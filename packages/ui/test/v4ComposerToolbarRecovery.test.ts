@@ -1392,8 +1392,21 @@ it("after a display failure, retrying the current connection is allowed instead 
   expect(menu).toBeDefined();
   const selected = menu!.groups.find((group) => group.key === menu!.selectedKey)!;
   expect(selected).toBeDefined();
-  menu!.onSelect(selected);
+  menu!.onSelectModel(selected, selected.items[0]!.value);
   expect(mocks.selectConnection).toHaveBeenCalledTimes(1);
+  expect(mocks.selectConnection).toHaveBeenCalledWith(
+    expect.objectContaining({ key: selected.key }),
+    selected.key,
+    selected.items[0]!.name,
+  );
+});
+
+it("a model picked in the selected connection without an error skips the connection switch", () => {
+  renderToolbarMarkup();
+  const menu = captured.modelSelectProps?.composerOptions?.providerMenu;
+  const selected = menu!.groups.find((group) => group.key === menu!.selectedKey)!;
+  menu!.onSelectModel(selected, selected.items[0]!.value);
+  expect(mocks.selectConnection).not.toHaveBeenCalled();
 });
 
 it("after team usage is cached, clearing only the user while the provider stays ready hides the stale source immediately and disables requests", async () => {

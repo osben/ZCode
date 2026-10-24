@@ -5644,7 +5644,8 @@ const enUS: Record<string, string> = {
   "chat.reasoning.thinking": "Thinking",
   "chat.reasoning.thought": "Thought",
   "chat.reasoning.durationFewSeconds": "a few seconds",
-  "chat.reasoning.durationSeconds": "{seconds} seconds",
+  "chat.reasoning.durationSeconds.one": "{count} second",
+  "chat.reasoning.durationSeconds.other": "{count} seconds",
   "chat.contextUsage": "Context usage {used} of {total}",
   "chat.contextUsage.title": "Context windows",
   "chat.contextUsageDescription":
@@ -5700,6 +5701,7 @@ const enUS: Record<string, string> = {
   "chat.contextCompaction.retrying": "Retrying context compression ({attempt}/{maxAttempts})",
   "chat.contextCompaction.skipped": "Context is up to date; no compression needed",
   "chat.contextCompaction.completed": "Context compressed",
+  "chat.contextCompaction.completedAuto": "Context automatically compressed",
   "chat.modelChange.switched": "Model switched {from} → {to}",
   "chat.modelChange.using": "Using {model}",
   "chat.agentContextReset":

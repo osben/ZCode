@@ -422,6 +422,16 @@ export function createZCodeTaskIndexSyncer(
     if (state.assemblyTimer) clearTimeout(state.assemblyTimer);
     state.assemblyTimer = null;
   };
+  const logUnsubscribeFailure = (message: string, error: unknown): void => {
+    // disposeAll() runs right before the agent service is disposed in the same teardown
+    // (specs/host-shutdown-teardown-logging.md): an unsubscribe that settles afterwards was
+    // cancelled by that disposal ("ZCode Protocol client disposed"), not a recoverable fault.
+    if (disposed) {
+      logger.debug(undefined, message, error);
+      return;
+    }
+    logger.warn(undefined, message, error);
+  };
   const unsubscribeIndex = async (
     state: WorkspaceIngestState,
     subscriptionId: string,
@@ -433,8 +443,7 @@ export function createZCodeTaskIndexSyncer(
         runtimePolicy: "existing-only",
       });
     } catch (error) {
-      logger.warn(
-        undefined,
+      logUnsubscribeFailure(
         `清理 task index sessions-index 订阅失败 workspace=${state.target.workspacePath}`,
         error,
       );
@@ -451,8 +460,7 @@ export function createZCodeTaskIndexSyncer(
         runtimePolicy: "existing-only",
       });
     } catch (error) {
-      logger.warn(
-        undefined,
+      logUnsubscribeFailure(
         `清理 task index workspace-config 订阅失败 workspace=${state.target.workspacePath}`,
         error,
       );

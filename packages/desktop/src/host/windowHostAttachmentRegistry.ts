@@ -5,8 +5,59 @@ export interface WindowHostAttachmentPort {
   once(event: "close", listener: () => void): unknown;
 }
 
+/**
+ * Why an attachment is disposed. `host-shutdown` means the Host is tearing down and will
+ * dispose the services behind every attachment right after (specs/host-shutdown-teardown-logging.md).
+ */
+export type WindowHostAttachmentDisposeReason = "host-shutdown";
+
 export interface WindowHostAttachmentHandle {
-  dispose(): void;
+  dispose(reason?: WindowHostAttachmentDisposeReason): void;
+}
+
+type WindowHostAttachmentFlowState = "saturated" | "drained" | "closed";
+
+export interface WindowHostAttachmentFlowScope {
+  setTransportFlowState(state: WindowHostAttachmentFlowState): Promise<void>;
+  dispose(): Promise<void>;
+}
+
+/**
+ * Serializes one attachment's transport flow edges into its connection scope; close is
+ * ordered after every edge already received, so a late "saturated" never revives CLI pause state.
+ */
+export function createWindowHostAttachmentFlowForwarder(
+  scope: WindowHostAttachmentFlowScope | undefined,
+  onForwardError: (state: WindowHostAttachmentFlowState, error: unknown) => void,
+) {
+  let chain = Promise.resolve();
+  let hostShutdown = false;
+  const forward = (state: WindowHostAttachmentFlowState): Promise<void> => {
+    if (!scope) return Promise.resolve();
+    const update = chain.then(() => scope.setTransportFlowState(state));
+    chain = update.catch((error: unknown) => {
+      // An edge still queued when host shutdown begins is rejected by the agent disposal that
+      // follows; that cancellation is not a recoverable fault.
+      if (!hostShutdown) onForwardError(state, error);
+    });
+    return update;
+  };
+  return {
+    forward,
+    close(reason?: WindowHostAttachmentDisposeReason): Promise<void> {
+      if (!scope) return Promise.resolve();
+      if (reason === "host-shutdown") {
+        hostShutdown = true;
+        // The Host disposes the agent right after the attachments, which rejects an in-flight
+        // "closed" RPC with "ZCode Protocol client disposed" (ISSUE-061). scope.dispose() still
+        // enqueues "closed" itself as silent best effort; only the reported forward is skipped.
+        return chain.then(() => scope.dispose());
+      }
+      return forward("closed")
+        .catch(() => {})
+        .then(() => scope.dispose());
+    },
+  };
 }
 
 export interface WindowHostResolvedAttachmentScope<TServices, TCapabilities = never> {
@@ -46,12 +97,15 @@ export function createWindowHostAttachmentRegistry<
 }) {
   const attachments = new Map<string, TrackedAttachment<TServices, TPort, TCapabilities>>();
 
-  function disposeTracked(tracked: TrackedAttachment<TServices, TPort, TCapabilities>): void {
+  function disposeTracked(
+    tracked: TrackedAttachment<TServices, TPort, TCapabilities>,
+    reason?: WindowHostAttachmentDisposeReason,
+  ): void {
     if (tracked.disposed) {
       return;
     }
     tracked.disposed = true;
-    tracked.handle.dispose();
+    tracked.handle.dispose(reason);
   }
 
   function attach(params: {
@@ -159,9 +213,10 @@ export function createWindowHostAttachmentRegistry<
         scope: tracked.params.scope,
         generation: tracked.params.generation,
       })),
+    /** Host shutdown only: every handle learns that its services are disposed next. */
     dispose(): void {
       for (const tracked of attachments.values()) {
-        disposeTracked(tracked);
+        disposeTracked(tracked, "host-shutdown");
       }
       attachments.clear();
     },

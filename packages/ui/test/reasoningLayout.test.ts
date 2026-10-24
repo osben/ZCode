@@ -181,7 +181,7 @@ describe("Reasoning layout", () => {
 
     expect(html).toContain(expectedCopy("chat.reasoning.thought"));
     expect(html).not.toContain(expectedCopy("modelTrajectory.reasoning"));
-    expect(html).toContain(expectedCopy("chat.reasoning.durationSeconds", { seconds: 7 }));
+    expect(html).toContain(expectedCopy("chat.reasoning.durationSeconds.other", { count: 7 }));
     expect(html).toContain('data-state="open"');
     expect(html).not.toContain("animated-gradient-text");
     expect(html).not.toContain('data-reasoning-streaming-line="true"');
@@ -198,6 +198,23 @@ describe("Reasoning layout", () => {
     expect(html).toContain("Thought");
     expect(html).toContain("2 seconds");
     expect(html).not.toContain("for 2 seconds");
+  });
+
+  it('pluralizes the duration per locale (ISSUE-059: no "1 seconds")', () => {
+    const render = (duration: number, locale: Locale) =>
+      renderReasoningContent(
+        "Checking.",
+        { defaultOpen: false, duration, isStreaming: false },
+        {},
+        locale,
+      );
+
+    expect(render(1, "en-US")).toContain("1 second<");
+    expect(render(1, "en-US")).not.toContain("1 seconds");
+    expect(render(2, "en-US")).toContain("2 seconds");
+    expect(render(1, "uk-UA")).toContain("1 с");
+    expect(render(5, "uk-UA")).toContain("5 с");
+    expect(render(1, "zh-CN")).toContain("持续了 1 秒");
   });
 
   it("adds a two-sided fade mask only while the streaming summary overflows", () => {

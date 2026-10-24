@@ -10,6 +10,7 @@ const EN_ONLY_KEYS = [
   "archives.count.one",
   "branchSwitchGuard.taskCount.one",
   "chat.queue.sendConfirm.description.one",
+  "chat.reasoning.durationSeconds.one",
   "git.actionMenu.commitDialog.changesValue.one",
   "git.branchSwitcher.commitDialog.changesValue.one",
   "git.branchSwitcher.currentDirty.one",
@@ -180,6 +181,29 @@ describe("i18n catalog parity", () => {
         if (category === undefined) continue;
         const base = key.slice(0, -(category.length + 1));
         assert.ok(catalog[`${base}.other`] !== undefined, `${name}: ${base} lacks .other`);
+      }
+    }
+  });
+  // The compaction marker builds `<scope>.<status>` at runtime (ConversationRowView), so static
+  // reference scans miss these ids; pruning `completedAuto` once rendered the raw key (CH-26).
+  it("every compaction marker label key exists in every catalog", () => {
+    const keys = [
+      ...["started", "skipped", "interrupted", "failed", "completed", "completedAuto"].map(
+        (status) => `chat.contextCompaction.${status}`,
+      ),
+      ...["started", "skipped", "interrupted", "failed", "completed"].map(
+        (status) => `chat.contextOptimization.${status}`,
+      ),
+    ];
+    for (const [name, catalog] of [
+      ["en-US", enUS],
+      ["zh-CN", zhCN],
+      ["uk-UA", ukUA],
+    ] as const) {
+      for (const key of keys) {
+        const message = catalog[key];
+        assert.ok(message !== undefined, `${name}: ${key} is missing`);
+        assert.ok(message.trim() !== "" && message !== key, `${name}: ${key} is not localized`);
       }
     }
   });

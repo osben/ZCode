@@ -162,7 +162,11 @@ import {
 } from "./cronRunLifecycle.js";
 import { connectServerRemote, type ServerRemoteConnection } from "./serverRemoteConnection.js";
 import { bindBotGroupTaskScope } from "./botGroupTaskScope.js";
-import { createWindowHostAttachmentRegistry } from "./windowHostAttachmentRegistry.js";
+import {
+  createWindowHostAttachmentFlowForwarder,
+  createWindowHostAttachmentRegistry,
+  type WindowHostAttachmentDisposeReason,
+} from "./windowHostAttachmentRegistry.js";
 import { exposeWindowHostAttachmentServices } from "./windowHostAttachmentRpcPolicy.js";
 import { scopeConversationShareServiceForAttachment } from "./conversationShareAttachmentService.js";
 import {
@@ -2514,7 +2518,7 @@ function disposeLocalResourceTelemetry(): void {
 
 type ExposedServicePortHandle = {
   server: IChannelServer & { ready(): void };
-  dispose(): void;
+  dispose(reason?: WindowHostAttachmentDisposeReason): void;
 };
 
 function createControllerRoutedTaskService(
@@ -2734,27 +2738,21 @@ function exposeServicesOnMessagePort(
     windowServices: activeServices ?? undefined,
   });
   let disposed = false;
-  let flowUpdateChain = Promise.resolve();
-  const forwardFlowState = (state: "saturated" | "drained" | "closed") => {
-    if (!connectionScope) return Promise.resolve();
-    const update = flowUpdateChain.then(() => connectionScope.setTransportFlowState(state));
-    flowUpdateChain = update.catch((error) => {
-      logger.warn("failed to forward attachment connection flow state", {
-        state,
-        message: error instanceof Error ? error.message : String(error),
-      });
+  const flowForwarder = createWindowHostAttachmentFlowForwarder(connectionScope, (state, error) => {
+    logger.warn("failed to forward attachment connection flow state", {
+      state,
+      message: error instanceof Error ? error.message : String(error),
     });
-    return update;
-  };
+  });
   const flowStateDisposable = protocol.onFlowState((state) => {
     if (disposed) return;
     // MessagePort sideband 已在 protocol 层与 Uint8Array 分流；这里只把 owning scope
     // 的 edge 串行送往 CLI，不能由 control object 指定 connectionId。
-    void forwardFlowState(state).catch(() => {});
+    void flowForwarder.forward(state).catch(() => {});
   });
   const handle: ExposedServicePortHandle = {
     server,
-    dispose() {
+    dispose(reason) {
       if (disposed) return;
       disposed = true;
       flowStateDisposable.dispose();
@@ -2767,9 +2765,7 @@ function exposeServicesOnMessagePort(
       });
       // close 排在所有已接收 SAT/DRN 之后；scope.dispose 自身会再次幂等确保 closed，
       // 但绝不让迟到 saturated 在 close 后复活 CLI pause state。
-      void forwardFlowState("closed")
-        .catch(() => {})
-        .then(() => connectionScope?.dispose());
+      void flowForwarder.close(reason);
       rawServer.dispose();
       protocol.disconnect();
     },

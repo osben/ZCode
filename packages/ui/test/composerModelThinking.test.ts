@@ -328,11 +328,16 @@ describe("composer combined model and thinking picker", () => {
     expect(screen.getByRole("menu")).toBeTruthy();
   });
 
-  it("selects the provider model and synchronizes thinking without a second model click", () => {
+  it("selects a browsed provider's model on the model click and synchronizes thinking", () => {
     render(createElement(Harness));
     const providerTrigger = screen.getByTestId("composer-provider-trigger");
     fireEvent.keyDown(providerTrigger, { key: "ArrowRight" });
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Provider B API" }));
+    // ISSUE-058: the provider row only browses.
+    expect(screen.getByTestId("chat-model-select-trigger").getAttribute("aria-label")).toContain(
+      "GLM-5.3-Flash",
+    );
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Fixed model" }));
     expect(screen.getByTestId("chat-model-select-trigger").getAttribute("aria-label")).toContain(
       "Fixed model",
     );
@@ -346,6 +351,7 @@ describe("composer combined model and thinking picker", () => {
     expect(screen.getByTestId("composer-thought-meter").getAttribute("data-progress")).toBe("0");
     fireEvent.keyDown(screen.getByTestId("composer-provider-trigger"), { key: "ArrowRight" });
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Provider A Individual" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /^GLM-5.3-Flash/ }));
     expect(screen.getByRole("slider")).toBeTruthy();
   });
 
@@ -361,17 +367,14 @@ describe("composer combined model and thinking picker", () => {
     ).toBe("true");
   });
 
-  it("skips locked models when automatically selecting a provider model", () => {
-    render(createElement(Harness, { locked: ["a/flash"] }));
+  it("does not select a locked model in a browsed provider", () => {
+    render(createElement(Harness, { locked: ["b/fixed"] }));
     fireEvent.keyDown(screen.getByTestId("composer-provider-trigger"), { key: "ArrowRight" });
     fireEvent.click(screen.getByRole("menuitemradio", { name: "Provider B API" }));
-    fireEvent.keyDown(screen.getByTestId("composer-provider-trigger"), { key: "ArrowRight" });
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "Provider A Individual" }));
-    expect(
-      screen
-        .getByRole("menuitemradio", { name: "GLM-5.3", exact: true })
-        .getAttribute("aria-checked"),
-    ).toBe("true");
+    fireEvent.click(screen.getByText("Fixed model"));
+    expect(screen.getByTestId("chat-model-select-trigger").getAttribute("aria-label")).toContain(
+      "GLM-5.3-Flash",
+    );
   });
 
   it("keeps the current selection when the target provider has no available model", () => {

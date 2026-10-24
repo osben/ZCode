@@ -78,11 +78,7 @@ import type {
 import { useProviderSettingsView } from "@/hooks/useProviderSettingsView.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useComposerConnectionSwitch } from "@/hooks/useComposerConnectionSwitch.js";
-import {
-  buildComposerPlanGroups,
-  composerConnectionKey,
-  chooseConnectionModel,
-} from "@/lib/composerPlanGroups.js";
+import { buildComposerPlanGroups, composerConnectionKey } from "@/lib/composerPlanGroups.js";
 import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
 import { useSettings } from "@/hooks/useSettingService.js";
 import {
@@ -1178,30 +1174,34 @@ function V4ComposerModelControlsImpl({
         pending: connectionSwitch.pending,
         // 团队目录查询不是用户的连接切换操作，不能把登录错误挂到 API 菜单。
         error: connectionSwitch.error,
-        onSelect: (group) => {
+        // ISSUE-058: provider rows only browse; this runs when a model row is picked in a
+        // browsed group, so the picked model (not the group's first one) is switched to.
+        onSelectModel: (group, value) => {
           // 原因：展示失败时设置可能已成功；已选连接仍须允许重试，不能被同 key 短路。
-          if (group.key === selectedPlanKey && !connectionSwitch.error) return;
-          if (group.connection) {
-            void selectConnection(group.connection, selectedPlanKey);
-          } else {
-            const model = chooseConnectionModel(
-              group.items,
-              decodeCustomModelValue(normalizedModelValue)?.modelName,
-            );
-            const providerId = decodeCustomModelValue(model?.value ?? "")?.providerId;
-            // 原因：普通 API 原先绕过连接切换 owner，缺少 loading 且会暴露旧目录。
-            if (providerId)
-              void selectConnection(
-                {
-                  key: group.key,
-                  label: group.label,
-                  providerId,
-                  family: connectionFamily,
-                  items: group.items,
-                },
-                selectedPlanKey,
-              );
+          if (group.key === selectedPlanKey && !connectionSwitch.error) {
+            handleModelValueChange(value);
+            return;
           }
+          const modelName = group.items.find((item) => item.value === value)?.name;
+          if (group.connection) {
+            void selectConnection(group.connection, selectedPlanKey, modelName);
+            return;
+          }
+          const providerId = decodeCustomModelValue(value)?.providerId;
+          // 原因：普通 API 原先绕过连接切换 owner，缺少 loading 且会暴露旧目录。
+          if (providerId)
+            void selectConnection(
+              {
+                key: group.key,
+                label: group.label,
+                providerId,
+                family: connectionFamily,
+                items: group.items,
+              },
+              selectedPlanKey,
+              modelName,
+            );
+          else handleModelValueChange(value);
         },
       },
       providerLabel: intl.formatMessage({ id: "chat.toolbar.combined.provider" }),
@@ -1223,7 +1223,7 @@ function V4ComposerModelControlsImpl({
       connectionSwitch.pending,
       connectionSwitch.error,
       selectConnection,
-      normalizedModelValue,
+      handleModelValueChange,
       connectionFamily,
       intl,
       thoughtShortcutLabel,
