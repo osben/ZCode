@@ -1,27 +1,26 @@
-# Todo100 Investigation: Current Status and Convergence Direction for Account/Provider/Effective Selection
+# Todo100 Investigation: Account/Provider/Effective Selection — Status and Convergence Direction
 
-> 2026-09-09; pure investigation complete, no product fixes. Corresponds to [Todo100](../steps/todo-100-account-provider-selection-architecture-investigation.md).
-> Baseline committed: `86bbe157c88e8e599694afb53c39f6dac125ac08`. Files affected by paused experiments verified with `git show HEAD:<path>`, cannot prove baselines fixed with workspace trial modifications. No product code, tests, real accounts, remote configs, or deployments modified.
+> 2026-09-09; pure investigation, no product fixes. Corresponds to [Todo100](../steps/todo-100-account-provider-selection-architecture-investigation.md). Baseline: `86bbe157c88e8e599694afb53c39f6dac125ac08`. No product code, tests, real accounts, remote configs, or deployments were modified.
 
 ## 1. Conclusions
 
-It is not "no public architecture at all," nor is it "just add one field to sync and everything is fine." Public Registry snapshots, effective selection algorithms, and UI subscriptions already exist; the main gaps are in assembly and consumption boundaries.
+The gap is neither "no public architecture at all" nor "add one sync field and everything works." Public Registry snapshots, the effective-selection algorithm, and UI subscriptions already exist; the gaps are in assembly and consumption boundaries.
 
 Priorities:
 
-1. Ensure actual execution processes obtain complete Account facts, and sync confirmations reflect truly applied snapshots.
-2. Explicit Subagent and similar entry points that still create models from original selections should接入 existing public resolution; not write another corresponding algorithm.
-3. Check whether effective selection loses from parsing to dispatch. Tasks adapters with attachments were found to leak this selection; Bot existing task next messages do not re-obtain effective selections.
-4. Clearly distinguish "new intent parsing" from "already-fixed execution" at call boundaries; ModelFactory should not uniformly swap models secretly inside.
+1. Execution processes must receive complete Account facts, and sync confirmations must reflect the snapshot actually applied.
+2. Entry points that still create models from original selections (explicit Subagents and similar) must connect to the existing public resolution; do not write a parallel algorithm.
+3. Check whether effective selection is lost between parsing and dispatch. Task adapters with attachments were found to leak the selection; Bot follow-up messages on existing tasks do not re-resolve.
+4. Distinguish "new intent parsing" from "already-fixed execution" at call boundaries; ModelFactory must not silently swap models on its own.
 
-Temporary sync mechanisms are not worth doing large refactorings for first. Fix completeness, application confirmation, and lifecycle only; public model selection semantics should not depend on its long-term existence. Independent terminal CLI's complete account assembly still unchanged per user ruling.
+Temporary sync mechanisms do not justify large refactors. Fix completeness, application confirmation, and lifecycle only; public model-selection semantics must not depend on the temporary sync long-term. The independent terminal CLI keeps its simpler account assembly per the user's standing ruling.
 
-Evidence grading: **Confirmed** means the code chain is explicit or reproduced in memory; **Conditional gaps** mean branch behaviors can be determined but whether real users trigger/product boundaries still need distinction; **Risks** mean errors cannot yet be asserted. The below does not report every un-invoked resolver location as a Bug.
+Evidence grading: **Confirmed** = explicit code chain or reproduced; **Conditional gap** = branch behavior is determinable but real-user/product-boundary exposure unverified; **Risk** = cannot yet be asserted as a bug. Not every un-invoked resolver location is reported as a bug.
 
 ## 2. Current Layering and State Ownership
 
 ```text
-A single execution environment's Host
+Host of one execution environment
   Settings / OAuth / Team queries / Built-in / Personal
        |                    |
        v                    v
@@ -39,94 +38,94 @@ A single execution environment's Host
   Display/edit facts            Original Selection -> Effective Selection
 
 Workers managed by Host (normal / Wiki, etc.)
-  This process's Config Source <---- Same-environment config files/refresh mechanisms
-  Mutable Account Source <-- Current temporary Account protocol
+  This process's Config Source <---- same-environment config files/refresh
+  Mutable Account Source <-- current temporary Account protocol
                   |
                   v
         Same ProviderRegistryService / Resolver
                   |
                   v
-        ModelFactory -> Fixed Models -> Request-period authentication
+        ModelFactory -> frozen models -> request-time authentication
         ^
-        Baseline explicit Subagents not connected to public Effective Selection
+        Baseline: explicit Subagents not connected to public effective selection
 ```
 
-Several easily confused points:
+Easily confused points:
 
-- `providerFamilyConnectionSelections` are user-persistent selections; Account `current` is runtime fact, no new persistent current added.
-- Account Overlays and Account states are two projections of one account calculation; states are not credentials and cannot be dropped cross-process just because "they are not request configs."
-- Workers and Hosts have already shared Provider core code, but **injected data and entry point assemblies differ**. Sharing the same Resolver does not guarantee identical results.
-- `ModelSelectionFacade` is a pure public layer. Reading the same applied snapshot, it returns candidates and input-corresponding effective selections; no business needs to recognize personal/Team/Start individually.
-- Host network account orchestration is located in services; independent CLIs currently only assemble simpler personal plan sources. This is not "algorithms must depend on Host," but service assembly has not yet aligned.
+- `providerFamilyConnectionSelections` are user-persistent selections; Account `current` is a runtime fact. No new persistent "current" was added.
+- Account Overlays and Account states are two projections of one account computation; states are not credentials and must not be dropped cross-process "because they are not request configs."
+- Workers and Hosts share Provider core code, but **injected data and entry-point assembly differ**. Sharing the same Resolver does not guarantee identical results.
+- `ModelSelectionFacade` is a pure public layer: reading the same applied snapshot, it returns candidates and effective selections for a given input; business code does not need to know personal/Team/Start specifics.
+- Host network account orchestration lives in services; independent CLIs assemble only simpler personal-plan sources. This is not "algorithms must depend on Host" — service assembly has not been aligned.
 
-### SSH / Phones are Not Another Set of Business Algorithms
+### SSH / Phones Are Not a Second Business Algorithm
 
 ```text
-Desktop environment -- initial/changes provisioning --> remote environment config storage
+Desktop environment -- initial/change provisioning --> remote environment config storage
                                       |
                                       v
                                  Remote Host
                                  /       \
                             View services  Remote Workers
 
-Phones /remote -- shared-host attachment --> existing target Host
+Phones / remote -- shared-host attachment --> existing target Host
 ```
 
-Desktop→remote environment provisioning and Host→Worker Account syncing are different edges. Do not build runtimes for phones just to fix the latter, nor add barriers to sync Desktop's latest configs before every normal send. Service targets, caches, and response ownership continue to be isolated by `workspaceIdentity?.trim() || workspacePath`; actual file operations still use workspacePath.
+Desktop→remote provisioning and Host→Worker Account syncing are different edges. Do not build runtimes for phones to fix the latter, and do not add a sync barrier before every normal Desktop send. Service targets, caches, and response ownership stay isolated by `workspaceIdentity?.trim() || workspacePath`; actual file operations still use workspacePath.
 
 ## 3. Existing Correct Mechanisms: Retain, Do Not Rewrite
 
-| Mechanism                    | Investigation Results                                                                                                                                                                 | Evidence Entry (baseline)                                                         |
+| Mechanism                    | Finding                                                                                                                                                                                | Evidence (baseline)                                                               |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Registry full application    | Concurrent reads of config/account, check refresh generation; retains previous complete snapshot when Account's based-on Built-in does not match                                      | `packages/provider/src/registry-service.ts:180`                                   |
-| Facade same-snapshot parsing | Candidates Registry and Account states come from one `getSnapshot()`; not separately fetching latest values from two services then stitching                                          | `packages/provider/src/facades.ts:483`                                            |
-| Account revision             | Identifiers already include Built-in source, Overlays, and states; only current changes also change revision, no need to rebuild revision systems                                     | `packages/provider/src/sources.ts:60`                                             |
-| Account refresh              | Merges pending reasons, serially runs; failures retain previous results; new events during failures continue processing; initial failures only account fail-closed                    | `packages/provider/src/account-provider-service.ts:95`                            |
-| Account scope isolation      | Resolvers select reusable old results by identity/connection scope, not directly inheriting another account's available facts because one query failed                                | `packages/services/src/model-provider/accountProviderConnectionResolver.ts:76`    |
-| UI async isolation           | Public Hook handles owner, input changes, request generations, old responses; receiving common change notifications with inputs re-reads View with original selection                 | `packages/ui/src/hooks/useModelSelectionView.ts`                                  |
-| Composer original intent     | Drafts save original intent, display/submit derived effective selection; reading failures do not clear original intent to databases; accepted writes back have independent boundaries | `packages/ui/src/v4/composer/useDraftConfigControl.ts:173`                        |
-| Final model creation         | Precisely validates already-given Provider/Model/tiers before creating frozen-configured Models; does not fall back to plan's first model                                             | `apps/zcode-cli/packages/bootstrap/src/app/provider-registry-model-runtime.ts:43` |
+| Registry full application    | Concurrent config/account reads check refresh generation; keeps the previous complete snapshot when Account's based-on Built-in does not match                                        | `packages/provider/src/registry-service.ts:180`                                   |
+| Facade same-snapshot parsing | Candidates Registry and Account states come from one `getSnapshot()`; not two separately fetched latest values stitched together                                                      | `packages/provider/src/facades.ts:483`                                            |
+| Account revision             | Identity already covers Built-in source, Overlays, and states; only a current change changes the revision — no need to rebuild the revision system                                    | `packages/provider/src/sources.ts:60`                                             |
+| Account refresh              | Merges pending reasons, runs serially; failures keep the previous result; events arriving during a failure continue processing; only the initial failure fails the account closed      | `packages/provider/src/account-provider-service.ts:95`                            |
+| Account scope isolation      | Resolvers reuse prior results per identity/connection scope; a failed query for one account does not inherit another account's available facts                                        | `packages/services/src/model-provider/accountProviderConnectionResolver.ts:76`    |
+| UI async isolation           | Public hook owns generation/owner handling and stale responses; common change notifications re-read the View with the original selection                                              | `packages/ui/src/hooks/useModelSelectionView.ts`                                  |
+| Composer original intent     | Drafts save original intent; display/submit derive effective selection; read failures do not clear persisted original intent; accepted write-back has independent boundaries           | `packages/ui/src/v4/composer/useDraftConfigControl.ts:173`                        |
+| Final model creation         | Validates the given Provider/Model/tiers precisely before creating frozen-config models; never falls back to the plan's first model                                                   | `apps/zcode-cli/packages/bootstrap/src/app/provider-registry-model-runtime.ts:43` |
 
-Therefore, the so-called "unified mid-state solution" is not locking the entire warehouse, nor deleting existing correct mechanisms. What should be clarified: Accounts publish complete results, Registries publish complete applied results, all consumers needing combined facts read the latter; asymmetric source productions still need targeted scope consistency guarantees.
+So the "unified mid-state solution" is neither locking the whole repository nor deleting these correct mechanisms. Clarify instead: Accounts publish complete results; Registries publish complete applied results; every consumer needing combined facts reads the latter; asymmetric source productions still need targeted scope-consistency guarantees.
 
 ## 4. Confirmed Issues and Impacts
 
 ### P100-01: States Lost Cross-Process, Execution Eligibility Inconsistent (Confirmed, Priority Fix)
 
-Host Account revisions already include states, but envelopes sent from `zcodeAgentService.ts:1169` contain only revision, basedOnZCodeBuiltinRevision, and providers. Baseline protocols and Worker receive paths also do not connect states.
+Host Account revisions include states, but envelopes sent from `zcodeAgentService.ts:1169` carry only revision, basedOnZCodeBuiltinRevision, and providers. Baseline protocol and Worker receive paths do not connect states either.
 
-Resolvers use `accountStates?.[providerId]?.current !== false`. This has established uses for ordinary Providers/Off-Peak that do not define current, but non-current ordinary Accounts also pass when information is lost.
+Resolvers test `accountStates?.[providerId]?.current !== false`. That is correct for ordinary Providers/Off-Peak that never define `current`, but non-current ordinary Accounts also pass when the state is lost in transit.
 
 ```text
-Host:   entitled=true, current=false -> Plan models do not enter execution Registry
-Transfer: only retains entitled=true, drops states
+Host:   entitled=true, current=false -> Plan models must not enter the execution Registry
+Sync:   keeps entitled=true, drops states
 Worker: entitled=true, current=undefined -> current condition passes
 ```
 
-Impacts are not just Subagents, but also precise model creation, protocol model validations, and other entry points using this Worker Registry. Subsequent authentication may reject requests again, but cannot treat late failures as correctness earlier.
+Impact is not limited to Subagents: precise model creation, protocol model validation, and every other consumer of this Worker Registry are affected. Later authentication may still reject the request, but a late failure must not be treated as earlier correctness.
 
-Another direction: connecting Workers to public Effective Selection without supplementing states would cause ordinary account selections to parse as empty without unique current. Both fixes need to be validated as a set.
+The opposite direction is also broken: connecting Workers to public effective selection without delivering states makes ordinary account selections resolve to empty (no unique current). Both fixes must be validated as a set.
 
-Recommendation: pass complete same snapshots through the current temporary protocol; Workers' boundaries clearly define "initialization fail-closed" and "complete account facts," avoiding leaked states being misread as normal executable states. Cannot simply make current required for all Providers, nor add current for Off-Peak.
+Recommendation: pass complete same snapshots through the current temporary protocol; Worker boundaries clearly define "fail-closed initialization" and "complete account facts" so leaked states are not misread as normal executable state. Do not make `current` required for all Providers, and do not add `current` for Off-Peak.
 
-### P100-02: Received Does Not Equal Applied, ACK Can Report Wrong Versions (Memory Reproduced, Priority Fix)
+### P100-02: Received ≠ Applied, ACK Can Report the Wrong Version (Reproduced in Memory, Priority Fix)
 
 Chain:
 
-- `bootstrap/src/zcode-protocol-entrypoint.ts:239` replaces Account Sources, await Registry refresh, but does not verify the returned applied snapshot.
-- `bootstrap/src/zcode-protocol/account-provider-config.ts` unconditionally replies input `snapshot.revision` as `appliedRevision`.
-- Host stores this result in each Client's confirmation cache, skipping same revisions subsequently.
-- Registries allow refreshes to return old snapshots when Built-in sources do not match; this is **correct Registry behavior**.
+- `bootstrap/src/zcode-protocol-entrypoint.ts:239` replaces Account Sources and awaits a Registry refresh but does not verify the returned applied snapshot.
+- `bootstrap/src/zcode-protocol/account-provider-config.ts` unconditionally replies with the input `snapshot.revision` as `appliedRevision`.
+- The Host stores that in the per-Client confirmation cache and skips same revisions afterwards.
+- Registries may return an old snapshot when the Built-in source does not match — that is **correct Registry behavior**.
 
 ```text
 Worker using A
-  -> receives Account B,配套 Built-in B has not yet arrived
+  -> receives Account B while the matching Built-in B has not arrived yet
   -> Account Source=B; Registry still complete A
-  -> Protocol replies appliedRevision=B       [error occurs here]
-  -> Host considers B complete, stops sending same content
+  -> protocol replies appliedRevision=B       [error occurs here]
+  -> Host considers B applied, stops sending it
 ```
 
-On 2026-09-09, no-account, pure-memory `ProviderRegistryService` execution yielded:
+A 2026-09-09 in-memory run of `ProviderRegistryService` (no real accounts) produced:
 
 ```json
 {
@@ -137,203 +136,197 @@ On 2026-09-09, no-account, pure-memory `ProviderRegistryService` execution yield
 }
 ```
 
-The last item is deduced from baseline handler logic, not claimed to have run the entire old protocol process. The preceding three are actual execution results.
+The first three items are actual execution results; the last is deduced from the baseline handler logic, not from a full old-protocol run.
 
-Recommendation: ACKs derived from actual applied snapshots; not-yet-applied must be clearly distinguished, cannot be recorded as success. Does not prescribe blocking waits for the latest, nor relies on infinite waits/delays. How to express accepted-but-not-applied can be the minimum protocol adjustment chosen in implementation specifications.
+Recommendation: derive ACKs from the snapshot actually applied; "received but not yet applied" must be distinguishable and never recorded as success. This does not prescribe blocking waits for the latest, nor rely on unbounded waits/delays. How to express accepted-but-not-applied is the minimal protocol adjustment for the implementation spec.
 
-### P100-03: Explicit Subagents Not Connected to Public Resolution (Confirmed, Consumption Layer Focus)
+### P100-03: Explicit Subagents Not Connected to Public Resolution (Confirmed, Consumption-Layer Focus)
 
-Baseline `core/src/runtime/methods/subagent.ts`'s same-name effective helper only takes profile.modelSelection or parent selections, without calling `packages/provider/src/effective-model-selection.ts`. Subsequently uses precise ModelFactories.
+Baseline `core/src/runtime/methods/subagent.ts`'s same-name effective helper only takes profile.modelSelection or the parent selection, without calling `packages/provider/src/effective-model-selection.ts`; it then uses precise ModelFactories.
 
-Therefore, old intents from personal Providers do not automatically correspond when the same model exists in current Teams. When states are lost, it may first incorrectly pass the Registry; after supplementing states, it will more clearly fail; so "problems become more obvious after supplementing sync" is not a reason to restore loose gates.
+Consequence: an old intent for a personal Provider does not auto-remap when the same model exists in the current Team. With states lost (P100-01) it may first pass the Registry wrongly; after states are delivered it will fail more visibly. "Problems become more obvious after sync is fixed" is not a reason to restore loose gates.
 
-Recommendation: inject the same-process public read/parse capabilities when explicit profiles start new executions, using Workers' already-applied complete snapshots. Profiles do not write back. Nested children, workflow/script children must propagate identical dependencies. Implicit inheritance and internal overrides do not go through this re-parsing.
+Recommendation: inject the same-process public read/resolve capability when explicit profiles start new executions, using the Worker's already-applied complete snapshot. Profiles do not write back. Nested children and workflow/script children must propagate the same dependency. Implicit inheritance and internal overrides do not go through this re-resolution.
 
-### P100-04: Bot Existing Task Subsequent Messages Do Not Re-parse (Conditional Gap, Consumption Boundaries Must Be Clear)
+### P100-04: Bot Follow-Up Messages on Existing Tasks Do Not Re-resolve (Conditional Gap, Consumption Boundary Must Be Defined)
 
-`botsService.ts:4842`'s initial task creation reads Views with original selections, creates tasks using effectiveSelection; this is correct.
+`botsService.ts:4842` initial task creation reads the View with the original selection and creates the task with effectiveSelection — correct.
 
-But `botsService.ts:4934`'s existing activeTask branch is resume + send. `sendPromptInBackground:4764` does not pass modelSelection; task adapters do not supplement parsing, Core `turn.ts:105` directly freezes Session-saved selections when intents are missing.
+But the existing-activeTask branch at `botsService.ts:4934` is resume + send. `sendPromptInBackground:4764` passes no modelSelection; task adapters add no resolution; Core `turn.ts:105` freezes the Session-saved selection when the intent is missing.
 
-Conclusions: if the same Bot task is idle, users switch personal→Team, then send next messages, this path **does not automatically correspond to the same model due to Account updates**. Here, "activeTask" means long-term reuse task IDs, not necessarily executing in one round.
+Conclusion: if a Bot task sits idle while the user switches personal→Team and then sends the next message, this path does **not** auto-remap to the same model from the Account update. "ActiveTask" here means long-lived reused task IDs, not necessarily mid-round execution.
 
-Recommendation per this round's goals: new messages from idle tasks belong to new dispatches and should obtain effective selections; already-admitted inputs, already-fixed executions, retries, and running guidance should not be universally re-parsed. Specific Bot busy inputs freeze at which established boundaries need to follow the original CommandInbox semantics, cannot rebuild Host queues. Semantic boundaries noted here, not arbitrarily changing all subsequent inputs to the same behavior.
+Recommendation: new messages to idle tasks are new dispatches and must obtain an effective selection; already-admitted inputs, already-fixed executions, retries, and running guidance must not be re-resolved wholesale. Which established boundary Bot busy inputs freeze at follows the existing CommandInbox semantics; do not rebuild Host queues. Define the boundary; do not flip all follow-up inputs to one behavior.
 
-### P100-05: Task Send Has Attachment Branch Losing Selections (Confirmed Branch Gap, No Real-Machine Reproduction)
+### P100-05: Task Send Attachment Branch Drops Selections (Confirmed Branch Gap, No Real-Machine Reproduction)
 
-`zcodeTaskServiceAdapter.ts:363`'s `sendPromptToAgent` receives modelSelection/modelExecution.
+`zcodeTaskServiceAdapter.ts:363` `sendPromptToAgent` receives modelSelection/modelExecution.
 
-- No attachments: sends V4 sendText, carrying both.
-- With attachments: calls old `zcodeAgentService.sendPrompt`, both items not carried when manually rebuilding parameters.
+- Without attachments: sends V4 sendText carrying both.
+- With attachments: calls the old `zcodeAgentService.sendPrompt`, rebuilding arguments without either.
 
-This does not necessarily cause every attachment send to error: if Sessions happen to already be at the same selection, behavior may be normal. But if callers rely on this selection to override or execution-specific scopes, attachment branches cannot preserve equal semantics. Upper layers "already called getView" is insufficient to prove final execution correctness.
+This does not necessarily error on every attachment send — if the Session already holds the same selection, behavior looks normal. But when callers rely on this selection to override or on execution-scoped context, the attachment branch cannot preserve equal semantics. "The upper layer already called getView" does not prove final execution correctness.
 
-Recommendation: restore equivalent transmission based on actual protocol capabilities, clearly define execution-only boundaries; cannot simply setModel globally on already-running Sessions. Does not require completing the entire attachment protocol migration this round.
+Recommendation: restore equivalent transmission using actual protocol capabilities and define the execution-only boundary; do not call setModel globally on running Sessions. Completing the whole attachment protocol migration is not required this round.
 
-## 5. Per-Entry Consumption Review Table
+## 5. Per-Entry Consumption Review
 
-| Entry                                       | Baseline Actual Behavior                                                                                                              | Investigation Conclusions / Subsequent Ownership                                                                                                                                                                                  |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Composer new and existing session drafts    | Hooks read target services with original selections; derive draftConfig; only accepted successful writes back of effective selections | Public algorithm connected; retain scope/request to prevent races, do not continuously re-inject Session snapshots                                                                                                                |
-| Normal Core Turns                           | Freezes传入 intents or Session selections before admission; subsequently precisely creates Models                                     | Execution layer should not secretly remap; requires upstream new intent entries to pass complete results                                                                                                                          |
-| Scheduled task initial dispatch             | `automationModelSelection.ts` has original selections when getView(input), dispatch returns results                                   | Correct; cannot only verify editors, need to keep this backend chain                                                                                                                                                              |
-| Scheduled task already-fixed runs / retries | fixedSelection branches directly return; callers use run selections                                                                   | Correct exceptions; do not re-correspond accounts                                                                                                                                                                                 |
-| Bot draft display/initial creation          | Displays returned copy effective values; creation parses and submits effective values                                                 | Connected; P100-04 is another existing task branch                                                                                                                                                                                |
-| Bot existing task new messages              | Continue along Session selections                                                                                                     | P100-04; distinguish idle new rounds from accepted-running inputs                                                                                                                                                                 |
-| Task adapter attachment branches            | Do not forward selections/execution contexts                                                                                          | P100-05; attachment and non-attachment must reach the same selection contract                                                                                                                                                     |
-| Wiki new generations                        | `resolveGenerationConfig` reads original selections to target Views, validates issues, fixes generation configs                       | Connected to public resolution; `repoWikiModelClient.ts:95`                                                                                                                                                                       |
-| Wiki fixed generation retries               | `resolveConfig` no longer re-interprets account selections                                                                            | Correct exceptions, cannot change retries to getView then switch plans                                                                                                                                                            |
-| Explicit Subagents                          | Original profile selections directly enter factories                                                                                  | P100-03; actual execution entries, built-in JSON overrides, and user Markdown parse results treated uniformly                                                                                                                     |
-| Implicit Subagents                          | Inherit parent Active Models, with frozen model factories                                                                             | Correct exceptions; cannot let background current updates switch child models                                                                                                                                                     |
-| Workflow / script children                  | Independent child runtime assemblies, dependencies must propagate                                                                     | Must cover assemblies when connecting public capabilities, do not write separate matching tables                                                                                                                                  |
-| Titles / Goal titles                        | `title-generation-sidecar.ts:103` reads title configs or Session Selections, then precisely creates Models                            | Not UI consumption; independent explicit configs are potential missed connections. Checked Host currently creates only title on/off, no normal UI independent model selection entries; not exaggerated into confirmed user faults |
-| Compacts                                    | Inherits when inputs exist; precisely creates Session Models when not                                                                 | Retain running inheritance; manual independent Compact new intents and frozen executions should be distinguished at entries, do not re-parse every internal model step                                                            |
-| Memory Extraction / Dreams                  | `project-memory-agent.ts:34` prioritizes input Models, otherwise creates from Sessions                                                | Extraction inheritance correct; Dream default paths need to clarify new work vs. inherited work in subsequent entry specifications, do not force-unify to latest accounts                                                         |
-| Connection testing                          | Tests explicit settings Providers/Models, checks actual models in Workers                                                             | Should not be remapped to other plans through ordinary accounts. Sync correctness applicable; public "current plan corresponding" not unconditionally applicable                                                                  |
-| Off-Peak                                    | Takes Tickets on creation; dispatches validations, uses Ticket request contexts                                                       | Maintain original bindings, original domains, and execution-specific scopes; do not merge into ordinary account auto-remap; P100-05 cannot lose execution contexts                                                                |
-| Phone remote control                        | Shares target Host services/task commands, UIs share public Hooks                                                                     | No need to add phone Account calculations; must maintain replayable recoveries, workspaceIdentity, and attachment boundaries                                                                                                      |
-| Independent terminal CLI                    | Same Provider cores, simplified Account sources, incomplete Team/Start assemblies                                                     | Users have excluded, recording differences is sufficient                                                                                                                                                                          |
+| Entry                                       | Baseline Behavior                                                                                                                          | Conclusion / Owner                                                                                                                                                  |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Composer new and existing session drafts    | Hooks read target services with original selections, derive draftConfig; only accepted write-back persists effective selection              | Public algorithm connected; keep scope/request-race protections; do not continuously re-inject Session snapshots                                                    |
+| Normal Core turns                           | Freezes passed-in intents or Session selections before admission; then creates models precisely                                             | Execution layer must not remap silently; upstream new-intent entries must pass complete results                                                                    |
+| Scheduled task initial dispatch             | `automationModelSelection.ts` getView(input) with original selection; dispatch returns result                                               | Correct; do not verify only editors — keep this backend chain                                                                                                      |
+| Scheduled task fixed runs / retries         | fixedSelection branches return directly; callers use the run selection                                                                     | Correct exception; do not remap accounts                                                                                                                           |
+| Bot draft display / initial creation        | Displays returned effective copy; creation resolves and submits effective values                                                           | Connected; P100-04 is the separate existing-task branch                                                                                                            |
+| Bot existing-task new messages              | Continue on Session selections                                                                                                             | P100-04; distinguish idle new rounds from accepted running inputs                                                                                                 |
+| Task adapter attachment branch              | Does not forward selection/execution context                                                                                              | P100-05; attachment and non-attachment must reach the same selection contract                                                                                      |
+| Wiki new generations                        | `resolveGenerationConfig` reads original selections from target Views, validates issues, fixes generation config                           | Connected to public resolution; `repoWikiModelClient.ts:95`                                                                                                        |
+| Wiki fixed-generation retries               | `resolveConfig` no longer re-interprets account selections                                                                                 | Correct exception; do not turn retries into getView + plan switch                                                                                                 |
+| Explicit Subagents                          | Original profile selections go straight to factories                                                                                       | P100-03; actual execution entries, built-in JSON overrides, and user Markdown parse results treated uniformly                                                       |
+| Implicit Subagents                          | Inherit parent active models with frozen factories                                                                                         | Correct exception; background current updates must not switch child models                                                                                         |
+| Workflow / script children                  | Independent child runtime assemblies; dependencies must propagate                                                                          | Cover assemblies when connecting public capabilities; do not write separate matching tables                                                                        |
+| Titles / Goal titles                        | `title-generation-sidecar.ts:103` reads title config or Session selection, then creates models precisely                                   | Not UI consumption; independent explicit config is a potential missed connection. Host currently creates only a title on/off, no normal UI independent model selection entry — not claimed as a confirmed user-facing fault |
+| Compacts                                    | Inherits when the input carries a selection; otherwise creates Session models precisely                                                    | Keep running inheritance; distinguish manual independent Compact new intents from frozen executions at the entry; do not re-resolve every internal model step      |
+| Memory extraction / Dreams                  | `project-memory-agent.ts:34` prefers input models, otherwise creates from Sessions                                                         | Extraction inheritance correct; the Dream default path must clarify new work vs. inherited work in the entry spec; do not force-upgrade to the latest account        |
+| Connection testing                          | Tests explicit settings Providers/Models, checks actual models in Workers                                                                  | Must not be remapped to another plan through ordinary accounts. Sync correctness applies; public "current plan correspondence" does not apply unconditionally       |
+| Off-Peak                                    | Takes a Ticket on creation; dispatch validates and uses the Ticket request context                                                         | Keep original binding, domain, and execution scopes; do not fold into ordinary account auto-remap; P100-05 must not lose execution context                         |
+| Phone remote control                        | Shares the target Host's services/task commands; UI shares public hooks                                                                   | No phone-side Account computation needed; keep replayable recovery, workspaceIdentity, and attachment boundaries                                                    |
+| Independent terminal CLI                    | Same Provider cores, simplified Account sources, incomplete Team/Start assembly                                                           | Excluded by user ruling; recording the difference is enough                                                                                                       |
 
-### Request-Period Authentication is Not a Second Model Selector
+### Request-Time Authentication Is Not a Second Model Selector
 
-`accountProviderRequestAuthService.ts` / `accountProviderConnectionResolver.ts:253` obtains current credentials by static access family/mode; mode mismatches reject, do not change personal Providers to Team Providers at the request layer. API Key/JWT/one-time security verification materials are not static Model Configs.
+`accountProviderRequestAuthService.ts` / `accountProviderConnectionResolver.ts:253` obtains current credentials by static access family/mode; mode mismatches reject. The request layer must not change a personal Provider into a Team Provider. API Key/JWT/one-time security-verification material is not static model config.
 
-Freezing here is **Provider/Model/static request configs and this execution selections**, not forever-frozen OAuth Tokens. Current code allows compatible family/mode request materials to update per-request (including current Team scopes); this differs from the stronger semantics of "the same Model forever bound to the original account." This item does not autonomously add old account/team locks, nor put Tokens in through complete snapshots. Off-Peak has separate Ticket binding rules, cannot generalize ordinary request behavior to it.
+What is frozen here is **Provider/Model/static request config plus this execution's selection**, not an OAuth token frozen forever. Current code allows compatible family/mode request material to refresh per request (including current Team scopes); that is deliberately weaker than "the same model stays bound to the original account forever." Do not add old-account/team locks here, and do not push tokens through the complete snapshots. Off-Peak has separate Ticket binding rules; ordinary request behavior must not be generalized to it.
 
 ## 6. Temporary Sync: Fix Correctness, Do Not Build a Second Platform
 
-### Timing, Frequency, and Lifecycle
+### Timing, Frequency, Lifecycle
 
-| Item                           | Current Facts                                                                                                                               | Judgment                                                                                                                                                             |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Upstream invalidation triggers | Family/connection/endpoint setting changes, config source changes; login/logout/purchasing business explicit refreshes                      | Event-driven; Account reads usually read caches, not querying remotes each time                                                                                      |
-| Hot pushes                     | Traverse `activeClientsByWorkspaceKey` after Account changes                                                                                | Normal Workers here; not full-process broadcasts                                                                                                                     |
-| On-demand checks               | Create/recover sessions, partial reads/subscriptions, generateText, connection testing, and startup readiness etc.                          | Already share one sync helper, not each location writing separate network syncs; but strategy entries are scattered                                                  |
-| Normal V4 sends                | Synchronous checks at createSession branches, not forcibly syncing Desktop→SSH on every normal sendText                                     | Retain adjudicated no-global-send barriers                                                                                                                           |
-| Deduplication                  | Each Client WeakMap saves confirmed revisions; same-value skips                                                                             | Can continue after data completeness/ACK correctness; revision is content identity, not comparable old/new numbers                                                   |
-| Serialization                  | Per-Client Promise queues, failures do not poison next tasks                                                                                | Exists, no need to stack queues again; snapshots read before enqueuing, cannot only claim order-discard functionality through revision strings                       |
-| Worker reconstruction          | Confirmation caches keyed by Client objects, new objects do not inherit old confirmations; WeakMaps do not form permanent strong references | Should not additionally create permanent workspace confirmation tables                                                                                               |
-| Wiki Workers                   | Independent process managers; already wired Host handlers; not on normal active map hot pushes, checks before generateText                  | Not "completely unsynced." Allows old complete snapshots; if future internal autonomous new work is initiated, needs to clearly define initialization/refresh scopes |
-| Plugin/MCP-dedicated Workers   | Dedicated managers, mainly doing plugin/MCP management                                                                                      | Do not force pure-read capabilities to wait for account readiness for "uniformity"                                                                                   |
+| Item                    | Current facts                                                                                                                                       | Judgment                                                                                                                              |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Upstream invalidation   | Family/connection/endpoint setting changes, config source changes, login/logout/purchase explicit refreshes trigger                                  | Event-driven; Account reads usually hit caches, not remote queries each time                                                          |
+| Hot push                | Traverse `activeClientsByWorkspaceKey` after Account changes                                                                                        | Normal Workers only; not a process-wide broadcast                                                                                     |
+| On-demand checks        | Session create/recover, some reads/subscriptions, generateText, connection testing, startup readiness                                                | Already share one sync helper; strategy entries are scattered                                                                         |
+| Normal V4 sends         | Synchronous check at createSession branches; no forced Desktop→SSH sync on every sendText                                                           | Keep the ruling: no global send barrier                                                                                               |
+| Deduplication           | Per-Client WeakMap of confirmed revisions; same value skips                                                                                         | Can stay once completeness/ACK correctness are fixed; revision is content identity, not an orderable number                           |
+| Serialization           | Per-Client Promise queues; failures do not poison the next task                                                                                     | Exists; no extra queue layer. Snapshots are read before enqueueing — order-discard claims via revision strings alone are insufficient |
+| Worker reconstruction   | Confirmation caches keyed by Client objects; new objects inherit nothing; WeakMaps hold no permanent references                                      | Do not add permanent workspace confirmation tables                                                                                   |
+| Wiki Workers            | Independent process managers; Host handlers wired; not on the normal active map hot push; check before generateText                                  | Not "completely unsynced." Old complete snapshots allowed; future self-initiated work needs defined init/refresh scopes               |
+| Plugin/MCP workers      | Dedicated managers doing plugin/MCP management                                                                                                      | Do not force pure-read capabilities to wait for account readiness "for uniformity"                                                    |
 
-Minimum convergence recommendations: retain existing sync helpers/queues, clarify needed facts in model execution Worker initialization/usage contracts; fix P100-01/P100-02. Do not pursue eliminating all ensure calls this round, nor add account checks to every unrelated RPC. Future transport deletions should not modify effective selection algorithms or business save semantics.
+Minimum convergence: keep the existing sync helpers/queues; define the facts needed in the model-execution Worker init/usage contract; fix P100-01/P100-02. Do not chase eliminating every ensure call, and do not add account checks to unrelated RPCs. Deleting the transport later must not change effective-selection algorithms or persistence semantics.
 
-## 7. Mid-States: Levels Truly Needing Unification
+## 7. Mid-States: The Levels That Actually Need Unifying
 
 ```text
-Source reads / Account queries (can be async, can fail)
+Source reads / Account queries (async, may fail)
              |
              v
-Same-scope complete Account results
+Complete same-scope Account results
              |
              v
 Registry checks source matching -> publishes complete applied snapshot
              |
        +-----+----------------+
        v                      v
-Settings/candidates/effective selection    Transfer application confirmations
-Read this result                           Confirm actual application results
+Settings/candidates/effective     Sync application confirmations
+selection read this result       confirm what was actually applied
 ```
 
-"Global consistency" should not be understood as all processes simultaneously switching to B. Old complete As can continue serving; new combinations that are not self-consistent should not be published.
+"Global consistency" does not mean all processes switch to B simultaneously. Old complete A snapshots may keep serving; new self-inconsistent combinations must not be published.
 
-Registry has been confirmed to have this layer of protection; Facades also correctly consume. **Account async upstream not inherently self-consistent cannot yet be proven**: settings read at query start, identities and API materials obtained asynchronously later; AccountServices serially refresh, but unlike Registries, do not discard expired queries by update generations on each return. This round has not reproduced "old selections + new identities/responses" mixed states with real account switches.
+Registry protection at this level is confirmed; Facades consume it correctly. **Not yet proven: the Account async upstream is inherently self-consistent.** Settings are read at query start; identities and API material arrive later. AccountService refreshes serially, but unlike the Registry it does not discard stale query results by update generation. No real account switch has reproduced an "old selections + new identities/responses" mix yet.
 
-This should be listed as targeted production-side race risk R100-01, not claiming "everything is broken globally." Minimum subsequent validation is using controllable-delayed identity/entitlement ports, switching connections or accounts during queries, observing whether published scopes, currents, models, and LKGs belong to the same round. If not成立, fix production-side scope capture/expiration result publishing, not adding timeouts individually in UIs.
+This is targeted production-side race risk **R100-01**, not "everything is globally broken." Minimum validation: controllable-delayed identity/entitlement ports; switch connections or accounts mid-query; observe whether published scopes, currents, models, and LKGs belong to one round. If they do not, fix production-side scope capture/stale-result publishing — do not bolt timeouts onto the UI.
 
-R100-02: synchronized snapshots read before queuing, channels only recognize same-values, not orderings. Currently Account reads are cached snapshots, Client requests serially; this round did not reproduce reverse-order applications. Do not introduce second global version clocks for assumed risks. Subsequent validation through delayed read/reconnect scenarios is sufficient.
+**R100-02:** synchronized snapshots are read before enqueueing and channels compare values only, not order. Account reads are cached snapshots and Client requests serialize; no reverse-order application was reproduced. Do not introduce a second global version clock for a hypothetical risk; validate via delayed-read/reconnect scenarios.
 
-## 8. What Reconstruction Should Look Like
+## 8. What the Reconstruction Should Look Like
 
-The target is not to make each business "know how to sync," but to let each business only explain what input they provide:
+The target is not making each feature "know how to sync" but letting each feature state only what input it provides:
 
 ```text
-Saved configs / current drafts              Already-fixed Selections / Active Models / Tickets
+Saved configs / current drafts            Fixed Selections / Active Models / Tickets
         |                                        |
-        v                                        |  Used as-is
-Public Selection read entries                   |
-  = Same applied snapshot + original intents     |
-        |                                        |
-        v                                        |
-effectiveSelection + issues + Views               |
-        |                                        |
-        +--------------> New dispatch boundaries <-------------
+        v                                        |  used as-is
+Public selection read entries                  |
+  = same applied snapshot + original intent     |
+        |                                       |
+        v                                       |
+effectiveSelection + issues + Views             |
+        |                                       |
+        +------------> new dispatch boundaries <-------------
                               |
                               v
-                       Precise ModelFactory
-                       Fix this model
+                       precise ModelFactory
+                       fixes this model
                               |
-                       Request-period legal authentication
+                       request-time legal authentication
 ```
 
-Suggested responsibilities:
+Responsibilities:
 
-- `packages/provider`: continues to own Account orchestration abstractions, Registry applied snapshots, pure effective selection rules. Does not import Hosts/networks/files, nor save business selections.
-- Environment assembly layers: provide config sources, Account fact sources, and identity classifiers; Hosts and managed Workers assemble the same selection capabilities. Temporary transports are just one adapter for Account sources.
-- Core: resolves **explicit new intents** through dependency ports; dependencies pass from parent runtimes to children. Should not depend on specific services Runtimes, nor RPC reverse for each resolution.
-- UIs: continue public Hooks, do not copy account correspondences/refreshes/expired response handling.
-- Bots/Automations/Wikis: each own intents and execution records; return public rule values, businesses use at established new dispatch points. Do not make getView an operation that scans and rewrites task files.
-- Factories/adapters: precise executions, no secret fallbacks, no re-selecting models on each HTTP retry.
+- `packages/provider`: keeps owning Account orchestration abstractions, Registry applied snapshots, and pure effective-selection rules. Imports no Host/network/files, persists no business selections.
+- Environment assembly layers: provide config sources, Account fact sources, identity classifiers; Host and managed Workers assemble the same selection capabilities. Temporary transports are just one Account source adapter.
+- Core: resolves **explicit new intents** through dependency ports; dependencies pass from parent runtimes to children. No dependency on concrete service Runtimes, no per-resolution reverse RPC.
+- UI: keep the public hooks; do not copy account mapping/refresh/stale-response handling.
+- Bots/Automations/Wikis: each owns intents and execution records; return public rule values that features consume at established new-dispatch points. getView must not become a scan-and-rewrite of task files.
+- Factories/adapters: precise execution, no secret fallbacks, no model re-selection on each HTTP retry.
 
-Input types prioritize clear functions/ports and existing execution scopes, not urgently adding generic "large context objects" or rebuilding state frameworks. Whether to move Account services to another process in the future is a deployment decision, not a prerequisite for pure resolution algorithms.
+Input types favor clear functions/ports and existing execution scopes over generic "large context objects" or a rebuilt state framework. Moving Account services to another process is a future deployment decision, not a prerequisite for pure resolution algorithms.
 
-## 9. Fix Suggestion Order and Pending Rulings
+## 9. Fix Order and Pending Rulings (Suggestions, Not Authorized Implementations)
 
-This section is investigation suggestions, not authorized implementations:
+1. **Minimal state closure together**: P100-01 complete facts + P100-02 real application confirmations. Cover only current changes, Builtin mismatch, new Clients, and post-failure retries; do not replace cross-end Registry comparisons with optional-field round-trips.
+2. **Connect the public consumption chain**: P100-03 explicit Subagent real model calls and all child assemblies; failed original tiers / non-same-models must report per public rules — parent models must not be inherited to mask failure.
+3. **Fix dispatch losses and new rounds**: P100-05 attachment protocol transmission; P100-04 Bot idle new inputs. Strictly keep fixed runs, busy admissions, and Tickets; do not rewrite accepted inputs.
+4. **Production-side race evidence**: R100-01 delayed query scopes; whether identity changes and Config refreshes can publish mixed results. If confirmed, fix upstream and keep the Registry/hook protections.
+5. **Only then structural simplification**: public Facade assemblies, Worker execution-capability initialization. Thorough temporary-sync unification is not a prerequisite.
 
-1. **Set minimal state closure together**: P100-01 complete facts + P100-02 real application confirmations. Cover only current changes, Builtin mismatches, new Clients, post-failure retries; do not replace cross-end Registry result comparisons with optional field successful round-trips.
-2. **Connect complete public consumption chains**: P100-03 explicit Subagent real model calls and all child assemblies; failed original tiers/non-same-models must report results per public rules, cannot inherit parent models to cover failures.
-3. **Fix dispatch losses and verify new rounds**: P100-05 attachment protocol transmission; P100-04 Bot idle new inputs. Strictly maintain already-fixed runs, busy admissions, Tickets, do not rewrite accepted inputs.
-4. **Supplement production-side race evidence**: R100-01 delayed query scopes; check whether identity changes and Config refreshes can publish mixed results. If成立, fix upstream, retain existing Registry/Hook protections.
-5. **Only then do necessary structural simplifications**: Public Facade assemblies, Worker execution capability initializations; do not make thorough temporary sync unification completion prerequisites.
+Product boundaries still needing discussion: Bot busy/queued inputs and independent titles, manual Compacts, Dreams "new work vs. inherit current work". Implicit children, in-run Compacts/extractions, fixed Wiki runs, and Off-Peak need no new rulings.
 
-Product boundaries needing discussion concentrate on: Bot busy/queue inputs and independent titles, manual Compacts, Dreams' "new work" and "inherit current work" boundaries. Implicit children, intra-run Compacts/Extractions, fixed Wiki runs, Off-Peak need no re-rulings.
+Out of scope for the minimal fix: independent CLI account services, deleting temporary sync, full-end instant consistency, persisted-structure rework.
 
-Independent CLI complete account services, deleting temporary syncs, full-end instant consistency, persisted structure re-dos are all outside this round's minimal fix targets.
+## 10. Verification, Paused Experiments, Coverage Limits
 
-## 10. Verifications, Paused Experiments, and Coverage Limitations
+### Executed
 
-### Executed This Round
+- Workspace freshness passed; baseline pinned `86bbe157c8`.
+- Read-only tracing of the entry points, Host/Worker assemblies, protocol, request authentication, and model factories; no product files modified.
+- Registry/Resolver unit tests: 2 files, 21 passing. Facade/AccountService/Account-resolution unit tests: 3 files, 31 passing (52 total — verify the existing public mechanisms, not end-to-end transmission or fixed gaps).
+- P100-02 reproduced purely in memory; no real requests, credentials, or user data. One early run named a non-existent `effective-model-selection.test.ts`; the recorded files/cases above are the actually executed set.
 
-- Workspace freshness checks passed; baseline pinned at `86bbe157c8`.
-- Read-only tracked the above entry points, Host/Worker assemblies, protocols, request authentication, and model factories; did not modify product files.
-- Existing Registry/Resolver unit tests **2 files, 21 passing**.
-- Existing Facade/AccountService/Account resolution unit tests **3 files, 31 passing**.
-- P100-02 pure memory reproduction; no real requests, account credentials, or user data.
-- First group commands included non-existent `effective-model-selection.test.ts` path; Vitest actually only ran two files. Subsequent runs included `facades.test.ts` with related behaviors; recorded actual files/cases here, do not claim non-existent tests passed.
+### Todo99 Paused Experiments: Still Paused
 
-These 52 verify existing public mechanisms, not proving transmission end-to-end or product gaps fixed. Test files and tested Provider cores not modified this round.
+Workspace trial modifications (states transmission, shared Facade assembly, Core optional resolution port, explicit Subagent helper) cover parts of P100-01/P100-03, but:
 
-### Re-review of Todo99 Paused Experiments
+- P100-02 ACK not fixed; complete-snapshot end-to-end application unproven.
+- Optional-states strictness/missing semantics not contracted.
+- P100-04/P100-05 and auxiliary consumer boundaries uncovered.
+- Mock-helper success is not proof that real children emit correct requests; workflows, implicit inheritance, and overrides need joint proof.
+- Earlier bootstrap test failures (old fixture schemas, stale dependency artifacts) were not fixed; the experiments are not submittable.
 
-Workspace trial modifications added states transmission, shared Facade assemblies, Core optional resolution ports, and explicit Subagent helpers. Directions cover parts of P100-01/P100-03, but:
+Stay paused: neither auto-adopt nor auto-rollback; keep reusable parts for a later ruling. Experiment changes must not be mixed into this "pure investigation complete."
 
-- Did not fix P100-02 ACK; cannot claim complete snapshots are end-to-end applied.
-- Optional states' strictness/missing semantics not formed complete contracts.
-- Did not cover P100-04/P100-05 and auxiliary consumer boundaries.
-- Mock helper successes do not equal real children emitting correct requests; workflows, implicit inheritance, overrides need joint proofs.
-- Previous bootstrap tests had old fixture schemas/incomplete config failures, partial type builds also had dependency artifact freshness issues; this round did not continue fixing these failures, nor announced experiments submittable.
+### Not Executed / Future Acceptance Requirements
 
-Therefore continue paused, neither auto-adopting nor auto-rolling back; retain necessary parts from rulings later. Experiment tests and product modifications cannot be mixed into this "pure investigation complete."
+- No real multi-plan/account switches, real SSH machines, phone attachments, Bot attachments with multiple rounds, or real Subagent network requests.
+- R100-01/R100-02 unproven in production; not reproducible incidents.
+- After implementation, verify the actual Provider/Model/tiers and execution scope of requests, not just UI text/Schema reception; in-flight switches must not change old models; the next explicit new work must remap.
+- Docs-only round: no repo-wide typecheck/lint or E2E results may back the paused experiments.
 
-### Not Executed and Subsequent Acceptance Requirements
+## 11. Impact Mapping / Graph Rewrite Suggestions
 
-- No real multi-plan/account switches, real SSH machines, phone attachments, Bot attachments and multiple rounds, real Subagent network request verifications performed.
-- R100-01/R100-02 not proven to appear in production; cannot list them as reproduced incidents.
-- After implementations, verify actual Provider/Model/tiers and execution scopes of requests, not just UI texts/Schema receptions; in-flight switches cannot change old Models, next explicit new works should correspond.
-- This round is docs-only; no full-warehouse typecheck/lint or E2E historical results should back paused experiments; above unit tests only serve as investigation evidence.
+feature-boundary-planner impact-only paths; codegraph tools unavailable — functional graph seeds plus targeted file/call searches, not a claimed repo-wide automatic reference audit.
 
-## 11. Impact Mapping / Graph Rewriting Suggestions
+Main nodes: AccountProviderService → ProviderRegistryService → ModelSelectionFacade → UI hooks / backend new dispatches / implicit children → ModelFactory; the temporary Account transport is a source edge, not an effective-selection rule owner.
 
-Uses feature-boundary-planner's impact-only paths; this round's users explicitly requested Todos and investigation reports, did not generate implementation matrices or directly modify feature graphs. codegraph tools unavailable, using functional graph seeds + targeted file/call searches, not claiming completed full-warehouse automatic reference graph audits.
+Graph facts to update when real implementations land:
 
-Main nodes: AccountProviderService → ProviderRegistryService → ModelSelectionFacade → UI Hooks/backend new dispatches/implicit children → ModelFactory; temporary Account transports are source edges, not effective selection rule owners.
+- "Explicit Subagents must extend Host parsing RPC" is not a necessary constraint; pure Facades can reuse a Worker's locally applied snapshot.
+- "Bots connected to public resolution" splits into drafts/initial creation (done) and existing-task follow-ups (P100-04); the former does not represent full coverage.
+- "Workers share Resolvers" does not imply equally complete Account states; the transmission gap is marked separately.
+- "Sync success" must distinguish source reception from Registry application; existing applied snapshots are the evidence source.
 
-Graph facts needing updates by subsequent real implementations:
-
-- Old "explicit Subagents must extend Host parsing RPCs" is not a necessary constraint; pure Facades can reuse Workers' local application snapshots.
-- "Bots already connected to public resolution" should be split into drafts/initial creation and existing task subsequent messages; cannot represent full coverage with the former.
-- "Workers already share Resolvers" cannot infer Account states equally complete; transmission gaps should be marked separately.
-- "Sync success" needs to distinguish source reception and Registry applications; existing applied snapshots can serve as evidence sources.
-
-Investigation completion only indicates this round's itemized conclusions and traceable evidence exist, not that the system has no other Bugs, nor authorizes automatic Todo99 recoveries.
+Investigation completion means itemized conclusions and traceable evidence exist — not that the system has no other bugs, and not authorization to resume Todo99 automatically.
