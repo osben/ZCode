@@ -4,11 +4,11 @@
 > Date: 2026-08-10
 > Corresponding stage design: [`../steps/01-model-and-request.md`](../steps/01-model-and-request.md)
 >
-> Terminology note: This investigation uses `ModelBinding` to represent the model object held by continuous execution; the current design has converged to callable `Model`, expressed as immutable derivation by `model.bind(options)`. The old terminology in this document is used only to reconstruct the code chain at that time.
+> Terminology note: This investigation uses `ModelBinding` for the model object held by continuous execution; the current design has converged to a callable `Model` expressed as immutable derivation via `model.bind(options)`. The old terminology here only reconstructs the code chain at that time.
 
 ## Conclusion
 
-Reasoning can maintain a very simple model at the product layer: models declare which tiers they support, users select one tier, a continuous execution fixes this selection, and Adapters then write it as request fields accepted by the target interface.
+Reasoning can stay simple at the product layer: models declare supported tiers, users select one tier, a continuous execution fixes this selection, and Adapters write it as request fields accepted by the target interface.
 
 ```text
 Model declares levels
@@ -26,32 +26,22 @@ Specific Adapter serialization
 Provider HTTP request
 ```
 
-The current implementation has not yet formed this clean boundary. The system first converts logical tiers into an arbitrarily-structured `providerOptions`, then passes this object from Catalogs, Bootstrap, and Runtime all the way to Adapters. The conversion logic is distributed across App config projections, CLI Catalog default policies, dynamic Provider overlays, historical compatibilities, and auxiliary model tasks.
+The current implementation has not formed this boundary: it converts logical tiers into an arbitrarily-structured `providerOptions` passed from Catalogs, Bootstrap, and Runtime all the way to Adapters, with conversion logic distributed across App config projections, CLI Catalog default policies, dynamic Provider overlays, historical compatibilities, and auxiliary model tasks. The repository Catalog saves explicit parameter mappings, the App strips mappings keeping only tiers, and the CLI reconstructs parameters through dynamic `first-match-wins` rules and Standalone CLI `last-match-wins` default policies, while Titles, Git, Compacts, and Memories further modify results before calls.
 
-This investigation originally was just a parameter issue within M1 ModelBinding design. After code expansion, it can be confirmed that it has formed an independent migration topic: the repository Catalog saves explicit parameter mappings, the App side strips mappings and retains only tiers, and the CLI then reconstructs parameters through dynamic `first-match-wins` rules and Standalone CLI `last-match-wins` default policies, while Titles, Git, Compacts, and Memories further modify results before calls.
+M1 retains only generic `reasoningLevel` in public boundaries: Selections save user selections, `Model.bind(options)` fixes continuous execution tiers, and Requests can override within the scope validated by Option Specs. Existing `providerOptionsByLevel` parsing concentrates into compatible assembly and Adapter paths, no longer exposed to business callers. Unified Catalogs, deleted name inference, unified priority, and re-done Adapter dialects are subsequent independent migrations; this document stays the baseline for the topic's current behavior.
 
-Therefore, this round's investigation stops at this point here. M1 retains only the generic `reasoningLevel` in public boundaries: Selections save user selections, `Model.bind(options)` fixes continuous execution tiers, and Requests can override within the scope validated by Option Specs. Existing `providerOptionsByLevel` parsing concentrates into compatible assembly and Adapter paths, no longer exposed to business callers. Unified Catalogs, deleted name inference, unified priority, and re-done Adapter dialects are subsequent independent migrations. This document continues as the baseline for this topic's current behavior.
+Name glossary:
 
-The most easily confused names can be understood this way first:
-
-- `thoughtLevel`, `reasoningLevel`, and `ModelRef.variant` express the user-selected logical tier, e.g., `high`.
-- `providerOptionsByLevel` is a "tier-to-vendor-parameters" lookup table; it is not sent as-is to model interfaces.
-- `providerOptions` is an intermediate object prepared for a run to give to AI SDK, containing reasoning, transport, output budgets, and other Provider parameters mixed in.
+- `thoughtLevel`, `reasoningLevel`, and `ModelRef.variant` express the user-selected logical tier (e.g. `high`).
+- `providerOptionsByLevel` is a "tier-to-vendor-parameters" lookup table; not sent as-is to model interfaces.
+- `providerOptions` is an intermediate object for a run, containing reasoning, transport, output budgets, and other Provider parameters mixed in.
 - `reasoning_effort`, `enable_thinking`, `thinking`, `output_config.effort` are the actual HTTP request fields.
 
-These final fields are not unified under the same OpenAI-compatible protocol. Current code mainly selects dialects based on explicit mappings, `provider.kind`, `providerId`, `modelId`, and tier lists; Base URLs do not participate in reasoning dialect judgment. Therefore, two Providers of the same kind, same modelId, but different URLs produce the same parameters without explicit mappings. This is a clear limitation of the current implementation.
+These final fields are not unified under one OpenAI-compatible protocol. Current code selects dialects by explicit mappings, `provider.kind`, `providerId`, `modelId`, and tier lists; base URLs do not participate. Two Providers of the same kind and modelId but different URLs produce identical parameters without explicit mappings — a clear limitation of the current implementation.
 
 ### `apiFormat`, `defaultKind`, and `kind`
 
-The settings page exposes `apiFormat` to users:
-
-```text
-anthropic-messages
-openai-chat-completions
-openai-responses
-```
-
-When saving Provider Configs, the page simultaneously writes the derived `defaultKind`. When Hosts generate runtime Registries, the final `apiFormat` is first parsed, then the CLI's `kind` is derived:
+The settings page exposes `apiFormat` (`anthropic-messages` / `openai-chat-completions` / `openai-responses`) and, when saving Provider Configs, also writes the derived `defaultKind`. Hosts generating runtime Registries parse the final `apiFormat` first, then derive the CLI's `kind`:
 
 ```text
 apiFormat                    defaultKind / kind
@@ -60,13 +50,11 @@ openai-responses          <-> openai
 openai-chat-completions   <-> openai-compatible
 ```
 
-Built-in Providers entering `ModelProviderConfig` also typically populate `apiFormat` and `defaultKind` simultaneously. Hardcoded Start Plans directly write this pair; remote builtin schemas typically provide `primaryKind` first, then derive `apiFormat` at load time.
+Built-in Providers entering `ModelProviderConfig` typically populate both; hardcoded Start Plans write the pair directly; remote builtin schemas provide `primaryKind` first, deriving `apiFormat` at load.
 
-Under the current three protocols, these fields do not express independent information. The runtime protocol allows both `kind` and `apiFormat`, but does not exclude inconsistent combinations from types. The proposed evolution direction is to make `apiFormat` the single source of truth in configs and protocols; Adapter factories can continue using their own implementation enums internally, but those enums no longer enter Provider Configs or cross-process protocols. This direction still needs to verify Standalone CLI `provider.kind` migration before implementation, and how to explicitly select the current protocol when a Provider has multiple endpoints.
+Under the three protocols these fields carry no independent information; the runtime protocol allows both `kind` and `apiFormat` without excluding inconsistent combinations by type. Proposed evolution: `apiFormat` becomes the single source of truth in configs and protocols; Adapter factories keep internal implementation enums that no longer enter Provider Configs or cross-process protocols. Before implementing, verify Standalone CLI `provider.kind` migration and how to explicitly select the protocol when a Provider has multiple endpoints.
 
 ## A Complete Chain
-
-The following diagram places the main objects in the current status on the same line:
 
 ```text
 App config / CLI config / builtin Catalog
@@ -100,7 +88,7 @@ AI SDK providerOptions
 HTTP request body
 ```
 
-`ModelCapability.reasoning` currently both describes user-selectable capabilities and saves vendor parameter mappings:
+`ModelCapability.reasoning` both describes user-selectable capability and stores vendor parameter mappings:
 
 ```ts
 interface ModelReasoningCapability {
@@ -111,43 +99,13 @@ interface ModelReasoningCapability {
 }
 ```
 
-For example:
-
-```ts
-{
-  enabled: true,
-  levels: ["low", "high"],
-  defaultLevel: "high",
-  providerOptionsByLevel: {
-    low:  { openaiCompatible: { reasoningEffort: "low" } },
-    high: { openaiCompatible: { reasoningEffort: "high" } }
-  }
-}
-```
-
-After users select `high`, the Runtime receives:
-
-```ts
-{
-  openaiCompatible: {
-    reasoningEffort: "high";
-  }
-}
-```
-
-OpenAI-compatible Adapters ultimately send it as:
-
-```json
-{
-  "reasoning_effort": "high"
-}
-```
+For example `levels: ["low","high"], defaultLevel: "high", providerOptionsByLevel: { low: { openaiCompatible: { reasoningEffort: "low" } }, high: { openaiCompatible: { reasoningEffort: "high" } } }`. After the user selects `high`, the Runtime receives `{ openaiCompatible: { reasoningEffort: "high" } }`, and OpenAI-compatible Adapters finally send `{"reasoning_effort": "high"}`.
 
 ## Where Configs Come From
 
 ### App's Persistent Configs
 
-The App's authoritative file is `~/.zcode/v2/config.json`. Currently persisted reasoning only describes tiers, not vendor request parameters:
+The App's authoritative file is `~/.zcode/v2/config.json`. Persisted reasoning describes tiers only, not vendor request parameters:
 
 ```jsonc
 {
@@ -172,25 +130,11 @@ The App's authoritative file is `~/.zcode/v2/config.json`. Currently persisted r
 }
 ```
 
-This config converts to internal `ModelProviderReasoningSpec` after being read by the App. Each level temporarily has only a name, no patches:
-
-```ts
-{
-  defaultLevel: "max",
-  levels: {
-    high: {},
-    max: {}
-  }
-}
-```
-
-The App clears old `model.variants`, `reasoningSpec`, and `zcode.reasoning` parameter mappings when saving configs. In other words, configs saved through the App settings page cannot directly dictate whether `high` ultimately uses `reasoning_effort` or `enable_thinking`; zcode-cli will supplement mappings at runtime.
-
-Relevant conversions are located at `modelProviderServiceStorage.ts`'s `openCodeReasoningToModelReasoning()` and `modelReasoningToOpenCodeReasoning()`.
+This converts to internal `ModelReasoningSpec` with name-only levels (`{ defaultLevel: "max", levels: { high: {}, max: {} } }`). The App clears old `model.variants`, `reasoningSpec`, and `zcode.reasoning` parameter mappings when saving: configs saved through the settings page cannot dictate whether `high` uses `reasoning_effort` or `enable_thinking`; zcode-cli supplements mappings at runtime. Conversions live in `modelProviderServiceStorage.ts` (`openCodeReasoningToModelReasoning()` / `modelReasoningToOpenCodeReasoning()`).
 
 ### Standalone CLI Configs
 
-Standalone CLIs read `~/.zcode/cli/config.json`. They accept structures closer to Runtimes and can explicitly save `providerOptionsByLevel`:
+Standalone CLIs read `~/.zcode/cli/config.json`, accept structures closer to Runtimes, and can explicitly save `providerOptionsByLevel`:
 
 ```jsonc
 {
@@ -216,26 +160,11 @@ Standalone CLIs read `~/.zcode/cli/config.json`. They accept structures closer t
 }
 ```
 
-Because Provider kind is `openai-compatible`, CLI schemas wrap un-namespaced parameters as:
-
-```ts
-{
-  enabled: {
-    openaiCompatible: { enable_thinking: true }
-  },
-  disabled: {
-    openaiCompatible: { enable_thinking: false }
-  }
-}
-```
-
-If configs already carry `anthropic`, `openai`, or `openaiCompatible` namespaces, they remain as-is.
-
-This means App configs and Standalone CLI configs are currently asymmetric: Apps only save tiers; CLIs can simultaneously save tiers and sending parameters.
+Because the kind is `openai-compatible`, CLI schemas wrap un-namespaced parameters as `{ enabled: { openaiCompatible: { enable_thinking: true } }, ... }`; configs already carrying `anthropic` / `openai` / `openaiCompatible` namespaces remain as-is. App configs and Standalone CLI configs are therefore asymmetric: Apps save only tiers; CLIs can save tiers and sending parameters.
 
 ### Model Catalogs and Built-in Providers
 
-Historical Model Catalogs and remote builtin configs use patches to describe parameters for each transport:
+Historical Model Catalogs and remote builtin configs describe per-transport parameters with patches:
 
 ```ts
 interface ModelProviderReasoningSpec {
@@ -265,23 +194,11 @@ A real Catalog config for Kimi K3:
 }
 ```
 
-When Apps project the current transport to zcode-cli, they only extract patches of the corresponding kind. Assuming the current kind is `openai-compatible`, the above becomes:
+When Apps project the current transport to zcode-cli, they extract only patches of the corresponding kind (`{ high: { openaiCompatible: { reasoningEffort: "high" } } }` for `openai-compatible`). Ordinary App persistent configs clear these patches, but built-in Coding Plans, Start Plans, and remote client configs can carry complete `ModelProviderReasoningSpec` in memory through the same projection function.
 
-```ts
-{
-  high: {
-    openaiCompatible: {
-      reasoningEffort: "high";
-    }
-  }
-}
-```
+Plan login status, entitlement judgments, runtime API Keys, and one-time security verification Headers do not participate in reasoning dialect selection; they form callable Providers first, and reasoning still depends on the Provider's `kind` and model definitions. Current ZCode built-in Plans primarily project as Anthropic runtime, so GLM and others follow `anthropic.effort` / `anthropic.thinking` paths. Refreshing Tokens or Headers before requests changes only authentication materials, not the selected reasoning level.
 
-Ordinary App persistent configs clear these patches, but built-in Coding Plans, Start Plans, and remote client configs can carry complete `ModelProviderReasoningSpec` in memory, entering zcode-cli through the same protocol projection function.
-
-Plan login status, entitlement judgments, runtime API Keys, and one-time security verification Headers do not participate in reasoning dialect selection. They first form currently callable Providers; reasoning still depends on the Provider's `kind` and model definitions. Current ZCode built-in Plans primarily project as Anthropic runtime, so GLM and other models follow `anthropic.effort` / `anthropic.thinking` paths. Refreshing Tokens or Headers before requests only changes authentication materials, not already-selected reasoning levels.
-
-Currently only five types of reasoning patch paths actually appear in local Catalogs:
+Only five reasoning patch paths actually appear in local Catalogs:
 
 ```text
 anthropic
@@ -294,13 +211,13 @@ openai-compatible
 └─ thinking.type
 ```
 
-The Catalog's patch structure is a config-layer expression; whether it can ultimately be directly accepted by the SDK also goes through zcode-cli model specifics and Adapter normalization. For example, Kimi K3 will regenerate `anthropic.effort` in CLI overlays, not directly giving the Catalog's `anthropic.output_config.effort` to the SDK.
+The Catalog patch structure is config-layer expression; SDK acceptance still goes through zcode-cli model specifics and Adapter normalization — e.g., Kimi K3 regenerates `anthropic.effort` in CLI overlays rather than passing the Catalog's `anthropic.output_config.effort` directly.
 
 ## How zcode-cli Forms `providerOptionsByLevel`
 
 ### Dynamic App Providers
 
-After Apps下发 Providers through the protocol, `workspace-model-catalog.ts` creates runtime capabilities for each model. The order is roughly:
+After Apps deliver Providers through the protocol, `workspace-model-catalog.ts` creates runtime capabilities per model:
 
 ```text
 Kimi K3 model specifics
@@ -320,32 +237,20 @@ Filter to inbound-declared levels
 ModelCapability.reasoning
 ```
 
-Without inbound reasoning, CLIs then try to supplement defaults by model names and Provider kinds. The main judgment fields are:
+Without inbound reasoning, CLIs supplement defaults by model names and Provider kinds, judging on `provider.kind`, `provider.providerId`, `model.modelId`, `model.reasoning.levels`, `model.reasoning.providerOptionsByLevel` — base URLs are not in the set. Current hardcoded recognitions:
 
-```text
-provider.kind
-provider.providerId
-model.modelId
-model.reasoning.levels
-model.reasoning.providerOptionsByLevel
-```
-
-Base URLs are not in this judgment set.
-
-Current hardcoded recognitions include:
-
-- `gpt` models select OpenAI, OpenAI-compatible, or Anthropic parameters by `provider.kind`.
-- `qwen` judges by providerId prefix or modelId, using `enable_thinking`.
-- `glm` judges by model names and tiers whether switches or depth tiers.
-- `deepseek-v4` simultaneously uses `thinking.type` and `reasoningEffort`.
-- Kimi, MiMo, and other models use `thinking.type` switches by providerId/modelId families.
+- `gpt` models select OpenAI, OpenAI-compatible, or Anthropic parameters by `provider.kind`;
+- `qwen` judges by providerId prefix or modelId, using `enable_thinking`;
+- `glm` judges by model names and tiers whether switches or depth tiers;
+- `deepseek-v4` simultaneously uses `thinking.type` and `reasoningEffort`;
+- Kimi, MiMo, and others use `thinking.type` switches by providerId/modelId families;
 - Kimi K3 forces `low/high/max` usage and uses efforts by transport.
 
-When the same-named model connects to two different URLs, as long as kind, providerId/modelId rules are the same, identical mappings are produced. To express different dialects, the current approach can only have upstream explicitly carry different reasoning patches, or add new code specifics.
+The same-named model on two different URLs with the same kind and rules produces identical mappings; expressing different dialects today requires upstream explicitly carrying different reasoning patches or new code specifics.
 
 ### Standalone CLI Default Policies
 
-Standalone CLIs' static Catalogs use another set of default rules, core at `default-policy.ts` and `reasoning-policy.ts`:
+Static Catalogs use default rules in `default-policy.ts` / `reasoning-policy.ts`:
 
 ```text
 Kimi K3                 -> low / high / max
@@ -357,13 +262,11 @@ Claude Opus 4.7          -> low / medium / high / xhigh / max
 GPT                      -> low / medium / high / xhigh
 ```
 
-Again, default mappings are selected by `providerId` and `modelId`. For unspecified reasoning custom `openai-compatible` models, current config parsing also supplements a general `thinking.type = enabled/disabled` switch. This rule has broad coverage and cannot guarantee suitability for all OpenAI-compatible services.
+Again selected by `providerId` and `modelId`. For unspecified-reasoning custom `openai-compatible` models, config parsing also supplements a general `thinking.type = enabled/disabled` switch — broad coverage, not guaranteed suitable for all OpenAI-compatible services.
 
 ### How Tier Names Are Normalized
 
-Normal selections first do exact matching, then case-insensitive matching. Without explicit selections, valid `defaultLevels` are used; without valid defaults, `levels[0]` is used.
-
-Currently there are also two sets of model-specific aliases:
+Selections match exactly, then case-insensitively; without explicit selection, valid `defaultLevels` apply, else `levels[0]`. Two model-specific alias sets exist:
 
 ```text
 DeepSeek V4
@@ -375,11 +278,11 @@ thinking toggle
 └─ disabled/off  -> disabled
 ```
 
-App UIs translate values like `off`, `disabled`, `none`, `nothink` into display-appropriate text, but display aliases themselves do not automatically change Provider parameters. True execution normalization is still completed by Catalog/Bootstrap rules.
+App UIs translate `off`, `disabled`, `none`, `nothink` for display, but display aliases do not change Provider parameters; real execution normalization stays in Catalog/Bootstrap rules.
 
 ### How Static Options and Tier Options Merge
 
-Model targets can first carry a static `providerOptions`, e.g., API format, structured-output options, or user-configured custom fields. Bootstraps then deep-merge selected tier's options, with tier options overriding same-path static values:
+Model targets can carry a static `providerOptions` (API format, structured-output options, user custom fields). Bootstrap deep-merges the selected tier's options over them, tier options winning same-path values:
 
 ```text
 target.providerOptions
@@ -391,13 +294,11 @@ providerOptionsByLevel[selectedLevel]
 Runtime.modelProviderOptions
 ```
 
-If static options use old `extra_body` reasoning paths, Bootstraps first remove recognized old reasoning fields, then merge canonical tier options; other custom fields continue to be retained.
-
-At Adapter runners, static options on Provider Registries and `ModelTextRequest.providerOptions` are merged once more. This layer is the top-level merge, with same-name top namespaces of request objects taking priority. Normal main chains have already been fully synthesized by Bootstraps before entering here, but peripheral paths directly calling ModelPorts may still depend on this behavior.
+If static options use old `extra_body` reasoning paths, Bootstrap first removes recognized old reasoning fields, then merges canonical tier options; other custom fields are retained. At Adapter runners, static options on Provider Registries and `ModelTextRequest.providerOptions` merge once more — the top-level merge, request objects winning same-name top namespaces. Normal main chains are fully synthesized by Bootstrap before this, but peripheral paths directly calling ModelPorts may still depend on it.
 
 ## All Current Main Parameter Dialects
 
-There is no finite-enumerated "reasoning state machine" here. Current local Catalogs only have five patch paths; after CLI default policies and SDK namespace conversions, they form the seven main field shapes in the table below, allowing effort and thinking combinations.
+There is no finite "reasoning state machine": five Catalog patch paths plus CLI default policies and SDK namespace conversions form seven main field shapes, allowing effort + thinking combinations.
 
 | Runtime Interface           | Intermediate canonical field         | Typical final request fields |
 | --------------------------- | ------------------------------------ | ---------------------------- |
@@ -409,246 +310,35 @@ There is no finite-enumerated "reasoning state machine" here. Current local Cata
 | Anthropic fixed thinking    | `anthropic.thinking.budgetTokens`    | `thinking.budget_tokens`     |
 | Anthropic adaptive thinking | `anthropic.thinking.type = adaptive` | `thinking.type = adaptive`   |
 
-Grouped by final interfaces below. Each section provides logical tiers, intermediate `providerOptions`, and final request bodies.
-
 ### OpenAI Responses: `reasoning.effort`
 
-OpenAI Providers currently use AI SDK Responses models. Logical tiers are typically:
+OpenAI Providers use AI SDK Responses models; logical tiers are typically `low / medium / high / xhigh`. Dynamic App Providers form `{ openai: { reasoningEffort: "high" } }`; standalone default policies sometimes produce top-level `{ reasoningEffort: "high" }`, which `runner-options.ts` wraps into the `openai` namespace. Final requests: `{"reasoning": {"effort": "high"}}`. Disabling reasoning on models supporting `none` sends `reasoningEffort: "none"` → `{"reasoning": {"effort": "none"}}`.
 
-```text
-low / medium / high / xhigh
-```
-
-Intermediate values formed by dynamic App Providers:
-
-```ts
-{
-  openai: {
-    reasoningEffort: "high";
-  }
-}
-```
-
-Standalone default policies sometimes still produce top-level canonical fields:
-
-```ts
-{
-  reasoningEffort: "high";
-}
-```
-
-`runner-options.ts` wraps top-level fields into `openai` namespaces. The final OpenAI Responses requests are:
-
-```json
-{
-  "reasoning": {
-    "effort": "high"
-  }
-}
-```
-
-When disabling reasoning, models supporting `none` receive:
-
-```ts
-{
-  openai: {
-    reasoningEffort: "none";
-  }
-}
-```
-
-Final requests:
-
-```json
-{
-  "reasoning": {
-    "effort": "none"
-  }
-}
-```
-
-AI SDK only generates `reasoning` objects for reasoning models it recognizes. Whether a specific model accepts a particular level is still determined by the OpenAI API; for example, not all GPT models support `none` and `xhigh`.
+AI SDK generates `reasoning` objects only for reasoning models it recognizes; whether a specific model accepts a level is determined by the OpenAI API — not all GPT models support `none` and `xhigh`.
 
 ### OpenAI-compatible effort: `reasoning_effort`
 
-Kimi K3, GLM 5.2, GPTs called through compatible interfaces, and some DeepSeek models follow this path.
-
-Intermediate values:
-
-```ts
-{
-  openaiCompatible: {
-    reasoningEffort: "max";
-  }
-}
-```
-
-Adapters copy `openaiCompatible` contents to the dynamic Provider namespace actually used by AI SDK. AI SDK then converts camelCase to snake_case:
-
-```json
-{
-  "reasoning_effort": "max"
-}
-```
-
-GLM 5.2's `nothink` maps to:
-
-```ts
-{
-  openaiCompatible: {
-    reasoningEffort: "none";
-  }
-}
-```
-
-Ultimately:
-
-```json
-{
-  "reasoning_effort": "none"
-}
-```
-
-Kimi K3's complete tier mapping under compatible interfaces:
-
-```text
-low  -> reasoning_effort: "low"
-high -> reasoning_effort: "high"
-max  -> reasoning_effort: "max"
-```
+Kimi K3, GLM 5.2, GPTs called through compatible interfaces, and some DeepSeek models. Intermediate `{ openaiCompatible: { reasoningEffort: "max" } }`; Adapters copy the contents to the dynamic Provider namespace and AI SDK converts camelCase to snake_case: `{"reasoning_effort": "max"}`. GLM 5.2's `nothink` maps to `reasoningEffort: "none"` → `{"reasoning_effort": "none"}`. Kimi K3's complete mapping: `low/high/max -> reasoning_effort: "low"/"high"/"max"`.
 
 ### Qwen Switches: `enable_thinking`
 
-Qwen's OpenAI-compatible interfaces use boolean fields:
-
-```ts
-// enabled
-{
-  openaiCompatible: {
-    enable_thinking: true;
-  }
-}
-
-// disabled / off
-{
-  openaiCompatible: {
-    enable_thinking: false;
-  }
-}
-```
-
-AI SDK transparently passes unrecognized compatible fields, so final requests are:
-
-```json
-{ "enable_thinking": true }
-```
-
-```json
-{ "enable_thinking": false }
-```
-
-Current Qwen recognition depends on providerId starting with `qwen-alibaba-model-studio`, or modelId starting with `qwen`.
+Qwen's OpenAI-compatible interfaces use booleans: enabled → `{ openaiCompatible: { enable_thinking: true } }`, disabled/off → `enable_thinking: false`; AI SDK transparently passes unrecognized compatible fields, so final requests are `{"enable_thinking": true}` / `{"enable_thinking": false}`. Recognition depends on providerId starting with `qwen-alibaba-model-studio` or modelId starting with `qwen`.
 
 ### Kimi K2, MiMo, and General Compatible Switches: `thinking.type`
 
-Another batch of OpenAI-compatible services uses object switches:
-
-```ts
-// enabled
-{
-  openaiCompatible: {
-    thinking: {
-      type: "enabled";
-    }
-  }
-}
-
-// disabled / off
-{
-  openaiCompatible: {
-    thinking: {
-      type: "disabled";
-    }
-  }
-}
-```
-
-Final requests maintain the same shape:
-
-```json
-{ "thinking": { "type": "enabled" } }
-```
-
-```json
-{ "thinking": { "type": "disabled" } }
-```
-
-Current default rules also sort some unspecified GLM, DeepSeek, and unknown OpenAI-compatible models into this dialect.
+Another batch uses object switches: enabled → `{ openaiCompatible: { thinking: { type: "enabled" } } }`, disabled → `type: "disabled"`; final requests keep the shape: `{"thinking": {"type": "enabled"}}`. Default rules also sort some unspecified GLM, DeepSeek, and unknown OpenAI-compatible models into this dialect.
 
 ### DeepSeek V4: Effort and Thinking Appearing Simultaneously
 
-DeepSeek V4's `high/max` simultaneously carry depth and enabled state:
-
-```ts
-// high
-{
-  openaiCompatible: {
-    reasoningEffort: "high",
-    thinking: { type: "enabled" }
-  }
-}
-```
-
-Final requests:
-
-```json
-{
-  "reasoning_effort": "high",
-  "thinking": { "type": "enabled" }
-}
-```
-
-Current local Catalogs also declare `off`:
-
-```ts
-{
-  openaiCompatible: {
-    thinking: {
-      type: "disabled";
-    }
-  }
-}
-```
-
-Catalog patches simultaneously unset `reasoningEffort`. Dynamic overlays receiving inbound `off` also generate disabled thinking. Static default policies only list `high/max`, so the coverage of selectable tiers for DeepSeek V4 from different sources is not fully consistent.
+`high/max` carry depth and enabled state simultaneously: `{ openaiCompatible: { reasoningEffort: "high", thinking: { type: "enabled" } } }` → `{"reasoning_effort": "high", "thinking": {"type": "enabled"}}`. Local Catalogs also declare `off` as `{ thinking: { type: "disabled" } }` and unset `reasoningEffort`; dynamic overlays receiving inbound `off` also generate disabled thinking. Static default policies list only `high/max`, so selectable-tier coverage for DeepSeek V4 differs by source.
 
 ### Anthropic effort: `output_config.effort`
 
-When calling Kimi K3, GPT, and other models requiring only depth tiers through Anthropic Messages, the intermediate value is:
-
-```ts
-{
-  anthropic: {
-    effort: "xhigh";
-  }
-}
-```
-
-Anthropic SDKs ultimately generate:
-
-```json
-{
-  "output_config": {
-    "effort": "xhigh"
-  }
-}
-```
-
-Kimi K3's `low/high/max` also follows this form, without carrying `thinking`.
+Kimi K3, GPT, and other depth-only models through Anthropic Messages: intermediate `{ anthropic: { effort: "xhigh" } }`, final `{"output_config": {"effort": "xhigh"}}`. Kimi K3's `low/high/max` follows this form without `thinking`.
 
 ### Anthropic fixed thinking: effort + budget
 
-Current Claude default strategies convert tiers to fixed budgets:
+Claude default strategies convert tiers to fixed budgets:
 
 ```text
 low    -> 4,000 tokens
@@ -657,142 +347,23 @@ high   -> 16,000 tokens
 xhigh  -> 32,000 tokens
 ```
 
-For example, `high`:
-
-```ts
-{
-  anthropic: {
-    effort: "high",
-    thinking: {
-      type: "enabled",
-      budgetTokens: 16000
-    }
-  }
-}
-```
-
-Final requests:
-
-```json
-{
-  "thinking": {
-    "type": "enabled",
-    "budget_tokens": 16000
-  },
-  "output_config": {
-    "effort": "high"
-  }
-}
-```
-
-Fixed thinking budgets also affect output budgets. Adapters first ensure reasoning budgets fall within the current `maxOutputTokens`, then hand to Anthropic SDKs; the final online `max_tokens` maintain the total output budget for this request, not additionally and infinitely increase thinking tokens on top of it.
+`high` → `{ anthropic: { effort: "high", thinking: { type: "enabled", budgetTokens: 16000 } } }` → `{"thinking": {"type": "enabled", "budget_tokens": 16000}, "output_config": {"effort": "high"}}`. Fixed budgets also affect output budgets: Adapters first ensure reasoning budgets fall within the current `maxOutputTokens`; the final `max_tokens` keeps the total output budget, not infinitely increasing thinking tokens on top.
 
 ### Anthropic adaptive thinking
 
-Opus 4.7 currently uses adaptive thinking and supports `max`:
-
-```ts
-{
-  anthropic: {
-    effort: "max",
-    thinking: {
-      type: "adaptive"
-    }
-  }
-}
-```
-
-Final requests:
-
-```json
-{
-  "thinking": {
-    "type": "adaptive"
-  },
-  "output_config": {
-    "effort": "max"
-  }
-}
-```
+Opus 4.7 uses adaptive thinking and supports `max`: `{ anthropic: { effort: "max", thinking: { type: "adaptive" } } }` → `{"thinking": {"type": "adaptive"}, "output_config": {"effort": "max"}}`.
 
 ### Anthropic Switches
 
-When calling models providing only switches through Anthropic Messages, enabled status typically uses a 1,024-token compatible budget:
-
-```ts
-{
-  anthropic: {
-    thinking: {
-      type: "enabled",
-      budgetTokens: 1024
-    }
-  }
-}
-```
-
-Final requests:
-
-```json
-{
-  "thinking": {
-    "type": "enabled",
-    "budget_tokens": 1024
-  }
-}
-```
-
-Disabled state intermediates are:
-
-```ts
-{
-  anthropic: {
-    thinking: {
-      type: "disabled";
-    }
-  }
-}
-```
-
-Current AI SDKs omit `thinking` in final requests without generating `output_config`. They do not send `{ "thinking": { "type": "disabled" } }`. Repository wire tests have explicitly locked this behavior.
+Models providing only switches through Anthropic Messages: enabled uses the 1,024-token compatible budget `{ anthropic: { thinking: { type: "enabled", budgetTokens: 1024 } } }` → `{"thinking": {"type": "enabled", "budget_tokens": 1024}}`. Disabled intermediates are `{ thinking: { type: "disabled" } }`; current AI SDKs omit `thinking` in final requests without generating `output_config` — they do not send `{"thinking": {"type": "disabled"}}`. Repository wire tests have locked this behavior.
 
 ### GLM / DeepSeek Through Anthropic Messages
 
-GLM 5.2's `high/max` simultaneously carry effort and fixed budgets:
-
-```ts
-// max
-{
-  anthropic: {
-    effort: "max",
-    thinking: {
-      type: "enabled",
-      budgetTokens: 32000
-    }
-  }
-}
-```
-
-Final requests are the same as Claude fixed thinking:
-
-```json
-{
-  "thinking": {
-    "type": "enabled",
-    "budget_tokens": 32000
-  },
-  "output_config": {
-    "effort": "max"
-  }
-}
-```
-
-`nothink` produces `thinking: disabled` intermediates, ultimately omitting `thinking` and `output_config`.
-
-DeepSeek V4 through Anthropic Messages uses respective efforts for `high/max`, with fixed `thinking.budgetTokens = 1024`.
+GLM 5.2's `high/max` carry effort and fixed budgets: `max` → `{ anthropic: { effort: "max", thinking: { type: "enabled", budgetTokens: 32000 } } }`, final same shape as Claude fixed thinking. `nothink` produces `thinking: disabled` intermediates, ultimately omitting both `thinking` and `output_config`. DeepSeek V4 through Anthropic Messages uses respective efforts for `high/max` with fixed `thinking.budgetTokens = 1024`.
 
 ## `extra_body` and Historical Compatibility
 
-Early configs used excessive nesting to cram non-standard fields into OpenAI-compatible requests:
+Early configs crammed non-standard fields into OpenAI-compatible requests:
 
 ```ts
 {
@@ -807,7 +378,7 @@ Early configs used excessive nesting to cram non-standard fields into OpenAI-com
 }
 ```
 
-Current Bootstraps recognize the following old paths:
+Bootstrap recognizes these old paths:
 
 ```text
 openaiCompatible.extra_body.chat_template_kwargs.reasoning_effort
@@ -817,48 +388,13 @@ openaiCompatible.extra_body.enable_thinking
 openaiCompatible.thinking
 ```
 
-If current Catalogs can match these fields to a level, Bootstraps remove old reasoning sub-paths, then merge canonical mappings. For example:
-
-```text
-extra_body.chat_template_kwargs.reasoning_effort = "high"
-        |
-        v
-openaiCompatible.reasoningEffort = "high"
-```
-
-If models do not recognize them, raw `extra_body` is retained, avoiding breaking user custom parameters.
-
-At Adapter boundaries, remaining `openaiCompatible.extra_body` is expanded once:
-
-```ts
-{
-  openaiCompatible: {
-    extra_body: {
-      thinking: { type: "enabled" }
-    },
-    reasoningEffort: "max"
-  }
-}
-```
-
-Final requests:
-
-```json
-{
-  "thinking": { "type": "enabled" },
-  "reasoning_effort": "max"
-}
-```
-
-New local Catalogs no longer save `extra_body` reasoning patches; current source catalog OpenAI-compatible patches all use direct canonical fields.
+If current Catalogs can match these fields to a level, Bootstrap removes the old reasoning sub-paths, then merges canonical mappings (e.g. `extra_body.chat_template_kwargs.reasoning_effort = "high"` → `openaiCompatible.reasoningEffort = "high"`). Unrecognized `extra_body` is retained raw to preserve user custom parameters. At Adapter boundaries, remaining `openaiCompatible.extra_body` is expanded once — e.g. `{ openaiCompatible: { extra_body: { thinking: { type: "enabled" } }, reasoningEffort: "max" } }` sends `{"thinking": {"type": "enabled"}, "reasoning_effort": "max"}`. New local Catalogs no longer save `extra_body` reasoning patches; current source catalog OpenAI-compatible patches all use direct canonical fields.
 
 ## How User Selections Enter Runtimes
 
 ### Apps and Protocols
 
-The option's ID in the UI is `thought_level`. Model capabilities provide optional values; Composers, Drafts, Workspace defaults, Task meta, and Session snapshots save strings within their respective scopes.
-
-When switching tiers, the current protocol calls `session/setThoughtLevel`. The CLI's `setThoughtLevel()` will:
+The option's UI ID is `thought_level`. Model capabilities provide values; Composers, Drafts, Workspace defaults, Task meta, and Session snapshots save strings within their scopes. Switching tiers calls `session/setThoughtLevel`; the CLI's `setThoughtLevel()`:
 
 ```text
 Read current modelRef
@@ -878,23 +414,11 @@ Modify Runtimes simultaneously
 Persist Session model selection
 ```
 
-Session persistent entries save:
-
-```ts
-{
-  providerId: string,
-  modelId: string,
-  thoughtLevel?: string
-}
-```
-
-Runtimes currently save "logical selection + expanded parameters" as two sets of facts. The root of extensive reverse inference appearing in system recovery and telemetry is here.
+Session persistence saves `{ providerId, modelId, thoughtLevel? }`. Runtimes store "logical selection + expanded parameters" as two fact sets — the root of extensive reverse inference in recovery and telemetry.
 
 ### TUI and Standalone CLIs
 
-TUI's `/effort` and `/variant` commands first read the current model's `listThoughtLevels()`, then call the same `app.setThoughtLevel()`. They do not splice vendor parameters themselves.
-
-Standalone CLIs also save a global recent reasoning level at Session SQLite's local setting:
+TUI's `/effort` and `/variant` read `listThoughtLevels()` then call the same `app.setThoughtLevel()`; they never splice vendor parameters. Standalone CLIs also save a global recent reasoning level in Session SQLite local settings:
 
 ```text
 namespace = "model"
@@ -904,13 +428,11 @@ scopeID   = "default"
 value     = { level: "high" }
 ```
 
-This global value participates in the preferred tier for new Runtimes or temporary Turn models. Sessions themselves still persist their own `thoughtLevel`.
-
-Current one-time Prompt CLIs have no independent `--reasoning` / `--thought-level` parameters. When callers do not explicitly provide `modelProviderOptions` through Runtime configs, startup assemblies read the above global values; existing Session recovery chains also use the Session's own saved `thoughtLevel` to recover current selections.
+This global value participates in the preferred tier for new Runtimes or temporary Turn models; Sessions still persist their own `thoughtLevel`. One-time Prompt CLIs have no independent `--reasoning` / `--thought-level` parameters; when callers do not provide `modelProviderOptions` via Runtime configs, startup assemblies read the global value, and Session recovery uses the Session's own `thoughtLevel`.
 
 ### Automations, Bots, and Idle Tasks
 
-Automations, Bots, and OffPeak Tasks can all carry `thoughtLevel` strings. Ordinary Automations/Bots ultimately apply tiers through parameters for creating or recovering Sessions, then still go through `setThoughtLevel()`.
+Automations, Bots, and OffPeak Tasks can carry `thoughtLevel` strings; ordinary Automations/Bots apply tiers through parameters for creating or recovering Sessions, still via `setThoughtLevel()`.
 
 Idle tasks also carry a complete `turnRuntimeModel`:
 
@@ -927,9 +449,7 @@ Idle tasks also carry a complete `turnRuntimeModel`:
 }
 ```
 
-Hosts inject temporary Providers as turn overlays; CLIs then generate `TurnExecutionModels`, which already contain `modelRef` and `modelProviderOptions`. This object is currently closest to the future ModelBinding input structure.
-
-There is a noteworthy difference to correct when migrating: `ZCodeModelRuntimeConfig.thoughtLevel` is passed in with idle tasks, but current `resolveTurnExecutionModel()` reads CLI global reasoning preferences when parsing parameters, without directly passing `runtimeModel.thoughtLevel` as a preferred level. Actual tiers for this round only match Host-specified values when both happen to be consistent, or model defaults are consistent.
+Hosts inject temporary Providers as turn overlays; CLIs generate `TurnExecutionModels` already containing `modelRef` and `modelProviderOptions` — currently closest to the future ModelBinding input. Migration difference to correct: `ZCodeModelRuntimeConfig.thoughtLevel` is passed in with idle tasks, but `resolveTurnExecutionModel()` reads CLI global reasoning preferences instead of preferring `runtimeModel.thoughtLevel`; actual tiers match the Host-specified value only when both happen to be consistent or model defaults align.
 
 ## How Model Steps Use Parameters
 
@@ -947,32 +467,17 @@ turnExecutionModel does not exist
 └─ providerOptions     <- Runtime config.modelProviderOptions
 ```
 
-Subsequently, `ModelTextRequest` simultaneously carries:
-
-```ts
-{
-  model: ModelRef,
-  messages: [...],
-  tools: [...],
-  providerOptions: Record<string, unknown>
-}
-```
-
-Adapter Registries then query Provider factories, endpoints, credentials, and SDK models using `model`. `runner-options.ts` merges Provider static options with request options, and executes final namespace conversions.
-
-In this chain, model identity and reasoning parameters come from Runtime/Turn snapshots, Provider clients come from Adapter Registries, and capabilities come from Catalogs. The target `Model`'s responsibility is to consolidate all three into a single callable object.
+`ModelTextRequest` then carries `{ model: ModelRef, messages, tools, providerOptions }`. Adapter Registries query Provider factories, endpoints, credentials, and SDK models using `model`; `runner-options.ts` merges Provider static options with request options and performs final namespace conversion. Model identity and reasoning parameters come from Runtime/Turn snapshots, Provider clients from Adapter Registries, capabilities from Catalogs; the target `Model` consolidates all three into one callable object.
 
 ## How Special Model Calls Handle Reasoning
 
 ### Automatic Compacts
 
-Automatic Compacts currently default to inheriting the main Loop's `modelRef` and `providerOptions`. `ENABLE_COMPACT_SUMMARY_THINKING` is currently true, so summary requests continue using the main Loop's reasoning.
-
-Code still retains disabled Compact reasoning branches. These branches delete efforts and change Anthropic/OpenAI-compatible thinking to disabled. They belong to historical switchable strategies; current default paths do not trigger them.
+Compacts default to inheriting the main Loop's `modelRef` and `providerOptions`. `ENABLE_COMPACT_SUMMARY_THINKING` is true, so summary requests keep the main Loop's reasoning. Disabled Compact reasoning branches remain in code (delete efforts, switch thinking to disabled) as historical switchable strategies not triggered by default.
 
 ### Session Titles and Goal Summary Titles
 
-Title tasks fixed-disable reasoning. Current implementations first inherit Runtime `providerOptions`, then modify objects based on models and dialects:
+Title tasks fixed-disable reasoning: inherit Runtime `providerOptions`, then modify per model and dialect:
 
 ```text
 Anthropic              -> thinking disabled, delete effort
@@ -981,15 +486,15 @@ OpenAI-compatible      -> enable_thinking=false / thinking disabled / effort non
 MiniMax M3             -> Supplement dedicated disable fields per apiFormat
 ```
 
-This logic is located at `title-provider-options.ts`, which must simultaneously understand model names, Provider namespaces, and three API formats. If the target design retains "titles do not think," it should express `reasoningLevel = disabled` through generic Model Options; whether to `bind()` at task start or as a single Request override is determined by the task's lifecycle. Core no longer directly modifies vendor parameter objects.
+Logic at `title-provider-options.ts`, which must understand model names, Provider namespaces, and three API formats simultaneously. If "titles do not think" is retained, the target expresses `reasoningLevel = disabled` through generic Model Options — whether `bind()` at task start or a single Request override follows the task lifecycle; Core stops directly modifying vendor parameter objects.
 
 ### Git Commit Messages
 
-Normal calls to `workspace/generateText` inherit current Provider options; Git Commit Messages reuse title task's no-thinking projections, therefore having the same dialect branches.
+`workspace/generateText` calls inherit current Provider options; Git Commit Messages reuse the title task's no-thinking projections, sharing the same dialect branches.
 
 ### Repo Wikis
 
-Repo Wikis currently do not go through `ModelPort`, `workspace/generateText`, or the above `providerOptions` chains. They read providers, models, endpoints, API Keys, headers, and `apiFormat` from Provider Registries corresponding to workspaces, then directly construct three HTTP requests within `packages/services`:
+Repo Wikis bypass `ModelPort`, `workspace/generateText`, and the `providerOptions` chains: they read providers, models, endpoints, API Keys, headers, and `apiFormat` from workspace Provider Registries and construct three HTTP request shapes directly in `packages/services`:
 
 ```text
 openai-chat-completions
@@ -1002,15 +507,15 @@ anthropic-messages
 └─ model / max_tokens / messages / temperature
 ```
 
-These requests do not carry reasoning levels, nor send `reasoning_effort`, `enable_thinking`, `thinking`, or `output_config`. Therefore Repo Wikis currently neither inherit session tiers nor have their own reasoning strategies. This is an independent model call chain that the Provider refactor must consolidate: future implementations should first create their own Selections/Bindings, then initiate requests through Bindings; whether to use default tiers or explicitly disable reasoning is determined by Repo Wiki's product semantics.
+They carry no reasoning levels and send none of `reasoning_effort`, `enable_thinking`, `thinking`, `output_config` — neither inheriting session tiers nor having their own reasoning strategy. This independent model call chain must be consolidated by the Provider refactor: future implementations create their own Selections/Bindings and request through Bindings; default tiers or explicit disable follows Repo Wiki's product semantics.
 
 ### Bots
 
-Bots do not have another set of model request Adapters. Bot `/thoughtLevel` configs, draft status, and task parameter save logical levels; after creating or recovering ZCode Tasks, they still enter standard Session/Agent execution chains. Therefore Bot needs to unify Selections, Submissions, and Session recovery semantics, without needing new reasoning wire dialects.
+Bots have no separate model request Adapters. `/thoughtLevel` configs, draft status, and task parameters save logical levels; after creating or recovering ZCode Tasks they enter standard Session/Agent chains. Bots unify Selections, Submissions, and Session recovery semantics without new reasoning wire dialects.
 
 ### Project Memories
 
-Project Memory Recall selectors use Lite models or main models, generating only 256-token structured outputs. Current code simply clears the `anthropic` namespace to prevent fixed thinking from consuming budgets:
+Memory Recall selectors use Lite or main models, generating only 256-token structured outputs. Current code clears the `anthropic` namespace to prevent fixed thinking from consuming budgets:
 
 ```ts
 {
@@ -1019,44 +524,21 @@ Project Memory Recall selectors use Lite models or main models, generating only 
 }
 ```
 
-It does not make equivalent treatments for OpenAI and OpenAI-compatible, nor forms an explicit logical reasoning choice. This is a localized patch chain.
-
-Project Memory Extractions and Dreams capture models and Provider options, then run their own small Agent Loops.
+No equivalent treatment for OpenAI / OpenAI-compatible and no explicit logical reasoning choice — a localized patch chain. Extractions and Dreams capture models and Provider options, then run their own small Agent Loops.
 
 ### Goal Completion Verification
 
-Goal verifiers use current Runtime models and `modelProviderOptions`, with no independent reasoning strategies. Model refs are captured during retries, but Provider options are still read from Runtime configs.
+Goal verifiers use current Runtime models and `modelProviderOptions` with no independent reasoning strategy. Model refs are captured during retries, but Provider options are still read from Runtime configs.
 
 ### Subagents
 
-Subagent profiles can simultaneously declare models and `thoughtLevel`. Current code only calls `resolveModelProviderOptions(modelRef, profile.thoughtLevel)` to parse parameters for Child Runtimes when profiles specify specific models.
+Subagent profiles can declare models and `thoughtLevel`. Current code calls `resolveModelProviderOptions(modelRef, profile.thoughtLevel)` for Child Runtimes only when profiles specify specific models; `inherit` / `main` profiles inherit the parent Runtime's `modelProviderOptions`; an idle `turnExecutionModel` forces Children to use the entire snapshot.
 
-```text
-profiles specify specific models and thoughtLevel
-└─ Parse providerOptions by child model + profile thoughtLevel
-
-profiles use inherit / main
-└─ Inherit parent Runtime's modelProviderOptions
-
-idle turnExecutionModel exists
-└─ Force Children to use entire TurnExecutionModel snapshots
-```
-
-This already reflects the correct product semantics: when Children change models or reasoning, they should form their own Bindings; when inheriting, they reuse parent selections. Current implementations still pass through `modelRef + providerOptions` separately.
+This already reflects the correct product semantics — Children changing models or reasoning form their own Bindings; inheriting reuses parent selections — but the implementation still passes `modelRef + providerOptions` separately.
 
 ## Reverse Inference and Telemetry
 
-Current Runtimes often have only `providerOptions`, so the system also needs to reverse-answer "which tier is this?" `runtime-thought-level.ts` deep-matches current options with `providerOptionsByLevel` item by item:
-
-```text
-Runtime providerOptions
-        |
-        | Compare with each level's options
-        v
-Reverse to effective thought level
-```
-
-It also recognizes the following control types:
+Runtimes often hold only `providerOptions`, so the system reverse-answers "which tier is this?" `runtime-thought-level.ts` deep-matches current options against `providerOptionsByLevel` per level. It recognizes control types:
 
 ```text
 fixed_level   reasoningEffort / reasoning_effort / effort
@@ -1065,55 +547,24 @@ adaptive      thinking.type = adaptive
 toggle        enable_thinking / reasoning_enabled / thinking.type
 ```
 
-Telemetry only checks the current Adapter's actually consumed namespaces, avoiding misjudgments when both `anthropic` and `openaiCompatible` exist in one object. The actual namespace for OpenAI-compatible is also determined by `providerOptionsName`.
-
-This reverse inference serves Session recovery, UI current levels, Trace, and telemetry attribution. Future Bindings directly holding `ModelSelection.reasoningLevel` means normal execution chains can directly record logical selections; Adapters can still record final line-effective parameters for troubleshooting vendor behaviors, but no longer need to guess user selections from arbitrary objects.
+Telemetry checks only the current Adapter's actually consumed namespaces, avoiding misjudgment when both `anthropic` and `openaiCompatible` exist in one object; the actual OpenAI-compatible namespace is determined by `providerOptionsName`. This inference serves Session recovery, UI current levels, Trace, and telemetry attribution. Future Bindings directly holding `ModelSelection.reasoningLevel` let normal chains record logical selections directly; Adapters can still record final effective wire parameters for vendor troubleshooting but no longer guess user selections from arbitrary objects.
 
 ## Where Current Issues Concentrate
 
-### Capability Declarations and Serialization Rules Mixed Together
-
-`ModelCapability.reasoning` both tells UIs "there is a high tier" and tells Adapters "what objects high should send." Renderer only needs the first half; Core should not understand the second half.
-
-### Multiple Generation Points for the Same Rules
-
-Currently, at least the following generation or correction points exist:
-
-```text
-App Catalog patch projections
-Standalone CLI default-policies
-Standalone CLI config normalizations
-Dynamic workspace-model-catalogs
-Bootstrap legacy migrations
-Title / Git / Compact / Memory request patches
-Adapter runner namespace normalizations
-```
-
-A new model dialect often needs specifics added in multiple places.
-
-### OpenAI-compatible Dialect Recognition Depends on Names
-
-Current use of kind, providerId, modelId, and levels for inference; URLs do not participate. Names can cover officially known models, but cannot reliably express private gateways, proxy services, or "same modelId, different compatible implementations."
-
-### App and CLI Config Expressions Differ
-
-Apps only save variants; Standalone CLIs can save complete `providerOptionsByLevel`. Builtin memory configs can again carry transport patches. Three sources require multiple supplements and conversions before entering the same Runtime.
-
-### Runtimes Simultaneously Save Selections and Expanded Results
-
-`modelRef.variant` is the logical selection, `modelProviderOptions` is the expanded result. Both may be separately updated by different entries, so code requires substantial synchronization, recovery, and reverse matching.
-
-### Auxiliary Tasks Directly Modify Arbitrary Parameters
-
-Titles, Git, Compacts, and Memories delete or write Provider fields based on their respective needs. Each call point must understand vendor differences; Adapter responsibilities leak into Core.
+- **Capability declarations and serialization rules mixed**: `ModelCapability.reasoning` tells UIs "there is a high tier" and Adapters "what high sends." The Renderer needs only the first half; Core must not understand the second.
+- **Multiple generation points for the same rules**: App Catalog patch projections; standalone default policies; standalone config normalizations; dynamic workspace-model-catalogs; Bootstrap legacy migrations; Title/Git/Compact/Memory request patches; Adapter runner namespace normalizations. A new model dialect often needs specifics in several places.
+- **OpenAI-compatible dialect recognition depends on names**: kind/providerId/modelId/levels inference covers officially known models but cannot reliably express private gateways, proxies, or "same modelId, different compatible implementations" (URLs do not participate).
+- **App and CLI config expressions differ**: Apps save variants; Standalone CLIs can save complete `providerOptionsByLevel`; builtin memory configs carry transport patches — three sources needing supplements and conversions before one Runtime.
+- **Runtimes simultaneously save selections and expanded results**: `modelRef.variant` is the logical selection, `modelProviderOptions` the expanded result; both can be separately updated by different entries, forcing synchronization, recovery, and reverse matching.
+- **Auxiliary tasks directly modify arbitrary parameters**: Titles, Git, Compacts, and Memories delete or write Provider fields per their needs; every call point must understand vendor differences — Adapter responsibility leaks into Core.
 
 ## Constraints on Model and ModelRequest Designs
 
-Public Option semantics have been further clarified: `reasoningLevel` is the user-expected reasoning intensity, a soft constraint; `maxOutputTokens` is the total generation token limit shared by reasoning and final answers, a hard constraint. Models validate both separately, do not understand thinking budgets, and do not undertake Provider-specific combination validations.
+Public Option semantics: `reasoningLevel` is the user-expected reasoning intensity, a soft constraint; `maxOutputTokens` is the total generation token limit shared by reasoning and final answers, a hard constraint. Models validate both separately, do not understand thinking budgets, and undertake no Provider-specific combination validations.
 
-The first phase maintains existing Adapter behaviors. Even if some new Anthropic model official recommendations have shifted to adaptive thinking, as long as current fixed-budget requests still work, this round does not change model recognition, tier mappings, and wire requests. Existing fixed thinking continues to use `min(levelBudget, maxOutputTokens - 1)` to guarantee total budgets. Future Adapter topics then evaluate native effort/adaptive migrations and adjust dialects still needing fixed budgets to `min(levelDefaultBudget, floor(maxOutputTokens * 3 / 4))`, reserving stable space for final answers.
+The first phase keeps existing Adapter behaviors — even where official recommendations shift to adaptive thinking, fixed-budget requests that still work keep current recognition, tier mappings, and wire requests. Existing fixed thinking keeps `min(levelBudget, maxOutputTokens - 1)`. A later Adapter topic evaluates native effort/adaptive migration and adjusts still-fixed-budget dialects to `min(levelDefaultBudget, floor(maxOutputTokens * 3 / 4))`, reserving stable space for final answers.
 
-This investigation supports the following target chain:
+Target chain:
 
 ```text
 Model
@@ -1134,22 +585,22 @@ Derived Models
 Adapter private serialization
 ```
 
-Target boundaries need to satisfy:
+Target boundaries:
 
 - UIs, Sessions, Submissions, Automations, and Subagents save logical levels, not vendor parameters.
 - Derived Models fix providers, models, and reasoning levels; continuous executions no longer re-read mutable Runtime options.
-- Adapter paths own reasoning dialects. OpenAI-compatible differences must no longer leak to Core.
-- `providerOptionsByLevel` is read by a compatible boundary during the migration period, then encapsulated into Models/Adapters, no longer exposed to ModelRequests.
-- Tasks that genuinely change reasoning, like Titles and Git, use `bind()` or Request Options to express generic tiers, no longer modifying vendor parameter objects.
+- Adapter paths own reasoning dialects; OpenAI-compatible differences must not leak to Core.
+- `providerOptionsByLevel` is read by a compatible boundary during migration, then encapsulated into Models/Adapters, no longer exposed to ModelRequests.
+- Tasks that genuinely change reasoning (Titles, Git) express generic tiers via `bind()` or Request Options, never modifying vendor parameter objects.
 - Compacts reuse current Models when only changing messages and budgets.
 - Usage, Trace, and message histories record provider/model/reasoning from models actually initiating requests.
-- Final-line Headers, token refreshes, routing, retries, and field serialization continue to stay within Adapters internally.
+- Final-line Headers, token refreshes, routing, retries, and field serialization stay within Adapters.
 
-Whether "more granular Adapter types" or "one Adapter with strengthened type reasoning strategy" is adopted still needs ruling in subsequent Adapter designs. Regardless of what fields are ultimately named, they must become explicit facts in the Provider/Adapter path, capable of distinguishing the same modelId connected to different compatible services.
+Whether "more granular Adapter types" or "one Adapter with strengthened typed reasoning strategy" is adopted needs ruling in later Adapter designs; whatever the field names, they must become explicit facts in the Provider/Adapter path, capable of distinguishing the same modelId connected to different compatible services.
 
 ## Tests to Lock Before Implementation
 
-Migrations cannot verify only intermediate `providerOptions`. At minimum, three layers of tests must be retained:
+Migrations cannot verify only intermediate `providerOptions`; keep three layers:
 
 ```text
 Config/Definition tests
@@ -1162,7 +613,7 @@ Wire tests
 └─ Capture real SDK request bodies, verify final fields
 ```
 
-Existing wire tests already cover OpenAI Responses `none`, Anthropic effort, Anthropic thinking budgets, OpenAI-compatible `reasoning_effort`, `enable_thinking`, `thinking.type`, and legacy `extra_body` expansions. These should serve as behavior baselines during migrations.
+Existing wire tests already cover OpenAI Responses `none`, Anthropic effort, Anthropic thinking budgets, OpenAI-compatible `reasoning_effort`, `enable_thinking`, `thinking.type`, and legacy `extra_body` expansions; these serve as behavior baselines during migrations.
 
 ## Main Code Evidence
 

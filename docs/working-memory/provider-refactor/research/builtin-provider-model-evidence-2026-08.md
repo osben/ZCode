@@ -6,7 +6,7 @@
 
 ## 1. Evidence Rules
 
-This report only records the basis publishers use to maintain the Built-in Config, and does not add evidence, confidence, or provenance fields to runtime Config. Facts are ruled in the following order:
+This report records only the basis publishers use to maintain the Built-in Config; it adds no evidence, confidence, or provenance fields to runtime Config. Facts are ruled in this order:
 
 ```text
 ZCode product or account service confirmed contracts
@@ -23,10 +23,10 @@ Conservative inference from third-party compatible scenarios
 
 - Officially declared context, max output, input formats, and protocol capabilities can enter the corresponding Model/API/Endpoint Rule.
 - Capabilities additionally provided by the ZCode plan chain enter Provider-scoped Rules and cannot reverse-rewrite native model facts.
-- Models API documentation examples only prove response shape, not real-time directories with current access materials.
+- Models API documentation examples prove response shape only, not real-time directories with current access materials.
 - Candidates not listed on the website can keep conservative rules for third-party compatible services; not enabled by default before the target official Endpoint is confirmed.
-- Request accepting a field, ignoring content, or not erroring does not equal the model consuming that input, nor constitutes capability evidence.
-- "JSON Output" or JSON Object does not equal strict JSON Schema; the current field `supportsJsonSchemaOutput` is only enabled on proven strict Schema lines; the field rename was completed by Todo74 inheriting from Todo39.
+- A request accepting a field, ignoring content, or not erroring does not equal the model consuming that input, and is not capability evidence.
+- "JSON Output" or JSON Object does not equal strict JSON Schema; `supportsJsonSchemaOutput` is enabled only on proven strict Schema lines (field rename completed by Todo74 inheriting from Todo39).
 
 ## 2. Vendor Conclusion Matrix
 
@@ -58,16 +58,16 @@ Start / Individual / Team Plan
 └─ Provider service provides Image/Video transcription for actual members
 ```
 
-Regular Account API accepting image-carrying requests without error only means the server tolerates or ignores the content, not that `glm-5.3` has vision capabilities. Therefore this round keeps its native vision capability as `false`. The Plan's vision capability comes from the ZCode product chain, an independent Provider service fact.
+The regular Account API accepting image-carrying requests without error means only that the server tolerates or ignores the content, not that `glm-5.3` has vision. Its native vision capability stays `false`. The Plan's vision capability comes from the ZCode product chain — an independent Provider service fact.
 
 ## 4. This Round's Provider Members and Initial Order
 
-The physical order of `builtinModelIds` follows "default enabled first, default disabled last." This is only the initial order of release files; no runtime sorter is added, and user-draged Personal `modelOrder` remains the user order fact.
+`builtinModelIds` physical order follows "default enabled first, default disabled last." This is only the initial order of release files; no runtime sorter is added, and user-dragged Personal `modelOrder` remains the user order fact.
 
 - GLM API: 5.3, 5.3 Flash, 5V Turbo first, remaining historical members later.
 - Individual/Team: 5.3, 5.3 Flash, 5.2, 5-Turbo.
 - Kimi: K3, K2.7 Code, K2.6 first.
-- MiniMax: M3 first; M2.7, M2.7 Highspeed as still-normal service speed tiers following, all three default enabled.
+- MiniMax: M3 first; M2.7, M2.7 Highspeed as still-normal speed tiers following, all three default enabled.
 - Qwen: China and international Providers both start with 3.8 Max, 3.8 Flash.
 - MiMo: 2.5 Pro, 2.5 first.
 - OpenAI: Sol, Terra, Luna first, aliases and old models later.
@@ -88,7 +88,7 @@ The physical order of `builtinModelIds` follows "default enabled first, default 
 
 ## 6. Known Imperfections and Next-Round Verification
 
-This round's goal is to form a more credible release baseline than revision 3, and does not claim completion of Endpoint real-tests with real access materials. Subsequent model verification APIs should first call vendor Models APIs, then verify capabilities not provided by the interface:
+This round forms a more credible release baseline than revision 3 and does not claim completion of Endpoint real-tests with real access materials. Subsequent model verification APIs should first call vendor Models APIs, then verify capabilities not provided by the interface:
 
 1. Model lists, aliases, and optional capability metadata for each real Endpoint with current access materials;
 2. Tools, reasoning, MCS, and strict JSON Schema under three API Schemas;
@@ -96,14 +96,8 @@ This round's goal is to form a more credible release baseline than revision 3, a
 4. Max output, default reasoning tiers, and server-side limitations;
 5. Automatic reporting when official documentation and account product interfaces drift.
 
-OpenAI-compatible Models APIs usually return only basic identity; Anthropic's official Models API can currently additionally return token limits, Image/PDF, Thinking, Effort, and Structured Outputs capabilities. Third-party compatible services may implement only subsets; parsing and evidence acceptance must proceed by actual fields, not by protocol name completion.
+OpenAI-compatible Models APIs usually return only basic identity; Anthropic's official Models API can additionally return token limits, Image/PDF, Thinking, Effort, and Structured Outputs capabilities. Third-party compatible services may implement only subsets; parse and accept evidence by actual fields, not protocol-name completion.
 
 ## 7. 2026-09-01 Kimi Evidence Correction
 
-This round's review found that revision 4 refreshes treated "summary did not record multimodal" as "does not support," and subsequent configs continued this error. Current official materials have made clear:
-
-- Kimi API model selection page declares `kimi-k3` has native vision understanding; K3 release materials further clarify native architecture understanding of text, images, and video;
-- Kimi K2.7 Code official FAQ explicitly declares Text, Image, Video input;
-- Kimi Code model table declares `k3` supports Image/Video, while `k3-256k` only supports Image.
-
-Therefore revision 7 corrects these three facts. Future capability downgrades from already-released `true` to `false` must have clear negative evidence or reproducible request results, and can no longer use material absence as justification.
+Revision 4 refreshes had treated "summary did not record multimodal" as "does not support," and subsequent configs continued the error. Current official materials: the Kimi API model selection page declares `kimi-k3` native vision understanding; K3 release materials clarify native text/image/video understanding; the K2.7 Code FAQ declares Text, Image, Video input; the Kimi Code model table declares `k3` supports Image/Video while `k3-256k` only Image. Revision 7 corrects these three facts. Future capability downgrades from released `true` to `false` require clear negative evidence or reproducible request results — material absence is no longer justification.
