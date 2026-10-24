@@ -13,6 +13,7 @@ import {
   sortSessionManagerRows,
   type SessionManagerRow,
 } from "@/session-manager/sessionManagerModel.js";
+import { resolveSessionManagerVisibleColumns } from "@/session-manager/sessionManagerColumns.js";
 import { HiddenSessionsMaintenance } from "@/session-manager/HiddenSessionsMaintenance.js";
 import { SessionManagerDeleteDialog } from "@/session-manager/SessionManagerDeleteDialog.js";
 import { SessionManagerTable } from "@/session-manager/SessionManagerTable.js";
@@ -251,11 +252,12 @@ export function SessionsSettingsSection({
   const mutabilityReason = intl.formatMessage({ id: "workspaceSidebar.unavailableLocalDirectory" });
   const scopeChipActive = Boolean(scope);
   // Stable identity keeps the memoized row renderers from re-rendering on every parent pass.
-  const effectiveColumns = useMemo(
-    () =>
-      scopeChipActive ? viewState.columns.filter((column) => column !== "path") : viewState.columns,
-    [scopeChipActive, viewState.columns],
-  );
+  const effectiveColumns = useMemo(() => {
+    const selected = scopeChipActive
+      ? viewState.columns.filter((column) => column !== "path")
+      : viewState.columns;
+    return resolveSessionManagerVisibleColumns(selected, visibleRows);
+  }, [scopeChipActive, viewState.columns, visibleRows]);
 
   return (
     <div

@@ -7,6 +7,7 @@ import {
   SESSION_MANAGER_CHECKBOX_COLUMN_WIDTH,
   SESSION_MANAGER_MENU_COLUMN_WIDTH,
   SESSION_MANAGER_SORTABLE_COLUMNS,
+  resolveSessionManagerVisibleColumns,
   sessionManagerColumnLabelId,
 } from "@/session-manager/sessionManagerColumns.js";
 import {
@@ -67,5 +68,51 @@ describe("sessionManagerColumns", () => {
     for (const column of SESSION_MANAGER_SORTABLE_COLUMNS) {
       expect(SESSION_MANAGER_TOGGLEABLE_COLUMNS).toContain(column);
     }
+  });
+});
+
+describe("resolveSessionManagerVisibleColumns", () => {
+  const all = SESSION_MANAGER_TOGGLEABLE_COLUMNS;
+  const rowWith = (task: {
+    changeSummary?: { fileCount: number; added: number; removed: number };
+    executionWorktree?: { path: string };
+  }) => ({ task });
+
+  it("hides changes, branch and PR while no row has data for them", () => {
+    const visible = resolveSessionManagerVisibleColumns(all, [rowWith({}), rowWith({})]);
+    expect(visible).not.toContain("changes");
+    expect(visible).not.toContain("branch");
+    expect(visible).not.toContain("pullRequests");
+    expect(visible).toContain("name");
+    expect(visible).toContain("environment");
+  });
+
+  it("treats a zero-line change summary as no data", () => {
+    const visible = resolveSessionManagerVisibleColumns(all, [
+      rowWith({ changeSummary: { fileCount: 0, added: 0, removed: 0 } }),
+    ]);
+    expect(visible).not.toContain("changes");
+  });
+
+  it("restores changes when a row has non-zero changes, branch/PR when a row has a worktree", () => {
+    const visible = resolveSessionManagerVisibleColumns(all, [
+      rowWith({ changeSummary: { fileCount: 1, added: 3, removed: 0 } }),
+      rowWith({ executionWorktree: { path: "/tmp/wt" } }),
+    ]);
+    expect(visible).toContain("changes");
+    expect(visible).toContain("branch");
+    expect(visible).toContain("pullRequests");
+  });
+
+  it("never adds columns the user did not select and preserves order", () => {
+    const visible = resolveSessionManagerVisibleColumns(
+      ["name", "branch"],
+      [rowWith({ executionWorktree: { path: "/tmp/wt" } })],
+    );
+    expect(visible).toEqual(["name", "branch"]);
+  });
+
+  it("keeps the empty-data columns visible while there are no rows yet", () => {
+    expect(resolveSessionManagerVisibleColumns(all, [])).toEqual(all);
   });
 });

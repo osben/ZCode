@@ -69,6 +69,7 @@ export function ChatPromptEditor({
   attachmentAction,
   betweenCancelAndSubmitAction,
   submitControl,
+  hideSubmit = false,
   inputTestId,
   submitTestId,
   cancelTestId,
@@ -133,6 +134,8 @@ export function ChatPromptEditor({
   /** 行内编辑专用：固定插在取消与主提交之间的第二动作。 */
   betweenCancelAndSubmitAction?: ReactNode;
   submitControl?: ReactNode;
+  /** Hosts that own the submit action elsewhere (e.g. a dialog footer) render no send button. */
+  hideSubmit?: boolean;
   voicePreview?: VoiceTranscriptionPreview | null;
   inputTestId?: string;
   submitTestId?: string;
@@ -486,21 +489,30 @@ export function ChatPromptEditor({
               </ControlHintTooltip>
             ) : null}
             {betweenCancelAndSubmitAction}
-            {submitControl ?? (
-              <ControlHintTooltip title={submitLabel} shortcut={enterSubmits ? "Enter" : undefined}>
-                <Button
-                  type="submit"
-                  size="icon-md"
-                  disabled={submitDisabled}
-                  data-testid={submitTestId ?? TID_CHAT_SEND_BUTTON}
-                  aria-label={submitLabel}
-                  className="gap-1 rounded-lg bg-brand text-ui-base text-foreground-inverse hover:bg-brand/80"
-                >
-                  {submitting ? <Spinner className="size-4" /> : <ArrowUpIcon className="size-4" />}
-                  <span className="sr-only">{submitLabel}</span>
-                </Button>
-              </ControlHintTooltip>
-            )}
+            {hideSubmit
+              ? null
+              : (submitControl ?? (
+                  <ControlHintTooltip
+                    title={submitLabel}
+                    shortcut={enterSubmits ? "Enter" : undefined}
+                  >
+                    <Button
+                      type="submit"
+                      size="icon-md"
+                      disabled={submitDisabled}
+                      data-testid={submitTestId ?? TID_CHAT_SEND_BUTTON}
+                      aria-label={submitLabel}
+                      className="gap-1 rounded-lg bg-brand text-ui-base text-foreground-inverse hover:bg-brand/80"
+                    >
+                      {submitting ? (
+                        <Spinner className="size-4" />
+                      ) : (
+                        <ArrowUpIcon className="size-4" />
+                      )}
+                      <span className="sr-only">{submitLabel}</span>
+                    </Button>
+                  </ControlHintTooltip>
+                ))}
           </div>
         </div>
       </div>

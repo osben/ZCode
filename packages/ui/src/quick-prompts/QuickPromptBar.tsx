@@ -3,7 +3,14 @@
  * Chips insert through the editor handle; the send path is delegated to the composer's own submit, passed in as
  * onSendMarkdown, so queue admission and held-queue confirmation stay in one place.
  */
-import { useCallback, useRef, useState, type MutableRefObject, type PointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type PointerEvent,
+} from "react";
 import { PlusIcon } from "lucide-react";
 import type {
   IQuickPromptService,
@@ -27,6 +34,7 @@ import {
   BottomSheetTitle,
 } from "@/components/mobile-ui/bottom-sheet.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { computeQuickPromptScrollFades, type QuickPromptScrollFades } from "./scrollFades.js";
 import { isAppleKeyboardPlatform } from "@/lib/keyboardShortcuts.js";
 import { useIsMobileTextInputViewport } from "@/lib/mobileTextInput.js";
 import type { LexicalChatInputHandle } from "@/LexicalChatInput.js";
@@ -85,6 +93,19 @@ export function QuickPromptBar({
   const [savePopoverOpen, setSavePopoverOpen] = useState(false);
   const [sheetPrompt, setSheetPrompt] = useState<QuickPrompt | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [scrollFades, setScrollFades] = useState<QuickPromptScrollFades>({
+    left: false,
+    right: false,
+  });
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const updateScrollFades = useCallback(() => {
+    const element = toolbarRef.current;
+    if (!element) return;
+    const next = computeQuickPromptScrollFades(element);
+    setScrollFades((current) =>
+      current.left === next.left && current.right === next.right ? current : next,
+    );
+  }, []);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressFiredRef = useRef(false);
 
@@ -180,6 +201,18 @@ export function QuickPromptBar({
     if (longPressTimerRef.current !== null) window.clearTimeout(longPressTimerRef.current);
     longPressTimerRef.current = null;
   };
+
+  // Hook must stay above the early return. The row mounts only once service+snapshot exist, and chips
+  // derive from the snapshot, so both gate re-measuring; container width changes ride the observer.
+  const rowMounted = Boolean(service && snapshot);
+  useEffect(() => {
+    updateScrollFades();
+    const element = toolbarRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateScrollFades);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [rowMounted, snapshot, updateScrollFades]);
 
   // Hidden until a snapshot exists: a blank row while the first read is in flight would flash the first-run hint.
   if (!service || !snapshot) return null;
@@ -318,6 +351,8 @@ export function QuickPromptBar({
       <div
         role="toolbar"
         aria-label={intl.formatMessage({ id: "quickPrompts.row.label" })}
+        ref={toolbarRef}
+        onScroll={updateScrollFades}
         className="no-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5"
       >
         {chips.map((prompt) => chipButton(prompt))}
@@ -387,11 +422,19 @@ export function QuickPromptBar({
           {actionError}
         </p>
       ) : null}
-      {/* Fade hints that the row scrolls horizontally. */}
-      <span
-        aria-hidden
-        className="pointer-events-none absolute inset-y-0 left-0 w-4 bg-gradient-to-r from-surface to-transparent"
-      />
+      {/* Fades hint at hidden chips; a row that fits shows none. */}
+      {scrollFades.left ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 left-0 w-4 bg-gradient-to-r from-surface to-transparent"
+        />
+      ) : null}
+      {scrollFades.right ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 right-0 w-4 bg-gradient-to-l from-surface to-transparent"
+        />
+      ) : null}
       {editorTarget ? (
         <QuickPromptEditorDialog
           target={editorTarget}

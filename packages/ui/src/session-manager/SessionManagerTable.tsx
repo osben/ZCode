@@ -1,6 +1,6 @@
 import { memo, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronDown, ChevronRight, Folder, Star } from "lucide-react";
+import { ChevronDown, ChevronRight, Folder, Pin } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { Checkbox } from "@/components/ui/checkbox.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -145,8 +145,8 @@ export function SessionManagerTable(props: SessionManagerTableProps) {
           {visibleColumns.map((column) => (
             <div key={column} role="columnheader" className="min-w-0 px-2">
               {column === "pinned" ? (
-                // The pinned column is 32px wide; a star header fits where the localized word cannot.
-                <Star
+                // The pinned column is 32px wide; a pin header fits where the localized word cannot.
+                <Pin
                   className="size-3 text-foreground-subtlest"
                   aria-label={intl.formatMessage({ id: sessionManagerColumnLabelId(column) })}
                 />
