@@ -129,7 +129,7 @@ export const Reasoning = memo(
     useEffect(() => {
       if (!isStreaming) {
         if (startTimeRef.current !== null) {
-          setDuration(Math.ceil((Date.now() - startTimeRef.current) / MS_IN_S));
+          setDuration(Math.max(1, Math.ceil((Date.now() - startTimeRef.current) / MS_IN_S)));
         }
         startTimeRef.current = null;
         return;
@@ -351,10 +351,7 @@ export const ReasoningTrigger = memo(
           </span>
           <span className="font-normal text-foreground-subtlest">·</span>
           <span className="font-normal text-foreground-subtlest">
-            {intl.formatMessage(
-              { id: "chat.reasoning.durationSeconds" },
-              { seconds: String(duration) },
-            )}
+            {intl.formatPlural({ id: "chat.reasoning.durationSeconds" }, duration)}
           </span>
         </span>
       ));
