@@ -148,6 +148,7 @@ describe("tool executor error projection", () => {
 
     expect(result.error?.message).toBe("request has been blocked due to unusual activity.");
     expect(result.error?.attribution).toEqual({
+      source: "provider",
       providerErrorCode: "3012",
       retryable: false,
       statusCode: 405,
@@ -169,7 +170,7 @@ describe("tool executor error projection", () => {
       ),
     );
 
-    expect(result.error?.attribution).toEqual({ retryable: true, statusCode: 429 });
+    expect(result.error?.attribution).toEqual({ source: "provider", retryable: true, statusCode: 429 });
     expect(result.modelContent).toBeUndefined();
     expect(stringifyToolResultOutput(result)).toBe("Rate limit reached");
   });
@@ -181,7 +182,7 @@ describe("tool executor error projection", () => {
 
     const result = createErrorResult(agentToolCall(), toolError);
 
-    expect(result.error?.attribution).toEqual({ retryable: false, statusCode: 404 });
+    expect(result.error?.attribution).toEqual({ source: "tool", retryable: false, statusCode: 404 });
     expect(result.modelContent).toBeUndefined();
     expect(stringifyToolResultOutput(result)).toBe("Request failed with status 404");
   });

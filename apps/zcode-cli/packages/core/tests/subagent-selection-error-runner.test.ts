@@ -123,6 +123,7 @@ describe("Subagent 选择错误经过真实前后台 runner", () => {
       );
 
       expect(result.error?.attribution).toEqual({
+        source: "provider",
         providerErrorCode: "3012",
         retryable: false,
         statusCode: 405,

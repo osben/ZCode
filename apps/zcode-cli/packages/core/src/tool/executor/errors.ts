@@ -52,7 +52,7 @@ export function createErrorResult(
   // so persistence and cold resume replay the same text the live run sent.
   const providerFactsLine =
     ownModelContent === undefined && reasonSource === undefined
-      ? formatTerminalProviderFailureFacts(projectedError.attribution)
+      ? formatTerminalProviderFailureFacts(attribution)
       : undefined;
   const modelContent =
     ownModelContent ?? (providerFactsLine ? `${message}\n\n${providerFactsLine}` : undefined);
@@ -85,38 +85,42 @@ function toToolErrorAttribution(
   attribution: ErrorAttribution | undefined,
 ): ToolErrorAttribution | undefined {
   if (!attribution) return undefined;
-  const { providerErrorCode, retryable, statusCode } = attribution;
-  const subset: ToolErrorAttribution = {
+  const { providerErrorCode, retryable, source, statusCode } = attribution;
+  if (providerErrorCode === undefined && retryable === undefined && statusCode === undefined) {
+    return undefined;
+  }
+  return {
+    ...(source !== undefined ? { source } : {}),
     ...(providerErrorCode !== undefined ? { providerErrorCode } : {}),
     ...(retryable !== undefined ? { retryable } : {}),
     ...(statusCode !== undefined ? { statusCode } : {}),
   };
-  return Object.keys(subset).length > 0 ? subset : undefined;
+}
+
+/**
+ * A terminal upstream failure whose facts the parent model should see. Every CoreError defaults to
+ * retryable=false, so only an explicit provider source marks it; tool or runtime errors must not be
+ * labelled as provider facts. Callers branch on this structured check, never on the rendered text.
+ */
+export function isTerminalProviderFailure(attribution: ToolErrorAttribution | undefined): boolean {
+  return (
+    attribution?.source === "provider" &&
+    attribution.retryable === false &&
+    (attribution.statusCode !== undefined || attribution.providerErrorCode !== undefined)
+  );
 }
 
 function formatTerminalProviderFailureFacts(
-  attribution: ErrorAttribution | undefined,
+  attribution: ToolErrorAttribution | undefined,
 ): string | undefined {
-  // Every CoreError defaults to retryable=false, so only an explicit provider source marks a
-  // terminal upstream failure; tool or runtime errors must not be labelled as provider facts.
-  if (attribution?.source !== "provider" || attribution.retryable !== false) return undefined;
+  if (!attribution || !isTerminalProviderFailure(attribution)) return undefined;
   const { providerErrorCode, statusCode } = attribution;
-  if (providerErrorCode === undefined && statusCode === undefined) return undefined;
   const parts = [
     ...(statusCode !== undefined ? [`status=${statusCode}`] : []),
     ...(providerErrorCode !== undefined ? [`provider_error_code=${providerErrorCode}`] : []),
     "retryable=false",
   ];
   return `Provider failure: ${parts.join(" ")}`;
-}
-
-/** True when createErrorResult built modelContent from terminal provider facts. */
-export function hasProviderFailureModelContent(result: ToolExecutionResult): boolean {
-  return (
-    typeof result.modelContent === "string" &&
-    result.error !== undefined &&
-    result.modelContent.startsWith(`${result.error.message}\n\nProvider failure: `)
-  );
 }
 
 export function createToolHandlerFailureError(

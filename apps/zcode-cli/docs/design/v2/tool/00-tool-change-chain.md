@@ -1,5 +1,29 @@
 # Tool Change Chain Spec
 
+## 失败工具结果携带 provider 终态事实（2026-10-24）
+
+前台 Agent 的 child 遇到终态 provider 失败（如 `405` / provider code `3012`）时，父模型原先只看到
+错误正文，attribution 在 `createErrorResult` 被丢弃，父模型因此臆测原因与重试策略。现由
+`packages/core/src/tool/executor/errors.ts` 通用组装（不按 tool name 分支）：
+
+- `ToolExecutionResult.error.attribution` 只保留安全子集 `source`、`providerErrorCode`、
+  `statusCode`、`retryable`；不含凭证、URL、request/trace id、provider/model id。
+- 仅当 `isTerminalProviderFailure`（`source === "provider"`、`retryable === false`、且有 status 或
+  provider code）成立时，`modelContent` = 原 message + 空行 +
+  `Provider failure: status=… provider_error_code=… retryable=false`。重试型 429/5xx、非 provider
+  错误、handler failure、校验错误、权限拒绝与 plan/workflow 反馈保持原文。
+- 事件：`tool.updated` error 的 `attribution` 走既有 strict `errorAttributionSchema`，v4 投影仍只取
+  `type`/`message`，协议与 UI 不变；`error.message`（UI hover、日志）不变。
+- Hook：`call-runner` 追加 PreToolUse/PostToolUseFailure context 时，以同一结构化判定
+  `isTerminalProviderFailure(result.error.attribution)` 决定保留该 `modelContent`，不匹配渲染文本。
+- 持久化与回放：事实行存于 `modelContent`，经 settlement 写入 `metadata.modelContent`，冷恢复回放
+  同一文本，live 与 resume 一致。
+- 不做文本匹配、冷却或重试策略变更；后台 Agent 失败（task notification）不在本次范围。
+
+规格见 `specs/tool-error-provider-attribution.md`；回归见
+`packages/core/tests/tool-executor-error.test.ts`、`packages/core/tests/tool-hook-context.test.ts`、
+`packages/core/tests/subagent-selection-error-runner.test.ts`。
+
 ## 模型可见的工具定义只用英文（2026-10-23）
 
 Agent、CreateWorkflow、CronCreate、OffPeakCreate 的描述与 schema 字段说明，以及

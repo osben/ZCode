@@ -491,7 +491,7 @@ export interface ToolExecutionResult {
 
 export type ToolErrorAttribution = Pick<
   ErrorAttribution,
-  "providerErrorCode" | "retryable" | "statusCode"
+  "providerErrorCode" | "retryable" | "source" | "statusCode"
 >;
 
 export interface ToolExecutionFollowUpUserInput {
