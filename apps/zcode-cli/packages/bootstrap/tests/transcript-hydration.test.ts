@@ -629,6 +629,46 @@ describe("transcript→event 合成", () => {
     });
   });
 
+  it("cold provider business failure keeps its business code and drops the synthetic trace id", () => {
+    const failed = assistantMessage("a-concurrency", "u-concurrency", "", 1001);
+    const { projection } = reduce([
+      userMessage("u-concurrency", "hit the model concurrency cap", 1000),
+      {
+        ...failed,
+        info: {
+          ...failed.info,
+          error: {
+            name: "AiSdkModelAdapterError",
+            data: {
+              message: "model concurrency limit exceeded",
+              code: "model_rate_limited",
+              attribution: {
+                source: "provider",
+                reason: "rate_limited",
+                errorPhase: "stream",
+                exceptionKind: "provider_business",
+                providerId: "account:zai-start-plan",
+                modelId: "GLM-5.3",
+                statusCode: 429,
+                providerErrorCode: "3009",
+                retryable: false,
+              },
+            },
+          },
+        },
+      } satisfies MessageWithParts,
+    ]);
+
+    const lastError = projection.getSnapshot().control.lastError;
+    expect(lastError).toMatchObject({
+      message: "model concurrency limit exceeded",
+      source: "provider",
+      attribution: { providerErrorCode: "3009", providerId: "account:zai-start-plan" },
+    });
+    // The hydration trace id is a replay sentinel, not a support-traceable request id.
+    expect(lastError?.traceId).toBeUndefined();
+  });
+
   it("cold empty output-limit exhaustion restores only its error state", () => {
     const failed = assistantMessage("a-output-limit", "u-output-limit", "", 1001);
     const { events, projection } = reduce([
