@@ -1,41 +1,29 @@
-# CDN Zip Plugin Source 安装设计
+# CDN zip plugin source install design
 
 ## 1. Goals / non-goals
 
 ### Goals
 
-- 支持 marketplace plugin entry 指向 CDN 托管的 `.zip` 插件包，并复用现有安装闭环：
-  `installMarketplacePlugin` -> `cacheMarketplacePlugin` -> `resolvePluginSourceRoot` -> 拷贝到
-  `~/.zcode/cli/plugins/cache/{marketplace}/{plugin}/{version}/` -> 写入
-  `installed_plugins.json`。
-- 在 plugin entry 现有 `{ "source": "url" }` 上新增显式 artifact type：
-  `{ "source": "url", "type": "zip", ... }`。无 `type` 的 `{ "source": "url" }`
-  继续保持 legacy git clone 语义；不要靠 URL 后缀推断 zip。
-- 下载、校验、解压后仍返回 plain directory tree。最终安装产物继续是包含
-  `.zcode-plugin/plugin.json`、`.claude-plugin/plugin.json` 或 `.codex-plugin/plugin.json`
-  的目录，不长期保留 zip archive。
-- 下载链路要对齐现有 marketplace/git 网络出口策略。现有 git 子进程通过
-  `buildMarketplaceGitEnv()` 和 `applyNetworkEgressEnv()` 注入 `ZCODE_HTTP_PROXY` 等显式网络环境；
-  zip 下载应使用同一网络出口语义，而不是绕过代理配置。
-- 保持 Claude Marketplace Git 兼容性。本 Phase 1 原本不改变 `github`、`git`、`url`、
-  `git-subdir`；后续 [公开 GitHub 插件源无 Git安装规格](./plugin-github-archive-source.md)
-  已将可匿名读取的 GitHub HTTPS 来源收敛到同一安全 ZIP materializer，其他来源仍走系统 Git。
-  `npm` / `pip` 仍是识别但不安装的诊断路径。
-- 在 spec 先行的基础上，给后续 coding agent 留出具体文件、测试和 rollout checklist。
+- Marketplace plugin entries can point at CDN-hosted `.zip` plugin packages and reuse the existing install loop:
+  `installMarketplacePlugin` -> `cacheMarketplacePlugin` -> `resolvePluginSourceRoot` -> copy to
+  `~/.zcode/cli/plugins/cache/{marketplace}/{plugin}/{version}/` -> write `installed_plugins.json`.
+- Plugin entries add an explicit artifact type on the existing `{ "source": "url" }`:
+  `{ "source": "url", "type": "zip", ... }`. `{ "source": "url" }` without `type` keeps legacy git clone semantics; never infer zip from a URL suffix.
+- After download, verification, and extraction the resolver still returns a plain directory tree. The final install artifact stays a directory containing `.zcode-plugin/plugin.json`, `.claude-plugin/plugin.json`, or `.codex-plugin/plugin.json`; zip archives are not kept long-term.
+- The download path follows the existing marketplace/git network egress policy. Git subprocesses inject explicit network env (`ZCODE_HTTP_PROXY` etc.) via `buildMarketplaceGitEnv()` and `applyNetworkEgressEnv()`; zip downloads use the same egress semantics instead of bypassing proxy config.
+- Claude Marketplace Git compatibility is preserved. Phase 1 did not change `github`, `git`, `url`, `git-subdir`; the follow-up [public GitHub no-Git install spec](./plugin-github-archive-source.md) routed anonymously readable GitHub HTTPS sources to the same safe ZIP materializer, while other sources still use system Git. `npm` / `pip` remain diagnose-only paths.
 
 ### Non-goals
 
-- Phase 1 不支持 marketplace 本身以 zip 分发。现有 marketplace source 的 `"url"` 继续表示
-  HTTP fetch `marketplace.json`，这是和 plugin entry source 不同的轴。
-- Phase 1 不实现 zip 内 package manager 安装，不执行 `npm install` / `pip install`。
-- Phase 1 不改变 plugin runtime、启用态、MCP/hook 安全策略，也不把任何业务状态下沉到 Electron
-  main process、relay 或 web remote 链路。
-- Phase 1 不实现自动 update daemon；只扩展现有 overview/update 检测使用的 pin 读取能力。
-- Phase 1 不引入新的缓存布局，不把 zip 文件作为长期缓存 key 或安装产物。
+- Phase 1 does not support marketplace-as-zip. A marketplace source `"url"` still means an HTTP fetch of `marketplace.json` — a different axis from the plugin entry source.
+- No package-manager installation inside zips (`npm install` / `pip install`).
+- No changes to plugin runtime, enable state, or MCP/hook security policy; no business state sinks into the Electron main process, relay, or web remote links.
+- No auto-update daemon; only the pin-reading used by the existing overview/update detection was extended.
+- No new cache layout; zip files are never a long-term cache key or install artifact.
 
 ## 2. Source schema
 
-新增 plugin entry URL artifact type：
+Plugin entry URL artifact type:
 
 ```json
 {
@@ -53,69 +41,32 @@
 }
 ```
 
-字段语义：
+Field semantics:
 
-| 字段 | Phase 1 语义 |
+| Field | Semantics |
 | --- | --- |
-| `source` | 固定为 `"url"`。这是 plugin entry source，不是 marketplace source。 |
-| `type` | zip artifact 必填为 `"zip"`。缺失或 `"git"` 时保持 legacy git clone。未知值直接诊断/报错，不 fallback。 |
-| `url` | 必填，远端 CDN 必须是 `https://` URL。本地测试/fixture 允许 loopback HTTP（`localhost` / `127.0.0.1` / `::1`）。 |
-| `sha256` | zip source 必填，64 位小写 hex。下载后必须先校验 digest，校验通过才允许解压。 |
-| `path` | 可选，zip 解压后的插件子目录。语义对齐 git source 的 `path`，先安全解压到临时根，再在临时根内 `resolveInside(path)` 定位插件根。 |
-| `headers` | 可选，仅允许普通字符串 header；禁止 `Authorization`、`Cookie` 等敏感 header 进入 marketplace JSON。Phase 1 建议仅支持公开 CDN，不把 credential 写入 marketplace。 |
-| `stripRoot` | 可选布尔值。`true` 表示 zip 所有条目都有同一个安全顶层目录时，定位 root 时可剥离这一层；默认推荐 `true`，但实现要和 `path` 互斥或明确优先级。 |
+| `source` | Fixed `"url"` — this is the plugin entry source, not the marketplace source. |
+| `type` | Required `"zip"` for zip artifacts. Missing or `"git"` keeps legacy git clone. Unknown values diagnose/error, never fall back. |
+| `url` | Required; remote CDN must be `https://`. Local test/fixture use allows loopback HTTP (`localhost` / `127.0.0.1` / `::1`). |
+| `sha256` | Required for zip sources, 64 lowercase hex. The digest is verified before extraction is allowed. |
+| `path` | Optional plugin subdirectory inside the zip, matching git source `path` semantics: extract safely to a temp root, then `resolveInside(path)` within it. |
+| `headers` | Optional, plain string headers only; sensitive headers such as `Authorization` and `Cookie` are forbidden in marketplace JSON. Phase 1 targets public CDNs and writes no credentials into marketplaces. |
+| `stripRoot` | Optional boolean. `true` strips the single safe top-level directory when all entries share one; recommended default `true`, with a defined priority versus `path`. |
 
-推荐的最小公开 CDN entry：
+Why `{ "source": "url", "url": "https://...zip" }` without `type` is not accepted:
 
-```json
-{
-  "name": "superpowers-cdn",
-  "source": {
-    "source": "url",
-    "type": "zip",
-    "url": "https://cdn.example.com/plugins/superpowers.zip",
-    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  }
-}
-```
+- A plugin entry `{source:"url"}` reaches `resolveGitPluginSource()` inside `resolvePluginSourceRoot()` and clones `source.url`.
+- A marketplace source `{source:"url"}` in `loadMarketplaceFromSource()` fetches `source.url` and parses JSON. The two `"url"` meanings live at different layers; overloading them further would break Claude marketplace compatibility.
+- So zip must be written explicitly as `{source:"url", type:"zip"}`. Type is never guessed from the `.zip` suffix, because CDN signed URLs and suffix-less artifact URLs are both common.
 
-带子目录的 monorepo zip entry：
+### Marketplace URL filename and JSON contract
 
-```json
-{
-  "name": "atomic-agents",
-  "source": {
-    "source": "url",
-    "type": "zip",
-    "url": "https://cdn.example.com/archives/agents-bundle.zip",
-    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "path": "claude-plugin/atomic-agents"
-  }
-}
-```
+- The marketplace URL's filename plays no part in type detection. `marketplace.json`, `index.json`, or an extension-less URL all download and parse through the existing marketplace URL fetch path.
+- The response keeps the existing marketplace manifest format with a valid top-level `name` and `plugins`; extension fields like `description`, `owner`, `description_i18n` stay in the raw manifest under the existing lenient parsing rules.
+- No `{ "marketplace": { "name": "..." }, "plugins": [...] }` envelope compatibility. CDN publishers must emit the existing format so clients never maintain two synonymous schemas.
+- A plugin artifact's zip filename is likewise irrelevant; the client dispatches only on the entry's `{ "source": "url", "type": "zip" }` and verifies content with `sha256`.
 
-不采用无 `type` 的 `{ "source": "url", "url": "https://...zip" }` 的原因：
-
-- 当前 plugin entry `{source:"url"}` 在 `resolvePluginSourceRoot()` 中进入
-  `resolveGitPluginSource()`，会 clone `source.url`。
-- 当前 marketplace source `{source:"url"}` 在 `loadMarketplaceFromSource()` 中才是
-  `fetch(source.url)` 并解析 JSON。两个 `"url"` 属于不同层级，继续混用会破坏 Claude
-  marketplace 兼容和用户心智。
-- 因此 zip 必须显式写成 `{source:"url", type:"zip"}`。禁止通过 `.zip` 后缀猜测类型，
-  因为 CDN 签名 URL 和无后缀 artifact URL 都很常见。
-
-### Marketplace URL 文件名与 JSON 契约
-
-- marketplace URL 的文件名不参与类型判断。`marketplace.json`、`index.json` 或无扩展名 URL
-  都通过现有 marketplace URL fetch 路径下载并解析 JSON。
-- 响应内容继续使用现有 marketplace manifest 格式，顶层直接包含合法 `name` 和 `plugins`；
-  `description`、`owner`、`description_i18n` 等扩展字段可按现有宽松解析规则保留在 raw manifest 中。
-- 不新增 `{ "marketplace": { "name": "..." }, "plugins": [...] }` envelope 兼容。CDN 发布端必须输出
-  现有格式，避免客户端同时维护两个同义 schema。
-- plugin artifact 的 zip 文件名同样不参与判断。客户端只依据 plugin entry 的
-  `{ "source": "url", "type": "zip" }` 分发，并使用 `sha256` 验证下载内容。
-
-官方 CDN marketplace 可直接使用：
+The official CDN marketplace can be used directly:
 
 ```json
 {
@@ -137,108 +88,79 @@
 }
 ```
 
-入口 URL 为 `https://cdn-zcode.z.ai/zcode/official-plugin/index.json`。示例中的版本和 digest
-仅表示发布时快照；客户端 smoke 测试应从 overview 读取 live 版本，避免 CDN 增量发布造成硬编码漂移。
+Entry URL: `https://cdn-zcode.z.ai/zcode/official-plugin/index.json`. Versions and digests in examples are publish-time snapshots; client smoke tests should read the live version from the overview instead of hardcoding.
 
-## 3. Install pipeline steps
+## 3. Install pipeline
 
-当前安装链路事实：
+Facts of the current chain:
 
-- `installMarketplacePlugin()` 先确保 marketplace manifest 可用，再解析 dependency closure。
-- 每个 entry 进入 `cacheMarketplacePlugin()`。
-- `cacheMarketplacePlugin()` 调用 `resolvePluginSourceRoot()` 得到 `{ path, cleanup? }`。
-- 然后读取插件 root 的 manifest version，计算 cache 目录，`rm target` 后 `cp sourceRoot.path`
-  到 cache，最后写入安装记录。
-- `validateMarketplacePlugin()`、`describeMarketplacePlugin()` 和 marketplace source validate
-  也会调用 `resolvePluginSourceRoot()`；因此 zip resolver 必须是临时目录 + cleanup 合约，不能只为安装路径服务。
+- `installMarketplacePlugin()` ensures the marketplace manifest, then resolves the dependency closure.
+- Each entry reaches `cacheMarketplacePlugin()`, which calls `resolvePluginSourceRoot()` for `{ path, cleanup? }`, reads the plugin root's manifest version, computes the cache directory, `rm target` + `cp` from the source root, and writes the install record.
+- `validateMarketplacePlugin()`, `describeMarketplacePlugin()`, and marketplace source validate also call `resolvePluginSourceRoot()`, so the zip resolver must honor the temp-directory + cleanup contract, not just serve installs.
 
-Phase 1 zip 安装步骤：
+Zip dispatch inside `resolvePluginSourceRoot()` for `sourceKind === "url"`:
 
-1. `installMarketplacePlugin({ marketplace, name })` 保持不变，找到目标 `PluginMarketplaceEntry`。
-2. `cacheMarketplacePlugin()` 保持不变，调用 `resolvePluginSourceRoot({ entry, ... })`。
-3. `resolvePluginSourceRoot()` 在 `sourceKind === "url"` 分支按 `source.type` 分发：
-   - `url` 缺失、不是字符串或为空时立即报错；显式 object source 的字段错误不得继续走
-     `localByName` fallback。
-   - `type` 缺失或 `"git"`：继续调用现有 `resolveGitPluginSource()`。
-   - `type === "zip"`：进入 zip 下载/解压安装路径。
-   - 其他 `type`：报 unsupported/invalid source。
-   - 校验 `url` / `sha256` / `path` / `headers` / `stripRoot` shape。
-   - 调用 `resolveZipPluginSource({ url, sha256, path, headers, stripRoot, signal })`。
-4. `resolveZipPluginSource()` 创建临时目录，例如 `mkdtemp(join(tmpdir(), "zcode-plugin-zip-"))`。
-5. 下载 zip 到临时文件或流式写入临时文件：
-   - 使用与 marketplace 操作一致的 AbortSignal。
-   - 对齐 `ZCODE_HTTP_PROXY` / `ZCODE_HTTPS_PROXY` / `ZCODE_NO_PROXY` / CA 等网络出口配置。
-   - 记录累计下载字节，超过上限立即 abort 并删除临时目录。
-6. 计算下载内容 SHA-256：
-   - 若 entry 提供 `sha256`，实际 digest 必须完全相等。
-   - 若策略允许缺失 `sha256`，仍计算 digest 并仅用于日志/诊断/update pin。
-7. 安全解压 zip 到临时 extract root：
-   - 逐 entry 校验路径，拒绝绝对路径、`..`、反斜杠、Windows drive、空 path、NUL path。
-   - 拒绝 symlink、device、socket 等非普通文件/目录。
-   - 逐 entry 统计 uncompressed bytes、文件数、目录数、单文件大小，超限失败。
-8. 定位插件 root：
-   - 若 `path` 存在：使用 `resolveInside(extractRoot, path)`，要求目录存在。
-   - 否则若 `stripRoot === true` 或默认启用 root detection：当所有解压条目共享一个顶层目录时，使用该顶层目录。
-   - 否则使用 `extractRoot`。
-   - 定位后的 root 交给现有 `validatePluginRoot()` / `resolveInstalledPluginVersion()`，必须找到合法 plugin manifest，除非 entry `strict:false` 走现有 synthetic manifest 规则。
-9. `resolveZipPluginSource()` 返回 `{ path: pluginRoot, cleanup }`。cleanup 使用有限重试；失败路径必须保留
-   下载、校验或解压的原始错误，并把 cleanup failure 作为附加诊断。
-10. `cacheMarketplacePlugin()` 继续按现有逻辑复制 plain directory 到：
+- A missing, non-string, or empty `url` errors immediately; field errors on an explicit object source never fall through to the `localByName` fallback.
+- `type` missing or `"git"`: existing `resolveGitPluginSource()`.
+- `type === "zip"`: `resolveZipPluginSource({ url, sha256, path, headers, stripRoot, signal })`.
+- Any other `type`: unsupported/invalid source error.
 
-```text
-~/.zcode/cli/plugins/cache/{marketplace}/{plugin}/{version}/
-```
+`resolveZipPluginSource()` steps:
 
-11. cache 复制成功后的 source cleanup 是 best-effort；cleanup failure 不得阻断安装记录构造和
-    `saveInstalledPlugins()`，避免 cache 与 `installed_plugins.json` 分裂。
-12. `ensureMarketplaceEntryManifest()`、安装记录 `source` 回写、`saveInstalledPlugins()` 都沿用当前逻辑。安装记录中的 `source` 应保留完整 zip source object，便于后续 `sha256` update pin 比较。
+1. Create a temp directory (`mkdtemp(join(tmpdir(), "zcode-plugin-zip-"))`).
+2. Download to a temp file using the marketplace operation's AbortSignal, the `ZCODE_HTTP_PROXY` / `ZCODE_HTTPS_PROXY` / `ZCODE_NO_PROXY` / CA egress config, and an accumulated-bytes cap that aborts and removes the temp directory on overflow.
+3. Compute SHA-256 of the download: with an entry `sha256`, digests must match exactly; if policy ever allows a missing `sha256`, the digest is still computed but used only for logs/diagnostics/update pin.
+4. Safely extract to a temp extract root:
+   - per-entry path checks rejecting absolute paths, `..`, backslashes, Windows drives, empty and NUL paths;
+   - rejecting symlinks, devices, sockets, and other non-plain files/directories;
+   - per-entry accounting of uncompressed bytes, file/directory counts, and single-file size, failing over the limits.
+5. Locate the plugin root:
+   - with `path`: `resolveInside(extractRoot, path)`, directory must exist;
+   - else with `stripRoot === true` (or default single-root detection): the shared single top-level directory;
+   - else `extractRoot`.
+   The root then goes through `validatePluginRoot()` / `resolveInstalledPluginVersion()` and must contain a valid plugin manifest, except entries with `strict:false` following the existing synthetic manifest rules.
+6. Return `{ path: pluginRoot, cleanup }`. Cleanup retries finitely; failure paths keep the original download/verify/extract error and attach the cleanup failure as an extra diagnostic.
+7. `cacheMarketplacePlugin()` copies the plain directory to `~/.zcode/cli/plugins/cache/{marketplace}/{plugin}/{version}/` as today. Post-copy source cleanup is best-effort and must not block the install record or `saveInstalledPlugins()`, avoiding a cache/`installed_plugins.json` split. `ensureMarketplaceEntryManifest()`, the install-record `source` write-back, and `saveInstalledPlugins()` are unchanged; the record keeps the full zip source object so later `sha256` update-pin comparisons work.
 
 ## 4. Security requirements
 
 ### HTTPS
 
-- Phase 1 远端 CDN 默认只允许 `https://`。`http://` 仅允许 loopback host（`localhost`、`127.0.0.1`、`::1`）用于本地模拟真实 URL 的 fixture 和开发验证。
-- URL 必须可被 `new URL()` 解析，禁止 `file://`、`data:`、`blob:`、`ftp:`。
-- 跟随 redirect 时最终 URL 也必须是 `https://`；redirect 次数设上限。
+- Remote CDNs are `https://` only; `http://` is allowed only for loopback hosts (`localhost`, `127.0.0.1`, `::1`) in local fixtures and dev verification.
+- URLs must parse with `new URL()`; `file://`, `data:`, `blob:`, `ftp:` are forbidden.
+- The final URL after redirects must also be `https://`; redirect count is capped.
 
 ### Headers
 
-- `headers` 只允许普通字符串键值。
-- 默认拒绝敏感 header：`authorization`、`cookie`、`proxy-authorization`、`set-cookie`。
-- redirect 仅在目标 URL 与当前 URL 同 origin 时继续发送自定义 `headers`；跨 origin redirect
-  必须清除全部自定义 `headers`，不能依赖敏感 header denylist 防止信息泄露。
-- Phase 1 推荐只支持公开 CDN。需要私有 CDN 时，应先设计 credential store 集成，不能把 token 写进 marketplace JSON。
+- `headers` accepts plain string key/values only.
+- Sensitive headers are rejected by default: `authorization`, `cookie`, `proxy-authorization`, `set-cookie`.
+- Custom `headers` survive a redirect only when the target shares the origin of the current URL; a cross-origin redirect must drop all custom headers — do not rely on the sensitive-header denylist to prevent leakage.
+- Phase 1 targets public CDNs. Private CDNs need a credential-store integration designed first; tokens never go into marketplace JSON.
 
 ### Network egress
 
-- ZIP 下载必须使用 adapters 的 web-fetch 网络出口语义：显式 `ZCODE_HTTP_PROXY` / `ZCODE_NO_PROXY`
-  优先，并回退读取 `ZCODE_TOOL_ENV_PASSTHROUGH_JSON` 中封存的用户 `HTTP_PROXY` / `HTTPS_PROXY` /
-  `NO_PROXY`。
-- 不能直接使用只识别显式 ZCode proxy 的默认 HTTP resolver；否则 agent 清理标准代理变量后，git source
-  可以安装而 ZIP source 会尝试直连。
-- CA、timeout、下载大小限制和 AbortSignal 继续由共享 HTTP adapter 处理，不在 plugin 层重复实现。
+- ZIP downloads use the adapters web-fetch egress semantics: explicit `ZCODE_HTTP_PROXY` / `ZCODE_NO_PROXY` first, falling back to the user `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` sealed inside `ZCODE_TOOL_ENV_PASSTHROUGH_JSON`.
+- Never use a default HTTP resolver that only knows explicit ZCode proxies — after the agent scrubs standard proxy variables, git sources would install while zip sources would attempt a direct connection.
+- CA, timeout, download size limits, and the AbortSignal stay in the shared HTTP adapter, not re-implemented in the plugin layer.
+- Git clone uses `execGitCommand()` with env from `buildMarketplaceGitEnv()` -> `sanitizeZCodeRuntimeEnv()` -> `applyNetworkEgressEnv()`. Zip download does not run a git subprocess and cannot inherit that env naturally; it goes through the shared egress helper / fetch dispatcher so HTTP zip downloads match the marketplace/git network policy. `@zcode/adapters` already depends on `proxy-agent` for building the Node fetch dispatcher.
 
 ### Integrity
 
-- `sha256` 作为安全默认必填，格式为 64 位 hex，比较前统一小写。
-- 缺失 `sha256` 时 install 阻断，validate 返回明确 diagnostic，提示 manifest 必须提供 `sha256`。
-- 校验必须发生在解压前。digest mismatch 时不得解压、不得写 cache、不得写 install record。
-- 下载失败、校验失败、解压失败时必须清理临时目录。
-- 临时目录删除至少进行有限次数重试。最终仍失败时，原始业务错误保持为主错误；安装成功路径不得因
-  cleanup failure 回滚或跳过 installed record。
+- `sha256` is the security default and required: 64-hex, lowercased before comparison.
+- A missing `sha256` blocks install; validate returns an explicit diagnostic saying the manifest must provide `sha256`.
+- Verification happens before extraction. On digest mismatch: no extraction, no cache write, no install record.
+- Download, verify, and extract failures clean the temp directory. Temp cleanup retries finitely; if it ultimately fails, the original business error stays primary, and a successful install is never rolled back or skipped because of cleanup.
+- `yauzl` is declared as an explicit dependency of `@zcode/adapters` (the repo already uses it in desktop/services, but cross-package implicit use is not allowed).
 
-### Zip Slip / unsafe entry
+### Zip slip / unsafe entries
 
-- zip entry path normalization 可参考 `packages/services/src/skill-sync/skillSyncPath.ts` 的思路：
-  拒绝绝对路径、`..`、反斜杠、Windows drive、空段，并用 `relative(targetRoot, targetPath)`
-  再确认目标仍在 extract root 内。
-- 不能只依赖 yauzl 的 path 字符串；写文件前必须自己做 containment。
-- 对 zip directory entry 和 file entry 分别处理。拒绝 symlink 和特殊文件；如果库无法可靠暴露 external attrs，
-  Phase 1 保守策略是只写普通 file entry 和 directory entry，其他类型失败。
+- Entry path normalization follows the approach of `packages/services/src/skill-sync/skillSyncPath.ts`: reject absolute paths, `..`, backslashes, Windows drives, and empty segments, then re-check with `relative(targetRoot, targetPath)` that the target stays inside the extract root.
+- Never trust the library's path string alone; do own containment before writing files.
+- Directory and file entries are handled separately. Symlinks and special files are rejected; where the library cannot reliably expose external attrs, the conservative policy writes only plain file and directory entries and fails everything else.
 
 ### Size limits
 
-建议常量放在 adapters plugin zip helper 内：
+Constants live in the adapters plugin zip helper:
 
 ```ts
 const ZIP_DOWNLOAD_MAX_BYTES = 100 * 1024 * 1024;
@@ -247,312 +169,117 @@ const ZIP_MAX_ENTRIES = 20_000;
 const ZIP_MAX_SINGLE_FILE_BYTES = 50 * 1024 * 1024;
 ```
 
-默认值可按产品调整，但必须有：
+Defaults are product-tunable, but all five must exist: compressed download cap, uncompressed cap, entry-count cap, single-file cap, temp-directory cleanup.
 
-- compressed download 上限；
-- uncompressed extracted bytes 上限；
-- entry count 上限；
-- 单文件上限；
-- 临时目录 cleanup。
+## 5. Update detection
 
-### Network / proxy
+Current facts:
 
-- 现有 git clone 使用 `execGitCommand()`，其 env 来自 `buildMarketplaceGitEnv()` ->
-  `sanitizeZCodeRuntimeEnv()` -> `applyNetworkEgressEnv()`。
-- zip 下载不走 git 子进程，不能自然继承这套 env；实现应新增一个 fetch dispatcher/proxy-agent
-  适配点，或抽出共享 network egress helper，让 HTTP zip download 与 marketplace/git 网络策略一致。
-- `@zcode/adapters` 已依赖 `proxy-agent`，可优先用它构造 Node fetch dispatcher；具体 API 需要 coding
-  阶段按当前 Node/undici 类型验证，不在 spec 中假设不存在的调用签名。
+- `apps/zcode-cli/packages/bootstrap/src/plugins.ts` builds `latestPinByPluginId` from `entry.version` and the source pin (`readPluginSourceSha()`, now `readPluginSourceIdentityPin()`).
+- `comparePluginUpdate()` priority: latest version present -> semver/version compare; else latest sha present -> sha identity compare; else `none`.
 
-## 5. Update detection changes
+Zip semantics:
 
-当前更新检测事实：
-
-- `apps/zcode-cli/packages/bootstrap/src/plugins.ts` 构建 `latestPinByPluginId` 时读取
-  `entry.version` 和 `readPluginSourceSha(entry.source)`。
-- `comparePluginUpdate()` 的优先级是：
-  1. latest version 存在 -> semver/version compare；
-  2. 否则 latest sha 存在 -> sha identity compare；
-  3. 否则 -> `none`。
-- `readPluginSourceSha()` 当前只读取 `source.sha`，兼容 `source.commit`。
-
-zip 设计：
-
-- 保持 version primary：当 marketplace entry 有 `version`，仍以 version 作为 update 轴。
-- 当 entry 无 `version` 但 zip source 有 `sha256`，用 `sha256` 作为内容完整性 pin 和 update identity。
-- 为避免把 git commit sha 与 zip sha256 混成一个含义，建议新增更通用的 helper：
+- Version stays primary: an entry with `version` updates on the version axis.
+- Without `version` but with zip `sha256`, the `sha256` is the content integrity pin and update identity.
+- To avoid conflating git commit shas with zip sha256, the pin helper returns a kind:
 
 ```ts
 readPluginSourcePin(source): { kind: "git-sha" | "zip-sha256"; value: string } | undefined
 ```
 
-Phase 1 为最小改动，也可以扩展现有 `readPluginSourceSha()`：
+The shipped helper is `readPluginSourceIdentityPin()`; `readPluginSourceSha()` remains as a wrapper. Git sources return `sha` / `commit`; zip sources return `sha256`.
 
-- 对 git/url/github/git-subdir 返回 `sha` / `commit`；
-- 对 zip 返回 `sha256`；
-- 注释明确该值是“source identity pin”，不再只表示 git sha。
+Install records: `cacheMarketplacePlugin()` writes `input.entry.source` verbatim into `InstalledPluginRecord.source`, so zip installs keep `source.sha256` for the next overview comparison. No new persisted field records the downloaded digest; an entry without `sha256` provides no update pin and relies on `version` only.
 
-推荐最终取名：`readPluginSourceIdentityPin()`，再同步更新 `bootstrap/src/plugins.ts` 和
-`version-compare.ts` 的参数名，减少后续误读。
-
-安装记录：
-
-- `cacheMarketplacePlugin()` 当前会把 `input.entry.source` 原样写入 `InstalledPluginRecord.source`。
-  因此 zip 安装后 record 可保留 `source.sha256`，供下次 overview 比较。
-- 如果允许缺失 `sha256`，安装记录可记录实际下载 digest 作为内部字段，但这会改变 record schema。
-  Phase 1 推荐不新增持久字段：缺失 `sha256` 的 entry 不提供 update pin，只能依赖 `version`。
-
-## 6. Files/modules to touch
-
-必须修改：
-
-- `docs/plugin-cdn-zip-source.md`
-  - 本 spec，随实现更新决策和验收结果。
-- `docs/claude-code-marketplace-plugin-compat.md`
-  - 在 plugin entry source 矩阵新增 `{source:"url", type:"zip"}`。
-  - 明确无 `type` 的 `{source:"url"}` 仍是 git clone 兼容路径，不代表 HTTP zip。
-- `apps/zcode-cli/packages/adapters/package.json`
-  - `@zcode/adapters` 当前没有 `yauzl`；若采用 yauzl，需要在 adapters 自己声明 dependency。
-  - 仓库已有 `yauzl`：`packages/desktop/package.json` 和 `packages/services/package.json` 均依赖
-    `yauzl` / `@types/yauzl`，但不能跨 package 隐式使用。
-- `apps/zcode-cli/packages/adapters/src/plugins/marketplace.ts`
-  - `PluginMarketplaceEntry.source` 仍是 `unknown`，但 `sourceKind === "url"` 需要按 `source.type` 分发。
-  - 新增 `readPluginSourceIdentityPin()` 或扩展/重命名 `readPluginSourceSha()`。
-  - `validateMarketplaceEntryShape()` 新增 zip shape 和 integrity diagnostic。
-  - `getMarketplaceSourceValidationDeferral()` 可把 zip 也视为 remote plugin source，在 marketplace-level
-    validate 时 deferral，避免批量下载数百个 zip。
-- `apps/zcode-cli/packages/adapters/src/plugins/zip-source.ts`（建议新文件）
-  - `resolveZipPluginSource()`、download、sha256、safe extract、root locate。
-  - 保持 marketplace.ts 体积可控。
-- `apps/zcode-cli/packages/adapters/src/plugins/index.ts`
-  - 如新增 public helper 或测试需要导出，更新 barrel。
-- `apps/zcode-cli/packages/adapters/src/network/subprocess-env.ts` 或相邻 network helper
-  - 抽出 HTTP fetch/proxy 对齐逻辑，避免 zip 下载绕过 `ZCODE_HTTP_PROXY` 等网络策略。
-- `apps/zcode-cli/packages/bootstrap/src/plugins.ts`
-  - update overview 的 latest/installed pin 读取从 git sha 扩展到 zip sha256。
-- `apps/zcode-cli/packages/adapters/src/plugins/version-compare.ts`
-  - 如果保留字符串 pin，逻辑可不变但命名/注释要更新；如果区分 pin kind，更新类型和测试。
-
-必须新增/更新测试：
-
-- `apps/zcode-cli/packages/adapters/tests/plugins.test.ts`
-- `apps/zcode-cli/packages/adapters/tests/version-compare.test.ts`
-- 如网络/proxy helper 抽出：对应 adapters network 单测。
-
-可能需要修改：
-
-- `pnpm-lock.yaml`
-  - adapters 新增 `yauzl` dependency 后会更新。
-- `apps/zcode-cli/packages/bootstrap/tests/plugins.test.ts`
-  - 如果 overview schema 或 helper 语义在 bootstrap 层暴露，需要补覆盖。
-
-不应修改：
-
-- Electron main process / relay 业务状态。
-- web remote task/session realtime 语义。
-- plugin cache 布局和 runtime loader 安装产物读取语义。
-
-## 7. Test plan
+## 6. Test plan
 
 ### Unit: source parsing / validation
 
-- zip source shape valid：
-  - `source:"url"`、`type:"zip"`、HTTPS 或 loopback HTTP url、合法 sha256、可选 path、可选 stripRoot。
-- zip source invalid：
-  - 缺 url；
-  - 非 loopback `http://`；
-  - `file://`；
-  - sha256 非 64 hex；
-  - headers 非 object；
-  - sensitive headers；
-  - `path` 含 `..` / Windows drive / 反斜杠。
-- marketplace-level validate 对 remote zip source 返回 `plugin_validation_deferred`，不批量下载。
+- Valid zip shape: `source:"url"`, `type:"zip"`, HTTPS or loopback HTTP url, valid sha256, optional `path`, optional `stripRoot`.
+- Invalid: missing url; non-loopback `http://`; `file://`; sha256 not 64 hex; headers not an object; sensitive headers; `path` containing `..` / Windows drive / backslash.
+- Marketplace-level validate returns `plugin_validation_deferred` for remote zip sources instead of batch-downloading.
 
 ### Unit: download / integrity
 
-- 下载 zip，sha256 匹配后继续。
-- sha256 mismatch：报错，临时目录清理，不写 cache，不写 installed record。
-- 下载超过 compressed limit：报错并 abort。
-- 支持 AbortSignal：下载中 abort 后清理临时目录。
-- cleanup failure：失败路径保留原始错误并附带 cleanup diagnostic；cache 已复制成功时仍写入
-  installed record。
-- 代理配置测试：仅在 `ZCODE_TOOL_ENV_PASSTHROUGH_JSON` 中提供用户 `HTTP_PROXY`，不设置
-  `ZCODE_HTTP_PROXY`，断言 ZIP 请求仍通过本地代理；测试不得访问外网。
-- redirect 安全测试：跳转到非 HTTPS、非 loopback URL 时拒绝；跨 origin 跳转时不转发自定义
-  `headers`，同 origin 跳转仍可保留普通 header。
+- sha256 match proceeds; mismatch errors, cleans the temp directory, writes no cache or installed record.
+- Compressed-limit overflow aborts; AbortSignal mid-download cleans up.
+- Cleanup failure: failure paths keep the original error plus a cleanup diagnostic; with the cache already copied, the installed record is still written.
+- Proxy: with the user `HTTP_PROXY` only inside `ZCODE_TOOL_ENV_PASSTHROUGH_JSON` and no `ZCODE_HTTP_PROXY`, the ZIP request still goes through the local proxy; tests never touch the public network.
+- Redirects: reject non-HTTPS/non-loopback targets; cross-origin redirects drop custom `headers`; same-origin keeps ordinary headers.
 
 ### Unit: safe extract fixtures
 
-- 正常 zip：根目录直接包含 `.claude-plugin/plugin.json`。
-- 单顶层目录 zip：`plugin-1.0.0/.claude-plugin/plugin.json`，默认 root detection/`stripRoot:true`
-  后安装成功。
-- 子目录 zip：`bundle/claude-plugin/atomic-agents/.claude-plugin/plugin.json` + `path` 安装成功。
-- Zip Slip：
-  - `../escape.txt`；
-  - `/absolute.txt`；
-  - `C:\escape.txt`；
-  - `nested/../../escape.txt`；
-  - 反斜杠路径。
-- 特殊 entry：
-  - symlink；
-  - device/socket 或未知 type；
-  - directory/file 混合。
-- limit：
-  - entry count 超限；
-  - extracted bytes 超限；
-  - 单文件超限。
+- Normal zip with `.claude-plugin/plugin.json` at the root.
+- Single top-level directory zip installs via default root detection/`stripRoot:true`.
+- Subdirectory zip installs with `path`.
+- Zip slip variants: `../escape.txt`, `/absolute.txt`, `C:\escape.txt`, `nested/../../escape.txt`, backslash paths.
+- Special entries: symlink; device/socket/unknown type; mixed directory/file.
+- Limits: entry count, extracted bytes, single file.
 
 ### Unit: install/cache behavior
 
-- `installMarketplacePlugin()` 安装 zip source 后，cache 路径仍是：
-
-```text
-cache/{marketplace}/{plugin}/{version}/
-```
-
-- 安装记录 `source` 保留 `{source:"url", type:"zip", url, sha256, ...}`。
-- zip plugin manifest version 优先于 marketplace entry version 的现有规则保持不变。
-- `describeMarketplacePlugin()` 对未安装 zip plugin 可临时下载/解压/枚举组件，并 cleanup。
-- `validateMarketplacePlugin()` 对单个 zip plugin 深扫 root。
+- After installing a zip source the cache path is still `cache/{marketplace}/{plugin}/{version}/`.
+- The install record `source` keeps `{source:"url", type:"zip", url, sha256, ...}`.
+- Plugin manifest version still wins over the marketplace entry version.
+- `describeMarketplacePlugin()` can temporarily download/extract/enumerate an uninstalled zip plugin and clean up; `validateMarketplacePlugin()` deep-scans the root.
 
 ### Unit: update detection
 
-- entry 有 `version` 和 `sha256`：version 轴优先，sha256 变化但 version 相同 -> `none`。
-- entry 无 `version`，installed/source sha256 与 latest/source sha256 不同 -> `update-available`。
-- latest 有 sha256，installed 无 sha256 -> `version-changed`。
-- 无 version、无 sha256 -> `none` 或 warning，按产品决策固定。
-- git `sha` / `commit` 现有测试保持通过，证明没有破坏 Claude official git path。
+- Entry with `version` and `sha256`: version axis wins; sha256 change with same version -> `none`.
+- Entry without `version`, installed/source sha256 differing from latest -> `update-available`.
+- Latest with sha256, installed without -> `version-changed`.
+- Neither version nor sha256 -> `none` or a warning, per the fixed product decision.
+- Existing git `sha` / `commit` tests keep passing (Claude official git path intact).
 
 ### Desktop E2E: startup seed + service install + discover
 
-- pending manual-review spec：
-  `packages/desktop/test/e2e/plugins/manual-review/pending/plugin-cdn-zip-marketplace-install.test.ts`。
-- WDIO `beforeSession` 在 Electron 启动前启动 loopback zip fixture server，并把 zip marketplace seed 到
-  `<E2E_HOME>/.zcode/cli/plugins/known_marketplaces.json` 与
-  `<E2E_HOME>/.zcode/cli/plugins/marketplaces/{marketplace}/marketplace.json`。
-- spec 通过 renderer `window.__testActions` 调用真实 `zcodeAgentService.installPlugin()`，覆盖
-  desktop renderer -> services -> agent protocol -> bootstrap -> adapters 的安装链路。
-- 断言范围：
-  - install 前 overview 可见 seeded marketplace 和 zip plugin；
-  - install 后 `cache/{marketplace}/{plugin}/{version}` 已 materialize；
-  - `installed_plugins.json` 保留 `{source:"url", type:"zip", url, sha256}`；
-  - `config.json#plugins.enabledPlugins[id] === true`；
-  - `listPlugins()` discover 出 command/skill 组件。
+- Pending manual-review spec: `packages/desktop/test/e2e/plugins/manual-review/pending/plugin-cdn-zip-marketplace-install.test.ts`.
+- WDIO `beforeSession` starts a loopback zip fixture server before Electron launches and seeds the zip marketplace into `<E2E_HOME>/.zcode/cli/plugins/known_marketplaces.json` and `<E2E_HOME>/.zcode/cli/plugins/marketplaces/{marketplace}/marketplace.json`.
+- The spec calls the real `zcodeAgentService.installPlugin()` via renderer `window.__testActions`, covering desktop renderer -> services -> agent protocol -> bootstrap -> adapters.
+- Asserts: seeded marketplace and zip plugin visible in overview before install; `cache/{marketplace}/{plugin}/{version}` materialized after; `installed_plugins.json` keeps `{source:"url", type:"zip", url, sha256}`; `config.json#plugins.enabledPlugins[id] === true`; `listPlugins()` discovers command/skill components.
 
 ### Desktop E2E: official CDN smoke
 
-- pending manual-review spec：
-  `packages/desktop/test/e2e/plugins/manual-review/pending/plugin-cdn-zip-official-cdn-smoke.test.ts`。
-- 这两个用例验证插件安装，不涉及 conversation/session 状态机，因此登记在 plugin 专项目录，不进入
-  conversation case catalog 和 coverage matrix。
-- 通过真实 `addPluginMarketplace()` 添加官方 `index.json`，随后走真实
-  `installPlugin()` 和 `listPlugins()` 服务入口。
-- 版本从 add 后的 overview 动态读取，不在测试中固定 CDN 发布版本；安装成功同时证明 manifest
-  可解析且 zip 的 `sha256` 与下载内容一致。
-- 断言 cache、`installed_plugins.json`、enabled config 和 command/skill discover。
-- 此用例依赖公网与官方 CDN 当前内容，只作为 manual smoke，不进入离线 replay/CI 稳定套件；确定性 CI
-  覆盖由 loopback seed 用例承担。
+- Pending manual-review spec: `packages/desktop/test/e2e/plugins/manual-review/pending/plugin-cdn-zip-official-cdn-smoke.test.ts`.
+- Both cases verify plugin installation only — no conversation/session state machine — so they live in the plugin directory, not the conversation case catalog or coverage matrix.
+- Adds the official `index.json` via the real `addPluginMarketplace()`, then real `installPlugin()` and `listPlugins()`.
+- Versions are read dynamically from the post-add overview, never hardcoded to a CDN release; a successful install proves both manifest parseability and `sha256` agreement with the download.
+- Asserts cache, `installed_plugins.json`, enabled config, and command/skill discovery.
+- Depends on the public network and current official CDN content: manual smoke only, excluded from offline replay/CI suites; deterministic CI coverage is the loopback seed case.
 
 ### Fixture strategy
 
-- 测试 zip 通过测试 helper 动态创建，不依赖外部 CDN。
-- 如果采用 `yauzl` 只读解压，可用现有测试依赖生成 zip；若没有 zip writer，测试可引入轻量 dev helper 或使用仓库已有 archive builder，但不要让 production helper 依赖 test-only API。
-- 所有 zip fixture 都必须跨 macOS/Linux/Windows 路径语义稳定。
+- Test zips are created dynamically by test helpers; no external CDN dependency.
+- Production helpers never depend on test-only APIs; all zip fixtures behave identically across macOS/Linux/Windows path semantics.
 
-## 8. Rollout phases
+## 7. Rollout phases
 
-### Phase 1 minimal
+### Phase 1 (shipped)
 
-- 新增 plugin entry `{source:"url", type:"zip"}`。
-- 远端 CDN HTTPS only，本地 fixture 允许 loopback HTTP。
-- `sha256` required。
-- 安全下载、sha256 校验、安全解压、root locate。
-- 复用 `resolvePluginSourceRoot()` -> `{ path, cleanup? }` -> `cacheMarketplacePlugin()`。
-- 更新 `docs/claude-code-marketplace-plugin-compat.md` source matrix。
-- 单元测试覆盖 install、validate、describe、update detection、zip slip、limits。
-- 不改 marketplace-as-zip。
-- 不改 runtime 和 UI 业务语义；UI 只自然展示现有 install/diagnostic 结果。
+- Plugin entry `{source:"url", type:"zip"}`; remote HTTPS only, loopback HTTP for fixtures; `sha256` required; safe download, digest verification, safe extraction, root locate; reuse of `resolvePluginSourceRoot()` -> `cacheMarketplacePlugin()`; `docs/claude-code-marketplace-plugin-compat.md` source matrix updated; unit coverage of install, validate, describe, update detection, zip slip, and limits; no marketplace-as-zip, no runtime or UI business-semantics changes.
 
-### Phase 2 hardening
+### Phase 2 open items
 
-- 私有 CDN credential 方案：headers 不直接写 marketplace JSON，改走 credential store 或 marketplace trust policy。
-- 更细的 trust policy：官方/企业 marketplace 可配置是否允许缺失 sha256、允许哪些 CDN host。
-- 内容寻址临时下载缓存：短期复用相同 `{url, sha256}`，但仍最终 materialize 到现有 cache 目录。
-- 支持 `.zip` marketplace source 需要单独 spec：marketplace-as-zip 是另一条轴，不能和 plugin zip source 混做。
-- zip 签名或 manifest 签名验证。
-- UI 侧展示 integrity 状态、digest mismatch 诊断、下载大小。
-- 网络代理集成补 e2e 或集成测试，覆盖企业代理/自签 CA。
+- Private CDN credentials: headers move out of marketplace JSON into a credential store or marketplace trust policy.
+- Finer trust policy: official/enterprise marketplaces configurable on allowing missing `sha256` and which CDN hosts are allowed.
+- Content-addressed temp download cache reusing the same `{url, sha256}` short-term, still materializing into the existing cache directory.
+- Marketplace-as-zip needs its own spec — a separate axis, not to be conflated with plugin zip sources.
+- Zip or manifest signature verification.
+- UI display of integrity state, digest mismatch diagnostics, and download size.
+- Network proxy integration e2e covering enterprise proxies and self-signed CAs.
 
-## 9. Open questions / decisions for product owner
+## 8. Open questions / decisions
 
-1. `sha256` 是否硬性必填？
-   - 推荐默认：第三方 marketplace 必填；官方/开发 fixture 可 warning。
-   - 影响：硬性必填安全性最好，但会阻断只给 CDN URL 的临时市场。
+1. Is `sha256` hard-required? Decision: required by default; third-party marketplaces must provide it, official/dev fixtures may warn. Hard requirement is safest but blocks URL-only ad-hoc marketplaces.
+2. `stripRoot` default? Decision: auto-detect and use the single top-level directory; explicit `stripRoot:false` uses the extract root. Most GitHub release zips have one top-level directory, so the default reduces manifest authoring.
+3. `headers` in Phase 1? Decision: support non-sensitive public headers, reject sensitive ones. CDN cache/control headers work without opening a plaintext-token path.
+4. Update detection without `sha256`? Decision: no identity pin, `version` only; with neither, show “no comparable update”. Avoids writing the downloaded digest into installed records (schema migration).
+5. Multiple plugin manifests in one zip root? Decision: without `path`, accept only one plugin root at the extract root or under a single top-level directory; multiple candidates error and require an entry `path`. Avoids installing the wrong plugin.
+6. `http://localhost` test sources? Decision: loopback HTTP allowed to exercise the real URL download path; non-loopback HTTP stays forbidden.
 
-2. `stripRoot` 默认值是什么？
-   - 推荐默认：自动检测单一顶层目录并使用该目录；显式 `stripRoot:false` 时使用 extract root。
-   - 影响：多数 GitHub release zip 都有一个顶层目录，默认自动剥离能减少 manifest author 配置。
+## 9. Boundaries that must not change
 
-3. `headers` Phase 1 是否支持？
-   - 推荐默认：支持非敏感公开 header，拒绝敏感 header。
-   - 影响：能支持 CDN cache/control header，但不打开 token 明文入口。
-
-4. 缺失 `sha256` 的 update detection 怎么展示？
-   - 推荐默认：不提供 identity pin，只能依赖 `version`；若也无 version，显示无可比较更新。
-   - 影响：避免把下载时实际 digest 写入 installed record 造成 schema 迁移。
-
-5. zip root 中同时有多个 plugin manifest 怎么处理？
-   - 推荐默认：没有 `path` 时只接受 extract root 或单一顶层目录下的一个插件 root；多个候选时报错，要求 marketplace entry 写 `path`。
-   - 影响：避免安装错插件。
-
-6. 是否允许 `http://localhost` 测试源？
-   - 决策：允许 loopback HTTP，用于模拟真实 ZIP URL 拉取；非 loopback HTTP 仍禁止。
-   - 影响：测试可以覆盖真实 HTTP URL 下载链路，同时不放开远端明文 CDN。
-
-## 10. Implementation task checklist
-
-- [ ] 阅读并保持本 spec 与 `docs/claude-code-marketplace-plugin-compat.md` 一致。
-- [ ] 在 adapters 增加 zip dependency：优先评估 `yauzl`，并在 `apps/zcode-cli/packages/adapters/package.json`
-  显式声明，不依赖 desktop/services 的 transitive dependency。
-- [ ] 新建 `apps/zcode-cli/packages/adapters/src/plugins/zip-source.ts`：
-  - [ ] `resolveZipPluginSource(input): Promise<ResolvedPluginSourceRoot>`；
-  - [ ] HTTPS URL 和 redirect 校验；
-  - [ ] headers allow/deny list；
-  - [ ] download byte limit + AbortSignal；
-  - [ ] sha256 digest；
-  - [ ] yauzl lazy entry safe extract；
-  - [ ] Zip Slip / Windows path / symlink / special entry 拒绝；
-  - [ ] extracted size / entry count / single file limit；
-  - [ ] root locate: `path`、single top-level、extract root；
-  - [ ] cleanup on every failure path。
-- [ ] 抽出或新增 HTTP network egress helper，让 zip download 与 `buildMarketplaceGitEnv()` 语义对齐。
-- [ ] 修改 `marketplace.ts`：
-  - [ ] `resolvePluginSourceRoot()` 在 `sourceKind === "url"` 分支按 `type` 分发；
-  - [ ] `validateMarketplaceEntryShape()` 增加 zip shape diagnostics；
-  - [ ] `getMarketplaceSourceValidationDeferral()` 把 zip 归入 remote deferral；
-  - [ ] 将 `readPluginSourceSha()` 重命名/扩展为 identity pin helper。
-- [ ] 修改 `bootstrap/src/plugins.ts` 使用 identity pin helper，确保 zip sha256 进入 update overview。
-- [ ] 修改 `version-compare.ts` 注释/类型，保持 version primary、identity pin secondary。
-- [ ] 更新 `docs/claude-code-marketplace-plugin-compat.md` 的 plugin source 矩阵。
-- [ ] 新增 adapters 单测：
-  - [ ] valid zip install；
-  - [ ] zip `path` install；
-  - [ ] single top-level root detection；
-  - [ ] sha256 mismatch；
-  - [ ] Zip Slip variants；
-  - [ ] size/entry limits；
-  - [ ] validate/describe cleanup；
-  - [ ] update detection via sha256；
-  - [ ] git url/sha existing behavior regression。
-- [ ] 运行窄验证：
-  - [ ] `pnpm --filter @zcode/adapters test -- plugins.test.ts`
-  - [ ] `pnpm --filter @zcode/adapters test -- version-compare.test.ts`
-  - [ ] `pnpm --filter @zcode/adapters typecheck`
-  - [ ] `pnpm --filter @zcode/adapters lint`
-- [ ] 按仓库要求运行全局：
-  - [ ] `pnpm typecheck`
-  - [ ] `pnpm lint`
-- [ ] 提交 Conventional Commits commit，commit body 说明：
-  - [ ] 影响面：plugin marketplace install/validate/describe/update overview；
-  - [ ] 安全边界：HTTPS、sha256、Zip Slip、size limits；
-  - [ ] 未覆盖项：marketplace-as-zip、private CDN credential、UI integrity display。
+- No Electron main process / relay business state; no web remote task/session realtime semantics.
+- No changes to the plugin cache layout or how the runtime loader reads install artifacts.
+- UI only naturally renders existing install/diagnostic results.

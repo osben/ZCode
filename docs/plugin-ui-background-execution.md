@@ -1,88 +1,58 @@
-# MCP 页面保留与后台执行
+# MCP page retention and background execution
 
-## 问题与边界
+## Problem and boundary
 
-协议握手早于编辑器初始化完成；session 停止也不代表插件没有内部工作。
-宿主不能从这两个状态推断任意插件何时可以停帧，更不能要求插件增加私有执行上报。
-无锚点时等待 React 挂载、将 guest 置于 `display:none`、按空闲期限销毁 guest，
-都会使后台初始化或依赖 `requestAnimationFrame` 的操作失败。
+The protocol handshake can finish before editor initialization, and a stopped session does not mean the plugin has no internal work. The host cannot infer from either state when a plugin may stop frames, and must not require plugins to add private execution reporting. Waiting for React mounting when there is no anchor, putting the guest under `display:none`, or destroying guests on an idle deadline all break background initialization or `requestAnimationFrame`-dependent work.
 
-## 生命周期
+## Lifecycle
 
-### 首次打开与会话恢复的连接屏障
+### Connection barrier on first open and session restore
 
-会话恢复完成不等于目标 MCP 已连接。`mcp/uiOpenInstance` 必须等待该 server 已有的
-连接任务完成，再读取连接身份并签发页面凭证。等待由 MCP adapter / pool 持有，不等待
-其它 server，不重新连接，不在 UI 增加轮询、延迟或自动重试计数。
+Session restore completing does not mean the target MCP is connected. `mcp/uiOpenInstance` must wait for that server's existing connection task to finish, then read the connection identity and issue the page credential. The wait is owned by the MCP adapter/pool, does not wait for other servers, does not reconnect, and adds no polling, delays, or retry counters in the UI.
 
 ```text
-session 恢复 → 打开 App → 等待目标 MCP 现有 connecting
-                            ├─ connected → 校验 session / lease / 连接身份 → 创建页面
-                            └─ failed / owner 已释放或替换 → 拒绝创建
+session restore → open App → wait for the target MCP's existing connecting
+                            ├─ connected → validate session / lease / connection identity → create page
+                            └─ failed / owner released or replaced → refuse creation
 ```
 
-已有页面的同步身份校验不等待、不重连。连接失败仍显示错误并保留重新加载入口。
-等待期间关闭或替换会话、释放 lease 或更换连接时，旧请求不得给新 owner 签发凭证。
-Web / 手机 / remote 的不支持回退与 continuous / replayable 边界不变。
+Synchronous identity validation of an existing page does not wait and does not reconnect. A failed connection still shows the error and keeps the reload entry. If the session is closed or replaced, the lease released, or the connection swapped while waiting, the old request must not issue a credential to the new owner. The Web/mobile/remote unsupported fallbacks and the continuous/replayable boundary are unchanged.
 
-回归 `PLM-UI-CONNECTION-READY`：真实 Electron 页面在 MCP initialize 被控制闸门阻塞时
-保持准备中；放行后无需点击重新加载即可运行，且只创建一个实例。adapter / pool / 协议
-单测覆盖失败、并发等待和 owner 失效。入口沿用 `--managed-only`。
+Regression `PLM-UI-CONNECTION-READY`: a real Electron page stays “preparing” while MCP initialize is blocked by a controlled gate; once released it runs without clicking reload and creates only one instance. Adapter/pool/protocol unit tests cover failure, concurrent waits, and owner invalidation. Entry point stays `--managed-only`.
 
 ```text
-当前执行的成功 UI 工具结果 → 窗口级接收器 → page owner 准入 → 立即创建 guest
-历史卡片 / 手动面板打开 ────────────────────┘       （不等待展示锚点）
-                           ├─ 可见：正常展示
-                           └─ 不可见：有尺寸、不可交互的后台表面 + 目标 guest 活动
-任务删除 / 显式重载 / 来源或 runtime 失效 / 窗口关闭 → 撤销凭证与活动 → 释放 guest 和租约
+current successful UI tool result → window-level receiver → page-owner admission → create guest immediately
+history card / manual panel open ───────────────────┘        (does not wait for a display anchor)
+                           ├─ visible: normal display
+                           └─ not visible: sized, non-interactive background surface + target guest active
+task delete / explicit reload / source or runtime invalidation / window close → revoke credential and activity → release guest and lease
 ```
 
-- 所有 MCP 页面使用相同宿主规则，不改插件代码、不新增插件协议、不区分插件名称。
-  page owner 在准入完成后立即启动，即使请求方此时已切页、没有绑定锚点。
-- 首次创建不能依赖工具卡片或 SessionPane 挂载。Agent 在当前执行的成功工具结果完成投影后，
-  经 `v4/plugin-ui/tool-result` 向所属本地宿主发送 UI 描述和原始输入；不要求 conversation 订阅。
-  Host 校验 schema、当前 runtime 来源与本地范围，只有可信桌面 attachment 可订阅；窗口接收器
-  复用相同逻辑键和准入 Promise。卡片与接收器并发只能创建一个页面。
-  历史 hydration、失败、取消和 MCP isError 不产生此通知；不扫描历史或保活所有会话投影。
-  后台结果只更新页面的工具数据，不绑定锚点、不抢焦点或改当前侧栏；返回会话后复用同一 guest。
-  Web/手机/远程不接收创建副作用，仍使用普通工具记录。页面订阅与删除清理由既有 owner 持有。
-- 已创建的 MCP guest 在整个有效生命周期内保持可执行；握手完成、session 空闲、
-  停止回合均不改变这个规则。workspace/session 租约与资源 feed 随页面保留；
-  session 的执行投影不再作为页面运行的开关。
-- 有展示尺寸的内联锚点保留在原滚动树中。没有可展示锚点（含 forceMount 隐藏 tab）
-  时迁移到非零尺寸、不可交互的后台表面；恢复展示仍是同一个 guest，不重建编辑器。
-- 页面不可见或 owner document 隐藏/窗口最小化时，宿主为对应 guest 保持已有可逆
-  capturer 活动。Main 按 sender、sandboxId、initId 校验；旧请求不能控制新实例。
-  加载期间提前收到的活动请求保留到 `did-stop-loading` 再启用；DOM 就绪事件中仍可能处于加载态，不能吞掉首次请求。
-  不设置全窗口 `backgroundThrottling:false`，不唤醒不属于该生命周期的普通页面。
-- MCP 页面拒绝自动 `suspend()`；切页、离屏五分钟和容量压力不能丢失插件的内存状态。
-  显式 `suspend(true)` 沿用凭证撤销、取消调用、teardown、关闭 guest 和释放租约的路径。
-  迟到事件不能重建已删除页面。
-- 性能边界：只创建实际请求过的页面；保留最多三十个任务、六十四个活页面的准入限制。
-  没有可回收页时拒绝新建，不能淘汰已有 MCP 页面。Main 继续使用已有间隔至少 200ms
-  的目标 guest 探测，不引入新的忙闲推断、定时回收或恢复快照。该间隔不是插件帧率上限。
-  通用后台执行与保留编辑状态需要资源，不承诺后台零 CPU 或释放这些页面占用的内存。
-- Gen UI 沿用连续离屏五分钟和容量回收；普通 Browser、Web/手机/远程的不支持回退不变。
-  不预加载全部历史工具行，不承诺应用退出、崩溃或显式重载后的未保存状态恢复。
+- All MCP pages use the same host rules: no plugin code changes, no new plugin protocol, no per-plugin-name distinctions. The page owner starts immediately after admission, even if the requester has already switched away and bound no anchor.
+- First creation must not depend on tool cards or SessionPane mounting. After the Agent projects the current successful tool result, it sends the UI description and original input to the owning local host via `v4/plugin-ui/tool-result`; no conversation subscription is required. The host validates the schema, the current runtime source, and the local scope; only trusted desktop attachments may subscribe; the window receiver reuses the same logical key and admission Promise. A card and the receiver racing can create only one page. History hydration, failures, cancellations, and MCP `isError` produce no notification; history is not scanned and session projections are not kept alive. A background result only updates the page's tool data — it binds no anchor, steals no focus, and does not change the current sidebar; returning to the session reuses the same guest. Web/mobile/remote receive no creation side effects and keep plain tool records. Page subscription and deletion cleanup are owned by the existing owner.
+- A created MCP guest stays executable for its whole valid lifetime: handshake completion, an idle session, or a stopped turn change nothing. The workspace/session lease and resource feed stay with the page; the session's execution projection is not a switch for page operation.
+- An inline anchor with a display size stays in its original scroll tree. Without a displayable anchor (including forceMount-hidden tabs) the page migrates to a non-zero-size, non-interactive background surface; restoring display is the same guest, with no editor rebuild.
+- While the page is hidden, the owner document is hidden, or the window is minimized, the host keeps the existing reversible capturer activity for that guest. Main validates by sender, sandboxId, and initId; old requests cannot control a new instance. Activity requests arriving early during loading are held until `did-stop-loading` before enabling; the DOM-ready event can still fire mid-load, so the first request must not be swallowed. Do not set window-wide `backgroundThrottling:false` and do not wake normal pages outside this lifecycle.
+- MCP pages refuse automatic `suspend()`; switching pages, five minutes off-screen, and capacity pressure must not lose the plugin's in-memory state. Explicit `suspend(true)` follows the existing path: credential revocation, call cancellation, teardown, guest close, and lease release. Late events must not recreate a deleted page.
+- Performance boundary: create only pages actually requested; admission caps at thirty retained tasks and sixty-four live pages. With no reclaimable page, refuse new creation — existing MCP pages are never evicted. Main keeps the existing target-guest probe at intervals of at least 200 ms, with no new busy/idle inference, timed reclamation, or restore snapshots; that interval is not a plugin frame-rate cap. General background execution and edit-state retention cost resources: no promise of zero background CPU or of releasing the memory these pages hold.
+- Gen UI keeps the five-minute off-screen and capacity reclaim; normal Browser and Web/mobile/remote unsupported fallbacks are unchanged. Historical tool rows are not preloaded, and unsaved state is not promised to survive app exit, crash, or explicit reload.
 
-## 回归契约
+## Regression contract
 
-使用真实 Electron、生产 page owner、Agent 和无私有执行协议的受控 MCP 页面验证：
+Verified in real Electron with the production page owner, the Agent, and a controlled MCP page without a private execution protocol:
 
-| 场景                     | 必须断言                                                                              |
-| ------------------------ | ------------------------------------------------------------------------------------- |
-| 工具结果到达前切离会话   | 无工具卡片、无 conversation 订阅时由真实 Agent 结果创建；后台完成工作，返回复用 guest |
-| 无锚点 / 隐藏 tab 冷启动 | session 空闲时完成握手后多帧初始化，页面尺寸非零                                      |
-| session 空闲 / 停止回合  | 页面内部 rAF 工作仍能完成，无需新模型回合或宿主工具调用                               |
-| 窗口最小化               | 后台操作完成；恢复展示后 guest 身份和编辑状态不变                                     |
-| 离屏期限 / 容量压力      | 已有 MCP guest 和内存状态保留，无可回收页时拒绝新建                                   |
-| 原生隔离                 | 不唤醒未申请活动的旁路 guest；错 owner / 旧 initId 被拒绝                             |
-| 隐藏与恢复               | 后台表面不接收鼠标，内联滚动不漂移，恢复后可正常显示                                  |
-| 删除 / runtime 失效      | 活动、guest 和租约释放，迟到事件不复活                                                |
-| Web / remote             | 不创建本地沙箱，不产生额外订阅                                                        |
+| Scenario                                | Must assert                                                                                        |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Switch away before a tool result        | Created by a real Agent result with no tool card or conversation subscription; work completes in background, guest reused on return |
+| No anchor / hidden tab cold start       | Multi-frame initialization after handshake with the session idle; page size non-zero               |
+| Session idle / stopped turn             | Internal rAF work still completes, without a new model turn or host tool call                      |
+| Window minimized                        | Background work completes; guest identity and edit state unchanged after restore                   |
+| Off-screen deadline / capacity pressure | Existing MCP guests and in-memory state retained; new creation refused when nothing is reclaimable |
+| Native isolation                        | Bypass guests that never requested activity are not woken; wrong owner / old initId rejected       |
+| Hide and restore                        | Background surface receives no mouse; inline scroll does not drift; normal display after restore   |
+| Delete / runtime invalidation           | Activity, guest, and lease released; late events do not resurrect                                  |
+| Web / remote                            | No local sandbox created; no extra subscriptions                                                   |
 
-入口：`node packages/desktop/scripts/mcp-apps-host-e2e.mjs --background-only`；
-既有生命周期与回退使用 `--managed-only`。真实插件验证直接使用未修改的 PhotoCraft 0.2.2：
-`ZCODE_PHOTOCRAFT_SERVER=/path/to/photocraft/dist/server.mjs node packages/desktop/scripts/mcp-apps-host-e2e.mjs --photocraft-background-only`。
-macOS Electron 已验证：宿主先最小化再首次创建插件、后台初始化与编辑、跨离屏期限保留和恢复截图 `photocraft-restored.png`。
-测试外壳的白底不是插件成功证据，必须结合实际命令结果和恢复截图；该夹具不覆盖商店安装路径。
+Entry points: `node packages/desktop/scripts/mcp-apps-host-e2e.mjs --background-only`; existing lifecycle and fallbacks use `--managed-only`. Real-plugin verification uses the unmodified PhotoCraft 0.2.2:
+`ZCODE_PHOTOCRAFT_SERVER=/path/to/photocraft/dist/server.mjs node packages/desktop/scripts/mcp-apps-host-e2e.mjs --photocraft-background-only`.
+Verified on macOS Electron: host minimized before first plugin creation, background initialization and editing, cross-deadline retention, and the restore screenshot `photocraft-restored.png`. The test shell's blank background is not evidence of plugin success — combine actual command results and the restore screenshot; the fixture does not cover the store install path.
