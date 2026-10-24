@@ -1,12 +1,12 @@
 # Hooks Runtime Contract
 
-> 状态：Implementation Spec
+> Status: implementation spec
 >
-> 本文是 ZCode 当前 Hooks 实现、桌面设置页和自动化测试的共同验收依据。
+> This document is the shared acceptance basis for ZCode's current hooks implementation, the desktop settings page, and the automated tests.
 
-## 目标与边界
+## Goals and boundaries
 
-支持 10 个事件：
+Ten supported events:
 
 - `SessionStart`
 - `UserPromptSubmit`
@@ -19,21 +19,16 @@
 - `PostCompact`
 - `SessionEnd`
 
-后续候选事件（`SubagentStart`、`SubagentStop`、`Notification`、`Interrupt`、
-`WorktreeCreate`、`WorktreeRemove` 等）记录在 `docs/specs/hooks-future-events.md`，
-未进入本契约前不得被 UI 写入或被文档标记为已支持。每个已支持事件都必须形成完整闭环：
-配置可加载、matcher 语义明确、stdin 与 Claude Code 兼容、stdout 能影响对应运行时行为
-（诊断型事件除外）、失败可观测，并有独立自动化测试。
+Candidate future events (`SubagentStart`, `SubagentStop`, `Notification`, `Interrupt`, `WorktreeCreate`, `WorktreeRemove`, etc.) are recorded in `docs/specs/hooks-future-events.md`; until they enter this contract, the UI must not write them and docs must not mark them supported. Every supported event must form a complete loop: config loadable, matcher semantics clear, stdin Claude-Code-compatible, stdout able to affect the corresponding runtime behavior (except diagnostic-only events), failures observable, and an independent automated test.
 
-持久化 Hook 类型限定为：
+Persisted hook types are limited to:
 
-- `process`：`command + args[]`，通过 argv 执行，不经过 shell。
-- `command`：完整 shell command，兼容 Claude Marketplace 插件。
+- `process`: `command + args[]`, executed via argv, no shell.
+- `command`: a full shell command, for Claude Marketplace plugin compatibility.
 
-本期不实现 `prompt`、`agent`、`http`、`callback` 持久化配置，也不实现 `if`、`once`、
-`asyncRewake`。这些字段和新增事件不能被 UI 写入，也不能被文档标记为已支持。
+This round does not implement `prompt`, `agent`, `http`, or `callback` persisted config, nor `if`, `once`, or `asyncRewake`. Those fields and new events must not be written by the UI or marked supported in docs.
 
-## 状态所有权
+## State ownership
 
 ```text
 user config + enabled plugin hooks
@@ -52,38 +47,31 @@ HooksService / conversation projection
   -> atomic Trust mutation / supersede / revoke
 ```
 
-- Hook 的执行权只在 `apps/zcode-cli` Agent runtime。
-- UI 和 `packages/services` 只管理配置和只读来源展示，不执行 Hook。
-- 每个 session 启动时捕获 Hook 配置快照。配置修改只保证新 session
-  生效；设置页保存后要关闭尚未使用的 deferred draft session，避免下一次首发继续复用旧快照。
-- 远程 workspace 的 HooksService 必须来自远端 service collection。`workspacePath` 用于文件
-  读写；UI 缓存和并发请求隔离使用 `workspaceIdentity?.trim() || workspacePath`。
+- Hook execution rights live only in the `apps/zcode-cli` agent runtime.
+- The UI and `packages/services` only manage config and read-only source display; they never execute hooks.
+- Every session start captures a hook config snapshot. Config changes are guaranteed only for new sessions; after saving in settings, close unused deferred draft sessions so the next first-run does not keep the old snapshot.
+- A remote workspace's HooksService must come from the remote service collection. `workspacePath` is used for file reads/writes; UI cache and concurrent-request isolation use `workspaceIdentity?.trim() || workspacePath`.
 
-## 配置来源与合并
+## Configuration sources and merge
 
-| 来源                           | Runtime 执行 | 设置页编辑 | 生效规则                                               |
-| ------------------------------ | ------------ | ---------- | ------------------------------------------------------ |
-| `~/.zcode/cli/config.json`     | 是           | 是         | user hooks 先执行                                      |
-| workspace `.zcode/config.json` | 条件执行     | 是         | rollout 开启且 exact Trust/policy admission 通过后执行 |
-| 已启用插件 hooks               | 是           | 否         | 按现有 plugin 来源规则执行                             |
-| `.agents/settings.json`        | 否           | 否         | 只读展示，可显式导入 `.zcode`                          |
-| `.claude/settings.json`        | 否           | 否         | 只读展示，可显式导入 `.zcode`                          |
+| Source                          | Runtime executes | Settings edits | Effect rule                                                     |
+| ------------------------------- | ---------------- | -------------- | ---------------------------------------------------------------- |
+| `~/.zcode/cli/config.json`      | yes              | yes            | user hooks run first                                             |
+| workspace `.zcode/config.json`  | conditional      | yes            | runs after rollout is on and exact Trust/policy admission passes |
+| enabled plugin hooks            | yes              | no             | runs per the existing plugin source rules                        |
+| `.agents/settings.json`         | no               | no             | read-only display; explicit import into `.zcode` allowed         |
+| `.claude/settings.json`         | no               | no             | read-only display; explicit import into `.zcode` allowed         |
 
-配置合并约束：
+Merge constraints:
 
-1. runtime executable config 只直接合并 user 与已启用插件 hooks；workspace project hooks 保留在隔离的
-   immutable snapshot side-channel。未 admission 前不得创建可执行 callback；发现诊断统一使用
-   `config_project_hooks_pending_trust`，Runtime blocked reason 进一步区分 pending、feature-disabled、policy、
-   store failure 与 snapshot mismatch。
-2. 单个受信配置来源的 `hooks.enabled:false` 只禁用该来源内的 hooks，不能关闭其他来源。
-3. 插件 hooks 只在插件启用时注入 runtime；插件关闭后新 session 不再执行。
-4. 每个 `process` / `command` 支持 `enabled?: boolean`，缺省为 `true`。Runner 必须跳过
-   `enabled:false`，不能只在 UI 中隐藏或变灰。
-5. UI 只把 `.zcode` hooks 写回原 user/project 文件，不修改 plugin、`.agents` 或 `.claude` 文件。
-6. 单条 Hook 的未知扩展字段必须在设置服务中往返保留，并由 Agent 配置 schema 接受；runtime
-   可以忽略当前版本不识别的字段，不能因此让整个配置文件失效。
+1. The runtime executable config directly merges only user and enabled-plugin hooks; workspace project hooks stay in an isolated immutable snapshot side-channel. Before admission, no executable callback may be created; discovery diagnostics uniformly use `config_project_hooks_pending_trust`, and the runtime blocked reason further distinguishes pending, feature-disabled, policy, store failure, and snapshot mismatch.
+2. `hooks.enabled:false` in one trusted source disables only that source's hooks, never other sources.
+3. Plugin hooks inject into the runtime only while the plugin is enabled; after disabling, new sessions stop executing them.
+4. Each `process` / `command` supports `enabled?: boolean`, default `true`. The runner must skip `enabled:false`, not merely hide or gray it out in the UI.
+5. The UI writes `.zcode` hooks back only to the original user/project files, never touching plugin, `.agents`, or `.claude` files.
+6. Unknown extension fields on a single hook must round-trip in the settings service and be accepted by the agent config schema; the runtime may ignore fields it does not recognize without invalidating the whole config file.
 
-示例：
+Example:
 
 ```json
 {
@@ -111,175 +99,144 @@ HooksService / conversation projection
 }
 ```
 
-## Matcher 契约
+## Matcher contract
 
-Matcher 规则：
+Matcher rules:
 
-- 缺省、空字符串和 `*`：match all。
-- 只包含字母、数字、下划线和 `|`：按精确名称或精确名称列表匹配。
-- 其他字符串：按 JavaScript 正则匹配；非法正则不执行该 matcher，并记录诊断。
-- tool 事件匹配 `tool_name`，同时兼容 `Agent` / `Task` 等 ZCode alias。
-- `SessionStart` 匹配 `source`。
-- `PreCompact` / `PostCompact` 匹配 `trigger`（`manual` / `auto` / `partial` / `reactive` / `session_memory`）。
-- `UserPromptSubmit`、`Stop` 和 `SessionEnd` 没有 matcher query；即使配置带 matcher，也执行该组 hooks。
+- Missing, empty string, and `*`: match all.
+- Only letters, digits, underscore, and `|`: match as an exact name or exact name list.
+- Other strings: match as a JavaScript regex; an invalid regex means the matcher does not run and a diagnostic is logged.
+- Tool events match `tool_name`, also accepting ZCode aliases such as `Agent` / `Task`.
+- `SessionStart` matches `source`.
+- `PreCompact` / `PostCompact` match `trigger` (`manual` / `auto` / `partial` / `reactive` / `session_memory`).
+- `UserPromptSubmit`, `Stop`, and `SessionEnd` have no matcher query; even with a matcher configured, the group's hooks run.
 
-## Claude 兼容 stdin
+## Claude-compatible stdin
 
-所有 Hook stdin 都是单行 JSON 加换行，同时保留 ZCode camelCase 字段和 Claude Code
-snake_case 字段。
+All hook stdin is single-line JSON plus a newline, keeping both ZCode camelCase fields and Claude Code snake_case fields.
 
-基础字段：
+Base fields:
 
 - `session_id`
 - `transcript_path`
 - `cwd`
 - `permission_mode`
 - `hook_event_name`
-- `agent_type`（存在时）
+- `agent_type` (when present)
 
-事件字段：
+Event fields:
 
-| Event                | 必需的 Claude 兼容字段                                                   |
-| -------------------- | ------------------------------------------------------------------------ |
-| `SessionStart`       | `source`，可选 `agent_type`、`model`                                     |
-| `UserPromptSubmit`   | `prompt`                                                                 |
-| `PreToolUse`         | `tool_name`、`tool_input`、`tool_use_id`                                 |
-| `PermissionRequest`  | `tool_name`、`tool_input`、可选 `permission_suggestions`                 |
-| `PostToolUse`        | `tool_name`、`tool_input`、`tool_use_id`、完整 `tool_response`           |
-| `PostToolUseFailure` | `tool_name`、`tool_input`、`tool_use_id`、字符串 `error`、`is_interrupt` |
-| `Stop`               | `stop_hook_active`、`last_assistant_message`                             |
-| `PreCompact`         | `trigger`、可选 `custom_instructions`                                    |
-| `PostCompact`        | `trigger`                                                                |
-| `SessionEnd`         | `reason`                                                                 |
+| Event                | Required Claude-compatible fields                                          |
+| -------------------- | -------------------------------------------------------------------------- |
+| `SessionStart`       | `source`; optional `agent_type`, `model`                                   |
+| `UserPromptSubmit`   | `prompt`                                                                   |
+| `PreToolUse`         | `tool_name`, `tool_input`, `tool_use_id`                                   |
+| `PermissionRequest`  | `tool_name`, `tool_input`; optional `permission_suggestions`               |
+| `PostToolUse`        | `tool_name`, `tool_input`, `tool_use_id`, full `tool_response`             |
+| `PostToolUseFailure` | `tool_name`, `tool_input`, `tool_use_id`, string `error`, `is_interrupt`   |
+| `Stop`               | `stop_hook_active`, `last_assistant_message`                               |
+| `PreCompact`         | `trigger`; optional `custom_instructions`                                  |
+| `PostCompact`        | `trigger`                                                                  |
+| `SessionEnd`         | `reason`                                                                   |
 
-`PreCompact` / `PostCompact` 的 stdin 同时携带 ZCode 扩展字段 `preCompactTokenCount` /
-`postCompactTokenCount`（camelCase，估算值），不提供 Claude 兼容别名。`SessionEnd.reason`
-当前只有 `close` 一个值，为未来区分退出原因保留。
+`PreCompact` / `PostCompact` stdin also carries the ZCode extension fields `preCompactTokenCount` / `postCompactTokenCount` (camelCase, estimates) with no Claude-compatible alias. `SessionEnd.reason` currently has only `close`, reserved to distinguish exit reasons later.
 
-`PostToolUse.tool_response` 使用工具 handler 的完整结构化输出；`toolResultPreview` 继续作为
-ZCode 扩展字段保留，但不能替代 `tool_response`。
+`PostToolUse.tool_response` is the tool handler's full structured output; `toolResultPreview` stays as a ZCode extension field but cannot replace `tool_response`.
 
-ZCode 当前没有 Claude JSONL transcript 文件，因此 configured runner 为每次 Hook 创建临时
-兼容 transcript：Stop 至少包含最后一条 assistant message，其他事件至少提供存在且可读的
-JSONL 文件。Hook 完成后清理临时目录。
+ZCode has no Claude JSONL transcript file, so the configured runner creates a temporary compatible transcript per hook: Stop contains at least the last assistant message; other events provide at least an existing, readable JSONL file. The temporary directory is cleaned up after the hook finishes.
 
-## stdout、退出码与事件效果
+## stdout, exit codes, and event effects
 
-stdout 规则：
+stdout rules:
 
-- 空 stdout：成功，无额外效果。
-- 非 JSON stdout：成功，只作为诊断，不注入模型上下文。
-- 以 `{` 开头的合法 JSON：校验已知字段并消费。
-- 未知 JSON 字段忽略，不能导致整个 Hook 失败。
-- 已知字段类型错误或 `hookSpecificOutput.hookEventName` 错误：该 Hook 失败；失败与其他 Hook 隔离。
+- Empty stdout: success, no extra effect.
+- Non-JSON stdout: success, diagnostic only, never injected into model context.
+- Valid JSON starting with `{`: known fields validated and consumed.
+- Unknown JSON fields are ignored and never fail the whole hook.
+- A known field with the wrong type, or a wrong `hookSpecificOutput.hookEventName`: that hook fails; failures are isolated per hook.
 
-退出码规则：
+Exit code rules:
 
-- `0`：成功并解析 stdout。
-- `2`：请求阻断；对可阻断事件产生对应 block/deny，Stop 产生继续一轮反馈。
-- 其他非零：可恢复 Hook 失败，不让整个 turn 崩溃。
+- `0`: success, parse stdout.
+- `2`: request blocked; produces the matching block/deny on blockable events; Stop produces one continue round.
+- Other non-zero: recoverable hook failure that never crashes the whole turn.
 
-事件输出效果：
+Event output effects:
 
-| Event                | 可阻断           | 可修改                                       | 模型可见上下文                                   |
-| -------------------- | ---------------- | -------------------------------------------- | ------------------------------------------------ |
-| `SessionStart`       | 否               | 否                                           | `additionalContext` 注入首轮前                   |
-| `UserPromptSubmit`   | 是               | 不修改原 prompt                              | `additionalContext` 注入本轮前                   |
-| `PreToolUse`         | 是               | `updatedInput`，并重新做 tool schema 校验    | 成功/失败 tool result 都携带 `additionalContext` |
-| `PermissionRequest`  | 是               | allow 时可返回 `updatedInput` 和 permissions | 否                                               |
-| `PostToolUse`        | 否               | 本期不替换 tool output                       | 追加 `additionalContext`                         |
-| `PostToolUseFailure` | 否               | 否                                           | 追加 recovery `additionalContext`                |
-| `Stop`               | 是，表示不要结束 | 否                                           | block reason/context 注入下一轮，最多连续 3 次   |
-| `PreCompact`         | 是，跳过本次压缩 | 否                                           | 否（诊断）                                       |
-| `PostCompact`        | 否               | 否                                           | 否（诊断）                                       |
-| `SessionEnd`         | 否               | 否                                           | 否（尽力而为）                                   |
+| Event                | Blocking                | Can modify                                        | Model-visible context                                |
+| -------------------- | ----------------------- | -------------------------------------------------- | ---------------------------------------------------- |
+| `SessionStart`       | no                      | no                                                | `additionalContext` injected before the first round   |
+| `UserPromptSubmit`   | yes                     | never modifies the original prompt                 | `additionalContext` injected before this round        |
+| `PreToolUse`         | yes                     | `updatedInput`, then re-run tool schema validation | both success and failure tool results carry `additionalContext` |
+| `PermissionRequest`  | yes                     | on allow may return `updatedInput` and permissions | no                                                   |
+| `PostToolUse`        | no                      | does not replace tool output this round            | appends `additionalContext`                          |
+| `PostToolUseFailure` | no                      | no                                                | appends recovery `additionalContext`                 |
+| `Stop`               | yes — means do not stop | no                                                | block reason/context injected next round, max 3 consecutive |
+| `PreCompact`         | yes — skip this compaction | no                                             | no (diagnostic)                                      |
+| `PostCompact`        | no                      | no                                                | no (diagnostic)                                      |
+| `SessionEnd`         | no                      | no                                                | no (best effort)                                     |
 
-`PreCompact` 在 `compactActiveConversationImpl` 判定确有内容可压缩之后、写入
-`CompactStarted` 之前触发；被 block 时本次调用返回 `outcome: "skipped"`，不写入 compact
-timeline failure。`PostCompact` 只在一次真实压缩成功完成（history 已替换）后触发；early
-skip、失败和重试中途不触发。microcompact 不经过这两个事件。`SessionEnd` 在 session
-facade `close()` 的 memoized 块开头、`beginShutdown()` 之前触发一次；共享 5 秒总预算，
-超时 hook 记为 cancelled，hook 失败只记日志，绝不阻断 close。进程被硬杀或崩溃时不保证
-触发（与 Claude Code 语义一致）。
+`PreCompact` fires after `compactActiveConversationImpl` determines there is content to compact and before `CompactStarted` is written; when blocked, the call returns `outcome: "skipped"` and writes no compact timeline failure. `PostCompact` fires only after a real compaction completes successfully (history replaced); early skip, failure, and mid-retry never fire it. Microcompact does not pass through these two events. `SessionEnd` fires exactly once at the start of the session facade's `close()` memoized block, before `beginShutdown()`; it shares a 5-second total budget, timeouts mark the hook cancelled, hook failures only log and never block close. A hard kill or crash gives no delivery guarantee (same semantics as Claude Code).
 
-兼容字段：
+Compatibility fields:
 
-- 顶层 `decision:"approve"|"block"`。
-- 顶层 `continue:false` 在 `UserPromptSubmit`、`PreToolUse`、`PermissionRequest` 中阻断；
-  在 `PreCompact` 中表示跳过本次压缩。
-- Stop 使用 `decision:"block"`；为兼容已发布的 ZCode 配置，`continue:true` 且带
-  `additionalContext` 也可继续一轮。
-- `PreCompact` / `PostCompact` / `SessionEnd` 不接受 `hookSpecificOutput`；这些事件返回的
-  `hookSpecificOutput` 会被 schema 拒绝并记为该 Hook 的可恢复失败。
-- `PermissionRequest` 同时接受 Claude 的 `updatedPermissions` 和 ZCode 历史字段
-  `permissionUpdates`。
-- `suppressOutput:true` 表示不投影 Hook stdout；它不抑制结构化 decision/context。
+- Top-level `decision:"approve"|"block"`.
+- Top-level `continue:false` blocks on `UserPromptSubmit`, `PreToolUse`, and `PermissionRequest`; on `PreCompact` it means skip this compaction.
+- Stop uses `decision:"block"`; for compatibility with published ZCode configs, `continue:true` with `additionalContext` also continues one round.
+- `PreCompact` / `PostCompact` / `SessionEnd` do not accept `hookSpecificOutput`; a returned one is rejected by the schema and counted as that hook's recoverable failure.
+- `PermissionRequest` accepts both Claude's `updatedPermissions` and the ZCode legacy field `permissionUpdates`.
+- `suppressOutput:true` stops projecting hook stdout; it does not suppress structured decision/context.
 
-`PreToolUse` 的失败结果包括 Hook 自身 deny、后续权限拒绝和工具 handler 失败；这些提前返回路径
-也必须保留已产生的 `additionalContext`，不能只在 handler 成功或抛错路径追加。
+`PreToolUse` failure results include the hook's own deny, a later permission denial, and tool handler failure; these early-return paths must also keep any `additionalContext` already produced — never append only on handler success or throw paths.
 
-## async 契约
+## async contract
 
-`command` hook 支持 `async:true`：
+`command` hooks support `async:true`:
 
-1. Agent 启动命令后立即继续当前事件，不等待命令退出。
-2. async stdout 不能 block、修改输入或注入 context；这些输出被忽略。
-3. 后台命令仍受 timeout 和调用方 cancellation 管理；调用方取消后必须终止命令，并产生
-   `outcome: "cancelled"` 的 Hook lifecycle event。
-4. 后台 Promise 必须捕获错误，不能产生 unhandled rejection。
+1. The agent continues the current event immediately after starting the command, without waiting for exit.
+2. Async stdout cannot block, modify input, or inject context; such output is ignored.
+3. The background command is still governed by timeout and caller cancellation; on caller cancel the command must be terminated and a `outcome: "cancelled"` hook lifecycle event emitted.
+4. The background promise must catch errors and never produce an unhandled rejection.
 
-`process` hook 本期保持同步。`asyncRewake` 不在本期能力声明中。
+`process` hooks stay synchronous this round. `asyncRewake` is not in this round's capability claims.
 
-`SessionEnd` 的 async command hook 不保证在进程退出前完成：close 的总预算（5 秒）耗尽或
-进程退出后，后台命令即被取消/终止，其输出不会产生任何效果。
+A `SessionEnd` async command hook is not guaranteed to finish before process exit: once the close budget (5 seconds) is exhausted or the process exits, the background command is cancelled/killed and its output has no effect.
 
-## 设置页契约
+## Settings page contract
 
-Hooks 设置页必须在 desktop 和 Web UI 使用同一组件，并满足：
+The hooks settings page must use the same components on desktop and Web UI and satisfy:
 
-- `.zcode` hooks 支持新增、编辑、删除、启停和 user/workspace scope。
-- 表单支持 10 个事件、`process` / `command` 类型、matcher、argv、timeout、`statusMessage`
-  和 command async。
-- `.agents` / `.claude` hooks 标记为兼容来源、不可直接编辑或启停，并提供显式导入 `.zcode`。
-- 插件 hooks 单独分组；列表只读展示 event 与 command，并以分组标题和插件图标表达来源。
-  matcher、type、source path 与 effective enabled 状态保留为数据事实，不在列表行重复堆叠。
-- 插件 Hook 的 User / Workspace 分栏只使用 overview 安装记录中的权威 scope。overview
-  降级或安装记录缺失时必须保留 `unknown`，不得默认为 User；未知 scope 的 Hook 在两个
-  Tab 中均保持可见并显示“作用域未知”标签，避免伪造来源或静默丢失数据。
-- 插件 Hook 的启停跟随插件设置，不在 Hooks 页创建第二套 override。
-- 页面文案支持 `zh-CN` / `en-US`，使用语义颜色和现有控件；窄屏下内容和操作不能重叠。
-- 页面明确提示：修改应用于新 session。
-- 页面遵循 MCP、Skills、Commands 设置页的统一信息架构：顶部使用共享 Scope 菜单、当前
-  Scope 的 Hook 总数与搜索入口；当前 Scope 下按 `Installed`、具体插件、`Legacy` 分组。
-- 搜索后只展示存在匹配 Hook 的分组；无结果时展示统一空状态，不保留计数为 0 的分组标题。
-- 组内使用单个圆角 surface 列表容器和元素分割线。Hook Item 以 Event 为主标题，command
-  使用 `font-mono text-ui-sm`；直接配置显示开关并可整行进入编辑，插件 Hook 只读且使用插件
-  图标，兼容来源显示 Import。
-- 从当前 Scope 新建 Hook 时，表单默认选择相同 scope；表单复用 `PluginScopeMenu`。
-  编辑已有 Hook 时 Scope 不可迁移。没有可用 workspace 时菜单只提供 User。
-- 新增/编辑页复用资源设置页的返回链接、标题和说明层级；desktop 与手机 Web 使用相同的
-  响应式布局。
-- HooksSection 必须接收并透传 `workspaceIdentity`，远程工作区的读取、写入和 session
-  invalidation 以 `workspaceIdentity?.trim() || workspacePath` 隔离。
+- `.zcode` hooks support create, edit, delete, enable/disable, and user/workspace scope.
+- The form supports the 10 events, `process` / `command` types, matcher, argv, timeout, `statusMessage`, and command async.
+- `.agents` / `.claude` hooks are marked compatibility sources — not directly editable or toggleable — with explicit import into `.zcode`.
+- Plugin hooks are grouped separately; the list read-only shows event and command, with the group title and plugin icon expressing provenance. matcher, type, source path, and effective enabled stay as data facts, not stacked into list rows.
+- The plugin hook User/Workspace tabs use only the authoritative scope from the overview install record. When the overview degrades or the install record is missing, keep `unknown` — never default to User; unknown-scope hooks stay visible in both tabs with a "scope unknown" label, avoiding fabricated provenance or silent data loss.
+- Plugin hook enabling follows plugin settings; the hooks page creates no second override system.
+- Copy supports `zh-CN` / `en-US`, semantic colors, and existing controls; on narrow screens content and actions must not overlap.
+- The page states clearly: changes apply to new sessions.
+- The page follows the shared information architecture of the MCP, Skills, and Commands settings pages: the shared Scope menu on top, the current scope's hook total, and a search entry; within a scope, groups are `Installed`, specific plugins, and `Legacy`.
+- After a search, only groups with matching hooks are shown; with no results, a unified empty state replaces zero-count group headers.
+- Groups use one rounded surface list container with item dividers. A hook item leads with the event as title; commands use `font-mono text-ui-sm`; directly configured hooks show a toggle and open editing from the whole row; plugin hooks are read-only with the plugin icon; compatibility sources show Import.
+- Creating a hook from the current scope preselects that scope; the form reuses `PluginScopeMenu`. Editing an existing hook cannot migrate scope. With no workspace available, the menu offers User only.
+- The create/edit pages reuse the resource settings pages' back link, title, and description hierarchy; desktop and mobile Web share the responsive layout.
+- HooksSection must receive and pass through `workspaceIdentity`; remote-workspace read, write, and session invalidation are isolated by `workspaceIdentity?.trim() || workspacePath`.
 
-## 验收矩阵
+## Acceptance matrix
 
-| ID    | Event                | 证明点                                                                            | 自动化层                 |
-| ----- | -------------------- | --------------------------------------------------------------------------------- | ------------------------ |
-| HK-01 | `SessionStart`       | startup matcher、snake_case stdin、首轮 context                                   | core + desktop E2E       |
-| HK-02 | `UserPromptSubmit`   | prompt stdin、matcher 不过滤、block/context                                       | core + desktop E2E       |
-| HK-03 | `PreToolUse`         | tool matcher、deny/ask/allow、updatedInput、context；三个提前失败出口不丢 context | core + desktop E2E       |
-| HK-04 | `PermissionRequest`  | 仅 ask 路径触发、allow/deny/modify、permission updates                            | core + desktop E2E       |
-| HK-05 | `PostToolUse`        | 完整 `tool_response`、context                                                     | core + desktop E2E       |
-| HK-06 | `PostToolUseFailure` | 字符串 error、interrupt、recovery context                                         | core + desktop E2E       |
-| HK-07 | `Stop`               | last assistant、transcript、block 续跑上限                                        | core + desktop E2E       |
-| HK-11 | `PreCompact`         | trigger matcher、`custom_instructions` stdin、block 跳过本次压缩                  | core                     |
-| HK-12 | `PostCompact`        | 仅真实压缩成功后触发、skip/失败不触发、诊断不影响结果                             | core                     |
-| HK-13 | `SessionEnd`         | close 时恰好一次、5 秒总预算、hook 失败不阻断 close                               | core + bootstrap         |
-| HK-08 | Config/source        | user+project+plugin 顺序、逐 Hook disabled 真跳过                                 | adapter/bootstrap/core   |
-| HK-09 | Settings             | `.zcode` 可写、legacy 可导入、plugin 只读可见                                     | service/UI + desktop E2E |
-| HK-10 | Executors/async      | process argv、command shell/fire-and-forget、父级取消、后台 lifecycle、错误隔离   | core + desktop E2E       |
+| ID    | Event                | Proof point                                                                          | Automation layer         |
+| ----- | -------------------- | -------------------------------------------------------------------------------------- | ------------------------ |
+| HK-01 | `SessionStart`       | startup matcher, snake_case stdin, first-round context                                 | core + desktop E2E       |
+| HK-02 | `UserPromptSubmit`   | prompt stdin, matcher does not filter, block/context                                   | core + desktop E2E       |
+| HK-03 | `PreToolUse`         | tool matcher, deny/ask/allow, updatedInput, context; all three early-failure exits keep context | core + desktop E2E |
+| HK-04 | `PermissionRequest`  | fires only on the ask path, allow/deny/modify, permission updates                      | core + desktop E2E       |
+| HK-05 | `PostToolUse`        | full `tool_response`, context                                                          | core + desktop E2E       |
+| HK-06 | `PostToolUseFailure` | string error, interrupt, recovery context                                              | core + desktop E2E       |
+| HK-07 | `Stop`               | last assistant, transcript, block continuation cap                                     | core + desktop E2E       |
+| HK-11 | `PreCompact`         | trigger matcher, `custom_instructions` stdin, block skips this compaction              | core                     |
+| HK-12 | `PostCompact`        | fires only after real successful compaction; skip/failure do not fire; diagnostics do not affect the result | core       |
+| HK-13 | `SessionEnd`         | exactly once on close, 5-second total budget, hook failure never blocks close          | core + bootstrap         |
+| HK-08 | Config/source        | user+project+plugin order, per-hook disabled really skipped                            | adapter/bootstrap/core   |
+| HK-09 | Settings             | `.zcode` writable, legacy importable, plugin read-only visible                         | service/UI + desktop E2E |
+| HK-10 | Executors/async      | process argv, command shell/fire-and-forget, parent cancellation, background lifecycle, error isolation | core + desktop E2E |
 
-完整窗口级 suite 使用 `HK-LC-01`、`HK-EF-01`、`HK-ST-01`、`HK-UP-01`，定义在
-`docs/testing/hooks-e2e-coverage-matrix.md`。其中父级取消保留在 core 的确定性 AbortSignal
-测试；窗口级验证 async command 真实启动/完成且其 stdout 决策不会反向改变已继续的事件。
+The full window-level suites use `HK-LC-01`, `HK-EF-01`, `HK-ST-01`, `HK-UP-01`, defined in `docs/testing/hooks-e2e-coverage-matrix.md`. Parent cancellation stays in core's deterministic AbortSignal test; window level verifies that an async command really starts/completes and its stdout decisions cannot retroactively change the already-continued event.

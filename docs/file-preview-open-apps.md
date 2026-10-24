@@ -1,54 +1,52 @@
-# 文件预览的外部打开应用
+# File preview external open apps
 
-## 范围
+## Scope
 
-在现有 Open 上拉菜单中追加已安装且匹配当前文件扩展名的应用。原有编辑器、终端、Finder/QSpace/Explorer 的展示与顺序保持不变；不增加入口、分组、默认应用项或“选择其他应用”，复制路径和 Open 主按钮不变。
+Append installed apps that match the current file's extension to the existing Open menu. Existing editor, terminal, and Finder/QSpace/Explorer entries and their order stay unchanged. No new entries, groups, default-app item, or "choose other app"; copy-path and the main Open button are unchanged.
 
-| 类型 | macOS                                                 | Windows                                                  | Linux                                 |
+| Type | macOS                                                | Windows                                                  | Linux                                 |
 | ---- | ----------------------------------------------------- | -------------------------------------------------------- | ------------------------------------- |
-| PDF  | Preview、Adobe Acrobat/Reader、PDF Expert、WPS Office | Adobe Acrobat/Reader、Foxit PDF Reader、WPS Office、Edge | Evince、Okular、Firefox               |
-| DOCX | Word、Pages、WPS Office、LibreOffice Writer           | Word、WPS Office、LibreOffice Writer                     | WPS Office、LibreOffice Writer        |
-| PPTX | PowerPoint、Keynote、WPS Office、LibreOffice Impress  | PowerPoint、WPS Office、LibreOffice Impress              | WPS Presentation、LibreOffice Impress |
-| XLSX | Excel、Numbers、WPS Office、LibreOffice Calc          | Excel、WPS Office、LibreOffice Calc                      | WPS Spreadsheets、LibreOffice Calc    |
-| MP3  | Music、QuickTime Player、IINA、VLC                    | Windows Media Player、VLC                                | VLC、mpv                              |
-| MP4  | QuickTime Player、IINA、VLC                           | Windows Media Player、VLC、PotPlayer                     | VLC、mpv                              |
+| PDF  | Preview, Adobe Acrobat/Reader, PDF Expert, WPS Office | Adobe Acrobat/Reader, Foxit PDF Reader, WPS Office, Edge | Evince, Okular, Firefox               |
+| DOCX | Word, Pages, WPS Office, LibreOffice Writer           | Word, WPS Office, LibreOffice Writer                     | WPS Office, LibreOffice Writer        |
+| PPTX | PowerPoint, Keynote, WPS Office, LibreOffice Impress  | PowerPoint, WPS Office, LibreOffice Impress              | WPS Presentation, LibreOffice Impress |
+| XLSX | Excel, Numbers, WPS Office, LibreOffice Calc          | Excel, WPS Office, LibreOffice Calc                      | WPS Spreadsheets, LibreOffice Calc    |
+| MP3  | Music, QuickTime Player, IINA, VLC                    | Windows Media Player, VLC                                | VLC, mpv                              |
+| MP4  | QuickTime Player, IINA, VLC                           | Windows Media Player, VLC, PotPlayer                     | VLC, mpv                              |
 
-## 数据与平台边界
+## Data and platform boundaries
 
-`IPlatformService.getInstalledEditors(filePath?)` 保持无参数兼容：不传文件路径时仅返回原有清单，避免改变工作区菜单。传路径时主进程按大小写无关的扩展名匹配新增清单并异步检测安装位置（macOS 系统/全局/用户 Applications，Windows 常见安装位置与 App Paths 注册，Linux PATH）。主进程是安装检测与缓存的唯一 owner；UI 不维护另一份格式映射。
+`IPlatformService.getInstalledEditors(filePath?)` stays compatible with the no-argument form: without a path it returns only the original list, leaving workspace menus unchanged. With a path, the main process matches the added catalog by case-insensitive extension and detects install locations asynchronously (macOS system/global/user Applications; Windows common install locations and App Paths registry; Linux PATH). The main process is the single owner of install detection and caching; the UI keeps no second format map.
 
 ```mermaid
 sequenceDiagram
-    participant UI as 文件 Open 菜单
-    participant P as 平台接口 / IPC
-    participant M as 主进程
+    participant UI as File Open menu
+    participant P as Platform interface / IPC
+    participant M as Main process
     UI->>P: getInstalledEditors(filePath)
-    P->>M: 可选文件路径
-    M->>M: 原有列表 + 匹配扩展名且已安装的应用
-    M-->>UI: 带现有图标结构的列表
+    P->>M: optional file path
+    M->>M: original list + apps matching the extension and installed
+    M-->>UI: list with the existing icon structure
     UI->>P: openInEditor(id, filePath, options)
-    P->>M: 复用现有打开链路
+    P->>M: reuse the existing open pipeline
 ```
 
-文件卡片和 Preview Pane 使用当前文件路径查询。未知扩展名、目录及无路径查询不追加应用。切换预览文件时，旧查询结果不得覆盖新文件的列表。新增应用通过参数数组打开文件，不经 shell 拼接。
+File cards and the Preview Pane query with the current file path. Unknown extensions, directories, and pathless queries append no apps. When the previewed file switches, stale query results must not overwrite the new file's list. New apps open files through an argument array, never shell string concatenation.
 
-SSH/WSL/Docker 继续通过现有 `resolveWorkspaceEditorSelection` 限制可用应用，不把远端文件路径传给新增本机阅读器。手机 Web 继续返回空清单，桌面 continuous / 手机 replayable 消息流、workspaceIdentity 和 owner 路由不变。
+SSH/WSL/Docker keep restricting available apps through the existing `resolveWorkspaceEditorSelection`; remote file paths never reach the new local viewers. Mobile Web keeps returning an empty list. Desktop-continuous / mobile replayable message streams, `workspaceIdentity`, and owner routing are unchanged.
 
-## 验证
+## Verification
 
-单测覆盖六种扩展名、大小写与含空格路径、缺失应用、无参数兼容、多平台安装位置以及参数化打开。现有文件卡片 E2E 覆盖按路径传递和菜单内容/打开目标；系统应用安装与真实启动另需平台运行时验证。
+Unit tests cover the six extensions, case and spaces in paths, missing apps, no-argument compatibility, per-platform install locations, and argument-array opening. Existing file-card E2E covers path passing and menu contents/open targets; system-app installation and real launching need platform runtime verification.
 
-主进程在启动文件应用前校验本机绝对路径与真实文件类型，不信任 renderer 的 `pathKind`。
-macOS 使用系统 `open`；Windows/Linux 使用独立子进程并忽略 stdio，收到 `spawn` 后返回成功，
-不等待阅读器退出，也不让应用日志触发缓冲上限终止进程。启动失败返回原有失败结果。
+The main process validates a local absolute path and the real file type before launching a file app; it does not trust the renderer's `pathKind`. macOS uses the system `open`; Windows/Linux spawn a detached child process with stdio ignored, return success on `spawn`, and neither wait for the reader to exit nor let app logs trigger buffer-limit process termination. Launch failure returns the existing failure result.
 
 ```text
-renderer 打开请求 → main 校验本机文件 → 启动应用 → spawn / error → 返回结果
-                                                └─ 应用独立运行，关闭时无需回写状态
+renderer open request → main validates local file → launch app → spawn / error → return result
+                                                  └─ app runs independently; no state write-back on close
 ```
 
-## 打开失败与安装变化
+## Open failures and install changes
 
-打开应用返回失败或请求抛异常时，都记录日志并显示同一条本地化失败 Toast。远端菜单继续复用工作区能力过滤：SSH 仅 VS Code 系；WSL 额外允许 Explorer；未解析目标和不支持的目标不展示本机应用。
+Both an app-open failure and a thrown request log the error and show the same localized failure toast. Remote menus keep reusing workspace capability filtering: SSH allows only the VS Code family; WSL additionally allows Explorer; unresolved and unsupported targets show no local apps.
 
-文件应用探测只缓存成功结果和在途请求；未安装、图标缺失和异常都释放缓存。下次菜单查询重新探测，不用 TTL 或要求重启。清理只针对原请求，不能删除更新的请求。
+File-app probing caches only successful results and in-flight requests; not-installed, missing-icon, and error cases release the cache. The next menu query re-probes, with no TTL and no restart required. Cache cleanup targets only the original request and never deletes a newer request.
