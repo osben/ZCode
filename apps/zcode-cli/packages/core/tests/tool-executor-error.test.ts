@@ -134,6 +134,59 @@ describe("tool executor error projection", () => {
     expect(result.error?.detail).toContain("reason=missing_model_id");
   });
 
+  it("adds terminal provider facts to the parent Agent tool result", () => {
+    const result = createErrorResult(
+      agentToolCall(),
+      agentChildFailure(
+        providerFailure("request has been blocked due to unusual activity.", {
+          providerCode: "3012",
+          retryable: false,
+          statusCode: 405,
+        }),
+      ),
+    );
+
+    expect(result.error?.message).toBe("request has been blocked due to unusual activity.");
+    expect(result.error?.attribution).toEqual({
+      source: "provider",
+      providerErrorCode: "3012",
+      retryable: false,
+      statusCode: 405,
+    });
+    const text = stringifyToolResultOutput(result);
+    expect(text).toBe(
+      "request has been blocked due to unusual activity.\n\nProvider failure: status=405 provider_error_code=3012 retryable=false",
+    );
+    expect(text).not.toContain("zai-coding-plan");
+    expect(text).not.toContain("glm-5.3");
+    expect(text).not.toContain("req_secret");
+  });
+
+  it("keeps today's text for retryable provider failures", () => {
+    const result = createErrorResult(
+      agentToolCall(),
+      agentChildFailure(
+        providerFailure("Rate limit reached", { retryable: true, statusCode: 429 }),
+      ),
+    );
+
+    expect(result.error?.attribution).toEqual({ source: "provider", retryable: true, statusCode: 429 });
+    expect(result.modelContent).toBeUndefined();
+    expect(stringifyToolResultOutput(result)).toBe("Rate limit reached");
+  });
+
+  it("keeps today's text for non-retryable failures not attributed to the provider", () => {
+    const toolError = Object.assign(new Error("Request failed with status 404"), {
+      context: { retryable: false, source: "tool", statusCode: 404 },
+    });
+
+    const result = createErrorResult(agentToolCall(), toolError);
+
+    expect(result.error?.attribution).toEqual({ source: "tool", retryable: false, statusCode: 404 });
+    expect(result.modelContent).toBeUndefined();
+    expect(stringifyToolResultOutput(result)).toBe("Request failed with status 404");
+  });
+
   it("preserves plan approval feedback before turn steering handles it", () => {
     const feedback = "x".repeat(600);
 
@@ -179,4 +232,29 @@ function agentToolCall(): ExecutableToolCall {
     },
     name: "Agent",
   };
+}
+
+function providerFailure(message: string, facts: Record<string, unknown>): Error {
+  return Object.assign(new Error(message), {
+    code: "provider_error",
+    context: {
+      ...facts,
+      modelId: "glm-5.3",
+      providerId: "zai-coding-plan",
+      requestId: "req_secret",
+      source: "provider",
+    },
+    name: "AiSdkModelAdapterError",
+  });
+}
+
+function agentChildFailure(providerError: Error): Error {
+  return createCoreError(CoreErrorType.ToolExecutionFailed, "Explore subagent failed", {
+    cause: createTurnFailureError(providerError, undefined, "Turn execution failed"),
+    context: withErrorPayloadRole(
+      { agentId: "agent_e2e", agentType: "Explore", code: "agent_child_runtime_failed" },
+      ErrorPayloadRole.Wrapper,
+    ),
+    recoverable: true,
+  });
 }
