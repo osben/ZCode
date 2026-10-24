@@ -57,7 +57,7 @@ export function createRuntimeModel(
  * "why it is calling" (agent step / web_search / compact / title). The design gap was that if they were injected only into turn-step
  * invocation context, all nine call sites that set only "why" (WebSearch / WebFetch handling / compaction / title sidecar, etc.) bypassed the gate—
  * in observed cases the governor missed two-thirds of 429s. These fields are now bound once in the handle
- * factory; merge order in `withModelInvocationContext` gives this layer precedence over call sites, with no per-call opt-out:
+ * factory as a host layer (see `withHostInvocationLayer`): it takes precedence over call sites, with no per-call opt-out:
  * a runtime that should not use the gate simply has no admission port.
  */
 function withRuntimeInvocationLayer(
@@ -76,7 +76,41 @@ function withRuntimeInvocationLayer(
       ? {}
       : { modelRequestAdmission: runtime.modelRequestAdmission }),
   };
-  return withModelInvocationContext(model, () => layer);
+  return withHostInvocationLayer(model, "runtime", () => layer);
+}
+
+const HOST_INVOCATION_LAYERS = Symbol("zcode.hostInvocationLayers");
+
+type HostInvocationLayerKind = "runtime" | "turn";
+
+type HostTaggedInvocationContext = ModelInvocationContext & {
+  [HOST_INVOCATION_LAYERS]?: Readonly<Partial<Record<HostInvocationLayerKind, ModelInvocationContext>>>;
+};
+
+/**
+ * Bind fields owned by the runtime that executes the request (spec: subagent-inherited-model-invocation-context).
+ *
+ * A subagent reuses the parent's Active Model handle, which already carries the parent's host layers. Plain
+ * `withModelInvocationContext` lets inner layers overwrite outer ones, so the parent's layer used to replace the
+ * child's session type (`main` instead of `subagent`) on every inherited child request. The outermost host
+ * layer of a kind is the executing runtime: it records its values in the context of this call chain, and inner
+ * layers of the same kind re-assert them instead of their own. The record is a symbol key, so object spread and
+ * the async-iterator context restore carry it, and adapters never see it as a request field.
+ */
+export function withHostInvocationLayer(
+  model: Model,
+  kind: HostInvocationLayerKind,
+  createLayer: (request: ModelRequest) => ModelInvocationContext,
+): Model {
+  return withModelInvocationContext(model, (request): HostTaggedInvocationContext => {
+    const bound = (getCurrentModelInvocationContext() as HostTaggedInvocationContext | undefined)?.[
+      HOST_INVOCATION_LAYERS
+    ];
+    const outer = bound?.[kind];
+    if (outer) return outer;
+    const layer = createLayer(request);
+    return { ...layer, [HOST_INVOCATION_LAYERS]: { ...bound, [kind]: layer } };
+  });
 }
 
 export function withModelInvocationContext(
