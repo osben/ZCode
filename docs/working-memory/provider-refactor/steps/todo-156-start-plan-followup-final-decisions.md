@@ -1,350 +1,349 @@
-# Todo156：Start 独立 Provider 后续修复与最终页面决策
+# Todo156: Start independent Provider follow-up fixes and final page decisions
 
-> 状态：2026-09-17 已按授权实施 F01–F09 并完成自审；必要验证仍有基线失败；用户已在知悉后明确要求提交推送。实现、验证证据及未覆盖项见 §14。
-> 来源：[Todo154](todo-154-start-plan-independent-provider.md) 交付后审查、Air 反馈和后续逐项讨论。
-> 本条取代 [Todo155](todo-155-start-plan-selection-dependency-cleanup.md) 的初版实施范围；Todo155 保留调查历史，冲突处以本条最终决策为准。
-> 审查基线：`f2b40bda8c`；实施前未提交标签草稿见 §11；本轮已一并复核。
+> Status: F01-F09 implemented on authorization and self-reviewed (2026-09-17); required verification still
+> has baseline failures; the user, knowing this, explicitly asked to commit and push. Implementation,
+> evidence and uncovered items are in section 14.
+> Source: review after [Todo154](todo-154-start-plan-independent-provider.md), Air feedback and later
+> item-by-item discussion. This Todo supersedes the initial implementation scope of
+> [Todo155](todo-155-start-plan-selection-dependency-cleanup.md) (which keeps the investigation history;
+> conflicts resolve to this Todo). Review baseline `f2b40bda8c`.
 
-## 1. 最终范围与状态归属
+## 1. Final scope and state ownership
 
-本轮修复 Start 对旧连接方式的残留依赖，整理常驻 Provider 的状态展示，修复团队连接下拉，并为会话模型提示补套餐名称；后续审查确认补齐带问题创建副屏的提交推荐（F08，见 §12），以及推荐余额共享、按需刷新和 60 秒有效期（F09，见 §13）。保留既有组件、数据 owner 和执行协议语义，副屏首条模型的传递契约在实施前补齐。
+This round fixes Start's leftover dependence on the old connection mode, tidies the always-present
+Provider's status display, fixes the team connection dropdown and adds plan names to session model hints;
+later review added the submit recommendation for the question-creating side session (F08, section 12) and
+shared recommendation balance, on-demand refresh and 60-second validity (F09, section 13). Existing
+components, data owners and execution protocol semantics are kept; the contract for passing the side
+session's first model is completed before implementation.
 
-| 事实                 | 权威来源                                          | 展示／消费位置                           |
-| -------------------- | ------------------------------------------------- | ---------------------------------------- |
-| 下一次提交使用的模型 | 当前输入框／表单的有效 Provider、model、options   | 输入框额度、提交时同模型推荐             |
-| 已执行模型与错误     | 会话执行事实                                      | 会话余额及业务错误提醒                   |
-| 历史模型切换         | 记录的 fromProvider/fromModel、toProvider/toModel | 切换分隔提示，不读取当前草稿或连接反推   |
-| Start 身份与权益     | 当前登录账号、Account Source                      | Provider 可用性、Registry、设置页        |
-| 付费连接选择         | 原有已保存选择与提交中选择                        | 个人／团队下拉，完整团队身份匹配         |
-| 套餐余额             | 原 UsageEntitlement 服务                          | 按套餐和额度桶展示，不创建第二份余额状态 |
+| Fact                       | Authoritative source                                        | Display / consumer                              |
+| -------------------------- | ----------------------------------------------------------- | ----------------------------------------------- |
+| Model for the next submit  | effective Provider, model, options of the current input/form | input quota; submit-time same-model recommendation |
+| Executed model and errors  | session execution facts                                     | session balance and business error reminders    |
+| Historical model switch    | recorded fromProvider/fromModel, toProvider/toModel         | switch divider hint (never reads the current draft or connection) |
+| Start identity/entitlement | current logged-in account, Account Source                   | Provider availability, Registry, settings page  |
+| Paid-connection selection  | existing saved selection and the in-flight submit selection | personal/team dropdown, full team identity match |
+| Plan balance               | existing UsageEntitlement service                           | by plan and quota bucket (no second balance state) |
+
+`current` still means "matches the account access context"; Start and one paid Provider may both be true;
+it is not the input selection and is not used to guess the dropdown's selected item. Desktop continuous,
+phone replayable and the original submit owner are kept.
+
+## 2. F01: input-box Start quota drops the old connection gate
+
+`resolveV4ContextPlanConnection` in `V4ComposerToolbar.tsx` still required a global selection of kind
+start-plan once Start was chosen in the input (personal/team/none all returned none), so the ring could
+disappear for a new zero-usage session and the hover lacked Start balance (the ring also carries context
+usage, so it is not the Start state indicator).
+- [x] Remove that extra connection condition; show balance per the input's effective Provider and model.
+- [x] Keep original account entitlement, model, config validation and quota-refresh entries.
+- [x] Personal/team quota keeps depending on the correct paid scope; other Providers' semantics unchanged.
+
+## 3. F02: legacy team completion failure no longer blocks Start
+
+Chain `settingService.prepareLegacyAccountConnections` -> `node.ts` readAccountProviderSettings ->
+`accountProviderConnectionResolver.ts`: a legacy team missing organizationId with failed completion produced
+`unresolvedFamilies`, marking the same brand's Providers including Start unknown and skipping queries.
+- [x] Drop that restriction for Start (it keeps querying entitlement independently by the logged-in account).
+- [x] Missing team info still restricts paid access that needs it (no guessed organization/project).
+- [x] No migration, extra recovery or complex race barrier. Old tests asserting Start unknown with the whole brand are corrected. The defect has source and test evidence but is not the proven cause of the earlier Air plan-expiry symptom.
+
+## 4. F03: claim, success feedback and "View plan"
+
+The active claim entry/dialog is carried by Marketing Touch; the old `manualClaimPlanModelGuideStore` and
+Toolbar consumer (waiting for global Start, auto-picking a model, showing "Start ready") has no production requester.
 
 ```text
-登录账号 → Account Source → Start 权益与 Registry
-                                  ↓
-输入框有效 Provider / model → 对应额度与提交推荐
-会话执行 Provider / model  → 会话余额与错误反馈
-历史切换前后 Provider      → 历史套餐名称
-
-已保存付费连接 + 原提交中选择 → 付费下拉选中项 / 团队 scope
-                             不作为 Start 的额外门禁
+original active entry -> original verification and claim -> success feedback
+   -> refresh Provider entitlement and balance
+   -> user clicks "View plan" -> the always-present Start detail
+User actively picks a Start model, or accepts the existing same-model recommendation at submit -> Start is actually used
 ```
 
-`current` 仍表示匹配账号访问上下文，Start 与一个付费 Provider 可同时为 true；它不是输入框选择，也不用于猜下拉框选中项。保留桌面 continuous、手机 replayable 与原提交 owner。
+- [x] Keep the original claim entry, actions, success dialog and campaign eligibility; claiming changes neither the input model nor the global paid connection.
+- [x] The button that jumps to settings is uniformly "View plan" (real content/button come from remote config, so the actual delivery and navigation action were checked, not only local copy).
+- [x] Start is always present and opens detail on click; while the entitlement refresh is unfinished the detail shows the existing loading feedback (no dedicated wait-for-entry flow).
+- [x] Claim API success and refresh success are handled separately; a refresh failure cannot reverse the claim result.
+- [x] Remove the old auto-model-select guide and its dedicated leftovers; no "use now" auto model selection and no extra input-box hint layer.
+- [x] The claim entry stays independent of the plans the user owns and follows original campaign eligibility.
 
-## 2. F01：输入框 Start 额度去掉旧连接门禁
+## 5. F04: pass account access parameters to balance queries
 
-**发现**：`V4ComposerToolbar.tsx` 的 `resolveV4ContextPlanConnection` 在输入框选中 Start 后，仍要求全局 selection 存在且 kind 为 start-plan。全局个人／团队／无选择均返回 none。
+These callers supply `preferredProviderId` but omit `accountAccess`; `useUsageEntitlement` does not fill it
+and `BigModelUsageQuotaProvider` does not derive it from the ID alone, so Start can return `not_configured`
+with provider=null, quota=null.
 
-**影响**：新会话没有上下文用量时圆环可能整体消失；已有上下文用量时圆环可出现，但悬浮层仍缺 Start 余额。圆环还承载上下文用量，不能把它当作 Start 状态点。
+| Call site                                  | Fix                                                                 |
+| ------------------------------------------ | ------------------------------------------------------------------- |
+| `useV4SessionQuotaBanner.ts`               | add the access description from the actual executing Provider; keep the server-error branch |
+| `usePlanIdentitySnapshot.ts`               | check Start/paid queries, add the parameter, keep the plan-identity statistics purpose |
+| `MarketingTouchProvider.tsx` post-claim balance refresh | add the access description for that Start query, still via the existing service |
 
-- [x] 删除 Start 分支的上述额外连接条件，按输入框有效 Provider 和模型提供对应余额。
-- [x] 继续使用原账号权益、模型、配置校验及额度刷新入口。
-- [x] 保留个人／团队额度对正确付费 scope 的依赖，不改所有 Provider 的语义。
+- [x] Fix the calls without asking the user to reconnect or copying credentials into UI.
+- [x] Cover cold cache, existing cache and refresh so other entries filling the cache do not mask the missing parameter.
+- [x] Session feedback is not bound to the draft model not yet submitted; no new quota owner.
 
-## 3. F02：旧团队补全失败不再阻断 Start
+## 6. F05: Start always present and right-side status tidy-up
 
-**发现**：`settingService.prepareLegacyAccountConnections` → `node.ts` 的 readAccountProviderSettings → `accountProviderConnectionResolver.ts`。旧团队缺 organizationId、补全失败时产生 unresolvedFamilies；当前会将同品牌包括 Start 在内的 Provider 标 unknown 并跳过查询。
+### 6.1 Final product decision
 
-- [x] 去掉对 Start 的这层限制，Start 继续按登录账号独立查询权益。
-- [x] 缺团队信息时保留对需要该信息的付费访问限制，不猜组织／项目。
-- [x] 不增加 migration、额外恢复机制或复杂竞态屏障。
+**The Start Provider is always present** (the earlier "hide the Provider without a plan" idea was withdrawn).
+Existing brand display rules, the unified Start name and the real IDs are kept. 2026-09-17 addition: both
+trial plans share the Z icon provided by the user; personal/team plans keep their brand icons. Presence does
+not mean executable models. The original screenshot mixed "Coding Plan / not connected / config unavailable"
+for no-plan, query failure and missing config; this round fixes the state classification and reuses existing
+page components (no page redesign).
 
-现有测试曾断言 Start 随整品牌一起 unknown，需要改为新的正确预期。此缺陷有源码和测试证据，但不是此前 Air 套餐到期现象的已证实成因。
+| Case                           | Final display and action                                          | Nature                                              |
+| ------------------------------ | ----------------------------------------------------------------- | --------------------------------------------------- |
+| Not logged in                  | Start-specific login note + login entry                           | adjust note and wiring, reuse login flow; never "connect Start" |
+| First query, nothing yet       | original "querying + spinner"                                     | reused, no skeleton                                 |
+| Explicitly no valid plan       | no trial plan available; keep original intro and applicable campaign entry | necessary Start empty-state adjustment    |
+| Valid plan                     | original plan card, quota card, upgrade, model management         | reused; connect/disconnect and paid-connection dropdown removed |
+| Pending                        | original green pending time                                       | reused, no promise of executability                 |
+| Effective time reached, quota not synced | original "refresh entitlement" button                   | reused                                              |
+| Quota exhausted                | original card 0%, empty bar, 0 / total; keep plan info and model management | reused, no exhaustion warning added      |
+| First query failed             | original failed state with retry wired                            | fix classification/action; no no-plan or not-connected |
+| Background refresh failed      | existing cache/error handling                                     | no new failure bar over old content; cache-retention rule not widened |
+| Explicit login/credential invalid | original re-login action                                       | necessary classification fix; ordinary network failure only retries |
+| Provider config truly missing  | only then show config unavailable                                 | fix wrong judgment; no-plan or balance failure must not trigger it |
 
-## 4. F03：领取、成功反馈与查看套餐
+- [x] Linked check of `providerFamilyConnectionVisibility.ts`, `Detail.tsx`, `StatusCards.tsx` and the original claim/intro entries so changing copy alone does not hide actions.
+- [x] With a plan keep plan name, expiry, per-plan quota cards, per-model quota buckets, upgrade and model-management layout; multiple plans group exactly by plan_id; one exhausted bucket does not affect others or clear the page.
+- [x] Show the empty state only when the interface explicitly proves no valid plan (a bare `no_plan` does not infer claim history or "expired"); with no dynamic model list no models are faked; Provider presence and Registry-executable models are judged independently.
 
-两套流程必须区分：当前活动领取入口／弹窗由 Marketing Touch 承载；旧 `manualClaimPlanModelGuideStore` 与 Toolbar consumer 则等待全局 Start、自动挑模型并显示“Start 已就绪”。旧引导未找到生产请求方。
+### 6.2 Explicitly not added
 
-**最终流程**：
+No dedicated "quota exhausted" warning bar or red style; no first-load skeleton (reuse query text and spinner); no persistent "refresh failed" bar over old content (active-operation failures reuse existing error feedback); no Start small-dot loading state and no change of existing gray meaning or left-side color system (normal dot: disabled gray / executable green / other unavailable orange / existing group loading feedback); no change to "any refresh error keeps old data" (the hook keeps snapshots only for some silent refresh errors; ordinary failure or an unavailable snapshot may clear/replace, verified against the original contract).
+
+### 6.3 Quota times are not leftovers
+
+Air log `2026-09-17.log` (Beijing 2026-09-17 01:12:06): entitlement period=daily; two buckets
+expires_at=1789660799 (Sep 17 23:59:59); plan ends_at=1790006399 (Sep 21 23:59:59), proving both times are real.
 
 ```text
-原活动入口 → 原验证与领取 → 成功反馈
-                              ├→ 刷新 Provider 权益与余额
-                              └→ 用户点击“查看套餐” → 常驻 Start 详情
-
-用户主动选择 Start 模型，或提交时接受既有同模型推荐 → 实际使用 Start
+balance.expires_at -> limit.nextResetTime -> this quota bucket's time
+plan.ends_at       -> expireTime          -> the whole plan's expiry date
 ```
 
-- [x] 保留原领取入口、操作、成功弹窗及活动资格规则；领取不改输入框模型或全局付费连接。
-- [x] 跳转设置的按钮统一表达为“查看套餐”。真实内容和按钮来自远端配置，实施时核对实际投放及导航动作，不只处理本地文案。
-- [x] Start 常驻，点击即可打开详情；权益刷新未结束就在详情显示原有加载反馈，不增加等待入口出现的专门流程。
-- [x] 领取接口成功与刷新成功分开处理；刷新失败不能逆转领取结果。
-- [x] 清理无生产入口的旧自动选模引导及其专用残留，不恢复“立即使用”自动挑模型，不增加另一层输入框引导提示。
-- [x] 领取入口继续独立于用户当前拥有的套餐，按原活动资格展示。
+- [x] Keep the original time display; each bucket uses only its own expires_at (no fallback to plan expiry); no field means no fabricated time; no promise that quota is restored at that time (the last period may expire with the plan).
 
-## 5. F04：补齐余额查询账号访问参数
+## 7. F06: team connection dropdown reflects the paid selection exactly
 
-**发现**：以下调用提供 preferredProviderId，但漏传 accountAccess；`useUsageEntitlement` 不补齐参数，`BigModelUsageQuotaProvider` 也不只凭 ID 推导，Start 可返回 not_configured、provider=null、quota=null。
+Cause: `feeca80bd4` kept an entry for old Start users ("a single paid candidate is still actively selectable")
+and judged selection via `selectedOption.item.provider.accountState.current`; team entries inherit the
+personal Provider object structure and were misread; an empty value's hint was written as SelectValue child
+instead of a placeholder, leaving only the arrow.
 
-| 调用位置                                        | 修正范围                                                   |
-| ----------------------------------------------- | ---------------------------------------------------------- |
-| `useV4SessionQuotaBanner.ts`                    | 根据实际执行 Provider 补访问描述；原服务端错误提示分支保留 |
-| `usePlanIdentitySnapshot.ts`                    | 检查 Start／付费查询，补参数但保持原套餐身份统计用途       |
-| `MarketingTouchProvider.tsx` 领取成功后余额刷新 | 补齐该 Start 查询的访问描述，仍复用既有服务                |
+- [x] Pass the settings page's existing paid selection (saved + in-flight submit selection) directly; no new state.
+- [x] Reuse the existing full matching: personal by brand and type; team by brand, organization, project and plan identity.
+- [x] Delete the guess of the selected item from the entry's `provider.current`.
+- [x] If nothing matches do not pick the first option; pass the "select a plan" placeholder properly.
+- [x] A single option that is selected keeps the hidden behavior; a single unselected one keeps an operable dropdown.
+- [x] Team temporarily unavailable is not the user cancelling the selection and must not clear the selection on availability change alone; detail shows the reason.
+- [x] Switching to Start in the input does not change the global paid-connection dropdown.
 
-- [x] 修正上述接口调用，不要求用户再连接、不把凭据复制到 UI。
-- [x] 覆盖冷缓存、已有缓存和刷新，防止其他入口填充缓存掩盖缺参。
-- [x] 不把会话反馈绑定到尚未提交的草稿模型，不新增额度 owner。
+Explicitly deferred (user's final decision, left to later dedicated governance): team entries are built by
+copying personal plan data (three branches may inherit provider, entitlement, subscription and quota
+fields). This round does not rebuild team entries explicitly, extract a unified team constructor or replace
+inherited fields; it only cuts the dropdown's selection check off from that object. The mid-way idea of
+"also govern it in passing" is not in this round.
 
-## 6. F05：Start 常驻与右侧状态整理
-
-### 6.1 最终产品裁决
-
-**Start Provider 常驻。此前“没有套餐就隐藏 Provider”的讨论方案已撤回。** 沿用已确定的品牌展示规则、统一 Start 名称和真实 ID。2026-09-17 补充决定：两家体验套餐共用用户提供的 Z 字图标，个人／团队套餐保留各自品牌图标。常驻入口不等于始终有可执行模型。
-
-原截图中的“编程套餐／未连接／配置暂不可用”把无套餐、查询失败和配置缺失混在一起。本轮修正状态分类，复用已有页面组件，不整体重做页面。
-
-| 情况                   | 最终展示与操作                                      | 原有／新增性质                                   |
-| ---------------------- | --------------------------------------------------- | ------------------------------------------------ |
-| 未登录                 | Start 专属登录说明＋登录入口                        | 调整说明和接入，复用原登录流程；不叫连接 Start   |
-| 首次查询中，无已有内容 | 原“查询中＋转圈”                                    | 复用，不新增骨架                                 |
-| 明确无有效套餐         | 暂无可用体验套餐；保留原介绍及适用活动入口          | 必要的 Start 空状态调整                          |
-| 有效套餐               | 原套餐卡、额度卡、升级、模型管理                    | 复用；移除连接／断开和付费连接下拉               |
-| 待生效                 | 原绿色待生效时间                                    | 复用，不承诺已可执行                             |
-| 到生效时间但额度未同步 | 原“刷新权益”按钮                                    | 复用                                             |
-| 额度耗尽               | 原卡 0%、空进度条、0 / 总量；保留套餐信息与模型管理 | 复用，不增加耗尽警告                             |
-| 首次查询失败           | 原失败状态并接好重试                                | 修正分类和操作，不显示无套餐或未连接             |
-| 后台刷新失败           | 沿用既有缓存／错误处理                              | 不新增覆盖旧内容的失败提示条，不扩大缓存保留规则 |
-| 明确登录／凭据失效     | 接原重新登录操作                                    | 必要分类修正；普通网络失败只重试                 |
-| 真正缺 Provider 配置   | 才展示配置不可用                                    | 修正错误判断，不能因没套餐或余额失败触发         |
-
-- [x] 联动核对 `providerFamilyConnectionVisibility.ts`、`Detail.tsx`、`StatusCards.tsx`、原领取／介绍入口，避免只改文案导致操作隐藏。
-- [x] 有套餐时保持原套餐名称、到期信息、分套餐额度卡、各模型额度桶、升级与模型管理布局。
-- [x] 多个套餐继续精确按 plan_id 分组；一个额度桶耗尽不影响其他桶展示，也不把整页清空。
-- [x] 只有接口明确证明无有效套餐才展示空状态。仅返回 no_plan 时不擅自推断领取历史或“已到期”。
-- [x] 没有动态模型名单时不伪造模型；Provider 常驻与 Registry 可执行模型独立判断。
-
-### 6.2 明确不新增的设计
-
-- 不新增“额度已耗尽”专门警告条或耗尽后变红样式。
-- 不新增首次加载骨架；复用查询文字与转圈。
-- 不新增覆盖在旧内容上的“刷新失败”常驻提示条；主动操作失败复用现有错误反馈。
-- 不新增 Start 小圆点加载态，不修改现有灰色含义，不扩展左侧颜色体系。保留普通状态点的禁用灰／可执行绿／其余不可用橙及已有分组加载反馈。
-- 不改成任何刷新错误都保留旧数据。当前 hook 仅对部分静默刷新抛错保留快照；普通失败或服务返回不可用快照可能清空／替换，按原契约验证。
-
-### 6.3 额度时间不是残留功能
-
-Air 实际日志 `2026-09-17.log` 中北京时间 2026-09-17 01:12:06 的余额响应：权益 period=daily；两个桶 expires_at=1789660799（9 月 17 日 23:59:59）；套餐 ends_at=1790006399（9 月 21 日 23:59:59）。日志证明这两个不同时间都真实返回。
+## 8. F07: plan labels in session model hints
 
 ```text
-balance.expires_at → limit.nextResetTime → 本额度桶的时间
-plan.ends_at      → expireTime          → 整份套餐到期日期
-```
-
-- [x] 保留原时间展示，每个桶只使用自己的 expires_at，不借套餐到期时间兜底。
-- [x] 没有字段不伪造时间；不额外承诺“到这个时间一定恢复额度”，最后一个周期可能与套餐一起到期。
-
-## 7. F06：团队连接下拉精确反映付费选择
-
-### 7.1 引入原因
-
-`feeca80bd4` 为旧 Start 用户保留“唯一付费候选仍可主动选择”的入口，新增通过 `selectedOption.item.provider.accountState.current` 判断是否选中。团队条目继承个人 Provider 对象的旧结构因而被误读；空 value 的提示又写在 SelectValue 子内容而非 placeholder，最终只剩箭头。
-
-### 7.2 本轮确定修法
-
-- [x] 直接传递设置页已有的付费选择（已保存＋原提交中选择），不新增状态。
-- [x] 复用现有完整匹配逻辑：个人按品牌和类型；团队按品牌、组织、项目、套餐身份。
-- [x] 删除使用条目 provider.current 猜选中项的判断。
-- [x] 匹配不到不擅自取第一个选项，正确传递“请选择套餐”placeholder。
-- [x] 唯一选项且已选中时沿用隐藏行为；唯一但未选中时保留可操作下拉。
-- [x] 团队暂时不可用不等于用户取消选择，不能仅因可用性变化清空选中状态；详情展示对应原因。
-- [x] 输入框切换 Start 不改变全局付费连接下拉。
-
-### 7.3 明确延期
-
-团队条目通过复制个人套餐数据构造，三个分支可能继承 provider、权益、订阅和额度字段。这是已识别的结构问题，但用户最终决定**留到后续专项治理**。
-
-本轮不显式重建所有团队条目、不抽统一团队构造器、不整体替换继承字段；只切断下拉选中判断对该对象的错误依赖。不能把中途提出的“顺手一起治理”继续当成本轮范围。
-
-## 8. F07：会话模型提示加套餐标识
-
-```text
-GLM-5.3(个人套餐)
-GLM-5.3(体验套餐)
-GLM-5.3(团队套餐)
-
+GLM-5.3(个人套餐)   GLM-5.3(体验套餐)   GLM-5.3(团队套餐)
 模型已切换 GLM-5.3(团队套餐) → GLM-5.3(体验套餐)
 ```
 
-- [x] 前后两侧分别标注，模型同名也能区分额度来源；其他模型使用同一格式。
-- [x] 覆盖会话切换分隔提示、首次“正在使用”提示和对应切换 toast。
-- [x] 类型取记录／提示自身的真实 Provider ID，支持 BigModel、Z.ai 及国际化。
-- [x] 历史直接按新规则渲染，不迁移；当前账号、连接、草稿或目录变化不改错历史套餐。
-- [x] 自定义 Provider 保留原名称规则；输入框按钮、模型菜单和 Subagent 标签不扩大修改。
+- [x] Label both sides separately so same-named models still show the quota source; other models use the same format.
+- [x] Covers the session switch divider, the first "now using" hint and the matching switch toast.
+- [x] Type comes from the record/hint's own real Provider ID; BigModel, Z.ai and i18n supported.
+- [x] History renders directly by the new rule without migration; current account, connection, draft or catalog changes never mislabel history.
+- [x] Custom Providers keep their original naming; input button, model menu and Subagent labels are not widened.
 
-## 9. 共同边界与文档对齐
+## 9. Common boundaries and doc alignment
 
-- 不迁移会话、任务、自动化、Subagent、Bot 或模型选择数据；保留旧 kind:start-plan 兼容读取。
-- 不合并两品牌 Provider ID，不启动 Todo101 的个人／多个团队全面并存。
-- Start 无权益／不可用不静默消耗付费额度；领取与浏览不改模型或全局付费连接。
-- 同模型推荐保留思考兼容校验和原提交／accepted 写回；任务触发、后台执行、立即运行、Bot 不新增推荐。
-- 不新增身份读取竞态屏障、自动重发、第二份 accepted queue、连接或额度状态。
-- [x] 实施前将正式 Start spec、相关 feature graph 与本条最终决策对齐，消除“Start 是连接选项、失效自动回落个人”的旧描述；保留原组件设计，不引入已撤回候选。
-- [x] 旧引导等代码删除前核查真实引用；仅为专用废弃流程做清理，不删除有效历史格式兼容读取。
+No migration of sessions, tasks, automations, Subagent, Bot or model selection; legacy `kind: start-plan`
+stays readable. No merge of the two brands' Provider IDs and no Todo101 coexistence. Unentitled/unavailable
+Start never silently consumes paid quota; claiming and browsing change neither model nor global paid
+connection. The same-model recommendation keeps thinking-compat validation and original submit/accepted
+write-back; task triggers, background execution, run-now and Bot add no recommendation. No new identity-read
+race barrier, auto-resend, second accepted queue, connection or quota state.
+- [x] Before implementing, the formal Start spec and related feature graph were aligned with these decisions (removing "Start is a connection option / auto fall back to personal on invalidation"); withdrawn candidates not introduced.
+- [x] Old guide code deleted only after checking real references and only for the dedicated deprecated flow; valid legacy-format compatibility reads kept.
 
-## 10. 回归与最终 review
+## 10. Regression cases
 
-| 编号  | 必须验证的场景                                                                                                                                                         |
-| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| SF-01 | 两品牌 × 全局个人／团队／无选择／历史 Start；输入框选 Start 正常提供其额度                                                                                             |
-| SF-02 | 新会话零上下文、已有上下文；额度圆环、悬浮内容和刷新正常；切付费后展示正确 scope                                                                                       |
-| SF-03 | 旧团队组织补全失败，Start 仍能独立查询；团队访问保持原限制                                                                                                             |
-| SF-04 | 会话余额、身份快照、领取后余额查询：冷缓存／已有缓存／刷新均传正确访问描述                                                                                             |
-| SF-05 | Start 常驻，未登录、查询中、无套餐、有效、待生效、失败、登录失效分别显示正确状态及操作                                                                                 |
-| SF-06 | 额度为零仍保留原卡；多个套餐和额度桶不串数据；桶时间与套餐到期分开，无字段不伪造                                                                                       |
-| SF-07 | 领取成功后不改模型／付费选择；查看套餐可直接打开常驻详情；刷新失败不逆转领取成功                                                                                       |
-| SF-08 | 团队已选中而个人未启用，下拉显示团队；团队暂不可用不因 current 清空；完整团队身份匹配                                                                                  |
-| SF-09 | 旧 Start 用户未选付费，显示请选择套餐；唯一个人候选可主动选；不自动取第一个                                                                                            |
-| SF-10 | 两品牌三类套餐、同名／不同名模型、目录缺失、历史重放：分隔提示／首次使用／toast 后缀正确                                                                               |
-| SF-11 | 自定义 Provider 标签不变；中英文、深浅主题、桌面与手机窄屏无截断／溢出；左侧不新增状态体系                                                                             |
-| SF-12 | 原 Start 精确解析、请求鉴权、同模型推荐、领取、各存储 owner 和 continuous/replayable 边界不回归                                                                        |
-| SF-13 | `/side <问题>` 首条提交：兼容且有额度时可推荐；确认只影响 child，不了沿用其原选择，关闭不创建／发送并保留草稿；空 `/side` 不提示；两种交付模式均保持原幂等与 admission |
-| SF-14 | 推荐、设置页、输入框浮层共享同账号同 Start 的余额结果；设置页刷新为零后，推荐不得继续使用旧正额度；其他账号／Provider 的结果不混用                                     |
-| SF-15 | 推荐余额未超过 60 秒时按真实额度判断；超过 60 秒或未知时后台刷新，本次继续原选择，不等待查询；成功后下次提交采用新结果                                                 |
-| SF-16 | 同品牌 A → B：复用账号／Provider 刷新机制读取 B 的余额；允许短暂沿用，旧采样超过有效期即停止用于推荐；查询失败沿用既有退避且不阻塞提交                                 |
-| SF-17 | 会话切换、组件卸载重挂、隔天进入不能使旧余额重新变新；反复访问复用 60 秒节流及 in-flight 合并，没有操作时不额外轮询                                                    |
-| SF-18 | 按提交时刻检查桶有效期：快照虽新、桶已到期也不推荐；服务端时间计入采样后经过的时间，保留原桶／套餐时间展示规则                                                         |
-| SF-19 | 领取／权益变化触发原刷新链路并同步推荐依据；已有零额度更新为正额度后恢复推荐，仍不自动切模型；覆盖各推荐入口及同 Host 手机路径                                         |
+| ID    | Scenario                                                                                                                                                  |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SF-01 | Two brands x global personal/team/none/legacy Start: input-selected Start provides its quota                                                              |
+| SF-02 | New zero-context and existing-context sessions: ring, hover and refresh correct; after switching to paid, correct scope                                   |
+| SF-03 | Legacy team organization completion fails: Start still queries independently; team access keeps its restriction                                           |
+| SF-04 | Session balance, identity snapshot, post-claim balance: cold cache / existing cache / refresh pass correct access description                             |
+| SF-05 | Start present; not logged in, querying, no plan, valid, pending, failed, login invalid show correct state and action                                      |
+| SF-06 | Zero quota keeps the original card; multiple plans and buckets do not mix; bucket time vs plan expiry separate, no fabrication                            |
+| SF-07 | After claiming, model/paid selection unchanged; "View plan" opens the Start detail; refresh failure does not reverse the claim                            |
+| SF-08 | Team selected and personal not enabled: dropdown shows team; team temporarily unavailable not cleared by current; full team identity matched              |
+| SF-09 | Old Start user without a paid selection: "select a plan"; the single personal candidate selectable; never auto-picks the first                            |
+| SF-10 | Two brands x three plan types, same/different model names, missing catalog, history replay: divider / first-use / toast suffix correct                    |
+| SF-11 | Custom Provider labels unchanged; zh/en, light/dark, desktop and phone narrow without truncation or overflow; no new left-side status system              |
+| SF-12 | Original exact Start resolution, request auth, same-model recommendation, claim, store owners and continuous/replayable boundaries not regressed           |
+| SF-13 | `/side <question>` first submit: when compatible with quota the recommendation may show; confirm affects only the child, "not now" keeps its original selection, closing neither creates nor sends and keeps the draft; empty `/side` does not prompt; both delivery modes keep original idempotency and admission |
+| SF-14 | Recommendation, settings page and input hover share the same-account same-Start balance; after the settings page refreshes to zero the recommendation must not keep the old positive quota; other accounts/Providers' results are not mixed |
+| SF-15 | Recommendation balance within 60 s judged by the real quota; over 60 s or unknown refreshes in the background, this time continues with the original selection without waiting, and the next submit uses the new result |
+| SF-16 | Same brand A -> B: B's balance is read via the account/Provider refresh mechanism; brief reuse is allowed but an old sample older than the validity stops being used; query failure follows existing backoff and never blocks submit |
+| SF-17 | Session switch, unmount/remount and next-day entry never make an old balance fresh again; repeated access reuses the 60 s throttle and in-flight merge; no extra polling without operations |
+| SF-18 | Bucket validity checked at submit time: a fresh snapshot with an expired bucket does not recommend; server time counts the time elapsed since sampling; original bucket/plan time display rules kept |
+| SF-19 | Claim / entitlement change triggers the original refresh chain and syncs the recommendation basis; an existing zero quota updated to positive restores the recommendation without auto-switching; covers every recommendation entry and the same-Host phone path |
 
-旧测试里“必须全局选中 Start 才有额度”和“旧团队补全失败 Start 也必须 unknown”的预期要同步纠正，不保留相互矛盾的断言。先有能够证明正确预期的测试，再实现。
+Old tests asserting "Start quota requires a globally selected Start" and "Start must be unknown when legacy
+team completion fails" were corrected; tests proving the right expectations came before implementation.
+Gates: workspace freshness, git status, typecheck, lint, `architecture:check --changed`, affected tests;
+per the user, E2E via **Pro admin SSH** under e2e-case-lifecycle; light/dark and narrow-window checks do not
+replace a physical phone or full Web shared-host E2E, and uncovered items are listed.
 
-实施门禁：workspace freshness、git status；必要 typecheck、lint、architecture:check --changed、受影响测试。按用户要求通过 **Pro admin SSH** 执行对应 E2E，遵守 e2e-case-lifecycle；深浅主题／窄屏验证不冒充实体手机或完整 Web shared-host E2E，未覆盖项明确列出。
+## 11. Pre-implementation pause (history)
 
-- [x] 全面 review：已逐项复核问题、状态来源、调用参数、字段归属和错误路径，并补充新场景验收，见 §14。
-- [x] 提交授权：CLI 基线 lint 与旧协议边界检查仍失败，已向用户说明；用户随后明确要求推送本轮改动。保留失败记录，正常执行 Git 检查钩子。
+Investigation had 5 existing test files / 118 passing with old-semantics assertions; eight source-probe
+combinations showed only legacy start-plan connections return Start quota context and an `accountAccess`-less
+query returns an empty `not_configured` snapshot. Before the pause only the label draft was uncommitted
+(`modelTriggerDisplay.ts`, `ConversationRowView.tsx`, `SessionPane.tsx`,
+`packages/ui/test/v4ConversationRowViewTimelineMarker.test.ts`, the label rules in `docs/zai-start-plan-provider.md`);
+it had failed 7 tests first, then 2 files / 28 passed. The user later confirmed adding F08 and confirmed
+F09 (shared recommendation balance, on-demand refresh, 60 s validity); brief reuse on account change is
+allowed but not forever, with no new complex identity race barrier.
 
-## 11. 实施前暂停现场与证据边界（历史）
+The conditional multi-instance quota ownership / list key suspicion was rechecked against the baseline:
+`StartPlanBalanceCard.tsx`, `StartPlanContextBalance.tsx` and `bigmodelUsageQuotaProvider.ts` are identical
+to the pre-change `2772217134` and to local `origin/staging` at recheck. A constructed-input probe does not
+prove the production interface allows that combination, so it is not a definite defect introduced here and
+the F05-decided grouping/display rules are not changed. History: `13bb702b38` once withdrew key hardening
+under the entitlement_id uniqueness contract and `853b93b2c2` restored that topic to an earlier version;
+historical notes do not replace verifying the current interface contract.
 
-- 调查期间 5 个现有测试文件 118 项通过；其中仍有旧语义断言，不能证明本轮问题已解决。
-- 原源码探针验证两品牌共八组连接组合，只有旧 start-plan 返回 Start 额度上下文；缺 accountAccess 的查询返回 not_configured 空快照。
-- 暂停前只有标签相关未提交草稿：`packages/ui/src/v4/composer/modelTriggerDisplay.ts`、`ConversationRowView.tsx`、`SessionPane.tsx`、`packages/ui/test/v4ConversationRowViewTimelineMarker.test.ts`，以及 `docs/zai-start-plan-provider.md` 的标签规则段落。
-- 标签草稿曾先验证 7 项失败，修改后相关 2 文件 28 项通过；完整代码检查、视觉／端上验证和最终 review 未完成，没有 commit／push。
-- 本轮仅新建决策 TODO 并更新入口，不继续产品实现、不擅自回滚已有草稿。恢复实施时按本条统一复核草稿，不能直接标完成。
-- 后续全链路审查中，用户确认补充 F08，并已确认 F09 的推荐余额共享、按需刷新和 60 秒有效期。用户允许换账号时短暂沿用，但不能一直沿用，不据此新增复杂身份竞态屏障；具体裁决见 §13，不再标为待讨论。
-- 多实例额度归属／列表 key 的条件性疑点经基线复核：`StartPlanBalanceCard.tsx`、`StartPlanContextBalance.tsx`、`bigmodelUsageQuotaProvider.ts` 与改造前 `2772217134` 及复核时本地 `origin/staging` 均无差异。构造输入探针不证明生产接口允许该组合，不列为本次引入的确定缺陷，也不擅自修改 F05 已确定的原分组／展示规则。历史 `13bb702b38` 曾按 entitlement_id 唯一契约撤回 key 加固，之后 `853b93b2c2` 将该专题恢复到更早版本；历史说明不能替代当前接口契约核实。
+## 12. F08: recommendation for the question-creating side session
 
-## 12. F08：补齐带问题创建副屏的提交推荐
-
-**确认**：2026-09-17 用户要求补充。当前 `SessionPane` 对 `/side <问题>` 提前返回，调用 `createSelectionSideSession({ firstInput: { text } })`；CLI 创建 child 后直接启动首条输入，绕过普通发送路径中的体验套餐推荐。普通副屏续聊仍走共用发送路径。
-
-```text
-用户提交 /side <问题> → 解析子会话实际继承的有效模型 → 共用同模型推荐
-  确认切换 → 用确认后的 Start 选择创建 child 并提交首条
-  不了     → 按 child 原选择创建并提交
-  关闭     → 保留输入草稿，不创建 child、不发送首条
-
-父会话的模型、运行态和队列保持原语义
-```
-
-- [x] 在带文本创建副屏的首条提交边界接入共用推荐，保留同模型、思考兼容、额度与“不再提示”的已有规则。
-- [x] 按 child 实际继承并解析后的模型判断，不能直接用父输入框草稿冒充 child 的执行选择。
-- [x] 确认后选择必须传到 child 首条执行与原保存边界，不能只弹框而仍执行旧付费模型；不修改父会话模型或全局付费连接。
-- [x] 当前命令只接收 firstInput.text；实施前补齐显式首条模型传递的 spec／协议契约，核对 App、Host、CLI 两侧的类型与运行时 schema。
-- [x] 保持创建与首条输入原有的 admission、ACK、去重和失败处理；不另建 accepted queue，不靠先发送再切换或自动重发实现。
-- [x] 空 `/side` 只打开副屏，不推荐；普通副屏续聊不重复接入；后台、重试和 Bot 的排除规则不变。
-- [x] 覆盖 SF-13 的确认／不了／关闭、思考不兼容、未知／零额度、不再提示、child 与 parent 隔离；使用 Pro admin SSH 验证端上路径，并分别验证 continuous／replayable 的原恢复边界。
-
-**实施前证据边界**：原调查来自前端分支、共享 schema 和 CLI handler，彼时 CLI 构建入口缺失。实施阶段已构建 CLI 依赖并完成定向回归及 Pro 首条请求验证，详见 §14。
-
-## 13. F09：推荐余额共享、按需刷新与有效期
-
-**确认**：2026-09-17 用户确认方案并要求落盘。这里的“推荐弹窗”指付费同模型有体验套餐额度时，在提交／保存前显示的“不了／切换套餐／不再提示”弹窗。本节合并处理推荐长期使用旧余额、同品牌换账号后仍沿用旧推荐余额两个问题。
-
-**现状**：`useStartPlanRecommendation` 只启用 refreshOnMount；`useUsageEntitlement` 的 initial 分支对共享缓存使用无限有效期。推荐与设置页的请求参数／缓存键不同，设置页刷新不更新推荐依据。额度桶判断使用快照采集时刻，未计入提交前经过的时间。已有 Hook 探针复现隔天仍推荐、重挂不查询、设置页余额为零但仍推荐、同品牌换号后仍用旧正额度；这些是问题证据，不是修复完成证据。
-
-### 13.1 共享余额事实
-
-- [x] 统一 Start 查询参数和缓存身份的构造；推荐、设置页、输入框额度浮层读取同一 Host、同一账号的同一个 Start 时，共享原权益服务的查询结果与更新通知。
-- [x] 设置页／浮层刷新后的新余额应更新推荐依据，不能继续形成彼此不更新的同义缓存。
-- [x] 复用已有账号／Provider 权益指纹和失效事件，保持不同账号、品牌、Provider、Host 的边界；不新建余额 owner，不把凭据复制到 UI。
-- [x] 只共享余额事实，各入口仍根据自己的有效模型选择、Registry、思考兼容性和 Host 推荐偏好决定是否提示。查询参数统一不得绕过原查询资格或模型执行校验。
-
-### 13.2 按需刷新
-
-- [x] 进入有推荐能力的页面、用户提交消息／保存任务等原推荐操作时，检查是否需要刷新。普通访问复用现有 `USAGE_ENTITLEMENT_ACCESS_REFRESH_MS` 的 60 秒节流、并发请求合并和失败退避。
-- [x] 账号变化、领取套餐或权益发生变化时，复用设置页已有 Provider 权益指纹及相应刷新机制，在后台读取新结果并发布给相关消费者。账号／领取刷新沿用原触发语义，不新增同步发送门禁。
-- [x] 允许账号变化的刷新过渡期短暂沿用已有内容；新结果返回后替换。查询失败或迟迟没有新结果时，过期快照不得继续作为推荐依据。
-- [x] 没有操作时不新增轮询；“60 秒”是普通按需刷新窗口和推荐依据有效期，不代表每隔 60 秒固定请求一次。
-- [x] 不新增账号切换竞态屏障、自动重发或第二份 accepted queue。
-
-### 13.3 提交时的推荐规则
-
-| 提交时的余额事实                                           | 确定行为                                                     |
-| ---------------------------------------------------------- | ------------------------------------------------------------ |
-| 最近一次成功采样未超过 60 秒，同模型桶仍有效且有明确正额度 | 原有候选／思考／偏好条件均满足时正常推荐                     |
-| 最近一次成功采样未超过 60 秒，余额为零                     | 不推荐，继续原选择                                           |
-| 余额采样超过 60 秒，或尚未查到                             | 按已有节流／退避规则后台刷新，本次继续原选择，不等待额度查询 |
-| 查询失败                                                   | 跳过推荐，正常提交不受影响；后续按原退避规则重试             |
-| 快照虽未超过 60 秒，但对应额度桶已经到期                   | 不依据该桶推荐；其他同模型有效桶仍按原规则判断               |
-
-- [x] 推荐时效依据最近一次真实成功采样，读取缓存、重新挂载、跨入口回显不得重置年龄；刷新失败不能延长旧正额度的推荐有效期。
-- [x] 按实际提交时刻判断额度桶有效期。使用服务端参考时间时，计入自快照采集后经过的时间，不能一直固定在 snapshot.serverTime／generatedAt；保留原服务端时间与本地时钟差异的处理边界。
-- [x] 此有效期限制针对推荐决策，不把所有套餐页面的展示缓存一律改成 60 秒后清空，也不新增耗尽／刷新失败提示样式。
-- [x] 长时间闲置后的第一次提交可能不弹推荐：本次照常使用原模型，后台得到新余额后，后续提交再正常判断。不会在原提交已发出后补弹或自动改用 Start。
+Confirmed 2026-09-17. `SessionPane` returned early for `/side <question>` and called
+`createSelectionSideSession({ firstInput: { text } })`; the CLI created the child and started the first
+input directly, bypassing the normal-send recommendation. Plain side-session follow-ups already use the
+shared send path.
 
 ```text
-账号／Provider 变化、领取完成 → 原权益刷新机制 → 发布新的 Start 余额
-进入页面／用户提交          → 原按需刷新检查（60 秒节流、合并、退避）
-                                                  ↓
-                               共享余额 → 设置页／浮层／推荐消费者
-
-本次提交 → 快照在 60 秒内且桶当前有效？
-  是 → 原同模型、思考、正额度与偏好判断 → 原推荐弹窗／提交路径
-  否 → 按需后台刷新；本次原模型照常提交，不等待、不补发
+user submits /side <question> -> resolve the model the child actually inherits -> shared same-model recommendation
+  confirm switch -> create the child with the confirmed Start selection and submit the first message
+  not now        -> create with the child's original selection and submit
+  close          -> keep the input draft, create nothing, send nothing
+parent session model, runtime state and queue keep their original semantics
 ```
 
-### 13.4 验收与实施范围
+- [x] Shared recommendation at the first-submit boundary of text-bearing side sessions, keeping same-model, thinking-compat, quota and "don't ask again" rules.
+- [x] Decide by the child's actual inherited and resolved model, not the parent's input draft.
+- [x] The confirmed selection must reach the child's first execution and the original save boundary (no dialog while still executing the old paid model); the parent model and global paid connection are not modified.
+- [x] The command accepted only `firstInput.text`; the explicit first-message model-passing contract (spec/protocol) was completed first, with App, Host and CLI types and runtime schemas checked.
+- [x] Original admission, ACK, dedupe and failure handling kept; no extra accepted queue, no send-then-switch, no auto-resend.
+- [x] Empty `/side` only opens the side session (no recommendation); plain follow-ups not re-wired; the exclusions for background, retry and Bot unchanged.
+- [x] SF-13 confirm / not now / close, incompatible thinking, unknown/zero quota, don't ask again, child/parent isolation covered; Pro admin SSH verified the end path, continuous/replayable recovery boundaries checked separately.
 
-- [x] 覆盖 SF-14～SF-19，特别验证“旧正额度变零”和“旧零额度补充为正”两个方向，以及同品牌换账号、重挂、跨日、刷新失败与恢复。
-- [x] 检查所有共用推荐入口：Session、Automation、Subagent、手动 Wiki 及 F08 的副屏首条；保持各入口原提交／保存 owner，验证同 Host 手机的身份来源与同步边界。
-- [x] 实施前把正式 Start spec 中推荐规则更新为本节最终裁决，并补充相关回归测试。原只落盘限制已由本次执行授权解除。
+## 13. F09: shared recommendation balance, on-demand refresh and validity
 
-多实例额度分组／列表 key（上一轮审查第 4 项）按用户决定先不处理，保留与原基线一致的行为，不作为 F09 的附带重构。
+Confirmed 2026-09-17. "Recommendation dialog" = the "Not now / Switch plan / Don't ask again" dialog shown
+before submit/save when a paid same model has trial-plan quota. This section handles both the recommendation
+using stale balance for a long time and a same-brand account change still using the old recommendation balance.
 
-## 14. 2026-09-17 实施与自审记录
+Before: `useStartPlanRecommendation` only enabled refreshOnMount; the initial branch of
+`useUsageEntitlement` used unlimited validity for the shared cache; the recommendation and the settings page
+had different request parameters/cache keys (a settings refresh did not update the recommendation basis);
+bucket-validity checks used the snapshot collection time, not elapsed time. Hook probes reproduced: next-day
+still recommending, remount not querying, settings balance zero but still recommending, old positive quota
+after a same-brand account change.
 
-### 14.1 已交付行为
+### 13.1 Shared balance fact
 
-- F01/F02：输入框 Start 额度按有效 Provider 判断；旧团队组织补全失败仅限制付费套餐，不阻断 Start。付费 scope 和执行鉴权保留。
-- F03/F04：删除无生产入口的旧自动选模引导；实际营销按钮按导航动作将 Start 详情入口标为“查看套餐”；领取成功分别刷新 Provider 与共享余额，不改变领取结果、模型或连接。会话余额、套餐身份统计、领取刷新补齐显式账号访问参数。
-- F05/F06：Start 常驻，复用既有状态卡；区分无套餐、网络失败和明确登录失效，接好重试／登录，不再误报未连接或配置缺失。无套餐不展示泛用付费订购按钮。付费下拉读取保存／提交中选择，按完整团队身份匹配，不再看复制来的个人 Provider.current。
-- F07：首次模型提示、切换分隔线及 toast 按各自真实 Provider ID 标注个人／体验／团队套餐，支持两品牌和中英文；不迁移历史。
-- F08：副屏首条推荐以父 runtime 的生效模型为继承依据，确认后的选择通过一个 createSelectionSideSession.firstInput.modelSelection 传入 child；不了保持原继承，关闭不创建／发送且保留草稿。父输入框草稿不被改写。
-- F09：设置页、浮层、推荐与领取刷新共享原服务的 Start 查询参数及账号指纹。普通访问复用 60 秒节流、并发合并和错误退避；推荐只使用 60 秒内真实采样，并计入桶到期经过的时间。共享查询失败同步给推荐入口；无操作不轮询，不新增余额 owner。
+- [x] Unified Start query parameters and cache identity: recommendation, settings page and input quota hover reading the same Start of the same account on the same Host share the original entitlement service's result and update notifications.
+- [x] A fresh balance after a settings/hover refresh updates the recommendation basis (no mutually non-updating equivalent caches).
+- [x] Reuse the existing account/Provider entitlement fingerprint and invalidation events, keeping the boundaries between accounts, brands, Providers and Hosts; no new balance owner, no credentials copied into UI.
+- [x] Only the balance fact is shared; each entry still decides by its own effective model selection, Registry, thinking compat and Host recommendation preference. Unified parameters must not bypass the original query eligibility or model execution validation.
 
-### 14.2 回归与端上证据
+### 13.2 On-demand refresh
 
-以下组有重叠，不能相加为独立用例总数。
+- [x] Check whether a refresh is needed on entering a recommendation-capable page and on the original recommendation operations (sending, saving a task). Ordinary access reuses the existing `USAGE_ENTITLEMENT_ACCESS_REFRESH_MS` 60 s throttle, in-flight merge and failure backoff.
+- [x] Account change, claim or entitlement change reuse the settings page's Provider entitlement fingerprint and refresh mechanism, reading in the background and publishing to consumers, with the original trigger semantics (no new synchronous send gate).
+- [x] During the transition after an account change brief reuse of existing content is allowed and replaced when the new result arrives; with query failure or no new result an expired snapshot must not remain the recommendation basis.
+- [x] No polling without operations: "60 s" is the normal on-demand refresh window and recommendation validity, not a fixed 60-second request interval. No account-switch race barrier, auto-resend or second accepted queue.
 
-| 检查                       | 结果与证据                                                                                                                                                                                                                                                                                      |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 实施前 freshness／工作区   | 已检查；保留原文档及标签草稿，未重置用户内容                                                                                                                                                                                                                                                    |
-| 根受影响回归               | `pnpm exec vitest run --changed HEAD`：622 文件、7041 条通过、7 条跳过；`/tmp/start156-unit-changed.log`。`test:unit:affected` 因 HEAD 等于上游而跳过，未将其算作运行证据                                                                                                                       |
-| 最终页面／共享余额定向     | 4 文件、223 条通过，`/tmp/start156-final-targeted.log`；营销 2 文件、12 条通过，`/tmp/start156-marketing-final.log`                                                                                                                                                                             |
-| Session 桌面／手机提交入口 | 68 条通过，包含新增 6 组副屏确认／不了／关闭、父生效模型与草稿隔离断言；`/tmp/start156-session-mobile.log`                                                                                                                                                                                      |
-| 根代码检查                 | typecheck、lint、architecture:check --changed 通过；lint 54 个原有 warning，架构 0 violation。`/tmp/start156-{typecheck,lint,arch}-reviewed.log`                                                                                                                                                |
-| CLI 类型／受影响调用方     | 28 个 typecheck 任务通过；副屏 native 8 条通过；selection child、continuous/replayable、去重定向 3 文件 26 条通过（187 条筛选跳过），`/tmp/start156-cli-typecheck.log`、`/tmp/start156-side-cli-green.log`、`/tmp/start156-cli-integration.log`                                                 |
-| Pro 桌面 E2E               | `macbook-pro-admin`，隔离目录 `/Users/dev/zcode-start156-pro-e2e`；最终 run `desktop-e2e-20260917051754556-p53534-7ee59f80ae96b31e` 通过。覆盖团队下拉、Start 圆环／标签、Subagent／Automation 推荐、聊天关闭／不了／确认、副屏首条真实请求 Provider／思考、主草稿隔离，以及不再提示与重启保持 |
-| Pro 浏览器页面状态         | 64 组：两品牌 × 8 状态 × 桌面／390px、中英文、深浅主题组合通过；修正 pending 夹具字段及空套餐泛用订购按钮后，16 组空套餐／待生效定向复测通过。`/tmp/start156-browser.log`、`/tmp/start156-browser-final2.log`（Pro）；截图已复制本地 `/tmp/start156-pro-evidence/browser/` 并目视核对           |
+### 13.3 Recommendation rule at submit
 
-补充 Pro 回归：`marketing-touch-entitlement.test.ts` 与 `repo-wiki-model-plan-selection.test.ts` 两例通过，run `desktop-e2e-20260917052049566-p56236-413567dc76597ef7`。断言领取后刷新不覆盖连接、旧 Start 选择保持、唯一付费候选可选，以及 Wiki 不了／确认切换后的持久化。两次最终 run 的 summary 已复制本地 `/tmp/start156-pro-evidence/{desktop,claim-wiki}/`。
+| Balance fact at submit                                                  | Behavior                                                                          |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| latest successful sample <= 60 s, same-model bucket valid with positive quota | recommend normally when the original candidate/thinking/preference conditions hold |
+| latest successful sample <= 60 s, balance zero                          | no recommendation, continue with the original selection                           |
+| sample older than 60 s, or not yet queried                              | refresh in the background per existing throttle/backoff; this time continues with the original selection without waiting for the quota query |
+| query failed                                                            | skip the recommendation, normal submit unaffected; retry per original backoff     |
+| snapshot <= 60 s but its quota bucket has expired                        | that bucket is not a basis; other valid same-model buckets are judged by the original rule |
 
-SF-01～19 由组件／Hook／服务／CLI 与端上证据组合覆盖，不代表每种组合都在完整产品中 E2E。尤其手机证据是共用 SessionPane 的 compactForRemoteControl 回归、CLI replayable 边界与 390px 浏览器检查；**未实跑实体手机 Safari 或完整 Web shared-host 联合 E2E**。Windows／Linux Electron、真实账号和线上付费接口亦未实跑。E2E 外部服务使用隔离 fixture，UI、Host／Worker、协议请求构造及持久化走真实链路；新增用例仍为 pending，未自行转正或宣称 CI 准入。
+- [x] Validity is by the latest real successful sample; reading cache, remounting and cross-entry echo do not reset its age; a failed refresh does not extend an old positive quota's validity.
+- [x] Bucket validity is judged at the actual submit time; with a server reference time the time elapsed since collection is counted (not fixed at snapshot.serverTime / generatedAt); the original handling of server vs local clock difference is kept.
+- [x] The validity limit applies to recommendation decisions, not to turning every plan-page display cache into a 60 s clear, and adds no exhausted/refresh-failed style.
+- [x] The first submit after a long idle may not show the recommendation: it goes with the original model, and after the background gets the new balance later submits are judged normally; no post-hoc dialog and no auto switch to Start.
 
-### 14.3 自审修正与保留边界
+```text
+account/Provider change, claim done -> original entitlement refresh -> publish new Start balance
+enter page / user submit            -> original on-demand check (60 s throttle, merge, backoff)
+                                          -> shared balance -> settings page / hover / recommendation consumers
+this submit -> snapshot within 60 s and bucket valid?
+   yes -> original same-model, thinking, positive-quota and preference checks -> original dialog / submit path
+   no  -> background refresh on demand; this time the original model is submitted, no waiting, no re-send
+```
 
-- 自审发现查询失败没有通知其他余额消费者，可能使推荐继续采用旧正额度；已在原共享错误／退避 owner 发布失败事实，补充“设置页刷新失败后推荐跳过”回归。
-- 自审将明确登录失效改为结构化 accountLoginRequired 展示事实，避免用 i18n 文案 key 决定登录／重试行为。
-- 空套餐复用了泛用订购按钮，已移除 Start 的该按钮；保留套餐介绍及活动资格规则。有效／待生效套餐升级和零额度原卡不变。
-- E2E 修正可见文本尚在布局过程中的读取，以及退出动画中的旧弹窗被误判为二次推荐；等待对应 UI 状态后最终运行通过。pending 视觉夹具补正确 effectiveTime／entitlementId 并增加可见状态断言。
-- 已检查共用推荐的 Session、Automation、Subagent、手动 Wiki 入口，未把推荐搬到后台执行、Bot 或立即运行；副屏没有新增独立 accepted queue 或先发后切模型。
-- 旧 guide 专用 export 删除前做引用核查；现有模型菜单通用 guide 能力及其他消费者保留。
-- 没有 migration、自动回落付费、新账号竞态屏障；团队条目复制结构、多实例额度归属／列表 key 按已确认延期决定保持原状。
+- [x] SF-14..19 covered, especially "old positive quota turned zero" and "old zero quota replenished to positive", and same-brand account change, remount, cross-day, refresh failure and recovery.
+- [x] All shared recommendation entries checked: Session, Automation, Subagent, manual Wiki and F08's side first message; each keeps its original submit/save owner; same-Host phone identity source and sync boundary verified.
+- [x] The formal Start spec's recommendation rules were updated to this section before implementation, with regression tests.
 
-### 14.4 未通过的基线门禁
+Multi-instance quota grouping / list key (item 4 of the previous review) is not handled by the user's
+decision and keeps baseline behavior; it is not a side refactor of F09.
 
-- `pnpm --dir apps/zcode-cli lint` 失败：telemetry／adapters／contracts／debug 等原文件超过现有 400 行限制，日志 `/tmp/start156-cli-lint.log`。例如 `telemetry/src/model-api-recorder.ts` 内容与 HEAD 完全一致。本轮根 lint 已通过，不把 CLI 全量失败归为本轮通过。
-- 扩展执行 `v4-native-boundary.test.ts` 发现 3 处原有 V4 → 旧协议 import：`commands/handlers/goal-compact.ts`、`commands/handlers/session-flow.ts`、`commands/prompt-turn.ts`；三文件逐字与 HEAD 相同。日志 `/tmp/start156-cli-tests.log`。本轮修改的副屏 handler 没有引入这类依赖。
-- Feature graph 可解析，但原图有 4 条悬空边，plan-entitlements 的旧 codeSeed 指向已不存在的 `modelProviderFamilyConnectionSelection.ts`；本轮只同步已确认的套餐不变量，未扩大图治理。Codegraph 服务当前不可调用，影响扫描使用实际引用及回归证据，不声称图索引验证通过。
+## 14. Implementation and self-review (2026-09-17)
 
-实施结束时按根 AGENTS 的门禁失败规则保留工作区、未自动提交；用户在知悉上述限制后明确要求推送，故继续提交并正常运行推送钩子。已知失败与未验证项继续保留，此次提交不代表全部门禁通过。
+### 14.1 Delivered behavior
+
+- F01/F02: input-box Start quota by the effective Provider; legacy team organization completion failure restricts only paid plans, not Start; paid scope and execution auth kept.
+- F03/F04: old auto-model-guide removed; the real marketing button labeled "View plan" per navigation action; claim success refreshes Provider and shared balance separately without altering the claim result, model or connection; session balance, plan-identity statistics and claim refresh pass explicit account access.
+- F05/F06: Start always present reusing status cards; no-plan, network failure and explicit login invalid are distinguished with retry/login wired, no more false "not connected" or "config missing"; no generic order button for no plan; the paid dropdown reads the saved/in-flight selection and matches full team identity instead of the copied personal Provider.current.
+- F07: first-model hint, switch divider and toast label personal/trial/team plans by their own real Provider ID, both brands and zh/en; no history migration.
+- F08: the side first-message recommendation bases the inherited model on the parent runtime's effective model; the confirmed selection reaches the child via one `createSelectionSideSession.firstInput.modelSelection`; "not now" keeps the inheritance; close neither creates nor sends and keeps the draft; the parent input draft is not rewritten.
+- F09: settings page, hover, recommendation and claim refresh share the original service's Start query parameters and account fingerprint; ordinary access reuses the 60 s throttle, in-flight merge and error backoff; the recommendation uses only a real sample within 60 s and counts the elapsed time for bucket expiry; shared query failures are synced to the recommendation entry; no polling without operations; no new balance owner.
+
+### 14.2 Regression and end evidence (groups overlap; not independent totals)
+
+- Root affected regression `pnpm exec vitest run --changed HEAD`: 622 files, 7041 pass, 7 skipped (`/tmp/start156-unit-changed.log`; `test:unit:affected` was skipped because HEAD equals upstream and is not counted as evidence). Final page/shared-balance targeted 4 files / 223 and marketing 2 files / 12; Session desktop/phone submit entries 68 (6 new side-session confirm / not-now / close groups, parent-effective model, draft isolation).
+- Root typecheck, lint (54 existing warnings) and `architecture:check --changed` (0 violations) pass. CLI typecheck 28 tasks pass; side native 8; selection child, continuous/replayable, dedupe targeted 3 files / 26 (187 filtered out).
+- Pro desktop E2E (`macbook-pro-admin`, isolated dir `/Users/dev/zcode-start156-pro-e2e`): final run `desktop-e2e-20260917051754556-p53534-7ee59f80ae96b31e` passed, covering team dropdown, Start ring/labels, Subagent/Automation recommendation, chat close / not-now / confirm, side first-message real request Provider/thinking, main-draft isolation, and don't-ask-again persistence across restart. Supplementary Pro run `desktop-e2e-20260917052049566-p56236-413567dc76597ef7`: `marketing-touch-entitlement.test.ts` and `repo-wiki-model-plan-selection.test.ts` pass (refresh after claim does not overwrite the connection, old Start selection kept, the single paid candidate selectable, Wiki not-now / confirm persistence).
+- Pro browser page states: 64 groups (two brands x 8 states x desktop/390px, zh/en, light/dark) pass; after fixing pending fixture fields and the generic order button for empty plan, 16 empty/pending groups re-pass; screenshots copied to `/tmp/start156-pro-evidence/browser/` and viewed.
+
+SF-01..19 are covered by component / Hook / service / CLI and end evidence combined, not every combination
+as full-product E2E. Phone evidence is the shared SessionPane compactForRemoteControl regression, the CLI
+replayable boundary and a 390px browser check; **a physical phone Safari or a full Web shared-host joint
+E2E was not run**, nor Windows/Linux Electron, real accounts or live paid APIs. E2E external services use
+isolated fixtures while UI, Host/Worker, protocol request construction and persistence are real; new cases
+remain pending (not self-promoted, no CI admission claimed).
+
+### 14.3 Self-review fixes and retained boundaries
+
+- A query failure did not notify other balance consumers (so the recommendation could keep the old positive quota); the failure fact is now published at the original shared error/backoff owner with a "settings refresh failure makes the recommendation skip" regression.
+- Explicit login invalidation became a structured `accountLoginRequired` display fact (login/retry behavior no longer decided by i18n key).
+- The empty plan reused the generic order button; removed for Start while keeping the intro and campaign eligibility; valid/pending upgrade and the zero-quota card unchanged.
+- E2E fixes: reading visible text during layout, and an exit-animating old dialog mistaken for a second recommendation; the pending visual fixture got proper effectiveTime / entitlementId and visible-state assertions.
+- Shared recommendation entries (Session, Automation, Subagent, manual Wiki) checked; the recommendation was not moved into background execution, Bot or run-now; the side session has no separate accepted queue or send-then-switch. The old guide's dedicated exports were deleted after a reference check; the generic guide capability of the model menu and other consumers stay.
+- No migration, no auto fallback to paid, no new account race barrier; copied team entry structure and multi-instance quota ownership / list key stay as decided.
+
+### 14.4 Baseline gates that did not pass
+
+- `pnpm --dir apps/zcode-cli lint` fails: telemetry / adapters / contracts / debug files exceed the existing 400-line limit (log `/tmp/start156-cli-lint.log`; e.g. `telemetry/src/model-api-recorder.ts` is identical to HEAD). Root lint passed; the CLI-wide failure is not attributed as passed.
+- Extended `v4-native-boundary.test.ts` found 3 pre-existing V4 -> legacy protocol imports (`commands/handlers/goal-compact.ts`, `commands/handlers/session-flow.ts`, `commands/prompt-turn.ts`), byte-identical to HEAD (log `/tmp/start156-cli-tests.log`); this round's side-session handler adds no such dependency.
+- The feature graph parses but the original graph has 4 dangling edges and plan-entitlements' old codeSeed points to the nonexistent `modelProviderFamilyConnectionSelection.ts`; only the confirmed plan invariants were synced, graph governance not widened. The Codegraph service was unavailable (impact scanning used real references and regression evidence; no graph-index verification claimed).
+
+On finishing, per the root AGENTS gate-failure rule the workspace was kept and not auto-committed; the user,
+knowing the limits above, explicitly asked to push, so the commit proceeded with the normal push hooks. Known
+failures and unverified items stay; the commit does not mean all gates passed.

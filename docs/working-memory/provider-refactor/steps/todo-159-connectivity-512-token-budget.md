@@ -1,33 +1,37 @@
-# Todo159：连接测试输出预算统一调整为 512 Token
+# Todo159: Raise the connectivity-test output budget to 512 tokens
 
-状态：待执行，2026-09-17 用户已确认目标值为 512。本轮仅记录 Todo 与调查证据，未修改产品代码或 Air 配置。
+Status: pending; on 2026-09-17 the user confirmed the target value 512. This round only recorded the Todo
+and investigation evidence; no product code or Air config was changed.
 
-## 问题与实际证据
+## Problem and evidence
 
-MacBook Air 的 ZCode 3.12.2 在设置页测试 OpenCode Go（Responses）的 `gpt-5.6-luna` 时失败。2026-09-17 18:00:03、18:00:06（Asia/Shanghai）的两次请求均返回 HTTP 400；请求包含 `reasoning.effort: "none"` 和 `max_output_tokens: 1`。
+On a MacBook Air with ZCode 3.12.2, the settings-page test of OpenCode Go (Responses) `gpt-5.6-luna` failed.
+Two requests (2026-09-17 18:00:03 and 18:00:06, Asia/Shanghai) returned HTTP 400 with
+`reasoning.effort: "none"` and `max_output_tokens: 1`.
 
-- 使用 Air 原有 Key、地址、Prompt 和请求参数复现，服务端原始错误为：`[integer_below_min_value] Invalid 'max_output_tokens': integer below minimum value. Expected a value >= 16, but got 1 instead.`
-- 对照请求仅将 `max_output_tokens` 改为 `16`，返回 HTTP 200、正常文本与 `response.completed`。该证据证明本次连接失败由输出预算下限触发；512 尚未实测，不能把 16 的对照结果记作 512 验收通过。
-- 原始失败记录位于 Air 的 `~/.zcode/cli/log/zcode-2026-09-17.jsonl` 与 `~/.zcode/cli/rollout/model-io-sess_8c93aadb-89ce-4f3e-bee9-8aaa0de12488.jsonl`。文档不保存 Key。
-- 当前 [Core 连接测试入口](../../../../apps/zcode-cli/packages/core/src/runtime/methods/workspace-generate-text.ts) 将 `CONNECTIVITY_PROBE_MAX_OUTPUT_TOKENS` 固定为 `1`；[错误归一化](../../../../apps/zcode-cli/packages/adapters/src/model/failure-classifier.ts) 将该 400 显示为通用的 `Provider rejected the model request.`。错误文案优化不纳入本项。
+- Reproduced with Air's original Key, address, prompt and parameters, the raw server error was: `[integer_below_min_value] Invalid 'max_output_tokens': integer below minimum value. Expected a value >= 16, but got 1 instead.`
+- A control request changing only `max_output_tokens` to `16` returned HTTP 200, normal text and `response.completed`. This proves the failure is triggered by the output-budget lower bound; 512 is not yet measured and the 16 control result is not a 512 acceptance.
+- The original failure records are on Air in `~/.zcode/cli/log/zcode-2026-09-17.jsonl` and `~/.zcode/cli/rollout/model-io-sess_8c93aadb-89ce-4f3e-bee9-8aaa0de12488.jsonl` (the doc stores no Key).
+- The [Core connectivity-test entry](../../../../apps/zcode-cli/packages/core/src/runtime/methods/workspace-generate-text.ts) fixes `CONNECTIVITY_PROBE_MAX_OUTPUT_TOKENS` at `1`; [error normalization](../../../../apps/zcode-cli/packages/adapters/src/model/failure-classifier.ts) shows this 400 as the generic `Provider rejected the model request.` (error-message improvement is out of scope).
 
-## 已确认目标与边界
+## Confirmed target and boundaries
 
-1. Core `testModelConnectivity()` 的独立输出预算统一从 `1` 改为 `512`，适用于所有 Provider 的连接测试，不增加 Luna／OpenCode 特判，不按失败动态提高预算。
-2. 仍取模型公开有序推理档位首项；system `You are ZCode connectivity probe.`、user `hi` 的文本、角色及顺序保持原契约，不混入历史或工具。
-3. 保留正式流与错误处理：正常 finish（含 length）即成功，允许无正文；error、缺少 finish、超时、鉴权及参数拒绝仍失败。沿用既有空响应重试，重试预算同样为 512。
-4. 仅改变连接测试预算。普通会话与 Git、标题等辅助生成预算、模型输出能力上限、用户保存的配置和选择均不变；不新增配置、协议、持久化或迁移。
-5. 预算策略仍由 Core 连接测试入口唯一持有，桌面、远端 Worker 和手机 shared-host 复用既有链路，保留 workspaceIdentity、owner 与 continuous/replayable 边界。
+1. Core `testModelConnectivity()`'s own output budget changes from `1` to `512` for all Providers, with no Luna/OpenCode special case and no dynamic raise on failure.
+2. Still the first entry of the model's public ordered reasoning levels; system `You are ZCode connectivity probe.`, user `hi` text, roles and order unchanged, no history or tools.
+3. Formal stream and error handling kept: a normal finish (including length) is success with empty body allowed; error, missing finish, timeout, auth and parameter rejection still fail. The existing empty-response retry stays, and the retry budget is also 512.
+4. Only the connectivity-test budget changes. Ordinary session and Git/title auxiliary budgets, model max-output capability limits, user saved config and selection are unchanged; no new config, protocol, persistence or migration.
+5. The budget policy stays solely at the Core connectivity-test entry; desktop, remote Worker and phone shared-host reuse the existing chain with workspaceIdentity, owner and continuous/replayable boundaries kept.
 
-本项取代 [Todo144](todo-144-connectivity-one-token-budget.md) 的“连接测试固定 1 Token”裁决；其余契约和历史验证记录保留。512 是本次确定的目标值，不代表已验证所有上游兼容性。
+This supersedes [Todo144](todo-144-connectivity-one-token-budget.md)'s "fixed 1 token" decision; its other
+contracts and verification history stay. 512 is the target value and is not verified for all upstreams.
 
-## 实施与验收
+## Implementation and acceptance (all open)
 
-- [ ] 先更新 [Settings 连接测试规格](../design/registry/settings.md)、[桌面连接测试用例说明](../../../testing/desktop-local-model-provider-p0-e2e-cases.md)及 [OpenRouter 请求契约](../../../openrouter-reasoning-request-contract.md)中仍适用的连接测试预算描述为 512，保留与本项无关的低预算 Adapter 测试。
-- [ ] 先更新 [Core 测试](../../../../apps/zcode-cli/packages/core/tests/workspace-generate-text-streaming.test.ts)，证明旧实现不满足 512，再修改生产常量。继续验证最低推理档位、固定 Prompt、无正文 stop/length 成功、流异常／缺少 finish 失败，以及 Git 辅助预算仍为 5,000。
-- [ ] 更新 [Adapter wire 测试](../../../../apps/zcode-cli/packages/adapters/tests/connectivity-probe-wire.test.ts)：实际序列化的 Anthropic `max_tokens`、Chat `max_completion_tokens`、Responses `max_output_tokens` 均为 512；保留协议映射、Prompt 和身份断言。
-- [ ] 更新 [连接测试 E2E](../../../../packages/desktop/test/e2e/settings/manual-review/pending/provider-connectivity-prompt.test.ts)与 [Reasoning fallback E2E](../../../../packages/desktop/test/e2e/settings/manual-review/pending/provider-reasoning-fallback.test.ts)。通过真实模型行点击验证 wire 预算为 512、正常 finish 成功、400 仍失败、Personal／会话选择不变；增加能拒绝低于 16 预算的 Responses 回归场景，复现本次 Luna 的失败条件。
-- [ ] 实测 Air 的 OpenCode Go / `gpt-5.6-luna` 在 512 下正常完成连接测试，记录运行版本、请求预算及终态；不以本次 16 Token 的直接 API 对照代替修改后的 App 验收。
-- [ ] 按根及 CLI 子级规则执行相关测试、typecheck、lint、架构检查和受影响 E2E；覆盖受影响桌面／手机路径，远端或手机环境阻塞时明确记录未验证项。必要验证通过后自检 diff 并提交。
+- [ ] First update the connectivity budget descriptions that still apply to 512 in the [Settings connectivity-test spec](../design/registry/settings.md), the [desktop connectivity-test cases](../../../testing/desktop-local-model-provider-p0-e2e-cases.md) and the [OpenRouter request contract](../../../openrouter-reasoning-request-contract.md); keep low-budget Adapter tests unrelated to this item.
+- [ ] Update the [Core test](../../../../apps/zcode-cli/packages/core/tests/workspace-generate-text-streaming.test.ts) first to prove the old implementation fails 512, then change the production constant; keep verifying lowest reasoning level, fixed prompt, empty-body stop/length success, stream error / missing finish failure, and the Git auxiliary budget still 5,000.
+- [ ] Update the [Adapter wire test](../../../../apps/zcode-cli/packages/adapters/tests/connectivity-probe-wire.test.ts): serialized Anthropic `max_tokens`, Chat `max_completion_tokens`, Responses `max_output_tokens` are all 512; keep protocol mapping, prompt and identity assertions.
+- [ ] Update the [connectivity E2E](../../../../packages/desktop/test/e2e/settings/manual-review/pending/provider-connectivity-prompt.test.ts) and the [reasoning fallback E2E](../../../../packages/desktop/test/e2e/settings/manual-review/pending/provider-reasoning-fallback.test.ts): via a real model-row click verify wire budget 512, normal-finish success, 400 still fails, Personal/session selection unchanged; add a Responses regression scenario that rejects budgets below 16, reproducing this Luna failure condition.
+- [ ] Measure Air's OpenCode Go / `gpt-5.6-luna` completing the connectivity test normally at 512, recording the running version, request budget and terminal state (the direct API 16-token control does not replace post-change App acceptance).
+- [ ] Per root and CLI child rules run related tests, typecheck, lint, architecture check and affected E2E, covering affected desktop/phone paths and recording blocked remote/phone environments; self-review the diff and commit after the necessary verification passes.
 
-当前交付仅为上述待办；代码、512 真实请求和修改后 App 验收均待执行。
+Current delivery is only the above to-do list: code, the real 512 request and post-change App acceptance are all pending.
