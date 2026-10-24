@@ -10,7 +10,7 @@ import { getCurrentModelInvocationContext } from "../deps.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { cloneModelSelection } from "../model-selection.js";
 import { createRefreshRuntimeHeadersBeforeModelAttempt } from "./model-runtime-headers.js";
-import { createRuntimeModel, withModelInvocationContext } from "./runtime-model.js";
+import { createRuntimeModel, withHostInvocationLayer } from "./runtime-model.js";
 import { applyRuntimeExecutionState } from "../execution-state.js";
 import { acceptOffPeakUserTakeover, selectionForPersistence } from "../off-peak/runtime.js";
 
@@ -119,7 +119,7 @@ export function createTurnModel(
     requestDependencies: options.requestDependencies,
     retryBudget: options.retryBudget,
   });
-  return withModelInvocationContext(model, (request) => ({
+  return withHostInvocationLayer(model, "turn", (request) => ({
     refreshRuntimeHeadersBeforeAttempt: createRefreshRuntimeHeadersBeforeModelAttempt(runtime, {
       abortSignal: request.abortSignal,
       model,
