@@ -214,7 +214,9 @@ const zhCN: Record<string, string> = {
   "remote.error.connectionTimeout.reason": "设备未及时响应，请检查网络后重试。",
   "remote.error.hostNotFound.reason": "检查主机名是否正确，或尝试使用 IP 地址。",
   "remote.error.hostKeyChanged.reason":
-    "设备身份与保存的记录不一致。请向设备管理员核实后再修改本机的已知主机记录。",
+    '设备的 SSH 主机密钥与 known_hosts 中记录的密钥不一致。设备可能已重装，也可能有人在拦截连接。请先向设备管理员核实新密钥。如果旧记录在本机 ~/.ssh/known_hosts 中，请用 ssh-keygen -R HOST（非默认端口：ssh-keygen -R "[HOST]:PORT"）删除后重新连接；如果旧记录在系统级 known_hosts 文件中，请联系管理员更新该文件。',
+  "remote.error.hostKeyUnknown.reason":
+    "本机尚未信任此设备的主机密钥。请打开连接对话框核对主机密钥指纹，再决定是否信任。",
   "remote.error.downloadFailed.reason": "下载安装包失败。请检查网络后重试。",
   "remote.error.uploadFailed.reason": "安装包未能传送到设备，请检查连接后重试。",
   "remote.error.preflightFailed.reason": "设备环境不满足安装要求，请查看详细信息。",
@@ -2093,6 +2095,7 @@ const zhCN: Record<string, string> = {
   "remote.error.connectionTimeout": "连接超时",
   "remote.error.hostNotFound": "找不到主机",
   "remote.error.hostKeyChanged": "主机身份已变化",
+  "remote.error.hostKeyUnknown": "无法识别的主机密钥",
   "remote.error.downloadFailed": "资源下载失败",
   "remote.error.uploadFailed": "资源上传失败",
   "remote.error.preflightFailed": "远端环境检查失败",
@@ -2386,6 +2389,13 @@ const zhCN: Record<string, string> = {
   "remote.installTarget": "目标账号",
   "remote.installVersion": "安装版本",
   "remote.installLocation": "安装位置",
+  "remote.hostKeyTrustTitle": "是否信任此设备的主机密钥？",
+  "remote.hostKeyTrustDescription":
+    "本机尚未信任此设备的主机密钥（即使以前连接过）。请将指纹与设备管理员提供的指纹核对，例如在设备上运行 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub（请使用与所显示密钥类型对应的密钥文件）。信任后会将密钥写入 ~/.ssh/known_hosts。",
+  "remote.hostKeyType": "密钥类型",
+  "remote.hostKeyFingerprint": "指纹",
+  "remote.hostKeyTrustConfirm": "信任并连接",
+  "remote.hostKeyTrustRejected": "已取消连接：未信任该主机密钥，未保存任何内容。",
   "remote.sourceServerBoundaryTitle": "本地离线，任务照常运行",
   "remote.sourceServerBoundaryDescription": "关闭 ZCode 或休眠本机，\n远程任务继续运行。",
   "remote.sourceServerBoundaryEyebrow": "新版远程连接",

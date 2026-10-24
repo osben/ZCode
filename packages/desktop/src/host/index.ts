@@ -185,6 +185,7 @@ import {
   SourceServerConnectionManager,
   SourceServerInstallRequiredError,
   SourceServerUpgradeRequiredError,
+  readHostKeyProfileId,
 } from "./sourceServerConnectionManager.js";
 import { createSourceServerRecoveryCloseEvent } from "./sourceServerRecoveryPolicy.js";
 import { runStartupReconnectBatch } from "./sourceServerStartupReconnect.js";
@@ -3479,6 +3480,10 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
           ...(error instanceof SourceServerUpgradeRequiredError ||
           error instanceof SourceServerInstallRequiredError
             ? { profileId: error.profileId }
+            : {}),
+          // The host key trust step is keyed by the profile whose attempt observed the key.
+          ...(failure.code === "remote-host-key-unknown" && readHostKeyProfileId(error)
+            ? { profileId: readHostKeyProfileId(error) }
             : {}),
           // 安装和升级等待固定 Main 解析后的 WSL 身份，不能从可编辑 Profile 重建。
           // 身份来自同一请求，独立于附加安装预览；只回传 WSL 的非敏感连接参数。

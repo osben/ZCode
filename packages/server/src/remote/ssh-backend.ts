@@ -31,6 +31,14 @@ import {
   normalizeSSHConnectError,
 } from "@zcode/server/remote/sshAuth.js";
 import {
+  defaultKnownHostsFiles,
+  orderServerHostKeyAlgorithms,
+  readKnownHostKeyTypes,
+  verifyHostKey,
+  type KnownHostsFiles,
+  type SSHHostKeyFailure,
+} from "@zcode/server/remote/sshAuth.js";
+import {
   createSSHUploadProgressReporter,
   formatSSHUploadError,
   formatSSHUploadLabel,
@@ -46,6 +54,8 @@ export interface SSHBackendOptions {
   privateKeyPassphrase?: string;
   password?: string;
   agent?: string;
+  /** known_hosts files used for host key verification; defaults to the user's OpenSSH files. */
+  knownHosts?: KnownHostsFiles;
 }
 
 type SSHUploadFailureKind = "sftp-session" | "sftp-write" | "local-read" | "aborted";
@@ -102,6 +112,9 @@ export class SSHBackend implements IRemoteBackend {
   // Set by the keyboard-interactive responder when the server asks a second-factor prompt. It is reset before every
   // connect attempt so one attempt's prompt cannot change the classification of a later, unrelated failure.
   private additionalVerificationPrompted = false;
+  // Set by the host key verifier when it refuses the server key; reset before every connect attempt like the flag above.
+  private hostKeyFailure: SSHHostKeyFailure | undefined;
+  private readonly knownHosts: KnownHostsFiles;
   private readonly disconnectEmitter = new Emitter<RemoteDisconnectEvent>();
   readonly onDidDisconnect = this.disconnectEmitter.event;
 
@@ -115,6 +128,7 @@ export class SSHBackend implements IRemoteBackend {
     const normalizedError = normalizeSSHConnectError(error, {
       established: this.connected,
       additionalVerificationPrompted: this.additionalVerificationPrompted,
+      hostKeyFailure: this.hostKeyFailure,
     });
     // ssh2 may emit an "error" event if the underlying connection becomes unstable after ready. Without
     // a persistent listener, Node treats it as an uncaught exception and may crash the host process.
@@ -146,6 +160,12 @@ export class SSHBackend implements IRemoteBackend {
       password: options.password,
       agent: options.agent,
     });
+    this.knownHosts = options.knownHosts ?? defaultKnownHostsFiles();
+    // Without a verifier ssh2 accepts any host key (ISSUE-055). Every handshake, including automatic reconnects of this
+    // cached backend, re-reads known_hosts so an edit or a trust decision takes effect without a restart.
+    this.config.hostVerifier = (key: Buffer, verify: (valid: boolean) => void) => {
+      void this.verifyServerHostKey(key).then(verify, () => verify(false));
+    };
     if (resolveZCodeRuntimeEnv(process.env) === "development") {
       this.config.debug = (message: string) => {
         // A generic client-timeout on SSH ready does not reveal whether the stall is in TCP, negotiation,
@@ -180,10 +200,42 @@ export class SSHBackend implements IRemoteBackend {
     }
   }
 
+  private async verifyServerHostKey(blob: Buffer): Promise<boolean> {
+    const host = this.config.host ?? "";
+    const port = this.config.port ?? 22;
+    const { key, lookup } = await verifyHostKey(this.knownHosts, host, port, blob);
+    if (lookup.kind === "match") return true;
+    this.hostKeyFailure = {
+      kind: lookup.kind === "unknown" ? "unknown" : "changed",
+      host,
+      port,
+      ...key,
+    };
+    return false;
+  }
+
+  private async prepareHostKeyAlgorithms(): Promise<void> {
+    const knownKeyTypes = await readKnownHostKeyTypes(
+      this.knownHosts,
+      this.config.host ?? "",
+      this.config.port ?? 22,
+    );
+    const serverHostKey = orderServerHostKeyAlgorithms(knownKeyTypes);
+    if (serverHostKey) {
+      this.config.algorithms = { ...this.config.algorithms, serverHostKey };
+    } else if (this.config.algorithms?.serverHostKey) {
+      const { serverHostKey: _previous, ...rest } = this.config.algorithms;
+      this.config.algorithms = rest;
+    }
+  }
+
   private async ensureConnected(): Promise<void> {
     // Connection cancellation releases the backend first, but a late deploy/cleanup continuation may
     // still call ensureConnected. ssh2 Client allows connect after end, so block old credentials from
     // being revived at the backend boundary.
+    this.assertNotDisposed();
+    if (this.connected) return;
+    await this.prepareHostKeyAlgorithms();
     this.assertNotDisposed();
     if (this.connected) return;
     return new Promise((resolve, reject) => {
@@ -207,12 +259,14 @@ export class SSHBackend implements IRemoteBackend {
         reject(
           normalizeSSHConnectError(error, {
             additionalVerificationPrompted: this.additionalVerificationPrompted,
+            hostKeyFailure: this.hostKeyFailure,
           }),
         );
       };
       this.client.once("ready", handleReady);
       this.client.once("error", handleConnectError);
       this.additionalVerificationPrompted = false;
+      this.hostKeyFailure = undefined;
       this.client.connect(this.config);
     });
   }

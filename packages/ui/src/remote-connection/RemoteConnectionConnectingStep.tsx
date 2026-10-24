@@ -11,6 +11,7 @@ import {
 } from "@/remote-connection/RemoteConnectionTags.js";
 import {
   DesktopCommandIds,
+  type SourceServerHostKeyPreview,
   type SourceServerInstallPreview,
   type SourceServerOperationLog,
   type SourceServerRunningTask,
@@ -254,6 +255,7 @@ export function RemoteConnectionConnectingStep({
   upgradeTarget,
   loading,
   installConfirmation,
+  hostKeyTrust,
   target,
   recognizedDeviceName,
   profileName,
@@ -298,6 +300,13 @@ export function RemoteConnectionConnectingStep({
     onConfirm: () => void;
     onCancel: () => void;
   };
+  /** Unknown SSH host key waiting for the user's decision (specs/ssh-host-key-verification.md). */
+  hostKeyTrust?: {
+    preview: SourceServerHostKeyPreview;
+    busy?: boolean;
+    onConfirm: () => void;
+    onCancel: () => void;
+  };
   target?: RemoteTarget | null;
   recognizedDeviceName?: string;
   profileName?: string;
@@ -331,11 +340,12 @@ export function RemoteConnectionConnectingStep({
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [loading]);
-  const waitingPhase = credentials
-    ? "channel"
-    : installConfirmation || forceUpdate
-      ? "deploy"
-      : undefined;
+  const waitingPhase =
+    credentials || hostKeyTrust
+      ? "channel"
+      : installConfirmation || forceUpdate
+        ? "deploy"
+        : undefined;
   const projectFolder = workspacePath?.trim() || undefined;
   const phases = resolveRemoteConnectionPhases(logs, {
     connectionReady,
@@ -382,17 +392,19 @@ export function RemoteConnectionConnectingStep({
       ? "needs-upgrade"
       : upgradeLoading
         ? "updating"
-        : installConfirmation
-          ? "needs-install"
-          : loading
-            ? "bootstrapping"
-            : upgradeRequired
-              ? "needs-upgrade"
-              : errorMessage
-                ? "failed"
-                : connectionReady
-                  ? "online"
-                  : "absent",
+        : hostKeyTrust
+          ? "pending"
+          : installConfirmation
+            ? "needs-install"
+            : loading
+              ? "bootstrapping"
+              : upgradeRequired
+                ? "needs-upgrade"
+                : errorMessage
+                  ? "failed"
+                  : connectionReady
+                    ? "online"
+                    : "absent",
     errorCode: credentials && !errorCode ? "credentials-required" : errorCode,
     error: rawError ?? errorMessage,
     upgradeTarget,
@@ -448,6 +460,57 @@ export function RemoteConnectionConnectingStep({
       screenshots: [],
     });
   };
+
+  const hostKeyTrustPanel = hostKeyTrust ? (
+    // Same neutral in-stage panel as the install confirmation; the decision belongs to the SSH channel stage.
+    <div
+      data-testid="remote-host-key-trust"
+      className="mt-2 flex items-start gap-3 rounded-sm border border-border bg-background px-3.5 py-3 text-ui-sm text-foreground"
+    >
+      <AlertTriangleIcon className="mt-0.5 size-4 shrink-0" />
+      <div className="min-w-0 flex-1 space-y-2">
+        <p className="font-medium">{intl.formatMessage({ id: "remote.hostKeyTrustTitle" })}</p>
+        <p className="text-ui-xs text-remote-foreground-muted">
+          {intl.formatMessage({ id: "remote.hostKeyTrustDescription" })}
+        </p>
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-ui-xs">
+          <dt className="text-remote-foreground-muted">
+            {intl.formatMessage({ id: "remote.hostKeyType" })}
+          </dt>
+          <dd className="font-mono" data-testid="remote-host-key-type">
+            {hostKeyTrust.preview.keyType}
+          </dd>
+          <dt className="text-remote-foreground-muted">
+            {intl.formatMessage({ id: "remote.hostKeyFingerprint" })}
+          </dt>
+          <dd className="break-all font-mono" data-testid="remote-host-key-fingerprint">
+            {hostKeyTrust.preview.fingerprint}
+          </dd>
+        </dl>
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Button
+            type="button"
+            size="sm"
+            data-testid="remote-host-key-trust-confirm"
+            disabled={hostKeyTrust.busy}
+            onClick={hostKeyTrust.onConfirm}
+          >
+            {intl.formatMessage({ id: "remote.hostKeyTrustConfirm" })}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            data-testid="remote-host-key-trust-cancel"
+            disabled={hostKeyTrust.busy}
+            onClick={hostKeyTrust.onCancel}
+          >
+            {intl.formatMessage({ id: "common.cancel" })}
+          </Button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   const installPanel = installConfirmation ? (
     // 安装确认是阶段内的中性信息面板，圆角比所属阶段行低一级。
@@ -811,6 +874,7 @@ export function RemoteConnectionConnectingStep({
                       })}
                     </p>
                   ) : null}
+                  {phase.key === "channel" ? hostKeyTrustPanel : null}
                   {phase.key === "deploy" ? installPanel : null}
                   {phase.key === "deploy" && forceUpdate ? (
                     <div className="mt-2 space-y-2 rounded-sm bg-warning-surface p-3 text-warning-surface-foreground">

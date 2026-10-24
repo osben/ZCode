@@ -132,6 +132,7 @@ it.each([
   ["remote-connection-timeout", "connectionTimeout", "retry"],
   ["remote-host-not-found", "hostNotFound", "edit-host"],
   ["remote-host-key-changed", "hostKeyChanged", "security"],
+  ["remote-host-key-unknown", "hostKeyUnknown", "retry"],
   ["remote-download-failed", "downloadFailed", "retry"],
   ["remote-upload-failed", "uploadFailed", "retry"],
   ["remote-preflight-failed", "preflightFailed", "retry"],
