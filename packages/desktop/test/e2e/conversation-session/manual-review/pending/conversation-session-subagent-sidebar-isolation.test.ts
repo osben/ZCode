@@ -54,12 +54,7 @@ describe("子代理冷恢复主列表隔离", () => {
     const childRow = parent.$(`[data-child-session-id="${childId}"]`);
     await childRow.waitForDisplayed({ timeout: 30000 });
     await childRow.click();
-    await waitForV4Pane(
-      (state) => state.sessionId === childId,
-      "sidebar child selection did not open the child as the active session",
-      30000,
-    );
-    await assertChildIsolated(childId);
+    await assertChildOpenedInSidePane(parentId, childId);
     await childMarker.click();
     await parent.click();
     await waitForV4Pane(
@@ -88,14 +83,22 @@ async function assertProjectsViewChildRow(parentId: string, childId: string) {
   const childRow = parent.$(`[data-child-session-id="${childId}"]`);
   await childRow.waitForDisplayed({ timeout: 30000 });
   await childRow.click();
-  await waitForV4Pane(
-    (state) => state.sessionId === childId,
-    "projects-view child selection did not open the child as the active session",
-    30000,
-  );
-  await assertChildIsolated(childId);
+  await assertChildOpenedInSidePane(parentId, childId);
   await marker.click();
   await childRow.waitForDisplayed({ timeout: 30000, reverse: true });
+}
+
+// Spec §8.2: a sidebar subagent row keeps the parent as the active session and opens the child in
+// the right-pane subagent-session tab (read-only).
+async function assertChildOpenedInSidePane(parentId: string, childId: string) {
+  await waitForV4Pane(
+    (state) => state.sessionId === parentId,
+    "sidebar subagent selection did not keep the parent as the active session",
+    30000,
+  );
+  const tab = $(`[data-side-pane-tab-id$="${childId}"]`);
+  await tab.waitForExist({ timeout: 30000 });
+  await assertChildIsolated(childId);
 }
 
 async function activateGroupedView() {

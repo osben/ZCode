@@ -1331,7 +1331,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       targetRemoteSessionId?: string,
       expectedUnreadAt?: number,
       options?: { readOnly?: boolean; selectionSideChat?: boolean },
-    ) => {
+    ): boolean => {
       // Any explicit selection supersedes a pending sidebar subagent open (spec §8.2).
       handleQueueSubagentSessionOpen(null);
       const childKind = options?.readOnly
@@ -1362,7 +1362,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
             workspacePath: targetWorkspacePath,
           });
           toast(intl.formatMessage({ id: "automations.runs.openSessionFailed" }));
-          return;
+          return false;
         }
         if (workspaceResult.openedLocalTab) {
           logger.info("[automations] 为运行历史会话补开本地 workspace tab", {
@@ -1395,6 +1395,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       } else {
         handleSelectTask(targetWorkspacePath, taskId, targetWorkspaceIdentity);
       }
+      return true;
     },
     [
       handleQueueSubagentSessionOpen,
@@ -1415,12 +1416,14 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
           tab.workspacePath === target.workspacePath &&
           (!target.workspaceIdentity || tab.workspaceIdentity === target.workspaceIdentity),
       )?.remoteSessionId;
-      handleSelectTaskInChat(
+      // A rejected selection (unreachable workspace) must not leave an armed open behind.
+      const selected = handleSelectTaskInChat(
         target.workspacePath,
         target.parentSessionId,
         target.workspaceIdentity,
         remoteSessionId,
       );
+      if (!selected) return;
       handleQueueSubagentSessionOpen({
         workspacePath: target.workspacePath,
         ...(target.workspaceIdentity ? { workspaceIdentity: target.workspaceIdentity } : {}),
