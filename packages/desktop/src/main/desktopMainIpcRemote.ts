@@ -577,9 +577,11 @@ export function registerRemoteIpcHandlers(options: {
         ? normalizedError.code
         : undefined;
       const retryable = reasonCode ? readRetryable(error) : undefined;
+      // The host key trust step is keyed by the refusing Profile; dropping it here hid the trust panel (ISSUE-055).
       const profileId = hostRemoteWorkspaceConnectFailedResponseSchema.shape.profileId.safeParse(
         (reasonCode === "source-server-upgrade-required" ||
-          reasonCode === "source-server-install-required") &&
+          reasonCode === "source-server-install-required" ||
+          reasonCode === "remote-host-key-unknown") &&
           error &&
           typeof error === "object" &&
           "profileId" in error

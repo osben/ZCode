@@ -42,7 +42,6 @@ import type {
   PostUpdateReleaseNotesPayload,
   RemoteConnectionRuntimeLog,
   RemoteSessionClosedEvent,
-  RemoteTarget,
   SSHConfigAliasOption,
   RendererTelemetryEventPayload,
   RendererActionTraceBatchV1,
@@ -77,15 +76,8 @@ declare global {
       consumeUserGesture(sandboxId: string): Promise<boolean>;
     };
     zcode: {
-      connectRemote(
-        options: RemoteTarget,
-        requestId?: string,
-        context?: {
-          workspacePath: string;
-          workspaceIdentity?: string;
-          connectTrigger?: import("@zcode/shared").RemoteWorkspaceConnectTrigger;
-        },
-      ): Promise<{ success: boolean; error?: string; sessionId?: string }>;
+      /** Same contract as the platform service: failures carry reasonCode, retryable, profileId. */
+      connectRemote: import("@zcode/shared").IPlatformService["connectRemote"];
       requestSourceSettingsAttachment?(sourceServerId: string): Promise<{ attachmentId: string }>;
       /** Cancel a remote connection that has not yet been established in the current window. */
       cancelPendingRemoteConnection?(requestId?: string): Promise<void>;
