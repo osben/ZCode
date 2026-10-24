@@ -182,7 +182,9 @@ Unit (fake keys, temp dir, no network): match, unknown, changed, revoked, differ
 `[host]:port` entry, port 22 bare host, wildcard and negation, append format and file modes, trust refuses a
 fingerprint different from the pending one, the file append is a no-op when the key is already present, a pending key
 is single-use, the refused key is not logged, the real transport probe chain carries the key to the manager, automatic
-recovery stops on both codes, and the wizard's reject → retry brings the prompt back. Manual (QA, RM-14): see the PR's
+recovery stops on both codes, the wizard's reject → retry brings the prompt back, and Main's connect IPC result
+carries the refusing `profileId` for `remote-host-key-unknown` (without it the renderer cannot show the trust panel;
+ISSUE-055 regression) but not for `remote-host-key-changed`. Manual (QA, RM-14): see the PR's
 Verify steps.
 
 ## Open question: existing devices after upgrade
