@@ -11,145 +11,76 @@
 
 ## 1. Problem
 
-Team Plan settings page currently squeezes navigation identity, Effective Provider, account connection, plan entitlement, quota query, and error display into same
-`ModelProviderNavItem`. Detail page then uses plan `status` to decide whether to render entire Provider config area:
+The Team Plan settings page squeezed navigation identity, Effective Provider, account connection, plan entitlement,
+quota query and error display into one `ModelProviderNavItem`, and the detail page used plan `status` to decide
+whether to render the whole Provider config area (gate `dedicatedProvider !== null && status === "purchased"`). Quota
+loading, request failure, project Key unavailable or server-confirmed unassigned all made the existing Effective
+Provider, model list and Personal Model Config editing entry disappear. "Team plan unassigned" was reverse-deduced via
+`statusLabelId`, merging server-confirmed unassigned, Project Key unavailable, quota request failed/unknown and quota
+loading into `unavailable` / `teamUnavailable`. The status card display thereby became wrongly authoritative for
+whether Provider config exists, and temporary unknown was misreported as unassigned.
+
+## 2. Authority Boundaries
+
+### 2.1 `ProviderSettingsView`
+
+`ProviderSettingsView` is not a new config layer or second authority; it is a read-only projection of the same formal
+Resolver result:
 
 ```text
-Provider config facts
-Account connection status
-Plan purchase status
-Team quota query
-Team Project API Key status
-Page navigation info
-        |
-        v
-ModelProviderNavItem.status
-        |
-        +-- purchased -> plan card + Provider/model config
-        `-- other states -> plan card only, hide Provider/model config
+Built-in -> Account -> Personal -> Effective Provider Config
+                                     +--> ProviderSettingsView (complete settings projection)
+                                     `--> Provider Registry (complete & executable members only)
 ```
 
-Actual gate requires `dedicatedProvider !== null && status === "purchased"`. Therefore quota loading, request failure, project Key
-unavailable, or server-confirmed unassigned all cause existing Effective Provider, model list, and Personal Model Config editing entry to
-disappear simultaneously.
+`providers[].effectiveConfig` and `models[].effectiveConfig` are the final display results.
+`effectiveBuiltinConfig`, `personalConfig`, `personalExactConfig` and `issues` supplement editing source, restore
+defaults, sparse save and repair information and take part in no second Overlay. The settings page cannot read the
+Registry only, because disabled or incomplete Providers/Models are excluded from Registry but must stay visible and
+repairable in settings.
 
-Current implementation also reverse-deduces "team plan unassigned" via `statusLabelId`, merging multiple causes into `unavailable`:
+### 2.2 Renderer does not understand Account Overlay
+
+Account Overlay only participates in generating Effective Provider Config upstream of the Resolver. The settings page
+never re-reads, applies or infers Account Overlay `enabled`, model members or Access; it reads final
+`effectiveConfig`, `models`, `enabled`, `executable` and `issues`. Static account Access for Team entitlement/usage
+requests comes from the selected Effective Provider's `effectiveConfig.access`; the current Team connection's
+`productId / organizationId / projectId` come from navigation selection, serve only as the entitlement/quota request
+context, and are not written back to Provider Config, Account Overlay, Personal Config or Registry.
+
+### 2.3 Plan status does not own Provider config visibility
 
 ```text
-server-confirmed unassigned ───────────────┐
-Team Project Key unavailable ──────────────┤
-quota request failed / status unknown ───────┼─> unavailable / teamUnavailable
-quota loading with no snapshot ────────────┘
+ProviderSettingsView -> selected providerId: effectiveConfig, effective models, enabled/executable, Personal editing source -> Provider config area
+Team Plan selection (productId, organizationId, projectId) -> entitlement / quota -> plan status card
 ```
 
-This makes "what plan status card displays" erroneously authoritative for "whether Provider config exists," and misreports temporary unknown as server-confirmed
-unassigned.
-
-## 2. Decided Authority Boundaries
-
-### 2.1 ProviderSettingsView Meaning
-
-`ProviderSettingsView` is not a new config layer or second config authority. It is the same formal Resolver result read-only projection for settings page:
-
-```text
-ZCode Built-in Provider Config
-             |
-             v
-Account Provider Config
-             |
-             v
-Personal Provider Config
-             |
-             v
-Effective Provider Config
-             |
-             +-------------------------+
-             |                         |
-             v                         v
-ProviderSettingsView              Provider Registry
-complete settings projection      complete & executable members only
-```
-
-`ProviderSettingsView.providers[].effectiveConfig` and `models[].effectiveConfig` are settings page display Provider/Model final
-results. `effectiveBuiltinConfig`, `personalConfig`, `personalExactConfig`, and `issues` only supplement editing source, restore defaults,
-sparse save, and incomplete config repair information, participating in no second Overlay.
-
-Settings page cannot read-only Registry, because disabled or incomplete Provider/Model excluded by Registry, but must still remain in settings page for user
-view and repair.
-
-### 2.2 Renderer Does Not Understand Account Overlay
-
-Account Provider Config only participates in generating Effective Provider Config upstream of Resolver:
-
-```text
-Built-in -> Account -> Personal -> Effective
-```
-
-Provider settings page must not re-read, apply, or infer Account Overlay `enabled`, model members, or Access. Page uniformly reads
-final `effectiveConfig`, `models`, `enabled`, `executable`, and `issues` from `ProviderSettingsView`.
-
-Team entitlement/usage requests' static account Access also obtained from selected Effective Provider's `effectiveConfig.access`;
-current Team connection's `productId / organizationId / projectId` from navigation selection, only serves as this entitlement/quota request context, not written back to
-Provider Config, Account Overlay, Personal Config, or Registry.
-
-### 2.3 Plan Status Does Not Own Provider Config Visibility
-
-Team Plan page fixed composed of two independent projections:
-
-```text
-ProviderSettingsView
-└─ selected providerId
-   ├─ effectiveConfig
-   ├─ effective models
-   ├─ enabled / executable
-   └─ Personal editing source
-             |
-             v
-      Provider config area
-
-Team Plan selection
-├─ productId
-├─ organizationId
-└─ projectId
-             |
-             v
-      entitlement / quota
-             |
-             v
-         plan status card
-```
-
-Two projections combined only in right detail layout. Plan query results can affect status card, quota, retry, and purchase/manage operations, but cannot decide Effective
-Provider, model list, or model editing entry existence.
+The two projections combine only in the right detail layout. Plan query results can affect the status card, quota,
+retry and purchase/manage operations but cannot decide the existence of Effective Provider, model list or model
+editing entry.
 
 ## 3. Target Page Structure
 
-As long as current Team Provider exists in `ProviderSettingsView`, right side always maintains same Provider page:
+As long as the current Team Provider exists in `ProviderSettingsView`, the right side always shows one Provider page:
+title/status/connection method; Team Plan status card (organization / project / quota / error / retry); Effective
+model list (toggle and edit per model).
 
-```text
-┌─────────────────────────────────────┐
-│ Provider title, status, and connection method       │
-├─────────────────────────────────────┤
-│ Team Plan status card                    │
-│ Organization / project / quota / error / retry    │
-├─────────────────────────────────────┤
-│ Effective model list                   │
-│ Model A                  [toggle][edit]│
-│ Model B                  [toggle][edit]│
-└─────────────────────────────────────┘
-```
-
-- Team Provider model display, ordering, enable/disable, and Personal Model Config editing continue using unified Provider settings component;
-- Start Plan's account-specific model members keep existing read-only boundaries, this Todo does not change;
-- Individual / Team Coding Plan pages completely hide Endpoint and API Schema. This is settings page product projection: fields continue in
-  Effective Provider Config for Registry/Runtime use, Renderer does not copy, clear, or override;
-- Account Access also not displayed as editable form field;
-- Provider disabled, incomplete config, or plan unavailable: models still display and editable, but executable facts must accurately displayed;
-- Provider loading state displayed while loading; after loading completes, truly missing shows Provider config exception, cannot disguise as unpurchased or unassigned.
+- Team Provider model display, ordering, enable/disable and Personal Model Config editing use the unified Provider
+  settings component.
+- Start Plan's account-specific model members keep their existing read-only boundary (unchanged).
+- Individual / Team Coding Plan pages completely hide Endpoint and API Schema (a settings page product projection;
+  the fields stay in Effective Provider Config for Registry/Runtime and Renderer never copies, clears or overrides
+  them). Account Access is also not an editable form field. They reuse the unified Provider editor with the
+  connection fact area fixed disabled and must not re-expose Endpoint/API Schema or create a deleted-field Account
+  Provider DTO.
+- Provider disabled, incomplete config or plan unavailable: models still display and are editable, with executable
+  facts shown accurately.
+- While loading show a loading state; after loading a truly missing Provider shows a Provider config exception, not
+  "unpurchased" or "unassigned".
 
 ## 4. Status Semantics
 
-Team Plan status must retain explicit reasons, no longer reverse-inferred by generic `statusLabelId`:
+Team Plan status keeps explicit reasons and is no longer reverse-inferred from a generic `statusLabelId`:
 
 | Status                   | Plan card behavior                                           | Provider config area                  |
 | ------------------------ | ------------------------------------------------------------ | ------------------------------------- |
@@ -159,91 +90,52 @@ Team Plan status must retain explicit reasons, no longer reverse-inferred by gen
 | credential-unavailable   | Display Project Key/credential reasons and available actions | Display                               |
 | request-failed / unknown | Display fetch failure and allow retry, not called unassigned | Display                               |
 | provider-loading         | Display Provider loading                                     | Editor not yet displayed              |
-| provider-missing         | Display independent config exception                         | Do not render fake plan purchase page |
+| provider-missing         | Display independent config exception                         | Do not render a fake plan purchase page |
 
-Specific types can reuse existing upstream decision results or establish page-local decision union, but only as plan card View State, not entering Provider Config
-or becoming second Account/Registry state.
+Specific types may reuse existing upstream decisions or a page-local decision union, but only as plan card View
+State; they never enter Provider Config or become a second Account/Registry state.
 
-## 5. Implementation Plan
+## 5. Implementation Requirements
 
-### 5.1 Write Failing Tests First
+- Remove the `status === "purchased"` rendering gate for the whole `InlineEditableProviderCard`; decide the config
+  area only by whether the current `providerId` resolves in `ProviderSettingsView`.
+- `CodingPlanStatusPanel` is always an independent `statusSection` in Provider detail.
+- The model list consumes only the current Provider View's `models` and each `effectiveConfig`, not entitlement data.
+- Narrow `ModelProviderNavItem` to navigation identity (key / type / label, providerId, Team productId /
+  organizationId / projectId); Provider detail resolves independently from `ProviderSettingsView` by `providerId`;
+  the plan card status resolves independently from the entitlement hook by Team selection. Final state: no old
+  branch controls Provider detail existence by `status/statusLabelId`.
+- Delete the `selectedTeamPlanUnassigned` comparison to `statusLabelId` and the logic merging
+  `apiKeyStatus=unavailable` with `quota unavailable` into `teamUnavailable`. Request failure, loading and no
+  matching snapshot express only unknown; "Team plan unassigned" is shown only when an authoritative response
+  explicitly proves no Team allocation/quota. Status card actions (retry, reconnect, manage plan) follow explicit
+  reasons, not display text.
 
-1. Provider exists and Team quota loading: still render model list;
-2. Provider exists and quota request failed: still render model list and editing entry;
-3. Provider exists and server explicitly unassigned: display unassigned hint but still render model list;
-4. Project Key unavailable: display real reason, do not falsely claim quota unassigned, Provider config still exists;
-5. Provider missing and plan unavailable use different UI states;
-6. Team and Start model editing permissions keep differences, not unified by shared component.
-7. Individual / Team Coding Plan pages do not render Endpoint and API Schema; hiding cannot change save payload or runtime config.
+State owners: Effective Provider/Model — Provider Config Resolver (`ProviderSettingsView`, from formal Config source);
+Personal Provider/Model editing — Personal Config Repository (Settings Draft/Facade, persisted); Provider
+executability — Resolver + Registry integrity (`enabled/executable/issues`, no independent field); Team current
+connection identity — Family connection selection (navigation selection, existing settings); Team plan, quota and
+error — Entitlement/Quota Service (`CodingPlanStatusPanel`, existing cache only); request-period credentials — Host
+Account Request Auth Service (not persisted on the settings page).
 
-### 5.2 Remove Error Gate
+## 6. Invariants and Out of Scope
 
-- Delete `status === "purchased"` rendering gate for entire `InlineEditableProviderCard`;
-- Only decide config area by whether current `providerId` can resolve Provider in `ProviderSettingsView`;
-- `CodingPlanStatusPanel` always independent `statusSection` in Provider detail;
-- Model list only consumes current Provider View's `models` and each item's `effectiveConfig`, does not construct model members from entitlement data.
-- Individual / Team Coding Plan reuse unified Provider editor with connection fact area fixed disabled; must not re-expose
-  Endpoint, API Schema for model list display, or create deleted-field Account Provider DTO.
+- Overlay order stays Built-in -> Account -> Personal; Model Rules stay Built-in + Personal with Personal deferred.
+- Renderer does not re-execute Overlay, integrity validation or Registry admission algorithms.
+- Account Overlay still constrains Built-in account Providers but only through Resolver-reflected Effective results.
+- Team quota/entitlement UI never directly modifies Provider `enabled`.
+- Settings shows disabled/incomplete members; Registry retains only complete executable members.
+- Team scope is not written back to Config; connection testing and real requests go through the formal
+  Registry/ModelFactory.
+- Hiding Endpoint/API Schema for Individual / Team affects only UI visibility.
+- Desktop, Web and phone share settings page behavior; desktop continuous, mobile replayable, remote workspace and
+  model selection lifecycle are unchanged.
 
-### 5.3 Separate Navigation Identity and Page Facts
+Not modified: Account Overlay generation rules and priority; Team entitlement, quota and billing server contracts;
+Start Plan account model whitelist semantics; Request Auth, Runtime Headers and model network protocols; Remote
+Provisioning, release artifacts and real account verification.
 
-Narrow `ModelProviderNavItem` responsibility to primarily express navigation and connection selection:
-
-```text
-Navigation identity
-├─ key / type / label
-├─ providerId
-└─ Team productId / organizationId / projectId
-```
-
-Provider detail resolved independently from `ProviderSettingsView` by `providerId`; plan card status resolved independently from entitlement hook by Team selection
-must not continue letting one navigation DTO simultaneously carry and override Provider, quota, purchase status, and error status.
-
-If one-time type narrowing expands unrelated Family page changes, can first build one-way page projection and migrate callers; final must delete old branch
-controlling Provider detail existence by `status/statusLabelId`.
-
-### 5.4 Clean Up Status Reverse-Deduction
-
-- Delete `selectedTeamPlanUnassigned` comparison to `statusLabelId`;
-- Delete logic merging `apiKeyStatus=unavailable` with `quota unavailable` then uniformly generating `teamUnavailable`;
-- Request failure, loading, and no matching snapshot can only express unknown, not express authoritative unassigned;
-- "Team plan unassigned" displayed only when authoritative response explicitly proves no Team allocation/quota;
-- Status card operation buttons decide retry, reconnect, or manage plan based on explicit reasons, not reverse-deduced from display text.
-
-## 6. State Owner and Submission Boundaries
-
-| Fact                             | Authoritative Owner               | Page Projection                   | Persisted?                |
-| -------------------------------- | --------------------------------- | --------------------------------- | ------------------------- |
-| Effective Provider/Model         | Provider Config Resolver          | `ProviderSettingsView`            | From formal Config source |
-| Personal Provider/Model editing  | Personal Config Repository        | Settings Draft/Facade             | Yes                       |
-| Provider executability           | Resolver + Registry integrity     | `enabled/executable/issues`       | Not independent field     |
-| Team current connection identity | Family connection selection       | Navigation selection              | Existing settings         |
-| Team plan, quota, and error      | Entitlement/Quota Service         | `CodingPlanStatusPanel`           | Only existing cache       |
-| Request-period credentials       | Host Account Request Auth Service | Not persistently on settings page | No                        |
-
-## 7. Invariants and Out-of-Scope
-
-Must maintain:
-
-- Overlay order still Built-in -> Account -> Personal;
-- Model Rules still Built-in + Personal, Personal deferred;
-- Renderer does not re-execute Overlay, integrity validation, or Registry admission algorithms;
-- Account Overlay can still constrain Built-in account Providers, but only through Resolver reflected in Effective results;
-- Team quota/entitlement UI does not directly modify Provider `enabled`;
-- Settings page disabled/incomplete members visible, Registry only retains complete executable members;
-- Team scope not written back to Config; connection testing and real requests continue through formal Registry/ModelFactory;
-- Individual / Team pages hiding Endpoint/API Schema only affects UI visibility, Effective Config and ModelFactory assembly unchanged;
-- Desktop, Web, and phone share settings page behavior; not changing desktop continuous, mobile replayable, remote workspace, or model selection lifecycle.
-
-This Todo does not modify:
-
-- Account Overlay business generation rules and priority;
-- Team entitlement, quota, billing server-side interface contracts;
-- Start Plan account model whitelist semantics;
-- Request Auth, Runtime Headers, and model network protocols;
-- Remote Provisioning, release artifacts, or real account verification.
-
-## 8. Verification Matrix
+## 7. Acceptance Matrix
 
 | Provider View       | Team status              | Expected config area                           | Expected status card                    |
 | ------------------- | ------------------------ | ---------------------------------------------- | --------------------------------------- |
@@ -256,38 +148,31 @@ This Todo does not modify:
 | Loading             | any                      | Provider loading                               | Status must not disguise as unpurchased |
 | Truly missing       | any                      | Config exception                               | Can retain known plan facts             |
 
-Automation must at minimum cover:
+Automation covers: Provider exists with Team quota loading / request failed / explicitly unassigned / Project Key
+unavailable (model list and editing entry still render, and the card shows the real reason, never falsely
+unassigned); Provider missing vs plan unavailable use different UI states; Team and Start model editing permissions
+keep their differences; Individual / Team Coding Plan pages do not render Endpoint and API Schema and hiding does not
+change the save payload or runtime config; Resolver-generated Effective Provider/Model passes through
+`ProviderSettingsFacade` intact; Account `enabled/models/access` are not merged twice in Renderer; Personal
+last-layer override still shows in Effective results and save still produces a sparse Overlay; Team status changes
+re-render only the plan card without unloading the model list or losing the model editing Draft; Provider/model
+ordering, toggle, editing, connection testing and save feedback do not regress; Chinese/English, light/dark, desktop
+and narrow-screen layout stay usable.
 
-- Resolver-generated Effective Provider/Model passes through `ProviderSettingsFacade` intact into settings page;
-- Account `enabled/models/access` not merged twice in Renderer;
-- Personal last-layer override still reflected by Effective results, save still generates sparse Overlay;
-- Team status changes only re-render plan card, do not unload model list or lose model editing Draft;
-- Provider/model ordering, toggle, editing, connection testing, and save feedback do not regress;
-- Chinese/English, light/dark themes, desktop, and narrow-screen layout usable;
-- Provider UI directed unit tests, `pnpm typecheck`, `pnpm lint`, this round's file format check, and `git diff --check` pass.
+## 8. Completion and Outcome
 
-## 9. Completion Criteria
+- Team / Individual Provider detail resolves precisely from `ProviderSettingsView` by `providerId` (no stale
+  navigation-item Provider copy); a loaded View with the target Provider missing shows an independent config
+  exception.
+- The plan status card no longer gates the Provider config area: quota loading, failure, explicit unassignment and
+  Project Key unavailability all still show the existing Effective Provider and model list.
+- `not-allocated` and `credential-unavailable` are explicit page status reasons; quota recovery clears the old "team
+  plan unassigned" status.
+- Team / Individual pages reuse the unified Provider editor but fixedly hide the connection config area and API key
+  area, so Endpoint and API Schema are not displayed; Effective Provider Config, Registry and ModelFactory data are
+  not deleted. Start Plan keeps existing read-only models and purchase gate.
+- No new second Config, Overlay, Registry, plan or Account Access authority.
 
-- Team Plan any plan query status no longer controls Effective Provider config area existence;
-- Settings page consumes final Effective Provider/Model only through `ProviderSettingsView`, does not understand Account Overlay;
-- Navigation identity, Provider settings facts, and plan status form at least three independent links in page projection;
-- "Team plan unassigned" only produced by authoritative unassigned facts, no longer reverse-deduced from errors, loading, credential issues, or i18n labels;
-- Model list always visible when Provider exists, supporting ordering, enable/disable, and Personal Model Config editing by existing permissions;
-- Individual / Team Coding Plan pages completely do not display Endpoint and API Schema, but runtime still uses Effective Provider Config;
-- No new second Config, Overlay, Registry, plan, or Account Access authority.
-
-## 10. Implementation Results
-
-- Team / Individual Provider detail changed to precise parsing from `ProviderSettingsView` by `providerId`, no longer using potentially stale
-  Provider copy from navigation item as page fact; View loaded but target Provider missing displays independent config exception.
-- Plan status card and Provider config area rendering gate removed. Team quota loading, failure, explicit unassignment, and Project Key unavailability,
-  existing Effective Provider and model lists still displayed.
-- `not-allocated` and `credential-unavailable` become explicit page status reasons; status card no longer reverse-deduces business behavior from i18n labels,
-  quota recovery simultaneously clears old "team plan unassigned" status.
-- Team / Individual pages continue reusing unified Provider editor, but fixedly hide connection config area and API Key area, therefore Endpoint and
-  API Schema not displayed on page; Effective Provider Config, Registry, and ModelFactory data not deleted.
-- Start Plan retains existing read-only models and purchase gate, no account model whitelist semantics changed this round.
-
-Verification results: Provider UI directed tests 220 passed; full unit 1470 test files, 12480 tests passed (with repository pre-existing skip items);
-root `typecheck`, `lint`, this round's file format check, and `git diff --check` passed. Workspace `fmt:check` still blocked by repository pre-existing
-Electron example HTML syntax and GB2312 fixture, this round's modified files independently passed format check.
+Verification: Provider UI directed tests 220 passed; full unit 1470 test files / 12480 tests passed (pre-existing
+skips); root `typecheck`, `lint`, changed-file format check and `git diff --check` passed. Workspace `fmt:check` is
+still blocked by pre-existing Electron example HTML and GB2312 fixture.
