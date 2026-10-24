@@ -1,6 +1,6 @@
 import { TID_TASK_ARCHIVE, TID_TASK_ITEM, testId } from "@zcode/shared/test-ids";
 import type { ProjectTask as ZCodeTaskMeta } from "@/project-sidebar/contract.js";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useContext, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import type { UniqueIdentifier } from "@dnd-kit/core";
@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge.js";
 import { Button } from "@/components/ui/button.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { ChildSessionCountsMarker } from "@/components/ChildSessionCountsMarker.js";
+import { ProjectTaskListContext } from "@/project-sidebar/ProjectTaskListContext.js";
 import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
 import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
 import { TaskPullRequestMarker } from "@/components/TaskPullRequestMarker.js";
@@ -395,6 +396,8 @@ function GroupedTaskInteractiveRow({
   }, [archiveConfirming]);
   // Child-conversation list expansion is per parent and per device; the marker doubles as the expander.
   const [childSessionsExpanded, handleToggleChildSessions] = useChildSessionsExpansion(task.taskId);
+  // Phone rows stay unchanged (spec §7): the web remote switcher cannot open child sessions.
+  const childSessionsEnabled = !useContext(ProjectTaskListContext).isWebRemoteControl;
   const handleSelectChildSession = (sessionId: string, options: ChildSessionSelectOptions) =>
     onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, options);
   const archiveLabel = intl.formatMessage({
@@ -613,7 +616,7 @@ function GroupedTaskInteractiveRow({
               ) : null}
             </span>
           )}
-          {!hasPendingInteraction ? (
+          {!hasPendingInteraction && childSessionsEnabled ? (
             // Outside the hover-suppressed span: the marker is also the child-list expander and must
             // stay clickable while hover/focus swap the metadata for the action cluster.
             <ChildSessionCountsMarker
@@ -687,7 +690,7 @@ function GroupedTaskInteractiveRow({
         </span>
       </span>
       {workflowRunLinesNode}
-      {childSessionsExpanded ? (
+      {childSessionsEnabled && childSessionsExpanded ? (
         <TaskChildSessionRows task={task} onSelectSession={handleSelectChildSession} />
       ) : null}
     </div>

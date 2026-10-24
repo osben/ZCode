@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { GroupedTaskRow } from "@/project-sidebar/grouped/task-row.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
+import { ProjectTaskListContext } from "@/project-sidebar/ProjectTaskListContext.js";
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
@@ -105,6 +106,34 @@ describe("grouped child-session navigation", () => {
       "remote:server:a:/tmp/grouped-parent",
       { readOnly: true, selectionSideChat: false },
     );
+  });
+
+  it("phone rows (web remote control) render no child marker", () => {
+    const view = render(
+      createElement(
+        ProjectTaskListContext.Provider,
+        { value: { isWebRemoteControl: true } },
+        createElement(
+          TooltipProvider,
+          null,
+          createElement(GroupedTaskRow, {
+            task: parent,
+            groups: [],
+            activeWorkspacePath: parent.workspacePath,
+            activeTaskId: null,
+            onSelectTask: vi.fn(),
+            onCloseTask: () => {},
+            onMoveTaskToGroup: () => {},
+            onMoveTaskToTop: () => {},
+            onStartRenameTask: () => {},
+            onArchiveTask: () => {},
+            onMarkTaskAsUnread: () => {},
+            dragId: "grouped-parent-row",
+          }),
+        ),
+      ),
+    );
+    expect(view.container.querySelector('[data-child-sessions-marker="true"]')).toBeNull();
   });
 
   it("the grouped view adapter forwards that capability to the sidebar contract", () => {
