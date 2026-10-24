@@ -3,6 +3,8 @@
 Status: implemented with the upstream 3.16.1 sync, PR 7b. Covers the CLI session-store ledger only; the
 services-side task index and project storage are specified elsewhere.
 
+Full history: `git show 01dd23cd:specs/session-database-migrations.md`
+
 ## Scope and owners
 
 - Upstream migration definitions: `apps/zcode-cli/packages/adapters/src/storage/session-store/migrations.ts`,

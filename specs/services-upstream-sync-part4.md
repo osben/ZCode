@@ -2,7 +2,7 @@
 
 Parent spec: `specs/services-upstream-sync.md`. Base `aac47556` (v3.15.1), target `0a1fc56d` (v3.16.1). Branch `claude/upstream-sync-services-4` is based on `origin/claude/upstream-sync-ui` (#215), which already carries the services change from G5 (window-controller unread producer, owner-direct `getTaskMeta`).
 
-This part closes the items deferred in 8b and 8c, one file per commit. Where the fork never changed behavior (fork == base), the upstream behavior and test win. Where the fork changed behavior on purpose, the fork test is the spec.
+Rule for every item: where the fork never changed behavior (fork == base), the upstream behavior and test win. Where the fork changed behavior on purpose, the fork test is the spec.
 
 ## Coordinator decisions carried in (not reopened here)
 
@@ -34,16 +34,16 @@ Fork kept: `/api/connect-remote`, `/ws/remote/:id` and their `createRemoteConnec
 
 Tests: `serverInfoHttp.test.ts` (upstream payload expectations, plus `keeps the fork web-mode remote routes reachable`: the POST returns 400 for an invalid body, and an unknown `/ws/remote/:id` closes with 4004). `staticRoutePathContainment.test.ts` (upstream, waits for `listeningAddress` instead of reading `address()` synchronously).
 
-## 2. `bots/botsService.ts` and `BotsRepo.updateContext` (not done; coordinator decision reopened)
+## 2. `bots/botsService.ts` and `BotsRepo.updateContext` (not done; decision reopened)
 
-The coordinator decision was to adopt upstream's project binding additively, through optional deps. It is not done here, and the reason is below, so the decision needs to be made again.
+The coordinator decision was to adopt upstream's project binding additively, through optional deps. It is not done here, for the reasons below, so the decision needs to be made again.
 
 - Upstream binds each bot context to a project from the project catalog (`readContext` → `bindProject`, `workspaceRefsFromCatalog`, `context.projectId`). The fork binds a context to a workspace (`workspaceId`, `resolveCanonicalContextWorkspace`, settings-derived `listWorkspaceRefs`).
 - No host in this repo passes `projectService` into `createBotsService`. The desktop local-global collection (`remoteWorkspaceServiceCollection.ts`, since removed) and the services `node.ts` both omitted it. An additive port would therefore be inert everywhere today, and it would still add a second context-write path next to the fork's (AGENTS.md single-owner rule).
 - Making `projectService` required, as upstream does, would break the unsynced desktop consumer.
 - Not applied: `BotsRepo.updateContext`, the project deps on `BotsServiceDeps`, `bindProject`. `/remote` and `botRemote*` are unchanged.
 
-Requested: re-decide whether bot workspace binding moves to projects in this sync, or stays on the fork's workspace model until the project feature is wired.
+Open question: whether bot workspace binding moves to projects in this sync, or stays on the fork's workspace model until the project feature is wired.
 
 ## 3. `zcode-agent/zcodeTaskServiceAdapter.ts`, `zcodeTaskIndexSyncer.ts`, `zcodeAgentService.ts`
 
@@ -62,7 +62,7 @@ Requested: re-decide whether bot workspace binding moves to projects in this syn
 - Task-state writes through `task-facts`: `createTaskFacts`, `taskFacts.ingest`/`mutate`/`reconcile`/`removed`, `mirrorSummary`, `refreshSessionFacts`, `mutateSessionFacts`. Ownership: not taken.
 - Fork-owned writes renamed upstream: `applyAgentPatch`, `updateTaskState`, `syncTaskMeta`, `seedTaskMetaIfMissing` become `updateTaskPresentation`, and `syncTaskMetaAtGroupedTop` is added. Not taken (fork writer).
 - Grouped ordering: `moveGroupedTaskToTop`, `initializedGroupedOrder`. Not taken (fork grouped view, UI-2).
-- Repair path: upstream imports `#src/task-facts/repairSubagentTaskIndex.js`. Not taken; the fork copy `zcode-agent/repairSubagentTaskIndex.ts` stays the only owner (main spec, single owners).
+- Repair path: upstream imports `#src/task-facts/repairSubagentTaskIndex.js`. Not taken; the fork copy `zcode-agent/repairSubagentTaskIndex.ts` stays the only owner.
 - Presentation and title derivation (`buildPresentationFromSnapshot`, removal of `deriveTitleFromSnapshot`): tied to the new writer. Not taken.
 - Not taken, no current consumer: `activeTaskRefs()` (an observer for upstream auto-archive, which the fork does not wire), and removing the unused `_options` argument of `ensureSessionSubscription` (cosmetic).
 
@@ -70,7 +70,7 @@ Requested: re-decide whether bot workspace binding moves to projects in this syn
 
 Checked by symbol name only: `additionalDirectories` in create and resume params, `PendingSessionRuntimePreferencesRequest.workspace`, off-peak lifecycle and plugin UI tool result emitters with their parsing and disposal, `resolveSessionDirectories` in subscribe with the subagent lineage check, `historyFirst` subscribe, the `prepareSessionCreation` guard, `reconcileSessionsIndexV4`. A presence match does not prove the same behavior. The body differences are fork-changed code and have not been reviewed hunk by hunk.
 
-Fork-decided, not taken: the `refreshRegistry` barrier on `ensureAccountProviderConfigSynced` (8c; the fork test pins that createSession sends no refresh), `includeArchived` removal in `sessionList` (the fork archive repair uses it; since superseded: removed, see `specs/build-pipeline-entrypoints.md`), and `updateTaskPresentation` in the automation path (the fork owner is `syncTaskMeta`, see 8c).
+Fork-decided, not taken: the `refreshRegistry` barrier on `ensureAccountProviderConfigSynced` (the fork test pins that createSession sends no refresh), `includeArchived` removal in `sessionList` (since superseded: removed, see `specs/build-pipeline-entrypoints.md`), and `updateTaskPresentation` in the automation path (the fork owner is `syncTaskMeta`).
 
 ## 4. Grouped surface and fork writer
 
@@ -86,7 +86,7 @@ Verified: the fork's live tasks-database migration list (`session/tasksDatabase/
 
 Upstream's restore checks the provider access token (`oauth:<provider>:access_token`) in addition to the shared JWT. The fork restore path reads only the shared JWT, by design: a provider token read on the first-screen restore re-blocks the background BigModel migration (comment in `restoreCachedSessionState`).
 
-Experiment (reverted, file back to HEAD): adding the provider token read to the restore path makes `does not send zai token to BigModel when migration token load races with provider switch` time out at 8 s. The test holds the first `oauth:bigmodel:access_token` load and releases it only after `restoreCachedSession()` resolves, so an await on that load inside restore can never finish. This is the await that hangs, and no delay-based fix is acceptable. The check cannot coexist with that test as specified, so it stays deferred.
+Experiment (reverted, file back to HEAD): adding the provider token read to the restore path makes `does not send zai token to BigModel when migration token load races with provider switch` time out at 8 s. The test holds the first `oauth:bigmodel:access_token` load and releases it only after `restoreCachedSession()` resolves, so an await on that load inside restore can never finish. No delay-based fix is acceptable. The check cannot coexist with that test as specified, so it stays deferred.
 
 ```mermaid
 sequenceDiagram
@@ -104,25 +104,10 @@ sequenceDiagram
 
 ## 7. `project-storage` startup, 3-argument `prepareTasksIndexStorage` (deferred, no live consumer)
 
-The desktop worker keeps the 2-argument call (marked `DEFERRED`). Upstream's third argument (`settings`) only seeds project records through `TaskIndexRepo` → `projectStorage.migrate`, and that path has no live consumer in the fork (section 5). An optional third argument would be accepted and then ignored, which is dead surface, so it is not added. `project-storage/startup-entry.ts` is identical to upstream.
-
-```mermaid
-sequenceDiagram
-  participant Desktop as tasksStorageWorker (desktop)
-  participant Start as prepareTasksIndexStorage (fork, 2 args)
-  participant DB as tasks-index.sqlite
-  participant Repos as TaskIndexRepo, Automation, OffPeak
-  Desktop->>Start: (path, onProgress)
-  Start->>DB: migrations under write lock (fork ledger)
-  Start->>Repos: ensureReady (fork constructor path/busyTimeout)
-  Start-->>Desktop: ready (markTasksStoragePrepared)
-  Note over Start,DB: Upstream 3rd arg (settings) would feed projectStorage.migrate, which has no live consumer
-```
+The desktop worker keeps the 2-argument call (marked `DEFERRED`). Upstream's third argument (`settings`) only seeds project records through `TaskIndexRepo` → `projectStorage.migrate`, and that path has no live consumer in the fork (section 5). An optional third argument would be accepted and then ignored, which is dead surface, so it is not added. `project-storage/startup-entry.ts` is identical to upstream. Upstream's third argument would feed `projectStorage.migrate`, which has no live consumer; the desktop worker calls `prepareTasksIndexStorage(path, onProgress)`, migrations run under the fork ledger and write lock, repos `ensureReady` through the fork constructor path, and readiness is reported via `markTasksStoragePrepared`.
 
 ## 8. `window-controller` base
 
 The branch is based on `origin/claude/upstream-sync-ui` (#215), which carries the G5 window-controller change. No further change in this PR.
 
-## Verification log
-
-Recorded at the end of this section once the full run finishes.
+Full history: `git show 01dd23cd:specs/services-upstream-sync-part4.md`
