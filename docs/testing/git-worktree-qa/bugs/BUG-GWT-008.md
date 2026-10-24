@@ -37,8 +37,6 @@ In `inside` mode the worktree lives in the project (`<repoRoot>/.worktrees/<segm
 
 Proposed: after a successful `git worktree add` with a target inside repoRoot, idempotently add `.worktrees/` to `.git/info/exclude` (do not touch the user's `.gitignore`; create the file if missing). Preferred over filtering at the status layer because status stays honest for external git.
 
-Shipped fix (6b16482b): a separate `ensureWorktreeExclusion` step called by the app pipeline writes `.git/info/exclude`; covered by upstream tests `gitCliRepo ensureWorktreeExclusion`. The original service-level test asserted exclusion inside `createWorktree`, was superseded and removed.
-
 ## Test (superseded)
 
 `packages/services/test/gitService.test.ts`, `it.fails("BUG-GWT-008: inside worktree creation keeps .worktrees/ out of the main checkout status")`: real git in a temp folder, `createGitService().createWorktree` with target `<repoRoot>/.worktrees/zcode-brave-otter`, asserts the worktree exists and `git status --porcelain` of the main checkout is empty (red without marker: `expected '?? .worktrees/' to be ''`).

@@ -9,7 +9,7 @@
 
 1. Fixture R1 (basic): `main` with commits, branches `feature/a` / `main` / `release` (QA-PROMPT §4).
 2. QA app: open project `basic`, destination chip (`aria-label="Choose where this task runs"`) -> "Task branch" row -> embedded branch list (`[main, feature/a, release]`, `main` marked current).
-3. Footer action "Create and switch to new branch..." -> enter `qa/b4-valid` -> "Create and switch".
+3. Footer action "Create and switch to new branch…" -> enter `qa/b4-valid` -> "Create and switch".
 4. The dialog closes; the chip correctly shows `qa/b4-valid` (live git summary updated via `onRefreshGit`).
 5. Reopen the chip -> branch list (`listOpen` survives popover close, so it opens immediately).
 
@@ -17,7 +17,7 @@ Git equivalent: `git checkout -b qa/b4-valid` (the UI list stays `[feature/a, ma
 
 ## Expected
 
-`specs/composer-branch-switcher-semantics.md` §4, Popover row 2: the embedded branch list inherits the base switcher semantics: "Create and switch to new branch..." (existing `GitBranchCreateDialog` + create-and-switch semantics, unchanged) and "current check + dirty count"; §4 "Reuse": branch machinery comes from `useGitBranchSwitcher`. The status-panel `GitBranchSwitcher` refetches the list on every open (`useGitBranchSwitcher.ts:126-134`), so after create-and-switch the reopened list shows the new current branch. The composer's embedded copy must do the same.
+`specs/composer-branch-switcher-semantics.md` §4, Popover row 2: the embedded branch list inherits the base switcher semantics: "Create and switch to new branch…" (existing `GitBranchCreateDialog` + create-and-switch semantics, unchanged) and "current check + dirty count"; §4 "Reuse": branch machinery comes from `useGitBranchSwitcher`. The status-panel `GitBranchSwitcher` refetches the list on every open (`useGitBranchSwitcher.ts:126-134`), so after create-and-switch the reopened list shows the new current branch. The composer's embedded copy must do the same.
 
 ## Actual
 
@@ -36,7 +36,7 @@ After create-and-switch (RPC `git.createBranchAndSwitch` ok, repo state correct)
 
 ## Fix direction and outcome
 
-Proposed: invalidate the list after create-and-switch (`setBranchesResult(null)` plus reset `branchListFailed`), or mirror the hook strategy (reset when `gitSummary.branchName`/`headRefType` change while the popover is closed, without issuing RPC from the reset). Shipped fix (ee460878): reload the list on every popper open. Covered by the upstream regression test (b) in `composerDestinationControl.test.ts`; the duplicate `it.fails` was dropped in merge resolution.
+Proposed: invalidate the list after create-and-switch (`setBranchesResult(null)` plus reset `branchListFailed`), or mirror the hook strategy (reset when `gitSummary.branchName`/`headRefType` change while the popover is closed, without issuing RPC from the reset). 
 
 ## Test (superseded)
 

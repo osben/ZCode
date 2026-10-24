@@ -18,8 +18,6 @@
 | 1     | Verify per event and add an overall E2E lifecycle?  | "Make sure all 7 hooks work, test them one by one, and add one e2e lifecycle case for hooks overall" | 7 focused contract cases + 1 window-level combined case | no               |
 | 0     | How to handle the settings page and sources?        | Implement the confirmed plan                                                                         | `.zcode` editable, plugin read-only, legacy explicit import | no           |
 
-Note: the case table below also covers PreCompact, PostCompact and SessionEnd (HK-11..HK-13) and the Lifecycle Decision refers to "10 events", while the clarification log and scope say 7 events.
-
 ## Domain Scope
 
 | Domain                   | Include?            | Reason                                                               | Primary sources                                               |

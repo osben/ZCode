@@ -1,16 +1,40 @@
 # R3 Post-merge Remote Automation Case Matrix
 
-Related: [execution plan](r3-remote-automation-plan.md), [readiness and actual records](../archive/remote-r3/r3-remote-automation-readiness-2026-09-07.md).
+Related: [execution plan](r3-remote-automation-plan.md), [readiness and actual
+records](../archive/remote-r3/r3-remote-automation-readiness-2026-09-07.md).
 
-This table registers candidate implementation contracts under accepted semantics, initially NOT_RUN / planned. **The first actual results of 2026-09-08 are in the [run ledger](../archive/remote-r3/r3-remote-automation-live-run-2026-09-08.md)**; some first-connect / first-send representatives have really run, which does not allow marking all actions or cross combinations of a whole row as passed. A reference to an old formal/pending case only means reusable material; later each row is linked to the actual spec, manifest, artifact and result.
+This table registers candidate implementation contracts under accepted semantics, initially NOT_RUN
+/ planned. **The first actual results of 2026-09-08 are in the [run
+ledger](../archive/remote-r3/r3-remote-automation-live-run-2026-09-08.md)**; some first-connect /
+first-send representatives have really run, which does not allow marking all actions or cross
+combinations of a whole row as passed. A reference to an old formal/pending case only means reusable
+material; later each row is linked to the actual spec, manifest, artifact and result.
 
-Evidence abbreviations: U = actual UI / key screenshots; P = process/connection; R = protocol/authoritative runtime; N = request/network; F = formal store/file/database; L = logs in the relevant time window. E means it must go through a real Electron/browser operation; I means real store/protocol/artifact integration; E+I means each layer has its own independent proof. Every GUI case has at least U plus another evidence layer.
+Evidence abbreviations: U = actual UI / key screenshots; P = process/connection; R =
+protocol/authoritative runtime; N = request/network; F = formal store/file/database; L = logs in the
+relevant time window. E means it must go through a real Electron/browser operation; I means real
+store/protocol/artifact integration; E+I means each layer has its own independent proof. Every GUI
+case has at least U plus another evidence layer.
 
-Environment names: see the execution plan. Faults happen only in dedicated E-ISO/E-SVC environments; controllable-response scenarios use replay, real-model acceptance uses live; the user cancelled the real-request consumption cap and all actual model calls are still recorded. S = enters smoke; other accepted rows enter full; the SOAK package runs separately. When an environment is not ready, the matching BLOCKED stays and the case does not vanish from the denominator by filtering discovery.
+Environment names: see the execution plan. Faults happen only in dedicated E-ISO/E-SVC environments;
+controllable-response scenarios use replay, real-model acceptance uses live; the user cancelled the
+real-request consumption cap and all actual model calls are still recorded. S = enters smoke; other
+accepted rows enter full; the SOAK package runs separately. When an environment is not ready, the
+matching BLOCKED stays and the case does not vanish from the denominator by filtering discovery.
 
 ## Current acceptance and history
 
-This table keeps the stable R3A numbering; historical planned/NOT_RUN and old batch links are not current run state. Connection UI is accepted by the [three-screen wizard](../architecture/remote-device-connection-ux-spec.md) and [project navigation](../remote/project-first-remote-navigation-spec.md); the old connect-and-chat operations are no longer executed. An uninstall-reinstall that keeps data keeps the original identity and history; only an independent-environment replacement confirms a new identity, see [Issue 08](../issues/remote-e2e-stability/08-reinstall-history-visible-in-new-device.md). The implementation/run mapping of each scenario is in the [coverage matrix](conversation-session-e2e-coverage-matrix.md) and the [SSH guide regression](desktop-ssh-guide-regression.md); the gap between the full soak target and the shorter harness tiers is in the [test plan](r3-remote-automation-plan.md).
+This table keeps the stable R3A numbering; historical planned/NOT_RUN and old batch links are not
+current run state. Connection UI is accepted by the [three-screen
+wizard](../architecture/remote-device-connection-ux-spec.md) and [project
+navigation](../remote/project-first-remote-navigation-spec.md); the old connect-and-chat operations
+are no longer executed. An uninstall-reinstall that keeps data keeps the original identity and
+history; only an independent-environment replacement confirms a new identity, see [Issue
+08](../issues/remote-e2e-stability/08-reinstall-history-visible-in-new-device.md). The
+implementation/run mapping of each scenario is in the [coverage
+matrix](conversation-session-e2e-coverage-matrix.md) and the [SSH guide
+regression](desktop-ssh-guide-regression.md); the gap between the full soak target and the shorter
+harness tiers is in the [test plan](r3-remote-automation-plan.md).
 
 ## A. Build, Install and Authentication
 
@@ -73,7 +97,16 @@ This table keeps the stable R3A numbering; historical planned/NOT_RUN and old ba
 | R3A-PRV-17 | P1         | An active Linux path, with and without a usable local workspace | Model-settings connectivity test                                      | With a local cwd it runs locally; without one it is explicitly unavailable; a Linux path is not handed to the local Agent         | E/URPN           |
 | R3A-PRV-18 | P1         | Two lines of one Source with different Environment keys        | Connect both lines, trigger save and takeover                           | Each may sync; transactions do not partially overwrite, final config consistent; the unimplemented optimization of syncing once per Source is not imposed | E+I/URF |
 
-For the Provisioning GUI cases, PRV-12 acceptance must really revoke write permission of the isolated Source config directory and prove that the local save succeeds, the remote original config is kept, Main emits a warning with Environment/trigger/status, and the original session does not change generation; after the save event settles, observe 10 seconds without retry, then restore permission and let a new real save deliver the full latest config. Restoring permission goes in `finally`; a fault-free save cannot be taken as evidence of this failure branch. PRV-13 holds back the Desktop product SSH reply while deleting config, first confirms the Source has committed and Main has no completion result yet, then disconnects; replay models and control probes use an independent direct connection. Rejection of the old pending RPC is also verified on real WebSocket/duplex by `packages/desktop/test/serverRemoteConnectionLifecycle.test.ts`.
+For the Provisioning GUI cases, PRV-12 acceptance must really revoke write permission of the
+isolated Source config directory and prove that the local save succeeds, the remote original config
+is kept, Main emits a warning with Environment/trigger/status, and the original session does not
+change generation; after the save event settles, observe 10 seconds without retry, then restore
+permission and let a new real save deliver the full latest config. Restoring permission goes in
+`finally`; a fault-free save cannot be taken as evidence of this failure branch. PRV-13 holds back
+the Desktop product SSH reply while deleting config, first confirms the Source has committed and
+Main has no completion result yet, then disconnects; replay models and control probes use an
+independent direct connection. Rejection of the old pending RPC is also verified on real
+WebSocket/duplex by `packages/desktop/test/serverRemoteConnectionLifecycle.test.ts`.
 
 ## D. Remote Development and Settings
 
@@ -90,9 +123,22 @@ For the Provisioning GUI cases, PRV-12 acceptance must really revoke write permi
 | R3A-DEV-09 | retired    | Repo Wiki removed as a whole                                   | The old remote generate/cancel topic no longer applies                 | Retired with the service, UI and test entries; not counted as current coverage                           | n/a              |
 | R3A-DEV-10 | P1         | An explicit remote-file local open/export entry                | Trigger download / local app action and cancel                         | Remote read and local platform action responsibilities separated; exported content matches; no illegal remote path executed locally | E/URNF |
 
-DEV-06 current regression entry: with a remote project active, choose ordinary User; after creating, the local `agents/<name>.md` exists and no same-named remote user/project file exists; after selecting a remote project by full workspace identity, creation lands only in each `.zcode/agents`. The explicit Source User of DEV-07 must be accepted independently and the last `default` workspace in the menu must not stand in for remote User; when that entry is missing, record it as uncovered without changing DEV-06's local User assertions.
+DEV-06 current regression entry: with a remote project active, choose ordinary User; after creating,
+the local `agents/<name>.md` exists and no same-named remote user/project file exists; after
+selecting a remote project by full workspace identity, creation lands only in each `.zcode/agents`.
+The explicit Source User of DEV-07 must be accepted independently and the last `default` workspace
+in the menu must not stand in for remote User; when that entry is missing, record it as uncovered
+without changing DEV-06's local User assertions.
 
-DEV-10 evidence split (2026-09-24): `file-local-actions` verifies remote read, clipboard and file-manager gating, and on native platforms checks the complete Remote-SSH file URI through a VS Code CLI recording fixture. The Linux product implementation has no editor candidate, so only the disabled state can be verified and it is not positive native-editor evidence. `media-preview` performs a real download and cancel in the image preview after reconnect: the source image SHA-256 equals the bytes saved locally, and cancelling the save must not overwrite an existing local sentinel file. Together they cover DEV-10; the fact that the Markdown file tree has no export menu cannot be used to skip export acceptance. These reinforcements still need real re-verification on the corresponding platforms and servers and cannot be counted complete from new assertions alone.
+DEV-10 evidence split (2026-09-24): `file-local-actions` verifies remote read, clipboard and
+file-manager gating, and on native platforms checks the complete Remote-SSH file URI through a VS
+Code CLI recording fixture. The Linux product implementation has no editor candidate, so only the
+disabled state can be verified and it is not positive native-editor evidence. `media-preview`
+performs a real download and cancel in the image preview after reconnect: the source image SHA-256
+equals the bytes saved locally, and cancelling the save must not overwrite an existing local
+sentinel file. Together they cover DEV-10; the fact that the Markdown file tree has no export menu
+cannot be used to skip export acceptance. These reinforcements still need real re-verification on
+the corresponding platforms and servers and cannot be counted complete from new assertions alone.
 
 ## E. Conversation and Run Control
 
@@ -122,9 +168,24 @@ DEV-10 evidence split (2026-09-24): `file-local-actions` verifies remote read, c
 | R3A-REC-09 | P0         | permission and elicitation each blocked                       | Desktop auto-recovery and Desktop manual-recovery paths each disconnect/restore/respond | Each combination asserted independently: snapshot restores the same ID; cleared after resolution, CLI continues, no second response | E/URNF |
 | R3A-REC-10 | P1         | Historical conversation/project entries, some purpose records missing | Source update, active-first recovery                       | The new version restores only the active directory and opens other projects on demand; old settings import still verifies active-first; historical purpose and remote data are not deleted by mistake | E+I/URF |
 
-R3A-REC-04 is accepted per the [current cold-start contract](../remote/desktop-remote-session-renderer-reattach.md): `lastActiveWorkspace` -> the active directory recovers automatically; the user opens another project -> a workspace attachment is created for it. In the [2026-10-12 final recheck](../issues/remote-e2e-stability/15-cold-start-open-workspace-siblings.md) `coldreconnect` passed; the corresponding E2E is still pending manual review, which does not change promotion or CI admission.
+R3A-REC-04 is accepted per the [current cold-start
+contract](../remote/desktop-remote-session-renderer-reattach.md): `lastActiveWorkspace` -> the
+active directory recovers automatically; the user opens another project -> a workspace attachment is
+created for it. In the [2026-10-12 final
+recheck](../issues/remote-e2e-stability/15-cold-start-open-workspace-siblings.md) `coldreconnect`
+passed; the corresponding E2E is still pending manual review, which does not change promotion or CI
+admission.
 
-Evidence of R3A-REC-08 has two layers: the desktop E2E holds back the real SSH reply so that the Source finishes a controlled turn and it is confirmed the old desktop has not received the final reply yet; after automatic generation swap the final reply and idle are restored, then the proxy is released and the bytes actually written and the bytes discarded by retiring the old socket are checked separately. Bytes discarded at retirement cannot count as a late callback delivered. Application-level reordering is verified by `packages/desktop/test/sourceServerConnectionManager.test.ts` against the real connection manager: after the new owner is published, an old close and an old recovery-success callback cannot delete or replace the new owner, and the old result must be released. The proxy itself is verified separately on real TCP for forwarding, retirement discard and delayed EOF.
+Evidence of R3A-REC-08 has two layers: the desktop E2E holds back the real SSH reply so that the
+Source finishes a controlled turn and it is confirmed the old desktop has not received the final
+reply yet; after automatic generation swap the final reply and idle are restored, then the proxy is
+released and the bytes actually written and the bytes discarded by retiring the old socket are
+checked separately. Bytes discarded at retirement cannot count as a late callback delivered.
+Application-level reordering is verified by
+`packages/desktop/test/sourceServerConnectionManager.test.ts` against the real connection manager:
+after the new owner is published, an old close and an old recovery-success callback cannot delete or
+replace the new owner, and the old result must be released. The proxy itself is verified separately
+on real TCP for forwarding, retirement discard and delayed EOF.
 
 ## G. Versions and Migration
 
@@ -164,7 +225,10 @@ Evidence of R3A-REC-08 has two layers: the desktop E2E holds back the real SSH r
 | ---------- | ---------- | -------------------------------------------------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
 | R3A-TEL-01 | P1         | Isolated report capturer; local/SSH task and connection lifecycle; remote conversation telemetry contract | Send, connect/reconnect, switch tabs and rebuild the attachment | workspace_kind/remote_kind of events such as agent_step match the actual source; categories not mixed, no duplicate reports; a report failure does not block the product; logs/events contain no out-of-bounds fields such as host/secret | E+I/URNL |
 
-This row corresponds to the remote fact forwarding and local/remote classification fix before the merge of R3 and reuses the report inventory assertions in SSH P0; it uses the current `docs/monitoring/conversation-telemetry-v4.md` contract and does not take the "no automatic recovery yet" historical wording of an earlier usage document as current behavior.
+This row corresponds to the remote fact forwarding and local/remote classification fix before the
+merge of R3 and reuses the report inventory assertions in SSH P0; it uses the current
+`docs/monitoring/conversation-telemetry-v4.md` contract and does not take the "no automatic recovery
+yet" historical wording of an earlier usage document as current behavior.
 
 ## I. Real Models and Long-run Stability
 
@@ -176,11 +240,21 @@ This row corresponds to the remote fact forwarding and local/remote classificati
 | R3A-SOAK-01 | P1/soak    | Two Sources x two projects + conversation, replay      | 50 rounds of connect/disconnect/recover/open-close tab | Every round can continue; owned resources return to baseline under the same quiescent conditions, no old-generation wrong writes | E/UPRFL |
 | R3A-SOAK-02 | P1/soak    | Desktop continuous + Mobile replayable running together, replay | 2 hours of stream/tool/input and phone recovery | No hang / lost input; resource trend explainable; production lifecycle logs do not flush to disk with chunk volume | E/UPRNL |
 
-On 2026-09-08 the user said explicitly "no need to control consumption": the total cap of 20 and the 8/8/4 split are cancelled, and real requests run as acceptance coverage requires, without cutting coverage for an artificial count or cost budget. The controller must be able to count all actual model calls, otherwise the live package is BLOCKED first; the request count is not inferred from the number of chat messages sent. Account refresh / entitlement network requests are recorded separately and must not be called model requests or hide automatic retries.
+On 2026-09-08 the user said explicitly "no need to control consumption": the total cap of 20 and the
+8/8/4 split are cancelled, and real requests run as acceptance coverage requires, without cutting
+coverage for an artificial count or cost budget. The controller must be able to count all actual
+model calls, otherwise the live package is BLOCKED first; the request count is not inferred from the
+number of chat messages sent. Account refresh / entitlement network requests are recorded separately
+and must not be called model requests or hide automatic retries.
 
 ## J. Old Case Mapping and Implementation Priority
 
-The stable numbers and setup/action/assertion of R3-REMOTE-01..15 (with sub-cases) are carried by [conversation-session-case-catalog.md](../conversation-session-case-catalog.md); the original "R3 Source Server release test plan" is archived in [docs/archive/remote-r3/](../archive/remote-r3/r3-source-server-release-test-plan.md) and its "current automation status" column is no longer maintained; current status follows this table and the [full rerun record](r3-remote-full-rerun-2026-09-10.md).
+The stable numbers and setup/action/assertion of R3-REMOTE-01..15 (with sub-cases) are carried by
+[conversation-session-case-catalog.md](../conversation-session-case-catalog.md); the original "R3
+Source Server release test plan" is archived in
+[docs/archive/remote-r3/](../archive/remote-r3/r3-source-server-release-test-plan.md) and its
+"current automation status" column is no longer maintained; current status follows this table and
+the [full rerun record](r3-remote-full-rerun-2026-09-10.md).
 
 | New contract | Reusable material                                                        | Must add                                                                       |
 | ------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
@@ -192,7 +266,9 @@ The stable numbers and setup/action/assertion of R3-REMOTE-01..15 (with sub-case
 | MOB/TRN      | shared-host/allowlist/stream contract, Docker/WSL verifier               | New real browser pairing and relay orchestration; distinguish SSH container / native Docker transport / WSL |
 | LIVE/SOAK    | reporter/recorder, provider real-request entry                           | Actual request and usage records, resource/log trends, recordings of success representatives and remote evidence |
 
-Implementation order: H1/H2/H3 -> smoke -> PRV/ID/REC -> DEV/TASK/UI/UPG -> H4/MOB/TRN/LIVE -> SOAK -> evidence audit. Directory/fixture creation follows e2e-case-lifecycle; planned cases are not put into the formal default glob first.
+Implementation order: H1/H2/H3 -> smoke -> PRV/ID/REC -> DEV/TASK/UI/UPG -> H4/MOB/TRN/LIVE -> SOAK
+-> evidence audit. Directory/fixture creation follows e2e-case-lifecycle; planned cases are not put
+into the formal default glob first.
 
 ## K. Pruning, Undefined and Risk Candidates
 
@@ -209,11 +285,16 @@ Implementation order: H1/H2/H3 -> smoke -> PRV/ID/REC -> DEV/TASK/UI/UPG -> H4/M
 | R3A-B-02 | bug-candidate               | Historical record of old-config matchRules blocking first connect | An old run record is not a current reproduction; UPG-05 pins the version and creates data; a failure is attributed to product or fixture |
 | R3A-I-01 | ignored-current-environment | Native Windows Desktop, iOS/Android real devices, independent WAN/public-network packet loss | Platform/network resources not yet provided or confirmed; the gap is registered separately and not claimed covered by containers/browser |
 
-Candidate status and execution status are separate. When new cases are added later because of newly found changes, keep stable IDs, record the source and update the change-map; a failing row must not be changed to pruned to shrink the denominator.
+Candidate status and execution status are separate. When new cases are added later because of newly
+found changes, keep stable IDs, record the source and update the change-map; a failing row must not
+be changed to pruned to shrink the denominator.
 
 ## R3A-BLD-04/06 Fault-injection Contract Correction (2026-09-11)
 
-`r3-install-faults` must, for A (uninstalled) and B (installed control) each, take the remote `uname -s` / `uname -m`, reuse the remote environment normalization function, uniquely match `target` in the release descriptor, and then use that entry's `fileName`, SHA and size. It must not hardcode an x64 package or assume both targets share an architecture.
+`r3-install-faults` must, for A (uninstalled) and B (installed control) each, take the remote `uname
+-s` / `uname -m`, reuse the remote environment normalization function, uniquely match `target` in
+the release descriptor, and then use that entry's `fileName`, SHA and size. It must not hardcode an
+x64 package or assume both targets share an architecture.
 
 ```text
 remote platform/arch -> descriptor target -> case-owned staged file
@@ -221,12 +302,30 @@ remote platform/arch -> descriptor target -> case-owned staged file
                                               + finally -> restore original file
 ```
 
-After B's first install, disconnect explicitly through the device menu and wait until the remoteSessionId of the same workspaceIdentity is cleared, then switch back to a local draft through the sidebar; reusing an existing session online does not revalidate the local artifact again and does not belong to this fault scenario.
+After B's first install, disconnect explicitly through the device menu and wait until the
+remoteSessionId of the same workspaceIdentity is cleared, then switch back to a local draft through
+the sidebar; reusing an existing session online does not revalidate the local artifact again and
+does not belong to this fault scenario.
 
-The case is the only writer of the isolated staged file. Missing, equal-length SHA tampering, descriptor size tampering and installed-target protection must all hit the entry actually used; the existing assertions of the explicit error, no new install, old install unchanged, single Host, and retry success after cancel stay. Each injection restores the original file via `finally`, including on assertion failure; restoration must not pollute the source package a hard link points to. Forensics record fault, target, fileName, expected error, remote install and session state; if the wizard closes unexpectedly these facts are saved before reporting the error.
+The case is the only writer of the isolated staged file. Missing, equal-length SHA tampering,
+descriptor size tampering and installed-target protection must all hit the entry actually used; the
+existing assertions of the explicit error, no new install, old install unchanged, single Host, and
+retry success after cancel stay. Each injection restores the original file via `finally`, including
+on assertion failure; restoration must not pollute the source package a hard link points to.
+Forensics record fault, target, fileName, expected error, remote install and session state; if the
+wizard closes unexpectedly these facts are saved before reporting the error.
 
-This correction touches only the Desktop E2E fixture and report and does not change product connection state, workspace identity, desktop continuous or mobile replayable paths. New regression checks cover ARM64/x64 and macOS architecture normalization, rejection of a missing entry, and restoration of the file and hard-link source after a fault; the full BLD-04/06 still depends on a real GUI E2E run. A full GUI E2E passed after the correction (macOS arm64 -> Linux arm64 A/B); see the recheck section of `r3-remote-full-rerun-2026-09-10.md`.
+This correction touches only the Desktop E2E fixture and report and does not change product
+connection state, workspace identity, desktop continuous or mobile replayable paths. New regression
+checks cover ARM64/x64 and macOS architecture normalization, rejection of a missing entry, and
+restoration of the file and hard-link source after a fault; the full BLD-04/06 still depends on a
+real GUI E2E run. A full GUI E2E passed after the correction (macOS arm64 -> Linux arm64 A/B); see
+the recheck section of `r3-remote-full-rerun-2026-09-10.md`.
 
 ## SQLite Migration Reopen Write-lock Regression (2026-09-15)
 
-This regression keeps the R3A-P-02 layering: `packages/services/test/remoteSchemaMigrations.test.ts` adds three cases (Controller reconnect with no source rows, Source management query, session resolution of an existing alias) that verify, under a real WAL two-connection lock, successful return and checksum rejection; each was reproduced first and then passed. The GUI reconnect operation contract of REC-04/09 is unchanged and the GUI E2E was not rerun this time.
+This regression keeps the R3A-P-02 layering: `packages/services/test/remoteSchemaMigrations.test.ts`
+adds three cases (Controller reconnect with no source rows, Source management query, session
+resolution of an existing alias) that verify, under a real WAL two-connection lock, successful
+return and checksum rejection; each was reproduced first and then passed. The GUI reconnect
+operation contract of REC-04/09 is unchanged and the GUI E2E was not rerun this time.

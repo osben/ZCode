@@ -5,16 +5,14 @@
 - Cases: H5 (FAIL)
 - Environment: macOS 27.2 (darwin, arm64), commit `bd6a05b3` (branch `qa/git-worktree-20261017`), isolated QA instance (production build, sandbox HOME)
 
-Note: `actual-issues-2026-10-18.md` lists 006 as closed (visible toast "Committed, but push failed: ..." 2/2 in RT3-H5), which conflicts with the Status above.
-
 ## Repro
 
 1. Fixture R5 `detached` (HEAD~1, origin = `$QA_ROOT/remotes/detached.git`): `"$QA_ROOT/bin/qa-run.sh" bash "$QA_ROOT/bin/make-fixtures.sh" R5`.
-2. Make the repo dirty BEFORE opening the session: append a line to `src/app.txt` of `$QA_ROOT/repos/detached`.
-3. Open `$QA_ROOT/repos/detached` in the QA app and create a session (any short message).
+2. Make the repo dirty BEFORE opening the session: `"$QA_ROOT/bin/qa-run.sh" bash -c 'echo "h5-line for detached push test" >> $QA_ROOT/repos/detached/src/app.txt'`.
+3. Open `$QA_ROOT/repos/detached` in the QA app and create a session (any short message, for example «Reply with H5OK only.»).
 4. Status panel -> "Commit or push" -> in the dialog (title "Detached HEAD", +1 -0) type a message -> choose "Commit and push" (Enter or click the cmdk item).
-5. The dialog closes right after the action is chosen; there is no toast and no error (`[data-sonner-toast]` = 0, no "Cannot push..."/"Push failed..." text in the DOM).
-6. Host log, 3 of 3 attempts: `[rpc:call] git.push FAIL ... "Cannot push while HEAD is detached."`; the commit was created on the detached HEAD each time.
+5. The dialog closes right after the action is chosen; there is no toast and no error (`[data-sonner-toast]` = 0, no «Cannot push…»/«Push failed…» text in the DOM).
+6. Host log, 3 of 3 attempts: `[rpc:call] git.push FAIL … "Cannot push while HEAD is detached."`; the commit was created on the detached HEAD each time.
 
 ## Expected
 
@@ -43,6 +41,6 @@ Make the failure branch of `handleCommitAction` visible independent of the dialo
 
 ## Test
 
-`packages/ui/test/gitActionMenuError.test.ts`, one `it.fails("BUG-GWT-006: keeps a push-after-commit failure visible after the commit dialog closes", ...)`. Level: mounted `GitActionMenu` (jsdom + @testing-library/react), git mocked at the `gitService` RPC boundary (refresh/stagePaths/commit resolve; push is a controlled deferred reject "Cannot push while HEAD is detached."). No sleeps (`findBy*`/`waitFor`/microtask flush), self-contained, independent of `$QA_ROOT`.
+`packages/ui/test/gitActionMenuError.test.ts`, one `it.fails("BUG-GWT-006: keeps a push-after-commit failure visible after the commit dialog closes", …)`. Level: mounted `GitActionMenu` (jsdom + @testing-library/react), git mocked at the `gitService` RPC boundary (refresh/stagePaths/commit resolve; push is a controlled deferred reject "Cannot push while HEAD is detached."). No sleeps (`findBy*`/`waitFor`/microtask flush), self-contained, independent of `$QA_ROOT`.
 
 Scenario: detached + dirty -> commit dialog -> message -> "Commit and push" -> push pending -> dismiss the dialog (`onOpenChange(false)` -> `closeCommitDialog`) -> push rejects -> assert the error is visible (open/reopened dialog with the error OR a failure toast). Without the marker it fails at that assertion (`expected false to be true`, `gitActionMenuError.test.ts:243`) after commit/push were each called once.

@@ -11,7 +11,7 @@
 2. Create a worktree session: Command Center -> "New task in worktree" (or the Worktree toggle in the composer) -> send a message; wait for ready. The sidebar shows the worktree marker (svg aria `Worktree session · <dir>`); Settings -> Sessions: Branch=`zcode/<name>`, Environment=Worktree.
 3. Make sure the worktree's workspace (or the parent workspace listing the session) is closed afterwards (tab closed; that workspace's host not running).
 4. Fully restart the QA app (QA-PROMPT §9, then §2.7).
-5. Without opening that workspace: the sidebar (Group) shows no worktree marker; Settings -> Sessions shows Branch=`-`, Environment=Local (the Environment=Local filter now includes the session, the Worktree filter does not).
+5. Without opening that workspace: the sidebar (Group) shows no worktree marker; Settings -> Sessions shows Branch=`—`, Environment=Local (the Environment=Local filter now includes the session, the Worktree filter does not).
 6. Reopen the workspace: the host starts, sessions-index is cold-seeded from the session store (`execution_directory`), and marker plus Branch/Environment return.
 
 Persistence check in the sandbox DB:
@@ -30,7 +30,7 @@ sqlite3 "$QA_ROOT/home/.zcode/v2/tasks-index.sqlite" \
 
 ## Actual
 
-- F7: after restart the session of case C9 (workspace `detached`, worktree `zcode-grumpy-cookie`, folder on disk, branch @5632c228) lost its sidebar marker; Settings -> Sessions showed Environment=Local, Branch=`-`. Recovery proven: `qa-open detached` restores marker, Branch=zcode/grumpy-cookie, Environment=Worktree.
+- F7: after restart the session of case C9 (workspace `detached`, worktree `zcode-grumpy-cookie`, folder on disk, branch @5632c228) lost its sidebar marker; Settings -> Sessions showed Environment=Local, Branch=`—`. Recovery proven: `qa-open detached` restores marker, Branch=zcode/grumpy-cookie, Environment=Worktree.
 - SQLite (F7): NO worktree session has the `executionWorktree` key in `meta_json`: the fact is never written, not "lost on overwrite".
 - I1 (full restart): right after start only the freshly reopened `detached` workspace's session had the marker; after `qa-open basic` markers returned for all 10 basic worktree sessions. No sessions lost (16/16), git unchanged: a display-classification defect only.
 
@@ -49,8 +49,6 @@ Make the fact a persistent tasks-index property modeled on `cronAutomationId`/`o
 2. Write the fact at the Host boundary when it is known: when sessions-index summaries arrive (where `sessionOverlay` is built / in the syncer at `syncTaskMeta`), so the existing v4 sessions-index is the channel.
 3. In the merge, read the fact as a fallback from persisted meta when the overlay is absent: `windowHostControllerProjection.ts` `buildSourceRows` (spread from `membership.meta`) and/or `windowHostControllerService.ts:613-617,669-672`.
 
-The shipped code carries this as BUG-GWT-010 comments in `taskIndexRepo.ts`, `windowHostControllerService.ts`, `zcodeTaskService.ts`, `zcodeTaskServiceAdapter.ts` and `validation.ts` (execution-worktree facts converge from the live overlay into `meta_json`; the host acknowledges a fact only after a task row carries it and re-sends it to a replaced task service).
-
 ## Test
 
-`packages/services/test/taskIndexWorktreeFact.test.ts` (services level, no UI): real `TaskIndexRepo` on temp sqlite + `createWindowHostControllerRuntime`; the live phase delivers the fact via a sessions-index snapshot frame, then "restart": fresh repo + fresh runtime without an agent service (closed workspace); the cold `listTaskList` must return `executionWorktree`. No sleeps, only the agent-service RPC surface is mocked. Test name: `BUG-GWT-010: cold listTaskList after a restart keeps the worktree session fact` (was `it.fails`; red without marker at the cold assertion `expected undefined to deeply equal {...}`). Related host-side test: `packages/desktop/test/windowHostControllerService.test.ts` "BUG-GWT-010: acknowledges a worktree fact only after a task row carries it, and re-sends it to a replaced task service".
+`packages/services/test/taskIndexWorktreeFact.test.ts` (services level, no UI): real `TaskIndexRepo` on temp sqlite + `createWindowHostControllerRuntime`; the live phase delivers the fact via a sessions-index snapshot frame, then "restart": fresh repo + fresh runtime without an agent service (closed workspace); the cold `listTaskList` must return `executionWorktree`. No sleeps, only the agent-service RPC surface is mocked. Test name: `BUG-GWT-010: cold listTaskList after a restart keeps the worktree session fact` (was `it.fails`; red without marker at the cold assertion `expected undefined to deeply equal {...}`).

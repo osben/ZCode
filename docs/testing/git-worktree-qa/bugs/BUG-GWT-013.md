@@ -20,7 +20,7 @@
 4. `agent-browser reload` makes the chip appear ("main" for R2, "Detached HEAD" for R5).
 5. Alternative recovery without reload: click another project in the sidebar and back (a `workspacePath` change restarts the refresh).
 
-Log at the open second: `zcode-agent.subscribeSessionsIndexV4 FAIL ... Error: ZCode Agent runtime is not running` (runtime-start race marker; the sessions-index subscription recovers by itself, `subscribeSessionsIndexV4 OK` after ~0.5 s).
+Log at the open second: `zcode-agent.subscribeSessionsIndexV4 FAIL … Error: ZCode Agent runtime is not running` (runtime-start race marker; the sessions-index subscription recovers by itself, `subscribeSessionsIndexV4 OK` after ~0.5 s).
 
 ## Expected
 
@@ -30,7 +30,7 @@ Log at the open second: `zcode-agent.subscribeSessionsIndexV4 FAIL ... Error: ZC
 
 - R2: chip absent >2 minutes after qa-open (checked twice); appeared only after reload. Control: R1 opened the same way 4 minutes earlier had the chip immediately.
 - R5: same on a normal repo, so not specific to unborn HEAD.
-- Host log at the open second: `git.refresh OK` (39.6 ms and 29.1 ms); the next `git.refresh` only after reload. Whole run: 254x `git.refresh OK`, 0x FAIL; no renderer warn `[useGitRepository] ...` (read-failure message).
+- Host log at the open second: `git.refresh OK` (39.6 ms and 29.1 ms); the next `git.refresh` only after reload. Whole run: 254x `git.refresh OK`, 0x FAIL; no renderer warn `[useGitRepository] 读取 Git 仓库状态失败` ("failed to read Git repository state").
 - So the host got git state successfully, the renderer neither applied the result nor retried. Git data unchanged.
 
 ## Cause (confirmed by code and log)
@@ -44,7 +44,7 @@ Log at the open second: `zcode-agent.subscribeSessionsIndexV4 FAIL ... Error: ZC
 
 ## Fix direction
 
-`packages/ui/src/hooks/useGitRepository.ts` (no protocol change): make loss/failure of the initial refresh self-healing: (a) let `shouldRefreshLiveGitData` treat incompleteness (`loading && !summary.isRepository`) or a last-request error as grounds for a retry at the next effect evaluation / `rpcReady` transition, or (b) do not discard an in-flight result on service identity change without a `workspaceKey` change. Do not mask with timeouts. The shipped code carries BUG-GWT-013 comments in `useGitRepository.ts` (resolved snapshot and current pending request per exact target; recover an unresolved target only after its current request settles; service replacement must not drop a current result).
+`packages/ui/src/hooks/useGitRepository.ts` (no protocol change): make loss/failure of the initial refresh self-healing: (a) let `shouldRefreshLiveGitData` treat incompleteness (`loading && !summary.isRepository`) or a last-request error as grounds for a retry at the next effect evaluation / `rpcReady` transition, or (b) do not discard an in-flight result on service identity change without a `workspaceKey` change. Do not mask with timeouts.
 
 ## Test
 

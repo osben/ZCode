@@ -1,6 +1,18 @@
 # Model Call Trajectory E2E Coverage Matrix
 
-This document defines the end-to-end acceptance semantics of the Model Trajectory Viewer. The coverage threshold is computed over the fixed range `1f015ca1726a4e1f932c6e87b8b7ce64623317af..f5ce7b4b360eaec0a396b55f1e2ad36586ecd837`, aggregated over executable TypeScript/TSX changed lines attributable to the call-trajectory capability, with a target of at least 95%. The attribution set is fixed to `3e00cec9d0`, `bfcef0c9c4`, `1d434a6dda`, `65156894ac`, `274ebbd8f4`, `f5ce7b4b36`, corresponding to native scrolling, reasoning persistence, tool metadata projection, trajectory UX, content search and bounded tail reading. Unrelated changes that entered staging in the same period (provider, media, settings, generic task action tracing) must not enter the denominator. Pure docs, test code, translation dictionaries and pure CSS are not in the executable-line denominator, but the matching visuals and copy must be covered by E2E assertions. Renderer uses Istanbul coverage; Desktop host / CLI use V8 coverage. The default expansion of `094ac1c5a1` is current behavior after the upper bound; E2E keeps a regression assertion for it but it is not in this fixed denominator.
+This document defines the end-to-end acceptance semantics of the Model Trajectory Viewer. The
+coverage threshold is computed over the fixed range
+`1f015ca1726a4e1f932c6e87b8b7ce64623317af..f5ce7b4b360eaec0a396b55f1e2ad36586ecd837`, aggregated
+over executable TypeScript/TSX changed lines attributable to the call-trajectory capability, with a
+target of at least 95%. The attribution set is fixed to `3e00cec9d0`, `bfcef0c9c4`, `1d434a6dda`,
+`65156894ac`, `274ebbd8f4`, `f5ce7b4b36`, corresponding to native scrolling, reasoning persistence,
+tool metadata projection, trajectory UX, content search and bounded tail reading. Unrelated changes
+that entered staging in the same period (provider, media, settings, generic task action tracing)
+must not enter the denominator. Pure docs, test code, translation dictionaries and pure CSS are not
+in the executable-line denominator, but the matching visuals and copy must be covered by E2E
+assertions. Renderer uses Istanbul coverage; Desktop host / CLI use V8 coverage. The default
+expansion of `094ac1c5a1` is current behavior after the upper bound; E2E keeps a regression
+assertion for it but it is not in this fixed denominator.
 
 ## State Dimensions and Pruning
 
@@ -31,7 +43,9 @@ This document defines the end-to-end acceptance semantics of the Model Trajector
 
 ## Trajectory v2 cases
 
-Spec: `specs/model-trajectory-v2.md`. Automation: `packages/desktop/test/e2e/conversation-session/conversation-session-model-trajectory-v2-viewer.test.ts`. v1 cases TRJ01-TRJ11 stay unchanged.
+Spec: `specs/model-trajectory-v2.md`. Automation:
+`packages/desktop/test/e2e/conversation-session/conversation-session-model-trajectory-v2-viewer.test.ts`.
+v1 cases TRJ01-TRJ11 stay unchanged.
 
 | ID    | Setup                                                                                                                                                                                                                                                              | Action                                                          | Assertions                                                                                                                                                                                                                                                                                                       |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -56,16 +70,30 @@ Spec: `specs/model-trajectory-v2.md`. Automation: `packages/desktop/test/e2e/con
 ## 95% Audit Rules
 
 1. Set `ZCODE_E2E_COVERAGE=1` when running the trajectory E2E.
-2. After merging Renderer Istanbul and Node V8 reports, select only the relevant executable changed lines inside the fixed range introduced by the trajectory commits above; attribute by blame at the target revision, and take TS/TSX executable lines from Babel/Istanbul statement start lines.
-3. Every case must have setup, action and assertion; merely passing through code does not count as semantic coverage.
-4. If the aggregate is below 95%, first add cases/assertions with product meaning; coverage must not be faked with assertion-less calls.
+2. After merging Renderer Istanbul and Node V8 reports, select only the relevant executable changed
+   lines inside the fixed range introduced by the trajectory commits above; attribute by blame at
+   the target revision, and take TS/TSX executable lines from Babel/Istanbul statement start lines.
+3. Every case must have setup, action and assertion; merely passing through code does not count as
+   semantic coverage.
+4. If the aggregate is below 95%, first add cases/assertions with product meaning; coverage must not
+   be faked with assertion-less calls.
 5. Finally run `typecheck:e2e`, root `typecheck`, `lint` and the fixture check together.
 
 ## Execution Evidence
 
-2026-08-24 (historical): formal case `conversation-session-model-trajectory-viewer.test.ts` ran TRJ01-TRJ08 as one real Desktop/host chain, passed manual review and the formal admission audit; changed-line hits were 1382 / 1437 (96.17%), CLI new lines (27) counted conservatively. This predates the bounded-tail reading fix of `f5ce7b4b36`, so it proves only the coverage of the UX refactor then and is not final proof of the current 95% threshold.
+2026-08-24 (historical): formal case `conversation-session-model-trajectory-viewer.test.ts` ran
+TRJ01-TRJ08 as one real Desktop/host chain, passed manual review and the formal admission audit;
+changed-line hits were 1382 / 1437 (96.17%), CLI new lines (27) counted conservatively. This
+predates the bounded-tail reading fix of `f5ce7b4b36`, so it proves only the coverage of the UX
+refactor then and is not final proof of the current 95% threshold.
 
-2026-08-27 (current): formal case `conversation-session-model-trajectory-viewer.test.ts`, TRJ01-TRJ09 in a single formal replay passed after a full rebuild (exit code `0`, first-time pass rate `100%`). The case-local DeepSeek fixture and the common fixture are combined explicitly; the case first lets the real CLI main-turn write model-io containing `response.reasoningText`, then appends deterministic records and enters the Pane through the real task context menu. The same run collected Renderer Istanbul, Host V8 and CLI V8. Fixed-revision blame and executable-line intersection audit:
+2026-08-27 (current): formal case `conversation-session-model-trajectory-viewer.test.ts`,
+TRJ01-TRJ09 in a single formal replay passed after a full rebuild (exit code `0`, first-time pass
+rate `100%`). The case-local DeepSeek fixture and the common fixture are combined explicitly; the
+case first lets the real CLI main-turn write model-io containing `response.reasoningText`, then
+appends deterministic records and enters the Pane through the real task context menu. The same run
+collected Renderer Istanbul, Host V8 and CLI V8. Fixed-revision blame and executable-line
+intersection audit:
 
 | Coverage source   | Hits / changed executable lines |   Coverage |
 | ----------------- | ------------------------------: | ---------: |
@@ -74,4 +102,8 @@ Spec: `specs/model-trajectory-v2.md`. Automation: `packages/desktop/test/e2e/con
 | CLI V8            |                           6 / 6 |       100% |
 | Total             |                   **440 / 457** | **96.28%** |
 
-The CLI report lands in the compiled `runner-debug.js`; the generate/stream `reasoningText` and `modelIOReasoningText` source lines were all hit in the same V8 report. The 17 uncovered lines are mainly unreachable unreferenced old components, the copy-failure catch, the no-content fallback, the unserializable-payload catch, and the scroll correction when a search range is already outside the viewport; they do not affect the 95% threshold and no assertion-less calls were used to create hits.
+The CLI report lands in the compiled `runner-debug.js`; the generate/stream `reasoningText` and
+`modelIOReasoningText` source lines were all hit in the same V8 report. The 17 uncovered lines are
+mainly unreachable unreferenced old components, the copy-failure catch, the no-content fallback, the
+unserializable-payload catch, and the scroll correction when a search range is already outside the
+viewport; they do not affect the 95% threshold and no assertion-less calls were used to create hits.

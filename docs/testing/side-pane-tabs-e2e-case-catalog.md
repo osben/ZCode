@@ -116,7 +116,7 @@ SPT-E2E-009 addition: after the last tab is closed the panel collapses with no r
 | Entry          | button / shortcut                                          | Both cover enter and exit                                                                         |
 | surface        | conversation tab / panel tab / no visible panel tab        | First two covered; with no visible tab the launch page is handled by component logic, not covered separately |
 | Float form     | collapsed / collapsed + action bar / expanded / minimized  | All covered                                                                                       |
-| Exit           | button / shortcut / panel toggle / close the last tab      | First three covered; closing the last tab reuses the existing collapse logic, covered by owner-memory unit tests |
+| Exit           | button / shortcut / ◫ / close the last tab      | First three covered; closing the last tab reuses the existing collapse logic, covered by owner-memory unit tests |
 | owner          | switch back to the same session / different session        | Covered by the provider case                                                                      |
 | Blocking interaction | appears when collapsed / appears when minimized      | Appearing when minimized is covered (also proves the card is inside the float)                    |
 | Client         | desktop / Web / phone remote                               | Desktop only; Web and remote do not render the entry, covered by component condition unit tests   |
@@ -124,7 +124,7 @@ SPT-E2E-009 addition: after the last tab is closed the panel collapses with no r
 ### SPFV-E2E-001 Enter, exit and single instance
 
 - Setup: desktop draft, open the Side Pane and create a Terminal tab; put a DOM marker on the main SessionPane root.
-- Action: click "enter full view"; exit with the shortcut; enter again with the button.
+- Action: click «进入完整视图» (enter full view); exit with the shortcut; enter again with the button.
 - Assertions: in full view the left task list width is unchanged, the top-left button group remains, WorkspaceHeader does not exist, the Side Pane frame width is close to the `#content` width; the first tab in the tab strip is the conversation tab, with computed style `-webkit-app-region` of `no-drag` (clickable with a real mouse); after exit the sidebar and panel widths return to those before entering; throughout, the SessionPane root keeps the same DOM marker (not remounted).
 
 ### SPFV-E2E-002 Conversation tab full width and panel tab float
@@ -136,13 +136,13 @@ SPT-E2E-009 addition: after the last tab is closed the panel collapses with no r
 ### SPFV-E2E-003 Action bar, minimize and restore
 
 - Setup: after 002, float collapsed.
-- Action: click the float input and type; click blank panel space; focus the input again and click "-"; click the round button.
-- Assertions: when the input has focus the drawer slides out and the action bar is visible without a title (no loading even when idle), and the drawer extends to the input's bottom edge (within 1.5px, no notch on either side); hidden on blur; after "-" only the round button remains; after clicking it the collapsed state is restored, the input gets focus and the text is still there; after switching to the conversation tab the main input shows the same text.
+- Action: click the float input and type; click blank panel space; focus the input again and click «−» (minimize); click the round button.
+- Assertions: when the input has focus the drawer slides out and the action bar is visible without a title (no loading even when idle), and the drawer extends to the input's bottom edge (within 1.5px, no notch on either side); hidden on blur; after «−» only the round button remains; after clicking it the collapsed state is restored, the input gets focus and the text is still there; after switching to the conversation tab the main input shows the same text.
 
 ### SPFV-E2E-004 Drag snap and menu
 
 - Setup: after 003, float collapsed.
-- Action: drag the grip to the slot's top-left area and release; click the grip to open the menu and choose "open in full view".
+- Action: drag ⠿ to the slot's top-left area and release; click ⠿ to open the menu and choose «在完整视图中打开» (open in full view).
 - Assertions: after release the float sticks to the slot's top-left (16px); the global preference `zcode:side-pane-full-view:floating-anchor` is written as `top-left`; after choosing the menu item the conversation tab is shown and the float's expanded state is not changed by the menu click (regression: portal events bubble along the React tree).
 
 ### SPFV-MODEL-001 Float model menu dismissal (pending)
@@ -155,7 +155,7 @@ SPT-E2E-009 addition: after the last tab is closed the panel collapses with no r
 ### SPFV-E2E-005 Expand and collapse the message stream
 
 - Setup: float collapsed + action bar.
-- Action: click the "up" button; then click the "down" button.
+- Action: click the «⌃» button; then click the «⌄» button.
 - Assertions: after expanding the float height is above 400px and the timeline is visible, the button has `aria-expanded=true`; the bottom edge of the message scroll container is at least 8px above the input area's top edge (the scrollbar does not extend behind the input); clicking again returns to the collapsed state.
 
 ### SPFV-E2E-009 Plugin page layer not covered by the panel frame
@@ -167,20 +167,20 @@ SPT-E2E-009 addition: after the last tab is closed the panel collapses with no r
 ### SPFV-E2E-006 Panel toggle exit
 
 - Setup: full view.
-- Action: click the panel toggle; then click the panel toggle on WorkspaceHeader to reopen.
+- Action: click the panel toggle ◫; then click the panel toggle on WorkspaceHeader to reopen.
 - Assertions: after closing, the normal layout is back; after reopening it is still the normal view (does not return to full view).
 
 ### SPFV-E2E-007 Float send and per-session memory (provider)
 
 - Setup: existing session A (first message completed), Terminal tab open, enter full view.
-- Action: send a message in the float input; in full view create a draft with the command palette (Cmd+K -> New task); switch back to A in the left task list.
+- Action: send a message in the float input; in full view create a draft with the command palette (⌘K → New task); switch back to A in the left task list.
 - Assertions: the message appears in A's timeline and a reply arrives; after the answer ends an answer bubble pops up above the float containing only the answer body (no icon, no title); the draft is the normal view; after switching back to A the full view and float are restored and the bubble is still there (it disappears only via the x or by clicking); clicking the bubble expands the float and the bubble disappears, and it does not appear again after collapsing (regression: switching sessions does not produce React #185 and the panel does not stay collapsed).
 
 ### SPFV-E2E-008 AskUserQuestion appearing while minimized (provider)
 
 - Setup: after 007, session A in full view, current tab Terminal.
 - Action: send a prompt that triggers AskUserQuestion in the float (replay delay 4s), minimize right after the user message appears, wait for the question request.
-- Assertions: after the user message appears (before the question request arrives, while the conversation is running) loading shows to the right of the action bar "up / down", the input placeholder is "工作中 N 秒" / `Working for …`, exactly the same as the running-duration text on the last line of the streaming message; the float auto-restores to collapsed and the question card shows inside the float; after submitting the answer the card disappears and the input recovers; a new bubble (`spfv-ask-done`) pops up when the answer ends, and after clicking the x the bubble disappears and the float stays collapsed; after the conversation is idle, focusing the float shows the action bar without loading.
+- Assertions: after the user message appears (before the question request arrives, while the conversation is running) loading shows to the right of the action bar «⌃ / ⌄», the input placeholder is "工作中 N 秒" / `Working for …`, exactly the same as the running-duration text on the last line of the streaming message; the float auto-restores to collapsed and the question card shows inside the float; after submitting the answer the card disappears and the input recovers; a new bubble (`spfv-ask-done`) pops up when the answer ends, and after clicking the x the bubble disappears and the float stays collapsed; after the conversation is idle, focusing the float shows the action bar without loading.
 
 ### Invariants
 

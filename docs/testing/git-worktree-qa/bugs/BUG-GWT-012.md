@@ -8,7 +8,7 @@
 ## Repro
 
 1. Fixture R1 (basic): repo with commits on `main` (QA-PROMPT §4).
-2. QA app: open project `basic`, start a live session whose message yields a running task for 10+ s (for example "Run these six commands..." with 5-6 separate bash calls).
+2. QA app: open project `basic`, start a live session whose message yields a running task for 10+ s (for example "Run these six commands…" with 5-6 separate bash calls).
 3. About 3 s after the task starts: status panel -> branch switcher -> pick `release`.
 4. The guard dialog "Switch branch?" appears; read the description under the title.
 5. Minimal mechanism check (what the renderer does):
@@ -29,14 +29,14 @@ createIntl("en-US", { "en-US": enUS }).formatMessage(
 
 ## Actual
 
-- The dialog description shows the raw ICU template: "Switching to release changes the working tree for {count, plural, one {# running task} other {# running tasks}}:". `{branch}` is substituted; `{count, plural, ...}` is NOT rendered in any locale.
+- The dialog description shows the raw ICU template: "Switching to release changes the working tree for {count, plural, one {# running task} other {# running tasks}}:". `{branch}` is substituted; `{count, plural, …}` is NOT rendered in any locale.
 - 2/2 reproductions in case B6 (dialog with a running task of a checkout session).
 - Git before/after: `main`, unchanged (switch cancelled via Cancel; the guard works). No log errors.
 
 ## Cause (confirmed on all layers)
 
 - `packages/ui/src/v4/composer/branchSwitchGuard.tsx:144-150`: the description is formatted via `intl.formatMessage({ id: "branchSwitchGuard.description" }, { count, branch })`.
-- `packages/ui/src/i18n/createIntl.ts:28-37,60-62`: after lookup, `formatMessage` only does naive `replaceAll("{key}", value)`. ICU syntax `{count, plural, one {...} other {...}}` is not parsed; the template has no literal `{count}` token, so the whole fragment stays in the output while `{branch}` is substituted.
+- `packages/ui/src/i18n/createIntl.ts:28-37,60-62`: after lookup, `formatMessage` only does naive `replaceAll("{key}", value)`. ICU syntax `{count, plural, one {…} other {…}}` is not parsed; the template has no literal `{count}` token, so the whole fragment stays in the output while `{branch}` is substituted.
 - `en-US.ts:5193-5194` (also `zh-CN.ts:4887`, `uk-UA.ts:4884`): the message has an inline ICU plural, but the project's intl layer supports plurals only through `formatPlural` (`createIntl.ts:63-74`), which expects separate catalog keys `id.one`/`id.few`/`id.many`/`id.other` (convention of all other plural messages, for example `sessionManager.count.sessions`, `chat.codeComments`).
 
 ## Fix direction
