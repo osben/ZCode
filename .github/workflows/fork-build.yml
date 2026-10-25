@@ -2,7 +2,7 @@ name: Fork build
 
 on:
   push:
-    branches: [fork]
+    branches: [fork, integration]
   workflow_dispatch:
 
 permissions:
