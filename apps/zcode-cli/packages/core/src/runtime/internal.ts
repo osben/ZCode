@@ -179,6 +179,12 @@ export interface AgentRuntimeInternal
   backgroundTaskNotificationSealReason?: BackgroundTaskNotificationSealReason;
   pendingModelChangeTimeline?: PendingModelChangeTimeline;
   sessionStartHookRan: boolean;
-  sessionTitleGenerationAttempted: boolean;
+  /** Title generation attempts that reached the model in this runtime (specs/session-title-polish.md §6). */
+  sessionTitleGenerationAttempts: number;
+  sessionTitleGenerationInFlight: boolean;
+  /** True once a generated/custom title is known; stops further attempts. */
+  sessionTitleGenerationSettled: boolean;
+  /** First title seed this runtime saw; a retry prefers it over the current message. */
+  sessionTitleSeed?: { input: string; messageID?: MessageId };
   agentTelemetry: RuntimeTelemetryFacade;
 }

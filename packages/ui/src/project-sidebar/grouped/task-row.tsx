@@ -550,7 +550,8 @@ function GroupedTaskInteractiveRow({
         "group/task-row",
         TASK_GROUP_ROW_CLASS,
         "cursor-pointer",
-        isActive ? "bg-selected" : "hover:bg-surface-hover",
+        // The menu renders in a portal, so the pointer leaves the row while it is open; keep the row marked.
+        isActive ? "bg-selected" : contextMenuOpen ? "bg-surface-hover" : "hover:bg-surface-hover",
         dragging && "opacity-0",
       )}
     >

@@ -28,6 +28,8 @@ const GENERATED_TITLE_EXPECTED_SOURCES: readonly SessionTitleSource[] = [
   "generated",
 ];
 const MIN_GENERATED_TITLE_INPUT_CHARS = 10;
+// First attempt plus one retry (specs/session-title-polish.md §6.2).
+const MAX_SESSION_TITLE_GENERATION_ATTEMPTS = 2;
 
 export function maybeStartSessionTitleGeneration(
   this: AgentRuntimeInternal,
@@ -89,13 +91,21 @@ function maybeStartSessionTitleGenerationFromSeed(
     offPeakExecutionId?: string;
   },
 ): boolean {
+  const seedText = normalizeTitleInput(sanitizeTitleSeed(input));
   if (
-    !shouldAttemptSessionTitleGeneration(this, input, {
-      bypassShortInputGuard: options.bypassShortInputGuard,
-    })
+    !options.bypassShortInputGuard &&
+    !options.goalSummaryTargetID &&
+    !this.sessionTitleSeed &&
+    seedText.length > 0 &&
+    isTitleGenerationConfigured(this)
   ) {
-    return false;
+    this.sessionTitleSeed = { input: seedText, messageID: options.messageID };
   }
+  const mode = resolveSessionTitleGenerationMode(this, seedText, {
+    bypassShortInputGuard: options.bypassShortInputGuard,
+    firstTurnOnly: options.bypassShortInputGuard || Boolean(options.goalSummaryTargetID),
+  });
+  if (!mode) return false;
   if (
     options.deferIfProviderRuntimeHeadersRefresh &&
     shouldDeferSessionTitleForRuntimeHeaders(this)
@@ -104,17 +114,25 @@ function maybeStartSessionTitleGenerationFromSeed(
     // For providers that need runtime-header refresh, send the main turn first and generate the title asynchronously afterward.
     return false;
   }
-  this.sessionTitleGenerationAttempted = true;
+  // A retry prefers the first seed of this runtime when it is substantial; otherwise the current message.
+  const seed =
+    mode === "retry" &&
+    this.sessionTitleSeed &&
+    codePointLength(this.sessionTitleSeed.input) >= MIN_GENERATED_TITLE_INPUT_CHARS
+      ? this.sessionTitleSeed
+      : { input, messageID: options.messageID };
+  this.sessionTitleGenerationInFlight = true;
   // The title task outlives the current Turn. Freeze causation when enqueuing it so later awaits,
   // scheduler behavior, or implementation refactoring cannot silently drop the background Trace's Link to the triggering Span.
   const causation = this.agentTelemetry.captureCausation();
   const modelContext = retainTitleModelContext(this, options.offPeakExecutionId);
 
   const generation = generateAndPersistSessionTitle
-    .call(this, input, options.messageID, options.traceContext, {
+    .call(this, seed.input, seed.messageID, options.traceContext, {
       causation,
       modelContext,
       goalSummaryTargetID: options.goalSummaryTargetID,
+      retry: mode === "retry",
     })
     .catch(async (error) => {
       this.logger?.warn("Session title generation failed", {
@@ -133,7 +151,10 @@ function maybeStartSessionTitleGenerationFromSeed(
         });
       }
     })
-    .finally(() => modelContext.release());
+    .finally(() => {
+      this.sessionTitleGenerationInFlight = false;
+      modelContext.release();
+    });
   void this.trackResidencyBlockingWork(generation).catch((error) => {
     this.logger?.warn("Session title fallback persistence failed", {
       ...traceContextToLogContext(options.traceContext),
@@ -146,25 +167,59 @@ function maybeStartSessionTitleGenerationFromSeed(
   return true;
 }
 
-function shouldAttemptSessionTitleGeneration(
-  runtime: AgentRuntimeInternal,
-  input: string,
-  options: { bypassShortInputGuard?: boolean } = {},
-): boolean {
-  if (runtime.sessionTitleGenerationAttempted) return false;
+type SessionTitleGenerationMode = "first" | "retry";
+
+function codePointLength(text: string): number {
+  return Array.from(text).length;
+}
+
+/** Cheap in-memory gates shared by the seed memory and the mode decision. */
+function isTitleGenerationConfigured(runtime: AgentRuntimeInternal): boolean {
   if (runtime.config.titleGeneration?.enabled === false) return false;
   if (!runtime.config.titleGeneration) return false;
   if (!runtime.sessionStore) return false;
+  if (runtime.config.taskType === "selection_side_chat") return true;
   if (runtime.config.parentSessionId) return false;
-  if (runtime.config.taskType && runtime.config.taskType !== "interactive") return false;
-  if (runtime.turnNumber !== 0) return false;
-  const normalizedInput = normalizeTitleInput(sanitizeTitleSeed(input));
-  if (normalizedInput.length === 0) return false;
-  // A short initial input is already a readable title. Running the generated-title sidecar would
-  // consistently overwrite titles such as "hi" with the generic "New Coding Session."
+  return !runtime.config.taskType || runtime.config.taskType === "interactive";
+}
+
+function resolveSessionTitleGenerationMode(
+  runtime: AgentRuntimeInternal,
+  seedText: string,
+  options: { firstTurnOnly?: boolean; bypassShortInputGuard?: boolean } = {},
+): SessionTitleGenerationMode | null {
+  if (!isTitleGenerationConfigured(runtime)) return null;
+  if (runtime.sessionTitleGenerationInFlight || runtime.sessionTitleGenerationSettled) return null;
+  if (runtime.sessionTitleGenerationAttempts >= MAX_SESSION_TITLE_GENERATION_ATTEMPTS) return null;
+  if (seedText.length === 0) return null;
+  const meetsMinimum = codePointLength(seedText) >= MIN_GENERATED_TITLE_INPUT_CHARS;
+  const sideChat = runtime.config.taskType === "selection_side_chat";
+  if (runtime.turnNumber === 0 && runtime.sessionTitleGenerationAttempts === 0 && !sideChat) {
+    // A short initial input is already a readable title. Running the generated-title sidecar would
+    // consistently overwrite titles such as "hi" with the generic "New Coding Session."
+    return options.bypassShortInputGuard || meetsMinimum ? "first" : null;
+  }
+  // /goal and other external inputs keep their first-turn-only behavior (their goal summary fallback depends on it).
+  if (options.firstTurnOnly) return null;
+  return meetsMinimum ? "retry" : null;
+}
+
+function isTitleEligibleSession(session: SessionInfo): boolean {
+  if (session.taskType === "selection_side_chat") return Boolean(session.parentID);
+  return !session.parentID && session.taskType === "interactive";
+}
+
+/**
+ * The persisted title is still an automatic placeholder that a generated title may replace in a retry.
+ * A side chat is created with a `generated` placeholder title that carries no `titleMessageID`; a title written by
+ * the sidecar always records the message it came from.
+ */
+function isAutoTitlePending(session: SessionInfo): boolean {
+  if (session.titleSource === "default" || session.titleSource === "first_input") return true;
   return (
-    options.bypassShortInputGuard ||
-    Array.from(normalizedInput).length >= MIN_GENERATED_TITLE_INPUT_CHARS
+    session.taskType === "selection_side_chat" &&
+    session.titleSource === "generated" &&
+    !session.titleMessageID
   );
 }
 
@@ -191,10 +246,26 @@ async function generateAndPersistSessionTitle(
     causation?: AgentTelemetryCausation;
     goalSummaryTargetID?: string;
     modelContext?: TitleModelContext;
+    retry?: boolean;
   } = {},
 ): Promise<void> {
   const initialSession = await this.sessionStore?.getSession(this.sessionId);
-  if (!initialSession || initialSession.parentID || initialSession.taskType !== "interactive") {
+  if (initialSession && !isTitleEligibleSession(initialSession)) {
+    // Forks, subagents and other non-interactive sessions never get a generated title; stop checking per message.
+    this.sessionTitleGenerationSettled = true;
+  }
+  if (!initialSession || !isTitleEligibleSession(initialSession)) {
+    return;
+  }
+  if (options.retry && !isAutoTitlePending(initialSession)) {
+    // A generated or custom title already exists (for example after a cold resume or a user rename); stop retrying.
+    this.sessionTitleGenerationSettled = true;
+    this.logger?.debug("Session title generation skipped", {
+      ...traceContextToLogContext(traceContext),
+      event: "session_title_generation.skipped",
+      module: "core.runtime",
+      reason: "title_already_resolved",
+    });
     return;
   }
 
@@ -210,6 +281,7 @@ async function generateAndPersistSessionTitle(
   }
 
   const shouldPersistSessionTitle = initialSession.titleSource !== "custom";
+  if (!shouldPersistSessionTitle) this.sessionTitleGenerationSettled = true;
   if (!shouldPersistSessionTitle && !options.goalSummaryTargetID) {
     this.logger?.debug("Session title generation skipped", {
       ...traceContextToLogContext(traceContext),
@@ -230,6 +302,7 @@ async function generateAndPersistSessionTitle(
     });
   }
 
+  this.sessionTitleGenerationAttempts++;
   const generated = await generateTitleCandidate.call(this, input, {
     causation: options.causation,
     modelContext: options.modelContext,
@@ -285,6 +358,7 @@ export async function setCustomSessionTitle(
     title: input.title,
     titleSource: "custom",
   });
+  this.sessionTitleGenerationSettled = true;
   await this.appendEvent(
     this.createEvent(
       SessionEventType.SessionTitleUpdated,
@@ -313,6 +387,7 @@ async function persistGeneratedSessionTitle(
   const session = await getSessionForGeneratedTitle.call(this, input.messageID, input.traceContext);
   if (!session) return;
   if (session.titleSource === "custom") {
+    this.sessionTitleGenerationSettled = true;
     this.logger?.debug("Session title generation skipped", {
       ...traceContextToLogContext(input.traceContext),
       event: "session_title_generation.skipped",
@@ -339,6 +414,7 @@ async function persistGeneratedSessionTitle(
     });
     return;
   }
+  this.sessionTitleGenerationSettled = true;
 
   await this.appendEvent(
     this.createEvent(
@@ -362,7 +438,7 @@ async function getSessionForGeneratedTitle(
   traceContext: TraceContext,
 ): Promise<SessionInfo | null> {
   const session = await this.sessionStore?.getSession(this.sessionId);
-  if (!session || session.parentID || session.taskType !== "interactive") return null;
+  if (!session || !isTitleEligibleSession(session)) return null;
   if (
     await shouldSkipGeneratedTitleForFirstQueryEdit.call(this, session, messageID, traceContext)
   ) {
@@ -378,6 +454,8 @@ async function shouldSkipGeneratedTitleForFirstQueryEdit(
   traceContext: TraceContext,
 ): Promise<boolean> {
   if (!(await isSuppressedByFirstQueryEdit.call(this, session, messageID))) return false;
+  // The first query was edited: no title can be written for it any more, so stop re-reading the store per message.
+  this.sessionTitleGenerationSettled = true;
   this.logger?.debug("Session title generation skipped", {
     ...traceContextToLogContext(traceContext),
     event: "session_title_generation.skipped",

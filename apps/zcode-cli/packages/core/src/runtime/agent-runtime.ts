@@ -271,7 +271,10 @@ export class AgentRuntime {
   private backgroundTaskNotificationSealReason?: "subagent_terminal" | "subagent_cancelled";
   private pendingModelChangeTimeline?: PendingModelChangeTimeline;
   private sessionStartHookRan = false;
-  private sessionTitleGenerationAttempted = false;
+  private sessionTitleGenerationAttempts = 0;
+  private sessionTitleGenerationInFlight = false;
+  private sessionTitleGenerationSettled = false;
+  private sessionTitleSeed?: { input: string; messageID?: MessageId };
   private agentTelemetry: RuntimeTelemetryFacade;
 
   constructor(sessionId: SessionId, config: AgentRuntimeConfig, deps: AgentRuntimeDeps) {

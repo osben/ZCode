@@ -143,3 +143,24 @@ describe("TaskListItem Pin placement with a run state", () => {
     expect(document.activeElement).toBe(row);
   });
 });
+
+describe("TaskListItem context menu highlight", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("keeps the hover background while its context menu is open, and not otherwise", () => {
+    const closed = renderItem();
+    expect(closed.row.className).not.toContain(" bg-surface-hover");
+    cleanup();
+
+    const open = renderItem({ isContextMenuTarget: true });
+    expect(open.row.className.split(" ")).toContain("bg-surface-hover");
+  });
+
+  it("lets the active selection win over the context menu highlight", () => {
+    const { row } = renderItem({ isActive: true, isContextMenuTarget: true });
+    expect(row.className.split(" ")).toContain("bg-selected");
+    expect(row.className.split(" ")).not.toContain("bg-surface-hover");
+  });
+});

@@ -60,3 +60,17 @@ Status dots use design tokens: the draft task row dot is `bg-success`, the unrea
 
 Acceptance: the menu lists both items only under the conditions above; Manage sessions passes the project scope;
 Open on GitHub calls `openExternal` with the converted URL; no lookup happens before a menu opens.
+
+## Task row stays highlighted while its context menu is open
+
+Right-clicking a sidebar task row opens a menu in a portal, so the pointer leaves the row and `hover:bg-surface-hover`
+drops. The row the menu acts on must stay visibly marked until the menu closes.
+
+- State owner: the menu open state that already exists per surface. The grouped row (`grouped/task-row.tsx`) uses its
+  `contextMenuOpen`; the flat list (`TaskList.tsx`) uses `contextMenuTaskId` and passes `isContextMenuTarget` to the
+  row (`TaskListItem.tsx`). No new state, no new write path.
+- Visual: the hover background (`bg-surface-hover`) is applied while the menu is open. An active row keeps
+  `bg-selected`, which wins over the menu highlight.
+
+Acceptance: opening the context menu on a row keeps that row highlighted; closing it (Escape, outside click, item
+select) restores the normal hover behavior; other rows are unaffected; the active row keeps `bg-selected`.

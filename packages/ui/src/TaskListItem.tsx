@@ -89,6 +89,8 @@ interface TaskListItemProps {
   isPinned: boolean;
   isArchived?: boolean;
   isActive: boolean;
+  /** The row's context menu is open (the menu is a portal, so hover alone would drop). */
+  isContextMenuTarget?: boolean;
   isMobileActive?: boolean;
   hoverEnabled?: boolean;
   connectionOverlay?: "disconnected" | "reconnecting";
@@ -165,6 +167,7 @@ function areTaskListItemPropsEqual(left: TaskListItemProps, right: TaskListItemP
     left.isPinned === right.isPinned &&
     left.isArchived === right.isArchived &&
     left.isActive === right.isActive &&
+    left.isContextMenuTarget === right.isContextMenuTarget &&
     left.isMobileActive === right.isMobileActive &&
     left.hoverEnabled === right.hoverEnabled &&
     left.connectionOverlay === right.connectionOverlay &&
@@ -211,6 +214,7 @@ export const MemoTaskItem = memo(function TaskListItem({
   isPinned,
   isArchived = false,
   isActive,
+  isContextMenuTarget,
   isMobileActive = false,
   hoverEnabled = true,
   connectionOverlay,
@@ -722,7 +726,11 @@ export const MemoTaskItem = memo(function TaskListItem({
               : hasBelowTitleLines
                 ? "items-start"
                 : "items-center",
-            isActive ? "bg-selected" : hoverEnabled && "hover:bg-surface-hover",
+            isActive
+              ? "bg-selected"
+              : isContextMenuTarget
+                ? "bg-surface-hover"
+                : hoverEnabled && "hover:bg-surface-hover",
           )}
         >
           {/* Bugfix: 之前任务列表依赖 divide-y 画分隔线，深色侧栏里每个 item 上下都会出现明显黑线，
