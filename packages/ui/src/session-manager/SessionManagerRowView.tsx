@@ -24,6 +24,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.js";
 import { useTaskListItemContextActions } from "@/useTaskListItemContextActions.js";
@@ -186,7 +189,9 @@ function NameCell({
         autoFocus
         defaultValue={row.task.titleOverridden ? row.task.title : title}
         className="h-6 w-full min-w-0 rounded-sm border border-input-border-focused bg-input px-1 text-ui-base text-foreground outline-none"
-        aria-label={intl.formatMessage({ id: "sessionManager.rename.ariaLabel" })}
+        aria-label={intl.formatMessage({
+          id: "sessionManager.rename.ariaLabel",
+        })}
         onBlur={(event) => onRenameCommit(row, event.currentTarget.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
@@ -243,6 +248,7 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
   const { intl, locale } = useZCodeIntl();
   const [menuOpen, setMenuOpen] = useState(false);
   const {
+    taskNativeSessionLogFile,
     fileManagerLabel,
     canOpenInFileManager,
     handleOpenTaskPathInFileManager,
@@ -271,7 +277,9 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
             disabled={!canMutate}
             title={
               mutabilityReason ??
-              intl.formatMessage({ id: row.pinned ? "sessionManager.unpin" : "sessionManager.pin" })
+              intl.formatMessage({
+                id: row.pinned ? "sessionManager.unpin" : "sessionManager.pin",
+              })
             }
             aria-label={intl.formatMessage({
               id: row.pinned ? "sessionManager.unpin" : "sessionManager.pin",
@@ -311,7 +319,9 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
             {row.task.executionWorktree ? (
               <span className="inline-flex h-5 items-center gap-1 rounded-sm border border-border bg-surface px-1.5 text-ui-xs text-foreground-subtle">
                 <GitBranch className="size-3" />
-                {intl.formatMessage({ id: "sessionManager.environment.worktree" })}
+                {intl.formatMessage({
+                  id: "sessionManager.environment.worktree",
+                })}
               </span>
             ) : (
               <span className="text-ui-sm text-foreground-subtle">
@@ -388,7 +398,9 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
       <div role="gridcell" className="flex items-center px-2">
         <Checkbox
           checked={selected}
-          aria-label={intl.formatMessage({ id: "sessionManager.selectRow.ariaLabel" })}
+          aria-label={intl.formatMessage({
+            id: "sessionManager.selectRow.ariaLabel",
+          })}
           onCheckedChange={(checked) => onToggleSelected(row, checked === true)}
           onClick={(event) => event.stopPropagation()}
         />
@@ -405,7 +417,9 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
               type="button"
               variant="ghost"
               size="icon-sm"
-              aria-label={intl.formatMessage({ id: "sessionManager.rowMenu.ariaLabel" })}
+              aria-label={intl.formatMessage({
+                id: "sessionManager.rowMenu.ariaLabel",
+              })}
               onClick={(event) => event.stopPropagation()}
             >
               <MoreHorizontal className="h-3.5 w-3.5" />
@@ -433,17 +447,45 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
                 {fileManagerLabel}
               </DropdownMenuItem>
             ) : null}
-            <DropdownMenuItem
-              onSelect={() =>
-                void handleCopyText(
-                  intl.formatMessage({ id: "sessionManager.copyPath" }),
-                  row.task.workspacePath,
-                )
-              }
-            >
-              <Copy className="h-3.5 w-3.5" />
-              {intl.formatMessage({ id: "sessionManager.copyPath" })}
-            </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Copy className="h-3.5 w-3.5" />
+                {intl.formatMessage({ id: "taskList.menu.copy" })}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuItem
+                  onSelect={() =>
+                    void handleCopyText(
+                      intl.formatMessage({ id: "sessionManager.copyPath" }),
+                      row.task.workspacePath,
+                    )
+                  }
+                >
+                  {intl.formatMessage({ id: "sessionManager.copyPath" })}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={taskNativeSessionLogFile.loading || !taskNativeSessionLogFile.path}
+                  onSelect={() =>
+                    void handleCopyText(
+                      intl.formatMessage({ id: "appHeader.copyLogPath" }),
+                      taskNativeSessionLogFile.path,
+                    )
+                  }
+                >
+                  {intl.formatMessage({ id: "appHeader.copyLogPath" })}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() =>
+                    void handleCopyText(
+                      intl.formatMessage({ id: "appHeader.copySessionId" }),
+                      row.task.taskId,
+                    )
+                  }
+                >
+                  {intl.formatMessage({ id: "appHeader.copySessionId" })}
+                </DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
             <DropdownMenuSeparator />
             <DropdownMenuItem disabled={!canMutate} onSelect={() => onArchiveToggle(row)}>
               {row.archived ? (

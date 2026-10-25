@@ -787,6 +787,8 @@ export const TID_V4_SPLIT_DIVIDER = "v4-split-divider";
 /** Workspace badge in a v4 pane header (shows ownership for panes across workspaces). */
 export const TID_V4_PANE_WORKSPACE_BADGE = "v4-pane-workspace-badge";
 /** View model trajectory in a task context menu. */
+/** Inspect submenu trigger in the task context menu; open it before clicking trajectory items. */
+export const TID_TASK_INSPECT_MENU = "task-inspect-menu";
 export const TID_TASK_VIEW_MODEL_TRAJECTORY = "task-view-model-trajectory";
 /** Refresh button in the model trajectory pane. */
 export const TID_MODEL_TRAJECTORY_REFRESH = "model-trajectory-refresh";

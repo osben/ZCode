@@ -17,6 +17,9 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.js";
 import { WINDOWS_CAPTION_CONTROL_CLASS } from "@/windowCaptionControls.js";
@@ -234,19 +237,6 @@ export function WindowsCaptionMenuButton({
 
         <DropdownMenuSeparator />
 
-        {/* <DropdownMenuItem onSelect={onToggleTerminal}>
-          {intl.formatMessage({ id: "terminal.toggle" })}
-          <DropdownMenuShortcut>{formatCommandShortcutLabel("J")}</DropdownMenuShortcut>
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={onToggleBrowser}>
-          {intl.formatMessage({ id: "browser.toggle" })}
-        </DropdownMenuItem>
-
-        <DropdownMenuSeparator /> */}
-
-        <DropdownMenuItem onSelect={() => handleExecuteDesktopCommand(DesktopCommandIds.ShowAbout)}>
-          {intl.formatMessage({ id: "titleBar.menu.help.about" })}
-        </DropdownMenuItem>
         {showDesktopUpdateEntry ? (
           <DropdownMenuItem
             disabled={updateState?.enabled === false}
@@ -258,46 +248,64 @@ export function WindowsCaptionMenuButton({
             )}
           </DropdownMenuItem>
         ) : null}
-        <DropdownMenuItem
-          onSelect={() => handleExecuteDesktopCommand(DesktopCommandIds.OpenResourceManager)}
-        >
-          {intl.formatMessage({ id: "titleBar.menu.help.resourceManager" })}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={helpMenuActions.openIssueReport}>
-          {intl.formatMessage({ id: "titleBar.menu.help.feedback" })}
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={openFeatureRequest}>
-          {intl.formatMessage({ id: "workspaceHeader.help.productRequest" })}
-        </DropdownMenuItem>
-        {showCommunityMenuItem ? (
-          <DropdownMenuItem
-            onSelect={() => handleExecuteDesktopCommand(DesktopCommandIds.OpenCommunity)}
-          >
-            {intl.formatMessage({ id: "sidebar.menu.community" })}
-          </DropdownMenuItem>
-        ) : null}
-        <DropdownMenuItem onSelect={helpMenuActions.openProductDocs}>
-          {intl.formatMessage({ id: "workspaceHeader.help.docs" })}
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={helpMenuActions.exportLogs}>
-          {intl.formatMessage({ id: "titleBar.menu.help.exportLogs" })}
-        </DropdownMenuItem>
-        {stdioTapDevState.visible ? (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuCheckboxItem
-              checked={stdioTapDevState.enabled}
-              onCheckedChange={handleToggleStdioTapDevProxy}
-            >
-              {intl.formatMessage({ id: "titleBar.menu.help.toggleZCodeStdioTap" })}
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuItem
-              onSelect={() => handleExecuteDesktopCommand(DesktopCommandIds.ToggleDevTools)}
-            >
-              {intl.formatMessage({ id: "titleBar.menu.help.toggleDevTools" })}
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            {intl.formatMessage({ id: "titleBar.menu.help" })}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="w-64 border border-popover-border bg-menu p-2">
+            <DropdownMenuItem onSelect={helpMenuActions.openProductDocs}>
+              {intl.formatMessage({ id: "workspaceHeader.help.docs" })}
             </DropdownMenuItem>
-          </>
+            {showCommunityMenuItem ? (
+              <DropdownMenuItem
+                onSelect={() => handleExecuteDesktopCommand(DesktopCommandIds.OpenCommunity)}
+              >
+                {intl.formatMessage({ id: "sidebar.menu.community" })}
+              </DropdownMenuItem>
+            ) : null}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={helpMenuActions.openIssueReport}>
+              {intl.formatMessage({ id: "titleBar.menu.help.feedback" })}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={openFeatureRequest}>
+              {intl.formatMessage({ id: "workspaceHeader.help.productRequest" })}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => handleExecuteDesktopCommand(DesktopCommandIds.OpenResourceManager)}
+            >
+              {intl.formatMessage({ id: "titleBar.menu.help.resourceManager" })}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={helpMenuActions.exportLogs}>
+              {intl.formatMessage({ id: "titleBar.menu.help.exportLogs" })}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => handleExecuteDesktopCommand(DesktopCommandIds.ShowAbout)}
+            >
+              {intl.formatMessage({ id: "titleBar.menu.help.about" })}
+            </DropdownMenuItem>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        {stdioTapDevState.visible ? (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              {intl.formatMessage({ id: "titleBar.menu.developer" })}
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-64 border border-popover-border bg-menu p-2">
+              <DropdownMenuCheckboxItem
+                checked={stdioTapDevState.enabled}
+                onCheckedChange={handleToggleStdioTapDevProxy}
+              >
+                {intl.formatMessage({ id: "titleBar.menu.help.toggleZCodeStdioTap" })}
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuItem
+                onSelect={() => handleExecuteDesktopCommand(DesktopCommandIds.ToggleDevTools)}
+              >
+                {intl.formatMessage({ id: "titleBar.menu.help.toggleDevTools" })}
+              </DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
         ) : null}
         {/* Bugfix: after bulk session load testing was retired, the Windows custom title bar menu must no longer expose the old toggle. */}
 

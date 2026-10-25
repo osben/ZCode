@@ -27,7 +27,7 @@ vi.mock("@/ControlHintTooltip.js", () => ({
   SidebarNativeTooltip: ({ children }: { children: ReactNode }) => children,
 }));
 vi.mock("@/components/TaskPullRequestMenuItems.js", () => ({
-  TaskPullRequestMenuItems: () => null,
+  TaskPullRequestMenuItems: () => createElement("div", { "data-pr-section": "" }),
 }));
 
 afterEach(cleanup);
@@ -64,5 +64,46 @@ describe("grouped task context menu: Move to group titles", () => {
     expect(label(CRON_DEFAULT_GROUP_ID)).toBe("Scheduled tasks");
     expect(label(OFF_PEAK_DEFAULT_GROUP_ID)).toBe("Idle-time tasks");
     expect(label("custom")).toBe("My Group");
+  });
+});
+
+describe("grouped task context menu: structure", () => {
+  it("renders the pull request section once, after the Copy submenu", () => {
+    const noop = () => {};
+    const { container } = render(
+      createElement(GroupedTaskContextMenuContent, {
+        task: { taskId: "t1", workspacePath: "/w" } as unknown as ProjectTask,
+        groups: [],
+        intl: { formatMessage: ({ id }: { id: string }) => enUS[id] ?? id },
+        fileManagerLabel: "Finder",
+        canOpenInFileManager: true,
+        taskSessionFile: { loading: false, path: null, exists: false },
+        taskNativeSessionLogFile: { loading: false, path: null },
+        providerConfigFile: { loading: false, path: null },
+        onMoveTaskToGroup: noop,
+        onMoveTaskToTop: noop,
+        onStartRenameTask: noop,
+        onArchiveTask: noop,
+        onMarkTaskAsUnread: noop,
+        onOpenTaskPathInFileManager: noop,
+        onCopyText: noop,
+        onOpenProviderConfig: noop,
+        onOpenTaskFeedback: noop,
+      }),
+    );
+    const sections = container.querySelectorAll("[data-pr-section]");
+    expect(sections).toHaveLength(1);
+    const text = container.textContent ?? "";
+    expect(text.indexOf("Copy")).toBeGreaterThan(-1);
+    expect(text.indexOf("Report issue")).toBeGreaterThan(text.indexOf("Copy session ID"));
+    expect(text.lastIndexOf("Archive")).toBeGreaterThan(text.indexOf("Report issue"));
+    const copyTrigger = [...container.querySelectorAll("div")].find(
+      (el) => el.children.length === 0 && el.textContent === "Copy",
+    );
+    expect(
+      copyTrigger &&
+        (copyTrigger.compareDocumentPosition(sections[0]!) & Node.DOCUMENT_POSITION_FOLLOWING) !==
+          0,
+    ).toBe(true);
   });
 });

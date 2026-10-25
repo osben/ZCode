@@ -39,6 +39,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -216,7 +219,12 @@ export function WorkspaceHeaderTitleSection({
   // 远控 tab 只携带身份，bridge 已在身份索引登记；直接读 tab sessionId 会误报断线。
   const attached = useRemoteWorkspaceSessionStore((state) => {
     const sessionId = resolveWorkspaceRemoteSessionId(
-      { workspacePath: workspaceAbsPath, workspaceIdentity, remoteSessionId, remoteTarget },
+      {
+        workspacePath: workspaceAbsPath,
+        workspaceIdentity,
+        remoteSessionId,
+        remoteTarget,
+      },
       state,
     );
     return Boolean(sessionId && state.sessionsById[sessionId]?.services);
@@ -497,7 +505,9 @@ export function WorkspaceHeaderTitleSection({
                                 { id: presentation.recovery.messageId },
                                 presentation.recovery.values,
                               )
-                            : intl.formatMessage({ id: presentation.shortMessageId })}
+                            : intl.formatMessage({
+                                id: presentation.shortMessageId,
+                              })}
                         </span>
                       ) : null}
                     </span>
@@ -639,6 +649,10 @@ export function WorkspaceHeaderTitleSection({
                 hideMobileUnsupportedActions={simplifyForNarrowRemote}
                 Item={DropdownMenuItem}
                 Separator={DropdownMenuSeparator}
+                // Side-opening submenus are cramped on a ~375px remote screen; fall back to the flat list.
+                Sub={simplifyForNarrowRemote ? undefined : DropdownMenuSub}
+                SubTrigger={simplifyForNarrowRemote ? undefined : DropdownMenuSubTrigger}
+                SubContent={simplifyForNarrowRemote ? undefined : DropdownMenuSubContent}
                 onTogglePinTask={() => {
                   if (!resolvedTaskActionTaskId) {
                     return;

@@ -23,6 +23,8 @@ export interface ProjectRowAction {
   run(): void;
   disabled?: boolean;
   destructive?: boolean;
+  /** Consecutive actions with a different group are separated (specs/session-context-menu-structure.md). */
+  group?: string;
 }
 export {
   buildRemoteHostWorkspaceIdentity,

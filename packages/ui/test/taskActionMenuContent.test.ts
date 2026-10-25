@@ -5,13 +5,13 @@ import { TaskActionMenuContent } from "@/TaskActionMenuContent.js";
 
 const PIN_ITEM_INDEX = 0;
 const RENAME_ITEM_INDEX = 1;
-const ARCHIVE_ITEM_INDEX = 2;
-const UNREAD_ITEM_INDEX = 3;
-const FILE_MANAGER_ITEM_INDEX = 4;
+const UNREAD_ITEM_INDEX = 2;
+const FILE_MANAGER_ITEM_INDEX = 3;
+const PROVIDER_CONFIG_ITEM_INDEX = 4;
 const WORKSPACE_PATH_ITEM_INDEX = 5;
 const TASK_PATH_ITEM_INDEX = 6;
 const TASK_LOG_PATH_ITEM_INDEX = 7;
-const PROVIDER_CONFIG_ITEM_INDEX = 8;
+const ARCHIVE_ITEM_INDEX = 8;
 
 function renderMenu(overrides: Partial<React.ComponentProps<typeof TaskActionMenuContent>> = {}) {
   const itemStates: Array<{ disabled?: boolean }> = [];
@@ -176,5 +176,65 @@ describe("TaskActionMenuContent", () => {
 
     expect(html).toContain("appHeader.copyTaskPath");
     expect(itemStates).toHaveLength(renderMenu().itemStates.length);
+  });
+
+  // specs/session-context-menu-structure.md
+  describe("submenus", () => {
+    const subs = {
+      Sub: ({ children }: { children: React.ReactNode }) =>
+        createElement("section", null, children),
+      SubTrigger: ({ children }: { children: React.ReactNode }) =>
+        createElement("header", null, children),
+      SubContent: ({ children }: { children: React.ReactNode }) =>
+        createElement("div", null, children),
+    };
+
+    function submenu(html: string, labelId: string): string {
+      const match = new RegExp(`<header>${labelId}</header><div>(.*?)</div></section>`).exec(html);
+      return match?.[1] ?? "";
+    }
+
+    it("nests Open, Copy and Inspect entries under their triggers", () => {
+      const { html } = renderMenu({
+        ...subs,
+        onCopySessionId: vi.fn(),
+        onViewModelTrajectory: vi.fn(),
+        onViewModelTrajectoryV2: vi.fn(),
+      });
+
+      expect(submenu(html, "taskList.menu.open")).toContain("Open in Finder");
+      expect(submenu(html, "taskList.menu.open")).toContain("appHeader.goToProviderConfig");
+      const copy = submenu(html, "taskList.menu.copy");
+      expect(copy).toContain("appHeader.copyPath");
+      expect(copy).toContain("appHeader.copyLogPath");
+      expect(copy).toContain("appHeader.copySessionId");
+      expect(submenu(html, "taskList.menu.inspect")).toContain("taskList.viewModelTrajectoryV2");
+    });
+
+    it("omits the Open submenu when local files cannot be opened", () => {
+      const { html } = renderMenu({ ...subs, canOpenInFileManager: false });
+
+      expect(html).not.toContain("taskList.menu.open");
+      expect(html).toContain("taskList.menu.copy");
+    });
+
+    it("renders a single-entry group flat", () => {
+      const { html } = renderMenu({
+        ...subs,
+        onViewModelTrajectoryV2: vi.fn(),
+      });
+
+      expect(html).not.toContain("taskList.menu.inspect");
+      expect(html).toContain("taskList.viewModelTrajectoryV2");
+    });
+
+    it("puts Archive last, after Delete's divider", () => {
+      const { html } = renderMenu({ ...subs, onDeleteTask: vi.fn() });
+
+      expect(html.lastIndexOf("taskList.archive")).toBeLessThan(
+        html.lastIndexOf("taskList.delete"),
+      );
+      expect(html.indexOf("taskList.feedback")).toBe(-1);
+    });
   });
 });

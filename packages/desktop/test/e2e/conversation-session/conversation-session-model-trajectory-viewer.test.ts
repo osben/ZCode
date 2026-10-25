@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import {
   TID_MODEL_TRAJECTORY_REFRESH,
   TID_SIDE_PANE_TOGGLE,
+  TID_TASK_INSPECT_MENU,
   TID_TASK_VIEW_MODEL_TRAJECTORY,
 } from "@zcode/shared";
 import {
@@ -581,11 +582,17 @@ async function openTrajectoryThroughTaskMenu(taskId: string) {
 
   await browser.waitUntil(
     () =>
-      browser.execute((testId) => {
-        const item = document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
-        item?.click();
-        return Boolean(item);
-      }, TID_TASK_VIEW_MODEL_TRAJECTORY),
+      browser.execute(
+        (inspectTestId, testId) => {
+          // Trajectory items live in the Inspect submenu; clicking the trigger mounts them.
+          document.querySelector<HTMLElement>(`[data-testid="${inspectTestId}"]`)?.click();
+          const item = document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+          item?.click();
+          return Boolean(item);
+        },
+        TID_TASK_INSPECT_MENU,
+        TID_TASK_VIEW_MODEL_TRAJECTORY,
+      ),
     { timeout: 15_000, timeoutMsg: "task context menu 没有调用轨迹入口" },
   );
 }
