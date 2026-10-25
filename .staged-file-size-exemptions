@@ -231,6 +231,7 @@ packages/desktop/src/host/windowRemoteConnectionRegistry.ts
 packages/desktop/src/main/browserView/browserPlaywrightLocatorExecutor.ts
 packages/desktop/src/main/desktopMainIpcRemote.ts
 packages/desktop/src/main/desktopRemoteSessions.ts
+packages/desktop/src/main/desktopCommandHandlers.ts
 packages/desktop/src/main/desktopRuntimeEnv.ts
 packages/desktop/src/main/desktopWindowChrome.ts
 packages/desktop/src/main/editors.ts
