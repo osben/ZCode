@@ -1764,6 +1764,7 @@ const ukUA: Record<string, string> = {
   "titleBar.menu.view.actualSize": "Фактичний розмір",
   "titleBar.menu.view.zoomIn": "Збільшити",
   "titleBar.menu.view.zoomOut": "Зменшити",
+  "titleBar.menu.developer": "Розробник",
   "titleBar.menu.help.about": "Про ZCode",
   "titleBar.menu.help.checkForUpdates": "Перевірити оновлення",
   "titleBar.menu.help.feedback": "Відгук",

@@ -30,6 +30,14 @@ Rules:
 
 `packages/ui/src/session-manager/SessionManagerRowView.tsx` keeps its own icon-style menu (it has no unread/trajectory/feedback handlers and its rows are table rows). It follows the same grouping: Open session, Rename, Pin | file manager, Copy ▸ (Copy path, Copy log path, Copy session ID) | Archive/Restore, Delete. Copy log path and Copy session ID are new there; path probing is already gated on the menu being open.
 
+## Project row menu
+
+`ProjectNodeContent.tsx` (context menu and the row "more" dropdown share `ProjectRowAction[]`). Actions carry an optional `group`; a separator is inserted wherever consecutive actions change group: create (New session, Show file tree per root) | remote sync | navigate (Device settings, Open on GitHub, Manage sessions) | edit (Edit, Pin) | danger (Delete, Remove entry). Multi-root file entries stay flat (existing tests and E2E select them by test id).
+
+## Windows app menu
+
+`WindowsCaptionMenuButton.tsx`: New task, Open workspace, Open in File Explorer | Check for updates (when shown), Help ▸ (Docs, Community | Feedback, Product request | Resource manager, Export logs | About), Developer ▸ (stdio tap, DevTools; dev builds only) | Close window. The unused commented-out terminal/browser toggles are removed.
+
 ## Not in scope
 
 Child session rows (two items), the Agent row menu, the full-view conversation menu and side pane tab menus stay flat. Fork, Share, Open in new window and Export do not exist in ZCode; they would be separate features.
