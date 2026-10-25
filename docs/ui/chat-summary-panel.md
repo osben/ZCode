@@ -37,6 +37,10 @@ Git Tools shows workspace-level Git state and does not depend on whether the cur
 
 Git Tools does not issue Git RPC directly. Git data comes from the `gitSummary` and worktree dataset summary already maintained by `useGitRepository`.
 
+### Last turn 与 Context
+
+规格见 `specs/status-panel-context-and-last-turn.md`。两个区块只读 v4 投影，默认收起，且不参与 `hasContent`：它们不会单独挂载 status panel、不增加 inline offset，也不进入 mini 胶囊。Last turn 紧跟 Git Tools，展示最近一个有文件变更的轮次（与 Review「Last turn」来源同一选择规则），展开时才读取 `fileChanges` 明细；Context 位于所有区块最后，展示 `snapshot.usage` 的上下文占用、自动压缩阈值、来源构成和累计 token。两个区块正文中的次级元信息（目录、写入次数、图例、`used / max` 与累计 token 行）使用 `text-ui-sm`，属于上文字号约束的补充例外。
+
 ### Goal
 
 Goal shows goal/prompt progress and no longer carries todo details:
