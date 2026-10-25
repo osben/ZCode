@@ -20,6 +20,7 @@ import {
   retainTitleModelContext,
   type TitleModelContext,
 } from "./title-generation-sidecar.js";
+import { sanitizeTitleSeed } from "@zcode/shared";
 
 const GENERATED_TITLE_EXPECTED_SOURCES: readonly SessionTitleSource[] = [
   "default",
@@ -157,7 +158,7 @@ function shouldAttemptSessionTitleGeneration(
   if (runtime.config.parentSessionId) return false;
   if (runtime.config.taskType && runtime.config.taskType !== "interactive") return false;
   if (runtime.turnNumber !== 0) return false;
-  const normalizedInput = normalizeTitleInput(input);
+  const normalizedInput = normalizeTitleInput(sanitizeTitleSeed(input));
   if (normalizedInput.length === 0) return false;
   // A short initial input is already a readable title. Running the generated-title sidecar would
   // consistently overwrite titles such as "hi" with the generic "New Coding Session."

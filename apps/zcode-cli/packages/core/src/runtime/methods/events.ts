@@ -20,6 +20,7 @@ import type {
   UserInputAutoResolutionUpdatedPayload,
 } from "../deps.js";
 import { titleFromInput, slugify, projectIdFromDirectory } from "../helpers/index.js";
+import { sanitizeTitleSeed } from "@zcode/shared";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { buildPersistedConversationInputIntent } from "./input-intent-persistence.js";
 import { recordToolUsageFromEvent } from "./usage-observability.js";
@@ -610,7 +611,7 @@ async function applyFirstInputTitleForPersistedSession(
   if (!session) return;
   if (session.titleSource === "custom" || session.titleSource === "generated") return;
   if (session.title !== "New session" && session.title !== "Untitled session") return;
-  const title = titleFromInput(input);
+  const title = titleFromInput(sanitizeTitleSeed(input));
   if (title === session.title) return;
   const updated = await this.sessionStore!.updateSession({
     id: this.sessionId,
@@ -664,7 +665,7 @@ async function persistSession(
     // default placeholder instead of stamping first_input "Untitled session", which the
     // first real input is then not allowed to replace.
     const hasInput = input.trim().length > 0;
-    const title = hasInput ? titleFromInput(input) : "New session";
+    const title = hasInput ? titleFromInput(sanitizeTitleSeed(input)) : "New session";
     const workspaceIdentity = this.config.memory?.workspaceIdentity?.trim();
     await this.sessionStore.createSession({
       id: this.sessionId,
