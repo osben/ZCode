@@ -422,6 +422,10 @@ export function TaskGroupedView({
         onConfirm={() =>
           action(async () => {
             if (!renamingTask) return;
+            if (renameDraft.trim().length === 0) {
+              setRenamingTask(null);
+              return;
+            }
             await mutate(renamingTask, { kind: "rename", title: renameDraft.trim() });
             setRenamingTask(null);
           }, "taskList.renameFailed")

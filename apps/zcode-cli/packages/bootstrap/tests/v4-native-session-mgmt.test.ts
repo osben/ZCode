@@ -76,6 +76,16 @@ describe("v4 原生 renameSession", () => {
     });
   });
 
+  it("empty or blank title is a no-op (a sticky empty custom title would block auto-titling)", async () => {
+    for (const title of ["", "   "]) {
+      const app = makeApp();
+      await new V4CommandExecutor(makeHost(makeRecord({ app }))).execute(
+        envelope("renameSession", { title }),
+      );
+      expect(app.runtime.setCustomSessionTitle).not.toHaveBeenCalled();
+    }
+  });
+
   it("session 不存在：拒绝（V4SessionNotFoundError）", async () => {
     const record = makeRecord();
     await expect(

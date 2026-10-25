@@ -258,6 +258,8 @@ async function renameSession(
 ): Promise<CommandResult | undefined> {
   const payload = envelope.payload as CommandPayloadMap["renameSession"];
   const record = requireRecord(host, envelope.sessionId);
+  // An empty custom title would be sticky and block auto-titling; older Hosts may still send one, so it is a no-op.
+  if (payload.title.trim().length === 0) return undefined;
   // 注意：方法必须经 runtime 调用（不可解构，实现依赖 this 绑定，见 methods/index.ts 挂载方式）。
   await record.app.runtime.setCustomSessionTitle({
     title: payload.title,

@@ -3471,6 +3471,13 @@ export function createZCodeTaskServiceAdapter(
     },
 
     async renameTask(params): Promise<ZCodeTaskMeta> {
+      if (params.title.trim().length === 0) {
+        // An empty custom title would pin titleOverridden=true and block auto-titling for good, while the CLI ignores it.
+        const current = await taskIndexRepo.getTaskMeta(params);
+        if (!current)
+          throw new Error(`Cannot rename unknown task ${params.taskId} to an empty title`);
+        return current;
+      }
       logger.info(undefined, "[ZCodeTaskService] renameTask start", {
         taskId: params.taskId,
         workspacePath: params.workspacePath,
