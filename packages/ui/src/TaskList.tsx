@@ -384,6 +384,7 @@ export const TaskList = memo(function TaskList({
         isPinned={isPinned}
         isArchived={isArchived}
         isActive={isWorkspaceActive && task.taskId === activeTaskId}
+        isContextMenuTarget={task.taskId === contextMenuTaskId}
         isMobileActive={
           mobileActiveTaskKey ===
           `${buildTaskWorkspaceKey(workspacePath, workspaceIdentity)}:${task.taskId}`
