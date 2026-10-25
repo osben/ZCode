@@ -98,6 +98,11 @@ vi.mock("@/components/ui/dropdown-menu.js", () => ({
   DropdownMenuItem: ({ children }: { children: ReactNode }) =>
     createElement("div", { "data-testid": "dropdown-item" }, children),
   DropdownMenuSeparator: () => createElement("hr"),
+  DropdownMenuSub: ({ children }: { children: ReactNode }) => createElement("div", null, children),
+  DropdownMenuSubContent: ({ children }: { children: ReactNode }) =>
+    createElement("div", null, children),
+  DropdownMenuSubTrigger: ({ children }: { children: ReactNode }) =>
+    createElement("div", { "data-testid": "dropdown-item" }, children),
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => children,
 }));
 

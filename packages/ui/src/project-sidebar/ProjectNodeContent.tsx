@@ -28,6 +28,7 @@ import type {
   ProjectRowAction,
   RemoteProjectHost,
 } from "@/project-sidebar/contract.js";
+import { ProjectMenuItems } from "@/project-sidebar/ProjectMenuItems.js";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible.js";
@@ -35,13 +36,11 @@ import { TaskRowActionButton } from "@/workspace-grouped-tasks/task-row-action-b
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.js";
 import {
   ContextMenu,
   ContextMenuContent,
-  ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu.js";
 import { DeferredRowsSlot, useRowsReveal } from "@/project-sidebar/DeferredRows.js";
@@ -146,7 +145,7 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
   const more = intl.formatMessage({ id: "common.more" });
   // 原因：右键是快捷入口的补充；与更多菜单共用操作定义，避免再次删掉 hover 功能。
   const management: ProjectRowAction[] = [
-    ...additionalActions,
+    ...additionalActions.map((action) => ({ group: "sync", ...action })),
     ...(onOpenDeviceSettings
       ? [
           {
@@ -154,6 +153,7 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
             label: msg("deviceSettings"),
             icon: Settings,
             run: onOpenDeviceSettings,
+            group: "navigate",
           },
         ]
       : []),
@@ -164,6 +164,7 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
             label: intl.formatMessage({ id: "workspaceSidebar.openOnGitHub" }),
             icon: ExternalLink,
             run: onOpenGitHub,
+            group: "navigate",
           },
         ]
       : []),
@@ -174,24 +175,41 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
             label: intl.formatMessage({ id: "quickPick.command.manageSessions" }),
             icon: MessagesSquare,
             run: onManageSessions,
+            group: "navigate",
           },
         ]
       : []),
     ...(editable
       ? [
-          { id: "edit", label: msg("edit"), icon: Pencil, run: onEdit },
+          { id: "edit", label: msg("edit"), icon: Pencil, run: onEdit, group: "edit" },
           {
             id: "pin",
             label: project.pinned ? msg("unpin") : msg("pin"),
             icon: project.pinned ? PinOff : Pin,
             run: onPin,
+            group: "edit",
           },
-          { id: "delete", label: msg("delete"), icon: Trash2, run: onDelete, destructive: true },
+          {
+            id: "delete",
+            label: msg("delete"),
+            icon: Trash2,
+            run: onDelete,
+            destructive: true,
+            group: "danger",
+          },
         ]
       : []),
     // 可编辑的远程项目菜单与本地项目一致；从本机移除只在不能删除项目时（离线、legacy 单 root）兜底。
     ...(!editable && availability.entryId && onRemoveEntry
-      ? [{ id: "remove-entry", label: msg("removeEntry"), icon: FolderMinus, run: onRemoveEntry }]
+      ? [
+          {
+            id: "remove-entry",
+            label: msg("removeEntry"),
+            icon: FolderMinus,
+            run: onRemoveEntry,
+            group: "danger",
+          },
+        ]
       : []),
   ];
   const files: ProjectRowAction[] = project.roots.map((root, index) => ({
@@ -199,6 +217,7 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
     label: project.roots.length > 1 ? `${showFiles} · ${root.rootPath}` : showFiles,
     icon: ListTree,
     run: () => onViewFiles?.(root.rootPath),
+    group: "create",
     disabled: Boolean(primaryRootDisabledReason) || !onViewFiles,
   }));
   const contextActions = [
@@ -210,6 +229,7 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
             icon: MessageCirclePlus,
             run: onCreate,
             disabled: Boolean(primaryRootDisabledReason),
+            group: "create",
           },
           ...files,
         ]
@@ -441,25 +461,3 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
     </>
   );
 });
-
-function ProjectMenuItems({
-  actions,
-  context = false,
-}: {
-  actions: ProjectRowAction[];
-  context?: boolean;
-}) {
-  const Item = context ? ContextMenuItem : DropdownMenuItem;
-  return actions.map((action) => (
-    <Item
-      key={action.id}
-      disabled={action.disabled}
-      data-testid={`virtual-project-${context && (action.id.startsWith("files-") || action.id === "create-task") ? "context-" : ""}${action.id}`}
-      className={action.destructive ? "text-destructive" : undefined}
-      onSelect={action.run}
-    >
-      {action.icon ? <action.icon className="size-4 shrink-0" aria-hidden="true" /> : null}
-      {action.label}
-    </Item>
-  ));
-}

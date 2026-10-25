@@ -260,3 +260,14 @@ it("omits remote device settings without an opener", () => {
   expect(screen.getByTestId("virtual-project-edit")).toBeDefined();
   expect(screen.queryByTestId("virtual-project-device-settings")).toBeNull();
 });
+it("separates create, edit and danger groups in the context menu", () => {
+  const props = fixture(["/one", "/two"]);
+  render(createElement(ProjectNode, props));
+  fireEvent.contextMenu(screen.getByTestId("virtual-project-toggle"));
+  const order = [...document.querySelectorAll('[role="menuitem"],[role="separator"]')].map((node) =>
+    node.getAttribute("role") === "separator" ? "-" : node.getAttribute("data-testid"),
+  );
+  const joined = order.join(",");
+  expect(joined).toContain("virtual-project-context-files-1,-,");
+  expect(joined).toMatch(/virtual-project-edit,virtual-project-pin,-,virtual-project-delete$/);
+});
