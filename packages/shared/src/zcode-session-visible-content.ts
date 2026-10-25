@@ -259,3 +259,58 @@ export function resolveZCodeVisibleSessionTitle(input: {
 
   return input.fallback ?? "New session";
 }
+
+// Title seed sanitizer (specs/session-title-polish.md §2.1).
+// The seed is the copy of the first user input used only for the first-input title and the title model request.
+// The persisted message and the model-facing prompt are never changed.
+
+// A mention link never directly follows a word character, so `handlers[type](payload)` in pasted code is left alone.
+// Every repeated group has disjoint first characters (backslash is excluded from the character classes), so matching
+// stays linear on adversarial input such as an unclosed link followed by many backslashes. One level of balanced
+// parentheses is allowed in a plain destination because file mentions emit paths like `./Dir (copy)/a.ts` unescaped.
+const LINK_MENTION_PATTERN =
+  /(?<![A-Za-z0-9_\])])\[((?:\\.|[^\\\]])*)\]\((?:<((?:\\.|[^>\\])*)>|((?:\\.|[^()\\]|\((?:\\.|[^()\\])*\))*))\)/g;
+// Destinations composer mentions produce: absolute or relative paths, Windows drive paths, plugin and session ids.
+const MENTION_DESTINATION_PATTERN = /^(?:\/|\.{1,2}\/|[A-Za-z]:[\\/]|file:|plugin:\/\/|#sess_)/;
+// Only the head of a long paste can reach a title, so the scan is bounded.
+const MAX_TITLE_SEED_SCAN_CHARS = 8192;
+const BARE_SESSION_TOKEN_PATTERN = /(^|\s)#sess_[a-zA-Z0-9._-]+(?=$|\s)/g;
+// Mirrors buildManualSkillPrompt in apps/zcode-cli/packages/cli/src/command-center/slash-commands.ts.
+// shared cannot import cli; when the template drifts this stops matching and the input passes through unchanged.
+const MANUAL_SKILL_PROMPT_PATTERN =
+  /^Use the skill named `([^`\n]+)` for this turn\.\nFirst call the `Skill` tool with name `\1` before doing the task\.\nAfter the skill content is loaded, follow its instructions and continue\.\n\n(?:User request:\n([\s\S]*)|No additional user request was provided\. Load the skill and respond according to its instructions\.)$/;
+
+function unescapeMarkdownLabel(label: string): string {
+  return label.replace(/\\(.)/g, "$1");
+}
+
+function linkLabelToSeed(match: string, rawLabel: string, destination: string): string {
+  const label = unescapeMarkdownLabel(rawLabel);
+  // Ordinary links (https URLs, code like `a[i](x)`) are not mentions and stay as typed.
+  if (!label.startsWith("$") && !MENTION_DESTINATION_PATTERN.test(destination)) return match;
+  if (destination.startsWith("plugin://")) {
+    return label.startsWith("@") ? label.slice(1) : label;
+  }
+  if (/^#sess_[a-zA-Z0-9._-]+$/.test(destination)) {
+    return label.startsWith("#") ? label.slice(1) : label;
+  }
+  if (label.startsWith("$")) return label;
+  return label.startsWith("@") ? label.slice(1) : label;
+}
+
+export function sanitizeTitleSeed(input: string): string {
+  const scanned =
+    input.length > MAX_TITLE_SEED_SCAN_CHARS ? input.slice(0, MAX_TITLE_SEED_SCAN_CHARS) : input;
+  const manualSkill = MANUAL_SKILL_PROMPT_PATTERN.exec(scanned.trim());
+  const seedSource = manualSkill
+    ? manualSkill[2] !== undefined && manualSkill[2].trim().length > 0
+      ? manualSkill[2]
+      : `$${manualSkill[1]}`
+    : scanned;
+  const sanitized = seedSource
+    .replace(LINK_MENTION_PATTERN, (match, label: string, angled?: string, plain?: string) =>
+      linkLabelToSeed(match, label, angled ?? plain ?? ""),
+    )
+    .replace(BARE_SESSION_TOKEN_PATTERN, "$1");
+  return sanitized.trim().length > 0 ? sanitized : input;
+}

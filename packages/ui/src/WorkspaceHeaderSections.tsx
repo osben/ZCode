@@ -365,7 +365,7 @@ export function WorkspaceHeaderTitleSection({
 
     const normalizedTitle = renameDraft.trim();
     const currentTitle = activeTaskMeta?.title ?? activeTaskTitle ?? "";
-    if (normalizedTitle === currentTitle.trim()) {
+    if (normalizedTitle.length === 0 || normalizedTitle === currentTitle.trim()) {
       handleCancelRenameTask();
       return;
     }

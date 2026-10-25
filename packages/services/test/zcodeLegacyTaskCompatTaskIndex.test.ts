@@ -2165,6 +2165,39 @@ describe("ZCode legacy task compat task index", () => {
     expect(results.flatMap((result) => result.failedTaskIds)).toEqual([]);
   });
 
+  it("ignores an empty rename: no index write, no CLI command, title stays automatic", async () => {
+    const { agent, service, taskIndexRepo } = createService();
+    await taskIndexRepo.applyCliFacts({
+      meta: {
+        taskId: "empty-rename",
+        traceId: "trace_empty-rename",
+        title: "Auto title",
+        workspacePath: "/repo",
+        createdAt: 10,
+        updatedAt: 100,
+        mode: "build",
+        status: "idle",
+        provider: "glm",
+      },
+      titleSource: "generated",
+    });
+    vi.mocked(agent.sendConversationCommandV4).mockClear();
+
+    for (const title of ["", "   "]) {
+      const meta = await service.renameTask({
+        taskId: "empty-rename",
+        workspacePath: "/repo",
+        title,
+      });
+      expect(meta.title).toBe("Auto title");
+      expect(meta.titleOverridden).not.toBe(true);
+    }
+    expect(agent.sendConversationCommandV4).not.toHaveBeenCalled();
+    await expect(
+      taskIndexRepo.getTaskMeta({ taskId: "empty-rename", workspacePath: "/repo" }),
+    ).resolves.toMatchObject({ title: "Auto title" });
+  });
+
   it("keeps updatedAt and CLI order when renaming a running task", async () => {
     vi.useFakeTimers();
     // Far after the seeded CLI time: any Host wall-clock write to updated_at shows up as a mismatch.

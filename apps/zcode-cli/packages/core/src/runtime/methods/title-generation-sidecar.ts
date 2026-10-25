@@ -20,6 +20,7 @@ import { createRuntimeModel } from "./runtime-model.js";
 import { cloneModelSelection } from "../model-selection.js";
 import { auxiliaryModelOptions } from "../../model/auxiliary-model-options.js";
 import { getOffPeakExecution } from "../off-peak/runtime.js";
+import { sanitizeTitleSeed } from "@zcode/shared";
 
 export interface TitleModelContext {
   selection: ModelSelection | undefined;
@@ -256,11 +257,11 @@ export function normalizeTitleInput(input: string): string {
 function buildTitleMessages(input: string): ModelInputMessage[] {
   return [
     { role: "system", content: SESSION_TITLE_SYSTEM_PROMPT },
-    { role: "user", content: normalizeTitleInput(input) },
+    { role: "user", content: normalizeTitleInput(sanitizeTitleSeed(input)) },
   ];
 }
 
-function cleanGeneratedTitle(raw: string): string | null {
+export function cleanGeneratedTitle(raw: string): string | null {
   const withoutThinking = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
   const parsed = parseTitleJson(withoutThinking);
   const candidate = parsed ?? firstNonEmptyLine(withoutThinking);
@@ -271,7 +272,8 @@ function cleanGeneratedTitle(raw: string): string | null {
     .replace(/[.。!！?？:：,，;；]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  if (!/[A-Za-z0-9\u3400-\u9fff]/.test(cleaned)) return null;
+  // Any script counts: a Cyrillic, kana, Hangul or Arabic title must not fall back to the truncated first input.
+  if (!/[\p{L}\p{N}]/u.test(cleaned)) return null;
   return cleaned.length > MAX_TITLE_CHARS
     ? `${cleaned.slice(0, MAX_TITLE_CHARS - 3).trim()}...`
     : cleaned;
