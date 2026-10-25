@@ -7,7 +7,7 @@ const ZERO_SHA = /^0+$/u;
 // Prefer the repository's actual default branch so a stale staging ref cannot pull unrelated history into the diff.
 const DEFAULT_BRANCH_CANDIDATES = (originHead) => [
   originHead,
-  "origin/integration",
+  "origin/fork",
   "origin/staging",
   "origin/main",
   "origin/master",

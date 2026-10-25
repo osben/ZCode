@@ -2,7 +2,7 @@ name: PR checks
 
 on:
   pull_request:
-    branches: [integration]
+    branches: [fork]
 
 permissions:
   contents: read

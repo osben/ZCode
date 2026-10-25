@@ -19,7 +19,7 @@
 - **`--on-full` interface** (`scripts/run-affected-unit-tests.mjs`): `run` executes the whole suite when the official selection covers it; `skip` (default, unchanged pre-push behavior) skips and exits 0. Invalid or missing values fail argument parsing.
 - **Dependency manifest guard**: if the diff `<base>..HEAD` touches `pnpm-lock.yaml` or any `package.json`, the workflow runs the full `pnpm test:unit` instead of affected selection (dependency changes are invisible to the import graph).
 - **`test:node`**: always runs in full on PRs; it is small, fixed-list, and carries the convention-coupled coverage.
-- **Scheduled full run**: a separate workflow (not `integration-build.yml`, to keep its `concurrency` group untouched) with a nightly `schedule` cron (03:30 UTC) and `workflow_dispatch`, running the same setup as the PR `Unit tests` job and then the full `pnpm test`. It is the safety net for the residual blind spots of affected selection, not an optimization.
+- **Scheduled full run**: a separate workflow (not `fork-build.yml`, to keep its `concurrency` group untouched) with a nightly `schedule` cron (03:30 UTC) and `workflow_dispatch`, running the same setup as the PR `Unit tests` job and then the full `pnpm test`. It is the safety net for the residual blind spots of affected selection, not an optimization.
 - **Docs-only PRs**: affected selection yields zero specs and the job passes without executing Vitest tests (setup still runs); no special-casing in the workflow.
 
 ## Acceptance scenarios

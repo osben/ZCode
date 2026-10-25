@@ -2,7 +2,7 @@
 
 ## Background (current source facts)
 
-- This repository is a fork of `zai-org/ZCode`. Upstream syncs are merge commits such as `Merge upstream v3.15.1 (aac47556) into integration`; the `upstream` remote points at `zai-org/ZCode`.
+- This repository is a fork of `zai-org/ZCode`. Upstream syncs are merge commits into the default branch `fork` (`specs/fork-branch-model.md`), such as `Merge upstream v3.16.3 (<sha>) into fork`; the `upstream` remote points at `zai-org/ZCode`.
 - Upstream does not run oxfmt over its whole tree. At the last sync (`aac47556`, v3.15.1) about 1480 files fail `oxfmt --check`, and every one of them is byte-identical to the upstream blob. Reformatting them would turn every later upstream sync into a conflict on each of those files.
 - The pre-commit hook (`lint-staged.pre-commit.config.mjs` → `scripts/run-pre-commit-checks.mjs`) formats staged files in write mode, which is why fork-touched files are already clean. It matches the same formattable set as `fmt` / `fmt:check` (below); a fork edit to e.g. a `.yml` file is therefore formatted on commit, not only in CI.
 
@@ -74,7 +74,7 @@ Every gate that runs on a commit, push or PR, and whether an upstream-identical 
 - Pre-commit `format-and-lint`: formats via the exemption above; oxlint ignores Markdown.
 - Pre-push `verify` (`scripts/run-pre-push.mjs`): `lint` and `architecture:check --changed` scan code only; `test-copy:check` scans `packages/ui/test`, `packages/web/test` and `packages/desktop/test/e2e` only. A docs-only push skips the tests. No gate reads document content, so byte-copied Chinese documents are not checked by CJK or English-only rules.
 - PR CI `pr-checks.yml`: typecheck, lint, architecture, pre-push runner tests and unit tests do not read `docs/`; `pnpm fmt:check` is covered above.
-- `git-hooks.yml`, `integration-build.yml` (`pnpm build`) and `fork-release.yml` do not run the format check or read `docs/`.
+- `git-hooks.yml`, `fork-build.yml` (`pnpm build`) and `fork-release.yml` do not run the format check or read `docs/`.
 - Deleted files: pre-commit globs and the size guard consider staged additions and modifications only (`--diff-filter=ACMT`); fmt drops deleted paths.
 
 Tests: `scripts/fork-format.test.mjs` (temporary git repositories) and `scripts/run-pre-commit-checks.test.mjs` (pre-commit glob parity with the formattable set, staged yml formatting); both are part of `pnpm test:node`.

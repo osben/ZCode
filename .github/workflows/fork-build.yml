@@ -1,15 +1,15 @@
-name: Integration build
+name: Fork build
 
 on:
   push:
-    branches: [integration]
+    branches: [fork]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: integration-build
+  group: fork-build
   cancel-in-progress: false
 
 jobs:

@@ -2,7 +2,7 @@ name: Git hooks
 
 on:
   pull_request:
-    branches: [integration]
+    branches: [fork]
     paths:
       - .github/workflows/git-hooks.yml
       - lefthook.yml

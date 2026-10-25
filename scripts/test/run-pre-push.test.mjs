@@ -17,7 +17,7 @@ async function fixture(t) {
   await mkdir(join(dir, "repo"));
   const root = await realpath(join(dir, "repo"));
   const git = async (...args) => (await exec("git", args, { cwd: root })).stdout.trim();
-  await git("init", "--initial-branch=integration");
+  await git("init", "--initial-branch=fork");
   await git("config", "user.name", "Pre-push Test");
   await git("config", "user.email", "pre-push@example.invalid");
   await git("config", "commit.gpgsign", "false");
@@ -30,8 +30,8 @@ async function fixture(t) {
   await git("add", ".");
   await git("commit", "-m", "baseline");
   const base = await git("rev-parse", "HEAD");
-  await git("update-ref", "refs/remotes/origin/integration", base);
-  await git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/integration");
+  await git("update-ref", "refs/remotes/origin/fork", base);
+  await git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/fork");
   const callsPath = join(dir, "calls.jsonl");
   const pnpmCli = join(dir, "pnpm.mjs");
   await writeFile(
@@ -145,7 +145,7 @@ test("source, configuration, runtime Markdown, MDX and mixed changes retain test
     const result = await f.run();
     assert.equal(result.code, 0, result.stderr);
     assert.deepEqual(result.stages, allStages, path);
-    await f.git("update-ref", "refs/remotes/origin/integration", head);
+    await f.git("update-ref", "refs/remotes/origin/fork", head);
   }
 });
 
@@ -172,8 +172,23 @@ test("new branches prefer the actual default even with a stale staging ref", asy
   const f = await fixture(t);
   await f.git("update-ref", "refs/remotes/origin/staging", f.base);
   await f.put("packages/example/src/index.ts", "export const value = 2;\n");
-  const integration = await f.commit();
-  await f.git("update-ref", "refs/remotes/origin/integration", integration);
+  const fork = await f.commit();
+  await f.git("update-ref", "refs/remotes/origin/fork", fork);
+  await f.put("README.md", "documentation change\n");
+  const head = await f.commit();
+  const result = await f.run({
+    ZCODE_PRE_PUSH_STDIN: `refs/heads/feature ${head} refs/heads/feature ${zeroSha}\n`,
+  });
+  assert.deepEqual(result.stages, staticStages);
+});
+
+test("without origin/HEAD new branches compare against origin/fork before staging", async (t) => {
+  const f = await fixture(t);
+  await f.git("symbolic-ref", "--delete", "refs/remotes/origin/HEAD");
+  await f.git("update-ref", "refs/remotes/origin/staging", f.base);
+  await f.put("packages/example/src/index.ts", "export const value = 2;\n");
+  const fork = await f.commit();
+  await f.git("update-ref", "refs/remotes/origin/fork", fork);
   await f.put("README.md", "documentation change\n");
   const head = await f.commit();
   const result = await f.run({
@@ -190,7 +205,7 @@ test("multiple push refs and missing targets cannot use the documentation shortc
     ZCODE_PRE_PUSH_STDIN: `refs/heads/feature ${head} refs/heads/feature ${f.base}\nrefs/heads/other ${f.base} refs/heads/other ${zeroSha}\n`,
   });
   assert.deepEqual(result.stages, allStages);
-  await f.git("update-ref", "-d", "refs/remotes/origin/integration");
+  await f.git("update-ref", "-d", "refs/remotes/origin/fork");
   assert.deepEqual((await f.run()).stages, allStages);
 });
 

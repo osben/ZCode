@@ -14,12 +14,12 @@ The affected stage receives its base from the fork resolver: `run-pre-push.mjs`
 computes the merge-base of the resolved target and `HEAD` and passes it as
 `ZCODE_AFFECTED_TEST_BASE`. Upstream `scripts/affected-unit-tests/scope.mjs`
 honours that override before its own first-push fallback, which hard-codes
-`origin/staging` (absent in this fork, whose default branch is `integration`).
+`origin/staging` (absent in this fork, whose default branch is `fork`, see `specs/fork-branch-model.md`).
 `scope.mjs` stays byte-identical to upstream.
 
 `scripts/pre-push-diff-target.mjs` owns the documentation-only comparison target:
 explicit base, Git pre-push input, upstream, then default branch. The
-default-branch fallback prefers `origin/HEAD`, then `origin/integration`, then
+default-branch fallback prefers `origin/HEAD`, then `origin/fork`, then
 `origin/staging`, `origin/main`, `origin/master`, `main` and `master`. An existing
 remote branch still uses the remote SHA supplied by Git. Affected Vitest scope
 selection is owned by upstream `scripts/run-affected-unit-tests.mjs`.
@@ -50,8 +50,8 @@ Git refs -> pre-push diff target resolver -> documentation classification
 
 ## Acceptance scenarios
 
-1. A new branch with both `origin/staging` and default `origin/integration`
-   available compares against integration. Without origin/HEAD, integration is
+1. A new branch with both `origin/staging` and default `origin/fork`
+   available compares against fork. Without origin/HEAD, fork is
    preferred when present; the legacy fallbacks remain usable.
 2. A committed docs/specs/root Markdown change or deletion runs static checks
    and skips both test commands. Source edits, config edits, application Markdown,
