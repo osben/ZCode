@@ -4,6 +4,7 @@ import {
   TID_MODEL_TRAJECTORY_V2_REFRESH,
   TID_SIDE_PANE_TOGGLE,
   TID_TASK_VIEW_MODEL_TRAJECTORY,
+  TID_TASK_INSPECT_MENU,
   TID_TASK_VIEW_MODEL_TRAJECTORY_V2,
 } from "@zcode/shared";
 import {
@@ -761,12 +762,15 @@ async function openTrajectoryV2ThroughTaskMenu(taskId: string) {
   await browser.waitUntil(
     () =>
       browser.execute(
-        (v1TestId, v2TestId) => {
+        (inspectTestId, v1TestId, v2TestId) => {
+          // Trajectory items live in the Inspect submenu; clicking the trigger mounts them.
+          document.querySelector<HTMLElement>(`[data-testid="${inspectTestId}"]`)?.click();
           const menuV1 = document.querySelector(`[data-testid="${v1TestId}"]`);
           const item = document.querySelector<HTMLElement>(`[data-testid="${v2TestId}"]`);
           item?.click();
           return Boolean(menuV1) && Boolean(item);
         },
+        TID_TASK_INSPECT_MENU,
         TID_TASK_VIEW_MODEL_TRAJECTORY,
         TID_TASK_VIEW_MODEL_TRAJECTORY_V2,
       ),

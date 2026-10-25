@@ -102,7 +102,9 @@ export function GroupedTaskContextMenuContent({
                 <span className="truncate">
                   {getTaskGroupDisplayTitle(group, {
                     cron: intl.formatMessage({ id: "taskGroup.cronGroupName" }),
-                    offPeak: intl.formatMessage({ id: "offPeak.sidebar.groupTitle" }),
+                    offPeak: intl.formatMessage({
+                      id: "offPeak.sidebar.groupTitle",
+                    }),
                   })}
                 </span>
               </ContextMenuItem>
@@ -143,19 +145,6 @@ export function GroupedTaskContextMenuContent({
           title={disabledReason}
           onSelect={() => {
             if (!disabledReason) {
-              onArchiveTask(task);
-            }
-          }}
-        >
-          {intl.formatMessage({ id: "taskList.archive" })}
-        </ContextMenuItem>
-      </SidebarNativeTooltip>
-      <SidebarNativeTooltip>
-        <ContextMenuItem
-          disabled={Boolean(disabledReason)}
-          title={disabledReason}
-          onSelect={() => {
-            if (!disabledReason) {
               onMarkTaskAsUnread(task);
             }
           }}
@@ -163,6 +152,84 @@ export function GroupedTaskContextMenuContent({
           {intl.formatMessage({ id: "taskList.markAsUnread" })}
         </ContextMenuItem>
       </SidebarNativeTooltip>
+      <ContextMenuSeparator />
+      {canOpenInFileManager ? (
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>
+            {intl.formatMessage({ id: "taskList.menu.open" })}
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent className="w-52">
+            <SidebarNativeTooltip>
+              <ContextMenuItem
+                disabled={Boolean(disabledReason)}
+                title={disabledReason}
+                onSelect={() => {
+                  if (!disabledReason) {
+                    onOpenTaskPathInFileManager();
+                  }
+                }}
+              >
+                {fileManagerLabel}
+              </ContextMenuItem>
+            </SidebarNativeTooltip>
+            <ContextMenuItem
+              disabled={providerConfigFile.loading || !providerConfigFile.path}
+              onSelect={onOpenProviderConfig}
+            >
+              <span className="truncate">
+                {intl.formatMessage({ id: "appHeader.goToProviderConfig" })}
+              </span>
+            </ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+      ) : null}
+      <ContextMenuSub>
+        <ContextMenuSubTrigger>
+          {intl.formatMessage({ id: "taskList.menu.copy" })}
+        </ContextMenuSubTrigger>
+        <ContextMenuSubContent className="w-52">
+          <ContextMenuItem
+            onSelect={() =>
+              onCopyText(intl.formatMessage({ id: "appHeader.copyPath" }), task.workspacePath)
+            }
+          >
+            {intl.formatMessage({ id: "appHeader.copyPath" })}
+          </ContextMenuItem>
+          {/* Same rule as TaskActionMenuContent: hide Copy task path unless the snapshot file exists
+              (diverges from upstream 0a1fc56d). */}
+          {taskSessionFile.exists ? (
+            <ContextMenuItem
+              disabled={!taskSessionFile.path}
+              onSelect={() =>
+                onCopyText(
+                  intl.formatMessage({ id: "appHeader.copyTaskPath" }),
+                  taskSessionFile.path,
+                )
+              }
+            >
+              {intl.formatMessage({ id: "appHeader.copyTaskPath" })}
+            </ContextMenuItem>
+          ) : null}
+          <ContextMenuItem
+            disabled={taskNativeSessionLogFile.loading || !taskNativeSessionLogFile.path}
+            onSelect={() =>
+              onCopyText(
+                intl.formatMessage({ id: "appHeader.copyLogPath" }),
+                taskNativeSessionLogFile.path,
+              )
+            }
+          >
+            {intl.formatMessage({ id: "appHeader.copyLogPath" })}
+          </ContextMenuItem>
+          <ContextMenuItem
+            onSelect={() =>
+              onCopyText(intl.formatMessage({ id: "appHeader.copySessionId" }), task.taskId)
+            }
+          >
+            {intl.formatMessage({ id: "appHeader.copySessionId" })}
+          </ContextMenuItem>
+        </ContextMenuSubContent>
+      </ContextMenuSub>
       <TaskPullRequestMenuItems
         task={task}
         intl={intl}
@@ -171,72 +238,23 @@ export function GroupedTaskContextMenuContent({
         onCopyText={onCopyText}
       />
       <ContextMenuSeparator />
-      {canOpenInFileManager ? (
-        <SidebarNativeTooltip>
-          <ContextMenuItem
-            disabled={Boolean(disabledReason)}
-            title={disabledReason}
-            onSelect={() => {
-              if (!disabledReason) {
-                onOpenTaskPathInFileManager();
-              }
-            }}
-          >
-            {fileManagerLabel}
-          </ContextMenuItem>
-        </SidebarNativeTooltip>
-      ) : null}
-      <ContextMenuItem
-        onSelect={() =>
-          onCopyText(intl.formatMessage({ id: "appHeader.copyPath" }), task.workspacePath)
-        }
-      >
-        {intl.formatMessage({ id: "appHeader.copyPath" })}
-      </ContextMenuItem>
-      {/* Same rule as TaskActionMenuContent: hide Copy task path unless the snapshot file exists
-          (diverges from upstream 0a1fc56d). */}
-      {taskSessionFile.exists ? (
-        <ContextMenuItem
-          disabled={!taskSessionFile.path}
-          onSelect={() =>
-            onCopyText(intl.formatMessage({ id: "appHeader.copyTaskPath" }), taskSessionFile.path)
-          }
-        >
-          {intl.formatMessage({ id: "appHeader.copyTaskPath" })}
-        </ContextMenuItem>
-      ) : null}
-      <ContextMenuItem
-        disabled={taskNativeSessionLogFile.loading || !taskNativeSessionLogFile.path}
-        onSelect={() =>
-          onCopyText(
-            intl.formatMessage({ id: "appHeader.copyLogPath" }),
-            taskNativeSessionLogFile.path,
-          )
-        }
-      >
-        {intl.formatMessage({ id: "appHeader.copyLogPath" })}
-      </ContextMenuItem>
-      <ContextMenuItem
-        onSelect={() =>
-          onCopyText(intl.formatMessage({ id: "appHeader.copySessionId" }), task.taskId)
-        }
-      >
-        {intl.formatMessage({ id: "appHeader.copySessionId" })}
-      </ContextMenuItem>
-      {canOpenInFileManager ? (
-        <ContextMenuItem
-          disabled={providerConfigFile.loading || !providerConfigFile.path}
-          onSelect={onOpenProviderConfig}
-        >
-          <span className="truncate">
-            {intl.formatMessage({ id: "appHeader.goToProviderConfig" })}
-          </span>
-        </ContextMenuItem>
-      ) : null}
-      <ContextMenuSeparator />
       <ContextMenuItem onSelect={onOpenTaskFeedback}>
         {intl.formatMessage({ id: "taskList.feedback" })}
       </ContextMenuItem>
+      <ContextMenuSeparator />
+      <SidebarNativeTooltip>
+        <ContextMenuItem
+          disabled={Boolean(disabledReason)}
+          title={disabledReason}
+          onSelect={() => {
+            if (!disabledReason) {
+              onArchiveTask(task);
+            }
+          }}
+        >
+          {intl.formatMessage({ id: "taskList.archive" })}
+        </ContextMenuItem>
+      </SidebarNativeTooltip>
     </ContextMenuContent>
   );
 }
