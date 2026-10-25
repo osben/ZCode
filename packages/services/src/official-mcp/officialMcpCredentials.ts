@@ -1,19 +1,19 @@
 /*
- * ZCode 官方 Server MCP 的凭证解析与身份头构造。
+ * Credential resolution and identity-header construction for ZCode's official Server MCP.
  *
- * 本文件与 Off-Peak 的 offPeakRuntimeModel.ts **逻辑等价但完全独立**：
- * 不复用其函数、不修改其行为。理由是两者的套餐门槛、Team 支持范围与凭证通道预期会独立演进，
- * 共享 helper 会让任一侧的调整都变成需要评估双方影响的改动。
+ * This file is **logically equivalent but fully independent** from Off-Peak's offPeakRuntimeModel.ts:
+ * it does not reuse its functions or change its behavior. The two flows are expected to evolve independently in plan requirements,
+ * Team support, and credential channels, so a shared helper would make a change to either side require evaluating both.
  *
- * 与 Off-Peak 的三处有意差异：
- *   1. 显式产出 Bigmodel-Target-Type（Off-Peak 侧当前没有生产者）；
- *   2. 不存在任何 mock 凭证分支（官方 MCP 无 mock 网关，测试用依赖注入替换来源）；
- *   3. 失败原因使用 official_* 分类，不复用 Off-Peak 的 reason 字符串。
+ * Three intentional differences from Off-Peak:
+ *   1. Explicitly emit Bigmodel-Target-Type (there is currently no producer for it on the Off-Peak side).
+ *   2. No mock credential branch (official MCP has no mock gateway; tests replace the source through dependency injection).
+ *   3. Failure reasons use official_* categories rather than Off-Peak reason strings.
  *
- * 凭证通道：Coding Plan 凭证走 `X-Bigmodel-Authorization` + MaaS 登录 JWT，
- * 不再发送 `X-Coding-Plan-Api-Key`。服务端把 API key 通道标为"仅存量客户端兼容"，且两个头同时
- * 发送是有害的——JWT 会赢得额度查询，但 API key 的归属校验仍会照跑，一把过期 key 就能让整个
- * 请求 403。Off-Peak 仍走 API key 通道，这也是上面"逻辑等价但完全独立"的又一个理由。
+ * Credential channel: Coding Plan credentials use `X-Bigmodel-Authorization` + the MaaS login JWT;
+ * do not send `X-Coding-Plan-Api-Key`. The server marks the API key channel as “legacy clients only,” and sending both headers
+ * is harmful: the JWT may pass quota lookup, but API-key ownership validation still runs, and one expired key can make the whole
+ * request fail with 403. Off-Peak still uses the API key channel, another reason for the independence described above.
  */
 import {
   OFFICIAL_MCP_AUTH_HEADER_NAMES,
@@ -32,22 +32,22 @@ const ZCODE_JWT_TOKEN_KEY = "zcodejwttoken";
 const ACTIVE_OAUTH_PROVIDER_KEY = "oauth:active_provider";
 
 /**
- * MaaS 登录 JWT 的凭证键（`oauth:<provider>:access_token`，见 oauth/repo/oauthCredentialRepo.ts）。
+ * Credential key for the MaaS login JWT (`oauth:<provider>:access_token`; see oauth/repo/oauthCredentialRepo.ts).
  *
- * 必须按 provider family 精确选择、**禁止跨 family 回退**：拿 ZAI 的业务 JWT 去打 BigModel 的
- * Coding Plan 只会得到一次注定失败的请求，而且失败原因会指向"没有套餐"这种误导结论。
- * 这几行与 bigmodelUsageQuotaProvider 的 reset 通道逻辑等价但独立（见文件头说明）。
+ * Select the exact provider family and **never fall back across families**: using a ZAI business JWT for BigModel
+ * Coding Plan creates a request that is guaranteed to fail, with a misleading “no plan” reason.
+ * This logic is equivalent to but independent from the reset channel in bigmodelUsageQuotaProvider (see the file header).
  */
 function maasJwtCredentialKey(providerFamily: "zai" | "bigmodel"): string {
   return `oauth:${getModelProviderFamilySpec(providerFamily).oauthProviderId}:access_token`;
 }
 
 /**
- * 只为日志算出 JWT 的剩余有效期（秒）。**不参与任何控制流**，解析失败返回 undefined。
+ * Compute the JWT's remaining lifetime (seconds) for logging only. **Does not participate in control flow**; returns undefined if parsing fails.
  *
- * 存在理由：MaaS JWT 没有刷新链路，过期后服务端的表现是 queryCodingPlan 上游 401，
- * 客户端却收到"需要 Coding Plan"这类文案——真实原因与提示不符。有了这个数值，
- * "神秘的 403"能一眼看出是"token 早就过期了"。只记数字，绝不记 token 本身。
+ * Rationale: MaaS JWTs have no refresh flow. After expiration, the server returns an upstream 401 from queryCodingPlan,
+ * but the client shows a message such as “Coding Plan required,” which does not match the cause. This value makes a
+ * “mysterious 403” easy to recognize as “the token expired long ago.” Log only the number, never the token itself.
  */
 function readJwtExpiresInSeconds(token: string): number | undefined {
   const payload = token.split(".")[1];
@@ -64,15 +64,15 @@ function readJwtExpiresInSeconds(token: string): number | undefined {
   }
 }
 
-/** 凭证解析 info 日志的有效期分桶粒度（秒）；桶内不重复记录，见 createCredentialResolvedLogKey。 */
+/** Lifetime bucket size (seconds) for credential-resolution info logs; do not repeat entries within a bucket (see createCredentialResolvedLogKey). */
 const CREDENTIAL_RESOLVED_LOG_BUCKET_SECONDS = 3600;
 
 /**
- * 凭证解析成功日志的去重键（导出仅为可单测，无其他消费方）。
+ * Deduplication key for successful credential-resolution logs (exported only for unit tests; no other consumers).
  *
- * 生产日志保留 JWT 有效期分桶，帮助区分凭据过期与套餐不可用，不记录凭据原文。
- * resolver 只合并正在执行的请求，没有时间缓存；因此按小时分桶去重，避免每次
- * MCP 调用都产生 info 日志。凭据有效期跨桶、进入 expired 或切换套餐类型时重新记录。
+ * Production logs retain the JWT lifetime bucket to help distinguish expired credentials from an unavailable plan; never log raw credentials.
+ * The resolver only coalesces in-flight requests and has no time-based cache, so deduplicate by hour to avoid an info log for every
+ * MCP call. Log again when the credential crosses a bucket, becomes expired, or the plan type changes.
  */
 export function createCredentialResolvedLogKey(input: {
   providerFamily: "zai" | "bigmodel";
@@ -107,18 +107,18 @@ export type OfficialMcpPlanScope =
 
 export type OfficialMcpWireScope = OfficialMcpPlanScope | null;
 
-/** 解析成功后的凭证快照。仅在 host/service 进程内存活，脱敏后才允许过 RPC。 */
+/** Credential snapshot after successful resolution. Exists only in host/service process memory and may cross RPC only after redaction. */
 export interface OfficialMcpCredentialSnapshot {
   jwt: string;
   /**
-   * MaaS 登录 JWT（`oauth:<family>:access_token` 的原文，**不带 Bearer 前缀**）。
-   * 前缀在 buildOfficialMcpAuthHeaders 里加，与 reset / usage 通道的既有约定一致。
+   * Raw MaaS login JWT (`oauth:<family>:access_token`, **without the Bearer prefix**).
+   * buildOfficialMcpAuthHeaders adds the prefix, matching the existing reset/usage channel convention.
    */
   codingPlanAuthorization?: string;
   providerFamily: "zai" | "bigmodel";
-  /** 当前选中连接的产品/额度归属；畸形旧 Team key 无法精确归属时为 null。 */
+  /** Product/quota ownership for the currently selected connection; null when a malformed legacy Team key cannot be assigned precisely. */
   planScope: OfficialMcpPlanScope | null;
-  /** 实际发往 Server MCP 的身份头 scope；ZAI Team 与 Off-Peak 一致为 null。 */
+  /** Scope of identity headers sent to Server MCP; null for ZAI Team, as on the Off-Peak path. */
   wireScope: OfficialMcpWireScope;
 }
 
@@ -146,8 +146,8 @@ function fail(reason: OfficialMcpAuthFailureReason): {
 }
 
 /**
- * 从 Registry 判定当前启用的 Coding Plan Provider；动态套餐和 Team scope 随后由账号服务解析。
- * 禁止从静态 Provider Config 读取或伪造当前 Team scope。
+ * Determine the currently enabled Coding Plan Provider from the Registry; the account service then resolves the dynamic plan and Team scope.
+ * Do not read or fabricate the current Team scope from static Provider Config.
  */
 function resolveSelectedProvider(
   registry: ModelSelectionView,
@@ -207,7 +207,7 @@ function resolveSelectedPlan(
   };
 }
 
-/** 非秘密的选择指纹，用于解析前后比对，防止把切换前后的两代凭证拼进同一请求。 */
+/** Non-secret selection fingerprint used to compare before/after resolution and prevent combining credentials from two selections in one request. */
 function createSelectionFingerprint(registry: ModelSelectionView): string {
   return JSON.stringify({ revision: registry.revision, providers: registry.providers });
 }
@@ -258,7 +258,7 @@ function isSameIdentitySnapshot(
 }
 
 function identityOnlyOutcome(identity: OfficialMcpIdentitySnapshot): OfficialMcpCredentialOutcome {
-  log.debug("official mcp identity-only credentials resolved", {
+  log.debug(undefined, "official mcp identity-only credentials resolved", {
     providerFamily: identity.activeProvider,
     reason: "official_auth_plan_required",
   });
@@ -274,12 +274,12 @@ function identityOnlyOutcome(identity: OfficialMcpIdentitySnapshot): OfficialMcp
 }
 
 /**
- * 解析当前选中连接的官方 MCP 凭证。
+ * Resolve official MCP credentials for the currently selected connection.
  *
- * 防竞态：Registry、动态 Account Access、active provider、zcode JWT 与 MaaS JWT
- * 都可能在解析期间变化。这里在前后各取一次并比对，任一不一致就整轮
- * 重来，绝不拼接两代凭证——既包括"zcode JWT 来自 ZAI 而 MaaS JWT 来自 BigModel"（跨 family 混搭），
- * 也包括"旧 JWT + 新 JWT"（同 family 的 token 轮换）。两轮仍不稳定则按不可用返回。
+ * Race protection: Registry, dynamic Account Access, active provider, zcode JWT, and MaaS JWT
+ * may all change during resolution. Read each before and after and compare; if any differ, retry the entire operation.
+ * Never combine credentials from two generations, whether “zcode JWT from ZAI and MaaS JWT from BigModel” (cross-family mixing)
+ * or “old JWT + new JWT” (same-family token rotation). If two attempts remain unstable, return unavailable.
  */
 export async function resolveOfficialMcpCredentials(
   deps: OfficialMcpCredentialResolverDeps,
@@ -307,7 +307,7 @@ export async function resolveOfficialMcpCredentials(
     const selected = resolveSelectedPlan(selectedProvider.provider, accountAccess);
     if (!selected.ok) return selected;
 
-    // zcode JWT 是全局登录身份镜像；只校验 selectedKey 会把 ZAI JWT 与 BigModel key 拼到同一请求。
+    // The zcode JWT mirrors the global login identity; checking only selectedKey could combine a ZAI JWT with a BigModel key in one request.
     if (identity.snapshot.activeProvider !== selected.plan.providerFamily) {
       return fail("official_auth_unavailable");
     }
@@ -315,10 +315,10 @@ export async function resolveOfficialMcpCredentials(
     const maasJwtKey = maasJwtCredentialKey(selected.plan.providerFamily);
     const codingPlanAuthorization = (await deps.credentialService.load(maasJwtKey))?.trim() ?? "";
     if (!codingPlanAuthorization) {
-      // 归类为 unavailable 而不是 plan_required：这是登录态不完整（需要重新登录），
-      // 不是"没有套餐"。两个 provider adapter 在登录时都会硬性要求写入该 token，
-      // 因此正常路径不会命中，主要出现在历史迁移过来的旧登录态上。
-      log.warn("official mcp maas jwt missing", {
+      // Classify as unavailable rather than plan_required: the login state is incomplete (sign in again),
+      // not “no plan.” Both provider adapters require this token at sign-in, so the normal path does not hit this;
+      // it mainly occurs with legacy login states from migration.
+      log.warn(undefined, "official mcp maas jwt missing", {
         providerFamily: selected.plan.providerFamily,
         reason: "official_auth_unavailable",
       });
@@ -347,18 +347,18 @@ export async function resolveOfficialMcpCredentials(
       continue;
     }
 
-    // provider 条目只作"该 Coding Plan 连接确实存在"的门槛。业务 key 本身不再是凭证
-    // （已切到 MaaS JWT 通道），因此不再要求它有值——否则业务 key 正在刷新的瞬态
-    // 会把一次本可成功的调用判成"没有套餐"。真正的"没有套餐"由上面两道门槛拦住：
-    // API Key 模式与选中 Start Plan 连接，两者都不依赖业务 key。
+    // The provider entry is only a gate confirming that the Coding Plan connection exists. The business key is no longer a credential
+    // (the flow switched to the MaaS JWT channel), so do not require it to be present; otherwise a transient key refresh
+    // would classify a call that could succeed as “no plan.” The two gates above handle actual “no plan” cases:
+    // API Key mode and the selected Start Plan connection, neither of which depends on the business key.
     const provider = identity.snapshot.registry.providers.find(
       (candidate) => candidate.providerId === selected.plan.providerId,
     );
     if (!provider) return fail("official_auth_plan_required");
 
-    // info 而非 debug：生产构建 debug 不落盘，而 MaaS JWT 剩余有效期是排障关键线索
-    // （见 createCredentialResolvedLogKey 的说明）。只记剩余秒数，绝不记 token 本身。
-    // 去重键跨桶才记录，避免日志量与官方 MCP 请求数同数量级。
+    // Use info rather than debug: production builds do not persist debug logs, and the MaaS JWT remaining lifetime is important diagnostic context
+    // (see createCredentialResolvedLogKey). Log only remaining seconds, never the token itself.
+    // Log only when the deduplication key changes buckets, avoiding a log volume comparable to official MCP request volume.
     const maasJwtExpiresInSeconds = readJwtExpiresInSeconds(codingPlanAuthorization);
     const logKey = createCredentialResolvedLogKey({
       providerFamily: selected.plan.providerFamily,
@@ -367,7 +367,7 @@ export async function resolveOfficialMcpCredentials(
     });
     if (logKey !== lastCredentialResolvedLogKey) {
       lastCredentialResolvedLogKey = logKey;
-      log.info("official mcp credentials resolved", {
+      log.info(undefined, "official mcp credentials resolved", {
         maasJwtExpiresInSeconds,
         providerFamily: selected.plan.providerFamily,
         planTargetType: selected.plan.planScope?.targetType ?? null,
@@ -391,8 +391,8 @@ export async function resolveOfficialMcpCredentials(
 }
 
 /**
- * 由凭证快照构造本次请求的身份头。
- * Team 身份成对原子性：organization/project 任一缺失时两者都不发送。
+ * Build identity headers for this request from the credential snapshot.
+ * Team identity is atomic as a pair: if either organization or project is missing, send neither.
  */
 export function buildOfficialMcpAuthHeaders(
   snapshot: OfficialMcpCredentialSnapshot,
@@ -401,7 +401,7 @@ export function buildOfficialMcpAuthHeaders(
     [OFFICIAL_MCP_AUTH_HEADER_NAMES.authorization]: `Bearer ${snapshot.jwt}`,
   };
   if (snapshot.codingPlanAuthorization) {
-    // 服务端会 CutPrefix("Bearer ")，裸 token 也接受；这里按 MCP 接口文档发 Bearer 形式。
+    // The server applies CutPrefix("Bearer ") and also accepts a bare token; send the Bearer form per the MCP API documentation.
     headers[OFFICIAL_MCP_AUTH_HEADER_NAMES.codingPlanAuthorization] =
       `Bearer ${snapshot.codingPlanAuthorization}`;
   }
@@ -416,7 +416,7 @@ export function buildOfficialMcpAuthHeaders(
   return headers;
 }
 
-/** host handler 透传的请求上下文；不参与凭证选择。 */
+/** Request context passed through by the host handler; not used to select credentials. */
 export interface OfficialMcpAuthHeadersRequestContext {
   mcpKey: string;
   pluginId: string;
@@ -429,11 +429,11 @@ export type OfficialMcpAuthHeadersOutcome =
   | { ok: false; reason: OfficialMcpAuthFailureReason };
 
 /**
- * 身份头解析入口，带 in-flight 去重。
+ * Identity-header resolution entry point with in-flight deduplication.
  *
- * 只合并**并发**请求：已有解析在飞时后来者复用同一 Promise；settle 后立即丢弃，
- * 下一个请求重新完整解析。不做任何时间维度缓存，因此不存在"读到已被替换的旧凭证"的窗口。
- * 作用域为 host 全局——凭证是全局状态，按 plugin/mcpKey/workspace 分桶只会削弱去重、不增隔离。
+ * Coalesce **concurrent** requests only: later callers reuse the same Promise while a resolution is in flight; discard it immediately on settle,
+ * and fully resolve again for the next request. There is no time-based cache and therefore no window for reading credentials that have since been replaced.
+ * Scope is global to the host: credentials are global state, and bucketing by plugin/mcpKey/workspace would weaken deduplication without adding isolation.
  */
 export function createOfficialMcpAuthHeadersResolver(deps: OfficialMcpCredentialResolverDeps): {
   resolveHeaders(
@@ -443,9 +443,9 @@ export function createOfficialMcpAuthHeadersResolver(deps: OfficialMcpCredential
   let pending: Promise<OfficialMcpAuthHeadersOutcome> | null = null;
 
   return {
-    // request 仅为契约对齐（host handler 已在此之前完成可信校验，见 zcodeAgentService）；
-    // 凭据是 host 全局状态，**不**按 plugin/mcpKey/workspace 分桶——分桶只会削弱 in-flight
-    // 去重而不增加隔离。参数保留是为了将来审计需要时不必再改接口。
+    // request is present only for contract alignment (the host handler has already performed trust validation; see zcodeAgentService).
+    // Credentials are global host state and are **not** bucketed by plugin/mcpKey/workspace; bucketing would weaken in-flight
+    // deduplication without adding isolation. Keep the parameter so future audits do not require another interface change.
     resolveHeaders(_request?: OfficialMcpAuthHeadersRequestContext) {
       if (pending) return pending;
       const inFlight = (async (): Promise<OfficialMcpAuthHeadersOutcome> => {
@@ -454,9 +454,9 @@ export function createOfficialMcpAuthHeadersResolver(deps: OfficialMcpCredential
         return { ok: true, headers: buildOfficialMcpAuthHeaders(outcome.snapshot) };
       })();
       pending = inFlight;
-      // 用双 handler 的 then 而非 finally：finally 会派生一个同样 reject 的 promise，
-      // 调用方只 await 了 inFlight，那个派生 promise 无人处理会变成 unhandled rejection。
-      // 解析抛错也必须清空 slot，否则后续请求会永久复用失败的 Promise。
+      // Use then with both handlers instead of finally: finally creates a derived Promise that also rejects,
+      // and callers await only inFlight, leaving that derived Promise unhandled.
+      // Clear the slot on resolution errors too, or later requests will reuse the failed Promise forever.
       const clear = (): void => {
         if (pending === inFlight) pending = null;
       };

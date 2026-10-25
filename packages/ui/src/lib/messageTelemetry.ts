@@ -176,6 +176,77 @@ const composerInputTimingByWorkspace = new Map<string, ComposerInputTimingState>
 const queuedPromptTelemetryByTask = new Map<string, PromptTelemetryState[]>();
 const activePromptTelemetryByTask = new Map<string, PromptTelemetryState>();
 const agentStepTelemetryByTask = new Map<string, AgentStepTelemetryState>();
+const subagentToolUsageByTask = new Map<string, Map<string, ZCodeUsage>>();
+const subagentToolUsageListenersByTask = new Map<string, Map<string, Set<() => void>>>();
+
+export function buildSubagentUsageSessionKey(workspaceScopeKey: string, sessionId: string): string {
+  return `${workspaceScopeKey}\u0000${sessionId}`;
+}
+
+function sameUsage(left: ZCodeUsage, right: ZCodeUsage): boolean {
+  return (
+    left.inputTokens === right.inputTokens &&
+    left.outputTokens === right.outputTokens &&
+    left.totalTokens === right.totalTokens &&
+    left.reasoningTokens === right.reasoningTokens &&
+    left.cachedInputTokens === right.cachedInputTokens &&
+    left.cachedWriteInputTokens === right.cachedWriteInputTokens
+  );
+}
+
+function notifySubagentToolUsageListeners(taskId: string, toolCallId: string): void {
+  const listeners = subagentToolUsageListenersByTask.get(taskId)?.get(toolCallId);
+  if (!listeners) return;
+  for (const listener of Array.from(listeners)) listener();
+}
+
+function setSubagentToolUsage(taskId: string, toolCallId: string, usage: ZCodeUsage): void {
+  let taskUsage = subagentToolUsageByTask.get(taskId);
+  if (!taskUsage) {
+    taskUsage = new Map();
+    subagentToolUsageByTask.set(taskId, taskUsage);
+  }
+  const previous = taskUsage.get(toolCallId);
+  if (previous && sameUsage(previous, usage)) return;
+  taskUsage.set(toolCallId, { ...usage });
+  notifySubagentToolUsageListeners(taskId, toolCallId);
+}
+
+export function getSubagentToolUsage(taskId: string, toolCallId: string): ZCodeUsage | null {
+  return subagentToolUsageByTask.get(taskId)?.get(toolCallId) ?? null;
+}
+
+export function subscribeSubagentToolUsage(
+  taskId: string,
+  toolCallId: string,
+  listener: () => void,
+): () => void {
+  let taskListeners = subagentToolUsageListenersByTask.get(taskId);
+  if (!taskListeners) {
+    taskListeners = new Map();
+    subagentToolUsageListenersByTask.set(taskId, taskListeners);
+  }
+  let listeners = taskListeners.get(toolCallId);
+  if (!listeners) {
+    listeners = new Set();
+    taskListeners.set(toolCallId, listeners);
+  }
+  listeners.add(listener);
+  return () => {
+    listeners?.delete(listener);
+    if (listeners?.size === 0) taskListeners?.delete(toolCallId);
+    if (taskListeners?.size === 0) subagentToolUsageListenersByTask.delete(taskId);
+  };
+}
+
+export function discardSubagentToolUsageSession(sessionKey: string): void {
+  const toolCallIds = [...(subagentToolUsageByTask.get(sessionKey)?.keys() ?? [])];
+  subagentToolUsageByTask.delete(sessionKey);
+  for (const toolCallId of toolCallIds) {
+    notifySubagentToolUsageListeners(sessionKey, toolCallId);
+  }
+  subagentToolUsageListenersByTask.delete(sessionKey);
+}
 
 function resolvePromptTelemetryModelProvider(params: {
   modelName?: string | null;
@@ -1038,7 +1109,9 @@ function assignUsageToStep(step: ActiveAgentStep, attribution: AgentStepUsageAtt
  */
 export function recordSubagentToolAttribution(input: {
   taskId: string;
+  usageSessionKey?: string;
   toolCallId: string;
+  displayToolCallId?: string;
   requestIds: string[];
   requestCount: number;
   modelName: string;
@@ -1048,6 +1121,13 @@ export function recordSubagentToolAttribution(input: {
   agentRole?: AgentStepRole;
   usage?: ZCodeUsage;
 }): void {
+  if (input.usage && input.usageSessionKey) {
+    setSubagentToolUsage(
+      input.usageSessionKey,
+      input.displayToolCallId ?? input.toolCallId,
+      input.usage,
+    );
+  }
   const state = agentStepTelemetryByTask.get(input.taskId);
   const step = state?.toolStepsById.get(input.toolCallId);
   if (!step) return;
@@ -1543,6 +1623,12 @@ export function finalizePromptTelemetry(
 }
 
 export function resetMessageTelemetryForTest(): void {
+  for (const taskId of new Set([
+    ...subagentToolUsageByTask.keys(),
+    ...subagentToolUsageListenersByTask.keys(),
+  ])) {
+    discardSubagentToolUsageSession(taskId);
+  }
   composerInputTimingByWorkspace.clear();
   queuedPromptTelemetryByTask.clear();
   activePromptTelemetryByTask.clear();

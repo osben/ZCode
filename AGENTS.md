@@ -1,85 +1,101 @@
-## 核心原则
+# Core Principles
 
-- 新增或修改行为前，先更新对应 spec；目录不存在时按需创建。先明确产品规则、状态所有者、接口和验收场景，再实现代码。
-- 以当前检出的源码、`package.json` 和架构策略为准。说明中只保留当前仓库提供的功能、命令和文件；删除功能时同步清理指令和技能中的引用。
-- 定位问题时，未明确要求修改代码就先调查原因。结合源码、日志和运行时证据，区分已确认原因与待验证假设。
-- 保留与任务无关的本地改动，不自行恢复已移除的模块或内部依赖。
+- Before adding or changing behavior, first update the corresponding spec; create the directory as needed if it does not exist. First clarify product rules, state owners, interfaces, and acceptance scenarios, then implement the code.
+- Treat the currently checked-out source, `package.json`, and the architecture policy as the source of truth. Instructions should only retain features, commands, and files that the current repository provides; when removing a feature, clean up references in instructions and skills at the same time.
+- When locating a problem, if code changes are not explicitly requested, investigate the cause first. Combine source code, logs, and runtime evidence to distinguish confirmed causes from hypotheses pending verification.
+- Preserve local changes unrelated to the task; do not restore removed modules or internal dependencies on your own.
 
-## 命令与仓库结构
+## Commands and Repository Structure
 
-开工前运行 `node scripts/check-workspace-freshness.mjs` 检查基线。Node 版本以 `mise.toml` 为准。
+Before starting work, run `node scripts/check-workspace-freshness.mjs` to check the baseline. The Node version is defined by `mise.toml`.
 
-以下命令从仓库根目录执行：
+Run the following commands from the repository root:
 
-| 用途             | 命令                                                 |
-| ---------------- | ---------------------------------------------------- |
-| 类型检查         | `pnpm typecheck`                                     |
-| Lint             | `pnpm lint` / `pnpm lint:fix`                        |
-| 格式检查         | `pnpm fmt:check`                                     |
-| 桌面开发         | `pnpm dev:desktop`                                   |
-| Web 开发         | `pnpm dev:web`                                       |
-| 提交前检查       | `pnpm verify:pre-push`（Lint、架构检查与受影响单测） |
-| 架构检查         | `pnpm architecture:check --changed`                  |
-| 模块阅读包       | `pnpm architecture:context <module-id>`              |
-| 未使用依赖与导出 | `pnpm knip`                                          |
-| 导出引用查询     | `pnpm dep:refs --list-exports <file>`                |
+| Purpose                     | Command                                               |
+| --------------------------- | ----------------------------------------------------- |
+| Type check                  | `pnpm typecheck`                                      |
+| Lint                        | `pnpm lint` / `pnpm lint:fix`                         |
+| Format check                | `pnpm fmt:check` (fork-changed files only)            |
+| Desktop development         | `pnpm dev:desktop`                                    |
+| Web development             | `pnpm dev:web`                                        |
+| Pre-push check              | `pnpm verify:pre-push` (Lint, architecture and tests) |
+| Architecture check          | `pnpm architecture:check --changed`                   |
+| Module reading package      | `pnpm architecture:context <module-id>`               |
+| Unused dependencies/exports | `pnpm knip`                                           |
+| Export reference lookup     | `pnpm dep:refs --list-exports <file>`                 |
 
-affected 使用 Vitest 官方选择，只运行选中的根 UT；选中整个套件时说明并跳过 UT，成功退出，不因此阻止 Push；不替代 CLI 测试或桌面 E2E。全量使用 `pnpm test` / `pnpm test:unit`，仅在用户明确要求时调用。范围与输出合同见 [pre-push 说明](docs/testing/pre-push-hook.md)。
+Git hooks use `lefthook.yml`; `pnpm prepare` installs the pinned Lefthook. Hook integration tests run with `pnpm test:git-hooks`.
 
-测试入口以目标包当前的 `package.json` 和实际测试文件为准，不假定存在统一的单测或 E2E 命令。
+Test entry points are defined by the target package's current `package.json` and actual test files; do not assume a unified unit test or E2E command exists.
 
-- `packages/desktop`：Electron main、host、renderer。
-- `packages/web`、`packages/server`：Web 客户端与服务端。
-- `packages/ui`：共享 React 组件、hooks 与 Zustand store。
-- `packages/services`：业务服务；`packages/rpc`：RPC 框架。
-- `packages/shared`：共享协议与类型；`packages/client`：Agent 客户端 SDK。
-- `apps/zcode-cli`：Agent CLI 与运行时。
-- `CONTEXT.md`：插件商店领域词汇；修改相关 UI 前阅读。
-- `DESIGN.md`：UI 设计规范；修改 UI 前阅读。
+- `packages/desktop`: Electron main, host, renderer.
+- `packages/web`, `packages/server`: Web client and server.
+- `packages/ui`: Shared React components, hooks, and Zustand store.
+- `packages/services`: Business services; `packages/rpc`: RPC framework.
+- `packages/shared`: Shared protocol and types; `packages/client`: Agent client SDK.
+- `apps/zcode-cli`: Agent CLI and runtime.
+- `CONTEXT.md`: Plugin store domain vocabulary; read before modifying related UI.
+- `DESIGN.md`: UI design guidelines; read before modifying UI.
 
-## 实现与验证
+## Implementation and Verification
 
-- 代码改动使用 `.agents/skills/architecture-governance/SKILL.md`，先运行架构检查，再读取目标模块的受控上下文。
-- 避免重复状态和多条写入路径。明确唯一所有者、接口、依赖方向、事件顺序与幂等边界，不能用超时掩盖同步问题。
-- 有行为改动时先补充对应测试；交互改动需要 E2E 场景。检查测试与实现是否一致，并实际执行可用的验证。未执行或环境受限时如实说明。
-- 修复 bug 时用中文注释说明原因和修复依据。发现设计缺陷时先与用户对齐，不不断增加兜底分支。
-- PR 描述须说明背景、设计意图与修改前后行为；包含 bugfix 时逐项说明触发场景、根因证据、修复机制及回归验证，并尽量关联已有工单链接。未确认的根因或引入提交如实标注，不根据模块或时间接近推断归因。
-- 涉及状态、时序、远端或异步同步的方案，用图展示所有者及事件顺序。
-- 必须执行 `pnpm typecheck` 和 `pnpm lint`，报告真实结果，不将已有失败写成通过。
-- 使用异步文件和网络 IO；跨包导入使用公开入口，遵守现有路径别名。
-- 禁止 UI 直接调用 Repo、Service 引用 Runtime 具体实现、跨域导入实现细节及循环依赖。
+- For code changes, use `.agents/skills/architecture-governance/SKILL.md`: run the architecture check first, then read the controlled context of the target module.
+- Avoid duplicated state and multiple write paths. Define a single owner, interface, dependency direction, event order, and idempotency boundary; do not use timeouts to mask synchronization problems.
+- When there are behavior changes, add the corresponding tests first; interaction changes require E2E scenarios. Check that tests are consistent with the implementation, and actually run the available verification. If not run or the environment is limited, state so truthfully.
+- When fixing a bug, use English comments only, and add them only when they explain the cause or prevention constraints. When a design flaw is found, align with the user first instead of continually adding fallback branches.
+- For solutions involving state, timing, remote, or asynchronous synchronization, use a diagram to show owners and event order.
+- You must run `pnpm typecheck` and `pnpm lint` and report the real results; do not report pre-existing failures as passing.
+- Use asynchronous file and network IO; cross-package imports use public entry points and follow existing path aliases.
+- Forbidden: UI directly calling a Repo, a Service referencing a concrete Runtime implementation, cross-domain imports of implementation details, and circular dependencies.
 
-## UI 与平台边界
+## UI and Platform Boundaries
 
-- 遵守 `DESIGN.md`，复用已有组件，兼顾桌面与手机 Web 的布局、交互、主题和国际化。
-- 组件通过 `packages/ui/src/hooks/` 访问服务；平台操作通过 `IPlatformService`（`packages/shared/src/platform.ts`），不直接调用 `window.zcode`。
-- 通过依赖注入处理 Desktop、Web、本地和远程环境的差异，并兼顾 Windows、macOS 和 Linux。
-- Zustand 状态位于 `packages/ui/src/store/`。广播同步的主题、语言等字段需要防止回环；UI 局部状态不应被误当作服务端事实。
-- hooks 中含 JSX 的文件使用 `.tsx`。
+- Follow `DESIGN.md`, reuse existing components, and account for layout, interaction, theme, and internationalization on both desktop and mobile Web.
+- Components access services through `packages/ui/src/hooks/`; platform operations go through `IPlatformService` (`packages/shared/src/platform.ts`), never by calling `window.zcode` directly.
+- Handle differences between Desktop, Web, local, and remote environments via dependency injection, and account for Windows, macOS, and Linux.
+- Zustand state lives in `packages/ui/src/store/`. Broadcast-synced fields such as theme and language must be protected against loopback; UI-local state must not be mistaken for server-side facts.
+- Files in hooks that contain JSX use `.tsx`.
 
-## 进程、协议与远程控制
+## Processes, Protocol, and Remote Control
 
-- Desktop app 通过 stdio 与 Agent 通信。协议改动同步更新 `packages/shared/src/zcode-protocol/index.ts`，提供严格类型与运行时校验。
-- Main 负责窗口、原生操作、进程调度和消息转发，不承载 task/session 业务状态。
-- 每个窗口使用一个 window-scoped Local Host；本地 workspace 共享该 Host。远程 workspace 由窗口内的连接注册表管理，不另建 Desktop Remote Host。
-- 手机远控连接桌面已有 Host attachment，复用会话运行时；不为手机另起 Agent、Local Host 或远程会话。
-- Desktop 的 `desktop-continuous` 实时链路与手机的 `web-remote-replayable` 恢复链路必须明确区分。修改 stream、snapshot、queue 或重连时，同时验证两种语义。
-- 外部 relay 与 Main 只做鉴权、配对、心跳、转发及 attachment 调度，不保存任务队列、快照等业务状态。
-- 已接受的 busy/running 输入由 CLI/runtime `CommandInbox` 串行 admission；Renderer 只保留未提交草稿与 pending optimistic overlay，Host owner/lease 负责路由。
-- 保留 owner/lease、跨 Host 路由和 stale run 防护，不能仅根据单一路径删除边界判断。
+- The Desktop app communicates with the Agent over stdio. Protocol changes must update `packages/shared/src/zcode-protocol/index.ts` at the same time, providing strict types and runtime validation.
+- Main is responsible for windows, native operations, process scheduling, and message forwarding; it does not hold task/session business state.
+- Each window uses one window-scoped Local Host; local workspaces share that Host. Remote workspaces are managed by the in-window connection registry; do not create a separate Desktop Remote Host.
+- Mobile remote control connects to the desktop's existing Host attachment and reuses the session runtime; do not spin up a separate Agent, Local Host, or remote session for mobile.
+- The Desktop `desktop-continuous` real-time link and the mobile `web-remote-replayable` recovery link must be clearly distinguished. When modifying stream, snapshot, queue, or reconnection, verify both semantics.
+- The external relay and Main only handle authentication, pairing, heartbeat, forwarding, and attachment scheduling; they do not store business state such as task queues or snapshots.
+- Accepted busy/running input is serially admitted by the CLI/runtime `CommandInbox`; the Renderer only keeps uncommitted drafts and the pending optimistic overlay, and Host owner/lease is responsible for routing.
+- Preserve owner/lease, cross-Host routing, and stale run protection; do not remove boundary checks based on a single path alone.
+
+## Shared Databases and Fork Divergence
+
+- The upstream app and this fork share the same user data: `~/.zcode/v2/tasks-index.sqlite` and `~/.zcode/cli/db/db.sqlite`. Both use per-id checksum ledgers (for example `tasks_schema_migration`); each build applies only its own migration definitions and ignores unknown ledger rows, so additive migrations from either side coexist.
+- Never modify upstream migration definitions or anything feeding their checksums: migration ids and order, schema DDL strings, frozen column declarations, migration SQL — including comments inside those strings. A changed checksum makes the other build reject the shared database.
+- Fork-owned tables and columns must use a `fork_` name prefix so a future upstream table can never collide with them.
+- Fork migrations use non-colliding ids (`9001_fork_*`), are additive only, and never take numbers in the upstream `000N` sequence.
+- `pnpm fmt` / `pnpm fmt:check` cover only files changed since the upstream commit pinned in `fork-upstream-base.json`; never reformat upstream-identical files. Every upstream sync PR bumps that pin (`specs/fork-format-scope.md`).
+- `setting.json` is not fork-safe storage: settings writes re-parse through the app settings schema, which strips keys unknown to the writing build (an upstream release would delete fork keys, and an older fork build would delete newer upstream keys). Fork-only state lives in `fork_`-prefixed storage (a fork DB table or a sidecar file), never as new `setting.json` keys.
 
 ## Workspace Identity
 
-- `workspaceIdentity` 用于身份隔离，`workspacePath` 用于文件操作、命令 cwd、Git 和路径展示。
-- 身份 key 统一为 `workspaceIdentity?.trim() || workspacePath`，适用于去重、绑定、缓存、队列、持久化和请求关联。
-- 远程链路贯穿传递 `workspaceIdentity` 与 `remoteSessionId`，不得仅按路径匹配。
-- 新接口保留本地路径 fallback；远程 identity 复用现有构造和解析工具，不在业务代码中手写格式。
+- `workspaceIdentity` is used for identity isolation; `workspacePath` is used for file operations, command cwd, Git, and path display.
+- The identity key is uniformly `workspaceIdentity?.trim() || workspacePath`, applying to deduplication, binding, caching, queues, persistence, and request correlation.
+- Remote links pass `workspaceIdentity` and `remoteSessionId` end to end; never match by path alone.
+- New interfaces keep a local path fallback; remote identity reuses existing construction and parsing utilities; do not hand-write the format in business code.
 
-## 日志
+## Logging
 
-- UI 使用 `packages/ui/src/logger.ts`，不直接使用 `console.log` 或 `window.zcode?.log`。
-- Agent/session/runtime 相关服务日志使用 `createServiceLogger(scope)`（`packages/services/src/logger/serviceLogger.ts`）。
-- `debug` 用于协议原始数据、流式 chunk 和逐条工具更新等高频诊断，生产环境不落盘。
-- `info` 用于进程和会话生命周期、权限结果、一次性初始化等生产可用事件。
-- `warn` 用于可恢复异常；`error` 用于崩溃、握手失败、鉴权丢失等不可恢复错误。
-- 不在日志、示例或提交中写入凭据、真实用户数据和内部服务地址。
+- UI uses `packages/ui/src/logger.ts`; do not use `console.log` or `window.zcode?.log` directly.
+- Agent/session/runtime-related service logs use `createServiceLogger(scope)` (`packages/services/src/logger/serviceLogger.ts`).
+- `debug` is for high-frequency diagnostics such as raw protocol data, streaming chunks, and per-item tool updates; not persisted to disk in production.
+- `info` is for production-usable events such as process and session lifecycle, permission results, and one-time initialization.
+- `warn` is for recoverable exceptions; `error` is for unrecoverable errors such as crashes, handshake failures, and lost authentication.
+- Do not write credentials, real user data, or internal service addresses in logs, examples, or commits.
+
+## Cursor Cloud specific instructions
+
+- Prepend `/usr/local/bin` to `PATH` before `node`, `pnpm`, or repository scripts. Cloud Agent shells resolve `node` to `/exec-daemon/node` (Node 22). This repo requires Node **26.11.1** and pnpm **12.14.0**, installed under `/usr/local` (`mise.toml`).
+- Boot `start` launches `pnpm dev:web` in tmux session `zcode-web` unless the API and Vite app already respond. The API is `http://127.0.0.1:3030` (`/api/server-info`). Vite listens on IPv6 localhost at `http://localhost:5173`; `127.0.0.1:5173` does not connect.
+- The web server uses `ZCODE_DATA_BASE_DIR` (`$HOME/.zcode-dev-home` on boot) for the tasks index and onboarding. `setting.json` still lives at `~/.zcode/v2/setting.json`.
+- Open `http://localhost:5173/`, choose **Use API key**, then **Skip for now** to reach the workspace without an account. Creating a task needs a configured model provider; until then the Agent runtime stays stopped.
+- `ssh2`'s optional native crypto binding does not compile on Node 26. `pnpm install` still exits 0.

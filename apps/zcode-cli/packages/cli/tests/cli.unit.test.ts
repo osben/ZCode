@@ -1125,16 +1125,17 @@ test("command center handles login and logout locally", async () => {
     },
   } as never);
   const apiKeyResult = await commandCenter("/login bigmodel-coding-plan-api-key manual-key", {});
+  const fallbackResult = await commandCenter("/login invalid", {});
   const logoutResult = await commandCenter("/logout", {});
 
-  assert.equal(pickerResult.selection?.items.length, 4);
+  assert.equal(pickerResult.selection?.items.length, 5);
   assert.equal(pickerResult.selection?.filterable, false);
   assert.equal(
     pickerResult.selection?.items[0]?.pending?.primary,
     "Waiting for Z.AI authorization",
   );
-  assert.equal(pickerResult.selection?.items[2]?.input?.primary, "Enter Z.AI Coding Plan API Key");
-  assert.equal(pickerResult.selection?.items[2]?.input?.mask, true);
+  assert.equal(pickerResult.selection?.items[3]?.input?.primary, "Enter Z.AI Coding Plan API Key");
+  assert.equal(pickerResult.selection?.items[3]?.input?.mask, true);
   assert.equal(loginAbortSignal, loginAbort.signal);
   assert.equal(loginCalled, true);
   assert.equal(apiKeyCalled, true);
@@ -1152,6 +1153,7 @@ test("command center handles login and logout locally", async () => {
     /Model selection: \/home\/test\/\.zcode\/v2\/model-selection\.json/,
   );
   assert.match(apiKeyResult.response, /Configured BigModel Coding Plan/);
+  assert.match(fallbackResult.response, /chatgpt-plan/);
   assert.match(logoutResult.response, /Logged out from Coding Plan accounts/);
 });
 
@@ -1173,8 +1175,8 @@ test("command center localizes the Coding Plan setup picker", async () => {
   assert.equal(result.selection?.prompt, "选择登录或 API key 配置方式。");
   assert.equal(result.selection?.filterable, false);
   assert.match(result.selection?.items[0]?.secondary ?? "", /打开浏览器登录/);
-  assert.equal(result.selection?.items[2]?.input?.primary, "输入 Z.AI Coding Plan API Key");
-  assert.equal(result.selection?.items[2]?.input?.placeholder, "粘贴 API key");
+  assert.equal(result.selection?.items[3]?.input?.primary, "输入 Z.AI Coding Plan API Key");
+  assert.equal(result.selection?.items[3]?.input?.placeholder, "粘贴 API key");
 });
 
 test("command center keeps local commands usable before login", async () => {
@@ -2510,6 +2512,12 @@ test("parses built-in slash commands outside the TUI", () => {
     rawName: "compact",
     type: "known",
   });
+  assert.deepEqual(parseSlashCommand("/dream"), {
+    args: "",
+    name: "dream",
+    rawName: "dream",
+    type: "known",
+  });
   assert.deepEqual(parseSlashCommand("/expert migrate auth"), {
     args: "migrate auth",
     name: "expert",
@@ -2681,6 +2689,7 @@ test("command center returns slash help without creating an app", async () => {
   assert.match(allCommands.response, /Slash commands:/);
   assert.match(allCommands.response, /\/help \[command\]/);
   assert.match(allCommands.response, /\/compact \[instructions\]/);
+  assert.match(allCommands.response, /\/dream: Consolidate project memory now\./);
   assert.match(allCommands.response, /\/init \[notes\]/);
   assert.match(allCommands.response, /\/workflow \[what the workflow should accomplish\]/);
   assert.match(allCommands.response, /\/expert \[status\|resume\|stop\|<task>\]/);
@@ -2939,6 +2948,7 @@ test("command center opens a plugin toggle picker", async () => {
       ({
         listPlugins: async () => ({
           commandRoots: [],
+          lspServers: [],
           diagnostics: [],
           mcpServers: {},
           plugins: [
@@ -2995,6 +3005,7 @@ test("command center resolves plugin labels from listings by stable plugin id", 
       ({
         listPlugins: async () => ({
           commandRoots: [],
+          lspServers: [],
           diagnostics: [],
           mcpServers: {},
           pluginListingsById: {
@@ -3090,6 +3101,7 @@ test("command center toggles plugins and refreshes the picker", async () => {
       ({
         listPlugins: async () => ({
           commandRoots: [],
+          lspServers: [],
           diagnostics: [],
           mcpServers: {},
           plugins: [
@@ -3163,6 +3175,7 @@ test("command center requires --force before uninstalling a plugin", async () =>
       ({
         listPlugins: async () => ({
           commandRoots: [],
+          lspServers: [],
           diagnostics: [],
           mcpServers: {},
           plugins: [],
@@ -3196,6 +3209,7 @@ test("command center uninstalls a plugin when --force is provided", async () => 
       ({
         listPlugins: async () => ({
           commandRoots: [],
+          lspServers: [],
           diagnostics: [],
           mcpServers: {},
           plugins: [],
@@ -3286,9 +3300,66 @@ test("command center dispatches init through the active app", async () => {
   assert.equal(result.traceId, "trace-init");
 });
 
+test("command center dispatches dream through the active app as a prompt", async () => {
+  // Without an explicit branch /dream falls into the resume fallback and never reaches the
+  // runtime's command turn (same failure mode documented on /init and /workflow).
+  let submitted = "";
+  const submitPrompt = createCommandCenter({
+    getApp: async () =>
+      ({
+        sessionId: "sess_active",
+        traceId: "trace-active",
+        resume: async () => {
+          throw new Error("resume should not run");
+        },
+        submitPrompt: async (prompt: string) => {
+          submitted = prompt;
+          return {
+            response: "Dream complete",
+            traceId: "trace-dream",
+          };
+        },
+      }) as never,
+    resumeApp: async () => {
+      throw new Error("resume should not run");
+    },
+  });
+
+  const result = await submitPrompt("/dream", {
+    abortSignal: new AbortController().signal,
+  });
+
+  assert.equal(submitted, "/dream");
+  assert.equal(result.response, "Dream complete");
+  assert.equal(result.traceId, "trace-dream");
+});
+
+test("command center answers dream usage errors without creating an app", async () => {
+  const submitPrompt = createCommandCenter({
+    getApp: async () => {
+      throw new Error("app should not be created");
+    },
+    getMode: () => "build",
+    resumeApp: async () => {
+      throw new Error("resume should not run");
+    },
+  });
+
+  const result = await submitPrompt("/dream now", {
+    abortSignal: new AbortController().signal,
+  });
+
+  assert.equal(result.mode, "build");
+  assert.equal(
+    result.response,
+    "Usage: /dream — takes no arguments. Run /dream to consolidate project memory now.",
+  );
+});
+
 test("command center dispatches workflow through the active app as a prompt", async () => {
-  // 与 /init 同款：TUI 只识别名字，原文交给 app.submitPrompt，由 bootstrap 的 builtin resolver
-  // 展开；没有显式分支会落到 resume 兜底，/workflow 就再也到不了模型。
+  // Same shape as /init: the TUI only recognizes the name and hands the raw text to
+  // app.submitPrompt, where bootstrap's builtin resolver expands it; without an explicit branch it
+  // would fall into the resume fallback and /workflow would never reach the model.
   let submitted = "";
   const submitPrompt = createCommandCenter({
     getApp: async () =>
@@ -4029,6 +4100,7 @@ test("zcode plugins list prints installed plugins", async () => {
       assert.equal(options.workingDirectory, "/workspace/project");
       return {
         commandRoots: [],
+        lspServers: [],
         diagnostics: [
           {
             code: "plugin_unsupported_component",

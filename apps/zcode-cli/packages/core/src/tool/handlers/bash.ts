@@ -36,7 +36,7 @@ import type {
   ToolRuntimePermissionCapabilityContext,
 } from "../types.js";
 import { resolveToolWorkingDirectory } from "../path-policy.js";
-import { decideBashCwdPolicy } from "./bash-cwd-policy.js";
+import { decideBashCwdPolicy, guardBashCwdWriteBack } from "./bash-cwd-policy.js";
 export {
   getBashActivityDescription,
   getBashAutoClassifierInput,
@@ -47,7 +47,7 @@ export {
 import { readStringProperty } from "./bash-metadata.js";
 import { formatBashModelContent, formatPersistedBashModelContent } from "./bash-model-content.js";
 
-/** session shell selection 尚未初始化时 guarded matcher 采用的文法；与 readonly 判定的假设一致。 */
+/** Grammar used by the Guarded matcher before session shell selection is initialized; matches the assumptions of read-only detection. */
 const GUARDED_DEFAULT_DIALECT: ExecutionShellSelection["dialect"] = "posix";
 import { createBashProviderDescription } from "./bash-prompt.js";
 import {
@@ -63,6 +63,7 @@ import {
 } from "./tool-perf.js";
 import { applyBashReadFileStateEffects } from "./bash-read-file-state.js";
 import {
+  bashCommandChangesDirectory,
   prepareBashPermissionMatcherForCommand,
   isBashReadOnlyCommand,
   isRuntimeReadOnlyBashCommand,
@@ -99,7 +100,8 @@ export function isBashInputReadOnly(input: unknown): boolean {
 }
 
 export function isBashInputConcurrencySafe(input: unknown): boolean {
-  return isBashInputReadOnly(input);
+  const command = readStringProperty(input, "command");
+  return command ? isBashReadOnlyCommand(command) && !bashCommandChangesDirectory(command) : false;
 }
 
 export function checkBashInputPermissions(input: unknown): { behavior: "allow" } | undefined {
@@ -117,8 +119,8 @@ export function resolveBashPermissionCapability(
 ): ToolRuntimePermissionCapability | undefined {
   const command = readStringProperty(input, "command");
   if (command && context?.mode === "guarded") {
-    // selection 缺失是基础设施状态而非语法边界；与下方 isRuntimeReadOnlyBashCommand 一致按 POSIX
-    // 文法匹配，避免 guarded 在 selection 尚未初始化时静默退回 YOLO。显式 legacy-shell 仍 unsupported。
+    // Missing selection is infrastructure state, not a grammar boundary; match POSIX syntax as in isRuntimeReadOnlyBashCommand below,
+    // so Guarded does not silently fall back to YOLO before selection is initialized. Explicit legacy-shell remains unsupported.
     const match = matchDangerousCommand(
       command,
       context.bashShellSelection?.dialect ?? GUARDED_DEFAULT_DIALECT,
@@ -127,6 +129,7 @@ export function resolveBashPermissionCapability(
   }
   if (!command || !isRuntimeReadOnlyBashCommand(command, context)) return undefined;
   return {
+    concurrentSafe: !bashCommandChangesDirectory(command),
     destructive: false,
     needsApproval: false,
     readOnly: true,
@@ -175,12 +178,29 @@ async function executeBashHandler(
     return emptyBashOutput(parsed);
   }
 
+  // After a background command completes, runTaskNotificationBatch starts a separate notification turn without
+  // turnExecutionModel. Once the idle turn completes or fails, it would run a full agent loop on the user's own plan.
+  // Match the subagent runner's BACKGROUND_UNAVAILABLE behavior: reject explicit background execution in idle turns and disable automatic backgrounding on timeout.
+  // Fork divergence from upstream 3.16.1 (specs/upstream-sync-cli-divergences.md).
+  const backgroundDisabled = context.offPeakTurn === true;
+  if (parsed.run_in_background && backgroundDisabled) {
+    throw createCoreError(
+      CoreErrorType.ToolExecutionFailed,
+      "Idle-time tasks do not support background commands. Run this command in the foreground without run_in_background.",
+      {
+        context: {
+          toolCallId: context.toolCallId,
+          toolName: "Bash",
+        },
+        recoverable: true,
+      },
+    );
+  }
   const request = createExecutionRequest(parsed, context, timeoutPolicy);
   const progressTiming: BashProgressTiming = {};
   const commandTelemetry = startBashCommandTelemetry(parsed, context);
   const runOptions = createExecutionRunOptions(context, progressTiming, commandTelemetry);
-  // 闲时后台归属由 Runtime 生命周期保留，Bash 复用普通显式/超时后台路径。
-  const eligibleForAutoBackground = isBashAutoBackgroundEligible(parsed);
+  const eligibleForAutoBackground = !backgroundDisabled && isBashAutoBackgroundEligible(parsed);
   const backgroundLifecyclePort = supportsBashBackgroundLifecycle(executionPort)
     ? executionPort
     : undefined;
@@ -233,16 +253,22 @@ async function executeBashHandler(
   }
 
   const result = runResult.result;
-  const cwdDecision = decideBashCwdPolicy({
-    status: result.status,
-    exitCode: result.exitCode,
-    resolvedCwd: result.resolvedCwd,
-    workspaceRoot: context.workspaceRoot,
-    runtimeScope: context.runtimeScope,
-  });
+  const cwdDecision = guardBashCwdWriteBack(
+    decideBashCwdPolicy({
+      status: result.status,
+      exitCode: result.exitCode,
+      resolvedCwd: result.resolvedCwd,
+      workspaceRoot: context.workspaceRoot,
+      runtimeScope: context.runtimeScope,
+    }),
+    {
+      startWorkingDirectory: context.workingDirectory,
+      currentWorkingDirectory: context.getWorkingDirectory?.(),
+    },
+  );
   if (cwdDecision.nextWorkingDirectory) {
-    // 主线程 Bash 成功后会保留项目内 cwd；
-    // 离开项目边界时 reset 回原始工作区，并把 reset 文案放进 Bash stderr。
+    // After successful Bash execution on the main thread, preserve a CWD inside the project.
+    // If it leaves the project boundary, reset to the original workspace and put the reset message in Bash stderr.
     await context.setWorkingDirectory?.(cwdDecision.nextWorkingDirectory);
   }
   const output = await toBashOutput(result, parsed, context, {
@@ -349,8 +375,8 @@ function finishBashCommandTelemetry(
   } else if (result.status === "spawn_error") {
     telemetry.finishFailed("spawn", "configuration", result.error);
   } else if (result.status === "failed" && result.error) {
-    // 非零退出码是命令事实（例如 grep 未匹配），不等同于执行框架失败。
-    // 只有 Adapter 明确提供结构化 failure 时才污染 command failure rate。
+    // A nonzero exit code is a command fact (for example, grep found no matches), not an execution framework failure.
+    // Count it toward command failure rate only when the Adapter provides a structured failure explicitly.
     telemetry.finishFailed("execute", "internal", result.error);
   } else {
     telemetry.finishCompleted();
@@ -574,8 +600,8 @@ function createBashTimeoutBudgetResolver(
 ): NonNullable<ToolEntry["resolveTimeoutBudgetMs"]> {
   return (input) => {
     const parsed = BashInputSchema.safeParse(input);
-    // 旧 watchdog 直接读取 raw timeout，导致 0 被压成 1ms，且字符串数字绕过
-    // Bash policy。这里和 handler 共用 timeout || default / max 解析后再加 cleanup grace。
+    // The old watchdog read the raw timeout, turning 0 into 1 ms and allowing numeric strings to bypass
+    // Bash policy. Reuse the handler's timeout || default / max parsing here, then add cleanup grace.
     return resolveBashTimeoutMs(parsed.success ? parsed.data.timeout : undefined, timeoutPolicy);
   };
 }

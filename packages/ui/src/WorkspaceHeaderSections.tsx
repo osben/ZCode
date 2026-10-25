@@ -9,6 +9,7 @@ import {
 } from "@/lib/remoteConnectionPresentation.js";
 import { WorkspaceContextPath } from "@/WorkspaceHeaderSections/WorkspaceContextPath.js";
 import { WorkspaceLastActivity } from "@/WorkspaceHeaderSections/WorkspaceLastActivity.js";
+import { WorkspaceHeaderPullRequestChip } from "@/WorkspaceHeaderPullRequestChip.js";
 /* eslint-disable max-lines -- Header 标题区当前同时承载 task 菜单、路径上下文和 workspace 级状态提示，先保持单文件收口，避免菜单链路迁移时再引入回归。 */
 import {
   parseRemoteWorkspaceIdentity,
@@ -28,7 +29,9 @@ import { Button } from "@/components/ui/button.js";
 import { Ellipsis, Folder, GitBranch, LoaderIcon } from "lucide-react";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
+import { useOptionalServices } from "@/hooks/useServices.js";
 import { useBaseWorkspaceServices, useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
+import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
 import { useTaskListItemContextActions } from "@/useTaskListItemContextActions.js";
 import { TaskActionMenuContent } from "@/TaskActionMenuContent.js";
 import {
@@ -73,6 +76,7 @@ export {
   WorkspaceHeaderActionSection,
   type WorkspaceHeaderActionSectionProps,
 } from "@/WorkspaceHeaderSections/WorkspaceHeaderActionSection.js";
+import { withOptimisticTitleRecency } from "@/lib/zcodeTaskMetaMerge.js";
 
 export function shouldShowRemoteSkillSyncAction(params: {
   remoteSessionId?: string | null;
@@ -187,6 +191,7 @@ export function WorkspaceHeaderTitleSection({
     taskNativeSessionLogFile,
     providerConfigFile,
     fileManagerLabel,
+    canOpenInFileManager,
     handleCopyText,
     handleOpenTaskPathInFileManager,
     handleOpenProviderConfig,
@@ -238,14 +243,36 @@ export function WorkspaceHeaderTitleSection({
     formatRemoteDeviceName(remoteTarget ?? directoryTarget ?? undefined, sourceServerDisplayName) ??
     intl.formatMessage({ id: "workspaceSidebar.remoteProject" });
   const workspaceContextLabel = workspaceDisplayLabel;
-  const workspaceBranchLabel = gitSummary.isRepository
-    ? resolveGitBranchTriggerLabel({
-        headRefType: gitSummary.headRefType,
-        currentBranchName: gitSummary.branchName,
-        detachedLabel: intl.formatMessage({ id: "git.head.detached" }),
-        fallbackLabel: intl.formatMessage({ id: "git.branchSwitcher.label" }),
-      })
-    : null;
+  // Session worktrees report their own branch; prefer it over the repository-root branch.
+  const agentService = useOptionalServices()?.zcodeAgentService ?? undefined;
+  const sessionIndexScopes = useMemo(
+    () =>
+      remoteSessionId && !agentService
+        ? []
+        : [
+            {
+              workspacePath: workspaceAbsPath,
+              ...(workspaceIdentity ? { workspaceIdentity } : {}),
+              ...(remoteSessionId ? { endpointKey: remoteSessionId } : {}),
+              ...(agentService ? { agentService } : {}),
+            },
+          ],
+    [agentService, remoteSessionId, workspaceAbsPath, workspaceIdentity],
+  );
+  const { items: sessionIndexItems } = useWorkspaceSessionsIndexItems(sessionIndexScopes);
+  const sessionExecutionWorktree = activeSessionId
+    ? sessionIndexItems.find((task) => task.taskId === activeSessionId)?.executionWorktree
+    : undefined;
+  const workspaceBranchLabel = sessionExecutionWorktree?.branchName
+    ? sessionExecutionWorktree.branchName
+    : gitSummary.isRepository
+      ? resolveGitBranchTriggerLabel({
+          headRefType: gitSummary.headRefType,
+          currentBranchName: gitSummary.branchName,
+          detachedLabel: intl.formatMessage({ id: "git.head.detached" }),
+          fallbackLabel: intl.formatMessage({ id: "git.branchSwitcher.label" }),
+        })
+      : null;
   const isRemoteWorkspace = Boolean(
     remoteWorkspaceHostLabel || workspaceIdentity?.trim() || remoteSessionId,
   );
@@ -350,12 +377,14 @@ export function WorkspaceHeaderTitleSection({
         title: normalizedTitle,
         ...(workspaceIdentity ? { workspaceIdentity } : {}),
       });
-      upsertOptimisticTaskListItem(workspaceAbsPath, renamedTask, workspaceIdentity);
+      // Overlay-only renderer clock; the RPC above sent just {taskId, title}.
+      const optimisticTask = withOptimisticTitleRecency(renamedTask);
+      upsertOptimisticTaskListItem(workspaceAbsPath, optimisticTask, workspaceIdentity);
       applyTaskQueryCacheMutation({
         previousTask: buildHeaderTaskSnapshot(renamedTask, {
           title: currentTitle,
         }),
-        nextTask: renamedTask,
+        nextTask: optimisticTask,
         previousState: { pinned: isPinned, archived: false },
         nextState: { pinned: isPinned, archived: false },
       });
@@ -469,8 +498,8 @@ export function WorkspaceHeaderTitleSection({
                                 presentation.recovery.values,
                               )
                             : intl.formatMessage({ id: presentation.shortMessageId })}
-                    </span>
-                  ) : null}
+                        </span>
+                      ) : null}
                     </span>
                   ) : null}
                   {workspaceContextOpen && isRemoteWorkspace ? (
@@ -482,7 +511,7 @@ export function WorkspaceHeaderTitleSection({
                     </span>
                   ) : workspaceContextOpen ? (
                     <WorkspaceContextPath
-                      workspacePath={workspaceAbsPath}
+                      workspacePath={sessionExecutionWorktree?.path ?? workspaceAbsPath}
                       workspaceIdentity={workspaceIdentity}
                       remoteSessionId={remoteSessionId}
                     />
@@ -537,17 +566,17 @@ export function WorkspaceHeaderTitleSection({
         </ControlHintTooltip>
       ) : null}
       {!isDraftNewTask ? (
-      <h1
-        data-testid={TID_WORKSPACE_TITLE}
-        className={cn(
-          "flex min-w-12 max-w-100 shrink items-center gap-2 truncate font-semibold text-foreground @max-[560px]/workspace-header:max-w-[30vw] @max-[420px]/workspace-header:max-w-[22vw]",
-          simplifyForNarrowRemote && "max-md:max-w-[42vw]",
-          compact ? "text-[0.92rem]" : "text-ui-base",
-        )}
-        title={activeTaskTitle}
-      >
-        <span className="min-w-0 truncate">{activeTaskTitle}</span>
-        {/* {activeTaskChangeSummary ? (
+        <h1
+          data-testid={TID_WORKSPACE_TITLE}
+          className={cn(
+            "flex min-w-12 max-w-100 shrink items-center gap-2 truncate font-semibold text-foreground @max-[560px]/workspace-header:max-w-[30vw] @max-[420px]/workspace-header:max-w-[22vw]",
+            simplifyForNarrowRemote && "max-md:max-w-[42vw]",
+            compact ? "text-[0.92rem]" : "text-ui-base",
+          )}
+          title={activeTaskTitle}
+        >
+          <span className="min-w-0 truncate">{activeTaskTitle}</span>
+          {/* {activeTaskChangeSummary ? (
           <>
             {activeTaskChangeSummary.added > 0 ? (
               <span className="text-diff-added">
@@ -561,8 +590,11 @@ export function WorkspaceHeaderTitleSection({
             ) : null}
           </>
         ) : null} */}
-      </h1>
+        </h1>
       ) : null}
+      <WorkspaceHeaderPullRequestChip
+        task={activeTaskMeta?.taskId === activeTaskId ? activeTaskMeta : null}
+      />
       <div className="flex min-w-0 shrink-0 items-center gap-1">
         {!isDraftNewTask ? (
           <DropdownMenu open={taskMenuOpen} onOpenChange={setTaskMenuOpen}>
@@ -595,6 +627,7 @@ export function WorkspaceHeaderTitleSection({
                 intl={intl}
                 isPinned={isPinned}
                 fileManagerLabel={fileManagerLabel}
+                canOpenInFileManager={canOpenInFileManager}
                 taskSessionFile={taskSessionFile}
                 activeSessionId={activeSessionId}
                 taskNativeSessionLogFile={taskNativeSessionLogFile}
@@ -719,6 +752,18 @@ export function WorkspaceHeaderTitleSection({
                           taskId: resolvedTaskActionTaskId,
                           workspaceKey: workspaceIdentity?.trim() || workspaceAbsPath,
                           title: activeTaskMeta?.title ?? null,
+                        });
+                      }
+                    : undefined
+                }
+                onViewModelTrajectoryV2={
+                  resolvedTaskActionTaskId
+                    ? () => {
+                        useModelTrajectoryStore.getState().requestOpen({
+                          taskId: resolvedTaskActionTaskId,
+                          workspaceKey: workspaceIdentity?.trim() || workspaceAbsPath,
+                          title: activeTaskMeta?.title ?? null,
+                          kind: "v2",
                         });
                       }
                     : undefined

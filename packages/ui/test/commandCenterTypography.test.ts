@@ -8,43 +8,44 @@ import {
   CommandCenterScopeButton,
   CommandCenterSearchHistory,
 } from "@/command-center/CommandCenterDialog.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
-// Cmd+K 命令中心内字号语义（DESIGN.md）的固化为单测目标：
-// - scope tabs / 历史 chip 搜索词：可交互/可读内容 → text-ui-base
-// - 历史分区标题 / 时间戳：次要文案、helper text → text-ui-sm
-// - chip scope 前缀：badge 标记 → text-ui-xs
+// Typography semantics inside the Cmd+K command center (DESIGN.md) pinned as unit tests:
+// - scope tabs / history chip queries: interactive/readable content -> text-ui-base
+// - history section titles / timestamps: secondary copy, helper text -> text-ui-sm
+// - chip scope prefix: badge marker -> text-ui-xs
 
 afterEach(() => {
   cleanup();
 });
 
 describe("CommandCenterScopeButton", () => {
-  it("点击时触发 onClick", () => {
+  it("triggers onClick when clicked", () => {
     const onClick = vi.fn();
     render(
-      createElement(CommandCenterScopeButton, { active: false, label: "命令", onClick }, null),
+      createElement(CommandCenterScopeButton, { active: false, label: "Commands", onClick }, null),
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "命令" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Commands" }));
     expect(onClick).toHaveBeenCalledOnce();
   });
 
-  it("active 状态反映在 aria-selected", () => {
+  it("reflects the active state in aria-selected", () => {
     const { rerender } = render(
       createElement(
         CommandCenterScopeButton,
-        { active: true, label: "对话", onClick: vi.fn() },
+        { active: true, label: "Tasks", onClick: vi.fn() },
         null,
       ),
     );
 
-    const tab = screen.getByRole("tab", { name: "对话" });
+    const tab = screen.getByRole("tab", { name: "Tasks" });
     expect(tab.getAttribute("aria-selected")).toBe("true");
 
     rerender(
       createElement(
         CommandCenterScopeButton,
-        { active: false, label: "对话", onClick: vi.fn() },
+        { active: false, label: "Tasks", onClick: vi.fn() },
         null,
       ),
     );
@@ -56,7 +57,7 @@ function makeEntry(
   overrides: Partial<CommandCenterSearchHistoryEntry> = {},
 ): CommandCenterSearchHistoryEntry {
   return {
-    query: "登录",
+    query: "login",
     scope: "all",
     updatedAt: 1700000000000,
     ...overrides,
@@ -71,49 +72,49 @@ describe("CommandCenterSearchHistory", () => {
       onToggleExpanded: vi.fn(),
       onPickEntry: vi.fn(),
       onClear: vi.fn(),
-      historyLabel: "历史搜索",
-      clearLabel: "清除历史",
-      expandLabel: "展开",
-      collapseLabel: "收起",
+      historyLabel: expectedCopy("commandCenter.history"),
+      clearLabel: expectedCopy("commandCenter.clearHistory"),
+      expandLabel: expectedCopy("commandCenter.expandHistory"),
+      collapseLabel: expectedCopy("commandCenter.collapseHistory"),
       ...overrides,
     };
     render(createElement(CommandCenterSearchHistory, props));
     return props;
   }
 
-  it("点击历史 chip 触发 onPickEntry", () => {
+  it("triggers onPickEntry when a history chip is clicked", () => {
     const onPickEntry = vi.fn();
     renderHistory({ onPickEntry });
 
-    fireEvent.click(screen.getByText("登录"));
+    fireEvent.click(screen.getByText("login"));
     expect(onPickEntry).toHaveBeenCalledOnce();
     const entry = onPickEntry.mock.calls[0]![0] as CommandCenterSearchHistoryEntry;
-    expect(entry.query).toBe("登录");
+    expect(entry.query).toBe("login");
   });
 
-  it("清除按钮触发 onClear", () => {
+  it("triggers onClear from the clear button", () => {
     const onClear = vi.fn();
     renderHistory({ onClear });
 
-    fireEvent.click(screen.getByLabelText("清除历史"));
+    fireEvent.click(screen.getByLabelText(expectedCopy("commandCenter.clearHistory")));
     expect(onClear).toHaveBeenCalledOnce();
   });
 
-  it("条目超过 6 条时显示展开按钮，并触发 onToggleExpanded", () => {
+  it("shows the expand button once there are more than 6 entries and triggers onToggleExpanded", () => {
     const onToggleExpanded = vi.fn();
     const entries = Array.from({ length: 7 }, (_, i) =>
-      makeEntry({ query: `查询${i}`, updatedAt: 1700000000000 + i }),
+      makeEntry({ query: `query ${i}`, updatedAt: 1700000000000 + i }),
     );
     renderHistory({ entries, onToggleExpanded });
 
-    const expandBtn = screen.getByLabelText("展开");
+    const expandBtn = screen.getByLabelText(expectedCopy("commandCenter.expandHistory"));
     fireEvent.click(expandBtn);
     expect(onToggleExpanded).toHaveBeenCalledOnce();
   });
 
-  it("条目不超过 6 条时不显示展开按钮", () => {
+  it("does not show the expand button with 6 entries or fewer", () => {
     renderHistory();
-    expect(screen.queryByLabelText("展开")).toBeNull();
-    expect(screen.queryByLabelText("收起")).toBeNull();
+    expect(screen.queryByLabelText(expectedCopy("commandCenter.expandHistory"))).toBeNull();
+    expect(screen.queryByLabelText(expectedCopy("commandCenter.collapseHistory"))).toBeNull();
   });
 });

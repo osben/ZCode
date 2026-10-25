@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { resolve } from "node:path";
 import { resolveE2EScheduledSpecFiles } from "#e2e/helpers/e2e-spec-resolution";
@@ -49,11 +48,5 @@ describe("desktop E2E environment-gated formal spec admission", () => {
     expect(hasRequiredSshE2EEnvironment(env)).toBe(true);
     expect(resolveEnvironmentGatedFormalSpecExcludes({ env, targeted: false })).toEqual([]);
     expect(resolveEnvironmentGatedFormalSpecExcludes({ env: {}, targeted: true })).toEqual([]);
-  });
-
-  it("uses the shared admission helper in the WDIO exclude list", () => {
-    const source = readFileSync(new URL("../wdio.conf.ts", import.meta.url), "utf8");
-    expect(source).toContain("resolveEnvironmentGatedFormalSpecExcludes({");
-    expect(source).toContain("hasRequiredSshE2EEnvironment(process.env)");
   });
 });

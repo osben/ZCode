@@ -1,9 +1,11 @@
-/* oxlint-disable eslint(max-lines) -- Provider 与 Access Config 的 Overlay/序列化必须集中维护同一联合类型；待契约稳定后再按配置族拆文件。 */
+/* oxlint-disable eslint(max-lines) -- Provider and Access Config overlays/serialization must maintain one shared union type; split by config family only after the contract stabilizes. */
 import { ConfigOverlay, type ConfigValidationIssue } from "../config-overlay.js";
 import type { z } from "zod";
 import {
   completeApiKeyAccessDataSchema,
   completeZhipuAccountAccessDataSchema,
+  completeChatgptAccountAccessDataSchema,
+  completeAcpAgentAccessDataSchema,
   completeProviderApiDataSchema,
   completeProviderConfigDataSchema,
   type providerApiTypeDataSchema,
@@ -13,6 +15,8 @@ import {
   type providerLogoDataSchema,
   type apiKeyAccessDataSchema,
   type zhipuAccountAccessDataSchema,
+  type chatgptAccountAccessDataSchema,
+  type acpAgentAccessDataSchema,
   type providerAccessDataSchema,
   type providerApiDataSchema,
   type providerConfigDataSchema,
@@ -111,15 +115,113 @@ export class ZhipuAccountAccessConfig extends ConfigOverlay<ZhipuAccountAccessCo
   }
 }
 
-export type ProviderAccessConfig = ApiKeyAccessConfig | ZhipuAccountAccessConfig;
+export type ChatgptAccountAccessConfigInput = Omit<ChatgptAccountAccessConfigObject, "type">;
+
+export type ChatgptAccountAccessConfigObject = Readonly<
+  z.infer<typeof chatgptAccountAccessDataSchema>
+>;
+
+/** ChatGPT plan account access (official OpenAI SIWC); independent of the zhipu account domain. */
+export class ChatgptAccountAccessConfig extends ConfigOverlay<ChatgptAccountAccessConfig> {
+  readonly type = "chatgpt-account" as const;
+  readonly entitled?: ChatgptAccountAccessConfigInput["entitled"];
+
+  constructor(input: ChatgptAccountAccessConfigInput = {}) {
+    super();
+    this.entitled = input.entitled;
+    Object.freeze(this);
+  }
+
+  overlay(next: ChatgptAccountAccessConfig): ChatgptAccountAccessConfig {
+    return new ChatgptAccountAccessConfig({
+      entitled: this.overlayValue(this.entitled, next.entitled),
+    });
+  }
+
+  validateComplete(path: readonly string[] = []): readonly ConfigValidationIssue[] {
+    return validateConfigSchema(completeChatgptAccountAccessDataSchema, this.toJSON(), path);
+  }
+
+  toJSON(): ChatgptAccountAccessConfigObject {
+    return {
+      type: this.type,
+      ...objectWithoutUndefined({ entitled: this.entitled }),
+    };
+  }
+}
+
+export type AcpAgentAccessConfigInput = Omit<AcpAgentAccessConfigObject, "type" | "args"> & {
+  readonly args?: readonly string[] | null;
+};
+
+export type AcpAgentAccessConfigObject = Readonly<z.infer<typeof acpAgentAccessDataSchema>>;
+
+/**
+ * External ACP agent access: the runtime spawns `command args` locally and
+ * speaks the Agent Client Protocol over JSON-RPC stdio.
+ */
+export class AcpAgentAccessConfig extends ConfigOverlay<AcpAgentAccessConfig> {
+  readonly type = "acp-agent" as const;
+  readonly agentId?: AcpAgentAccessConfigInput["agentId"];
+  readonly command?: AcpAgentAccessConfigInput["command"];
+  readonly args?: readonly string[] | null;
+  readonly env?: Readonly<Record<string, string>> | null;
+
+  constructor(input: AcpAgentAccessConfigInput = {}) {
+    super();
+    this.agentId = input.agentId;
+    this.command = input.command;
+    this.args = input.args == null ? input.args : Object.freeze([...input.args]);
+    this.env = input.env ? Object.freeze({ ...input.env }) : input.env;
+    Object.freeze(this);
+  }
+
+  overlay(next: AcpAgentAccessConfig): AcpAgentAccessConfig {
+    return new AcpAgentAccessConfig({
+      agentId: this.overlayValue(this.agentId, next.agentId),
+      command: this.overlayValue(this.command, next.command),
+      args: this.overlayValue(this.args, next.args),
+      env: this.overlayValue(this.env, next.env),
+    });
+  }
+
+  validateComplete(path: readonly string[] = []): readonly ConfigValidationIssue[] {
+    return validateConfigSchema(completeAcpAgentAccessDataSchema, this.toJSON(), path);
+  }
+
+  toJSON(): AcpAgentAccessConfigObject {
+    return {
+      type: this.type,
+      ...objectWithoutUndefined({
+        agentId: this.agentId,
+        command: this.command,
+        args: this.args,
+        env: this.env,
+      }),
+    };
+  }
+}
+
+export type ProviderAccessConfig =
+  | ApiKeyAccessConfig
+  | ZhipuAccountAccessConfig
+  | ChatgptAccountAccessConfig
+  | AcpAgentAccessConfig;
 
 export type ProviderAccessConfigObject = Readonly<z.infer<typeof providerAccessDataSchema>>;
 
-/** 手动 Key 的编辑/保存共用能力判断，不把套餐 Key 误写成普通 API Key。 */
+/** Shared capability check for editing/saving a manual key; do not treat a plan key as a regular API key. */
 export function isApiKeyAccess<T extends { readonly type: string }>(
   access: T | null | undefined,
 ): access is Extract<T, { readonly type: ApiKeyAccessConfigObject["type"] }> {
   return access?.type === "api-key" || access?.type === "zhipu-coding-plan-api-key";
+}
+
+/** Shared capability check for providers backed by a local ACP agent process. */
+export function isAcpAgentAccess<T extends { readonly type: string }>(
+  access: T | null | undefined,
+): access is Extract<T, { readonly type: "acp-agent" }> {
+  return access?.type === "acp-agent";
 }
 
 export type ProviderVisibility = z.infer<typeof providerVisibilityDataSchema>;
@@ -150,7 +252,7 @@ export class ProviderApiConfig extends ConfigOverlay<ProviderApiConfig> {
   }
 
   validateComplete(path: readonly string[] = []): readonly ConfigValidationIssue[] {
-    // 旧检查只判断 type 非空，不可信 JS 值可绕过枚举；准入与保存共用 schema。
+    // The old check only verified that type was non-empty, allowing untrusted JS values to bypass the enum; admission and save share the schema.
     return validateConfigSchema(completeProviderApiDataSchema, this.toJSON(), path);
   }
 
@@ -230,7 +332,7 @@ export class ProviderConfig extends ConfigOverlay<ProviderConfig> {
     });
   }
 
-  /** 普通 Provider 字段保存不拥有成员变更；成员只能由明确的领域操作更新。 */
+  /** Saving ordinary Provider fields does not own member changes; members can be updated only through explicit domain operations. */
   withModelMembershipFrom(source: ProviderConfig | undefined): ProviderConfig {
     return new ProviderConfig({
       group: this.group,
@@ -245,7 +347,7 @@ export class ProviderConfig extends ConfigOverlay<ProviderConfig> {
   }
 
   validateComplete(path: readonly string[] = []): readonly ConfigValidationIssue[] {
-    // 不再用字段存在性代替值域验证，也不把展示/成员等可选字段变成执行必填项。
+    // Do not use field presence as a substitute for validating its value, or make optional display/member fields mandatory for execution.
     return validateConfigSchema(completeProviderConfigDataSchema, this.toJSON(), path);
   }
 
@@ -272,7 +374,7 @@ export type ProviderTemplateInput = Omit<ProviderTemplateObject, "config"> & {
 
 export type ProviderTemplateObject = Readonly<z.infer<typeof providerTemplateDataSchema>>;
 
-/** Template 是元数据与 Provider Overlay 的领域壳，本身不是 Provider。 */
+/** Template is a domain wrapper for metadata and Provider overlays; it is not itself a Provider. */
 export class ProviderTemplate {
   readonly templateId: ProviderTemplateId;
   readonly templateNameMap: ProviderTemplateNameMap;
@@ -306,7 +408,7 @@ export function resolveProviderTemplateName(
   );
 }
 
-/** Built-in Template 与真实 Provider 使用不同身份空间；Template 永不进入 Registry。 */
+/** Built-in Templates and real Providers use separate identity spaces; Templates never enter the Registry. */
 export class ProviderTemplateMap extends ConfigOverlay<ProviderTemplateMap> {
   readonly #values: ReadonlyMap<ProviderTemplateId, ProviderTemplate>;
 
@@ -379,7 +481,7 @@ export type ProviderConfigRule = Readonly<
   Omit<ProviderConfigRuleData, "config"> & { config: ProviderConfig }
 >;
 
-/** 索引只保存完整规则；get/entries 是内容投影，改成员时不能丢掉外层身份和名称。 */
+/** The index stores only complete rules; get/entries project their contents, so member edits must preserve the outer identity and name. */
 export class ProviderConfigMap extends ConfigOverlay<ProviderConfigMap> {
   readonly #values: ReadonlyMap<ProviderId, ProviderConfigRule>;
 
@@ -505,6 +607,10 @@ function overlayProviderAccess(
       return current.overlay(next as ApiKeyAccessConfig);
     case "zhipu-account":
       return current.overlay(next as ZhipuAccountAccessConfig);
+    case "chatgpt-account":
+      return current.overlay(next as ChatgptAccountAccessConfig);
+    case "acp-agent":
+      return current.overlay(next as AcpAgentAccessConfig);
   }
 }
 

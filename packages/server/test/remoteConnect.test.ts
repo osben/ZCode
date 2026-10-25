@@ -111,7 +111,7 @@ describe("connectRemote", () => {
       },
     });
     const stream = backend.stream!;
-    // hello-ack 是文本握手；反向 RPC 复用它之后的原始字节流。
+    // hello-ack is a text handshake; reverse RPC reuses the raw byte stream that follows it.
     const stdin = stream.stdin as PassThrough;
     const buffered = stdin.read() as Buffer;
     const boundary = buffered.indexOf(10) + 1;
@@ -145,8 +145,9 @@ describe("connectRemote", () => {
     });
   });
 
-  // DWG-06（docs/dynamic-workflow/launch.md「Gray release」）：Dynamic Workflow 的档位由
-  // Desktop Main 写定，远端 Host 必须拿到同一个值，preview 包的远程工作区才与本地一致。
+  // DWG-06 (docs/dynamic-workflow/launch.md "Gray release"): the Dynamic Workflow tier is decided
+  // by Desktop Main, and the remote Host must receive the same value so the preview package's
+  // remote workspace matches local.
   it("透传 Desktop Main 写定的 Dynamic Workflow 灰度档位", () => {
     expect(
       pickRemoteRuntimeEnv({
@@ -156,7 +157,7 @@ describe("connectRemote", () => {
     ).toEqual({
       ZCODE_DYNAMIC_WORKFLOW_MODE: "alwaysOn",
     });
-    // Main 在 production 包里已经删掉这个键，远端因此什么也收不到。
+    // Main strips this key from production builds, so the remote receives nothing.
     expect(pickRemoteRuntimeEnv({})).toEqual({});
   });
 

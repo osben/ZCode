@@ -62,6 +62,12 @@ export interface TuiCopy {
         primary: string;
         secondary: string;
       };
+      chatgptOauth: {
+        pendingPrimary: string;
+        pendingSecondary: string;
+        primary: string;
+        secondary: string;
+      };
       zaiApiKey: {
         inputPrimary: string;
         inputSecondary: string;
@@ -273,7 +279,7 @@ export interface TuiCopy {
         running: string;
         stopped: string;
       };
-      /** `stopped` 的原因词。 */
+      /** Reason for `stopped`. */
       stopReason: {
         user: string;
         model: string;

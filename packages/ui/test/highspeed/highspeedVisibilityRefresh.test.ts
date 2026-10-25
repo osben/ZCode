@@ -5,6 +5,7 @@ import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { SessionPane } from "@/v4/SessionPane.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import type { ConversationComposer } from "@/v4/ConversationComposer.js";
+import { TEST_LOCALE } from "../helpers/uiCopy.js";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,7 +18,8 @@ const captured = vi.hoisted(() => ({
 }));
 
 const mocks = vi.hoisted(() => ({
-  // SessionPane 会读取 Bot 绑定并订阅广播；此处保持普通任务，避免依赖缺失阻断到期断言。
+  // SessionPane reads bot bindings and subscribes to broadcast; keep a plain
+  // task so missing dependencies do not block the expiry assertions.
   botsService: {
     getBotStates: vi.fn(async () => []),
   },
@@ -62,8 +64,9 @@ const mocks = vi.hoisted(() => ({
     revisionAtDecision: 0,
   })),
   attachmentPut: vi.fn(),
-  // 本用例不测 dwf run 发现查询；返回永不 resolve 的 Promise，避免环境拆除后
-  // .then 回调再触发 setState（未处理异常）。稳定引用满足 effect 依赖不抖动。
+  // This case does not test the dwf run discovery query; return a never-resolving
+  // Promise so no .then callback re-triggers setState after teardown. The stable
+  // reference keeps effect dependencies from flapping.
   workflowRuns: vi.fn(() => new Promise<never>(() => {})),
   modelProviderService: {
     getProviderRegistrySnapshot: vi.fn(async () => ({
@@ -111,8 +114,9 @@ vi.mock("@/hooks/useServices.js", () => ({
     zcodeSessionService: mocks.zcodeSessionService,
     zcodeTaskService: mocks.zcodeTaskService,
   }),
-  // SessionPane 渲染链里的 useStartPlanRecommendation 走可选服务降级，
-  // 本用例只验证到期采样，无服务上下文按 null 处理即可（与其它 SessionPane 用例一致）。
+  // useStartPlanRecommendation in the SessionPane render chain degrades without
+  // the optional service; this case only verifies expiry sampling, so a null
+  // service context is fine (consistent with other SessionPane cases).
   useOptionalServices: () => null,
 }));
 
@@ -147,8 +151,9 @@ vi.mock("@/v4/composer/useDraftConfigControl.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/v4/composer/useDraftConfigControl.js")>();
   return {
     ...actual,
-    // 本用例只验证到期采样，不需要真实草稿；但 SessionPane 渲染期直接读
-    // modelSelectionRead.state.status，stub 缺这个字段会读 undefined 崩溃。
+    // This case only verifies expiry sampling and needs no real draft; but the
+    // SessionPane render path reads modelSelectionRead.state.status directly, and
+    // a stub missing that field would read undefined and crash.
     useDraftConfigControl: () => ({
       modelSelectionRead: { state: { status: "loading" as const }, reload: vi.fn() },
       draftConfigRef: { current: {} },
@@ -211,8 +216,8 @@ vi.mock("@/v4/ConversationTimeline.js", async () => {
   };
 });
 
-// minimal DOM：记录 document/window 事件监听并允许用例直接派发，用于模拟
-// 「页面被冻结错过到期定时器 → 回到窗口」的时序。
+// Minimal DOM: record document/window event listeners and let cases dispatch
+// them directly, simulating "page frozen past the expiry timer → back to window".
 const domListeners = {
   document: new Map<string, Set<() => void>>(),
   window: new Map<string, Set<() => void>>(),
@@ -357,7 +362,7 @@ function makeSnapshot(
           createdAt: T0 - 120_000,
           createdAtSeq: 1,
           kind: "userInput",
-          text: "加速这一轮",
+          text: "Accelerate this turn",
           origin: "realUser",
           sourceCommandId,
           highspeed: {
@@ -413,7 +418,7 @@ async function renderExpiredCardPane(cardId: string, sourceCommandId: string): P
     root.render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: TEST_LOCALE },
         createElement(SessionPane, {
           paneId: "workspace-main",
           sessionId: "session-vis",
@@ -437,18 +442,20 @@ afterEach(() => {
 });
 
 describe("highspeed expiry clock visibility refresh", () => {
-  it("页面冻结错过到期定时器后，visibilitychange 恢复可见会立即补跑卡级采样", async () => {
+  it("re-runs card sampling immediately when visibilitychange restores visibility after the page froze past the expiry timer", async () => {
     vi.useFakeTimers({ now: T0 });
     const root = await renderExpiredCardPane("hsc-vis-1", "cmd-vis-1");
     try {
-      // 挂载时卡未到期，不应触发 healthy。
+      // The card has not expired at mount; healthy must not fire.
       expect(mocks.highspeedCardService.healthy).not.toHaveBeenCalled();
 
-      // 模拟页面冻结：墙钟越过到期点，但挂起的 setTimeout（到期唤醒）不执行。
+      // Simulate a frozen page: the wall clock passes the expiry point while the
+      // pending expiry-wakeup setTimeout never runs.
       vi.setSystemTime(T0 + 61_000);
       expect(mocks.highspeedCardService.healthy).not.toHaveBeenCalled();
 
-      // 回到窗口：visibilitychange(visible) 必须补跑聚合链路（卡已按当前墙钟到期）。
+      // Back at the window: visibilitychange(visible) must re-run the aggregation
+      // path (the card is already expired by the current wall clock).
       domListeners.visibilityState = "visible";
       await act(async () => {
         dispatchRecorded(domListeners.document, "visibilitychange");
@@ -461,7 +468,7 @@ describe("highspeed expiry clock visibility refresh", () => {
     }
   });
 
-  it("窗口 focus 同样触发到期链路补跑", async () => {
+  it("window focus also triggers the expiry path re-run", async () => {
     vi.useFakeTimers({ now: T0 });
     const root = await renderExpiredCardPane("hsc-vis-2", "cmd-vis-2");
     try {
@@ -478,7 +485,7 @@ describe("highspeed expiry clock visibility refresh", () => {
     }
   });
 
-  it("切到隐藏态的 visibilitychange 不触发补跑", async () => {
+  it("a visibilitychange to hidden does not trigger the re-run", async () => {
     vi.useFakeTimers({ now: T0 });
     const root = await renderExpiredCardPane("hsc-vis-3", "cmd-vis-3");
     try {

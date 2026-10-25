@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import {
   ChannelServer,
   ChannelClient,
@@ -6,7 +6,7 @@ import {
   getDelayedChannel,
 } from "../src/channels.js";
 import { createQueuePair, SocketProtocol, type ISocket } from "../src/protocol.js";
-import { Emitter, Event, DisposableStore } from "../src/foundation.js";
+import { CancellationTokenSource, Emitter, Event, DisposableStore } from "../src/foundation.js";
 import { VSBuffer } from "../src/buffer.js";
 
 function createPair(ctx = "test-ctx") {
@@ -404,6 +404,155 @@ describe("ChannelServer + ChannelClient", () => {
     client.dispose();
     serverProtocol.dispose();
     clientProtocol.dispose();
+  });
+});
+
+describe("ChannelServer pending requests for unregistered channels", () => {
+  const timeoutMs = 1000;
+  // Initialize and the request each take one macrotask hop over the queue pair.
+  const deliveryMs = 10;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function createShortTimeoutPair() {
+    const [serverProtocol, clientProtocol] = createQueuePair();
+    const server = new ChannelServer(serverProtocol, "test-ctx", timeoutMs);
+    const client = new ChannelClient(clientProtocol);
+    return {
+      server,
+      client,
+      dispose: () => {
+        server.dispose();
+        client.dispose();
+      },
+    };
+  }
+
+  function advance(ms: number) {
+    return vi.advanceTimersByTimeAsync(ms);
+  }
+
+  function createRecordingChannel() {
+    const source = new Emitter<string>();
+    const call = vi.fn(() => Promise.resolve("late"));
+    const listen = vi.fn(() => source.event);
+    const channel: IServerChannel = { call, listen };
+    return { channel, call, listen, source };
+  }
+
+  it("does not execute a timed-out call when the channel registers later", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { server, client, dispose } = createShortTimeoutPair();
+    try {
+      const result = client.getChannel("missing").call("doThing", { a: 1 });
+      const assertion = expect(result).rejects.toThrow(/timed out/);
+      await advance(timeoutMs + deliveryMs);
+      await assertion;
+
+      const { channel, call } = createRecordingChannel();
+      server.registerChannel("missing", channel);
+      await advance(deliveryMs);
+
+      expect(call).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("does not execute a pending call cancelled before the channel registers", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { server, client, dispose } = createShortTimeoutPair();
+    try {
+      const cts = new CancellationTokenSource();
+      const result = client.getChannel("late").call("doThing", undefined, cts.token);
+      await advance(deliveryMs);
+      cts.cancel();
+      await expect(result).rejects.toThrow("Cancelled");
+      await advance(deliveryMs);
+
+      const { channel, call } = createRecordingChannel();
+      server.registerChannel("late", channel);
+      await advance(timeoutMs * 2);
+
+      expect(call).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("keeps a pending listen past the timeout and subscribes on late registration", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { server, client, dispose } = createShortTimeoutPair();
+    try {
+      const listener = vi.fn();
+      const subscription = client.getChannel("late-events").listen<string>("onData")(listener);
+      await advance(timeoutMs * 2);
+      expect(errorSpy).toHaveBeenCalledWith("Unknown channel: late-events");
+
+      const { channel, listen, source } = createRecordingChannel();
+      server.registerChannel("late-events", channel);
+      await advance(deliveryMs);
+      expect(listen).toHaveBeenCalledTimes(1);
+
+      source.fire("hello");
+      await advance(deliveryMs);
+      expect(listener).toHaveBeenCalledWith("hello");
+      subscription.dispose();
+    } finally {
+      dispose();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("does not subscribe a pending listen disposed before the channel registers", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { server, client, dispose } = createShortTimeoutPair();
+    try {
+      const subscription = client.getChannel("late-events").listen<string>("onData")(vi.fn());
+      await advance(timeoutMs * 2);
+      expect(errorSpy).toHaveBeenCalledWith("Unknown channel: late-events");
+      subscription.dispose();
+      await advance(deliveryMs);
+
+      const { channel, listen } = createRecordingChannel();
+      server.registerChannel("late-events", channel);
+      await advance(deliveryMs);
+
+      expect(listen).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("clears pending timers on dispose", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { server, client } = createShortTimeoutPair();
+    try {
+      void client
+        .getChannel("missing")
+        .call("doThing")
+        .catch(() => {});
+      await advance(deliveryMs);
+      expect(vi.getTimerCount()).toBe(1);
+      server.dispose();
+
+      expect(vi.getTimerCount()).toBe(0);
+      await advance(timeoutMs * 2);
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      client.dispose();
+      errorSpy.mockRestore();
+    }
   });
 });
 

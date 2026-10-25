@@ -35,14 +35,14 @@ describe("V4InteractionDialogs", () => {
       taskId: "sess-1",
       traceId: "trace-1",
       requestId: "ask-1",
-      message: "第一题",
+      message: "Question one",
       options: [],
       currentQuestionIndex: 0,
       questions: [],
     };
     const botProgress = {
       ...projected,
-      message: "第二题",
+      message: "Question two",
       currentQuestionIndex: 1,
       answerDrafts: { answer_0: ["first-answer"] },
     };
@@ -105,7 +105,7 @@ describe("V4InteractionDialogs", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(V4InteractionDialogs, {
           sessionId: "sess-1",
           workspacePath: "/workspace",
@@ -152,7 +152,7 @@ describe("V4InteractionDialogs", () => {
           createdAt: 301,
           payload: {
             kind: "userInput",
-            prompt: "请确认计划",
+            prompt: "Please confirm the plan",
             freeText: true,
             toolName: "ExitPlanMode",
             toolCallId: "tool-plan",
@@ -160,11 +160,19 @@ describe("V4InteractionDialogs", () => {
             schema: { toolName: "ExitPlanMode" },
             questions: [
               {
-                question: "是否执行该计划？",
-                header: "计划",
+                question: "Execute this plan?",
+                header: "Plan",
                 options: [
-                  { value: "approve", label: "执行", description: "执行当前计划" },
-                  { value: "feedback", label: "反馈", description: "返回修改意见" },
+                  {
+                    value: "approve",
+                    label: "Execute",
+                    description: "Execute the current plan",
+                  },
+                  {
+                    value: "feedback",
+                    label: "Feedback",
+                    description: "Return revision feedback",
+                  },
                 ],
               },
             ],
@@ -176,7 +184,7 @@ describe("V4InteractionDialogs", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(V4InteractionDialogs, {
           sessionId: "sess-1",
           workspacePath: "/workspace",
@@ -185,8 +193,8 @@ describe("V4InteractionDialogs", () => {
       ),
     );
 
-    expect(html).toContain("是否执行该计划？");
-    expect(html).toContain("执行当前计划");
+    expect(html).toContain("Execute this plan?");
+    expect(html).toContain("Execute the current plan");
   });
 
   it("renders structured userInput interactions with ElicitationDialog", () => {
@@ -200,7 +208,7 @@ describe("V4InteractionDialogs", () => {
           createdAt: 300,
           payload: {
             kind: "userInput",
-            prompt: "请选择",
+            prompt: "Please choose",
             freeText: true,
             toolName: "AskUserQuestion",
             toolCallId: "tool-ask",
@@ -208,11 +216,19 @@ describe("V4InteractionDialogs", () => {
             schema: { toolName: "AskUserQuestion" },
             questions: [
               {
-                question: "你想怎么做？",
-                header: "方案",
+                question: "How do you want to proceed?",
+                header: "Approach",
                 options: [
-                  { value: "fast", label: "快速", description: "先做最小修复" },
-                  { value: "safe", label: "稳妥", description: "补齐测试和文档" },
+                  {
+                    value: "fast",
+                    label: "Fast",
+                    description: "Apply the minimal fix first",
+                  },
+                  {
+                    value: "safe",
+                    label: "Safe",
+                    description: "Add tests and docs",
+                  },
                 ],
               },
             ],
@@ -224,7 +240,7 @@ describe("V4InteractionDialogs", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(V4InteractionDialogs, {
           sessionId: "sess-1",
           workspacePath: "/workspace",
@@ -233,9 +249,9 @@ describe("V4InteractionDialogs", () => {
       ),
     );
 
-    expect(html).toContain("你想怎么做？");
-    expect(html).toContain("快速");
-    expect(html).toContain("先做最小修复");
+    expect(html).toContain("How do you want to proceed?");
+    expect(html).toContain("Fast");
+    expect(html).toContain("Apply the minimal fix first");
     expect(html).not.toContain(`data-testid="${TID_V4_USER_INPUT_DIALOG}"`);
   });
 });

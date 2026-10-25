@@ -4,6 +4,7 @@ import {
   REMOTE_RECOVERY_BUDGET_EXHAUSTED_ERROR_CODE,
   REMOTE_WORKSPACE_BIND_SESSION_MISSING_ERROR_CODE,
   REMOTE_WORKSPACE_DIRECTORY_UNAVAILABLE_ERROR_CODE,
+  REMOTE_WORKSPACE_DIRECTORY_UNRESPONSIVE_ERROR_CODE,
   SOURCE_SERVER_INSTALL_REQUIRED_ERROR_CODE,
   SOURCE_SERVER_IDENTITY_CHANGE_PENDING_ERROR_CODE,
   SOURCE_SERVER_UPDATE_RUNNING_TASKS_ERROR_CODE,
@@ -33,16 +34,19 @@ export interface RemoteConnectionErrorPresentation {
 
 const messageIdByCode: Record<PublicZCodeErrorCode, string> = {
   "remote-authentication-failed": "remote.error.authentication",
+  "remote-authentication-unsupported": "remote.error.authenticationUnsupported",
   "remote-host-unreachable": "remote.error.hostUnreachable",
   "remote-connection-timeout": "remote.error.connectionTimeout",
   "remote-host-not-found": "remote.error.hostNotFound",
   "remote-host-key-changed": "remote.error.hostKeyChanged",
+  "remote-host-key-unknown": "remote.error.hostKeyUnknown",
   "remote-download-failed": "remote.error.downloadFailed",
   "remote-upload-failed": "remote.error.uploadFailed",
   "remote-preflight-failed": "remote.error.preflightFailed",
   "remote-install-failed": "remote.error.installFailed",
   "remote-space-insufficient": "remote.error.spaceInsufficient",
   "remote-permission-denied": "remote.error.permissionDenied",
+  "remote-platform-unsupported": "remote.error.platformUnsupported",
   "remote-connection-canceled": "remote.error.connectionCanceled",
   "remote-connection-unknown": "remote.error.unknown",
 
@@ -60,6 +64,8 @@ const messageIdByCode: Record<PublicZCodeErrorCode, string> = {
   [REMOTE_RECOVERY_BUDGET_EXHAUSTED_ERROR_CODE]: "remote.error.recoveryBudgetExhausted",
   [REMOTE_WORKSPACE_BIND_SESSION_MISSING_ERROR_CODE]: "remote.error.bindSessionMissing",
   [REMOTE_WORKSPACE_DIRECTORY_UNAVAILABLE_ERROR_CODE]: "remote.error.workspaceDirectoryUnavailable",
+  [REMOTE_WORKSPACE_DIRECTORY_UNRESPONSIVE_ERROR_CODE]:
+    "remote.error.workspaceDirectoryUnresponsive",
   [SOURCE_SERVER_REMOVE_CALLBACK_MISSING_ERROR_CODE]:
     "settings.source.error.source-server-remove-callback-missing",
   [SOURCE_SERVER_REMOVE_CALLBACK_FAILED_ERROR_CODE]:
@@ -105,6 +111,8 @@ export function classifyRemoteConnectionError(input: {
     case "remote-host-key-changed":
       primaryAction = "security";
       break;
+    case "remote-authentication-unsupported":
+    case "remote-platform-unsupported":
     case "remote-space-insufficient":
     case "remote-permission-denied":
       primaryAction = "details";

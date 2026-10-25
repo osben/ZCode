@@ -8,6 +8,7 @@ import { resolveEffectiveModelSelection, type ProviderRegistryView } from "@zcod
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useDraftConfigControl as useActualDraftConfigControl } from "@/v4/composer/useDraftConfigControl.js";
 import {
+  composerScopeKey,
   persistV4ComposerDraft as persistScopedDraft,
   readV4ComposerDraft as readScopedDraft,
   resolveComposerScope,
@@ -231,6 +232,9 @@ function installMinimalDom() {
       removeItem: (key: string) => storage.delete(key),
     },
     addEventListener: () => {},
+    // composerDraftStore broadcasts draft changes through a window event; the minimal DOM has no
+    // listeners, so a plain no-op dispatch keeps persistence working in these tests.
+    dispatchEvent: () => true,
     document: documentMock,
     HTMLIFrameElement: function HTMLIFrameElement() {},
     HTMLElement: function HTMLElement() {},
@@ -440,11 +444,18 @@ describe("useDraftConfigControl slash command hydration", () => {
       }
       await act(async () => root.render(createElement(Probe, { ready: false })));
       await act(async () => root.render(createElement(Probe, { ready: true })));
+      // An unselectable persisted root selection is replaced by the Host preferredSelection
+      // (see specs/sidebar-new-task-outside-project.md rule 5), never kept as a dead selection.
+      const preferred = {
+        providerId: "provider",
+        modelId: "default",
+        options: { reasoningLevel: "high" },
+      };
       expect(control!.composerDraft.modelSelection).toEqual(
-        scenario === "session" ? undefined : selection,
+        scenario === "session" ? undefined : scenario === "invalid" ? preferred : selection,
       );
       expect(control!.draftConfig.modelSelection).toEqual(
-        scenario === "chosen" ? selection : undefined,
+        scenario === "chosen" ? selection : scenario === "invalid" ? preferred : undefined,
       );
       expect(control!.composerDraft.text).toBe("KEEP INTENT");
       act(() => root.unmount());
@@ -1006,11 +1017,108 @@ describe("useDraftConfigControl slash command hydration", () => {
       mode: "edit",
       modelSelection: { modelId: "new" },
     });
-    expect(readV4ComposerDraft(workspacePath, undefined, "session")).toBeNull();
+    // ISSUE-035: the explicit model pick in an existing session is persisted even without text;
+    // the mode switch alone adds nothing beyond it.
+    expect(readV4ComposerDraft(workspacePath, undefined, "session")).toMatchObject({
+      text: "",
+      modelSelection: { modelId: "new" },
+      modelSelectionPicked: true,
+    });
     act(() => root.unmount());
   });
 
-  it("旧文本草稿等 Session 到达后只补新字段；Todo70 未绑定结果不会用 preferred 填满", async () => {
+  it("fork child 的 partial config 已初始化 mode 后，迟到的完整 config 补齐缺失模型", async () => {
+    const workspacePath = "/fork-child-delayed-model";
+    const root = createRoot(installMinimalDom());
+    const view = modelSelectionView(1, ["model"], "model");
+    const inheritedSelection = view.preferredSelection!;
+    persistV4ComposerDraft(workspacePath, undefined, "fork-child", {
+      text: "follow up",
+      mode: "build",
+    });
+    let control: ReturnType<typeof useDraftConfigControl>;
+    function Probe({ config }: { config: Partial<SessionConfigState> }) {
+      control = useDraftConfigControl({
+        workspacePath,
+        sessionId: "fork-child",
+        sessionConfig: config,
+        agentStartupAllowed: false,
+        modelSelectionView: view,
+      });
+      return null;
+    }
+
+    await act(async () => {
+      root.render(createElement(Probe, { config: { mode: "build" } }));
+    });
+    expect(control!.draftConfig.modelSelection).toBeUndefined();
+    act(() => control!.handleDraftSwitchMode("edit"));
+
+    await act(async () => {
+      root.render(
+        createElement(Probe, {
+          config: { mode: "build", modelSelection: inheritedSelection },
+        }),
+      );
+    });
+
+    expect(control!.draftConfig).toMatchObject({
+      mode: "edit",
+      modelSelection: inheritedSelection,
+    });
+    expect(readV4ComposerDraft(workspacePath, undefined, "fork-child")).toMatchObject({
+      text: "follow up",
+      mode: "edit",
+      modelSelection: inheritedSelection,
+    });
+    act(() => root.unmount());
+  });
+
+  it("fork child 在 mode 缺失时已有的模型选择，不被迟到的继承模型覆盖", async () => {
+    const workspacePath = "/fork-child-model-before-mode";
+    const root = createRoot(installMinimalDom());
+    const view = modelSelectionView(1, ["user-model", "inherited-model"], "user-model");
+    const userSelection = { providerId: "provider", modelId: "user-model" };
+    const inheritedSelection = { providerId: "provider", modelId: "inherited-model" };
+    persistV4ComposerDraft(workspacePath, undefined, "fork-child", {
+      text: "follow up",
+      modelSelection: userSelection,
+    });
+    let control: ReturnType<typeof useDraftConfigControl>;
+    function Probe({ config }: { config: Partial<SessionConfigState> }) {
+      control = useDraftConfigControl({
+        workspacePath,
+        sessionId: "fork-child",
+        sessionConfig: config,
+        agentStartupAllowed: false,
+        modelSelectionView: view,
+      });
+      return null;
+    }
+
+    await act(async () => {
+      root.render(createElement(Probe, { config: { mode: "build" } }));
+    });
+    expect(control!.draftConfig).toMatchObject({ mode: "build", modelSelection: userSelection });
+
+    await act(async () => {
+      root.render(
+        createElement(Probe, {
+          config: { mode: "build", modelSelection: inheritedSelection },
+        }),
+      );
+    });
+
+    expect(control!.draftConfig.modelSelection).toEqual(userSelection);
+    expect(readV4ComposerDraft(workspacePath, undefined, "fork-child")).toMatchObject({
+      text: "follow up",
+      mode: "build",
+      modelSelection: userSelection,
+    });
+    act(() => root.unmount());
+  });
+
+  it("旧文本草稿保留本地 mode，并从完整 Session config 补齐缺失模型", async () => {
     const workspacePath = "/old-text-draft";
     const root = createRoot(installMinimalDom());
     persistV4ComposerDraft(workspacePath, undefined, "session", { text: "未发送正文" });
@@ -1048,7 +1156,10 @@ describe("useDraftConfigControl slash command hydration", () => {
       );
     });
     expect(control!.draftConfig).toMatchObject({ mode: "build" });
-    expect(control!.draftConfig.modelSelection).toBeUndefined();
+    expect(control!.draftConfig.modelSelection?.modelId).toBe("old");
+    expect(readV4ComposerDraft(workspacePath, undefined, "session")?.modelSelection?.modelId).toBe(
+      "old",
+    );
     act(() => root.unmount());
   });
 
@@ -1671,5 +1782,532 @@ describe("useDraftConfigControl slash command hydration", () => {
     await act(async () => root.render(createElement(Probe, { sessionId: "created" })));
     expect(control!.composerDraft).toMatchObject({ text: "typed after acceptance", mode: "build" });
     act(() => root.unmount());
+  });
+
+  it("switching the model while typing keeps the typed input", async () => {
+    const workspacePath = "/switch-model-keeps-input";
+    const view = modelSelectionView(1, ["model-a", "model-b"], "model-a");
+    const root = createRoot(installMinimalDom());
+    let control: ReturnType<typeof useDraftConfigControl>;
+    function Probe({
+      sessionId,
+      config,
+    }: {
+      sessionId: string | null;
+      config: Partial<SessionConfigState>;
+    }) {
+      control = useDraftConfigControl({
+        workspacePath,
+        sessionId,
+        sessionConfig: sessionId === null ? null : config,
+        agentStartupAllowed: false,
+        modelSelectionView: view,
+      });
+      return null;
+    }
+    const sessionConfig = {
+      mode: "build",
+      modelSelection: { providerId: "provider", modelId: "model-a" },
+    } as Partial<SessionConfigState>;
+
+    await act(async () =>
+      root.render(createElement(Probe, { sessionId: "switch-session", config: sessionConfig })),
+    );
+    act(() => control!.updateComposerContent({ text: "half typed sentence" }));
+    act(() => control!.handleDraftSelectModel("provider", "model-b"));
+    expect(control!.composerDraft).toMatchObject({
+      text: "half typed sentence",
+      modelSelection: { providerId: "provider", modelId: "model-b" },
+    });
+    // A late snapshot that still reports the previous model must not replace the user's switch or text.
+    await act(async () =>
+      root.render(
+        createElement(Probe, { sessionId: "switch-session", config: { ...sessionConfig } }),
+      ),
+    );
+    expect(control!.composerDraft).toMatchObject({
+      text: "half typed sentence",
+      modelSelection: { providerId: "provider", modelId: "model-b" },
+    });
+    expect(readV4ComposerDraft(workspacePath, undefined, "switch-session")).toMatchObject({
+      text: "half typed sentence",
+      modelSelection: { providerId: "provider", modelId: "model-b" },
+    });
+
+    await act(async () => root.render(createElement(Probe, { sessionId: null, config: {} })));
+    act(() => control!.updateComposerContent({ text: "root typed" }));
+    act(() => control!.handleDraftSelectModel("provider", "model-b"));
+    act(() => control!.handleDraftSelectModel("provider", "model-a"));
+    expect(control!.composerDraft).toMatchObject({
+      text: "root typed",
+      modelSelection: { providerId: "provider", modelId: "model-a" },
+    });
+    act(() => root.unmount());
+  });
+});
+
+describe("useDraftConfigControl dead stored selection (sidebar-new-task-outside-project rule 5)", () => {
+  // The Host view does not offer this provider, so the picker's effectiveSelection is null.
+  const DEAD = {
+    providerId: "account:zai-individual-coding-plan",
+    modelId: "GLM-5.3",
+    options: { reasoningLevel: "max" },
+  };
+  const OTHER = { providerId: "provider", modelId: "other", options: { reasoningLevel: "high" } };
+  const PREFERRED = {
+    providerId: "provider",
+    modelId: "model",
+    options: { reasoningLevel: "high" },
+  };
+  const view = {
+    ...modelSelectionView(1, ["model", "other"], "model"),
+    preferredSelection: PREFERRED,
+  } as ModelSelectionView;
+  const scopes = [
+    ["project", { projectId: "p" }],
+    ["global", { projectId: null }],
+  ] as const;
+
+  function recentKey(workspacePath: string) {
+    return `zcode-composer-recent:v2:${composerScopeKey(testScope(workspacePath))}`;
+  }
+
+  async function settle() {
+    for (let index = 0; index < 4; index += 1) await act(async () => {});
+  }
+
+  // installMinimalDom() replaces the storage, so every seed happens after the DOM is installed.
+  function mountProbe(workspacePath: string) {
+    const root = createRoot(installMinimalDom());
+    const result: { control?: ReturnType<typeof useDraftConfigControl> } = {};
+    function Probe() {
+      result.control = useDraftConfigControl({
+        workspacePath,
+        sessionId: null,
+        agentStartupAllowed: false,
+        modelSelectionView: view,
+      });
+      return null;
+    }
+    return { root, result, Probe };
+  }
+
+  it.each(scopes)(
+    "rule 5 (%s scope): a dead Recent selection initializes to preferredSelection and Recent is not rewritten",
+    async (_name, scope) => {
+      const workspacePath = `/dead-recent-${_name}`;
+      const { root, result, Probe } = mountProbe(workspacePath);
+      act(() =>
+        useZCodeSessionStore.getState().startDraft(workspacePath, undefined, undefined, scope),
+      );
+      captureComposerRecentSubmission(workspacePath, { mode: "build", modelSelection: DEAD })();
+      const recentBefore = window.localStorage.getItem(recentKey(workspacePath));
+      expect(recentBefore).not.toBeNull();
+      await act(async () => root.render(createElement(Probe)));
+      await settle();
+      expect(result.control!.composerDraft.modelSelection).toEqual(PREFERRED);
+      expect(result.control!.draftConfig.modelSelection).toEqual(PREFERRED);
+      // A blank page's config stays in memory (composerDraftStore), so no persisted root record exists here.
+      expect(readV4ComposerDraft(workspacePath, undefined, "__draft__")).toBeNull();
+      expect(window.localStorage.getItem(recentKey(workspacePath))).toBe(recentBefore);
+      act(() => root.unmount());
+    },
+  );
+
+  it.each(scopes)(
+    "rule 5 (%s scope): a dead persisted root selection is replaced and keeps the text",
+    async (_name, scope) => {
+      const workspacePath = `/dead-root-${_name}`;
+      const { root, result, Probe } = mountProbe(workspacePath);
+      act(() =>
+        useZCodeSessionStore.getState().startDraft(workspacePath, undefined, undefined, scope),
+      );
+      persistV4ComposerDraft(workspacePath, undefined, "__draft__", {
+        text: "KEEP TEXT",
+        mode: "build",
+        planEnabled: false,
+        modelSelection: DEAD,
+      });
+      await act(async () => root.render(createElement(Probe)));
+      await settle();
+      expect(result.control!.composerDraft).toMatchObject({
+        text: "KEEP TEXT",
+        modelSelection: PREFERRED,
+      });
+      expect(result.control!.draftConfig.modelSelection).toEqual(PREFERRED);
+      expect(readV4ComposerDraft(workspacePath, undefined, "__draft__")).toMatchObject({
+        text: "KEEP TEXT",
+        modelSelection: PREFERRED,
+      });
+      act(() => root.unmount());
+    },
+  );
+
+  it("rule 5: a Recent selection that the view can select is kept", async () => {
+    const workspacePath = "/valid-recent";
+    const { root, result, Probe } = mountProbe(workspacePath);
+    act(() =>
+      useZCodeSessionStore
+        .getState()
+        .startDraft(workspacePath, undefined, undefined, { projectId: "p" }),
+    );
+    captureComposerRecentSubmission(workspacePath, { mode: "build", modelSelection: OTHER })();
+    const recentBefore = window.localStorage.getItem(recentKey(workspacePath));
+    await act(async () => root.render(createElement(Probe)));
+    await settle();
+    expect(result.control!.composerDraft.modelSelection).toEqual(OTHER);
+    expect(result.control!.draftConfig.modelSelection).toEqual(OTHER);
+    expect(window.localStorage.getItem(recentKey(workspacePath))).toBe(recentBefore);
+    act(() => root.unmount());
+  });
+
+  it("rule 5: project and global scopes produce the same initial selection for the same inputs", async () => {
+    const outcomes: unknown[] = [];
+    for (const [, scope] of scopes) {
+      const workspacePath = "/scope-parity";
+      const { root, result, Probe } = mountProbe(workspacePath);
+      act(() =>
+        useZCodeSessionStore.getState().startDraft(workspacePath, undefined, undefined, scope),
+      );
+      captureComposerRecentSubmission(workspacePath, { mode: "build", modelSelection: DEAD })();
+      await act(async () => root.render(createElement(Probe)));
+      await settle();
+      outcomes.push({
+        composer: result.control!.composerDraft.modelSelection,
+        config: result.control!.draftConfig.modelSelection,
+      });
+      act(() => root.unmount());
+    }
+    expect(outcomes[0]).toEqual(outcomes[1]);
+    expect(outcomes[0]).toEqual({ composer: PREFERRED, config: PREFERRED });
+  });
+});
+
+describe("useDraftConfigControl existing-session explicit model pick (ISSUE-035)", () => {
+  const workspacePath = "/mp-hook";
+  const modelA = { providerId: "provider", modelId: "model-a" };
+  const modelB = { providerId: "provider", modelId: "model-b" };
+  const modelC = { providerId: "provider", modelId: "model-c" };
+  const snapshotA = { mode: "build", modelSelection: modelA } as Partial<SessionConfigState>;
+  const snapshotC = { mode: "build", modelSelection: modelC } as Partial<SessionConfigState>;
+  // Registry without model-c: a pick of model-c cannot be resolved (MP08).
+  const viewAB = () => modelSelectionView(1, ["model-a", "model-b"], "model-a");
+  const viewABC = () => modelSelectionView(1, ["model-a", "model-b", "model-c"], "model-a");
+  // Registry without model-b: a pick of model-b cannot be resolved (MF2).
+  const viewAC = () => modelSelectionView(1, ["model-a", "model-c"], "model-a");
+  const snapshotAMedium = {
+    mode: "build",
+    modelSelection: {
+      providerId: "provider",
+      modelId: "model-a",
+      options: { reasoningLevel: "medium" },
+    },
+  } as Partial<SessionConfigState>;
+
+  // The model view resolves asynchronously; flush several ticks like the other hook suites do.
+  async function settle() {
+    for (let index = 0; index < 4; index += 1) await act(async () => {});
+  }
+
+  type ProbeProps = {
+    sessionId: string;
+    // undefined keeps the default Snapshot; null means no Snapshot has arrived yet.
+    snapshot?: Partial<SessionConfigState> | null;
+    // undefined keeps the default view; null means the model selection view is still loading.
+    view?: ModelSelectionView | null;
+  };
+  // installMinimalDom() creates a fresh storage each call, so remounts must share one container.
+  function createProbe(container: Element) {
+    const root = createRoot(container);
+    const result: { control?: ReturnType<typeof useDraftConfigControl> } = {};
+    function Probe(props: ProbeProps) {
+      result.control = useDraftConfigControl({
+        workspacePath,
+        sessionId: props.sessionId,
+        sessionConfig: props.snapshot === undefined ? snapshotA : props.snapshot,
+        agentStartupAllowed: false,
+        modelSelectionView: props.view === undefined ? viewAB() : props.view,
+      });
+      return null;
+    }
+    return {
+      async render(props: ProbeProps) {
+        await act(async () => root.render(createElement(Probe, props)));
+        await settle();
+      },
+      control: () => result.control!,
+      unmount: () => act(() => root.unmount()),
+    };
+  }
+
+  it("MP01/MP02 an explicit pick without text is persisted and survives leaving and returning", async () => {
+    const container = installMinimalDom();
+    const first = createProbe(container);
+    await first.render({ sessionId: "mp-session" });
+    act(() => first.control().handleDraftSelectModel("provider", "model-b"));
+    await settle();
+
+    expect(readV4ComposerDraft(workspacePath, undefined, "mp-session")).toMatchObject({
+      text: "",
+      modelSelection: modelB,
+      modelSelectionPicked: true,
+      modelSelectionPickedFrom: modelA,
+    });
+    first.unmount();
+
+    // Returning to the session: the Snapshot still reports model-a, the stored pick wins.
+    const second = createProbe(container);
+    await second.render({ sessionId: "mp-session" });
+    expect(second.control().composerDraft.modelSelection).toMatchObject({ modelId: "model-b" });
+    second.unmount();
+  });
+
+  it("MP03 switching only the permission or Plan writes no empty record", async () => {
+    const probe = createProbe(installMinimalDom());
+    await probe.render({ sessionId: "mp-mode" });
+    act(() => probe.control().handleDraftSwitchMode("edit"));
+    await settle();
+    act(() => probe.control().handleDraftSwitchMode("yolo"));
+    await settle();
+
+    expect(readV4ComposerDraft(workspacePath, undefined, "mp-mode")).toBeNull();
+    probe.unmount();
+  });
+
+  it("MP04 a model only inherited from the Snapshot is not written without a pick", async () => {
+    const probe = createProbe(installMinimalDom());
+    await probe.render({ sessionId: "mp-inherit" });
+
+    expect(readV4ComposerDraft(workspacePath, undefined, "mp-inherit")).toBeNull();
+    probe.unmount();
+  });
+
+  it("MP05 accepting the picked model clears its marker, so the empty record is removed", async () => {
+    const probe = createProbe(installMinimalDom());
+    await probe.render({ sessionId: "mp-accept" });
+    act(() => probe.control().handleDraftSelectModel("provider", "model-b"));
+    await settle();
+    expect(readV4ComposerDraft(workspacePath, undefined, "mp-accept")).toMatchObject({
+      modelSelectionPicked: true,
+    });
+
+    // The accepted selection is the one the composer submitted (the resolved effective selection).
+    const accepted = probe.control().draftConfig.modelSelection!;
+    const acknowledge = probe.control().captureAcceptedModelSelection(accepted);
+    act(() => acknowledge());
+
+    expect(readV4ComposerDraft(workspacePath, undefined, "mp-accept")).toBeNull();
+    probe.unmount();
+  });
+
+  it("MP08 a pick the Registry no longer offers keeps the stored intent and is not replaced", async () => {
+    const probe = createProbe(installMinimalDom());
+    await probe.render({ sessionId: "mp-missing", view: viewAB() });
+    act(() => probe.control().handleDraftSelectModel("provider", "model-c"));
+    await settle();
+
+    expect(readV4ComposerDraft(workspacePath, undefined, "mp-missing")).toMatchObject({
+      modelSelection: modelC,
+      modelSelectionPicked: true,
+    });
+    expect(probe.control().composerDraft.modelSelection).toMatchObject({ modelId: "model-c" });
+    // The resolved selection is empty, so the composer shows "choose a model" instead of another model.
+    expect(probe.control().draftConfig.modelSelection).toBeUndefined();
+    probe.unmount();
+  });
+
+  it("C-1 a pick is dropped when the Session model moves away from the model the pick was made against", async () => {
+    const probe = createProbe(installMinimalDom());
+    await probe.render({ sessionId: "mp-moved", view: viewABC() });
+    act(() => probe.control().handleDraftSelectModel("provider", "model-b"));
+    await settle();
+    expect(readV4ComposerDraft(workspacePath, undefined, "mp-moved")).toMatchObject({
+      modelSelectionPicked: true,
+    });
+
+    // Another window, a Host fallback, or the CLI moved the Session to model-c.
+    await probe.render({ sessionId: "mp-moved", snapshot: snapshotC, view: viewABC() });
+
+    expect(readV4ComposerDraft(workspacePath, undefined, "mp-moved")).toBeNull();
+    expect(probe.control().composerDraft.modelSelection).toMatchObject({ modelId: "model-c" });
+    expect(probe.control().composerDraft.modelSelectionPicked).toBeUndefined();
+    probe.unmount();
+  });
+
+  it("C-4 a pick equal to the Session model stores no marker and clears an earlier pick", async () => {
+    const probe = createProbe(installMinimalDom());
+    await probe.render({ sessionId: "mp-noop" });
+    act(() => probe.control().handleDraftSelectModel("provider", "model-b"));
+    await settle();
+    expect(readV4ComposerDraft(workspacePath, undefined, "mp-noop")).not.toBeNull();
+
+    // Picking back the Session's own model is a no-op: the record goes away.
+    act(() => probe.control().handleDraftSelectModel("provider", "model-a"));
+    await settle();
+    expect(readV4ComposerDraft(workspacePath, undefined, "mp-noop")).toBeNull();
+    probe.unmount();
+  });
+
+  it("C-4 a reasoning-level-only change is not a model pick and is not persisted without text", async () => {
+    const probe = createProbe(installMinimalDom());
+    await probe.render({ sessionId: "mp-thought" });
+    act(() => probe.control().handleDraftSelectThought("high"));
+    await settle();
+
+    expect(readV4ComposerDraft(workspacePath, undefined, "mp-thought")).toBeNull();
+    probe.unmount();
+  });
+
+  it("MF1 a snapshot that omits the reasoning level keeps a pick made against the same model", async () => {
+    const probe = createProbe(installMinimalDom());
+    await probe.render({ sessionId: "mf1-omit", snapshot: snapshotAMedium, view: viewABC() });
+    act(() => probe.control().handleDraftSelectModel("provider", "model-b"));
+    await settle();
+    // Another window's Snapshot still reports model-a, now without a reasoning level.
+    await probe.render({ sessionId: "mf1-omit", snapshot: snapshotA, view: viewABC() });
+
+    expect(readV4ComposerDraft(workspacePath, undefined, "mf1-omit")).toMatchObject({
+      modelSelection: modelB,
+      modelSelectionPicked: true,
+    });
+    expect(probe.control().composerDraft.modelSelection).toMatchObject({ modelId: "model-b" });
+    probe.unmount();
+  });
+
+  it("MF1 a reasoning-level change elsewhere on the same model keeps the pick", async () => {
+    const probe = createProbe(installMinimalDom());
+    await probe.render({ sessionId: "mf1-thought", snapshot: snapshotAMedium, view: viewABC() });
+    act(() => probe.control().handleDraftSelectModel("provider", "model-b"));
+    await settle();
+    const withHigh = {
+      mode: "build",
+      modelSelection: {
+        providerId: "provider",
+        modelId: "model-a",
+        options: { reasoningLevel: "high" },
+      },
+    } as Partial<SessionConfigState>;
+    await probe.render({ sessionId: "mf1-thought", snapshot: withHigh, view: viewABC() });
+
+    expect(readV4ComposerDraft(workspacePath, undefined, "mf1-thought")).toMatchObject({
+      modelSelection: modelB,
+      modelSelectionPicked: true,
+    });
+    probe.unmount();
+  });
+
+  it("MF1 a pick of the Session's own model with another reasoning level stores no marker", async () => {
+    const probe = createProbe(installMinimalDom());
+    // The Session is on model-a at medium; picking model-a at high is the same model, so no pick is stored.
+    await probe.render({ sessionId: "mf1-same", snapshot: snapshotAMedium, view: viewABC() });
+    act(() => probe.control().handleDraftSelectModel("provider", "model-a", "high"));
+    await settle();
+
+    expect(readV4ComposerDraft(workspacePath, undefined, "mf1-same")).toBeNull();
+    probe.unmount();
+  });
+
+  it("MF1 a stale pick is dropped even when the draft has text, and the text is kept", async () => {
+    const probe = createProbe(installMinimalDom());
+    await probe.render({ sessionId: "mf1-text", snapshot: snapshotA, view: viewABC() });
+    act(() => probe.control().updateComposerContent({ text: "half typed" }));
+    await settle();
+    act(() => probe.control().handleDraftSelectModel("provider", "model-b"));
+    await settle();
+
+    await probe.render({ sessionId: "mf1-text", snapshot: snapshotC, view: viewABC() });
+
+    expect(readV4ComposerDraft(workspacePath, undefined, "mf1-text")).toMatchObject({
+      text: "half typed",
+      modelSelection: modelC,
+    });
+    expect(readV4ComposerDraft(workspacePath, undefined, "mf1-text")).not.toHaveProperty(
+      "modelSelectionPicked",
+    );
+    probe.unmount();
+  });
+
+  it("MF2 a pick the Registry cannot resolve keeps the marker when the Session moves to a resolvable model", async () => {
+    const probe = createProbe(installMinimalDom());
+    await probe.render({ sessionId: "mf2-unresolved", snapshot: snapshotA, view: viewAC() });
+    act(() => probe.control().handleDraftSelectModel("provider", "model-b"));
+    await settle();
+    expect(probe.control().draftConfig.modelSelection).toBeUndefined();
+
+    // The Session moves to model-c, which the Registry can resolve. The unresolvable pick must stay:
+    // the stored intent wins and the composer keeps naming the model reason (ISSUE-026).
+    await probe.render({ sessionId: "mf2-unresolved", snapshot: snapshotC, view: viewAC() });
+
+    expect(readV4ComposerDraft(workspacePath, undefined, "mf2-unresolved")).toMatchObject({
+      modelSelection: modelB,
+      modelSelectionPicked: true,
+    });
+    expect(probe.control().composerDraft.modelSelection).toMatchObject({ modelId: "model-b" });
+    expect(probe.control().draftConfig.modelSelection).toBeUndefined();
+    probe.unmount();
+  });
+
+  it("MF3 a pick made before any Snapshot takes the first Snapshot as its base, then expires", async () => {
+    const probe = createProbe(installMinimalDom());
+    await probe.render({ sessionId: "mf3-base", snapshot: null, view: viewABC() });
+    act(() => probe.control().handleDraftSelectModel("provider", "model-b"));
+    await settle();
+    expect(readV4ComposerDraft(workspacePath, undefined, "mf3-base")).toMatchObject({
+      modelSelectionPicked: true,
+    });
+    expect(readV4ComposerDraft(workspacePath, undefined, "mf3-base")).not.toHaveProperty(
+      "modelSelectionPickedFrom",
+    );
+
+    // The first Snapshot arrives and becomes the base.
+    await probe.render({ sessionId: "mf3-base", snapshot: snapshotA, view: viewABC() });
+    expect(readV4ComposerDraft(workspacePath, undefined, "mf3-base")).toMatchObject({
+      modelSelectionPicked: true,
+      modelSelectionPickedFrom: modelA,
+    });
+
+    // The Session later moves away from that base, so the pick expires.
+    await probe.render({ sessionId: "mf3-base", snapshot: snapshotC, view: viewABC() });
+    expect(readV4ComposerDraft(workspacePath, undefined, "mf3-base")).toBeNull();
+    expect(probe.control().composerDraft.modelSelection).toMatchObject({ modelId: "model-c" });
+    probe.unmount();
+  });
+
+  it("a no-op pick made before the first Snapshot is cleared when that Snapshot adopts it as base", async () => {
+    const probe = createProbe(installMinimalDom());
+    await probe.render({ sessionId: "mf3-noop", snapshot: null, view: viewABC() });
+    act(() => probe.control().handleDraftSelectModel("provider", "model-a"));
+    await settle();
+    expect(readV4ComposerDraft(workspacePath, undefined, "mf3-noop")).toMatchObject({
+      modelSelectionPicked: true,
+    });
+
+    // The first Snapshot reports model-a, which is the pick itself: adopting it as base must not keep a marker.
+    await probe.render({ sessionId: "mf3-noop", snapshot: snapshotA, view: viewABC() });
+
+    expect(readV4ComposerDraft(workspacePath, undefined, "mf3-noop")).toBeNull();
+    expect(probe.control().composerDraft.modelSelectionPicked).toBeUndefined();
+    probe.unmount();
+  });
+
+  it("a pick is kept while the model view is loading and dropped once the view is ready and the Session moved", async () => {
+    const probe = createProbe(installMinimalDom());
+    await probe.render({ sessionId: "mp-loading", view: viewABC() });
+    act(() => probe.control().handleDraftSelectModel("provider", "model-b"));
+    await settle();
+
+    // The view is still loading (no verdict). The Session moved to model-c, but the pick must survive.
+    await probe.render({ sessionId: "mp-loading", snapshot: snapshotC, view: null });
+    expect(readV4ComposerDraft(workspacePath, undefined, "mp-loading")).toMatchObject({
+      modelSelection: modelB,
+      modelSelectionPicked: true,
+      modelSelectionPickedFrom: modelA,
+    });
+
+    // The view is ready and resolves model-b, and the Session has moved away from model-a: the pick expires.
+    await probe.render({ sessionId: "mp-loading", snapshot: snapshotC, view: viewABC() });
+    expect(readV4ComposerDraft(workspacePath, undefined, "mp-loading")).toBeNull();
+    expect(probe.control().composerDraft.modelSelection).toMatchObject({ modelId: "model-c" });
+    probe.unmount();
   });
 });

@@ -1,6 +1,7 @@
+/* eslint-disable max-lines -- Bot copy is maintained as a set across zh-CN/en-US/uk-UA; the line count grows with the number of languages by design. */
 import type { Locale } from "@zcode/shared";
 
-export type BotMessageLocale = Extract<Locale, "zh-CN" | "en-US">;
+export type BotMessageLocale = Locale;
 
 type MessageValues = Record<string, string | number | undefined>;
 
@@ -33,9 +34,16 @@ const messages = {
     helpModel: "**/模型** — 切换模型",
     helpMode: "**/模式** — 切换运行模式",
     helpThoughtLevel: "**/思考** — 切换思考级别",
+    helpRemote: "**/远程** — 获取 Web 远程控制链接",
     helpReply: "**/回复** — 切换回复详细程度",
+    remoteLinkReady: "Web 远程控制链接（有效期与桌面端远程控制会话一致，请勿转发给他人）：\n{url}",
+    remoteLinkPrivateOnly: "仅支持在私聊中获取 Web 远程控制链接。",
+    remoteLinkUnavailable: "当前运行环境不支持生成 Web 远程控制链接。",
+    remoteLinkWorkspaceNotOpen: "该工作区未在桌面端打开，请先在桌面端打开后再获取链接。",
+    remoteLinkFeatureDisabled: "此构建已禁用 Web 远程控制。",
+    remoteLinkFailed: "生成 Web 远程控制链接失败：{message}",
     webhookSecretInvalid: "Webhook secret 校验失败。",
-    // Bugfix: 这条错误由通用 provider callback 处理路径触发，微信/飞书失败时不能误显示 Telegram。
+    // Bug fix: this error is triggered through the shared provider callback path; WeChat/Feishu failures must not be shown as Telegram failures.
     callbackFailed: "处理机器人回调失败：{message}",
     sessionExpiredNewTaskHint:
       "当前任务会话已失效，可能是任务已被清理或机器人消息已过期。请发送 **/new task** 创建新任务后再继续。",
@@ -161,7 +169,16 @@ const messages = {
     helpModel: "**/model** — Switch model",
     helpMode: "**/mode** — Switch run mode",
     helpThoughtLevel: "**/think** — Switch thought level",
+    helpRemote: "**/remote** — Get a web remote control link",
     helpReply: "**/reply** — Switch reply detail",
+    remoteLinkReady:
+      "Web remote control link (valid while the desktop remote-control session lasts; do not forward it to others):\n{url}",
+    remoteLinkPrivateOnly: "Web remote control links can only be requested in a private chat.",
+    remoteLinkUnavailable: "Web remote control links are not available in this environment.",
+    remoteLinkWorkspaceNotOpen:
+      "This workspace is not open on the desktop. Open it there first, then request the link again.",
+    remoteLinkFeatureDisabled: "Web remote control is disabled in this build.",
+    remoteLinkFailed: "Failed to create a web remote control link: {message}",
     webhookSecretInvalid: "Webhook secret verification failed.",
     callbackFailed: "Failed to process bot callback: {message}",
     sessionExpiredNewTaskHint:
@@ -267,12 +284,162 @@ const messages = {
     replyMissing: "Reply detail option not found.",
     replyChanged: "Third-party reply detail changed to {mode}.",
   },
+  "uk-UA": {
+    botDisabled: "Цього бота не ввімкнено.",
+    groupOwnerOnly: "Цю дію може виконати лише користувач, який прив'язав бота.",
+    groupNotEnabled: "Цю групу ще не ввімкнено. Прив'язаний користувач має надіслати @бот /enable.",
+    groupEnabled:
+      "Груповий чат увімкнено. Історію тем типово відкрито; файли одного робочого простору спільні, можливі паралельні зміни.\n\nПеред використанням тем попросіть адміністратора підтвердити дозволи на платформі ({permissionsUrl}).\n1. Відкрийте [консоль платформи]({permissionsUrl}) і виберіть застосунок цього бота.\n2. У розділі дозволів відкрийте дозволи на читання повідомлень від імені застосунку, зокрема `im:message.group_msg` (читання групових повідомлень користувачів). Для отримання @ від інших ботів потрібен також `im:message.group_at_msg.include_bot:readonly`; для повідомлень бота в темах без @ — `im:message.group_msg.include_bot:read`.\n3. Необов'язково: `im:chat.members:read` (перегляд учасників) для показу імені відправника; без нього завдання все одно виконуватимуться.\n4. Після публікації надішліть @бота в темі з описом потреби.\n\nУвімкнення групи не означає, що дозволи застосунку вже видано; без дозволу на читання історії тем групові завдання не виконуватимуться.",
+    groupDisabled: "Груповий чат вимкнено. Отримані завдання збережено в Desktop.",
+    privateChatOnly: "Боти поки не підтримують групові чати. Скористайтеся приватним чатом.",
+    bindPrivateOnly: "Прив'язати бота можна лише в приватному чаті.",
+    userNotBound:
+      "Цей бот не прив'язаний. Згенеруйте код прив'язки в інтерфейсі zcode, а потім надішліть **/bind <code>**.",
+    commandNotAllowed: "Цю команду вимкнено для поточного бота.",
+    noWorkspaceAllowed:
+      "Немає доступного робочого простору. Спершу дозвольте робочий простір у налаштуваннях ботів.",
+    workspaceOutOfScope:
+      "Робочий простір у цьому чаті більше не дозволено. Виберіть **/workspace** ще раз.",
+    bindCodeInvalid:
+      "Код прив'язки недійсний або прострочений. Згенеруйте новий код в інтерфейсі zcode.",
+    bindBotMissing: "Не вдалося прив'язати: бота не існує.",
+    bindSuccess: "Прив'язку виконано. Надішліть **/help**, щоб переглянути доступні команди.",
+    weixinActivatedWelcome:
+      "Бот Weixin активний. Надішліть **/help**, щоб переглянути команди, або опишіть, що потрібно зробити.",
+    helpTitle: "Команди бота ZCode:",
+    helpHelp: "**/help** — показати цю довідку",
+    helpBind: "**/bind <code>** — прив'язати цей чат",
+    helpStatus: "**/status** — показати стан робочого простору, моделі й завдання",
+    helpNew: "/new або /clear — почати чернетку нового завдання",
+    helpWorkspace: "**/project** — змінити робочий простір",
+    helpModel: "**/model** — змінити модель",
+    helpMode: "**/mode** — змінити режим виконання",
+    helpThoughtLevel: "**/think** — змінити рівень міркувань",
+    helpRemote: "**/remote** — отримати посилання веб-віддаленого керування",
+    helpReply: "**/reply** — змінити детальність відповідей",
+    remoteLinkReady:
+      "Посилання веб-віддаленого керування (діє, доки активний сеанс віддаленого керування на комп'ютері; не перешлійте його іншим):\n{url}",
+    remoteLinkPrivateOnly:
+      "Посилання веб-віддаленого керування можна запитувати лише в особистому чаті.",
+    remoteLinkUnavailable: "Посилання веб-віддаленого керування недоступні в цьому середовищі.",
+    remoteLinkWorkspaceNotOpen:
+      "Цей робочий простір не відкрито на комп'ютері. Спершу відкрийте його там, потім запросіть посилання ще раз.",
+    remoteLinkFeatureDisabled: "Веб-віддалене керування вимкнено в цій збірці.",
+    remoteLinkFailed: "Не вдалося створити посилання веб-віддаленого керування: {message}",
+    webhookSecretInvalid: "Не вдалося перевірити секрет вебхука.",
+    callbackFailed: "Не вдалося обробити зворотний виклик бота: {message}",
+    sessionExpiredNewTaskHint:
+      "Сеанс поточного завдання завершився. Можливо, його очищено або це повідомлення бота застаріло. Надішліть **/new task**, щоб створити нове завдання й продовжити.",
+    deletedTaskReplaced:
+      "Попереднє завдання видалено, тому я створив для вас нове. Це повідомлення буде оброблено в новому завданні без історії попередньої розмови.",
+    received: "Отримано.",
+    attachmentOnlyPrompt: "Перегляньте вкладення й допоможіть на основі його вмісту.",
+    attachmentRejected: "Не вдалося обробити вкладення: {message}",
+    attachmentDownloadUnavailable:
+      "Не вдалося завантажити вкладення. Можливо, термін дії файлу минув, його видалено або бот не має дозволу на його читання. Надішліть вкладення ще раз і повторіть спробу.",
+    attachmentTooLarge: "Вкладення перевищує 5 МБ. Стисніть його й надішліть ще раз.",
+    selectionCancelled: "Скасовано.",
+    selectionCancelOption: "Скасувати",
+    selectionTextHint: "Надішліть номер, щоб вибрати, або 0, щоб скасувати.",
+    selectionTextHintNoCancel: "Надішліть номер, щоб вибрати.",
+    newTaskDraft: "Створено чернетку нового завдання в {workspacePath}.",
+    workspaceSelectTitle: "Поточний робочий простір: {workspace}\nВиберіть робочий простір",
+    workspaceMissing: "Доступних робочих просторів не знайдено.",
+    modelSelectTitle: "Виберіть модель",
+    modelProviderSelectTitle: "Поточна модель: {model}\nВиберіть постачальника моделі",
+    modelModelSelectTitle: "Поточна модель: {model}\nВиберіть модель",
+    modelMissing: "Модель не знайдено.",
+    sessionModelUnavailable:
+      "Вибрана для сеансу модель недоступна. Виберіть її знову за допомогою /model. Ваш збережений вибір не змінено.",
+    modeSelectTitle: "Поточний режим: {mode}\nВиберіть режим",
+    modeMissing: "Варіант режиму не знайдено.",
+    modeChanged: "Режим поточного завдання змінено на {mode}.",
+    modeLocked: "Цей бот заблоковано в режимі виконання **yolo**, змінити його не можна.",
+    thoughtLevelSelectTitle: "Поточний рівень міркувань: {level}\nВиберіть рівень міркувань",
+    thoughtLevelMissing: "Поточна модель не підтримує рівні міркувань.",
+    thoughtLevelChanged: "Рівень міркувань поточного завдання змінено на {level}.",
+    modelProviderMissing: "Постачальника моделі не знайдено.",
+    modelChanged: "Модель поточного завдання змінено на {model}.",
+    taskMissing: "Завдання не знайдено.",
+    taskChanged: "Перемкнуто на завдання: {title}",
+    noActiveTask: "Немає активного завдання.",
+    permissionExpired: "Термін дії цього запиту дозволу минув. Обробіть його в інтерфейсі zcode.",
+    permissionHandled: "Запит дозволу вже оброблено.",
+    permissionDenied: "Запит дозволу відхилено.",
+    permissionSubmitted: "Відповідь на запит дозволу надіслано.",
+    elicitationExpired: "Термін дії цього запитання минув. Обробіть його в інтерфейсі zcode.",
+    elicitationHandled: "Запитання вже оброблено.",
+    elicitationSubmitted: "Відповідь на запитання надіслано.",
+    elicitationCancelled: "Запитання скасовано.",
+    elicitationCustomOption: "Власна відповідь",
+    elicitationCustomPlaceholder: "Введіть власну відповідь",
+    elicitationQuestionTitle: "Запитання",
+    planApprovalTitle: "Перегляньте цей план реалізації.",
+    planApprovalHeader: "План реалізації",
+    planApprovalApprove: "Схвалити",
+    planApprovalApproveDescription: "Вийти з режиму планування й почати реалізацію.",
+    elicitationCancelledCard: "✅ Запитання скасовано",
+    elicitationSubmitOption: "Готово",
+    elicitationSkipOption: "Пропустити",
+    elicitationMultiSelectHint:
+      "Можна вибрати кілька варіантів; виберіть варіант ще раз, щоб зняти вибір, а потім натисніть «Готово».",
+    elicitationTextHint: "Також можна надіслати текст як власну відповідь.",
+    statusWorkspace: "Робочий простір",
+    statusModel: "Модель",
+    statusTask: "Завдання",
+    statusState: "Стан",
+    statusWorked: "Тривалість роботи",
+    statusProgress: "Прогрес",
+    statusDraft: "чернетка",
+    statusRemoteDisconnected: "віддалене з'єднання розірвано",
+    statusCancelled: "скасовано",
+    statusStopped: "зупинено",
+    streamingStatusRunning: "Виконується",
+    streamingStatusCompleted: "Завершено",
+    streamingStatusFailed: "Помилка",
+    streamingWorking: "Виконується...",
+    streamingToolSummaries: "Підсумки інструментів",
+    stopSubmitted: "Генерацію поточного завдання зупинено.",
+    unknownCommand: "Невідома команда: **/{command}**",
+    taskFailed: "Не вдалося виконати завдання: {message}",
+    groupTaskQueued:
+      "У поточного завдання ще є запити в черзі (воно може бути призупинене). Обробіть або приберіть їх у Desktop, перш ніж перемикати завдання; /stop не очищає чергу.",
+    groupTaskInteraction:
+      "Поточне завдання очікує на відповідь або підтвердження. Спершу завершіть цю взаємодію або зупиніть завдання командою /stop.",
+    groupTaskDisconnected:
+      "Віддалений робочий простір від'єднано, стан завдання перевірити неможливо. Спершу виконайте /reconnect.",
+    taskRunning:
+      "Поточне завдання ще виконується. Спробуйте пізніше або зупиніть його командою **/stop**.",
+    taskSelectTitle: "Поточне завдання: {task}\nВиберіть завдання",
+    noHistoryTasks: "У поточному робочому просторі немає завдань в історії.",
+    remoteDisconnected:
+      "Віддалений робочий простір {workspacePath} не підключено. Спершу надішліть **/reconnect**, а потім повторіть спробу. Попередній запит не виконано.",
+    remoteDisconnectedStatus:
+      "Віддалений робочий простір {workspacePath} не підключено. Надішліть **/reconnect**, щоб відновити з'єднання.",
+    remoteWorkspaceSelectedDisconnected:
+      "Перемкнуто на {workspacePath}, але віддалений робочий простір не підключено. Перш ніж виконувати завдання, надішліть **/reconnect**.",
+    remoteReconnectStarting:
+      "Віддалений робочий простір {workspacePath} не підключено. Підключаємо знову...",
+    remoteReconnectFailed:
+      "Не вдалося знову підключити віддалений робочий простір {workspacePath}: {message}\nПопередній запит не виконано.",
+    remoteReconnectUnavailable:
+      "Віддалений робочий простір {workspacePath} не підключено, а бот не має доступу до служби віддаленого підключення. Відкрийте цей віддалений проєкт у ZCode і повторіть спробу.",
+    remoteReconnectLocal:
+      "Поточний робочий простір локальний, тому повторно підключати його не потрібно. Надішліть **/workspace**, щоб перейти до віддаленого проєкту.",
+    remoteReconnectAlreadyConnected: "Віддалений робочий простір {workspacePath} підключено.",
+    replySelectTitle:
+      "Поточна детальність відповідей для сторонніх сервісів: {mode}\nВиберіть детальність відповідей",
+    replyMissing: "Варіант детальності відповідей не знайдено.",
+    replyChanged: "Детальність відповідей для сторонніх сервісів змінено на {mode}.",
+  },
 } as const;
 
 export type BotMessageId = keyof (typeof messages)[BotMessageLocale];
 
 export function normalizeBotMessageLocale(locale: Locale | undefined): BotMessageLocale {
-  return locale === "en-US" ? "en-US" : DEFAULT_BOT_MESSAGE_LOCALE;
+  // Keep Chinese as the default when no language is specified. Bot copy covers all UI languages (including uk-UA),
+  // so do not collapse it to en-US through toServiceLocale; otherwise Ukrainian users would see only English.
+  return locale ?? DEFAULT_BOT_MESSAGE_LOCALE;
 }
 
 export function formatBotMessage(

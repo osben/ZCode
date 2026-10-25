@@ -43,7 +43,7 @@ async function openProjectDraft(page: Page, project: VirtualProject): Promise<vo
 }
 
 async function showDirectory(page: Page): Promise<void> {
-  const back = page.getByRole("button", { name: /^(返回任务首页|Back to task home)$/u });
+  const back = page.getByRole("button", { name: /^(Back to task home)$/u });
   const sidebar = page.getByTestId("sidebar");
   const onboarding = page.getByTestId("onboarding-page");
   // 新 Source 有独立引导记录；先通过真实 UI 完成前置，不能把引导遮挡误判成目录丢失。
@@ -249,7 +249,7 @@ describe(`${CASE}: 真实 SSH bridge 保留窗口项目目录`, () => {
         viewport,
         isMobile: label === "narrow",
         hasTouch: label === "narrow",
-        locale: "zh-CN",
+        locale: "en-US",
       });
       await context.addInitScript((credentials) => {
         if (sessionStorage.getItem("mro02-credentials-seeded")) return;

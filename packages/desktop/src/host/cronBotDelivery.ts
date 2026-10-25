@@ -18,7 +18,7 @@ interface CronBotDeliveryService {
 }
 
 /**
- * 在 prompt 派发前完成 Bot 终态订阅，避免快速任务先完成、后注册 listener 而漏回推。
+ * Subscribe to the Bot terminal state before dispatching the prompt so a fast task cannot finish before its listener is registered and miss the callback.
  */
 export async function watchCronRunBotDelivery(params: {
   automationId: string;

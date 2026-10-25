@@ -105,8 +105,8 @@ function controlledTransport() {
   return { transport, sockets, states, failures };
 }
 
-describe("terminal 与 V2 假 relay 的线级契约", () => {
-  it("缺少 AbortSignal 静态 API 仍只取一次 token 并实际配对、透传 bootstrap", async () => {
+describe("terminal and V2 fake relay wire-level contract", () => {
+  it("still fetches the token only once and actually pairs and passes bootstrap through when AbortSignal static APIs are missing", async () => {
     const h = await fixture();
     const descriptors = Object.getOwnPropertyDescriptors(AbortSignal);
     cleanup.push(() => {
@@ -134,7 +134,7 @@ describe("terminal 与 V2 假 relay 的线级契约", () => {
     expect(h.failures).toEqual([]);
   });
 
-  it("首次 token 正文中途断开后退避重试，取得新 token 并实际配对", async () => {
+  it("after the first token body is cut off midway, retries with backoff, obtains a new token, and actually pairs", async () => {
     let partialResponse: ServerResponse | undefined;
     const server = createServer((_request, response) => {
       partialResponse = response;
@@ -151,7 +151,7 @@ describe("terminal 与 V2 假 relay 的线级契约", () => {
     const tokenFetcher = vi.fn<typeof fetch>(async (input, init) => {
       if (tokenFetcher.mock.calls.length > 1) return fetch(input, init);
       const response = await fetch(`http://127.0.0.1:${address.port}/token`, init);
-      // 确认 fetch 已交付 200 响应头，再断开正文，避免退化为已有的建连失败测试。
+      // Confirm that fetch has delivered the 200 response headers before cutting the body, to avoid degrading into the existing connection-failure test.
       partialResponse?.destroy();
       return response;
     });
@@ -169,7 +169,7 @@ describe("terminal 与 V2 假 relay 的线级契约", () => {
     );
   });
 
-  it("一次性 terminal token → 无 role/proof 的 auth_init → 配对后业务透传", async () => {
+  it("one-time terminal token → auth_init without role/proof → business passthrough after pairing", async () => {
     const h = await fixture();
     h.terminal.start();
     await vi.waitFor(() => expect(h.states).toContain("paired"));
@@ -197,7 +197,7 @@ describe("terminal 与 V2 假 relay 的线级契约", () => {
     );
     expect(h.failures).toEqual([]);
   });
-  it("5秒心跳不带 SID；15秒无 ACK 关闭旧连接并申请新 token", async () => {
+  it("5-second heartbeat carries no SID; after 15 seconds without an ACK, closes the old connection and requests a new token", async () => {
     let drop = false;
     const h = await fixture({
       users: { jwt: "user-1" },
@@ -211,7 +211,7 @@ describe("terminal 与 V2 假 relay 的线级契约", () => {
     h.terminal.start();
     await vi.waitFor(() => expect(h.states.at(-1)).toBe("paired"));
     vi.spyOn(Math, "random").mockReturnValue(0.5);
-    // 恢复探测重新启动共享心跳，避免首次调度已经取样的随机偏移。
+    // Recovery probing restarts the shared heartbeat, avoiding the random offset already sampled by the first scheduling.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     h.terminal.suspend();
     const recovery = h.terminal.recoverConnection();
@@ -239,7 +239,7 @@ describe("terminal 与 V2 假 relay 的线级契约", () => {
     expect(h.onSendReady).toHaveBeenLastCalledWith({ kind: "reconnected-socket" });
   });
 
-  it("网络和5xx保持500ms指数退避，上限10秒", async () => {
+  it("network and 5xx errors keep 500ms exponential backoff, capped at 10 seconds", async () => {
     let fail: "server" | "network" | undefined = "server";
     const h = await fixture({
       users: { jwt: "user-1" },
@@ -272,24 +272,27 @@ describe("terminal 与 V2 假 relay 的线级契约", () => {
     expect(h.failures).toEqual([]);
   });
 
-  it.each([401, 403])("token HTTP %s 停止重试，回前台不能复活终态", async (status) => {
-    const h = await fixture({
-      users: { jwt: "user-1" },
-      onHttp: (call) =>
-        (call.body as { role?: string }).role === "terminal" ? { status } : undefined,
-    });
-    h.terminal.start();
-    await vi.waitFor(() =>
-      expect(h.failures).toEqual([
-        { reason: status === 401 ? "auth-required" : "relay-unavailable", message: undefined },
-      ]),
-    );
-    await expect(h.terminal.recoverConnection()).rejects.toThrow();
-    h.terminal.recoverInBackground();
-    expect(h.states.at(-1)).toBe("error");
-  });
+  it.each([401, 403])(
+    "token HTTP %s stops retrying; returning to the foreground cannot revive a terminal state",
+    async (status) => {
+      const h = await fixture({
+        users: { jwt: "user-1" },
+        onHttp: (call) =>
+          (call.body as { role?: string }).role === "terminal" ? { status } : undefined,
+      });
+      h.terminal.start();
+      await vi.waitFor(() =>
+        expect(h.failures).toEqual([
+          { reason: status === 401 ? "auth-required" : "relay-unavailable", message: undefined },
+        ]),
+      );
+      await expect(h.terminal.recoverConnection()).rejects.toThrow();
+      h.terminal.recoverInBackground();
+      expect(h.states.at(-1)).toBe("error");
+    },
+  );
 
-  it("异账号归属错误不重试；WRONG_PARAM 保留参数错误分类", async () => {
+  it("an account-ownership error across accounts is not retried; WRONG_PARAM keeps the parameter-error classification", async () => {
     const h = await fixture({ users: { jwt: "owner", other: "other" } }, "other");
     h.terminal.start();
     await vi.waitFor(() =>
@@ -308,7 +311,7 @@ describe("terminal 与 V2 假 relay 的线级契约", () => {
     );
   });
 
-  it("首次 KICKED 等待2~5秒重新申请 token，第二次终止为 session-conflict", async () => {
+  it("the first KICKED waits 2~5 seconds and requests a token again; the second one terminates as session-conflict", async () => {
     const h = await fixture();
     h.terminal.start();
     await vi.waitFor(() => expect(h.states.at(-1)).toBe("paired"));
@@ -330,7 +333,7 @@ describe("terminal 与 V2 假 relay 的线级契约", () => {
     expect(tokens()).toBe(2);
   });
 
-  it("dispose 后的迟到 token 不能创建 socket", async () => {
+  it("a late token arriving after dispose cannot create a socket", async () => {
     let resolveToken!: (value: string) => void;
     const getToken = vi.fn(
       () =>
@@ -356,7 +359,7 @@ describe("terminal 与 V2 假 relay 的线级契约", () => {
     await Promise.resolve();
     expect(ctor).not.toHaveBeenCalled();
   });
-  it("挂起未完成握手的 socket 后，迟到 open/ACK 不能在后台触发配对", async () => {
+  it("after suspending a socket with an unfinished handshake, a late open/ACK must not trigger pairing in the background", async () => {
     const h = controlledTransport();
     h.transport.start();
     await Promise.resolve();
@@ -369,7 +372,7 @@ describe("terminal 与 V2 假 relay 的线级契约", () => {
     expect(h.states.at(-1)).toBe("suspended");
   });
 
-  it("waiting临近超时被KICKED，新连接重新计时而不保留旧代定时器", async () => {
+  it("waiting near timeout gets KICKED, and the new connection restarts the timer without keeping the old generation's timer", async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     const h = controlledTransport();

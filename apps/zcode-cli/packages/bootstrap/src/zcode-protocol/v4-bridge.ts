@@ -1,4 +1,13 @@
-import { isReadonlyAgentSessionKind } from "@zcode/shared";
+import { ACP_PROVIDER_ID_PREFIX } from "@zcode/provider";
+import { worktreePreparationStateSchema } from "@zcode/shared/zcode-protocol-v4";
+import {
+  assertWorktreePreparationMutation,
+  serializePreparedWorktreeMutation,
+} from "./worktree-preparation-guard.js";
+import {
+  createChildSessionFactsResolver,
+  toWireChildSession,
+} from "../zcode-protocol-v4/child-session-facts.js";
 import { readBackgroundBashOutputFromOwner } from "./background-work-owner.js";
 // v4 网关 binder。
 // 定位：ConversationV4Gateway 是域无关的通道运行时，本文件把它绑到协议服务器上下文：
@@ -12,12 +21,15 @@ import { readBackgroundBashOutputFromOwner } from "./background-work-owner.js";
 // 不做桥接：依赖方向只允许 旧目录 → v4 目录。
 // 本文件在旧目录，import v4 executor 合法；v4 目录禁止反向 import 本目录任何模块。
 import {
+  incognitoProfilesEqual,
   isConversationRealUserTurnStarter,
+  isReadonlyAgentSessionKind,
   parseRemoteWorkspaceIdentity,
   type ZCodeSessionContextUsage,
   type ZCodeWorkspaceRef,
 } from "@zcode/shared";
 import { createExternalTurnFaultError } from "@zcode/core";
+import { projectIdFromDirectory } from "../app/paths.js";
 import {
   V4_NOTIFICATIONS,
   conversationInputIntentSchema,
@@ -41,6 +53,7 @@ import {
   mergeColdConversationEvents,
 } from "../zcode-protocol-v4/cold-event-merge.js";
 import { lookupGlobalCreateSessionCommand } from "../zcode-protocol-v4/create-session-command-fact.js";
+import { sessionInputSourceCommandId } from "../zcode-protocol-v4/persistent-command-facts.js";
 import type {
   V4CommandCoreHost,
   V4QueuedTurnExecution,
@@ -54,6 +67,7 @@ import { queueItemIdForCommand } from "../zcode-protocol-v4/command-inbox.js";
 import { resolveStableForkTargetFromTranscript } from "../zcode-protocol-v4/stable-fork-target.js";
 import { shouldAutoDrainV4QueueHead } from "../zcode-protocol-v4/queue-auto-drain.js";
 import { persistAssistantFeedback } from "../zcode-protocol-v4/assistant-feedback-persistence.js";
+import { persistRowPinned } from "../zcode-protocol-v4/row-pin-persistence.js";
 import {
   persistHighspeedMetrics,
   persistHighspeedTiming,
@@ -76,6 +90,7 @@ import {
   createEventId,
   createSessionId,
 } from "@zcode/contracts";
+import type { V4ExternalAgentConfigStore } from "../zcode-protocol-v4/commands/external-agent-config-store.js";
 import type {
   CollaborationMode,
   DynamicWorkflowRunProgressPayload,
@@ -110,12 +125,219 @@ import {
   listSessionSubagents,
   registerForkedSession,
   readSessionContextUsage,
+  isWorktreeDirectoryMissing,
+  isWorktreeDirectoryMissingSync,
 } from "./server-operations.js";
 import type {
   ZCodeProtocolAgentServerContext,
+  ZCodeProtocolPreparedWorktreeSession,
+  ZCodeProtocolPreparedSubmissionSession,
   ZCodeProtocolSessionRecord,
 } from "./server-types.js";
 import { createProtocolLogger } from "./server-types.js";
+
+const PREPARED_WORKTREE_ENTRY_TYPE = "v4/worktree_preparation";
+const PREPARED_SUBMISSION_ENTRY_TYPE = "v4/fork_submission_preparation";
+
+function preparedSubmissionMap(context: ZCodeProtocolAgentServerContext) {
+  return (context.preparedSubmissionSessions ??= new Map());
+}
+
+async function loadPreparedSubmission(
+  context: ZCodeProtocolAgentServerContext,
+  sessionId: string,
+): Promise<ZCodeProtocolPreparedSubmissionSession | null> {
+  const resident = preparedSubmissionMap(context).get(sessionId);
+  if (resident) return resident;
+  const store = context.deps.sessionStore;
+  if (!store?.getSession || !store.sessionEntries) return null;
+  const session = await store.getSession(sessionId as SessionId);
+  if (!session || session.time.deleted !== undefined) return null;
+  const entries = await store.sessionEntries({ sessionID: session.id, type: PREPARED_SUBMISSION_ENTRY_TYPE });
+  const marker = entries.at(-1);
+  const data = marker?.data as { submissionId?: unknown; status?: unknown } | undefined;
+  if (!data || typeof data.submissionId !== "string" || (data.status !== "preparing" && data.status !== "active")) return null;
+  const prepared: ZCodeProtocolPreparedSubmissionSession = {
+    sessionId: session.id,
+    workspace: resolveWorkspaceRefFromId(session.workspaceID ?? String(session.directory)),
+    submissionId: data.submissionId,
+    createdAt: session.time.created,
+    updatedAt: marker?.time.updated ?? session.time.updated,
+    status: data.status,
+    incognito: session.incognito ?? null,
+  };
+  if (prepared.status !== "active") preparedSubmissionMap(context).set(sessionId, prepared);
+  return prepared;
+}
+
+async function persistPreparedSubmission(
+  context: ZCodeProtocolAgentServerContext,
+  prepared: ZCodeProtocolPreparedSubmissionSession,
+  status: "preparing" | "active",
+): Promise<void> {
+  const store = context.deps.sessionStore;
+  if (!store?.saveSessionEntry) throw new Error("Submission preparation requires session-entry storage");
+  const now = Date.now();
+  await store.saveSessionEntry({
+    id: `${PREPARED_SUBMISSION_ENTRY_TYPE}:${prepared.sessionId}`,
+    sessionID: prepared.sessionId,
+    type: PREPARED_SUBMISSION_ENTRY_TYPE,
+    time: { created: prepared.createdAt, updated: now },
+    data: { submissionId: prepared.submissionId, status },
+  });
+  prepared.status = status;
+  prepared.updatedAt = now;
+  if (status === "active") preparedSubmissionMap(context).delete(String(prepared.sessionId));
+  else preparedSubmissionMap(context).set(String(prepared.sessionId), prepared);
+}
+
+function preparedWorktreeMap(context: ZCodeProtocolAgentServerContext) {
+  return (context.preparedWorktreeSessions ??= new Map());
+}
+
+function parsePreparedWorktreeEntry(data: unknown): {
+  branchName: string;
+  targetPath: string;
+  baseBranch?: string;
+  attemptId?: string;
+  status: "preparing" | "failed" | "cancelled" | "active";
+  failureMessage?: string;
+} | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const value = data as Record<string, unknown>;
+  if (
+    typeof value.branchName !== "string" ||
+    typeof value.targetPath !== "string" ||
+    !["preparing", "failed", "cancelled", "active"].includes(String(value.status))
+  ) {
+    return null;
+  }
+  return {
+    ...(typeof value.attemptId === "string" ? { attemptId: value.attemptId } : {}),
+    branchName: value.branchName,
+    targetPath: value.targetPath,
+    ...(typeof value.baseBranch === "string" ? { baseBranch: value.baseBranch } : {}),
+    status: value.status as "preparing" | "failed" | "cancelled" | "active",
+    ...(typeof value.failureMessage === "string" ? { failureMessage: value.failureMessage } : {}),
+  };
+}
+
+/**
+ * Load the durable preparation for a session in any status (including `active`), preferring the
+ * in-memory registry. Unlike restorePreparedWorktreeSession this never hides an `active` receipt:
+ * repeat activation reads it to return the existing identity without re-materializing.
+ */
+async function loadStoredPreparedWorktreeSession(
+  context: ZCodeProtocolAgentServerContext,
+  sessionId: string,
+): Promise<ZCodeProtocolPreparedWorktreeSession | null> {
+  const map = preparedWorktreeMap(context);
+  const resident = map.get(sessionId);
+  if (resident) return resident;
+  const store = context.deps.sessionStore;
+  if (!store?.getSession || !store.sessionEntries) return null;
+  const session = await store.getSession(sessionId as SessionId);
+  if (!session) return null;
+  const entries = await store.sessionEntries({
+    sessionID: sessionId as SessionId,
+    type: PREPARED_WORKTREE_ENTRY_TYPE,
+  });
+  const marker = entries.at(-1);
+  const parsed = parsePreparedWorktreeEntry(marker?.data);
+  if (!parsed) return null;
+  const workspaceId = session.workspaceID ?? String(session.directory);
+  const restored = {
+    sessionId: sessionId as SessionId,
+    workspace: resolveWorkspaceRefFromId(workspaceId),
+    ...(parsed.attemptId ? { attemptId: parsed.attemptId } : {}),
+    branchName: parsed.branchName,
+    targetPath: parsed.targetPath,
+    ...(parsed.baseBranch ? { baseBranch: parsed.baseBranch } : {}),
+    createdAt: session.time?.created ?? Date.now(),
+    updatedAt: session.time?.updated ?? Date.now(),
+    status: parsed.status,
+    ...(parsed.failureMessage ? { failureMessage: parsed.failureMessage } : {}),
+  };
+  if (parsed.status !== "active") map.set(sessionId, restored);
+  return restored;
+}
+
+async function restorePreparedWorktreeSession(
+  context: ZCodeProtocolAgentServerContext,
+  sessionId: string,
+): Promise<ZCodeProtocolPreparedWorktreeSession | null> {
+  const loaded = await loadStoredPreparedWorktreeSession(context, sessionId);
+  return loaded && loaded.status !== "active" ? loaded : null;
+}
+
+/**
+ * Durable admission evidence for a prepared session: a session_input ledger row that was admitted
+ * or promoted (not cancelled, discarded, or failed). Read only on the reactivation path, where
+ * re-sending the frozen input under a new command id must be impossible unless no admission ever
+ * durably happened. With `commandId`, only that command's own row counts: another input admitted
+ * into the same session (a foreign window, a mobile remote) is not evidence for the frozen input.
+ * Without a readable ledger the result is conservatively "admitted".
+ */
+async function sessionHasAdmittedInput(
+  context: ZCodeProtocolAgentServerContext,
+  sessionId: string,
+  commandId?: string,
+): Promise<boolean> {
+  const store = context.deps.sessionStore;
+  if (!store?.listSessionInputs) return true;
+  const inputs = await store.listSessionInputs({ sessionID: sessionId as SessionId });
+  return inputs.some(
+    (input) =>
+      (input.status === "admitted" || input.status === "promoted") &&
+      (commandId === undefined || sessionInputSourceCommandId(input) === commandId),
+  );
+}
+
+async function persistPreparedWorktreeStatus(
+  context: ZCodeProtocolAgentServerContext,
+  prepared: ZCodeProtocolPreparedWorktreeSession,
+  status: "preparing" | "failed" | "cancelled" | "active",
+  failureMessage?: string,
+  worktreePreparation?: Pick<
+    ZCodeProtocolPreparedWorktreeSession,
+    "branchName" | "targetPath" | "baseBranch" | "attemptId"
+  >,
+): Promise<void> {
+  const store = context.deps.sessionStore;
+  if (!store?.saveSessionEntry)
+    throw new Error("Worktree preparation requires session-entry storage");
+  const now = Date.now();
+  await store.saveSessionEntry({
+    id: `v4/worktree_preparation:${prepared.sessionId}`,
+    sessionID: prepared.sessionId,
+    type: PREPARED_WORKTREE_ENTRY_TYPE,
+    time: { created: prepared.createdAt, updated: now },
+    data: {
+      ...(worktreePreparation?.attemptId || prepared.attemptId
+        ? { attemptId: worktreePreparation?.attemptId ?? prepared.attemptId }
+        : {}),
+      branchName: worktreePreparation?.branchName ?? prepared.branchName,
+      targetPath: worktreePreparation?.targetPath ?? prepared.targetPath,
+      ...((worktreePreparation ? worktreePreparation.baseBranch : prepared.baseBranch)
+        ? { baseBranch: worktreePreparation?.baseBranch ?? prepared.baseBranch }
+        : {}),
+      status,
+      ...(failureMessage ? { failureMessage } : {}),
+    },
+  });
+  prepared.status = status;
+  prepared.updatedAt = now;
+  if (worktreePreparation) {
+    if (worktreePreparation.attemptId) prepared.attemptId = worktreePreparation.attemptId;
+    prepared.branchName = worktreePreparation.branchName;
+    prepared.targetPath = worktreePreparation.targetPath;
+    if (worktreePreparation.baseBranch) prepared.baseBranch = worktreePreparation.baseBranch;
+    else delete prepared.baseBranch;
+  }
+  if (failureMessage) prepared.failureMessage = failureMessage;
+  else delete prepared.failureMessage;
+  if (status === "active") preparedWorktreeMap(context).delete(String(prepared.sessionId));
+}
 
 function normalizeStoredTitleSource(
   source: string | undefined,
@@ -295,6 +517,25 @@ function admissionAttachmentRefs(
  * admission 只持久化真正会产生输入的命令。edit/retry 不能从 payload 猜 intent；
  * 必须复用 projection 的 canonical target，并把旧来源折叠进 provenance。
  */
+/**
+ * The selects a session shows for its ACP agent from the binding (specs/acp-agent-runtime.md "S6"): the offered
+ * snapshot of this agent. The agent catalog is not a projection input; the composer reads it from the host.
+ */
+async function readExternalAgentConfigSeed(
+  store: V4ExternalAgentConfigStore,
+  sessionId: string,
+  providerId: string,
+): Promise<NonNullable<ConversationSnapshot["config"]["externalAgentConfig"]> | null> {
+  if (!providerId.startsWith(ACP_PROVIDER_ID_PREFIX)) return null;
+  const agentId = providerId.slice(ACP_PROVIDER_ID_PREFIX.length);
+  const config = await store.readConfig(sessionId);
+  if (config.agentId !== agentId || config.offered === undefined) return null;
+  return {
+    agentId,
+    options: config.offered.map((option) => ({ ...option, options: [...option.options] })),
+  };
+}
+
 export function resolveInputCommandForAdmission(
   envelope: CommandEnvelope,
   admissionSessionId: string,
@@ -780,8 +1021,12 @@ export function createConversationV4Gateway(
     autoDrainRetryTimers.set(sessionId, timer);
   };
   const coreHost: V4CommandCoreHost = {
+    hasPreparedSession: (sessionId) => preparedSubmissionMap(context).has(sessionId) || preparedWorktreeMap(context).has(sessionId),
     // 同一注册表对象引用：view 是旧 record 的结构化窄视图，字段变更双向可见。
     getRecord: (sessionId) => context.sessions.get(sessionId),
+    ...(context.deps.externalAgentConfig
+      ? { externalAgentConfig: context.deps.externalAgentConfig }
+      : {}),
     // 同一登记表实例：broker（旧目录）注册反向请求 deferred，
     // v4 resolveInteraction handler 经此投递应答（v4 原生基础设施，非过渡钩子）。
     interactions: context.v4Interactions,
@@ -799,6 +1044,7 @@ export function createConversationV4Gateway(
     hasQueuedDelivery: (sessionId, delivery) =>
       context.v4Gateway?.hasQueuedDelivery(sessionId, delivery) ?? false,
     getQueueLength: (sessionId) => context.v4Gateway?.getQueueLength(sessionId) ?? 0,
+    getQueueAutoDrain: (sessionId) => context.v4Gateway?.getQueueAutoDrain(sessionId) ?? null,
     retainQueuedTurnExecution: (sessionId, sourceCommandId, execution) => {
       const sessionExecutions = queuedTurnExecutions.get(sessionId) ?? new Map();
       sessionExecutions.set(sourceCommandId, execution);
@@ -1176,6 +1422,28 @@ export function createConversationV4Gateway(
           }),
       });
     },
+    setRowPinned: async (sessionId, input) => {
+      const record = context.sessions.get(sessionId);
+      const sessionStore = context.deps.sessionStore;
+      if (!record || !sessionStore) throw new Error("proto.sessionNotFound");
+      // Pins follow the same transcript-first order as feedback: persist metadata so CLI restart
+      // recovers it through cold hydration, then advance eventStore/projection from the same fact.
+      await persistRowPinned({
+        sessionStore,
+        eventStore: record.eventStore,
+        sessionId,
+        messageId: input.messageId,
+        entityId: input.entityId,
+        pinned: input.pinned,
+        traceId: String(record.traceContext.traceId),
+        onPersistedEvent: (persisted) => context.v4Gateway?.ingest(sessionId, persisted),
+        onLiveProjectionError: (error) =>
+          context.logger?.warn("v4 row pin live projection failed", {
+            error: error instanceof Error ? error.message : String(error),
+            sessionId,
+          }),
+      });
+    },
     setHighspeedMetrics: async (sessionId, input) => {
       const record = context.sessions.get(sessionId);
       const sessionStore = context.deps.sessionStore;
@@ -1221,7 +1489,9 @@ export function createConversationV4Gateway(
       await context.deps.sessionStore.softDeleteSession(sessionId as SessionId);
       const record = context.sessions.get(sessionId);
       if (!record) {
-        // handler 已校验存在性；此处只兜并发竞态（重复删除幂等成功）。
+        context.v4Gateway?.disposeSession(sessionId, { deleted: true });
+        preparedSubmissionMap(context).delete(sessionId);
+        preparedWorktreeMap(context).delete(sessionId);
         return;
       }
       record.unsubscribe?.();
@@ -1234,6 +1504,8 @@ export function createConversationV4Gateway(
       context.v4Gateway?.disposeSession(sessionId, { deleted: true });
       queuedTurnExecutions.delete(sessionId);
       context.sessions.delete(sessionId);
+      preparedSubmissionMap(context).delete(sessionId);
+      preparedWorktreeMap(context).delete(sessionId);
     },
     // createSession 的执行面：record 建立/事件接线/catalog 同步/失败自清理全在旧
     // createSession op 内（半初始化 record 的回收顺序修过 bug，不重复实现）。
@@ -1242,58 +1514,321 @@ export function createConversationV4Gateway(
       sessionId,
       additionalDirectories,
       workspaceId,
+      preparedSessionId,
+      expectedAttemptId,
+      expectedSubmissionId,
+      expectedFirstInputCommandId,
       mcpServers,
+      executionWorktree,
+      incognito,
       offPeakToolEnabled,
       dynamicWorkflowEnabled,
       dynamicWorkflowMode,
       permissionScope,
-    }) => {
-      if (permissionScope && !context.deps.sessionStore)
-        throw new Error("Group task permission scope requires persistence");
-      // workspaceId 双形态（Workspace Identity 约束）：
-      // - 本地工作区 = workspacePath（identity 缺省时的 fallback）；
-      // - 远程 pane（跨 workspace 分屏）= 远程 identity
-      //   （remote:ssh/wsl/docker:...:<path>，UI buildRemoteWorkspaceIdentity 构造）。
-      //   经统一解析工具还原真实 workspacePath 作 workingDirectory——CLI 本就跑在
-      //   远端机器上，path 即本机路径；identity 原样保留进 workspace ref
-      //   （workspaceKey = identity，sessions-index topic / 隔离语义不变）。
-      // shared parser 统一兼容 WSL legacy 与显式 user identity；非远程格式继续按
-      // 本地 workspacePath 处理。
-      const created = await createSessionRecordForV4(context, {
-        sessionId,
-        additionalDirectories,
-        workspace: resolveWorkspaceRefFromId(workspaceId),
-        // 群任务已经由首条真实需求触发，先落盘隔离授权，再开放任务与配置。
-        // 普通 Desktop draft 仍保持 deferred。
-        persistence: "deferred",
-        // MCP 是 runtime 创建期配置；v4 createSession 必须与 legacy
-        // session/create 等价透传，否则创建的 session 永远不会启动这些工具。
-        mcpServers,
-        // Off-Peak 工具面 flag 同为 runtime 创建期配置，必须随 create 进入 record。
-        ...(offPeakToolEnabled === true ? { offPeakToolEnabled: true } : {}),
-        // 动态工作流灰度门同为 runtime 创建期配置：
-        // v4 createSession 必须与 legacy session/create 等价透传，否则无界面创建的会话
-        // 会绕过 Host 的灰度判定，只剩进程级缺省。
-        ...(dynamicWorkflowEnabled === true ? { dynamicWorkflowEnabled: true } : {}),
-        ...(dynamicWorkflowEnabled === true && dynamicWorkflowMode !== undefined
-          ? { dynamicWorkflowMode }
-          : {}),
+    }) =>
+      serializePreparedWorktreeMutation(context, preparedSessionId, async () => {
+        if (permissionScope && !context.deps.sessionStore)
+          throw new Error("Group task permission scope requires persistence");
+        // The profile actually used for this prepared identity. A prepared row starts without one;
+        // the first activation's request freezes it (durable via the row's set-once column,
+        // in-memory via the prepared entry until that write lands).
+        let activationIncognito = incognito;
+        if (preparedSessionId && expectedSubmissionId) {
+          const prepared = await loadPreparedSubmission(context, preparedSessionId);
+          if (!prepared || prepared.submissionId !== expectedSubmissionId || prepared.workspace.workspaceKey !== workspaceId || executionWorktree || expectedAttemptId) {
+            throw new Error("Prepared submission does not match the requested workspace or submission");
+          }
+          if (!incognitoProfilesEqual(prepared.incognito ?? undefined, incognito)) {
+            throw new Error("Prepared submission does not match the frozen incognito profile");
+          }
+          activationIncognito = prepared.incognito ?? undefined;
+          // Identity first: the frozen input's own admitted row is proof of admission even when the
+          // preparation is already marked active (the marker can be set by another window's input).
+          // Checked on a cold process too, so a prior admitted input is never replayed under another id.
+          if (
+            expectedFirstInputCommandId !== undefined &&
+            (await sessionHasAdmittedInput(context, preparedSessionId, expectedFirstInputCommandId))
+          ) {
+            return { sessionId: preparedSessionId, preparedActivation: "input-admitted" };
+          }
+          if (prepared.status === "active") return { sessionId: preparedSessionId, preparedActivation: "already-active" };
+          // Without an identity (first attempt, or a client that sends none) any admitted row decides.
+          if (
+            expectedFirstInputCommandId === undefined &&
+            (await sessionHasAdmittedInput(context, preparedSessionId))
+          ) {
+            return { sessionId: preparedSessionId, preparedActivation: "input-admitted" };
+          }
+          if (context.sessions.has(preparedSessionId)) return { sessionId: preparedSessionId, preparedActivation: "input-pending" };
+        } else if (preparedSessionId) {
+          const prepared = await loadStoredPreparedWorktreeSession(context, preparedSessionId);
+          if (
+            !prepared ||
+            (prepared.status !== "preparing" && prepared.status !== "active") ||
+            (prepared.attemptId && prepared.attemptId !== expectedAttemptId)
+          ) {
+            throw new Error("Prepared worktree session is unavailable");
+          }
+          if (
+            prepared.workspace.workspaceKey !== workspaceId ||
+            !executionWorktree ||
+            executionWorktree.path !== prepared.targetPath ||
+            (executionWorktree.branchName && executionWorktree.branchName !== prepared.branchName)
+          ) {
+            throw new Error("Prepared worktree session does not match the requested workspace");
+          }
+          const storedProfile = (
+            await context.deps.sessionStore?.getSession(preparedSessionId as SessionId)
+          )?.incognito;
+          // Tri-state: a profile, `null` (frozen as a normal session), `undefined` (first use).
+          const frozenChoice = storedProfile !== undefined ? storedProfile : prepared.incognito;
+          if (
+            frozenChoice !== undefined &&
+            // `null` (frozen as a normal session) compares as an absent profile.
+            !incognitoProfilesEqual(frozenChoice ?? undefined, incognito)
+          ) {
+            // Cause: a retry could report success for an incognito request while returning a
+            // normal session (or materialize the retry's profile against a row that keeps the
+            // original). The stored profile is the frozen fact; only an exact match may reuse it.
+            throw new Error(
+              "Prepared worktree session does not match the requested incognito profile",
+            );
+          }
+          if (frozenChoice !== undefined) activationIncognito = frozenChoice ?? undefined;
+          if (prepared.status === "active") {
+            // The durable active entry is the receipt of a completed activation: return the
+            // existing identity without a second runtime, re-applied startup configuration, or a
+            // second first-input admission — including on a cold Host with no live runtime.
+            return { sessionId: preparedSessionId, preparedActivation: "already-active" };
+          }
+          if (context.sessions.has(preparedSessionId)) {
+            // The runtime exists but the durable receipt is not settled. A durable admitted input
+            // row means the frozen input already reached Core (an activation whose completion did
+            // not persist): never re-send it under a new command id. Without such a row the
+            // earlier attempt failed before admission, so exactly one retry may admit it.
+            return {
+              sessionId: preparedSessionId,
+              preparedActivation: (await sessionHasAdmittedInput(context, preparedSessionId))
+                ? "input-admitted"
+                : "input-pending",
+            };
+          }
+          // First materialization freezes the choice for warm-host retries: the row's profile
+          // lands only at first-send persistence, so until then only this stamp holds it
+          // (`null` freezes a normal session just as a profile freezes an incognito one).
+          prepared.incognito = activationIncognito ?? null;
+        }
+        // workspaceId 双形态（Workspace Identity 约束）：
+        // - 本地工作区 = workspacePath（identity 缺省时的 fallback）；
+        // - 远程 pane（跨 workspace 分屏）= 远程 identity
+        //   （remote:ssh/wsl/docker:...:<path>，UI buildRemoteWorkspaceIdentity 构造）。
+        //   经统一解析工具还原真实 workspacePath 作 workingDirectory——CLI 本就跑在
+        //   远端机器上，path 即本机路径；identity 原样保留进 workspace ref
+        //   （workspaceKey = identity，sessions-index topic / 隔离语义不变）。
+        // shared parser 统一兼容 WSL legacy 与显式 user identity；非远程格式继续按
+        // 本地 workspacePath 处理。
+        const created = await createSessionRecordForV4(
+          context,
+          {
+            sessionId,
+            additionalDirectories,
+            workspace: resolveWorkspaceRefFromId(workspaceId),
+            // 群任务已经由首条真实需求触发，先落盘隔离授权，再开放任务与配置。
+            // 普通 Desktop draft 仍保持 deferred。
+            persistence: "deferred",
+            // Execution worktree: the record executes in the linked worktree while session identity
+            // and listing stay under the parent workspace above.
+            ...(executionWorktree ? { executionWorktree } : {}),
+            // The frozen choice of the prepared identity (stored profile when one exists), not
+            // the retry's request — see the compare above.
+            incognito: activationIncognito,
+            // MCP 是 runtime 创建期配置；v4 createSession 必须与 legacy
+            // session/create 等价透传，否则创建的 session 永远不会启动这些工具。
+            mcpServers,
+            // Off-Peak 工具面 flag 同为 runtime 创建期配置，必须随 create 进入 record。
+            ...(offPeakToolEnabled === true ? { offPeakToolEnabled: true } : {}),
+            // 动态工作流灰度门同为 runtime 创建期配置：
+            // v4 createSession 必须与 legacy session/create 等价透传，否则无界面创建的会话
+            // 会绕过 Host 的灰度判定，只剩进程级缺省。
+            ...(dynamicWorkflowEnabled === true ? { dynamicWorkflowEnabled: true } : {}),
+            ...(dynamicWorkflowEnabled === true && dynamicWorkflowMode !== undefined
+              ? { dynamicWorkflowMode }
+              : {}),
+          },
+          preparedSessionId,
+        );
+        if (permissionScope) {
+          const record = context.sessions.get(created.sessionId);
+          if (!record) throw new Error("Group task runtime is unavailable");
+          await record.app.runtime.ensureSessionPersistedForExternalActivity("", {
+            traceContext: record.traceContext,
+          });
+          await context.deps.sessionStore!.updateSession({
+            id: created.sessionId as SessionId,
+            permission: { version: 1, scope: "session", mode: "build" },
+          });
+          await record.app.runtime.setExecutionState({ mode: "build" }, record.traceContext);
+          record.persistence = "immediate";
+        }
+        return {
+          sessionId: created.sessionId,
+          ...(preparedSessionId ? { preparedActivation: "materialized" as const } : {}),
+        };
+      }),
+    prepareSubmissionSession: async ({ workspaceId, sessionId: requestedId, submissionId, incognito }) => {
+      // The submission identity also provides a stable reservation key when the caller has not
+      // supplied a prewarm id. Retrying a lost reservation ACK cannot produce a second row.
+      const sessionId = requestedId ?? submissionId;
+      return serializePreparedWorktreeMutation(context, sessionId, async () => {
+        const store = context.deps.sessionStore;
+        if (!store?.saveSessionEntry) throw new Error("Submission preparation requires session storage");
+        const existing = await loadPreparedSubmission(context, sessionId);
+        if (existing) {
+          if (existing.workspace.workspaceKey !== workspaceId || existing.submissionId !== submissionId || !incognitoProfilesEqual(existing.incognito ?? undefined, incognito)) {
+            throw new Error("Submission reservation identity is already in use");
+          }
+          return { sessionId };
+        }
+        const workspace = resolveWorkspaceRefFromId(workspaceId);
+        const record = context.sessions.get(sessionId);
+        const stored = await store.getSession(sessionId as SessionId);
+        if (stored) throw new Error("Submission reservation cannot overwrite a stored session");
+        if (record) {
+          if (record.persistence !== "deferred" || record.workspace.workspaceKey !== workspaceId || incognito || record.app.runtime.isIncognito() || record.app.runtime.getExecutionWorktree()) {
+            throw new Error("Submission reservation cannot reuse an incompatible prewarm");
+          }
+          await record.app.runtime.ensureSessionPersistedForExternalActivity("", { traceContext: record.traceContext });
+        } else {
+          const now = Date.now();
+          await store.createSession({
+            id: sessionId as SessionId,
+            projectID: projectIdFromDirectory(workspace.workspacePath),
+            workspaceID: workspace.workspaceIdentity as WorkspaceId | undefined,
+            slug: sessionId.toLowerCase(),
+            directory: workspace.workspacePath,
+            path: workspace.workspacePath,
+            title: "New session",
+            titleSource: "default",
+            version: context.deps.version ?? "0.0.0",
+            time: { created: now, updated: now },
+            ...(incognito ? { incognito } : {}),
+          });
+        }
+        const now = Date.now();
+        await persistPreparedSubmission(context, {
+          sessionId: sessionId as SessionId,
+          workspace,
+          submissionId,
+          createdAt: now,
+          updatedAt: now,
+          status: "preparing",
+          incognito: incognito ?? null,
+        }, "preparing");
+        context.v4Gateway?.notifyPreparedSessionChanged(sessionId);
+        return { sessionId };
       });
-      if (permissionScope) {
-        const record = context.sessions.get(created.sessionId);
-        if (!record) throw new Error("Group task runtime is unavailable");
-        await record.app.runtime.ensureSessionPersistedForExternalActivity("", {
-          traceContext: record.traceContext,
-        });
-        await context.deps.sessionStore!.updateSession({
-          id: created.sessionId as SessionId,
-          permission: { version: 1, scope: "session", mode: "build" },
-        });
-        await record.app.runtime.setExecutionState({ mode: "build" }, record.traceContext);
-        record.persistence = "immediate";
-      }
-      return { sessionId: created.sessionId };
     },
+    prepareWorktreeSession: async ({
+      workspaceId,
+      branchName,
+      targetPath,
+      baseBranch,
+      attemptId,
+    }) => {
+      const store = context.deps.sessionStore;
+      if (!store?.saveSessionEntry || !store.deleteEmptySession) {
+        throw new Error("Worktree preparation requires session and session-entry storage");
+      }
+      const workspace = resolveWorkspaceRefFromId(workspaceId);
+      const sessionId = createSessionId();
+      const now = Date.now();
+      await store.createSession({
+        id: sessionId,
+        projectID: projectIdFromDirectory(workspace.workspacePath),
+        workspaceID: workspace.workspaceIdentity as WorkspaceId | undefined,
+        slug: String(sessionId).toLowerCase(),
+        directory: workspace.workspacePath,
+        path: workspace.workspacePath,
+        title: `Worktree ${branchName}`,
+        titleSource: "default",
+        version: context.deps.version ?? "0.0.0",
+        time: { created: now, updated: now },
+      });
+      const prepared = {
+        sessionId,
+        workspace,
+        ...(attemptId ? { attemptId } : {}),
+        branchName,
+        targetPath,
+        ...(baseBranch ? { baseBranch } : {}),
+        createdAt: now,
+        updatedAt: now,
+        status: "preparing" as const,
+      };
+      preparedWorktreeMap(context).set(String(sessionId), prepared);
+      try {
+        await persistPreparedWorktreeStatus(context, prepared, "preparing");
+      } catch (error) {
+        preparedWorktreeMap(context).delete(String(sessionId));
+        try {
+          await store.deleteEmptySession(sessionId);
+        } catch (cleanupError) {
+          context.logger?.warn("Could not remove an empty worktree preparation session", {
+            sessionId: String(sessionId),
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          });
+        }
+        throw error;
+      }
+      context.v4Gateway?.notifyPreparedSessionChanged(String(sessionId));
+      return { sessionId: String(sessionId) };
+    },
+    updateWorktreePreparation: async (sessionId, input) =>
+      serializePreparedWorktreeMutation(context, sessionId, async () => {
+        const prepared = await restorePreparedWorktreeSession(context, sessionId);
+        if (
+          !prepared ||
+          context.sessions.has(sessionId) ||
+          prepared.status === "active" ||
+          (prepared.attemptId && prepared.attemptId !== input.expectedAttemptId)
+        ) {
+          throw new Error("Prepared worktree session is unavailable");
+        }
+        assertWorktreePreparationMutation(prepared, input);
+        await persistPreparedWorktreeStatus(
+          context,
+          prepared,
+          input.status,
+          input.failureMessage,
+          input.worktreePreparation,
+        );
+        context.v4Gateway?.notifyPreparedSessionChanged(sessionId);
+      }),
+    withPreparedWorktreeActivation: <T>(sessionId: string, body: () => Promise<T>) =>
+      serializePreparedWorktreeMutation(context, sessionId, body),
+    completePreparedWorktreeActivation: async (sessionId, frozenSubmissionId) =>
+      serializePreparedWorktreeMutation(context, sessionId, async () => {
+        const submission = await loadPreparedSubmission(context, sessionId);
+        if (frozenSubmissionId !== undefined) {
+          // Only the frozen sendText's own submission: another id (or no submission) is a no-op, so a
+          // worktree preparation is never completed by a sendText.
+          if (!submission || submission.submissionId !== frozenSubmissionId || submission.status !== "preparing") return;
+          await persistPreparedSubmission(context, submission, "active");
+          context.v4Gateway?.notifyPreparedSessionChanged(sessionId);
+          return;
+        }
+        if (submission) {
+          if (submission.status !== "active") {
+            await persistPreparedSubmission(context, submission, "active");
+            context.v4Gateway?.notifyPreparedSessionChanged(sessionId);
+          }
+          return;
+        }
+        const prepared = await loadStoredPreparedWorktreeSession(context, sessionId);
+        if (!prepared || prepared.status !== "preparing") return;
+        await persistPreparedWorktreeStatus(context, prepared, "active");
+        context.v4Gateway?.notifyPreparedSessionChanged(sessionId);
+      }),
     createSelectionSideSession: async (sessionId, options) => {
       const record = context.sessions.get(sessionId);
       if (!record) throw new Error("proto.sessionNotFound");
@@ -1510,6 +2045,19 @@ export function createConversationV4Gateway(
       });
     },
   };
+  const childSessionFactsResolver = createChildSessionFactsResolver({
+    store: () => context.deps.sessionStore,
+    sessions: context.sessions,
+    onRefresh: (parentKeys) => {
+      for (const parentKey of parentKeys) {
+        context.v4Gateway?.publishSessionIndexChildFacts(
+          parentKey,
+          childSessionFactsResolver.resolve(parentKey),
+        );
+      }
+    },
+    logger: context.logger,
+  });
   nativeExecutor = new V4CommandExecutor(coreHost);
   const loadStoredSessionSummaries = async (
     workspaceId: string,
@@ -1566,24 +2114,74 @@ export function createConversationV4Gateway(
         taskTypes: [...TASK_LIST_SESSION_TYPES],
         workspaceID: parsedRemote ? (workspaceId as WorkspaceId) : null,
       });
-      return stored.map((session) => ({
-        sessionId: String(session.id),
-        workspaceId,
-        ...(session.parentID ? { parentSessionId: String(session.parentID) } : {}),
-        title: session.title ?? "",
-        titleSource: normalizeStoredTitleSource(session.titleSource),
-        phase:
-          session.lastOutcome === "error"
-            ? ("error" as const)
-            : session.lastOutcome === "interrupted"
-              ? ("completedInterrupted" as const)
-              : ("completedSuccess" as const),
-        ...(session.lastOutcome ? { lastOutcome: session.lastOutcome } : {}),
-        sessionEnded: true,
-        hasBackgroundWork: false,
-        lastActivityAt: session.time?.updated ?? 0,
-        createdAt: session.time?.created ?? 0,
-      }));
+      const [childCountFacts, childListFacts] = await childSessionFactsResolver.loadStoredFacts(
+        stored.map((session) => session.id),
+      );
+      childSessionFactsResolver.seed(
+        stored.map((session) => session.id),
+        childCountFacts,
+        childListFacts,
+      );
+      childSessionFactsResolver.noteParents(childCountFacts.keys());
+      childSessionFactsResolver.noteParents(childListFacts.keys());
+      return await Promise.all(
+        stored.map(async (session) => {
+          const childCounts = childCountFacts.get(String(session.id));
+          const childList = childListFacts.get(String(session.id)) ?? [];
+          const prepared = await restorePreparedWorktreeSession(context, String(session.id));
+          const submission = await loadPreparedSubmission(context, String(session.id));
+          const isPreparing = Boolean((prepared && prepared.status !== "active") || (submission && submission.status !== "active"));
+          const executionWorktreeMissing = session.executionDirectory
+            ? await isWorktreeDirectoryMissing(session.executionDirectory)
+            : false;
+          return {
+            sessionId: String(session.id),
+            workspaceId,
+            ...(session.parentID ? { parentSessionId: String(session.parentID) } : {}),
+            title:
+              isPreparing && prepared?.branchName
+                ? `Worktree ${prepared.branchName}`
+                : (session.title ?? ""),
+            ...(isPreparing && prepared
+              ? { worktreePreparation: worktreePreparationStateSchema.parse(prepared) }
+              : {}),
+            ...(submission?.status === "preparing" ? { submissionPreparation: {
+              submissionId: submission.submissionId,
+              status: "preparing" as const,
+              createdAt: submission.createdAt,
+              updatedAt: submission.updatedAt,
+            } } : {}),
+            titleSource: normalizeStoredTitleSource(session.titleSource),
+            titleUpdatedAt: session.time?.titleUpdated ?? session.time?.created,
+            phase: isPreparing
+              ? ("draft" as const)
+              : session.lastOutcome === "error"
+                ? ("error" as const)
+                : session.lastOutcome === "interrupted"
+                  ? ("completedInterrupted" as const)
+                  : ("completedSuccess" as const),
+            ...(session.lastOutcome ? { lastOutcome: session.lastOutcome } : {}),
+            sessionEnded: !isPreparing,
+            hasBackgroundWork: false,
+            lastActivityAt: session.time?.updated ?? 0,
+            createdAt: session.time?.created ?? 0,
+            // Execution-worktree sessions keep listing under the parent workspace; the badge and
+            // "open in IDE/folder" consumers need the worktree facts on the cold-seeded row too.
+            ...(session.executionDirectory
+              ? {
+                  executionWorktree: {
+                    path: session.executionDirectory,
+                    ...(session.executionBranch ? { branchName: session.executionBranch } : {}),
+                  },
+                }
+              : {}),
+            ...(childCounts?.sideChats ? { sideChatCount: childCounts.sideChats } : {}),
+            ...(childList.length ? { childSessions: childList.map(toWireChildSession) } : {}),
+            ...(executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
+            ...(session.incognito ? { incognito: true } : {}),
+          };
+        }),
+      );
     } catch (error) {
       context.logger?.warn("sessions-index stored summaries failed", {
         error: error instanceof Error ? error.message : String(error),
@@ -1595,7 +2193,12 @@ export function createConversationV4Gateway(
   };
   return new ConversationV4Gateway({
     cliVersion: context.deps.version,
-    sessionExists: (sessionId) => context.sessions.has(sessionId),
+    sessionExists: (sessionId) =>
+      context.sessions.has(sessionId) || preparedWorktreeMap(context).has(sessionId) || preparedSubmissionMap(context).has(sessionId),
+    restorePreparedSession: async (sessionId) => {
+      await restorePreparedWorktreeSession(context, sessionId);
+      await loadPreparedSubmission(context, sessionId);
+    },
     reconcileSessions: async ({ workspaceId, sessionIds }) => {
       const store = context.deps.sessionStore;
       if (!store) throw new Error("Session store is unavailable");
@@ -1617,6 +2220,7 @@ export function createConversationV4Gateway(
             deleted: session.time.deleted !== undefined,
             title: session.title,
             titleSource: normalizeStoredTitleSource(session.titleSource),
+            titleUpdatedAt: session.time.titleUpdated ?? session.time.created,
             createdAt: session.time.created,
             updatedAt: session.time.updated,
             ...(session.lastOutcome ? { lastOutcome: session.lastOutcome } : {}),
@@ -1718,6 +2322,12 @@ export function createConversationV4Gateway(
     // createSession.config（handler 先应用到 runtime 再种）、历史会话 resume
     // （App 恢复结果可以只有模型身份，不能为了投影而绑定半成品执行模型）。
     getSessionMemoryEnabled: (sessionId) => context.sessions.get(sessionId)?.memoryEnabled,
+    // Stored ACP agent selects (S6): in-memory events are gone after a worker restart.
+    getSessionExternalAgentConfigSeed: (sessionId, providerId) => {
+      const store = context.deps.externalAgentConfig;
+      if (!store) return Promise.resolve(null);
+      return readExternalAgentConfigSeed(store, sessionId, providerId);
+    },
     getSessionConfigSeed: (sessionId) => {
       const record = context.sessions.get(sessionId);
       if (!record) return null;
@@ -1756,34 +2366,99 @@ export function createConversationV4Gateway(
         resolveSessionModelContextWindow(context, record),
       );
     },
-    // ── sessions-index hooks（workspace 分桶 + 冷启动 store 种子）──────────
+    // ── sessions-index hooks (workspace buckets + cold-start store seed) ──────────
     getSessionWorkspaceId: (sessionId) => {
       const record = context.sessions.get(sessionId);
-      return !record || !isTaskListSessionType(record.taskType)
-        ? null
-        : record.workspace.workspaceKey;
+      if (record && isTaskListSessionType(record.taskType)) return record.workspace.workspaceKey;
+      return preparedWorktreeMap(context).get(sessionId)?.workspace.workspaceKey ?? preparedSubmissionMap(context).get(sessionId)?.workspace.workspaceKey ?? null;
+    },
+    getChildSessionParentId: (sessionId) => {
+      const record = context.sessions.get(sessionId);
+      // Sidebar child facts cover side chats only (sidebar-child-conversation-counts §9).
+      if (record?.taskType === "selection_side_chat" && record.parentSessionId) {
+        return String(record.parentSessionId);
+      }
+      return null;
+    },
+    onChildSessionActivity: (parentSessionId) => {
+      // Refreshed persisted totals/list are published by onRefresh.
+      childSessionFactsResolver.invalidate([parentSessionId]);
+      void childSessionFactsResolver.refresh([parentSessionId]);
     },
     getSessionIndexMeta: (sessionId) => {
       const record = context.sessions.get(sessionId);
-      if (!record) return null;
+      if (!record) {
+        const prepared = preparedWorktreeMap(context).get(sessionId) ?? preparedSubmissionMap(context).get(sessionId);
+        return prepared
+          ? { createdAt: prepared.createdAt, lastActivityAt: prepared.updatedAt, ...(prepared.incognito ? { incognito: true } : {}) }
+          : null;
+      }
+      const executionWorktree = record.app.runtime.getExecutionWorktree();
+      // Worktree health at derive time: the runtime fact carries `missing` after the resume
+      // fallback; a statSync (the hook is synchronous) also catches out-of-band deletion between
+      // events so the badge converges on the next fan-out without a resume.
+      const executionWorktreeMissing =
+        executionWorktree != null &&
+        (executionWorktree.missing === true ||
+          isWorktreeDirectoryMissingSync(executionWorktree.path));
       return {
         createdAt: record.createdAt,
         lastActivityAt: record.updatedAt,
         ...(record.lastOutcome ? { lastOutcome: record.lastOutcome } : {}),
         ...(record.parentSessionId ? { parentSessionId: String(record.parentSessionId) } : {}),
+        ...(executionWorktree
+          ? {
+              // Strip the runtime-only `missing` field from the strict nested wire shape.
+              executionWorktree: {
+                path: executionWorktree.path,
+                ...(executionWorktree.branchName
+                  ? { branchName: executionWorktree.branchName }
+                  : {}),
+              },
+            }
+          : {}),
+        ...(executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
+        ...(record.app.runtime.isIncognito() ? { incognito: true } : {}),
+        ...childSessionFactsResolver.resolve(sessionId),
       };
     },
-    listWorkspaceSessionIds: (workspaceId) =>
-      [...context.sessions.values()]
+    getSessionPreparationSeed: (sessionId) => {
+      const prepared = preparedWorktreeMap(context).get(sessionId);
+      if (!prepared || prepared.status === "active") return null;
+      return {
+        branchName: prepared.branchName,
+        targetPath: prepared.targetPath,
+        ...(prepared.baseBranch ? { baseBranch: prepared.baseBranch } : {}),
+        ...(prepared.attemptId ? { attemptId: prepared.attemptId } : {}),
+        status: prepared.status,
+        ...(prepared.failureMessage ? { failureMessage: prepared.failureMessage } : {}),
+      };
+    },
+    getSessionSubmissionPreparationSeed: (sessionId) => {
+      const prepared = preparedSubmissionMap(context).get(sessionId);
+      if (!prepared || prepared.status === "active") return null;
+      return { submissionId: prepared.submissionId, status: "preparing", createdAt: prepared.createdAt, updatedAt: prepared.updatedAt };
+    },
+    listWorkspaceSessionIds: (workspaceId) => [
+      ...[...context.sessions.values()]
         .filter(
           (record) =>
             isTaskListSessionType(record.taskType) && record.workspace.workspaceKey === workspaceId,
         )
         .map((record) => record.app.sessionId),
-    // draft 判定：deferred = 未发首条输入（prompt-turn 首发提升为 immediate）。
-    // 旧 workspace prepare 预建的 deferred 会话不得以「新任务」漏进侧栏列表。
-    isDraftSession: (sessionId) => context.sessions.get(sessionId)?.persistence === "deferred",
-    // ── workspace-config hook（配置目录订阅种子；live session 快路径，避免临时 app）──
+      ...[...preparedWorktreeMap(context).values()]
+        .filter((prepared) => prepared.workspace.workspaceKey === workspaceId)
+        .map((prepared) => String(prepared.sessionId)),
+      ...[...preparedSubmissionMap(context).values()]
+        .filter((prepared) => prepared.workspace.workspaceKey === workspaceId)
+        .map((prepared) => String(prepared.sessionId)),
+    ],
+    // Draft check: deferred means no first input has been sent (the first prompt turn promotes it to immediate).
+    // Deferred sessions pre-created by the old workspace prepare must not appear as "new tasks" in the sidebar.
+    isDraftSession: (sessionId) =>
+      context.sessions.get(sessionId)?.persistence === "deferred" &&
+      !preparedWorktreeMap(context).has(sessionId) && !preparedSubmissionMap(context).has(sessionId),
+    // ── workspace-config hook (seed configuration-directory subscription; live-session fast path, no temporary App) ──
     getWorkspaceConfig: (workspaceId) => buildLiveWorkspaceConfigStateV4(context, workspaceId),
     getStoredSessionSummaries: loadStoredSessionSummaries,
     refreshLegacySessionSummaries: (workspaceId, legacyTaskIds) =>
@@ -1792,10 +2467,34 @@ export function createConversationV4Gateway(
         : null,
     // 回落面已清零（20 命令全部原生）：supports 未命中（未知命令类型）→
     // notImplemented → ACK failed fault.command.notImplemented。
-    executeCommand: (envelope, admission) =>
-      nativeExecutor.supports(envelope.type)
-        ? nativeExecutor.execute(envelope, admission)
-        : Promise.reject(new V4CommandNotImplementedError(envelope.type)),
+    executeCommand: async (envelope, admission) => {
+      if (!nativeExecutor.supports(envelope.type)) throw new V4CommandNotImplementedError(envelope.type);
+      const result = await nativeExecutor.execute(envelope, admission);
+      // Runtime creation alone is not input admission: two-step uploads may still fail or restart.
+      // A sendText that names its submission completes that submission's preparation on a match only
+      // (another id leaves it preparing). A sendText with no field comes from a renderer that predates
+      // the field: it keeps the legacy rule and completes a still-preparing reserved submission
+      // (specs/first-submission-instant-ux.md, "Owner of the frozen input in the bridge").
+      if (envelope.type === "sendText" && envelope.sessionId) {
+        const firstSubmissionId = (envelope.payload as { firstSubmissionId?: unknown })
+          .firstSubmissionId;
+        const namedSubmissionId = typeof firstSubmissionId === "string" ? firstSubmissionId : undefined;
+        const completesPreparation =
+          namedSubmissionId !== undefined ||
+          (await loadPreparedSubmission(context, envelope.sessionId))?.status === "preparing";
+        if (completesPreparation) {
+          try {
+            await coreHost.completePreparedWorktreeActivation?.(envelope.sessionId, namedSubmissionId);
+          } catch (error) {
+            context.logger?.warn("Could not persist admitted submission receipt", {
+              sessionId: envelope.sessionId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      }
+      return result;
+    },
     admitCommandInput: async (envelope, admission) => {
       // 仅隐藏 composer 不能阻止旧 child 标签页续聊。类型准入必须早于
       // ledger/输入历史写入；detached child 没有 record 时只查元数据，不激活第二个 runtime。

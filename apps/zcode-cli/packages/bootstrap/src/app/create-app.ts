@@ -39,7 +39,11 @@ import {
   type ExecutionShellSelection,
   type MessageId,
 } from "@zcode/contracts";
-import { isRemoteWorkspaceIdentity, resolveZCodeRuntimeEnv } from "@zcode/shared";
+import {
+  incognitoExcludes,
+  isRemoteWorkspaceIdentity,
+  resolveZCodeRuntimeEnv,
+} from "@zcode/shared";
 import {
   ZCODE_ATTACHMENT_FAULT_CODES,
   ZCodeAttachmentFaultError,
@@ -61,6 +65,7 @@ import {
   resolveEffectiveConfigResult,
 } from "./app-config-options.js";
 import { getCliStorageRoot, getModelIoDir, projectIdFromDirectory } from "./paths.js";
+import { createSessionLsp, type SessionLsp } from "./lsp-session.js";
 import {
   asInputHistoryStore,
   asLocalSettingStore,
@@ -102,6 +107,8 @@ import {
 import { resolveBuiltInNodeReplMcpServers } from "./built-in-node-repl.js";
 import { resolveZCodeCustomCommandPrompt } from "../custom-command-prompt.js";
 import { resolveZCodeBuiltinPromptCommandInvocation } from "../builtin-prompt-command.js";
+import { loadPersistedSystemPromptOverrides } from "../system-prompt.js";
+import { loadPersistedOutputStyle } from "../output-style.js";
 import { BUILTIN_WORKFLOW_COMMAND_NAME } from "../builtin-workflow-command.js";
 import { collectDisabledPaths } from "../skill-command-overrides.js";
 import {
@@ -168,7 +175,16 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
   const appVersion = options.version ?? "0.0.0";
   const sessionId = options.sessionId ?? createSessionId();
   const traceContext = options.traceContext ?? createRootTraceContext({ sessionId });
-  const workingDirectory = resolve(options.runtimeConfig?.workingDirectory ?? process.cwd());
+  // Execution worktree wins over workingDirectory: the agent executes in the linked worktree while
+  // workspacePath (and the persisted session identity) keep pointing at the parent workspace.
+  // A worktree marked missing (resume fallback after out-of-band deletion) must NOT become the
+  // execution cwd; the session continues in the parent workspace instead.
+  const executionWorktree = options.runtimeConfig?.executionWorktree;
+  const workingDirectory = resolve(
+    (executionWorktree && !executionWorktree.missing ? executionWorktree.path : undefined) ??
+      options.runtimeConfig?.workingDirectory ??
+      process.cwd(),
+  );
   const configResult = resolveEffectiveConfigResult(
     createConfig({
       env: options.env,
@@ -215,6 +231,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
   let nodeReplBrowserBroker: NodeReplBrowserBroker | undefined;
   let ownedNodeReplBrowserBroker: NodeReplBrowserBroker | undefined;
   let providerModelRuntime: ApiProviderModelRuntime | undefined;
+  let sessionLsp: SessionLsp | undefined;
   try {
     const storageRoot = resolvePath(configResult.config.storage.dir);
     const cliStorageRoot = getCliStorageRoot(storageRoot);
@@ -222,11 +239,21 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       cliStorageRoot,
       resolveZCodeRuntimeEnv(options.env ?? process.env) === "development",
     );
-    // 初始化与父轮必须使用同一 Host 来源，避免 CLI storage.dir 的另一份定义在首轮消失。
-    const hostSubagentSnapshot = await options.readSubagentRuntimeConfig?.({
-      signal: new AbortController().signal,
-      traceContext,
-    });
+    // Incognito profile (docs/design/v2/incognito-session.md). Without custom agents every agent
+    // source resolves as the built-in fallback and no per-turn Host read is installed.
+    const incognito = options.runtimeConfig?.incognito;
+    const customAgentsExcluded = incognitoExcludes(incognito, "customAgents");
+    const readSubagentRuntimeConfig = customAgentsExcluded
+      ? undefined
+      : options.readSubagentRuntimeConfig;
+    // Initialization and the parent turn must use the same Host source, preventing a separate
+    // CLI storage.dir definition from disappearing in the first turn.
+    const hostSubagentSnapshot = customAgentsExcluded
+      ? ({ kind: "built-in-fallback" } as const)
+      : await readSubagentRuntimeConfig?.({
+          signal: new AbortController().signal,
+          traceContext,
+        });
     const zcodeSubagentProfileOutcome = hostSubagentSnapshot
       ? subagentProfilesFromSnapshot(hostSubagentSnapshot)
       : await loadZCodeAgentProfiles({
@@ -240,14 +267,17 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       cliStorageRoot,
       configResult,
       env: options.env,
+      incognito,
       logger,
       options,
       startupTimer,
       workingDirectory,
     });
-    // 随 CLI 内置的技能包（dynamic-workflows 等）：不属于任何插件，用户无法停用或卸载。
+    // Skills shipped with the CLI (such as dynamic-workflows): they do not belong to a plugin, so users cannot disable or uninstall them.
     const bundledSkillRoots = resolveBundledSkillRoots({ cliStorageRoot, logger });
-    const pluginTemplates = loadPluginAgentTemplates({ logger, plugins: pluginOutcome.plugins });
+    const pluginTemplates = customAgentsExcluded
+      ? { profiles: [], diagnostics: [] }
+      : loadPluginAgentTemplates({ logger, plugins: pluginOutcome.plugins });
     const pluginSubagentProfiles =
       hostSubagentSnapshot?.kind === "built-in-fallback"
         ? []
@@ -272,16 +302,40 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     const sessionStore =
       options.sessionStore ?? (await openStartupSessionStore(configResult, startupTimer));
     const localSettingStore = asLocalSettingStore(sessionStore);
-    const projectID = projectIdFromDirectory(workingDirectory);
+    // Project-scoped persisted settings (collaboration mode) belong to the session's workspace, not
+    // the execution worktree: worktree sessions must read and write the same mode as sibling
+    // sessions of the parent project. Plain CLI runs have no workspacePath and keep using the cwd.
+    const projectID = projectIdFromDirectory(
+      resolve(options.runtimeConfig?.workspacePath ?? workingDirectory),
+    );
     const persistedMode = options.runtimeConfig?.mode
       ? undefined
       : readProjectPermissionMode(localSettingStore, projectID);
+    // Session-level overrides win; otherwise fall back to the persisted files on disk.
+    // The loader reads the fixed ~/.zcode/system-prompt location (same rule as the global
+    // AGENTS.md), not the redirected storage root, so it stays in sync with the host service.
+    // skipUserConfig also skips operator files (settings.json, prompt overrides), as in createConfig.
+    const persistedSystemPromptOverrides =
+      options.runtimeConfig?.systemPromptOverrides ||
+      options.skipUserConfig ||
+      incognitoExcludes(incognito, "systemPromptOverrides")
+        ? undefined
+        : await loadPersistedSystemPromptOverrides({ env: options.env ?? process.env, logger });
+    // Session-level output style wins; otherwise fall back to the persisted active style on disk.
+    const persistedOutputStyle =
+      options.runtimeConfig?.outputStyle ||
+      options.skipUserConfig ||
+      incognitoExcludes(incognito, "outputStyle")
+        ? undefined
+        : await loadPersistedOutputStyle({ storageRoot, logger });
     let { configuredMcpServers, runtimeConfig, untrustedProjectMcpServers } =
       resolveAppRuntimeConfig({
         cliStorageRoot,
         configResult,
         options,
         persistedMode,
+        persistedSystemPromptOverrides,
+        persistedOutputStyle,
         pluginHooks: pluginOutcome.hooks,
         pluginMcpServers: pluginOutcome.mcpServers,
         builtInMcpServers,
@@ -352,7 +406,10 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         maxOutputBytes: runtimeConfig.hooks?.maxOutputBytes ?? 32_768,
       },
       sessionId,
-      snapshot: configResult.sources.project.workspaceHookSnapshot,
+      // Incognito without hooks never admits workspace hooks, so no trust review or admission runs.
+      snapshot: incognitoExcludes(incognito, "hooks")
+        ? undefined
+        : configResult.sources.project.workspaceHookSnapshot,
       userConfigPath: configResult.sources.user.path,
       workingDirectory,
       ...(options.workspaceHookReviewHost
@@ -444,8 +501,23 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     const ownsExecutionPort = options.executionPort === undefined;
     const pdfDocumentPort =
       options.pdfDocumentPort ?? createPopplerPdfDocumentAdapter({ executionPort });
-    // browser-use 控制端口：仅当宿主（desktop）注入时可用，无本地 fallback（纯 CLI 无浏览器底座）。
+    // browser-use control port: available only when injected by the host (desktop); no local
+    // fallback exists because plain CLI has no browser foundation.
     const fileSystemPort = options.fileSystemPort ?? createNodeFileSystemAdapter();
+    const lspWorkspaceIdentity = options.runtimeConfig?.memory?.workspaceIdentity?.toString();
+    // Remote workspaces are out of scope for V1 (spec 19-lsp.md §4): never start servers for them.
+    sessionLsp = createSessionLsp({
+      hub: options.lspRuntimeHub,
+      servers: isRemoteWorkspaceIdentity(lspWorkspaceIdentity ?? "")
+        ? []
+        : pluginOutcome.lspServers,
+      cliStorageRoot,
+      fileSystemPort,
+      workingDirectory,
+      workspaceIdentity: lspWorkspaceIdentity,
+      env: options.env ?? process.env,
+      logger,
+    });
     const httpClientPort =
       options.httpClientPort ??
       createNodeWebFetchHttpClientAdapter({
@@ -603,6 +675,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     providerModelRuntime = new ApiProviderModelRuntime({
       registry: options.providerRegistry,
       modelAdapter,
+      ...(options.externalAgents ? { externalAgents: options.externalAgents } : {}),
     });
     providerModelRuntime.start();
     // model factory 提前到三条 workflow child 装配线之前构造：script workflow bridge、dwf actor
@@ -802,10 +875,10 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       currentSelection: () => getRuntime().getSessionModelSelection(),
     });
     runtime = new AgentRuntime(sessionId, runtimeConfig, {
-      ...(options.readSubagentRuntimeConfig
+      ...(readSubagentRuntimeConfig
         ? {
             loadAgentDefinitions: async (input) => {
-              const snapshot = await options.readSubagentRuntimeConfig!(input);
+              const snapshot = await readSubagentRuntimeConfig!(input);
               const parsed = subagentProfilesFromSnapshot(snapshot);
               const pluginProfiles =
                 snapshot.kind === "built-in-fallback"
@@ -892,9 +965,11 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       automationPort: options.automationPort,
       offPeakPort: options.offPeakPort,
       topicResourcePort: options.topicResourcePort,
+      ...(sessionLsp.service ? { lsp: sessionLsp.service } : {}),
       appVersion,
       traceContext,
     });
+    sessionLsp.attach(runtime);
     markRuntimeConstructed({
       hasInjectedModelAdapter: options.modelAdapter !== undefined,
       sessionId,
@@ -1012,6 +1087,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     });
 
     const closeSession = sessionFacade.close;
+    const activeSessionLsp = sessionLsp;
     const resolvePromptAttachment = async (input: {
       ref: string;
       mime: string;
@@ -1242,8 +1318,14 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         } finally {
           try {
             providerModelRuntime?.dispose();
+            await activeSessionLsp?.close();
           } finally {
-            await modelTelemetry.shutdown();
+            try {
+              // The resident ACP agent process belongs to this session (specs/acp-agent-runtime.md).
+              await options.externalAgents?.stopSession(sessionId);
+            } finally {
+              await modelTelemetry.shutdown();
+            }
           }
         }
       },
@@ -1415,6 +1497,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     };
   } catch (error) {
     providerModelRuntime?.dispose();
+    void sessionLsp?.close().catch(() => undefined);
     void modelTelemetry.shutdown().catch(() => undefined);
     void ownedNodeReplBrowserBroker?.close();
     startupTimer.fail("ZCode app startup failed", error, {

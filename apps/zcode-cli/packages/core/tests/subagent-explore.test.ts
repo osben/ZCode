@@ -91,7 +91,8 @@ You are powered by the model named anthropic/claude-haiku-4-5-20251001-cc.`;
 
 const exploreSystemMessages = [
   "You are ZCode, an interactive coding agent",
-  // 正文已合并为一段；保留原 prompt、Notes、环境及换行顺序的逐字校验。
+  // The body has been merged into a single segment; this keeps verbatim verification of the original prompt, Notes,
+  // environment, and newline order.
   `\n${exploreAgentPrompt}\n\n${subagentCommonNotes}\n\n${subagentEnvironmentContext}`,
 ];
 
@@ -576,8 +577,9 @@ describe("Explore subagent", () => {
     });
     expect(childObservations[0].factoryInput.providerOptions).toBeUndefined();
     expect(childRequests[0].options?.maxOutputTokens).toBe(32_000);
-    // Explore 工具面：本地搜索/读取工具 + WebSearch client-side wrapper。
-    // provider-visible 顺序由最终输出边界统一排序，本地工具追加在后。
+    // Explore tool surface: local search/read tools + the WebSearch client-side wrapper.
+    // The provider-visible order is sorted uniformly at the final output boundary, with local tools appended at the
+    // end.
     expect(childRequests[0].tools.map((tool: any) => tool.name)).toEqual([
       "Bash",
       "Read",
@@ -606,6 +608,7 @@ describe("Explore subagent", () => {
       "ToolSearch",
       "DeferredToolCall",
       "Bash",
+      "LSP",
       "Read",
       "WebFetch",
       "WebSearch",
@@ -993,14 +996,16 @@ describe("Explore subagent", () => {
     expect(result.response).toBe("parent saw unknown agent type");
   });
 
-  // docs/dynamic-workflow/launch.md「Gray release」：父会话关着灰度时，Agent 工具不能成为
-  // 绕过它的后门；父会话开着（或根本不参与灰度）时子代理照旧拿得到。
+  // docs/dynamic-workflow/launch.md "Gray release": when the parent session has the gray release off, the Agent tool
+  // must not become a backdoor around it; when the parent session has it on (or does not participate in the gray
+  // release at all), subagents keep getting the tools as before.
   //
-  // 这里刻意用**显式声明 tools 的自定义 agent profile**：默认 agent 的子工具面是「父
-  // registry 里现存工具名」的交集，父会话已经被剃过，子代理自然也没有——那条路径挡得住，
-  // 但挡住它的不是灰度门。profile 显式写 `tools: [...]` 时 resolveSubagentToolAllowlist
-  // 走的是另一条分支（request.allowedTools 原样保留，只过 disallow 规则），父 registry
-  // 不再参与。唯一能挡住它的就是子 runtime 自己继承到的 dynamicWorkflowEnabled。
+  // This deliberately uses a **custom agent profile that declares tools explicitly**: the default agent's child tool
+  // surface is the intersection with "tool names present in the parent registry", and the parent session has already
+  // been shaved, so subagents naturally have none — that path is blocked, but what blocks it is not the gray gate.
+  // When a profile explicitly writes `tools: [...]`, resolveSubagentToolAllowlist takes a different branch
+  // (request.allowedTools is kept verbatim, only disallow rules apply) and the parent registry no longer
+  // participates. The only thing that can block it is the dynamicWorkflowEnabled the child runtime itself inherits.
   describe("dynamic-workflow gray gate inheritance into subagent children", () => {
     async function childToolNamesForParent(
       parentConfig: Record<string, unknown>,
@@ -1098,10 +1103,11 @@ describe("Explore subagent", () => {
     it.each([
       { parentConfig: { dynamicWorkflowEnabled: false }, available: false },
       { parentConfig: { dynamicWorkflowEnabled: true }, available: true },
-      // 不参与灰度的父会话（TUI / headless `-p`，DWG-04）：子代理必须保留全部工具。
+      // A parent session not participating in the gray release (TUI / headless `-p`, DWG-04): the subagent must keep
+      // all tools.
       { parentConfig: {}, available: true },
-      // DWG-12：onDemand 父会话未激活时子代理没有工作流工具；父已激活则子出生即有
-      // （launch.md「On demand: activation」Children 段）。
+      // DWG-12: an onDemand parent session that is not activated gives its subagent no workflow tools; an activated
+      // parent gives the child them from birth (launch.md "On demand: activation", Children section).
       {
         parentConfig: { dynamicWorkflowEnabled: true, dynamicWorkflowToolsOnDemand: true },
         available: false,
@@ -1119,7 +1125,8 @@ describe("Explore subagent", () => {
         expect({ name, inParent: parent.includes(name) }).toEqual({ name, inParent: available });
         expect({ name, inChild: child.includes(name) }).toEqual({ name, inChild: available });
       }
-      // 反向断言：profile 里其余工具在三种取值下都照常给到，门只碰工作流那几件。
+      // Reverse assertion: the profile's other tools are handed over as usual under all three settings; the gate only
+      // touches the workflow ones.
       expect(child).toContain("Read");
     });
   });
@@ -1156,8 +1163,9 @@ describe("Explore subagent", () => {
             refreshes.push({
               providerId: input.providerId,
               boundSessionId: sessionId,
-              // 回归守卫：子 runtime 的刷新到这里必须已经是父会话的 sessionId。若派生层漏掉
-              // 改写，子 runtime 会把子会话发给客户端（2026-09-09 挂死事故）。
+              // Regression guard: by the time a child runtime's refresh reaches here, it must already carry the parent
+              // session's sessionId. If the derivation layer misses the rewrite, the child runtime sends the child
+              // session to the client (the 2026-09-09 hang incident).
               routedSessionId: input.sessionId,
             });
             return {
@@ -1229,7 +1237,7 @@ describe("Explore subagent", () => {
     expect(childRequests).toHaveLength(1);
     expect(childSessionId).not.toBe(sessionId);
     expect(childEvents.length).toBeGreaterThan(0);
-    // 三次刷新（父两次 + 子一次）全部以父会话为路由身份到达端口。
+    // All three refreshes (two parent + one child) reach the port with the parent session as the routing identity.
     expect(refreshes).toEqual([
       { providerId: "provider-start-plan", boundSessionId: sessionId, routedSessionId: sessionId },
       { providerId: "provider-start-plan", boundSessionId: sessionId, routedSessionId: sessionId },
@@ -3461,7 +3469,7 @@ describe("Explore subagent", () => {
                       name: "Agent",
                       input: {
                         description: "Check Explore override",
-                        // 修复原因：旧 transcript 可能继续生成调用级 model；Explore 也必须只消费 profile。
+                        // Reason for the fix: old transcripts may keep emitting a call-level model; Explore too must only consume the profile.
                         model: "haiku",
                         prompt: "Check the configured model override.",
                         subagent_type: "Explore",
@@ -3760,7 +3768,8 @@ describe("Explore subagent", () => {
     expect(first.status).toBe("failed");
     const originalTask = await internal.subagentPort.getTask(first.agentId);
     scenario.update(profile("new"));
-    // 保存发生在当前上下文内：同轮 SendMessage 仍使用旧 profile，直到下轮 prepare。
+    // The save happens within the current context: a SendMessage in the same turn still uses the old profile, until
+    // the next turn's prepare.
     await internal.subagentPort.sendMessage({
       ...context,
       to: first.agentId,

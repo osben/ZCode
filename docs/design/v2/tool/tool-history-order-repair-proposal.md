@@ -1,71 +1,84 @@
-# 工具历史顺序修复
+# Tool History Order Repair
 
-2026-09-10，基于 `origin/staging` 的 `fa70e896834a88e17290739c54995437b03aceee`。
-实现范围：现有 ToolPart 写入附带声明序号，provider history hydration 选择每次调用的最新记录，再恢复声明顺序。
+Existing ToolPart writes carry a declaration index; provider history hydration selects the latest record per
+invocation, then restores the declaration order.
 
-## 根因
+## Root cause
 
-`model.ts` 接纳并去重工具声明，live history 按声明顺序提交调用和结果。
-只读工具可以在流结束前执行；SQLite 的 part.sequence 却由第一次写入决定。
-原 hydration 直接使用 SQLite 顺序，导致 resume、edit/rewind、fork 的模型历史与 live 不同。
+`model.ts` accepts and deduplicates tool declarations, and live history submits calls and results in
+declaration order. Read-only tools can execute before the stream ends, and SQLite's `part.sequence` is decided
+by the first write. The old hydration used the SQLite order directly, so model history for resume,
+edit/rewind and fork differed from live.
 
 ```text
-模型声明     Bash(0) ---------> Read(1)
-执行时机     等待 finish         提前执行
-首次落盘     后写 Bash           先写 Read
-live         calls [Bash, Read] -> results [Bash, Read]
-旧 hydrate   calls [Read, Bash] -> results [Read, Bash]
-修复 hydrate calls [Bash, Read] -> results [Bash, Read]
+Model declaration     Bash(0) ---------> Read(1)
+Execution timing      Wait for finish         Pre-execute
+First write           Write Bash later        Write Read first
+live                  calls [Bash, Read] -> results [Bash, Read]
+Old hydrate           calls [Read, Bash] -> results [Read, Bash]
+Fixed hydrate         calls [Bash, Read] -> results [Bash, Read]
 ```
 
-真实 SQLite + 受控 ModelFactory 已在修复前复现倒序：正常完成、工具错误、可恢复断流
-后的冷恢复请求均与 live 不同；纯 hydration 的排序、错误/中断和 fork 测试也先失败。
+## Data and behavior contracts
 
-## 数据与行为契约
+- ToolPart adds an optional top-level `declarationIndex?: number`: the order, starting from 0, of
+  client-executed invocations accepted by the runtime within the same assistant; repeated declarations and
+  providerExecuted calls take no index.
+- The streaming path keeps using the deduplicated `acceptedToolCalls`; normal/recovery paths keep using
+  `coreToolCalls`. The index is written into part.data JSON along with the existing pending, running,
+  completed/error states.
+- The sorting adds no storage reads/writes, moves no write points, and adds no queues, awaits, partID
+  registration, timeouts or catch. `onStreamToolCall` still returns synchronously; pre-execution failures
+  still go through the original catch's stream-end execution.
+- Fallback after a pre-execution failure and synthetic recovery keep the existing new-part behavior, with the
+  same `callID` and `declarationIndex`; failing attempts' partIDs are not registered, passed or reused.
+- Model hydration selects, per `callID` within each assistant, the last newly created part by the original
+  persisted order, without comparing update times or preferring successful states. When the latest part is
+  pending/running it uses the interrupted result; identical callIDs across different messages are not merged.
+- The index is enumerated by the runtime. When all selected parts have indices, sorting applies even with
+  gaps; when some or all are missing, the original relative order of the selected parts is kept. calls and
+  results share the same selection and sort result.
+- SQL sequences, original message.parts, UI transcripts, tool scheduling/permissions/cancellation/results, the
+  V4 protocol and the desktop continuous / mobile replayable boundaries are unchanged.
+- Fork keeps using existing part copying and ID remapping; the numeric index has no cross-message ID
+  references, so no new fork logic is needed.
+- Old versions can ignore this JSON field; an old version rewriting the same part may lose it; new versions
+  follow the old record rules.
 
-- ToolPart 顶层新增可选 `declarationIndex?: number`，含义是同一 assistant 内 runtime
-  接纳的 client-executed 调用顺序，从 0 开始；重复声明、providerExecuted 不占序号。
-- streaming 路径沿用已去重的 `acceptedToolCalls`，普通/恢复路径沿用 `coreToolCalls`。
-  序号随原有 pending、running、completed/error 写入保存到 part.data JSON。
-- 排序逻辑不增加存储读写，不移动写入点，不新增队列、await、partID 登记、超时或 catch。
-  `onStreamToolCall` 仍同步返回；提前执行失败仍由原 catch 回退流结束后的执行。
-- 提前执行异常后的回退及 synthetic recovery 沿用原有新建 part 行为，保留同一
-  `callID` 和 `declarationIndex`；不登记、传递或复用失败尝试的 partID。
-- 模型 hydration 在每个 assistant 内按 `callID` 选择最后新建的 part，依据原始
-  持久化顺序，不比较更新时间，也不优先选择成功状态。最新 part 为 pending/running
-  时沿用 interrupted result；不同消息中相同 callID 不合并。
-- 序号由 runtime 枚举生成，所选 part 全部有序号时排序，允许间隙；全部或部分缺失
-  时保留所选 part 的原始相对顺序。calls/results 共用同一份选择和排序结果。
-- 不改变 SQL sequence、原始 message.parts、UI transcript、工具调度/权限/取消/结果。
-  不改变 V4 protocol、桌面 continuous 和手机 replayable 的边界。
-- fork 沿用已有 part 复制和 ID 重映射；数字序号无跨消息 ID 引用，无需新增 fork 逻辑。
-- 旧版可以忽略该 JSON 字段。旧版重写同一 part 后可能丢字段，新版按旧记录规则兼容。
+Reusing a failing attempt's partID would keep the first insert position, making the same file's
+post-completion fallback read be overwritten by an older Read when file state is restored. So newly created
+parts keep the existing execution record order and only model hydration selection is fixed:
 
-## 验证
+```text
+Original parts: Read A(pending,1) -> Read B(old,2) -> Bash(0) -> Read A(new,1)
+                         |
+         +---------------+------------------+
+         v                                  v
+Model hydrate: latest part by same callID    File state: original order of completed parts
+Sort Bash(0), A(new,1), B(old,2)             B(old) -> A(new), restoring new
+```
 
-- core `tests/tool-history-order.test.ts`：有效排序、legacy/部分缺失、同调用多次尝试、
-  最新成功/失败/未结束状态、消息间隔离、间隙、原数组不变及 fork 的 callID 重映射。
-- core `tests/runtime-streaming-tool-part-identity.test.ts`：回退成功、失败、再次写入失败、
-  synthetic recovery 和迟到 batch start；原始记录可以有多条，模型历史仅有一个调用及结果。
-- bootstrap `tests/tool-fallback-read-state.test.ts`：真实 SQLite 和 Read/Edit handler，
-  同一文件先被另一条 Read 读取，再由 Bash 类工具修改，最后由回退 Read 读取；冷恢复及
-  rewind 后模型历史保持一致，Edit 使用最新已读快照成功执行。
-- bootstrap `tests/tool-history-order.test.ts`：真实 SQLite，read 先写、write 后写；实际
-  live 请求、关闭并重开数据库后的 cold 请求、rewind 后下一请求的 calls/results 完全一致。
-  同时覆盖正常完成、工具错误、断流 synthetic result、pending 慢写/拒绝和 Stop。
-  慢写通过 deferred 控制，证明后续模型事件继续消费；不依赖 sleep 推测竞态。
-- Desktop D19：较早轮完成 Bash→Read，发送后续问题，再编辑最新问题；比较真实 provider
-  tool_use/tool_result。用例位于 manual-review/pending，fixture 为 synthetic，待人工评审。
-- 已通过：新增 20 项回归、原有 hydrator/runtime-tool-loop/session-fork 的 218 项测试、
-  `pnpm typecheck`、`pnpm lint`（43 个既有 warning）、架构检查、contracts/core 类型检查、
-  Desktop E2E 类型检查和 fixture 检查。
-- macOS Electron D19 回放通过（1/1），真实请求命中 `d19-tools`、`d19-followup`、
-  `d19-title`、`d19-later`、`d19-edited`，没有 fixture miss。报告：
-  `packages/desktop/.e2e-artifacts/desktop-e2e-20260910122250619-p1669-f4f6ced2e19e5429/summary.md`。
-  待审用例不计入正式 E2E 覆盖；Windows/Linux、手机远控未运行。
-- 待审 runner 默认 240-token 窗口会触发额外 compact。本例比较未压缩历史，必须使用
-  128000-token 窗口。首次准备因相对 fixture 路径解析失败，第二次因默认小窗口触发
-  未配置的 compact 而失败；下列命令修正准备条件后通过，不涉及产品代码调整。
+## Verification
+
+- core `tests/tool-history-order.test.ts`: valid ordering, legacy/partially missing, multiple attempts for the
+  same call, latest success/failure/incomplete states, cross-message isolation, gaps, unchanged original
+  arrays, and fork callID remapping.
+- core `tests/runtime-streaming-tool-part-identity.test.ts`: fallback success, failure, re-write failure,
+  synthetic recovery and late batch starts; original records may have multiple entries but model history has
+  one invocation and result.
+- bootstrap `tests/tool-fallback-read-state.test.ts`: real SQLite and Read/Edit handlers; a file first read by
+  another Read, then modified by a Bash-like tool, finally read by the fallback Read; cold recovery and rewind
+  keep model history consistent; Edit succeeds using the latest read snapshot.
+- bootstrap `tests/tool-history-order.test.ts`: real SQLite, read written first and write later; the live
+  request, the cold request after closing and re-opening the database, and calls/results after rewind are
+  fully consistent. Covers normal completions, tool errors, stream-loss synthetic results, slow pending/writes
+  and Stop. Slow writes are controlled by deferred, proving later model events keep being consumed; no
+  sleep-dependent race assumptions.
+- Desktop D19: an earlier turn completes Bash->Read, a follow-up is sent, then the latest question is edited;
+  real provider tool_use/tool_result are compared. The case is in manual-review/pending with a synthetic
+  fixture, awaiting manual review, and is not counted as formal E2E coverage; Windows/Linux and mobile remote
+  control were not run. The runner's default 240-token window triggers extra compaction; this case compares
+  uncompressed history and needs the 128000-token window:
 
 ```sh
 ZCODE_E2E_MANUAL_REVIEW=1 \
@@ -76,37 +89,12 @@ E2E_PROVIDER_REPLAY_FIXTURE_PATH="$PWD/packages/desktop/test/e2e/fixtures/upstre
 pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/conversation-session/manual-review/pending/conversation-session-tool-history-order.test.ts
 ```
 
-### 2026-09-11：按调用选择最新尝试
+## Scope limits
 
-- 先写回归再修代码：修改前 25 项定向测试中 19 项失败，包含真实 Read/Edit 在 cold resume
-  和 rewind 后误报 stale；修复后 25 项全部通过。
-- 使用当前 core、SQLite 和文件系统 adapter 源码执行 10 个相关测试文件，共 335 项通过；
-  覆盖模型历史、fallback、断流、取消、fork、文件状态及 UI transcript hydration。
-- macOS Electron D19 synthetic 回放 1/1 通过；runner 重新构建 desktop 和 Agent，继续验证
-  live、后续提问、编辑后请求中的 calls/results 一致。报告：
-  `packages/desktop/.e2e-artifacts/desktop-e2e-20260911095916848-p74882-7ee773cd74562b10/summary.md`。
-- core build、根 typecheck、根 lint、架构检查、Desktop E2E 类型检查和 fixture 检查通过。
-  根 lint 有既有 warning；core 独立 lint 的报错位置/规则与修复前一致，包含原有超长文件。
-  手动严格检查新增/修改测试时，剩余错误仅来自未改动的 `test-runtime-model.ts`、
-  `test-agent-runtime.ts`、`runtime-output-token-continuation-test-helpers.ts`。
-- 未运行 Windows/Linux 和手机远控 E2E；D19 仍为待审用例，本轮不转正。
+This fix only restores tool record order when declaration indices are complete; it cannot reverse-predict old
+data and cannot guarantee that all cache misses disappear. Multiple parts with the same callID are merged only
+in model hydration; database records are not deleted/migrated, and the set of un-persisted invocations at Stop
+is unchanged. File read state and UI keep consuming the original parts.
 
-## 范围限制
-
-该修复只恢复有完整声明序号的工具记录顺序，不能反推旧数据，不能保证所有 cache miss
-消失。同 callID 的多份 part 只在模型 hydration 中合并，不删除/迁移数据库记录，不改变
-Stop 时原来未落库调用的集合。文件读取状态和 UI 继续消费原始 parts。
-回退与断流恢复契约见
-[流式工具执行与恢复](../../../../apps/zcode-cli/docs/design/v2/model/streaming-tool-execution-and-recovery.md)。
-
-复用失败尝试的 partID 会保留首次插入位置，导致同文件后完成的回退读取在恢复文件状态时
-被另一条更旧的 Read 覆盖。因此保留新建 part 的既有执行记录顺序，只修复模型历史的选择：
-
-```text
-原始 parts：Read A(pending,1) -> Read B(old,2) -> Bash(0) -> Read A(new,1)
-                         |
-         +---------------+------------------+
-         v                                  v
-模型 hydrate：同 callID 取最后 part     文件状态：原顺序的 completed parts
-再排序 Bash(0), A(new,1), B(old,2)      B(old) -> A(new)，恢复 new
-```
+See [Streaming Tool Execution and Recovery](../../../../apps/zcode-cli/docs/design/v2/model/streaming-tool-execution-and-recovery.md)
+for fallback and stream-loss recovery contracts.

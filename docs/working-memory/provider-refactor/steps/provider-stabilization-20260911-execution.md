@@ -1,61 +1,94 @@
-# Provider 本轮 19 项执行账本
+# Provider Stabilization: Execution Ledger for This Round's 19 Items
 
-> 2026-09-11 用户授权进入 Goal 执行、逐项 review、最终推送当前分支。基线 `1bc2e9bc42`，分支 `provider-stabilization-20260911`；工作区为独立 worktree。
+> 2026-09-11. The user authorized Goal execution, item-by-item review and a final push of the current branch. Baseline `1bc2e9bc42`, branch `provider-stabilization-20260911`, independent worktree.
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/provider-stabilization-20260911-execution.md`
 
-## 目标、范围与执行约定
+## Goal, Scope and Conventions
 
-完整执行 Todo113 第二轮及 Todo115–132（19 项），以每份 Todo 最新裁决为规格，不能照旧注释恢复已撤销行为。原文“仅落盘／未授权实施”保留为历史，本次统一授权执行；120 仍以签名等价验收为主，发现需修改先给证据，不借此重做签名体系。
+Execute all 19 items (Todo113 round two and Todo115-132), using each Todo's latest decision as the specification (do not
+restore revoked behavior from old comments). The original "only persisted / not authorized for implementation" wording
+is kept as history; this round authorizes execution. Todo120 still focuses on signature-equivalent acceptance: if a
+modification is found, give evidence first and do not redo the signature system.
 
-- 先 spec 和失败测试，再实现。逐项核对全部要求、上下游、Provider/Selection 抽象和数据边界，记录证据后再推进；共享代码交集可同组实现及 review，共享构建、类型检查、lint 与 E2E 合批执行。
-- 单点环境／测试前置问题记录并转做其他独立项。无新增证明价值不重复跑大回归；区分合并/本轮回归、既有产品问题和过时测试，不扩修无关问题。
-- 新产品裁决、显著扩大架构、真实用户数据或新增权限需求只挂起相关事项；其余继续。未解决的关键要求不得写成完成，不能用转交旧欠测 Todo102 绕过本轮验收。
-- 内置账号不可禁用，模板创建的手动 Key 实例可启停；资格仍由公共事实判断。埋点侧最大努力恢复旧口径，报表/实际身份不动。
-- 旧字段和内容保留；回滚或再升级可丢模型选择但内容可读、不得因新字段缺失异常。首次迁移不覆盖已迁移个人意图；0020 checksum 不改。
-- 一个配置事实源、一个正式执行链；已绑定 Model 冻结，不代写草稿/历史、不偷偷替换模型。桌面 continuous、手机 replayable/shared-host 和 workspace 身份隔离保持。
-- 最终整体交集复审、关键回归及提交完成后推送当前分支，不自动发线上配置、不自动建 MR，不推其他工作者分支。
+1. Spec and failing tests first, then implementation. Check requirements, upstream/downstream, Provider/Selection
+   abstractions and data boundaries per item and record evidence before proceeding; items with shared code may be
+   implemented and reviewed in one group, with shared build/typecheck/lint/E2E run in batches.
+2. Record single-point environment/test pre-existing issues and move them to independent items; do not rerun large
+   regressions without added proof value; distinguish merge/this-round regressions, existing product issues and
+   outdated tests; do not fix unrelated issues.
+3. A new product decision, significantly expanded architecture, real user data or a new permission request suspends only
+   the related matter. Unresolved key requirements are never written as completed; previously unverified Todo102 cannot
+   bypass this round's acceptance.
+4. Built-in accounts cannot be disabled; manual-Key instances created from a template can be enabled or disabled;
+   qualification is still judged by public facts. Telemetry restores the old caliber as far as possible; reports and
+   actual identity are unchanged.
+5. Old fields and content are retained; rollback or re-upgrade may discard model selection but content stays readable
+   and must not break on missing new fields. First migration never overwrites already-migrated personal intent; the 0020
+   checksum is unchanged.
+6. One config fact source, one formal execution chain; a bound Model is frozen; drafts/history are not written; no
+   secret model replacement. Desktop continuous, mobile replayable/shared-host and workspace identity isolation stay.
+7. The final intersection review, key regressions and commit are pushed to the current branch; no automatic online
+   config release, no automatic MR, no push of other workers' branches.
 
-## 批次与状态
+## Items and Outcome
 
-**最终汇总（覆盖下表实施过程中的“待整批验收”）：19 项均已实现或完成原有实现的核验，并逐项复审；整批本地测试、构建与交集复审完成。2026-09-12 Pro 补齐真实 Electron 冷恢复、设置保存／恢复和中文显示验证，手机／SSH 等剩余验收仍如实保留，不能宣布全端验收通过。** 交付明细、提交对应及限制见 [最终复审](./provider-stabilization-20260911-final-review.md)。下表保留各项局部证据，不把环境受阻改写为产品通过。
+All 19 items were implemented, or the original implementation was verified and reviewed item by item; batch-local
+tests, build and intersection review are done. The 2026-09-12 Pro supplement added real Electron cold recovery,
+settings save/recovery and Chinese display verification; remaining mobile/SSH acceptance stays unclaimed, so full-end
+acceptance is not announced. Delivery details, commits and limitations: [Final Review](./provider-stabilization-20260911-final-review.md).
 
-| Todo | 主题                              | 实现 / 验证 / Review                                                                          |
-| ---- | --------------------------------- | --------------------------------------------------------------------------------------------- |
-| 118  | 首次迁移手动 Provider 启停        | 实现、测试及与 117 联合 review 通过；整批最终验收待执行                                       |
-| 121  | 补回 Session 思考档位             | 实现、正式迁移/Reader 测试、局部 review 通过；整批最终验收待执行                              |
-| 117  | 账号域、套餐选择、取消账号禁用    | 实现、503 项合批单测、4 项浏览器用例及 review 通过；真实多端链路未测                          |
-| 115  | Provider 标题栏及热区             | 实现、109 项合批单测、6 项浏览器及局部 review 通过；最终整批验收待执行                        |
-| 132  | 名称确认保存与选项底色            | 实现、合批单测/浏览器及截图复审通过；最终整批验收待执行                                       |
-| 119  | 连接测试绿色及名称                | 实现、单测/浏览器与局部 review 通过；整批验收待执行                                           |
-| 124  | 禁用测试入口与提示                | 实现、单测/浏览器与局部 review 通过；整批验收待执行                                           |
-| 116  | 单 Key URL 完整验收               | 全链路复审、49项单测、合批浏览器及 Pro 原生打开通过；真实手机登录控制台未测 |
-| 130  | 手动字段契约                      | 实现、498 项合批单测、真实 Repository 往返、2 项浏览器及局部 review 通过；最终整批验收待执行  |
-| 131  | 智能位置与恢复                    | 实现、原子恢复/旧请求失效浏览器、单测与局部 review 通过；Electron 文件交互最终合批验收待执行  |
-| 125  | 问号说明                          | 9处定稿实现、双尺寸帮助交互/几何与局部 review 通过；Linux中文字形验收限制保留                 |
-| 126  | GLM 视觉标、Flash PDF、Turbo 默认 | 实现、96 项单测、2 项双入口浏览器和局部 review 通过；未线上发布                               |
-| 113  | 第二轮目录及智能配置              | 研究、已核实目录/规则/SDK实现及局部review通过；最终合批验收进行中，未确认供给保留限制         |
-| 128  | 生命周期与闲时资格                | 实现、80项定向测试/1项真实Hook浏览器及局部review通过；Air真实Team验收待整批完成               |
-| 127  | Built-in 在线发布链               | 下载/Account/生命周期、Pro 设置刷新→新请求整链、macOS HTTP/双进程及最终 revision22 完整性通过；手机／SSH与线上发布限制保留 |
-| 129  | Team 分类及旧埋点 ID              | 实现、229项合批单测/真实首页组件浏览器及局部review通过；真实端待最终合批                      |
-| 122  | Subagent 错误详情                 | 实现、84 项 Core 测试、2 项详情/复制浏览器及局部 review 通过；不包含未定位的启动根因          |
-| 123  | 历史容量查询                      | 实现及复审通过；12 项新增测试、整批门禁、Pro Electron CW01–CW06 通过；5 项基线同失败另记      |
-| 120  | 官方 URL 签名等价验收             | 32组成对/147项合批测试与review通过；两家官方各两入口真实带Sig/200/文本；Air远程独立包限制保留 |
+| Todo | Topic                                                         | Implementation / verification / review                                                                                                                                                |
+| ---- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 118  | First-migration manual Provider enable/disable                | Implementation, test and joint review with 117 passed                                                                                                                                 |
+| 121  | Supplement Session reasoning tier                             | Implementation, formal migration/Reader test passed                                                                                                                                   |
+| 117  | Account domain, plan selection, disabled-account cancellation | Implementation, 503 batch unit tests, 4 browser cases, review passed; real multi-end chain untested                                                                                   |
+| 115  | Provider title bar and hit area                               | 109 batch unit tests, 6 browser cases passed                                                                                                                                          |
+| 132  | Name confirmation save and option background color            | Batch unit test/browser and screenshot review passed                                                                                                                                  |
+| 119  | Connectivity test green feedback and name                     | Unit test/browser passed                                                                                                                                                              |
+| 124  | Disabled test entry and prompt                                | Unit test/browser passed                                                                                                                                                              |
+| 116  | Single Key URL full acceptance                                | Full-chain review, 49 unit tests, batch browser and Pro native open passed; real mobile login console untested                                                                        |
+| 130  | Manual field contract                                         | 498 batch unit tests, real Repository round-trip, 2 browser cases passed                                                                                                              |
+| 131  | Smart placement and recovery                                  | Atomic recovery/old-request-failure browser, unit test passed; Electron file interaction later supplemented on Pro                                                                    |
+| 125  | Question-mark description                                     | 9-item final implementation, dual-size help interaction/geometry passed; Linux Chinese-character limitation kept                                                                      |
+| 126  | GLM vision badge, Flash PDF, Turbo default                    | 96 unit tests, 2 dual-entry browser cases passed; not yet published online                                                                                                            |
+| 113  | Round two directory and smart configuration                   | Research, verified directory/rules/SDK implementation passed; unconfirmed supply limitation kept                                                                                      |
+| 128  | Lifecycle and idle qualification                              | 80 targeted tests, 1 real Hook browser case passed; Air real-team acceptance pending                                                                                                  |
+| 127  | Built-in online release chain                                 | Download/Account/lifecycle, Pro settings refresh -> new request full chain, macOS HTTP/dual-process, final revision22 integrity passed; mobile/SSH and online release limitation kept |
+| 129  | Team classification and old telemetry ID                      | 229 batch unit tests, real home-page component browser case passed                                                                                                                    |
+| 122  | Subagent error details                                        | 84 Core tests, 2 detail/copy browser cases passed; the unlocated startup root cause is excluded                                                                                       |
+| 123  | History capacity query                                        | 12 new tests, batch gate, Pro Electron CW01-CW06 passed; 5 baseline failures recorded separately                                                                                      |
+| 120  | Official URL signature-equivalent acceptance                  | 32 paired / 147 batch tests passed; both official services each have two entries' real Sig/200/text; Air remote independent package limitation kept                                   |
 
-## 验证与限制
+## Verification Notes
 
-开工 freshness 通过；无上游跟踪分支（最终 push 设置 upstream）。架构初始检查 0 violations。Services 为 unmanaged 模块、无生成的直接依赖契约；首项保持既有迁移入口，不新增跨层依赖。
+- Opening freshness passed; no upstream tracking branch (the final push sets it). Initial architecture check: 0
+  violations. Services is an unmanaged module with a generated direct-dependency contract; the first item keeps the
+  existing migration entry and adds no cross-layer dependency.
+- Credentials are never written to documents, printed or committed; real user files are not modified; other working
+  trees unchanged.
 
-开工时尚无产品修改；后续每组在下方追加失败测试、修复后结果、审查结论和提交。凭据不写文档、不打印、不提交；真实用户文件不改。其他工作区不动。
+### Todo118: first migration
 
-## Todo118 首次迁移（实现批次）
+Expanded real old file -> import -> Repository -> Resolver -> save-reopen cases; outer false/true, the zcode.enabled
+conflict, extension false and default are verified separately (before the fix, explicit enable/disable was lost in
+the new rule: 3 distinguishing failures; also corrected a test that accessed the non-existent
+`ResolvedProvider.executable` since execution qualification should check the model and the actual Registry member).
+The implementation copies only the explicit `enabled` to the outer layer of the Provider rule in the custom branch (the
+default is not materialized); old built-in API migrates only the Key, account identity skips, and model/Key/order/
+context are unchanged; the runtime Resolver and normal reading are not modified. 3 migration files / 20 tests pass
+including a real temp-directory round-trip; old `config.json` stays byte-identical, post-upgrade enable/disable edits
+persist and are not imported again. Account disable cancellation is jointly accepted with Todo117; type/lint and
+negative qualification examples were consolidated in the batch gate.
 
-- 先扩展真实旧文件 → 导入 → Repository → Resolver → 保存后重新打开的用例，外层 false/true 与 zcode.enabled 冲突、扩展 false、缺省分别验证。修复前显式启停均在新规则中丢失（3 个区分性失败）；另纠正测试错误访问不存在的 ResolvedProvider.executable，执行资格应检查模型及实际 Registry 成员。
-- 实现只在自定义分支向 Provider 规则外层复制明确 enabled，缺省不物化；旧内置 API 只迁 Key、账号身份跳过、模型/Key/顺序/context 原值不变。未修改运行时 Resolver 或正常读取。
-- 三个迁移文件 20 tests 通过；包含真实临时目录往返，旧 config.json 字节不变、升级后主动反转启停保持且不再次导入。并非仅 mock 导入输出。
-- 局部 review：配置位置、false 保留、缺省默认、内置身份优先与新文件权威满足。账号不可禁用由 Todo117 联合验收，故本项不提前标全量完成；类型/lint 和补充资格负例在批量门禁收口。
+### Todo121: append migration and first gates
 
-## Todo121 追加迁移与第一组门禁
-
-- 0022 已追加；19 个失败用例先红，再与旧全库迁移及 GLM 迁移合跑，29 项通过。未改 0020/0021，也未改数据库表/列结构。
-- 正式 runner 及 Reader 证明两种升级路径、保守跳过、原内容/时间保持、失败回滚与不重跑。局部 review 通过，详见 Todo121 实施节。
-- 根 typecheck 通过；根 lint 0 errors / 41 warnings；Adapter typecheck 通过；架构 0 violations。Adapter 全量 lint **未通过**：现有多处 max-lines 错误（包括原本已超限的 migrations.ts，本轮仅追加注册项）；新增 0022 文件单独 lint 通过。不扩修无关超长文件，最终门禁仍须区分既有错误与新增问题。日志 `/tmp/provider-stabilization-20260911-{typecheck,lint,adapters-typecheck,adapters-lint}.log`。此前误用不存在的架构模块名 cli-adapters 已纠正为实际 zcode-cli，未修改策略或基线。
-- 继续执行 Todo117；批量门禁不是 19 项完成声明。
+Migration 0022 was appended (19 failing cases red first, then green with the old full-library migration and the GLM
+migration; 29 tests pass); 0020/0021 and table/column structure are untouched. The formal runner and Reader prove the
+two upgrade paths, conservative skip, original content/time retention, failure rollback and no re-run. Root typecheck
+passed; root lint 0 errors / 41 warnings; Adapter typecheck passed; architecture 0 violations. Full Adapter lint did
+**not** pass (multiple max-lines errors including `migrations.ts`, which already exceeded the limit before; only the
+registration item was appended; the new 0022 file passes individual lint); unrelated long files were not expanded and
+the final gate must distinguish existing errors from new ones. Logs:
+`/tmp/provider-stabilization-20260911-{typecheck,lint,adapters-typecheck,adapters-lint}.log`. An earlier wrong
+architecture module name `cli-adapters` was corrected to the actual `zcode-cli` (no policy or baseline change).

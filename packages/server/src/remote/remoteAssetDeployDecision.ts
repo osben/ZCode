@@ -309,8 +309,8 @@ async function resolveComponentManifest(
     );
   } catch (error) {
     loggers.logWarn(`[remote-assets] component manifest request failed: ${String(error)}`);
-    // version resolver 与 pinned identity 共享同一 manifest deadline。
-    // 网络/响应体失败时不得降级成 null，否则持锁路径会再发起默认 10s 请求。
+    // The version resolver and pinned identity share the same manifest deadline.
+    // Do not fall back to null on network/response-body failure, or the lock-held path will issue another request with the default 10-second timeout.
     throw error;
   }
 }

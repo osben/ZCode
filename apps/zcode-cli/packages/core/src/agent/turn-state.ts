@@ -150,7 +150,7 @@ export type PermissionDecision = "allow" | "deny" | "escalate" | "modify";
 
 export type TurnResultType =
   | "success"
-  // "cancelled": 用户主动中断（TurnCancelled）属于正常结束，复用 TurnComplete 上报而非 TurnError。
+  // "cancelled": user-initiated interruption (TurnCancelled) is a normal end; report it through TurnComplete, not TurnError.
   | "cancelled"
   | "error_max_turns"
   | "error_max_budget"
@@ -167,11 +167,11 @@ export interface TurnAttachment {
   type: "file" | "image" | "video" | "pdf" | "url";
   path?: string;
   content?: string;
-  /** clipboard-text 是 UI 长粘贴落盘生成的临时附件，模型请求中只保留路径引用。 */
+  /** clipboard-text is a temporary attachment created by persisting a long UI paste; model requests keep only its path reference. */
   sourceKind?: "clipboard-text" | "topic-history";
   messageCount?: number;
-  // 展示元信息（协议边界保真透传，TurnStarted 事件/v4 投影展示用；
-  // 缺省时由 basename/扩展名推断兜底）。不参与内容解析。
+  // Display metadata passed through the protocol boundary unchanged for TurnStarted events/v4 projection;
+  // if absent, fall back to inferring it from basename/extension. It is not used to parse content.
   filename?: string;
   mimeType?: string;
   sizeBytes?: number;

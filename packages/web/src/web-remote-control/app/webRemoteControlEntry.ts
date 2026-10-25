@@ -9,6 +9,7 @@ import { parseWebRemoteControlExternalQrParams } from "@zcode/shared";
 import { WebRemoteControlV2ConnectionError } from "@zcode/shared/web-remote-relay";
 import type { WebOAuthProviderId } from "#src/auth/browserOAuthCredentialRepo.js";
 import { groupWebRemoteControlDevices } from "#src/web-remote-control/domain/webRemoteControlDeviceGroups.js";
+import { resolveWebRemoteControlRepairNotice } from "#src/web-remote-control/domain/webRemoteControlRepairNotice.js";
 import {
   readKnownDevices,
   rememberKnownDevices,
@@ -18,7 +19,7 @@ export function isWebRemoteControlOAuthCallback(url: URL): boolean {
   return (
     ["/remote/v4", "/remote/v4/"].includes(url.pathname) &&
     url.searchParams.has("state") &&
-    // BigModel 使用 authCode；必须先进入既有回调校验，不能落回未登录门禁。
+    // BigModel uses authCode; it must first go through the existing callback validation and must not fall back to the logged-out gate.
     (url.searchParams.has("code") ||
       url.searchParams.has("authCode") ||
       url.searchParams.has("error"))
@@ -29,9 +30,9 @@ const LAST_DEVICE_KEY = "zcode-web-remote-last-device-sid";
 const LAST_DEVICE_MID_KEY = "zcode-web-remote-last-device-mid";
 
 /**
- * 最近设备的自动落点：最近 SID 在线优先；否则同一台电脑（最近 MID）恰好一个在线 SID 时接上它。
- * 桌面重新注册会换 SID 并尽力删除旧 SID，因此最近 MID 缺失时只能从列表里旧 SID 的离线记录取。
- * 同 MID 多个在线 SID 时不猜测目标，交给用户在列表中选择。
+ * Auto-landing for recent devices: an online recent SID wins; otherwise, when exactly one SID on the same computer (recent MID) is online, connect to it.
+ * Desktop re-registration issues a new SID and makes a best-effort attempt to delete the old one, so when the recent MID is missing, only the offline record of the old SID in the list can be used.
+ * When the same MID has multiple online SIDs, the target is not guessed; the user chooses from the list.
  */
 function resolveAutoConnectSid(
   records: readonly WebRemoteControlRelayV2Device[],
@@ -47,9 +48,11 @@ function resolveAutoConnectSid(
   return connections.length === 1 ? connections[0]?.device_sid : undefined;
 }
 
-/** 只负责连接前的 admission；配对后的 workspace/恢复仍归既有 bootstrap。 */
+/** Only handles admission before connecting; workspace/recovery after pairing still belongs to the existing bootstrap. */
 export class WebRemoteControlEntry {
   private scope = new AbortController();
+  /** Relay JWT from a device-key pairing code. Memory only: a reload requires a fresh QR. */
+  private pairedJwt: string | undefined;
   private list:
     | {
         view: WebRemoteControlDeviceListView;
@@ -81,7 +84,37 @@ export class WebRemoteControlEntry {
       this.options.onView({ kind: "callback" });
       return;
     }
-    if (!this.options.auth.getZCodeJwtToken()) {
+    // V1 links carry `hash`/`t` and V2 rejects them; tell the user to re-pair instead of a generic failure.
+    if (url.searchParams.has("hash") || url.searchParams.has("t")) {
+      this.options.onView({
+        kind: "repair-needed",
+        message:
+          this.options.repairNotice ?? resolveWebRemoteControlRepairNotice(this.options.locale),
+      });
+      return;
+    }
+    // `pk` travels in the fragment (never sent to the web host); QR codes from older Desktops put it in the query.
+    const fragmentParams = new URLSearchParams(url.hash.replace(/^#/, ""));
+    const pairingCode = (fragmentParams.get("pk") ?? url.searchParams.get("pk"))?.trim();
+    if (fragmentParams.has("pk") || url.searchParams.has("pk")) {
+      // The pairing code is a credential: take it out of the address bar and history before anything else.
+      fragmentParams.delete("pk");
+      url.searchParams.delete("pk");
+      url.hash = fragmentParams.toString();
+      this.options.replaceHref(url.href);
+    }
+    if (!this.options.auth.getZCodeJwtToken() && pairingCode && this.options.pairing) {
+      try {
+        this.pairedJwt = await this.options.pairing.exchange(pairingCode, this.scope.signal);
+      } catch {
+        if (this.scope.signal.aborted) return;
+        // A spent or expired code cannot be retried; the phone has to scan a fresh QR.
+        this.options.onView({ kind: "failure", failure: { reason: "session-expired" } });
+        return;
+      }
+      if (this.scope.signal.aborted) return;
+    }
+    if (!this.bearer()) {
       this.options.onView({ kind: "login" });
       return;
     }
@@ -97,6 +130,11 @@ export class WebRemoteControlEntry {
     this.connect({ ...params, deviceSid: params.deviceSid });
   }
 
+  /** The z.ai login JWT when present, otherwise the relay JWT obtained from a pairing code. */
+  private bearer(): string | null {
+    return this.options.auth.getZCodeJwtToken() ?? this.pairedJwt ?? null;
+  }
+
   private async openDevices(autoConnect: boolean): Promise<void> {
     this.reset();
     let lastSid: string | null = null;
@@ -107,7 +145,7 @@ export class WebRemoteControlEntry {
         lastMid = this.options.storage.getItem(LAST_DEVICE_MID_KEY);
       }
     } catch {
-      // iOS 私密模式等环境可能禁用存储；最近设备只是偏好，不阻断入口。
+      // Environments such as iOS private mode may disable storage; recent devices are only a preference and do not block entry.
     }
     const account = this.options.auth.getActiveAccount() ?? undefined;
     this.list = {
@@ -131,7 +169,7 @@ export class WebRemoteControlEntry {
     const list = this.list;
     if (!list) return;
     if (list.request) return list.request;
-    const jwt = this.options.auth.getZCodeJwtToken();
+    const jwt = this.bearer();
     if (!jwt) return this.switchAccount();
     if (list.acceptedJwt && list.acceptedJwt !== jwt) return this.start();
     const { signal } = this.scope;
@@ -141,23 +179,23 @@ export class WebRemoteControlEntry {
       try {
         const devices = await this.options.devices(jwt, signal);
         if (signal.aborted) return;
-        // 账号变更后的响应不能为新账号提供设备或自动连接依据。
-        if (this.options.auth.getZCodeJwtToken() !== jwt) return this.start();
+        // Responses received after an account change must not provide device or auto-connect basis for the new account.
+        if (this.bearer() !== jwt) return this.start();
         list.acceptedJwt = jwt;
-        // 先读缓存补全离线记录的名字/平台，再把本次在线记录写回；它们只是展示偏好，不进入 admission。
+        // First read the cache to fill in names/platforms for offline records, then write back this online record; they are display preferences only and do not enter admission.
         const knownDevices = readKnownDevices(this.options.storage);
         const groups = groupWebRemoteControlDevices(devices, this.options.locale, knownDevices);
         rememberKnownDevices(this.options.storage, knownDevices, groups);
         list.view = { ...list.view, devices: groups, loading: false, error: false };
         const autoSid = resolveAutoConnectSid(devices, groups, list.lastSid, list.lastMid);
-        // 自动落点只消费首次成功的列表；后续刷新不能打断用户选择。
+        // Auto-landing only consumes the first successful list; later refreshes must not interrupt the user's selection.
         list.lastSid = null;
         list.lastMid = null;
         if (autoSid) this.selectDevice(autoSid);
         else this.options.onView(list.view);
       } catch (error) {
         if (signal.aborted) return;
-        if (this.options.auth.getZCodeJwtToken() !== jwt) return this.start();
+        if (this.bearer() !== jwt) return this.start();
         if (
           error instanceof WebRemoteControlV2ConnectionError &&
           error.reason === "auth-required"
@@ -176,7 +214,7 @@ export class WebRemoteControlEntry {
 
   selectDevice(sid: string): void {
     if (!this.list || this.list.view.loading || this.list.view.error) return;
-    if (this.list.acceptedJwt !== this.options.auth.getZCodeJwtToken()) {
+    if (this.list.acceptedJwt !== this.bearer()) {
       void this.start();
       return;
     }
@@ -213,7 +251,7 @@ export class WebRemoteControlEntry {
       this.options.storage.setItem(LAST_DEVICE_KEY, sid);
       if (mid) this.options.storage.setItem(LAST_DEVICE_MID_KEY, mid);
     } catch {
-      // 偏好持久化失败不影响连接，也不修改按 SID 隔离的业务状态。
+      // A failure to persist preferences does not affect the connection and does not modify business state isolated by SID.
     }
   }
 
@@ -224,7 +262,7 @@ export class WebRemoteControlEntry {
       params,
       signal,
       getToken: (tokenSignal) => {
-        const jwt = this.options.auth.getZCodeJwtToken();
+        const jwt = this.bearer();
         if (!jwt) return Promise.reject(new WebRemoteControlV2ConnectionError("auth-required"));
         return this.options.token(jwt, tokenSignal);
       },
@@ -233,7 +271,15 @@ export class WebRemoteControlEntry {
       },
       onFailure: (failure) => {
         if (signal.aborted) return;
-        if (failure.reason === "auth-required") void this.switchAccount();
+        if (
+          failure.reason === "auth-required" &&
+          this.pairedJwt &&
+          !this.options.auth.getZCodeJwtToken()
+        ) {
+          // A paired relay JWT cannot be renewed with the spent code; ask for a new QR instead of the login page.
+          this.pairedJwt = undefined;
+          this.options.onView({ kind: "failure", failure: { reason: "session-expired" } });
+        } else if (failure.reason === "auth-required") void this.switchAccount();
         else this.options.onView({ kind: "failure", failure });
       },
     });
@@ -250,6 +296,11 @@ export class WebRemoteControlEntry {
   async switchAccount(): Promise<void> {
     this.reset();
     const { signal } = this.scope;
+    if (this.pairedJwt && !this.options.auth.getZCodeJwtToken()) {
+      this.pairedJwt = undefined;
+      this.options.onView({ kind: "failure", failure: { reason: "session-expired" } });
+      return;
+    }
     await this.options.auth.logout();
     if (!signal.aborted) this.options.onView({ kind: "login" });
   }

@@ -36,7 +36,7 @@ interface BigModelCustomerInfo {
   avatar?: unknown;
 }
 
-/** OAuth 启动恢复允许的最长等待时间（1 分钟） */
+/** Maximum wait allowed for OAuth startup restoration (1 minute). */
 const OAUTH_USERINFO_TIMEOUT_MS = 60_000;
 const log = createServiceLogger("bigmodelOAuth");
 
@@ -49,7 +49,7 @@ function maskOAuthCode(code: string): string {
 }
 
 function readOptionalString(value: unknown): string | undefined {
-  // BigModel userinfo 是远端运行时数据，异常类型不能参与 trim 或持久化为展示字段。
+  // BigModel userinfo is remote runtime data; an exception value must not be trimmed or persisted as a display field.
   return typeof value === "string" ? value : undefined;
 }
 
@@ -63,7 +63,7 @@ function resolveBigModelDisplayName(customer: BigModelCustomerInfo): string {
   return customerName || nickName || "user";
 }
 
-/** BigModel OAuth 协议适配器 */
+/** BigModel OAuth protocol adapter. */
 export class BigModelProviderAdapter implements OAuthProviderAdapter {
   readonly providerId = BIGMODEL_PROVIDER_ID;
   readonly meta: OAuthProviderMeta;
@@ -85,14 +85,14 @@ export class BigModelProviderAdapter implements OAuthProviderAdapter {
   }
 
   async normalizePolledTokenSet(tokenSet: OAuthTokenSet): Promise<OAuthTokenSet> {
-    // polling ready 已返回 BigModel 业务 token；不走 Z.AI 的二次业务 token 兑换。
+    // polling ready already returned the BigModel business token; do not perform Z.AI's second business-token exchange.
     return tokenSet;
   }
 
   parseCallbackParams(url: string): OAuthCallbackParams {
     const parsed = new URL(url);
-    // BigModel 线上回调历史上用 authCode，新版可能回落为 code。
-    // 这里同时兼容两个字段，避免控制台切换参数名时客户端直接登录失败。
+    // BigModel production callbacks historically used authCode; newer versions may fall back to code.
+    // Support both fields so a parameter rename in the console does not immediately break client login.
     const code = parsed.searchParams.get("authCode") ?? parsed.searchParams.get("code");
     const state = parsed.searchParams.get("state");
 
@@ -150,10 +150,10 @@ export class BigModelProviderAdapter implements OAuthProviderAdapter {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          // zcode JWT 的后端 token 路由按 OAuth callback 授权码语义解析。
-          // BigModel Start Plan 不能在后续 balance 查询阶段用 access_token 二次兑换，
-          // 否则 body 与 Z.ai 登录链路不一致并触发 HTTP 400。provider 用 shared
-          // 中的 OAuth provider 枚举值，避免前后端新增多 provider 后只靠 redirect_uri 猜身份。
+          // The backend token route for zcode JWTs parses the request using OAuth callback authorization-code semantics.
+          // BigModel Start Plan must not exchange access_token again during later balance queries,
+          // or the body will differ from the Z.AI login flow and trigger HTTP 400. Use the shared OAuth provider enum
+          // to avoid guessing identity from redirect_uri when more providers are added to the frontend/backend.
           body: JSON.stringify({
             provider: BIGMODEL_PROVIDER_ID,
             code: params.code,
@@ -163,8 +163,8 @@ export class BigModelProviderAdapter implements OAuthProviderAdapter {
         },
       );
       if (payload.code !== undefined && payload.code !== 0) {
-        // BigModel 的一次性 authCode 现在只交给 zcode token 路由。
-        // 如果这里失败，不能继续保存半登录态，否则 Start Plan 仍会显示未连接。
+        // BigModel's one-time authCode is now used only by the zcode token route.
+        // If this fails, do not continue saving a partial login state or Start Plan will still appear disconnected.
         log.warn(undefined, "zcode token business response rejected", {
           code: payload.code,
           msg: payload.msg,
@@ -183,9 +183,9 @@ export class BigModelProviderAdapter implements OAuthProviderAdapter {
       }
       const accessToken = resolveBigModelBusinessAccessToken(payload);
       if (!accessToken) {
-        // Coding Plan 付费套餐仍调用 bigmodel.cn 业务接口，只能使用
-        // BigModel 业务 access token；zcode JWT 只能写入 zcodejwttoken 给 Start Plan 使用。
-        // 如果继续把 zcode JWT 写进 oauth:bigmodel:access_token，套餐预览会稳定报“令牌已过期”。
+        // Paid Coding Plan subscriptions still call BigModel business endpoints and must use
+        // the BigModel business access token; the zcode JWT belongs only in zcodejwttoken for Start Plan.
+        // If the zcode JWT is stored in oauth:bigmodel:access_token, subscription previews will consistently report "token expired".
         log.warn(undefined, "zcode token response missing bigmodel access token", {
           code: payload.code,
           msg: payload.msg,
@@ -203,8 +203,8 @@ export class BigModelProviderAdapter implements OAuthProviderAdapter {
         zcodeJwtToken,
       };
     } catch (error) {
-      // BigModel callback code 是一次性的，客户端不能再先调用
-      // tokenByAuthCode 消费它；zcode token 交换失败时直接中止登录并记录链路头。
+      // BigModel callback code is single-use; the client must not consume it first by calling
+      // tokenByAuthCode. Abort login if the zcode token exchange fails, and record the trace headers.
       log.warn(undefined, "zcode token request failed", {
         message: error instanceof Error ? error.message : String(error),
         ...(error instanceof ApiError
@@ -225,8 +225,8 @@ export class BigModelProviderAdapter implements OAuthProviderAdapter {
     _context: OAuthProviderContext,
   ): Promise<OAuthUserProfile> {
     if (tokenSet.zcodeJwtToken && tokenSet.accessToken === tokenSet.zcodeJwtToken) {
-      // 移除 tokenByAuthCode 后 callback 阶段没有 BigModel access token。
-      // zcode JWT 不能调用 bigmodel.cn 的 customer 接口，避免无意义的鉴权失败请求。
+      // After removing tokenByAuthCode, no BigModel access token is available during the callback.
+      // A zcode JWT cannot call the bigmodel.cn customer endpoint, so avoid an unnecessary failed authorization request.
       return {
         id: "unknown",
         username: "user",
@@ -238,13 +238,13 @@ export class BigModelProviderAdapter implements OAuthProviderAdapter {
       data?: BigModelCustomerInfo;
     }>(this.apiClient, this.config.userinfoUrl, {
       method: "GET",
-      // 启动恢复登录态依赖这条 userinfo 校验链路。
-      // 没有超时时网络层可能长期 pending，导致 UI 一直显示“恢复中”。
-      // 这里固定 1 分钟超时，保证失败路径可及时落定，避免无限 loading。
+      // Startup session restoration depends on this userinfo validation path.
+      // Without a timeout, the network request could remain pending and leave the UI showing "restoring" indefinitely.
+      // Set a fixed one-minute timeout so failure settles promptly and loading cannot continue forever.
       timeoutMs: OAUTH_USERINFO_TIMEOUT_MS,
       headers: {
-        // BigModel customer 信息接口要求 Authorization 直接传 token，
-        // 不能使用 Bearer 前缀，否则稳定返回鉴权失败。
+        // BigModel's customer information endpoint requires the raw token in Authorization;
+        // a Bearer prefix consistently causes authorization failure.
         Authorization: tokenSet.accessToken,
         "Content-Type": "application/json",
       },
@@ -259,8 +259,8 @@ export class BigModelProviderAdapter implements OAuthProviderAdapter {
       };
     }
 
-    // BigModel customerName 是账号真实展示名，nickName 只是昵称兜底；
-    // 空字符串在 API 语义上等同缺失，必须 trim 后再选择，避免账号展示为空白。
+    // BigModel customerName is the account's actual display name; nickName is only a fallback.
+    // An empty string is equivalent to missing in the API, so trim before choosing to avoid a blank account display name.
     const username = resolveBigModelDisplayName(customer);
 
     return {
@@ -281,8 +281,8 @@ export class BigModelProviderAdapter implements OAuthProviderAdapter {
 
     const refreshToken = await loadCredential("refresh_token");
 
-    // 旧版 BigModel 登录态只写 auth_token/refresh_token，
-    // 如果不在 provider 层做兼容，升级后会被误判为“没有 token”。
+    // Legacy BigModel login state stored only auth_token/refresh_token;
+    // without compatibility handling in the provider, upgrades would incorrectly treat it as "no token".
     return {
       accessToken,
       ...(refreshToken ? { refreshToken } : {}),

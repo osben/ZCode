@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-worktree-chat-first",
+  "spec": "./test/e2e/conversation-session/conversation-session-worktree-chat-first.test.ts",
+  "providerFixtures": [
+    "./test/e2e/fixtures/upstream/common.json",
+    "./test/e2e/fixtures/upstream/conversation-session/conversation-session-worktree-chat-first.json"
+  ],
+  "fileFixtures": [],
+  "requests": [
+    {
+      "id": "worktree-chat-first-title",
+      "kind": "common",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "Title generation is incidental; the scenario asserts chat presentation and first-message ordering."
+    },
+    {
+      "id": "worktree-chat-first-message",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "The scenario needs a deterministic first-message response after worktree creation and session admission."
+    },
+    {
+      "id": "worktree-chat-second-message",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "The second send during the first response is ordinary session input; the scenario needs a deterministic second-turn response."
+    },
+    {
+      "id": "worktree-recovered-message",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "The navigation case must admit the recovered message only after an explicit restore and send."
+    },
+    {
+      "id": "worktree-independent-new-chat",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "Require the second-chat marker without admitting the detached first input, making workspace-wide reservation reuse observable."
+    }
+  ]
+}

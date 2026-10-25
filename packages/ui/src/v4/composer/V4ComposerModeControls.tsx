@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useMemo, useRef } from "react";
 import { LightbulbIcon, XIcon, ChevronDownIcon } from "lucide-react";
 import {
   ZCODE_AGENT_PROVIDER,
@@ -29,7 +29,7 @@ import {
   resolveModeOptionIcon,
 } from "@/chat-input-toolbar/display.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { isCoarseTouchDevice } from "@/lib/pickerFocus.js";
+import { restoreComposerInputFocusAfterPickerClose } from "@/lib/pickerFocus.js";
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import {
@@ -40,7 +40,7 @@ import type { V4ComposerToolbarProps } from "@/v4/composer/V4ComposerToolbar.js"
 
 function noop(): void {}
 
-/** Plan 是独立勾选项，三种权限仍为单选；只编辑草稿，不向 Runtime 发切换命令。 */
+/** Plan is an independent checkbox; the three permission levels remain mutually exclusive. This edits only the draft and sends no mode-switch command to Runtime. */
 function V4ComposerModeSwitchImpl({
   provider,
   draftConfig,
@@ -60,11 +60,12 @@ function V4ComposerModeSwitchImpl({
   | "onSwitchMode"
 >) {
   const { intl } = useZCodeIntl();
+  const modeTriggerRef = useRef<HTMLButtonElement | null>(null);
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
   const modeShortcutLabel = useShortcutCommandLabel("cycleSessionMode");
   const modes = getZCodeAgentAvailableModes();
   const permissions = modes.filter((mode) => mode.id !== "plan");
-  // 新菜单隐藏 Edit，但历史草稿仍可回显，不能因候选变化隐藏整个权限入口。
+  // The new menu hides Edit, but historical drafts can still be restored; a changed candidate list must not hide the entire permission entry.
   const selected =
     permissions.find((mode) => mode.id === draftConfig?.mode) ??
     (draftConfig?.mode === "edit" ? { id: "edit", name: "Edit" } : undefined);
@@ -72,7 +73,7 @@ function V4ComposerModeSwitchImpl({
     getModeOptionDisplayLabel(intl, displayProvider, { value: mode.id, name: mode.name });
   const plan = modes.find((mode) => mode.id === "plan")!;
   const planLabel = label(plan);
-  // Plan 拆成独立勾选项后仍需保留原菜单说明，复用相同的国际化映射。
+  // Keep the original menu description after Plan becomes an independent checkbox, reusing the same i18n mapping.
   const planDescriptionId = getModeOptionDescriptionMessageId(displayProvider, { value: plan.id });
   const modeOption = useMemo<ZCodeConfigOption>(
     () => ({
@@ -115,6 +116,7 @@ function V4ComposerModeSwitchImpl({
         >
           <DropdownMenuTrigger asChild>
             <Button
+              ref={modeTriggerRef}
               variant="ghost"
               size="sm"
               disabled={disabled}
@@ -143,10 +145,10 @@ function V4ComposerModeSwitchImpl({
           className="w-64"
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            if (!isCoarseTouchDevice())
-              document
-                .querySelector<HTMLElement>(`[data-testid="${TID_V4_COMPOSER_INPUT}"]`)
-                ?.focus();
+            restoreComposerInputFocusAfterPickerClose({
+              anchor: modeTriggerRef.current,
+              fallbackSelector: `[data-testid="${TID_V4_COMPOSER_INPUT}"]`,
+            });
           }}
         >
           <DropdownMenuCheckboxItem

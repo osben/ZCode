@@ -68,8 +68,8 @@ const h = vi.hoisted(() => {
     modelProviderFamilyModes: {} as Record<string, "oauth" | "apiKey">,
     modelProviderFamilySelectedKeys: {} as Record<string, string>,
   };
-  // 真实 useServices 返回的是稳定的 Context 值；mock 若每次调用都新建对象，
-  // 组件任何一次重渲染都会让 initialize 的依赖变化并重复拉取灰度配置。
+  // The real useServices returns a stable Context value; a mock that builds a new object per
+  // call makes initialize's dependencies change on every re-render and re-fetch gray config.
   const services = {
     offPeakTaskService: {},
     codingPlanSubscriptionService: {},
@@ -130,7 +130,7 @@ vi.mock("@/settings/useAutomationTemplates.js", () => ({
       return {
         id,
         title: copy ? { en: copy.en.title, cn: copy.cn.title } : {},
-        // Automations 仍展示 contents；首页必须显式读取 homepageDescription（descs 映射结果）。
+        // Automations still shows contents; the homepage must read homepageDescription explicitly.
         description: copy
           ? { en: `contents:${copy.en.description}`, cn: `contents:${copy.cn.description}` }
           : {},
@@ -238,7 +238,7 @@ describe("OffPeakNewTaskEntry", () => {
     },
   );
 
-  it("远程目录为空时显示本地 Customize 入口", () => {
+  it("shows the local Customize entry when the remote catalog is empty", () => {
     h.offPeakTemplateIds.current = [];
 
     renderEntry();
@@ -246,7 +246,7 @@ describe("OffPeakNewTaskEntry", () => {
     expect(screen.getByRole("button", { name: /Customize/i })).not.toBeNull();
   });
 
-  it("首页只展示前两条普通远程模板，并把本地 Customize 固定放在最后", () => {
+  it("homepage shows only the first two regular remote templates and pins local Customize last", () => {
     h.offPeakTemplateIds.current = [
       "standupGitSummary",
       "item-customize",
@@ -268,7 +268,7 @@ describe("OffPeakNewTaskEntry", () => {
     expect(view.container.textContent).not.toContain("Remote docs check");
   });
 
-  it("远端模板图标和本地 Customize 图标接线", async () => {
+  it("wires remote template icons and the local Customize icon", async () => {
     const view = renderEntry();
     const templateGrid = view.container.querySelector<HTMLElement>("[data-off-peak-template-grid]");
     const cards = templateGrid?.querySelectorAll<HTMLElement>("button") ?? [];
@@ -292,7 +292,7 @@ describe("OffPeakNewTaskEntry", () => {
     expect(closeButton?.classList.contains("hidden")).toBe(true);
   });
 
-  it("横幅文案可聚焦并承接 Tooltip", () => {
+  it("banner copy is focusable and hosts the Tooltip", () => {
     renderEntry();
 
     const copy = screen.getByText("offPeak.newTask.bannerText");
@@ -300,11 +300,11 @@ describe("OffPeakNewTaskEntry", () => {
     expect(copy.tabIndex).toBe(0);
   });
 
-  it("首次挂载交由共享机制初始化和登记 freshness，连接变化后刷新", () => {
+  it("first mount delegates initialization and freshness registration to shared machinery, refreshing on connection change", () => {
     const view = renderEntry();
 
     expect(h.initialize).toHaveBeenCalledOnce();
-    // 去重归 Store 所有；这里验证组件交付通知，不再要求它自行跳过首次通知。
+    // Deduplication belongs to the Store; here we verify the component delivers the notification.
     expect(h.refreshCodingPlanSupport).toHaveBeenCalledOnce();
     view.rerender(createElement(OffPeakNewTaskEntry));
     expect(h.refreshCodingPlanSupport).toHaveBeenCalledOnce();
@@ -317,16 +317,16 @@ describe("OffPeakNewTaskEntry", () => {
     expect(h.refreshCodingPlanSupport).toHaveBeenCalledTimes(2);
   });
 
-  it("非 Coding Plan 用户点击模板时直接弹升级 toast，并拦截草稿与导航", () => {
+  it("users without a Coding Plan get the upgrade toast on template click, with draft and navigation intercepted", () => {
     vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue("idle-funnel-home");
-    h.messages.current["settings.modelProvider.codingPlan.upgrade"] = "升级";
+    h.messages.current["settings.modelProvider.codingPlan.upgrade"] = "Upgrade";
     const onOpenAutomations = clickStandupTemplate();
 
     expect(h.toast).toHaveBeenCalledWith("offPeak.create.codingPlanToast", {
       durationMs: 8000,
       position: "top-center",
       variant: "info",
-      actionLabel: "升级",
+      actionLabel: "Upgrade",
       onAction: expect.any(Function),
       dismissible: true,
       dismissLabel: "common.close",
@@ -347,7 +347,7 @@ describe("OffPeakNewTaskEntry", () => {
         purchaseFunnelId: "idle-funnel-home",
         upgradeSource: "session_idle_time",
         eventRegion: "app.session",
-        eventText: "升级",
+        eventText: "Upgrade",
         entryPlanStatus: "no_plan",
         entryPlanLevel: "",
         entryPlanList: "",
@@ -358,7 +358,7 @@ describe("OffPeakNewTaskEntry", () => {
     });
   });
 
-  it("Account Overlay 确认 Coding Plan 可用时放行闲时任务导航", () => {
+  it("Account Overlay confirming an available Coding Plan lets the idle-time task navigation through", () => {
     h.providerSettingsState.view = {
       revision: 2,
       addableProviders: [],
@@ -395,7 +395,7 @@ describe("OffPeakNewTaskEntry", () => {
     expect(onOpenAutomations).toHaveBeenCalledOnce();
   });
 
-  it("Provider Settings 尚未水合时不把未知状态误判为无套餐", () => {
+  it("does not mistake the pre-hydration Provider Settings state for having no plan", () => {
     h.providerSettingsState.view = null;
     const onOpenAutomations = clickStandupTemplate();
 
@@ -416,23 +416,21 @@ describe("OffPeakNewTaskEntry", () => {
   });
 
   it.each([
-    {
-      locale: "zh-CN",
-      messages: zhCN,
-      bannerText: "订阅用户新功能体验：创建“闲时任务”，我们将免费在算力富余时段为你完成指派任务。",
-      bannerTipText: "本功能不消耗订阅用户套餐额度、本功能仅面向订阅用户开放",
-    },
-    {
-      locale: "en-US",
-      messages: enUS,
-      bannerText:
-        'New feature for subscribers: Create "Idle-time task" , We will complete your assigned task for free during periods of surplus computing power.',
-      bannerTipText:
-        "This feature does not consume your subscription plan quota and is available exclusively to subscribers.",
-    },
-  ])(
-    "$locale 首页展示、提示与模板预填使用同一种语言",
-    ({ locale, messages, bannerText, bannerTipText }) => {
+    [
+      "zh-CN",
+      zhCN,
+      "订阅用户新功能体验：创建“闲时任务”，我们将免费在算力富余时段为你完成指派任务。",
+      "本功能不消耗订阅用户套餐额度、本功能仅面向订阅用户开放",
+    ],
+    [
+      "en-US",
+      enUS,
+      'New feature for subscribers: Create "Idle-time task" , We will complete your assigned task for free during periods of surplus computing power.',
+      "This feature does not consume your subscription plan quota and is available exclusively to subscribers.",
+    ],
+  ] as const)(
+    "%s homepage banner, tooltip, and template prefill use one language",
+    (locale, messages, bannerText, bannerTipText) => {
       h.messages.current = messages;
       h.locale.current = locale;
       h.providerSettingsState.view = {
@@ -464,7 +462,7 @@ describe("OffPeakNewTaskEntry", () => {
         ],
       };
 
-      const copy = h.remoteTemplateCopy.standupGitSummary[locale === "zh-CN" ? "cn" : "en"];
+      const copy = h.remoteTemplateCopy.standupGitSummary[messages === zhCN ? "cn" : "en"];
       const { title, description, prompt } = copy;
       const onOpenAutomations = vi.fn();
 

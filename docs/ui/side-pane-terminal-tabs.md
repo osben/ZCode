@@ -1,34 +1,46 @@
 # Side Pane Terminal Tabs
 
-## 背景
+## Background
 
-Workspace 现在有底部 Terminal 面板，也有右侧 side pane tabs。用户希望在 side pane 的 `+` 菜单中直接新建 Terminal tab，让终端可以和 Browser、Review、Code Viewer 等内容并排保留在右侧 tab 容器里。
+A Workspace now has a bottom Terminal panel and right side pane tabs. Users want to create a Terminal tab
+directly from the side pane `+` menu, so the terminal can sit side by side with Browser, Review, Code Viewer
+and other content in the right tab container.
 
-## 行为定义
+## Behavior
 
-- side pane 新增 `terminal` tab 类型。
-- `+` 菜单每次点击 Terminal 都新建一个 side pane Terminal tab，不复用单例。
-- 外层 side pane Terminal tab 按当前 workspace 名命名：
-  - 第一个：`workspace-name`
-  - 第二个：`workspace-name 2`
-  - 第三个：`workspace-name 3`
-- workspace 名来自当前 workspace path 的最后一级目录；如果无法解析，回退为 `Terminal`。
-- 每个 side pane Terminal tab 对应一个独立终端实例，内部不再嵌套 terminal tabs，也不提供第二层新建终端按钮。
-- side pane Terminal tab 复用底层 `TerminalSession` 能力，因此仍支持 xterm 主题、链接打开和复制粘贴行为。
-- 底部 Terminal 面板保持原有行为，不和 side pane Terminal tab 共享终端 session 状态。
-- 关闭某个 side pane Terminal tab 会卸载该 tab 内部的 `TerminalSession`，并释放对应终端进程；切换到其他 side pane tab 或收起 side pane 时保持挂载，不中断正在运行的命令。
+- The side pane gets a new `terminal` tab type.
+- Each click on Terminal in the `+` menu creates a new side pane Terminal tab; no singleton reuse.
+- The outer side pane Terminal tab is named after the current workspace name: first `workspace-name`, second
+  `workspace-name 2`, third `workspace-name 3`. The workspace name is the last directory level of the current
+  workspace path; when it cannot be resolved it falls back to `Terminal`.
+- Each side pane Terminal tab maps to an independent terminal instance, with no nested terminal tabs inside
+  and no second-level new-terminal button.
+- A side pane Terminal tab reuses the underlying `TerminalSession` capability, so it still supports the xterm
+  theme, link opening and copy/paste behavior.
+- The bottom Terminal panel keeps its original behavior and shares no terminal session state with side pane
+  Terminal tabs.
+- Closing a side pane Terminal tab unmounts the `TerminalSession` inside it and releases the matching terminal
+  process; switching to another side pane tab or collapsing the side pane keeps it mounted and does not
+  interrupt a running command.
 
-## 兼容边界
+## Compatibility Boundary
 
-- workspace 级命名继续使用当前 workspace path；远程/本地服务隔离仍由当前窗口 services 和 `workspaceIdentity` 上下文承载。
-- 远程 workspace 继续通过当前窗口的 services 和 `workspacePath` 创建终端，不新增独立 Agent runtime、local host、SSH/WSL/Docker session。
-- 该功能只改变 UI 承载位置，不修改 ZCode session/task realtime 消息流，不涉及 `desktop-continuous` 与 `web-remote-replayable` 传输边界。
-- 手机 Web 远控复用现有 side pane overlay 渲染路径；Terminal tab 不改变 replayable 恢复语义。
+- Workspace naming keeps using the current workspace path; remote/local service isolation is still carried by
+  the current window's services and the `workspaceIdentity` context.
+- A remote workspace keeps creating terminals through the current window's services and `workspacePath`,
+  adding no separate Agent runtime, local host, or SSH/WSL/Docker session.
+- The feature only changes where the UI is hosted; it does not modify the ZCode session/task realtime message
+  flow nor involve the `desktop-continuous` and `web-remote-replayable` transport boundaries. Mobile Web remote
+  reuses the existing side pane overlay render path; the Terminal tab does not change replayable recovery
+  semantics.
 
-## 实现入口
+## Implementation Entry Points
 
-- `packages/ui/src/lib/workspaceSidePane.ts`：新增 `TerminalSidePaneTab` 状态类型和创建函数。
-- `packages/ui/src/hooks/useAppPanels.ts`：新增打开 Terminal side pane tab 的 handler，并按 workspace 名生成唯一标题。
-- `packages/ui/src/app-shell/AnimatedSidePanePanel.tsx`：在 `+` 菜单和 tab 内容区接入单实例 Terminal。
-- `packages/ui/src/SidePaneTerminalPane.tsx`：承载无内嵌 tabs 的单个 `TerminalSession`。
-- `packages/ui/src/app-shell/SidePaneTabTrigger.tsx` / `SidePaneTabOverview.tsx`：补标题、图标和搜索标签。
+- `packages/ui/src/lib/workspaceSidePane.ts`: adds the `TerminalSidePaneTab` state type and creation function.
+- `packages/ui/src/hooks/useAppPanels.ts`: adds the handler that opens a Terminal side pane tab and generates a
+  unique title from the workspace name.
+- `packages/ui/src/app-shell/AnimatedSidePanePanel.tsx`: wires the single-instance Terminal into the `+` menu
+  and the tab content area.
+- `packages/ui/src/SidePaneTerminalPane.tsx`: hosts a single `TerminalSession` without embedded tabs.
+- `packages/ui/src/app-shell/SidePaneTabTrigger.tsx` / `SidePaneTabOverview.tsx`: add title, icon and search
+  labels.

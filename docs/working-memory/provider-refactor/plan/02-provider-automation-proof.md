@@ -1,129 +1,95 @@
-# 阶段 B：Provider 重构自动化证明收口
+# Stage B: Provider Refactor Automated Proof Wrap-up
 
-> 状态：自动化实现完成；关键 E2E 等待人工 review 与可用图形/Docker 环境
+> Status: automation complete; four key E2Es await manual review and a graphics/Docker environment. Last updated: 2026-08-25.
 >
-> 最近更新：2026-08-25
+> Full history: `git show 45f808f7:docs/working-memory/provider-refactor/plan/02-provider-automation-proof.md`
 
-## 1. 目标
+## 1. Objective
 
-本阶段只补齐能够直接证明 Provider 重构正确性的自动化证据，不改造全仓 CI、workspace、Node、lockfile 或 formatter 基线。
+Prove the Provider refactor's correctness with automated evidence only. This stage does not modify the full-repository CI, workspace, Node, lockfile, or formatter baseline.
 
-```text
-真实 Built-in Config 完整性
-            |
-            v
-真实 Config 到 Active Model 纵向集成
-            |
-            v
-Runtime 分支覆盖审计与补缺
-            |
-            v
-Provider 关键 E2E 晋升
-            |
-            v
-定向与全量回归验证
-```
+Chain: real Built-in Config completeness → real Config-to-Active-Model vertical integration → Runtime branch coverage audit and gap-filling → Provider key E2E promotion → targeted and full regression verification.
 
-## 2. 自动化证明
+## 2. Automated Proofs
 
-1. 直接读取真实 `config/provider/zcode-builtin.json`，为 API Key、Account 与 Request Auth Provider 补入各自最小执行期访问材料，证明每个 Built-in Provider 和模型成员都能解析成完整 Registry Config。
-2. 使用真实 Built-in Config 贯通 Overlay、Resolver、Registry、ModelFactory 与 Adapter，证明最终 Provider/Model Config 不被重新推断。
-3. 复核普通请求、Compact、Memory、Subagent 与 Off-Peak 均消费同一个 Active Model；已有直接证据的链路不重复造测试。
-4. 对 Provider 身份、Registry 冷启动、闲时子 Agent 与候选过滤四个 pending E2E 完成 fixture、replay 和人工 review 门禁；未经人工确认不得晋升。
+1. Read the real `config/provider/zcode-builtin.json`, add minimal execution-period access materials for API Key, Account, and Request Auth Providers, and prove every Built-in Provider and model member resolves into a complete Registry Config.
+2. Traverse Overlay, Resolver, Registry, ModelFactory, and Adapter with the real Built-in Config, proving the final Provider/Model Config is never re-inferred.
+3. Verify that normal requests, Compact, Memory, Subagent, and Off-Peak all consume the same Active Model; linkages with existing direct evidence are not duplicated.
+4. Complete fixture, replay, and manual-review gates for the four pending E2Es; no promotion without manual confirmation.
 
-## 3. 测试边界
+## 3. Test Boundaries
 
-- 完整性测试不固定 Provider、Rule 或 Model 总数，也不要求通用 Rule 必须命中 Built-in 成员。
-- Built-in API Key Provider 由 Personal Overlay 注入测试 Key；Account Provider 由 Account Overlay 注入 accessId 和必要 Team scope；Request Auth 保持请求期注入。
-- 测试可以引用真实模型 ID 固定配置事实，生产代码不得按具体模型 ID 分支。
-- `support_pdf: false` 与 `support_audio: false` 是本阶段已确认输入，不修改配置事实。
-- Remote Provisioning、真实账号、正式制品、历史数据升级、队列与恢复语义不属于本阶段。
+- Completeness tests fix no Provider, Rule, or Model total counts and never require universal Rules to hit Built-in members.
+- The Built-in API Key Provider gets a test key via Personal Overlay; the Account Provider gets accessId and Team scope via Account Overlay; Request Auth keeps request-period injection.
+- Tests may reference real model IDs as fixed configuration facts; production code never branches on specific model IDs.
+- `support_pdf: false` and `support_audio: false` are confirmed inputs in this stage; configuration facts are not modified.
+- Remote Provisioning, real accounts, production artifacts, historical-data upgrades, queue, and recovery semantics are out of scope.
 
-## 4. E2E 决策
+## 4. E2E Decisions
 
-第一批候选为：
+First-batch candidates:
 
 - `conversation-session-same-model-draft-provider-identity`
 - `conversation-session-provider-registry-prewarm`
 - `conversation-session-offpeak-subagent-model-inheritance`
 - `conversation-session-model-provider-list-filtering`
 
-本阶段不晋升 `model-switch-compact`、`model-switch-queue` 与 `model-provider-session-isolation`。前两者分别存在已知 transport/产品状态问题和更宽的 Queue 交叉面；后者留给会话生命周期专项。
+Not promoted in this stage: `model-switch-compact` and `model-switch-queue` (known transport/product state issues, broader Queue cross-faces) and `model-provider-session-isolation` (reserved for a session lifecycle project).
 
-人工 review 于 2026-08-25 确认以下证明边界：
+Manual review on 2026-08-25 confirmed the proof boundaries:
 
-- 同名模型身份使用现有 `same-model-draft-provider-identity`：两个 Provider 暴露完全相同的 modelId，
-  使用不同 Provider ID 与 Base URL；复合选择值、菜单选中态、草稿配置和真实请求 URL 都必须保持目标
-  Provider。旧 `same-model-provider-identity` 实际使用不同 modelId，只能作为普通跨 Provider 切换覆盖，
-  不承担本阶段的同名身份隔离证明。
-- 候选过滤 E2E 使用代表性负样本证明 hidden Provider、visible Provider 下的 hidden Model、disabled 或
-  incomplete Provider 不进入普通候选；同时以真实 ZCode Built-in Provider + Personal 同 modelId 覆盖证明
-  冲突时 Built-in 成员仍可选择、可发送。重复排列和 issue code 继续由 Resolver 单测证明，E2E 不复制
-  Resolver 全量状态空间。
-- 普通任务中，无显式模型的 Subagent 继承父 ModelFactory，显式模型仍创建自己的 Model；Off-Peak 是
-  执行作用域约束，所有 foreground child 必须继续使用本轮闲时 Provider/Ticket/Request Auth，background
-  child 在发请求前拒绝，闲时轮结束后的普通消息恢复用户 Provider。
-- Registry prewarm 除 provider/model、toolbar 与 last-selected 外，还必须通过 case-local Base URL 证明首个
-  请求确实命中冷启动前配置的 custom Provider。
+- Same-name model identity uses the existing `same-model-draft-provider-identity`: two Providers expose the exact same modelId with different Provider IDs and Base URLs; composite selection values, menu selected state, draft configuration, and real request URLs must all keep the target Provider. The old `same-model-provider-identity` uses different modelIds and covers only ordinary cross-Provider switching — it does not carry this stage's same-name identity isolation proof.
+- Candidate filtering proves with representative negative samples that hidden Providers, hidden Models under visible Providers, and disabled or incomplete Providers stay out of normal candidates; it also covers real ZCode Built-in Provider + Personal same modelId to prove Built-in members remain selectable and sendable during conflicts. Repeated arrangements and issue codes stay proven by Resolver unit tests; the E2E does not duplicate Resolver's full state space.
+- In normal tasks, Subagents without an explicit model inherit the parent ModelFactory; explicit models create their own Models. Off-Peak is an execution-scope constraint: all foreground children keep this round's idle-time Provider/Ticket/Request Auth; background children are rejected before any request; when idle-time rotation ends and normal messages resume, the user Provider returns.
+- Registry prewarm must prove — beyond provider/model, toolbar, and last-selected — via case-local Base URLs that the first request hits the cold-start configured custom Provider.
 
-## 5. 完成标准
+## 5. Completion Criteria
 
-- 真实 Built-in Config 的全部 Provider 与模型成员由永久测试保护。
-- API Key、Account、Request Auth 三条路径均有真实配置到 Active Model 的纵向证据。
-- 普通请求、Compact、Memory、Subagent、Off-Peak 均有明确自动化证据。
-- 四个 E2E 完成可自动执行的 fixture/replay 验证；只有人工 review 通过的用例才进入正式目录和 Docker preset。
-- Provider 定向测试、相关包 typecheck、根 typecheck、lint 与全量 unit 通过。
-- 不恢复旧 Provider/Model 抽象、具体模型运行时 hardcode 或第二份模型事实源。
+- Every Provider and model member of the real Built-in Config is protected by permanent tests.
+- API Key, Account, and Request Auth paths each have real config-to-Active-Model vertical evidence.
+- Normal requests, Compact, Memory, Subagent, and Off-Peak have clear automated evidence.
+- The four E2Es pass auto-executable fixture/replay verification; only manually reviewed cases enter the formal directory and Docker preset.
+- Provider targeted tests, related package typecheck, root typecheck, lint, and full unit tests pass.
+- No old Provider/Model abstractions, specific-model runtime hardcoding, or second model fact sources are restored.
 
-## 6. 实施结果
+## 6. Implementation Results
 
-### 6.1 永久自动化证据
+### 6.1 Permanent Automated Evidence
 
-| 证明层                      | 自动化证据                                                                                | 结果                                                                                                 |
-| --------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| 真实 Built-in Config 完整性 | `packages/provider-node/test/zcode-builtin-integrity.test.ts`                             | 真实 JSON 的 Provider、模型成员、访问材料 Overlay、完整 Model Config、隐藏闲时模型与旧字段归零均通过 |
-| API Key 纵向链路            | `apps/zcode-cli/packages/bootstrap/tests/zcode-builtin-model-runtime-integration.test.ts` | `builtin:zai` 从 Built-in + Personal Overlay 经 Resolver/Registry/ModelFactory 原样进入 Adapter      |
-| Account 纵向链路            | 同上                                                                                      | Start Plan 的 Account 成员约束生效，Personal Provider Overlay 保持最后覆盖                           |
-| Request Auth 纵向链路       | 同上                                                                                      | 隐藏闲时 Provider 可由普通 Registry 精确创建，Request Auth Source 仅在执行期绑定                     |
-| Request Auth 缺失           | `apps/zcode-cli/packages/adapters/tests/model.test.ts`                                    | generate/stream 均在网络调用前返回 `ModelRequestAuthMissing`                                         |
-| Model 冻结                  | `apps/zcode-cli/packages/bootstrap/tests/provider-registry-model-runtime.test.ts`         | Registry 更新只影响后来创建的 Model                                                                  |
+| Proof Layer                       | Automated Evidence                                                                        | Result                                                                                                                                         |
+| --------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Real Built-in Config completeness | `packages/provider-node/test/zcode-builtin-integrity.test.ts`                             | Real JSON's Providers, model members, access material Overlays, complete Model Config, hidden idle-time models, and old-field zeroing all pass |
+| API Key vertical chain            | `apps/zcode-cli/packages/bootstrap/tests/zcode-builtin-model-runtime-integration.test.ts` | `builtin:zai` flows from Built-in + Personal Overlay through Resolver/Registry/ModelFactory natively into Adapter                              |
+| Account vertical chain            | Same as above                                                                             | Start Plan Account member constraints take effect; Personal Provider Overlay keeps last-override                                               |
+| Request Auth vertical chain       | Same as above                                                                             | Hidden idle-time Providers are precisely creatable via normal Registry; Request Auth Source binds only at execution                            |
+| Request Auth missing              | `apps/zcode-cli/packages/adapters/tests/model.test.ts`                                    | generate/stream both return `ModelRequestAuthMissing` before network calls                                                                     |
+| Model freeze                      | `apps/zcode-cli/packages/bootstrap/tests/provider-registry-model-runtime.test.ts`         | Registry updates affect only subsequently created Models                                                                                       |
 
-真实 Built-in 集成测试只捕获 Adapter 的创建参数，不发送网络请求，也没有增加执行 Registry、能力 DTO、
-Provider snapshot 或测试专用生产 API。
+The real Built-in integration tests capture only Adapter creation parameters, send no network requests, and add no execution Registry, capability DTO, Provider snapshot, or test-specific production API.
 
-### 6.2 Runtime 分支覆盖审计
+### 6.2 Runtime Branch Coverage Audit
 
-| Runtime 分支 | 直接证据                                                                                                                                                                 |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 普通请求     | `packages/adapters/tests/model.test.ts`、`packages/core/tests/runtime-model-lifecycle.test.ts`                                                                           |
-| Compact      | `packages/core/tests/compact-media-capability.test.ts`、`packages/core/tests/compact-summary-model-request.test.ts`                                                      |
-| Memory       | `packages/core/tests/memory-agent-loop.test.ts`、`packages/core/tests/runtime-memory-extraction.test.ts`                                                                 |
-| Subagent     | `packages/core/tests/subagent-inherited-model-factory.test.ts`                                                                                                           |
-| Off-Peak     | `packages/core/tests/runtime-model-selection.test.ts`、`packages/bootstrap/tests/v4-native-commands.test.ts`、`packages/services/test/offPeakModelSelectionView.test.ts` |
+| Runtime branch  | Direct evidence                                                                                                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Normal requests | `packages/adapters/tests/model.test.ts`, `packages/core/tests/runtime-model-lifecycle.test.ts`                                                                           |
+| Compact         | `packages/core/tests/compact-media-capability.test.ts`, `packages/core/tests/compact-summary-model-request.test.ts`                                                      |
+| Memory          | `packages/core/tests/memory-agent-loop.test.ts`, `packages/core/tests/runtime-memory-extraction.test.ts`                                                                 |
+| Subagent        | `packages/core/tests/subagent-inherited-model-factory.test.ts`                                                                                                           |
+| Off-Peak        | `packages/core/tests/runtime-model-selection.test.ts`, `packages/bootstrap/tests/v4-native-commands.test.ts`, `packages/services/test/offPeakModelSelectionView.test.ts` |
 
-上述测试已经直接读取同一个 Active Model 或 ModelFactory，没有发现需要新增生产分支或第二套模型事实的缺口。
-相关 CLI 定向集合共 9 个文件、203 个测试通过。
+All read the same Active Model or ModelFactory; no gaps required new production branches or a second model fact set. CLI targeted collections: 9 files, 203 tests passed.
 
-### 6.3 关键 E2E 门禁状态
+### 6.3 Key E2E Gate Status
 
-四个 pending case 的 case-local manifest 与 replay fixture 均通过机械校验。现有非阻断 warning 为三个 title
-fixture 没有 E2E marker，以及 Off-Peak fixture 的两个 marker 未覆盖；它们不改变 fixture contract 通过结论，
-留待人工 review 判断是否需要补充观测点。
+All four pending cases' case-local manifests and replay fixtures passed mechanical validation. Remaining non-blocking warnings: three title fixtures lack an E2E marker, and the Off-Peak fixture has two uncovered markers; they do not change the fixture-contract pass and are left to manual review. Local pending replay built Desktop, CLI, Adapter, and Bootstrap; the first run hit a Zod resolution conflict from old dependency install state, recovered by the repository-standard `pnpm bootstrap`; re-runs bypassed builds, but the host lacks `xvfb-run` and Docker/Podman, so Chrome WebDriver sessions exit before business pages and case assertions. This is a verification environment blocker, not a product failure, and is not reported as green replay. The four cases remain in `manual-review/pending` — no execution promotion, no Docker admission.
 
-本机 pending replay 已完成 Desktop、CLI、Adapter 与 Bootstrap 构建。首次运行暴露旧依赖安装状态导致的 Zod
-解析冲突，使用仓库标准 `pnpm bootstrap` 后恢复；再次运行越过构建，但宿主没有 `xvfb-run`、Docker/Podman，
-Chrome WebDriver session 在业务页面和用例断言前退出。因此这里记录为验证环境 blocker，不记录为产品失败，
-也不伪装为绿色 replay。四个用例继续留在 `manual-review/pending`，未执行 promotion 或 Docker admission。
+### 6.4 Regression Results
 
-### 6.4 回归结果
+- `@zcode/provider`: 13 files, 115 tests passed; typecheck passed.
+- `@zcode/provider-node`: 4 files, 20 tests passed; typecheck passed. Concurrent package tests once caused an existing file-watcher test to see an extra `watch-error`; serial re-runs pass stably and the new integrity tests always pass.
+- Services targeted: 5 files, 30 tests passed.
+- Real Built-in Bootstrap integration: 1 file, 3 tests passed.
+- Root `pnpm typecheck`, `pnpm lint`, and Desktop E2E typecheck passed; lint keeps repository-existing warnings, 0 errors.
+- Root `pnpm test:unit`: 1467 files, 12418 tests passed (25 skipped).
 
-- `@zcode/provider`：13 个文件、115 个测试通过；typecheck 通过。
-- `@zcode/provider-node`：4 个文件、20 个测试通过；typecheck 通过。并发包测试曾令既有 file watcher
-  测试额外收到一次 `watch-error`，串行复跑稳定通过，新增完整性测试始终通过。
-- Services 定向：5 个文件、30 个测试通过。
-- 真实 Built-in Bootstrap 集成：1 个文件、3 个测试通过。
-- 根 `pnpm typecheck`、`pnpm lint`、Desktop E2E typecheck 均通过；lint 保留仓库既有 warning、零 error。
-- 根 `pnpm test:unit`：1467 个文件通过、1 个跳过；12418 个测试通过、25 个跳过。
-
-剩余门禁只有四个 pending E2E 的人工 review、正式 replay 与 Docker admission。它们需要具备图形/Docker
-运行条件后继续，不需要也不允许通过改造 Provider 生产代码来绕过。
+Remaining gate: manual review, formal replay, and Docker admission of the four pending E2Es. They need graphics/Docker runtime conditions; no Provider production-code change is needed or permitted to bypass them.

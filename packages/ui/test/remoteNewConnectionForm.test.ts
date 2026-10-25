@@ -8,11 +8,12 @@ import type {
   SSHConfigAliasOption,
   WSLDistro,
 } from "@zcode/shared";
-import zhCN from "@/i18n/locales/zh-CN.js";
+import enUS from "@/i18n/locales/en-US.js";
 
 /**
- * RDUX-27：新建连接表单的头部、类型切换、SSH config 导入、粘贴拆分、内联校验与两种入口页脚。
- * 挂载真实向导（useRemoteConnectionFlow + SSHDialog），只替换服务端口。
+ * RDUX-27: header, type switching, SSH config import, paste splitting, inline validation and
+ * both entry footers of the new-connection form. Mounts the real wizard
+ * (useRemoteConnectionFlow + SSHDialog), replacing only the service ports.
  */
 const ports = vi.hoisted(() => ({
   snapshot: {} as SourceServerManagementSnapshot,
@@ -42,10 +43,10 @@ const ports = vi.hoisted(() => ({
 }));
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
-    locale: "zh-CN",
+    locale: "en-US",
     intl: {
       formatMessage: ({ id }: { id: string }, values: Record<string, string> = {}) =>
-        ((zhCN as Record<string, string>)[id] ?? id).replace(
+        ((enUS as Record<string, string>)[id] ?? id).replace(
           /\{(\w+)\}/gu,
           (_, key) => values[key] ?? `{${key}}`,
         ),
@@ -129,13 +130,13 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-describe("设置入口的新建连接表单", () => {
-  it("没有步骤条和说明句，标题下实时预览目标，焦点在主机", async () => {
+describe("new-connection form from the settings entry", () => {
+  it("has no step bar or description sentence; live target preview under the title; focus on the host", async () => {
     mountSettingsEntry();
     const host = await screen.findByTestId("ssh-host-input");
-    expect(screen.getByRole("heading", { name: "新建连接" })).toBeTruthy();
-    expect(screen.queryByRole("navigation", { name: zhCN["remote.wizard"] })).toBeNull();
-    expect(screen.queryByText(/填写建立/)).toBeNull();
+    expect(screen.getByRole("heading", { name: enUS["remote.settingsStepTitle"] })).toBeTruthy();
+    expect(screen.queryByRole("navigation", { name: enUS["remote.wizard"] })).toBeNull();
+    expect(screen.queryByText(/Enter the details/)).toBeNull();
     const preview = screen.getByTestId("remote-new-connection-preview");
     expect(preview.textContent).toBe("user@host:22");
     await waitFor(() => expect(document.activeElement).toBe(host));
@@ -145,9 +146,9 @@ describe("设置入口的新建连接表单", () => {
     expect(preview.textContent).toBe("root@10.0.0.5:22");
   });
 
-  it("类型切换带类型色并标记选中项，认证方式保持中性", async () => {
+  it("type switching carries the type color and marks the selection; the auth method stays neutral", async () => {
     mountSettingsEntry();
-    const kinds = await screen.findByRole("group", { name: zhCN["remote.connectionType"] });
+    const kinds = await screen.findByRole("group", { name: enUS["remote.connectionType"] });
     const ssh = within(kinds).getByTestId("remote-kind-ssh");
     expect(ssh.getAttribute("aria-pressed")).toBe("true");
     expect(ssh.className).toContain("bg-remote-ssh-surface");
@@ -157,13 +158,13 @@ describe("设置入口的新建连接表单", () => {
     expect(docker.className).toContain("bg-remote-docker-surface");
     expect(ssh.className).not.toContain("bg-remote-ssh-surface");
     fireEvent.click(ssh);
-    const auth = screen.getByRole("group", { name: zhCN["ssh.authMethod"] });
+    const auth = screen.getByRole("group", { name: enUS["ssh.authMethod"] });
     expect(within(auth).getByRole("button", { pressed: true }).className).not.toMatch(
       /bg-remote-/u,
     );
   });
 
-  it("从 SSH config 导入后显示关联标签，焦点到第一个空必填项，× 只解除关联", async () => {
+  it("after importing from SSH config shows the linked chip, focuses the first empty required field, and × only unlinks", async () => {
     ports.platform.listSSHConfigAliases.mockResolvedValue(aliases);
     mountSettingsEntry();
     const importButton = await screen.findByTestId("remote-ssh-config-import");
@@ -172,7 +173,7 @@ describe("设置入口的新建连接表单", () => {
     fireEvent.click(await screen.findByText("staging"));
 
     const chip = await screen.findByTestId("remote-ssh-config-alias-chip");
-    expect(chip.textContent).toContain("已关联 Host staging");
+    expect(chip.textContent).toContain(enUS["ssh.configAliasLinked"].replace("{alias}", "staging"));
     expect(chip.className).toContain("bg-remote-ssh-surface");
     expect((screen.getByTestId("ssh-host-input") as HTMLInputElement).value).toBe(
       "staging.example.com",
@@ -181,14 +182,14 @@ describe("设置入口的新建连接表单", () => {
       expect(document.activeElement).toBe(screen.getByTestId("ssh-password-input")),
     );
 
-    fireEvent.click(within(chip).getByRole("button", { name: zhCN["ssh.configAliasUnlink"] }));
+    fireEvent.click(within(chip).getByRole("button", { name: enUS["ssh.configAliasUnlink"] }));
     expect(screen.queryByTestId("remote-ssh-config-alias-chip")).toBeNull();
     expect((screen.getByTestId("ssh-host-input") as HTMLInputElement).value).toBe(
       "staging.example.com",
     );
   });
 
-  it("导入的 Host 已有私钥时焦点移到主操作", async () => {
+  it("focus moves to the primary action when the imported Host already has a private key", async () => {
     ports.platform.listSSHConfigAliases.mockResolvedValue(aliases);
     mountSettingsEntry();
     const importButton = await screen.findByTestId("remote-ssh-config-import");
@@ -196,18 +197,20 @@ describe("设置入口的新建连接表单", () => {
     fireEvent.click(importButton);
     fireEvent.click(await screen.findByText("gpu"));
     await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByRole("button", { name: "添加并连接" })),
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: enUS["remote.addAndConnect"] }),
+      ),
     );
   });
 
-  it("没有 config Host 时导入按钮禁用并说明原因", async () => {
+  it("with no config Hosts the import button is disabled and explains why", async () => {
     mountSettingsEntry();
     const importButton = await screen.findByTestId("remote-ssh-config-import");
-    await waitFor(() => expect(importButton.textContent).toContain(zhCN["ssh.importEmpty"]));
+    await waitFor(() => expect(importButton.textContent).toContain(enUS["ssh.importEmpty"]));
     expect((importButton as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("粘贴 ssh 命令拆分主机、用户名和端口，并解除别名关联", async () => {
+  it("pasting an ssh command splits host, username and port, and unlinks the alias", async () => {
     ports.platform.listSSHConfigAliases.mockResolvedValue(aliases);
     mountSettingsEntry();
     const importButton = await screen.findByTestId("remote-ssh-config-import");
@@ -222,90 +225,96 @@ describe("设置入口的新建连接表单", () => {
     expect((host as HTMLInputElement).value).toBe("10.0.0.5");
     expect((screen.getByTestId("ssh-username-input") as HTMLInputElement).value).toBe("root");
     expect((screen.getByTestId("ssh-port-input") as HTMLInputElement).value).toBe("2222");
-    expect(screen.getByText("已识别 root@10.0.0.5:2222")).toBeTruthy();
+    expect(
+      screen.getByText(enUS["ssh.pasteRecognized"].replace("{target}", "root@10.0.0.5:2222")),
+    ).toBeTruthy();
     expect(screen.queryByTestId("remote-ssh-config-alias-chip")).toBeNull();
     await waitFor(() =>
       expect(document.activeElement).toBe(screen.getByTestId("ssh-password-input")),
     );
 
-    // 手动修改主机后识别提示消失；不匹配的文本交给浏览器默认粘贴。
+    // After a manual host edit the recognition hint disappears; non-matching text falls through
+    // to the browser's default paste.
     fireEvent.change(host, { target: { value: "10.0.0.6" } });
-    expect(screen.queryByText(/已识别/)).toBeNull();
+    expect(screen.queryByText(/Recognized/)).toBeNull();
     expect(pasteInto(host, "plain-host").defaultPrevented).toBe(false);
   });
 
-  it("提交时在字段下方显示错误，焦点到第一个出错字段，修正后错误消失", async () => {
+  it("submit shows errors under the fields, focuses the first invalid field, and errors clear after fixing", async () => {
     const { props } = mountSettingsEntry();
     const host = await screen.findByTestId("ssh-host-input");
-    fireEvent.click(screen.getByRole("button", { name: "添加并连接" }));
+    fireEvent.click(screen.getByRole("button", { name: enUS["remote.addAndConnect"] }));
 
-    const hostError = (await screen.findByText(zhCN["ssh.validation.hostRequired"])).closest("p")!;
+    const hostError = (await screen.findByText(enUS["ssh.validation.hostRequired"])).closest("p")!;
     expect(host.getAttribute("aria-invalid")).toBe("true");
     expect(host.getAttribute("aria-describedby")).toBe(hostError.id);
-    expect(screen.getByText(zhCN["ssh.validation.usernameRequired"])).toBeTruthy();
-    expect(screen.getByText(zhCN["ssh.validation.passwordRequired"])).toBeTruthy();
+    expect(screen.getByText(enUS["ssh.validation.usernameRequired"])).toBeTruthy();
+    expect(screen.getByText(enUS["ssh.validation.passwordRequired"])).toBeTruthy();
     expect(document.activeElement).toBe(host);
     expect(props.onConnect).not.toHaveBeenCalled();
 
     fireEvent.change(host, { target: { value: "10.0.0.5" } });
-    expect(screen.queryByText(zhCN["ssh.validation.hostRequired"])).toBeNull();
+    expect(screen.queryByText(enUS["ssh.validation.hostRequired"])).toBeNull();
     expect(host.getAttribute("aria-invalid")).toBeNull();
-    expect(screen.getByText(zhCN["ssh.validation.usernameRequired"])).toBeTruthy();
+    expect(screen.getByText(enUS["ssh.validation.usernameRequired"])).toBeTruthy();
   });
 
-  it("设置入口页脚提供取消与添加并连接", async () => {
+  it("the settings entry footer offers cancel and add-and-connect", async () => {
     mountSettingsEntry();
-    const submit = await screen.findByRole("button", { name: "添加并连接" });
+    const submit = await screen.findByRole("button", { name: enUS["remote.addAndConnect"] });
     const footer = submit.parentElement!;
-    expect(within(footer).getByRole("button", { name: zhCN["common.cancel"] })).toBeTruthy();
+    expect(within(footer).getByRole("button", { name: enUS["common.cancel"] })).toBeTruthy();
   });
 
-  it("Docker 没有说明段，不可用时在选择器下方警告", async () => {
+  it("Docker has no description block; when unavailable it warns under the picker", async () => {
     ports.platform.isDockerAvailable.mockResolvedValue(false);
     mountSettingsEntry();
     fireEvent.click(await screen.findByTestId("remote-kind-docker"));
-    fireEvent.click(screen.getByRole("button", { name: zhCN["docker.inputMode.select"] }));
-    const warning = await screen.findByText(zhCN["docker.unavailable"]);
+    fireEvent.click(screen.getByRole("button", { name: enUS["docker.inputMode.select"] }));
+    const warning = await screen.findByText(enUS["docker.unavailable"]);
     expect(warning.closest("[data-remote-field-hint=warning]")).toBeTruthy();
-    expect(screen.queryByText("连接本机 Docker 容器。")).toBeNull();
+    expect(screen.queryByText(enUS["docker.description"])).toBeNull();
     expect(screen.getByTestId("remote-new-connection-preview").textContent).toBe(
-      zhCN["docker.selectContainer"],
+      enUS["docker.selectContainer"],
     );
   });
 
   it.each([
-    ["Docker 不可用", false, "docker.unavailable"],
-    ["没有运行中的容器", true, "docker.noContainers"],
-  ] as const)("%s时，打开容器下拉的空列表说明原因", async (_, available, messageId) => {
-    ports.platform.isDockerAvailable.mockResolvedValue(available);
-    mountSettingsEntry();
-    fireEvent.click(await screen.findByTestId("remote-kind-docker"));
-    fireEvent.click(screen.getByRole("button", { name: zhCN["docker.inputMode.select"] }));
-    await screen.findByText(zhCN[messageId]);
-    fireEvent.click(screen.getByTestId("docker-container-select"));
-    const list = await screen.findByRole("listbox");
-    expect(within(list).getByText(zhCN[messageId])).toBeTruthy();
-    expect(within(list).queryByText(zhCN["docker.selectContainer"])).toBeNull();
-  });
+    ["Docker unavailable", false, "docker.unavailable"],
+    ["No running containers", true, "docker.noContainers"],
+  ] as const)(
+    "%s: opening the container dropdown explains the empty list",
+    async (_, available, messageId) => {
+      ports.platform.isDockerAvailable.mockResolvedValue(available);
+      mountSettingsEntry();
+      fireEvent.click(await screen.findByTestId("remote-kind-docker"));
+      fireEvent.click(screen.getByRole("button", { name: enUS["docker.inputMode.select"] }));
+      await screen.findByText(enUS[messageId]);
+      fireEvent.click(screen.getByTestId("docker-container-select"));
+      const list = await screen.findByRole("listbox");
+      expect(within(list).getByText(enUS[messageId])).toBeTruthy();
+      expect(within(list).queryByText(enUS["docker.selectContainer"])).toBeNull();
+    },
+  );
 });
 
-describe("项目/聊天入口的新建 SSH 连接表单", () => {
-  it("保留三步步骤条、类型标签与返回连接入口，隐藏别名入口", async () => {
+describe("new SSH connection form from the project/chat entry", () => {
+  it("keeps the three-step bar, type label and back-to-list entry, and hides the alias entry", async () => {
     ports.platform.listSSHConfigAliases.mockResolvedValue(aliases);
     mountDialog();
-    fireEvent.click(await screen.findByRole("button", { name: zhCN["remote.selection.new.ssh"] }));
+    fireEvent.click(await screen.findByRole("button", { name: enUS["remote.selection.new.ssh"] }));
     await screen.findByTestId("ssh-host-input");
 
-    const steps = screen.getByRole("navigation", { name: zhCN["remote.wizard"] });
+    const steps = screen.getByRole("navigation", { name: enUS["remote.wizard"] });
     expect(within(steps).getAllByRole("listitem")).toHaveLength(3);
-    expect(screen.getByRole("heading", { name: "新建连接" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: enUS["remote.settingsStepTitle"] })).toBeTruthy();
     expect(document.querySelector("[data-remote-connection-kind=ssh]")).toBeTruthy();
     expect(screen.queryByTestId("remote-ssh-config-import")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /高级/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Advanced/ }));
     expect(screen.queryByTestId("ssh-config-alias-select")).toBeNull();
 
-    const back = screen.getByRole("button", { name: zhCN["remote.selection.back"] });
+    const back = screen.getByRole("button", { name: enUS["remote.selection.back"] });
     const footer = back.parentElement!;
-    expect(footer.lastElementChild!.textContent).toBe(zhCN["remote.startConnection"]);
+    expect(footer.lastElementChild!.textContent).toBe(enUS["remote.startConnection"]);
   });
 });

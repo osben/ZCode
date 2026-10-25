@@ -18,10 +18,7 @@ import {
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = resolve(HERE, "../..");
-const { version, zcodeCompatibility } = JSON.parse(
-  readFileSync(resolve(REPO_ROOT, "package.json"), "utf-8"),
-) as { version: string; zcodeCompatibility?: { minCompatibleVersion?: string } };
-const minCompatibleVersion = zcodeCompatibility?.minCompatibleVersion ?? version;
+const { version } = JSON.parse(readFileSync(resolve(REPO_ROOT, "package.json"), "utf-8"));
 
 function resolveZCodeEnv(value: string | undefined): "test" | "production" {
   return value?.trim().toLowerCase() === "production" ? "production" : "test";
@@ -76,8 +73,8 @@ export default defineConfig(({ mode }) => {
           ws: true,
         },
         // 将 /ws 和 /api 请求代理到 server（默认 3030 端口）
-        "/ws": { target: "ws://localhost:3030", ws: true },
-        "/api": { target: "http://localhost:3030" },
+        "/ws": { target: "ws://127.0.0.1:3030", ws: true },
+        "/api": { target: "http://127.0.0.1:3030" },
       },
     },
     optimizeDeps: {
@@ -97,7 +94,6 @@ export default defineConfig(({ mode }) => {
       __ZCODE_VERSION__: JSON.stringify(
         resolveRemoteFrontendVersion(version, process.env.WEB_REMOTE_FRONTEND_VERSION),
       ),
-      __ZCODE_MIN_COMPATIBLE_VERSION__: JSON.stringify(minCompatibleVersion),
       __ZCODE_COMMIT__: JSON.stringify(env.ZCODE_COMMIT || "unknown"),
       __ZCODE_ENV__: JSON.stringify(zcodeEnv),
       "import.meta.env.VITE_ZCODE_BASE_URL": JSON.stringify(zcodeEndpointOrigin),

@@ -1,80 +1,134 @@
-# 本地 TTFT 上线与 ARMS 验收清单
+# Local TTFT Launch & ARMS Acceptance Checklist
 
-Status: in-progress
+> Status: in-progress
 
-[父合同](ttft-stage-telemetry.md) · [查询与诊断合同](local-ttft-queries.md) · [看板模板](dashboards/local-ttft.json) · [怎么读一条 Trace](local-ttft-trace-reading.md) · [平台验收证据](local-ttft-platform-evidence.json) · [Ticket 01](../issues/ttft-stage-telemetry/01-local-send-stage-observability.md) · [Ticket 02](../issues/ttft-stage-telemetry/02-queued-retry-and-failure-diagnostics.md)
+[Parent Contract](ttft-stage-telemetry.md) · [Query & Diagnostics Contract](local-ttft-queries.md) · [Dashboard Template](dashboards/local-ttft.json) · [How to Read a Trace](local-ttft-trace-reading.md) · [Platform Acceptance Evidence](local-ttft-platform-evidence.json) · [Ticket 01](../issues/ttft-stage-telemetry/01-local-send-stage-observability.md) · [Ticket 02](../issues/ttft-stage-telemetry/02-queued-retry-and-failure-diagnostics.md)
 
-本文只覆盖"埋点已实现"之后的部署动作：把数据打通到北京 ARMS、完成平台验收、开灰度、核容量与费用。埋点合同本身见父合同，查询口径见查询合同。
+This document covers only the deployment actions after telemetry is implemented: routing data to Beijing ARMS,
+completing platform acceptance, gradual rollout, capacity verification and cost tracking. The telemetry contract
+itself is in the parent contract; the query scope is in the query contract.
 
-**2026-09-15：阶段 0 已完成**，新 service `zcode-local-ttft` 的 Trace 与 Metric 在北京 ARMS 可查，分位数、瀑布关联、标签与诊断口径全部核对通过，实测数据见 [local-ttft-platform-evidence.json](local-ttft-platform-evidence.json)。本地 OTLP 证据见 [local-ttft-evidence.json](local-ttft-evidence.json)、[local-ttft-diagnostics-evidence.json](local-ttft-diagnostics-evidence.json)。阶段 1~3 仍未完成。
+**Phase 0 is complete (2026-09-15):** the new service `zcode-local-ttft` Trace and Metric are queryable in Beijing
+ARMS; percentiles, waterfall correlation, labels and the diagnostic definitions were all verified. Measurements:
+`local-ttft-platform-evidence.json`. Local OTLP evidence: `local-ttft-evidence.json`,
+`local-ttft-diagnostics-evidence.json`. Phases 1-3 are unfinished.
 
-## 现状
+## Current state
 
-| 门       | 现状                                                                                                                                                                                            | 由谁打开                                                           |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| 写入地址 | 接入点已验证可写（同一 base 收 traces 与 metrics）。桌面 main 的 metrics reader 在没有 endpoint 时不创建（`packages/desktop/src/main/localTtftExporter.ts:46`），打包版靠构建期注入，该路径未验 | 阶段 1                                                             |
-| 灰度开关 | `rendererActionTrace.localTtftEnabled` 缺省 false（`packages/shared/src/rendererActionTrace.ts:21`）                                                                                            | 阶段 2：服务端 `/api/v1/client/configs` 下发；单机可用环境变量强开 |
-| 平台验收 | 已完成：查询、瀑布、标签、入库时延均核对通过；控制台界面目视与保留期/费用未做                                                                                                                   | 阶段 3                                                             |
+| Gate                | Current state                                                                                                                                                                                                                                                                              | Opened by                                                                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Write address       | The write address is verified writable (the same base accepts traces and metrics). Desktop main does not create the metrics reader without an endpoint (`packages/desktop/src/main/localTtftExporter.ts:46`); the packaged build depends on build-time injection, a path not yet validated | Phase 1                                                                                              |
+| Gray switch         | `rendererActionTrace.localTtftEnabled` defaults false (`packages/shared/src/rendererActionTrace.ts:21`)                                                                                                                                                                                    | Phase 2: server-side `/api/v1/client/configs` delivery; a single machine can force it on via env var |
+| Platform acceptance | Complete for query, waterfall, labels and warehouse delay; console UI visual check and retention/cost not done                                                                                                                                                                             | Phase 3                                                                                              |
 
-灰度开关与旧 Renderer/Agent Trace 的 `enabled`、`sampleRatio` 相互独立，只开 TTFT 不改变旧 Trace 的采样与父子归属。
+The gray switch is independent of the old Renderer/Agent Trace `enabled`/`sampleRatio`; it opens only TTFT without
+changing old Trace sampling or parent-child ownership.
 
-## 阶段 0：本机直连真实 ARMS，完成平台验收（2026-09-15 已完成）
+## Phase 0: direct connection to real ARMS from a local machine, platform acceptance (done 2026-09-15)
 
-平台验收不依赖 CI 与灰度下发；本机 dev 直连即可解掉 Ticket 01/02 的平台项。
+Platform acceptance does not depend on CI or gray delivery; a local dev direct connection settles the Ticket 01/02
+platform items.
 
-- [x] 取现有 `zcode-cli-agent` 在用的那对接入值（CI 变量 `ZCODE_PACKAGED_AGENT_OTEL_ENDPOINT` / `ZCODE_PACKAGED_AGENT_OTEL_HEADERS`）。写入密钥不进看板、不进本仓库文档。
-- [x] **确认该 endpoint 是 OTLP base。** 实测 base 为 `/apm/trace/opentelemetry`；`base + /v1/traces` 与 `base + /v1/metrics` 都返回 200，独立的 `/apm/metric/opentelemetry/v1/metrics` 反而是 404。原先担心的"base 里带 trace 段导致 metrics 打到不存在的 URL"不成立，`packages/desktop/src/main/localTtftExporter.ts:31` 的拼接可用。
-- [x] 确认后端同一接入点接受 metrics signal。**结论：接受**，因此不需要给桌面 main 增加独立 metrics endpoint 注入通道（注入白名单 `packages/desktop/src/main/desktopRuntimeEnv.ts:216` 保持现状即可）。
-- [x] 用真实运行产生受控样本。实际用两个真实 E2E（`conversation-session-ttft-stages` 跑 2 次，各 3/3 通过；`conversation-session-ttft-diagnostics` 6/6 通过），共 12 次发送；出口按线上形态只设 base endpoint，未单独设置 `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`。转发 85 次全部 200，无失败。
-- [x] Trace 验收：`service.name = zcode-local-ttft` 可查（此前为 0）；`observation_id` 去连字符确实等于 traceID；单条发送 62 个 span，根 701.70ms 与六个主阶段并集 701.69ms 对账一致，`unattributed_ms=0` 得到印证；`local_ttft.checkpoint`、`.start`、`.first_text` 与根同属一条 Trace；`.started` 点记录 duration 为 0。
-- [x] 核对指标实际序列名：**不追加单位后缀**，查询合同里的 `zcode_local_ttft_*` 默认名成立。
-- [x] 跑总 P50/P95、阶段 P95、准备子阶段 P95 与配套 `_count`，DELTA + `sum_over_time` 口径成立。阶段样本数 18 = 3 次发送 × 6 阶段，未被 attempt 放大。
-- [x] 诊断口径（Ticket 02）：`records` 按 kind 齐全（start 16 / first_output 12 / first_text 12 / excluded 4 / checkpoint 442）；`excluded` 区分 cancelled / failed / guided；`attempt` 按 role+outcome 区分失败重试与首输出；`no_output.wait` 记录 cancelled 与 failed；`preparation` 覆盖 context / hooks / persistence / mcp / tools / request_assembly / user_confirmation / retry_wait。
-- [x] 标签为受控低基数（app_version、os、provider、model、quality、send_mode、visibility、stage、role、outcome、kind），未发现关联 ID 泄漏进指标标签。
-- [x] 记录入库可见时延：第二次 run 结束瞬间开始轮询，Trace 与 Metric 首次轮询即命中（上界 <5s）。这是"结束时已可见"的上界，不是逐条精确时延。
-- [x] 把结果写回 Ticket 01 与 Ticket 02 的平台验收项，本地测试与平台验收分开记录。
-- [ ] **仍未做**：在 ARMS/Trace Explorer 控制台界面上目视确认瀑布渲染与跳转。本次全部通过只读 API 核对数据完整性，界面确认需要登录控制台。
+- [x] Use the ingestion values currently used by `zcode-cli-agent` (CI vars `ZCODE_PACKAGED_AGENT_OTEL_ENDPOINT` /
+      `ZCODE_PACKAGED_AGENT_OTEL_HEADERS`). The write key goes neither into the dashboard nor into this repo doc.
+- [x] Confirm this endpoint is the OTLP base. Measured base is `/apm/trace/opentelemetry`; `base + /v1/traces` and
+      `base + /v1/metrics` both return 200, and the separate `/apm/metric/opentelemetry/v1/metrics` is actually 404.
+      The earlier worry that a base containing the trace segment makes metrics hit a non-existent URL does not hold;
+      the concatenation at `packages/desktop/src/main/localTtftExporter.ts:31` works.
+- [x] Confirm the backend accepts the metrics signal on the same endpoint. Conclusion: accepted, so no separate
+      metrics-endpoint injection is needed in desktop main (the allow-list at
+      `packages/desktop/src/main/desktopRuntimeEnv.ts:216` stays as is).
+- [x] Use real controlled samples: two real E2E runs of `conversation-session-ttft-stages` (3/3 each) and one of
+      `conversation-session-ttft-diagnostics` (6/6), 12 sends in total, with only the base endpoint set as online
+      (`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` not set separately). 85 forwards, all 200, no failure.
+- [x] Trace acceptance: `service.name = zcode-local-ttft` queryable (was 0); `observation_id` without hyphens
+      equals traceID; one send has 62 spans, root 701.70 ms vs six main stages' union 701.69 ms, `unattributed_ms=0`;
+      `local_ttft.checkpoint`, `.start`, `.first_text` share the Trace root; `.started` point records have duration 0.
+- [x] Actual metric series names carry **no unit suffix**; the query contract's `zcode_local_ttft_*` default names
+      hold.
+- [x] Total P50/P95, stage P95, preparation sub-stage P95 with matching `_count`, DELTA + `sum_over_time` hold.
+      Stage sample count 18 = 3 sends x 6 stages, not inflated by attempts.
+- [x] Diagnostic definitions (Ticket 02): `records` complete by kind (start 16 / first_output 12 / first_text 12 /
+      excluded 4 / checkpoint 442); `excluded` splits cancelled / failed / guided; `attempt` splits failed retries and
+      first output by role+outcome; `no_output.wait` records cancelled and failed; `preparation` covers context /
+      hooks / persistence / mcp / tools / request_assembly / user_confirmation / retry_wait.
+- [x] Labels are controlled and low-cardinality (app_version, os, provider, model, quality, send_mode,
+      visibility, stage, role, outcome, kind); no correlation ID leaks into metric labels.
+- [x] Warehouse visible delay: polling started right after the second run ended; Trace and Metric hit on the first
+      poll (upper bound <5 s). This is an "visible at end" upper bound, not a per-condition precise delay.
+- [x] Results written back to the Ticket 01 and Ticket 02 platform acceptance items; local tests and platform
+      acceptance are recorded separately.
+- [ ] **Not done:** visually confirm the waterfall rendering and navigation in the ARMS/Trace Explorer console. All
+      checks so far read API data integrity only; console confirmation needs a login.
 
-验收细节与全部查询返回值见 [local-ttft-platform-evidence.json](local-ttft-platform-evidence.json)。
+Side effect: 12 controlled sample sends were written into the production telemetry store; they can be excluded by
+`provider="e2e-deepseek"`, `model="deepseek-v4-flash"`, which never appear in real user samples.
 
-副作用：本次向生产遥测库写入 12 次发送的受控样本，可按 `provider="e2e-deepseek"`、`model="deepseek-v4-flash"` 识别排除，这两个标签不会出现在真实用户样本中。
+## Phase 1: packaged build with write configuration
 
-## 阶段 1：让打包版带上写入配置
+Needs CI variable permission (release/CI owner).
 
-需要 CI 变量权限（发布/CI owner）。
+- [ ] Confirm the CI variables are available in the target build. `resolveBuildPackagedAgentTelemetryEnv`
+      (`packages/desktop/tsup.config.ts:84`) requires endpoint and headers as a pair, production must be HTTPS, and a
+      missing variable on a release branch/tag fails the build directly. With the variables in place desktop main gets
+      the metrics output automatically; no new build config is needed.
+- [ ] Produce a dev/preview package and launch it once from Finder / Start Menu. An installed package starts
+      without shell env vars, which is why the Agent historically fell silently into Noop (see the comment at
+      `packages/desktop/src/main/desktopRuntimeEnv.ts:213`). This is the only path Phase 0 does not cover: Phase 0 runs
+      runtime env injection.
+- [x] ~~If Phase 0 shows metrics need a separate endpoint, finish that channel change before packaging.~~ Phase 0
+      confirmed the same base accepts metrics; no change needed.
 
-- [ ] 确认 CI 变量在目标构建上可用。`resolveBuildPackagedAgentTelemetryEnv`（`packages/desktop/tsup.config.ts:84`）要求 endpoint 与 headers 成对出现、生产必须 HTTPS，release 分支/tag 缺失会直接让构建失败。变量到位时桌面 main 自动获得 metrics 出口，**不需要新增构建配置**。
-- [ ] 出一个 dev/preview 包，从 Finder / 开始菜单启动验证一次。安装包启动时没有 shell 环境变量，历史上 Agent 因此静默落入 Noop，注释见 `packages/desktop/src/main/desktopRuntimeEnv.ts:213`。这是阶段 0 唯一没覆盖到的写入路径：阶段 0 走的是运行时 env 注入。
-- [x] ~~若阶段 0 发现 metrics 需要独立接入点，先完成注入通道改动再打包。~~ 阶段 0 已确认同一 base 收 metrics，无需改动。
+## Phase 2: gradual rollout
 
-## 阶段 2：开灰度
+- [ ] Server `GET /api/v1/client/configs` returns `data.configs.rendererActionTrace.localTtftEnabled = true`
+      (parsing: `packages/desktop/src/main/rendererActionTraceRollout.ts:53`). The request carries `app_version` and
+      `platform`, so audiences can be cut by version/platform.
+- [ ] Start with a small group. Within the gray release collection is bounded and full, with no active sampling;
+      observe volume per Phase 3 before expanding.
+- [ ] Internal verification forces it on per machine with `ZCODE_LOCAL_TTFT_ENABLED=1`
+      (`packages/desktop/src/main/rendererActionTraceIpc.ts:123`) without editing the online config.
+- [ ] After the gray launch confirm that legacy business completion, RUM TTFT and send-funnel counts are
+      unchanged.
 
-- [ ] 服务端 `GET /api/v1/client/configs` 返回 `data.configs.rendererActionTrace.localTtftEnabled = true`（解析见 `packages/desktop/src/main/rendererActionTraceRollout.ts:53`）。请求携带 `app_version` 与 `platform`，可按版本/平台圈人。
-- [ ] 从小人群起步。灰度内是有界全量采集、不主动抽样，先按阶段 3 观察量再扩。
-- [ ] 内部验证用 `ZCODE_LOCAL_TTFT_ENABLED=1` 单机强开（`packages/desktop/src/main/rendererActionTraceIpc.ts:123`），不动线上配置。
-- [ ] 确认开灰度后旧业务 completion、RUM TTFT 与发送漏斗的计数口径没有变化。
+## Phase 3: capacity, cost and retention
 
-## 阶段 3：容量、费用与保留期
+Thresholds before expanding the gray release; all must be verified on ARMS, document estimates cannot replace it.
 
-扩大灰度前的门槛，全部需要在 ARMS 上核实，文档里的估算不能替代。
+- [ ] Series count: 10 Histograms + 2 Counters, 15 explicit buckets + `+Inf` + sum/count, theoretical limit about
+      46,592 series per resource group. Also check the backend resource-label mapping and whether overflow series are
+      produced.
+- [ ] Cardinality not capped: per-instrument limit 256 (`localTtftExporter.ts`), provider/model
+      at most 16 groups (`packages/desktop/src/main/localTtftExporter.ts:71`). Capped means lost discriminability and
+      entry into `other`.
+- [ ] `zcode.local_ttft.dropped` is 0 online; non-zero means the queue or capacity boundary needs adjusting;
+      distinguish reasons by queue full, eviction capacity, transport timeout and truncation.
+- [ ] Retention reaches the target: detail 7 days, aggregates at least 30 days, plus an actual cost estimate. The
+      parent contract marks this item as a deployment condition to verify.
 
-- [ ] 序列量：10 Histogram + 2 Counter，15 个显式桶 + `+Inf` + sum/count，理论上限约 46,592 条序列/同资源组。另需检查后端资源标签映射与是否产生 overflow 序列。
-- [ ] cardinality 未顶上限：每个 instrument 上限 256、provider/model 最多 16 组（`packages/desktop/src/main/localTtftExporter.ts:71`）。顶到上限会归入 `other`，等于丢失区分度。
-- [ ] `zcode.local_ttft.dropped` 在线上为 0；非 0 说明队列或容量边界需要调整，按 reason 区分队列满、去重容量、传输超时与截断。
-- [ ] 保留期达到目标：明细 7 天、聚合 ≥30 天，并给出实际费用估算。该项在父合同中标为待核验的部署条件。
+## Phase 4: dashboard deployment
 
-## 阶段 4：看板落地
+- [ ] Import `dashboards/local-ttft.json` and replace the `total_metric` / `stage_metric` variables with the actual
+      metric names verified in Phase 0.
+- [ ] The default experience view uses `quality="complete"` and `visibility="foreground"`; `missing`,
+      `clock_invalid` and observation series go only into the diagnostic view. Observation-series labels are the state
+      when that stage was observed, not proof that the message stayed foreground; mixing them pollutes the default
+      distribution.
+- [ ] Each percentile chart carries `_count` of the same filter and time window. Do not add P95s or derive stage
+      P95 as total P95 minus model P95.
 
-- [ ] 导入 [dashboards/local-ttft.json](dashboards/local-ttft.json)，用阶段 0 核对到的真实指标名替换 `total_metric` / `stage_metric` 变量。
-- [ ] 默认体验视图带 `quality="complete"` 与 `visibility="foreground"`；`missing`、`clock_invalid` 与 observation 系列只进诊断视图。observation 系列的标签是该阶段观察当时的状态，不代表消息最终持续前台，混入会污染默认分布。
-- [ ] 每张分位数图配同过滤、同时间窗的 `_count`。不相加 P95，也不用总 P95 减模型 P95 推导阶段。
+## Local reproduction entry
 
-## 本地复现入口
+Without connecting to real ARMS, verify the local output via the
+[Local reproduction](local-ttft-queries.md#local-reproduction) section of the query contract: first start
+`packages/desktop/scripts/ttft-otlp-receiver.mjs` (listens only on localhost:14318), then run the two candidate
+cases `conversation-session-ttft-stages` / `conversation-session-ttft-diagnostics`. This path proves only the final
+OTLP contract and is not platform acceptance.
 
-不接真实 ARMS 时的本地出口验证走 [查询合同的本地复现](local-ttft-queries.md#本地复现)：先起 `packages/desktop/scripts/ttft-otlp-receiver.mjs`（仅监听 localhost:14318），再跑 `conversation-session-ttft-stages` / `conversation-session-ttft-diagnostics` 两个候选用例。这条路径只证明最终 OTLP 出口合同，不构成平台验收。
+## Not in this checklist
 
-## 未纳入本清单
-
-- 桌面远程工作区、手机与 Web 远控的 TTFT 采集（父合同 Out of Scope）。
-- Ticket 01 记录的 CLI 全量单测未通过项（442 文件通过 / 76 文件失败，失败未逐项归因，受影响 gateway 的 stale 场景在开工 HEAD 同样失败）。不阻塞平台验收，但主张整体完成前需单独交代。
-- Windows / Linux 实机与手机远控 E2E 运行证据。
+- TTFT collection for desktop remote workspaces and mobile/web remote control (parent contract, Out of Scope).
+- The CLI full-unit-test failures recorded in Ticket 01 (442 files passed / 76 failed, not itemized by origin; the
+  stale scenario also fails at the starting HEAD). They do not block platform acceptance, but overall completion
+  needs separate disclosure.
+- Windows / Linux real-machine and mobile remote-control E2E evidence.

@@ -1,32 +1,29 @@
-# MCP STDIO 失败 stderr 诊断
+# MCP stdio failure stderr diagnostics
 
-## 背景
+## Background
 
-用户反馈 `ZCT-2071437415552278528` 中，两个 MySQL MCP server 都以
-`MCP error -32000: Connection closed` 失败。该错误只说明 MCP stdio 子进程关闭了
-管道，无法判断是 `npx`、server 参数校验、环境变量、网络还是 server 自身崩溃。
+In ticket `ZCT-2071437415552278528`, both MySQL MCP servers failed with `MCP error -32000: Connection closed`. That error only says the MCP stdio child closed the pipe — it cannot tell whether `npx`, server argument validation, env vars, the network, or the server itself crashed.
 
-现有 adapter 已经监听 stdio stderr，但 stderr 只写 debug 日志。生产日志导出默认不包含
-debug，导致工单里没有 MCP 子进程退出前的原始错误。
+The adapter already listens to stdio stderr, but stderr only went to debug logs. Production log exports exclude debug by default, so tickets lacked the child process's original error before exit.
 
-## 目标
+## Goals
 
-- 保留 stdio MCP 子进程最近的 stderr 尾部内容。
-- 当 `mcp.server.failed` 发生时，把最近 stderr 作为 warn 上下文字段输出。
-- stderr 必须限长，避免高频 stderr 把生产日志刷爆。
-- stderr 必须脱敏，避免把 token、password、authorization 等凭据写入日志。
-- 成功连接时不额外输出 warn 级 stderr，保持正常运行日志安静。
+- Keep the tail of the most recent stderr from each stdio MCP child.
+- When `mcp.server.failed` fires, emit the recent stderr as a warn context field.
+- The stderr must be length-capped so high-frequency output cannot flood production logs.
+- The stderr must be redacted so tokens, passwords, and authorization credentials never reach logs.
+- Successful connections emit no extra warn-level stderr, keeping normal logs quiet.
 
-## 行为约定
+## Behavior
 
-- 每个 stdio MCP server 连接尝试单独维护一个内存 stderr buffer。
-- buffer 只保留尾部固定长度，用于定位启动失败前的最后错误。
-- debug 级 `mcp.stdio.stderr` 继续输出单次 chunk，但同样使用脱敏后的文本。
-- warn 级 `mcp.server.failed` 仅在 buffer 非空时附带 `stderr` 字段。
-- 不记录 stdio env values；env 仍只通过子进程启动参数传递。
+- Each stdio MCP server connection attempt keeps its own in-memory stderr buffer.
+- The buffer keeps only a fixed tail length, for locating the last error before startup failure.
+- Debug-level `mcp.stdio.stderr` still logs individual chunks, using the same redacted text.
+- Warn-level `mcp.server.failed` attaches the `stderr` field only when the buffer is non-empty.
+- stdio env values are never logged; env still passes only through child-process launch arguments.
 
-## 验证
+## Verification
 
-- 单测覆盖 stdio MCP connect 失败时，warn 日志包含最近 stderr。
-- 单测覆盖 stderr 中的敏感字段会被 `[Redacted]` 替换。
-- `pnpm typecheck` 与 `pnpm lint` 作为边界检查。
+- Unit tests cover warn logs containing recent stderr on stdio MCP connect failure.
+- Unit tests cover sensitive fields in stderr being replaced by `[Redacted]`.
+- `pnpm typecheck` and `pnpm lint` as boundary checks.

@@ -1,8 +1,9 @@
 import { rewardsContextSchema, type RewardsContext } from "./rewardsEmbedded.js";
 
-/** 此函数经 preload 序列化到网页主世界，不能引用模块外的运行时变量。 */
+/** This function is serialized via preload into the page's main world; it must not reference runtime variables from outside the module. */
 export function installRewardsPageBridge() {
-  // 持久分区可能遗留上次账号；在业务脚本运行前清除，等待本次 App 注入完成。
+  // The persistent partition may retain the previous account; clear it before business scripts
+  // run and wait for this app's injection to complete.
   const storage = (globalThis as unknown as { localStorage: { removeItem: (key: string) => void } })
     .localStorage;
   for (const key of ["oauth:zai:access_token", "oauth:bigmodel:access_token", "zcodejwttoken"])
@@ -43,7 +44,7 @@ export function installRewardsPageBridge() {
     configurable: false,
     writable: false,
     value: {
-      // 对象方法不引入 esbuild keepNames 辅助闭包；序列化到主世界后可独立执行。
+      // Object methods avoid esbuild keepNames helper closures; they run standalone once serialized into the main world.
       getTheme() {
         return current?.theme ?? null;
       },

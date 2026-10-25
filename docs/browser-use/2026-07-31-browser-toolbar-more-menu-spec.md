@@ -1,68 +1,68 @@
-# 内置浏览器地址栏操作与更多菜单规格
+# Embedded Browser Address-Bar Actions and More Menu Spec
 
-> 状态：已实现（2026-07-31）
-> 范围：`packages/ui` 统一内置浏览器 chrome；不修改 Browser Use 协议、guest 生命周期或远控消息流。
+> Status: implemented (2026-07-31)
+> Scope: the `packages/ui` unified embedded browser chrome; no change to the Browser Use protocol, guest lifecycle or remote-control message flow.
 
-## 1. 目标
+## 1. Goal
 
-内置浏览器在地址栏右侧提供“在默认浏览器中打开”能力，同时收敛窄侧栏中的操作密度。
+The embedded browser offers "open in default browser" to the right of the address bar and reduces action density in a narrow side pane.
 
-地址输入框固定使用 `h-7 rounded-lg`（28 CSS px 高、8 CSS px 圆角）；外层工具栏继续使用 `h-12`（48 CSS px），由工具栏垂直居中地址框和操作按钮。
+The address input is fixed at `h-7 rounded-lg` (28 CSS px high, 8 CSS px radius); the outer toolbar stays `h-12` (48 CSS px) and vertically centers the address box and the action buttons.
 
-新建浏览器 tab 后立即显示空置态，底层 `<webview>` 只挂载、不显示。地址栏内容在回车前属于未提交草稿：输入、粘贴或清空草稿均不得关闭空置态或提前显示 `<webview>`；只有确认提交合法 URL、恢复既有 URL 或接收外部导航请求后，才进入已导航状态并显示 `<webview>`。
+A newly created browser tab immediately shows the empty state; the underlying `<webview>` is only mounted, not shown. Until Enter, the address bar content is an uncommitted draft: typing, pasting or clearing the draft must not close the empty state or show the `<webview>` early. Only after a valid URL is submitted, an existing URL is restored, or an external navigation request is received does the view enter the navigated state and show the `<webview>`.
 
-`<webview>` 节点自身固定使用 `#FFF` 背景，不区分加载状态或 ZCode 明暗主题。空置态继续提前挂载 guest，但节点从创建时就同时使用内联 `visibility:hidden` 与 `display:none`，阻止 Electron guest surface 在 CSS 类生效前合成白色首帧；确认导航后解除隐藏。不得增加额外覆盖层或向 guest 网页注入 CSS，网页声明的背景正常绘制在该白色底之上。
+The `<webview>` node itself always uses a `#FFF` background, regardless of loading state or the ZCode light/dark theme. The empty state still mounts the guest early, but the node uses both inline `visibility:hidden` and `display:none` from creation, so the Electron guest surface cannot composite a white first frame before the CSS class takes effect; the hiding is released after navigation is confirmed. No extra overlay and no CSS injection into the guest page; page-declared backgrounds paint normally over the white base.
 
-地址栏操作的完整优先级固定为：
+Full address-bar action priority:
 
 ```text
-自由尺寸 -> 选择元素 -> 在默认浏览器中打开 -> 调试
+free size -> select element -> open in default browser -> debug
 ```
 
-实际 chrome 只常驻前两个操作，第三个位置固定为“更多”菜单：
+The actual chrome keeps only the first two actions permanently; the third slot is a fixed "More" menu:
 
 ```text
-+---------- address ----------+ [自由尺寸] [选择元素] [更多]
++---------- address ----------+ [free size] [select element] [more]
                                                        |
-                                                       +-- 在默认浏览器中打开
-                                                       +-- 调试
+                                                       +-- open in default browser
+                                                       +-- debug
 ```
 
-## 2. 交互合同
+## 2. Interaction contract
 
-- “自由尺寸”和“选择元素”继续保持现有图标、激活态、禁用态和顺序。
-- “更多”是地址栏右侧第三个常驻图标按钮，支持鼠标和键盘打开。
-- 菜单按完整操作优先级展示被折叠的两个动作：
-  1. 在默认浏览器中打开。
-  2. 打开调试工具。
-- “在默认浏览器中打开”使用当前已加载页面 URL，不使用地址栏里尚未提交的草稿。
-- 仅当前页面为 `http:`、`https:` 或 `file:`，且 guest 已就绪时允许外部打开；`about:`、`data:`、空页和未就绪状态保持禁用。
-- “打开调试工具”沿用现有 guest ready 门禁与 `webview.openDevTools()` 行为。
-- 点击任一菜单项后菜单关闭；错误或 detached guest 继续使用既有安全调用和 UI logger 诊断边界。
+- "Free size" and "Select element" keep their existing icons, active state, disabled state and order.
+- "More" is the third permanent icon button to the right of the address bar and opens with mouse and keyboard.
+- The menu shows the two collapsed actions in priority order:
+  1. Open in default browser.
+  2. Open DevTools.
+- "Open in default browser" uses the currently loaded page URL, never the uncommitted address-bar draft.
+- External open is allowed only when the current page is `http:`, `https:` or `file:` and the guest is ready; `about:`, `data:`, empty page and not-ready state stay disabled.
+- "Open DevTools" keeps the existing guest-ready gate and `webview.openDevTools()` behavior.
+- Clicking any menu item closes the menu; errors or a detached guest keep using the existing safe call and UI logger diagnostic boundary.
 
-## 3. 平台与状态边界
+## 3. Platform and state boundary
 
-外部打开复用 `IPlatformService.openExternal`：
+External open reuses `IPlatformService.openExternal`:
 
 ```text
   BrowserToolbar menu
-  -> UnifiedBrowserView 读取当前 guest URL 并校验 http/https/file
+  -> UnifiedBrowserView reads the current guest URL and validates http/https/file
     -> IPlatformService.openExternal(url)
       -> Desktop: Electron shell
       -> Web fallback: window.open
 ```
 
-- 不新增 UI 直接访问 `window.zcode`。
-- 不新增 Desktop main / host process 业务状态，也不新增同步 IO。
-- Desktop `desktop-continuous` 与手机 `web-remote-replayable` 的 stream、snapshot、queue、owner/lease 语义均不变化。
-- Web 当前不暴露 embedded-browser capability；共享组件仍保持平台注入兼容。
+- No new UI direct access to `window.zcode`.
+- No new Desktop main / host process business state and no synchronous IO.
+- The stream, snapshot, queue and owner/lease semantics of Desktop `desktop-continuous` and mobile `web-remote-replayable` are unchanged.
+- Web currently exposes no embedded-browser capability; the shared component keeps platform-injection compatibility.
 
-## 4. 验证
+## 4. Verification
 
-- 组件测试约束常驻操作只有“自由尺寸、选择元素、更多”，并验证 DOM 顺序。
-- 菜单测试约束“在默认浏览器中打开”位于“调试”之前。
-- `http/https` 当前页面点击外部打开时，精确调用一次 `platform.openExternal(currentUrl)`。
-- 未提交地址栏草稿不能覆盖当前页面 URL。
-- `about/data` 与 guest 未就绪时外部打开禁用且不调用平台；所有 `file:` 页面允许调用平台。
-- 调试菜单项继续调用当前 guest 的 `openDevTools()`。
-- 必跑定向 Vitest、`pnpm typecheck` 与 `pnpm lint`。
+- A component test constrains the permanent actions to "free size, select element, more" and checks the DOM order.
+- A menu test constrains "open in default browser" to come before "debug".
+- Clicking external open on an `http/https` current page calls `platform.openExternal(currentUrl)` exactly once.
+- An uncommitted address-bar draft cannot overwrite the current page URL.
+- For `about/data` and a not-ready guest, external open is disabled and the platform is not called; every `file:` page may call the platform.
+- The debug menu item still calls the current guest's `openDevTools()`.
+- Run targeted Vitest, `pnpm typecheck` and `pnpm lint`.

@@ -286,8 +286,9 @@ function resolveWindowsCmdOverridePath(
   if (isExecutableCandidate(shellPath, exists)) {
     return shellPath;
   }
-  // 设置页在 ComSpec 缺失时会暴露系统默认 cmd.exe fallback；它和 generic
-  // Windows shell fallback 一样不能依赖 accessSync 预校验，否则用户显式选择会被 Git Bash 抢走。
+  // When ComSpec is missing, the settings page exposes the system-default cmd.exe fallback. As with
+  // the generic Windows shell fallback, do not precheck it with accessSync or Git Bash could override
+  // the user's explicit selection.
   return isWindowsCmdFallback(shellPath) ? shellPath : undefined;
 }
 

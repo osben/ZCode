@@ -44,6 +44,8 @@ interface DesktopTopOverlayProps {
   onGoBack: () => void;
   onGoForward: () => void;
   hideTaskNavigationButtons?: boolean;
+  /** Plain web (not desktop, not web remote control) has no other on-screen sidebar toggle. */
+  showWebSidebarToggle?: boolean;
   newTaskDisabledReason?: string;
 }
 
@@ -74,6 +76,7 @@ export function DesktopTopOverlay({
   onGoBack,
   onGoForward,
   hideTaskNavigationButtons = false,
+  showWebSidebarToggle = false,
   newTaskDisabledReason,
 }: DesktopTopOverlayProps) {
   const { intl } = useZCodeIntl();
@@ -152,6 +155,20 @@ export function DesktopTopOverlay({
                   <ZCodeStartupLogoBadge size="titlebar" animated={false} />
                 </span>
                 <SidebarToggleIcon className="absolute inset-0 m-auto size-4 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100" />
+              </DesktopTopOverlayActionButton>
+            )}
+
+            {/* ISSUE-065: web had only the ⌘B shortcut, so touch users could not hide the sidebar
+                and the composer stayed clipped at phone width. */}
+            {showWebSidebarToggle && !isDesktop && (
+              <DesktopTopOverlayActionButton
+                title={toggleSidebarTitle}
+                shortcut={toggleSidebarShortcutLabel}
+                ariaLabel={toggleSidebarTitle}
+                testId="web-top-sidebar-toggle"
+                onClick={onToggleSidebar}
+              >
+                <SidebarToggleIcon className="size-4" />
               </DesktopTopOverlayActionButton>
             )}
 

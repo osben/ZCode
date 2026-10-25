@@ -2,8 +2,9 @@ import { z } from "zod";
 import { modelSelectionSchema } from "./model-selection.js";
 
 /**
- * 执行 Selection 退回 Session Selection 的原因。由发起方在 selectionFallback 规则里声明，
- * CLI 只透传命中规则的原因，不自行解释 provider 错误码。
+ * Reason an execution Selection falls back to the Session Selection. Declared by the initiator in
+ * selectionFallback rules; the CLI only passes through the matched rule's reason and does not
+ * interpret provider error codes on its own.
  */
 export const modelExecutionSelectionFallbackReasonSchema = z.enum([
   "highspeed_card_expired",
@@ -11,7 +12,7 @@ export const modelExecutionSelectionFallbackReasonSchema = z.enum([
   "highspeed_selection_unavailable",
 ]);
 
-/** 文本与附件发送共用执行约束，凭据只属于单次执行，不进入 Session 配置。 */
+/** Text and attachment sends share execution constraints; credentials belong to a single execution and are not part of Session configuration. */
 export const modelExecutionSchema = z
   .object({
     memoryExtraction: z.literal("skip").optional(),

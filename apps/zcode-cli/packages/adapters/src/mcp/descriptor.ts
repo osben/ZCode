@@ -17,7 +17,7 @@ export function normalizeMcpToolDescriptor(
   const record = isRecord(tool) ? tool : {};
   const meta = isRecord(record._meta) ? record._meta : {};
   const toolName = typeof record.name === "string" ? record.name : "unknown";
-  // 插件 UI：tools/list 的 `_meta` 只在这里读一次，归一化成 descriptor.ui；下游不再碰原始 _meta。
+  // Plugin UI: read `tools/list` `_meta` once here and normalize it to descriptor.ui; downstream code never touches raw _meta.
   const ui = normalizeMcpToolUiMeta(record._meta);
   return {
     serverName,
@@ -29,15 +29,15 @@ export function normalizeMcpToolDescriptor(
     toolName,
     name: `mcp__${sanitizeMcpName(serverName)}__${sanitizeMcpName(toolName)}`,
     description: typeof record.description === "string" ? record.description : undefined,
-    // 工具级 `_meta.timeoutMs`（A8）覆盖服务器级超时：长任务（下载引擎、渲染）按工具声明，上限 30 分钟。
+    // Tool-level `_meta.timeoutMs` (A8) overrides the server-level timeout: long tasks (engine downloads, rendering) declare their own limit, capped at 30 minutes.
     timeoutMs: readToolMetaTimeoutMs(record._meta) ?? timeoutMs,
     inputSchema: normalizeInputSchema(record.inputSchema),
     outputSchema: isRecord(record.outputSchema) ? (record.outputSchema as JsonSchema) : undefined,
     annotations: normalizeAnnotations(record.annotations),
-    // 只有 http 官方 MCP 的 tool error 标识才被信任——那种形态的响应来自已校验 origin 的
-    // ZCode 后端，插件伪造不了（判据与代价见 mcp.port.ts 的 official 字段说明）。
+    // Trust tool error identifiers only for official HTTP MCP; that response shape comes from a ZCode backend with a
+    // validated origin and cannot be forged by a plugin (see the official field in mcp.port.ts for the criteria and tradeoffs).
     ...(official ? { official: true } : {}),
-    // 可见性独立于 UI 呈现——没有 resourceUri 的 app-only 数据工具也不能进模型工具表。
+    // Visibility is independent of UI presentation: app-only data tools without a resourceUri must not enter the model tool list either.
     visibility: readMcpToolVisibility(record._meta),
     ...(ui ? { ui } : {}),
   };

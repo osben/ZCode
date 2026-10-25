@@ -1,9 +1,16 @@
+import {
+  TID_TASK_DELETE,
+  TID_TASK_VIEW_MODEL_TRAJECTORY,
+  TID_TASK_VIEW_MODEL_TRAJECTORY_V2,
+} from "@zcode/shared/test-ids";
+
 interface TaskActionMenuItemProps {
   children: React.ReactNode;
   "data-testid"?: string;
   disabled?: boolean;
   onSelect?: () => void;
   title?: string;
+  variant?: "default" | "destructive";
 }
 
 interface TaskActionMenuSeparatorProps {
@@ -15,6 +22,7 @@ export function TaskActionMenuContent({
   isPinned,
   isArchived = false,
   fileManagerLabel,
+  canOpenInFileManager,
   taskSessionFile,
   activeSessionId,
   taskNativeSessionLogFile,
@@ -37,7 +45,10 @@ export function TaskActionMenuContent({
   onCopyTaskLogPath,
   onCopySessionId,
   onViewModelTrajectory,
+  onViewModelTrajectoryV2,
   onOpenProviderConfig,
+  onDeleteTask,
+  deleteDisabledReason,
 }: {
   intl: {
     formatMessage: (desc: { id: string }, values?: Record<string, string>) => string;
@@ -45,6 +56,7 @@ export function TaskActionMenuContent({
   isPinned: boolean;
   isArchived?: boolean;
   fileManagerLabel: string;
+  canOpenInFileManager: boolean;
   taskSessionFile: { loading: boolean; path: string | null; exists: boolean };
   activeSessionId?: string | null;
   taskNativeSessionLogFile: {
@@ -71,7 +83,11 @@ export function TaskActionMenuContent({
   onCopyTaskLogPath: () => void;
   onCopySessionId?: () => void;
   onViewModelTrajectory?: () => void;
+  onViewModelTrajectoryV2?: () => void;
   onOpenProviderConfig: () => void;
+  /** Sidebar Delete (session-deletion-cascade): confirmation is owned by the caller. */
+  onDeleteTask?: () => void;
+  deleteDisabledReason?: string;
 }) {
   const taskTargetActionsDisabled = disableTaskActions || disableTaskTargetActions;
 
@@ -110,6 +126,19 @@ export function TaskActionMenuContent({
       >
         {intl.formatMessage({ id: isArchived ? "taskList.unarchive" : "taskList.archive" })}
       </Item>
+      {onDeleteTask ? (
+        <Item
+          data-testid={TID_TASK_DELETE}
+          variant="destructive"
+          disabled={taskTargetActionsDisabled || Boolean(deleteDisabledReason)}
+          title={deleteDisabledReason ?? disabledReason}
+          onSelect={() => {
+            if (!taskTargetActionsDisabled && !deleteDisabledReason) onDeleteTask();
+          }}
+        >
+          {intl.formatMessage({ id: "taskList.delete" })}
+        </Item>
+      ) : null}
       <Item
         disabled={taskTargetActionsDisabled}
         title={disabledReason}
@@ -122,7 +151,7 @@ export function TaskActionMenuContent({
         {intl.formatMessage({ id: "taskList.markAsUnread" })}
       </Item>
       <Separator />
-      {!hideMobileUnsupportedActions ? (
+      {canOpenInFileManager && !hideMobileUnsupportedActions ? (
         <Item
           disabled={disableTaskActions}
           title={disableTaskActions ? disabledReason : undefined}
@@ -142,13 +171,18 @@ export function TaskActionMenuContent({
       >
         {intl.formatMessage({ id: "appHeader.copyPath" })}
       </Item>
-      <Item
-        disabled={taskTargetActionsDisabled || taskSessionFile.loading || !taskSessionFile.path}
-        title={taskTargetActionsDisabled ? disabledReason : undefined}
-        onSelect={onCopyTaskPath}
-      >
-        {intl.formatMessage({ id: "appHeader.copyTaskPath" })}
-      </Item>
+      {/* Host computes the snapshot path even when no file exists (exists:false); copying it would
+          give a path that does not exist, so the item is hidden until the file is confirmed. This
+          diverges from upstream 0a1fc56d, which always shows it. */}
+      {taskSessionFile.exists ? (
+        <Item
+          disabled={taskTargetActionsDisabled || !taskSessionFile.path}
+          title={taskTargetActionsDisabled ? disabledReason : undefined}
+          onSelect={onCopyTaskPath}
+        >
+          {intl.formatMessage({ id: "appHeader.copyTaskPath" })}
+        </Item>
+      ) : null}
       <Item
         disabled={
           taskTargetActionsDisabled ||
@@ -171,7 +205,7 @@ export function TaskActionMenuContent({
           {intl.formatMessage({ id: "appHeader.copySessionId" })}
         </Item>
       ) : null}
-      {!hideMobileUnsupportedActions ? (
+      {canOpenInFileManager && !hideMobileUnsupportedActions ? (
         /* Bugfix: 手机远控运行在浏览器里，无法可靠打开桌面端 provider 配置文件。
            这里只在远控移动端隐藏入口，桌面端仍沿用“路径已知即可前往配置”的能力。 */
         <Item
@@ -194,11 +228,26 @@ export function TaskActionMenuContent({
           {/* 调用轨迹查看：从 ~/.zcode/cli 的 model-io 还原该 task 的模型请求/响应/工具调用，
               在右侧边栏可视化。只依赖 taskId（即 sessionId），不依赖快照文件是否落盘。 */}
           <Item
+            data-testid={TID_TASK_VIEW_MODEL_TRAJECTORY}
             disabled={taskTargetActionsDisabled || !activeSessionId}
             title={taskTargetActionsDisabled ? disabledReason : undefined}
             onSelect={onViewModelTrajectory}
           >
             {intl.formatMessage({ id: "taskList.viewModelTrajectory" })}
+          </Item>
+        </>
+      ) : null}
+      {onViewModelTrajectoryV2 ? (
+        <>
+          {onViewModelTrajectory ? null : <Separator />}
+          {/* Trajectory v2: event ledger, timing and request details; coexists with the v1 tab. */}
+          <Item
+            data-testid={TID_TASK_VIEW_MODEL_TRAJECTORY_V2}
+            disabled={taskTargetActionsDisabled || !activeSessionId}
+            title={taskTargetActionsDisabled ? disabledReason : undefined}
+            onSelect={onViewModelTrajectoryV2}
+          >
+            {intl.formatMessage({ id: "taskList.viewModelTrajectoryV2" })}
           </Item>
         </>
       ) : null}

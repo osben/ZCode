@@ -1,222 +1,209 @@
-# ZCT-2099792881319157760：Provider 文件锁与配置消失调查
+# ZCT-2099792881319157760: Provider File Lock and Missing Configuration Investigation
 
-- 调查日期：2026-09-15。
-- 主要事件：2026-09-13，Windows 桌面版 3.12.1，发布构建 `dfc10615`。
-- 材料：反馈附件 `284720`，`zcode-logs-full-20260915-173012.zip`。复核了 9 月 13–15 日六份 Desktop / CLI 运行日志，共 58,443 行。
-- 范围：调查 9 月 13 日的配置文件锁失败、个人 Provider 消失和恢复行为。9 月 15 日的配置校验失败，已由反馈跟进者确认是用户手动改坏配置，作为独立问题处理。
-- 状态：调查报告，未实施修复。配置降级与恢复缺陷已确认；现场反复锁超时的具体触发因素尚未定案。
+- Investigation date: 2026-09-15.
+- Primary event: 2026-09-13, Windows desktop 3.12.1, release build `dfc10615`.
+- Materials: feedback attachment `284720`, `zcode-logs-full-20260915-173012.zip`; six Desktop/CLI run logs from September 13-15, 58,443 lines.
+- Scope: September 13 configuration file lock failures, personal Provider disappearance, and recovery behavior. The September 15 configuration validation failures were confirmed by the feedback follow-up as user-manual configuration corruption and are a separate issue.
+- Status: investigation report. Configuration degradation and recovery defects are confirmed; the on-site trigger for repeated lock timeouts is unresolved. The lock-competition part was later reduced by [the pure-read lock-removal change](./2026-09-15-provider-config-read-lock-todo.md); the other defects below remain open.
 
-结论：多个进程对同一份个人 Provider 配置进行排他轮询，存在持续的读者竞争。现场部分时段出现锁获取超时，读取层将异常转换为空个人配置，导致 Provider 从可用状态中消失，并可阻断后续消息执行。读取恢复后，又可能因磁盘内容版本未变化而漏发恢复通知。周日异常操作延迟与频繁最小化相关，但现有材料不能确定延迟来自系统调度、I/O、游戏负载或锁屏。
+Conclusion: multiple processes poll the same personal Provider configuration under an exclusive lock, so readers contend continuously. In some periods on-site, lock acquisition timed out and the read layer converted the exception into an empty personal configuration. The Provider then disappeared from the available set and subsequent message execution could fail. After reading recovers, the recovery notification can be missed because the disk content version is unchanged. Abnormal operation delays on Sunday correlate with frequent minimizing, but the materials do not show whether the delay came from system scheduling, I/O, game load, or screen lock.
 
-## 1. 问题完整路径还原
+## 1. Issue Path
 
-### 1.1 涉及的文件和状态
+### 1.1 Involved files and state
 
-| 对象                                     | 作用                                          | 与本次问题的关系                                                         |
-| ---------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------ |
-| `provider_config.json`                   | 保存个人 Provider、模型规则等配置             | 出现读取失败的目标文件                                                   |
-| `provider_config.json.lock/owner-*.json` | 用目录和 owner 文件实现跨进程排他锁           | 即使纯轮询，也会创建、写入和删除这些锁元数据                             |
-| 内存中的 Provider Registry               | 为模型设置、模型选择和运行时提供可用 Provider | 可能接收空个人配置，并在故障恢复后继续保留降级状态                       |
-| `setting.json` 及其独立文件锁            | 保存应用偏好、上次工作区等信息                | 重复保存是旁路发现；不直接占用 Provider 文件的锁                         |
-| SQLite 会话库                            | 保存会话及相关数据                            | 与上述 JSON 文件目录锁属于不同机制，未发现迁移失败直接触发本次故障的证据 |
+| Object                                       | Purpose                                                                       | Relation to this issue                                                                        |
+| -------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `provider_config.json`                       | Saves personal Provider, model rules, and other configuration                 | File that failed to read                                                                      |
+| `provider_config.json.lock/owner-*.json`     | Cross-process exclusive lock via directory and owner file                     | Even pure polling creates, writes, and deletes this lock metadata                             |
+| In-memory Provider Registry                  | Provides available Providers for model settings, model selection, and runtime | May receive empty personal configuration and keep the degraded state after the fault recovers |
+| `setting.json` and its independent file lock | Saves app preferences, last workspace, etc.                                   | Repeated saving is a side finding; it does not occupy the Provider file's lock                |
+| SQLite session library                       | Saves session and related data                                                | Different lock mechanism; no evidence that a migration failure triggered this fault           |
 
-### 1.2 完整链路
-
-```text
-Host 和多个 Agent 使用同一个 Personal Provider 配置路径
-各 Repository 默认约每隔 1 秒安排一次轮询
-                         ↓
-读取与更新使用同一把排他锁，读者之间也互相等待
-每次成功获取锁都要创建目录、写 owner、复核所有权
-                         ↓
-部分时段操作完成明显变慢，可能放大锁竞争
-【推断：现场哪个 PID、哪一步变慢，尚未确认】
-                         ↓
-某些请求在获取锁的等待预算内仍未成功，报锁超时
-                         ↓
-轮询失败发出 poll-error，触发上层刷新和新的读取
-                         ↓
-新的 read() 也失败，捕获异常后成功返回空 Personal Overlay
-                         ↓
-Registry 按这份空个人配置发布新的可用状态
-个人 Provider / 模型消失，后续消息可能无法创建模型
-                         ↓
-之后轮询成功，读到原来的磁盘内容版本 R1
-Repository 仍记得 R1，认为内容未变化，不发送 change
-                         ↓
-下游可能继续保留降级视图，直到其他刷新或重启
-```
-
-默认 8 秒是一次跨进程获取锁的墙钟等待预算，不包括此前的进程内 FIFO 排队，也不是单次 `readFile` 超时或持锁操作的期限。超时不意味着另一个进程连续持锁 8 秒，也可能是多次竞争、重试或操作完成延迟累计耗尽预算。
-
-轮询完成后才安排下一轮；不能把默认 1 秒间隔换算成异常期间严格每秒固定执行次数。普通 `read()` 还包含旧配置导入、格式规范化写回；纯轮询不修改配置正文，但同样加锁。
-
-### 1.3 时间线
-
-下表使用 Host 消息内层时间。Desktop 日志中的外层时间是 Main 接收和转发时间，二者可能存在延迟。
-
-| 时间                         | 日志事实                                                                         |
-| ---------------------------- | -------------------------------------------------------------------------------- |
-| 15:44                        | 升到 3.12.1 后正常加载，Host Registry 的 `providerCount=8`                       |
-| 18:07:56–58                  | Host 30660 正常加载配置；随后四个 Agent 完成数据库迁移检查                       |
-| 18:38:10–19:08:02            | 第一轮：11 条轮询告警、16 条读取降级，共 26 次锁超时和 1 次 `mkdir EPERM`        |
-| 19:10:10                     | 新 Host 31780 加载正常，恢复为 8 个 Provider，个人配置内容版本与此前正常启动相同 |
-| 19:23:51–19:27:06            | 第二轮：1 条轮询告警、5 条读取降级，均为锁超时                                   |
-| 19:28:59                     | 新 Host 25264 加载正常，再次恢复为 8 个 Provider，个人配置内容版本相同           |
-| 20:24:48–20:28:50            | 第三轮：4 条轮询告警、4 条读取降级，均为锁超时                                   |
-| 20:34:49、20:35:03、20:35:12 | 同一个任务连续接受三条短输入，均在模型创建阶段因 `provider_not_found` 失败       |
-| 21:40、22:11                 | 后续启动仍正常加载 8 个 Provider，个人配置内容版本相同                           |
-| 22:13–22:14                  | 出现 1 次删除 Provider、2 次保存 Provider Overlay 的成功 RPC                     |
-| 22:15                        | Host 启动时加载 7 个 Provider，个人配置内容版本发生变化                          |
-
-全天合计 16 条轮询告警、25 条读取降级，即 40 次锁超时和 1 次创建锁目录失败。不能将全天计数全部归入第一轮。配置数量只比较 Host 的 `Provider Registry 已就绪` 事件，不混用其他层的 `providerCount`。
-
-这条时间线支持故障期间主要发生内存配置降级，磁盘原配置仍能在重启后读回。本轮 `read()` 返回空配置本身不覆盖磁盘；`update()` 会在锁内重新读取磁盘后执行修改，不能推导“降级后任意保存都会把磁盘写空”。
-
-### 1.4 影响与恢复边界
-
-- 第一轮期间仍有 31 个不同请求的模型网络完成记录，其中 24 个使用原自定义供应商模型，7 个使用账号模型。运行中的任务与配置列表可以存在不同状态，不能用任务继续输出证明配置视图健康。
-- 20:34–20:35 的三次 `provider_not_found` 表明后续消息确实可能无法执行。Host 的发送 RPC 返回 `OK` 只代表请求被接收，不代表后续任务执行成功。
-- 同一 Host 的轮询告警多次重新出现，而代码只在连续失败的第一次告警、成功读取后复位。因此中间有成功轮询，不能认定整个晚上始终被同一把残留锁挡住。
-- 40 次超时中，33 次嵌套 cause 带原生 `mkdir EEXIST` 的字段，7 次只带 `code=EEXIST`。后者高度指向建锁后的所有权复核分支，但缺少原始 message/stack，无法确认具体失败子条件。
-- 已有隔离探针验证过“读取失败后 Registry 变空、磁盘恢复读取但 Registry 不自动恢复、显式刷新后恢复”的机制。锁延迟、删除失败的故障注入只证明缺陷可发生，不证明现场经历了相同注入条件。
-
-## 2. 当时系统环境的特殊性
-
-### 2.1 周日与周一、周二的对照
-
-| 指标                    | 9 月 13 日，周日 | 9 月 14 日，周一 | 9 月 15 日，周二 |
-| ----------------------- | ---------------: | ---------------: | ---------------: |
-| 最小化命令              |            21 次 |             5 次 |             2 次 |
-| 设置保存阶段配对数      |              264 |              211 |              265 |
-| 设置保存阶段中位耗时    |              7ms |              5ms |              5ms |
-| 设置保存阶段最大耗时    |         16,626ms |             26ms |             36ms |
-| 超过 1 秒的设置保存阶段 |             3 次 |             0 次 |             0 次 |
-| Provider 文件锁超时     |            40 次 |             0 次 |             0 次 |
-
-保存阶段按同一 Host 的 `writing settings` / `write done` 内层时间配对，无未配对记录。这段耗时包括目录操作、兼容字段读取、加锁、写入、替换重试和执行调度，不是物理磁盘写入时长，也不覆盖整个 `setting.update` RPC。
-
-周一、周二仍使用 3.12.1、同一个自定义 Provider，并非通过修复升级消除了问题。周一多数启动仍有四个 Agent，另有时段多开了一个子项目 Agent；周二主要使用时段同样有四个 Agent。两天都有实际配置修改和任务执行，模型网络完成请求分别为 159、149 个。
-
-周一存在其他模型参数、上游响应及网络错误，但没有 Provider 配置加载降级。周二 17:20 起的配置校验失败属于已确认的手动改坏配置，不能与周日文件锁问题合并。周二附件只覆盖到 17:30，之后降级版本的结果不由该附件直接证明。
-
-### 2.2 最小化是相关线索，单独不足以触发
-
-第三轮故障的时间关联较集中：
-
-| 最小化   | 下一次 Provider 轮询告警 |     间隔 |
-| -------- | ------------------------ | -------: |
-| 20:24:30 | 20:24:48                 | 约 18 秒 |
-| 20:25:04 | 20:25:18                 | 约 14 秒 |
-| 20:26:03 | 20:26:18                 | 约 15 秒 |
-| 20:27:40 | 20:27:51                 | 约 12 秒 |
-
-但周日早些时候多次最小化正常，20:35 那次之后也未再出现锁告警。周一 09:31、14:44 及周二 12:47 同样有任务运行中最小化，后续任务完成且无锁超时。因此，“多个 Agent + 最小化”不是充分触发条件。
-
-用户行为更像运行长任务期间反复查看应用，故障后检查设置和尝试恢复：18:42–18:44 集中读取设置及 Provider 视图，18:59 打开 ZCode 内置资源管理器，19:10、19:29 重启后恢复原任务并继续输入。部分 RPC 是自动查询，不能逐条解释为点击；缺少完整 focus/restore 轨迹，也不能还原每次后台停留时长。
-
-### 2.3 当前判断及不能下的结论
-
-当前更有依据的方向是：周日某些时段出现了异常运行延迟，放大了多进程排他轮询的竞争；周一、周二没有再次出现相同表现。具体延迟来自哪里仍待确认。
-
-- 没有游戏进程、其他前台应用或全机资源负载的现场记录，不能认定用户当时玩游戏或资源被占满。
-- 3.12.1 未记录锁屏、解锁、系统休眠和唤醒事件，不能根据无日志排除这些行为。锁屏不等于系统睡眠；运行日志也不支持整个故障窗口持续处于传统系统睡眠。
-- 三天记录中的“保持电脑运行”均关闭，但不能据此推导系统实际休眠。
-- 日志没有 `ENOSPC`、`SQLITE_FULL` 等磁盘满错误，也没有故障时剩余空间数据；不能认定磁盘满，也不能声称彻底排除空间不足。
-- 最近一组数据库迁移检查在 18:07:58 完成，首次 Provider 错误在 18:38，未发现迁移失败直接触发该锁故障的证据。
-
-微软文档描述窗口可见性会影响进程及其后代的 QoS，最小化或完全遮挡属于 Low；部分节能策略带有电池供电条件。这提供了系统调度方面的调查方向，不能证明本案的具体延迟来源。[Windows QoS](https://learn.microsoft.com/en-us/windows/win32/procthread/quality-of-service)
-
-后续可用 Electron 的锁屏、解锁、休眠、恢复事件补足状态记录，无需扫描用户其他应用。[Electron powerMonitor](https://www.electronjs.org/docs/latest/api/power-monitor)
-
-## 3. Provider 的核心设计缺陷
-
-### 3.1 高频只读也使用排他锁
-
-配置变化需要在 Host 和 Agent 之间同步，定期读取的功能目的合理。当前实现让多个进程独立轮询同一文件，纯读者之间互斥，并在每次成功读取前后执行锁元数据写入和删除，制造持续竞争，对异常完成延迟较敏感。
-
-改进目标应是减少重复读取和不必要的读者互斥，不等价于直接指定“必须改成读写锁”。普通 `read()` 包含导入和规范化写回，必须先区分纯读取与读改写操作，再确定跨进程一致性方案。单纯取消所有读取的锁或延长超时都不是完整设计。
-
-### 3.2 将暂时读取失败当成有效空配置
-
-锁超时意味着没有获得最新配置，不意味着用户删除了全部个人 Provider。目前 `read()` 捕获错误后成功返回空 Personal Overlay，Registry 因而按合法配置替换原状态。
-
-应维护的约束：暂时不可读不能冒充真实空配置；已经有有效快照时，不应因一次临时读取失败把它清空。首次启动没有任何有效快照的情况，也应明确表达不可用，不能伪装成用户尚未配置。
-
-### 3.3 故障恢复只看文件内容，没有覆盖下游状态
-
-Repository 已记录内容版本 R1，读取失败后 Registry 接收空配置，但 Repository 的已观察版本仍可能保留 R1。之后轮询成功读回 R1，会因版本相同提前返回，漏发下游所需的恢复通知。
+### 1.2 Chain
 
 ```text
-正常：磁盘 R1，已观察版本 R1，Registry 正常
-失败：磁盘 R1，已观察版本 R1，Registry 降级为空
-恢复：磁盘 R1，版本未变化 → 不通知 → Registry 可能仍为空
+Host and multiple Agents use the same Personal Provider config path
+Each Repository polls by default approximately every 1 second
+                         ↓
+Read and update use the same exclusive lock; readers also wait for each other
+Each successful lock acquisition creates a directory, writes an owner, and verifies ownership
+                         ↓
+Some periods complete operations noticeably slower, potentially amplifying lock contention
+[Inference: Which PID, which step was slow on-site, remains unconfirmed]
+                         ↓
+Some requests fail to succeed within the lock-wait budget, reporting lock timeout
+                         ↓
+Poll failure triggers upper-level refresh and new read
+                         ↓
+New `read()` also fails, catches the exception, and successfully returns an empty Personal Overlay
+                         ↓
+Registry publishes new available state based on this empty personal configuration
+Personal Provider / models disappear; subsequent messages may fail to create models
+                         ↓
+Later polling succeeds, reading the original disk content version R1
+Repository still remembers R1, considers content unchanged, does not send change
+                         ↓
+Downstream may keep the degraded view until another refresh or restart
 ```
 
-应维护的约束：文件内容未变不等于服务状态未变；读取从失败恢复成功时，必须让消费方能够恢复到有效状态。UI 已订阅 Registry，不能把上游恢复事件缺失误诊为页面没有响应 Registry 变化。
+The default 8 seconds is a wall-clock wait budget for cross-process lock acquisition. It excludes prior in-process FIFO queuing and is not a single `readFile` timeout or lock-holding duration. A timeout does not mean another process held the lock for 8 seconds; accumulated costs from several competitions, retries, or delayed operation completions can exhaust the budget.
 
-修复优先级：先保证读取失败不会破坏已有可用配置、恢复后正确更新；再优化读取与锁竞争。后续实现前需要单独落设计和回归场景，本报告不表示已经确定最终锁方案。
+A new poll is scheduled only after the previous one completes, so the 1-second interval is not a strict rate during the anomaly. A normal `read()` also does old config import and format normalization write-back; pure polling does not modify the config body but still acquires the lock.
 
-## 4. 顺带发现的问题
+### 1.3 Timeline
 
-### 4.1 工作区信息未变化，也重复保存 setting.json
+Times are Host message inner time. The outer time in Desktop logs is Main's receive/forward time and may lag.
 
-保存工作区信息的目的是下次启动恢复上次打开的工作区、顺序和激活项。`TabStore` 同时保存工作区/设置标签、当前激活标签和侧栏展开状态；持久化监听订阅整个 store，300ms 防抖后才提取 `lastWorkspaceSession`、`lastActiveTabIndex`。
+| Time                         | Log fact                                                                                                         |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| 15:44                        | Loaded normally after upgrading to 3.12.1; Host Registry's `providerCount=8`                                     |
+| 18:07:56–58                  | Host 30660 loaded config normally; four Agents completed database migration checks                               |
+| 18:38:10–19:08:02            | First round: 11 poll alerts, 16 read degradations, 26 lock timeouts and 1 `mkdir EPERM`                          |
+| 19:10:10                     | New Host 31780 loaded normally, recovering to 8 Providers; personal configuration content version same as before |
+| 19:23:51–19:27:06            | Second round: 1 poll alert, 5 read degradations, all lock timeouts                                               |
+| 19:28:59                     | New Host 25264 loaded normally, 8 Providers; content version same                                                |
+| 20:24:48–20:28:50            | Third round: 4 poll alerts, 4 read degradations, all lock timeouts                                               |
+| 20:34:49, 20:35:03, 20:35:12 | Same task accepted three short inputs; all failed in model creation with `provider_not_found`                    |
+| 21:40, 22:11                 | Startups loaded 8 Providers normally; content version same                                                       |
+| 22:13–22:14                  | 1 delete Provider and 2 save Provider Overlay RPCs succeeded                                                     |
+| 22:15                        | Host startup loaded 7 Providers; content version changed                                                         |
 
-监听层不比较提取结果，服务层合并后也不比较新旧设置。因此新开/关闭/重排工作区等有效变更会保存，打开设置页、收起项目、重复激活已有工作区等不改变这两个字段的操作也可能保存。
+Daily total: 16 poll alerts, 25 read degradations, i.e. 40 lock timeouts and 1 lock directory creation failure. The count only compares Host `Provider Registry ready` events, not `providerCount` from other layers.
+
+The primary problem during the fault was in-memory configuration degradation; the disk configuration could still be read after restart. A `read()` returning empty configuration does not overwrite the disk, and `update()` re-reads the disk inside the lock before modifying, so "any save after degradation writes an empty disk" cannot be derived.
+
+### 1.4 Impact and recovery boundaries
+
+- 31 model network completions were recorded in the first round: 24 used the original custom provider model, 7 used account models. Running tasks and configuration lists can be in different states; continued task output does not prove the configuration view is healthy.
+- The three `provider_not_found` events at 20:34–20:35 show subsequent messages could fail to execute. The Host send RPC returning `OK` only means the request was received.
+- The same Host's poll alert fires only on the first consecutive failure and resets on a successful read, so intermediate successful polls do not prove one residual lock persisted all evening.
+- Of 40 timeouts, 33 nested causes carry the native `mkdir EEXIST` field and 7 carry only `code=EEXIST`. The latter strongly points to the post-creation ownership verification branch, but without the original message/stack the failed sub-condition is unconfirmed.
+- Isolated probes verified the mechanism "Registry becomes empty after read failure; disk recovers but Registry does not auto-recover; explicit refresh recovers". Lock delay and deletion failure fault injection only proves the defect can occur, not that on-site conditions matched the injection.
+
+## 2. System Environment
+
+### 2.1 Sunday vs. Monday and Tuesday
+
+| Metric                             | September 13, Sunday | September 14, Monday | September 15, Tuesday |
+| ---------------------------------- | -------------------: | -------------------: | --------------------: |
+| Minimize commands                  |             21 times |              5 times |               2 times |
+| Setting save phase pair count      |                  264 |                  211 |                   265 |
+| Setting save phase median duration |                  7ms |                  5ms |                   5ms |
+| Setting save phase max duration    |             16,626ms |                 26ms |                  36ms |
+| Setting saves exceeding 1 second   |              3 times |              0 times |               0 times |
+| Provider file lock timeout         |             40 times |              0 times |               0 times |
+
+Save phases pair the same Host's `writing settings` / `write done` inner times, with no unmatched records. The duration includes directory operations, compatible field reads, lock acquisition, writing, replacement retries, and scheduling dispatch; it is not physical disk write time and not the whole `setting.update` RPC.
+
+Monday and Tuesday still ran 3.12.1 with the same custom Provider, so an upgrade fix did not remove the problem. Both days had mostly four Agents, real configuration modifications, and task executions (159 and 149 model network completions). Monday had other model parameter, upstream response, and network errors but no Provider configuration loading degradation. Tuesday's configuration validation failures from 17:20 are the confirmed manually-corrupted configuration and cannot be combined with Sunday's lock issue. Tuesday's attachments end at 17:30.
+
+### 2.2 Minimizing is a related clue, insufficient alone
+
+Third-round correlation:
+
+| Minimize | Next Provider poll alert |    Interval |
+| -------- | ------------------------ | ----------: |
+| 20:24:30 | 20:24:48                 | ~18 seconds |
+| 20:25:04 | 20:25:18                 | ~14 seconds |
+| 20:26:03 | 20:26:18                 | ~15 seconds |
+| 20:27:40 | 20:27:51                 | ~12 seconds |
+
+But earlier Sunday minimizations were normal and no lock alerts appeared after 20:35. Monday 09:31, 14:44 and Tuesday 12:47 minimizations during running tasks also had no lock timeouts. "Multiple Agents + minimizing" is not a sufficient trigger.
+
+User behavior resembles repeatedly checking the app during long task runs and checking settings and attempting recovery after faults (18:42–18:44 settings/Provider views, 18:59 built-in file explorer, restarts at 19:10 and 19:29). Some RPCs are automatic queries. Without complete focus/restore trails, per-session background dwell time cannot be reconstructed.
+
+### 2.3 Current judgment and what cannot be concluded
+
+The better-supported direction: abnormal operational latency in some Sunday periods amplified multi-process exclusive polling competition; Monday and Tuesday did not repeat it. The latency source is unconfirmed.
+
+- No on-site records of game processes, other foreground applications, or full-system resource load; gaming or resource saturation cannot be concluded.
+- 3.12.1 records no screen lock, unlock, sleep, or wake events; absent logs do not exclude them. Screen lock is not system sleep; runtime logs do not support continuous sleep through the fault window.
+- "Keep computer running" was off on all three days; this does not imply actual system sleep.
+- No `ENOSPC`, `SQLITE_FULL`, or other full-disk errors and no free-space data at fault time; neither disk full nor sufficient space can be concluded.
+- The last database migration checks completed at 18:07:58; the first Provider error was at 18:38. No evidence that migration failure triggered the lock fault.
+
+Microsoft documentation states that window visibility affects process and descendant QoS; minimized or fully obscured windows fall into Low, and some power-saving strategies depend on battery power ([Windows QoS](https://learn.microsoft.com/en-us/windows/win32/procthread/quality-of-service)). This is an investigation direction, not proof of the latency source. Electron lock screen, unlock, sleep, and resume events can supplement state records without scanning the user's other applications ([Electron powerMonitor](https://www.electronjs.org/docs/latest/api/power-monitor)).
+
+## 3. Core Provider Design Defects
+
+### 3.1 High-frequency read-only operations use exclusive locks
+
+Config changes need Host and Agent synchronization, so periodic reads serve a purpose. The current implementation has multiple processes independently polling the same file, pure readers excluding each other, and lock metadata writes and deletions around every successful read, which creates sustained competition and sensitivity to abnormal completion latency.
+
+The goal is to reduce repeated reads and unnecessary reader exclusion; that is not the same as "must change to read-write locks". Normal `read()` includes import and normalization write-back, so pure reads must be distinguished from read-write operations before cross-process consistency is decided. Removing all read locks or extending timeouts is not a complete design.
+
+### 3.2 Temporary read failures treated as valid empty configuration
+
+A lock timeout means the latest configuration was not obtained, not that the user deleted all personal Providers. `read()` catches errors and returns an empty Personal Overlay, so the Registry replaces its state with it.
+
+Constraint: temporary unreadability must not impersonate a real empty configuration. When an effective snapshot exists, a single temporary read failure must not clear it. On first startup with no effective snapshot, the unavailable state must be expressed explicitly, not disguised as "user has not configured".
+
+### 3.3 Recovery only checks file content, not downstream state
+
+The Repository recorded content version R1; the Registry receives an empty configuration after read failure while the Repository's observed version may still be R1. Later polling reads R1 back, finds the version unchanged, returns early, and misses the downstream recovery notification.
 
 ```text
-打开设置页或收起项目
-          ↓
-TabStore 通知 → 300ms 防抖
-          ↓
-提取的工作区列表、激活索引与之前相同
-          ↓
-仍调用 setting.update → 合并完整设置 → 临时文件替换写回
+Normal: disk R1, observed version R1, Registry normal
+Failed: disk R1, observed version R1, Registry degraded to empty
+Recovery: disk R1, version unchanged → no notification → Registry may remain empty
 ```
 
-300ms 防抖只合并密集事件，不负责内容去重；也不是固定每 300ms 保存。最小化命令本身只调用窗口最小化，没有直接保存设置，不能把最小化后的保存日志解释成最小化动作必然写盘。
+Constraint: unchanged file content does not mean unchanged service state; when reading recovers from failure, consumers must be able to return to an effective state. The UI is already subscribed to the Registry; do not misdiagnose upstream recovery events as the page not responding to Registry changes.
 
-周日 264 次保存的日志对象中，263 对相邻对象有 261 对相同。该统计未受脱敏占位符影响，但日志缺少调用参数和调用栈，不能把全部重复写入都归到这一个监听入口；实际写盘还会合并兼容字段，也不宣称逐次磁盘字节完全相同。
+Fix priority: first ensure read failures do not destroy existing available configuration and recovery updates downstream correctly; then optimize read and lock competition. Separate designs and regression scenarios are needed before implementation; this report does not fix the final lock scheme.
 
-与主问题的关系只有两层：
+## 4. Incidental Issues
 
-1. 重复保存增加文件操作、锁元数据和调度负担，是可削减的额外开销。
-2. 同期保存异常缓慢，为共同运行环境出现延迟提供旁证。
+### 4.1 Unchanged workspace info, yet `setting.json` repeatedly saved
 
-`setting.json.lock` 与 `provider_config.json.lock` 不同，普通工作区设置保存不会直接占住 Provider 的锁。没有证明重复保存导致了本次锁超时；周一、周二仍有大量重复保存但未出现该故障。
+Workspace info is saved to restore the last opened workspace, order, and active items at next startup. `TabStore` holds workspace/settings tabs, the active tab, and sidebar expand state together; the persistence listener subscribes to the whole store and, after a 300ms debounce, extracts only `lastWorkspaceSession` and `lastActiveTabIndex`. The listener does not compare extracted results and the service layer does not compare old and new settings after merging. So opening settings, collapsing projects, or reactivating an existing workspace can also trigger a save.
 
-### 4.2 底层锁释放失败被忽略，诊断不足
+```text
+Open settings page or collapse project
+          ↓
+TabStore notification → 300ms debounce
+          ↓
+Extracted workspace list and activation index are the same as before
+          ↓
+Still calls setting.update → merges full settings → temp file replacement write-back
+```
 
-释放时删除 owner、删除锁目录的异常被忽略。如果 owner 文件残留且其 PID 仍存活，后续请求可能继续把它当作活锁，形成持续等待。该风险在底层工具中存在，但不是本次已确认的现场触发原因；唯一的 `EPERM` 明确发生在 `mkdir`，不能解释为释放时删除失败。
+The 300ms debounce merges dense events; it does not deduplicate content and is not a fixed 300ms save. The minimize command only minimizes the window, with no direct settings save, so post-minimize save logs do not show minimizing writes to disk.
 
-这属于顺带发现的公共工具问题，放在本节不意味着潜在影响很小。需要让释放错误可见，并在一次慢请求或失败结束时记录必要的汇总信息：等待者和 owner PID、存活判断、尝试次数、队列/获取/持有/释放耗时、所有权复核失败条件以及原始错误类型。必要时在失败时异步读取所在卷的可用空间。
+Of 264 save log objects on Sunday, 261 of 263 adjacent pairs were identical. Logs lack call parameters and stacks, so not all duplicate writes can be attributed to this listener, and actual disk writes also merge compatible fields.
 
-这些记录应限于慢请求、异常和系统状态切换，不逐轮打印，不包含配置正文或 API Key。文件操作的完成耗时仍不能直接命名为物理磁盘延迟。
+Relation to the main issue: (1) repeated saving adds file operations, lock metadata, and scheduling burden that could be reduced; (2) unusually slow concurrent saves are collateral evidence of latency in the shared environment. `setting.json.lock` differs from `provider_config.json.lock`, so workspace setting saves do not occupy the Provider lock. No evidence that repeated saving caused the lock timeout; Monday and Tuesday had plenty of repeated saving without this fault.
 
-### 4.3 调查依据与后续交接
+### 4.2 Underlying lock release failures ignored, insufficient diagnosis
 
-源码已对照发布构建 `dfc10615`，下列核心文件与调查时工作区无差异：
+Errors when releasing (deleting the owner, deleting the lock directory) are ignored. If the owner file remains and its PID is alive, later requests may keep treating it as an active lock and wait continuously. The risk exists in the underlying tool but is not the confirmed on-site trigger; the sole `EPERM` occurred during `mkdir`, not during release.
 
-| 关注点                         | 源码入口                                                                                           |
-| ------------------------------ | -------------------------------------------------------------------------------------------------- |
-| 个人配置读取、写入、轮询和降级 | `packages/provider-node/src/personal-provider-config-repository.ts`：`read`、`update`、`#pollOnce` |
-| 配置层转发与 Registry 发布     | `packages/provider/src/config-service.ts`、`packages/provider/src/registry-service.ts`             |
-| 进程内排队和文件锁预算         | `packages/shared/src/node/privateFilePersistence.ts`：`withFileLock`                               |
-| 跨进程所有权复核与释放         | `packages/shared/src/node/atomicFileLock.ts`：`acquireFileLock`                                    |
-| TabStore 与持久化监听          | `packages/ui/src/store/tabStore.ts`、`packages/ui/src/hooks/useTabPersistence.ts`                  |
-| 工作区序列化字段               | `packages/ui/src/root/remoteWorkspaceSessionPersistence.ts`：`buildRemoteWorkspacePersistPatch`    |
-| 设置更新和实际写盘             | `packages/services/src/setting/settingService.ts`：`update`、`writeSettings`                       |
+This is a common tool issue found incidentally; its placement here does not mean small impact. Release errors must be made visible, and after a slow request or failure the log should carry a summary: waiters and owner PID, liveness judgment, attempt count, queue/acquire/hold/release durations, ownership verification failure conditions, and original error type; when necessary, asynchronously read available space of the failing volume at failure time. Records are limited to slow requests, anomalies, and system state transitions (not every round) and must not include config bodies or API Keys. File operation completion durations are not physical disk latency.
 
-原始附件内的关键定位点如下，行号按原文件解码后计数，不包含任何用户配置正文：
+### 4.3 Source entry points and log locations
 
-| 文件                                    | 行号                       | 内容                                         |
-| --------------------------------------- | -------------------------- | -------------------------------------------- |
-| `logs/2026-09-13.log`                   | 11184、11187               | 第一条轮询锁故障及后续读取降级               |
-| `logs/2026-09-13.log`                   | 11965                      | 创建锁目录的 `EPERM`                         |
-| `logs/2026-09-13.log`                   | 14186、14189               | 16.626 秒设置保存阶段                        |
-| `logs/2026-09-13.log`                   | 14652、16404、23497、23872 | 后续启动重新加载正常配置                     |
-| `logs/2026-09-13.log`                   | 22729、22733、22734、22735 | 最小化、12.314 秒保存和同期 Provider 锁告警  |
-| `.zcode/cli/log/zcode-2026-09-13.jsonl` | 5216、5221、5226           | 三次后续消息因 `provider_not_found` 执行失败 |
+The source was compared against release build `dfc10615`; the core files differ from the investigation workspace.
 
-CLI 导出日志中少量裸露脱敏占位符会导致 JSON 解析失败，调查时仅在内存中规范化占位符再读取，未修改原件，也未将其作为文件损坏证据。完整用户日志不随本报告入库，后续应通过反馈工单附件获取。
+| Concern                                               | Source code entry                                                                                  |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Personal config read, write, polling, and degradation | `packages/provider-node/src/personal-provider-config-repository.ts`: `read`, `update`, `#pollOnce` |
+| Config-layer forwarding and Registry publishing       | `packages/provider/src/config-service.ts`, `packages/provider/src/registry-service.ts`             |
+| In-process queuing and file lock budget               | `packages/shared/src/node/privateFilePersistence.ts`: `withFileLock`                               |
+| Cross-process ownership verification and release      | `packages/shared/src/node/atomicFileLock.ts`: `acquireFileLock`                                    |
+| TabStore and persistence listener                     | `packages/ui/src/store/tabStore.ts`, `packages/ui/src/hooks/useTabPersistence.ts`                  |
+| Workspace serialization fields                        | `packages/ui/src/root/remoteWorkspaceSessionPersistence.ts`: `buildRemoteWorkspacePersistPatch`    |
+| Setting update and actual disk writing                | `packages/services/src/setting/settingService.ts`: `update`, `writeSettings`                       |
+
+Key log lines (counted after decoding the original files; no user configuration body):
+
+| File                                    | Line                       | Content                                                                |
+| --------------------------------------- | -------------------------- | ---------------------------------------------------------------------- |
+| `logs/2026-09-13.log`                   | 11184, 11187               | First poll lock fault and subsequent read degradation                  |
+| `logs/2026-09-13.log`                   | 11965                      | `EPERM` for creating lock directory                                    |
+| `logs/2026-09-13.log`                   | 14186, 14189               | 16.626s setting save phase                                             |
+| `logs/2026-09-13.log`                   | 14652, 16404, 23497, 23872 | Subsequent startups reloaded normal config                             |
+| `logs/2026-09-13.log`                   | 22729, 22733, 22734, 22735 | Minimize, 12.314s save, and concurrent Provider lock alert             |
+| `.zcode/cli/log/zcode-2026-09-13.jsonl` | 5216, 5221, 5226           | Three subsequent messages failed execution due to `provider_not_found` |
+
+A few bare anonymized placeholders in the CLI export logs caused JSON parse failures; they were normalized in memory during reading. Original files were not modified and this is not evidence of file corruption. Complete user logs are not archived here; access them through the feedback ticket attachments.

@@ -1,10 +1,10 @@
-import { seedTaskIndex } from "./helpers/taskIndexFixture.js";
 import { readTrustedZCodeAgentV4Connection } from "#src/zcode-agent/zcodeAgentConnectionScope.js";
 import {
   readBotGroupRuntimeSnapshot,
   waitBotGroupExecutionEnd,
 } from "#src/zcode-agent/groupRuntimeSnapshot.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -56,20 +56,15 @@ vi.mock("#src/zcode-agent/groupRuntimeSnapshot.js", () => ({
 
 const tempDirs: string[] = [];
 const disposables: Array<{ disposeAll(): void }> = [];
-const repositories: TaskIndexRepo[] = [];
 const BACKGROUND_AGENT_PROVIDER_ERROR =
   "Requests are too frequent. Please reduce your request frequency, wait a short moment, and retry your request.";
 const BACKGROUND_AGENT_FAILED_SUMMARY = `Agent general-purpose task "Review" failed. ${BACKGROUND_AGENT_PROVIDER_ERROR}`;
 
-afterEach(async () => {
+afterEach(() => {
   vi.useRealTimers();
   setNetworkTelemetrySink(null);
   while (disposables.length > 0) {
     disposables.pop()?.disposeAll();
-  }
-  for (const repo of repositories.splice(0)) {
-    await repo.ensureReady();
-    repo.close({ throwOnError: true });
   }
   setDataBaseDir(null);
   while (tempDirs.length > 0) {
@@ -241,24 +236,6 @@ function createAgentMock() {
     };
   };
   const agent: IZCodeAgentService = {
-    reconcileSessionsIndexV4: vi.fn(async ({ sessionIds }) => ({
-      sessions: sessionIds.map((sessionId) => {
-        const snapshot = snapshots.get(sessionId);
-        // 夹具模拟 CLI 持久会话；结果固定为已完成，不从运行态反推持久结果。
-        return snapshot
-          ? {
-              sessionId,
-              exists: true as const,
-              deleted: false,
-              title: snapshot.session.title,
-              titleSource: "generated",
-              createdAt: snapshot.session.createdAt,
-              updatedAt: snapshot.session.updatedAt,
-              lastOutcome: "completed" as const,
-            }
-          : { sessionId, exists: false as const, deleted: false };
-      }),
-    })),
     initialize: vi.fn(async (params) => ({
       available: true,
       workspaceKey: params.workspaceIdentity ?? params.workspacePath,
@@ -369,7 +346,7 @@ function createAgentMock() {
           workspaceIdentity: params.workspaceIdentity,
         }),
     ),
-    // M5 ③-2：send/stop/交互回执主路径收敛 v4 命令面（旧 sendPrompt 仅剩附件回退分支）。
+    // M5 3-2: the send/stop/interaction-receipt main paths converge on the v4 command surface (legacy sendPrompt keeps only the attachment fallback branch).
     sendConversationCommandV4: vi.fn(async (params) => ({
       commandId: params.envelope.commandId,
       status: "accepted" as const,
@@ -414,11 +391,13 @@ function createAgentMock() {
         }),
     ),
     onDynamicSessionEvent: vi.fn(() => eventEmitter.event),
-    // M5 删波次 2：syncer 的终态/ready 摄入换到 v4 sessions-index 帧，
-    // 真实 syncer 会在首个 session 激活信号时建立 workspace 级订阅。
+    // M5 removal wave 2: the syncer ingests terminal/ready from v4 sessions-index frames;
+    // the real syncer establishes the workspace-level subscription at the first session
+    // activation signal.
     subscribeSessionsIndexV4: vi.fn(async () => {
-      // fresh subscribe 必须先给 syncer 一份完整 initial snapshot；后续 ready deltas
-      // 才能在同一 log epoch/seq 链上作为权威状态迁移被消费。
+      // A fresh subscribe must first hand the syncer a complete initial snapshot; only then can
+      // subsequent ready deltas be consumed as authoritative state transitions on the same
+      // log epoch/seq chain.
       fireIndexSnapshot(indexFrameEmitter);
       return {
         ack: {
@@ -464,11 +443,8 @@ function createService(options?: {
         ),
       }
     : undefined;
-  // adapter 现在要求注入 syncer；测试里给一个真实的 syncer（agent 上面已经 mock 了 onDynamicSessionEvent）。
-  // 旧夹具跟随全局路径，迟到的异步初始化会打开下一用例的库并造成锁冲突。
-  // 与真实 Host 装配一样固定数据库路径，并在删除夹具目录前关闭连接。
-  const taskIndexRepo = new TaskIndexRepo(undefined, undefined, getTasksIndexDatabasePath());
-  repositories.push(taskIndexRepo);
+  // The adapter now requires an injected syncer; the test wires a real one (the agent above already mocks onDynamicSessionEvent).
+  const taskIndexRepo = new TaskIndexRepo();
   const taskIndexSyncer = createZCodeTaskIndexSyncer({
     agentService: agent,
     taskIndexRepo,
@@ -571,8 +547,8 @@ function fireIndexUpsert(
 }
 
 /**
- * M5 删波次 2：prompt ready 边界改由 v4 sessions-index 的 phase 终态迁移驱动
- * （running → completedSuccess），替代旧 state.updated prompt_completed 通知。
+ * M5 removal wave 2: the prompt-ready boundary is now driven by v4 sessions-index phase terminal transitions
+ * (running → completedSuccess), replacing the legacy state.updated prompt_completed notification.
  */
 async function firePromptCompletedState(
   indexFrameEmitter: Emitter<SessionsIndexTopicWireFrame>,
@@ -582,7 +558,7 @@ async function firePromptCompletedState(
     workspaceIdentity?: string;
   },
 ): Promise<void> {
-  // 等 syncer 的 workspace v4 订阅建立完（subscriptionId 闸门就位）。
+  // Wait for the syncer's workspace v4 subscription to be established (subscriptionId gate in place).
   await flushMicrotasks();
   fireIndexUpsert(indexFrameEmitter, compatSummary(params.sessionId, "running"));
   fireIndexUpsert(indexFrameEmitter, compatSummary(params.sessionId, "completedSuccess"));
@@ -603,7 +579,7 @@ async function seedIndexedTask(
     thoughtLevel?: string;
   },
 ) {
-  await seedTaskIndex(repo, {
+  await repo.syncTaskMeta({
     meta: {
       taskId: params.taskId,
       traceId: `trace_${params.taskId}`,
@@ -649,57 +625,13 @@ async function seedLegacyAcpSessionId(
     resolveWorkspaceKey(params),
     params.taskId,
   );
-  // Bugfix: 老库的 acp_session_id 只在初始化迁移阶段读取。
-  // 测试里手工补列后重开 repo，验证迁移不是运行时 facade 兜底。
+  // Bugfix: the legacy database's acp_session_id is only read during the initialization migration.
+  // The test adds the column manually and reopens the repo, verifying migration is not a runtime facade fallback.
   repo.close();
   await repo.ensureReady();
 }
 
 describe("ZCode legacy task compat task index", () => {
-  it("各夹具的迟到写入保持在自己的数据库中", async () => {
-    const first = createService();
-    await first.taskIndexRepo.ensureReady();
-    const second = createService();
-    await second.taskIndexRepo.ensureReady();
-    await seedIndexedTask(first.taskIndexRepo, { taskId: "late-first", provider: "zcode" });
-    expect(await second.taskIndexRepo.listReconciliationRows({ workspacePath: "/repo" })).toEqual(
-      [],
-    );
-    expect(await first.taskIndexRepo.listReconciliationRows({ workspacePath: "/repo" })).toEqual([
-      expect.objectContaining({ meta: expect.objectContaining({ taskId: "late-first" }) }),
-    ]);
-  });
-
-  it("creates fresh CLI identities for explicit imports instead of overwriting a deleted import", async () => {
-    const { service, taskIndexRepo } = createService();
-    const module = await import("../src/session/claude-native/claudeNativeSessionImportService.js");
-    const spy = vi
-      .spyOn(module, "importClaudeNativeSessions")
-      .mockImplementation(async (params) => {
-        const source = {
-          provider: "claude" as const,
-          workspacePath: "/repo",
-          sessionId: "external",
-          sourcePath: "/fixture.jsonl",
-          title: "Imported",
-          createdAt: 1,
-          updatedAt: 2,
-          messages: [{ role: "user" as const, content: "hello", timestamp: 1 }],
-        };
-        const first = await params.createImportedSession(source);
-        await taskIndexRepo.applyCliDeletion({ workspacePath: "/repo", taskId: first.taskId });
-        const second = await params.createImportedSession(source);
-        expect(second.taskId).not.toBe(first.taskId);
-        expect(await taskIndexRepo.getTaskMeta(first)).toBeNull();
-        return { imported: [], failed: [], skipped: [] };
-      });
-    try {
-      await service.importClaudeSessions({ workspacePath: "/repo", sessionIds: ["external"] });
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
   it.each([undefined, "ssh://host/repo"])(
     "waits for an in-flight topic admission before confirming cancellation (%s)",
     async (workspaceIdentity) => {
@@ -738,7 +670,7 @@ describe("ZCode legacy task compat task index", () => {
       });
       await flushMicrotasks();
       const completedBeforeAdmission = cancelled;
-      // 总是释放挂起请求，失败断言也不能遗留正在写入临时任务的异步工作。
+      // Always release the pending request so failed assertions do not leave async work writing temp tasks behind.
       release();
       await Promise.all([sending, cancellation]);
       expect(completedBeforeAdmission).toBe(false);
@@ -897,7 +829,7 @@ describe("ZCode legacy task compat task index", () => {
     };
     vi.mocked(readBotGroupRuntimeSnapshot).mockClear();
     vi.mocked(agent.sendConversationCommandV4).mockImplementation(async (params) => {
-      // 冷启动时先恢复同一任务，不能依赖 Desktop 曾经打开过它。
+      // On cold start the same task is restored first; it must not depend on Desktop having opened it before.
       expect(readBotGroupRuntimeSnapshot).toHaveBeenCalledWith(expect.any(Object), {
         workspacePath: "/repo",
         workspaceIdentity: "ssh://host/repo",
@@ -1016,6 +948,51 @@ describe("ZCode legacy task compat task index", () => {
     }
   });
 
+  it("forwards project and directory fields to createSession only when the caller supplies them", async () => {
+    const { agent, service } = createService();
+
+    await service.createTask({ workspacePath: "/repo", provider: "glm" });
+    const withoutFields = vi.mocked(agent.createSession).mock.calls[0]?.[0];
+    expect(withoutFields).not.toHaveProperty("projectId");
+    expect(withoutFields).not.toHaveProperty("additionalDirectories");
+
+    await service.createTask({
+      workspacePath: "/repo",
+      provider: "glm",
+      projectId: "project-1",
+      additionalDirectories: ["/extra"],
+    });
+    const withFields = vi.mocked(agent.createSession).mock.calls[1]?.[0];
+    expect(withFields).toEqual(
+      expect.objectContaining({
+        projectId: "project-1",
+        additionalDirectories: ["/extra"],
+      }),
+    );
+
+    // The native v4 path (bots use v4Create) must carry the same fields in its command envelope.
+    await service.createTask({
+      workspacePath: "/repo",
+      provider: "glm",
+      projectId: "project-1",
+      additionalDirectories: ["/extra"],
+      v4Create: true,
+    });
+    expect(agent.sendConversationCommandV4).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        projectId: "project-1",
+        envelope: expect.objectContaining({
+          type: "createSession",
+          payload: expect.objectContaining({ additionalDirectories: ["/extra"] }),
+        }),
+      }),
+    );
+    await service.createTask({ workspacePath: "/repo", provider: "glm", v4Create: true });
+    expect(agent.sendConversationCommandV4).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ projectId: expect.anything() }),
+    );
+  });
+
   it("keeps automation mutation isolation turn-scoped when creating an execution task", async () => {
     const { agent, service, taskIndexRepo } = createService();
 
@@ -1040,40 +1017,6 @@ describe("ZCode legacy task compat task index", () => {
         taskId: task.taskId,
       }),
     ).resolves.toEqual(expect.objectContaining({ cronAutomationId: "automation-1" }));
-  });
-
-  it("preserves an explicitly empty frozen directory list across adapter create and resume", async () => {
-    const { agent, service } = createService();
-    await service.createTask({
-      workspacePath: "/repo",
-      projectId: "p",
-      additionalDirectories: [],
-      v4Create: true,
-    });
-    expect(agent.sendConversationCommandV4).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "p",
-        envelope: expect.objectContaining({
-          payload: expect.objectContaining({ additionalDirectories: [] }),
-        }),
-      }),
-    );
-    const nativeTask = await service.createTask({
-      workspacePath: "/repo",
-      projectId: "p",
-      additionalDirectories: [],
-    });
-    expect(agent.createSession).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "p", additionalDirectories: [] }),
-    );
-    await service.resumeTask({
-      workspacePath: "/repo",
-      taskId: nativeTask.taskId,
-      additionalDirectories: [],
-    });
-    expect(agent.resumeSession).toHaveBeenCalledWith(
-      expect.objectContaining({ additionalDirectories: [] }),
-    );
   });
 
   it("SAT28: 显式恢复 child 只返回详情，不创建主列表索引", async () => {
@@ -1166,8 +1109,9 @@ describe("ZCode legacy task compat task index", () => {
             heldQueueDisposition: "keepQueueAndSend",
             offPeakTaskId: "offpeak-stable-1",
             offPeakRunType: "init",
-            // D49-2：闲时派发轮在调用方 CronCreate 之外，纵深补 OffPeakCreate
-            // （免费池自我放大）；OffPeakList 只读保留。
+            // D49-2: the off-peak dispatch round runs outside the caller's CronCreate, so
+            // OffPeakCreate is added for defense in depth (free-pool self-amplification);
+            // OffPeakList stays allowed as read-only.
             toolDisallowlist: ["CronCreate", "OffPeakCreate"],
           },
         }),
@@ -1206,7 +1150,7 @@ describe("ZCode legacy task compat task index", () => {
             heldQueueDisposition: "keepQueueAndSend",
             offPeakTaskId: "offpeak-stable-1",
             offPeakRunType: "resume",
-            // D49-2：续跑段与首跑同语义。
+            // D49-2: the resume segment keeps the same semantics as the first run.
             toolDisallowlist: ["CronCreate", "OffPeakCreate"],
           },
         }),
@@ -1216,13 +1160,13 @@ describe("ZCode legacy task compat task index", () => {
 
   it("restores automation mutation tools for a user turn in a cron-owned session", async () => {
     const { agent, service } = createService();
-    // 会话因用户在其中创建过定时任务而归属 automation：DB meta 带 cronAutomationId。
+    // The session belongs to automation because the user created a scheduled task in it: the DB meta carries cronAutomationId.
     const task = await service.createTask({
       workspacePath: "/repo",
       provider: "glm",
       automationId: "automation-owned",
     });
-    // 复刻打开已有定时任务会话：归属仍保存在 DB，但普通用户轮不携带 automationId。
+    // Mirror opening an existing scheduled-task session: ownership stays in the DB, but a normal user turn carries no automationId.
     await service.resumeTask({ workspacePath: "/repo", taskId: task.taskId });
     service.onDynamicTaskEvent({
       workspacePath: "/repo",
@@ -1231,7 +1175,7 @@ describe("ZCode legacy task compat task index", () => {
     })(() => undefined);
     vi.mocked(agent.sendConversationCommandV4).mockClear();
 
-    // 普通用户后续输入：不带 automationId。
+    // A normal follow-up user input: no automationId.
     await service.sendPrompt({
       taskId: task.taskId,
       traceId: "trace-followup",
@@ -1284,8 +1228,8 @@ describe("ZCode legacy task compat task index", () => {
   });
 
   it("injects product CUA helper broker config before legacy createTask session creation", async () => {
-    // services 只负责建会话前把 MCP 配置交给 producer 的 resolver；改写细节由 producer 自己的测试覆盖。
-    // 这里用测试自己的 resolver，不依赖私有 producer 的注入实现（开源占位包不改写配置）。
+    // services only hands the MCP config to the producer's resolver before session creation; rewrite details are covered by the producer's own tests.
+    // This test uses its own resolver instead of the private producer's injected implementation (the open-source placeholder package does not rewrite config).
     const resolver = {
       resolveMcpServers: vi.fn(async (servers) =>
         servers?.map((server) =>
@@ -1339,8 +1283,8 @@ describe("ZCode legacy task compat task index", () => {
       provider: "glm",
     });
 
-    // Bugfix: restartWorkspaceProcess 是切模型/配置后的 workspace 级重启，
-    // 不能调用 disposeAll 把整个 agent manager 永久关闭。
+    // Bugfix: restartWorkspaceProcess is a workspace-level restart after a model/config switch;
+    // it must not call disposeAll and permanently close the whole agent manager.
     expect(agent.disposeWorkspace).toHaveBeenCalledWith({
       workspacePath: "/repo",
       workspaceIdentity: "remote:ssh:dev:/repo",
@@ -1529,10 +1473,25 @@ describe("ZCode legacy task compat task index", () => {
         },
       }),
     );
-    // 旧 stream 适配只负责转发错误，不能作为第二个 task index 写者。
-    expect(
-      await taskIndexRepo.getTaskMeta({ workspacePath: "/repo", taskId: task.taskId }),
-    ).toMatchObject({ updatedAt: task.updatedAt, title: task.title });
+    await vi.waitFor(async () => {
+      await expect(
+        taskIndexRepo.getTaskMeta({
+          workspacePath: "/repo",
+          taskId: task.taskId,
+        }),
+      ).resolves.toMatchObject({
+        lastError: {
+          code: "provider_not_found",
+          detail: "stale-provider/gpt-5.5",
+          message: "Model provider is not configured: stale-provider",
+          attribution: {
+            source: "runtime",
+            reason: "provider_not_configured",
+            providerId: "account:zai-individual-coding-plan",
+          },
+        },
+      });
+    });
   });
 
   it("projects streaming Write input in dynamic task fallback subscriptions", async () => {
@@ -1815,8 +1774,9 @@ describe("ZCode legacy task compat task index", () => {
     }
   });
 
-  // M5 ③ 删除：listWorkspaceTaskLists（workspace 行分组查询）——列表面（本机 + remote shard）
-  // 已切 sessions-index，分组结果在客户端由 sessions + tasks-index 归属 join 构建。
+  // M5 3 removal: listWorkspaceTaskLists (workspace row-grouped query) is gone — the list surface
+  // (local + remote shards) now runs on sessions-index, and grouped results are built client-side
+  // by joining sessions with tasks-index ownership.
 
   it("broadcasts task_created when createTask inserts a new indexed task", async () => {
     const { service } = createService();
@@ -1875,6 +1835,37 @@ describe("ZCode legacy task compat task index", () => {
       { reason: "task_archived", taskId: task.taskId },
       { reason: "task_unarchived", taskId: task.taskId },
     ]);
+  });
+
+  it("broadcasts one workspace task_meta_changed only when an incognito marker is written", async () => {
+    const { service } = createService();
+    const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
+    const events: Array<{ reason?: string; taskId?: string }> = [];
+    const disposable = service.onDynamicWorkspaceEvent({ workspacePath: "/repo" })((event) => {
+      if (event.type === "workspace_task_list_changed") {
+        events.push({ reason: event.reason, taskId: event.taskId });
+      }
+    });
+
+    const written = await service.persistIncognitoMarkers({
+      workspacePath: "/repo",
+      taskIds: [task.taskId],
+    });
+    const confirmedOnly = await service.persistIncognitoMarkers({
+      workspacePath: "/repo",
+      taskIds: [task.taskId],
+    });
+    const absent = await service.persistIncognitoMarkers({
+      workspacePath: "/repo",
+      taskIds: ["missing-task"],
+    });
+    disposable.dispose();
+
+    expect(written).toEqual({ confirmed: [task.taskId], written: [task.taskId] });
+    expect(confirmedOnly).toEqual({ confirmed: [task.taskId], written: [] });
+    expect(absent).toEqual({ confirmed: [], written: [] });
+    // One broadcast for the single write; the repeat confirm and the absent row broadcast nothing.
+    expect(events).toEqual([{ reason: "task_meta_changed", taskId: undefined }]);
   });
 
   it("does not clear a newer unread marker when the system clock does not advance", async () => {
@@ -1993,22 +1984,7 @@ describe("ZCode legacy task compat task index", () => {
     expect(events).toEqual(["task_meta_changed"]);
   });
 
-  it("keeps task facts unchanged when CLI rejects rename or deletion", async () => {
-    const { agent, service, taskIndexRepo } = createService();
-    const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
-    vi.mocked(agent.sendConversationCommandV4).mockRejectedValue(new Error("offline"));
-    await expect(service.renameTask({ ...task, title: "must not persist" })).rejects.toThrow(
-      "offline",
-    );
-    await expect(service.deleteTask(task)).rejects.toThrow("offline");
-    expect(await taskIndexRepo.getTaskMeta(task)).toMatchObject({
-      title: task.title,
-      updatedAt: task.updatedAt,
-    });
-    expect(await service.listDeletedTaskIds({ workspacePath: "/repo" })).toEqual([]);
-  });
-
-  it("deletes through CLI before mirroring its durable tombstone", async () => {
+  it("persists deleted tombstone and broadcasts task_deleted without deleting the CLI session", async () => {
     const { agent, service, taskIndexRepo } = createService();
     const events: Array<{ reason?: string; taskId?: string }> = [];
     const disposable = service.onDynamicWorkspaceEvent({ workspacePath: "/repo" })((event) => {
@@ -2020,19 +1996,6 @@ describe("ZCode legacy task compat task index", () => {
     await service.archiveTask({ workspacePath: "/repo", taskId: task.taskId });
     vi.mocked(agent.sendConversationCommandV4).mockClear();
 
-    agent.reconcileSessionsIndexV4 = vi.fn(async () => ({
-      sessions: [
-        {
-          sessionId: task.taskId,
-          exists: true as const,
-          deleted: true,
-          title: task.title,
-          titleSource: "default" as const,
-          createdAt: task.createdAt,
-          updatedAt: task.updatedAt,
-        },
-      ],
-    }));
     await service.deleteTask({ workspacePath: "/repo", taskId: task.taskId });
     disposable.dispose();
 
@@ -2049,36 +2012,181 @@ describe("ZCode legacy task compat task index", () => {
       }),
     ).resolves.toEqual([expect.objectContaining({ taskId: task.taskId })]);
     expect(events.at(-1)).toEqual({ reason: "task_deleted", taskId: task.taskId });
-    expect(agent.sendConversationCommandV4).toHaveBeenCalledWith(
-      expect.objectContaining({ envelope: expect.objectContaining({ type: "deleteSession" }) }),
-    );
+    expect(agent.sendConversationCommandV4).not.toHaveBeenCalled();
   });
 
-  it("renames through CLI while preserving CLI activity time", async () => {
+  it("deletes only still-archived targets, skips restored/missing targets, and retains CLI sessions", async () => {
+    const { agent, service } = createService();
+    const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
+    const target = { workspacePath: "/repo", taskId: task.taskId };
+    await service.archiveTask(target);
+    await service.unarchiveTask(target);
+    expect(await service.deleteArchivedTask(target)).toBe(false);
+    await service.archiveTask(target);
+    vi.mocked(agent.sendConversationCommandV4).mockClear();
+    expect(await service.deleteArchivedTask(target)).toBe(true);
+    expect(await service.deleteArchivedTask(target)).toBe(false);
+    expect(await service.deleteArchivedTask({ ...target, taskId: "missing" })).toBe(false);
+    expect(await service.listDeletedTaskIds({ workspacePath: "/repo" })).toEqual([task.taskId]);
+    expect(agent.sendConversationCommandV4).not.toHaveBeenCalled();
+  });
+
+  it("does not publish deletion or hide the archived target when guarded persistence fails", async () => {
+    const { service, taskIndexRepo } = createService();
+    const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
+    const target = { workspacePath: "/repo", taskId: task.taskId };
+    await service.archiveTask(target);
+    const events: string[] = [];
+    const listener = service.onDynamicWorkspaceEvent({ workspacePath: "/repo" })((event) => {
+      if (event.type === "workspace_task_list_changed") events.push(event.reason);
+    });
+    const write = vi
+      .spyOn(taskIndexRepo, "deleteArchivedTask")
+      .mockRejectedValueOnce(new Error("write failed"));
+    await expect(service.deleteArchivedTask(target)).rejects.toThrow("write failed");
+    expect(
+      (await service.listArchivedTasks({ workspacePath: "/repo" })).map((meta) => meta.taskId),
+    ).toContain(task.taskId);
+    expect(events).toEqual([]);
+    write.mockRestore();
+    listener.dispose();
+  });
+
+  it("批量条件删除逐项提交，重复 ID 去重，混合失败只发布一次 workspace 删除事件", async () => {
+    const { agent, service, taskIndexRepo } = createService();
+    const tasks = [];
+    for (let i = 0; i < 4; i += 1) {
+      const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
+      await service.archiveTask({ workspacePath: "/repo", taskId: task.taskId });
+      tasks.push(task);
+    }
+    const [first, restored, failed, last] = tasks;
+    await service.unarchiveTask({ workspacePath: "/repo", taskId: restored!.taskId });
+    const onEvent = vi.fn();
+    const listener = service.onDynamicWorkspaceEvent({ workspacePath: "/repo" })(onEvent);
+    const originalDelete = taskIndexRepo.deleteArchivedTask.bind(taskIndexRepo);
+    const write = vi
+      .spyOn(taskIndexRepo, "deleteArchivedTask")
+      .mockImplementation(async (target) => {
+        if (target.taskId === failed!.taskId) throw new Error("write failed");
+        return originalDelete(target);
+      });
+    vi.mocked(agent.sendConversationCommandV4).mockClear();
+    const result = await service.deleteArchivedTasks({
+      workspacePath: "/repo",
+      taskIds: [
+        first!.taskId,
+        restored!.taskId,
+        failed!.taskId,
+        last!.taskId,
+        first!.taskId,
+        "missing",
+      ],
+    });
+    expect(result).toEqual({
+      deletedTaskIds: [first!.taskId, last!.taskId],
+      skippedTaskIds: [restored!.taskId, "missing"],
+      failedTaskIds: [failed!.taskId],
+    });
+    expect(write).toHaveBeenCalledTimes(5);
+    expect(onEvent).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        type: "workspace_task_list_changed",
+        workspacePath: "/repo",
+        reason: "task_deleted",
+      }),
+    );
+    expect(onEvent.mock.calls[0]![0].taskId).toBeUndefined();
+    expect(onEvent.mock.calls[0]![0].taskMeta).toBeUndefined();
+    expect(
+      (await service.listArchivedTasks({ workspacePath: "/repo" })).map((task) => task.taskId),
+    ).toEqual([failed!.taskId]);
+    expect(agent.sendConversationCommandV4).not.toHaveBeenCalled();
+    onEvent.mockClear();
+    expect(await service.deleteArchivedTasks({ workspacePath: "/repo", taskIds: [] })).toEqual({
+      deletedTaskIds: [],
+      skippedTaskIds: [],
+      failedTaskIds: [],
+    });
+    expect(
+      await service.deleteArchivedTasks({ workspacePath: "/repo", taskIds: [failed!.taskId] }),
+    ).toEqual({ deletedTaskIds: [], skippedTaskIds: [], failedTaskIds: [failed!.taskId] });
+    expect(
+      await service.deleteArchivedTasks({ workspacePath: "/repo", taskIds: [first!.taskId] }),
+    ).toEqual({ deletedTaskIds: [], skippedTaskIds: [first!.taskId], failedTaskIds: [] });
+    expect(onEvent).not.toHaveBeenCalled();
+    write.mockRestore();
+    listener.dispose();
+  });
+
+  it("批次按 workspaceIdentity 隔离，同路径同 taskId 不会误删其它 source", async () => {
+    const { service, taskIndexRepo } = createService();
+    const identities = ["remote:ssh:first:/repo", "remote:ssh:second:/repo"];
+    const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
+    for (const workspaceIdentity of identities) {
+      await taskIndexRepo.syncTaskMeta({ meta: { ...task, workspaceIdentity } });
+      await taskIndexRepo.updateTaskState({
+        workspacePath: "/repo",
+        workspaceIdentity,
+        taskId: task.taskId,
+        patch: { archived: true },
+      });
+    }
+    expect(
+      await service.deleteArchivedTasks({
+        workspacePath: "/repo",
+        workspaceIdentity: identities[0],
+        taskIds: [task.taskId],
+      }),
+    ).toEqual({ deletedTaskIds: [task.taskId], skippedTaskIds: [], failedTaskIds: [] });
+    expect(
+      await taskIndexRepo.getTaskMeta({
+        workspacePath: "/repo",
+        workspaceIdentity: identities[1],
+        taskId: task.taskId,
+      }),
+    ).toEqual(expect.objectContaining({ taskId: task.taskId, workspaceIdentity: identities[1] }));
+  });
+
+  it("并发批次仍由 Repo 条件写入裁决，每个目标只能成功删除一次", async () => {
+    const { service } = createService();
+    const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
+    await service.archiveTask({ workspacePath: "/repo", taskId: task.taskId });
+    const results = await Promise.all(
+      [1, 2].map(() =>
+        service.deleteArchivedTasks({
+          workspacePath: "/repo",
+          taskIds: [task.taskId],
+        }),
+      ),
+    );
+    expect(results.flatMap((result) => result.deletedTaskIds)).toEqual([task.taskId]);
+    expect(results.flatMap((result) => result.skippedTaskIds)).toEqual([task.taskId]);
+    expect(results.flatMap((result) => result.failedTaskIds)).toEqual([]);
+  });
+
+  it("keeps updatedAt and CLI order when renaming a running task", async () => {
     vi.useFakeTimers();
+    // Far after the seeded CLI time: any Host wall-clock write to updated_at shows up as a mismatch.
     vi.setSystemTime(new Date("2026-06-13T14:45:00.000Z"));
     const { agent, service, taskIndexRepo } = createService();
-    await seedIndexedTask(taskIndexRepo, {
-      taskId: "running-rename",
-      provider: "glm",
-      workspacePath: "/repo",
-      updatedAt: 100,
+    // CLI-admitted row: applyCliFacts is the only writer of cli_updated_at, so the mirror path is exercised.
+    await taskIndexRepo.applyCliFacts({
+      meta: {
+        taskId: "running-rename",
+        traceId: "trace_running-rename",
+        title: "原标题",
+        workspacePath: "/repo",
+        createdAt: 10,
+        updatedAt: 100,
+        mode: "build",
+        status: "running",
+        provider: "glm",
+      },
+      titleSource: "default",
     });
     vi.mocked(agent.sendConversationCommandV4).mockClear();
 
-    agent.reconcileSessionsIndexV4 = vi.fn(async () => ({
-      sessions: [
-        {
-          sessionId: "running-rename",
-          exists: true as const,
-          deleted: false,
-          title: "短名",
-          titleSource: "custom" as const,
-          createdAt: 1,
-          updatedAt: 100,
-        },
-      ],
-    }));
     const renamed = await service.renameTask({
       taskId: "running-rename",
       workspacePath: "/repo",
@@ -2096,7 +2204,19 @@ describe("ZCode legacy task compat task index", () => {
     ).resolves.toMatchObject({
       title: "短名",
       titleOverridden: true,
+      updatedAt: 100,
     });
+    const rawDatabase = new DatabaseSync(getTasksIndexDatabasePath());
+    try {
+      const rawRow = rawDatabase
+        .prepare(
+          "SELECT updated_at, cli_updated_at FROM tasks WHERE workspace_key = ? AND task_id = ?",
+        )
+        .get("/repo", "running-rename");
+      expect(rawRow).toEqual({ updated_at: 100, cli_updated_at: 100 });
+    } finally {
+      rawDatabase.close();
+    }
     expect(agent.sendConversationCommandV4).toHaveBeenCalledWith({
       workspacePath: "/repo",
       workspaceIdentity: undefined,
@@ -2106,6 +2226,34 @@ describe("ZCode legacy task compat task index", () => {
         payload: { title: "短名" },
       }),
     });
+  });
+
+  it("reuses a mobile replayable draft session when createTask receives draftSessionId", async () => {
+    const { agent, service } = createService();
+    await agent.createSession({
+      workspacePath: "/repo",
+      sessionId: "draft_mobile",
+      persistence: "deferred",
+      model: { providerId: "glm", modelId: "deepseek-v4-pro" },
+    });
+    vi.mocked(agent.createSession).mockClear();
+    vi.mocked(agent.readSession).mockClear();
+
+    const task = await service.createTask({
+      workspacePath: "/repo",
+      provider: "glm",
+      draftSessionId: "draft_mobile",
+    });
+    const list = await service.listTasks({ workspacePath: "/repo" });
+
+    expect(agent.readSession).toHaveBeenCalledWith({
+      workspacePath: "/repo",
+      workspaceIdentity: undefined,
+      sessionId: "draft_mobile",
+    });
+    expect(agent.createSession).not.toHaveBeenCalled();
+    expect(task.taskId).toBe("draft_mobile");
+    expect(list.map((item) => item.taskId)).toEqual(["draft_mobile"]);
   });
 
   it("reads the bound Session original selection without filtering unavailable model options", async () => {
@@ -2157,7 +2305,6 @@ describe("ZCode legacy task compat task index", () => {
     expect(agent.sendConversationCommandV4).toHaveBeenCalledWith({
       workspacePath: "/repo",
       workspaceIdentity: undefined,
-      projectId: null,
       envelope: expect.objectContaining({
         sessionId: null,
         type: "createSession",
@@ -2244,6 +2391,83 @@ describe("ZCode legacy task compat task index", () => {
     expect(task.cronAutomationId).toBeUndefined();
   });
 
+  it("syncs a structured model selection before reusing a mobile replayable draft session", async () => {
+    const { agent, service } = createService();
+    await agent.createSession({
+      workspacePath: "/repo",
+      sessionId: "draft_mobile",
+      persistence: "deferred",
+      model: { providerId: "glm", modelId: "glm-0606[1m]" },
+    });
+    vi.mocked(agent.setModel).mockClear();
+
+    const task = await service.createTask({
+      workspacePath: "/repo",
+      provider: "glm",
+      draftSessionId: "draft_mobile",
+      modelSelection: {
+        providerId: "glm",
+        modelId: "glm-0606[1m]",
+        options: { reasoningLevel: "max" },
+      },
+    });
+
+    expect(agent.setModel).toHaveBeenCalledWith({
+      workspacePath: "/repo",
+      workspaceIdentity: undefined,
+      sessionId: "draft_mobile",
+      model: {
+        providerId: "glm",
+        modelId: "glm-0606[1m]",
+        options: { reasoningLevel: "max" },
+      },
+    });
+    expect(task.taskId).toBe("draft_mobile");
+  });
+
+  it("syncs model and thoughtLevel before reusing a mobile replayable draft session", async () => {
+    const { agent, service } = createService();
+    await agent.createSession({
+      workspacePath: "/repo",
+      sessionId: "draft_mobile",
+      persistence: "deferred",
+      model: { providerId: "custom-deepseek", modelId: "deepseek-v4-flash" },
+    });
+    vi.mocked(agent.createSession).mockClear();
+    vi.mocked(agent.setModel).mockClear();
+    vi.mocked(agent.setThoughtLevel).mockClear();
+
+    const task = await service.createTask({
+      workspacePath: "/repo",
+      provider: "glm",
+      draftSessionId: "draft_mobile",
+      modelSelection: {
+        providerId: "account:bigmodel-individual-coding-plan",
+        modelId: "GLM-5-Turbo",
+        options: { reasoningLevel: "enabled" },
+      },
+    });
+
+    expect(agent.setModel).toHaveBeenCalledWith({
+      workspacePath: "/repo",
+      workspaceIdentity: undefined,
+      sessionId: "draft_mobile",
+      model: {
+        providerId: "account:bigmodel-individual-coding-plan",
+        modelId: "GLM-5-Turbo",
+        options: { reasoningLevel: "enabled" },
+      },
+    });
+    expect(agent.setThoughtLevel).toHaveBeenCalledWith({
+      workspacePath: "/repo",
+      workspaceIdentity: undefined,
+      sessionId: "draft_mobile",
+      thoughtLevel: "enabled",
+    });
+    expect(agent.createSession).not.toHaveBeenCalled();
+    expect(task.taskId).toBe("draft_mobile");
+  });
+
   it("drains an accepted mobile task command after the current turn completes", async () => {
     const { agent, eventEmitter, indexFrameEmitter, service } = createService();
     const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
@@ -2299,7 +2523,7 @@ describe("ZCode legacy task compat task index", () => {
       await flushMicrotasks();
 
       expect(agent.sendConversationCommandV4).toHaveBeenCalledTimes(2);
-      // 幂等键 inputId→commandId：drain 落 v4 sendText，终态收口仍按 traceId 对账。
+      // Idempotency key inputId→commandId: drain lands as v4 sendText; terminal settlement still reconciles by traceId.
       expect(agent.sendConversationCommandV4).toHaveBeenLastCalledWith({
         workspacePath: "/repo",
         workspaceIdentity: undefined,
@@ -2434,7 +2658,67 @@ describe("ZCode legacy task compat task index", () => {
     await flushMicrotasks();
 
     expect(agent.sendConversationCommandV4).toHaveBeenCalledTimes(2);
-    // 幂等键 inputId→commandId：drain 落 v4 sendText，终态收口仍按 traceId 对账。
+    // Idempotency key inputId→commandId: drain lands as v4 sendText; terminal settlement still reconciles by traceId.
+    expect(agent.sendConversationCommandV4).toHaveBeenLastCalledWith({
+      workspacePath: "/repo",
+      workspaceIdentity: undefined,
+      envelope: expect.objectContaining({
+        type: "sendText",
+        sessionId: task.taskId,
+        commandId: "input_second",
+        payload: { text: "second", heldQueueDisposition: "keepQueueAndSend" },
+      }),
+    });
+  });
+
+  it("waits for the prompt completed ready state before draining a mobile task command", async () => {
+    const { agent, eventEmitter, indexFrameEmitter, service } = createService();
+    const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
+
+    await service.sendPrompt({
+      taskId: task.taskId,
+      traceId: "input_first",
+      queryId: "query_first",
+      content: "first",
+    });
+    await service.enqueueTaskCommand({
+      workspacePath: "/repo",
+      taskId: task.taskId,
+      commandId: "queued_second",
+      traceId: "input_second",
+      queryId: "query_second",
+      type: "send_prompt",
+      content: "second",
+    });
+
+    eventEmitter.fire({
+      type: "session.event",
+      event: {
+        eventId: "evt_turn_completed",
+        sessionId: task.taskId,
+        turnId: "turn_first",
+        seq: 2,
+        timestamp: 100,
+        traceId: "protocol_trace_first",
+        type: "turn.completed",
+        payload: {
+          inputId: "input_first",
+          response: "done",
+        },
+      },
+    });
+    await flushMicrotasks();
+
+    expect(agent.sendConversationCommandV4).toHaveBeenCalledTimes(1);
+
+    await firePromptCompletedState(indexFrameEmitter, {
+      sessionId: task.taskId,
+      workspacePath: "/repo",
+    });
+    await flushMicrotasks();
+
+    expect(agent.sendConversationCommandV4).toHaveBeenCalledTimes(2);
+    // Idempotency key inputId→commandId: drain lands as v4 sendText; terminal settlement still reconciles by traceId.
     expect(agent.sendConversationCommandV4).toHaveBeenLastCalledWith({
       workspacePath: "/repo",
       workspaceIdentity: undefined,
@@ -2714,7 +2998,7 @@ describe("ZCode legacy task compat task index", () => {
       ],
     });
 
-    // 附件命令面未建模（v4 attachmentRef 引用模型缺上传面）：带附件输入仍走旧 session/send。
+    // The attachment command surface is not modeled (the v4 attachmentRef reference model lacks an upload surface): attachment-bearing input still goes through the legacy session/send.
     expect(agent.sendConversationCommandV4).not.toHaveBeenCalled();
     expect(agent.sendPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2818,7 +3102,7 @@ describe("ZCode legacy task compat task index", () => {
 
     await service.stopGeneration({ taskId: task.taskId });
 
-    // M5 ③-4：agentService.stopSession 已删除（v4 stop 命令唯一路径），断言收敛为 v4 面。
+    // M5 3-4: agentService.stopSession is removed (the v4 stop command is the only path); assertions converge on the v4 surface.
     expect(agent.sendConversationCommandV4).toHaveBeenLastCalledWith({
       workspacePath: "/repo",
       workspaceIdentity: undefined,
@@ -2830,7 +3114,7 @@ describe("ZCode legacy task compat task index", () => {
     });
   });
 
-  // M5 ③-3：模式切换（手机远控语义入口 setMode/setConfigOption）收敛 v4 switchCollaborationMode。
+  // M5 3-3: mode switching (the mobile-remote semantic entry points setMode/setConfigOption) converges on v4 switchCollaborationMode.
   it("routes setMode through the v4 switchCollaborationMode command", async () => {
     const { agent, service } = createService();
     const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
@@ -2849,7 +3133,7 @@ describe("ZCode legacy task compat task index", () => {
     });
   });
 
-  // M5 ③-3：host 无本地 v4 投影，CAS 首发 baseRevision=0 探测，stale 用 revisionAtDecision 收敛。
+  // M5 3-3: the host has no local v4 projection, so the first CAS send probes with baseRevision=0 and stale results converge via revisionAtDecision.
   it("retries a stale switchCollaborationMode ACK with the server revision", async () => {
     const { agent, service } = createService();
     const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
@@ -2871,7 +3155,7 @@ describe("ZCode legacy task compat task index", () => {
     expect(envelopes[1]).toMatchObject({ baseRevision: 7, payload: { mode: "yolo" } });
   });
 
-  // M5 ③-3 残留保真：v4 switchCollaborationMode 值域刻意排除 auto，auto 继续走旧 op。
+  // M5 3-3 legacy-behavior fidelity: the v4 switchCollaborationMode value range deliberately excludes auto; auto keeps using the legacy op.
   it("keeps mode=auto on the legacy session/setMode fallback", async () => {
     const { agent, service } = createService();
     const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
@@ -2888,7 +3172,7 @@ describe("ZCode legacy task compat task index", () => {
     ).toBe(false);
   });
 
-  // M5 ③-3：思考深度收敛 v4 switchModelConfig（thought 字段承载，provider/model 取当前选型）。
+  // M5 3-3: thought level converges on v4 switchModelConfig (carried in the thought field; provider/model take the current selection).
   it("routes thought level config through v4 switchModelConfig with the current model", async () => {
     const { agent, service } = createService();
     const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
@@ -2912,8 +3196,8 @@ describe("ZCode legacy task compat task index", () => {
     expect(configOptions.some((option) => option.id === "thought_level")).toBe(true);
   });
 
-  // M5 ③-3 评估标注保真：setModel 仍走旧 op（v4 switchModelConfig 无 runtimeModel 解析，
-  // 迁移会让手机远控的 custom provider 跨切失效）。
+  // M5 3-3 annotated-for-eval fidelity: setModel still uses the legacy op (v4 switchModelConfig has no runtimeModel resolution;
+  // migrating would break custom-provider switches across sessions for mobile remote control).
   it("keeps setModel on the legacy session/setModel op", async () => {
     const { agent, service } = createService();
     const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
@@ -3022,7 +3306,7 @@ describe("ZCode legacy task compat task index", () => {
     });
 
     expect(submitted).toBe(true);
-    // M5 ③-4：agentService.respondPermission 已删除（v4 resolveInteraction 唯一路径）。
+    // M5 3-4: agentService.respondPermission is removed (v4 resolveInteraction is the only path).
     expect(agent.sendConversationCommandV4).toHaveBeenLastCalledWith({
       workspacePath: "/repo",
       workspaceIdentity: undefined,
@@ -3074,8 +3358,8 @@ describe("ZCode legacy task compat task index", () => {
           },
         }),
       });
-      // 语义保真：replayable 应答后 observer 弹窗按 elicitation_response 清理（原
-      // respondUserInput 的 web-remote-replayable 分支，现由 adapter 本地补投）。
+      // Semantic fidelity: after a replayable answer, the observer dialog clears via elicitation_response (the former
+      // web-remote-replayable branch of respondUserInput, now re-delivered locally by the adapter).
       expect(received).toContainEqual(
         expect.objectContaining({
           type: "elicitation_response",
@@ -3230,6 +3514,7 @@ describe("ZCode legacy task compat task index", () => {
       });
       eventEmitter.fire({ type: "session.event", event: resultEvent });
 
+      expect(streamEvents.some((event) => event.type === "tool_call_update")).toBe(true);
       expect(streamEvents).toContainEqual(
         expect.objectContaining({
           type: "tool_call_update",
@@ -3736,18 +4021,146 @@ describe("ZCode legacy task compat task index", () => {
       workspaceScopes: [{ workspacePath: "/repo" }],
       sortBy: "updated",
     });
-    // 历史 provider 仍按兼容列表 API 的过滤约定读取。
+    // M5 2: listGroupedTaskView (the tasks-table join grouped query) is removed; grouped task content
+    // now comes from sessions-index, and provider-filter assertions keep only the sqlite list surface that still exists.
     expect(active.map((task) => task.taskId)).toEqual(["glm_active"]);
     expect(pinned.map((task) => task.taskId)).toEqual(["glm_pinned"]);
     expect(pinnedIds).toEqual(["glm_pinned"]);
     expect(taskList.items.map((task) => task.taskId)).toEqual(["glm_active"]);
     expect(taskList.total).toBe(1);
-    // 项目树曾绕过原列表的 provider 边界，导致能展示却无法经 Controller 操作。
-    const tree = (await taskIndexRepo.getProjectRepository()).readTree();
-    expect(tree.tasks.map((task) => task.taskId).sort()).toEqual(["glm_active", "glm_pinned"]);
-    expect(tree.tasks.filter((task) => task.pinned).map((task) => task.taskId)).toEqual([
-      "glm_pinned",
-    ]);
+  });
+
+  it("filters non-glm task rows from grouped order save results", async () => {
+    const { service, taskIndexRepo } = createService();
+    await seedIndexedTask(taskIndexRepo, { taskId: "glm_active", provider: "glm" });
+    await seedIndexedTask(taskIndexRepo, { taskId: "glm_grouped", provider: "glm" });
+    await seedIndexedTask(taskIndexRepo, { taskId: "gemini_active", provider: "gemini" });
+    const group = await service.createTaskGroup({ title: "Group" });
+
+    const savedGroupedView = await service.applyGroupedTaskViewOrder({
+      workspaceScopes: [{ workspacePath: "/repo" }],
+      topLevelNodes: [
+        { type: "group", groupId: group.id },
+        {
+          type: "task",
+          task: { workspacePath: "/repo", taskId: "glm_active" },
+        },
+        {
+          type: "task",
+          task: { workspacePath: "/repo", taskId: "gemini_active" },
+        },
+      ],
+      groups: [
+        {
+          groupId: group.id,
+          taskRefs: [
+            { workspacePath: "/repo", taskId: "glm_grouped" },
+            { workspacePath: "/repo", taskId: "gemini_active" },
+          ],
+        },
+      ],
+    });
+    const groupedTaskIds = savedGroupedView.nodes.flatMap((node) =>
+      node.type === "group" ? node.tasks.map((task) => task.taskId) : [node.task.taskId],
+    );
+    const rawOrders = (
+      taskIndexRepo as unknown as {
+        getDatabase(): {
+          prepare(sql: string): {
+            all(): Array<{ node_key: string }>;
+          };
+        };
+      }
+    )
+      .getDatabase()
+      .prepare("SELECT node_key FROM task_group_view_node_orders WHERE node_type = 'task'")
+      .all()
+      .map((row) => row.node_key);
+    const rawMembers = (
+      taskIndexRepo as unknown as {
+        getDatabase(): {
+          prepare(sql: string): {
+            all(): Array<{ task_id: string }>;
+          };
+        };
+      }
+    )
+      .getDatabase()
+      .prepare("SELECT task_id FROM task_group_members")
+      .all()
+      .map((row) => row.task_id);
+
+    expect(groupedTaskIds).toEqual(["glm_grouped", "glm_active"]);
+    expect(rawOrders.some((nodeKey) => nodeKey.includes("gemini_active"))).toBe(false);
+    expect(rawMembers).toEqual(["glm_grouped"]);
+  });
+
+  it("keeps stale grouped tasks visible when auto archive is disabled", async () => {
+    vi.useFakeTimers();
+    const now = new Date("2026-06-09T00:00:00.000Z").getTime();
+    vi.setSystemTime(now);
+    const { service, taskIndexRepo } = createService({
+      settings: {
+        taskAutoArchiveEnabled: false,
+        taskAutoArchiveOlderThanDays: 7,
+      },
+    });
+    await seedIndexedTask(taskIndexRepo, {
+      taskId: "stale_glm",
+      provider: "glm",
+      updatedAt: now - 8 * 24 * 60 * 60 * 1000,
+    });
+    await seedIndexedTask(taskIndexRepo, {
+      taskId: "stale_gemini",
+      provider: "gemini",
+      updatedAt: now - 8 * 24 * 60 * 60 * 1000,
+    });
+
+    // M5 2: the grouped entry point switched to structural reads (listGroupedTaskViewStructure); the auto-archive trigger semantics are unchanged.
+    await service.listGroupedTaskViewStructure({
+      workspaceScopes: [{ workspacePath: "/repo" }],
+    });
+    const archived = await taskIndexRepo.listTaskMetas({
+      workspacePath: "/repo",
+      archived: true,
+    });
+
+    expect(archived.map((task) => task.taskId)).toEqual([]);
+  });
+
+  it("auto archives stale grouped tasks across providers when the setting is enabled", async () => {
+    vi.useFakeTimers();
+    const now = new Date("2026-06-09T00:00:00.000Z").getTime();
+    vi.setSystemTime(now);
+    const { service, taskIndexRepo } = createService({
+      settings: {
+        taskAutoArchiveEnabled: true,
+        taskAutoArchiveOlderThanDays: 7,
+      },
+    });
+    await seedIndexedTask(taskIndexRepo, {
+      taskId: "stale_glm",
+      provider: "glm",
+      updatedAt: now - 8 * 24 * 60 * 60 * 1000,
+    });
+    await seedIndexedTask(taskIndexRepo, {
+      taskId: "stale_gemini",
+      provider: "gemini",
+      updatedAt: now - 8 * 24 * 60 * 60 * 1000,
+    });
+
+    // M5 2: the grouped entry point switched to structural reads (listGroupedTaskViewStructure); the auto-archive trigger semantics are unchanged.
+    await service.listGroupedTaskViewStructure({
+      workspaceScopes: [{ workspacePath: "/repo" }],
+    });
+    const archived = await taskIndexRepo.listTaskMetas({
+      workspacePath: "/repo",
+      archived: true,
+    });
+    const visibleArchived = await service.listArchivedTasks({ workspacePath: "/repo" });
+
+    expect(archived.map((task) => task.taskId)).toEqual(["stale_glm", "stale_gemini"]);
+    expect(visibleArchived.map((task) => task.taskId)).toEqual(["stale_glm"]);
   });
 
   it("does not include zero ZCode Protocol context usage in task snapshots", async () => {
@@ -4042,8 +4455,8 @@ describe("ZCode legacy task compat task index", () => {
   });
 
   it("stamps offPeakTaskId on normal snapshot resume (D48)", async () => {
-    // SG-01：legacy 分支已补写闲时标记，正常 snapshot 续跑路径必须同语义，
-    // 否则 pre-D48 会话被闲时续跑后月亮标识与系统分组归属不会出现。
+    // SG-01: the legacy branch already stamps the off-peak marker, so the normal snapshot resume path must keep the same
+    // semantics, or pre-D48 sessions resumed off-peak would never show the moon badge or the system group ownership.
     const { agent, service, taskIndexRepo } = createService();
     const taskId = "resume_offpeak_stamp_task";
     const workspacePath = "/repo";
@@ -4503,19 +4916,6 @@ describe("ZCode legacy task compat task index", () => {
       throw new Error(`Session not found: ${params.sessionId}`);
     });
 
-    agent.reconcileSessionsIndexV4 = vi.fn(async () => ({
-      sessions: [
-        {
-          sessionId: acpSessionId,
-          exists: true as const,
-          deleted: false,
-          title: "DB session",
-          titleSource: "generated" as const,
-          createdAt: dbSnapshot.session.createdAt,
-          updatedAt: dbSnapshot.session.updatedAt,
-        },
-      ],
-    }));
     const snapshot = await service.getTaskSnapshot({
       workspacePath,
       taskId: acpSessionId,

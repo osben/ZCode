@@ -1,6 +1,8 @@
 import { EventEmitter } from "node:events";
 import { rmSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { inspect } from "node:util";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
@@ -113,12 +115,135 @@ function expectSSHExecCommand(command: string, rawCommand: string): void {
   expect(command).toBe(`/bin/sh -c ${quotePosixShellArgForTest(rawCommand)}`);
 }
 
+// Host key verification reads known_hosts before connecting; point every backend here at a file that does not exist
+// so no test reads the developer's real ~/.ssh.
+const NO_KNOWN_HOSTS = {
+  userFile: join(tmpdir(), "zcode-ssh-backend-test-missing", "known_hosts"),
+  globalFiles: [],
+};
+
 describe("SSHBackend", () => {
+  it("密码之后出现额外验证提示并认证失败时应报告 remote-authentication-unsupported", async () => {
+    const backend = new SSHBackend({
+      host: "example.com",
+      username: "root",
+      password: "secret",
+      knownHosts: NO_KNOWN_HOSTS,
+    });
+    const mutableBackend = backend as unknown as {
+      client: EventEmitter & { connect: (config: unknown) => void };
+    };
+    const connectSpy = vi
+      .spyOn(mutableBackend.client, "connect")
+      .mockImplementation(() => undefined);
+    const finish = vi.fn();
+
+    const detecting = backend.detect();
+    await vi.waitFor(() => expect(connectSpy).toHaveBeenCalledTimes(1));
+    mutableBackend.client.emit(
+      "keyboard-interactive",
+      "",
+      "",
+      "",
+      [{ prompt: "Enter OTP:", echo: true }],
+      finish,
+    );
+    expect(finish).toHaveBeenCalledWith(["secret"]);
+    mutableBackend.client.emit(
+      "error",
+      Object.assign(new Error("All configured authentication methods failed"), {
+        level: "client-authentication",
+      }),
+    );
+
+    const error = await detecting.catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(Reflect.get(error as object, "code")).toBe("remote-authentication-unsupported");
+    backend.dispose();
+  });
+
+  it("未出现额外验证提示时认证失败仍报告 remote-authentication-failed，且每次连接前重置标记", async () => {
+    const backend = new SSHBackend({
+      host: "example.com",
+      username: "root",
+      password: "secret",
+      knownHosts: NO_KNOWN_HOSTS,
+    });
+    const mutableBackend = backend as unknown as {
+      client: EventEmitter & { connect: (config: unknown) => void };
+      additionalVerificationPrompted: boolean;
+    };
+    const seenAtConnect: boolean[] = [];
+    vi.spyOn(mutableBackend.client, "connect").mockImplementation(() => {
+      seenAtConnect.push(mutableBackend.additionalVerificationPrompted);
+    });
+
+    // First attempt: the server asks a second-factor prompt, then authentication fails.
+    const first = backend.detect();
+    await vi.waitFor(() => expect(seenAtConnect).toHaveLength(1));
+    mutableBackend.client.emit(
+      "keyboard-interactive",
+      "",
+      "",
+      "",
+      [{ prompt: "OTP:", echo: true }],
+      () => undefined,
+    );
+    mutableBackend.client.emit(
+      "error",
+      Object.assign(new Error("auth"), { level: "client-authentication" }),
+    );
+    await first.catch(() => undefined);
+
+    // Second attempt: no prompt, plain authentication failure must not inherit the old flag.
+    const second = backend.detect();
+    await vi.waitFor(() => expect(seenAtConnect).toHaveLength(2));
+    mutableBackend.client.emit(
+      "error",
+      Object.assign(new Error("auth"), { level: "client-authentication" }),
+    );
+    const error = await second.catch((caught: unknown) => caught);
+
+    expect(seenAtConnect).toEqual([false, false]);
+    expect(Reflect.get(error as object, "code")).toBe("remote-authentication-failed");
+    backend.dispose();
+  });
+
+  it("已建立会话后的 client-timeout 应报告心跳无响应", () => {
+    const backend = new SSHBackend({
+      host: "example.com",
+      username: "root",
+      password: "secret",
+      knownHosts: NO_KNOWN_HOSTS,
+    });
+    const events: Array<{ reason: string; error?: Error }> = [];
+    const disposable = backend.onDidDisconnect((event) => {
+      events.push(event);
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const mutableBackend = backend as unknown as { client: EventEmitter; connected: boolean };
+    mutableBackend.connected = true;
+
+    mutableBackend.client.emit(
+      "error",
+      Object.assign(new Error("Keepalive timed out"), { level: "client-timeout" }),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.error?.message).toBe(
+      "SSH 连接无响应：约 60 秒没有收到服务器的心跳响应，连接已断开，请检查网络或服务器状态",
+    );
+    disposable.dispose();
+    backend.dispose();
+    errorSpy.mockRestore();
+  });
+
   it("ready 后 SSH client error 应触发一次断连事件", () => {
     const backend = new SSHBackend({
       host: "example.com",
       username: "root",
       password: "secret",
+      knownHosts: NO_KNOWN_HOSTS,
     });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const events: Array<{ reason: string; error?: Error }> = [];
@@ -150,6 +275,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "secret",
+      knownHosts: NO_KNOWN_HOSTS,
     });
     const events: string[] = [];
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {
@@ -181,6 +307,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "secret",
+      knownHosts: NO_KNOWN_HOSTS,
     });
     const events: Array<{ reason: string }> = [];
     const disposable = backend.onDidDisconnect((event) => {
@@ -206,6 +333,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "old-password",
+      knownHosts: NO_KNOWN_HOSTS,
     });
     const fakeClient = {
       off: vi.fn(),
@@ -233,6 +361,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "old-password",
+      knownHosts: NO_KNOWN_HOSTS,
     });
     const fakeClient = Object.assign(new EventEmitter(), {
       connect: vi.fn(),
@@ -249,7 +378,7 @@ describe("SSHBackend", () => {
     mutableBackend.connected = false;
 
     const detecting = backend.detect();
-    expect(fakeClient.connect).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(fakeClient.connect).toHaveBeenCalledTimes(1));
     backend.dispose();
     fakeClient.emit("ready");
 
@@ -262,6 +391,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "old-password",
+      knownHosts: NO_KNOWN_HOSTS,
     });
     const fakeClient = Object.assign(new EventEmitter(), {
       connect: vi.fn(),
@@ -286,6 +416,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "old-password",
+      knownHosts: NO_KNOWN_HOSTS,
     });
     const fakeClient = Object.assign(new EventEmitter(), {
       connect: vi.fn(),
@@ -299,12 +430,13 @@ describe("SSHBackend", () => {
       onClientError: (error: unknown) => void;
     };
     mutableBackend.client = fakeClient;
-    // 构造 ssh2 的两次 error 顺序：第一次由 ready timeout 触发，第二次由 socket close 触发。
+    // Construct ssh2's two-error sequence: the first is triggered by ready timeout, the second by socket close.
     fakeClient.on("error", mutableBackend.onClientError);
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     try {
       const detecting = backend.detect();
+      await vi.waitFor(() => expect(fakeClient.connect).toHaveBeenCalledTimes(1));
       fakeClient.emit(
         "error",
         Object.assign(new Error("Timed out while waiting for handshake"), {
@@ -315,7 +447,7 @@ describe("SSHBackend", () => {
 
       backend.dispose();
 
-      // ssh2 在 timeout 后销毁 socket，close/end 阶段仍可能再发出 error；该迟到事件必须被吞掉。
+      // ssh2 destroys the socket after timeout, and close/end phases may still emit another error; the late event must be swallowed.
       expect(() =>
         fakeClient.emit("error", new Error("Connection lost before handshake")),
       ).not.toThrow();
@@ -330,6 +462,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "old-password",
+      knownHosts: NO_KNOWN_HOSTS,
     });
     const fakeClient = Object.assign(new EventEmitter(), {
       end: vi.fn(),
@@ -356,6 +489,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "secret",
+      knownHosts: NO_KNOWN_HOSTS,
     });
 
     const executedCommands: string[] = [];
@@ -398,6 +532,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "secret",
+      knownHosts: NO_KNOWN_HOSTS,
     });
     const infoSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -436,6 +571,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "secret",
+      knownHosts: NO_KNOWN_HOSTS,
     });
     const rawCommand = "download=; if command -v curl >/dev/null 2>&1; then download=curl; fi";
     const executedCommands: string[] = [];
@@ -471,6 +607,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "secret",
+      knownHosts: NO_KNOWN_HOSTS,
     });
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
@@ -508,6 +645,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "secret",
+      knownHosts: NO_KNOWN_HOSTS,
     });
     const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
     const debug = (
@@ -548,6 +686,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "secret",
+      knownHosts: NO_KNOWN_HOSTS,
     });
 
     const attemptedSftpPaths: string[] = [];
@@ -664,6 +803,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "secret",
+      knownHosts: NO_KNOWN_HOSTS,
     });
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const execUploadedContents: string[] = [];
@@ -745,6 +885,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "secret",
+      knownHosts: NO_KNOWN_HOSTS,
     });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     let sftpAttempts = 0;
@@ -812,6 +953,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "secret",
+      knownHosts: NO_KNOWN_HOSTS,
     });
 
     const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -898,6 +1040,7 @@ describe("SSHBackend", () => {
       host: "example.com",
       username: "root",
       password: "secret",
+      knownHosts: NO_KNOWN_HOSTS,
     });
 
     const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -1001,5 +1144,147 @@ describe("SSHBackend", () => {
       consoleWarnSpy.mockRestore();
       consoleErrorSpy.mockRestore();
     }
+  });
+
+  describe("host key verification", () => {
+    type VerifierConfig = {
+      hostVerifier: (key: Buffer, verify: (valid: boolean) => void) => void;
+      algorithms?: { serverHostKey?: string[] };
+    };
+
+    function fakeKeyBlob(type = "ssh-ed25519"): Buffer {
+      const part = (data: Buffer) => {
+        const length = Buffer.alloc(4);
+        length.writeUInt32BE(data.length);
+        return Buffer.concat([length, data]);
+      };
+      return Buffer.concat([part(Buffer.from(type)), part(randomBytes(32))]);
+    }
+
+    async function createVerifyingBackend(knownHostsContent: string | undefined, port = 22) {
+      const dir = await mkdtemp(join(tmpdir(), "zcode-ssh-backend-hostkey-"));
+      const userFile = join(dir, "known_hosts");
+      if (knownHostsContent !== undefined) await writeFile(userFile, knownHostsContent);
+      const backend = new SSHBackend({
+        host: "dev.example",
+        port,
+        username: "root",
+        password: "secret",
+        knownHosts: { userFile, globalFiles: [] },
+      });
+      const mutableBackend = backend as unknown as {
+        client: EventEmitter & { connect: (config: VerifierConfig) => void };
+      };
+      const configs: VerifierConfig[] = [];
+      vi.spyOn(mutableBackend.client, "connect").mockImplementation((config) => {
+        configs.push(config);
+      });
+      const cleanup = () => {
+        backend.dispose();
+        rmSync(dir, { recursive: true, force: true });
+      };
+      return { backend, client: mutableBackend.client, configs, cleanup };
+    }
+
+    function runVerifier(config: VerifierConfig, blob: Buffer): Promise<boolean> {
+      return new Promise((resolve) => config.hostVerifier(blob, resolve));
+    }
+
+    function knownLine(name: string, blob: Buffer): string {
+      return `${name} ${blob.subarray(4, 4 + blob.readUInt32BE(0)).toString()} ${blob.toString("base64")}\n`;
+    }
+
+    it("accepts a key recorded in known_hosts", async () => {
+      const blob = fakeKeyBlob();
+      const { backend, client, configs, cleanup } = await createVerifyingBackend(
+        knownLine("dev.example", blob),
+      );
+      try {
+        const detecting = backend.detect();
+        await vi.waitFor(() => expect(configs).toHaveLength(1));
+        await expect(runVerifier(configs[0]!, blob)).resolves.toBe(true);
+        client.emit("error", new Error("stop"));
+        await detecting.catch(() => undefined);
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("refuses an unknown key with remote-host-key-unknown and keeps the key for the trust prompt", async () => {
+      const blob = fakeKeyBlob();
+      const { backend, client, configs, cleanup } = await createVerifyingBackend(undefined, 2222);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const detecting = backend.detect();
+        await vi.waitFor(() => expect(configs).toHaveLength(1));
+        await expect(runVerifier(configs[0]!, blob)).resolves.toBe(false);
+        client.emit(
+          "error",
+          Object.assign(new Error("Host denied (verification failed)"), { level: "handshake" }),
+        );
+        const error = (await detecting.catch((caught: unknown) => caught)) as Error;
+        expect(Reflect.get(error, "code")).toBe("remote-host-key-unknown");
+        expect(Reflect.get(error, "retryable")).toBe(false);
+        expect(Reflect.get(error, "hostKey")).toMatchObject({
+          kind: "unknown",
+          host: "dev.example",
+          port: 2222,
+          keyType: "ssh-ed25519",
+          publicKey: blob.toString("base64"),
+        });
+        expect(error.message).not.toContain("dev.example");
+        // The persistent error listener logs the normalized error; the host and key must not reach the log.
+        const logged = inspect(errorSpy.mock.calls, { depth: 10 });
+        expect(errorSpy).toHaveBeenCalled();
+        expect(logged).not.toContain("dev.example");
+        expect(logged).not.toContain(blob.toString("base64"));
+        expect(logged).not.toContain("SHA256:");
+      } finally {
+        errorSpy.mockRestore();
+        cleanup();
+      }
+    });
+
+    it("refuses a changed key with remote-host-key-changed", async () => {
+      const { backend, client, configs, cleanup } = await createVerifyingBackend(
+        knownLine("dev.example", fakeKeyBlob()),
+      );
+      try {
+        const detecting = backend.detect();
+        await vi.waitFor(() => expect(configs).toHaveLength(1));
+        await expect(runVerifier(configs[0]!, fakeKeyBlob())).resolves.toBe(false);
+        client.emit(
+          "error",
+          Object.assign(new Error("Host denied (verification failed)"), { level: "handshake" }),
+        );
+        const error = await detecting.catch((caught: unknown) => caught);
+        expect(Reflect.get(error as object, "code")).toBe("remote-host-key-changed");
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("offers recorded key types first and resets the failure before the next attempt", async () => {
+      const rsaBlob = fakeKeyBlob("ssh-rsa");
+      const { backend, client, configs, cleanup } = await createVerifyingBackend(
+        knownLine("dev.example", rsaBlob),
+      );
+      try {
+        const first = backend.detect();
+        await vi.waitFor(() => expect(configs).toHaveLength(1));
+        expect(configs[0]!.algorithms?.serverHostKey?.[0]).toBe("rsa-sha2-512");
+        await runVerifier(configs[0]!, fakeKeyBlob("ssh-rsa"));
+        client.emit("error", new Error("Host denied (verification failed)"));
+        await first.catch(() => undefined);
+
+        const second = backend.detect();
+        await vi.waitFor(() => expect(configs).toHaveLength(2));
+        client.emit("error", Object.assign(new Error("auth"), { level: "client-authentication" }));
+        const error = await second.catch((caught: unknown) => caught);
+        expect(Reflect.get(error as object, "code")).toBe("remote-authentication-failed");
+      } finally {
+        cleanup();
+      }
+    });
   });
 });

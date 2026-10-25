@@ -46,7 +46,7 @@ async function setWindowSize(width: number, height: number): Promise<number> {
 }
 
 async function setLocaleAndTheme(
-  locale: "zh-CN" | "en-US",
+  locale: "en-US" | "uk-UA",
   theme: "light" | "dark",
 ): Promise<{ locale: string; theme: string }> {
   const read = () =>
@@ -137,7 +137,7 @@ describe(`${CASE_MARKER}: 项目导航中英文/深浅主题与窄窗口`, () =>
         width: NARROW.width,
         height: NARROW.height,
       },
-      { locale: "zh-CN" as const, theme: "light" as const, width: 1280, height: 900 },
+      { locale: "uk-UA" as const, theme: "light" as const, width: 1280, height: 900 },
     ];
     let identity: string | undefined;
     for (const scenario of scenarios) {

@@ -6,18 +6,18 @@ import type { WebAuthService } from "#src/auth/webAuthService.js";
 export interface WebRemoteControlDeviceGroup {
   deviceMid: string;
   name?: string;
-  /** relay meta.platform（darwin / win32 / linux 等），离线时回退到本机记住的平台。 */
+  /** relay meta.platform (darwin / win32 / linux, etc.); falls back to the locally remembered platform when offline. */
   platform?: string;
   onlineConnections: WebRemoteControlRelayV2Device[];
 }
 
-/** 本机见过的在线设备展示信息；name / platform 至少一项非空。 */
+/** Display info for online devices seen on this machine; at least one of name / platform is non-empty. */
 export interface KnownDevice {
   name?: string;
   platform?: string;
 }
 
-/** 设备页账号行的只读展示资料；不是登录事实，登录门禁仍以 JWT 为准。 */
+/** Read-only display profile for the account row on the device page; not a login fact, the login gate still relies on the JWT. */
 export interface WebRemoteControlDeviceListAccount {
   displayName: string;
   avatarUrl?: string;
@@ -35,7 +35,8 @@ export type WebRemoteControlDeviceListView = {
 export type WebRemoteControlEntryView =
   | { kind: "callback" | "login" }
   | WebRemoteControlDeviceListView
-  | { kind: "failure"; failure: WebRemoteControlFailure };
+  | { kind: "failure"; failure: WebRemoteControlFailure }
+  | { kind: "repair-needed"; message: string };
 
 export interface WebRemoteControlEntryConnection {
   params: WebRemoteControlV2QrParams & { deviceSid: string };
@@ -46,7 +47,7 @@ export interface WebRemoteControlEntryConnection {
 }
 
 export interface WebRemoteControlEntryOptions {
-  // 浏览器 location/history/storage 经现有边界注入，不另存一份登录事实。
+  // Browser location/history/storage are injected through existing boundaries; no second copy of login facts is stored.
   auth: Pick<WebAuthService, "getZCodeJwtToken" | "getActiveAccount" | "startLogin" | "logout">;
   getHref(): string;
   replaceHref(href: string): void;
@@ -55,7 +56,14 @@ export interface WebRemoteControlEntryOptions {
   devices(jwt: string, signal: AbortSignal): Promise<WebRemoteControlRelayV2Device[]>;
   subscribeVisible(listener: () => void): () => void;
   loginOptions?: Parameters<WebAuthService["startLogin"]>[0];
+  // Localized re-pair notice for QR links carrying the V1 `hash`/`t` credential; defaults to the locale-based copy.
+  repairNotice?: string;
   token(jwt: string, signal: AbortSignal): Promise<string>;
+  /**
+   * Fork device-key relay mode: exchanges the QR `pk` pairing code for a relay JWT, so a phone with
+   * no z.ai login can reach the Desktop's devices. Omitted when the build does not support it.
+   */
+  pairing?: { exchange(code: string, signal: AbortSignal): Promise<string> };
   connect(connection: WebRemoteControlEntryConnection): void;
   onView(view: WebRemoteControlEntryView): void;
 }

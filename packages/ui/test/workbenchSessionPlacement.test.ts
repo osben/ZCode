@@ -6,7 +6,13 @@ import {
   openSessionInNewPane,
   usePaneLayoutStore,
 } from "@/v4/paneLayoutStore.js";
-import { useWorkbenchGroupStore, type WorkbenchSessionBinding } from "@/v4/workbenchGroupStore.js";
+import {
+  buildWorkbenchSessionKey,
+  createWorkbenchGroupFromSessions,
+  useWorkbenchGroupStore,
+  type WorkbenchGroupSnapshot,
+  type WorkbenchSessionBinding,
+} from "@/v4/workbenchGroupStore.js";
 import { selectWorkbenchSession } from "@/v4/workbenchSessionPlacement.js";
 
 const SCOPE = { workspacePath: "/workspace" };
@@ -17,6 +23,23 @@ function binding(sessionId: string): WorkbenchSessionBinding {
 
 function target(sessionId: string) {
   return { ...SCOPE, sessionId };
+}
+
+function groupSnapshot(): WorkbenchGroupSnapshot {
+  const group = createWorkbenchGroupFromSessions(
+    binding("session-a"),
+    binding("session-b"),
+    "right",
+    { id: "group-1", updatedAt: 1 },
+  );
+  return {
+    activeGroupId: group.id,
+    groups: { [group.id]: group },
+    sessionIndex: {
+      [buildWorkbenchSessionKey(SCOPE, "session-a")]: group.id,
+      [buildWorkbenchSessionKey(SCOPE, "session-b")]: group.id,
+    },
+  };
 }
 
 function resetStores(): void {
@@ -53,7 +76,20 @@ describe("workbench session placement", () => {
     layout = openSessionInNewPane(layout, SCOPE, "session-c");
     usePaneLayoutStore.setState(layout);
 
-    selectWorkbenchSession(binding("session-c"), target("session-b"));
+    selectWorkbenchSession(binding("session-c"), { ...target("session-b"), readOnly: true });
     expect(usePaneLayoutStore.getState().focusedPaneId).toBe("pane-1");
+    expect(usePaneLayoutStore.getState().panes["pane-1"]?.readOnly).toBe(true);
+  });
+
+  it("upgrades an already-open group binding to read-only for subagent navigation", () => {
+    useWorkbenchGroupStore.setState(groupSnapshot());
+
+    selectWorkbenchSession(binding("session-a"), {
+      ...target("session-b"),
+      readOnly: true,
+    });
+
+    const group = useWorkbenchGroupStore.getState().groups["group-1"];
+    expect(group?.panes["pane-1"]).toMatchObject({ sessionId: "session-b", readOnly: true });
   });
 });

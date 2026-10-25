@@ -33,10 +33,10 @@ export interface BrowserScreenshotSurfaceCoordinator {
     webContentsId: number;
     viewport: BrowserViewportSize;
     viewportMode?: BrowserViewScreenshotSurfacePreparePayload["viewportMode"];
-    /** recording 用真实 100% renderer surface；普通截图缺失时保留当前预览比例。 */
+    /** Recording uses the actual 100% renderer surface; ordinary screenshots preserve the current preview scale when absent. */
     surfaceScaleMode?: BrowserViewSurfaceScaleMode;
     signal: AbortSignal;
-    /** recording 可显式请求更长但仍有界的 activity watchdog；普通截图继续使用默认值。 */
+    /** Recording can explicitly request a longer but still bounded activity watchdog; ordinary screenshots keep the default. */
     activityTimeoutMs?: number;
   }): Promise<BrowserScreenshotSurfaceLease>;
 }

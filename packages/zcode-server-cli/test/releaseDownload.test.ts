@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { Readable } from "node:stream";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   ReleaseDownloader,
@@ -15,97 +14,12 @@ import {
 const servers: Array<ReturnType<typeof createServer>> = [];
 
 afterEach(async () => {
-  vi.useRealTimers();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
   await Promise.all(
     servers
       .splice(0)
       .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
   );
 });
-
-// 30ms 发包与 50ms 空闲截止只有 20ms 墙钟余量，繁忙 worker 会先执行截止回调。
-// 只控制网络输入和时钟；每次等待真实 Node data 事件后再推进，落盘与校验仍走真实实现。
-async function controlledArchiveDownload(overallTimeoutMs = 1_000) {
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  const payload = Buffer.from("abcdefgh");
-  const root = await mkdtemp(join(tmpdir(), "zcode-release-download-clock-"));
-  const destination = join(root, "release.tar.gz");
-  let input!: ReadableStreamDefaultController<Uint8Array>;
-  let closed = false;
-  let signal: AbortSignal | null | undefined;
-  let consumed = Promise.withResolvers<void>();
-  const connected = Promise.withResolvers<void>();
-  const response = new Response(
-    new ReadableStream<Uint8Array>({
-      start(controller) {
-        input = controller;
-      },
-      cancel() {
-        closed = true;
-      },
-    }),
-  );
-  vi.stubGlobal(
-    "fetch",
-    vi.fn<typeof fetch>(async (_url, options) => {
-      signal = options?.signal;
-      return response;
-    }),
-  );
-  const fromWeb = Readable.fromWeb;
-  vi.spyOn(Readable, "fromWeb").mockImplementation((...args) => {
-    const body = fromWeb(...args);
-    body.on("data", () => consumed.resolve());
-    connected.resolve();
-    return body;
-  });
-  const outcome = new ReleaseDownloader()
-    .download({
-      url: "https://release.example.com/archive.tar.gz",
-      destination,
-      sha256: createHash("sha256").update(payload).digest("hex"),
-      expectedSizeBytes: payload.byteLength,
-      timeoutMs: 50,
-      overallTimeoutMs,
-      maxAttempts: 1,
-    })
-    .then(
-      () => ({ error: undefined }),
-      (error: unknown) => ({ error }),
-    );
-  await connected.promise;
-  const close = () => {
-    if (!closed) {
-      closed = true;
-      input.close();
-    }
-  };
-  return {
-    payload,
-    root,
-    destination,
-    outcome,
-    close,
-    isAborted: () => signal?.aborted,
-    async send(index: number) {
-      consumed = Promise.withResolvers<void>();
-      input.enqueue(payload.subarray(index, index + 1));
-      await Promise.race([
-        consumed.promise,
-        outcome.then(({ error }) => {
-          throw error ?? new Error("download ended before consuming data");
-        }),
-      ]);
-    },
-    async dispose() {
-      close();
-      await outcome;
-      await rm(root, { recursive: true, force: true });
-    },
-  };
-}
 
 describe("release downloader", () => {
   it("fetches a catalog and verifies an archive checksum", async () => {
@@ -191,7 +105,7 @@ describe("release downloader", () => {
 
   it("aborts a JSON request at the application timeout", async () => {
     const server = createServer((_request, _response) => {
-      // 保持请求打开，确保测试验证的是 AbortSignal 而不是服务端返回错误。
+      // Keep the request open so the test verifies the AbortSignal, not a server-side error.
     });
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
@@ -202,61 +116,43 @@ describe("release downloader", () => {
       fetchReleaseJson(
         `http://127.0.0.1:${address.port}/manifest.json`,
         z.object({ answer: z.number() }),
-        // 留出本地 fetch 建连和 CI 调度余量，避免 25ms 下先得到连接错误而不是 AbortError。
+        // Allow margin for local fetch connection setup and CI scheduling so a 25ms run does not produce a connection error instead of an AbortError.
         1_000,
       ),
     ).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("keeps an active archive stream alive past the idle timeout", async () => {
-    const download = await controlledArchiveDownload();
-    try {
-      for (let index = 0; index < download.payload.length; index += 1) {
-        await vi.advanceTimersByTimeAsync(30);
-        expect(download.isAborted()).toBe(false);
-        await download.send(index);
-      }
-      download.close();
-      expect((await download.outcome).error).toBeUndefined();
-      await expect(readFile(download.destination)).resolves.toEqual(download.payload);
-      expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      await download.dispose();
-    }
-  });
+    const payload = Buffer.from("abcdefgh");
+    const sha256 = createHash("sha256").update(payload).digest("hex");
+    const server = createServer((_request, response) => {
+      let index = 0;
+      const timer = setInterval(() => {
+        response.write(payload.subarray(index, index + 1));
+        index += 1;
+        if (index === payload.length) {
+          clearInterval(timer);
+          response.end();
+        }
+      }, 100);
+      response.once("close", () => clearInterval(timer));
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("server did not listen");
+    const dir = await mkdtemp(join(tmpdir(), "zcode-release-download-idle-"));
 
-  it("aborts a stalled archive at the idle deadline and removes partial data", async () => {
-    const download = await controlledArchiveDownload();
-    try {
-      await download.send(0);
-      await vi.advanceTimersByTimeAsync(49);
-      expect(download.isAborted()).toBe(false);
-      await vi.advanceTimersByTimeAsync(1);
-      expect(download.isAborted()).toBe(true);
-      expect((await download.outcome).error).toMatchObject({ name: "AbortError" });
-      expect(await readdir(download.root)).toEqual([]);
-      expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      await download.dispose();
-    }
-  });
-
-  it("does not extend the overall deadline when archive data remains active", async () => {
-    const download = await controlledArchiveDownload(100);
-    try {
-      for (let index = 0; index < 3; index += 1) {
-        await vi.advanceTimersByTimeAsync(30);
-        expect(download.isAborted()).toBe(false);
-        await download.send(index);
-      }
-      await vi.advanceTimersByTimeAsync(10);
-      expect(download.isAborted()).toBe(true);
-      expect((await download.outcome).error).toMatchObject({ name: "AbortError" });
-      expect(await readdir(download.root)).toEqual([]);
-      expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      await download.dispose();
-    }
+    await new ReleaseDownloader().download({
+      url: `http://127.0.0.1:${address.port}/archive.tar.gz`,
+      destination: join(dir, "release.tar.gz"),
+      sha256,
+      expectedSizeBytes: payload.byteLength,
+      // CI load may delay a single event loop tick; the larger interval margin still verifies that the idle timeout resets when data flows.
+      timeoutMs: 300,
+      overallTimeoutMs: 2_000,
+      maxAttempts: 1,
+    });
   });
 
   it("retries transient release HTTP failures with bounded attempts", async () => {

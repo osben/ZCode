@@ -18,6 +18,7 @@ import {
   type AppToolSearchMode,
   type ZCodeAutomationBotDeliveryTarget,
   type ZCodeDeliveryKind,
+  type IncognitoProfile,
   type ModelSelection,
   type ZCodeModelContextBudgetStrategy,
   type ZCodeProtocolMessage,
@@ -34,6 +35,8 @@ import type { ZCodeApp, ZCodeAppOptions } from "../app/types.js";
 import type { V4InteractionRegistry } from "../zcode-protocol-v4/interaction-registry.js";
 import type { ConversationV4Gateway } from "../zcode-protocol-v4/v4-gateway.js";
 import type { SessionResidentPool, SessionResidentPoolOptions } from "./session-resident-pool.js";
+import type { LspProtocolHost } from "./lsp.js";
+import type { V4ExternalAgentConfigStore } from "../zcode-protocol-v4/commands/external-agent-config-store.js";
 import type { DynamicWorkflowMode } from "@zcode/shared";
 
 export interface ParamsSchema<T> {
@@ -42,29 +45,39 @@ export interface ParamsSchema<T> {
 
 export interface ZCodeProtocolAgentDependencies {
   createZCodeApp(options?: Omit<ZCodeAppOptions, "providerRegistry">): ZCodeApp | Promise<ZCodeApp>;
+  /** Process-wide LSP protocol host (lsp/* methods); absent when the runtime has no LSP support. */
+  lsp?: LspProtocolHost;
+  /** ACP agent selects per session (specs/acp-agent-runtime.md "S6"); absent without ACP support. */
+  externalAgentConfig?: V4ExternalAgentConfigStore;
   /**
-   * 每个 session record 的内存 event store 工厂。
-   * 默认 turn 窗口保留策略；测试可注入 spy 或 unbounded 实现做对照。
+   * In-memory event store factory for each session record.
+   * Default turn-window retention policy; tests may inject a spy or unbounded implementation for comparison.
    */
   createSessionEventStore?(sessionId: string): SessionEventStorePort;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   loggerFactory?: LoggerFactory;
   mcpPort?: McpPort;
-  /** 资源管理器：`process/childProcesses` 读取 MCP 子进程 pid 与插件归属 */
+  /** Resource manager: `process/childProcesses` reads MCP child-process pids and plugin ownership. */
   mcpTelemetry?: Pick<McpTelemetryTracker, "listProcesses">;
   platform?: NodeJS.Platform | string;
-  /** 仅用于构造单个 CLI/app-server 的混合 resident 策略；生产默认值由 pool 定义。 */
+  /** Used only to construct the mixed residency policy for one CLI/app-server; production defaults are defined by the pool. */
   sessionResidentPoolOptions?: SessionResidentPoolOptions;
-  /** 兼容旧测试/嵌入调用；新代码应通过 sessionResidentPoolOptions 设置 low-water。 */
+  /** Compatibility for older tests/embedded callers; new code should configure low-water through sessionResidentPoolOptions. */
   sessionResidentTargetCount?: number;
   sessionStore?: SessionStorePort;
+  /**
+   * Raw `storage.dir` (not getCliStorageRoot): the per-session directory writers all build
+   * `join(storageRoot, "cli", ...)`, and erase must resolve the same paths. Absent: directories are
+   * reported as failures.
+   */
+  storageRoot?: string;
   version?: string;
-  /** 受信 Host 管理的 Hook policy；workspace/project 配置不得覆盖。 */
+  /** Hook policy managed by the trusted Host; workspace/project configuration cannot override it. */
   workspaceHookPolicyProvider?: WorkspaceHookPolicyProvider;
-  /** 把 Host 账号状态形成的第三层 Config Overlay 同步给进程 Registry。 */
+  /** Sync the third-layer Config Overlay derived from Host account state to the process Registry. */
   syncAccountProviderConfig?: (snapshot: AccountProviderConfigSnapshot) => Promise<boolean>;
-  /** 连接测试前主动重读当前进程的 Config Source 并等待 Registry 发布。 */
+  /** Reread this process's Config Source and wait for Registry publication before testing the connection. */
   refreshProviderRegistry?: (reason: string) => Promise<void>;
 }
 
@@ -86,6 +99,7 @@ export interface ZCodeProtocolSessionRecord {
   app: ZCodeApp;
   subagentRuntimeConfigEnabled?: boolean;
   memoryEnabled: boolean;
+  memoryIndexAsContext: boolean;
   nativeSearchEnhancementsEnabled: boolean;
   toolSearchMode: AppToolSearchMode;
   modelContextBudgetStrategy: ZCodeModelContextBudgetStrategy;
@@ -122,6 +136,38 @@ export interface ZCodeProtocolSessionRecord {
   restoredModelSelection?: ModelSelection;
 }
 
+/** Host-owned session identity reserved while a worktree is being created; it has no app/runtime. */
+export interface ZCodeProtocolPreparedWorktreeSession {
+  attemptId?: string;
+  sessionId: SessionId;
+  workspace: ZCodeWorkspaceRef;
+  branchName: string;
+  targetPath: string;
+  baseBranch?: string;
+  createdAt: number;
+  updatedAt: number;
+  status: "preparing" | "failed" | "cancelled" | "active";
+  failureMessage?: string;
+  /**
+   * Incognito choice of the first materialization (specs/incognito-session.md): a profile, `null`
+   * for a normal session, `undefined` until first materialization. In-memory only — it freezes the
+   * choice for warm-host retries of a failed first activation, before the row's set-once
+   * `fork_incognito` has landed via first-send persistence.
+   */
+  incognito?: IncognitoProfile | null;
+}
+
+/** CLI-owned durable submission; its prompt remains unaccepted until explicit activation. */
+export interface ZCodeProtocolPreparedSubmissionSession {
+  sessionId: SessionId;
+  workspace: ZCodeWorkspaceRef;
+  submissionId: string;
+  createdAt: number;
+  updatedAt: number;
+  status: "preparing" | "active";
+  incognito: IncognitoProfile | null;
+}
+
 export interface ZCodeProtocolClientRequestOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -151,16 +197,23 @@ export interface ZCodeProtocolAgentServerContext {
      */
     dynamicWorkflowMode?: DynamicWorkflowMode;
   };
-  // 竖切：v4 conversation 通道（订阅/帧/命令），与旧 session/* 方法并存。
-  // 构造顺序问题（gateway 闭包持有 context）用可选字段收口，server 构造完立即赋值。
+  // Vertical slice: v4 conversation channel (subscription/frames/commands), coexisting with legacy
+  // session/* methods. Optional fields resolve construction order (the gateway closure holds context);
+  // assign them immediately after constructing the server.
   v4Gateway?: ConversationV4Gateway;
-  // v4 前向命令 resolveInteraction 与反向请求（permission/AskUserQuestion）的汇合点。
-  // broker 注册 deferred、v4 命令面投递应答（同一实例经 binder 注入 V4CommandCoreHost）。
+  // Convergence point for the v4 forward resolveInteraction command and reverse requests
+  // (permission/AskUserQuestion). The broker registers deferred responses and the v4 command surface
+  // delivers them (the binder injects this same instance into V4CommandCoreHost).
   v4Interactions: V4InteractionRegistry;
-  // 单 CLI resident session 池。冷恢复入口经 waitForDeactivation 等待旧 app.close 收尾，
-  // 协议请求则持有 operation lease，禁止异步 handler 与容量回收交错。
+  // Single-CLI resident session pool. Cold recovery waits for old app.close to finish through
+  // waitForDeactivation; protocol requests hold an operation lease to prevent async handlers from
+  // racing with capacity reclamation.
   sessionResidentPool?: SessionResidentPool;
+  /** Language server preferences and status; absent in runtimes without LSP, where the methods return a protocol error. */
+  lsp?: LspProtocolHost;
   sessions: Map<string, ZCodeProtocolSessionRecord>;
+  preparedWorktreeSessions?: Map<string, ZCodeProtocolPreparedWorktreeSession>;
+  preparedSubmissionSessions?: Map<string, ZCodeProtocolPreparedSubmissionSession>;
   /** 仅覆盖异步创建窗口，结束即释放；输入命令仍由 CommandInbox 排队。 */
   sessionCreationIds?: Set<string>;
   notify(notification: ZCodeProtocolNotification): void;

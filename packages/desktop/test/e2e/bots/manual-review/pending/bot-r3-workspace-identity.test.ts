@@ -64,6 +64,7 @@ it("BOT-E2E-RW-02 legacy 与 stable Bot 通过同一 Source 身份完成任务�
       settings = appSettingsSchema.parse({ ...settings, ...patch });
     },
     updateDataBaseDir: async () => {},
+    ensureDefaultProject: async () => ({ path: "/e2e/zcode-default-project", created: false }),
   };
   const credentials = { load: async () => null, save: async () => {}, delete: async () => {} };
   const directory = new SourceServerDirectory({ settingService, credentialService: credentials });

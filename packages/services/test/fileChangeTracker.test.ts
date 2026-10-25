@@ -92,7 +92,7 @@ describe("SessionFileChangeTracker", () => {
     tracker.newTurn(); // 2
     tracker.record("/a.ts", "v2", "v3");
 
-    // 回到 turn 0：a.ts 应恢复到 v1（turn 0 的 afterContent），b.ts 应删除（null）
+    // Back to turn 0: a.ts should restore to v1 (turn 0's afterContent); b.ts should be deleted (null)
     const ops = tracker.getRewindOperations(0);
     expect(ops.get("/a.ts")).toBe("v1");
     expect(ops.get("/b.ts")).toBeNull();
@@ -100,17 +100,17 @@ describe("SessionFileChangeTracker", () => {
 
   it("getRewindOperations 处理跨轮同文件", () => {
     const tracker = new SessionFileChangeTracker();
-    tracker.newTurn(); // 0: 不动 a.ts
+    tracker.newTurn(); // 0: a.ts untouched
     tracker.record("/x.ts", null, "x");
     tracker.newTurn(); // 1
     tracker.record("/a.ts", "origin", "v1");
     tracker.newTurn(); // 2
     tracker.record("/a.ts", "v1", "v2");
 
-    // 回到 turn 0：a.ts 在 turn 1 才出现，before 是 "origin"
+    // Back to turn 0: a.ts first appears in turn 1, so before is "origin"
     const ops = tracker.getRewindOperations(0);
     expect(ops.get("/a.ts")).toBe("origin");
-    expect(ops.has("/x.ts")).toBe(false); // x.ts 在 turn 0，不在回滚范围
+    expect(ops.has("/x.ts")).toBe(false); // x.ts was created in turn 0, outside the rewind scope
   });
 
   it("getAllChangedFiles 汇聚所有文件的原始和最终状态", () => {

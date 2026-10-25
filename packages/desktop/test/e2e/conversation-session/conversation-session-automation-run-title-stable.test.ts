@@ -1,5 +1,7 @@
 import {
   TID_AUTOMATION_CARD,
+  TID_AUTOMATION_CARD_RUN_COUNT,
+  TID_AUTOMATION_CARD_SCHEDULE,
   TID_AUTOMATION_CREATE_MANUALLY,
   TID_AUTOMATION_CREATE_MENU,
   TID_AUTOMATION_FORM_PROMPT,
@@ -52,10 +54,7 @@ describe("automation run keeps the first-input session title", () => {
   it("UI 手动任务立即运行完成后不发起 session_title，标题保持原 prompt", async function () {
     this.timeout(150000);
     await waitForDefaultWorkspaceReady(90_000);
-
-    // 卡片运行次数/下次运行是本 case 的可见证据；显式固定中文 locale，避免 WDIO
-    // 继承英文系统语言后把“已运行 0 次”渲染为 “Ran 0 times”。
-    await seedSettings({ locale: "zh-CN", localePreference: "zh-CN" });
+    await seedSettings({ locale: "en-US", localePreference: "en-US" });
     await prepareV4ConversationE2E({ resetDraftBeforeProvider: true });
     const telemetryFetch = await browser.electron.mock("net", "fetch");
     await telemetryFetch.mockResolvedValue({ ok: true, status: 204 });
@@ -83,12 +82,14 @@ describe("automation run keeps the first-input session title", () => {
       timeoutMsg: "定时任务创建按钮不可点击",
     });
 
-    const initialCardText = await waitForAutomationCardText(
+    await waitForAutomationCardChild(AUTOMATION_TITLE, TID_AUTOMATION_CARD_RUN_COUNT);
+    await waitForAutomationCardChildAttribute(
       AUTOMATION_TITLE,
-      "已运行 0 次",
+      TID_AUTOMATION_CARD_RUN_COUNT,
+      "data-run-count",
+      "0",
     );
-    expect(initialCardText).toContain("下次运行");
-    expect(initialCardText).not.toMatch(/已运行\s*0\s*\/\s*\d+\s*次/);
+    await waitForAutomationCardChild(AUTOMATION_TITLE, TID_AUTOMATION_CARD_SCHEDULE);
     await clickAutomationCardByTitle(AUTOMATION_TITLE);
     // 回归边界：编辑页 Run now 必须先保存当前未提交表单，再派发同一 payload，不能执行旧快照。
     await setInputValueByTestIdDom(TID_AUTOMATION_FORM_PROMPT, RUN_PROMPT);
@@ -113,10 +114,7 @@ describe("automation run keeps the first-input session title", () => {
     // automation 执行轮只能读取任务定义；写工具必须在发给 provider 前被 turn-scoped
     // denylist 移除，避免任务在运行时自改、自删或递归创建新任务。
     const runRequest = { lastUserMessageIncludes: [RUN_PROMPT] };
-    await waitForUpstreamRequest(
-      runRequest,
-      "没有捕获到定时任务立即运行的 provider 请求",
-    );
+    await waitForUpstreamRequest(runRequest, "没有捕获到定时任务立即运行的 provider 请求");
     const runToolNames = await getUpstreamRequestToolNames(runRequest);
     expect(runToolNames).toContain("CronList");
     expect(runToolNames).not.toContain("CronCreate");
@@ -135,12 +133,14 @@ describe("automation run keeps the first-input session title", () => {
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, {
       timeoutMsg: "执行完成后无法返回定时任务列表",
     });
-    const dispatchedCardText = await waitForAutomationCardText(
+    await waitForAutomationCardChild(AUTOMATION_TITLE, TID_AUTOMATION_CARD_RUN_COUNT);
+    await waitForAutomationCardChildAttribute(
       AUTOMATION_TITLE,
-      "已运行 1 次",
+      TID_AUTOMATION_CARD_RUN_COUNT,
+      "data-run-count",
+      "1",
     );
-    expect(dispatchedCardText).toContain("下次运行");
-    expect(dispatchedCardText).not.toMatch(/已运行\s*1\s*\/\s*\d+\s*次/);
+    await waitForAutomationCardChild(AUTOMATION_TITLE, TID_AUTOMATION_CARD_SCHEDULE);
   });
 });
 
@@ -240,13 +240,9 @@ async function clickAutomationCardByTitle(title: string): Promise<void> {
       const result = await browser.execute(
         (cardTestId, expectedTitle) => {
           const cards = Array.from(
-            document.querySelectorAll<HTMLElement>(
-              `[data-testid="${cardTestId}"]`,
-            ),
+            document.querySelectorAll<HTMLElement>(`[data-testid="${cardTestId}"]`),
           );
-          const target = cards.find((card) =>
-            card.innerText.includes(expectedTitle),
-          );
+          const target = cards.find((card) => card.innerText.includes(expectedTitle));
           target?.click();
           return {
             clicked: Boolean(target),
@@ -266,28 +262,56 @@ async function clickAutomationCardByTitle(title: string): Promise<void> {
   );
 }
 
-async function waitForAutomationCardText(title: string, expectedText: string): Promise<string> {
-  let latestText = "";
+async function waitForAutomationCardChild(title: string, childTestId: string): Promise<void> {
   await browser.waitUntil(
-    async () => {
-      latestText = await browser.execute(
-        (cardTestId, expectedTitle) => {
+    async () =>
+      browser.execute(
+        (cardTestId, childId, expectedTitle) => {
           const cards = Array.from(
             document.querySelectorAll<HTMLElement>(`[data-testid="${cardTestId}"]`),
           );
-          return cards.find((card) => card.innerText.includes(expectedTitle))?.innerText ?? "";
+          const card = cards.find((candidate) => candidate.innerText.includes(expectedTitle));
+          return Boolean(card?.querySelector(`[data-testid="${childId}"]`));
         },
         TID_AUTOMATION_CARD,
+        childTestId,
         title,
-      );
-      return latestText.includes(expectedText);
-    },
+      ),
     {
       timeout: 15000,
-      timeoutMsg: `定时任务 Card 未显示“${expectedText}”：${title}; latest=${latestText}`,
+      timeoutMsg: `定时任务卡片缺少稳定子元素 ${childTestId}：${title}`,
     },
   );
-  return latestText;
+}
+
+async function waitForAutomationCardChildAttribute(
+  title: string,
+  childTestId: string,
+  attribute: string,
+  expectedValue: string,
+): Promise<void> {
+  await browser.waitUntil(
+    async () =>
+      browser.execute(
+        (cardTestId, childId, attributeName, value, expectedTitle) => {
+          const cards = Array.from(
+            document.querySelectorAll<HTMLElement>(`[data-testid="${cardTestId}"]`),
+          );
+          const card = cards.find((candidate) => candidate.innerText.includes(expectedTitle));
+          const child = card?.querySelector<HTMLElement>(`[data-testid="${childId}"]`);
+          return child?.getAttribute(attributeName) === value;
+        },
+        TID_AUTOMATION_CARD,
+        childTestId,
+        attribute,
+        expectedValue,
+        title,
+      ),
+    {
+      timeout: 15000,
+      timeoutMsg: `定时任务卡片子元素 ${childTestId} 的 ${attribute} 未变为 ${expectedValue}：${title}`,
+    },
+  );
 }
 
 async function waitForTaskItemContaining(title: string): Promise<string> {
@@ -299,13 +323,9 @@ async function waitForTaskItemContaining(title: string): Promise<string> {
         (baseTestId, expectedTitle) => {
           const prefix = `${baseTestId}-`;
           const items = Array.from(
-            document.querySelectorAll<HTMLElement>(
-              `[data-testid^="${prefix}"]`,
-            ),
+            document.querySelectorAll<HTMLElement>(`[data-testid^="${prefix}"]`),
           );
-          const target = items.find((item) =>
-            item.innerText.includes(expectedTitle),
-          );
+          const target = items.find((item) => item.innerText.includes(expectedTitle));
           return {
             taskId: target?.dataset.testid?.slice(prefix.length) ?? null,
             titles: items.map((item) => item.innerText),
@@ -330,23 +350,16 @@ async function waitForTaskItemContaining(title: string): Promise<string> {
 
 async function expectHeaderTitle(expectedTitle: string): Promise<void> {
   const actual = await browser.execute((titleTestId) => {
-    const header = document.querySelector<HTMLElement>(
-      `[data-testid="${titleTestId}"]`,
-    );
+    const header = document.querySelector<HTMLElement>(`[data-testid="${titleTestId}"]`);
     return header?.getAttribute("title") ?? header?.innerText.trim() ?? null;
   }, TID_WORKSPACE_TITLE);
   expect(actual).toBe(expectedTitle);
 }
 
-async function expectTaskItemTitle(
-  taskId: string,
-  expectedTitle: string,
-): Promise<void> {
+async function expectTaskItemTitle(taskId: string, expectedTitle: string): Promise<void> {
   const actual = await browser.execute(
     (taskItemTestId) => {
-      const item = document.querySelector<HTMLElement>(
-        `[data-testid="${taskItemTestId}"]`,
-      );
+      const item = document.querySelector<HTMLElement>(`[data-testid="${taskItemTestId}"]`);
       return item?.innerText ?? null;
     },
     testId(TID_TASK_ITEM, taskId),

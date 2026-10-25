@@ -4,24 +4,23 @@ import type { AgentRuntimeInternal } from "../internal.js";
 import { activateDynamicWorkflowTools } from "./dynamic-workflow-activation.js";
 
 /**
- * 把一个**恢复的** dwf run 重新纳入后台追踪。
+ * Re-enrolls a **resumed** dwf run in background tracking.
  *
- * submit 路径的追踪由 tool executor 在 CreateWorkflow 返回 backgrounded 时自动完成；resume
- * 是一条 v4 命令，没有在飞的工具调用，四件事因此无人做：runtime-task registry 登记（**会话
- * 回收护栏**——漏了它跑着 run 的会话被当空闲回收、完成通知无处投递）、BackgroundTaskStarted
- * （backgroundWorks 面板 + cancellable 标志）、轮询/终态 waiter、结算通知。本方法合成一个
- * 工具描述子走 executor 的同一条 trackBackgroundTask，四件事一次换回。
+ * The submit path is tracked automatically by the tool executor when CreateWorkflow returns backgrounded. Resume
+ * is a v4 command with no in-flight tool call, so nothing handles four things: runtime-task registry registration (**session
+ * reclamation guard**—without it, a session with a running task is reclaimed as idle and completion notifications have nowhere to go), BackgroundTaskStarted
+ * (the backgroundWorks panel and cancellable flag), polling/terminal waiter, and settlement notification. This method synthesizes a
+ * tool descriptor and uses the executor's same trackBackgroundTask path to restore all four at once.
  *
- * 描述子字段的取舍：
- *   - `id` 用**原始 toolCallId**（dwf_run.tool_call_id 落库还原）——它是工具卡 → 详情页的
- *     关联键与 registry 的 parentToolCallId；老 run 缺席时合成一个 resume 前缀 id（可观测，
- *     不冒充任何真实工具行）。
- *   - `name` 恒为 CreateWorkflow：per-tool 生命周期分派（快照/等待/取消/通知格式）全按它查表。
- *   - `input.name` 喂展示名兜底链（workflowTaskSubject）——resume 命令可携带，缺席时
- *     tracker 兜底到 taskId，UI 侧按 fallbackName 处理（与 submit 路径同语义）。
+ * Descriptor-field choices:
+ *   - `id` uses the **original toolCallId** (restored from dwf_run.tool_call_id) as the association key between the tool card and detail page,
+ *     and as registry parentToolCallId. If an old run has none, synthesize a resume-prefixed id (observable and not impersonating a real tool row).
+ *   - `name` is always CreateWorkflow: per-tool lifecycle dispatch (snapshot/wait/cancel/notification format) looks up behavior by this name.
+ *   - `input.name` feeds the display-name fallback chain (workflowTaskSubject). The resume command may provide it; if absent,
+ *     the tracker falls back to taskId, and the UI handles it as fallbackName (same semantics as submit).
  *
- * turnId 刻意缺席：resume 由 UI 命令发起，不属于任何模型回合（与 run 进度事件的
- * rootTraceContext 论证同源，见 dynamic-workflow-run-progress.ts）。
+ * turnId is deliberately absent: resume is initiated by a UI command, not by a model turn (same reasoning as rootTraceContext
+ * for run progress events; see dynamic-workflow-run-progress.ts).
  */
 export async function trackResumedDynamicWorkflowRun(
   this: AgentRuntimeInternal,
@@ -39,7 +38,7 @@ export async function trackResumedDynamicWorkflowRun(
     traceContext,
     undefined,
   );
-  // GUI Resume 成功即激活工具面（launch.md「On demand: activation」）：run 的终态通知会让模型
-  // 去调 GetWorkflowRun，没有那个工具它就卡住。
+  // A successful GUI Resume activates the tool surface (launch.md, “On demand: activation”): the run's terminal notification tells the model
+  // to call GetWorkflowRun, and without that tool it would get stuck.
   await activateDynamicWorkflowTools.call(this, { source: "run_control", traceContext });
 }

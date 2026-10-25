@@ -11,12 +11,15 @@ import {
 } from "@zcode/shared";
 export { BOT_BIND_CODE_TTL_MS } from "@zcode/shared";
 
-// 回滚兼容：旧 App 对 Options 严格解析，旧文件仅作升级前快照，不得持续回写。
+// Rollback compatibility: older Apps parse Options strictly; old files are only pre-upgrade snapshots and must not be written back continuously.
 export const BOTS_CONFIG_FILE = "bot-config.v3.json";
 export const BOTS_LEGACY_CONFIG_FILE = "bot-config.json";
 export const BOTS_LEGACY_STATE_FILE = "bot-state.json";
 export const BOTS_V2_STATE_FILE = "bot-state.v2.json";
 export const BOTS_STATE_FILE = "bot-state.v3.json";
+/** Pre-migration copies written once before the `[hostId, projectId]` identity rewrite; restore these to downgrade. */
+export const BOTS_CONFIG_PRE_PROJECT_IDENTITY_FILE = "bot-config.v3.pre-project-identity.json";
+export const BOTS_STATE_PRE_PROJECT_IDENTITY_FILE = "bot-state.v3.pre-project-identity.json";
 export const BOTS_LEGACY_MODEL_CACHE_FILE = "bots-model-cache.json";
 export const BOTS_MODEL_CACHE_FILE = "bots-model-cache.v2.json";
 const BOT_CREDENTIAL_PREFIX = "bot";
@@ -35,7 +38,7 @@ export function createDefaultBotCommands(): BotCommandPolicy {
 export function normalizeBotCommandPolicy(
   commands: Partial<BotCommandPolicy> & { cli?: unknown } = {},
 ): BotCommandPolicy {
-  // Bugfix: /cli 命令已经移除，历史 bot-config.json 里残留的 cli 字段不能继续被保存回新配置。
+  // Bug fix: the /cli command has been removed; a leftover cli field in historical bot-config.json must not be saved into new configuration.
   return {
     ...DEFAULT_BOT_COMMANDS,
     status: commands.status ?? DEFAULT_BOT_COMMANDS.status,
@@ -46,6 +49,7 @@ export function normalizeBotCommandPolicy(
     thoughtLevel: commands.thoughtLevel ?? DEFAULT_BOT_COMMANDS.thoughtLevel,
     sandboxMode: commands.sandboxMode ?? DEFAULT_BOT_COMMANDS.sandboxMode,
     approvalPolicy: commands.approvalPolicy ?? DEFAULT_BOT_COMMANDS.approvalPolicy,
+    remote: commands.remote ?? DEFAULT_BOT_COMMANDS.remote,
     reply: commands.reply ?? DEFAULT_BOT_COMMANDS.reply,
   };
 }
@@ -59,8 +63,8 @@ export function normalizeBotCurrentOptions(
 ): BotCurrentOptions {
   const parsedSelection = modelSelectionSchema.safeParse(options.modelSelection);
   const modelSelection = parsedSelection.success ? parsedSelection.data : undefined;
-  // 旧 model/thoughtLevel 只在 Repository 的一次性导入读取，普通保存只认新字段。
-  // Bugfix: /cli 命令移除后，历史 currentOptions.cli 只作为旧配置兼容读取，不再保存。
+  // Read the old model/thoughtLevel only during the Repository's one-time import; ordinary saves use only the new fields.
+  // Bug fix: after /cli was removed, historical currentOptions.cli is read only for legacy compatibility and is no longer saved.
   return {
     ...(modelSelection ? { modelSelection } : {}),
     ...(options.mode ? { mode: options.mode } : {}),

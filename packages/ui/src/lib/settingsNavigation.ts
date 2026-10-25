@@ -5,33 +5,48 @@ export type SettingsSectionId =
   | "general"
   | "appearance"
   | "migration"
+  // Fork section (voice dictation settings, specs/voice-dictation.md); re-applied in UI-2.
+  | "voiceDictation"
   | "browser"
   | "modelProvider"
+  | "instructions"
+  | "outputStyles"
+  | "systemPrompt"
   | "remoteDevices"
   | "memory"
+  | "incognito"
+  | "quickPrompts"
   | "plugin"
   | "mcp"
   | "skill"
   | "plugins"
   | "archives"
   | "usage"
+  | "sessions"
   | "subagents"
   | "commands"
   | "hooks"
   | "workspaceFileSearch"
   | "computerUse"
   | "automations"
-  | "shortcuts";
+  | "shortcuts"
+  | "worktrees";
 
 export type SettingsUsageTabTarget = "app" | "codingPlan";
 export type SettingsPluginTabTarget = "plugins" | "mcps" | "skills" | "commands";
 export type SettingsPluginNavigationOrigin = "plugin-store";
 
+export interface SettingsSessionsScope {
+  workspacePath: string;
+  workspaceIdentity?: string;
+}
+
 const SETTINGS_SECTION_INTENT_KEY = "zcode-settings-section-intent",
   SETTINGS_USAGE_TAB_INTENT_KEY = "zcode-settings-usage-tab-intent",
   SETTINGS_PLUGIN_TAB_INTENT_KEY = "zcode-settings-plugin-tab-intent",
   SETTINGS_PLUGIN_ORIGIN_INTENT_KEY = "zcode-settings-plugin-origin-intent",
-  SETTINGS_PLUGIN_SCOPE_KEY_INTENT_KEY = "zcode-settings-plugin-scope-key-intent";
+  SETTINGS_PLUGIN_SCOPE_KEY_INTENT_KEY = "zcode-settings-plugin-scope-key-intent",
+  SETTINGS_SESSIONS_SCOPE_INTENT_KEY = "zcode-settings-sessions-scope-intent";
 const SETTINGS_SOURCE_SERVER_ID_INTENT_KEY = "zcode-settings-source-server-id-intent";
 const SETTINGS_SOURCE_SERVER_DETAILS_INTENT_KEY = "zcode-settings-source-server-details-intent";
 const SETTINGS_MODEL_PROVIDER_ID_INTENT_KEY = "zcode-settings-model-provider-id-intent";
@@ -46,6 +61,7 @@ const HIDDEN_SETTINGS_SECTIONS = new Set<SettingsSectionId>([
   // 工作区搜索（.zcodeignore）设置入口先隐藏：规则文件仍生效并可手动编辑，
   // 编辑页代码保留，放开时从这里移除即可。
   "workspaceFileSearch",
+  "migration",
 ]);
 
 export interface SettingsSectionIntentEventDetail {
@@ -55,6 +71,7 @@ export interface SettingsSectionIntentEventDetail {
   pluginScopeKey?: string;
   usageTab?: SettingsUsageTabTarget;
   modelProviderId?: string;
+  sessionsScope?: SettingsSessionsScope;
   sourceServerId?: string;
   sourceServerDetails?: boolean;
 }
@@ -70,21 +87,29 @@ function isSettingsSectionId(value: string): value is SettingsSectionId {
     value === "migration" ||
     value === "browser" ||
     value === "modelProvider" ||
+    value === "instructions" ||
+    value === "outputStyles" ||
+    value === "systemPrompt" ||
     value === "remoteDevices" ||
     value === "memory" ||
+    value === "incognito" ||
+    value === "quickPrompts" ||
     value === "plugin" ||
     value === "mcp" ||
     value === "skill" ||
     value === "plugins" ||
     value === "archives" ||
     value === "usage" ||
+    value === "sessions" ||
     value === "subagents" ||
     value === "commands" ||
     value === "hooks" ||
     value === "workspaceFileSearch" ||
     value === "computerUse" ||
     value === "automations" ||
-    value === "shortcuts"
+    value === "shortcuts" ||
+    value === "worktrees" ||
+    value === "voiceDictation"
   );
 }
 
@@ -229,6 +254,7 @@ export function setPendingSettingsSectionIntent(
     sourceServerId?: string;
     sourceServerDetails?: boolean;
     usageTab?: SettingsUsageTabTarget;
+    sessionsScope?: SettingsSessionsScope;
   } = {},
 ): void {
   if (typeof window === "undefined") {
@@ -278,6 +304,17 @@ export function setPendingSettingsSectionIntent(
     } else {
       window.sessionStorage.removeItem(SETTINGS_MODEL_PROVIDER_ID_INTENT_KEY);
     }
+    if (options.sessionsScope?.workspacePath.trim()) {
+      window.sessionStorage.setItem(
+        SETTINGS_SESSIONS_SCOPE_INTENT_KEY,
+        JSON.stringify({
+          workspacePath: options.sessionsScope.workspacePath,
+          workspaceIdentity: options.sessionsScope.workspaceIdentity,
+        }),
+      );
+    } else {
+      window.sessionStorage.removeItem(SETTINGS_SESSIONS_SCOPE_INTENT_KEY);
+    }
   } catch {
     // 忽略浏览器存储异常，不影响主流程。
   }
@@ -293,6 +330,9 @@ export function setPendingSettingsSectionIntent(
         pluginScopeKey: options.pluginScopeKey?.trim() || undefined,
         usageTab: options.usageTab,
         modelProviderId: options.modelProviderId,
+        sessionsScope: options.sessionsScope?.workspacePath.trim()
+          ? options.sessionsScope
+          : undefined,
         ...(section === "remoteDevices" && options.sourceServerId?.trim()
           ? {
               sourceServerId: options.sourceServerId.trim(),
@@ -318,6 +358,7 @@ function clearPendingSettingsSectionIntent(): void {
     window.sessionStorage.removeItem(SETTINGS_PLUGIN_TAB_INTENT_KEY);
     window.sessionStorage.removeItem(SETTINGS_PLUGIN_ORIGIN_INTENT_KEY);
     window.sessionStorage.removeItem(SETTINGS_PLUGIN_SCOPE_KEY_INTENT_KEY);
+    window.sessionStorage.removeItem(SETTINGS_SESSIONS_SCOPE_INTENT_KEY);
   } catch {
     // 忽略浏览器存储异常，不影响主流程。
   }
@@ -493,6 +534,36 @@ export function addPendingSettingsSectionListener(
 }
 
 /** 设置页先消费分区，再消费卡片目标；已挂载页面由同一导航事件直接接收。 */
+export function consumePendingSettingsSessionsScope(): SettingsSessionsScope | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(SETTINGS_SESSIONS_SCOPE_INTENT_KEY);
+    window.sessionStorage.removeItem(SETTINGS_SESSIONS_SCOPE_INTENT_KEY);
+    if (!raw) {
+      return undefined;
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as SettingsSessionsScope).workspacePath === "string" &&
+      (parsed as SettingsSessionsScope).workspacePath.trim()
+    ) {
+      const scope = parsed as SettingsSessionsScope;
+      return {
+        workspacePath: scope.workspacePath,
+        workspaceIdentity: scope.workspaceIdentity?.trim() || undefined,
+      };
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function consumePendingSettingsSourceServerId(): string | undefined {
   if (typeof window === "undefined") return undefined;
   try {
@@ -513,4 +584,10 @@ export function consumePendingSettingsSourceServerDetails(): boolean {
   } catch {
     return false;
   }
+}
+
+/** Fork: sessions settings scope (specs/manage-sessions-table.md); re-applied in UI-2. */
+export interface SettingsSessionsScope {
+  workspacePath: string;
+  workspaceIdentity?: string;
 }

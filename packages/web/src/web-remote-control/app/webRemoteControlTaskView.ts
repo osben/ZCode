@@ -5,7 +5,7 @@ import type {
 } from "@zcode/shared";
 import type { WebRemoteControlTerminalTransportState } from "#src/web-remote-control/contract.js";
 
-/** 只保留 Reporter 的当前投影供传输恢复重申；任务已读仍由桌面唯一 writer 提交。 */
+/** Only keeps the Reporter's current projection for transport recovery to reassert; task read state is still committed by the desktop, the sole writer. */
 export function createWebRemoteControlTaskViewPublisher(
   send: (payload: WebRemoteControlMobileTaskViewUpdatePayload) => boolean,
 ) {
@@ -43,12 +43,12 @@ export function createWebRemoteControlTaskViewPublisher(
   return {
     request,
     seed(nextEpoch: string | undefined) {
-      // 配对请求可能先于 bootstrap 回包；迟到的 bootstrap 不得把更新的 epoch 改回去。
+      // A pairing request may arrive before the bootstrap response; a late bootstrap must not roll the newer epoch back.
       if (!epoch && nextEpoch) request(nextEpoch);
     },
     disconnected,
     suspend() {
-      // lifecycle 监听早于 React Reporter；必须在 transport 停发前撤销，不能等待后装的监听器。
+      // The lifecycle listener is registered before the React Reporter; it must be revoked before the transport stops sending, and must not wait for a listener installed later.
       view = null;
       dirty = true;
       flush();
@@ -60,14 +60,14 @@ export function createWebRemoteControlTaskViewPublisher(
       if (next === "paired") {
         flush();
       } else if (next !== "suspended" && !(next === "reconnecting" && previous === "suspended")) {
-        // 挂起及原 socket 探测不改变 Main 的 epoch，不能重置 seq；真正鉴权/建连仍需新声明。
+        // Suspension and probing the original socket do not change Main's epoch and must not reset seq; a real authentication/connect still requires a new declaration.
         disconnected();
       }
     },
     setBridge(next: WebRemoteControlExternalWorkspaceBridge) {
       if (matches(next)) return;
       bridge = next;
-      // 新 bridge 的初始任务只是导航意图，必须等待新 Root 的实际可见 Reporter。
+      // The new bridge's initial task is only a navigation intent and must wait for the new Root's actually visible Reporter.
       view = null;
       dirty = true;
       flush();
@@ -76,7 +76,7 @@ export function createWebRemoteControlTaskViewPublisher(
       source: WebRemoteControlExternalWorkspaceBridge,
       next: WebRemoteControlMobileTaskView | null,
     ) {
-      // 旧 Root 的卸载回调可能晚于新 Root 挂载，不能清掉新 bridge 的可见事实。
+      // The old Root's unmount callback may arrive after the new Root has mounted and must not clear the visible facts of the new bridge.
       if (!matches(source)) return;
       view = next;
       dirty = true;

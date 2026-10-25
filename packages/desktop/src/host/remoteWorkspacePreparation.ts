@@ -1,5 +1,8 @@
 import type { IFileService } from "@zcode/services";
-import { REMOTE_WORKSPACE_DIRECTORY_UNAVAILABLE_ERROR_CODE } from "@zcode/shared";
+import {
+  REMOTE_WORKSPACE_DIRECTORY_UNAVAILABLE_ERROR_CODE,
+  REMOTE_WORKSPACE_DIRECTORY_UNRESPONSIVE_ERROR_CODE,
+} from "@zcode/shared";
 
 interface RemoteWorkspaceIdentityInput {
   workspacePath: string;
@@ -8,7 +11,52 @@ interface RemoteWorkspaceIdentityInput {
   signal?: AbortSignal;
 }
 
+export interface RemoteWorkspacePreparationOptions {
+  /** Budget for the remote directory check. The default is the 3.16.3 30 second budget; tests shorten it. */
+  timeoutMs?: number;
+}
+
+const DEFAULT_WORKSPACE_PREPARATION_TIMEOUT_MS = 30_000;
+
+/**
+ * Verifies the remote project folder and binds its identity, within a bounded budget.
+ * A folder that does not answer in time is reported as unresponsive (retryable), which is distinct from a folder that
+ * is missing or unreadable (not retryable), so the UI can tell a slow or disconnected mount from a deleted project.
+ */
 export async function prepareRemoteWorkspaceIdentity(
+  fileService: Pick<IFileService, "readdir">,
+  input: RemoteWorkspaceIdentityInput,
+  bindWorkspaceIdentity?: (input: RemoteWorkspaceIdentityInput) => Promise<void>,
+  options: RemoteWorkspacePreparationOptions = {},
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_WORKSPACE_PREPARATION_TIMEOUT_MS;
+  const budget = new AbortController();
+  // The inner check sees the budget signal, so a late readdir result cannot bind a workspace after the timeout.
+  const signal = input.signal ? AbortSignal.any([input.signal, budget.signal]) : budget.signal;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const error = Object.assign(
+        new Error(
+          `Remote workspace directory did not respond within ${Math.round(timeoutMs / 1000)} seconds: ${input.workspacePath}`,
+        ),
+        { code: REMOTE_WORKSPACE_DIRECTORY_UNRESPONSIVE_ERROR_CODE, retryable: true },
+      );
+      budget.abort(error);
+      reject(error);
+    }, timeoutMs);
+  });
+  try {
+    await Promise.race([
+      prepareWorkspace(fileService, { ...input, signal }, bindWorkspaceIdentity),
+      expired,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function prepareWorkspace(
   fileService: Pick<IFileService, "readdir">,
   input: RemoteWorkspaceIdentityInput,
   bindWorkspaceIdentity?: (input: RemoteWorkspaceIdentityInput) => Promise<void>,

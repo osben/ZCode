@@ -30,9 +30,9 @@ type LegacyQuotaProviderTestOptions = Omit<
 };
 
 /**
- * 这些测试原本直接把旧 ModelProviderService 注入 quota provider。
- * 迁移后凭据由 Account Request Auth 提供；这里仅保留测试数据装配，避免测试继续
- * 把旧 Provider Config 当成生产事实来源。
+ * These tests used to inject the legacy ModelProviderService directly into the quota provider.
+ * After the migration, credentials come from Account Request Auth; only test-data assembly remains here,
+ * so tests no longer treat the legacy Provider Config as the production source of truth.
  */
 function createProviderForTest(
   options: LegacyQuotaProviderTestOptions,
@@ -261,7 +261,7 @@ describe("BigModelUsageQuotaProvider", () => {
       productId: "zcode-v3-start-plan",
       productName: "ZCode V3 Start Plan",
       billingCycle: "daily",
-      // Start Plan 卡片不再展示套餐级续期时间；桶刷新时间由各 limit 的 nextResetTime 表达。
+      // The Start Plan card no longer shows a plan-level renewal time; bucket refresh time is expressed by each limit's nextResetTime.
       renewTime: null,
       expireTime: new Date(1_781_500_800 * 1000).toISOString(),
     });
@@ -378,9 +378,10 @@ describe("BigModelUsageQuotaProvider", () => {
   });
 
   it("Z.ai Start Plan 过期套餐不进入 subscription 且移除其额度桶", async () => {
-    // 固化服务端契约被破坏时的行为：subscription 只含 active 套餐；
-    // 无法归属的桶由 provider 原样透传（设置页归属层会丢弃，聊天气泡仍展示），
-    // 同时 provider 会打 warn tripwire 日志（见 warnOnUnattributedStartPlanBuckets）。
+    // Pin down the behavior when the server contract is broken: subscription only contains active plans;
+    // unattributable buckets are passed through by the provider as-is (the settings-page attribution
+    // layer drops them while chat bubbles still show them), and the provider also logs a warn tripwire
+    // (see warnOnUnattributedStartPlanBuckets).
     const apiClient: ApiClient = {
       request: vi.fn(async () =>
         createJsonResponse({
@@ -547,8 +548,8 @@ describe("BigModelUsageQuotaProvider", () => {
                 capabilities: ["model:glm-5.2"],
                 total_units: 3_000_000,
                 remaining_units: 2_500_000,
-                // 服务端契约保证 expires_at 存在；缺失时桶刷新时间退化为 undefined，
-                // 快照构建不能抛错。
+                // The server contract guarantees expires_at exists; when missing, the bucket refresh time degrades to undefined,
+                // and snapshot construction must not throw.
               },
             ],
           },
@@ -1512,8 +1513,8 @@ describe("BigModelUsageQuotaProvider", () => {
       }),
     ).rejects.toThrow("Coding Plan entitlement refresh failed");
 
-    // 修复原因：误传 team context 时不能把个人 Z.ai Coding Plan key 和 team header 混用。
-    // 团队业务登录态和调用 Key 均缺失时权益未知，不能回退个人 Key。
+    // Fix rationale: when a team context is passed by mistake, the personal Z.ai Coding Plan key and team headers must not be mixed.
+    // When both the team business login session and call key are missing, entitlements are unknown and must not fall back to the personal key.
     expect(requestHeaders).toEqual([]);
   });
 

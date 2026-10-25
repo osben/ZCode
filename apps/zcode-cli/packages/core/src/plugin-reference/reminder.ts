@@ -1,7 +1,7 @@
-// plugin_reference reminder 的纯函数构建器。
-// 契约：identifiers-only、固定模板、fail closed。
-// 本文件不做任何 I/O，live inventory 由 runtime 侧（runtime/methods/plugin-reference.ts）注入，
-// 以保证 unit 可测且行为对 retry / provider replay 确定。
+// Pure-function builder for the plugin_reference reminder.
+// Contract: identifiers only, fixed template, fail closed.
+// This file performs no I/O; runtime injects the live inventory from runtime/methods/plugin-reference.ts
+// so behavior is unit-testable and deterministic across retries and provider replay.
 import type { PluginReferenceCatalog, PluginReferenceCatalogEntry } from "@zcode/contracts";
 import { isValidPluginStableId } from "./references.js";
 
@@ -10,8 +10,8 @@ export const MAX_PLUGIN_REFERENCE_MCP_SERVERS = 16;
 export const MAX_PLUGIN_REFERENCE_SUBAGENTS = 16;
 export const MAX_PLUGIN_REFERENCE_REMINDER_BYTES = 8 * 1024;
 const MAX_CAPABILITY_IDENTIFIER_LENGTH = 128;
-// 第三方 Skill/MCP/Subagent 名称写入 reminder 前的字符集校验：
-// qualified name 含 `:`，MCP namespaced name 含 `plugin:` 前缀，路径类字符最多允许 `/`。
+// Character-set validation before third-party Skill/MCP/Subagent names are added to the reminder:
+// qualified names contain `:`, MCP namespaced names use the `plugin:` prefix, and path-like characters may contain at most `/`.
 const CAPABILITY_IDENTIFIER_PATTERN = /^[A-Za-z0-9._:@/-]+$/;
 
 export type PluginReferenceSkipReason =
@@ -24,7 +24,7 @@ export type PluginReferenceSkipReason =
 export interface LivePluginSkill {
   qualifiedName: string;
   pluginName: string;
-  /** 该 Skill 的扫描根目录，用于 rootPath 前缀 provenance 回溯。 */
+  /** Scanning root for this Skill, used to verify provenance by rootPath prefix. */
   rootPath: string;
   source: string;
 }
@@ -32,19 +32,19 @@ export interface LivePluginSkill {
 export interface LivePluginMcpServer {
   serverName: string;
   connected: boolean;
-  /** allow/disallow 策略过滤后仍注册在 tool registry 中的 provider-visible tool 数。 */
+  /** Number of provider-visible tools still registered in the tool registry after allow/disallow filtering. */
   providerVisibleToolCount: number;
 }
 
 export interface LivePluginSubagent {
-  /** bootstrap 已解析并注册的 canonical `${plugin}:${agent}` profile name。 */
+  /** Canonical `${plugin}:${agent}` profile name resolved and registered by bootstrap. */
   name: string;
-  /** profile 的权威 Markdown 路径，用于 Plugin root provenance 回溯。 */
+  /** Authoritative Markdown path for the profile, used to verify Plugin root provenance. */
   path: string;
 }
 
 export interface BuildPluginReferenceReminderInput {
-  /** 严格 parser 输出：首现顺序、已去重、已限量。 */
+  /** Strict parser output: ordered by first appearance, deduplicated, and limited. */
   references: readonly string[];
   catalog: PluginReferenceCatalog | undefined;
   liveSkills: readonly LivePluginSkill[];
@@ -62,7 +62,7 @@ export interface PluginReferenceReminderDiagnostics {
 }
 
 export interface BuildPluginReferenceReminderResult {
-  /** null 表示整条 reminder 省略（全部引用无可用能力或全部被跳过）。 */
+  /** null means the entire reminder is omitted (all references lack available capabilities or were skipped). */
   body: string | null;
   diagnostics: PluginReferenceReminderDiagnostics;
 }
@@ -77,9 +77,9 @@ interface ResolvedPluginCapabilities {
 function isSkillOwnedByPlugin(skill: LivePluginSkill, entry: PluginReferenceCatalogEntry): boolean {
   if (skill.source !== "plugin") return false;
   if (skill.pluginName !== entry.name) return false;
-  // provenance 精确回溯：跨 marketplace 同名 Plugin 的 skill root 位于各自插件根目录下，
-  // 只有 rootPath 前缀匹配才认定归属；防止靠 manifest name 猜测。
-  // 同时接受 POSIX / Windows 分隔符，路径由同一进程的 loader 产出，无需再 resolve。
+  // Verify provenance precisely: same-named Plugins from different marketplaces have Skill roots under their respective plugin roots,
+  // and only a rootPath prefix match establishes ownership; do not infer ownership from manifest name.
+  // Accept both POSIX and Windows separators; the loader in this process produced the path, so it does not need another resolve.
   return (
     skill.rootPath === entry.rootPath ||
     skill.rootPath.startsWith(`${entry.rootPath}/`) ||
@@ -125,8 +125,8 @@ function resolveLiveCapabilities(
   const mcpServers = new Set<string>();
   const declaredServerNames = new Set(entry.mcpServerNames);
   for (const server of input.liveMcpServers) {
-    // MCP provenance：只认冻结 catalog 声明过的 namespaced server name；
-    // 引用不触发 connect/retry，未连接或没有 provider-visible tool 一律跳过。
+    // MCP provenance: accept only namespaced server names declared by the frozen catalog;
+    // a reference does not trigger connect/retry, and an unconnected server or one without provider-visible tools is skipped.
     if (!declaredServerNames.has(server.serverName)) continue;
     if (!server.connected || server.providerVisibleToolCount <= 0) continue;
     if (!isValidCapabilityIdentifier(server.serverName)) {
@@ -138,8 +138,8 @@ function resolveLiveCapabilities(
 
   const subagents = new Set<string>();
   for (const subagent of input.liveSubagents ?? []) {
-    // 只按 canonical name 归属会把同名用户 profile 或跨 marketplace Plugin
-    // 误投影进 reminder。必须同时满足冻结声明、live profile 与 Plugin root provenance。
+    // Assigning ownership only by canonical name could incorrectly project a same-named user profile or a Plugin from another marketplace
+    // into the reminder. Require the frozen declaration, live profile, and Plugin root provenance to all match.
     if (!isSubagentOwnedByPlugin(subagent, entry)) continue;
     if (!isValidCapabilityIdentifier(subagent.name)) {
       onInvalidIdentifier();
@@ -181,9 +181,9 @@ function renderReminderBody(resolved: readonly ResolvedPluginCapabilities[]): st
 }
 
 /**
- * 生成本轮 plugin_reference reminder 正文。
- * fail closed：未知 / 冲突 / session 内 disabled / 无 live capability / 非法标识的条目跳过；
- * 全部跳过时返回 body=null（整条省略），对话侧照常执行。
+ * Build this turn's plugin_reference reminder body.
+ * Fail closed: skip unknown, conflicting, session-disabled, unavailable-live-capability, and invalid-identifier entries;
+ * if all entries are skipped, return body=null (omit the whole reminder) and let the conversation proceed normally.
  */
 export function buildPluginReferenceReminderBody(
   input: BuildPluginReferenceReminderInput,
@@ -210,8 +210,8 @@ export function buildPluginReferenceReminderBody(
       continue;
     }
     if (entry.conflictingPluginIds.length > 0) {
-      // V1 fail closed：同 manifest.name 的 enabled Plugin 在 runtime 名字空间坍缩，
-      // 不做 last-write-wins，也不按 display name 猜测。
+      // V1 fails closed: enabled Plugins with the same manifest.name collapse in the runtime namespace;
+      // do not use last-write-wins or guess based on display name.
       skipped.push({ pluginId, reason: "ambiguous" });
       continue;
     }
@@ -232,7 +232,7 @@ export function buildPluginReferenceReminderBody(
       continue;
     }
 
-    // 上限按用户引用顺序生效：预算耗尽后整条 Plugin 截断（保持"至少一个数组非空"的输出不变量）。
+    // Apply limits in the user's reference order. When the budget runs out, truncate whole Plugins (preserving the output invariant that at least one array is non-empty).
     const skillsWithinBudget = capabilities.skills.slice(0, Math.max(0, skillBudget));
     const mcpWithinBudget = capabilities.mcpServers.slice(0, Math.max(0, mcpBudget));
     const subagentsWithinBudget = capabilities.subagents.slice(0, Math.max(0, subagentBudget));
@@ -263,7 +263,7 @@ export function buildPluginReferenceReminderBody(
     });
   }
 
-  // 字节上限（8 KiB）：超限时从尾部整条移除 Plugin（保留用户引用顺序前项）。
+  // Byte limit (8 KiB): if exceeded, remove whole Plugins from the end (preserving earlier entries in the user's reference order).
   let body: string | null = null;
   const kept = [...resolved];
   while (kept.length > 0) {

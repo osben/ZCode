@@ -84,8 +84,9 @@ describe("botsService Telegram polling", () => {
     service.disposeAll();
   });
 
-  // Bugfix: 这个用例在同一 Node 进程里模拟两个窗口，Windows 下目录锁与异步 polling 启动时序不稳定。
-  // 先保留 POSIX 覆盖，避免 Windows full suite 被该环境敏感断言阻塞。
+  // Bugfix: this test simulates two windows in one Node process; on Windows the directory lock and async
+  // polling startup timing are unstable. Keep POSIX-only coverage so the Windows full suite is not blocked
+  // by these environment-sensitive assertions.
   it.runIf(process.platform !== "win32")(
     "does not start a second local polling client for the same Telegram token",
     async () => {
@@ -144,4 +145,113 @@ describe("botsService Telegram polling", () => {
       serviceA.disposeAll();
     },
   );
+
+  it("retries bot storage initialization while the shared state lock is contended at startup", async () => {
+    useTempDataDir();
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    stubHangingTelegramFetch();
+    const baseRepo = f.createMemoryRepo(f.telegramConfig);
+    let readStateCalls = 0;
+    const repo = {
+      ...baseRepo,
+      readState: vi.fn(async () => {
+        readStateCalls += 1;
+        if (readStateCalls <= 2) {
+          throw new Error(
+            "Timed out after 8000ms waiting for the ZCode file lock: bot-state.v3.json.lock",
+          );
+        }
+        return baseRepo.readState();
+      }),
+    };
+
+    const service = f.createBotsService({
+      credentialService: f.createCredentialService({ "telegram-token": "token" }),
+      legacyTaskService: f.createLegacyTaskService(),
+      repo: repo as never,
+    });
+
+    // Init attempts: fail, retry after 1s and fail, retry after 5s and succeed, then the
+    // post-migration restore loop reads the state once more.
+    await vi.advanceTimersByTimeAsync(7_000);
+
+    expect(readStateCalls).toBeGreaterThanOrEqual(4);
+    expect(
+      warnSpy.mock.calls.some(([, message]) =>
+        String(message).includes("Bot storage initialization failed, retrying"),
+      ),
+    ).toBe(true);
+    expect(
+      errorSpy.mock.calls.some(([, message]) =>
+        String(message).includes("Bot storage initialization failed"),
+      ),
+    ).toBe(false);
+
+    service.disposeAll();
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("logs the terminal bot storage initialization error once after bounded retries", async () => {
+    useTempDataDir();
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    stubHangingTelegramFetch();
+    const baseRepo = f.createMemoryRepo(f.telegramConfig);
+    const repo = {
+      ...baseRepo,
+      readState: vi.fn(async () => {
+        throw new Error(
+          "Timed out after 8000ms waiting for the ZCode file lock: bot-state.v3.json.lock",
+        );
+      }),
+    };
+
+    const service = f.createBotsService({
+      credentialService: f.createCredentialService({ "telegram-token": "token" }),
+      legacyTaskService: f.createLegacyTaskService(),
+      repo: repo as never,
+    });
+
+    await vi.advanceTimersByTimeAsync(7_500);
+
+    expect(
+      warnSpy.mock.calls.filter(([, message]) =>
+        String(message).includes("Bot storage initialization failed, retrying"),
+      ),
+    ).toHaveLength(2);
+    expect(
+      errorSpy.mock.calls.filter(([, message]) =>
+        String(message).includes("Bot storage initialization failed"),
+      ),
+    ).toHaveLength(1);
+
+    service.disposeAll();
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+    vi.useRealTimers();
+  });
 });
+
+function stubHangingTelegramFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string | URL, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes("/getUpdates")) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      }
+      return Promise.resolve(new Response(JSON.stringify({ ok: true })));
+    }),
+  );
+}

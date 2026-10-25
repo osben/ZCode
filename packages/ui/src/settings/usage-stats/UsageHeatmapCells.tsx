@@ -15,6 +15,8 @@ export type TokenActivityMode = "daily" | "weekly" | "cumulative";
 
 export interface HeatmapDisplayCell {
   key: string;
+  /** Local calendar date of a real daily cell; set only where drilling into the day is meaningful. */
+  date?: string;
   tooltipTitle?: string;
   level: AppUsageHeatmapCell["level"];
   hasUsage: boolean;
@@ -37,9 +39,11 @@ function getHeatmapCellStyle(level: number): CSSProperties {
 export function HeatmapColumn({
   column,
   mode,
+  onSelectDate,
 }: {
   column: HeatmapDisplayColumn;
   mode: TokenActivityMode;
+  onSelectDate?: (date: string) => void;
 }) {
   const node = (
     <div
@@ -49,7 +53,7 @@ export function HeatmapColumn({
       )}
     >
       {column.cells.map((cell) => (
-        <HeatmapCell key={cell.key} cell={cell} />
+        <HeatmapCell key={cell.key} cell={cell} onSelectDate={onSelectDate} />
       ))}
     </div>
   );
@@ -61,15 +65,43 @@ export function HeatmapColumn({
   return <ControlHintTooltip title={column.tooltipTitle}>{node}</ControlHintTooltip>;
 }
 
-function HeatmapCell({ cell }: { cell: HeatmapDisplayCell }) {
+function HeatmapCell({
+  cell,
+  onSelectDate,
+}: {
+  cell: HeatmapDisplayCell;
+  onSelectDate?: (date: string) => void;
+}) {
+  const selectable = Boolean(onSelectDate && cell.date && cell.hasUsage);
+  const select = () => {
+    if (onSelectDate && cell.date) {
+      onSelectDate(cell.date);
+    }
+  };
   const node = (
     <div
       className={cn(
         "aspect-square w-full min-w-0 rounded-[4px] border transition-transform hover:scale-110 hover:border-border-hover",
         cell.hasUsage ? "border-border" : "border-transparent",
         cell.columnHover && "group-hover/usage-heatmap-column:border-border-hover",
+        selectable &&
+          "cursor-pointer outline-none focus-visible:border-border-hover focus-visible:ring-2 focus-visible:ring-input-border-focused/50",
       )}
       style={getHeatmapCellStyle(cell.level)}
+      {...(selectable
+        ? {
+            role: "button",
+            tabIndex: 0,
+            "aria-label": cell.date,
+            onClick: select,
+            onKeyDown: (event: { key: string; preventDefault: () => void }) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                select();
+              }
+            },
+          }
+        : {})}
     />
   );
 

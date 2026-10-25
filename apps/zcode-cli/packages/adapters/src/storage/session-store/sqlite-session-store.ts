@@ -1,9 +1,7 @@
-import type { MigrationResult } from "@zcode/shared/sqlite-migrations";
-import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
 import * as permissionFullAccessRepository from "./repositories/permission-full-access.js";
 import { DatabaseSync } from "node:sqlite";
 import type {
+  ChildSessionInfo,
   CollaborationMode,
   ClaimLegacySessionWorkspaceInput,
   RepairLegacyRemoteSessionWorkspaceInput,
@@ -39,6 +37,7 @@ import type {
   ScriptWorkflowEventRecord,
   ScriptWorkflowRunRecord,
   ScriptWorkflowRunStatus,
+  SessionTreeCounts,
   ScriptWorkflowStorePort,
   SessionGoal,
   SessionId,
@@ -62,7 +61,7 @@ import type {
   UpdateScriptWorkflowRunInput,
   UsageStorePort,
 } from "@zcode/contracts";
-// 端口留在领域包 @zcode/dynamic-workflow，这里只做类型引用：adapters 运行时不依赖它。
+// The port remains in the domain package @zcode/dynamic-workflow; this is a type-only reference, so adapters do not depend on it at runtime.
 import type { JournalStorePort } from "@zcode/dynamic-workflow";
 import {
   accountSessionTargetUsage,
@@ -79,6 +78,9 @@ import {
   updateSessionTargetStatus,
 } from "../session-target.js";
 import { SqliteSessionMigrationError } from "./errors.js";
+import type { MigrationResult } from "@zcode/shared/sqlite-migrations";
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import {
   DEFAULT_SQLITE_STARTUP_LOCK_TIMEOUT_MS,
   runSqliteSessionMigrationsAsync,
@@ -101,7 +103,10 @@ import * as scriptWorkflowRunRepository from "./repositories/script-workflow-run
 import * as sessionEntryRepository from "./repositories/session-entries.js";
 import * as sessionInputRepository from "./repositories/session-inputs.js";
 import * as sessionRepository from "./repositories/sessions.js";
+import * as sessionTreeRepository from "./repositories/session-tree.js";
 import * as todoRepository from "./repositories/todos.js";
+import * as forkUsageQuery from "./repositories/fork-usage-query.js";
+import { scheduleForkUsageRollup } from "./repositories/fork-usage-rollup.js";
 import * as usageRepository from "./repositories/usage.js";
 
 function forkChildSessionId(entry: SessionEntryInfo): SessionId | null {
@@ -127,7 +132,7 @@ function assertForkBundleChildLocal(bundle: ForkCommitBundle): void {
     result?.type === "createSelectionSideSession" ||
     (result?.type === "editUserQuery" && result.disposition === "fork");
   if (!isForkResult || !sessionId || sessionId !== childId) {
-    // 缺失或非 fork 的 command result 会留下无法重放到 child 的幂等事实。
+    // A missing or non-fork command result leaves an idempotency fact that cannot be replayed to the child.
     throw new Error("Fork bundle command result is missing, invalid, or not child-local");
   }
   const messageIds = new Set(bundle.messages.map((message) => String(message.info.id)));
@@ -222,7 +227,6 @@ function assertForkBundleChildLocal(bundle: ForkCommitBundle): void {
   }
 }
 
-
 export class SqliteSessionStore
   implements
     SessionStorePort,
@@ -247,7 +251,14 @@ export class SqliteSessionStore
     this.forkCommitFaultAt = options.forkCommitFaultAt;
   }
 
-  static async open(options: SqliteSessionStoreOptions = {}, migrationOptions?: AsyncSqliteMigrationOptions): Promise<SqliteSessionStore> {
+  /**
+   * Production open. The repositories only ever receive a connection after the migration COMMIT;
+   * an unmigrated connection never leaves this factory.
+   */
+  static async open(
+    options: SqliteSessionStoreOptions = {},
+    migrationOptions?: AsyncSqliteMigrationOptions,
+  ): Promise<SqliteSessionStore> {
     const dbPath = options.dbPath ?? getDefaultSessionDbPath();
     const startupLockTimeoutMs =
       options.startupLockTimeoutMs ?? DEFAULT_SQLITE_STARTUP_LOCK_TIMEOUT_MS;
@@ -258,6 +269,8 @@ export class SqliteSessionStore
         await mkdir(dirname(dbPath), { recursive: true });
       }
       maybeThrowStorageFsFault({ operation: "sqliteOpen", path: dbPath });
+      // Multiple local or remote agents share the same session DB; the timeout must be set before the
+      // first PRAGMA, or concurrent startup fails with "database is locked" in the migration prelude.
       db = new DatabaseSync(dbPath, { timeout: startupLockTimeoutMs });
     } catch (error) {
       throw new SqliteSessionMigrationError(`Failed to open SQLite session database at ${dbPath}`, {
@@ -267,15 +280,27 @@ export class SqliteSessionStore
       });
     }
     try {
-      const migration = await runSqliteSessionMigrationsAsync(db, dbPath, migrationOptions ?? { lockWaitTimeoutMs: startupLockTimeoutMs });
-      return new SqliteSessionStore(db, dbPath, options, migration);
+      const result = await runSqliteSessionMigrationsAsync(
+        db,
+        dbPath,
+        migrationOptions ?? { lockWaitTimeoutMs: startupLockTimeoutMs },
+      );
+      return new SqliteSessionStore(db, dbPath, options, result);
     } catch (error) {
-      try { db.close(); } catch { /* 关闭失败不能覆盖迁移错误。 */ }
+      // Closing can also fail on I/O; the original migration cause is what the user must act on.
+      try {
+        db.close();
+      } catch {
+        /* Preserve the original migration failure. */
+      }
       throw error;
     }
   }
 
-  static async openStartup(options: SqliteSessionStoreOptions = {}, migrationOptions: AsyncSqliteMigrationOptions = {}) {
+  static async openStartup(
+    options: SqliteSessionStoreOptions = {},
+    migrationOptions: AsyncSqliteMigrationOptions = {},
+  ): Promise<SqliteSessionStore> {
     return SqliteSessionStore.open(options, migrationOptions);
   }
 
@@ -302,6 +327,38 @@ export class SqliteSessionStore
     return sessionRepository.createSession(this.db, input);
   }
 
+  async countSessionTree(input: { rootIds: readonly SessionId[] }): Promise<SessionTreeCounts> {
+    return sessionTreeRepository.countSessionTree(this.db, input.rootIds);
+  }
+
+  async listSessionTreeIds(input: { rootIds: readonly SessionId[] }): Promise<SessionId[]> {
+    return sessionTreeRepository.listSessionTreeIds(this.db, input.rootIds);
+  }
+
+  async listSessionTreeIdsWithSurvivingChildren(input: {
+    rootIds: readonly SessionId[];
+  }): Promise<SessionId[]> {
+    return sessionTreeRepository.listSessionTreeIdsWithSurvivingChildren(this.db, input.rootIds);
+  }
+
+  async deleteSessionTree(input: {
+    rootIds: readonly SessionId[];
+  }): Promise<{ erasedIds: SessionId[] }> {
+    this.throwBeforeWrite();
+    return sessionTreeRepository.deleteSessionTree(this.db, input.rootIds);
+  }
+
+  /** Upstream tombstone: keeps message/part rows; hidden from listings. Permanent erase is `deleteSessionTree`. */
+  async softDeleteSession(sessionID: SessionId, timeDeleted = Date.now()): Promise<void> {
+    this.throwBeforeWrite();
+    sessionRepository.softDeleteSession(this.db, sessionID, timeDeleted);
+  }
+
+  async deleteEmptySession(sessionID: SessionId): Promise<boolean> {
+    this.throwBeforeWrite();
+    return sessionRepository.deleteEmptySession(this.db, sessionID);
+  }
+
   async createForkedSessionWithMetadata(
     input: CreateSessionInput,
     metadata: ForkChildSessionMetadata,
@@ -311,8 +368,8 @@ export class SqliteSessionStore
       throw new Error("Fork child metadata parent does not match session parentID");
     }
     const orderedMessageIds = metadata.forkTarget.orderedMessageIds;
-    // compact 覆盖首轮 query 时，input 前稳定前缀合法为空；boundaryMessageId 仍记录
-    // 被编辑 input，供幂等事实定位，但不会被复制进 child。
+    // When compact replaces the first query, the stable prefix before the input may validly be empty; boundaryMessageId still records
+    // the edited input for idempotency, but it is not copied into the child.
     const validBoundary =
       metadata.forkTarget.boundaryMessageId.trim().length > 0 &&
       (orderedMessageIds.length === 0 ||
@@ -321,8 +378,8 @@ export class SqliteSessionStore
       throw new Error("Fork child metadata is invalid");
     }
 
-    // command key 是 (parentSessionId, sourceCommandId)；session_entry.id 是全库主键，
-    // 必须把 parent 纳入 id，避免两个 session 恰好复用 commandId 时互相覆盖事实。
+    // The command key is (parentSessionId, sourceCommandId); session_entry.id is a database-wide primary key,
+    // so include the parent in the ID to prevent two sessions that reuse a commandId from overwriting each other’s records.
     const entryId = `v4_command_fact:child:${metadata.parentSessionId}:${metadata.sourceCommandId}`;
     this.db.exec("begin immediate");
     try {
@@ -467,10 +524,10 @@ export class SqliteSessionStore
     if (
       String(contextMessage.info.sessionID) !== String(session.id) ||
       String(provenance.sessionID) !== String(session.id) ||
-      // session_entry.id 是全库主键，saveSessionEntry 的 on conflict(id)
-      // 会把 session_id 改绑到后写入者。provenance id 若不含 session 命名空间，同一个
-      // share 导入到第二个会话时会夺走第一个会话的条目（旧会话 transcript 静默丢失）。
-      // 这里在唯一写入口做守卫，覆盖所有调用方，而不是只修某一个构造点。
+      // session_entry.id is a database-wide primary key, and saveSessionEntry’s on conflict(id)
+      // rebinds session_id to the later writer. If the provenance ID lacks a session namespace, the same
+      // share imported into a second session can steal the first session’s entry, silently losing its transcript.
+      // Guard the single write entry point here so all callers are covered, rather than fixing only one construction site.
       !provenance.id.includes(String(session.id)) ||
       contextMessage.info.role !== "user" ||
       contextMessage.info.visibility !== "model-only" ||
@@ -571,17 +628,25 @@ export class SqliteSessionStore
     return sessionRepository.updateSession(this.db, input);
   }
 
-  async softDeleteSession(sessionID: SessionId, timeDeleted = Date.now()): Promise<void> {
-    this.throwBeforeWrite();
-    sessionRepository.softDeleteSession(this.db, sessionID, timeDeleted);
-  }
-
   async getSession(sessionID: SessionId): Promise<SessionInfo | null> {
     return sessionRepository.getSession(this.db, sessionID);
   }
 
   async listSessions(input: ListSessionsInput = {}): Promise<SessionInfo[]> {
     return sessionRepository.listSessions(this.db, input);
+  }
+
+  async countChildSessions(input: {
+    parentIds: readonly SessionId[];
+  }): Promise<Map<string, { sideChats: number }>> {
+    return sessionRepository.countChildSessions(this.db, input.parentIds);
+  }
+
+  async listChildSessions(input: {
+    parentIds: readonly SessionId[];
+    limitPerParent: number;
+  }): Promise<Map<string, ChildSessionInfo[]>> {
+    return sessionRepository.listChildSessions(this.db, input.parentIds, input.limitPerParent);
   }
 
   async claimLegacySessionWorkspace(input: ClaimLegacySessionWorkspaceInput): Promise<number> {
@@ -654,7 +719,7 @@ export class SqliteSessionStore
     return sessionEntryRepository.sessionEntries(this.db, input);
   }
 
-  // ── session_input 账本──
+  // ── session_input ledger ──
 
   async saveSessionInput(input: {
     id: string;
@@ -831,15 +896,18 @@ export class SqliteSessionStore
   }
 
   async recordModelUsage(input: ModelUsageRecord): Promise<void> {
-    return usageRepository.recordModelUsage(this.db, input);
+    await usageRepository.recordModelUsage(this.db, input);
+    scheduleForkUsageRollup(this.db);
   }
 
   async upsertTurnUsage(input: TurnUsageRecord): Promise<void> {
-    return usageRepository.upsertTurnUsage(this.db, input);
+    await usageRepository.upsertTurnUsage(this.db, input);
+    scheduleForkUsageRollup(this.db);
   }
 
   async upsertToolUsage(input: ToolUsageRecord): Promise<void> {
-    return usageRepository.upsertToolUsage(this.db, input);
+    await usageRepository.upsertToolUsage(this.db, input);
+    scheduleForkUsageRollup(this.db);
   }
 
   async pruneUsage(input?: { beforeTime?: number }): Promise<void> {
@@ -847,7 +915,7 @@ export class SqliteSessionStore
   }
 
   async queryAppUsage(input: AppUsageQueryInput): Promise<AppUsageQueryResult> {
-    return usageRepository.queryAppUsage(this.db, input);
+    return forkUsageQuery.queryAppUsageWithRollup(this.db, input);
   }
 
   async queryTaskUsage(input: TaskUsageQueryInput): Promise<TaskUsageQueryResult> {
@@ -985,8 +1053,8 @@ export class SqliteSessionStore
   }
 
   /**
-   * dynamic-workflow 执行引擎的 durable journal（dwf_* 表）。端口是同步的，所以这里返回
-   * 端口对象本身而不是逐方法转发——引擎持有它、按自己的节奏读写。
+   * Durable journal for the dynamic-workflow execution engine (dwf_* tables). The port is synchronous, so return
+   * the port object itself instead of forwarding each method; the engine owns it and reads/writes at its own pace.
    */
   workflowJournalStore(): JournalStorePort {
     this.dwfJournalStore ??= createDwfJournalStore(this.db);

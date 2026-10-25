@@ -4,11 +4,13 @@ export * from "#src/web-remote-control/adapters/webRemoteControlDeviceClient.js"
 export * from "#src/web-remote-control/adapters/webRemoteControlDeviceInfo.js";
 export * from "#src/web-remote-control/adapters/webRemoteControlThemeSeed.js";
 export * from "#src/web-remote-control/adapters/webRemoteControlTransport.js";
+export * from "#src/web-remote-control/adapters/webRemoteControlV2Pairing.js";
 export * from "#src/web-remote-control/adapters/webRemoteControlV2Token.js";
 export * from "#src/web-remote-control/app/webRemoteControlBridgeRecovery.js";
 export * from "#src/web-remote-control/app/webRemoteControlEntry.js";
 export * from "#src/web-remote-control/app/webRemoteControlKnownDevices.js";
 export * from "#src/web-remote-control/app/webRemoteControlLifecycle.js";
+export * from "#src/web-remote-control/app/webRemoteControlRelayEndpoints.js";
 export * from "#src/web-remote-control/app/webRemoteControlRoute.js";
 export * from "#src/web-remote-control/app/webRemoteControlTaskRead.js";
 export * from "#src/web-remote-control/app/webRemoteControlTaskView.js";

@@ -17,6 +17,7 @@ const labels: SidePaneTabPresentationLabels = {
   treemappingTitle: "Treemapping",
   whiteboardTitle: "Whiteboard",
   modelTrajectoryTitle: "Model trajectory",
+  modelTrajectoryV2Title: "Model trajectory v2",
   developerToolsTitle: "Developer tools",
   pluginMarketTitle: "Plugins",
   terminalTitle: "Terminal",
@@ -65,6 +66,14 @@ const workflowArtifactTab: Extract<WorkspaceSidePaneTab, { type: "workflow-artif
   runId: "dwfrun-1",
   artifactId: "book",
   title: "审计报告",
+};
+
+const modelTrajectoryV2Tab: Extract<WorkspaceSidePaneTab, { type: "model-trajectory-v2" }> = {
+  id: "model-trajectory-v2:task-1",
+  type: "model-trajectory-v2",
+  workspaceKey: "/workspace",
+  taskId: "task-1",
+  title: "Debug hang",
 };
 
 describe("workflow-run tab presentation", () => {
@@ -167,5 +176,25 @@ describe("workflow-workspace tab presentation", () => {
     expect(getLocalizedSidePaneTabTitle(workflowWorkspaceTab, labels)).toBe("Fan-out review");
     const { workflowName: _dropped, ...unnamed } = workflowWorkspaceTab;
     expect(getLocalizedSidePaneTabTitle(unnamed, labels)).toBe("Script steps");
+  });
+});
+
+describe("model-trajectory-v2 tab presentation", () => {
+  it("makes the v2 trajectory searchable by task id and ledger vocabulary", () => {
+    const hint = getSidePaneTabSearchHint(modelTrajectoryV2Tab);
+    expect(hint).toContain("task-1");
+    expect(hint).toContain("Debug hang");
+    expect(hint).toContain("trajectory v2");
+  });
+
+  it("localizes the fallback title through the modelTrajectoryV2.title descriptor", () => {
+    expect(getLocalizedSidePaneTabTitle(modelTrajectoryV2Tab, labels)).toBe("Debug hang");
+    expect(getLocalizedSidePaneTabTitle({ ...modelTrajectoryV2Tab, title: null }, labels)).toBe(
+      "Model trajectory v2",
+    );
+  });
+
+  it("labels the type as a model trajectory v2 rather than falling through to code preview", () => {
+    expect(getSidePaneTabTypeLabel(modelTrajectoryV2Tab, labels)).toBe("Model trajectory v2");
   });
 });

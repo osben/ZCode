@@ -5,7 +5,7 @@ import {
   WEB_REMOTE_CONTROL_V2_HEARTBEAT_ACK_TIMEOUT_MS,
 } from "#src/web-remote-relay/domain/heartbeatTiming.js";
 
-/** ACK deadline 独立于 jitter 心跳；两端 transport 复用，不补发休眠期间的历史心跳。 */
+/** The ACK deadline is independent of the jittered heartbeat; both transports reuse it and do not replay heartbeats missed during sleep. */
 export class WebRemoteControlV2Heartbeat {
   private heartbeat?: ReturnType<typeof setTimeout>;
   private watchdog?: ReturnType<typeof setTimeout>;

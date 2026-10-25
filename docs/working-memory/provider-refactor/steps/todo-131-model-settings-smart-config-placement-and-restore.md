@@ -1,133 +1,128 @@
-# Todo131：模型设置页智能配置位置与“恢复”按钮
+# Todo131: Smart-config placement and the "restore" button in model settings
 
-> 2026-09-12 后续裁决：[Todo134](todo-134-model-editor-basic-advanced-draft.md) 将智能配置移回固定底部左侧，恢复改为 outline 按钮并放到保存左侧。本文恢复语义和异步保护保留，旧布局不再适用。
-
-> 2026-09-11 执行中：复用 Todo130 字段清理。恢复请求沿用现有推荐 Hook 的请求身份/代次，并附加当前草稿编辑意图校验；成功后推荐与草稿一次应用，失败原草稿不动。关闭、再次编辑、保存开始均使旧恢复意图失效。不建立第二份推荐缓存；布局与 Todo125 同批验证。
-
-> 状态：**产品实现、局部验证与 review 完成；整批最终验收待执行**。2026-09-11 Goal 已授权实施。
+> Status: product implementation, local verification and review done; final batch acceptance pending
+> (Goal authorized implementation on 2026-09-11).
 >
-> 最终名称：**恢复**。不是“重置”“恢复推荐”或“恢复推荐并保存”。只修改当前草稿，保存后生效；ID 为空也可以操作，只有保存中禁用。
+> Later decision (2026-09-12): [Todo134](todo-134-model-editor-basic-advanced-draft.md) moves the smart
+> config back to the fixed bottom left and makes restore an outline button placed to the left of save. The
+> restore semantics and async protection here stay; the old layout no longer applies.
 >
-> 关联：[Todo125 问号说明与定稿文案](./todo-125-model-settings-help-copy.md)、[Todo130 手动配置字段边界](./todo-130-manual-model-config-editable-field-boundary.md)。本 Todo 负责布局及恢复动作；复用 Todo130 字段归属和模式转换，不重新定义系统/个人配置。取代此前“智能配置位于底部”的布局规定，Todo125 的说明文案与问号交互继续有效。
+> Final name: **恢复** ("Restore"; not "reset", "restore recommendation" or "restore recommendation and
+> save"). It only edits the current draft and takes effect on save. It works with an empty ID; it is
+> disabled only while saving.
+>
+> Related: [Todo125 help copy](./todo-125-model-settings-help-copy.md) (help text and question-mark
+> interaction stay valid), [Todo130 field boundary](./todo-130-manual-model-config-editable-field-boundary.md)
+> (field ownership and mode conversion are reused, not redefined).
 
-## 1. 背景与最终裁决
+## 1. Decisions
 
-用户希望模型配置页增加重置能力。讨论后确定：
+- Restore does not save directly: the page has save/cancel, and an immediate persist could not be undone by cancel and would mix in unsaved model-ID edits.
+- The smart-config switch moves into the model-ID container (ID input shortened, switch on the right, question mark moves with the title). The freed bottom-left holds the restore button; save/cancel stay on the right.
+- Meaning: restore the current model's smart recommendation and turn smart config on, not restore the values saved when the dialog opened.
+- Not disabled for an empty ID: it still clears editable overrides and turns smart config on, but sends no empty-ID recommendation request; filling the ID later matches through the normal chain.
 
-- 不直接保存。当前页面有保存/取消，恢复立即持久化会造成点击取消也无法撤回的误解，还会混入未保存的模型 ID 修改。
-- 智能配置移进模型 ID 所在容器；模型 ID 输入框缩短，智能配置放右侧，问号说明随标题一起移动。
-- 腾出的底部左侧放恢复按钮；保存、取消仍位于右侧。
-- 用户将按钮最终命名为“恢复”；含义仍是恢复当前模型的智能推荐、开启智能配置，不是恢复弹窗打开时的已保存值。
-- 用户明确否定“ID 为空时禁用恢复”。空 ID 也清除可编辑覆盖、开启智能配置，但不发起空 ID 推荐请求，填入 ID 后再按原链路匹配。
-
-本轮只落盘，不自动实施相关 Todo，不修改配置文件或正式事实文档。
-
-## 2. 第一层：页面布局
-
-桌面/宽屏：
+## 2. Layer 1: layout
 
 ```text
-┌─────────────────────────────────────────┐
-│ 模型 ID                  智能配置 ?     │
-│ [ GLM-5.3             ]       [开关]    │
-└─────────────────────────────────────────┘
-
-……现有模型配置分组……
-
-[恢复]                         [保存] [取消]
+[ Model ID                         Smart config ? ]
+[ GLM-5.3                              [switch]   ]
+... existing model config groups ...
+[Restore]                              [Save] [Cancel]
 ```
 
-- 模型 ID 输入框仍占主要宽度；右侧智能配置区域保留稳定宽度，不把开关搬出该容器。
-- 长 ID 允许输入框内部横向滚动，实际值不截断、不缩写；不为布局设置新的 ID 长度限制。
-- 手机窄屏时容器内改为上下排列，避免输入框被挤窄；底部按钮可沿用响应式分行，保证长译文和触摸操作可用。
-- 继承模型的 ID 只读，智能配置仍可切换；保存期间沿用正文锁定与开关禁用。
-- 问号跟随“智能配置”标题，复用 Todo125；不因为处于模型 ID 容器而给模型 ID 新增问号。
-- 恢复使用现有弱样式按钮，保存仍为主按钮；保留保存/取消的顺序，不改其他字段分组、弹窗滚动、焦点规则或视觉层级。
-- 智能配置开关按 Todo130 始终显示且仅 saving 禁用，不遗留第二个底部开关。
+- ID input keeps most of the width; the right smart-config area has a stable width and the switch never leaves the container.
+- Long IDs scroll horizontally inside the input; values are never truncated or abbreviated; no new ID length limit.
+- Narrow phone screens stack vertically inside the container; bottom buttons may wrap responsively.
+- An inherited model ID is read-only but smart config stays switchable; while saving, body lock and switch disable stay.
+- The question mark follows the "smart config" title (Todo125); the model ID gets no question mark.
+- Restore uses the existing weak button style, save stays primary, save/cancel order kept; other groups, dialog scrolling, focus rules and visual hierarchy unchanged.
+- Per Todo130 the switch is always shown and disabled only while saving; no second bottom switch remains.
 
-## 3. 第二层：恢复动作
+## 3. Layer 2: restore action
 
-### 3.1 恢复哪些内容
+### 3.1 What is restored
 
-- 清除当前模型可编辑字段的个人覆盖，包括已保存覆盖在本次草稿中的表示，以及本次尚未保存的编辑。
-- 开启智能配置，按当前模型 ID、当前 Provider 和当前接入配置恢复推荐；智能配置原本已开启时，也能一次清掉各项覆盖。
-- 保留当前输入的模型 ID，不回退为打开弹窗时的 ID；保留所属 Provider、模型启停、成员和排序。
-- 系统字段继续按 Todo130 由系统解析，不复制到个人配置、不冻结隐藏映射、不新增隐藏项编辑器。
-- 不恢复其他模型，不修改 Provider API Key、Base URL 或连接配置，不调用全 Provider 重置。
-- 不在点击时调用保存接口；不会顺便持久化当前的改名。
+- Clears personal overrides of the current model's editable fields (both the saved overrides' draft representation and unsaved edits).
+- Turns smart config on and restores recommendation for the current model ID, Provider and access config; when smart config was already on it still clears all overrides at once.
+- Keeps the currently typed model ID (not the ID at open time), Provider, model enable state, members and order.
+- System fields stay system-resolved per Todo130 (not copied to personal config, no frozen hidden mapping, no hidden-item editor).
+- Does not restore other models, change Provider API Key/Base URL/connection config, or call a full-Provider reset; does not call the save API on click (never persists a pending rename).
 
-### 3.2 与保存/取消的关系
+### 3.2 Relation to save/cancel
 
 ```text
-点击恢复
-    |
-当前草稿清除可编辑覆盖 + 开启智能配置
-    |
-    +--> 保存：按现有校验、revision 与原子提交正式生效
-    |
-    `--> 取消：丢弃本次草稿，保留之前已保存的配置
+click Restore -> draft clears editable overrides + smart on
+  -> Save: takes effect via existing validation, revision and atomic commit
+  -> Cancel: discard draft, keep previously saved config
 ```
 
-不增加确认弹窗或直接保存入口。恢复之后继续编辑的字段仍是新的个人覆盖，最终保存不能再按“恢复过”标记无条件清空后续编辑。
+No confirmation dialog or direct-save entry. Fields edited after restore are new personal overrides; save must not unconditionally clear later edits because "restore happened".
 
-### 3.3 ID 为空、解析失败和并发
+### 3.3 Empty ID, failure and concurrency
 
-| 条件                   | 行为                                                                  |
-| ---------------------- | --------------------------------------------------------------------- |
-| ID 为空                | 恢复可点击；清覆盖、开智能，保留空 ID；不请求空身份；填 ID 后正常匹配 |
-| 当前身份已有有效推荐   | 可复用仍适用于当前 Provider/模型/接入环境的结果，立即投影草稿         |
-| 需要重新解析           | 不因解析中禁用恢复；仅应用属于当前身份和本次恢复意图的结果            |
-| 解析失败               | 保留恢复前草稿，使用已有反馈区域提示失败，不先清空后让用户承担丢失    |
-| 正常解析但推荐本身缺项 | 只展示实际取得的推荐，沿用真实缺项反馈与保存校验，不编造完整配置      |
-| 正在保存               | 恢复禁用；点击不能改变当前提交中的草稿                                |
+| Condition                                           | Behavior                                                                                                                  |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Empty ID                                            | clickable; clears overrides and enables smart; keeps empty ID; no empty-identity request; matches after an ID is typed    |
+| Current identity already has a valid recommendation | may reuse results still applicable to the current Provider/model/access; project the draft immediately                    |
+| Re-resolution needed                                | restore is not disabled while resolving; only results for the current identity and this restore intent are applied        |
+| Resolution fails                                    | keep the pre-restore draft, show failure in the existing feedback area (never clear first and let the user bear the loss) |
+| Resolution succeeds but recommendation has gaps     | show only what was actually obtained; real gap feedback and save validation apply; nothing fabricated                     |
+| Saving                                              | restore disabled; click cannot change the draft being submitted                                                           |
 
-除 saving 外，不因为 ID 为空、已在智能模式、没有覆盖或推荐请求中而增加禁用条件。
+Apart from saving there is no extra disable condition (empty ID, already smart, no overrides, request in flight).
 
-需要异步解析时保持动作原子性：解析前保留草稿，成功且身份/编辑代次仍匹配时一次应用；失败不破坏当前编辑。等待期间用户改 ID、字段、模式、Provider、关闭弹窗或再次恢复，旧结果/旧错误不能覆盖新意图；保存开始前未完成的恢复也不能在保存期间突改草稿。优先复用现有编辑代次/请求身份机制，不加固定延时、第二份推荐缓存或单独状态服务。
+Async resolution stays atomic: keep the draft before resolution; apply once on success if identity and edit generation still match; failure never damages current edits. If the user changes ID, field, mode, Provider, closes the dialog or restores again while waiting, old results/errors never overwrite the new intent; a restore unfinished when saving starts must not mutate the draft during save. Reuse the existing edit generation / request identity; no fixed delay, second recommendation cache or separate state service.
 
-## 4. 第三层：实现边界
+## 4. Layer 3: implementation boundary
 
-| 位置                                                      | 修改或核查目的                                                                             |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `ProviderModelMetadataDialog.tsx`                         | 智能配置移到 ID 容器右侧；底部 leadingAction 改为恢复；保持响应式、ID 只读和保存锁定       |
-| `ProviderModelMetadataDialogActions.tsx`                  | 复用现有 Switch 与操作区，接入恢复动作和 saving 禁用；不改其他页面的公共操作顺序           |
-| `useProviderModelDraft.ts` / `ProviderModelDraftState.ts` | 为恢复提供明确的草稿动作，复用开启智能配置时的字段清理与投影，覆盖当前已经是智能模式的情况 |
-| `ProviderFormControls.tsx` / `ProviderCardSections.tsx`   | 编辑与新增接入同一个恢复入口；保留各自身份权限、错误展示、revision 和保存事务              |
-| i18n 与现有帮助组件                                       | 中文按钮逐字为“恢复”；英文按同一含义翻译；智能配置说明沿用 Todo125 定稿                    |
+| Location                                                  | Purpose                                                                                                                              |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `ProviderModelMetadataDialog.tsx`                         | smart config to the right of the ID container; bottom leadingAction becomes Restore; keep responsiveness, read-only ID and save lock |
+| `ProviderModelMetadataDialogActions.tsx`                  | reuse existing Switch and action area; wire restore and saving-disable; no change to other pages' action order                       |
+| `useProviderModelDraft.ts` / `ProviderModelDraftState.ts` | explicit draft action for restore, reusing the field cleanup/projection of enabling smart config, also covering "already smart"      |
+| `ProviderFormControls.tsx` / `ProviderCardSections.tsx`   | add and edit share one restore entry; keep identity permissions, error display, revision and save transaction                        |
+| i18n and existing help component                          | zh-CN button literally "恢复"; English translated with the same meaning; smart-config help per Todo125                               |
 
-文件位置相对 `packages/ui/src/settings/model-provider-section/`，除 i18n/公共组件外。实施按实际引用选择必要改动，不要求每个文件都改，也不为此重构所有 SettingsFormActions。
+Paths relative to `packages/ui/src/settings/model-provider-section/` (except i18n/shared components).
+Calling `onChange(true)` alone is not restore: when the mode is already on, a normal mode change may not
+clear overrides, so the restore intent is explicit. No second field list or schema; the editable-field
+contract, hidden-field removal and mode saving reuse Todo130. No new schema, persisted field, file, table
+or protocol. May ship in the same batch as Todo130 but must not build a third restore mode on the old
+"freeze the whole config" base.
 
-不能只调用 `onChange(true)` 就认为恢复已实现：当前模式已经开启时，普通模式变更可能不会清覆盖。需要显式表达恢复意图，但不建立第二套字段清单或 schema；可编辑字段契约、隐藏字段剔除、模式保存统一复用 Todo130。
+## 5. Verification
 
-不新增 schema、持久化字段、文件、数据表或协议；Todo130 所需的底层语义修正由其承担。本 Todo 可以与 Todo130 同批实现，但不能在旧“整份配置固化”基础上拼出第三种恢复模式。
+| Case    | Scenario                                                                                | Must assert                                                                                                                                  |
+| ------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| R121-01 | wide/narrow screen, long ID, long translation, inherited ID read-only                   | switch only in the ID container, question mark placed correctly; Restore bottom left, save/cancel kept; no truncation or unreachable control |
+| R121-02 | smart mode with overrides, click Restore                                                | overrides cleared, smart stays on; no immediate write; no dependence on switch false -> true                                                 |
+| R121-03 | click Restore on manual config                                                          | editable items return to recommendation and smart on; ID/Provider/enabled kept; system fields not frozen                                     |
+| R121-04 | Restore with empty ID, then type an ID                                                  | button usable, clears overrides, smart on, no empty-ID request; matches the current identity after typing                                    |
+| R121-05 | restore -> edit -> save; restore -> cancel; save failure                                | new edits kept, cancel writes nothing, failure keeps the draft; the button itself never submits                                              |
+| R121-06 | A -> B then Restore, B request slow/failing                                             | A's recommendation not used; failure does not clear the original draft; explicit error feedback                                              |
+| R121-07 | restore in flight, then edit/switch mode/switch Provider/close/restore again/start save | stale success and failure never overwrite the new generation; no duplicate write or draft change during save                                 |
+| R121-08 | saving=true / recommendation pending / no overrides                                     | disabled only when saving; otherwise allowed                                                                                                 |
 
-## 5. 验证与实施顺序
+Draft and mode are verified with the real Hook/pure functions; interaction by DOM/E2E clicks. Save/cancel
+verify call counts and real Repository output (disk unchanged before save; after save independent enable
+state kept). UI follows DESIGN.md, both themes and i18n; desktop and phone entries behave the same and keep
+shared-host; continuous/replayable message flows untouched.
 
-先核对 Todo130 的接口与字段边界，补草稿/组件测试，再接布局与动作；涉及 APP 交互要补设置页 E2E，并记录保存前后实际配置读写事实。
+## 6. Delivered state and open items
 
-| Case    | 场景                                                         | 必须断言                                                                              |
-| ------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| R121-01 | 宽屏、窄屏、长 ID、长译文、继承 ID 只读                      | 开关仅在 ID 容器，问号位置正确；恢复在底部左侧，保存/取消保持；无截断值或不可触达控件 |
-| R121-02 | 智能模式已有覆盖，再点恢复                                   | 覆盖清除、智能保持开启；没有即时写入；不依赖开关从 false 变 true                      |
-| R121-03 | 手动配置点恢复                                               | 可编辑项回推荐并开启智能；ID/Provider/enabled 保留；不固化系统字段                    |
-| R121-04 | 空 ID 点恢复，再填写 ID                                      | 按钮可用，清覆盖开智能，不发空 ID 请求；填入后按当前身份匹配                          |
-| R121-05 | 恢复→再编辑→保存；恢复→取消；保存失败                        | 新编辑保留、取消不落盘、失败保留草稿；按钮本身不提交                                  |
-| R121-06 | A 改 B 后恢复，B 请求慢/失败                                 | 不使用 A 推荐；失败不清原草稿；明确错误反馈                                           |
-| R121-07 | 恢复在途，继续编辑/切模式/换 Provider/关闭/再次恢复/开始保存 | 旧成功和失败均不覆盖新代次，无重复写入或保存期间草稿突变                              |
-| R121-08 | saving=true / 推荐 pending / 无覆盖                          | 仅 saving 禁用；其余允许恢复，不增加无效限制                                          |
+Implemented: smart config at the right of the ID row (own row on narrow screens), Restore at bottom left.
+Add and edit share one draft action and Todo130 field cleanup; ID, `enabled` and hidden config are kept and
+the result is projected as a whole after restore succeeds. No new persisted field, protocol, recommendation
+cache or save entry. The restore request reuses the existing recommendation Hook's request identity and
+generation plus a current-draft edit-intent check; close, further edit and save start invalidate the old
+restore intent; stale success and errors never overwrite a newer draft. Help entry and restore do not trigger each other.
 
-- 草稿与模式用真实 Hook/纯函数验证；交互用 DOM/E2E 点击，不只检查静态布局字符串。
-- 保存/取消至少验证调用次数及真实 Repository 输出；恢复前后未保存时磁盘不变，恢复后保存保留独立启停。
-- UI 变更遵守 DESIGN.md、两种主题与国际化；桌面和手机既有设置入口行为一致，保留 shared-host，不改 continuous/replayable 消息流。
-- 按仓库流程先写测试、再实现，运行架构、typecheck、lint、相关单测和必要 E2E；新 E2E 按 lifecycle 管理，未运行不写通过。
-- 本轮基线检查仍提示本地 staging 落后 origin/staging 5 个提交；仅记录文档，不自动合并远端。实施前重新对齐并核对代码，尤其 Todo125/130 是否已落地。
-
-## 6. 当前交付与剩余工作
-
-已实现：智能配置在 ID 行右侧、窄屏独立下一行；恢复在底部左侧。新增/编辑复用同一草稿动作和 Todo130 字段清理；保留 ID、enabled 和隐藏配置，恢复成功后再整体投影。没有新增持久化字段、协议、推荐缓存或保存入口。
-
-局部 review：保存前失效旧恢复意图；原推荐 Hook 同时检查请求身份/代次，旧成功与错误都不能覆盖新草稿。空 ID 只清草稿、不请求；当前已智能也能清覆盖。失败保留原编辑；帮助入口与恢复不互相触发。
-
-测试先红（缺恢复按钮），实施后真实 Hook+弹窗浏览器覆盖原子恢复、失败、编辑/模式/供应商/关闭/再次恢复/保存开始/ID 变化，含空 ID 无请求、恢复无写入、保存失败草稿保留。390 中文浅色与1200英文深色均通过；相关单测60项通过。根 typecheck（包含 Electron E2E）、lint 0 errors/41 warnings、架构0 violations。
-
-Electron `provider-model-smart-config` 已增加恢复取消磁盘不变、恢复再编辑保存、独立 enabled 保留的实际 Repository 断言，连同受影响两个设置用例更新。**本组未实跑 Electron**，实际文件交互验收留到 Goal 整批执行，不以隔离浏览器路由代替；Todo130 的真实文件手动/智能往返另已通过。
+Tests failed first (missing Restore button); then real Hook+dialog browser tests covered atomic restore,
+failure, edit/mode/Provider/close/re-restore/save-start/ID change, empty-ID no request, no write on
+restore, draft kept on save failure (390 zh-CN light and 1200 English dark pass); 60 related unit tests
+pass; root typecheck (including Electron E2E), lint (0 errors / 41 warnings) and architecture (0
+violations) pass. Electron `provider-model-smart-config` gained assertions (disk unchanged on restore +
+cancel, restore + edit + save, independent `enabled` kept) and two affected settings cases were updated,
+but **Electron was not run for this group**; real file interaction acceptance is left to the Goal batch
+(Todo130's real-file manual/smart round trip passed separately).

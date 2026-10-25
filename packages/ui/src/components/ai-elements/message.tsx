@@ -353,7 +353,7 @@ export const MessageBranchPage = ({ className, ...props }: MessageBranchPageProp
 };
 
 export type MessageResponseProps = {
-  /** 办公模式的正式回答固定换行，不覆盖用户保存的代码预览设置。 */
+  /** Completed responses in Office mode use fixed line breaks; do not override the user's saved code-preview settings. */
   forceCodeWrap?: boolean;
   className?: string;
   children?: ReactNode;
@@ -369,27 +369,21 @@ export type MessageResponseProps = {
     sessionId: string;
     ref: string;
   }) => Promise<{ bytes: Uint8Array; mediaType: string } | { url: string; mediaType: string }>;
-  /**
-   * 应用主题（store 耦合剥离）：决定代码块高亮取 light/dark 主题。
-   * 由调用方从上层状态传入；默认 "system" 跟随操作系统，供待删旧调用点兜底。
-   */
+  /** Applied theme (store coupling removed): determines whether code highlighting uses light or dark. The caller passes it from upper-level state; "system" is the fallback for older call sites and follows the OS. */
   theme?: Theme;
-  /**
-   * 代码预览设置（store 耦合剥离）：由调用方传入，需保持引用稳定。
-   * 默认 DEFAULT_CODE_PREVIEW_SETTINGS。
-   */
+  /** Code-preview settings (store coupling removed): provided by the caller and must have a stable reference. Defaults to DEFAULT_CODE_PREVIEW_SETTINGS. */
   codePreviewSettings?: CodePreviewSettings;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
   onOpenExternalUrl?: (url: string) => void;
-  /** 仅 Assistant 正文开启：把完整 zcode-file-citation 投影为现有文件链接。 */
+  /** Enabled only for Assistant body text: project complete zcode-file-citation values as existing file links. */
   renderZCodeFileCitations?: boolean;
 };
 
 export interface MessageFileLinkTarget {
   path: string;
   label: string;
-  /** 仅用于显式尾随斜杠的目录展示提示；打开第三方应用前必须重新 stat。 */
+  /** Display hint for directories with an explicit trailing slash only; stat again before opening in an external app. */
   pathKind?: NonNullable<OpenInEditorOptions["pathKind"]>;
   relativePath?: string;
   workspacePath?: string;
@@ -397,8 +391,8 @@ export interface MessageFileLinkTarget {
   workspaceRemoteSessionId?: string;
 }
 
-// @streamdown/math 默认不解析 `$...$` 行内公式，导致客户消息里块级 `$$...$$`
-// 能渲染而 `$c(\mathbf{r})$` 会原样显示；聊天消息需要兼容常见 Markdown/LaTeX 输出。
+// @streamdown/math does not parse `$...$` inline formulas by default, so client messages can render block `$$...$$`
+// but show `$c(\mathbf{r})$` literally. Chat messages need to support common Markdown/LaTeX output.
 const messageMathPlugin = createMathPlugin({ singleDollarTextMath: true });
 
 function disableSingleTilde(plugin: Pluggable): Pluggable {
@@ -427,16 +421,16 @@ const messageCjkPlugin: typeof cjk = {
 };
 const streamdownPlugins = { cjk: messageCjkPlugin, code, math: messageMathPlugin, mermaid };
 const messageLinkSafety = { enabled: false } as const;
-// `decoration-dashed` 会把原有的细圆点下划线绘制成短线段；这里只改变下划线的
-// 出现时机，继续使用 `dotted` 保留原视觉形态。
+// `decoration-dashed` turns the existing fine dotted underline into short dashes; this only changes when the underline
+// appears, while keeping `dotted` to preserve the original visual style.
 const messageLinkClassName =
   "wrap-anywhere text-ui-base font-medium text-icon-blue no-underline decoration-dotted underline-offset-4 hover:underline";
-// `items-center` 让 inline-flex 使用浏览器合成的基线，固定 top 偏移又会随平台字体产生漂移。
-// 改为由文字子项提供真实 baseline；图标只在链接自身行盒内居中，桌面和移动 Web 共用同一语义。
+// `items-center` makes inline-flex use the browser-computed baseline, while a fixed top offset drifts with platform fonts.
+// Let the text child provide the real baseline; center the icon only within the link’s own line box so desktop and mobile Web share the same behavior.
 const messageFileLinkClassName =
   "inline-flex max-w-full items-baseline gap-1 align-baseline text-icon-blue text-ui-base no-underline decoration-dotted underline-offset-4 hover:underline";
-// Markdown 之前继承紧凑 UI 字号，正文、标题、链接和表格缺少独立的阅读层级。
-// 这里显式定义字号层级，并让标题跟随 UI 字号 Token 缩放，确保聊天、预览和工具面板复用 MessageResponse 时保持一致。
+// Markdown previously inherited the compact UI font size, leaving body text, headings, links, and tables without their own reading hierarchy.
+// Define an explicit type scale and let headings follow the UI font-size token so chat, preview, and tool panels look consistent when they reuse MessageResponse.
 const messageMarkdownHeadingClassNames = {
   h1: "mt-6 mb-4 text-ui-xl font-semibold",
   h2: "mt-6 mb-4 text-ui-lg font-semibold",
@@ -607,8 +601,8 @@ function normalizeSingleDollarMathInText(text: string): string {
     const content = text.slice(index + 1, closingIndex);
 
     if (isLikelyCompactCurrencyRangeText(text, closingIndex, content)) {
-      // `$5-$10` 这类紧凑价格区间的第二个 `$` 会被误当成公式闭合符。
-      // 只转义当前 `$`，让整段继续按普通文本渲染并保留美元符号。
+      // In a compact price range such as `$5-$10`, the second `$` can be mistaken for a math delimiter.
+      // Escape only the current `$` so the whole range stays plain text and keeps its dollar signs.
       output += "\\$";
       continue;
     }
@@ -619,8 +613,8 @@ function normalizeSingleDollarMathInText(text: string): string {
       continue;
     }
 
-    // 开启 singleDollarTextMath 后，`$5 ... $10` / `$HOME ... $PATH`
-    // 这类普通文本会被误当成公式。只转义当前 `$`，让后续 `$` 继续按原文本扫描。
+    // With singleDollarTextMath enabled, plain text such as `$5 ... $10` / `$HOME ... $PATH`
+    // can be mistaken for math. Escape only the current `$` so later `$` characters are scanned as original text.
     output += "\\$";
   }
 
@@ -698,10 +692,10 @@ function normalizeMessageSingleDollarMath(markdown: string): string {
 }
 
 export function resolveMessageStreamdownMode(renderStreaming: boolean): MessageStreamdownMode {
-  // 生产包里有用户命中 React #185，堆栈落在 MessageResponse -> Streamdown。
-  // 之前完成态长消息也会为了分块缓存走 streaming mode，Streamdown 内部 block state
-  // 在某些历史 markdown 上会反复同步状态。现在只有真实流式输出进入 streaming，
-  // 历史/完成态内容固定走 static，避免重新挂载时再次参与更新循环。
+  // A production build hit React #185 for a user, with the stack ending at MessageResponse → Streamdown.
+  // Previously, completed long messages also entered streaming mode to use chunked caching. Streamdown’s internal block state
+  // could repeatedly synchronize on some historical Markdown. Only actual streaming output now uses streaming mode;
+  // historical/completed content always uses static mode, avoiding another update loop when remounted.
   return renderStreaming ? "streaming" : "static";
 }
 
@@ -737,7 +731,7 @@ class MessageResponseMarkdownBoundary extends Component<
     if (this.state.error) {
       return (
         <div className={this.props.className}>
-          {/* 单条 markdown 渲染异常时降级为纯文本，避免错误继续冒泡到会话区边界。*/}
+          {/* If one Markdown item fails to render, fall back to plain text so the error does not bubble up to the conversation boundary. */}
           {this.props.fallbackText}
         </div>
       );
@@ -749,9 +743,9 @@ class MessageResponseMarkdownBoundary extends Component<
 
 function formatMarkdownFileLinkTargetHref(href: string): string {
   const parsedTarget = parseMarkdownFileLinkTarget(href);
-  // Windows 盘符的 `C:` 会被 rehype-harden 当成未知 URI scheme，
-  // 在自定义文件链接 renderer 运行前直接替换成 `[blocked]`。临时补成 `/C:/...`
-  // 让安全层按普通 path 放行；resolveMarkdownFileLink 会在 Windows Host 上对称还原。
+  // Windows drive prefixes like `C:` are treated by rehype-harden as unknown URI schemes,
+  // and replaced with `[blocked]` before the custom file-link renderer runs. Temporarily prefix with `/C:/...`
+  // so the security layer allows it as a regular path; resolveMarkdownFileLink reverses this on a Windows Host.
   const path = windowsDriveAbsolutePathPattern.test(parsedTarget.path)
     ? `/${parsedTarget.path.replaceAll("\\", "/")}`
     : fileUrlProtocolPattern.test(href)
@@ -786,12 +780,12 @@ function shouldRewriteMarkdownFileLinkHref(href: string): boolean {
     !parsedTarget.path.startsWith("#") &&
     !parsedTarget.path.startsWith("../") &&
     !/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(parsedTarget.path) &&
-    // 越界路径若先经过 rehype rewrite/harden，`..` 可能被 URL 归一后丢失，
-    // 点击层就无法还原原始逃逸意图；必须在改写前复用相对路径词法边界校验。
+    // If an out-of-bounds path passes through rehype rewrite/harden first, URL normalization may remove `..`,
+    // and the click handler can no longer recover the original traversal intent. Reuse the relative-path lexical boundary check before rewriting.
     normalizeWorkspaceRelativeFilePath(parsedTarget.path) !== null &&
-    // `[README.md](README.md)` 这类裸文件名链接以前不会在 harden 前改写，
-    // Streamdown 会把它当成不安全链接渲染成 `[blocked]`。有扩展名的裸路径按工作区文件处理，
-    // 先规整成 `./README.md`，再交给统一的文件链接打开逻辑解析。
+    // Bare filename links such as `[README.md](README.md)` were not rewritten before hardening,
+    // so Streamdown treated them as unsafe and rendered `[blocked]`. Treat bare paths with an extension as workspace files,
+    // normalize them to `./README.md`, and pass them to the shared file-link opening logic.
     (parsedTarget.path.includes("/") ||
       parsedTarget.path.includes("\\") ||
       hasFileExtension(getPathLeaf(parsedTarget.path)))
@@ -808,8 +802,8 @@ function rewriteLocalFileMarkdownTargetsRehypePlugin() {
         typeof node.properties?.[targetProperty] === "string" &&
         shouldRewriteMarkdownFileLinkHref(node.properties[targetProperty])
       ) {
-        // markdown 图片和链接一样会先经过 rehype-harden。`file://` 会被安全层硬拦，
-        // 裸文件名又会被当成未知 URL；这里在 harden 前统一规整成本地路径/相对路径。
+        // Markdown images, like links, pass through rehype-harden first. `file://` is blocked outright by the hardening layer,
+        // while a bare filename is treated as an unknown URL; normalize both to local/relative paths before hardening.
         node.properties[targetProperty] = formatMarkdownFileLinkTargetHref(
           node.properties[targetProperty],
         );
@@ -833,8 +827,8 @@ const messageDefaultRemarkPlugins: PluggableList = Object.entries(defaultRemarkP
       return plugin;
     }
 
-    // remark-gfm 与 Streamdown CJK 删除线扩展都默认开启 singleTilde，
-    // 后者还会覆盖前者的解析结果；两处必须同时关闭，才能让 `~text~` 按 GFM 规范保留原文。
+    // remark-gfm and Streamdown’s CJK strikethrough extension both enable singleTilde by default,
+    // and the latter overrides the former’s result. Disable it in both places so `~text~` remains literal as required by GFM.
     return disableSingleTilde(plugin);
   },
 );
@@ -849,9 +843,7 @@ function resolveMessageCodeTheme(
       : codePreviewSettings.lightTheme;
   }
 
-  return theme === "dark" || theme === "zai-dark"
-    ? codePreviewSettings.darkTheme
-    : codePreviewSettings.lightTheme;
+  return theme === "dark" ? codePreviewSettings.darkTheme : codePreviewSettings.lightTheme;
 }
 
 export function buildMessageStreamdownRenderKey(params: {
@@ -866,8 +858,8 @@ export function buildMessageStreamdownRenderKey(params: {
   workspaceRemoteSessionId?: string;
   wrapLongLines: boolean;
 }): string {
-  // streaming/static 只是解析模式，不应参与 React key；否则流式状态抖动会卸载
-  // 整棵 markdown 子树，让已显示的正文重新触发淡入动画。
+  // streaming/static is only a parsing mode and must not affect the React key; otherwise a streaming-state change would unmount
+  // the entire Markdown subtree and replay the fade-in animation for already displayed text.
   return [
     params.sessionId ?? "",
     params.attachmentReaderEpoch ?? 0,
@@ -938,8 +930,8 @@ export function buildMessageFileLinkTarget(input: {
   workspaceIdentity?: string;
   workspaceRemoteSessionId?: string;
 }): MessageFileLinkTarget {
-  // 文件名是否带扩展名不能代表文件系统类型；env、hosts、config 等无扩展名文件
-  // 过去会被误判为目录。这里只保留显式尾随斜杠作为图标提示，打开方式必须再 stat。
+  // A filename’s extension does not identify its filesystem type; extensionless files such as env, hosts, and config
+  // were previously mistaken for directories. Use an explicit trailing slash only as an icon hint; stat again before opening.
   const pathKind = isExplicitDirectoryMarkdownLink(input.path, input.href)
     ? ("directory" as const)
     : undefined;
@@ -973,8 +965,8 @@ export async function openMessageFileLinkInEditor({
   remoteTarget?: OpenInEditorOptions["remoteTarget"];
   statFile: (params: { path: string }) => Promise<Pick<FileStat, "type">>;
 }) {
-  // Markdown 渲染层无法从名称可靠判断文件/目录。这里在动作发生时通过
-  // 当前 workspace scope 的 file service 取真实类型，stat 失败时不会调用本机应用。
+  // The Markdown renderer cannot reliably infer whether a name is a file or directory. When the action occurs,
+  // use the file service for the current workspace scope to check the real type; if stat fails, do not call a local app.
   const fileStat = await statFile({ path: fileLink.path });
   return openInEditor(editorId, fileLink.path, {
     pathKind: fileStat.type,
@@ -1013,8 +1005,8 @@ function MessageExternalLink({
   const platform = useOptionalPlatform();
   const handleOpen = useCallback(
     (options: { forceExternal?: boolean; forceInApp?: boolean } = {}) => {
-      // 交互语义：本机/私网白名单只决定左键单击的默认目标；右键菜单两项各自强制一个目标。
-      // 菜单「打开」过去复用左键默认行为，公网链接（如飞书文档）两项都会跳系统浏览器。
+      // Interaction behavior: local/private-network allowlists determine the default target for a left click; each context-menu item forces its own target.
+      // The menu’s “Open” previously reused left-click default behavior, so both menu items opened public links (such as Feishu docs) in the system browser.
       const target = resolveMessageLinkOpenTarget({ href, ...options });
       logger.debug("[MessageExternalLink] 打开 Markdown 外链", {
         forceExternal: Boolean(options.forceExternal),
@@ -1024,8 +1016,8 @@ function MessageExternalLink({
       });
 
       if (target === "app-browser" || !platform) {
-        // Share/普通 Web 没有 Desktop PlatformProvider；仍交给调用方的安全 URL handler，
-        // 避免 MessageResponse 因缺少宿主上下文整棵 Markdown 降级为纯文本。
+        // Share/regular Web has no Desktop PlatformProvider. Keep using the caller’s safe URL handler so missing host context
+        // does not make MessageResponse downgrade the entire Markdown tree to plain text.
         onOpenExternalUrl(href);
         return;
       }
@@ -1058,8 +1050,8 @@ function MessageExternalLink({
           )}
           title={href}
           {...props}
-          // markdown 外链之前被统一降级成 span，用户看得到链接却点不开。
-          // 这里仍阻断原生 a 标签跳转，但不再把所有 http/https 都默认送进内置浏览器。
+          // Markdown external links used to become spans across the board, so users could see but not open them.
+          // Continue blocking native <a> navigation, but do not send every http/https URL to the built-in browser by default.
           onClick={handleClick}
         >
           {children}
@@ -1352,11 +1344,11 @@ export const MessageResponse = memo(
     const streamdownMode = resolveMessageStreamdownMode(renderStreaming);
     const messageRemarkPlugins = useMemo<PluggableList>(
       () => [
-        // 显式传 remarkPlugins 会覆盖 Streamdown 默认插件；
-        // citation 必须和默认 GFM 插件一起传入，否则表格会退化成普通段落。
+        // Passing remarkPlugins explicitly replaces Streamdown's default plugins;
+        // citation must be passed with the default GFM plugin or tables degrade into ordinary paragraphs.
         ...messageDefaultRemarkPlugins,
-        // Windows 绝对路径链接里的 `\.` 会在 remark 解析期被当成标点转义吃掉
-        // rehype 阶段已经看不到原文。这条还原必须无条件生效，不能挂在 citation 开关下。
+        // In Windows absolute-path links, `\.` is consumed as punctuation escaping during remark parsing,
+        // so the original text is no longer available during rehype. This restoration must always run, not depend on the citation toggle.
         windowsFileLinkEscapeRemarkPlugin,
         ...(renderZCodeFileCitations && workspacePath
           ? [createZCodeFileCitationRemarkPlugin(workspacePath, workspaceHomePath)]
@@ -1562,8 +1554,8 @@ export const MessageResponse = memo(
             <CodeBlock
               className="my-4 border border-border bg-card"
               code={codeText}
-              // 流式消息里的代码围栏会被 Streamdown 反复拆分/重挂载。
-              // 高亮等消息完成后再启动，避免 async highlighter 和消息流更新叠加触发 React #185。
+              // Streamdown repeatedly splits/remounts code fences in streaming messages.
+              // Start highlighting after the message completes to avoid async-highlighter work overlapping message updates and triggering React #185.
               enableSyntaxHighlighting={!renderStreaming}
               fontSizePx={codePreviewSettings.fontSizePx}
               language={language}
@@ -1620,34 +1612,33 @@ export const MessageResponse = memo(
         <Streamdown
           key={streamdownRenderKey}
           className={responseClassName}
-          // Streamdown 自身是 memo，比较函数不看 components。app light/dark 切换时
-          // codeBlockTheme 只存在于自定义 code renderer 闭包里，若不改 key，当前 task 已挂载的
-          // markdown 代码块不会重新执行 renderer；切换 task 触发重建后才会恢复正确主题。
-          // Artifact reader/session 同样只存在于 img renderer 闭包里。权限上下文变化时必须重挂载
-          // markdown 子树，释放旧 blob URL，并确保后续读取只使用当前会话的 reader。
-          // 已结束消息之前也一直走 streaming mode，会触发 remend 对正文做“未闭合 markdown 补全”。
-          // 遇到 `./src/**/*` 这类代码片段时，remend 会误判成未闭合粗体并在末尾补出 `**`。
-          // 性能优化曾让长历史消息也启用 block streaming 模式复用分块缓存；虚拟滚动/懒渲染会
-          // 频繁重挂载历史消息，生产上遇到部分 markdown 会在 Streamdown 内部触发 React #185。
-          // 这里重新收敛为：只有真实流式输出走 streaming 解析，完成态一律 static。
+          // Streamdown itself is memoized, and its comparison function ignores components. When the app switches between light/dark,
+          // codeBlockTheme exists only in the custom code-renderer closure. Without changing the key, mounted Markdown blocks in the
+          // current task do not rerun the renderer; they regain the correct theme only after switching tasks remounts them.
+          // The artifact reader/session also exists only in the img-renderer closure. Remount the Markdown subtree when permission
+          // context changes to release old blob URLs and ensure subsequent reads use only the current session's reader.
+          // Completed messages previously still used streaming mode, which let remend "complete" unfinished Markdown in the body.
+          // For code such as `./src/**/*`, remend could mistake it for unclosed bold text and append `**`.
+          // A performance optimization also enabled block streaming for long history messages to reuse chunk caches; virtual scrolling
+          // and lazy rendering frequently remounted those messages, and some Markdown triggered React #185 inside Streamdown in production.
+          // Keep streaming parsing only for actual streaming output; completed messages always use static parsing.
           mode={streamdownMode}
           components={messageComponents}
           parseIncompleteMarkdown={streaming}
-          // Streamdown 内置 code renderer 的 highlighted-body 会在代码高亮结果和 raw fallback
-          // 之间反复 setState，部分历史消息恢复时会触发 React #185。这里保留 markdown 解析能力，
-          // 但代码块改走本项目自己的稳定 CodeBlock 渲染器。
-          // 说明：这里继续关掉 Streamdown 默认链接行为，统一改由上面的自定义 a 渲染器接管。
-          // 这样工作区文件链接和 http/https 外链都能走我们自己的安全分流，其它协议仍保持不可点击。
+          // Streamdown's built-in code renderer repeatedly sets state between highlighted-body and raw fallback,
+          // which can trigger React #185 when some history messages restore. Keep Markdown parsing but render code blocks with this project's stable CodeBlock renderer.
+          // Keep Streamdown's default link behavior disabled; the custom a renderer above handles links consistently.
+          // This lets workspace-file links and http/https links use our security routing while other protocols remain unclickable.
           linkSafety={messageLinkSafety}
           plugins={streamdownPlugins}
           controls={STREAMDOWN_CONTROLS}
-          // Streamdown 的 harden 插件会在自定义 a renderer 之前把 file:// 标成 [blocked]。
-          // 这里先把 file URI 规整成本地路径 href，让后续 resolveMarkdownFileLink 统一走预览/文件树打开逻辑。
+          // Streamdown's harden plugin marks file:// as [blocked] before the custom a renderer runs.
+          // Normalize file URIs to local-path hrefs here so resolveMarkdownFileLink can use the shared preview/file-tree opening logic.
           rehypePlugins={messageRehypePlugins}
           remarkPlugins={messageRemarkPlugins}
           shikiTheme={shikiTheme}
-          // markdown 正文流式淡入会在重渲染时让历史文本整段重新闪烁。
-          // 这里保留 streaming 解析模式，但彻底关闭 Streamdown/正文 rehype 动画。
+          // Fading in streaming Markdown causes the entire history text to flash again on rerender.
+          // Keep streaming parsing mode, but disable Streamdown/body rehype animations entirely.
           animated={false}
           isAnimating={false}
         >

@@ -1,4 +1,4 @@
-/* oxlint-disable max-lines -- 热力图在同一文件内维护每日、每周、累计三种展示计算，拆分会割裂共享列模型。 */
+/* oxlint-disable max-lines -- The heatmap maintains daily, weekly, and total display calculations together; splitting them would fragment the shared column model. */
 import { useState } from "react";
 import type { AppUsageHeatmapCell, AppUsageHeatmapWeek } from "@zcode/shared";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs.js";
@@ -23,8 +23,8 @@ const DAY_MS = 86_400_000;
 const HEATMAP_VISIBLE_MONTH_LABEL_COUNT = 12;
 const TOKEN_ACTIVITY_MODES = ["daily", "weekly", "cumulative"] as const;
 const HEATMAP_GRID_STYLE = {
-  // 固定 14px 最小列宽加 4px 间隔会让 52 周网格超过容器，违背一次性完整展示的产品语义。
-  // 列宽改回可收缩的 1fr，桌面、Web 和手机端都由同一容器宽度等分，不再产生第二个横向滚动区。
+  // A fixed 14px minimum column width plus 4px gaps makes the 52-week grid wider than its container, violating the product's full-at-once display semantics.
+  // Use shrinkable 1fr columns again so Desktop, Web, and mobile share the same container-width distribution without a second horizontal scroller.
   gridTemplateColumns: `repeat(${HEATMAP_DISPLAY_WEEK_COUNT}, minmax(0, 1fr))`,
 };
 
@@ -149,8 +149,8 @@ function buildDisplayHeatmapWeeks(weeks: AppUsageHeatmapWeek[]): AppUsageHeatmap
   const startDayIndex =
     endWeekStartDayIndex - (HEATMAP_DISPLAY_WEEK_COUNT - 1) * HEATMAP_DAYS_PER_WEEK;
 
-  // agent 只返回近 30 天真实数据会让热力图缩水；这里补齐展示用 0 格，
-  // 同时按自然周对齐，保证所有范围的第一行都是周日。
+  // Returning only 30 days of real data from the agent would shrink the heatmap. Fill in zero-valued display cells
+  // and align by calendar week so the first row begins on Sunday for every range.
   return Array.from({ length: HEATMAP_DISPLAY_WEEK_COUNT }, (_, weekIndex) => ({
     weekIndex,
     days: Array.from({ length: HEATMAP_DAYS_PER_WEEK }, (_, dayOffset) => {
@@ -179,8 +179,8 @@ function filledRowsForValue(value: number, max: number): number {
 }
 
 function resolveHeatmapColumnMonthDate(week: AppUsageHeatmapWeek): string {
-  // 用周日判断月份会把非周日的每月 1 日推迟到下一周，月份文案最多错开一列。
-  // 周列包含 1 日时优先归入新月份，让文案锚定到 1 日所在列；其余列沿用周日起始月份。
+  // Using Sunday to determine the month pushes a month's first day to the next week when it is not Sunday, shifting the month label by up to one column.
+  // Prefer the new month for a week column containing the 1st so the label anchors to that column; use the week's starting month for other columns.
   const firstDayOfMonth = week.days.find((cell) => cell?.date.endsWith("-01"));
   return firstDayOfMonth?.date ?? week.days[0]?.date ?? week.days.find(Boolean)?.date ?? "";
 }
@@ -200,6 +200,7 @@ function buildDailyHeatmapColumns(
       const displayCell = cell ?? createEmptyHeatmapCell(fallbackDate);
       return {
         key: `daily-${displayCell.date}`,
+        ...(cell ? { date: cell.date } : {}),
         level: displayCell.level,
         hasUsage: displayCell.totalTokens > 0,
         columnHover: false,
@@ -306,8 +307,8 @@ function buildHeatmapMonthLabels(
     }
   }
 
-  // 52 个自然周可能横跨 13 个月，直接渲染会在底部同时出现去年和今年的同月文案。
-  // 保留多余起始月份的 span 以维持月份与周列对齐，只隐藏其文字，底部始终最多显示最近 12 个月。
+  // 52 calendar weeks can span 13 months, so rendering all labels can show the same month for both last year and this year at the bottom.
+  // Keep extra leading-month spans to align month labels with week columns, but hide their text so at most the latest 12 months appear.
   const hiddenLabelCount = Math.max(0, labels.length - HEATMAP_VISIBLE_MONTH_LABEL_COUNT);
   for (let index = 0; index < hiddenLabelCount; index += 1) {
     const label = labels[index];
@@ -324,12 +325,15 @@ export function UsageHeatmap({
   intl,
   weeks,
   countMetric = "turns",
+  onSelectDate,
 }: {
   locale: string;
   intl: ReturnType<typeof useZCodeIntl>["intl"];
   weeks: AppUsageHeatmapWeek[];
-  /** Coding Plan 远端只提供 mcpCalls；App Usage 才提供真实消息轮数。 */
+  /** Remote Coding Plan provides only mcpCalls; only App Usage provides actual message-turn counts. */
   countMetric?: HeatmapCountMetric;
+  /** Drill into one day; only the daily view offers it. */
+  onSelectDate?: (date: string) => void;
 }) {
   const [mode, setMode] = useState<TokenActivityMode>("daily");
   const displayWeeks = buildDisplayHeatmapWeeks(weeks);
@@ -368,7 +372,12 @@ export function UsageHeatmap({
         <div>
           <div className="grid w-full gap-x-0.5" style={HEATMAP_GRID_STYLE}>
             {displayColumns.map((column) => (
-              <HeatmapColumn key={column.key} column={column} mode={mode} />
+              <HeatmapColumn
+                key={column.key}
+                column={column}
+                mode={mode}
+                onSelectDate={mode === "daily" ? onSelectDate : undefined}
+              />
             ))}
           </div>
           <div className="mt-3 grid w-full gap-x-0.5" style={HEATMAP_GRID_STYLE}>

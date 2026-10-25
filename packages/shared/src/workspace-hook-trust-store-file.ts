@@ -1,25 +1,22 @@
 import { z } from "zod";
 
 /**
- * Workspace Hook Trust store 文件格式（`workspace-hook-trust-v1.json`）的
- * 单一权威 schema。
+ * Single authoritative schema for the Workspace Hook Trust store format (`workspace-hook-trust-v1.json`).
  *
- * 完整 schema 不能只存在于 contracts（CLI 侧，zod3）：
- * services 层无法依赖 apps 下的包，只好手写局部字段校验（只看
- * workspaceIdentity 与 digest 形状）。结果同一份"JSON 合法但结构非法"的
- * store 文件，runtime/adapters 判 corrupt（fail-closed 全部阻断），services
- * 却把其中的 digest 当作已信任展示——UI 显示"已信任"、执行层永远拒绝，
- * 且无法通过统一路径诊断。信任存储是权限边界，所有消费者必须对同一
- * 文件得出同一结论，因此 schema 下沉到 shared 作为单源，contracts 侧
- * re-export 本模块保持既有 import 路径兼容。
+ * The complete schema cannot live only in contracts (CLI side, zod3):
+ * the services layer cannot depend on packages under apps, so it would have to hand-write partial field checks (only for
+ * workspaceIdentity and digest shape). The same store file with "valid JSON but invalid structure" would then be deemed corrupt by
+ * runtime/adapters (fail-closed, blocking everything), while services would display its digest as trusted — the UI would show "trusted" while the execution layer always rejects,
+ * with no unified path for diagnosis. Trust storage is a permission boundary, so every consumer must reach the same conclusion for the same
+ * file. Therefore, the schema moves to shared as the single source of truth, and contracts re-exports this module to preserve existing import paths.
  *
- * 注意：contracts 与本模块分属 zod3 / zod4 两个实例，本 schema 不得被
- * contracts 内部的 zod3 schema 组合引用（当前仅 re-export，无组合）。
+ * Note: contracts and this module use separate zod3/zod4 instances. This schema must not be composed into
+ * a zod3 schema inside contracts (currently it is only re-exported, not composed).
  */
 
 export const WORKSPACE_HOOK_TRUST_STORE_SCHEMA_VERSION = 1 as const;
 
-/** 与 contracts 的 workspaceHookEventNameSchema 保持一致（7 个现有事件）。 */
+/** Keep in sync with the contracts workspaceHookEventNameSchema (10 existing events). */
 const workspaceHookEventNameSchema = z.enum([
   "SessionStart",
   "UserPromptSubmit",
@@ -28,6 +25,9 @@ const workspaceHookEventNameSchema = z.enum([
   "PostToolUse",
   "PostToolUseFailure",
   "Stop",
+  "PreCompact",
+  "PostCompact",
+  "SessionEnd",
 ]);
 
 const nonEmptyStringSchema = z.string().trim().min(1);
@@ -80,9 +80,9 @@ export type WorkspaceHookTrustStoreParseResult =
   | { status: "invalid" };
 
 /**
- * 解析 trust store 文件内容。JSON 语法错误与 schema 校验失败统一归为
- * `invalid`——两者在消费语义上等价：文件不可信，必须 fail-closed，
- * 不得返回任何部分结果。
+ * Parse trust store file contents. JSON syntax errors and schema validation failures both map to
+ * `invalid`; they have the same meaning to consumers: the file is untrusted, so fail closed and
+ * return no partial results.
  */
 export function parseWorkspaceHookTrustStoreContent(
   content: string,

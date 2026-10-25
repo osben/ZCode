@@ -371,6 +371,15 @@ export function shouldExposeSessionEventToProtocol(event: SessionEvent): boolean
     return false;
   }
 
+  if (
+    event.type === SessionEventType.ExternalAgentConfigUpdated ||
+    event.type === SessionEventType.ExternalAgentStatus
+  ) {
+    // ACP agent selects and stall status (specs/acp-agent-runtime.md "S6") are projected only by v4
+    // (config.externalAgentConfig, control.externalAgentStall); the v3 mapper has no consumer for them.
+    return false;
+  }
+
   if (event.type !== SessionEventType.ModelStreaming) {
     return true;
   }

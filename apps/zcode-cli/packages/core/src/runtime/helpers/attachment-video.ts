@@ -1,6 +1,6 @@
-// video 附件共用的 mime 推断与大小校验。
-// Read 工具（read-video.ts）与 prompt 附件解析（attachments.ts）都从这里取，
-// 保证扩展名→mime 的映射只有一份事实；mime 枚举的唯一事实源在 contracts（ReadVideoOutput）。
+// Shared MIME inference and size validation for video attachments.
+// Both the Read tool (read-video.ts) and prompt-attachment parser (attachments.ts) use this module,
+// keeping one extension-to-MIME mapping; contracts (ReadVideoOutput) remains the single source for MIME enums.
 import type { ReadVideoOutput } from "@zcode/contracts";
 import { base64PayloadByteLength, isStrictBase64Payload } from "./attachment-data-url.js";
 
@@ -15,7 +15,7 @@ const VIDEO_INPUT_MIME_BY_EXTENSION: Record<string, VideoInputMimeType> = {
   ".avi": "video/x-msvideo",
 };
 
-/** 按扩展名推断视频 mime；非受支持视频扩展名返回 undefined。 */
+/** Infers video MIME from the extension; returns undefined for unsupported video extensions. */
 export function inferVideoMimeFromPath(path: string): VideoInputMimeType | undefined {
   const lower = path.toLowerCase();
   for (const [extension, mime] of Object.entries(VIDEO_INPUT_MIME_BY_EXTENSION)) {
@@ -30,8 +30,8 @@ export function parseInlineVideoDataUrl(
   const match = /^data:([^;,]+);base64,(.*)$/i.exec(dataUrl);
   const mediaType = match?.[1]?.toLowerCase();
   const payload = match?.[2];
-  // video inline 过去只检查宽松 data URL header，缺少 base64 标记、
-  // 非法正文和非 video MIME 会继续进入持久化或通用文本分支。
+  // Inline video previously checked only a permissive data URL header; missing base64 markers,
+  // invalid bodies, and non-video MIME types could continue into persistence or the generic-text path.
   if (
     !mediaType?.startsWith("video/") ||
     payload === undefined ||

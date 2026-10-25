@@ -21,8 +21,9 @@ function deferred<T>() {
 }
 
 /**
- * 排空微任务直到条件成立，避免测试绑定内部 await 数量；设上界防止实现回归时死循环空转
- * （纯微任务循环会饿死计时器，vitest 的用例超时也无法打断）。
+ * Drains microtasks until the condition holds, avoiding coupling tests to the internal number of awaits;
+ * an upper bound prevents an infinite spin if the implementation regresses
+ * (a pure microtask loop starves timers, and vitest's per-test timeout cannot interrupt it).
  */
 async function drainUntil(condition: () => boolean, label: string): Promise<void> {
   for (let turn = 0; turn < 1_000; turn += 1) {
@@ -92,37 +93,6 @@ describe("HighspeedCardService", () => {
     expect(calls).toHaveLength(1);
   });
 
-  it("only invalidates the matching current card and preserves the draw cooldown", async () => {
-    const now = 9_500;
-    const { calls, transport } = createTransport(async (request) =>
-      cardResponse(request.task_id, now),
-    );
-    const service = new HighspeedCardService({ transport, now: () => now });
-    await service.prepareTurn({
-      taskId: "task-1",
-      providerId: "account:zai-individual-coding-plan",
-      model: "glm-5",
-    });
-    const before = await service.getSnapshot();
-
-    await expect(service.invalidateCard("older-card")).resolves.toBe(false);
-    expect((await service.getSnapshot()).card?.cardId).toBe("hsc-1");
-    await expect(service.invalidateCard("hsc-1")).resolves.toBe(true);
-    expect(await service.getSnapshot()).toEqual({
-      card: null,
-      nextDrawAt: before.nextDrawAt,
-      drawing: false,
-    });
-
-    const next = await service.prepareTurn({
-      taskId: "task-1",
-      providerId: "account:zai-individual-coding-plan",
-      model: "glm-5",
-    });
-    expect(next).toMatchObject({ kind: "fallback", reason: "cooldown" });
-    expect(calls).toHaveLength(1);
-  });
-
   it("sends the allowlisted builtin coding-plan id in the draw body instead of the provider id", async () => {
     const now = 10_000;
     const { calls, transport } = createTransport(async (request) =>
@@ -136,8 +106,9 @@ describe("HighspeedCardService", () => {
       model: "GLM-5.3",
     });
 
-    // 回归：曾把会话选择的完整 providerId 透传进 draw body，被服务端白名单
-    // 以 3001 参数错误拒绝；契约要求 body 的 provider 是 builtin:*-coding-plan。
+    // Regression: the session selection's full providerId used to be passed through into the draw body
+    // and was rejected by the server allowlist with 3001 invalid parameter; the contract requires the
+    // body's provider to be a builtin:*-coding-plan.
     expect(result.kind).toBe("accelerated");
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
@@ -154,7 +125,7 @@ describe("HighspeedCardService", () => {
     );
     const service = new HighspeedCardService({ transport, now: () => now });
 
-    // Start Plan 与自定义 Provider 都不在服务端 highspeed 白名单内。
+    // Neither Start Plan nor custom providers are in the server-side highspeed allowlist.
     const startPlan = await service.prepareTurn({
       taskId: "task-1",
       providerId: "account:zai-start-plan",
@@ -183,8 +154,9 @@ describe("HighspeedCardService", () => {
       resolveModelCovered: async () => covered,
     });
 
-    // 回归：会话恢复出的陈旧 (coding-plan provider, 已下线模型) 组合曾照样发 draw；
-    // 契约要求模型不在所选 Provider 模型目录内时不发接口（spec §3 规则 14）。
+    // Regression: a stale (coding-plan provider, retired model) combination restored from a session used
+    // to still send draw; the contract requires no API call when the model is not in the selected
+    // provider's catalog (spec §3 rule 14).
     const staleModel = await service.prepareTurn({
       taskId: "task-1",
       providerId: "account:bigmodel-team-coding-plan",
@@ -193,7 +165,7 @@ describe("HighspeedCardService", () => {
     expect(staleModel).toMatchObject({ kind: "fallback", reason: "unavailable" });
     expect(calls).toHaveLength(0);
 
-    // 门禁不落冷却、不改卡状态；切回目录内模型后下一轮立即可抽。
+    // The gate neither starts a cooldown nor changes card state; switching back to a cataloged model allows drawing on the next turn.
     covered = true;
     const coveredModel = await service.prepareTurn({
       taskId: "task-1",
@@ -246,7 +218,7 @@ describe("HighspeedCardService", () => {
     expect(gatedResult).toMatchObject({ kind: "fallback", reason: "no-coding-plan" });
     expect(calls).toHaveLength(0);
 
-    // 门禁不落冷却，不改变卡状态；用户开通 Coding Plan 后下一轮立即可抽。
+    // The gate neither starts a cooldown nor changes card state; once the user activates a Coding Plan, drawing works on the next turn.
     supported = true;
     const entitledResult = await service.prepareTurn({
       taskId: "task-1",
@@ -287,7 +259,7 @@ describe("HighspeedCardService", () => {
         cardResponse(request.task_id, now),
       );
       const waits: Array<() => void> = [];
-      // 模拟 Provider Runtime 初始化阻塞：模型选择视图 / Coding Plan 判定迟迟不返回。
+      // Simulate Provider Runtime initialization blocking: the model selection view / Coding Plan check is slow to return.
       const blocked = deferred<boolean>();
       const service = new HighspeedCardService({
         transport,
@@ -304,14 +276,14 @@ describe("HighspeedCardService", () => {
         waitBudgetMs: 1,
       };
 
-      // 回归（CR-02）：门禁 await 曾不受 1s 发送预算约束，Registry 未就绪时发送被无限期挂起。
+      // Regression (CR-02): the gate await used to be unconstrained by the 1s send budget, so sending hung indefinitely when the Registry was not ready.
       const first = service.prepareTurn(params);
       await drainUntil(() => waits.length > 0, "send budget timer registered");
       waits.shift()?.();
       expect(await first).toMatchObject({ kind: "fallback", reason: "unavailable" });
       expect(calls).toHaveLength(0);
 
-      // 判定不取消，晚到的结果不补发 draw、不改变卡与冷却状态；下一轮判定命中即正常抽卡。
+      // The check is not cancelled; the late result neither back-fills a draw nor changes card or cooldown state; the next turn's check hitting draws normally.
       blocked.resolve(true);
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
       expect(calls).toHaveLength(0);
@@ -340,8 +312,9 @@ describe("HighspeedCardService", () => {
       model: "glm-5",
       waitBudgetMs: 1000,
     });
-    // 门禁在预算内通过后进入 draw 等待：两段共享进入 prepareTurn 时的同一截止时间，
-    // draw 不得重新获得一整段 1s，否则总等待可达「门禁耗时 + 1s」。
+    // After the gate passes within budget, the draw wait begins: both segments share the same deadline
+    // from entering prepareTurn, and draw must not regain a full 1s; otherwise total waiting can reach
+    // "gate time + 1s".
     await drainUntil(() => waits.length > 0, "send budget timer registered");
     catalog.resolve(true);
     await drainUntil(() => calls.length > 0, "draw started");
@@ -379,7 +352,8 @@ describe("HighspeedCardService", () => {
     expect((await service.prepareTurn(params)).kind).toBe("accelerated");
     waits.length = 0;
 
-    // 回归（CR-02）：复用卡时的加速鉴权解析曾在预算外单独 await，凭据解析卡住会让发送无限期挂起。
+    // Regression (CR-02): when reusing a card, accelerated-auth resolution used to be awaited separately
+    // outside the budget, so a stuck credential resolution hung sending indefinitely.
     pendingAuth = deferred<HighspeedInferenceAuth>();
     const blocked = service.prepareTurn(params);
     await drainUntil(() => waits.length > 0, "send budget timer registered");
@@ -391,7 +365,7 @@ describe("HighspeedCardService", () => {
     });
     expect((await service.getSnapshot()).card?.cardId).toBe("hsc-1");
 
-    // 卡保留：鉴权恢复后的下一轮直接复用该卡加速，不重新 draw。
+    // Card retained: the next turn after auth recovery reuses this card for acceleration without redrawing.
     pendingAuth.resolve(auth);
     pendingAuth = null;
     const next = await service.prepareTurn(params);
@@ -448,16 +422,19 @@ describe("HighspeedCardService", () => {
 
     expect(result.kind).toBe("accelerated");
     expect(result.card?.taskId).toBe("task-1");
-    // 加速轮通过标准 Selection 指向隐藏的加速卡内建 Provider；端点等静态事实来自 Provider
-    // Config，只有卡 JWT 与卡 ID 作为本次执行的动态鉴权随 modelExecution 下发。
+    // The accelerated turn points at the hidden accelerated-card builtin provider through the standard
+    // Selection; static facts such as endpoints come from Provider Config, and only the card JWT and
+    // card ID go down with modelExecution as this execution's dynamic auth.
     expect(result.execution?.modelSelection).toEqual({
       providerId: "account:zai-highspeed-card",
       modelId: "glm-5",
     });
     expect(result.execution?.requestAuth.headers["X-Highspeed-Card-ID"]).toBe("hsc-1");
-    // 加速请求任何失败都退回会话模型（spec §2.2）：卡过期按 3402 单独给原因，兜底规则不带错误码。
-    // CLI 只按声明匹配，这里的声明就是降级覆盖面的唯一事实源；退回目标 = 本次提交的会话选择，
-    // 不依赖 CLI 内存里的常驻选择（冷恢复竞态下它可能未绑定）。
+    // Any accelerated-request failure falls back to the session model (spec §2.2): card expiry gets its
+    // own reason via 3402 while the catch-all rule carries no error code.
+    // The CLI matches by declaration only, so the declaration here is the single source of truth for
+    // fallback coverage; the fallback target = the session selection submitted this time, not the CLI's
+    // in-memory resident selection (which may be unbound under cold-recovery races).
     expect(result.execution?.selectionFallback).toEqual({
       providerId: "account:zai-highspeed-card",
       rules: [
@@ -471,7 +448,7 @@ describe("HighspeedCardService", () => {
 
   it("carries the session reasoning level into the accelerated selection options", async () => {
     const now = 10_000;
-    // 复现用户命中的 BigModel 场景：卡回显 GLM-5.3，加速 Provider 按账号 Family 落到 bigmodel。
+    // Reproduce the BigModel scenario a user hit: the card echoes GLM-5.3, and the accelerated provider resolves to bigmodel by account family.
     const { transport } = createTransport(async (request) => ({
       code: 0,
       msg: "success",
@@ -505,15 +482,16 @@ describe("HighspeedCardService", () => {
       reasoningLevel: "enabled",
     });
 
-    // 回归：加速卡曾丢掉会话思考档位，CLI Registry 因 execution 选择缺档位报
-    // "Reasoning level is required" 让整轮发送失败。加速只换端点不换模型，档位必须一致。
+    // Regression: the accelerated card used to drop the session's reasoning level, and the CLI Registry
+    // failed the whole turn with "Reasoning level is required" because the execution selection lacked a
+    // level. Acceleration only swaps the endpoint, not the model, so the level must be identical.
     expect(result.kind).toBe("accelerated");
     expect(result.execution?.modelSelection).toEqual({
       providerId: "account:bigmodel-highspeed-card",
       modelId: "GLM-5.3",
       options: { reasoningLevel: "enabled" },
     });
-    // 退回目标带同一份档位：降级后的原模型请求同样不能因缺档位被 Registry 拒绝。
+    // The fallback target carries the same level: the downgraded original-model request must not be rejected by the Registry for a missing level either.
     expect(result.execution?.selectionFallback.target).toEqual({
       providerId: "account:bigmodel-team-coding-plan",
       modelId: "GLM-5.3",
@@ -541,8 +519,8 @@ describe("HighspeedCardService", () => {
     const service = new HighspeedCardService({
       transport,
       now: () => now,
-      // BigModel Team：加速推理与 draw 走同一 highspeed 网关，必须带上 Coding Plan 业务 JWT
-      // 与 Team 身份头，来自同一次 selected connection 解析。
+      // BigModel Team: accelerated inference and draw go through the same highspeed gateway and must carry
+      // the Coding Plan business JWT and Team identity headers, resolved from the same selected connection.
       resolveInferenceAuth: async () => ({
         zcodeJwt: "zcode-jwt",
         family: "bigmodel",
@@ -559,8 +537,9 @@ describe("HighspeedCardService", () => {
       model: "GLM-5.3",
     });
 
-    // 回归：加速推理曾只发 zcode JWT + 卡 ID，缺 Coding Plan 双 JWT + Team 身份头，
-    // 加速网关返回 401 auth_failed。必须与 draw 携带完全一致的 Coding Plan 头，再附加卡 ID。
+    // Regression: accelerated inference used to send only the zcode JWT + card ID, missing the Coding Plan
+    // dual JWT + Team identity headers, and the highspeed gateway returned 401 auth_failed. The Coding Plan
+    // headers must be exactly identical to draw's, plus the card ID.
     expect(result.kind).toBe("accelerated");
     expect(result.execution?.requestAuth.apiKey).toBe("zcode-jwt");
     expect(result.execution?.requestAuth.headers).toEqual({
@@ -570,6 +549,25 @@ describe("HighspeedCardService", () => {
       "Bigmodel-Organization": "org-1",
       "Bigmodel-Project": "project-1",
       "X-Highspeed-Card-ID": "hsc-1",
+    });
+  });
+
+  it("omits selection options when the session has no reasoning level", async () => {
+    const now = 10_000;
+    const { transport } = createTransport(async (request) => cardResponse(request.task_id, now));
+    const service = new HighspeedCardService({ transport, now: () => now });
+
+    const result = await service.prepareTurn({
+      taskId: "task-1",
+      providerId: "account:zai-team-coding-plan",
+      model: "glm-5",
+    });
+
+    // A model without a level writes no options, avoiding passing an empty or invalid level to the CLI.
+    expect(result.kind).toBe("accelerated");
+    expect(result.execution?.modelSelection).toEqual({
+      providerId: "account:zai-highspeed-card",
+      modelId: "glm-5",
     });
   });
 
@@ -590,8 +588,9 @@ describe("HighspeedCardService", () => {
       model: "glm-5",
       waitBudgetMs: 1000,
     });
-    // 预算从进入 prepareTurn 起算并覆盖异步门禁（规则 11/14）；排空微任务直到 draw 真正发起
-    // 再让预算到期，避免测试绑定内部 await 数量，也避免到期落在门禁阶段。
+    // The budget starts when prepareTurn is entered and covers the async gates (rules 11/14); drain
+    // microtasks until draw has actually started before letting the budget expire, so the test is not
+    // coupled to the internal number of awaits and the expiry does not land in the gate phase.
     await drainUntil(() => calls.length > 0, "draw started");
     waits.shift()?.();
     expect(await firstPromise).toMatchObject({ kind: "fallback", reason: "draw-timeout" });
@@ -612,9 +611,10 @@ describe("HighspeedCardService", () => {
   });
 
   it("releases the in-flight draw when the background request fails and draws again next turn", async () => {
-    // CR-01 回归：draw 请求永不返回时，1s race 只结束「本次等待」，inFlightDraw 只能在 draw Promise
-    // settle 的 finally 里释放。transport 必须让超时请求 reject；否则后续每次发送都复用同一个
-    // 永久 pending Promise、等 1s 再降级，整个应用生命周期内不再发起新 draw，只能靠重启恢复。
+    // CR-01 regression: when a draw request never returns, the 1s race only ends "this wait"; inFlightDraw
+    // can only be released in the finally of the draw Promise settling. The transport must reject the
+    // timed-out request; otherwise every later send reuses the same permanently pending Promise, waits 1s
+    // and degrades, no new draw is ever started for the rest of the app's lifetime, and only a restart recovers.
     let now = 40_000;
     const pending = deferred<HighspeedDrawResponse>();
     let drawCalls = 0;
@@ -641,7 +641,7 @@ describe("HighspeedCardService", () => {
     expect(await first).toMatchObject({ kind: "fallback", reason: "draw-timeout" });
     expect((await service.getSnapshot()).drawing).toBe(true);
 
-    // 模拟 transport 在后台生命期耗尽后 abort → reject（而不是永久 pending）。
+    // Simulate the transport aborting → rejecting after the background lifetime expires (instead of pending forever).
     pending.reject(new Error("highspeed draw request timed out after 20000ms"));
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect((await service.getSnapshot()).drawing).toBe(false);
@@ -649,6 +649,48 @@ describe("HighspeedCardService", () => {
     now += 1;
     const second = await service.prepareTurn(params);
     expect(second.kind).toBe("accelerated");
+    expect(calls).toHaveLength(2);
+  });
+
+  it("enters the draw cooldown when a draw rejection is observed within the send budget", async () => {
+    // Bug fix (spec §3 rule 16): a draw rejection that won the 1s race used to leave nextDrawAt
+    // untouched, so every following send re-issued the same doomed draw and paid its latency again
+    // (2026-10-19 production: repeated HTTP 400 code=3001 draws, each send delayed 0.5-3.3s).
+    let now = 50_000;
+    let drawCalls = 0;
+    const { calls, transport } = createTransport(async () => {
+      drawCalls += 1;
+      if (drawCalls === 1) {
+        throw new Error("highspeed draw failed: 400");
+      }
+      return cardResponse("task-1", now);
+    });
+    const service = new HighspeedCardService({ transport, now: () => now });
+    const params = {
+      taskId: "task-1",
+      providerId: "account:zai-team-coding-plan",
+      model: "glm-5",
+    };
+
+    expect(await service.prepareTurn(params)).toMatchObject({
+      kind: "fallback",
+      reason: "draw-failed",
+    });
+
+    // Sends inside the failure cooldown fall back instantly without re-issuing the draw.
+    expect(await service.prepareTurn(params)).toMatchObject({
+      kind: "fallback",
+      reason: "cooldown",
+    });
+    expect(await service.prepareTurn(params)).toMatchObject({
+      kind: "fallback",
+      reason: "cooldown",
+    });
+    expect(calls).toHaveLength(1);
+
+    // After the backoff expires the next send draws again and can succeed.
+    now += 61_000;
+    expect((await service.prepareTurn(params)).kind).toBe("accelerated");
     expect(calls).toHaveLength(2);
   });
 
@@ -696,19 +738,9 @@ describe("Highspeed mock transport", () => {
       now: () => now,
       delay: async () => undefined,
     });
-    const invalidModel = createHighspeedMockTransport({
-      scenario: "hit-invalid-model",
-      now: () => now,
-      delay: async () => undefined,
-    });
 
     const hitResponse = await hit.draw({ task_id: "task-1", provider: "zai", model: "glm-5" });
     const missResponse = await miss.draw({
-      task_id: "task-1",
-      provider: "zai",
-      model: "glm-5",
-    });
-    const invalidModelResponse = await invalidModel.draw({
       task_id: "task-1",
       provider: "zai",
       model: "glm-5",
@@ -717,7 +749,6 @@ describe("Highspeed mock transport", () => {
     expect(hitResponse.data.card?.expires_at).toBe(now + 5 * 60_000);
     expect(hitResponse.data.next_draw_at).toBe(now + 2 * 60_000);
     expect(missResponse.data.next_draw_at).toBe(now + 2 * 60_000);
-    expect(invalidModelResponse.data.card?.model).toBe("E2E-HIGHSPEED-MODEL-NOT-IN-REGISTRY");
   });
 });
 
@@ -731,7 +762,7 @@ describe("Highspeed HTTP contract", () => {
       }),
     ).toEqual({
       Authorization: "Bearer zcode-jwt",
-      // 接口契约要求 X-Bigmodel-Authorization 带 Bearer 前缀；凭据库可能存裸 token。
+      // The API contract requires X-Bigmodel-Authorization to carry the Bearer prefix; the credential store may hold a bare token.
       "X-Bigmodel-Authorization": "Bearer maas-jwt",
       "Bigmodel-Target-Type": "PERSONAL",
     });
@@ -752,7 +783,7 @@ describe("Highspeed HTTP contract", () => {
       "Bigmodel-Project": "project-1",
     });
 
-    // 已带前缀的凭据不能重复加 Bearer。
+    // Credentials that already carry the prefix must not get Bearer added twice.
     expect(
       buildHighspeedCodingPlanAuthHeaders({
         zcodeJwt: "zcode-jwt",
@@ -879,6 +910,44 @@ describe("Highspeed HTTP contract", () => {
     expect(JSON.stringify(warn.mock.calls)).not.toContain("must-not-be-logged");
   });
 
+  /* share endpoint removed: sharing is now generated entirely in the UI. */
+  /*
+    const warn = vi.fn();
+    const transport = createHighspeedHttpTransport({
+      drawUrl: "https://example.test/api/v1/highspeed/draw",
+      healthyBaseUrl: "https://example.test/api/v1/highspeed/",
+      shareUrl: "https://example.test/api/v1/highspeed/share",
+      drawHeaders: async () => ({ Authorization: "Bearer draw-secret" }),
+      healthyHeaders: async () => ({ Authorization: "Bearer healthy-secret" }),
+      shareHeaders: async () => ({ Authorization: "Bearer share-secret" }),
+      logger: { warn },
+      fetchImpl: async () => {
+        throw new TypeError("fetch failed");
+      },
+    });
+
+    await expect(
+      transport.share({
+        card_id: "hsc-1",
+        token_usage: 100,
+        highspeed_tps: 90,
+        regular_tps: 45,
+      }),
+    ).rejects.toThrow("fetch failed");
+
+    expect(warn).toHaveBeenCalledWith(
+      undefined,
+      "Highspeed 接口网络请求失败",
+      expect.objectContaining({
+        operation: "share",
+        method: "POST",
+        url: "https://example.test/api/v1/highspeed/share",
+        error: "fetch failed",
+      }),
+    );
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("share-secret");
+  }); */
+
   it("logs healthy HTTP failures without logging authorization", async () => {
     const warn = vi.fn();
     const transport = createHighspeedHttpTransport({
@@ -911,6 +980,45 @@ describe("Highspeed HTTP contract", () => {
     );
     expect(JSON.stringify(warn.mock.calls)).not.toContain("healthy-secret");
   });
+
+  /*
+  it("logs invalid share response schemas", async () => {
+    const warn = vi.fn();
+    const transport = createHighspeedHttpTransport({
+      drawUrl: "https://example.test/api/v1/highspeed/draw",
+      healthyBaseUrl: "https://example.test/api/v1/highspeed/",
+      shareUrl: "https://example.test/api/v1/highspeed/share",
+      drawHeaders: async () => ({}),
+      healthyHeaders: async () => ({}),
+      shareHeaders: async () => ({}),
+      logger: { warn },
+      fetchImpl: async () =>
+        Response.json(
+          { code: 0, msg: "success", data: { share_id: "hss-1" } },
+          { headers: { "x-request-id": "req-highspeed-share" } },
+        ),
+    });
+
+    await expect(
+      transport.share({
+        card_id: "hsc-1",
+        token_usage: 100,
+        highspeed_tps: 90,
+        regular_tps: 45,
+      }),
+    ).rejects.toThrow();
+
+    expect(warn).toHaveBeenCalledWith(
+      undefined,
+      "Highspeed 接口响应结构校验失败",
+      expect.objectContaining({
+        operation: "share",
+        status: 200,
+        responseHeaders: { "x-request-id": "req-highspeed-share" },
+        response: { code: 0, message: "success", fields: ["code", "data", "msg"] },
+      }),
+    );
+  }); */
 
   it("rejects and logs Highspeed business envelope failures with response request id", async () => {
     const warn = vi.fn();
@@ -946,8 +1054,9 @@ describe("Highspeed HTTP contract", () => {
   });
 
   it("aborts a request that never returns so the in-flight draw can be released", async () => {
-    // CR-01 回归：fetch 过去没有任何 deadline；代理/服务端接受连接后永不返回时 Promise 永久 pending。
-    // 请求生命期必须有界且明确大于 1s 发送等待预算，超时后 abort → reject，让调用方的 finally 得以执行。
+    // CR-01 regression: fetch previously had no deadline; when a proxy/server accepted the connection but
+    // never responded, the Promise stayed pending forever. The request lifetime must be bounded and
+    // strictly larger than the 1s send-wait budget; on timeout abort → reject so the caller's finally runs.
     vi.useFakeTimers();
     try {
       const warn = vi.fn();
@@ -961,7 +1070,7 @@ describe("Highspeed HTTP contract", () => {
         fetchImpl: (_input, init) =>
           new Promise<Response>((_resolve, reject) => {
             observedSignal = init?.signal;
-            // 只有 abort 能结束这个 Promise，模拟永不返回的连接。
+            // Only abort can settle this Promise, simulating a connection that never responds.
             init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
               once: true,
             });

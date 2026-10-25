@@ -1,6 +1,6 @@
 /**
- * 扫描条目 → 根目录占用快照的折叠器。纯函数式累加器，可在 Worker 内运行。
- * 保证快照体积有界：每个类别的 entries 只保留 bytes 最大的前 N 项，其余折叠进 STORAGE_MORE_ENTRIES_PATH。
+ * Fold scanned entries into a root-directory usage snapshot. This is a pure accumulator and can run in a Worker.
+ * Keep snapshot size bounded: retain only the N entries with the largest byte counts per category and fold the rest into STORAGE_MORE_ENTRIES_PATH.
  */
 import { classifyStoragePath, getStorageCategoryCleanability } from "./storageCatalog.js";
 import {

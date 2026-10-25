@@ -213,7 +213,7 @@ describe("probe failure classification", () => {
     ).rejects.toMatchObject({ code: "remote-permission-denied" });
   });
 
-  it("reports an unsupported remote platform as a preflight failure", async () => {
+  it("reports a Windows remote platform as remote-platform-unsupported before install", async () => {
     await expect(
       probeWith(async () =>
         completedStream(
@@ -221,7 +221,33 @@ describe("probe failure classification", () => {
             "__ZCODE_PROBE_INSTALLED__\n0\n__ZCODE_PROBE_END__\n",
         ),
       ),
-    ).rejects.toMatchObject({ code: "remote-preflight-failed" });
+    ).rejects.toMatchObject({
+      code: "remote-platform-unsupported",
+      message: "当前 remote 模式仅支持 POSIX shell 环境，暂不支持 Windows 原生远程主机",
+    });
+  });
+
+  it("maps a Windows shell failure during the probe to remote-platform-unsupported and diagnoses the backend", async () => {
+    const backend = new FakeBackend();
+    const diagnoseExecFailure = vi.fn(async () => undefined);
+    Object.assign(backend, { diagnoseExecFailure });
+    backend.exec = async (command) => {
+      backend.commands.push(command);
+      return completedStream(
+        "",
+        "powershell : The term 'uname' is not recognized as the name of a cmdlet, function, script file, or operable program.\nCommandNotFoundException",
+        1,
+      );
+    };
+    const adapter = createSourceServerTransportAdapter("ssh", {
+      createBackend: async () => backend,
+    });
+
+    const error = await adapter.probe(targets[0]!, {}).catch((caught: unknown) => caught);
+
+    expect(diagnoseExecFailure).toHaveBeenCalledTimes(1);
+    expect(error).toMatchObject({ code: "remote-platform-unsupported" });
+    expect(Reflect.get(error as object, "cause")).toBeInstanceOf(Error);
   });
 
   const linuxProbeOutput = (libc: string) =>
@@ -229,17 +255,34 @@ describe("probe failure classification", () => {
     `__ZCODE_PROBE_LIBC__\n${libc}\n__ZCODE_PROBE_INSTALLED__\n0\n__ZCODE_PROBE_END__\n`;
 
   it.each(["2.17", "2.27"])(
-    "rejects Linux glibc %s before install because the bundled Node runtime needs glibc 2.28",
+    "warns but keeps the install chain for Linux glibc %s, which is older than the bundled runtime's 2.28",
     async (version) => {
-      // ZCT-2112008575366098944：CentOS 7 先上传 87MB archive，解压后执行 bin/zcode 才报 7 行 not found。
-      await expect(
-        probeWith(async () => completedStream(linuxProbeOutput(`glibc ${version}`))),
-      ).rejects.toMatchObject({
-        code: "remote-preflight-failed",
-        message: expect.stringMatching(
-          new RegExp(`glibc ${version.replace(".", "\\.")}\\b.*glibc 2\\.28`, "u"),
-        ),
+      // 3.16.3 downgraded glibc < 2.28 from a probe rejection to a warning; installation continues.
+      const logs: Array<{ phase: string; level?: string; message: string }> = [];
+      const backend = new FakeBackend();
+      backend.exec = async (command) => {
+        backend.commands.push(command);
+        return completedStream(linuxProbeOutput(`glibc ${version}`));
+      };
+      const adapter = createSourceServerTransportAdapter("ssh", {
+        createBackend: async () => backend,
       });
+
+      await expect(
+        adapter.probe(targets[0]!, { onLog: (event) => logs.push(event) }),
+      ).resolves.toMatchObject({ platform: "linux", installed: false });
+      expect(logs).toEqual([
+        expect.objectContaining({
+          phase: "probe",
+          level: "warn",
+          message: expect.stringMatching(
+            new RegExp(
+              `^Remote glibc ${version.replace(".", "\\.")} is older than glibc 2\\.28 required by the bundled ZCode Source Server runtime\\. .*Continuing installation or connection\\.$`,
+              "u",
+            ),
+          ),
+        }),
+      ]);
     },
   );
 
@@ -395,20 +438,36 @@ it.each(targets)("forwards $kind install progress before command completion", as
   });
   const onLog = vi.fn();
   let complete = false;
-  const install = adapter.installOrUpdate(target, {
-    localArchivePath: "/tmp/release.tar.gz", target: "linux-x64", version: "3.12.1",
-    sha256: "a".repeat(64), sizeBytes: 1024, urls: [],
-  }, { onLog }).then(() => { complete = true; });
+  const install = adapter
+    .installOrUpdate(
+      target,
+      {
+        localArchivePath: "/tmp/release.tar.gz",
+        target: "linux-x64",
+        version: "3.12.1",
+        sha256: "a".repeat(64),
+        sizeBytes: 1024,
+        urls: [],
+      },
+      { onLog },
+    )
+    .then(() => {
+      complete = true;
+    });
   await started.promise;
   expect(backend.commands.at(-1)).toContain("--progress");
   expect(onLog).toHaveBeenCalledWith(expect.objectContaining({ phase: "extract" }));
   stdout.write('shell banner\n{"type":"source-server-install-progress","phase":"ver');
   stdout.write('ify"}\n{"type":"source-server-install-progress","phase":"ready"}\n');
-  await vi.waitFor(() => expect(onLog).toHaveBeenCalledWith(expect.objectContaining({ phase: "verify" })));
+  await vi.waitFor(() =>
+    expect(onLog).toHaveBeenCalledWith(expect.objectContaining({ phase: "verify" })),
+  );
   expect(complete).toBe(false);
   expect(onLog).not.toHaveBeenCalledWith(expect.objectContaining({ phase: "ready" }));
   stdout.write('{"type":"source-server-install-progress","phase":"restart"}\n');
-  await vi.waitFor(() => expect(onLog).toHaveBeenCalledWith(expect.objectContaining({ phase: "restart" })));
+  await vi.waitFor(() =>
+    expect(onLog).toHaveBeenCalledWith(expect.objectContaining({ phase: "restart" })),
+  );
   stdout.end('{"applied":true}\n');
   stderr.end();
   closed.fire(0);

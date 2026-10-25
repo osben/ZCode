@@ -1,36 +1,58 @@
-ZCode CUA AX 树优化方案
-本文给出 ZCode Computer Use（CUA）AX 树的完整优化方案，覆盖数据采集、跨平台归一化、模型可见格式、稳定节点身份、full/delta/no-change 状态、复杂 Web 树裁剪、动作后验证、持久化恢复、迁移和量化验收。方案基于 ZCode CUA 的真实 Calculator、TextEdit、System Settings、Chrome 轨迹分析。
+# ZCode CUA AX tree optimization design
 
-核心结论：目标架构保留 ZCode 的 state_id、window owner、坐标系和 stale 校验等执行安全与跨平台契约，同时采用层级语义表示和真正的增量 patch，降低模型上下文成本。
-1. 实测基线
+Scope: data capture, cross-platform normalization, the model-visible format, stable node identity,
+full/delta/no-change states, complex Web tree pruning, post-action verification, persistence and
+recovery, migration and measurable acceptance. Based on real Calculator, TextEdit, System Settings and
+Chrome CUA trajectories.
 
-以下为 ZCode CUA 在真机轨迹上的现状测量：
+Core conclusion: keep ZCode's execution-safety and cross-platform contracts (`state_id`, window owner,
+coordinate system, stale validation), and adopt a hierarchical semantic representation plus true
+incremental patches to cut model context cost.
 
-| 场景 | ZCode CUA 实测 |
-|---|---|
-| Calculator full | 约 9,435 字符 / 58 元素 |
-| Calculator 小变化 | 9,351–11,684 字符（仍倾倒完整树） |
-| TextEdit full | 3,636 字符 / 29 元素 |
-| TextEdit no-change | 仍返回约 3.6–4 KB 完整树 |
-| 复杂浏览器页 | 5,015–8,757 字符（不能只按长度判断质量） |
+## 1. Measured baseline
 
-ZCode Calculator 同一会话 11 个带 state_id 的结果合计 112,279 字符，平均每次约 10,207 字符。ZCode 的 changes 当前只是附加摘要，并没有替代完整 elements。
-2. 两种模型格式的差异
-2.1 目标格式：层级文本 DSL
-目标 full DSL（完整规格见第 8 节）
+| Scenario                | Measured ZCode CUA                                     |
+| ----------------------- | ------------------------------------------------------ |
+| Calculator full         | about 9,435 chars / 58 elements                        |
+| Calculator small change | 9,351-11,684 chars (still dumps the full tree)         |
+| TextEdit full           | 3,636 chars / 29 elements                              |
+| TextEdit no-change      | still returns the full tree, about 3.6-4 KB            |
+| Complex browser page    | 5,015-8,757 chars (length alone does not show quality) |
+
+Eleven `state_id` results in one Calculator session total 112,279 chars, about 10,207 per result. Today
+`changes` is only an attached summary and does not replace the full `elements`.
+
+## 2. Model format versus current format
+
+### 2.1 Target: hierarchical text DSL
+
+Full (spec in §8):
+
+```
 @state s-4 mode=full app=Calculator window=main
 0 window "Calculator"
   1 region "Keypad"
     6 text "Display" value="46"
     14 button "All Clear" [press]
     23 button "7" [press]
-目标 delta DSL
+```
+
+Delta:
+
+```
 @state s-5 base=s-4 mode=delta
 ~ 6 value="7"
 ~ 14 name="Clear"
-目标格式用缩进保留父子关系，以连续 index 作为动作句柄，把 role、selected/editable/expanded、Description、Help、ID 和 Secondary Actions 内联到单行。小变化用 +、~ 和 removed ID range 表达；无变化只返回 no-change 与焦点。该格式面向模型，不承担跨进程结构化契约。
-2.2 现状：扁平 JSON 快照
-ZCode compact state
+```
+
+Indentation keeps parent-child relations; a continuous index is the action handle; role,
+selected/editable/expanded, Description, Help, ID and secondary actions are inlined on one line. Small
+changes use `+`, `~` and removed ID ranges; no change returns only no-change and focus. The format is for
+the model and does not carry the cross-process structured contract.
+
+### 2.2 Current: flat JSON snapshot
+
+```json
 {
   "state_id": "s-3",
   "focused_element": 18,
@@ -44,36 +66,39 @@ ZCode compact state
       "focused": true
     }
   ],
-  "changes": {
-    "added": [],
-    "removed": []
-  }
+  "changes": { "added": [], "removed": [] }
 }
-ZCode 的 app、window、state、coordinate space、elements、changes 和 action outcome 边界清楚，kind 屏蔽 macOS AX、Windows UIA 和 Linux AT-SPI 差异，state_id + index 支持过期快照防护。但扁平数组丢失父子上下文，JSON key 重复占用 token，changes 与完整 elements 同时返回，后面还可能附带 top_candidates 和长自然语言指导。
-3. 当前核心问题
-3.1 changes 不是增量
-当前 ZCode 状态流
-S0：完整 compact elements
-        │
-        ▼
-      action
-        │
-        ▼
-S1：完整 compact elements
-  + changes.added/removed
-  + top_candidates 重复元素
-  + 静态自然语言指导
-即使 added_count 和 removed_count 都为 0，也会重复整个树。动作结果自带 settled state 本来可以减少一次 get_app_state，但完整状态回灌使上下文收益被抵消。
-3.2 节点身份与 stale fingerprint 混用
-现有 element fingerprint 包含 role、title、value 和 coarse bounds，同时用于 diff identity 与动作 stale/TOCTOU 校验。TextEdit 中同一个 textarea 仅 value 改变，就被 changes 表达为 removed + added；这不是节点替换，而是状态更新。两个用途必须拆开。
-3.3 扁平化丢失语义父链
-重复的“OK”“Edit”“More”控件需要父节点、row、dialog、toolbar 或 section 才能区分。ZCode compact 只保留扁平 kind/name，模型需要依赖 index、top_candidates 或位置提示猜上下文，无法直接表达“按钮属于哪个区域”。
-3.4 复杂 Web 树的预算被容器占满
-ZCode Chrome 搜索结果页实测 80 个元素中有 56 个 AXGroup，75 个没有有效 name/value，且 truncated=true。无信息容器先占满 node cap，真正 link/text/button 可能被截掉；反向极端是保留太多重复链接和长 tracking URL，单页体积失控。
-3.5 静态指导反复进入结果
-Calculator 单次结果前置指导约 728 字符；TextEdit menu-only 失败轨迹总计 3,741 字符，其中约 2,453 字符是策略指导，占 66%。这些内容应属于 skill/tool description 或结构化诊断码，不应随每个状态重复。
-4. 目标架构
-AX 目标架构
+```
+
+The app/window/state/coordinate-space/elements/changes/action-outcome boundaries are clear, `kind` hides
+macOS AX / Windows UIA / Linux AT-SPI differences, and `state_id` + `index` guards stale snapshots. But the
+flat array loses parent context, JSON keys repeat tokens, `changes` and full `elements` are returned
+together, and `top_candidates` plus long natural-language guidance may follow.
+
+## 3. Core problems
+
+1. **`changes` is not incremental.** After an action the state is the full compact elements +
+   `changes.added/removed` + duplicated `top_candidates` + static guidance, even when both counts are 0.
+   The settled state returned with the action could save a `get_app_state`, but the full re-dump cancels
+   the gain.
+2. **Node identity and stale fingerprint are conflated.** The element fingerprint (role, title, value,
+   coarse bounds) serves both diff identity and action stale/TOCTOU validation. A TextEdit textarea whose
+   only change is `value` shows as removed + added; that is a state update, not a node replacement. The two
+   uses must be split.
+3. **Flattening drops the semantic parent chain.** Repeated "OK", "Edit", "More" controls need a parent
+   (row, dialog, toolbar, section) to disambiguate; flat kind/name forces the model to guess from index,
+   `top_candidates` or position hints.
+4. **Complex Web trees fill the budget with containers.** A real Chrome results page: 56 of 80 elements are
+   AXGroup, 75 have no effective name/value, `truncated=true`. Information-free containers fill the node
+   cap first and real link/text/button nodes may be cut; the opposite extreme keeps too many duplicate
+   links and long tracking URLs.
+5. **Static guidance repeats in every result.** A Calculator result carries about 728 chars of leading
+   guidance; a TextEdit menu-only failure trajectory totals 3,741 chars, 2,453 (66%) being policy guidance.
+   That belongs in skill/tool description or structured diagnostic codes, not in every state.
+
+## 4. Target architecture
+
+```
 macOS AX / Windows UIA / Linux AT-SPI
                   │
                   ▼
@@ -82,7 +107,7 @@ macOS AX / Windows UIA / Linux AT-SPI
         ┌─────────┴──────────┐
         ▼                    ▼
  stable node identity   material fingerprint
-   full/delta 对齐       stale/TOCTOU 校验
+   full/delta align     stale/TOCTOU validation
         │                    │
         ▼                    ▼
  semantic pruning       action verification
@@ -93,17 +118,38 @@ macOS AX / Windows UIA / Linux AT-SPI
   ├─ delta
   └─ no_change
         │
-        ├─ structured JSON：进程/存储/replay/测试
-        └─ compact DSL：模型上下文
-内部结构化契约与模型表现层分开：JSON 是事实和恢复协议，DSL 是 token 优化后的模型视图。两者由同一 semantic snapshot 生成，不维护两套行为逻辑。
-5. 状态与节点模型
-5.1 Snapshot identity
-仅 full 观察生成并向模型暴露新的 session state_id。delta/no_change 不 mint 新 id：模型复用其上一次 full 观察持有的 session state_id（实现见 `AccessibilitySession.lastStateId()`），broker 内部仍维护 base_state_id 用于 diff，但不向模型暴露该 broker 计数器 id（它是独立计数器，targeting resolver 无法解析）。delta 必须声明 base_state_id；调用方只有持有 base 时才能应用 patch。compaction、重连、进程恢复、跨页面导航或 base 丢失时强制 full。
-5.2 Stable node identity
-增加 opaque node_id，用于跨快照识别同一语义节点。优先使用 backend stable native identifier；无法获得时由 window identity、可访问路径、稳定 role/name 与 sibling discriminator 组合。node_id 不包含 value、focus、selected 或临时 bounds。
-5.3 Material fingerprint
-material fingerprint 继续包含会影响动作安全的 role、title/value、enabled、bounds 与必要 capability，用于 actuation 前重新读取和 stale 判断。它不参与 delta identity。index 保留为当前 snapshot 内的短别名，动作仍提交 state_id + index/node_id。
-节点契约
+        ├─ structured JSON: process/storage/replay/tests
+        └─ compact DSL: model context
+```
+
+Structured JSON is the fact and recovery protocol; the DSL is the token-optimized model view. Both are
+generated from the same semantic snapshot; there are not two sets of behavior logic.
+
+## 5. State and node model
+
+### 5.1 Snapshot identity
+
+Only a full observation mints and exposes a new session `state_id`. delta/no_change mint no new id: the
+model reuses the session `state_id` from its last full observation (implementation:
+`AccessibilitySession.lastStateId()`). The broker still keeps `base_state_id` for diff internally but does
+not expose that broker counter id to the model (it is an independent counter the targeting resolver cannot
+resolve). A delta must declare `base_state_id`; a caller may apply a patch only when it holds the base.
+Compaction, reconnection, process recovery, cross-page navigation or a lost base forces full.
+
+### 5.2 Stable node identity
+
+Add an opaque `node_id` to recognize the same semantic node across snapshots. Prefer the backend's stable
+native identifier; otherwise combine window identity, accessible path, stable role/name and a sibling
+discriminator. `node_id` never includes value, focus, selected or transient bounds.
+
+### 5.3 Material fingerprint
+
+The material fingerprint keeps role, title/value, enabled, bounds and necessary capability that affect
+action safety, used for re-reading before actuation and stale judgment. It does not take part in delta
+identity. `index` stays a short alias within the current snapshot; actions still submit `state_id` +
+`index`/`node_id`.
+
+```
 {
   nodeId: "ax:window-3642:path-1.2.18",
   index: 18,
@@ -115,77 +161,62 @@ material fingerprint 继续包含会影响动作安全的 role、title/value、e
   state: { focused: true },
   materialFingerprint: "mfp:..."
 }
-6. Full、Delta 与 No-change
-delta response
+```
+
+## 6. Full, delta and no-change
+
+```json
 {
   "schema_version": 3,
   "state_id": "s-5",
   "base_state_id": "s-4",
   "mode": "delta",
-  "updated": [
-    {
-      "node_id": "calc:display",
-      "index": 6,
-      "changes": {"value": "7"}
-    }
-  ],
+  "updated": [{ "node_id": "calc:display", "index": 6, "changes": { "value": "7" } }],
   "added": [],
   "removed_node_ids": [],
   "focus": null
 }
-full。首次观察、base 不可用、window identity 变化、页面/文档导航、大比例节点重建、schema 版本变化时返回 pruned full snapshot。
-delta。同一 window/document 且变化节点比例低于阈值时，只返回 added、updated、removed、focus、selection 与 readable text patch。初始建议阈值为 patch 估算字符数小于 full 的 40%；最终阈值由轨迹评测确定，而不是硬编码经验值。
-no_change。semantic tree、focus、selection 和关键 readable text 均未变化时，只返回 state_id、base_state_id、mode=no_change、重复观察计数与必要的一句 next action。目标长度不超过 200–300 字符。
-checkpoint。连续 delta 达到固定数量、上下文即将 compact、mobile replay gap、调用方显式请求或服务端判断 base 风险升高时发送 full checkpoint。delta 永远不能依赖调用方不可恢复的 renderer-local 状态。
-7. 语义裁剪与层级保留
-裁剪顺序从“节点出现顺序”改为“信息价值”。先保留 focused、editable、pressable、selectable、selected/checked、错误/状态节点；再保留有可读 name/value 的 text/link/button/menuitem；然后为已保留节点补齐最短父链。纯布局容器默认折叠成 section/container summary，只有承担 disambiguation 时保留。
+```
 
+- **full:** first observation, unavailable base, window identity change, page/document navigation, large
+  node rebuild, or schema version change returns a pruned full snapshot.
+- **delta:** same window/document and a changed-node ratio under the threshold returns only added,
+  updated, removed, focus, selection and readable-text patches. The initial suggested threshold is a patch
+  estimate under 40% of full chars; the final threshold comes from trajectory evaluation, not a hard-coded
+  rule of thumb.
+- **no_change:** semantic tree, focus, selection and key readable text all unchanged returns only
+  `state_id`, `base_state_id`, `mode=no_change`, a repeat-observation count and at most one next-action
+  sentence. Target length no more than 200-300 chars.
+- **checkpoint:** a full checkpoint is sent after a fixed number of consecutive deltas, when context is
+  about to compact, on a mobile replay gap, on explicit caller request, or when the server judges base
+  risk raised. A delta must never depend on renderer-local state the caller cannot recover.
 
-节点类型
+## 7. Semantic pruning and hierarchy
 
-默认策略
+Pruning order changes from node appearance order to information value. First keep focused, editable,
+pressable, selectable, selected/checked and error/status nodes; then text/link/button/menuitem with a
+readable name/value; then fill the shortest parent chain for retained nodes. Pure layout containers fold
+into a section/container summary by default and stay only when they disambiguate.
 
-例外
+| Node type                     | Default                      | Exception                                              |
+| ----------------------------- | ---------------------------- | ------------------------------------------------------ |
+| focused/editable/actionable   | always keep                  | secure-field value must be masked                      |
+| selected/checked/error/status | always keep state            | merge repeated status                                  |
+| text/link/button              | keep when name/value present | merge repeated links                                   |
+| group/container               | fold or omit                 | keep a summary as parent disambiguator                 |
+| offscreen/invisible           | omit by default              | keep scroll targets or menus on demand                 |
+| disabled                      | low priority                 | keep when the user is dealing with the disabled reason |
 
-focused/editable/actionable
+The budget moves from a fixed node count to a char/token budget plus semantic quotas. The response
+includes `omitted_counts_by_kind`, `truncated_reason` and callable `get_element_subtree(node_id)` /
+`get_more_elements(cursor)`. 56 empty AXGroups must not consume the whole budget.
 
-始终保留
+## 8. Model-visible DSL
 
-安全字段 value 必须屏蔽
+The model layer uses a stable, platform-prefix-free text DSL with the shortest parent chain; the full
+JSON is still held internally. The DSL is a serializer, not a new source of truth.
 
-selected/checked/error/status
-
-始终保留状态
-
-重复状态合并
-
-text/link/button
-
-有 name/value 时保留
-
-重复 link 合并
-
-group/container
-
-折叠或省略
-
-作为父级消歧时保留摘要
-
-offscreen/invisible
-
-默认省略
-
-可滚动目标或菜单按需保留
-
-disabled
-
-低优先级
-
-用户正在处理禁用原因时保留
-预算从固定 node count 改为字符/token 预算与语义配额并用。响应应包含 omitted_counts_by_kind、truncated_reason 和可调用的 get_element_subtree(node_id) / get_more_elements(cursor)。不能让 56 个空 AXGroup 抢占全部预算。
-8. 模型可见 DSL
-模型层使用稳定、无平台前缀、保留最短父链的文本 DSL。内部仍持有完整 JSON。DSL 只是一种 serializer，不是新的事实源。
-建议 full DSL
+```
 @state s-4 mode=full app=Calculator window=main
 0 window "Calculator"
   1 region "Keypad"
@@ -194,174 +225,158 @@ disabled
     23 button "7" [press]
 @focus none
 @omitted container=4 disabled=1
-建议 delta DSL
+```
+
+```
 @state s-5 base=s-4 mode=delta
 ~ 6 value="7"
 ~ 14 name="Clear"
 @focus none
-DSL 中保留 index、kind、name/value、关键状态与 capability；Help、native role 按 subtree 拉取；actions 已在 compact 中无条件返回，bounds 不再对模型暴露。长 URL 默认保留 origin/path 摘要，移除 tracking query；用户明确处理 URL 时再请求 full value。
-9. 动作结果与观察合并
-ZCode 当前动作后 settled state 是正确方向，但返回内容应改为 action_outcome + delta/no_change。动作执行、验证和后观察仍在同一 transaction/锁语义内，避免为了 token 优化重新引入 TOCTOU。
-动作结果
+```
+
+The DSL keeps index, kind, name/value, key state and capability; Help and native role are pulled per
+subtree; `actions` are already returned unconditionally in compact and `bounds` are no longer exposed to
+the model. Long URLs keep an origin/path summary with tracking queries removed; full value is requested
+only when the user is working on the URL.
+
+## 9. Action results and observation merge
+
+Returning a settled state after an action is the right direction, but the content becomes
+`action_outcome` + delta/no_change. Action execution, verification and post-observation stay in one
+transaction/lock scope so token optimization does not reintroduce TOCTOU.
+
+```json
 {
-  "action_outcome": {
-    "status": "verified",
-    "target_node_id": "calc:equals"
-  },
+  "action_outcome": { "status": "verified", "target_node_id": "calc:equals" },
   "state": {
     "state_id": "s-6",
     "base_state_id": "s-5",
     "mode": "delta",
-    "updated": [
-      {"node_id": "calc:display", "changes": {"value": "46"}}
-    ]
+    "updated": [{ "node_id": "calc:display", "changes": { "value": "46" } }]
   }
 }
-如果 return_state=none，仅返回 outcome 和明确的 state_available=false；如果动作无效果，返回 no_change + no_effect 原因；如果窗口关闭、权限回退或 base 无效，返回结构化 recovery code，不重复一大段策略说明。
-10. 浏览器与大树策略
-同文档内输入、展开、选择和局部加载可使用 delta；跨 URL/document navigation 默认 full。判断依据不是 App 名称，而是 document identity、root signature 和节点复用率。
-Web pruning 需要额外规则：合并同一卡片的 image link/title link；空 group 只保留必要父链；URL 删除 tracking query；长聚合文本按来源拆成 text nodes；优先 viewport、focused、interactive 与 selected；超预算时按 section 分页。对于 canvas/AX sparse 页面，明确返回 state_quality=visual_required，避免伪造空树可用性。
-11. 截图与 AX 的协同
-AX-first 的默认 include_screenshot=false 保留，这一点优于每次观察都捕获图片。只有视觉读取、state_image coordinate、AX sparse 或显式用户截图时才捕获。图片通过 media block/artifact 传输，不放进 AX JSON 或日志。
-当返回 screenshot 时，snapshot 记录 window、display provenance、device pixel ratio、image region 和 media ref。AX delta 与图片 dirty crop 使用同一 state_id/base_state_id，但任一方缺失不能让另一方不可解析。桌面 continuous 和手机 replayable 共享持久化 snapshot fact。
-12. 跨平台与恢复
-normalized kind、capability 和 state 字段跨 macOS AX、Windows UIA、Linux AT-SPI 一致；native role、native action 和 backend handle 只存在 adapter/private state。node_id 可以包含 backend namespace，但调用方将其视为 opaque。
-snapshot/delta 必须可持久化并运行时 schema 校验。移动端 replay gap、进程重启、服务端 LRU 淘汰、session fork 或 base_state_id 不存在时请求/推送 full checkpoint。desktop continuous 不拼接手机 replayable 专用恢复消息。
-13. 迁移计划
+```
 
+With `return_state=none`, only the outcome and an explicit `state_available=false` are returned. An action
+with no effect returns no_change + a no_effect reason. A closed window, permission fallback or invalid base
+returns a structured recovery code, not a long strategy explanation.
 
-阶段
+## 10. Browsers and large trees
 
-内容
+In-document input, expand, select and local loading may use delta; cross-URL/document navigation defaults
+to full. The basis is document identity, root signature and node reuse rate, not the app name.
 
-兼容策略
+Extra Web pruning rules: merge image link/title link of one card; keep only the necessary parent chain for
+empty groups; strip tracking queries from URLs; split long aggregated text into per-source text nodes;
+prefer viewport, focused, interactive and selected; paginate by section when over budget. For canvas / AX
+sparse pages return `state_quality=visual_required` explicitly instead of faking a usable empty tree.
 
-P0 基线
+## 11. Screenshot and AX cooperation
 
-锁定 Calculator、TextEdit、Settings、Chrome 的字符、token、成功率、节点保留率与延迟。
+Keep the AX-first default `include_screenshot=false`; capture only for visual reading, `state_image`
+coordinates, AX-sparse pages or an explicit user screenshot. Images travel as media blocks/artifacts, not
+inside AX JSON or logs.
 
-不改变现有输出。
+When a screenshot is returned, the snapshot records window, display provenance, device pixel ratio, image
+region and media ref. AX delta and image dirty crop share one `state_id`/`base_state_id`, but absence of
+either must not make the other unresolvable. Desktop continuous and mobile replayable share the persisted
+snapshot fact.
 
-P1 Identity
+## 12. Cross-platform and recovery
 
-引入 node_id；拆分 stable identity 与 material fingerprint；增加 updated diff。
+Normalized `kind`, capability and state fields are consistent across macOS AX, Windows UIA and Linux
+AT-SPI; native role, native action and backend handle exist only in adapter/private state. `node_id` may
+include a backend namespace but callers treat it as opaque.
 
-旧 state_id+index 继续可用。
+Snapshot/delta must be persistable with runtime schema validation. On a mobile replay gap, process
+restart, server LRU eviction, session fork or missing `base_state_id`, request/push a full checkpoint.
+Desktop continuous does not splice in the mobile-replayable-only recovery messages.
 
-P2 Snapshot
+## 13. Migration plan
 
-增加 schema_version、base_state_id、mode 和 full/delta/no_change。
+| Phase       | Content                                                                                                 | Compatibility                                                 |
+| ----------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| P0 Baseline | Lock chars, tokens, success rate, node retention and latency for Calculator, TextEdit, Settings, Chrome | no output change                                              |
+| P1 Identity | Introduce `node_id`; split stable identity from material fingerprint; add updated diff                  | old `state_id`+`index` keeps working                          |
+| P2 Snapshot | Add `schema_version`, `base_state_id`, `mode` and full/delta/no_change                                  | capability negotiation; old clients still get full            |
+| P3 Pruning  | Semantic budget, parent chain, container folding, Web de-noising, subtree/cursor                        | subtree/cursor keep a diagnostic entry                        |
+| P4 DSL      | Model context switches to compact DSL; JSON for events, storage and debug                               | dual-serializer comparison period, behavior from one snapshot |
+| P5 Rollout  | Gray-release delta; monitor action success, stale, reobserve, token and recovery errors                 | automatic fallback to full on base/diff anomalies             |
 
-能力协商；旧客户端继续收到 full。
+## 14. Code impact
 
-P3 Pruning
+- `src/zcode_cua/accessibility/models.py`: add `node_id`, `parent_node_id`, semantic state/capability.
+- `accessibility/state.py`: split identity / material fingerprint; implement updated/full/delta/no-change.
+- `accessibility/filtering.py`: semantic scoring, parent chain, char budget.
+- `platforms/macos_ax.py`, Windows UIA, Linux AT-SPI: provide backend stable-identity candidates.
+- `observation/presentation.py`: action results return delta/no-change; remove repeated guidance.
+- `tools/observation_tools.py`: capability negotiation, snapshot mode, subtree/cursor tool contract.
+- ZCode protocol/event/projection: persist snapshot/delta and base dependency; support replay/cold recovery.
 
-语义预算、父链、容器折叠、Web 去噪、subtree/cursor。
+## 15. Test plan
 
-subtree/cursor 保留诊断入口。
+- **Identity:** value/focus/selected changes keep `node_id`; window/document/semantic-path changes change
+  the id correctly; duplicate siblings disambiguate stably; the material fingerprint reacts to changes
+  affecting action safety.
+- **Diff:** updated/added/removed/no-change, duplicate nodes, focus, parent change, base mismatch,
+  threshold fallback to full; a patched result equals the new full exactly.
+- **Pruning:** actionable, focused and readable text never lost; empty groups do not fill the budget; the
+  parent chain is shortest yet disambiguating; secure-field value is never output; long URLs lose tracking.
+- **Cross-platform contract:** one fixture yields consistent kind/capability/state on AX/UIA/AT-SPI; native
+  role does not leak into compact DSL; Windows DPI, macOS Retina and Linux X11 coordinate metadata keep
+  existing safety semantics.
+- **Trajectory E2E:** Calculator consecutive operations, TextEdit input and save panel, System Settings
+  page switching, Chrome same-page interaction and cross-page navigation, AX sparse/canvas, permission
+  fallback, window close, mobile replay gap, session cold restore.
 
-P4 DSL
+## 16. Metrics and targets
 
-模型上下文切到 compact DSL；JSON 用于事件、存储和调试。
+| Metric                                 | Suggested target       | Note                                                       |
+| -------------------------------------- | ---------------------- | ---------------------------------------------------------- |
+| Calculator warm full                   | not above 4-5 KB       | now about 9.4 KB; at most half                             |
+| Native-app small-change delta          | not above 20% of full  | Calculator/TextEdit may reach 5-10%                        |
+| no-change                              | not above 300 chars    | state chain and necessary diagnostics only                 |
+| Complex Web full                       | per model token budget | favor semantic nodes, not mere brevity                     |
+| retained semantic ratio                | keeps rising           | share of actionable/readable/stateful among retained nodes |
+| base/delta recovery errors             | near 0                 | errors auto-fallback to a full checkpoint                  |
+| action success / stale false positives | no worse than baseline | token savings must not cost action correctness             |
+| repeat observations                    | markedly down          | no-change and action outcome should stop observation loops |
 
-双 serializer 对照期，行为来自同一 snapshot。
+Runtime latency needs its own benchmark: startup/settle and serialization are not one metric. Split
+backend capture, normalize, prune, diff, serialize, image capture and transport duration, each with its own
+target.
 
-P5 Rollout
+## 17. Acceptance
 
-灰度开启 delta；监控 action success、stale、reobserve、token 与恢复错误。
+1. The state schema distinguishes full, delta and no_change and carries `schema_version`.
+2. delta always declares `base_state_id`; a lost base falls back to full automatically.
+3. Stable `node_id` and the material fingerprint are separate.
+4. A TextEdit value change is expressed as updated, not removed + added.
+5. A Calculator small change no longer repeats the full 58-element tree and `top_candidates`.
+6. A complex Web tree is not filled by nameless groups.
+7. The model DSL keeps the necessary parent chain and the internal JSON replays completely.
+8. An action result returns outcome + delta/no-change without adding observation rounds.
+9. Secure fields, clipboard, secrets and sensitive values never reach the model or logs.
+10. macOS, Windows, Linux and the desktop/mobile recovery chains pass tests.
+11. Context cost drops markedly while action success and stale protection do not regress.
 
-出现 base/diff 异常自动回退 full。
-14. 代码影响面
-src/zcode_cua/accessibility/models.py：增加 node_id、parent_node_id、semantic state/capability。
-src/zcode_cua/accessibility/state.py：拆分 identity/material fingerprint，实现 updated/full/delta/no-change。
-src/zcode_cua/accessibility/filtering.py：语义评分、父链和字符预算。
-src/zcode_cua/platforms/macos_ax.py、Windows UIA、Linux AT-SPI：提供 backend stable identity 候选。
-src/zcode_cua/observation/presentation.py：动作结果返回 delta/no-change，移除重复指导。
-src/zcode_cua/tools/observation_tools.py：能力协商、snapshot mode、subtree/cursor 工具契约。
-ZCode protocol/event/projection：持久化 snapshot/delta 与 base dependency，支持 replay/cold recovery。
-15. 测试方案
-Identity 单测。value、focus、selected 改变不改变 node_id；窗口/文档/语义路径变化正确换 id；重复兄弟节点稳定消歧；material fingerprint 对影响动作安全的变化敏感。
-Diff 单测。updated/added/removed/no-change、重复节点、focus、父节点变化、base mismatch、阈值回退 full、patch 应用后与新 full 完全一致。
-Pruning 单测。actionable、focused、readable text 不丢；空 group 不占满预算；父链最短且足以消歧；secure field 永不输出 value；长 URL 去 tracking。
-跨平台合约。同一 fixture 在 AX/UIA/AT-SPI 得到一致 kind/capability/state；native role 不泄漏到 compact DSL；Windows DPI、macOS Retina、Linux X11 坐标元数据保持现有安全语义。
-轨迹 E2E。Calculator 连续运算、TextEdit 输入与保存面板、System Settings 页面切换、Chrome 同页交互与跨页导航、AX sparse/canvas、权限回退、窗口关闭、mobile replay gap 和 session cold restore。
-16. 指标与目标
+## 18. Risks and trade-offs
 
+- **Delta depends on base.** If model context compaction or mobile replay loses the base, patches become
+  unreadable. The snapshot engine must manage checkpoints, not the renderer or the prompt.
+- **Stable node identity cannot be perfect for every app.** Dynamic Web/Canvas nodes without native
+  identifiers can only use heuristic paths. With low identity confidence or a high tree-rebuild ratio,
+  return full; never force a match to raise the delta rate.
+- **Pruning can hide needed information.** Keep subtree/cursor and an omitted summary; acceptance is task
+  success rate and semantic retention, not shortest chars alone.
+- **Dual-format maintenance.** JSON and DSL must come from the same snapshot serializer pipeline; two
+  independent filtering/diff logics are forbidden, otherwise what the model sees and the executing state
+  diverge.
 
-指标
+## 19. Trajectory and implementation references
 
-建议目标
-
-说明
-
-Calculator warm full
-
-不高于 4–5 KB
-
-当前约 9.4 KB，目标收紧一半以内
-
-原生 App 小变化 delta
-
-不高于 full 的 20%
-
-Calculator/TextEdit 目标可进一步达到 5–10%
-
-no-change
-
-不高于 300 字符
-
-只含状态链与必要诊断
-
-复杂 Web full
-
-按模型 token budget
-
-优先保证语义节点，不追求单纯短
-
- retained semantic ratio
-
-持续上升
-
-保留节点中 actionable/readable/stateful 的占比
-
-base/delta 恢复错误
-
-接近 0
-
-错误自动 full checkpoint
-
-action success/stale false positive
-
-不劣于当前基线
-
-token 优化不能牺牲动作正确性
-
-重复观察次数
-
-显著下降
-
-no-change 和 action outcome 应阻止观察循环
-运行时延迟需要单独基准：启动/settle 与序列化不能混为一个指标。ZCode 应拆分 backend capture、normalize、prune、diff、serialize、image capture 和 transport duration，分别设定目标。
-17. 验收标准
-state schema 明确区分 full、delta、no_change，并带 schema_version。
-delta 总是声明 base_state_id，base 丢失可自动回退 full。
-stable node_id 与 material fingerprint 分离。
-TextEdit value 变化表达为 updated，而非 removed + added。
-Calculator 小变化不再重复完整 58 元素树和 top_candidates。
-复杂 Web 树不会被无名 group 占满预算。
-模型 DSL 保留必要父链，内部 JSON 可完整 replay。
-action result 返回 outcome + delta/no-change，不增加额外观察轮次。
-secure field、剪贴板、密钥和敏感 value 不进入模型与日志。
-macOS、Windows、Linux 与 desktop/mobile 恢复链通过测试。
-上下文成本显著下降且 action success、stale 防护不退化。
-18. 风险与取舍
-Delta 依赖 base。如果模型上下文 compact 或 mobile replay 丢失 base，patch 会不可读。必须由 snapshot engine 管理 checkpoint，而不是把责任交给 renderer 或 prompt。
-稳定 node identity 不可能在所有 App 完美。没有 native identifier 的动态 Web/Canvas 节点只能使用启发式路径。identity confidence 低或 tree rebuild 比例高时直接 full，不能为了 delta 率强行匹配。
-裁剪可能隐藏必要信息。因此保留 subtree/cursor 与 omitted summary；验收以任务成功率和语义保留率为准，不以最短字符为唯一目标。
-双格式维护风险。JSON 与 DSL 必须由同一 snapshot serializer pipeline 生成；禁止两套独立过滤和 diff 逻辑，否则会出现模型所见与执行 state 不一致。
-19. 轨迹与实现参考
-ZCode Calculator：~/.zcode/cli/debug/model-io-sess_4c0dec29-abc9-45db-b92a-85b734cfa5eb.jsonl
-ZCode TextEdit：~/.zcode/cli/debug/model-io-sess_9ce83024-e3ca-4a27-8bb7-352186b9c06e.jsonl
-ZCode Chrome：~/.zcode/cli/debug/model-io-sess_d7748be0-9015-464e-b6e1-7e35b3c8563c.jsonl
-核心实现：src/zcode_cua/accessibility/state.py、models.py、filtering.py、observation/presentation.py。
-
+- ZCode Calculator: `~/.zcode/cli/debug/model-io-sess_4c0dec29-abc9-45db-b92a-85b734cfa5eb.jsonl`
+- ZCode TextEdit: `~/.zcode/cli/debug/model-io-sess_9ce83024-e3ca-4a27-8bb7-352186b9c06e.jsonl`
+- ZCode Chrome: `~/.zcode/cli/debug/model-io-sess_d7748be0-9015-464e-b6e1-7e35b3c8563c.jsonl`
+- Core implementation: `src/zcode_cua/accessibility/state.py`, `models.py`, `filtering.py`,
+  `observation/presentation.py`.

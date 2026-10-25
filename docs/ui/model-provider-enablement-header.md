@@ -1,12 +1,14 @@
 # Model Provider Enablement Header
 
-模型供应商详情页的启用状态与启停动作在同一标题行展示。
+On the model provider detail page, the enablement status and the enable/disable action share one title
+row.
 
-- 状态标识显示在 provider 名称后面。
-- “启用 / 禁用”按钮紧跟状态标识，避免和右侧次级动作混在一起。
-- 右侧动作区仅保留查看用量、删除等非启停操作。
+- The status badge follows the provider name.
+- The "Enable / Disable" button follows the status badge, kept apart from the secondary actions on the
+  right.
+- The right action area keeps only non-toggle actions such as view usage and delete.
 
-相关实现：
+Implementation:
 
 - `packages/ui/src/settings/model-provider-section/ProviderCardSections.tsx`
 - `packages/ui/test/modelProviderEnablementHeader.test.ts`

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { RemoteTarget } from "#src/remoteTarget.js";
+import type { RemoteTarget } from "../remoteTarget.js";
 import { publicZCodeErrorCodeSchema } from "./errorCodes.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "../remoteAssetInstallMode.js";
 import { isKnownRemoteResourcePackageId } from "../remoteResourcePackages.js";
@@ -312,6 +312,15 @@ export const sourceServerInstallPreviewSchema = z
   .strict();
 export type SourceServerInstallPreview = z.infer<typeof sourceServerInstallPreviewSchema>;
 
+/** Unknown SSH host key waiting for the user's trust decision (specs/ssh-host-key-verification.md). */
+export const sourceServerHostKeyPreviewSchema = z
+  .object({
+    keyType: nonEmptyStringSchema,
+    fingerprint: nonEmptyStringSchema,
+  })
+  .strict();
+export type SourceServerHostKeyPreview = z.infer<typeof sourceServerHostKeyPreviewSchema>;
+
 export const sourceServerConnectionStateSnapshotSchema = z
   .object({
     profileId: z.string().uuid(),
@@ -326,6 +335,7 @@ export const sourceServerConnectionStateSnapshotSchema = z
     errorCode: publicZCodeErrorCodeSchema.optional(),
     retryable: z.boolean().optional(),
     installPreview: sourceServerInstallPreviewSchema.optional(),
+    hostKeyPreview: sourceServerHostKeyPreviewSchema.optional(),
     runningTasks: sourceServerRunningTasksSchema.optional(),
     pendingSourceServerId: z.string().uuid().optional(),
     recoveryAttempt: z.number().int().positive().optional(),

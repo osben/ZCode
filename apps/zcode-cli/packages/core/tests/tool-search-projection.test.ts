@@ -32,7 +32,14 @@ function result(
 it.each<ResolvedToolSearchMode>(["native", "local", "off"])(
   "%s reuses unchanged tool result entries and their content",
   (mode) => {
-    const entries = [result([{ type: "text", text: "ordinary tool output" }]), result("text")];
+    // Ordinary outputs are not search rows, so Local mode must not copy them for a search-name rewrite.
+    const ordinary = (content: RuntimeMessageMessageEntry["message"]["content"]) => ({
+      message: { role: "tool" as const, toolName: "Bash", toolCallId: "bash", content },
+    });
+    const entries = [
+      ordinary([{ type: "text", text: "ordinary tool output" }]),
+      ordinary("text"),
+    ];
     for (const entry of entries) {
       Object.freeze(entry.message.content);
       Object.freeze(entry.message);

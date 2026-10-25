@@ -87,6 +87,56 @@ it("已删除项目发起 SSH 重连时，项目记为失败且不阻断两个 s
   expect(loadCredential).toHaveBeenCalledTimes(1);
 });
 
+it("目录无响应时与目录不可用一样先通知 SSH host ready，sibling 可继续复用凭据", async () => {
+  const entry: RemoteWorkspaceSessionEntry = {
+    kind: "remote",
+    workspacePath: "/repo/slow",
+    workspaceIdentity: "remote:server:fixture:/repo/slow",
+    target: {
+      kind: "ssh",
+      host: "fixture.invalid",
+      username: "tester",
+      passwordCredentialKey: "fixture-password",
+    },
+    lastConnectionStatus: "connected",
+    lastOpenedAt: 1,
+  };
+  const unresponsive = Object.assign(new Error("slow folder"), {
+    code: "remote-workspace-directory-unresponsive",
+    retryable: true,
+  });
+  const onSshHostReady = vi.fn();
+  const connect = vi.fn<ReconnectParams["connectRemoteWorkspaceTarget"]>(async () => {
+    throw unresponsive;
+  });
+
+  await reconnectRemoteWorkspaceHistoryEntry({
+    sessionEntry: entry,
+    options: { onSshHostReady },
+    activateTabByPath: () => true,
+    setReconnectingRemoteWorkspaceKeys: () => undefined,
+    loadCredential: vi.fn(async () => "fixture-secret"),
+    connectRemoteWorkspaceTarget: connect,
+    resolveRemoteWorkspaceCanonicalPath: async (_sessionId, path) => path,
+    bindRemoteWorkspaceScope: async (_sessionId, workspacePath) => ({
+      workspacePath,
+      workspaceIdentity: `remote:server:fixture:${workspacePath}`,
+    }),
+    disposeRemoteWorkspaceSession: vi.fn(),
+    bindRemoteWorkspacePath: vi.fn(),
+    bindRemoteWorkspaceIdentity: vi.fn(),
+    upsertWorkspaceTab: vi.fn(),
+    commitRemoteWorkspaceSessionMutation: vi.fn<
+      ReconnectParams["commitRemoteWorkspaceSessionMutation"]
+    >(async (mutation) => mutation.entry),
+    getRemoteSessions: () => [entry],
+    logger: { warn: vi.fn() },
+    toast: vi.fn(),
+  });
+  expect(connect).toHaveBeenCalledTimes(1);
+  expect(onSshHostReady).toHaveBeenCalledTimes(1);
+});
+
 it("目录不可用错误沿用统一中英文消息映射", () => {
   expect(
     formatRemoteConnectionError({

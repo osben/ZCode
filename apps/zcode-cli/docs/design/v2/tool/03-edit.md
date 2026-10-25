@@ -1,162 +1,149 @@
 # Edit Tool
 
-## 定位
+## Purpose
 
-`Edit` 对文件做精确字符串替换。
+`Edit` performs exact string replacement in a file.
 
-## 输入契约
+## Input contract
 
-`Edit` 输入是严格对象：
+`Edit` input is a strict object:
 
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `file_path` | `string` | 是 | 要修改的绝对路径 |
-| `old_string` | `string` | 是 | 要替换的原文 |
-| `new_string` | `string` | 是 | 替换后的文本，必须不同于 `old_string` |
-| `replace_all` | `boolean` | 否 | 是否替换所有匹配，默认 `false` |
+| Field         | Type      | Required | Description                                             |
+| ------------- | --------- | -------- | ------------------------------------------------------- |
+| `file_path`   | `string`  | yes      | Absolute path to modify                                 |
+| `old_string`  | `string`  | yes      | Original text to replace                                |
+| `new_string`  | `string`  | yes      | Replacement text; must differ from `old_string`         |
+| `replace_all` | `boolean` | no       | Replace every match; default `false`                    |
 
-设计要求：
+Design requirements:
 
-- 模型必须在本轮对话中先使用 `Read` 至少一次再调用 `Edit`。当前 runtime 的 read cache guard 尚未落地，但 provider-visible prompt 必须先表达这个约束，避免模型盲写。
-- `old_string` 必须来自 `Read` 输出里的真实文件内容，不能带行号前缀。
-- 当前 `Read` 模型可见格式为 `<lineNumber>: <fileContentLine>`；模型从 Read 结果复制时必须丢弃行号、冒号和第一个空格，只保留其后的真实内容。真实内容如果本身以 tab 或空格开头，必须原样保留。
-- `Edit` 必须兼容旧 `Read` 输出格式 `<lineNumber>\t<fileContentLine>`，用于历史对话、日志回放和模型复制旧结果时的兜底。
-- 模型编辑从 Read 输出复制的文本时，必须按行号前缀之后的内容保留精确缩进、tab、空格和上下文。
-- `Read` 向模型展示、`Edit` 匹配和 diff 生成统一使用 LF 逻辑内容；Windows CRLF 文件由 filesystem adapter 在读取时记录 `lineEndings=CRLF`，写回时恢复 CRLF。模型不需要、也不应该在 `old_string` 中手写 `\r\n`。
-- `old_string` 和 `new_string` 都是从 `Read` 结果复制或推导出的 Unicode 逻辑文本。filesystem adapter 负责 GB2312 / GBK / GB18030 等 legacy 编码的解码与原编码写回；模型不应通过 Bash、Node、Python、iconv 或 sed 先行转码再编辑。
-- `Edit` 以精确匹配为第一优先级。仅当精确匹配失败时，才允许启用保守兼容 matcher；所有 matcher 必须返回文件中的真实旧字符串，且最终候选必须唯一。
-- 允许的兼容 matcher 包括：quote normalization、行号前缀剥离、逐行 trim、共同缩进差异、字面量转义 `\n` / `\t` / `\r` 归一化、首尾锚点块匹配。不得做开放式语义猜测、AST 猜测或跨文件搜索替换。
-- `replace_all=true` 时只能使用精确、quote normalization、行号前缀剥离和字面量转义等不会扩大匹配范围的策略；不能用逐行 trim、缩进弹性或块锚点批量替换。
-- 兼容 matcher 命中时，结构化输出必须记录 `matchStrategy`，便于日志、trace 和后续问题诊断。
-- 默认要求 `old_string` 在文件中唯一；如果不唯一，`Edit` 必须失败，模型应扩大上下文让 `old_string` 唯一，或显式设置 `replace_all`。
-- `replace_all` 用于跨文件内替换和重命名同一字符串，例如变量重命名。
-- 多处替换必须显式设置 `replace_all`。
-- 总是优先编辑代码库中的既有文件；除非用户显式要求，否则不要创建新文件。当前 ZCode `Edit` 拒绝空 `old_string`，创建新文件应使用 `Write`。
-- 只有用户显式要求时才向文件加入 emoji。
+- The model must use `Read` at least once in the current conversation before calling `Edit`. The runtime read-cache guard has not landed yet, but the provider-visible prompt must already state this constraint so the model does not write blind.
+- `old_string` must come from real file content in the `Read` output, without the line-number prefix.
+- The current `Read` model-visible format is `<lineNumber>: <fileContentLine>`; when copying from a Read result the model must drop the line number, the colon and the first space and keep only the real content after them. Real content that itself starts with a tab or spaces must be kept as is.
+- `Edit` must also accept the old `Read` format `<lineNumber>\t<fileContentLine>`, as a fallback for historical conversations, log replay and a model copying old results.
+- When editing text copied from Read output, the model must keep exact indentation, tabs, spaces and context after the line-number prefix.
+- `Read` display, `Edit` matching and diff generation all use LF logical content; for Windows CRLF files the filesystem adapter records `lineEndings=CRLF` on read and restores CRLF on write. The model does not need to, and should not, hand-write `\r\n` in `old_string`.
+- `old_string` and `new_string` are Unicode logical text copied or derived from the `Read` result. The filesystem adapter owns decoding GB2312 / GBK / GB18030 and other legacy encodings and writing back the original encoding; the model must not transcode first through Bash, Node, Python, iconv or sed.
+- Exact matching is first priority. Only when exact matching fails may a conservative compatibility matcher run; every matcher must return the real old string from the file, and the final candidate must be unique.
+- Allowed compatibility matchers: quote normalization, line-number prefix stripping, per-line trim, common-indentation difference, literal escape `\n` / `\t` / `\r` normalization, first/last anchor block matching. No open-ended semantic guessing, AST guessing or cross-file search-and-replace.
+- With `replace_all=true` only strategies that do not widen the match range may be used: exact, quote normalization, line-number prefix stripping and literal escapes; per-line trim, indentation flexibility and block anchors must not be used for bulk replacement.
+- When a compatibility matcher hits, the structured output must record `matchStrategy` for logs, traces and later diagnosis.
+- `old_string` must be unique in the file by default; if not, `Edit` must fail, and the model should widen the context to make `old_string` unique or explicitly set `replace_all`.
+- `replace_all` is for replacing and renaming the same string throughout a file, for example renaming a variable.
+- Multiple replacements must explicitly set `replace_all`.
+- Always prefer editing existing files in the codebase; do not create new files unless the user explicitly asks. ZCode `Edit` rejects an empty `old_string`; creating a new file uses `Write`.
+- Add emoji to files only when the user explicitly asks.
 
-## 输出契约
+## Output contract
 
-输出：
+Output:
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `filePath` | `string` | 被编辑路径 |
-| `oldString` | `string` | 实际匹配到的旧字符串 |
-| `newString` | `string` | 新字符串 |
-| `originalFile` | `string` | 编辑前完整内容 |
-| `structuredPatch` | `Hunk[]` | 展示用 diff hunk |
-| `userModified` | `boolean` | 用户是否在权限 UI 中改动了提议变更 |
-| `replaceAll` | `boolean` | 是否替换全部匹配 |
-| `gitDiff` | optional object | 远程场景可附带 git diff |
+| Field             | Type            | Description                                                      |
+| ----------------- | --------------- | ---------------------------------------------------------------- |
+| `filePath`        | `string`        | Path edited                                                      |
+| `oldString`       | `string`        | Old string actually matched                                      |
+| `newString`       | `string`        | New string                                                       |
+| `originalFile`    | `string`        | Full content before the edit                                     |
+| `structuredPatch` | `Hunk[]`        | Diff hunks for display                                           |
+| `userModified`    | `boolean`       | Whether the user changed the proposed change in the permission UI |
+| `replaceAll`      | `boolean`       | Whether all matches were replaced                                |
+| `gitDiff`         | optional object | A git diff may be attached in remote scenarios                   |
 
-模型可见结果只确认文件已更新；如果 `replaceAll` 为真，会说明所有匹配已替换。
+The model-visible result only confirms the file was updated; if `replaceAll` is true it states that all matches were replaced.
 
-当前最小实现要求：
+Minimum current implementation requirements:
 
-- `structuredPatch` 必须在编辑成功后基于编辑前后内容生成，供 TUI 和调试事件展示。
-- TUI 只展示有限行数的 red/green diff preview：按 hunk 行渲染行号 gutter、`+`/`-` 标记和整行红绿背景；不把这个 UI projection 当作模型流程判断依据。
-- TUI 默认标题为 `Edit <path>`。`<path>` 在当前 workspace 内显示相对路径，workspace 外保留绝对路径；结果区不重复显示 `file_path`、`replace_all`、`diff: ... (+n -n)` 或 `@@ ... @@`。
-- TUI diff preview 由 TUI 内部消费结构化 hunk 渲染：窄屏显示 unified 单列行号，宽屏显示 split 多列。语法高亮使用 Shiki：根据文件路径推断 Shiki language，对 changed/context 行做 tokenization，并把 token 前景色转换为 OpenTUI `StyledText` chunks；整行红绿背景、行号 gutter 和 `+`/`-` 标记继续使用 TUI theme token。Shiki 不支持的语言、加载失败或高亮超时必须降级为纯文本 diff。行号展示只服务人工审计，不进入模型可见结果。
-- 首版 TUI preview 不做 word diff、权限弹窗内编辑或完整 review UI；这些能力需要独立 spec 和测试。
-- diff display 是 `tool_call_result` 的 UI projection，不替代 `EditOutput` 契约，也不作为模型流程判断依据。
+- `structuredPatch` must be generated after a successful edit from the before/after content, for TUI and debug events.
+- The TUI shows only a bounded-line red/green diff preview: a line-number gutter per hunk line, `+`/`-` markers and full-line red/green backgrounds. This UI projection is not a basis for model flow decisions.
+- The default TUI title is `Edit <path>`. `<path>` is relative inside the current workspace and absolute outside it; the result area does not repeat `file_path`, `replace_all`, `diff: ... (+n -n)` or `@@ ... @@`.
+- The TUI diff preview is rendered internally from structured hunks: narrow screens show a unified single-column line number, wide screens a split multi-column layout. Syntax highlighting uses Shiki: infer the Shiki language from the file path, tokenize changed/context lines and convert token foreground colors to OpenTUI `StyledText` chunks; full-line red/green backgrounds, line-number gutter and `+`/`-` markers keep using TUI theme tokens. A language Shiki does not support, a load failure or a highlight timeout must degrade to a plain-text diff. Line numbers serve human audit only and never enter model-visible results.
+- The first TUI preview has no word diff, in-permission-dialog editing or full review UI; those need their own spec and tests.
+- The diff display is a UI projection of `tool_call_result`; it does not replace the `EditOutput` contract and is not a basis for model flow decisions.
 
-## 行为语义
+## Behavior semantics
 
-核心流程：
+Core flow:
 
-1. 展开路径并规范化为绝对路径；当前版本不硬拒绝 workspace 外路径，后续由 filesystem permission adapter 接管工作区外编辑的 ask/deny 策略。
-2. 拒绝向 team memory 写入 secret。
-3. 拒绝 `old_string === new_string`。
-4. 检查 edit deny rule。
-5. 对 UNC path 跳过提前 I/O，交给权限处理。
-6. stat 防止超大文件导致 OOM，上限为 1 GiB。
-7. 通过 `FileSystemPort.readTextFile` 读取文件 bytes，由 adapter 按 BOM、UTF-8 校验和 legacy 中文编码检测推断文本编码，并返回 LF 规范化后的 Unicode 逻辑内容、原始 `encoding` 和 `lineEndings` metadata。
-8. 当前 ZCode 拒绝空 `old_string`，避免对既有文件产生隐式插入；创建新文件或完整重写使用 `Write`。
-9. 不存在文件且 `old_string` 为空时创建文件的行为，ZCode 暂不暴露；后续如需支持必须先更新 `Write/Edit` 边界和测试。
-10. `.ipynb` 文件拒绝，要求用 Notebook edit 工具。
-11. 已存在文件必须此前完整 `Read`。
-12. mtime 变更时，如果完整读缓存内容仍相同，可继续；否则拒绝 stale edit。
-13. 先用 exact，再用 quote normalization 和受限兼容 matcher 查找实际字符串。
-14. 匹配不到或非唯一匹配时拒绝；fallback 候选多于一个也必须拒绝，不允许工具替模型猜位置。
-15. 对 settings 文件做额外校验。
-16. 生成 patch，调用 `FileSystemPort.writeTextFile` 时带回 `encoding` 和 `lineEndings`，保持原编码和原换行风格写回；如果 `new_string` 无法编码到原编码，工具必须失败且不写入。
-17. 通知 LSP 和 IDE。
-18. 更新 `readFileState`。
+1. Expand the path and normalize to an absolute path; the current version does not hard-reject outside-workspace paths, and the filesystem permission adapter will later own ask/deny for outside-workspace edits.
+2. Reject writing secrets to team memory.
+3. Reject `old_string === new_string`.
+4. Check edit deny rules.
+5. For a UNC path skip early I/O and leave it to permission handling.
+6. stat to prevent OOM on huge files; limit 1 GiB.
+7. Read file bytes through `FileSystemPort.readTextFile`; the adapter infers the text encoding from BOM, UTF-8 validation and legacy Chinese encoding detection, and returns LF-normalized Unicode logical content plus the original `encoding` and `lineEndings` metadata.
+8. ZCode currently rejects an empty `old_string` to avoid implicit insertion into existing files; creating a new file or a full rewrite uses `Write`.
+9. Creating a file when it does not exist and `old_string` is empty is not exposed by ZCode for now; supporting it later requires updating the `Write/Edit` boundary and tests first.
+10. Reject `.ipynb` files; there is no dedicated notebook edit tool, so the error message says to read and rewrite the whole notebook JSON with Write if necessary, and must not point to a nonexistent tool.
+11. An existing file must have been fully `Read` earlier.
+12. If mtime changed, continue when the full read-cache content is still identical; otherwise reject as a stale edit.
+13. Find the actual string using exact first, then quote normalization and restricted compatibility matchers.
+14. Reject when there is no match or a non-unique match; a fallback with more than one candidate must also be rejected, and the tool must not guess a position for the model.
+15. Run extra validation on settings files.
+16. Generate the patch and call `FileSystemPort.writeTextFile` with `encoding` and `lineEndings`, writing back in the original encoding and newline style; if `new_string` cannot be encoded in the original encoding the tool must fail and write nothing.
+17. Notify LSP and IDE (LSP: publish a `FileMutatedEvent` with `changedRange`; Edit does not wait for the language server, see [19-lsp.md](19-lsp.md)).
+18. Update `readFileState`.
 
-## 权限模型
+## Permission model
 
-`Edit` 和 `Write` 共用 filesystem write permission。它是写工具，不并发安全。
+`Edit` and `Write` share the filesystem write permission. It is a write tool and not concurrency-safe.
 
-额外要求：
+Extra requirements:
 
-- `preparePermissionMatcher` 按文件路径匹配 wildcard。
-- `toAutoClassifierInput` 使用 `file_path` 和 `new_string`，用于自动权限分类。
-- 对 `.claude`、settings、危险路径的 session scoped 例外需要在 permission layer 中处理，而不是散落在 tool 里。
+- `preparePermissionMatcher` matches wildcards by file path.
+- `toAutoClassifierInput` uses `file_path` and `new_string` for automatic permission classification.
+- Session-scoped exceptions for `.claude`, settings and dangerous paths are handled in the permission layer, not scattered across tools.
 
-## 校验与错误
+## Validation and errors
 
-错误码语义可归纳为：
+Error semantics:
 
-| 场景 | 语义 |
-| --- | --- |
-| secret 检查失败 | 拒绝写入敏感内容 |
-| 新旧字符串相同 | 无变更 |
-| deny rule | 权限拒绝 |
-| 目标不存在且旧字符串非空 | 文件不存在 |
-| 目标存在且旧字符串为空 | 不能创建，文件已存在 |
-| notebook | 需要专用 notebook edit |
-| 未读或 partial read | 必须先完整读取 |
-| mtime/content 变化 | stale edit |
-| old string 找不到 | 匹配失败 |
-| 多处匹配但未 replace_all | 歧义替换 |
-| 文件过大 | 超出编辑大小上限 |
-| 空 `file_path` | 路径不能为空 |
-| 不支持编码或新内容不可编码 | 拒绝并保持原文件不变 |
+| Scenario                                    | Semantics                                          |
+| ------------------------------------------- | -------------------------------------------------- |
+| Secret check fails                          | Writing sensitive content refused                  |
+| Old and new strings identical               | No change                                          |
+| Deny rule                                   | Permission denied                                  |
+| Target missing and old string non-empty     | File does not exist                                |
+| Target exists and old string empty          | Cannot create, file already exists                 |
+| Notebook                                    | Edit unsupported; use Write to rewrite notebook JSON |
+| Unread or partial read                      | Must read fully first                              |
+| mtime/content changed                       | Stale edit                                         |
+| Old string not found                        | Match failure                                      |
+| Multiple matches without replace_all        | Ambiguous replacement                              |
+| File too large                              | Exceeds the edit size limit                        |
+| Empty `file_path`                           | Path must not be empty                             |
+| Unsupported encoding or new content not encodable | Rejected, original file unchanged            |
 
-ZCode 应给这些错误稳定 code，避免依赖英文文本判断流程。Edit handler 在原有检查位置发现
-可预期拒绝时返回 `{ result:false, errorCode, message }`，不通过 `throw` 向 executor
-传递；成功路径、读取次数和执行顺序保持不变。executor 通用组装结构化 error，并只在
-provider-visible `modelContent` 外包 `<tool_use_error>`；UI、日志和结构化 error 保留裸
-message。
+ZCode gives these errors stable codes so flow never depends on English text. When the Edit handler finds an expected rejection at the existing check position it returns `{ result:false, errorCode, message }` instead of `throw`ing to the executor; the success path, read count and execution order are unchanged. The executor assembles the structured error generically and wraps only the provider-visible `modelContent` in `<tool_use_error>`; UI, logs and the structured error keep the bare message.
 
-数字错误码固定为：无变更 `1`、文件已存在且
-`old_string` 为空 `3`、文件不存在 `4`、Notebook `5`、未完整读取 `6`、stale `7`、
-未找到 `8`、非唯一 `9`、文件过大 `10`。I/O 故障、取消或 expected revision 冲突仍属于
-执行异常，继续走通用异常路径。ZCode path policy 额外拒绝空 `file_path`，由 Edit
-handler 在进入共享路径解析前返回本地稳定错误码 `13` 和既有
-`Tool path must not be empty` 文案，避免共享异常绕过 Edit 的 provider error envelope。
-这些数字码由 Edit tool contract 统一导出，handler 不再维护第二份私有映射，避免
-provider error 与公开工具契约在后续修改中漂移。
+Numeric error codes are fixed: no change `1`, file exists and `old_string` empty `3`, file not found `4`, Notebook `5`, not fully read `6`, stale `7`, not found `8`, non-unique `9`, file too large `10`. I/O failures, cancellation and expected-revision conflicts remain execution exceptions and keep the generic exception path. ZCode path policy additionally rejects an empty `file_path`; the Edit handler returns the local stable error code `13` with the existing `Tool path must not be empty` message before entering shared path resolution, so the shared exception does not bypass Edit's provider error envelope. These numeric codes are exported by the Edit tool contract; the handler keeps no second private mapping, so provider errors and the public tool contract do not drift.
 
-## ZCode 设计结论
+## Implementation status (2026-05-08)
 
-## 实现状态（2026-05-08）
+| Capability                                       | Status      | Notes                                                                                                                                                                                                                                              |
+| ------------------------------------------------ | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Basic exact replacement                          | implemented | `Edit` runs the `old_string` -> `new_string` replacement through `FileSystemPort` and generates `structuredPatch`.                                                                                                                                  |
+| Relative path resolved against cwd               | implemented | Path resolution does not depend on the host process cwd.                                                                                                                                                                                            |
+| Hard block of outside-workspace paths            | disabled    | The current version only normalizes paths and does not reject outside-workspace edits in core path-policy, because a subagent needs to operate on external repos or files on user instruction; fine-grained ask/deny will converge in the filesystem permission adapter. |
+| Model-visible usage guidance                     | implemented | Guidance added: `Read` first, no line-number prefix, keep indentation, unique match by default, explicit `replace_all` for multiple replacements, prefer editing existing files, emoji only on explicit request.                                    |
+| Model-visible short result                       | in progress | A successful `Edit` result serializes to a short confirmation; full original text and diff are not fed back to the model.                                                                                                                           |
+| read-before-edit                                 | missing     | The runtime does not yet require a prior full `Read`, so unread, partial read and stale edit cannot be told apart.                                                                                                                                  |
+| Uniqueness check                                 | implemented | With `replace_all=false`, multiple matches are rejected, asking the model for a more specific `old_string` or an explicit `replace_all`.                                                                                                            |
+| Quote normalization                              | implemented | On match failure `Edit` tries curly quote normalization and keeps the file's original curly quote style in `new_string`.                                                                                                                            |
+| Line-number prefix compatibility                 | implemented | `Edit` strips an accidentally included `<lineNumber>: ` or historical `<lineNumber>\t` view prefix.                                                                                                                                                 |
+| Indentation fallback                             | implemented | On exact miss, with a unique candidate, tolerates common indentation, leading/trailing whitespace or literal `\n` / `\t` transcription differences.                                                                                                 |
+| CRLF / UTF-16LE / legacy Chinese encoding / original newline preservation | in progress | `FileSystemPort` returns LF logical content, original encoding and line-ending metadata; `Edit` matches in LF space and writes back in the original format.                                                       |
+| Empty `old_string` create semantics              | partial     | An empty `old_string` is explicitly rejected to avoid implicit insertion from JS includes/replace; creating new files via `Edit` is unsupported, use `Write`.                                                                                       |
+| Notebook/settings/secret validation              | missing     | `.ipynb` rejection and settings/team memory safety checks are not implemented yet.                                                                                                                                                                  |
+| Stable business errors                           | implemented | The handler returns fixed numeric `errorCode + message` at the existing check positions; the executor assembles the provider error generically without changing the success path.                                                                   |
 
-| 能力 | 状态 | 说明 |
-| --- | --- | --- |
-| 基本精确替换 | implemented | 当前 `Edit` 已通过 `FileSystemPort` 执行 `old_string` -> `new_string` 替换并生成 `structuredPatch`。 |
-| 相对路径按 session cwd 解析 | implemented | 当前路径解析不依赖宿主进程 cwd。 |
-| workspace 外路径硬拦截 | disabled | 当前版本只规范化路径，不在 core path-policy 拒绝工作区外编辑；原因是 subagent 需要按用户指令操作外部仓库或文件，细粒度 ask/deny 后续收敛到 filesystem permission adapter。 |
-| 模型可见使用指导 | implemented | 已补充 guidance：先 `Read`、不要带行号前缀、保持缩进、默认唯一匹配、多处替换显式 `replace_all`、优先编辑既有文件、emoji 仅在用户显式要求时加入。 |
-| 模型可见短结果 | in progress | 本轮将 `Edit` 成功结果序列化为短确认文本，完整原文和 diff 不直接回灌模型。 |
-| read-before-edit | missing | 当前 runtime 尚未要求此前完整 `Read`，因此无法区分未读、partial read 和 stale edit。 |
-| 唯一性检查 | implemented | 当前 `replace_all=false` 时会拒绝多处匹配，要求模型提供更具体的 `old_string` 或显式设置 `replace_all`。 |
-| quote normalization | implemented | `Edit` 匹配失败时会尝试 curly quote normalization，并在 `new_string` 中保留文件原有 curly quote 风格。 |
-| line-number prefix compatibility | implemented | `Edit` 可剥离模型误带入的 `<lineNumber>: ` 或历史 `<lineNumber>\t` 视图前缀。 |
-| indentation fallback | implemented | exact miss 时可在唯一候选前提下容忍共同缩进、行首尾空白或字面量 `\n` / `\t` 抄写差异。 |
-| CRLF / UTF-16LE / legacy 中文编码 / 原换行保持 | in progress | `FileSystemPort` 返回 LF 逻辑内容、原始 encoding 和 line ending metadata；`Edit` 在 LF 空间匹配并按原格式写回。 |
-| empty `old_string` 创建语义 | partial | 当前显式拒绝空 `old_string`，避免 JS includes/replace 产生隐式插入；暂不支持通过 `Edit` 创建新文件，创建应使用 `Write`。 |
-| notebook/settings/secret 校验 | missing | 尚未拒绝 `.ipynb` 或进行 settings/team memory 安全校验。 |
-| 稳定业务错误 | implemented | handler 在既有检查位置返回固定的数字 `errorCode + message`；executor 通用组装 provider error，不改变成功路径。 |
+Landed so far: model guidance, short-result serialization and multi-match rejection for `replace_all=false`; read cache, stale guard, encoding fidelity and structured errors come in later stages.
 
-本轮落地模型指导、短结果序列化和 `replace_all=false` 的多匹配拒绝；read cache、stale guard、编码保真和结构化错误在后续阶段补齐。
+`Edit` is ZCode's core NL-to-code mutation primitive. Implementation must prioritize verifiability:
 
-`Edit` 是 ZCode 的核心 NL-to-code mutation primitive。实现时需要优先保证可验证性：
-
-- `old_string` 精确匹配和唯一性是核心契约；兼容 matcher 只能修正模型从 Read 视图复制文本时的格式误差，不能替模型自由猜测修改位置。
-- 结构化补丁编辑由 `ApplyPatch` 承担，不能把 patch 语义塞进 `Edit.old_string`。
-- 读前编辑约束必须和 `Read` 的 cache 结构共享。
-- 写回必须保持原编码和原换行风格；`Edit` 不直接猜测宿主系统 EOL，而是消费 `FileSystemPort` 的 `lineEndings` metadata。
-- 文件读取、stale 校验和写回必须通过 `FileSystemPort`，不得在 core handler 中直接调用 Node `fs`。
-- 权限 UI 应展示 diff，并允许用户拒绝或修改提议。
-- 测试必须覆盖缩进、CRLF、UTF-16LE、GB2312/GBK/GB18030、重复匹配、quote normalization、stale edit、不可编码字符失败和 settings 文件保护。
+- Exact `old_string` matching and uniqueness are the core contract; compatibility matchers may only fix format drift when the model copies text from the Read view and must not freely guess where to edit.
+- Structured patch editing belongs to `ApplyPatch`; patch semantics must not be squeezed into `Edit.old_string`.
+- The read-before-edit constraint must share the `Read` cache structure.
+- Write-back must keep the original encoding and newline style; `Edit` does not guess the host EOL and consumes the `lineEndings` metadata of `FileSystemPort`.
+- File read, stale validation and write-back go through `FileSystemPort`; core handlers must not call Node `fs` directly.
+- The permission UI should show the diff and let the user reject or modify the proposal.
+- Tests must cover indentation, CRLF, UTF-16LE, GB2312/GBK/GB18030, duplicate matches, quote normalization, stale edit, unencodable character failure and settings file protection.

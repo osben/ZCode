@@ -1,3 +1,5 @@
+import type { LspService } from "../lsp/service.js";
+import type { NestedInstructionTracker } from "../context/nested-instructions/tracker.js";
 import { PermissionService, ToolScheduler } from "./deps.js";
 import type {
   Logger,
@@ -58,7 +60,7 @@ import type { AgentRuntimeHookMethods } from "./internal-hook-methods.js";
 import type { MemoryRecallState } from "../memory/recall/index.js";
 import type { ProjectMemoryRecallPrefetch } from "./helpers/project-memory-recall.js";
 import type { ProjectMemoryExtractionScheduler } from "./helpers/project-memory-extraction.js";
-import type { ProjectMemoryUpdate } from "./helpers/project-memory-dream.js";
+import type { BackgroundDreamRun, ProjectMemoryUpdate } from "./helpers/project-memory-dream.js";
 import type { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
 
@@ -90,10 +92,15 @@ export interface AgentRuntimeInternal
   sessionModelSelection: ModelSelection | undefined;
   messageHistory: MessageHistory;
   readFileState: ReadFileStateMap;
+  nestedInstructionTracker: NestedInstructionTracker;
   cachedTools: ModelToolContract[] | null;
   /** 工作流工具面是否已注册（launch.md「On demand: activation」）；非 onDemand 会话出生即 true。 */
   dynamicWorkflowToolsActivated: boolean;
   dynamicWorkflowActivationSource?: DynamicWorkflowActivationSource;
+  /** Language-server service handed in through deps; absent when code intelligence is not wired. */
+  lspService?: LspService;
+  /** Whether the LSP tool is currently registered (service present, enabled, and a server binary installed). */
+  lspToolAvailable: boolean;
   contextBuilder: ContextBuilder | null;
   contextInitialized: boolean;
   contextSourceSnapshot?: ContextSourceSnapshot;
@@ -105,6 +112,8 @@ export interface AgentRuntimeInternal
   memoryExtractionScheduler?: ProjectMemoryExtractionScheduler;
   memoryDreamLastScanAtMs: number;
   pendingMemoryUpdate?: ProjectMemoryUpdate;
+  /** Live background /dream runs keyed by runtime-task id; the background stop dispatch aborts the controller. */
+  backgroundDreamRuns: Map<string, BackgroundDreamRun>;
   contextSourcePort?: ContextSourcePort;
   skillPort?: SkillPort;
   mcpPort?: McpPort;

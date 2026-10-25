@@ -19,6 +19,7 @@ import {
   resolveWorkspaceKey,
   ZCODE_VERSION,
   type ConnectionProfile,
+  type SourceServerHostKeyPreview,
   type SourceServerRunningTask,
   type RemoteTarget,
 } from "@zcode/shared";
@@ -168,6 +169,9 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
   const [validationAttempt, setValidationAttempt] = useState(0);
   const [focusCredentials, setFocusCredentials] = useState(false);
   const [directoryPath, setDirectoryPath] = useState("");
+  // The folder a connect attempt will open. directoryPath only belongs to the directory step and is cleared before
+  // connecting, so the connecting progress reads this snapshot of the attempt's preferred directory instead.
+  const [connectingWorkspacePath, setConnectingWorkspacePath] = useState<string>();
   const consumedKindPreferenceRef = useRef<string | null>(null);
   const [step, setCurrentStep] = useState<RemoteWizardStep>("device");
   // Root 常驻挂载，设置入口的首帧也直接展示分类表单，不等待 effect 隐藏旧选择屏。
@@ -184,6 +188,13 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
   const [pendingInstallConfirmation, setPendingInstallConfirmation] = useState<RemoteTarget | null>(
     null,
   );
+  // Unknown SSH host key the Host refused; the user decides inline, like the install confirmation.
+  const [pendingHostKeyTrust, setPendingHostKeyTrust] = useState<{
+    target: RemoteTarget;
+    profileId: string;
+    preview: SourceServerHostKeyPreview;
+    busy: boolean;
+  } | null>(null);
   const [upgradeProfileId, setUpgradeProfileId] = useState<string | null>(null);
   const [upgradeLoading, setUpgradeLoading] = useState(false);
   const [pendingForceUpdate, setPendingForceUpdate] = useState<{
@@ -215,6 +226,11 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
   const consumedPreferredProfileIdRef = useRef<string | null>(null);
   const consumedPreferredTargetRef = useRef<RemoteTarget | null>(null);
   const pendingCompletionIntentRef = useRef<RemoteConnectionCompletionIntent>({});
+  // Device management and an onConnectionReady owner never open the folder from this flow, so no folder step.
+  const resolveConnectingWorkspacePath = (path?: string) =>
+    completion !== "device-management" && !onConnectionReady && path?.trim()
+      ? path.trim()
+      : undefined;
   const [selectingDirectory, setSelectingDirectory] = useState(false);
   const selectingDirectoryRef = useRef(false);
   const { connectionLogs, resetConnectionLogs } = useRemoteConnectionLogs(connectingRequestId);
@@ -517,12 +533,14 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       ownsConnectedSessionRef.current = false;
       updatePendingRemoteTarget(null);
       setPendingInstallConfirmation(null);
+      setPendingHostKeyTrust(null);
       setUpgradeProfileId(null);
       setUpgradeLoading(false);
       setRecognizedDeviceName(undefined);
       setRecognizedSourceServerId(undefined);
       setActiveProfileName(undefined);
       pendingCompletionIntentRef.current = {};
+      setConnectingWorkspacePath(undefined);
       updateConnectingRequestId(null);
       if (!options?.keepOpen) applyOpenState(false);
     },
@@ -669,6 +687,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       preferredDirectoryPath,
       options,
     };
+    setConnectingWorkspacePath(resolveConnectingWorkspacePath(preferredDirectoryPath));
 
     updatePendingRemoteTarget(nextTarget);
     setLoading(true);
@@ -929,6 +948,29 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
         resolvedWslTarget?: Required<Extract<RemoteTarget, { kind: "wsl" }>>;
       };
       const reasonCode = typeof failure.code === "string" ? failure.code : undefined;
+      if (
+        reasonCode === "remote-host-key-unknown" &&
+        typeof failure.profileId === "string" &&
+        sourceManagement
+      ) {
+        // The Host keeps the refused key; the preview comes from its snapshot, as for the install preview.
+        const snapshot = await sourceManagement.getSnapshot().catch(() => undefined);
+        if (activeRequestIdRef.current !== requestId) return;
+        if (snapshot) applySourceManagementSnapshot(snapshot);
+        const preview = snapshot?.states.find(
+          (state) => state.profileId === failure.profileId,
+        )?.hostKeyPreview;
+        if (preview) {
+          setPendingHostKeyTrust({
+            target: nextTarget,
+            profileId: failure.profileId,
+            preview,
+            busy: false,
+          });
+          finishTrace((action) => action.cancel());
+          return;
+        }
+      }
       const errorMessage = formatRemoteConnectionError({
         fallback: getErrorMessage(connectError),
         reasonCode,
@@ -1097,8 +1139,64 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     const target = pendingInstallConfirmation;
     const intent = pendingCompletionIntentRef.current;
     setPendingInstallConfirmation(null);
+    setPendingHostKeyTrust(null);
     void startRemoteConnection(target, true, intent.preferredDirectoryPath, intent.options);
   }, [pendingInstallConfirmation, startRemoteConnection, loading]);
+
+  const handleTrustHostKey = useCallback(async () => {
+    const pending = pendingHostKeyTrust;
+    if (!pending || pending.busy || !sourceManagement) return;
+    const epoch = entryEpochRef.current;
+    setPendingHostKeyTrust({ ...pending, busy: true });
+    try {
+      const snapshot = await sourceManagement.trustHostKey(
+        pending.profileId,
+        pending.preview.fingerprint,
+      );
+      if (entryEpochRef.current !== epoch) return;
+      applySourceManagementSnapshot(snapshot);
+      setPendingHostKeyTrust(null);
+      const intent = pendingCompletionIntentRef.current;
+      void startRemoteConnection(
+        pending.target,
+        false,
+        intent.preferredDirectoryPath,
+        intent.options,
+      );
+    } catch (trustError) {
+      if (entryEpochRef.current !== epoch) return;
+      setPendingHostKeyTrust(null);
+      const code =
+        trustError && typeof trustError === "object" && "code" in trustError
+          ? String(trustError.code)
+          : "remote-host-key-unknown";
+      setErrorCode(code);
+      setRawError(getErrorMessage(trustError));
+      setError(
+        formatRemoteConnectionError({
+          fallback: getErrorMessage(trustError),
+          reasonCode: code,
+          retryable: false,
+          formatMessage: intl.formatMessage,
+        }),
+      );
+    }
+  }, [
+    applySourceManagementSnapshot,
+    intl,
+    pendingHostKeyTrust,
+    sourceManagement,
+    startRemoteConnection,
+  ]);
+
+  const handleRejectHostKey = useCallback(() => {
+    // Rejecting writes nothing; a queued trust click from this prompt must not reconnect afterwards.
+    entryEpochRef.current += 1;
+    setPendingHostKeyTrust(null);
+    resetFeedback();
+    setErrorCode("remote-host-key-unknown");
+    setError(intl.formatMessage({ id: "remote.hostKeyTrustRejected" }));
+  }, [intl]);
 
   const handleCancelInstall = useCallback(() => {
     if (completion === "device-management" && onCancelled) {
@@ -1110,6 +1208,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     // 安装确认可能已排入事件队列；取消先撤销归属，旧确认不能重新发起连接。
     entryEpochRef.current += 1;
     setPendingInstallConfirmation(null);
+    setPendingHostKeyTrust(null);
     resetFeedback();
     setCancelled(true);
   }, [closeDialog, completion, onCancelled]);
@@ -1135,6 +1234,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     // 取消先撤销 epoch，旧更新的 finally 不再有权清理 busy；在 owner 的取消入口同步收口。
     setUpgradeLoading(false);
     setPendingInstallConfirmation(null);
+    setPendingHostKeyTrust(null);
     setAliasCredentialsPending(false);
     resetFeedback();
     setCancelled(true);
@@ -1296,6 +1396,11 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       setServerToken(target.token ?? "");
     }
     setCurrentStep("connecting");
+    setConnectingWorkspacePath(
+      resolveConnectingWorkspacePath(
+        pendingCompletionIntentRef.current.preferredDirectoryPath ?? preferredDirectoryPath,
+      ),
+    );
     setErrorCode(initialFailure.code);
     setRawError(initialFailure.message);
     setError(
@@ -1331,9 +1436,11 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     const entryEpoch = ++entryEpochRef.current;
     resetFeedback();
     setPendingInstallConfirmation(null);
+    setPendingHostKeyTrust(null);
     setUpgradeProfileId(null);
     // 凭据缺失时也保留目录意图，不能等真正拨号才记录。
     pendingCompletionIntentRef.current = { preferredDirectoryPath, options: selectOptions };
+    setConnectingWorkspacePath(resolveConnectingWorkspacePath(preferredDirectoryPath));
     setDirectoryPath("");
     setActiveProfileName(profile.displayName);
     setRecognizedSourceServerId(profile.sourceServerId);
@@ -1762,6 +1869,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
             cancelled,
             target: displayTarget,
             name: recognizedDeviceName ?? activeProfileName,
+            workspacePath: connectingWorkspacePath,
             logs: visibleConnectionLogs,
             error: errorCode === "credentials-required" ? "" : error,
             reason: error
@@ -1775,6 +1883,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
             waiting:
               aliasCredentialsPending ||
               Boolean(pendingInstallConfirmation) ||
+              Boolean(pendingHostKeyTrust) ||
               Boolean(pendingForceUpdate) ||
               errorCode === "credentials-required",
             ready: backgroundReady,
@@ -1970,6 +2079,8 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       backToDevicesLabel: addingDevice
         ? intl.formatMessage({ id: "settings.source.newConnection" })
         : undefined,
+      // A chosen project folder means this connection also opens it, so the progress shows the folder step.
+      workspacePath: connectingWorkspacePath,
       onClose: () => {
         void handleCloseRequest();
       },
@@ -2043,7 +2154,8 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       onUpgrade: () => {
         void handleUpgradeRequiredServer();
       },
-      connectionReady: Boolean(connectedSessionId) && !error,
+      // The folder step is still pending after the connection, so the step is not complete yet.
+      connectionReady: Boolean(connectedSessionId) && !error && !connectingWorkspacePath,
       onContinueToDirectory: () => setCurrentStep("directory"),
       target: pendingRemoteTarget,
       recognizedDeviceName: recognizedDeviceName,
@@ -2067,6 +2179,17 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
               );
             }
           : undefined,
+      hostKeyTrust: pendingHostKeyTrust
+        ? {
+            preview: pendingHostKeyTrust.preview,
+            busy: pendingHostKeyTrust.busy,
+            onConfirm: () => {
+              if (entryEpochRef.current !== directoryEpoch) return;
+              void handleTrustHostKey();
+            },
+            onCancel: handleRejectHostKey,
+          }
+        : undefined,
       installConfirmation: pendingInstallConfirmation
         ? {
             target: pendingInstallConfirmation,
@@ -2095,6 +2218,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
           }
           setFocusCredentials(errorCode === "credentials-required");
           setPendingInstallConfirmation(null);
+          setPendingHostKeyTrust(null);
           resetFeedback();
           updateConnectingRequestId(null);
           setCurrentStep("settings");

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement, isValidElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import { UpdateStatusButton } from "@/UpdateStatusButton.js";
 import { UpdateStatusDialog } from "@/UpdateStatusDialog.js";
 import {
@@ -52,7 +53,7 @@ function renderUpdateStatusButton(
           { platform: noopPlatform },
           createElement(
             ZCodeIntlProvider,
-            { initialLocale: "zh-CN" },
+            { initialLocale: "en-US" },
             createElement(UpdateStatusButton, {
               platform: noopPlatform,
               version,
@@ -68,7 +69,7 @@ function renderUpdateStatusButton(
 const testIntl: IntlInstance = {
   formatMessage({ id }, values) {
     if (values?.version) {
-      return `更新 ${values.version}`;
+      return `Update ${values.version}`;
     }
 
     return id;
@@ -527,7 +528,10 @@ describe("UpdateStatusButton release notes", () => {
     expect(downloadingHtml).toContain("bg-success");
     expect(downloadingHtml).toContain("animate-spin");
     expect(downloadingHtml).not.toContain('disabled=""');
-    expect(downloadingHtml).not.toContain("下载中");
+    // The entry conveys downloading via the spinner and aria-label, not a visible
+    // "Downloading" text node (the aria-label "Downloading update ..." legitimately
+    // contains the word, so pin the text-node form).
+    expect(downloadingHtml).not.toContain(`>${expectedCopy("updateDialog.downloadingAction")}<`);
     expect(downloadingHtml).not.toContain("topoverlayer:w-auto");
     expect(downloadingHtml).not.toContain("topoverlayer:hidden");
     expect(downloadedHtml).toContain("bg-success");
@@ -541,8 +545,9 @@ describe("UpdateStatusButton release notes", () => {
       channel: "stable",
     } as UpdateStatePayload);
 
-    // Bugfix: download-progress.version 是协议可选字段。不能因为某一帧缺少版本号
-    // 就把更新入口卸载，否则用户打开的下载弹窗会跟着消失。
+    // Bugfix: download-progress.version is an optional protocol field. One frame
+    // missing the version must not unmount the update entry, or the download
+    // dialog the user opened would disappear with it.
     expect(html).toContain("bg-success");
     expect(html).toContain("animate-spin");
     expect(html).not.toContain("topoverlayer:w-auto");
@@ -590,8 +595,10 @@ describe("UpdateStatusButton release notes", () => {
   it("ignores stale legacy ready version after state reports idle", () => {
     const html = renderUpdateStatusButton({ kind: "idle", enabled: true }, "3.3.2");
 
-    // Bugfix: main 侧 staging error 后会广播 idle，但旧 UpdateReady 缓存仍可能残留。
-    // UI 此时不能继续展示“重启以更新”，否则点击只会命中一个已失效的安装上下文。
+    // Bugfix: main broadcasts idle after a staging error, but the stale
+    // UpdateReady cache may still linger. The UI must not keep showing the
+    // restart-to-update entry, or the click would only hit a dead install
+    // context.
     expect(html).not.toContain("bg-success");
     expect(html).not.toContain("updateReady.shortTitle");
   });
@@ -599,8 +606,9 @@ describe("UpdateStatusButton release notes", () => {
   it("keeps legacy ready version when no update state API exists", () => {
     const html = renderUpdateStatusButton(null, "3.3.2");
 
-    // 平滑迁移：旧包只会发 UpdateReady，不一定有持续状态流。
-    // 只有新状态明确同步成 idle/error/checking 后，才清掉 legacy ready。
+    // Smooth migration: old builds only emit UpdateReady and may not have a
+    // continuous state stream. Clear the legacy ready marker only after the new
+    // state explicitly syncs to idle/error/checking.
     expect(html).toContain("bg-success");
     expect(html).toContain("topoverlayer:w-auto");
   });

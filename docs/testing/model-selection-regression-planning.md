@@ -1,18 +1,18 @@
-# 模型选择与供应商超大回归矩阵规划
+# Model Selection and Provider Mega-Regression Matrix Plan
 
 ## Feature Summary
 
-| Field                | Value                                                                                                                                                                                                                                                                                                                                   |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Developer intent     | 罗列所有与模型供应商、模型选择、思考深度、模型能力、请求投影和模型相关产品功能有关的因子，并为后续笛卡尔积、剪枝和测试生成提供稳定输入。                                                                                                                                                                                                |
-| Capability           | Model selection / Provider Registry / Model Runtime / Model Request Projection                                                                                                                                                                                                                                                          |
-| Change layer         | option-source、draft-default、validation、commit-effect、persistence、recovery；presentation 只作为低权重交叉维度                                                                                                                                                                                                                       |
-| Operating mode       | planning                                                                                                                                                                                                                                                                                                                                |
-| Primary catalog      | [model-selection-regression-factor-catalog.yaml](./model-selection-regression-factor-catalog.yaml)；隐含决策见 [backlog](./model-selection-regression-decision-backlog.yaml)，可直接填写的 [决策问卷](./model-selection-regression-decision-questionnaire.md)                                                                           |
-| Current product code | [ModelSelection](/Users/dev/workspace/z-code-3/packages/shared/src/model-selection.ts)、[Provider Resolver](/Users/dev/workspace/z-code-3/packages/provider/src/resolver.ts)、[V4 model command handler](/Users/dev/workspace/z-code-3/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/handlers/model-config.ts) |
-| Out of scope         | 本轮不写产品代码、不直接生成正式 E2E、不把 undefined 或 bug-candidate 当成 accepted 断言、不把所有 literal model ID 做无约束全排列。                                                                                                                                                                                                    |
+| Field                | Value                                                                                                                                                                                                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Developer intent     | List every factor related to model providers, model selection, thinking depth, model capability, request projection and model-related product features, and give later Cartesian products, pruning and test generation a stable input.                                                                 |
+| Capability           | Model selection / Provider Registry / Model Runtime / Model Request Projection                                                                                                                                                                                                                         |
+| Change layer         | option-source, draft-default, validation, commit-effect, persistence, recovery; presentation only as a low-weight cross dimension                                                                                                                                                                      |
+| Operating mode       | planning                                                                                                                                                                                                                                                                                               |
+| Primary catalog      | [model-selection-regression-factor-catalog.yaml](./model-selection-regression-factor-catalog.yaml); implicit decisions in the [backlog](./model-selection-regression-decision-backlog.yaml), with a directly fillable [decision questionnaire](./model-selection-regression-decision-questionnaire.md) |
+| Current product code | [ModelSelection](../../packages/shared/src/model-selection.ts), [Provider Resolver](../../packages/provider/src/resolver.ts), [V4 model command handler](../../apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/handlers/model-config.ts)                                              |
+| Out of scope         | No product code this round, no direct generation of formal E2E, no treating undefined or bug-candidate as accepted assertions, no unconstrained full permutation of all literal model IDs.                                                                                                             |
 
-## 1. 语义分层
+## 1. Semantic Layers
 
 ```text
 Provider / account / entitlement / personal config
@@ -40,59 +40,57 @@ Provider / account / entitlement / personal config
               provider request + usage + events
 ```
 
-必须分别断言四层：
+Four layers must be asserted separately:
 
-1. `ModelSelection`：provider/model 加显式 option override。
-2. Active Model：ModelFactory 根据当前 Registry 补齐默认值后创建的执行对象。
-3. Request Projection：针对 Anthropic、OpenAI Chat、OpenAI Responses 和 OpenAI-compatible 的请求形态。
-4. Provenance：最终回复、压缩、标题、Subagent、Automation 等结果实际使用的 provider/model。
+1. `ModelSelection`: provider/model plus explicit option overrides.
+2. Active Model: the execution object created by ModelFactory after filling defaults from the current Registry.
+3. Request Projection: request shapes for Anthropic, OpenAI Chat, OpenAI Responses and OpenAI-compatible.
+4. Provenance: the provider/model actually used by the final reply, compaction, title, Subagent, Automation and other results.
 
-模型 ID 是 opaque value。展示态可以编码为 `providerId/modelId$variant`，但 V4 command、Agent snapshot
-和持久化不得把该展示态字符串当成新的跨进程协议；model ID 中的 `/`、`:` 和 `$` 都需要保留原义。
+A model ID is an opaque value. The display form may be encoded as `providerId/modelId$variant`, but the V4 command, Agent snapshot and persistence must not treat that display string as a new cross-process protocol; `/`, `:` and `$` inside a model ID keep their original meaning.
 
 ## 2. UI Surface Matrix
 
-| 用户场景           | 入口                            | 草稿/展示 owner            | 默认/继承                            | 校验                             | Commit sink                           | 权威落点                           | 必须隔离                                  |
-| ------------------ | ------------------------------- | -------------------------- | ------------------------------------ | -------------------------------- | ------------------------------------- | ---------------------------------- | ----------------------------------------- |
-| 新建对话           | V4 composer toolbar             | renderer draft             | Recent -> Host preferred -> fallback | target Host Registry             | `createSession.config` / `firstInput` | Session runtime + Snapshot         | 不改已有 Session                          |
-| 已有对话切模       | V4 composer toolbar             | Conversation Snapshot      | 当前 Session config                  | CAS、target model capability     | `switchModelConfig`                   | CLI session runtime                | 不改其他 Session                          |
-| 历史任务恢复       | Session/task switch             | Snapshot hydrator          | persisted Session config             | cold-resume + Registry           | resume path                           | Session timeline                   | Task index 不是 authority                 |
-| Automation 编辑    | `AutomationEditView`            | automation form draft      | inherit 或 automation record         | automation model options         | automation save                       | automation record/run snapshot     | 不改 Chat Session                         |
-| Automation 运行    | scheduler / manual dispatch     | run snapshot               | saved selection                      | run-time Registry/auth           | dispatch                              | automation execution               | 不重新读取 Chat Draft                     |
-| Off-Peak 编辑      | `OffPeakEditView`               | Off-Peak form              | task record                          | hidden exact model + entitlement | offpeak save                          | Off-Peak task record               | 不写 Recent/default                       |
-| Off-Peak 执行      | scheduler                       | task/run record            | persisted selection                  | ticket、JWT、Team scope          | task dispatch                         | Off-Peak runtime                   | 不创建普通 Chat runtime                   |
-| User Subagent      | `SubagentsSection`              | profile/Markdown           | parent inherit                       | child profile + Registry         | Markdown save / child create          | child runtime/timeline             | readonly child 无 picker                  |
-| Built-in Subagent  | Built-in model control          | built-in override          | built-in profile                     | Registry                         | built-in override save                | child runtime                      | 不污染 parent timeline                    |
-| Provider 设置      | provider settings section       | settings form              | source overlay                       | schema/complete/revision         | Provider facade                       | personal/account config + Registry | 不直接创建 runtime model                  |
-| 登录初始选择       | login/welcome                   | login form                 | family/provider first model          | key/OAuth/entitlement            | account connection                    | account settings                   | 不绕过 Provider Registry                  |
-| Bot                | Bot `/model`                    | bot config                 | bot default                          | model selection view             | bot service                           | bot config/request                 | 不假设 Chat toolbar 状态                  |
-| 官方 MCP           | official MCP credentials        | account/family selection   | active plan provider                 | coding plan access               | credentials service                   | auth context                       | 不把 MCP provider facts 当 Registry owner |
-| Git commit message | git generator                   | request-local              | current/explicit model               | output budget 256                | generateText                          | commit result provenance           | 不改主会话 thought                        |
-| Title/Goal title   | sidecar                         | request-local              | configured title model/current model | JSON/no tools                    | sidecar request                       | title provenance                   | 强制关闭 reasoning                        |
-| Goal verifier      | runtime verifier                | start-time snapshot        | Session model                        | verifier policy                  | verifier request                      | goal execution                     | 不跟随中途模型切换                        |
-| Compact            | compact runtime                 | request-local              | current model                        | context/output budget            | compact request                       | compact timeline                   | 不生成普通 user row                       |
-| Project memory     | memory helpers                  | request-local              | current model                        | memory policy                    | generateText                          | memory result                      | 不制造额外产品 turn                       |
-| Connectivity       | provider/model test             | request-local              | explicit model                       | credentials/provider facts       | connectivity service                  | result only                        | 不修改 Session model                      |
-| CLI/TUI            | `/model`、`/effort`、`/variant` | CLI config                 | CLI current config                   | runtime validation               | CLI command                           | CLI runtime                        | 与 UI 展示层分开验证                      |
+| User scenario                         | Entry                           | Draft/display owner      | Default/inherit                      | Validation                       | Commit sink                           | Authority                          | Must isolate                              |
+| ------------------------------------- | ------------------------------- | ------------------------ | ------------------------------------ | -------------------------------- | ------------------------------------- | ---------------------------------- | ----------------------------------------- |
+| New conversation                      | V4 composer toolbar             | renderer draft           | Recent -> Host preferred -> fallback | target Host Registry             | `createSession.config` / `firstInput` | Session runtime + Snapshot         | Existing Sessions unchanged               |
+| Switch model in existing conversation | V4 composer toolbar             | Conversation Snapshot    | current Session config               | CAS, target model capability     | `switchModelConfig`                   | CLI session runtime                | Other Sessions unchanged                  |
+| Historical task restore               | Session/task switch             | Snapshot hydrator        | persisted Session config             | cold-resume + Registry           | resume path                           | Session timeline                   | Task index is not authority               |
+| Automation edit                       | `AutomationEditView`            | automation form draft    | inherit or automation record         | automation model options         | automation save                       | automation record/run snapshot     | Chat Session unchanged                    |
+| Automation run                        | scheduler / manual dispatch     | run snapshot             | saved selection                      | run-time Registry/auth           | dispatch                              | automation execution               | Does not re-read the Chat Draft           |
+| Off-Peak edit                         | `OffPeakEditView`               | Off-Peak form            | task record                          | hidden exact model + entitlement | offpeak save                          | Off-Peak task record               | Does not write Recent/default             |
+| Off-Peak execution                    | scheduler                       | task/run record          | persisted selection                  | ticket, JWT, Team scope          | task dispatch                         | Off-Peak runtime                   | Does not create an ordinary Chat runtime  |
+| User Subagent                         | `SubagentsSection`              | profile/Markdown         | parent inherit                       | child profile + Registry         | Markdown save / child create          | child runtime/timeline             | readonly child has no picker              |
+| Built-in Subagent                     | Built-in model control          | built-in override        | built-in profile                     | Registry                         | built-in override save                | child runtime                      | Does not pollute the parent timeline      |
+| Provider settings                     | provider settings section       | settings form            | source overlay                       | schema/complete/revision         | Provider facade                       | personal/account config + Registry | Does not create a runtime model directly  |
+| Initial selection at login            | login/welcome                   | login form               | family/provider first model          | key/OAuth/entitlement            | account connection                    | account settings                   | Does not bypass the Provider Registry     |
+| Bot                                   | Bot `/model`                    | bot config               | bot default                          | model selection view             | bot service                           | bot config/request                 | Assumes no Chat toolbar state             |
+| Official MCP                          | official MCP credentials        | account/family selection | active plan provider                 | coding plan access               | credentials service                   | auth context                       | MCP provider facts are not Registry owner |
+| Git commit message                    | git generator                   | request-local            | current/explicit model               | output budget 256                | generateText                          | commit result provenance           | Main session thought unchanged            |
+| Title/Goal title                      | sidecar                         | request-local            | configured title model/current model | JSON/no tools                    | sidecar request                       | title provenance                   | Reasoning forced off                      |
+| Goal verifier                         | runtime verifier                | start-time snapshot      | Session model                        | verifier policy                  | verifier request                      | goal execution                     | Does not follow mid-run model switches    |
+| Compact                               | compact runtime                 | request-local            | current model                        | context/output budget            | compact request                       | compact timeline                   | Creates no ordinary user row              |
+| Project memory                        | memory helpers                  | request-local            | current model                        | memory policy                    | generateText                          | memory result                      | Creates no extra product turn             |
+| Connectivity                          | provider/model test             | request-local            | explicit model                       | credentials/provider facts       | connectivity service                  | result only                        | Session model unchanged                   |
+| CLI/TUI                               | `/model`, `/effort`, `/variant` | CLI config               | CLI current config                   | runtime validation               | CLI command                           | CLI runtime                        | Verified separately from the UI display   |
 
-共享 UI 不代表共享行为。`ModelConfigSelect`、`buildModelSelectGroups` 和 `useModelSelectionView` 只
-共享候选来源或展示约定；每个 surface 的 draft、默认、commit 和 persistence 都必须独立断言。
+Shared UI does not mean shared behavior. `ModelConfigSelect`, `buildModelSelectGroups` and `useModelSelectionView` share only the candidate source or display conventions; each surface's draft, default, commit and persistence must be asserted independently.
 
-## 3. 状态 owner、校验点和持久化
+## 3. State Owners, Validation Points and Persistence
 
-| 状态/事实            | Authority                         | Mirrors/cache                   | 校验/commit                                  | 持久化                                           |
-| -------------------- | --------------------------------- | ------------------------------- | -------------------------------------------- | ------------------------------------------------ |
-| Provider/Model facts | target Host Provider Registry     | Settings/Selection facade       | `ProviderConfigResolver`、`validateComplete` | Built-in/Account/Personal config                 |
-| 用户选择             | surface-local draft 或产品 record | toolbar、form、recent           | target Worker Registry + ModelFactory        | Session/Automation/Subagent/Off-Peak record |
-| Active Model         | CLI runtime                       | Snapshot、usage、provenance     | ModelFactory、Adapter capability checks      | session model timeline / message provenance      |
-| Session config       | CLI Session runtime               | Conversation Snapshot、Renderer | V4 command barrier/CAS                       | Session persistence                              |
-| Queue Submission     | CLI CommandInbox/FIFO             | renderer optimistic journal     | admission/queue guard                        | queue facts/discard ledger                       |
-| Recent selection     | workspace-keyed renderer storage  | draft initializer               | selectable check                             | workspaceKey：identity trim，否则使用 path       |
-| Plan/entitlement     | Account/plan services             | provider UI badges/usage        | account/provider access resolution           | account settings/usage data                      |
-| Request auth         | execution service/provider access | request-local only              | fail before network                          | 不落盘动态凭据                                   |
-| Delivery profile     | trusted Host attachment           | connection subscription         | host injection                               | 不由 renderer 自选                               |
+| State/fact           | Authority                             | Mirrors/cache                   | Validation/commit                            | Persistence                                 |
+| -------------------- | ------------------------------------- | ------------------------------- | -------------------------------------------- | ------------------------------------------- |
+| Provider/Model facts | target Host Provider Registry         | Settings/Selection facade       | `ProviderConfigResolver`, `validateComplete` | Built-in/Account/Personal config            |
+| User selection       | surface-local draft or product record | toolbar, form, recent           | target Worker Registry + ModelFactory        | Session/Automation/Subagent/Off-Peak record |
+| Active Model         | CLI runtime                           | Snapshot, usage, provenance     | ModelFactory, Adapter capability checks      | session model timeline / message provenance |
+| Session config       | CLI Session runtime                   | Conversation Snapshot, Renderer | V4 command barrier/CAS                       | Session persistence                         |
+| Queue Submission     | CLI CommandInbox/FIFO                 | renderer optimistic journal     | admission/queue guard                        | queue facts/discard ledger                  |
+| Recent selection     | workspace-keyed renderer storage      | draft initializer               | selectable check                             | workspaceKey: identity trim, otherwise path |
+| Plan/entitlement     | Account/plan services                 | provider UI badges/usage        | account/provider access resolution           | account settings/usage data                 |
+| Request auth         | execution service/provider access     | request-local only              | fail before network                          | Dynamic credentials are not persisted       |
+| Delivery profile     | trusted Host attachment               | connection subscription         | host injection                               | Not chosen by the renderer                  |
 
-## 4. 交付边界
+## 4. Delivery Boundary
 
 ```text
 desktop / SSH / WSL / Docker
@@ -106,18 +104,18 @@ mobile /remote
   -> web-remote-replayable
 ```
 
-必须保持：
+Must hold:
 
-- relay 和 main 只做鉴权、配对、心跳、透传和 attachment 调度，不拥有 Session/Task/Queue/Snapshot。
-- 手机不另起 Agent、Local Host 或独立 remote runtime。
-- Desktop continuous 和 mobile replayable 是两个 delivery contract，不能互相拼接。
-- 远程请求贯穿 `workspaceIdentity` 和 `remoteSessionId`。
-- `workspacePath` 用于执行和展示；`workspaceIdentity` 用于身份隔离和 key。
-- accepted input 只有 CLI/runtime CommandInbox 一个权威 FIFO。
+- The relay and main only do authentication, pairing, heartbeat, passthrough and attachment scheduling; they own no Session/Task/Queue/Snapshot.
+- Mobile does not start its own Agent, Local Host or independent remote runtime.
+- Desktop continuous and mobile replayable are two delivery contracts and must not be stitched together.
+- Remote requests carry `workspaceIdentity` and `remoteSessionId` end to end.
+- `workspacePath` is for execution and display; `workspaceIdentity` is for identity isolation and keys.
+- Accepted input has exactly one authoritative FIFO: the CLI/runtime CommandInbox.
 
-## 5. 因子和组合策略
+## 5. Factors and Combination Strategy
 
-完整因子在 [YAML catalog](./model-selection-regression-factor-catalog.yaml) 中维护，第一层维度为：
+The full factor list is maintained in the [YAML catalog](./model-selection-regression-factor-catalog.yaml); the first-level dimensions are:
 
 ```text
 surface × operation × provider/access/entitlement
@@ -127,7 +125,7 @@ surface × operation × provider/access/entitlement
         × recovery/persistence/delivery/workspace
 ```
 
-不直接展开成全局笛卡尔积。模型采用以下等价类签名：
+No direct global Cartesian expansion. Models use the following equivalence-class signature:
 
 ```text
 provider access profile
@@ -140,67 +138,66 @@ provider access profile
 + product operation profile
 ```
 
-生成规则：
+Generation rules:
 
-1. 第一轮 pairwise，覆盖每个行为维度和共享 owner。
-2. Provider/API/reasoning、Registry/session/queue、remote/recovery 等高风险关系做 3-wise。
-3. 仅在明确声明的 cross-product 内展开 full Cartesian。
-4. 颜色、主题、语言、viewport、键盘/鼠标等 presentation 维度做共享 UI 代表，不和所有模型组合。
-5. `accepted` 才能进入正式 E2E；`undefined` 必须先有决策；`bug-candidate` 需要产品契约确认后转回归。
-6. 每个剪枝都必须有明确 guard 或 invariant，不能以“组合太多”为理由删除。
+1. First round pairwise, covering every behavior dimension and shared owner.
+2. 3-wise for high-risk relations such as Provider/API/reasoning, Registry/session/queue, remote/recovery.
+3. Full Cartesian only inside explicitly declared cross-products.
+4. Presentation dimensions (color, theme, language, viewport, keyboard/mouse) use shared-UI representatives and are not crossed with all models.
+5. Only `accepted` enters formal E2E; `undefined` needs a decision first; `bug-candidate` becomes a regression after the product contract is confirmed.
+6. Every pruning needs an explicit guard or invariant; "too many combinations" is not a reason to delete.
 
-## 6. 第一批高风险 case
+## 6. First Batch of High-Risk Cases
 
-YAML 中已经放入完整 seed cases。最先应落地的主线为：
+The YAML already holds the complete seed cases. The main line to land first:
 
-| Case             | 场景                                      | 证据重点                                |
-| ---------------- | ----------------------------------------- | --------------------------------------- |
-| MSR-REG-001      | Personal custom Provider 选择并首发       | UI、Registry、真实 request body、持久化 |
-| MSR-REG-002      | 两个 Provider 下同名模型                  | provider/model 完整身份                 |
-| MSR-REG-003      | Remote Registry loading 不 fallback 本地  | target Host authority                   |
-| MSR-REG-004      | Built-in/Account revision 不匹配          | atomic Registry publish                 |
-| MSR-AUTH-002     | entitlement loading 保留 saved selection  | plan gating                             |
-| MSR-REASON-001   | GLM-5.2 max/high/nothink                  | reasoning wire mapping                  |
-| MSR-REASON-002   | Qwen/Kimi/MiMo toggle                     | extra-body minimal projection           |
-| MSR-REASON-003   | Anthropic fixed/adaptive budget           | max output 与 thinking budget           |
-| MSR-REQ-001      | modality/tool/structured output           | adapter preflight + request body        |
-| MSR-DRAFT-002    | Draft 切模后首次发送                      | createSession/firstInput freeze         |
-| MSR-SESSION-002  | noop/stale/duplicate/failed switch        | protocol ACK/CAS                        |
-| MSR-SESSION-003  | switch barrier 与 send 竞态               | command ordering                        |
-| MSR-SESSION-004  | provider.notInRegistry 一次 refresh/retry | remote identity                         |
-| MSR-SESSION-005  | stream 中切模                             | in-flight model immutability            |
-| MSR-QUEUE-002    | Desktop + mobile busy input 共用 FIFO     | CommandInbox + delivery                 |
-| MSR-RECOVERY-001 | Anthropic unsigned reasoning repair       | canonical history immutability          |
-| MSR-RECOVERY-002 | empty completion retry                    | exactly-once output                     |
-| MSR-REMOTE-001   | remote workspace identity 隔离            | workspaceKey + reconnect                |
-| MSR-SURFACE-001  | Automation 保存后运行                     | record/run snapshot                     |
-| MSR-SURFACE-002  | Subagent 继承/显式模型                    | child authority/provenance              |
-| MSR-OFF-001      | 隐藏 Off-Peak provider 内部执行           | hidden Registry + ticket                |
-| MSR-SIDE-001     | title 强制 no reasoning                   | sidecar projection                      |
-| MSR-SIDE-002     | Git commit 显式 thought 语义              | querySource-specific behavior           |
+| Case             | Scenario                                            | Evidence focus                               |
+| ---------------- | --------------------------------------------------- | -------------------------------------------- |
+| MSR-REG-001      | Personal custom Provider selected and first send    | UI, Registry, real request body, persistence |
+| MSR-REG-002      | Same-named models under two Providers               | full provider/model identity                 |
+| MSR-REG-003      | Remote Registry loading does not fall back to local | target Host authority                        |
+| MSR-REG-004      | Built-in/Account revision mismatch                  | atomic Registry publish                      |
+| MSR-AUTH-002     | entitlement loading keeps the saved selection       | plan gating                                  |
+| MSR-REASON-001   | GLM-5.2 max/high/nothink                            | reasoning wire mapping                       |
+| MSR-REASON-002   | Qwen/Kimi/MiMo toggle                               | extra-body minimal projection                |
+| MSR-REASON-003   | Anthropic fixed/adaptive budget                     | max output and thinking budget               |
+| MSR-REQ-001      | modality/tool/structured output                     | adapter preflight + request body             |
+| MSR-DRAFT-002    | First send after a draft model switch               | createSession/firstInput freeze              |
+| MSR-SESSION-002  | noop/stale/duplicate/failed switch                  | protocol ACK/CAS                             |
+| MSR-SESSION-003  | switch barrier races with send                      | command ordering                             |
+| MSR-SESSION-004  | provider.notInRegistry one refresh/retry            | remote identity                              |
+| MSR-SESSION-005  | model switch during streaming                       | in-flight model immutability                 |
+| MSR-QUEUE-002    | Desktop + mobile busy input share one FIFO          | CommandInbox + delivery                      |
+| MSR-RECOVERY-001 | Anthropic unsigned reasoning repair                 | canonical history immutability               |
+| MSR-RECOVERY-002 | empty completion retry                              | exactly-once output                          |
+| MSR-REMOTE-001   | remote workspace identity isolation                 | workspaceKey + reconnect                     |
+| MSR-SURFACE-001  | Automation runs after save                          | record/run snapshot                          |
+| MSR-SURFACE-002  | Subagent inherited/explicit model                   | child authority/provenance                   |
+| MSR-OFF-001      | hidden Off-Peak provider internal execution         | hidden Registry + ticket                     |
+| MSR-SIDE-001     | title forces no reasoning                           | sidecar projection                           |
+| MSR-SIDE-002     | Git commit explicit thought semantics               | querySource-specific behavior                |
 
-## 7. 隐含决策审计结果
+## 7. Implicit Decision Audit Result
 
-上一版只列了 3 个 hard blocker，确实过度压缩了范围。现在单独维护的 decision backlog 有 114 项，但它们不是 114 个都要产品逐条拍板：
+An earlier version listed only 3 hard blockers, which over-compressed the scope. The separately maintained decision backlog now has 114 items, but they do not all need a product ruling one by one:
 
-| 分类                   | 数量    | 含义                                   | 下一步                           |
-| ---------------------- | ------- | -------------------------------------- | -------------------------------- |
-| `undefined`            | 64      | 真实产品行为未定义，必须先裁决         | 每轮裁 3–7 项                    |
-| `contract-conflict`    | 12      | 新旧 spec、实现、既有 case 互相矛盾    | 先确定权威口径，再改文档/测试    |
-| `resolved-needs-proof` | 38      | 已有较强设计或实现倾向，不应重复问产品 | 用 unit/integration/E2E/日志证明 |
-| **合计**               | **114** |                                        |                                  |
+| Category               | Count   | Meaning                                                                  | Next step                                                   |
+| ---------------------- | ------- | ------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| `undefined`            | 64      | Real product behavior is undefined, must be ruled first                  | Rule on 3-7 per round                                       |
+| `contract-conflict`    | 12      | New/old specs, implementation and existing cases contradict each other   | Fix the authoritative reading first, then update docs/tests |
+| `resolved-needs-proof` | 38      | Strong design or implementation leaning exists; do not ask product again | Prove with unit/integration/E2E/logs                        |
+| **Total**              | **114** |                                                                          |                                                             |
 
-### 7.1 需要先收敛的 12 个契约冲突
+### 7.1 The 12 contract conflicts to converge first
 
-- Registry：`DEC-019`、`DEC-020`、`DEC-021`，旧 legacy 来源、identity scope 和 atomic publish 是否仍有效。
-- Entitlement：`DEC-030`，旧 I56/I58/I61 的 silent fallback 是否仍是当前行为。
-- Reasoning：`DEC-041` 已裁决为 frozen Submission；queue 消费时不得用最新 Session Selection
-  改写已入队的 Provider、Model 与思考深度。
-- Session：`DEC-046` 已裁决为 queue item 的 Provider、Model 与 thought 按 admission 冻结。
-- Product surface：`DEC-065`、`DEC-066`、`DEC-067`，Automation/Subagent 继承和 Recent 写入时点。
-- Migration：`DEC-091`、`DEC-092`，旧 snapshot/case 如何重分类和迁移。
+- Registry: `DEC-019`, `DEC-020`, `DEC-021`: whether old legacy sources, identity scope and atomic publish are still valid.
+- Entitlement: `DEC-030`: whether the silent fallback of old I56/I58/I61 is still current behavior.
+- Reasoning: `DEC-041` is ruled as a frozen Submission; at queue consumption the latest Session Selection must not rewrite the Provider, Model and thinking depth of an already queued item.
+- Session: `DEC-046` is ruled that the Provider, Model and thought of a queue item are frozen at admission.
+- Product surface: `DEC-065`, `DEC-066`, `DEC-067`: Automation/Subagent inheritance and the Recent write point.
+- Migration: `DEC-091`, `DEC-092`: how old snapshots/cases are reclassified and migrated.
 
-其中 Queue 冲突的当前证据链是：
+The current evidence chain for the Queue conflict:
 
 ```text
 accepted input
@@ -217,85 +214,79 @@ queue wait ───────────────┐
                           ▼
                  request + provenance
 
-desktop-continuous  ─────┐  业务事实相同
-web-remote-replayable ───┘  只改变 snapshot/gap/owner 的投递与恢复边界
+desktop-continuous  ─────┐  same business facts
+web-remote-replayable ───┘  only the delivery and recovery boundary of snapshot/gap/owner changes
 ```
 
-较新的 Provider interaction design、`conversation-product-state-space.md` 和当前 `input-intent.ts` 都支持冻结 Submission；
-`conversation-protocol-declaration.md` / `conversation-product-protocol.md` 已统一为
-`queuedSubmissionPreservesSelection`。
-因此 `MSR-QUEUE-001` 及其相关项可以按 frozen Submission 语义进入 formal E2E。
+The newer Provider interaction design, `conversation-product-state-space.md` and the current `input-intent.ts` all support a frozen Submission; `conversation-protocol-declaration.md` / `conversation-product-protocol.md` have been unified to `queuedSubmissionPreservesSelection`. So `MSR-QUEUE-001` and related items may enter formal E2E with frozen Submission semantics.
 
-### 7.2 64 个真正需要产品决策的 edge domain
+### 7.2 The 64 edge domains that really need product decisions
 
-完整问题、选项、建议、证据和阻塞 case 在 backlog 中逐项展开。覆盖面包括：
+Full questions, options, recommendations, evidence and blocking cases are expanded per item in the backlog. Coverage:
 
-1. 空选择、Recent、Host preferred、provider default、provider/model 同名和 draft 原子回滚。
-2. Picker 打开后 Registry 变化、disabled/deprecated、revision、旧 snapshot 和远端 target Host authority。
-3. entitlement loading、账号切换、OAuth refresh、个人 key/团队代理、组织 policy 和 operation 级能力。
-4. missing/default/explicit-off thought、effort/budget 优先级、nothink wire、reasoning 与 tools/schema 冲突。
-5. Queue admission、FIFO、Guide boundary、取消/停止/超时、Edit/Retry、compact、Goal 和内部 Submission。
-6. Automation、Subagent、Off-Peak、Bot/TUI/CLI、MCP、Git commit、Title、Verifier、Memory。
-7. desktop continuous 与 mobile replayable、shared-host attachment、workspaceIdentity、remoteSessionId、owner/lease、gap recovery。
-8. 长列表排序/搜索/键盘/触摸/无障碍、双主题/i18n/窄屏，以及 migration、correlation ID、脱敏日志、错误分类和 pruning report。
-9. Node persistence：Configured Default 的 schema/损坏/legacy import/watcher/dispose，以及 Built-in Release 的 Bundled/Active/LKG、revision、retired provider、远端 refresh lease、backoff、atomic write。
+1. Empty selection, Recent, Host preferred, provider default, same-named provider/model and atomic draft rollback.
+2. Registry changes after the picker opens, disabled/deprecated, revision, old snapshots and remote target Host authority.
+3. entitlement loading, account switching, OAuth refresh, personal key / team proxy, org policy and operation-level capability.
+4. missing/default/explicit-off thought, effort/budget priority, nothink wire, conflict between reasoning and tools/schema.
+5. Queue admission, FIFO, Guide boundary, cancel/stop/timeout, Edit/Retry, compact, Goal and internal Submissions.
+6. Automation, Subagent, Off-Peak, Bot/TUI/CLI, MCP, Git commit, Title, Verifier, Memory.
+7. desktop continuous and mobile replayable, shared-host attachment, workspaceIdentity, remoteSessionId, owner/lease, gap recovery.
+8. Long-list sorting/search/keyboard/touch/accessibility, dual theme/i18n/narrow screen, plus migration, correlation ID, redacted logs, error classification and pruning report.
+9. Node persistence: schema/corruption/legacy import/watcher/dispose of the Configured Default, and Bundled/Active/LKG, revision, retired provider, remote refresh lease, backoff and atomic write of the Built-in Release.
 
-第一轮建议裁决以下 7 项，它们的答案会最大幅度影响笛卡尔积剪枝：
+Suggested first-round rulings, whose answers most strongly affect Cartesian pruning:
 
-1. `DEC-046`：已裁决为 Queue 冻结 Submission Selection；Provider 配置在 Model 创建时读取最新事实。
-2. `DEC-067`：Recent 在 picker、switch ACK 还是 accepted Submission 时写入。
-3. `DEC-030`：不可用 explicit model 是否允许 silent fallback。
-4. `DEC-066`：Subagent 无显式 model 的继承源。
-5. `DEC-001`：没有任何 selectable model 时的空状态和发送行为。
-6. `DEC-016`：Provider endpoint/config 变更是否影响 Active Model。
-7. `DEC-091`：旧 snapshot 缺 provider/thought 信息时如何恢复。
+1. `DEC-046`: ruled; the Queue freezes the Submission Selection; Provider config reads the latest facts at Model creation.
+2. `DEC-067`: whether Recent is written at the picker, the switch ACK or an accepted Submission.
+3. `DEC-030`: whether an unavailable explicit model may silently fall back.
+4. `DEC-066`: the inheritance source of a Subagent without an explicit model.
+5. `DEC-001`: empty state and send behavior when no selectable model exists.
+6. `DEC-016`: whether a Provider endpoint/config change affects the Active Model.
+7. `DEC-091`: how to restore when an old snapshot lacks provider/thought information.
 
-### 7.3 29 个已有口径但需要证据的项目
+### 7.3 29 items with an established reading that need evidence
 
-这些不是“再问一个产品偏好”，而是要补测试或运行时证据：ModelSelection 的结构化 round-trip、Recent 的 accepted-Submission 时点、
-Provider config 对 Active Model 的不可变性、reasoning repair、Edit/Retry 复制完整 selection、跨端 queue provenance、
-Automation/Subagent/Off-Peak 隔离、remote snapshot authority、workspaceKey 迁移、脱敏日志和 pruning report。
+These are not "one more product preference to ask" but need tests or runtime evidence: structured round-trip of ModelSelection, the accepted-Submission timing of Recent, immutability of the Active Model against Provider config, reasoning repair, Edit/Retry copying the complete selection, cross-client queue provenance, Automation/Subagent/Off-Peak isolation, remote snapshot authority, workspaceKey migration, redacted logs and the pruning report.
 
-## 8. Graph drift 和范围缺口
+## 8. Graph Drift and Scope Gaps
 
-- 当前没有 live codegraph index，因此本目录的 code evidence 标记为 source-reading/rg evidence；不能把 graph 未索引误判为功能不存在。
-- `OffPeakEditView` 是实际模型选择入口，但 feature graph 对它的独立 surface 描述不完整。
-- Login、Bot、官方 MCP、Git commit、标题、Goal verifier、Project memory 都是实际模型消费者，但当前 graph 只部分表达了它们和 model-selection 的语义边。
-- 旧 client-config、`magic_name`、fallback、tombstone 相关路径只能作为 migration/legacy boundary，不应继续作为当前 Provider Registry 的来源。
-- 这次新增 backlog 专门记录 code graph 之外通过 spec、resolver、input-intent、ModelFactory 和 case catalog 交叉发现的隐含边，不把它们悄悄塞进单一 `surface` 因子。
-- `packages/provider-node` 不是简单文件存储：它同时决定 Configured Default、Bundled/Active Release、远端同步 lease 和 Registry 的启动可用性；因此新增 `DEC-098`–`DEC-114`，不能只覆盖 renderer picker。
+- There is no live codegraph index now, so the code evidence in this directory is marked source-reading/rg evidence; an unindexed graph must not be misread as a missing feature.
+- `OffPeakEditView` is an actual model-selection entry, but the feature graph describes its independent surface incompletely.
+- Login, Bot, official MCP, Git commit, title, Goal verifier and Project memory are all actual model consumers, but the current graph expresses only part of their semantic edges to model-selection.
+- Old client-config, `magic_name`, fallback and tombstone paths serve only as migration/legacy boundaries and must not remain a source of the current Provider Registry.
+- The new backlog records implicit edges found across spec, resolver, input-intent, ModelFactory and case catalog beyond the code graph, and does not hide them in a single `surface` factor.
+- `packages/provider-node` is not simple file storage: it decides the Configured Default, Bundled/Active Release, remote sync lease and the startup availability of the Registry; hence `DEC-098`-`DEC-114` were added, and covering only the renderer picker is not enough.
 
-## 9. E2E 交接规则
+## 9. E2E Handoff Rules
 
-模型专项正式 E2E 需要遵循现有 conversation E2E 工作流：
+Formal model-focused E2E follows the existing conversation E2E workflow:
 
-1. accepted case 先写 setup/action/assertion 和至少一个非 UI 证据层。
-2. Provider 请求使用 case-local fixture；普通功能使用 `fast-text`，时序场景使用 `controlled-stream`，故障场景使用 `fault-stream`。
-3. UI-only picker/keyboard case 显式声明 `providerRequestPolicy: none`，不能用空 fixture 掩盖漏配。
-4. Desktop case 默认 `desktop-continuous`；Remote case 额外验证 `web-remote-replayable` 的 snapshot/gap/owner boundary。
-5. 只把 provider/model capability signature 的代表 case 放入 E2E；映射细节由 provider-unit 和 adapter-wire 测试覆盖。
-6. 先通过 fixture check 和 local replay，再进入 formal promotion/Docker preset。
+1. An accepted case first writes setup/action/assertion and at least one non-UI evidence layer.
+2. Provider requests use a case-local fixture; ordinary features use `fast-text`, timing scenarios `controlled-stream`, fault scenarios `fault-stream`.
+3. UI-only picker/keyboard cases declare `providerRequestPolicy: none` explicitly; an empty fixture must not mask a missing setup.
+4. Desktop cases default to `desktop-continuous`; Remote cases additionally verify the snapshot/gap/owner boundary of `web-remote-replayable`.
+5. Only representative cases of provider/model capability signatures go into E2E; mapping details are covered by provider-unit and adapter-wire tests.
+6. Pass fixture check and local replay first, then enter formal promotion / the Docker preset.
 
-当前不生成 `manual-review/pending` spec，因为 Queue contract、旧 fallback、Recent timing、Subagent/Automation inheritance、
-legacy snapshot migration 等仍有未决/冲突项。待这些问题裁决后，再把 YAML 的 accepted cases 回填到专项 case catalog 和 coverage matrix。
+No `manual-review/pending` spec is generated now because the Queue contract, old fallback, Recent timing, Subagent/Automation inheritance, legacy snapshot migration and others still have undecided or conflicting items. After those are ruled, the accepted cases of the YAML are backfilled into the focused case catalog and coverage matrix.
 
-## 10. 后续执行顺序
+## 10. Next Execution Order
 
 ```text
 YAML factor catalog
         │
         ▼
-决策回填（undefined / contract-conflict）
+backfill decisions (undefined / contract-conflict)
         │
         ▼
-实现证明（resolved-needs-proof）
+implementation proof (resolved-needs-proof)
         │
         ▼
-生成 legal combinations + pruning report
+generate legal combinations + pruning report
         │
         ▼
-按 owner 分派 unit / integration / desktop E2E / remote replay
+dispatch by owner: unit / integration / desktop E2E / remote replay
         │
         ▼
-回填 conversation case catalog + coverage matrix
+backfill conversation case catalog + coverage matrix
 ```

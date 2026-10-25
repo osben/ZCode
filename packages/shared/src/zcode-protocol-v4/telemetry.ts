@@ -4,7 +4,7 @@ import { zcodeSyntheticUserMessageSourceSchema } from "../zcode-protocol-legacy-
 import { timestampSchema } from "./core.js";
 
 const factBaseFields = {
-  /** 会话创建期采用的 App Memory 开关，不表示记忆读写结果。 */
+  /** App Memory toggle used when creating the session; does not indicate whether memory was read or written. */
   memoryEnabled: z.boolean().optional(),
   version: z.literal(1),
   eventId: z.string().min(1),
@@ -66,8 +66,9 @@ const turnStartedFactSchema = z
     kind: z.literal("turn.started"),
     executionKind: z.enum(["agent", "controlOnly"]).optional(),
     inputSource: zcodeSyntheticUserMessageSourceSchema.optional(),
-    // `workflow`：dynamic-workflow run 的完成 / 提问通知唤起的独立轮。
-    backgroundSource: z.enum(["bash", "subagent", "workflow"]).optional(),
+    // `workflow`: a separate turn triggered by a completion/question notification from a dynamic-workflow run;
+    // `dream`: a separate turn triggered by the /dream memory-consolidation completion notification.
+    backgroundSource: z.enum(["bash", "subagent", "workflow", "dream"]).optional(),
     automationId: z.string().min(1).optional(),
     offPeakTaskId: z.string().min(1).optional(),
     offPeakRunType: z.enum(["init", "resume"]).optional(),
@@ -202,12 +203,12 @@ const subagentLifecycleFactSchema = z
   .strict();
 
 /**
- * 动态工作流子代理的归属事实。由父会话的 workflow run 进度事件派生：
- * - `actor-spawned`：一个子代理会话诞生。`childSessionId` 是 driver 生成的子会话 id，
- *   `sourceCommandId`（基字段）是该 run 的启动输入 id——子代理 step 挂在它下面。
- * - `run-settled`：run 结算即该 run 全部子代理的终态（子代理会话活到 run dispose）。
- *   `status` 是 run 的终态；`stopReason` 只在 `stopped` 时在场。
- * 只带 id 与状态，不带脚本、prompt、结果正文。
+ * Ownership facts for dynamic-workflow subagents, derived from parent-session workflow-run progress:
+ * - `actor-spawned`: a subagent session was created. `childSessionId` is the driver-generated child
+ *   session ID; base field `sourceCommandId` is the run's launch-input ID, which owns the subagent step.
+ * - `run-settled`: once the run settles, all its subagents are terminal (their sessions live until the
+ *   run is disposed). `status` is the run's terminal state; `stopReason` is present only when stopped.
+ * Include only IDs and status, not scripts, prompts, or result text.
  */
 const workflowLifecycleFactSchema = z
   .object({
@@ -238,7 +239,7 @@ const turnTerminalFactSchema = z
     errorRetryable: z.boolean().optional(),
     turnPhase: z.string().optional(),
     backgroundSubagentResultConsumed: z.boolean().optional(),
-    /** 本轮消费过 dynamic-workflow run 的通知（完成 / 提问）；`agent_composition` 的 wf 维度。 */
+    /** This turn consumed a dynamic-workflow run notification (completion/question); the wf dimension of `agent_composition`. */
     workflowResultConsumed: z.boolean().optional(),
   })
   .strict();
@@ -267,8 +268,9 @@ const compactionTerminalFactSchema = z
   .strict();
 
 /**
- * CLI 经 `v4/telemetry/event` 上送的实时会话事实，供桌面埋点与运行中会话统计消费。
- * 每个分支都 strict，避免新增 runtime 字段时把 prompt、工具输入或 provider URL 意外外带。
+ * Live session facts sent by the CLI through `v4/telemetry/event`, consumed by desktop telemetry and
+ * in-progress session statistics. Every branch is strict so new runtime fields cannot accidentally
+ * expose prompts, tool inputs, or provider URLs.
  */
 const conversationTelemetryFactRuntimeSchema = z
   .discriminatedUnion("kind", [
@@ -297,7 +299,7 @@ const conversationTelemetryFactRuntimeSchema = z
         path: ["offPeakRunType"],
       });
     }
-    // discriminatedUnion 的成员必须是裸 ZodObject，按 phase 的条件必填只能写在这里。
+    // discriminatedUnion members must be plain ZodObjects; phase-dependent required fields belong here.
     if (
       fact.kind === "workflow.lifecycle" &&
       fact.phase === "actor-spawned" &&

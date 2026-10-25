@@ -1,27 +1,19 @@
-# Assistant Row Actions（当前事实）
+# Assistant Row Actions (Current Facts)
 
-Assistant turn 的操作区提供 copy、赞、踩、fork、retry，并在末尾展示该 assistant 消息的
-创建时间。操作区只挂在一轮最后一段已完成的 assistant 正文后；一轮有多个 text part 时，
-不在中间 part 重复展示。
+The action area of an assistant turn offers copy, like, dislike, fork and retry, and shows the creation time of that assistant message at the end. The action area is attached only after the last completed assistant text of a turn; when a turn has several text parts it is not repeated on the middle parts.
 
-## 行为
+## Behavior
 
-- Copy 复制该轮合并后的 assistant 正文，不只复制最后一个 part。
-- 赞 / 踩是互斥反馈。再次点击当前选中项会清空反馈，点击另一项会直接切换。
-- 反馈只保存在当前 `ConversationAssistantTextActions` 组件的本地状态中；组件重挂、刷新或
-  重新打开任务后清空，不写 transcript、数据库或 renderer store。
-- 点击只更新当前按钮状态并上报应用遥测；不发送 V4 command，不进入 provider-visible
-  history，也不注入后续 Agent prompt。
-- Fork 是否可用完全由 CLI 投影的 `row.actions.canFork` 决定；running 中的稳定 assistant
-  row 也可被 CLI stable resolver 放行，pane 不自行按 phase 猜测。
-- Retry 发送 V4 `retryTurn`，目标是对应 turn/row。
-- Fork 发送 V4 `forkAssistant`，成功 ACK 返回 child sessionId，随后由权威
-  sessions/projection 收敛。
-- 时间来自 CLI 投影的 `AssistantTextRow.createdAt`，表达消息创建时间，不是本轮工作耗时。
-  当天只显示时分，昨天显示“昨天 + 时分”，当年更早显示月日和时分，跨年显示年月日和
-  时分；无效或非正时间戳不展示，避免出现 1970 年占位时间。
+- Copy copies the merged assistant text of the turn, not just the last part.
+- Like / dislike are mutually exclusive feedback. Clicking the currently selected one clears the feedback; clicking the other switches directly.
+- Feedback lives only in the local state of the current `ConversationAssistantTextActions` component; it is cleared on remount, refresh or reopening the task, and is not written to the transcript, database or renderer store.
+- A click only updates the current button state and reports app telemetry; it sends no V4 command, does not enter provider-visible history and is not injected into later Agent prompts.
+- Whether Fork is available is decided entirely by the CLI-projected `row.actions.canFork`; a stable assistant row that is still running can also be released by the CLI stable resolver, and the pane does not guess by phase.
+- Retry sends V4 `retryTurn`, targeting the corresponding turn/row.
+- Fork sends V4 `forkAssistant`; the successful ACK returns the child sessionId, which then converges through the authoritative sessions/projection.
+- The time comes from the CLI-projected `AssistantTextRow.createdAt` and expresses the message creation time, not the working duration of the turn. Today shows only hour:minute, yesterday shows "Yesterday" + hour:minute (UI string "昨天"), earlier this year shows month-day and hour:minute, and a previous year shows year-month-day and hour:minute; an invalid or non-positive timestamp is not shown, avoiding a 1970 placeholder time.
 
-## 时间来源
+## Time source
 
 ```text
 live ModelStreaming event.timestamp ──┐
@@ -33,15 +25,12 @@ cold message.info.time.created ───────┤
                                       |
                     completed assistant action toolbar
                          /                         \
-          desktop hover/focus          mobile /remote 常显
+          desktop hover/focus          mobile /remote always visible
 ```
 
-live continuous 直接使用 CLI 事件时间；cold hydration 必须把 transcript assistant message 的
-`info.time.created` 传给合成的 `text_start` 事件，不能退化成“会话首条时间 + 合成序号”。事件
-全序仍由 `sequenceNumber` 裁决，时间戳只负责展示。desktop continuous 与 mobile replayable
-最终都消费同一 `row.createdAt` 事实，各自在本地 locale/timezone 下格式化。
+Live continuous uses the CLI event time directly; cold hydration must pass the transcript assistant message `info.time.created` to the synthesized `text_start` event and must not degrade to "first session time + synthetic sequence". The total event order is still decided by `sequenceNumber`, and the timestamp is only for display. Desktop continuous and mobile replayable both finally consume the same `row.createdAt` fact, each formatted locally in its own locale/timezone.
 
-## 反馈状态链路
+## Feedback state chain
 
 ```text
 desktop / mobile assistant action toolbar
@@ -54,16 +43,14 @@ desktop / mobile assistant action toolbar
   aria-pressed / style   fire-and-forget telemetry
 ```
 
-反馈没有跨组件生命周期的权威事实，也不参与 desktop continuous 或 mobile replayable 消息
-链路。CLI、host、relay、desktop main、transcript 和数据库均不读取或保存该状态。
+Feedback has no authoritative fact across the component lifecycle and does not take part in the desktop continuous or mobile replayable message chain. CLI, host, relay, desktop main, transcript and database neither read nor store this state.
 
-## 展示与可访问性
+## Display and accessibility
 
-- UI 复用 `MessageAction` 的紧凑 ghost/icon 样式和语义色 token；选中态保留清晰背景反馈。
-- 使用 `aria-pressed`、本地化 label 和可见 focus 状态。
-- 桌面端随 assistant turn hover/focus 显示；手机 `/remote` 没有 hover，动作区直接可见且
-  不用 Tooltip 包裹按钮，避免触屏首次 tap 被 hover/portal 吞掉。
-- 时间跟随动作区一起显隐，排列在所有可用动作之后；它是只读元数据，不增加可点击区域。
-- 点按选中动画尊重 `prefers-reduced-motion`。
+- The UI reuses the compact ghost/icon style of `MessageAction` and semantic color tokens; the selected state keeps clear background feedback.
+- Uses `aria-pressed`, a localized label and a visible focus state.
+- On desktop it shows with hover/focus of the assistant turn; mobile `/remote` has no hover, so the action area is directly visible and buttons are not wrapped in a Tooltip, so that the first tap on a touch screen is not swallowed by hover/portal.
+- The time shows and hides together with the action area, placed after all available actions; it is read-only metadata and adds no clickable area.
+- The press selection animation respects `prefers-reduced-motion`.
 
-实现入口：`ConversationRowView.tsx` 和共享 test id。
+Implementation entry: `ConversationRowView.tsx` and the shared test ids.

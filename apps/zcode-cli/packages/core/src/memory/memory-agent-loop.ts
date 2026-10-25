@@ -1,8 +1,11 @@
+import { assertNotExternalAgentModel } from "@zcode/contracts";
 import { isAbsolute } from "node:path";
 
 import type {
   ModelInputMessage,
   ModelMessageContent,
+  ModelUsage,
+  ModelResult,
   Model,
   ModelReasoningContentBlock,
   ModelRequest,
@@ -23,8 +26,21 @@ import { auxiliaryModelOptions } from "../model/auxiliary-model-options.js";
 
 export type MemoryAgentModelRequest = ModelRequest;
 
+/** Per provider request timing + usage captured for callers that record usage facts (manual Dream). */
+export interface MemoryAgentLoopRequestUsage {
+  index: number;
+  completedAt: number;
+  durationMs: number;
+  startedAt: number;
+  status: "completed" | "error" | "cancelled";
+  result?: ModelResult;
+  error?: unknown;
+  usage?: ModelUsage;
+}
+
 export interface MemoryAgentLoopResult {
   messages: ModelInputMessage[];
+  requests: MemoryAgentLoopRequestUsage[];
   turns: number;
 }
 
@@ -42,6 +58,8 @@ const MEMORY_AGENT_READ_ONLY_TOOLS = new Set(["Read", "Grep", "Glob"]);
 
 export async function runMemoryAgentLoop(input: {
   abortSignal?: AbortSignal;
+  onRequestStart?: (index: number) => void;
+  onRequestSettled?: (request: MemoryAgentLoopRequestUsage) => Promise<void>;
   executeTool: (
     toolCall: ExecutableToolCall,
     options: { abortSignal?: AbortSignal },
@@ -58,12 +76,13 @@ export async function runMemoryAgentLoop(input: {
   workspaceRoot: string;
 }): Promise<MemoryAgentLoopResult> {
   const messages = input.request.messages.map(cloneModelMessage);
+  const requests: MemoryAgentLoopRequestUsage[] = [];
   let turns = 0;
 
   for (; turns < input.maxTurns; turns += 1) {
     input.abortSignal?.throwIfAborted();
-    // 只在 Memory 初始快照投影会漏掉 Read 等工具后续产生的媒体；每一次
-    // provider 请求都必须在 request-local 副本上执行同一套 capability + budget 策略。
+    // Projecting only the initial Memory snapshot would miss media produced later by tools such as Read; every
+    // provider request must apply the same capability + budget policy to a request-local copy.
     const mediaProjection = projectMessagesForModelMediaPolicy(
       messages.map(cloneModelMessage),
       input.model.properties.inputFormat,
@@ -72,11 +91,40 @@ export async function runMemoryAgentLoop(input: {
       abortSignal: input.abortSignal,
       messages: mediaProjection.messages,
       options: auxiliaryModelOptions(input.model),
-      // Memory agent 的 provider request 必须保留 Main 的真实工具目录；执行权限只在 tool-use 边界收窄。
+      // The Memory agent's provider request must preserve Main's real tool catalog; execution permissions are narrowed only at the tool-use boundary.
       tools: input.request.tools as ModelToolContract[],
       toolSearchEnabled: input.request.toolSearchEnabled,
     };
-    const response = await input.model.generateText(request);
+    input.onRequestStart?.(turns);
+    const startedAt = Date.now();
+    let response: ModelResult;
+    try {
+      response = await assertNotExternalAgentModel(input.model, "memory agent").generateText(request);
+    } catch (error) {
+      const completedAt = Date.now();
+      await input.onRequestSettled?.({
+        index: turns,
+        startedAt,
+        completedAt,
+        durationMs: completedAt - startedAt,
+        status: input.abortSignal?.aborted ? "cancelled" : "error",
+        error,
+      });
+      throw error;
+    }
+    const completedAt = Date.now();
+    const observation: MemoryAgentLoopRequestUsage = {
+      index: turns,
+      startedAt,
+      completedAt,
+      durationMs: completedAt - startedAt,
+      status: "completed",
+      result: response,
+      usage: response.usage,
+    };
+    requests.push(observation);
+    // Persist before abort checks and tools: a later failure must not erase paid requests.
+    await input.onRequestSettled?.(observation);
     input.abortSignal?.throwIfAborted();
 
     const toolCalls = response.toolCalls ?? [];
@@ -121,15 +169,15 @@ export async function runMemoryAgentLoop(input: {
     messages.push(...toolMessages);
   }
 
-  return { messages, turns };
+  return { messages, requests, turns };
 }
 
 export function evaluateMemoryAgentToolPolicy(
   input: MemoryAgentToolPolicyInput,
 ): MemoryAgentToolPolicyDecision {
   const contract = input.tools.find((tool) => tool.name === input.toolCall.name);
-  // catalog miss 被合并进 Memory 权限拒绝会让未注册工具没有先走
-  // No such tool 错误处理。此分支只闭合原 call id，不进入工具执行面。
+  // If a catalog miss is merged into a Memory permission rejection, an unregistered tool will not first receive
+  // the "No such tool" handling. This branch only closes the original call ID and does not enter tool execution.
   if (!contract) return denyUnavailableMemoryAgentTool(input.toolCall.name);
 
   if (
@@ -147,7 +195,7 @@ export function evaluateMemoryAgentToolPolicy(
 
   if (input.toolCall.name === "Bash") {
     const command = stringProperty(input.toolCall.input, "command");
-    // Memory Agent 直接复用既有只读分类器，避免在此处二次收窄安全 env、redirect 和后台执行。
+    // The Memory Agent reuses the existing read-only classifier to avoid narrowing safe env, redirect, and background execution a second time here.
     if (
       command &&
       (isRuntimeReadOnlyBashCommand(command, {
@@ -275,7 +323,7 @@ function stringProperty(value: unknown, property: string): string | undefined {
   return typeof propertyValue === "string" ? propertyValue : undefined;
 }
 
-// 拒绝结果会进入下一轮 provider request，需按基线区分 Bash 与其他工具的固定文案。
+// Rejection results enter the next provider request; follow the baseline by using different fixed messages for Bash and other tools.
 function denyMemoryAgentBash(rootDir: string): MemoryAgentToolPolicyDecision {
   return {
     allowed: false,

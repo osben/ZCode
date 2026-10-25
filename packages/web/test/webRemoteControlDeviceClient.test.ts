@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createFakeRelayV2 } from "@zcode/shared/testing/fake-relay-v2";
 import { createWebRemoteControlDeviceClient } from "#src/web-remote-control/index.js";
 
-describe("设备列表 HTTP", () => {
-  it("忽略响应信封、设备及 meta 的新增字段后返回设备列表", async () => {
+describe("device list HTTP", () => {
+  it("returns the device list after ignoring new fields in the response envelope, device, and meta", async () => {
     const devices = [
       {
         device_sid: "d_1",
@@ -29,7 +29,7 @@ describe("设备列表 HTTP", () => {
     await expect(list("jwt", new AbortController().signal)).resolves.toEqual(devices);
   });
 
-  it("只返回当前 JWT 账号的设备；其他账号最近 SID 不能作为连接依据", async () => {
+  it("only returns devices of the current JWT account; the recent SID of another account must not be used as a connection basis", async () => {
     const relay = await createFakeRelayV2({ users: { a: "alice", b: "bob" } });
     try {
       for (const jwt of ["a", "b"]) {
@@ -59,14 +59,17 @@ describe("设备列表 HTTP", () => {
     [200, "not-json"],
     [200, JSON.stringify({ code: 1006, msg: "private server detail" })],
     [200, JSON.stringify({ code: 0, msg: "", data: [{ device_sid: "incomplete" }] })],
-  ])("HTTP %s 或非法信封不当成空设备列表", async (status, body) => {
-    const list = createWebRemoteControlDeviceClient(
-      "https://relay.example",
-      async () => new Response(body, { status }),
-    );
-    await expect(list("jwt", new AbortController().signal)).rejects.toMatchObject({
-      reason: "relay-unavailable",
-      message: "relay-unavailable",
-    });
-  });
+  ])(
+    "HTTP %s or an invalid envelope is not treated as an empty device list",
+    async (status, body) => {
+      const list = createWebRemoteControlDeviceClient(
+        "https://relay.example",
+        async () => new Response(body, { status }),
+      );
+      await expect(list("jwt", new AbortController().signal)).rejects.toMatchObject({
+        reason: "relay-unavailable",
+        message: "relay-unavailable",
+      });
+    },
+  );
 });

@@ -1,204 +1,174 @@
-# Browser Use Guest 跨主视图常驻规格（最小化延期）
+# Browser Use Guest Cross-Main-View Residency Spec (Minimize Deferred)
 
-> 状态：当前迭代已实现（最小化场景延期）
-> 决策日期：2026-08-25
-> 适用范围：Desktop `desktop-continuous` 的 Browser / Browser Use `<webview>` Guest。
-> 非适用范围：手机 `web-remote-replayable`、relay 中的 task/session 恢复、独立后台浏览器窗口。
+> Status: implemented for the current iteration (the minimize scenario is deferred)
+> Decision date: 2026-08-25
+> Applies to: the Browser / Browser Use `<webview>` Guest of Desktop `desktop-continuous`.
+> Does not apply to: mobile `web-remote-replayable`, task/session recovery in relay, a standalone background browser window.
 
-## 1. 背景与运行时根因
+## 1. Background and runtime root cause
 
-工单 `ZCT-2092076135526567936` 的 CDP teardown 修复后，定时任务在“自动化”主视图执行 Browser Use
-仍会失败：
+After the CDP teardown fix of ticket `ZCT-2092076135526567936`, scheduled tasks running Browser Use in the "Automations" main view still failed:
 
 ```text
 browser-use newTab
-  -> renderer 收到 BrowserViewReady 并登记 iab tab
-  -> 10 秒内没有 browserViewAttachGuest
+  -> renderer receives BrowserViewReady and registers the iab tab
+  -> no browserViewAttachGuest within 10 seconds
   -> waitForGuest timeout
   -> browser guest not attached (webview not ready)
 ```
 
-运行时复现中，保持在自动化页时两次 `newTab` 均等待 10 秒超时；切换到执行会话的对话页后，旧 tab
-立即创建 `<webview>`、上报 `attachGuest`，随后 navigate / screenshot 成功。根因不是 main 没有创建 Guest，
-而是 `WorkspaceShellLayout` 只在对话主视图分支渲染 `AnimatedSidePanePanel`；自动化主视图只渲染
-`AutomationsSection`。因此 renderer 虽然持有 Browser Use tab shell，却没有可承载 Guest 的 DOM。
+In runtime reproduction, staying on the automations page made both `newTab` calls time out after 10 seconds; after switching to the chat page of the executing session the old tab immediately created the `<webview>`, reported `attachGuest`, and navigate / screenshot succeeded. The root cause was not that main failed to create the Guest: `WorkspaceShellLayout` rendered `AnimatedSidePanePanel` only in the chat main view branch, while the automations main view rendered only `AutomationsSection`. So although the renderer held the Browser Use tab shell, there was no DOM to host the Guest.
 
-已有 `shouldMountSidePaneContent()` 合同已经规定：Browser / Browser Use tab 即使面板收起也要保持
-`<webview>` 挂载。当前缺口发生在更外层——整个 Side Pane 组件被主视图路由卸载，使该合同没有执行机会。
+The existing `shouldMountSidePaneContent()` contract already requires Browser / Browser Use tabs to keep the `<webview>` mounted even when the panel is collapsed. The gap was one level out: the whole Side Pane component was unmounted by main-view routing, so that contract never had a chance to run.
 
-## 2. 当前迭代范围与用户确认的产品边界
+## 2. Current iteration scope and confirmed product boundary
 
-- 当前迭代只保证 ZCode 窗口存在且未最小化时，chat、自动化、插件、Repo Wiki 等主视图都能操作 Browser Use。
-- 主窗口最小化到 macOS Dock 后的已有 Guest/冷启动行为不在当前迭代验收范围，后续单独处理。
-- 在自动化页点“立即运行”或由定时器触发时，不要求用户先进入执行会话的对话页。
-- 本次不新增“不可缩小透明窗口”或任何独立后台 BrowserWindow。
-- 自动化页、插件页、Repo Wiki 等非对话主视图不展示 Side Pane；后台 Guest 不抢焦点、不改变主视图。
-- 截图 prepare 期间不展开物理 Side Pane；由 Browser Use tab 在现有窗口内创建固定尺寸的低透明合成层，保持 Guest 有 compositor surface，同时不参与右侧布局，用户不应看到 tab 栏闪现。
-- 完整退出 ZCode 仍结束所有 Guest；本次不新增跨进程持久化或重启恢复。
+- This iteration guarantees only that Browser Use works from chat, automations, plugins, Repo Wiki and other main views while the ZCode window exists and is not minimized.
+- The existing Guest/cold-start behavior after the main window is minimized to the macOS Dock is out of this iteration's acceptance and is handled separately later.
+- Clicking "Run now" on the automations page, or a timer trigger, must not require the user to enter the executing session's chat page first.
+- No "non-shrinkable transparent window" or any standalone background BrowserWindow is added.
+- Non-chat main views (automations, plugins, Repo Wiki) do not show the Side Pane; a background Guest does not steal focus or change the main view.
+- During screenshot prepare the physical Side Pane is not expanded; the Browser Use tab creates a fixed-size low-opacity composited layer inside the existing window, so the Guest keeps a compositor surface while not taking part in the right-side layout, and the user must not see the tab bar flash.
+- A complete quit of ZCode still ends all Guests; no cross-process persistence or restart recovery is added.
 
-## 3. 目标与非目标
+## 3. Goals and non-goals
 
-### 3.1 目标
+### 3.1 Goals
 
-1. `AnimatedSidePanePanel` 在 Desktop 工作区壳层内跨 `workspaceMainView` 常驻。
-2. 对话主视图继续按 `isSidePaneOpen` 展开/收起；非对话主视图强制折叠但不卸载 Browser Guest。
-3. 自动化页收到 `BrowserViewReady` 后能创建 `<webview>` 并在 main 的 10 秒期限内完成 attach。
-4. 对话页 → 自动化页 → 对话页不触发 Browser Guest teardown、换代或页面重载。
-5. 截图 prepare 到达非 chat 主视图时，保持物理 Side Pane 折叠，由 tab 自己的固定尺寸合成层提供真实 compositor surface；请求释放后移除该合成层。
+1. `AnimatedSidePanePanel` stays resident across `workspaceMainView` inside the Desktop workspace shell.
+2. The chat main view keeps expanding/collapsing by `isSidePaneOpen`; non-chat main views are forcibly collapsed without unmounting the Browser Guest.
+3. After the automations page receives `BrowserViewReady` it can create the `<webview>` and finish attach within main's 10-second deadline.
+4. chat -> automations -> chat triggers no Browser Guest teardown, generation change or page reload.
+5. When screenshot prepare arrives in a non-chat main view, the physical Side Pane stays collapsed and the tab's own fixed-size composited layer provides a real compositor surface; the layer is removed once release is requested.
 
-### 3.2 非目标
+### 3.2 Non-goals
 
-- 不创建透明窗口、离屏窗口或第二套 Browser runtime。
-- 不修改 BrowserCommand / ZCode Protocol，不新增 task snapshot、queue 或 replay 字段。
-- 不让自动化页显示 Side Pane，也不把后台任务自动切到前台。
-- 不绕过 32-tab residency 预算、session/workspace ownership 或 CDP teardown handshake。
-- 不承诺应用完整退出后恢复 Browser tab、URL、history 或 page state。
+- No transparent window, offscreen window or second Browser runtime.
+- No change to BrowserCommand / ZCode Protocol; no new task snapshot, queue or replay field.
+- The automations page does not show the Side Pane and a background task is not auto-switched to the foreground.
+- No bypass of the 32-tab residency budget, session/workspace ownership or the CDP teardown handshake.
+- No promise to restore Browser tabs, URL, history or page state after a complete app quit.
 
-## 4. 状态与事件链路
+## 4. State and event chain
 
-### 4.1 修复前
+### 4.1 Before the fix
 
 ```text
 workspaceMainView = automations
         |
-        +--> AutomationsSection（已挂载）
+        +--> AutomationsSection (mounted)
         |
-        X--> AnimatedSidePanePanel（路由分支未渲染）
+        X--> AnimatedSidePanePanel (route branch not rendered)
                    |
-BrowserViewReady --X--> 无 <webview> 可创建
+BrowserViewReady --X--> no <webview> to create
                    |
                    +--> main waitForGuest 10s timeout
 ```
 
-### 4.2 修复后
+### 4.2 After the fix
 
 ```text
 Desktop workspace shell
         |
-        +--> ResizablePanelGroup（跨主视图常驻）
+        +--> ResizablePanelGroup (resident across main views)
                 |
                 +--> conversation-column
                 |       +--> chat / automations / plugin-store / repo-wiki
                 |
-                +--> AnimatedSidePanePanel（跨主视图常驻）
+                +--> AnimatedSidePanePanel (resident across main views)
                         |
-                        +--> chat：按 isSidePaneOpen 可见
-                        +--> 非 chat：折叠、不可交互，但 Browser Guest 保持挂载
+                        +--> chat: visible per isSidePaneOpen
+                        +--> non-chat: collapsed, not interactive, but Browser Guest stays mounted
                                       |
 BrowserViewReady --------------------> <webview> -> attachGuest -> CDP ready
 ```
 
-### 4.3 最小化生命周期（后续专项，不作为本次验收）
+### 4.3 Minimize lifecycle (later dedicated work, not accepted now)
 
 ```text
-主窗口 minimize
+main window minimize
       |
-      +--> renderer / Side Pane Host 不销毁
+      +--> renderer / Side Pane Host not destroyed
       |       |
-      |       +--> 已 attach Guest 保持同一 generation
-      |       +--> CDP/DOM/navigation 继续走原 BrowserGuestManager
+      |       +--> an attached Guest keeps the same generation
+      |       +--> CDP/DOM/navigation keep going through the original BrowserGuestManager
       |
       +--> screenshot
-              +--> 复用 bounded screenshot activity lease
-              +--> 成功/失败/取消后释放
+              +--> reuse the bounded screenshot activity lease
+              +--> release after success/failure/cancel
 
-主窗口 close / app quit
-      +--> 沿用既有 teardown 与进程内生命周期，不做后台窗口接管
+main window close / app quit
+      +--> follow the existing teardown and in-process lifecycle, no background window takeover
 ```
 
-## 5. Impact Brief
+## 5. Impact brief
 
-### 5.1 变更分类
+| Item                | Conclusion                                                                                         |
+| ------------------- | -------------------------------------------------------------------------------------------------- |
+| Change level        | `presentation` + Desktop Guest `recovery/lifecycle`                                                |
+| User entries        | automations main view "Run now", timer trigger, chat-page Browser Use                              |
+| Authoritative state | logical tab/Guest in Desktop main; the renderer only hosts and attaches `<webview>`                |
+| Commit side effects | no new business commit; only the mount location and visibility gating of the Side Pane Host change |
+| Persistence         | none added; a complete restart is still empty                                                      |
 
-| 项         | 结论                                                                    |
-| ---------- | ----------------------------------------------------------------------- |
-| 改动层级   | `presentation` + Desktop Guest `recovery/lifecycle`                     |
-| 用户入口   | 自动化主视图“立即运行”、定时触发、对话页 Browser Use                    |
-| 权威状态   | logical tab/Guest 在 Desktop main；renderer 只承载并 attach `<webview>` |
-| 提交副作用 | 无新的业务提交；只改变 Side Pane Host 的挂载位置和可见性 gating         |
-| 持久化     | 不新增；完整重启仍为空                                                  |
+| Scenario                 | UI entry                                                                           | Visibility owner        | Mode boundary                                    | Must isolate                           |
+| ------------------------ | ---------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------ | -------------------------------------- |
+| chat-page Browser Use    | `WorkspaceShellLayout` chat; shared `AnimatedSidePanePanel` / `UnifiedBrowserView` | `isSidePaneOpen`        | Desktop local/remote shared host                 | session, workspaceKey, remoteSessionId |
+| automations "Run now"    | `AutomationsSection`; same resident Side Pane Host                                 | main view forced hidden | Desktop only                                     | no focus steal, no session switch      |
+| scheduled background run | session derived by Automation service; same resident Side Pane Host                | main view forced hidden | Desktop continuous                               | not in the mobile replayable snapshot  |
+| mobile `/remote`         | Mobile shell; no Electron `<webview>`                                              | existing mobile drawer  | `web-remote-replayable` (shared-host attachment) | no new Browser runtime                 |
 
-### 5.2 UI Surface Matrix
+Guest owner for all desktop rows: Desktop `BrowserGuestManager`.
 
-| 场景               | UI 入口                     | 共享实现                                       | 可见性 owner     | Guest owner                   | 模式边界                         | 必须隔离                               |
-| ------------------ | --------------------------- | ---------------------------------------------- | ---------------- | ----------------------------- | -------------------------------- | -------------------------------------- |
-| 对话页 Browser Use | `WorkspaceShellLayout` chat | `AnimatedSidePanePanel` / `UnifiedBrowserView` | `isSidePaneOpen` | Desktop `BrowserGuestManager` | Desktop local/remote shared host | session、workspaceKey、remoteSessionId |
-| 自动化立即运行     | `AutomationsSection`        | 同一常驻 Side Pane Host                        | 主视图强制隐藏   | 同上                          | Desktop only                     | 不抢焦点、不切会话                     |
-| 定时后台运行       | Automation service 派生会话 | 同一常驻 Side Pane Host                        | 主视图强制隐藏   | 同上                          | Desktop continuous               | 不进入手机 replayable snapshot         |
-| 手机 `/remote`     | Mobile shell                | 无 Electron `<webview>`                        | 既有移动抽屉     | shared-host attachment        | `web-remote-replayable`          | 不新建 Browser runtime                 |
+Relationships: `WorkspaceShellLayout` keeps `AnimatedSidePanePanel` across main views (current unmount point and direct root cause); `AnimatedSidePanePanel` mounts `BrowserUseSidePaneContent` in the background (the real hosting chain from tab to `<webview>`); `useAnimatedResizablePanel` collapses without unmounting (non-chat pages must not take visible width); invariants: Browser tab residency (32-tab/teardown/scope: residency must not bypass recycling and isolation) and Web remote (replayable/shared-host: no mobile Guest or recovery state); evidence: UI layout tests + Electron logs (static structure and runtime evidence complement each other).
 
-### 5.3 影响关系
+Graph drift: the existing feature graph declares that a Browser tab stays mounted when the panel is collapsed or the conversation switches, but not that the automations main view can trigger background Browser Use without showing the Side Pane. That confirmed relationship is added to `zcode-feature-graph.yaml` before implementation.
 
-| 级别           | From                            | 关系         | To                           | 原因                              |
-| -------------- | ------------------------------- | ------------ | ---------------------------- | --------------------------------- |
-| must-inspect   | `WorkspaceShellLayout`          | 跨主视图保留 | `AnimatedSidePanePanel`      | 当前卸载点和直接根因              |
-| must-inspect   | `AnimatedSidePanePanel`         | 后台挂载     | `BrowserUseSidePaneContent`  | tab 到 `<webview>` 的真实承载链路 |
-| should-inspect | `useAnimatedResizablePanel`     | 折叠但不卸载 | Side Pane panel              | 非对话页不能占用可见宽度          |
-| invariant-only | Browser tab residency           | 保留         | 32-tab/teardown/scope        | 不能因常驻绕过回收与隔离          |
-| invariant-only | Web remote                      | 不变         | replayable/shared-host       | 不新增手机 Guest 或恢复状态       |
-| evidence-only  | UI layout tests + Electron logs | 证明         | attach/navigation/screenshot | 静态结构和运行时证据互补          |
+## 6. Implementation contract
 
-### 5.4 图谱漂移
+### 6.1 Workspace shell
 
-现有功能图已声明 Browser tab 在面板折叠、切换对话后保持挂载，但没有声明自动化主视图可以在不展示
-Side Pane 时触发后台 Browser Use。实现前把该已确认关系补到 `zcode-feature-graph.yaml`。
+- Desktop main content is always hosted by the same `workspace-body-layout`.
+- Inside `conversation-column`, `workspaceMainView` selects chat / automations / plugin-store / repo-wiki.
+- `AnimatedSidePanePanel` is always a stable sibling of that layout; switching the main view must not change its React identity.
+- `useAnimatedResizablePanel.open` is true only for chat with the user having opened the Side Pane; non-chat is always collapsed, and screenshots do not change the panel layout.
+- During a non-chat screenshot prepare, the target TabsContent renders in a fixed host layer of viewport size inside the existing window with `opacity: 0.001` to keep the Chromium compositor surface, while not taking part in Side Pane layout, avoiding a tab bar or white flash on the automations page.
+- During a non-conversation main view the logical `isSidePaneOpen` is not cleared; returning to chat restores the user's original expand intent.
 
-## 6. 实现合同
+### 6.2 Guest mounting
 
-### 6.1 工作区壳层
+- `shouldMountSidePaneContent(false, tabs)` still returns true for Browser / Browser Use tabs.
+- An already-mounted `<webview>` is not unmounted by a main-view switch; the existing Inactive/screenshot-composition rules are unchanged.
+- After a new `BrowserViewReady` enters side pane state on the automations page, the next render must create the corresponding `UnifiedBrowserView` and report `attachGuest` through the trusted IPC sender.
+- After the renderer accepts a screenshot prepare, the tab registry may update `browserGeneration` during attach/restore; requests keep routing by the stable `tabId + workspace/session/browser`, and the final stale check is still done by the main coordinator.
+- No singleton global Guest is added; one logical tab still corresponds to its own stable tabId, scope and guest generation.
 
-- Desktop 主内容始终由同一个 `workspace-body-layout` 承载。
-- `conversation-column` 内根据 `workspaceMainView` 选择 chat / automations / plugin-store / repo-wiki。
-- `AnimatedSidePanePanel` 始终是该 layout 的稳定 sibling；主视图切换不得改变其 React identity。
-- `useAnimatedResizablePanel.open` 只在 chat 且用户打开 Side Pane 时为真；非 chat 始终折叠，截图期间不改变面板布局。
-- 非 chat 的截图 prepare 期间，目标 TabsContent 在现有窗口内以 viewport 尺寸 fixed 承载层渲染，使用
-  `opacity: 0.001` 保留 Chromium compositor surface，同时不参与 Side Pane 布局，避免自动化页出现 tab 栏或白屏闪烁。
-- 非对话主视图期间 logical `isSidePaneOpen` 不清空；返回 chat 后恢复用户原来的展开意图。
+### 6.3 Screenshot and minimize deferral
 
-### 6.2 Guest 挂载
+- The main window never gets a permanent `backgroundThrottling=false`, and no transparent window is added.
+- The owner renderer + target Guest screenshot activity lease is still reused; first creation and screenshot results after minimize are left to a later spec.
 
-- `shouldMountSidePaneContent(false, tabs)` 遇到 Browser / Browser Use tab 仍返回 true。
-- 已 mounted 的 `<webview>` 不因主视图切换卸载；Inactive/截图合成的既有规则不变。
-- 新 `BrowserViewReady` 在自动化页进入 side pane state 后，下一次 render 必须创建对应
-  `UnifiedBrowserView`，并通过可信 IPC sender 上报 `attachGuest`。
-- 截图 prepare 被 renderer 接收后，tab registry 允许在 attach/restore 期间更新
-  `browserGeneration`；请求继续按稳定的 `tabId + workspace/session/browser` 路由，最终 stale
-  校验仍由 main coordinator 执行。
-- 不新增单例全局 Guest；一个 logical tab 仍对应自己的 stable tabId、scope 与 guest generation。
+## 7. Acceptance and pruning
 
-### 6.3 截图与最小化延期
+| Case    | Setup                                                                    | Action                                             | Assertions                                                                                                          | Status   |
+| ------- | ------------------------------------------------------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------- |
+| BCP-227 | stay on the automations main view with a runnable Browser Use automation | click "Run now" without switching to the chat page | `BrowserViewReady -> attachGuest -> newTab ok`; the automations page stays visible and the Side Pane is not exposed | accepted |
+| BCP-228 | chat already has an attached Guest                                       | chat -> automations -> chat                        | `<webview>` identity/guest generation/URL unchanged; no teardown/rebind                                             | accepted |
+| BCP-229 | an attached Guest exists, main window minimized                          | background navigate/DOM/screenshot                 | not accepted in this iteration; deferred to the minimize work                                                       | deferred |
+| BCP-230 | no Guest, main window minimized first                                    | first background `newTab` and screenshot           | not accepted in this iteration; deferred to the minimize work                                                       | deferred |
 
-- 不设置主窗口永久 `backgroundThrottling=false`，也不新增透明窗口。
-- 当前仍复用 owner renderer + target Guest 的截图 activity lease；最小化后的首次创建与截图结果留待后续规格。
+Pruning: theme, language and model/provider do not change Guest attach semantics and are covered by structure unit tests and one real Desktop representative; mobile `/remote` has no Electron `<webview>`, so only "does not add that path" is verified, not a Cartesian product with the four Desktop cases.
 
-## 7. 验收与剪枝
+## 8. Tests and runtime evidence
 
-| Case    | Setup                                                     | Action                           | 断言                                                                             | 状态     |
-| ------- | --------------------------------------------------------- | -------------------------------- | -------------------------------------------------------------------------------- | -------- |
-| BCP-227 | 保持自动化主视图，存在可立即运行的 Browser Use automation | 点击“立即运行”且不切到对话页     | `BrowserViewReady -> attachGuest -> newTab ok`；自动化页仍可见，Side Pane 不露出 | accepted |
-| BCP-228 | chat 已有 attached Guest                                  | chat → automations → chat        | `<webview>` identity/guest generation/URL 不变；无 teardown/rebind               | accepted |
-| BCP-229 | 已有 attached Guest，主窗口最小化                         | 后台执行 navigate/DOM/screenshot | 当前迭代不验收，延期到最小化专项                                                 | deferred |
-| BCP-230 | 无 Guest，主窗口先最小化                                  | 后台首次 `newTab` 并截图         | 当前迭代不验收，延期到最小化专项                                                 | deferred |
+1. UI SSR/component regression: the automations main view still renders the single `AnimatedSidePanePanel` but its visibility is false; `workspace-body-layout` and `conversation-column` stay stable.
+2. Existing `workspaceSidePane` / `BrowserUseSidePaneContent` / `UnifiedBrowserView` tests keep verifying hidden mounting, session/workspace scope and Guest attach.
+3. Real macOS dev regression: stay on the automations page and click "Run now", observing `newTab -> attachGuest -> screenshot` completing inside the window (the screenshot still finishes in about 1.3 seconds when the generation updates after attach); switch back to chat and confirm page and Guest identity are preserved; minimize cases BCP-229/230 are not pass conditions and stay for the later work.
+4. Must run: affected UI tests, `pnpm typecheck`, `pnpm lint`.
 
-剪枝：主题、语言、模型/provider 不改变 Guest attach 语义，由结构单测和一个真实 Desktop 代表；手机
-`/remote` 没有 Electron `<webview>`，只验证不新增该路径，不与四个 Desktop case 做笛卡尔积。
+## 9. Done criteria
 
-## 8. 测试与运行时证据
-
-1. UI SSR/component 回归：自动化主视图仍渲染唯一的 `AnimatedSidePanePanel`，但可见性为 false；
-   `workspace-body-layout` 与 `conversation-column` 保持稳定。
-2. 既有 `workspaceSidePane` / `BrowserUseSidePaneContent` / `UnifiedBrowserView` 测试继续验证隐藏挂载、
-   session/workspace scope 和 Guest attach。
-3. macOS dev 真实回归：
-   - 保持自动化页点“立即运行”，观察 `newTab -> attachGuest -> screenshot` 在窗口内完成；
-     generation 在 attach 后更新时，截图仍在约 1.3 秒内完成；
-   - 切回对话确认页面与 Guest identity 保留；
-   - 最小化 Case BCP-229/230 不作为本次通过条件，保留为后续专项。
-4. 必跑：受影响 UI tests、`pnpm typecheck`、`pnpm lint`。
-
-## 9. 完成条件
-
-- BCP-227/228 自动化与 dev 运行时证据通过。
-- BCP-229/230 明确标记 deferred，不阻塞当前迭代。
-- 自动化主视图没有 Side Pane 可见回归，chat 返回后可恢复原展开意图。
-- Desktop continuous、mobile replayable、workspace identity、32-tab residency 与 CDP teardown 合同不变。
+- BCP-227/228 automation and dev runtime evidence pass.
+- BCP-229/230 are clearly marked deferred and do not block the current iteration.
+- No visible Side Pane regression on the automations main view, and returning to chat restores the original expand intent.
+- The Desktop continuous, mobile replayable, workspace identity, 32-tab residency and CDP teardown contracts are unchanged.

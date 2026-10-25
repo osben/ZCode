@@ -31,8 +31,8 @@ export function assertBotCallbackSucceeded(
   if (result.ok) {
     return;
   }
-  // Bugfix: provider callback 以返回值表达可恢复的业务失败，不一定 reject。
-  // 外部消费游标只能在 ok=true 后提交，否则瞬时失败会被错误确认并永久丢消息。
+  // Bug fix: provider callbacks can report recoverable business failures as return values instead of rejecting.
+  // Commit the external consumption cursor only after ok=true; otherwise a transient failure is incorrectly acknowledged and the message is lost permanently.
   throw new Error(`${provider} callback failed: status=${result.status ?? "unknown"}`);
 }
 
@@ -46,8 +46,8 @@ export function createLatestRuntimeRefreshQueue() {
       const result = queue
         .catch(() => undefined)
         .then(() => reconcile(() => currentGeneration === generation));
-      // Bugfix: 配置保存会连续触发 fire-and-forget refresh。串行队列既要让后一轮等待
-      // 前一轮释放连接，又不能因前一轮失败永久阻断后续最新配置。
+      // Bug fix: saving configuration can trigger consecutive fire-and-forget refreshes. The serial queue must make the next run wait
+      // for the previous run to release its connection, without letting a previous failure permanently block newer configuration.
       queue = result.catch(() => undefined);
       return result;
     },
@@ -84,9 +84,7 @@ export function isBotRuntimeLockConflictError(error: unknown): boolean {
 function isBotRuntimeLockCleanupRetryable(error: unknown): boolean {
   return (
     isNodeError(error) &&
-    (error.code === "EPERM" ||
-      error.code === "EBUSY" ||
-      error.code === "ENOTEMPTY")
+    (error.code === "EPERM" || error.code === "EBUSY" || error.code === "ENOTEMPTY")
   );
 }
 
@@ -169,29 +167,26 @@ async function acquireBotRuntimeLock(
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const pendingLockPath = `${lockPath}.${owner.nonce}.pending`;
     try {
-      // Bugfix: 锁目录和 owner 文件必须作为一个完整状态对外可见。
-      // 先在唯一临时目录写完 owner，再原子 rename，避免竞争者把尚未初始化完成的锁误判为 stale。
+      // Bug fix: the lock directory and owner file must be visible as one complete state.
+      // Write the owner file in a unique temporary directory, then atomically rename it so contenders do not mistake an incompletely initialized lock for a stale one.
       await mkdir(pendingLockPath);
       await writeFile(join(pendingLockPath, "owner.json"), `${JSON.stringify(owner)}\n`);
       await writeFile(join(pendingLockPath, `lease-${owner.nonce}`), "");
       try {
         await rename(pendingLockPath, lockPath);
       } catch (error) {
-        // Bugfix：Windows 将临时锁目录 rename 到已存在锁目录时返回 EPERM；这里只把 rename 冲突当作锁竞争，
-        // 避免把 mkdir/writeFile 的权限错误误判为可接管锁。
+        // Bug fix: on Windows, renaming a temporary lock directory to an existing lock directory returns EPERM. Treat only rename conflicts as lock contention,
+        // so permission errors from mkdir/writeFile are not mistaken for a lock that can be taken over.
         if (!isBotRuntimeLockConflictError(error)) {
           throw error;
         }
-        // EPERM 也可能只是目录权限错误；只有正式锁路径确实存在时，才进入冲突接管分支。
+        // EPERM may also indicate a directory permission error; enter the conflict-takeover branch only if the final lock path actually exists.
         if (!(await stat(lockPath).catch(() => undefined))) {
           throw error;
         }
         const currentOwner = await readBotRuntimeLockOwner(lockPath);
         if (currentOwner) {
-          const leaseAt = await readBotRuntimeLockLeaseAt(
-            lockPath,
-            currentOwner.nonce,
-          );
+          const leaseAt = await readBotRuntimeLockLeaseAt(lockPath, currentOwner.nonce);
           const leaseAge = Date.now() - leaseAt;
           if (
             isProcessAlive(currentOwner.pid) &&
@@ -201,7 +196,7 @@ async function acquireBotRuntimeLock(
             return null;
           }
         }
-        // Bugfix：陈旧目录可能短暂被 Windows 文件句柄占用；有限重试后再放弃，避免静默残留。
+        // Bug fix: a stale directory may be held briefly by a Windows file handle; retry a limited number of times before giving up to avoid silent leftovers.
         await removeBotRuntimeLockPath(lockPath);
         continue;
       }
@@ -275,7 +270,7 @@ export function waitFor(ms: number, signal: AbortSignal): Promise<void> {
     };
     const onAbort = () => finish();
     const timeout = setTimeout(finish, ms);
-    // Bugfix: runtime 会长期复用同一个 signal；每次等待结束都必须移除监听器，避免重试时持续累积。
+    // Bug fix: the runtime reuses the same signal for a long time; remove the listener after each wait to prevent it accumulating across retries.
     signal.addEventListener("abort", onAbort, { once: true });
   });
 }

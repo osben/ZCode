@@ -1,10 +1,10 @@
-# Error Banner Dismissal（当前事实）
+# Error Banner Dismissal (current state)
 
-Conversation error banner 的关闭状态是 pane-local UI 状态，不属于 CLI projection，也不写入 workspace Zustand bucket。
+The conversation error banner's dismissed state is pane-local UI state. It is not part of the CLI projection and is not written to the workspace Zustand bucket.
 
-- 指纹由 session、error code、时间和 message 组合。
-- 当前 pane 只保留最近约 20 个 dismissed fingerprint，防止本次视图中同一错误反复出现。
-- 切换/重建 pane 后允许再次展示仍然存在的权威错误；关闭 banner 不清除 CLI error 状态。
-- 新 error fingerprint 到达时正常展示。
+- The fingerprint combines session, error code, time and message.
+- The pane keeps only the most recent ~20 dismissed fingerprints, so the same error does not reappear repeatedly within the current view.
+- After the pane is switched or rebuilt, an authoritative error that still exists is shown again. Dismissing the banner does not clear the CLI error state.
+- A new error fingerprint is shown normally.
 
-实现入口：`packages/ui/src/v4/SessionPane.tsx`。
+Entry point: `packages/ui/src/v4/SessionPane.tsx`.

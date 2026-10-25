@@ -50,7 +50,7 @@ describe("readPersistentWorkspaceHookTrustDigests corrupt 检测（#7）", () =>
       workspacePath: workspace,
     });
 
-    // 文件不存在 ⇒ 合理无记录，hook 标为 pending_trust（未持久信任），但非 corrupt。
+    // Missing file, so a reasonable no-record case: the hook is marked pending_trust (not persistently trusted) but not corrupt.
     expect(loaded.hooks[0]?.workspaceHook?.trustState).toBe("pending_trust");
     expect(loaded.trustStoreCorrupt).toBeUndefined();
     expect(warnSpy).not.toHaveBeenCalled();
@@ -69,7 +69,7 @@ describe("readPersistentWorkspaceHookTrustDigests corrupt 检测（#7）", () =>
       },
     });
 
-    // 先加载一次拿到 declaration digest，再写入畸形 trust store。
+    // Load once to obtain the declaration digest before writing a malformed trust store.
     vi.stubEnv("HOME", home);
     vi.stubEnv("USERPROFILE", home);
 
@@ -79,9 +79,9 @@ describe("readPersistentWorkspaceHookTrustDigests corrupt 检测（#7）", () =>
     const digest = first.workspaceHookSnapshot?.hooks[0]?.hookDeclarationDigest;
     expect(digest).toBeTruthy();
 
-    // 写入合法完整的 trust 记录以证明：若 trust store 畸形，即使存在有效记录也不会被采纳。
-    // CR-01 后 services 使用与 runtime 相同的完整 strict schema——记录必须包含全部
-    // 必需字段（旧测试只写 identity+digest，恰好依赖了被修复的局部校验 bug）。
+    // Write a valid, complete trust record to prove that if the trust store is malformed, even a valid record is not adopted.
+    // After CR-01, services use the same complete strict schema as runtime — records must include all
+    // required fields (the old test wrote only identity+digest, relying on the partial-validation bug that was fixed).
     writeJson(join(home, ".zcode", "security", "workspace-hook-trust-v1.json"), {
       schemaVersion: 1,
       records: [
@@ -98,13 +98,13 @@ describe("readPersistentWorkspaceHookTrustDigests corrupt 检测（#7）", () =>
       ],
     });
 
-    // 验证正常情况下会被信任。
+    // Verify it would be trusted under normal conditions.
     const trusted = await createHooksService().loadHooks({
       workspacePath: workspace,
     });
     expect(trusted.hooks[0]?.workspaceHook?.trustState).toBe("trusted_persistent");
 
-    // 覆盖为畸形 JSON。
+    // Overwrite with malformed JSON.
     writeJson(
       join(home, ".zcode", "security", "workspace-hook-trust-v1.json"),
       "{ this is :: not valid JSON !!!",
@@ -116,13 +116,13 @@ describe("readPersistentWorkspaceHookTrustDigests corrupt 检测（#7）", () =>
       workspacePath: workspace,
     });
 
-    // fail-closed：即使记录本应匹配，损坏文件不返回任何 digest，hook 回退 pending_trust。
+    // Fail closed: even though the record would match, the corrupted file returns no digest and the hook falls back to pending_trust.
     expect(loaded.hooks[0]?.workspaceHook?.trustState).toBe("pending_trust");
     expect(loaded.trustStoreCorrupt).toBe(true);
     expect(warnSpy).toHaveBeenCalled();
-    // 统一 ServiceLogger 会把 scope、消息和结构化路径分成三个参数。
-    // CR-01 后非法 JSON 统一走 schema 解析分支，文案为"结构不符合 schema"
-    // （与 runtime/adapters 对同类文件的 corrupt 判定对齐）。
+    // The unified ServiceLogger splits scope, message, and structured path into three arguments.
+    // After CR-01, invalid JSON uniformly goes through the schema-parse branch with the message
+    // "structure does not match the schema" (aligned with runtime/adapters' corrupt verdict for the same file kinds).
     expect(warnSpy.mock.calls[0]).toEqual([
       expect.stringContaining("[hooks-service]"),
       expect.stringContaining("Workspace Hook Trust store 结构不符合 schema"),
@@ -145,7 +145,7 @@ describe("readPersistentWorkspaceHookTrustDigests corrupt 检测（#7）", () =>
     vi.stubEnv("HOME", home);
     vi.stubEnv("USERPROFILE", home);
 
-    // 根节点为数组（非对象）。
+    // Root node is an array (not an object).
     writeJson(join(home, ".zcode", "security", "workspace-hook-trust-v1.json"), []);
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});

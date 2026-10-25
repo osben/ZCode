@@ -99,7 +99,7 @@ describe("Bot v3 单向导入与回滚文件隔离", () => {
   });
 
   it("Config 导入保留绑定；新增/编辑/删除只写 v3，staging strict Reader 仍读到原配置", async () => {
-    // 冻结 6e781fdd9029 的 Options Reader；外围 Bot 字段与当前相同，不建立运行时兼容 Schema。
+    // Frozen copy of the 6e781fdd9029 Options Reader; surrounding Bot fields match the current shape, so no runtime-compat schema is set up.
     const oldOptionsSchema = z
       .object({
         model: z.string().min(1).optional(),
@@ -151,7 +151,7 @@ describe("Bot v3 单向导入与回滚文件隔离", () => {
     expect(current.bots[1]?.currentOptions).toEqual({
       modelSelection: { providerId: "missing", modelId: "model" },
     });
-    // 如果仍往旧文件写新 Options，即使保持 version:2，旧 Reader 也会整份拒绝。
+    // If new Options were still written into the old file, the old Reader would reject the whole document even with version:2 kept.
     expect(oldReader.safeParse({ ...current, version: 2 }).success).toBe(false);
     await repo.writeConfig({
       ...current,

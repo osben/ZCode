@@ -1,52 +1,44 @@
 # TUI Network Status Projection
 
-更新日期：2026-07-15
+Updated: 2026-07-15
 
-## 当前行为
+## Current behavior
 
-TUI 把通用 HTTP 边界的 `network_request_status` 和 provider 模型请求的
-`model_network_status` 归一成同一组内存 `NetworkRequest`。这些状态显示在右侧 sidebar 的
-`APIs` section，不再在输入框下方保留独立 network panel。
+The TUI normalizes the `network_request_status` of the generic HTTP boundary and the `model_network_status` of provider model requests into the same in-memory `NetworkRequest` group. These states are shown in the `APIs` section of the right sidebar; a standalone network panel below the input box is no longer kept.
 
 ```text
 session event
   -> app-session-event-handler
-  -> app-network-events（归一、按 request id 合并、最多保留 8 条）
+  -> app-network-events (normalize, merge by request id, keep at most 8)
   -> app.tsx networkRequests state
-  -> app-sidebar-api.tsx（摘要 + 最近 5 条，剩余显示 more）
+  -> app-sidebar-api.tsx (summary + latest 5, the rest shown as more)
 ```
 
-sidebar 摘要同时显示：
+The sidebar summary shows:
 
-- 当前 session usage 中的 model request 次数；
-- WebFetch / WebSearch 次数；
-- 内存网络请求的 pending、error 和 recent 数量；
-- 展开时最多 5 条最近请求，包含状态、method、目标和可用的 duration。
+- the number of model requests in the current session usage;
+- the number of WebFetch / WebSearch calls;
+- the pending, error and recent counts of in-memory network requests;
+- when expanded, at most 5 recent requests, with status, method, target and the duration when available.
 
-## 事件与身份
+## Events and identity
 
-- 通用 HTTP 事件必须包含稳定 `requestId`、`method`、`url` 和
-  `pending | complete | error` 状态。
-- provider 模型事件映射为 `source=model`、`method=POST`，目标从 provider/model/base URL
-  元数据解析。
-- 当前合并 key 是 `request.id`（由 `requestId` 构造）；同 id 的新状态替换旧行并移到顶部。
-- 内存最多保存 8 条，sidebar 最多渲染 5 条；这些数字是 UI 容量，不是持久协议。
-- `model_retry_scheduled` 还会更新 footer status；新的 outbound attempt 到达后才形成请求行。
-- cache 命中的 WebFetch 不产生网络行，因为没有 outbound request。
+- A generic HTTP event must contain a stable `requestId`, `method`, `url` and a `pending | complete | error` status.
+- A provider model event maps to `source=model`, `method=POST`, with the target parsed from provider/model/base URL metadata.
+- The current merge key is `request.id` (built from `requestId`); a new status with the same id replaces the old row and moves it to the top.
+- Memory holds at most 8 entries and the sidebar renders at most 5; these numbers are UI capacity, not a persistent protocol.
+- `model_retry_scheduled` also updates the footer status; a request row is formed only after a new outbound attempt arrives.
+- A cache-hit WebFetch produces no network row, because there is no outbound request.
 
-## 权威边界
+## Authority boundary
 
-network list 是 live TUI projection，不落盘、不轮询 debug proxy，也不作为 runtime 网络状态的第二权威。
-恢复 session 后只展示恢复以来收到的 live 网络事件。usage summary 可以持久化累计计数，但不能反推每条
-历史请求。
+The network list is a live TUI projection; it is not persisted, does not poll a debug proxy, and is not a second authority of runtime network state. After a session is restored only live network events received since restoration are shown. The usage summary may persist accumulated counts but cannot reconstruct each historical request.
 
-## 布局
+## Layout
 
-`APIs` 是 sidebar 的可折叠 section，由 sidebar state 保存展开状态。窄终端或 sidebar 关闭时不渲染该
-section；这不影响请求执行或事件收集。旧“输入框下方固定三行 network panel、短终端按优先级折叠”的描述
-已经失效。
+`APIs` is a collapsible sidebar section whose expanded state is held by the sidebar state. When the terminal is narrow or the sidebar is closed the section is not rendered; this does not affect request execution or event collection. The old description of "a fixed three-line network panel below the input box, collapsed by priority on short terminals" is obsolete.
 
-## 当前代码与测试
+## Current code and tests
 
 - `packages/contracts/src/events/session.events.ts`
 - `packages/tui/src/app-network-events.ts`
@@ -57,8 +49,7 @@ section；这不影响请求执行或事件收集。旧“输入框下方固定�
 - `packages/core/tests/webfetch-tool.test.ts`
 - `packages/core/tests/websearch.test.ts`
 
-## 尚未覆盖
+## Not yet covered
 
-- network request list 的冷恢复（当前产品语义明确为不恢复）；
-- 跨 attempt 的显式复合身份。如果未来同一个 requestId 可以并发多个 attempt，必须先修改合并 key 和
-  event contract，不能只在 UI 增加一列。
+- Cold recovery of the network request list (the current product semantics explicitly do not restore it);
+- An explicit composite identity across attempts. If a future requestId can have multiple concurrent attempts, the merge key and the event contract must be changed first; a column cannot simply be added in the UI.

@@ -13,9 +13,7 @@ export function getSettingsWriteQueueTimeoutMs(): number {
 }
 
 export function buildSettingsTempFile(settingsFile: string): string {
-  return `${settingsFile}.tmp-${process.pid}-${Date.now()}-${Math.random()
-    .toString(16)
-    .slice(2)}`;
+  return `${settingsFile}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 export function withSettingsWriteQueueTimeout(
@@ -44,16 +42,58 @@ export function withSettingsWriteQueueTimeout(
         return;
       }
       expireCurrentWrite();
-      // 设置写入队列持有真实持久化顺序，Provider 层不 await 也无法释放这里的 pending。
-      // 超时只允许发生在提交前阶段；进入 rename 提交后必须等临界区收口，避免旧写晚到覆盖新设置。
-      reject(
-        new Error(`settingService update timed out after ${timeoutMs}ms`),
-      );
+      // The settings write queue owns the actual persistence order; not awaiting in the Provider layer cannot release this pending write.
+      // Timeouts are allowed only before commit; once rename begins, wait for the critical section to finish so a late old write cannot overwrite new settings.
+      reject(new Error(`settingService update timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     timeoutHandle.unref?.();
   });
 
-  return Promise.race([runUpdate(enterCommitPhase), timeoutPromise]).finally(
-    clearQueueTimeout,
-  );
+  return Promise.race([runUpdate(enterCommitPhase), timeoutPromise]).finally(clearQueueTimeout);
+}
+
+/**
+ * Per-instance serialized settings write queue. Each queued update runs against the latest
+ * generation; a timed-out write is expired (its generation invalidated) so a late turn cannot
+ * overwrite newer settings, while a turn that already entered its commit phase always finishes.
+ */
+export function createSettingsWriteQueue() {
+  let updateQueue: Promise<void> = Promise.resolve();
+  let commitQueue: Promise<void> = Promise.resolve();
+  let writeQueueGeneration = 0;
+
+  const runSettingsCommit = async (commit: () => Promise<void>) => {
+    const queued = commitQueue.then(commit, commit);
+    commitQueue = queued.catch(() => {});
+    await queued;
+  };
+
+  const waitForQueuedWrites = async () => {
+    await updateQueue;
+  };
+
+  const enqueueSettingsWrite = async (
+    runUpdate: (shouldCommit: () => boolean, enterCommitPhase: () => void) => Promise<void>,
+  ) => {
+    const runCurrentUpdate = () => {
+      const currentGeneration = ++writeQueueGeneration;
+      const shouldCommit = () => currentGeneration === writeQueueGeneration;
+      return withSettingsWriteQueueTimeout(
+        (enterCommitPhase) => runUpdate(shouldCommit, enterCommitPhase),
+        () => {
+          if (writeQueueGeneration === currentGeneration) {
+            writeQueueGeneration += 1;
+          }
+        },
+      );
+    };
+    const queued = updateQueue.then(
+      () => runCurrentUpdate(),
+      () => runCurrentUpdate(),
+    );
+    updateQueue = queued.catch(() => {});
+    await queued;
+  };
+
+  return { enqueueSettingsWrite, runSettingsCommit, waitForQueuedWrites };
 }

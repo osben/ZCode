@@ -1,5 +1,5 @@
-// V4 physical wire reassembly：所有 fragment 只进入 staging；bytes、checksum、
-// UTF-8、JSON 与 schema 全部通过后，才产出一个可原子 apply 的 logical frame。
+// V4 physical wire reassembly: all fragments enter staging. Produce an atomically applicable logical
+// frame only after bytes, checksum, UTF-8, JSON, and schema validation all succeed.
 import { z } from "zod";
 import { PROTOCOL_V4_LIMITS } from "./core.js";
 import { crc32WireBytes, decodeWireBase64 } from "./wire-binary.js";
@@ -25,10 +25,7 @@ function frameMatchesEnvelope(
 ): boolean {
   if (typeof frame !== "object" || frame === null) return false;
   const record = frame as { topic?: unknown; subscriptionId?: unknown };
-  return (
-    record.topic === wire.topic &&
-    record.subscriptionId === wire.subscriptionId
-  );
+  return record.topic === wire.topic && record.subscriptionId === wire.subscriptionId;
 }
 
 export function reassembleTopicWireFrames<F>(
@@ -58,8 +55,8 @@ export function reassembleTopicWireFrames<F>(
       };
     }
     if (encodeJson(first.frame).byteLength > maxAssemblyBytes) {
-      // complete 与 fragment 是同一个 logical frame 的两种物理
-      // 承载，只限制 fragment 会允许接收端绕过 16 MiB 权威状态上限。
+      // complete and fragment are two physical representations of the same logical frame. Limiting
+      // only fragments would let receivers bypass the authoritative 16 MiB state limit.
       return {
         kind: "rejected",
         reasonCode: "proto.frameAssemblyTooLarge",
@@ -71,12 +68,10 @@ export function reassembleTopicWireFrames<F>(
       : { kind: "rejected", reasonCode: WIRE_FAULT_INVALID_PAYLOAD };
   }
 
-  if (
-    first.fragmentCount >
-    PROTOCOL_V4_LIMITS.logicalFrameAssemblyMaxFragments
-  ) {
-    // 修复原因：fragmentCount 曾只受 logicalBytes 约束，恶意元数据可在
-    // 缺片路径制造千万级 missingIndexes，先用协议硬上限阻断无界分配。
+  if (first.fragmentCount > PROTOCOL_V4_LIMITS.logicalFrameAssemblyMaxFragments) {
+    // Fix rationale: fragmentCount was previously bounded only by logicalBytes, so malicious
+    // metadata could allocate tens of millions of missingIndexes on the missing-fragment path.
+    // The protocol hard limit blocks the unbounded allocation.
     return {
       kind: "rejected",
       reasonCode: "proto.frameFragmentCountExceeded",
@@ -134,8 +129,8 @@ export function reassembleTopicWireFrames<F>(
     }
     const nextDecodedByteTotal = decodedByteTotal + decoded.byteLength;
     if (nextDecodedByteTotal > maxAssemblyBytes) {
-      // 总字节不能到所有分片收齐后才统计；每接纳一片就
-      // 检查，使 staging assembly 的累计内存始终受协议上限约束。
+      // Do not wait until all fragments arrive to count total bytes. Check each accepted fragment so the
+      // staging assembly's cumulative memory always stays within protocol limits.
       return {
         kind: "rejected",
         reasonCode: "proto.frameAssemblyTooLarge",

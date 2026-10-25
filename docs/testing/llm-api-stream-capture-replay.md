@@ -1,54 +1,61 @@
 # LLM API Stream Capture Replay
 
-## 背景
+## Background
 
-流式性能问题不能只靠最终 Markdown 文本复现。真实链路里的 provider SSE chunk 数量、chunk
-间隔、agent/protocol 合并、renderer IPC、UI chunk batch、Markdown 渲染和动画都会影响 CPU。
-只保存完整 response body 再一次性回放，会改变通信节奏，无法稳定复现 renderer 层压力。
+Streaming performance problems cannot be reproduced from the final Markdown text alone. In the real
+path, the number of provider SSE chunks, chunk intervals, agent/protocol merging, renderer IPC, UI
+chunk batching, Markdown rendering and animation all affect CPU. Saving the complete response body
+and replaying it at once changes the communication cadence and cannot reproduce renderer-layer
+pressure reliably.
 
-## 目标
+## Goals
 
-- e2e capture 继续通过本地 MITM 代理访问真实 provider。
-- capture artifact 在保留请求/响应预览的同时，记录 response chunk 时间线。
-- replay server 支持按照 chunk 时间线流式写回响应，保持首 chunk 延迟和后续 chunk 间隔。
-- DeepSeek provider e2e 默认固定回放行为不变；性能采样可通过环境变量覆盖 prompt 和 replay fixture。
+- E2E capture keeps reaching the real provider through the local MITM proxy.
+- The capture artifact keeps the request/response previews and also records the response chunk
+  timeline.
+- The replay server writes the response back as a stream following the chunk timeline, keeping the
+  first-chunk delay and later chunk intervals.
+- The default fixed replay behavior of the DeepSeek provider e2e is unchanged; performance sampling
+  can override the prompt and replay fixture through environment variables.
 
-## 非目标
+## Non-goals
 
-- 不录制或回放 renderer IPC、ZCode Protocol event、UI store mutation。
-- 不把真实 API key 或鉴权 header 写入 artifact。
-- 不保证跨 provider 通用语义解析；本阶段只在 e2e 网络层保真 HTTP/SSE 响应节奏。
+- No recording or replay of renderer IPC, ZCode Protocol events or UI store mutations.
+- No real API key or auth header is written into artifacts.
+- No cross-provider semantic parsing; this phase only preserves HTTP/SSE response cadence at the e2e
+  network layer.
 
-## Artifact 扩展
+## Artifact extension
 
-`E2ENetworkCaptureRecord` 新增可选字段：
+`E2ENetworkCaptureRecord` has optional fields:
 
-- `responseChunkTimeline`：response body chunk 列表。
-- `responseChunkTimelineTruncated`：chunk 时间线达到本地大小上限时置为 `true`。
+- `responseChunkTimeline`: list of response body chunks.
+- `responseChunkTimelineTruncated`: `true` when the chunk timeline reached the local size limit.
 
-每个 chunk 包含：
+Each chunk contains:
 
-- `offsetMs`：从请求进入 capture proxy 到该 chunk 到达 proxy 的毫秒偏移。
-- `byteLength`：原始 chunk 字节数。
-- `base64`：记录到 artifact 的 chunk bytes。
+- `offsetMs`: millisecond offset from the request entering the capture proxy to the chunk arriving
+  at the proxy.
+- `byteLength`: raw chunk byte count.
+- `base64`: the chunk bytes recorded in the artifact.
 
-`responseTextPreview` 仍然用于人工查看和现有 usage 解析；性能回放优先使用
-`responseChunkTimeline`。
+`responseTextPreview` stays for manual inspection and existing usage parsing; performance replay
+prefers `responseChunkTimeline`.
 
-## 回放语义
+## Replay semantics
 
-replay fixture 的 `response.chunks` 存在时：
+When the replay fixture has `response.chunks`:
 
-- replay server 不写 `content-length`，让 Node 以 chunked response 流式发送。
-- 第一个 chunk 等待其 `offsetMs` 后写出。
-- 后续 chunk 按相邻 `offsetMs` 差值等待后写出。
-- `response.body` 仍保留为完整响应文本，用于报告和旧断言。
+- The replay server does not write `content-length`, so Node sends a chunked response as a stream.
+- The first chunk is written after waiting its `offsetMs`.
+- Later chunks are written after waiting the difference between adjacent `offsetMs` values.
+- `response.body` stays as the complete response text for reports and old assertions.
 
-没有 `response.chunks` 的旧 fixture 继续一次性返回 `response.body`。
+Old fixtures without `response.chunks` keep returning `response.body` at once.
 
-## 使用
+## Usage
 
-采集真实 GLM highspeed 响应：
+Capture a real GLM highspeed response:
 
 ```bash
 E2E_PROVIDER_HTTP_MODE=capture \
@@ -59,20 +66,22 @@ E2E_PROVIDER_EXPECT_REPLY_TEXT=PERF_TRACE_DONE \
 pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/upstream-provider.test.ts
 ```
 
-`glmhighspeed` preset 使用 Anthropic-compatible endpoint
-`https://open.bigmodel.cn/api/anthropic` 和模型 `glm-5.1-highspeed`。capture 模式在未显式指定
-provider preset 时默认仍使用 DeepSeek v4 flash；只有显式设置
-`E2E_PROVIDER_PRESET=glmhighspeed` / `LLM_E2E_PROVIDER_PRESET=glmhighspeed`
-时才会切到 GLM highspeed。GLM highspeed preset 默认不强制选择思考深度；如需覆盖，可显式设置
-`E2E_PROVIDER_THOUGHT_LEVEL`。
+(The prompt reads "Output a very long Markdown article that contains PERF_TRACE_DONE at the end".)
 
-capture artifact 默认写入：
+The `glmhighspeed` preset uses the Anthropic-compatible endpoint
+`https://open.bigmodel.cn/api/anthropic` and model `glm-5.1-highspeed`. Capture mode defaults to
+DeepSeek v4 flash when no provider preset is given; it switches to GLM highspeed only when
+`E2E_PROVIDER_PRESET=glmhighspeed` / `LLM_E2E_PROVIDER_PRESET=glmhighspeed` is set explicitly. The
+GLM highspeed preset does not force a thinking depth by default; override with
+`E2E_PROVIDER_THOUGHT_LEVEL`.
+
+The capture artifact is written by default to:
 
 ```text
 packages/desktop/.e2e-home/.zcode/e2e-network-capture/upstream-provider.json
 ```
 
-后续回放自定义 fixture 或 capture-derived fixture：
+Replay a custom or capture-derived fixture:
 
 ```bash
 E2E_PROVIDER_PRESET=glmhighspeed \
@@ -80,8 +89,11 @@ E2E_PROVIDER_REPLAY_FIXTURE_PATH=/absolute/path/to/replay-fixture-or-capture.jso
 pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/upstream-provider.test.ts
 ```
 
-## 风险与边界
+## Risks and boundaries
 
-- response chunk timing 是网络层观测，不能代表 provider 内部 token 生成时间。
-- capture artifact 可能包含大响应正文，只保存在本地 e2e artifact 目录，不提交。
-- 如果响应超过 chunk 时间线上限，artifact 会标记 truncated；这类记录不能用于完整流式回放。
+- Response chunk timing is a network-layer observation and does not represent provider-internal
+  token generation time.
+- A capture artifact may contain a large response body; it stays in the local e2e artifact directory
+  and is not committed.
+- If the response exceeds the chunk timeline limit, the artifact is marked truncated; such records
+  cannot be used for complete streaming replay.

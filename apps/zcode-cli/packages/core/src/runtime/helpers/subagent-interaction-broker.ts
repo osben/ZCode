@@ -23,15 +23,15 @@ export function createSubagentInteractionBroker(
       request: PermissionBrokerRequest,
       options?: PermissionBrokerRequestOptions,
     ): BrokerResponse {
-      // 修复原因：子 agent 的 permission / AskUserQuestion / ExitPlanMode 都需要父 task 的 UI 响应；
-      // broker request 对外路由到父 session，origin 保留 child 归属，便于 UI 与日志识别来源。
-      // 契约（2026-09-17 review）：registered 只是挂在 Promise 上的属性；本函数必须原样返回父 broker 的
-      // 响应对象，不得改成 async 或加 .then 重新包装，否则信号静默丢失、executor 退回同步登记假设并
-      // 重新引入"确认窗可见但 deferred 未登记"的竞态。subagent-interaction-broker.test.ts 守护该同一性。
+      // Reason for the fix: child-agent permission / AskUserQuestion / ExitPlanMode requests need a response from the parent task's UI;
+      // route the broker request to the parent session while preserving the child in origin so the UI and logs can identify its source.
+      // Contract (2026-09-17 review): `registered` is a property attached to the Promise; this function must return the parent's broker response object unchanged.
+      // Do not make this function async or wrap the response in `.then`, or the signal will be silently lost, the executor will assume synchronous registration,
+      // and the race where a confirmation dialog is visible but its deferred operation was not registered will return. subagent-interaction-broker.test.ts guards this identity.
       //
-      // 本包装可以叠加。`sessionId` 由**外层**（离客户端更近的一层）
-      // 最后改写，所以任意深度最终都落到根会话；`origin` 反过来保留**内层**已有值，
-      // 归属永远是真正发起请求的那个子代理，不会被外层覆盖成中间层。
+      // This wrapper may be nested. `sessionId` is rewritten last by the **outermost** layer (closest to the client),
+      // so any depth ultimately routes to the root session. `origin` instead preserves the existing **innermost** value,
+      // keeping ownership with the child agent that actually made the request instead of letting an outer layer replace it with an intermediate agent.
       return parentBroker.requestPermission(
         {
           ...request,

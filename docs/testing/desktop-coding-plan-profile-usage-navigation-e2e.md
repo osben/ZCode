@@ -2,20 +2,20 @@
 
 ## Scope
 
-头像菜单里的 `使用统计` 入口是设置页导航入口，必须覆盖两个页面上下文：
+The avatar-menu entry `使用统计` (Usage statistics) is a settings-page navigation entry and must be covered in two page contexts:
 
-- 工作区 sidebar footer 头像菜单。
-- 设置页 sidebar footer 头像菜单。
+- The workspace sidebar footer avatar menu.
+- The settings sidebar footer avatar menu.
 
-这组 case 只验证导航语义，不验证 Coding Plan 权益、额度或 Team Plan 数据。用量数据类断言继续留在 Team Plan / Coding Plan 专用 E2E 中。
+These cases verify navigation semantics only, not Coding Plan entitlements, quota or Team Plan data. Usage-data assertions stay in the dedicated Team Plan / Coding Plan E2E.
 
 ## Cases
 
-| Case | 前置 | 操作 | 期望 |
-| --- | --- | --- | --- |
-| ECR-usage-01 | 桌面默认 workspace 已打开 | 点击 workspace 头像菜单里的 `使用统计` | 打开设置页，并选中 `usage` 分区 |
-| ECR-usage-02 | 桌面默认 workspace 已打开；当前已在设置页 `general` 分区 | 点击 settings 头像菜单里的 `使用统计` | 仍停留设置页，并切换到 `usage` 分区，不返回 workspace |
+| Case         | Precondition                                                                    | Action                                        | Expected                                                                                |
+| ------------ | ------------------------------------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------- |
+| ECR-usage-01 | Desktop default workspace is open                                               | Click `使用统计` in the workspace avatar menu | Settings opens with the `usage` section selected                                        |
+| ECR-usage-02 | Desktop default workspace is open; settings is already on the `general` section | Click `使用统计` in the settings avatar menu  | Stays on settings and switches to the `usage` section; does not return to the workspace |
 
-## Test Placement
+## Test placement
 
-这两条 case 放在 `packages/desktop/test/e2e/e2ecase-regression.test.ts`，使用默认 workspace 前置。测试通过共享 test id 点击当前可见头像菜单和 `使用统计` 菜单项，避免 settings 页面保留的隐藏 workspace DOM 影响断言。
+Both cases live in `packages/desktop/test/e2e/e2ecase-regression.test.ts` with the default-workspace precondition. The test clicks the currently visible avatar menu and the `使用统计` item through shared test ids, so hidden workspace DOM kept by the settings page cannot affect the assertions.

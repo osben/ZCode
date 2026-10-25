@@ -72,6 +72,9 @@ export async function settleToolResults(
       turnId: state.turnId,
     });
   }
+  // The results are now in provider-visible history, so history alone answers which nested AGENTS.md files the model
+  // has seen. Reservations only bridged the gap until this point (context/nested-instructions/tracker.ts).
+  this.nestedInstructionTracker.clearReservations();
   await emitNestedModelUsageEvents(this, {
     events: state.events,
     results,

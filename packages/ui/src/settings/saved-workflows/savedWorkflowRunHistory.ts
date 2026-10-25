@@ -1,8 +1,8 @@
-// 运行历史的归组与呈现。
-// 归属只按 `dwf_run.name === 工作流名`；模型另起名字的 run 不归任何工作流，而不是猜。
+// Grouping and presentation for run history.
+// Associate only when `dwf_run.name === workflow name`; do not guess which workflow a run with a different model-generated name belongs to.
 import type { ZCodeSavedWorkflowRun, ZCodeSavedWorkflowRunStatus } from "@zcode/shared";
 
-/** 每个名字下 `updatedAt` 最新的一行（服务端按 time_updated 倒序，这里只取首见）。 */
+/** Newest row by `updatedAt` per name (the server sorts by time_updated descending, so take only the first occurrence). */
 export function lastRunByWorkflowName(
   runs: readonly ZCodeSavedWorkflowRun[],
 ): Map<string, ZCodeSavedWorkflowRun> {
@@ -18,9 +18,9 @@ export function lastRunByWorkflowName(
 type SavedWorkflowRunBadgeKind = "completed" | "errored" | "running" | "stopped" | "never";
 
 /**
- * 卡片「上次运行」徽标的四态 + 「尚未运行」。pending 与 running 同画成活动态。
- * 终态词汇为 errored / stopped；老 CLI 仍可能发
- * `failed` / `cancelled`，按同一语义折进去而不是让徽标缺席。
+ * Four states for the card's "Last run" badge + "Never run." pending and running share the active appearance.
+ * Terminal states are errored / stopped; older CLI versions may still send
+ * `failed` / `cancelled`, so fold them into the same semantics instead of omitting the badge.
  */
 export function savedWorkflowRunBadgeKind(
   status: ZCodeSavedWorkflowRunStatus | "errored" | "stopped" | "failed" | "cancelled" | undefined,
@@ -42,7 +42,7 @@ export function savedWorkflowRunBadgeKind(
   }
 }
 
-/** 运行历史行的实参芯片：`key=value`，值按 JSON 压缩。 */
+/** Argument chip in a run-history row: `key=value`, with the value compacted as JSON. */
 export function formatSavedWorkflowRunArgs(args: Record<string, unknown> | undefined): string[] {
   if (!args) return [];
   return Object.entries(args).map(
@@ -50,7 +50,7 @@ export function formatSavedWorkflowRunArgs(args: Record<string, unknown> | undef
   );
 }
 
-/** 一次 run 的时长（毫秒）；非终态按 now 计。 */
+/** Duration of one run in milliseconds; use now for non-terminal states. */
 export function savedWorkflowRunDurationMs(run: ZCodeSavedWorkflowRun, now: number): number {
   const end = run.status === "pending" || run.status === "running" ? now : run.updatedAt;
   return Math.max(0, end - run.createdAt);

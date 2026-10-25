@@ -1,11 +1,11 @@
 import {
-  TID_VIRTUAL_PROJECT_NEW_TASK,
   TID_CONVERSATION_SECTION,
   TID_TASK_ARCHIVE,
   TID_TASK_ITEM,
   TID_V4_SESSION_PANE,
+  TID_VIRTUAL_PROJECT_NEW_TASK,
   testId,
-} from "@zcode/shared/test-ids";
+} from "@zcode/shared";
 import { clearAppData } from "./helpers/desktop-app.js";
 import {
   E2E_REPLY_TOKEN,
@@ -53,6 +53,17 @@ describe("任务列表归档二次确认 E2E", () => {
     expect(taskId).toBeTruthy();
 
     await hoverConversationTaskRow(taskId as string);
+    await markTaskUnread(taskId as string);
+    await hoverConversationTaskRow(taskId as string);
+    await browser.waitUntil(
+      async () =>
+        JSON.stringify(await readHoveredUnreadAndPinState(taskId as string)) ===
+        JSON.stringify({ unreadVisible: true, pinActionVisible: true }),
+      { timeout: 10_000, timeoutMsg: "hover hid the unread indicator or pin action" },
+    );
+    const hoverCard = await waitForTaskHoverCard();
+    expect(hoverCard.status).toBeTruthy();
+    expect(hoverCard.text.length).toBeGreaterThan(0);
     await waitForArchiveButtonState(taskId as string, (state) => state.visible);
 
     await $(sel(testId(TID_TASK_ARCHIVE, taskId as string))).click();
@@ -99,6 +110,80 @@ async function useProjectConversationTaskView() {
   });
 }
 
+async function markTaskUnread(taskId: string) {
+  const opened = await browser.execute(
+    (taskTestId) => {
+      const row = document.querySelector<HTMLElement>(`[data-testid="${taskTestId}"]`);
+      if (!row) return false;
+      const rect = row.getBoundingClientRect();
+      row.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2,
+        }),
+      );
+      return true;
+    },
+    testId(TID_TASK_ITEM, taskId),
+  );
+  expect(opened).toBe(true);
+
+  await browser.waitUntil(
+    () =>
+      browser.execute(() =>
+        Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).some((item) =>
+          ["Mark as unread", "标记为未读"].includes((item.textContent ?? "").trim()),
+        ),
+      ),
+    { timeout: 10_000, timeoutMsg: "task menu did not expose Mark as unread" },
+  );
+  const selected = await browser.execute(() => {
+    const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (candidate) =>
+        ["Mark as unread", "标记为未读"].includes((candidate.textContent ?? "").trim()),
+    );
+    item?.click();
+    return Boolean(item);
+  });
+  expect(selected).toBe(true);
+}
+
+async function readHoveredUnreadAndPinState(taskId: string) {
+  return browser.execute(
+    (taskTestId) => {
+      const row = document.querySelector<HTMLElement>(`[data-testid="${taskTestId}"]`);
+      const unread = row?.querySelector<HTMLElement>('[data-unread-indicator="true"]');
+      const pin = row?.querySelector<HTMLElement>(
+        'button[aria-label="Pin task"], button[aria-label="置顶任务"], button[aria-label="Закріпити завдання"]',
+      );
+      const unreadRect = unread?.getBoundingClientRect();
+      const pinRect = pin?.getBoundingClientRect();
+      return {
+        unreadVisible: Boolean(
+          unread &&
+          unreadRect &&
+          unreadRect.width > 0 &&
+          unreadRect.height > 0 &&
+          getComputedStyle(unread).display !== "none" &&
+          getComputedStyle(unread).visibility !== "hidden",
+        ),
+        pinActionVisible: Boolean(
+          pin &&
+          pinRect &&
+          pinRect.width > 0 &&
+          pinRect.height > 0 &&
+          getComputedStyle(pin).display !== "none" &&
+          getComputedStyle(pin).visibility !== "hidden",
+        ),
+      };
+    },
+    testId(TID_TASK_ITEM, taskId),
+  );
+}
+
 async function startConversationTaskDraft() {
   // Bug 根因：refresh 后 sidebar 的 task section 会异步水合，原先同步读取 DOM
   // 偶发拿不到已经按产品语义应出现的“新建任务”按钮，尚未覆盖后续归档交互。
@@ -142,6 +227,24 @@ async function hoverConversationTaskRow(taskId: string) {
     timeoutMsg: `项目视图的“任务”分区没有显示目标 conversation task: ${taskId}`,
   });
   await row.moveTo();
+}
+
+async function waitForTaskHoverCard() {
+  await browser.waitUntil(
+    async () =>
+      browser.execute(() => Boolean(document.querySelector('[data-task-hover-card="true"]'))),
+    {
+      timeout: 5000,
+      timeoutMsg: "Hover по task row не показал карточку метаданных",
+    },
+  );
+  return browser.execute(() => {
+    const card = document.querySelector<HTMLElement>('[data-task-hover-card="true"]');
+    return {
+      status: card?.dataset.taskHoverStatus ?? null,
+      text: card?.textContent?.trim() ?? "",
+    };
+  });
 }
 
 async function waitForConversationTaskRowAbsent(taskId: string) {

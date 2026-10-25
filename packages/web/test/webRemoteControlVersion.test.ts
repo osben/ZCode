@@ -114,7 +114,7 @@ describe("remote v4 desktop version guard", () => {
   });
 
   it.each([false, true])(
-    "MRO03：旧回包先到不能占用新配对的查看 epoch，重申先到=%s",
+    "MRO03: an old response arriving first must not occupy the new pairing's view epoch; re-declaration arriving first=%s",
     async (reasserted) => {
       const h = harness({ version: "3.12.1" });
       const send = vi.fn(() => true);
@@ -136,7 +136,7 @@ describe("remote v4 desktop version guard", () => {
       h.requestBootstrap.mockReturnValueOnce(oldResponse.promise).mockResolvedValue(newResult);
       const old = h.guard.check();
       await Promise.resolve();
-      // 同 socket 的 waiting -> paired 也撤销原请求；不能仅校验物理 socket。
+      // On the same socket, waiting -> paired also revokes the original request; checking only the physical socket is not enough.
       publisher.transportStateChanged("waiting", "paired");
       h.guard.invalidate();
       publisher.transportStateChanged("paired", "waiting");

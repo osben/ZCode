@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- Browser Plugin、Chrome 数据导入与清理共享同一平台状态机，拆分会扩大 pending/失败回收边界。 */
+/* oxlint-disable eslint(max-lines) -- Browser Plugin, Chrome data import, and cleanup share one platform state machine; splitting it would expand pending/failure-recovery boundaries. */
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { LoaderCircle } from "lucide-react";
 import type { ChromeBrowserDataImportResult } from "@zcode/shared";
@@ -259,9 +259,9 @@ export function BrowserSettingsSection({
               ) : undefined
             }
           />
-          {/* 导入登录状态是“开启内置浏览器控制”之后的配套动作，与开关同卡片表达先后关系；
-              清除类破坏性操作仍留在“浏览器数据”分组。
-              Windows App-Bound 导入链路暂未开放，先隐藏入口但保留底层实现和清理能力。*/}
+          {/* Importing sign-in state is a follow-up to "Enable built-in browser control"; keeping it on the same card as the toggle expresses the order.
+              Destructive cleanup actions remain in the "Browser data" group.
+              The Windows App-Bound import path is not yet available, so hide its entry point while retaining the underlying implementation and cleanup capability. */}
           {!isWindowsDesktop ? (
             <SettingsRow
               label={intl.formatMessage({ id: "settings.browser.import.title" })}
@@ -290,7 +290,7 @@ export function BrowserSettingsSection({
         </SettingsGroupCard>
       </section>
 
-      {/* 证书策略只在桌面端有内置浏览器时可配；改动由 main 在启动时装到 Session，需重启生效。 */}
+      {/* Certificate policy is configurable only when Desktop has a built-in browser; main applies changes to Session at startup, so a restart is required. */}
       {isDesktop ? (
         <section className="space-y-3">
           <div className="text-ui-base font-medium text-foreground-subtle">

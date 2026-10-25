@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 设置页 provider 导航同时承载分组、卡片化预置入口和拖拽排序，当前先集中维护交互边界。 */
+/* eslint-disable max-lines -- Provider navigation on the settings page includes groups, card-style preset entry points, and drag sorting; keep interaction boundaries centralized for now. */
 import {
   closestCenter,
   DndContext,
@@ -18,7 +18,8 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Loader2Icon } from "lucide-react";
-import { ProviderStatusIndicator } from "./ProviderStatusIndicator.js";
+import { ProviderStatusIndicator, type ProviderStatusKind } from "./ProviderStatusIndicator.js";
+import { resolveAcpAgentStatusKind } from "./acpAgentConfig.js";
 
 import {
   resolveModelProviderFamilySpecByProviderId,
@@ -31,7 +32,14 @@ import type { ModelProviderNavGroup, ModelProviderNavItem } from "./constants.js
 import { useOptimisticReorder } from "./useOptimisticReorder.js";
 import { renderModelProviderNavIcon } from "./utils.js";
 
-// 侧栏会裁切水平溢出；排序只改变纵向位置，拖动时也必须保持 x=0。
+/** Shared status dot of an ACP agent row: active = enabled and not in conflict. */
+function resolveAcpStatusKind(
+  item: Extract<ModelProviderNavItem, { type: "acpAgent" }>,
+): ProviderStatusKind {
+  return resolveAcpAgentStatusKind(item);
+}
+
+// The sidebar clips horizontal overflow; sorting changes only vertical position, so keep x=0 while dragging as well.
 const restrictToVerticalAxis: Modifier = ({ transform }) => ({ ...transform, x: 0 });
 
 export function getSortableProviderId(
@@ -64,8 +72,12 @@ export function shouldShowModelProviderGroupLoadingIndicator(params: {
   presetLoading: boolean;
   customLoading: boolean;
 }): boolean {
-  if (params.groupId === "preset") {
+  if (params.groupId === "preset" || params.groupId === "chatgpt") {
     return params.presetLoading;
+  }
+  // The ACP group shows its own loading row; it is not driven by provider list loading.
+  if (params.groupId === "acp") {
+    return false;
   }
   return params.customLoading;
 }
@@ -94,7 +106,7 @@ function ModelProviderNavigationButton({
   showIcon?: boolean;
 }) {
   const isSelected = item.key === selectedNodeKey;
-  const isLoadingItem = item.type === "codingPlanLoading";
+  const isLoadingItem = item.type === "codingPlanLoading" || item.type === "acpLoading";
   const inactiveItemClassName = "border-transparent text-foreground hover:border-border-hover/60";
 
   return (
@@ -130,6 +142,9 @@ function ModelProviderNavigationButton({
           <ProviderStatusIndicator
             provider={item.type === "preset" ? item.statusProvider : item.provider}
           />
+        ) : null}
+        {item.type === "acpAgent" ? (
+          <ProviderStatusIndicator status={resolveAcpStatusKind(item)} />
         ) : null}
       </button>
     </ControlHintTooltip>
@@ -400,7 +415,7 @@ export function ModelProviderSectionNavigation({
                 ) : null}
               </div>
 
-              {group.id === "preset" ? (
+              {group.id === "preset" || group.id === "chatgpt" || group.id === "acp" ? (
                 <PresetProviderCardNavigation
                   group={group}
                   selectedNodeKey={selectedNodeKey}

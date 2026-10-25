@@ -37,13 +37,15 @@ const conversationTelemetryState = vi.hoisted(() => ({
   },
 }));
 
-// Bugfix：本文件只验证 SessionPane 布局骨架，隔离闲时入口对真实 TabStore 的依赖。
+// Bugfix: this file only verifies the SessionPane layout skeleton, so isolate
+// the off-peak entry from the real TabStore dependency.
 vi.mock("@/v4/OffPeakNewTaskEntry.js", () => ({
   OffPeakNewTaskEntry: () => null,
 }));
 
-// 同理隔离推荐提示词容器：它通过 useWorkspaceServicesResolution 依赖 TabStoreProvider，
-// 而本文件只挂 SessionPane 验证布局，不提供 Tab store。
+// Likewise isolate the suggested-prompts container: it depends on
+// TabStoreProvider through useWorkspaceServicesResolution, while this file only
+// mounts SessionPane to verify layout and provides no Tab store.
 vi.mock("@/v4/ConversationDraftSuggestedPromptsContainer.js", () => ({
   ConversationDraftSuggestedPromptsContainer: () => null,
 }));
@@ -211,7 +213,7 @@ function subagentRow(overrides: Partial<SubagentRow> = {}): SubagentRow {
     kind: "subagent",
     subagentType: "Explore",
     status: "running",
-    summaryText: "正在后台探索",
+    summaryText: "Exploring in the background",
     backgrounded: true,
     workId: "work-agent",
     childSessionId: "child-session",
@@ -232,9 +234,13 @@ function pendingPermissionInteraction(): PendingInteraction {
       summary: "Tool has side effects and requires approval",
       detail: { command: "touch quickSort.js" },
       options: [
-        { optionId: "allow_once", label: "允许", kind: "allowOnce" },
-        { optionId: "allow_always", label: "始终允许", kind: "allowAlways" },
-        { optionId: "deny", label: "拒绝", kind: "deny" },
+        { optionId: "allow_once", label: "Allow", kind: "allowOnce" },
+        {
+          optionId: "allow_always",
+          label: "Always allow",
+          kind: "allowAlways",
+        },
+        { optionId: "deny", label: "Deny", kind: "deny" },
       ],
     },
   };
@@ -248,17 +254,25 @@ function pendingStructuredUserInputInteraction(): PendingInteraction {
     createdAt: 1_777_777_779,
     payload: {
       kind: "userInput",
-      prompt: "选择实现形式",
+      prompt: "Choose the implementation form",
       freeText: false,
       toolName: "AskUserQuestion",
       toolCallId: "tool-call-ask-1",
       questions: [
         {
-          question: "你想把这个番茄时钟作为什么形式存在？",
-          header: "形式",
+          question: "What form should this Pomodoro timer take?",
+          header: "Form",
           options: [
-            { value: "page", label: "独立新页面", description: "通过导航访问" },
-            { value: "widget", label: "独立小工具视图", description: "可复用组件" },
+            {
+              value: "page",
+              label: "Standalone new page",
+              description: "Reached via navigation",
+            },
+            {
+              value: "widget",
+              label: "Standalone widget view",
+              description: "Reusable component",
+            },
           ],
         },
       ],
@@ -345,7 +359,7 @@ function renderPane({
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(SessionPane, {
         paneId: "workspace-main",
         sessionId,
@@ -389,7 +403,7 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(html).toContain('data-v4-composer-dock="true"');
     expect(html).toContain('data-testid="mock-composer"');
     expect(html).not.toContain("v4-timeline-empty");
-    expect(html).not.toContain("发送第一条消息开始对话");
+    expect(html).not.toContain("Send a first message to start the conversation");
   });
 
   it("renders the composer after the timeline viewport and inside its dock", () => {
@@ -439,9 +453,10 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(composerIndex).toBeGreaterThanOrEqual(0);
     expect(dockIndex).toBeLessThan(interactionIndex);
     expect(interactionIndex).toBeLessThan(composerIndex);
-    // 2026-08-17：Start Plan runtime headers 应答方已迁出 SessionPane，改由 Root 的
-    // V4WorkspaceProviderRuntimeHeadersBridge 按 workspace 常驻挂载（web 远控新建会话
-    // 在桌面没有 pane 时也必须有应答方），pane 内不再渲染该控制器。
+    // 2026-08-17: the Start Plan runtime headers responder moved out of
+    // SessionPane to Root's V4WorkspaceProviderRuntimeHeadersBridge, mounted
+    // per workspace (a web remote-control new session must have a responder even
+    // with no pane on desktop), so the pane no longer renders the controller.
     expect(html).not.toContain('data-testid="mock-runtime-headers"');
     expect(html).toContain('data-blocking-request-id="perm-1"');
   });
@@ -459,7 +474,8 @@ describe("SessionPane v4 chat layout parity", () => {
           snapshot: makeSnapshot({ pendingInteractions }),
         });
 
-        // 待处理请求已有底部卡片，顶部不再重复展示 warning 和跳转入口。
+        // Pending requests already have a bottom card; the top no longer repeats
+        // the warning and jump entry.
         expect(html).not.toContain('data-testid="v4-pending-interaction-top-notice"');
         const dockIndex = html.indexOf('data-v4-composer-dock="true"');
         const interactionIndex = html.indexOf('data-testid="mock-interactions"');
@@ -471,7 +487,7 @@ describe("SessionPane v4 chat layout parity", () => {
     );
   }
 
-  it("普通 Web 没有 desktop-continuous attachment 时不挂一次性 runtime header controller", () => {
+  it("plain Web without a desktop-continuous attachment mounts no one-shot runtime header controller", () => {
     conversationTelemetryState.current = null;
     const html = renderPane();
 
@@ -571,7 +587,7 @@ describe("SessionPane v4 chat layout parity", () => {
         {
           workId: "work-agent",
           kind: "subagent",
-          title: "分析状态面板",
+          title: "Analyze the status panel",
           status: "running",
           startedAt: 1_777_777_778,
           anchorRowId: row.rowId,
@@ -600,7 +616,7 @@ describe("SessionPane v4 chat layout parity", () => {
       parentSessionId: "session-1",
       childSessionId: "child-session",
       subagentType: "Explore",
-      title: "分析状态面板",
+      title: "Analyze the status panel",
     });
     expect(onOpenSubagentSession).toHaveBeenCalledWith({
       workspacePath: "/workspace",
@@ -608,7 +624,7 @@ describe("SessionPane v4 chat layout parity", () => {
       parentSessionId: "session-1",
       childSessionId: "child-session",
       subagentType: "Explore",
-      title: "分析状态面板",
+      title: "Analyze the status panel",
     });
 
     renderPane({
@@ -655,7 +671,7 @@ describe("SessionPane v4 chat layout parity", () => {
         {
           workId: "work-agent",
           kind: "subagent",
-          title: "后台分析",
+          title: "Background analysis",
           status: "running",
           startedAt: 1_777_777_778,
           anchorRowId: null,
@@ -676,13 +692,15 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(composerProps?.onOpenRunningBackgroundWorks).toEqual(expect.any(Function));
   });
 
-  // composer 徽标直达（docs/dynamic-workflow/presentation.md）：唯一在跑的工作流
-  // 点徽标直接开详情 side tab，胶囊不动；其他形态照旧展开胶囊。
+  // Composer badge direct access (docs/dynamic-workflow/presentation.md): when
+  // a single workflow is the only running activity, clicking the badge opens the
+  // detail side tab directly and the capsule stays put; other shapes still expand
+  // the capsule.
   describe("Composer background entry with dwf workflow runs", () => {
     const workflowWork = {
       workId: "dwfrun-1",
       kind: "workflow" as const,
-      title: "发布前检查",
+      title: "Pre-release checks",
       status: "running" as const,
       startedAt: 1_777_777_778,
       anchorRowId: null,
@@ -705,7 +723,11 @@ describe("SessionPane v4 chat layout parity", () => {
         workflowRuns: { revision: 1, runs: [workflowRun] },
       });
 
-      renderPane({ snapshot, onOpenWorkflowRun, onSummaryPanelVariantOverrideChange });
+      renderPane({
+        snapshot,
+        onOpenWorkflowRun,
+        onSummaryPanelVariantOverrideChange,
+      });
       const composerProps = statusPanelCapture.composerProps.at(-1);
       expect(composerProps?.backgroundWorkOpenTarget).toBe("workflow-run");
 
@@ -714,7 +736,7 @@ describe("SessionPane v4 chat layout parity", () => {
         parentSessionId: "session-1",
         runId: "dwfrun-1",
         toolCallId: "tool-wf-1",
-        workflowName: "发布前检查",
+        workflowName: "Pre-release checks",
         workspacePath: "/workspace",
       });
       expect(onSummaryPanelVariantOverrideChange).not.toHaveBeenCalled();
@@ -738,7 +760,11 @@ describe("SessionPane v4 chat layout parity", () => {
         workflowRuns: { revision: 1, runs: [workflowRun] },
       });
 
-      renderPane({ snapshot, onOpenWorkflowRun, onSummaryPanelVariantOverrideChange });
+      renderPane({
+        snapshot,
+        onOpenWorkflowRun,
+        onSummaryPanelVariantOverrideChange,
+      });
       const composerProps = statusPanelCapture.composerProps.at(-1);
       expect(composerProps?.backgroundWorkOpenTarget).toBe("panel");
 

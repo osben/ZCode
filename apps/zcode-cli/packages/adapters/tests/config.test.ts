@@ -676,7 +676,7 @@ describe("config adapters", () => {
     }
   });
 
-  it("rejects unsupported UI locale values from file config", async () => {
+  it("ignores unsupported UI locale values from file config without rejecting the file", async () => {
     const dir = await mkdtemp(join(tmpdir(), "zcode-config-"));
     const path = join(dir, "config.json");
 
@@ -685,8 +685,8 @@ describe("config adapters", () => {
 
       const result = loadFileConfig(path);
 
-      expect(result.loaded).toBe(false);
-      expect(result.config.ui).toBeUndefined();
+      expect(result.loaded).toBe(true);
+      expect(result.config.ui?.locale).toBeUndefined();
     } finally {
       await rm(dir, { force: true, recursive: true });
     }

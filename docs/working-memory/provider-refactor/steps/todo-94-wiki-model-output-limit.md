@@ -1,79 +1,57 @@
-# Todo 94：Wiki 移除手动最大输出设置，统一使用模型 Limit
+# Todo 94: Wiki Drops the Manual Max-Output Setting and Uses the Model Limit
 
-> 验证归属更新（2026-09-09）：本文残余欠测/失败/人工晋级统一转交 [Todo102](todo-102-verification-debt-closeout.md)，关闭在本文中的独立验证排期；历史证据保留，转交不代表测试通过。
+> Verification ownership (2026-09-09): residual untested/failing/manual-promotion items moved to [Todo102](todo-102-verification-debt-closeout.md). Historical evidence stays; the hand-off does not mean the tests pass.
 
-> 状态：实现、复审、本地校验与 Pro 正式 Electron E2E 完成；2026-09-08。手机/Windows 实机复验仍留账。执行证据见 [94–97 执行记录](../research/todo94-97-execution-and-review.md)。
-> 用户已确认：彻底统一使用模型 Limit；删除手动 max output、Catalog/Page 独立预算、正文减半和提高预算的特殊重试。保留截断检测与普通失败重试。
-> 2026-09-09 存储裁决补充：用户要求保留已发布旧字段供实用回滚；正常保存保留旧 Wiki / Draft 的 maxOutputTokens 原值，但新版不再使用或生成该偏好。见 [Todo104 §6.18](./todo-104-pre-release-schema-review.md)（m2 原 Todo99）。此项待修，未修改代码；下文原实施记录不表示该补充已完成。
+> Status: implementation, review, local checks and Pro formal Electron E2E done; 2026-09-08. Mobile/Windows real-device re-verification stays open. Execution evidence: [94-97 execution record](../research/todo94-97-execution-and-review.md).
+>
+> User confirmed: fully unify on the model Limit; delete the manual max output, the independent Catalog/Page budgets, the halved body budget and the special retry that raises the budget; keep truncation detection and ordinary failure retry.
+>
+> 2026-09-09 storage ruling: the user asked to keep published old fields for practical rollback; a normal save keeps the old Wiki / Draft `maxOutputTokens` original value, but the new version neither uses nor generates that preference. See [Todo104 §6.18](./todo-104-pre-release-schema-review.md) (m2, formerly Todo99). This item is pending a fix with no code change yet; the original implementation record below does not mean this addition is done.
 
-## 1. 当前事实与问题
+## 1. Status quo and problem
 
-- `RepoWikiPane.tsx` 在未生成卡片和已有 Wiki 工具栏提供输出预算选择；选项为 16,384 / 32,768 / 65,536。
-- `repoWikiStore.ts` 保存 `maxOutputTokens` 和 touched 状态；共享 Generate / RegenerateFailedPages 参数以及 `generationOptions` 也携带该值。
-- `repoWikiService.ts` 将所选预算用于 Catalog，Page 使用其一半；自动刷新、失败页补齐会沿用旧生成设置。
-- `repoWikiLimits.ts` 另有 Catalog 16,384 / Page 8,192 的默认预算及截断后提高预算的救援重试。
-- `repoWikiProviderRegistryModelConfig.ts` 已从目标 Host 的模型配置获取 `optionSpecs.maxOutputTokens.max`。这是 `type: limit` 的上限，不是另一个名叫 `limit` 的数值字段。
-- 因此只删控件不能完成需求：旧保存值和后台默认预算仍会限制请求。
+`RepoWikiPane.tsx` offered an output budget picker (16,384 / 32,768 / 65,536) on the ungenerated card and the existing-Wiki toolbar; `repoWikiStore.ts` stored `maxOutputTokens` and a touched state; shared Generate / RegenerateFailedPages parameters and `generationOptions` also carried it; `repoWikiService.ts` used the selected budget for Catalog and half for Page (auto-refresh and failed-page completion reused the old generation settings); `repoWikiLimits.ts` additionally had Catalog 16,384 / Page 8,192 defaults and a rescue retry that raised the budget after truncation. `repoWikiProviderRegistryModelConfig.ts` already gets `optionSpecs.maxOutputTokens.max` from the target Host's model config, which is the `type: limit` ceiling, not another numeric field named `limit`. Deleting only the control is therefore not enough: old saved values and background defaults would still limit requests.
 
-## 2. 最终裁决
+## 2. Final ruling
 
-| 项目                                 | 裁决 / 计划                                                                              |
-| ------------------------------------ | ---------------------------------------------------------------------------------------- |
-| 手动输出预算入口                     | 移除；未生成、重新生成入口一致，桌面和 Web 共用行为                                      |
-| Wiki 独立输出预算状态                | 不再维护、提交或保存；移除对应 touched、类型、常量、文案和无用 helper                    |
-| 实际请求上限                         | 使用目标模型当前生效配置的 Limit；沿用统一 Model 校验与 Option Map，不手写供应商请求字段 |
-| Catalog / Page 固定预算及减半        | 删除；目录和正文均直接使用模型 Limit，不保留 Wiki 私有输出预算                           |
-| 截断后提高预算的特殊重试             | 删除；不再提高预算或额外赠送一次预算救援重试，已使用完整 Limit 时无更高预算可提高        |
-| 输出截断检测                         | 保留；达到上限后不把不完整输出当作成功内容保存                                           |
-| 普通失败重试、超时                   | 保留原语义，不借本项重做重试系统                                                         |
-| 工具轮次、源码字符预算、目录页数限制 | 保留，它们不是模型最大输出设置                                                           |
+| Item                                                           | Ruling                                                                                                                       |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| manual output-budget entry                                     | removed; the ungenerated and regenerate entries are consistent, desktop and Web share behavior                               |
+| Wiki's own output-budget state                                 | no longer maintained, submitted or saved; touched state, types, constants, copy and unused helpers removed                   |
+| actual request ceiling                                         | the target model's currently effective Limit; unified Model validation and Option Map, no hand-written vendor request fields |
+| fixed Catalog / Page budgets and halving                       | deleted; catalog and body both use the model Limit directly, with no Wiki-private output budget                              |
+| special retry that raises the budget after truncation          | deleted; no budget raising or extra rescue retry (with the full Limit already used there is no higher budget)                |
+| output truncation detection                                    | kept; hitting the cap never stores incomplete output as success content                                                      |
+| ordinary failure retry, timeout                                | original semantics kept                                                                                                      |
+| tool rounds, source character budget, catalog page-count limit | kept (not model max-output settings)                                                                                         |
 
-上限表示最多允许输出多少，不要求模型填满；较大上限可能让单次响应更长，不能据此承诺耗时与成本完全不变。
+The ceiling means "at most this much", not "fill it"; a larger ceiling may lengthen a single response, so unchanged time and cost are not promised.
 
-## 3. 唯一事实源与旧数据边界
+## 3. Single source of truth and old-data boundary
 
 ```text
-Wiki 已解析的 ModelSelection + 目标 Host 模型配置
-                       |
-                       v
-             本次请求的模型 Limit
-                       |
-                       v
-           统一 Model 校验 / Option Map
-                       |
-                       v
-                 供应商请求
-
-旧 Wiki / Draft 的手动 maxOutputTokens -- 不再参与新请求
+Wiki's resolved ModelSelection + target Host model config -> this request's model Limit
+ -> unified Model validation / Option Map -> vendor request
+old Wiki / Draft manual maxOutputTokens -- no longer takes part in new requests
 ```
 
-- 不向 Personal Provider Config 写入 Wiki 偏好，不修改用户模型配置、不扩大模型自身上限。
-- 旧 Wiki / Draft 仍可读；历史手动预算忽略，不因为旧字段存在就整份加载失败。正常保存不再写该字段，不批量改写历史文件，不新增数据版本迁移。
-- 首次生成、重新生成、失败页补齐、任务结束自动刷新都覆盖；检查旧 Selection 是否可能携带该选项，避免遗留值从其他路径重新成为覆盖。
-- 生成过程中不增加动态换模型或强制远端同步；复用现有模型冻结、目标 Host 和 workspaceIdentity 边界。
-- 实现时先确认统一请求入口是否已能在缺省选项时使用 Limit，优先复用；不得为了删除 Wiki 设置新增一套模型默认值解析。
+- Nothing is written into Personal Provider Config for a Wiki preference; user model config and the model's own ceiling are not changed.
+- Old Wiki / Draft stay readable; the historical manual budget is ignored and its presence does not fail the whole load. A normal save no longer writes the field; no bulk rewrite of history files and no new data-version migration.
+- First generation, regeneration, failed-page completion and end-of-task auto-refresh are all covered; check whether an old Selection could carry the option so a leftover value cannot become an override again from another path.
+- No dynamic model switching or forced remote sync during generation; reuse the existing model freeze, target Host and `workspaceIdentity` boundary.
+- Confirm first whether the unified request entry already uses the Limit when options are absent and reuse it; no new model default resolution is added just to delete the Wiki setting.
 
-## 4. 影响面与执行顺序
+## 4. Impact and order
 
-| 层级            | 检查与改动                                                                                         |
-| --------------- | -------------------------------------------------------------------------------------------------- |
-| UI / 草稿       | RepoWikiPane、repoWikiStore；删除控件、状态、回填和提交参数；清理双语文案和专属 test ID 的引用     |
-| 共享契约 / 存储 | shared/repo-wiki.ts、repoWikiStorage；移除新请求与新记录中的手动预算，旧记录读取安全忽略           |
-| 服务 / 请求     | repoWikiService、ModelClient、Generator、Catalog/Page Tool Agent、Limits；收口覆盖参数和各生成路径 |
-| 保留边界        | 模型选择及 Reasoning、生成语言/图表/超时/普通重试、工作区隔离、远控 attachment 与消息流语义不变    |
+UI/draft (RepoWikiPane, repoWikiStore: delete control, state, backfill and submission parameters; clean zh/en copy and dedicated test IDs); shared contract / storage (shared/repo-wiki.ts, repoWikiStorage: new requests and records carry no manual budget, old records read and ignore safely); service/request (repoWikiService, ModelClient, Generator, Catalog/Page tool Agent, Limits: collect the override parameters and all generation paths); unchanged: model selection and Reasoning, generation language/diagram/timeout/ordinary retry, workspace isolation, remote attachment and message-flow semantics. Order: update the budget contract in `docs/repo-wiki.md`; write unit tests and interaction E2E before deleting; clean references and update the feature graph if facts changed; review all generation entries for no leftover Wiki-private ceiling; typecheck, lint, related unit tests and MacBook Pro E2E, then commit.
 
-1. 按第 2 节已确认裁决更新 `docs/repo-wiki.md` 的预算契约，避免新旧规范矛盾。
-2. 先补单测与交互 E2E，再删实现；涉及已修改测试文件时保留其他工作者的改动。
-3. 清理引用、更新功能图中对应事实（如发生变化），复审所有生成入口，无 Wiki 私有默认上限残留。
-4. 执行类型检查、Lint、相关单测及 MacBook Pro E2E，记录通过与未验证项后提交。
+## 5. Acceptance
 
-## 5. 验收清单
-
-- [x] 未生成卡片和已有 Wiki 工具栏都不再出现最大输出选择，其他设置与生成动作不变。
-- [x] Catalog、Page、工具请求、静态回退及压缩 final 的实际输出上限均符合最终裁决。
-- [x] 用不同模型上限验证请求，无 16K 默认、Page 减半、旧保存预算漏入；API 请求字段仍由各自 Map 决定。
-- [x] 删除提高预算的救援重试及专属常量、状态与参数；截断不触发额外的预算升级调用。
-- [x] 旧记录带 maxOutputTokens 仍可查看、重新生成、补齐失败页、自动刷新；新记录不再持久化该偏好。
-- [x] 模型输出截断仍判定不完整；普通失败重试、停止、超时和页数/工具资源限制不退化。
-- [ ] 桌面和手机 Web 布局、两种主题与双语文案无残留入口；远程请求使用目标 Host 的配置。
-- [x] 记录实施提交、验证命令、测试结果、复审结论和任何待裁决项；未执行不得标为完成。
+- [x] Neither the ungenerated card nor the existing-Wiki toolbar shows a max-output picker; other settings and generate actions unchanged.
+- [x] Catalog, Page, tool requests, static fallback and compression final all follow the final ruling for actual output ceilings.
+- [x] Requests under different model ceilings show no 16K default, no Page halving, no old saved budget leaking in; API request fields are still decided by their own Maps.
+- [x] The budget-raising rescue retry and its constants, state and parameters are deleted; truncation triggers no extra budget-upgrade call.
+- [x] Old records carrying `maxOutputTokens` can still be viewed, regenerated, completed for failed pages and auto-refreshed; new records no longer persist the preference.
+- [x] Truncated model output is still judged incomplete; ordinary failure retry, stop, timeout and page-count/tool resource limits do not regress.
+- [ ] Desktop and phone Web layout, both themes and bilingual copy show no leftover entry; remote requests use the target Host's config.
+- [x] Implementation commit, verification commands, test results, review conclusion and any open ruling recorded.

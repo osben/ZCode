@@ -31,7 +31,7 @@ function defaultCredentialSecret(env: NodeJS.ProcessEnv): string {
   try {
     username = userInfo().username;
   } catch {
-    // 部分运行环境可能拿不到系统用户，失败时退回默认占位值。
+    // Some environments cannot resolve the system user; fall back to a default placeholder on failure.
   }
 
   return `zcode-credential-fallback:${platform()}:${homedir()}:${username}`;

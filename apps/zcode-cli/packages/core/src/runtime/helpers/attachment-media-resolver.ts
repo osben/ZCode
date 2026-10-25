@@ -162,7 +162,7 @@ export async function resolveInlineMediaAttachment(
       sizeBytes: attachment.sizeBytes,
     });
   }
-  // 空 payload 曾绕过视频大小校验并被持久化，导致实时与冷恢复消息形态不一致。
+  // An empty payload previously bypassed video-size validation and was persisted, causing live and cold-recovery messages to differ.
   if (videoData.sizeBytes === 0) {
     return resolvedPlaceholderAttachment(attachment, placeholder, "attachment_video_invalid", {
       filename: attachment.filename,
@@ -441,7 +441,7 @@ async function resolveLocalVideoAttachment(
     );
   } catch (error) {
     if (isFileSystemPortError(error) && error.code === "too_large") {
-      // 外层 stat 后文件仍可能增长；以读取端的 maxBytes 结果为最终边界。
+      // The file may grow after the outer stat; use the read-side maxBytes result as the final boundary.
       return resolvedPathReferenceAttachment(attachment, attachment.path!, {
         filename,
         mime,
@@ -451,7 +451,7 @@ async function resolveLocalVideoAttachment(
     }
     return localMediaReadFailure(attachment, filename, mime, source);
   }
-  // 文件可能在 stat 后被清空，必须以实际读取结果判断是否为有效视频。
+  // The file may be emptied after stat; determine whether it is a valid video from the actual read result.
   if (read.bytesRead === 0) {
     return resolvedPlaceholderAttachment(attachment, attachment.path!, "attachment_video_invalid", {
       filename,

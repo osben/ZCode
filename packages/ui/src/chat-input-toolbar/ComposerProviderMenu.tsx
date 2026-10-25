@@ -43,6 +43,7 @@ export function ComposerProviderMenu({
   isDisabled,
   separatorBeforeKey,
   group,
+  selectedKey,
   label,
   providerFooter,
   onSelect,
@@ -54,7 +55,10 @@ export function ComposerProviderMenu({
   loading?: boolean;
   isDisabled?: (group: ModelSelectGroup) => boolean;
   separatorBeforeKey?: string;
+  /** Browsed group shown in the trigger row. */
   group: ModelSelectGroup | undefined;
+  /** Group of the selected model; owns the check mark. */
+  selectedKey: string | undefined;
   label: string;
   providerFooter?: ReactNode;
   onSelect: (group: ModelSelectGroup) => void;
@@ -78,7 +82,7 @@ export function ComposerProviderMenu({
         </div>
       ) : null}
       <DropdownMenuRadioGroup
-        value={group?.key}
+        value={selectedKey ?? ""}
         data-composer-provider-list
         className="min-h-0 overflow-y-auto"
       >
@@ -95,6 +99,11 @@ export function ComposerProviderMenu({
               data-testid={testId(TID_CHAT_MODEL_SELECT_GROUP, candidate.key)}
               data-model-provider-key={candidate.key}
               className="min-h-8 gap-2 pl-2 pr-8"
+              // ISSUE-058: on the desktop submenu, hovering or arrowing to a row (Radix focuses it)
+              // browses it too; the narrow page only browses on an explicit choice.
+              onFocus={() => {
+                if (!narrow) onSelect(candidate);
+              }}
               onSelect={(event) => {
                 event.preventDefault();
                 onSelect(candidate);

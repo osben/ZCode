@@ -19,8 +19,10 @@ beforeEach(() => {
 afterEach(async () => {
   repo.close();
   setDataBaseDir(null);
-  // Windows 需要等待 SQLite 释放文件句柄，避免临时目录清理出现 EPERM。
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  if (process.platform === "win32") {
+    // Windows needs to wait for SQLite to release the file handle, avoiding EPERM during temp dir cleanup.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
   rmSync(tempDir, { recursive: true, force: true });
 });
 

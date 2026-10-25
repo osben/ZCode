@@ -1,10 +1,12 @@
 import type { TaskChatMessage as ChatMessage } from "@/lib/taskChatMessageTypes.js";
 import { shouldExposeE2EStoreBridge } from "@/lib/e2eStoreBridge.js";
 import type { IBotsService, IZCodeAgentService, IZCodeTaskService } from "@zcode/services";
+import type { Locale } from "@zcode/shared";
 import type { TaskListE2EActions } from "@/lib/taskListE2EActions.js";
+import type { Theme } from "@/useTheme.js";
 import { useEffect } from "react";
 
-// Vite 注入的 import.meta.env 类型声明
+// Type declaration for import.meta.env injected by Vite
 declare global {
   interface ImportMeta {
     env: { PROD: boolean; DEV: boolean; [key: string]: unknown };
@@ -12,37 +14,37 @@ declare global {
 }
 
 /**
- * E2E 测试可通过 window.__testActions 调用的操作集合。
- * 仅在非 production 环境下注册，避免泄露到生产。
+ * Set of actions that E2E tests can call through window.__testActions.
+ * Register only outside production to avoid exposing these actions in production.
  */
 export interface TestActions extends TaskListE2EActions {
-  /** 受控 E2E 输入走真实 Host Bot 服务与 CLI admission，不伪造队列投影。 */
+  /** Controlled E2E input goes through the real Host Bot service and CLI admission; it does not fake queue projections. */
   sendBotMessage: IBotsService["handleInboundMessage"];
-  /** 受控材料夹具走真实任务服务、上传与 CLI 队列，不注入 UI row。 */
+  /** Controlled attachment fixtures use the real task service, upload flow, and CLI queue; they do not inject UI rows. */
   submitBotGroupInput: NonNullable<IZCodeTaskService["submitBotGroupInput"]>;
-  /** 获取当前主题 */
+  /** Get the current theme */
   getTheme: () => string;
-  /** 设置主题 */
-  setTheme: (theme: "light" | "dark" | "zai-light" | "zai-dark" | "system") => void;
-  /** 获取当前语言，仅供跨语言展示 E2E */
-  getLocale: () => "zh-CN" | "en-US";
-  /** 设置当前语言，仅供跨语言展示 E2E */
-  setLocale: (locale: "zh-CN" | "en-US") => void;
-  /** 注入聊天展示用的 mock 消息 */
+  /** Set the theme */
+  setTheme: (theme: Theme) => void;
+  /** Get the current language, only for cross-language display E2E tests */
+  getLocale: () => Locale;
+  /** Set the current language, only for cross-language display E2E tests */
+  setLocale: (locale: Locale) => void;
+  /** Inject mock messages for chat display */
   setChatMessages: (messages: ChatMessage[]) => void;
-  /** 获取当前 mock 消息数量 */
+  /** Get the current number of mock messages */
   getChatMessageCount: () => number;
-  /** E2E 通过真实 zcodeAgentService 拉取插件 overview */
+  /** E2E fetches the plugin overview through the real zcodeAgentService */
   getPluginsOverview: IZCodeAgentService["getPluginsOverview"];
-  /** E2E 通过真实 zcodeAgentService 添加 marketplace */
+  /** E2E adds a marketplace through the real zcodeAgentService */
   addPluginMarketplace: IZCodeAgentService["addPluginMarketplace"];
-  /** E2E 通过真实 zcodeAgentService 刷新 marketplace */
+  /** E2E refreshes a marketplace through the real zcodeAgentService */
   updatePluginMarketplace: IZCodeAgentService["updatePluginMarketplace"];
-  /** E2E 通过真实 zcodeAgentService 安装 marketplace plugin */
+  /** E2E installs a marketplace plugin through the real zcodeAgentService */
   installPlugin: IZCodeAgentService["installPlugin"];
-  /** E2E 通过真实 zcodeAgentService 触发插件 discover */
+  /** E2E triggers plugin discovery through the real zcodeAgentService */
   listPlugins: IZCodeAgentService["listPlugins"];
-  /** E2E 通过真实 zcodeAgentService 查询 Workspace/Session Plugin catalog */
+  /** E2E queries the Workspace/Session Plugin catalog through the real zcodeAgentService */
   getPluginReferenceCatalog: IZCodeAgentService["getPluginReferenceCatalog"];
 }
 
@@ -53,12 +55,12 @@ declare global {
 }
 
 /**
- * 将 test actions 注册到 window.__testActions。
- * 仅在 import.meta.env.PROD 为 true 时跳过注册（Vite 环境）。
+ * Register test actions on window.__testActions.
+ * Skip registration only when import.meta.env.PROD is true (Vite environment).
  */
 export function useTestActions(actions: TestActions) {
   useEffect(() => {
-    // E2E 的 production renderer 也需要服务入口；只能由专用 bridge 开关打开，避免普通生产包泄露。
+    // The E2E production renderer also needs the service entry; open it only with the dedicated bridge switch so it is not exposed in regular production builds.
     if (import.meta.env.PROD && !shouldExposeE2EStoreBridge()) return;
     window.__testActions = actions;
     return () => {

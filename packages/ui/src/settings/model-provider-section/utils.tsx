@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { type BuiltinModelProviderId, type OAuthProviderId } from "@zcode/shared";
 import { PackageIcon } from "lucide-react";
 import { ProviderLogo } from "./ProviderLogo.js";
+import { AcpAgentMark } from "./AcpAgentMark.js";
 import {
   CODING_PLAN_PROVIDER_SPECS,
   PRESET_PROVIDER_SPEC_BY_ID,
@@ -31,7 +32,7 @@ export function resolveOAuthProviderIdByPreset(
 }
 
 export function resolveModelProviderNavLogo(item: ModelProviderNavItem) {
-  // 品牌主入口沿用 Start 导航 ID，但不能因此显示体验套餐图标。
+  // The brand's primary entry reuses the Start navigation ID, but must not show the trial-plan icon as a result.
   if (item.type === "preset") return item.logo;
   return "provider" in item ? item.provider?.config.logo : undefined;
 }
@@ -39,6 +40,9 @@ export function resolveModelProviderNavLogo(item: ModelProviderNavItem) {
 export function renderModelProviderNavIcon(item: ModelProviderNavItem): ReactNode {
   if ("provider" in item && item.provider) {
     return <ProviderLogo logo={resolveModelProviderNavLogo(item)} className="size-4" />;
+  }
+  if (item.type === "acpAgent") {
+    return <AcpAgentMark agentId={item.agentId} name={item.label} />;
   }
   return <PackageIcon className="size-4 shrink-0" />;
 }

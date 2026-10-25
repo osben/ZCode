@@ -15,7 +15,7 @@ import {
   type HttpClientRunOptions,
 } from "@zcode/contracts";
 import {
-  loadTlsCaCertificates,
+  createTlsCaLoader,
   resolveProxyForRequest,
   resolveWebFetchProxyForRequest,
 } from "../network/http-config.js";
@@ -44,10 +44,11 @@ export interface NodeHttpClientAdapterOptions {
 }
 
 export class NodeHttpClientAdapter implements HttpClientPort {
-  private tlsCaCertificates: Buffer | undefined;
-  private tlsCaLoaded = false;
+  private readonly resolveTlsCaCertificates: ReturnType<typeof createTlsCaLoader>;
 
-  constructor(private readonly options: NodeHttpClientAdapterOptions = {}) {}
+  constructor(private readonly options: NodeHttpClientAdapterOptions = {}) {
+    this.resolveTlsCaCertificates = createTlsCaLoader(options);
+  }
 
   async request(
     request: HttpClientRequest,
@@ -70,8 +71,6 @@ export class NodeHttpClientAdapter implements HttpClientPort {
       request.egressPolicy === "public"
         ? (this.options.dnsLookup ?? defaultPublicDnsLookup())
         : undefined;
-    const tlsCaCertificates = this.resolveTlsCaCertificates();
-    const egress = buildEgressInfo(proxy, tlsCaCertificates);
     const abortController = new AbortController();
     const abortState = linkAbortSignals(options.signal, abortController);
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -84,6 +83,8 @@ export class NodeHttpClientAdapter implements HttpClientPort {
     }
 
     try {
+      const tlsCaCertificates = await this.resolveTlsCaCertificates(abortController.signal);
+      const egress = buildEgressInfo(proxy, tlsCaCertificates);
       if (publicDnsLookup) {
         assertPublicEgressProxyBoundary(url, proxy.proxyUrl);
         await assertPublicEgressDestination(url, publicDnsLookup, {
@@ -127,17 +128,6 @@ export class NodeHttpClientAdapter implements HttpClientPort {
       if (timeout) clearTimeout(timeout);
       abortState.unlink();
     }
-  }
-
-  private resolveTlsCaCertificates(): Buffer | undefined {
-    if (!this.tlsCaLoaded) {
-      this.tlsCaCertificates = loadTlsCaCertificates({
-        caCertFile: this.options.caCertFile,
-        env: this.options.env,
-      });
-      this.tlsCaLoaded = true;
-    }
-    return this.tlsCaCertificates;
   }
 }
 
@@ -199,8 +189,8 @@ function fetchHttpResponse(
         lookup: proxyUrl ? undefined : lookup,
       },
       (message) => {
-        // 不包成 `Response`：它表示不了 999 之类的状态码，而这里只要状态、头与正文（与原生 fetch 一样原样带回）。
-        // 回调里抛出的东西没人接得住、会打死整个 agent 进程，所以一律转成这一次请求的 reject。
+        // Do not wrap this as `Response`: it cannot represent status codes such as 999, and we only need to pass through status, headers, and body (as native fetch does).
+        // No caller can catch errors thrown by the callback, and they would crash the entire agent process, so always reject only this request.
         try {
           resolve(readIncomingResponse(message));
         } catch (error) {
@@ -261,7 +251,7 @@ function createRequestAgent(
 
 function assertPublicEgressProxyBoundary(url: URL, proxyUrl: string | undefined): void {
   if (!proxyUrl) return;
-  // 普通代理会在代理侧解析目标域名，本地 DNS 校验无法证明最终 IP 仍是公网地址。
+  // A regular proxy resolves the target hostname on the proxy side, so local DNS validation cannot prove the final IP is still public.
   throw createHttpClientError({
     code: "egress_blocked",
     url: url.toString(),

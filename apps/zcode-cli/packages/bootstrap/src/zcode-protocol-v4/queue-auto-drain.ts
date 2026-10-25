@@ -1,8 +1,8 @@
 import type { GoalStatus } from "@zcode/contracts";
 
 /**
- * 普通 queue 的唯一自动提升闸门。fail-open 不在这里开旁路：verifier 仍先把
- * target 持久化为 complete，再与显式 pass 共用这一条判断。
+ * The only automatic-promotion gate for the regular queue. Do not add a fail-open bypass here:
+ * verifier still persists the target as complete first, then shares this check with explicit pass.
  */
 export function shouldAutoDrainV4QueueHead(input: {
   autoDrain: boolean;

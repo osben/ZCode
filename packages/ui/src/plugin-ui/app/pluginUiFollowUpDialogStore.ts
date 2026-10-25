@@ -1,6 +1,7 @@
 /**
- * 无用户手势的 sendFollowUpMessage 需要用户确认（可编辑 prompt）。
- * 与 confirmDialogStore 同构：请求排队、宿主组件订阅并渲染当前一条，resolve 返回最终文本或 null（取消）。
+ * sendFollowUpMessage without a user gesture needs user confirmation (with an editable prompt).
+ * Isomorphic to confirmDialogStore: requests queue up, a host component subscribes and renders the
+ * current one, and resolve returns the final text or null (cancelled).
  */
 export interface PluginUiFollowUpRequest {
   requestId: number;

@@ -2,7 +2,7 @@ import type { AppSettings } from "@zcode/shared";
 import { ServiceChannels } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
 
-/** Host 私有装配端口：只读取本机已提交目录，禁止递归读取设置或网络。 */
+/** Host-private assembly port: reads only the locally committed workspace directory, never settings or network. */
 export type WorkspaceSettingsProjection = Pick<
   AppSettings,
   "lastActiveWorkspace" | "lastWorkspaceSession" | "recentProjects" | "lastActiveTabIndex"
@@ -10,7 +10,10 @@ export type WorkspaceSettingsProjection = Pick<
 
 export interface ISettingService {
   get(): Promise<AppSettings>;
-  /** 完整连接映射写入必须传入原快照和操作版本；服务在锁内比较并递增版本。 */
+  /**
+   * Full connection-mapping writes may pass the snapshot they read plus its version. When the version is
+   * present, the service compares it inside the write lock and bumps providerFamilyDomainUpdatedAt.
+   */
   update(
     patch: Partial<AppSettings>,
     expectedAccountSettings?: Pick<
@@ -22,6 +25,7 @@ export interface ISettingService {
   ): Promise<void>;
   /** Change the data base directory: copy data from old → new location, then persist the setting. */
   updateDataBaseDir(newDir: string | undefined): Promise<void>;
+  ensureDefaultProject(homedir: string): Promise<{ path: string; created: boolean }>;
 }
 
 export const ISettingService = createServiceDescriptor<ISettingService>(ServiceChannels.Setting);

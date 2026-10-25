@@ -10,9 +10,9 @@ import {
 } from "@/lib/assistantCodeComment.js";
 
 describe("web remote control Assistant code-comment capability", () => {
-  it("终态 replay row 通过共享投影隐藏 directive，并保留 remote review scope", () => {
+  it("terminal replay row hides the directive through the shared projection and keeps the remote review scope", () => {
     const assistantText =
-      '已完成审查。\n::code-comment{title="[P1] 检查入口" body="请检查启动路径" file="src/main.ts" start=12 end=14 priority=1}';
+      'Review complete.\n::code-comment{title="[P1] Check entry" body="Check the startup path" file="src/main.ts" start=12 end=14 priority=1}';
     const workspacePath = "/remote/workspace";
     const workspaceIdentity = "remote:ssh:demo:/remote/workspace";
     const workspaceRemoteSessionId = "remote-session-1";
@@ -20,13 +20,13 @@ describe("web remote control Assistant code-comment capability", () => {
     const cards = buildAssistantCodeCommentCards(assistantText, workspacePath);
     const onOpenCodeViewer = vi.fn();
 
-    expect(projection.visibleText).toBe("已完成审查。\n");
+    expect(projection.visibleText).toBe("Review complete.\n");
     expect(cards).toHaveLength(1);
 
     render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(AssistantCodeCommentCards, {
           cards,
           workspacePath,
@@ -37,8 +37,8 @@ describe("web remote control Assistant code-comment capability", () => {
       ),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /展开 1 条评论/ }));
-    fireEvent.click(screen.getByRole("button", { name: /检查入口/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Show 1 comments/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Check entry/ }));
 
     expect(onOpenCodeViewer).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -48,8 +48,8 @@ describe("web remote control Assistant code-comment capability", () => {
         workspaceIdentity,
         workspaceRemoteSessionId,
         review: expect.objectContaining({
-          title: "检查入口",
-          body: "请检查启动路径",
+          title: "Check entry",
+          body: "Check the startup path",
           startLine: 12,
           endLine: 14,
         }),

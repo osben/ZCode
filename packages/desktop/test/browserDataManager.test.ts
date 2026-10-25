@@ -73,6 +73,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await rm(tempRoot, { recursive: true, force: true });
 });
 
@@ -771,6 +772,7 @@ describe("browserDataManager", () => {
   });
 
   it("先复制 LocalStorage 快照，再从快照发现 origin", async () => {
+    // CI runner 会安装 Chrome；显式注入“未发现”结果，避免宿主路径影响快照测试。
     const profilePath = join(tempRoot, "Default");
     const levelDbPath = join(profilePath, "Local Storage", "leveldb");
     await mkdir(levelDbPath, { recursive: true });
@@ -782,6 +784,7 @@ describe("browserDataManager", () => {
     const result = await importChromeLocalStorage({
       profilePath,
       platform: "aix",
+      chromeExecutablePath: "",
       logger,
       targetSession: {} as Electron.Session,
     });

@@ -63,9 +63,9 @@ function selectWorkspaceCheckpointsForFileSummary(
     return byMessageId;
   }
 
-  // 旧事件和缺失 user messageId 映射的普通 TurnStarted
-  // 只能用事件 turnId 兜底。split product turn 带 "~q" 后缀，禁止按 runtime turnId
-  // 合并，避免 queued/drained 场景串轮。
+  // Legacy events and ordinary TurnStarted events without a user messageId mapping can only fall
+  // back to the event turnId. Split product turns have a "~q" suffix; do not merge them by runtime
+  // turnId, which would conflate turns in queued/drained scenarios.
   return checkpoints.filter(({ turnId }) => turnId === String(targetTurnId));
 }
 
@@ -126,7 +126,7 @@ async function aggregateWorkspaceCheckpoints(
 ): Promise<V4ConversationFileChangesResult> {
   const byPath = new Map<string, FileChangeAggregate>();
 
-  // checkpoint 顺序就是同一轮文件写入顺序，必须串行聚合 first-before → final-after。
+  // Checkpoint order is the file-write order within one turn; aggregate serially from first-before to final-after.
   for (const { checkpoint } of checkpoints) {
     const artifact = parseWorkspaceCheckpointArtifact(
       JSON.parse(await readArtifact(checkpoint.snapshotRef)),

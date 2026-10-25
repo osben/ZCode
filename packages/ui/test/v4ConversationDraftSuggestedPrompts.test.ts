@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
-    locale: "zh-CN",
+    locale: "en-US",
   }),
 }));
 
@@ -45,13 +45,13 @@ describe("ConversationDraftSuggestedPrompts", () => {
 
     expect(rows).toHaveLength(items.length);
     for (const [index, item] of items.entries()) {
-      expect(rows[index]?.textContent).toBe(item.label.cn);
-      expect(rows[index]?.getAttribute("aria-label")).toBe(item.label.cn);
-      expect(rows[index]?.getAttribute("title")).toBe(item.label.cn);
-      expect(rows[index]?.textContent).not.toBe(item.prompt.cn);
+      expect(rows[index]?.textContent).toBe(item.label.en);
+      expect(rows[index]?.getAttribute("aria-label")).toBe(item.label.en);
+      expect(rows[index]?.getAttribute("title")).toBe(item.label.en);
+      expect(rows[index]?.textContent).not.toBe(item.prompt.en);
       expect(rows[index]?.getAttribute("data-draft-suggested-prompt")).toBe(item.id);
     }
-    expect(view.container.textContent).not.toContain(items[1]?.plugin?.label.cn);
+    expect(view.container.textContent).not.toContain(items[1]?.plugin?.label.en);
   });
 
   it("assigns stagger delays in recommendation order", () => {
@@ -107,7 +107,7 @@ describe("ConversationDraftSuggestedPrompts", () => {
         onSelect: vi.fn(),
       }),
     );
-    const originalPluginButton = screen.getByRole("button", { name: "制作 PDF" });
+    const originalPluginButton = screen.getByRole("button", { name: "Create PDF" });
 
     view.rerender(
       createElement(ConversationDraftSuggestedPrompts, {
@@ -118,15 +118,15 @@ describe("ConversationDraftSuggestedPrompts", () => {
           operationId: "install-document-skills",
           phase: "confirmation",
           message: "Enable Document Skills Plugin",
-          actionLabel: "确认",
+          actionLabel: "Confirm",
           onAction,
           onDismiss,
         },
       }),
     );
 
-    const plainButton = screen.getByRole("button", { name: "检查 commit" });
-    const pluginButton = screen.getByRole("button", { name: "制作 PDF" });
+    const plainButton = screen.getByRole("button", { name: "Check commits" });
+    const pluginButton = screen.getByRole("button", { name: "Create PDF" });
     expect(pluginButton).toBe(originalPluginButton);
     expect(plainButton.hasAttribute("data-draft-suggested-plugin-popover-anchor")).toBe(false);
     expect(pluginButton.getAttribute("data-draft-suggested-plugin-popover-anchor")).toBe("true");
@@ -147,7 +147,7 @@ describe("ConversationDraftSuggestedPrompts", () => {
     );
     expect(confirmationMessage?.textContent).toBe("Enable Document Skills Plugin");
 
-    const confirmButton = screen.getByRole("button", { name: "确认" });
+    const confirmButton = screen.getByRole("button", { name: "Confirm" });
     fireEvent.click(confirmButton);
     expect(onAction).toHaveBeenCalledOnce();
     expect(onDismiss).not.toHaveBeenCalled();
@@ -163,7 +163,7 @@ describe("ConversationDraftSuggestedPrompts", () => {
           anchorItemId: "create-pdf",
           operationId: "install-document-skills",
           phase: "success",
-          message: "安装成功",
+          message: "Installed successfully",
         },
       }),
     );
@@ -174,7 +174,7 @@ describe("ConversationDraftSuggestedPrompts", () => {
       expect(element).not.toBeNull();
       return element!;
     });
-    // 确认、进度和结果阶段必须复用同一个 PopoverContent；只复用 anchor 仍会让浮窗闪断重挂。
+    // Confirmation, progress, and result phases must reuse the same PopoverContent; reusing only the anchor would still remount and flicker the popover.
     expect(resultPopover).toBe(popover);
     expect(resultPopover.classList.contains("gap-0")).toBe(true);
     const successContent = resultPopover.querySelector<HTMLElement>(
@@ -183,9 +183,9 @@ describe("ConversationDraftSuggestedPrompts", () => {
     const successIcon = resultPopover.querySelector<SVGElement>(
       '[data-draft-suggested-plugin-success-icon="true"]',
     );
-    expect(successContent?.textContent).toBe("安装成功");
+    expect(successContent?.textContent).toBe("Installed successfully");
     expect(successIcon).not.toBeNull();
-    expect(screen.queryByRole("button", { name: "确认" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Confirm" })).toBeNull();
   });
 
   it("renders nothing when the recommendation list is empty", () => {

@@ -5,7 +5,7 @@ export const enUS: ZCodeCopy = {
   cli: {
     errors: {
       localeUnsupported: (value) =>
-        `Unsupported --locale value: ${value}. Supported locales: en-US, zh-CN, auto.`,
+        `Unsupported --locale value: ${value}. Supported locales: en-US, zh-CN, uk-UA, auto.`,
     },
     help: (version) => `zcode ${version}
 
@@ -18,7 +18,7 @@ Commands:
   app-server Run the ZCode Protocol stdio app server
   commands   List custom slash commands (\`commands list\`)
   doctor     Inspect runtime and packaging assumptions
-  login [zai|bigmodel]  Sign in through browser authorization
+  login [zai|bigmodel|chatgpt]  Sign in through browser authorization
   logout     Remove the shared Z.AI login credentials
   plugins    Manage plugins and marketplaces (\`plugins list|install|uninstall|enable|disable|update|validate|marketplace ...\`; alias: plugin)
   skills     List local skills (\`skills list\`)
@@ -41,7 +41,7 @@ Options:
     "Bash(git *)" removes all of Bash; command patterns are not matched.
   --toolsearch-mode <auto|native|local|off> ToolSearch mode (default: off; this launch only)
   --force-mcs      Force mid-conversation system projection for Anthropic providers
-  --locale <locale>  UI locale: en-US, zh-CN, or auto
+  --locale <locale>  UI locale: en-US, zh-CN, uk-UA, or auto
   --mode <mode>    Permission mode for prompts: build, edit, plan, yolo, or guarded (default: yolo for --prompt)
   --resume <sessionId>  Resume a persisted session by sessionId (sess_...)
   --target <text>  Run or set the session goal in headless mode
@@ -119,6 +119,12 @@ Slash Commands:
             "Complete sign-in in your browser. Authorization is detected automatically.",
           primary: "BigModel Coding Plan",
           secondary: "Open browser login; authorization is detected automatically.",
+        },
+        chatgptOauth: {
+          pendingPrimary: "Waiting for ChatGPT authorization",
+          pendingSecondary: "Complete sign-in in your browser with your ChatGPT Plus/Pro account.",
+          primary: "ChatGPT Plan",
+          secondary: "Continue with ChatGPT (official OpenAI token sharing).",
         },
         zaiApiKey: {
           inputPrimary: "Enter Z.AI Coding Plan API Key",

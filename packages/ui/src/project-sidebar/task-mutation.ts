@@ -6,6 +6,7 @@ import type {
   WindowHostControllerMutation,
   WindowHostTaskAddress,
 } from "@/project-sidebar/contract.js";
+import { withOptimisticTitleRecency } from "@/lib/zcodeTaskMetaMerge.js";
 export type ProjectTaskMutation = Exclude<
   WindowHostControllerMutation,
   { kind: "open" | "resume" }
@@ -60,7 +61,9 @@ export async function mutateProjectTask(
       await ports.service.deleteTask(target);
       return null;
     case "rename":
-      return ports.service.renameTask({ ...target, title: mutation.title });
+      return ports.service
+        .renameTask({ ...target, title: mutation.title })
+        .then(withOptimisticTitleRecency);
     case "pin":
       return ports.service.setTaskPinned({ ...target, pinned: mutation.pinned });
     case "mark-read":

@@ -1,14 +1,21 @@
-import { PERMISSION_FULL_ACCESS_OPTION_ID } from "@zcode/shared/zcode-protocol-v4";
-// ProductProjection —— CLI 权威投影第二 reducer。
-// 输入：CLI 事件日志（SessionEvent，权威事实源）；输出：ConversationDelta[]。
-// 快照推进复用协议规范 apply（applyConversationDeltas）——投影演进与 delta 流
-// 逐字节一致是构造保证，黄金测试再用独立重放交叉验证。
+import {
+  PERMISSION_FULL_ACCESS_OPTION_ID,
+  externalAgentConfigStateSchema,
+} from "@zcode/shared/zcode-protocol-v4";
+// ProductProjection — the second authoritative reducer in the CLI projection.
+// Input: the CLI event log (SessionEvent, the source of truth); output: ConversationDelta[].
+// Snapshot advancement reuses the protocol's canonical apply function (applyConversationDeltas).
+// Byte-for-byte agreement between projection evolution and the delta stream is guaranteed by
+// construction, then cross-checked by independent replay in golden tests.
 //
-// 覆盖：session/turn 生命周期、流式文本/思考、tool call 状态机、
-// 权限交互、turn-steer 队列、usage、错误态、迟到终态拒收、
-// compact marker、goal 状态机、fork marker。传输外壳（TopicFrame/subscribe）在后续片。
+// Covers session/turn lifecycle, streamed text/reasoning, the tool-call state machine,
+// permission interactions, the turn-steer queue, usage, error states, rejection of late terminal
+// events, compact markers, the goal state machine, and fork markers. The transport wrapper
+// (TopicFrame/subscribe) is handled in a later slice.
 import type {
   AssistantFeedbackUpdatedPayload,
+  ExternalAgentStatusPayload,
+  RowPinnedUpdatedPayload,
   HighspeedMetricsUpdatedPayload,
   CompactLifecyclePayload,
   DynamicWorkflowRunProgressPayload,
@@ -25,6 +32,7 @@ import type {
   PluginUiAppToolCallRequestedPayload,
   PluginUiResourceListChangedPayload,
   PluginUiResourceUpdatedPayload,
+  SystemMessagePayload,
   SessionEvent,
   SessionForkedPayload,
   SessionInputPromotedPayload,
@@ -76,6 +84,8 @@ import {
   extractPlanStepsFromToolOutput,
   isHighspeedProviderId,
   isZCodeFileStreamingToolInputPreviewTool,
+  isZCodeAskUserQuestionToolName as isAskUserQuestionToolName,
+  isZCodeExitPlanModeToolName as isExitPlanModeToolName,
   isZCodeModelRetryRecoveryProgressPayload,
   parseZCodeBackgroundTaskNotificationText,
   resolveZCodeBackgroundTaskControlKind,
@@ -91,6 +101,7 @@ import type {
   ConversationRowTarget,
   ConversationSnapshot,
   CuaAppIdentity,
+  ExternalAgentConfigState,
   GoalState,
   HookExecutionProjection,
   HookInvocationRow,
@@ -265,6 +276,27 @@ interface ContextWindowProjectionState {
   usedTokens: number;
 }
 
+function invalidateResolvedContextBudgetThresholds(
+  contextWindow: NonNullable<SessionUsageState["contextWindow"]>,
+): NonNullable<SessionUsageState["contextWindow"]> {
+  const {
+    autoCompactThresholdTokens,
+    autoCompactThresholdAuthoritative,
+    microcompactThresholdTokens,
+    ...remaining
+  } = contextWindow;
+  return {
+    ...remaining,
+    // Keep the required legacy field populated for old V4 clients. Numeric thresholds are stale
+    // after a model switch; only an authoritative disabled null survives with its authority bit.
+    autoCompactThresholdTokens: null,
+    ...(autoCompactThresholdTokens === null && autoCompactThresholdAuthoritative === true
+      ? { autoCompactThresholdAuthoritative: true }
+      : {}),
+    ...(microcompactThresholdTokens === null ? { microcompactThresholdTokens: null } : {}),
+  };
+}
+
 export interface SessionSubagentsSeed {
   revision: number;
   childSessionIds: string[];
@@ -346,6 +378,7 @@ export type ConversationRowTargetAction =
   | "fileChanges"
   | "fileRewindPreview"
   | "setAssistantFeedback"
+  | "setRowPinned"
   | "setHighspeedMetrics";
 
 export type ConversationRowTargetResolution =
@@ -416,6 +449,22 @@ function nonNegativeInteger(value: number, fallback: number): number {
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
 }
 
+/** The event payload as projected state; a payload that fails the strict schema is ignored. */
+function externalAgentConfigFromPayload(payload: unknown): ExternalAgentConfigState | null {
+  const parsed = externalAgentConfigStateSchema.safeParse(payload);
+  return parsed.success ? parsed.data : null;
+}
+
+function cloneExternalAgentConfig(state: ExternalAgentConfigState): ExternalAgentConfigState {
+  return {
+    agentId: state.agentId,
+    options: state.options.map((option) => ({
+      ...option,
+      options: option.options.map((value) => ({ ...value })),
+    })),
+  };
+}
+
 interface FileToolInputPreviewState {
   lastPublishedAt: number | null;
   pendingAppend: string;
@@ -431,10 +480,25 @@ type TurnModelBaseline =
   | { kind: "sourceLess" }
   | { kind: "known"; provider: string; model: string; thought: string };
 
+/** Event taskKind → panel work kind; new events carry the runtime's explicit taskKind. */
+const BACKGROUND_WORK_KIND_BY_TASK_KIND: Record<string, BackgroundWorkSummary["kind"]> = {
+  dream: "dream",
+  subagent: "subagent",
+  bash: "bash",
+  workflow: "workflow",
+};
+
+/** Legacy resolver kind → panel work kind; older events have no explicit taskKind. */
+const BACKGROUND_WORK_KIND_BY_LEGACY_KIND: Record<string, BackgroundWorkSummary["kind"]> = {
+  agent: "subagent",
+  bash: "bash",
+};
+
 export class ProductProjection {
   private snapshot: ConversationSnapshot;
-  // reducer 内部的 rowId 查找必须与 rows.window 同步；冷恢复过去每次 find 都扫描全表，
-  // tool/turn 终态越多退化越明显。普通归约增量维护，rewind 才重建。
+  // Keep the reducer's rowId lookup synchronized with rows.window. Cold recovery previously scanned
+  // the entire table on every find, with worse degradation as tool/turn terminal events accumulated.
+  // Normal reduction maintains it incrementally; only rewind rebuilds it.
   private rowIndexById = new Map<number, number>();
   private hydrationAccumulator: MutableConversationSnapshotAccumulator | null = null;
   private nextRowId = 1;
@@ -513,6 +577,8 @@ export class ProductProjection {
   // 又避免后续种子覆盖新事件已原子发布的模型能力。
   private configThoughtLevelsTouchedByEvent = false;
   private configModeTouchedByEvent = false;
+  // An external_agent_config_updated event is authoritative over the stored seed (S6).
+  private configExternalAgentTouchedByEvent = false;
   // assistant 守恒：非运行期拒收的正文流计数（gateway 据此置 stale）。
   private droppedContentStreamEventCount = 0;
   // 读取期 legacy fallback 必须可观测；否则 normalizer 缺字段后仍会退化为“可见但不可寻址”。
@@ -651,6 +717,20 @@ export class ProductProjection {
   }
 
   /**
+   * External agent config seed (specs/acp-agent-runtime.md "S6"): the offered options stored with the
+   * session's ACP binding. In-memory events do not survive a worker restart, so a cold projection
+   * gets the selects from the store without spawning the agent. Like seedConfig it emits no delta
+   * and never overrides a value an event already set.
+   */
+  seedExternalAgentConfig(state: ExternalAgentConfigState | null | undefined): void {
+    if (this.configExternalAgentTouchedByEvent || !state) return;
+    this.snapshot = {
+      ...this.snapshot,
+      config: { ...this.snapshot.config, externalAgentConfig: cloneExternalAgentConfig(state) },
+    };
+  }
+
+  /**
    * 导入分享上下文的来源只读种子。
    *
    * shared_context 是 provider-only message，不应物化为用户气泡；来源标记通过
@@ -678,6 +758,47 @@ export class ProductProjection {
         title,
       },
     };
+  }
+
+  /** Runtime-less worktree preparations are Host-owned metadata, not transcript rows or turns. */
+  seedWorktreePreparation(
+    preparation: ConversationSnapshot["meta"]["worktreePreparation"] | null | undefined,
+  ): void {
+    if (!preparation) {
+      // A null seed means the preparation no longer exists (activated/cancelled/cleared on the
+      // Host), so a re-subscribed client must not keep seeing the stale preparing/failed marker.
+      if (this.snapshot.meta.worktreePreparation !== undefined) {
+        const { worktreePreparation: _cleared, ...restMeta } = this.snapshot.meta;
+        this.snapshot = { ...this.snapshot, meta: restMeta };
+      }
+      return;
+    }
+    const current = this.snapshot.meta.worktreePreparation;
+    if (
+      current?.status === preparation.status &&
+      current.branchName === preparation.branchName &&
+      current.targetPath === preparation.targetPath &&
+      current.baseBranch === preparation.baseBranch &&
+      current.failureMessage === preparation.failureMessage
+    ) {
+      return;
+    }
+    this.snapshot = {
+      ...this.snapshot,
+      meta: { ...this.snapshot.meta, worktreePreparation: { ...preparation } },
+    };
+  }
+
+  /** Durable submission setup is metadata; it never invents an accepted user row. */
+  seedSubmissionPreparation(
+    preparation: ConversationSnapshot["meta"]["submissionPreparation"] | null | undefined,
+  ): void {
+    if (!preparation) {
+      const { submissionPreparation: _cleared, ...meta } = this.snapshot.meta;
+      this.snapshot = { ...this.snapshot, meta };
+      return;
+    }
+    this.snapshot = { ...this.snapshot, meta: { ...this.snapshot.meta, submissionPreparation: { ...preparation } } };
   }
 
   seedUsage(seed: SessionUsageSeed): void {
@@ -851,6 +972,26 @@ export class ProductProjection {
     if (action === "setAssistantFeedback") {
       const messageId = this.messageIdByRowId.get(row.rowId);
       if (row.kind !== "assistantText" || !messageId) {
+        return {
+          ok: false,
+          status: "rejected",
+          reasonCode: "guard.actionUnavailable",
+        };
+      }
+      return { ok: true, action, row, messageId };
+    }
+    if (action === "setRowPinned") {
+      const messageId = this.messageIdByRowId.get(row.rowId);
+      // Pins address the human bookmark on the final assistant text segment or the user's own input;
+      // both need the transcript anchor. A streaming/failed assistant row cannot be pinned yet, and
+      // system-generated user rows (background result / mailbox / synthetic / workflow launch) are
+      // outside the v1 boundary (docs/chat-message-pins.md).
+      if (
+        !messageId ||
+        (row.kind !== "assistantText" && row.kind !== "userInput") ||
+        (row.kind === "assistantText" && row.state !== "complete") ||
+        (row.kind === "userInput" && row.origin !== "realUser")
+      ) {
         return {
           ok: false,
           status: "rejected",
@@ -1062,7 +1203,9 @@ export class ProductProjection {
     const reduced =
       event.type === SessionEventType.AssistantFeedbackUpdated
         ? this.onAssistantFeedbackUpdated(event)
-        : event.type === SessionEventType.HighspeedMetricsUpdated
+        : event.type === SessionEventType.RowPinnedUpdated
+          ? this.onRowPinnedUpdated(event)
+          : event.type === SessionEventType.HighspeedMetricsUpdated
           ? this.onHighspeedMetricsUpdated(event)
           : event.type === SessionEventType.TurnExecutionModelFallback
             ? this.onTurnExecutionModelFallback(event)
@@ -1189,6 +1332,7 @@ export class ProductProjection {
     clone.configModelTouchedByEvent = this.configModelTouchedByEvent;
     clone.configThoughtLevelsTouchedByEvent = this.configThoughtLevelsTouchedByEvent;
     clone.configModeTouchedByEvent = this.configModeTouchedByEvent;
+    clone.configExternalAgentTouchedByEvent = this.configExternalAgentTouchedByEvent;
     clone.droppedContentStreamEventCount = this.droppedContentStreamEventCount;
     clone.normalizationDiagnostics = [...this.normalizationDiagnostics];
     return clone;
@@ -1234,6 +1378,7 @@ export class ProductProjection {
     this.configModelTouchedByEvent = candidate.configModelTouchedByEvent;
     this.configThoughtLevelsTouchedByEvent = candidate.configThoughtLevelsTouchedByEvent;
     this.configModeTouchedByEvent = candidate.configModeTouchedByEvent;
+    this.configExternalAgentTouchedByEvent = candidate.configExternalAgentTouchedByEvent;
     this.droppedContentStreamEventCount = candidate.droppedContentStreamEventCount;
     this.normalizationDiagnostics = candidate.normalizationDiagnostics;
   }
@@ -1389,6 +1534,8 @@ export class ProductProjection {
         return this.onSessionResumed(event);
       case SessionEventType.SessionTitleUpdated:
         return this.onSessionTitleUpdated(event);
+      case SessionEventType.SystemMessage:
+        return this.onSystemMessage(event);
       case SessionEventType.TurnStarted:
         if (fact.semanticKind !== "userIntent") return [];
         return [
@@ -1522,6 +1669,10 @@ export class ProductProjection {
         return this.onFollowupModeChanged(event);
       case SessionEventType.SessionModeChanged:
         return this.onSessionModeChanged(event);
+      case SessionEventType.ExternalAgentConfigUpdated:
+        return this.onExternalAgentConfigUpdated(event);
+      case SessionEventType.ExternalAgentStatus:
+        return this.onExternalAgentStatus(event);
       case SessionEventType.TurnComplete:
         return this.onTurnComplete(event);
       case SessionEventType.TurnError:
@@ -2227,6 +2378,7 @@ export class ProductProjection {
           // 新一轮被接受后，旧错误不再是当前事实（与旧 reducer 同一裁决）。
           lastError: null,
           apiRetry: null,
+          ...this.clearedExternalAgentStall(),
         }),
       });
     }
@@ -2352,6 +2504,7 @@ export class ProductProjection {
             // 旧 V4 reducer 没有消费 ModelNetworkStatus，补投影后若 turn
             // 直接进入终态仍不清理，会让“重新连接中”残留到下一轮。
             apiRetry: null,
+            ...this.clearedExternalAgentStall(),
           },
           pausedGoal,
           heldQueue,
@@ -2445,7 +2598,11 @@ export class ProductProjection {
               at: this.ms(event),
               // 旧投影把所有 TurnError 都写成 runtime，丢失 adapter 已识别的 provider/network 事实。
               source: payload.error.attribution?.source ?? "runtime",
-              traceId: String(event.traceId),
+              // Cold hydration stamps a shared sentinel trace id; surfacing it would make
+              // error reports carry "hydrate-trace" instead of a traceable request id.
+              ...(String(event.traceId) !== HYDRATION_TRACE_ID
+                ? { traceId: String(event.traceId) }
+                : {}),
               ...(payload.error.detail ? { detail: payload.error.detail } : {}),
               ...(payload.error.underlyingErrorMessage
                 ? { underlyingErrorMessage: payload.error.underlyingErrorMessage }
@@ -2457,6 +2614,7 @@ export class ProductProjection {
             },
             // 同 onTurnComplete：终态是重试生命周期的兜底清理边界。
             apiRetry: null,
+            ...this.clearedExternalAgentStall(),
           },
           undefined,
           heldQueue,
@@ -2775,6 +2933,23 @@ export class ProductProjection {
     }
     if (row.feedback === payload.feedback) return [];
     return [{ op: "row.upserted", row: { ...row, feedback: payload.feedback } }];
+  }
+
+  private onRowPinnedUpdated(event: SessionEvent): ConversationDelta[] {
+    const payload = event.payload as RowPinnedUpdatedPayload;
+    const row = this.snapshot.rows.window.find(
+      (candidate): candidate is AssistantTextRow | UserInputRow =>
+        (candidate.kind === "assistantText" || candidate.kind === "userInput") &&
+        candidate.entityId === payload.entityId,
+    );
+    if (!row) return [];
+    if (payload.pinnedAt === null) {
+      if (row.pinnedAt === undefined) return [];
+      const { pinnedAt: _removedPinnedAt, ...withoutPinnedAt } = row;
+      return [{ op: "row.upserted", row: withoutPinnedAt }];
+    }
+    if (row.pinnedAt === payload.pinnedAt) return [];
+    return [{ op: "row.upserted", row: { ...row, pinnedAt: payload.pinnedAt } }];
   }
 
   private onHighspeedMetricsUpdated(event: SessionEvent): ConversationDelta[] {
@@ -3146,6 +3321,7 @@ export class ProductProjection {
           row: {
             ...existing,
             toolName: payload.toolName,
+            ...(payload.title ? { title: payload.title } : {}),
             ...(payload.assistantMessageId
               ? { assistantResponseId: String(payload.assistantMessageId) }
               : {}),
@@ -3166,6 +3342,7 @@ export class ProductProjection {
         : {}),
       toolCallId,
       toolName: payload.toolName,
+      ...(payload.title ? { title: payload.title } : {}),
       status: "inputStreaming",
       inputText,
       input: payload.input,
@@ -4194,6 +4371,56 @@ export class ProductProjection {
     ];
   }
 
+  /** S6: the selects of the session's ACP agent (config.externalAgentConfig); no row. */
+  private onExternalAgentConfigUpdated(event: SessionEvent): ConversationDelta[] {
+    const state = externalAgentConfigFromPayload(event.payload);
+    if (!state) return [];
+    this.configExternalAgentTouchedByEvent = true;
+    const current = this.snapshot.config.externalAgentConfig;
+    if (current && JSON.stringify(current) === JSON.stringify(state)) return [];
+    return [
+      {
+        op: "state.updated",
+        patch: { config: { ...this.snapshot.config, externalAgentConfig: state } },
+      },
+    ];
+  }
+
+  /**
+   * S6: a stall of the running turn's ACP agent is a transient, non-blocking status
+   * (control.externalAgentStall). `resumed` and the turn's end clear it; no row is written.
+   */
+  private onExternalAgentStatus(event: SessionEvent): ConversationDelta[] {
+    if (!this.acceptsActiveModelEvent(event)) return [];
+    const payload = event.payload as Partial<ExternalAgentStatusPayload>;
+    if (payload.status === "resumed") {
+      const cleared = this.clearedExternalAgentStall();
+      return "externalAgentStall" in cleared
+        ? [{ op: "state.updated", patch: this.controlPatch(cleared) }]
+        : [];
+    }
+    if (payload.status !== "stalled" || typeof payload.agentId !== "string" || !payload.agentId) {
+      return [];
+    }
+    return [
+      {
+        op: "state.updated",
+        patch: this.controlPatch({
+          externalAgentStall: {
+            agentId: payload.agentId,
+            since: this.ms(event),
+            silentMs: nonNegativeInteger(payload.silentMs ?? 0, 0),
+          },
+        }),
+      },
+    ];
+  }
+
+  /** Control fields that clear a stall; empty when none is shown, so control is not rewritten. */
+  private clearedExternalAgentStall(): Pick<SessionControl, "externalAgentStall"> {
+    return this.snapshot.control.externalAgentStall ? { externalAgentStall: null } : {};
+  }
+
   /**
    * Subagent row 与摘要投影在同一个 event transaction 内 materialize。
    * 旧 UI 在 spawn 后另查 session/subagents；7 个并发 child 中查询若恰好落在
@@ -4608,23 +4835,17 @@ export class ProductProjection {
     const prev = this.snapshot.backgroundWorks;
     const existing = prev.find((work) => work.workId === workId);
     const legacyKind = resolveZCodeBackgroundTaskControlKind(payload);
-    // 新事件使用 runtime 的显式 taskKind；旧事件统一走 shared resolver，
-    // 不能再在 reducer 内散落 Agent/Task/subagent 字符串分支。
-    // "workflow" 是 workflow run（此前错标成 bash）；legacy resolver 里没有对应值，因为
-    // legacy `Workflow` 工具刻意仍归 bash——两者是不同的东西，共用类别会让面板混在一起。
+    // New events use the explicit taskKind from runtime; older events all use the shared resolver.
+    // Do not scatter Agent/Task/subagent string branches throughout the reducer.
+    // "workflow" is a workflow run (previously mislabeled as bash). The legacy resolver has no
+    // equivalent because the legacy `Workflow` tool intentionally remains bash; they are different
+    // things, and sharing a category would mix them in the panel.
     const kind: BackgroundWorkSummary["kind"] =
-      payload.taskKind === "subagent"
-        ? "subagent"
-        : payload.taskKind === "bash"
-          ? "bash"
-          : payload.taskKind === "workflow"
-            ? "workflow"
-            : legacyKind === "agent"
-              ? "subagent"
-              : legacyKind === "bash"
-                ? "bash"
-                : (existing?.kind ?? "bash");
-    // 事件 status（running/completed/failed/timed_out/cancelled/spawn_error/lost）
+      BACKGROUND_WORK_KIND_BY_TASK_KIND[payload.taskKind ?? ""] ??
+      BACKGROUND_WORK_KIND_BY_LEGACY_KIND[legacyKind ?? ""] ??
+      existing?.kind ??
+      "bash";
+    // Event statuses (running/completed/failed/timed_out/cancelled/spawn_error/lost)
     // → summary status（running/resultPending/failed/cancelled）。
     const rawStatus = payload.status ?? "running";
     const status: "running" | "resultPending" | "failed" | "cancelled" =
@@ -4767,10 +4988,14 @@ export class ProductProjection {
       (contextWindow === null
         ? previousContextWindow !== null
         : previousContextWindow === null || previousContextWindow.maxTokens !== contextWindow);
-    // 日志事件触碰过模型选型后，种子不再覆盖（同值 return 也算触碰）。
-    // 冷恢复合成的 ModelSelected（HYDRATION_TRACE_ID）例外：它只是从 message 事实
-    // 重建历史选型供 modelChange marker 使用，不是权威选型动作；重放后 seedConfig
-    // 仍以 runtime 真值（resume 已回写的上次/草稿选型）收口。
+    const modelIdentityChanged = prev.provider !== provider || prev.model !== model;
+    const contextBudgetChanged = contextWindowChanged || modelIdentityChanged;
+    // Once a log event touches model selection, a seed cannot overwrite it (even a same-value return
+    // counts as a touch).
+    // Exception: ModelSelected synthesized during cold recovery (HYDRATION_TRACE_ID) only rebuilds
+    // historical selection from message facts for the modelChange marker; it is not an authoritative
+    // selection action. After replay, seedConfig still settles on runtime truth (the previous/draft
+    // selection restored by resume).
     if (String(event.traceId) !== HYDRATION_TRACE_ID) {
       this.configModelTouchedByEvent = true;
       if (payload.supportedThoughtLevels !== undefined) {
@@ -4803,7 +5028,7 @@ export class ProductProjection {
             to: { provider, model },
           }
         : undefined;
-    if (!configChanged && !contextWindowChanged && modelTransition === undefined) {
+    if (!configChanged && !contextBudgetChanged && modelTransition === undefined) {
       return [];
     }
     return [
@@ -4813,11 +5038,12 @@ export class ProductProjection {
           ...(configChanged
             ? { config: { ...prev, modelSelection, provider, model, thought, thoughtLevels } }
             : {}),
-          // Bug 原因：仅投影 config 会丢失“由 registry fallback 触发”的来源，
-          // renderer 无法安全地区分自动恢复和显式/历史切换。保留事件 ID 与起止身份，
-          // 具体 toast 仍只由客户端在实时 online delivery 边界触发。
+          // Cause: projecting only config loses the fact that a registry fallback triggered this,
+          // so the renderer cannot safely distinguish automatic recovery from an explicit/historical
+          // switch. Preserve the event ID and source/destination identities; the client still shows
+          // the toast only at the live online-delivery boundary.
           ...(modelTransition ? { modelTransition } : {}),
-          ...(contextWindowChanged
+          ...(contextBudgetChanged
             ? {
                 usage: {
                   ...this.snapshot.usage,
@@ -4827,12 +5053,17 @@ export class ProductProjection {
                     contextWindow === null
                       ? null
                       : previousContextWindow
-                        ? { ...previousContextWindow, maxTokens: contextWindow }
-                        : {
-                            usedTokens: this.contextWindowState.usedTokens,
-                            maxTokens: contextWindow,
-                            autoCompactThresholdTokens: null,
-                          },
+                        ? {
+                            ...invalidateResolvedContextBudgetThresholds(previousContextWindow),
+                            ...(contextWindow !== undefined ? { maxTokens: contextWindow } : {}),
+                          }
+                        : contextWindow === undefined
+                          ? null
+                          : {
+                              usedTokens: this.contextWindowState.usedTokens,
+                              maxTokens: contextWindow,
+                              autoCompactThresholdTokens: null,
+                            },
                 },
               }
             : {}),
@@ -4906,6 +5137,7 @@ export class ProductProjection {
     this.contextWindowState.usedTokens = usedTokens;
     const maxTokens = payload.contextWindow ?? this.contextWindowState.maxTokens;
     const cumulative = this.snapshot.usage.cumulative;
+    const previousContextWindow = this.snapshot.usage.contextWindow;
     deltas.push({
       op: "state.updated",
       patch: {
@@ -4919,7 +5151,21 @@ export class ProductProjection {
                   usedTokens,
                   maxTokens,
                   autoCompactThresholdTokens:
-                    this.snapshot.usage.contextWindow?.autoCompactThresholdTokens ?? null,
+                    payload.autoCompactThresholdTokens !== undefined
+                      ? payload.autoCompactThresholdTokens
+                      : (previousContextWindow?.autoCompactThresholdTokens ?? null),
+                  ...(payload.autoCompactThresholdTokens !== undefined ||
+                  previousContextWindow?.autoCompactThresholdAuthoritative === true
+                    ? { autoCompactThresholdAuthoritative: true }
+                    : {}),
+                  ...(payload.microcompactThresholdTokens !== undefined
+                    ? { microcompactThresholdTokens: payload.microcompactThresholdTokens }
+                    : previousContextWindow?.microcompactThresholdTokens !== undefined
+                      ? {
+                          microcompactThresholdTokens:
+                            previousContextWindow.microcompactThresholdTokens,
+                        }
+                      : {}),
                   ...(payload.cacheHit ? { cache: payload.cacheHit } : {}),
                   ...(payload.contextUsageBreakdown && payload.contextUsageBreakdown.length > 0
                     ? { breakdown: payload.contextUsageBreakdown }
@@ -5065,8 +5311,22 @@ export class ProductProjection {
                 : {
                     usedTokens: tokensAfter,
                     maxTokens,
-                    autoCompactThresholdTokens:
-                      this.snapshot.usage.contextWindow?.autoCompactThresholdTokens ?? null,
+                    ...(this.snapshot.usage.contextWindow?.autoCompactThresholdTokens !== undefined
+                      ? {
+                          autoCompactThresholdTokens:
+                            this.snapshot.usage.contextWindow.autoCompactThresholdTokens,
+                        }
+                      : { autoCompactThresholdTokens: null }),
+                    ...(this.snapshot.usage.contextWindow?.autoCompactThresholdAuthoritative ===
+                    true
+                      ? { autoCompactThresholdAuthoritative: true }
+                      : {}),
+                    ...(this.snapshot.usage.contextWindow?.microcompactThresholdTokens !== undefined
+                      ? {
+                          microcompactThresholdTokens:
+                            this.snapshot.usage.contextWindow.microcompactThresholdTokens,
+                        }
+                      : {}),
                   },
           },
         },
@@ -5386,6 +5646,20 @@ export class ProductProjection {
       if (this.turnHeaderRowIdByTurnId.has(mapped)) return mapped;
     }
     return this.turnIdOf(event);
+  }
+
+  // ── external agent context reset（S5：divider，lane 由投影裁决）──
+
+  private onSystemMessage(event: SessionEvent): ConversationDelta[] {
+    const payload = event.payload as SystemMessagePayload;
+    if (payload.type !== "external_agent_context_reset") return [];
+    const row: TimelineMarkerRow = {
+      ...this.rowBase(event, this.turnIdOf(event)),
+      kind: "timelineMarker",
+      lane: "lightBoundary",
+      marker: { type: "agentContextReset", agentId: payload.content },
+    };
+    return [{ op: "row.appended", row }];
   }
 
   // ── fork marker（forkAssistant 命令效果）──
@@ -5790,16 +6064,13 @@ export class ProductProjection {
   }
 }
 
-function isAskUserQuestionToolName(value: string | undefined): boolean {
-  return value === "AskUserQuestion";
-}
-
 /**
- * 把 core 的 tool display 收窄成 v4 协议能承载的那几种 kind。
+ * Narrow core tool display to the kinds that the v4 protocol can carry.
  *
- * 这份白名单原先在每个投影点各写一份内联判断，引入
- * create_workflow display 时漏改了其中一份，实时投影把图整个丢掉、而 hydration 路径没过滤，
- * 于是桌面端只有重载之后才看得到。收成一个谓词后，所有投影点共用同一份名单。
+ * This allowlist used to be duplicated as inline checks at each projection site. When create_workflow
+ * display was introduced, one check was missed: live projection dropped the entire graph, while
+ * hydration did not filter it, so Desktop showed it only after reload. Consolidate the checks into
+ * one predicate so every projection site shares the same allowlist.
  */
 function toProtocolToolCallDisplay(
   display: ToolResultDisplayPayload | undefined,
@@ -5832,10 +6103,6 @@ function stringifyToolInput(input: unknown): string {
   } catch {
     return "{}";
   }
-}
-
-function isExitPlanModeToolName(value: string | undefined): boolean {
-  return value === "ExitPlanMode";
 }
 
 function createExitPlanModeApprovalQuestion(reason: string): UserInputQuestionPayload {

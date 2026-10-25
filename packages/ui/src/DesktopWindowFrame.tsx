@@ -16,7 +16,7 @@ export const DesktopWindowFrame = memo(function DesktopWindowFrameComponent({
   children: ReactNode;
   topBar?: ReactNode;
   actions?: ReactNode;
-  /** 标签栏插槽，渲染在 header 内标题后面 */
+  /** Tab-bar slot rendered after the title inside the header. */
   tabBar?: ReactNode;
   isDesktop?: boolean;
   isMacDesktop?: boolean;
@@ -30,16 +30,16 @@ export const DesktopWindowFrame = memo(function DesktopWindowFrameComponent({
   return (
     <div
       className={cn(
-        // 手机浏览器的 100vh 会把地址栏区域算进页面高度，
-        // 远控页底部输入框容易被挤到可视区外。动态视口高度能跟随浏览器 chrome 收放，桌面端视觉不变。
+        // On mobile browsers, 100vh includes the address-bar area in the page height,
+        // which can push the remote-control page’s bottom input outside the viewport. Dynamic viewport height follows browser chrome changes without affecting the desktop appearance.
         "flex h-dvh flex-col overflow-hidden border-border text-foreground",
-        // Linux BrowserWindow 的不透明底色会把最外层恢复为直角。
-        // 外壳 16px 与内层 12px 面板及 4px inset 构成同心圆。Linux 合成器在原生拖拽/缩放时
-        // 可能短暂丢失 overflow 圆角，额外使用同半径 clip-path 固定合成裁切；最大化时两者一起归零。
+        // The opaque background of a Linux BrowserWindow restores square corners to the outermost layer.
+        // The 16px shell, 12px inner panel, and 4px inset form concentric corners. During native dragging/resizing, the Linux compositor may briefly lose overflow rounding,
+        // so use a matching clip-path to keep compositing clipped; both radii return to zero when maximized.
         isLinuxDesktop &&
           "rounded-[16px] [clip-path:inset(0_round_16px)] platform-linux-window-maximized:rounded-none platform-linux-window-maximized:[clip-path:inset(0)]",
-        // Web/Windows/Linux 都没有 macOS vibrancy 作为透明底层兜底，
-        // 如果继续走半透明 alt 背景，会和浏览器或系统窗口底色混出异常灰块。
+        // Web, Windows, and Linux do not have macOS vibrancy as a transparent-layer fallback.
+        // Continuing to use a translucent alt background would blend with the browser or system window background into an unintended gray block.
         usesOpaqueRootSurface ? "bg-background-win-alt" : "bg-background-alt",
       )}
       data-desktop-window-frame="true"

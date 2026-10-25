@@ -11,6 +11,7 @@ import {
 } from "@/remote-connection/RemoteConnectionTags.js";
 import {
   DesktopCommandIds,
+  type SourceServerHostKeyPreview,
   type SourceServerInstallPreview,
   type SourceServerOperationLog,
   type SourceServerRunningTask,
@@ -49,7 +50,21 @@ const REMOTE_CONNECTION_PHASES = [
   ["handshake", "remote.phase.handshake"],
 ] as const;
 
+/** Shown only when the connection opens a project folder; its logs are tagged `[source-server:workspace]`. */
+const REMOTE_CONNECTION_WORKSPACE_PHASE = ["workspace", "remote.phase.workspace"] as const;
+
+const REMOTE_CONNECTION_ALL_PHASES = [
+  ...REMOTE_CONNECTION_PHASES,
+  REMOTE_CONNECTION_WORKSPACE_PHASE,
+] as const;
+
 export type RemoteConnectionPhaseStatus = "pending" | "active" | "complete" | "failed";
+
+function listRemoteConnectionPhases(
+  includeWorkspace: boolean,
+): ReadonlyArray<readonly [string, string]> {
+  return includeWorkspace ? REMOTE_CONNECTION_ALL_PHASES : REMOTE_CONNECTION_PHASES;
+}
 
 function normalizeRemoteConnectionPhase(rawPhase: string): string | null {
   if (rawPhase === "probe") return "channel";
@@ -69,21 +84,24 @@ function normalizeRemoteConnectionPhase(rawPhase: string): string | null {
     return "deploy";
   }
   if (rawPhase === "channel") return "channel";
-  return REMOTE_CONNECTION_PHASES.some(([key]) => key === rawPhase) ? rawPhase : null;
+  return REMOTE_CONNECTION_ALL_PHASES.some(([key]) => key === rawPhase) ? rawPhase : null;
 }
 
 export function resolveRemoteConnectionPhases(
   logs: ReadonlyArray<Pick<RemoteConnectionLogEntry, "message" | "level">>,
-  options: { connectionReady?: boolean } = {},
+  options: { connectionReady?: boolean; includeWorkspace?: boolean } = {},
 ) {
+  const includeWorkspace = options.includeWorkspace === true;
+  const phases = listRemoteConnectionPhases(includeWorkspace);
   let activeIndex = -1;
   let failedIndex = -1;
   for (const log of logs) {
     const match = /^\[source-server:([^\]]+)\]/u.exec(log.message);
     if (!match) continue;
-    const phaseIndex = REMOTE_CONNECTION_PHASES.findIndex(
-      ([key]) => key === normalizeRemoteConnectionPhase(match[1]!),
-    );
+    const normalized = normalizeRemoteConnectionPhase(match[1]!);
+    // Without a folder step, workspace preparation still belongs to the handshake the user sees.
+    const key = normalized === "workspace" && !includeWorkspace ? "handshake" : normalized;
+    const phaseIndex = phases.findIndex(([phaseKey]) => phaseKey === key);
     if (phaseIndex < 0) continue;
     activeIndex = Math.max(activeIndex, phaseIndex);
     if (log.level === "error") failedIndex = phaseIndex;
@@ -91,11 +109,13 @@ export function resolveRemoteConnectionPhases(
   // 修复原因：成功连接后 publish-online 不是 Renderer 日志流的可靠终结事件，
   // 仅按日志推断会出现顶部已连接但阶段轨永久停在握手中的状态。连接 session ready
   // 是同一条连接流程的权威终态；没有错误阶段时用它完成最终阶段，不改变连接中的日志进度。
+  // With a folder step, publish-online is not the end: the folder must still be read before the connection is usable.
   const connectionReady =
     (options.connectionReady === true ||
-      logs.some((log) => log.message.startsWith("[source-server:publish-online]"))) &&
+      (!includeWorkspace &&
+        logs.some((log) => log.message.startsWith("[source-server:publish-online]")))) &&
     failedIndex < 0;
-  return REMOTE_CONNECTION_PHASES.map(([key, titleId], index) => ({
+  return phases.map(([key, titleId], index) => ({
     key,
     titleId,
     status: (failedIndex === index
@@ -161,6 +181,7 @@ export function resolveRemoteConnectionPhaseSub(
     installConfirmationPending?: boolean;
     deployErrorReason?: string;
     rawPhase?: string;
+    workspacePath?: string;
   },
 ): { id: string; values?: Record<string, string> } | null {
   switch (phase.key) {
@@ -209,6 +230,13 @@ export function resolveRemoteConnectionPhaseSub(
       return phase.status === "active" && context.rawPhase === "restart"
         ? { id: "remote.phaseSub.restarting" }
         : null;
+    case "workspace":
+      return phase.status === "active" && context.workspacePath
+        ? {
+            id: "remote.phaseSub.workspaceReading",
+            values: { path: context.workspacePath },
+          }
+        : null;
     case "ready":
       return phase.status === "complete" || phase.status === "active"
         ? { id: "remote.phaseSub.readyOnline" }
@@ -227,6 +255,7 @@ export function RemoteConnectionConnectingStep({
   upgradeTarget,
   loading,
   installConfirmation,
+  hostKeyTrust,
   target,
   recognizedDeviceName,
   profileName,
@@ -237,6 +266,7 @@ export function RemoteConnectionConnectingStep({
   upgradeLoading = false,
   onUpgrade,
   connectionReady = false,
+  workspacePath,
   cancelled = false,
   onCancelConnection,
   credentials,
@@ -270,6 +300,13 @@ export function RemoteConnectionConnectingStep({
     onConfirm: () => void;
     onCancel: () => void;
   };
+  /** Unknown SSH host key waiting for the user's decision (specs/ssh-host-key-verification.md). */
+  hostKeyTrust?: {
+    preview: SourceServerHostKeyPreview;
+    busy?: boolean;
+    onConfirm: () => void;
+    onCancel: () => void;
+  };
   target?: RemoteTarget | null;
   recognizedDeviceName?: string;
   profileName?: string;
@@ -282,6 +319,8 @@ export function RemoteConnectionConnectingStep({
   upgradeLoading?: boolean;
   onUpgrade?: () => void;
   connectionReady?: boolean;
+  /** The project folder being opened; when set, the connecting progress shows the "Open project folder" step. */
+  workspacePath?: string;
   cancelled?: boolean;
   onCancelConnection?: () => void;
   onContinueToDirectory?: () => void;
@@ -301,27 +340,30 @@ export function RemoteConnectionConnectingStep({
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [loading]);
-  const waitingPhase = credentials
-    ? "channel"
-    : installConfirmation || forceUpdate
-      ? "deploy"
-      : undefined;
-  const phases = resolveRemoteConnectionPhases(logs, { connectionReady }).map(
-    (phase, index, all) => {
-      const waitingIndex = all.findIndex((item) => item.key === waitingPhase);
-      if (waitingIndex >= 0)
-        return {
-          ...phase,
-          status: (index < waitingIndex
-            ? "complete"
-            : index === waitingIndex
-              ? "active"
-              : "pending") as RemoteConnectionPhaseStatus,
-        };
-      if (loading && !logs.length && index === 0) return { ...phase, status: "active" as const };
-      return phase;
-    },
-  );
+  const waitingPhase =
+    credentials || hostKeyTrust
+      ? "channel"
+      : installConfirmation || forceUpdate
+        ? "deploy"
+        : undefined;
+  const projectFolder = workspacePath?.trim() || undefined;
+  const phases = resolveRemoteConnectionPhases(logs, {
+    connectionReady,
+    includeWorkspace: projectFolder !== undefined,
+  }).map((phase, index, all) => {
+    const waitingIndex = all.findIndex((item) => item.key === waitingPhase);
+    if (waitingIndex >= 0)
+      return {
+        ...phase,
+        status: (index < waitingIndex
+          ? "complete"
+          : index === waitingIndex
+            ? "active"
+            : "pending") as RemoteConnectionPhaseStatus,
+      };
+    if (loading && !logs.length && index === 0) return { ...phase, status: "active" as const };
+    return phase;
+  });
   const logTime = (timestamp: string) => {
     const parts = String(timestamp).match(/(\d{1,2}):(\d{2}):(\d{2})/u);
     if (!parts) return mountedAt;
@@ -350,17 +392,19 @@ export function RemoteConnectionConnectingStep({
       ? "needs-upgrade"
       : upgradeLoading
         ? "updating"
-        : installConfirmation
-          ? "needs-install"
-          : loading
-            ? "bootstrapping"
-            : upgradeRequired
-              ? "needs-upgrade"
-              : errorMessage
-                ? "failed"
-                : connectionReady
-                  ? "online"
-                  : "absent",
+        : hostKeyTrust
+          ? "pending"
+          : installConfirmation
+            ? "needs-install"
+            : loading
+              ? "bootstrapping"
+              : upgradeRequired
+                ? "needs-upgrade"
+                : errorMessage
+                  ? "failed"
+                  : connectionReady
+                    ? "online"
+                    : "absent",
     errorCode: credentials && !errorCode ? "credentials-required" : errorCode,
     error: rawError ?? errorMessage,
     upgradeTarget,
@@ -390,8 +434,8 @@ export function RemoteConnectionConnectingStep({
       return;
     }
 
-    // 日志持续追加会推高 scrollHeight，无条件写 scrollTop 会把向上查看历史日志的用户拉回底部。
-    // 这里只在用户原本贴底时继续跟随最新日志。
+    // As logs keep arriving, scrollHeight grows; always writing scrollTop would pull users reading earlier logs back to the bottom.
+    // Continue following new logs only if the user was already at the bottom.
     if (
       scrollRemoteConnectionLogsToLatestIfFollowing(container, shouldFollowLatestLogRef.current)
     ) {
@@ -400,8 +444,8 @@ export function RemoteConnectionConnectingStep({
   }, [logs.length, latestLogId, latestLogTimestamp]);
 
   const handleOpenFeedback = async () => {
-    // 远程连接失败时用户看到的是连接日志现场。
-    // 反馈入口只预填脱敏后的错误摘要，附件由用户主动选择。
+    // On remote connection failure, users see the connection log context.
+    // The feedback entry only pre-fills a redacted error summary; users choose any attachments themselves.
     openFeedbackSubmit({
       title:
         errorMessage.slice(0, 80) ||
@@ -416,6 +460,57 @@ export function RemoteConnectionConnectingStep({
       screenshots: [],
     });
   };
+
+  const hostKeyTrustPanel = hostKeyTrust ? (
+    // Same neutral in-stage panel as the install confirmation; the decision belongs to the SSH channel stage.
+    <div
+      data-testid="remote-host-key-trust"
+      className="mt-2 flex items-start gap-3 rounded-sm border border-border bg-background px-3.5 py-3 text-ui-sm text-foreground"
+    >
+      <AlertTriangleIcon className="mt-0.5 size-4 shrink-0" />
+      <div className="min-w-0 flex-1 space-y-2">
+        <p className="font-medium">{intl.formatMessage({ id: "remote.hostKeyTrustTitle" })}</p>
+        <p className="text-ui-xs text-remote-foreground-muted">
+          {intl.formatMessage({ id: "remote.hostKeyTrustDescription" })}
+        </p>
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-ui-xs">
+          <dt className="text-remote-foreground-muted">
+            {intl.formatMessage({ id: "remote.hostKeyType" })}
+          </dt>
+          <dd className="font-mono" data-testid="remote-host-key-type">
+            {hostKeyTrust.preview.keyType}
+          </dd>
+          <dt className="text-remote-foreground-muted">
+            {intl.formatMessage({ id: "remote.hostKeyFingerprint" })}
+          </dt>
+          <dd className="break-all font-mono" data-testid="remote-host-key-fingerprint">
+            {hostKeyTrust.preview.fingerprint}
+          </dd>
+        </dl>
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Button
+            type="button"
+            size="sm"
+            data-testid="remote-host-key-trust-confirm"
+            disabled={hostKeyTrust.busy}
+            onClick={hostKeyTrust.onConfirm}
+          >
+            {intl.formatMessage({ id: "remote.hostKeyTrustConfirm" })}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            data-testid="remote-host-key-trust-cancel"
+            disabled={hostKeyTrust.busy}
+            onClick={hostKeyTrust.onCancel}
+          >
+            {intl.formatMessage({ id: "common.cancel" })}
+          </Button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   const installPanel = installConfirmation ? (
     // 安装确认是阶段内的中性信息面板，圆角比所属阶段行低一级。
@@ -667,6 +762,7 @@ export function RemoteConnectionConnectingStep({
             const phaseSub = resolveRemoteConnectionPhaseSub(phase, {
               kind,
               rawPhase,
+              workspacePath: projectFolder,
               recognizedDeviceName,
               installConfirmationPending: Boolean(installConfirmation),
               deployErrorReason: deploymentFailedLog?.message.replace(
@@ -778,6 +874,7 @@ export function RemoteConnectionConnectingStep({
                       })}
                     </p>
                   ) : null}
+                  {phase.key === "channel" ? hostKeyTrustPanel : null}
                   {phase.key === "deploy" ? installPanel : null}
                   {phase.key === "deploy" && forceUpdate ? (
                     <div className="mt-2 space-y-2 rounded-sm bg-warning-surface p-3 text-warning-surface-foreground">

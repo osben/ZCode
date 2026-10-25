@@ -56,6 +56,15 @@ export function parseSlashCommand(input: string): SlashCommand | null {
     };
   }
 
+  if (rawName === "dream") {
+    return {
+      args,
+      name: "dream",
+      rawName,
+      type: "known",
+    };
+  }
+
   if (rawName === "expert") {
     return {
       args,

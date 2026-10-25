@@ -2,9 +2,9 @@ import { seedTaskIndex } from "./helpers/taskIndexFixture.js";
 import { fixture, port } from "#src/project-storage/test-fixture.js";
 import type { ZCodeSessionInfo } from "@zcode/shared";
 import { channelReplyHostRequestSchema, type ChannelReplyHostRequest } from "@zcode/shared";
-// v4 conversation 通道 host 转发面测试（M3 竖切，docs/v4-refactor/01-topology §host 通道层）。
-// 验证 host 只做透传：subscribe/unsubscribe/command 转发给 CLI v4 方法，
-// v4/conversation/frame 通知按 workspace fan-out 给 onDynamicConversationFrame 订阅者。
+// v4 conversation channel host forwarding-surface tests (M3 vertical slice, docs/v4-refactor/01-topology §host channel layer).
+// Verifies the host only forwards: subscribe/unsubscribe/command pass through to the CLI v4 methods,
+// and v4/conversation/frame notifications fan out per workspace to onDynamicConversationFrame subscribers.
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,11 +25,11 @@ import {
 import { setDataBaseDir } from "../src/paths.js";
 import { TaskIndexRepo } from "../src/session/taskIndexRepo.js";
 
-// 最小 v4 fake agent：
-// - v4/conversation/subscribe → 一次 stdout.write 连续写 ACK-only response + initial notification；
-// - v4/conversation/unsubscribe → 返回 {}；
-// - v4/command → 返回 CommandAck accepted。
-// 所有入站请求写入 logPath 供断言转发参数。
+// Minimal v4 fake agent:
+// - v4/conversation/subscribe → a single stdout.write that consecutively emits an ACK-only response + initial notification;
+// - v4/conversation/unsubscribe → returns {};
+// - v4/command → returns CommandAck accepted.
+// All inbound requests are written to logPath for asserting forwarded params.
 const V4_FAKE_AGENT = `
 const fs = require("node:fs");
 const logPath = process.argv[2];
@@ -296,7 +296,13 @@ process.stdin.on("data", (chunk) => {
       else reply();
     }
     if (msg.method === "v4/command" && msg.id !== undefined) {
-      const status = "accepted";
+      // Test seam: commandIds prefixed "reject-" get a guard rejection (no session created), so abandonment paths can be exercised.
+      // The "reject-missing-" prefix answers proto.sessionNotFound, the CLI's reply for a session it never initialized.
+      const rejected = String(msg.params.commandId).startsWith("reject-");
+      const reasonCode = String(msg.params.commandId).startsWith("reject-missing-")
+        ? "proto.sessionNotFound"
+        : "project.not-found";
+      const status = rejected ? "rejected" : "accepted";
       const acceptedInput = {
         delivery: "startNow",
         inputId: msg.params.commandId,
@@ -306,14 +312,16 @@ process.stdin.on("data", (chunk) => {
         ? { result: { type: "createSession", sessionId: "created-session", input: acceptedInput } }
         : msg.params.type === "sendText"
           ? { result: { type: "inputAccepted", ...acceptedInput } }
-          : {};
+          : msg.params.type === "forkAssistant"
+            ? { result: { type: "forkAssistant", sessionId: "forked-session" } }
+            : {};
       send({
         id: msg.id,
         result: {
           commandId: msg.params.commandId,
           status,
           revisionAtDecision: 3,
-          ...createSessionResult,
+          ...(rejected ? { reasonCode } : createSessionResult),
         },
       });
     }
@@ -391,12 +399,12 @@ describe("zcodeAgentService v4 conversation channel", () => {
   afterEach(() => {
     setDataBaseDir(null);
     for (const dir of createdDirs.splice(0).reverse()) {
-      // 根因：Windows 不允许删除仍有打开句柄的目录，而 runtime/子进程与 watcher 的句柄
-      // 是异步收口的；`force: true` 只吞 ENOENT，不做任何重试。于是 afterEach 稳定抛
-      // `EPERM, Permission denied: \\?\C:\...\Temp\zcode-agent-v4-xxxx`，把已经通过断言
-      // 的用例判成失败（POSIX 允许删除仍被打开的 inode，所以只在 Windows 上出现）。
-      // 先用 rm 自带的有界重试等句柄释放；真的等不到也不该让清理决定用例成败，
-      // 临时目录由操作系统回收。
+      // Root cause: Windows refuses to delete directories that still have open handles, while the runtime/subprocess
+      // and watcher handles close asynchronously; `force: true` only swallows ENOENT and does no retries. So afterEach
+      // reliably threw `EPERM, Permission denied: \\?\C:\...\Temp\zcode-agent-v4-xxxx`, marking already-passing cases
+      // as failed (POSIX allows deleting inodes that are still open, so this only happens on Windows).
+      // Use rm's built-in bounded retries to wait for handle release; if the wait truly fails, cleanup must still not
+      // decide the case's outcome — the OS reclaims temp directories.
       try {
         rmSync(dir, {
           recursive: true,
@@ -405,7 +413,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
           retryDelay: 100,
         });
       } catch {
-        /* 清理失败不影响断言结论，交给操作系统回收临时目录。 */
+        /* Cleanup failure does not affect the assertion outcome; the OS reclaims the temp directory. */
       }
     }
   });
@@ -417,6 +425,12 @@ describe("zcodeAgentService v4 conversation channel", () => {
       prepareSessionCreation?: NonNullable<
         Parameters<typeof createZCodeAgentService>[0]
       >["prepareSessionCreation"];
+      discardSessionReservation?: NonNullable<
+        Parameters<typeof createZCodeAgentService>[0]
+      >["discardSessionReservation"];
+      prepareForkedSession?: NonNullable<
+        Parameters<typeof createZCodeAgentService>[0]
+      >["prepareForkedSession"];
       resolveSessionDirectories?: NonNullable<
         Parameters<typeof createZCodeAgentService>[0]
       >["resolveSessionDirectories"];
@@ -444,6 +458,8 @@ describe("zcodeAgentService v4 conversation channel", () => {
     const service = createZCodeAgentService({
       commandResolver,
       prepareSessionCreation: options.prepareSessionCreation,
+      discardSessionReservation: options.discardSessionReservation,
+      prepareForkedSession: options.prepareForkedSession,
       resolveSessionDirectories: options.resolveSessionDirectories,
       repoSnapshotCaptureIntentScheduler: options.repoSnapshotCaptureIntentScheduler,
       repoSnapshotSidecar: options.repoSnapshotSidecar,
@@ -477,6 +493,125 @@ describe("zcodeAgentService v4 conversation channel", () => {
     });
     return { service, workspacePath, logPath, commandResolver };
   }
+
+  it("claims a forked child for the parent's project only after the forkAssistant ack", async () => {
+    const state = await fixture();
+    await port.migrate(state.db, state.context);
+    const repo = port.repository(state.db);
+    const claims: unknown[] = [];
+    const env = setupService({
+      resolveSessionDirectories: async (target) =>
+        repo.resolveSessionDirectories({ ...target, taskId: target.sessionId })
+          .additionalDirectories,
+      prepareForkedSession: async (target) => {
+        claims.push(target);
+        return repo.reserveCreatedTask({
+          task: { workspacePath: target.workspacePath, taskId: target.sessionId },
+          forkOf: { workspacePath: target.workspacePath, taskId: target.parentSessionId },
+        });
+      },
+    });
+    const project = repo.saveProject({ roots: [env.workspacePath] });
+    repo.reserveCreatedTask({
+      task: { workspacePath: env.workspacePath, taskId: "parent" },
+      projectId: project.id,
+    });
+    // The syncer may write the fork's row before the ack reaches the Host; it carries no owner, as in the observed index.
+    state.db
+      .prepare(
+        "INSERT INTO tasks(workspace_key,workspace_path,task_id,title,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+      )
+      .run(env.workspacePath, env.workspacePath, "forked-session", "Fork of parent", 1, 2);
+    expect(() =>
+      repo.resolveSessionDirectories({
+        workspacePath: env.workspacePath,
+        taskId: "forked-session",
+      }),
+    ).toThrow("project.host-mismatch");
+
+    const ack = await env.service.sendConversationCommandV4({
+      workspacePath: env.workspacePath,
+      envelope: {
+        commandId: "fork-claim",
+        clientId: "fork-client",
+        issuedAt: 1,
+        sessionId: "parent",
+        baseRevision: 3,
+        type: "forkAssistant",
+        payload: { target: { rowId: 1, entityId: "row-1" } },
+      },
+    } as Parameters<typeof env.service.sendConversationCommandV4>[0]);
+    expect(ack).toMatchObject({
+      status: "accepted",
+      result: { type: "forkAssistant", sessionId: "forked-session" },
+    });
+    expect(claims).toEqual([
+      {
+        workspacePath: env.workspacePath,
+        parentSessionId: "parent",
+        sessionId: "forked-session",
+      },
+    ]);
+    expect(
+      repo.resolveSessionDirectories({
+        workspacePath: env.workspacePath,
+        taskId: "forked-session",
+      }),
+    ).toEqual({
+      workspacePath: env.workspacePath,
+      projectId: project.id,
+      additionalDirectories: [],
+    });
+    await env.service.disposeAllAndWait();
+  });
+
+  it("acknowledges a fork whose parent has no owner yet: warns and writes no child row", async () => {
+    const state = await fixture();
+    await port.migrate(state.db, state.context);
+    const repo = port.repository(state.db);
+    const env = setupService({
+      resolveSessionDirectories: async (target) =>
+        repo.resolveSessionDirectories({ ...target, taskId: target.sessionId })
+          .additionalDirectories,
+      prepareForkedSession: async (target) =>
+        repo.reserveCreatedTask({
+          task: { workspacePath: target.workspacePath, taskId: target.sessionId },
+          forkOf: { workspacePath: target.workspacePath, taskId: target.parentSessionId },
+        }),
+    });
+    // The parent row has no host yet (organization writer, before the first CLI admission).
+    state.db
+      .prepare(
+        "INSERT INTO tasks(workspace_key,workspace_path,task_id,title,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+      )
+      .run(env.workspacePath, env.workspacePath, "parent", "Parent", 1, 2);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const ack = await env.service.sendConversationCommandV4({
+      workspacePath: env.workspacePath,
+      envelope: {
+        commandId: "fork-unowned-parent",
+        clientId: "fork-client",
+        issuedAt: 1,
+        sessionId: "parent",
+        baseRevision: 3,
+        type: "forkAssistant",
+        payload: { target: { rowId: 1, entityId: "row-1" } },
+      },
+    } as Parameters<typeof env.service.sendConversationCommandV4>[0]);
+
+    expect(ack).toMatchObject({
+      status: "accepted",
+      result: { type: "forkAssistant", sessionId: "forked-session" },
+    });
+    expect(JSON.stringify(warn.mock.calls)).toContain("fork child left unclaimed");
+    expect(JSON.stringify(warn.mock.calls)).toContain("forked-session");
+    expect(
+      state.db.prepare("SELECT task_id FROM tasks WHERE task_id='forked-session'").get(),
+    ).toBeUndefined();
+    warn.mockRestore();
+    await env.service.disposeAllAndWait();
+  });
 
   const childHostId = "remote:server:subagent-view";
   const childWorkspace = (workspacePath: string) => ({
@@ -716,7 +851,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
     "projects only channel reply scope from a live V4 connection (remote=%s)",
     async (remote) => {
       const reply = vi.fn(async (value: ChannelReplyHostRequest) => {
-        // 与实际 Host executor 一样执行严格校验，不能用宽松 spy 掩盖额外连接字段。
+        // Runs the same strict validation as the real Host executor; a loose spy must not mask extra connection fields.
         channelReplyHostRequestSchema.parse(value);
         return { status: "sent" as const, deliveryId: "delivery", providerMessageId: "om_sent" };
       });
@@ -856,7 +991,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
           result: { type: "createSession", sessionId: "created-session" },
         });
         const commands = readRequests(logPath).filter((item) => item.method === "v4/command");
-        // 根因：为不存在的版本错配补写 mode、补发无 revision 的模式命令，改变了原创建合同。
+        // Root cause: backfilling mode for a nonexistent version mismatch and re-sending a revision-less mode command changed the original creation contract.
         expect(commands).toHaveLength(1);
         expect(commands[0]?.params.type).toBe("createSession");
         expect(commands[0]?.params.payload).toEqual(payload);
@@ -888,8 +1023,8 @@ describe("zcodeAgentService v4 conversation channel", () => {
       });
       expect(commandResolver).toHaveBeenCalledTimes(1);
 
-      // 修复原因：只读 topic 已经登记 active client，旧 fast path 会直接返回它并绕过
-      // provider/model 门禁。createSession 必须仍在写入协议前确定性拒绝。
+      // Fix reason: the read-only topic had already registered an active client, and the old fast path returned it
+      // directly, bypassing the provider/model gate. createSession must still deterministically reject before writing the protocol.
       await expect(service.createSession({ workspacePath })).rejects.toMatchObject({
         code: "ZCODE_AGENT_PROVIDER_NOT_READY",
         data: expect.objectContaining({ reason: "provider_not_ready" }),
@@ -915,8 +1050,8 @@ describe("zcodeAgentService v4 conversation channel", () => {
         sessionId: "cold-registry-session",
       });
 
-      // Worker 已经持有进程级 Registry；Host 读取 Registry View 只用于启动门禁，
-      // 不能把完整 Registry 下发成另一份执行事实源。
+      // The Worker already holds the process-level Registry; the Host reading the Registry View is only for the startup
+      // gate and must not push down the full Registry as a second execution source of truth.
       expect(readRequests(logPath).map((entry) => entry.method)).toEqual([
         "v4/conversation/subscribe",
       ]);
@@ -1025,8 +1160,9 @@ describe("zcodeAgentService v4 conversation channel", () => {
     }
   });
 
-  // `workflowRunDeltas` 与 `clientMode` 同族（10 §3.1）：可信 host 从连接的 clientHello 注入，
-  // UI 面的 subscribe 入参碰不到它——一个客户端认不认得 `workflowRun.*` 增量是**连接**的事实。
+  // `workflowRunDeltas` is in the same family as `clientMode` (10 §3.1): the trusted host injects it from the connected
+  // clientHello, and the UI-side subscribe params cannot touch it — whether a client understands `workflowRun.*` deltas
+  // is a fact of the **connection**.
   it.each([true, false])(
     "subscribe 的 workflowRunDeltas 只由 clientHello 声明决定（declared=%s）",
     async (declared) => {
@@ -1048,7 +1184,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
         await scope.service.subscribeConversationV4({
           workspacePath,
           sessionId: "workflow-run-deltas-session",
-          // 调用方自报的同名字段：必须被可信值整个顶掉，两种声明下都不能生效。
+          // A caller self-reporting the same-named field: the trusted value must fully override it, under both declarations.
           workflowRunDeltas: !declared,
         } as never);
 
@@ -1157,7 +1293,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
       expect(subscribeRequest?.params.topic).toBe("conversation/s1");
       expect(subscribeRequest?.params.clientMode).toBe("desktop-continuous");
       expect(subscribeRequest?.params).not.toHaveProperty("deliveryProfile");
-      // 这条 clientHello 没有 capabilities：订阅就不能带增量位，CLI 按旧消费者发整键 patch。
+      // This clientHello has no capabilities: the subscription must not carry the deltas bit, and the CLI sends whole-key patches as for a legacy consumer.
       expect(subscribeRequest?.params).not.toHaveProperty("workflowRunDeltas");
       expect(typeof subscribeRequest?.params.connectionId).toBe("string");
       expect(String(subscribeRequest?.params.connectionId)).toMatch(/^host-/);
@@ -1234,6 +1370,165 @@ describe("zcodeAgentService v4 conversation channel", () => {
       expect(readRequests(logPath).filter((entry) => entry.method === "v4/command")).toHaveLength(
         2,
       );
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+
+  it("discards a plain create's reservation when the CLI rejects the create", async () => {
+    const prepareSessionCreation = vi.fn(async () => [] as string[]);
+    const discardSessionReservation = vi.fn(async () => true);
+    const { service, workspacePath } = setupService({
+      prepareSessionCreation,
+      discardSessionReservation,
+    });
+    try {
+      const ack = await service.sendConversationCommandV4({
+        workspacePath,
+        projectId: null,
+        envelope: {
+          commandId: "reject-create",
+          clientId: "test",
+          sessionId: null,
+          type: "createSession",
+          payload: { workspaceId: workspacePath },
+          issuedAt: 1,
+        },
+      });
+      expect(ack.status).toBe("rejected");
+      const target = prepareSessionCreation.mock.calls[0]![0];
+      expect(discardSessionReservation).toHaveBeenCalledTimes(1);
+      expect(discardSessionReservation).toHaveBeenCalledWith({
+        workspacePath,
+        sessionId: target.sessionId,
+      });
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+
+  it("discards a prewarm reservation once the CLI accepts its deleteSession", async () => {
+    const prepareSessionCreation = vi.fn(async () => [] as string[]);
+    const discardSessionReservation = vi.fn(async () => true);
+    const { service, workspacePath } = setupService({
+      prepareSessionCreation,
+      discardSessionReservation,
+    });
+    try {
+      await service.sendConversationCommandV4({
+        workspacePath,
+        projectId: null,
+        envelope: {
+          commandId: "prewarm-create",
+          clientId: "test",
+          sessionId: null,
+          type: "createSession",
+          payload: { workspaceId: workspacePath },
+          issuedAt: 1,
+        },
+      });
+      const target = prepareSessionCreation.mock.calls[0]![0];
+      expect(discardSessionReservation).not.toHaveBeenCalled();
+
+      const ack = await service.sendConversationCommandV4({
+        workspacePath,
+        envelope: {
+          commandId: "delete-prewarm",
+          clientId: "test",
+          sessionId: target.sessionId,
+          type: "deleteSession",
+          payload: {},
+          issuedAt: 2,
+        },
+      });
+      expect(ack.status).toBe("accepted");
+      expect(discardSessionReservation).toHaveBeenCalledTimes(1);
+      expect(discardSessionReservation).toHaveBeenCalledWith({
+        workspacePath,
+        sessionId: target.sessionId,
+      });
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+
+  it("keeps the reservation when a deleteSession is rejected", async () => {
+    const prepareSessionCreation = vi.fn(async () => [] as string[]);
+    const discardSessionReservation = vi.fn(async () => true);
+    const { service, workspacePath } = setupService({
+      prepareSessionCreation,
+      discardSessionReservation,
+    });
+    try {
+      await service.sendConversationCommandV4({
+        workspacePath,
+        projectId: null,
+        envelope: {
+          commandId: "create-kept",
+          clientId: "test",
+          sessionId: null,
+          type: "createSession",
+          payload: { workspaceId: workspacePath },
+          issuedAt: 1,
+        },
+      });
+      const target = prepareSessionCreation.mock.calls[0]![0];
+      const ack = await service.sendConversationCommandV4({
+        workspacePath,
+        envelope: {
+          commandId: "reject-delete",
+          clientId: "test",
+          sessionId: target.sessionId,
+          type: "deleteSession",
+          payload: {},
+          issuedAt: 2,
+        },
+      });
+      expect(ack.status).toBe("rejected");
+      expect(discardSessionReservation).not.toHaveBeenCalled();
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+
+  it("deleteSession rejected with proto.sessionNotFound discards", async () => {
+    const prepareSessionCreation = vi.fn(async () => [] as string[]);
+    const discardSessionReservation = vi.fn(async () => true);
+    const { service, workspacePath } = setupService({
+      prepareSessionCreation,
+      discardSessionReservation,
+    });
+    try {
+      await service.sendConversationCommandV4({
+        workspacePath,
+        projectId: null,
+        envelope: {
+          commandId: "create-abandoned",
+          clientId: "test",
+          sessionId: null,
+          type: "createSession",
+          payload: { workspaceId: workspacePath },
+          issuedAt: 1,
+        },
+      });
+      const target = prepareSessionCreation.mock.calls[0]![0];
+      const ack = await service.sendConversationCommandV4({
+        workspacePath,
+        envelope: {
+          commandId: "reject-missing-delete",
+          clientId: "test",
+          sessionId: target.sessionId,
+          type: "deleteSession",
+          payload: {},
+          issuedAt: 2,
+        },
+      });
+      expect(ack).toMatchObject({ status: "rejected", reasonCode: "proto.sessionNotFound" });
+      expect(discardSessionReservation).toHaveBeenCalledTimes(1);
+      expect(discardSessionReservation).toHaveBeenCalledWith({
+        workspacePath,
+        sessionId: target.sessionId,
+      });
     } finally {
       await service.disposeAllAndWait();
     }
@@ -1854,8 +2149,8 @@ describe("zcodeAgentService v4 conversation channel", () => {
         },
         issuedAt: 1700000000000,
       });
-      // 同一 workspaceIdentity 的 subscribe + command 复用同一 host child，
-      // 手机端不单独创建 Agent runtime，relay/main 也不持有 rewind 状态。
+      // subscribe + command for the same workspaceIdentity reuse the same host child;
+      // mobile does not create its own Agent runtime, and relay/main holds no rewind state.
       expect(commandResolver).toHaveBeenCalledTimes(1);
     } finally {
       await scope.dispose();

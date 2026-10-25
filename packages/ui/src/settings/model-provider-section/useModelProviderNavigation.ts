@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Model Provider 导航需要集中计算分组、选中项与 Coding Plan 权益态，后续拆分时再收敛。 */
+/* eslint-disable max-lines -- Model Provider navigation centrally computes groups, selected items, and Coding Plan entitlement state; consolidate it when splitting later. */
 import { useEffect, useMemo } from "react";
 import type { ProviderSettingsFormProvider } from "@/lib/providerSettingsFormTypes.js";
 import { getProviderFormLabel } from "@/lib/providerSettingsFormTypes.js";
@@ -14,13 +14,22 @@ import {
   resolveProviderFamilyDomainFromOAuthProvider,
   type OAuthProviderId,
 } from "@zcode/shared";
+import { isChatGptPlanSubscriptionProviderId } from "@/lib/chatgptPlanProvider.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   CODING_PLAN_PROVIDER_SPECS,
+  isSelectableNavItem,
   type CodingPlanEntitlementState,
   type ModelProviderNavGroup,
+  type ModelProviderSelectableNavItem,
   type PresetProviderSpec,
 } from "@/settings/model-provider-section/constants.js";
+import {
+  ACP_DETECT_NODE_KEY,
+  ACP_LOADING_NODE_KEY,
+  isAcpManagedProvider,
+  isAcpNodeKey,
+} from "@/settings/model-provider-section/acpAgentConfig.js";
 import { pickCodingPlanEntitlementProvider } from "@/lib/codingPlanProvider.js";
 import {
   createCodingPlanProviderNodeKey,
@@ -44,9 +53,7 @@ interface PresetProviderWithConfig extends PresetProviderSpec {
 interface UseModelProviderNavigationOptions {
   presetProviders: PresetProviderWithConfig[];
   modelProviders: ProviderSettingsFormProvider[];
-  /**
-   * 当前账号明确有权益的 Provider。缺省等价于尚无账号权益；生产设置页始终显式传入。
-   */
+  /** Providers for which the current account has explicit entitlement. Omission means no account entitlements yet; production Settings always passes this explicitly. */
   entitledAccountProviderIds?: ReadonlySet<string>;
   modelProvidersLoading?: boolean;
   displayOrder?: ProviderOrderView;
@@ -60,6 +67,10 @@ interface UseModelProviderNavigationOptions {
   showPurchasedTeamPlanFallback?: boolean;
   selectedNodeKey: string | null;
   setSelectedNodeKey: (key: string | null) => void;
+  /** The "ACP agents" group, already built by the page; omitted (undefined/null) when the host reports ACP unsupported. */
+  acpGroup?: ModelProviderNavGroup | null;
+  /** The first ACP detection is still in flight; an `acp-*` selection must not be corrected away yet. */
+  acpDetectionPending?: boolean;
   intl: ReturnType<typeof useZCodeIntl>["intl"];
 }
 
@@ -79,13 +90,17 @@ export function useModelProviderNavigation({
   showPurchasedTeamPlanFallback = false,
   selectedNodeKey,
   setSelectedNodeKey,
+  acpGroup = null,
+  acpDetectionPending = false,
   intl,
 }: UseModelProviderNavigationOptions) {
   const customProviders = useMemo(() => {
     const allCustomProviders = modelProviders.filter(
-      (provider) => provider.config.group === "standard-personal",
+      // ACP agents are listed only in the "ACP agents" group, never again as custom providers.
+      (provider) =>
+        provider.config.group === "standard-personal" && !isAcpManagedProvider(provider),
     );
-    // 这里复用模型菜单的展示排序，确保设置页和聊天框供应商顺序一致。
+    // Reuse the model-menu display order so providers appear in the same order in Settings and the chat box.
     return sortModelProvidersForDisplay(allCustomProviders, displayOrder);
   }, [displayOrder, modelProviders]);
 
@@ -211,6 +226,40 @@ export function useModelProviderNavigation({
         ],
       },
       {
+        // ChatGPT plan is an independent identity domain: always listed, never filtered
+        // by the zai/bigmodel active-provider family scope, and rendered after those blocks.
+        // Exactly ONE settings entry regardless of the runtime account set (zero accounts
+        // must still route to the sign-in page; N accounts must not create duplicate keys).
+        // Prefer an executable account so the shared status agrees with a usable provider;
+        // fall back to the first entry when every account is identity-only.
+        id: "chatgpt",
+        title: intl.formatMessage({ id: "settings.modelProvider.chatgpt.navigationTitle" }),
+        items: [
+          (() => {
+            const accountProviders = modelProviders.filter((candidate) =>
+              isChatGptPlanSubscriptionProviderId(candidate.providerId),
+            );
+            const provider =
+              accountProviders.find((candidate) => candidate.executable) ??
+              accountProviders[0] ??
+              null;
+            return {
+              key: createPresetProviderNodeKey(BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan),
+              type: "preset" as const,
+              presetId: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
+              label: intl.formatMessage({ id: "settings.modelProvider.chatgpt.navigationPlan" }),
+              logo: provider?.config.logo ?? null,
+              provider: provider ?? null,
+              displayName: intl.formatMessage({
+                id: "settings.modelProvider.chatgpt.navigationPlan",
+              }),
+              statusProvider: provider ?? null,
+              statusActive: provider?.executable === true,
+            };
+          })(),
+        ],
+      },
+      {
         id: "custom",
         title: intl.formatMessage({ id: "settings.modelProvider.customTitle" }),
         items: customProviders.map((provider) => ({
@@ -221,15 +270,17 @@ export function useModelProviderNavigation({
           statusActive: provider.executable === true,
         })),
       },
+      ...(acpGroup ? [acpGroup] : []),
     ];
 
     return groups;
   }, [
+    acpGroup,
     customProviders,
     codingPlanItems,
     connectionModeCodingPlanItems,
-    // 左侧导航分组标题在这个 memo 内格式化。
-    // 语言切换时 provider/权益引用可能不变，必须依赖 intl 才能刷新旧 locale 的文案。
+    // Format left navigation group headings inside this memo.
+    // Provider/entitlement references may stay the same after a language switch, so intl must be a dependency to refresh copy from the old locale.
     intl,
     connectionSelections,
     pendingConnectionSelections,
@@ -247,14 +298,11 @@ export function useModelProviderNavigation({
   }, [connectionModeCodingPlanItems, navigationGroups]);
 
   const selectableNavigationItems = useMemo(
-    () => navigationItems.filter((item) => item.type !== "codingPlanLoading"),
+    () => navigationItems.filter(isSelectableNavItem),
     [navigationItems],
   );
   const selectableSideNavigationItems = useMemo(
-    () =>
-      navigationGroups
-        .flatMap((group) => group.items)
-        .filter((item) => item.type !== "codingPlanLoading"),
+    () => navigationGroups.flatMap((group) => group.items).filter(isSelectableNavItem),
     [navigationGroups],
   );
 
@@ -303,7 +351,20 @@ export function useModelProviderNavigation({
     selectedNodeKey,
     selectableNavigationItems,
   });
+  // When the first scan finds agents, a selection parked on the catalog entry moves to the first agent.
+  const firstAcpAgentKey = acpGroup?.items.find((item) => item.type === "acpAgent")?.key ?? null;
   useEffect(() => {
+    // Detection owns the ACP rows until it settles: an acp-agent selection is not yet resolvable.
+    if (acpDetectionPending && isAcpNodeKey(selectedNodeKey)) {
+      return;
+    }
+    if (
+      firstAcpAgentKey &&
+      (selectedNodeKey === ACP_DETECT_NODE_KEY || selectedNodeKey === ACP_LOADING_NODE_KEY)
+    ) {
+      setSelectedNodeKey(firstAcpAgentKey);
+      return;
+    }
     const hasSelectedNode = selectedNodeKey ? sideNavigationItemByKey.has(selectedNodeKey) : false;
     if (hasSelectedNode) {
       return;
@@ -313,7 +374,9 @@ export function useModelProviderNavigation({
       setSelectedNodeKey(fallbackNodeKey);
     }
   }, [
+    acpDetectionPending,
     fallbackNodeKey,
+    firstAcpAgentKey,
     selectedNavItem,
     selectedNodeKey,
     setSelectedNodeKey,
@@ -356,15 +419,15 @@ function resolvePresetFamilyStatusProvider({
     return provider;
   }
   const connectionItem = pickFamilyModeNavigationItem(
-    connectionModeItems.filter((item) => item.type !== "codingPlanLoading"),
+    connectionModeItems.filter(isSelectableNavItem),
     familySpec.id,
     connectionSelections,
   );
   if (!connectionItem || !isPlanConnectionNavigationItem(connectionItem)) {
     return null;
   }
-  // 菜单 Team 项可能从个人项派生，携带的 provider 不是团队执行身份。
-  // 必须按具体套餐 ID 回到 Settings View，不能用菜单权益或继承的 provider 点灯。
+  // A Team item in the menu may be derived from a personal item and carry a provider that is not the team execution identity.
+  // Return to the Settings View by exact plan ID; do not activate it from menu entitlements or an inherited provider.
   return (
     modelProviders.find((candidate) => candidate.providerId === connectionItem.presetId) ?? null
   );
@@ -375,21 +438,19 @@ export function resolveFallbackModelProviderNodeKey({
   selectableNavigationItems,
 }: {
   selectedNodeKey: string | null;
-  selectableNavigationItems: Array<
-    Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>
-  >;
+  selectableNavigationItems: Array<ModelProviderSelectableNavItem>;
 }): string | null {
   const initialConnectionItem = pickInitialConnectionNavigationItem(selectableNavigationItems);
   const initialSideNodeKey = initialConnectionItem
     ? resolveSideNavigationNodeKeyForConnectionItem(initialConnectionItem)
     : null;
   if (isFamilyPresetNodeKey(selectedNodeKey) && initialSideNodeKey) {
-    // App OAuth 登录成功后会按 active provider 隐藏另一组预置入口。
-    // 当前选中项消失时使用初始化优先级回落到对应 family，而不是把连接方式塞回侧栏。
+    // After successful App OAuth login, another preset entry is hidden based on the active provider.
+    // If the selected item disappears, fall back to the initialization priority for the matching family instead of putting the connection method back in the sidebar.
     return initialSideNodeKey;
   }
 
-  // 初始化只在没有有效选中项时发生；如果当前用户选择仍有效，上层 effect 不会调用 fallback 抢焦点。
+  // Initialization occurs only when there is no valid selection; if the user's current choice is valid, the parent effect does not call fallback and steal focus.
   return (
     initialSideNodeKey ??
     resolveSideNavigationNodeKeyForConnectionItem(selectableNavigationItems[0] ?? null)
@@ -407,19 +468,14 @@ function resolveSelectedProviderFamilyConnectionItem({
   modelProvidersLoading,
 }: {
   selectedNodeKey: string;
-  navigationItemByKey: Map<
-    string,
-    Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>
-  >;
-  selectableNavigationItems: Array<
-    Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>
-  >;
+  navigationItemByKey: Map<string, ModelProviderSelectableNavItem>;
+  selectableNavigationItems: Array<ModelProviderSelectableNavItem>;
   connectionSelections: ProviderFamilyConnectionSelectionSettings;
   pendingConnectionSelections: ProviderFamilyConnectionSelectionSettings;
   familyConnectionSettingsLoading?: boolean;
   familyConnectionSettingsFailed?: boolean;
   modelProvidersLoading?: boolean;
-}): Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }> | null {
+}): ModelProviderSelectableNavItem | null {
   const selectedItem = navigationItemByKey.get(selectedNodeKey) ?? null;
   if (!selectedItem) {
     return null;
@@ -432,8 +488,8 @@ function resolveSelectedProviderFamilyConnectionItem({
     return selectedItem;
   }
   if (familyConnectionSettingsLoading) {
-    // 从外部入口打开 Model Settings 时，settings 首次 hydrate 前不能按默认 oauth
-    // 连接方式推导 Start Plan，否则右侧连接方式会先闪成 Start 再按已保存设置纠偏。
+    // When Model Settings opens from an external entry, do not infer Start Plan from the default OAuth connection method before settings first hydrate,
+    // or the right-side connection method briefly flashes as Start before correcting to the saved settings.
     return null;
   }
   const mergedSelections = { ...connectionSelections, ...pendingConnectionSelections };
@@ -444,8 +500,8 @@ function resolveSelectedProviderFamilyConnectionItem({
     return resolvedItem;
   }
   if (modelProvidersLoading) return null;
-  // 非法/过期连接只影响当前设置页的落点，不能让 null 被详情页当作永久 loading。
-  // 不写回 Family 偏好，不改会话 Selection；用户可在这个同 Family 页面重新选择。
+  // An invalid/expired connection affects only the current settings-page destination; do not let the detail page interpret null as permanent loading.
+  // Do not write back Family preference or change conversation Selection; users can choose again on this same Family page.
   return pickInitialConnectionNavigationItem(
     selectableNavigationItems.filter(
       (item) =>
@@ -456,7 +512,7 @@ function resolveSelectedProviderFamilyConnectionItem({
 }
 
 function resolveSideNavigationNodeKeyForConnectionItem(
-  item: Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }> | null,
+  item: ModelProviderSelectableNavItem | null,
 ): string | null {
   if (!item) {
     return null;
@@ -473,10 +529,8 @@ function resolveSideNavigationNodeKeyForConnectionItem(
 }
 
 function pickInitialConnectionNavigationItem(
-  selectableNavigationItems: Array<
-    Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>
-  >,
-): Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }> | null {
+  selectableNavigationItems: Array<ModelProviderSelectableNavItem>,
+): ModelProviderSelectableNavItem | null {
   const planItems = selectableNavigationItems.filter(isPlanConnectionNavigationItem);
   const personalCodingPlanItem = planItems.find(
     (item) =>
@@ -504,12 +558,10 @@ function pickInitialConnectionNavigationItem(
 }
 
 function pickFamilyModeNavigationItem(
-  selectableNavigationItems: Array<
-    Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>
-  >,
+  selectableNavigationItems: Array<ModelProviderSelectableNavItem>,
   familyId: "zai" | "bigmodel",
   connectionSelections: ProviderFamilyConnectionSelectionSettings,
-): Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }> | null {
+): ModelProviderSelectableNavItem | null {
   const selection = connectionSelections[familyId];
   if (!selection) return null;
   return (
@@ -525,13 +577,8 @@ export function resolveSelectedFamilyModeNodeKey({
   connectionSelections = {},
   pendingConnectionSelections = {},
 }: {
-  selectedNavItem: Exclude<
-    ModelProviderNavGroup["items"][number],
-    { type: "codingPlanLoading" }
-  > | null;
-  selectableNavigationItems: Array<
-    Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>
-  >;
+  selectedNavItem: ModelProviderSelectableNavItem | null;
+  selectableNavigationItems: Array<ModelProviderSelectableNavItem>;
   connectionSelections?: ProviderFamilyConnectionSelectionSettings;
   pendingConnectionSelections?: ProviderFamilyConnectionSelectionSettings;
 }): string | null {
@@ -556,10 +603,10 @@ export function resolveSelectedFamilyModeNodeKey({
 export function connectionSelectionMatchesNavigationItem(
   family: ProviderFamilyDomain,
   selection: ProviderFamilyConnectionSelection,
-  item: Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>,
+  item: ModelProviderSelectableNavItem,
 ): boolean {
-  if (item.type === "custom") return false;
-  const familySpec = resolveModelProviderFamilySpecByProviderId(item.presetId ?? "");
+  if (!("presetId" in item)) return false;
+  const familySpec = resolveModelProviderFamilySpecByProviderId(item.presetId);
   if (familySpec?.id !== family) return false;
   if (selection.kind === "start-plan") {
     return false;
@@ -572,15 +619,15 @@ export function connectionSelectionMatchesNavigationItem(
   return (
     item.type === "teamPlan" &&
     item.presetId === familySpec.teamCodingPlanProviderId &&
-    // 团队连接按平台、组织和项目定位；订阅商品会在权益快照和 pricing 校正间变化。
-    // 不能把同项目的商品更新误判为连接丢失，否则初始化会出现空选项和错误提示。
+    // Team connections are identified by platform, organization, and project; subscribed products may change between entitlement snapshots and pricing corrections.
+    // Do not mistake a product update for a lost connection to the same project, or initialization will show an empty selection and an incorrect error.
     item.organizationId === selection.organizationId &&
     item.projectId === selection.projectId
   );
 }
 
 function isPlanConnectionNavigationItem(
-  item: Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>,
+  item: ModelProviderSelectableNavItem,
 ): item is Extract<ModelProviderNavGroup["items"][number], { type: "codingPlan" | "teamPlan" }> {
   return (
     (item.type === "codingPlan" && !isStartPlanModelProviderId(item.presetId)) ||

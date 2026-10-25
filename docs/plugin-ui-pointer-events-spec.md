@@ -1,40 +1,40 @@
-# 插件页面承载层点击穿透修复
+# Plugin page host layer click-through fix
 
-## 原因与规则
+## Cause and rule
 
-握手超时后 webview 已移除，但侧栏承载容器仍保留覆盖区域和 `pointer-events: auto`，空容器会拦住宿主的重载按钮。
+After a handshake timeout the webview is removed, but the sidebar host container keeps its overlay area and `pointer-events: auto`; the empty container blocks the host reload button.
 
-共享页面承载层只负责定位，始终使用 `pointer-events: none`；其中的 webview 显式使用 `pointer-events: auto`。不新增生命周期状态、定时器或错误分支。
-
-```text
-有 webview：鼠标 → webview → 插件内容
-无 webview：鼠标穿过空容器 → 宿主重载按钮
-```
-
-MCP Apps 与 Gen UI 共用该承载层，因此内联、侧栏和 popover 预览均遵守同一点击规则。原有锚点迁移、实例清理、握手时限和重载流程保持不变。
-
-## 保活侧栏的展示边界
-
-插件页面挂在 body 下的独立浮层，不能继承宿主侧栏的透明度、裁剪及祖先页面隐藏状态。收起时锁宽、切标签时保留 DOM，会使锚点仍连接且有尺寸；不能只凭几何相交判断是否应该显示。
-
-展示状态唯一来源是宿主：工作区可见、聊天主视图、侧栏展开、当前标签同时成立。`WorkspaceShellLayout` 投影页面可见性，`AnimatedSidePanePanel` 合并当前标签，沿 `PluginUiSidePane` → model → view → card 传递。card 在 layout effect 同步解绑隐藏锚点，不等待动画或 observer 回调，不删除 tab 或实例 owner。
+The shared page host layer only positions; it always uses `pointer-events: none`, while the webview inside it explicitly uses `pointer-events: auto`. No new lifecycle states, timers, or error branches.
 
 ```text
-工作区可见 ∧ 聊天页 ∧ 侧栏展开 ∧ 当前标签 → 绑定展示锚点
-任一条件关闭 → 同步解绑 → inert 后台表面 → 同一 guest 继续运行
-条件恢复 → 重新绑定 → 同一 guest 与内存编辑状态重新显示
+webview present: mouse → webview → plugin content
+webview absent:  mouse passes through the empty container → host reload button
 ```
 
-隐藏后的非零尺寸后台表面沿用[后台执行契约](plugin-ui-background-execution.md)，不因隐藏而暂停或回收 MCP 页面，不要求插件上报私有状态。重新显示不重复握手。
+MCP Apps and Gen UI share this host layer, so inline, sidebar, and popover previews follow the same click rule. Existing anchor migration, instance cleanup, handshake deadline, and reload flow are unchanged.
 
-## 验证
+## Display boundary for the keep-alive sidebar
 
-- 真实 Electron 中用启动失败的测试页面触发 15 秒握手超时，等待 webview 移除后，鼠标点击宿主重载按钮；只触发一次回调并重建一个运行实例。
-- 对正常页面，宿主命中测试必须落到 webview；通过 Chromium 鼠标与键盘事件确认插件按钮和输入框可操作。
-- 内联、侧栏、popover 预览切换后仍可交互，保持同一 guest。
-- 真实 Electron 用鼠标收起侧栏、切换标签、离开聊天页及切换工作区。保留真实卡片 DOM，断言后台表面不可命中、inert、页面不再可见；双帧工作仍完成、编辑状态与 guest 身份保持，恢复可交互且不新增注册。覆盖深浅主题。
-- 初始隐藏的侧栏不绑定锚点；桌面和手机壳的页面隐藏状态均传给侧栏。Web/remote 的能力回退继续验证。
-- 不使用 DOM `.click()` 代替鼠标命中测试。故障页为受控夹具，不代表原始用户插件的启动问题也已修复。
-- 无布局、主题、文案或平台能力变化；Web/手机/远程的不支持回退保持现状，不修改 continuous/replayable 消息语义。运行时证据以实际执行平台为准。
+Plugin pages are independent overlays under `body`; they must not inherit the host sidebar's opacity, clipping, or ancestor page-hidden state. The collapsed width lock and DOM retention across tab switches keep anchors connected and sized; geometry intersection alone must not decide visibility.
 
-回归入口：`node packages/desktop/scripts/mcp-apps-host-e2e.mjs --managed-only`（超时重载及生命周期）与 `--storage-only`（真实 guest 在内联、侧栏、预览中的交互）。
+The single source of display state is the host: workspace visible, chat main view, sidebar expanded, and current tab all hold at once. `WorkspaceShellLayout` projects page visibility, `AnimatedSidePanePanel` merges the current tab, and the result flows `PluginUiSidePane` → model → view → card. The card synchronously unbinds the hidden anchor in a layout effect — no waiting for animations or observer callbacks — and does not delete tabs or the instance owner.
+
+```text
+workspace visible ∧ chat page ∧ sidebar expanded ∧ current tab → bind display anchor
+any condition off → synchronous unbind → inert background surface → same guest keeps running
+conditions restored → rebind → same guest and in-memory edit state shown again
+```
+
+The hidden non-zero-size background surface follows the [background execution contract](plugin-ui-background-execution.md): MCP pages are not paused or reclaimed while hidden, and plugins are not required to report private state. Re-showing does not repeat the handshake.
+
+## Verification
+
+- In real Electron, trigger the 15-second handshake timeout with a test page that fails to start, wait for the webview to be removed, then click the host reload button: exactly one callback fires and one running instance is rebuilt.
+- For a normal page, host hit-testing must land on the webview; confirm plugin buttons and inputs work via Chromium mouse and keyboard events.
+- Inline, sidebar, and popover previews stay interactive after switching, keeping the same guest.
+- In real Electron, collapse the sidebar with the mouse, switch tabs, leave the chat page, and switch workspaces. Keep the real card DOM; assert the background surface is not hit-testable, is inert, and the page is no longer visible; two-frame work still completes, edit state and guest identity persist, restore is interactive with no new registration. Cover light and dark themes.
+- A sidebar hidden from the start binds no anchor; page-hidden state reaches the sidebar in both the desktop and mobile shells. Web/remote capability fallback continues to be verified.
+- Do not substitute DOM `.click()` for mouse hit-testing. The failing page is a controlled fixture; passing it does not prove startup issues of original user plugins are fixed.
+- No layout, theme, copy, or platform-capability changes; Web/mobile/remote unsupported fallbacks stay as-is, and continuous/replayable message semantics are untouched. Runtime evidence is judged on the platform actually executed.
+
+Regression entry points: `node packages/desktop/scripts/mcp-apps-host-e2e.mjs --managed-only` (timeout reload and lifecycle) and `--storage-only` (real guest interaction in inline, sidebar, and preview).

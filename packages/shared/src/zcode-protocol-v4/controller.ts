@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { zcodeTaskMetaSchema } from "../validation.js";
+import { zcodeExecutionWorktreeSchema } from "./execution-worktree.js";
 import { pendingInteractionSummarySchema } from "./sessions-index.js";
 import { sessionWorkflowActivitySchema } from "./sessions-index-workflow-activity.js";
-import { sessionPhaseSchema } from "./snapshot.js";
+import { sessionPhaseSchema, worktreePreparationStateSchema } from "./snapshot.js";
 import { subscribeAckSchema } from "./transport.js";
 
 export const CONTROLLER_WORKSPACES_TOPIC = "controller/workspaces" as const;
@@ -82,7 +83,7 @@ export const windowHostControllerTaskActivitySchema = z
     lastActivityAt: z.number().finite().nonnegative(),
     hasBackgroundWork: z.boolean(),
     pendingInteractions: pendingInteractionSummarySchema.optional(),
-    // 侧栏工作流运行行；无 run 时缺席。
+    // Sidebar workflow-run row; absent when there is no run.
     workflowActivity: sessionWorkflowActivitySchema.optional(),
   })
   .strict();
@@ -103,6 +104,18 @@ export const windowHostControllerTaskRowSchema = z
       .strict(),
     sourceAvailability: z.enum(["online", "offline"]),
     liveStatus: z.enum(["idle", "running", "waiting", "completed", "error"]),
+    /** Live execution target from the Host sessions-index overlay; never persisted in task metadata. */
+    executionWorktree: zcodeExecutionWorktreeSchema.optional(),
+    /** Host-observed health for the live execution target; never persisted in task metadata. */
+    executionWorktreeMissing: z.boolean().optional(),
+    /** Incognito marker from the Host sessions-index overlay; never persisted in task metadata. */
+    incognito: z.boolean().optional(),
+    /**
+     * Host-owned worktree preparation for a not-yet-active session (runtime-less prepared
+     * identity). Deletion guards treat a non-cancelled preparation as using its target path and
+     * branch; never persisted in task metadata.
+     */
+    worktreePreparation: worktreePreparationStateSchema.optional(),
     activity: windowHostControllerTaskActivitySchema.optional(),
     searchSnippets: z.array(z.string()).optional(),
   })
@@ -124,7 +137,7 @@ export type WindowHostControllerTaskRow = z.infer<typeof windowHostControllerTas
 
 export type TaskListMembershipKind = "pinned" | "archived" | "timeline" | "active";
 
-/** Host 查询和各 Renderer 投影共用的 task list membership 判定。 */
+/** Shared task-list membership check for Host queries and Renderer projections. */
 export function matchesTaskListMembershipKind(
   membership: Pick<WindowHostControllerTaskRow["membership"], "pinned" | "archived">,
   kind: TaskListMembershipKind,

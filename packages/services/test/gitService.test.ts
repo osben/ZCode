@@ -78,9 +78,10 @@ function createDetachedGitEnv(): NodeJS.ProcessEnv {
     ...process.env,
   };
 
-  // Bugfix: pre-push hook 触发测试时，Git 会注入 GIT_DIR/GIT_WORK_TREE 等本地环境变量。
-  // 如果不清理，这个 helper 即便传了临时仓库 cwd，也会误操作当前工作仓库（例如把分支重命名成 main）。
-  // 这里统一移除 Git local env，确保测试里的每条 git 命令只作用于显式传入的仓库目录。
+  // Bugfix: when tests are triggered by the pre-push hook, Git injects local env vars such as
+  // GIT_DIR/GIT_WORK_TREE. Without clearing them, this helper would operate on the current working repo
+  // even when given a temp repo cwd (e.g. renaming its branch to main). Removing the Git local env here
+  // ensures every git command in tests only acts on the explicitly passed repository directory.
   for (const variableName of gitLocalEnvVars) {
     delete env[variableName];
   }
@@ -142,8 +143,9 @@ async function createRepo(options?: { withRemote?: boolean }) {
     throw new Error("Git test repository template is not initialized");
   }
 
-  // Bugfix: 每个 case 原本都通过 8 个同步 Git 子进程从零建库；related 测试并发时会耗尽
-  // macOS 的进程启动队列。复用一次性模板并复制独立工作树，保留真实 Git 行为与 case 隔离。
+  // Bugfix: each test used to build a repo from scratch via 8 synchronous Git subprocesses, exhausting
+  // macOS's process launch queue when related tests run concurrently. Reuse a one-time template and copy
+  // an independent worktree, preserving real Git behavior and per-test isolation.
   const repoContainer = makeTempDir("zcode-git-repo-");
   const repoPath = join(repoContainer, "repo");
   await cp(repoTemplatePath, repoPath, { recursive: true });
@@ -221,8 +223,9 @@ describeIfGit("gitService", () => {
     expect(listLocalBranches).toHaveBeenCalledWith(workspacePath);
   });
 
-  // Bugfix: 该用例真实创建/切换/merge Git 仓库，pre-push 全量并发时偶尔超过默认 5s。
-  // 这里仅放宽这个集成用例，避免把 Git 进程调度抖动误判成业务失败。
+  // Bugfix: this test really creates/switches/merges Git repos and can occasionally exceed the default
+  // 5s under full pre-push parallelism. Only this integration test's timeout is relaxed, so Git process
+  // scheduling jitter is not misjudged as a business failure.
   it("returns real commit graph history with parents, refs, and max-count", async () => {
     const { repoPath, workspacePath } = await createRepo();
     const service = createGitService();
@@ -553,6 +556,39 @@ describeIfGit("gitService", () => {
     );
   });
 
+  it("lists empty untracked and staged files like git status, but still hides binary ones (ISSUE-042)", async () => {
+    const { workspacePath } = await createRepo();
+    const service = createGitService();
+
+    writeFileSync(join(workspacePath, "qa.txt"), "one line\n");
+    writeFileSync(join(workspacePath, "qa2.txt"), "");
+    writeFileSync(join(workspacePath, "staged-empty.txt"), "");
+    writeFileSync(join(workspacePath, "binary.dat"), Buffer.from([0x00, 0x01, 0x02, 0x00]));
+    runGit(workspacePath, ["add", "staged-empty.txt"]);
+
+    const unstaged = await service.getChanges({ workspacePath, sourceId: "unstaged" });
+    expect(unstaged.map((change) => change.workspaceRelativePath).sort()).toEqual([
+      "qa.txt",
+      "qa2.txt",
+    ]);
+    expect(unstaged.find((change) => change.workspaceRelativePath === "qa2.txt")).toMatchObject({
+      section: "untracked",
+      kind: "added",
+      added: 0,
+      removed: 0,
+      isUntracked: true,
+    });
+
+    const staged = await service.getChanges({ workspacePath, sourceId: "staged" });
+    expect(staged).toHaveLength(1);
+    expect(staged[0]).toMatchObject({
+      workspaceRelativePath: "staged-empty.txt",
+      kind: "added",
+      added: 0,
+      removed: 0,
+    });
+  });
+
   it("filters changes to the current workspace scope and exposes summary plus identity", async () => {
     const { repoPath, workspacePath } = await createRepo();
     const service = createGitService();
@@ -581,16 +617,16 @@ describeIfGit("gitService", () => {
       workspacePath,
       sourceId: "unstaged",
     });
+    // ISSUE-042: a zero-byte untracked file is a real added file and must match `git status`.
     expect(
       unstagedChanges.map((change) => `${change.section}:${change.workspaceRelativePath}`).sort(),
-    ).toEqual(["unstaged:tracked.txt", "untracked:untracked.txt"]);
+    ).toEqual([
+      "unstaged:tracked.txt",
+      "untracked:.build/empty-generated.h",
+      "untracked:untracked.txt",
+    ]);
     expect(
       unstagedChanges.some((change) => change.repoRelativePath.includes("packages/other")),
-    ).toBe(false);
-    expect(
-      unstagedChanges.some((change) =>
-        change.repoRelativePath.endsWith(".build/empty-generated.h"),
-      ),
     ).toBe(false);
 
     const stagedChanges = await service.getChanges({
@@ -609,12 +645,11 @@ describeIfGit("gitService", () => {
       refresh.unstagedChanges
         .map((change) => `${change.section}:${change.workspaceRelativePath}`)
         .sort(),
-    ).toEqual(["unstaged:tracked.txt", "untracked:untracked.txt"]);
-    expect(
-      refresh.unstagedChanges.some((change) =>
-        change.workspaceRelativePath.endsWith(".build/empty-generated.h"),
-      ),
-    ).toBe(false);
+    ).toEqual([
+      "unstaged:tracked.txt",
+      "untracked:.build/empty-generated.h",
+      "untracked:untracked.txt",
+    ]);
     expect(refresh.stagedChanges.map((change) => change.workspaceRelativePath)).toEqual([
       "staged.txt",
     ]);
@@ -622,10 +657,11 @@ describeIfGit("gitService", () => {
   });
 
   it("supports stage, unstage, discard and commit via the Git service", async () => {
-    // Bugfix: 这条用例会串行执行多次真实 git CLI 调用（stage/unstage/discard/commit/status）。
-    // 全量测试并发时，磁盘 I/O 和子进程调度偶发超过默认 5 秒，Vitest 会先超时中断，
-    // 随后 afterEach 清理临时仓库又触发额外未处理拒绝，最终把 pre-push 挡住。
-    // 这里放宽超时，只消除环境抖动，不改变 Git 服务行为断言。
+    // Bugfix: this test serially performs multiple real git CLI calls (stage/unstage/discard/commit/status).
+    // Under full test parallelism, disk I/O and subprocess scheduling occasionally exceed the default
+    // 5 seconds; Vitest then interrupts on timeout, and the afterEach temp-repo cleanup triggers extra
+    // unhandled rejections, ultimately blocking pre-push. The timeout is relaxed here only to remove
+    // environment jitter; the Git service behavior assertions are unchanged.
     const { workspacePath } = await createRepo();
     const service = createGitService();
     const trackedPath = join(workspacePath, "tracked.txt");
@@ -917,5 +953,101 @@ describeIfGit("gitService", () => {
     expect(branchDiff.availability).toBe("patch");
     expect(branchDiff.beforeContent).toBe("line 1\nline 2\n");
     expect(branchDiff.afterContent).toBe("line 1\nline 2\nbranch change\n");
+  });
+});
+
+describeIfGit("gitService.getWorktreeRemovalPreview", () => {
+  it("lists every untracked file that force removal would delete, including binary and large files", async () => {
+    const { repoPath } = await createRepo();
+    const worktreePath = join(makeTempDir("zcode-git-wt-"), "wt");
+    runGit(repoPath, ["worktree", "add", "-b", "wt", worktreePath]);
+    writeFileSync(join(worktreePath, "binary.dat"), Buffer.from([0x00, 0x01, 0x02, 0x00]));
+    writeFileSync(join(worktreePath, "large.txt"), "x".repeat(2 * 1024 * 1024));
+    writeFileSync(join(worktreePath, "empty.txt"), "");
+    writeFileSync(join(worktreePath, "packages", "app", "tracked.txt"), "changed\n");
+    const service = createGitService();
+
+    // The review panel hides zero-stat untracked entries; the deletion preview must not.
+    const reviewUntracked = (
+      await service.getChanges({ workspacePath: worktreePath, sourceId: "unstaged" })
+    ).filter((change) => change.isUntracked);
+    expect(reviewUntracked.map((change) => change.repoRelativePath)).not.toContain("binary.dat");
+
+    const preview = await service.getWorktreeRemovalPreview({ workspacePath: worktreePath });
+    expect(preview.files).toEqual(
+      expect.arrayContaining([
+        { path: "binary.dat", status: "??" },
+        { path: "large.txt", status: "??" },
+        { path: "empty.txt", status: "??" },
+        { path: "packages/app/tracked.txt", status: "M" },
+      ]),
+    );
+    expect(preview.files).toHaveLength(4);
+  });
+
+  it("returns no files for a clean worktree", async () => {
+    const { repoPath } = await createRepo();
+    const worktreePath = join(makeTempDir("zcode-git-wt-"), "wt");
+    runGit(repoPath, ["worktree", "add", "-b", "wt-clean", worktreePath]);
+    const preview = await createGitService().getWorktreeRemovalPreview({
+      workspacePath: worktreePath,
+    });
+    expect(preview).toEqual({ files: [] });
+  });
+
+  it("throws for a folder that is not a repository instead of reporting it clean", async () => {
+    const plain = makeTempDir("zcode-not-repo-");
+    writeFileSync(join(plain, "notes.txt"), "keep me\n");
+    await expect(
+      createGitService().getWorktreeRemovalPreview({ workspacePath: plain }),
+    ).rejects.toThrow(/not a Git repository/);
+  });
+
+  it("throws for a missing folder", async () => {
+    const missing = join(makeTempDir("zcode-missing-"), "gone");
+    await expect(
+      createGitService().getWorktreeRemovalPreview({ workspacePath: missing }),
+    ).rejects.toThrow(/not a Git repository/);
+  });
+
+  it("throws when the path resolves to an enclosing repository rather than the worktree root", async () => {
+    const { workspacePath } = await createRepo();
+    await expect(createGitService().getWorktreeRemovalPreview({ workspacePath })).rejects.toThrow(
+      /not the root/,
+    );
+  });
+});
+
+describe("gitService.getWorktreeRemovalPreview without Git", () => {
+  it("throws when Git is unavailable instead of reporting the worktree clean", async () => {
+    const resolution = {
+      workspacePath: "/wt",
+      repoRoot: "/wt",
+      workspaceInRepoPath: ".",
+      autoRefreshWatchPaths: [],
+      isGitAvailable: false,
+      isRepository: false,
+    };
+    const service = createGitService({
+      repo: createMockRepo({
+        getStatus: vi.fn(async () => ({
+          resolution,
+          summary: createSummary({
+            workspacePath: "/wt",
+            repoRoot: "/wt",
+            workspaceInRepoPath: ".",
+            isGitAvailable: false,
+            isRepository: false,
+          }),
+          entries: [],
+          stagedStats: new Map(),
+          unstagedStats: new Map(),
+          untrackedStats: new Map(),
+        })),
+      }),
+    });
+    await expect(service.getWorktreeRemovalPreview({ workspacePath: "/wt" })).rejects.toThrow(
+      /Git is unavailable/,
+    );
   });
 });

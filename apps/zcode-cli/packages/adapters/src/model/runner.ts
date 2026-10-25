@@ -39,6 +39,7 @@ import { runStreamText } from "./runner-stream.js";
 import { normalizeReasoningHistory } from "./reasoning-history-normalization.js";
 import {
   defaultRuntime,
+  type AiSdkAccountAccess,
   type AiSdkModelRuntime,
   type AiSdkModelTextRequest,
   type ResolvedAiSdkModel,
@@ -46,6 +47,12 @@ import {
 import { resolveToolSearchCapability } from "./tool-search.js";
 import { createModel, type ModelExecutionRequest } from "./model.js";
 import { refreshOffPeakRequestAuth } from "./off-peak-request-auth.js";
+import { isAccountAccess } from "./account-access-mode.js";
+import { aggregateModelStreamToTextResult } from "./stream-to-text-result.js";
+import {
+  attachSiwcUsageToFinishEvent,
+  attachSiwcUsageToTextResult,
+} from "./siwc-usage-capture.js";
 
 export type { AiSdkModelRetryOptions } from "./retry-policy.js";
 export type {
@@ -156,12 +163,11 @@ export class AiSdkModelAdapter {
       optionSpecs: options.modelConfig.optionSpecs,
     });
     const properties = options.modelConfig.properties;
+    const accountAccess = resolveAccountAccess(options.providerConfig.access);
     const resolved = {
       ...boundResolution.resolved,
       properties,
-      ...(options.providerConfig.access.type === "zhipu-account"
-        ? { accountAccess: options.providerConfig.access }
-        : {}),
+      ...(accountAccess ? { accountAccess } : {}),
     };
     const optionSpecs = options.modelConfig.optionSpecs;
     const toLegacyRequest = (request: ModelExecutionRequest): AiSdkModelTextRequest => {
@@ -206,7 +212,7 @@ export class AiSdkModelAdapter {
                 : requestAuth;
             return { headersApplied: true, requestAuth: refreshedAuth };
           }
-        : options.providerConfig.access.type === "zhipu-account"
+        : isAccountAccess(options.providerConfig.access)
           ? (contextRefreshRuntimeHeadersBeforeAttempt ??
             (async () => {
               throw new ModelProtocolError(
@@ -267,9 +273,7 @@ export class AiSdkModelAdapter {
               }),
             ),
             properties,
-            ...(options.providerConfig.access.type === "zhipu-account"
-              ? { accountAccess: options.providerConfig.access }
-              : {}),
+            ...(accountAccess ? { accountAccess } : {}),
           })
         : () => ({
             ...boundResolution.resolveRequest({
@@ -279,9 +283,7 @@ export class AiSdkModelAdapter {
               },
             }),
             properties,
-            ...(options.providerConfig.access.type === "zhipu-account"
-              ? { accountAccess: options.providerConfig.access }
-              : {}),
+            ...(accountAccess ? { accountAccess } : {}),
           });
     };
     return createModel({
@@ -303,6 +305,17 @@ export class AiSdkModelAdapter {
       executor: {
         generateText: (request) => {
           const legacyRequest = toLegacyRequest(request);
+          if (options.providerConfig.access.type === "chatgpt-account") {
+            // The SIWC direct route rejects non-streaming requests (stream:true is required on
+            // every inference call), so route generateText through the streaming path and aggregate.
+            return aggregateModelStreamToTextResult(
+              this.streamTextWithResolved(
+                legacyRequest,
+                resolved,
+                resolveForRequest(legacyRequest, request.options),
+              ),
+            );
+          }
           return this.generateTextWithResolved(
             legacyRequest,
             resolved,
@@ -338,7 +351,11 @@ export class AiSdkModelAdapter {
       runtime: this.runtime,
       statusSink: this.statusSink,
       modelIoFullRetentionEnabled: this.modelIoFullRetentionEnabled,
-    });
+    }).then((result) =>
+      // The final attempt's response headers were captured into the binding-shared object;
+      // attach the freshest snapshot (if any) to the result usage for turn-completion transport.
+      resolved.siwcUsageCapture ? attachSiwcUsageToTextResult(result, resolved.siwcUsageCapture) : result,
+    );
   }
 
   private async *streamTextWithResolved(
@@ -347,7 +364,7 @@ export class AiSdkModelAdapter {
     resolveModel: () => ResolvedAiSdkModel,
   ): AsyncGenerator<ModelStreamEvent> {
     const projectedRequest = projectRequestHistory(request, resolved);
-    yield* runStreamText({
+    const stream = runStreamText({
       debugDir: this.debugDir,
       env: this.env,
       logger: this.logger,
@@ -361,6 +378,15 @@ export class AiSdkModelAdapter {
       streamIdleTimeoutMs: this.streamIdleTimeoutMs,
       modelIoFullRetentionEnabled: this.modelIoFullRetentionEnabled,
     });
+    if (!resolved.siwcUsageCapture) {
+      yield* stream;
+      return;
+    }
+    // Only the finish event carries usage out of the stream; patch it after the stream settled
+    // so the snapshot reflects the final attempt's response headers.
+    for await (const event of stream) {
+      yield attachSiwcUsageToFinishEvent(event, resolved.siwcUsageCapture);
+    }
   }
 }
 
@@ -372,6 +398,15 @@ function requireMaxOutputTokens(options: ModelOptions): number {
     );
   }
   return options.maxOutputTokens;
+}
+
+/** Both account domains need per-attempt runtime-header refresh; only zhipu carries a wire payload. */
+function resolveAccountAccess(
+  access: RegistryProviderConfig["access"],
+): AiSdkAccountAccess | undefined {
+  if (access.type === "zhipu-account") return access;
+  if (access.type === "chatgpt-account") return { type: "chatgpt-account" };
+  return undefined;
 }
 
 function hasRequestAuth(

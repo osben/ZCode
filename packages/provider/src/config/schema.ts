@@ -1,9 +1,16 @@
 import { z } from "zod";
 import { modelConfigDataSchema } from "@zcode/shared/model-config";
-import { providerConfigDataSchema, zhipuAccountAccessDataSchema } from "./provider-data-schema.js";
+import {
+  providerConfigDataSchema,
+  zhipuAccountAccessDataSchema,
+  chatgptAccountAccessDataSchema,
+} from "./provider-data-schema.js";
 import { ModelConfig, ModelConfigRules } from "./model-config.js";
+import { omitCatalogOwnedOptionFields } from "./manual-model-config.js";
 import {
   ApiKeyAccessConfig,
+  AcpAgentAccessConfig,
+  ChatgptAccountAccessConfig,
   ProviderApiConfig,
   ProviderConfig,
   ProviderConfigMap,
@@ -26,7 +33,13 @@ import {
 const accountProviderConfigSchema = providerConfigDataSchema
   .pick({ builtinModelIds: true })
   .extend({
-    access: zhipuAccountAccessDataSchema.pick({ type: true, entitled: true }).nullable().optional(),
+    access: z
+      .union([
+        zhipuAccountAccessDataSchema.pick({ type: true, entitled: true }),
+        chatgptAccountAccessDataSchema.pick({ type: true, entitled: true }),
+      ])
+      .nullable()
+      .optional(),
   });
 
 export function parseProviderConfigMap(input: unknown): ProviderConfigMap {
@@ -56,7 +69,7 @@ export function parsePersonalProviderConfigMap(input: unknown): ProviderConfigMa
   return createProviderRules(personalProviderConfigRulesSchema.parse(input).providerRules);
 }
 
-/** Account 运行时事实仍只有成员及权益；不是磁盘配置规则的第二种格式。 */
+/** Account runtime facts still consist only of members and entitlements; this is not a second format for on-disk config rules. */
 export function parseAccountProviderConfigMap(input: unknown): ProviderConfigMap {
   const parsed = z.record(z.string().min(1), accountProviderConfigSchema).parse(input);
   return new ProviderConfigMap(
@@ -107,7 +120,7 @@ export function parseZCodeBuiltinModelConfigRules(input: unknown): ModelConfigRu
 }
 
 export function parsePersonalModelConfigRules(input: unknown): ModelConfigRules {
-  const parsed = personalModelConfigRulesSchema.parse(input);
+  const parsed = personalModelConfigRulesSchema.parse(omitCatalogOwnedOptionFields(input));
   return new ModelConfigRules([
     ...parsed.providerModelRules.map((rule) => ({
       ...rule,
@@ -148,9 +161,13 @@ function createProviderConfig(config: z.infer<typeof providerConfigDataSchema>):
     access:
       config.access == null
         ? config.access
-        : config.access.type !== "zhipu-account"
-          ? new ApiKeyAccessConfig(config.access)
-          : new ZhipuAccountAccessConfig(config.access),
+        : config.access.type === "zhipu-account"
+          ? new ZhipuAccountAccessConfig(config.access)
+          : config.access.type === "chatgpt-account"
+            ? new ChatgptAccountAccessConfig(config.access)
+            : config.access.type === "acp-agent"
+              ? new AcpAgentAccessConfig(config.access)
+              : new ApiKeyAccessConfig(config.access),
     api: config.api == null ? config.api : new ProviderApiConfig(config.api),
   });
 }

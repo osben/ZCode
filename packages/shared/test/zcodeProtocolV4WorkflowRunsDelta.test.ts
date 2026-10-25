@@ -1,9 +1,9 @@
-// workflowRuns 的键级增量（workflow-runs-delta.ts + delta.ts 的两条 op + apply 的两个 twin）。
+// Key-level deltas for workflowRuns (workflow-runs-delta.ts + the two ops in delta.ts + apply's two twins).
 //
-// 本文件钉的是**一条**契约，其余断言都为它服务：对任意一对 reducer 产出的 (prior, next)，
-//   JSON.stringify(apply(带 prior 的快照, diff(prior, next)).workflowRuns) === JSON.stringify(next)
-// 逐字节，不是深相等——键序若不一致，桌面与 CLI 的两份状态就会在别处（比如快照哈希、
-// 回放比对）悄悄分叉，而这类分叉从现象上看只是"偶尔刷新一下"。
+// This file pins **one** contract; all other assertions serve it: for any reducer-produced (prior, next) pair,
+//   JSON.stringify(apply(snapshot with prior, diff(prior, next)).workflowRuns) === JSON.stringify(next)
+// byte-for-byte, not deep-equal — if key order differed, the desktop's and CLI's two copies of state would silently
+// diverge elsewhere (snapshot hashes, replay comparisons), and such divergence only looks like "an occasional refresh".
 import { describe, expect, it } from "vitest";
 import {
   WORKFLOW_RUNS_LIMITS,
@@ -27,8 +27,8 @@ import {
 const RUN_ID = "dwfrun-1";
 
 /**
- * 只装 apply 会碰到的两处：rows 窗口（mutable accumulator 建索引要读它）与状态键。
- * 其余字段与本文件的契约无关，写全一份只会让真正的断言淹没在夹具里。
+ * Contains only the two spots apply touches: the rows window (the mutable accumulator reads it to build its index) and the state key.
+ * The other fields are irrelevant to this file's contract; writing them all out would drown the real assertions in fixtures.
  */
 function snapshotWith(workflowRuns: WorkflowRunsState | undefined): ConversationSnapshot {
   const base = {
@@ -44,7 +44,7 @@ function snapshotWith(workflowRuns: WorkflowRunsState | undefined): Conversation
     : { ...base, workflowRuns }) as unknown as ConversationSnapshot;
 }
 
-/** 事件信封工厂：sequence 按调用序自增，模拟 journal 的单调分配（与 reducer 测试同一习语）。 */
+/** Event envelope factory: sequence auto-increments per call, mimicking the journal's monotonic assignment (same idiom as the reducer tests). */
 function progressLog(runId = RUN_ID) {
   let sequence = -1;
   return function progress(
@@ -61,9 +61,9 @@ const ASK = { siteId: "ask#1", ordinal: 1 };
 const ACTOR = { siteId: "actor#1", ordinal: 1 };
 
 /**
- * 一条走完全程的 run：出生、阶段、子代理、节点全相位、进度读数、用量、report、产物、
- * 升级问答（`cleared` 路径的唯一来源：pendingQuestions 归零后整个键缺席）、缓存命中的结算、
- * 第二个子代理、终态。
+ * One run that walks the full lifecycle: birth, phases, subagents, all node phases, progress readings, usage, a report,
+ * an artifact, an escalation (`cleared` path's only source: pendingQuestions drops to zero so the whole key goes absent),
+ * a cache-hit settle, a second subagent, and the terminal state.
  */
 function fullRunEvents(): WorkflowRunProgressEnvelope[] {
   const progress = progressLog();
@@ -109,10 +109,10 @@ function fullRunEvents(): WorkflowRunProgressEnvelope[] {
       question: "门是不是坏了？",
       askedAt: 1_756_000_000_000,
     }),
-    // 划掉最后一条停驻问题 → 整个键缺席，这是 diff 的 `cleared` 路径。
+    // Striking the last parked question → the whole key goes absent; this is diff's `cleared` path.
     progress("escalation-resolved", { qid: "dwfq-1", answer: "坏了，跳过。" }),
     progress("node-settled", { instance: ASK, outcome: "ok" }),
-    // resume 的完结命中短路：直接 settled、不经 queued，且它就是这条节点的出生事件。
+    // Resume's completed-hit short-circuit: straight to settled, never through queued, and it is this node's birth event.
     progress("node-settled", {
       instance: { siteId: "world-read#1", ordinal: 1 },
       outcome: "ok",
@@ -137,7 +137,7 @@ function fullRunEvents(): WorkflowRunProgressEnvelope[] {
   ];
 }
 
-/** 第二条 run 的最小生命周期：同一份状态里两条 run 并存，diff 只能动被改的那条。 */
+/** A second run's minimal lifecycle: two runs coexist in one state; diff may only touch the changed one. */
 function secondRunEvents(): WorkflowRunProgressEnvelope[] {
   const progress = progressLog("dwfrun-2");
   return [
@@ -149,7 +149,7 @@ function secondRunEvents(): WorkflowRunProgressEnvelope[] {
   ];
 }
 
-/** 把最旧的 run 挤出去：maxRuns + 2 条新 run，每条一个 run-started。 */
+/** Squeezes out the oldest runs: maxRuns + 2 new runs, each with one run-started. */
 function evictionEvents(): WorkflowRunProgressEnvelope[] {
   return Array.from({ length: WORKFLOW_RUNS_LIMITS.maxRuns + 2 }, (_, index) => ({
     runId: `dwfrun-evict-${index}`,
@@ -160,8 +160,8 @@ function evictionEvents(): WorkflowRunProgressEnvelope[] {
 }
 
 /**
- * 契约裁判：逐条归约，每一步都用 diff 产出的增量把 prior 推到 next，两个 apply twin 都要
- * 得到与 next **逐字节**一致的 workflowRuns。返回走过的全部增量，供调用方再做别的断言。
+ * Contract referee: reduce one by one, and at each step push prior to next with the diff's deltas; both apply twins must
+ * yield workflowRuns **byte-identical** to next. Returns every delta produced so callers can assert further.
  */
 function expectRoundTrip(envelopes: readonly WorkflowRunProgressEnvelope[]): ConversationDelta[] {
   let state: WorkflowRunsState | undefined;
@@ -180,7 +180,7 @@ function expectRoundTrip(envelopes: readonly WorkflowRunProgressEnvelope[]): Con
     applyConversationDeltasMutable(accumulator, deltas);
     expect(JSON.stringify(accumulator.snapshot.workflowRuns)).toBe(JSON.stringify(next));
 
-    // 增量不该能拼出一个非法状态：客户端侧的产物同样过 strict schema。
+    // Deltas must not be able to assemble an illegal state: the client-side product also passes the strict schema.
     expect(workflowRunsStateSchema.safeParse(immutable.workflowRuns).success).toBe(true);
     state = next;
   }
@@ -190,7 +190,7 @@ function expectRoundTrip(envelopes: readonly WorkflowRunProgressEnvelope[]): Con
 describe("diffWorkflowRunsState × apply：逐事件往返", () => {
   it("一条走完全程的 run：每一步的终态逐字节一致", () => {
     const deltas = expectRoundTrip(fullRunEvents());
-    // 全程没有一条整键重发——有一条就说明 diff 认不出某种结构变化，字节数退回改造前。
+    // Not a single whole-key resend on the way — one would mean diff failed to recognize some structural change and byte counts regressed to pre-rework levels.
     expect(deltas.some((delta) => delta.op === "state.updated")).toBe(false);
   });
 
@@ -198,7 +198,7 @@ describe("diffWorkflowRunsState × apply：逐事件往返", () => {
     const deltas = expectRoundTrip([...fullRunEvents(), ...secondRunEvents(), ...evictionEvents()]);
     expect(deltas.some((delta) => delta.op === "state.updated")).toBe(false);
     const removed = deltas.filter((delta) => delta.op === "workflowRun.removed");
-    // 两条旧 run + maxRuns + 2 条新 run 进场，最旧的四条按进场序被挤出去。
+    // Two old runs + maxRuns + 2 new runs arrive; the four oldest are squeezed out in arrival order.
     expect(removed.map((delta) => (delta.op === "workflowRun.removed" ? delta.runId : ""))).toEqual(
       [RUN_ID, "dwfrun-2", "dwfrun-evict-0", "dwfrun-evict-1"],
     );
@@ -242,13 +242,13 @@ describe("diffWorkflowRunsState × apply：逐事件往返", () => {
     if (op.op !== "workflowRun.updated") return;
     expect(op.nodes).toEqual([{ siteId: "ask#1", ordinal: 7, kind: "ask", phase: "dispatched" }]);
     expect(op.actors).toBeUndefined();
-    // 派发计步改了 usage，header 里因此只有这一个键 + 水位。
+    // Dispatch step-counting changed usage, so the header carries only this key + the watermark.
     expect(Object.keys(op.run ?? {}).sort()).toEqual(["lastEventSequence", "usage"]);
   });
 
-  // 删除有词汇（removedActors / removedNodes，腾位用），**重排没有**。所以下面第一种输入走键化
-  // 路径、第二种只能退回整键重发——上面的往返用例断言「全程没有一条 state.updated」，任何一天
-  // 有人让归约重排了条目，那里会立刻红。
+  // Deletion has a vocabulary (removedActors / removedNodes, used for making room), **reordering does not**. So the first
+  // input below takes the keyed path and the second can only fall back to a whole-key resend — the round-trip cases above
+  // assert "not a single state.updated on the way"; the day someone makes the reducer reorder entries, those turn red immediately.
   it("条目被删走键化路径，被重排则退回整键重发", () => {
     const state = expectRoundTripFinal(fullRunEvents());
     const run = state.runs[0]!;
@@ -278,7 +278,7 @@ describe("diffWorkflowRunsState × apply：逐事件往返", () => {
     expect(diffWorkflowRunsState(state, reordered)).toEqual([
       { op: "state.updated", patch: { workflowRuns: reordered } },
     ]);
-    // 退路本身仍然正确：整键替换后逐字节一致。
+    // The fallback itself stays correct: byte-identical after the whole-key replacement.
     const applied = applyConversationDeltas(
       snapshotWith(state),
       diffWorkflowRunsState(state, reordered),
@@ -299,7 +299,7 @@ describe("diffWorkflowRunsState × apply：逐事件往返", () => {
   });
 });
 
-/** 跑完整串事件，返回终态（上面的往返断言在 expectRoundTrip 里，这里只要状态）。 */
+/** Runs the full event sequence and returns the final state (the round-trip assertions live in expectRoundTrip; only the state is needed here). */
 function expectRoundTripFinal(
   envelopes: readonly WorkflowRunProgressEnvelope[],
 ): WorkflowRunsState {
@@ -309,7 +309,7 @@ function expectRoundTripFinal(
 }
 
 describe("coalesce 规则 6 × diff 产出的真实增量", () => {
-  /** 把两条 run 的事件交错成一个 flush 窗口，收集逐步 diff 出来的全部增量。 */
+  /** Interleaves two runs' events into one flush window and collects every delta step-wise diffing produces. */
   function windowOf(...streams: readonly WorkflowRunProgressEnvelope[][]): {
     deltas: ConversationDelta[];
     final: WorkflowRunsState;
@@ -341,9 +341,9 @@ describe("coalesce 规则 6 × diff 产出的真实增量", () => {
     expect(JSON.stringify(applyConversationDeltas(base, coalesced).workflowRuns)).toBe(
       JSON.stringify(direct.workflowRuns),
     );
-    // 逐条投递本来就该收敛到 reducer 的终态；合并只是不许改变它。
+    // One-by-one delivery should converge to the reducer's final state anyway; coalescing is merely forbidden from changing it.
     expect(JSON.stringify(direct.workflowRuns)).toBe(JSON.stringify(final));
-    // 塌缩：几十条引擎事件 → 每条 run 一条增量，与 fan-out 宽度无关（500 条帧界的由来）。
+    // Collapse: dozens of engine events → one delta per run, independent of fan-out width (the origin of the 500-frame bound).
     expect(deltas.length).toBeGreaterThan(20);
     expect(coalesced).toHaveLength(2);
   });
@@ -379,8 +379,8 @@ describe("coalesce 规则 6 × diff 产出的真实增量", () => {
       JSON.stringify(direct.workflowRuns),
     );
     expect(JSON.stringify(direct.workflowRuns)).toBe(JSON.stringify(final));
-    // 被淘汰的 run：屏障之前的增量被吞干净（出生+淘汰同窗口 = 客户端没见过它）。屏障之后还可能
-    // 再出现一条——迟到的事件让这条 runId 作为**新条目**回到队尾，那是另一件事，不该被吞。
+    // The evicted run: deltas before the barrier are swallowed cleanly (birth + eviction in one window = the client never saw it). One more
+    // delta may appear after the barrier — a late event brings this runId back as a **new entry** at the tail; that is a different matter and must not be swallowed.
     const removedAt = coalesced.findIndex(
       (delta) => delta.op === "workflowRun.removed" && delta.runId === RUN_ID,
     );
@@ -429,7 +429,7 @@ describe("apply：workflowRun.* 的边界语义", () => {
       { op: "workflowRun.updated", runId: "dwfrun-ghost", revision: 6, nodes: [ASK_NODE] },
     ]);
     expect(applied.workflowRuns?.runs).toEqual([]);
-    // 容器 revision 仍然跟上：生产者对版本的断言与它能不能安放这条 run 是两回事。
+    // The container revision still keeps up: the producer's claim about the version and whether it can place this run are two different things.
     expect(applied.workflowRuns?.revision).toBe(6);
   });
 
@@ -474,11 +474,11 @@ describe("apply：workflowRun.* 的边界语义", () => {
 
     expect(after).not.toBe(before);
     expect(after.runs[0]).not.toBe(before.runs[0]);
-    // 另一条 run 与被改 run 里没动过的那个节点都保持引用——GUI 的两级 memo 靠的就是这个。
+    // The other run and the untouched node inside the changed run keep their references — the GUI's two-level memo relies on exactly this.
     expect(after.runs[1]).toBe(before.runs[1]);
     expect(after.runs[0]!.nodes[0]).toBe(before.runs[0]!.nodes[0]);
     expect(after.runs[0]!.nodes[1]).not.toBe(before.runs[0]!.nodes[1]);
-    // actors 没被这条 op 提到：整张表保持引用。
+    // actors was not mentioned by this op: the whole table keeps its reference.
     expect(after.runs[0]!.actors).toBe(before.runs[0]!.actors);
   });
 
@@ -490,7 +490,7 @@ describe("apply：workflowRun.* 的边界语义", () => {
       run: { ...born.run, runId: `dwfrun-${index}` },
     })) as ConversationDelta[];
     const applied = applyConversationDeltas(snapshotWith(undefined), births);
-    // 客户端自行裁剪只会让两侧悄悄分叉：生产者以为发过的 run 在这边根本不存在。
+    // Client-side trimming would only make the two sides silently diverge: runs the producer believes it sent would not exist here at all.
     expect(applied.workflowRuns?.runs).toHaveLength(WORKFLOW_RUNS_LIMITS.maxRuns + 3);
   });
 
@@ -514,20 +514,21 @@ describe("apply：workflowRun.* 的边界语义", () => {
       JSON.stringify(immutable.workflowRuns),
     );
     expect(immutable.workflowRuns?.runs.map((run) => run.runId)).toEqual(["dwfrun-2"]);
-    // 入参不被修改。
+    // Inputs are not mutated.
     expect(base.workflowRuns).toBeUndefined();
   });
 });
 
 const ASK_NODE = { siteId: "ask#1", ordinal: 1, phase: "queued" } as const;
 
-// ── 条目淘汰的线上表达：removedActors / removedNodes ────────────────────────
+// ── Wire expression of entry eviction: removedActors / removedNodes ────────────────────────
 //
-// 归约到界之后会淘汰终态条目给活的新人腾位（workflow-runs-eviction.ts），于是这个模型第一次
-// 需要说出「这条走了」。下面钉的仍是文件头那条契约（diff 施加到 prior 与 next 逐字节一致），
-// 只是输入里多了删除；外加一条：合并两条增量必须等于顺序施加它们。
+// After reduction hits a bound, terminal entries are evicted to make room for live newcomers (workflow-runs-eviction.ts),
+// so for the first time this model needs to say "this one left". What is pinned below is still the file-header contract
+// (diff applied to prior equals next byte-for-byte), only with deletions added to the inputs; plus one more: merging two
+// deltas must equal applying them in order.
 
-/** 手搓一条 run：本节测的是 diff/apply/merge 的代数，走一遍归约反而看不清输入。 */
+/** Hand-built run: this section tests the algebra of diff/apply/merge; running the reducer would only obscure the inputs. */
 function runWithNodes(
   nodes: readonly { siteId: string; ordinal: number; phase: string }[],
   actors: readonly { siteId: string; ordinal: number; status: string }[] = [],
@@ -546,7 +547,7 @@ const queued = (siteId: string) => ({ siteId, ordinal: 1, phase: "queued" as con
 const settled = (siteId: string) => ({ siteId, ordinal: 1, phase: "settled" as const });
 const waiting = (siteId: string) => ({ siteId, ordinal: 1, status: "waiting" as const });
 
-/** 单条 run 的 diff，取出那条 updated（本节的输入都不触发整键重发）。 */
+/** Single-run diff that extracts the updated op (none of this section's inputs trigger a whole-key resend). */
 function updateBetween(before: WorkflowRunState, after: WorkflowRunState) {
   const deltas = diffWorkflowRunsState(
     { revision: 1, runs: [before] },
@@ -555,7 +556,7 @@ function updateBetween(before: WorkflowRunState, after: WorkflowRunState) {
   expect(deltas).toHaveLength(1);
   const op = deltas[0]!;
   if (op.op !== "workflowRun.updated") throw new Error("应当是一条 workflowRun.updated");
-  // 契约：施加到 prior 之后与 next 逐字节一致。
+  // Contract: applying to prior is byte-identical to next.
   const applied = applyConversationDeltas(snapshotWith({ revision: 1, runs: [before] }), deltas);
   expect(JSON.stringify(applied.workflowRuns)).toBe(JSON.stringify({ revision: 2, runs: [after] }));
   return op;
@@ -677,7 +678,7 @@ describe("merge（coalesce 规则 6 的载荷）：合并必须等于顺序施�
     nodes: [queued("a"), queued("b"), queued("c")],
   };
 
-  /** 裁判：合并后施加 与 顺序施加 逐字节一致（两条 op 都以 birth 建好的表为底）。 */
+  /** Referee: apply-after-merge and sequential application are byte-identical (both ops sit on the table birth built). */
   function expectMergeEqualsSequential(
     earlier: ConversationDelta,
     later: ConversationDelta,
@@ -765,7 +766,7 @@ describe("merge（coalesce 规则 6 的载荷）：合并必须等于顺序施�
   });
 
   it("合并出来会超界时**不合并**：超界的帧会被整帧丢掉，订阅从此静默", () => {
-    // 腾位之前，「一个窗口里被碰过的不同键 ≤ 表界」是结构性的（表只增不减）；腾位之后不是了。
+    // Before eviction, "distinct keys touched in one window ≤ table bound" was structural (the table only grew); after eviction it is not.
     const ref = (ordinal: number) => ({ siteId: "ask#1", ordinal });
     const wide = (revision: number, from: number, count: number): ConversationDelta => ({
       op: "workflowRun.updated",
@@ -779,7 +780,7 @@ describe("merge（coalesce 规则 6 的载荷）：合并必须等于顺序施�
     for (const delta of coalesced) {
       expect(conversationDeltaSchema.safeParse(delta).success).toBe(true);
     }
-    // 不合并不改变终态：逐条投递与"合并"后的序列施加出来的是同一份状态。
+    // Not merging does not change the final state: one-by-one delivery and the "merged" sequence apply to the same state.
     const base = applyConversationDeltas(snapshotWith(undefined), [
       {
         op: "workflowRun.updated",
@@ -797,7 +798,7 @@ describe("merge（coalesce 规则 6 的载荷）：合并必须等于顺序施�
     expect(JSON.stringify(applyConversationDeltas(base, coalesced).workflowRuns)).toBe(
       JSON.stringify(applyConversationDeltas(base, deltas).workflowRuns),
     );
-    // 界内的两条仍然照常合并（这道闸只在真的装不下时才拦）。
+    // Two in-bound ones still merge as usual (this gate only blocks when it genuinely does not fit).
     expect(coalesceConversationDeltas([wide(2, 0, 10), wide(3, 100, 10)])).toHaveLength(1);
   });
 
@@ -818,8 +819,8 @@ describe("merge（coalesce 规则 6 的载荷）：合并必须等于顺序施�
         nodes: [queued("ask#1"), queued("x")],
       },
     ]);
-    // A 把删除表塞到界上 → B 并不进去，只能另立一条；C 若越过 B 并回 A，
-    // 它的 upsert 就跑到了 B 的删除**之前**，ask#1 会凭空消失。
+    // A pushes the removal table onto the bound → B cannot merge in and must stand alone; if C crossed B back into A,
+    // C's upsert would land **before** B's removal and ask#1 would vanish into thin air.
     const deltas: ConversationDelta[] = [
       {
         op: "workflowRun.updated",
@@ -836,7 +837,7 @@ describe("merge（coalesce 规则 6 的载荷）：合并必须等于顺序施�
     expect(JSON.stringify(applyConversationDeltas(base, coalesced).workflowRuns)).toBe(
       JSON.stringify(direct.workflowRuns),
     );
-    // 先删后加的键落在表尾，而不是被吃掉。
+    // The delete-then-add key lands at the table tail instead of being swallowed.
     expect(direct.workflowRuns?.runs[0]?.nodes).toEqual([queued("x"), settled("ask#1")]);
   });
 
@@ -914,7 +915,7 @@ describe("conversationDeltaSchema：两条新 op", () => {
       removedNodes: [{ siteId: "ask#1", ordinal: 1 }],
     });
     expect(parsed).toMatchObject({ removedNodes: [{ siteId: "ask#1", ordinal: 1 }] });
-    // 淘汰载荷说的是**身份**，不是条目：多带的键被剥掉，不会让整条 op 变成一次 upsert。
+    // Eviction payloads carry **identity**, not entries: extra keys are stripped and do not turn the op into an upsert.
     expect(
       conversationDeltaSchema.safeParse({
         op: "workflowRun.updated",
@@ -951,7 +952,7 @@ describe("conversationDeltaSchema：两条新 op", () => {
       conversationDeltaSchema.safeParse({ op: "workflowRun.updated", runId: "", revision: 1 })
         .success,
     ).toBe(false);
-    // nodes / actors 不是 header 键：它们有自己的增量载荷，清不掉。
+    // nodes / actors are not header keys: they have their own delta payloads and cannot be cleared.
     expect(
       conversationDeltaSchema.safeParse({
         op: "workflowRun.updated",
@@ -960,7 +961,7 @@ describe("conversationDeltaSchema：两条新 op", () => {
         cleared: ["nodes"],
       }).success,
     ).toBe(false);
-    // 状态键上的坏值同样进不来（run 是 header 的 partial，不是任意对象）。
+    // Bad values on the state key are equally excluded (run is a partial of the header, not an arbitrary object).
     expect(
       conversationDeltaSchema.safeParse({
         op: "workflowRun.updated",

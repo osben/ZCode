@@ -4,7 +4,9 @@ import {
   OFF_PEAK_EXECUTION_TOOL_DENYLIST,
 } from "@zcode/shared";
 /* eslint-disable max-lines -- ZCode Protocol 的 session/workspace 方法共享同一个 server context 与 snapshot helpers，迁移期先集中维护。 */
-import { observeSessionDebug } from "./session-debug.js";
+import { stat } from "node:fs/promises";
+import { statSync } from "node:fs";
+import { observeDetachedChildSessionDebug, observeSessionDebug } from "./session-debug.js";
 import {
   TASK_LIST_SESSION_TYPES,
   isTaskListSessionType,
@@ -13,7 +15,11 @@ import { resolveEffectiveBashShellSelection } from "@zcode/adapters/exec";
 import { inputIntentMetadata } from "../zcode-protocol-v4/commands/input-intent.js";
 import { createModelExecutionContext } from "./model-execution.js";
 import type { SendInputOptions } from "../app/types.js";
-import { repairPersistedRemoteSessionPaths, type TurnAttachment } from "@zcode/core";
+import {
+  repairPersistedRemoteSessionPaths,
+  type AgentRuntimeConfig,
+  type TurnAttachment,
+} from "@zcode/core";
 import {
   CoreErrorType,
   SESSION_ENTRY_TARGET_COMPLETION_VERIFICATION,
@@ -51,6 +57,8 @@ import {
   ZCODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
   zcodeProtocolErrorCodes,
   zcodeProtocolMethods,
+  zcodeProtocolNotifications,
+  zcodeChatGptPlanUsageUpdatedParamsSchema,
   zcodeSessionCancelBackgroundTaskParamsSchema,
   zcodeSessionCompactParamsSchema,
   zcodeSessionCloseParamsSchema,
@@ -116,7 +124,7 @@ import {
   type ZCodeProtocolToolInputTransmissionState,
 } from "./server-types.js";
 import { createWorkspaceZCodeApp, ensureSessionModelAvailable } from "./workspace-model-runtime.js";
-import { buildAppUsageSnapshot, resolveTzOffsetMs } from "./usage-stats-builder.js";
+import { runUsageStats } from "./usage-stats-run.js";
 import { createProtocolInteractionBroker } from "./interaction-broker.js";
 import { createProtocolAutomationPort } from "./automation-port.js";
 import { createProtocolOffPeakPort } from "./offpeak-port.js";
@@ -155,8 +163,12 @@ type ZCodeSessionRecordParams = (
       model?: ZCodeSessionCreateParams["model"];
       parentSessionId?: ZCodeSessionCreateParams["parentSessionId"];
       thoughtLevel?: ZCodeSessionCreateParams["thoughtLevel"];
-      // 自动化会话会在创建期关闭标题二次生成，而 create/resume
-      // 共用 record 初始化函数；resume 兼容分支也必须声明该策略字段。
+      executionWorktree?: ZCodeSessionCreateParams["executionWorktree"];
+      // Cold resume and fork carry the persisted profile: plugins, MCP, hooks and agents are
+      // composed by createZCodeApp before core resume runs.
+      incognito?: ZCodeSessionCreateParams["incognito"];
+      // Automation sessions disable title regeneration at creation, and create/resume share the
+      // record initializer; the resume compatibility branch must declare this policy field too.
       titleGenerationEnabled?: ZCodeSessionCreateParams["titleGenerationEnabled"];
     })
 ) & { taskType?: SessionTaskType };
@@ -165,6 +177,7 @@ interface SessionStartupPreferences {
   additionalDirectories?: readonly string[];
   subagentRuntimeConfigEnabled?: boolean;
   memoryEnabled: boolean;
+  memoryIndexAsContext: boolean;
   modelContextBudgetStrategy: ZCodeModelContextBudgetStrategy;
   nativeSearchEnhancementsEnabled: boolean;
   toolSearchMode: AppToolSearchMode;
@@ -1075,6 +1088,9 @@ async function persistImportedSessionHistory(params: {
         slug: slugifyImportedSession(params.sessionId),
         directory: workspace.workspacePath,
         path: workspace.workspacePath,
+        // The app.resume() after this import marks the runtime persisted, so first-send
+        // persistence never writes the profile: the import write must carry it (set-once).
+        incognito: params.createParams.incognito,
         title: importedHistory.title,
         titleSource: "custom",
         version: params.context.deps.version ?? "0.0.0",
@@ -1151,6 +1167,9 @@ async function persistImportedSessionHistory(params: {
     slug: slugifyImportedSession(params.sessionId),
     directory: workspace.workspacePath,
     path: workspace.workspacePath,
+    // Same constraint as the shared-context bundle above: the resume that follows this write
+    // suppresses first-send persistence, so the profile must land here.
+    incognito: params.createParams.incognito,
     title: importedHistory.title?.trim() || "Imported session",
     titleSource: "custom",
     version: params.context.deps.version ?? "0.0.0",
@@ -1258,10 +1277,17 @@ export async function createSession(
 export async function createSessionRecordForV4(
   context: ZCodeProtocolAgentServerContext,
   rawParams: unknown,
+  preparedSessionId?: string,
 ) {
-  return createSessionWithProjection(context, rawParams, undefined, async (record) => ({
-    value: { sessionId: record.app.sessionId },
-  }));
+  return createSessionWithProjection(
+    context,
+    rawParams,
+    undefined,
+    async (record) => ({
+      value: { sessionId: record.app.sessionId },
+    }),
+    preparedSessionId,
+  );
 }
 
 async function createSessionWithProjection<T>(
@@ -1271,9 +1297,10 @@ async function createSessionWithProjection<T>(
   project: (
     record: ZCodeProtocolSessionRecord,
   ) => Promise<{ value: T; phaseDurationsMs?: SnapshotPhaseDurationsMs; messageCount?: number }>,
+  preparedSessionId?: string,
 ): Promise<T> {
   const params = parseParams(zcodeSessionCreateParamsSchema, rawParams);
-  const sessionId = (params.sessionId ?? createSessionId()) as SessionId;
+  const sessionId = (preparedSessionId ?? params.sessionId ?? createSessionId()) as SessionId;
   const claims = (context.sessionCreationIds ??= new Set<string>());
   // Host 预留只决定身份与归属，不能覆盖 CLI 已有/软删/正在创建的会话。
   // 在任何 await 前占用 ID，防止 native 与 V4 并发 materialize 同一 runtime。
@@ -1281,7 +1308,8 @@ async function createSessionWithProjection<T>(
     throw new ProtocolRequestError(-32602, "sessionId already exists");
   claims.add(sessionId);
   try {
-    if (await context.deps.sessionStore?.getSession(sessionId))
+    // A prepared id is validated by the V4 bridge and already has its durable session row.
+    if (!preparedSessionId && await context.deps.sessionStore?.getSession(sessionId))
       throw new ProtocolRequestError(-32602, "sessionId already exists");
     return await materializeCreatedSession(context, { ...params, sessionId }, trace, project);
   } finally {
@@ -1530,14 +1558,25 @@ export async function activateSessionForResume(
     {
       ...params,
       mode,
-      // 模型只由 App 的单向迁移/当前 entry 恢复，不能先用消息或调用方 hint 构造一次选择。
+      incognito: session.incognito,
+      ...(session.executionDirectory
+        ? {
+            executionWorktree: {
+              path: session.executionDirectory,
+              ...(session.executionBranch ? { branchName: session.executionBranch } : {}),
+            },
+          }
+        : {}),
+      // Restore the model only through the app's one-way migration/current entry; do not first create
+      // a selection from a message or caller hint.
       model: undefined,
       ...(session.parentID ? { parentSessionId: String(session.parentID) } : {}),
-      // resume 曾丢掉持久化 taskType，createRecord 落回缺省
-      // "interactive"。于是被 resume 的 workflow_child / subagent_child 会话通过
-      // isTaskListSessionType 的筛，经 getSessionWorkspaceId 漏进 sessions-index，
-      // desktop 任务列表长出「workflow actor actor#N@k」假任务，任务索引同步器还会
-      // 反复对它们发 session/resume。fork 路径一直带着 taskType，这里必须同样带。
+      // resume previously dropped persisted taskType, so createRecord fell back to the default
+      // "interactive". Resumed workflow_child/subagent_child sessions then passed the
+      // isTaskListSessionType filter and leaked into sessions-index via getSessionWorkspaceId. The
+      // Desktop task list showed fake "workflow actor actor#N@k" tasks, and the task-index syncer
+      // repeatedly sent session/resume for them. The fork path already preserves taskType; resume
+      // must do the same.
       taskType: session.taskType,
       workspace,
     },
@@ -1854,60 +1893,13 @@ export async function listSessionSubagents(
   };
 }
 
-const APP_USAGE_RANGE_DAYS: Record<string, number> = { "7d": 7, "30d": 30 };
-
 export async function getUsageStats(context: ZCodeProtocolAgentServerContext, rawParams: unknown) {
   const params = parseParams(zcodeUsageStatsParamsSchema, rawParams ?? {});
-  const timeZone = params.timeZone ?? "UTC";
-  const until = Date.now();
-  const tzOffsetMs = resolveTzOffsetMs(timeZone, until);
-  const rangeDays = APP_USAGE_RANGE_DAYS[params.range] ?? 30;
-  const since = params.range === "all" ? 0 : until - rangeDays * 86_400_000;
-  const buildOptions = {
-    range: params.range,
-    timeZone,
-    tzOffsetMs,
-    generatedAt: until,
-    since,
-    until,
-  };
-
-  // SessionStorePort 与 UsageStorePort 是分离接口，但实际 store 同时实现两者；
-  // 沿用 core/usage-observability 的运行时收窄方式访问只读聚合方法。
+  // SessionStorePort and UsageStorePort are separate interfaces, but the actual store implements
+  // both. Use the runtime narrowing pattern from core/usage-observability to access the read-only
+  // aggregate method.
   const usageStore = context.deps.sessionStore as Partial<UsageStorePort> | undefined;
-  if (!usageStore?.queryAppUsage) {
-    // 无 usage store（不应发生）：返回空快照而非抛错，便于 UI 显示空态。
-    return buildAppUsageSnapshot(
-      {
-        totals: {
-          totalTokens: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          reasoningTokens: 0,
-          cacheCreationTokens: 0,
-          cacheReadTokens: 0,
-          modelRequestCount: 0,
-          modelErrorCount: 0,
-          avgTimeToFirstTokenMs: null,
-        },
-        turnTotals: {
-          totalSessions: 0,
-          totalTurns: 0,
-          avgTurnDurationMs: null,
-          longestSessionMs: 0,
-        },
-        toolTotals: { toolCallCount: 0, toolErrorCount: 0 },
-        models: [],
-        tools: [],
-        days: [],
-        dayModels: [],
-      },
-      buildOptions,
-    );
-  }
-
-  const result = await usageStore.queryAppUsage({ since, until, tzOffsetMs });
-  return buildAppUsageSnapshot(result, buildOptions);
+  return runUsageStats(usageStore, params, Date.now(), context.logger);
 }
 
 export async function readSession(context: ZCodeProtocolAgentServerContext, rawParams: unknown) {
@@ -2374,9 +2366,11 @@ export async function registerForkedSession(
     {
       sessionId: fork.forkedSessionId,
       mode: parentMode,
-      // 未绑定父会话也允许复制历史；不能因分叉而选择默认模型或解析空字符串。
+      // History can be copied even if the parent session is unbound; do not choose a default model or
+      // parse an empty string just because of the fork.
       model: optionalModelSelectionFromString(parentModel),
       ...(fork.parentSessionId ? { parentSessionId: fork.parentSessionId } : {}),
+      incognito: forkedSession.incognito,
       taskType: forkedSession.taskType,
       workspace: record.workspace,
     },
@@ -3061,6 +3055,7 @@ export async function getTaskTokenUsage(
  * 这些事件不 bump record.updatedAt（= sessions-index lastActivityAt），
  * 避免配置操作驱动侧栏列表按活动时间重排。
  * - ModelSelected / SessionModeChanged：纯配置变更（切模型/切模式）。
+ * - ExternalAgentConfigUpdated / ExternalAgentStatus: ACP agent selects and stall status (S6).
  * - FollowupModeChanged：打开会话会自动同步 queue/guide 偏好；这是配置，不应刷新历史活动时间。
  * - SessionTitleUpdated：标题是会话元数据；冷恢复会为了 v4 投影补发标题事件，
  *   不能因此把历史任务当成刚活动过并顶到列表最前。
@@ -3076,6 +3071,8 @@ function isNonActivitySessionEvent(event: SessionEvent): boolean {
   return (
     event.type === SessionEventType.ModelSelected ||
     event.type === SessionEventType.SessionModeChanged ||
+    event.type === SessionEventType.ExternalAgentConfigUpdated ||
+    event.type === SessionEventType.ExternalAgentStatus ||
     event.type === SessionEventType.FollowupModeChanged ||
     event.type === SessionEventType.SessionTitleUpdated ||
     event.type === SessionEventType.SessionResumed ||
@@ -3108,6 +3105,7 @@ export function onSessionEvent(
   record: ZCodeProtocolSessionRecord,
   event: SessionEvent,
 ): void {
+  sendChatGptPlanUsageUpdated(context, event);
   const computerUseOperationEvent = mapComputerUseOperationEvent(event);
   if (computerUseOperationEvent) {
     try {
@@ -3148,6 +3146,9 @@ export function onSessionEvent(
       event,
       record.app.sessionId,
     );
+    // Child-session throughput observation runs alongside chat projection. Child events do not
+    // pass through a parent record; without routing here, session/debug can never show subagent tok/s.
+    observeDetachedChildSessionDebug(String(event.sessionId), event);
     return;
   }
   // record.updatedAt 是 sessions-index 的 lastActivityAt 事实源（v4-bridge
@@ -3207,6 +3208,36 @@ export function onSessionEvent(
 
   resetLiveProtocolStreamingDeltaBatch(context, record, record.deliveryKind);
   sendProtocolSessionEvent(context, record, event, record.deliveryKind);
+}
+
+/** Forward captured usage independently of legacy deliveryKind so V4-only sessions are covered. */
+function sendChatGptPlanUsageUpdated(
+  context: ZCodeProtocolAgentServerContext,
+  event: SessionEvent,
+): void {
+  if (event.type !== SessionEventType.TurnComplete) return;
+  const payload = asRecord(event.payload);
+  const usage = asRecord(payload.usage);
+  const parsed = zcodeChatGptPlanUsageUpdatedParamsSchema.safeParse({
+    eventId: String(event.id),
+    sessionId: String(event.sessionId),
+    providerId: usage.providerRateLimitProviderId,
+    usage: usage.providerRateLimits,
+  });
+  if (!parsed.success) return;
+  try {
+    context.notify({
+      method: zcodeProtocolNotifications.chatGptPlanUsageUpdated,
+      params: parsed.data,
+    });
+  } catch (error) {
+    context.logger?.warn("ChatGPT plan usage notification failed", {
+      error: error instanceof Error ? error.message : String(error),
+      event: "zcode_protocol.chatgpt-plan.usage-updated.failed",
+      eventId: parsed.data.eventId,
+      sessionId: parsed.data.sessionId,
+    });
+  }
 }
 
 function flushLiveProtocolStreamingDeltaBatch(
@@ -3350,6 +3381,7 @@ async function requestSessionRuntimePreferences(
       return {
         askUserQuestionAutoResolutionEnabled: true,
         memoryEnabled: false,
+        memoryIndexAsContext: false,
         modelContextBudgetStrategy: DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
         nativeSearchEnhancementsEnabled: true,
         toolSearchMode: "off",
@@ -3369,6 +3401,7 @@ async function resolveSessionStartupPreferences(
     const inheritedShellSelection = source.parent.app.runtime.getSessionShellSelection();
     return {
       memoryEnabled: source.parent.memoryEnabled,
+      memoryIndexAsContext: source.parent.memoryIndexAsContext,
       subagentRuntimeConfigEnabled: source.parent.subagentRuntimeConfigEnabled,
       modelContextBudgetStrategy: DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
       nativeSearchEnhancementsEnabled: source.parent.nativeSearchEnhancementsEnabled,
@@ -3391,9 +3424,11 @@ async function resolveSessionStartupPreferences(
     additionalDirectories: runtimePreferences.additionalDirectories,
     subagentRuntimeConfigEnabled: runtimePreferences.subagentRuntimeConfigEnabled,
     memoryEnabled: runtimePreferences.memoryEnabled,
+    memoryIndexAsContext: runtimePreferences.memoryIndexAsContext,
     modelContextBudgetStrategy: DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
     nativeSearchEnhancementsEnabled: runtimePreferences.nativeSearchEnhancementsEnabled,
-    toolSearchMode: runtimePreferences.toolSearchMode,
+    // Shared compat keeps toolSearchMode optional for unsynced Hosts; the parsed default is "off".
+    toolSearchMode: runtimePreferences.toolSearchMode ?? "off",
     resolveInitialBashShellSelection: async () => {
       const executionPreferences = await requestSessionRuntimePreferences(
         context,
@@ -3426,6 +3461,52 @@ async function materializeSessionRecord(
   return createRecord(context, params, sessionId, resume, startupPreferences, trace);
 }
 
+/**
+ * Execution-worktree boundary health check (spec: execution-worktree-missing-handling.md §1-2).
+ * A single stat in the CLI process — the same machine workingDirectory resolves against. Create
+ * rejects with a precise error; resume keeps the fact marked missing so the session continues in
+ * the parent workspace while the wire meta and env bullet still see the worktree fact.
+ */
+async function resolveRecordExecutionWorktree(
+  resume: boolean,
+  executionWorktree: ZCodeSessionCreateParams["executionWorktree"] | undefined,
+): Promise<AgentRuntimeConfig["executionWorktree"]> {
+  if (!executionWorktree) return undefined;
+  if (!(await isWorktreeDirectoryMissing(executionWorktree.path))) return executionWorktree;
+  if (!resume) {
+    throw new ProtocolRequestError(
+      -32602,
+      `Execution worktree path does not exist or is not a directory: ${executionWorktree.path}`,
+    );
+  }
+  return { ...executionWorktree, missing: true };
+}
+
+/** True when the path is absent or not a directory (the async variant for cold-seed fan-outs). */
+export async function isWorktreeDirectoryMissing(path: string): Promise<boolean> {
+  try {
+    return !(await stat(path)).isDirectory();
+  } catch (error) {
+    if (isMissingWorktreePathError(error)) return true;
+    throw error;
+  }
+}
+
+/** Synchronous variant for hooks that must not await (sessions-index meta derivation). */
+export function isWorktreeDirectoryMissingSync(path: string): boolean {
+  try {
+    return !statSync(path).isDirectory();
+  } catch (error) {
+    if (isMissingWorktreePathError(error)) return true;
+    throw error;
+  }
+}
+
+function isMissingWorktreePathError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
 async function createRecord(
   context: ZCodeProtocolAgentServerContext,
   params: ZCodeSessionRecordParams,
@@ -3438,6 +3519,13 @@ async function createRecord(
     "workspace" in params && params.workspace
       ? params.workspace
       : buildWorkspaceRef({ workspacePath: context.deps.cwd ?? process.cwd() });
+  // Execution-worktree health at the session boundary (spec: execution-worktree-missing-handling.md
+  // §1-2): create rejects so a session never starts executing in a dead cwd; resume keeps the
+  // persisted fact but marks it missing, and createZCodeApp then falls back to the parent workspace.
+  const recordExecutionWorktree = await resolveRecordExecutionWorktree(
+    resume,
+    "executionWorktree" in params ? params.executionWorktree : undefined,
+  );
   const eventStore = context.deps.createSessionEventStore(sessionId);
   const traceContext = createProtocolRootTraceContext(sessionId, trace);
   const initialModel = "model" in params ? params.model : undefined;
@@ -3490,29 +3578,41 @@ async function createRecord(
       nativeSearchEnhancementsEnabled: startupPreferences.nativeSearchEnhancementsEnabled,
       toolSearch: { mode: startupPreferences.toolSearchMode },
       modelContextBudgetStrategy: startupPreferences.modelContextBudgetStrategy,
-      // Memory Settings 是现有 CLI features.memory/use 之外的总开关。只在关闭时
-      // 写入 override，避免开启值反向覆盖用户已有的 CLI 禁用配置。
+      // memoryIndexAsContext only chooses the index rendering, so write it before the master-switch
+      // override below: when Memory is disabled, { enabled: false } must win over { indexAsContext }.
+      ...(startupPreferences.memoryIndexAsContext ? { memory: { indexAsContext: true } } : {}),
+      // Memory Settings is a master switch in addition to existing CLI features.memory/use. Write an
+      // override only when disabled so the enabled value does not override a user's existing CLI disablement.
       ...(startupPreferences.memoryEnabled ? {} : { memory: { enabled: false } }),
-      // desktop-continuous session/create 由 UI 先解析 ~/.zcode/.agents 的 enabled MCP，
-      // 但 protocol app-server 自己不会读取 UI/main 侧的 MCP store；之前 createRecord 没把
-      // params.mcpServers 注入 runtimeConfig，导致日志里 runtimeHasMcpConfig=false，工具永远不启动。
-      // MCP 是 runtime 启动期配置，因此必须在 session 创建/恢复边界一次性写入 runtimeConfig.mcp。
+      // For desktop-continuous session/create, UI first resolves enabled MCP servers from
+      // ~/.zcode/.agents, but protocol app-server does not read the UI/main-side MCP store. Previously,
+      // createRecord did not inject params.mcpServers into runtimeConfig, so logs showed
+      // runtimeHasMcpConfig=false and tools never started. MCP is runtime startup configuration and
+      // must be written into runtimeConfig.mcp once at the session create/resume boundary.
       ...(runtimeMcp ? { mcp: runtimeMcp } : {}),
-      // 之前只有 TUI 路径（tui-prompt-handler）注入 titleGeneration，
-      // ZCode Protocol app-server 创建的 session（desktop/web/mobile）没有传，导致
-      // shouldAttemptSessionTitleGeneration 的 `if (!config.titleGeneration) return false`
-      // 永远命中，模型生成 title 的请求从不触发，侧边栏标题一直停在 first_input 的用户 query。
-      // 这里补一份默认配置开启；具体是否生成仍由 runtime 按 parent/taskType/turnNumber 把关。
-      // automation 执行会话显式关闭二次命名，避免回答内容覆盖原始用户 query 标题。
+      // Previously only the TUI path (tui-prompt-handler) injected titleGeneration; sessions
+      // created by the ZCode Protocol app-server (Desktop/Web/mobile) did not, so
+      // shouldAttemptSessionTitleGeneration's `if (!config.titleGeneration) return false` always
+      // matched. Model title generation never ran and the sidebar title stayed at the first_input
+      // user query. Add an enabled default here; runtime still decides whether to generate based on
+      // parent/taskType/turnNumber. Explicitly disable retitling for automation sessions so answers
+      // do not overwrite the original user-query title.
       titleGeneration: params.titleGenerationEnabled === false ? { enabled: false } : {},
       workingDirectory: workspace.workspacePath,
-      // 身份隔离与路径执行分开：core 只把 identity 写入 session.workspace_id，
-      // workingDirectory 仍是远端机器上的实际路径；本地 workspace 保持 undefined。
+      // Execution worktree: createZCodeApp derives the execution cwd from it while workspacePath
+      // above keeps the session identity/persistence anchored to the parent workspace. The fact was
+      // health-checked above (create rejects a dead path; resume carries missing: true).
+      ...(recordExecutionWorktree ? { executionWorktree: recordExecutionWorktree } : {}),
+      incognito: params.incognito,
+      // Keep identity isolation separate from execution paths: core writes only identity to
+      // session.workspace_id, while workingDirectory remains the actual path on the remote machine.
+      // Local workspaces keep it undefined.
       workspaceIdentity: workspace.workspaceIdentity as WorkspaceId | undefined,
     },
-    // ZCode Protocol app-server 以前没有注入可等待的交互 broker，
-    // core 遇到 permission / AskUserQuestion 只能走默认拒绝，UI 永远收不到阻塞请求。
-    // 这里把阻塞交互转换成 server-to-client JSON-RPC request，由 app 通过 response 释放 runtime。
+    // ZCode Protocol app-server previously injected no waitable interaction broker, so core could
+    // only deny permission/AskUserQuestion by default and the UI never received a blocking request.
+    // Convert blocking interactions into server-to-client JSON-RPC requests; the app releases runtime
+    // through its response.
     permissionBroker: createProtocolInteractionBroker(context),
     automationPort: createProtocolAutomationPort(context, () => ownSessionRecord),
     topicResourcePort: createProtocolTopicResourcePort(context),
@@ -3570,6 +3670,7 @@ async function createRecord(
     createdAt: now,
     eventStore,
     memoryEnabled: startupPreferences.memoryEnabled,
+    memoryIndexAsContext: startupPreferences.memoryIndexAsContext,
     subagentRuntimeConfigEnabled: startupPreferences.subagentRuntimeConfigEnabled,
     modelContextBudgetStrategy: startupPreferences.modelContextBudgetStrategy,
     nativeSearchEnhancementsEnabled: startupPreferences.nativeSearchEnhancementsEnabled,

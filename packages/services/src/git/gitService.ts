@@ -1,9 +1,26 @@
-import { resolve } from "node:path";
-import type { GitBranchComparison, GitFileChange, GitChangeSectionId } from "@zcode/shared";
-import { isPathInWorkspaceScope, normalizeGitPath, toWorkspaceRelativeGitPath } from "./config.js";
+/* eslint-disable max-lines */
+import { realpath } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import type {
+  GitBranchComparison,
+  GitBranchMergeStatus,
+  GitFileChange,
+  GitChangeSectionId,
+  GitWorktreeRemovalPreview,
+} from "@zcode/shared";
+import { createServiceLogger, type ServiceLogger } from "#src/logger/serviceLogger.js";
+import { toWorkspaceRelativeGitPath } from "./config.js";
+import { matchesWorkspaceScope, toAbsolutePath } from "./gitServicePathHelpers.js";
 import { filterCommitMessageFilesByCurrentSession } from "./commitMessageFileScope.js";
 import type { IGitService } from "./git.js";
 import type { GitCommitMessageGenerator } from "./gitCommitMessageGenerator.js";
+import { createGitCommandProvider } from "./providers/gitCommandProvider.js";
+import { createGhCommandProvider } from "./providers/ghCommandProvider.js";
+import {
+  createSessionPullRequestsService,
+  type SessionPullRequestsService,
+} from "./sessionPullRequestsService.js";
 import {
   createGitCliRepo,
   type GitBranchComparisonChange,
@@ -12,20 +29,6 @@ import {
   type GitStatusEntry,
   type GitStatusSnapshot,
 } from "./repo/gitCliRepo.js";
-
-function toAbsolutePath(repoRoot: string, repoRelativePath: string): string {
-  return resolve(repoRoot, ...normalizeGitPath(repoRelativePath).split("/"));
-}
-
-function matchesWorkspaceScope(
-  workspaceInRepoPath: string,
-  entry: { path: string; originalPath: string | null },
-): boolean {
-  return (
-    isPathInWorkspaceScope(entry.path, workspaceInRepoPath) ||
-    (entry.originalPath ? isPathInWorkspaceScope(entry.originalPath, workspaceInRepoPath) : false)
-  );
-}
 
 function buildFileChange(
   snapshot: GitStatusSnapshot,
@@ -55,13 +58,14 @@ function buildFileChange(
 
 function shouldIncludeUntrackedChange(
   entry: GitStatusEntry,
-  stat: { added: number; removed: number },
+  stat: { added: number; removed: number; isEmptyFile?: boolean },
 ): boolean {
-  // 构建目录里常见大量未跟踪的空文件、失效链接或不可读产物。
-  // 这类条目没有可审查的文本增删，之前会以 +0/-0 挤进 Review 面板，既污染列表又拖慢打开。
-  // 但详细 status 超限后，Git 会用末尾 `/` 的目录记录表达整棵未跟踪目录；它本身不可读，
-  // 行数必然为 0，却仍必须作为可 stage/discard 的降级入口保留。
-  return entry.path.endsWith("/") || stat.added > 0 || stat.removed > 0;
+  // Untracked binary files, broken links and unreadable build artifacts have no reviewable text; showing them as +0/-0 cluttered the panel.
+  // A zero-byte regular file is a real added file listed by `git status`, so it stays (ISSUE-042).
+  // A trailing `/` entry is a collapsed untracked directory (status over the limit); it must remain as a stage/discard fallback.
+  return (
+    entry.path.endsWith("/") || stat.isEmptyFile === true || stat.added > 0 || stat.removed > 0
+  );
 }
 
 function toChangeForSource(
@@ -120,6 +124,39 @@ function getChangesForSource(
     .filter((entry): entry is GitFileChange => Boolean(entry));
 }
 
+function toRemovalPreviewStatus(entry: GitStatusEntry): string {
+  if (entry.isUntracked) return "??";
+  const codes = [entry.x, entry.y].filter((code) => code && code !== ".").join("");
+  return codes || "M";
+}
+
+/**
+ * Deletion preview for a forced worktree removal. Unlike getChanges it keeps every untracked entry:
+ * the review filter drops zero-stat files (binary, over the stat size limit, unreadable), which force
+ * removal still deletes. An unavailable or mismatched repository throws so callers report "unknown".
+ */
+async function buildWorktreeRemovalPreview(
+  snapshot: GitStatusSnapshot,
+  workspacePath: string,
+): Promise<GitWorktreeRemovalPreview> {
+  const { resolution } = snapshot;
+  if (!resolution.isGitAvailable) throw new Error("Git is unavailable");
+  if (!resolution.isRepository) throw new Error("Worktree path is not a Git repository");
+  const [repoRoot, worktreeRoot] = await Promise.all([
+    realpath(resolution.repoRoot),
+    realpath(workspacePath),
+  ]);
+  if (repoRoot !== worktreeRoot) {
+    throw new Error("Worktree path is not the root of its Git repository");
+  }
+  return {
+    files: snapshot.entries.map((entry) => ({
+      path: entry.path,
+      status: toRemovalPreviewStatus(entry),
+    })),
+  };
+}
+
 function toBranchComparisonChange(
   snapshot: GitBranchComparisonSnapshot,
   change: GitBranchComparisonChange,
@@ -147,6 +184,17 @@ function toBranchComparisonChange(
 
 const COMMIT_MESSAGE_DIFF_FILE_LIMIT = 8;
 
+// merged-session-highlight spec: the merge observation is cached for 60s;
+// branch switches and new commits invalidate it immediately.
+const BRANCH_MERGE_STATUS_TTL_MS = 60_000;
+
+interface BranchMergeStatusCacheEntry {
+  workspacePath: string;
+  headRef: string | null;
+  status: GitBranchMergeStatus;
+  fetchedAt: number;
+}
+
 function getCommitMessageDiffQueries(
   files: readonly GitFileChange[],
   includeUnstaged: boolean,
@@ -170,10 +218,52 @@ function getCommitMessageDiffQueries(
 export function createGitService(options?: {
   repo?: GitCliRepo;
   commitMessageGenerator?: GitCommitMessageGenerator;
+  logger?: ServiceLogger;
+  now?: () => number;
+  sessionPullRequests?: SessionPullRequestsService;
 }): IGitService {
   const repo = options?.repo ?? createGitCliRepo();
+  const branchMergeLog = options?.logger ?? createServiceLogger("branch-merge-status");
+  const now = options?.now ?? Date.now;
+  const sessionPullRequests =
+    options?.sessionPullRequests ??
+    createSessionPullRequestsService({
+      repo,
+      gitRunner: createGitCommandProvider(),
+      gh: createGhCommandProvider(),
+      logger: options?.logger,
+      now,
+    });
+  const branchMergeStatusCache = new Map<string, BranchMergeStatusCacheEntry>();
+  // Bugfix: проба, ожидающая repo.getBranchMergeStatus, могла дописать в кэш
+  // результат, вычисленный ДО инвалидации (смена ветки/коммит во время полёта),
+  // и снова отравить кэш до конца TTL. Generation per key инкрементируется при
+  // инвалидации; запись разрешена только неизменившемуся поколению. Ключ
+  // регистрируется на СТАРТЕ пробы — в полёте кэш-записи ещё нет, а инвалидация
+  // обязана добраться и до неё.
+  const branchMergeGeneration = new Map<string, number>();
+  const branchMergeKeyWorkspaces = new Map<string, string>();
+
+  function workspaceMergeCacheKey(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): string {
+    return params.workspaceIdentity?.trim() || params.workspacePath;
+  }
+
+  function invalidateBranchMergeStatus(workspacePath: string): void {
+    for (const [key, registeredPath] of branchMergeKeyWorkspaces) {
+      if (registeredPath === workspacePath) {
+        branchMergeStatusCache.delete(key);
+        branchMergeGeneration.set(key, (branchMergeGeneration.get(key) ?? 0) + 1);
+      }
+    }
+  }
 
   return {
+    async getWorktreeStorageInfo(_params) {
+      return { globalWorktreesDir: join(homedir(), ".zcode", "worktrees") };
+    },
     async getRepositorySummary(params) {
       const status = await repo.getStatus(params.workspacePath);
       return status.summary;
@@ -181,6 +271,10 @@ export function createGitService(options?: {
 
     async getWorkspaceRepositoryInfo(params) {
       return await repo.getWorkspaceRepositoryInfo(params.workspacePath);
+    },
+
+    async getRepositoryRemotes(params) {
+      return await repo.getRepositoryRemotes(params.workspacePath);
     },
 
     async getLocalBranches(params) {
@@ -200,23 +294,65 @@ export function createGitService(options?: {
     },
 
     async switchBranch(params) {
-      return await repo.switchBranch(params.workspacePath, params.targetBranchName);
+      const result = await repo.switchBranch(params.workspacePath, params.targetBranchName);
+      invalidateBranchMergeStatus(params.workspacePath);
+      return result;
     },
 
     async createBranchAndSwitch(params) {
-      return await repo.createBranchAndSwitch(
+      const result = await repo.createBranchAndSwitch(
         params.workspacePath,
         params.branchName,
         params.startPoint,
       );
+      invalidateBranchMergeStatus(params.workspacePath);
+      return result;
+    },
+
+    async listWorktrees(params) {
+      return await repo.listWorktrees(params.workspacePath);
+    },
+
+    async resolveWorktreePathIdentities(params) {
+      return await repo.resolveWorktreePathIdentities(params.paths);
+    },
+
+    async verifyWorktreeUsable(params) {
+      return await repo.verifyWorktreeUsable(params.workspacePath, params.targetPath);
+    },
+
+    async ensureWorktreeExclusion(params) {
+      return await repo.ensureWorktreeExclusion(params.workspacePath, params.targetPath);
+    },
+
+    async createWorktree(params) {
+      return await repo.createWorktree(
+        params.workspacePath,
+        params.branchName,
+        params.targetPath,
+        params.baseBranch,
+      );
+    },
+
+    async removeWorktree(params) {
+      return await repo.removeWorktree(params.workspacePath, params.targetPath, params.force);
+    },
+
+    async pruneWorktrees(params) {
+      return await repo.pruneWorktrees(params.workspacePath);
     },
 
     async getChanges(params) {
       const status = await repo.getStatus(params.workspacePath);
 
-      // workspace 可以是 monorepo 子目录，所以这里统一在 service 层按作用域裁剪。
-      // 这样 repo 继续只负责“把 Git 原始状态解析出来”，上层则始终拿到符合当前 workspace 边界的数据。
+      // A workspace may be a subdirectory of a monorepo, so scope results here in the service layer.
+      // The repo remains responsible only for parsing raw Git status, while callers always receive data within the current workspace boundary.
       return getChangesForSource(status, params.sourceId);
+    },
+
+    async getWorktreeRemovalPreview(params) {
+      const status = await repo.getStatus(params.workspacePath);
+      return await buildWorktreeRemovalPreview(status, params.workspacePath);
     },
 
     async getIgnoredPaths(params) {
@@ -237,6 +373,51 @@ export function createGitService(options?: {
           .map((change) => toBranchComparisonChange(comparison, change))
           .filter((change): change is GitFileChange => Boolean(change)),
       };
+    },
+
+    async getBranchMergeStatus(params): Promise<GitBranchMergeStatus> {
+      const key = workspaceMergeCacheKey(params);
+      const cached = branchMergeStatusCache.get(key);
+      if (cached && now() - cached.fetchedAt < BRANCH_MERGE_STATUS_TTL_MS) {
+        // Bugfix: ключ кэша не содержал ветку, и внешний checkout (мимо
+        // инвалидаций приложения) до 60 с подавал статус предыдущей ветки.
+        // Попадание принимается только при совпадении HEAD: один дешёвый
+        // symbolic-ref вместо полной пробы; HEAD не читается — принимаем.
+        const headBranch = await repo.readHeadBranch(params.workspacePath);
+        const headMoved =
+          headBranch !== null &&
+          cached.status.headRef !== null &&
+          headBranch !== cached.status.headRef;
+        if (!headMoved) {
+          return cached.status;
+        }
+      }
+
+      const generation = branchMergeGeneration.get(key) ?? 0;
+      branchMergeKeyWorkspaces.set(key, params.workspacePath);
+      const status = await repo.getBranchMergeStatus(params.workspacePath);
+      if ((branchMergeGeneration.get(key) ?? 0) === generation) {
+        branchMergeStatusCache.set(key, {
+          workspacePath: params.workspacePath,
+          headRef: status.headRef,
+          status,
+          fetchedAt: now(),
+        });
+      }
+      if (cached && cached.status.state !== status.state) {
+        branchMergeLog.info(undefined, "branch merge state changed", {
+          workspacePath: params.workspacePath,
+          previous: cached?.status.state ?? null,
+          next: status.state,
+          headRef: status.headRef,
+          baseRef: status.baseRef,
+        });
+      }
+      return status;
+    },
+
+    async getSessionPullRequests(params) {
+      return await sessionPullRequests.getSessionPullRequests(params);
     },
 
     async stagePaths(params) {
@@ -302,6 +483,7 @@ export function createGitService(options?: {
       const result = await repo.commit(params.workspacePath, params.message, params.paths, {
         stagedOnly: params.stagedOnly,
       });
+      invalidateBranchMergeStatus(params.workspacePath);
       const status = await repo.getStatus(params.workspacePath);
       return {
         commitHash: result.commitHash,
@@ -326,11 +508,24 @@ export function createGitService(options?: {
       const branchComparisonPromise = params.includeBranchComparison
         ? repo.getBranchComparison(params.workspacePath)
         : Promise.resolve(null);
-      const [status, identity, branchComparisonSnapshot] = await Promise.all([
+      const [statusResult, identityResult, comparisonResult] = await Promise.allSettled([
         statusPromise,
         identityPromise,
         branchComparisonPromise,
       ]);
+      if (statusResult.status === "rejected") throw statusResult.reason;
+      if (identityResult.status === "rejected") throw identityResult.reason;
+      const status = statusResult.value;
+      const identity = identityResult.value;
+      // Comparison is auxiliary: disclose its failure without losing the current status snapshot.
+      const branchComparisonSnapshot =
+        comparisonResult.status === "fulfilled" ? comparisonResult.value : null;
+      const branchComparisonError =
+        comparisonResult.status === "rejected"
+          ? comparisonResult.reason instanceof Error
+            ? comparisonResult.reason.message || comparisonResult.reason.name
+            : String(comparisonResult.reason)
+          : null;
       const branchComparison: GitBranchComparison | null = branchComparisonSnapshot
         ? {
             baseRef: branchComparisonSnapshot.baseRef,
@@ -342,15 +537,16 @@ export function createGitService(options?: {
           }
         : null;
 
-      // UI 的自动刷新原本会并发调用 summary、unstaged、staged 三个 RPC，
-      // 每个 RPC 都重新执行一次 git status。agent 批量写文件时这会把 renderer 卡在
-      // 重复的 Git I/O 和 RPC 日志上。refresh 在一次 status 快照里切出三份数据。
+      // The UI's automatic refresh used to call three RPCs concurrently for summary, unstaged, and staged,
+      // each rerunning git status. When the agent writes many files, this leaves the renderer stuck with
+      // repeated Git I/O and RPC logs. refresh derives all three results from one status snapshot.
       return {
         summary: status.summary,
         identity,
         unstagedChanges: getChangesForSource(status, "unstaged"),
         stagedChanges: getChangesForSource(status, "staged"),
         branchComparison,
+        branchComparisonError,
       };
     },
   };

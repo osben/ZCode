@@ -1,74 +1,74 @@
-# 持续维护工作流
+# Ongoing Maintenance Workflow
 
-## 责任和状态
+## Responsibilities and states
 
-每项工作明确角色，不在文档中固定个人姓名：维护者负责资料、配置和 MR；产品负责人讨论确认既有配置调整、删除及超出现有能力的方案；验证协作者提供账号/Key 和预算；代码评审者检查规则与兼容；发布负责人记录版本或动态配置交付。一个人可以承担多种角色，但实际结果需要分别记录。
+Each piece of work names its roles, without fixing personal names in the docs: the maintainer owns material, configuration and MR; the product owner discusses and confirms adjustments and deletions of existing configuration and proposals beyond existing capability; the validation collaborator provides accounts/keys and budget; the code reviewer checks rules and compatibility; the release owner records version or dynamic configuration delivery. One person may take several roles, but the actual results are recorded separately.
 
 ```mermaid
 flowchart LR
-    A[新闻/公告/反馈线索] --> B[核实官方入口和型号]
-    B --> C[按既定原则分类：新增直接推进 / 既有变更先讨论]
-    C --> D[spec与测试先行]
-    D --> E[正式配置与派生测试配置]
-    E --> F[静态与实际请求验证]
-    F --> G[MR评审与合并]
-    G --> H[版本或动态配置交付]
-    H --> I[确认采用与后续观察]
-    F --> J[缺Key/权限/预算：保留待人工验证]
+    A[News/notice/feedback lead] --> B[Verify official entry and model]
+    B --> C[Classify by established principle: additions proceed / existing changes discussed first]
+    C --> D[spec and tests first]
+    D --> E[Production configuration and derived test configuration]
+    E --> F[Static and real-request validation]
+    F --> G[MR review and merge]
+    G --> H[Version or dynamic configuration delivery]
+    H --> I[Confirm adoption and follow-up observation]
+    F --> J[Missing key/permission/budget: keep pending manual validation]
     J --> F
 ```
 
-这些是维护阶段，不替换工作项的 `Status:`。本目录没有创建自动新闻监控或自动上线任务。
+These are maintenance phases and do not replace the work item's `Status:`. This directory creates no automated news monitoring or auto go-live task.
 
-维护项使用本地 Markdown，不创建远端 Issue。已有完整 spec 可直接作为工作项，不复制正文；本领域新增维护 spec 和研究记录放在本目录，保留明确日期、目标、验收和下表状态。若需独立 Issue，仓库位置为 `docs/issues/<feature-slug>/<NN>-<slug>.md`，这里只记录状态和本目录 spec 的引用，维护背景与要求仍完整留在本目录。
+Maintenance items use local Markdown and no remote Issue is created. An existing complete spec can serve directly as the work item without copying the body; new maintenance specs and research records of this area live in this directory with explicit date, goal, acceptance and the status in the table below. If a standalone Issue is needed, the repository location is `docs/issues/<feature-slug>/<NN>-<slug>.md`, which records only the status and the reference to this directory's spec; the maintenance background and requirements stay complete in this directory.
 
-| `Status:`         | 适用条件                                                   |
-| ----------------- | ---------------------------------------------------------- |
-| `needs-triage`    | 线索尚未分类，范围待判断                                   |
-| `needs-info`      | 缺官方事实、复现或其他必要信息                             |
-| `ready-for-human` | 等人工账号、Key、预算或产品裁决                            |
-| `ready-for-agent` | 目标与验收明确，可以实施                                   |
-| `in-progress`     | 已开始工作                                                 |
-| `done`            | 本项声明的验收完成；只完成配置 MR 的任务仍要单列未交付状态 |
-| `wontfix`         | 已决定不接入或不处理，记录理由                             |
+| `Status:`         | Applies when                                                                                                                                  |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `needs-triage`    | The lead is not yet classified, scope to be judged                                                                                            |
+| `needs-info`      | Missing official facts, reproduction or other necessary information                                                                           |
+| `ready-for-human` | Waiting for a manual account, key, budget or product ruling                                                                                   |
+| `ready-for-agent` | Goal and acceptance are clear and it can be implemented                                                                                       |
+| `in-progress`     | Work has started                                                                                                                              |
+| `done`            | The acceptance declared by this item is complete; a task that finished only the configuration MR still lists the undelivered state separately |
+| `wontfix`         | Decided not to integrate or handle, with the reason recorded                                                                                  |
 
-文件标题下写 `Status:`，依赖用本地链接，必要讨论追加 `## Comments`。Issue 状态与 MR、版本、动态配置的交付状态分别记录；不能用 `done` 代替线上采用证据。
+Write `Status:` under the file title, use local links for dependencies, and append `## Comments` for necessary discussion. The Issue status and the delivery state of MR, version and dynamic configuration are recorded separately; `done` cannot replace evidence of online adoption.
 
-## 一次配置改动
+## One configuration change
 
-1. 从最新 staging 开分支，记录基线 commit，执行 `node scripts/check-workspace-freshness.mjs`。先查本目录当前状态、研究记录和维护项，避免同一供应商重复立项。
-2. 收集精确入口、协议、原始 ID、能力、档位、参数映射、地区/套餐与退役证据。按[新增与既有变更边界](./scope.md#新增与既有变更的授权边界)分类：符合范围且无需额外适配的新增直接推进；需要新增协议、认证、动态 Header、请求/响应或历史处理及 SDK 兼容改动的候选暂缓，记录缺口，不顺带开发适配。任何已有配置调整、降级或移除先给出具体前后差异并讨论确认。
-3. 在本目录更新相应规范或维护 spec，写明目标行为、理由、非目标和验收；先写能表达目标和保留边界的测试。新模板覆盖继承与实例身份；规则变更覆盖顺序、相邻型号不误命中和最终请求。
-4. 修改正式 JSON，使用新的内容 revision；新品牌按需补 Logo/本地化。执行 `pnpm provider:config:sync-test`，把测试 JSON 同时纳入 Git。只有地址转换合同变化才改生成器。
-5. 做[验证](./validation.md)，区分正式/测试配置、普通/套餐 Key、三协议及不同入口。用户界面变化按仓库要求补 E2E，不能只测 JSON 字符串。
-6. 更新[当前状态](./current-state.md)及本项证据；对账成员、默认启停、已解析能力、精确规则和已知例外。审查是否无意写入个人覆盖、修改请求预算或改变其他模板。
-7. 完成适用检查和 diff 自检后提交 Conventional Commit，按[MR 内容与操作](./delivery.md)创建面向 staging 的 MR。缺实测证据的 MR 明确标记待验证，不宣称上线就绪。
-8. 合并后由授权发布者沿[交付规范](./delivery.md)执行，记录实际包或动态配置采用结果；MR 合并不是维护工作的线上完成证据。
+1. Branch from the latest staging, record the baseline commit, and run `node scripts/check-workspace-freshness.mjs`. First check this directory's current state, research records and maintenance items to avoid duplicate projects for the same vendor.
+2. Collect the exact entry, protocol, original ID, capability, levels, parameter mapping, region/plan and retirement evidence. Classify by the [boundary for additions and existing changes](./scope.md#authorization-boundary-for-additions-and-existing-changes): additions within scope that need no extra adaptation proceed directly; candidates needing a new protocol, authentication, dynamic Header, request/response or history handling and SDK compatibility changes are postponed with the gap recorded and no adaptation developed in passing. Any adjustment, downgrade or removal of existing configuration first gives the concrete before/after difference and is discussed and confirmed.
+3. Update the corresponding spec or maintenance spec in this directory, stating target behavior, rationale, non-goals and acceptance; first write tests that can express the goal and retained boundaries. A new template covers inheritance and instance identity; a rule change covers order, no false hit on adjacent models and the final request.
+4. Edit the production JSON with a new content revision; add Logo/localization as needed for a new brand. Run `pnpm provider:config:sync-test` and include the test JSON in Git. Change the generator only when the address conversion contract changes.
+5. Do the [validation](./validation.md), distinguishing production/test configuration, ordinary/plan keys, the three protocols and different entries. A user-interface change adds E2E as the repository requires and is not tested only on JSON strings.
+6. Update the [current state](./current-state.md) and this item's evidence; reconcile members, default enablement, resolved capabilities, exact rules and known exceptions. Review whether personal overrides were written unintentionally, request budgets modified or other templates changed.
+7. After the applicable checks and a diff self-check, commit a Conventional Commit and create an MR toward staging per [MR content and operation](./delivery.md). An MR lacking measured evidence is explicitly marked pending validation and must not claim go-live readiness.
+8. After merge, the authorized releaser executes along the [Delivery spec](./delivery.md) and records the actual package or dynamic configuration adoption result; an MR merge is not online completion evidence of the maintenance work.
 
-## 每项工作的最小记录
+## Minimum record per work item
 
-维护背景、决定和验收记录放到本目录的相应规范、维护 spec 或日期研究中；独立 Issue 只链接任务，不另存一份规范正文：
+The maintenance background, decisions and acceptance records go into the corresponding spec, maintenance spec or dated research of this directory; a standalone Issue only links the task and does not store a second copy of the spec body:
 
-| 字段       | 必填内容                                                                      |
-| ---------- | ----------------------------------------------------------------------------- |
-| 标识与状态 | templateId / 原始 modelId / 协议；维护阶段与 Issue Status                     |
-| 范围决定   | 新增/调整/下线；重点/一般维护；新增适用的已确认原则，或既有变更的人工确认记录 |
-| 来源       | 官方链接、发布日期、生效日、检查日期；冲突或未知项                            |
-| 配置差异   | 成员、enabled、能力、Map、URL、Access、正式/测试转换                          |
-| 人工协作   | 缺哪类账号/Key、地区/套餐、所需权限、预算与安全交付方式；不记录 Secret        |
-| 验证       | 基线 commit/revision、配置 hash、用例、实际请求协议、结果和未覆盖项           |
-| Git        | commit、MR、目标分支、评审结论与后续任务                                      |
-| 交付       | 计划方式、兼容客户端、最终文件 hash、实际版本/动态 revision 与采用结果        |
-| 后续       | owner 角色、下一次复核触发、退役日期或解除阻塞的条件                          |
+| Field                | Required content                                                                                                                                         |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity and status  | templateId / original modelId / protocol; maintenance phase and Issue Status                                                                             |
+| Scope decision       | Add/adjust/retire; key/general maintenance; the applicable confirmed principle for an addition, or the manual confirmation record for an existing change |
+| Sources              | Official links, publication date, effective date, check date; conflicts or unknowns                                                                      |
+| Configuration diff   | Members, enabled, capabilities, Map, URL, Access, production/test conversion                                                                             |
+| Manual collaboration | Which kind of account/key, region/plan, required permissions, budget and safe delivery method is missing; no Secret recorded                             |
+| Validation           | Baseline commit/revision, configuration hash, cases, actual request protocol, results and uncovered items                                                |
+| Git                  | commit, MR, target branch, review conclusion and follow-up tasks                                                                                         |
+| Delivery             | Planned method, compatible clients, final file hash, actual version/dynamic revision and adoption result                                                 |
+| Follow-up            | owner role, trigger of the next re-check, retirement date or condition to unblock                                                                        |
 
-## 范围扩大和清理
+## Scope expansion and cleanup
 
-每月复核重点/一般模型是否仍符合需求、待人工项是否长期无人处理、聚合目录是否遗漏已维护上游、官方退役与别名是否变化。范围扩大按已确认原则审查证据和维护资源，无须逐个重问新增授权；超出现有协议能力的候选暂缓。不把“支持更多”当作默认启用全部型号的理由。
+Monthly re-check whether key/general models still fit demand, whether manual items have gone unhandled for long, whether the aggregating catalog misses maintained upstreams, and whether official retirements and aliases changed. Scope expansion reviews evidence and maintenance resources under the confirmed principles without re-asking addition authorization one by one; candidates beyond existing protocol capability are postponed. "Supporting more" is not a reason to enable all models by default.
 
-无效模板成员先按真实入口证据处理；能力规则和精确规则另查用途。删除模板要检查现有实例的模板引用、用户自定义 URL、保存的模型选择和必要迁移。恢复默认、关闭模型、移除成员、移除模板是不同动作，不能用一次大批删除代替。
+An invalid template member is first handled by real entry evidence; capability rules and exact rules are checked separately for their purpose. Deleting a template requires checking template references of existing instances, user-defined URLs, saved model selections and necessary migration. Restoring defaults, disabling a model, removing a member and removing a template are different actions and cannot be replaced by one large batch deletion.
 
-## 文档同步
+## Documentation sync
 
-本目录完整承接模板维护所需的领域概念、合同、理由、验收和当前库存。新增规则必须在本目录解释清楚，不能用“参见其他设计/待办”替代正文；代码用于核验实现，官方资料用于追溯外部事实。历史调查保留原时点证据。目录外入口和 AUF 可以引用这里，不维护第二份现行规范或可执行型号目录。
+This directory fully carries the domain concepts, contracts, rationale, acceptance and current inventory needed for template maintenance. New rules must be explained in this directory and "see other design/to-do" cannot replace the body; code is for verifying the implementation and official material for tracing external facts. Historical investigation keeps the evidence of its time. Entries and AUF outside the directory may reference here but do not maintain a second current spec or an executable model catalog.
 
-新原则或例外一经确认，立即更新本目录对应正文及受影响流程，不等到下一次配置 MR。每次配置 MR 都要检查正式/测试同源、当前库存、研究状态和旧入口导航。仅整理文档时不顺带修配置、不抬 revision，也不把发现的问题写成已经解决。
+Once a new principle or exception is confirmed, immediately update the corresponding body and affected flow in this directory and do not wait for the next configuration MR. Every configuration MR checks production/test single-source, the current inventory, research state and old entry navigation. When only organizing docs, do not fix configuration in passing, do not bump the revision, and do not write found problems as resolved.

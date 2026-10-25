@@ -34,7 +34,7 @@ async function listDocuments(root: string): Promise<string[]> {
       throw error;
     },
   );
-  // 自定义 profile 的发现范围与 depth:0 监听一致，避免深层定义只在重扫时变化。
+  // The discovery scope for custom profiles matches the depth:0 watch, so deep definitions never change only on rescan.
   return entries
     .filter((entry) => entry.isFile() && /\.(md|markdown)$/iu.test(entry.name))
     .map((entry) => join(root, entry.name));
@@ -64,7 +64,7 @@ async function loadDocuments(
       }
       context.signal.throwIfAborted();
       const content = await readFile(path, "utf8").catch((error: NodeJS.ErrnoException) => {
-        // 删除可能先于 change 的读取完成，以实际文件不存在为准，不回填旧 profile。
+        // The deletion may complete before the change's read; a missing actual file wins and the old profile is never backfilled.
         if (error.code === "ENOENT") return undefined;
         throw error;
       });
@@ -85,7 +85,7 @@ const profiles = (documents: Profiles) =>
     .sort(([a], [b]) => a.localeCompare(b))
     .flatMap(([, parsed]) => (parsed.profile ? [parsed.profile] : []));
 
-/** Host 是解析结果的唯一 owner；每个父 turn 的 RPC 只复制已完成的内存 snapshot。 */
+/** The Host is the sole owner of parse results; each parent turn's RPC only copies completed in-memory snapshots. */
 export function createSubagentRuntimeConfigCache(reader: ConfigReader) {
   let disposed = false;
   let user: { path: string; scope: Scope<Profiles> } | undefined;
@@ -101,7 +101,7 @@ export function createSubagentRuntimeConfigCache(reader: ConfigReader) {
     if (disposed || !user || !state) return;
     for (const [workspaceKey, project] of workspaces) {
       const scopes = [user.scope, state.scope, project];
-      // 只保留已有完整快照；首次超时回退可用各范围的完整结果恢复，不必等共享刷新结束。
+      // Keep only existing complete snapshots; a first-time timeout fallback can recover from each scope's complete results without waiting for the shared refresh to finish.
       if (snapshots.get(workspaceKey)?.kind === "ready" && scopes.some((scope) => scope.busy))
         continue;
       if (scopes.some((scope) => scope.failed))
@@ -138,7 +138,7 @@ export function createSubagentRuntimeConfigCache(reader: ConfigReader) {
       do {
         await Promise.all(scopes.map((scope) => scope.settle()));
       } while (waiting && scopes.some((scope) => scope.busy));
-      // 首次 ready 在 scope 的 onSettled 之后才完成；启动方已返回时也必须发布。
+      // First-time ready completes after the scope's onSettled; publish even when the starter has already returned.
       publish();
     })();
     try {
@@ -155,7 +155,7 @@ export function createSubagentRuntimeConfigCache(reader: ConfigReader) {
         }),
       ]);
     } finally {
-      // 只结束调用方等待，不中止共享加载或清除文件事件；销毁仍由 scope 负责取消。
+      // Only ends the caller's wait; never aborts the shared load or clears file events. Disposal is still cancelled by the scope.
       waiting = false;
       if (timer) clearTimeout(timer);
     }
@@ -169,7 +169,7 @@ export function createSubagentRuntimeConfigCache(reader: ConfigReader) {
         await Promise.all([reader.readUserRoot(), reader.readStatePath()])
       ).map((path) => resolve(path)) as [string, string];
       assertActive();
-      // 新 workspace 复用共享缓存；既有 workspace 的显式重启才重建监听并全量读取。
+      // New workspaces reuse the shared cache; only an explicit restart of an existing workspace rebuilds the watches and re-reads everything.
       const reload = !workspace || workspaces.has(key(workspace));
       if (!user || user.path !== userPath || reload) {
         user?.scope.dispose();
@@ -183,7 +183,7 @@ export function createSubagentRuntimeConfigCache(reader: ConfigReader) {
           scope: createSubagentConfigScope({
             root: dirname(statePath),
             file: statePath,
-            // 使用准备时固定的路径，文件事件不重读 CLI 配置，也不切换到另一 storage root。
+            // Use the path pinned at prepare time; file events neither re-read CLI config nor switch to another storage root.
             load: async (_previous, _changes, context) => {
               await context.waitForStableFile(statePath);
               context.signal.throwIfAborted();

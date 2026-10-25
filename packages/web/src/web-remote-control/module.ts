@@ -1,7 +1,7 @@
-// 依赖与 architecture-policy.yaml 同步；新增文件必须属于此 managed 边界。
+// Dependencies must stay in sync with architecture-policy.yaml; new files must belong to this managed boundary.
 export const webRemoteControlModule = {
   id: "web-remote-control",
-  requires: ["client", "mobile-ui", "shared", "ui", "web", "web-remote-relay"],
+  requires: ["client", "mobile-ui", "remote-relay-protocol", "shared", "ui", "web"],
   provides: ["web-remote-control"],
   publicEntrypoints: [
     "index.ts",

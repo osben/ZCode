@@ -2,13 +2,13 @@ import { join } from "node:path";
 
 export const DEFAULT_GIT_DISCOVERY_TIMEOUT_MS = 3_000;
 export const DEFAULT_GIT_COMMAND_TIMEOUT_MS = 15_000;
-// `git push` 可能会被仓库的 pre-push hook 阻塞较长时间（例如执行 `pnpm test`）。
-// 继续沿用普通 Git 命令的 15s 超时会把显式 push 误判成失败，因此单独放宽 push 超时。
+// `git push` may be blocked for a long time by the repository's pre-push hook (for example, while running `pnpm test`).
+// The 15s timeout used for ordinary Git commands would incorrectly fail an explicit push, so extend the timeout for push only.
 export const DEFAULT_GIT_PUSH_TIMEOUT_MS = 10 * 60_000;
 export const DEFAULT_GIT_DIFF_TIMEOUT_MS = 20_000;
 export const DEFAULT_GIT_OUTPUT_BYTES = 512 * 1024;
-// pre-push hook 可能会输出完整测试日志；继续沿用普通 Git 命令的 512KB 上限，
-// 会在真正 push 完成前因为日志过多被截断终止。这里仅给 push 单独放宽输出配额。
+// A pre-push hook may output full test logs; the 512KB limit for ordinary Git commands
+// may truncate and stop the operation before the push finishes. Increase the output limit for push only.
 export const DEFAULT_GIT_PUSH_OUTPUT_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_GIT_DIFF_BYTES = 1024 * 1024;
 export const GIT_UNTRACKED_STAT_MAX_BYTES = 1024 * 1024;
@@ -59,14 +59,48 @@ export function getGitBinaryCandidates(): string[] {
   return candidates.filter((candidate): candidate is string => Boolean(candidate));
 }
 
+export const DEFAULT_GH_DISCOVERY_TIMEOUT_MS = 3_000;
+export const DEFAULT_GH_COMMAND_TIMEOUT_MS = 20_000;
+export const DEFAULT_GH_OUTPUT_BYTES = 1024 * 1024;
+
+const WINDOWS_GH_BINARY_CANDIDATES = [
+  join(
+    process.env.ProgramW6432 ?? process.env.ProgramFiles ?? "C:\\Program Files",
+    "GitHub CLI",
+    "gh.exe",
+  ),
+  join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "GitHub CLI", "gh.exe"),
+];
+
+// sidebar-pr-status spec: binary candidates mirror getGitBinaryCandidates
+// (ZCODE_GH_BINARY override doubles as the E2E seam for a fake gh script).
+export function getGhBinaryCandidates(): string[] {
+  const candidates = [process.env.ZCODE_GH_BINARY?.trim(), "gh"];
+  if (process.platform === "win32") {
+    candidates.push(...WINDOWS_GH_BINARY_CANDIDATES);
+  }
+
+  return candidates.filter((candidate): candidate is string => Boolean(candidate));
+}
+
+// gh must never wait for input and output must stay machine-readable.
+export function getGhCommandEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    GH_PROMPT_DISABLED: "1",
+    GH_NO_UPDATE_NOTIFIER: "1",
+    NO_COLOR: "1",
+  };
+}
+
 export function getGitCommandEnv(): NodeJS.ProcessEnv {
   const env = {
     ...process.env,
   };
 
-  // pre-push hook 会向子进程注入当前仓库的 GIT_DIR/GIT_WORK_TREE 等 local env。
-  // 如果这里原样透传，Git 服务命令会“串仓”到 hook 所在仓库，临时仓库/远端仓库操作都会被污染。
-  // 统一先清理 local env，再叠加 ZCode 约束变量，保证命令只依赖显式 cwd。
+  // The pre-push hook injects local environment variables such as GIT_DIR/GIT_WORK_TREE into child processes.
+  // Passing them through unchanged makes Git service commands run against the hook's repository, contaminating temporary/remote repository operations.
+  // Always clear Git-local environment variables first, then add ZCode constraint variables so commands depend only on the explicit cwd.
   for (const variableName of GIT_LOCAL_ENV_VARS) {
     delete env[variableName];
   }

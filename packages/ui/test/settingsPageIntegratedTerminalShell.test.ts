@@ -1,6 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const selectedSection = vi.hoisted(() => ({ value: "general" }));
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
@@ -225,6 +225,7 @@ vi.mock("@/lib/settingsNavigation.js", () => ({
   clearPendingSettingsPluginScopeKey: () => undefined,
   consumePendingSettingsModelProviderTarget: () => undefined,
   consumePendingSettingsUsageTab: () => undefined,
+  consumePendingSettingsSessionsScope: () => undefined,
   consumePendingSettingsSourceServerId: () => undefined,
   consumePendingSettingsSourceServerDetails: () => false,
   resolveSettingsSection: (section: string) => section,
@@ -333,6 +334,9 @@ function flushPendingEffects() {
 }
 
 describe("SettingsPage integrated terminal shell", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
   beforeEach(() => {
     pendingEffects.length = 0;
     selectedSection.value = "general";
@@ -572,6 +576,8 @@ describe("SettingsPage integrated terminal shell", () => {
     expect(remoteServices.settingService.updateDataBaseDir).not.toHaveBeenCalled();
   });
   it("hydrates each field from its owning Environment despite conflicting snapshots", async () => {
+    // Effects run in the node test environment; SettingsPage subscribes to window events there.
+    vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
     localServices.settingService.get.mockResolvedValueOnce({
       dataBaseDir: "/desktop/data",
       httpProxy: "http://desktop-proxy:7890",
@@ -596,6 +602,8 @@ describe("SettingsPage integrated terminal shell", () => {
   });
 
   it("ignores pending settings reads after the owning page is detached", async () => {
+    // Effects run in the node test environment; SettingsPage subscribes to window events there.
+    vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
     let completeLocal!: (value: Record<string, unknown>) => void;
     let completeSource!: (value: Record<string, unknown>) => void;
     localServices.settingService.get.mockReturnValueOnce(

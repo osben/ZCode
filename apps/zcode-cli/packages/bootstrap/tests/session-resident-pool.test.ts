@@ -576,7 +576,7 @@ describe("deactivateSessionRecord（执行面）", () => {
       settled = true;
     });
     await Promise.resolve();
-    expect(settled).toBe(false); // close 收尾未完成前不结算
+    expect(settled).toBe(false); // does not settle until close finalization completes
     harness.releaseClose();
     await promise;
     expect(settled).toBe(true);
@@ -914,7 +914,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
       appOverrides: {
         close: async () => {
           closeCount += 1;
-          if (closeCount === 1) await closeGate; // 只挂第一次去激活的收尾
+          if (closeCount === 1) await closeGate; // only hold the first deactivation's finalization
         },
       },
     });
@@ -929,7 +929,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
           subscriptionId: subscribed.ack.subscriptionId,
         },
       });
-      expect(sessions.has(SESSION_ID)).toBe(false); // 同步段已摘除，close 收尾挂起中
+      expect(sessions.has(SESSION_ID)).toBe(false); // removed in the synchronous slice, close finalization pending
 
       let resubscribeSettled = false;
       const resubscribePromise = subscribeConversation(server, "gate-resub", "conn-gate-2").then(
@@ -939,7 +939,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
         },
       );
       await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(resubscribeSettled).toBe(false); // 闸门：收尾未完成不物化新 record
+      expect(resubscribeSettled).toBe(false); // gate: no new record materializes before finalization completes
       expect(createdApps).toHaveLength(1);
 
       releaseClose?.();

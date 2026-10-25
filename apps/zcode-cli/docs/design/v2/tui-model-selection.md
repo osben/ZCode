@@ -35,14 +35,9 @@ contract.
 
 ## State Boundary
 
-TUI 不拥有选型状态，只渲染 Bootstrap 的每会话 `cliDefaultSelection`。CLI 装配显式使用
-`modelSelectionMode: "cli-default"`；`/model` 和 `/effort` 修改并持久化下一条用户消息的默认选择，
-不提前改变 Core Session Selection。CLI 用户消息在入口补齐 Selection，实际接受后成为 Session
-续跑选择。App/Bot 的现有显式配置入口不因 CLI 装配改变语义。
+The TUI does not own selection state; it only renders the per-session `cliDefaultSelection` of Bootstrap. The CLI assembly explicitly uses `modelSelectionMode: "cli-default"`; `/model` and `/effort` modify and persist the default selection for the next user message and do not change the Core Session Selection in advance. A CLI user message gets its Selection filled in at the entry, and once actually accepted it becomes the Session continuation selection. The existing explicit configuration entries of App/Bot do not change semantics because of the CLI assembly.
 
-新 CLI 会话从 Provider Config 的 `config.defaultModelSelection` 初始化默认值，恢复会话读现有
-`runtime/model_selection` entry。全局保存继续复用现有命令路径，不引入新配置文件或迁移。
-后台唤起和 Goal 直接使用 Session Selection；不会从 CLI 默认值补模型。闲时临时选择不写普通用户 entry。
+A new CLI session initializes its default from `config.defaultModelSelection` of the Provider Config; a restored session reads the existing `runtime/model_selection` entry. Global saving keeps reusing the existing command path, introducing no new config file or migration. Background wake-up and Goal use the Session Selection directly and do not fill in a model from the CLI default. A temporary idle selection does not write an ordinary user entry.
 
 The TUI sends `/model ...` through the same submit callback as other slash commands. The command center asks the app/server for current model state, available model options, and applies the selected model through an explicit app-level method. The TUI renders the returned command text and updates its session metadata projection from the returned `model` and `thoughtLevel` fields.
 

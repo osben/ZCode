@@ -1,91 +1,78 @@
-# Exa MCP OAuth 重认证问题根因分析
+# Exa MCP OAuth Re-authentication Root Cause Analysis
 
-> 分析日期：2026-08-13
-> 分析基线：`exa-oauth-analysis` / `bfc91c54a9507beae4820c58f86a25fc3c44104d`
-> 范围：只分析，不修改生产代码，不执行 OAuth 授权或 token 请求
-> MCP server：`plugin:exa:exa`
+> Analysis date: 2026-08-13
+> Analysis baseline: `exa-oauth-analysis` / `bfc91c54a9507beae4820c58f86a25fc3c44104d`
+> Scope: analysis only; no production code changes; no OAuth authorization or token requests executed
+> MCP server: `plugin:exa:exa`
+>
+> Compaction note: source line numbers and test line ranges were dropped; locations are given as file paths. Full history: `git show 45f808f7:docs/analysis/exa-oauth-reauth-analysis.md`.
 
-## 1. 结论摘要
+## 1. Conclusion Summary
 
-### 问题 1：为什么过一段时间后要求重新认证
+### Problem 1: Why Re-authentication Is Required After a Period of Time
 
-已确认的直接机制是：
+Confirmed direct mechanism:
 
-1. ZCode 当前实现会持久化并加载 refresh token；refresh 成功后也会原子更新 client/token pair。当前实现未发现“正常保存后重启必丢 refresh token”的代码 bug。
-2. MCP SDK 在 MCP 返回未授权时，会优先使用已保存的 refresh token。若 Exa 返回 `invalid_grant`，SDK 会删除 token、保留 client，然后重试并进入浏览器授权。
-3. 本机运行时现场正是“只剩 client/discovery，没有 token/canonical pair”，所以当前状态必然进入重新授权，而不是继续 refresh。
-4. 2026-08-12 的日志显示 Exa 在 `08:54:49Z` 仍可连接，`09:00:13Z` 已进入交互授权，符合“access token 失效后 refresh 未恢复，token 被失效处理”的时间线。
+1. The current ZCode implementation persists and loads refresh tokens, and after a successful refresh atomically updates the client/token pair. No code bug was found that makes refresh tokens get lost after a normal save and restart.
+2. When MCP returns unauthorized, the MCP SDK first uses the saved refresh token. If Exa returns `invalid_grant`, the SDK deletes tokens, keeps the client, then retries and enters browser authorization.
+3. The local state at the time was exactly "only client/discovery remains, no token/canonical pair", so entering re-authorization (not refresh) was inevitable.
+4. 2026-08-12 logs show Exa connected at `08:54:49Z` and entered interactive authorization by `09:00:13Z`, matching "access token expired, refresh did not recover, tokens invalidated".
 
-但是，现有日志没有记录 Exa token endpoint 的响应状态和 OAuth error code，因此无法仅凭当前证据唯一判定 refresh 失败的上游原因是：
+Logs do not record the Exa token endpoint's response status and OAuth error code, so the upstream cause of the refresh failure cannot be determined: Exa actively expired/revoked the refresh token; historical old versions or concurrent authorization once produced a client/token mismatch; or other Exa server-side policy or temporary errors.
 
-- Exa 主动过期/撤销了 refresh token；
-- 历史旧版本或并发授权曾生成 client/token 不配对；
-- 其他 Exa 服务端策略或临时错误。
+The credential implementation already uses canonical pairs, cross-process file locks, and compare-and-delete against client/token interleaved overwrites. "Desktop and CLI's current code overwrite each other's tokens" is therefore not the confirmed root cause; legacy-key writes from un-upgraded old processes remain a compatibility-window risk.
 
-当前凭据实现已经用 canonical pair、跨进程文件锁和 compare-and-delete 处理 client/token 交错覆盖。因此“desktop 与 CLI 的当前代码仍会普通地互相覆盖 token”不是本次可确认根因；未升级的旧进程写 legacy key 仍属于兼容窗口风险。
+Qualitative assessment:
 
-**定性：**
+- Re-authorization after refresh failure: normal OAuth degradation.
+- Token endpoint error codes not recorded, so token expiry, revocation, client mismatch, and server errors cannot be told apart: **observability design defect**.
+- Tokens missing from the current environment: **confirmed fact**; the specific deletion reason is affected by a manual reset on 2026-08-11 and is not all attributable to the program.
+- Multiple independent runtimes can start OAuth/DCR for the same MCP simultaneously: **architecture design defect** that amplifies credential generation and re-authentication instability.
 
-- refresh 失败后重新授权：OAuth 的正常降级行为。
-- 未记录 token endpoint 错误码，导致无法区分 token 过期、撤销、client mismatch 和服务端错误：**可观测性设计缺陷**。
-- 当前现场缺 token：**已确认事实**；具体删除原因受 2026-08-11 的人工 reset 操作影响，不能全部归因于程序。
-- 多个独立运行时可同时发起同一 MCP 的 OAuth/DCR：**架构设计缺陷**，会放大凭据换代和重认证不稳定性。
+### Problem 2: Why Secondary Authentication Times Out
 
-### 问题 2：为什么二次认证超时
+Confirmed direct root cause:
 
-直接根因已确认：
+- The session startup path hard-codes the manual OAuth wait limit to **15 seconds**, overriding `oauth.ts`'s default **5 minutes**.
+- After 15 seconds the connection is marked `MCP server plugin:exa:exa OAuth authorization timed out`, the local callback server is closed, and the current state's PKCE verifier is cleared.
+- Logging in via browser, selecting a team, reading the page, and clicking Authorize usually cannot be done reliably within 15 seconds.
 
-- Session 启动路径把人工 OAuth 等待上限硬编码为 **15 秒**。
-- 该值覆盖 `oauth.ts` 的默认 **5 分钟**。
-- 15 秒后，连接被标记为 `MCP server plugin:exa:exa OAuth authorization timed out`，本地 callback server 被关闭，当前 state 的 PKCE verifier 被清理。
-- 用户在浏览器登录、选择 team、阅读页面并点击 Authorize，通常无法稳定在 15 秒内完成。
+The settings page's own background connections do not pass 15 seconds and use 5 minutes. But the settings page lease and Session lease are different connections by default (session isolation) with different `mcpConnectionId`, callback ports, states, and browser URLs, so the settings page's 5-minute wait cannot extend or take over the Session's 15-second OAuth.
 
-设置页自己的后台连接通常不传 15 秒，走 5 分钟；但设置页 lease 和 Session lease 默认按 session isolation 建立不同连接，所以它们有不同的 `mcpConnectionId`、callback 端口、state 和浏览器 URL。设置页的 5 分钟等待不能延长或接管 Session 的 15 秒 OAuth。
+Qualitative assessment:
 
-**定性：**
+- Session limiting human-browser authorization to 15 seconds: **implementation bug / product behavior bug**.
+- Settings page and Session creating multiple independent authorization transactions for the same OAuth identity, without cross-lease/process single-flight: **architecture design defect**.
+- Callback listener and PKCE state timeout cleanup are basically correct and not the stale-state root cause.
 
-- Session 把人机浏览器授权限制为 15 秒：**实现 bug / 产品行为 bug**。
-- 设置页和 Session 对同一 OAuth 身份建立多个独立授权事务，缺少跨 lease/process single-flight：**架构设计缺陷**。
-- callback listener 与 PKCE state 的超时清理本身基本正确，不是 stale state 根因。
+### Exa `Server Components render` Error
 
-### Exa `Server Components render` 错误
+Strongest ZCode-side contributor:
 
-最强的 ZCode 侧诱因是：
+1. DCR registration writes the current random localhost port into `redirect_uris`.
+2. Each later OAuth session listens on another random port.
+3. ZCode prefers reusing the persisted old `client_id`.
+4. A second authorization after refresh may therefore send "old `client_id` + new `redirect_uri`".
 
-1. DCR 注册时把当次随机 localhost 端口写入 `redirect_uris`。
-2. 后续 OAuth session 每次重新监听另一个随机端口。
-3. ZCode 优先复用持久化的旧 `client_id`。
-4. refresh 失败后二次授权因此可能发出“旧 `client_id` + 新 `redirect_uri`”。
+The registered redirect URI port is `54735`; failed authorizations on 2026-08-13 used new ports `58670`, `58676`. If Exa matches DCR redirect URIs exactly, redirect validation fails; if the Exa Next.js authorization page does not render this as a normal OAuth error page, it can show as a generic Server Components production error.
 
-本机当前 client 注册的 redirect URI 端口是 `54735`；2026-08-13 的失败授权使用过 `58670`、`58676` 等新端口。若 Exa 对 DCR redirect URI 做精确匹配，这会触发 redirect 校验失败；Exa Next.js 授权页没有把它转为正常 OAuth 错误页时，可能表现为 generic Server Components production error。
+This is a **high-confidence inference, not a captured Exa server-side stack trace**. RFC 8252 allows arbitrary ports for loopback native client authorization, so compliant servers may ignore port differences; without a logged-in network trace, whether Exa implements the exception cannot be confirmed. Anonymous read-only probes show both redirects first `307` to login entries, so Exa defers final validation to after login; match or mismatch at the anonymous stage is neither confirmed nor excluded.
 
-这是**高可信推断，不是已直接抓到的 Exa 服务端堆栈**。RFC 8252 对 loopback native client 允许授权时使用任意端口，合规服务端可以忽略端口差异；本次没有登录态网络 trace，无法确认 Exa 是否实现了该例外。匿名只读探针中，两种 redirect 都先 `307` 到登录入口，说明 Exa 把最终校验推迟到了登录后，未能在匿名阶段证实或排除 mismatch。
+Multi-connection concurrency produces multiple client/state/authorization URLs, so users may click timed-out URLs or non-target connection URLs; this is a confirmed amplifier. Exa pages using a generic SSR error instead of a structured OAuth error is the other party's page robustness issue.
 
-另外，多 connection 并发产生多个 client/state/authorization URL，会使用户点击到已超时 URL 或非目标连接 URL；这是已确认的放大因素。Exa 页面自身用 generic SSR 错误代替结构化 OAuth 错误，也是对方页面的健壮性问题。
+## 2. Fact Boundaries and Evidence Levels
 
-## 2. 事实边界与证据等级
+- **Confirmed**: code, logs, or local persistent state prove it directly.
+- **Strong consistent inference**: implementation behavior matches the on-site form, but token endpoint or Exa server logs are missing.
+- **Candidate contributor**: valid in the protocol; current evidence cannot rank it as the unique root cause.
 
-本文使用以下标记：
+Key evidence not obtained: Exa `/api/oauth/token` HTTP status, `error`, `error_description` for failed refresh responses; logged-in browser Network trace and Next.js digest for `dashboard.exa.ai` / `auth.exa.ai`; Exa server-side client registry, redirect validation, and Server Components stack traces. This document therefore does not state `invalid_grant`, `invalid_redirect_uri`, or Exa deleting DCR clients as observed facts.
 
-- **确认**：代码、日志或本机持久化状态可直接证明。
-- **强一致推断**：实现行为与现场形态吻合，但缺少 token endpoint 或 Exa 服务端日志。
-- **候选诱因**：协议上成立，当前证据不能排序到唯一根因。
+## 3. Actual Plugin Configuration and OAuth Discovery
 
-未取得的关键证据：
+### 3.1 Loaded Plugin Configuration
 
-- Exa `/api/oauth/token` 对失败 refresh 的 HTTP 状态、`error`、`error_description`。
-- 登录态下 `dashboard.exa.ai` / `auth.exa.ai` 的浏览器 Network trace 和 Next.js digest。
-- Exa 服务端的 client registry、redirect 校验和 Server Components 堆栈。
-
-因此本文不会把 `invalid_grant`、`invalid_redirect_uri` 或 Exa 删除 DCR client 写成已直接观测事实。
-
-## 3. 实际插件配置与 OAuth discovery
-
-### 3.1 实际加载的插件配置
-
-实际官方插件 manifest：
-
-`~/.zcode/cli/plugins/cache/claude-plugins-official/exa/3.4.0/.claude-plugin/plugin.json:10-17`
+The official plugin manifest `~/.zcode/cli/plugins/cache/claude-plugins-official/exa/3.4.0/.claude-plugin/plugin.json` defines:
 
 ```json
 {
@@ -99,20 +86,13 @@
 }
 ```
 
-插件根目录另有 `mcp.json:3-9`，URL 参数是 `client=agent-plugin`。但当前 loader 默认查找的是 `.mcp.json`（带前导点），而该目录没有 `.mcp.json`；实际定义来自 manifest。若存在 `.mcp.json`，loader 才会使用 `{ ...fromFile, ...fromManifest }`，并由 manifest 覆盖同名项，见：
+The plugin root also has `mcp.json` with URL parameter `client=agent-plugin`, but the loader looks for `.mcp.json` (leading dot), which does not exist there; definitions come from the manifest. If `.mcp.json` existed, the loader would use `{ ...fromFile, ...fromManifest }` with the manifest overriding same-named items (`apps/zcode-cli/packages/adapters/src/plugins/mcp.ts`). The actual configuration and credential prefix correspond to the `claude-code-plugin` URL; the root `mcp.json` is not on this loading path.
 
-- `apps/zcode-cli/packages/adapters/src/plugins/mcp.ts:17-24`
-- `apps/zcode-cli/packages/adapters/src/plugins/mcp.ts:34-42`
+The manifest has no explicit OAuth configuration. For HTTP/SSE MCP without Authorization headers, ZCode enables authorization_code discovery automatically (`apps/zcode-cli/packages/adapters/src/mcp/index.ts`).
 
-因此当前实际配置和凭据 prefix 对应的是 `claude-code-plugin` URL，根目录的 `mcp.json` 未进入这条加载路径。
+### 3.2 2026-08-13 On-site Discovery
 
-manifest 没有显式 OAuth 配置。对于没有 Authorization header 的 HTTP/SSE MCP，ZCode 自动启用 authorization_code discovery：
-
-- `apps/zcode-cli/packages/adapters/src/mcp/index.ts:1012-1025`
-
-### 3.2 2026-08-13 现场 discovery
-
-对 MCP endpoint 做了无凭据只读请求：
+A credential-less read-only request to the MCP endpoint returned:
 
 ```text
 HTTP 401
@@ -120,7 +100,7 @@ WWW-Authenticate:
   Bearer resource_metadata="https://mcp.exa.ai/.well-known/oauth-protected-resource/mcp"
 ```
 
-resource metadata：
+Resource metadata:
 
 ```text
 resource              https://mcp.exa.ai/mcp
@@ -128,7 +108,7 @@ authorization_server  https://auth.exa.ai
 scope                 mcp:tools
 ```
 
-authorization server metadata：
+Authorization server metadata:
 
 ```text
 authorization_endpoint              https://auth.exa.ai/oauth/authorize
@@ -139,35 +119,35 @@ code_challenge_methods_supported    S256
 token_endpoint_auth_methods         none
 ```
 
-Exa 明确声明支持 refresh token 和 public client。其 scope 中没有 `offline_access`，但不能据此断言它不签发 refresh token；MCP SDK 仅在服务端声明 `offline_access` 时自动追加该 scope。
+Exa declares support for refresh tokens and public clients. Its scopes do not include `offline_access`, but that does not show it issues no refresh tokens; the MCP SDK appends this scope only when the server declares `offline_access`.
 
-## 4. 首次授权时序
+## 4. First Authorization Timing
 
-以下时序综合代码和 2026-08-11 的真实日志。当天同时出现三个 OAuth connection；其中两个约 15 秒失败，另一个约 74 秒后成功。
+Combines code and real 2026-08-11 logs. Three OAuth connections appeared simultaneously that day; two failed around 15 seconds and one succeeded around 74 seconds.
 
 ```text
-用户/浏览器       设置页 lease          Session lease A/B        OAuth Provider       Exa Auth        凭据文件
+User/Browser          Settings page lease       Session lease A/B       OAuth Provider       Exa Auth        Credentials file
     |                  |                       |                       |                 |              |
     |                  | connect              | connect               |                 |              |
     |                  +---------------------->|                       |                 |              |
     |                  |                       +---------------------->|                 |              |
-    |                  |                       |   每个连接各建 callback server          |              |
-    |                  |                       |   端口 54723 / 54726 / 54735             |              |
+    |                  |                       |   Each connection builds its own callback server          |              |
+    |                  |                       |   Ports 54723 / 54726 / 54735                             |              |
     |                  |                       |<----------------------|                 |              |
     |                  |                       |                       | discovery       |              |
     |                  |                       |                       +---------------->|              |
-    |                  |                       |                       | DCR: redirect_uri=当次端口       |
+    |                  |                       |                       | DCR: redirect_uri=current port      |
     |                  |                       |                       +---------------->|              |
     |                  |                       |                       |<-- client_id ----|              |
     |                  |                       |                       | save client_information         |
     |                  |                       |                       +------------------------------->|
-    |<-----------------+-----------------------+--- 展示一个或多个 authorization URL ----|              |
+    |<-----------------+-----------------------+--- Display one or more authorization URLs ----|              |
     |                  |                       |                       |                 |              |
-    |                  |                       |-- 15 秒超时 ----------X                 |              |
-    |                  |                       | close callback + 清当前 state verifier  |              |
-    |                  |                       | failed / tools=0                        |              |
+    |                  |                       |-- 15 second timeout ----------X                 |              |
+    |                  |                       | close callback + clear current state verifier  |              |
+    |                  |                       | failed / tools=0                                |              |
     |                  |                       |                       |                 |              |
-    | 登录/选择 team/点击 Authorize（约 74 秒） |                       |                 |              |
+    |  Login/select team/click Authorize (approx 74s) |                       |                 |              |
     +---------------------------------------------------------------->|<-- callback code-|              |
     |                  |                       |                       | code exchange    |              |
     |                  |                       |                       +---------------->|              |
@@ -177,7 +157,7 @@ Exa 明确声明支持 refresh token 和 public client。其 scope 中没有 `of
     |                  | connected / 2 tools   |                       |                 |              |
 ```
 
-真实日志（字段已最小化，未包含 URL、code、token）：
+Real logs (fields minimized, no URLs, codes, or tokens):
 
 ```text
 ~/.zcode/cli/log/zcode-2026-08-11.jsonl
@@ -191,136 +171,64 @@ Exa 明确声明支持 refresh token 和 public client。其 scope 中没有 `of
 3948  11:27:11.248Z connected connection=85a0... tools=2
 ```
 
-从 `11:25:54.502Z` 到 `11:27:08.338Z` 是约 73.8 秒，直接证明真人授权所需时间可以远大于 15 秒，同时小于 5 分钟。
+`11:25:54.502Z` to `11:27:08.338Z` is about 73.8 seconds, proving human authorization can take far longer than 15 seconds while staying under 5 minutes.
 
-## 5. 问题 1：refresh token 保存、加载与失效
+## 5. Problem 1: Refresh Token Saving, Loading, and Invalidation
 
-### 5.1 当前实现会保存并加载 refresh token
+### 5.1 Current Implementation Saves and Loads Refresh Tokens
 
-OAuth provider 从同一 credential pair 读取 client 和 tokens：
+The OAuth provider (`apps/zcode-cli/packages/adapters/src/mcp/oauth.ts`) reads client and tokens from one credential pair. After token exchange or refresh, `saveTokens` publishes `authorization_credentials` (canonical client/token pair), `client_information` (legacy client mirror), and `tokens` (legacy token mirror) in one `saveMany`. `saveMany` updates multiple keys in one read-modify-write (`apps/zcode-cli/packages/adapters/src/auth/shared-credentials.ts`), protected by the cross-process file lock and written back atomically. The credential file mode on-site is `0600`.
 
-- `apps/zcode-cli/packages/adapters/src/mcp/oauth.ts:182-199`
-- `apps/zcode-cli/packages/adapters/src/mcp/oauth.ts:213-215`
-- `apps/zcode-cli/packages/adapters/src/mcp/oauth.ts:434-505`
+Refresh tokens are therefore not memory-only, and desktop and CLI do not overwrite the whole file independently without locks.
 
-token exchange 或 refresh 后，`saveTokens` 会把：
+### 5.2 Client/Token Pairing Protection
 
-- `authorization_credentials`：canonical client/token pair；
-- `client_information`：legacy client 镜像；
-- `tokens`：legacy token 镜像；
+The canonical v2 logic handles these concurrent cases (`oauth.ts`):
 
-通过一次 `saveMany` 发布：
+- When legacy tokens are deleted, old tokens are not revived from canonical.
+- The canonical pair keeps being used only when legacy tokens match canonical tokens.
+- When the client is unchanged, new refresh results written by old processes are accepted.
+- When both client and token changed and the same transaction cannot be proven, the client is kept and untrusted tokens are discarded.
+- When invalidating old snapshots, compare-and-delete is used so a pair just written by another transaction is not deleted.
 
-- `apps/zcode-cli/packages/adapters/src/mcp/oauth.ts:217-250`
+Covering tests (`mcp-oauth.e2e.test.ts`): concurrent adapter PKCE state isolation; DCR clients bound to their own transactions; canonical pair atomic publish; mixed-version read/write; rejecting stitched legacy client/tokens from different transactions; compare-and-delete; refresh using the winning canonical pair.
 
-`saveMany` 在一个 read-modify-write 中更新多个 key：
+"Clients and refresh tokens are frequently overwritten into wrong combinations by concurrency" has no static or test evidence in the current version. Historical old versions had the risk, which is why the compatibility and canonical logic exists. If a machine also runs un-upgraded processes, legacy writes can still make new readers discard tokens (pairing cannot be proven) and require re-authorization.
 
-- `apps/zcode-cli/packages/adapters/src/auth/shared-credentials.ts:152-161`
+### 5.3 SDK Behavior After Access Token Expiration
 
-整个 read-modify-write 受跨进程文件锁保护，再原子写回：
+The repository locks `@modelcontextprotocol/client 2.0.0` (`apps/zcode-cli/packages/adapters/package.json`). Read-only verification of the published `dist/index.mjs`:
 
-- `apps/zcode-cli/packages/adapters/src/auth/shared-credentials.ts:260-270`
+- When a refresh token exists, the token endpoint is called first and `provider.saveTokens` after success.
+- With no usable refresh, or after recoverable refresh errors, the SDK generates a new authorization URL and PKCE verifier and enters interactive authorization.
+- `invalid_grant`: retry after invalidating tokens; `invalid_client` / `unauthorized_client`: retry after invalidating clients and tokens.
 
-凭据文件权限现场为 `0600`。
-
-结论：当前实现中，refresh token 不是只存在内存，也不是由 desktop 和 CLI 无锁地各自覆盖整份文件。
-
-### 5.2 client/token 配对保护
-
-当前 canonical v2 逻辑显式处理以下并发情况：
-
-- legacy token 被删除时，不从 canonical 复活旧 token：`oauth.ts:439-447`
-- 只有 legacy token 与 canonical token 一致时，才继续使用 canonical pair：`oauth.ts:448-460`
-- client 不变时，可接收旧进程写入的新 refresh 结果：`oauth.ts:461-467`
-- client 和 token 都变化、无法证明属于同一事务时，保留 client、丢弃不可信 token：`oauth.ts:468-476`
-- 失效旧快照时使用 compare-and-delete，不删除其他事务刚写入的新 pair：`oauth.ts:334-373`
-
-对应测试：
-
-- 并发 adapter 的 PKCE state 隔离：`mcp-oauth.e2e.test.ts:248-349`
-- DCR client 绑定到各自事务：`mcp-oauth.e2e.test.ts:351-375`
-- canonical pair 原子发布：`mcp-oauth.e2e.test.ts:482-512`
-- mixed-version 读写：`mcp-oauth.e2e.test.ts:514-601`
-- 拒绝拼接不同事务的 legacy client/token：`mcp-oauth.e2e.test.ts:603-643`
-- compare-and-delete：`mcp-oauth.e2e.test.ts:645-680`
-- refresh 使用获胜 canonical pair：`mcp-oauth.e2e.test.ts:686-773`
-
-因此，当前版本中“client 与 refresh token 经常被并发覆盖成错误组合”没有静态或测试证据支持。历史旧版本确实存在这种风险，这也是上述兼容和 canonical 逻辑的修复原因；若机器上同时运行未升级进程，legacy 写入仍可能使新 reader 因无法证明配对而主动丢弃 token、要求重新授权。
-
-### 5.3 access token 过期后的 SDK 行为
-
-仓库锁定：
-
-`apps/zcode-cli/packages/adapters/package.json:105`
-
-```text
-@modelcontextprotocol/client 2.0.0
-```
-
-对 npm 发布包 `@modelcontextprotocol/client@2.0.0/dist/index.mjs` 的只读核对：
-
-- `754-779`：存在 refresh token 时先调用 token endpoint，refresh 成功后调用 `provider.saveTokens`。
-- `780-790`：没有可用 refresh，或可回退的 refresh 错误发生后，生成新的 authorization URL、PKCE verifier 并进入交互授权。
-- `610-624`：
-  - `invalid_grant`：invalidate tokens 后重试；
-  - `invalid_client` / `unauthorized_client`：invalidate client 和 tokens 后重试。
-
-ZCode provider 的 invalidate 实现位于：
-
-- `apps/zcode-cli/packages/adapters/src/mcp/oauth.ts:296-305`
-- `apps/zcode-cli/packages/adapters/src/mcp/oauth.ts:334-373`
-
-因此 access token 失效后的路径是：
+ZCode's provider invalidate implementation is in `oauth.ts`. Path after access token expiration:
 
 ```text
 MCP 401
-  -> SDK 尝试 refresh_token
-     -> 成功：saveTokens，新 access token 持久化
-     -> invalid_grant：删除 token，保留 client，转浏览器授权
-     -> invalid_client：删除 client + token，重新 DCR/授权
-     -> 部分 server_error：可直接回退浏览器授权，未必先删除旧 client
+  -> SDK tries refresh_token
+     -> Success: saveTokens, new access token persisted
+     -> invalid_grant: delete tokens, retain clients, transition to browser authorization
+     -> invalid_client: delete clients + tokens, re-DCR/authorization
+     -> Partial server_error: can fall back to browser authorization directly, may not first delete old clients
 ```
 
-### 5.4 本机凭据现场
+### 5.4 Local Credential On-site
 
-权威凭据文件是：
-
-```text
-~/.zcode/v2/credentials.json
-mode: 0600
-Exa credential prefix: mcp:oauth:c50fd1fa63fb88a233be0688
-```
-
-当前仅有：
+The authoritative credential file is `~/.zcode/v2/credentials.json` (mode `0600`), Exa credential prefix `mcp:oauth:c50fd1fa63fb88a233be0688`. It currently holds only `discovery_state` and `client_information`; it has no `tokens`, `authorization_credentials`, or `code_verifier`. Anonymized client summary:
 
 ```text
-discovery_state
-client_information
-```
-
-当前没有：
-
-```text
-tokens
-authorization_credentials
-code_verifier
-```
-
-当前 client 信息仅以脱敏摘要记录：
-
-```text
-client_id SHA-256 前 12 位：d31ae07a373b
-client_name：ZCode plugin:exa:exa
-client_secret：无
-client_id_issued_at：2026-08-11T11:25:54Z
-grant_types：authorization_code, refresh_token
-registered redirect URI：
+client_id SHA-256 first 12 characters: d31ae07a373b
+client_name: ZCode plugin:exa:exa
+client_secret: none
+client_id_issued_at: 2026-08-11T11:25:54Z
+grant_types: authorization_code, refresh_token
+registered redirect URI:
   http://127.0.0.1:54735/oauth/callback/mcp/plugin%3Aexa%3Aexa
 ```
 
-`credentials.json:27-28` 也只显示上述两个 Exa key；本文没有读取或记录任何 token 明文。
-
-历史人工备份/reset 文件中的 Exa key 同样只有 client/discovery/verifier，没有 token，且 client 多次变化：
+Historical manual backup/reset files also contain only client/discovery/verifier for Exa, no tokens, and the client changes several times:
 
 ```text
 credentials.json.exa-backup-20260725-215609   client hash c27de9b37128
@@ -330,15 +238,11 @@ credentials.json.exa-reset-20260811-192515    client hash fa0c35e0d90f
 credentials.json                              client hash d31ae07a373b
 ```
 
-这些文件名本身表明现场包含人工 backup/reset。故：
+The file names show manual backup/reset on-site. "Currently no tokens" is a fact; "all tokens were abnormally deleted by the program" is not provable; repeatedly generated new DCR clients are a fact, consistent with concurrent authorization transactions and manual resets. No token plaintext was read or recorded.
 
-- “当前无 token”是事实；
-- “全部 token 都被程序异常删除”不是可证明结论；
-- 反复产生新 DCR client 是事实，与多授权事务并发和人工重置均一致。
+The user-specified `~/.zcode/db` does not exist locally; the SQLite file is `~/.zcode/cli/db/db.sqlite` and its schema has no OAuth/MCP credential tables. The OAuth credential authority remains `~/.zcode/v2/credentials.json`.
 
-用户指定的 `~/.zcode/db` 在本机不存在；实际 SQLite 位于 `~/.zcode/cli/db/db.sqlite`。其 schema 没有 OAuth credential/MCP credential 表，OAuth 凭据权威源仍是 `~/.zcode/v2/credentials.json`。
-
-### 5.5 运行时间线
+### 5.5 Runtime Timeline
 
 ```text
 ~/.zcode/cli/log/zcode-2026-08-12.jsonl
@@ -348,126 +252,86 @@ credentials.json                              client hash d31ae07a373b
 1909  09:00:28.969Z  OAuth authorization timed out
 ```
 
-“先连接成功，约 5 分钟后新连接进入授权”排除了“首次授权从未保存/从未生效”。它与 token 后续失效或不可 refresh 一致。
+First connection succeeded and about 5 minutes later new connections entered authorization. This rules out "first authorization never saved/never took effect" and is consistent with tokens later becoming un-refreshable.
 
-### 5.6 问题 1 的根因结论
+### 5.6 Problem 1 Root Cause Conclusion
 
-| 层级 | 结论 | 证据等级 | 定性 |
-|---|---|---:|---|
-| 直接触发 | 当前无可用 token，SDK 只能重新授权 | 确认 | 状态事实 |
-| refresh 流程 | 有 refresh 时会加载、尝试 refresh、成功后持久化 | 确认 | 实现正确 |
-| refresh 失败后 | `invalid_grant` 会删 token；`invalid_client` 会删 client+token | 确认 | 合理降级 |
-| 本次具体 refresh error | 日志未记录，无法唯一判定 | 确认缺口 | 可观测性设计缺陷 |
-| 当前多进程覆盖 | canonical pair + 文件锁已保护普通写入 | 确认 | 非当前主根因 |
-| 旧进程/legacy 混写 | 无法证明配对时会主动丢 token | 确认代码行为 | 兼容性风险 |
-| 并发 OAuth/DCR | 不同 lease/process 可重复授权和注册 client | 确认 | 架构设计缺陷 |
+| Layer                            | Conclusion                                                               |          Evidence Level | Qualitative                    |
+| -------------------------------- | ------------------------------------------------------------------------ | ----------------------: | ------------------------------ |
+| Direct trigger                   | No available tokens now, SDK can only re-authorize                       |               Confirmed | State fact                     |
+| Refresh flow                     | Has refresh tokens, loads them, tries refresh, persists after success    |               Confirmed | Implementation correct         |
+| After refresh failure            | `invalid_grant` deletes tokens; `invalid_client` deletes client+tokens   |               Confirmed | Reasonable degradation         |
+| This specific refresh error      | Logs do not record it, cannot uniquely determine                         |           Confirmed gap | Observability design defect    |
+| Current multi-process overwrites | Canonical pairs + file locks already protect normal writes               |               Confirmed | Not current primary root cause |
+| Old process/legacy mixed writes  | Cannot prove pairing, so tokens are actively discarded                   | Confirmed code behavior | Compatibility risk             |
+| Concurrent OAuth/DCR             | Different leases/processes can repeatedly authorize and register clients |               Confirmed | Architecture design defect     |
 
-## 6. 问题 2：15 秒超时链路与连接隔离
+## 6. Problem 2: 15-Second Timeout Chain and Connection Isolation
 
-### 6.1 15 秒从哪里传入
+### 6.1 Where the 15 Seconds Are Passed In
 
-Session runtime 定义：
-
-- `apps/zcode-cli/packages/core/src/runtime/methods/mcp.ts:5`
+Session runtime (`apps/zcode-cli/packages/core/src/runtime/methods/mcp.ts`):
 
 ```ts
 const MCP_SESSION_OAUTH_AUTHORIZATION_TIMEOUT_MS = 15_000;
 ```
 
-Session 启动时传入：
-
-- `apps/zcode-cli/packages/core/src/runtime/methods/mcp.ts:37-46`
+passed in at session startup:
 
 ```ts
 connectConfiguredServers(servers, {
   oauthAuthorizationTimeoutMs: MCP_SESSION_OAUTH_AUTHORIZATION_TIMEOUT_MS,
   // ...
-})
+});
 ```
 
-adapter 把它传到 OAuth session：
-
-- `apps/zcode-cli/packages/adapters/src/mcp/index.ts:680-719`
-- `apps/zcode-cli/packages/adapters/src/mcp/index.ts:770-787`
+The adapter (`apps/zcode-cli/packages/adapters/src/mcp/index.ts`) forwards it to OAuth sessions:
 
 ```ts
-authorizationTimeoutMs:
-  oauthAuthorizationTimeoutMs ?? this.mcpOAuth?.authorizationTimeoutMs
+authorizationTimeoutMs: oauthAuthorizationTimeoutMs ?? this.mcpOAuth?.authorizationTimeoutMs;
 ```
 
-等待 callback 时实际使用 `oauthSession.timeoutMs`：
-
-- `apps/zcode-cli/packages/adapters/src/mcp/index.ts:570-600`
+and uses `oauthSession.timeoutMs` when waiting for callbacks:
 
 ```ts
 withTimeout(
   oauthSession.waitForAuthorizationCallback(),
   oauthSession.timeoutMs,
   `MCP server ${name} OAuth authorization timed out`,
-)
+);
 ```
 
-OAuth 模块的默认 5 分钟只在调用方没有覆盖时生效：
-
-- `apps/zcode-cli/packages/adapters/src/mcp/oauth.ts:20`
-- `apps/zcode-cli/packages/adapters/src/mcp/oauth.ts:96-107`
+The OAuth module's default 5 minutes applies only when callers do not override:
 
 ```ts
-timeoutMs:
-  input.options?.authorizationTimeoutMs
-  ?? DEFAULT_MCP_OAUTH_CALLBACK_TIMEOUT_MS
+timeoutMs: input.options?.authorizationTimeoutMs ?? DEFAULT_MCP_OAUTH_CALLBACK_TIMEOUT_MS;
 ```
 
-所以二次认证若由 Session startup 触发，确定命中 15 秒，不是 5 分钟。
+Secondary authentication triggered by Session startup therefore hits 15 seconds, not 5 minutes.
 
-### 6.2 设置页为什么救不了 Session
+### 6.2 Why the Settings Page Cannot Rescue the Session
 
-设置页 `mcp/list` 发起后台连接时没有传 `oauthAuthorizationTimeoutMs`：
+The settings page `mcp/list` does not pass `oauthAuthorizationTimeoutMs` when starting background connections (`apps/zcode-cli/packages/bootstrap/src/zcode-protocol/mcp.ts`), so it uses the default 5 minutes. Logs show connections timing out after about `300xxx ms`, e.g. `zcode-2026-08-11.jsonl` `durationMs=300864`, `error=MCP server plugin:exa:exa OAuth authorization timed out`.
 
-- `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/mcp.ts:81-105`
-
-该连接通常使用默认 5 分钟。日志中多次存在约 `300xxx ms` 后才 timed out 的无 session 连接，例如：
-
-```text
-~/.zcode/cli/log/zcode-2026-08-11.jsonl:1920
-durationMs=300864
-error=MCP server plugin:exa:exa OAuth authorization timed out
-```
-
-但是 protocol entrypoint 给设置页和 Session 发放不同 lease：
-
-- 设置页：`protocol-settings`
-- Session：`appOptions.sessionId`
-
-见：
-
-- `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-entrypoint.ts:101-115`
-- `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-entrypoint.ts:126-133`
-
-连接池默认 isolation 是 `session`，connection key 对非 workspace-isolated server 使用 `leaseId`：
-
-- `apps/zcode-cli/packages/adapters/src/mcp/pool.ts:296-308`
-- `apps/zcode-cli/packages/adapters/src/mcp/pool.ts:317-328`
-
-因此：
+But the protocol entrypoint issues different leases to the settings page (`protocol-settings`) and Sessions (`appOptions.sessionId`) (`apps/zcode-cli/packages/bootstrap/src/zcode-protocol-entrypoint.ts`). The connection pool default isolation is `session`, and connection keys for non-workspace-isolated servers use `leaseId` (`apps/zcode-cli/packages/adapters/src/mcp/pool.ts`):
 
 ```text
 protocol-settings lease
   -> connection A
   -> callback port A
   -> state A
-  -> 默认 5 分钟
+  -> Default 5 minutes
 
 session lease
   -> connection B
   -> callback port B
   -> state B
-  -> 15 秒
+  -> 15 seconds
 ```
 
-`index.ts:153-168` 的 pending connection 复用只在同一个 adapter/record 内成立，不能跨 pool entry 共享。
+Pending-connection reuse in `mcp/index.ts` applies only within the same adapter/record and cannot share across pool entries.
 
-### 6.3 2026-08-13 并发运行时证据
+### 6.3 2026-08-13 Concurrent Runtime Evidence
 
 ```text
 ~/.zcode/cli/log/zcode-2026-08-13.jsonl
@@ -481,215 +345,147 @@ session lease
 6683  08:25:30.754Z connection=fb8aa7... timed out
 ```
 
-两个 connection 在同一时刻为同一 Exa server 建立了不同 callback 端口和 state，并各自在约 15 秒后失败。它直接证明当前运行时没有形成全局 OAuth single-flight。
+Two connections created different callback ports and states for the same Exa server at the same moment and each failed after about 15 seconds. The runtime has no global OAuth single-flight.
 
-### 6.4 二次授权失败时序
+### 6.4 Secondary Authorization Failure Timing
 
 ```text
-Session/设置页       OAuth Provider        凭据文件          MCP SDK          Exa Auth/Page       浏览器
+Session/Settings page    OAuth Provider        Credentials file      MCP SDK          Exa Auth/Page       Browser
      |                    |                   |                 |                    |               |
      | connect            |                   |                 |                    |               |
      +------------------->| load client/tokens|                 |                    |               |
      |                    +------------------>|                 |                    |               |
-     |                    |<-- 旧 client；token 可能存在/不存在 |                    |               |
+     |                    |<-- Old clients; tokens may/may not exist |                    |               |
      |                    |                   |                 | MCP 401 / refresh |
      |                    +------------------------------------>|------------------->|
      |                    |                   |                 |                    |
-     |                    |                   |      refresh 失败/不可用              |
+     |                    |                   |      Refresh failed/unavailable              |
      |                    |<------------------------------------|                    |
-     |                    | invalidate token（具体 error 未记录）|                    |
+     |                    | invalidate tokens (specific error not recorded)            |
      |                    +------------------>| delete token    |                    |
      |                    |                   |                 |                    |
-     |                    | 新建随机 callback 端口 + 新 state   |                    |
-     |                    | 复用旧 client_id                   |                    |
+     |                    | New random callback port + new state            |                    |
+     |                    | Reuse old client_id                     |                    |
      |                    +------------------------------------>| authorize request  |
-     |                    |                                     | 旧 client_id       |
-     |                    |                                     | 新 redirect_uri    |
+     |                    |                                     | Old client_id       |
+     |                    |                                     | New redirect_uri    |
      |                    |                                     +------------------->|
-     |                    |                                     |                    | Authorize 页
-     |                    |                                     |                    | 可能 SSR error
+     |                    |                                     |                    | Authorize page
+     |                    |                                     |                    | May show SSR error
      |                    |                                     |                    |
      |<-- authorization URL/status -----------------------------+                    |
-     |                                                                 15 秒计时      |
-     |--------------------------- 15 秒 ------------------------------X               |
+     |                                                                 15s timer      |
+     |--------------------------- 15 seconds ------------------------------X               |
      |                    | close callback server                                  |
-     |                    | clear 当前 state verifier                              |
+     |                    | clear current state verifier                           |
      |<-- failed/tools=0  |                                                         |
-     |                                                                 用户稍后点击  |
-     |                                                                 callback 到旧端口
-     |                                                                 -> 已关闭/失败 |
+     |                                                                 User later clicks  |
+     |                                                                 callback to old port |
+     |                                                                 -> closed/failed   |
 ```
 
-若是设置页独立连接，最后一个计时点通常是 5 分钟；它仍可能与 Session 的 15 秒事务并行存在。
+If the settings page connects independently, the last point is usually 5 minutes and may run in parallel with the Session's 15-second transaction.
 
-### 6.5 超时后是否留下 stale state
+### 6.5 Whether Timeouts Leave Stale State
 
-callback server：
+- Callback server (`apps/zcode-cli/packages/adapters/src/auth/localhost-callback.ts`): listens randomly on `127.0.0.1:0`, strictly checks path, state, and code, and `close()` closes the HTTP server.
+- OAuth session (`oauth.ts`): `close()` closes callback servers first, then the provider; provider `close()` clears current state verifiers; verifier keys contain the complete state.
 
-- 随机监听 `127.0.0.1:0`：`apps/zcode-cli/packages/adapters/src/auth/localhost-callback.ts:69-83`
-- 严格检查 path、state 和 code：`localhost-callback.ts:32-59`
-- `close()` 关闭 HTTP server：`localhost-callback.ts:83-90`
+No Exa `code_verifier` exists in the current credentials, consistent with successful cleanup. `discovery_state` is retained as reusable discovery metadata, not callback stale state.
 
-OAuth session：
+What remains: browser URLs still open while callback ports are closed; DCR clients registered but no longer used on the Exa side; users with several URLs cannot tell which are valid.
 
-- `close()` 先关 callback server，再关 provider：`oauth.ts:96-100`
-- provider `close()` 清理当前 state 的 verifier：`oauth.ts:312-331`
-- verifier key 包含完整 state：`oauth.ts:538-545`
+- Callback listener not cleaned up: **not found**.
+- PKCE verifier cross-state mis-deletion/leftover: **not supported by implementation or on-site state**.
+- Stale browser URLs / stale DCR clients: **the design can produce them**.
 
-当前凭据中没有 Exa `code_verifier`，与清理成功一致。`discovery_state` 会保留，它是可复用 discovery metadata，不是 callback stale state。
+## 7. Evidence Chain for Exa Server Components Errors
 
-真正残留的是：
+### 7.1 Old Clients with New Redirect URIs
 
-- 浏览器中仍打开、但 callback 端口已经关闭的 authorization URL；
-- Exa 服务端已经注册但不再使用的 DCR client；
-- 用户面对多个 URL 时无法知道哪一个仍有效。
-
-因此：
-
-- 本地 callback listener 未清理：**否，未发现**。
-- PKCE verifier 跨 state 误删/遗留：**当前实现和现场均不支持该判断**。
-- stale browser URL / stale DCR client：**存在设计上的产生路径**。
-
-## 7. Exa Server Components 错误的证据链
-
-### 7.1 旧 client 与新 redirect URI
-
-每次 OAuth session 都创建新 state 和随机端口：
-
-- `apps/zcode-cli/packages/adapters/src/mcp/oauth.ts:67-80`
-- `apps/zcode-cli/packages/adapters/src/auth/localhost-callback.ts:69-83`
-
-DCR metadata 使用当次完整 callback URL：
-
-- `apps/zcode-cli/packages/adapters/src/mcp/oauth.ts:163-175`
-
-后续优先读取并复用存储 client：
-
-- `apps/zcode-cli/packages/adapters/src/mcp/oauth.ts:182-199`
-
-MCP SDK 构造 authorization request 时使用：
-
-- `clientInformation`：旧 client；
-- `provider.redirectUrl`：当前新随机端口。
-
-见 npm 包：
-
-- `@modelcontextprotocol/client@2.0.0/dist/index.mjs:698-730`
-- `@modelcontextprotocol/client@2.0.0/dist/index.mjs:780-790`
-
-本机对照：
+Each OAuth session creates a new state and random port (`oauth.ts`, `localhost-callback.ts`). DCR metadata uses the current complete callback URL; later sessions prefer reading and storing clients. The MCP SDK builds authorization requests from `clientInformation` (old client) and `provider.redirectUrl` (current new random port) (`@modelcontextprotocol/client@2.0.0/dist/index.mjs`).
 
 ```text
-注册时 redirect port：54735
-后续日志端口示例：61820、58670、58676
+Register redirect port: 54735
+Subsequent log port examples: 61820, 58670, 58676
 ```
 
-这证明 ZCode 确实会构造“持久化 client + 新 callback 端口”的组合。
+ZCode does build "persisted client + new callback port" combinations.
 
-### 7.2 为什么只能定为高可信推断
+### 7.2 Why Only a High-Confidence Inference
 
-对当前脱敏 client 做了不带登录态、无授权点击的只读探针：
+A read-only probe without login or authorization clicks, against the current anonymized client:
 
 ```text
-registered redirect  -> HTTP 307 -> auth.exa.ai /?callbackUrl=...
-mismatched redirect  -> HTTP 307 -> auth.exa.ai /?callbackUrl=...
+Registered redirect  -> HTTP 307 -> auth.exa.ai /?callbackUrl=...
+Mismatched redirect  -> HTTP 307 -> auth.exa.ai /?callbackUrl=...
 ```
 
-两个请求都先进入登录页，匿名响应没有暴露最终 redirect 校验结果，也没有出现 Server Components 错误。因此：
+Both first go to the login page; anonymous responses expose neither the final redirect validation result nor the Server Components error. So `invalid_redirect_uri` is not claimed as caught, Exa correctly allowing loopback port changes per RFC 8252 is not excluded, and generic SSR errors on logged-in pages still need Network traces or Exa logs.
 
-- 不能声称已经抓到 `invalid_redirect_uri`；
-- 不能排除 Exa 按 RFC 8252 正确允许 loopback 端口变化；
-- 用户登录态页面的 generic SSR error 仍需 Network trace 或 Exa 日志确认。
+The page can still show `Authorize ZCode plugin:exa:exa`, so it obtained the client display information. That lowers the probability of "client_id does not exist" but does not exclude incomplete client state, team binding anomalies, or authorization record abnormalities.
 
-页面仍能显示 `Authorize ZCode plugin:exa:exa`，说明它至少取得了 client 展示信息；这降低了“client_id 完全不存在”的概率，但不能排除 client 状态不完整、team 绑定异常或授权记录异常。
+### 7.3 Other Candidate Contributors (by current evidence)
 
-### 7.3 其他候选诱因
+1. **Old DCR clients + new callback port redirect validation/page handling anomalies.** The ZCode combination is confirmed; whether Exa rejects it is unconfirmed.
+2. **Concurrent authorization URLs / timed-out URLs.** Multiple connections, states, and ports are confirmed by logs; users may log in or click on the wrong transaction.
+3. **Exa Personal team / account server-side data anomalies.** Compatible with the Server Components errors; no ZCode-side evidence.
+4. **Repeated DCR itself conflicts.** ZCode generating multiple clients is confirmed; DCR usually allows multiple clients; no evidence of Exa conflicts.
 
-按当前证据排序：
+### 7.4 Qualitative Assessment
 
-1. **旧 DCR client + 新 callback 端口的 redirect 校验/页面处理异常**
-   ZCode 组合已确认；Exa 是否拒绝未确认。
-2. **并发授权 URL / 已超时 URL**
-   多 connection、多 state、多端口已由日志确认。用户可能在错误事务上登录或点击。
-3. **Exa Personal team / account 的服务端数据异常**
-   与页面的 Server Components 错误兼容，但 ZCode 侧无证据可验证。
-4. **重复 DCR 本身冲突**
-   ZCode 会产生多个 client 已确认；但 DCR 通常允许注册多个 client，目前没有 Exa 返回冲突的证据。
+- Long-term reuse of DCR clients bound to specific callback URIs while using random callback ports each time: **implementation/design boundary defect**. Even if Exa supports the loopback port exception, ZCode should not depend on unverified server leniency.
+- No single-flight for the same OAuth identity, producing multiple URLs and DCR clients: **architecture design defect**.
+- Exa pages showing OAuth parameter/account data issues as a generic Server Components production error: **Exa page robustness bug**.
 
-### 7.4 定性
+## 8. Test Coverage and Gaps
 
-- ZCode 长期复用绑定了某次 callback URI 的 DCR client，同时每次使用随机 callback 端口：**实现/设计边界缺陷**。即使 Exa 支持 loopback 端口例外，也不应依赖未验证的服务端宽松行为。
-- ZCode 缺少同一 OAuth identity 的 single-flight，生成多 URL、多 DCR client：**架构设计缺陷**。
-- Exa 页面把 OAuth 参数/账号数据问题展示为 generic Server Components production error：**Exa 页面健壮性 bug**。
+Existing coverage: single adapter reusing pending OAuth, with bounded caller timeouts not closing shared connections, and per-connect OAuth timeout taking effect (`mcp.test.ts`); two adapters' concurrent PKCE isolation; DCR client transaction binding, canonical pairs, mixed-version, refresh (§5.2).
 
-## 8. 测试覆盖与缺口
+Gaps:
 
-已有测试覆盖：
+1. No test for "DCR client registered port differs from the new callback port after session rebuild".
+2. No strict authorization server simulation of exact `redirect_uri` matching or the RFC 8252 loopback port exception.
+3. No coverage of `protocol-settings lease + session lease` parallel authorization for the same server.
+4. No test of complete ZCode state, logs, and secondary authorization URL after refresh returns `invalid_grant`.
+5. No product behavior test for human authorization taking longer than 15 seconds.
+6. No assertion that token endpoint errors are recorded sensitively as diagnosable events.
 
-- 单 adapter 内复用 pending OAuth，bounded caller 超时不关闭共享连接：`mcp.test.ts:880-932`
-- per-connect OAuth timeout 生效：`mcp.test.ts:994-1032`
-- 两 adapter 并发 PKCE 隔离：`mcp-oauth.e2e.test.ts:248-349`
-- DCR client 事务绑定、canonical pair、mixed-version、refresh：见第 5.2 节。
+## 9. Repair Suggestions (Not Implemented)
 
-关键缺口：
+### P0: Fix the 15-Second Human Authorization Timeout
 
-1. 没有测试“DCR client 在 session 重建后，注册端口与新 callback 端口不同”。
-2. 没有严格模拟授权服务器对 `redirect_uri` 精确匹配或 RFC 8252 loopback 端口例外。
-3. 没有覆盖 `protocol-settings lease + session lease` 对同一 server 并行授权。
-4. 没有测试 refresh 返回 `invalid_grant` 后的完整 ZCode 状态、日志和二次授权 URL。
-5. 没有人机授权耗时大于 15 秒的产品行为测试。
-6. 没有断言 token endpoint 错误被脱敏地记录为可诊断 event。
-
-## 9. 修复建议（仅建议，不实施）
-
-### P0：修复 15 秒人机授权超时
-
-不要让 Session startup 的阻塞预算等同于 OAuth 事务生命周期：
+Do not equate Session startup's blocking budget with the OAuth transaction lifecycle:
 
 ```text
-Session 启动预算 15 秒
-  -> 只决定“本次 Session 是否继续等待”
-  -> 不关闭全局/设置页 OAuth transaction
+Session startup budget 15 seconds
+  -> Only decides "whether this Session continues waiting"
+  -> Does not close global/settings page OAuth transactions
 
-OAuth transaction 生命周期
-  -> 独立 5 分钟或用户取消
-  -> 状态持续展示在设置页
-  -> 成功后后续 Session 自动复用凭据
+OAuth transaction lifecycle
+  -> Independent 5 minutes or user cancel
+  -> Status continues displaying on settings page
+  -> Subsequent Sessions automatically reuse credentials after success
 ```
 
-如果暂时不能拆生命周期，至少不要对已进入浏览器交互的 OAuth transaction 使用 15 秒硬关闭。
+If the lifecycle cannot be split now, at least do not hard-close OAuth transactions that already entered browser interaction at 15 seconds.
 
-### P0：为同一 OAuth identity 增加 single-flight
+### P0: Add Single-Flight for the Same OAuth Identity
 
-协调 key 应基于 OAuth credential identity，而不是 connection lease：
+Coordinate on OAuth credential identity, not connection leases: `serverName + serverUrl + clientId + scope + redirectPath`. Only one leader may run discovery/DCR, hold callback servers/states/verifiers, expose the unique authorization URL, and publish client/token pairs. Other settings/session connections subscribe to the transaction result; the 15-second startup waiters' timeouts must not cancel the leader. Across Node processes this needs file locks/leases or centralization in shared hosts; single-adapter `record.connecting` is insufficient.
 
-```text
-serverName + serverUrl + clientId + scope + redirectPath
-```
+### P0: Stabilize the DCR and Callback URI Relationship
 
-只允许一个 leader：
+Evaluate in priority order:
 
-- 执行 discovery/DCR；
-- 持有 callback server/state/verifier；
-- 暴露唯一 authorization URL；
-- 发布 client/token pair。
+1. Use a stable callback broker/deep link, then forward to the current transaction inside ZCode.
+2. If sticking with loopback, register native redirects without fixed ports and confirm Exa supports arbitrary ports per RFC 8252.
+3. If Exa accepts only exact URIs, invalidate old clients and re-DCR when the current callback URI is not in the client registration set, instead of reusing old clients.
+4. Include redirect compatibility in discovery/DCR capability caching and testing.
 
-其他 settings/session connection 只订阅该事务结果，各自的 15 秒 startup waiter 超时不能取消 leader。
+### P1: Add Anonymized OAuth Diagnostic Events
 
-跨 Node 进程时需要文件锁/lease 或集中在共享 host 中管理；单 adapter 内的 `record.connecting` 不够。
-
-### P0：稳定 DCR 与 callback URI 的关系
-
-建议按优先级评估：
-
-1. 使用稳定 callback broker / deep link，再由 ZCode 转发到当前事务；
-2. 若坚持 loopback，注册不含固定端口的 native redirect，并确认 Exa 按 RFC 8252 支持任意端口；
-3. 若 Exa 只接受精确 URI，发现当前 callback URI 不在 client 注册集合时，先失效旧 client 并重新 DCR，不复用旧 client；
-4. 把 redirect 兼容性纳入 discovery/DCR capability 缓存和测试。
-
-### P1：增加脱敏 OAuth 诊断事件
-
-应记录但不得记录 token、code、client secret：
+Record, never including tokens, codes, or client secrets:
 
 ```text
 event=mcp.oauth.refresh.failed
@@ -703,7 +499,7 @@ willInvalidate=client | tokens | none
 willStartInteractive=true/false
 ```
 
-authorize 页面失败时也应记录：
+When authorize pages fail, also record:
 
 ```text
 clientIdHash
@@ -714,37 +510,35 @@ connectionId
 leaseId/isolation
 ```
 
-### P1：改善 stale URL UX
+### P1: Improve Stale URL UX
 
-- 授权 URL 超时后，设置页应明确显示“此链接已失效，请生成新链接”。
-- 多连接请求同一 OAuth 时只展示 leader URL。
-- callback 到已关闭端口时，若采用 broker，应显示可恢复页面，而不是浏览器连接失败。
+- After authorization URL timeouts, settings pages show "This link has expired, please generate a new link."
+- When several connections request the same OAuth, show only the leader URL.
+- When callbacks reach closed ports, a broker (if used) shows a recoverable page instead of a browser connection failure.
 
-### P1：补齐回归测试
-
-至少增加：
+### P1: Regression Tests
 
 - `refresh invalid_grant -> tokens invalidated -> one interactive transaction`
-- `stored DCR client + new loopback port`
+- `stored DCR clients + new loopback ports`
 - `settings lease + N session leases -> one DCR/one URL`
-- `session waiter 15s timeout -> leader remains alive -> callback at 60s succeeds`
-- `old browser URL after replacement -> explicit stale response`
-- `OAuth error log contains code/status but never contains token/code/secret`
+- `session waiter 15s timeout -> leader remains alive -> callbacks at 60s succeed`
+- `old browser URLs after replacement -> explicit stale responses`
+- `OAuth error logs contain codes/status but never contain tokens/codes/secrets`
 
-## 10. 最终定性表
+## 10. Final Qualitative Table
 
-| 问题 | 根因/因素 | 定性 |
-|---|---|---|
-| 过一段时间要求重认证 | token 已不存在；refresh 未恢复后进入交互授权 | 直接机制已确认 |
-| refresh token 是否保存/加载 | 当前实现会保存、加载、refresh 后更新 | 非 bug |
-| 本次 refresh 为什么失败 | token endpoint 错误码缺失，无法唯一判定 | 可观测性设计缺陷 |
-| client/token 跨进程覆盖 | 当前 canonical pair + 文件锁已保护；旧进程仍有兼容风险 | 当前非主根因 / 历史实现风险 |
-| 二次认证 timed out | Session 硬编码 15 秒并关闭自己的 OAuth session | 实现 bug |
-| 设置页 5 分钟为何无效 | settings/session 是不同 lease 和 connection | 架构设计缺陷 |
-| 超时后 callback/verifier | listener 关闭、当前 state verifier 清理 | 实现基本正确 |
-| stale state | 浏览器旧 URL、废弃 DCR client、多 URL 并存 | 设计缺陷 |
-| Exa Server Components error | 最可能由旧 client/新 redirect 或并发 stale URL 触发；未抓到服务端错误 | ZCode 边界缺陷 + Exa 页面健壮性 bug |
+| Problem                                    | Root Cause/Factors                                                                                    | Qualitative                                                     |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Periodic re-authentication required        | Tokens no longer exist; interactive authorization entered after refresh did not recover               | Direct mechanism confirmed                                      |
+| Whether refresh tokens are saved/loaded    | Current implementation saves, loads, updates after refresh                                            | Not a bug                                                       |
+| Why this specific refresh failed           | Token endpoint error codes missing, cannot uniquely determine                                         | Observability design defect                                     |
+| Cross-process client/token overwrites      | Current canonical pairs + file locks protect; old processes still carry compatibility risk            | Not current primary root cause / historical implementation risk |
+| Secondary authentication timed out         | Session hard-coded 15 seconds and closed its own OAuth sessions                                       | Implementation bug                                              |
+| Why settings page 5 minutes is ineffective | Settings/sessions are different leases and connections                                                | Architecture design defect                                      |
+| Callback/verifier after timeout            | Listeners closed, current state verifiers cleaned up                                                  | Implementation basically correct                                |
+| Stale state                                | Old browser URLs, obsolete DCR clients, multiple URLs coexisting                                      | Design defect                                                   |
+| Exa Server Components errors               | Most likely triggered by old clients/new redirects or concurrent stale URLs; server errors not caught | ZCode boundary defects + Exa page robustness bugs               |
 
-## 11. 一句话根因
+## 11. One-Sentence Root Cause
 
-ZCode 把“Session 最多等 MCP 15 秒”错误地实现成了“OAuth 人工授权事务只能活 15 秒”，同时设置页与 Session 又按 lease 各自创建 OAuth/DCR 事务；refresh 不可用后，系统会在多个随机 callback 端口上复用或重建 client 并生成多个授权 URL，最终造成必现的短超时，以及高概率触发 Exa 授权页对 client/redirect/stale transaction 处理不健壮的问题。
+ZCode implemented "Sessions can wait for MCP at most 15 seconds" as "OAuth human-authorization transactions can live only 15 seconds", while settings pages and Sessions create OAuth/DCR transactions per lease. After refresh becomes unavailable, the system reuses or rebuilds clients across multiple random callback ports and produces multiple authorization URLs, causing inevitable short timeouts and a high chance of triggering Exa's authorization page's non-robust handling of client/redirect/stale transactions.

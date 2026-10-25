@@ -17,7 +17,7 @@ export interface RemoteProviderProvisioningExecutor {
 
 const executors = new WeakMap<ServiceCollection, RemoteProviderProvisioningExecutor>();
 
-/** Window Host 私有执行能力；不会随 ServiceCollection 暴露到 Renderer RPC。 */
+/** Private execution capability for Window Host; it is not exposed to Renderer RPC through ServiceCollection. */
 export function getRemoteProviderProvisioningExecutor(
   services: ServiceCollection,
 ): RemoteProviderProvisioningExecutor | undefined {
@@ -45,9 +45,11 @@ export function createRemoteProviderProvisioningExecutor(options: {
       const envelope = await options.source.read(syncId);
       errorCode = "target-call-failed";
       const { errorCode: remoteErrorCode, ...result } = await options.target.apply(envelope);
-      // 成功结果不携带诊断字段，避免未知错误码使 Main 丢弃本已成功的回包。
+      // Success results carry no diagnostic fields, so an unknown error code cannot make
+      // Main drop a reply that already succeeded.
       if (result.status === "applied" || result.status === "already-applied") return result;
-      // 旧目标没有阶段码，任意远端也可能返回自由文本；只能透传本地 allowlist。
+      // Older targets have no stage codes and any remote may return free text; only the
+      // local allowlist can be passed through.
       const parsedCode = providerProvisioningErrorCodeSchema.safeParse(remoteErrorCode);
       return { ...result, errorCode: parsedCode.success ? parsedCode.data : "target-apply-failed" };
     } catch (error) {

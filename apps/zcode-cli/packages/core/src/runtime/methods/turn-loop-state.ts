@@ -13,7 +13,7 @@ import type {
   TurnId,
 } from "../deps.js";
 import type { ActiveTurnSteeringState } from "../types.js";
-import type { ModelToolContract, SubagentRunOptions } from "@zcode/contracts";
+import type { ModelToolContract, ModelUsage, SubagentRunOptions } from "@zcode/contracts";
 import type { DrainedPendingInputDiagnostics, ModelExecutionContext } from "../types.js";
 import type { TurnMachineImpl } from "../deps.js";
 import type { RuntimeMessageEntry } from "../../agent/message-history.js";
@@ -85,6 +85,8 @@ export interface RegularTurnLoopState {
   automationId?: string;
   /** Host admission 显式传入的本轮闲时任务身份；与 automationId 互斥，不从持久 meta 推断。 */
   offPeakTaskId?: string;
+  /** Usage reported by an external agent for this turn; absent for provider-backed turns. */
+  externalAgentUsage?: ModelUsage;
   /** CronCreate 命中全局上限后，本用户 turn 永久切为纯文本回复，禁止模型自行恢复。 */
   automationCreateLimitReached?: boolean;
   anomalyWarningsInjected: number;

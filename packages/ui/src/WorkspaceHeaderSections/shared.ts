@@ -65,6 +65,11 @@ export interface WorkspaceHeaderActionSectionProps {
   user?: UserInfo | null;
   readOnlyReason?: string;
   workspaceAbsPath: string;
+  /**
+   * Active session's execution worktree: "Open in {editor}" must open the directory the agent
+   * works in; undefined keeps the workspace checkout (ordinary sessions).
+   */
+  executionWorktreePath?: string;
   workspaceIdentity?: string;
   remoteSessionId?: string;
   remoteTarget?: RemoteTarget;

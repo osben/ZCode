@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  ACP_ENV_KEY_PATTERN,
+  describeAcpArgsProblem,
+  describeAcpCommandProblem,
+  describeAcpEnvProblem,
+} from "@zcode/shared/acp-launch-rules";
 import { sparseShape } from "@zcode/shared/config-schema";
 
 export const providerApiTypeDataSchema = z.enum([
@@ -10,13 +16,16 @@ export const providerGroupDataSchema = z.enum([
   "standard-personal",
   "zai-family",
   "bigmodel-family",
+  // ChatGPT plan (official OpenAI SIWC); an account family independent of zai/bigmodel.
+  "chatgpt-family",
 ]);
 export const zhipuAccountModeDataSchema = z.enum([
   "start-plan",
   "individual-coding-plan",
   "team-coding-plan",
   "off-peak",
-  // 加速卡访问类别；与 zcodeProviderAccountAccessSchema.mode 同值，改动需同步两处。
+  // Highspeed-card access category; mirrors zcodeProviderAccountAccessSchema.mode — change
+  // both together.
   "highspeed",
 ]);
 export const providerVisibilityDataSchema = z.enum(["visible", "hidden"]);
@@ -54,13 +63,76 @@ export const zhipuAccountAccessDataSchema = z
     type: completeZhipuAccountAccessDataSchema.shape.type,
   })
   .strict();
+/**
+ * ChatGPT plan account (official OpenAI SIWC token sharing). Deliberately separate from
+ * zhipu-account so it never triggers zcode gateway routing or zhipu-specific handling.
+ */
+export const completeChatgptAccountAccessDataSchema = z
+  .object({
+    type: z.literal("chatgpt-account"),
+    entitled: z.boolean(),
+  })
+  .strict();
+export const chatgptAccountAccessDataSchema = z
+  .object({
+    ...sparseShape(completeChatgptAccountAccessDataSchema.shape),
+    type: completeChatgptAccountAccessDataSchema.shape.type,
+  })
+  .strict();
+/**
+ * External ACP agent provider access: a local agent process (opencode,
+ * cursor-agent, …) driven over JSON-RPC stdio instead of an HTTP endpoint.
+ * Providers with this access do not require an `api` section.
+ */
+const acpAgentEnvKeySchema = z.string().regex(ACP_ENV_KEY_PATTERN);
+/** Structural shape shared by the stored (sparse) and complete schemas. */
+const acpAgentAccessStructuralShape = {
+  type: z.literal("acp-agent"),
+  agentId: z.string().min(1),
+  command: nonBlankRequiredString,
+  args: z.array(z.string()).readonly(),
+  env: z.record(acpAgentEnvKeySchema, z.string()).readonly().nullable().optional(),
+};
+/** Adds a shared launch-rule refinement (`@zcode/shared/acp-launch-rules`) to a field schema. */
+function withAcpLaunchRule<T extends z.ZodType>(
+  schema: T,
+  describe: (value: z.output<T>) => string | null,
+) {
+  return schema.superRefine((value, ctx) => {
+    const problem = describe(value);
+    if (problem) ctx.addIssue({ code: "custom", message: problem });
+  });
+}
+// The complete shape enforces the launch rules per field (so every consumer of the field
+// schema inherits them); the stored sparse shape stays structural so one invalid entry is
+// reported by complete validation instead of failing the whole personal provider file.
+export const completeAcpAgentAccessDataSchema = z
+  .object({
+    ...acpAgentAccessStructuralShape,
+    command: withAcpLaunchRule(acpAgentAccessStructuralShape.command, describeAcpCommandProblem),
+    args: withAcpLaunchRule(acpAgentAccessStructuralShape.args, describeAcpArgsProblem),
+    env: withAcpLaunchRule(acpAgentAccessStructuralShape.env, describeAcpEnvProblem),
+  })
+  .strict();
+export const acpAgentAccessDataSchema = z
+  .object({
+    ...sparseShape(acpAgentAccessStructuralShape),
+    type: acpAgentAccessStructuralShape.type,
+  })
+  .strict();
 export const providerAccessDataSchema = z.discriminatedUnion("type", [
   apiKeyAccessDataSchema,
   zhipuAccountAccessDataSchema,
+  chatgptAccountAccessDataSchema,
+  acpAgentAccessDataSchema,
 ]);
+// Registry-complete access deliberately excludes ACP: `serializeRegistryProviderAccess`
+// treats every non-account access as API-key, so a complete ACP config must never pass
+// this union. ACP validation uses `completeAcpProviderConfigDataSchema` below.
 export const completeProviderAccessDataSchema = z.discriminatedUnion("type", [
   completeApiKeyAccessDataSchema,
   completeZhipuAccountAccessDataSchema,
+  completeChatgptAccountAccessDataSchema,
 ]);
 
 export const completeProviderApiDataSchema = z
@@ -76,7 +148,7 @@ export const providerApiDataSchema = z
     baseUrl: z.string().url().nullable().optional(),
   })
   .strict();
-// Personal 允许暂存编辑中的 endpoint；完整 schema 仍拒绝，且只影响该 Provider 的准入。
+// Personal may temporarily store an endpoint while it is being edited; the full schema still rejects it, and admission is affected only for that Provider.
 export const personalProviderApiDataSchema = providerApiDataSchema.extend({
   baseUrl: z.string().nullable().optional(),
 });
@@ -99,6 +171,16 @@ export const completeProviderConfigDataSchema = providerConfigDataSchema.extend(
   access: completeProviderAccessDataSchema,
   api: completeProviderApiDataSchema,
 });
+
+/**
+ * Complete Personal-provider shape for ACP agents: the registry-complete schema
+ * minus the HTTP `api` section (agents have no endpoint) and with the complete
+ * ACP access. Used for Settings validation only — Registry entries stay
+ * API-key/account-only.
+ */
+export const completeAcpProviderConfigDataSchema = completeProviderConfigDataSchema
+  .omit({ api: true })
+  .extend({ access: completeAcpAgentAccessDataSchema });
 
 export const providerTemplateNameMapDataSchema = z
   .object({

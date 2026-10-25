@@ -19,6 +19,19 @@ import {
 import { createServiceDescriptor } from "../descriptors.js";
 import type { ModelConnectivityResult } from "@zcode/shared";
 import { createServiceLogger } from "../logger/serviceLogger.js";
+import type {
+  AcpAgentCatalogInput,
+  AcpAgentCatalogResult,
+  AcpAgentDetectionResult,
+  AcpAgentEnabledInput,
+  AcpAgentSaveInput,
+  ProviderSettingsAcpAgentWriter,
+  AcpAgentLoginResult,
+  AcpAgentStatusReport,
+  AcpAgentTestInput,
+  AcpAgentTestResult,
+  ProviderSettingsAcpAgentsBridge,
+} from "./acpAgentsContract.js";
 
 export type {
   ProviderSettingsProviderView,
@@ -64,10 +77,28 @@ export interface IProviderSettingsService {
     modelId: ModelId,
     enabled: boolean,
   ): Promise<ProviderSettingsView>;
-  /** 测试已经保存并进入目标 Environment Registry 的正式 Model。 */
+  /** Test a production Model that has been saved and added to the target Environment Registry. */
   testModelConnectivity(
     input: ProviderSettingsConnectivityRequest,
   ): Promise<ModelConnectivityResult>;
+  /** Detect the ACP agent CLIs (opencode, cursor) installed on the host environment. */
+  detectAcpAgents(input?: { readonly refresh?: boolean }): Promise<AcpAgentDetectionResult>;
+  /** The options an ACP agent offered in its last handshake; read by the composer before a session exists. */
+  getAcpAgentCatalog(input: AcpAgentCatalogInput): Promise<AcpAgentCatalogResult>;
+  /** Run a full ACP roundtrip (spawn → initialize → session/new → prompt) and return the raw frames. */
+  testAcpAgent(input: AcpAgentTestInput): Promise<AcpAgentTestResult>;
+  /** Best-effort login status for an agent CLI; `supported: false` when unknown. */
+  getAcpAgentStatus(
+    input: Parameters<ProviderSettingsAcpAgentsBridge["status"]>[0],
+  ): Promise<AcpAgentStatusReport>;
+  /** Open the user's terminal with the agent's login command. */
+  startAcpAgentLogin(
+    input: Parameters<ProviderSettingsAcpAgentsBridge["startLogin"]>[0],
+  ): Promise<AcpAgentLoginResult>;
+  /** Enable or edit an ACP agent (one atomic write of the fork-owned sidecar record). */
+  saveAcpAgent(input: AcpAgentSaveInput): Promise<ProviderSettingsView>;
+  /** Switch an ACP agent on or off; the saved launch config is kept. */
+  setAcpAgentEnabled(input: AcpAgentEnabledInput): Promise<ProviderSettingsView>;
 }
 
 export const IProviderSettingsService = createServiceDescriptor<IProviderSettingsService>(
@@ -110,7 +141,13 @@ export function createProviderSettingsService(
   facade: ProviderSettingsFacade,
   ensureReady: () => Promise<void> = async () => {},
   testConnectivity?: ProviderSettingsConnectivityTester,
+  acpAgents?: ProviderSettingsAcpAgentsBridge,
+  acpAgentWriter?: ProviderSettingsAcpAgentWriter,
 ): IProviderSettingsService {
+  const requireAcpAgentWriter = (): ProviderSettingsAcpAgentWriter => {
+    if (!acpAgentWriter) throw new Error("ACP agents are not supported in this environment");
+    return acpAgentWriter;
+  };
   return {
     onDidChange: toEvent((listener) => facade.onDidChange(listener)),
     getView: async () => {
@@ -171,8 +208,8 @@ export function createProviderSettingsService(
         throw new Error("当前 Environment 未装配模型连通性测试能力");
       }
       await facade.waitForProviderOperations(input.providerId);
-      // 禁用对象仍存在于配置视图，但不进入执行 Registry；不能把未发布误报成配置丢失。
-      // 只消费操作完成后的公共资格，不另查 Key、权益，也不替代目标 Environment 最终校验。
+      // Disabled entries remain visible in configuration but are not added to the execution Registry; do not report them as missing configuration.
+      // Use only the public eligibility result after the operation completes; do not query keys/entitlements again or replace final validation in the target Environment.
       const provider = facade
         .getView()
         .providers.find((item) => item.providerId === input.providerId);
@@ -206,6 +243,42 @@ export function createProviderSettingsService(
         modelId: input.modelId,
       });
     },
+    detectAcpAgents: async (input) =>
+      acpAgents
+        ? acpAgents.detect(input)
+        : { supported: false, agents: [], detectedAt: Date.now() },
+    getAcpAgentCatalog: async (input) =>
+      acpAgents ? acpAgents.catalog(input) : { supported: false },
+    testAcpAgent: async (input) =>
+      acpAgents
+        ? acpAgents.test(input)
+        : {
+            ok: false,
+            error: { message: "ACP agents are not supported in this environment" },
+            frames: [],
+            framesDropped: 0,
+            durationMs: 0,
+          },
+    getAcpAgentStatus: async (input) =>
+      acpAgents ? acpAgents.status(input) : { supported: false },
+    startAcpAgentLogin: async (input) =>
+      acpAgents
+        ? acpAgents.startLogin(input)
+        : {
+            opened: false,
+            command: "",
+            error: "ACP agents are not supported in this environment",
+          },
+    saveAcpAgent: async (input) => {
+      await ensureReady();
+      await requireAcpAgentWriter().save(input);
+      return facade.refresh("acp-agents:saved");
+    },
+    setAcpAgentEnabled: async (input) => {
+      await ensureReady();
+      await requireAcpAgentWriter().setEnabled(input);
+      return facade.refresh("acp-agents:enabled");
+    },
   };
 }
 
@@ -236,9 +309,8 @@ export function createModelSelectionService(
         for (const listener of listeners) listener(view);
       },
       (error: unknown) => {
-        // Registry 事件触发的异步 View 重建没有 owner；Host dispose 后它仍会继续
-        // 读取已释放的配置仓库，并形成未处理 rejection。dispose 是明确的取消边界；仅在服务
-        // 仍存活时记录真实读取失败。
+        // Asynchronous view rebuilds triggered by Registry events have no owner; after Host dispose they could continue
+        // reading a released configuration repository and cause an unhandled rejection. dispose is the explicit cancellation boundary; log real read failures only while the service is still alive.
         if (disposed) return;
         log.warn(undefined, `ModelSelection View 刷新失败: ${String(error)}`);
       },

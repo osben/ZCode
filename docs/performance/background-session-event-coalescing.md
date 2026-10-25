@@ -1,48 +1,76 @@
-# 后台 session event 降频
+# Background Session Event Coalescing
 
-## 背景
+## Background
 
-深度检索类任务并发运行时，多个后台 task 会持续产生 `model.streaming`、`tool.updated:progress` 和恢复进度事件。即使当前界面只展示一个 task，renderer 仍会被后台任务的每个协议事件唤醒，继续做 projection、Zustand 写入和 React 更新，导致 5 并发时 renderer CPU 明显升高。
+When deep-search style tasks run concurrently, several background tasks keep producing
+`model.streaming`, `tool.updated:progress` and recovery progress events. Even if the UI shows only
+one task, the renderer is woken by every protocol event of the background tasks and keeps doing
+projection, Zustand writes and React updates, which raises renderer CPU noticeably at 5 concurrent
+tasks.
 
-## 策略
+## Strategy
 
-- active task 继续使用 `desktop-continuous` 实时订阅，保留流式正文、思考和工具调用的体感。
-- inactive task 的后台 monitor 在订阅 `desktop-continuous` session event 时声明 `background-summary` 合并模式。
-- inactive desktop task 进入 tombstone 内容模式：后台 monitor 只维护运行态、标题、权限、usage、plan、队列、未读和终态，不再把正文/思考/tool progress chunk 持续写入 React 消息树。
-- 合并只发生在订阅者侧，不改变共享 emitter，不改变 agent/runtime 的事件事实源，也不改变手机 `/remote` 的 `web-remote-replayable` snapshot/gap 恢复语义。
-- 后台可合并事件：
-  - `model.streaming:text_delta`
-  - `model.streaming:reasoning_delta`
-  - `model.streaming:tool_input_delta`
-  - `tool.updated:progress`
-  - `streamRecovery.updated`
-- 后台不可延迟事件必须先 flush 已合并事件再立即投递：
-  - turn start / terminal
-  - tool scheduled / started / result / error / batch
-  - permission / user input
-  - snapshot / state update / provider runtime headers
-  - title、mode、target 等结构化 session 变更
+- The active task keeps the real-time `desktop-continuous` subscription, preserving the feel of
+  streaming text, reasoning and tool calls.
+- The background monitor of an inactive task declares the `background-summary` merge mode when it
+  subscribes to `desktop-continuous` session events.
+- An inactive desktop task enters tombstone content mode: the background monitor maintains only run
+  state, title, permission, usage, plan, queue, unread and terminal state, and no longer writes body /
+  reasoning / tool progress chunks into the React message tree.
+- Merging happens only on the subscriber side. It does not change the shared emitter, the agent/runtime
+  event source of truth, or the `web-remote-replayable` snapshot/gap recovery semantics of mobile
+  `/remote`.
+- Events a background subscriber may merge: `model.streaming:text_delta`,
+  `model.streaming:reasoning_delta`, `model.streaming:tool_input_delta`, `tool.updated:progress`,
+  `streamRecovery.updated`.
+- Events that must not be delayed first flush the merged events and are then delivered immediately:
+  turn start / terminal; tool scheduled / started / result / error / batch; permission / user input;
+  snapshot / state update / provider runtime headers; structured session changes such as title, mode,
+  target.
 
-## 目标
+## Goal
 
-后台 task 仍能保持运行态、权限请求、终态、未读状态和切回后的恢复能力，但不可见任务不再按 token/tool progress 频率驱动 renderer。用户切换到某个任务时，前台订阅通过 snapshot/live stream 重新接管完整 UI；后台合并只承担低频摘要，不作为 replayable 恢复边界。
+A background task still keeps run state, permission requests, terminal state, unread state and the
+ability to recover after switching back, but an invisible task no longer drives the renderer at
+token/tool-progress frequency. When the user switches to a task, the foreground subscription takes
+over the full UI again through snapshot/live stream; background merging only carries a low-frequency
+summary and is not a replayable recovery boundary.
 
-## Tombstone 内容模式
+## Tombstone content mode
 
-- 桌面后台任务收到 `agent_message_chunk`、`agent_thought_chunk`、`tool_call`、普通 `tool_call_update` 时，不再调用 `updateTaskMessages`。
-- `tool_call_update:completed` 仍会用工具标题轻量补齐 todo plan，例如 `Write/Edit <path>` 对应某个 plan step 文件名时将该 step 标成 completed。
-- `task_complete` / `task_error` 对不可见桌面任务只收口 runtime、usage、错误、未读和队列，不主动拉 residual snapshot 写入大消息。
-- `task_snapshot_updated` 对不可见桌面任务只作为恢复提示；除归档/删除等显式释放原因外，不在后台读取全量消息。
-- 当前 active task、active task 前台订阅建立前的兜底窗口，以及手机 `web-remote-replayable` mirror 不使用 tombstone，仍保持原有实时/恢复语义。
-- 批量 session 压测不会在触发完成后自动切到最后一个成功任务；这些任务保持后台 tombstone，用户显式点开时再恢复完整内容。
-- 批量 session 压测的首发 session 会按 1000ms 轻微错峰启动，最多延迟 5s；这样 5 并发会在 4s 内全部进入运行态，10 并发在 5s 内完成触发，不会把 task 创建、订阅和运行态写入全部压在同一秒打到 renderer。
-- 批量 session 压测产生的后台首发任务使用轻量初始化：task 列表插入、optimistic meta、runtime=`streaming`、`activeInputId` 和 provider 绑定合并为一次 Zustand 写入，不再为不可见任务写入首发 user/assistant optimistic messages。
-- 后台 monitor 的单个事件处理包在 React batched updates 中，减少终态同时更新 runtime、usage、未读、权限等状态时的 React commit 次数。
-- 不可见桌面任务的 title-only `session_info_update` 会按 2s 合并写回任务缓存；带 `target` 的 goal/status 更新和终态事件会先 flush pending title，再继续通知和收口。
-- 工具输入投影采样、消息写入采样、后台 usage breakdown 等随流诊断日志必须走 `debug`，避免深度检索时 renderer 反复做大对象序列化和生产日志落盘。
+- For a desktop background task, `agent_message_chunk`, `agent_thought_chunk`, `tool_call` and ordinary
+  `tool_call_update` no longer call `updateTaskMessages`.
+- `tool_call_update:completed` still fills the todo plan lightly from the tool title: for example when
+  `Write/Edit <path>` matches the file name of a plan step, that step is marked completed.
+- `task_complete` / `task_error` on an invisible desktop task only close out runtime, usage, error,
+  unread and queue; they do not pull a residual snapshot into large messages.
+- `task_snapshot_updated` on an invisible desktop task is only a recovery hint; except explicit release
+  reasons such as archive/delete it does not read full messages in the background.
+- The current active task, the fallback window before the active task's foreground subscription is
+  established, and the mobile `web-remote-replayable` mirror do not use tombstone and keep the original
+  real-time/recovery semantics.
+- A batch session stress run does not auto-switch to the last successful task after triggering; those
+  tasks stay background tombstones and recover full content when the user opens one explicitly.
+- The first dispatched sessions of a batch stress run are staggered by 1000ms, at most 5s delay: 5
+  concurrent tasks all enter running within 4s and 10 concurrent finish triggering within 5s, so task
+  creation, subscription and runtime writes do not all hit the renderer in the same second.
+- Background first-dispatch tasks of a batch stress run use lightweight initialization: task list
+  insertion, optimistic meta, runtime=`streaming`, `activeInputId` and provider binding merge into one
+  Zustand write, and the first user/assistant optimistic messages are not written for invisible tasks.
+- Each event handling of the background monitor is wrapped in React batched updates, reducing React
+  commits when a terminal event updates runtime, usage, unread and permission together.
+- A title-only `session_info_update` of an invisible desktop task is merged and written back to the
+  task cache every 2s; goal/status updates carrying `target` and terminal events flush the pending
+  title first and then continue notifying and closing out.
+- Streaming diagnostic logs such as tool-input projection sampling, message-write sampling and
+  background usage breakdown must go through `debug`, so deep search does not make the renderer
+  serialize large objects repeatedly and write production logs.
 
-## 边界
+## Boundaries
 
-- `clientMode` / `deliveryKind` 边界不扩散：本策略只在 UI 后台 monitor 的 `desktop-continuous` 订阅参数上启用。
-- 手机远控 replayable 不使用该合并模式，仍由 `seq`、gap recovery 和 snapshot 保证恢复。
-- app-agent 协议 `@zcode/protocol` 不新增字段；合并参数是 services 内部订阅者策略，不传给 zcode-cli runtime。
+- The `clientMode` / `deliveryKind` boundary does not spread: this strategy is enabled only on the
+  `desktop-continuous` subscription parameters of the UI background monitor.
+- Mobile remote replayable does not use this merge mode; recovery is still guaranteed by `seq`, gap
+  recovery and snapshot.
+- The app-agent protocol `@zcode/protocol` gains no field; the merge parameter is an internal
+  subscriber policy of services and is not passed to the zcode-cli runtime.

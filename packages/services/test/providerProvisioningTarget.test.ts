@@ -157,7 +157,7 @@ describe("Provider Provisioning Target", () => {
       expect(f.replacePersonalConfig).not.toHaveBeenCalled();
       expect(f.credentialValues.get("oauth:zai:access_token")).toBe("old-token");
     } else {
-      // 空配置无默认模型，避免测试 fake Registry 对未知默认的校验影响协议断言。
+      // Empty config has no default model, keeping the test fake Registry's validation of unknown defaults from affecting the protocol assertions.
       delete envelope.personalConfig.defaultModelSelection;
       await expect(f.target.apply(envelope)).resolves.toMatchObject({ status: "applied" });
       expect(f.credentialValues.get("oauth:zai:access_token")).toBeNull();

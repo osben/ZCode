@@ -32,6 +32,7 @@
     "@zcode/dynamic-workflow": "workspace:*",
     "@zcode/dynamic-workflow-runtime": "workspace:*",
     "@zcode/i18n": "workspace:*",
+    "@zcode/acp-agent-runtime": "workspace:*",
     "@zcode/provider": "workspace:*",
     "@zcode/provider-node": "workspace:*",
     "@zcode/shared": "workspace:*",
@@ -40,7 +41,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.0.0",
     "@types/yazl": "^3.3.1",
     "@zcode/formal-proof": "workspace:*",
     "yazl": "^3.3.1"

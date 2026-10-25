@@ -19,9 +19,10 @@ import type {
 } from "@zcode/shared";
 import zhCN from "@/i18n/locales/zh-CN.js";
 import enUS from "@/i18n/locales/en-US.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const ports = vi.hoisted(() => ({
-  locale: "zh-CN",
+  locale: "en-US",
   snapshot: {} as SourceServerManagementSnapshot,
   credentialService: { load: vi.fn(async () => null), save: vi.fn() },
   settingService: {
@@ -51,7 +52,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
     locale: ports.locale,
     intl: {
       formatMessage: ({ id }: { id: string }, values: Record<string, string> = {}) => {
-        const messages: Record<string, string> = ports.locale === "zh-CN" ? zhCN : enUS;
+        const messages: Record<string, string> = ports.locale === "en-US" ? enUS : zhCN;
         return (messages[id] ?? id).replace(/\{(\w+)\}/gu, (_, key) => values[key] ?? `{${key}}`);
       },
     },
@@ -99,7 +100,7 @@ beforeEach(() => {
   vi.unstubAllEnvs();
   ports.platform.isLocalDevelopmentRuntime = true;
   ports.platform.isDockerAvailable.mockResolvedValue(true);
-  ports.locale = "zh-CN";
+  ports.locale = "en-US";
   ports.platform.listSSHConfigAliases.mockResolvedValue([]);
   ports.platform.listWSLDistros.mockResolvedValue([]);
   ports.platform.listDockerContainers.mockResolvedValue([]);
@@ -119,8 +120,8 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-describe("远程连接向导用户流程", () => {
-  it("缺少已保存密码时在阶段内聚焦密码，补齐后保留原目录和下载方式", async () => {
+describe("remote connection wizard user flows", () => {
+  it("focuses the password within the stage when the saved password is missing; after completing it keeps the original directory and download mode", async () => {
     ports.snapshot.profiles = [
       {
         profileId: "missing",
@@ -147,7 +148,7 @@ describe("远程连接向导用户流程", () => {
     expect(screen.queryByTestId("remote-connection-settings-scroll")).toBeNull();
     expect(props.onConnect).not.toHaveBeenCalled();
     fireEvent.change(password, { target: { value: "replacement-password" } });
-    fireEvent.click(screen.getByRole("button", { name: "建立连接" }));
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("remote.startConnection") }));
     await waitFor(() =>
       expect(props.onSelectProject).toHaveBeenCalledWith("session-a", "/srv/project", undefined),
     );
@@ -172,7 +173,7 @@ function pending<T>() {
   return { promise, resolve, reject };
 }
 
-it("连接中可以取消，迟到成功只释放临时 session，不进入目录或重新打开向导", async () => {
+it("a connecting flow can be cancelled; a late success only releases the temporary session without entering a directory or reopening the wizard", async () => {
   const connection = pending<string>();
   const { props } = mountDialog({
     preferredTarget: {
@@ -183,11 +184,15 @@ it("连接中可以取消，迟到成功只释放临时 session，不进入目�
     },
     onConnect: vi.fn(() => connection.promise),
   });
-  fireEvent.click(await screen.findByRole("button", { name: "建立连接" }));
-  const cancel = await screen.findByRole("button", { name: "取消连接" });
+  fireEvent.click(
+    await screen.findByRole("button", { name: expectedCopy("remote.startConnection") }),
+  );
+  const cancel = await screen.findByRole("button", {
+    name: expectedCopy("remote.cancelConnection"),
+  });
   expect(cancel.hasAttribute("disabled")).toBe(false);
   fireEvent.click(cancel);
-  await screen.findByText("已取消");
+  await screen.findByText(expectedCopy("remote.connectionCancelled"));
   expect(screen.queryByTestId("ssh-error")).toBeNull();
   expect(ports.platform.cancelPendingRemoteConnection).toHaveBeenCalledWith(expect.any(String));
   await act(async () => connection.resolve("late-session"));
@@ -196,7 +201,7 @@ it("连接中可以取消，迟到成功只释放临时 session，不进入目�
   expect(screen.queryByTestId("ssh-success")).toBeNull();
 });
 
-it("取消安装显示已取消，并允许重新开始连接", async () => {
+it("cancelling the install shows the cancelled state and allows restarting the connection", async () => {
   const onConnect = vi
     .fn()
     .mockRejectedValueOnce(
@@ -204,11 +209,15 @@ it("取消安装显示已取消，并允许重新开始连接", async () => {
     )
     .mockResolvedValueOnce("session-a");
   mountDialog({ preferredTarget: { kind: "docker", container: "dev" }, onConnect });
-  fireEvent.click(await screen.findByRole("button", { name: "建立连接" }));
-  fireEvent.click(await screen.findByRole("button", { name: "取消", exact: true }));
-  await screen.findByText("已取消");
+  fireEvent.click(
+    await screen.findByRole("button", { name: expectedCopy("remote.startConnection") }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: expectedCopy("common.cancel"), exact: true }),
+  );
+  await screen.findByText(expectedCopy("remote.connectionCancelled"));
   expect(screen.queryByTestId("ssh-error")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "重试" }));
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.retry") }));
   await screen.findByTestId("ssh-success");
 });
 
@@ -241,16 +250,18 @@ function addDockerProfile() {
   ];
 }
 async function clickStart() {
-  fireEvent.click(await screen.findByRole("button", { name: "建立连接" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: expectedCopy("remote.startConnection") }),
+  );
 }
 async function clickBack() {
-  fireEvent.click(screen.getByRole("button", { name: "上一步", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.back"), exact: true }));
 }
 async function closeAndReopen(
   view: ReturnType<typeof mountDialog>,
   next: Partial<DialogProps> = {},
 ) {
-  fireEvent.click(screen.getByRole("button", { name: "关闭", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.close"), exact: true }));
   await act(async () => undefined);
   view.rerender(createElement(RemoteConnectionDialog, { ...view.props, open: false }));
   view.rerender(createElement(RemoteConnectionDialog, { ...view.props, ...next }));
@@ -272,7 +283,7 @@ function registerSession(
 }
 
 it.each(["profile", "source"] as const)(
-  "从 %s 入口沿保存连接直接进入目录，不自动选择项目",
+  "from the %s entry a saved connection goes straight to the directory without auto-selecting a project",
   async (entry) => {
     addDockerProfile();
     const { props } = mountDialog(
@@ -290,49 +301,64 @@ it.each(["profile", "source"] as const)(
   },
 );
 
-it("新连接成功后自动进入目录，等待用户明确选择", async () => {
+it("after a new connection succeeds it enters the directory and waits for an explicit choice", async () => {
   registerSession();
   const { props } = mountDialog({ preferredTarget: sshTarget });
   await clickStart();
   await screen.findByTestId("ssh-success");
   expect(props.onSelectProject).not.toHaveBeenCalled();
-  fireEvent.click(await screen.findByRole("button", { name: "在此目录打开工作区", exact: true }));
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: expectedCopy("remote.openWorkspaceHere"),
+      exact: true,
+    }),
+  );
   await waitFor(() =>
     expect(props.onSelectProject).toHaveBeenCalledWith("session-a", "/srv/project", undefined),
   );
 });
 
-it.each([false, true])("目录选择失败恢复可操作状态，session 被回收=%s", async (removed) => {
-  registerSession();
-  const selection = pending<void>();
-  const { props } = mountDialog({
-    preferredTarget: sshTarget,
-    onSelectProject: vi.fn(() => selection.promise),
-  });
-  await clickStart();
-  const select = await screen.findByRole("button", { name: "在此目录打开工作区", exact: true });
-  await waitFor(() => expect(select.hasAttribute("disabled")).toBe(false));
-  fireEvent.click(select);
-  expect(props.onSelectProject).toHaveBeenCalledOnce();
-  if (removed) useRemoteWorkspaceSessionStore.getState().unregisterSession("session-a");
-  await act(async () => selection.reject(new Error("directory admission failed")));
-  await screen.findByText("directory admission failed");
-  const next = await screen.findByRole("button", {
-    name: removed ? "建立连接" : "在此目录打开工作区",
-    exact: true,
-  });
-  expect(next.hasAttribute("disabled")).toBe(false);
-});
+it.each([false, true])(
+  "directory selection failure restores an operable state, session reclaimed=%s",
+  async (removed) => {
+    registerSession();
+    const selection = pending<void>();
+    const { props } = mountDialog({
+      preferredTarget: sshTarget,
+      onSelectProject: vi.fn(() => selection.promise),
+    });
+    await clickStart();
+    const select = await screen.findByRole("button", {
+      name: expectedCopy("remote.openWorkspaceHere"),
+      exact: true,
+    });
+    await waitFor(() => expect(select.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(select);
+    expect(props.onSelectProject).toHaveBeenCalledOnce();
+    if (removed) useRemoteWorkspaceSessionStore.getState().unregisterSession("session-a");
+    await act(async () => selection.reject(new Error("directory admission failed")));
+    await screen.findByText("directory admission failed");
+    const next = await screen.findByRole("button", {
+      name: removed
+        ? expectedCopy("remote.startConnection")
+        : expectedCopy("remote.openWorkspaceHere"),
+      exact: true,
+    });
+    expect(next.hasAttribute("disabled")).toBe(false);
+  },
+);
 
-it("回填、收起、恢复保留当前密码和用户选择的下载侧", async () => {
+it("refill, collapse and restore keep the current password and the user-chosen download side", async () => {
   const view = mountDialog({
     preferredTarget: { kind: "ssh", host: "a.example.com", username: "dev" },
   });
   const password = await screen.findByTestId("ssh-password-input");
   fireEvent.change(password, { target: { value: "same-target-secret" } });
-  fireEvent.click(screen.getByRole("button", { name: "高级选项" }));
-  fireEvent.click(screen.getByRole("button", { name: "远端服务器下载" }));
-  fireEvent.click(screen.getByRole("button", { name: /收起/u }));
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.advancedOptions") }));
+  fireEvent.click(
+    screen.getByRole("button", { name: expectedCopy("ssh.assetInstallMode.remote-download") }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: /Collapse/u }));
   view.rerender(createElement(RemoteConnectionDialog, { ...view.props, open: false }));
   view.rerender(createElement(RemoteConnectionDialog, view.props));
   expect((screen.getByTestId("ssh-password-input") as HTMLInputElement).value).toBe(
@@ -352,7 +378,7 @@ it("回填、收起、恢复保留当前密码和用户选择的下载侧", asyn
 });
 
 it.each(["target", "profile"] as const)(
-  "换到另一 %s 时清空旧密码，不向新设备提交旧凭据",
+  "switching to another %s clears the old password so stale credentials are not submitted to the new device",
   async (entry) => {
     ports.snapshot.profiles = [
       {
@@ -382,13 +408,15 @@ it.each(["target", "profile"] as const)(
         : { preferredTarget: undefined, preferredProfileId: "missing" },
     );
     if (entry === "profile") {
-      // 延后快照返回，确定性覆盖旧配置页仍在、新 Profile 尚未进入连接阶段的窗口。
+      // Delay the snapshot return to deterministically cover the window where the old
+      // configuration screen is still mounted and the new profile has not reached the connecting stage.
       expect(screen.queryByTestId("remote-connection-stages")).toBeNull();
       expect(view.props.onConnect).not.toHaveBeenCalled();
       await act(async () => snapshot.resolve(ports.snapshot));
     }
-    // 两屏复用密码框 test id；全局查询可能拿到随后卸载的旧节点，输入事件不会更新新凭据。
-    // Profile 必须等待连接阶段的补凭据表单，手动 target 则继续操作配置页。
+    // Both screens reuse the password field test id; a global query may pick up the old node that
+    // unmounts right after, and the input event would not update the new credential.
+    // The profile entry must wait for the connecting stage's credential form; the manual target keeps operating the configuration screen.
     const input =
       entry === "profile"
         ? await within(await screen.findByTestId("remote-connection-stages")).findByTestId(
@@ -410,69 +438,88 @@ it.each(["target", "profile"] as const)(
   },
 );
 
-it.each(["ssh", "server"] as const)("关闭后换目标清空 %s 口令", async (kind) => {
-  const target = kind === "ssh" ? sshTarget : { kind, url: "http://server-a" };
-  const view = mountDialog({ preferredTarget: target });
-  const selector =
-    kind === "ssh" ? 'input[name="remote-ssh-private-key-passphrase"]' : 'input[type="password"]';
-  await screen.findByRole("button", { name: "建立连接" });
-  const input = document.querySelector<HTMLInputElement>(selector)!;
-  fireEvent.change(input, { target: { value: "old-token" } });
-  await closeAndReopen(view, {
-    preferredTarget:
-      kind === "ssh" ? { ...sshTarget, host: "new.example.com" } : { kind, url: "http://server-b" },
-  });
-  await screen.findByRole("button", { name: "建立连接" });
-  expect(document.querySelector<HTMLInputElement>(selector)!.value).toBe("");
-});
+it.each(["ssh", "server"] as const)(
+  "closing and switching targets clears the %s token",
+  async (kind) => {
+    const target = kind === "ssh" ? sshTarget : { kind, url: "http://server-a" };
+    const view = mountDialog({ preferredTarget: target });
+    const selector =
+      kind === "ssh" ? 'input[name="remote-ssh-private-key-passphrase"]' : 'input[type="password"]';
+    await screen.findByRole("button", { name: expectedCopy("remote.startConnection") });
+    const input = document.querySelector<HTMLInputElement>(selector)!;
+    fireEvent.change(input, { target: { value: "old-token" } });
+    await closeAndReopen(view, {
+      preferredTarget:
+        kind === "ssh"
+          ? { ...sshTarget, host: "new.example.com" }
+          : { kind, url: "http://server-b" },
+    });
+    await screen.findByRole("button", { name: expectedCopy("remote.startConnection") });
+    expect(document.querySelector<HTMLInputElement>(selector)!.value).toBe("");
+  },
+);
 
-it.each([false, true])("原项目意图跨连接和安装确认保留，需安装=%s", async (install) => {
-  const onConnect = vi.fn().mockResolvedValue("session-a");
-  if (install)
-    onConnect.mockRejectedValueOnce(
-      Object.assign(new Error("install"), { code: "source-server-install-required" }),
-    );
-  const { props } = mountDialog({
-    preferredTarget: sshTarget,
-    preferredDirectoryPath: "/srv/original",
-    onConnect,
-  });
-  await clickStart();
-  if (install) fireEvent.click(await screen.findByRole("button", { name: "安装并继续" }));
-  await waitFor(() =>
-    expect(props.onSelectProject).toHaveBeenCalledWith("session-a", "/srv/original", undefined),
-  );
-  expect(onConnect).toHaveBeenLastCalledWith(
-    expect.objectContaining({ assetInstallMode: "remote-download" }),
-    expect.any(String),
-    install ? { confirmSourceServerInstall: true } : undefined,
-  );
-});
-
-it.each(["new", "saved"] as const)("主动改选 %s 连接释放旧项目意图", async (entry) => {
-  addDockerProfile();
-  const onProjectIntentCleared = vi.fn();
-  const { props } = mountDialog({
-    preferredTarget: sshTarget,
-    preferredDirectoryPath: "/srv/old",
-    onProjectIntentCleared,
-  });
-  await screen.findByRole("button", { name: "建立连接" });
-  fireEvent.click(screen.getByRole("button", { name: "返回列表" }));
-  if (screen.queryByRole("button", { name: "上一步", exact: true })) await clickBack();
-  if (entry === "new") {
-    fireEvent.click(screen.getByRole("button", { name: "手动输入 Docker" }));
-    fireEvent.change(screen.getByTestId("docker-container-input"), { target: { value: "dev" } });
+it.each([false, true])(
+  "the original project intent survives connection and install confirmation, install required=%s",
+  async (install) => {
+    const onConnect = vi.fn().mockResolvedValue("session-a");
+    if (install)
+      onConnect.mockRejectedValueOnce(
+        Object.assign(new Error("install"), { code: "source-server-install-required" }),
+      );
+    const { props } = mountDialog({
+      preferredTarget: sshTarget,
+      preferredDirectoryPath: "/srv/original",
+      onConnect,
+    });
     await clickStart();
-  } else {
-    fireEvent.click(screen.getByRole("button", { name: /devbox/ }));
-  }
-  await screen.findByTestId("ssh-success");
-  expect(props.onSelectProject).not.toHaveBeenCalled();
-  expect(onProjectIntentCleared).toHaveBeenCalledOnce();
-});
+    if (install)
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: expectedCopy("remote.sourceServerInstallConfirm"),
+        }),
+      );
+    await waitFor(() =>
+      expect(props.onSelectProject).toHaveBeenCalledWith("session-a", "/srv/original", undefined),
+    );
+    expect(onConnect).toHaveBeenLastCalledWith(
+      expect.objectContaining({ assetInstallMode: "remote-download" }),
+      expect.any(String),
+      install ? { confirmSourceServerInstall: true } : undefined,
+    );
+  },
+);
 
-it("失败流程收起后恢复原错误，不重复连接", async () => {
+it.each(["new", "saved"] as const)(
+  "actively choosing a %s connection releases the old project intent",
+  async (entry) => {
+    addDockerProfile();
+    const onProjectIntentCleared = vi.fn();
+    const { props } = mountDialog({
+      preferredTarget: sshTarget,
+      preferredDirectoryPath: "/srv/old",
+      onProjectIntentCleared,
+    });
+    await screen.findByRole("button", { name: expectedCopy("remote.startConnection") });
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("remote.selection.back") }));
+    if (screen.queryByRole("button", { name: expectedCopy("common.back"), exact: true }))
+      await clickBack();
+    if (entry === "new") {
+      fireEvent.click(
+        screen.getByRole("button", { name: expectedCopy("remote.selection.new.docker") }),
+      );
+      fireEvent.change(screen.getByTestId("docker-container-input"), { target: { value: "dev" } });
+      await clickStart();
+    } else {
+      fireEvent.click(screen.getByRole("button", { name: /devbox/ }));
+    }
+    await screen.findByTestId("ssh-success");
+    expect(props.onSelectProject).not.toHaveBeenCalled();
+    expect(onProjectIntentCleared).toHaveBeenCalledOnce();
+  },
+);
+
+it("after a failed flow is collapsed, restoring shows the original error without reconnecting", async () => {
   addDockerProfile();
   const view = mountDialog({
     preferredProfileId: "docker-profile",
@@ -482,7 +529,7 @@ it("失败流程收起后恢复原错误，不重复连接", async () => {
     onOpenChange: vi.fn(),
   });
   await screen.findByTestId("ssh-error");
-  fireEvent.click(screen.getByRole("button", { name: /收起/u }));
+  fireEvent.click(screen.getByRole("button", { name: /Collapse/u }));
   expect(view.props.onOpenChange).toHaveBeenCalledWith(false);
   view.rerender(createElement(RemoteConnectionDialog, { ...view.props, open: false }));
   view.rerender(createElement(RemoteConnectionDialog, view.props));
@@ -491,7 +538,7 @@ it("失败流程收起后恢复原错误，不重复连接", async () => {
 });
 
 it.each(["success", "failure", "force", "force-cancel"] as const)(
-  "自动更新保留连接意图并处理 %s 结果",
+  "auto-update keeps the connection intent and handles the %s outcome",
   async (outcome) => {
     addDockerProfile();
     ports.snapshot.states = [
@@ -528,9 +575,11 @@ it.each(["success", "failure", "force", "force-cancel"] as const)(
       expect(ports.confirm).not.toHaveBeenCalled();
       expect(ports.management.updateSource).toHaveBeenCalledTimes(1);
       if (outcome === "force-cancel") {
-        fireEvent.click(screen.getAllByRole("button", { name: "取消连接" }).at(-1)!);
-        await screen.findByText("已取消");
-        expect(screen.queryByText("正在更新远端服务")).toBeNull();
+        fireEvent.click(
+          screen.getAllByRole("button", { name: expectedCopy("remote.cancelConnection") }).at(-1)!,
+        );
+        await screen.findByText(expectedCopy("remote.connectionCancelled"));
+        expect(screen.queryByText(expectedCopy("remote.connectingSubtitleUpdating"))).toBeNull();
         expect(ports.management.updateSource).toHaveBeenCalledTimes(1);
         onConnect
           .mockReset()
@@ -538,7 +587,7 @@ it.each(["success", "failure", "force", "force-cancel"] as const)(
             Object.assign(new Error("upgrade"), { code: "source-server-upgrade-required" }),
           )
           .mockResolvedValue("session-a");
-        fireEvent.click(screen.getByRole("button", { name: "重试" }));
+        fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.retry") }));
         await waitFor(() => expect(ports.management.updateSource).toHaveBeenCalledTimes(2));
         await act(async () => update.resolve({ ...ports.snapshot, generation: 2, states: [] }));
         await waitFor(() =>
@@ -546,7 +595,9 @@ it.each(["success", "failure", "force", "force-cancel"] as const)(
         );
         return;
       }
-      fireEvent.click(screen.getByRole("button", { name: "强制更新" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: expectedCopy("settings.source.forceUpdate") }),
+      );
     }
     await waitFor(() =>
       expect(ports.management.updateSource).toHaveBeenCalledWith({
@@ -555,7 +606,7 @@ it.each(["success", "failure", "force", "force-cancel"] as const)(
         force: outcome === "force",
       }),
     );
-    await screen.findByText("正在更新远端服务");
+    await screen.findByText(expectedCopy("remote.connectingSubtitleUpdating"));
     if (outcome === "failure") {
       await act(async () => update.reject(new Error("archive verification failed")));
       await screen.findByTestId("ssh-error");
@@ -577,35 +628,38 @@ it.each([
   ["en-US", "ssh", "Connecting to SSH host", "Connected to the SSH host"],
   ["en-US", "wsl", "Starting and connecting to distribution", "Connected to the distribution"],
   ["en-US", "docker", "Connecting to container", "Connected to the container"],
-] as const)("%s 的 %s 保存连接显示对应阶段及阶段说明", async (locale, kind, title, description) => {
-  ports.locale = locale;
-  const target =
-    kind === "ssh"
-      ? sshTarget
-      : kind === "wsl"
-        ? { kind, distro: "Ubuntu" }
-        : { kind, container: "dev" };
-  ports.snapshot.profiles = [{ profileId: "profile", transport: kind, target, createdAt: 1 }];
-  const onConnect = vi.fn(() => new Promise<string>(() => undefined));
-  mountDialog({ preferredProfileId: "profile", isWindowsDesktop: true, onConnect });
-  await waitFor(() => expect(onConnect).toHaveBeenCalledOnce());
-  await screen.findByText(title);
-  const requestId = vi.mocked(onConnect).mock.calls[0] as unknown as [unknown, string];
-  const listener = ports.platform.onRemoteConnectionLog.mock.calls.at(-1)?.[0] as unknown as (
-    entry: unknown,
-  ) => void;
-  act(() =>
-    listener({
-      requestId: requestId[1],
-      level: "info",
-      message: "[source-server:identify] identified",
-      timestamp: Date.now(),
-    }),
-  );
-  await screen.findByText(description);
-});
+] as const)(
+  "%s saved %s connection shows the matching stage and stage description",
+  async (locale, kind, title, description) => {
+    ports.locale = locale;
+    const target =
+      kind === "ssh"
+        ? sshTarget
+        : kind === "wsl"
+          ? { kind, distro: "Ubuntu" }
+          : { kind, container: "dev" };
+    ports.snapshot.profiles = [{ profileId: "profile", transport: kind, target, createdAt: 1 }];
+    const onConnect = vi.fn(() => new Promise<string>(() => undefined));
+    mountDialog({ preferredProfileId: "profile", isWindowsDesktop: true, onConnect });
+    await waitFor(() => expect(onConnect).toHaveBeenCalledOnce());
+    await screen.findByText(title);
+    const requestId = vi.mocked(onConnect).mock.calls[0] as unknown as [unknown, string];
+    const listener = ports.platform.onRemoteConnectionLog.mock.calls.at(-1)?.[0] as unknown as (
+      entry: unknown,
+    ) => void;
+    act(() =>
+      listener({
+        requestId: requestId[1],
+        level: "info",
+        message: "[source-server:identify] identified",
+        timestamp: Date.now(),
+      }),
+    );
+    await screen.findByText(description);
+  },
+);
 
-it("关闭后迟到失败不重新打开向导，凭据加载的迟到结果不拨号", async () => {
+it("a late failure after closing does not reopen the wizard; a late credential load result does not dial", async () => {
   const credential = pending<null>();
   ports.credentialService.load.mockImplementationOnce(() => credential.promise);
   ports.snapshot.profiles = [
@@ -623,7 +677,7 @@ it("关闭后迟到失败不重新打开向导，凭据加载的迟到结果不�
   ];
   const view = mountDialog({ preferredProfileId: "profile", onOpenChange: vi.fn() });
   await waitFor(() => expect(ports.credentialService.load).toHaveBeenCalled());
-  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.close") }));
   await act(async () => undefined);
   view.rerender(createElement(RemoteConnectionDialog, { ...view.props, open: false }));
   await act(async () => credential.resolve(null));
@@ -631,7 +685,7 @@ it("关闭后迟到失败不重新打开向导，凭据加载的迟到结果不�
   expect(view.props.onOpenChange).toHaveBeenLastCalledWith(false);
 });
 
-it("取消后立即重试，旧请求完成不清除新请求的忙碌状态", async () => {
+it("retrying immediately after cancel: the old request completing does not clear the new request's busy state", async () => {
   const first = pending<string>();
   const second = pending<string>();
   const onConnect = vi
@@ -640,16 +694,22 @@ it("取消后立即重试，旧请求完成不清除新请求的忙碌状态", a
     .mockImplementationOnce(() => second.promise);
   mountDialog({ preferredTarget: sshTarget, onConnect });
   await clickStart();
-  fireEvent.click(await screen.findByRole("button", { name: "取消连接" }));
-  fireEvent.click(screen.getByRole("button", { name: "重试" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: expectedCopy("remote.cancelConnection") }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.retry") }));
   await act(async () => first.reject(new Error("old failure")));
-  expect(screen.getByRole("button", { name: "取消连接" }).hasAttribute("disabled")).toBe(false);
+  expect(
+    screen
+      .getByRole("button", { name: expectedCopy("remote.cancelConnection") })
+      .hasAttribute("disabled"),
+  ).toBe(false);
   expect(screen.queryByTestId("ssh-error")).toBeNull();
   await act(async () => second.resolve("session-a"));
   await screen.findByTestId("ssh-success");
 });
 
-it("收起进行中的流程后成功不抢前台，显式继续才展示目录", async () => {
+it("after collapsing an in-flight flow, success does not steal the foreground; the directory shows only on explicit continue", async () => {
   const connection = pending<string>();
   const onCancelSession = vi.fn();
   render(
@@ -667,16 +727,16 @@ it("收起进行中的流程后成功不抢前台，显式继续才展示目录"
   );
   fireEvent.click(screen.getByTestId("ssh-connect-trigger"));
   await clickStart();
-  fireEvent.click(screen.getByRole("button", { name: /收起/u }));
+  fireEvent.click(screen.getByRole("button", { name: /Collapse/u }));
   await act(async () => connection.resolve("session-a"));
   expect(screen.queryByRole("dialog")).toBeNull();
   fireEvent.click(await screen.findByTestId("remote-connection-minimized"));
   await screen.findByTestId("ssh-success");
-  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.close") }));
   await waitFor(() => expect(onCancelSession).toHaveBeenCalledWith("session-a"));
 });
 
-it("取消等待中的升级快照后不能再发起更新", async () => {
+it("after cancelling while waiting for the upgrade snapshot, no further update can be started", async () => {
   addDockerProfile();
   const snapshot = pending<SourceServerManagementSnapshot>();
   ports.management.getSnapshot
@@ -689,7 +749,9 @@ it("取消等待中的升级快照后不能再发起更新", async () => {
     );
   mountDialog({ preferredProfileId: "docker-profile", onConnect });
   await waitFor(() => expect(ports.management.getSnapshot).toHaveBeenCalledTimes(2));
-  fireEvent.click(screen.getAllByRole("button", { name: "取消连接" }).at(-1)!);
+  fireEvent.click(
+    screen.getAllByRole("button", { name: expectedCopy("remote.cancelConnection") }).at(-1)!,
+  );
   await act(async () =>
     snapshot.resolve({
       ...ports.snapshot,
@@ -705,11 +767,11 @@ it("取消等待中的升级快照后不能再发起更新", async () => {
     }),
   );
   expect(ports.management.updateSource).not.toHaveBeenCalled();
-  await screen.findByText("已取消");
+  await screen.findByText(expectedCopy("remote.connectionCancelled"));
 });
 
 it.each(["success", "failure"] as const)(
-  "历史目录提交迟到 %s 不改变取消后的流程",
+  "a late %s from the historical directory submission does not change the cancelled flow",
   async (outcome) => {
     const selection = pending<void>();
     const view = mountDialog({
@@ -719,13 +781,15 @@ it.each(["success", "failure"] as const)(
     });
     await clickStart();
     await waitFor(() => expect(view.props.onSelectProject).toHaveBeenCalledOnce());
-    fireEvent.click(screen.getAllByRole("button", { name: "取消连接" }).at(-1)!);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: expectedCopy("remote.cancelConnection") }).at(-1)!,
+    );
     await act(async () =>
       outcome === "success"
         ? selection.resolve()
         : selection.reject(new Error("late directory failure")),
     );
-    await screen.findByText("已取消");
+    await screen.findByText(expectedCopy("remote.connectionCancelled"));
     expect(screen.queryByTestId("ssh-error")).toBeNull();
     expect(screen.queryByTestId("ssh-success")).toBeNull();
     if (outcome === "failure") expect(view.props.onCancelSession).toHaveBeenCalledWith("session-a");
@@ -733,7 +797,7 @@ it.each(["success", "failure"] as const)(
   },
 );
 
-it("原目录恢复成功后结束活动流程，后续连接不被忙碌状态阻挡", async () => {
+it("after the original directory is restored successfully, the active flow ends and later connections are not blocked by busy state", async () => {
   const onFlowActiveChange = vi.fn();
   const view = mountDialog({
     preferredTarget: sshTarget,
@@ -754,7 +818,7 @@ it("原目录恢复成功后结束活动流程，后续连接不被忙碌状态�
   await waitFor(() => expect(view.props.onConnect).toHaveBeenCalledTimes(2));
 });
 
-it("原地重连失败交接只展示连接屏与日志，用户重试才再次连接", async () => {
+it("an in-place reconnect failure handover shows only the connection screen and logs; only a user retry reconnects", async () => {
   const { props } = mountDialog({
     preferredTarget: {
       kind: "ssh",
@@ -778,13 +842,13 @@ it("原地重连失败交接只展示连接屏与日志，用户重试才再次�
   });
   expect(await screen.findByText("E2E_RECONNECT_FAILURE_LOG")).toBeTruthy();
   expect(props.onConnect).not.toHaveBeenCalled();
-  fireEvent.click(screen.getAllByRole("button", { name: "重试" }).at(-1)!);
+  fireEvent.click(screen.getAllByRole("button", { name: expectedCopy("common.retry") }).at(-1)!);
   await waitFor(() =>
     expect(props.onSelectProject).toHaveBeenCalledWith("session-a", "/srv/project", undefined),
   );
 });
 
-it("无目录连接可稍后选择：释放临时 attachment，关闭向导而不新增项目", async () => {
+it("a directory-less connection can be chosen later: releases the temporary attachment and closes the wizard without adding a project", async () => {
   ports.snapshot.profiles = [
     {
       profileId: "later",
@@ -796,13 +860,13 @@ it("无目录连接可稍后选择：释放临时 attachment，关闭向导而�
     },
   ];
   const { props } = mountDialog({ preferredProfileId: "later" });
-  fireEvent.click(await screen.findByRole("button", { name: "稍后选择" }));
+  fireEvent.click(await screen.findByRole("button", { name: expectedCopy("remote.chooseLater") }));
   await waitFor(() => expect(props.onCancelSession).toHaveBeenCalledWith("session-a"));
   expect(props.onSelectProject).not.toHaveBeenCalled();
   expect(ports.confirm).not.toHaveBeenCalled();
 });
 
-it("查看 A 的失败后改选 B，不能把 A 的失败或安装等待交给 B", async () => {
+it("after viewing A's failure, switching to B must not hand A's failure or install wait to B", async () => {
   const a = {
     profileId: "a",
     sourceServerId: "source-a",
@@ -826,16 +890,18 @@ it("查看 A 的失败后改选 B，不能把 A 的失败或安装等待交给 B
     preferredProfileId: "a",
     initialFailure: { code: "source-server-install-required", message: "A needs install" },
   });
-  await screen.findByRole("button", { name: "安装并继续" });
-  fireEvent.click(screen.getByRole("button", { name: "返回配置" }));
-  fireEvent.click(await screen.findByRole("button", { name: "返回列表" }));
+  await screen.findByRole("button", { name: expectedCopy("remote.sourceServerInstallConfirm") });
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("remote.backToConnection") }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: expectedCopy("remote.selection.back") }),
+  );
   fireEvent.click(await screen.findByRole("button", { name: /^B/ }));
   await waitFor(() =>
     expect(props.onConnect).toHaveBeenCalledWith(b.target, expect.any(String), undefined),
   );
 });
 
-it("身份等待只在用户确认后继续原目录，确认完成不遗留 busy", async () => {
+it("identity waiting continues with the original directory only after user confirmation; a completed confirmation leaves no busy state", async () => {
   const { renderHook } = await import("@testing-library/react");
   const { useRemoteConnectionFlow } = await import("@/remote-connection-flow/index.js");
   ports.snapshot.profiles = [
@@ -873,7 +939,7 @@ it("身份等待只在用户确认后继续原目录，确认完成不遗留 bus
   expect(result.current.connectingStep.loading).toBe(false);
 });
 
-it("首屏直接列出 config Host，搜索后点击并在连接屏补密码", async () => {
+it("the first screen lists config Host entries directly; searching, clicking one, then completing the password on the connection screen", async () => {
   ports.platform.listSSHConfigAliases.mockResolvedValue([
     { alias: "build-box", host: "build.example.com", username: "builder", port: 2222 },
     { alias: "other-box", host: "other.example.com", username: "dev" },
@@ -886,7 +952,7 @@ it("首屏直接列出 config Host，搜索后点击并在连接屏补密码", a
   fireEvent.click(await screen.findByRole("button", { name: /build-box/ }));
   expect(screen.queryByRole("button", { name: /other-box/ })).toBeNull();
   expect(props.onConnect).not.toHaveBeenCalled();
-  const password = await screen.findByLabelText("密码");
+  const password = await screen.findByLabelText(expectedCopy("ssh.auth.password"));
   expect(document.activeElement).toBe(password);
   fireEvent.change(password, { target: { value: "config-secret" } });
   fireEvent.submit(password.closest("form")!);
@@ -906,9 +972,11 @@ it("首屏直接列出 config Host，搜索后点击并在连接屏补密码", a
   );
 });
 
-it("新建 SSH 使用表单校验端口，回车提交时修剪地址和用户名", async () => {
+it("new SSH uses form port validation; pressing Enter submits with trimmed address and username", async () => {
   const { props } = mountDialog();
-  fireEvent.click(await screen.findByRole("button", { name: "新建 SSH 连接" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: expectedCopy("remote.selection.new.ssh") }),
+  );
   const host = screen.getByTestId("ssh-host-input");
   expect(document.activeElement).toBe(host);
   fireEvent.change(host, { target: { value: " dev.example.com " } });
@@ -919,9 +987,9 @@ it("新建 SSH 使用表单校验端口，回车提交时修剪地址和用户�
   fireEvent.submit(host.closest("form")!);
   expect(props.onConnect).not.toHaveBeenCalled();
   expect(port.getAttribute("aria-invalid")).toBe("true");
-  await screen.findByText("端口须为 1–65535 的整数");
+  await screen.findByText(expectedCopy("ssh.validation.port"));
   fireEvent.change(port, { target: { value: "2222" } });
-  // 端口变更代表另一目标，须重新输入该目标的凭据。
+  // Changing the port means another target, so that target's credentials must be re-entered.
   expect(screen.getByTestId("ssh-password-input")).toHaveProperty("value", "");
   fireEvent.change(screen.getByTestId("ssh-password-input"), { target: { value: "secret" } });
   fireEvent.submit(host.closest("form")!);
@@ -935,7 +1003,7 @@ it("新建 SSH 使用表单校验端口，回车提交时修剪地址和用户�
   );
 });
 
-it("离线设备的最近目录可连接并打开，搜索也匹配目录", async () => {
+it("an offline device's recent directory can connect and open; search also matches directories", async () => {
   addDockerProfile();
   ports.snapshot.workspaceHistory = [
     {
@@ -958,7 +1026,7 @@ it("离线设备的最近目录可连接并打开，搜索也匹配目录", asyn
   );
 });
 
-it("关闭清空同一会话草稿，收起后点击卡片保留失败结果且不重复连接", async () => {
+it("closing clears the same session draft; after collapsing, clicking the card keeps the failure result without reconnecting", async () => {
   const connection = pending<string>();
   const onConnect = vi.fn(() => connection.promise);
   render(
@@ -974,14 +1042,16 @@ it("关闭清空同一会话草稿，收起后点击卡片保留失败结果且�
     ),
   );
   fireEvent.click(screen.getByTestId("ssh-connect-trigger"));
-  fireEvent.click(await screen.findByRole("button", { name: "新建 SSH 连接" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: expectedCopy("remote.selection.new.ssh") }),
+  );
   fireEvent.change(screen.getByTestId("ssh-host-input"), {
     target: { value: "failed.example.com" },
   });
   fireEvent.change(screen.getByTestId("ssh-username-input"), { target: { value: "dev" } });
   fireEvent.change(screen.getByTestId("ssh-password-input"), { target: { value: "secret" } });
   await clickStart();
-  fireEvent.click(screen.getByRole("button", { name: /收起/u }));
+  fireEvent.click(screen.getByRole("button", { name: /Collapse/u }));
   expect(await screen.findByTestId("remote-connection-minimized")).toBeTruthy();
   await act(async () =>
     connection.reject(
@@ -990,16 +1060,18 @@ it("关闭清空同一会话草稿，收起后点击卡片保留失败结果且�
   );
   expect(screen.queryByRole("dialog")).toBeNull();
   const card = screen.getByTestId("remote-connection-minimized");
-  expect(card.textContent).toContain("失败");
-  expect(card.textContent).toContain("无法连接到主机");
+  expect(card.textContent).toContain("failed");
+  expect(card.textContent).toContain(expectedCopy("remote.error.hostUnreachable"));
   fireEvent.click(card);
   await screen.findByTestId("ssh-error");
   expect(onConnect).toHaveBeenCalledOnce();
   expect(screen.queryByTestId("remote-connection-minimized")).toBeNull();
-  fireEvent.click(screen.getAllByRole("button", { name: "关闭" }).at(-1)!);
+  fireEvent.click(screen.getAllByRole("button", { name: expectedCopy("common.close") }).at(-1)!);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   fireEvent.click(screen.getByTestId("ssh-connect-trigger"));
-  fireEvent.click(await screen.findByRole("button", { name: "新建 SSH 连接" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: expectedCopy("remote.selection.new.ssh") }),
+  );
   expect((screen.getByTestId("ssh-host-input") as HTMLInputElement).value).toBe("");
   expect((screen.getByTestId("ssh-username-input") as HTMLInputElement).value).toBe("");
   expect((screen.getByTestId("ssh-password-input") as HTMLInputElement).value).toBe("");
@@ -1007,7 +1079,7 @@ it("关闭清空同一会话草稿，收起后点击卡片保留失败结果且�
 });
 
 it.each([false, true])(
-  "WSL 只在 Windows 出现（Windows=%s），发现条目直接连接",
+  "WSL appears only on Windows (Windows=%s); discovered entries connect directly",
   async (isWindowsDesktop) => {
     ports.platform.listWSLDistros.mockResolvedValue([
       { name: "Ubuntu", isDefault: true, state: "Running", version: 2 },
@@ -1030,7 +1102,7 @@ it.each([false, true])(
   },
 );
 
-it("Docker 下拉与手动输入互斥，选择运行中容器立即连接", async () => {
+it("Docker dropdown and manual entry are mutually exclusive; selecting a running container connects immediately", async () => {
   ports.platform.listDockerContainers.mockResolvedValue([
     { id: "container-a", name: "running-box", image: "ubuntu", state: "running", status: "Up" },
   ]);
@@ -1046,39 +1118,43 @@ it("Docker 下拉与手动输入互斥，选择运行中容器立即连接", asy
   );
 });
 
-it("Docker 手动输入和列表选择有互斥的可访问控件", async () => {
+it("Docker manual entry and list selection have mutually exclusive accessible controls", async () => {
   mountDialog();
-  fireEvent.click(await screen.findByRole("button", { name: "手动输入 Docker" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: expectedCopy("remote.selection.new.docker") }),
+  );
   await screen.findByTestId("docker-container-input");
   expect(screen.queryByTestId("docker-container-select")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "选择运行中的容器" }));
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("docker.inputMode.select") }));
   expect(screen.queryByTestId("docker-container-input")).toBeNull();
   await screen.findByTestId("docker-container-select");
-  await screen.findByText("没有运行中的容器");
+  await screen.findByText(expectedCopy("docker.noContainers"));
 });
 
-it("正式版没有开发 Server 提示，未选别名没有填充提示，密码可以显示隐藏", async () => {
+it("production builds show no dev Server hint, no alias fill hint when no alias is selected, and the password can be shown and hidden", async () => {
   vi.stubEnv("DEV", false);
   ports.platform.isLocalDevelopmentRuntime = false;
   mountDialog();
   await screen.findByRole("searchbox");
   expect(screen.queryByText(/Server/)).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "新建 SSH 连接" }));
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("remote.selection.new.ssh") }));
   expect(screen.queryByText(zhCN["ssh.configAliasDescription"])).toBeNull();
   const password = screen.getByTestId("ssh-password-input");
-  fireEvent.click(screen.getByRole("button", { name: "显示密码" }));
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.showPassword") }));
   expect(password.getAttribute("type")).toBe("text");
-  fireEvent.click(screen.getByRole("button", { name: "隐藏密码" }));
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.hidePassword") }));
   expect(password.getAttribute("type")).toBe("password");
 });
 
-it("Docker 不可用与无运行容器分开提示，打开下拉刷新发现结果", async () => {
+it("Docker unavailability and no running containers are distinct hints; opening the dropdown refreshes discovery results", async () => {
   ports.platform.isDockerAvailable.mockResolvedValue(false);
   mountDialog();
-  fireEvent.click(await screen.findByRole("button", { name: "手动输入 Docker" }));
-  fireEvent.click(screen.getByRole("button", { name: "选择运行中的容器" }));
-  await screen.findByText("Docker 不可用");
-  expect(screen.queryByText("没有运行中的容器")).toBeNull();
+  fireEvent.click(
+    await screen.findByRole("button", { name: expectedCopy("remote.selection.new.docker") }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("docker.inputMode.select") }));
+  await screen.findByText(expectedCopy("docker.unavailable"));
+  expect(screen.queryByText(expectedCopy("docker.noContainers"))).toBeNull();
   ports.platform.isDockerAvailable.mockResolvedValue(true);
   ports.platform.listDockerContainers.mockResolvedValue([
     { id: "new", name: "new-container", image: "ubuntu", state: "running", status: "Up" },
@@ -1089,14 +1165,14 @@ it("Docker 不可用与无运行容器分开提示，打开下拉刷新发现结
   expect(screen.queryByTestId("docker-container-input")).toBeNull();
 });
 
-it("手动 WSL 入口可填写未被发现的发行版并回车连接", async () => {
+it("the manual WSL entry accepts an undiscovered distribution and connects on Enter", async () => {
   ports.platform.listWSLDistros.mockResolvedValue([
     { name: "Ubuntu", isDefault: true, state: "Running", version: 2 },
   ]);
   const { props } = mountDialog({ isWindowsDesktop: true });
   await screen.findByRole("button", { name: /Ubuntu/ });
-  fireEvent.click(screen.getByRole("button", { name: "手动输入 WSL" }));
-  const distro = screen.getByLabelText("发行版");
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("remote.selection.new.wsl") }));
+  const distro = screen.getByLabelText(expectedCopy("wsl.distro"));
   fireEvent.change(distro, { target: { value: "Custom-Distro" } });
   fireEvent.submit(distro.closest("form")!);
   await waitFor(() =>
@@ -1109,34 +1185,38 @@ it("手动 WSL 入口可填写未被发现的发行版并回车连接", async ()
   );
 });
 
-it("WSL 外部入口保留指定发行版，收起恢复不覆盖用户草稿", async () => {
+it("an external WSL entry keeps the given distribution; collapse and restore do not overwrite the user draft", async () => {
   const view = mountDialog({
     isWindowsDesktop: true,
     preferredKind: "wsl",
     preferredWslDistro: "Ubuntu-24.04",
   });
-  const distro = await screen.findByLabelText("发行版");
+  const distro = await screen.findByLabelText(expectedCopy("wsl.distro"));
   expect((distro as HTMLInputElement).value).toBe("Ubuntu-24.04");
   fireEvent.change(distro, { target: { value: "Custom-Distro" } });
-  fireEvent.click(screen.getByRole("button", { name: /收起/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Collapse/ }));
   view.rerender(createElement(RemoteConnectionDialog, { ...view.props, open: false }));
   view.rerender(createElement(RemoteConnectionDialog, view.props));
-  expect((screen.getByLabelText("发行版") as HTMLInputElement).value).toBe("Custom-Distro");
+  expect((screen.getByLabelText(expectedCopy("wsl.distro")) as HTMLInputElement).value).toBe(
+    "Custom-Distro",
+  );
 });
 
-it("收起恢复时 config 发现失败不会丢失当前 Host 的别名", async () => {
+it("on collapse/restore a failing config discovery cannot lose the current Host's alias", async () => {
   ports.platform.listSSHConfigAliases.mockResolvedValueOnce([
     { alias: "jump-box", host: "private", username: "dev" },
   ]);
   const view = mountDialog();
   fireEvent.click(await screen.findByRole("button", { name: /jump-box/ }));
-  fireEvent.change(await screen.findByLabelText("密码"), { target: { value: "secret" } });
-  fireEvent.click(screen.getByRole("button", { name: /收起/ }));
+  fireEvent.change(await screen.findByLabelText(expectedCopy("ssh.auth.password")), {
+    target: { value: "secret" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /Collapse/ }));
   ports.platform.listSSHConfigAliases.mockRejectedValue(new Error("temporary config read failure"));
   view.rerender(createElement(RemoteConnectionDialog, { ...view.props, open: false }));
   view.rerender(createElement(RemoteConnectionDialog, view.props));
   await act(async () => undefined);
-  fireEvent.submit(screen.getByLabelText("密码").closest("form")!);
+  fireEvent.submit(screen.getByLabelText(expectedCopy("ssh.auth.password")).closest("form")!);
   await waitFor(() =>
     expect(view.props.onConnect).toHaveBeenCalledWith(
       expect.objectContaining({ sshConfigAlias: "jump-box", host: "private", password: "secret" }),
@@ -1146,7 +1226,7 @@ it("收起恢复时 config 发现失败不会丢失当前 Host 的别名", async
   );
 });
 
-it("配置和目录屏收起都有恢复卡片，恢复后保留表单及已导航目录", async () => {
+it("both the configuration and directory screens have restore cards on collapse; restoring keeps the form and the navigated directory", async () => {
   registerSession();
   const onSelectProject = vi.fn();
   render(
@@ -1165,8 +1245,10 @@ it("配置和目录屏收起都有恢复卡片，恢复后保留表单及已导�
   fireEvent.click(screen.getByTestId("ssh-connect-trigger"));
   const host = await screen.findByTestId("ssh-host-input");
   fireEvent.change(host, { target: { value: "kept.example.com" } });
-  fireEvent.click(screen.getByRole("button", { name: /收起/ }));
-  fireEvent.click(await screen.findByRole("button", { name: /继续配置远程连接/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Collapse/ }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Continue setting up the connection/ }),
+  );
   expect((screen.getByTestId("ssh-host-input") as HTMLInputElement).value).toBe("kept.example.com");
   await clickStart();
   const path = await screen.findByDisplayValue("/srv/project");
@@ -1175,20 +1257,22 @@ it("配置和目录屏收起都有恢复卡片，恢复后保留表单及已导�
   await waitFor(() =>
     expect(
       screen
-        .getByRole("button", { name: "在此目录打开工作区", exact: true })
+        .getByRole("button", { name: expectedCopy("remote.openWorkspaceHere"), exact: true })
         .hasAttribute("disabled"),
     ).toBe(false),
   );
-  fireEvent.click(screen.getByRole("button", { name: /收起/ }));
-  fireEvent.click(await screen.findByRole("button", { name: /选择目录/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Collapse/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Choose a directory/ }));
   await screen.findByDisplayValue("/srv/another");
-  fireEvent.click(screen.getByRole("button", { name: "在此目录打开工作区", exact: true }));
+  fireEvent.click(
+    screen.getByRole("button", { name: expectedCopy("remote.openWorkspaceHere"), exact: true }),
+  );
   await waitFor(() =>
     expect(onSelectProject).toHaveBeenCalledWith("session-a", "/srv/another", undefined),
   );
 });
 
-it("旧目录浏览器的迟到结果不能覆盖收起恢复后选择的目录", async () => {
+it("a late result from the old directory browser cannot overwrite the directory chosen after a collapse/restore", async () => {
   const slow = pending<import("@zcode/shared").FileEntry[]>();
   registerSession(async ({ path }) => (path === "/slow" ? slow.promise : []));
   const view = mountDialog({ preferredTarget: sshTarget });
@@ -1196,7 +1280,7 @@ it("旧目录浏览器的迟到结果不能覆盖收起恢复后选择的目录"
   let path = await screen.findByDisplayValue("/srv/project");
   fireEvent.change(path, { target: { value: "/slow" } });
   fireEvent.submit(path.closest("form")!);
-  fireEvent.click(screen.getByRole("button", { name: /收起/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Collapse/ }));
   view.rerender(createElement(RemoteConnectionDialog, { ...view.props, open: false }));
   view.rerender(createElement(RemoteConnectionDialog, view.props));
   path = await screen.findByDisplayValue("/srv/project");
@@ -1205,18 +1289,20 @@ it("旧目录浏览器的迟到结果不能覆盖收起恢复后选择的目录"
   await waitFor(() =>
     expect(
       screen
-        .getByRole("button", { name: "在此目录打开工作区", exact: true })
+        .getByRole("button", { name: expectedCopy("remote.openWorkspaceHere"), exact: true })
         .hasAttribute("disabled"),
     ).toBe(false),
   );
   await act(async () => slow.resolve([]));
-  fireEvent.click(screen.getByRole("button", { name: "在此目录打开工作区", exact: true }));
+  fireEvent.click(
+    screen.getByRole("button", { name: expectedCopy("remote.openWorkspaceHere"), exact: true }),
+  );
   await waitFor(() =>
     expect(view.props.onSelectProject).toHaveBeenCalledWith("session-a", "/new", undefined),
   );
 });
 
-it("收起的最近目录连接成功后保留卡片，显式继续恢复目录", async () => {
+it("a collapsed recent-directory connection keeps its card after success; explicit continue restores the directory", async () => {
   addDockerProfile();
   ports.snapshot.workspaceHistory = [
     {
@@ -1243,12 +1329,17 @@ it("收起的最近目录连接成功后保留卡片，显式继续恢复目录"
   fireEvent.click(screen.getByTestId("ssh-connect-trigger"));
   fireEvent.click(await screen.findByRole("button", { name: "/srv/recent" }));
   await act(async () => undefined);
-  fireEvent.click(screen.getByRole("button", { name: /收起/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Collapse/ }));
   await screen.findByTestId("remote-connection-minimized");
   await act(async () => connection.resolve("session-a"));
   expect(onSelectProject).not.toHaveBeenCalled();
   expect(
-    (await screen.findAllByRole("button", { name: "继续", exact: true })).length,
+    (
+      await screen.findAllByRole("button", {
+        name: expectedCopy("remote.background.continue"),
+        exact: true,
+      })
+    ).length,
   ).toBeGreaterThan(0);
   fireEvent.click(await screen.findByTestId("remote-connection-minimized"));
   await waitFor(() =>
@@ -1258,42 +1349,52 @@ it("收起的最近目录连接成功后保留卡片，显式继续恢复目录"
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
-it.each([false, true])("认证失败在连接阶段补充凭据并保留原目录，私钥=%s", async (privateKey) => {
-  const onConnect = vi
-    .fn()
-    .mockRejectedValueOnce(
-      Object.assign(new Error("SSH 认证失败：请检查用户名、密码或私钥配置"), {
-        code: "remote-preflight-failed",
-      }),
-    )
-    .mockResolvedValueOnce("session-a");
-  mountDialog({
-    preferredTarget: privateKey
-      ? sshTarget
-      : { ...sshTarget, privateKeyPath: undefined, password: "old" },
-    preferredDirectoryPath: "/keep/path",
-    onConnect,
-  });
-  if (!privateKey)
-    fireEvent.change(await screen.findByTestId("ssh-password-input"), { target: { value: "old" } });
-  await clickStart();
-  await screen.findByTestId("ssh-error");
-  const field = await screen.findByTestId(
-    privateKey ? "ssh-private-key-passphrase-input" : "ssh-password-input",
-  );
-  expect(field.closest("li")).not.toBeNull();
-  fireEvent.change(field, { target: { value: "fixed-secret" } });
-  fireEvent.submit(field.closest("form")!);
-  await waitFor(() => expect(onConnect).toHaveBeenCalledTimes(2));
-  expect(onConnect.mock.calls[1]?.[0]).toMatchObject(
-    privateKey
-      ? { privateKeyPassphrase: "fixed-secret", privateKeyPath: "/keys/dev" }
-      : { password: "fixed-secret" },
-  );
-  expect(ports.confirm).not.toHaveBeenCalled();
-});
+it.each([false, true])(
+  "authentication failure completes credentials in the connecting stage and keeps the original directory, private key=%s",
+  async (privateKey) => {
+    const onConnect = vi
+      .fn()
+      .mockRejectedValueOnce(
+        Object.assign(
+          new Error(
+            "SSH authentication failed: check the username, password, or private key configuration",
+          ),
+          {
+            code: "remote-preflight-failed",
+          },
+        ),
+      )
+      .mockResolvedValueOnce("session-a");
+    mountDialog({
+      preferredTarget: privateKey
+        ? sshTarget
+        : { ...sshTarget, privateKeyPath: undefined, password: "old" },
+      preferredDirectoryPath: "/keep/path",
+      onConnect,
+    });
+    if (!privateKey)
+      fireEvent.change(await screen.findByTestId("ssh-password-input"), {
+        target: { value: "old" },
+      });
+    await clickStart();
+    await screen.findByTestId("ssh-error");
+    const field = await screen.findByTestId(
+      privateKey ? "ssh-private-key-passphrase-input" : "ssh-password-input",
+    );
+    expect(field.closest("li")).not.toBeNull();
+    fireEvent.change(field, { target: { value: "fixed-secret" } });
+    fireEvent.submit(field.closest("form")!);
+    await waitFor(() => expect(onConnect).toHaveBeenCalledTimes(2));
+    expect(onConnect.mock.calls[1]?.[0]).toMatchObject(
+      privateKey
+        ? { privateKeyPassphrase: "fixed-secret", privateKeyPath: "/keys/dev" }
+        : { password: "fixed-secret" },
+    );
+    expect(ports.confirm).not.toHaveBeenCalled();
+  },
+);
 
-it("从已保存线路的认证失败返回配置时保留原用户名和私钥文件", async () => {
+it("after an authentication failure on a saved line, returning to configuration keeps the original username and private key file", async () => {
   ports.snapshot.profiles = [
     { profileId: "key-profile", transport: "ssh", createdAt: 1, target: sshTarget },
   ];
@@ -1306,7 +1407,7 @@ it("从已保存线路的认证失败返回配置时保留原用户名和私钥�
     ),
   });
   await screen.findByTestId("ssh-private-key-passphrase-input");
-  fireEvent.click(screen.getByRole("button", { name: "返回配置" }));
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("remote.backToConnection") }));
   await waitFor(() =>
     expect((screen.getByTestId("ssh-host-input") as HTMLInputElement).value).toBe(
       "original.example.com",
@@ -1318,5 +1419,5 @@ it("从已保存线路的认证失败返回配置时保留原用户名和私钥�
 
 it("project-owned connections can omit background actions until their continuation is available", async () => {
   mountDialog({ allowBackground: false });
-  expect(screen.queryByRole("button", { name: /收起/u })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Collapse/u })).toBeNull();
 });

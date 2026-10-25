@@ -46,9 +46,9 @@ export function DataBaseDirControl({
         return;
       }
 
-      // 之前这里允许手输任意字符串，用户填错路径后仍会触发整份数据复制。
-      // 这里改成只接受系统目录弹窗返回的真实文件夹路径，先更新草稿值，再由“保存”统一触发迁移，
-      // 避免把“浏览目录”和“执行数据迁移”这两个风险不同的动作混在一起。
+      // This previously accepted any manually entered string, so a mistyped path could still trigger a copy of all data.
+      // Now it accepts only a real folder path returned by the system directory picker, updates the draft value first, and lets Save trigger migration,
+      // keeping the differently risky actions of browsing for a directory and migrating data separate.
       setLocalDataBaseDir(selectedDir);
       if (saveState !== "idle") {
         setSaveState("idle");
@@ -126,7 +126,7 @@ export function DataBaseDirControl({
         <p
           data-testid={TID_SETTINGS_DATA_BASE_DIR_STATUS}
           data-state="saved"
-          className="text-ui-base text-amber-600 dark:text-amber-400"
+          className="text-ui-base text-warning"
         >
           {intl.formatMessage({ id: "settings.dataBaseDirRestartRequired" })}
         </p>

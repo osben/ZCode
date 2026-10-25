@@ -10,7 +10,7 @@ import {
   CONTROLLER_TASKS_INDEX_TOPIC,
   type SessionsIndexTopicWireCandidate,
 } from "@zcode/shared/zcode-protocol-v4";
-import { createWindowHostControllerRuntime } from "../src/host/windowHostControllerService.js";
+import { createWindowHostControllerRuntime } from "@zcode/services/window-controller";
 
 function meta(params: {
   taskId: string;
@@ -174,6 +174,23 @@ describe("WindowHostControllerService", () => {
                       permissionCount: 0,
                       userInputCount: 1,
                     },
+                    executionWorktree: {
+                      path: "/work/demo/.worktrees/live",
+                      branchName: "feature/live",
+                    },
+                    executionWorktreeMissing: true,
+                    sideChatCount: 1,
+                    subagentCount: 2,
+                    runningSubagentCount: 1,
+                    childSessions: [
+                      {
+                        sessionId: "child-1",
+                        title: "Subagent",
+                        taskType: "subagent_child",
+                        lastActivityAt: 18,
+                        running: true,
+                      },
+                    ],
                     lastActivityAt: 20,
                     createdAt: 1,
                   },
@@ -219,6 +236,23 @@ describe("WindowHostControllerService", () => {
         title: "正在运行",
         updatedAt: 20,
         liveStatus: "waiting",
+        executionWorktree: {
+          path: "/work/demo/.worktrees/live",
+          branchName: "feature/live",
+        },
+        executionWorktreeMissing: true,
+        sideChatCount: 1,
+        subagentCount: 2,
+        runningSubagentCount: 1,
+        childSessions: [
+          {
+            sessionId: "child-1",
+            title: "Subagent",
+            taskType: "subagent_child",
+            lastActivityAt: 18,
+            running: true,
+          },
+        ],
         pendingInteraction: expect.objectContaining({ interactionId: "ask-1" }),
         activity: {
           phase: "running",
@@ -284,9 +318,158 @@ describe("WindowHostControllerService", () => {
       liveStatus: "completed",
       activity: { phase: "completedSuccess", lastActivityAt: 30 },
     });
-    expect(local.listTasks).toHaveBeenCalledTimes(1);
+    // BUG-GWT-010: besides the initial list load, the host converges the overlay's
+    // execution-worktree fact into task meta via the same list channel, so the count is 2 here
+    // and the second call must carry the fact payload (no other extra calls are expected).
+    expect(local.listTasks).toHaveBeenCalledTimes(2);
+    expect(local.listTasks).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        executionWorktreeFacts: [
+          {
+            taskId: "live",
+            executionWorktree: { path: "/work/demo/.worktrees/live", branchName: "feature/live" },
+          },
+        ],
+      }),
+    );
     expect(local.listPinnedTasks).toHaveBeenCalledTimes(1);
     expect(local.listArchivedTasks).toHaveBeenCalledTimes(1);
+    runtime.dispose();
+  });
+
+  it("BUG-GWT-010: acknowledges a worktree fact only after a task row carries it, and re-sends it to a replaced task service", async () => {
+    const frames = new Emitter<SessionsIndexTopicWireCandidate>();
+    const worktree = { path: "/work/demo/.worktrees/live", branchName: "feature/live" };
+    const sessionFrame = (ordinal: number, lastActivityAt: number) => ({
+      wireVersion: 3 as const,
+      kind: "complete" as const,
+      deliveryKind: "online" as const,
+      logicalFrameId: `delta-${ordinal}`,
+      logicalFrameOrdinal: ordinal,
+      topic: "sessions-index//work/demo",
+      subscriptionId: "sessions-sub-1",
+      frame: {
+        topic: "sessions-index//work/demo",
+        subscriptionId: "sessions-sub-1",
+        fromSeq: ordinal - 1,
+        toSeq: ordinal,
+        sentAt: ordinal,
+        payload: {
+          kind: "deltas" as const,
+          deltas: [
+            {
+              op: "session.upserted" as const,
+              session: {
+                sessionId: "live",
+                workspaceId: "/work/demo",
+                title: "live",
+                phase: "running" as const,
+                sessionEnded: false,
+                hasBackgroundWork: false,
+                executionWorktree: worktree,
+                lastActivityAt,
+                createdAt: 1,
+              },
+            },
+          ],
+        },
+      },
+    });
+    const agentService = {
+      onDynamicSessionsIndexFrame: vi.fn(() => frames.event),
+      onAgentRuntimeLifecycle: new Emitter<never>().event,
+      onAgentRuntimeRestarted: vi.fn(() => ({ dispose: vi.fn() })),
+      subscribeSessionsIndexV4: vi.fn(async () => {
+        frames.fire({
+          wireVersion: 3,
+          kind: "complete",
+          deliveryKind: "initial",
+          logicalFrameId: "initial-1",
+          logicalFrameOrdinal: 1,
+          topic: "sessions-index//work/demo",
+          subscriptionId: "sessions-sub-1",
+          frame: {
+            topic: "sessions-index//work/demo",
+            subscriptionId: "sessions-sub-1",
+            fromSeq: 0,
+            toSeq: 1,
+            sentAt: 1,
+            payload: {
+              kind: "snapshot",
+              snapshot: {
+                protocolVersion: 1,
+                workspaceId: "/work/demo",
+                logEpoch: "sessions-epoch-1",
+                sessions: [
+                  {
+                    sessionId: "live",
+                    workspaceId: "/work/demo",
+                    title: "live",
+                    phase: "running",
+                    sessionEnded: false,
+                    hasBackgroundWork: false,
+                    executionWorktree: worktree,
+                    lastActivityAt: 10,
+                    createdAt: 1,
+                  },
+                ],
+              },
+            },
+          },
+        });
+        return {
+          ack: { subscriptionId: "sessions-sub-1", mode: "snapshot", logEpoch: "sessions-epoch-1" },
+        };
+      }),
+      resyncSessionsIndexV4: vi.fn(),
+      unsubscribeSessionsIndexV4: vi.fn(async () => undefined),
+    } as unknown as IZCodeAgentService;
+    const withFact = (): ZCodeTaskMeta => ({
+      ...meta({ taskId: "live" }),
+      executionWorktree: worktree,
+    });
+    // First service: the task-index row does not exist yet, so the fact is skipped by the repo.
+    const first = taskService({ active: [] });
+    const second = taskService({ active: [withFact()] });
+    let current = first;
+    const runtime = createWindowHostControllerRuntime({
+      createId: () => "id",
+      resolveSource: (scope) => ({
+        scope: { kind: "local" as const, ...scope },
+        taskService: current,
+        agentService,
+        sourceAvailability: "online" as const,
+      }),
+    });
+    const factCalls = (service: IZCodeTaskService) =>
+      (service.listTasks as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([params]) => params.executionWorktreeFacts,
+      ).length;
+    const publish = async (ordinal: number) => {
+      frames.fire(sessionFrame(ordinal, 10 + ordinal));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const list = () =>
+      runtime.service.listTaskList({
+        kind: "active",
+        workspaceScopes: [{ workspacePath: "/work/demo" }],
+        sortBy: "updated",
+      });
+
+    await list();
+    // The initial snapshot already converged once; the row is missing, so the fact stays unacknowledged.
+    expect(factCalls(first)).toBe(1);
+    await publish(2);
+    expect(factCalls(first)).toBe(2);
+
+    // A replaced task service must receive the unchanged fact again (acknowledgement is per service).
+    current = second;
+    await list();
+    await publish(3);
+    expect(factCalls(second)).toBe(1);
+    // The row now carries the fact: acknowledged, no further convergence reads.
+    await publish(4);
+    expect(factCalls(second)).toBe(1);
     runtime.dispose();
   });
 

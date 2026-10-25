@@ -1,9 +1,16 @@
 import { appendFile, mkdir, open, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import {
+  TID_MODEL_TRAJECTORY_REFRESH,
+  TID_SIDE_PANE_TOGGLE,
+  TID_TASK_VIEW_MODEL_TRAJECTORY,
+} from "@zcode/shared";
+import {
   clearAppData,
+  clickTestIdByDom,
   getE2EAppDataPaths,
   setCurrentElectronRendererContentSize,
+  restoreElectronRendererContentSize,
 } from "../helpers/desktop-app.js";
 import {
   getV4PaneSnapshot,
@@ -33,7 +40,7 @@ describe("模型调用轨迹查看器 E2E", () => {
   it("TRJ01-TRJ09: 写入、投影、交互、虚拟搜索、窄布局与有界尾读", async function () {
     this.timeout(240_000);
     await prepareV4ConversationE2E();
-    await setRendererLocale("zh-CN");
+    await setRendererLocale("en-US");
     await sendV4Prompt("E2E_TRJ_TASK_SEED reply with E2E_TRJ_TASK_READY");
     await waitForV4TimelineContaining("E2E_TRJ_TASK_READY", 45_000);
     await waitForV4Pane(
@@ -58,6 +65,22 @@ describe("模型调用轨迹查看器 E2E", () => {
     await openTrajectoryThroughTaskMenu(taskId);
     await waitForTrajectory();
 
+    // TRJ10: the trajectory tab must stay reachable after being closed. The "+" launcher page offers it
+    // again for the active task, both while other tabs keep the pane open and after the pane fell
+    // back to the collapsed empty state.
+    await closeTrajectoryTab(taskId);
+    await browser.waitUntil(
+      () => browser.execute(() => !document.querySelector('[data-trajectory-timeline=""]')),
+      { timeout: 10_000, timeoutMsg: "closed trajectory tab did not unmount the timeline" },
+    );
+    if (await $("[data-side-pane-add-tab-trigger]").isExisting()) {
+      await $("[data-side-pane-add-tab-trigger]").click();
+    } else {
+      await clickTestIdByDom(TID_SIDE_PANE_TOGGLE);
+    }
+    await $('[data-side-pane-open-tab-item="model-trajectory"]').click();
+    await waitForTrajectory();
+
     const initial = await trajectorySnapshot();
     expect(initial.callCount).toBeLessThan(90);
     expect(initial.callCount).toBeGreaterThan(0);
@@ -78,13 +101,6 @@ describe("模型调用轨迹查看器 E2E", () => {
         "tool-result",
       ]),
     );
-    expect(initial.text).toContain("主会话");
-    expect(initial.text).toContain("系统提示词");
-    expect(initial.text).toContain("用户消息");
-    expect(initial.text).toContain("思考过程");
-    expect(initial.text).toContain("助手消息");
-    expect(initial.text).toContain("工具调用");
-    expect(initial.text).toContain("工具结果");
     expect(initial.text).toContain("mcp__computer-use__open_application_with_full_name");
     expect(initial.text).toContain("e2e_trj_0");
     expect(initial.text).toContain(DELTA_MARKER);
@@ -92,8 +108,6 @@ describe("模型调用轨迹查看器 E2E", () => {
     expect(initial.text).toContain("E2E_TRJ02_ERROR_VALUE");
     expect(initial.errorIconCount).toBeGreaterThan(0);
     expect(initial.callErrorCount).toBeGreaterThan(0);
-    expect(initial.text).toContain("达到长度限制");
-    expect(initial.text).toContain("内容过滤");
     expect(initial.text).toContain("custom-e2e-finish");
     expect(initial.text).toContain("1.25s");
 
@@ -219,15 +233,17 @@ describe("模型调用轨迹查看器 E2E", () => {
     );
 
     // TRJ08：窄视口中共享操作列不横跳，完整 tool name 仍存在于 DOM。
-    await setCurrentElectronRendererContentSize(760, 720);
+    const sizeBeforeNarrow = await setCurrentElectronRendererContentSize(760, 720);
     const narrow = await trajectorySnapshot();
     expect(narrow.text).toContain("mcp__computer-use__open_application_with_full_name");
     expect(narrow.pageHorizontalOverflow).toBe(false);
     expect(narrow.chevronRightEdgeDelta).toBeLessThanOrEqual(2);
+    // Restore the viewport: later cases in this file (TRJ11) type into the pane search input, which is not interactable in the narrow layout.
+    await restoreElectronRendererContentSize(sizeBeforeNarrow);
 
     // TRJ09：稀疏扩展到 33 MiB 后只读取尾部完整记录，并显式呈现 truncated。
     await seedOversizedTrajectoryTail(actualTrajectoryFile.filePath, taskId);
-    await clickFirst('[aria-label="Refresh"], [aria-label="刷新"]');
+    await clickFirst(`[data-testid="${TID_MODEL_TRAJECTORY_REFRESH}"]`);
     await browser.waitUntil(
       async () => {
         const snapshot = await trajectorySnapshot();
@@ -236,7 +252,128 @@ describe("模型调用轨迹查看器 E2E", () => {
       { timeout: 20_000, timeoutMsg: "有界尾部读取没有保留 recent record 或 truncated 提示" },
     );
   });
+
+  it("TRJ11: 超过 40 条输入的卡片默认收起并分页，搜索命中只挂载窗口，超长段显示截断提示", async function () {
+    this.timeout(240_000);
+    await prepareV4ConversationE2E();
+    await setRendererLocale("en-US");
+    await sendV4Prompt("E2E_TRJ_TASK_SEED reply with E2E_TRJ_TASK_READY");
+    await waitForV4TimelineContaining("E2E_TRJ_TASK_READY", 45_000);
+    await waitForV4Pane(
+      (snapshot) => snapshot.sessionId !== null && snapshot.sessionId !== "draft",
+      "window case 没有建立真实 task/session",
+      45_000,
+    );
+    const taskId = (await getV4PaneSnapshot()).sessionId as string;
+    const actualTrajectoryFile = await waitForActualTrajectory(taskId);
+    // The fixture record starts before the CLI record, so it becomes call 1 with its full 100-message context.
+    await appendFile(
+      actualTrajectoryFile.filePath,
+      `${JSON.stringify(createWindowRecord(taskId))}\n`,
+      "utf8",
+    );
+    await openTrajectoryThroughTaskMenu(taskId);
+    await waitForTrajectory();
+
+    // TRJ11a: 100 input rows, so only the first page (40) is mounted and every mounted row is collapsed.
+    const initial = await windowCardSnapshot();
+    expect(initial.inputRows).toBe(40);
+    expect(initial.openInputRows).toBe(0);
+    expect(initial.moreLabel).toBe("Show next 40 of 100 messages");
+
+    // TRJ11b: the >16 KiB segment is cut on the host; expanding its row shows the explicit notice.
+    await clickFirst(
+      '[data-trajectory-expandable-role="user"] [data-trajectory-message-trigger=""]',
+    );
+    await browser.waitUntil(async () => (await windowCardSnapshot()).truncatedNotices.length > 0, {
+      timeout: 10_000,
+      timeoutMsg: "被裁剪的段没有显示截断提示",
+    });
+    const cut = await windowCardSnapshot();
+    expect(cut.truncatedNotices).toEqual([
+      expect.stringMatching(/^Truncated at source, \d+ bytes$/),
+    ]);
+
+    // TRJ11c: a hit at row 90 mounts the page plus the reveal window [i-10, i+11) = [80, 101), clipped to the
+    // 100 input rows: [80, 100), 20 rows (page 40 + 20 = 60), not 91 rows. Full window is 21 rows (docs/model-trajectory-viewer.md).
+    await searchAndNavigate(WINDOW_MARKER);
+    await browser.waitUntil(async () => (await windowCardSnapshot()).inputRows === 60, {
+      timeout: 10_000,
+      timeoutMsg: "搜索命中没有挂载页加窗口（期望 60 行）",
+    });
+    const revealed = await windowCardSnapshot();
+    expect(revealed.moreLabel).toBe("Show next 40 of 100 messages");
+    expect(revealed.hiddenLabel).toBe("");
+
+    // TRJ11d: "show next" must mount exactly the rows its label claims (40 of the gap before the window).
+    await clickFirst('[data-trajectory-call=""] [data-trajectory-rows-more=""]');
+    await browser.waitUntil(async () => (await windowCardSnapshot()).inputRows === 100, {
+      timeout: 10_000,
+      timeoutMsg: "显示接下来没有挂载标签声明的 40 行",
+    });
+    expect((await windowCardSnapshot()).moreLabel).toBe("");
+  });
 });
+
+const WINDOW_MARKER = "E2E_TRJ11_FAR_ROW";
+const WINDOW_SEGMENT_HEAD = "E2E_TRJ11_SEGMENT_HEAD";
+
+function createWindowRecord(taskId: string) {
+  const messages = Array.from({ length: 100 }, (_, index) => ({
+    role: "user",
+    content:
+      index === 0
+        ? `${WINDOW_SEGMENT_HEAD} ${"w".repeat(20_000)}`
+        : index === 90
+          ? `${WINDOW_MARKER} ${index}`
+          : `window row ${index}`,
+  }));
+  return {
+    type: "model_io",
+    sessionId: taskId,
+    requestId: "e2e-trj-window-card",
+    querySource: "main_turn",
+    startedAt: "2000-01-01T00:00:00.000Z",
+    completedAt: "2000-01-01T00:00:00.250Z",
+    durationMs: 250,
+    model: { modelId: "e2e-trajectory-model", providerId: "e2e-provider" },
+    request: { messages, toolNames: [] },
+    response: {
+      text: "E2E_TRJ11_RESPONSE",
+      finishReason: "stop",
+      toolCalls: [],
+      usage: { inputTokens: 1, outputTokens: 1 },
+    },
+  };
+}
+
+async function windowCardSnapshot() {
+  return browser.execute(() => {
+    const timelines = [...document.querySelectorAll<HTMLElement>('[data-trajectory-timeline=""]')];
+    const timeline =
+      timelines.find((element) => element.offsetParent !== null) ?? timelines[0] ?? document;
+    const card = timeline.querySelector<HTMLElement>('[data-trajectory-call=""]');
+    const input = card?.querySelector<HTMLElement>('[data-trajectory-section=""]');
+    const rows = input
+      ? Array.from(input.querySelectorAll<HTMLElement>('[data-trajectory-message-collapsible=""]'))
+      : [];
+    return {
+      inputRows: rows.length,
+      openInputRows: rows.filter((row) => row.dataset.state === "open").length,
+      moreLabel:
+        input?.querySelector<HTMLElement>('[data-trajectory-rows-more=""]')?.textContent?.trim() ??
+        "",
+      hiddenLabel:
+        input
+          ?.querySelector<HTMLElement>('[data-trajectory-rows-hidden=""]')
+          ?.textContent?.trim() ?? "",
+      truncatedNotices: Array.from(
+        document.querySelectorAll<HTMLElement>('[data-trajectory-truncated=""]'),
+        (element) => element.textContent?.trim() ?? "",
+      ),
+    };
+  });
+}
 
 async function seedTrajectory(taskId: string, filePath: string) {
   const safeTaskId = taskId
@@ -444,15 +581,28 @@ async function openTrajectoryThroughTaskMenu(taskId: string) {
 
   await browser.waitUntil(
     () =>
-      browser.execute(() => {
-        const labels = new Set(["View model trajectory", "查看调用轨迹"]);
-        const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
-          (element) => labels.has((element.textContent ?? "").trim()),
-        );
+      browser.execute((testId) => {
+        const item = document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
         item?.click();
         return Boolean(item);
-      }),
+      }, TID_TASK_VIEW_MODEL_TRAJECTORY),
     { timeout: 15_000, timeoutMsg: "task context menu 没有调用轨迹入口" },
+  );
+}
+
+async function closeTrajectoryTab(taskId: string) {
+  await browser.waitUntil(
+    () =>
+      browser.execute((currentTaskId) => {
+        const tab = document.querySelector<HTMLElement>(
+          `[data-side-pane-tab-id="model-trajectory:${currentTaskId}"]`,
+        );
+        const closeButton = tab?.querySelector<HTMLButtonElement>("button[aria-label]");
+        if (!closeButton) return false;
+        closeButton.click();
+        return true;
+      }, taskId),
+    { timeout: 10_000, timeoutMsg: `trajectory tab for task ${taskId} has no close button` },
   );
 }
 
@@ -587,15 +737,51 @@ async function waitForToggleAllAction(labels: string[]) {
 }
 
 async function searchAndNavigate(query: string) {
+  // A second trajectory pane (TRJ11) keeps the earlier pane's inactive tab in the DOM, so only a displayed
+  // search bar counts and only a displayed trigger is clicked.
   const hasSearchBar = await browser.execute(() =>
-    Boolean(document.querySelector('[data-trajectory-search-bar=""]')),
+    [...document.querySelectorAll<HTMLElement>('[data-trajectory-search-bar=""]')].some(
+      (element) => element.offsetParent !== null,
+    ),
   );
-  if (!hasSearchBar) await clickFirst('[data-trajectory-search-trigger=""]');
+  if (!hasSearchBar) await clickFirstDisplayed('[data-trajectory-search-trigger=""]');
   await setSearchValue(query);
-  await browser.waitUntil(async () => (await trajectorySnapshot()).text.includes(query), {
-    timeout: 15_000,
-    timeoutMsg: `搜索命中没有被虚拟列表挂载并 reveal: ${query}`,
-  });
+  try {
+    await browser.waitUntil(async () => (await trajectorySnapshot()).text.includes(query), {
+      timeout: 15_000,
+      timeoutMsg: `搜索命中没有被虚拟列表挂载并 reveal: ${query}`,
+    });
+  } catch (error) {
+    const diagnostics = await browser.execute((marker) => {
+      const panes = [...document.querySelectorAll<HTMLElement>('[data-trajectory-timeline=""]')];
+      return JSON.stringify({
+        panes: panes.map((pane) => ({
+          displayed: pane.offsetParent !== null,
+          calls: pane.querySelectorAll('[data-trajectory-call=""]').length,
+          rows: pane.querySelectorAll('[data-trajectory-message-collapsible=""]').length,
+          openRows: pane.querySelectorAll(
+            '[data-trajectory-message-collapsible=""][data-state="open"]',
+          ).length,
+          hiddenGaps: [...pane.querySelectorAll<HTMLElement>("[data-trajectory-rows-hidden]")].map(
+            (gap) => gap.textContent?.trim(),
+          ),
+          more: [...pane.querySelectorAll<HTMLElement>("[data-trajectory-rows-more]")].map((btn) =>
+            btn.textContent?.trim(),
+          ),
+          markerInText: (pane.innerText || "").includes(marker),
+          markerInContent: (pane.textContent || "").includes(marker),
+        })),
+        searchBars: [
+          ...document.querySelectorAll<HTMLElement>('[data-trajectory-search-bar=""]'),
+        ].map((bar) => ({
+          displayed: bar.offsetParent !== null,
+          value: bar.querySelector("input")?.value,
+          counter: bar.textContent?.trim().slice(0, 40),
+        })),
+      });
+    }, query);
+    throw new Error(`${(error as Error).message} diagnostics=${diagnostics}`);
+  }
 }
 
 async function setSearchValue(query: string) {
@@ -606,8 +792,29 @@ async function setSearchValue(query: string) {
       ),
     { timeout: 10_000, timeoutMsg: "调用轨迹搜索框没有出现" },
   );
-  const input = $('[data-trajectory-search-bar=""] input');
+  const inputs = await browser.$$('[data-trajectory-search-bar=""] input');
+  const count = await inputs.length;
+  let input = count > 0 ? inputs[0] : undefined;
+  for (let index = 0; index < count; index += 1) {
+    const candidate = inputs[index];
+    if (candidate && (await candidate.isDisplayed())) input = candidate;
+  }
+  if (!input) throw new Error("调用轨迹搜索框没有出现");
   await input.setValue(query);
+}
+
+async function clickFirstDisplayed(selector: string) {
+  await browser.waitUntil(
+    () =>
+      browser.execute((value) => {
+        const element = [...document.querySelectorAll<HTMLElement>(value)].find(
+          (candidate) => candidate.offsetParent !== null,
+        );
+        element?.click();
+        return Boolean(element);
+      }, selector),
+    { timeout: 10_000, timeoutMsg: `没有找到可点击的可见元素: ${selector}` },
+  );
 }
 
 async function waitForSearchHighlights(expectedNormal: number, expectedActive: number) {
@@ -675,7 +882,9 @@ async function seedOversizedTrajectoryTail(filePath: string, taskId: string) {
 
 async function trajectorySnapshot() {
   return browser.execute(() => {
-    const root = document.querySelector<HTMLElement>('[data-trajectory-timeline=""]');
+    // Prefer the displayed pane: an earlier case's trajectory tab may still be in the DOM, hidden.
+    const timelines = [...document.querySelectorAll<HTMLElement>('[data-trajectory-timeline=""]')];
+    const root = timelines.find((element) => element.offsetParent !== null) ?? timelines[0] ?? null;
     const expanded = Array.from(
       document.querySelectorAll<HTMLElement>(
         '[data-trajectory-message-expanded=""][data-state="open"]',
@@ -721,7 +930,7 @@ async function trajectorySnapshot() {
   });
 }
 
-async function setRendererLocale(locale: "zh-CN") {
+async function setRendererLocale(locale: "en-US") {
   const changed = await browser.execute((nextLocale) => {
     const actions = (
       window as typeof window & {

@@ -8,15 +8,21 @@ const presentation = {
   ready: { label: "settings.modelProvider.readyStatus", color: "text-success" },
 } as const;
 
+export type ProviderStatusKind = keyof typeof presentation;
+
 export function ProviderStatusIndicator({
   provider,
+  status: statusOverride,
 }: {
   provider?: Pick<ProviderSettingsFormProvider, "enabled" | "executable"> | null;
+  /** Explicit status for rows whose activity is not the provider `executable` flag (ACP agents). */
+  status?: ProviderStatusKind;
 }) {
   const { intl } = useZCodeIntl();
-  // 只做展示映射，不能在 UI 再检查 Key、权益或模型成员。
-  const status =
-    provider?.enabled === false ? "disabled" : provider?.executable ? "ready" : "unavailable";
+  // Display mapping only; do not recheck Keys, entitlements, or model membership in the UI.
+  const status: ProviderStatusKind =
+    statusOverride ??
+    (provider?.enabled === false ? "disabled" : provider?.executable ? "ready" : "unavailable");
   const { label, color } = presentation[status];
   return (
     <CircleIcon

@@ -86,7 +86,7 @@ export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
         processEnv: this.processEnv,
       });
       const knownPath = this.outputPathForRequest(request, "stdout")!;
-      // 请求可能被复用；缓存保存的是实际路径，降级根必须始终来自原有配置。
+      // The request may be reused; the cache stores the actual path, and the fallback root must always come from the original configuration.
       const fallbackPath = join(
         this.options.outputRootDir ?? resolveDefaultOutputRootDir(this.options.processEnv),
         basename(dirname(knownPath)),
@@ -103,12 +103,12 @@ export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
         if (!BASH_TEMP_UNAVAILABLE_CODES.has((error as NodeJS.ErrnoException).code ?? ""))
           throw error;
         await file?.discard();
-        // 搜索数据目录会把正在写入的输出再次读回；优先隔离到 tmp，失败后完整复用旧文件实现。
+        // Searching the data directory would read back output that is still being written; isolate to tmp first and, on failure, fully reuse the old file implementation.
         file = new BashFileOutput(fallbackPath, this.platform, legacyOutputEncoding);
         await file.prepare();
       }
       if (isStopped()) return await cancelled();
-      // 路径必须在后台记录和文件入口发布之前确定，不能在 spawn 后再降级或重新打开。
+      // The path must be determined before the background record and file entry are published; it must not be downgraded or reopened after spawn.
       this.outputPathsByRequest.set(request, {
         outputPath: file.path,
         stdoutPersistedOutputPath: file.path,
@@ -188,7 +188,7 @@ export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
           platform: this.platform,
           processEnv: this.processEnv,
         });
-    // 任务记录单独解析会重复同步执行 Windows chcp；复用执行时的编码值。
+    // Parsing task records separately would run Windows chcp synchronously again; reuse the encoding value from execution.
     internalOptions.onOutputEncodingResolved?.(legacyOutputEncoding);
     const file =
       preparedOutput?.file ??
@@ -234,7 +234,8 @@ export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
     const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     let finishExit: (state: ExitState) => void = () => undefined;
     let finishResourceTelemetry: (state: ExitState) => void = () => undefined;
-    // timeout 计时器在 spawn 后才启动（见下），spawn 前的停止只可能来自取消或 adapter 关闭。
+    // The timeout timer starts only after spawn (see below); before spawn, a stop can come only from
+    // cancellation or adapter shutdown.
     const createPreSpawnStoppedResult = () =>
       this.createStoppedResult(
         startedAt,
@@ -254,8 +255,9 @@ export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
       }
       const startedChild = child;
       terminationRequested = true;
-      // root shell exit 不代表其进程组和继承 pipe 的后代已经退出。
-      // cancel/close 必须在组长 exit 后仍能清理整个 execution，避免 orphan。
+      // The root shell exiting does not mean its process group or descendants holding inherited pipes
+      // have exited. Cancellation and close must still be able to clean up the whole execution after
+      // the group leader exits, to avoid orphans.
       this.terminateProcessTree(startedChild, useBashMergedOutput);
       if (file) {
         finishExit({ code: timedOut ? 143 : 137 });
@@ -267,8 +269,8 @@ export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
             signal: "SIGKILL",
           });
         }
-        // Windows 的 taskkill 或 POSIX 的 PGID 都可能已无法寻址脱离的后代；
-        // 最终释放 ZCode 持有的读端，不能继续让未知进程保活 CLI。
+        // Windows taskkill or a POSIX PGID may no longer address detached descendants. Release the
+        // read end held by ZCode so unknown processes cannot keep the CLI alive.
         this.destroyChildOutputStreams(startedChild);
       }, FORCE_EXIT_AFTER_KILL_MS);
       forceExitTimer.unref?.();
@@ -302,7 +304,7 @@ export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
     try {
       const prepared = await this.prepareChildSpawn(request);
 
-      // shell init snapshot 创建是异步的；用户可能在等待期间取消或关闭 adapter。
+      // Creating the shell-init snapshot is asynchronous; the user may cancel or close the adapter while it is pending.
 
       const stoppedAfterCommandPreparation = stoppedBeforeSpawn();
       if (stoppedAfterCommandPreparation) {
@@ -396,10 +398,13 @@ export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
 
       this.emit(options, { type: "started", pid: spawnedChild.pid, timestamp: startedAt });
 
-      // 复原原因：计时器提前到准备阶段是 protected-resource sandbox 时代的行为——capability
-      // probe 可能无限挂起，总超时必须覆盖准备期。sandbox 撤除后准备阶段只剩 shell snapshot /
-      // artifact 等既有异步步骤，timeoutMs 恢复为只约束子进程运行，避免 shell 初始化较慢或
-      // timeout 较短时命令尚未启动就被判 timed_out；准备期间的取消与关闭仍由 stoppedBeforeSpawn 兜底。
+      // Restore the prior behavior: starting the timer during preparation was needed by the
+      // protected-resource sandbox era, when a capability probe could hang indefinitely and the
+      // overall timeout had to cover preparation. With the sandbox removed, preparation contains
+      // only existing asynchronous steps such as shell snapshots and artifacts. timeoutMs now again
+      // limits child-process runtime only, so slow shell initialization or a short timeout cannot
+      // mark a command timed_out before it starts. stoppedBeforeSpawn still handles cancellation and
+      // shutdown during preparation.
       if (timeoutMs > 0) {
         timeoutTimer = setTimeout(() => requestStop("timeout"), timeoutMs);
       }

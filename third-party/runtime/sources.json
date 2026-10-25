@@ -11,6 +11,12 @@
       "source": "https://raw.githubusercontent.com/nodejs/node/v24.14.0/LICENSE",
       "file": "third-party/runtime/node-24.14.0-LICENSE.txt",
       "sha256": "4573185d56580da2b890ba34a85a409257640f1c5632eade4300137266194d18"
+    },
+    {
+      "version": "26.11.1",
+      "source": "https://raw.githubusercontent.com/nodejs/node/v26.11.1/LICENSE",
+      "file": "third-party/runtime/node-26.11.1-LICENSE.txt",
+      "sha256": "6b85ee1983d01fa2cdcdd5d1a3053c6221fae41d6a54e43b416bf35969fc4128"
     }
   ]
 }

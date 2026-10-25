@@ -1,30 +1,72 @@
 import { z } from "zod";
 import { modelSelectionSchema } from "../model-selection.js";
 
+/**
+ * Config options an external ACP agent offers for its session (specs/acp-agent-runtime.md "S6"). Labels
+ * and values come from the agent; `currentValue` is the agent's value, or the user's choice once the
+ * choice is stored (it reaches the agent before the next prompt).
+ */
+export const externalAgentConfigValueSchema = z
+  .object({
+    value: z.string(),
+    name: z.string(),
+    description: z.string().nullable(),
+    group: z.string().nullable(),
+  })
+  .strict();
+export type ExternalAgentConfigValue = z.infer<typeof externalAgentConfigValueSchema>;
+
+export const externalAgentConfigOptionSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string(),
+    description: z.string().nullable(),
+    category: z.string().nullable(),
+    currentValue: z.string(),
+    options: z.array(externalAgentConfigValueSchema),
+  })
+  .strict();
+export type ExternalAgentConfigOption = z.infer<typeof externalAgentConfigOptionSchema>;
+
+export const externalAgentConfigStateSchema = z
+  .object({
+    agentId: z.string().min(1),
+    options: z.array(externalAgentConfigOptionSchema),
+  })
+  .strict();
+export type ExternalAgentConfigState = z.infer<typeof externalAgentConfigStateSchema>;
+
 // ── config──
 export const sessionConfigStateSchema = z.object({
-  /** Session 接受并持久化的稀疏选择意图；provider/model/thought 仅为 UI effective 投影。 */
+  /** Sparse selection intent accepted and persisted by the session; provider/model/thought are only effective projections for the UI. */
   modelSelection: modelSelectionSchema.optional(),
   provider: z.string(),
   model: z.string(),
   thought: z.string(),
-  // 思考档位是当前模型的能力，不是 workspace/UI 偏好。
-  // default 仅用于兼容旧快照；新 agent 必须从 runtime 投影实际集合。
+  // Reasoning levels are capabilities of the current model, not workspace/UI preferences.
+  // default exists only for compatibility with older snapshots; new agents must project the actual set from runtime.
   thoughtLevels: z.array(z.string()).default([]),
   followupMode: z.enum(["queue", "guide"]),
-  // additive（冻结面演进，同 meta 的裁决口径）：agent 协作模式（core CollaborationMode）。
-  // 必须带 default 才不破坏旧快照/旧发送端的解析；投影经 SessionModeChanged 事件更新。
+  // Additive evolution on the frozen surface, following the same rule as meta: agent collaboration
+  // mode (core CollaborationMode). Include a default to preserve parsing of old snapshots/senders; the
+  // projection updates through SessionModeChanged events.
   mode: z.string().default("build"),
   planEnabled: z.boolean().optional(),
-  /** 明确审批结果；草稿按 interactionId 消费一次，普通 mode 更新不重置它。 */
+  /** Explicit approval result; drafts are consumed once by interactionId, and ordinary mode updates do not reset it. */
   permissionGrant: z.object({ interactionId: z.string().min(1) }).optional(),
-  /** 最近工具转换的关联，供草稿定向同步；不新增可见历史事件。 */
+  /** Correlation for the most recent tool transition, used for targeted draft synchronization without adding a visible history event. */
   planTransition: z
     .object({
       toolCallId: z.string(),
       planEnabled: z.boolean(),
     })
     .optional(),
+  /**
+   * Additive (S6): the selects of the ACP agent that last ran in this session. Absent until the
+   * session has an offered snapshot; the composer shows them only while the selected model is that
+   * agent (`acp:<agentId>`). Optional so older snapshots still parse.
+   */
+  externalAgentConfig: externalAgentConfigStateSchema.optional(),
 });
 export type SessionConfigState = z.infer<typeof sessionConfigStateSchema>;
 

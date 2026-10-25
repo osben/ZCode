@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -11,6 +10,8 @@ import {
 import type {
   AutoArchiveInput,
   ProjectDirectories,
+  ReserveCreatedTaskInput,
+  ReserveCreatedTaskResult,
   ProjectRepositoryContract,
   ProjectTask,
   ProjectTaskRef,
@@ -23,8 +24,21 @@ import {
   assertRemoteProjectRoots,
   assertRemoteTaskDirectories,
 } from "#src/project-storage/remote-policy.js";
+import { claimForkedTask } from "#src/project-storage/project-repository-fork.js";
+import {
+  executionDirectoriesSchema,
+  insertReservationRow,
+  readProjects,
+  readTask,
+  requireProject,
+  resolveDirectories,
+} from "#src/project-storage/project-repository-rows.js";
 
-const executionDirectoriesSchema = z.array(z.string().min(1)).max(256);
+// Reservation placeholder signature: reserveCreatedTask (this file) is the only writer that leaves created_at 0, cli_created_at NULL and
+// the column default meta_json '{}' together. Reads hide such rows until applyCliFacts writes facts (taskIndexRepo imports this predicate),
+// and discardCreatedTaskReservation may delete only rows that still match it, so CLI-admitted rows are never removed.
+export const RESERVATION_PLACEHOLDER_SQL =
+  "(cli_created_at IS NULL AND created_at = 0 AND meta_json = '{}')";
 
 function transaction<T>(db: DatabaseSync, body: () => T, write = true): T {
   db.exec(write ? "BEGIN IMMEDIATE" : "BEGIN");
@@ -38,84 +52,21 @@ function transaction<T>(db: DatabaseSync, body: () => T, write = true): T {
   }
 }
 
-function readProjects(db: DatabaseSync, includeDeleted = true): VirtualProject[] {
-  const roots = db
-    .prepare(
-      "SELECT project_id,root_path,position,is_primary FROM project_roots ORDER BY position,root_path",
-    )
-    .all();
-  return db
-    .prepare(
-      `SELECT * FROM projects ${includeDeleted ? "" : "WHERE deleted=0"} ORDER BY position,project_id`,
-    )
-    .all()
-    .map((row) => ({
-      id: String(row.project_id),
-      hostId: String(row.host_id),
-      name: String(row.name),
-      nameOverridden: row.name_overridden === 1,
-      position: Number(row.position),
-      pinned: row.pinned === 1,
-      deleted: row.deleted === 1,
-      createdAt: Number(row.created_at),
-      updatedAt: Number(row.updated_at),
-      roots: roots
-        .filter((root) => root.project_id === row.project_id)
-        .map((root) => ({
-          rootPath: String(root.root_path),
-          position: Number(root.position),
-          isPrimary: root.is_primary === 1,
-        })),
-    }));
-}
-
-function requireProject(db: DatabaseSync, id: string): VirtualProject {
-  const project = readProjects(db).find((entry) => entry.id === id);
-  if (!project) throw new Error("project.not-found");
-  return project;
-}
-
-function readTask(db: DatabaseSync, task: ProjectTaskRef) {
-  return db
-    .prepare("SELECT * FROM tasks WHERE workspace_key=? AND task_id=?")
-    .get(resolveWorkspaceKey(task), task.taskId);
-}
-
-function resolveDirectories(
-  db: DatabaseSync,
-  task: ProjectTaskRef,
-  ownerHostId = "local",
-): ProjectDirectories {
-  const row = readTask(db, task);
-  // 旧远端影子行仍可能保留；行与项目一致不代表当前 Host 有权加载其目录。
-  if (row && row.host_id !== ownerHostId) throw new Error("project.host-mismatch");
-  const workspacePath = row ? String(row.root_path) : task.workspacePath;
-  const project = row?.project_id ? requireProject(db, String(row.project_id)) : null;
-  if (project && row?.host_id !== project.hostId) throw new Error("project.host-mismatch");
-  assertRemoteTaskDirectories(
-    ownerHostId,
-    project,
-    workspacePath,
-    typeof row?.execution_directories === "string"
-      ? executionDirectoriesSchema.parse(JSON.parse(row.execution_directories))
-      : [],
-  );
-  return {
-    workspacePath,
-    projectId: project?.id ?? null,
-    additionalDirectories:
-      typeof row?.execution_directories === "string"
-        ? executionDirectoriesSchema.parse(JSON.parse(row.execution_directories))
-        : (project?.roots.map((root) => root.rootPath).filter((path) => path !== workspacePath) ??
-          []),
-  };
+// searchable_text holds every task's full-text body. The tree never reads it, but SELECT * made
+// this synchronous Host query sort that body through a temp B-tree, stalling the Host event loop
+// on every navigation. Keep the remaining columns dynamic so older table shapes still load.
+function taskTreeColumns(db: DatabaseSync): string {
+  return (db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[])
+    .filter(({ name }) => name !== "searchable_text")
+    .map(({ name }) => `"${name.replaceAll('"', '""')}"`)
+    .join(",");
 }
 
 function readTasks(db: DatabaseSync): ProjectTask[] {
   // 迁移后的旧后端行也有 CLI 时间；沿用列表的 provider 边界，避免展示 Controller 无法操作的会话。
   return db
     .prepare(
-      "SELECT * FROM tasks WHERE provider=? AND deleted=0 AND coalesce(cli_deleted,0)=0 AND cli_created_at IS NOT NULL ORDER BY cli_updated_at DESC,task_id",
+      `SELECT ${taskTreeColumns(db)} FROM tasks WHERE provider=? AND deleted=0 AND coalesce(cli_deleted,0)=0 AND cli_created_at IS NOT NULL ORDER BY cli_updated_at DESC,task_id`,
     )
     .all(ZCODE_AGENT_PROVIDER)
     .map((row) => {
@@ -236,6 +187,19 @@ export class ProjectRepository implements ProjectRepositoryContract {
       if (input.hostId && input.hostId !== hostId) throw new Error("project.host-immutable");
       const roots = [...new Set(input.roots ?? old?.roots.map((root) => root.rootPath) ?? [])];
       assertRemoteProjectRoots(this.ownerHostId, roots, old);
+      if (input.reuseExistingRoot) {
+        // Open-directory intent is only defined for a single local root that does not target an existing project.
+        if (hostId !== "local" || old || roots.length !== 1)
+          throw new Error("project.invalid-directory-open");
+        const existing = this.db
+          .prepare(
+            `SELECT p.project_id FROM projects p JOIN project_roots r ON r.project_id=p.project_id
+          WHERE p.host_id=? AND p.deleted=0 AND r.root_path=?
+          ORDER BY r.is_primary DESC,p.position,p.project_id LIMIT 1`,
+          )
+          .get(hostId, roots[0]!) as { project_id: string } | undefined;
+        if (existing) return requireProject(this.db, String(existing.project_id));
+      }
       if (
         input.restoreProjectId &&
         (!old?.deleted ||
@@ -369,15 +333,13 @@ export class ProjectRepository implements ProjectRepositoryContract {
     return transaction(this.db, () => resolveDirectories(this.db, task, this.ownerHostId), false);
   }
 
-  reserveCreatedTask(input: {
-    task: ProjectTaskRef;
-    projectId: string | null;
-    additionalDirectories?: string[];
-  }): ProjectDirectories {
+  reserveCreatedTask<T extends ReserveCreatedTaskInput>(input: T): ReserveCreatedTaskResult<T> {
     return transaction(this.db, () => {
       const key = resolveWorkspaceKey(input.task);
       const host = ensureHost(this.db, key, this.ownerHostId);
       if (host !== (this.ownerHostId ?? "local")) throw new Error("project.cross-host-move");
+      if (input.forkOf)
+        return claimForkedTask(this.db, this.ownerHostId, input.task, input.forkOf, key, host);
       if (!readTask(this.db, input.task)) {
         assertRemoteTaskDirectories(
           this.ownerHostId,
@@ -397,24 +359,46 @@ export class ProjectRepository implements ProjectRepositoryContract {
             throw new Error("project.cwd-not-in-roots");
         }
         // 创建归属必须先于 CLI 首发；空事实不是假会话，列表只读取已有 CLI 事实的行。
-        this.db
-          .prepare(`INSERT INTO tasks(workspace_key,workspace_path,workspace_identity,task_id,created_at,updated_at,host_id,root_path,project_id,handoff_pending,execution_directories)
-          VALUES(?,?,?,?,0,0,?,?,?,?,?)`)
-          .run(
-            key,
-            input.task.workspacePath,
-            input.task.workspaceIdentity ?? null,
-            input.task.taskId,
-            host,
-            input.task.workspacePath,
-            input.projectId,
-            OWNERSHIP_DECIDED,
+        insertReservationRow(this.db, {
+          key,
+          task: input.task,
+          host,
+          projectId: input.projectId,
+          executionDirectories:
             input.additionalDirectories === undefined
               ? null
               : JSON.stringify(executionDirectoriesSchema.parse(input.additionalDirectories)),
-          );
+        });
       }
       return resolveDirectories(this.db, input.task, this.ownerHostId);
+    }) as ReserveCreatedTaskResult<T>;
+  }
+
+  /**
+   * Deletes a reservation placeholder whose create was abandoned before the CLI admitted it (prewarm discarded, create rejected by the
+   * CLI). Only the exact placeholder signature is removed; a row with CLI facts or any other writer's row is left untouched, and a
+   * missing row is a no-op. Returns whether a row was removed.
+   */
+  discardCreatedTaskReservation(input: { task: ProjectTaskRef }): boolean {
+    return transaction(this.db, () => {
+      const result = this.db
+        .prepare(
+          `DELETE FROM tasks WHERE workspace_key=? AND task_id=? AND host_id=? AND ${RESERVATION_PLACEHOLDER_SQL}`,
+        )
+        .run(resolveWorkspaceKey(input.task), input.task.taskId, this.ownerHostId ?? "local");
+      return Number(result.changes) > 0;
     });
   }
+}
+
+/**
+ * Startup-only sweep of abandoned placeholders for the local owner (specs/first-submission-lifecycle.md, "Placeholder startup sweep").
+ * The caller holds the write transaction and calls this before any Host opens the index; it is a plain exact-signature DELETE scoped to
+ * host `local`, the same scope discardCreatedTaskReservation uses. Returns the number of rows removed.
+ */
+export function sweepAbandonedReservations(db: DatabaseSync, hostId = "local"): number {
+  const result = db
+    .prepare(`DELETE FROM tasks WHERE host_id=? AND ${RESERVATION_PLACEHOLDER_SQL}`)
+    .run(hostId);
+  return Number(result.changes);
 }

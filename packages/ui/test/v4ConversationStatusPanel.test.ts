@@ -11,7 +11,10 @@ import type {
   ToolCallRow,
   WorkflowRunState,
 } from "@zcode/shared/zcode-protocol-v4";
+import enUS from "@/i18n/locales/en-US.js";
+import zhCN from "@/i18n/locales/zh-CN.js";
 import { getStatusPanelTodoFocusWindow } from "@/v4/ConversationStatusPanel.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const statusPanelCapture = vi.hoisted(() => ({
   collapsibles: [] as Array<{
@@ -35,6 +38,16 @@ const statusPanelCapture = vi.hoisted(() => ({
 vi.mock("@/ControlHintTooltip.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/ControlHintTooltip.js")>()),
   ControlHintTooltip: ({ children }: { children: ReactNode }) => children,
+}));
+
+// The live throughput link (useSessionThroughput → useSessionDebug) reads the session debug snapshot;
+// in tests it falls back to null, the throughput label does not render, and existing assertions are unaffected.
+vi.mock("@/hooks/useServices.js", () => ({
+  useServices: () => ({
+    zcodeAgentService: {
+      readSessionDebug: async () => null,
+    },
+  }),
 }));
 
 vi.mock("@/GitActionMenu.js", () => ({
@@ -152,6 +165,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
           "chat.summaryPanel.duration.hours": "小时",
           "chat.summaryPanel.duration.minutes": "分",
           "chat.summaryPanel.duration.seconds": "秒",
+          "chat.statusPanel.endedWorkflows": "Ended workflows",
         };
         return (
           durationUnits[descriptor.id] ??
@@ -159,7 +173,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
         );
       },
     },
-    locale: "zh-CN",
+    locale: "en-US",
   }),
 }));
 
@@ -284,9 +298,9 @@ function runningSubagent(
   };
 }
 
-// 面板自己从 workflowRuns 投影 + backgroundWorks 联接出行（模型层的活儿），所以这里造的是
-// 两侧输入，而不是行——行的形状由 v4ConversationStatusPanelModel.test.ts 穷举。
-/** 声明了三站（盘点 → 计划 → 构建）、正在「计划」的 run。 */
+// The panel itself joins rows out of the workflowRuns projection + backgroundWorks (model-layer work), so what is
+// built here are the two side inputs, not rows — row shapes are exhaustively covered by v4ConversationStatusPanelModel.test.ts.
+/** A run that declared three phases (inventory → plan → build) and is currently in "plan". */
 function phasedRunProjection(overrides: Partial<WorkflowRunState> = {}): WorkflowRunState {
   return workflowRunProjection({
     phaseNames: ["盘点", "计划", "构建"],
@@ -377,8 +391,9 @@ describe("ConversationStatusPanel", () => {
   });
 
   it("goal 计时器只在活动态起一次：投影换一个等值的 goal 对象不重建 interval，暂停即拆掉", async () => {
-    // 修订 2026-09-12：此前 effect 以整个 goal 对象为依赖，每个 goal 事件都同步 setNow 并重建
-    // interval——落在投影帧的同步提交里，给 React 的嵌套更新计数记一笔（与工作流卡崩溃同形）。
+    // Revision 2026-09-12: the effect previously depended on the whole goal object, so every goal event synchronously
+    // called setNow and rebuilt the interval — landing inside the synchronous commit of a projection frame, adding a
+    // tick to React's nested update count (same shape as the workflow-card crash).
     vi.useFakeTimers();
     vi.setSystemTime(10_000);
     const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
@@ -398,18 +413,18 @@ describe("ConversationStatusPanel", () => {
       const intervalsAfterMount = setIntervalSpy.mock.calls.length;
       expect(intervalsAfterMount).toBeGreaterThan(0);
 
-      // 同值、不同对象的 goal 帧 ×3：不再有新的 interval。
+      // Equal-value, different-object goal frames ×3: no new interval.
       for (let i = 0; i < 3; i += 1) {
         view.rerender(renderGoal(goalState({ activeRunStartedAtMs: 10_000, iteration: 1 + i })));
       }
       expect(setIntervalSpy.mock.calls.length).toBe(intervalsAfterMount);
 
-      // 秒针仍在走：过 2 秒后用时文案跟着变。
+      // The second hand keeps ticking: after 2 seconds the elapsed text follows.
       const before = view.container.textContent;
       act(() => vi.advanceTimersByTime(2_000));
       expect(view.container.textContent).not.toBe(before);
 
-      // 暂停：interval 拆掉，不再起新的。
+      // Paused: the interval is torn down and no new one starts.
       const clearsBefore = clearIntervalSpy.mock.calls.length;
       view.rerender(renderGoal(goalState({ status: "paused", activeRunStartedAtMs: null })));
       expect(clearIntervalSpy.mock.calls.length).toBeGreaterThan(clearsBefore);
@@ -479,7 +494,7 @@ describe("ConversationStatusPanel", () => {
     expect(html).not.toContain("data-status-todo-preview-trigger");
   });
 
-  it("keeps the full long Todo content and title", async () => {
+  it("clamps each Todo label to two lines without truncating its content", async () => {
     const content =
       "检查包含多个测试项目的目录，逐项核对配置文件、依赖安装状态、测试入口和输出目录是否完整";
     const html = await renderStatusPanel({
@@ -489,6 +504,7 @@ describe("ConversationStatusPanel", () => {
       }),
     });
 
+    expect(html).toContain("line-clamp-2 min-w-0 flex-1 break-words leading-5");
     expect(html).toContain(`title="${content}"`);
     expect(html).toContain(content);
   });
@@ -507,6 +523,7 @@ describe("ConversationStatusPanel", () => {
     expect(html).toContain('data-status-section="sessionPlans"');
     expect(html).toContain('data-status-section-scroll="sessionPlans"');
     expect(html.indexOf("最新计划")).toBeLessThan(html.indexOf("较早计划"));
+    expect(html).not.toContain("78 行");
     expect(
       buildSessionPlanOpenRequest("parent-session", {
         rowId: 9,
@@ -632,9 +649,10 @@ describe("ConversationStatusPanel", () => {
     expect(mixed).not.toContain("lucide-square-terminal");
   });
 
-  // ── Workflows 分区（docs/dynamic-workflow/presentation.md「Other places a run appears」）──
-  // 一行两行高：第一行 名称 + 时长，第二行 侧栏同款轨道 + phase 词。状态词不再可见（灯和 phase
-  // 已经说了），但仍进打开按钮的无障碍名。步数只在没有 phase 表时出现。
+  // ── Workflows section (docs/dynamic-workflow/presentation.md "Other places a run appears") ──
+  // One row, two lines tall: line one is name + duration, line two is the sidebar-style rail + the phase word. The
+  // status word is no longer visible (the lamp and phase already say it) but still enters the open button's accessible
+  // name. The step count appears only when there is no phase table.
   it("renders a run as name and time over the sidebar rail and its phase words", async () => {
     const { ConversationStatusPanel } = await import("@/v4/ConversationStatusPanel.js");
     const view = render(
@@ -662,30 +680,32 @@ describe("ConversationStatusPanel", () => {
 
     expect(lineOne?.textContent).toContain("重构状态胶囊");
     expect(lineOne?.querySelector("[data-workflow-run-elapsed]")?.textContent).toBe("3分 14秒");
-    // 轨道就是侧栏那一条：done / running / pending 三种灯按声明序排开。
+    // The rail is exactly the sidebar's: done / running / pending lamps laid out in declared order.
     expect(
       [...(lineTwo?.querySelectorAll("[data-rail-station]") ?? [])].map((lamp) =>
         lamp.getAttribute("data-rail-station"),
       ),
     ).toEqual(["done", "running", "pending"]);
     expect(lineTwo?.textContent).toContain("计划");
-    // 可见文字里没有状态词、没有步数、没有「已运行」前缀。
+    // No status word, no step count, no "running for" prefix in the visible text.
     expect(row?.textContent).not.toContain("chat.toolCall.workflow.run.status.running");
     expect(row?.textContent).not.toContain("chat.toolCall.workflow.card.steps");
     expect(row?.textContent).not.toContain("chat.longRunning");
-    // 状态词挪进打开按钮的无障碍名：名称 · 状态 · phase。
+    // The status word moves into the open button's accessible name: name · status · phase.
     expect(
       row?.querySelector('[data-workflow-run-details-trigger="true"]')?.getAttribute("aria-label"),
     ).toBe(
       "chat.toolCall.workflow.openRunDetails · 重构状态胶囊 · chat.toolCall.workflow.run.status.running · 计划",
     );
-    // Stop 叠在时长上（悬停 / 键盘焦点时出现），无障碍名与卡片的「停止运行」同一个 key。
+    // Stop sits on top of the duration (appears on hover / keyboard focus); its accessible name shares the card's "stop run" key.
     const stop = row?.querySelector<HTMLElement>(
       '[data-testid="v4-background-work-cancel-dwfrun-1"]',
     );
     expect(stop?.getAttribute("aria-label")).toBe("chat.toolCall.workflow.run.cancel");
     expect(stop?.textContent).toContain("chat.statusPanel.runningStop");
     view.unmount();
+    expect(zhCN["chat.statusPanel.workflows"]).toBe("工作流");
+    expect(enUS["chat.statusPanel.workflows"]).toBe("Workflows");
   });
 
   it("joins parallel burning phases with ∥ and draws the twin segment", async () => {
@@ -768,8 +788,8 @@ describe("ConversationStatusPanel", () => {
     expect(html).not.toContain("1小时 2分 7秒");
   });
 
-  // 头部右侧开合一个样：灯 + 「{n} 个运行中」。折叠时不再换成「所有 run 里最长的时长」——那不是
-  // 任何一条 run 的时间。
+  // The header reads the same open or folded: lamp + "{n} running". When folded it no longer swaps to "the longest
+  // duration across all runs" — that is not any single run's time.
   it("reads the same live count in the section header open or folded", async () => {
     const works = [
       backgroundWork({ workId: "dwfrun-1", kind: "workflow", startedAt: Date.now() - 3_727_000 }),
@@ -795,9 +815,11 @@ describe("ConversationStatusPanel", () => {
       expect(header).toContain("chat.statusPanel.workflowsLive 2");
       expect(header).not.toMatch(/\d+秒/u);
     }
+    expect(zhCN["chat.statusPanel.workflowsLive"]).toBe("{count} 个运行中");
+    expect(enUS["chat.statusPanel.workflowsLive"]).toBe("{count} running");
   });
 
-  // 已结束入口在滚动区之外：runs 多到要滚时它也不会被滚出视野。
+  // The ended-runs entry sits outside the scroll area: even when runs overflow into scrolling it never scrolls out of view.
   it("keeps the ended-runs entry below the scrolling run list", async () => {
     const { ConversationStatusPanel } = await import("@/v4/ConversationStatusPanel.js");
     const view = render(
@@ -822,8 +844,8 @@ describe("ConversationStatusPanel", () => {
     view.unmount();
   });
 
-  // 未命名规则：core 的 workflowTaskSubject 兜底链落到 taskId（≡ runId ≡ workId），投影再把
-  // 非空 description 原样抄进 title——所以「题名恰好等于 id」是唯一可靠的未命名信号。
+  // Unnamed rule: core's workflowTaskSubject fallback chain lands on taskId (≡ runId ≡ workId), and the projection
+  // copies a non-empty description verbatim into title — so "title exactly equals id" is the only reliable unnamed signal.
   it("substitutes the shared fallback name when the title is just the run id", async () => {
     const html = await renderStatusPanel({
       gitSummary: null,
@@ -845,7 +867,7 @@ describe("ConversationStatusPanel", () => {
       gitSummary: null,
       gitWorktreeChangeSummary: null,
       summaryPanelVariantOverride: "panel",
-      // 旧 CLI：只有 workflow work，没有 workflowRuns 投影键。
+      // Old CLI: only the workflow work, no workflowRuns projection key.
       backgroundWorks: [
         backgroundWork({ workId: "dwfrun-skew", kind: "workflow", title: "旧 CLI 的 run" }),
       ],
@@ -874,7 +896,7 @@ describe("ConversationStatusPanel", () => {
 
     expect(html).toContain("chat.toolCall.workflow.card.steps 1/3");
     expect(html).not.toContain("data-workflow-run-elapsed");
-    // 无 work → 无 workId → 停不了；Stop 的两个前提字段在模型层就一起缺席。
+    // No work → no workId → cannot stop; both prerequisite fields of Stop are absent together at the model layer.
     expect(html).not.toContain("v4-background-work-cancel");
     expect(html).not.toContain("chat.statusPanel.runningStop");
   });
@@ -897,7 +919,7 @@ describe("ConversationStatusPanel", () => {
     );
 
     expect(trigger).not.toBeNull();
-    // Stop 是行内嵌套交互，所以详情入口不能是整行 button——透明同级按钮，与 Agent 行同款。
+    // Stop is a nested in-row interaction, so the details entry must not be a whole-row button — a transparent sibling button, same style as the Agent row.
     expect(trigger?.getAttribute("aria-label")).toBe(
       "chat.toolCall.workflow.openRunDetails · chat.toolCall.workflow.fallbackName · chat.toolCall.workflow.run.status.running · chat.toolCall.workflow.card.steps 1/3",
     );
@@ -910,8 +932,9 @@ describe("ConversationStatusPanel", () => {
   });
 
   it("carries the workflow name into the target for a named run", async () => {
-    // 任务岛入口曾只交出 runId + toolCallId，详情页标签因此兜底成通用名，而工具卡入口显示真名。
-    // 行的题名由 workflowRuns 投影按 workId ≡ runId 联接 workflow 后台任务的 title 得到。
+    // The task island entry used to hand over only runId + toolCallId, so the details tab label fell back to a generic
+    // name while the tool card entry showed the real name.
+    // The row's title comes from the workflowRuns projection joining the workflow background task's title by workId ≡ runId.
     const onOpenWorkflowRun = vi.fn();
     const { ConversationStatusPanel } = await import("@/v4/ConversationStatusPanel.js");
     const view = render(
@@ -940,7 +963,8 @@ describe("ConversationStatusPanel", () => {
   });
 
   it("omits the workflow name for an unnamed run (title ≡ runId)", async () => {
-    // `title ≡ runId` 是未命名 run 的兜底样子；把 runId 冻进标签比通用兜底名更糟，所以不带出去。
+    // `title ≡ runId` is the fallback look of an unnamed run; freezing the runId into the label is worse than a generic
+    // fallback name, so it is not carried out.
     const onOpenWorkflowRun = vi.fn();
     const { ConversationStatusPanel } = await import("@/v4/ConversationStatusPanel.js");
     const view = render(
@@ -995,7 +1019,7 @@ describe("ConversationStatusPanel", () => {
       gitSummary: null,
       gitWorktreeChangeSummary: null,
       summaryPanelVariantOverride: "panel",
-      // 投影序即启动序；后启动的 run 反而 startedAt 更早也不许把它排到前面。
+      // Projection order is launch order; a later-launched run with an earlier startedAt must not be sorted ahead.
       workflowRuns: [
         workflowRunProjection({ runId: "dwfrun-late", toolCallId: "tool-late" }),
         workflowRunProjection({ runId: "dwfrun-early", toolCallId: "tool-early" }),
@@ -1022,7 +1046,7 @@ describe("ConversationStatusPanel", () => {
     );
   });
 
-  // ── 已结束的 run 折进页脚行（docs/dynamic-workflow/presentation.md「Other places a run appears」）──
+  // ── Ended runs fold into a footer row (docs/dynamic-workflow/presentation.md "Other places a run appears") ──
 
   it("folds ended runs into a footer row that opens the run directory", async () => {
     const onOpenWorkflowRunDirectory = vi.fn();
@@ -1044,17 +1068,21 @@ describe("ConversationStatusPanel", () => {
     );
 
     expect(trigger).not.toBeNull();
-    // 桶名刻意不是「已完成」：这个桶里也有失败与取消的 run。
-    expect(trigger?.textContent).toContain("chat.statusPanel.endedWorkflows");
+    // The bucket name is deliberately not "completed": this bucket also holds failed and cancelled runs.
+    expect(trigger?.textContent).toContain(expectedCopy("chat.statusPanel.endedWorkflows"));
     expect(trigger?.textContent).toContain("3");
     await act(async () => trigger?.click());
     expect(onOpenWorkflowRunDirectory).toHaveBeenCalledWith({ parentSessionId: "parent-a" });
     view.unmount();
+
+    expect(zhCN["chat.statusPanel.endedWorkflows"]).toBe("已结束的工作流");
+    expect(enUS["chat.statusPanel.endedWorkflows"]).toBe("Ended workflows");
   });
 
   it("keeps the Workflows section when nothing is active but history exists (the restart entry)", async () => {
-    // 重启后 workflowRuns 投影为空（memory-only）。只按活动数开门的那一版在这里整块消失，
-    // 于是通往 run 目录的唯一入口也没了——这条用例就是钉住那个失效。
+    // After a restart the workflowRuns projection is empty (memory-only). A version that only opened the gate on the
+    // active count would make this whole section disappear here, taking the sole entry to the run directory with it —
+    // this case pins that regression.
     const html = await renderStatusPanel({
       gitSummary: null,
       gitWorktreeChangeSummary: null,
@@ -1068,7 +1096,7 @@ describe("ConversationStatusPanel", () => {
     expect(html).toContain('data-status-section="workflow"');
     expect(html).toContain('data-testid="workflow-run-directory-trigger"');
     expect(html).toContain('data-ended-workflow-count="2"');
-    // 一行活动 run 都没有，所以不该出现任何 run 行。
+    // Not a single active run row exists, so no run row should appear.
     expect(html).not.toContain("data-workflow-run-id");
   });
 
@@ -1086,7 +1114,7 @@ describe("ConversationStatusPanel", () => {
     expect(noHistory).toContain('data-workflow-run-id="dwfrun-1"');
     expect(noHistory).not.toContain("workflow-run-directory-trigger");
 
-    // 点了没反应的入口比没有入口更糟：缺会话或缺回调时整行缺席。
+    // An entry that does nothing when clicked is worse than no entry: with a missing session or callback the whole row is absent.
     const noCallback = await renderStatusPanel({
       gitSummary: null,
       gitWorktreeChangeSummary: null,
@@ -1126,10 +1154,10 @@ describe("ConversationStatusPanel", () => {
     expect(html).toContain('data-workflow-pill="dwfrun-1"');
     expect(html).toContain("chat.toolCall.workflow.fallbackName");
     expect(html).not.toContain("chat.summaryPanel.runningBackgroundTasksMiniValue");
-    expect(html).not.toContain("chat.statusPanel.endedWorkflows");
+    expect(html).not.toContain(expectedCopy("chat.statusPanel.endedWorkflows"));
   });
 
-  // 活的工作流排在胶囊最前：它在跑时就是会话在做的事；todo / goal / git 都让位。
+  // A live workflow sorts first in the pill: while running it is what the session is doing; todo / goal / git all yield.
   it("puts a live workflow ahead of the to-do, goal and git summaries in the pill", async () => {
     const html = await renderStatusPanel({
       summaryPanelVariantOverride: "mini",
@@ -1155,8 +1183,9 @@ describe("ConversationStatusPanel", () => {
     expect(html).not.toContain("chat.statusPanel.changes");
   });
 
-  // 展开后看到的不能比胶囊还少：胶囊显示着工作流时，点它展开面板并同时打开「工作流」分区——
-  // 哪怕读者先前手动折过它。胶囊显示别的（todo / git …）时不碰这个分区。
+  // What is shown when expanded must not be less than the pill: when the pill is showing a workflow, clicking it
+  // expands the panel and also opens the "Workflows" section — even if the reader had manually folded it earlier.
+  // When the pill shows something else (todo / git …), that section is not touched.
   it("opens the Workflows section when the clicked pill was showing a workflow", async () => {
     const { ConversationStatusPanel } = await import("@/v4/ConversationStatusPanel.js");
     const onVariantChange = vi.fn();
@@ -1212,9 +1241,26 @@ describe("ConversationStatusPanel", () => {
     expect(html).not.toContain("data-workflow-run-lamp");
   });
 
+  // Pill width is decided by CSS alone (w-max + a cap based on the conversation container): no more JS-measured
+  // width variable. A measured value lags the content by one render and the cap is computed from the window width —
+  // either can push text outside the pill.
+  it("sizes the pill with CSS alone, capped by the conversation column", async () => {
+    const html = await renderStatusPanel({
+      gitSummary: null,
+      gitWorktreeChangeSummary: null,
+      summaryPanelVariantOverride: "mini",
+      workflowRuns: [workflowRunProjection()],
+    });
+
+    expect(html).not.toContain("--chat-summary-panel-mini-width");
+    expect(html).toContain("max-w-[min(20rem,calc(100cqw-2rem))]");
+    expect(html).not.toContain("100vw");
+  });
+
   it("shows the ended-runs metric in the mini capsule when nothing else is alive", async () => {
-    // Bug 复现：工作区无 Git 变更、workflow 跑完的瞬间——卸载闸门为了 run 目录入口保留
-    // 壳（canRenderEndedWorkflows），但胶囊兜底链没有终态分支，渲染成一条 2px 空壳线。
+    // Bug reproduction: no Git changes in the workspace and the instant a workflow finishes — the unmount gate keeps
+    // the shell for the run directory entry (canRenderEndedWorkflows), but the pill fallback chain has no terminal
+    // branch and renders a 2px empty shell line.
     const html = await renderStatusPanel({
       gitSummary: null,
       gitWorktreeChangeSummary: null,
@@ -1226,13 +1272,13 @@ describe("ConversationStatusPanel", () => {
     });
 
     expect(html).toContain('data-state="collapsed"');
-    expect(html).toContain("chat.statusPanel.endedWorkflows");
+    expect(html).toContain(expectedCopy("chat.statusPanel.endedWorkflows"));
     expect(html).toContain("3");
   });
 
   it("keeps the ended-runs metric behind the directory gate (no session or callback → no capsule text)", async () => {
-    // 与页脚同一条规则：目录打不开时，报数就是一个点了没反应的入口。此时 hasContent 也是
-    // false，整个壳按既有闸门卸载。
+    // Same rule as the footer: when the directory cannot open, reporting a count is just an entry that does nothing
+    // when clicked. hasContent is false as well, so the whole shell unmounts behind the existing gate.
     const html = await renderStatusPanel({
       gitSummary: null,
       gitWorktreeChangeSummary: null,
@@ -1242,7 +1288,7 @@ describe("ConversationStatusPanel", () => {
       parentSessionId: "parent-a",
     });
 
-    expect(html).not.toContain("chat.statusPanel.endedWorkflows");
+    expect(html).not.toContain(expectedCopy("chat.statusPanel.endedWorkflows"));
     expect(html).not.toContain('data-state="collapsed"');
   });
 
@@ -1334,6 +1380,30 @@ describe("ConversationStatusPanel", () => {
     expect(html).not.toContain(">复现用目标：总共完成 4 个 checkpoint<");
   });
 
+  // Bug cause: goal semantics in the status panel used to mix two icons — the expanded iteration row used GoalIcon
+  // (goalpost) while the collapsed mini summary used TargetIcon (bullseye). The icon jumped on expand/collapse and was
+  // inconsistent with the GoalIcon used by other goal entries in the project (message rows, user input, tool calls).
+  // Fixed convention: all goal icons inside the panel are GoalIcon; TargetIcon must not appear.
+  it("uses GoalIcon consistently for goal across expanded section and mini summary", async () => {
+    const miniActive = await renderStatusPanel({
+      gitSummary: null,
+      gitWorktreeChangeSummary: null,
+      summaryPanelVariantOverride: "mini",
+      goal: goalState({ status: "active" }),
+    });
+    expect(miniActive).toContain("lucide-goal");
+    expect(miniActive).not.toContain("lucide-target");
+
+    const miniVerified = await renderStatusPanel({
+      gitSummary: null,
+      gitWorktreeChangeSummary: null,
+      summaryPanelVariantOverride: "mini",
+      goal: goalState({ status: "verified", summaryTitle: "已完成主目标" }),
+    });
+    expect(miniVerified).toContain("lucide-goal");
+    expect(miniVerified).not.toContain("lucide-target");
+  });
+
   it("does not keep a mini capsule alive for ended Agents alone", async () => {
     const html = await renderStatusPanel({
       gitSummary: null,
@@ -1390,6 +1460,35 @@ describe("ConversationStatusPanel", () => {
     expect(endedDirectoryRow).toBeLessThan(agentSectionEnd);
   });
 
+  it("renders the expanded z-code-2 panel controls and sections", async () => {
+    const html = await renderStatusPanel({
+      summaryPanelVariantOverride: "panel",
+      goal: goalState(),
+      plan: planState(),
+      runningSubagents: [runningSubagent()],
+    });
+
+    expect(html).toContain('data-state="expanded"');
+    expect(html).toContain("chat.summaryPanel.displayMode");
+    expect(html).toContain("chat.summaryPanel.displayModeAuto");
+    expect(html).not.toContain("chat.summaryPanel.displayModeExpanded");
+    expect(html).not.toContain("chat.summaryPanel.displayModeCollapsed");
+    expect(html).toContain("mock-git-branch-switcher");
+    expect(html).toContain("mock-git-action-menu");
+    expect(html).toContain("修好状态面板");
+    expect(html).toContain("复刻浮层");
+    expect(html).toContain("chat.statusPanel.agents");
+    expect(html).toContain('data-goal-status="active"');
+    expect(html).toContain('data-goal-objective="修好状态面板"');
+    expect(html).toContain('data-running-background-count="1"');
+    expect(html).toContain('data-status-section="agent"');
+    expect(html).toContain('data-status-section-trigger="agent"');
+    expect(html).toContain("shrink-0 text-ui-base text-[var(--color-foreground-subtle)]");
+    expect(html).toContain("gap-1.5 text-ui-sm text-[var(--color-foreground-subtlest)]");
+    expect(html).toContain("line-clamp-2 text-ui-base leading-5");
+    expect(html).toContain("pl-2 pr-3 text-ui-base text-[var(--color-foreground)]");
+  });
+
   it("renders expanded panel controls and sections", async () => {
     const html = await renderStatusPanel({
       summaryPanelVariantOverride: "panel",
@@ -1422,6 +1521,19 @@ describe("ConversationStatusPanel", () => {
     });
 
     expect(html).toContain('data-display-mode="auto"');
+  });
+
+  it("uses the conversation container query for automatic responsive mode", async () => {
+    const html = await renderStatusPanel({
+      layoutMode: "auto",
+      summaryPanelVariantOverride: null,
+    });
+
+    expect(html).toContain('data-display-mode="auto"');
+    expect(html).toContain("@min-[1280px]/conversation:flex");
+    expect(html).toContain("@min-[1280px]/conversation:hidden");
+    expect(html).toContain("@min-[1280px]/conversation:right-4");
+    expect(html).toContain("inset-x-0 flex justify-end px-4");
   });
 
   it("controls the Agent section open state and forwards manual collapse", async () => {
@@ -1463,6 +1575,8 @@ describe("ConversationStatusPanel", () => {
 
     expect(agentSection).toContain("chat.statusPanel.runningAgentsValuePlural 2");
     expect(agentSection).not.toContain("chat.summaryPanel.runningBackgroundTasksMiniValuePlural 2");
+    expect(zhCN["chat.statusPanel.runningAgentsValuePlural"]).toBe("{count} 运行");
+    expect(enUS["chat.statusPanel.runningAgentsValuePlural"]).toBe("{count} running");
   });
 
   it("renders active elapsed, pause control, and every iteration action/status", async () => {
@@ -1764,6 +1878,17 @@ describe("ConversationStatusPanel", () => {
     }
     expect(html).toContain("max-h-80 min-h-0 overflow-x-hidden overflow-y-auto pr-1");
     expect(html).toContain("max-h-48 min-h-0 overflow-x-hidden overflow-y-auto pr-1");
+  });
+
+  it("pins the expanded shell to the right edge when inline with the conversation", async () => {
+    const html = await renderStatusPanel({
+      layoutMode: "inline",
+      summaryPanelVariantOverride: "panel",
+      goal: goalState(),
+    });
+
+    expect(html).toMatch(/^<div class="pointer-events-none absolute top-0 z-20 pt-4 right-4"/);
+    expect(html).not.toMatch(/^<div class="[^"]*inset-x-0[^"]*justify-end/);
   });
 
   it("maps the display mode menu back to nullable shell override", async () => {

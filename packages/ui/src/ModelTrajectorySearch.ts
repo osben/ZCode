@@ -25,10 +25,18 @@ export interface TrajectorySearchIndex {
   matches: TrajectorySearchMatch[];
 }
 
+/**
+ * How a record's full input was obtained (docs/model-trajectory-viewer.md, "展示模型").
+ * "reconstructed": a delta chained onto its base. "base-missing": the base is unavailable, so only the delta rows are shown.
+ */
+export type TrajectoryInputContext = "full" | "reconstructed" | "base-missing";
+
 export interface TrajectorySearchTimelineItem {
   key: string;
   record: ZCodeModelTrajectoryRecord;
   inputMessages: ZCodeModelTrajectoryMessage[];
+  /** Set by resolveTrajectoryTimelineItems; "base-missing" marks a delta shown without its base. */
+  inputContext?: TrajectoryInputContext;
 }
 
 interface SearchTarget {
@@ -101,13 +109,14 @@ function messageTargets(
   message: ZCodeModelTrajectoryMessage,
 ): SearchTarget[] {
   const metadata = trajectoryToolMetadata(message);
-  const content = message.parts.some((part) => part.kind === "tool-result")
-    ? trajectoryToolOutputs(message).join("\n\n")
-    : message.parts.some((part) => part.kind === "tool-call")
-      ? trajectoryToolCallInputs(message).join("\n\n")
-      : message.parts
-          .flatMap((part) => ("text" in part && typeof part.text === "string" ? [part.text] : []))
-          .join("\n\n");
+  // Index every part in its rendered order (text, tool output, tool input), so a mixed message is searchable in all of them.
+  const content = message.parts
+    .flatMap((part) => {
+      if (part.kind === "tool-result") return trajectoryToolOutputs({ ...message, parts: [part] });
+      if (part.kind === "tool-call") return trajectoryToolCallInputs({ ...message, parts: [part] });
+      return "text" in part && typeof part.text === "string" ? [part.text] : [];
+    })
+    .join("\n\n");
   return [
     ...(content ? [contentTarget(callKey, callIndex, expansionKey, content)] : []),
     ...(metadata.names

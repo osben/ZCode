@@ -2,7 +2,7 @@ export function webRemoteControlV2PairState(status: "waiting" | "matched") {
   return status === "matched" ? "paired" : "waiting_terminal";
 }
 
-/** 每个 transport 实例独占，auth_ack 只清退避，不清 KICKED 窗口。 */
+/** Each transport instance owns its policy; auth_ack clears only the backoff, not the KICKED window. */
 export class WebRemoteControlV2RetryPolicy {
   private failures = 0;
   private lastKickAt?: number;

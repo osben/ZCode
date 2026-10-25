@@ -48,6 +48,7 @@ import {
 } from "../helpers/model-provider-restart.js";
 import { waitForProviderConfigPolling } from "../helpers/provider-config-polling.js";
 import { sel } from "../helpers/selectors.js";
+import { expectedCopy } from "../helpers/help-client-config-fixture.js";
 import { waitForToolCallBlockByToolName } from "../helpers/conversation-session-tool.js";
 import {
   getV4PaneSnapshot,
@@ -208,17 +209,7 @@ async function configureSubagentReasoningOverrides() {
     Explore: OVERRIDE_MODEL_VALUE,
     "general-purpose": PRIMARY_MODEL_VALUE,
   });
-  await waitForExploreInvalidEffortError(
-    "Select a reasoning effort supported by this model",
-    "英文",
-  );
-  await setRendererLocale("zh-CN");
-  await waitForExploreInvalidEffortError("请选择当前模型支持的推理档位", "中文");
-  await setRendererLocale("en-US");
-  await waitForExploreInvalidEffortError(
-    "Select a reasoning effort supported by this model",
-    "英文恢复",
-  );
+  await waitForExploreInvalidEffortError();
 
   await selectThoughtLevelInScope(sel(testId(TID_SUBAGENT_ROW, "Explore")), EXPLORE_EFFORT);
   await waitForAgentsState(
@@ -264,7 +255,7 @@ async function configureSubagentReasoningOverrides() {
   await waitForWorkspaceApp(DEFAULT_WORKSPACE, 30000);
 }
 
-async function setRendererLocale(locale: "en-US" | "zh-CN") {
+async function setRendererLocale(locale: "en-US") {
   const changed = await browser.execute((nextLocale) => {
     const actions = (
       window as typeof window & {
@@ -297,13 +288,14 @@ async function setRendererLocale(locale: "en-US" | "zh-CN") {
   );
 }
 
-async function waitForExploreInvalidEffortError(expectedText: string, localeLabel: string) {
+async function waitForExploreInvalidEffortError() {
+  const expectedText = expectedCopy("settings.subagents.form.validation.thoughtLevelUnavailable");
   await browser.waitUntil(
     async () =>
       (await $(sel(testId(TID_SUBAGENT_ROW, "Explore"))).getText()).includes(expectedText),
     {
       timeout: 15_000,
-      timeoutMsg: `workspace catalog 就绪后 Explore 没有显示${localeLabel}无效 effort 错误`,
+      timeoutMsg: "Explore row did not show invalid reasoning effort error after catalog ready",
     },
   );
 }
@@ -315,8 +307,8 @@ async function configureCustomSubagentReasoningOverride() {
 
   await openCustomAgentForm();
   const form = $(SUBAGENT_FORM_SELECTOR);
-  expect(await form.getText()).toMatch(
-    /Select a reasoning effort supported by this model|请选择当前模型支持的推理档位/u,
+  expect(await form.getText()).toContain(
+    expectedCopy("settings.subagents.form.validation.thoughtLevelUnavailable"),
   );
   // 非法历史档位会禁用保存按钮；强行点击只会触发 WebDriver 拦截，不能证明产品拒绝保存。
   expect(await form.$('button[type="submit"]').isEnabled()).toBe(false);
@@ -504,9 +496,9 @@ async function selectThoughtLevelInScope(scope: string, thoughtLevel: string) {
     throw new Error(`reasoning effort 菜单没有出现 ${thoughtLevel}`);
   }
   const expectedLabels: Record<string, string[]> = {
-    high: ["High", "高"],
-    low: ["Low", "低"],
-    max: ["Max", "最高"],
+    high: ["High"],
+    low: ["Low"],
+    max: ["Max"],
   };
   await browser.waitUntil(
     async () => {
@@ -799,8 +791,9 @@ async function assertInitialChildModelMarker(stage: "cold" | "live") {
     }
   }
 
-  const expectedZh = `正在使用 ${UPSTREAM_ALTERNATE_PROVIDER_NAME}/${UPSTREAM_ALTERNATE_MODEL}`;
-  const expectedEn = `Using ${UPSTREAM_ALTERNATE_PROVIDER_NAME}/${UPSTREAM_ALTERNATE_MODEL}`;
+  const expectedModelMarker = expectedCopy("chat.modelChange.using", {
+    model: `${UPSTREAM_ALTERNATE_PROVIDER_NAME}/${UPSTREAM_ALTERNATE_MODEL}`,
+  });
   // cold pane 默认恢复到底部；timeline 使用虚拟列表时，首轮顶部 marker 可能尚未挂载。
   // 断言的是持久化后的首个模型事实，因此先滚到目标 child timeline 顶部再读取 DOM。
   await browser.execute((expectedChildSessionId) => {
@@ -814,8 +807,7 @@ async function assertInitialChildModelMarker(stage: "cold" | "live") {
       async () => {
         const markers = await readVisibleModelMarkers();
         return markers.some(
-          (marker) =>
-            (marker.text === expectedZh || marker.text === expectedEn) && !marker.hasSwitchArrow,
+          (marker) => marker.text === expectedModelMarker && !marker.hasSwitchArrow,
         );
       },
       {

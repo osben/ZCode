@@ -42,7 +42,7 @@ export interface ProjectAccessTokenInput {
   readonly family: "bigmodel" | "zai";
   readonly loginToken: string;
   readonly accountId: string;
-  /** 保留各调用端既有项目选择；CLI 默认项目不排除团队类型。 */
+  /** Preserves each caller's existing project selection; the CLI's default project does not exclude team-type projects. */
   readonly personalProjectSelection?: "non-team" | "default";
   readonly team?: {
     readonly organizationId: string;
@@ -70,7 +70,7 @@ interface LoginSession {
   cache: ProjectAccessTokenCache;
 }
 
-/** Host/CLI 各自持有实例；网络由已有 adapter 注入，凭据不进入配置或磁盘。 */
+/** Host/CLI each hold their own instance; the network is injected via the existing adapter, and credentials never reach config or disk. */
 export class ProjectAccessTokenClient {
   readonly #sessions = new Map<string, LoginSession>();
   #generation = 0;
@@ -171,7 +171,7 @@ export class ProjectAccessTokenClient {
             try {
               parsed = JSON.parse(saved);
             } catch {
-              /* 损坏记录通过正常元数据流程重建。 */
+              /* A corrupted record is rebuilt through the normal metadata flow. */
             }
             const value = locationSchema.safeParse(parsed);
             if (
@@ -216,7 +216,7 @@ export class ProjectAccessTokenClient {
               }),
             },
           );
-          // 仅明确不存在才废弃 ID；权限/网络/开关错误不能触发创建或 Key 回退。
+          // Discard the ID only on an explicit not-found; permission/network/switch errors must not trigger creation or key fallback.
           if (raw && typeof raw === "object" && "code" in raw && raw.code === 404) {
             current.locations.delete(locationKey);
             await this.options.locationStore?.delete(storageKey, assertCurrent);
@@ -229,7 +229,8 @@ export class ProjectAccessTokenClient {
       if (!value.enabled) throw new Error("project_token_disabled");
       return { token: value.token, ...location };
     } catch (error) {
-      // 上游错误体或网络异常可能携带凭据；只传播固定错误码，不保留原始 cause/message。
+      // Upstream error bodies or network exceptions may carry credentials; propagate only fixed
+      // error codes, keeping no original cause/message.
       const code =
         error instanceof ProjectAccessTokenError
           ? error.code
@@ -311,14 +312,14 @@ export class ProjectAccessTokenClient {
         }
       : {
           ...headers,
-          // 个人 Key 管理保留既有格式，不能套用 customerInfo 的鉴权约定。
           Authorization: input.family === "zai" ? `Bearer ${loginToken}` : loginToken,
         };
     const list = z
       .array(z.unknown())
       .safeParse(readData(await request(url, { method: "GET", headers: keyHeaders })));
     if (!list.success) throw new Error("project_token_invalid_response");
-    // 列表可能含无关坏条目。个人同名条目缺 ID 时禁止重复创建；团队只复用有效条目。
+    // The list may contain unrelated bad entries. Never re-create when a personal same-name entry
+    // lacks an ID; teams reuse only valid entries.
     const candidate = list.data.find((entry) => {
       if (!entry || typeof entry !== "object" || !("name" in entry) || entry.name !== name)
         return false;

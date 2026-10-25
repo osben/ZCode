@@ -32,7 +32,7 @@ UI 纠偏：分区复用 WorkspacePurposeSection 和原折叠/顺序偏好；项
 
 每个 Host + project ID 的折叠状态归常驻侧栏，项目行只接收值与切换命令；文件树替换列表后返回不能重置折叠状态。
 
-编辑器的 roots/primary 只属于表单草稿，保存才通过 saveProject 提交；有 roots 显示紧凑列表和末行添加，空 roots 才展示整块空态。已有项目的删除入口复用 deleteProject，并携带原 hostId；成功刷新后关闭，失败保留弹窗，保存/删除互斥。主要目录只决定后续新任务 cwd，不重绑旧任务。
+编辑器的 roots/primary 只属于表单草稿，保存才通过 saveProject 提交；有 roots 显示紧凑列表和末行添加，空 roots 才展示整块空态。已有项目的删除入口（行菜单与编辑器）先经确认弹窗（`projectDeleteConfirmRequest`），确认后复用 deleteProject 并携带原 hostId；取消不调用任何删除；成功刷新后关闭，失败保留弹窗，保存/删除互斥。主要目录只决定后续新任务 cwd，不重绑旧任务。
 
 旧体验保留：按项目选择器复用运行层稳定排序和更新时间，从同 Host/project 的未归档成员（含置顶）派生收起未读点。偏好 hook 只拥有视图/折叠的 browser persistence；项目点击无导航。任务交互 owner 只保存尚在途的 pin 意图，Host 树始终是唯一已提交行集合；归档成功复用 UI 清理。任务行按 Shell 当前 workspaceKey 定位选中态，手机标记按完整目标地址；只有置顶区任务提供文件树按钮，按任务固化 cwd 与精确 identity/session 打开，不读取项目新主目录。远端同步/日志沿用既有接口与桌面 SSH/WSL、手机 replayable 边界，不新增业务状态所有者。
 
@@ -46,7 +46,7 @@ UI 纠偏：分区复用 WorkspacePurposeSection 和原折叠/顺序偏好；项
 
 `ProjectDirectoryProvider` 是 shell 内项目树读取和排序偏好的唯一 UI owner；`ProjectSidebar` 与公开 `ProjectComposerMenu` 共用该投影。菜单不得从 tabs/cwd 生成项目或推断归属。候选为未删除项目（包括离线入口），按侧栏顺序，搜索名称和 roots；离线不可选。选中来自草稿 projectId + Host 身份，命令复用 onCreateTask -> prepareSession，目录绑定与桌面/手机导航仍由 Root/Host 承担。零 roots 不被过滤。旧 ChatEmptyState 的 tab 菜单退场。
 
-归档管理经 index 公开，属于 project-sidebar/ui。RootWorkspaceContent 提供单一项目目录 owner，嵌套 Provider 复用；设置、侧栏、composer 共用树。归档按 Host+projectId 分组，删除容器和未归类不按目录重绑；操作复用模块内 mutation adapter 与现有 Controller/TaskService。页面只保存筛选/分页/确认候选和在途状态，批量部分失败不伪造全部成功。见 `docs/superpowers/specs/2026-09-11-archive-management.md`。
+归档管理经 index 公开，属于 project-sidebar/ui。RootWorkspaceContent 提供单一项目目录 owner，嵌套 Provider 复用；设置、侧栏、composer 共用树。归档按 Host+projectId 分组，删除容器和未归类不按目录重绑；恢复复用模块内 mutation adapter 与现有 Controller/TaskService；永久删除的单一 owner 仅限归档管理页：`useTaskDeleteDialog` → `permanentlyDeleteTasks`（见 `specs/session-deletion-cascade.md` Settings → Archives）；其他删除入口不受此约定约束。远程行与 Web 远程控制不可永久删除，待确认范围内的置顶会话需显式勾选后才会删除。页面只保存筛选/分页/确认候选和在途状态，批量部分失败不伪造全部成功。见 `docs/superpowers/specs/2026-09-11-archive-management.md`。
 
 侧栏分区标题与置顶行保留旧字号/缩进，空态由 ProjectTaskRows 统一展示。SortableProjects 持有 dnd-kit 暂态位移，排序只在同 Host/置顶分区内经原 reorderProjects 提交，任务原生拖入仍发 moveTask。
 
@@ -63,6 +63,8 @@ ProjectNode 从同一 dnd-kit active/over 派生项目插入蓝线的位置；�
 ## 侧栏视图
 
 插件市场下胶囊按钮打开原全局搜索，旁侧筛选仅 projects / timeline。偏好 owner 保存 view，默认 projects，忽略旧 sort/time 偏好，保留展开状态。项目与 composer 读取当前控制端侧栏偏好的复合身份顺序。projects 保留全局置顶和运行优先；timeline 只取未归档任务（含置顶与已删除项目历史），按 CLI updatedAt / createdAt / taskId 倒序和完整身份稳定排序，20/+20；分页后只插入本地日历日期标题，不显示项目/Host 分组、不重排、不改变任务 key。最近更新向共享 TaskList 显式传递 timeline 行样式，显示标题、绑定 cwd 末级名、相对时间；无状态不显示圆点但保留对齐槽；按项目保留 default 行。筛选两项左侧使用 Folder/Clock，右侧保留单选勾。选择器和行渲染使用同一模式，不能再次按运行状态排序。切换只修改本客户端偏好，不改导航、归属、Host/CLI 时间或 continuous/replayable 边界。详见 virtual-project-design 的 SBV01–SBV06。
+
+Deferred rows (ISSUE-064): in the projects view an expanded project mounts its task rows only once they are within half a viewport of the sidebar scroll area, contain the active task, receive keyboard focus, or the user expands the project; until then a sized placeholder stands in, and once mounted rows stay mounted. CollapsibleContent stays mounted, ordering, expansion state and the collapsed unread dot are unchanged; pinned, local, timeline and grouped sections are not deferred. See `specs/project-sidebar-deferred-rows.md`.
 
 ## 2026-10-10 平铺项目与控制端排序
 

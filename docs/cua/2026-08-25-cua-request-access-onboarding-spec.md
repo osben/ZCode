@@ -1,14 +1,12 @@
-# CUA `request_access` 实时权限引导 Spec
+# CUA `request_access` Live Permission Guidance Spec
 
-- 日期：2026-08-25
-- 状态：实现中
-- 关联：producer `zcode-cua` !576、consumer `z-code` !2315
+- Date: 2026-08-25
+- Status: in implementation
+- Related: producer `zcode-cua` !576, consumer `z-code` !2315
 
-## 产品合同
+## Product contract
 
-`request_access` 是只读权限快照，不直接触发 native prompt。Producer 在 macOS 成功结果的
-namespaced `_meta` 中提供版本化状态；Consumer 只在 official-CUA authority、精确工具名、严格
-schema 和本地 `desktop-continuous` live event 同时成立时生成一次权限观察。
+`request_access` is a read-only permission snapshot and does not trigger a native prompt. On macOS the producer provides versioned status in the namespaced `_meta` of a successful result. The consumer generates one permission observation only when official-CUA authority, the exact tool name, a strict schema and a local `desktop-continuous` live event all hold.
 
 ```text
 live official request_access
@@ -24,35 +22,30 @@ live official request_access
 history / recovery / mobile / remote / ordinary error -> no side effect
 ```
 
-## 状态与副作用
+## State and side effects
 
-- Accessibility 的 `denied`、`stale` 和 Screen Recording 的 `denied` 是确定缺权；`unknown`
-  不触发该权限的引导。
-- 所有当前桌面窗口管理的本地 live task 都可以触发，不要求任务可见或 workspace 当前激活。
-- 同一 `workspaceKey + sessionId + turnId + missingPermissions` 只确认一次；确认或 onboarding
-  进行中合并并发观察。未来新 turn 的新 `request_access` 可以再次提醒。
-- 确认前和确认后都调用 `getStatus(..., {includeFunctionalProbes:false})`，只以新鲜状态决定权限列表。
-- 两项都缺失时顺序固定为 Accessibility、Screen Recording。
-- 用户取消不打开系统设置；授权返回后仅按现有 owner 合同重启对应 Helper 并刷新状态。
-- 不调用 conversation command，不自动 continuation，不重放 `request_access` 或此前动作。
+- Accessibility `denied`, `stale` and Screen Recording `denied` are definite missing permissions; `unknown` does not trigger guidance for that permission.
+- Every local live task managed by a desktop window can trigger, whether or not the task is visible or the workspace is currently active.
+- The same `workspaceKey + sessionId + turnId + missingPermissions` is confirmed once; concurrent observations during confirmation or onboarding merge. A new `request_access` in a future turn may remind again.
+- Before and after confirmation call `getStatus(..., {includeFunctionalProbes:false})`; only the fresh status decides the permission list.
+- When both are missing the order is fixed: Accessibility, then Screen Recording.
+- User cancellation does not open system settings; after authorization returns, the corresponding Helper is restarted per the existing owner contract and status refreshed.
+- No conversation command, no automatic continuation, no replay of `request_access` or earlier actions.
 
-## 交付与身份边界
+## Delivery and identity boundaries
 
-- Wire observation 只由 live `ToolCallResult` 生成，不进入 snapshot、transcript 或 recovery。
-- `desktop-continuous` 的可信 renderer 可以订阅；`web-remote-replayable` 返回空事件。
-- `workspaceKey = workspaceIdentity?.trim() || workspacePath` 用于隔离；执行和 Helper 查询继续使用
-  `workspacePath`。携带 `remoteSessionId` 或远程 identity 的 workspace 直接剪枝。
-- 第三方同名 MCP、malformed metadata、普通 `permission_denied`、历史
-  `CUA_PERMISSION_REQUIRED` 文本和 Tool Card JSON parser 均不能触发。
+- The wire observation is generated only from a live `ToolCallResult` and does not enter snapshot, transcript or recovery.
+- A trusted `desktop-continuous` renderer may subscribe; `web-remote-replayable` returns an empty event.
+- `workspaceKey = workspaceIdentity?.trim() || workspacePath` isolates; execution and Helper queries keep using `workspacePath`. A workspace carrying `remoteSessionId` or a remote identity is pruned directly.
+- Same-named third-party MCP, malformed metadata, ordinary `permission_denied`, historical `CUA_PERMISSION_REQUIRED` text and the Tool Card JSON parser can never trigger.
 
 ## UI
 
-复用全局 ConfirmDialog 和既有 onboarding，不新增 modal 体系。文案说明正在运行的电脑操作任务
-需要 macOS 权限，操作为“前往授权 / 暂不授权”。后台窗口只排队显示确认框，不主动抢焦点。
+Reuse the global ConfirmDialog and the existing onboarding; no new modal system. The copy says the running computer-use task needs macOS permissions, with actions "前往授权 / 暂不授权" (go authorize / not now). A background window only queues the confirmation dialog and does not steal focus.
 
-## 验证
+## Verification
 
-- Producer：metadata schema、文本不变、只读/跨平台 fail closed。
-- Core/Protocol：authority、工具名、strict schema、live-only 和 clientMode 边界。
-- UI：新鲜状态双检查、并发合并、同 turn 去重、取消/确认、Helper 恢复与零任务重放。
-- E2E：后台任务、cold restore、mobile replayable 和普通错误代表 case。
+- Producer: metadata schema, text unchanged, read-only / cross-platform fail closed.
+- Core/Protocol: authority, tool name, strict schema, live-only and clientMode boundaries.
+- UI: double fresh-status check, concurrent merge, same-turn dedupe, cancel/confirm, Helper recovery and zero task replay.
+- E2E: representative cases for background task, cold restore, mobile replayable and ordinary error.

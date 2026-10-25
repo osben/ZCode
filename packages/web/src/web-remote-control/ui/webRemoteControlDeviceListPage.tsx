@@ -64,7 +64,7 @@ interface WebRemoteControlDeviceListPageProps {
   onSelect(sid: string): void;
   onRefresh(): void;
   onSwitchAccount(): void;
-  /** 多连接弹层的“启动于”相对时间基准，测试注入。 */
+  /** Time baseline for the "started" relative label in the multi-connection sheet; injected by tests. */
   now?: () => number;
 }
 
@@ -105,7 +105,7 @@ function describeDevice(
     : [platform, copy.offline];
   const filtered = parts.filter((part): part is string => Boolean(part));
   if (filtered.length === 0) filtered.push(online ? copy.online : copy.offline);
-  // 设备 ID 默认隐藏；同组重名时才追加 MID 前 8 位区分，前 8 位不参与身份判断。
+  // Device IDs are hidden by default; the first 8 characters of the MID are appended only when names collide within a group. Those 8 characters do not take part in identity checks.
   if (showId) filtered.push(`ID ${device.deviceMid.slice(0, 8)}`);
   return filtered.join(" · ");
 }
@@ -141,7 +141,7 @@ function DeviceSection({
             <li key={device.deviceMid}>
               <WebRemoteControlDeviceRow
                 first={index === 0}
-                // 全离线行原生禁用；在线行在刷新中/失败时也暂不可选，沿用入口 admission。
+                // Rows that are fully offline are natively disabled; online rows are also temporarily unselectable while refreshing or after a failure, following the entry admission.
                 disabled={!online || !selectable}
                 onClick={() => onOpen(device)}
                 dimmed={!online}
@@ -248,7 +248,7 @@ export function WebRemoteControlDeviceListPage({
     else setSheetDeviceMid(device.deviceMid);
   };
 
-  // 全局 body/#root 禁止滚动；入口自己承接长列表，保证末行可达。
+  // Global body/#root scrolling is disabled; the entry handles the long list itself to keep the last row reachable.
   return (
     <main className="h-dvh overflow-y-auto bg-background text-foreground">
       <div className="mx-auto w-full max-w-md px-4 pb-10 pt-[calc(env(safe-area-inset-top)+12px)]">

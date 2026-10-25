@@ -61,9 +61,9 @@ export const workspaceHookTrustRevokeTargetSchema = z
   });
 export type WorkspaceHookTrustRevokeTarget = z.infer<typeof workspaceHookTrustRevokeTargetSchema>;
 
-// 软门禁：按需开审核 flow 的命令 target。
-// 克隆 revoke 的 non-flow target 变体,但不需要 hookDeclarationDigests
-// (审核 flow 从当前 snapshot 拉取全部 pending items,而非指定 declarations)。
+// Soft gate: command target for opening a review flow on demand.
+// Mirrors the non-flow target variant of revoke, but does not need hookDeclarationDigests
+// (the review flow loads all pending items from the current snapshot instead of named declarations).
 export const requestWorkspaceHookReviewTargetSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
@@ -119,6 +119,9 @@ export const workspaceHookReviewRequestPayloadSchema = z
             "PostToolUse",
             "PostToolUseFailure",
             "Stop",
+            "PreCompact",
+            "PostCompact",
+            "SessionEnd",
           ]),
           matcher: z.string().optional(),
           type: z.enum(["command", "process"]),

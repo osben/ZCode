@@ -189,6 +189,15 @@ export const officialSeaPlugins = [
     version: "0.1.0",
   },
   {
+    // Fork feature: TypeScript LSP plugin (fork-only; not in upstream 3.16.1).
+    marketplace: "zcode-plugins-official",
+    name: "typescript-lsp",
+    packageName: "@zcode/typescript-lsp-plugin",
+    requiresRuntime: false,
+    rootPath: join("packages", "typescript-lsp-plugin"),
+    version: "0.1.0",
+  },
+  {
     marketplace: "zcode-plugins-official",
     name: "plugin-creator",
     packageName: "@zcode/plugin-creator-plugin",

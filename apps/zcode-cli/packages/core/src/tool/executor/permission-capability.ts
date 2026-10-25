@@ -21,9 +21,44 @@ export function resolveRuntimePermissionCapability(
   };
 }
 
+export interface ToolSchedulingFlags {
+  readOnly?: boolean;
+  destructive?: boolean;
+  concurrentSafe?: boolean;
+  sideEffectScope?: ModelToolSideEffectScope;
+}
+
 /**
- * 一次调用**解析后**的副作用旗标，挂在 `ToolCallStarted` 上：与权限判定同一次解析，所以 Bash 的只读命令判定等运行时结论一并生效。
- * 订阅者（dynamic-workflow 的 driver）据它在 handler 动手之前判断这一笔是否会改写工作区。
+ * Scheduling flags for a model-emitted call, resolved through the same runtime capability as
+ * permission checks so input-aware conclusions (for example a read-only Bash command) can run
+ * in a parallel group. Precedence: runtime capability > `entry.permission` > `entry.metadata`.
+ */
+export function resolveToolSchedulingFlags(
+  entry: ToolEntry,
+  input: unknown,
+  context: ToolRuntimePermissionCapabilityContext,
+): ToolSchedulingFlags {
+  const runtimeCapability = entry.resolvePermissionCapability?.(input, context);
+  const metadata = entry.metadata;
+  const sideEffectScope =
+    runtimeCapability?.sideEffectScope ??
+    entry.permission?.sideEffectScope ??
+    metadata.sideEffectScope;
+  const readOnly = runtimeCapability?.readOnly ?? metadata.readOnly;
+  return {
+    readOnly: readOnly === undefined ? undefined : readOnly && sideEffectScope === "none",
+    destructive: runtimeCapability?.destructive ?? metadata.destructive,
+    concurrentSafe: runtimeCapability?.concurrentSafe ?? metadata.concurrentSafe,
+    sideEffectScope,
+  };
+}
+
+/**
+ * Side-effect flags for a call **after input resolution**, attached to `ToolCallStarted`.
+ * They use the same resolution as permission checks, so runtime conclusions such as
+ * whether a Bash command is read-only are reflected too. Subscribers (the
+ * dynamic-workflow driver) use them to determine before the handler runs whether this
+ * call will modify the workspace.
  */
 export function resolveToolCallCapabilityFlags(
   deps: ToolExecutorDeps,

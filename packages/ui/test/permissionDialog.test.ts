@@ -9,6 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { PermissionDialog } from "../src/PermissionDialog.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const WORKSPACE_PATH = "/Users/dev/ZCodeProject/demo";
 const SUBAGENT_ORIGIN = {
@@ -29,7 +30,7 @@ function renderPermissionDialog(
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(Dialog, {
         request,
         onRespond: () => {},
@@ -80,7 +81,7 @@ describe("PermissionDialog", () => {
     });
 
     expect(withoutFeedback).not.toContain("chat.permission.feedback.placeholder");
-    expect(withFeedback).toContain("告诉模型接下来应该怎么做...");
+    expect(withFeedback).toContain(expectedCopy("chat.permission.feedback.placeholder"));
     expect(withFeedback).toContain("<textarea");
     expect(withFeedback).toContain('wrap="soft"');
     expect(withFeedback).toContain('maxLength="4096"');
@@ -115,11 +116,11 @@ describe("PermissionDialog", () => {
       raw: { rawInput: { app_ref: { bundle_id: "com.apple.TextEdit" } } },
     });
 
-    expect(html).toContain("始终允许本项目中的电脑控制");
-    expect(html).toContain('aria-label="始终允许本项目中的电脑控制"');
-    expect(html).toContain('aria-label="确认"');
-    expect(html).toContain("本项目后续官方电脑控制操作不再询问");
-    expect(html).not.toContain("后续相同权限请求不再询问");
+    expect(html).toContain(expectedCopy("chat.permission.cua.allowForProject"));
+    expect(html).toContain(`aria-label="${expectedCopy("chat.permission.cua.allowForProject")}"`);
+    expect(html).toContain(`aria-label="${expectedCopy("common.confirm")}"`);
+    expect(html).toContain(expectedCopy("chat.permission.cua.allowForProject.description"));
+    expect(html).not.toContain(expectedCopy("chat.permission.allowAlways.description.generic"));
   });
 
   it("renders compound prefix scopes inline without an exact-command card", () => {
@@ -161,10 +162,10 @@ describe("PermissionDialog", () => {
     expect(html).toContain('data-permission-option-kind="allowAlways"');
     expect(html).toContain('data-permission-rule-scope="prefix"');
     expect(html).not.toContain('data-permission-rule-scope="exact"');
-    expect(html).not.toContain("命令前缀");
-    expect(html).not.toContain("后续相同命令不再询问");
+    expect(html).not.toContain(expectedCopy("chat.permission.scope.commandPrefix"));
+    expect(html).not.toContain(expectedCopy("chat.permission.allowCommand.description"));
     expect(html).toContain("pnpm run lint …");
-    expect(html).not.toContain("仅此命令");
+    expect(html).not.toContain(expectedCopy("chat.permission.scope.exactCommand"));
     expect(html).toContain("rm -rf ./generated");
     expect(html).not.toContain("<input");
   });
@@ -214,8 +215,8 @@ describe("PermissionDialog", () => {
     expect(html).not.toContain("cat &gt; /tmp/sun.html");
     expect(html).not.toContain("HEREDOC_BODY_MUST_NOT_RENDER");
     expect(html).not.toContain("OVERSIZED_TAIL_MUST_NOT_RENDER");
-    expect(html).not.toContain("仅此命令");
-    expect(html).toContain("后续相同命令不再询问");
+    expect(html).not.toContain(expectedCopy("chat.permission.scope.exactCommand"));
+    expect(html).toContain(expectedCopy("chat.permission.allowCommand.description"));
   });
 
   it("truncates long permission prefixes without showing exact command grants", () => {
@@ -255,7 +256,7 @@ describe("PermissionDialog", () => {
     expect(html).toContain('data-permission-rule-prefixes="true"');
     expect(html).toContain('data-permission-rule-scopes="true"');
     expect(html).toContain('data-permission-rule-scope-truncated="true"');
-    expect(html).not.toContain("后续相同命令不再询问");
+    expect(html).not.toContain(expectedCopy("chat.permission.allowCommand.description"));
   });
 
   it("shows a subagent source tag for delegated permission requests only", () => {
@@ -287,8 +288,12 @@ describe("PermissionDialog", () => {
 
     expect(mainHtml).not.toContain('data-interaction-origin-badge="subagent"');
     expect(subagentHtml).toContain('data-interaction-origin-badge="subagent"');
-    expect(subagentHtml).toContain("子智能体");
-    expect(subagentHtml).toContain("来自子智能体：general-purpose");
+    expect(subagentHtml).toContain(expectedCopy("chat.interactionOrigin.subagent"));
+    expect(subagentHtml).toContain(
+      expectedCopy("chat.interactionOrigin.subagent.title", {
+        agentType: "general-purpose",
+      }),
+    );
   });
 
   it("names the subagent in the source tag when the origin carries a description", () => {
@@ -302,7 +307,7 @@ describe("PermissionDialog", () => {
       title: "Bash",
       options: [{ optionId: "allow", kind: "allow", name: "Allow" }],
       raw: { toolName: "Bash" },
-      // 动态工作流子代理的 origin（docs/dynamic-workflow/launch.md「Permissions inside a run」）。
+      // Origin of a dynamic-workflow subagent (docs/dynamic-workflow/launch.md "Permissions inside a run").
       origin: {
         ...SUBAGENT_ORIGIN,
         agentType: "zcode-workflow",
@@ -311,9 +316,18 @@ describe("PermissionDialog", () => {
     });
 
     expect(html).toContain('data-interaction-origin-badge="subagent"');
-    expect(html).toContain("子智能体 · reviewer (agent#1@0)");
-    // 截断时完整文本留在 tooltip 里，且仍带 agentType。
-    expect(html).toContain("来自子智能体：zcode-workflow · reviewer (agent#1@0)");
+    expect(html).toContain(
+      expectedCopy("chat.interactionOrigin.subagent.named", {
+        description: "reviewer (agent#1@0)",
+      }),
+    );
+    // When truncated the full text stays in the tooltip, still prefixed with agentType.
+    expect(html).toContain(
+      expectedCopy("chat.interactionOrigin.subagent.titleNamed", {
+        agentType: "zcode-workflow",
+        description: "reviewer (agent#1@0)",
+      }),
+    );
   });
 
   it("renders a compact implementation plan placeholder for switch mode requests", () => {
@@ -329,13 +343,13 @@ describe("PermissionDialog", () => {
         {
           optionId: "code",
           kind: "allow_always",
-          name: "是，并自动接受后续操作",
+          name: "Yes, and auto-accept follow-up actions",
         },
       ],
       raw: {},
     });
 
-    expect(html).toContain("实施计划");
+    expect(html).toContain(expectedCopy("chat.permission.switchMode.placeholder"));
     expect(html).not.toContain("ToolCall");
     expect(html).not.toContain("Ready to code?");
   });
@@ -366,7 +380,7 @@ describe("PermissionDialog", () => {
       },
     });
 
-    expect(html).toContain("实施计划");
+    expect(html).toContain(expectedCopy("chat.permission.switchMode.placeholder"));
     expect(html).not.toContain("ToolCall");
     expect(html).not.toContain("ExitPlanMode changes session mode");
   });
@@ -384,27 +398,27 @@ describe("PermissionDialog", () => {
         {
           optionId: "code",
           kind: "allow_always",
-          name: "是，并自动接受后续操作",
+          name: "Yes, and auto-accept follow-up actions",
         },
         {
           optionId: "ask",
           kind: "allow_always",
-          name: "是，但高风险操作仍逐次确认",
+          name: "Yes, but confirm high-risk actions each time",
         },
         {
           optionId: "reject",
           kind: "reject_once",
-          name: "否，先继续整理计划",
+          name: "No, keep refining the plan",
         },
       ],
       raw: {},
     });
 
-    expect(html).toContain("是，并自动接受后续操作");
-    expect(html).toContain("是，但高风险操作仍逐次确认");
-    expect(html).toContain("否，先继续整理计划");
-    expect(html).not.toContain("始终允许");
-    expect(html).not.toContain("拒绝");
+    expect(html).toContain("Yes, and auto-accept follow-up actions");
+    expect(html).toContain("Yes, but confirm high-risk actions each time");
+    expect(html).toContain("No, keep refining the plan");
+    expect(html).not.toContain(expectedCopy("chat.permission.approveAlways"));
+    expect(html).not.toContain(expectedCopy("chat.permission.deny"));
   });
 
   it("localizes GLM project-scoped generic permission options", () => {
@@ -433,8 +447,8 @@ describe("PermissionDialog", () => {
       "glm",
     );
 
-    expect(html).toContain("始终允许此命令");
-    expect(html).toContain("后续相同命令不再询问");
+    expect(html).toContain(expectedCopy("chat.permission.allowCommand"));
+    expect(html).toContain(expectedCopy("chat.permission.allowCommand.description"));
     expect(html).not.toContain("Always allow in this project");
   });
 
@@ -465,7 +479,7 @@ describe("PermissionDialog", () => {
     );
 
     expect(html).toContain("Allow for Session");
-    expect(html).not.toContain("允许本会话");
+    expect(html).not.toContain(expectedCopy("chat.permission.allowForSession"));
   });
 
   it("renders file change previews with file display for add operations", () => {
@@ -481,7 +495,7 @@ describe("PermissionDialog", () => {
         {
           optionId: "allow",
           kind: "allow_once",
-          name: "允许",
+          name: "Allow",
         },
       ],
       raw: {
@@ -495,7 +509,7 @@ describe("PermissionDialog", () => {
     });
 
     expect(html).toContain("README.md");
-    expect(html).toContain("等待确认");
+    expect(html).toContain(expectedCopy("chat.permission.awaitingApproval"));
     expect(html).not.toContain("/Users/dev/ZCodeProject/demo/");
   });
 
@@ -512,7 +526,7 @@ describe("PermissionDialog", () => {
         {
           optionId: "allow",
           kind: "allow_once",
-          name: "允许",
+          name: "Allow",
         },
       ],
       raw: {
@@ -526,7 +540,7 @@ describe("PermissionDialog", () => {
     });
 
     expect(html).toContain("quicksort.js");
-    expect(html).toContain("等待确认");
+    expect(html).toContain(expectedCopy("chat.permission.awaitingApproval"));
     expect(html).toContain("+3");
     expect(html).not.toContain("toolName");
     expect(html).not.toContain("file_path");
@@ -545,7 +559,7 @@ describe("PermissionDialog", () => {
         {
           optionId: "allow",
           kind: "allow_once",
-          name: "允许",
+          name: "Allow",
         },
       ],
       raw: {
@@ -553,14 +567,14 @@ describe("PermissionDialog", () => {
         toolName: "Edit",
         input: {
           file_path: "/Users/dev/ZCodeProject/demo/quicksort.js",
-          old_string: "平均时间复杂度 O(n log n)",
-          new_string: "平均时间复杂度 O(n log n)，最坏 O(n^2)",
+          old_string: "Average time complexity O(n log n)",
+          new_string: "Average time complexity O(n log n), worst case O(n^2)",
         },
       },
     });
 
     expect(html).toContain("quicksort.js");
-    expect(html).toContain("等待确认");
+    expect(html).toContain(expectedCopy("chat.permission.awaitingApproval"));
     expect(html).toContain("+1");
     expect(html).toContain("-1");
     expect(html).not.toContain("old_string");
@@ -580,7 +594,7 @@ describe("PermissionDialog", () => {
         {
           optionId: "allow",
           kind: "allow_once",
-          name: "允许",
+          name: "Allow",
         },
       ],
       raw: {
@@ -601,7 +615,7 @@ describe("PermissionDialog", () => {
       },
     });
 
-    expect(html).toContain("等待确认");
+    expect(html).toContain(expectedCopy("chat.permission.awaitingApproval"));
     expect(html).toContain("index.html");
     expect(html).toContain("styles.css");
     expect(html).toContain("script.js");
@@ -621,7 +635,7 @@ describe("PermissionDialog", () => {
         {
           optionId: "allow",
           kind: "allow_once",
-          name: "允许",
+          name: "Allow",
         },
       ],
       raw: {
@@ -632,8 +646,8 @@ describe("PermissionDialog", () => {
     });
 
     expect(html).toContain("Run shell command");
-    expect(html).toContain("等待确认");
-    expect(html).not.toContain("执行中");
+    expect(html).toContain(expectedCopy("chat.permission.awaitingApproval"));
+    expect(html).not.toContain(expectedCopy("chat.toolCall.status.running"));
   });
 
   it("renders Bash input description as the permission reason instead of a running state", () => {
@@ -649,7 +663,7 @@ describe("PermissionDialog", () => {
         {
           optionId: "allow",
           kind: "allow_once",
-          name: "允许",
+          name: "Allow",
         },
       ],
       raw: {
@@ -664,10 +678,10 @@ describe("PermissionDialog", () => {
     });
 
     expect(html).toContain("Check package.json scripts");
-    expect(html).toContain("等待确认");
+    expect(html).toContain(expectedCopy("chat.permission.awaitingApproval"));
     expect(html).toContain("cat /Users/dev/test/z-m/package.json");
     expect(html).not.toContain("High risk tools require explicit approval");
-    expect(html).not.toContain("执行中");
+    expect(html).not.toContain(expectedCopy("chat.toolCall.status.running"));
   });
 
   it("hides the generic high-risk policy reason when no tool description exists", () => {
@@ -683,7 +697,7 @@ describe("PermissionDialog", () => {
         {
           optionId: "allow",
           kind: "allow_once",
-          name: "允许",
+          name: "Allow",
         },
       ],
       raw: {
@@ -697,7 +711,7 @@ describe("PermissionDialog", () => {
       },
     });
 
-    expect(html).toContain("等待确认");
+    expect(html).toContain(expectedCopy("chat.permission.awaitingApproval"));
     expect(html).toContain("rm -rf ./generated");
     expect(html).not.toContain("High risk tools require explicit approval");
   });
@@ -717,12 +731,12 @@ describe("PermissionDialog", () => {
         {
           optionId: "allow",
           kind: "allow_once",
-          name: "允许",
+          name: "Allow",
         },
         {
           optionId: "deny",
           kind: "deny",
-          name: "拒绝",
+          name: "Deny",
         },
       ],
       raw: {
@@ -736,7 +750,7 @@ describe("PermissionDialog", () => {
     });
 
     expect(html).toContain(url);
-    expect(html).toContain("等待确认");
+    expect(html).toContain(expectedCopy("chat.permission.awaitingApproval"));
     expect(html).not.toContain("Tool has side effects and requires approval");
     expect(html).not.toContain("List all AI Agent");
     expect(html).not.toContain("&quot;toolId&quot;");
@@ -758,12 +772,12 @@ describe("PermissionDialog", () => {
         {
           optionId: "allow",
           kind: "allow_once",
-          name: "允许",
+          name: "Allow",
         },
         {
           optionId: "deny",
           kind: "deny",
-          name: "拒绝",
+          name: "Deny",
         },
       ],
       raw: {
@@ -797,12 +811,12 @@ describe("PermissionDialog", () => {
         {
           optionId: "allow",
           kind: "allow_once",
-          name: "允许",
+          name: "Allow",
         },
         {
           optionId: "deny",
           kind: "deny",
-          name: "拒绝",
+          name: "Deny",
         },
       ],
       raw: {

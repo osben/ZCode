@@ -2,6 +2,7 @@ import {
   ServiceCollection,
   IFileService,
   IGenUiService,
+  IDefinitionPreviewService,
   IMediaPreviewService,
   IGitService,
   IGitCheckpointService,
@@ -37,18 +38,18 @@ import {
   IHooksService,
   IMemoryService,
   IOutputStyleService,
+  ISystemPromptService,
   ISettingsSyncService,
   IProjectService,
   ITaskGroupService,
+  IQuickPromptService,
+  QUICK_PROMPTS_CHANGED_CHANNEL,
   IRemoteProjectService,
   IPromptAttachmentTransferService,
+  IUserInstructionsService,
   type ServiceDescriptor,
   type IServiceAccessor,
 } from "@zcode/services";
-import {
-  REMOTE_WORKSPACE_RPC_CHANNELS,
-  assertRemoteWorkspaceRpcContract,
-} from "./remoteWorkspaceRpcContract.js";
 import {
   createServiceLogger,
   createLegacySingleRootProjectService,
@@ -57,16 +58,27 @@ import {
 import {
   buildServerRemoteWorkspaceIdentity,
   remoteHostIdFromWorkspaceIdentity,
+  type RemoteTarget,
 } from "@zcode/shared";
-import type { RemoteTarget } from "@zcode/shared";
+import {
+  REMOTE_WORKSPACE_RPC_CHANNELS,
+  assertRemoteWorkspaceRpcContract,
+} from "./remoteWorkspaceRpcContract.js";
 import {
   createRemoteProviderProvisioningExecutorFromWorkspace,
   registerRemoteProviderProvisioningExecutor,
 } from "./remoteProviderProvisioningService.js";
 
+// Broadcasts that originate on the controller Host, not on the remote Source.
+const CONTROLLER_BROADCAST_CHANNELS: ReadonlySet<string> = new Set([
+  "state:task-groups",
+  QUICK_PROMPTS_CHANGED_CHANNEL,
+]);
+
 export const REMOTE_WORKSPACE_RPC_REGISTRATIONS = [
   ["fileService", IFileService],
   ["genUiService", IGenUiService],
+  ["definitionPreviewService", IDefinitionPreviewService],
   ["mediaPreviewService", IMediaPreviewService],
   ["gitService", IGitService],
   ["gitCheckpointService", IGitCheckpointService],
@@ -193,6 +205,8 @@ export function createServerRemoteWorkspaceServiceCollection(params: {
     // 根因：客户端已有 gen-ui 代理，但 Host 漏转发使远端读取成为 Unknown channel。
     // 复用 Source 的读取与输出目录校验；桌面状态/沙箱仍由 base services 提供。
     .register(IGenUiService, params.connectionServices.genUiService)
+    // Definition files live on the workspace host; local catalogs would scan the wrong machine.
+    .register(IDefinitionPreviewService, params.connectionServices.definitionPreviewService)
     .register(IMediaPreviewService, params.connectionServices.mediaPreviewService)
     .register(IGitService, params.connectionServices.gitService)
     .register(IGitCheckpointService, params.connectionServices.gitCheckpointService)
@@ -239,7 +253,12 @@ export function createServerRemoteWorkspaceServiceCollection(params: {
     .register(ICommandsService, params.connectionServices.commandsService)
     .register(IHooksService, params.connectionServices.hooksService)
     .register(IMemoryService, params.connectionServices.memoryService)
+    // Root cause: this is the only production collection for remote workspaces; without this fork-only
+    // registration the Host has no user-instructions channel and every remote host reports "not supported".
+    // Kept out of the upstream RPC contract so upstream or older servers still connect.
+    .register(IUserInstructionsService, params.connectionServices.userInstructionsService)
     .register(IOutputStyleService, params.connectionServices.outputStyleService)
+    .register(ISystemPromptService, params.connectionServices.systemPromptService)
     .register(ISettingsSyncService, params.connectionServices.settingsSyncService)
     .register(
       IPromptAttachmentTransferService,
@@ -270,25 +289,28 @@ export function createServerRemoteWorkspaceServiceCollection(params: {
     );
   }
   const controllerGroups = params.sourceServices?.getOptional(ITaskGroupService);
+  const controllerQuickPrompts = params.sourceServices?.getOptional(IQuickPromptService);
   const controllerBroadcast = params.sourceServices?.getOptional(IBroadcastService);
   if (controllerGroups) services.register(ITaskGroupService, controllerGroups);
-  if (controllerGroups && controllerBroadcast) {
+  if (controllerQuickPrompts) services.register(IQuickPromptService, controllerQuickPrompts);
+  if ((controllerGroups || controllerQuickPrompts) && controllerBroadcast) {
     const remoteBroadcast = params.connectionServices.broadcastService;
     services.register(IBroadcastService, {
       send: (message) =>
-        (message.channel === "state:task-groups" ? controllerBroadcast : remoteBroadcast).send(
-          message,
-        ),
+        (CONTROLLER_BROADCAST_CHANNELS.has(message.channel)
+          ? controllerBroadcast
+          : remoteBroadcast
+        ).send(message),
       acquireClaim: (key) => remoteBroadcast.acquireClaim(key),
       commitClaim: (lease) => remoteBroadcast.commitClaim(lease),
       releaseClaim: (lease) => remoteBroadcast.releaseClaim(lease),
       tryClaim: (key) => remoteBroadcast.tryClaim(key),
       onMessage: (listener) => {
         const remote = remoteBroadcast.onMessage((event) => {
-          if (event.channel !== "state:task-groups") listener(event);
+          if (!CONTROLLER_BROADCAST_CHANNELS.has(event.channel)) listener(event);
         });
         const local = controllerBroadcast.onMessage((event) => {
-          if (event.channel === "state:task-groups") listener(event);
+          if (CONTROLLER_BROADCAST_CHANNELS.has(event.channel)) listener(event);
         });
         return {
           dispose: () => {

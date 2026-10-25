@@ -8,9 +8,7 @@ import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import type { WindowTabState } from "@/store/tabStore.js";
 import { isWorkspaceTab } from "@/store/tabStore.js";
 
-function isBotTaskBroadcastPayload(
-  payload: unknown,
-): payload is BotTaskBroadcastPayload {
+function isBotTaskBroadcastPayload(payload: unknown): payload is BotTaskBroadcastPayload {
   if (typeof payload !== "object" || payload === null) {
     return false;
   }
@@ -32,8 +30,7 @@ function isBotTaskBroadcastPayload(
     typeof value.workspacePath === "string" &&
     typeof value.taskId === "string" &&
     typeof value.updatedAt === "number" &&
-    (value.workspaceIdentity === undefined ||
-      typeof value.workspaceIdentity === "string") &&
+    (value.workspaceIdentity === undefined || typeof value.workspaceIdentity === "string") &&
     typeof value.event === "string" &&
     validEvents.has(value.event) &&
     (value.task === undefined ||
@@ -75,8 +72,7 @@ export function resolveBotTaskBroadcastRefresh(
   const hasOpenWorkspace = tabs.some(
     (tab) =>
       isWorkspaceTab(tab) &&
-      buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity) ===
-        targetWorkspaceKey,
+      buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity) === targetWorkspaceKey,
   );
   return hasOpenWorkspace ? message.payload : null;
 }
@@ -100,9 +96,9 @@ export function resolveBotTaskBroadcastRuntimeStatus(
     case "elicitation_resolved":
       return "streaming";
     case "updated":
-      // Bugfix: /model、/mode、/think 这类 Bot 配置更新只同步 task 元数据/configOptions，
-      // 并没有启动一次 assistant streaming。之前把 updated 映射成 streaming，
-      // 会让当前对话一直显示 loading。
+      // Bugfix: Bot configuration updates such as /model, /mode, and /think only sync task metadata/configOptions;
+      // they do not start assistant streaming. Mapping updated to streaming previously
+      // left the current conversation showing a loading state indefinitely.
       return "ready";
   }
 }

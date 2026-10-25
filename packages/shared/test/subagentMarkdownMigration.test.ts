@@ -64,7 +64,7 @@ describe("仅用户目录的异步 Markdown 迁移", () => {
     await writeFile(file, old);
     const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
     const edited = old.replace("GLM", "USER-EDIT");
-    // 锁元数据也会 writeFile；只在迁移临时文件写入后注入编辑。
+    // Lock metadata is also written via writeFile; inject the edit only after the migration temp file is written.
     vi.mocked(writeFile).mockImplementation(async (...args) => {
       await actual.writeFile(...args);
       if (String(args[0]).endsWith(".tmp")) await actual.writeFile(file, edited);
@@ -80,7 +80,7 @@ describe("仅用户目录的异步 Markdown 迁移", () => {
     const other = join(project, "helper.md");
     await writeFile(file, old);
     await chmod(file, 0o640);
-    // Windows chmod 仅映射只读属性；验证实际模式被保留，POSIX 仍严格检查指定权限。
+    // Windows chmod only maps the read-only attribute; verify the actual mode is preserved, POSIX still checks the exact mode strictly.
     const originalMode = (await stat(file)).mode & 0o777;
     if (process.platform !== "win32") expect(originalMode).toBe(0o640);
     await writeFile(other, old);
@@ -92,7 +92,7 @@ describe("仅用户目录的异步 Markdown 迁移", () => {
     await writeFile(join(user, "later.md"), old);
     expect((await migrateUserSubagentMarkdown(user)).migrated).toEqual([join(user, "later.md")]);
   });
-  // Windows 普通用户无符号链接权限（需开发者模式），fs.symlink EPERM；覆盖由 CI Linux 承担。
+  // Ordinary Windows users lack symlink permission (requires developer mode), fs.symlink raises EPERM; coverage is handled by CI Linux.
   it.skipIf(process.platform === "win32")(
     "不跟随链接、不改只读文件；其他可迁文件继续",
     async () => {

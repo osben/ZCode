@@ -68,7 +68,7 @@ it.each(["initial", "urgent"] as const)(
     const rendered = render(view());
     const query = () => document.querySelector(`[data-context-reset-reminder="${phase}"]`);
     expect(query()).not.toBeNull();
-    const trigger = screen.getByRole("button", { name: "chat.contextUsage" });
+    const trigger = screen.getByTestId("chat-context-usage-trigger");
     let workspaceId: string;
     act(() => {
       workspaceId = store!.getState().addTab("/workspace");
@@ -77,7 +77,7 @@ it.each(["initial", "urgent"] as const)(
     expect(query()).toBeNull();
     fireEvent.pointerDown(document.body);
     expect(state.dismiss).not.toHaveBeenCalled();
-    // 设置期间新机会到达也不能打开 Portal。
+    // A new opportunity arriving during setup must not open the Portal either.
     state.phase = null;
     rendered.rerender(view());
     state.phase = phase;
@@ -85,7 +85,7 @@ it.each(["initial", "urgent"] as const)(
     expect(query()).toBeNull();
     act(() => store!.getState().activateTab(workspaceId!));
     expect(query()).not.toBeNull();
-    expect(screen.getByRole("button", { name: "chat.contextUsage" })).toBe(trigger);
+    expect(screen.getByTestId("chat-context-usage-trigger")).toBe(trigger);
     fireEvent.pointerDown(document.body);
     expect(state.dismiss).toHaveBeenCalledTimes(1);
   },

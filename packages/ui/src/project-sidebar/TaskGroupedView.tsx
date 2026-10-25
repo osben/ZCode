@@ -1,3 +1,4 @@
+import type { ChildSessionSelectOptions } from "@/components/TaskChildSessionRows.js";
 import { useComposerClientNamespace } from "@/hooks/useServices.js";
 import { readComposerWorkspaceScope } from "@/v4/composer/composerDraftStore.js";
 import {
@@ -252,12 +253,29 @@ export function TaskGroupedView({
     activeWorkspaceIdentity: workspaceIdentity,
     activeTaskId,
     mobileActiveTaskKey: presentation.mobileActiveTaskKey,
-    onSelectTask: (path: string, id: string, identity?: string) => {
+    onSelectTask: (
+      path: string,
+      id: string,
+      identity?: string,
+      options?: ChildSessionSelectOptions,
+    ) => {
       const task = findTaskInGroupedView(
         authoritativeView,
-        taskKey({ workspacePath: path, taskId: id, workspaceIdentity: identity }),
+        taskKey({
+          workspacePath: path,
+          taskId: options?.parentTaskId ?? id,
+          workspaceIdentity: identity,
+        }),
       );
-      onSelect(path, id, identity, task ? getTaskRemoteSessionId(task) : undefined, task?.unreadAt);
+      // Child sessions are not grouped rows: forward their capability so a subagent opens read-only.
+      onSelect(
+        path,
+        id,
+        identity,
+        task ? getTaskRemoteSessionId(task) : undefined,
+        task?.unreadAt,
+        options,
+      );
     },
     onCloseTask: (task: ProjectTask) =>
       action(() => mutate(task, { kind: "archive", archived: true }), "taskList.archiveFailed"),
@@ -429,7 +447,6 @@ export function TaskGroupedView({
                     {...rowCallbacks}
                     node={node}
                     getTaskRemoteSessionId={getTaskRemoteSessionId}
-                    getTaskWorkspaceLabel={getWorkspaceLabel}
                     onCreateTask={() => createTask(node.group.id)}
                     hasDraftTask={draftGroupId === node.group.id}
                     draftTaskActive={!activeTaskId}
@@ -457,7 +474,6 @@ export function TaskGroupedView({
                   key={taskKey(node.task)}
                   task={node.task}
                   remoteSessionId={getTaskRemoteSessionId(node.task)}
-                  workspaceLabel={getWorkspaceLabel(node.task)}
                   dragId={taskKey(node.task)}
                   dragging={drag.activeTaskKey === taskKey(node.task)}
                 />
@@ -486,7 +502,6 @@ export function TaskGroupedView({
                   {...rowCallbacks}
                   task={activeTask}
                   remoteSessionId={getTaskRemoteSessionId(activeTask)}
-                  workspaceLabel={getWorkspaceLabel(activeTask)}
                   dragId={drag.activeTaskKey ?? undefined}
                   dragOverlay
                 />

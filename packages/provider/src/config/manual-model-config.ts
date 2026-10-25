@@ -2,7 +2,7 @@ import { z } from "zod";
 import { completeModelConfigDataSchema, modelConfigDataSchema } from "@zcode/shared/model-config";
 
 const complete = completeModelConfigDataSchema.shape;
-// 手动模式只冻结产品明确开放的叶子；新增系统字段默认不属于个人手动配置。
+// Manual mode freezes only leaves explicitly exposed by the product; newly added system fields are not part of personal manual config by default.
 export const manualModelConfigSchema = completeModelConfigDataSchema
   .pick({ enabled: true })
   .extend({
@@ -28,16 +28,60 @@ export const manualModelConfigSchema = completeModelConfigDataSchema
 
 export type ManualModelConfig = z.infer<typeof manualModelConfigSchema>;
 
-/** 草稿/旧完整规则提取复用 schema 结构，避免维护第二份可编辑字段清单。 */
+/** Draft/legacy complete-rule extraction reuses the schema structure to avoid maintaining a second editable-field list. */
 export function extractManualModelConfig(input: unknown): ManualModelConfig {
   return manualModelConfigSchema.parse(pickSchemaFields(manualModelConfigSchema, input));
 }
 
-/** 保留独立 enabled 和系统叶子；恢复智能配置及规则合成都使用同一字段归属。 */
+/** Preserve standalone enabled and system leaves; restoring intelligent config and rule merging both use the same field ownership. */
 export function clearManualModelConfig(input: z.infer<typeof modelConfigDataSchema>) {
-  return modelConfigDataSchema.parse(
+  const cleared = modelConfigDataSchema.parse(
     omitSchemaFields(manualModelConfigSchema.omit({ enabled: true }), input),
   );
+  // reasoningLevel.default is catalog-owned, not an editable leaf: keep the inherited value so a manual rule overlays on it.
+  // EnumOptionSpecConfig.overlay still drops it when the rule's own values no longer include it.
+  const inheritedDefault = input.optionSpecs?.reasoningLevel?.default;
+  if (inheritedDefault === undefined) return cleared;
+  return modelConfigDataSchema.parse({
+    ...cleared,
+    optionSpecs: {
+      ...cleared.optionSpecs,
+      reasoningLevel: { ...cleared.optionSpecs?.reasoningLevel, default: inheritedDefault },
+    },
+  });
+}
+
+/**
+ * reasoningLevel.default is fork-only and catalog-owned. Upstream's strict shared-file schema rejects the whole
+ * provider_config.json when it is present, so personal model rules drop it on both parse and serialize.
+ */
+export function omitCatalogOwnedOptionFields(input: unknown): unknown {
+  if (!isRecord(input)) return input;
+  return {
+    ...input,
+    ...(Array.isArray(input.providerModelRules)
+      ? { providerModelRules: input.providerModelRules.map(omitRuleDefault) }
+      : {}),
+    ...(Array.isArray(input.manualProviderModelRules)
+      ? { manualProviderModelRules: input.manualProviderModelRules.map(omitRuleDefault) }
+      : {}),
+  };
+}
+
+function omitRuleDefault(rule: unknown): unknown {
+  if (!isRecord(rule) || !isRecord(rule.config)) return rule;
+  const optionSpecs = rule.config.optionSpecs;
+  if (!isRecord(optionSpecs) || !isRecord(optionSpecs.reasoningLevel)) return rule;
+  if (!("default" in optionSpecs.reasoningLevel)) return rule;
+  const { default: _catalogDefault, ...reasoningLevel } = optionSpecs.reasoningLevel;
+  return {
+    ...rule,
+    config: { ...rule.config, optionSpecs: { ...optionSpecs, reasoningLevel } },
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function omitSchemaFields(schema: z.ZodObject, input: unknown): unknown {

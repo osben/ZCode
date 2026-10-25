@@ -44,6 +44,7 @@ import {
   encodeTextContent,
   normalizeLineEndings,
   shouldNormalizeLineEndings,
+  trimTruncatedUtf8Tail,
 } from "./text-metadata.js";
 import { readTextFileRangeFromNode } from "./text-range-reader.js";
 import { maybeThrowStorageFsFault } from "../storage/fs-fault-injection.js";
@@ -53,6 +54,7 @@ const DEFAULT_GREP_HEAD_LIMIT = 250;
 const DEFAULT_RIPGREP_TIMEOUT_MS = 30_000;
 const VCS_DIRECTORIES_TO_EXCLUDE = new Set([".git", ".svn", ".hg", ".bzr", ".jj", ".sl"]);
 
+type NodeStat = NonNullable<Awaited<ReturnType<typeof stat>>>;
 type RipgrepWorker = Pick<Worker, "once" | "terminate">;
 
 interface RipgrepWorkerData {
@@ -174,7 +176,11 @@ export class NodeFileSystemAdapter implements FileSystemPort {
 
       const maxBytes = request.maxBytes;
       const truncated = maxBytes !== undefined && info.size > maxBytes;
-      const buffer = truncated ? await readFirstBytes(path, maxBytes) : await readFile(path);
+      const rawBuffer = truncated ? await readFirstBytes(path, maxBytes) : await readFile(path);
+      // Only UTF-8 or auto-detected reads may drop a split tail: a caller that names a legacy encoding (gbk, utf16le, ...)
+      // owns those bytes, and a lead byte of that encoding can look like an incomplete UTF-8 sequence.
+      const mayTrimUtf8Tail = request.encoding === undefined || request.encoding === "utf8";
+      const buffer = truncated && mayTrimUtf8Tail ? trimTruncatedUtf8Tail(rawBuffer) : rawBuffer;
       const decoded = decodeTextBuffer({ buffer, encoding: request.encoding, path });
       const rawContent = decoded.content;
       const encoding = decoded.encoding;
@@ -234,8 +240,8 @@ export class NodeFileSystemAdapter implements FileSystemPort {
           ? await readFile(path)
           : await readAtMostBytes(path, request.maxBytes + 1, info.size);
       if (request.maxBytes !== undefined && buffer.byteLength > request.maxBytes) {
-        // stat 与 readFile 之间文件可能增长；实际读取也必须保持有界，
-        // 否则 maxBytes 既挡不住超限内容，也挡不住一次性大内存分配。
+        // The file may grow between stat and readFile; the actual read must also stay bounded,
+        // or maxBytes would neither stop oversized content nor a one-time large memory allocation.
         throw createFileSystemError({
           code: "too_large",
           path,
@@ -523,7 +529,7 @@ async function searchTextWithRipgrep(
     });
   }
 
-  let rootInfo: Awaited<ReturnType<typeof stat>>;
+  let rootInfo: NodeStat;
   try {
     throwIfAborted(signal);
     rootInfo = await stat(path);
@@ -664,7 +670,8 @@ async function readAtMostBytes(
 ): Promise<Buffer> {
   const handle = await open(path, "r");
   try {
-    // 稳定文件按 stat 大小一次读取；只有文件在 stat 后增长时才继续分块追到硬上限。
+    // Read a stable file once using its stat size; continue in chunks up to the hard limit only if
+    // the file grows after stat.
     const firstBuffer = Buffer.allocUnsafe(Math.min(maxBytes, Math.max(1, initialSizeBytes + 1)));
     const chunks: Buffer[] = [];
     let bytesReadTotal = 0;
@@ -674,7 +681,7 @@ async function readAtMostBytes(
           ? firstBuffer
           : Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes - bytesReadTotal));
       const { bytesRead } = await handle.read(chunk, 0, chunk.byteLength, bytesReadTotal);
-      // FileHandle.read 的短读不等于 EOF；只有明确返回 0 字节才能停止。
+      // A short read from FileHandle.read does not mean EOF; stop only when it explicitly returns 0 bytes.
       if (bytesRead === 0) break;
       chunks.push(chunk.subarray(0, bytesRead));
       bytesReadTotal += bytesRead;
@@ -724,7 +731,8 @@ async function atomicWrite(path: string, content: Buffer): Promise<void> {
     try {
       await handle.writeFile(content);
       if (existingMode !== undefined) {
-        // 原子写会用临时文件 inode 覆盖目标文件；必须先复制原文件权限，避免抹掉脚本执行位。
+        // Atomic writes replace the target with the temporary file's inode; copy the original
+        // permissions first to avoid clearing script execute bits.
         await handle.chmod(existingMode);
       }
       await handle.sync();
@@ -754,7 +762,7 @@ async function atomicWrite(path: string, content: Buffer): Promise<void> {
   }
 }
 
-function nodeKind(info: Awaited<ReturnType<typeof stat>>): FileSystemNodeKind {
+function nodeKind(info: NodeStat): FileSystemNodeKind {
   if (info.isFile()) return "file";
   if (info.isDirectory()) return "directory";
   if (info.isSymbolicLink()) return "symlink";
@@ -923,7 +931,7 @@ class RipgrepTimeoutFailure extends Error {
 
 function createRipgrepSearchPlan(
   path: string,
-  rootInfo: Awaited<ReturnType<typeof stat>>,
+  rootInfo: NodeStat,
   request: FileSystemSearchTextRequest,
   mode: FileSystemTextSearchOutputMode,
 ): RipgrepSearchPlan {
@@ -1053,9 +1061,10 @@ function runBundledRipgrepWorker(
     return Promise.reject(createAbortError("ripgrep search was cancelled before it started"));
   }
 
-  // 不能在 agent 主线程里直接运行 WASI ripgrep。大目录搜索会占住 Node
-  // event loop，导致 session/stop 虽然绕过协议队列，却没有机会被 agent 处理。
-  // 放到 Worker 后，用户 stop 和超时都能从主线程 terminate 这个搜索执行单元。
+  // Do not run WASI ripgrep directly on the agent's main thread. Searches in large directories can
+  // block the Node event loop, preventing the agent from handling session/stop even though those
+  // requests bypass the protocol queue. Running it in a Worker lets user stop and timeout
+  // terminate the search unit from the main thread.
   const worker = createRipgrepWorker({
     args: args.map(String),
     preopens,
@@ -1397,7 +1406,7 @@ function compileSearchRegex(pattern: string, request: FileSystemSearchTextReques
 
 async function collectTextSearchCandidates(
   path: string,
-  rootInfo: Awaited<ReturnType<typeof stat>>,
+  rootInfo: NodeStat,
   request: FileSystemSearchTextRequest,
   signal?: AbortSignal,
 ): Promise<FileSearchCandidate[]> {
@@ -1405,7 +1414,7 @@ async function collectTextSearchCandidates(
   const globMatcher = request.glob ? createGlobMatcher(request.glob) : undefined;
   const root = rootInfo.isDirectory() ? path : dirname(path);
 
-  const addIfCandidate = async (filePath: string, info: Awaited<ReturnType<typeof stat>>) => {
+  const addIfCandidate = async (filePath: string, info: NodeStat) => {
     if (!info.isFile()) return;
     const relativePath = toPosixRelative(root, filePath);
     if (globMatcher && !globMatcher(relativePath, basename(filePath))) return;
@@ -1666,8 +1675,9 @@ function createOnlyMatchingEntries(input: {
     ];
   }
 
-  // ripgrep 只把 LF/CRLF 当作输出行边界；单独的 CR 是普通匹配文本。
-  // 同时，跨行 match 内部的空行不生成 entry，但整段零长度 match 需要保留空 entry。
+  // ripgrep treats only LF/CRLF as output line boundaries; a lone CR is ordinary matched text.
+  // Empty lines inside a multiline match do not produce entries, but a wholly zero-length match
+  // must retain an empty entry.
   return input.text
     .split(/\r?\n/)
     .flatMap((line, index) =>
@@ -1686,7 +1696,8 @@ function createOnlyMatchingEntries(input: {
 }
 
 function splitRipgrepSearchLines(content: string): string[] {
-  // ripgrep 以 LF/CRLF 作为行结束符；末尾换行不是额外空行，单独的 CR 保留在行内容中。
+  // ripgrep uses LF/CRLF as line endings; a trailing newline is not an extra empty line, and a
+  // lone CR remains in the line content.
   if (content.length === 0) return [];
   return content.replace(/\r?\n$/, "").split(/\r?\n/);
 }
@@ -1708,7 +1719,7 @@ function lineNumberForIndex(content: string, index: number): number {
 async function walkFiles(
   current: string,
   signal: AbortSignal | undefined,
-  visitor: (path: string, info: Awaited<ReturnType<typeof stat>>) => Promise<void> | void,
+  visitor: (path: string, info: NodeStat) => Promise<void> | void,
 ): Promise<void> {
   throwIfAborted(signal);
   const entries = await readdir(current, { withFileTypes: true });

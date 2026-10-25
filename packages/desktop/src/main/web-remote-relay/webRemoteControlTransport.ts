@@ -104,7 +104,7 @@ export class WebRemoteControlDeviceTransport {
     this.connectAttempt += 1;
     this.setState("connecting");
     try {
-      // 首次注册和失效后的重注册共用连接尝试，网络失败均由此处退避，不能在 manager 裸 await。
+      // First registration and re-registration after invalidation share the connection attempt; network failures back off here and must not surface as a bare await in the manager.
       if (!this.deviceSid || this.registrationPending) {
         const sid = await this.options.resolveDeviceSid(signal, this.registrationPending);
         if (signal.aborted || generation !== this.generation) return;
@@ -135,7 +135,7 @@ export class WebRemoteControlDeviceTransport {
       });
       socket.on("message", (raw, isBinary) => {
         if (socket !== this.socket || isBinary) return;
-        // 在拼接/解码前检查未压缩字节数，保留 raw frame 的内存边界。
+        // Check the uncompressed byte count before concatenating or decoding, to keep the raw frame memory bound.
         const byteLength = Array.isArray(raw)
           ? raw.reduce((sum, part) => sum + part.byteLength, 0)
           : raw.byteLength;
@@ -153,7 +153,7 @@ export class WebRemoteControlDeviceTransport {
         if (message) void this.handleMessage(message);
       });
       socket.on("error", () => {
-        // WS 错误可能包含一次性 token URL，日志和对外错误只暴露固定原因。
+        // WS errors may contain a one-time token URL, so logs and external errors expose only a fixed reason.
         if (socket === this.socket)
           this.options.logger.warn("[web-remote-control] V2 socket error");
       });
@@ -186,7 +186,7 @@ export class WebRemoteControlDeviceTransport {
         !this.registrationRetried
       ) {
         this.registrationRetried = true;
-        // 注册遇到网络错误时必须重试注册，不能带已失效 SID 再次握手。
+        // A network error during registration must retry the registration, never re-handshake with an invalid SID.
         this.registrationPending = true;
         this.scheduleReconnect(0);
       } else if (message.code === "INTERNAL" || message.code === "DEVICE_OFFLINE") {
@@ -230,7 +230,7 @@ export class WebRemoteControlDeviceTransport {
   }
 
   private closeSocket(): void {
-    // 先撤销当前代，再关闭；旧 close/ACK 及异步 token 结果均不能推进下一代。
+    // Revoke the current generation before closing; stale close/ACK events and async token results must not advance to the next generation.
     this.generation += 1;
     this.authenticated = false;
     this.heartbeat.stop();

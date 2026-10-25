@@ -1163,7 +1163,7 @@ describe("workflow driver — 结算后释放 actor runtime", () => {
     // 引擎结算：先 cancelAsk（在飞 ask 中止），再 dispose——与 engine.cancel / complete 的顺序一致。
     driver.cancelAsk(instance);
     driver.dispose?.();
-    expect(idle.closeBrowserSession).not.toHaveBeenCalled(); // 经 Promise.resolve().then 排队
+    expect(idle.closeBrowserSession).not.toHaveBeenCalled(); // still queued behind Promise.resolve().then
     await flushMicrotasks();
     expect(idle.closeBrowserSession).toHaveBeenCalledTimes(1);
     expect(busy.closeBrowserSession).toHaveBeenCalledTimes(1);

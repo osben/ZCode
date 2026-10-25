@@ -13,9 +13,14 @@ import type {
 import type { ToolRegistry } from "../tool/registry.js";
 import { estimateTokens } from "./utils.js";
 import { buildCliPrefixSection } from "./sections/cli-prefix.js";
+import { resolveIncognitoPromptToggles } from "./sections/prompt-toggles.js";
 import { buildIdentitySection } from "./sections/identity.js";
 import { buildWorkflowActorIdentitySection } from "./sections/workflow-actor.js";
-import { buildEnvInfoSection, buildGitSystemContextSection } from "./sections/env-info.js";
+import {
+  buildEnvInfoSection,
+  buildGitSystemContextSection,
+  buildWorktreeOnlyEnvSection,
+} from "./sections/env-info.js";
 import { buildSkillsSection } from "./sections/skills.js";
 import { buildRequestUserContextSection } from "./sections/request-user-context.js";
 import { buildCurrentDateSection } from "./sections/current-date.js";
@@ -34,7 +39,7 @@ import {
 // -----------------------------------------------
 
 const EPHEMERAL_CACHE_CONTROL = { type: "ephemeral" as const };
-/** Skill 工具的注册名（与 tool/handlers/skill.ts 的 metadata.name 同字面；contracts 没有常量）。 */
+/** Registered name of the Skill tool (same literal as metadata.name in tool/handlers/skill.ts; contracts has no constant). */
 const SKILL_TOOL_NAME = "Skill";
 
 export class ContextBuilder {
@@ -46,7 +51,7 @@ export class ContextBuilder {
   }
 
   /**
-   * 保留兼容入口。工具说明由 model request 的 tools 字段承载，不再镜像进 system prompt。
+   * Retained for compatibility. Tool descriptions are carried by the model request's tools field and are no longer mirrored into the system prompt.
    */
   setToolRegistry(_registry: ToolRegistry): this {
     return this;
@@ -61,7 +66,7 @@ export class ContextBuilder {
   }
 
   /**
-   * 添加自定义 section（用于后续扩展）
+   * Add a custom section (for later extension).
    */
   addSection(
     section: Omit<ContextSection, "chars" | "tokens" | "injectionTarget" | "cacheHint"> &
@@ -78,7 +83,7 @@ export class ContextBuilder {
   }
 
   /**
-   * 构建 context，返回结构化结果
+   * Build context and return a structured result.
    */
   build(): ContextBuildResult {
     const sections: ContextSection[] = [];
@@ -87,9 +92,9 @@ export class ContextBuilder {
       : undefined;
     const customSystemPrompt = this.config.customSystemPrompt?.trim();
     const hasCustomSystemPrompt = Boolean(customSystemPrompt);
-    // 工作流子代理身份：第三条路径。与
-    // customSystemPrompt 互斥——两者同在只可能是接线错误（persona 该经 workflowActor 进来，
-    // 不该再塞 systemPrompt），大声失败而不是默默二选一。
+    // Workflow subagent identity: the third path. Mutually exclusive with
+    // customSystemPrompt—if both are present, wiring is wrong (the persona should arrive through workflowActor,
+    // not systemPrompt). Fail loudly instead of silently choosing one.
     const workflowActor = this.config.workflowActor;
     if (workflowActor !== undefined && hasCustomSystemPrompt) {
       throw new Error(
@@ -97,12 +102,16 @@ export class ContextBuilder {
       );
     }
     const isWorkflowActor = workflowActor !== undefined;
+    const promptOverrides = isWorkflowActor ? undefined : this.config.systemPromptOverrides;
+    // Incognito toggles for prompt text (specs/incognito-session.md, "Prompt toggles"). Absent profile = all included.
+    const incognito = this.config.incognito;
+    const { identityOff, harnessOff, environmentOff } = resolveIncognitoPromptToggles(incognito);
 
     // 1. CLI / product prefix. Keep this as the short leading identity block.
-    // 「You are ZCode, an interactive coding agent」对一个
-    // 只对脚本说话、可能连读文件工具都没有的子代理是错的身份，且走在正确身份段前面。
-    if (!isWorkflowActor) {
-      sections.push(buildCliPrefixSection());
+    // "You are ZCode, an interactive coding agent" is the wrong identity for a subagent that speaks only to a script
+    // and may not even have file-reading tools, and it would appear before the correct identity section.
+    if (!isWorkflowActor && !identityOff) {
+      sections.push(buildCliPrefixSection(promptOverrides?.["cli-prefix"]));
     }
 
     // 2. Stable agent behavior or custom prompt body
@@ -117,34 +126,45 @@ export class ContextBuilder {
         }),
       );
     } else if (workflowActor !== undefined) {
-      sections.push(buildWorkflowActorIdentitySection(workflowActor));
+      sections.push(
+        buildWorkflowActorIdentitySection(workflowActor, { includeHarness: !harnessOff }),
+      );
     } else {
-      sections.push(buildIdentitySection(activeOutputStyle));
+      sections.push(
+        buildIdentitySection(
+          activeOutputStyle,
+          {
+            "identity-intro": promptOverrides?.["identity-intro"],
+            harness: promptOverrides?.harness,
+          },
+          { includeIntro: !identityOff, includeHarness: !harnessOff },
+        ),
+      );
     }
 
     // 3. Dynamic system context
-    // custom prompt 不是只替换
-    // stable body，而是跳过默认 system prompt 体系和 systemContext；否则用户提供
-    // custom prompt 后仍会混入 Session Guidance / output style 等动态 system 段。
-    // 工作流子代理跳过其中面向「与用户对话」的三段（desktop、Dynamic Behavior、session
-    // guidance——契约里已把 Report outcomes faithfully 搬过去），保留 memory 与其后各段。
+    // A custom prompt does not replace only the stable body; it skips the default system prompt structure and systemContext.
+    // Otherwise, dynamic system sections such as Session Guidance/output style would still be included after the user provides a custom prompt.
+    // Workflow subagents skip the three sections aimed at "talking with the user" (desktop, Dynamic Behavior, and session
+    // guidance—the contract already carries Report outcomes faithfully), while retaining memory and subsequent sections.
     if (!hasCustomSystemPrompt) {
-      if (!isWorkflowActor && this.config.presentationSurface === "zcode_desktop") {
+      if (!isWorkflowActor && !harnessOff && this.config.presentationSurface === "zcode_desktop") {
         sections.push(buildDesktopContextSection(this.config.genUiOutputDirectory));
       }
 
       // behaviour part right after stable sp...
-      if (!isWorkflowActor) {
-        sections.push(buildDynamicBehaviorSection());
+      if (!isWorkflowActor && !harnessOff) {
+        sections.push(buildDynamicBehaviorSection(promptOverrides?.communication));
       }
 
       // Session-specific guidance
-      const sessionGuidanceSection = isWorkflowActor
-        ? null
-        : buildSessionGuidanceSection(
-            this.config.guidanceToolNames ?? [],
-            (this.config.skills?.skills.length ?? 0) > 0,
-          );
+      const sessionGuidanceSection =
+        isWorkflowActor || harnessOff
+          ? null
+          : buildSessionGuidanceSection(
+              this.config.guidanceToolNames ?? [],
+              (this.config.skills?.skills.length ?? 0) > 0,
+            );
       if (sessionGuidanceSection) {
         sections.push(sessionGuidanceSection);
       }
@@ -154,18 +174,26 @@ export class ContextBuilder {
         const memorySection = buildMemorySection(
           this.config.memoryRoot,
           ACTIVE_PROJECT_MEMORY_RETRIEVAL_BRANCH,
+          promptOverrides?.["memory-guidance"],
         );
         if (memorySection) {
           sections.push(memorySection);
         }
       }
-      sections.push(
-        buildEnvInfoSection(
-          this.config.envInfo,
-          this.config.model,
-          this.config.additionalDirectories,
-        ),
-      );
+      if (environmentOff) {
+        // The worktree bullet is isolation context, not environment text (specs/incognito-session.md).
+        const worktreeSection = buildWorktreeOnlyEnvSection(this.config.executionWorktree);
+        if (worktreeSection) sections.push(worktreeSection);
+      } else {
+        sections.push(
+          buildEnvInfoSection(
+            this.config.envInfo,
+            this.config.model,
+            this.config.executionWorktree,
+            this.config.additionalDirectories,
+          ),
+        );
+      }
 
       // Output Style
       const outputStyleSection = buildOutputStyleSection(activeOutputStyle);
@@ -174,18 +202,20 @@ export class ContextBuilder {
       }
 
       // Context Management
-      sections.push(buildContextManagementSection());
+      sections.push(buildContextManagementSection(promptOverrides?.["context-management"]));
 
-      const gitSystemContextSection = buildGitSystemContextSection(this.config.envInfo);
+      const gitSystemContextSection = environmentOff
+        ? null
+        : buildGitSystemContextSection(this.config.envInfo);
       if (gitSystemContextSection) {
         sections.push(gitSystemContextSection);
       }
     }
 
     // 4. Skills appear as a meta user system-reminder, matching provider block layout.
-    // guidanceToolNames 是 runtime 当下的
-    // 工具表；一个 Skill 工具未注册的工作流子代理被告知「以下技能可经 Skill 工具使用」，
-    // 只会让它相信自己有一个没有的工具。表缺席（测试 / 旧调用方）时保持既有行为。
+    // guidanceToolNames is the runtime's current tool list. Telling a workflow subagent without a registered Skill tool that
+    // "the following skills can be used through the Skill tool" would make it believe it has a tool it does not have.
+    // Preserve existing behavior when the list is absent (tests / older callers).
     if (this.config.skills && this.skillToolAvailable()) {
       const skillsSection = buildSkillsSection({
         outcome: this.config.skills,
@@ -201,6 +231,7 @@ export class ContextBuilder {
       userInstructions: this.config.userInstructions,
       memoryIndexContent: this.config.memoryIndexContent,
       memoryRoot: this.config.memoryRoot,
+      memoryIndexAsContext: this.config.memoryIndexAsContext,
     });
     if (requestUserContextSection) {
       sections.push(requestUserContextSection);
@@ -216,7 +247,7 @@ export class ContextBuilder {
 
     const orderedSections = orderSectionsForInjection(sections);
 
-    // 计算总计
+    // Calculate totals.
     const totalChars = orderedSections.reduce((sum, s) => sum + s.chars, 0);
     const totalTokens = orderedSections.reduce((sum, s) => sum + s.tokens, 0);
 
@@ -276,7 +307,7 @@ export class ContextBuilder {
     if (dynamicSystemContent) {
       messages.push({
         role: "system",
-        // ZCode by design：Main Agent 的 dynamic system block 自带左边界，所有 provider 保持一致。
+        // ZCode by design: the Main Agent's dynamic system block includes its own left boundary, consistently across providers.
         content: `\n\n${dynamicSystemContent}`,
         cacheControl: EPHEMERAL_CACHE_CONTROL,
       });

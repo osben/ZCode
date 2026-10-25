@@ -654,6 +654,71 @@ describe("session history hydrator", () => {
     });
   });
 
+  it("keeps external agent tool rows out of the history a later regular model sees", async () => {
+    const sessionID = createSessionId("hydrate-external-agent-tool");
+    const userID = createMessageId("user-external");
+    const assistantID = createMessageId("assistant-external");
+    const history = new MessageHistoryImpl();
+    history.init("system prompt");
+
+    await hydrateMessageHistoryFromSession({
+      history,
+      messages: [
+        userMessage(sessionID, userID, "edit the file", 1),
+        {
+          info: {
+            id: assistantID,
+            sessionID,
+            role: "assistant",
+            time: { created: 2 },
+            parentID: userID,
+            modelID,
+            providerID,
+            variant: "thinking",
+            mode: "build",
+            agent: "zcode-agent",
+            path: { cwd: "/tmp/project", root: "/tmp/project" },
+            cost: 0,
+            tokens: emptyTokens(),
+          },
+          parts: [
+            {
+              id: createPartId("external-text"),
+              messageID: assistantID,
+              sessionID,
+              text: "done",
+              type: "text",
+              time: { start: 2, end: 3 },
+            },
+            {
+              id: createPartId("external-tool"),
+              callID: "acp_tool_1",
+              messageID: assistantID,
+              sessionID,
+              state: {
+                input: { path: "a.ts" },
+                output: "edited",
+                status: "completed",
+                title: "Edit a.ts",
+                metadata: { externalAgent: true },
+                time: { start: 2, end: 3 },
+              },
+              tool: "acp:edit",
+              metadata: { externalAgent: true },
+              type: "tool",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(providerMessages(history)).toEqual([
+      { role: "system", content: "system prompt" },
+      { role: "user", content: "edit the file" },
+      { role: "assistant", content: "done", toolCalls: [] },
+    ]);
+  });
+
   it("hydrates assistant reasoning parts before tool replay", async () => {
     const sessionID = createSessionId("hydrate-reasoning-tool");
     const userID = createMessageId("user-reasoning");

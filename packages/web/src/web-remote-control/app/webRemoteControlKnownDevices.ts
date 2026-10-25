@@ -1,8 +1,8 @@
 import type { WebRemoteControlDeviceGroup, KnownDevice } from "#src/web-remote-control/contract.js";
 
-// 键名沿用旧版“设备名”缓存，旧的 [mid, name] 条目可直接读出。
+// The key name keeps the legacy "device name" cache name, so old [mid, name] entries can be read directly.
 export const KNOWN_DEVICES_KEY = "zcode-web-remote-device-names";
-/** 记录只是展示偏好，设上限防止 localStorage 无限增长；超出时淘汰最久未更新的条目。 */
+/** Records are only display preferences; a cap prevents localStorage from growing without bound, and the least recently updated entries are evicted when exceeded. */
 export const KNOWN_DEVICES_LIMIT = 50;
 
 type KnownDeviceStorage = Pick<Storage, "getItem" | "setItem">;
@@ -18,9 +18,9 @@ function toKnownDevice(name: string, platform: string | undefined): KnownDevice 
 }
 
 /**
- * 读取本机记住的 MID → 设备名/平台。
- * relay 只在设备在线时通过 auth_init.meta 携带主机名和平台，离线记录的 meta 为空，
- * 这份缓存是离线设备名与平台的唯一来源；读取失败或内容损坏都按“没记住任何设备”处理。
+ * Reads the locally remembered MID → device name/platform.
+ * The relay carries the hostname and platform through auth_init.meta only while the device is online; the meta of offline records is empty,
+ * so this cache is the only source of offline device names and platforms. A read failure or corrupted content is treated as "no device remembered".
  */
 export function readKnownDevices(storage: KnownDeviceStorage): Map<string, KnownDevice> {
   const devices = new Map<string, KnownDevice>();
@@ -30,7 +30,7 @@ export function readKnownDevices(storage: KnownDeviceStorage): Map<string, Known
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return devices;
     for (const item of parsed) {
-      // 旧版只写 [mid, name]；新版在有平台时写 [mid, name, platform]。
+      // The old version only wrote [mid, name]; the new version writes [mid, name, platform] when a platform is available.
       if (!Array.isArray(item) || (item.length !== 2 && item.length !== 3)) continue;
       const [mid, name, platform] = item as unknown[];
       if (typeof mid !== "string" || !mid || typeof name !== "string") continue;
@@ -39,16 +39,16 @@ export function readKnownDevices(storage: KnownDeviceStorage): Map<string, Known
       if (device) devices.set(mid, device);
     }
   } catch {
-    // iOS 私密模式等环境可能禁用存储，或旧内容不是合法 JSON；不阻断列表展示。
+    // Environments such as iOS private mode may disable storage, or old content may not be valid JSON; this does not block list display.
     devices.clear();
   }
   return devices;
 }
 
 /**
- * 把本次刷新中有在线连接、且有名字或平台的设备项写回缓存。
- * Map 的插入顺序即“最近更新”顺序：先删再设把设备移到末尾，淘汰时从头部开始。
- * 写入失败静默忽略，调用方已经拿到本次投影，不受影响。
+ * Writes back to the cache the device entries from this refresh that have an online connection and a name or platform.
+ * The Map's insertion order is the "most recently updated" order: delete-then-set moves a device to the end, and eviction starts from the head.
+ * Write failures are silently ignored; the caller already has this projection and is not affected.
  */
 export function rememberKnownDevices(
   storage: KnownDeviceStorage,
@@ -80,6 +80,6 @@ export function rememberKnownDevices(
       ),
     );
   } catch {
-    // 偏好持久化失败不影响本次展示，也不修改按 SID 隔离的业务状态。
+    // A failure to persist preferences does not affect this display and does not modify business state isolated by SID.
   }
 }

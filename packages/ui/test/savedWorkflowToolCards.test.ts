@@ -4,6 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import zhCN from "@/i18n/locales/zh-CN.js";
 import { resolveToolCallRenderer } from "@/ToolCallBlocks/resolveRenderer.js";
 import { CreateWorkflowToolCallBlock } from "@/ToolCallBlocks/renderers/create-workflow.js";
 import {
@@ -19,22 +20,24 @@ import {
 import { SaveWorkflowToolCallBlock } from "@/ToolCallBlocks/renderers/save-workflow.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
 
-const SCRIPT = 'const r = await agent("a").ask<string>("检查");';
+const SCRIPT = 'const r = await agent("a").ask<string>("check");';
 const SAVED_PATH = "/workspace/.zcode/workflows/release-check.dwf.ts";
+const WORKFLOW_DESCRIPTION = "Pre-release check: lint, tests, changelog";
+const WORKFLOW_WHEN_TO_USE = "When the user asks for a release";
 
 const LIST_RESULT = {
   workflows: [
     {
       name: "release-check",
-      description: "发布前检查：lint、测试、变更日志",
-      whenToUse: "用户说要发版时",
+      description: WORKFLOW_DESCRIPTION,
+      whenToUse: WORKFLOW_WHEN_TO_USE,
       args: { target: { type: "string", required: true }, skipTests: { type: "boolean" } },
       scope: "project",
       path: SAVED_PATH,
     },
     {
       name: "translate-docs",
-      description: "批量翻译文档目录",
+      description: "Batch-translate documentation directories",
       scope: "project",
       path: "/workspace/.zcode/workflows/translate-docs.dwf.ts",
     },
@@ -65,7 +68,7 @@ function buildContext(
     statusLabel: "",
     childToolList: null,
     showIcon: true,
-    // 卡体默认折叠，测试里强制展开以断言内容。
+    // The card body is collapsed by default; tests force it open to assert content.
     forceOpen: true,
     canToggle: false,
     ...overrides,
@@ -95,8 +98,8 @@ function buildSaveToolCall(input: Record<string, unknown> = {}) {
     status: "completed",
     input: {
       name: "release-check",
-      description: "发布前检查：lint、测试、变更日志",
-      whenToUse: "用户说要发版时",
+      description: WORKFLOW_DESCRIPTION,
+      whenToUse: WORKFLOW_WHEN_TO_USE,
       script: SCRIPT,
       path: SAVED_PATH,
       overwrite: false,
@@ -120,10 +123,12 @@ function buildListToolCall(output: unknown = LIST_RESULT) {
 
 afterEach(cleanup);
 
-// ── spec 测试地图「归一化 (b)」──
-// 归一化入参对**既有**读取规则原样命中。这是「旧桌面渲染按构造成立」这条安全属性的
-// 渲染侧一半（CLI 侧那一半钉在 bootstrap 的 session-mapper 测试里）：saved run 的确认窗
-// 之所以在没有来源徽标的旧客户端上也显示完整脚本，靠的就是这两个函数读得到东西。
+// ── spec test map "normalization (b)" ──
+// Normalized input must hit the existing reader rules verbatim. This is the render-side half of
+// the safety property "the legacy desktop renderer works by construction" (the CLI-side half is
+// pinned in bootstrap session-mapper tests): the saved-run confirmation window shows the full
+// script even on legacy clients without a source badge precisely because these two readers
+// find their values.
 describe("normalized saved-run input feeds the existing reader helpers", () => {
   const NORMALIZED_SAVED_RAW = {
     name: "Release check",
@@ -156,12 +161,13 @@ describe("normalized saved-run input feeds the existing reader helpers", () => {
 
   it("treats an inline run as having no saved source", () => {
     expect(readWorkflowSaved({ name: "Inline", script: SCRIPT })).toBeUndefined();
-    // 不变式 7：args 恒有定义——saved 在场但没有实参时是空对象，不是 undefined。
+    // Invariant 7: args is always defined — saved present without concrete args is an empty
+    // object, not undefined.
     expect(readWorkflowSaved({ script: SCRIPT, saved: { name: "x" } })?.args).toEqual({});
   });
 
   it("formats argument values by declared type", () => {
-    // 字符串原样（引号只会给中文实参添噪），其余走 JSON。
+    // Strings verbatim (quotes would only add noise); everything else goes through JSON.
     expect(formatWorkflowArgValue("packages/ui")).toBe("packages/ui");
     expect(formatWorkflowArgValue(false)).toBe("false");
     expect(formatWorkflowArgValue(3)).toBe("3");
@@ -171,8 +177,9 @@ describe("normalized saved-run input feeds the existing reader helpers", () => {
 
 describe("resolveToolCallRenderer saved-workflow dispatch", () => {
   it("routes both tools by name even though shared does not know them", () => {
-    // 前置事实：这两个名字不在 shared 的已知工具表里，identity 会回 unknown。
-    // 分流必须按名字命中，否则整包 toolCall JSON 会被摊进聊天区。
+    // Precondition: neither name is in shared's known tool table, so identity would fall back to
+    // unknown. Dispatch must hit by name, otherwise the whole toolCall JSON gets dumped into the
+    // chat area.
     expect(resolveToolCallRenderer(buildContext(buildSaveToolCall()))).toBe(
       SaveWorkflowToolCallBlock,
     );
@@ -188,8 +195,9 @@ describe("resolveToolCallRenderer saved-workflow dispatch", () => {
 });
 
 describe("SaveWorkflowToolCallBlock", () => {
-  // 2026-08-29 增补（spec：docs/dynamic-workflow/launch.md「`SaveWorkflow`」）：
-  // 折叠行收敛为「名字 + overwrite 徽标」，说明/落点/whenToUse 只在展开卡体出现。
+  // 2026-08-29 addition (spec: docs/dynamic-workflow/launch.md "`SaveWorkflow`"):
+  // the collapsed row converges to "name + overwrite badge"; description/path/whenToUse appear
+  // only in the expanded card body.
   it("collapsed row shows only the name; details live in the expanded body", () => {
     renderCard(
       SaveWorkflowToolCallBlock,
@@ -198,16 +206,16 @@ describe("SaveWorkflowToolCallBlock", () => {
 
     expect(screen.getByText("Saved workflow")).toBeTruthy();
     expect(screen.getByText("release-check")).toBeTruthy();
-    // 折叠行不出现说明与落点——它们是详情，不是状态。
-    expect(screen.queryByText("发布前检查：lint、测试、变更日志")).toBeNull();
+    // The collapsed row must not show description or path — they are details, not status.
+    expect(screen.queryByText(WORKFLOW_DESCRIPTION)).toBeNull();
     expect(screen.queryByText(SAVED_PATH)).toBeNull();
     cleanup();
 
     renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall()));
-    expect(screen.getByText("发布前检查：lint、测试、变更日志")).toBeTruthy();
+    expect(screen.getByText(WORKFLOW_DESCRIPTION)).toBeTruthy();
     expect(screen.getByText(SAVED_PATH)).toBeTruthy();
-    expect(screen.getByText("用户说要发版时")).toBeTruthy();
-    // 脚本归确认窗，不在卡上重复一遍。
+    expect(screen.getByText(WORKFLOW_WHEN_TO_USE)).toBeTruthy();
+    // The script belongs to the confirmation window; the card does not repeat it.
     expect(document.body.textContent).not.toContain('await agent("a")');
   });
 
@@ -233,30 +241,30 @@ describe("SaveWorkflowToolCallBlock", () => {
       buildContext(buildSaveToolCall({ overwrite: true })),
       "zh-CN",
     );
-    expect(screen.getByText("已保存工作流")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.save.saved"])).toBeTruthy();
     expect(document.querySelector('[data-workflow-overwrite-badge="true"]')?.textContent).toBe(
-      "覆盖",
+      zhCN["chat.toolCall.workflow.save.overwrite"],
     );
   });
 
-  // ── docs/dynamic-workflow/launch.md「`SaveWorkflow`」──
+  // ── docs/dynamic-workflow/launch.md "`SaveWorkflow`" ──
   it("shows a scope row above the path (project vs global) and stays silent on unknown scope", () => {
     renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall()));
     expect(screen.getByText("Scope")).toBeTruthy();
     expect(screen.getByText("Project")).toBeTruthy();
-    // 项目档折叠行不加全局小标。
+    // Project-scoped collapsed rows get no global badge.
     expect(document.querySelector('[data-workflow-scope-badge="global"]')).toBeNull();
     cleanup();
 
     renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall({ scope: "global" })));
     expect(screen.getByText("Global · visible from every project")).toBeTruthy();
-    // 全局档折叠行加一个「全局」小标（与 overwrite 徽标同排）。
+    // Global collapsed rows get a "Global" badge (in the same row as the overwrite badge).
     expect(document.querySelector('[data-workflow-scope-badge="global"]')?.textContent).toBe(
       "Global",
     );
     cleanup();
 
-    // scope 缺席（旧 agent）→ 不渲染作用域行。
+    // scope absent (legacy agent) → no scope row rendered.
     const { scope: _dropped, ...withoutScope } = buildSaveToolCall().input as Record<
       string,
       unknown
@@ -296,10 +304,10 @@ describe("SaveWorkflowToolCallBlock", () => {
       buildContext(buildSaveToolCall({ scope: "global" })),
       "zh-CN",
     );
-    expect(screen.getByText("作用域")).toBeTruthy();
-    expect(screen.getByText("全局 · 对所有项目可见")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.save.scope.label"])).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.save.scope.global"])).toBeTruthy();
     expect(document.querySelector('[data-workflow-scope-badge="global"]')?.textContent).toBe(
-      "全局",
+      zhCN["chat.toolCall.workflow.scope.global"],
     );
   });
 });
@@ -363,7 +371,9 @@ describe("CreateWorkflowToolCallBlock saved source line", () => {
 
     expect(
       document.querySelector('[data-workflow-card-saved-source="true"]')?.textContent,
-    ).toContain("已保存的工作流 · project");
+    ).toContain(
+      `${zhCN["chat.permission.workflow.saved.badge"]} · ${zhCN["chat.permission.workflow.saved.scope.project"]}`,
+    );
   });
 });
 
@@ -373,13 +383,14 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
     expect(
       readListSavedWorkflowsResult(buildListToolCall(JSON.stringify(LIST_RESULT)))?.workflows,
     ).toHaveLength(2);
-    // 读不懂就是 null——空列表与解析失败必须可分辨。
+    // Unreadable means null — an empty list and a parse failure must be distinguishable.
     expect(readListSavedWorkflowsResult(buildListToolCall("not json"))).toBeNull();
   });
 
   it("prefers the saved_workflow_list display over the model-facing text projection", () => {
-    // 根因回归钉：v4 wire 上 output 是 formatModelContent 的 XML 风格投影（JSON 探针
-    // 永不命中）；display 通道在场时必须优先于一切文本探针。
+    // Root-cause regression pin: on the v4 wire the output is formatModelContent's XML-style
+    // projection (a JSON probe would never hit); when the display channel is present it must
+    // take priority over every text probe.
     const toolCall = {
       ...buildListToolCall(
         '<saved_workflows count="1"><workflow name="release-check"/></saved_workflows>',
@@ -390,7 +401,7 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
           workflows: [
             {
               name: "release-check",
-              description: "发布前检查：lint、测试、变更日志",
+              description: WORKFLOW_DESCRIPTION,
               scope: "project",
               path: SAVED_PATH,
               argNames: ["target", "skipTests"],
@@ -418,11 +429,12 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
     expect(screen.getByText("2 workflows")).toBeTruthy();
     expect(screen.getByText("release-check")).toBeTruthy();
     expect(screen.getByText("translate-docs")).toBeTruthy();
-    expect(screen.getByText("发布前检查：lint、测试、变更日志")).toBeTruthy();
+    expect(screen.getByText(WORKFLOW_DESCRIPTION)).toBeTruthy();
     expect(screen.getByText("target")).toBeTruthy();
     expect(screen.getByText("skipTests")).toBeTruthy();
 
-    // 通用兜底会打印整包 toolCall；专用卡必须没有这些结构键。
+    // The generic fallback would print the whole toolCall; the dedicated card must not show
+    // these structural keys.
     expect(document.body.textContent).not.toContain('"toolId"');
     expect(document.body.textContent).not.toContain('"workflows"');
   });
@@ -432,7 +444,7 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
 
     expect(screen.getByText("1 file could not be read")).toBeTruthy();
     expect(screen.getByText("/workspace/.zcode/workflows/broken.dwf.ts")).toBeTruthy();
-    // 坏文件不该把好文件挤掉。
+    // A broken file must not crowd out the good ones.
     expect(screen.getByText("release-check")).toBeTruthy();
   });
 
@@ -455,15 +467,19 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
     renderCard(ListSavedWorkflowsToolCallBlock, buildContext(buildListToolCall("not json")));
 
     expect(document.querySelector('[data-saved-workflow-list="true"]')).toBeNull();
-    // 降级路径存在即可——重点是不画一张假的空列表。
+    // The downgrade path just needs to exist — the point is not drawing a fake empty list.
     expect(document.body.textContent).not.toContain("No saved workflows in this project");
   });
 
   it("renders the listing in zh-CN", () => {
     renderCard(ListSavedWorkflowsToolCallBlock, buildContext(buildListToolCall()), "zh-CN");
-    expect(screen.getByText("已保存的工作流")).toBeTruthy();
-    expect(screen.getByText("2 个工作流")).toBeTruthy();
-    expect(screen.getByText("1 个文件无法解析")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.list.listed"])).toBeTruthy();
+    expect(
+      screen.getByText(zhCN["chat.toolCall.workflow.list.count"].replaceAll("{count}", "2")),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(zhCN["chat.toolCall.workflow.list.invalidOne"].replaceAll("{count}", "1")),
+    ).toBeTruthy();
   });
 
   it("tags global-scoped entries next to the name", () => {
@@ -472,7 +488,7 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
         LIST_RESULT.workflows[0],
         {
           name: "deep-research",
-          description: "深度调研",
+          description: "Deep research",
           scope: "global",
           path: "/home/.zcode/workflows/deep-research.dwf.ts",
         },
@@ -486,7 +502,7 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
     );
     const tag = document.querySelector('[data-workflow-scope-tag="global"]');
     expect(tag?.textContent).toBe("Global");
-    // 项目档不加这个标（scope 文本还是 project）。
+    // Project entries do not get this tag (their scope text stays project).
     expect(document.querySelectorAll('[data-workflow-scope-tag="global"]').length).toBe(1);
   });
 });

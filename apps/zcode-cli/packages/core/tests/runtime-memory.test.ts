@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createSessionId, type SessionTaskType } from "@zcode/contracts";
 import { join } from "node:path";
 import { resolveProjectMemoryRoot } from "../src/memory/project-root.js";
+import { resolveEnabledProjectMemoryRoot } from "../src/runtime/helpers/project-memory.js";
 import { createTestAgentRuntime } from "./test-agent-runtime.js";
 import { createTestSessionEventStore } from "./test-event-store.js";
 import { MemoryFileSystem } from "./memory-test-utils.js";
@@ -12,6 +13,20 @@ const WORKSPACE_PATH = "/workspace/project";
 let runtimeSequence = 0;
 
 describe("AgentRuntime project Memory context", () => {
+  it("keeps worktree sessions in the parent workspace memory namespace", () => {
+    const config = {
+      workspacePath: WORKSPACE_PATH,
+      memory: { enabled: true, cliStorageRoot: CLI_STORAGE_ROOT },
+    } as const;
+
+    expect(resolveEnabledProjectMemoryRoot(config, "/worktrees/feature")).toBe(
+      resolveProjectMemoryRoot({
+        cliStorageRoot: CLI_STORAGE_ROOT,
+        workspacePath: WORKSPACE_PATH,
+      }),
+    );
+  });
+
   it.each<SessionTaskType>(["interactive", "fork", "selection_side_chat", "workflow_parent"])(
     "injects the frozen Main Memory section for %s even with an empty root",
     async (taskType) => {

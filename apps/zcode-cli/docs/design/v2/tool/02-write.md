@@ -1,103 +1,103 @@
 # Write Tool
 
-## 定位
+## Purpose
 
-`Write` 创建文件或完整覆盖本地文件。
+`Write` creates a file or fully overwrites a local file.
 
-## 输入契约
+## Input contract
 
-`Write` 输入是严格对象：
+`Write` input is a strict object:
 
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `file_path` | `string` | 是 | 要写入的路径；相对路径按 session cwd 解析，绝对路径会规范化后直接交给文件系统 adapter |
-| `content` | `string` | 是 | 完整文件内容 |
+| Field       | Type     | Required | Description                                                                                                          |
+| ----------- | -------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
+| `file_path` | `string` | yes      | Path to write. Relative paths resolve against the session cwd; absolute paths are normalized and handed to the filesystem adapter |
+| `content`   | `string` | yes      | Full file content                                                                                                    |
 
-设计要求：
+Design requirements:
 
-- `Write` 是完整内容写入，不是 patch。
-- 运行时会把 `file_path` 统一规范化为绝对路径；相对路径基于 session cwd，不能隐式使用 adapter 的宿主进程 cwd。
-- 修改已有文件前必须先 `Read`。
-- 修改已有文件时优先建议使用 `Edit`，因为 `Edit` 只传 diff 语义。
-- 覆盖已有文本文件时，`Write` 必须复用 `FileSystemPort.readTextFile` 返回的原始 `encoding` 和 `lineEndings` metadata，优先保留 GB2312 / GBK / GB18030 等 legacy 编码；新建文件默认 UTF-8。
-- 如果完整写入内容包含原编码无法表示的字符，filesystem adapter 必须失败并保留原文件，不允许静默替换为 `?` 或写坏 bytes。
-- 不应让模型默认新建文档或 README，除非用户明确要求。
+- `Write` writes full content; it is not a patch.
+- The runtime normalizes `file_path` to an absolute path; relative paths use the session cwd and must never implicitly use the adapter's host process cwd.
+- An existing file must be `Read` before modification.
+- Prefer `Edit` for modifying existing files, because `Edit` carries only diff semantics.
+- When overwriting an existing text file, `Write` must reuse the original `encoding` and `lineEndings` metadata returned by `FileSystemPort.readTextFile`, preserving legacy encodings such as GB2312 / GBK / GB18030; new files default to UTF-8.
+- If the full content contains characters the original encoding cannot represent, the filesystem adapter must fail and keep the original file; silent replacement with `?` or corrupted bytes is not allowed.
+- The model should not create documents or READMEs by default unless the user explicitly asks.
 
-## 输出契约
+## Output contract
 
-输出：
+Output:
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `type` | `create | update` | 新建还是覆盖已有文件 |
-| `filePath` | `string` | 写入路径 |
-| `content` | `string` | 已写入内容 |
-| `structuredPatch` | `Hunk[]` | 展示用 diff hunk |
-| `originalFile` | `string | null` | 原始内容，新文件为 `null` |
-| `gitDiff` | optional object | 远程场景可附带 git diff |
+| Field             | Type              | Description                                        |
+| ----------------- | ----------------- | -------------------------------------------------- |
+| `type`            | `create \| update` | New file or overwrite of an existing file          |
+| `filePath`        | `string`          | Path written                                       |
+| `content`         | `string`          | Content written                                    |
+| `structuredPatch` | `Hunk[]`          | Diff hunks for display                             |
+| `originalFile`    | `string \| null`  | Original content, `null` for a new file            |
+| `gitDiff`         | optional object   | A git diff may be attached in remote scenarios     |
 
-模型可见结果是短文本：
+The model-visible result is short text:
 
-- 新建：文件已创建。
-- 更新：文件已更新。
+- Create: file created.
+- Update: file updated.
 
-完整内容和 diff 留给 UI、审计和 artifact，不直接塞进模型响应。
+Full content and diff are left to UI, audit and artifacts, not put in the model response.
 
-当前最小实现要求：
+Minimum current implementation requirements:
 
-- `structuredPatch` 必须在写入成功后生成，供 TUI 和调试事件展示。
-- TUI 只展示有限行数的 red/green diff preview：按 hunk 行渲染行号 gutter、`+`/`-` 标记和整行红绿背景；不把这个 UI projection 当作模型可见契约。
-- 首版 TUI preview 不做语法高亮、word diff、权限弹窗内编辑或完整 review UI；这些能力需要独立 spec 和测试。
-- 模型可见结果仍走 result budget 序列化；UI diff display 是额外 projection，不应被业务逻辑反向解析。
+- `structuredPatch` must be generated after a successful write, for TUI and debug events.
+- The TUI shows only a bounded-line red/green diff preview: a line-number gutter per hunk line, `+`/`-` markers and full-line red/green backgrounds. This UI projection is not a model-visible contract.
+- The first TUI preview has no syntax highlighting, word diff, in-permission-dialog editing or full review UI; those need their own spec and tests.
+- The model-visible result still goes through result-budget serialization; the UI diff display is an extra projection and business logic must not parse it back.
 
-## 行为语义
+## Behavior semantics
 
-核心流程：
+Core flow:
 
-1. 按 session cwd 展开相对路径并规范化为绝对路径。
-2. 当前版本不硬拒绝 workspace 外路径，只保留绝对路径规范化；后续由 filesystem permission adapter 接管工作区外写入的 ask/deny 策略。
-3. 定位父目录。
-4. 对内容做 secret 检查，特别是 team memory 文件。
-5. 检查 edit deny 规则。
-6. 如果文件已存在，要求此前完整读取过该文件。
-7. 通过 mtime 和读缓存防止 stale write。
-8. 创建父目录。
-9. 可选记录 file history，用于撤销或审计。
-10. 再次同步读取当前文件并确认没有被并发修改。
-11. 以原编码写入完整内容；ZCode 当前会把已有文件的 `lineEndings` metadata 传回 adapter 以保留既有换行风格。无法编码到原编码时失败，不降级成有损替换。
-12. 通知 LSP 和 IDE 文件已更新。
-13. 更新 `readFileState` 为新内容和新 mtime。
-14. 返回 create/update 结果和展示用 diff。
+1. Expand a relative path against the session cwd and normalize to an absolute path.
+2. The current version does not hard-reject paths outside the workspace and only normalizes absolute paths; the filesystem permission adapter will later own ask/deny for outside-workspace writes.
+3. Locate the parent directory.
+4. Run a secret check on the content, especially for team memory files.
+5. Check edit deny rules.
+6. If the file exists, require that it was fully read earlier.
+7. Prevent stale writes through mtime and the read cache.
+8. Create the parent directory.
+9. Optionally record file history for undo or audit.
+10. Synchronously re-read the current file and confirm it was not modified concurrently.
+11. Write the full content in the original encoding; ZCode currently passes the existing file's `lineEndings` metadata back to the adapter to keep the existing newline style. If the content cannot be encoded in the original encoding, fail; never degrade to lossy replacement.
+12. Notify LSP and IDE that the file was updated (LSP: publish `FileMutatedEvent`; Write does not wait for the language server, see [19-lsp.md](19-lsp.md)).
+13. Update `readFileState` to the new content and new mtime.
+14. Return the create/update result and a display diff.
 
-## 权限模型
+## Permission model
 
-`Write` 是写入工具，默认不是只读，也不并发安全。
+`Write` is a write tool: not read-only and not concurrency-safe by default.
 
-权限判断来自统一 filesystem write permission：
+Permission decisions come from the unified filesystem write permission:
 
-- edit deny 规则优先。
-- plan、scratchpad 等内部可编辑路径可直接 allow。
-- `.claude/**` 等敏感目录只允许 session scoped 特例规则绕过安全检查。
-- 危险文件、危险目录、Claude settings、可疑 Windows path 进入 ask。
-- `acceptEdits` 模式下，工作区内写入可 allow。
-- explicit edit allow 可 allow。
-- 默认 ask，并提供 `acceptEdits` 或新增工作目录建议。
+- Edit deny rules take priority.
+- Internal editable paths such as plan and scratchpad may be allowed directly.
+- Sensitive directories such as `.claude/**` allow only session-scoped special rules to bypass the safety check.
+- Dangerous files, dangerous directories, Claude settings and suspicious Windows paths go to ask.
+- In `acceptEdits` mode, writes inside the workspace may be allowed.
+- An explicit edit allow may allow.
+- Default is ask, with `acceptEdits` or add-working-directory suggestions.
 
-ZCode 应把 create/update 都归入 `workspace` side effect，并显式声明可能覆盖已有文件。
+ZCode classifies both create and update as `workspace` side effects and explicitly declares that an existing file may be overwritten.
 
-## 校验与错误
+## Validation and errors
 
-失败路径包括：
+Failure paths:
 
-- team memory secret 检查失败。
-- 路径被 edit deny rule 命中。
-- 现有文件未读过。
-- 现有文件只读了 partial view。
-- 文件自上次读取后被用户、formatter 或 linter 修改。
-- UNC path 不做提前 I/O，交给权限处理。
-- 写入过程中的文件系统错误向上冒泡。
+- Team memory secret check fails.
+- Path hits an edit deny rule.
+- Existing file was not read.
+- Existing file was read only as a partial view.
+- The file was modified by the user, a formatter or a linter after the last read.
+- A UNC path does no early I/O and is left to permission handling.
+- Filesystem errors during the write bubble up.
 
-这些错误应保留原始 cause，并区分：
+These errors keep the original cause and distinguish:
 
 - `file_not_read`
 - `partial_read`
@@ -106,30 +106,28 @@ ZCode 应把 create/update 都归入 `workspace` side effect，并显式声明�
 - `secret_detected`
 - `io_error`
 
-## ZCode 设计结论
+## Implementation status (2026-05-08)
 
-## 实现状态（2026-05-08）
+| Capability                              | Status      | Notes                                                                                                                                                                                                                                              |
+| --------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Basic create/overwrite                  | implemented | `Write` reads the original content through `FileSystemPort`, writes the full content and generates `structuredPatch`.                                                                                                                               |
+| Relative path resolved against cwd      | implemented | Path resolution does not depend on the host process cwd.                                                                                                                                                                                           |
+| Hard block of outside-workspace paths   | disabled    | The current version only normalizes paths and does not reject outside-workspace writes in core path-policy, because a subagent needs to operate on external repos or files on user instruction; fine-grained ask/deny will converge in the filesystem permission adapter. |
+| Model-visible usage guidance            | in progress | Guidance added: `Read` before modifying an existing file, prefer `Edit` for existing files, do not proactively create documents.                                                                                                                    |
+| Model-visible short result              | in progress | A successful `Write` result serializes to a short confirmation; full content and diff stay in structured output / UI projection only.                                                                                                               |
+| Existing file read-before-write         | missing     | The runtime does not yet require an existing file to be fully `Read` first.                                                                                                                                                                         |
+| Stale write protection                  | partial     | Relies on the single read/write protection of `FileSystemPort.writeTextFile(expectedRevision)`; read-cache-based unread, partial-read and mtime/content comparison are missing.                                                                     |
+| File history / LSP / IDE notification   | partial     | After a successful write `FileMutatedEvent` is published and consumed by LSP document sync (see [19-lsp.md](19-lsp.md)); file history and IDE notification are not wired yet.                                                                      |
+| Secret/settings/dangerous path checks   | missing     | Currently relies mainly on the generic path policy and permission declarations; special-file safety checks are not covered yet.                                                                                                                    |
 
-| 能力 | 状态 | 说明 |
-| --- | --- | --- |
-| 基本创建/覆盖 | implemented | 当前 `Write` 已通过 `FileSystemPort` 读取原内容、写入完整内容并生成 `structuredPatch`。 |
-| 相对路径按 session cwd 解析 | implemented | 当前路径解析不依赖宿主进程 cwd。 |
-| workspace 外路径硬拦截 | disabled | 当前版本只规范化路径，不在 core path-policy 拒绝工作区外写入；原因是 subagent 需要按用户指令操作外部仓库或文件，细粒度 ask/deny 后续收敛到 filesystem permission adapter。 |
-| 模型可见使用指导 | in progress | 本轮补充 guidance：修改已有文件前先 `Read`，优先用 `Edit` 修改既有文件，不主动创建文档。 |
-| 模型可见短结果 | in progress | 本轮将 `Write` 成功结果序列化为短确认文本，完整内容和 diff 仅留给结构化 output / UI projection。 |
-| existing file read-before-write | missing | 当前 runtime 尚未要求已有文件先被完整 `Read`。 |
-| stale write 防护 | partial | 当前依赖 `FileSystemPort.writeTextFile(expectedRevision)` 的单次读写保护，但缺少基于 read cache 的未读、partial read 和 mtime/content 对比。 |
-| file history / LSP / IDE 通知 | missing | 尚未接入文件历史记录和编辑器通知链路。 |
-| secret/settings/dangerous path 校验 | missing | 当前主要依赖通用路径策略和权限声明，尚未覆盖特殊文件安全校验。 |
+Only model guidance and short-result serialization have landed; read cache, stale guard and safety checks come in later stages.
 
-本轮只落地模型指导和短结果序列化；read cache、stale guard 和安全校验在后续阶段补齐。
+`Write` must not be a thin shell over `fs.writeFile`. It is a controlled file mutation pipeline:
 
-`Write` 不能是一个直接 `fs.writeFile` 的薄壳。它需要成为受控 file mutation pipeline：
-
-- 业务层只提交 `WriteFileIntent`。
-- `FileMutationService` 负责读缓存校验、mtime/content 比对、diff 生成、history 和 LSP 通知。
-- `FileSystemPort` 负责 mkdir、stat、read、atomic write。
-- `FileSystemPort` 是写入能力边界；Node 本地写入和 ZCode app-server `fs/write_text_file` 都必须实现同一契约。
-- `PermissionPort` 负责 workspace、dangerous path、mode 和 rule 判断。
-- 写入成功后必须更新 read cache，否则下一次 `Edit` 会误判 stale。
-- 测试必须覆盖未读写入、partial read、mtime 假阳性、文件不存在创建、路径权限和换行保持。
+- The business layer only submits a `WriteFileIntent`.
+- `FileMutationService` owns read-cache validation, mtime/content comparison, diff generation, history and LSP notification.
+- `FileSystemPort` owns mkdir, stat, read and atomic write.
+- `FileSystemPort` is the write capability boundary; Node local writes and ZCode app-server `fs/write_text_file` must implement the same contract.
+- `PermissionPort` owns workspace, dangerous path, mode and rule decisions.
+- After a successful write the read cache must be updated, otherwise the next `Edit` misjudges staleness.
+- Tests must cover unread write, partial read, mtime false positives, creating a nonexistent file, path permission and newline preservation.

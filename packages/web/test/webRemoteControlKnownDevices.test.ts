@@ -39,8 +39,8 @@ const onlineGroup = (
   ],
 });
 
-describe("本地记住的设备名与平台", () => {
-  it("兼容旧 [mid, name] 二元组，接受 [mid, name, platform]，忽略形状不对的条目并去掉首尾空白", () => {
+describe("locally remembered device names and platforms", () => {
+  it("accepts legacy [mid, name] pairs and [mid, name, platform], ignores entries of the wrong shape, and trims leading and trailing whitespace", () => {
     const storage = memoryStorage(
       JSON.stringify([
         ["mid-1", " One "],
@@ -62,7 +62,7 @@ describe("本地记住的设备名与平台", () => {
     ]);
   });
 
-  it("缺失、非数组 JSON、损坏内容或读取抛错都按没有记住任何设备处理", () => {
+  it("a missing value, non-array JSON, corrupted content, or a read that throws are all treated as no remembered device", () => {
     expect(readKnownDevices(memoryStorage()).size).toBe(0);
     expect(readKnownDevices(memoryStorage('{"mid-1":"One"}')).size).toBe(0);
     expect(readKnownDevices(memoryStorage("{not json")).size).toBe(0);
@@ -76,7 +76,7 @@ describe("本地记住的设备名与平台", () => {
     ).toBe(0);
   });
 
-  it("只写入有在线连接且有名字或平台的设备项，再次见到的设备移到最近位置", () => {
+  it("only writes device entries that have an online connection and a name or platform; a device seen again moves to the most recent position", () => {
     const storage = memoryStorage(
       JSON.stringify([
         ["mid-a", "A"],
@@ -99,7 +99,7 @@ describe("本地记住的设备名与平台", () => {
     ]);
   });
 
-  it("没有任何可写入的设备项时不触碰存储", () => {
+  it("does not touch storage when there are no writable device entries", () => {
     const storage = memoryStorage(JSON.stringify([["mid-a", "A"]]));
     const known = readKnownDevices(storage);
     let writes = 0;
@@ -110,7 +110,7 @@ describe("本地记住的设备名与平台", () => {
     expect(writes).toBe(0);
   });
 
-  it(`超过 ${KNOWN_DEVICES_LIMIT} 条时淘汰最久未更新的条目`, () => {
+  it(`evicts the least recently updated entries when there are more than ${KNOWN_DEVICES_LIMIT}`, () => {
     const seeded = Array.from({ length: KNOWN_DEVICES_LIMIT }, (_, i) => [`mid-${i}`, `D${i}`]);
     const storage = memoryStorage(JSON.stringify(seeded));
     const known = readKnownDevices(storage);
@@ -125,7 +125,7 @@ describe("本地记住的设备名与平台", () => {
     expect(stored.at(-1)).toEqual(["mid-new", "New"]);
   });
 
-  it("写入失败静默忽略，内存中的映射仍已更新", () => {
+  it("silently ignores write failures; the in-memory mapping is still updated", () => {
     const known = new Map();
     expect(() =>
       rememberKnownDevices(

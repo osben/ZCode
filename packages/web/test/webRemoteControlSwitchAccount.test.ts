@@ -9,59 +9,61 @@ import {
 
 afterEach(cleanup);
 
-describe.each(["zh-CN", "en-US"] as const)("%s 手动切换账号确认", (locale) => {
-  it.each(["devices", "failure"])("%s 取消保留登录，只有确认才调用退出", async (source) => {
-    const onSwitch = vi.fn();
-    const label = locale === "zh-CN" ? "切换账号" : "Switch account";
-    render(
-      source === "devices"
-        ? createElement(WebRemoteControlDeviceListPage, {
-            locale,
-            view: { kind: "devices", devices: [], loading: false, error: false },
-            onSwitchAccount: onSwitch,
-            onRefresh: vi.fn(),
-            onSelect: vi.fn(),
-          })
-        : createElement(WebRemoteControlFailureScreen, {
-            locale,
-            failure: { reason: "device-not-owned" },
-            primaryActionLabel: label,
-            onReload: onSwitch,
-          }),
-    );
-    const trigger = screen.getByRole("button", { name: label, exact: true });
-    fireEvent.click(trigger);
-    expect(onSwitch).not.toHaveBeenCalled();
-    expect(screen.getByRole("dialog").textContent).toContain(
-      locale === "zh-CN" ? "电脑端仍保持登录" : "Your computer will stay signed in",
-    );
-    const cancel = screen.getByRole("button", { name: locale === "zh-CN" ? "取消" : "Cancel" });
-    expect(document.activeElement).toBe(cancel);
-    fireEvent.click(cancel);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(document.activeElement).toBe(trigger);
-    expect(onSwitch).not.toHaveBeenCalled();
+describe("manual account switch confirmation", () => {
+  const locale = "en-US" as const;
+  it.each(["devices", "failure"])(
+    "%s cancel keeps the sign-in; only confirm signs out",
+    async (source) => {
+      const onSwitch = vi.fn();
+      const label = "Switch account";
+      render(
+        source === "devices"
+          ? createElement(WebRemoteControlDeviceListPage, {
+              locale,
+              view: { kind: "devices", devices: [], loading: false, error: false },
+              onSwitchAccount: onSwitch,
+              onRefresh: vi.fn(),
+              onSelect: vi.fn(),
+            })
+          : createElement(WebRemoteControlFailureScreen, {
+              locale,
+              failure: { reason: "device-not-owned" },
+              primaryActionLabel: label,
+              onReload: onSwitch,
+            }),
+      );
+      const trigger = screen.getByRole("button", { name: label, exact: true });
+      fireEvent.click(trigger);
+      expect(onSwitch).not.toHaveBeenCalled();
+      expect(screen.getByRole("dialog").textContent).toContain("Your computer will stay signed in");
+      const cancel = screen.getByRole("button", { name: "Cancel" });
+      expect(document.activeElement).toBe(cancel);
+      fireEvent.click(cancel);
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(document.activeElement).toBe(trigger);
+      expect(onSwitch).not.toHaveBeenCalled();
 
-    fireEvent.click(trigger);
-    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(onSwitch).not.toHaveBeenCalled();
+      fireEvent.click(trigger);
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(onSwitch).not.toHaveBeenCalled();
 
-    fireEvent.click(trigger);
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: locale === "zh-CN" ? "退出并切换" : "Sign out & switch",
-      }),
-    );
-    expect(onSwitch).toHaveBeenCalledOnce();
-  });
+      fireEvent.click(trigger);
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Sign out & switch",
+        }),
+      );
+      expect(onSwitch).toHaveBeenCalledOnce();
+    },
+  );
 });
 
-it("非账号归属失败的重试不弹出确认", () => {
+it("retry on a non-account-ownership failure does not open the confirmation", () => {
   const onReload = vi.fn();
   render(
     createElement(WebRemoteControlFailureScreen, {
-      locale: "zh-CN",
+      locale: "en-US",
       failure: { reason: "desktop-disconnected" },
       onReload,
     }),

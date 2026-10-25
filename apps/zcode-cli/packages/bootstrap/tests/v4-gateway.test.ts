@@ -104,6 +104,15 @@ interface HostStub {
   executed: CommandEnvelope[];
   errors: Array<{ scope: string; error: unknown }>;
   sessions: Set<string>;
+  preparationSeeds: Map<
+    string,
+    {
+      branchName: string;
+      targetPath: string;
+      baseBranch?: string;
+      status: "preparing" | "failed" | "cancelled";
+    }
+  >;
   executeImpl: (
     envelope: CommandEnvelope,
     admission?: { admissionSeq: number; admittedAt: number; queueItemId: string },
@@ -134,6 +143,8 @@ interface HostStub {
   resumeOutcome: "resumed" | "notFound";
   projectionTerminations: Array<{ sessionId: string; reasonCode: string }>;
   projectionEvents: Array<{ sessionId: string; event: SessionEvent }>;
+  childParentIds: Map<string, string>;
+  childActivity: Array<{ parentSessionId: string; childSessionId: string }>;
 }
 
 function makeHost(): HostStub {
@@ -143,6 +154,7 @@ function makeHost(): HostStub {
     executed: [],
     errors: [],
     sessions: new Set(["session-1"]),
+    preparationSeeds: new Map(),
     executeImpl: async () => undefined,
     persistedEvents: new Map(),
     synthesizedSessions: new Set(),
@@ -168,6 +180,8 @@ function makeHost(): HostStub {
     resumeOutcome: "notFound",
     projectionTerminations: [],
     projectionEvents: [],
+    childParentIds: new Map(),
+    childActivity: [],
   };
 }
 
@@ -184,6 +198,10 @@ function makeGateway(host: HostStub): ConversationV4Gateway {
       emitConversationTelemetryFact: (fact) => host.telemetryFacts.push(fact),
       onTargetCompleted: (sessionId, event) => {
         host.projectionEvents.push({ sessionId, event });
+      },
+      getChildSessionParentId: (sessionId) => host.childParentIds.get(sessionId) ?? null,
+      onChildSessionActivity: (parentSessionId, childSessionId) => {
+        host.childActivity.push({ parentSessionId, childSessionId });
       },
       executeCommand: async (envelope, admission) => {
         host.executed.push(envelope);
@@ -222,6 +240,7 @@ function makeGateway(host: HostStub): ConversationV4Gateway {
           synthesized: host.synthesizedSessions.has(sessionId),
         },
       getSessionConfigSeed: (sessionId) => host.configSeeds.get(sessionId) ?? null,
+      getSessionPreparationSeed: (sessionId) => host.preparationSeeds.get(sessionId) ?? null,
       getSessionMemoryEnabled: (sessionId) => host.memorySettings?.get(sessionId),
       getConversationFileChanges: async (sessionId, targetRowId, messageIds) => {
         host.fileChangeCalls.push({ sessionId, targetRowId, messageIds });
@@ -298,6 +317,99 @@ describe("订阅与帧调度", () => {
     expect(result.initialFrame?.payload.kind).toBe("snapshot");
     // 初始帧只进入 server 内部 dispatch result，不走 online notification 出口。
     expect(host.frames).toHaveLength(0);
+  });
+
+  it("preparation status changes refresh live subscribers with a snapshot", async () => {
+    const host = makeHost();
+    const gateway = makeGateway(host);
+    const log = new EventLog();
+    gateway.ingest("session-1", sessionCreated(log));
+    const subscribed = await gateway.subscribe(subscribeParams());
+    expect(subscribed.ack.subscriptionId).toBeTruthy();
+
+    host.preparationSeeds.set("session-1", {
+      branchName: "zcode/fresh-otter",
+      targetPath: "/tmp/fresh-otter",
+      baseBranch: "main",
+      status: "failed",
+    });
+    gateway.notifyPreparedSessionChanged("session-1");
+    await vi.advanceTimersByTimeAsync(CONTINUOUS_WINDOW);
+
+    const updated = host.frames.at(-1);
+    expect(updated?.payload.kind).toBe("snapshot");
+    if (updated?.payload.kind === "snapshot") {
+      expect(updated.payload.snapshot.meta.worktreePreparation).toMatchObject({
+        status: "failed",
+        branchName: "zcode/fresh-otter",
+        targetPath: "/tmp/fresh-otter",
+        baseBranch: "main",
+      });
+    }
+  });
+
+  it("waits for subscribe ACK admission before sending a metadata snapshot", async () => {
+    const host = makeHost();
+    const gateway = makeGateway(host);
+    const log = new EventLog();
+    gateway.ingest("session-1", sessionCreated(log));
+    const subscribe = await gateway.subscribeReserved(subscribeParams());
+
+    host.preparationSeeds.set("session-1", {
+      branchName: "zcode/fresh-otter",
+      targetPath: "/tmp/fresh-otter",
+      baseBranch: "main",
+      status: "preparing",
+    });
+    gateway.notifyPreparedSessionChanged("session-1");
+    await vi.advanceTimersByTimeAsync(CONTINUOUS_WINDOW);
+    expect(host.frames).toEqual([]);
+
+    expect(subscribe.commit()).toBe(true);
+    await vi.advanceTimersByTimeAsync(CONTINUOUS_WINDOW);
+    expect(host.frames.at(-1)?.payload).toMatchObject({
+      kind: "snapshot",
+      snapshot: {
+        meta: {
+          worktreePreparation: {
+            status: "preparing",
+            branchName: "zcode/fresh-otter",
+            targetPath: "/tmp/fresh-otter",
+          },
+        },
+      },
+    });
+    gateway.dispose();
+  });
+
+  it("publishes cleared preparation metadata when a prepared session becomes active", async () => {
+    const host = makeHost();
+    const gateway = makeGateway(host);
+    const log = new EventLog();
+    gateway.ingest("session-1", sessionCreated(log));
+    const subscribed = await gateway.subscribe(subscribeParams());
+    expect(subscribed.ack.subscriptionId).toBeTruthy();
+
+    host.preparationSeeds.set("session-1", {
+      branchName: "zcode/fresh-otter",
+      targetPath: "/tmp/fresh-otter",
+      baseBranch: "main",
+      status: "preparing",
+    });
+    gateway.notifyPreparedSessionChanged("session-1");
+    await vi.advanceTimersByTimeAsync(CONTINUOUS_WINDOW);
+
+    host.frames.length = 0;
+    host.preparationSeeds.delete("session-1");
+    gateway.notifyPreparedSessionChanged("session-1");
+    await vi.advanceTimersByTimeAsync(CONTINUOUS_WINDOW);
+
+    const updated = host.frames.at(-1);
+    expect(updated?.payload.kind).toBe("snapshot");
+    if (updated?.payload.kind === "snapshot") {
+      expect(updated.payload.snapshot.meta.worktreePreparation).toBeUndefined();
+    }
+    gateway.dispose();
   });
 
   it("只从 live ingest 发送 telemetry fact，并按 eventId 有界入口去重", () => {
@@ -4844,6 +4956,41 @@ describe("detached subagent child publisher 生命周期（session-idle-deactiva
       detachedLive: 0,
       detachedTerminal: 0,
     });
+  });
+
+  it("exposes detached child running state without notifying the parent (sidebar §9)", () => {
+    const host = makeHost();
+    const gateway = makeGateway(host);
+    const childLog = new EventLog("child-facts");
+    gateway.ingestDetachedLiveSession("child-facts", sessionCreated(childLog), "parent-facts");
+    gateway.ingestDetachedLiveSession("child-facts", textDelta(childLog, "stream"), "parent-facts");
+    expect(gateway.getDetachedChildSessionFacts()).toEqual([
+      { parentSessionId: "parent-facts", sessionId: "child-facts", running: false },
+    ]);
+
+    gateway.ingestDetachedLiveSession(
+      "child-facts",
+      childLog.push(
+        SessionEventType.TurnStarted,
+        { turnNumber: 1, input: "work" },
+        { turnId: "turn-1" },
+      ),
+      "parent-facts",
+    );
+    expect(gateway.getDetachedChildSessionFacts()[0]?.running).toBe(true);
+    gateway.ingestDetachedLiveSession("child-facts", childTurnComplete(childLog), "parent-facts");
+    expect(gateway.getDetachedChildSessionFacts()[0]?.running).toBe(false);
+    expect(host.childActivity).toEqual([]);
+  });
+
+  it("notifies the parent for ordinary child records through the host lookup", () => {
+    const host = makeHost();
+    host.childParentIds.set("child-record", "parent-record");
+    const gateway = makeGateway(host);
+    gateway.ingest("child-record", sessionCreated(new EventLog("child-record")));
+    expect(host.childActivity).toEqual([
+      { parentSessionId: "parent-record", childSessionId: "child-record" },
+    ]);
   });
 
   it("child 已有自己的 record 时，父释放不碰它，交给 child 自己的生命周期", () => {

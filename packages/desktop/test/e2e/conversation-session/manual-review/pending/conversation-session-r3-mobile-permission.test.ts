@@ -223,7 +223,7 @@ describe(`${CASE_MARKER}: 权限阻塞在手机端呈现、重建手机 bridge �
         viewport: MOBILE_VIEWPORT,
         isMobile: true,
         hasTouch: true,
-        locale: "zh-CN",
+        locale: "en-US",
       });
       const page = await context.newPage();
       await openMobilePairingPage(page, pairUrl, {

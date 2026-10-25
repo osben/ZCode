@@ -1,49 +1,53 @@
 // ============================================================
-// Dynamic Workflow Run Port：就地改一个在飞 run 的并发上界
+// Dynamic Workflow Run Port: retune the concurrency cap of a live run in place.
 // ============================================================
-// docs/dynamic-workflow/concurrency.md「Retuning a live run」。与情势截面
-// （dynamic-workflow-run-roster.port.ts）同一条拆分理由：dynamic-workflow-run.port.ts 顶到
-// oxlint max-lines 上限（400 行），而这三个类型自成一组。公开面不变——那边原样再导出，
-// `@zcode/contracts` 的导入路径一字不改。
+// docs/dynamic-workflow/concurrency.md, “Retuning a live run”. Split for the same reason as the roster
+// view (dynamic-workflow-run-roster.port.ts): dynamic-workflow-run.port.ts reached oxlint's 400-line
+// limit, and these three types form a cohesive group. The public surface is unchanged: that module
+// re-exports them, so `@zcode/contracts` import paths remain the same.
 
 /**
- * {@link import("./dynamic-workflow-run.port.js").DynamicWorkflowRunPort.retuneConcurrency}
- * 的请求。
+ * Request for {@link import("./dynamic-workflow-run.port.js").DynamicWorkflowRunPort.retuneConcurrency}.
  */
 export interface DynamicWorkflowRunRetuneRequest {
   runId: string;
   /**
-   * 新的并发上界。`null` = 天花板 = 解除本 run 自己的限制（与 `AmendWorkflow` 的
-   * `max_concurrency: null` 同义）。给了数就钳到 `[1, 天花板]`——钳制用的是端口自己那一份实现，
-   * 工具层无须、也不该再钳一次得到第二个答案。
+   * New concurrency limit. `null` = ceiling = remove this run's own limit (equivalent to
+   * `max_concurrency: null` in `AmendWorkflow`). A supplied number is clamped to
+   * `[1, ceiling]` by the port's implementation; the tool layer need not and must not clamp it
+   * again and produce a second answer.
    */
   maxConcurrency: number | null;
 }
 
 /**
- * retune 被拒的结构化理由。两者对调用方是**两个不同的下一步**，所以必须可分辨：
+ * Structured reason why retune was refused. These imply **different next steps** for the
+ * caller and must therefore remain distinguishable:
  *
- *   - `not_live`：本 service 手上没有这个在飞 run（从来不是本进程的、已经结算的），或者它恰好
- *     在存活判定与本次调用之间结算了。调用方回落到一次真正的修订（`AmendWorkflow` 的既有那条路）。
- *   - `unchanged`：值与此刻生效的上界相同。什么都没写、什么都没停——`current` 就是那个值，
- *     调用方据它写出「已经是 n 了」。
+ *   - `not_live`: this service does not have this run in flight (it never belonged to this
+ *     process or has already settled), or it settled between the liveness check and this call.
+ *     The caller falls back to an actual amendment (the existing `AmendWorkflow` path).
+ *   - `unchanged`: the value matches the limit currently in effect. Nothing was written or
+ *     stopped; `current` is that value, which lets the caller report "already at n."
  */
 export type DynamicWorkflowRunRetuneRefusalReason = "not_live" | "unchanged";
 
 /**
- * retune 的结构化结果。失败走 reason 而不是 throw，与
- * {@link import("./dynamic-workflow-run.port.js").DynamicWorkflowRunAmendResult} 同一条论证：
- * 两种理由都是调用方可预期的业务分支。
+ * Structured result of retune. Failures use `reason` rather than throwing, for the same
+ * reason as {@link import("./dynamic-workflow-run.port.js").DynamicWorkflowRunAmendResult}:
+ * both outcomes are expected business branches for the caller.
  *
- * `defaultConcurrency` 与 `previous` 不是锦上添花：模型面的回话要说「至多 n 个子代理同时运行」，而
- * n 等于默认并发时要注明「（默认）」（与 `CreateWorkflow` 的回话同一条判据）；事件日志要说「8 → 2」，
- * 从单个新值推不出前一个。两者都只有端口这一侧知道，留给调用方重算就是第二份默认并发实现。
+ * `defaultConcurrency` and `previous` are required context: the model-facing reply must say “up to n
+ * subagents at once,” and label n as “(default)” when it equals the default concurrency (same rule as
+ * the `CreateWorkflow` reply). The event log must show “8 → 2,” which cannot be derived from the new
+ * value alone. Only the port knows both values; making callers recompute them would create a second
+ * default-concurrency implementation.
  */
 export type DynamicWorkflowRunRetuneResult =
   | { ok: true; maxConcurrency: number; previous: number; defaultConcurrency: number }
   | {
       ok: false;
       reason: DynamicWorkflowRunRetuneRefusalReason;
-      /** 此刻生效的上界；`unchanged` 恒在场，`not_live` 只在还读得到时在场。 */
+      /** Limit currently in effect; always present for `unchanged`, and present for `not_live` only when still available. */
       current?: number;
     };

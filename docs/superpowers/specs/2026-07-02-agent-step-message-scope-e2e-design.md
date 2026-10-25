@@ -1,140 +1,66 @@
 # Agent Step Message Scope E2E Design
 
-> 状态（2026-07-15）：修复已实施，本文保留为历史 E2E 设计记录。原正式 E2E 已随 V4 测试迁移
-> 进入 `manual-review/pending`；当前自动覆盖事实以
-> `docs/testing/conversation-session-e2e-coverage-matrix.md` 为准。
+Status: fix implemented; this is a historical E2E design record. The original formal E2E moved to `manual-review/pending` with the V4 test migration; current automated coverage facts live in `docs/testing/conversation-session-e2e-coverage-matrix.md`.
 
-## Feature Summary
+Change: fix `message_completion` wrongly accumulating the whole session history, locked by a failure-reproducing E2E on message scope. No new UI behavior; verifies the `/report` `agent_trace` payload. Code owners: `packages/ui/src/lib/messageTelemetry.ts`, `packages/ui/src/hooks/useZCodeChat.ts`, `packages/ui/src/hooks/taskStreamEventHandlers.ts`. Out of scope: queue/stop, cross-session, mobile replayable recovery protocol, real telemetry server ingestion.
 
-| Field | Value |
-| --- | --- |
-| Change | 修复 `message_completion` 错误累计整个 session 历史的问题，并以失败复现 E2E 锁定 message scope |
-| User-visible surfaces | 无 UI 新行为；验证 `/report` 的 `agent_trace` payload |
-| Existing docs | `docs/monitoring/business-monitoring.md`、`docs/monitoring/performance-telemetry-catalog.md`、`docs/conversation-session-case-catalog.md` |
-| Existing code owners | `packages/ui/src/lib/messageTelemetry.ts`、`packages/ui/src/hooks/useZCodeChat.ts`、`packages/ui/src/hooks/taskStreamEventHandlers.ts` |
-| Out of scope | queue/stop、跨 session、手机 replayable 恢复协议、真实 telemetry 服务端接收 |
+User rulings: (1) cover only the history-accumulation defect (A), not also unclosed active tool steps — verify only `agent_step_cnt` message scope; (2) reconcile from local observable evidence (no external telemetry server); (3) since the production renderer disables local logs, use Electron `net.fetch` mock call history as equivalent, stronger local evidence — reconcile the main process's actual HTTP transport inputs rather than re-enabling production logs.
 
-## Clarification Log
+Boundaries:
 
-| Round | Question | User answer | Boundary fixed | Follow-up needed |
-| --- | --- | --- | --- | --- |
-| 1 | 覆盖历史累计问题（A），还是同时覆盖活动 tool step 未收口（A+B） | A | 只验证 `agent_step_cnt` 的 message scope | no |
-| 2 | 使用日志对账、preload mock，还是 endpoint 改写 | 日志对账 | 优先从本地可观测证据对账，不依赖外部 telemetry 服务端 | no |
-| 3 | production renderer 禁用本地日志，无法读取原计划 payload | 使用 Electron `net.fetch` mock 的调用历史作为等价且更强的本地证据 | 对账主进程实际 HTTP transport 入参，不为测试重新打开生产日志 | no |
+| Boundary           | Decision                                             | Includes                                            | Excludes / prunes                              |
+| ------------------ | ---------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------- |
+| Client chain       | `desktop-continuous`                                 | desktop renderer normal session stream              | `web-remote-replayable`, snapshot/gap recovery |
+| Session shape      | two consecutive turns in one session                 | the second turn must see the first turn's history   | cross-session, fork/edit/compact               |
+| Step shape         | one plain generation step per turn                   | deterministic plain-text replay                     | reasoning, tool call, permission/elicitation   |
+| Reconciliation key | `talkId + messageId`                                 | one completion and its per-step events              | talkId-only aggregation                        |
+| Evidence           | Electron main-process telemetry fetch call arguments | final HTTP body `agent_step` / `message_completion` | external telemetry server persistence          |
 
-## Boundary Decisions
+State owners: active prompt telemetry — UI `activePromptTelemetryByTask` (completion `messageId`); agent step lifecycle — UI `agentStepTelemetryByTask` (per `talkId + messageId` `agent_step` payloads); session message history — agent runtime/session + UI projection (turn 1 complete before turn 2 sends; same `talkId`); telemetry transport input — renderer `reportAppTelemetryEvent` → main `createDesktopTelemetryFetch(net)`; E2E observation — WDIO Electron service `browser.electron.mock("net", "fetch")` call history.
 
-| Boundary | Decision | Includes | Excludes / prunes | Source |
-| --- | --- | --- | --- | --- |
-| 客户端链路 | `desktop-continuous` | 桌面 renderer 的正常 session stream | `web-remote-replayable`、snapshot/gap recovery | user |
-| 会话形态 | 同一 session 连续两轮 | 第二轮必须能看到第一轮历史 | 跨 session、fork/edit/compact | user |
-| step 形态 | 每轮一个普通 generation step | 确定性纯文本 replay | reasoning、tool call、permission/elicitation | design |
-| 对账主键 | `talkId + messageId` | 同一 completion 与它的逐 step 事件 | 仅按 talkId 聚合 | monitoring spec |
-| 证据 | Electron 主进程 telemetry fetch 调用参数 | 最终 HTTP body 中的 `agent_step`、`message_completion` | 外部 telemetry 服务端落库结果 | code constraint + user-approved local reconciliation |
+## Production fix design
 
-## Domain Scope
+`message_completion` and per-item `agent_step` share one active-prompt lifecycle:
 
-| Domain | Include? | Why it can change behavior | Primary sources |
-| --- | --- | --- | --- |
-| Conversation/session behavior | yes | 必须证明两轮属于同一 session 且都完成 | conversation catalog/workflow |
-| Monitoring/telemetry | yes | 被测字段和逐事件对账都属于 `/report agent_trace` | monitoring specs |
-| Provider replay | yes | 两轮需要确定性、无工具的纯文本响应 | E2E fixture workflow |
-| Mobile remote/replayable | no | message scope 缺陷不需要恢复链路即可复现 | user pruning |
+1. `activatePromptTelemetry()` initializes the turn's step aggregation and `loop_index` from `1` when activating a user message.
+2. Each step accumulates exactly once at `finalizeAgentStep()`; therefore `agent_step_cnt` equals the count of `agent_step` events actually reported for the current `message_id`.
+3. A closed `tool_call` step also accumulates `tool_call_total`; failed/timed-out tools accumulate `tool_call_failed`, keeping the turn's first tool error for completion failure fallback.
+4. `finalizePromptTelemetry()` reads only the active prompt's aggregates — it never scans the session's full `taskMessages`.
+5. `FinalizePromptTelemetryInput.taskMessages` and two historical scan helpers are deleted; callers no longer read the message store for completion counts.
 
-## Concept Map And State Owners
+`PromptTelemetryState` holds this state; `AgentStepTelemetryState` still owns only the active step and `loop_index`. Counting happens at the single step-close exit, so completion aggregation and the actual per-step events stay same-source instead of inferring streaming lifecycle from final message projections.
 
-| Concept | State owner | Evidence |
-| --- | --- | --- |
-| 当前 prompt telemetry | UI `activePromptTelemetryByTask` | completion 的 `messageId` |
-| agent step lifecycle | UI `agentStepTelemetryByTask` | 同 `talkId + messageId` 的 `agent_step` payload |
-| session message history | Agent runtime/session + UI projection | 第二轮发送前第一轮已完成；同一 `talkId` |
-| telemetry transport input | renderer `reportAppTelemetryEvent` → main `createDesktopTelemetryFetch(net)` | Electron `net.fetch` mock calls 中的最终 request body |
-| E2E observation boundary | WDIO Electron service | `browser.electron.mock("net", "fetch")` 调用历史 |
+Counting invariants:
 
-## Production Fix Design
+- For any `talk_id + message_id`, `agent_step_cnt` equals the number of `agent_step` events produced.
+- `loop_index` for one message increments consecutively from `1`; a newly activated prompt restarts at `1`.
+- `tool_call_total` equals the terminal `step_type=tool_call` steps in the current message; `tool_call_failed` equals those with `status=fail/timeout`.
+- No step or tool from a previous message may enter the next message's completion.
 
-`message_completion` 与逐条 `agent_step` 必须共享同一个 active prompt 生命周期：
+Compatibility: the fix changes only the UI telemetry aggregation source — stream, snapshot, queue, owner, relay, host, and protocol untouched. Desktop continuous and web remote replayable each aggregate by their own activated prompt; replayable recovery semantics do not leak into the desktop path. Out-of-order tool events keep the existing fallback-step and permission-wait attribution; counting happens only when that fallback step finally closes.
 
-1. `activatePromptTelemetry()` 激活一条用户消息时，初始化本轮 step 聚合和从 `1`
-   开始的 `loop_index`。
-2. 每个 step 只在 `finalizeAgentStep()` 收口时累计一次；因此
-   `agent_step_cnt` 等于当前 `message_id` 实际上报的 `agent_step` 数。
-3. 收口的 `tool_call` step 同时累计 `tool_call_total`；失败或超时工具累计
-   `tool_call_failed`，并保留本轮第一个工具错误用于 completion 失败兜底。
-4. `finalizePromptTelemetry()` 只读取 active prompt 中的聚合值，不再扫描
-   session 全量 `taskMessages`。
-5. 删除 `FinalizePromptTelemetryInput.taskMessages` 以及两个历史扫描 helper，调用方
-   不再为 completion 计数读取消息 store。
+## Case selection
 
-上述状态由 `PromptTelemetryState` 持有，`AgentStepTelemetryState` 继续只负责活动 step
-和 `loop_index`。计数发生在统一的 step 收口出口，使 completion 聚合与实际逐 step
-事件保持同源，避免根据最终消息投影反推流式生命周期。
+| ID  | Setup                                         | Event                       | Expected                                      | Status   | Reason                                               |
+| --- | --------------------------------------------- | --------------------------- | --------------------------------------------- | -------- | ---------------------------------------------------- |
+| R01 | same desktop session, turn 1 complete         | turn 2 plain-text completes | turn 2 `agent_step_cnt` = 1                   | accepted | minimal stable production-defect reproduction        |
+| R02 | turn 2 includes tools                         | completion                  | full tool/reasoning/generation reconciliation | pruned   | later step-type coverage, not the minimal A boundary |
+| R03 | two different sessions, one turn each         | both complete               | independent per-session counts                | pruned   | never hits the history-accumulation condition        |
+| R04 | mobile replayable restores history then sends | turn 2 completes            | recovery chain still counts per message       | ignored  | cross-client semantics planned separately            |
+| R05 | stop/error while running                      | completion closes           | interrupted step reconciliation               | ignored  | fault/terminal lifecycle planned separately          |
 
-### 计数不变量
+## Accepted case R01: same-session second-turn step isolation
 
-- 对任意 `talk_id + message_id`，`agent_step_cnt` 等于实际产出的 `agent_step` 条数。
-- 同一 message 的 `loop_index` 连续从 `1` 递增；新 prompt 激活后重新从 `1` 开始。
-- `tool_call_total` 等于当前 message 中 `step_type=tool_call` 的终态 step 数。
-- `tool_call_failed` 等于其中 `status=fail/timeout` 的数量。
-- 前一轮 message 的任何 step 或工具都不得进入后一轮 completion。
+Setup: `prepareConversationE2E()` starts an isolated desktop app; two prompts with stable `E2E_AGENT_STEP_MESSAGE_SCOPE_*` markers match the case-local fixture; each fixture turn returns one plain-text content block, deterministically one `generation` step per turn.
 
-### 兼容边界
+Action: send turn 1, wait `idle`; send turn 2, wait `idle`; before sending, mock Electron `net.fetch` with a success response, then parse the telemetry endpoint request body from mock call history.
 
-- 本修复只改变 UI telemetry 聚合来源，不修改 stream、snapshot、queue、owner、
-  relay、host 或协议。
-- desktop continuous 与 web remote replayable 都按各自激活的 prompt 聚合；不会把
-  replayable 恢复语义扩散到桌面主链路。
-- 工具事件乱序仍沿用现有 fallback step 和 permission waiting 归因；计数只在该
-  fallback step 最终收口时发生。
+Assertions: both completions share `talkId` with different `messageId`s; turn 2 has exactly one `agent_step` for that `talkId + messageId`, type `generation`, `loop_index=1`; turn 2's `message_completion.agent_step_cnt` must be `"1"` (under the defect it read `"2"` — the test failed with an explicit count mismatch).
 
-## Candidate Combinations And Pruning
+Evidence layers: UI/session — both turns return to `idle`, turn 2 reuses turn 1's session; provider — both markers hit the case-local replay; telemetry/transport — per-`talk_id + message_id` reconciliation of per-step and completion in the final HTTP body.
 
-| Candidate ID | State | Event | Expected effect | Status | Reason |
-| --- | --- | --- | --- | --- | --- |
-| R01 | 同一 desktop session，第一轮已完成 | 第二轮纯文本完成 | 第二轮 `agent_step_cnt` 等于同 message 的实际 step 数 1 | accepted | 最小稳定生产缺陷复现 |
-| R02 | 同一 session，第二轮含工具 | 第二轮完成 | tool/reasoning/generation 全量对账 | pruned | 属于后续 step 类型覆盖，不是本次 A 的最小边界 |
-| R03 | 两个不同 session 各发一轮 | 两轮完成 | 各 session 独立计数 | pruned | 不经过历史累计条件 |
-| R04 | 手机 replayable 恢复历史后发送 | 第二轮完成 | 恢复链路仍按 message 计数 | ignored | 高风险跨端语义单独规划 |
-| R05 | 运行中 stop/error | completion 收口 | 中断 step 与 completion 对账 | ignored | fault/terminal lifecycle 单独规划 |
+## E2E handoff notes
 
-## Accepted Case
-
-### R01: 同一 session 第二轮 agent step 按 message 隔离
-
-Setup:
-
-1. 使用 `prepareConversationE2E()` 启动隔离桌面应用。
-2. 两个带稳定 `E2E_AGENT_STEP_MESSAGE_SCOPE_*` marker 的 prompt 分别匹配 case-local fixture。
-3. fixture 每轮只返回一个纯文本 content block，因此每轮确定产生一个 `generation` step。
-
-Action:
-
-1. 发送第一轮并等待 `idle`。
-2. 发送第二轮并等待 `idle`。
-3. 在发送前 mock Electron `net.fetch` 并返回成功响应；完成后从 mock 调用历史解析 telemetry endpoint 的 request body。
-
-Assertions:
-
-1. 第一、二轮 completion 具有相同 `talkId`、不同 `messageId`。
-2. 第二轮同 `talkId + messageId` 恰有一个 `agent_step`，类型为 `generation`，`loop_index=1`。
-3. 第二轮 `message_completion.agent_step_cnt` 必须为 `"1"`。
-4. 当前缺陷下第 3 条得到 `"2"`，测试以明确的 count mismatch 失败。
-
-Evidence layers:
-
-- UI/session：两轮均回到 `idle`，第二轮复用第一轮 session。
-- Provider：两个稳定 marker 都命中 case-local replay。
-- Telemetry/transport：按 `talk_id + message_id` 对账最终 HTTP body 中的逐 step 与 completion。
-
-## E2E Handoff Notes
-
-- Spec：`packages/desktop/test/e2e/conversation-session/conversation-session-agent-step-message-scope.test.ts`
-- Provider fixture：`packages/desktop/test/e2e/fixtures/upstream/conversation-session/conversation-session-agent-step-message-scope.json`
-- Timing：`fast-text`
-- Request classification：两条 marker 请求均为 `main`
-- Synthetic：是；稳定纯文本响应用于固定每轮 step 数，manifest 必须记录 `syntheticReason`
-- File-system fixture：无
-- Promotion：已基于人工 review 转为 formal case；修复后状态为 `covered`
-- Verification：GREEN artifact `desktop-e2e-20260703-090147-683`
-- Docker：formal case 已通过本地 isolated replay；Docker preset 准入仍按独立 admission 流程执行
-- Review risk：telemetry 上报是异步的，测试必须轮询 mock calls，不能依赖固定 sleep；mock 只替换 Electron `net.fetch`，provider replay 由 agent 独立 HTTP 链路处理
+- Spec: `packages/desktop/test/e2e/conversation-session/conversation-session-agent-step-message-scope.test.ts`; fixture `packages/desktop/test/e2e/fixtures/upstream/conversation-session/conversation-session-agent-step-message-scope.json`; timing `fast-text`; both marker requests classified `main`; synthetic (manifest must record `syntheticReason`); no file-system fixture.
+- Promoted to formal case by manual review; post-fix status `covered`; GREEN artifact `desktop-e2e-20260703-090147-683`; Docker preset admission follows the separate admission process.
+- Review risk: telemetry reporting is asynchronous — poll mock calls, never fixed sleeps; the mock replaces only Electron `net.fetch` (provider replay goes through the agent's own HTTP chain).

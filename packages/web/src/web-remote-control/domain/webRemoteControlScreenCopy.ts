@@ -309,7 +309,7 @@ export function resolveWebRemoteControlScreenCopy(
   failure: WebRemoteControlFailure,
   locale: WebRemoteControlScreenLocale,
 ): WebRemoteControlScreenCopy {
-  // auth-required 由入口回登录页；此处仅作为非入口调用者的防御性兜底。
+  // auth-required is returned to the login page by the entry; this is only a defensive fallback for non-entry callers.
   const reason = failure.reason === "auth-required" ? "relay-unavailable" : failure.reason;
   return WEB_REMOTE_CONTROL_SCREEN_COPY[locale][reason];
 }

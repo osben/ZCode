@@ -22,7 +22,7 @@ const FILE_PATH_KEYS = new Set([
   "path",
   "paths",
   "file",
-  // ZCode Agent edit 权限常把目标文件放在 file_path/filePath，漏掉会让权限预览只剩标题。
+  // ZCode Agent edit permissions often put the target file in file_path/filePath; missing it would leave only the title in the permission preview.
   "file_path",
   "filepath",
   "files",
@@ -77,8 +77,8 @@ function readPermissionInputSource(rawSource: unknown): unknown {
     return rawSource.rawInput;
   }
 
-  // ZCode protocol 的 requestPermission schema 使用 input 承载工具参数；
-  // 只按旧 rawInput 读取会让 Write/Edit 这类结构化工具退回到通用 JSON 预览。
+  // The ZCode protocol's requestPermission schema uses input to carry tool parameters;
+  // Reading only the legacy rawInput would make structured tools such as Write/Edit fall back to the generic JSON preview.
   return "input" in rawSource ? rawSource.input : rawSource;
 }
 

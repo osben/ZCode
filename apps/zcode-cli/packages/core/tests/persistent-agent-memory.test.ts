@@ -60,8 +60,13 @@ describe("persistent custom-agent memory", () => {
     });
 
     expect(prompt).toContain("## MEMORY.md\n\n- memory 1");
-    expect(prompt).toContain("- memory 200\n\n> WARNING: MEMORY.md is 201 lines (limit: 200).");
-    expect(prompt).not.toContain("- memory 201");
+    expect(prompt).toContain(
+      "- memory 59\n\n…[MEMORY.md is over the 200-line cap; its middle is omitted]…\n\n- memory 64",
+    );
+    expect(prompt).toContain("- memory 201\n\n> WARNING: MEMORY.md is 201 lines (limit: 200).");
+    // Newest entries are appended at the end, so the elided middle drops old lines, not the tail.
+    // Marker line + two blank separators count toward the cap: 59 + 3 + 138 = 200 kept lines.
+    expect(prompt).not.toContain("- memory 60");
   });
 
   it("limits a single long MEMORY.md value and formats integer KB like the baseline", () => {
@@ -71,8 +76,9 @@ describe("persistent custom-agent memory", () => {
       scope: "local",
     });
 
+    expect(prompt).toContain("…[MEMORY.md is over the 24.4KB cap; its middle is omitted]…");
     expect(prompt).toContain(
-      `${"x".repeat(25_000)}\n\n> WARNING: MEMORY.md is 25KB (limit: 24.4KB) — index entries are too long.`,
+      "> WARNING: MEMORY.md is 25KB (limit: 24.4KB) — index entries are too long.",
     );
   });
 

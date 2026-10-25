@@ -1,34 +1,19 @@
-# Git 未验收需求清单
+# Git Unaccepted Requirements List
 
-更新日期：2026-04-09
+All requirement items in `requirements-review.md` whose `Acceptance status` is `Not accepted` (5 items).
 
-## 说明
+## Unaccepted Requirements
 
-本文档列出来自 `requirements-review.md` 中所有 `验收状态` 为 `未验收` 的需求项，共 5 项。
+1. Oversized Diff Handling: an oversized diff gives a cropping hint.
+2. Patch Generation Failure Handling: when a patch cannot be generated, show an unavailable hint.
+3. Empty State Handling - No Changes: the current version at least handles the "current source has no changes" empty state.
+4. Empty State Handling - Unable to Preview: the current version at least handles the "diff cannot be previewed" empty state.
+5. Cross-Platform Compatibility: keep local / remote / multiple operating system compatibility as a direction.
 
-## 未验收需求
+## Acceptance Progress
 
-### 1. 超大 Diff 处理
-超大 diff 给出裁剪提示
+| Accepted | Not accepted |
+| -------- | ------------ |
+| 8/13     | 5/13         |
 
-### 2. Patch 生成失败处理
-无法生成 patch 时给出不可用提示
-
-### 3. 空态处理 - 无改动
-当前版本至少处理"当前来源没有任何改动"空态
-
-### 4. 空态处理 - 无法预览
-当前版本至少处理"diff 无法预览"空态
-
-### 5. 跨平台兼容
-保持本地 / 远程 / 多操作系统兼容方向
-
-## 验收进度
-
-| 已验收 | 未验收 |
-|-------|--------|
-| 8/13  | 5/13   |
-
----
-
-> 完整需求清单请参考 [`requirements-review.md`](./requirements-review.md)
+The complete requirement list is in [`requirements-review.md`](./requirements-review.md).

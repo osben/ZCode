@@ -32,8 +32,8 @@ export function TaskTitleOverflowText({
   as = "p",
   children,
   className,
-  // 原生 title 提示框会在 hover 走马灯时遮挡正在滚动的任务名称。
-  // 在组件边界统一消费该属性，避免各个 task row 漏掉后再次引入 tooltip。
+  // Native title tooltips obscure task names while the marquee is scrolling on hover.
+  // Consume this prop at the component boundary so individual task rows cannot omit it and reintroduce the tooltip.
   title: _nativeTitle,
   ...props
 }: TaskTitleOverflowTextProps) {
@@ -54,8 +54,8 @@ export function TaskTitleOverflowText({
     if (!textElement || !originalTextElement) return;
 
     const updateOverflow = () => {
-      // 标题过去无条件挂载 mask，完整可见的短标题也带有渐隐样式。
-      // 以单份标题的真实排版宽度为准，避免走马灯副本撑大 scrollWidth 后无法退出溢出状态。
+      // The title used to always have a mask, giving fully visible short titles a fade effect too.
+      // Use the actual layout width of a single title to avoid the marquee duplicate inflating scrollWidth and preventing overflow state from clearing.
       const contentWidth = originalTextElement.scrollWidth;
       const nextIsOverflowing = contentWidth > textElement.clientWidth;
       const nextDistance = nextIsOverflowing ? contentWidth + marqueeGapPx : 0;
@@ -104,8 +104,8 @@ export function TaskTitleOverflowText({
       typeof window.matchMedia === "function"
         ? window.matchMedia("(prefers-reduced-motion: reduce)")
         : null;
-    // 走马灯事件原本绑在文字节点上，鼠标位于 task item 的时间、
-    // 状态或操作区域时不会滚动。统一绑到最近的普通或 grouped task 行边界。
+    // Marquee events used to be bound to the text node, so hovering over the task item's time,
+    // status, or action area would not scroll the title. Bind to the nearest regular or grouped task-row boundary instead.
     const hoverTarget =
       textElement.closest<HTMLElement>("[data-task-item-key], [data-grouped-task-key]") ??
       textElement;
@@ -125,12 +125,12 @@ export function TaskTitleOverflowText({
 
       stopMarquee();
       const totalDuration = duration + marqueePauseSeconds;
-      // 纯 CSS infinite 动画只能按百分比停顿，标题宽度变化时无法保证
-      // 副本头部对齐后固定等待 2 秒。Web Animation 用动态 offset 分离移动与停留时长。
+      // A pure CSS infinite animation can pause only by percentage and cannot guarantee a fixed 2-second wait
+      // after duplicate headings align when title width changes. Web Animation uses dynamic offsets to separate travel and pause durations.
       const movementEndOffset = duration / totalDuration;
       const maskFadeInEndOffset = marqueeMaskFadeInSeconds / totalDuration;
-      // 左侧 mask 在 24px 间距内继续淡出，会让已经离场的主体标题
-      // 仍留下一段无内容的渐变。主体尾部到达左边缘时直接切换为仅右侧 mask。
+      // Continuing the left mask fade across the 24px gap leaves an empty gradient after the main title exits.
+      // Switch directly to a right-only mask when the main title's tail reaches the left edge.
       const originalTailArrivalTime = duration * ((distance - marqueeGapPx) / distance);
       const originalTailArrivalOffset = originalTailArrivalTime / totalDuration;
       const animationOptions: KeyframeAnimationOptions = {
@@ -152,8 +152,8 @@ export function TaskTitleOverflowText({
         ],
         animationOptions,
       );
-      // 滚动期间始终使用双侧 mask，会让副本对齐后的 2 秒停留画面
-      // 仍然看不清标题开头。mask 与位移动画共用时长，在到达前淡出左侧并保持到下一轮。
+      // Keeping masks on both sides throughout the scroll leaves the title's beginning hard to read during the 2-second pause after alignment.
+      // Share the movement animation's duration with the mask, fading out the left side before arrival and keeping it that way until the next cycle.
       const maskAnimation = textElement.animate(
         [
           createMaskKeyframe(rightFadeMask, 0),
@@ -169,7 +169,7 @@ export function TaskTitleOverflowText({
     const scheduleMarquee = () => {
       if (reducedMotionQuery?.matches) return;
       stopMarquee();
-      // 交互规则：短暂划过 task row 不应立即触发运动；停留满 1 秒才开始。
+      // Interaction rule: briefly passing over a task row should not start motion; begin only after hovering for a full second.
       startTimer = window.setTimeout(() => {
         startTimer = null;
         startMarquee();

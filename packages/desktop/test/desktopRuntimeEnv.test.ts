@@ -9,15 +9,16 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const appMock = {
   isPackaged: false,
   getPath: vi.fn((name: string) => `/mock/${name}`),
 };
 
-// 编译期常量 ZCODE_PRODUCT_FLAVOR 决定 isPreviewPackagedRuntime；Dynamic Workflow 灰度的
-// 「打包 production」档位必须能与 preview 区分，因此这里改成可切换的持有者，默认仍是 preview。
+// The compile-time constant ZCODE_PRODUCT_FLAVOR decides isPreviewPackagedRuntime; the Dynamic
+// Workflow gray release's "packaged production" tier must be distinguishable from preview, so it
+// is made a switchable holder here, still defaulting to preview.
 const productFlavorMock = { value: "preview" as string };
 
 vi.mock("electron", () => ({
@@ -25,6 +26,7 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("@zcode/shared", () => ({
+  DESKTOP_LOCAL_DEVELOPMENT_RUNTIME_ARG: "--zcode-local-development-runtime",
   ZCODE_APP_VERSION_ENV: "ZCODE_APP_VERSION",
   ZCODE_BUILD_COMMIT_ID_ENV: "ZCODE_BUILD_COMMIT_ID",
   ZCODE_RUNTIME_ENV_KEY: "ZCODE_RUNTIME_ENV",
@@ -145,6 +147,7 @@ vi.mock("@zcode/shared", () => ({
 vi.mock("@zcode/services/node", () => ({
   getAppConfigDir: vi.fn(() => "/mock/config"),
   getDataBaseDir: vi.fn(() => "/mock/db"),
+  ZCODE_APPLE_FM_HELPER_ENV: "ZCODE_APPLE_FM_HELPER",
   ZCODE_CUA_BUNDLED_HELPER_APP_PATH_ENV: "ZCODE_CUA_BUNDLED_HELPER_APP_PATH",
   ZCODE_WINDOWS_APP_INSTALL_DIR_ENV: "ZCODE_WINDOWS_APP_INSTALL_DIR",
 }));
@@ -180,9 +183,11 @@ function restoreEnvValue(key: string, value: string | undefined) {
   process.env[key] = value;
 }
 
-// Bugfix: 开发机 shell（如 ~/.codegeex/mamba profile）常注入 NO_PROXY/SSL_CERT_FILE 等代理证书
-// 变量，buildHostProcessEnv 会把它们并入 ZCODE_TOOL_ENV_PASSTHROUGH_JSON / telemetry env，
-// 断言随宿主机环境漂移。逐个枚举清单必然漏网，这里按 passthrough/telemetry 捕获口径全量清理并恢复。
+// Bugfix: dev-machine shells (e.g. ~/.codegeex/mamba profiles) often inject NO_PROXY/SSL_CERT_FILE
+// and other proxy/certificate variables, which buildHostProcessEnv merges into
+// ZCODE_TOOL_ENV_PASSTHROUGH_JSON / the telemetry env, making assertions drift with the host
+// machine's environment. Enumerating a fixed list would inevitably miss some, so everything is
+// cleared and restored here according to the passthrough/telemetry capture criteria.
 const AMBIENT_TOOL_PASSTHROUGH_ENV_KEYS = new Set([
   "HTTP_PROXY",
   "HTTPS_PROXY",
@@ -205,6 +210,13 @@ function isAmbientHostEnvKey(key: string): boolean {
     AMBIENT_TOOL_PASSTHROUGH_ENV_KEYS.has(upperKey) ||
     upperKey.startsWith("OTEL_") ||
     upperKey.startsWith("ZCODE_TELEMETRY_") ||
+    // Bugfix: the ZCode host app exports ZCODE_CUA_BUNDLED_HELPER_APP_PATH to child processes
+    // (the local unsigned CUA dev flow), and buildHostProcessEnv's {...localEnv, ...process.env}
+    // lets the environment variable override the value injected by the case, so the CUA dev bundle
+    // assertions inevitably drift on machines with the host app installed. ZCODE_HOME also takes
+    // part in dev bundle path derivation and is cleared under the same host criteria.
+    upperKey.startsWith("ZCODE_CUA_") ||
+    upperKey === "ZCODE_HOME" ||
     AMBIENT_PACKAGE_MANAGER_PROXY_ENV_PATTERN.test(key)
   );
 }
@@ -255,8 +267,9 @@ async function withTestMockCdnReleaseDir<T>(
   }
 }
 function expectRuntimePath(actualPath: string | undefined, expectedPath: string) {
-  // Bugfix: macOS 的 /var 是 /private/var 的符号链接，chdir 后 process.cwd() 会返回真实路径。
-  // buildHostProcessEnv 按 cwd 解析 bundled runtime，因此断言也要比较真实路径，避免路径拼写差异掩盖优先级语义。
+  // Bugfix: on macOS /var is a symlink to /private/var, and after chdir process.cwd() returns the
+  // real path. buildHostProcessEnv resolves the bundled runtime from cwd, so the assertion must
+  // also compare real paths, keeping path spelling differences from masking the priority semantics.
   expect(actualPath).toBe(realpathSync(expectedPath));
 }
 
@@ -476,7 +489,7 @@ describe("desktopRuntimeEnv buildHostProcessEnv", () => {
 
     const env = buildHostProcessEnv({});
 
-    // Bugfix: warning 抑制改由 utilityProcess.fork 的 execArgv 负责，避免 Node 专用变量继续泄漏到 shell。
+    // Bugfix: warning suppression moved to utilityProcess.fork's execArgv, keeping Node-specific variables from leaking into the shell.
     expect(env.NODE_NO_WARNINGS).toBeUndefined();
   });
 
@@ -576,10 +589,10 @@ describe("desktopRuntimeEnv buildHostProcessEnv", () => {
     expect(env.NODE_ENV).toBeUndefined();
   });
 
-  // 根因：bundledCuaHelperAppPath 只在 darwin 上计算（desktopRuntimeEnv.ts:474 直接
-  // `process.platform !== "darwin" ? undefined : ...`），其他平台不写这个键，继承值原样穿透。
-  // Windows CUA 走独立的 Node Helper，不使用 .app bundle，所以下面几条 dev bundle 断言
-  // 只在 darwin 上有意义。
+  // Root cause: bundledCuaHelperAppPath is computed only on darwin (desktopRuntimeEnv.ts:474 does
+  // `process.platform !== "darwin" ? undefined : ...` directly); other platforms never write this
+  // key and the inherited value passes through unchanged. Windows CUA uses a separate Node Helper
+  // instead of an .app bundle, so the dev bundle assertions below only make sense on darwin.
   it.skipIf(process.platform !== "darwin")(
     "本地免签 CUA 使用 dev Helper bundle，且不回退网络下载",
     async () => {
@@ -651,6 +664,34 @@ describe("desktopRuntimeEnv buildHostProcessEnv", () => {
     expect(env.ZCODE_CUA_HELPER_ALLOW_UNSIGNED_LOCAL).toBeUndefined();
   });
 
+  // The host runtime env and the renderer's development flag come from one signal, so development-only
+  // surfaces (the stdio tap, for example) never open on only one side. ACP availability does not read it
+  // (specs/acp-agent-runtime.md "Availability (platform rule)").
+  it.each([
+    { isPackaged: true, runtimeEnv: "production", rendererGate: false },
+    { isPackaged: false, runtimeEnv: "development", rendererGate: true },
+  ])(
+    "host runtime env and renderer development flag agree (packaged=$isPackaged)",
+    async ({ isPackaged, runtimeEnv, rendererGate }) => {
+      appMock.isPackaged = isPackaged;
+      Object.defineProperty(process, "resourcesPath", {
+        value: "/mock/resources",
+        configurable: true,
+      });
+      const { buildHostProcessEnv } = await import("../src/main/desktopRuntimeEnv.js");
+      const { buildAppRendererAdditionalArguments } =
+        await import("../src/main/desktopElectronApp.js");
+      const { hasDesktopLocalDevelopmentRuntimeArg } =
+        await vi.importActual<typeof import("@zcode/shared")>("@zcode/shared");
+
+      const rendererArgs = buildAppRendererAdditionalArguments("device-1");
+
+      expect(buildHostProcessEnv({}).ZCODE_RUNTIME_ENV).toBe(runtimeEnv);
+      expect(rendererArgs[0]).toBe("--device-id=device-1");
+      expect(hasDesktopLocalDevelopmentRuntimeArg(rendererArgs)).toBe(rendererGate);
+    },
+  );
+
   it("打包 Preview 不向 Host 注入 storage profile 或精确 CLI 根", async () => {
     appMock.isPackaged = true;
     Object.defineProperty(process, "resourcesPath", {
@@ -677,10 +718,12 @@ describe("desktopRuntimeEnv buildHostProcessEnv", () => {
     expect(env.ZCODE_HOME).toBeUndefined();
   });
 
-  // 拆出来的原因：「打包态用 Resources 里的签名 Helper 覆盖外部传入路径」这条断言只在 darwin
-  // 成立（desktopRuntimeEnv.ts:474 非 darwin 直接给 undefined，继承值原样穿透），
-  // 而同一条用例里的 ZCODE_RUNTIME_ENV / NODE_ENV / ALLOW_UNSIGNED 是跨平台契约，
-  // 整条 skip 会连带丢掉这三条覆盖，所以只把 macOS 专属的那条单独 gate。
+  // Why this is split out: the assertion "packaged builds override the externally passed path with
+  // the signed Helper in Resources" holds only on darwin (desktopRuntimeEnv.ts:474 returns
+  // undefined directly on non-darwin, letting the inherited value pass through), while
+  // ZCODE_RUNTIME_ENV / NODE_ENV / ALLOW_UNSIGNED in the same case are cross-platform contracts;
+  // skipping the whole case would drop those three coverages too, so only the macOS-specific one
+  // is gated separately.
   it.skipIf(process.platform !== "darwin")(
     "打包态 host 进程用 Resources 里的 Helper 覆盖外部传入的 bundled 路径",
     async () => {
@@ -798,8 +841,8 @@ describe("desktopRuntimeEnv buildHostProcessEnv", () => {
     expect(env.ZCODE_CUA_HELPER_INSTALL_VARIANT).toBe("preview");
   });
 
-  // DWG-05（docs/dynamic-workflow/launch.md「Gray release」）：Main 对
-  // ZCODE_DYNAMIC_WORKFLOW_MODE 只有「写」和「删」两种动作，先在纯函数上钉住三档语义。
+  // DWG-05 (docs/dynamic-workflow/launch.md, "Gray release"): Main's only two actions on
+  // ZCODE_DYNAMIC_WORKFLOW_MODE are "write" and "delete"; pin the three tiers' semantics on the pure function first.
   describe("resolveDynamicWorkflowModeHostEnv", () => {
     it("未打包 dev 透传 shell 里的合法取值", async () => {
       const { resolveDynamicWorkflowModeHostEnv } =
@@ -871,7 +914,7 @@ describe("desktopRuntimeEnv buildHostProcessEnv", () => {
     process.env["ZCODE_DYNAMIC_WORKFLOW_MODE"] = "not-a-mode";
     const { buildHostProcessEnv: rebuilt } = await import("../src/main/desktopRuntimeEnv.js");
 
-    // 非法值必须被删掉而不是随 inheritedEnv 穿透；否则 Host 还要自己分辨来源。
+    // Invalid values must be deleted instead of passing through with inheritedEnv; otherwise the Host would have to distinguish the source itself.
     expect(rebuilt({}).ZCODE_DYNAMIC_WORKFLOW_MODE).toBeUndefined();
   });
 
@@ -900,7 +943,7 @@ describe("desktopRuntimeEnv buildHostProcessEnv", () => {
 
     const { buildHostProcessEnv } = await import("../src/main/desktopRuntimeEnv.js");
 
-    // shell 和 .env 两条继承路径都要被删干净，本机环境变量不能自行打开灰度。
+    // Both inheritance paths, shell and .env, must be scrubbed; local environment variables must not enable the gray release on their own.
     expect(buildHostProcessEnv({}).ZCODE_DYNAMIC_WORKFLOW_MODE).toBeUndefined();
     expect(
       buildHostProcessEnv({ ZCODE_DYNAMIC_WORKFLOW_MODE: "alwaysOn" }).ZCODE_DYNAMIC_WORKFLOW_MODE,
@@ -981,10 +1024,11 @@ describe("desktopRuntimeEnv runtime identity", () => {
 
     expect(isPreviewPackagedRuntime).toBe(true);
     expect(runtimeApplicationName).toBe("ZCode Preview");
-    // Bugfix：这两条路径由实现用宿主 path.join 从 app.getPath("appData") 拼出，
-    // Windows 上是 `\mock\appData\ZCode Preview`，写死 POSIX 字面量必然失败。
-    // 用例要断言的是「Preview 单独占一个 Electron 数据目录」的目录结构，与分隔符无关，
-    // 所以用同样的 join 表达；在 POSIX 上是恒等变换。
+    // Bugfix: the implementation builds these two paths with the host path.join from
+    // app.getPath("appData"); on Windows that is `\mock\appData\ZCode Preview`, so hardcoding a
+    // POSIX literal always fails. What the case asserts is the directory structure of "Preview
+    // owning its own Electron data directory", which is separator-independent, so the same join
+    // expression is used; on POSIX it is the identity transformation.
     expect(runtimeUserDataPath).toBe(join("/mock/appData", "ZCode Preview"));
     expect(runtimeSessionDataPath).toBe(join("/mock/appData", "ZCode Preview", "session"));
   });
@@ -1005,5 +1049,206 @@ describe("desktopRuntimeEnv runtime identity", () => {
     expect(runtimeUserDataPath).toBeUndefined();
     expect(runtimeSessionDataPath).toBeUndefined();
     expect(appMock.getPath).not.toHaveBeenCalledWith("appData");
+  });
+});
+
+describe("desktopRuntimeEnv voice transcription library path", () => {
+  let transcribeSandboxRoot: string;
+
+  beforeEach(() => {
+    delete process.env["TRANSCRIBE_LIBRARY"];
+    transcribeSandboxRoot = mkdtempSync(join(tmpdir(), "zcode-transcribe-env-"));
+    createdDirs.push(transcribeSandboxRoot);
+  });
+
+  // This describe runs after the first describe, whose afterAll cleanup does not cover the directories
+  // created here; resourcesPath must also be restored when leaving this group so file-level state is not
+  // leaked to later files running in the same worker.
+  afterAll(() => {
+    if (originalResourcesPathDescriptor) {
+      Object.defineProperty(process, "resourcesPath", originalResourcesPathDescriptor);
+    } else {
+      Reflect.deleteProperty(process, "resourcesPath");
+    }
+    for (const dir of createdDirs.splice(0).reverse()) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves the library path under app.asar.unpacked for the target platform when packaged", async () => {
+    const bundledLibraryDir = join(
+      transcribeSandboxRoot,
+      "app.asar.unpacked",
+      "node_modules",
+      "@transcribe-cpp",
+      "darwin-arm64-metal",
+    );
+    mkdirSync(bundledLibraryDir, { recursive: true });
+    writeFileSync(join(bundledLibraryDir, "libtranscribe.dylib"), "");
+
+    const { resolveBundledTranscribeLibraryPath } =
+      await import("../src/main/desktopRuntimeEnv.js");
+
+    // Bugfix: koffi dlopen cannot read asar virtual paths; when packaged, the real path under
+    // app.asar.unpacked must be resolved.
+    expect(
+      resolveBundledTranscribeLibraryPath({
+        platform: "darwin",
+        arch: "arm64",
+        isPackaged: true,
+        resourcesPath: transcribeSandboxRoot,
+      }),
+    ).toBe(join(bundledLibraryDir, "libtranscribe.dylib"));
+    // Linux resolves the .so inside its cpu-vulkan package; keeps the filename mapping covered on
+    // runners of any OS.
+    const linuxLibraryDir = join(
+      transcribeSandboxRoot,
+      "app.asar.unpacked",
+      "node_modules",
+      "@transcribe-cpp",
+      "linux-x64-cpu-vulkan",
+    );
+    mkdirSync(linuxLibraryDir, { recursive: true });
+    writeFileSync(join(linuxLibraryDir, "libtranscribe.so"), "");
+    expect(
+      resolveBundledTranscribeLibraryPath({
+        platform: "linux",
+        arch: "x64",
+        isPackaged: true,
+        resourcesPath: transcribeSandboxRoot,
+      }),
+    ).toBe(join(linuxLibraryDir, "libtranscribe.so"));
+    // Upstream provides no win32-arm64 prebuilt package; unknown platform combinations return undefined.
+    expect(
+      resolveBundledTranscribeLibraryPath({
+        platform: "win32",
+        arch: "arm64",
+        isPackaged: true,
+        resourcesPath: transcribeSandboxRoot,
+      }),
+    ).toBeUndefined();
+    // Not injected when unpackaged (local dev); keep the transcribe-cpp loader's default resolution.
+    expect(
+      resolveBundledTranscribeLibraryPath({
+        platform: "darwin",
+        arch: "arm64",
+        isPackaged: false,
+        resourcesPath: transcribeSandboxRoot,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("injects TRANSCRIBE_LIBRARY into the host process when packaged, overriding external values", async () => {
+    // buildHostProcessEnv resolves for the real process platform/arch; fabricate the platform
+    // package matching the CURRENT runner (CI is linux, dev is usually darwin) so the assertion
+    // holds on every OS instead of only where darwin-arm64 happens to be the host.
+    const { buildHostProcessEnv, TRANSCRIBE_PLATFORM_TUPLES } =
+      await import("../src/main/desktopRuntimeEnv.js");
+    const platformTuple = TRANSCRIBE_PLATFORM_TUPLES[process.platform]?.[process.arch];
+    const libraryFileName =
+      process.platform === "darwin"
+        ? "libtranscribe.dylib"
+        : process.platform === "win32"
+          ? "transcribe.dll"
+          : "libtranscribe.so";
+
+    appMock.isPackaged = true;
+    Object.defineProperty(process, "resourcesPath", {
+      value: transcribeSandboxRoot,
+      configurable: true,
+    });
+
+    if (platformTuple) {
+      const bundledLibraryPath = join(
+        transcribeSandboxRoot,
+        "app.asar.unpacked",
+        "node_modules",
+        "@transcribe-cpp",
+        platformTuple,
+        libraryFileName,
+      );
+      mkdirSync(dirname(bundledLibraryPath), { recursive: true });
+      writeFileSync(bundledLibraryPath, "");
+      const env = buildHostProcessEnv({ TRANSCRIBE_LIBRARY: "/tmp/stale-user-dylib" });
+      expect(env.TRANSCRIBE_LIBRARY).toBe(bundledLibraryPath);
+      return;
+    }
+    // No prebuilt package for this platform combination (e.g. win32-arm64): nothing to inject,
+    // the ambient value passes through unchanged.
+    const env = buildHostProcessEnv({ TRANSCRIBE_LIBRARY: "/tmp/stale-user-dylib" });
+    expect(env.TRANSCRIBE_LIBRARY).toBe("/tmp/stale-user-dylib");
+  });
+
+  it("does not inject TRANSCRIBE_LIBRARY when unpackaged; explicit overrides still pass through", async () => {
+    const explicitLibraryPath = join(transcribeSandboxRoot, "custom-libtranscribe.dylib");
+    writeFileSync(explicitLibraryPath, "");
+    appMock.isPackaged = false;
+
+    const { buildHostProcessEnv } = await import("../src/main/desktopRuntimeEnv.js");
+
+    const env = buildHostProcessEnv({ TRANSCRIBE_LIBRARY: explicitLibraryPath });
+
+    expect(env.TRANSCRIBE_LIBRARY).toBe(explicitLibraryPath);
+  });
+});
+
+describe("desktopRuntimeEnv Apple Foundation Models helper path", () => {
+  let root: string;
+
+  beforeEach(() => {
+    delete process.env["ZCODE_APPLE_FM_HELPER"];
+    root = mkdtempSync(join(tmpdir(), "zcode-apple-fm-env-"));
+    createdDirs.push(root);
+  });
+
+  const placeHelper = (dir: string) => {
+    mkdirSync(join(dir, "apple-fm"), { recursive: true });
+    writeFileSync(join(dir, "apple-fm", "zcode-apple-fm"), "");
+    return join(dir, "apple-fm", "zcode-apple-fm");
+  };
+
+  it("resolves the bundled helper from the resources directory when packaged on macOS", async () => {
+    const helper = placeHelper(root);
+    const { resolveBundledAppleFmHelperPath } = await import("../src/main/desktopRuntimeEnv.js");
+
+    expect(
+      resolveBundledAppleFmHelperPath({
+        platform: "darwin",
+        isPackaged: true,
+        resourcesPath: root,
+      }),
+    ).toBe(helper);
+  });
+
+  it("resolves the locally built helper in development and ignores a missing binary", async () => {
+    const devResources = join(root, "resources");
+    const helper = placeHelper(devResources);
+    const { resolveBundledAppleFmHelperPath } = await import("../src/main/desktopRuntimeEnv.js");
+
+    expect(
+      resolveBundledAppleFmHelperPath({
+        platform: "darwin",
+        isPackaged: false,
+        devResourcesDir: devResources,
+      }),
+    ).toBe(helper);
+    expect(
+      resolveBundledAppleFmHelperPath({
+        platform: "darwin",
+        isPackaged: false,
+        devResourcesDir: join(root, "nowhere"),
+      }),
+    ).toBeUndefined();
+  });
+
+  it("is macOS only", async () => {
+    placeHelper(root);
+    const { resolveBundledAppleFmHelperPath } = await import("../src/main/desktopRuntimeEnv.js");
+
+    for (const platform of ["win32", "linux"] as const) {
+      expect(
+        resolveBundledAppleFmHelperPath({ platform, isPackaged: true, resourcesPath: root }),
+      ).toBeUndefined();
+    }
   });
 });

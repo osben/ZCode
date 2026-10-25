@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-// 单项目工作流组（docs/dynamic-workflow/launch.md「Groups」「目录监听」「删除」「运行发起」）。
-// 迁移自 v1 单项目 section 的用例；卡片与详情页各有自己的用例，这里换桩，只看组的状态流与
-// **本项目**的 target（不变式 8）。useWorkspaceServices 按 workspacePath 返回不同 agent，钉住
-// 组用的是 ITS project 而不是活动 workspace。
+// Single-project workflow group (docs/dynamic-workflow/launch.md "Groups", "Directory watching", "Delete", "Run launching").
+// Migrated from the v1 single-project section cases; cards and the detail page have their own cases, so this file
+// stubs them and watches only the group's state flow and the **ITS project** target (invariant 8).
+// useWorkspaceServices returns different agents per workspacePath, pinning that the group uses ITS project
+// rather than the active workspace.
 import { createElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +24,7 @@ import { testId } from "@zcode/shared/test-ids";
 import type { AutomationWorkspaceOption } from "@/settings/automationWorkspaceOptions.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { resetSavedWorkflowStoreForTests } from "@/store/savedWorkflowStore.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const confirmMock = vi.fn(async () => true);
 const toastMock = vi.fn();
@@ -65,17 +67,25 @@ const agentByPath: Record<string, ReturnType<typeof makeAgent>> = {
 
 vi.mock("@/hooks/useWorkspaceServices.js", () => ({
   useWorkspaceServicesResolution: (workspacePath: string) => ({
-    services: { zcodeAgentService: agentByPath[workspacePath] ?? agentRepo, fileWatcherService },
+    services: {
+      zcodeAgentService: agentByPath[workspacePath] ?? agentRepo,
+      fileWatcherService,
+    },
     remoteSessionId: null,
     isRemoteTarget: false,
     connectionKind: "local-ready" as const,
     rpcReady: true,
   }),
 }));
-vi.mock("@/hooks/useConfirmDialog.js", () => ({ useConfirmDialog: () => confirmMock }));
-vi.mock("@/components/ui/toast.js", () => ({ toast: (...args: unknown[]) => toastMock(...args) }));
-// 直接启动器换桩：组只负责按类型开窗 / 直发；launch 的 createSession→startSavedWorkflow 编排
-// 与导航由 useSavedWorkflowLauncher 单测覆盖，这里只断言组以正确 target + request 调它。
+vi.mock("@/hooks/useConfirmDialog.js", () => ({
+  useConfirmDialog: () => confirmMock,
+}));
+vi.mock("@/components/ui/toast.js", () => ({
+  toast: (...args: unknown[]) => toastMock(...args),
+}));
+// The direct launcher is stubbed: the group only opens a dialog by type or fires directly; the launch
+// createSession→startSavedWorkflow orchestration and navigation are covered by useSavedWorkflowLauncher
+// unit tests — here we only assert the group calls it with the right target + request.
 const launchMock = vi.fn(async () => ({
   ok: true as const,
   sessionId: "s-1",
@@ -91,9 +101,13 @@ vi.mock("@/settings/saved-workflows/useSavedWorkflowLauncher.js", () => ({
     clearError: clearErrorMock,
   }),
 }));
-// 「提升为全局」编排换桩：createSession(firstInput) 与导航由 useSavedWorkflowPromote 单测覆盖，
-// 这里只断言组以本项目 target + 名字 / 路径 / locale 调它，失败时 toast。
-const promoteMock = vi.fn(async () => ({ ok: true as const, sessionId: "s-p" }));
+// The "Promote to global" orchestration is stubbed: createSession(firstInput) and navigation are covered
+// by useSavedWorkflowPromote unit tests — here we only assert the group calls it with the project target +
+// name / path / locale, and toasts on failure.
+const promoteMock = vi.fn(async () => ({
+  ok: true as const,
+  sessionId: "s-p",
+}));
 vi.mock("@/settings/saved-workflows/useSavedWorkflowPromote.js", () => ({
   useSavedWorkflowPromote: () => ({ promote: promoteMock, pending: false }),
 }));
@@ -125,7 +139,11 @@ vi.mock("@/settings/saved-workflows/SavedWorkflowCard.js", () => ({
       createElement("button", { type: "button", onClick: () => onOpen(entry) }, "open"),
       createElement(
         "button",
-        { type: "button", onClick: () => onRevise(entry), "data-testid": `revise-${entry.name}` },
+        {
+          type: "button",
+          onClick: () => onRevise(entry),
+          "data-testid": `revise-${entry.name}`,
+        },
         "revise",
       ),
       createElement(
@@ -171,7 +189,11 @@ vi.mock("@/settings/saved-workflows/SavedWorkflowDetailView.js", () => ({
   }) =>
     createElement(
       "div",
-      { "data-testid": TID_WORKFLOW_DETAIL, "data-name": name, "data-project": projectLabel },
+      {
+        "data-testid": TID_WORKFLOW_DETAIL,
+        "data-name": name,
+        "data-project": projectLabel,
+      },
       createElement("button", { type: "button", onClick: onBack }, "back"),
     ),
 }));
@@ -185,14 +207,17 @@ function entry(
 ): ZCodeSavedWorkflowEntry {
   return {
     name,
-    description: `${name} 的说明`,
+    description: `${name} description`,
     scope: "project",
     path: `/beta/.zcode/workflows/${name}.dwf.ts`,
     ...overrides,
   };
 }
 
-const BETA: AutomationWorkspaceOption = { workspacePath: "/beta", label: "Beta" };
+const BETA: AutomationWorkspaceOption = {
+  workspacePath: "/beta",
+  label: "Beta",
+};
 
 function mount(props: Partial<Parameters<typeof SavedWorkflowProjectGroup>[0]> = {}) {
   const onNavigateToLaunchedRun = vi.fn();
@@ -204,7 +229,7 @@ function mount(props: Partial<Parameters<typeof SavedWorkflowProjectGroup>[0]> =
   const result = render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(SavedWorkflowProjectGroup, {
         project: BETA,
         isCurrent: false,
@@ -234,9 +259,17 @@ function mount(props: Partial<Parameters<typeof SavedWorkflowProjectGroup>[0]> =
 describe("SavedWorkflowProjectGroup", () => {
   beforeEach(() => {
     resetSavedWorkflowStoreForTests();
-    agentBeta.listResult.current = { workflows: [], invalid: [], dir: "/beta/.zcode/workflows" };
+    agentBeta.listResult.current = {
+      workflows: [],
+      invalid: [],
+      dir: "/beta/.zcode/workflows",
+    };
     agentBeta.runsResult.current = [];
-    agentRepo.listResult.current = { workflows: [], invalid: [], dir: "/repo/.zcode/workflows" };
+    agentRepo.listResult.current = {
+      workflows: [],
+      invalid: [],
+      dir: "/repo/.zcode/workflows",
+    };
     agentRepo.runsResult.current = [];
     changeListener = null;
     vi.clearAllMocks();
@@ -246,7 +279,7 @@ describe("SavedWorkflowProjectGroup", () => {
     cleanup();
   });
 
-  it("用 ITS project 的 agent 拉取，渲染卡片与上次运行归组；无实参「运行」直接发起并带本项目 target", async () => {
+  it("fetches with the ITS project agent, renders cards with last-run grouping; no-args Run fires directly with the project target", async () => {
     agentBeta.listResult.current = {
       workflows: [entry("release-check"), entry("nightly")],
       invalid: [],
@@ -271,8 +304,10 @@ describe("SavedWorkflowProjectGroup", () => {
     ];
     mount();
     await screen.findByTestId(testId(TID_WORKFLOWS_LIST, "/beta"));
-    // 用的是 /beta 的 agent，不是 /repo
-    expect(agentBeta.listSavedWorkflows).toHaveBeenCalledWith({ workspacePath: "/beta" });
+    // Uses the /beta agent, not /repo
+    expect(agentBeta.listSavedWorkflows).toHaveBeenCalledWith({
+      workspacePath: "/beta",
+    });
     expect(agentRepo.listSavedWorkflows).not.toHaveBeenCalled();
     expect(agentBeta.listSavedWorkflowRuns).toHaveBeenCalledWith({
       workspacePath: "/beta",
@@ -287,12 +322,16 @@ describe("SavedWorkflowProjectGroup", () => {
 
     fireEvent.click(screen.getByTestId(testId(TID_WORKFLOW_CARD_RUN, "nightly")));
     await waitFor(() => expect(launchMock).toHaveBeenCalledTimes(1));
-    // 无实参项目档：不弹窗，直发；带本项目 target + project scope + 空实参。
+    // No-args project scope: no dialog, fires directly; carries the project target + project scope + empty args.
     expect(launchMock.mock.calls[0]?.[0]).toEqual({ workspacePath: "/beta" });
-    expect(launchMock.mock.calls[0]?.[1]).toEqual({ name: "nightly", scope: "project", args: {} });
+    expect(launchMock.mock.calls[0]?.[1]).toEqual({
+      name: "nightly",
+      scope: "project",
+      args: {},
+    });
   });
 
-  it("回报加载态给页：加载完成且有工作流 → { loaded:true, empty:false }", async () => {
+  it("reports load state to the page: loaded with workflows → { loaded:true, empty:false }", async () => {
     agentBeta.listResult.current = { workflows: [entry("a")], invalid: [] };
     const { onStateChange } = mount();
     await screen.findByTestId(testId(TID_WORKFLOW_CARD, "a"));
@@ -305,7 +344,7 @@ describe("SavedWorkflowProjectGroup", () => {
     );
   });
 
-  it("空组：加载完成且无工作流无坏文件时渲染 null，但仍回报 { loaded:true, empty:true }", async () => {
+  it("empty group: renders null once loaded with no workflows and no invalid files, but still reports { loaded:true, empty:true }", async () => {
     const { onStateChange, container } = mount();
     await waitFor(() =>
       expect(onStateChange).toHaveBeenLastCalledWith("/beta", {
@@ -319,7 +358,7 @@ describe("SavedWorkflowProjectGroup", () => {
     ).toBeNull();
   });
 
-  it("坏文件条列出路径与原因，组仍出现", async () => {
+  it("the invalid-files strip lists path and reason and the group still appears", async () => {
     agentBeta.listResult.current = {
       workflows: [entry("ok")],
       invalid: [{ path: "/beta/.zcode/workflows/bad.dwf.ts", reason: "invalid_yaml" }],
@@ -327,11 +366,11 @@ describe("SavedWorkflowProjectGroup", () => {
     const { container } = mount();
     await screen.findByTestId(testId(TID_WORKFLOW_CARD, "ok"));
     const strip = container.querySelector('[data-workflows-invalid="true"]');
-    expect(strip?.textContent).toContain("1 个文件无法读取");
+    expect(strip?.textContent).toContain(expectedCopy("workflows.hub.invalid.one", { count: 1 }));
     expect(strip?.textContent).toContain("/beta/.zcode/workflows/bad.dwf.ts");
   });
 
-  it("refreshSeq 变化时绕过缓存重拉；目录变更去抖后刷新；卸载拆监听", async () => {
+  it("a refreshSeq change bypasses the cache and refetches; directory changes refresh after debounce; unmount tears the watcher down", async () => {
     agentBeta.listResult.current = { workflows: [entry("a")], invalid: [] };
     const { rerender } = mount();
     await screen.findByTestId(testId(TID_WORKFLOW_CARD, "a"));
@@ -340,7 +379,7 @@ describe("SavedWorkflowProjectGroup", () => {
     rerender(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(SavedWorkflowProjectGroup, {
           project: BETA,
           isCurrent: false,
@@ -357,7 +396,9 @@ describe("SavedWorkflowProjectGroup", () => {
     );
     await waitFor(() => expect(agentBeta.listSavedWorkflows).toHaveBeenCalledTimes(2));
 
-    expect(fileWatcherService.watch).toHaveBeenCalledWith({ path: "/beta/.zcode/workflows" });
+    expect(fileWatcherService.watch).toHaveBeenCalledWith({
+      path: "/beta/.zcode/workflows",
+    });
     await waitFor(() => expect(changeListener).not.toBeNull());
     changeListener?.();
     await waitFor(() => expect(agentBeta.listSavedWorkflows).toHaveBeenCalledTimes(3), {
@@ -368,7 +409,7 @@ describe("SavedWorkflowProjectGroup", () => {
     expect(fileWatcherService.unwatch).toHaveBeenCalledWith({ id: "watch-1" });
   });
 
-  it("删除：确认后带本项目 target 调 delete 并刷新；取消则不动", async () => {
+  it("delete: after confirmation calls delete with the project target and refreshes; cancel does nothing", async () => {
     agentBeta.listResult.current = { workflows: [entry("x")], invalid: [] };
     mount();
     await screen.findByTestId(testId(TID_WORKFLOW_CARD, "x"));
@@ -386,31 +427,35 @@ describe("SavedWorkflowProjectGroup", () => {
     );
     expect(agentRepo.deleteSavedWorkflow).not.toHaveBeenCalled();
     await waitFor(() => expect(agentBeta.listSavedWorkflows).toHaveBeenCalledTimes(2));
-    expect(toastMock).toHaveBeenCalledWith("已删除工作流「x」");
+    expect(toastMock).toHaveBeenCalledWith(expectedCopy("workflows.hub.deleted", { name: "x" }));
   });
 
-  it("修订：带本项目 target 预填草稿", async () => {
+  it("revise: prefills the draft with the project target", async () => {
     agentBeta.listResult.current = { workflows: [entry("x")], invalid: [] };
     const { onCreateViaChat } = mount();
     await screen.findByTestId(testId(TID_WORKFLOW_CARD, "x"));
     fireEvent.click(screen.getByTestId("revise-x"));
     expect(onCreateViaChat).toHaveBeenCalledTimes(1);
-    expect(onCreateViaChat.mock.calls[0]?.[0]).toContain("请修订已保存的工作流「x」");
-    expect(onCreateViaChat.mock.calls[0]?.[1]).toEqual({ workspacePath: "/beta" });
+    expect(onCreateViaChat.mock.calls[0]?.[0]).toContain('Please revise the saved workflow "x"');
+    expect(onCreateViaChat.mock.calls[0]?.[1]).toEqual({
+      workspacePath: "/beta",
+    });
   });
 
-  it("组头「通过对话创建」带 workspaceKey 的 test id 与本项目 target", async () => {
+  it("the group-header create-via-chat entry has the workspaceKey test id and the project target", async () => {
     agentBeta.listResult.current = { workflows: [entry("x")], invalid: [] };
     const { onCreateViaChat } = mount();
     await screen.findByTestId(testId(TID_WORKFLOW_CARD, "x"));
     fireEvent.click(screen.getByTestId(testId(TID_WORKFLOWS_CREATE_VIA_CHAT, "/beta")));
-    expect(onCreateViaChat.mock.calls[0]?.[1]).toEqual({ workspacePath: "/beta" });
-    expect(onCreateViaChat.mock.calls[0]?.[0]).toContain("帮我设计一个工作流");
+    expect(onCreateViaChat.mock.calls[0]?.[1]).toEqual({
+      workspacePath: "/beta",
+    });
+    expect(onCreateViaChat.mock.calls[0]?.[0]).toContain("Help me design a workflow");
   });
 
-  // 「提升为全局」（docs/dynamic-workflow/launch.md「Promote to global」）：不搬文件，在本项目开
-  // 新会话发概括提示。
-  it("提升为全局：带本项目 target 与名字 / 路径 / locale 调 promote；不调 move、不 toast", async () => {
+  // "Promote to global" (docs/dynamic-workflow/launch.md "Promote to global"): does not move files; opens
+  // a new session in this project and sends the summarization prompt.
+  it("promote to global: calls promote with the project target and name / path / locale; no move call, no toast", async () => {
     agentBeta.listResult.current = {
       workflows: [entry("x")],
       invalid: [],
@@ -424,14 +469,14 @@ describe("SavedWorkflowProjectGroup", () => {
     expect(promoteMock.mock.calls[0]?.[1]).toEqual({
       name: "x",
       path: "/beta/.zcode/workflows/x.dwf.ts",
-      locale: "zh-CN",
+      locale: "en-US",
     });
     expect(toastMock).not.toHaveBeenCalled();
-    // 列表不重拉：源文件没动，全局档由模型另存后靠全局组的目录监听出现。
+    // The list is not refetched: the source file is untouched; the global copy appears via the global group's directory watcher once the model saves it.
     expect(agentBeta.listSavedWorkflows).toHaveBeenCalledTimes(1);
   });
 
-  it("提升为全局：createSession 被拒 → toast 提升失败（带服务端原因）", async () => {
+  it("promote to global: createSession rejected → toast promote failure (with the server reason)", async () => {
     agentBeta.listResult.current = {
       workflows: [entry("x")],
       invalid: [],
@@ -446,10 +491,16 @@ describe("SavedWorkflowProjectGroup", () => {
     await screen.findByTestId(testId(TID_WORKFLOW_CARD, "x"));
     fireEvent.click(screen.getByTestId(testId(TID_WORKFLOW_ACTION_MOVE, "x")));
     await waitFor(() => expect(promoteMock).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(toastMock).toHaveBeenCalledWith("提升失败：workspace is read-only"));
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expectedCopy("workflows.hub.promote.failed", {
+          reason: "workspace is read-only",
+        }),
+      ),
+    );
   });
 
-  it("远程项目不提供「提升为全局」（不变式 4：远端 home 不进中枢）", async () => {
+  it("remote projects do not offer promote-to-global (invariant 4: remote home never enters the hub)", async () => {
     agentBeta.listResult.current = {
       workflows: [entry("x")],
       invalid: [],
@@ -460,7 +511,7 @@ describe("SavedWorkflowProjectGroup", () => {
     expect(screen.queryByTestId(testId(TID_WORKFLOW_ACTION_MOVE, "x"))).toBeNull();
   });
 
-  it("点卡片进详情由页决定：onOpenDetail 带工作流名", async () => {
+  it("clicking a card into detail is the page's decision: onOpenDetail carries the workflow name", async () => {
     agentBeta.listResult.current = { workflows: [entry("x")], invalid: [] };
     const { onOpenDetail } = mount();
     await screen.findByTestId(testId(TID_WORKFLOW_CARD, "x"));
@@ -468,7 +519,7 @@ describe("SavedWorkflowProjectGroup", () => {
     expect(onOpenDetail).toHaveBeenCalledWith("x");
   });
 
-  it("detail 模式渲染 SavedWorkflowDetailView 并把项目名传给详情页", async () => {
+  it("detail mode renders SavedWorkflowDetailView and passes the project label to the detail page", async () => {
     agentBeta.listResult.current = { workflows: [entry("x")], invalid: [] };
     const { onBack } = mount({ mode: { kind: "detail", name: "x" } });
     const detail = await screen.findByTestId(TID_WORKFLOW_DETAIL);

@@ -1,7 +1,7 @@
 # desktop-web-remote-relay
 
-将 Main 的 HTTP、存储和 device WebSocket 与 manager 装配隔离。
+Isolates Main's HTTP, storage, and device WebSocket from manager assembly.
 
-仅 index.ts/contract.ts 供外部消费。manager 仍唯一拥有 window runtime 与 attachment；transport 唯一拥有 socket/generation。storage 只保存非敏感身份，clearLegacy 合并并发且失败可重试。凭据从注入端口读取，HTTP 错误只返回分类。
+Only index.ts and contract.ts are consumed externally. The manager remains the sole owner of window runtimes and attachments; the transport is the sole owner of the socket and generation. Storage persists only non-sensitive identity: clearLegacy coalesces concurrent calls and is retryable on failure. Credentials are read from injected ports, and HTTP errors return only a classification.
 
-完整语义见 [Relay V2 spec](../../../../../docs/web-remote-control/relay-v2-pairing.md)。
+Full semantics: [Relay V2 spec](../../../../../docs/web-remote-control/relay-v2-pairing.md).

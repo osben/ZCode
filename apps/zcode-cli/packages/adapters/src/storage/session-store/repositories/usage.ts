@@ -16,6 +16,8 @@ import { encodeJson } from "../json.js";
 
 const USAGE_RETENTION_DAYS = 30;
 const USAGE_RETENTION_MS = USAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+const USAGE_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+const lastAutomaticUsagePruneAt = new WeakMap<DatabaseSync, number>();
 
 export async function recordModelUsage(db: DatabaseSync, input: ModelUsageRecord): Promise<void> {
   const computedTotalTokens =
@@ -26,7 +28,7 @@ export async function recordModelUsage(db: DatabaseSync, input: ModelUsageRecord
       input.cacheReadInputTokens,
     ) + integer(input.outputTokens);
 
-  // 数据库沿用 0010 创建的历史列名；领域层使用更准确的 reasoningLevel。
+  // The database retains historical column names from migration 0010; the domain layer uses the more accurate reasoningLevel.
   db.prepare(
     `
       insert into model_usage (
@@ -160,7 +162,7 @@ export async function recordModelUsage(db: DatabaseSync, input: ModelUsageRecord
     encodeJson(input.rawUsage),
     encodeJson(input.providerMetadata),
   );
-  await pruneUsage(db);
+  await pruneUsageIfDue(db);
 }
 
 export async function upsertTurnUsage(db: DatabaseSync, input: TurnUsageRecord): Promise<void> {
@@ -253,7 +255,7 @@ export async function upsertTurnUsage(db: DatabaseSync, input: TurnUsageRecord):
     input.errorType ?? null,
     input.errorCode ?? null,
   );
-  await pruneUsage(db);
+  await pruneUsageIfDue(db);
 }
 
 export async function upsertToolUsage(db: DatabaseSync, input: ToolUsageRecord): Promise<void> {
@@ -329,7 +331,27 @@ export async function upsertToolUsage(db: DatabaseSync, input: ToolUsageRecord):
         error_message = coalesce(excluded.error_message, tool_usage.error_message)
       `,
   ).run(...toolUsageValues(input));
-  await pruneUsage(db);
+  await pruneUsageIfDue(db);
+}
+
+async function pruneUsageIfDue(db: DatabaseSync): Promise<void> {
+  const now = Date.now();
+  const lastPrunedAt = lastAutomaticUsagePruneAt.get(db);
+  if (
+    lastPrunedAt !== undefined &&
+    now >= lastPrunedAt &&
+    now - lastPrunedAt < USAGE_PRUNE_INTERVAL_MS
+  ) {
+    return;
+  }
+
+  lastAutomaticUsagePruneAt.set(db, now);
+  try {
+    await pruneUsage(db);
+  } catch (error) {
+    lastAutomaticUsagePruneAt.delete(db);
+    throw error;
+  }
 }
 
 export async function pruneUsage(
@@ -381,8 +403,8 @@ function toolUsageValues(input: ToolUsageRecord): SQLInputValue[] {
   ];
 }
 
-// 说明：按本地日归桶用固定偏移 tzOffsetMs，dayIndex = floor((started_at + off)/DAY)。
-// DST 跨日边界存在最多 1 小时误差，对用量统计可接受。
+// Bucket by local day using the fixed offset tzOffsetMs: dayIndex = floor((started_at + off)/DAY).
+// Daylight-saving transitions can introduce up to a one-hour boundary error, which is acceptable for usage statistics.
 export async function queryAppUsage(
   db: DatabaseSync,
   input: AppUsageQueryInput,
@@ -498,7 +520,7 @@ export async function queryAppUsage(
     )
     .all(tzOffsetMs, DAY_MS, since, until) as Array<{ dayIndex: number; toolCallCount: number }>;
 
-  // 合并三类按日统计到同一 dayIndex
+  // Merge the three daily statistics into the same dayIndex.
   const dayMap = new Map<number, AppUsageDayRow>();
   for (const row of days) {
     dayMap.set(row.dayIndex, {
@@ -638,8 +660,8 @@ export async function queryTaskUsage(
         ? inputSideTokens
         : Math.max(0, inputSideTokens - (inputBaselineBySource[source] ?? 0));
     if (source !== undefined) {
-      // 压缩会让后续 context input 变小；累计消耗不能因此回扣历史，
-      // 但 baseline 必须降到压缩后的值，后续新增轮次才能继续按增量计算。
+      // Compaction reduces subsequent context input; do not subtract that reduction from historical cumulative usage.
+      // But lower the baseline to the compacted value so later turns can continue to be counted incrementally.
       inputBaselineBySource[source] = inputSideTokens;
     }
 
@@ -712,8 +734,8 @@ function inputSideTokensFromStoredUsage(row: {
     }
   }
 
-  // AI SDK v6 写入的 inputTokens 已经是 total input；历史表里 cache 字段只是 breakdown。
-  // task usage 和 compact 基线不能再把 cache read/write 叠到 inputTokens 上。
+  // AI SDK v6 writes inputTokens as total input; cache fields in historical rows are only a breakdown.
+  // Task usage and compaction baselines must not add cache reads/writes on top of inputTokens again.
   return input;
 }
 
@@ -729,7 +751,7 @@ function taskUsageInputBaselineSource(querySource: string): string | undefined {
 }
 
 function integer(value: number | null | undefined): number {
-  // providerTotalTokens 这类旧记录字段可能是 null；adapters 独立 tsc 需要先完成类型收窄。
+  // Legacy fields such as providerTotalTokens may be null; the adapters package's standalone tsc requires narrowing the type first.
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return 0;
   }

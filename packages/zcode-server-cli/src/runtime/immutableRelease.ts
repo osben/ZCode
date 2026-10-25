@@ -20,7 +20,7 @@ async function hashReleaseTree(root: string, relativeRoot = ""): Promise<string>
   const hash = createHash("sha256");
   const visit = async (relativeDirectory: string): Promise<void> => {
     const entries = await readdir(join(root, relativeDirectory), { withFileTypes: true });
-    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
     for (const entry of entries) {
       const relativePath = join(relativeDirectory, entry.name);
       if (relativePath === RELEASE_INTEGRITY_FILE) continue;
@@ -102,7 +102,9 @@ export async function promoteImmutableReleaseDirectory(options: {
     const existingKind = await existingPathKind(options.targetDir);
     if (existingKind !== null) {
       if (existingKind !== "directory") {
-        throw new Error(`Existing immutable release conflict at ${options.targetDir}: target is not a directory`);
+        throw new Error(
+          `Existing immutable release conflict at ${options.targetDir}: target is not a directory`,
+        );
       }
       await assertExistingReleaseMatches(options.targetDir, integrity);
       return;
@@ -111,14 +113,14 @@ export async function promoteImmutableReleaseDirectory(options: {
       await rename(options.incomingDir, options.targetDir);
       promoted = true;
     } catch (error) {
-      // 并发发布可能都先看到目标不存在。rename 失败后仅当目标确实已由
-      // 另一发布者创建时才进入校验复用；Windows 的普通 EPERM 不能伪装成命中。
+      // Concurrent publishers may all see the target as missing first. After rename fails, validate and reuse only if another publisher actually created the target;
+      // a generic Windows EPERM must not be mistaken for a hit.
       const racedKind = await existingPathKind(options.targetDir);
       if (racedKind !== "directory") throw error;
       await assertExistingReleaseMatches(options.targetDir, integrity);
     }
   } finally {
-    // 复用和失败都不会消费 incoming，必须统一清理，避免每次重试留下完整 release。
+    // Reuse and failure both leave incoming untouched, so always clean it up to avoid leaving a full release after every retry.
     if (!promoted) await rm(options.incomingDir, { recursive: true, force: true });
   }
 }

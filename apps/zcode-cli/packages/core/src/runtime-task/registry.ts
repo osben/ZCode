@@ -7,13 +7,15 @@ import type {
 } from "@zcode/contracts";
 import type { AgentOutput } from "@zcode/contracts";
 
-// local_dynamic_workflow 与 local_workflow 刻意分开：后者是 legacy `Workflow` 工具（不可取消），
-// 前者是 workflow run（经 DynamicWorkflowRunPort.cancel 可取消）。合成一个类型，取消分派就无法区分。
+// Keep local_dynamic_workflow and local_workflow separate: the latter is the legacy `Workflow` tool (not cancellable),
+// while the former is a workflow run (cancellable through DynamicWorkflowRunPort.cancel). Combining the types would make cancellation dispatch ambiguous.
+// local_dream = /dream memory consolidation: in-process promise (no port), cancellable via the runtime-held AbortController.
 export type RuntimeTaskType =
   | "local_agent"
   | "local_bash"
   | "local_workflow"
   | "local_dynamic_workflow"
+  | "local_dream"
   | "monitor_mcp";
 
 export interface RuntimeTaskUsageSnapshot {
@@ -44,7 +46,7 @@ export interface RuntimeTaskSnapshot extends SubagentTaskSnapshot {
   /** 内存执行归属；重启不会恢复闲时后台任务。 */
   offPeakExecutionId?: string;
   offPeakCancelled?: boolean;
-  /** task 注册时所属 active conversation branch；用于迟到 completion fencing。 */
+  /** Active conversation branch that owned the task when it was registered; used to fence late completions. */
   branchGeneration?: number;
   exitCode?: number;
   type: RuntimeTaskType;
@@ -55,13 +57,13 @@ export interface RuntimeTaskSnapshot extends SubagentTaskSnapshot {
   pendingMessages?: RuntimeTaskPendingMessage[];
   prompt?: string;
   /**
-   * workflow run 产物的序列化文本。TaskOutput 的投影只读得到 registry 条目（dwf 从不写
-   * outputFile），所以产物必须在终态更新时就存到条目上。
+   * Serialized workflow run artifacts. TaskOutput can read only registry entries (DWF never writes
+   * outputFile), so artifacts must be stored on the entry when the terminal state is updated.
    */
   resultText?: string;
   /**
-   * 是谁请求停止这个任务（"user" = GUI / 后台面板，"model" = TaskStop）。dwf 停止分支在调
-   * 端口 cancel 之前写下它；终态通知稍后由 waiter 结算时读它。重臂（resume 新生命）随结算面复位。
+   * Who requested this task to stop ("user" = GUI/background panel, "model" = TaskStop). The DWF stop branch records this
+   * before calling the cancel port; the terminal notification reads it later when the waiter settles. Re-arming (resume as a new run) resets it during settlement.
    */
   stopInitiator?: "user" | "model";
   taskType?: RuntimeTaskType;

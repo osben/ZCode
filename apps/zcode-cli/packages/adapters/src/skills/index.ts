@@ -35,8 +35,8 @@ const PLUGIN_MANIFEST_RELATIVE_PATHS = [
 ] as const;
 
 export interface NodeSkillAdapterOptions extends SkillRootResolutionOptions {
-  // 被禁用的 SKILL.md 绝对路径集合（来自 config.json 的 skill.<path>.enable=false）。
-  // 命中的 skill 在发现阶段直接剔除，使 discover/load/inspect 全链路保持一致。
+  // Set of disabled SKILL.md absolute paths (from skill.<path>.enable=false in config.json).
+  // Matching skills are removed during discovery so discover/load/inspect stay consistent.
   disabledPaths?: Iterable<string>;
 }
 
@@ -77,7 +77,8 @@ export class NodeSkillAdapter implements SkillPort {
         if (!parsed) continue;
         if (await this.isDisabledSkillPath(parsed.path)) continue;
         totalDiscovered++;
-        // 同名技能可能来自不同技能生态或版本，不能只按 name 去重；路径才是安装项身份。
+        // Skills with the same name may come from different ecosystems or versions; deduplicate by
+        // path, which identifies an installation, rather than by name alone.
         if (selected.has(parsed.path)) {
           continue;
         }
@@ -134,10 +135,12 @@ export class NodeSkillAdapter implements SkillPort {
     diagnostics: SkillDiagnostic[],
   ): Promise<string[]> {
     try {
-      // manifest 的 skills 项既可指向单个技能目录，也可指向包含多个技能的根目录。
-      // 共享 scan helper 会检查根自身的 SKILL.md，再扫描一层子目录，排除策略与桌面端一致。
-      // 信任边界：plugin-scope 内容不可信，不跟随符号链接（目录级与文件级逃逸
-      // 一并拒绝）；用户级根保持跟随，symlink 技能导入能力不变。
+      // A manifest's skills entry may point to one skill directory or to a root containing multiple
+      // skills. The shared scan helper checks for a SKILL.md in the root itself, then scans one
+      // level of subdirectories; its exclusion policy matches the desktop app.
+      // Trust boundary: plugin-scope content is untrusted, so do not follow symlinks (reject both
+      // directory-level and file-level escapes). User-level roots still follow symlinks, preserving
+      // the existing skill-import capability.
       return await scanSkillFilesUnderRoot(skillRoot.path, {
         followSymbolicLinks: skillRoot.source !== "plugin",
       });
@@ -176,7 +179,8 @@ export class NodeSkillAdapter implements SkillPort {
     }
 
     const frontmatter = extractFrontmatter(rawContent);
-    // 无 frontmatter 的手写 skill 仍可按目录名加载，避免设置页/CLI 出现无修复价值的错误。
+    // Handwritten skills without frontmatter can still load by directory name, avoiding errors in
+    // Settings/CLI that provide no useful repair guidance.
     const parsed = frontmatter
       ? parseFlatYaml(frontmatter, path, diagnostics)
       : { values: {}, keys: [] };
@@ -214,8 +218,9 @@ export class NodeSkillAdapter implements SkillPort {
       return null;
     }
 
-    // 第三方/旧版 skill 常带 version、homepage 等扩展字段。
-    // 这些字段不影响加载，不再作为 warning 暴露，只保留 safeToAutoLoad 的保守判断。
+    // Third-party/older skills often include extension fields such as version and homepage.
+    // These fields do not affect loading, so do not expose them as warnings; retain only the
+    // conservative safeToAutoLoad check.
     const pluginAlias = await this.resolvePluginSkillAlias(name, root);
 
     return {
@@ -243,8 +248,9 @@ export class NodeSkillAdapter implements SkillPort {
       return true;
     }
     const canonicalPath = await realpath(resolvedPath).catch(() => resolvedPath);
-    // UI 可能把 symlink 目标真实路径写入 config，而 agent 从 ~/.zcode/skills 的链接路径扫描。
-    // 同时比对扫描路径和真实路径，避免同一个 SKILL.md 因路径形态不同绕过禁用开关。
+    // The UI may write a symlink target's real path to config while the agent scans through the
+    // linked path in ~/.zcode/skills. Compare both the scanned path and real path so the same
+    // SKILL.md cannot bypass the disable switch because of different path forms.
     return this.disabledPaths.has(canonicalPath);
   }
 
@@ -327,8 +333,9 @@ function parseFlatYaml(
     keys.push(key);
     const blockStyle = parseBlockScalarStyle(value);
     if (blockStyle) {
-      // Agent 侧只读顶层 `description: >` 会把后续缩进行跳过，
-      // 导致 `.agents/skills` 的合法多行触发说明注入给模型时只剩 `>`。
+      // On the Agent side, reading only the top-level `description: >` skips subsequent indented
+      // lines, leaving only `>` when a valid multiline trigger description from `.agents/skills`
+      // is injected into the model prompt.
       const block = readBlockScalar(lines, index + 1, blockStyle);
       values[key] = block.value;
       index = block.nextIndex - 1;

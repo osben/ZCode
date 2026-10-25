@@ -15,11 +15,11 @@ import {
   spliceHoleBody,
 } from "../src/index.js";
 
-// 留白的编译面（docs/dynamic-workflow/authoring.md「Holes」，docs/analysis.md「Sites」）：站点收集
-// （名字键 id、一层前缀计数器、tail、三个重载）、规则 9012、图投影（步 / 阶段 / fill / holes）、
-// lowering（holeBodies 与站点处的求值器）、以及补全服务的两件纯文本工具。
+// The compile surface of holes (docs/dynamic-workflow/authoring.md "Holes", docs/analysis.md "Sites"): site collection
+// (name-keyed ids, one-level prefix counters, tail, the three overloads), rule 9012, graph projection
+// (steps / phases / fill / holes), lowering (holeBodies and the evaluator at the site), and the completion service's two plain-text tools.
 
-// 留白 id 是名字键（hole-id.ts）：测试里按名字取，不写死哈希。
+// Hole ids are name keys (hole-id.ts): tests fetch by name instead of hard-coding hashes.
 const GROUP = holeSiteId("决定分组");
 const ORDER = holeSiteId("决定顺序");
 const VERDICT = holeSiteId("评判");
@@ -42,7 +42,7 @@ describe("hole ids (name key)", () => {
   });
 
   it("reports two different names that hash to one id as 9012 instead of guessing", () => {
-    // 离线搜到的一对 FNV-1a 32 位撞车名（k32728 / k261234 → 0x92c402be）。
+    // A pair of FNV-1a 32-bit colliding names found offline (k32728 / k261234 → 0x92c402be).
     expect(holeSiteId("k32728")).toBe(holeSiteId("k261234"));
     const { diagnostics } = sitesOf(
       `const a = await hole<string>("k32728");
@@ -93,7 +93,7 @@ describe("hole site collection", () => {
     expect(site?.body).toBeUndefined();
     expect(site?.tail).toBe(false);
     expect(site?.order).toBe(2);
-    // 留白之后的站点照常编号：留白不是另一套计数器的起点。
+    // Sites after the hole number as usual: a hole is not the start of another counter set.
     expect(table.asks.map((s) => s.id)).toEqual(["ask#1", "ask#2"]);
     expect(table.actors.map((s) => s.id)).toEqual(["actor#1", "actor#2"]);
   });
@@ -105,13 +105,13 @@ describe("hole site collection", () => {
     expect(table.holes[0]?.body).toBeDefined();
     expect(table.asks.map((s) => s.id)).toEqual(["ask#1", `${GROUP}/ask#1`, "ask#2"]);
     expect(table.actors.map((s) => s.id)).toEqual(["actor#1", `${GROUP}/actor#1`, "actor#2"]);
-    // 站点 id 稳定性规则延伸到「加函数体」：体外每个 id 逐字不变。
+    // The site-id stability rule extends to "adding a function body": every id outside the body stays verbatim.
     const ids = (t: typeof table) =>
       [...t.asks, ...t.actors, ...t.holes].map((s) => s.id).filter((id) => !id.includes("/"));
     expect(ids(table)).toEqual(ids(outer));
-    // 函数体里的 return 不是顶层 return。
+    // A return inside the body is not a top-level return.
     expect(table.topLevelReturns).toHaveLength(1);
-    // 体内的标记照常收集（它没有 id）。
+    // Markers inside the body are collected as usual (it has no id).
     expect(table.phases.map((m) => m.name)).toEqual(["分组"]);
   });
 
@@ -132,7 +132,7 @@ describe("hole site collection", () => {
       [OUTER, undefined],
       [INNER, OUTER],
     ]);
-    // 前缀只有一层：内层留白体内的站点带内层的 id，不带外层的。
+    // The prefix is only one level: sites inside the inner hole's body carry the inner id, not the outer one.
     expect(table.asks.map((s) => s.id)).toEqual([`${INNER}/ask#1`]);
   });
 
@@ -186,7 +186,7 @@ describe("hole diagnostics (9012)", () => {
       `const a = await hole<string>("决定");\nconst b = await hole<string>("决定");\nreturn a + b;`,
     ).diagnostics;
     expect(twice).toHaveLength(1);
-    expect(twice[0]?.line).toBe(2); // 报在后一个上
+    expect(twice[0]?.line).toBe(2); // reported on the latter one
     expect(twice[0]?.message).toContain("two holes are named");
     const marker = sitesOf(
       `phase("决定");\nconst a = await hole<string>("决定");\nreturn a;`,
@@ -194,7 +194,7 @@ describe("hole diagnostics (9012)", () => {
     expect(marker).toHaveLength(1);
     expect(marker[0]?.line).toBe(2);
     expect(marker[0]?.message).toContain("phase(");
-    // 嵌套补全里的名字也算：体内的标记与外面的留白撞名。
+    // Names inside nested completions count too: a marker in the body colliding with a hole outside.
     const nested = sitesOf(
       `const a = await hole<string>("决定", async () => {\n  phase("决定");\n  return "x";\n});\nreturn a;`,
     ).diagnostics;
@@ -215,11 +215,11 @@ describe("hole diagnostics (9012)", () => {
         `const xs = [1, 2];\nconst ys = await Promise.all(xs.map(async (x) => await hole<string>(\`h\${x}\`)));\nreturn ys;`,
       ),
     ).toEqual([expect.stringContaining("string literal"), expect.stringContaining("fan-out")]);
-    // 未提升的候选也算：forEach 的回调里没有别的站点，留白本身就是它到达的第一个站点。
+    // Un-hoisted candidates count too: the forEach callback has no other sites, so the hole itself is the first site it reaches.
     expect(
       messages(`[1, 2].forEach(async () => {\n  await hole<string>("决定");\n});\nreturn 1;`)[0],
     ).toContain("fan-out");
-    // for...of 带 await 是顺序的：第一轮停在留白，补全后每轮跑函数体（authoring.md「Holes」）。
+    // for...of with await is sequential: the first iteration stops at the hole, and after completion each iteration runs the body (authoring.md "Holes").
     expect(codes(`for (const x of [1, 2]) {\n  await hole<string>("决定");\n}\nreturn 1;`)).toEqual(
       [],
     );
@@ -313,7 +313,8 @@ describe("holes in the graphs", () => {
     expect(step?.lane).toBe(MAIN_LANE);
     expect(step?.fill).toBeUndefined();
     expect(analyzed.causality?.lanes[0]?.id).toBe(MAIN_LANE);
-    // 留白是一个阶段：控制流投影的阶段表里有它、没有成员；因果图的阶段表（按成员）没有它。
+    // A hole is a phase: the control-flow projection's phase table includes it with no members; the causality graph's
+    // phase table (by membership) does not include it.
     expect(analyzed.flow?.phases?.map((p) => p.id)).toEqual(["unphased", GROUP]);
     expect(analyzed.flow?.nodes.filter((n) => n.kind === "issue" && n.phase === GROUP)).toEqual([]);
     expect(analyzed.causality?.phases?.map((p) => p.id)).toEqual(["unphased"]);
@@ -335,21 +336,22 @@ describe("holes in the graphs", () => {
     expect(analyzed.ok).toBe(true);
     expect(analyzed.graph?.nodes.some((n) => n.id === GROUP)).toBe(false);
     expect(analyzed.flow?.holes).toBeUndefined();
-    // 函数体以标记开头：留白自己的阶段没有成员，但它有 mark 节点，所以仍在阶段表里（接龙的每一步
-    // 名字因此留在侧栏）；顶层留白的阶段不带 fill，体内的阶段带 fill 指回它。
+    // The body starts with a marker: the hole's own phase has no members, but it has a mark node, so it stays in the
+    // phase table (keeping each link-of-relay step's name in the sidebar); a top-level hole's phase carries no fill,
+    // while a body phase carries a fill pointing back to it.
     expect(analyzed.flow?.phases).toEqual([
       { id: "unphased" },
       { id: GROUP, loc: { column: 20, line: 3 }, name: "决定分组" },
       { fill: GROUP, id: "phase#1", loc: { column: 3, line: 4 }, name: "分组" },
     ]);
-    // 因果图的阶段表按成员：空的留白阶段不在里面。
+    // The causality graph's phase table is by membership: an empty hole phase is not in it.
     expect(analyzed.causality?.phases?.map((p) => p.id)).toEqual(["unphased", "phase#1"]);
     const bodyAsk = analyzed.causality?.steps.find((s) => s.id === `${GROUP}/ask#1`);
     expect(bodyAsk?.fill).toBe(GROUP);
     expect(bodyAsk?.phase).toBe("phase#1");
     expect(bodyAsk?.lane).toBe(`${GROUP}/actor#1`);
     expect(analyzed.causality?.steps.find((s) => s.id === "ask#2")?.fill).toBeUndefined();
-    // 没有标记的函数体：留白自己的阶段认领体内的 ask，站在它的名字下。
+    // A body without markers: the hole's own phase claims the body's ask and stands under its name.
     const noMarker = analyzeWorkflowScript(FILLED.replace(`  phase("分组");\n`, ""));
     expect(noMarker.flow?.phases).toEqual([
       { id: "unphased" },
@@ -373,7 +375,7 @@ describe("holes in the graphs", () => {
     expect(analyzed.ok).toBe(true);
     const phases = collectSitePhases(analyzed.core!);
     expect(phases.get(`${GROUP}/ask#1`)).toBe("决定分组");
-    expect(phases.get(ORDER)).toBe("摸底"); // 开放的留白站在「摸底」里
+    expect(phases.get(ORDER)).toBe("摸底"); // the open hole stands inside "摸底"
     expect(collectPhaseNames(analyzed.flow)).toEqual({
       holes: [2],
       phaseNames: ["摸底", "决定分组", "决定顺序", "执行"],
@@ -410,15 +412,16 @@ describe("hole lowering", () => {
       `__host.ask("${GROUP}/ask#1", __host.createActor("${GROUP}/actor#1", "分组员")`,
     );
     expect(body).not.toContain("<Plan>");
-    // 开放的留白：提示缺席退回 void 0，没有函数体也没有 holeBodies 条目。
+    // Open hole: a missing prompt falls back to void 0, with no body and no holeBodies entry.
     const open = lowerWorkflowScript(`const v = await hole<string>("决定");\nreturn v;`).lowered!;
     expect(open.code).toContain(`__host.hole("${DECIDE}", "决定", void 0, __src => eval(__src))`);
     expect(open.holeBodies).toEqual({});
   });
 
   it("evaluates a fill's text at the site: the body closes over the bindings there", async () => {
-    // 模拟 cell：__host.hole 在站点处拿到求值器，用 holeBodies 的文本求出函数并调用；函数体里
-    // 引用的 `survey` 是留白之前的 const——只有站点处的直接 eval 能看见它。
+    // Simulated cell: __host.hole receives the evaluator at the site, evaluates the function from holeBodies' text and
+    // calls it; the `survey` referenced inside the body is a const declared before the hole — only a direct eval at the
+    // site can see it.
     const lowered = lowerWorkflowScript(FILLED).lowered!;
     const calls: string[] = [];
     const host = {
@@ -437,7 +440,7 @@ describe("hole lowering", () => {
         return evaluate(lowered.holeBodies[id] as string)();
       },
     };
-    // 把已补全的调用改成开放形式（去掉第五实参），让文本路径真的跑起来。
+    // Turn the already-filled call into the open form (drop the fifth argument) so the text path really runs.
     const unfilledCode = lowered.code.replace(/, async \(\) => \{[\s\S]*?\n\}\);/, ");");
     const result = await new AsyncFunction("__host", unfilledCode)(host);
     expect(result).toEqual({ groups: [["a"]] });
@@ -459,7 +462,7 @@ describe("spliceHoleBody / checkSiteStability", () => {
     expect(spliced?.text).toBe(FILLED);
     expect(spliced?.insertedAtLine).toBe(4);
     expect(spliced?.insertedLines).toBe(3);
-    // 拼出来的脚本编译干净，且函数体的站点带前缀。
+    // The spliced script compiles cleanly, and the body's sites carry the prefix.
     const after = sitesOf(spliced!.text);
     expect(after.diagnostics).toEqual([]);
     expect(after.table.asks.map((s) => s.id)).toEqual(["ask#1", `${GROUP}/ask#1`, "ask#2"]);
@@ -477,7 +480,8 @@ describe("spliceHoleBody / checkSiteStability", () => {
   });
 
   it("keeps a trailing comma and a multi-line call intact (prettier-style call site)", () => {
-    // 2026-09-28 首次实测：主代理写了带尾随逗号的多行调用，旧的「右括号前插入」得到 `, , async`。
+    // First observed live on 2026-09-28: the main agent wrote a multi-line call with a trailing comma, and the old
+    // "insert before the closing paren" produced `, , async`.
     const script = [
       `const v = await hole<string>(`,
       `  "决定",`,
@@ -552,7 +556,7 @@ describe("spliceHoleBody / checkSiteStability", () => {
       ok: false,
       detail: expect.stringContaining("ask#3 appeared"),
     });
-    // 体外新出现的留白也算「补全之外」：它的 fill 链通不到被补全的留白。
+    // A hole newly appearing outside the body also counts as "outside the completion": its fill chain cannot reach the completed hole.
     const strayHole = sitesOf(`${OPEN}\nawait hole<string>("别处");`).table;
     expect(checkSiteStability(before, strayHole, GROUP, 99, 0)).toMatchObject({
       ok: false,
@@ -568,9 +572,10 @@ describe("spliceHoleBody / checkSiteStability", () => {
   });
 });
 
-// 递归留白（docs/analysis.md「Sites」）：一个补全体里再留一个留白，补全它就是对**有效脚本**再拼接
-// 一次。内层留白的 id 仍是它自己的名字键（不带外层前缀，深度不长 id），归属记在 fill 上。五件事
-// 逐一证明：站点表、拼接、稳定性、lowering 的两层 holeBodies、阶段表里的位置。
+// Recursive holes (docs/analysis.md "Sites"): a hole left inside a completion body; completing it is one more splice
+// onto a **valid script**. The inner hole's id is still its own name key (no outer prefix, depth does not lengthen the
+// id), and its ownership is recorded on fill. Five things proven one by one: the site table, splicing, stability,
+// lowering's two-layer holeBodies, and the position in the phase table.
 describe("recursive holes", () => {
   const OUTER_OPEN = [
     `interface Plan { groups: string[][] }`,
@@ -605,7 +610,7 @@ describe("recursive holes", () => {
     ]);
     const second = bothFilled();
     expect(sitesOf(second.text).diagnostics).toEqual([]);
-    // 拼进了内层调用：内层调用现在带函数体，且体内的站点带内层留白自己的一层前缀。
+    // Spliced into the inner call: the inner call now has a body, and the body's sites carry the inner hole's own one-level prefix.
     expect(second.text).toContain(
       `const order = await hole<Order>("决定顺序", \`\${draft.groups.length} 组\`, async () => {`,
     );
@@ -626,7 +631,7 @@ describe("recursive holes", () => {
       `${ORDER}/actor#1`,
       "actor#2",
     ]);
-    // 内层调用的缩进（外层体 2 格）+ 2：内层函数体 4 格，右括号回到 2 格。
+    // Indentation of the inner call (outer body at 2 spaces) + 2: the inner function body at 4 spaces, the closing paren back to 2.
     expect(second.text).toContain(`\n  });\n  return { groups`);
   });
 
@@ -641,7 +646,7 @@ describe("recursive holes", () => {
         second.insertedLines,
       ),
     ).toEqual({ ok: true });
-    // 重新编号：在有效脚本前面多插一个 ask，外层与外层体的 id 全部错位。
+    // Renumbering: inserting one more ask before the valid script misaligns every outer and outer-body id.
     const renumbered = sitesOf(`await agent("x").ask<string>("y");\n${second.text}`).table;
     const verdict = checkSiteStability(
       second.before,
@@ -651,7 +656,7 @@ describe("recursive holes", () => {
       second.insertedLines,
     );
     expect(verdict.ok).toBe(false);
-    // 外层体的 id（`<GROUP>/…`）必须原样存在：把它们改掉也被拒。
+    // The outer body's ids (`<GROUP>/…`) must exist verbatim: changing them is rejected too.
     const dropped = sitesOf(
       second.text.replace(
         `const draft = await agent("分组员").ask<Plan>(\`分组 \${survey}\`);`,
@@ -695,7 +700,7 @@ describe("recursive holes", () => {
     expect(inner).toContain(
       `__host.ask("${ORDER}/ask#1", __host.createActor("${ORDER}/actor#1", "排序员")`,
     );
-    // 外层文本现在把内层函数体内联为第五实参，且与单独打印的内层文本同一份改写。
+    // The outer text now inlines the inner function body as the fifth argument, with the same rewrite as the inner text printed alone.
     const outer = second.holeBodies[GROUP]!;
     expect(outer).toContain(
       `__host.hole("${ORDER}", "决定顺序", \`\${draft.groups.length} 组\`, __src => eval(__src), async () => {`,
@@ -716,7 +721,7 @@ describe("recursive holes", () => {
     expect(innerOpen.flow?.holes).toEqual([
       { name: "决定顺序", phase: GROUP, siteId: ORDER, type: "Order" },
     ]);
-    // 顶层留白自己的阶段不带 fill；体内的留白阶段带外层的 id——嵌套关系只在这里。
+    // A top-level hole's own phase carries no fill; a hole phase inside a body carries the outer id — the nesting lives only here.
     expect(innerOpen.flow?.phases?.map((p) => [p.id, p.fill])).toEqual([
       ["unphased", undefined],
       [GROUP, undefined],
@@ -760,9 +765,10 @@ describe("recursive holes", () => {
   });
 });
 
-// 修复原因：id 曾逐层拼接（`hole#1/hole#1/…`，每层 7 个字符），接龙八九步就顶到协议的 64 字符
-// id 上界。名字键之后深度不再进 id：这里把一条尾巴留白的接龙长到 20 步，每一步都走真实的
-// 拼接 + 稳定性复核 + 全量分析，最后看最长的 id 与第一步时一样短。
+// Fix rationale: ids used to be concatenated per level (`hole#1/hole#1/…`, 7 characters per level), and a link of
+// eight or nine steps hit the protocol's 64-character id cap. With name keys, depth no longer enters the id: this
+// test grows a tail-hole relay to 20 steps, each step going through the real splice + stability recheck + full
+// analysis, and finally checks the longest id is as short as at step one.
 describe("a tail chain twenty fills deep", () => {
   const STEPS = 20;
   const stepName = (k: number) => `第${k}步`;
@@ -811,12 +817,12 @@ describe("a tail chain twenty fills deep", () => {
 
   it("keeps 20 nested fills stable with bounded ids and their enclosing fill identity", () => {
     const { lengths, text } = grow();
-    // 最长的 id 是 `hole#xxxxxxxx/actor#1` 这一类：21 个字符，与深度无关。
+    // The longest ids are of the `hole#xxxxxxxx/actor#1` kind: 21 characters, independent of depth.
     expect(new Set(lengths)).toEqual(new Set([lengths[0]]));
     expect(lengths[0]).toBeLessThanOrEqual(24);
     const analyzed = analyzeWorkflowScript(text);
     expect(analyzed.ok).toBe(true);
-    // 每一步的名字都还在阶段表里：接龙的步名不会从侧栏消失。
+    // Every step's name remains in the phase table: the relay's step names never disappear from the sidebar.
     const names = collectPhaseNames(analyzed.flow).phaseNames;
     for (let k = 1; k <= STEPS; k += 1) expect(names).toContain(stepName(k));
     expect(collectPhaseNames(analyzed.flow).holes).toEqual([]);
@@ -828,7 +834,7 @@ describe("a tail chain twenty fills deep", () => {
       expect(hole?.fill, `step ${k}`).toBe(holeSiteId(stepName(k - 1)));
     }
     expect(table.holes.find((h) => h.id === holeSiteId(stepName(1)))?.fill).toBeUndefined();
-    // 最里层函数体的站点只带最里层留白自己的一层前缀。
+    // The innermost body's sites carry only the innermost hole's own one-level prefix.
     const lowered = lowerWorkflowScript(text).lowered!;
     expect(lowered.siteIds).toContain(`${holeSiteId(stepName(19))}/ask#1`);
     expect(Object.keys(lowered.holeBodies)).toHaveLength(STEPS);

@@ -156,12 +156,7 @@ describe("DB109 会话库正式数据迁移", () => {
     const sessionBefore = db.prepare("SELECT * FROM session").get();
     store = await createSqliteSessionStore({ dbPath: path });
     expect(store.debugMigrationIds()).toContain(migrationId);
-    expect(store.debugMigrationIds()).toEqual(
-      expect.arrayContaining([
-        "0023_session_soft_delete_outcome",
-        "0024_session_database_identity",
-      ]),
-    );
+    expect(store.debugMigrationIds().at(-1)).toBe("9005_fork_session_acp_pending_choice");
     expect(raw("session_entry", "selection")).toEqual({
       ...oldEntry,
       modelSelection: currentSelection,
@@ -183,11 +178,8 @@ describe("DB109 会话库正式数据迁移", () => {
       modelSelection: historicalSelection,
     });
     expect(raw("part", "body")).toEqual(parts[0]!.value);
-    expect(db.prepare("SELECT * FROM session").get()).toEqual({
-      ...sessionBefore,
-      time_deleted: null,
-      last_outcome: null,
-    });
+    // Later migrations add session columns; pre-existing values must stay unchanged.
+    expect(db.prepare("SELECT * FROM session").get()).toMatchObject(sessionBefore);
     const history = await store.messages({ sessionID });
     expect(history[0]?.info).not.toHaveProperty("model");
     expect(history[1]?.info).not.toHaveProperty("providerID");

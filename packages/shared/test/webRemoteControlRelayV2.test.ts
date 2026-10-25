@@ -9,7 +9,7 @@ describe("Relay V2 wire contract", () => {
     const auth = {
       type: "auth_init",
       device_sid: "d_1",
-      meta: { name: "桌面" },
+      meta: { name: "Desktop" },
       client_ts: 1_600_000_000,
     };
     expect(parseWebRemoteControlRelayV2OutgoingMessage(auth)).toEqual(auth);
@@ -32,7 +32,7 @@ it("validates message direction, seconds and opaque JSON payloads", () => {
     { type: "pair_status_query", client_ts: 1.5 },
     { type: "pair_status_query", client_ts: -1 },
     { type: "auth_init", device_sid: " " },
-    { type: "auth_init", device_sid: "中".repeat(43) },
+    { type: "auth_init", device_sid: "\u4e2d".repeat(43) },
     { type: "auth_init", device_sid: "d_1", meta: { extra: 1 } },
     { type: "data" },
     { type: "data", payload: undefined },

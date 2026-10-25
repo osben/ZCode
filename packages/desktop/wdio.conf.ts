@@ -99,7 +99,6 @@ import { createE2EStartupCredentialSeed } from "./test/e2e/helpers/e2e-startup-c
 import { seedRemoteOnboardingFixture } from "./test/e2e/helpers/remote-startup-profile.js";
 import { getE2EProviderEndpointEnv } from "#e2e/helpers/e2e-provider-endpoint";
 import { prepareOAuthCompletionRaceFixture } from "./test/e2e/helpers/oauth-completion-race-fixture.js";
-import { prepareWebRemoteControlAuthGateFixture } from "./test/e2e/helpers/web-remote-control-auth-gate-fixture.js";
 import { prepareAccessToken401Fixture } from "./test/e2e/helpers/access-token-401-fixture.js";
 import { createE2EReplayFixtureVariables } from "./test/e2e/helpers/e2e-runtime-paths.js";
 import { stageE2EAppOutput } from "./test/e2e/helpers/e2e-app-output-stage.js";
@@ -179,6 +178,7 @@ import {
   CONTEXT_WINDOW_COLD_RESUME_PROVIDER_NAME,
   seedProviderReadinessHistoryFixture,
 } from "./test/e2e/helpers/provider-readiness-history-fixture.js";
+import { seedSessionPrStatusFixture } from "./test/e2e/helpers/session-pr-status-fixture.js";
 import {
   PASSIVE_AGENT_STARTUP_SCENARIO,
   SMALL_AGENT_WARMUP_SCENARIO,
@@ -314,11 +314,13 @@ const MODEL_PROVIDER_REGRESSION_GAPS_SPEC =
 // 只借用这套 fixture 的「多 workspace 已恢复」启动态来做 workspace 切换，不断言 agent 预热行为。
 const BROWSER_CROSS_WORKSPACE_CLOSE_SPEC = "browser-tab-close-cross-workspace.test.ts";
 const WORKSPACE_REMOVAL_RUNTIME_RELEASE_SPEC = "workspace-removal-runtime-release.test.ts";
+const WORKSPACE_SIDEBAR_PROJECT_CONTROLS_SPEC = "workspace-sidebar-project-controls.test.ts";
 const AGENT_WARMUP_FIXTURE_SPECS = [
   PASSIVE_AGENT_STARTUP_SPEC,
   AGENT_WARMUP_LIFECYCLE_SPEC,
   AGENT_WARMUP_SMALL_SET_SPEC,
   PROVIDER_SAVE_DORMANT_AGENT_SPEC,
+  WORKSPACE_SIDEBAR_PROJECT_CONTROLS_SPEC,
   BROWSER_CROSS_WORKSPACE_CLOSE_SPEC,
   WORKSPACE_REMOVAL_RUNTIME_RELEASE_SPEC,
   MODEL_PROVIDER_REGRESSION_GAPS_SPEC,
@@ -326,6 +328,7 @@ const AGENT_WARMUP_FIXTURE_SPECS = [
 /** 只需要两个 workspace 的 spec，用小号 scenario 少 seed 7 个目录。 */
 const SMALL_AGENT_WARMUP_SPECS = [
   AGENT_WARMUP_SMALL_SET_SPEC,
+  WORKSPACE_SIDEBAR_PROJECT_CONTROLS_SPEC,
   BROWSER_CROSS_WORKSPACE_CLOSE_SPEC,
   WORKSPACE_REMOVAL_RUNTIME_RELEASE_SPEC,
   MODEL_PROVIDER_REGRESSION_GAPS_SPEC,
@@ -333,6 +336,8 @@ const SMALL_AGENT_WARMUP_SPECS = [
 const TASK_INDEX_ROW_AUTHORITY_SPEC = "conversation-session-task-index-row-authority.test.ts";
 const TASK_TITLE_MARQUEE_SPEC = "conversation-session-task-title-marquee.test.ts";
 const GIT_REVIEW_ENTRY_SPEC = "conversation-session-git-review-entry.test.ts";
+const SESSION_PR_STATUS_SPEC = "git/session-pr-status.test.ts";
+const WORKTREE_CHAT_FIRST_SPEC = "conversation-session-worktree-chat-first.test.ts";
 const WINDOWS_AGENT_METRIC_PROBE_ABSENCE_SPEC = "windows-agent-metric-probe-absence.test.ts";
 const HOOKS_LIFECYCLE_SPEC = "conversation-session-hooks-lifecycle.test.ts";
 const HOOK_TRUST_SPEC = "conversation-session-hook-trust.test.ts";
@@ -620,7 +625,6 @@ let modelContextBudgetConfigMockServer: ModelContextBudgetConfigMockServer | nul
 let dynamicWorkflowConfigMockServer: DynamicWorkflowConfigMockServer | null = null;
 let clientScenesMockServer: ClientScenesMockServer | null = null;
 let stopOAuthCompletionRaceFixture: (() => Promise<void>) | null = null;
-let stopWebRemoteControlAuthGateFixture: (() => Promise<void>) | null = null;
 let stopAccessToken401Fixture: (() => Promise<void>) | null = null;
 let pluginCdnZipFixtureServer: PluginCdnZipFixtureServer | null = null;
 let upstreamE2EBaseUrl: string = e2eProviderPreset.baseUrl;
@@ -3200,10 +3204,23 @@ async function resetE2EHome(specs: string[] = []) {
   if (workerSpecsContain(specs, PROJECT_UPGRADE_ORDER_SPEC)) {
     await seedProjectUpgradeOrderFixture(E2E_HOME_DIR, E2E_APP_SETTINGS_FILE);
   }
-  if (usesProviderReadinessColdStartFixture(specs) || usesGitReviewEntryFixture(specs)) {
+  if (
+    usesProviderReadinessColdStartFixture(specs) ||
+    usesGitReviewEntryFixture(specs) ||
+    workerSpecsContain(specs, "conversation-session-permanent-delete.test.ts")
+  ) {
     // SP13 必须在 Host 打开 tasks-index 前同时预置真实 task row 与可打开的
     // CLI session；测试内临时注入会绕过 Header 与 status panel 的真实 task/service 解析链路。
     await seedProviderReadinessHistoryFixture({
+      cliEntryPoint: ZCODE_CLI_ENTRYPOINT,
+      e2eHomeDir: E2E_HOME_DIR,
+      workspacePath: resolve(E2E_HOME_DIR, "ZCodeProject"),
+    });
+  }
+  if (workerSpecsContain(specs, SESSION_PR_STATUS_SPEC)) {
+    // PRS-01 needs a worktree task row, a github.com remote, and the fake gh
+    // (ZCODE_GH_BINARY seam) in place before the Host opens tasks-index.
+    await seedSessionPrStatusFixture({
       cliEntryPoint: ZCODE_CLI_ENTRYPOINT,
       e2eHomeDir: E2E_HOME_DIR,
       workspacePath: resolve(E2E_HOME_DIR, "ZCodeProject"),
@@ -3213,6 +3230,14 @@ async function resetE2EHome(specs: string[] = []) {
     // Bug 根因：TSL23 必须在 Host 打开 tasks-index 前制造“持久行多于 session 摘要”的冷启动状态；
     // spec 的 before hook 已经太晚，因此只对该 case 在 beforeSession 的隔离 HOME 中落盘。
     await seedTaskIndexRowAuthorityFixture({
+      cliEntryPoint: ZCODE_CLI_ENTRYPOINT,
+      e2eHomeDir: E2E_HOME_DIR,
+      workspacePath: resolve(E2E_HOME_DIR, "ZCodeProject"),
+    });
+  }
+  if (workerSpecsContain(specs, "conversation-session-delete-all-archived-tasks.test.ts")) {
+    // The helper is async; awaiting it keeps the seed on disk before the Host opens tasks-index.
+    await seedDeleteAllArchivedTasksFixture({
       cliEntryPoint: ZCODE_CLI_ENTRYPOINT,
       e2eHomeDir: E2E_HOME_DIR,
       workspacePath: resolve(E2E_HOME_DIR, "ZCodeProject"),
@@ -3243,6 +3268,7 @@ async function resetE2EHome(specs: string[] = []) {
   seedE2ESubagentProfiles(specs);
   await seedE2EGitReviewEntryWorkspace(specs);
   seedE2EGitCommitDialogWorkspace(specs);
+  seedE2EWorktreeChatFirstWorkspace(specs);
   if (specs.some((spec) => spec.includes("conversation-session-history-first.test.ts"))) {
     await seedSessionHistoryFirstFixture({
       cliEntryPoint: ZCODE_CLI_ENTRYPOINT,
@@ -3378,6 +3404,20 @@ function runGitE2ECommand(cwd: string, args: string[]) {
   });
 }
 
+function seedE2EWorktreeChatFirstWorkspace(specs: string[] = []) {
+  if (!workerSpecsContain(specs, WORKTREE_CHAT_FIRST_SPEC)) return;
+
+  const workspacePath = resolve(E2E_HOME_DIR, "ZCodeProject");
+  mkdirSync(workspacePath, { recursive: true });
+  writeFileSync(resolve(workspacePath, "README.md"), "Worktree chat-first E2E fixture\n", "utf-8");
+  runGitE2ECommand(workspacePath, ["init", "-q"]);
+  runGitE2ECommand(workspacePath, ["checkout", "-B", "main"]);
+  runGitE2ECommand(workspacePath, ["config", "user.name", "ZCode E2E"]);
+  runGitE2ECommand(workspacePath, ["config", "user.email", "zcode-e2e@example.invalid"]);
+  runGitE2ECommand(workspacePath, ["add", "README.md"]);
+  runGitE2ECommand(workspacePath, ["commit", "-m", "chore: seed worktree chat-first e2e"]);
+}
+
 function seedE2EStartupState(specs: string[] = []) {
   mkdirSync(E2E_APP_CONFIG_DIR, { recursive: true });
   const useFreshConversationWorkspace = specs.some((spec) =>
@@ -3506,8 +3546,6 @@ function seedE2EStartupState(specs: string[] = []) {
                 ? createExpiredJwtOAuthCredentialSeed(authProviderId)
                 : createE2EStartupCredentialSeed({
                     specs,
-                    accountMock: codingPlanTeamSpec || codingPlanUpgradeE2E,
-                    remoteProfile: process.env.ZCODE_E2E_REMOTE_PROFILE === "1",
                     legacyAuthToken: E2E_AUTH_TOKEN,
                     restoredOAuthCredentials: {
                       "oauth:active_provider": authProviderId,
@@ -3539,9 +3577,13 @@ function isSubagentCodingPlanLoginCatalogStaleSpec(specs: string[] = []) {
 }
 
 function usesProviderReadinessColdStartFixture(specs: string[] = []) {
+  // Bug cause: windows-agent-metric-probe-absence.test.ts registers its describe only on win32,
+  // so on macOS/Linux it runs no case. Seeding its fixture there aborts beforeSession because
+  // the CLI DB is never created; gate it on the same platform check the spec uses.
   return (
     workerSpecsContain(specs, PROVIDER_READINESS_AGENT_STARTUP_SPEC) ||
-    workerSpecsContain(specs, WINDOWS_AGENT_METRIC_PROBE_ABSENCE_SPEC)
+    (process.platform === "win32" &&
+      workerSpecsContain(specs, WINDOWS_AGENT_METRIC_PROBE_ABSENCE_SPEC))
   );
 }
 
@@ -4635,6 +4677,17 @@ export const config: WebdriverIO.Config = {
           ZCODE_GIT_BINARY: resolve(E2E_HOME_DIR, "missing-bin", "git"),
         }
       : {}),
+    // session-pr-status spec seam: POSIX-only fake gh at a fixed path. The spec writes the script
+    // itself before the first worktree task triggers gh resolution; other specs only see a candidate
+    // that fails the --version probe and fall through to a real gh lookup. Windows keeps the seam
+    // unset because spawning a shell script is not supported there.
+    ...(process.platform !== "win32"
+      ? { ZCODE_GH_BINARY: resolve(E2E_HOME_DIR, "fake-bin", "gh") }
+      : {}),
+    // ACP detection seam (specs/acp-agent-runtime.md): every spec probes only this run-scoped
+    // directory, so a real opencode/cursor-agent on the machine is never detected or spawned. The
+    // ACP settings spec writes its mock agent here; for other specs the directory stays absent.
+    ZCODE_E2E_ACP_AGENT_PATH: resolve(E2E_HOME_DIR, "acp-agent-bin"),
     VITE_ZCODE_E2E_STORE_BRIDGE: "1",
     ZCODE_AGENT_SERVER_ARGS_JSON: "",
     ZCODE_AGENT_SERVER_COMMAND: "",
@@ -4958,7 +5011,7 @@ export const config: WebdriverIO.Config = {
         // 动态工作流灰度同样只能在 worker 的 beforeSession 注入动态端口，Main -> Host 的
         // 环境链才会继承到 case-local 的 /client/configs 网关。
         await startDynamicWorkflowConfigE2EMock(specs);
-        // 此 SSH 用例验证会话归属；在 Electron 启动前设置开启前置，避免把本机 mock 的 loopback 交给远端。
+        // This SSH case verifies session ownership; enable the mode before Electron starts so the local mock loopback is not handed to the remote.
         if (specs.some((spec) => spec.endsWith("conversation-session-r3-subagent.test.ts"))) {
           process.env.ZCODE_DYNAMIC_WORKFLOW_MODE = "alwaysOn";
         }
@@ -4985,12 +5038,6 @@ export const config: WebdriverIO.Config = {
           specs,
           credentialsFile: E2E_APP_CREDENTIALS_FILE,
           settingsFile: E2E_APP_SETTINGS_FILE,
-        });
-        stopWebRemoteControlAuthGateFixture = await prepareWebRemoteControlAuthGateFixture({
-          specs,
-          credentialsFile: E2E_APP_CREDENTIALS_FILE,
-          settingsFile: E2E_APP_SETTINGS_FILE,
-          workspacePath: resolve(E2E_HOME_DIR, "ZCodeProject"),
         });
         // resetHome 之后、Electron 启动之前安装，Main -> Host -> Agent 才会同时继承
         // case-owned PATH；其他 spec 由 helper 保持 no-op。
@@ -5077,8 +5124,6 @@ export const config: WebdriverIO.Config = {
           currentE2EElectronAppPid = null;
           await stopOAuthCompletionRaceFixture?.();
           stopOAuthCompletionRaceFixture = null;
-          await stopWebRemoteControlAuthGateFixture?.();
-          stopWebRemoteControlAuthGateFixture = null;
           await stopAccessToken401Fixture?.();
           stopAccessToken401Fixture = null;
           currentE2EBeforeSessionError = null;
@@ -5159,8 +5204,6 @@ export const config: WebdriverIO.Config = {
           await stopClientScenesE2EMock();
           await stopOAuthCompletionRaceFixture?.();
           stopOAuthCompletionRaceFixture = null;
-          await stopWebRemoteControlAuthGateFixture?.();
-          stopWebRemoteControlAuthGateFixture = null;
           await stopAccessToken401Fixture?.();
           stopAccessToken401Fixture = null;
           await stopPluginCdnZipFixture();

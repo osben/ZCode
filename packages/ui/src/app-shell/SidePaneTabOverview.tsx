@@ -154,8 +154,8 @@ export function SidePaneTabOverview({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 gap-0 bg-menu p-0">
         <Command
-          // 旧搜索菜单手写输入框、标题和列表项，和模型选择菜单的 Command 视觉体系不一致。
-          // 这里复用 Command 容器统一搜索框、分组标题、hover 和键盘选中态，同时保留现有 ranking 逻辑。
+          // The old search menu hand-built its input, headings, and list items, which did not match the model picker’s Command styling.
+          // Reuse the Command container for the search field, group headings, hover, and keyboard selection while preserving ranking behavior.
           shouldFilter={false}
           className="bg-transparent p-0 text-foreground"
         >

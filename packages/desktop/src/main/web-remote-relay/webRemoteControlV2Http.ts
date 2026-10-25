@@ -7,7 +7,7 @@ import {
   type WebRemoteControlRelayV2HttpResponse,
 } from "@zcode/shared/web-remote-relay";
 
-/** Main 直接 Node fetch；不使用会触发全局登出的 services HTTP 客户端。 */
+/** Main uses Node fetch directly and not the services HTTP client, which triggers a global logout. */
 export function createWebRemoteControlV2Http(endpointOrigin: string, fetcher = fetch) {
   async function request<K extends WebRemoteControlRelayV2HttpOperation>(
     operation: K,
@@ -27,7 +27,7 @@ export function createWebRemoteControlV2Http(endpointOrigin: string, fetcher = f
       if (response.status === 401) throw new WebRemoteControlV2ConnectionError("auth-required");
       if (!response.ok)
         throw new WebRemoteControlV2ConnectionError("relay-unavailable", response.status >= 500);
-      // 读取正文也可能断网或超时，必须交给外层网络重试；只有完整但非法的 JSON 才是终态。
+      // Reading the body can also lose the network or time out; hand it to the outer network retry. Only a complete but invalid JSON body is terminal.
       const responseBody = await response.text();
       let value: unknown;
       try {

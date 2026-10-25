@@ -12,8 +12,9 @@ import {
   readListModelsResult,
 } from "@/ToolCallBlocks/renderers/list-models.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
+import zhCN from "@/i18n/locales/zh-CN.js";
 
-// 团队套餐的 providerId 是一个 UUID。它是本卡最重要的负面断言：一个字符都不该上屏。
+// The team plan's providerId is a UUID. It is this card's most important negative assertion: not a single character of it should appear on screen.
 const TEAM_PROVIDER_UUID = "4fc7f541-2382-4c32-be11-f021b8d7ed1d";
 const BUILTIN_BIGMODEL_PROVIDER_ID = BUILTIN_MODEL_PROVIDER_IDS.bigmodelTeamCodingPlan;
 
@@ -82,7 +83,7 @@ function buildContext(
     statusLabel: "",
     childToolList: null,
     showIcon: true,
-    // 卡体默认折叠，测试里强制展开以断言内容。
+    // The card body is collapsed by default; tests force it open to assert content.
     forceOpen: true,
     canToggle: false,
     ...overrides,
@@ -103,14 +104,14 @@ function renderCard(
   );
 }
 
-/** 行按 data-model-id 取：模型 id 里有 `/` 与 `:`，这个 jsdom 没有 CSS.escape。 */
+/** Rows are found by data-model-id: model ids contain `/` and `:`, and this jsdom has no CSS.escape. */
 function rowByModelId(modelId: string): Element | undefined {
   return [...document.querySelectorAll("[data-model-id]")].find(
     (element) => element.getAttribute("data-model-id") === modelId,
   );
 }
 
-/** `null` 表示这次调用没有 display 通道（老会话 / 降级路径）；缺省参数会把 undefined 吃掉。 */
+/** `null` means this call has no display channel (old session / degraded path); a default parameter would swallow undefined. */
 function buildListModelsToolCall(
   display: unknown = LIST_MODELS_DISPLAY,
   overrides: Record<string, unknown> = {},
@@ -122,7 +123,7 @@ function buildListModelsToolCall(
     title: "ListModels",
     status: "completed",
     input: {},
-    // v4 wire 上 output.text 是模型面的 `<models>` 投影；结构化目录只走 display 通道。
+    // On the v4 wire, output.text is the model-facing `<models>` projection; the structured catalog only travels through the display channel.
     output: '<models count="4">…</models>',
     ...(display === null ? {} : { raw: { display } }),
     ...overrides,
@@ -266,8 +267,10 @@ describe("ListModelsToolCallBlock", () => {
 
   it("renders both locales", () => {
     renderCard(ListModelsToolCallBlock, buildContext(buildListModelsToolCall()), "zh-CN");
-    expect(screen.getByText("可用模型")).toBeTruthy();
-    expect(screen.getByText("4 个模型")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.models.listed"])).toBeTruthy();
+    expect(
+      screen.getByText(zhCN["chat.toolCall.workflow.models.count.other"].replace("{count}", "4")),
+    ).toBeTruthy();
     expect(document.querySelector('[data-model-current="true"]')?.textContent).toBe("当前");
     expect(rowByModelId(CURRENT_MODEL_ID)?.getAttribute("title")).toContain(
       "思考强度：低 · 中 · 高（默认 高）",
@@ -279,7 +282,7 @@ describe("ListModelsToolCallBlock", () => {
       buildContext(buildListModelsToolCall(), { isRunning: true }),
       "zh-CN",
     );
-    expect(screen.getByText("正在列出模型")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.models.listing"])).toBeTruthy();
   });
 
   it("uses the singular count for one model", () => {

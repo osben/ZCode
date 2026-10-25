@@ -1,13 +1,14 @@
-// Agent bundle 的暂存动作：把 apps/zcode-cli/packages/cli/dist/zcode.cjs 放进
-// bundled-agents/<平台>/glm，并写 meta。
+// Stage the agent bundle by copying apps/zcode-cli/packages/cli/dist/zcode.cjs to
+// bundled-agents/<platform>/glm and writing its metadata.
 //
-// dev 与打包**必须**用同一份暂存实现。
-// 只有打包链（prepare-agent-node-bundle.mjs）会暂存是不够的，dev 链
-// （scripts/build-desktop-agent-cli.mjs）不会；而 dev 未打包时的 agent 二进制由
-// desktopRuntimeEnv.ts 的 resolveBundledZCodeAgentBinaryPath() 解析，候选**只有**
-// bundled-agents/，没有 cli/dist/。于是 dev 一直跑着上一次打包时留下的那份 ——
-// 实测陈旧 3 天，任何 agent CLI 侧改动在 dev 里静默不生效，排查时会把「改动没生效」
-// 误判成「代码没起作用」。两边共用这一份，dev 与打包不可能再各自漂移。
+// The dev and packaging pipelines must use the same staging implementation.
+// Staging only in the packaging path (prepare-agent-node-bundle.mjs) is insufficient because the dev
+// path (scripts/build-desktop-agent-cli.mjs) would not stage the bundle. In an unpackaged dev build,
+// desktopRuntimeEnv.ts resolves the agent binary with resolveBundledZCodeAgentBinaryPath(), whose only
+// candidate is bundled-agents/; it does not check cli/dist/. Dev would therefore keep running the copy
+// from the previous package build. One observed copy was three days old, so agent CLI changes silently
+// had no effect in dev and looked like code changes were not working. Sharing this implementation keeps
+// the two paths aligned.
 import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -24,9 +25,10 @@ export function resolveAgentBundlePaths({ repoRoot, platformKey }) {
 }
 
 /**
- * 干净重建 glm 目录再拷贝。清空是刻意的：electron-builder 整目录拷贝
- * bundled-agents/<平台>/glm → resources/glm，本地工作树里上一次构建残留的原生二进制
- * （zcode-agent / zcode-acp 等）和旧 meta 会被一并打进安装包（CI 干净检出不会有，本地会）。
+ * Rebuild the glm directory from scratch before copying. Clearing it is intentional: electron-builder
+ * copies bundled-agents/<platform>/glm to resources/glm as a directory. Stale native binaries (such as
+ * zcode-agent or zcode-acp) and old metadata from a previous local build would otherwise ship in the
+ * installer. Clean CI checkouts do not contain them, but local worktrees can.
  */
 export function stageAgentBundle({ repoRoot, platformKey, log = console.log }) {
   const { cliBundlePath, glmDir, stagedBundlePath, stagedMetaPath } = resolveAgentBundlePaths({

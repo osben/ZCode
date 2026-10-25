@@ -13,6 +13,7 @@ import { SessionPane } from "@/v4/SessionPane.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 
 const {
+  composerProps,
   fileChangesMock,
   fileRewindPreviewMock,
   headerProps,
@@ -21,6 +22,7 @@ const {
   sendCommandMock,
   timelineProps,
 } = vi.hoisted(() => ({
+  composerProps: [] as Array<{ composerRestoreRequest?: { text?: string } | null }>,
   fileChangesMock: vi.fn(),
   fileRewindPreviewMock: vi.fn(),
   headerProps: [] as Array<{
@@ -40,7 +42,11 @@ const {
       release: vi.fn(),
     })),
   },
-  queueProps: [] as Array<{ onSendNow?: (queueItemId: string) => void }>,
+  queueProps: [] as Array<{
+    onSendNow?: (queueItemId: string) => void;
+    onEditItem?: (queueItemId: string) => Promise<void> | void;
+    onDeleteItem?: (queueItemId: string) => void;
+  }>,
   sendCommandMock: vi.fn(
     async (envelope: CommandEnvelope): Promise<CommandAck> => ({
       commandId: envelope.commandId,
@@ -71,7 +77,7 @@ const {
   }>,
 }));
 
-// 永不 resolve：这些文件不测发现查询；resolve 会在环境拆除后触发 setState（未处理异常）。
+// Never resolves: these files do not test the discovery query; resolving would trigger setState after environment teardown (unhandled exception).
 const workflowRunsQueryMock = vi.hoisted(() =>
   vi.fn(() => new Promise<{ runs: unknown[] }>(() => {})),
 );
@@ -97,7 +103,7 @@ const servicesMock = vi.hoisted(() => ({
     healthy: vi.fn(),
     share: vi.fn(),
   },
-  // 修复原因：readiness hook 将 service 作为 effect 依赖；每次 render 重建会导致无限重渲染直至 OOM。
+  // Fix reason: the readiness hook takes the service as an effect dependency; rebuilding it every render causes infinite re-renders up to OOM.
   zcodeSessionService: {
     updateProviderRegistry: vi.fn(),
   },
@@ -106,7 +112,7 @@ const servicesMock = vi.hoisted(() => ({
   },
 }));
 
-// 本组隔离编辑/设置行为，群投递服务由独立单测及 Host/CLI E2E 覆盖。
+// This suite isolates edit/settings behavior; group delivery is covered by dedicated unit tests and Host/CLI E2E.
 vi.mock("@/v4/BotGroupDeliveryAction.js", () => ({
   BotGroupDeliveryProvider: ({ children }: { children: unknown }) => children,
   ConnectedBotGroupDeliveryAction: () => null,
@@ -139,8 +145,8 @@ vi.mock("@/v4/V4ConversationContext.js", () => ({
     fileRewindPreview: fileRewindPreviewMock,
     layer: layerMock,
     sendCommand: sendCommandMock,
-    // SessionPane 挂载即拉 journal 兜底的 run 发现查询：缺桩会在 effect 里 TypeError；
-    // 桩必须是稳定引用——effect 以 workflowRuns 为依赖，每次渲染换新函数会死循环。
+    // SessionPane pulls the journal-fallback run discovery query on mount; a missing stub throws TypeError in an effect.
+    // The stub must be a stable reference — the effect depends on workflowRuns, and a fresh function per render would loop forever.
     workflowRuns: workflowRunsQueryMock,
   }),
 }));
@@ -172,9 +178,18 @@ vi.mock("@/v4/composer/useDraftSessionPrewarm.js", () => ({
 vi.mock("@/v4/ConversationComposer.js", async () => {
   const React = await import("react");
   return {
-    ConversationComposer: () => React.createElement("div", { "data-testid": "mock-composer" }),
+    ConversationComposer: (props: Record<string, unknown>) => {
+      composerProps.push(props as (typeof composerProps)[number]);
+      return React.createElement("div", { "data-testid": "mock-composer" });
+    },
   };
 });
+
+const toastMock = vi.hoisted(() => vi.fn());
+vi.mock("@/components/ui/toast.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/ui/toast.js")>()),
+  toast: toastMock,
+}));
 
 vi.mock("@/v4/ConversationHeader.js", async () => {
   const React = await import("react");
@@ -397,6 +412,8 @@ afterEach(() => {
   }));
   headerProps.length = 0;
   queueProps.length = 0;
+  composerProps.length = 0;
+  toastMock.mockReset();
   timelineProps.length = 0;
   servicesMock.highspeedCardService.prepareTurn.mockReset();
   servicesMock.highspeedCardService.prepareTurn.mockResolvedValue({
@@ -426,7 +443,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "pane-2",
             sessionId: "session-1",
@@ -447,7 +464,7 @@ describe("SessionPane user query editing", () => {
     });
   });
 
-  it("虚拟行复挂载共享同一 fileChanges 请求，target 或 logEpoch 变化后才重查", async () => {
+  it("remounted virtual rows share one fileChanges request until the target or logEpoch changes", async () => {
     projectionState.current = {
       status: "live",
       snapshot: makeSnapshot(),
@@ -465,7 +482,7 @@ describe("SessionPane user query editing", () => {
     const renderPane = () =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(SessionPane, {
           paneId: "workspace-main",
           sessionId: "session-1",
@@ -527,7 +544,7 @@ describe("SessionPane user query editing", () => {
     await act(async () => root.unmount());
   });
 
-  it("终态 fileChanges 缓存按 active/reverted 状态隔离", async () => {
+  it("terminal fileChanges cache isolates active/reverted states", async () => {
     projectionState.current = {
       status: "live",
       snapshot: makeSnapshot(),
@@ -551,7 +568,7 @@ describe("SessionPane user query editing", () => {
     const renderPane = () =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(SessionPane, {
           paneId: "workspace-main",
           sessionId: "session-1",
@@ -619,7 +636,7 @@ describe("SessionPane user query editing", () => {
     await act(async () => root.unmount());
   });
 
-  it("fileChanges 完整结果缓存最多保留 20 个 turn", async () => {
+  it("fileChanges full-result cache keeps at most 20 turns", async () => {
     projectionState.current = {
       status: "live",
       snapshot: makeSnapshot(),
@@ -634,7 +651,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -655,7 +672,7 @@ describe("SessionPane user query editing", () => {
     await act(async () => root.unmount());
   });
 
-  it("运行中 revision 前进后重查 fileChanges，终态结果才跨复挂载缓存", async () => {
+  it("re-queries fileChanges after a running revision advance; only terminal results survive remount caching", async () => {
     const runningSnapshot = makeSnapshot();
     runningSnapshot.revision = 7;
     projectionState.current = {
@@ -688,7 +705,7 @@ describe("SessionPane user query editing", () => {
     const renderPane = () =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(SessionPane, {
           paneId: "workspace-main",
           sessionId: "session-1",
@@ -743,7 +760,7 @@ describe("SessionPane user query editing", () => {
     await act(async () => root.unmount());
   });
 
-  it("row command 收到 stale log epoch ACK 时触发 projection resync", async () => {
+  it("a row command stale log epoch ACK triggers projection resync", async () => {
     const recoverFromStaleLogEpoch = vi.fn();
     layerMock.acquire.mockReturnValue({
       store: {
@@ -775,7 +792,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -796,7 +813,7 @@ describe("SessionPane user query editing", () => {
   });
 
   it.each(["proto.staleTarget", "proto.staleRevision"])(
-    "row command 收到 %s ACK 时同样触发 projection resync",
+    "a row command %s ACK also triggers projection resync",
     async (reasonCode) => {
       const recoverFromStaleAuthority = vi.fn();
       layerMock.acquire.mockReturnValue({
@@ -829,7 +846,7 @@ describe("SessionPane user query editing", () => {
         root.render(
           createElement(
             ZCodeIntlProvider,
-            { initialLocale: "zh-CN" },
+            { initialLocale: "en-US" },
             createElement(SessionPane, {
               paneId: "workspace-main",
               sessionId: "session-1",
@@ -848,7 +865,7 @@ describe("SessionPane user query editing", () => {
     },
   );
 
-  it("file changes/preview stale authority fault 触发同一 projection recovery", async () => {
+  it("file changes/preview stale authority faults trigger the same projection recovery", async () => {
     const recoverFromStaleAuthority = vi.fn();
     layerMock.acquire.mockReturnValue({
       store: {
@@ -876,7 +893,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -902,7 +919,7 @@ describe("SessionPane user query editing", () => {
     await act(async () => root.unmount());
   });
 
-  it("running 时向 Timeline 提供 edit、fork 与 retry 回调，由 row.actions 裁决展示", async () => {
+  it("while running, provides edit, fork and retry callbacks to the Timeline; row.actions decides display", async () => {
     const snapshot = makeSnapshot();
     snapshot.control = {
       ...snapshot.control,
@@ -926,7 +943,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -940,7 +957,7 @@ describe("SessionPane user query editing", () => {
     const props = timelineProps.at(-1);
     expect(typeof props?.onEdit).toBe("function");
     expect(props?.onFork).toBeTypeOf("function");
-    // row.actions 是唯一 action authority；Timeline 收到稳定 resolver，再逐 row 决定是否展示 retry。
+    // row.actions is the sole action authority; the Timeline receives a stable resolver and decides per row whether to show retry.
     expect(props?.onRetry).toBeTypeOf("function");
 
     await act(async () => {
@@ -971,7 +988,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -1006,7 +1023,7 @@ describe("SessionPane user query editing", () => {
     });
   });
 
-  it("重新编辑时重新准备 Highspeed，并随 editUserQuery 提交本次卡和 runtime", async () => {
+  it("a re-edit re-prepares Highspeed and submits this turn card and runtime with editUserQuery", async () => {
     const snapshot = makeSnapshot();
     snapshot.config = {
       ...snapshot.config,
@@ -1056,7 +1073,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -1079,8 +1096,8 @@ describe("SessionPane user query editing", () => {
       type: "editUserQuery",
       payload: {
         highspeedMeta,
-        // 显式重编辑会重新抽卡：Selection 与执行材料必须整体刷新，且永远是 execution 作用域，
-        // 不允许把会话常驻 Selection 改成加速卡 Provider。
+        // An explicit re-edit draws a new card: the Selection and execution material must be refreshed wholesale and
+        // always stay execution-scoped; the session-resident Selection must never switch to the highspeed-card provider.
         modelSelection: execution.modelSelection,
         modelExecution: {
           selectionScope: "execution",
@@ -1096,7 +1113,7 @@ describe("SessionPane user query editing", () => {
     await act(async () => root.unmount());
   });
 
-  it("手动发送 Highspeed 队列项时刷新同卡 runtime 后再提升", async () => {
+  it("sending a Highspeed queue item manually refreshes the same-card runtime before promoting", async () => {
     const snapshot = makeSnapshot();
     const highspeedMeta = {
       schemaVersion: 1 as const,
@@ -1169,7 +1186,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -1217,7 +1234,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -1271,7 +1288,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -1293,7 +1310,7 @@ describe("SessionPane user query editing", () => {
     await act(async () => root.unmount());
   });
 
-  it("duplicate fork ACK 导航既有 child，edit 与失败 ACK 即使带 result 也不导航", async () => {
+  it("a duplicate fork ACK navigates to the existing child; edit and failed ACKs never navigate even with a result", async () => {
     projectionState.current = {
       status: "live",
       snapshot: makeSnapshot(),
@@ -1325,7 +1342,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -1366,7 +1383,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -1383,5 +1400,165 @@ describe("SessionPane user query editing", () => {
     await act(async () => {
       root.unmount();
     });
+  });
+});
+
+describe("SessionPane queue commands after proto.staleRevision (ISSUE-072)", () => {
+  function snapshotWithQueue(): ConversationSnapshot {
+    const snapshot = makeSnapshot();
+    snapshot.queue = {
+      autoDrain: true,
+      items: [
+        {
+          sourceCommandId: "source-queue",
+          queueItemId: "queue-1",
+          clientId: "client-1",
+          kind: "sendText",
+          text: "qa queue item A",
+          attachments: [],
+          delivery: { requested: "queue", admitted: "queue" },
+          order: { admissionSeq: 1, queuePosition: 0 },
+          steer: { state: "notRequested" },
+          dispatch: { state: "queued" },
+          admittedAt: 1,
+        },
+      ],
+    };
+    snapshot.availability = { ...snapshot.availability, sendQueuedNow: { allowed: true } };
+    return snapshot;
+  }
+
+  function staleAck(envelope: CommandEnvelope, revisionAtDecision: number): CommandAck {
+    return {
+      commandId: envelope.commandId,
+      revisionAtDecision,
+      status: "stale",
+      reasonCode: "proto.staleRevision",
+    };
+  }
+
+  async function renderPane(): Promise<Root> {
+    projectionState.current = {
+      status: "live",
+      snapshot: snapshotWithQueue(),
+      subscriptionId: "sub-1",
+      lastError: null,
+      optimisticCommands: [],
+      loadingOlder: false,
+    };
+    const root: Root = createRoot(installMinimalDom());
+    await act(async () => {
+      root.render(
+        createElement(
+          ZCodeIntlProvider,
+          { initialLocale: "en-US" },
+          createElement(SessionPane, {
+            paneId: "workspace-main",
+            sessionId: "session-1",
+            workspacePath: "/workspace",
+          }),
+        ),
+      );
+      await flushMicrotasks();
+    });
+    return root;
+  }
+
+  function queueCalls(type: string): CommandEnvelope[] {
+    return sendCommandMock.mock.calls
+      .map((call) => call[0] as CommandEnvelope)
+      .filter((envelope) => envelope.type === type);
+  }
+
+  it("Steer re-sends once at revisionAtDecision and shows no error", async () => {
+    sendCommandMock.mockImplementationOnce(async (envelope) => staleAck(envelope, 9));
+    const root = await renderPane();
+    await act(async () => {
+      queueProps.at(-1)?.onSendNow?.("queue-1");
+      await flushMicrotasks();
+    });
+
+    const calls = queueCalls("sendQueuedNow");
+    expect(calls.map((envelope) => envelope.baseRevision)).toEqual([7, 9]);
+    expect(calls[1]?.commandId).not.toBe(calls[0]?.commandId);
+    expect(toastMock).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it("Steer stale twice stops after one retry and tells the user", async () => {
+    sendCommandMock
+      .mockImplementationOnce(async (envelope) => staleAck(envelope, 9))
+      .mockImplementationOnce(async (envelope) => staleAck(envelope, 10));
+    const root = await renderPane();
+    await act(async () => {
+      queueProps.at(-1)?.onSendNow?.("queue-1");
+      await flushMicrotasks();
+    });
+
+    expect(queueCalls("sendQueuedNow")).toHaveLength(2);
+    expect(toastMock).toHaveBeenCalledWith("Couldn't send the queued message now. Try again.");
+    await act(async () => root.unmount());
+  });
+
+  it("Steer that lost the race to the auto-drain shows no failure toast", async () => {
+    sendCommandMock.mockImplementationOnce(async (envelope) => ({
+      commandId: envelope.commandId,
+      revisionAtDecision: 7,
+      status: "failed",
+      reasonCode: "guard.queueItemReserved",
+    }));
+    const root = await renderPane();
+    await act(async () => {
+      queueProps.at(-1)?.onSendNow?.("queue-1");
+      await flushMicrotasks();
+    });
+
+    expect(queueCalls("sendQueuedNow")).toHaveLength(1);
+    expect(toastMock).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it("Edit re-sends the delete once and restores the queued text", async () => {
+    sendCommandMock.mockImplementationOnce(async (envelope) => staleAck(envelope, 9));
+    const root = await renderPane();
+    await act(async () => {
+      await queueProps.at(-1)?.onEditItem?.("queue-1");
+      await flushMicrotasks();
+    });
+
+    expect(queueCalls("deleteQueueItem").map((envelope) => envelope.baseRevision)).toEqual([7, 9]);
+    expect(composerProps.at(-1)?.composerRestoreRequest?.text).toBe("qa queue item A");
+    expect(toastMock).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it("Edit stale twice keeps the item queued, restores nothing and shows the retry toast", async () => {
+    sendCommandMock
+      .mockImplementationOnce(async (envelope) => staleAck(envelope, 9))
+      .mockImplementationOnce(async (envelope) => staleAck(envelope, 10));
+    const root = await renderPane();
+    await act(async () => {
+      await queueProps.at(-1)?.onEditItem?.("queue-1");
+      await flushMicrotasks();
+    });
+
+    expect(queueCalls("deleteQueueItem")).toHaveLength(2);
+    expect(composerProps.at(-1)?.composerRestoreRequest ?? null).toBeNull();
+    expect(toastMock).toHaveBeenCalledWith(
+      "Couldn't return the queued message to the composer. Try again.",
+    );
+    await act(async () => root.unmount());
+  });
+
+  it("Delete re-sends once at revisionAtDecision", async () => {
+    sendCommandMock.mockImplementationOnce(async (envelope) => staleAck(envelope, 9));
+    const root = await renderPane();
+    await act(async () => {
+      queueProps.at(-1)?.onDeleteItem?.("queue-1");
+      await flushMicrotasks();
+    });
+
+    expect(queueCalls("deleteQueueItem").map((envelope) => envelope.baseRevision)).toEqual([7, 9]);
+    await act(async () => root.unmount());
   });
 });

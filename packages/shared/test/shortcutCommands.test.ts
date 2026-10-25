@@ -51,7 +51,7 @@ describe("shortcutCommands 序列化格式", () => {
     expect(parseShortcutBinding("+")).toBeNull();
     expect(parseShortcutBinding("CmdOrCtrl+ß")).toBeNull();
     expect(parseShortcutBinding("CmdOrCtrl+CmdOrCtrl+k")).toBeNull();
-    // Electron 的其他修饰名（Meta/Command/Super）不在本格式内
+    // Electron's other modifier names (Meta/Command/Super) are not part of this format
     expect(parseShortcutBinding("Meta+k")).toBeNull();
     expect(parseShortcutBinding("Command+k")).toBeNull();
   });
@@ -73,7 +73,7 @@ describe("shortcutCommands 序列化格式", () => {
     expect(serializeShortcutBinding(parseShortcutBinding("CmdOrCtrl+Enter")!)).toBe(
       "CmdOrCtrl+Enter",
     );
-    // 大小写敏感不变
+    // Case sensitivity is unchanged
     expect(parseShortcutBinding("enter")).toBeNull();
   });
 });

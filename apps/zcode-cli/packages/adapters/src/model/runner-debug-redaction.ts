@@ -30,8 +30,9 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-// 内部 dataUrl、AI SDK image/file 与 provider wire 的媒体键名不同，
-// 分散在调用方脱敏会遗漏 image/video 形态；统一在 model-I/O 落盘边界递归处理。
+// Internal dataUrl, AI SDK image/file, and provider wire formats use different media keys.
+// Redacting them at each call site would miss image/video forms, so handle them recursively at
+// the model-I/O persistence boundary.
 function redactModelIOImageAndVideoData(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => redactModelIOImageAndVideoData(item));
@@ -72,7 +73,7 @@ function readDataUrlMimeType(dataUrl: string): string {
 }
 
 function isImageOrVideoMimeType(mimeType: string | undefined): boolean {
-  // MIME type 大小写不敏感，直接比较会让非规范大小写绕过日志脱敏。
+  // MIME types are case-insensitive; direct comparison could let noncanonical casing bypass log redaction.
   const normalized = mimeType?.trim().toLowerCase();
   return normalized?.startsWith("image/") === true || normalized?.startsWith("video/") === true;
 }

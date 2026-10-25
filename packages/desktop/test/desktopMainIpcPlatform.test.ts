@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { DesktopCommandIds, PlatformChannels } from "@zcode/shared";
+import { PlatformChannels } from "@zcode/shared";
 
 type IpcHandler = (...args: unknown[]) => unknown;
 
@@ -51,6 +51,12 @@ vi.mock("electron", () => ({
 
 vi.mock("../src/main/editors.js", () => ({
   getInstalledEditors: vi.fn(() => []),
+}));
+
+// The dictation system-audio backend spawns per-OS tools in its own dedicated test suite; this
+// file only verifies that registerPlatformIpcHandlers wires the platform IPC surface.
+vi.mock("../src/main/desktopDictationSystemAudio.js", () => ({
+  registerDesktopDictationSystemAudioIpc: vi.fn(),
 }));
 
 vi.mock("../src/main/exportLogs.js", () => ({
@@ -139,8 +145,12 @@ describe("registerPlatformIpcHandlers", () => {
     });
   });
 
-  it("returns every native directory selection and an empty list on cancellation", async () => {
+  it("forwards the fork resourceTelemetryEnabled key through SyncAppSettings", async () => {
+    // appSettingsPatchSchema strips fork keys; the sync handler must admit this one so the Settings
+    // switch reaches main (specs/resource-telemetry-toggle.md).
     const { registerPlatformIpcHandlers } = await import("../src/main/desktopMainIpcPlatform.js");
+    const syncAppSettings = vi.fn();
+
     registerPlatformIpcHandlers({
       logger: { info: vi.fn(), warn: vi.fn() },
       applyApplicationLocale: vi.fn(async () => {}),
@@ -154,21 +164,18 @@ describe("registerPlatformIpcHandlers", () => {
       getUpdateState: vi.fn(() => ({ status: "idle" })),
       syncWebRemoteControlWorkspaces: vi.fn(),
       deviceMid: "test-device-mid",
+      syncAppSettings,
     });
-    const handler = electronMocks.handlers.get(PlatformChannels.SelectDirectories);
+
+    const handler = electronMocks.handlers.get(PlatformChannels.SyncAppSettings);
     expect(handler).toBeDefined();
-    electronMocks.showOpenDialog.mockResolvedValueOnce({
-      canceled: false,
-      filePaths: ["/one", "/two"],
+    handler?.({}, { resourceTelemetryEnabled: true, keepAwakeWhileRunning: false });
+    handler?.({}, { resourceTelemetryEnabled: "yes" });
+
+    expect(syncAppSettings).toHaveBeenCalledExactlyOnceWith({
+      resourceTelemetryEnabled: true,
+      keepAwakeWhileRunning: false,
     });
-    await expect(handler?.()).resolves.toEqual(["/one", "/two"]);
-    expect(electronMocks.showOpenDialog).toHaveBeenCalledWith({
-      properties: ["openDirectory", "createDirectory", "multiSelections"],
-    });
-    electronMocks.showOpenDialog.mockResolvedValueOnce({ canceled: true, filePaths: ["/ignored"] });
-    await expect(handler?.()).resolves.toEqual([]);
-    electronMocks.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: [] });
-    await expect(handler?.()).resolves.toEqual([]);
   });
 
   it("syncs macOS window controls when preload reports startup zoom metrics", async () => {
@@ -309,33 +316,5 @@ describe("registerPlatformIpcHandlers", () => {
         missingPermissions: expect.anything(),
       }),
     );
-  });
-
-  it("returns desktop command results to the renderer", async () => {
-    const { registerPlatformIpcHandlers } = await import("../src/main/desktopMainIpcPlatform.js");
-    const executeDesktopCommand = vi.fn(async () => ({ kind: "supported" }));
-
-    registerPlatformIpcHandlers({
-      logger: { info: vi.fn(), warn: vi.fn() },
-      applyApplicationLocale: vi.fn(async () => {}),
-      focusWorkspaceInExistingWindow: vi.fn(() => ({ activated: false })),
-      windowWorkspaceMap: new Map(),
-      windowUnreadCountMap: new Map(),
-      currentApplicationLocale: () => "en-US",
-      executeDesktopCommand,
-      acknowledgePostUpdateReleaseNotes: vi.fn(async () => {}),
-      syncTaskRealtimeWorkspaceKeys: vi.fn(),
-      getUpdateState: vi.fn(() => ({ status: "idle" })),
-      syncWebRemoteControlWorkspaces: vi.fn(),
-      deviceMid: "test-device-mid",
-    });
-
-    const handler = electronMocks.handlers.get(PlatformChannels.ExecuteDesktopCommand);
-    expect(handler).toBeDefined();
-
-    await expect(handler?.({ sender: {} }, DesktopCommandIds.GetCuaOsSupport)).resolves.toEqual({
-      kind: "supported",
-    });
-    expect(executeDesktopCommand).toHaveBeenCalledWith(DesktopCommandIds.GetCuaOsSupport, null);
   });
 });

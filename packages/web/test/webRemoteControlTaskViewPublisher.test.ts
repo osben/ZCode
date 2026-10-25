@@ -19,7 +19,7 @@ const second = {
 };
 const view = { workspacePath: "/one", taskId: "task" };
 
-it("MRO03：先有可见事实再收到 epoch 仍立即声明，bootstrap 不覆盖更新的 epoch", () => {
+it("MRO03: a visible fact is declared immediately even if an epoch arrives later; bootstrap does not overwrite the newer epoch", () => {
   const send = vi.fn(() => true);
   const publisher = createWebRemoteControlTaskViewPublisher(send);
   publisher.setBridge(first);
@@ -43,7 +43,7 @@ it("MRO03：先有可见事实再收到 epoch 仍立即声明，bootstrap 不覆
   );
 });
 
-it("MRO03：断连期间更新 Home/隐藏事实，新 epoch 只重申当前事实", () => {
+it("MRO03: while disconnected, updating Home/hidden facts; a new epoch only reasserts the current facts", () => {
   const send = vi.fn(() => true);
   const publisher = createWebRemoteControlTaskViewPublisher(send);
   publisher.setBridge(first);
@@ -60,7 +60,7 @@ it("MRO03：断连期间更新 Home/隐藏事实，新 epoch 只重申当前事�
   );
 });
 
-it("MRO03：新 Root 不继承旧 bridge 查看，旧 Root cleanup 不能清新查看", () => {
+it("MRO03: a new Root does not inherit the old bridge's view; the old Root's cleanup must not clear the new view", () => {
   const send = vi.fn(() => true);
   const publisher = createWebRemoteControlTaskViewPublisher(send);
   publisher.seed("one");
@@ -81,7 +81,7 @@ it("MRO03：新 Root 不继承旧 bridge 查看，旧 Root cleanup 不能清新�
   );
 });
 
-it("MRO03：发送未就绪只保留最新投影，send-ready 不持续重复已成功声明", () => {
+it("MRO03: when sending is not ready, only the latest projection is kept; send-ready does not repeatedly re-declare an already successful declaration", () => {
   const send = vi.fn(() => false);
   const publisher = createWebRemoteControlTaskViewPublisher(send);
   publisher.setBridge(first);

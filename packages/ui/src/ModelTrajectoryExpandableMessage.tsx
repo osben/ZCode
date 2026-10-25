@@ -36,6 +36,7 @@ export function ExpandableTrajectoryMessage({
   callDatetimeLabel,
   callDatetimeTitle,
   isAlt = false,
+  defaultOpen = true,
   intl,
   expansionKey,
 }: {
@@ -47,15 +48,16 @@ export function ExpandableTrajectoryMessage({
   callDatetimeLabel: string;
   callDatetimeTitle: string;
   isAlt?: boolean;
+  /** Initial state for rows that have no batch command or override yet (large call cards start collapsed). */
+  defaultOpen?: boolean;
   intl: IntlShape;
   expansionKey?: string;
 }) {
   const expansionCommands = useContext(TrajectoryExpansionCommandContext);
   const expansionRegistry = useContext(TrajectoryExpansionRegistryContext);
   const searchRevealKey = useContext(TrajectorySearchRevealContext);
-  const [localExpansion, setLocalExpansion] = useState({ open: true, commandVersion: 0 });
+  const [localExpansion, setLocalExpansion] = useState({ open: defaultOpen, commandVersion: 0 });
   const copyLabel = intl.formatMessage({ id: "chat.message.copy" });
-  const copyText = messageClipboardText(message);
   const toolResultMeta = trajectoryToolMetadata(message);
   const toolPayloadHasError = trajectoryToolHasError(message);
   const payloadDirection = message.parts.some((part) => part.kind === "tool-result")
@@ -85,6 +87,8 @@ export function ExpandableTrajectoryMessage({
   const open = userOpen || searchRevealed;
 
   const handleCopy = () => {
+    // Built on demand: a large message would otherwise be re-joined on every render of its row.
+    const copyText = messageClipboardText(message);
     if (!copyText || typeof navigator === "undefined" || !navigator.clipboard?.writeText) return;
     void navigator.clipboard.writeText(copyText).catch((error: unknown) => {
       logger.warn("[ModelTrajectory] copy expanded content failed", error);
@@ -228,7 +232,7 @@ export function ExpandableTrajectoryMessage({
             className="absolute right-full mr-1 hidden text-foreground-subtlest group-data-[state=open]:inline-flex"
             aria-label={copyLabel}
             title={copyLabel}
-            disabled={!copyText}
+            disabled={message.parts.length === 0}
             onClick={handleCopy}
           >
             <CopyIcon className="size-3" />
@@ -275,23 +279,40 @@ function messagePreview(
   role: "system" | "user" | "assistant" | "tool",
 ): string {
   if (role === "tool" && message.parts.some((part) => part.kind === "tool-result")) {
-    return trajectoryToolOutputs(message).join(" ").replaceAll(/\s+/g, " ").trim() || "—";
+    return (
+      trajectoryToolOutputs(message)
+        .map((output) => output.slice(0, PREVIEW_SOURCE_CHARS))
+        .join(" ")
+        .replaceAll(/\s+/g, " ")
+        .trim() || "—"
+    );
   }
-  const toolCallNames = message.parts.flatMap((part) =>
-    part.kind === "tool-call" ? [part.toolName] : [],
+  const toolCallInputs = message.parts.flatMap((part) =>
+    part.kind === "tool-call" ? [compactPreviewValue(part.input)] : [],
   );
-  if (toolCallNames.length > 0) {
-    return message.parts
-      .flatMap((part) => (part.kind === "tool-call" ? [compactPreviewValue(part.input)] : []))
-      .join(", ");
+  if (toolCallInputs.length > 0) {
+    // Text parts come first, as in the expanded body; a mixed message must not hide its text behind the tool input.
+    const hasText = message.parts.some(
+      (part) => "text" in part && typeof part.text === "string" && part.text.length > 0,
+    );
+    const inputs = toolCallInputs.join(", ");
+    return hasText ? `${compactTextPreview(message)} ${inputs}` : inputs;
   }
   if (role === "user" || role === "assistant") return compactTextPreview(message);
   return firstLinePreview(message);
 }
 
+// A collapsed row only shows a single line, so the preview reads a bounded prefix of each segment.
+// Normalizing whole segments (up to the host budget per part) on every render was a large share of the call-card cost.
+const PREVIEW_SOURCE_CHARS = 1024;
+
 function compactTextPreview(message: ZCodeModelTrajectoryMessage): string {
   const text = message.parts
-    .flatMap((part) => ("text" in part && typeof part.text === "string" ? [part.text] : []))
+    .flatMap((part) =>
+      "text" in part && typeof part.text === "string"
+        ? [part.text.slice(0, PREVIEW_SOURCE_CHARS)]
+        : [],
+    )
     .join(" ")
     .replaceAll(/\s+/g, " ")
     .trim();
@@ -299,14 +320,18 @@ function compactTextPreview(message: ZCodeModelTrajectoryMessage): string {
 }
 
 function compactPreviewValue(value: unknown): string {
-  if (typeof value === "string") return value.replaceAll(/\s+/g, " ").trim() || "—";
+  if (typeof value === "string") {
+    return value.slice(0, PREVIEW_SOURCE_CHARS).replaceAll(/\s+/g, " ").trim() || "—";
+  }
   const errorText = trajectoryToolPayloadErrorText(value);
-  if (errorText !== undefined) return errorText.replaceAll(/\s+/g, " ").trim() || "—";
+  if (errorText !== undefined) {
+    return errorText.slice(0, PREVIEW_SOURCE_CHARS).replaceAll(/\s+/g, " ").trim() || "—";
+  }
   if (value === undefined) return "—";
   try {
-    return JSON.stringify(value) ?? String(value);
+    return (JSON.stringify(value) ?? String(value)).slice(0, PREVIEW_SOURCE_CHARS);
   } catch {
-    return String(value);
+    return String(value).slice(0, PREVIEW_SOURCE_CHARS);
   }
 }
 
@@ -314,6 +339,7 @@ function firstLinePreview(message: ZCodeModelTrajectoryMessage): string {
   for (const part of message.parts) {
     if ("text" in part && typeof part.text === "string") {
       const firstLine = part.text
+        .slice(0, PREVIEW_SOURCE_CHARS)
         .split(/\r?\n/)
         .map((line) => line.trim())
         .find(Boolean);

@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- settings-sync 需要集中维护外部 skills/commands/plugins/MCP 扫描、去重和导入状态机，后续按资源类别拆分 */
+/* eslint-disable max-lines -- settings-sync centralizes external skills/commands/plugins/MCP scanning, deduplication, and import state machines; split it by resource type later. */
 import type {
   McpServerConfig,
   SettingsSyncAgent,
@@ -21,9 +21,25 @@ import type {
   SettingsSyncSourceRootSummary,
   SettingsSyncTaskImportResult,
 } from "@zcode/shared";
-import { copyFile, cp, link, lstat, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import {
+  cp,
+  link,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import {
+  atomicWriteFile,
+  getClaudeUserInstructionsFilePath,
+  getUserZcodeAgentsFilePath,
+  resolveAgentUserHomeDir,
+  withFileLock,
+} from "@zcode/shared/node";
 import { parse as parseYaml } from "yaml";
 import { parse as parseToml } from "smol-toml";
 import { CommandFileParser } from "../commands/commandFileParser.js";
@@ -406,10 +422,8 @@ const CLAUDE_PLUGIN_MANIFEST_PATH = [".claude-plugin", "plugin.json"] as const;
 const CODEX_PLUGIN_MANIFEST_PATH = [".codex-plugin", "plugin.json"] as const;
 const INLINE_PLUGIN_MARKETPLACE = "inline";
 
-function resolveUserHomeDir(): string {
-  const envHome = process.env.HOME?.trim() || process.env.USERPROFILE?.trim();
-  return envHome && envHome.length > 0 ? envHome : homedir();
-}
+// Share home-directory resolution with the CLI so migration writes and the Agent's AGENTS.md reads stay consistent.
+const resolveUserHomeDir = resolveAgentUserHomeDir;
 
 function getWorkspaceZcodeSkillRoot(workspacePath: string): string {
   return join(workspacePath, ".zcode", "skills");
@@ -443,14 +457,6 @@ function getWorkspaceZcodeConfigPath(workspacePath: string): string {
   return join(workspacePath, ".zcode", "config.json");
 }
 
-function getClaudeUserAgentsFileSourcePath(): string {
-  return join(resolveUserHomeDir(), ".claude", "CLAUDE.md");
-}
-
-function getUserZcodeAgentsFilePath(): string {
-  return join(resolveUserHomeDir(), ".zcode", "AGENTS.md");
-}
-
 function resolveTargetRootForScope(
   targetScope: SettingsSyncSourceScope,
   workspacePath: string | undefined,
@@ -466,7 +472,9 @@ function resolveCandidateTargetRoot(
   workspacePath: string | undefined,
 ): string | null {
   return sourceScope === "workspace"
-    ? workspacePath ? getWorkspaceZcodeSkillRoot(workspacePath) : null
+    ? workspacePath
+      ? getWorkspaceZcodeSkillRoot(workspacePath)
+      : null
     : getUserZcodeSkillRoot();
 }
 
@@ -485,7 +493,9 @@ function resolveCommandCandidateTargetRoot(
   workspacePath: string | undefined,
 ): string | null {
   return sourceScope === "workspace"
-    ? workspacePath ? getWorkspaceZcodeCommandRoot(workspacePath) : null
+    ? workspacePath
+      ? getWorkspaceZcodeCommandRoot(workspacePath)
+      : null
     : getUserZcodeCommandRoot();
 }
 
@@ -504,7 +514,9 @@ function resolvePluginCandidateTargetRoot(
   workspacePath: string | undefined,
 ): string | null {
   return sourceScope === "workspace"
-    ? workspacePath ? getWorkspaceZcodePluginRoot(workspacePath) : null
+    ? workspacePath
+      ? getWorkspaceZcodePluginRoot(workspacePath)
+      : null
     : getUserZcodePluginRoot();
 }
 
@@ -555,8 +567,8 @@ export function getCommandFileSymlinkType(): "file" {
 }
 
 async function createDirectorySymlink(sourcePath: string, targetPath: string): Promise<void> {
-  // Windows 创建目录软链需要 junction；其它平台使用 dir。source 使用绝对路径，避免 junction
-  // 在不同 cwd 下解析目标不一致。
+  // Windows requires a junction for directory links; other platforms use dir. Use an absolute source path so the junction
+  // resolves to the same target from different working directories.
   await symlink(resolve(sourcePath), targetPath, getSkillDirectorySymlinkType());
 }
 
@@ -567,9 +579,9 @@ async function importCommandFile(
 ): Promise<void> {
   if (importMode === "symlink") {
     if (process.platform === "win32") {
-      // Windows 创建文件级 symlink 需要管理员权限，改用硬链接。
-      // 硬链接不需要提权，且文件修改能双向同步。
-      // 跨分区（EXDEV）等硬链接失败时回退到复制。
+      // Creating a file symlink on Windows requires administrator privileges, so use a hard link instead.
+      // Hard links require no elevation and file changes are visible in both directions.
+      // Fall back to copying if hard-link creation fails, for example across filesystems (EXDEV).
       try {
         await link(resolve(sourcePath), targetPath);
         log.info(undefined, "[importCommandFile] Windows 硬链接创建成功", {
@@ -578,7 +590,7 @@ async function importCommandFile(
         });
         return;
       } catch (linkError) {
-        // 记录硬链接失败原因（EXDEV 跨分区 / EACCES 权限等），便于排查
+        // Record why hard-link creation failed (for example, EXDEV across filesystems or EACCES permissions) for diagnosis.
         const linkErrorCode = (linkError as NodeJS.ErrnoException)?.code;
         log.warn(undefined, "[importCommandFile] Windows 硬链接失败，回退到复制模式", {
           sourcePath,
@@ -588,7 +600,7 @@ async function importCommandFile(
         });
       }
     } else {
-      // 非 Windows 平台使用 symlink，不需要提权。
+      // On non-Windows platforms, use a symlink; no elevation is required.
       await symlink(resolve(sourcePath), targetPath, getCommandFileSymlinkType());
       return;
     }
@@ -623,7 +635,7 @@ function getExternalSkillRoots(workspacePath?: string): SkillSourceRoot[] {
     scope: "user",
   }));
   if (!workspacePath) {
-    // 全局技能导入不应依赖当前窗口必须打开 workspace。
+    // Importing global skills must not depend on a workspace being open in the current window.
     return userRoots;
   }
   return [
@@ -721,8 +733,8 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 async function collectSkillMarkdownPaths(rootPath: string): Promise<string[]> {
-  // 复用共享的有界遍历（排除 node_modules 等内容目录、限制深度、软链去重），
-  // 与桌面端技能扫描保持一致，避免设置同步在巨型目录上卡死。
+  // Reuse the shared bounded traversal (exclude content directories such as node_modules, limit depth, and deduplicate symlinks),
+  // matching desktop skill scanning and preventing settings sync from hanging on huge directories.
   const discovered = new Set<string>();
   for await (const skillPath of walkSkillMarkdownPaths(rootPath)) {
     discovered.add(skillPath);
@@ -811,7 +823,7 @@ function normalizeSkillNameKey(name: string): string {
 function stripYamlScalarQuotes(value: string): string {
   const trimmed = value.trim();
   if (
-    (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
     (trimmed.startsWith("'") && trimmed.endsWith("'"))
   ) {
     return trimmed.slice(1, -1).trim();
@@ -843,12 +855,14 @@ function readSkillMetadataFromMarkdown(
   try {
     const parsed = parseYaml(frontmatterText);
     if (isRecord(parsed)) {
-      const name = typeof parsed.name === "string" && parsed.name.trim()
-        ? parsed.name.trim()
-        : readLooseSkillName(frontmatterText, fallbackName);
-      const parsedVersion = typeof parsed.version === "string" || typeof parsed.version === "number"
-        ? String(parsed.version).trim()
-        : "";
+      const name =
+        typeof parsed.name === "string" && parsed.name.trim()
+          ? parsed.name.trim()
+          : readLooseSkillName(frontmatterText, fallbackName);
+      const parsedVersion =
+        typeof parsed.version === "string" || typeof parsed.version === "number"
+          ? String(parsed.version).trim()
+          : "";
       const version = parsedVersion || readLooseSkillVersion(frontmatterText);
       return {
         name,
@@ -905,10 +919,7 @@ function getCommandNameFromPath(rootPath: string, filePath: string): string {
     .join("/")}`;
 }
 
-async function readCommandMetadata(params: {
-  filePath: string;
-  rootPath: string;
-}): Promise<{
+async function readCommandMetadata(params: { filePath: string; rootPath: string }): Promise<{
   argumentHint?: string;
   description?: string;
   name: string;
@@ -945,9 +956,10 @@ async function readPluginMetadata(pluginPath: string): Promise<{
     if (name.length === 0) {
       return null;
     }
-    const version = typeof parsed.version === "string" && parsed.version.trim().length > 0
-      ? parsed.version.trim()
-      : undefined;
+    const version =
+      typeof parsed.version === "string" && parsed.version.trim().length > 0
+        ? parsed.version.trim()
+        : undefined;
     return {
       id: `${name}@${INLINE_PLUGIN_MARKETPLACE}`,
       name,
@@ -1066,9 +1078,7 @@ async function readMcpServersFromSourceFile(
     if (!isRecord(parsed)) {
       return {};
     }
-    return format === "mcpJson"
-      ? readOpenCodeMcpServers(parsed)
-      : readWrappedMcpServers(parsed);
+    return format === "mcpJson" ? readOpenCodeMcpServers(parsed) : readWrappedMcpServers(parsed);
   } catch {
     return {};
   }
@@ -1081,7 +1091,9 @@ async function collectExistingMcpServerNameKeys(
   const nameKeys = new Set<string>();
   const targetConfigPath = resolveMcpConfigPathForScope(targetScope, workspacePath);
   if (targetConfigPath) {
-    for (const name of Object.keys(readZcodeMcpServers(await readJsonFileOrEmpty(targetConfigPath)))) {
+    for (const name of Object.keys(
+      readZcodeMcpServers(await readJsonFileOrEmpty(targetConfigPath)),
+    )) {
       nameKeys.add(normalizeMcpServerNameKey(name));
     }
   }
@@ -1153,10 +1165,9 @@ async function isSkillImportCandidateImportable(
   candidate: SkillImportCandidate,
   existingNameKeysByTargetRoot: Map<string, Set<string>>,
 ): Promise<boolean> {
-  return (await getSkillImportCandidateSkipReason(
-    candidate,
-    existingNameKeysByTargetRoot,
-  )) === undefined;
+  return (
+    (await getSkillImportCandidateSkipReason(candidate, existingNameKeysByTargetRoot)) === undefined
+  );
 }
 
 async function getSkillImportCandidateSkipReason(
@@ -1193,10 +1204,10 @@ async function isCommandImportCandidateImportable(
   candidate: CommandImportCandidate,
   existingNameKeysByTargetRoot: Map<string, Set<string>>,
 ): Promise<boolean> {
-  return (await getCommandImportCandidateSkipReason(
-    candidate,
-    existingNameKeysByTargetRoot,
-  )) === undefined;
+  return (
+    (await getCommandImportCandidateSkipReason(candidate, existingNameKeysByTargetRoot)) ===
+    undefined
+  );
 }
 
 async function getPluginImportCandidateSkipReason(
@@ -1226,12 +1237,14 @@ async function isPluginImportCandidateImportable(
   workspacePath: string | undefined,
   targetScope: SettingsSyncSourceScope = candidate.sourceRootScope,
 ): Promise<boolean> {
-  return (await getPluginImportCandidateSkipReason(
-    candidate,
-    existingPluginIdsByConfigPath,
-    workspacePath,
-    targetScope,
-  )) === undefined;
+  return (
+    (await getPluginImportCandidateSkipReason(
+      candidate,
+      existingPluginIdsByConfigPath,
+      workspacePath,
+      targetScope,
+    )) === undefined
+  );
 }
 
 async function getMcpImportCandidateSkipReason(
@@ -1254,12 +1267,14 @@ async function isMcpImportCandidateImportable(
   workspacePath: string | undefined,
   targetScope: SettingsSyncSourceScope = candidate.sourceRootScope,
 ): Promise<boolean> {
-  return (await getMcpImportCandidateSkipReason(
-    candidate,
-    existingNameKeysByTargetScope,
-    workspacePath,
-    targetScope,
-  )) === undefined;
+  return (
+    (await getMcpImportCandidateSkipReason(
+      candidate,
+      existingNameKeysByTargetScope,
+      workspacePath,
+      targetScope,
+    )) === undefined
+  );
 }
 
 async function buildSourceRootSummaries(
@@ -1587,9 +1602,7 @@ async function collectPluginImportCandidates(
   return candidates;
 }
 
-async function collectMcpImportCandidates(
-  workspacePath?: string,
-): Promise<McpImportCandidate[]> {
+async function collectMcpImportCandidates(workspacePath?: string): Promise<McpImportCandidate[]> {
   const candidates: McpImportCandidate[] = [];
   const seenSourceNames = new Set<string>();
   for (const root of getExternalMcpRoots(workspacePath)) {
@@ -1618,16 +1631,15 @@ async function collectMcpImportCandidates(
   return candidates;
 }
 
-async function buildSkillsDiscovery(
-  workspacePath?: string,
-): Promise<SettingsSyncDiscoveryResult> {
+async function buildSkillsDiscovery(workspacePath?: string): Promise<SettingsSyncDiscoveryResult> {
   const candidates = await collectSkillImportCandidates(workspacePath);
   const agents: SettingsSyncDiscoveryResult["agents"] = [];
   for (const { agent } of SUPPORTED_SKILL_AGENT_SOURCES) {
     const agentCandidates = candidates.filter((candidate) => candidate.agent === agent);
     const discoveredCount = agentCandidates.length;
-    const sourcePaths = [...new Set(agentCandidates.map((candidate) => candidate.sourceRootPath))]
-      .sort((left, right) => left.localeCompare(right));
+    const sourcePaths = [
+      ...new Set(agentCandidates.map((candidate) => candidate.sourceRootPath)),
+    ].sort((left, right) => left.localeCompare(right));
     const sourceRoots = await buildSourceRootSummaries(agentCandidates);
     let importableCount = 0;
     const existingNameKeysByTargetRoot = new Map<string, Set<string>>();
@@ -1665,8 +1677,9 @@ async function buildCommandsDiscovery(
   for (const { agent } of SUPPORTED_COMMAND_AGENT_SOURCES) {
     const agentCandidates = candidates.filter((candidate) => candidate.agent === agent);
     const discoveredCount = agentCandidates.length;
-    const sourcePaths = [...new Set(agentCandidates.map((candidate) => candidate.sourceRootPath))]
-      .sort((left, right) => left.localeCompare(right));
+    const sourcePaths = [
+      ...new Set(agentCandidates.map((candidate) => candidate.sourceRootPath)),
+    ].sort((left, right) => left.localeCompare(right));
     const sourceRoots = await buildCommandSourceRootSummaries(agentCandidates);
     let importableCount = 0;
     const existingNameKeysByTargetRoot = new Map<string, Set<string>>();
@@ -1696,25 +1709,26 @@ async function buildCommandsDiscovery(
   };
 }
 
-async function buildPluginsDiscovery(
-  workspacePath?: string,
-): Promise<SettingsSyncDiscoveryResult> {
+async function buildPluginsDiscovery(workspacePath?: string): Promise<SettingsSyncDiscoveryResult> {
   const candidates = await collectPluginImportCandidates(workspacePath);
   const agents: SettingsSyncDiscoveryResult["agents"] = [];
   for (const { agent } of SUPPORTED_PLUGIN_AGENT_SOURCES) {
     const agentCandidates = candidates.filter((candidate) => candidate.agent === agent);
     const discoveredCount = agentCandidates.length;
-    const sourcePaths = [...new Set(agentCandidates.map((candidate) => candidate.sourceRootPath))]
-      .sort((left, right) => left.localeCompare(right));
+    const sourcePaths = [
+      ...new Set(agentCandidates.map((candidate) => candidate.sourceRootPath)),
+    ].sort((left, right) => left.localeCompare(right));
     const sourceRoots = await buildPluginSourceRootSummaries(agentCandidates, workspacePath);
     let importableCount = 0;
     const existingPluginIdsByConfigPath = new Map<string, Set<string>>();
     for (const candidate of agentCandidates) {
-      if (await isPluginImportCandidateImportable(
-        candidate,
-        existingPluginIdsByConfigPath,
-        workspacePath,
-      )) {
+      if (
+        await isPluginImportCandidateImportable(
+          candidate,
+          existingPluginIdsByConfigPath,
+          workspacePath,
+        )
+      ) {
         importableCount += 1;
       }
     }
@@ -1739,25 +1753,26 @@ async function buildPluginsDiscovery(
   };
 }
 
-async function buildMcpDiscovery(
-  workspacePath?: string,
-): Promise<SettingsSyncDiscoveryResult> {
+async function buildMcpDiscovery(workspacePath?: string): Promise<SettingsSyncDiscoveryResult> {
   const candidates = await collectMcpImportCandidates(workspacePath);
   const agents: SettingsSyncDiscoveryResult["agents"] = [];
   for (const { agent } of SUPPORTED_MCP_AGENT_SOURCES) {
     const agentCandidates = candidates.filter((candidate) => candidate.agent === agent);
     const discoveredCount = agentCandidates.length;
-    const sourcePaths = [...new Set(agentCandidates.map((candidate) => candidate.sourceRootPath))]
-      .sort((left, right) => left.localeCompare(right));
+    const sourcePaths = [
+      ...new Set(agentCandidates.map((candidate) => candidate.sourceRootPath)),
+    ].sort((left, right) => left.localeCompare(right));
     const sourceRoots = await buildMcpSourceRootSummaries(agentCandidates, workspacePath);
     let importableCount = 0;
     const existingNameKeysByTargetScope = new Map<SettingsSyncSourceScope, Set<string>>();
     for (const candidate of agentCandidates) {
-      if (await isMcpImportCandidateImportable(
-        candidate,
-        existingNameKeysByTargetScope,
-        workspacePath,
-      )) {
+      if (
+        await isMcpImportCandidateImportable(
+          candidate,
+          existingNameKeysByTargetScope,
+          workspacePath,
+        )
+      ) {
         importableCount += 1;
       }
     }
@@ -2184,7 +2199,7 @@ function shouldScanMcpServers(request: {
 }
 
 async function getClaudeAgentsFileMigrationStatus(): Promise<SettingsSyncClaudeAgentsFileMigrationStatus> {
-  const sourcePath = getClaudeUserAgentsFileSourcePath();
+  const sourcePath = getClaudeUserInstructionsFilePath();
   const sourceExists = await pathExists(sourcePath);
   const targetPath = getUserZcodeAgentsFilePath();
   const targetExists = await pathExists(targetPath);
@@ -2202,7 +2217,7 @@ async function getClaudeAgentsFileMigrationStatus(): Promise<SettingsSyncClaudeA
 async function copyClaudeAgentsFileToZcodeAgentsFile(params: {
   overwrite?: boolean;
 }): Promise<SettingsSyncClaudeAgentsFileCopyResult> {
-  const sourcePath = getClaudeUserAgentsFileSourcePath();
+  const sourcePath = getClaudeUserInstructionsFilePath();
   const targetPath = getUserZcodeAgentsFilePath();
   const sourceExists = await pathExists(sourcePath);
   const targetExists = await pathExists(targetPath);
@@ -2227,14 +2242,40 @@ async function copyClaudeAgentsFileToZcodeAgentsFile(params: {
     };
   }
 
-  await mkdir(dirname(targetPath), { recursive: true });
-  await copyFile(sourcePath, targetPath);
+  // Share the same file lock as the settings-page Instructions editor to prevent the two write paths from overwriting each other.
+  // targetExists outside the lock is only a fast path; recheck overwrite conditions inside the lock,
+  // or the editor could create a file between the check and copy and then have it overwritten.
+  // Write with atomicWriteFile + rename: if the target is a symlink, in-place copyFile would
+  // follow the link and bypass the editor's checks for regular files.
+  const copyOutcome = await withFileLock(targetPath, async () => {
+    const targetExistsUnderLock = await pathExists(targetPath);
+    if (targetExistsUnderLock && params.overwrite !== true) {
+      return { skipped: true, overwritten: false };
+    }
+    // Match copyFile by preserving the source file's permissions (atomicWriteFile uses umask by default).
+    // Use stat rather than lstat: when the source is a symlink, use the target file's mode;
+    // the link itself always has mode 0777, which could expose file contents to other local users.
+    const sourceBytes = await readFile(sourcePath);
+    const sourceMode = (await stat(sourcePath)).mode & 0o7777;
+    await atomicWriteFile(targetPath, sourceBytes, { mode: sourceMode });
+    return { skipped: false, overwritten: targetExistsUnderLock };
+  });
+
+  if (copyOutcome.skipped) {
+    return {
+      sourcePath,
+      targetPath,
+      status: "skipped",
+      overwritten: false,
+      skippedReason: "targetExists",
+    };
+  }
 
   return {
     sourcePath,
     targetPath,
     status: "copied",
-    overwritten: targetExists,
+    overwritten: copyOutcome.overwritten,
   };
 }
 
@@ -2248,17 +2289,21 @@ export function createSettingsSyncService(
   }
 
   return {
-    async getClaudeAgentsFileMigrationStatus(request): Promise<SettingsSyncClaudeAgentsFileMigrationStatus> {
+    async getClaudeAgentsFileMigrationStatus(
+      request,
+    ): Promise<SettingsSyncClaudeAgentsFileMigrationStatus> {
       void request.workspaceIdentity;
       void request.workspacePath;
       return getClaudeAgentsFileMigrationStatus();
     },
 
-    async copyClaudeAgentsFileToZcodeAgentsFile(request = {}): Promise<SettingsSyncClaudeAgentsFileCopyResult> {
+    async copyClaudeAgentsFileToZcodeAgentsFile(
+      request = {},
+    ): Promise<SettingsSyncClaudeAgentsFileCopyResult> {
       const result = await copyClaudeAgentsFileToZcodeAgentsFile({
         overwrite: request.overwrite,
       });
-      log.info("[settings-sync] Claude AGENTS.md migration completed", {
+      log.info(undefined, "[settings-sync] Claude AGENTS.md migration completed", {
         workspacePath: request.workspacePath,
         workspaceIdentity: request.workspaceIdentity,
         sourcePath: result.sourcePath,
@@ -2294,46 +2339,54 @@ export function createSettingsSyncService(
       const taskResults: SettingsSyncTaskImportResult[] = [];
       for (const selection of request.selections) {
         if (selection.category === "skills") {
-          taskResults.push(await importSkillsForAgent(
-            request.workspacePath,
-            selection.agent,
-            selection.sourceScope,
-            selection.targetScope,
-            selection.importMode,
-            selection.skillPaths,
-          ));
+          taskResults.push(
+            await importSkillsForAgent(
+              request.workspacePath,
+              selection.agent,
+              selection.sourceScope,
+              selection.targetScope,
+              selection.importMode,
+              selection.skillPaths,
+            ),
+          );
           continue;
         }
         if (selection.category === "commands") {
-          taskResults.push(await importCommandsForAgent(
-            request.workspacePath,
-            selection.agent,
-            selection.sourceScope,
-            selection.targetScope,
-            selection.importMode,
-            selection.commandPaths,
-          ));
+          taskResults.push(
+            await importCommandsForAgent(
+              request.workspacePath,
+              selection.agent,
+              selection.sourceScope,
+              selection.targetScope,
+              selection.importMode,
+              selection.commandPaths,
+            ),
+          );
           continue;
         }
         if (selection.category === "plugins") {
-          taskResults.push(await importPluginsForAgent(
-            request.workspacePath,
-            selection.agent,
-            selection.sourceScope,
-            selection.targetScope,
-            selection.importMode,
-            selection.pluginPaths,
-          ));
+          taskResults.push(
+            await importPluginsForAgent(
+              request.workspacePath,
+              selection.agent,
+              selection.sourceScope,
+              selection.targetScope,
+              selection.importMode,
+              selection.pluginPaths,
+            ),
+          );
           continue;
         }
         if (selection.category === "mcpServers") {
-          taskResults.push(await importMcpServersForAgent(
-            request.workspacePath,
-            selection.agent,
-            selection.sourceScope,
-            selection.targetScope,
-            selection.mcpServerPaths,
-          ));
+          taskResults.push(
+            await importMcpServersForAgent(
+              request.workspacePath,
+              selection.agent,
+              selection.sourceScope,
+              selection.targetScope,
+              selection.mcpServerPaths,
+            ),
+          );
           continue;
         }
         taskResults.push({
@@ -2362,8 +2415,8 @@ export function createSettingsSyncService(
 
     async markFirstRunPromptHandled(): Promise<void> {
       await dependencies.settingService.update({
-        // 这里记录的是“首启导入提示是否已经被消费”，不是“导入是否成功”。
-        // 如果把“用户点击跳过”遗漏掉，下次启动还会重复弹窗，造成首启流程打扰感。
+        // This records whether the first-run import prompt has been consumed, not whether the import succeeded.
+        // If skipping the prompt is not recorded, it will appear again on the next launch and disrupt the first-run flow.
         settingsSyncFirstRunPromptHandled: true,
       });
     },

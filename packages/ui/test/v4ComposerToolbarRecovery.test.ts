@@ -33,8 +33,10 @@ const mocks = vi.hoisted(() => ({
   selectConnection: vi.fn(),
   codingPlanEntitlements: {} as Record<string, unknown>,
   codingPlanEntitlementsRefresh: vi.fn(async () => undefined),
-  // 修复原因：context hover 的 start plan onAccess 按 enabledStartPlanProviderIds 挂载；
-  // 默认空数组模拟 Start Plan 尚无独立 Account Access，需要入口的用例显式提供 provider id。
+  // Fix rationale: the context-hover start plan onAccess mounts per
+  // enabledStartPlanProviderIds; the default empty array simulates Start Plan
+  // having no separate Account Access yet, and cases needing the entry provide
+  // the provider id explicitly.
   codingPlanEntitlementsEnabledStartPlanIds: [] as string[],
   configOptions: [] as Array<Record<string, unknown>>,
   configOptionsError: true,
@@ -205,7 +207,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
     intl: {
       formatMessage: ({ id }: { id: string }) => id,
     },
-    locale: "zh-CN",
+    locale: "en-US",
   }),
 }));
 
@@ -386,7 +388,8 @@ function createActiveEntitlement(providerId: string, extra: Record<string, unkno
 }
 
 function renderToolbarMarkup(overrides: Partial<V4ComposerModelControlsProps> = {}): string {
-  // 纯工具条测试显式提供已初始化的 Composer；生产初始化由 scope owner 负责。
+  // A pure toolbar test provides an initialized Composer explicitly; production
+  // initialization is owned by the scope owner.
   const seed = overrides.config ?? {
     provider: "custom-openai",
     model: "gpt-4o",
@@ -394,8 +397,8 @@ function renderToolbarMarkup(overrides: Partial<V4ComposerModelControlsProps> = 
     mode: "build",
   };
   return renderToStaticMarkup(
-    // HighspeedModelIndicator 走 ControlHintTooltip，缺少 TooltipProvider 会直接抛错，
-    // 所以工具条快照统一包一层 Provider。
+    // HighspeedModelIndicator uses ControlHintTooltip and throws without a
+    // TooltipProvider, so toolbar snapshots always wrap in the provider.
     createElement(
       TooltipProvider,
       null,
@@ -494,7 +497,7 @@ afterEach(() => {
 });
 
 describe("V4ComposerModelControls recovery", () => {
-  it("同 Host 重读保留目录时入口不切成禁用态，首次加载仍禁用", () => {
+  it("the entry does not flip to disabled when the same Host re-reads with a retained catalog; first load stays disabled", () => {
     renderToolbarMarkup({
       modelSelectionState: { status: "loading", catalog: mocks.modelSelectionView },
     });
@@ -502,7 +505,7 @@ describe("V4ComposerModelControls recovery", () => {
     renderToolbarMarkup({ modelSelectionState: { status: "loading" } });
     expect(captured.modelSelectProps?.disabled).toBe(true);
   });
-  it("Highspeed 卡生效期间隐藏 context token usage 圈圈", () => {
+  it("hides the context token usage ring while a Highspeed card is active", () => {
     const normalHtml = renderToolbarMarkup();
     const highspeedHtml = renderToolbarMarkup({ modelLocked: true });
 
@@ -510,7 +513,7 @@ describe("V4ComposerModelControls recovery", () => {
     expect(highspeedHtml).not.toContain('data-testid="mock-usage"');
   });
 
-  it("把倒计时放在模型和 Think 之间并显示剩余时间", () => {
+  it("places the countdown between the model and Think controls and shows the remaining time", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_000);
 
     const html = renderToolbarMarkup({
@@ -531,7 +534,7 @@ describe("V4ComposerModelControls recovery", () => {
     );
   });
 
-  it("已有会话的 Composer 模型留空时仍能打开模型菜单重选", () => {
+  it("a Composer with an existing session and an empty model still opens the model menu to reselect", () => {
     renderToolbarMarkup({
       sessionId: "existing-session",
       draftMode: false,
@@ -553,7 +556,7 @@ describe("V4ComposerModelControls recovery", () => {
     expect(html).not.toContain('data-testid="mock-model-select"');
   });
 
-  it("Start 权益目录更新不自动改输入框模型或显示旧领取引导", async () => {
+  it("a Start entitlement catalog update does not auto-change the composer model or show the stale claim guide", async () => {
     const providerId = BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan;
     mocks.settings = {
       providerFamilyConnectionSelections: { bigmodel: { kind: "start-plan" } },
@@ -624,7 +627,7 @@ describe("V4ComposerModelControls recovery", () => {
     await act(async () => root.unmount());
   });
 
-  it("合并入口只显示模型名，供应商保留在提示与菜单", () => {
+  it("the merged entry shows only the model name; the provider stays in the tooltip and menu", () => {
     renderToolbarMarkup();
 
     expect(captured.modelSelectProps?.triggerLabel).toBe("gpt-4o");
@@ -632,7 +635,7 @@ describe("V4ComposerModelControls recovery", () => {
     expect(captured.modelSelectProps?.triggerLabelPrefix).toBeUndefined();
   });
 
-  it("Registry 已发布时只使用 Registry providerName", () => {
+  it("uses only the Registry providerName once the Registry is published", () => {
     mocks.modelSelectionView = {
       revision: 1,
       providers: [
@@ -658,7 +661,7 @@ describe("V4ComposerModelControls recovery", () => {
     expect(captured.modelSelectProps?.tooltipTitle).toBe("Registry OpenAI/gpt-4o");
   });
 
-  it("prewarm 未就绪时不把旧 configOptions 模型当作 Selection 来源", async () => {
+  it("does not treat a stale configOptions model as the selection source while prewarm is not ready", async () => {
     mocks.configOptions = [
       {
         id: "model",
@@ -721,7 +724,7 @@ describe("V4ComposerModelControls recovery", () => {
     });
   });
 
-  it("V4 任务边界不再刷新 entitlement", async () => {
+  it("V4 task boundaries no longer refresh the entitlement", async () => {
     const root: Root = createRoot(installMinimalDom());
     const renderPhase = (phase: V4ComposerModelControlsProps["phase"]) =>
       createElement(V4ComposerModelControls, {
@@ -773,7 +776,7 @@ describe("V4ComposerModelControls recovery", () => {
     });
   });
 
-  it("忽略模型切换期间受控 Select 产生的空 thought 事件", () => {
+  it("ignores empty thought events from the controlled Select during model switches", () => {
     mocks.configOptions = [
       {
         id: "thought_level",
@@ -803,7 +806,7 @@ describe("V4ComposerModelControls recovery", () => {
     });
   });
 
-  it("会话态候选档位只取目标 Host View，不取旧 Session 或 workspace 目录", () => {
+  it("session-state candidate levels come only from the target Host view, not the stale session or workspace catalog", () => {
     mocks.configOptions = [
       {
         id: "thought_level",
@@ -842,7 +845,7 @@ describe("V4ComposerModelControls recovery", () => {
   });
 
   it.each([{ thoughtLevels: [] }, { thoughtLevels: ["disabled"] }])(
-    "恢复的空档位不被目录补齐：$thoughtLevels",
+    "a recovered empty level is not backfilled from the catalog: $thoughtLevels",
     ({ thoughtLevels }) => {
       renderToolbarMarkup({
         config: {
@@ -858,7 +861,7 @@ describe("V4ComposerModelControls recovery", () => {
     },
   );
 
-  it("草稿预热完成后仍展示 Composer 选择与 Host 候选，不消费旧投影档位", () => {
+  it("after draft prewarm completes, the composer selection and Host candidates still show without consuming stale projection levels", () => {
     renderToolbarMarkup({
       draftMode: true,
       draftConfig: {
@@ -885,7 +888,7 @@ describe("V4ComposerModelControls recovery", () => {
     });
   });
 
-  it("草稿切换目标模型时不复用旧预热投影的 thought 档位", () => {
+  it("switching the draft target model does not reuse the stale prewarmed projection thought level", () => {
     renderToolbarMarkup({
       draftMode: true,
       config: {
@@ -915,7 +918,7 @@ describe("V4ComposerModelControls recovery", () => {
     expect(props.startPlanBalance).toBeUndefined();
   });
 
-  it("Registry 尚未发布时不从旧 Provider Snapshot 构造模型菜单", () => {
+  it("does not build the model menu from a stale provider snapshot before the Registry is published", () => {
     mocks.modelSelectionView = null;
     renderToolbarMarkup();
 
@@ -1118,7 +1121,8 @@ describe("V4ComposerModelControls recovery", () => {
     const startPlanBalance = latestUsageProps().startPlanBalance as {
       onAccess?: () => unknown;
     };
-    // 修复原因：start plan 用户原先没有 hover onAccess 入口，context 面板从不主动刷新今日余额。
+    // Fix rationale: start plan users previously had no hover onAccess entry, so
+    // the context panel never proactively refreshed the daily balance.
     expect(typeof startPlanBalance?.onAccess).toBe("function");
     expect(startPlanBalance.onAccess).not.toBeNull();
   });
@@ -1381,18 +1385,31 @@ describe("V4ComposerModelControls recovery", () => {
   });
 });
 
-it("展示失败后允许重试当前连接，不再被已选 key 提前返回", () => {
+it("after a display failure, retrying the current connection is allowed instead of returning early on the selected key", () => {
   mocks.connectionSwitchError = "retry";
   renderToolbarMarkup();
   const menu = captured.modelSelectProps?.composerOptions?.providerMenu;
   expect(menu).toBeDefined();
   const selected = menu!.groups.find((group) => group.key === menu!.selectedKey)!;
   expect(selected).toBeDefined();
-  menu!.onSelect(selected);
+  menu!.onSelectModel(selected, selected.items[0]!.value);
   expect(mocks.selectConnection).toHaveBeenCalledTimes(1);
+  expect(mocks.selectConnection).toHaveBeenCalledWith(
+    expect.objectContaining({ key: selected.key }),
+    selected.key,
+    selected.items[0]!.name,
+  );
 });
 
-it("团队用量已缓存后只清空 user，Provider 仍旧 ready 时立即隐藏旧来源并禁用请求", async () => {
+it("a model picked in the selected connection without an error skips the connection switch", () => {
+  renderToolbarMarkup();
+  const menu = captured.modelSelectProps?.composerOptions?.providerMenu;
+  const selected = menu!.groups.find((group) => group.key === menu!.selectedKey)!;
+  menu!.onSelectModel(selected, selected.items[0]!.value);
+  expect(mocks.selectConnection).not.toHaveBeenCalled();
+});
+
+it("after team usage is cached, clearing only the user while the provider stays ready hides the stale source immediately and disables requests", async () => {
   const { useUsageEntitlement } = await import("@/hooks/useUsageEntitlement.js");
   const provider = BUILTIN_MODEL_PROVIDER_IDS.bigmodelTeamCodingPlan;
   addAccountProviderAccess(provider, { accountType: "bigmodel", mode: "team-coding-plan" });

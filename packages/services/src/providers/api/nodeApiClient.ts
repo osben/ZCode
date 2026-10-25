@@ -377,7 +377,7 @@ export class NodeApiClient implements ApiClient {
           );
         } catch (error) {
           if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
-          log.warn("zcode jwt invalid response observation failed", { error });
+          log.warn(undefined, "zcode jwt invalid response observation failed", { error });
         }
       }
       if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");

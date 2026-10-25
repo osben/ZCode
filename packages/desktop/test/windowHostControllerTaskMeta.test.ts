@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import type { IZCodeTaskService } from "@zcode/services";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import type { WindowHostTaskAddress } from "@zcode/shared/zcode-protocol-v4";
-import { createWindowHostControllerRuntime } from "@desktop/host/windowHostControllerService.js";
+import { createWindowHostControllerRuntime } from "@zcode/services/window-controller";
 
 const local: WindowHostTaskAddress = { taskId: "same", workspacePath: "/repo" };
 const remote: WindowHostTaskAddress = {

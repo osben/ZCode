@@ -137,8 +137,9 @@ export async function readNextWithStreamIdleTimeout<T>(
       rejectAbort();
       return;
     }
-    // Stop 按钮会 abort 当前模型请求；如果底层 provider 没有让 iterator.next()
-    // 立刻返回，这里必须主动结束等待，否则 UI 会一直卡到 idle timeout。
+    // The Stop button aborts the current model request. If the underlying provider does not make
+    // iterator.next() return immediately, end the wait here; otherwise the UI stays blocked until
+    // the idle timeout.
     signal.addEventListener("abort", rejectAbort, { once: true });
     removeAbortListener = () => signal.removeEventListener("abort", rejectAbort);
   });

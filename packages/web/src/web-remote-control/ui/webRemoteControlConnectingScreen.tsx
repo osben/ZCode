@@ -4,7 +4,7 @@ import { WebRemoteControlBrand } from "#src/web-remote-control/ui/webRemoteContr
 import type { WebRemoteControlScreenLocale } from "#src/web-remote-control/domain/webRemoteControlScreenCopy.js";
 import type { WebRemoteControlTerminalTransportState } from "#src/web-remote-control/contract.js";
 
-/** 连接过程页展示的目标电脑；名字来自连接参数，平台来自本机记住的设备记录。 */
+/** Target computer shown on the connecting page; the name comes from the connection parameters, the platform from the locally remembered device record. */
 export interface WebRemoteControlConnectingDevice {
   name?: string;
   platform?: string;
@@ -50,7 +50,7 @@ const copyByLocale = {
   },
 };
 
-// 线性阶段映射到 4 段进度；重连、后台等非线性状态不高亮任何一段。
+// Linear phases map to a 4-segment progress bar; non-linear states such as reconnecting or background do not highlight any segment.
 const STEP_INDEX: Partial<Record<WebRemoteControlTerminalTransportState, number>> = {
   idle: 0,
   connecting: 0,
@@ -78,7 +78,7 @@ function resolveStage(
   }
 }
 
-/** 选中设备到任务首页之间的全屏连接过程页；只呈现 transport 状态，不改变阶段逻辑。 */
+/** Full-screen connecting page between selecting a device and the task home; it only presents transport state and does not change phase logic. */
 export function WebRemoteControlLoadingScreen({
   state,
   locale,

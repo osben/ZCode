@@ -267,14 +267,14 @@ describe("workflow seat gate", () => {
     const workers = seatWorkers(gate, 3);
     gate.setLimit(1);
     const busy = workers[0]!;
-    busy.subagent.tools = 2; // 一轮里并行的两次 WebSearch
+    busy.subagent.tools = 2; // two parallel WebSearch calls within one turn
 
     expect(busy.admission.tryAcquire?.({ model: MODEL })).toBeDefined();
     await busy.admission.acquire({ model: MODEL });
     expect(busy.governor.acquireCalls).toBe(1);
     expect(gate.stats()).toEqual({ limit: 1, working: 3, parked: 0 });
 
-    busy.subagent.tools = 0; // 工具都回来了，下一次请求是这个 ask 的下一个 turn step
+    busy.subagent.tools = 0; // all tools are back; the next request is this ask's next turn step
     expect(busy.admission.tryAcquire?.({ model: MODEL })).toBeUndefined();
     void busy.admission.acquire({ model: MODEL });
     expect(gate.stats()).toEqual({ limit: 1, working: 2, parked: 1 });

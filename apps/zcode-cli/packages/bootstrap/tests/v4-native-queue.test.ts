@@ -4,6 +4,7 @@
 // fake 风格参照 tests/v4-native-commands.test.ts（fake host/app，不经旧协议代码）。
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionEventType, type SessionEvent } from "@zcode/contracts";
+import { createTurnCancelReason, hasPreserveQueueAutoDrainCancelIntent } from "@zcode/core";
 import type { CommandEnvelope, QueueItem } from "@zcode/shared/zcode-protocol-v4";
 import { V4CommandExecutor } from "../src/zcode-protocol-v4/commands/executor.js";
 import {
@@ -846,6 +847,258 @@ describe("v4 原生 sendQueuedNow", () => {
     });
     expect(controller.signal.aborted).toBe(false);
     expect(calls).toEqual(["runtime-stop", "release", "resend"]);
+  });
+
+  // ISSUE-039 / specs/stop-queue-hold.md: Steer (sendQueuedNow) interrupts the running turn with the
+  // preserve intent and never writes the user-Stop hold, even when the queue has more items behind it.
+  // Covers the runtime-token branch (stopActiveForegroundExecution returns stopped). The runtime-idle branch
+  // is covered by the ISSUE-039 tests below.
+  it("ISSUE-039：steer 抢占运行中 turn（runtime 有 token）不写 stop hold，剩余 queue 保持 autoDrain", async () => {
+    let record!: V4SessionRecordView;
+    const stopActiveForegroundExecution = vi.fn().mockImplementation(() => {
+      setTimeout(() => {
+        record.activeAbortController = undefined;
+      }, 20);
+      return { kind: "stopped", foregroundExecutionId: "foreground-1" };
+    });
+    const app = makeApp({ runtime: { stopActiveForegroundExecution } });
+    const controller = new AbortController();
+    record = makeRecord({ app, activeAbortController: controller });
+    const host = makeHost(record, {
+      getQueueAutoDrain: vi.fn().mockReturnValue(true),
+      getQueueLength: vi.fn().mockReturnValue(2),
+    });
+
+    await new V4CommandExecutor(host).execute(envelope("sendQueuedNow", { queueItemId: "q-1" }));
+
+    expect(stopActiveForegroundExecution).toHaveBeenCalledWith({
+      preserveQueueAutoDrainOnCancel: true,
+      reason: "v4 sendQueuedNow preempts active turn",
+    });
+    expect(app.setQueueAutoDrain).not.toHaveBeenCalled();
+  });
+
+  it("ISSUE-039：steer 之后的用户 Stop 仍写 hold（先 hold 再 stop）", async () => {
+    const calls: string[] = [];
+    let record!: V4SessionRecordView;
+    const stopActiveForegroundExecution = vi.fn().mockImplementation(() => {
+      calls.push("runtime-stop");
+      setTimeout(() => {
+        record.activeAbortController = undefined;
+      }, 20);
+      return { kind: "stopped", foregroundExecutionId: "foreground-1" };
+    });
+    // The steered turn ends (no foreground) before the later user Stop targets the next turn.
+    let foregroundExecutionId: string | undefined;
+    const app = makeApp({
+      runtime: {
+        stopActiveForegroundExecution,
+        getActiveForegroundExecutionId: vi.fn(() => foregroundExecutionId),
+      },
+    });
+    app.setQueueAutoDrain = vi.fn().mockImplementation(async (autoDrain: boolean) => {
+      calls.push(`autoDrain:${String(autoDrain)}`);
+    }) as typeof app.setQueueAutoDrain;
+    record = makeRecord({ app, activeAbortController: new AbortController() });
+    const host = makeHost(record, {
+      getQueueAutoDrain: vi.fn().mockReturnValue(true),
+      getQueueLength: vi.fn().mockReturnValue(1),
+    });
+
+    // Steer first: no hold is written by the steer itself.
+    await new V4CommandExecutor(host).execute(envelope("sendQueuedNow", { queueItemId: "q-1" }));
+    expect(calls.filter((call) => call.startsWith("autoDrain"))).toEqual([]);
+
+    // A later user Stop on the steered turn holds the rest of the queue before it aborts.
+    calls.length = 0;
+    foregroundExecutionId = "foreground-2";
+    record.activeAbortController = new AbortController();
+    await new V4CommandExecutor(host).execute(envelope("stop", {}));
+    expect(calls).toEqual(["autoDrain:false", "runtime-stop"]);
+  });
+
+  // ISSUE-039 A-1: the caller's controller is set but the runtime has no foreground token yet (runtime idle).
+  // The steer must still carry the preserve intent in the abort reason; a user Stop in the same state must not.
+  it("ISSUE-039：runtime 尚无前台 token 时 steer 的 controller abort 仍携带保留 queue 的意图", async () => {
+    let record!: V4SessionRecordView;
+    const app = makeApp({
+      runtime: { stopActiveForegroundExecution: vi.fn().mockReturnValue({ kind: "idle" }) },
+    });
+    const controller = new AbortController();
+    controller.signal.addEventListener("abort", () => {
+      record.activeAbortController = undefined;
+    });
+    record = makeRecord({ app, activeAbortController: controller });
+    const host = makeHost(record, {
+      getQueueAutoDrain: vi.fn().mockReturnValue(true),
+      getQueueLength: vi.fn().mockReturnValue(2),
+    });
+
+    await new V4CommandExecutor(host).execute(envelope("sendQueuedNow", { queueItemId: "q-1" }));
+
+    expect(controller.signal.aborted).toBe(true);
+    expect(hasPreserveQueueAutoDrainCancelIntent(controller.signal.reason)).toBe(true);
+    expect(app.setQueueAutoDrain).not.toHaveBeenCalled();
+  });
+
+  it("ISSUE-039：runtime 尚无前台 token 时用户 Stop 的 controller abort 不携带保留意图并仍 hold", async () => {
+    let record!: V4SessionRecordView;
+    const app = makeApp({
+      runtime: {
+        stopActiveForegroundExecution: vi.fn().mockReturnValue({ kind: "idle" }),
+        getActiveForegroundExecutionId: vi.fn(() => undefined),
+      },
+    });
+    const controller = new AbortController();
+    controller.signal.addEventListener("abort", () => {
+      record.activeAbortController = undefined;
+    });
+    record = makeRecord({ app, activeAbortController: controller });
+    const host = makeHost(record, {
+      getQueueAutoDrain: vi.fn().mockReturnValue(true),
+      getQueueLength: vi.fn().mockReturnValue(2),
+    });
+
+    await new V4CommandExecutor(host).execute(envelope("stop", {}));
+
+    expect(controller.signal.aborted).toBe(true);
+    expect(hasPreserveQueueAutoDrainCancelIntent(controller.signal.reason)).toBe(false);
+    expect(app.setQueueAutoDrain).toHaveBeenCalledWith(false);
+  });
+
+  // ISSUE-039 D1: a Steer already aborted the target; a user Stop lands before the turn tears down. The Stop
+  // is a cancel in flight, so its hold must stay (no release). Stop always wins over an in-flight Steer.
+  it("ISSUE-039 D1：steer 已 abort（runtime token 存在）后用户 Stop 在收口前到达，保留自己的 hold", async () => {
+    const calls: string[] = [];
+    const app = makeApp({
+      runtime: {
+        getActiveForegroundExecutionId: vi.fn(() => "foreground-1"),
+        // The execution exists but its controller is already aborted by the Steer: runtime returns idle.
+        stopActiveForegroundExecution: vi.fn().mockReturnValue({ kind: "idle" }),
+      },
+    });
+    app.setQueueAutoDrain = vi.fn().mockImplementation(async (autoDrain: boolean) => {
+      calls.push(`autoDrain:${String(autoDrain)}`);
+    }) as typeof app.setQueueAutoDrain;
+    const controller = new AbortController();
+    controller.abort(
+      createTurnCancelReason("v4 sendQueuedNow preempts active turn", {
+        preserveQueueAutoDrainOnCancel: true,
+      }),
+    );
+    const record = makeRecord({ app, activeAbortController: controller });
+    const host = makeHost(record, {
+      getQueueAutoDrain: vi.fn().mockReturnValue(true),
+      getQueueLength: vi.fn().mockReturnValue(2),
+    });
+
+    await new V4CommandExecutor(host).execute(envelope("stop", { expectedForegroundExecutionId: "foreground-1" }));
+
+    expect(calls).toEqual(["autoDrain:false"]);
+  });
+
+  it("ISSUE-039 D1：steer 已 abort（无 runtime token，compat controller）后用户 Stop 保留自己的 hold", async () => {
+    const calls: string[] = [];
+    const app = makeApp({
+      runtime: {
+        getActiveForegroundExecutionId: vi.fn(() => undefined),
+        stopActiveForegroundExecution: vi.fn().mockReturnValue({ kind: "idle" }),
+      },
+    });
+    app.setQueueAutoDrain = vi.fn().mockImplementation(async (autoDrain: boolean) => {
+      calls.push(`autoDrain:${String(autoDrain)}`);
+    }) as typeof app.setQueueAutoDrain;
+    const controller = new AbortController();
+    controller.abort(
+      createTurnCancelReason("v4 sendQueuedNow preempts active turn", {
+        preserveQueueAutoDrainOnCancel: true,
+      }),
+    );
+    const record = makeRecord({ app, activeAbortController: controller });
+    const host = makeHost(record, {
+      getQueueAutoDrain: vi.fn().mockReturnValue(true),
+      getQueueLength: vi.fn().mockReturnValue(2),
+    });
+
+    await new V4CommandExecutor(host).execute(envelope("stop", {}));
+
+    expect(calls).toEqual(["autoDrain:false"]);
+  });
+
+  // Core runtime semantics (runtime-command-queue.ts stopActiveForegroundExecution): an aborted active execution
+  // returns idle before the expected-id check, so idle does not prove the expected target is the aborted one.
+  function coreLikeRuntime(initial: { id: string; aborted: boolean } | undefined) {
+    let active = initial;
+    const runtime = {
+      getActiveForegroundExecutionId: vi.fn(() => active?.id),
+      stopActiveForegroundExecution: vi.fn((options: { expectedForegroundExecutionId?: string }) => {
+        if (!active || active.aborted) return { kind: "idle" as const };
+        if (
+          options.expectedForegroundExecutionId !== undefined &&
+          options.expectedForegroundExecutionId !== active.id
+        ) {
+          return { kind: "mismatch" as const, activeForegroundExecutionId: active.id };
+        }
+        active.aborted = true;
+        return { kind: "stopped" as const, foregroundExecutionId: active.id };
+      }),
+    };
+    return {
+      runtime,
+      clear: () => {
+        active = undefined;
+      },
+      swap: (next: { id: string; aborted: boolean }) => {
+        active = next;
+      },
+    };
+  }
+
+  it("ISSUE-039 D1：stale expected id 不因另一个已 abort 的执行而保留 hold（rule 2：noop、不写 hold）", async () => {
+    const calls: string[] = [];
+    const core = coreLikeRuntime({ id: "foreground-1", aborted: false });
+    const app = makeApp({ runtime: core.runtime });
+    app.setQueueAutoDrain = vi.fn().mockImplementation(async (autoDrain: boolean) => {
+      calls.push(`autoDrain:${String(autoDrain)}`);
+      // While the hold is written, the expected execution is replaced by another, already-aborted one.
+      core.swap({ id: "foreground-2", aborted: true });
+    }) as typeof app.setQueueAutoDrain;
+    const record = makeRecord({ app, activeAbortController: new AbortController() });
+    const host = makeHost(record, {
+      getQueueAutoDrain: vi.fn().mockReturnValue(true),
+      getQueueLength: vi.fn().mockReturnValue(2),
+    });
+
+    await expect(
+      new V4CommandExecutor(host).execute(
+        envelope("stop", { expectedForegroundExecutionId: "foreground-1" }),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "guard.stopTargetChanged" });
+    expect(calls).toEqual(["autoDrain:false", "autoDrain:true"]);
+  });
+
+  it("ISSUE-039 D1：steer 已 abort 的执行在 hold 写入期间收口后，Stop 释放自己的 hold（rule 14）", async () => {
+    const calls: string[] = [];
+    const core = coreLikeRuntime({ id: "foreground-1", aborted: true });
+    const app = makeApp({ runtime: core.runtime });
+    app.setQueueAutoDrain = vi.fn().mockImplementation(async (autoDrain: boolean) => {
+      calls.push(`autoDrain:${String(autoDrain)}`);
+      // The steered turn tears down while the Stop's hold is being written.
+      core.clear();
+    }) as typeof app.setQueueAutoDrain;
+    const record = makeRecord({ app, activeAbortController: new AbortController() });
+    const host = makeHost(record, {
+      getQueueAutoDrain: vi.fn().mockReturnValue(true),
+      getQueueLength: vi.fn().mockReturnValue(2),
+    });
+
+    // Without an expected id the stop is pinned to the execution it saw before the hold write; that execution has
+    // torn down, so the stop cancels nothing, releases its hold, and returns the stale-target noop (rule 4).
+    await expect(new V4CommandExecutor(host).execute(envelope("stop", {}))).rejects.toMatchObject({
+      reasonCode: "guard.stopTargetChanged",
+    });
+
+    expect(calls).toEqual(["autoDrain:false", "autoDrain:true"]);
   });
 
   it("BG42：notification 只占用 Core foreground 时仍先 stop 再提升 queue item", async () => {

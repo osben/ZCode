@@ -1,56 +1,56 @@
-# 13 — 设置页设备卡、未完成的连接与更新提示
+# 13 — Settings Device Cards, Unfinished Connections and Update Notices
 
 Status: done
 
-**父规格：** [远程连接交互与视觉体验优化](./01-remote-connection-ux-optimization.md)
+**Parent spec:** [Remote Connection Interaction and Visual Experience Optimization](./01-remote-connection-ux-optimization.md)
 
-**被阻塞于：** [03 — 远程连接展示模型、5 种状态与术语](./03-presentation-model-states-and-glossary.md)、[06 — 交互原型与评审](./06-interaction-prototype-review.md)
+**Blocked by:** [03 — Remote connection presentation model, 5 states and glossary](./03-presentation-model-states-and-glossary.md), [06 — Interaction prototype and review](./06-interaction-prototype-review.md)
 
-**要交付的行为：**
+**Behavior to deliver:**
 
-- **设备卡**：
-  - 第一行：连接方式图标、设备名、状态、主操作，以及"编辑"和"更多"。主操作由展示模型决定。
-  - 第二行：连接描述。连接类型的颜色只在这里出现。
-  - 第三行：最多列出 3 个项目名，点击即可打开；超出的显示"+N"。
-  - "更多"菜单里放设备信息（版本、主机名、系统用户、设备 ID）、复制设备 ID 和移除设备。
-- **其他连接**：
-  - 标出当前正在用的是哪一条、默认的是哪一条，并且可以改设默认。
-  - 操作按钮常驻显示，不需要悬停才出现；窄屏下自动换行。
-  - 去掉卡片套卡片的双层边框。
-- **未完成的连接**：从来没连通过的连接不再显示为设备卡，改为归入页面底部的"未完成的连接"。这一块默认折叠，可以重试、删除，也可以一键清理。
-- **更新提示**：
-  - 可选更新不弹 toast，只在设置导航的"远程设备"上显示小圆点，并在设备卡上显示中性色横幅。
-  - 按"设备 + 目标版本"去重，并持久保存。重连、网络抖动或重启应用后都不会再次提示。
-  - "稍后"只在本次运行期间有效。
-  - 用户主动发起更新时，显示更新阶段和进度。成功后弹 toast；失败时弹的 toast 带"查看详情"。
-  - 强制更新前，列出正在运行的任务。
-- **迁移报告**：被截断的路径，悬停时显示完整内容。
+- **Device card**:
+  - Row 1: connection-method icon, device name, state, primary action, and "编辑" (edit) and "更多" (more). The primary action is decided by the presentation model.
+  - Row 2: connection description. The connection-type color appears only here.
+  - Row 3: at most 3 project names, click to open; the rest shows "+N".
+  - The "更多" menu holds device info (version, hostname, system user, device ID), copy device ID and remove device.
+- **Other connections**:
+  - Mark which one is in use and which is default, and allow changing the default.
+  - Action buttons are always visible and need no hover; they wrap on narrow screens.
+  - Remove the double border of a card inside a card.
+- **Unfinished connections**: a connection that never connected is no longer shown as a device card but goes into "未完成的连接" (unfinished connections) at the page bottom. This block is collapsed by default and supports retry, delete and one-click cleanup.
+- **Update notices**:
+  - An optional update shows no toast, only a small dot on "远程设备" in the Settings navigation and a neutral banner on the device card.
+  - Deduplicated by "device + target version" and persisted. Reconnect, network jitter or an app restart do not prompt again.
+  - "稍后" (later) is valid only for the current run.
+  - When the user starts an update, the update stage and progress are shown. Success shows a toast; failure shows a toast with "查看详情" (view details).
+  - Before a forced update, list the running tasks.
+- **Migration report**: a truncated path shows the full content on hover.
 
-对应父规格中「设置页"远程设备"」一节的设备卡、其他连接、未完成的连接部分，以及「更新提示」一节。本机版本过旧时的更新方向由 [03](./03-presentation-model-states-and-glossary.md) 负责；操作防护和作用域标注由 [05](./05-settings-safeguards-edit-and-scope.md) 负责。
+It corresponds to the device card, other connections and unfinished connections parts of the "Settings: remote devices" section, and the "update notice" section of the parent spec. The update direction for an over-old local version belongs to [03](./03-presentation-model-states-and-glossary.md); operation safeguards and scope labels belong to [05](./05-settings-safeguards-edit-and-scope.md).
 
-**原型评审结论**（[06 评审结论](./06-interaction-prototype-review.md#comments)）：界面按评审通过的原型实现，以下几点以 06 为准。
+**Prototype review conclusion** ([06 review conclusion](./06-interaction-prototype-review.md#comments)): the UI follows the approved prototype; these points follow 06.
 
-- 设备卡上的主操作统一用描边按钮，紧急程度由状态标签和卡内横幅表达；设置页只有“新建连接”是实心主按钮。
-- 必须更新：状态标签 + 警告色横幅说明版本和影响 + 卡片右上角的“更新远端”，横幅内不重复放按钮。可选更新：中性横幅，带“稍后 / 更新”。
-- 其他连接：卡片第二行标出“当前 · 默认”；展开区只列其余连接，“设为默认 / 删除”常驻显示。
-- 设备状态标签写成“状态 · 原因短语”；连接描述使用正常大小写 `Docker · …`。
+- Primary actions on device cards uniformly use outline buttons; urgency is carried by the status label and the in-card banner; only "新建连接" on the Settings page is a solid primary button.
+- Required update: status label + warning-colored banner explaining version and impact + "更新远端" at the card's top right, with no button repeated in the banner. Optional update: neutral banner with "稍后 / 更新".
+- Other connections: the card's second line marks "当前 · 默认"; the expanded area lists only the remaining connections, with "设为默认 / 删除" always visible.
+- The device status label reads "state · reason phrase"; the connection description uses normal casing `Docker · …`.
 
-验收标准：
+Acceptance criteria (all met):
 
-- [x] 设备卡的布局与原型一致，有组件测试并附截图。
-- [x] 用一个未被占用的端口尝试连接后，设置页的设备卡列表里没有出现这次失败的尝试，它只出现在"未完成的连接"里，有 E2E 覆盖。
-- [x] 模拟重连和重启后，更新提示的去重仍然有效；"稍后"只在本次运行期间有效；可选更新不弹 toast。这些都要有更新提示的测试。
-- [x] 强制更新的确认框列出了正在运行的任务。
-- [x] 提供浅色、深色主题和窄屏下的截图。
-- [x] 更新 UX 规格，并同步 E2E 用例目录。
-- [x] `pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed`、受影响的单测、受影响的 E2E 全部通过后，本地提交。
+- The device card layout matches the prototype, with component tests and screenshots.
+- After attempting a connection to an unused port, the failed attempt does not appear in the Settings device card list; it appears only in "未完成的连接". Covered by E2E.
+- After simulated reconnect and restart, update-notice dedupe still holds; "稍后" is valid only for the current run; an optional update shows no toast. All covered by update notice tests.
+- The forced-update confirmation lists the running tasks.
+- Screenshots in light, dark and narrow-screen.
+- UX spec updated and the E2E case catalog synced.
+- `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`, affected unit tests and affected E2E all pass before the local commit.
 
-## 验证记录（2026-09-29）
+## Verification Record (2026-09-29)
 
-- 起点 `1bc73f709887b4882978f55de3d9177d57a9192d`，工作区初始干净；未推送。设备卡、当前/默认连接、未完成连接、更新偏好/反馈、运行任务确认和路径 tooltip 均已实现；项目打开复用明确 profile + directory 的连接意图，不要求已有 attachment。
-- Standards 与 Spec 两路评审发现并修复：当前连接设默认、未完成连接日志、无 attachment 项目打开/双意图覆盖、面板卸载后更新失败 toast 的详情导航。复核无剩余问题。
-- `pnpm typecheck`、`pnpm lint`（64 条存量警告、0 错误）、`pnpm architecture:check --changed`、桌面 E2E 类型检查、fixture 校验和 diff 检查通过。
-- 受影响测试：基于起点、包含未提交及新增文件预览，得到 559 个测试文件。自动解析对既有 `.mp3` 与 `.html?url` 资源边报告 incomplete；两项文件均存在且未改动，人工确认是静态资源叶子，按输出的明确测试清单通过 `test:unit:affected --files-manifest` 执行，不回退全量。该轮 556 个 Vitest 文件中 555 通过、1 个文件的两条旧布局断言失败；另 3 个 Node 文件的 17 项通过。旧断言已按三行布局更新，并补项目身份去重；最终本次变动及评审修复的 8 个文件、130 项受影响回归全部通过。清单与日志保存在下列 artifact 中；不宣称全量验证。
-- 真实 macOS Electron → 独立 Linux SSH 容器：新增 RDUX-13 用例通过，包含设备信息、断开后点击项目恢复、未占用端口失败只归入默认折叠区、确认清理后保留设备。此前首装超时与测试等待/选择器问题已定位并修复，最终通过 run：`desktop-e2e-20260928211106956-p24417-7952ff47932db52d`。
-- 既有 RDUX-05 设置防护用例在最终产品构建上通过，run：`desktop-e2e-20260928210923472-p23086-df79c48fd72ebf81`；该合跑中的新用例曾因测试常量漏导入失败，已由上述单独最终回归覆盖。
-- 截图：`packages/desktop/.e2e-artifacts/desktop-e2e-20260928211106956-p24417-7952ff47932db52d/device-cards-{light,dark}-{1440,900,480}.png`，已检查主题与窄屏布局；480px 是桌面窗口，不是实体手机。手机设备管理门禁与 continuous/replayable 代码未改，相关既有单测在受影响清单内通过，未做手机实机或 Windows/WSL 实机验证。新增用例保持 pending，未自动人工转正。
+- Start `1bc73f709887b4882978f55de3d9177d57a9192d`, clean working tree; not pushed. Device card, current/default connection, unfinished connections, update preference/feedback, running-task confirmation and path tooltip are implemented; opening a project reuses the connection intent with an explicit profile + directory and does not require an existing attachment.
+- Findings of the two reviews (conventions and spec) were fixed: setting the current connection as default, unfinished-connection logs, project opening without an attachment / dual-intent override, and the details navigation of the update-failure toast after the panel unmounts. The re-check found nothing left.
+- `pnpm typecheck`, `pnpm lint` (64 pre-existing warnings, 0 errors), `pnpm architecture:check --changed`, desktop E2E type check, fixture check and diff check pass.
+- Affected tests: based on the start commit, including uncommitted and new-file previews, 559 test files. Automatic resolution reported incomplete for the existing `.mp3` and `.html?url` asset edges; both files exist, are unchanged, and were confirmed manually as static-asset leaves, so the explicit test list was run through `test:unit:affected --files-manifest` instead of falling back to the full suite. In that round 555 of 556 Vitest files passed, with 1 file's two old layout assertions failing; 17 tests of 3 Node files passed. The old assertions were updated to the three-row layout and project identity dedupe was added; the final 8 files / 130 affected regression tests of this change and the review fixes all pass. Full-suite verification is not claimed.
+- Real macOS Electron → isolated Linux SSH container: the new RDUX-13 case passes, covering device info, click-project recovery after disconnect, unused-port failure going only to the default-collapsed block, and the device being kept after confirmed cleanup. Earlier first-install timeouts and test wait/selector problems were located and fixed; final passing run `desktop-e2e-20260928211106956-p24417-7952ff47932db52d`.
+- The existing RDUX-05 settings safeguard case passes on the final product build, run `desktop-e2e-20260928210923472-p23086-df79c48fd72ebf81`; the new case in that combined run once failed on a missing test constant import, covered by the final standalone regression above.
+- Screenshots: `packages/desktop/.e2e-artifacts/desktop-e2e-20260928211106956-p24417-7952ff47932db52d/device-cards-{light,dark}-{1440,900,480}.png`, theme and narrow layout checked; 480px is a desktop window, not a real phone. The mobile device management gate and continuous/replayable code are unchanged, and related existing unit tests passed within the affected list; there is no mobile real-device or Windows/WSL real-device verification. The new case stays pending and was not promoted manually.

@@ -8,6 +8,7 @@ import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { chromium } from "playwright-core";
+import { expectedCopy } from "../../../helpers/uiCopy.js";
 
 const root = fileURLToPath(new URL("../../../../../../", import.meta.url));
 const entry = "/packages/ui/test/browser/manual-review/pending/share-import-selection.fixture.tsx";
@@ -66,9 +67,9 @@ for (const source of ["root", "recent", "default", "empty", "delayed"])
       const getConfig = async () => JSON.parse(await page.getByTestId("config").textContent());
       try {
         await page.goto(
-          `${origin}fixture?source=${source}&locale=${width === 390 ? "zh-CN" : "en-US"}&theme=${width === 390 ? "light" : "dark"}`,
+          `${origin}fixture?source=${source}&locale=en-US&theme=${width === 390 ? "light" : "dark"}`,
         );
-        await page.getByRole("button", { name: "Import", exact: true }).click();
+        await page.getByTestId("share-import").click();
         assert.equal(await page.getByTestId("content").textContent(), "IMPORTED CONTENT");
         if (source === "delayed") {
           assert.equal((await getConfig()).modelSelection, undefined);
@@ -99,7 +100,7 @@ for (const source of ["root", "recent", "default", "empty", "delayed"])
           );
           assert.match(
             await page.getByTestId("chat-thought-level-select-trigger").innerText(),
-            /High|高/,
+            /High/,
           );
           await page.getByRole("button", { name: "Submit", exact: true }).click();
           assert.deepEqual(JSON.parse(await page.getByTestId("submission").textContent()), {
@@ -122,7 +123,12 @@ for (const source of ["root", "recent", "default", "empty", "delayed"])
         if (source !== "empty") {
           await page.getByRole("button", { name: "Reopen", exact: true }).click();
           await page.getByTestId("chat-thought-level-select-trigger").click();
-          await page.getByRole("option", { name: /Low|低/, exact: false }).click();
+          await page
+            .getByRole("option", {
+              name: expectedCopy("chat.toolbar.thoughtLevel.value.low"),
+              exact: true,
+            })
+            .click();
           await page.waitForFunction(
             () =>
               JSON.parse(document.querySelector('[data-testid="config"]').textContent)
@@ -130,7 +136,8 @@ for (const source of ["root", "recent", "default", "empty", "delayed"])
           );
           await page.getByRole("button", { name: "Reopen", exact: true }).click();
           assert.equal((await getConfig()).modelSelection.options.reasoningLevel, "low");
-          // 先前提交的快照不随之后改档位变化；重新打开也不重复初始化。
+          // The previously submitted snapshot does not change with the later level switch;
+          // reopening does not re-initialize it either.
           assert.equal(
             JSON.parse(await page.getByTestId("submission").textContent()).modelSelection.options
               .reasoningLevel,

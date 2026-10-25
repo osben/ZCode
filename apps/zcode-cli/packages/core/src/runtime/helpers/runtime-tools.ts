@@ -17,11 +17,20 @@ import { shouldSuppressSealedSubagentBashNotification } from "../../runtime-task
 import {
   resolveBuiltInToolAllowlist,
   resolveRuntimeDisallowedTools,
+  resolveRuntimeAutomationToolsIncluded,
   resolveRuntimeDynamicWorkflowToolsIncluded,
+  resolveRuntimeLspToolIncluded,
 } from "./tool-allowlist.js";
 import { isStaleBranchRuntimeTaskEvent } from "../methods/runtime-command-generation.js";
 import { resolveEnabledProjectMemoryRoot } from "./project-memory.js";
 import { sessionHasLoadedSkill } from "../../agent/loaded-skills.js";
+import { createRuntimeNestedInstructionContext } from "./nested-instructions-context.js";
+import { getMissingExecutionWorktreeToolError } from "./execution-worktree-guard.js";
+import type {
+  ToolMetadata,
+  ToolRuntimePermissionCapabilityContext,
+  ToolRuntimeScope,
+} from "../../tool/types.js";
 
 const DEFAULT_SUBAGENT_BACKGROUND_BASH_MAX_MS = 3_600_000;
 const EMPTY_RUNTIME_HOOK_CONFIG = {
@@ -47,6 +56,10 @@ export function initializeRuntimeTooling(
 function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentRuntimeDeps): void {
   const nodeReplEnabled = runtime.config.runtimeFeatures?.nodeRepl === true;
   const browserUseEnabled = resolveRuntimeBrowserUseEnabled(runtime, deps);
+  // Cron and OffPeak are main-session automation; both also follow the `automationTools` toggle.
+  const mainAutomationToolsIncluded =
+    runtime.config.taskType !== "subagent_child" &&
+    resolveRuntimeAutomationToolsIncluded(runtime.config);
   registerBuiltInTools(runtime.registry, {
     bashTimeoutPolicy: runtime.config.bashTimeoutPolicy,
     includeSkill: Boolean(runtime.skillPort),
@@ -54,33 +67,35 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     includeSendMessage: runtime.subagentPort?.sendMessage !== undefined,
     includeRespondToCoordinator:
       runtime.config.taskType === "subagent_child" && Boolean(deps.coordinatorResponsePort),
-    // submit_result 只在注入了 workflowSubmitPort 的 workflow actor 会话注册。以端口存在为门，
-    // 与 taskType 无关：workflow actor 是 workflow_child，其 runtimeScope 目前是 "main"。
+    // Register submit_result only in workflow actor sessions with workflowSubmitPort injected. Gate on port presence, independent of
+    // taskType: a workflow actor is workflow_child, but its runtimeScope is currently "main".
     includeSubmitResult: Boolean(deps.workflowSubmitPort),
-    // mono 子代理：typed 声明。门仍是端口。
+    // Mono subagents use the typed declaration; the gate is still port presence.
     ...(deps.workflowSubmitSchema === undefined
       ? {}
       : { submitResultSchema: deps.workflowSubmitSchema }),
-    // escalate 与 submit_result 同门同理由：端口在场即注册（不做 opt-in：最可能撞墙的 actor 恰是作者没标记的那个）。
+    // escalate uses the same gate and rationale as submit_result: register when the port exists (no opt-in; the actor most likely to
+    // hit a blocker is the one the author did not mark).
     includeEscalate: Boolean(deps.workflowEscalatePort),
     includeWorkflow: Boolean(deps.workflowPort),
-    includeAutomation: Boolean(deps.automationPort) && runtime.config.taskType !== "subagent_child",
-    // offPeakPort 只在 host 下发 offPeakToolEnabled 时注入（灰度/远程门在 host 端），
-    // 端口存在即代表曝光允许；subagent 子会话与 automation 同规则不暴露。
-    includeOffPeak: Boolean(deps.offPeakPort) && runtime.config.taskType !== "subagent_child",
-    // 动态工作流灰度门：与 off-peak 相反，
-    // 这里不能用端口在场做判据——十个工具的端口在任何 CLI 里都装配齐全，灰度是 Host 的决定。
-    // 取值收在 tool-allowlist.ts，与分支刷新那个入口共用同一个推导。
+    includeAutomation: Boolean(deps.automationPort) && mainAutomationToolsIncluded,
+    // offPeakPort is injected only when the host enables offPeakToolEnabled (rollout/remote gate is on the host), so port presence
+    // means exposure is allowed. Do not expose it in subagent sessions, matching automation.
+    includeOffPeak: Boolean(deps.offPeakPort) && mainAutomationToolsIncluded,
+    // Dynamic-workflow rollout gate: unlike off-peak, port presence cannot be the criterion here; all ten tool ports are wired in
+    // every CLI, and rollout is a Host decision. The value is defined in tool-allowlist.ts and shared with the branch-refresh entry point.
     includeDynamicWorkflow: resolveRuntimeDynamicWorkflowToolsIncluded(runtime),
-    // 修复原因：browserControlPort 只是宿主能力，不应隐式暴露高权限 node_repl。
-    // node_repl/browser-use 由 ZCode 官方 browser-use 插件启停推导出的 runtimeFeatures 控制。
+    // Reason for the fix: browserControlPort is a host capability and must not implicitly expose the privileged node_repl.
+    // node_repl/browser-use is controlled by runtimeFeatures derived from whether the official ZCode browser-use plugin is enabled.
     includeNodeRepl: nodeReplEnabled,
+    // Language-server tool: gated by wired service plus availability (shared helper, also used by the branch refresh path).
+    includeLsp: resolveRuntimeLspToolIncluded(runtime),
     includeBrowserUse: browserUseEnabled,
     embeddedSearchEnabled: resolveRuntimeEmbeddedSearchEnabled(runtime),
     allowedTools: resolveBuiltInToolAllowlist(runtime.config),
-    // workflow_child 的结构性禁用（CreateWorkflow/SaveWorkflow 因 alwaysAsk 隐形挂起；
-    // ResumeWorkflowRun 已免确认但因「child 内不得再编排」仍在列）在 helper
-    // 里与 turn 级名单合并，见 tool-allowlist.ts 的根因注释。
+    // Structural workflow_child exclusions (CreateWorkflow/SaveWorkflow invisibly hang on alwaysAsk; ResumeWorkflowRun no longer
+    // asks but remains excluded because children cannot orchestrate) are merged with the turn-level list in the helper; see the root
+    // cause comment in tool-allowlist.ts.
     disallowedTools: resolveRuntimeDisallowedTools(runtime.config),
   });
 }
@@ -175,9 +190,11 @@ function createRuntimeToolExecutor(
       ? runtime.config.runtimeFeatures?.browserDocumentationRoot
       : undefined,
     fileSystemPort: deps.fileSystemPort,
+    lsp: deps.lsp,
     httpClientPort: deps.httpClientPort,
     imageProcessorPort: deps.imageProcessorPort,
-    // 合并删除旧模型连接时曾漏掉此端口；Read 分页渲染与整份 PDF 页数检查仍依赖宿主注入。
+    // A previous connection-merge deletion accidentally omitted this port; Read pagination rendering and full-PDF page-count checks
+    // still depend on host injection.
     pdfDocumentPort: deps.pdfDocumentPort,
     embeddedSearchBackend: runtime.config.embeddedSearchBackend,
     nativeSearchEnhancementsEnabled: runtime.config.nativeSearchEnhancementsEnabled,
@@ -198,9 +215,10 @@ function createRuntimeToolExecutor(
     modelCatalogPort: deps.modelCatalogPort,
     runtimeTaskRegistry: runtime.runtimeTaskRegistry,
     readFileState: runtime.readFileState,
-    // 工作流创作工具的技能门（tool/handlers/workflow-skill-gate.ts）：按模型此刻看得见的历史回答
-    // 「读过技能没有」。只在会话真有 Skill 工具时给探针——没有 skillPort 的会话装不上那个技能，
-    // 门若仍然在场就成了一道谁也过不去的墙。
+    nestedInstructions: createRuntimeNestedInstructionContext(runtime),
+    // Skill gate for workflow-authoring tools (tool/handlers/workflow-skill-gate.ts): answer “has the skill been read?” from history
+    // currently visible to the model. Add the probe only when this session has a Skill tool; a session without skillPort cannot load the
+    // skill, so leaving the gate enabled would create an impassable wall.
     ...(deps.skillPort === undefined
       ? {}
       : {
@@ -213,6 +231,25 @@ function createRuntimeToolExecutor(
         : undefined,
     getBashShellSelection: () => getSessionShellSelectionFromConfig(runtime.config),
     hookRunner,
+    validateToolExecution: (metadata: ToolMetadata) =>
+      getMissingExecutionWorktreeToolError(
+        runtime.config.executionWorktree,
+        metadata.sideEffectScope,
+        metadata.name,
+        undefined,
+        (directoryExists) => {
+          const current = runtime.config.executionWorktree;
+          if (!current) return;
+          if (directoryExists) {
+            if (current.missing) {
+              const { missing: _missing, ...restored } = current;
+              runtime.config.executionWorktree = restored;
+            }
+          } else if (!current.missing) {
+            runtime.config.executionWorktree = { ...current, missing: true };
+          }
+        },
+      ),
     getWorkingDirectory: () => runtime.workingDirectory,
     setWorkingDirectory: runtime.setWorkingDirectory.bind(runtime),
     getWorkspaceRoot: () => runtime.workspaceRoot,
@@ -222,13 +259,34 @@ function createRuntimeToolExecutor(
     deliveryKind: runtime.config.deliveryKind,
     getMemoryRoot: () =>
       deps.memoryRoot ?? resolveEnabledProjectMemoryRoot(runtime.config, runtime.workspaceRoot),
-    runtimeScope: runtime.config.taskType === "subagent_child" ? "subagent" : "main",
+    runtimeScope: resolveRuntimeToolScope(runtime),
     permissionTimeoutMs: runtime.config.permissionTimeoutMs,
     sessionId: runtime.sessionId,
     traceContext: runtime.rootTraceContext,
     getMode: () => runtime.config.mode ?? "build",
     maxConcurrency: runtime.config.toolConcurrency?.maxConcurrency,
   });
+}
+
+export function resolveRuntimeToolScope(runtime: AgentRuntimeInternal): ToolRuntimeScope {
+  return runtime.config.taskType === "subagent_child" ? "subagent" : "main";
+}
+
+/**
+ * Single construction point for input-aware capability resolution outside the executor
+ * (scheduling, streaming early execution, ledger). Guarded only reports a dangerous Bash
+ * match when both `mode` and the shell dialect are present.
+ */
+export function resolveRuntimeToolCapabilityContext(
+  runtime: AgentRuntimeInternal,
+): ToolRuntimePermissionCapabilityContext {
+  return {
+    bashShellSelection: getSessionShellSelectionFromConfig(runtime.config),
+    mode: runtime.config.mode ?? "build",
+    runtimeScope: resolveRuntimeToolScope(runtime),
+    workingDirectory: runtime.workingDirectory,
+    workspaceRoot: runtime.workspaceRoot,
+  };
 }
 
 function resolveRuntimeBrowserUseEnabled(

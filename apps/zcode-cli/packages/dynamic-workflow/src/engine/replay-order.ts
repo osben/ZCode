@@ -1,16 +1,18 @@
 /**
- * Replay 的**结算次序闸**（docs/execution-engine.md「Replaying the settle order」）。
+ * **Settlement-order gate** for replay (docs/execution-engine.md, “Replaying the settle order”).
  *
- * 站点序号是调用到达时的计数器，所以一条分支在 await **之后**做的每一次 journal 调用，
- * 编号依的是扇出完成的顺序，而不是脚本发起的顺序。那个顺序是墙钟的，节点行里没有任何东西
- * 能复现它：按准入顺序释放缓存结算，重放的 `Promise.all` 会按数组顺序跑续体，join 之后的第一条
- * `report` 于是拿到 journal 给「最先跑完的那条分支」的序号，run 死在自己的防御性校验里
- * （`InputHashMismatch`），被指认为不确定的却是一个纯脚本。2026-09-17 实盘：五路并行调研，
- * 完成顺序 1、4、2、5、3，resume 在 report#2@2 上炸。
+ * Site ordinals are counters assigned when calls arrive, so each journal call a branch makes **after** an await
+ * is numbered by the order in which fan-out work completes, not by the order in which the script started it. That ordering depends on wall-clock timing, and node rows contain nothing
+ * that can reproduce it: releasing cached settlements in admission order makes replayed `Promise.all` resume continuations in array order. The first `report`
+ * after the join then receives the journal sequence for the branch that finished first, and the run fails its own defensive check
+ * (`InputHashMismatch`), blaming a deterministic script for nondeterminism. Observed in production on 2026-09-17: five parallel research branches
+ * completed in order 1, 4, 2, 5, 3, and resume failed at report#2@2.
  *
- * 所以 resume 重放的是**调度**，不只是答案：本闸持有首生的结算次序，命中缓存的结算在释放点
- * 挂起，直到它前面的每一条都已释放。次序表之外的实例直接放行——闸门只约束它有证据的那些，
- * 因此对旧 journal（事件早于本规则）退化成原行为，也不可能把一个它一无所知的 run 锁死。
+ * Therefore resume replays **scheduling**, not only answers: this gate holds the original
+ * settlement order, parking cached settlements at their release point until all earlier entries
+ * have been released. Instances outside the order table pass through—the gate constrains only
+ * those with recorded evidence. Old journals (events from before this rule) keep their prior
+ * behavior, and a run unknown to the gate can never deadlock.
  */
 
 import { isArtifactPresetOp } from "../facade/registry.js";
@@ -19,14 +21,14 @@ import type { InstanceRef, JournalStorePort, NodeKind, NodeRecord, RunEvent } fr
 import { refToString } from "./types.js";
 
 /**
- * 重放时一定会兑现一个 promise 的节点 kind：除 `report`（void）与 `artifact`（要看成员族，
- * 见 {@link claimsOnReplay}）之外的全部。从 {@link NODE_KINDS} 派生：新增的 kind 默认算进来。
+ * Node kinds that always resolve a promise during replay: every kind except `report` (void) and `artifact` (see member-specific rules in
+ * {@link claimsOnReplay}). Derived from {@link NODE_KINDS}, so newly added kinds are included by default.
  */
 export const REPLAY_WORK_KINDS: readonly NodeKind[] = NODE_KINDS.filter(
   (kind) => kind !== "report" && kind !== "artifact",
 );
 
-/** 结算次序只看这三种事件（{@link settledInstanceKey}），其余事件不必读出来。 */
+/** Settlement order depends only on these three event kinds ({@link settledInstanceKey}); other events need not be read. */
 const SETTLE_EVENT_TYPES: readonly RunEventType[] = [
   "node-settled",
   "artifact-published",
@@ -34,9 +36,9 @@ const SETTLE_EVENT_TYPES: readonly RunEventType[] = [
 ];
 
 /**
- * 结算次序要的节点行：工作行**不带结果**（只看 kind / status / 坐标），产物行带结果（成员族在
- * `result.kind` 上，而产物行有界：32 个 id × 每 id 16 版）。报告行一条都不读——它们从不认领
- * 闸门，而一个 run 可以有 65,536 条（docs/execution-engine.md「Reading the journal」）。
+ * Node rows needed for settlement ordering: work rows **omit results** (only kind / status / coordinates are needed); artifact rows include results (member family is in
+ * `result.kind`, and artifact rows are bounded: 32 IDs × 16 versions each). Report rows are never read—they do not claim
+ * the gate, and a run can contain 65,536 of them (docs/execution-engine.md, “Reading the journal”).
  */
 export function readReplayRows(
   journal: JournalStorePort,
@@ -49,16 +51,16 @@ export function readReplayRows(
 }
 
 export class ReplaySettleOrder {
-  /** 实例键 → 它在首生结算次序里的位置。 */
+  /** Instance key → its position in the original settlement order. */
   private readonly position: ReadonlyMap<string, number>;
-  /** 已释放到哪一位（次序表的游标）。 */
+  /** Position released so far (cursor in the order table). */
   private cursor = 0;
-  /** 已到达、正在等自己那一位的释放动作。 */
+  /** Release actions that have arrived and are waiting for their turn. */
   private readonly parked = new Map<string, () => void>();
-  /** 已轮到、排在微任务里等着投递的释放动作（FIFO，见 {@link enqueue}）。 */
+  /** Release actions whose turn has arrived, queued for delivery in a microtask (FIFO; see {@link enqueue}). */
   private queue: Array<() => void> = [];
   private flushing = false;
-  /** run 结算后闸门永久打开（见 {@link open}）。 */
+  /** Gate permanently opens after run settlement (see {@link open}). */
   private opened = false;
 
   constructor(private readonly order: readonly string[] = []) {
@@ -71,14 +73,15 @@ export class ReplaySettleOrder {
     return new ReplaySettleOrder([]);
   }
 
-  /** 首生的结算次序（诊断与测试用）。 */
+  /** First-observed settlement order (for diagnostics and tests). */
   recorded(): readonly string[] {
     return this.order;
   }
 
   /**
-   * 受次序约束地释放一次 replay 命中。表里没有这个实例（全新调用、旧 journal）、闸门已打开、
-   * 或它的位次已被越过时立即执行；否则挂起，等轮到它。
+   * Release one replay hit subject to the order. Execute immediately if this instance is absent
+   * from the table (a new call or old journal), the gate is open, or its position has passed;
+   * otherwise park it until its turn.
    */
   hold(instance: InstanceRef, release: () => void): void {
     const key = refToString(instance);
@@ -92,12 +95,15 @@ export class ReplaySettleOrder {
   }
 
   /**
-   * 投递永远晚于**产生这个 promise 的那次调用**：释放动作先进队列，一个微任务之后才执行。
+   * Delivery always happens after **the call that created the promise**: queue the release action
+   * and execute it in a later microtask.
    *
-   * 少了这一跳，次序就是反的：`Promise.all` 里每条分支都在同一个同步片里发起自己的调用，
-   * 队首那条的释放会**在它自己的 `ask()` 里**同步发生——那时它的 `await` 还没挂上去，于是
-   * 它的续体排在「早先已挂上、刚被这次 pump 兑现」的那条后面。微任务这一跳让所有 `await`
-   * 先挂稳，投递次序因此就是释放次序。这不是时钟：跳的是确定的一步，队列是 FIFO。
+   * Without this extra hop, the order reverses: every branch in `Promise.all` starts its call in
+   * the same synchronous slice, and the head entry's release would run synchronously **inside its
+   * own `ask()`** before its `await` is attached. Its continuation would then queue after an
+   * earlier `await` already attached and just resolved by this pump. The microtask hop lets every
+   * `await` attach first, so delivery order equals release order. This is not a clock: the hop is
+   * deterministic and the queue is FIFO.
    */
   private enqueue(release: () => void): void {
     this.queue.push(release);
@@ -106,7 +112,7 @@ export class ReplaySettleOrder {
     queueMicrotask(() => this.flush());
   }
 
-  /** 把排好的投递按 FIFO 执行完（队列空即空跑，故重复调用安全）。 */
+  /** Execute scheduled deliveries in FIFO order (a no-op on an empty queue, so safe to repeat). */
   private flush(): void {
     this.flushing = false;
     const batch = this.queue;
@@ -115,17 +121,18 @@ export class ReplaySettleOrder {
   }
 
   /**
-   * run 结算：闸门永久打开，挂起的按记录次序放完。
+   * Run settlement: permanently open the gate and release parked actions in recorded order.
    *
-   * 不放的后果是脚本那侧的 promise 永远不兑现——在 harness 里沙箱马上就被关掉，但在同进程
-   * 跑脚本的装配（引擎测试、`EvalWorkflowSnippet`）里那就是一次挂死。结算之后释放是安全的：
-   * 引擎已 markSettled，每条 host 路径都以 `isRunSettled()` 开头。
+   * If not released, the script-side promise never resolves—the harness immediately closes its sandbox, but in same-process
+   * execution (engine tests, `EvalWorkflowSnippet`) this hangs forever. Releasing after settlement is safe:
+   * the engine has called markSettled, and every host path starts with `isRunSettled()`.
    */
   open(): void {
     if (this.opened) return;
     this.opened = true;
-    // 已排队的先按次序放完：结算路径在 `run-settled` **之前**调用本方法，同步放完这一批，
-    // 命中事件因此不会落到那条终态事件后面。此刻每个挂起项的 await 早就挂稳了，不需要再跳。
+    // Release already queued actions in order first: settlement paths call this **before**
+    // `run-settled` and synchronously drain this batch, so hit events do not appear after the
+    // terminal event. Each parked item's await is already attached, so no extra hop is needed now.
     this.flush();
     for (let i = this.cursor; i < this.order.length; i++) {
       const key = this.order[i];
@@ -136,13 +143,14 @@ export class ReplaySettleOrder {
       release();
     }
     this.cursor = this.order.length;
-    // 次序表之外的键从不入 parked，这一轮理论上是空的；兜底清空，绝不留下没人兑现的 promise。
+    // Keys outside the order table never enter parked, so this should be empty; clear defensively
+    // and never leave a promise without a release.
     const leftovers = [...this.parked.values()];
     this.parked.clear();
     for (const release of leftovers) release();
   }
 
-  /** 游标能往前走多少就走多少：队首已到达即释放，然后看下一位。 */
+  /** Advance as far as possible: release the head entry if it has arrived, then check the next one. */
   private pump(): void {
     while (this.cursor < this.order.length) {
       const key = this.order[this.cursor];
@@ -157,23 +165,26 @@ export class ReplaySettleOrder {
 }
 
 /**
- * 从 run 自己的事件日志恢复首生的结算次序。
+ * Recover original settlement order from the run's own event log.
  *
- * 事实来源是事件而不是新列：结算次序**本来就**逐条记在 `dwf_event` 里，而它与 journal 行同一次
- * 写入落库；读回来既不用迁移，也让本规则之前跑出来的 journal 立刻可 resume（本地库里 258 个 run
- * 有 54 个正卡在这个形状上）。同一条路 `recoverImportClosure` 已经走过（零 schema 变更地从事件
- * 次序恢复关门判定）。
+ * Use events rather than a new column as the source of truth: settlement order is **already**
+ * recorded event by event in `dwf_event`, persisted in the same write as journal rows. Reading it
+ * requires no migration and makes journals from before this rule immediately resumable (54 of 258
+ * runs in the local database had this shape). `recoverImportClosure` already follows the same
+ * approach, recovering cache closure from event order without a schema change.
  *
- * 只收**每个实例首次**结算的那一条：重放的一世会按本闸释放的次序再发一遍 cached 事件，取首次
- * 因而跨世稳定，第三世恢复出的仍是同一张表。
+ * Keep only the **first settlement for each instance**: replay emits cached events again in this
+ * gate's order, so taking the first occurrence keeps the order stable across generations and the
+ * third generation restores the same table again.
  *
- * 表里只留「重放时会兑现一个 promise 的终态行」：`report` 是 void、预置产物声明是同步的，两者
- * 永远不会来认领，留在表里就会把游标堵死；仍是 `running` 的行按重新 live 执行处理，也不认领。
+ * Keep only terminal rows that “settle a promise during replay”: `report` returns void and preset
+ * artifact declarations are synchronous, so neither claims an entry; including them would block
+ * the cursor. Rows still `running` are re-executed live and do not claim an entry either.
  */
 export function recoverSettleOrder(
   journal: JournalStorePort,
   runId: string,
-  /** 已读好的节点行（引擎的 resume 分支本来就要读一次，传进来省掉第二次读）。 */
+  /** Node rows already read (the engine's resume path needs them anyway; pass them here to avoid a second read). */
   nodes: readonly NodeRecord[] = Object.values(readReplayRows(journal, runId)).flat(),
 ): ReplaySettleOrder {
   const claimable = new Set<string>();
@@ -198,7 +209,7 @@ export function recoverSettleOrder(
   return new ReplaySettleOrder(order);
 }
 
-/** 结算事件 → 它结算的实例键；不是结算事件则 undefined。 */
+/** Map a settlement event to its instance key; undefined for non-settlement events. */
 function settledInstanceKey(event: RunEvent): string | undefined {
   if (
     event.type === "node-settled" ||
@@ -211,9 +222,10 @@ function settledInstanceKey(event: RunEvent): string | undefined {
 }
 
 /**
- * 这一行在 replay 时会不会兑现一个脚本能等的 promise。
- * ask / world 节点会；`report` 不会（void）；产物行要看成员族——内容成员是效应（async），
- * 预置声明是同步的，只有前者会来认领闸门。失败的产物行只可能来自内容成员（声明没有拒绝通道）。
+ * Whether replaying this row settles a promise the script can await.
+ * ask / world nodes do; `report` does not (`void`). Artifact rows depend on member family: content
+ * members are effects (async), while preset declarations are synchronous, so only the former claim
+ * the gate. Failed artifact rows can only come from content members (declarations have no rejection channel).
  */
 function claimsOnReplay(node: NodeRecord): boolean {
   if (node.kind === "report") return false;
@@ -224,8 +236,10 @@ function claimsOnReplay(node: NodeRecord): boolean {
 }
 
 /**
- * 受次序闸约束地兑现一次 replay 命中：轮到它时才执行 `settle` 并按其结果兑现 / 拒绝。
- * 给的是 promise 路径（world 节点与内容产物）；ask 的释放本就是回调，直接用 {@link ReplaySettleOrder.hold}。
+ * Settle one replay hit under the order gate: execute `settle` only when its turn arrives and
+ * resolve/reject according to its result.
+ * Used by promise paths (world nodes and content artifacts); asks already release through a
+ * callback, so use {@link ReplaySettleOrder.hold} directly.
  */
 export function heldResolution<T>(
   hold: (instance: InstanceRef, release: () => void) => void,

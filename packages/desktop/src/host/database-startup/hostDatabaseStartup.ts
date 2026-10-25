@@ -17,8 +17,12 @@ export function createHostDatabaseStartup(options: {
   publish: (state: DatabaseStartupState) => void;
   initializeServices: () => Promise<void>;
   onFailure: (error: unknown) => void;
+  /** Only the first local Host of an app process may set this (specs/first-submission-lifecycle.md, "Placeholder startup sweep"). */
+  sweepAbandonedReservations?: boolean;
 }) {
   const abort = new AbortController();
+  // Only the first prepare attempt may sweep. A retry runs later, when other windows may already hold live drafts.
+  let sweepPending = options.sweepAbandonedReservations === true;
   let sampler: StartupDiskSampler | undefined;
   const coordinator = new DatabaseStartupCoordinator({
     startupId: options.startupId,
@@ -47,11 +51,14 @@ export function createHostDatabaseStartup(options: {
         const tasksPath = getTasksIndexDatabasePath();
         await observePath(tasksPath);
         currentSampler.start();
+        const sweepAbandonedReservations = sweepPending;
+        sweepPending = false;
         await prepareHostStorage(
           tasksPath,
           (phase, migration) =>
             report("preparing_host_storage", phase, { databaseId: "tasks-index", migration }),
           abort.signal,
+          { sweepAbandonedReservations },
         );
         markTasksStoragePrepared(tasksPath);
         report("preparing_session_storage", "checking");

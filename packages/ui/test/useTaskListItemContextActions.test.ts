@@ -14,6 +14,7 @@ const {
   mockOpenInFileManager,
   mockReadLastSelectedEditorId,
   mockUseWorkspaceOpenInEditorTarget,
+  mockPlatformCapabilities,
 } = vi.hoisted(() => ({
   mockUseWorkspaceProviderConfigFile: vi.fn(),
   mockGetInstalledEditors: vi.fn(),
@@ -21,10 +22,12 @@ const {
   mockOpenInFileManager: vi.fn(),
   mockReadLastSelectedEditorId: vi.fn(),
   mockUseWorkspaceOpenInEditorTarget: vi.fn(),
+  mockPlatformCapabilities: { canOpenLocalFiles: true as boolean | undefined },
 }));
 
 vi.mock("@/hooks/usePlatform.js", () => ({
   usePlatform: () => ({
+    canOpenLocalFiles: mockPlatformCapabilities.canOpenLocalFiles,
     getInstalledEditors: mockGetInstalledEditors,
     openInEditor: mockOpenInEditor,
     openInFileManager: mockOpenInFileManager,
@@ -105,6 +108,7 @@ function HookProbe({
 describe("useTaskListItemContextActions", () => {
   beforeEach(() => {
     latestResult = null;
+    mockPlatformCapabilities.canOpenLocalFiles = true;
     mockUseWorkspaceProviderConfigFile.mockReset();
     mockUseWorkspaceProviderConfigFile.mockReturnValue({
       path: "/tmp/provider-config.toml",
@@ -204,15 +208,11 @@ describe("useTaskListItemContextActions", () => {
 
     await latestResult!.handleOpenTaskPathInFileManager();
 
-    expect(mockOpenInEditor).toHaveBeenCalledWith(
-      "explorer",
-      "/workspace/remote",
-      {
-        pathKind: "directory",
-        remoteTarget,
-        workspaceIdentity: "remote:wsl:Ubuntu-24.04:dev:/workspace/remote",
-      },
-    );
+    expect(mockOpenInEditor).toHaveBeenCalledWith("explorer", "/workspace/remote", {
+      pathKind: "directory",
+      remoteTarget,
+      workspaceIdentity: "remote:wsl:Ubuntu-24.04:dev:/workspace/remote",
+    });
     expect(mockOpenInFileManager).not.toHaveBeenCalled();
   });
 
@@ -239,6 +239,21 @@ describe("useTaskListItemContextActions", () => {
 
     expect(mockOpenInEditor).not.toHaveBeenCalled();
     expect(mockOpenInFileManager).not.toHaveBeenCalled();
+  });
+
+  it("exposes the file-manager actions only when the platform can open local files", () => {
+    renderToStaticMarkup(createElement(HookProbe, { workspacePath: "/workspace/local" }));
+    expect(latestResult!.canOpenInFileManager).toBe(true);
+
+    // ISSUE-066: the web platform sets canOpenLocalFiles=false; the menu item was shown and
+    // silently failed with "Not supported in web mode".
+    mockPlatformCapabilities.canOpenLocalFiles = false;
+    renderToStaticMarkup(createElement(HookProbe, { workspacePath: "/workspace/local" }));
+    expect(latestResult!.canOpenInFileManager).toBe(false);
+
+    mockPlatformCapabilities.canOpenLocalFiles = undefined;
+    renderToStaticMarkup(createElement(HookProbe, { workspacePath: "/workspace/local" }));
+    expect(latestResult!.canOpenInFileManager).toBe(false);
   });
 
   it("本地项目右键继续走既有文件管理器实现", async () => {
@@ -279,31 +294,19 @@ describe("useTaskListItemContextActions", () => {
     expect(latestResult).not.toBeNull();
     await latestResult!.handleOpenProviderConfig();
 
-    expect(mockOpenInEditor).toHaveBeenCalledWith(
-      "vscode",
-      "/tmp/providers/demo",
-    );
+    expect(mockOpenInEditor).toHaveBeenCalledWith("vscode", "/tmp/providers/demo");
     expect(mockOpenInFileManager).not.toHaveBeenCalled();
   });
 
   it("resolveProviderConfigOpenTargetPath 会兼容文件与不同平台路径", () => {
-    expect(
-      resolveProviderConfigOpenTargetPath(
-        "/tmp/providers/demo/config.toml",
-        true,
-      ),
-    ).toBe("/tmp/providers/demo/config.toml");
-    expect(
-      resolveProviderConfigOpenTargetPath(
-        "/tmp/providers/demo/config.toml",
-        false,
-      ),
-    ).toBe("/tmp/providers/demo");
-    expect(
-      resolveProviderConfigOpenTargetPath(
-        "C:\\Users\\dev\\.codex\\config.toml",
-        false,
-      ),
-    ).toBe("C:\\Users\\dev\\.codex");
+    expect(resolveProviderConfigOpenTargetPath("/tmp/providers/demo/config.toml", true)).toBe(
+      "/tmp/providers/demo/config.toml",
+    );
+    expect(resolveProviderConfigOpenTargetPath("/tmp/providers/demo/config.toml", false)).toBe(
+      "/tmp/providers/demo",
+    );
+    expect(resolveProviderConfigOpenTargetPath("C:\\Users\\dev\\.codex\\config.toml", false)).toBe(
+      "C:\\Users\\dev\\.codex",
+    );
   });
 });

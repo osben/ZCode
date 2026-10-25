@@ -13,6 +13,7 @@ import {
   type FeedbackSubmissionProgressState,
 } from "@/feedback/feedbackSubmissionJob.js";
 import type { FeedbackSubmitDraft } from "@/feedback/feedbackStore.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 function createTicket(id: string): FeedbackTicketDetail {
   const summary: FeedbackTicketSummary = {
@@ -110,17 +111,15 @@ function startTestFeedbackSubmissionJob(
   const { formDraft, ...submissionOptions } = options;
   return startFeedbackSubmissionJob({
     ...submissionOptions,
-    formDraft:
-      formDraft ??
-      {
-        description: options.ticketInput.description,
-        contact: options.ticketInput.contact,
-        screenshots: options.screenshots,
-        includeLogs: options.includeLogs,
-        type: options.ticketInput.type,
-        severity: options.ticketInput.severity,
-        module: options.ticketInput.module,
-      },
+    formDraft: formDraft ?? {
+      description: options.ticketInput.description,
+      contact: options.ticketInput.contact,
+      screenshots: options.screenshots,
+      includeLogs: options.includeLogs,
+      type: options.ticketInput.type,
+      severity: options.ticketInput.severity,
+      module: options.ticketInput.module,
+    },
   });
 }
 
@@ -244,6 +243,10 @@ describe("feedback submission job", () => {
         },
       ],
       includeLogs: true,
+      copy: createSubmissionCopy({
+        connectingLabel: expectedCopy("feedback.submission.connectingLabel"),
+        submittedLabel: expectedCopy("feedback.submission.submittedLabel"),
+      }),
     });
     const subscription = job.subscribe((state) => {
       seen.push(state.progress);
@@ -256,11 +259,15 @@ describe("feedback submission job", () => {
     expect(feedbackService.uploadAttachmentData).toHaveBeenCalledTimes(1);
     expect(feedbackService.uploadAttachmentWithProgress).toHaveBeenCalledTimes(1);
     expect(feedbackService.cleanupPreparedLogArchive).toHaveBeenCalledWith("/tmp/logs.zip");
-    expect(seen.some((progress) => progress.label === "正在连接反馈服务")).toBe(true);
+    expect(
+      seen.some(
+        (progress) => progress.label === expectedCopy("feedback.submission.connectingLabel"),
+      ),
+    ).toBe(true);
     expect(job.getState()).toMatchObject({
       status: "success",
       ticketId: "ticket-1",
-      progress: { label: "反馈已提交" },
+      progress: { label: expectedCopy("feedback.submission.submittedLabel") },
     });
   });
 
@@ -595,6 +602,12 @@ describe("feedback submission job", () => {
         },
       ],
       includeLogs: true,
+      copy: createSubmissionCopy({
+        connectingLabel: expectedCopy("feedback.submission.connectingLabel"),
+        submittedLabel: expectedCopy("feedback.submission.submittedLabel"),
+        canceledLabel: expectedCopy("feedback.submission.canceledLabel"),
+        canceledDetail: expectedCopy("feedback.submission.canceledDetail"),
+      }),
     });
 
     await vi.waitFor(() => {
@@ -603,15 +616,16 @@ describe("feedback submission job", () => {
 
     await job.cancelSubmission();
 
-    await expect(job.done).rejects.toThrow("反馈提交已取消");
+    const canceledMessage = expectedCopy("feedback.submission.canceledLabel");
+    await expect(job.done).rejects.toThrow(canceledMessage);
     expect(feedbackService.cancelCreate).toHaveBeenCalledWith(createOperationId);
     expect(feedbackService.uploadAttachmentData).not.toHaveBeenCalled();
     expect(feedbackService.prepareCompactLogArchive).not.toHaveBeenCalled();
     expect(job.getState()).toMatchObject({
       status: "error",
-      error: "反馈提交已取消",
+      error: canceledMessage,
       progress: {
-        label: "反馈提交已取消",
+        label: canceledMessage,
       },
     });
   });

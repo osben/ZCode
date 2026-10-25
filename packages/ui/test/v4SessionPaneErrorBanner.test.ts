@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { SessionPane } from "@/v4/SessionPane.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 
 const projectionState = vi.hoisted(() => ({
@@ -233,7 +234,7 @@ function renderPane(workspaceIdentity?: string): string {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(SessionPane, {
         paneId: "workspace-main",
         sessionId: "session-1",
@@ -278,8 +279,45 @@ describe("SessionPane error banner wiring", () => {
     const html = renderPane();
 
     expect(html).toContain("EPERM: operation not permitted");
-    expect(html).toContain("反馈问题");
-    expect(html).toContain("重新连接");
+    expect(html).toContain(expectedCopy("chat.error.feedback"));
+    expect(html).toContain(expectedCopy("workspaceSidebar.reconnect"));
+  });
+
+  it.each([
+    "remote:server:source-a:/workspace",
+    "remote:ssh:example.com:22:dev:/workspace",
+    "remote:wsl:ubuntu:/workspace",
+    "remote:docker:dev-box:/workspace",
+  ])("远程 workspace %s 缺模型时使用远端措辞并保留本机升级动作", (workspaceIdentity) => {
+    projectionState.current = {
+      status: "live",
+      snapshot: makeSnapshot(),
+      subscriptionId: "sub-1",
+      lastError: null,
+      optimisticCommands: [],
+      loadingOlder: false,
+    };
+
+    renderPane(workspaceIdentity);
+
+    expect(typeof captured.onOpenModelUpgrade).toBe("function");
+    expect(captured.modelConfigTarget).toBe("remote");
+  });
+
+  it("本地 workspace 缺模型时使用本机措辞", () => {
+    projectionState.current = {
+      status: "live",
+      snapshot: makeSnapshot(),
+      subscriptionId: "sub-1",
+      lastError: null,
+      optimisticCommands: [],
+      loadingOlder: false,
+    };
+
+    renderPane();
+
+    expect(typeof captured.onOpenModelUpgrade).toBe("function");
+    expect(captured.modelConfigTarget).toBe("local");
   });
 
   it.each([

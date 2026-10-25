@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  AcpAgentAccessConfig,
   ModelConfig,
   ModelConfigRules,
   ModelOptionSpecsConfig,
@@ -382,7 +383,7 @@ describe("ProviderConfigService", () => {
       refresh: registry.refresh.bind(registry),
     });
     try {
-      // 启停/编辑动态成员不创建根覆盖；随后仍必须能够首次添加个人模型。
+      // Toggling or editing dynamic members must not create a root overlay; a first personal model must still be addable afterwards.
       await facade.setPersonalModelEnabled("account", "glm-new", false);
       expect(personal.current.providers.has("account")).toBe(false);
       await facade.addPersonalModel("account", "personal-first", {});
@@ -398,7 +399,7 @@ describe("ProviderConfigService", () => {
         basedOnRevision: facade.getView().revision,
       });
       await facade.reorderPersonalModels("account", ["glm-next", "glm-new"]);
-      // 模拟磁盘上遗留的账号禁用：设置投影和真实 Registry 必须读取同一公共结果。
+      // Simulates a leftover account disable on disk: the settings projection and the real Registry must read the same public result.
       await personal.update((current) => ({
         ...current,
         providers: current.providers.setRule({
@@ -819,6 +820,49 @@ describe("ProviderConfigService", () => {
       modelOrder: [],
     });
     expect(personal.current.providerOrder).toEqual(["new-provider", "new-provider-3"]);
+  });
+
+  it("creates a personal provider with an explicit provider id and rejects duplicates", async () => {
+    const zcodeBuiltin = new MutableSource(layerSnapshot("zcodeBuiltin-1"));
+    const personal = new MemoryPersonalRepository(layerSnapshot("personal-1"));
+    const service = new ProviderConfigService({
+      zcodeBuiltinSource: zcodeBuiltin,
+      personalRepository: personal,
+    });
+
+    const created = await service.createPersonalProvider({
+      providerId: "acp:opencode",
+      providerName: "opencode (ACP)",
+      initialConfig: new ProviderConfig({
+        access: new AcpAgentAccessConfig({
+          agentId: "opencode",
+          command: "opencode",
+          args: ["acp"],
+        }),
+      }),
+    });
+
+    expect(created.providerId).toBe("acp:opencode");
+    expect(personal.current.providers.getRule("acp:opencode")?.providerName).toBe("opencode (ACP)");
+    expect(personal.current.providers.get("acp:opencode")?.toJSON()).toMatchObject({
+      group: "standard-personal",
+      access: { type: "acp-agent", agentId: "opencode", command: "opencode", args: ["acp"] },
+    });
+
+    await expect(service.createPersonalProvider({ providerId: "acp:opencode" })).rejects.toThrow();
+  });
+
+  it("rejects an explicitly supplied invalid provider id instead of generating one", async () => {
+    const zcodeBuiltin = new MutableSource(layerSnapshot("zcodeBuiltin-1"));
+    const personal = new MemoryPersonalRepository(layerSnapshot("personal-1"));
+    const service = new ProviderConfigService({
+      zcodeBuiltinSource: zcodeBuiltin,
+      personalRepository: personal,
+    });
+
+    await expect(service.createPersonalProvider({ providerId: "   " })).rejects.toThrow();
+    await expect(service.createPersonalProvider({ providerId: "bad id" })).rejects.toThrow();
+    expect(personal.current.providers.keys()).toEqual([]);
   });
 
   it("使用调用方提供的 Template 名称种子并在原子创建中去重", async () => {

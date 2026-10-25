@@ -13,7 +13,7 @@ import type { ToolSearchCapability } from "../tools/tool-search.js";
 
 export type { ModelSelection } from "@zcode/shared/model-selection";
 
-// 仅保留 CLI 公共类型名，字段来自同一数据 Schema，不复制 Provider 配置定义。
+// Retain only the CLI's public type names; fields come from the same data schema, without copying provider configuration definitions.
 export type {
   ModelInputFormatData as ModelInputFormat,
   ModelOutputFormatData as ModelOutputFormat,
@@ -38,8 +38,8 @@ export interface ModelRequest {
   abortSignal?: AbortSignal;
 }
 
-// 第一阶段沿用已经完成 Provider SDK 归一化的结果和流事件字段；
-// 旧名字只保留在 Adapter 兼容边界，业务调用统一使用下面两个名字。
+// The first phase reuses result and stream-event fields already normalized by the Provider SDK.
+// Keep old names only at the Adapter compatibility boundary; business code uses the two names below.
 export type ModelResult = ModelTextResult;
 export type ModelEvent = ModelStreamEvent;
 
@@ -57,7 +57,7 @@ export interface Model {
   streamText(request: ModelRequest): AsyncIterable<ModelEvent>;
 }
 
-/** 校验当前 ModelSelection 值；旧数据库格式只在版本化 migration 转换，不在普通读取时兜底。 */
+/** Validate the current ModelSelection value; convert old database formats only in a versioned migration, not as a fallback during normal reads. */
 export function parseModelSelectionValue(value: unknown): ModelSelection | undefined {
   const parsed = modelSelectionSchema.safeParse(value);
   return parsed.success ? parsed.data : undefined;

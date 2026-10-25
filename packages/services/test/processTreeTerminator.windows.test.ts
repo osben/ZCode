@@ -125,8 +125,8 @@ describe("terminateProcessTree Windows", () => {
       signalCode: null,
     } as ChildProcess;
 
-    // 修复原因：Node exit 回调可能晚于 OS 退出及 PID 复用；deadline 时没有新的
-    // CreationDate 复核，就不能根据旧快照向裸 root PID 发送 /F。
+    // Fix reason: the Node exit callback may land after the OS exit and PID reuse; without a fresh CreationDate
+    // re-check at the deadline, /F must not be sent to the bare root PID based on the old snapshot.
     terminateProcessTree(child, { forceAfterMs: 20 });
     await vi.advanceTimersByTimeAsync(20);
 
@@ -225,8 +225,9 @@ describe("terminateProcessTree Windows", () => {
     });
     await vi.advanceTimersByTimeAsync(250);
 
-    // 安全契约：受管 ChildProcess 的 live root 句柄是 root-only 所有权证据；CIM
-    // 定向复核失败时仍可收口 root，但不得把未复核后代加入显式 /F 目标。
+    // Safety contract: a managed ChildProcess's live root handle is root-only ownership evidence; if the CIM
+    // targeted re-check fails, the root may still be settled, but unverified descendants must not be added to
+    // the explicit /F target list.
     expect(windowsTaskkillRunner).toHaveBeenCalledWith({
       force: true,
       pid: 4242,
@@ -272,7 +273,7 @@ describe("terminateProcessTree Windows", () => {
     });
     await vi.advanceTimersByTimeAsync(250);
 
-    // Bug 回归：旧 deadlineSnapshotOnly 分支只保留 root，导致已验证后代永远没有 /F flight。
+    // Bug regression: the old deadlineSnapshotOnly branch kept only the root, so verified descendants never got an /F flight.
     expect(windowsTaskkillRunner).toHaveBeenCalledWith({
       force: true,
       pid: 4242,
@@ -333,8 +334,8 @@ describe("terminateProcessTree Windows", () => {
       expect.objectContaining({ windowsHide: true }),
       expect.any(Function),
     );
-    // 不匹配可能是 PID 复用，也可能是查询降级。安全边界是不强杀，并继续把旧身份
-    // 作为未确认残留报告，禁止把复核失败误判成清理成功。
+    // A mismatch may be PID reuse or a query downgrade. The safety boundary is to not force-kill and keep reporting
+    // the old identity as unconfirmed leftovers; a failed re-check must never be misread as cleanup success.
     await vi.advanceTimersByTimeAsync(880);
     await expect(resultPromise).resolves.toEqual({ remainingPids: [5000] });
   });
@@ -436,11 +437,12 @@ describe("terminateProcessTree Windows", () => {
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
 
-    // 旧实现会继续等待 PowerShell 到 60ms；绝对 deadline 到达后必须立即退化为
-    // unavailable，让 transport 继续进入有界的 fail-closed 收口。
+    // The old implementation kept waiting on PowerShell until 60ms; once the absolute deadline hits it must degrade to
+    // unavailable immediately, letting the transport proceed into bounded fail-closed settlement.
     expect(settled).toBe(true);
     await expect(snapshotPromise).resolves.toBeUndefined();
-    // 让被 absolute-deadline race 截断的底层 mock 查询完成，避免模块级共享 flight 污染后续用例。
+    // Let the underlying mock query truncated by the absolute-deadline race finish, avoiding module-level shared
+    // flight state polluting later cases.
     await vi.advanceTimersByTimeAsync(20);
   });
 
@@ -500,8 +502,8 @@ describe("terminateProcessTree Windows", () => {
       result = value;
     });
 
-    // Bug 回归：旧 waiter 在 graceful taskkill 尚未 settle 时按固定 force-wait 窗口
-    // 报 remaining PID；真实进程可能只晚几个毫秒投递 ChildProcess exit。
+    // Bug regression: the old waiter reported remaining PIDs on a fixed force-wait window while the graceful taskkill
+    // had not settled; real processes may deliver ChildProcess exit only a few milliseconds late.
     await vi.advanceTimersByTimeAsync(31);
     expect(result).toBeUndefined();
 
@@ -610,8 +612,8 @@ describe("terminateProcessTree Windows", () => {
       result = value;
     });
 
-    // 查询失败且没有任何已验证 identity 时，graceful/force targets 都为空；没有实际
-    // taskkill 可以等待，因此 deadline 不应无条件预留 taskkill timeout。
+    // When the query fails and no verified identity exists, graceful/force targets are both empty; there is no actual
+    // taskkill to wait for, so the deadline should not unconditionally reserve the taskkill timeout.
     await vi.advanceTimersByTimeAsync(49);
     expect(result).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1);
@@ -655,8 +657,8 @@ describe("terminateProcessTree Windows", () => {
       child.emit("exit", 0, null);
     }, 600);
 
-    // Bug 回归：没有可安全发送 taskkill 的身份时，旧 waiter 会把 1s 绝对预算
-    // 压缩为 waitAfterForceMs=30ms，把随后正常 code=0 的 exit 误报为残留。
+    // Bug regression: with no identity that can safely receive taskkill, the old waiter compressed the 1s absolute
+    // budget into waitAfterForceMs=30ms, misreporting a subsequent normal code=0 exit as leftovers.
     await vi.advanceTimersByTimeAsync(30);
     expect(result).toBeUndefined();
     await vi.advanceTimersByTimeAsync(570);
@@ -694,8 +696,8 @@ describe("terminateProcessTree Windows", () => {
       result = value;
     });
 
-    // 首次 cleanup 最坏 3.25s；最终重试只能再观察 750ms，必须在 Local Host
-    // 的 4s 强制退出点前明确返回真实残留，不能把完整 1.25s retry 预算串行叠加。
+    // Worst case for the first cleanup is 3.25s; the final retry may only observe another 750ms and must return a
+    // truthful leftover verdict before the Local Host's 4s forced-exit point, not serially stack the full 1.25s retry budget.
     await vi.advanceTimersByTimeAsync(749);
     expect(result).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1);
@@ -735,8 +737,8 @@ describe("terminateProcessTree Windows", () => {
       result = value;
     });
 
-    // 即使 root 不可验证，只要存在已验证后代，graceful taskkill 就是真实 flight；
-    // 继续保留完整预算，不能在 force + grace 的 50ms 边界提前报告。
+    // Even if the root cannot be verified, as long as verified descendants exist the graceful taskkill is a real flight;
+    // keep the full budget and do not report early at the 50ms force + grace boundary.
     await vi.advanceTimersByTimeAsync(50);
     expect(result).toBeUndefined();
     await vi.advanceTimersByTimeAsync(20);
@@ -772,7 +774,7 @@ describe("terminateProcessTree Windows", () => {
         ],
       },
       waitAfterForceMs: 30,
-      // 模拟 snapshot + EOF 已经消耗 3,210ms：transport 的 3,250ms 全链路预算只剩 40ms。
+      // Simulate snapshot + EOF already consuming 3,210ms: only 40ms remain of the transport's 3,250ms full-chain budget.
       windowsCleanupDeadlineAtMs: Date.now() + 40,
       windowsTaskkillRunner,
       windowsTaskkillTimeoutMs: 100,
@@ -785,8 +787,8 @@ describe("terminateProcessTree Windows", () => {
     expect(result).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1);
 
-    // 旧实现会在这里仍为 undefined，并把窗口错误延长到 130ms；断言必须快速失败，
-    // 不能等待旧 deadline 导致 fake-timer 用例自身超时。
+    // The old implementation would still return undefined here and wrongly extend the window to 130ms; the assertion
+    // must fail fast instead of waiting for the old deadline and timing out the fake-timer case itself.
     expect(result).toEqual({ remainingPids: [4242] });
     await expect(resultPromise).resolves.toEqual(result);
     expect(windowsTaskkillRunner).toHaveBeenCalledWith({

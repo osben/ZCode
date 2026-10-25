@@ -7,12 +7,14 @@ import type {
   ZCodePluginUserConfigOption,
 } from "@zcode/shared";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import { InstalledPluginDetailPanel } from "../src/settings/InstalledPluginManagement.js";
 
 describe("InstalledPluginDetailPanel", () => {
   it("renders authoritative skill component names for both enabled and disabled plugins", () => {
-    // 复现反馈中的 superpowers（14 个技能）。components 由 CLI 权威枚举随 list 下发，
-    // 与启用态无关：启用/停用都应展示具体技能名，而不只是数量、也不应整组消失。
+    // Reproduces the reported superpowers case (14 skills). components come from the CLI's
+    // authoritative enumeration via list, independent of the enabled state: both enabled and
+    // disabled must show concrete skill names, not just counts, and the group must not vanish.
     const skillItems = Array.from({ length: 14 }, (_, index) => ({
       name: `superpowers-skill-${index + 1}`,
       ...(index === 0 ? { description: "Brainstorming ideas into designs" } : {}),
@@ -26,7 +28,7 @@ describe("InstalledPluginDetailPanel", () => {
         enabled,
         source: "official",
         marketplace: "zcode-plugins-official",
-        // 停用时 CLI 的 skillCount 为 0，但 components 仍完整。
+        // When disabled the CLI reports skillCount 0, but components stay complete.
         skillCount: enabled ? 14 : 0,
         skillRootCount: enabled ? 1 : 0,
         commandRootCount: 0,
@@ -40,7 +42,7 @@ describe("InstalledPluginDetailPanel", () => {
       const html = renderToStaticMarkup(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(InstalledPluginDetailPanel, {
             getPluginOptionValue: (
               _plugin: ZCodePluginInfo,
@@ -56,18 +58,19 @@ describe("InstalledPluginDetailPanel", () => {
         ),
       );
 
-      // 数量徽标 + 首尾技能名都应可见。
+      // The count badge plus the first and last skill names must be visible.
       expect(html).toContain("14");
       expect(html).toContain("superpowers-skill-1");
       expect(html).toContain("superpowers-skill-14");
       expect(html).toContain("Brainstorming ideas into designs");
       // 不应再落到「启用后查看组件」的空态。
-      expect(html).not.toContain("启用插件后查看其组件。");
+      expect(html).not.toContain(expectedCopy("settings.plugins.detail.componentsWhenEnabled"));
     }
   });
 
   it("renders warning diagnostics scoped to the plugin and hides them when none match", () => {
-    // Bugfix（静默失败）回归：声明的技能路径扫描为空等 warning 此前在 UI 无渲染位置。
+    // Bugfix regression (silent failure): warnings such as an empty declared skills path scan
+    // previously had nowhere to render in the UI.
     const plugin: ZCodePluginInfo = {
       id: "mattpocock-skills@claude-plugins-official",
       name: "mattpocock-skills",
@@ -88,7 +91,7 @@ describe("InstalledPluginDetailPanel", () => {
       renderToStaticMarkup(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(InstalledPluginDetailPanel, {
             diagnostics,
             getPluginOptionValue: (
@@ -105,7 +108,7 @@ describe("InstalledPluginDetailPanel", () => {
         ),
       );
 
-    // 只有当前插件自身的 warning 才展示；其他插件 / error 级别不进入列表。
+    // Only the current plugin's own warnings render; other plugins / error severity stay out.
     const withWarnings = renderPanel([
       {
         code: "plugin_skill_root_empty",
@@ -126,17 +129,17 @@ describe("InstalledPluginDetailPanel", () => {
         severity: "error",
       },
     ]);
-    expect(withWarnings).toContain("警告");
+    expect(withWarnings).toContain(expectedCopy("settings.plugins.detail.warnings"));
     expect(withWarnings).toContain("./skills/engineering/tdd");
     expect(withWarnings).not.toContain("./other");
     expect(withWarnings).not.toContain("boom");
 
-    // 无匹配 warning 时不渲染空区块。
-    expect(renderPanel([])).not.toContain("警告");
+    // No matching warnings: the empty block does not render.
+    expect(renderPanel([])).not.toContain(expectedCopy("settings.plugins.detail.warnings"));
   });
 
   it("renders a details empty state for a plugin that declares no components", () => {
-    // 真正无组件的插件给出诚实空态，不留白。
+    // A plugin with no components gets an honest empty state, not a blank.
     const plugin: ZCodePluginInfo = {
       id: "empty-plugin@zcode-plugins-official",
       name: "empty-plugin",
@@ -157,7 +160,7 @@ describe("InstalledPluginDetailPanel", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(InstalledPluginDetailPanel, {
           getPluginOptionValue: (
             _plugin: ZCodePluginInfo,
@@ -173,7 +176,7 @@ describe("InstalledPluginDetailPanel", () => {
       ),
     );
 
-    expect(html).toContain("详情");
-    expect(html).toContain("无组件");
+    expect(html).toContain(expectedCopy("settings.plugins.detail.details"));
+    expect(html).toContain(expectedCopy("settings.plugins.detail.componentsEmpty"));
   });
 });

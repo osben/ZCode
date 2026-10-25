@@ -53,7 +53,7 @@ describe("ProviderConfig access / api boundaries", () => {
 
     const effective = zcodeBuiltin.overlay(personal);
 
-    // 名称由规则外层 overlay 测试覆盖；此处只验证执行配置。
+    // Names are covered by the rule-level overlay tests; here only the execution config is verified.
     expect(effective.logo).toEqual({ type: "builtin", key: "deepseek" });
 
     expect(zcodeBuiltin.overlay(new ProviderConfig({ logo: null })).logo).toBeNull();

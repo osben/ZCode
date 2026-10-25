@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useCallback, useRef, useState } from "react";
 import { shallow } from "zustand/shallow";
 import { Plug } from "lucide-react";
 import type {
@@ -11,10 +11,13 @@ import type {
 import { buildRemoteHostWorkspaceIdentity } from "@/project-sidebar/contract.js";
 import { ProjectNode } from "@/project-sidebar/ProjectNode.js";
 import type { ProjectNodeProps } from "@/project-sidebar/ProjectNodeContent.js";
-import { projectSourceServerId } from "@/project-sidebar/view.js";
+import { projectDeleteConfirmRequest, projectSourceServerId } from "@/project-sidebar/view.js";
 import { useTabStoreApi } from "@/store/TabStoreProvider.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { gitRemoteUrlToWebUrl } from "@zcode/shared";
+import { useOptionalPlatform } from "@/hooks/usePlatform.js";
+import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { setPendingSettingsSectionIntent } from "@/lib/settingsNavigation.js";
 import { toast } from "@/components/ui/toast.js";
 import { logger } from "@/logger.js";
@@ -75,6 +78,36 @@ export const ProjectSidebarNode = memo(
     const msg = (id: string) => intl.formatMessage({ id: `project.${id}` });
     const sourceServerId = projectSourceServerId(project);
     const { refresh, availability } = display;
+    const platform = useOptionalPlatform();
+    const primaryRoot = project.roots.find((root) => root.isPrimary) ?? project.roots[0];
+    // GitHub lookup is local-only: remote-host projects have no local git service for their root.
+    const gitRootPath =
+      project.hostId === "local" && !remoteHost ? primaryRoot?.rootPath : undefined;
+    const gitService = useWorkspaceServices(gitRootPath ?? null).gitService;
+    const [githubUrl, setGithubUrl] = useState<string | null>(null);
+    const githubRequestRef = useRef(0);
+    // Read lazily when a menu opens: a sidebar can hold dozens of projects.
+    const refreshGitHubUrl = useCallback(() => {
+      if (!gitRootPath) return;
+      const requestId = ++githubRequestRef.current;
+      void gitService
+        .getRepositoryRemotes({ workspacePath: gitRootPath })
+        .then((result) => {
+          if (requestId !== githubRequestRef.current) return;
+          setGithubUrl(
+            result.remotes
+              .map((remote) => gitRemoteUrlToWebUrl(remote.url))
+              .find(
+                (url): url is string => url !== null && url.startsWith("https://github.com/"),
+              ) ?? null,
+          );
+        })
+        .catch((cause: unknown) => {
+          if (requestId !== githubRequestRef.current) return;
+          logger.debug("[project-sidebar] repository remotes lookup failed", cause);
+          setGithubUrl(null);
+        });
+    }, [gitRootPath, gitService]);
     return (
       <ProjectNode
         {...display}
@@ -84,6 +117,28 @@ export const ProjectSidebarNode = memo(
           isDesktop && sourceServerId
             ? () => {
                 setPendingSettingsSectionIntent("remoteDevices", { sourceServerId });
+                tabStore.getState().openSettingsTab();
+              }
+            : undefined
+        }
+        onMenuOpen={gitRootPath ? refreshGitHubUrl : undefined}
+        onOpenGitHub={githubUrl && platform ? () => platform.openExternal(githubUrl) : undefined}
+        onManageSessions={
+          primaryRoot
+            ? () => {
+                setPendingSettingsSectionIntent("sessions", {
+                  sessionsScope: {
+                    workspacePath: primaryRoot.rootPath,
+                    ...(remoteHost
+                      ? {
+                          workspaceIdentity: buildRemoteHostWorkspaceIdentity(
+                            project.hostId,
+                            primaryRoot.rootPath,
+                          ),
+                        }
+                      : {}),
+                  },
+                });
                 tabStore.getState().openSettingsTab();
               }
             : undefined
@@ -137,6 +192,9 @@ export const ProjectSidebarNode = memo(
         onViewFiles={(rootPath) => runProjectAction(() => onViewFiles(project, rootPath))}
         onDelete={() =>
           runProjectAction(async () => {
+            // Deleting a project is one click away from the menu; confirm before the soft delete.
+            if (!(await confirm(projectDeleteConfirmRequest(intl.formatMessage, project.name))))
+              return;
             await service!.deleteProject(project.id, project.hostId);
             await refresh();
           })

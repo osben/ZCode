@@ -1,9 +1,34 @@
-import { useEffect, useState, useCallback } from "react";
+import { readSafeLocalStorage } from "./lib/browserEnvironment.js";
+import {
+  DEFAULT_THEME_PALETTE,
+  THEME_PALETTE_IDS,
+  isAccentPalette,
+  isThemePalette,
+  type ThemePalette,
+} from "./lib/themePalettes.js";
 
-export type Theme = "light" | "dark" | "zai-light" | "zai-dark" | "system";
+export {
+  DEFAULT_THEME_PALETTE,
+  THEME_PALETTES,
+  THEME_PALETTE_IDS,
+  isAccentPalette,
+  isThemePalette,
+  type ThemeAccentPaletteId,
+  type ThemePalette,
+  type ThemePaletteDefinition,
+} from "./lib/themePalettes.js";
+
+/** Light/dark mode. The color scheme is determined separately by ThemePalette. */
+export type Theme = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
 
-const STORAGE_KEY = "zcode-theme";
+export interface ThemeSelection {
+  mode: Theme;
+  palette: ThemePalette;
+}
+
+export const THEME_STORAGE_KEY = "zcode-theme";
+export const THEME_PALETTE_STORAGE_KEY = "zcode-theme-palette";
 const BROWSER_THEME_SURFACE_ATTRIBUTE = "data-zcode-browser-theme-surface";
 
 function getSystemTheme(): ResolvedTheme {
@@ -15,13 +40,50 @@ export function resolveTheme(theme: Theme): ResolvedTheme {
     return getSystemTheme();
   }
 
-  return theme === "dark" || theme === "zai-dark" ? "dark" : "light";
+  return theme === "dark" ? "dark" : "light";
 }
 
-export function normalizeThemePreference(theme: Theme): Theme {
-  if (theme === "dark") return "zai-dark";
-  if (theme === "light") return "zai-light";
-  return theme;
+/**
+ * Read the persisted theme selection. Older versions of `zcode-theme` stored the color scheme in the value (such as `zai-dark`),
+ * so these values are migrated to the `zai` palette plus the corresponding mode, preserving the old appearance.
+ * Convert only when reading; do not write back the old value. Use fallbackMode when the mode is missing or unrecognized.
+ */
+export function migrateThemeSelection(
+  storedMode: string | null,
+  storedPalette: string | null,
+  fallbackMode: Theme = "dark",
+): ThemeSelection {
+  let mode: Theme;
+  switch (storedMode) {
+    case "light":
+    case "zai-light":
+      mode = "light";
+      break;
+    case "dark":
+    case "zai-dark":
+      mode = "dark";
+      break;
+    case "system":
+      mode = "system";
+      break;
+    default:
+      mode = fallbackMode;
+      break;
+  }
+
+  return {
+    mode,
+    palette: isThemePalette(storedPalette) ? storedPalette : DEFAULT_THEME_PALETTE,
+  };
+}
+
+/** Read the current persisted theme selection for pages that do not use the store (such as the share page). */
+export function readStoredThemeSelection(fallbackMode: Theme = "dark"): ThemeSelection {
+  return migrateThemeSelection(
+    readSafeLocalStorage(THEME_STORAGE_KEY),
+    readSafeLocalStorage(THEME_PALETTE_STORAGE_KEY),
+    fallbackMode,
+  );
 }
 
 function setThemeMetaContent(name: "theme-color" | "color-scheme", content: string) {
@@ -43,8 +105,8 @@ function syncBrowserThemeSurface(resolved: ResolvedTheme) {
     return;
   }
 
-  // Electron 为 vibrancy 保持透明根背景，但普通浏览器需要从文档根和标准 meta
-  // 获得页面主题。只切换 React 的 dark class 会让浏览器工具栏、原生控件和 overscroll 留在旧主题。
+  // Electron keeps the root background transparent for vibrancy, but regular browsers need the document root and standard meta
+  // to receive the page theme. Changing only React’s dark class leaves the browser toolbar, native controls, and overscroll in the old theme.
   root.setAttribute(BROWSER_THEME_SURFACE_ATTRIBUTE, resolved);
   root.style.colorScheme = resolved;
   setThemeMetaContent("color-scheme", resolved);
@@ -55,55 +117,20 @@ function syncBrowserThemeSurface(resolved: ResolvedTheme) {
   }
 }
 
-export function applyTheme(theme: Theme) {
-  const resolved = resolveTheme(theme);
-  const appliedTheme =
-    theme === "system"
-      ? resolved === "dark"
-        ? "zai-dark"
-        : "zai-light"
-      : normalizeThemePreference(theme);
-  document.documentElement.classList.toggle("dark", resolved === "dark");
-  document.documentElement.classList.toggle("theme-zai-light", appliedTheme === "zai-light");
-  document.documentElement.classList.toggle("theme-zai-dark", appliedTheme === "zai-dark");
+/**
+ * Apply the light/dark mode and palette to <html>. Palette classes and mode classes are independent:
+ * `theme-zai-*` is only for the zai palette; accent palettes override brand-color variables through `palette-<id>`.
+ */
+export function applyTheme(mode: Theme, palette: ThemePalette = DEFAULT_THEME_PALETTE) {
+  const resolved = resolveTheme(mode);
+  const root = document.documentElement;
+  root.classList.toggle("dark", resolved === "dark");
+  root.classList.toggle("theme-zai-light", palette === "zai" && resolved === "light");
+  root.classList.toggle("theme-zai-dark", palette === "zai" && resolved === "dark");
+  for (const id of THEME_PALETTE_IDS) {
+    if (isAccentPalette(id)) {
+      root.classList.toggle(`palette-${id}`, id === palette);
+    }
+  }
   syncBrowserThemeSurface(resolved);
-}
-
-function isTheme(value: string | null): value is Theme {
-  return (
-    value === "light" ||
-    value === "dark" ||
-    value === "zai-light" ||
-    value === "zai-dark" ||
-    value === "system"
-  );
-}
-
-export function useTheme() {
-  const [theme, setThemeState] = useState<Theme>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    // 默认主题统一收敛到 Zai dark，避免旧 hook 兜底值和 Zustand store 默认值分叉。
-    return isTheme(saved) ? normalizeThemePreference(saved) : "zai-dark";
-  });
-
-  const setTheme = useCallback((t: Theme) => {
-    const normalizedTheme = normalizeThemePreference(t);
-    localStorage.setItem(STORAGE_KEY, normalizedTheme);
-    setThemeState(normalizedTheme);
-    applyTheme(normalizedTheme);
-  }, []);
-
-  // 初始化 + system 模式下监听系统偏好变化
-  useEffect(() => {
-    applyTheme(theme);
-
-    if (theme !== "system") return;
-
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = () => applyTheme("system");
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
-  }, [theme]);
-
-  return { theme, setTheme } as const;
 }

@@ -66,7 +66,10 @@ import type {
 
 export interface AgentRuntimeCoreMethods {
   updateConfig(
-    patch: Pick<AgentRuntimeConfig, "mode" | "planEnabled" | "language" | "outputStyle">,
+    patch: Pick<
+      AgentRuntimeConfig,
+      "mode" | "planEnabled" | "language" | "outputStyle" | "systemPromptOverrides"
+    >,
   ): void;
   initializeSessionShellEnvironmentIfNeeded(
     selection: ExecutionShellSelection | (() => ExecutionShellSelection),
@@ -83,6 +86,8 @@ export interface AgentRuntimeCoreMethods {
   setSessionModelSelection(selection: ModelSelection | undefined): void;
   getProjectId(): ProjectId;
   setWorkingDirectory(cwd: string): void;
+  getExecutionWorktree(): { path: string; branchName?: string; missing?: boolean } | undefined;
+  isIncognito(): boolean;
   ensureSessionPersistedForExternalActivity(
     input: string,
     options?: { traceContext?: TraceContext },
@@ -235,18 +240,22 @@ export interface AgentRuntimeCoreMethods {
     traceContext: TraceContext;
   }): Promise<void>;
   discardPersistedPendingSteerInputs(traceContext: TraceContext): Promise<number>;
-  /** held 项按 id 丢弃（held 回落）：active turn 结束后经投影定位补 TurnSteerDiscarded。 */
+  /** Discard a held item by id (held fallback): after the active turn ends, locate it in the projection and emit TurnSteerDiscarded. */
   discardHeldPendingInputById(
     pendingInputId: string,
     traceContext: TraceContext,
     reservationId?: string,
     reason?: "user_removed" | "promoted",
   ): Promise<boolean>;
-  /** 清空全部排队输入（clearQueueAndSend 执行件），返回丢弃条数。 */
+  /** Clear all queued input (the execution side of clearQueueAndSend) and return the number discarded. */
   clearAllPendingInputs(traceContext: TraceContext): Promise<number>;
   createDefaultSubagentPort(deps: AgentRuntimeDeps): SubagentPort | undefined;
   getTools(model?: Model): ModelToolContract[];
   invalidateToolCache(): void;
+  /** Re-evaluates LSP availability, refreshes the tool set, and stops servers when globally disabled. */
+  applyLspPreferences(): Promise<void>;
+  /** Post-edit diagnostics attachment body for the next model request, or undefined. */
+  collectLspEditDiagnosticsBody(abortSignal: AbortSignal): Promise<string | undefined>;
   getToolRegistry(): ToolRegistry;
   getToolExecutor(): ToolExecutor;
   subscribeEvents(sink: SessionEventSink): () => void;

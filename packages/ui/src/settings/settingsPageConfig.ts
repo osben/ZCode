@@ -20,6 +20,14 @@ import {
   HardDrive,
   Keyboard,
   FileSearch,
+  History,
+  ScrollText,
+  MessageSquareText,
+  FileText,
+  GitBranchPlus,
+  Mic,
+  VenetianMask,
+  MessageSquarePlus,
 } from "lucide-react";
 import { isSettingsSectionEnabled, type SettingsSectionId } from "@/lib/settingsNavigation.js";
 import type { Theme } from "@/useTheme.js";
@@ -29,8 +37,8 @@ export const THEME_MODES: Array<{
   icon: typeof Sun;
 }> = [
   { mode: "system", icon: Monitor },
-  { mode: "zai-dark", icon: Moon },
-  { mode: "zai-light", icon: Sun },
+  { mode: "dark", icon: Moon },
+  { mode: "light", icon: Sun },
 ];
 
 export type SettingsSectionGroupId = "basics" | "agentCapabilities" | "dataAndStats";
@@ -76,9 +84,40 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     groupId: "basics",
   },
   {
+    id: "instructions",
+    icon: ScrollText,
+    titleId: "settings.instructions.title",
+    groupId: "agentCapabilities",
+  },
+  {
+    id: "outputStyles",
+    icon: MessageSquareText,
+    titleId: "settings.outputStyles.title",
+    groupId: "agentCapabilities",
+  },
+  {
+    id: "systemPrompt",
+    icon: FileText,
+    titleId: "settings.systemPrompt.title",
+    groupId: "agentCapabilities",
+  },
+  {
     id: "memory",
     icon: Brain,
     titleId: "settings.memory",
+    groupId: "agentCapabilities",
+  },
+  {
+    id: "incognito",
+    icon: VenetianMask,
+    titleId: "settings.incognito",
+    groupId: "agentCapabilities",
+  },
+  // Composer quick prompts (specs/composer-quick-prompts.md rule 20): next to Incognito, the other composer-level setting.
+  {
+    id: "quickPrompts",
+    icon: MessageSquarePlus,
+    titleId: "settings.quickPrompts.title",
     groupId: "agentCapabilities",
   },
   {
@@ -128,7 +167,7 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "browser",
     icon: Globe2,
     titleId: "settings.browser.title",
-    groupId: "basics",
+    groupId: "agentCapabilities",
   },
   // 原型导航顺序：浏览器之后才是远程设备；电脑控制继续紧随其后并受灰度门禁。
   {
@@ -144,13 +183,25 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "computerUse",
     icon: Monitor,
     titleId: "settings.computerUse.title",
-    groupId: "basics",
+    groupId: "agentCapabilities",
   },
   // 键盘快捷键紧跟「电脑控制」：同属本机操控/效率配置，收纳在基础设置尾部。
   {
     id: "shortcuts",
     icon: Keyboard,
     titleId: "settings.shortcuts.title",
+    groupId: "basics",
+  },
+  {
+    id: "voiceDictation",
+    icon: Mic,
+    titleId: "settings.voiceDictation.title",
+    groupId: "basics",
+  },
+  {
+    id: "worktrees",
+    icon: GitBranchPlus,
+    titleId: "settings.worktrees.title",
     groupId: "basics",
   },
   // 工作区搜索范围（.zcodeignore）：面向所有用户的基础工作区行为配置，收在基础设置末尾。
@@ -164,6 +215,12 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "usage",
     icon: BarChart3,
     titleId: "settings.usageTitle",
+    groupId: "dataAndStats",
+  },
+  {
+    id: "sessions",
+    icon: History,
+    titleId: "sessionManager.title",
     groupId: "dataAndStats",
   },
   {
@@ -183,7 +240,10 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
 // 兼容既有只读消费者：默认配置代表不带桌面平台能力的 Web 视图；
 // macOS/Windows/Linux 必须继续通过 createSettingsPageConfig 动态加入 Computer Use。
 export const SETTINGS_SECTIONS = BASE_SETTINGS_SECTIONS.filter(
-  (section) => section.id !== "computerUse" && isSettingsSectionEnabled(section.id),
+  (section) =>
+    section.id !== "computerUse" &&
+    section.id !== "worktrees" &&
+    isSettingsSectionEnabled(section.id),
 );
 
 export interface SettingsPageConfigOptions {
@@ -198,8 +258,10 @@ export function createSettingsPageConfig({
   isWindowsDesktop = false,
 }: SettingsPageConfigOptions = {}) {
   const showComputerUse = isDesktop || isMacDesktop || isWindowsDesktop;
+  const showWorktrees = isDesktop || isMacDesktop || isWindowsDesktop;
   const settingsSections = BASE_SETTINGS_SECTIONS.filter((section) => {
     if (section.id === "computerUse" && !showComputerUse) return false;
+    if (section.id === "worktrees" && !showWorktrees) return false;
     return isSettingsSectionEnabled(section.id);
   });
   const settingsSectionGroups = BASE_SETTINGS_SECTION_GROUPS.map((group) => ({

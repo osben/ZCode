@@ -1,39 +1,55 @@
-# Todo119：连接测试恢复绿色成功反馈，使用供应商显示名称
+# Todo119: Restore Green Success Feedback for Connection Tests and Use the Provider Display Name
 
-> 状态：2026-09-11 实现、局部 review、单测及共享浏览器验证通过；整批最终验收与推送待执行，未做真实手机 shared-host / Pro 联调。
+> Status: Implemented on 2026-09-11 with focused review, unit tests and shared-browser verification passed; final
+> acceptance of the full batch and push were pending; no real mobile shared-host / Pro integration test was done.
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/todo-119-connectivity-feedback-style-and-provider-name.md`
 
-## 已确认根因
+## Confirmed Root Causes
 
-- 成功横幅曾使用绿色文字、浅绿背景和绿色边框。`31231492a8` 将共享 Provider 反馈的成功样式改为中性色，只保留绿色勾图标；后续 `aa0d7970cd` 添加关闭 × 并未修改颜色。两个改动不能混为同一个原因。
-- `ProviderFormControls.tsx` 的连接测试在进行中、成功、返回失败和异常分支均直接传入 `provider: providerId`，没有使用供应商显示名称；不是缺失名称后的正常兜底。
+- The success banner used green text, light-green background and green border. `31231492a8` changed shared
+  Provider-success feedback to neutral styling, keeping only the green check icon; the later `aa0d7970cd` added a close ×
+  without changing colors (two separate causes).
+- The connection test in `ProviderFormControls.tsx` passed `provider: providerId` directly for in-progress, success,
+  returned-failure and exception branches instead of the display name; not a normal fallback for a missing name.
 
-## 已裁决改动
+## Rules
 
-1. 连接测试成功恢复绿色反馈：绿色文字、浅绿色背景、绿色边框，复用项目语义色。保留关闭 ×、现有自动消失时长及重试测试能力。失败和进行中状态不借机重新设计。
-2. 所有连接测试提示统一使用已有供应商显示名称解析机制：名称优先，确实缺失时才回退 Provider ID。复用 `getProviderFormLabel` 及当前 View，不按账号类型另造名称表；重命名后再次测试应显示新名称。
-3. 显示名称只用于文案。请求参数、反馈去重 key、模型定位、配置保存及日志身份继续使用 Provider ID；模型 ID 保持原样。
-4. 复用共享反馈组件，不复制一套横幅。该组件也承载保存、删除等反馈，本项不得无意修改这些操作的既有样式；若需要区分成功表现，使用最小且明确的展示输入，不按文案或去重 key 猜测业务类型。
-5. 不修改测试 Prompt、签名、鉴权、模型解析、Provider 草稿提交与请求执行逻辑。不纳入尚未确认的其他横幅问题。
+1. Successful connection tests show green feedback again (green text, light-green background, green border from project
+   semantic colors), keeping the close ×, the auto-dismiss duration and the ability to retry. Failure and in-progress states
+   are not redesigned.
+2. Every connection-test notice uses the existing Provider display-name resolution: the name first, the Provider ID only
+   when the name is actually missing, via `getProviderFormLabel` and the current View (no per-account-type name table). A
+   test rerun after renaming shows the new name.
+3. The display name is used only in copy. Provider ID stays for request parameters, feedback-dedup keys, model
+   identification, config persistence and log identity; model ID is unchanged.
+4. The shared feedback component is reused (no duplicated banner); it also serves save/delete feedback, whose styles must
+   not change. If success styling needs distinguishing, use the smallest explicit presentation input, not business type
+   inferred from copy or dedup keys.
+5. No change to the test prompt, signature, authentication, model resolution, Provider draft submission or request
+   execution logic, and no other unconfirmed banner issues.
 
 ```text
-点击连接测试
-  ├─ Provider ID / Model ID → 原有测试请求与反馈定位
-  └─ Provider 显示名称      → 进行中 / 成功 / 失败提示
-                                  └─ 成功：绿色反馈 + 关闭 ×
+click connection test -> Provider ID / Model ID: existing test request and feedback identity
+                      -> Provider display name: in-progress / success / failure notice (success: green feedback + close ×)
 ```
 
-## 验收与复审
+## Acceptance (done) and Review
 
-- [ ] 先补测试：成功横幅的语义色、勾图标与关闭按钮同时存在；失败／进行中反馈及自动消失、关闭行为保持正常。
-- [ ] 自定义名称、账号供应商名称、名称缺失回退、重命名后再次测试均正确；覆盖成功、返回失败与异常分支，请求仍携带原 ID。
-- [ ] 更新共享交互 E2E，兼顾桌面及手机 Web、中英文、明暗主题、长名称换行和关闭按钮可点击；不扩大为全产品回归。
-- [ ] 确认保存、删除等共享横幅未被连带改色；连接测试前保存配置的时序未改变。
-- [ ] 批量执行相关测试、typecheck、lint 和架构检查；完整 review 本 Todo 后记录验证证据及未测限制，再标记完成。
+Tests first: success banner has semantic colors, check icon and close button together; failure/in-progress feedback,
+auto-dismiss and close stay correct. Custom names, account Provider names, missing-name fallback and the renamed value on a
+later test across success, returned failure and exception branches, with requests still using the original ID.
+Shared-interaction E2E for desktop and mobile Web, Chinese/English, light/dark, long-name wrapping and a clickable close
+button (no full product regression). Shared save/delete banners not recolored and config-save-before-test ordering
+unchanged. Relevant tests, typecheck, lint and architecture check as a batch.
 
-## 实施与 review
-
-- 通过 getProviderFormLabel 将名称沿卡片→模型列表→测试行传入；四种结果文案使用该名称，去重 key、模型请求参数仍为原 ID。已有名称缺失兜底不变。
-- 共享反馈仅新增 successEmphasis 展示输入，连接测试成功明确打开；保存/删除仍为中性样式。关闭与定时器没有改写。
-- 五项失败测试先红；与 Todo124、Hook 和服务测试合跑 74 项通过，覆盖成功、返回错误、抛异常、名称回传后再测、空名称回退及实际请求身份。已有保存中性样式断言仍通过。
-- 4 项浏览器验证通过（共享账号/手动卡片，390中文浅色与1200英文深色），验证绿色类与实际非透明背景、名称、关闭动作和删除重试。真实手机/Pro 未测，不冒称全端已验收。
-- 根 typecheck、lint（0 errors / 41 warnings）、架构 0 violations 通过。逐项 review 无测试 Prompt/鉴权/签名/草稿时序修改；最终批次继续做交付复审。
+Result: the display name flows through `getProviderFormLabel` along the card -> model list -> test row path, and all four
+result messages use it; dedup keys and request parameters stay the original ID; the missing-name fallback is unchanged.
+Only a `successEmphasis` presentation input was added to shared feedback, enabled for connection-test success; save/delete
+stay neutral; close and timer behavior untouched. Five tests failed before and pass after; with Todo124, Hook and service
+tests 74 pass (success, returned error, thrown exception, retry after the name passes through, empty-name fallback, actual
+request identity, existing neutral-save assertion). Four browser checks pass (shared account/manual cards, 390px Chinese
+light and 1200px English dark) for the green class, actual non-transparent background, name, close action and delete retry.
+Real mobile/Pro not tested. Root typecheck, lint (0 errors / 41 warnings) and architecture (0 violations) pass; review
+found no change to test prompts, authentication, signatures, draft timing or request timing; the final batch still needed
+delivery review.

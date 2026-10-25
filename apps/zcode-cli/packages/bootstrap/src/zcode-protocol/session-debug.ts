@@ -19,11 +19,14 @@ interface Observation {
   completedRequests: Set<string>;
   hasUnknownCacheUsage: boolean;
 }
-// 旁路记录跟随 CLI record 回收，不挂到聊天投影、轮次事实或已提交输入队列上。
+// Side-channel records are reclaimed with the CLI record; they are not attached to chat projections,
+// turn facts, or the committed input queue.
 const observations = new WeakMap<SessionRecord, Observation>();
 const MAX_HEADER_COUNT = 32;
 const MAX_HEADER_VALUE_LENGTH = 512;
 const MAX_MESSAGE_LENGTH = 2048;
+const MAX_DETACHED_CHILD_OBSERVATIONS = 16;
+const detachedChildObservations = new Map<string, Observation>();
 
 function emptySnapshot(sessionId: string): SessionDebugSnapshot {
   return { sessionId, rounds: [], networkEntries: [], cache: null };
@@ -35,7 +38,8 @@ function remember(keys: Set<string>, key: string): boolean {
   return true;
 }
 function boundedHeaders(headers: Record<string, string>): Record<string, string> {
-  // adapter 已脱敏；此处只限制调试响应体积，不保存正文，也不复制无限大小的 headers。
+  // The adapter already redacted this data. Limit only the debug response size here; do not store
+  // bodies or copy unbounded headers.
   return Object.fromEntries(
     Object.entries(headers)
       .slice(0, MAX_HEADER_COUNT)
@@ -49,30 +53,74 @@ function token(value: number | undefined): number | undefined {
   return value !== undefined && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
+function createObservation(sessionId: string): Observation {
+  return {
+    snapshot: emptySnapshot(sessionId),
+    seenEvents: new Set(),
+    completedRequests: new Set(),
+    hasUnknownCacheUsage: false,
+  };
+}
+
 export function observeSessionDebug(record: SessionRecord, event: SessionEvent): void {
   if (
     event.type !== SessionEventType.ModelNetworkStatus ||
     String(event.sessionId) !== record.app.sessionId
   )
     return;
+  let observation = observations.get(record);
+  if (!observation) {
+    observation = createObservation(record.app.sessionId);
+    observations.set(record, observation);
+  }
+  applySessionDebugEvent(observation, record.app.sessionId, event);
+}
+
+/**
+ * Model-request events for subagent children do not pass through any parent record (server-operations
+ * routes by sessionId early into a v4 detached live session), so session/debug cannot find child
+ * throughput there. Child-session telemetry mirrors parent-session telemetry: record only completed
+ * rounds with querySource=main_turn for polling by the Agents row in the status panel and the
+ * child-session detail pane.
+ */
+export function observeDetachedChildSessionDebug(sessionId: string, event: SessionEvent): void {
+  if (event.type !== SessionEventType.ModelNetworkStatus) return;
+  let observation = detachedChildObservations.get(sessionId);
+  if (!observation) {
+    // A child is a one-shot session, and telemetry serves only the open pane and running row. Keep a
+    // bounded FIFO and do not retain it until process exit for the whole session lifetime.
+    if (detachedChildObservations.size >= MAX_DETACHED_CHILD_OBSERVATIONS) {
+      const oldest = detachedChildObservations.keys().next().value;
+      if (oldest !== undefined) detachedChildObservations.delete(oldest);
+    }
+    observation = createObservation(sessionId);
+    detachedChildObservations.set(sessionId, observation);
+  }
+  applySessionDebugEvent(observation, sessionId, event);
+}
+
+export function readDetachedChildSessionDebug(sessionId: string): SessionDebugSnapshot | undefined {
+  return detachedChildObservations.get(sessionId)?.snapshot;
+}
+
+function applySessionDebugEvent(
+  observation: Observation,
+  sessionId: string,
+  event: SessionEvent,
+): void {
+  if (
+    event.type !== SessionEventType.ModelNetworkStatus ||
+    String(event.sessionId) !== sessionId
+  )
+    return;
   const payload = event.payload as ModelNetworkStatusPayload;
   const mapped = zcodeTaskNetworkDebugStatusFromPayload({
-    taskId: record.app.sessionId,
+    taskId: sessionId,
     traceId: event.traceId,
     eventId: String(event.id),
     payload: { ...payload, model: { providerId: payload.providerId, modelId: payload.modelId } },
   });
   if (!mapped) return;
-  let observation = observations.get(record);
-  if (!observation) {
-    observation = {
-      snapshot: emptySnapshot(record.app.sessionId),
-      seenEvents: new Set(),
-      completedRequests: new Set(),
-      hasUnknownCacheUsage: false,
-    };
-    observations.set(record, observation);
-  }
   if (!remember(observation.seenEvents, String(event.id))) return;
   const { type: _type, taskId: _taskId, eventId: _eventId, inputId: _inputId, ...entry } = mapped;
   const parsedAt = Date.parse(payload.timestamp);
@@ -83,7 +131,7 @@ export function observeSessionDebug(record: SessionRecord, event: SessionEvent):
     {
       ...entry,
       recordedAt,
-      // maxAttempts=0 表示无限重试，旧映射器会丢掉它，调试面必须保留。
+      // maxAttempts=0 means unbounded retries. The old mapper dropped it; preserve it for debugging.
       maxAttempts: payload.maxAttempts,
       requestHeaders: boundedHeaders(entry.requestHeaders),
       responseHeaders: boundedHeaders(entry.responseHeaders),
@@ -156,5 +204,11 @@ export function querySessionDebug(
   rawParams: unknown,
 ): SessionDebugSnapshot {
   const params = sessionDebugParamsSchema.parse(rawParams);
-  return readSessionDebug(requireSession(context, params.sessionId));
+  // Prefer the active record for a parent session; subagent children have no record and use detached
+  // telemetry. If neither exists, let requireSession throw sessionUnavailable with diagnostic logging.
+  const record = context.sessions.get(params.sessionId);
+  if (record) return readSessionDebug(record);
+  const childSnapshot = readDetachedChildSessionDebug(params.sessionId);
+  if (childSnapshot) return childSnapshot;
+  return readSessionDebug(requireSession(context, params.sessionId, { operation: "sessionDebug" }));
 }

@@ -23,19 +23,21 @@ export function analysisContainsGitCommand(
   });
 }
 
+const DIRECTORY_CHANGE_COMMANDS = new Set(["cd", "pushd", "popd"]);
+
+export function analysisContainsDirectoryChange(
+  commands: readonly { argv: readonly string[]; name: string }[],
+): boolean {
+  return commands.some((commandPart) =>
+    DIRECTORY_CHANGE_COMMANDS.has(normalizedSimpleCommandName(commandPart.argv) ?? commandPart.name),
+  );
+}
+
 export function analysisContainsGitAndDirectoryChange(
   commands: readonly { argv: readonly string[]; name: string }[],
 ): boolean {
-  let hasGit = false;
-  let hasDirectoryChange = false;
-  for (const commandPart of commands) {
-    const name = normalizedSimpleCommandName(commandPart.argv) ?? commandPart.name;
-    hasGit ||= name === "git";
-    hasDirectoryChange ||= name === "cd" || name === "pushd" || name === "popd";
-  }
-
-  // 因为 git 可能在目标目录加载 hooks/config；普通 `cd && grep/find` 仍可只读放行。
-  return hasGit && hasDirectoryChange;
+  // Git may load hooks/config from the target directory; ordinary `cd && grep/find` commands can still be allowed as read-only.
+  return analysisContainsGitCommand(commands) && analysisContainsDirectoryChange(commands);
 }
 
 function normalizedSimpleCommandName(argv: readonly string[]): string | undefined {
@@ -175,7 +177,7 @@ function hasBareGitIndicators(directory: string): boolean {
     const head = lstatSync(headPath);
     if (head.isFile() || head.isSymbolicLink()) return true;
   } catch {
-    // 缺少 HEAD 不是裸仓库信号，继续检查 objects/refs。
+    // A missing HEAD does not mean this is a bare repository; continue checking objects/refs.
   }
   return ["objects", "refs"].some((child) => pathExists(join(directory, child)));
 }

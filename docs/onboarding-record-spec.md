@@ -1,41 +1,43 @@
-# Onboarding 记录本地持久化 Spec
+# Onboarding Record Local Persistence Spec
 
-> 分支：`prototype/onboarding-suggestions`
-> 状态：已实现（本地存储阶段；服务端上传接口待定，预留 `uploadState`）
+> Status: implemented (local storage stage; the server upload API is pending, `uploadState`
+> reserved for it).
 
-## 1. 背景与目标
+## 1. Background and goals
 
-新用户引导（OccupationOnboarding，三步向导：职业 / 模式 / 偏好）目前只在完成后把偏好写入
-`~/.zcode/v2/setting.json`（`onboardingOccupation` 等字段），没有独立的"引导完成记录"。
-产品需要：
+The new-user onboarding (OccupationOnboarding, three-step wizard: occupation / mode / preferences)
+currently only writes preferences into `~/.zcode/v2/setting.json` (`onboardingOccupation` and
+related fields) on completion, with no standalone completion record. Product requirements:
 
-1. 把三页收集的信息持久化到**独立的本地 JSON 文件**，后续开放上传给服务器；
-2. 记录以**设备 id（deviceMid）**为锚点，支持**多个用户 id**（同一台电脑多人登录），
-   也支持**没有用户 id**（使用 apikey、未登录）；
-3. 引导只自动展示给本机尚未激活的身份：既没有作答/资格决策，也没有创建过真实
-   Task/Session 时展示；已有本地 Task 的存量用户静默记为 `existing_local_user`，关闭引导的用户
-   记为 `dismissed`，两者之后都不重复展示。
+1. Persist the three pages' collected data to an **independent local JSON file**, later opened for
+   server upload.
+2. Records anchor on the **device id (deviceMid)**, support **multiple user ids** (several people
+   logging in on one machine) and **no user id** (apikey, not logged in).
+3. Onboarding auto-shows only for identities not yet activated on this machine: no answers /
+   eligibility decision and never created a real task/session. Existing users with local tasks are
+   silently recorded as `existing_local_user`; users who close it as `dismissed`; neither is shown
+   again.
 
-## 2. 数据结构
+## 2. Data structure
 
-Schema 定义在 `packages/shared/src/onboardingRecord.ts`（类型 + zod，独立平级文件，
-不并入 `validationAppSettings.ts`）：
+Schema in `packages/shared/src/onboardingRecord.ts` (types + zod, a standalone file, not merged
+into `validationAppSettings.ts`):
 
 ```ts
 interface OnboardingRecordEntry {
-  userId: string | null; // OAuth user_id；apikey/未登录为 null
-  occupation: string; // developer | ... | other（非空字符串，向前兼容）
+  userId: string | null; // OAuth user_id; null for apikey/not logged in
+  occupation: string; // developer | ... | other (non-empty string, forward-compatible)
   interfaceMode: "coding" | "office";
   memoryEnabled: boolean;
   proactiveSuggestionsEnabled: boolean;
-  completedAt: string; // ISO 时间
-  uploadState: "pending"; // 预留：上传成功后改 "uploaded"
+  completedAt: string; // ISO time
+  uploadState: "pending"; // reserved: becomes "uploaded" after upload
 }
 
 interface OnboardingRecordFile {
   version: 2;
-  deviceMid: string; // 首次写入时固化，之后不变
-  entries: OnboardingRecordEntry[]; // 每 userId（含 null）至多一条，重复完成引导覆盖旧条目（覆盖后重置为 pending 等待上传；读取侧兼容旧版重复文件取最后一条）
+  deviceMid: string; // fixed on first write, never changes
+  entries: OnboardingRecordEntry[]; // at most one per userId (including null); re-completing overwrites (reset to pending; readers tolerate old duplicates by taking the last)
   decisions: Array<{
     userId: string | null;
     status: "dismissed" | "existing_local_user";
@@ -45,261 +47,314 @@ interface OnboardingRecordFile {
 }
 ```
 
-`entries` 仍是问卷答案及后续上传队列；`decisions` 只表达本机展示资格，不进入答案上传。
-v1 文件不做启动迁移：读取时视为 `decisions: []`，下一次业务写入时自然落为 v2。
+`entries` hold questionnaire answers and the future upload queue; `decisions` express only local
+display eligibility and are never uploaded. v1 files get no startup migration: read as
+`decisions: []`, naturally becoming v2 on the next business write.
 
-**跳过语义**：跳过是显式答案。某页被跳过时该字段记 `null`（职业页跳过 → `occupation: null`；模式页跳过 → `interfaceMode: null`；偏好页跳过 → 两个布尔记 `null`），与"明确选择了值"区分。settings 侧跳过仍落保守默认值（职业 `other` / 偏好关），区分度只体现在本记录文件。
+**Skip semantics**: skipping is an explicit answer. A skipped page records `null` for its fields
+(occupation page → `occupation: null`; mode page → `interfaceMode: null`; preferences page → both
+booleans `null`), distinct from an explicit choice. The settings side still writes conservative
+defaults on skip (occupation `other` / preferences off); the distinction exists only in this record
+file.
 
-存储位置：`getAppConfigDir()/onboarding-record.json`（即 `getDataBaseDir()/.zcode/v2/`，默认 `~/.zcode/v2/`；用户自定义数据目录时跟随 dataBaseDir，与 telemetry-state.json 等设备级数据一致。注意与 setting.json 不同——setting.json 固定留在 home，因为启动引导需要从固定位置读取 dataBaseDir）。原子写。
+Location: `getAppConfigDir()/onboarding-record.json` (i.e. `getDataBaseDir()/.zcode/v2/`, default
+`~/.zcode/v2/`; follows dataBaseDir for custom data directories, like telemetry-state.json and
+other device-level data). Unlike setting.json — which stays fixed in home because startup needs to
+read dataBaseDir from a fixed location. Atomic writes.
 
-## 3. 关联语义
+## 3. Association semantics
 
 ```
 +----------------+          +---------------------------+
 | deviceMid      |<---------| onboarding-record.json     |
-| (本地稳定不变)  |          |  version: 2                |
+| (stable local) |          |  version: 2                |
 +----------------+          |  entries: [                |
-                            |    { userId: "u1", ... },  |  用户 A 登录完成引导
-                            |    { userId: "u2", ... },  |  用户 B 之后登录完成引导
-                            |    { userId: null, ... },  |  未登录/apikey 完成引导
+                            |    { userId: "u1", ... },  |  user A completes onboarding
+                            |    { userId: "u2", ... },  |  user B later
+                            |    { userId: null, ... },  |  anonymous/apikey
                             |  ]                         |
                             +---------------------------+
                                            |
-                                           | 后续上传（接口待定）
+                                           | later upload (API pending)
                                            v
-                                  服务器（payload 自带 deviceMid + userId）
+                                  server (payload carries deviceMid + userId)
 ```
 
-- `deviceMid` 由 renderer 经 `platform.getDeviceId()`（desktop 为 userData 路径 SHA-256，
-  稳定）传入 service；落盘后以**文件内的值**为权威，重复写入不改变。
-- `userId` 由 service 内部经 `oauthCredentialRepo.loadActiveUserProfile()?.id ?? null`
-  补全，UI 不直接触碰 OAuth 层。
+- `deviceMid` comes from the renderer via `platform.getDeviceId()` (desktop: SHA-256 of the
+  userData path, stable); after the first write, the **file's value is authoritative** and repeat
+  writes never change it.
+- `userId` is completed inside the service via
+  `oauthCredentialRepo.loadActiveUserProfile()?.id ?? null`; the UI never touches the OAuth layer.
 
-## 3.5 登录认领（claimAnonymousRecord）
+## 3.5 Login claim (claimAnonymousRecord)
 
-同一人"未登录答一次 → 登录"不得被当成新用户重复引导：登录用户判定前先认领——
-该 userId 无条目而存在匿名（null）条目时，把 null 条目**移交给**该 userId（改写，
-不复制，避免同一引导行为双条目污染上传统计）。
-
-```
-[] → 未登录答 → [null]
-  → 登录 A：移交 → [A]（不再触发引导）
-    → 登出答（匿名）→ [A, null]
-      → 登录 B：B 无条目 → 移交 null → [A, B]
-        → 切回 A：A 有条目 → 不动
-```
-
-- 认领同时覆盖作答 entry 和资格 decision，只在登录用户自己两者都没有时发生；
-  [A, null] 状态下登录 A 是幂等空操作。
-- 匿名态失去记录后再次触发引导属预期（该态确实没有自己的记录）。
-- UI 侧必须 await 认领完成后再 shouldOnboard，否则读到认领前文件会误判需要引导。
-
-## 4. 触发规则（shouldOnboard）
+"Answered anonymously once → logs in" must not be re-onboarded as a new user: before deciding for a
+logged-in user, claim — if that userId has no entry but an anonymous (null) entry exists, the null
+entry is **transferred** to that userId (rewritten, not copied, so one onboarding act never becomes
+two entries polluting upload stats).
 
 ```
-启动 / 登录态变化（zustand user 改变）
+[] → anonymous answer → [null]
+  → login A: transfer → [A] (no onboarding re-trigger)
+    → logout, answer anonymously → [A, null]
+      → login B: B has no entry → transfer null → [A, B]
+        → switch back to A: A has an entry → untouched
+```
+
+- Claiming covers both answer entries and eligibility decisions, and happens only when the logging-in
+  user has neither; in state [A, null], logging in A is an idempotent no-op.
+- The anonymous state losing its record and re-triggering onboarding is expected (that state truly
+  has no record of its own).
+- The UI must await the claim before `shouldOnboard`; reading the pre-claim file would wrongly
+  decide onboarding is needed.
+
+## 4. Trigger rules (shouldOnboard)
+
+```
+startup / login-state change (zustand user changes)
         |
         v
  resolve userId = loadActiveUserProfile()?.id ?? null
         |
         v
- entries 或 decisions 存在 userId 匹配 ? -- 是 --> 不触发
-        | 否
+ entries or decisions contain a userId match ? -- yes --> don't trigger
+        | no
         v
- 本机存在使用证据（任一命中即存量用户）？ -- 是 --> 写 existing_local_user，不触发
-        | 否
+ local usage evidence (any one hit = existing user)? -- yes --> write existing_local_user, don't trigger
+        | no
         v
- 触发引导（完成写 entry；关闭写 dismissed）
+ trigger onboarding (completion writes an entry; closing writes dismissed)
 ```
 
-- 登录用户按 `userId` 精确匹配；未登录 / apikey 按 `userId === null` 匹配。
-- **使用证据（2026-10 修订）按"任一命中"判断，三个来源按序检查**：
-  1. 设备全局 tasks-index 存在任意 Task（`includeDeleted: true`，含已删除 tombstone——
-     清空过任务列表的存量用户不因删除行为失去资格）；
-  2. agent 会话库（默认 `~/.zcode/cli/db/db.sqlite`，按 homedir 展开、不随
-     dataBaseDir 迁移；env/配置覆盖与不可镜像跳过规则见下条；SQLite 只读查询
-     `session` 表存在至少一行）；
-  3. 旧版任务快照目录（`{dataBaseDir}/.zcode/v2/sessions/`，含 `.deleted.json`）非空。
-- **为什么不能只查 tasks-index**：索引是 session 同步器的衍生投影，同步器在 agent/provider
-  就绪后才开始回填；而判定恰好在登录完成、主界面挂载时执行，早于回填。索引为空 ≠ 没有历史
-  （2026-10 线上案例：dev 数据目录索引重建后，登录瞬间判定看到空索引，老用户被误弹引导；
-  事后取证确认全部历史任务行都在 WAL 中、判定之后才落库）。
-- **会话证据必须查会话库的行，不能用文件存在性或 cli/sessions 目录代替**（评审 CR-01）：
-  文件存在不代表有会话（空库/刚建库）；`cli/sessions` 是工作流文件输出目录
-  （`script-workflow-tool-port.ts`），拿它当证据会把用过工作流的新用户误判成存量。
-- **会话库路径只镜像 host 可确定性复制的定位来源，无法确定按"未知"跳过**（评审
-  三轮 CR-01：不在 host 复制完整 CLI 解析规则——相对路径按 agent 工作区 cwd、
-  project 级配置按 workspace 叠加，host 均无法镜像）。可镜像来源按序：
-  1. env `ZCODE_SESSION_DB_PATH` / `ZCODE_SESSION_DB`（双别名并存按 env 键序取
-     后者，与 CLI env adapter 覆盖顺序一致）；
-  2. `~/.zcode/cli/config.json` 的 `storage.sessionDbPath`（CLI `createConfig`
-     默认 user config 位置在 home，**不随 App dataBaseDir 迁移**）；
-  3. 默认 `~/.zcode/cli/db/db.sqlite`（`~/` 按 homedir 展开）。
-     值为绝对路径（含 `~/` 展开）才作为证据位置；相对路径 → 未知 → 跳过本证据源
-     （继续检查旧版快照目录），不得按 host cwd 猜测。配置读取/解析失败（非 ENOENT）
-     上抛：配置读不出来时会话库位置未知，猜测默认值会漏判自定义会话库的存量用户。
-- 会话库以只读连接查询，WAL 未 checkpoint 的行对只读连接同样可见，与回填时序
-  无关；库文件不存在（stat ENOENT）视为无证据，**其他异常（EACCES/ENOTDIR 等）
-  上抛**由 UI 保守判不弹（评审 CR-02：existsSync 会把权限错误吞成 false，违反
-  "结果未知不弹"约定）。
-- 当前版本没有可靠的 Task 创建者身份归属，因此任一来源命中即把当前无记录
-  身份视为存量用户。
-- 手动快捷键打开引导（`newUserOnboardingOpen`）不受该规则限制，保存后同样追加记录。
+- Logged-in users match `userId` exactly; anonymous / apikey match `userId === null`.
+- **Usage evidence (2026-10 revision) is "any one hit", three sources checked in order**:
+  1. any Task in the device-global tasks-index (`includeDeleted: true`, including deleted
+     tombstones — users who cleared their task list keep existing-user status);
+  2. the agent session DB (default `~/.zcode/cli/db/db.sqlite`, expanded by homedir, not following
+     dataBaseDir; env/config overrides and skip-on-unknown rules below; SQLite read-only query of
+     the `session` table having at least one row);
+  3. a non-empty legacy task snapshot directory (`{dataBaseDir}/.zcode/v2/sessions/`, including
+     `.deleted.json`).
+- **Why tasks-index alone is not enough**: the index is a derived projection of the session
+  synchronizer, which only backfills after agent/provider readiness — but the decision runs at
+  login completion / main-window mount, before backfill. Empty index ≠ no history (2026-10 online
+  case: after an index rebuild in a dev data directory, the login-time decision saw an empty index
+  and an old user was wrongly onboarding-prompted; forensics later confirmed all historical task
+  rows were in WAL and landed after the decision).
+- **Session evidence must query DB rows, never file existence or the cli/sessions directory**
+  (review CR-01): a file existing does not mean sessions exist (empty/fresh DB); `cli/sessions` is
+  a workflow file-output directory (`script-workflow-tool-port.ts`) — using it would misclassify
+  workflow-using new users as existing.
+- **The session DB path mirrors only sources the host can deterministically reproduce; anything
+  undeterminable is skipped as "unknown"** (review round 3, CR-01: the host does not replicate the
+  full CLI resolution rules — relative paths resolve against the agent workspace cwd, project-level
+  configs stack per workspace; the host cannot mirror either). Mirrorable sources in order:
+  1. env `ZCODE_SESSION_DB_PATH` / `ZCODE_SESSION_DB` (both aliases coexist; on collision the later
+     env key wins, matching the CLI env adapter's override order);
+  2. `storage.sessionDbPath` in `~/.zcode/cli/config.json` (the CLI `createConfig` default user
+     config lives in home, **not following the app dataBaseDir**);
+  3. default `~/.zcode/cli/db/db.sqlite` (`~/` expanded by homedir).
+     Only absolute paths (including `~/`-expanded) count as evidence locations; relative → unknown →
+     skip this source (continue with the legacy snapshot directory), never guess against the host cwd.
+     Config read/parse failure (non-ENOENT) throws: with the config unreadable the session DB location
+     is unknown, and guessing the default would miss existing users with a custom session DB.
+- The session DB is queried over a read-only connection; WAL rows not yet checkpointed are visible
+  to it regardless of backfill timing. A missing DB file (stat ENOENT) means no evidence; **other
+  errors (EACCES/ENOTDIR etc.) are rethrown** and the UI conservatively does not prompt (review
+  CR-02: existsSync swallows permission errors into false, violating "unknown result → don't
+  prompt").
+- No reliable task-creator attribution exists today, so any source hit marks the current
+  record-less identity as an existing user.
+- Manually opening onboarding via shortcut (`newUserOnboardingOpen`) bypasses this rule and appends
+  a record on save.
 
-## 5. 服务接口（IOnboardingRecordService）
+## 5. Service interface (IOnboardingRecordService)
 
-| 方法                             | 说明                                                                                |
-| -------------------------------- | ----------------------------------------------------------------------------------- |
-| `appendRecord(deviceMid, entry)` | 文件不存在则创建并固化 deviceMid；存在则追加；损坏时 warn 并重建；userId 由服务补全 |
-| `shouldOnboard(deviceMid)`       | 触发判定；已有 Task 时写入 existing_local_user（见 §4）                             |
-| `dismissOnboarding(deviceMid)`   | 关闭首次引导时写入 dismissed；已有作答时为空操作                                    |
-| `getRecords()`                   | 读取整份文件（后续上传使用）                                                        |
-| `clearRecords()`                 | 删除文件（调试用）                                                                  |
+| Method                                | Behavior                                                                                                                                                                                                                               |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `appendRecord(deviceMid, entry)`      | create the file and fix deviceMid if absent; append if present; warn and rebuild on corruption; service completes the userId                                                                                                           |
+| `shouldOnboard(deviceMid)`            | trigger decision; writes existing_local_user when tasks exist (see §4)                                                                                                                                                                 |
+| `getOnboardingEligibility(deviceMid)` | like `shouldOnboard`, also returns `{ shouldOnboard, recordFileExisted }` (whether the record file existed before deciding). UI distinguishes `auto_first_open` from `auto_identity_change` (file exists, no entry for this identity). |
+| `dismissOnboarding(deviceMid)`        | write dismissed on closing first-run onboarding; no-op if answers exist                                                                                                                                                                |
+| `getRecords()`                        | read the whole file (for later upload)                                                                                                                                                                                                 |
+| `clearRecords()`                      | delete the file (debug)                                                                                                                                                                                                                |
 
-RPC 暴露链路与 settingService 相同：`ServiceChannels.OnboardingRecord` →
-descriptor → `createLocalServices` 注册 → `RemoteServiceAccess` getter → UI hook。
+The RPC exposure chain matches settingService: `ServiceChannels.OnboardingRecord` → descriptor →
+`createLocalServices` registration → `RemoteServiceAccess` getter → UI hook.
 
-### 5.1 手机远程工作区的服务连接
+### 5.1 Service connection for mobile remote workspaces
 
-远程工作区的 service collection 必须暴露 `onboarding-record`，与该入口的 settings/OAuth
-保持同源。R3 下 SSH/WSL/Docker 与 Server 统一走 Source Server 全转发
-（[R3 主规格 §8.1](./architecture/r3-source-server-remote-architecture.md#81-权威表)），
-settings/OAuth 都由 Source 持有，因此四种 transport 都转接 Source 自己的记录服务；
-不得借用窗口 Local Host 的记录，也不得按项目另建记录服务或复制记录。
+The remote workspace service collection must expose `onboarding-record`, same-origin as that
+entry's settings/OAuth. Under R3, SSH/WSL/Docker and Server all forward through the Source Server
+([R3 main spec §8.1](./architecture/r3-source-server-remote-architecture.md#81-权威表)); settings/OAuth
+are Source-owned, so all four transports bridge to the Source's own record service — never borrow
+the window Local Host's records, never build per-project record services or copy records.
 
 ```text
-手机新建远程任务 -> 新 workspace attachment -> 手机 allowlist -> onboarding-record RPC
-  SSH/WSL/Docker/Server -> Source 原有服务 -> Source 身份（Provisioning 下发的 OAuth）、记录和任务索引
+mobile creates remote task -> new workspace attachment -> mobile allowlist -> onboarding-record RPC
+  SSH/WSL/Docker/Server -> Source's existing service -> Source identity (OAuth via provisioning), records and task index
 ```
 
-`onboarding-record` 属于 `RemoteWorkspaceRpcContract v1` 必有 channel，并在
-`web-remote-replayable` attachment allowlist 内；漏放行时手机调用会超时，效果与漏注册相同。
+`onboarding-record` is a mandatory channel in `RemoteWorkspaceRpcContract v1` and inside the
+`web-remote-replayable` attachment allowlist; omitting it makes mobile calls time out, same effect
+as a missing registration. (The historical failure was exactly this missing channel registration:
+after mobile remounted Root, the call failed and the settings-based fallback wrongly prompted
+onboarding. The fix only fixed service assembly; trigger rules, settings-failure fallback, Root
+remount and the desktop-continuous / web-remote-replayable task transport semantics are
+unchanged.)
 
-故障原因是远程 service collection 漏注册此通道，手机重挂载 Root 后调用失败，回退到
-settings 判定而误弹引导。修复只补服务装配；引导触发规则、settings 失败兜底、Root 重挂载
-以及 desktop-continuous/web-remote-replayable 的任务传输语义均沿用既有实现。
+Regression coverage: with records present but no settings occupation field, entering a remote
+draft on mobile shows no onboarding; first-run users still get it, and closing stays closed after
+reconnecting; the remote collection uses the Source's record service, never the desktop's. Service
+assembly tests verify read/write routing and error propagation over real RPC; browser regression
+uses the real onboarding component, service assembly and mobile allowlist, with isolated fixtures
+for task entry and transport — not a substitute for real-device pairing and SSH/WSL/Docker
+end-to-end acceptance.
 
-回归覆盖：已有记录但 settings 无职业字段时，手机进入远程草稿不展示引导；首次用户仍展示，
-关闭后重建连接仍保持已关闭；远程集合使用 Source 的记录服务，不能误读桌面记录。服务装配测试
-通过真实 RPC 验证读写路由和错误传播；浏览器回归使用真实引导组件、服务装配和手机 allowlist，
-任务入口与传输环境使用隔离夹具，不代替真机配对及 SSH/WSL/Docker 传输端到端验收。
+- RPC regression: `packages/desktop/test/hostRemoteWorkspaceServices.test.ts`,
+  `packages/desktop/test/windowHostAttachmentRpcPolicy.test.ts`.
+- Browser candidate case (pending manual review):
+  `packages/desktop/test/e2e/manual-review/pending/mobile-remote-onboarding.mjs`, run from the repo
+  root with `pnpm exec tsx <case path>`.
 
-- RPC 回归：`packages/desktop/test/hostRemoteWorkspaceServices.test.ts`、
-  `packages/desktop/test/windowHostAttachmentRpcPolicy.test.ts`。
-- 浏览器候选用例（待人工审阅）：
-  `packages/desktop/test/e2e/manual-review/pending/mobile-remote-onboarding.mjs`，
-  从仓库根目录执行 `pnpm exec tsx <用例路径>`。
+## 6. UI integration (OccupationOnboarding.tsx)
 
-## 6. UI 集成（OccupationOnboarding.tsx）
+- Onboarding action copy must be fully defined in both language packs, never falling back to raw
+  translation keys: `start` "开始使用" / "Get started", `continue` "下一步" / "Next", `saving`
+  "正在保存…" / "Saving…", `back` "返回" / "Back", `error` "保存失败，请重试。" / "Failed to
+  save. Please try again.". Regression covers all five keys in both languages so later telemetry
+  reuses valid button copy.
 
-- 引导操作文案必须在中英文语言包中完整定义，不能回退显示原始翻译 key：
-  `start` 为“开始使用” / “Get started”，`continue` 为“下一步” / “Next”，
-  `saving` 为“正在保存…” / “Saving…”，`back` 为“返回” / “Back”，
-  `error` 为“保存失败，请重试。” / “Failed to save. Please try again.”。
-  回归测试覆盖上述五个 key 的两种语言，确保后续埋点也能复用有效按钮文案。
+- Top navigation uses equal-width left/right columns with a centered progress column: back left,
+  step progress center, close right, buttons vertically centered with symmetric margins; hiding
+  back on the first step keeps its column so the progress does not move.
 
-- 顶部导航使用等宽左右列与居中进度列：返回在左、步骤进度在正中、关闭在右，按钮垂直居中且左右外边距一致；首步隐藏返回仍保留其列，不移动进度。
+- Occupation option icons are 20px (`size-5`); the selected circle stays 16px.
+- Skip and next buttons both use `text-ui-base` (default 14px).
 
-- 职业选项图标使用 20px（size-5），选中圆圈保持 16px。
-- 跳过与下一步按钮字号统一使用 text-ui-base（默认 14px）。
+- Layout: the desktop two-column layout gets a uniform 4px outer padding and column gap; the right
+  illustration panel reuses the main-window rounding rules (Windows 5px, macOS 26+ 12px, older or
+  unknown macOS 6px, other platforms 12px). The left occupation/mode/preference selection cards
+  use the first-layer container rounding `rounded-xl`; per this page's design, next/back/skip/
+  close buttons are also `rounded-xl` to match the cards — global default button rounding is not
+  changed. The right hero covers a 1px theme border, follows the panel rounding, takes no layout
+  space and receives no pointers. The hero uses a left-aligned brand layout: logo, title and
+  subtitle share a left edge, the content group vertically centered, max width 640px. Panel side
+  padding varies 64–72px with window width, top/bottom stays 32–72px, logo-to-title 40px,
+  title-to-subtitle 24px. Narrow screens keep the single-column form and existing scroll bounds,
+  no hero; short windows let the panel scroll. Hero copy uses its own type scale: title 24–48px by
+  content width, semibold, 1.15 line height, single line; subtitle 16px / 26px line height with
+  explicit sentence-per-line breaks for the two English sentences, naturally wrapping long lines
+  on narrow windows, not scaling with UI font size; the title keeps the hero theme text color, the
+  dark-mode subtitle uses a light blue-gray for contrast. Hero copy aligns with the site brand
+  title: English "Simple, Fast, Vibe‑Ready!", Chinese “简单、迅捷、氛围十足！”; the subtitle covers
+  multi-agent completion of complex goals and control from anywhere, in a short version fit for
+  the onboarding panel. The content-group top reuses the initialization page's brand icon
+  component (size, black gradient base, stroke and rounding), not inverted across themes; the
+  onboarding page disables its entrance animation, the initialization page keeps it. The onboarding
+  logo's black base and white Z stay still, adding only a faint white sheen sweep inside the 1px
+  rounded border — ~120° tail, one revolution per 5 s, soft tail, no outer glow; hidden when
+  reduced motion is on. The background uses only the welcome hero's blue theme colors (dark: deep
+  blue-black and cyan-blue; light: ice-blue white and sky blue) with an independently implemented
+  flowing WebGL light field (visually informed by Mesh Flow 6, not official preset code), keeping
+  the existing flow field, opacity and speed, only swapping base colors and light-band RGB; no
+  hero static glow or blend modes. Orbit lines removed. Main wave ~3 s per cycle; the background
+  takes no pointers, runs only while the desktop panel is visible, at most 24 fps, rendered at
+  most 960px on the long edge. Reduced motion freezes the frame; hidden pages pause; unmount
+  releases GPU and listeners; WebGL unavailable or context lost falls back to the theme's static
+  base color — never blocking onboarding. Acceptance covers desktop large screens, short windows
+  and mobile widths in dark/light; content must not overflow or cover navigation.
 
-- 布局：桌面双栏由外层统一提供 4px 四周留白与栏间距；右侧插画面板复用主界面圆角规则
-  （Windows 5px、macOS 26+ 12px、旧版或未知 macOS 6px、其他平台 12px）。
-  左侧职业、模式、偏好选择卡片统一使用首层容器圆角 rounded-xl；本页面按设计要求将下一步、上一步、跳过、关闭等按钮统一为 rounded-xl，与选择卡片一致，不修改全局按钮默认圆角。
-  右侧 Hero 覆盖 1px 主题边框，沿用面板圆角，不占布局空间、不接收指针。
-  Hero 使用左对齐的品牌介绍布局：Logo、标题、副文案共享左边线，内容组垂直居中，最大宽度 640px。
-  面板左右留白随窗口宽度在 64–72px 之间变化，上下留白保持 32–72px，Logo 与标题间距 40px，标题与副文案间距 24px。
-  窄屏沿用单栏表单与原有滚动边界，不显示 Hero；短窗口允许面板滚动。
-  Hero 展示文案按本页面设计使用独立字号：标题随内容区宽度在 24–48px 之间变化、半粗、1.15 倍行高，保持单行；副文案 16px、26px 行高，英文两句话在句号后显式换行，窄窗口中长句仍可自然折行，不随 UI 字号缩放；标题沿用 Hero 主题文字色，深色副文案使用浅蓝灰提高对比度。
-  Hero 文案对齐官网品牌标题：英文“Simple, Fast, Vibe‑Ready!”，中文“简单、迅捷、氛围十足！”；副文案围绕多智能体完成复杂目标与随处掌控，采用适合引导面板的简短版本。
-  内容组顶部直接复用初始化页面的品牌图标组件（含尺寸、黑色渐变底、描边及圆角），深浅主题不反转；引导页关闭动画，初始化页面保留原有动画。
-  引导 Logo 的黑底与白色 Z 保持静止，仅在 1px 圆角边框内增加淡白色扫光，光尾覆盖约 120°，5 秒绕行一圈，带柔和光尾、不产生外围光晕；减少动态效果时隐藏扫光。
-  背景仅引用欢迎区 Hero 的蓝色主题色值（深色为深蓝黑与青蓝，浅色为冰蓝白与天蓝），
-  叠加独立实现的流动 WebGL 光场（参考 Mesh Flow 6 的视觉方向，非官方预设代码），保持原有流场、透明度与速度，只替换底色和光带 RGB；不叠加 Hero 静态光晕或混合模式。
-  移除轨道线。主波形约 3 秒一轮；背景不接收指针，仅可见桌面面板运行，最多 24fps，
-  渲染长边不超过 960px。减少动态效果时固定画面，隐藏页面暂停，卸载释放 GPU 与监听资源；
-  WebGL 不可用或上下文丢失时显示主题静态底色，不能阻塞引导。
-  验收覆盖桌面大屏、短窗口及手机宽度的深浅主题，内容不得溢出或遮挡导航。
+- Display gating: `requested || (needsOnboarding === true && !dismissed)`;
+  `needsOnboarding` is the async decision result. **The decision must never block the main UI
+  indefinitely**: existing users (settings already has `onboardingOccupation`) enter the main UI
+  without waiting; suspected first-run users wait at most 3 s. `appendRecord` also carries a 5 s
+  timeout so a missing channel never leaves the save button spinning forever.
+- Fallback decision semantics (2026-10 revision):
+  - **3 s timeout → conservatively "no onboarding"**. The old implementation fell back to a
+    settings-based decision, but the fallback closure evaluated at effect first run — when settings
+    are necessarily unloaded (`useSettings` starts null) — so the fallback was always "need
+    onboarding": on cold starts where the decision RPC exceeded 3 s (startup congestion, slow
+    first tasks-index SQLite open, slow ws/relay), old users were wrongly prompted and the
+    flash-appearance already counted as exposure telemetry before the real result arrived. A
+    timeout means "result unknown" and must not disturb the user; the real result still applies
+    when it arrives (a truly new user's onboarding just appears seconds later, main UI first).
+  - **3 s release budget is separate from decision rounds**: reruns triggered by settings load or
+    identity change only refresh the decision context and never re-grant main-UI blocking time.
+    The deadline is established at the first pending round and shared across rounds; reruns only
+    use the remaining budget, and exhaustion releases conservatively — total main-UI waiting never
+    exceeds the 3 s cap set by the first round. Producing a decision result (real result /
+    conservative release / failure fallback / user completing onboarding) ends the budget; once a
+    result exists, later rounds' timeout fallbacks no longer apply and must not flip an already
+    released main UI or an in-progress onboarding.
+  - **Decision failure (rejection) or unavailable service → always conservatively "no onboarding"**
+    (2026-10 second revision). The old settings-based fallback (`!onboardingOccupation`) judged
+    never-onboarded existing users as needing onboarding — contradicting "existing users are never
+    prompted" — and the settings snapshot at effect first run is necessarily unloaded, with past
+    bugs prompting from stale snapshots. Failure means "unknown"; a truly new user at worst sees
+    onboarding one startup later (same cost as timeout).
+  - **Settings no longer participates in fallback decisions**: `settingsLoaded` /
+    `onboardingOccupation` were removed from the trigger hook; hook dependencies narrowed to the
+    record service, userId and deviceMid. Settings' `onboardingOccupation` remains only for the
+    "existing users skip waiting" UI release (§6 gating) and recommendation content — no longer a
+    source of truth for eligibility.
+- Known limitation: hosts without the record service (home-only web views, pure render-test
+  doubles) never auto-prompt (direct consequence of the conservative semantics); that is a service
+  assembly gap (same class as the §5.1 mobile remote omission). The fix direction is wiring the
+  same-origin record service, not a trigger-rule fallback; until then users can still open
+  onboarding manually from settings.
+- `save()`: after the existing settings update succeeds, call `appendRecord()`; append failure
+  only warns — never blocks the onboarding flow or surfaces an error.
+- Settings fields like `onboardingOccupation` are still written (the recommendation prompt pool
+  depends on them), with semantics of "this user's most recent occupation choice".
 
-- 显示 gating：`requested || (needsOnboarding === true && !dismissed)`；
-  `needsOnboarding` 为异步判定结果。**判定不得无限期拦截主界面**：存量用户
-  （settings 已有 `onboardingOccupation`）不等判定直接进主界面；疑似首跑用户最多等
-  3 秒。`appendRecord` 同样带 5 秒超时，channel 缺失时不会让保存按钮永久转圈。
-- 兜底判定语义（2026-10 修订）：
-  - **3 秒超时 → 保守判"不需要引导"**。原实现超时退回 settings 判定，但兜底闭包在
-    effect 首跑时求值，而首跑时 settings 必未加载（`useSettings` 初始为 null），兜底值
-    恒为"需要引导"——冷启动判定 RPC 超 3 秒（启动拥塞、tasks-index SQLite 首开慢、
-    ws/relay 链路慢）的老用户被误弹，真实结果到达后引导闪现消失并已计入曝光埋点。
-    超时只代表"结果未知"，不得据此打扰用户；真实结果到达后照常覆盖（真新用户的
-    引导只是晚几秒出现，主界面先行）。
-  - **3 秒放行预算与判定轮次分离**：settings 加载完成或身份变化触发的
-    判定重跑只刷新判定上下文，不重新授予主界面阻塞时间。截止时刻在首个未决判定轮
-    建立并跨轮共享，重跑只使用剩余预算，预算耗尽立即保守放行——主界面总等待不超过
-    首轮建立的 3 秒上限。产生判定结果（真实结果 / 保守放行 / 失败兜底 / 用户完成
-    引导）后预算结束；已有判定结果时，后续轮次的超时兜底不再生效，不得把已放行的
-    主界面或正在进行的引导翻掉。
-- **判定失败（rejection）、服务不可用 → 一律保守判"不需要引导"（2026-10 第二次修订）**。
-  原实现退回 settings 判定（`!onboardingOccupation`），但该兜底会把"没填过引导的存量
-  老用户"判成需要引导——与"老用户一定不弹"冲突，且 settings 快照在 effect 首跑时必未
-  加载，历史上有过按陈旧快照误弹的缺陷。失败只代表"结果未知"，不得据此打扰用户；
-  真新用户在故障场景最坏晚一次启动再弹（与超时语义同代价）。
-- **settings 不再参与兜底判定**：`settingsLoaded` / `onboardingOccupation` 从触发 hook
-  移除，hook 依赖收窄为 record 服务、userId、deviceMid。settings 侧的
-  `onboardingOccupation` 仍只用于"存量用户不等判定直接进主界面"的 UI 放行（§6 显示
-  gating）与推荐区内容，不再是引导资格的事实源。
-- **3 秒放行预算与判定轮次分离**：身份变化（userId / record 服务实例）触发的判定重跑
-  只刷新判定上下文，不重新授予主界面阻塞时间。截止时刻在首个未决判定轮建立并跨轮
-  共享，重跑只使用剩余预算，预算耗尽立即保守放行——主界面总等待不超过首轮建立的
-  3 秒上限。产生判定结果（真实结果 / 保守放行 / 用户完成引导）后预算结束；已有判定
-  结果时，后续轮次的超时兜底不再生效，不得把已放行的主界面或正在进行的引导翻掉。
-- 已知限制：无记录服务的宿主（home-only web 视图、纯渲染测试 double）自动引导恒不弹
-  （保守语义的直接结果）；该端属于服务装配缺口（与 §5.1 手机远程工作区漏注册同类），
-  修复方向是接入与桌面同源的记录服务，不在触发规则层兜底；缺口修复前用户仍可从设置
-  页手动打开引导。
-- `save()`：现有 settings update 成功后调 `appendRecord()`；追加失败仅 warn 日志，
-  不阻塞引导主流程、不向用户报错。
-- `onboardingOccupation` 等 settings 字段照旧写入（推荐 prompt 池仍依赖它），
-  语义变为"当前用户最近一次选择的职业"。
+## 6.5 Prefill and direct exit on reopening
 
-## 6.5 引导再次打开时的预填与直接退出
+- **Prefill**: manually opened onboarding (settings entry or shortcut) and re-triggered onboarding
+  initialize the three pages from the userId's latest record answer (`getLatestEntry()`). Fields
+  recorded null by a skipped page prefill defaults (occupation developer / default preferences); a
+  record occupation outside the current list (list evolution) also falls to defaults. In coding
+  mode, proactive memory always prefills off, even if previously enabled and saved in settings; in
+  office mode it prefills from the latest answer, defaulting to on. If prefill data arrives after
+  the user already interacted, it must not override their choices.
+- **Re-completing onboarding**: this run's choices overwrite settings and the record, replacing
+  preferences saved in settings or the last onboarding. Reopening in coding mode and saving
+  directly also turns previously hand-enabled proactive memory off — intended behavior.
+- **Direct exit**: the top-right X and ESC both exit — nothing saved, settings unchanged, a
+  `dismissed` eligibility decision written, and auto-trigger never fires again. Manually opened
+  from settings can still be closed anytime back to the previous view; identities with existing
+  answers add no new decision when closing a manually opened onboarding.
 
-- **预填**：从设置入口（或快捷键）手动打开引导、以及再次触发的引导，用该 userId 在
-  record 里的最近作答初始化三页选项（`getLatestEntry()`）。跳过页记 null 的字段预填
-  默认值（职业 developer / 偏好默认）；record 的职业不在当前列表（列表演进）时同样落
-  默认。编程模式下主动工作记忆始终预填为关闭，即使此前在设置中手动开启并保存；办公
-  模式下按最近作答预填，未作答时默认开启。预填数据异步后到时，若用户已交互则不覆盖其选择。
-- **重新完成引导**：本次引导的选择作为新的配置写入 settings 和 record，覆盖此前在设置页
-  或上次引导中保存的偏好。用户在编程模式下重开引导并直接保存，也会把此前手动开启的
-  主动工作记忆改为关闭；这是预期行为。
-- **直接退出**：引导页右上角 X 按钮与 ESC 均可退出——不保存、不改 settings，写入
-  `dismissed` 资格决策，之后启动不再自动触发。设置里主动打开仍可随时关闭回到原界面；
-  已有作答的身份关闭手动打开的引导时不新增决策。
+## 7. Settings backfill (restoring preferences on account switch)
 
-## 7. settings 回填（换账号恢复偏好）
+Settings are not per-user: after A answers, B triggering onboarding would push B's answers into
+settings. So when a login-state change (or startup) decides "no onboarding needed", call
+`syncSettingsFromRecord()` to backfill the current userId's **latest** record answer into settings'
+`onboardingOccupation / proactiveSuggestionsEnabled / memoryEnabled`, switching recommendation
+content. Rules:
 
-settings 不分用户，A 答完后 B 触发引导会把 settings 顶成 B 的答案。因此登录态变化
-（或启动）判定"不需要引导"时，调 `syncSettingsFromRecord()` 把当前 userId 在 record 里
-**最近一条**作答回填到 settings 的 `onboardingOccupation / proactiveSuggestionsEnabled /
-memoryEnabled`，推荐区内容随之切换。约定：
+- Backfill timing (CR-03 revision): **only after a runtime userId change** (account switch/login).
+  Mount first-run (including null→id from async startup OAuth restore) only decides, never writes
+  back — otherwise user-disabled recommendation/memory switches would be resurrected from the
+  record on every startup.
+- Manual edits write back to the record (CR-03 revision): the recommendation close button and the
+  settings suggestion/memory toggles call `updateRecordPreferences()` on the current user's entry
+  while updating settings (failure warns only). The record always equals "this user's latest
+  preference", so backfill never overrides manual edits.
+- Fields recorded null by skipped pages backfill conservative defaults (occupation `other`,
+  preferences off), matching onboarding-skip settings writes.
+- Record occupations are non-enum strings (the list evolves); backfill narrows via
+  `appSettingsOccupationEnum`, unknown values landing on `other`.
+- No settings change when the current user has no record; sync failure warns only.
 
-- 回填时机（CR-03 修订）：**仅 userId 运行时变化后**（换号/登录）执行；挂载首跑（含启动时
-  OAuth 异步恢复引起的 null→id）只做触发判定不回写——否则用户手动关闭的推荐/记忆开关
-  会在每次启动被 record 复活。
-- 手动修改回写 record（CR-03 修订）：推荐区关闭按钮、设置页建议/记忆开关在更新 settings
-  的同时调 `updateRecordPreferences()` 回写当前用户条目（失败仅 warn 不阻塞），record 始终
-  等于"该用户最新偏好"，回填因此不会覆盖任何手动修改。
-- 跳过页记 null 的字段回填保守默认（职业 `other`、偏好关），与引导跳过写 settings 一致。
-- record 的职业是非枚举字符串（职业列表会演进），回填前经 `appSettingsOccupationEnum`
-  窄化，未知值落 `other`。
-- 当前用户无记录时不改 settings；同步失败仅 warn 日志。
+## 7. Upload reservation (to implement once the server API is fixed)
 
-## 7. 上传预留（待服务端接口确定后实现）
+Onboarding exposure and completion telemetry is a separate spec:
+[Onboarding telemetry](monitoring/onboarding-telemetry.md). Its end-of-event choice snapshot
+(including third-page skip checkbox states) is not the local record upload and does not change this
+record's null-on-skip rules or `uploadState`. Telemetry uses work/code modes; the local
+`interfaceMode` keeps office/coding; identity fields reuse the common telemetry user_id/device_mid.
 
-引导曝光及结束的公共行为埋点另见 [用户引导埋点 Spec](monitoring/onboarding-telemetry.md)。
-该事件上传结束时的选择快照（包括第三页跳过时的勾选状态），不等同于本地记录上传，
-也不改变本记录的跳过字段置 null 规则或 uploadState。埋点模式使用 work/code，
-本地 interfaceMode 继续使用 office/coding；身份字段复用公共 telemetry 的 user_id/device_mid。
-
-- payload = 文件内 `uploadState === "pending"` 的 entries + deviceMid；`decisions` 不上传；
-- 上传成功后将对应 entry 置为 `uploaded`；
-- 触发时机待定（启动补报 / 登录后上报）。
+- payload = entries with `uploadState === "pending"` + deviceMid; `decisions` are not uploaded;
+- on upload success the corresponding entry becomes `uploaded`;
+- trigger timing pending (startup backfill / post-login report).

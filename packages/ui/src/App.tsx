@@ -6,6 +6,7 @@ import { resolveWorkspaceKey, type GitChangeSourceId, type WorkspacePurpose } fr
 import { useZCodeStore } from "@/store/StoreProvider.js";
 import { getVisibleTaskMetas, useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useTaskQueryCacheStore } from "@/store/taskQueryCacheStore.js";
+import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
 import { useAppPanels } from "@/hooks/useAppPanels.js";
 import { useGitAutoRefresh } from "@/hooks/useGitAutoRefresh.js";
 import { useGitRepository } from "@/hooks/useGitRepository.js";
@@ -46,12 +47,13 @@ import {
 import {
   setPendingSettingsPluginIntent,
   setPendingSettingsSection,
+  setPendingSettingsSectionIntent,
   type SettingsSectionId,
 } from "@/lib/settingsNavigation.js";
 import { runWorkspaceVisibleCommand } from "@/lib/workspaceVisibleCommand.js";
 import { ZCODE_PRODUCT_DOCS_URL } from "@/lib/productDocs.js";
 import appLogoUrl from "@/assets/provider-icons/logo-zai.svg";
-import { resolveTheme } from "@/useTheme.js";
+import { resolveTheme, type ResolvedTheme } from "@/useTheme.js";
 import { WorkspaceShellLayout } from "@/app-shell/WorkspaceShellLayout.js";
 import { useAppChromeState } from "@/app-shell/useAppChromeState.js";
 import { useWorkspaceSessionReload } from "@/app-shell/useWorkspaceSessionReload.js";
@@ -64,6 +66,8 @@ import {
 } from "@/app-shell/useWorkspaceTaskNavigation.js";
 import { useTaskSidePaneMemoryBridge } from "@/app-shell/useTaskSidePaneMemoryBridge.js";
 import { resolveAppWorkspaceRpcTarget } from "@/app-shell/workspaceRpcTarget.js";
+import { selectTaskInNavigationWorkspace } from "@/app-shell/taskNavigationWorkspace.js";
+import { toast } from "@/components/ui/toast.js";
 import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
 import { useWorkspaceTerminalTaskNotifications } from "@/hooks/useTaskNotifications.js";
 import { useMarketingTaskCompletionRefresh } from "@/components/marketing-touch/useMarketingTaskCompletionRefresh.js";
@@ -212,6 +216,24 @@ export function App({
   );
   const activeTaskId = workspaceShellZCodeState.activeTaskId;
   const sidePaneOwnerId = activeTaskId;
+  const {
+    resolvedActiveTaskMeta,
+    activeTraceId,
+    activeSessionId,
+    activeTaskProvider,
+    workspaceHeaderProvider,
+    activeTaskChangeSummary,
+    activeTaskTitle,
+    taskNativeSessionLogFile,
+    taskSessionFile,
+  } = useWorkspaceActiveTaskState({
+    workspaceAbsPath,
+    activeTaskId,
+    workspaceRemoteSessionId,
+    workspaceIdentity,
+    selectedProvider: workspaceShellZCodeState.selectedProvider,
+    intl,
+  });
   const [summaryPanelVariantOverride, setSummaryPanelVariantOverride] =
     useState<ChatViewSummaryPanelVariant | null>(null);
   const draftFocusVersion = workspaceShellZCodeState.draftFocusVersion;
@@ -239,6 +261,7 @@ export function App({
     handleNavigateFileManager,
     handleOpenPluginMarket,
     handleOpenTerminalTab,
+    handleOpenModelTrajectory,
     handleOpenSubagentSession,
     handleOpenBackgroundBash,
     handleOpenSubagentDirectory,
@@ -267,6 +290,7 @@ export function App({
     handleBrowserPageMetadataChange,
   } = useAppPanels({
     workspaceAbsPath,
+    terminalCwd: resolvedActiveTaskMeta?.executionWorktree?.path ?? workspaceAbsPath,
     workspaceIdentity,
     workspaceRemoteSessionId,
     activeTaskId,
@@ -362,6 +386,12 @@ export function App({
   const [canOpenCommunityFromQuickPick, setCanOpenCommunityFromQuickPick] = useState(false);
   const [gitSelectedSourceId, setGitSelectedSourceId] = useState<GitChangeSourceId>("unstaged");
   const [gitRefreshVersion, setGitRefreshVersion] = useState(0);
+  const [gitReviewRefreshVersion, setGitReviewRefreshVersion] = useState(0);
+  // Worktree review target: a git pane opened from an execution worktree reads that worktree, not the workspace root.
+  const [gitReviewExecutionTarget, setGitReviewExecutionTarget] = useState<{
+    workspacePath: string;
+    sessionId: string;
+  } | null>(null);
   const { browserRestoreUrls, handleBrowserUrlChange } = useTaskSidePaneMemoryBridge({
     activeTaskId,
     gitSelectedSourceId,
@@ -370,7 +400,34 @@ export function App({
     workspaceIdentity,
   });
   const theme = useZCodeStore((s) => s.theme);
+  const palette = useZCodeStore((s) => s.palette);
+  // The OS scheme is tracked as state so a system change re-renders; a live matchMedia read would not.
+  const [systemResolvedTheme, setSystemResolvedTheme] = useState<ResolvedTheme>(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light"
+      : "dark",
+  );
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") {
+      return;
+    }
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const syncSystemTheme = () => {
+      setSystemResolvedTheme(mediaQuery.matches ? "dark" : "light");
+    };
+    syncSystemTheme();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", syncSystemTheme);
+      return () => mediaQuery.removeEventListener("change", syncSystemTheme);
+    }
+    mediaQuery.addListener(syncSystemTheme);
+    return () => mediaQuery.removeListener(syncSystemTheme);
+  }, []);
+  const resolvedTheme = theme === "system" ? systemResolvedTheme : resolveTheme(theme);
   const setTheme = useZCodeStore((s) => s.setTheme);
+  const setPalette = useZCodeStore((s) => s.setPalette);
   const {
     isMacFullscreen,
     desktopWindowChromeState,
@@ -390,24 +447,6 @@ export function App({
   const addTab = useTabStore((s) => s.addTab);
   const activateTabByPath = useTabStore((s) => s.activateTabByPath);
 
-  const {
-    resolvedActiveTaskMeta,
-    activeTraceId,
-    activeSessionId,
-    activeTaskProvider,
-    workspaceHeaderProvider,
-    activeTaskChangeSummary,
-    activeTaskTitle,
-    taskNativeSessionLogFile,
-    taskSessionFile,
-  } = useWorkspaceActiveTaskState({
-    workspaceAbsPath,
-    activeTaskId,
-    workspaceRemoteSessionId,
-    workspaceIdentity,
-    selectedProvider: workspaceShellZCodeState.selectedProvider,
-    intl,
-  });
   const providerConfigFile = useWorkspaceProviderConfigFile(
     workspaceAbsPath,
     workspaceHeaderProvider,
@@ -435,18 +474,53 @@ export function App({
   const hasGitTab = sidePaneState?.tabs.some((tab) => tab.type === "git") ?? false;
   const handleRefreshGit = useCallback(() => {
     setGitRefreshVersion((value) => value + 1);
+    // A successful git mutation (branch switch, commit) invalidates PR probes; ask them to re-poll.
+    usePullRequestStatusStore.getState().requestRefresh();
   }, []);
+  const gitRepositoryWorkspacePath =
+    gitReviewExecutionTarget?.sessionId === activeTaskId
+      ? gitReviewExecutionTarget.workspacePath
+      : (resolvedActiveTaskMeta?.executionWorktree?.path ?? workspaceAbsPath);
+  const handleRefreshGitReview = useCallback(() => {
+    if (gitRepositoryWorkspacePath === workspaceAbsPath) {
+      handleRefreshGit();
+      return;
+    }
+    setGitReviewRefreshVersion((value) => value + 1);
+    usePullRequestStatusStore.getState().requestRefresh();
+  }, [gitRepositoryWorkspacePath, handleRefreshGit, workspaceAbsPath]);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
   const gitState = useGitRepository({
     workspacePath: workspaceAbsPath,
     activeTaskId,
-    includeExtendedData: hasGitTab,
-    // 关键逻辑：真实 Git 只在 workspace 变化、Git pane 打开、或用户显式点刷新时重拉。
-    // task 切换 / last-turn 摘要变化只更新本地衍生数据，不再顺带重跑 Git 命令。
+    includeExtendedData: hasGitTab && gitRepositoryWorkspacePath === workspaceAbsPath,
+    // Key logic: fetch real Git data only when the workspace changes, the Git pane opens, or the user explicitly refreshes.
+    // Task switches and last-turn summary changes update only local derived data; they do not rerun Git commands.
     refreshToken: gitRefreshVersion,
     remoteSessionId: workspaceRpcTarget.remoteSessionId ?? null,
     remoteTarget: workspaceRpcTarget.remoteTarget,
     workspaceIdentity,
+  });
+  const worktreeGitReviewState = useGitRepository({
+    workspacePath: gitRepositoryWorkspacePath,
+    activeTaskId,
+    enabled: gitRepositoryWorkspacePath !== workspaceAbsPath,
+    includeExtendedData: hasGitTab,
+    refreshToken: gitReviewRefreshVersion,
+    remoteSessionId: workspaceRpcTarget.remoteSessionId ?? null,
+    remoteTarget: workspaceRpcTarget.remoteTarget,
+    workspaceIdentity,
+  });
+  const gitPaneState =
+    gitRepositoryWorkspacePath === workspaceAbsPath ? gitState : worktreeGitReviewState;
+  useGitAutoRefresh({
+    workspacePath: gitRepositoryWorkspacePath,
+    workspaceIdentity,
+    remoteSessionId: workspaceRpcTarget.remoteSessionId ?? null,
+    gitSummary: worktreeGitReviewState.summary,
+    gitSummaryWorkspaceKey: worktreeGitReviewState.workspaceKey,
+    enabled: isWorkspaceVisible && hasGitTab && gitRepositoryWorkspacePath !== workspaceAbsPath,
+    onRefreshGit: handleRefreshGitReview,
   });
   useGitAutoRefresh({
     workspacePath: workspaceAbsPath,
@@ -458,8 +532,8 @@ export function App({
     onRefreshGit: handleRefreshGit,
   });
   const activeGitSourceId =
-    gitState.sourceOptions.find((option) => option.id === gitSelectedSourceId)?.id ??
-    gitState.sourceOptions[0]?.id ??
+    gitPaneState.sourceOptions.find((option) => option.id === gitSelectedSourceId)?.id ??
+    gitPaneState.sourceOptions[0]?.id ??
     "unstaged";
   const gitChangeSummaryBySourceId = useMemo(() => {
     // 关键业务逻辑：workspace header 和 Git pane 都依赖同一套来源统计，
@@ -513,10 +587,19 @@ export function App({
     return null;
   }, [gitChangeSummaryBySourceId]);
   const handleOpenGitReview = useCallback(
-    (sourceId?: GitChangeSourceId) => {
+    (
+      sourceId?: GitChangeSourceId,
+      executionWorkspacePath?: string,
+      executionSessionId?: string,
+    ) => {
       if (workspaceReadOnlyReason) {
         return;
       }
+      setGitReviewExecutionTarget(
+        executionWorkspacePath && executionSessionId
+          ? { workspacePath: executionWorkspacePath, sessionId: executionSessionId }
+          : null,
+      );
       if (sourceId) {
         setGitSelectedSourceId(sourceId);
       }
@@ -716,7 +799,7 @@ export function App({
   const handleOpenProductDocs = useCallback(() => {
     platform.openExternal(ZCODE_PRODUCT_DOCS_URL);
   }, [platform]);
-  const themeTarget = resolveTheme(theme) === "dark" ? "light" : "dark";
+  const themeTarget = resolvedTheme === "dark" ? "light" : "dark";
   const handleSwitchTheme = useCallback(() => {
     setTheme(themeTarget);
   }, [setTheme, themeTarget]);
@@ -807,6 +890,24 @@ export function App({
       workspaceShellZCodeState.selectedProvider,
       webRemoteControlWorkspaceSwitcher,
     ],
+  );
+  // Opens a created worktree through the shared workspace + draft flow (fork contract for the command center and shell panes).
+  const handleCreateTaskInWorkspace = useCallback(
+    (targetWorkspacePath: string, targetWorkspaceIdentity?: string): void | Promise<void> => {
+      if (webRemoteControlWorkspaceSwitcher?.openWorkspace) {
+        return webRemoteControlWorkspaceSwitcher.openWorkspace({
+          workspacePath: targetWorkspacePath,
+          ...(targetWorkspaceIdentity ? { workspaceIdentity: targetWorkspaceIdentity } : {}),
+        });
+      }
+      handleStartDraftInWorkspace(
+        targetWorkspacePath,
+        targetWorkspaceIdentity,
+        undefined,
+        "project",
+      );
+    },
+    [handleStartDraftInWorkspace, webRemoteControlWorkspaceSwitcher],
   );
 
   useWorkspaceShellLifecycle({
@@ -930,6 +1031,27 @@ export function App({
     },
     [handleOpenAutomations],
   );
+  // The palette searches local projects whose tab is closed; handleSelectTask alone cannot show those (ISSUE-069).
+  const handleSelectCommandCenterTask = useCallback(
+    (targetWorkspacePath: string, taskId: string, targetWorkspaceIdentity?: string) => {
+      if (webRemoteControlWorkspaceSwitcher) {
+        handleSelectTask(targetWorkspacePath, taskId, targetWorkspaceIdentity);
+        return;
+      }
+      selectTaskInNavigationWorkspace({
+        target: {
+          workspacePath: targetWorkspacePath,
+          taskId,
+          workspaceIdentity: targetWorkspaceIdentity,
+        },
+        activateTabByPath,
+        addLocalWorkspaceTab: (path) => addTab(path),
+        selectTask: handleSelectTask,
+        onRejected: () => toast(intl.formatMessage({ id: "automations.runs.openSessionFailed" })),
+      });
+    },
+    [activateTabByPath, addTab, handleSelectTask, intl, webRemoteControlWorkspaceSwitcher],
+  );
   const handleOpenPluginStoreForScope = useCallback(
     (_target: PluginStoreOpenTarget = {}) => {
       // 管理范围由市场内视图持有，重复打开只重置市场导航。
@@ -1052,6 +1174,9 @@ export function App({
         // 如果依赖完整 user 对象，auth store 返回等价新引用时会重建整组 command/run 闭包。
         isLoggedIn,
         themeTarget,
+        themeMode: theme,
+        themePalette: palette,
+        resolvedTheme,
         shortcuts: {
           newTask: newTaskShortcutLabel,
           openWorkspace: openWorkspaceShortcutLabel,
@@ -1062,6 +1187,11 @@ export function App({
           createTask: () => runVisibleWorkspaceCommand(() => handleCreateTaskIfWritable()),
           openWorkspace: () => runVisibleWorkspaceCommand(onOpenWorkspace),
           openSettings: openSettingsTab,
+          openSessionManager: () => {
+            // Sessions management is a Settings section; the command opens it unscoped.
+            setPendingSettingsSectionIntent("sessions");
+            openSettingsTab();
+          },
           openSkillsSettings: () => {
             setPendingSettingsPluginIntent("skills");
             openSettingsTab();
@@ -1071,6 +1201,8 @@ export function App({
             openSettingsTab();
           },
           switchTheme: handleSwitchTheme,
+          setThemeMode: setTheme,
+          setThemePalette: setPalette,
           openFeedback: handleOpenFeedback,
           openCommunity: handleOpenCommunity,
           openProductDocs: handleOpenProductDocs,
@@ -1093,6 +1225,8 @@ export function App({
       handleOpenProductDocs,
       handleOpenSettingsSection,
       handleSwitchTheme,
+      setTheme,
+      setPalette,
       handleOpenBrowserTab,
       handleOpenGitIfWritable,
       handleOpenTerminalTabIfWritable,
@@ -1113,6 +1247,9 @@ export function App({
       toggleSidebarShortcutLabel,
       toggleTerminalShortcutLabel,
       themeTarget,
+      theme,
+      palette,
+      resolvedTheme,
     ],
   );
   const taskFindDialogProps = useMemo<TaskFindDialogProps>(
@@ -1163,7 +1300,8 @@ export function App({
         activeTaskChangeSummary={activeTaskChangeSummary}
         workspaceTabs={commandCenterWorkspaceTabs}
         onOpenChange={setIsQuickPickOpen}
-        onSelectTask={handleSelectTask}
+        onSelectTask={handleSelectCommandCenterTask}
+        onCreateTaskInWorkspace={handleCreateTaskInWorkspace}
         onSearchResultHighlightRequest={handleSearchResultHighlightRequest}
         onOpenCodeViewer={handleOpenCodeViewerIfWritable}
       />
@@ -1264,6 +1402,10 @@ export function App({
           gitWorktreeChangeSummary={gitWorktreeChangeSummary}
           activeGitSourceId={activeGitSourceId}
           gitState={gitState}
+          gitReviewState={gitPaneState}
+          handleRefreshGitReview={handleRefreshGitReview}
+          gitRepositoryWorkspacePath={gitRepositoryWorkspacePath}
+          onCreateTaskInWorkspace={handleCreateTaskInWorkspace}
           browserNavigationRequest={browserNavigationRequest}
           browserRestoreUrls={browserRestoreUrls}
           providerConfigFile={providerConfigFile}
@@ -1304,6 +1446,7 @@ export function App({
           handleNavigateFileManager={handleNavigateFileManager}
           handleOpenPluginMarket={handleOpenPluginMarket}
           handleOpenTerminalTab={handleOpenTerminalTabIfWritable}
+          handleOpenModelTrajectory={handleOpenModelTrajectory}
           handleToggleGit={handleToggleGitIfWritable}
           handleToggleSidePane={handleToggleSidePane}
           handleOpenBrowserUrl={handleOpenBrowserUrl}

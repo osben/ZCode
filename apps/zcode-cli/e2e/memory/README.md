@@ -56,6 +56,8 @@ result.json
 证据校验根据构建产物中的 active branch 拒绝任何 pointer/index 与 Selector/Recall 混合组合。
 冻结 fixture 另由 `memory-provider-body.test.ts` 直接校验请求体合同；Desktop WDIO 从真实抓包提取同一 `# Memory` 段和
 `MEMORY.md` user-context source 复用该合同。
-Dream 当前没有产品触发入口，因此不在这里增加测试入口；gate、lock、tool loop 和
+Dream 的产品触发入口是手动 `/dream` 命令（快速 launch turn + detached 后台任务，见
+`docs/design/v2/memory/README.md` §7.1），本目录不增加内部协议入口；Desktop pending E2E 通过普通 composer 验证后台交互。命令 dispatch、
+soft gate、lock、tool loop、后台任务生命周期（backgroundWorks 事件、cancel）和
 `memory_update` 由 core runtime integration tests 覆盖，最终 Anthropic Messages 请求体由
 `memory-provider-body.test.ts` 覆盖。

@@ -16,6 +16,8 @@ import {
   type ToolArtifactStorePort,
 } from "@zcode/contracts";
 
+import type { SystemPromptOverrides } from "@zcode/shared";
+
 import { createTestAgentRuntime } from "./test-agent-runtime.js";
 import { createTestModelSelection } from "./test-model-selection.js";
 import { resolveProjectMemoryRoot } from "../src/memory/project-root.js";
@@ -58,6 +60,34 @@ describe("AgentRuntime background Memory extraction", () => {
     await runtime.executeTurn("remember this later durable preference");
     await runtime.drainMemoryExtractions();
     expect(extractionRequestCount).toBe(1);
+  });
+
+  it("records each Extraction model request as a project_memory_extract usage fact", async () => {
+    const facts: Record<string, unknown>[] = [];
+    const sessionStore = Object.assign(createMemorySessionStore(), {
+      recordModelUsage: async (fact: Record<string, unknown>) => {
+        facts.push(fact);
+      },
+      upsertTurnUsage: async () => {},
+      upsertToolUsage: async () => {},
+      pruneUsage: async () => {},
+    });
+    const runtime = createExtractionRuntime({
+      async generateText(request) {
+        return textResult(
+          request,
+          isExtractionRequest(request) ? "Nothing to save." : "main answer",
+        );
+      },
+      sessionStore,
+    });
+
+    await runtime.executeTurn("remember this durable project preference");
+    await runtime.drainMemoryExtractions();
+
+    expect(facts.filter((fact) => fact.querySource === "project_memory_extract")).toMatchObject([
+      { status: "completed", inputTokens: 1, outputTokens: 1, finishReason: "stop" },
+    ]);
   });
 
   it("reuses the completed Turn Active Model instead of resolving Session Selection again", async () => {
@@ -131,6 +161,28 @@ describe("AgentRuntime background Memory extraction", () => {
     expect(providerMessagesToText(extractionRequests[0]!.messages)).toContain(
       "does not support video input",
     );
+  });
+
+  it("sends the memory-extraction override instead of the default instructions", async () => {
+    const extractionRequests: ModelRequest[] = [];
+    const runtime = createExtractionRuntime({
+      async generateText(request) {
+        if (!isExtractionRequest(request)) return textResult(request, "main answer");
+        extractionRequests.push(request);
+        return textResult(request, "Nothing to save.");
+      },
+      systemPromptOverrides: {
+        "memory-extraction": `Custom ${EXTRACTION_PROMPT_MARKER}: review {{messageCount}} messages.{{existingMemories}}`,
+      },
+    });
+
+    await runtime.executeTurn("remember this durable project preference");
+    await runtime.drainMemoryExtractions();
+
+    const requestText = providerMessagesToText(extractionRequests[0]!.messages);
+    expect(requestText).toMatch(/Custom memory extraction subagent: review \d+ messages\./);
+    expect(requestText).not.toContain("{{messageCount}}");
+    expect(requestText).not.toContain("Do not waste any turns attempting to investigate");
   });
 
   it("starts after a successful Main turn without blocking it and keeps the frozen Main context and tools", async () => {
@@ -743,6 +795,7 @@ function createExtractionRuntime(input: {
   modelFactory?: RuntimeModelFactory;
   onRuntimeHeaderRefresh?: () => void;
   sessionStore?: SessionStorePort;
+  systemPromptOverrides?: SystemPromptOverrides;
   taskType?: SessionTaskType;
   toolRegistry?: ToolRegistry;
 }): AgentRuntime {
@@ -758,6 +811,7 @@ function createExtractionRuntime(input: {
         ...input.memory,
       },
       mode: "yolo",
+      systemPromptOverrides: input.systemPromptOverrides,
       taskType: input.taskType,
       titleGeneration: { enabled: false },
       workingDirectory: WORKSPACE_PATH,

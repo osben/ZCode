@@ -14,11 +14,12 @@ export type ToolSideEffectScope =
   | "userInteraction";
 
 /**
- * 会改写工作区的副作用范围：文件系统、git、
- * 以及无法证明只读的 shell / 宿主执行。`network`、`session`、`userInteraction`、`none` 不碰工作区。
- * dynamic-workflow 的导入缓存据此判「第一笔写入」——一次工具调用在解析后的能力上 `readOnly !== true`
- * 且范围落在这个集合里，就是一笔写入。判定放在 contracts 是因为产生标记的执行器（core）与消费它的
- * driver（bootstrap）都要用同一条规则。
+ * Side-effect scopes that can modify the workspace: filesystem, git, and shell / host execution that
+ * cannot be proven read-only. `network`, `session`, `userInteraction`, and `none` do not touch the
+ * workspace. The dynamic-workflow import cache uses this to detect the "first write": a tool call is
+ * a write when its resolved capability has `readOnly !== true` and its scope is in this set. The rule
+ * lives in contracts because both the executor that produces the marker (core) and the driver that
+ * consumes it (bootstrap) need to share it.
  */
 export const WORKSPACE_MUTATING_SIDE_EFFECT_SCOPES: ReadonlySet<ToolSideEffectScope> = new Set<ToolSideEffectScope>([
   "workspace",
@@ -26,7 +27,7 @@ export const WORKSPACE_MUTATING_SIDE_EFFECT_SCOPES: ReadonlySet<ToolSideEffectSc
   "system",
 ]);
 
-/** 一次工具调用（按解析后的能力）是否会改写工作区。缺席的范围按会改写处理（保守：未声明即不可信）。 */
+/** Whether a tool call (based on its resolved capability) can modify the workspace. A missing scope is treated as mutating (conservative: undeclared means untrusted). */
 export function isWorkspaceMutatingToolCall(capability: {
   readOnly?: boolean | undefined;
   sideEffectScope?: ToolSideEffectScope | undefined;
@@ -38,8 +39,9 @@ export function isWorkspaceMutatingToolCall(capability: {
 }
 
 /**
- * 只服务于协议本身、不看也不动外部世界的副作用范围：`session` 是把结果 / 问题交回调用方
- * （dynamic-workflow 的 `submit_result`、`escalate` 就在这一档），`userInteraction` 是问用户。
+ * Side-effect scopes that serve only the protocol itself and do not read or modify the outside world:
+ * `session` returns a result / question to the caller (dynamic-workflow's `submit_result` and
+ * `escalate` belong here), and `userInteraction` asks the user.
  */
 const PROTOCOL_ONLY_SIDE_EFFECT_SCOPES: ReadonlySet<ToolSideEffectScope> = new Set<ToolSideEffectScope>([
   "session",
@@ -47,12 +49,15 @@ const PROTOCOL_ONLY_SIDE_EFFECT_SCOPES: ReadonlySet<ToolSideEffectScope> = new S
 ]);
 
 /**
- * 一次工具调用是否**看或动了外部世界**（读文件、跑命令、访问网络……）。
+ * Whether a tool call **reads or modifies the outside world** (reads files, runs commands, accesses the network, etc.).
  *
- * 与 `isWorkspaceMutatingToolCall` 的分工：那个判「写」，用来决定何时关掉 amend-resume 的导入缓存；
- * 这个判「碰」，用来决定一条缓存条目是不是**纯**的（纯 = 只按指令与转录前缀作答，关门后仍可命中）。
- * 读也算碰：`Read` 声明的范围是 `none`（它不产生副作用），可它的答案取决于工作区。所以判定是排除法
- * ——只把协议档（`session` / `userInteraction`）排除，其余一律算碰；范围缺席同样算碰。
+ * Its role relative to `isWorkspaceMutatingToolCall`: that function detects writes and decides when
+ * to close the amend-resume import cache; this function detects any contact and decides whether a
+ * cache entry is **pure** (pure = answers only from instructions and transcript prefix, so it can
+ * still hit after the cache is closed). Reads count as contact: `Read` declares scope `none` (it has
+ * no side effects), but its answer depends on the workspace. The check is therefore by exclusion:
+ * exclude only protocol scopes (`session` / `userInteraction`); all others count as contact. A missing
+ * scope also counts as contact.
  */
 export function isWorldTouchingToolCall(capability: {
   sideEffectScope?: ToolSideEffectScope | undefined;
@@ -172,10 +177,11 @@ export interface ToolContractDeclaration {
   inputSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
   /**
-   * 声明 `inputSchema` **有资格**走 provider 的严格模式（Anthropic `strict: true`：constrained
-   * decoding 保证 tool_use.input 恰好满足 schema）。只是资格，不是命令：adapter 按 provider /
-   * model 决定是否真的下发，并负责把 strict 子集表达不了的关键字折进 description。缺席即不严格。
-   * 首个使用者是 dwf mono 子代理的 typed `submit_result`。
+   * Declares that `inputSchema` is **eligible** for the provider's strict mode (Anthropic
+   * `strict: true`: constrained decoding guarantees `tool_use.input` exactly matches the schema).
+   * This is eligibility, not a command: the adapter decides whether to send it based on provider /
+   * model, and folds keywords unsupported by the strict subset into the description. Omission means
+   * non-strict. The first user is the typed `submit_result` tool for dwf mono subagents.
    */
   strict?: boolean;
   requiresUserInteraction?: boolean;

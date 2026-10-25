@@ -36,10 +36,10 @@ const MODE_ICONS: Record<DynamicWorkflowMode, ComponentType<SVGProps<SVGSVGEleme
 };
 
 /**
- * 设置行要显示什么（docs/dynamic-workflow/launch.md「The user's choice」）。快照就绪后总是出现：
- * 服务端只决定默认值，提供的是 disabled 时「默认」落在「关闭」上，用户照样可以打开。
- * 只有快照加载中、读取失败、或来自不认用户选择的旧 Host（没有 offeredMode）时返回 null。
- * 值与「默认」都取 Host 算好的结果，renderer 不自己套用户选择。
+ * What the settings row should display (docs/dynamic-workflow/launch.md "The user's choice"). Once the snapshot is ready,
+ * the row always appears: the server only decides the default, and when disabled the "default" falls on "off" while the user can still turn it on.
+ * Returns null only while the snapshot is loading, on read failure, or for an older Host that does not understand the user's choice (no offeredMode).
+ * Both the value and the "default" come from the Host-computed result; the renderer does not apply the user's choice itself.
  */
 export function resolveDynamicWorkflowModeSettingView(
   snapshot: DynamicWorkflowAvailabilitySnapshot,
@@ -50,7 +50,7 @@ export function resolveDynamicWorkflowModeSettingView(
   return offeredMode ? { value: config.mode, offeredMode } : null;
 }
 
-/** 选回服务端提供的模式等于删除选择（空串哨兵，服务层归一成删除），安装继续跟随服务端翻转。 */
+/** Selecting the server-provided mode equals deleting the choice (empty-string sentinel, normalized to deletion by the service layer); installs keep following server flips. */
 export function buildDynamicWorkflowModePatch(
   next: DynamicWorkflowMode,
   offeredMode: DynamicWorkflowMode,
@@ -64,8 +64,8 @@ export function DynamicWorkflowModeSetting() {
   const { intl } = useZCodeIntl();
   const { update } = useSettings();
   const view = resolveDynamicWorkflowModeSettingView(useDynamicWorkflowAvailability());
-  // 选择落盘 → Root 通知 Host 重发策略 → 快照重读，整条链要几百毫秒；期间触发器先显示用户刚选的值。
-  // 行可见即功能已提供，此时生效模式必然等于用户所选，所以乐观值与最终值一致。
+  // Persist the choice → Root notifies the Host to re-push the policy → snapshot reread; the whole chain takes several hundred ms; the trigger shows the just-selected value meanwhile.
+  // A visible row means the feature is offered, so the effective mode must equal the user's choice; the optimistic and final values match.
   const [pending, setPending] = useState<DynamicWorkflowMode | null>(null);
   const settledValue = view?.value;
   useEffect(() => {
@@ -89,13 +89,13 @@ export function DynamicWorkflowModeSetting() {
     }
   };
 
-  // 不包外层元素：SettingsRow 靠 first:border-t-0 画行间分隔线，包一层会让它变成首行而丢掉上边框。
+  // No wrapping element: SettingsRow draws row separators via first:border-t-0; wrapping would make this the first row and drop the top border.
   return (
     <SettingsRow
       label={label}
       description={intl.formatMessage({ id: "settings.dynamicWorkflowDescription" })}
-      // Bugfix：默认控件列只有 192px，flex 会把 260px 的触发器压到 192px，跟随触发器宽度的列表也随之过窄；
-      // wide 布局给 280px 控件列（手机宽度下换到标签下方），触发器与列表都按设计稿的 260px 显示。
+      // Bugfix: the default control column is only 192px and flex would squeeze the 260px trigger down to 192px, making the list that follows the trigger width too narrow;
+      // the wide layout gives a 280px control column (label moves below on phone widths), so trigger and list both render at the design's 260px.
       controlLayout="wide"
       control={
         <Select value={value} onValueChange={(next) => void handleValueChange(next)}>
@@ -107,9 +107,9 @@ export function DynamicWorkflowModeSetting() {
           >
             <SelectValue />
           </SelectTrigger>
-          {/* 两行选项用 popper 展开在触发器下方，item-aligned 会盖住本行的标签与说明。
-              Bugfix：popper 只给了 min-width，列表宽度会被最长的一行说明撑开；固定为触发器宽度（260px），
-              说明在列表内折行，与设计稿一致。 */}
+          {/* Two-line options expand with popper below the trigger; item-aligned would cover this row's label and description.
+              Bugfix: popper only sets min-width, so the list width would be blown out by the longest description line; fix it to the trigger width (260px),
+              letting descriptions wrap inside the list, matching the design. */}
           <SelectContent
             position="popper"
             align="end"

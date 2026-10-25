@@ -1,14 +1,11 @@
-/* eslint-disable max-lines -- Bot bot reply formatter 集中维护第三方消息的文本颗粒度、工具摘要和权限摘要，避免 provider 间文案分叉。 */
+/* eslint-disable max-lines -- Keep third-party message text chunking, tool summaries, and permission summaries for Bot replies together to prevent copy from diverging across providers. */
 import type {
   ZCodePermissionRequest,
   ZCodeStreamEvent,
   ZCodeTaskChangeSummary,
   Locale,
 } from "@zcode/shared";
-import {
-  getCompactToolCallSummary,
-  getPermissionRequestPreview,
-} from "@zcode/shared";
+import { getCompactToolCallSummary, getPermissionRequestPreview } from "@zcode/shared";
 import { normalizeBotMessageLocale } from "./messages.js";
 
 export interface BotReplyToolCallState {
@@ -82,10 +79,53 @@ const formatterMessages = {
     moreToolCalls: "{count} more tool calls",
     moreFiles: "{count} more files",
   },
+  "uk-UA": {
+    toolCalls: "Виклики інструментів:",
+    completed: "Завершено",
+    failed: "Помилка",
+    denied: "Відхилено",
+    inProgress: "Виконується",
+    pending: "Очікує",
+    permissionRequired: "Потрібен дозвіл:",
+    editWriting: "Запис",
+    editUpdating: "Оновлення",
+    editDeleting: "Видалення",
+    editEditing: "Редагування",
+    changeSummary: "Зведення змін",
+    moreToolCalls: "Ще викликів інструментів: {count}",
+    moreFiles: "Ще файлів: {count}",
+  },
 } as const;
 
 function t(locale: Locale | undefined, key: keyof (typeof formatterMessages)["zh-CN"]): string {
   return formatterMessages[normalizeBotMessageLocale(locale)][key];
+}
+
+const UK_FILE_NOUN: Record<Intl.LDMLPluralRule, string> = {
+  zero: "файлів",
+  one: "файл",
+  two: "файли",
+  few: "файли",
+  many: "файлів",
+  other: "файлу",
+};
+
+function formatChangeSummaryHeader(
+  locale: Locale | undefined,
+  fileCount: number,
+  diffCount: string,
+): string {
+  const title = t(locale, "changeSummary");
+  switch (normalizeBotMessageLocale(locale)) {
+    case "zh-CN":
+      return `${title}：${fileCount} 个文件，${diffCount}`;
+    case "uk-UA": {
+      const noun = UK_FILE_NOUN[new Intl.PluralRules("uk-UA").select(fileCount)];
+      return `${title}: ${fileCount} ${noun}, ${diffCount}`;
+    }
+    default:
+      return `${title}: ${fileCount} files, ${diffCount}`;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -110,7 +150,7 @@ function truncateMiddleText(value: string, maxLength = MAX_COMMAND_FIELD_LENGTH)
 }
 
 function formatMarkdownInlineCode(value: string): string {
-  // Telegram Markdown 的 inline code 需要转义反斜杠和反引号，否则路径/命令里的特殊字符会导致文本退回裸显示。
+  // Telegram Markdown inline code must escape backslashes and backticks; otherwise special characters in paths/commands make the text fall back to plain display.
   return `\`${value.replace(/\\/gu, "\\\\").replace(/`/gu, "\\`")}\``;
 }
 
@@ -162,7 +202,9 @@ function formatCompactSummaryDetail(
 ): string | undefined {
   const parts: string[] = [];
   if (summary.secondaryText) {
-    parts.push(formatMarkdownInlineCode(truncateMiddleText(normalizeInlineText(summary.secondaryText))));
+    parts.push(
+      formatMarkdownInlineCode(truncateMiddleText(normalizeInlineText(summary.secondaryText))),
+    );
   }
   if (summary.changeStat) {
     const stat = formatBotDiffCount(summary.changeStat);
@@ -206,7 +248,10 @@ function formatPermissionRequestTitle(
     titleWithoutEdit && titleWithoutEdit !== preview.title
       ? titleWithoutEdit
       : preview.filePaths.length === 1 || preview.fileChanges.length === 1
-        ? toWorkspaceRelativePath((preview.filePaths[0] ?? preview.fileChanges[0]?.path)!, options?.workspacePath)
+        ? toWorkspaceRelativePath(
+            (preview.filePaths[0] ?? preview.fileChanges[0]?.path)!,
+            options?.workspacePath,
+          )
         : "";
   return targetText ? `${label} ${targetText}` : label;
 }
@@ -221,21 +266,26 @@ function formatEditPermissionKindLabel(
     request.description,
     isRecord(request.raw) && typeof request.raw.kind === "string" ? request.raw.kind : undefined,
     isRecord(request.raw) && typeof request.raw.title === "string" ? request.raw.title : undefined,
-  ].filter((value): value is string => typeof value === "string").join(" ");
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
   const normalizedText = rawText.trim().toLowerCase();
   const fileChangeType = preview.fileChange?.type;
 
   if (/\b(delete|deleted|remove|removed|erase|erased|unlink|rm)\b/u.test(normalizedText)) {
     return t(locale, "editDeleting");
   }
-  if (fileChangeType === "add" || /\b(write|wrote|create|created|add|added|save|saved|new)\b/u.test(normalizedText)) {
+  if (
+    fileChangeType === "add" ||
+    /\b(write|wrote|create|created|add|added|save|saved|new)\b/u.test(normalizedText)
+  ) {
     return t(locale, "editWriting");
   }
   if (/\b(update|updating|updated)\b/u.test(normalizedText)) {
     return t(locale, "editUpdating");
   }
-  // Bugfix: edit 权限标题直接透传 ZCode Agent 的 "Edit <path>" 时，第三方消息无法像 UI kindLabel 一样区分写入/更新/删除。
-  // 这里至少把泛化的 Edit 换成 edit kind label，具体操作能从 raw/fileChange 推断时再细分。
+  // Bug fix: when an edit permission title passes through the ZCode Agent's "Edit <path>", third-party messages cannot distinguish write/update/delete like the UI kindLabel.
+  // At minimum, replace the generic Edit with the edit kind label; refine the operation when it can be inferred from raw/fileChange.
   return t(locale, "editEditing");
 }
 
@@ -261,7 +311,8 @@ function formatToolStatus(
   locale?: Locale,
 ): string {
   if (status === "completed") return t(locale, "completed");
-  if (status === "failed") return `${t(locale, "failed")}${error ? `: ${truncateText(normalizeInlineText(error))}` : ""}`;
+  if (status === "failed")
+    return `${t(locale, "failed")}${error ? `: ${truncateText(normalizeInlineText(error))}` : ""}`;
   if (status === "denied") return t(locale, "denied");
   if (status === "in_progress") return t(locale, "inProgress");
   return t(locale, "pending");
@@ -294,8 +345,8 @@ export function extractBotAssistantResponseMessages(
     return { messages: [], rest: normalizedBuffer };
   }
 
-  // Bugfix: Bot channel 的 provider chunk 常按词或子词到达，非终态时必须继续留在
-  // assistantReplyBuffer 里合并；真正的发送边界由 tool_call / task_complete 等 force flush 决定。
+  // Bug fix: provider chunks on Bot channels often arrive by word or subword. Keep merging them in
+  // assistantReplyBuffer until a terminal state; tool_call / task_complete and other force flushes determine the actual send boundary.
   return {
     messages: splitLongReplyText(normalizedBuffer),
     rest: "",
@@ -318,9 +369,10 @@ export function formatBotPermissionRequestSummary(
   if (preview.command) {
     return `${header}\n${formatMarkdownInlineCode(truncateMiddleText(preview.command))}`;
   }
-  const previewFilePaths = preview.filePaths.length > 0
-    ? preview.filePaths
-    : preview.fileChanges.map((change) => change.path);
+  const previewFilePaths =
+    preview.filePaths.length > 0
+      ? preview.filePaths
+      : preview.fileChanges.map((change) => change.path);
   if (previewFilePaths.length > 0) {
     const paths = previewFilePaths
       .slice(0, 3)
@@ -332,13 +384,10 @@ export function formatBotPermissionRequestSummary(
   return header;
 }
 
-export function isBotToolCallReplyTerminal(
-  status?: BotReplyToolCallState["status"],
-): boolean {
-  return status === "completed" ||
-    status === "failed" ||
-    status === "denied" ||
-    status === "stopped";
+export function isBotToolCallReplyTerminal(status?: BotReplyToolCallState["status"]): boolean {
+  return (
+    status === "completed" || status === "failed" || status === "denied" || status === "stopped"
+  );
 }
 
 function formatBotChangeSummary(
@@ -349,15 +398,19 @@ function formatBotChangeSummary(
     return "";
   }
   const lines = [
-    options?.locale === "en-US"
-      ? `${t(options.locale, "changeSummary")}: ${changeSummary.fileCount} files, ${formatBotDiffCount(changeSummary)}`
-      : `${t(options?.locale, "changeSummary")}：${changeSummary.fileCount} 个文件，${formatBotDiffCount(changeSummary)}`,
+    formatChangeSummaryHeader(
+      options?.locale,
+      changeSummary.fileCount,
+      formatBotDiffCount(changeSummary),
+    ),
   ];
   for (const file of changeSummary.files.slice(0, MAX_TOOL_SUMMARY_ITEMS)) {
     lines.push(`- ${formatMarkdownInlineCode(file.path)} (${formatBotDiffCount(file)})`);
   }
   if (changeSummary.files.length > MAX_TOOL_SUMMARY_ITEMS) {
-    lines.push(`- ${t(options?.locale, "moreFiles").replace("{count}", String(changeSummary.files.length - MAX_TOOL_SUMMARY_ITEMS))}`);
+    lines.push(
+      `- ${t(options?.locale, "moreFiles").replace("{count}", String(changeSummary.files.length - MAX_TOOL_SUMMARY_ITEMS))}`,
+    );
   }
   return lines.join("\n");
 }

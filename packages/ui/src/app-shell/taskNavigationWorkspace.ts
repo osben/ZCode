@@ -19,13 +19,39 @@ export function ensureTaskNavigationWorkspace(params: {
   }
 
   if (workspaceIdentity) {
-    // 远程 workspace 的 identity 只表达隔离身份，不能据此重建 SSH/WSL/Docker
-    // attachment。当前窗口没有匹配 tab 时必须 fail-closed，避免创建无法连接的伪远程 tab。
+    // A remote workspace identity expresses isolation only; it cannot recreate an SSH/WSL/Docker
+    // attachment. If the current window has no matching tab, fail closed to avoid creating an unconnectable remote tab.
     return { accepted: false, reason: "remote_attachment_missing" };
   }
 
-  // Automations 是跨项目列表，运行历史所属的本地 workspace 可能已经关闭。
-  // 只尝试 activate 的话，失败后仍关闭 Automations，最终留在当前项目的旧会话。
+  // Automations is a cross-project list, and the local workspace for a run's history may already be closed.
+  // If we only try to activate it, failure still closes Automations and leaves the user in the current project's old session.
   params.addLocalWorkspaceTab(params.workspacePath);
   return { accepted: true, openedLocalTab: true };
+}
+
+/**
+ * Selects a task after making its workspace visible. handleSelectTask only activates an existing tab, so a task of a
+ * local project whose tab is closed (the command-center search covers those, ISSUE-020) used to be selected in a
+ * hidden workspace and the view never moved (ISSUE-069).
+ */
+export function selectTaskInNavigationWorkspace(params: {
+  target: { workspacePath: string; taskId: string; workspaceIdentity?: string };
+  activateTabByPath: (workspacePath: string, options?: { workspaceIdentity?: string }) => boolean;
+  addLocalWorkspaceTab: (workspacePath: string) => void;
+  selectTask: (workspacePath: string, taskId: string, workspaceIdentity?: string) => void;
+  onRejected: (reason: "remote_attachment_missing") => void;
+}): void {
+  const { workspacePath, taskId, workspaceIdentity } = params.target;
+  const result = ensureTaskNavigationWorkspace({
+    workspacePath,
+    workspaceIdentity,
+    activateTabByPath: params.activateTabByPath,
+    addLocalWorkspaceTab: params.addLocalWorkspaceTab,
+  });
+  if (!result.accepted) {
+    params.onRejected(result.reason);
+    return;
+  }
+  params.selectTask(workspacePath, taskId, workspaceIdentity);
 }

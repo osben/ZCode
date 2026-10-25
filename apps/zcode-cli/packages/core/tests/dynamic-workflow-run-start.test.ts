@@ -1,14 +1,14 @@
-// 中枢直接启动已保存工作流的 runtime 方法（docs/dynamic-workflow/launch.md「On the agent」
-// 与「启动轮」行）。它是 `port.submit` 的第二个调用方，与 CreateWorkflow 工具路径同构：复用
-// resolveSavedWorkflow + validateWorkflowArgs 归一化、trackExternalBackgroundTask 追踪，但绕开
-// 权限判定 + alwaysAsk，并以一条 controlOnly 启动轮把用户真实动作落进会话。
+// Runtime method for the hub to directly launch a saved workflow (docs/dynamic-workflow/launch.md "On the agent"
+// and the "launch turn" row). It is `port.submit`'s second caller, isomorphic with the CreateWorkflow tool path:
+// it reuses resolveSavedWorkflow + validateWorkflowArgs normalization and trackExternalBackgroundTask tracking, but
+// bypasses the permission decision + alwaysAsk, and lands the user's real action into the session as one controlOnly launch turn.
 //
-// 两组不变式被钉在这里：
-//   1. 失败在任何持久化之前——not_found / invalid_name / invalid_args / compile_failed /
-//      session_busy 任一都零 submit、零消息、零事件、零追踪。
-//   2. 成功路径 submit 参数 + 启动轮消息（source/visibility/metadata）+ TurnStarted/TurnComplete
-//      （controlOnly、workflowLaunch）+ trackExternalBackgroundTask 合成 CreateWorkflow 形状 +
-//      会话标题 = 工作流名。
+// Two groups of invariants are pinned here:
+//   1. Failure precedes any persistence — not_found / invalid_name / invalid_args / compile_failed /
+//      session_busy each mean zero submits, zero messages, zero events, zero tracking.
+//   2. The success path submits args + the launch-turn message (source/visibility/metadata) + TurnStarted/TurnComplete
+//      (controlOnly, workflowLaunch) + a trackExternalBackgroundTask synthesized CreateWorkflow shape +
+//      session title = the workflow name.
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,14 +30,14 @@ import { AgentRuntime, saveSavedWorkflow } from "../src/index.js";
 import { createTestSessionEventStore } from "./test-event-store.js";
 
 const OK_SCRIPT = "return 42;";
-/** 分析器语料里的脚本（与 create-workflow-tool.test.ts 同一份 corpus、同一条读法）。 */
+/** A script from the analyzer corpus (same corpus, same reading as create-workflow-tool.test.ts). */
 function fixture(name: string): string {
   return readFileSync(
     new URL(`../../dynamic-workflow/tests/graphs/${name}`, import.meta.url),
     "utf8",
   );
 }
-// 带阶段标记与两个子代理的脚本：显示图必须三层齐全（站点 / 阶段词汇表 / 子代理卡）。
+// A script with phase markers and two subagents: the display graph must have all three layers (sites / phase vocabulary / subagent cards).
 const PHASED_SCRIPT = [
   'phase("plan");',
   'const plan = await agent("planner").ask<string>("plan it");',
@@ -57,7 +57,7 @@ function makeDir(prefix: string): string {
   return dir;
 }
 
-// 全局根默认取 os.homedir()：把 HOME 指到空临时目录，避免扫到开发机真实的 ~/.zcode/workflows。
+// The global root defaults to os.homedir(): point HOME at an empty temp dir to avoid scanning the dev machine's real ~/.zcode/workflows.
 let originalHome: string | undefined;
 let originalUserProfile: string | undefined;
 beforeEach(() => {
@@ -81,7 +81,7 @@ interface RecordingStore {
   savedParts: MessagePart[];
 }
 
-/** 最小录制会话 store：够 ensureSessionPersisted + 启动轮消息落库与断言用。 */
+/** Minimal recording session store: enough for ensureSessionPersisted + landing and asserting the launch-turn messages. */
 function createRecordingStore(): RecordingStore & Record<string, unknown> {
   const createdSessions: CreateSessionInput[] = [];
   const savedMessages: MessageInfo[] = [];
@@ -135,14 +135,14 @@ interface SubmitCall {
   args?: Record<string, unknown>;
   parentSessionId?: string;
   toolCallId?: string;
-  /** 侧栏迷你轨道的两张表；中枢直接启动与 CreateWorkflow 工具路径必须画出同一条轨道。 */
+  /** The sidebar mini rail's two tables; the hub's direct launch and the CreateWorkflow tool path must draw the same rail. */
   phaseNames?: string[];
   phaseAlongside?: number[][];
-  /** 工作副本的落点（docs/dynamic-workflow/launch.md「Script files」）。 */
+  /** Where the working copy lands (docs/dynamic-workflow/launch.md "Script files"). */
   scriptPath?: string;
-  /** 脚本点名的模型（docs/dynamic-workflow/launch.md「Models the script names」）。 */
+  /** The models the script names (docs/dynamic-workflow/launch.md "Models the script names"). */
   modelBindings?: Record<string, unknown>;
-  /** 测试侧记录：submit 那一刻 store 里已落的会话行数（父会话必须先于 submit 落行）。 */
+  /** Test-side record: how many session rows the store already held at submit time (the parent session must persist its row before submit). */
   sessionsPersistedAtSubmit?: number;
 }
 
@@ -174,7 +174,7 @@ function makeRuntime(options: {
           submitCalls.push({ ...request, sessionsPersistedAtSubmit: store.createdSessions.length });
           return options.submit ? options.submit(request) : { ok: true, runId: "dwfrun-launch-1" };
         },
-        // 追踪器会挂一个 waiter；永不 settle，测试不等完成。
+        // The tracker attaches a waiter; it never settles, and the tests do not wait for completion.
         async getTask() {
           return {
             runId: "dwfrun-launch-1",
@@ -213,7 +213,7 @@ describe("startSavedWorkflowRun — 失败在任何持久化之前", () => {
     const cwd = makeDir("dwf-launch-cwd-");
     seed(cwd, "reporter", OK_SCRIPT);
     const { runtime, events, store, submitCalls } = makeRuntime({ name: "busy", cwd });
-    // 制造忙碌：hasActiveOrQueuedTurnWork 读 activeTurn。
+    // Manufacture busy-ness: hasActiveOrQueuedTurnWork reads activeTurn.
     (runtime as unknown as { activeTurn: unknown }).activeTurn = { pendingInputs: [] };
 
     const result = await runtime.startSavedWorkflowRun({ name: "reporter" });
@@ -252,7 +252,7 @@ describe("startSavedWorkflowRun — 失败在任何持久化之前", () => {
 
   it("invalid_args：多传未声明参数即拒绝，零 submit", async () => {
     const cwd = makeDir("dwf-launch-cwd-");
-    seed(cwd, "reporter", OK_SCRIPT); // 无 args 声明
+    seed(cwd, "reporter", OK_SCRIPT); // no args declared
     const { runtime, submitCalls, store, events } = makeRuntime({ name: "badargs", cwd });
 
     const result = await runtime.startSavedWorkflowRun({ name: "reporter", args: { pr: "12" } });
@@ -280,8 +280,8 @@ describe("startSavedWorkflowRun — 失败在任何持久化之前", () => {
     expect(events).toHaveLength(0);
   });
 
-  // docs/dynamic-workflow/launch.md「On the agent」：脚本点名的模型与 CreateWorkflow 同一段代码解析，
-  // 解不出来的名字是 9011，按 compile_failed 拒绝。
+  // docs/dynamic-workflow/launch.md "On the agent": models the script names resolve through the same code as
+  // CreateWorkflow; an unresolvable name is 9011, rejected as compile_failed.
   it("compile_failed：脚本点名的模型在本机目录里解析不出来（9011），零 submit", async () => {
     const cwd = makeDir("dwf-launch-cwd-");
     seed(cwd, "judged", 'await agent("评审员", { model: "gemini-3" }).ask("x");\nreturn 1;');
@@ -311,7 +311,7 @@ describe("startSavedWorkflowRun — 失败在任何持久化之前", () => {
         eventStore: createTestSessionEventStore(),
         sessionStore: store as never,
         modelAdapter: {} as never,
-        // 无 dynamicWorkflowRunPort。
+        // No dynamicWorkflowRunPort.
       },
     );
     const result = await runtime.startSavedWorkflowRun({ name: "reporter" });
@@ -323,9 +323,10 @@ describe("startSavedWorkflowRun — 失败在任何持久化之前", () => {
 
 describe("startSavedWorkflowRun — 成功路径", () => {
   it("启动轮元数据的显示图三层齐全：站点、阶段词汇表、子代理卡（与 CreateWorkflow 同一投影）", async () => {
-    // 2026-09-14 实机根因：启动路径手拼 boundCausalityGraph 实参而只传了因果图，display 有站点
-    // 却没有 phases / participants，run 详情侧板只剩一条空脊线、没有子代理。零 ask 的 OK_SCRIPT
-    // 看不出这一层缺失，所以这里用带阶段与两个子代理的脚本钉住三层。
+    // Root cause observed on a real machine 2026-09-14: the launch path hand-assembled boundCausalityGraph arguments
+    // and passed only the causality graph, so display had sites but no phases / participants, and the run detail
+    // side panel showed an empty spine with no subagents. The zero-ask OK_SCRIPT cannot reveal that missing layer,
+    // so this pins all three layers with a script that has phases and two subagents.
     const cwd = makeDir("dwf-launch-cwd-");
     seed(cwd, "phased", PHASED_SCRIPT);
     const { runtime, store } = makeRuntime({
@@ -364,8 +365,9 @@ describe("startSavedWorkflowRun — 成功路径", () => {
     }
   });
 
-  // 侧栏迷你轨道的两张表（docs/dynamic-workflow/presentation.md「The sidebar run line」）：
-  // 中枢直接启动与 CreateWorkflow 工具路径读同一个投影、同一对函数，同一脚本画同一条轨道。
+  // The sidebar mini rail's two tables (docs/dynamic-workflow/presentation.md "The sidebar run line"):
+  // the hub's direct launch and the CreateWorkflow tool path read the same projection and the same function pair; the
+  // same script draws the same rail.
   it("submit 带上声明阶段表与「同时在跑」表", async () => {
     const cwd = makeDir("dwf-launch-cwd-");
     seed(cwd, "parallel", fixture("strand-fanout-two-phases-join.ts"));
@@ -383,8 +385,8 @@ describe("startSavedWorkflowRun — 成功路径", () => {
     expect(submitCalls[0]!.phaseAlongside).toEqual([[], [0], []]);
   });
 
-  // docs/dynamic-workflow/launch.md「Script files」：中枢直接启动与 CreateWorkflow 的 saved 来源
-  // 是同一件事，所以工作副本也按同一条规矩写——逐字节，保存的定义本身一个字都不动。
+  // docs/dynamic-workflow/launch.md "Script files": the hub's direct launch and CreateWorkflow share the same saved
+  // source, so the working copy follows the same rule — byte-for-byte, with the saved definition itself untouched.
   it("submit 带上工作副本的落点，拷贝逐字节等于保存的文件", async () => {
     const cwd = makeDir("dwf-launch-cwd-");
     seed(cwd, "reporter", OK_SCRIPT, { description: "Write a daily report" });
@@ -434,10 +436,10 @@ describe("startSavedWorkflowRun — 成功路径", () => {
     const toolCallId = (result as { toolCallId: string }).toolCallId;
     expect(result).toMatchObject({ ok: true, runId: "dwfrun-ok" });
     expect(toolCallId).toMatch(/^launch-/);
-    // 协议层据此让会话离开 draft（进 session/list 与 sessions-index，侧栏才看得见）。
+    // This is what lets the protocol layer move the session out of draft (into session/list and sessions-index, so the sidebar can see it).
     expect(runtime.isSessionPersisted()).toBe(true);
 
-    // submit：脚本逐字、name = 解析名、parentSessionId = 会话、toolCallId = launch- 前缀；无 args 键。
+    // submit: script verbatim, name = resolved name, parentSessionId = the session, toolCallId = launch- prefix; no args key.
     expect(submitCalls).toHaveLength(1);
     expect(submitCalls[0]).toMatchObject({
       scriptText: OK_SCRIPT,
@@ -447,12 +449,13 @@ describe("startSavedWorkflowRun — 成功路径", () => {
       toolCallId,
     });
     expect(submitCalls[0]!.args).toBeUndefined();
-    // 父会话行必须先于 submit 落库（actor 的 session_task_link.parent_session_id 对 session(id)
-    // 有外键；2026-09-03 实机首启即以 DriverError「创建 actor 会话失败」结算的根因）。
+    // The parent session row must persist before submit (the actor's session_task_link.parent_session_id has a
+    // foreign key on session(id); the root cause of the 2026-09-03 real-machine first launch settling as DriverError
+    // "failed to create actor session").
     expect(submitCalls[0]!.sessionsPersistedAtSubmit).toBe(1);
     expect(store.createdSessions[0]).toMatchObject({ id: "sess_ok-noargs" });
 
-    // 启动轮消息：role=user、synthetic、source/visibility、real_user 语义、workflowLaunch 元数据。
+    // Launch-turn message: role=user, synthetic, source/visibility, real_user semantics, workflowLaunch metadata.
     const launchMessage = store.savedMessages.find((m) => m.source === "workflow_launch");
     expect(launchMessage).toBeDefined();
     expect(launchMessage).toMatchObject({
@@ -474,8 +477,10 @@ describe("startSavedWorkflowRun — 成功路径", () => {
       scope: "project",
       description: "Write a daily report",
     });
-    // 图与脚本随启动轮走（侧板按 toolCallId 找发起行取图/脚本，直接启动没有工具行）。
-    // OK_SCRIPT 是零 ask 的最小脚本：图可为空，但 display 本体（同一构造函数）与脚本原文必须在。
+    // Graph and script travel with the launch turn (the side panel finds the originating row by toolCallId for the
+    // graph/script; a direct launch has no tool row).
+    // OK_SCRIPT is a minimal zero-ask script: the graph may be empty, but the display itself (same constructor) and
+    // the verbatim script must be present.
     const launchMeta = launchMessage?.metadata?.workflowLaunch as
       | { display?: { kind?: string; ok?: boolean; diagnostics?: unknown[] }; script?: string }
       | undefined;
@@ -486,7 +491,7 @@ describe("startSavedWorkflowRun — 成功路径", () => {
     });
     expect(launchMeta?.script).toBe(OK_SCRIPT);
 
-    // 消息正文 = 规范英文句（旧客户端降级呈现），劝阻重复启动。
+    // Message body = the canonical English sentence (old clients render it as a fallback), discouraging a duplicate launch.
     const part = store.savedParts.find(
       (p) => p.messageID === launchMessage?.id && p.type === "text",
     );
@@ -496,7 +501,7 @@ describe("startSavedWorkflowRun — 成功路径", () => {
     expect((part as { text?: string } | undefined)?.text).toContain("do not start it again");
     expect((part as { text?: string } | undefined)?.text).not.toContain("Arguments:");
 
-    // TurnStarted：controlOnly + inputSource + workflowLaunch。
+    // TurnStarted: controlOnly + inputSource + workflowLaunch.
     const turnStarted = events.find((e) => e.type === SessionEventType.TurnStarted);
     expect(turnStarted?.payload).toMatchObject({
       executionKind: "controlOnly",
@@ -505,7 +510,7 @@ describe("startSavedWorkflowRun — 成功路径", () => {
     });
     expect(events.some((e) => e.type === SessionEventType.TurnComplete)).toBe(true);
 
-    // 追踪：合成 CreateWorkflow 描述子 → BackgroundTaskStarted（workflow 面板、可取消、subject=名）。
+    // Tracking: a synthesized CreateWorkflow descriptor → BackgroundTaskStarted (workflow panel, cancellable, subject=name).
     const started = events.find((e) => e.type === SessionEventType.BackgroundTaskStarted);
     expect(started?.payload).toMatchObject({
       cancellable: true,
@@ -518,7 +523,7 @@ describe("startSavedWorkflowRun — 成功路径", () => {
     });
     expect(runtime.hasRunningBackgroundTasks()).toBe(true);
 
-    // 会话标题 = 工作流名（first_input）。
+    // Session title = the workflow name (first_input).
     expect(store.createdSessions[0]?.title).toBe("reporter");
     expect(store.createdSessions[0]?.titleSource).toBe("first_input");
   });
@@ -538,7 +543,7 @@ describe("startSavedWorkflowRun — 成功路径", () => {
     const result = await runtime.startSavedWorkflowRun({ name: "review", args: { pr: "42" } });
 
     expect(result.ok).toBe(true);
-    // validateWorkflowArgs 回填默认值 deep=false。
+    // validateWorkflowArgs backfills the default deep=false.
     expect(submitCalls[0]!.args).toEqual({ pr: "42", deep: false });
 
     const launchMessage = store.savedMessages.find((m) => m.source === "workflow_launch");

@@ -1,40 +1,37 @@
-# ZCode 早期分层架构（历史）
+# ZCode Early Layered Architecture (Historical)
 
-本文记录项目从共享 UI + Channel RPC + service interface 起步时的分层背景。它不再描述当前 Host 数量、
-remote topology、Root props 或 conversation 数据流；当前事实请读
-[Z Code 代码架构总览](./zcode-code-architecture-overview.md)。
+This document records the layering context from when the project began with a shared UI, Channel RPC, and service interfaces. It no longer describes the current number of Hosts, remote topology, Root props, or conversation data flow; see the [Z Code Code Architecture Overview](./zcode-code-architecture-overview.md) for current facts.
 
-## 仍然有效的设计原则
+## Design Principles That Still Apply
 
-- Desktop、Web 和 mobile remote 复用 `packages/ui`，平台差异通过依赖注入处理。
-- UI 依赖 service/protocol interface，不直接调用 Repo、Node implementation 或 Electron main。
-- `packages/rpc` 只提供 channel、transport、proxy、事件和日志中间件，不拥有业务语义。
-- `packages/services` 定义 Host 业务接口和 Node 实现；`packages/client` 负责创建 service proxy。
-- `packages/desktop` / `packages/web` 负责平台装配，不能把平台对象泄漏回共享 UI。
-- 新增 service 仍应注册 descriptor、实现、accessor 和 client proxy，并保持 browser-safe type import。
+- Desktop, Web, and mobile remote reuse `packages/ui`; platform differences are handled through dependency injection.
+- The UI depends on service/protocol interfaces and does not call Repos, Node implementations, or Electron main directly.
+- `packages/rpc` provides only channels, transport, proxies, events, and logging middleware; it does not own business semantics.
+- `packages/services` defines Host business interfaces and Node implementations; `packages/client` creates service proxies.
+- `packages/desktop` / `packages/web` handle platform composition and must not leak platform objects into the shared UI.
+- New services should register a descriptor, implementation, accessor, and client proxy, and keep type imports browser-safe.
 
-## 已失效的早期假设
+## Obsolete Early Assumptions
 
-早期文档曾把系统描述为“单 server + HTTP/WebSocket/stdio 三入口”，并让 renderer 从 task/session event
-自行拼 chat 状态。这些假设已经被以下实现替代：
+Early documents described the system as a “single server with HTTP/WebSocket/stdio entry points” and had the renderer assemble chat state from task/session events. These assumptions have been replaced by the following implementation:
 
 ```text
-旧：Renderer reducer -> task state -> UI
-新：ZCode CLI ProductProjection -> V4 topic -> read-only UI store
+Old: Renderer reducer -> task state -> UI
+New: ZCode CLI ProductProjection -> V4 topic -> read-only UI store
 
-旧：一个抽象 server 承载所有部署形态
-新：每个窗口的 Host/service graph + workspace-scoped CLI + remote attachment
+Old: One abstract server supports every deployment form
+New: Each window has a Host/service graph + workspace-scoped CLI + remote attachment
 ```
 
-同样已经失效的内容包括：
+The following assumptions are also obsolete:
 
-- `Root` 通过 `credentialStore` / `onConnectRemote` props 直接装配平台能力；
-- UI 使用 `window.zcode` 或 service concrete singleton；
-- credential 可以经 platform bridge 直接暴露给 renderer；
-- task list、conversation rows、queue、stop/fork availability 由 renderer store 统一拥有；
-- remote workspace 可以只按 `workspacePath` 识别。
+- `Root` directly composes platform capabilities through `credentialStore` / `onConnectRemote` props;
+- The UI uses `window.zcode` or a concrete service singleton;
+- Credentials can be exposed directly to the renderer through the platform bridge;
+- The renderer store jointly owns the task list, conversation rows, queue, and stop/fork availability;
+- A remote workspace can be identified by `workspacePath` alone.
 
-## 当前依赖方向
+## Current Dependency Direction
 
 ```text
 packages/shared  <- schema / platform contracts
@@ -46,12 +43,11 @@ desktop/web      <- platform composition
 apps/zcode-cli   <- Agent runtime + V4 authority
 ```
 
-跨域代码只能依赖对方公开 Types/contract。conversation 的新增协议先改
-`packages/shared/src/zcode-protocol-v4/`，再同步 CLI、Host transport 和多端消费者。
+Cross-domain code may depend only on the other domain's public types/contracts. For new conversation protocols, update `packages/shared/src/zcode-protocol-v4/` first, then synchronize the CLI, Host transport, and all clients.
 
-## 当前入口
+## Current Entry Points
 
-- [代码架构总览](./zcode-code-architecture-overview.md)
+- [Code Architecture Overview](./zcode-code-architecture-overview.md)
 - [Message Flow](./message-flow.md)
-- [RPC 架构](./rpc.md)
+- [RPC Architecture](./rpc.md)
 - [ZCode Protocol](../zcode-protocol.md)

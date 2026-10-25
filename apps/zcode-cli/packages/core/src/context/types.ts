@@ -11,8 +11,10 @@ import type {
   SkillLoadOutcome,
   UserInstructionsOptions,
 } from "@zcode/contracts";
+import type { IncognitoProfile, SystemPromptOverrides } from "@zcode/shared";
 import type { AutoCompactPolicyConfig } from "../compact/index.js";
 import type { AgentProfile } from "../subagent/profile.js";
+import type { ExecutionWorktreeEnvFact } from "./sections/env-info.js";
 
 export type {
   EnvInfo,
@@ -29,25 +31,25 @@ export type {
 // -----------------------------------------------
 
 export type ContextSource =
-  | "cli_prefix" // CLI / 产品身份前缀
-  | "identity" // Agent 基础描述
-  | "env_info" // 环境信息 (cwd, platform, git repo boolean)
+  | "cli_prefix" // CLI/product identity prefix
+  | "identity" // Agent base description
+  | "env_info" // Environment information (cwd, platform, git repo boolean)
   | "system_context" // git snapshot context
-  | "skills" // 可用 skills
-  | "tools" // 工具定义
-  | "request_user_context" // request-level user context provider-visible 组合块
-  | "memory" // 长期 memory read path
-  | "current_date" // 当前日期
-  | "custom_system_prompt" // 自定义 stable system body
-  | "workflow_actor_identity" // 动态工作流子代理身份：契约 + persona 叠加
-  | "subagent_agent_prompt" // 子 agent 专属身份/任务 prompt
-  | "subagent_notes" // 子 agent 通用操作提醒
-  | "subagent_environment" // 子 agent 环境和模型上下文
-  | "dynamic_behavior" // 动态行为边界
-  | "session_guidance" // 当前可用内置能力指导
-  | "output_style" // 输出风格
-  | "context_management" // 长上下文管理提示
-  | "desktop_context"; // ZCode Desktop 渲染与交互协议
+  | "skills" // Available skills
+  | "tools" // Tool definitions
+  | "request_user_context" // Combined provider-visible request-level user context
+  | "memory" // Long-term memory read path
+  | "current_date" // Current date
+  | "custom_system_prompt" // Custom stable system body
+  | "workflow_actor_identity" // Dynamic workflow subagent identity: contract plus persona
+  | "subagent_agent_prompt" // Subagent-specific identity/task prompt
+  | "subagent_notes" // General operating notes for subagents
+  | "subagent_environment" // Subagent environment and model context
+  | "dynamic_behavior" // Dynamic behavior boundaries
+  | "session_guidance" // Guidance for currently available built-in capabilities
+  | "output_style" // Output style
+  | "context_management" // Long-context management guidance
+  | "desktop_context"; // ZCode Desktop rendering and interaction protocol
 
 export type ContextInjectionTarget = "system" | "meta_user";
 
@@ -60,14 +62,14 @@ export type PresentationSurface = "terminal" | "zcode_desktop";
 // -----------------------------------------------
 
 export interface ContextSection {
-  name: string; // 人类可读的 section 名称
-  source: ContextSource; // 来源标识
-  injectionTarget: ContextInjectionTarget; // 注入位置
-  cacheHint: ContextCacheHint; // 缓存稳定性提示
-  chars: number; // 字符数
-  tokens: number; // 估算 token 数
-  content: string; // 完整内容
-  preview: string; // 前 100 字符预览
+  name: string; // Human-readable section name
+  source: ContextSource; // Source identifier
+  injectionTarget: ContextInjectionTarget; // Injection location
+  cacheHint: ContextCacheHint; // Cache-stability hint
+  chars: number; // Character count
+  tokens: number; // Estimated token count
+  content: string; // Full content
+  preview: string; // Preview of the first 100 characters
 }
 
 export type ContextMetaUserAttachmentSource = "skills_listing" | "context_prefix";
@@ -85,8 +87,8 @@ export interface ContextBuildResult {
   sections: ContextSection[];
   totalChars: number;
   totalTokens: number;
-  systemMessages: ModelInputMessage[]; // ContextBuilder 只组装 system messages
-  metaUserAttachments: ContextMetaUserAttachment[]; // 未包裹 <system-reminder> 的 meta user body
+  systemMessages: ModelInputMessage[]; // ContextBuilder assembles only system messages
+  metaUserAttachments: ContextMetaUserAttachment[]; // Meta user bodies not wrapped in <system-reminder>
 }
 
 export interface OutputStylePromptConfig {
@@ -103,8 +105,13 @@ export interface ContextBuilderConfig {
   workingDirectory: string;
   additionalDirectories?: readonly string[];
   envInfo: EnvInfo;
-  /** 当前步骤的执行对象，不进入 Context Source 或持久化环境快照。 */
+  /** Execution object for the current step; excluded from Context Source and persisted environment snapshots. */
   model?: Model;
+  /**
+   * Execution-worktree fact rendered into the Environment section at build time (isolation notice);
+   * like `model`, it is a render-time projection and is not persisted into envInfo snapshots.
+   */
+  executionWorktree?: ExecutionWorktreeEnvFact;
   presentationSurface?: PresentationSurface;
   genUiOutputDirectory?: string;
   currentDate?: string;
@@ -112,26 +119,34 @@ export interface ContextBuilderConfig {
   projectContext?: ProjectContext;
   memoryRoot?: string;
   memoryIndexContent?: string;
+  memoryIndexAsContext?: boolean;
   skills?: SkillLoadOutcome;
   agentProfiles?: readonly AgentProfile[];
   embeddedSearchEnabled?: boolean;
   skillMetadataBudget?: number;
   customSystemPrompt?: string;
   /**
-   * 动态工作流子代理（workflow child）的身份输入。在场即走 builder 的第三条路径：
-   * 基座段（CLI prefix、安全行、Harness、memory）+ 工作流子代理契约 + persona 叠加，
-   * 而不是像 `customSystemPrompt` 那样整段替换。与 `customSystemPrompt` 互斥。
+   * Identity input for a dynamic workflow subagent (workflow child). When present, use the builder's third path:
+   * base sections (CLI prefix, safety lines, Harness, memory) + workflow subagent contract + persona,
+   * rather than replacing the whole prompt as `customSystemPrompt` does. Mutually exclusive with `customSystemPrompt`.
    */
   workflowActor?: WorkflowActorContext;
   language?: string;
   outputStyle?: OutputStylePromptConfig;
+  /**
+   * User overrides for the editable system-prompt sections (docs/system-prompt-overrides.md).
+   * Each present key replaces that section's code default; absent keys keep the constant.
+   */
+  systemPromptOverrides?: SystemPromptOverrides;
   compact?: AutoCompactPolicyConfig;
   guidanceToolNames?: readonly string[];
+  /** Frozen incognito profile; absent for a normal session. Gates identity, harness and environment text. */
+  incognito?: IncognitoProfile;
 }
 
 /**
- * 工作流子代理的身份输入：有效名（匿名缺席）、作者写的 persona system prompt（可缺席）。
- * 没有工具档位：每个子代理都有完整工作工具集，契约只有一份文本。
+ * Identity input for a workflow subagent: effective name (omitted when anonymous) and author-written persona system prompt (optional).
+ * There are no tool tiers: every subagent has the full work toolset, and there is one contract text.
  */
 export interface WorkflowActorContext {
   name?: string;

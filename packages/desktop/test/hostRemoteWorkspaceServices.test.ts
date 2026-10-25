@@ -21,9 +21,14 @@ import {
   IRemoteProjectService,
   ITaskGroupService,
   IBroadcastService,
+  ISkillSyncService,
   type BroadcastMessage,
   type IServiceAccessor,
   ServiceCollection,
+  IBotsService,
+  IUsageStatsService,
+  IPromptAttachmentTransferService,
+  IUserInstructionsService,
 } from "@zcode/services";
 import { REMOTE_WORKSPACE_RPC_CHANNELS } from "../src/host/remoteWorkspaceRpcContract.js";
 import {
@@ -53,6 +58,10 @@ function createOnboardingRecordStub(): IOnboardingRecordService {
     dismissOnboarding: vi.fn(async () => {}),
     claimAnonymousRecord: vi.fn(async () => {}),
     shouldOnboard: vi.fn(async () => false),
+    getOnboardingEligibility: vi.fn(async () => ({
+      shouldOnboard: false,
+      recordFileExisted: false,
+    })),
     getLatestEntry: vi.fn(async () => null),
     syncSettingsFromRecord: vi.fn(async () => null),
     updateRecordPreferences: vi.fn(async () => {}),
@@ -143,6 +152,91 @@ describe("server remote workspace host service wiring", () => {
     expect(services.getOptional(IProviderSettingsService)).toBeUndefined();
     expect(services.getOptional(IModelSelectionService)).toBeUndefined();
     expect(services.getOptional(IFileService)).toBeUndefined();
+  });
+
+  it("keeps server remote workspace runtime services server-authoritative", () => {
+    const remoteServices = Object.assign(makeServerRemoteServices(), {
+      settingService: { remote: "setting" },
+      onboardingRecordService: createOnboardingRecordStub(),
+      credentialService: { remote: "credential" },
+      broadcastService: { remote: "broadcast" },
+      botsService: { remote: "bots" },
+      oauthService: { remote: "oauth" },
+      usageStatsService: { remote: "usage-stats" },
+      codingPlanSubscriptionService: { remote: "coding-plan" },
+      pluginManagementService: { remote: "plugin-management" },
+      subagentsService: { remote: "subagents" },
+      hooksService: { remote: "hooks" },
+      memoryService: { remote: "memory" },
+      outputStyleService: { remote: "output-style" },
+      settingsSyncService: { remote: "settings-sync" },
+    });
+
+    const services = createServerRemoteWorkspaceServiceCollection({
+      clientConfigService,
+      targetKind: "server",
+      connectionServices: remoteServices,
+    });
+
+    expect(services.get(IClientConfigService)).toBe(clientConfigService);
+    expect(services.get(ISettingService)).toBe(remoteServices.settingService);
+    expect(services.get(IOnboardingRecordService)).toBe(remoteServices.onboardingRecordService);
+    expect(services.get(ICredentialService)).toBe(remoteServices.credentialService);
+    expect(services.get(IBroadcastService)).toBe(remoteServices.broadcastService);
+    expect(services.get(IBotsService)).toBe(remoteServices.botsService);
+    expect(services.get(IOAuthService)).toBe(remoteServices.oauthService);
+    expect(services.get(IModelSelectionService)).toBe(remoteServices.modelSelectionService);
+    expect(services.get(IProviderSettingsService)).toBe(remoteServices.providerSettingsService);
+    expect(services.get(IUsageStatsService)).toBe(remoteServices.usageStatsService);
+    expect(services.get(ISubagentsService)).toBe(remoteServices.subagentsService);
+    expect(services.get(ISettingsSyncService)).toBe(remoteServices.settingsSyncService);
+    expect(services.get(ISkillSyncService)).toBe(remoteServices.skillSyncService);
+    expect(services.get(IPromptAttachmentTransferService)).toBe(
+      remoteServices.promptAttachmentTransferService,
+    );
+  });
+
+  it("forwards global instructions to the server remote host instead of an unknown channel", async () => {
+    const userInstructionsService: IUserInstructionsService = {
+      read: vi.fn(async () => ({
+        kind: "error" as const,
+        path: "/home/remote/.zcode/AGENTS.md",
+        code: "NOT_UTF8" as const,
+      })),
+      write: vi.fn(async () => ({ kind: "conflict" as const, currentRevision: null })),
+      readClaudeImportSource: vi.fn(async () => ({
+        kind: "missing" as const,
+        path: "/home/remote/.claude/CLAUDE.md",
+      })),
+    };
+    const services = createServerRemoteWorkspaceServiceCollection({
+      clientConfigService,
+      connectionServices: { ...makeServerRemoteServices(), userInstructionsService } as never,
+      targetKind: "ssh",
+    });
+    const [serverProtocol, clientProtocol] = createQueuePair();
+    const server = new ChannelServer(serverProtocol, "remote-user-instructions", 50);
+    const client = new ChannelClient(clientProtocol);
+    services.exposeOnChannelServer(server);
+    const proxy = ProxyChannel.toService<IUserInstructionsService>(
+      client.getChannel(IUserInstructionsService.channelName),
+    );
+    try {
+      await expect(proxy.read()).resolves.toEqual({
+        kind: "error",
+        path: "/home/remote/.zcode/AGENTS.md",
+        code: "NOT_UTF8",
+      });
+      await expect(proxy.readClaudeImportSource()).resolves.toEqual({
+        kind: "missing",
+        path: "/home/remote/.claude/CLAUDE.md",
+      });
+      expect(userInstructionsService.read).toHaveBeenCalledTimes(1);
+      expect(userInstructionsService.readClaudeImportSource).toHaveBeenCalledTimes(1);
+    } finally {
+      client.dispose();
+      server.dispose();
+    }
   });
 
   it("keeps the Source Server runtime authoritative for every forwarded service family", () => {

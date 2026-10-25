@@ -6,7 +6,7 @@ import {
   buildRuntimeZCodeApiUrl,
   ZCODE_BUILD_TIME,
   ZCODE_COMMIT,
-  ZCODE_VERSION,
+  ZCODE_UPSTREAM_BASE_VERSION,
 } from "@zcode/shared";
 import { Emitter } from "@zcode/rpc";
 import { arch, platform, release, type as osType } from "node:os";
@@ -46,14 +46,14 @@ function resolveApiBaseUrl(explicit?: string): string {
 
 function buildDeviceSnapshot(): FeedbackDeviceInfo {
   return {
-    appVersion: ZCODE_VERSION,
+    appVersion: ZCODE_UPSTREAM_BASE_VERSION,
     buildCommitId: ZCODE_COMMIT,
     buildTime: ZCODE_BUILD_TIME,
     nodeVersion: process.version,
     osType: osType(),
     osPlatform: platform(),
     osRelease: release(),
-    // node:os.version() 在 macOS 上是完整 Darwin kernel 字符串，超过后端 os_version VARCHAR(64) 会写库失败。
+    // On macOS, node:os.version() returns the full Darwin kernel string, which can exceed the backend's os_version VARCHAR(64) and fail the database write.
     osVersion: release(),
     osArch: arch(),
   };
@@ -87,8 +87,8 @@ export function createFeedbackService(options: CreateFeedbackServiceOptions): IF
     getAuthHeaders: async () => {
       const headers: Record<string, string> = {};
       const deviceMid = getHostDeviceMid();
-      // feedback 的 device_mid 必须复用宿主 deviceMid（与 provider 请求头、远控同一身份）；
-      // 不单独生成 fb_ 身份，否则同一台机器在不同系统里会被拆成两个设备。
+      // Feedback's device_mid must reuse the host deviceMid (the same identity used by provider headers and remote control);
+      // do not generate a separate fb_ identity or the same machine would appear as two devices across systems.
       if (deviceMid) {
         headers["X-Device-Mid"] = deviceMid;
       }
@@ -123,8 +123,8 @@ export function createFeedbackService(options: CreateFeedbackServiceOptions): IF
       const operationId = createOptions?.operationId?.trim();
       const controller = new AbortController();
       if (operationId) {
-        // UI 取消创建工单时不能只关闭弹窗；host 需要能按 operationId
-        // 找到当前 HTTP 请求并 abort，避免“正在连接反馈服务”永久悬挂。
+        // When the UI cancels ticket creation, it must not only close the dialog; the Host needs to locate and abort the current HTTP request by operationId
+        // so "connecting to feedback service" does not remain stuck indefinitely.
         activeCreateControllers.get(operationId)?.abort();
         activeCreateControllers.set(operationId, controller);
       }
@@ -217,7 +217,7 @@ export function createFeedbackService(options: CreateFeedbackServiceOptions): IF
       const attachmentRootDir = getFeedbackAttachmentDir();
       await mkdir(attachmentRootDir, { recursive: true });
       const tempDir = await mkdtemp(join(attachmentRootDir, "attachment-"));
-      // 附件名来自 renderer，不能作为本地相对路径使用。
+      // Attachment names come from the renderer and must not be used as local relative paths.
       const filename = basename(file.filename.replaceAll("\\", "/")) || "attachment";
       const tempPath = join(tempDir, "content");
       try {

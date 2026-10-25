@@ -1,6 +1,6 @@
 import { ingestToolExecResource } from "./desktopResourceTelemetry.js";
 import { ingestMcpResourceSamples } from "./processResourceMcpTelemetrySource.js";
-/* eslint-disable max-lines -- host process 统一处理 main↔host 生命周期、日志、ZCode Agent，拆分前先保持跨进程消息收口。 */
+/* eslint-disable max-lines -- The Host process coordinates main↔Host lifecycle, logs, and ZCode Agent; keep cross-process messages centralized until a safe split is defined. */
 import {
   type HostAgentProcessErrorResponse,
   type HostAgentProcessExceptionResponse,
@@ -9,8 +9,9 @@ import {
   type HostAgentProcessSpawnedResponse,
   type HostCuaOperationStateResponse,
   type HostMcpTelemetryResponse,
-  type HostSessionCreateTelemetryResponse,
   type HostPluginTelemetryResponse,
+  type HostSessionCreateTelemetryResponse,
+  type DatabaseStartupState,
   type RemoteTarget,
   type TaskRealtimeHostDeliveryKind,
   type WorkspacePurpose,
@@ -45,9 +46,14 @@ import { ingestHostNetworkObservations } from "./desktopNetworkTelemetry.js";
 import {
   buildHostProcessEnv,
   hostModulePath,
+  type RemoteAssetDirs,
   resolveBundledGlmBinaryPath,
 } from "./desktopRuntimeEnv.js";
 import { ingestHostNetworkCapture } from "./resourceManagerNetwork.js";
+import type {
+  LocalHostStartupGate,
+  LocalHostStartupTicket,
+} from "./storage-sweep-gate/contract.js";
 import { buildHostE2ECoverageEnv } from "./e2eCoverage.js";
 import { createFeedbackLogArchiveFromExportLogs } from "./exportLogs.js";
 import { createHostLogRelay } from "./hostLogRelay.js";
@@ -60,7 +66,6 @@ import {
   unregisterHostAgentProcess,
   unregisterHostProcess,
 } from "./resourceManagerWindow.js";
-import type { RemoteAssetDirs } from "./desktopRuntimeEnv.js";
 import type { TaskRealtimeBus } from "./taskRealtimeBus.js";
 
 export interface WindowBootstrapOptions {
@@ -88,10 +93,12 @@ export interface HostInitMessage {
   }>;
   agentSpawnFallbackCwd?: string;
   remoteAssets?: RemoteAssetDirs;
-  /** Main 解析后的 ZCode Built-in Provider Config 路径；Host/Services 不感知 Electron 安装布局。 */
+  /** Path to the ZCode Built-in Provider Config resolved by Main; Host/Services do not know Electron's installation layout. */
   zcodeBuiltinProviderConfigFilePath: string;
-  /** Main 提前异步采集并过滤的本机 runtime 环境；只允许传给 InitLocal。 */
+  /** Local runtime environment collected/filtered asynchronously by Main; passed only to InitLocal. */
   runtimeProcessEnvPatch?: Record<string, string>;
+  /** Set by spawnHostProcess from the startup gate; true only for the first local Host of an app process. */
+  sweepAbandonedReservations?: boolean;
 }
 
 export interface SpawnHostProcessOptions {
@@ -104,12 +111,44 @@ export interface SpawnHostProcessOptions {
     onHostId?: (hostId: string) => void;
   };
   onPortReady?: (port: MessagePortMain) => void;
-  /** 共享 SSH/WSL Host 初始化时不创建特殊的首个 workspace RPC port。 */
+  /** Do not create a special first-workspace RPC port when initializing a shared SSH/WSL Host. */
   attachInitialServicePort?: boolean;
 }
 
 const exitedHostProcesses = new WeakSet<ElectronUtilityProcess>();
 const disposingHostProcesses = new Set<ElectronUtilityProcess>();
+/**
+ * Startup phases that prove the tasks index is prepared, so its placeholder sweep has run (it is best-effort)
+ * (specs/first-submission-lifecycle.md, "Placeholder startup sweep"). Later windows need not wait for session storage or services.
+ */
+/**
+ * A window whose InitLocal Main holds gets no startup state until its Host starts, and the renderer turns 30 s
+ * without one into a synthetic startup_status_timeout failure. Show it the Host's own sequence-0 "starting"
+ * state at once; the Host's first report (sequence 1) and the relay's exit failure (sequence 1) both replace it.
+ * Sent only here, before the relay has forwarded anything for this startupId.
+ */
+function showHeldStartup(win: BrowserWindow, startupId: string): void {
+  if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+  const now = Date.now();
+  const state: DatabaseStartupState = {
+    schemaVersion: 1,
+    startupId,
+    attemptId: randomUUID(),
+    sequence: 0,
+    startedAt: now,
+    updatedAt: now,
+    phase: "starting",
+    disk: [],
+  };
+  win.webContents.send(InternalChannels.DatabaseStartupState, state);
+}
+
+const sweepGateOpenPhases: ReadonlySet<DatabaseStartupState["phase"]> = new Set([
+  "preparing_session_storage",
+  "starting_services",
+  "ready",
+  "failed",
+]);
 
 export function listDisposingHostProcesses(): ElectronUtilityProcess[] {
   return Array.from(disposingHostProcesses);
@@ -142,7 +181,7 @@ export function loadWindow(
     });
   }
 
-  // 生产包不能信任继承环境中的开发服务器地址，否则会被本机开发会话劫持为空白页。
+  // Production packages must not trust an inherited development-server URL, or a local dev session could hijack them into a blank page.
   if (!app.isPackaged && process.env["ELECTRON_RENDERER_URL"]) {
     const base = process.env["ELECTRON_RENDERER_URL"];
     const url = new URL(page === "login" ? `${base}/login.html` : base);
@@ -163,7 +202,9 @@ export function spawnHostProcess(
   initMessage: HostInitMessage,
   dependencies: {
     hostProcessLocalEnv: Record<string, string>;
-    /** Main 进程已完成服务端灰度裁决；Host 只消费这个快照，不自行请求或分桶。 */
+    /** Absent in tests and entries that need no sweep gating; then InitLocal is posted at once and carries no flag. */
+    localHostStartupGate?: LocalHostStartupGate;
+    /** Main has completed the server-side rollout decision; Host consumes this snapshot without making requests or bucketing users. */
     desktopContextPromptEnabled?: () => boolean;
     logger: {
       info: (...args: unknown[]) => void;
@@ -171,6 +212,7 @@ export function spawnHostProcess(
     };
     broadcastHub: BroadcastHub;
     taskRealtimeBus?: TaskRealtimeBus;
+    getOpenWorkspaceInventory?: () => { available: boolean; paths: string[] };
     windowHostProcessMap: Map<number, ElectronUtilityProcess>;
     hostRunningTaskCountMap: Map<ElectronUtilityProcess, number>;
     onWorkspaceRunningTaskCountChanged?: (
@@ -194,7 +236,41 @@ export function spawnHostProcess(
       event: HostCuaOperationStateResponse,
     ) => void;
     onCuaOperationStateSourceExited?: (source: ElectronUtilityProcess) => void;
-    /** host → main：定时任务派发结果，转交给 cron scheduler 结算调度状态机。 */
+    handleBotRemoteWorkspaceReconnectRequest?: (params: {
+      win: BrowserWindow;
+      requestId: string;
+      workspacePath: string;
+      workspaceIdentity: string;
+      target: RemoteTarget;
+    }) => Promise<{ ok: boolean; sessionId?: string; error?: string }>;
+    handleBotRemoteWorkspaceConnectionStatusRequest?: (params: {
+      win: BrowserWindow;
+      requestId: string;
+      workspacePath: string;
+      workspaceIdentity: string;
+      target: RemoteTarget;
+    }) => Promise<{ ok: boolean; connected?: boolean; error?: string }>;
+    handleBotRemoteWorkspaceRuntimePortRequest?: (params: {
+      win: BrowserWindow;
+      requestId: string;
+      workspacePath: string;
+      workspaceIdentity: string;
+      target: RemoteTarget;
+    }) => Promise<{ ok: boolean; port?: MessagePortMain; error?: string }>;
+    handleBotRemoteWorkspaceWebRemoteLinkRequest?: (params: {
+      win: BrowserWindow;
+      requestId: string;
+      workspacePath: string;
+      workspaceIdentity?: string;
+      target?: RemoteTarget;
+    }) => Promise<{
+      ok: boolean;
+      url?: string;
+      sessionId?: string;
+      reason?: "workspace-not-open" | "feature-disabled";
+      error?: string;
+    }>;
+    /** Host → main: scheduled-task dispatch result, forwarded to cron scheduler to settle the scheduling state machine. */
     onCronRunResult?: (result: {
       runId: string;
       ok: boolean;
@@ -203,7 +279,7 @@ export function spawnHostProcess(
       error?: string;
       failureKind?: "transient" | "permanent";
     }) => void;
-    /** host → main：闲时任务派发结果，转交给 scheduler 结算（与 cron 独立）。 */
+    /** Host → main: idle-task dispatch result, forwarded to the scheduler for settlement (independent of cron). */
     onOffPeakRunResult?: (result: {
       offPeakTaskId: string;
       ok: boolean;
@@ -213,11 +289,11 @@ export function spawnHostProcess(
       error?: string;
       failureKind?: "transient" | "permanent";
     }) => void;
-    /** host 中 manual run 落库后请求 main 立即唤醒 scheduler。 */
+    /** After a manual run is persisted in Host, request that main wake the scheduler immediately. */
     onCronSchedulerWakeRequested?: (automationId: string) => void;
-    /** host 中闲时任务翻 schedulable 后请求 main 立即唤醒 scheduler。 */
+    /** Request that main wake the scheduler immediately after an idle task becomes schedulable in Host. */
     onOffPeakSchedulerWakeRequested?: (offPeakTaskId?: string) => void;
-    // browser-use：main 用 WebContentsView+CDP 执行一条命令。实现由宿主注入；缺省则 backend_unavailable。
+    // browser-use: main executes a command through WebContentsView+CDP. The host injects the implementation; otherwise return backend_unavailable.
     handleBrowserExecuteRequest?: (params: {
       win: BrowserWindow;
       requestId: string;
@@ -233,9 +309,9 @@ export function spawnHostProcess(
       sessionContext?: "live" | "cached";
       command: unknown;
     }) => Promise<{ ok: boolean; [k: string]: unknown }>;
-    /** Host 已完成附件授权后，由 Main 将本地视频 realpath 加入精确协议授权集合。 */
+    /** After Host authorizes an attachment, Main adds the local video's realpath to the exact-protocol allowlist. */
     authorizeLocalMediaPreviewPath?: (path: string) => Promise<string>;
-    /** Host 校验完插件 UI HTML 后交给 Main 沙箱注册表登记，返回句柄。 */
+    /** After Host validates the plugin UI HTML, Main registers it in the sandbox registry and returns a handle. */
     registerPluginSandbox?: (
       input: PluginSandboxRegisterRequestPayload,
     ) => PluginSandboxHandle | Promise<PluginSandboxHandle>;
@@ -281,8 +357,8 @@ export function spawnHostProcess(
     `[spawnHostProcess] BIGMODEL_OAUTH_APP_SECRET source: ${process.env.BIGMODEL_OAUTH_APP_SECRET ? "process" : dependencies.hostProcessLocalEnv.BIGMODEL_OAUTH_APP_SECRET ? "dotenv" : "fallback"}`,
   );
 
-  // 远程连接与本地服务共享 window Host，进程级 stdout 没有请求身份。
-  // 连接进度改由 HostResponseTypes.RemoteWorkspaceConnectionLog 按 requestId 上报。
+  // Remote connections and local services share the window Host, so process-level stdout has no
+  // request identity. Host reports connection progress through HostResponseTypes.RemoteWorkspaceConnectionLog by requestId.
   const hostLogRelay = createHostLogRelay(
     label,
     dependencies.logger as Parameters<typeof createHostLogRelay>[1],
@@ -295,6 +371,10 @@ export function spawnHostProcess(
     hostLogRelay.onStdout(data.toString());
   });
 
+  // spawnHostProcess only starts local Hosts, and each one begins with InitLocal, so every claim here is for InitLocal.
+  // Claimed right before the InitLocal post (postInit): a throw earlier in this function leaves the gate unclaimed,
+  // so the next local Host carries the sweep instead of every later window waiting on a Host that never got InitLocal.
+  let startupTicket: LocalHostStartupTicket | undefined;
   const databaseStartupRelay = bindDatabaseStartupRelay(win, child, hostId);
   child.on("message", (message: unknown) => {
     const result = hostResponseMessageSchema.safeParse(message);
@@ -304,6 +384,7 @@ export function spawnHostProcess(
 
     if (result.data.type === HostResponseTypes.DatabaseStartupState) {
       databaseStartupRelay.receive(result.data.state);
+      if (startupTicket && sweepGateOpenPhases.has(result.data.state.phase)) startupTicket.settle();
       return;
     }
 
@@ -320,7 +401,7 @@ export function spawnHostProcess(
       ingestHostNetworkCapture(result.data.batch, child.pid ?? 0);
       return;
     }
-    // CLI 自采的 60 秒样本：按 services 打的 lane 归入 cli_chat / cli_aux 角色。
+    // CLI self-samples every 60 seconds; assign it to cli_chat / cli_aux according to the lane set by services.
     if (result.data.type === HostResponseTypes.AgentResourceSample) {
       ingestCliResourceSample(
         result.data.sample,
@@ -330,7 +411,7 @@ export function spawnHostProcess(
       return;
     }
 
-    // Host 自采的 60 秒样本：main 只取 heap 作 host 角色事件的 heap 维度。
+    // Host self-samples every 60 seconds; main uses only heap for the Host role event's heap dimension.
     if (result.data.type === HostResponseTypes.HostResourceSample) {
       ingestHostSelfResourceSample(result.data.sample);
       return;
@@ -429,7 +510,7 @@ export function spawnHostProcess(
     }
 
     if (result.data.type === HostResponseTypes.CuaOperationState) {
-      // Main 只投影 Host 已经判定的 turn 状态，不在这里重复解析 session/tool 业务事件。
+      // Main projects turn state already determined by Host; do not parse session/tool business events again here.
       dependencies.onCuaOperationStateChanged?.(child, result.data);
       return;
     }
@@ -457,9 +538,24 @@ export function spawnHostProcess(
       return;
     }
 
+    if (result.data.type === HostResponseTypes.OpenWorkspaceInventoryRequest) {
+      let inventory = { available: false, paths: [] as string[] };
+      try {
+        inventory = dependencies.getOpenWorkspaceInventory?.() ?? inventory;
+      } catch {
+        // Missing all-window inventory must make worktree cleanup retain its target.
+      }
+      child.postMessage({
+        type: HostMessageTypes.OpenWorkspaceInventoryResult,
+        requestId: result.data.requestId,
+        ...inventory,
+      });
+      return;
+    }
+
     if (result.data.type === HostResponseTypes.BrowserExecuteRequest) {
-      // browser-use：main 用 WebContentsView+CDP 执行命令（handleBrowserExecuteRequest）。
-      // 缺省实现时返回 backend_unavailable，保证通道打通但不阻塞。
+      // browser-use: main executes commands through WebContentsView+CDP (handleBrowserExecuteRequest).
+      // Return backend_unavailable when no implementation is provided, keeping the channel available without blocking.
       const requestId = result.data.requestId;
       const handler = dependencies.handleBrowserExecuteRequest;
       const fallback = {
@@ -594,6 +690,181 @@ export function spawnHostProcess(
       });
       return;
     }
+
+    if (result.data.type === HostResponseTypes.BotRemoteWorkspaceReconnectRequest) {
+      const request = result.data;
+      const handler = dependencies.handleBotRemoteWorkspaceReconnectRequest;
+      if (!handler) {
+        child.postMessage({
+          type: HostMessageTypes.BotRemoteWorkspaceReconnectResult,
+          requestId: request.requestId,
+          ok: false,
+          // Bugfix: /reconnect requires a main-side bridge; report a clear reason when the handler is missing instead of showing a generic inaccessible state.
+          error: "未注入 Bot 远端 workspace 重连处理器。",
+        });
+        return;
+      }
+
+      void handler({
+        win,
+        requestId: request.requestId,
+        workspacePath: request.workspacePath,
+        workspaceIdentity: request.workspaceIdentity,
+        target: request.target,
+      })
+        .then((reconnectResult) => {
+          child.postMessage({
+            type: HostMessageTypes.BotRemoteWorkspaceReconnectResult,
+            requestId: request.requestId,
+            ok: reconnectResult?.ok === true,
+            sessionId: reconnectResult?.sessionId,
+            error: reconnectResult?.error,
+          });
+        })
+        .catch((error) => {
+          child.postMessage({
+            type: HostMessageTypes.BotRemoteWorkspaceReconnectResult,
+            requestId: request.requestId,
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return;
+    }
+
+    if (result.data.type === HostResponseTypes.BotRemoteWorkspaceConnectionStatusRequest) {
+      const request = result.data;
+      const handler = dependencies.handleBotRemoteWorkspaceConnectionStatusRequest;
+      if (!handler) {
+        child.postMessage({
+          type: HostMessageTypes.BotRemoteWorkspaceConnectionStatusResult,
+          requestId: request.requestId,
+          ok: false,
+          error: "未注入 Bot 远端 workspace 连接状态处理器。",
+        });
+        return;
+      }
+
+      void handler({
+        win,
+        requestId: request.requestId,
+        workspacePath: request.workspacePath,
+        workspaceIdentity: request.workspaceIdentity,
+        target: request.target,
+      })
+        .then((statusResult) => {
+          child.postMessage({
+            type: HostMessageTypes.BotRemoteWorkspaceConnectionStatusResult,
+            requestId: request.requestId,
+            ok: statusResult?.ok === true,
+            connected: statusResult?.connected,
+            error: statusResult?.error,
+          });
+        })
+        .catch((error) => {
+          child.postMessage({
+            type: HostMessageTypes.BotRemoteWorkspaceConnectionStatusResult,
+            requestId: request.requestId,
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return;
+    }
+
+    if (result.data.type === HostResponseTypes.BotRemoteWorkspaceRuntimePortRequest) {
+      const request = result.data;
+      const handler = dependencies.handleBotRemoteWorkspaceRuntimePortRequest;
+      if (!handler) {
+        child.postMessage({
+          type: HostMessageTypes.BotRemoteWorkspaceRuntimePort,
+          requestId: request.requestId,
+          ok: false,
+          // Bugfix: a remote Bot must not fall back to the local ZCode Agent when the runtime bridge
+          // is missing; that would write a remote workspace task locally and use the wrong model.
+          error: "未注入 Bot 远端 workspace runtime 处理器。",
+        });
+        return;
+      }
+
+      void handler({
+        win,
+        requestId: request.requestId,
+        workspacePath: request.workspacePath,
+        workspaceIdentity: request.workspaceIdentity,
+        target: request.target,
+      })
+        .then((runtimeResult) => {
+          if (runtimeResult.ok && runtimeResult.port) {
+            child.postMessage(
+              {
+                type: HostMessageTypes.BotRemoteWorkspaceRuntimePort,
+                requestId: request.requestId,
+                ok: true,
+              },
+              [runtimeResult.port],
+            );
+            return;
+          }
+          child.postMessage({
+            type: HostMessageTypes.BotRemoteWorkspaceRuntimePort,
+            requestId: request.requestId,
+            ok: false,
+            error: runtimeResult.error ?? "unknown",
+          });
+        })
+        .catch((error) => {
+          child.postMessage({
+            type: HostMessageTypes.BotRemoteWorkspaceRuntimePort,
+            requestId: request.requestId,
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return;
+    }
+
+    if (result.data.type === HostResponseTypes.BotRemoteWorkspaceWebRemoteLinkRequest) {
+      const request = result.data;
+      const handler = dependencies.handleBotRemoteWorkspaceWebRemoteLinkRequest;
+      if (!handler) {
+        child.postMessage({
+          type: HostMessageTypes.BotRemoteWorkspaceWebRemoteLinkResult,
+          requestId: request.requestId,
+          ok: false,
+          error: "Bot web-remote link handler is not injected.",
+        });
+        return;
+      }
+
+      void handler({
+        win,
+        requestId: request.requestId,
+        workspacePath: request.workspacePath,
+        ...(request.workspaceIdentity ? { workspaceIdentity: request.workspaceIdentity } : {}),
+        ...(request.target ? { target: request.target } : {}),
+      })
+        .then((linkResult) => {
+          child.postMessage({
+            type: HostMessageTypes.BotRemoteWorkspaceWebRemoteLinkResult,
+            requestId: request.requestId,
+            ok: linkResult.ok === true,
+            ...(linkResult.url ? { url: linkResult.url } : {}),
+            ...(linkResult.sessionId ? { sessionId: linkResult.sessionId } : {}),
+            ...(linkResult.reason ? { reason: linkResult.reason } : {}),
+            ...(linkResult.error ? { error: linkResult.error } : {}),
+          });
+        })
+        .catch((error) => {
+          child.postMessage({
+            type: HostMessageTypes.BotRemoteWorkspaceWebRemoteLinkResult,
+            requestId: request.requestId,
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return;
+    }
   });
 
   const shouldAttachRealtimeHost = options?.taskRealtime != null;
@@ -606,11 +877,38 @@ export function spawnHostProcess(
       }
     : { ...initMessage, databaseStartupId: databaseStartupRelay.startupId };
 
+  // Only the InitLocal post waits for the gate; the port is still created and handed to the renderer at once.
+  const postInit = (transfer?: MessagePortMain[]) => {
+    startupTicket = dependencies.localHostStartupGate?.claim();
+    const ticket = startupTicket;
+    // An unsettled first ticket would hold every later local window, so exit and a failed post both settle it.
+    if (ticket) child.once("exit", () => ticket.settle());
+    const message: HostInitMessage = ticket
+      ? { ...hostInitMessage, sweepAbandonedReservations: ticket.sweepAbandonedReservations }
+      : hostInitMessage;
+    const send = () => {
+      if (exitedHostProcesses.has(child)) return;
+      if (transfer) child.postMessage(message, transfer);
+      else child.postMessage(message);
+    };
+    if (!ticket) {
+      send();
+      return;
+    }
+    if (!ticket.sweepAbandonedReservations) showHeldStartup(win, databaseStartupRelay.startupId);
+    void ticket.open.then(send).catch((error: unknown) => {
+      ticket.settle();
+      dependencies.logger.warn(
+        `[spawnHostProcess] InitLocal post failed for (${label}): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  };
+
   if (options?.attachInitialServicePort === false) {
-    child.postMessage(hostInitMessage);
+    postInit();
   } else {
     const { port1, port2 } = new MessageChannelMain();
-    child.postMessage(hostInitMessage, [port2]);
+    postInit([port2]);
 
     if (options?.onPortReady) {
       options.onPortReady(port1);
@@ -646,7 +944,7 @@ export function spawnHostProcess(
 
   child.on("exit", (code) => {
     exitedHostProcesses.add(child);
-    // Host exit 是 fail-hidden 权威边界；不能依赖即将退出的 Host 再补发 inactive。
+    // Host exit is the authoritative fail-hidden boundary; do not rely on an exiting Host to send inactive afterward.
     dependencies.onCuaOperationStateSourceExited?.(child);
     hostLogRelay.flushRawLogs();
     dependencies.logger.info(`[spawnHostProcess] host process (${label}) exited with code ${code}`);
@@ -691,8 +989,9 @@ export function disposeHostProcess(
     logger.warn(`[disposeHostProcess] failed to post dispose to (${label}):`, error);
   }
 
-  // host 收到 Dispose 后需要等待 agent 进程树的 SIGTERM/SIGKILL 兜底完成。
-  // 如果 main 仍按 150/300ms 强杀 host，host 会先退出，zcode-cli/app-server 子进程就可能被 init 接管成孤儿。
+  // After Host receives Dispose, wait for SIGTERM/SIGKILL fallback handling of the Agent process
+  // tree to finish. If main still force-kills Host after 150/300 ms, Host may exit first and leave
+  // zcode-cli/app-server child processes orphaned under init.
   const effectiveForceKillDelayMs = Math.max(forceKillDelayMs, 3_500);
   const killTimer = setTimeout(() => {
     disposingHostProcessTimers.delete(child);
@@ -724,9 +1023,10 @@ export function disposeHostProcessAndWait(
     waitTimeoutMs?: number;
   } = {},
 ): Promise<void> {
-  // Electron UtilityProcess 不是 Node ChildProcess，没有 exitCode 字段。
-  // 右键 Dock 退出会走 before-quit -> disposeHostProcessAndWait；旧判断把运行中的 host
-  // 的 undefined exitCode 当成“已退出”。这里改为记录 exit 事件，避免第一次退出漏发 Dispose。
+  // Electron UtilityProcess is not a Node ChildProcess and has no exitCode field.
+  // Quitting through the Dock context menu follows before-quit -> disposeHostProcessAndWait; the
+  // old check treated an undefined exitCode on a running Host as "already exited." Track the exit
+  // event instead so the first shutdown does not skip Dispose.
   if (exitedHostProcesses.has(child)) {
     return Promise.resolve();
   }

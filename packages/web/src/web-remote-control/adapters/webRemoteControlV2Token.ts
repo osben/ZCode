@@ -5,7 +5,7 @@ import {
 } from "@zcode/shared/web-remote-relay";
 import { withWebRemoteControlHttpSignal } from "#src/web-remote-control/adapters/webRemoteControlHttpSignal.js";
 
-/** 一次性 token 不缓存；401 交给入口恢复登录，网络故障交给 transport 退避。 */
+/** One-time tokens are not cached; a 401 is handed to the entry to restore login, and network failures are handed to transport backoff. */
 export function createWebRemoteControlV2TokenClient(origin: string, fetcher = fetch) {
   return async (jwt: string, signal: AbortSignal): Promise<string> => {
     try {
@@ -23,7 +23,7 @@ export function createWebRemoteControlV2TokenClient(origin: string, fetcher = fe
         if (response.status === 401) throw new WebRemoteControlV2ConnectionError("auth-required");
         if (!response.ok)
           throw new WebRemoteControlV2ConnectionError("relay-unavailable", response.status >= 500);
-        // 读取正文也可能断网或超时，必须交给外层网络重试；只有完整但非法的 JSON 才是终态。
+        // Reading the body can also fail due to network loss or timeout and must be left to the outer network retry; only complete but invalid JSON is a terminal state.
         const body = await response.text();
         let value: unknown;
         try {
@@ -37,7 +37,7 @@ export function createWebRemoteControlV2TokenClient(origin: string, fetcher = fe
         return result.data.token;
       });
     } catch (error) {
-      // 不传播 fetch/服务端正文，避免一次性 token 与 JWT 进入 UI 或诊断日志。
+      // Do not propagate the fetch/server body, so one-time tokens and JWTs do not enter the UI or diagnostic logs.
       if (error instanceof WebRemoteControlV2ConnectionError) throw error;
       throw new WebRemoteControlV2ConnectionError("relay-unavailable", true);
     }

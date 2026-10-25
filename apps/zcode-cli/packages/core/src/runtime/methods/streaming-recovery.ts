@@ -9,8 +9,8 @@ import { createStreamRecoveryAnchorId, createStreamingToolAttemptId } from "../h
 import type { AgentRuntimeInternal } from "../internal.js";
 import { recordModelHistoryRound, type RegularTurnLoopState } from "./turn-loop-state.js";
 
-// 越过 adapter 重试边界后，SSE stall 只能靠 core recovery 从安全锚点重开流；
-// 只恢复 1 次会让连续短暂抖动直接失败，和模型默认 10 次 retry 的用户预期差距过大。
+// After crossing the adapter retry boundary, an SSE stall can recover only by restarting the stream from a safe anchor in core.
+// Allowing only one recovery makes consecutive brief interruptions fail, far short of the user's expectation from the model's default 10 retries.
 const STREAM_RECOVERY_MAX_RETRIES = 10;
 const PREVIOUS_MESSAGE_ANCHOR_SUFFIX = "previous-message-anchor";
 const START_PLAN_BUSY_PROVIDER_CODES = new Set(["3008", "3009", "3010"]);
@@ -106,7 +106,9 @@ export function getStartPlanBusyAdmissionRetryDelayMs(input: {
   state: RegularTurnLoopState;
   turnNumber: number;
 }): number | undefined {
-  if (input.turnNumber <= 0) return undefined;
+  // Only the very first model request of a new session fails fast (initial-busy banner);
+  // later steps of the first user turn must retry too, or a mid-turn busy kills the turn.
+  if (input.turnNumber <= 0 && input.state.modelStepCount <= 0) return undefined;
   if (!START_PLAN_BUSY_RETRY_PROVIDER_IDS.has(input.providerId)) return undefined;
   if (!isStartPlanBusyStreamRecoveryFailure(input.error)) return undefined;
   return START_PLAN_BUSY_MAIN_TURN_ADMISSION_RETRY_DELAYS_MS[input.state.streamRecoveryRetryCount];
@@ -192,9 +194,9 @@ export async function emitStreamRecoveryRetryEvents(
     await runtime.appendEvent(event, options.traceContext);
     state.events.push(event);
   }
-  // SSE 已经吐出部分事件后，下一次请求是 core recovery 重新发起的
-  // 新模型请求，不会表现为 adapter attempt=2；必须把来源 requestId 显式挂到
-  // 下一次 model_request_started 上，用户才能确认旧请求 A 超时后确实发出了恢复请求 B。
+  // After SSE emits some events, the next request is a new model request started by core recovery,
+  // not adapter attempt=2. Attach the source requestId explicitly to the next model_request_started so users can confirm
+  // recovery request B was sent after request A timed out.
   state.pendingStreamRecoveryRequest = {
     attemptId: createStreamingToolAttemptId(options.assistantMessageId),
     anchorId,
@@ -227,9 +229,9 @@ export async function recoverPartialAssistantOutputFailure(input: {
     return false;
   }
 
-  // reasoning_delta 为了实时展示会越过 adapter 重试边界，但旧 Core 只统计正文，
-  // 导致正文前的 thinking 断流直接失败。无工具时正文和思考都属于未提交 assistant tail，
-  // 必须统一从前一个 provider-safe anchor 重开，不能把新输出接到失败消息上。
+  // reasoning_delta crosses the adapter retry boundary for live display, but old Core tracked only body text,
+  // so an interruption during thinking before the body failed immediately. Without tools, body and reasoning both belong to an uncommitted assistant tail;
+  // restart both from the previous provider-safe anchor instead of appending new output to the failed message.
   input.abortController.abort();
   const recoveryAttempt = beginStreamRecoveryAttempt(input.state);
   await emitStreamRecoveryStarted(

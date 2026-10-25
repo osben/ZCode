@@ -10,7 +10,7 @@ const SUBMIT_RESULT_TOOL_ICON = (
   <ClipboardCheckIcon className="size-4 shrink-0 text-foreground-subtle" />
 );
 
-/** 折叠头部的单行概要上限：概要只是「大概提交了什么」，整段内容在展开后的 body 里。 */
+/** Single-line summary limit for the collapsed header: it only says roughly what was submitted; the full content is in the expanded body. */
 const INLINE_PREVIEW_MAX_LENGTH = 160;
 
 function toRecord(value: unknown): Record<string, unknown> | undefined {
@@ -36,11 +36,11 @@ function readText(value: unknown): string | undefined {
 }
 
 /**
- * 提交内容的读时归一化：字符串先试**一次**宽容 `JSON.parse`，解析出对象/数组才用解析值。
+ * Normalize submitted content at read time: for strings, try a lenient `JSON.parse` **once** and use the parsed value only for objects/arrays.
  *
- * 这是引擎侧实盘结论的读侧镜像——`engine/scheduler.ts` 记档「真实模型常把 result 序列化成
- * JSON 字符串」并做同款单次宽容 parse。不做多层递归 parse（引擎也只做一次），解析失败就按
- * 字符串对待，绝不抛错毁卡，也绝不改写任何数据。
+ * This mirrors an observed engine-side behavior on reads — `engine/scheduler.ts` records that “real models often serialize result as
+ * a JSON string” and applies the same one-time lenient parse. Do not recursively parse multiple layers (the engine also parses only once); treat parse failures as
+ * strings, never throw and break the card, and never rewrite any data.
  */
 function normalizeSubmittedResult(value: unknown): unknown {
   if (typeof value !== "string") {
@@ -52,14 +52,14 @@ function normalizeSubmittedResult(value: unknown): unknown {
 
   try {
     const parsed: unknown = JSON.parse(value);
-    // 数字 / 布尔 / null 的字面量字符串保持原样：那是模型写的那句话，不是结构化载荷。
+    // Preserve literal strings containing numbers / booleans / null: those are model-authored text, not structured payloads.
     return typeof parsed === "object" && parsed !== null ? parsed : value;
   } catch {
     return value;
   }
 }
 
-/** JSON 分支的缩进文本。循环引用之类的病态载荷退回 `String(...)`，卡片不能因载荷而崩。 */
+/** Indented text for the JSON branch. Fall back to `String(...)` for malformed payloads such as circular references; payloads must not crash the card. */
 function stringifyResult(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2) ?? String(value);
@@ -68,7 +68,7 @@ function stringifyResult(value: unknown): string {
   }
 }
 
-/** 折叠头部的单行概要：换行折叠成空格，超长截断。 */
+/** Single-line summary for the collapsed header: collapse newlines to spaces and truncate if too long. */
 function toInlinePreview(value: unknown): string | undefined {
   let text: string;
   if (typeof value === "string") {
@@ -95,8 +95,8 @@ export function SubmitResultToolCallBlock(context: ToolCallBlockRenderContext) {
   const { intl } = useZCodeIntl();
   const { toolCall } = context.toolCallNode;
   const input = toRecord(toolCall.input);
-  // 修复原因照 send-message：streaming 首帧的 input 可能还是 `{}`，不能为一个空面板提供
-  // 展开入口。门是「result 键在场」而不是「result 有值」——提交 null 也是一次真实提交。
+  // Same fix rationale as send-message: input may still be `{}` on the first streaming frame, so do not provide
+  // an expand control for an empty panel. Gate on the presence of the `result` key, not on “result has a value” — submitting null is still a real submission.
   const hasResult = input !== undefined && "result" in input;
   const normalizedResult = useMemo(
     () => (hasResult ? normalizeSubmittedResult(input?.result) : undefined),
@@ -105,7 +105,7 @@ export function SubmitResultToolCallBlock(context: ToolCallBlockRenderContext) {
   const isProse = typeof normalizedResult === "string";
 
   const isRejected = toolCall.status === "failed";
-  // 拒绝与停止在卡面上是同一句话：提交没走完。spec 只定义四相，不为 denied 造第五个词条。
+  // Rejected and stopped cards say the same thing: submission did not complete. The spec defines only four phases; do not invent a fifth label for denied.
   const isStopped = toolCall.status === "stopped" || toolCall.status === "denied";
   const isSubmitting =
     !isRejected &&
@@ -119,13 +119,13 @@ export function SubmitResultToolCallBlock(context: ToolCallBlockRenderContext) {
         ? "chat.toolCall.submitResult.submitting"
         : "chat.toolCall.submitResult.submitted";
 
-  // 驳回原文：错误通道优先，其次工具自己的错误字段与纯文本输出。接受态的输出恒为
-  // 「The result was accepted.」，没有信息量，从不读。
+  // Original rejection text: prefer the error channel, then the tool's own error field and plain-text output. Accepted output is always
+  // “The result was accepted.” and contains no information, so never read it.
   const rejectionText = isRejected
     ? (context.errorText ?? readText(toolCall.error) ?? readText(toolCall.output))
     : undefined;
-  // 驳回态是扁平行，不给展开入口；驳回原文走失败态 tooltip（可悬停复制），不再有逐字段
-  // 违规面板。rejectionText 只在驳回态存在，故非驳回态的展开门只看 result 键是否在场。
+  // Rejected state is a flat row with no expand control; show the original rejection in the failure tooltip (copyable on hover), without a field-by-field
+  // violations panel. rejectionText exists only in rejected state, so other states gate expansion only on the presence of the result key.
   const hasDetails = !isRejected && hasResult;
 
   const resultLabel = intl.formatMessage({ id: "chat.toolCall.submitResult.resultHeading" });
@@ -148,13 +148,13 @@ export function SubmitResultToolCallBlock(context: ToolCallBlockRenderContext) {
           <section className="space-y-1.5">
             <h4 className="text-ui-sm font-medium text-foreground-subtlest">{resultLabel}</h4>
             {isProse ? (
-              // 人话是 prose：DESIGN.md 把 mono 留给路径/命令/代码/标识符/终端数据。
-              // 刻意不做 markdown 渲染——result 字符串没有 markdown 契约。
+              // Human-readable text is prose: DESIGN.md reserves monospace for paths/commands/code/identifiers/terminal data.
+              // Deliberately do not render markdown — result strings have no markdown contract.
               <p className="whitespace-pre-wrap break-words rounded-lg border border-border bg-panel px-4 py-3 text-ui-base leading-5 text-foreground">
                 {normalizedResult as string}
               </p>
             ) : (
-              // 结构化载荷走 CodeBlock（尊重用户的代码字号设置），容器逐字照 mcp.tsx。
+              // Structured payloads use CodeBlock (respecting the user's code font-size setting); the container matches mcp.tsx exactly.
               <div className="max-h-72 overflow-auto rounded-xl border border-border bg-card">
                 <CodeBlock
                   appTheme={theme}

@@ -8,6 +8,7 @@ import { estimateTokens } from "../utils.js";
 
 const ENVIRONMENT_HEADING = "# Environment";
 const WORKING_DIRECTORY_LABEL = "Primary working directory";
+const EXECUTION_WORKTREE_LABEL = "Execution worktree";
 const ADDITIONAL_DIRECTORIES_LABEL = "Additional directories";
 const IS_GIT_REPOSITORY_LABEL = "Is a git repository";
 const PLATFORM_LABEL = "Platform";
@@ -30,13 +31,41 @@ const CLEAN_GIT_STATUS = "(clean)";
 const DIRTY_GIT_STATUS = "(dirty)";
 const UNKNOWN_GIT_STATUS = "(unknown)";
 
+/**
+ * Runtime-config execution-worktree fact projected into the Environment section at render time
+ * (spec: execution-worktree-model-context.md). Never persisted into EnvInfo snapshots and never
+ * sent on the wire; `missing` and `workspacePath` are runtime-only extensions.
+ */
+export interface ExecutionWorktreeEnvFact {
+  path: string;
+  branchName?: string;
+  /** The worktree directory vanished; workspace and terminal actions are blocked until restoration. */
+  missing?: boolean;
+  /** Parent workspace reference (the session's listing identity). */
+  workspacePath?: string;
+}
+
+/** One-line worktree isolation notice shared by the main and subagent env sections (no list prefix). */
+export function formatExecutionWorktreeSentence(worktree: ExecutionWorktreeEnvFact): string | null {
+  // The parent reference identifies the workspace without implying it is an execution fallback.
+  if (!worktree.workspacePath) return null;
+  if (worktree.missing) {
+    return `${EXECUTION_WORKTREE_LABEL}: the requested worktree ${worktree.path} is missing; filesystem and terminal actions are blocked until it is restored. The parent workspace is ${worktree.workspacePath}.`;
+  }
+  const branchClause = worktree.branchName ? ` (branch ${worktree.branchName})` : "";
+  return `${EXECUTION_WORKTREE_LABEL}: this session runs in a linked git worktree of ${worktree.workspacePath}${branchClause}; file changes stay in the worktree until they are merged.`;
+}
 export function buildEnvInfoSection(
   envInfo: EnvInfo,
   model?: Model,
+  executionWorktree?: ExecutionWorktreeEnvFact,
   additionalDirectories: readonly string[] = [],
 ): ContextSection {
-  const content = buildEnvInfoContent(envInfo, model, additionalDirectories);
+  const content = buildEnvInfoContent(envInfo, model, additionalDirectories, executionWorktree);
+  return buildEnvironmentInfoContextSection(content);
+}
 
+function buildEnvironmentInfoContextSection(content: string): ContextSection {
   return {
     name: "Environment Info",
     source: "env_info",
@@ -47,6 +76,18 @@ export function buildEnvInfoSection(
     content,
     preview: content.slice(0, 100),
   };
+}
+
+/**
+ * `environment` toggle off: only the execution-worktree isolation bullet survives (specs/incognito-session.md,
+ * "Prompt toggles"). Null when no worktree applies, so the section is omitted entirely.
+ */
+export function buildWorktreeOnlyEnvSection(
+  executionWorktree?: ExecutionWorktreeEnvFact,
+): ContextSection | null {
+  const line = executionWorktree ? formatExecutionWorktreeSentence(executionWorktree) : null;
+  if (!line) return null;
+  return buildEnvironmentInfoContextSection([ENVIRONMENT_HEADING, `- ${line}`].join("\n"));
 }
 
 export function buildGitSystemContextSection(envInfo: EnvInfo): ContextSection | null {
@@ -72,12 +113,18 @@ function buildEnvInfoContent(
   info: EnvInfo,
   model: Model | undefined,
   additionalDirectories: readonly string[],
+  executionWorktree?: ExecutionWorktreeEnvFact,
 ): string {
   const hasGitRepository = isEnvInfoGitRepository(info);
+  const executionWorktreeLine = executionWorktree
+    ? formatExecutionWorktreeSentence(executionWorktree)
+    : null;
   const lines: string[] = [
     ENVIRONMENT_HEADING,
     "You have been invoked in the following environment:",
     `- ${WORKING_DIRECTORY_LABEL}: ${info.cwd}`,
+    // Plain sessions pass no worktree fact and keep a byte-identical section (pinned by tests).
+    ...(executionWorktreeLine ? [`- ${executionWorktreeLine}`] : []),
     // 附加目录此前只进入能力发现，模型看不到目录范围；这里只投影本次运行已解析的路径。
     ...(additionalDirectories.length
       ? [
@@ -89,7 +136,7 @@ function buildEnvInfoContent(
     `- ${PLATFORM_LABEL}: ${info.platform}`,
     `- ${SHELL_LABEL}: ${info.shell}`,
     `- ${OS_VERSION_LABEL}: ${info.osVersion}`,
-    // 旧环境快照可能携带历史模型字段；渲染只读取本步骤实际执行的 Model。
+    // Older environment snapshots may contain historical model fields; render only the Model actually used for this step.
     ...(model
       ? [`- You are powered by the model named ${model.providerId}/${model.modelId}.`]
       : []),

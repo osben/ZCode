@@ -7,18 +7,28 @@ import type {
   RemoteProjectDirectory,
 } from "@/project-sidebar/contract.js";
 import { readProjectSidebarTree } from "@/project-sidebar/project-tree-reader.js";
-import { stabilizeProjectTree, applyProjectTaskActivities } from "@/project-sidebar/view.js";
+import { stabilizeProjectTree, applyProjectTaskOverlays } from "@/project-sidebar/view.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab } from "@/store/tabStore.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
 import { getTaskListRowActivity } from "@/v4/taskListRowActivity.js";
-import { getWindowControllerTaskListRegistry } from "@/v4/windowControllerTaskListRegistry.js";
+import {
+  getWindowControllerTaskListRegistry,
+  pickTaskChildSessionFacts,
+} from "@/v4/windowControllerTaskListRegistry.js";
 import { buildRemoteHostWorkspaceIdentity } from "@/project-sidebar/contract.js";
 import { logger } from "@/logger.js";
 import { useProjectUnreadSignals } from "@/project-sidebar/useProjectUnreadSignals.js";
 import { areStabilizedValuesEquivalent } from "@/v4/taskListItemStabilization.js";
+import {
+  EMPTY_DELETED_TASK_FACTS,
+  isKnownDeletedTask,
+  reconcileDeletedTaskFacts,
+  type DeletedTaskFacts,
+} from "@/project-sidebar/deletedTaskFacts.js";
+import type { TaskIdentityRef } from "@/lib/taskNavigationHistory.js";
 
 const subscribeToNothing = () => () => {};
 const zeroRevision = () => 0;
@@ -67,6 +77,11 @@ export function useProjectTree(isDesktop = false) {
     }>(),
   );
   const removeTaskState = useZCodeSessionStore((state) => state.removeTaskState);
+  const deletedTaskFacts = useRef<DeletedTaskFacts>(EMPTY_DELETED_TASK_FACTS);
+  const isTaskKnownDeleted = useCallback(
+    (task: TaskIdentityRef) => isKnownDeletedTask(deletedTaskFacts.current, task),
+    [],
+  );
   const accepted = useRef<{
     service: typeof service;
     remote: typeof remoteService;
@@ -98,6 +113,13 @@ export function useProjectTree(isDesktop = false) {
           }
         }
         accepted.current = { service, remote: remoteService, tree: result.tree };
+        // Deletion facts are owned here and retained per host: a failed or offline host keeps its last-known tombstones,
+        // and a host leaves the facts only when it leaves directory membership. A different service starts from empty facts.
+        deletedTaskFacts.current = reconcileDeletedTaskFacts({
+          previous:
+            previous?.service === service ? deletedTaskFacts.current : EMPTY_DELETED_TASK_FACTS,
+          read: result,
+        });
         // Bugfix: 自动归档只改 Host archived，未执行手动归档的 UI 清理，导致列表消失而详情残留。
         // 只处理已接受快照中的明确状态转换；首次已归档、离线缺行与迟到响应都不是归档事件。
         if (previous?.service === service && previous.remote === remoteService) {
@@ -323,11 +345,12 @@ export function useProjectTree(isDesktop = false) {
   const activity = useWorkspaceSessionsIndexItems(registry ? [] : scopes);
   const lastDisplay = useRef<ProjectTree>(EMPTY);
   const displayedTree = useMemo(() => {
-    const activities = registry
-      ? registry.readActivities()
+    const overlays = registry
+      ? registry.readTaskOverlays()
       : activity.items.flatMap((task) => {
           const live = getTaskListRowActivity(task);
-          return live
+          const childFacts = pickTaskChildSessionFacts(task);
+          return live || childFacts
             ? [
                 {
                   address: {
@@ -335,12 +358,13 @@ export function useProjectTree(isDesktop = false) {
                     workspacePath: task.workspacePath,
                     workspaceIdentity: task.workspaceIdentity,
                   },
-                  activity: live,
+                  ...(live ? { activity: live } : {}),
+                  ...(childFacts ? { childFacts } : {}),
                 },
               ]
             : [];
         });
-    const next = applyProjectTaskActivities(tree, activities);
+    const next = applyProjectTaskOverlays(tree, overlays);
     lastDisplay.current = stabilizeProjectTree(lastDisplay.current, next);
     return lastDisplay.current;
   }, [tree, activity.items, registry, revision]);
@@ -354,6 +378,7 @@ export function useProjectTree(isDesktop = false) {
       remoteService,
       refresh: refreshDirectory,
       commitCreatedTask,
+      isTaskKnownDeleted,
       error,
       loading,
     }),
@@ -366,6 +391,7 @@ export function useProjectTree(isDesktop = false) {
       remoteService,
       refreshDirectory,
       commitCreatedTask,
+      isTaskKnownDeleted,
       error,
       loading,
     ],

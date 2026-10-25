@@ -17,9 +17,32 @@ export interface SessionSummaryDeriveExtra {
   lastActivityAt: number;
   lastOutcome?: SessionSummary["lastOutcome"];
   parentSessionId?: string;
+  /** Execution worktree facts from the runtime; drives the sidebar badge and open-in-IDE target. */
+  executionWorktree?: { path: string; branchName?: string };
+  /**
+   * Sidebar child-conversation facts (spec: sidebar-child-conversation-counts.md §3): true totals
+   * from the store TTL cache plus the capped newest-first list; running flags come from the live
+   * session registry without I/O. Absent when the session has no children.
+   */
+  sideChatCount?: number;
+  subagentCount?: number;
+  runningSubagentCount?: number;
+  childSessions?: SessionSummary["childSessions"];
+  /** True when the execution worktree directory was absent on disk at the meta source. */
+  executionWorktreeMissing?: boolean;
+  /** True for an incognito session (specs/incognito-session.md). */
+  incognito?: boolean;
+  /** Title recency: CLI time_title_updated, or time_created when the column is null. Absent when the live source cannot supply it. */
+  titleUpdatedAt?: number;
 }
 
 const MAX_PREVIEW_CHARS = 120;
+
+/** Keeps titleUpdatedAt absent unless a value is known, so a deleted field is never serialized as undefined. */
+function setTitleUpdatedAt(summary: SessionSummary, titleUpdatedAt: number | undefined): void {
+  if (titleUpdatedAt === undefined) delete summary.titleUpdatedAt;
+  else summary.titleUpdatedAt = titleUpdatedAt;
+}
 
 /** 从 ConversationSnapshot + 会话元信息派生 SessionSummary（纯函数，golden 可测）。 */
 export function deriveSessionSummary(
@@ -76,11 +99,22 @@ export function deriveSessionSummary(
         }
       : undefined;
   return {
+    ...(snapshot.meta.worktreePreparation
+      ? { worktreePreparation: snapshot.meta.worktreePreparation }
+      : {}),
+    ...(snapshot.meta.submissionPreparation
+      ? { submissionPreparation: snapshot.meta.submissionPreparation }
+      : {}),
     sessionId: snapshot.sessionId,
     workspaceId: extra.workspaceId,
     ...(extra.parentSessionId ? { parentSessionId: extra.parentSessionId } : {}),
-    title: snapshot.meta.title,
+    title:
+      snapshot.meta.title ||
+      (snapshot.meta.worktreePreparation
+        ? `Worktree ${snapshot.meta.worktreePreparation.branchName}`
+        : ""),
     titleSource: snapshot.meta.titleSource,
+    ...(extra.titleUpdatedAt !== undefined ? { titleUpdatedAt: extra.titleUpdatedAt } : {}),
     ...(lastOutcome ? { lastOutcome } : {}),
     phase: snapshot.control.phase,
     // 忠实透传 control.sessionEnded（语义：成功轮收口后即 true，不代表已删除）。
@@ -99,6 +133,15 @@ export function deriveSessionSummary(
     ...(snapshot.goal ? { goalStatus: snapshot.goal.status } : {}),
     lastActivityAt: extra.lastActivityAt,
     ...(lastAssistantPreview ? { lastAssistantPreview } : {}),
+    ...(extra.executionWorktree ? { executionWorktree: extra.executionWorktree } : {}),
+    ...(extra.sideChatCount ? { sideChatCount: extra.sideChatCount } : {}),
+    ...(extra.subagentCount ? { subagentCount: extra.subagentCount } : {}),
+    ...(extra.runningSubagentCount ? { runningSubagentCount: extra.runningSubagentCount } : {}),
+    ...(extra.childSessions && extra.childSessions.length > 0
+      ? { childSessions: extra.childSessions }
+      : {}),
+    ...(extra.executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
+    ...(extra.incognito ? { incognito: true } : {}),
     createdAt: extra.createdAt,
   };
 }
@@ -111,12 +154,21 @@ function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
     a.parentSessionId === b.parentSessionId &&
     a.title === b.title &&
     a.titleSource === b.titleSource &&
+    a.titleUpdatedAt === b.titleUpdatedAt &&
     a.lastOutcome === b.lastOutcome &&
     a.phase === b.phase &&
+    a.submissionPreparation?.submissionId === b.submissionPreparation?.submissionId &&
+    a.submissionPreparation?.status === b.submissionPreparation?.status &&
+    a.worktreePreparation?.attemptId === b.worktreePreparation?.attemptId &&
+    a.worktreePreparation?.status === b.worktreePreparation?.status &&
+    a.worktreePreparation?.branchName === b.worktreePreparation?.branchName &&
+    a.worktreePreparation?.targetPath === b.worktreePreparation?.targetPath &&
+    a.worktreePreparation?.baseBranch === b.worktreePreparation?.baseBranch &&
+    a.worktreePreparation?.failureMessage === b.worktreePreparation?.failureMessage &&
     a.sessionEnded === b.sessionEnded &&
     a.hasBackgroundWork === b.hasBackgroundWork &&
-    // phase 翻转 / 结算 / 在跑子代理数变化永不被 conflation 吃掉；反之只改 node 的事件在这里判等
-    // （真实系统里它仍会因 lastActivityAt 推进而产帧——那是活动事实，语义不变）。
+    // Conflation must never discard phase changes, settlement, or changes to running-subagent counts. Node-only changes compare equal here
+    // (in the real system, advancing lastActivityAt still produces a frame; that reflects activity without changing these semantics).
     JSON.stringify(a.workflowActivity ?? null) === JSON.stringify(b.workflowActivity ?? null) &&
     JSON.stringify(a.pendingInteraction ?? null) === JSON.stringify(b.pendingInteraction ?? null) &&
     a.pendingInteractionSummary?.permissionCount === b.pendingInteractionSummary?.permissionCount &&
@@ -124,6 +176,20 @@ function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
     a.goalStatus === b.goalStatus &&
     a.lastActivityAt === b.lastActivityAt &&
     a.lastAssistantPreview === b.lastAssistantPreview &&
+    // Field comparison instead of JSON.stringify: this equality check runs on every session event
+    // fan-out, and the value is at most two scalar fields.
+    a.executionWorktree?.path === b.executionWorktree?.path &&
+    a.executionWorktree?.branchName === b.executionWorktree?.branchName &&
+    // Child-conversation facts: normalize absent ≈ 0 the same way, and compare the capped list by
+    // value so a counters-only or list-only change still emits a delta (acceptance #8).
+    (a.sideChatCount ?? 0) === (b.sideChatCount ?? 0) &&
+    (a.subagentCount ?? 0) === (b.subagentCount ?? 0) &&
+    (a.runningSubagentCount ?? 0) === (b.runningSubagentCount ?? 0) &&
+    JSON.stringify(a.childSessions ?? null) === JSON.stringify(b.childSessions ?? null) &&
+    // Normalize absent ≈ false so a producer flipping between omitting the flag and false does not
+    // emit a no-op delta, while a real health flip (false ↔ true) always produces one.
+    (a.executionWorktreeMissing ?? false) === (b.executionWorktreeMissing ?? false) &&
+    (a.incognito ?? false) === (b.incognito ?? false) &&
     a.createdAt === b.createdAt
   );
 }
@@ -157,11 +223,14 @@ export class SessionsIndexProjection {
       // sessions-index 读侧要区分“存储/协议物理标题”和“用户显式重命名”。
       // 冷恢复 live 投影在 hydration 补齐前可能只有 default/generated 标题；旧 seed 若已是
       // custom，不得被这类自动标题降级，否则侧边栏会把用户手动标题闪回生成标题。
+      // titleUpdatedAt always moves with the title it describes: when the title is kept from prev, its recency is kept too.
       if (prev.titleSource === "custom" && summary.titleSource !== "custom") {
         summary.title = prev.title;
         summary.titleSource = prev.titleSource;
+        setTitleUpdatedAt(summary, prev.titleUpdatedAt);
       } else if (!summary.title && prev.title) {
         summary.title = prev.title;
+        setTitleUpdatedAt(summary, prev.titleUpdatedAt);
         // 旧 store seed 的 titleSource 可缺省；冷投影的
         // default 只是暂态值。保住标题时也要保住“字段缺省”，否则
         // summariesEqual 会产生一帧无产品变化的 upsert。
@@ -190,6 +259,15 @@ export class SessionsIndexProjection {
         }
       }
     }
+    // Same title and no supplied value: the previous recency still describes this title.
+    if (
+      prev &&
+      summary.titleUpdatedAt === undefined &&
+      prev.titleUpdatedAt !== undefined &&
+      summary.title === prev.title
+    ) {
+      setTitleUpdatedAt(summary, prev.titleUpdatedAt);
+    }
     if (prev && summariesEqual(prev, summary)) return [];
     this.summaries.set(summary.sessionId, summary);
     return [{ op: "session.upserted", session: summary }];
@@ -210,7 +288,31 @@ export class SessionsIndexProjection {
     return [{ op: "session.upserted", session: summary }];
   }
 
-  /** 移除某会话；命中则返回 remove delta。 */
+  /** Update child facts on an existing cold or live row without changing activity or starting a conversation runtime. */
+  updateChildFacts(
+    sessionId: string,
+    facts: Pick<
+      SessionSummary,
+      "sideChatCount" | "subagentCount" | "runningSubagentCount" | "childSessions"
+    >,
+  ): SessionsIndexDelta[] {
+    const prev = this.summaries.get(sessionId);
+    if (!prev) return [];
+    const next = { ...prev };
+    delete next.sideChatCount;
+    delete next.subagentCount;
+    delete next.runningSubagentCount;
+    delete next.childSessions;
+    if (facts.sideChatCount) next.sideChatCount = facts.sideChatCount;
+    if (facts.subagentCount) next.subagentCount = facts.subagentCount;
+    if (facts.runningSubagentCount) next.runningSubagentCount = facts.runningSubagentCount;
+    if (facts.childSessions?.length) next.childSessions = facts.childSessions;
+    if (summariesEqual(prev, next)) return [];
+    this.summaries.set(sessionId, next);
+    return [{ op: "session.upserted", session: next }];
+  }
+
+  /** Remove a session; return a remove delta if it existed. */
   remove(sessionId: string): SessionsIndexDelta[] {
     if (!this.summaries.has(sessionId)) return [];
     this.summaries.delete(sessionId);

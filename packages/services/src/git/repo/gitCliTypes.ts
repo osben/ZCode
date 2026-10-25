@@ -1,4 +1,5 @@
 import type {
+  GitBranchMergeStatus,
   GitBranchMutationResult,
   GitChangeKind,
   GitCommitGraphCommit,
@@ -7,7 +8,14 @@ import type {
   GitIdentity,
   GitLocalBranchListResult,
   GitPushResult,
+  GitRepositoryRemotesResult,
   GitRepositorySummary,
+  GitWorktreeCreateResult,
+  GitWorktreeListResult,
+  GitWorktreePruneResult,
+  GitWorktreeRemoveResult,
+  GitWorktreeExcludeResult,
+  GitWorktreeVerifyResult,
   GitWorkspaceRepositoryInfo,
 } from "@zcode/shared";
 
@@ -16,6 +24,8 @@ export interface GitLineStat {
   removed: number;
   kind?: GitChangeKind;
   originalPath?: string | null;
+  /** Untracked zero-byte regular file: reviewable as an added file although both counts are zero. */
+  isEmptyFile?: boolean;
 }
 
 export interface GitStatusEntry {
@@ -72,6 +82,7 @@ export interface GitCliRepo {
   invalidate(workspacePath: string): void;
   resolveRepository(workspacePath: string): Promise<GitResolvedRepository>;
   getWorkspaceRepositoryInfo(workspacePath: string): Promise<GitWorkspaceRepositoryInfo>;
+  getRepositoryRemotes(workspacePath: string): Promise<GitRepositoryRemotesResult>;
   getStatus(workspacePath: string): Promise<GitStatusSnapshot>;
   getCommitGraph(
     workspacePath: string,
@@ -80,6 +91,25 @@ export interface GitCliRepo {
   ): Promise<GitCommitGraphSnapshot>;
   getIgnoredPaths(workspacePath: string, paths: string[]): Promise<string[]>;
   listLocalBranches(workspacePath: string): Promise<GitLocalBranchListResult>;
+  listWorktrees(workspacePath: string): Promise<GitWorktreeListResult>;
+  resolveWorktreePathIdentities(paths: string[]): Promise<string[]>;
+  verifyWorktreeUsable(workspacePath: string, targetPath: string): Promise<GitWorktreeVerifyResult>;
+  ensureWorktreeExclusion(
+    workspacePath: string,
+    targetPath: string,
+  ): Promise<GitWorktreeExcludeResult>;
+  createWorktree(
+    workspacePath: string,
+    branchName: string,
+    targetPath: string,
+    baseBranch?: string,
+  ): Promise<GitWorktreeCreateResult>;
+  removeWorktree(
+    workspacePath: string,
+    targetPath: string,
+    force?: boolean,
+  ): Promise<GitWorktreeRemoveResult>;
+  pruneWorktrees(workspacePath: string): Promise<GitWorktreePruneResult>;
   switchBranch(workspacePath: string, targetBranchName: string): Promise<GitBranchMutationResult>;
   createBranchAndSwitch(
     workspacePath: string,
@@ -88,6 +118,14 @@ export interface GitCliRepo {
   ): Promise<GitBranchMutationResult>;
   getDiff(params: GitDiffQuery): Promise<GitDiffResult>;
   getBranchComparison(workspacePath: string): Promise<GitBranchComparisonSnapshot>;
+  getBranchMergeStatus(workspacePath: string): Promise<GitBranchMergeStatus>;
+  /**
+   * Текущая ветка HEAD одним symbolic-ref (без полного `git status`).
+   * Служит дешёвой валидацией попаданий кэша merge-статуса: внешний checkout
+   * меняет HEAD, и запись другой ветки не должна подаваться как свежая.
+   * null = не репозиторий / detached HEAD / не удалось прочитать.
+   */
+  readHeadBranch(workspacePath: string): Promise<string | null>;
   stage(workspacePath: string, paths: string[]): Promise<void>;
   unstage(workspacePath: string, paths: string[]): Promise<void>;
   discard(workspacePath: string, paths: string[], staged: boolean): Promise<void>;

@@ -1,55 +1,43 @@
-# ZCode Built-in Provider Config 维护设计
+# ZCode Built-in Provider Config Maintenance Design
 
-> 状态：当前有效设计
->
-> 本文规定 `config/provider/zcode-builtin.json` 的长期维护方式。字段契约、Overlay 和 Registry
-> 完整语义分别以 [`configuration.md`](./configuration.md)、
-> [`provider-and-model-configuration-overview.md`](./provider-and-model-configuration-overview.md) 为准。
+> Current effective design. This document specifies long-term maintenance of `config/provider/zcode-builtin.json`; field contracts, Overlays, and Registry completeness semantics live in [`configuration.md`](./configuration.md) and [`provider-and-model-configuration-overview.md`](./provider-and-model-configuration-overview.md).
 
-正式环境源文件沿用 `zcode-builtin.json`，测试环境使用同目录 `zcode-builtin.test.json`。
-两份遵循相同维护规范，按 `ZCODE_ENV` 打包；选择与缓存契约见
-[双环境打包](../../../../builtin-provider-config-build-environments.md)。
+Formal environments use `zcode-builtin.json`; test environments use the sibling `zcode-builtin.test.json`. Both follow the same maintenance rules and are packaged by `ZCODE_ENV`; selection and cache contracts are in [dual-environment packaging](../../../../builtin-provider-config-build-environments.md).
 
-## 1. 目标与边界
+## 1. Goals and Boundaries
 
-ZCode Built-in Release 原子发布两类内容：
+A ZCode Built-in Release atomically publishes:
 
 ```text
 ZCode Built-in Release
 ├─ Account Provider Config Map
 ├─ Provider Template Map
-│  └─ Template 元数据壳 + Provider Config Overlay
+│  └─ Template metadata shell + Provider Config Overlay
 └─ Model Config Rules
 ```
 
-Account Provider Config Map 声明 ZCode 维护的账号 Provider 身份与调用配置。Provider Template Map 为普通 API
-Provider 提供创建基线；每个 Template 以领域壳保存多语言 `nameMap` 和复用的 Provider Config Overlay，不进入
-Registry。Model Config Rules 声明模型事实、API/Endpoint 请求能力、Option Specs、
-per-option raw-body map 和 Provider/Model 产品事实。
+The Account Provider Config Map declares ZCode-maintained account Provider identities and call configs. The Provider Template Map provides creation baselines for ordinary API Providers; each Template stores multi-language `nameMap` and reusable Provider Config overlays in domain shells and never enters Registries. Model Config Rules declare model facts, API/Endpoint request capabilities, Option Specs, per-option raw-body maps, and Provider/model product facts.
 
-本文是发布者写作规范和评审心智模型，不新增：
+This document is an author writing specification and review mental model. It does not add:
 
-- Rule `priority`、`specificity` 或排序字段；
-- Runtime Rule 重排或第二个 Resolver；
-- 按 modelId、Provider ID 或 URL 编写的业务代码分支；
-- 配置内的 evidence、provenance 或 confidence 字段；
-- Provider/Model 成员、Account 权益或 Personal 意图的新事实源。
+- Rule `priority`, `specificity`, or sorting fields;
+- Runtime Rule rearrangement or a second Resolver;
+- Business code branching by modelId, Provider ID, or URL;
+- `evidence`, `provenance`, or `confidence` fields in configurations;
+- New fact sources for Provider/model members, Account entitlements, or Personal intents.
 
-能力事实的维护还必须区分“没有查到”和“明确不支持”：
+Capability maintenance must distinguish "not found" from "explicitly unsupported":
 
-- 新模型没有可靠证据时，通用基线继续给出保守默认值；
-- 已发布模型能力从 `true` 降为 `false` 时，必须有当前官方资料的明确否定、目标 Endpoint 的可复现请求结果，
-  或服务发布者的明确裁决；
-- 搜索结果缺席、研究报告未记录、旧文档没有提及，都不能单独作为能力降级证据；
-- 同一模型存在多个 Endpoint/产品形态时，只能把结论写到证据真正覆盖的 Model、API 或 Endpoint 层，不能从一个
-  产品页面外推到所有线路。
+- New models without reliable evidence keep the general baseline's conservative defaults.
+- Downgrading a published capability from `true` to `false` requires explicit denial in current official material, reproducible request results from the target Endpoint, or an explicit service-publisher decision.
+- Absent search results, unrecorded research, or old documents not mentioning a capability are never sufficient downgrade evidence.
+- When a model exists across multiple Endpoints/product forms, conclusions are written only at the Model, API, or Endpoint layer the evidence truly covers; never extrapolated from one product page to all routes.
 
-这个不对称规则是有意的：未知模型采用保守默认值可以避免误放行；已经声明并投入使用的能力则不能因为一次资料
-刷新遗漏而被静默关闭。
+This asymmetry is intentional: conservative defaults for unknown models avoid false-positive admission; declared, deployed capabilities must not be silently disabled by one missed material refresh.
 
-## 2. 两种 Rule 类型
+## 2. Two Rule Types
 
-系统只有两种 Model Config Rule：
+Only two Model Config Rules exist:
 
 ```ts
 type ModelConfigRule =
@@ -69,270 +57,160 @@ type ModelConfigRule =
     };
 ```
 
-统一术语如下：
+| Rule type        | Terminology               | Meaning                                                |
+| ---------------- | ------------------------- | ------------------------------------------------------ |
+| `match`          | Match Rule                | Matches a set of resolution contexts by matcher        |
+| `provider-model` | Provider-Model Exact Rule | Precisely matches a `providerId + modelId` combination |
 
-| Rule type        | 术语                      | 含义                                     |
-| ---------------- | ------------------------- | ---------------------------------------- |
-| `match`          | Match Rule                | 用 matcher 命中一组解析上下文            |
-| `provider-model` | Provider-Model Exact Rule | 精确命中一个 `providerId + modelId` 组合 |
+Both Built-in and Personal may contain both types; `Built-in` / `Personal` only name Source owners and create no third Rule type. Built-in Exact Rules are maintained by Releases; Personal Exact Rules follow the settings-page model lifecycle.
 
-Built-in 与 Personal 都可以包含这两种类型。`Built-in`、`Personal` 只表示 Source 所有者，不产生第三种
-Rule 类型。Built-in Exact Rule 由 Release 维护；Personal Exact Rule 跟随设置页模型生命周期维护。
+## 3. Built-in Rules' Physical Writing Order
 
-## 3. Built-in Rule 的物理写作顺序
-
-Built-in Rules 按数组顺序应用，后命中的配置项覆盖前面。以下层级只是发布文件的写作顺序和评审心智模型，
-不由代码计算优先级：
+Built-in Rules apply in array order; later hits override earlier ones. The hierarchy below is only the published file's writing order and review model — never a code-computed priority:
 
 ```text
 1. Complete Baseline Match Rule
-   └─ modelMatch=.*
-   └─ 为未知 Personal Model 提供完整、保守的默认配置
-            |
-            v
+   └─ modelMatch=.* — complete, conservative defaults for unknown Personal Models
 2. Model Match Rule
-   └─ modelMatch
-   └─ 与 API Schema 和 Endpoint 无关的模型事实
-            |
-            v
+   └─ modelMatch — model facts independent of API Schema and Endpoints
 3. Model + API Match Rule
-   └─ modelMatch + apiMatch
-   └─ 该公开协议下的请求能力、Option Spec 和参数映射
-            |
-            v
+   └─ modelMatch + apiMatch — request capabilities, Option Specs, parameter mappings under that protocol
 4. Model + API + Endpoint Match Rule
-   └─ modelMatch + apiMatch + baseURLMatch
-   └─ 指定官方或兼容 Endpoint 的已证实差异
-            |
-            v
+   └─ modelMatch + apiMatch + baseURLMatch — verified differences at specific Endpoints
 5. Provider-scoped Match Rule
-   └─ providerMatch + modelMatch
-   └─ 适用于该 Provider 全部当前/未来成员的服务能力
-            |
-            v
+   └─ providerMatch + modelMatch — service capabilities for all current/future members of that Provider
 6. Provider-Model Exact Rule
-   └─ providerId + modelId
-   └─ 默认 enabled 和无法由 Endpoint 表达的窄产品事实
+   └─ providerId + modelId — default enabled and narrow product facts not expressible by Endpoints
 ```
 
-同一模型家族的第 2～4 层连续放置，避免在文件不同区域维护同一模型的事实。跨模型成立的
-Provider-scoped 服务事实放在各模型事实之后、Exact Rules 之前。第 1 层只出现一次。
-Reasoning Option Spec 的 `values` 必须按推理强度从低到高书写；首项是辅助调用使用的最低公开档位，
-末项是普通缺省选择使用的最高公开档位。模型不支持关闭时不得为了统一名称伪造 `off` 或 `nothink`。
+Layers 2-4 of one model family sit contiguously, so facts about one model are not scattered through the file. Cross-model Provider-scoped service facts sit after all model facts and before Exact Rules. Layer 1 appears exactly once. Reasoning Option Spec `values` are written from lowest to highest reasoning intensity: the first item is the lowest public level used for auxiliary calls; the last is the highest public level used for normal default selections. When a model cannot disable reasoning, do not fabricate `off` or `nothink` unified names.
 
-Resolver 继续原样遍历 Built-in 数组。Effective Rules 继续由现有领域边界组合：
+Resolvers still traverse Built-in arrays as-is; Effective Rules combine through existing domain boundaries:
 
 ```text
-Built-in Rules（保持物理顺序）
-              +
-Personal provider-model Rules（保持内部顺序）
-              +
-Personal Provider-Model Exact Rules（保持内部顺序）
+Built-in Rules (physical order)
+  + Personal provider-model Rules (internal order)
+  + Personal Provider-Model Exact Rules (internal order)
 ```
 
-不得为实现上述作者规范修改 `ModelConfigRules.composeEffective()` 或增加动态 specificity 排序。
+Do not modify `ModelConfigRules.composeEffective()` or add dynamic specificity sorting to serve this author specification.
 
-## 4. 各层负责的事实
+## 4. Facts Served by Each Layer
 
 ### 4.1 Complete Baseline
 
-通用基线保证任何合法 Personal Model 都能得到完整 Model Config。默认值必须保守：
+The general baseline guarantees every valid Personal Model a complete Model Config. Defaults are conservative:
 
-- 输入输出格式仅开启明确通用的 Text；
-- 未经证明的媒体、工具、JSON Schema 输出、原生搜索和 MCS 为 `false`；
-- 提供完整 context、max output 和其他必填叶子；
-- `enabled=true`，使用户新建并明确加入 Personal 成员的模型可用。
+- Input/output formats enable only explicitly universal Text;
+- Unproven media, tools, JSON Schema output, native search, and MCS are `false`;
+- Complete context, max output, and all other required leaves are provided;
+- `enabled=true`, so users can create and add Personal Model members that work.
 
-通用基线不能伪装成某个具体模型的真实能力。
+The baseline never impersonates a specific model's real capabilities.
 
 ### 4.2 Model Match
 
-Model Match Rule 只表达不随 API Schema 或 Endpoint 改变的事实，例如：
-
-- context window 和模型最大输出硬上限；
-- Text/Image/Video/Audio/PDF 输入事实；
-- Text 输出事实；
-- 可以被所有目标 Schema 可靠表达的模型级 Tool 能力。
-
-模型名匹配对完整 Model ID 做 ASCII 大小写不敏感匹配，但不改写真实请求中的 Model ID。
+Model Match Rules express only facts that do not change with API Schema or Endpoint: context windows and max-output hard limits; Text/Image/Video/Audio/PDF input facts; Text output facts; model-level Tool capabilities reliably expressible by every target Schema. `modelMatch` is ASCII case-insensitive matching on complete Model IDs and never rewrites the real Model ID sent in requests.
 
 ### 4.3 Model + API Match
 
-这一层表达公开协议差异，例如：
+This layer expresses public protocol differences: complete selectable reasoning levels from lowest to highest; `optionSpecs.reasoningLevel.map` and `optionSpecs.maxOutputTokens.map`; whether `responseJsonSchema` can be encoded by that Schema; whether Tools, MCS, and max-output parameters execute under that Schema; `requiresMfjsToolSchema` and other narrow request-encoding facts.
 
-- reasoning level 从低到高的完整可选值；
-- `optionSpecs.reasoningLevel.map` 与 `optionSpecs.maxOutputTokens.map`；
-- `responseJsonSchema` 能否由该 Schema 编码；
-- Tool、MCS、max output 参数在该 Schema 下是否可执行；
-- `requiresMfjsToolSchema` 等确属请求编码的窄事实。
-
-“覆盖三种 Schema”表示每个维护模型对三种 Schema 都有明确、可审计的解析结果；不表示厂商官方 Endpoint
-必须支持三种 Schema，也不要求把完整模型事实复制三份。缺少官方协议时使用保守结果，第三方兼容 Endpoint
-可以由下一层晋升。
+"Covering three Schemas" means each maintained model has clear, auditable resolution results for all three Schemas — not that vendor official Endpoints must support all three, and not copying model facts three times. Missing official protocols use conservative results; third-party compatible Endpoints can be promoted by the next layer.
 
 ### 4.4 Model + API + Endpoint Match
 
-Endpoint 特化优先使用：
+Endpoint specialization uses `modelMatch + apiMatch + baseURLMatch` and expresses differences of one model and Schema on a real service route. `baseURLMatch` fully regex-matches normalized URLs: host casing, default ports, and trailing slashes are already normalized; Paths, Queries, and Fragments still carry semantics.
 
-```text
-modelMatch + apiMatch + baseURLMatch
-```
-
-它表达同一模型和 Schema 在某条真实服务线路上的差异。`baseURLMatch` 对规范化后的 URL 做完整正则匹配：
-Host 大小写、默认端口和尾斜杠已经规范化，Path、Query 和 Fragment 仍有语义。
-
-适合放在此层的事实包括：
-
-- 官方兼容 Endpoint 实际支持的 JSON Schema、MCS 或 reasoning 参数；
-- 只有该 Endpoint 提供的原生 Web Search；
-- 同一公开 Schema 在不同服务端实现上的已验证限制。
-
-它不负责 Provider 成员、Account 权益、默认启用或访问材料。一个 Personal Provider 指向同一 Endpoint 时，
-应自然取得相同的 Endpoint 事实。
+Suitable facts: JSON Schemas, MCS, or reasoning parameters actually supported by official compatible Endpoints; Native Web Search provided only by that Endpoint; verified limitations of one public Schema across server-side implementations. This layer is not responsible for Provider members, Account entitlements, default enabled states, or access materials. A Personal Provider pointing at the same Endpoint naturally receives the same Endpoint facts.
 
 ### 4.5 Provider-scoped Match Rule
 
-当一个 Provider 的服务链为其全部当前和未来模型成员提供相同能力，而且该能力不能由 API Schema 或
-Endpoint 独立表达时，使用：
-
-```text
-providerMatch + modelMatch
-```
-
-它仍是普通 Match Rule，不产生新的 Rule 类型。例如 Start Plan、Individual Coding Plan 和 Team Coding Plan
-会在模型 API 前使用视觉模型把 Image/Video 转成文字，因此这些 Plan Provider 的全部模型成员都可以声明：
+When a Provider's service chain applies one capability to all current and future model members, and that capability cannot be expressed by API Schema or Endpoint alone, use `providerMatch + modelMatch`. It is still an ordinary Match Rule — no new Rule type. Example: Start Plan, Individual Coding Plan, and Team Coding Plan convert Image/Video to text with visual models before the model API, so all members of those Plan Providers may declare:
 
 ```ts
 properties.input_format.support_image = true;
 properties.input_format.support_video = true;
 ```
 
-这里的“多模态”只指已确认的 Image/Video 视觉输入，不推断 Audio 或 PDF。该 Rule 必须精确匹配 Plan Provider，
-不能命中由 `zai-api` / `bigmodel-api` Template 创建的普通 API Provider；后者继续使用模型 API 的原生能力。系统不存在
-`zhipu-account/mode=api-key` 的“Account API Provider”。
+"Multimodal" here means confirmed Image/Video visual input only — never Audio or PDF. This Rule must precisely match Plan Providers; it must not match ordinary API Providers created from `zai-api` / `bigmodel-api` Templates, which keep the model API's native capabilities. There is no `zhipu-account/mode=api-key` "Account API Provider" type.
 
-Provider-scoped Rule 只用于真正对全部成员成立的服务事实。仅对一个模型成立的差异仍放在 Model/API/Endpoint
-或 Exact Rule，不能借 `modelMatch=.*` 扩散。
+Provider-scoped Rules are only for truly member-wide service facts. Single-model differences stay in Model/API/Endpoint or Exact Rules; never diffuse them through `modelMatch=.*`.
 
 ### 4.6 Provider-Model Exact Rule
 
-每个 `builtinModelIds` 成员都必须有且只有一条 Exact Rule 明确声明默认 `enabled`，避免新增成员因通用基线
-`enabled=true` 而意外进入用户候选。除这张 enabled 矩阵外，Exact Rule 的其他字段应保持稀少，主要负责：
+Every `builtinModelIds` member must have exactly one Exact Rule explicitly declaring default `enabled`, so new members cannot unexpectedly enter user candidates through the baseline's `enabled=true`. Beyond this enabled matrix, Exact Rule fields stay scarce: the model's default `enabled` under that Built-in Provider, and Provider product-catalog facts not expressible by `model + api + baseURL`. Do not copy Endpoint-reusable facts into multiple Exact Rules for writing convenience.
 
-- 某个 Built-in Provider 下该模型的默认 `enabled`；
-- 不能由 `model + api + baseURL` 准确表达的 Provider 产品目录事实。
+## 5. JSON Schema Output Fields
 
-不能为了书写方便，把本可由 Endpoint Match 复用的事实复制到多个 Exact Rule。
-
-## 5. JSON Schema 输出字段
-
-目标字段名固定为：
+The target field is fixed:
 
 ```ts
 properties.supportsJsonSchemaOutput: boolean;
 ```
 
-它只表示当前 Effective Model 能接受应用提供的 `ModelRequest.responseJsonSchema`，并由目标 Adapter/Schema
-编码为 JSON Schema 约束输出。它不表示普通 JSON、JSON Object Mode 或提示词要求返回 JSON。
+It only means the Effective Model accepts the provided `ModelRequest.responseJsonSchema`, encoded as JSON Schema constraints by the target Adapter/Schema. It never means ordinary JSON, JSON Object Mode, or prompt-based JSON instructions. Evidence proving only `response_format={type:"json_object"}` keeps this field `false`; it becomes `true` only when the target Schema/Endpoint accepts JSON Schema. UI text uses "JSON Schema structured output."
 
-证据仅证明 `response_format={type:"json_object"}` 时，该字段必须保持 `false`。只有目标 Schema/Endpoint
-能够接受 JSON Schema 时才可设为 `true`。UI 文案使用“JSON Schema 结构化输出”。
+The current `supportsJsonSchemaOutput` name is a legacy awaiting migration; the migration renames Config, Registry, Model, Runtime, Adapter, Protocol, Settings, and tests all at once, with no dual fields or Runtime aliases.
 
-当前实现中的 `supportsJsonSchemaOutput` 是待迁移旧名；迁移时 Config、Registry、Model、Runtime、Adapter、
-Protocol、Settings 和测试必须一次性改名，不保留双字段或 Runtime alias。
+## 6. Evidence and Conservative Inference
 
-## 6. 证据与保守推断
+Every non-obvious fact is classified in publishing review materials (never written into runtime Config):
 
-每项非显然事实在发布评审材料中归为三类之一，但分类不写进运行时 Config：
+| Category              | Meaning                                                                                           | Configurable scope                                             |
+| --------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Official confirmation | Vendor's current model/API docs explicitly declared                                               | Corresponding Model, Schema, or Endpoint                       |
+| Product confirmation  | ZCode product/service, account interfaces, or internal official contracts explicitly declared     | Corresponding Built-in Provider product facts                  |
+| Protocol inference    | Conservative general results for third-party compatible services, with no official Endpoint proof | Uncertain capabilities are `false`; Personal overrides allowed |
 
-| 分类     | 含义                                                       | 可配置范围                               |
-| -------- | ---------------------------------------------------------- | ---------------------------------------- |
-| 官方确认 | 厂商当前模型/API 文档明确声明                              | 对应 Model、Schema 或 Endpoint           |
-| 产品确认 | ZCode 产品服务、账号接口或内部正式契约明确声明             | 对应 Built-in Provider 产品事实          |
-| 协议推断 | 为第三方兼容服务提供的保守通用结果，尚无官方 Endpoint 证明 | 不确定能力为 `false`，允许 Personal 覆盖 |
+### 6.1 Models API is Publishing Evidence, Not a New Runtime Config Layer
 
-### 6.1 Models API 是发布证据，不是新的运行时配置层
+Some vendors offer model discovery interfaces beside reasoning Endpoints. The query object is not a bare Base URL but `Endpoint + API Schema + current access materials`: the same Endpoint may return different members under different accounts, regions, plans, or API Keys. Models API paths and authentication are decided by protocol and vendor; mechanically appending `/models` to any `baseURL` is prohibited.
 
-部分厂商在推理 Endpoint 旁提供模型发现接口：
+Publisher boundaries for results:
 
-```text
-Base URL + API Schema + 当前访问材料
-                    |
-                    v
-         Provider Models API
-                    |
-                    +--> 当前访问材料可见的 Model ID
-                    `--> 可选的 context / output / capability 元数据
-```
+- Model IDs in real-time successful responses are strong evidence of members currently visible under those access materials; document example responses prove only response shape, never a live catalog.
+- Explicitly returned fields (context, max output, input capabilities, thinking, structured output) are official evidence for the corresponding Model/API/Endpoint Rules.
+- OpenAI-compatible basic Models responses usually contain only IDs, owners, and timestamps; media, reasoning, or Option Specs cannot be inferred from them.
+- Anthropic Models APIs can return richer capabilities and token limits, but third-party Anthropic-compatible Endpoints may implement only subsets.
+- Account/Plan-specific model collections still belong to Account Overlays; general Models APIs never override product entitlement interfaces.
 
-这里的查询对象不是脱离账号的 Base URL，而是 `Endpoint + API Schema + 当前访问材料`。同一 Endpoint
-在不同账号、区域、套餐或 API Key 下可能返回不同成员。Models API 的路径和认证也由协议及厂商共同决定，
-不得在任意 `baseURL` 后机械拼接 `/models`。
+Models APIs enter publishing verification, difference reports, or user-initiated import flows only. They never override ZCode Built-in, Account, or Personal Config during startup or normal requests, form no fourth Config layer, and never let transient network failures change Registries.
 
-发布者按以下边界使用结果：
+"Structured Output", "Search", or "Tools" on official websites does not spread across Schemas and Endpoints. Missing official material may be supplemented with conservative rules for all three Schemas, but risky capabilities are never enabled from same-family names, similar names, or marketing terms.
 
-- 实时成功响应中的 Model ID 是校验该访问材料当前可见成员的强证据；文档中的示例响应只能证明响应形状，
-  不能代替实时目录；
-- 响应明确返回的 context、max output、输入能力、thinking 或 structured output 等字段，可以成为对应
-  Model/API/Endpoint Rule 的官方证据；
-- OpenAI-compatible 的基础 Models 响应通常只包含 ID、owner 和时间，不能据此推断媒体、reasoning 或
-  Option Specs；
-- Anthropic Models API 当前可以返回更丰富的 capability 与 token 上限，但第三方 Anthropic-compatible
-  Endpoint 可能只实现其中的子集；
-- Account 或 Plan 的账号特定模型集合仍归 Account Overlay；通用 Models API 不覆盖产品权益接口。
+Capability evidence must also distinguish "service accepts input" from "model consumes input": requests with unknown fields or images passing without error may only be server tolerance or ignoring. Media capabilities need at least an official explicit declaration, a ZCode product service contract, or protocol-level tests proving the content actually reaches model answers.
 
-Models API 只进入发布验证、差异报告或用户主动导入流程。它不在应用启动或普通请求期间直接覆盖
-ZCode Built-in、Account 或 Personal Config，不形成第四层 Config，也不让瞬时网络失败改变 Registry。
+Models absent from official sites but plausibly served by third-party compatible services get complete conservative Model Rules; they become default-enabled members of the corresponding official Built-in Provider only after official docs, live Models APIs, or product facts confirm the model is callable by the target Endpoints and API Schemas. This provides Personal Provider defaults without disguising compatibility inference as official product commitment.
 
-官网写“Structured Output”“Search”或“Tools”不足以跨 Schema、Endpoint 扩散。官方资料缺失时可以补齐三种
-Schema 的保守规则，但不能凭同家族、相似名称或营销术语开启高风险能力。
+## 7. Model Members, Default Enabled, and Initial Ordering
 
-能力证据还必须区分“服务接受输入”与“模型消费输入”。请求携带未知字段、图片或其他内容而未报错，可能只是
-服务端容忍或忽略，不能据此把对应能力设为 `true`。媒体能力至少需要官方明确声明、ZCode 产品服务契约，或能证明
-内容确实参与模型回答的协议级实测。
-
-官网未列出但第三方兼容服务可能提供的模型，可以有完整的保守 Model Rules；只有官方文档、实时 Models API
-或产品事实确认该模型可由目标 Endpoint 和 API Schema 调用后，才能把它作为对应官方 Built-in Provider 的
-默认启用成员。这样既为 Personal Provider 提供默认值，又不把兼容推断伪装成官方产品承诺。
-
-## 7. 模型成员、默认启用与初始顺序
-
-每个 Built-in Provider 的 `builtinModelIds` 包含保留给用户配置的完整产品目录。默认启用由该 Provider 的
-Exact Rules 表达。
-
-发布文件同时遵守：
+Each Built-in Provider's `builtinModelIds` holds the complete product catalog reserved for user configuration; default enabled is expressed by that Provider's Exact Rules:
 
 ```text
 builtinModelIds
-├─ enabled=true 的当前主力或独特模型
-└─ enabled=false 的旧型号、重复别名或被替代模型
+├─ enabled=true current mainstays or unique models
+└─ enabled=false old models, duplicate aliases, or replaced models
 ```
 
-这只是 Built-in 初始成员顺序。系统不增加 enabled-first 动态排序，也不重写 Personal `modelOrder`。
-Account Overlay 返回模型子集时按该 Built-in 顺序投影；用户产生完整 `modelOrder` 后继续由现有成员顺序算法负责。
+This is only the Built-in initial member ordering: no enabled-first dynamic sorting, no rewriting of Personal `modelOrder`. When Account Overlays return model subsets, they project by that Built-in order; once users produce a complete `modelOrder`, the existing member-ordering algorithm takes over.
 
-默认启用评审至少回答：
+Default-enabled review answers at least: (1) is it a current mainstay model? (2) does it offer speed, price, visuals, ultra-long context, or Coding ability no other enabled model has? (3) is it merely another model's alias? (4) is it deprecated, offline, or explicitly replaced? (5) does the current Built-in Endpoint actually serve that Model ID?
 
-1. 它是否是当前主力型号；
-2. 它是否提供其他已启用型号没有的速度、价格、视觉、超长上下文或 Coding 能力；
-3. 它是否只是另一个型号的 alias；
-4. 它是否已经弃用、下线或被明确替代；
-5. 当前 Built-in Endpoint 是否真的提供该 Model ID。
+## 8. Publishing Checks
 
-## 8. 发布检查
+Every Built-in Release maintenance verifies at least:
 
-每次维护 Built-in Release 至少验证：
+- Provider Maps and Rules remain one atomic Release;
+- Every `builtinModelIds` member resolves to a complete Model Config;
+- Every maintained model has clear resolution results under all three API Schemas;
+- Endpoint differences use `baseURLMatch` first; Exact Rules keep product-fact boundaries;
+- Provider-scoped Match Rules express only capabilities that hold for all current/future members;
+- Built-in physical order follows this document's hierarchy, with no reliance on dynamic priorities;
+- Exact Rule `enabled` matches the Provider's initial member ordering;
+- Retired/alias models retained are default-disabled;
+- Personal Exact Rules can still override posteriorly;
+- Runtime, Adapters, and UIs re-infer nothing by specific modelId/Provider ID;
+- Non-obvious capabilities have official, product, or reproducible Endpoint evidence.
 
-- Provider Map 和 Rules 仍作为一个原子 Release；
-- 每个 `builtinModelIds` 成员都能解析出完整 Model Config；
-- 每个维护模型在三种 API Schema 下都有明确解析结果；
-- Endpoint 差异优先使用 `baseURLMatch`，Exact Rule 保持产品事实边界；
-- Provider-scoped Match Rule 只表达对全部当前/未来成员成立的服务能力；
-- Built-in Rule 物理顺序符合本文层级，没有依赖动态优先级；
-- Exact Rule 中的 `enabled` 与同 Provider 的初始成员顺序一致；
-- retired/alias 模型保留时默认 disabled；
-- Personal Exact Rule 仍可后置覆盖；
-- Runtime、Adapter 和 UI 不按具体 modelId/Provider ID 重新推断事实；
-- 非显然能力有官方、产品或可复现 Endpoint 证据。
-
-发布检查可以使用模型 ID 验证配置事实；生产业务代码不得据此分支。
+Publishing checks may verify config facts by model ID; production business code must never branch on it.

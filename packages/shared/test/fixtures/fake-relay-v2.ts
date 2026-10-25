@@ -285,7 +285,7 @@ export async function createFakeRelayV2(options: FakeRelayV2Options) {
       ws.on("close", () => {
         connections.delete(connection);
         const roles = owners.get(connection.deviceSid ?? "");
-        // 被替换连接的 close 晚于新认证完成，必须按连接身份释放，不能只按 SID/role 删除。
+        // The replaced connection's close can arrive after the new auth completes; release by connection identity, not only by SID/role.
         if (roles?.[connection.role] !== connection) return;
         delete roles[connection.role];
         const other = peer(connection);

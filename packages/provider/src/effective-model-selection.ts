@@ -7,12 +7,16 @@ import {
   type ProviderRegistryView,
 } from "./registry.js";
 
-export type ModelSelectionProviderKind = "ordinary" | "account-plan" | "account-offpeak";
+export type ModelSelectionProviderKind =
+  | "ordinary"
+  | "account-plan"
+  | "chatgpt-plan"
+  | "account-offpeak";
 export type ModelSelectionProviderClassifier = (providerId: string) => ModelSelectionProviderKind;
 
 /**
- * 只解析未来执行的意图，不改原选择、持久记录或已固定请求。
- * 原因：读取时清库会让临时失效永久丢失；账号对应也不能退化为同名模型跨任意供应商匹配。
+ * Resolve intent for future execution only; do not change the original selection, persisted records, or requests already pinned.
+ * Clearing storage during a read would make a temporary failure permanent; account mapping must not degrade into matching same-named models across arbitrary providers.
  */
 export function resolveEffectiveModelSelection(input: {
   readonly selection: ModelSelection | null;
@@ -27,8 +31,10 @@ export function resolveEffectiveModelSelection(input: {
   const kind = input.classifyProvider(original.providerId);
   let providerId = original.providerId;
   if (kind === "account-plan") {
+    // Classify identity independently of Registry: a previous plan disappears from executable
+    // candidates after a connection switch, but must retain its account domain.
     const current = Object.entries(input.accountStates ?? {}).filter(
-      ([id, state]) => state.current === true && input.classifyProvider(id) === "account-plan",
+      ([id, state]) => state.current === true && input.classifyProvider(id) === kind,
     );
     if (current.length !== 1) {
       return Object.freeze({
@@ -38,6 +44,12 @@ export function resolveEffectiveModelSelection(input: {
     }
     providerId = current[0]![0];
   }
+  // ChatGPT plan selections resolve by their EXACT per-account provider id: the Desktop
+  // overlay marks every entitled account current, so family-level remapping here would
+  // (a) see more than one current provider and fail with N entitled accounts, and
+  // (b) silently move a selection to a DIFFERENT account when its own account disappears.
+  // A missing account id (or the legacy base id) falls through to provider-not-found and
+  // the user re-picks.
   const provider = input.registry.providers.find(
     (candidate) => candidate.providerId === providerId,
   );

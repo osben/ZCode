@@ -1,27 +1,27 @@
-# 反馈处理进展查看
+# Viewing Feedback Processing Progress
 
-## 目标
+## Goal
 
-用户提交反馈后，可以在“我的反馈”里查看后端处理状态、官方回复和时间线。反馈状态查询只在用户主动进入反馈中心相关页面时发生，避免应用后台持续请求反馈列表。
+After submitting feedback, users can view its backend status, official replies, and timeline under “My Feedback.” Feedback status is queried only when users actively open a related feedback-center page, avoiding continuous background requests for the ticket list.
 
-## 客户端策略
+## Client Policy
 
-- 应用启动和反馈中心未打开时，不后台轮询反馈列表。
-- 用户打开“我的反馈”页时，`TicketsView` 拉取当前用户工单列表。
-- 用户选择某条反馈时，详情页拉取该工单详情，展示最新状态、回复、附件和时间线。
-- 用户点击列表刷新按钮、提交反馈后跳转详情、或补充信息提交成功后，重新拉取列表和当前详情。
-- 反馈中心不再通过后台轮询弹出 toast、桌面通知或“我的反馈”未读角标；用户主动进入“我的反馈”即可看到最新状态。
+- Do not poll the ticket list in the background at app startup or while the feedback center is closed.
+- When the user opens “My Feedback,” `TicketsView` fetches the current user's ticket list.
+- When the user selects a feedback item, the detail page fetches that ticket and displays its latest status, replies, attachments, and timeline.
+- Refetch the list and current detail after the user clicks the list refresh button, after submission navigates to the detail page, or after supplemental information is submitted successfully.
+- The feedback center no longer uses background polling to show toasts, desktop notifications, or an unread badge on “My Feedback.” Users can see the latest status by opening “My Feedback.”
 
-## 点击行为
+## Click Behavior
 
-反馈入口只负责打开反馈中心。用户需要查看处理进展时，进入“我的反馈”列表并选择对应工单。
+The feedback entry point only opens the feedback center. To view processing progress, users open the “My Feedback” list and select the relevant ticket.
 
-## 后端契约
+## Backend Contract
 
-客户端当前依赖列表接口返回的 `updated_at` 与 `status`，详情接口返回事件、评论和附件。后端只要在以下动作后更新工单 `updated_at`，用户下次打开或刷新“我的反馈”时即可看到最新处理进展：
+The client currently relies on `updated_at` and `status` from the list API, and on events, comments, and attachments from the detail API. The backend only needs to update a ticket's `updated_at` after the following actions for users to see the latest progress the next time they open or refresh “My Feedback”:
 
-- 管理员切换状态。
-- 管理员回复用户。
-- 派发、上线或其他处理动作写入工单时间线。
+- An administrator changes the status.
+- An administrator replies to the user.
+- Assignment, release, or another processing action is added to the ticket timeline.
 
-后续如果产品重新需要主动触达，再引入 WebSocket、SSE 或消息推送；不要恢复客户端固定间隔轮询。
+If the product later needs proactive notifications again, introduce WebSocket, SSE, or push notifications; do not restore fixed-interval client polling.

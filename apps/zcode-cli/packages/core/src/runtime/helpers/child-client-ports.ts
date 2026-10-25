@@ -1,43 +1,42 @@
 // ============================================================
-// child runtime 的「对外交互」端口派生（唯一出口）
+// Derive child-runtime client-facing interaction ports (the only entry point)
 // ============================================================
 //
-// 子 runtime 有两条会话身份轴：
-//   账本身份 sessionId —— 事件持久化 / transcript / trace / session store，子用自己的；
-//   路由身份         —— 一切 agent → app 反向请求（permission、AskUserQuestion、provider
-//                        runtime headers），子必须用父的，直到根会话。
-// 客户端只认识根会话；拿子会话去问，桌面侧找不到 session，response 永不发出，子代理挂死。
+// A child runtime has two session identity axes:
+//   Ledger identity, sessionId — event persistence / transcript / trace / session store; the child uses its own.
+//   Routing identity — all agent → app reverse requests (permission, AskUserQuestion, provider runtime headers); the child must use
+//                      the parent's identity, up to the root session.
+// Clients know only the root session. If a child session makes the request, Desktop cannot find it, never sends a response, and the child hangs.
 //
-// 过去这条规则散在各 child 装配点：core 的 subagent 包了两层私有 wrapper，dwf actor 与 legacy
-// workflow child 直接透传 appOptions 的端口——于是两处错、一处对。这里把派生收敛成一处，并由
-// **父 runtime** 调用（`AgentRuntime.createChildClientPorts`），`parentSessionId` 由父自己填，
-// 调用方给不了错的值。
+// Previously this rule was scattered across child assembly sites: core's subagent had two private wrappers, while DWF actors and
+// legacy workflow children passed appOptions ports straight through—two wrong and one correct. Consolidate derivation here and have
+// the **parent runtime** call it (`AgentRuntime.createChildClientPorts`). The parent supplies `parentSessionId`, so callers cannot pass the wrong value.
 
 import type { PermissionBrokerPort, SessionId } from "../deps.js";
 import type { ProviderRuntimeHeadersPort } from "../types.js";
 import type { SubagentInteractionOriginContext } from "../../subagent/interaction-origin.js";
 import { createSubagentInteractionBroker } from "./subagent-interaction-broker.js";
 
-/** 一个 runtime 面向协议客户端的端口集合。 */
+/** A runtime's ports for the protocol client. */
 export interface ClientFacingPorts {
   permissionBroker?: PermissionBrokerPort;
   providerRuntimeHeadersPort?: ProviderRuntimeHeadersPort;
 }
 
 /**
- * 铸造一个 child 所需的归属信息。`parentSessionId` 不在这里——它只能由父 runtime 提供，
- * 这正是「路由身份选不错」的机械保证。
+ * Ownership information needed to create a child. `parentSessionId` is intentionally absent; only the parent runtime may provide it,
+ * mechanically guaranteeing the correct routing identity.
  */
 export type ChildClientPortsContext = Omit<SubagentInteractionOriginContext, "parentSessionId">;
 
 /**
- * 由父的对外端口派生子的对外端口。
+ * Derive a child's client-facing ports from its parent's ports.
  *
- * - `providerRuntimeHeadersPort`：包一层把入参的 `sessionId` 改写成父会话（主 runtime 报自己的
- *   会话，见 methods/model-runtime-headers.ts）。多层嵌套时**外层后写**（离客户端更近的一层最后
- *   执行），最终值必然是根会话。
- * - `permissionBroker`：包一层改写 `request.sessionId`，同样外层后写；`origin` 则保留最内层已有值，
- *   子代理归属不被外层抹掉。
+ * - `providerRuntimeHeadersPort`: wrap it to rewrite the input `sessionId` to the parent session (the primary runtime reports its own
+ *   session; see methods/model-runtime-headers.ts). With nested children, **outer layers write last** (the layer closest to the client
+ *   executes last), so the final value is always the root session.
+ * - `permissionBroker`: similarly wrap it to rewrite `request.sessionId`; preserve the innermost existing `origin` so outer layers do
+ *   not erase subagent attribution.
  */
 export function deriveChildClientPorts(
   parent: ClientFacingPorts,
@@ -59,9 +58,10 @@ export function deriveChildClientPorts(
 }
 
 /**
- * provider runtime headers 是独立的反向协议请求，不经子事件镜像；子会话的 sessionId 只是 CLI
- * 内部账本，桌面端只订阅父 task 的会话，所以刷新账号凭据 header 时必须用父会话路由。服务层会
- * 识别请求模型与父会话当前模型是否一致，不一致时只同步本次 header，不把父会话切到子模型。
+ * Provider runtime headers are an independent reverse protocol request and are not mirrored as child events. A child sessionId is
+ * only an internal CLI ledger identity; Desktop subscribes to the parent task's session, so refresh account-credential headers through
+ * the parent session. The service checks whether the request model matches the parent's current model; if not, it syncs only this
+ * request's header without switching the parent session to the child's model.
  */
 function rerouteProviderRuntimeHeadersPort(
   parentPort: ProviderRuntimeHeadersPort,

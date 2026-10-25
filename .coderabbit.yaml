@@ -1,0 +1,9 @@
+language: en-US
+reviews:
+  profile: assertive
+  auto_review:
+    enabled: true
+    drafts: false
+    # Reviews PRs targeting fork; main mirrors upstream and is not reviewed here.
+    base_branches:
+      - "^fork$"

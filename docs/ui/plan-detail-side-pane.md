@@ -1,39 +1,60 @@
-# 计划卡片与侧边栏详情
+# Plan Card and Side Pane Detail
 
-## 目标
+## Goal
 
-`ExitPlanMode` 的计划既可能一次性完成，也可能通过 tool input 流式增长。主时间线使用紧凑计划卡片展示摘要；点击卡片或右上角展开按钮后，在 Side Pane 打开完整计划。主时间线不再原地展开，也不保留底部“展开计划”按钮。
+An `ExitPlanMode` plan may complete at once or grow in a streaming way through the tool input. The main
+timeline shows a summary in a compact plan card; clicking the card or the top-right expand button opens the
+full plan in the Side Pane. The main timeline no longer expands in place and keeps no bottom "expand plan"
+button.
 
-计划详情只是同一父会话投影的只读视图，不创建 session、Agent runtime、owner、lease 或 command queue。桌面 Electron 与桌面 Web 读取既有 `desktop-continuous` 投影；手机 Web 仍只读取既有 `web-remote-replayable` snapshot/gap 恢复结果，不新增远控链路。
+The plan detail is only a read-only view of the same parent session projection: it creates no session, Agent
+runtime, owner, lease or command queue. Desktop Electron and desktop Web read the existing
+`desktop-continuous` projection; mobile Web only reads the existing `web-remote-replayable` snapshot/gap
+recovery result, with no new remote-control chain.
 
-## 已确认产品语义
+## Confirmed Product Semantics
 
-- 左上角固定显示“计划”，不显示工具原名或“套餐”。
-- 右上角只显示复制；不显示展开、点赞、点踩。
-- 正文预览底部 `bottom-6` 悬浮显示默认主按钮样式、`h-10 pl-6 !pr-4.5` 的胶囊按钮
-  “查看完整计划 →”，替代原 header 展开按钮。
-- 点击卡片非交互区域或底部“查看完整计划”按钮，行为一致：在 Side Pane 打开详情。
-- 每个 `(workspaceKey, parentSessionId, toolCallId)` 对应一个稳定 tab；同一计划复用，不同计划可并存。
-- tab 标题统一为本地化“计划”。
-- Side Pane 显示完整计划，主时间线只显示裁切预览；没有原地展开状态。
-- 计划卡片严格停留在 `ExitPlanMode` 对应的 tool row 位置，不提升到 assistant 轮尾。它位于最终正文之前时随同一段“已工作”历史折叠；展开后必须保持 CLI `rowId` 全序。
-- 流式 `ExitPlanMode` 从首个可解析 `plan` 字段开始显示；卡片不展示行数或流式计数动画，详情随同一 projection 更新。
-- 终态到达后保留最后一份非空正文，snapshot 字段缺失时仍沿用既有完整字段加载入口。
-- assistant 轮尾动作栏的“复制”按本轮聚合：先复制全部 assistant 正文段，再追加同轮所有 `ExitPlanMode` 的完整 Markdown；不读取卡片裁切 DOM，也不包含其他工具结果。卡片自身的复制按钮仍只复制该计划。
-- 右上角摘要新增独立“计划”分区，只列出当前有效 conversation 分支中已经进入 `success`、`error` 或 `cancelled` 终态且含有正文的 `ExitPlanMode`；流式、运行中和等待审批状态不进入目录。
-- 计划目录按 `rowId` 从新到旧排序。点击目录项与点击时间线卡片一致，复用同一个 `(workspaceKey, parentSessionId, toolCallId)` Side Pane tab。
-- 手机端沿用既有 Side Pane 抽屉；核心入口不因窄屏消失。
-- 手机远控专用 `V4ChatPane` 必须与桌面 `V4WorkspaceChatArea` 一样接收
-  `onOpenPlanDetail`；点击卡片或“查看完整计划”后只更新 renderer Side Pane 状态，
-  不发送 task command，也不改变 `web-remote-replayable` 恢复链路。
+1. The top-left always shows "计划" (Plan), not the tool's original name or "套餐".
+2. The top-right shows only Copy; no expand, like or dislike.
+3. At the bottom of the body preview, `bottom-6` floats a default-primary-style capsule button
+   `h-10 pl-6 !pr-4.5` "查看完整计划 →" (View full plan), replacing the old header expand button.
+4. Clicking a non-interactive card area or the bottom "查看完整计划" button behaves the same: open the detail
+   in the Side Pane.
+5. Each `(workspaceKey, parentSessionId, toolCallId)` maps to one stable tab; the same plan reuses it,
+   different plans may coexist.
+6. A plan opened from a selection side chat still uses the child session as source `parentSessionId`, but
+   the tab's visible scope binds to the root task through an independent `rootSessionId`, hidden and
+   restored with the root task when switching main tasks.
+7. The tab title is the localized "计划".
+8. The Side Pane shows the full plan; the main timeline shows only a clipped preview; there is no in-place
+   expanded state.
+9. The plan card stays strictly at the position of the `ExitPlanMode` tool row and is not promoted to the
+   assistant turn tail. When it lies before the final body it folds with the same "已工作" history; after
+   expanding it must keep the CLI `rowId` total order.
+10. A streaming `ExitPlanMode` shows from the first parsable `plan` field; the card shows no line count or
+    streaming counter animation, and the detail updates with the same projection.
+11. After the terminal state arrives, the last non-empty body is kept; when snapshot fields are missing the
+    existing full-field loading entry is still used.
+12. The "Copy" of the assistant turn-tail action bar aggregates by turn: first copy all assistant body
+    segments, then append the full Markdown of all `ExitPlanMode` of the same turn; it does not read the
+    clipped card DOM nor include other tool results. The card's own copy button still copies only that plan.
+13. The top-right summary gains an independent "计划" section listing only `ExitPlanMode` in the current
+    valid conversation branch that has entered `success`, `error` or `cancelled` terminal state and has a
+    body; streaming, running and awaiting-approval states do not enter the directory.
+14. The plan directory is sorted by `rowId` newest first. Clicking a directory item equals clicking the
+    timeline card, reusing the same `(workspaceKey, parentSessionId, toolCallId)` Side Pane tab.
+15. Mobile keeps the existing Side Pane drawer; the core entry does not disappear on narrow screens.
+16. The mobile-remote-specific `V4ChatPane` must receive `onOpenPlanDetail` just like the desktop
+    `V4WorkspaceChatArea`; clicking the card or "查看完整计划" only updates renderer Side Pane state, sends no
+    task command and does not change the `web-remote-replayable` recovery chain.
 
-## 状态与时序
+## State and Timing
 
 ```text
 provider tool_input_start / delta / end
                   |
                   v
- shared partial JSON preview（识别 plan 字段）
+ shared partial JSON preview (recognize the plan field)
                   |
                   v
  parent conversation projection
@@ -44,10 +65,10 @@ provider tool_input_start / delta / end
           |                               + toolCallId
           v
  main timeline plan card
-   - 原 tool row 位置
-   - 计划
-   - 复制 / 展开
-   - 裁切预览
+   - at the original tool row position
+   - Plan
+   - Copy / Expand
+   - clipped preview
 
 ExitPlanMode terminal / row.removed / snapshot
                   |
@@ -55,68 +76,74 @@ ExitPlanMode terminal / row.removed / snapshot
  renderer plan-directory revision
                   |
                   v
- v4/conversation/plans（CLI 全量有效投影）
+ v4/conversation/plans (CLI full valid projection)
                   |
                   v
- status panel「计划」目录（最新优先）
+ status panel "Plan" directory (newest first)
 
-卡片点击 / 展开点击
-   ---> 激活或创建稳定 tab
-   ---> 展开 Side Pane
-   ---> tab 继续订阅 parent projection
+card click / expand click
+   ---> activate or create a stable tab
+   ---> expand Side Pane
+   ---> tab keeps subscribing to the parent projection
 
-轮尾 assistant 复制
-   ---> assistant text segments（原顺序）
-   ---> ExitPlanMode markdown（同轮原顺序）
-   ---> 以空行拼接后写入剪贴板
+turn-tail assistant copy
+   ---> assistant text segments (original order)
+   ---> ExitPlanMode markdown (same turn, original order)
+   ---> join with blank lines and write to clipboard
 
-切换父任务
-   ---> 按 parentSessionId 隐藏 / 恢复对应计划 tab
-   ---> 不新建 runtime，不改 owner / queue / deliveryKind
+switch parent task
+   ---> hide / restore the matching plan tabs by rootSessionId ?? parentSessionId
+   ---> no new runtime, no change to owner / queue / deliveryKind
 ```
 
-## 状态所有权
+## State Ownership
 
-| 状态 | 权威来源 | 生命周期 |
-| --- | --- | --- |
-| 计划正文与流式状态 | parent conversation projection 的 `ToolCallRow` | 跟随父 session |
-| 计划目录 | CLI 当前有效 projection 的终态 `ExitPlanMode` query | 跟随父分支；edit/retry 裁枝后刷新 |
-| plan detail tab 与激活项 | renderer workspace Side Pane memory | 当前窗口；不落盘 |
-| tab 稳定身份 | `workspaceIdentity?.trim() \|\| workspacePath` + parent session + tool call | 当前窗口 |
-| 最近一份非空计划正文 | plan detail 组件本地展示 fallback | tab 挂载期 |
+| State                           | Authoritative source                                                          | Lifecycle                                                     |
+| ------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Plan body and streaming state   | `ToolCallRow` of the parent conversation projection                           | Follows the parent session                                    |
+| Plan directory                  | Terminal-state `ExitPlanMode` query of the CLI's current valid projection     | Follows the parent branch; refreshed after edit/retry pruning |
+| plan detail tab and active item | renderer workspace Side Pane memory                                           | Current window; not persisted                                 |
+| Tab stable identity             | `workspaceIdentity?.trim() \|\| workspacePath` + parent session + tool call   | Current window                                                |
+| Latest non-empty plan body      | Local display fallback of the plan detail component                           | While the tab is mounted                                      |
+| Tab visible scope               | `rootSessionId ?? parentSessionId`; selection side chat uses the root task ID | Current window                                                |
 
-## 交互与可访问性
+## Interaction and Accessibility
 
-- 卡片使用语义 token：`bg-card`、`border-card-border`、`text-foreground*`，并使用
-  `rounded-xl` 强模块圆角，兼容全部主题。
-- 卡片 header 与正文之间不显示分隔线，依靠紧凑间距维持层级。
-- 卡片 header 使用 `NotepadText` 图标，图标与“计划”标题统一使用
-  `text-foreground-subtle`，两者由 `flex items-center gap-2` 容器组合。
-- 卡片 header 高度为 `h-10`，内容以 `items-start pt-4 px-4` 顶部对齐。
-- 卡片整体可用键盘聚焦；Enter / Space 打开详情。
-- 卡片键盘处理会忽略来自内部交互元素的 Enter / Space，避免底部按钮与整卡重复打开
-  同一个 tab。
-- 复制、查看完整计划、链接和正文内按钮阻止冒泡，不重复打开 tab；底部文字按钮直接以
-  可见文案作为无障碍名称，不与整卡复用 `aria-label`。
-- 图标按钮使用紧凑 `icon-xs` / `icon-sm` 尺寸并提供本地化 `aria-label`。
-- 复制成功只改变按钮可访问名称与图标，不引入常驻 toast。
-- 主时间线预览的正文节点同时承载 `max-h-64`、溢出裁切和底部 mask；前
-  `30%` 完全可见，后 `70%` 渐隐，确保渐变按可见高度计算。空计划不显示计划卡片，
-  Side Pane 仍展示完整正文。
+- The card uses semantic tokens `bg-card`, `border-card-border`, `text-foreground*` and the strong module
+  radius `rounded-xl`, compatible with all themes. No divider between card header and body; compact spacing
+  keeps the hierarchy.
+- The card header uses the `NotepadText` icon; icon and "计划" title both use `text-foreground-subtle`,
+  composed by a `flex items-center gap-2` container. Header height `h-10`; content is top-aligned with
+  `items-start pt-4 px-4`.
+- The whole card is keyboard-focusable; Enter / Space opens the detail. Card key handling ignores Enter /
+  Space coming from inner interactive elements, so the bottom button and the whole card do not open the same
+  tab twice.
+- Copy, View full plan, links and buttons in the body stop propagation and do not open the tab again; the
+  bottom text button uses its visible copy as the accessible name and does not reuse the whole card's
+  `aria-label`. Icon buttons use compact `icon-xs` / `icon-sm` sizes with localized `aria-label`.
+- Copy success changes only the button's accessible name and icon, with no persistent toast.
+- The main timeline preview's body node carries `max-h-64`, overflow clipping and a bottom mask together; the
+  first `30%` is fully visible and the last `70%` fades, so the gradient is computed against visible height.
+  An empty plan shows no plan card; the Side Pane still shows the full body.
 
-## Case 与剪枝
+## Cases and Pruning
 
-| Case | 场景                                           | 预期                                                                                                                        | 决策     |
-| ---- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | -------- |
-| S06  | 完整 `ExitPlanMode` 计划                       | 卡片紧凑显示“计划”和复制，不显示行数；卡片/底部“查看完整计划”胶囊按钮打开同一详情 tab；无反馈按钮                            | accepted |
-| S07  | `plan` 参数流式增长                            | 首个可解析片段即显示卡片，不展示流式计数动画；已打开详情同步增长并在终态一致                                                | accepted |
-| S08  | 同一父任务有多个历史计划                       | 每个 `toolCallId` 独立 tab；重复点击同一计划复用；切任务隐藏/恢复且不串 workspace                                           | accepted |
-| S09  | Electron、桌面 Web、手机 Web、明暗主题与中英文 | 共享卡片和 Side Pane 语义；手机复用既有 replayable 投影与抽屉，不另起 runtime                                               | accepted |
-| S10  | 普通助手回复与 `ExitPlanMode` 已持久化后重启   | canonical `assistant_response` 仍按 UI/transcript 可见语义恢复；计划 tool row 保留完整 `plan` 并以只读 interrupted 历史展示 | accepted |
-| S11  | 同一轮存在 assistant 正文与 `ExitPlanMode`     | 轮尾复制内容为全部 assistant 正文后追加完整计划 Markdown；不受卡片裁切影响，不混入其他工具结果                              | accepted |
-| S12  | 计划后仍有 assistant、tool 或 reasoning 输出     | 计划卡片保持在原 `ExitPlanMode` row；“已工作”展开顺序等于 CLI row 全序，不固定到当前轮底部                                  | accepted |
-| S13  | 当前有效分支存在多个已结束计划                   | 右上角“计划”按最新优先列出全部计划；标题取 Markdown H1/首个非空行；点击打开对应 Side Pane                                  | accepted |
-| S14  | 计划处于流式/审批中，随后终态；或 edit/retry 裁枝 | 非终态不进摘要；终态后出现；`row.removed` 后从目录移除；迟到 query 不恢复旧计划                                             | accepted |
-| S15  | 冷恢复、桌面 continuous、手机 remote replayable | 复用同一 CLI 全量投影 query 和 shared-host attachment；返回同一有效集合，不新增 runtime、owner、queue 或 replay 分支       | accepted |
+| Case | Scenario                                                                  | Expected                                                                                                                                                                | Decision |
+| ---- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| S06  | Complete `ExitPlanMode` plan                                              | Card compactly shows "计划" and Copy, no line count; card/bottom "查看完整计划" capsule opens the same detail tab; no feedback buttons                                  | accepted |
+| S07  | `plan` parameter streams in                                               | Card shows from the first parsable fragment, no streaming counter animation; an already open detail grows in sync and matches at terminal state                         | accepted |
+| S08  | Several historical plans under one parent task                            | Each `toolCallId` is its own tab; repeated clicks on a plan reuse; hide/restore on task switch without crossing workspace                                               | accepted |
+| S09  | Electron, desktop Web, mobile Web, dark/light, zh/en                      | Shared card and Side Pane semantics; mobile reuses the existing replayable projection and drawer, no new runtime                                                        | accepted |
+| S10  | Ordinary assistant reply and `ExitPlanMode` persisted, then restart       | canonical `assistant_response` still restores by UI/transcript visibility semantics; the plan tool row keeps the full `plan` and shows as read-only interrupted history | accepted |
+| S11  | A turn has assistant body and `ExitPlanMode`                              | Turn-tail copy is all assistant body plus appended full plan Markdown; unaffected by card clipping, no other tool results mixed in                                      | accepted |
+| S12  | Assistant, tool or reasoning output follows the plan                      | The plan card stays at the original `ExitPlanMode` row; the "已工作" expanded order equals the CLI row total order, not pinned to the turn bottom                       | accepted |
+| S13  | Several finished plans in the current valid branch                        | The top-right "计划" lists all plans newest first; title from the Markdown H1/first non-empty line; click opens the matching Side Pane                                  | accepted |
+| S14  | Plan streaming/awaiting approval, then terminal; or edit/retry pruning    | Non-terminal not in the summary; appears after terminal; removed from the directory after `row.removed`; a late query does not restore an old plan                      | accepted |
+| S15  | Cold restore, desktop continuous, mobile remote replayable                | Reuse the same CLI full-projection query and shared-host attachment; return the same valid set, no new runtime, owner, queue or replay branch                           | accepted |
+| S16  | `/btw` or `/side` child session enables plan mode and opens the full plan | Side Pane shows the child session's full plan; the tab is visible under the root task and hides/restores on root-task switch; no new session or runtime                 | accepted |
 
-剪枝：不把 `model × permission mode × goal × fork × queue` 与计划详情做笛卡尔积，因为详情和目录都只读既有 projection，不发送 session command。`success/error/cancelled` 共用同一终态过滤实现，组件测试枚举即可；远程 snapshot/gap 的恢复正确性继续由既有 replayable case 负责，S15 只证明 query 路由与 workspace identity 不串联。
+Pruning: do not Cartesian-multiply `model x permission mode x goal x fork x queue` with the plan detail,
+since detail and directory only read the existing projection and send no session command.
+`success/error/cancelled` share the same terminal filter implementation, so component-test enumeration
+suffices; remote snapshot/gap recovery correctness stays with existing replayable cases, and S15 only proves
+that query routing and workspace identity are not crossed.

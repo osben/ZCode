@@ -4,9 +4,10 @@ import { createServiceDescriptor } from "../descriptors.js";
 import type { PluginUiPluginScope } from "./contract.js";
 
 /**
- * App-Provided Tools 的 renderer → agent 通道。页面实例身份 = 会话 + 沙箱作用域 + 代际（与资源订阅同一三元组）。
- * 登记按实例整体替换；模型调用经实例信箱（`pluginUi.appToolCall` live 增量）到达渲染端，认领 / 回传按 callId 幂等。
- * 登记表、暴露集合与待执行调用由 agent 唯一持有，本服务不保存状态。
+ * Renderer → agent channel for App-Provided Tools. Page instance identity = session + sandbox scope + generation
+ * (the same triple as resource subscriptions). Registration replaces the instance as a whole; model calls reach the
+ * renderer through the instance mailbox (`pluginUi.appToolCall` live deltas), and claim/return is idempotent by callId.
+ * The registry, exposed set, and pending calls are owned solely by the agent; this service holds no state.
  */
 export interface PluginUiAppToolInstanceParams extends PluginUiPluginScope {
   scopeId: string;
@@ -30,13 +31,13 @@ export interface PluginUiAppToolAcceptedResult {
 }
 
 export interface IPluginUiAppToolsService {
-  /** 页面 `tools/list` 结果整体替换本实例的登记；返回实际暴露给模型的名字。依赖缺失（web / 远程）抛 unavailable。 */
+  /** The page's `tools/list` result wholesale-replaces this instance's registration; returns the names actually exposed to the model. Throws unavailable when dependencies are missing (web / remote). */
   registerAppTools(params: PluginUiRegisterAppToolsParams): Promise<PluginUiRegisterAppToolsResult>;
-  /** 实例销毁时注销；无 agent 或会话已关闭时回 `{ removed: 0 }`。 */
+  /** Unregisters on instance teardown; returns `{ removed: 0 }` when there is no agent or the session is closed. */
   unregisterAppTools(params: PluginUiAppToolInstanceParams): Promise<{ removed: number }>;
-  /** 认领信箱里的待执行调用；只有第一次认领成功，之后才向页面发 tools/call。 */
+  /** Claims a pending call from the mailbox; only the first claim succeeds, after which tools/call is sent to the page. */
   claimAppToolCall(params: PluginUiAppToolCallParams): Promise<PluginUiAppToolAcceptedResult>;
-  /** 回传页面结果或错误；未认领 / 已结束的调用回 `{ accepted: false }`。 */
+  /** Returns the page's result or error; unclaimed or already-finished calls get `{ accepted: false }`. */
   resolveAppToolCall(
     params: PluginUiResolveAppToolCallParams,
   ): Promise<PluginUiAppToolAcceptedResult>;

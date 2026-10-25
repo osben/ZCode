@@ -6,7 +6,7 @@ import type { IPlatformService, RemoteTarget } from "@zcode/shared";
 import { useRemoteWorkspaceHistory } from "@/root/useRemoteWorkspaceHistory.js";
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
 import { createTabStore } from "@/store/tabStore.js";
-import zhCN from "@/i18n/locales/zh-CN.js";
+import enUS from "@/i18n/locales/en-US.js";
 
 afterEach(() => {
   cleanup();
@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 it.each([false, true])(
-  "Host 声明复用：只为新建意图提示实际连接且不覆盖凭据（%s）",
+  "Host announces reuse: only a new-connect intent announces the reused connection and credentials are not overwritten (%s)",
   async (announceReusedConnection) => {
     const reused = true;
     const target: RemoteTarget = { kind: "ssh", host: "actual.example.com", username: "dev" };
@@ -50,7 +50,7 @@ it.each([false, true])(
       useRemoteWorkspaceHistory({
         intl: {
           formatMessage: ({ id }, values = {}) =>
-            (zhCN[id as keyof typeof zhCN] ?? id).replace(/\{(\w+)\}/gu, (_, key) =>
+            (enUS[id as keyof typeof enUS] ?? id).replace(/\{(\w+)\}/gu, (_, key) =>
               String(values[key] ?? `{${key}}`),
             ),
         },
@@ -74,10 +74,10 @@ it.each([false, true])(
     if (announceReusedConnection)
       expect(
         await screen.findByText(
-          "这台设备已通过 SSH · dev@actual.example.com:22 连接，已直接使用现有连接",
+          "This device is already connected through SSH · dev@actual.example.com:22. The existing connection is now in use.",
         ),
       ).toBeTruthy();
-    else expect(screen.queryByText(/已直接使用现有连接/u)).toBeNull();
+    else expect(screen.queryByText(/The existing connection is now in use/u)).toBeNull();
     await act(async () => {
       await result.current.handleSelectRemoteProject(sessionId, "/srv/project");
     });

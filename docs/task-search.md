@@ -1,9 +1,16 @@
 # Task Search
 
-侧栏“新建任务”下方提供“搜索”入口，快捷键为 `Cmd/Ctrl+K`。入口打开统一 Command Center；空搜索时展示当前任务最近变更、最近任务和分组命令，输入关键词后按命令、任务正文和文件匹配当前已打开 workspace 的 active 任务与文件。
+The sidebar offers a "Search" entry below "New task", with the shortcut `Cmd/Ctrl+K`. It opens the
+unified Command Center. With an empty query it shows recent changes to the current task, recent tasks
+and group commands; once a keyword is typed it matches commands, task body text and files against the
+active tasks and files of the currently open workspaces.
 
-搜索数据仍通过各 workspace scope 对应的 `zcodeTaskService.listTaskList` 获取：本地 workspace 通过本窗口
-共用的 Local Host，并按 workspaceKey 隔离查询；远程 workspace 查询对应 remote session 所属的 Remote Host。
-workspace scope 不代表独立 Host 进程。UI 不直接读取 session JSON，避免绕过 desktop / web remote 的服务边界。
+Search data is still obtained through `zcodeTaskService.listTaskList` of each workspace scope: a local
+workspace goes through this window's shared Local Host and queries are isolated by workspaceKey; a
+remote workspace queries the Remote Host that owns the corresponding remote session. A workspace scope
+does not mean a separate Host process. The UI does not read session JSON directly, so the desktop / web
+remote service boundary is not bypassed.
 
-为支持正文搜索，task sqlite 索引新增 `searchable_text` 字段。保存 task 时同步消息正文；旧会话在 schema migration 3 中从 session 快照回填。正文索引最多保留 200000 字符，避免长会话无限放大 `tasks-index.sqlite`。
+To support body search, the task sqlite index gains a `searchable_text` column. Saving a task syncs the
+message body; old sessions are back-filled from the session snapshot in schema migration 3. The body
+index keeps at most 200000 characters, so a long session cannot grow `tasks-index.sqlite` without bound.

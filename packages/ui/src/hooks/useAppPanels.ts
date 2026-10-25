@@ -29,6 +29,7 @@ import {
   closeCodeViewerSidePane,
   openWhiteboardSidePane,
   openModelTrajectorySidePane,
+  openModelTrajectoryV2SidePane,
   openTerminalSidePane,
   openSubagentSessionSidePane,
   openSubagentDirectorySidePane,
@@ -141,6 +142,8 @@ function createTerminalSidePaneTitle(
 
 export function useAppPanels(options: {
   workspaceAbsPath: string;
+  /** Working directory for new terminal tabs; defaults to the workspace path (a worktree task passes its execution path). */
+  terminalCwd?: string;
   workspaceIdentity?: string;
   workspaceRemoteSessionId?: string | null;
   activeTaskId: string | null;
@@ -173,6 +176,7 @@ export function useAppPanels(options: {
 }) {
   const {
     workspaceAbsPath,
+    terminalCwd = workspaceAbsPath,
     workspaceIdentity,
     workspaceRemoteSessionId,
     activeTaskId,
@@ -890,7 +894,7 @@ export function useAppPanels(options: {
       const title = createTerminalSidePaneTitle(current, workspaceAbsPath);
       const next = openTerminalSidePane(current, {
         title,
-        cwd: workspaceAbsPath,
+        cwd: terminalCwd,
         remoteSessionId: workspaceRemoteSessionId,
       });
       logger.info(
@@ -902,20 +906,25 @@ export function useAppPanels(options: {
     isOfficeMode,
     commitOpenedSidePaneState,
     revealSidePaneForCurrentOwner,
+    terminalCwd,
     workspaceAbsPath,
     workspaceRemoteSessionId,
   ]);
 
   const handleOpenModelTrajectory = useCallback(
-    (params: { taskId: string; title?: string | null }) => {
+    (params: { taskId: string; title?: string | null; kind?: "v1" | "v2" }) => {
       if (!params.taskId) {
         return;
       }
       revealSidePaneForCurrentOwner();
       commitOpenedSidePaneState((current) => {
-        const next = openModelTrajectorySidePane(current, params);
+        // An absent kind means v1; v1 and v2 dedupe by their own tab ids, so both can be open for one task.
+        const next =
+          params.kind === "v2"
+            ? openModelTrajectoryV2SidePane(current, params)
+            : openModelTrajectorySidePane(current, params);
         logger.info(
-          `[App] 打开右侧面板 mode=model-trajectory workspace=${workspaceAbsPath} taskId=${params.taskId} tabs=${next.tabs.length}`,
+          `[App] 打开右侧面板 mode=model-trajectory${params.kind === "v2" ? "-v2" : ""} workspace=${workspaceAbsPath} taskId=${params.taskId} tabs=${next.tabs.length}`,
         );
         return next;
       });

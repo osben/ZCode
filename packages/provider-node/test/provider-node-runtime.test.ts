@@ -34,7 +34,7 @@ afterEach(async () => {
   await Promise.all(
     temporaryDirectories
       .splice(0)
-      // Windows 上 runtime 句柄异步关闭，rm 立刻删会撞 EBUSY；带重试兜住句柄释放延迟
+      // On Windows the runtime handle closes asynchronously; deleting immediately hits EBUSY. Retry to absorb the handle-release delay.
       .map((directory) =>
         rm(directory, { force: true, recursive: true, maxRetries: 10, retryDelay: 200 }),
       ),
@@ -88,7 +88,7 @@ describe("@zcode/provider-node", () => {
         modelId,
         apiType: "openai-responses",
       });
-      // Todo138 已把通用兜底改为两档；Responses 没有 ox-alpha 专用值域，应继承该结果。
+      // Todo138 changed the generic fallback to two levels; Responses has no ox-alpha-specific value range, so it should inherit that result.
       expect(responses.optionSpecs?.reasoningLevel?.toJSON()).toMatchObject({
         values: ["disabled", "enabled"],
       });
@@ -384,8 +384,9 @@ describe("@zcode/provider-node", () => {
   it("Personal Repository 轮询读取暂时失败后会继续重试并恢复", async () => {
     const root = await temporaryDirectory();
     const filePath = join(root, "provider-config.json");
-    // Windows 无开发者模式时 symlink 会 EPERM；直接把配置路径本身设为目录同样触发
-    // 读取失败（readFile 目录抛错），保持用例跨平台可跑；恢复阶段先删目录再写文件
+    // On Windows without developer mode, symlinks fail with EPERM. Setting the config path itself
+    // to a directory triggers the read failure too (readFile on a directory throws), keeping the
+    // case cross-platform; during recovery, remove the directory before writing the file.
     await mkdir(filePath);
     const pollingErrors: unknown[] = [];
     const reasons: string[] = [];
@@ -548,7 +549,7 @@ describe("@zcode/provider-node", () => {
         zcodeEndpointOrigin: endpointOrigin,
       }).activeFilePath,
     );
-    // start 不等待后台下载；释放临时目录前等待首轮控制文件 lease 收尾，不能和 rm 竞态。
+    // start does not wait for the background download; before releasing the temp directory, wait for the first control-file lease to wind down so it cannot race with rm.
     await runtime.refreshZCodeBuiltin();
     runtime.dispose();
   });

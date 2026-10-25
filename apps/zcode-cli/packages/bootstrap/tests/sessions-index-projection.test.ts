@@ -124,6 +124,124 @@ describe("SessionsIndexProjection 黄金测试（L1）", () => {
     expect(summary.lastActivityAt).toBe(2000);
   });
 
+  it("execution worktree facts flow from the derive extra into the summary and drive deltas", () => {
+    const events = buildEvents("s-wt", (push) => {
+      push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
+    });
+    const snapshot = projectionFor("s-wt", events).getSnapshot();
+    const extra = {
+      workspaceId: "ws-1",
+      createdAt: 1000,
+      lastActivityAt: 2000,
+      executionWorktree: {
+        path: "/repo/../worktrees/zcode-sleepy-capybara",
+        branchName: "zcode/sleepy-capybara",
+      },
+    };
+    const summary = deriveSessionSummary(snapshot, extra);
+    expect(summary.executionWorktree).toEqual({
+      path: "/repo/../worktrees/zcode-sleepy-capybara",
+      branchName: "zcode/sleepy-capybara",
+    });
+
+    // Same facts again → no delta; a worktree appearing on a plain session → one upsert delta.
+    const projection = new SessionsIndexProjection("ws-1", "epoch-1");
+    const plainExtra = { workspaceId: "ws-1", createdAt: 1000, lastActivityAt: 2000 };
+    expect(projection.upsertFromConversation(snapshot, plainExtra)).toHaveLength(1);
+    expect(projection.upsertFromConversation(snapshot, plainExtra)).toHaveLength(0);
+    const deltas = projection.upsertFromConversation(snapshot, extra);
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0]).toMatchObject({
+      op: "session.upserted",
+      session: { sessionId: "s-wt", executionWorktree: { branchName: "zcode/sleepy-capybara" } },
+    });
+
+    // The derived summary satisfies the wire schema (optional field round-trips).
+    const parsed = sessionsIndexSnapshotSchema.safeParse(projection.getSnapshot());
+    expect(parsed.success).toBe(true);
+  });
+
+  it("execution worktree missing flag rides at the summary top level and only-flag changes produce deltas", () => {
+    const events = buildEvents("s-wt-missing", (push) => {
+      push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
+    });
+    const snapshot = projectionFor("s-wt-missing", events).getSnapshot();
+    const extra = {
+      workspaceId: "ws-1",
+      createdAt: 1000,
+      lastActivityAt: 2000,
+      executionWorktree: {
+        path: "/repo/../worktrees/zcode-sleepy-capybara",
+        branchName: "zcode/sleepy-capybara",
+      },
+      executionWorktreeMissing: true,
+    };
+    // Flag propagation: top-level only — the nested wire shape must stay free of runtime-only keys.
+    const summary = deriveSessionSummary(snapshot, extra);
+    expect(summary.executionWorktreeMissing).toBe(true);
+    expect(summary.executionWorktree).toEqual({
+      path: "/repo/../worktrees/zcode-sleepy-capybara",
+      branchName: "zcode/sleepy-capybara",
+    });
+
+    // Scenario 9 (conflation): a flip whose only change is the flag produces a delta; repeating
+    // the same flag does not, and absent ≈ false so a repeated healthy derive is a no-op.
+    const projection = new SessionsIndexProjection("ws-1", "epoch-1");
+    const healthyExtra = {
+      createdAt: 1000,
+      lastActivityAt: 2000,
+      executionWorktree: {
+        path: "/repo/../worktrees/zcode-sleepy-capybara",
+        branchName: "zcode/sleepy-capybara",
+      },
+    };
+    expect(projection.upsertFromConversation(snapshot, healthyExtra)).toHaveLength(1);
+    expect(projection.upsertFromConversation(snapshot, healthyExtra)).toHaveLength(0);
+    const missingDeltas = projection.upsertFromConversation(snapshot, {
+      ...healthyExtra,
+      executionWorktreeMissing: true,
+    });
+    expect(missingDeltas).toHaveLength(1);
+    expect(missingDeltas[0]).toMatchObject({
+      op: "session.upserted",
+      session: { sessionId: "s-wt-missing", executionWorktreeMissing: true },
+    });
+    expect(
+      projection.upsertFromConversation(snapshot, {
+        ...healthyExtra,
+        executionWorktreeMissing: true,
+      }),
+    ).toHaveLength(0);
+    const missingSnapshotParse = sessionsIndexSnapshotSchema.safeParse(projection.getSnapshot());
+    expect(missingSnapshotParse.success).toBe(true);
+    // Recreated worktree (flag omitted again) is a real health flip, not a no-op.
+    expect(projection.upsertFromConversation(snapshot, healthyExtra)).toHaveLength(1);
+    // The healthy state still satisfies the wire schema after clearing the flag.
+    const parsed = sessionsIndexSnapshotSchema.safeParse(projection.getSnapshot());
+    expect(parsed.success).toBe(true);
+  });
+
+  it("incognito flag rides at the summary top level and only-flag changes produce deltas", () => {
+    const events = buildEvents("s-incognito", (push) => {
+      push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
+    });
+    const snapshot = projectionFor("s-incognito", events).getSnapshot();
+    const extra = { workspaceId: "ws-1", createdAt: 1000, lastActivityAt: 2000 };
+
+    expect(deriveSessionSummary(snapshot, { ...extra, incognito: true }).incognito).toBe(true);
+    expect("incognito" in deriveSessionSummary(snapshot, extra)).toBe(false);
+
+    const projection = new SessionsIndexProjection("ws-1", "epoch-1");
+    projection.upsertFromConversation(snapshot, extra);
+    expect(projection.upsertFromConversation(snapshot, { ...extra, incognito: true })).toHaveLength(
+      1,
+    );
+    expect(projection.upsertFromConversation(snapshot, { ...extra, incognito: true })).toHaveLength(
+      0,
+    );
+    expect(sessionsIndexSnapshotSchema.safeParse(projection.getSnapshot()).success).toBe(true);
+  });
+
   it("hasBackgroundWork：有 running 后台任务时为 true", () => {
     const events = buildEvents("s2", (push) => {
       push(SessionEventType.SessionCreated, {
@@ -580,5 +698,134 @@ describe("SessionsIndexPublisher 单测（帧记账）", () => {
     const replaced = pub.subscribe("conn-1");
     expect(replaced.subscriptionId).not.toBe(stale.subscriptionId);
     expect(pub.subscriptionIds()).toEqual([replaced.subscriptionId]);
+  });
+});
+
+describe("sidebar child-conversation facts", () => {
+  function plainSnapshot(sessionId: string) {
+    const events = buildEvents(sessionId, (push) => {
+      push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
+    });
+    return projectionFor(sessionId, events).getSnapshot();
+  }
+
+  const childrenA = [
+    {
+      sessionId: "child-sub-1",
+      title: "research adapters",
+      taskType: "subagent_child" as const,
+      lastActivityAt: 50,
+      running: true,
+    },
+    {
+      sessionId: "child-chat-1",
+      title: "side chat",
+      taskType: "selection_side_chat" as const,
+      lastActivityAt: 40,
+      running: false,
+    },
+  ];
+
+  it("child counters and the capped list flow from the derive extra onto the summary and the wire schema", () => {
+    const summary = deriveSessionSummary(plainSnapshot("s-parent"), {
+      workspaceId: "ws-1",
+      createdAt: 1000,
+      lastActivityAt: 2000,
+      sideChatCount: 1,
+      subagentCount: 2,
+      runningSubagentCount: 1,
+      childSessions: childrenA,
+    });
+    expect(summary.sideChatCount).toBe(1);
+    expect(summary.subagentCount).toBe(2);
+    expect(summary.runningSubagentCount).toBe(1);
+    expect(summary.childSessions).toEqual(childrenA);
+    // The summary with child facts must stay a valid wire snapshot payload.
+    const parsed = sessionsIndexSnapshotSchema.parse({
+      protocolVersion: 1,
+      workspaceId: "ws-1",
+      logEpoch: "epoch-1",
+      sessions: [summary],
+    });
+    expect(parsed.sessions[0].childSessions).toHaveLength(2);
+  });
+
+  it("absent child facts render no fields, and a counters- or list-only change emits an upsert delta", () => {
+    const plain = deriveSessionSummary(plainSnapshot("s-plain"), {
+      workspaceId: "ws-1",
+      createdAt: 1000,
+      lastActivityAt: 2000,
+    });
+    expect(plain.sideChatCount).toBeUndefined();
+    expect(plain.childSessions).toBeUndefined();
+
+    const projection = new SessionsIndexProjection("ws-1", "log-epoch-1");
+    const snapshot = plainSnapshot("s-parent");
+    const base = { createdAt: 1000, lastActivityAt: 2000 };
+    const withFacts = {
+      ...base,
+      sideChatCount: 1,
+      subagentCount: 2,
+      runningSubagentCount: 1,
+      childSessions: childrenA,
+    };
+    expect(projection.upsertFromConversation(snapshot, withFacts).length).toBeGreaterThan(0);
+    // Identical facts → conflated away.
+    expect(projection.upsertFromConversation(snapshot, withFacts)).toEqual([]);
+    // Counters-only change (running subagent finished) must emit an upsert delta.
+    const settled = projection.upsertFromConversation(snapshot, {
+      ...withFacts,
+      runningSubagentCount: 0,
+      childSessions: childrenA.map((child) => ({ ...child, running: false })),
+    });
+    expect(settled.length).toBeGreaterThan(0);
+    expect(settled[0]).toMatchObject({
+      op: "session.upserted",
+      // runningSubagentCount normalizes to absent at 0; the children flipping to not-running is the visible change.
+      session: { childSessions: [{ running: false }, { running: false }] },
+    });
+  });
+
+  it("updates child facts on a cold summary without changing session activity", () => {
+    const projection = new SessionsIndexProjection("ws-1", "log-epoch-1");
+    projection.seed({
+      ...deriveSessionSummary(plainSnapshot("s-cold-parent"), {
+        workspaceId: "ws-1",
+        createdAt: 1000,
+        lastActivityAt: 2000,
+      }),
+      title: "Parent conversation",
+    });
+
+    const deltas = projection.updateChildFacts("s-cold-parent", {
+      sideChatCount: 1,
+      subagentCount: 1,
+      runningSubagentCount: 1,
+      childSessions: [childrenA[0]!],
+    });
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0]).toMatchObject({
+      op: "session.upserted",
+      session: {
+        sessionId: "s-cold-parent",
+        title: "Parent conversation",
+        lastActivityAt: 2000,
+        sideChatCount: 1,
+        subagentCount: 1,
+        runningSubagentCount: 1,
+        childSessions: [childrenA[0]],
+      },
+    });
+    expect(projection.updateChildFacts("s-cold-parent", {
+      sideChatCount: 1,
+      subagentCount: 1,
+      runningSubagentCount: 1,
+      childSessions: [childrenA[0]!],
+    })).toEqual([]);
+
+    expect(projection.updateChildFacts("s-cold-parent", {})).toMatchObject([
+      { op: "session.upserted", session: { lastActivityAt: 2000, title: "Parent conversation" } },
+    ]);
+    expect(projection.getSnapshot().sessions[0]).not.toHaveProperty("childSessions");
   });
 });

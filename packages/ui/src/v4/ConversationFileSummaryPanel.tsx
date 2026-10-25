@@ -8,6 +8,11 @@ import type {
   V4ConversationFileRewindPreviewResult,
 } from "@zcode/shared/zcode-protocol-v4";
 import { Button } from "@/components/ui/button.js";
+import { GroupByDirectoryCheckbox } from "@/components/GroupByDirectoryCheckbox.js";
+import {
+  persistChangeSummaryTreeViewPreference,
+  readChangeSummaryTreeViewPreference,
+} from "@/lib/changeSummaryTreeViewPreference.js";
 import { cn } from "@/components/lib/utils.js";
 import {
   Collapsible,
@@ -15,58 +20,19 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { FileDisplayInline } from "@/lib/fileDisplay.js";
-import { toWorkspaceRelativePath } from "@/lib/taskChangeSummary.js";
-import { buildChangeSummaryFilePreviewSource } from "@/messageChangeSummaryPreview.js";
-import { OpenSplitButton } from "@/OpenSplitButton.js";
 import { logger } from "@/logger.js";
 import { collectGenUiSourcePaths, matchesGenUiSourcePath } from "@/gen-ui/contract.js";
+import { ConversationFileSummaryList } from "@/v4/ConversationFileSummaryList.js";
 import { ConversationFileRewindDialog } from "@/v4/ConversationFileRewindDialog.js";
 import type {
   ConversationFileChangesRequestOptions,
   ConversationRowRenderContext,
 } from "@/v4/conversationRowContext.js";
 
-type FileChangeItem = V4ConversationFileChangesResult["items"][number];
-
 interface ConversationFileSummaryPanelProps {
   header: TurnHeaderRow;
   context: ConversationRowRenderContext;
   assistantText?: string;
-}
-
-function formatPatch(path: string, patches: FileChangeItem["patches"]): string {
-  if (patches.length === 0) return "";
-  const lines = [`--- a/${path}`, `+++ b/${path}`];
-  for (const patch of patches) {
-    lines.push(
-      `@@ -${patch.oldStart},${patch.oldLines} +${patch.newStart},${patch.newLines} @@`,
-      ...patch.lines,
-    );
-  }
-  return lines.join("\n");
-}
-
-function openDiff(
-  item: FileChangeItem,
-  context: Pick<
-    ConversationRowRenderContext,
-    "workspacePath" | "workspaceIdentity" | "workspaceRemoteSessionId" | "onOpenCodeViewer"
-  >,
-) {
-  const patch = formatPatch(item.path, item.patches);
-  const { workspacePath, workspaceIdentity, workspaceRemoteSessionId, onOpenCodeViewer } = context;
-  if (!patch || !onOpenCodeViewer) return;
-  const relativePath = toWorkspaceRelativePath(workspacePath, item.path);
-  onOpenCodeViewer({
-    type: "patch",
-    title: relativePath,
-    path: item.path,
-    patch,
-    workspacePath,
-    ...(workspaceIdentity ? { workspaceIdentity } : {}),
-    ...(workspaceRemoteSessionId ? { workspaceRemoteSessionId } : {}),
-  });
 }
 
 export function ConversationFileSummaryPanel({
@@ -78,6 +44,7 @@ export function ConversationFileSummaryPanel({
   const genUiSources = useMemo(() => collectGenUiSourcePaths(assistantText), [assistantText]);
   const filtersSources = genUiSources.length > 0;
   const [open, setOpen] = useState(false);
+  const [isTreeView, setIsTreeView] = useState(readChangeSummaryTreeViewPreference);
   const [loadedDetails, setLoadedDetails] = useState<{
     key: string;
     result: V4ConversationFileChangesResult | null;
@@ -92,7 +59,7 @@ export function ConversationFileSummaryPanel({
   const cachePolicy: ConversationFileChangesRequestOptions["cachePolicy"] =
     header.state === "running" ? "in-flight" : "terminal";
   const fileChangesState = header.fileChanges?.state;
-  // header 只有聚合值。按当前投影读取明细后过滤，不能把源文件行数从普通文件中猜着扣除。
+  // The header contains only aggregate values. Read details from the current projection and filter them; do not guess and subtract source-file rows from ordinary files.
   const requestKey = JSON.stringify([
     context.workspaceIdentity?.trim() || context.workspacePath,
     context.workspaceRemoteSessionId,
@@ -118,14 +85,9 @@ export function ConversationFileSummaryPanel({
         }
       : header.fileChanges;
 
-  const filesChangedLabel = intl.formatMessage(
-    {
-      id:
-        summary?.files === 1
-          ? "chat.changeSummary.filesChanged.one"
-          : "chat.changeSummary.filesChanged.other",
-    },
-    { count: String(summary?.files ?? 0) },
+  const filesChangedLabel = intl.formatPlural(
+    { id: "chat.changeSummary.filesChanged" },
+    summary?.files ?? 0,
   );
   const isReverted = summary?.state === "reverted";
   const canUndo =
@@ -142,9 +104,9 @@ export function ConversationFileSummaryPanel({
     if (!needsDetails || !context.fetchFileChanges || !target) return;
 
     let disposed = false;
-    // 运行中的 fileChanges 是某个 projection revision 的局部结果；turn
-    // 进入终态后必须废弃局部 details，并用可持久缓存的终态策略重新读取。
-    // requestKey 已同步隔离旧结果；同一摘要展开重读时保留已加载内容，避免卸载按钮丢失焦点。
+    // fileChanges while running is a local result for a projection revision. Once the turn reaches a terminal state,
+    // discard local details and read again using the persistently cacheable terminal-state strategy.
+    // requestKey already isolates stale results synchronously. Preserve loaded content when rereading the same expanded summary to avoid unmounting the button and losing focus.
     setLoadingDetails(true);
     void context
       .fetchFileChanges(target, {
@@ -231,7 +193,7 @@ export function ConversationFileSummaryPanel({
     });
   }, [details, header.rowId, header.turnId, header.fileChanges]);
 
-  // 在明细到达前不闪现源文件的聚合统计；读取失败后恢复原摘要，仍可展开重试。
+  // Do not flash aggregate source-file statistics before details arrive; restore the original summary after a read failure so it can still be expanded and retried.
   if (filtersSources && context.fetchFileChanges && target && !settled) return null;
   if (!summary || summary.files <= 0) return null;
 
@@ -270,6 +232,16 @@ export function ConversationFileSummaryPanel({
               ) : null}
             </button>
           </CollapsibleTrigger>
+          {open && summary.files > 1 ? (
+            <GroupByDirectoryCheckbox
+              checked={isTreeView}
+              onCheckedChange={(next) => {
+                setIsTreeView(next);
+                persistChangeSummaryTreeViewPreference(next);
+              }}
+              label={intl.formatMessage({ id: "chat.changeSummary.treeView" })}
+            />
+          ) : null}
           <Button
             type="button"
             variant="ghost"
@@ -298,101 +270,12 @@ export function ConversationFileSummaryPanel({
                 })}
               </div>
             ) : (
-              items.map((item) => {
-                const relativePath = toWorkspaceRelativePath(context.workspacePath, item.path);
-                const canReview = item.patches.length > 0 && Boolean(context.onOpenCodeViewer);
-                const filePreviewSource = buildChangeSummaryFilePreviewSource({
-                  path: item.path,
-                  relativePath,
-                  workspacePath: context.workspacePath,
-                  workspaceIdentity: context.workspaceIdentity,
-                  workspaceRemoteSessionId: context.workspaceRemoteSessionId,
-                });
-                return (
-                  <div key={item.path} className="w-full bg-background/50 overflow-hidden">
-                    <div
-                      aria-disabled={!canReview}
-                      className={cn(
-                        "flex w-full items-center gap-1 px-2 py-2 text-left transition-colors",
-                        canReview ? "cursor-pointer hover:bg-hover/30" : "cursor-default",
-                      )}
-                      onClick={() => openDiff(item, context)}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter" && event.key !== " ") return;
-                        event.preventDefault();
-                        openDiff(item, context);
-                      }}
-                      role="button"
-                      tabIndex={canReview ? 0 : -1}
-                      title={item.path}
-                    >
-                      <div className="flex min-w-0 flex-1 items-center gap-2">
-                        <div className="min-w-0 flex items-center">
-                          <FileDisplayInline
-                            path={item.path}
-                            options={{
-                              basePath: context.workspacePath,
-                              showFilePath: true,
-                              className: "inline-flex min-w-0 max-w-full items-center gap-1.5",
-                              fileNameClassName:
-                                "truncate text-ui-base font-medium text-foreground",
-                              filePathClassName: "truncate text-ui-base text-foreground-subtlest",
-                            }}
-                          />
-                        </div>
-                        {/* 修复原因：writeCount 是撤销预检使用的操作轨迹，摘要行已经用 +/- 表达最终结果；
-                            在这里展示会把内部操作次数误当成变更指标，因此只在撤销弹窗保留。 */}
-                        <span className="flex shrink-0 items-center gap-2 tabular-nums text-ui-base">
-                          {item.additions > 0 ? (
-                            <span className="text-diff-added">+{item.additions}</span>
-                          ) : null}
-                          {item.deletions > 0 ? (
-                            <span className="text-diff-removed">-{item.deletions}</span>
-                          ) : null}
-                        </span>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="default"
-                          aria-label={intl.formatMessage({
-                            id: "chat.changeSummary.review",
-                          })}
-                          title={intl.formatMessage({
-                            id: "chat.changeSummary.review",
-                          })}
-                          disabled={!canReview}
-                          className="h-7 gap-1.5 rounded-lg bg-input px-2 text-ui-base"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            openDiff(item, context);
-                          }}
-                          onPointerDown={(event) => event.stopPropagation()}
-                        >
-                          <span>
-                            {intl.formatMessage({
-                              id: "chat.changeSummary.review",
-                            })}
-                          </span>
-                        </Button>
-                        <OpenSplitButton
-                          target={{
-                            type: "file",
-                            path: item.path,
-                            title: relativePath,
-                            label: relativePath,
-                            previewSource: filePreviewSource,
-                          }}
-                          onOpenCodeViewer={context.onOpenCodeViewer}
-                          hideOpenWithMenu={context.compactForRemoteControl === true}
-                          stopPropagation
-                        />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
+              <ConversationFileSummaryList
+                key={isTreeView ? "tree" : "flat"}
+                items={items}
+                context={context}
+                isTreeView={isTreeView}
+              />
             )}
           </div>
         </CollapsibleContent>

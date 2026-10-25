@@ -1,92 +1,98 @@
-# CUA 设置面收敛（helper 状态与实验性开关下线）
+# CUA Settings Surface Minimization (Helper Status and Experimental Toggles Retired)
 
-- 日期：2026-08-17
-- 状态：已实现（MR z-code!2068 配套）
-- 范围：仅 CUA 相关面；不触碰非 CUA 设置与其它功能区
+- Date: 2026-08-17
+- Status: implemented (accompanies MR z-code!2068)
+- Scope: CUA surfaces only; non-CUA settings and other feature areas are untouched
 
-## 背景
+## Background
 
-2026-08-15 的 Helper 实例隔离设计（zcode-cua `docs/refactor-port-specs/CUA-HELPER-INSTANCE-ISOLATION-PLAN.md` 第 7 步）
-把 controller 状态/接管/停止暴露到权限服务，并在桌面端渲染了两处 UI：
+The 2026-08-15 Helper instance isolation design (zcode-cua
+`docs/refactor-port-specs/CUA-HELPER-INSTANCE-ISOLATION-PLAN.md`, step 7) exposed controller status/takeover/stop
+to the permission service and rendered two desktop UIs:
 
-1. 设置页「电脑控制」分区的 Input controller 行（owner 徽章 + Take control/Stop 按钮）；
-2. 工作区标题栏的 `CuaControllerStatusControl` 常驻状态胶囊。
+1. the Input controller row in the Settings "Computer Use" section (owner badge + Take control/Stop buttons);
+2. the persistent `CuaControllerStatusControl` status pill in the workspace title bar.
 
-此外设置页还引入了三个 Helper 启动开关（Agent pointer feedback / Picture-in-Picture /
-Background mode）。产品评审结论：这些面都是多余的——
+Settings also gained three Helper startup toggles (Agent pointer feedback / Picture-in-Picture / Background
+mode). Product review concluded all of these surfaces are redundant:
 
-- Helper 运行状态对用户没有可操作价值（权限引导自有状态行，故障自愈走重启链）；
-- controller lease 是 Helper 侧的安全仲裁机制，自动生效即可，用户不需要手动 take/stop；
-- Agent pointer 反馈与画中画默认开启即可，不存在需要用户关掉它们的产品场景；
-- Background mode（AX-only、不抢焦点）不符合当前交互模型，不再提供。
+- Helper running state has no actionable value for users (permission guidance has its own status rows, and
+  fault self-healing goes through the restart chain).
+- The controller lease is a Helper-side safety arbitration and takes effect automatically; users need no manual
+  take/stop.
+- Agent pointer feedback and Picture-in-Picture are simply on by default; there is no product scenario for
+  turning them off.
+- Background mode (AX-only, no focus stealing) does not fit the current interaction model and is no longer
+  offered.
 
-## 目标行为
+## Target behavior
 
-### 设置页（macOS / Windows 一致收敛）
+### Settings page (macOS / Windows converge the same way)
 
-「电脑控制」分区只保留：
+The "Computer Use" section keeps only:
 
-1. 总开关（zcode-cua 插件 enablement，联动 MCP + skill）；
-2. macOS Accessibility / Screen Recording 两个权限行（含 Grant 引导、stale 时的
-   Helper 重启 + 重启 ZCode 兜底——沿用现行恢复链，不受本变更影响）。
+1. the master switch (zcode-cua plugin enablement, linked to MCP + skill);
+2. the macOS Accessibility / Screen Recording permission rows (including Grant guidance and, when stale, the
+   Helper restart + ZCode restart fallback; the current recovery chain is unaffected).
 
-未授权时，权限行右侧的操作顺序固定为 `[Open… 按钮] [状态徽章]`；按钮与状态属于
-同一 control 区，不再把 Open 按钮放到行下方的 detail 区。stale 的 Helper/ZCode
-重启恢复操作仍保留在 detail 区，但不重复渲染 Open 按钮。
-该宽 control 布局只用于 Computer Use 权限行：宽屏使用 280px 操作列，按钮和状态不换行；
-窄屏改为单列，整个 control 区移到描述下方。其他 `SettingsRow` 继续使用 192px 操作列。
-Open 操作复用 MCP “打开授权”的按钮视觉：`link` 尺寸、蓝色链接态、ExternalLink 图标，
-小屏只保留图标但继续通过 `aria-label` / `title` 暴露完整操作名称。
+When not authorized, the action order on the right of a permission row is fixed as `[Open... button] [status
+badge]`; button and status belong to the same control area, and the Open button is no longer in the detail area
+below the row. The stale Helper/ZCode restart recovery action stays in the detail area without duplicating the
+Open button. The wide control layout applies only to Computer Use permission rows: wide screens use a 280px
+action column with no wrapping of button and status; narrow screens switch to a single column with the whole
+control area below the description. Other `SettingsRow` instances keep the 192px action column. The Open action
+reuses the MCP "open authorization" button look: `link` size, blue link state, ExternalLink icon; small screens
+keep only the icon but still expose the full action name via `aria-label` / `title`.
 
-移除的行：Helper 运行态行（版本/路径/Running 徽章/重启图标）、Input controller 行、
-Agent pointer feedback 行、Picture-in-Picture 行、Background mode 行。
+Removed rows: Helper runtime row (version/path/Running badge/restart icon), Input controller row, Agent pointer
+feedback row, Picture-in-Picture row, Background mode row.
 
-### 标题栏
+### Title bar
 
-移除 `CuaControllerStatusControl` 及其在 `WorkspaceHeader` /
-`WorkspaceHeaderActionSection` 的 `showCuaControllerStatus` 接线。标题栏不再出现任何
-CUA 状态。
+Remove `CuaControllerStatusControl` and its `showCuaControllerStatus` wiring in `WorkspaceHeader` /
+`WorkspaceHeaderActionSection`. The title bar shows no CUA status.
 
-### 运行时默认值（不再可配）
+### Runtime defaults (no longer configurable)
 
-| 能力                                  | 之前                           | 现在                                       |
-| ------------------------------------- | ------------------------------ | ------------------------------------------ |
-| Agent pointer overlay（ghost cursor） | `cuaGhostCursorEnabled` 默认开 | 常开（producer product factory 固定 true） |
-| Picture-in-Picture 浮窗               | `cuaPipMode` 默认开            | 常开（producer product factory 固定 true） |
-| Background mode（不抢焦点）           | `cuaBackgroundMode` 默认关     | 移除（host 不再传该启动参数）              |
+| Capability                           | Before                             | Now                                             |
+| ------------------------------------ | ---------------------------------- | ----------------------------------------------- |
+| Agent pointer overlay (ghost cursor) | `cuaGhostCursorEnabled` default on | Always on (producer product factory fixes true) |
+| Picture-in-Picture window            | `cuaPipMode` default on            | Always on (producer product factory fixes true) |
+| Background mode (no focus stealing)  | `cuaBackgroundMode` default off    | Removed (host no longer passes the startup arg) |
 
-### 设置存储
+### Settings storage
 
-`AppSettings.cuaGhostCursorEnabled` / `cuaPipMode` / `cuaBackgroundMode` 三个 key 从
-`packages/shared/src/protocol.ts` 与 `validationAppSettings.ts`（全量 + patch schema）删除。
-存量用户配置里的旧 key 由 zod strip 语义自然忽略，不做迁移。
+The three keys `AppSettings.cuaGhostCursorEnabled` / `cuaPipMode` / `cuaBackgroundMode` are deleted from
+`packages/shared/src/protocol.ts` and `validationAppSettings.ts` (full + patch schema). Old keys in existing
+user config are ignored by zod strip semantics; no migration.
 
-## 边界（明确不做的事）
+## Boundaries (explicitly not done)
 
-- **controller lease 本体保留**：zcode-cua Helper 侧的用户级 lease 仲裁（多实例共存、
-  仅 owner 可派发副作用与 overlay）是安全机制，本次只下线桌面端的手动 UI。
-- **desktop controller facade 已退役**：producer 0.5.7 已从 `ICuaPermissionService` 删除
-  `takeController/stopController/getHelperStatus`，z-code 同步删除零调用实现。raw broker
-  controller protocol、lease/admission 与 Helper 内部显式 takeover 安全机械不受影响。
-- 权限引导流（onboarding、授权返回恢复、stale 验证、重启 ZCode 兜底）行为不变；
-  `restartHelper` / `getStatus` 服务面不变。
+- **The controller lease itself stays.** The zcode-cua Helper-side user-level lease arbitration (multi-instance
+  coexistence, only the owner may dispatch side effects and overlay) is a safety mechanism; only the desktop's
+  manual UI is retired.
+- **The desktop controller facade is retired.** Producer 0.5.7 removed
+  `takeController/stopController/getHelperStatus` from `ICuaPermissionService`, and z-code removed the
+  zero-caller implementation. The raw broker controller protocol, lease/admission and the Helper's internal
+  explicit takeover safety machinery are unaffected.
+- Permission guidance flow (onboarding, return-from-authorization recovery, stale verification, ZCode restart
+  fallback) is unchanged; the `restartHelper` / `getStatus` service surface is unchanged.
 
-## 影响面清单
+## Impact list
 
-- UI：`packages/ui/src/CuaControllerStatusControl.tsx`（删除）、
-  `WorkspaceHeader*.tsx/shared.ts`（去接线）、`settings/ComputerUseSection.tsx`（删行 + 删
-  helper 心跳轮询）、i18n `settings.computerUse.controller*/pipMode*/backgroundMode*/
-ghostCursor*/helper{Label,Running,NotRunning}` 键（zh/en 同步删除）。
-- 协议/校验：`AppSettings` 三 key 删除。
-- services：producer product factory 固定 ghost cursor/PiP=true，`node.ts` 不再传伪动态
-  getter；删除 desktop controller 查询/命令 facade，保留 raw broker controller 安全边界。
-- 测试：删除 `cuaControllerStatusControl.test.ts`；改写
-  `computerUseWindowsSettings.test.ts`（断言收敛后的行集）、
-  `computerUseNoAutoPermissionModal.test.ts`、`workspaceHeader.test.ts`、
-  `appSettings.test.ts`；`cuaGhostCursorSettingsWiring.test.ts` 改为锁定"常开"接线。
+- UI: `packages/ui/src/CuaControllerStatusControl.tsx` (deleted), `WorkspaceHeader*.tsx/shared.ts` (wiring
+  removed), `settings/ComputerUseSection.tsx` (rows removed + helper heartbeat polling removed), i18n keys
+  `settings.computerUse.controller*/pipMode*/backgroundMode*/ghostCursor*/helper{Label,Running,NotRunning}`
+  (removed in zh/en).
+- Protocol/validation: the three `AppSettings` keys removed.
+- services: producer product factory fixes ghost cursor/PiP=true, `node.ts` no longer passes a pseudo-dynamic
+  getter; desktop controller query/command facade deleted, raw broker controller safety boundary kept.
+- Tests: delete `cuaControllerStatusControl.test.ts`; rewrite `computerUseWindowsSettings.test.ts` (assert the
+  converged row set), `computerUseNoAutoPermissionModal.test.ts`, `workspaceHeader.test.ts`,
+  `appSettings.test.ts`; `cuaGhostCursorSettingsWiring.test.ts` now locks the "always on" wiring.
 
-## 验证
+## Verification
 
-- `pnpm vitest run`（ui/shared/services 的 CUA 相关套件）
-- `pnpm typecheck`、`pnpm lint`
-- 三完整性门（skill-sync / version-coherence）在合并基上保持绿
+- `pnpm vitest run` (CUA-related suites in ui/shared/services)
+- `pnpm typecheck`, `pnpm lint`
+- The three integrity gates (skill-sync / version-coherence) stay green on the merge base

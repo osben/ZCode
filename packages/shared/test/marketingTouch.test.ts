@@ -6,7 +6,7 @@ import {
 } from "../src/marketingTouch.js";
 
 const text = { format: "plaintext", content: "Hello", style: {} };
-// 服务端未约定 Lottie；避免将通用播放器能力误扩展为营销接口字段。
+// The server contract does not include Lottie; do not leak generic player capabilities into the marketing API fields.
 it("rejects uncontracted Lottie deliveries without discarding valid siblings", () => {
   const hero = { type: "lottie", lottie: { src: asset } };
   expect(marketingPopupSchema.safeParse({ ...popup, hero }).success).toBe(false);

@@ -1,6 +1,13 @@
+import {
+  FALLBACK_UI_LOCALE,
+  resolveSystemLocale,
+  toServiceLocale,
+  type ServiceLocale,
+} from "@zcode/shared";
 import type { WebOAuthProviderId } from "./browserOAuthCredentialRepo.js";
 
-type WebAuthLocale = "zh-CN" | "en-US";
+// The login page provides Chinese and English copy only: resolve the system language to a UI language first, then map it to a service language.
+type WebAuthLocale = ServiceLocale;
 
 interface WebAuthPageCopy {
   brand: string;
@@ -50,7 +57,7 @@ function resolveWebAuthLocale(language?: string): WebAuthLocale {
     navigator.languages?.[0] ??
     "";
 
-  return candidate.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
+  return toServiceLocale(resolveSystemLocale(candidate, FALLBACK_UI_LOCALE));
 }
 
 export function getWebAuthCopy(locale: WebAuthLocale = resolveWebAuthLocale()): WebAuthPageCopy {

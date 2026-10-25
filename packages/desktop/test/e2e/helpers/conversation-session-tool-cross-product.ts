@@ -1,7 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveE2ERuntimePath } from "./e2e-runtime-paths.js";
-import { getV4ConfigProjection, switchV4Mode } from "#e2e/helpers/v4-conversation";
+import { getV4ConfigProjection, switchV4Mode } from "./v4-conversation.js";
 
 export const TOOL_CROSS_PRODUCT_ROOT = resolveE2ERuntimePath(
   "conversation-session-tool-cross-product",
@@ -48,9 +48,9 @@ export const TOOL_CROSS_PRODUCT_CASES: ToolCrossProductCase[] = [
   { markerName: "SEND_MESSAGE", toolName: "SendMessage" },
   { markerName: "AGENT", toolName: "Agent" },
   { markerName: "SKILL", toolName: "Skill" },
-  // 修复原因：当前 desktop E2E 的 agent runtime 没有注册 Workflow 工具。
-  // replay fixture 若强制调用 Workflow 会稳定得到 "Tool not found"，后续 compact/fork/goal
-  // 断言验证的是失败工具卡而不是工具历史能力，应该从正式叉乘集合剪掉。
+  // Reason for the change: the current desktop E2E agent runtime does not register the Workflow tool.
+  // If the replay fixture forcibly calls Workflow it deterministically gets "Tool not found", so the later compact/fork/goal
+  // assertions would verify the failed tool card instead of tool history capability; cut it from the formal cross-product set.
 ];
 
 export function markerForToolCase(toolCase: ToolCrossProductCase) {
@@ -166,9 +166,16 @@ export async function respondToToolCrossProductBlockers() {
   };
 
   if (result.elicitationClicked || result.planApprovalClicked || result.permissionClicked) {
-    // Bug 根因：ExitPlanMode 在 V4 中走独立计划审批弹窗，不再是 legacy
-    // PermissionDialog；只点击 permission option 会让整轮永久停在 interaction。
+    // Bug root cause: in V4 ExitPlanMode goes through a separate plan approval dialog, no longer the legacy
+    // PermissionDialog; clicking only the permission option leaves the whole turn stuck in interaction forever.
     await browser.pause(250);
   }
   return result;
+}
+
+interface ConfigOptionLike {
+  category?: string;
+  currentValue?: unknown;
+  id?: string;
+  type?: string;
 }

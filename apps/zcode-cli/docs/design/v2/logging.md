@@ -1,79 +1,79 @@
 # Logging and Trace
 
-ZCode 的日志不是调试输出的集合，而是 agent runtime 的可观测契约。所有 session、turn、message、model request、tool call、permission、storage 操作和外部 I/O 都必须归属到同一个顶层 `traceId` 下，并通过 `spanId` / `parentSpanId` 还原调用链。
+ZCode logs are not a collection of debug output; they are the agent runtime's observability
+contract. Every session, turn, message, model request, tool call, permission, storage operation,
+and external I/O must be attributed to one top-level `traceId`, with `spanId` / `parentSpanId`
+restoring the call chain.
 
-## 目标
+## Goals
 
-- 每次顶层任务创建一个稳定 `traceId`，默认覆盖整个 session 的任务链。
-- 每个 turn、model request、tool call、permission、adapter I/O 创建自己的 span。
-- session event 是可恢复事实来源，structured log 是诊断索引，trace span 是时序与调用链。
-- 日志默认不保存密钥、token、完整 prompt、完整 tool 输入输出或隐私内容。
-- core 和 adapter 都接收显式 `ExecutionContext` / `TraceContext`，不得在中途生成无关联 trace。
+- One stable `traceId` per top-level task, by default covering the task chain of the whole session.
+- Every turn, model request, tool call, permission, and adapter I/O creates its own span.
+- Session events are the recoverable source of truth, structured logs the diagnostic index, trace
+  spans the timing and call chain.
+- Logs never persist keys, tokens, full prompts, full tool input/output, or private content.
+- Core and adapters receive an explicit `ExecutionContext` / `TraceContext`; no unrelated trace may
+  be minted mid-flow.
 
-## 三层输出
+## Three output layers
 
-### Session Event
+### Session event
 
-append-only session event 记录可恢复状态，包括用户消息、模型结果、tool lifecycle、permission lifecycle、compact boundary 和错误。事件必须包含：
+Append-only session events record recoverable state: user messages, model results, tool lifecycle,
+permission lifecycle, compact boundaries, and errors. Events must include `eventId`, `sessionId`,
+`turnId`, `traceId`, `sequenceNumber`, `timestamp`, `type`, `payload`.
 
-- `eventId`
-- `sessionId`
-- `turnId`
-- `traceId`
-- `sequenceNumber`
-- `timestamp`
-- `type`
-- `payload`
+### Structured log
 
-### Structured Log
+Logs are the troubleshooting and audit index, written as JSONL by default. Minimal fields per line:
+`timestamp`, `level`, `event`, `message`, `module`, `traceId`, `spanId`, `parentSpanId`,
+`sessionId`, `turnId`, `toolCallId`, `durationMs`, `status`, `error`.
 
-日志用于排障和审计索引，默认写入 JSONL。每行最小字段：
+Log payloads pass through the redactor first. Default sensitive keys include `apiKey`, `token`,
+`authorization`, `cookie`, `password`, `secret`, `credential`.
 
-- `timestamp`
-- `level`
-- `event`
-- `message`
-- `module`
-- `traceId`
-- `spanId`
-- `parentSpanId`
-- `sessionId`
-- `turnId`
-- `toolCallId`
-- `durationMs`
-- `status`
-- `error`
+Error logs must keep a diagnosable cause chain. For anything written through
+`logger.error(message, error, context)`, the JSONL `error` field must contain at least the outer
+error's `name`, `message`, and stable `code` / `type` (if present), plus the same summary recorded
+recursively for `cause`. Structured `context` on the error object also enters the log, redacted.
+`turn.failed` must never collapse to `UNKNOWN_ERROR`: the original failure must be locatable
+directly from the log — provider missing API key, invalid model request, permission denial, or tool
+failure — without querying session storage.
 
-日志 payload 必须先经过 redactor。默认敏感 key 包括 `apiKey`、`token`、`authorization`、`cookie`、`password`、`secret`、`credential`。
+User interfaces must surface deep system state too: when an entrypoint shows error, waiting, retry,
+permission, model, tool, or I/O state, prefer the stable status code, an actionable summary, and a
+safe cause-chain summary over the outermost wrapper error. User-visible summaries must pass a
+privacy/secret-leak assessment; full payloads stay in controlled logs or debug paths.
 
-错误日志必须保留可诊断的原因链。凡是通过 `logger.error(message, error, context)` 写出的错误，JSONL 中的 `error` 字段必须至少包含外层错误的 `name`、`message`、稳定 `code` / `type`（如果存在），并递归记录 `cause` 的同类摘要。错误对象上的结构化 `context` 也必须进入日志并经过 redactor。`turn.failed` 不能只留下 `UNKNOWN_ERROR`，必须能直接从日志定位原始失败原因，例如 provider 缺少 API key、模型请求非法、权限拒绝或工具执行失败，而不需要再查询 session storage。
+### Conversation command audit index
 
-CLI/TUI 等用户界面也必须感知系统深层状态：当入口层展示错误、等待、重试、权限、模型、工具或 I/O 状态时，应优先展示稳定的状态码、可操作摘要和安全的 cause 链摘要，而不是只显示最外层包装错误。用户可见摘要必须经过隐私和密钥泄露风险评估，完整 payload 仍只进入受控日志或 debug 路径。
+Renderer logs are not the production source of truth for conversation operations. Low-frequency,
+user-initiated V4 conversation commands that change conversation history must write one `info`
+structured log after the Agent server completes the command's side effect, so default production
+JSONL locates the operation without depending on client logs. The log proves the server completed
+the command, not that the user triggered it through a specific button or key.
 
-### Conversation Command Audit Index
+- `conversation.command.edit_user_query.completed`: recorded only after conversation rewind is
+  committed and the edited canonical intent is accepted. Fields at least: `traceId`, `sessionId`,
+  `commandId`, `clientId`, `targetRowId`, `targetEntityId`, `workspaceMode`, `intentKind`,
+  `attachmentCount`, `status=completed`.
+- `conversation.command.fork_assistant.completed`: recorded only after a stable fork completes and a
+  child session id exists. Fields at least: `traceId`, `parentSessionId`, `childSessionId`,
+  `commandId`, `clientId`, `targetRowId`, `targetEntityId`, `targetBoundaryMessageId`,
+  `revisionAtDecision`, `status=completed`.
 
-renderer 日志不是生产环境里的对话操作事实来源。低频、由用户发起且会改变会话历史的
-V4 conversation command，必须在 Agent server 完成命令副作用后写一条 `info` 结构化日志，
-让默认生产 JSONL 可以直接定位操作，同时避免依赖客户端日志是否启用。这类日志证明的是
-server 已完成对应命令，不等价于证明用户通过某个具体按钮或键盘入口触发。
+These logs must not record `newText`, the original query, goal objective, attachment contents, or
+other full user input. Rejected/failed results of the same commands stay expressed by command ACKs
+and unified error logs; a failed request must never be mis-recorded as completed. Edit/fork are
+low-frequency user lifecycle operations — far below message-stream events per production day — so
+`info`, not `debug`.
 
-- `conversation.command.edit_user_query.completed`：只在 conversation rewind 已提交、编辑后的
-  canonical intent 已接受后记录。字段至少包含 `traceId`、`sessionId`、`commandId`、
-  `clientId`、`targetRowId`、`targetEntityId`、`workspaceMode`、`intentKind`、
-  `attachmentCount` 和 `status=completed`。
-- `conversation.command.fork_assistant.completed`：只在 stable fork 已完成并获得 child session id
-  后记录。字段至少包含 `traceId`、`parentSessionId`、`childSessionId`、`commandId`、
-  `clientId`、`targetRowId`、`targetEntityId`、`targetBoundaryMessageId`、
-  `revisionAtDecision` 和 `status=completed`。
+### Model stream diagnostics
 
-上述日志不得记录 `newText`、原 query、goal objective、附件内容或其他完整用户输入。
-同一 command 的 rejected/failed 结果继续由 command ACK 与统一错误日志表达，不能把失败请求
-误记成 completed。edit/fork 属于用户低频生命周期操作，生产环境一天的数量远低于消息流事件，
-因此使用 `info` 而不是 `debug`。
-
-### Model Stream Diagnostics
-
-`generateText()` 和 `streamText()` 都必须记录可定位的 model SDK 诊断日志。`model.sdk.generate.completed` 已用于非流式完成路径。流式路径除了 `model.sdk.stream.completed` 之外，还必须在 stream 迭代抛错时记录 `model.sdk.stream.failed`，并带上与完成日志同级的诊断字段：
+Both `generateText()` and `streamText()` must record locatable model SDK diagnostic logs.
+`model.sdk.generate.completed` covers the non-streaming completion path. The streaming path records
+`model.sdk.stream.completed` and, when stream iteration throws, `model.sdk.stream.failed` with the
+same diagnostic fields as the completion log:
 
 - `chunkCounts`
 - `errorChunkCount`
@@ -84,116 +84,186 @@ server 已完成对应命令，不等价于证明用户通过某个具体按钮�
 - `reasoningDeltaChars`
 - `toolCallCount`
 - `usage`
-- `error`（失败时）
-- `errorAfterFinish`（若在 `finish` / `message_stop` 之后才抛错则为 `true`）
+- `error` (on failure)
+- `errorAfterFinish` (`true` if the throw happened after `finish` / `message_stop`)
 
-这类日志的目标不是改变控制流，而是把“响应已完成但连接收尾时又出现 `ECONNRESET` / `aborted`”这种尾部故障单独暴露出来，便于复现和判断是 provider 断流、代理 reset，还是客户端在完成后误读了额外错误。
+The goal is not to change control flow but to expose tail failures like "response already complete,
+then `ECONNRESET` / `aborted` during connection teardown" separately, making it easy to tell a
+provider stream drop, a proxy reset, or a client misreading an extra error after completion.
 
-### Trace Span
+### Trace span
 
-span 表示一次可计时操作。最小字段：
+A span is one timed operation. Minimal fields: `traceId`, `spanId`, `parentSpanId`, `name`,
+`startedAt`, `endedAt`, `status`, `attributes`, `error`. P0 requires only local in-memory and log
+usage; OpenTelemetry exporters, metrics, and external collectors belong to a later telemetry phase.
 
-- `traceId`
-- `spanId`
-- `parentSpanId`
-- `name`
-- `startedAt`
-- `endedAt`
-- `status`
-- `attributes`
-- `error`
+## Startup duration logs
 
-P0 只要求本地内存和日志可用；OpenTelemetry exporter、metrics 和外部 collector 放到后续 telemetry phase。
+Startup timing is structured log only, never session event, keeping diagnostic noise out of
+recoverable session facts. All startup logs use the existing logger/redactor and carry a linkable
+`traceId`, `sessionId` (if any), `module`, `event`, `stage`, `durationMs`, `status`, and
+`context.totalDurationMs`.
 
-## 启动耗时日志
+`durationMs` is the current stage; `context.totalDurationMs` is the cumulative time from the start
+of that startup flow to this log. Timing uses a monotonic clock; logging failures must not affect
+startup.
 
-启动耗时属于 structured log，不进入 session event，避免把诊断噪音写入可恢复会话事实。所有启动日志必须使用现有 logger/redactor，并带上可串联的 `traceId`、`sessionId`（若已有）、`module`、`event`、`stage`、`durationMs`、`status` 和 `context.totalDurationMs`。
+App-server process startup records at least:
 
-`durationMs` 表示当前阶段耗时；`context.totalDurationMs` 表示从该启动流程开始到当前日志的累计耗时。计时使用单调时钟，日志失败不得影响启动流程。
+- `app_server.startup.started`: entry begins.
+- `app_server.startup.config.completed`: config loaded.
+- `app_server.startup.session_store.completed`: session store opened.
+- `app_server.startup.connection.completed`: ZCode app-server connection established.
+- `app_server.startup.completed` / `app_server.startup.failed`: total startup duration.
 
-app-server 进程启动至少记录：
+ZCode app-server `session/new` records at least:
 
-- `app_server.startup.started`：入口开始。
-- `app_server.startup.config.completed`：配置加载完成。
-- `app_server.startup.session_store.completed`：session store 打开完成。
-- `app_server.startup.connection.completed`：ZCode app-server connection 建立完成。
-- `app_server.startup.completed` / `app_server.startup.failed`：启动总耗时。
+- `app_server.session.new.started`: new session request received, session trace created.
+- `app_server.session.new.validate.completed`: request constraints validated (cwd, MCP servers,
+  additional directories).
+- `app_server.session.new.config.completed`: initial mode, model, thought level resolved.
+- `app_server.session.new.app.completed`: ZCode app/runtime created.
+- `app_server.session.new.record.completed`: ZCode app-server session record registered.
+- `app_server.session.new.commands.completed`: available commands notification sent.
+- `app_server.session.new.completed` / `app_server.session.new.failed`: total new-session duration.
 
-ZCode app-server `session/new` 至少记录：
+`createZCodeApp()` also records `bootstrap.app.startup.*` stages covering config, runtime config,
+storage, MCP adapter, runtime construction, and total time. When the app-server creates an app, it
+must pass the same `traceContext` and `loggerFactory` into `createZCodeApp()` so
+`app_server.session.new.*` and `bootstrap.app.startup.*` correlate under one `traceId/sessionId`.
 
-- `app_server.session.new.started`：收到 new session 请求并创建 session trace。
-- `app_server.session.new.validate.completed`：cwd、MCP server、additional directories 等请求约束校验完成。
-- `app_server.session.new.config.completed`：初始 mode、model、thought level 解析完成。
-- `app_server.session.new.app.completed`：ZCode app/runtime 创建完成。
-- `app_server.session.new.record.completed`：ZCode app-server session record 注册完成。
-- `app_server.session.new.commands.completed`：available commands 通知发送完成。
-- `app_server.session.new.completed` / `app_server.session.new.failed`：new session 总耗时。
+## Layer constraints
 
-`createZCodeApp()` 也要记录 `bootstrap.app.startup.*` 阶段，覆盖配置、runtime config、storage、MCP adapter、runtime 构造和总耗时。app-server 创建 app 时必须把同一个 `traceContext` 和 `loggerFactory` 传入 `createZCodeApp()`，让 `app_server.session.new.*` 与 `bootstrap.app.startup.*` 可以按同一个 `traceId/sessionId` 关联。
+- `contracts` defines only `Logger`, `LoggerFactory`, `TraceContext`, `ExecutionContext`, `Span`,
+  schemas, and ports.
+- `adapters` implement file logs, the console sink, redaction, directory resolution, and future
+  exporters.
+- `bootstrap` creates the logger factory and root trace context and injects them into the runtime.
+- `core` logs only domain events and calls logger/tracer ports; it never reads environment
+  variables, the filesystem, or the console directly.
+- CLI/TUI/SDK display `traceId` and never assemble raw log formats themselves.
 
-## 分层约束
+## Environment variables
 
-- `contracts` 只定义 `Logger`、`LoggerFactory`、`TraceContext`、`ExecutionContext`、`Span`、schema 和 port。
-- `adapters` 实现文件日志、console sink、redaction、目录解析和未来 exporter。
-- `bootstrap` 创建 logger factory、root trace context，并注入 runtime。
-- `core` 只记录领域事件和调用 logger/tracer port，不直接读取环境变量、文件系统或 console。
-- CLI/TUI/SDK 负责展示 `traceId`，不直接拼接底层日志格式。
+All project-owned variables use the `ZCODE_` prefix:
 
-## 环境变量
+- `ZCODE_LOG_DIR`: overrides the default log directory.
+- `ZCODE_LOG_CONSOLE`: when `1`, also writes diagnostic logs to stderr.
 
-所有自有环境变量使用 `ZCODE_` 前缀：
+Log level is not configured through environment variables. Callers may pass an explicit logger
+`minLevel` or adjust the level through the logger factory's runtime interface; without an explicit
+value, the development environment defaults to `debug` so the local debug app sees `context.built`
+and `context_usage_snapshot`, and normal runs default to `info`. Development environment is
+detected via `ZCODE_RUNTIME_ENV=development` or local source/tsx CLI entrypoints;
+`ZCODE_RUNTIME_ENV=production` and `ZCODE_RUNTIME_ENV=test` explicitly use the normal defaults.
+`NODE_ENV` does not participate in ZCode runtime detection, so user shell or package-manager
+variables cannot affect agent behavior. `ZCODE_LOG_LEVEL` is not part of the supported environment
+surface and must be ignored when set.
 
-- `ZCODE_LOG_DIR`：覆盖默认日志目录。
-- `ZCODE_LOG_CONSOLE`：为 `1` 时同时向 stderr 写诊断日志。
+The default log directory comes from cross-platform directory resolution; initially
+`{home}/.zcode/cli/log`. The default log file name is `zcode-YYYY-MM-DD.jsonl`, where the date is
+the machine's local calendar day, not UTC — otherwise positive-offset timezones such as Beijing
+write early-morning startup logs into the previous day's file, and startup-timing investigations
+misread it as missing logs.
 
-日志级别不通过环境变量配置。调用方可以显式传入 logger `minLevel` 或通过 logger factory 的运行时接口调整级别；未显式传入时，开发环境默认 `debug`，以便本地 debug app 能看到 `context.built` 和 `context_usage_snapshot`；普通运行默认 `info`。开发环境由 `ZCODE_RUNTIME_ENV=development` 或本地源码/tsx CLI 入口识别；`ZCODE_RUNTIME_ENV=production` 和 `ZCODE_RUNTIME_ENV=test` 明确使用普通默认值。`NODE_ENV` 不参与 ZCode 运行时判定，避免用户 shell 或包管理器变量影响 agent 行为。`ZCODE_LOG_LEVEL` 不属于受支持的环境变量 surface，设置后必须被忽略。
+## Log retention and cleanup
 
-默认日志目录通过跨平台目录解析获得，初版可使用 `{home}/.zcode/cli/log`。默认日志文件名为 `zcode-YYYY-MM-DD.jsonl`，其中日期使用本机本地日历日，而不是 UTC 日期；否则北京时间等正时区在本地凌晨启动时会把日志写入前一天的文件，导致排查启动耗时时误判为日志缺失。
+By default only the structured log files of the last 7 local calendar days are kept. Cleanup only
+touches files matching the default naming contract `zcode-YYYY-MM-DD.jsonl`; other files,
+subdirectories, artifacts, session events, SQLite DBs, and debug artifacts must never be deleted by
+the log cleanup task.
 
-## 日志保留与自动清理
+Cleanup is not a startup gate and must not add user-perceived startup latency. After
+`createZCodeApp()` and ZCode app-server agent startup complete, the logging adapter schedules one
+cleanup after a 60-second background delay — never during config loading, SQLite migration, runtime
+construction, or before the ZCode Protocol connection. Short-lived commands may skip the round due
+to process exit.
 
-默认只保留最近 7 个本地日历日的结构化日志文件。清理对象仅限默认日志命名契约匹配的 `zcode-YYYY-MM-DD.jsonl` 文件；其他文件、子目录、artifact、session event、SQLite DB 和 debug 产物不得被日志清理任务删除。
+The cleanup boundary uses the local date in the file name, not mtime. For local date `2026-05-08`,
+keep logs from `2026-05-02` through `2026-05-08` and delete `2026-05-01` and older matching logs. A
+missing log directory, concurrent deletes, permission errors, or single-file delete failures must
+not affect the agent main path; failures only write a structured warn including the directory, file
+name, `retentionDays`, `cutoffDate`, and a safe error summary.
 
-日志清理不是启动门禁，也不应增加用户感知的启动延迟。`createZCodeApp()` 和 ZCode app-server agent 启动完成后，通过 logging adapter 在后台延迟 60 秒调度一次清理；不在配置加载、SQLite migration、runtime 构造或 ZCode Protocol连接前立即执行。短生命周期命令可以因为进程退出而跳过本轮清理。
+This capability adds no environment variables. If retention days or delay ever become configurable,
+the config layer, precedence, error behavior, and test coverage must be defined in this spec first;
+capabilities expressible through config files, CLI arguments, or session config should not become
+`ZCODE_` environment variables.
 
-清理边界按文件名里的本地日期判断，不依赖 mtime。以本地日期 `2026-05-08` 为例，保留 `2026-05-02` 至 `2026-05-08` 的日志，删除 `2026-05-01` 及更早的匹配日志。不存在的日志目录、并发删除、权限错误或单文件删除失败都不得影响 agent 主流程；失败只写结构化 warn，并包含目录、文件名、retentionDays、cutoffDate 和安全错误摘要。
+## Default log payload boundary
 
-该能力不新增环境变量。未来如果要开放保留天数或延迟配置，必须先在本 spec 定义配置层级、优先级、错误行为和测试覆盖；能用配置文件、CLI 参数或 session 配置表达的能力，优先不要做成 `ZCODE_` 环境变量。
+`{home}/.zcode/cli/log/zcode-YYYY-MM-DD.jsonl` is the default locating log. It answers "which
+session/turn/trace/protocol seq/event type failed when", not full protocol messages, model stream
+content, or tool input/output mirrors. Default logs may record indexes, statuses, counts, durations,
+byte counts, key lists, and short summaries; they must not write full `protocolMessage`, full
+stream deltas, full tool input/result, full stdout/stderr tails, or full request/response headers on
+high-frequency paths.
 
-## 默认日志载荷边界
+High-frequency events are summarized:
 
-`{home}/.zcode/cli/log/zcode-YYYY-MM-DD.jsonl` 是默认定位日志，目标是回答“哪个 session/turn/trace/protocol seq/事件类型在什么时间出问题”，不是保存完整协议消息、模型流式内容或工具输入输出镜像。默认日志可以记录索引、状态、计数、耗时、字节数、key 列表和短摘要；不得在高频路径写入完整 `protocolMessage`、完整 stream delta、完整 tool input/result、完整 stdout/stderr tail 或完整 request/response headers。
+- `event_store.appended` does not log per-event entries for message-stream-frequency events such as
+  `model_streaming`, `tool_call_progress`, `streaming_tool_ledger_updated`, and
+  `model_network_status`; they are aggregated per session/turn/event type into
+  `event_store.appended.summary` recording `firstSessionEventSequenceNumber`,
+  `lastSessionEventSequenceNumber`, `eventCount`, `payloadBytes`, `payloadKinds`, `firstEventId`,
+  `lastEventId`, and the flush reason.
+- ZCode Protocol `session/event` send logs keep `deliveryKind`, `protocolSeq`, `eventId`,
+  `protocolEventType`, `payloadKind`, `sessionEventType`, and the source event sequence; by default
+  only `protocolMessageBytes`, `protocolPayloadBytes`, `payloadKeys`, and `payloadSummary` are
+  logged, never the full `protocolMessage`.
+- Context usage writes a compact snapshot by default: total tokens/chars, categories, message
+  breakdown, per-category contributor counts and top contributors. Full `mcpTools`, `systemTools`,
+  `skills`, `systemPromptSections`, and full contributor detail belong to explicit diagnostic logs
+  only, not the default daily log.
+- `zcode_protocol.process.memory_sample` reuses the 60s sampling cadence of
+  `process/resourceSample` to write process memory samples (`rssKb` / `heapUsedKb` / `heapTotalKb` /
+  `externalKb` / `arrayBuffersKb` plus counters like resident sessions and event store rows), but
+  only when heapUsed changed more than 5% since the last write, any counter changed, or 5 minutes
+  elapsed; gating and field semantics are in root `docs/monitoring/memory-diagnostics-log.md`.
+  Samples contain no session ids, paths, or content.
 
-高频事件必须摘要化写入：
+Error and warn logs may keep more context than the debug index but still respect the size cap and
+redaction: prefer locating fields such as `errorMessage`, `code`, `statusCode`, `requestId`,
+`toolCallId`, `payloadBytes`, `tailBytes`, `outputPath`; raw content only in bounded tails or
+diagnostic artifacts.
 
-- `event_store.appended` 对 `model_streaming`、`tool_call_progress`、`streaming_tool_ledger_updated`、`model_network_status` 等与消息流同频或近似同频的事件不逐条写默认日志；按 session/turn/event type 聚合为 `event_store.appended.summary`，记录 `firstSessionEventSequenceNumber`、`lastSessionEventSequenceNumber`、`eventCount`、`payloadBytes`、`payloadKinds`、`firstEventId`、`lastEventId` 和 flush 原因。
-- ZCode Protocol 的 `session/event` 发送日志保留 `deliveryKind`、`protocolSeq`、`eventId`、`protocolEventType`、`payloadKind`、`sessionEventType` 和 source event sequence；默认只记录 `protocolMessageBytes`、`protocolPayloadBytes`、`payloadKeys`、`payloadSummary`，不记录完整 `protocolMessage`。
-- context usage 默认写 compact snapshot：总 token/char、分类、消息 breakdown、每类 contributor 的数量与 Top contributors。完整 `mcpTools`、`systemTools`、`skills`、`systemPromptSections` 和完整 contributor 明细只属于显式诊断日志，不进入默认 daily log。
-- `zcode_protocol.process.memory_sample` 复用 `process/resourceSample` 的 60s 采样节拍写进程内存样本（`rssKb` / `heapUsedKb` / `heapTotalKb` / `externalKb` / `arrayBuffersKb` 与常驻 session、event store 行数等计数器），但只在 heapUsed 相对上次写盘变化超过 5%、任一计数器变化或距上次写盘满 5 分钟时才写；门控与字段口径见仓库根 `docs/monitoring/memory-diagnostics-log.md`。样本不含 session id、路径或任何内容。
+## Runtime propagation
 
-错误和告警日志可以比 debug 索引保留更多上下文，但仍必须遵守 size cap 和敏感信息 redaction：默认优先记录 `errorMessage`、`code`、`statusCode`、`requestId`、`toolCallId`、`payloadBytes`、`tailBytes`、`outputPath` 这类定位字段；原始内容只允许在 bounded tail 或诊断产物中出现。
+1. The CLI or SDK creates the root `TraceContext` when creating the app.
+2. `AgentRuntime.executeTurn()` creates the turn span and passes the same `traceId` to the event
+   store, model adapter, tool executor, and permission service.
+3. Model/tool/permission create only child spans, never a new root trace.
+4. Adapter I/O receives the current context; logs record the same `traceId` and current `spanId`.
+5. Outbound network adapters propagate the current `traceId` into request headers; model requests
+   send `x-request-id`, `x-zcode-trace-id`, `x-zcode-session-type`, `x-query-id` (when a query
+   exists), and `x-session-id` (when a session exists). `x-zcode-session-type` may only be `main`,
+   `subagent`, `side_chat`, or `other` and is for statistics and diagnostics only. Fine-grained
+   diagnostics such as `turnId`, `spanId`, and `parentSpanId` stay in status events, session
+   events, trace spans, and structured logs, never in provider-visible HTTP headers.
+6. Error wrapping preserves `cause` and uses structured error fields in logs and session events.
 
-## Runtime 传播
+`cause` recording has a depth limit and handles cycles; logging failures must not affect the main
+path. Logs may keep error messages and stable diagnostic fields but never key values, full prompts,
+full provider response bodies, or unredacted headers.
 
-1. CLI 或 SDK 创建 app 时生成 root `TraceContext`。
-2. `AgentRuntime.executeTurn()` 创建 turn span，并把同一个 `traceId` 传给 event store、model adapter、tool executor 和 permission service。
-3. model/tool/permission 只创建 child span，不创建新的 root trace。
-4. adapter I/O 必须接收当前 context，日志中记录同一个 `traceId` 和当前 `spanId`。
-5. 出站网络 adapter 必须把当前 `traceId` 传播到请求 header；模型请求发送 `x-request-id`、`x-zcode-trace-id`、`x-zcode-session-type`、`x-query-id`（存在 query 时）和 `x-session-id`（存在 session 时）。`x-zcode-session-type` 只能为 `main`、`subagent`、`side_chat` 或 `other`，只用于统计与诊断。`turnId`、`spanId`、`parentSpanId` 等细粒度诊断信息只保存在 status event、session event、trace span 和结构化日志中，不进入 provider-visible HTTP header。
-6. 错误包装必须保留 cause，并在日志和 session event 中使用结构化错误字段。
+## Acceptance
 
-`cause` 记录应有深度上限并处理循环引用；日志记录失败不得影响主流程。日志可以保留错误消息和稳定诊断字段，但不得记录密钥值、完整 prompt、完整 provider response body 或未经 redaction 的 headers。
-
-## 验收
-
-- 同一次 prompt 产生的 session events 使用同一个 `traceId`。
-- tool handler 接收到的 `traceId` 与所属 turn 一致。
-- 出站模型 HTTP 请求 header 包含与 model status event 相同的 `x-request-id` 和 `x-zcode-trace-id`，并包含按调用来源解析的 `x-zcode-session-type`。
-- CLI `--json` 输出包含 `traceId`。
-- 日志文件为 JSONL，敏感字段被 redacted。
-- `turn.failed` 日志包含外层 runtime 错误和原始 `cause` 的 `name`、`message`、`code` / `type`、redacted `context`，无需查询 SQLite 即可定位常见失败原因。
-- TUI 捕获 turn 失败时展示安全的 cause 链摘要，让用户能直接看到深层失败状态，例如 `provider_not_configured`。
-- logger 文件写入失败不影响 agent 主流程。
-- ZCode app-server `session/new` 日志覆盖 validate/config/create app/register/notify commands/total 阶段，每条阶段日志包含非负 `durationMs` 和同一个 `traceId/sessionId`。
-- 日志文件名使用本地日历日，`2026-05-05 02:46 +0800` 必须写入 `zcode-2026-05-05.jsonl`，不能因为 UTC 仍是 `2026-05-04` 而落到前一天文件。
-- 启动完成后调度日志保留清理，默认延迟 60 秒，最多保留最近 7 个本地日历日的 `zcode-YYYY-MM-DD.jsonl`，且清理失败不影响 CLI/TUI/ZCode app-server 主流程。
+- Session events from one prompt share one `traceId`.
+- The `traceId` a tool handler receives matches its turn.
+- Outbound model HTTP request headers carry the same `x-request-id` and `x-zcode-trace-id` as the
+  model status event, plus an `x-zcode-session-type` resolved from the call origin.
+- CLI `--json` output includes `traceId`.
+- Log files are JSONL with sensitive fields redacted.
+- `turn.failed` logs contain the outer runtime error and the original `cause`'s `name`, `message`,
+  `code` / `type`, and redacted `context`; common failure causes are locatable without SQLite.
+- When the TUI captures a turn failure it shows a safe cause-chain summary so the user sees the deep
+  failure state directly, e.g. `provider_not_configured`.
+- Logger file-write failures do not affect the agent main path.
+- ZCode app-server `session/new` logs cover validate/config/create app/register/notify
+  commands/total stages, each with a non-negative `durationMs` and the same `traceId/sessionId`.
+- Log file names use the local calendar day: `2026-05-05 02:46 +0800` must write
+  `zcode-2026-05-05.jsonl`, not roll into the previous day's file just because UTC is still
+  `2026-05-04`.
+- After startup completes, retention cleanup is scheduled with the default 60-second delay, keeping
+  at most the last 7 local calendar days of `zcode-YYYY-MM-DD.jsonl`, and cleanup failures do not
+  affect the CLI/TUI/ZCode app-server main path.

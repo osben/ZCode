@@ -3,6 +3,7 @@ import {
   databaseStartupControlSchema,
   databaseStartupStateSchema,
   databaseStartupPortPayloadSchema,
+  hasDesktopLocalDevelopmentRuntimeArg,
 } from "@zcode/shared";
 /* eslint-disable max-lines -- preload bridge 集中暴露桌面平台 IPC，拆散会让 contextBridge 权限边界更难审计。 */
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
@@ -27,6 +28,11 @@ function parseDeviceIdFromArgs(): string {
 
 // 在 contextBridge 建立之前就暴露同步值，让 renderer 在 React 渲染前就能读到
 contextBridge.exposeInMainWorld("__ZCODE_DEVICE_ID__", parseDeviceIdFromArgs());
+// Main's `!app.isPackaged`, the authoritative dev-only gate for this renderer.
+contextBridge.exposeInMainWorld(
+  "__ZCODE_IS_LOCAL_DEVELOPMENT_RUNTIME__",
+  hasDesktopLocalDevelopmentRuntimeArg(process.argv),
+);
 
 import type {
   AppSettings,
@@ -112,6 +118,13 @@ if (shouldEnableE2ETestBridge(process.env)) {
       ipcRenderer.invoke(PlatformChannels.ConfigureFinalArmsCustomEventsE2E, request),
   });
 }
+
+type OpenTaskDraftPayload = {
+  path: string;
+  text: string;
+};
+const openTaskDraftCallbacks = new Set<(payload: OpenTaskDraftPayload) => void>();
+const pendingOpenTaskDrafts: OpenTaskDraftPayload[] = [];
 
 const updateReadyCallbacks = new Set<(version: string) => void>();
 const updateStateCallbacks = new Set<(payload: UpdateStatePayload) => void>();
@@ -219,6 +232,16 @@ ipcRenderer.on(PlatformChannels.ShareImport, (_event: unknown, payload: { shareC
   for (const callback of shareImportCallbacks) callback(payload);
 });
 
+ipcRenderer.on(PlatformChannels.OpenTaskDraft, (_event: unknown, payload: OpenTaskDraftPayload) => {
+  if (openTaskDraftCallbacks.size === 0) {
+    pendingOpenTaskDrafts.push(payload);
+    return;
+  }
+  for (const callback of openTaskDraftCallbacks) {
+    callback(payload);
+  }
+});
+
 function updateRendererProcessTitle(): void {
   process.title = formatZCodeRendererProcessName(document.title);
 }
@@ -296,6 +319,10 @@ contextBridge.exposeInMainWorld("zcode", {
       .then((result: BindRemoteWorkspaceSessionContextIpcResult) =>
         unwrapRemoteWorkspaceBindResult(result),
       ),
+  getAppWorktreesDir: (): Promise<string> =>
+    ipcRenderer.invoke(PlatformChannels.GetAppWorktreesDir),
+  setDictationSystemMute: (active: boolean): Promise<void> =>
+    ipcRenderer.invoke(PlatformChannels.SetDictationSystemMute, { active }),
   startWebRemoteControl: (context: WebRemoteControlContext) =>
     ipcRenderer.invoke(PlatformChannels.StartWebRemoteControl, context),
   stopWebRemoteControl: (): Promise<void> =>
@@ -728,6 +755,16 @@ contextBridge.exposeInMainWorld("zcode", {
       if (payload) callback(payload);
     }
     return () => shareImportCallbacks.delete(callback);
+  },
+  onOpenTaskDraft: (callback: (payload: OpenTaskDraftPayload) => void): (() => void) => {
+    openTaskDraftCallbacks.add(callback);
+    while (pendingOpenTaskDrafts.length > 0) {
+      const payload = pendingOpenTaskDrafts.shift();
+      if (payload) {
+        callback(payload);
+      }
+    }
+    return () => openTaskDraftCallbacks.delete(callback);
   },
   /** 通知 main process renderer 已就绪 */
   notifyRendererReady: () => ipcRenderer.send(PlatformChannels.RendererReady),

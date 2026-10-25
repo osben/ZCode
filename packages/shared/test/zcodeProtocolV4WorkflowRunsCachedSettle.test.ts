@@ -1,12 +1,12 @@
-// 缓存命中的结算（`node-settled { cached: true }`）在 workflowRuns 里的两件事
-// （docs/dynamic-workflow/presentation.md「Reduction」与「Subagent transcripts」）：
+// The two things a cache-hit settle (`node-settled { cached: true }`) does inside workflowRuns
+// (docs/dynamic-workflow/presentation.md "Reduction" and "Subagent transcripts"):
 //
-//   1. **归属**：命中没有 node-queued，这条结算就是实例的出生事件，所以 ask 的那一条重发出生
-//      事实（actor ref 等）。缺了它，一个全部 ask 都命中缓存的子代理在读面上就是「待开始」——
-//      修订 run 从空表开始，没有任何上一世的条目可供向前携带。
-//   2. **转录会话**：actor 的 `sessionId` 指向**持有它转录的那条会话**。导入命中不建会话，
-//      交换只活在前驱的会话里（载荷的 `sourceSessionId`）；第一次 live 派发之后才轮到本 run 自己
-//      的会话（种子已把前缀抄了进去）。
+//   1. **Attribution**: a hit has no node-queued, so that settle is the instance's birth event; the ask therefore
+//      rebroadcasts the birth facts (actor ref etc.). Without it, a subagent whose asks were all cache hits would read
+//      as "pending start" — a revised run starts from an empty table with no entries from any previous life to carry forward.
+//   2. **Transcript session**: the actor's `sessionId` points at **the session holding its transcript**. An import hit
+//      does not create a session; the exchange lives only in the predecessor's session (the payload's
+//      `sourceSessionId`); only after the first live dispatch does this run's own session take over (the seed already copied the prefix).
 import { describe, expect, it } from "vitest";
 import {
   WORKFLOW_RUNS_LIMITS,
@@ -55,9 +55,9 @@ function driver(limits: WorkflowRunEntryLimits = WORKFLOW_RUNS_LIMITS) {
 
 const actorRef = (index: number) => ({ siteId: `actor#${index}`, ordinal: 1 });
 const askRef = (index: number, ordinal = 1) => ({ siteId: `ask#${index}`, ordinal });
-/** 本 run 为这个子代理铸的会话 id（run service 的 mintActorSessionId 的替身）。 */
+/** The session id this run minted for that subagent (stand-in for the run service's mintActorSessionId). */
 const ownSession = (index: number) => `sess-b-${index}`;
-/** 前驱里持有这个子代理转录的会话（导入候选的 transcriptSourceSessionId）。 */
+/** The predecessor session holding that subagent's transcript (the import candidate's transcriptSourceSessionId). */
 const predecessorSession = (index: number) => `sess-a-${index}`;
 
 function createActor(driven: ReturnType<typeof driver>, index: number): void {
@@ -68,7 +68,7 @@ function createActor(driven: ReturnType<typeof driver>, index: number): void {
   );
 }
 
-/** 引擎为一次缓存命中的 ask 发的那条结算：重发出生事实，导入命中另带前驱的会话。 */
+/** The settle the engine emits for a cache-hit ask: rebroadcasts birth facts; an import hit additionally carries the predecessor's session. */
 function cachedAskSettle(
   driven: ReturnType<typeof driver>,
   index: number,
@@ -135,7 +135,7 @@ describe("缓存命中的结算：出生事实让节点归属到它的子代理"
       actorOrdinal: 1,
       instructionsHead: "task 1",
     });
-    // 两个全部命中的子代理干完了；第三个还在跑。缺归属时前两个会被派生成 waiting（「待开始」）。
+    // The two all-hit subagents finished; the third is still running. Without attribution the first two would be derived as waiting ("pending start").
     expect(driven.run.actors.map((actor) => actor.status)).toEqual([
       "completed",
       "completed",
@@ -218,7 +218,7 @@ describe("缓存命中的结算：actor 的 sessionId 指向持有转录的会�
     const driven = driver();
     driven.send("run-started", {});
     createActor(driven, 1);
-    // seq 0、1 是原次的导入命中，seq 2 原次 live 跑完（会话是本 run 的，种子里有前缀）。
+    // seq 0 and 1 are the original run's import hits; seq 2 ran live in the original run (the session is this run's, the seed contains the prefix).
     cachedAskSettle(driven, 1, { ordinal: 1, seq: 0, source: predecessorSession(1) });
     cachedAskSettle(driven, 1, { ordinal: 2, seq: 1, source: predecessorSession(1) });
     expect(actorOf(driven.run, 1)?.sessionId).toBe(predecessorSession(1));
@@ -287,7 +287,7 @@ describe("缓存命中的结算：溢出过的 run 里画不出徽章的出生�
     driven.send("phase-entered", { name: "p1", ordinal: 1 });
     createActor(driven, 1);
     liveAsk(driven, 1, { settle: false });
-    // actor 表满、唯一的组在跑：第二个子代理出生即被拒，run 从此 truncated。
+    // The actor table is full and the only group is running: the second subagent is rejected at birth, and the run is truncated from then on.
     driven.send(
       "actor-created",
       { actor: actorRef(2), name: "w2", phaseName: "p1" },
@@ -311,7 +311,7 @@ describe("缓存命中的结算：溢出过的 run 里画不出徽章的出生�
     );
     expect(driven.run.nodes.map((node) => node.siteId)).toEqual(["ask#1"]);
     expect(driven.run.usage).toMatchObject({ nodesUnlisted: 1, nodesUnlistedSettled: 1 });
-    // 子代理已作为 actors 计在它自己的出生阶段那一格；它的结算只记节点的 settled，不重复记人。
+    // The subagent is already counted as an actor in its own birth phase's cell; its settle only records the node as settled, without double-counting a person.
     expect(driven.run.unlistedByPhase).toEqual([{ phaseName: "p1", actors: 1, settled: 1 }]);
   });
 
@@ -319,7 +319,7 @@ describe("缓存命中的结算：溢出过的 run 里画不出徽章的出生�
     const driven = driver(LIMITS);
     driven.send("run-started", {});
     createActor(driven, 1);
-    // 第二个子代理被拒，run truncated；随后已列的子代理 1 的缓存结算照常入座。
+    // The second subagent was rejected and the run truncated; the listed subagent 1's cache settle then takes its seat as usual.
     createActor(driven, 2);
     expect(driven.run.truncated).toBe(true);
     cachedAskSettle(driven, 1, { source: predecessorSession(1) });

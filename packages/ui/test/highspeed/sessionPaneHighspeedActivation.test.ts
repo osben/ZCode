@@ -11,8 +11,10 @@ import type {
 import type { HighspeedCardSnapshot } from "@zcode/shared";
 import { SessionPane } from "@/v4/SessionPane.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { TEST_LOCALE } from "../helpers/uiCopy.js";
 
-// spec §9.2：激活动效只属于本端发送路径的 draw 新命中；切回、恢复与同卡复用都按 restore 呈现。
+// spec §9.2: the activation animation belongs only to a fresh draw hit on the local send path;
+// switching back, restoring, and reusing the same card are all presented as restore.
 
 const { composerProps, layerMock, sendCommandMock, timelineProps } = vi.hoisted(() => ({
   composerProps: [] as Array<{
@@ -51,7 +53,8 @@ const { composerProps, layerMock, sendCommandMock, timelineProps } = vi.hoisted(
   }>,
 }));
 
-// 永不 resolve：本用例不测 run 发现查询；resolve 会在环境拆除后触发 setState（未处理异常）。
+// Never resolves: this case does not test the run discovery query; resolving would trigger
+// setState after the environment is torn down (unhandled exception).
 const workflowRunsQueryMock = vi.hoisted(() =>
   vi.fn(() => new Promise<{ runs: unknown[] }>(() => {})),
 );
@@ -74,7 +77,8 @@ const servicesMock = vi.hoisted(() => ({
       additionalDirectories: [],
     })),
   },
-  // 普通任务也会读取 Bot 绑定并订阅广播，补齐依赖以保持激活动效测试的原有范围。
+  // Regular tasks also read Bot bindings and subscribe to broadcasts; keep the dependencies
+  // filled so the activation test keeps its original scope.
   botsService: {
     getBotStates: vi.fn(async () => []),
   },
@@ -98,7 +102,8 @@ const servicesMock = vi.hoisted(() => ({
     })),
     share: vi.fn(),
   },
-  // readiness hook 将 service 作为 effect 依赖；每次 render 重建会导致无限重渲染。
+  // The readiness hook takes the service as an effect dependency; rebuilding it per render
+  // would cause infinite re-rendering.
   zcodeSessionService: {
     updateProviderRegistry: vi.fn(),
   },
@@ -107,8 +112,10 @@ const servicesMock = vi.hoisted(() => ({
   },
 }));
 
-// Start 套餐推荐是 sendText 在 prepare 之前的真实 await；用例据此把发送挂在 prepare 之前，
-// 模拟配置屏障 / 推荐 / 建会话期间用户切换 Task。桩必须是稳定引用（发送回调以其为依赖）。
+// Start plan recommendation is a real await in sendText before prepare; the case uses it to
+// hold the send before prepare, simulating the user switching Tasks during the config barrier /
+// recommendation / session creation. The stub must be a stable reference (the send callback
+// depends on it).
 const startPlanRecommendation = vi.hoisted(() => {
   const state = { hold: null as Promise<void> | null };
   return {
@@ -151,7 +158,8 @@ vi.mock("@/v4/V4ConversationContext.js", () => ({
     fileRewindPreview: vi.fn(),
     layer: layerMock,
     sendCommand: sendCommandMock,
-    // 桩必须是稳定引用：effect 以 workflowRuns 为依赖，每次渲染换新函数会死循环。
+    // The stub must be a stable reference: the effect depends on workflowRuns; a fresh function
+    // per render would loop forever.
     workflowRuns: workflowRunsQueryMock,
   }),
 }));
@@ -247,7 +255,8 @@ vi.mock("@/v4/ConversationDraftEmptyState.js", async () => {
   };
 });
 
-// 捕获 document/window 的事件监听，供唤醒补偿用例手动触发（模拟息屏后回到窗口）。
+// Capture document/window event listeners for the wake-compensation cases to trigger
+// manually (simulating returning to the window after the screen was off).
 const domEventListeners: Array<{
   target: "document" | "window";
   type: string;
@@ -418,7 +427,7 @@ function mockDrawHit(card: HighspeedCardSnapshot): void {
 
 function latestComposer() {
   const props = composerProps.at(-1);
-  if (!props) throw new Error("composer 尚未渲染");
+  if (!props) throw new Error("composer has not rendered yet");
   return props;
 }
 
@@ -435,7 +444,7 @@ async function renderPane(root: Root, sessionId: string): Promise<void> {
     root.render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: TEST_LOCALE },
         createElement(SessionPane, {
           paneId: "workspace-main",
           sessionId,
@@ -447,19 +456,20 @@ async function renderPane(root: Root, sessionId: string): Promise<void> {
   });
 }
 
-/** 走行内编辑重发路径：与 sendText 共用 prepareHighspeedTurnForSend 的发送前抽卡。 */
+/** Goes through the inline-edit resend path: shares the pre-send draw of prepareHighspeedTurnForSend with sendText. */
 async function sendThroughEdit(): Promise<void> {
   await act(async () => {
     await timelineProps
       .at(-1)
-      ?.onEdit?.({ rowId: 42, entityId: "message-user-42" }, "再加速一轮", []);
+      ?.onEdit?.({ rowId: 42, entityId: "message-user-42" }, "Accelerate one more round", []);
     await flushMicrotasks();
   });
 }
 
 /**
- * 走 Composer sendText 路径，并让发送停在 prepare 之前的 Start 套餐推荐 await；
- * 返回的 release 放行后才会进入 Highspeed prepare。
+ * Goes through the Composer sendText path and holds the send at the Start plan
+ * recommendation await before prepare; only after the returned release does it enter the
+ * Highspeed prepare.
  */
 async function sendTextHeldBeforePrepare(): Promise<{
   release: () => void;
@@ -472,13 +482,13 @@ async function sendTextHeldBeforePrepare(): Promise<{
   let sending: Promise<unknown> = Promise.resolve();
   await act(async () => {
     sending =
-      latestComposer().onSendText?.("加速一轮", {
+      latestComposer().onSendText?.("Accelerate one round", {
         submission: {
           mode: "build",
           planEnabled: false,
           modelSelection: { providerId: "builtin:bigmodel-coding-plan", modelId: "GLM-5.3" },
         },
-      }) ?? Promise.reject(new Error("composer 未提供 onSendText"));
+      }) ?? Promise.reject(new Error("composer did not provide onSendText"));
     await flushMicrotasks();
   });
   expect(startPlanRecommendation.recommend).toHaveBeenCalledTimes(1);
@@ -487,8 +497,9 @@ async function sendTextHeldBeforePrepare(): Promise<{
 }
 
 /**
- * 截获到期清退 timer（挂载时刻 + 延时恰为 expiresAt）改由用例手动触发，其余 timer 照常执行。
- * 需配合固定的 Date.now，才能按挂载时刻精确识别。
+ * Intercepts the expiry timer (mount time + delay equal to expiresAt) for manual firing by
+ * the case; all other timers run normally. Needs a fixed Date.now to identify precisely by
+ * mount time.
  */
 function captureExpiryTimers(expiresAt: number) {
   const realSetTimeout = window.setTimeout;
@@ -537,8 +548,8 @@ afterEach(() => {
   delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: unknown }).IS_REACT_ACT_ENVIRONMENT;
 });
 
-describe("SessionPane Highspeed 激活动效请求", () => {
-  it("draw 新命中只登记一次激活；切走再切回与同卡再次发送都不重播", async () => {
+describe("SessionPane Highspeed activation animation requests", () => {
+  it("a fresh draw hit registers activation once; switching away and back and re-sending on the same card never replay it", async () => {
     const card = makeCard("card-1");
     const root = createRoot(installMinimalDom());
     try {
@@ -551,14 +562,16 @@ describe("SessionPane Highspeed 激活动效请求", () => {
       expect(latestComposer().highspeedCard?.cardId).toBe("card-1");
       expect(latestComposer().highspeedActivationCardId).toBe("card-1");
 
-      // composer 锁定入场方式后回调消费：请求清空，但卡片仍然有效。
+      // After the composer locks in the entrance style the callback is consumed: the request
+      // clears while the card stays valid.
       await act(async () => {
         latestComposer().onHighspeedActivationApplied?.("card-1");
       });
       expect(latestComposer().highspeedActivationCardId).toBeNull();
       expect(latestComposer().highspeedCard?.cardId).toBe("card-1");
 
-      // Service 仍持有该卡；切到其他 Task 时卡不属于它，输入框回到普通态。
+      // The service still holds the card; switching to another Task the card does not belong to
+      // it, and the input returns to the normal state.
       servicesMock.highspeedCardService.getSnapshot.mockResolvedValue({
         card,
         nextDrawAt: card.expiresAt,
@@ -567,12 +580,14 @@ describe("SessionPane Highspeed 激活动效请求", () => {
       await renderPane(root, "session-b");
       expect(latestComposer().highspeedCard).toBeNull();
 
-      // 切回：恢复链路与 draw 命中共用同一张卡快照，但不能再登记激活。
+      // Switching back: the restore path shares the same card snapshot as the draw hit, but must
+      // not register activation again.
       await renderPane(root, "session-a");
       expect(latestComposer().highspeedCard?.cardId).toBe("card-1");
       expect(latestComposer().highspeedActivationCardId).toBeNull();
 
-      // 同一张卡继续加速下一轮：prepare 仍返回 accelerated，但不是新命中。
+      // The same card keeps accelerating the next round: prepare still returns accelerated, but
+      // it is not a fresh hit.
       mockDrawHit(card);
       await sendThroughEdit();
       expect(servicesMock.highspeedCardService.prepareTurn).toHaveBeenCalledTimes(2);
@@ -583,7 +598,7 @@ describe("SessionPane Highspeed 激活动效请求", () => {
     }
   });
 
-  it("Renderer 重载后经 getSnapshot 恢复的卡，再次发送也不补播激活", async () => {
+  it("a card restored via getSnapshot after a Renderer reload does not replay activation on the next send either", async () => {
     const card = makeCard("card-restored");
     servicesMock.highspeedCardService.getSnapshot.mockResolvedValue({
       card,
@@ -605,7 +620,7 @@ describe("SessionPane Highspeed 激活动效请求", () => {
     }
   });
 
-  it("换到新卡时重新登记激活；迟到的旧卡消费回调不清掉新请求", async () => {
+  it("switching to a new card registers activation again; a late old-card consumption callback does not clear the new request", async () => {
     const restoredCard = makeCard("card-old");
     servicesMock.highspeedCardService.getSnapshot.mockResolvedValue({
       card: restoredCard,
@@ -631,9 +646,10 @@ describe("SessionPane Highspeed 激活动效请求", () => {
     }
   });
 
-  it("息屏期间到期的卡在窗口唤醒时立即清退，不残留 00:00:00 僵尸加速态", async () => {
-    // 回归（spec §9.2/§9.3 清退时钟补偿）：清卡 setTimeout 在页面冻结期间停摆，
-    // 唤醒后若不按真实时钟重估，输入框会停在加速态、倒计时却已显示 00:00:00。
+  it("a card expiring while the screen is off is cleared immediately on window wake, leaving no 00:00:00 zombie accelerated state", async () => {
+    // Regression (spec §9.2/§9.3 expiry clock compensation): the card-clearing setTimeout
+    // stalls while the page is frozen; without re-evaluating against the real clock on wake,
+    // the input stays accelerated while the countdown already shows 00:00:00.
     const card = makeCard("card-wake");
     const root = createRoot(installMinimalDom());
     const nowSpy = vi.spyOn(Date, "now");
@@ -643,9 +659,11 @@ describe("SessionPane Highspeed 激活动效请求", () => {
       await sendThroughEdit();
       expect(latestComposer().highspeedCard?.cardId).toBe("card-wake");
 
-      // 模拟息屏：清卡定时器停摆，卡按墙钟已过期。
+      // Simulate the screen off: the clearing timer stalls and the card is already expired by
+      // wall clock.
       nowSpy.mockReturnValue(card.expiresAt + 1_000);
-      // 回到窗口（focus + 恢复可见）触发补偿，立即清卡。
+      // Returning to the window (focus + visible again) triggers the compensation and clears
+      // the card immediately.
       await act(async () => {
         triggerDomEvent("window", "focus");
         triggerDomEvent("document", "visibilitychange");
@@ -653,15 +671,18 @@ describe("SessionPane Highspeed 激活动效请求", () => {
       });
       expect(latestComposer().highspeedCard).toBeNull();
     } finally {
-      // 断言失败也必须还原墙钟，否则固定的 Date.now 会泄漏到后续用例。
+      // The wall clock must be restored even on assertion failure, otherwise the fixed
+      // Date.now leaks into later cases.
       nowSpy.mockRestore();
       await act(async () => root.unmount());
     }
   });
 
-  it("清退 timer 早于墙钟到期触发时按剩余时长重挂，到期后清卡", async () => {
-    // 回归：setTimeout 按单调时钟计时，到期判定读墙钟 Date.now()；两者的毫秒级偏差或 NTP
-    // 回拨会让 timer 在墙钟到期前触发。若此时只判定不重挂，窗口常驻前台时加速态永不退出。
+  it("an expiry timer firing before wall-clock expiry re-arms for the remaining duration, then clears the card on expiry", async () => {
+    // Regression: setTimeout counts on a monotonic clock while the expiry check reads the wall
+    // clock Date.now(); millisecond drift or an NTP step-back makes the timer fire before
+    // wall-clock expiry. If it only checked without re-arming, the accelerated state would never
+    // exit while the window stays foreground.
     const startedAt = Date.now();
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(startedAt);
     const card = makeCard("card-early-timer");
@@ -674,7 +695,8 @@ describe("SessionPane Highspeed 激活动效请求", () => {
       expect(latestComposer().highspeedCard?.cardId).toBe("card-early-timer");
       expect(expiryTimers.pendingCount).toBe(1);
 
-      // timer 提前 1ms 触发：墙钟尚未到期，卡保留并重挂剩余时长。
+      // The timer fires 1ms early: the wall clock has not expired yet, so the card stays and
+      // re-arms for the remaining duration.
       nowSpy.mockReturnValue(card.expiresAt - 1);
       await act(async () => {
         expiryTimers.fireNext();
@@ -683,7 +705,7 @@ describe("SessionPane Highspeed 激活动效请求", () => {
       expect(latestComposer().highspeedCard?.cardId).toBe("card-early-timer");
       expect(expiryTimers.pendingCount).toBe(1);
 
-      // 重挂的 timer 在墙钟到期后触发：清卡，且不再重挂。
+      // The re-armed timer fires after wall-clock expiry: the card clears and nothing re-arms.
       nowSpy.mockReturnValue(card.expiresAt);
       await act(async () => {
         expiryTimers.fireNext();
@@ -697,9 +719,11 @@ describe("SessionPane Highspeed 激活动效请求", () => {
     }
   });
 
-  it("抽卡返回前已切到其他 Task 时，旧 Task 的卡不呈现到当前 Task、也不登记激活", async () => {
-    // 回归（spec §9.2「卡片不属于当前 Task 时恢复普通态」）：SessionPane 跨 Task 复用同一实例，
-    // prepare 在 await 期间用户切走，返回后若直接写卡片状态，A 的卡会出现在 B 的输入框并播放激活。
+  it("when the user switches to another Task before the draw returns, the old Task's card is neither presented on the current Task nor registered as activation", async () => {
+    // Regression (spec §9.2 "restore the normal state when the card does not belong to the
+    // current Task"): SessionPane reuses one instance across Tasks; if the user switches away
+    // during the prepare await and the result writes card state directly, A's card appears in
+    // B's input and plays the activation.
     const card = makeCard("card-late", "session-a");
     const root = createRoot(installMinimalDom());
     try {
@@ -715,7 +739,7 @@ describe("SessionPane Highspeed 激活动效请求", () => {
         sending = Promise.resolve(
           timelineProps
             .at(-1)
-            ?.onEdit?.({ rowId: 42, entityId: "message-user-42" }, "再加速一轮", []),
+            ?.onEdit?.({ rowId: 42, entityId: "message-user-42" }, "Accelerate one more round", []),
         );
         await flushMicrotasks();
       });
@@ -730,7 +754,8 @@ describe("SessionPane Highspeed 激活动效请求", () => {
       expect(latestComposer().highspeedCard).toBeNull();
       expect(latestComposer().highspeedActivationCardId).toBeNull();
 
-      // 切回所属 Task：经快照恢复呈现，按 restore 入场，不补播激活。
+      // Switching back to the owning Task: presented via snapshot restore, enters as restore,
+      // no activation replay.
       servicesMock.highspeedCardService.getSnapshot.mockResolvedValue({
         card,
         nextDrawAt: card.expiresAt,
@@ -744,9 +769,11 @@ describe("SessionPane Highspeed 激活动效请求", () => {
     }
   });
 
-  it("prepare 开始前已切到其他 Task 时，旧 Task 的卡同样不呈现到当前 Task", async () => {
-    // 回归（CR-01）：发送起点曾在 prepare 入口才读取；配置屏障、套餐推荐、建会话等前置 await
-    // 期间切到 B 后，起点已被读成 B，A 的卡会呈现到 B 的输入框并播放激活。
+  it("when the user switches to another Task before prepare starts, the old Task's card likewise never reaches the current Task", async () => {
+    // Regression (CR-01): the send origin used to be read only at the prepare entry; after
+    // switching to B during earlier awaits (config barrier, plan recommendation, session
+    // creation), the origin was already read as B and A's card would present in B's input and
+    // play the activation.
     const card = makeCard("card-pre-prepare", "session-a");
     const root = createRoot(installMinimalDom());
     try {
@@ -760,7 +787,7 @@ describe("SessionPane Highspeed 激活动效请求", () => {
         await sending;
         await flushMicrotasks();
       });
-      // 卡仍用于 A 的本轮发送。
+      // The card is still used for A's send in this round.
       expect(servicesMock.highspeedCardService.prepareTurn).toHaveBeenCalledWith(
         expect.objectContaining({ taskId: "session-a" }),
       );
@@ -774,7 +801,7 @@ describe("SessionPane Highspeed 激活动效请求", () => {
     }
   });
 
-  it("A → B → A 后结果才返回时，按本端发送路径的首次呈现播放激活", async () => {
+  it("when the result returns only after A → B → A, the activation plays on the first presentation along the local send path", async () => {
     const card = makeCard("card-round-trip", "session-a");
     const root = createRoot(installMinimalDom());
     try {
@@ -796,7 +823,7 @@ describe("SessionPane Highspeed 激活动效请求", () => {
     }
   });
 
-  it("唤醒时未到期的卡保持加速态并重挂剩余时长的清退 timer", async () => {
+  it("on wake an unexpired card keeps the accelerated state and re-arms the clearing timer for the remaining duration", async () => {
     const startedAt = Date.now();
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(startedAt);
     const card = makeCard("card-early-wake");
@@ -808,7 +835,9 @@ describe("SessionPane Highspeed 激活动效请求", () => {
       await sendThroughEdit();
       expect(latestComposer().highspeedCard?.cardId).toBe("card-early-wake");
 
-      // 息屏片刻后唤醒：卡仍有效，补偿不得误清，并用剩余时长替换原 timer。
+      // Waking shortly after the screen went off: the card is still valid, the compensation
+      // must not clear it by mistake, and it replaces the original timer with the remaining
+      // duration.
       nowSpy.mockReturnValue(card.expiresAt - 10_000);
       await act(async () => {
         triggerDomEvent("window", "focus");
@@ -818,7 +847,7 @@ describe("SessionPane Highspeed 激活动效请求", () => {
       expect(latestComposer().highspeedCard?.cardId).toBe("card-early-wake");
       expect(expiryTimers.pendingCount).toBe(1);
 
-      // 重挂的 timer 到期触发后清卡。
+      // The re-armed timer fires on expiry and clears the card.
       nowSpy.mockReturnValue(card.expiresAt);
       await act(async () => {
         expiryTimers.fireNext();

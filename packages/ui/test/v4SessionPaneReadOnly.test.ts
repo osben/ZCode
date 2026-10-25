@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { SessionPane } from "@/v4/SessionPane.js";
+import { TEST_LOCALE } from "./helpers/uiCopy.js";
 import type { ConversationShareSelectionDraft } from "@/store/conversationShareSelectionStore.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 
@@ -30,8 +31,9 @@ const timelineState = vi.hoisted(() => ({
   scrollToQueryActionRef: null as { current: unknown } | null,
 }));
 
-// SSR 渲染不执行 effect，因此 zustand 的 getServerSnapshot（= 初始 state）看不到真实 store
-// 的写入。这里直接替换 store，让测试能声明式地摆出任意 share draft。
+// SSR rendering does not run effects, so zustand's getServerSnapshot (= initial state) never
+// sees writes to the real store. Replace the store directly so tests can declaratively stage
+// any share draft.
 const shareStoreState = vi.hoisted(() => ({
   draft: undefined as unknown,
 }));
@@ -41,8 +43,9 @@ vi.mock("@/store/conversationShareSelectionStore.js", async (importOriginal) => 
     await importOriginal<typeof import("@/store/conversationShareSelectionStore.js")>();
   const fakeState = () => ({
     drafts: shareStoreState.draft ? { "child-session": shareStoreState.draft } : {},
-    // ac4bc6e79c 起 SessionPane 从 dockStates[sessionId] 读取发布中 dock 状态，
-    // mock 缺这个字段会让 SSR selector 读 undefined[sessionId] 直接抛错。
+    // Since ac4bc6e79c SessionPane reads the publishing dock state from
+    // dockStates[sessionId]; a mock missing this field makes the SSR selector
+    // read undefined[sessionId] and throw.
     dockStates: {},
     closeShare: vi.fn(),
     confirmSelectionEdit: vi.fn(),
@@ -55,7 +58,8 @@ vi.mock("@/store/conversationShareSelectionStore.js", async (importOriginal) => 
     setAccessMode: vi.fn(),
     syncAvailableTurns: vi.fn(),
   });
-  // 只替换 hook 与 getState；派生 selector 保留真实实现，避免测试自证。
+  // Replace only the hook and getState; derived selectors keep their real implementations so
+  // the test does not verify itself.
   const hook = (selector: (state: unknown) => unknown) => selector(fakeState());
   return {
     ...actual,
@@ -268,7 +272,7 @@ function renderReadOnlyPane({
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: TEST_LOCALE },
       createElement(SessionPane, {
         allowWorkspaceFileRewind,
         paneId: "pane-1",
@@ -299,7 +303,7 @@ describe("SessionPane read-only mode", () => {
     });
   });
 
-  it("把 child snapshot 的 provider retry 传入只读时间线", () => {
+  it("passes the child snapshot provider retry into the read-only timeline", () => {
     const apiRetry = {
       attempt: 2,
       maxAttempts: 6,
@@ -342,12 +346,13 @@ describe("SessionPane read-only mode", () => {
 });
 
 /**
- * 这些用例守护 SessionPane 到 timeline 的分享模式接线。
+ * These cases guard SessionPane-to-timeline share-mode wiring.
  *
- * 分享浮窗必须保留 Composer 和正文滚动，勾选期仍禁用 message 工具条。
- * 断言必须落在 SessionPane 真正传给 ConversationTimeline 的 props 上。
+ * The share overlay must keep the Composer and body scrolling, while the message toolbar stays
+ * disabled during row selection. Assertions must land on the props SessionPane really passes to
+ * ConversationTimeline.
  */
-describe("SessionPane 分享模式接线", () => {
+describe("SessionPane share-mode wiring", () => {
   afterEach(() => {
     timelineState.apiRetry = null;
     timelineState.rowContext = null;
@@ -382,7 +387,7 @@ describe("SessionPane 分享模式接线", () => {
     return renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: TEST_LOCALE },
         createElement(SessionPane, {
           paneId: "pane-1",
           readOnly: false,
@@ -393,7 +398,7 @@ describe("SessionPane 分享模式接线", () => {
     );
   };
 
-  it("选择面板展开和收起时都保留正文滚动", () => {
+  it("keeps body scrolling both while the selection panel is expanded and collapsed", () => {
     renderSharePane(partialDraft());
     expect(timelineState.backgroundScrollLocked).toBe(false);
 
@@ -401,12 +406,12 @@ describe("SessionPane 分享模式接线", () => {
     expect(timelineState.backgroundScrollLocked).toBe(false);
   });
 
-  it("选择面板展开时向 Timeline 传递正文定位 action ref", () => {
+  it("passes the body-scroll action ref to the timeline while the selection panel is expanded", () => {
     renderSharePane(partialDraft());
     expect(timelineState.scrollToQueryActionRef).not.toBeNull();
   });
 
-  it("分享选择确认 handler 接线到当前 session 的 confirmShareSelection", () => {
+  it("wires the share-selection confirm handler to the current session confirmShareSelection", () => {
     const nextHandlerStart = sessionPaneSource.indexOf(
       "const handleConfirmShareSelection = useCallback",
     );
@@ -421,13 +426,13 @@ describe("SessionPane 分享模式接线", () => {
     expect(nextHandler).toContain("confirmShareSelection(sessionId)");
   });
 
-  it("不在分享模式时不锁定背景滚动", () => {
+  it("does not lock background scrolling outside share mode", () => {
     renderSharePane(undefined);
 
     expect(timelineState.backgroundScrollLocked).toBe(false);
   });
 
-  it("局部勾选期间禁用全局 message 工具条，退出分享后恢复", () => {
+  it("disables the global message toolbar during partial selection and restores it after leaving share mode", () => {
     renderSharePane(partialDraft());
     expect(timelineState.selectionActionsEnabled).toBe(false);
 
@@ -435,7 +440,7 @@ describe("SessionPane 分享模式接线", () => {
     expect(timelineState.selectionActionsEnabled).toBe(true);
   });
 
-  it("分享浮窗保持 chat 输入区，不再替换 Composer", () => {
+  it("the share overlay keeps the chat input area instead of replacing the Composer", () => {
     expect(renderSharePane(undefined)).toContain('data-conversation-bottom-dock-mode="chat"');
     const html = renderSharePane(partialDraft());
     expect(html).toContain('data-conversation-bottom-dock-mode="chat"');

@@ -1,10 +1,13 @@
 import { decorateRequestSecurityLogArgs } from "./request-security-edition/index.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
 /* eslint-disable max-lines -- 桌面平台 IPC 集中装配，拆散会让权限边界更难审计；行数随平台能力增长。 */
 import { BrowserWindow, dialog, ipcMain, nativeTheme } from "electron";
 import { readZCodeStdioTapDevState } from "@zcode/services/node";
 import {
   DesktopCommandIds,
   appSettingsPatchSchema,
+  appSettingsSyncPatchSchema,
   formatZodError,
   localeSchema,
   nonEmptyStringSchema,
@@ -62,6 +65,7 @@ import { registerDesktopSaveFileIpcHandler } from "./desktopSaveFile.js";
 import { registerDesktopPrintToPdfIpcHandler } from "./desktopPrintToPdf.js";
 import { registerDesktopCommandIpcHandler } from "./desktopCommandIpc.js";
 import { registerCuaPipActiveSessionIpc } from "./desktopCuaPipIpc.js";
+import { registerDesktopDictationSystemAudioIpc } from "./desktopDictationSystemAudio.js";
 
 export function registerPlatformIpcHandlers(options: {
   fetchHelpConfig?: () => Promise<unknown>;
@@ -151,8 +155,11 @@ export function registerPlatformIpcHandlers(options: {
     return result.filePaths;
   });
 
+  ipcMain.handle(PlatformChannels.GetAppWorktreesDir, () => join(homedir(), ".zcode", "worktrees"));
+
   registerDesktopSaveFileIpcHandler(options.logger);
   registerDesktopPrintToPdfIpcHandler(options.logger);
+  registerDesktopDictationSystemAudioIpc({ logger: options.logger });
 
   ipcMain.handle(
     PlatformChannels.CreateTempTextAttachment,
@@ -330,7 +337,7 @@ export function registerPlatformIpcHandlers(options: {
   );
 
   ipcMain.on(PlatformChannels.SyncAppSettings, (_event, payload: unknown) => {
-    const result = appSettingsPatchSchema.safeParse(payload);
+    const result = appSettingsSyncPatchSchema.safeParse(payload);
     if (!result.success) {
       options.logger.warn(
         "[settings] invalid app settings sync payload:",

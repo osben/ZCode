@@ -23,8 +23,10 @@ beforeEach(async () => {
 afterEach(async () => {
   repo.close();
   setDataBaseDir(null);
-  // Windows 需要等待 SQLite 释放文件句柄，避免临时目录清理出现 EPERM。
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  if (process.platform === "win32") {
+    // Windows needs to wait for SQLite to release the file handle, avoiding EPERM during temp dir cleanup.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
   await rm(tempDir, { recursive: true, force: true });
 });
 
@@ -166,6 +168,51 @@ describe("TaskIndexRepo unread compare-and-clear", () => {
         workspacePath: task.workspacePath,
       }),
     ).resolves.toEqual(expect.objectContaining({ unreadAt: terminalUnreadAt }));
+  });
+
+  it("unread, pin and archive never change updated_at or cli_updated_at of a CLI-admitted row", async () => {
+    const task = {
+      ...createTask(0),
+      unreadAt: undefined,
+      status: "completed" as const,
+      updatedAt: 100,
+    };
+    await seedTaskIndex(repo, { meta: task });
+
+    await repo.updateTaskState({
+      taskId: task.taskId,
+      workspacePath: task.workspacePath,
+      patch: { unreadAt: 200 },
+    });
+    await repo.clearTaskUnreadIfMatches({
+      taskId: task.taskId,
+      workspacePath: task.workspacePath,
+      expectedUnreadAt: 200,
+    });
+    await repo.updateTaskState({
+      taskId: task.taskId,
+      workspacePath: task.workspacePath,
+      patch: { pinned: true },
+    });
+    await repo.updateTaskState({
+      taskId: task.taskId,
+      workspacePath: task.workspacePath,
+      patch: { archived: true },
+    });
+
+    await expect(
+      repo.getTaskMeta({ taskId: task.taskId, workspacePath: task.workspacePath }),
+    ).resolves.toMatchObject({ updatedAt: 100 });
+    const db = new DatabaseSync(getTasksIndexDatabasePath());
+    try {
+      expect(
+        db
+          .prepare("SELECT updated_at, cli_updated_at FROM tasks WHERE task_id = ?")
+          .get(task.taskId),
+      ).toEqual({ updated_at: 100, cli_updated_at: 100 });
+    } finally {
+      db.close();
+    }
   });
 
   it("远程 workspace 重启后在时钟回拨时仍推进未读 marker", async () => {

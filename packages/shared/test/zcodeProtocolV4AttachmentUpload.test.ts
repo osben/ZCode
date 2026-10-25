@@ -219,8 +219,8 @@ describe("v4 chunked attachment protocol", () => {
   });
 
   it("stat 能表达超出传输上限的真实文件大小（容量超限才可能被判为阻断）", () => {
-    // Bug 根因：stat 结果曾复用 30MiB 的预览上限，超大附件在 schema 就抛错，
-    // 于是「已知容量超限」这个确定阻断被降级成 deferred 并静默丢内容。
+    // Bug root cause: the stat result reused the 30MiB preview limit, so oversized attachments threw at the schema,
+    // downgrading the definite "known capacity exceeded" block to deferred and silently dropping content.
     expect(PROTOCOL_V4_LIMITS.attachmentStatMaxBytes).toBeGreaterThan(
       PROTOCOL_V4_LIMITS.attachmentPreviewMaxBytes,
     );
@@ -230,14 +230,14 @@ describe("v4 chunked attachment protocol", () => {
         totalBytes: PROTOCOL_V4_LIMITS.attachmentPreviewMaxBytes + 1,
       }),
     ).toMatchObject({ totalBytes: PROTOCOL_V4_LIMITS.attachmentPreviewMaxBytes + 1 });
-    // 但 stat 仍有上界：超过它由 gateway 抛结构化 fault，而不是无声接受任意数字。
+    // stat still has an upper bound: exceeding it makes the gateway raise a structured fault instead of silently accepting any number.
     expect(() =>
       v4ConversationAttachmentStatResultSchema.parse({
         mediaType: "video/mp4",
         totalBytes: PROTOCOL_V4_LIMITS.attachmentStatMaxBytes + 1,
       }),
     ).toThrow();
-    // 搬运字节的读取通道边界不受影响。
+    // The read channel that transports bytes keeps its boundary.
     expect(() =>
       v4ConversationAttachmentReadResultSchema.parse({
         dataBase64: "eA==",

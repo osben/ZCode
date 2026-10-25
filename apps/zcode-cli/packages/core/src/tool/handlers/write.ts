@@ -19,6 +19,7 @@ import {
 import { createStructuredPatch } from "../diff.js";
 import { stampMemoryOriginSessionId } from "../../memory/origin-session.js";
 import { resolveWorkspacePath } from "../path-policy.js";
+import { publishFileMutation, writeChangedRange } from "../file-mutation.js";
 import {
   createReadFileStateKey,
   findLatestReadFileState,
@@ -144,6 +145,12 @@ export const writeHandler: ToolHandler = async (input, context) => {
     writeResult.revision,
   );
   recordReadFileStateMetadata(context, readFileStateEntry);
+  publishFileMutation(context, {
+    path: filePath,
+    kind: originalFile === null ? "created" : "changed",
+    content: contentToWrite,
+    changedRange: writeChangedRange(originalFile, contentToWrite),
+  });
 
   if (originalFile) {
     return attachToolExecutionTelemetry(
@@ -314,7 +321,7 @@ function hasReadStateChanged(
 
   const currentMtimeMs = currentRead.revision?.mtimeMs;
   if (lastRead.mtimeMs !== undefined && currentMtimeMs !== undefined) {
-    // 让已确认内容未变的 Write 被误判为 stale。
+    // This would incorrectly mark a Write as stale even when the confirmed content has not changed.
     const normalizedCurrentMtimeMs = normalizeReadFileStateMtimeMs(currentMtimeMs);
     const normalizedLastReadMtimeMs = normalizeReadFileStateMtimeMs(lastRead.mtimeMs);
     const mtimeAdvanced =

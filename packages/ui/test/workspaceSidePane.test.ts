@@ -32,6 +32,8 @@ import {
   findBrowserSidePaneTabByUrl,
   openCodeViewerSidePane,
   openFileManagerSidePane,
+  openModelTrajectorySidePane,
+  openModelTrajectoryV2SidePane,
   navigateFileManagerSidePane,
   openCodeViewerSidePanes,
   openTerminalSidePane,
@@ -401,9 +403,11 @@ describe("workspaceSidePane", () => {
   });
 
   it("backfills missing selection side chat ordinals without disturbing existing ones", () => {
-    // 多开引入 ordinal 之前的旧内存/HMR 状态没有该字段；normalize 边界必须按 parent
-    // 分组回填最小可用编号，且不改动已有编号（review SG-01）。
-    // 刻意省略 ordinal 模拟旧结构，用 unknown 中转绕过新类型必填约束。
+    // Pre-ordinal legacy in-memory/HMR state from before multi-open was introduced lacks this field; the
+    // normalize boundary must backfill the smallest available ordinal grouped by parent
+    // without touching existing ordinals (review SG-01).
+    // Deliberately omitting ordinal simulates the legacy structure, routed through unknown to bypass the
+    // new type's required constraint.
     const legacyTab = {
       id: "selection-side-chat:ws:parent-a:child-legacy",
       type: "selection-side-chat",
@@ -709,7 +713,8 @@ describe("workspaceSidePane", () => {
       workflowName: "Fan-out review",
     });
     const openedAt = (first.tabs[0] as { openedAt?: number }).openedAt!;
-    // 从另一站再点：同一个 tab，落点换成那一站，openedAt 刷新（同一站再点也据此再落）。
+    // Click again from another station: same tab, landing changes to that station, openedAt refreshed
+    // (re-clicking within the same station also re-lands based on this).
     const relanded = openWorkflowRunSidePane(first, { ...base, phaseId: "phase#b" });
     expect(relanded.tabs).toHaveLength(1);
     expect(relanded.tabs[0]).toMatchObject({
@@ -717,7 +722,7 @@ describe("workspaceSidePane", () => {
       workflowName: "Fan-out review",
     });
     expect((relanded.tabs[0] as { openedAt?: number }).openedAt).toBeGreaterThanOrEqual(openedAt);
-    // 不带站的请求（表头的 ⤢）：落点删掉，不是沿用上一次的。
+    // Requests without a station (the header's ⤢): the landing is removed, not carried over from last time.
     const unlanded = openWorkflowRunSidePane(relanded, base);
     expect(unlanded.tabs).toHaveLength(1);
     expect(unlanded.tabs[0]).not.toHaveProperty("focusPhaseId");
@@ -734,7 +739,8 @@ describe("workspaceSidePane", () => {
       runId: "dwfrun-a",
       workflowName: "三路评审",
     });
-    // 同一个 run 再次点击必须落回同一个 tab（结构化 id 幂等），而不是并排开第二份。
+    // Clicking the same run again must land back on the same tab (structured id idempotency), not open a
+    // second one side by side.
     const reclicked = openWorkflowRunSidePane(first, {
       workspaceKey: "ssh://host/workspace",
       workspacePath: "/workspace",
@@ -759,7 +765,8 @@ describe("workspaceSidePane", () => {
     expect(reclicked.activeTabId).toBe(
       "workflow-run:ssh%3A%2F%2Fhost%2Fworkspace:parent-a:dwfrun-a",
     );
-    // 再次点击用卡片当前展示名刷新兜底标题；权威运行态仍来自父会话投影。
+    // Re-clicking refreshes the fallback title with the card's current display name; the authoritative run
+    // state still comes from the parent session projection.
     expect(reclicked.tabs[0]).toMatchObject({
       type: "workflow-run",
       runId: "dwfrun-a",
@@ -838,9 +845,10 @@ describe("workspaceSidePane", () => {
       }),
     ).toBe(false);
 
-    // GC 语义（照 plan-detail：无 GC）。事件日志读的是 journal，不是 workflowRuns 投影，
-    // 所以被 8-run 上限淘汰的 run 仍有完整可读的事件日志——那恰恰是用户会留着这个 tab
-    // 的场景。子会话那套 sync 回收只作用于 subagent-session，绝不能连带清掉它。
+    // GC semantics (like plan-detail: no GC). The event log reads from the journal, not the workflowRuns
+    // projection, so a run evicted by the 8-run cap still has a fully readable event log — which is exactly
+    // the scenario where the user keeps this tab around. The subagent sync reclamation only applies to
+    // subagent-session and must never take this tab down with it.
     expect(
       syncSubagentSessionSidePaneTabs(state, {
         rootSessionId: "parent-a",
@@ -867,7 +875,7 @@ describe("workspaceSidePane", () => {
     expect(selected?.activeTabId).toBe("workflow-run:%2Fworkspace:parent-a:dwfrun-1");
   });
 
-  // ── actor transcript tab（docs/dynamic-workflow/presentation.md「Subagent transcripts」）──
+  // ── actor transcript tab (docs/dynamic-workflow/presentation.md "Subagent transcripts") ──
   it("按 workspace + parent + run + 槽位复用 actor transcript tab，重复点击幂等", () => {
     const first = openWorkflowActorSessionSidePane(null, {
       workspaceKey: "ssh://host/workspace",
@@ -893,7 +901,7 @@ describe("workspaceSidePane", () => {
       ordinal: 1,
       actorName: "reviewer",
     });
-    // 同一车道的第二个实例是**另一个** tab：实例身份是 (runId, siteId, ordinal)，不是车道。
+    // The second instance on the same lane is **another** tab: instance identity is (runId, siteId, ordinal), not the lane.
     const sibling = openWorkflowActorSessionSidePane(reclicked, {
       workspaceKey: "ssh://host/workspace",
       workspacePath: "/workspace",
@@ -926,7 +934,7 @@ describe("workspaceSidePane", () => {
   });
 
   it("槽位 tab：先从未启动的药丸开（无会话 id），后从已启动的药丸再开是同一个 tab 并补上会话 id", () => {
-    // docs/dynamic-workflow/presentation.md「The pill」。
+    // docs/dynamic-workflow/presentation.md "The pill".
     const base = {
       workspaceKey: "/workspace",
       workspacePath: "/workspace",
@@ -949,11 +957,11 @@ describe("workspaceSidePane", () => {
     expect(started.tabs[0]!.id).toBe(slot.tabs[0]!.id);
     expect(started.tabs[0]).toMatchObject({ actorSessionId: "dwf-dwfrun-a-actor_1@1" });
 
-    // 再来一次不带会话的请求也不会把已知的会话 id 抹掉。
+    // Another request without a session will not wipe a known session id either.
     const again = openWorkflowActorSessionSidePane(started, base);
     expect(again.tabs).toHaveLength(1);
     expect(again.tabs[0]).toMatchObject({ actorSessionId: "dwf-dwfrun-a-actor_1@1" });
-    // 另一条 run 里的同一槽位是另一个 tab。
+    // The same slot in another run is another tab.
     const otherRun = openWorkflowActorSessionSidePane(again, { ...base, runId: "dwfrun-b" });
     expect(otherRun.tabs).toHaveLength(2);
   });
@@ -1003,10 +1011,10 @@ describe("workspaceSidePane", () => {
   });
 
   it("子会话那套回收绝不吃 actor transcript tab", () => {
-    // 这是这个 tab 用**独立类型**而不是给 subagent-session 加个变体标记的理由：
-    // syncSubagentSessionSidePaneTabs 会删掉 childSessionId 不在有效集里的 subagent tab，
-    // 而 actor 会话永远不在那个集合里（它不是 subagent 的子会话）——复用类型等于每次
-    // 子会话投影一更新就把这个 tab 关掉。
+    // This is the reason this tab uses a **dedicated type** instead of a variant flag on subagent-session:
+    // syncSubagentSessionSidePaneTabs deletes subagent tabs whose childSessionId is not in the valid set,
+    // and actor sessions are never in that set (they are not subagent child sessions) — reusing the type
+    // would amount to closing this tab every time the subagent projection updates.
     const state = openWorkflowActorSessionSidePane(null, {
       workspaceKey: "/workspace",
       workspacePath: "/workspace",
@@ -1024,7 +1032,8 @@ describe("workspaceSidePane", () => {
         validChildSessionIds: [],
       }),
     ).toBe(state);
-    // 连 actor 会话 id 被当成「有效子会话」误传进来也不改变结论：类型不匹配，扫不到。
+    // Even passing the actor session id in as a mistaken "valid child session" doesn't change the outcome:
+    // the type doesn't match, so the scan can't see it.
     expect(
       syncSubagentSessionSidePaneTabs(state, {
         rootSessionId: "parent-a",
@@ -1052,9 +1061,9 @@ describe("workspaceSidePane", () => {
     expect(selected?.activeTabId).toContain("workflow-actor-session:");
   });
 
-  // ── 产物 tab（docs/dynamic-workflow/authoring.md「How the user sees them」）──
-  // ⚠ 术语：这里的 artifact 是脚本经 `artifact.*` 交付给用户的产出，不是引擎内部那个
-  // 「脚本顶层返回值」的同名词。
+  // ── Artifact tab (docs/dynamic-workflow/authoring.md "How the user sees them") ──
+  // ⚠ Terminology: the artifact here is the deliverable handed to the user by the script via `artifact.*`,
+  // not a synonym for the engine-internal "script top-level return value".
   it("身份是 (workspace, 父会话, run, 产物 id)——**不含版本**，同一产物再点只聚焦同一个 tab", () => {
     const first = openWorkflowArtifactSidePane(null, {
       workspaceKey: "/workspace",
@@ -1065,7 +1074,7 @@ describe("workspaceSidePane", () => {
       version: 1,
       title: "审计报告",
     });
-    // 同一个产物发了新版之后再点一次（chip 从不带版本号）。
+    // Clicking again after the same artifact published a new version (the chip carries no version).
     const reclicked = openWorkflowArtifactSidePane(first, {
       workspaceKey: "/workspace",
       workspacePath: "/workspace",
@@ -1078,7 +1087,8 @@ describe("workspaceSidePane", () => {
     expect(first.tabs).toHaveLength(1);
     expect(reclicked.tabs).toHaveLength(1);
     expect(reclicked.activeTabId).toBe("workflow-artifact:%2Fworkspace:parent-a:dwfrun-1:book");
-    // **回到最新版**：合并时旧 tab 上停着的 version 必须被丢掉，否则再点一次仍停在 v1。
+    // **Back to the latest version**: on merge, the version a stale tab was resting on must be dropped,
+    // otherwise clicking again would still land on v1.
     expect(reclicked.tabs[0]).toMatchObject({
       type: "workflow-artifact",
       parentSessionId: "parent-a",
@@ -1088,7 +1098,7 @@ describe("workspaceSidePane", () => {
     });
     expect("version" in reclicked.tabs[0]!).toBe(false);
 
-    // 另一个产物是另一个 tab。
+    // Another artifact is another tab.
     const sibling = openWorkflowArtifactSidePane(reclicked, {
       workspaceKey: "/workspace",
       workspacePath: "/workspace",
@@ -1207,7 +1217,7 @@ describe("workspaceSidePane", () => {
     });
   });
 
-  // ── 脚本 transcript tab（docs/dynamic-workflow/transcript-and-notifications.md「Opening the tab」）──
+  // ── Script transcript tab (docs/dynamic-workflow/transcript-and-notifications.md "Opening the tab") ──
   it("身份是 (workspace, 父会话, run)——一个 run 一份脚本 transcript；再点只聚焦并重新落点", () => {
     const first = openWorkflowWorkspaceSidePane(null, {
       workspaceKey: "/workspace",
@@ -1229,7 +1239,7 @@ describe("workspaceSidePane", () => {
       focusPhaseId: "phase#a",
     });
 
-    // 从另一站再点：同一个 tab，落点换成那一站。
+    // Click again from another station: same tab, landing changes to that station.
     const relanded = openWorkflowWorkspaceSidePane(first, {
       workspaceKey: "/workspace",
       workspacePath: "/workspace",
@@ -1244,7 +1254,8 @@ describe("workspaceSidePane", () => {
       workflowName: "Fan-out review",
     });
 
-    // 不带站的请求（例如从 tab 总览重开）：落点**删掉**，不是沿用上一次的。
+    // Requests without a station (e.g. reopened from the tab overview): the landing is **removed**, not
+    // carried over from last time.
     const unlanded = openWorkflowWorkspaceSidePane(relanded, {
       workspaceKey: "/workspace",
       workspacePath: "/workspace",
@@ -1255,7 +1266,7 @@ describe("workspaceSidePane", () => {
     expect(unlanded.tabs).toHaveLength(1);
     expect(unlanded.tabs[0]).not.toHaveProperty("focusPhaseId");
 
-    // 另一条 run 是另一个 tab。
+    // Another run is another tab.
     const otherRun = openWorkflowWorkspaceSidePane(unlanded, {
       workspaceKey: "/workspace",
       workspacePath: "/workspace",
@@ -2121,7 +2132,7 @@ describe("workspaceSidePane", () => {
         title: "Example Domain",
         faviconUrl: "https://example.com/favicon.ico",
       });
-      // 模拟 guest 销毁后再命令 → 再次广播 BrowserViewReady → 再次 open。
+      // Simulate the guest being destroyed and then commanded again → BrowserViewReady broadcast again → open again.
       const reopened = openBrowserUseSidePane(withMeta, {
         workspaceKey: "/workspace",
         sessionId: "sess-1",
@@ -2486,6 +2497,29 @@ describe("workspaceSidePane", () => {
     });
   });
 
+  describe("model trajectory v2 tab", () => {
+    it("opens with a v2-scoped tab id and coexists with the v1 tab for the same task", () => {
+      const v1 = openModelTrajectorySidePane(null, { taskId: "task-1", title: "Demo" });
+      expect(v1.tabs).toHaveLength(1);
+      expect(v1.tabs[0]).toMatchObject({ id: "model-trajectory:task-1", type: "model-trajectory" });
+
+      const both = openModelTrajectoryV2SidePane(v1, { taskId: "task-1", title: "Demo" });
+      expect(both.tabs.map((tab) => tab.id)).toEqual([
+        "model-trajectory:task-1",
+        "model-trajectory-v2:task-1",
+      ]);
+      expect(both.activeTabId).toBe("model-trajectory-v2:task-1");
+    });
+
+    it("reuses the existing v2 tab instead of opening a second one per task", () => {
+      const first = openModelTrajectoryV2SidePane(null, { taskId: "task-1", title: null });
+      const reopened = openModelTrajectoryV2SidePane(first, { taskId: "task-1", title: "Renamed" });
+      expect(reopened.tabs).toHaveLength(1);
+      expect(reopened.activeTabId).toBe("model-trajectory-v2:task-1");
+      expect(reopened.tabs[0]).toMatchObject({ type: "model-trajectory-v2", title: "Renamed" });
+    });
+  });
+
   describe("所有标签类型的归属契约", () => {
     const base = {
       id: "tab",
@@ -2517,6 +2551,10 @@ describe("workspaceSidePane", () => {
         tab: { ...base, type: "model-trajectory", taskId: "target" },
         owner: "owner",
       },
+      "model-trajectory-v2": {
+        tab: { ...base, type: "model-trajectory-v2", taskId: "target" },
+        owner: "owner",
+      },
       terminal: { tab: { ...base, type: "terminal" }, owner: "owner" },
       "browser-use": { tab: { ...base, type: "browser-use", tabId: "logical" }, owner: "session" },
       "bash-output": { tab: { ...base, type: "bash-output", workId: "work" }, owner: "root" },
@@ -2526,7 +2564,8 @@ describe("workspaceSidePane", () => {
       },
       "subagent-directory": { tab: { ...base, type: "subagent-directory" }, owner: "root" },
       "selection-side-chat": { tab: { ...base, type: "selection-side-chat" }, owner: "parent" },
-      "plan-detail": { tab: { ...base, type: "plan-detail", markdown: "plan" }, owner: "parent" },
+      // 计划详情的生命周期与可见性属于 root task（rootSessionId ?? parentSessionId），与 fork 一致。
+      "plan-detail": { tab: { ...base, type: "plan-detail", markdown: "plan" }, owner: "root" },
       "plugin-ui": {
         tab: { ...base, type: "plugin-ui", pluginId: "example", resourceUri: "ui://example/app" },
         owner: "parent",
@@ -2575,7 +2614,8 @@ describe("workspaceSidePane", () => {
   });
 
   describe("按 (项目, 对话) 隔离", () => {
-    // 便捷构造可见性作用域；workspaceKey 缺省 null（tab.workspaceKey==null 时对任意项目可见）。
+    // Convenience constructor for a visibility scope; workspaceKey defaults to null (a tab with
+    // tab.workspaceKey==null is visible to any workspace).
     const scope = (ownerTaskId: string | null, workspaceKey: string | null = null) => ({
       workspaceKey,
       ownerTaskId,
@@ -2590,7 +2630,7 @@ describe("workspaceSidePane", () => {
       })!;
       expect(stamped.tabs[0]!.ownerTaskId).toBe("task-a");
       expect(stamped.tabs[0]!.workspaceKey).toBe("ws-1");
-      // 再次 stamp 用别的归属，不应改动已打标的。
+      // Stamping again with a different owner must not touch already-stamped tabs.
       const restamped = stampSidePaneTabsOwnership(stamped, {
         ownerTaskId: "task-b",
         workspaceKey: "ws-2",
@@ -2639,12 +2679,12 @@ describe("workspaceSidePane", () => {
           workspaceKey: "ws-2",
         },
       ];
-      // 项目 ws-1、对话 task-a：只看 ws-1 的 tab（a1 + ws-1 的 git）。
+      // Workspace ws-1, conversation task-a: only ws-1's tabs are visible (a1 + ws-1's git).
       expect(getVisibleSidePaneTabs(tabs, scope("task-a", "ws-1")).map((t) => t.id)).toEqual([
         "a1",
         "git1",
       ]);
-      // 项目 ws-2、对话 task-b：只看 ws-2 的 tab。
+      // Workspace ws-2, conversation task-b: only ws-2's tabs are visible.
       expect(getVisibleSidePaneTabs(tabs, scope("task-b", "ws-2")).map((t) => t.id)).toEqual([
         "b1",
         "git2",
@@ -2675,7 +2715,8 @@ describe("workspaceSidePane", () => {
         ["browser:a"],
       );
 
-      // 在对话 B 点浏览器开关：不能复用 A 的 tab，应为 B 新建；A 的 tab 仍保留（不销毁）。
+      // Clicking the browser toggle in conversation B: must not reuse A's tab, but create a new one for B;
+      // A's tab is kept (not destroyed).
       const toggled = stampSidePaneTabsOwnership(toggleBrowserSidePane(stateA, "task-b"), {
         ownerTaskId: "task-b",
         workspaceKey: "ws-1",
@@ -2712,7 +2753,8 @@ describe("workspaceSidePane", () => {
       expect(second.tabs.filter((tab) => tab.id === "browser:first")).toHaveLength(1);
       expect(second.tabs.some((tab) => tab.id === "browser:second")).toBe(false);
       expect(second.activeTabId).toBe("browser:first");
-      // 复用不改任何字段：initialUrl 就是键，要重新取字节由调用方另发导航请求。
+      // Reuse changes no fields: initialUrl is the key; re-fetching the bytes is the caller's job via a
+      // separate navigation request.
       expect(second.tabs.find((tab) => tab.id === "browser:first")).toEqual(
         first.tabs.find((tab) => tab.id === "browser:first"),
       );
@@ -2768,8 +2810,9 @@ describe("workspaceSidePane", () => {
     });
 
     it("findBrowserSidePaneTabByUrl 与 open 落到同一个 tab（调用方据它发导航请求）", () => {
-      // useAppPanels 的直开路径：建 tab 时不带 ownerTaskId，归属由 stamping 盖当前 owner，
-      // 复查时用同一个 owner —— 两处必须认出同一个 tab，否则第二次点击会重复开。
+      // useAppPanels' direct-open path: the tab is created without ownerTaskId, ownership is stamped with
+      // the current owner, and the lookup uses the same owner — both places must recognize the same tab,
+      // otherwise a second click would open a duplicate.
       const opened = stampSidePaneTabsOwnership(
         openOrActivateBrowserSidePaneByUrl(null, {
           initialUrl: REPORT_URL,

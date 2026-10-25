@@ -1,23 +1,33 @@
-# 手机远控主题控制
+# Mobile Remote Control Theme Control
 
-手机远控主题分两段处理：
+Mobile remote control theme works in two parts:
 
-1. 二维码链接不再追加 `theme` query 参数，避免桌面端主题继续耦合手机端首次进入链路。
-2. 手机端 `/remote` 首次打开时，若本机浏览器没有 `localStorage["zcode-theme"]`，会使用默认 `zai-dark` 作为初始主题；后续只使用手机端本地偏好。
+1. The QR code link no longer appends a `theme` query parameter, so the desktop theme does not couple to the
+   mobile client's first-entry path.
+2. When the mobile client first opens `/remote` and the browser has no `localStorage["zcode-theme"]`, it uses
+   the default `zai-dark`; later theme changes use only the mobile client's local preference.
 
-这样可以保证之后两端互不影响：手机端切主题只改手机浏览器本地存储，桌面端切主题只改桌面 renderer 的本地存储。
+The two ends do not affect each other: switching the theme on mobile only changes the mobile browser's local
+storage, and switching it on the desktop only changes the desktop renderer's local storage.
 
-手机端任务首页与桌面共用项目侧栏，主题入口在侧栏底部设置菜单的主题子菜单中；聊天页顶栏右侧渲染 `WebRemoteControlThemeMenu`。两者使用同一组选项：只暴露 `system`、`zai-dark`、`zai-light`，其中 `zai-dark` / `zai-light` 分别显示为 Dark Theme / Light Theme。
+The task list page and the chat page header on mobile both render `WebRemoteControlThemeMenu` on the right.
+The menu exposes only `system`, `zai-dark` and `zai-light`, shown as Dark Theme / Light Theme for the latter two.
 
-## 浏览器表面同步
+## Browser surface synchronization
 
-手机远控运行在普通浏览器页面中，主题切换不能只改变 React 子树。Web 入口必须把同一个 resolved theme 同步到以下浏览器级表面：
+Mobile remote control runs in a standard browser page, so theme switching cannot only change the React subtree.
+The web entry synchronizes the same resolved theme to these browser-level surfaces:
 
-- `html`、`body` 和 `#root` 使用当前主题的 `--color-background`，不能继承 Electron vibrancy 所需的透明根背景。
-- `color-scheme` 声明当前页面采用的亮暗配色，使原生控件和浏览器默认表面使用一致的配色方案。
-- `meta[name="theme-color"]` 使用当前主题的页面背景色，供支持该标准的浏览器着色自身界面。
+- `html`, `body` and `#root` use the current theme's `--color-background`; they must not inherit the
+  transparent root background that Electron vibrancy requires.
+- `color-scheme` declares the page's light/dark scheme so native controls and browser default surfaces agree.
+- `meta[name="theme-color"]` uses the current theme's page background color, for browsers that color their own UI from it.
 
-该同步是浏览器能力边界，不按 Safari、Chrome、Firefox 或具体系统版本分支。首次加载由 `index.html` 在业务 bundle 执行前根据手机本地偏好完成；运行时切换和 `system` 模式的系统主题变化继续由共享 `applyTheme()` 使用同一 resolved theme 更新。Desktop Electron 不声明浏览器表面 opt-in，继续保留透明根背景和原生窗口 vibrancy。
+This is a browser capability boundary and does not branch on Safari, Chrome, Firefox or system versions. Initial
+load is done by `index.html` before the business bundle runs, from the mobile client's local preference;
+runtime switching and `system` mode system-theme changes keep being updated by the shared `applyTheme()` with
+the same resolved theme. Desktop Electron does not opt in to browser surfaces and keeps the transparent root
+background and native window vibrancy.
 
 ```text
 localStorage / system preference

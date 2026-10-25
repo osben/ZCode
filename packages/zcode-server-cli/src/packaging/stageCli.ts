@@ -55,17 +55,17 @@ async function downloadFile(url: string, destinationPath: string): Promise<void>
   if (!response.ok || !response.body) {
     throw new Error(`Download failed: HTTP ${response.status} (${url})`);
   }
-  // DOM fetch 的 ReadableStream 与 node:stream/web 的同名类型在 @types/node 下不兼容，
-  // 这里做一次显式桥接；运行时对象本身就是 Node 的 web stream。
+  // DOM fetch's ReadableStream and the identically named type from node:stream/web are incompatible under @types/node,
+  // so bridge them explicitly here; at runtime the object is already a Node web stream.
   const body = response.body as unknown as NodeWebReadableStream<Uint8Array>;
   await pipeline(Readable.fromWeb(body), createWriteStream(destinationPath, { flags: "w" }));
 }
 
 /**
- * 准备目标平台的 Node 二进制（固定 v22.16.0）。查找顺序：
- * 1. 现有远端资产链的 mock-cdn 缓存（避免重复下载）；
- * 2. 本包自有缓存；
- * 3. 从 Node dist 镜像（见 resolveNodeDistBase）下载 tar.xz 并解出 bin/node 后写入自有缓存。
+ * Prepare the Node binary for the target platform (pinned to v22.16.0). Lookup order:
+ * 1. mock-cdn cache from the existing remote-asset pipeline (avoid duplicate downloads);
+ * 2. this package's own cache;
+ * 3. download tar.xz from the Node dist mirror (see resolveNodeDistBase), extract bin/node, and write it to this package's cache.
  */
 async function ensureNodeBinary(repoRoot: string, target: ServerTarget): Promise<string> {
   const mockCdnReleasesDir = join(repoRoot, "packages/desktop/mock-cdn/releases");
@@ -143,8 +143,8 @@ async function ensureAgentBundle(repoRoot: string, skipBuild: boolean): Promise<
     if (await pathExists(bundlePath)) return bundlePath;
     throw new Error(`Agent bundle missing: ${bundlePath} (remove --skip-agent-build to build it)`);
   }
-  // Bug 原因：第一目标过去只按 bundle 是否存在决定构建，bootstrap 会把上一代 dist
-  // 复制进所有平台 archive。只有本轮第一目标真实构建后，后续目标才允许 skipBuild 复用。
+  // Bug cause: the first target only rebuilt when the bundle was missing, so bootstrap copied the previous dist into
+  // every platform archive. Later targets may reuse the bundle only after this run's first target has really built it.
   log("building current agent bundle via scripts/build-desktop-agent-cli.mjs");
   await runCommand(
     process.execPath,
@@ -158,10 +158,13 @@ async function ensureAgentBundle(repoRoot: string, skipBuild: boolean): Promise<
 }
 
 async function resolveNativeToolsDir(repoRoot: string, target: ServerTarget): Promise<string> {
-  // 修复：此前按“文件存在”复用 mock-cdn/releases/*/tools 或 bundled-tools。远端 macOS 资源固定为 rg13，
-  // 会被当成独立 Server 发行包的 rg14 复用；这些目录也可能缺少工具许可声明。现在统一交给
-  // prepare-native-search-tools.mjs 按目标 release plan 准备到 server-cli 自有缓存：内网依赖源已配置时下载，
-  // 未配置时解包仓库归档；缓存命中同样要通过版本、摘要与架构校验，并刷新同目录声明。
+  // Fix: previously mock-cdn/releases/*/tools and bundled-tools were reused on "file exists". Remote
+  // macOS assets are pinned to rg13 but would be reused as rg14 for a standalone Server release
+  // package; those directories could also miss tool license notices. Preparation is now delegated to
+  // prepare-native-search-tools.mjs, which stages assets into server-cli's own cache per the target
+  // release plan: download when the intranet dependency source is configured, otherwise unpack the
+  // repository archive; cache hits must still pass version, digest, and architecture checks, and
+  // refresh the notices in the same directory.
   const [platform, arch] = target.split("-");
   const cacheDir = join(repoRoot, "node_modules/.cache/zcode-server-cli", "tools", target);
   log(`prepare native search target assets: ${target}`);
@@ -194,7 +197,7 @@ async function resolveWorkspacePackageDirs(repoRoot: string): Promise<Map<string
         };
         if (packageJson.name) map.set(packageJson.name, join(root, entry.name));
       } catch {
-        // 非 package 目录不影响其它 workspace 包 staging。
+        // A non-package directory does not affect staging for other workspace packages.
       }
     }
   }
@@ -218,7 +221,8 @@ async function main(): Promise<void> {
   const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const repoRoot = await findRepoRoot(packageRoot);
   const target = parseTarget(argv);
-  // 构建只读取并附带已有声明，校验由显式 licenses 命令负责；运行时 server 不依赖仓库脚本。
+  // The build only reads and includes existing notices; the explicit licenses command performs
+  // validation, and the runtime server does not depend on repository scripts.
   const { readThirdPartyNotices, readNodeNotices } = (await import(
     pathToFileURL(join(repoRoot, "scripts/third-party-notices.mjs")).href
   )) as {

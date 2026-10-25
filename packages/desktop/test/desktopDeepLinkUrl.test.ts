@@ -154,6 +154,76 @@ describe("desktop deep link url helpers", () => {
     );
   });
 
+  it("percent-encodes single instance payload values so no whitespace or non-ASCII bytes reach Chromium", async () => {
+    // Electron #52020: Chromium splits the serialized additionalData on NUL and trims whitespace,
+    // so raw values with spaces or non-ASCII bytes can corrupt the handshake. Keep the payload ASCII-only.
+    const { createDeepLinkSingleInstanceData, extractOpenWorkspacePathFromSingleInstanceData } =
+      await import("../src/main/desktopDeepLinkUrl.js");
+    const workspacePath = "/tmp/проект с пробелами ü";
+
+    const additionalData = createDeepLinkSingleInstanceData([
+      "/opt/ZCode/zcode",
+      "--open-workspace",
+      workspacePath,
+    ]);
+
+    const values = Object.values(additionalData);
+    expect(values).toHaveLength(1);
+    for (const value of values) {
+      expect(value).not.toMatch(/\s/);
+      expect(Buffer.from(value, "utf8").every((byte) => byte < 0x80)).toBe(true);
+    }
+    expect(extractOpenWorkspacePathFromSingleInstanceData(additionalData)).toBe(workspacePath);
+  });
+
+  it("round-trips deep link urls through single instance payload without corrupting escapes", async () => {
+    const { createDeepLinkSingleInstanceData, extractDeepLinkUrlFromSingleInstanceData } =
+      await import("../src/main/desktopDeepLinkUrl.js");
+
+    const workspaceUrl = "zcode://workspace/open?path=%2FUsers%2Fdemo%2FProject%2520A";
+    const workspaceData = createDeepLinkSingleInstanceData(["/opt/ZCode/zcode", workspaceUrl]);
+    expect(Object.values(workspaceData).every((value) => !/\s/.test(value))).toBe(true);
+    expect(extractDeepLinkUrlFromSingleInstanceData(workspaceData)).toBe(workspaceUrl);
+
+    const oauthUrl = "zcode://oauth/callback?code=1&state=ü";
+    const oauthData = createDeepLinkSingleInstanceData(["/opt/ZCode/zcode", oauthUrl]);
+    expect(
+      Object.values(oauthData).every((value) => Buffer.from(value, "utf8").every((b) => b < 0x80)),
+    ).toBe(true);
+    expect(extractDeepLinkUrlFromSingleInstanceData(oauthData)).toBe(oauthUrl);
+  });
+
+  it("passes legacy unencoded single instance values through unchanged", async () => {
+    // Values written before the encoding existed. A stray "%" makes decodeURIComponent throw,
+    // so the raw value must be used as-is instead of being dropped.
+    const {
+      extractDeepLinkUrlFromSingleInstanceData,
+      extractOpenWorkspacePathFromSingleInstanceData,
+    } = await import("../src/main/desktopDeepLinkUrl.js");
+
+    expect(extractOpenWorkspacePathFromSingleInstanceData({ openWorkspacePath: "/tmp/100%" })).toBe(
+      "/tmp/100%",
+    );
+    expect(
+      extractOpenWorkspacePathFromSingleInstanceData({ openWorkspacePath: "/tmp/plain path" }),
+    ).toBe("/tmp/plain path");
+    expect(
+      extractOpenWorkspacePathFromSingleInstanceData({
+        openWorkspacePath: "/tmp/проект с пробелами ü",
+      }),
+    ).toBe("/tmp/проект с пробелами ü");
+    expect(
+      extractDeepLinkUrlFromSingleInstanceData({
+        deepLinkUrl: "zcode://oauth/callback?code=1&state=s",
+      }),
+    ).toBe("zcode://oauth/callback?code=1&state=s");
+    expect(
+      extractDeepLinkUrlFromSingleInstanceData({
+        deepLinkUrl: "zcode://oauth/callback?code=100%&state=s",
+      }),
+    ).toBe("zcode://oauth/callback?code=100%&state=s");
+  });
+
   it("builds Windows Explorer registry operations for folder context menu", async () => {
     const { buildWindowsOpenFolderCommand, buildWindowsOpenFolderRegistryOperations } =
       await import("../src/main/desktopWindowsOpenFolderContextMenu.js");
@@ -227,5 +297,64 @@ describe("desktop deep link url helpers", () => {
         "/f",
       ],
     });
+  });
+});
+
+describe("desktop deep link task/new url helpers", () => {
+  it("recognizes task/new urls and extracts path plus inline prompt", async () => {
+    const { extractTaskNewRequest, isTaskNewUrl } =
+      await import("../src/main/desktopDeepLinkUrl.js");
+
+    const url = new URL(
+      `zcode://task/new?path=${encodeURIComponent("/Users/demo/Проект A&B")}&prompt=${encodeURIComponent("Сделай 100% & #1\nвторая строка")}`,
+    );
+    expect(isTaskNewUrl(url)).toBe(true);
+    expect(extractTaskNewRequest(url)).toEqual({
+      path: "/Users/demo/Проект A&B",
+      prompt: "Сделай 100% & #1\nвторая строка",
+    });
+  });
+
+  it("extracts promptFile and accepts Linux one-slash form", async () => {
+    const { extractTaskNewRequest, isTaskNewUrl } =
+      await import("../src/main/desktopDeepLinkUrl.js");
+
+    const url = new URL("zcode:/task/new?path=%2Ftmp%2Fp&promptFile=%2Ftmp%2Fp%2Fplan.md");
+    expect(isTaskNewUrl(url)).toBe(true);
+    expect(extractTaskNewRequest(url)).toEqual({ path: "/tmp/p", promptFile: "/tmp/p/plan.md" });
+  });
+
+  it("rejects links with neither or both of prompt/promptFile, or without path", async () => {
+    const { extractTaskNewRequest } = await import("../src/main/desktopDeepLinkUrl.js");
+
+    expect(extractTaskNewRequest(new URL("zcode://task/new?path=%2Ftmp"))).toBeNull();
+    expect(
+      extractTaskNewRequest(new URL("zcode://task/new?path=%2Ftmp&prompt=a&promptFile=%2Ftmp%2Fb")),
+    ).toBeNull();
+    expect(extractTaskNewRequest(new URL("zcode://task/new?prompt=a"))).toBeNull();
+    expect(extractTaskNewRequest(new URL("zcode://task/new?path=&prompt=a"))).toBeNull();
+  });
+
+  it("does not match other routes or schemes and ignores unknown params", async () => {
+    const { extractTaskNewRequest, isTaskNewUrl } =
+      await import("../src/main/desktopDeepLinkUrl.js");
+
+    expect(isTaskNewUrl(new URL("zcode://task/other?path=%2Ftmp&prompt=a"))).toBe(false);
+    expect(isTaskNewUrl(new URL("https://task/new?path=%2Ftmp&prompt=a"))).toBe(false);
+    expect(isTaskNewUrl(new URL("zcode://workspace/open?path=%2Ftmp"))).toBe(false);
+    expect(
+      extractTaskNewRequest(new URL("zcode://task/new?path=%2Ftmp&prompt=a&model=x&mode=plan")),
+    ).toEqual({ path: "/tmp", prompt: "a" });
+  });
+
+  it("extractDeepLinkUrlFromArgs only accepts a complete task/new url", async () => {
+    const { extractDeepLinkUrlFromArgs } = await import("../src/main/desktopDeepLinkUrl.js");
+
+    const complete = "zcode://task/new?path=%2Ftmp%2Fp&prompt=hello";
+    expect(extractDeepLinkUrlFromArgs(["--", complete])).toBe(complete);
+    // A fragment split across argv entries is rejoined before it is accepted.
+    expect(extractDeepLinkUrlFromArgs(["zcode://task/new?path=%2Ftmp%2Fp", "&prompt=hello"])).toBe(
+      complete,
+    );
   });
 });

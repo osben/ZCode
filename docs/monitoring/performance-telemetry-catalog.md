@@ -1,356 +1,351 @@
-# 性能埋点事件字典
+# Performance Telemetry Event Dictionary
 
-> 跨通道速查清单，回答"性能相关埋点有哪些、各自上报什么"。
-> 详细口径与边界见 [performance-monitoring.md](./performance-monitoring.md)；本表只做索引与字段速查。
-> CLI Agent 模型 API OTel 统一观测见
-> [CLI Agent Telemetry 开发指南](../trace/cli-agent-telemetry.md)；部署侧配置 ARMS OTLP 后生效。
->
-> 数据分四条通道：
->
-> - **ARMS（main 进程）**：`@arms/rum-electron` `sendCustom`，进程级稳定性 / 资源 / 网络；ZCode CLI 资源由 CLI 自采样后转交 main。
-> - **ARMS（renderer/UI）**：`reportArmsCustomEvent` → IPC → main `sendCustom`，`group=ui_perf`。
-> - **ARMS（CLI Agent）**：`@zcode/telemetry` → OTLP/HTTP protobuf，模型 Logical Call / Physical Attempt。
-> - **`/report`（agent_trace）**：`reportAppTelemetryEvent`，消息链路质量与耗时，**非 ARMS**。
->
-> **V4 接线规范**：聊天 `/report` 和 renderer ARMS 的恢复口径见
-> [conversation-telemetry-v4.md](./conversation-telemetry-v4.md)。实现必须通过 live-only fact feed 接线，
-> 不能从 initial/recovery 投影补报。
+Cross-channel reference catalog answering "What are all performance-related telemetry events and what do they report?"
 
-## `/report` 本地日志边界
+Detailed specifications and boundaries see [performance-monitoring.md](./performance-monitoring.md); this catalog only provides index and field quick reference.
 
-- `TelemetryCore` 不在本地日志中打印请求、完整 payload、响应、响应体或原始错误。
-- 全部 attempt 最终失败后只记录一条脱敏 warn；字段限定为事件名、event ID、attempt 数、状态分类和
-  耗时。逐次重试只使用开发态 debug。完整投递合同见
-  [event-report-delivery-reliability.md](./event-report-delivery-reliability.md)。
-- 上报失败继续按原 Promise 拒绝路径交给调用方处理；有界重试不得改变 `device_mid` 持久化或
-  daily-active 去重语义。
-- `message_completion` / `agent_step` 属于随消息和步骤增长的高频事件，禁止为每次上报增加本地
-  console 或落盘日志。
+For unified observation of CLI Agent model API OTel, see [CLI Agent Telemetry Development Guide](../trace/cli-agent-telemetry.md); effective after deploying ARMS OTLP configuration.
 
-## 公共维度
+Data flows through four channels:
 
-| 通道                  | 自动携带维度                                                                                                                                      |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ARMS main             | `platform` / `app_version` / `arms_env` / `device_mid`（+各 group 专有维度，见下）                                                                |
-| ARMS ui_perf          | 同上 + `renderer_id`（由 main IPC handler 补齐）                                                                                                  |
-| `/report` agent_trace | `model_name` / `model_provider` / `ask_mode` / `agent` / `talk_id` / `message_id` / `workspace_kind` / `remote_kind`（version 由后端注入）        |
-| ARMS CLI Agent        | `service.name=zcode-cli-agent` + `uid`（hash）/ `device_mid` / `session_id` / `turn_id` / `trace_id` / `rid` / `operation` / `provider` / `model` |
+- **ARMS (main process)**: `@arms/rum-electron` `sendCustom`, process-level stability / resource / network; CLI resource samples reported to main.
+- **ARMS (renderer/UI)**: `reportArmsCustomEvent` → IPC → main `sendCustom`, `group=ui_perf`.
+- **ARMS (CLI Agent)**: `@zcode/telemetry` → OTLP/HTTP protobuf, model Logical Call / Physical Attempt.
+- **`/report` (agent_trace)**: `reportAppTelemetryEvent`, message link quality and timing, **NOT ARMS**.
+
+**V4 Integration Spec**: Recovery specs for chat `/report` and renderer ARMS see
+[conversation-telemetry-v4.md](./conversation-telemetry-v4.md). Implementation must be wired via live-only fact feed,
+cannot supplement from initial/recovery projections.
+
+## `/report` Local Log Boundary
+
+- `TelemetryCore` does not log requests, complete payloads, responses, response bodies, or raw errors locally.
+- After all attempts finally fail, only a redacted `warn` is logged; fields limited to event name, event ID, attempt count, status classification and duration. Retries only use dev-mode `debug`. See
+  [event-report-delivery-reliability.md](./event-report-delivery-reliability.md) for complete delivery contract.
+- Failed reports continue along the original Promise rejection path to be handled by the caller; bounded retries shall not alter `device_mid` persistence or daily-active deduplication semantics.
+- High-frequency events like `message_completion` / `agent_step` are prohibited from adding local
+  console or disk logs for each report.
+
+## Public Dimensions
+
+| Channel               | Auto-Bearing Dimensions                                                                                                                            |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ARMS main             | `platform` / `app_version` / `arms_env` / `device_mid` (+ channel-specific dimensions, see below)                                                  |
+| ARMS ui_perf          | Same + `renderer_id` (auto-filled by main IPC handler)                                                                                             |
+| `/report` agent_trace | `model_name` / `model_provider` / `ask_mode` / `agent` / `talk_id` / `message_id` / `workspace_kind` / `remote_kind` (version injected by backend) |
+| ARMS CLI Agent        | `service.name=zcode-cli-agent` + `uid` (hash) / `device_mid` / `session_id` / `turn_id` / `trace_id` / `rid` / `operation` / `provider` / `model`  |
 
 ---
 
-## 一、ARMS 稳定性 `group=stability`
+## I. ARMS Stability `group=stability`
 
-专有维度：`scene_lifecycle`（cold_start / runtime / app_quit / update_install）、`scene_window`（main / process_monitor / other）。
+Channel-specific dimensions: `scene_lifecycle` (cold_start / runtime / app_quit / update_install), `scene_window` (main / process_monitor / other).
 
-| 事件                       | value             | 上报内容                                                                                                                                                                                                      | 触发条件                                                                               |
-| -------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `perf_app_start`           | —                 | 冷启动计数（Crash-Free 分母，绑 `device_mid`）                                                                                                                                                                | 主窗 `did-finish-load` 后延迟 **3.2s**（`PERF_APP_START_AFTER_VIEW_MS`）               |
-| `perf_crash`               | `1`               | `crash_scope` / `crash_cause` / `crash_source=electron_callback` / `crash_id` / 兼容字段 `crash_kind`                                                                                                         | `render-process-gone` / ZCode Host `child-process-gone`；每个 Electron 回调上报一次    |
-| `perf_agent_start`         | `1`               | `runtime_instance_id` / `runtime_generation` / `provider`                                                                                                                                                     | Agent 子进程成功触发 Node `spawn`                                                      |
-| `perf_agent_ready`         | `1`               | `runtime_instance_id` / `runtime_generation` / `provider` / `startup_duration_ms`                                                                                                                             | Agent runtime 首次通过 provider/model 门禁                                             |
-| `perf_agent_crash`         | `1`               | `runtime_instance_id` / `error_name` / `error_code` / `error_message` / `error_stack` / `error_fingerprint` / `exit_code` / `signal` / `uptime_ms` / `crash_phase` / `termination_class` / `diagnostic_class` | Host 管理的 Agent 无主动退出意图且未命中受控终止排除条件时 exit；每个 runtime 只报一次 |
-| `perf_agent_spawn_error`   | `1`               | `runtime_instance_id` / `error_name` / `error_code` / `error_message` / `error_stack` / `error_fingerprint` / `runtime_generation` / `diagnostic_class`                                                       | Agent command/cwd spawn 失败                                                           |
-| `perf_mcp_process_start`   | `1`               | `mcp_id` / `mcp_instance_id` / `mcp_source` / `mcp_isolation` / `runtime_surface`                                                                                                                             | 正式 stdio MCP 完成连接和 `tools/list`；版本探测 probe 不计                            |
-| `perf_mcp_process_crash`   | `1`               | start 标识 + `exit_code` / `signal` / `uptime_ms` / `affected_session_count`                                                                                                                                  | 已发 start 的 stdio MCP 非预期退出；主动回收不计                                       |
-| `perf_mcp_session_startup` | `process_count`   | `session_id` / `configured_count` / `connected_count` / `process_count` / `failed_count`                                                                                                                      | 每个 session lease 的首次 MCP startup snapshot                                         |
-| `perf_anr`                 | `duration_ms`     | 无响应时长                                                                                                                                                                                                    | `webContents` `unresponsive` 持续 ≥ **5s**（`STABILITY_ANR_THRESHOLD_MS`）             |
-| `perf_freeze`              | `duration_ms`     | 冻结时长（期间未发生 crash）                                                                                                                                                                                  | `unresponsive` 持续 ≥ **30s**（`STABILITY_FREEZE_THRESHOLD_MS`）                       |
-| `perf_app_exit`            | `exit_code`（=0） | `exit_kind=normal`                                                                                                                                                                                            | `before-quit`                                                                          |
-| `perf_process_exit`        | `exit_code`       | `exit_reason` / `process_role`                                                                                                                                                                                | 子进程 / 渲染进程异常退出                                                              |
+| Event                      | Value            | Report Content                                                                                                                                                                                                | Trigger Condition                                                                                                 |
+| -------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `perf_app_start`           | —                | Cold start count (Crash-Free denominator, bound `device_mid`)                                                                                                                                                 | Main window `did-finish-load` after **3.2s** delay (`PERF_APP_START_AFTER_VIEW_MS`)                               |
+| `perf_crash`               | `1`              | `crash_scope` / `crash_cause` / `crash_source=electron_callback` / `crash_id` / backward-compatible `crash_kind`                                                                                              | `render-process-gone` / ZCode Host `child-process-gone`; one report per Electron callback                         |
+| `perf_agent_start`         | `1`              | `runtime_instance_id` / `runtime_generation` / `provider`                                                                                                                                                     | Agent child process successfully triggered Node `spawn`                                                           |
+| `perf_agent_ready`         | `1`              | `runtime_instance_id` / `runtime_generation` / `provider` / `startup_duration_ms`                                                                                                                             | Agent runtime first passed provider/model permission gate                                                         |
+| `perf_agent_crash`         | `1`              | `runtime_instance_id` / `error_name` / `error_code` / `error_message` / `error_stack` / `error_fingerprint` / `exit_code` / `signal` / `uptime_ms` / `crash_phase` / `termination_class` / `diagnostic_class` | Host-managed Agent exit without intentional shutdown reason matching exclusion conditions; one report per runtime |
+| `perf_agent_spawn_error`   | `1`              | `runtime_instance_id` / `error_name` / `error_code` / `error_message` / `error_stack` / `error_fingerprint` / `runtime_generation` / `diagnostic_class`                                                       | Agent command/cwd spawn failure                                                                                   |
+| `perf_mcp_process_start`   | `1`              | `mcp_id` / `mcp_instance_id` / `mcp_source` / `mcp_isolation` / `runtime_surface`                                                                                                                             | Formal stdio MCP completes connection and `tools/list`; version probe not counted                                 |
+| `perf_mcp_process_crash`   | `1`              | start marker + `exit_code` / `signal` / `uptime_ms` / `affected_session_count`                                                                                                                                | Stdio MCP that already sent start unexpectedly exits; intentional shutdown not counted                            |
+| `perf_mcp_session_startup` | `process_count`  | `session_id` / `configured_count` / `connected_count` / `process_count` / `failed_count`                                                                                                                      | First MCP startup snapshot of session lease                                                                       |
+| `perf_anr`                 | `duration_ms`    | Unresponsiveness duration                                                                                                                                                                                     | `webContents` `unresponsive` for ≥ **5s** (`STABILITY_ANR_THRESHOLD_MS`)                                          |
+| `perf_freeze`              | `duration_ms`    | Freeze duration (no crash during freeze)                                                                                                                                                                      | `unresponsive` for ≥ **30s** (`STABILITY_FREEZE_THRESHOLD_MS`)                                                    |
+| `perf_app_exit`            | `exit_code` (=0) | `exit_kind=normal`                                                                                                                                                                                            | `before-quit`                                                                                                     |
+| `perf_process_exit`        | `exit_code`      | `exit_reason` / `process_role`                                                                                                                                                                                | Child process / renderer abnormal exit                                                                            |
 
-SDK 原生 crash 不走 `sendCustom(group=stability)`，使用独立事件契约：
+SDK native crash does not go through `sendCustom(group=stability)`, uses separate event spec:
 
-| `event_type` | `type`  | `source`        | 上报内容                                                                                                                                                                           | 触发条件                                                                                                                             |
-| ------------ | ------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `exception`  | `crash` | `crashReporter` | `crash_scope=app_native_process`（仅 `native_dump_process_role=main`）或 `native_dump_unattributed` / `crash_cause=native_crash` / `crash_source=crash_reporter_dump` / `crash_id` | dump 的 `binary_images` 命中产品应用名或真实 runtime exe 名；仅确认产品二进制但没有主进程角色标记时保留为 `native_dump_unattributed` |
+| `event_type` | `type`  | `source`        | Report Content                                                                                                                                                                          | Trigger Condition                                                                                                                                             |
+| ------------ | ------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `exception`  | `crash` | `crashReporter` | `crash_scope=app_native_process` (only if `native_dump_process_role=main`) or `native_dump_unattributed` / `crash_cause=native_crash` / `crash_source=crash_reporter_dump` / `crash_id` | dump's `binary_images` matches product app name or real runtime exe; only matched product binary but no main process role marker → `native_dump_unattributed` |
 
-实现：`packages/desktop/src/main/desktopStabilityTelemetry.ts`、
+Implementation: `packages/desktop/src/main/desktopStabilityTelemetry.ts`,
 `packages/desktop/src/main/appARMSBootstrap.ts`
 
 ---
 
-## 二、ARMS 资源 `group=resource`
+## II. ARMS Resource `group=resource`
 
-资源链路自 v3.12.1 起已实现，完整采样、聚合、失败语义与验收见
-[全进程 CPU / 内存监控埋点](./process-resource-telemetry.md)。生产聚合窗口为 5 分钟，
-开发构建与 E2E 为 1 分钟；Bash 完成事件即时发送。全部设备、全部角色采集。
-三个事件共有 `platform`、`app_version`、`arms_env`、`device_mid` 四个全局属性，
-与下列事件属性合并后最多 20 项；undefined 不发送。CPU 是整机归一化百分比，内存单位 KB。
-`platform` / `arch` / `logical_cpu_count` / `total_memory_gb` 描述进程实际运行机，远端 CLI / MCP
-覆盖桌面默认值；`app_version` 是负责上报的桌面版本。
+Resource chain fully implemented since v3.12.1; complete sampling, aggregation, and failure semantics see
+[full-process CPU/memory monitoring](./process-resource-telemetry.md). Production aggregation window is 5 minutes,
+development builds and E2E are 1 minute; Bash completes immediately. Full collection across all devices and roles.
+Three events share `platform`, `app_version`, `arms_env`, `device_mid` four global attributes,
+combined with event-specific properties yields at most 20 items; undefined not sent. CPU is normalized percentage across the machine, memory in KB.
+`platform` / `arch` / `logical_cpu_count` / `total_memory_gb` describe actual runtime machine, remote CLI / MCP cover desktop defaults; `app_version` is the version of the reporting desktop.
 
-角色词表：`main`、`renderer_main`、`renderer_guest`、`gpu`、`chromium_other`、`host`、
-`scheduler`、`cli_chat`、`cli_aux`、`mcp`。main 的 `getAppMetrics()` 每 10 秒提供 Chromium CPU / RSS，
-Node 与主 renderer 的 heap 每 60 秒自采；CLI 每 60 秒自采，MCP 每 5 分钟使用通用进程探针。
-main 零外部进程；线程数、GPU 显存、磁盘 IO 与 10% 角色抽样均已删除。
-本地 `[memory]` 日志继续与遥测复用读数，见[进程内存本地诊断日志](./memory-diagnostics-log.md)。
+Role enumeration: `main`, `renderer_main`, `renderer_guest`, `gpu`, `chromium_other`, `host`,
+`scheduler`, `cli_chat`, `cli_aux`, `mcp`. main's `getAppMetrics()` provides Chromium CPU / RSS every 10 seconds,
+Node and main renderer heap every 60 seconds; CLI self-samples every 60 seconds, MCP every 5 minutes uses generic process probe.
+Main has zero external processes; thread count, GPU memory, disk I/O and 10% role sampling removed.
+Local `[memory]` log continues and reuses telemetry reads, see [process memory local diagnostic log](./memory-diagnostics-log.md).
 
 ### `perf_process_window`
 
-每角色 / runtime surface / 运行机分组每 5 分钟一条；MCP 再按 mcp_id 分组。
-`value=cpu_percent_mean`。Node 与 renderer_main 最多 20 属性（heap 无读数时省略），
-mcp 19 属性，其他 Chromium 角色 18 属性；白名单并集 21 项不代表单条发送 21 项。
+Per role / runtime surface / machine grouping every 5 minutes; MCP additionally grouped by mcp_id.
+`value=cpu_percent_mean`. Node and renderer_main at most 20 properties (heap omitted when no reading),
+mcp 19 properties, other Chromium roles 18 properties; whitelist union 21 items doesn't mean sending 21 items.
 
-| 类别 | 属性                      | 说明                                                               |
-| ---- | ------------------------- | ------------------------------------------------------------------ |
-| 维度 | `process_role`            | 上表 10 个枚举值                                                   |
-| 维度 | `runtime_surface`         | `local` / `remote`                                                 |
-| 维度 | `arch`                    | 运行机架构                                                         |
-| 维度 | `logical_cpu_count`       | 运行机逻辑核数                                                     |
-| 维度 | `total_memory_gb`         | 运行机物理内存，取整 GB                                            |
-| 维度 | `mcp_id`                  | 仅 `mcp` 角色                                                      |
-| 状态 | `background_ratio`        | 0 到 1，两位小数                                                   |
-| 状态 | `uptime_minutes`          | 该角色内最老进程的运行分钟数                                       |
-| CPU  | `cpu_percent_p95`         | 窗口内角色总 CPU 的 p95                                            |
-| CPU  | `cpu_percent_peak`        | 窗口内角色总 CPU 的最大值                                          |
-| 内存 | `rss_kb_total_mean`       | 角色内全部进程 RSS 之和的均值                                      |
-| 内存 | `rss_kb_total_peak`       | 角色内全部进程 RSS 之和的最大值                                    |
-| 内存 | `rss_kb_max_process_peak` | 窗口内单个进程 RSS 的最大值                                        |
-| 内存 | `heap_used_kb_mean`       | 仅 Node 与 renderer_main；多进程取每次收到读数的最大单进程再求均值 |
-| 内存 | `heap_used_kb_peak`       | 同上，取最大值                                                     |
-| 质量 | `process_count_peak`      | 窗口内该角色同时存活的最大进程数                                   |
-| 质量 | `sample_count`            | 窗口内样本数；main 侧角色预期 30，CLI 角色预期 5，mcp 为 1         |
+| Category  | Property                  | Description                                                                        |
+| --------- | ------------------------- | ---------------------------------------------------------------------------------- |
+| Dimension | `process_role`            | 10 enumeration values above                                                        |
+| Dimension | `runtime_surface`         | `local` / `remote`                                                                 |
+| Dimension | `arch`                    | Runtime architecture                                                               |
+| Dimension | `logical_cpu_count`       | Runtime logical core count                                                         |
+| Dimension | `total_memory_gb`         | Runtime physical memory, rounded to GB                                             |
+| Dimension | `mcp_id`                  | Only for `mcp` role                                                                |
+| Status    | `background_ratio`        | 0 to 1, two decimal places                                                         |
+| Status    | `uptime_minutes`          | Oldest process runtime minutes in this role                                        |
+| CPU       | `cpu_percent_p95`         | Role's total CPU p95 within window                                                 |
+| CPU       | `cpu_percent_peak`        | Role's total CPU max within window                                                 |
+| Memory    | `rss_kb_total_mean`       | Role's all processes RSS sum's mean                                                |
+| Memory    | `rss_kb_total_peak`       | Role's all processes RSS sum's max                                                 |
+| Memory    | `rss_kb_max_process_peak` | Single process RSS max within window                                               |
+| Memory    | `heap_used_kb_mean`       | Only Node and renderer_main; max single process reading per process, then averaged |
+| Memory    | `heap_used_kb_peak`       | Same, take max                                                                     |
+| Quality   | `process_count_peak`      | Max concurrent process count for this role in window                               |
+| Quality   | `sample_count`            | Sample count in window; main role expected 30, CLI role expected 5, mcp is 1       |
 
 ### `perf_system_window`
 
-每台桌面设备每 5 分钟一条，`value=app_cpu_percent_mean`，固定 17 属性。
-Chromium 使用同 tick 精确合计，CLI / MCP 使用最近样本（120 / 600 秒过期）；远端不计入。
+Per desktop device every 5 minutes, `value=app_cpu_percent_mean`, fixed 17 properties.
+Chromium uses same tick for precise aggregation, CLI / MCP use most recent sample (120 / 600 seconds expiry); remote not counted.
 
-| 类别 | 属性                                             | 说明                                                               |
-| ---- | ------------------------------------------------ | ------------------------------------------------------------------ |
-| 维度 | `arch`、`logical_cpu_count`、`total_memory_gb`   | 桌面机                                                             |
-| 状态 | `background_ratio`、`app_uptime_minutes`         | `background_ratio` 与角色事件同源；uptime 取 main 进程运行时长     |
-| 整机 | `system_cpu_percent_p95`                         | `os.cpus()` 差分                                                   |
-| 整机 | `system_free_memory_kb_min`                      | 窗口内 `os.freemem()` 最小值                                       |
-| 应用 | `app_cpu_percent_p95`                            | 全部本机 ZCode 进程合计                                            |
-| 应用 | `app_rss_kb_total_mean`、`app_rss_kb_total_peak` | Chromium 体系每 10 秒精确合计，加 CLI 与 MCP 最近一次已知样本      |
-| 应用 | `process_count_total_peak`                       | 全部本机 ZCode 进程数峰值                                          |
-| 质量 | `sample_count`                                   | 首个 tick 无 CPU 基线不产生样本，5 分钟窗口预期 29                 |
-| 质量 | `telemetry_self_ms`                              | 窗口内 main 侧采样与聚合代码累计墙钟毫秒数，`performance.now()` 计 |
+| Category  | Property                                         | Description                                                                                  |
+| --------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| Dimension | `arch`, `logical_cpu_count`, `total_memory_gb`   | Desktop machine                                                                              |
+| Status    | `background_ratio`, `app_uptime_minutes`         | `background_ratio` same source as role events; uptime takes main process runtime             |
+| System    | `system_cpu_percent_p95`                         | `os.cpus()` diff                                                                             |
+| System    | `system_free_memory_kb_min`                      | `os.freemem()` min within window                                                             |
+| App       | `app_cpu_percent_p95`                            | All local ZCode process sum                                                                  |
+| App       | `app_rss_kb_total_mean`, `app_rss_kb_total_peak` | Chromium-based every 10 seconds precise sum, plus CLI and MCP most recent known sample       |
+| App       | `process_count_total_peak`                       | Peak total ZCode process count on this machine                                               |
+| Quality   | `sample_count`                                   | First tick with no CPU baseline doesn't produce sample, 29 expected per 5 min window         |
+| Quality   | `telemetry_self_ms`                              | Main-side sampling and aggregation code cumulative wall clock ms, `performance.now()` timing |
 
 ### `perf_tool_exec_resource`
 
-每条运行满 15 秒的 Bash 在完成时即时上报，`value=duration_ms`。
-非 Windows 为 12 属性；Windows 无 tree 两项，共 10 属性，sample_count=0。
+Reported immediately on Bash completion when run ≥ 15 seconds, `value=duration_ms`.
+Non-Windows has 12 properties; Windows has 10 properties (no tree two fields), sample_count=0.
 
-| 类别   | 属性                    | 说明                                                     |
-| ------ | ----------------------- | -------------------------------------------------------- |
-| 维度   | `runtime_surface`       |                                                          |
-| 维度   | `tool_name`             | 第一期固定 `bash`                                        |
-| 维度   | `exit_kind`             | `completed` / `timeout` / `killed` / `error`             |
-| 命令   | `tree_rss_kb_peak`      | 命令进程树 RSS 之和的峰值                                |
-| 命令   | `tree_cpu_time_ms`      | 命令进程树累计 CPU 时间；与 `duration_ms` 相除得到忙闲比 |
-| 命令   | `sample_count`          | 采到的样本数                                             |
-| 上下文 | `cli_rss_kb`            | 命令结束时 CLI 自身 RSS                                  |
-| 上下文 | `system_free_memory_kb` | 命令结束时整机剩余内存                                   |
+| Category  | Property                | Description                                                                     |
+| --------- | ----------------------- | ------------------------------------------------------------------------------- |
+| Dimension | `runtime_surface`       |                                                                                 |
+| Dimension | `tool_name`             | Currently fixed `bash` only                                                     |
+| Dimension | `exit_kind`             | `completed` / `timeout` / `killed` / `error`                                    |
+| Command   | `tree_rss_kb_peak`      | Command process tree RSS sum peak                                               |
+| Command   | `tree_cpu_time_ms`      | Command process tree accumulated CPU time; divide by duration_ms for busy ratio |
+| Command   | `sample_count`          | Sample count collected                                                          |
+| Context   | `cli_rss_kb`            | CLI self RSS at command end                                                     |
+| Context   | `system_free_memory_kb` | System free memory at command end                                               |
 
-### 已停发资源事件
+### Discontinued Resource Events
 
-| 事件                   | 停发版本与替代                                                                           |
-| ---------------------- | ---------------------------------------------------------------------------------------- |
-| `perf_resource_window` | **自 v3.12.1 起停发**；由角色级 `perf_process_window` 与设备级 `perf_system_window` 取代 |
-| `perf_resource_agent`  | **自 v3.12.1 起停发**；由 `perf_process_window` 的 `cli_chat` / `cli_aux` 角色取代       |
-| `perf_mcp_memory`      | **自 v3.12.1 起停发**；由 `perf_process_window` 的 `mcp` 角色取代                        |
+| Event                  | Discontinued Version and Replacement                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `perf_resource_window` | **Discontinued since v3.12.1**; replaced by role-level `perf_process_window` and device-level `perf_system_window` |
+| `perf_resource_agent`  | **Discontinued since v3.12.1**; replaced by `perf_process_window` `cli_chat` / `cli_aux` roles                     |
+| `perf_mcp_memory`      | **Discontinued since v3.12.1**; replaced by `perf_process_window` `mcp` role                                       |
 
-### 独立资源事件
+### Independent Resource Events
 
-`perf_resource_zcode_data_size` 保持本地 ZCode 数据根逻辑字节数口径，每台设备最多 24 小时一次，
-见[ZCode 数据目录占用 ARMS 上报](./zcode-data-size-arms-telemetry.md)。更早的 `perf_resource_cpu`
-等仅用于历史查询。MCP 的三个稳定性生命周期事件见[MCP 进程 ARMS 可观测性](./mcp-process-arms-telemetry.md)。
-
----
-
-## 三、ARMS 网络 `group=network`
-
-**5min 聚合**（dev 1min）。每个 `{transport, interface}` 只发送一条
-`perf_network_window`，合并全局 properties 后最多 20 个属性。HTTP path 仅保留显式登记的静态路由段，其他段模板化；任意本地绝对
-路径归为 `local_file`；RPC=`channel.command`；
-WS=`web_remote_control.relay`。
-
-| 事件                  | value            | 说明                                                         |
-| --------------------- | ---------------- | ------------------------------------------------------------ |
-| `perf_network_window` | duration mean ms | counts + duration peak/p95；HTTP 阶段 mean；主错误类型与计数 |
-
-数据源：HTTP 解析 ARMS `beforeReport` 的 `api` 事件；RPC 经 Host `NetworkTelemetryChannelServer` 回传；WS 来自远控 relay。
-实现：`desktopNetworkTelemetry.ts`、`networkTelemetryAggregator.ts`、`packages/rpc/src/network-telemetry-middleware.ts`、`hostNetworkTelemetry.ts`
+`perf_resource_zcode_data_size` stays as local ZCode data root logical byte count spec, at most once per 24 hours per device,
+see [ZCode Data Directory Size ARMS Report](./zcode-data-size-arms-telemetry.md). Older `perf_resource_cpu`
+and other events only exist for historical queries. MCP's three stability lifecycle events see [MCP Process ARMS Observability](./mcp-process-arms-telemetry.md).
 
 ---
 
-## 四、ARMS 端侧 UI 性能 `group=ui_perf`
+## III. ARMS Network `group=network`
 
-renderer 侧埋点，全采（100%）。
+**5min aggregated** (dev 1min). Each `{transport, interface}` sends one
+`perf_network_window`, merged with global properties at most 20 items. HTTP path only preserves explicitly registered static route segments, other segments templated; any local absolute path unified as `local_file`; RPC=`channel.command`; WS=`web_remote_control.relay`.
 
-### 4.1 启动分阶段（7 段，每冷启动各 1 次，`session_id` 关联同次启动）
+| Event                 | Value            | Description                                                                |
+| --------------------- | ---------------- | -------------------------------------------------------------------------- |
+| `perf_network_window` | duration mean ms | counts + duration peak/p95; HTTP phases mean; primary error type and count |
 
-| 事件                              | value 测量段                                                  |
-| --------------------------------- | ------------------------------------------------------------- |
-| `perf_ui_launch_to_input`         | **总**：进程创建（`getCreationTime`）→ 输入框可用             |
-| `perf_ui_launch_electron_init_ms` | 进程创建 → main JS                                            |
-| `perf_ui_launch_app_ready_ms`     | main JS → `app.whenReady`                                     |
-| `perf_ui_launch_window_ms`        | `whenReady` → `loadURL`                                       |
-| `perf_ui_launch_renderer_load_ms` | `loadURL` → bundle 执行                                       |
-| `perf_ui_launch_react_commit_ms`  | bundle → React 首次 commit                                    |
-| `perf_ui_launch_startup_gate_ms`  | React commit → 输入框可用（鉴权 / provider / workspace 恢复） |
-
-### 4.2 Session 首次打开（每个逻辑打开最多两条）
-
-| 事件                          | value      | 关键 properties                                                                 |
-| ----------------------------- | ---------- | ------------------------------------------------------------------------------- |
-| `perf_ui_session_open_start`  | `1`        | `session_open_id` / `session_id` / `open_kind` / `open_trigger` / `client_mode` |
-| `perf_ui_session_open_result` | `total_ms` | `status` / `session_open_id` / `session_id` / Host/CLI/Renderer 阶段耗时字段    |
-
-哨兵：任一段为负（跨进程时钟偏移）或总时长 > **300000ms**（`LAUNCH_TO_INPUT_SANITY_MAX_MS`）→ **整批丢弃**。未登录（WelcomeScreen）不上报。旧 `perf_ui_first_screen` 已废弃，语义并入 `perf_ui_launch_react_commit_ms`。
-
-### 4.3 消息链路（镜像自 `/report` 的 `message_completion`，不新增计时）
-
-| 事件                       | value                                               | properties                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| -------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `perf_ui_first_token`      | 首 token 延迟 ms                                    | `model` / `talk_id` / `message_id`                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `perf_ui_message_complete` | 消息端到端耗时 ms                                   | `result` / `model` / `talk_id` / `message_id`                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `perf_ui_stream_stall`     | 真实停顿 ms（流式相邻正文 chunk 间隔 > **3000ms**） | `stall_ms` / `waiting_tool` / `model` / `talk_id` / `message_id`（停顿结束的 chunk，取不到留空）                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `perf_ui_tool_call_detail` | 工具终态耗时 ms                                     | `tool_name` / `status` / `talk_id` / `message_id` / `tool_call_id` / `parent_tool_call_id` / `child_tool_call_id` / `child_session_id` / `agent_id` / `agent_type` / `total_ms` / `permission_wait_ms` / `command_run_ms` / `first_output_ms` / `no_output_ms` / `timed_out` / `command_name` / `command_category` / `command_count` / `command_status` / `fs_read_ms` / `fs_write_ms` / `patch_match_ms` / `file_count` / `total_bytes` / `max_file_bytes` / `hunk_count` / `match_attempts` / `workspace_kind` |
-
-`perf_ui_stream_stall` 边界：工具调用期间不计入（`tool_call`/`tool_call_update` 到达时 `clearStreamStallTracking`）；阈值 `STREAM_STALL_REPORT_THRESHOLD_MS=3000` 仅作上报闸门，value 为真实间隔。`model` 取当前激活 prompt 的 `model_name`（`getActivePromptModelName`，chunk 本身不带模型），无激活 prompt 时留空。渲染卡顿（longTask）由 ARMS Browser SDK 自动采集，不在此手动埋点。
-
-`agent_step` 明细只保留在 `/report` 的 `agent_trace` 链路；ARMS RUM 不再逐 step
-双发，避免一条长消息按 step 数放大 IPC 和自定义事件量。RUM 侧通过
-`perf_ui_turn_breakdown.agent_step_cnt`、首 token、端到端、流式停顿和工具终态事件做低频归因。
-CLI 直接上报的 `zcode.agent.step` OTel Span 属于
-[CLI Agent Telemetry 开发指南](../trace/cli-agent-telemetry.md)，不经过这条 IPC/RUM 链路，
-也不等价于 `/report agent_step`。
-`perf_ui_tool_call_detail` 只镜像带 `raw.result.perf` 的工具终态。subagent mirror 子工具会带父子关联字段，数仓拿到父 `Agent` 的 `tool_call_id` 后，可在 ARMS 中按 `parent_tool_call_id` 下钻子工具；非 subagent 工具这些字段为空。
-
-`command_name` 只允许公开命令 Registry 中的静态可执行文件名或 `empty` / `compound` /
-`other` 固定桶。`command_hash` 自 2026-07-27 起不再进入 RUM/ARMS：即使是截断 Hash，
-仍会制造高基数，并可能通过常见命令字典进行反查；该字段只保留在 CLI 本地结构化诊断
-对象中。CLI OTel Agent Trace 是工具可靠性的新主事实源，现有 RUM 事件短期双跑兼容，
-后续看板迁移完成后再下线重复字段/事件。
-
-`model` 与 `chat_error_banner.model_id` 共用同一条白名单：只允许 telemetry 显式白名单中的
-内置稳定模型 ID，自定义 provider 的模型（`custom:<providerId>:<modelName>` 编码值）、
-`<providerId>/<modelId>` 复合值中非内置 provider 的部分，以及内置 provider 下未命中白名单的
-模型，统一写为 `custom`；缺失时留空。实现由 `@zcode/shared` 的
-`sanitizeTelemetryModelValue` 收口，`uiPerfArmsTelemetry.emit` 在发送前统一改写 `model`
-属性，调用方无需各自处理。白名单来源与内置 provider 双命名空间（运行时 `account:*` 与旧报表身份
-`builtin:*`）的判定规则见 [plan-usage-arms-telemetry](./plan-usage-arms-telemetry.md)。
-实现：`packages/ui/src/lib/uiPerfArmsTelemetry.ts`；V4 入口由 workspace telemetry supervisor 驱动。
-
-### 4.4 ARMS SDK longTask 自动事件
-
-| 字段                               | 口径                                                                                                |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `event_type=longTask`              | Browser SDK 自动采集的渲染主线程卡顿事件。                                                          |
-| `duration` / `fps` / `source`      | SDK 原始字段，`source` 为 `LoAF` 或 `rAF`。                                                         |
-| `properties.loaf_script_count`     | SDK `snapshots` 内 attribution 条数，最多 5。                                                       |
-| `properties.loaf_top_duration_ms`  | top attribution 耗时 ms，四舍五入且钳非负。                                                         |
-| `properties.loaf_top_invoker_type` | `user-callback` / `event-listener` / `script` / `unknown`；rAF 缺少 `invokerType` 时归为 `script`。 |
-| `properties.loaf_top_share_pct`    | top attribution 占 longTask 总 `duration` 的百分比整数；总时长无效时为 0。                          |
-
-隐私边界：不把原始脚本名、脚本 URL、文件路径、selector、堆栈或源码片段写入 `properties`；`snapshots` 缺失或解析失败时不补字段。
+Data source: HTTP parsed from ARMS `beforeReport` `api` event; RPC batches via Host `NetworkTelemetryChannelServer`; WS from remote control relay.
+Implementation: `desktopNetworkTelemetry.ts`, `networkTelemetryAggregator.ts`, `packages/rpc/src/network-telemetry-middleware.ts`, `hostNetworkTelemetry.ts`
 
 ---
 
-## 五、ARMS 可见 UI 错误 `group=ui_error`
+## IV. ARMS End-User UI Performance `group=ui_perf`
 
-| 事件                | `surface`                    | 触发口径                                              | 去重口径                                                |
-| ------------------- | ---------------------------- | ----------------------------------------------------- | ------------------------------------------------------- |
-| `chat_error_banner` | `chat_input_error_banner`    | 输入框上方错误横幅经过 suppression 后真实可见         | 同一 Composer mount 的 task/code/trace/message 指纹一次 |
-| `chat_error_banner` | `session_subscription_error` | 正式 Session 的 conversation 订阅失败页在前台真实可见 | 同一 SessionPane mount 的 session/code/message 指纹一次 |
+Renderer-side instrumentation, full sampling (100%).
 
-订阅失败继续复用 `chat_error_banner`，避免仪表盘出现第二套“用户可见聊天错误”口径；
-通过 `surface` 区分输入框错误与整页订阅错误。事件必须保留结构化 `error_code`，
-`fault.subscribe.sessionNotFound` 等 reasonCode 不得只埋在 message 中。后台 pane、
-预热 draft 的静默回落和被产品逻辑抑制的错误不曝光。
+### 4.1 Launch Phase Breakdown (7 segments, one per cold start, `session_id` groups same launch)
 
-错误归因字段为可选增量字段：`error_source` / `failure_reason` / `provider_scope` /
+| Event                             | Value Measurement                                                 |
+| --------------------------------- | ----------------------------------------------------------------- |
+| `perf_ui_launch_to_input`         | **Total**: process creation (`getCreationTime`) → input focusable |
+| `perf_ui_launch_electron_init_ms` | process creation → main JS                                        |
+| `perf_ui_launch_app_ready_ms`     | main JS → `app.whenReady`                                         |
+| `perf_ui_launch_window_ms`        | `whenReady` → `loadURL`                                           |
+| `perf_ui_launch_renderer_load_ms` | `loadURL` → bundle execution                                      |
+| `perf_ui_launch_react_commit_ms`  | bundle → React first commit                                       |
+| `perf_ui_launch_startup_gate_ms`  | React commit → input focusable (auth/provider/workspace restore)  |
+
+### 4.2 Session First Open (at most two entries per logical open)
+
+| Event                         | Value      | Key Properties                                                                              |
+| ----------------------------- | ---------- | ------------------------------------------------------------------------------------------- |
+| `perf_ui_session_open_start`  | `1`        | `session_open_id` / `session_id` / `open_kind` / `open_trigger` / `client_mode`             |
+| `perf_ui_session_open_result` | `total_ms` | `status` / `session_open_id` / `session_id` / per-phase timing fields for Host/CLI/Renderer |
+
+Sentinel: any segment negative (cross-process clock skew) or total > **300000ms** (`LAUNCH_TO_INPUT_SANITY_MAX_MS`) → **discard entire batch**. Not reported when not logged in (WelcomeScreen). Old `perf_ui_first_screen` deprecated, semantics merged into `perf_ui_launch_react_commit_ms`.
+
+### 4.3 Message Link (mirrors `/report` `message_completion`, no new timing)
+
+| Event                      | Value Nature                                                 | Key Properties                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `perf_ui_first_token`      | First token latency ms                                       | `model` / `talk_id` / `message_id`                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `perf_ui_message_complete` | Message end-to-end latency ms                                | `result` / `model` / `talk_id` / `message_id`                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `perf_ui_stream_stall`     | Real stall ms (between adjacent content chunks > **3000ms**) | `stall_ms` / `waiting_tool` / `model` / `talk_id` / `message_id` (first chunk after stall, or empty if unavailable)                                                                                                                                                                                                                                                                                                                                                                                              |
+| `perf_ui_tool_call_detail` | Tool terminal state latency ms                               | `tool_name` / `status` / `talk_id` / `message_id` / `tool_call_id` / `parent_tool_call_id` / `child_tool_call_id` / `child_session_id` / `agent_id` / `agent_type` / `total_ms` / `permission_wait_ms` / `command_run_ms` / `first_output_ms` / `no_output_ms` / `timed_out` / `command_name` / `command_category` / `command_count` / `command_status` / `fs_read_ms` / `fs_write_ms` / `patch_match_ms` / `file_count` / `total_bytes` / `max_file_bytes` / `hunk_count` / `match_attempts` / `workspace_kind` |
+
+`perf_ui_stream_stall` boundary: not counted during tool calls (`clearStreamStallTracking` on `tool_call`/`tool_call_update` arrival); threshold `STREAM_STALL_REPORT_THRESHOLD_MS=3000` only as report gate, value is real interval. `model` takes current active prompt's `model_name` via `getActivePromptModelName` (chunk itself doesn't carry model), empty if no active prompt. Rendering jank (`longTask`) automatically collected by ARMS Browser SDK, not manually instrumented here.
+
+`agent_step` details stay only in `/report` `agent_trace` chain; ARMS RUM doesn't duplicate per step
+to avoid inflating IPC and custom event volume per message. RUM side uses
+`perf_ui_turn_breakdown.agent_step_cnt`, first token, end-to-end, stream stall and tool terminal events for low-frequency attribution.
+CLI directly reports `zcode.agent.step` OTel Span which is
+[CLI Agent Telemetry Development Guide](../trace/cli-agent-telemetry.md), doesn't go through this IPC/RUM chain,
+thus not equivalent to `/report agent_step`.
+`perf_ui_tool_call_detail` only mirrors tools that have `raw.result.perf` at terminal state.
+Subagent mirror sub-tools carry parent-child linkage fields, allowing drill-down from parent `Agent`'s `tool_call_id` to sub-tools in ARMS via `parent_tool_call_id`. Non-subagent tools have empty fields for these.
+
+`command_name` only allows static executable file name from public command Registry or `empty` / `compound` /
+`other` buckets. `command_hash` no longer enters RUM/ARMS since 2026-07-27: even truncated hash
+may create high cardinality and enable reverse lookup via common command dictionary; this field only preserved in CLI local structured diagnostics object. CLI OTel Agent Trace is new authoritative source for tool reliability, current RUM events run in parallel for compatibility,
+later dashboard migration completed before retiring duplicate fields/events.
+
+`model` and `chat_error_banner.model_id` share same whitelist: only telemetry-whitelisted built-in stable model IDs,
+custom provider's models (`custom:<providerId>:<modelName>` encoded values),
+`<providerId>/<modelId>` composite values for non-builtin provider parts, and built-in provider models not matching whitelist
+unified as `custom`; empty if missing. Implementation via `@zcode/shared`'s
+`sanitizeTelemetryModelValue`, `uiPerfArmsTelemetry.emit` uniformly rewrites `model`
+property before sending, callers don't need to handle individually. Whitelist source aligns with builtin provider dual naming spaces (runtime `account:*` and legacy report identity `builtin:*`) judgment rules see [plan-usage-arms-telemetry](./plan-usage-arms-telemetry.md).
+Implementation: `packages/ui/src/lib/uiPerfArmsTelemetry.ts`; V4 entry driven by workspace telemetry supervisor.
+
+### 4.4 ARMS SDK longTask Auto Events
+
+| Field                              | Specification                                                                                                |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `event_type=longTask`              | Rendering main thread jank event auto-collected by Browser SDK.                                              |
+| `duration` / `fps` / `source`      | SDK original fields, `source` as `LoAF` or `rAF`.                                                            |
+| `properties.loaf_script_count`     | Attribution count in SDK `snapshots`, max 5.                                                                 |
+| `properties.loaf_top_duration_ms`  | Top attribution duration ms, rounded and clamped non-negative.                                               |
+| `properties.loaf_top_invoker_type` | `user-callback` / `event-listener` / `script` / `unknown`; rAF missing `invokerType` normalized to `script`. |
+| `properties.loaf_top_share_pct`    | Top attribution % of longTask total `duration`, integer; 0 if total duration invalid.                        |
+
+Privacy boundary: does not write original script names, URLs, paths, selectors, stacks or source snippets to `properties`; `snapshots` missing or parse failure doesn't add fields.
+
+---
+
+## V. ARMS Visible UI Errors `group=ui_error`
+
+| Event               | `surface`                    | Trigger Spec                                                                      | Deduplication Spec                                                    |
+| ------------------- | ---------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `chat_error_banner` | `chat_input_error_banner`    | Input area error banner visible after suppression                                 | One dedup per fingerprint of Composer mount's task/code/trace/message |
+| `chat_error_banner` | `session_subscription_error` | Real visible error of formal Session's conversation subscription failure on front | One dedup per fingerprint of SessionPane mount's session/code/message |
+
+Subscription failures reuse `chat_error_banner` to avoid dashboard having a second "user-visible chat error" spec;
+`surface` distinguishes input area errors from full-page subscription errors. Events must preserve structured `error_code`,
+`fault.subscribe.sessionNotFound` etc reasonCode not allowed only in message. Silent fallback errors in background panes,
+pre-warmed drafts and errors suppressed by product logic are not exposed.
+
+Attribution fields are optional incremental fields: `error_source` / `failure_reason` / `provider_scope` /
 `provider_id` / `model_id` / `provider_kind` / `transport` / `status_code` /
-`provider_error_code` / `failure_retryable` / `failure_phase` / `failure_exception_kind`。其中
-`provider_scope` 仅为
-`builtin | custom | unknown`；自定义 provider 的 `provider_id` 固定写 `custom`。`model_id` 仅允许
-telemetry 白名单内的内置稳定模型 ID；自定义或未命中白名单的模型固定写 `custom`，provider/model
-缺失时写空字符串。禁止写入自定义 provider/model 名称、base URL/完整 URL、header/token、请求或
-响应正文、prompt/tool 内容、stack、完整 detail 或 requestId。字段缺失不影响事件发送，也不改变
-错误展示和恢复行为。
+`provider_error_code` / `failure_retryable` / `failure_phase` / `failure_exception_kind`. Where
+`provider_scope` only `builtin | custom | unknown`; custom provider's `provider_id` always written `custom`. `model_id` only allows
+telemetry whitelist built-in stable model IDs; custom or non-whitelisted models always `custom`, provider/model
+missing written empty string. Prohibited from writing custom provider/model names, base URLs/full URLs, credentials,
+request or response bodies, prompt/tool content, stacks, full detail or requestId. Missing fields don't block event send, also don't change
+error display and recovery behavior.
 
-`failure_phase` 为固定 Model API 阶段枚举，`failure_exception_kind` 为 adapter allowlist 后的低基数
-异常族；不得上传原始 exception name。Dashboard 应把 reason coverage 与 diagnostic coverage 分开。
+`failure_phase` is fixed Model API phase enumeration, `failure_exception_kind` is adapter allowlist-derived low cardinality
+exception family; raw exception name not uploaded. Dashboard should separate reason coverage and diagnostic coverage.
 
-实现：`packages/ui/src/lib/chatErrorBannerTelemetry.ts`、`packages/ui/src/v4/ConversationComposer.tsx`、
-`packages/ui/src/v4/SessionPane.tsx`。
+Implementation: `packages/ui/src/lib/chatErrorBannerTelemetry.ts`, `packages/ui/src/v4/ConversationComposer.tsx`,
+`packages/ui/src/v4/SessionPane.tsx`.
 
-### 5.1 React 错误边界 `group=react_error`
+### 5.1 React Error Boundary `group=react_error`
 
-| 事件               | value | properties                                                                            |
+| Event              | value | properties                                                                            |
 | ------------------ | ----- | ------------------------------------------------------------------------------------- |
 | `perf_react_error` | `1`   | `error_name` / `error_message` / `error_stack` / `component_stack` / `boundary_scope` |
 
-React 错误边界拦截子树渲染异常并阻止其冒泡到 `window.onerror`，Browser RUM SDK 的自动采集
-看不到这类错误，因此单独补一条自定义事件。`boundary_scope` 为根级 `app` 或各 scoped 边界名。
+React error boundary intercepts subtree render errors and prevents bubbling to `window.onerror`.
+Browser RUM SDK can't see these errors, so separately logged custom event.
+`boundary_scope` is root-level `app` or each scoped boundary name.
 
-隐私边界：`error_message`、`error_stack`、`component_stack` 在上报前必须经 `@zcode/shared` 的
-`redactTelemetryText`，与 ARMS 自动采集 exception 事件
-（[脱敏边界](./arms-browser-monitoring.md#自动采集事件的脱敏边界)）同一套规则：绝对路径归一为
-`{path}`、邮箱归一为 `{email}`、URL 只留 `protocol//host` 与归一化路由、凭据归一为
-`{redacted}` / `{secret}`。`error_stack` 与 `component_stack` 另有 4000 字符上限，保证最近的抛错
-组件一定上得去。脱敏只作用于上报副本，本地日志与 fallback 恢复继续使用原值。
+Privacy boundary: `error_message`, `error_stack`, `component_stack` must be processed via `@zcode/shared`'s
+`redactTelemetryText` before reporting, same rules as ARMS auto-collected exception events
+(see [privacy boundary](./arms-browser-monitoring.md#auto-collected-event-redaction-boundary)): paths unified to
+`{path}`, emails unified to `{email}`, URLs only keep `protocol//host` and normalized routes, credentials unified to
+`{redacted}` / `{secret}`. `error_stack` and `component_stack` also have 4000 character limit, ensuring topmost error
+component reaches the server. Redaction applies only to report copy, local logs and fallback recovery continue raw values.
 
-实现：`packages/ui/src/lib/reactErrorArmsTelemetry.ts`、`packages/ui/src/ErrorBoundary.tsx`。
-
----
-
-## 六、消息链路（`/report` agent_trace，非 ARMS）
-
-`messageTelemetry.ts` 继续提供旧格式 builder；V4 workspace telemetry supervisor 只消费 live facts，
-再调用 `reportAppTelemetryEvent(eventType="agent_trace")`。
-
-| elementName          | value 性质 | 关键上报字段                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| -------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `message_completion` | 端到端     | `duration_ms`（从 sendTime 到 turn terminal 的用户可见墙钟耗时，包含前台 Subagent 与等待）/ `time_to_first_token`（未到首 token=-1）/ `waiting_ms`（所有 tool permission 等待累计）/ `input_tokens`·`output_tokens`·`reasoning_tokens`·`cached_input_tokens`·`cache_write_input_tokens`·`total_tokens` / `agent_step_cnt`（当前 message 实际收口的 step 数）/ `tool_call_total`·`tool_call_failed`（当前 message 实际收口的工具 step）/ `generated_code_lines` / `file_change_cnt` / `status` / `error_type`（失败归因）·`error_msg`（非空原文为 `[redacted]`，否则空串） / `request_time`                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `agent_step`         | 逐步骤     | `step_type`（reasoning / tool_call / generation）/ `loop_index` / `duration_ms`（step 墙钟耗时，包含等待）/ `waiting_ms`（tool permission 等待累计，非 tool 为 0）/ `generation_tail_finalize_ms`（仅桌面 `desktop-continuous` 中主 agent generation 被 `task_complete` / `task_error` 收口时写入，表示最后一个不带 `parentToolUseId` 的普通正文 chunk 到终态事件的尾延迟；手机 replayable 恢复重放和非适用场景留空字符串）/ `status`（success / fail / timeout）/ `tool_name` / `tool_call_id`（仅工具 step）/ `agent_id`（父 `Agent` 与镜像 child 工具的等值关联 id）/ `is_tool_call` / `model_name`·`model_provider`·`provider_name`（step 关联的真实请求模型维度）/ `model_request_id`·`model_request_count`·`token_usage_scope`（主请求为 `model_request`，前台 child 聚合为 `subagent_requests`）/ `input_tokens`·`output_tokens`·`reasoning_tokens`·`cached_tokens`·`cache_write_input_tokens`·`total_tokens`（完整 request usage 只归属一个 step）。仅走 `/report`，不逐条镜像 ARMS RUM；CLI OTel Step Span 另见 Agent Turn Trace 规范 |
-| `context_compaction` | 压缩结果   | `status`（completed / failed / interrupted）/ `trigger` / `reason` / `attempt` / `duration_ms` / `pre_compact_tokens`·`post_compact_tokens`·`true_post_compact_tokens` / `compact_ratio`（post/pre）。成功率由数仓按 status 聚合                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-
-`message_completion` 与 `agent_step` 还必须携带同一组场景维度：`workspace_kind`（`local` /
-`remote`）和 `remote_kind`（`ssh` / `wsl` / `docker` / `server`；本地或无法解析时为空字符串）。
-两者由 workspace attachment 冻结，不能上传 `remoteSessionId`、workspace path、主机地址等高基数身份。
-
-输入阶段字段（`queuePromptTelemetry` 注入到 `message_completion`）：`input_start_time` / `input_first_char_time` / `input_send_time`。
-`agent_step_cnt`、`tool_call_total`、`tool_call_failed` 与逐条 `agent_step` 使用同一个
-active prompt 生命周期；同 session 的历史 assistant 消息不参与本轮 completion 计数。
-Skill tool step 始终携带 `skill_name`（仅取通过遥测校验的已解析名称，否则为 `unknown`，不读取请求参数），另外可携带 `skill_qualified_name`、`skill_plugin_id`、`skill_source`；仅在
-`tool_name=Skill` 且 runtime 成功解析 metadata 时写入，不包含 Skill 正文或 description。
-前台 handler 与后台 runtime monitor 都必须先把收到的 step/terminal 事件送入该生命周期，
-再上报 `message_completion`；切换 task 不能让同一轮的后台计数归零或漏报逐条 `agent_step`。
-所有携带 `inputId` 的 step stream event 都必须与 runtime 当前 `activeInputId` 一致；旧 input
-迟到的 reasoning / generation / tool / terminal 事件不能收口或污染新 prompt 的 step 状态与
-计数。旧协议不携带 `inputId` 时保留兼容路径；queued prompt 发送时即使重绑定实际 inputId，
-也以 runtime `activeInputId` 为 ownership 事实源，不能拿排队阶段的 pending inputId 误拒当前事件。
-格式实现：`packages/ui/src/lib/messageTelemetry.ts`；生命周期和多端边界见
-[conversation-telemetry-v4.md](./conversation-telemetry-v4.md)。
+Implementation: `packages/ui/src/lib/reactErrorArmsTelemetry.ts`, `packages/ui/src/ErrorBoundary.tsx`.
 
 ---
 
-## 六、ARMS CLI Agent 模型 API（OTLP Trace）
+## VI. Message Link (`/report` agent_trace, NOT ARMS)
 
-`service.name=zcode-cli-agent`，不走 Electron RUM `/rum/web/v2`，也不新增客户端数据库表。
+`messageTelemetry.ts` continues providing legacy format builder; V4 workspace telemetry supervisor only consumes live facts,
+then calls `reportAppTelemetryEvent(eventType="agent_trace")`.
 
-| span.name             | 粒度                                        | 关键字段                                                                                                                                                                           |
-| --------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `zcode.model.call`    | 一次 `generateText/streamText` Logical Call | `operation` / `actor` / `provider_id/kind/origin/route` / `model` / requested/effective thinking / status / duration / TTFT / token/cache / retry recovery / error / `uid/rid/sid` |
-| `zcode.model.attempt` | 一次真实 Provider HTTP/SSE 请求             | 上述公共维度 + attempt/max / transport / previous request / retry delay / provider request ID                                                                                      |
+| elementName          | Value Nature      | Key Report Fields                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `message_completion` | End-to-end        | `duration_ms` (sendTime to turn terminal visible wall clock duration, includes foreground Subagent and waiting)/ `time_to_first_token` (if no first token=-1)/ `waiting_ms` (all tool permission wait cumulative)/ `input_tokens`·`output_tokens`·`reasoning_tokens`·`cached_input_tokens`·`cache_write_input_tokens`·`total_tokens` / `agent_step_cnt` (actual steps in completion)/ `tool_call_total`·`tool_call_failed` (actual tool steps in completion)/ `generated_code_lines` / `file_change_cnt` / `status` / `error_type` (failure attribution)·`error_msg` (non-empty raw as `[redacted]`, else empty)/ `request_time`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `agent_step`         | Per-step          | `step_type` (reasoning / tool_call / generation)/ `loop_index` / `duration_ms` (step wall clock duration, includes wait)/ `waiting_ms` (tool permission wait cumulative, non-tool is 0)/ `generation_tail_finalize_ms` (only desktop `desktop-continuous` where main agent generation captured by `task_complete` / `task_error`, indicates last chunk without `parentToolUseId` to terminal event tail delay; phone replayable re-play and inapplicable scenarios empty string)/ `status` (success / fail / timeout)/ `tool_name` / `tool_call_id` (only tool steps)/ `agent_id` (parent `Agent` and mirrored child tools equal association id)/ `is_tool_call` / `model_name`·`model_provider`·`provider_name` (step-associated real request model dimensions)/ `model_request_id`·`model_request_count`·`token_usage_scope` (main request is `model_request`, foreground child aggregated is `subagent_requests`)/ `input_tokens`·`output_tokens`·`reasoning_tokens`·`cached_tokens`·`cache_write_input_tokens`·`total_tokens` (full request usage only belongs to one step). Only via `/report`, not mirrored per ARMS RUM; CLI OTel Step Span see Agent Turn Trace spec |
+| `context_compaction` | Compaction Result | `status` (completed / failed / interrupted)/ `trigger` / `reason` / `attempt` / `duration_ms` / `pre_compact_tokens`·`post_compact_tokens`·`true_post_compact_tokens` / `compact_ratio` (post/pre). Success rate aggregated by warehouse on status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
-正常成功调用产生 1 Call + 1 Attempt；Adapter Retry 只增加 Attempt，Compaction SSE → HTTP fallback 产生两个通过 `previous_logical_call_id` 关联的 Call。所有事件都是 Terminal Span，不上报 Prompt、Header、Provider Options、工具内容或逐 SSE Chunk。
+`message_completion` and `agent_step` must also carry same scene dimensions: `workspace_kind` (`local` /
+`remote`) and `remote_kind` (`ssh` / `wsl` / `docker` / `server`; local or unparseable empty string).
+Both frozen by workspace attachment, cannot upload `remoteSessionId`, workspace path, host address or other high-cardinality identities.
 
-默认 5 秒/100 条 gzip protobuf 批量，队列上限 2,000 条或 4MiB；未配置 OTLP 时 No-op。App RUM、SQLite Usage 和 `/report` 当前继续双写，待灰度对账后再决定长期替代范围。
+Input phase fields (`queuePromptTelemetry` injected into `message_completion`): `input_start_time` / `input_first_char_time` / `input_send_time`.
+`agent_step_cnt`, `tool_call_total`, `tool_call_failed` share same active prompt lifecycle; history assistant messages in same session not included in this completion count.
+Skill tool steps always carry `skill_name` (only the telemetry-validated resolved name; otherwise `unknown`; request parameters are not read), and additionally carry `skill_qualified_name`, `skill_plugin_id`, `skill_source`; only when
+`tool_name=Skill` and runtime successfully parses metadata, not contain Skill body or description.
+Foreground handler and backend runtime monitor both must first send received step/terminal events into this lifecycle,
+then report `message_completion`; switching task cannot reset or drop counts for same round's backend
+`agent_step`. All events with `inputId` must match runtime's current `activeInputId`; old input's delayed
+reasoning / generation / tool / terminal events can't be accepted or contaminate new prompt's step state/count.
+Legacy protocol without `inputId` preserves compatibility path; when queued prompt sent, even with actual inputId rebinding,
+actual inputId from runtime remains ownership source, can't reject current events using pending inputId from queue stage.
+Format implementation: `packages/ui/src/lib/messageTelemetry.ts`; lifecycle and multi-platform boundaries see
+[conversation-telemetry-v4.md](./conversation-telemetry-v4.md).
 
-实现：`apps/zcode-cli/packages/telemetry`、`apps/zcode-cli/packages/adapters/src/model/runner-status.ts`。
+---
 
-## 覆盖度与已知缺口
+## VI. ARMS CLI Agent Model API (OTLP Trace)
 
-- ✅ **稳定性 / 资源 / 网络**：进程级齐全（CPU / 内存 / GPU / crash / ANR / freeze / 退出码 / 网络分层耗时）。
-- ✅ **启动链路**：进程创建 → "能输入" 7 段拆分，可出分位。
-- ✅ **消息链路**：输入 → 首 token → `/report` 逐步骤 → 停顿 → 端到端 → 上下文压缩；
-  ARMS RUM 保持每轮/工具终态低频事件，CLI OTel Agent Turn Trace 独立演进。
-- ✅ **CLI 模型 API**：主 Agent/Subagent/Workflow、Compaction、Sidecar 和工具内模型调用均形成 Call/Attempt；流量、成功率、耗时、Token/Cache、Retry/Fallback 和脱敏错误可在 ARMS 聚合。
-- ⚠️ **CLI 模型看板待部署**：代码已支持标准 OTLP 注入，但仓库不内置 ARMS OTLP 凭据；Workspace 看板、告警和 RUM/SQLite 对账仍需部署侧灰度完成。
-- ⚠️ **末帧渲染未覆盖**：`message_completion.duration_ms` / `time_to_first_token` 终点是 `task_complete` 到达 handler 的时刻，**不含 React 重渲染 → 浏览器 paint 上屏**那段；用户视角"渲染完"的延迟仍是盲区。
-- ⚠️ **资源不归因到消息**：资源采样 5min 聚合，无法回答"发某条消息时 CPU/内存的尖峰"。
+`service.name=zcode-cli-agent`, does not go through Electron RUM `/rum/web/v2`, no new client database tables.
+
+| span.name             | Granularity                                | Key Fields                                                                                                                                                                         |
+| --------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `zcode.model.call`    | One `generateText/streamText` Logical Call | `operation` / `actor` / `provider_id/kind/origin/route` / `model` / requested/effective thinking / status / duration / TTFT / token/cache / retry recovery / error / `uid/rid/sid` |
+| `zcode.model.attempt` | One real Provider HTTP/SSE request         | Same public dimensions + attempt/max / transport / previous request / retry delay / provider request ID                                                                            |
+
+Normal successful calls produce 1 Call + 1 Attempt; Adapter Retry only adds Attempt, Compaction SSE → HTTP fallback produces two linked via `previous_logical_call_id`. All events are Terminal Span, no prompt/header/provider options/tool content or individual SSE chunk reported.
+
+Default 5 second / 100 batch gzip protobuf, queue limit 2,000 items or 4MiB; no-op when OTLP unconfigured.
+App RUM, SQLite Usage and `/report` continue dual-write, await post-graymatch decide long-term replacement scope.
+
+Implementation: `apps/zcode-cli/packages/telemetry`, `apps/zcode-cli/packages/adapters/src/model/runner-status.ts`.
+
+## Coverage and Known Gaps
+
+- ✅ **Stability / Resource / Network**: Process-level complete (CPU / memory / GPU / crash / ANR / freeze / exit code / network layered duration).
+- ✅ **Launch Chain**: Process creation → "input focusable" 7 segments, distributable to percentiles.
+- ✅ **Message Chain**: Input → first token → `/report` per-step → stall → end-to-end → context compaction;
+  ARMS RUM maintains low-frequency events per round/tool terminal state, CLI OTel Agent Turn Trace independent evolution.
+- ✅ **CLI Model API**: Main Agent/Subagent/Workflow, Compaction, Sidecar and tools internal model calls all form Call/Attempt; traffic, success rate, duration, Token/Cache, Retry/Fallback and redacted errors all observable in ARMS aggregation.
+- ⚠️ **CLI Model Dashboard Not Deployed**: Code supports standard OTLP injection, but repository doesn't have ARMS OTLP credentials; Workspace dashboard, alerts and RUM/SQLite reconciliation await deployment-side graymatch completion.
+- ⚠️ **End-frame Rendering Not Covered**: `message_completion.duration_ms` / `time_to_first_token` endpoint is `task_complete` reaching handler moment, **does not include React re-render → browser paint upload**; user-perceived "render complete" latency remains blind spot.
+- ⚠️ **Resource Not Attributed to Message**: Resource sampling 5min aggregation cannot answer "CPU/memory peak when sending specific message".

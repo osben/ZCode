@@ -8,6 +8,7 @@ import {
   ActivityIcon,
   BookOpenIcon,
   CircleHelpIcon,
+  CopyIcon,
   DownloadIcon,
   LightbulbIcon,
   InfoIcon,
@@ -27,6 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu.js";
 import { cn } from "@/components/lib/utils.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
+import { toast } from "@/components/ui/toast.js";
 import { useFeedbackStore } from "@/feedback/feedbackStore.js";
 import { useDesktopUpdateMenu } from "@/hooks/useDesktopUpdateMenu.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
@@ -40,8 +42,8 @@ export function WorkspaceHelpMenuButton({
 }: {
   className?: string;
   /**
-   * 是否桌面端。由挂载处注入而不是在组件内嗅探：Web 的 IPlatformService 桩同样实现了
-   * executeDesktopCommand（no-op），拿它判定会让 Web 端出现一个点了没反应的「资源管理器」。
+   * Whether this is Desktop. Inject this from the mount site instead of sniffing inside the component: the Web IPlatformService stub also implements
+   * executeDesktopCommand (as a no-op), so using it for detection would show a nonfunctional “File Explorer” entry on Web.
    */
   isDesktop?: boolean;
 }) {
@@ -70,6 +72,20 @@ export function WorkspaceHelpMenuButton({
     void platform.executeDesktopCommand(DesktopCommandIds.ShowAbout);
   };
 
+  // Copies the device MID for support requests. The value goes only to the clipboard; it is never logged.
+  const handleCopyDeviceMid = async () => {
+    try {
+      const deviceMid = platform.getDeviceId();
+      if (!deviceMid || typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+        throw new Error("clipboard unavailable");
+      }
+      await navigator.clipboard.writeText(deviceMid);
+      toast(intl.formatMessage({ id: "workspaceHeader.help.deviceMidCopied" }));
+    } catch {
+      toast(intl.formatMessage({ id: "workspaceHeader.help.deviceMidCopyFailed" }));
+    }
+  };
+
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <ControlHintTooltip title={helpMenuLabel} side="bottom">
@@ -78,8 +94,8 @@ export function WorkspaceHelpMenuButton({
             type="button"
             variant="ghost"
             size="icon-md"
-            // Settings 页会把帮助按钮绝对定位在 Electron 顶部拖拽区上方。
-            // 只依赖外层容器 no-drag 时，真实 trigger 仍可能被标题栏 drag 区吞掉点击。
+            // The Settings page positions the help button absolutely above Electron’s top drag region.
+            // With no-drag only on the outer container, the title-bar drag region could still swallow clicks on the actual trigger.
             className={cn(
               "text-foreground hover:bg-hover hover:text-foreground [app-region:no-drag]",
               className,
@@ -125,15 +141,19 @@ export function WorkspaceHelpMenuButton({
           <LightbulbIcon className="size-4" />
           {intl.formatMessage({ id: "workspaceHeader.help.productRequest" })}
         </DropdownMenuItem>
-        {/* Windows/Linux 没有原生菜单栏，自绘标题栏箭头菜单也已下线，
-            资源管理器只能从这里进；Web 端没有该窗口，不渲染。 */}
+        {/* Windows/Linux have no native menu bar, and the custom title-bar arrow menu has been removed,
+            so File Explorer is accessible only here; Web has no such window, so do not render it. */}
         {isDesktop ? (
           <>
             <DropdownMenuSeparator />
-            {/* 独立导出入口曾被移除；复用原菜单动作，保持打包、系统定位与提示一致。 */}
+            {/* The standalone export entry had been removed; reuse the original menu action to keep packaging, system location, and hints consistent. */}
             <DropdownMenuItem onSelect={helpMenuActions.exportLogs}>
               <DownloadIcon className="size-4" />
               {intl.formatMessage({ id: "titleBar.menu.help.exportLogs" })}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={handleCopyDeviceMid}>
+              <CopyIcon className="size-4" />
+              {intl.formatMessage({ id: "workspaceHeader.help.copyDeviceMid" })}
             </DropdownMenuItem>
             <DropdownMenuItem
               data-testid={TID_WORKSPACE_HELP_MENU_RESOURCE_MANAGER}

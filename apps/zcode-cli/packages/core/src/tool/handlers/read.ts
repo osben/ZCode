@@ -33,7 +33,7 @@ import {
 } from "@zcode/contracts";
 import { resolveWorkspacePath } from "../path-policy.js";
 import { createReadFileStateKey, normalizeReadFileStateMtimeMs } from "../read-file-state.js";
-import { createReadFileStateMetadata } from "../read-file-state-metadata.js";
+import { FILE_UNCHANGED_STUB, createReadFileStateMetadata } from "../read-file-state-metadata.js";
 import { inferImageMimeFromPath, readImageFile } from "./read-image.js";
 import { inferVideoMimeFromPath } from "../../runtime/helpers/attachment-video.js";
 import { readVideoFile } from "./read-video.js";
@@ -52,8 +52,6 @@ import {
 
 export { addReadLineNumbers } from "./read-text.js";
 
-const FILE_UNCHANGED_STUB =
-  "Wasted call — file unchanged since your last Read. Refer to that earlier tool_result instead.";
 const READ_PROVIDER_DESCRIPTION = [
   "Reads a file from the local filesystem.",
   "",
@@ -110,13 +108,13 @@ function formatReadImageOutput(output: ReadImageOutput): ModelMessageContent {
       sizeBytes: output.originalSize,
     },
   };
-  // 尺寸提示拼进 tool result 会让 provider-visible content 随是否缩放而改变；
-  // 图片结果只保留媒体 block，dimensions 继续留在结构化 output 供 UI 和调试使用。
+  // Including dimension hints in tool results would make provider-visible content vary based on whether the image was resized.
+  // Keep image results to the media block; dimensions remain in structured output for the UI and debugging.
   return [imageBlock];
 }
 
-// 与图片同构：tool result 只保留媒体 block；OpenAI 系 provider 由
-// tool-result-media-projection 拆成后置 user part（AI SDK tool result 无 video part 变体）。
+// Same as images: tool results contain only the media block; OpenAI-family providers split it into a trailing user part through
+// tool-result-media-projection (the AI SDK has no video part variant for tool results).
 function formatReadVideoOutput(output: ReadVideoOutput): ModelMessageContent {
   const videoBlock = {
     type: "video" as const,
@@ -198,6 +196,8 @@ export const readHandler: ToolHandler = async (input, context) => {
     }
 
     let rangeReadRevision: FileSystemStatResult["revision"] | undefined;
+    // Text reads start the language server for this file type in the background (acquire only, never waits).
+    context.lspPrewarm?.(filePath);
     const output = await readTextFileForModel({
       abortSignal: context.abortSignal,
       filePath,
@@ -259,8 +259,8 @@ function parseReadInput(input: unknown): ReadInput {
     throw parsed.error;
   }
 
-  // Read 输入预检失败应以 <tool_use_error> 文本进入 provider；
-  // 直接透出 ZodError JSON 会让 binary/device preflight 与 capture 偏离。
+  // A Read input preflight failure should reach the provider as <tool_use_error> text.
+  // Exposing raw ZodError JSON would make binary/device preflight differ from capture.
   throw createCoreError(
     CoreErrorType.ToolExecutionFailed,
     `<tool_use_error>${toolUseErrorMessage}</tool_use_error>`,
@@ -284,8 +284,8 @@ function validateReadInput(input: unknown): ToolInputValidationResult {
     return { result: true };
   }
 
-  // PDF pages 的语义约束只存在于 runtime schema 时，JSON Schema 会接受任意
-  // string，导致错误调用穿过 Hook 和权限后才在 handler 抛出裸 ZodError。
+  // If PDF pages constraints exist only in the runtime schema, JSON Schema accepts any string, so invalid calls pass Hook and
+  // permission checks before the handler throws a raw ZodError.
   const failure = getReadPdfPagesValidationFailure(candidate.file_path, candidate.pages);
   return failure ? { result: false, ...failure } : { result: true };
 }
@@ -337,7 +337,7 @@ function isCachedReadFresh(entry: ReadFileStateEntry, stat: FileSystemStatResult
 
   const mtimeMs = stat.revision?.mtimeMs ?? stat.mtimeMs;
   if (entry.mtimeMs !== undefined && mtimeMs !== undefined) {
-    // 和写前 freshness 校验保持同一套策略，mtime 只比较整数毫秒。
+    // Use the same policy as pre-write freshness validation; compare mtime only at integer-millisecond precision.
     return (
       normalizeReadFileStateMtimeMs(entry.mtimeMs) === normalizeReadFileStateMtimeMs(mtimeMs) &&
       entry.sizeBytes === stat.sizeBytes
@@ -368,8 +368,8 @@ function updateReadFileState(
     content: input.output.content,
     offset: input.offset,
     limit: input.limit,
-    // offset/limit 是 range view，不等价于 partial view。
-    // partial view 只表示模型看到的内容被工具截断，Write/Edit 必须拒绝这种不完整视图。
+    // offset/limit define a range view, not a partial view.
+    // A partial view means the tool truncated content seen by the model, which Write/Edit must reject as incomplete.
     isPartialView: input.output.truncatedByTokenCap === true,
     readAt: new Date(),
     sourceTool: "Read",

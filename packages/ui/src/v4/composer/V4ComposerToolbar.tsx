@@ -1,19 +1,19 @@
-/* oxlint-disable eslint(max-lines) -- V4ComposerToolbar 汇聚模型/思考深度/context usage 三件套；继续拆分会打散工具条热键与模型目录 memo 的共享状态。 */
+/* oxlint-disable eslint(max-lines) -- V4ComposerToolbar groups model/reasoning-depth/context-usage controls; splitting further would scatter state shared by toolbar shortcuts and model-catalog memoization. */
 /**
- * V4 composer 工具条。
+ * V4 composer toolbar.
  *
- * 展示件全部复用旧 chat-input-toolbar 的纯 props 组件（ModelConfigSelect /
- * ChatModeSwitchControl / ThoughtLevelCycleControl / ChatContextUsage），外观与旧
- * ChatInputToolbar 对齐；但状态编排是全新 v4 wiring，不复活旧 ChatInputToolbar 的
- * effect 链 / 旧协议写路径：
- * - 当前模型/档位来自 Composer；已运行会话的用量来自 snapshot.usage.contextWindow
- * - 模型、思考深度和模式只更新下一次 Submission 的 Composer 意图
- * - 模型静态事实来自目标 Host ModelSelectionView；workspace configOptions 只提供
- *   mode 等非模型 presentation
+ * All display components reuse the old chat-input-toolbar's pure-props components (ModelConfigSelect /
+ * ChatModeSwitchControl / ThoughtLevelCycleControl / ChatContextUsage) and match the old ChatInputToolbar's
+ * appearance. State orchestration uses new v4 wiring and does not revive the old ChatInputToolbar effect
+ * chain or protocol write paths:
+ * - The current model/tier comes from Composer; usage for a running conversation comes from snapshot.usage.contextWindow.
+ * - Model, reasoning depth, and mode update only the Composer intent for the next Submission.
+ * - Static model facts come from the target Host ModelSelectionView; workspace configOptions provides only
+ *   non-model presentation such as mode.
  *
- * 新任务和已有会话采用相同的 Composer 显示事实；prewarm 不补模型或档位。
- * 提交时由宿主（SessionPane）把冻结选择随 Submission 一起发送。
- * 三件套不能全部门控在 config!==null 上——草稿态会整体不渲染。
+ * New tasks and existing conversations use the same Composer display facts; prewarm does not fill in the model or tier.
+ * On submit, the host (SessionPane) sends the frozen selection with the Submission.
+ * Do not gate all three controls on config!==null—the draft state would render none of them.
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlarmClockIcon } from "lucide-react";
@@ -26,11 +26,12 @@ import {
   type ProviderFamilyConnectionSelection,
   type ProviderFamilyConnectionSelectionSettings,
   type ProviderFamilyDomain,
+  resolveContextBudgetTone,
   type UsageEntitlementSnapshot,
   type ZCodeAccountAccess,
   type ZCodeProviderAccountAccess,
-  type ZCodeConfigOption,
   type ZCodeProvider,
+  type ZCodeConfigOption,
 } from "@zcode/shared";
 import { TID_V4_MODEL_CONFIG, TID_V4_COMPOSER_INPUT } from "@zcode/shared/test-ids";
 import type {
@@ -77,11 +78,7 @@ import type {
 import { useProviderSettingsView } from "@/hooks/useProviderSettingsView.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useComposerConnectionSwitch } from "@/hooks/useComposerConnectionSwitch.js";
-import {
-  buildComposerPlanGroups,
-  composerConnectionKey,
-  chooseConnectionModel,
-} from "@/lib/composerPlanGroups.js";
+import { buildComposerPlanGroups, composerConnectionKey } from "@/lib/composerPlanGroups.js";
 import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
 import { useSettings } from "@/hooks/useSettingService.js";
 import {
@@ -117,14 +114,14 @@ import {
   resolveDraftThoughtCurrentValue,
 } from "@/v4/composer/draftWorkspaceDefaults.js";
 
-// 拆分件再导出（模式选择移居 V4ComposerModeControls，超行数拆分）：
-// 既有消费方（ConversationComposer）继续从本模块入口 import，接口面不变。
+// Re-export split components (mode selection moved to V4ComposerModeControls to split an oversized file):
+// existing consumers (ConversationComposer) continue importing from this module; the public interface is unchanged.
 export { V4ComposerModeSwitch } from "@/v4/composer/V4ComposerModeControls.js";
 
 const V4_COMPOSER_INPUT_SELECTOR = `[data-testid="${TID_V4_COMPOSER_INPUT}"]`;
 const MODEL_SELECTION_LOADING_STATE: ModelSelectionState = { status: "loading" };
 
-/** 稳定空回调（热键 hook 单实例只处理本组件拥有的选项，其余动作占位）。 */
+/** Stable no-op callback (the single hotkey-hook instance handles only options owned by this component; other actions are placeholders). */
 function noop(): void {}
 
 function HighspeedCountdown({ expiresAt }: { expiresAt: number }) {
@@ -151,8 +148,8 @@ function HighspeedCountdown({ expiresAt }: { expiresAt: number }) {
     { time: remainingTime },
   );
 
-  // Bug 根因：倒计时原先晚于 Think 折叠，在中等窄窗口继续占用固定 82px；
-  // 窄窗口只收起数值，保留可 hover 的时钟入口。
+  // Root cause: the countdown previously collapsed after Think, continuing to occupy a fixed 82px
+  // in medium-width windows. In narrow windows, hide only the value and keep the hoverable clock entry.
   return (
     <span
       aria-label={absoluteExpiryLabel}
@@ -232,7 +229,7 @@ function resolveV4ContextPlanConnection(params: {
     return { kind: "none" };
   }
 
-  // Start 额度属于输入框的有效模型；全局付费连接不能作为它的查询门禁。
+  // Start quota belongs to the input's effective model; a global paid connection must not gate its lookup.
   if (providerFamily.kind === "start") {
     const providerId = params.providerId?.trim();
     if (
@@ -293,9 +290,9 @@ function resolveContextTeamUsageSourceFromEntitlementSnapshot({
   const subscription = snapshot.subscription?.details[0] ?? null;
   const productId =
     snapshot.context.productId?.trim() || subscription?.productId?.trim() || "current";
-  // 原 createBigModelTeamPlanConnectionKey + bigmodelCodingPlan providerId 硬编码，
-  // zai team snapshot 也生成 bigmodel 前缀 sourceId（与设置页/usage sources 不一致）。
-  // 从 snapshot.provider.id 反查 family，生成对应前缀。
+  // The old implementation hard-coded createBigModelTeamPlanConnectionKey and the bigmodelCodingPlan providerId,
+  // causing zai team snapshots to also use a bigmodel-prefixed sourceId (unlike settings/usage sources).
+  // Look up the family from snapshot.provider.id and generate the matching prefix.
   const familySpec = resolveModelProviderFamilySpecByProviderId(snapshot.provider?.id ?? "");
   const family: ProviderFamilyDomain = familySpec?.id ?? "bigmodel";
   if (!accountAccess) {
@@ -339,8 +336,8 @@ function resolveContextCodingPlanUsageSource(params: {
   accountAccess?: ZCodeProviderAccountAccess | ZCodeAccountAccess | null;
   cachedTeamSources?: readonly CodingPlanUsageSource[];
   entitlementSnapshot?: UsageEntitlementSnapshot | null;
-  // 原类型/守卫硬绑 bigmodelCodingPlan，zai team 上下文永远返回 null。
-  // 放开为 zai/bigmodel 两种 codingPlan providerId。
+  // The old type/guard was hard-coded to bigmodelCodingPlan, so zai team context always returned null.
+  // Allow both zai and bigmodel codingPlan provider IDs.
   providerId?:
     | typeof BUILTIN_MODEL_PROVIDER_IDS.bigmodelTeamCodingPlan
     | typeof BUILTIN_MODEL_PROVIDER_IDS.zaiTeamCodingPlan;
@@ -392,34 +389,34 @@ export interface V4ComposerToolbarProps {
   sessionId: string | null;
   phase: SessionPhase | null;
   provider?: ZCodeProvider;
-  /** 当前工具条是否运行在 Web 远控壳中。 */
+  /** Whether the toolbar currently runs inside the Web remote-control shell. */
   isWebRemoteControl?: boolean;
-  /** 当前视口是否为手机输入布局。 */
+  /** Whether the current viewport uses the mobile input layout. */
   isMobileViewport?: boolean;
-  /** 草稿态（sessionId=null），仅区分新任务呈现，不改变选择来源。 */
+  /** Draft state (sessionId=null); distinguishes new-task presentation only and does not change the selection source. */
   draftMode?: boolean;
-  /** 当前 scope 的 Composer 选择；新任务与已有会话都只显示这份状态。 */
+  /** Composer selection for the current scope; new tasks and existing conversations both display this state only. */
   draftConfig?: Partial<SessionConfigState>;
   usage: SessionUsageState | null;
   disabled: boolean;
-  /** Highspeed 卡生效时固定本轮模型，禁止通过选择器或快捷键切换。 */
+  /** Lock the model for this turn while a Highspeed card is active; do not allow switching through the picker or shortcuts. */
   modelLocked?: boolean;
-  /** 扩散尾段开始后（恢复入场则立即）展示 Highspeed 模型与倒计时。 */
+  /** Show the Highspeed model and countdown after the diffusion tail starts (immediately on restored entry). */
   highspeedPresented?: boolean;
-  /** 本次入场是否为 draw 新命中的激活动效；恢复入场的模型标识不做翻页。 */
+  /** Whether this entry is an activation effect for a newly drawn hit; restored model markers do not flip. */
   highspeedEntranceAnimated?: boolean;
-  /** 模型翻页完成并静置后播放一次扫光。 */
+  /** Play the shimmer once after the model flip finishes and settles. */
   highspeedSweepActive?: boolean;
-  /** Highspeed 卡片过期时间；有值时在模型与 Think 之间显示倒计时。 */
+  /** Highspeed card expiry time; when present, show a countdown between the model and Think. */
   highspeedExpiresAt?: number;
-  /** draw 响应绑定的模型；只覆盖锁定期的触发器文案。 */
+  /** Model bound to the draw response; overrides trigger text only while the model is locked. */
   highspeedModel?: string;
-  /** 单个 composer 内的配置 picker 排他 owner；只属于 renderer-local presentation。 */
+  /** Exclusive owner for configuration pickers within one composer; renderer-local presentation only. */
   activeConfigPicker: V4ComposerConfigPicker | null;
   onConfigPickerOpenChange: (picker: V4ComposerConfigPicker, open: boolean) => void;
   /**
-   * 选中模型（providerId/modelId 来自目录 value 解码），由 Composer owner 更新并持久化。
-   * sourceModel 只表达这次用户操作的来源，不从 Session 投影补 CAS 或思考档位。
+   * Selected model (providerId/modelId decoded from the catalog value), updated and persisted by the Composer owner.
+   * sourceModel identifies only the origin of this user action; do not fill CAS or reasoning tier from the Session projection.
    */
   onSelectModel: (
     provider: string,
@@ -427,10 +424,10 @@ export interface V4ComposerToolbarProps {
     sourceModel: ModelSelectionSource | null,
     reasoningLevel?: string,
   ) => void;
-  /** 选中思考深度；modelContext 固定本次用户操作的目标模型。 */
+  /** Selected reasoning depth; modelContext pins the target model for this user action. */
   onSelectThought: (thought: string, modelContext: { provider: string; model: string }) => void;
   onSwitchMode: (mode: string) => void;
-  /** prepare/configOptions 失败时，custom provider 选择走 workspace recovery 链。 */
+  /** If prepare/configOptions fails, custom-provider selection uses the workspace recovery chain. */
   onRecoverCustomModelSelection?: (
     value: string,
     sourceModel: ModelSelectionSource | null,
@@ -438,7 +435,7 @@ export interface V4ComposerToolbarProps {
   onSendCompressionCommand?: (command: string) => void;
 }
 
-/** 模型 / 思考深度 / context usage 簇（渲染在发送键左侧，与旧 UI 同位）。 */
+/** Model/reasoning-depth/context-usage group (rendered left of the send button, as in the old UI). */
 function V4ComposerModelControlsImpl({
   workspacePath,
   workspaceIdentity,
@@ -469,7 +466,7 @@ function V4ComposerModelControlsImpl({
   const { intl, locale } = useZCodeIntl();
   const { openCodingPlanUpgrade } = useCodingPlanUpgradeDialog();
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
-  // 配置面读取：workspace 缺省目录（taskId=null），不读旧会话态。
+  // Read the configuration surface's default workspace catalog (taskId=null), not legacy conversation state.
   const { error: configOptionsError } = useToolbarConfigOptions(
     workspacePath,
     null,
@@ -489,13 +486,13 @@ function V4ComposerModelControlsImpl({
   } = useCodingPlanEntitlements({
     providerSettingsView,
     connectionSelections: sharedSettings?.providerFamilyConnectionSelections,
-    // Context 只在用户 hover/open 时刷新，不在 composer 挂载时请求额度。
+    // Refresh context only when the user hovers/opens it; do not request quota when the composer mounts.
     suppressProviderFingerprintAutoRefresh: true,
   });
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
   const modelTriggerRef = useRef<HTMLSpanElement | null>(null);
   const thoughtTriggerRef = useRef<HTMLSpanElement | null>(null);
-  // Ctrl+M 热键：递增 openRequestKey 请求 ModelConfigSelect 打开菜单（旧 handleOpenModelMenuShortcut 语义）。
+  // Ctrl+M shortcut: increment openRequestKey to ask ModelConfigSelect to open its menu (the old handleOpenModelMenuShortcut behavior).
   const [modelMenuOpenRequestKey, setModelMenuOpenRequestKey] = useState(0);
   const [recoveryPending, setRecoveryPending] = useState(false);
   const handleOpenModelMenuShortcut = useCallback(() => {
@@ -525,8 +522,8 @@ function V4ComposerModelControlsImpl({
       } satisfies ZCodeConfigOption)
     : undefined;
 
-  // 空模型/档位曾被 Session 旧值补回，界面显示与实际不可提交状态矛盾。
-  // 初始化已经由 Composer owner 完成；显示层只消费它，不能再次补值。
+  // Empty model/tier values were previously filled from stale Session values, making the UI contradict the actual non-submittable state.
+  // The Composer owner already performs initialization; the display layer only consumes it and must not fill values again.
   const effectiveConfig = useMemo<SessionConfigState | null>(() => {
     return resolveDraftDisplayedConfig(draftConfig ?? {});
   }, [draftConfig]);
@@ -555,8 +552,8 @@ function V4ComposerModelControlsImpl({
       if (sourceId) {
         writeSidebarUsageCodingPlanProviderPreference(sourceId);
       }
-      // 剩余额度「更多」直达 Coding Plan 使用统计（按上面写入的来源偏好选中当前套餐），
-      // 不落到应用用量；通用 Usage 入口仍走 setPendingSettingsUsageIntent。
+      // “More” for remaining quota opens Coding Plan usage directly (selecting the current plan using the source preference set above),
+      // not app usage. The general Usage entry still uses setPendingSettingsUsageIntent.
       setPendingSettingsUsageCodingPlanIntent();
       openSettingsTab();
     },
@@ -586,16 +583,16 @@ function V4ComposerModelControlsImpl({
       return undefined;
     }
     const entitlement = entitlements[contextPlanConnection.providerId];
-    // Start Plan 只有具备独立 Account Access 时才挂载 hover 查询入口。
+    // Mount the Start Plan hover lookup only when independent Account Access is available.
     const startPlanEntitlementEnabled = enabledStartPlanProviderIds.includes(
       contextPlanConnection.providerId,
     );
     return {
       loading: entitlement?.loading ?? providerSourcesLoading,
-      // hover access 刷新入口不能只在 Coding Plan 配置上（onAccess）：
-      // start plan 用户 hover context 面板从不主动刷新今日余额，只能等设置页/侧栏
-      // 刷新后被动同步。接入与 Coding Plan 相同的静默 access 刷新；60s access 窗口
-      // 与 in-flight 合并由刷新策略层自动生效，不会因反复 hover 放大 billing/balance 请求。
+      // The hover access-refresh entry must not be limited to Coding Plan configuration (onAccess):
+      // Start Plan users otherwise never refresh today's balance by hovering over the context panel and must
+      // wait for settings/sidebar refreshes to sync it passively. Use the same silent access refresh as Coding Plan;
+      // the 60-second access window and in-flight request coalescing are handled by refresh policy, so repeated hovering does not amplify billing/balance requests.
       ...(startPlanEntitlementEnabled
         ? {
             onAccess: () => refreshCodingPlanEntitlements({ silent: true, reason: "access" }),
@@ -713,12 +710,12 @@ function V4ComposerModelControlsImpl({
   const teamEntitlement = useUsageEntitlement({
     enabled: !providerSourcesLoading && Boolean(contextCodingPlanUsageTeamSource),
     includeSubscription: true,
-    // 原硬编码 bigmodelCodingPlan，zai family team plan 选中时
-    // contextCodingPlanUsageTeamSource.providerId 是 zaiCodingPlan，但这里仍传 bigmodelCodingPlan
-    // → 服务端 pickQuotaProvider 按 providerId 精确匹配选不到 zai provider →
-    // resolveAuthorization 返回 null → zai team plan 的输入框上下文用量区域不显示额度。
-    // 改为跟随 team source 的 providerId（已在 resolveContextTeamUsageSourceFromEntitlementSnapshot
-    // / resolveV4ContextPlanConnection 按 family 正确产出 zaiCodingPlan/bigmodelCodingPlan）。
+    // Previously this hard-coded bigmodelCodingPlan. When a zai-family team plan was selected,
+    // contextCodingPlanUsageTeamSource.providerId was zaiCodingPlan but this still passed bigmodelCodingPlan.
+    // The server's pickQuotaProvider then failed to find the zai provider by exact providerId,
+    // resolveAuthorization returned null, and the input context usage area showed no quota for the zai team plan.
+    // Follow the team source's providerId instead (resolveContextTeamUsageSourceFromEntitlementSnapshot /
+    // resolveV4ContextPlanConnection already produce zaiCodingPlan/bigmodelCodingPlan according to family).
     preferredProviderId:
       contextCodingPlanUsageTeamSource?.providerId ??
       BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
@@ -731,8 +728,8 @@ function V4ComposerModelControlsImpl({
   });
   const refreshTaskEntitlements = useCallback(
     async (options?: UsageEntitlementRefreshOptions) => {
-      // Team Plan 的 context 面板使用 sourceId 隔离自己的 freshness key；任务边界刷新时
-      // 与全局 entitlement 一起发布，底层 request key 会合并相同团队请求。
+      // The Team Plan context panel uses sourceId to isolate its freshness key; publish it with global entitlements
+      // during task-boundary refreshes, and the underlying request key coalesces identical team requests.
       await Promise.all([refreshCodingPlanEntitlements(options), teamEntitlement.refresh(options)]);
     },
     [refreshCodingPlanEntitlements, teamEntitlement.refresh],
@@ -837,7 +834,7 @@ function V4ComposerModelControlsImpl({
       ? codingPlanUsageRemainingConfig
       : undefined;
 
-  // 高频交互排障只走 debug，避免生产日志量随每次选择增长。
+  // Use debug for high-frequency interaction diagnostics so production log volume does not grow with every selection.
   useEffect(() => {
     if (!draftMode) return;
     logger.debug("[v4-toolbar] draft effectiveConfig changed", {
@@ -853,6 +850,9 @@ function V4ComposerModelControlsImpl({
       apiKeyLabel: intl.formatMessage({ id: "settings.modelProvider.apiKey" }),
       apiKeyBadgeLabel: intl.formatMessage({
         id: "settings.modelProvider.connectionMode.apiKeyBadge",
+      }),
+      chatgptPlanBadgeLabel: intl.formatMessage({
+        id: "settings.modelProvider.chatgpt.pickerBadge",
       }),
       codingPlanLabel: intl.formatMessage({
         id: "settings.modelProvider.connectionMode.codingPlan",
@@ -880,7 +880,7 @@ function V4ComposerModelControlsImpl({
     return buildRegistryModelSelectGroups(displayProvider, modelSelectionView, modelGroupLabels);
   }, [displayProvider, modelGroupLabels, modelSelectionView]);
 
-  // 修复：恢复「管理模型」入口（老版 onManageModels = 打开设置页并定位模型供应商区）。
+  // Restore the “Manage models” entry (the old onManageModels opened settings and focused the model-provider section).
   const handleOpenModelProviderSettings = useCallback(() => {
     setPendingSettingsSectionIntent("modelProvider");
     openSettingsTab();
@@ -890,7 +890,7 @@ function V4ComposerModelControlsImpl({
     id: "chat.toolbar.model.manageModels",
   });
 
-  // 当前投影模型的编码值：provider 命中目录则按自定义模型编码，否则回落裸 model id。
+  // Encode the currently projected model: use the custom-model encoding when its provider matches the catalog; otherwise fall back to the bare model ID.
   const rawModelValue = useMemo(() => {
     if (!effectiveConfig || !effectiveConfig.model) return "";
     const providerExists = modelSelectionView?.providers.some(
@@ -902,9 +902,10 @@ function V4ComposerModelControlsImpl({
     return effectiveConfig.model;
   }, [effectiveConfig, modelSelectionView]);
 
-  // 触发器显示兜底——`<synthetic>`（SDK 恢复时合成的占位模型）或当前模型
-  // 不在可选组（失效/下线/退登）→ 回落占位/默认「选择模型」，不直显协议内部占位符或失效
-  // 模型 id。复用存活的 resolveModelSelectTriggerDisplay。
+  // Trigger display fallback: if `<synthetic>` (a placeholder model synthesized during SDK
+  // restore) or the current model is absent from the selectable group (invalid/offline/signed out),
+  // fall back to the placeholder/default “Select model” instead of showing an internal protocol placeholder or invalid model.
+  // Do not show protocol-internal placeholders or invalid model IDs. Reuse resolveModelSelectTriggerDisplay.
   const triggerDisplay = useMemo(
     () =>
       resolveModelSelectTriggerDisplay(
@@ -918,7 +919,7 @@ function V4ComposerModelControlsImpl({
   const normalizedModelValue = triggerDisplay.value ?? "";
 
   const modelTriggerDisplay = useMemo(() => {
-    // 非可选值（未选 / synthetic / 不可用）：占位文案或默认「选择模型」。
+    // For a non-selectable value (unselected/synthetic/unavailable), show the placeholder or default “Select model.”
     const fallbackLabel =
       triggerDisplay.placeholder ?? intl.formatMessage({ id: "chat.toolbar.model.label" });
     const providerName =
@@ -944,8 +945,8 @@ function V4ComposerModelControlsImpl({
     (value: string, reasoningLevel?: string) => {
       if (modelLocked) return;
       const decoded = decodeCustomModelValue(value);
-      // 草稿的点击时可见模型可能只存在于 catalog，或已经被最新 draft
-      // intent 覆盖，不能让 SessionPane 再从迟到的 prewarm projection 反推。
+      // The model visible when clicked in a draft may exist only in the catalog or may already be superseded by
+      // the latest draft intent; do not let SessionPane infer it again from a late prewarm projection.
       const sourceModel =
         effectiveConfig?.provider && effectiveConfig.model
           ? {
@@ -953,7 +954,7 @@ function V4ComposerModelControlsImpl({
               model: effectiveConfig.model,
             }
           : null;
-      // debug 日志（草稿态切模型排障）：点击值 + 解码分支。
+      // Debug log for draft model-switch troubleshooting: clicked value and decode branch.
       logger.debug("[v4-toolbar] model select onValueChange", {
         value,
         decodedProviderId: decoded?.providerId ?? null,
@@ -996,7 +997,7 @@ function V4ComposerModelControlsImpl({
         onSelectModel(value.slice(0, slashIndex), value.slice(slashIndex + 1), sourceModel);
         return;
       }
-      // 裸 model id：provider 沿用当前（宿主从最新投影补齐）。
+      // Bare model ID: keep the current provider (the host fills it from the latest projection).
       onSelectModel("", value, sourceModel);
     },
     [
@@ -1080,7 +1081,7 @@ function V4ComposerModelControlsImpl({
     [effectiveConfig, modelSelectionView],
   );
 
-  // 候选档位只来自目标 Host 的 ModelSelectionView，已选档位只来自 Composer。
+  // Candidate tiers come only from the target Host's ModelSelectionView; the selected tier comes only from Composer.
   const thoughtOption = useMemo<ZCodeConfigOption | null>(() => {
     if (!effectiveConfig) return null;
     if (!draftModelThoughtOption) return null;
@@ -1097,8 +1098,8 @@ function V4ComposerModelControlsImpl({
     (value: string) => {
       if (!effectiveConfig) return;
       if (!value.trim()) {
-        // 跨模型受控 Select 重建时可能抛出一次空 value；它不是用户选择，
-        // 若继续上抛会把模型 intent 标成 superseded，导致 accepted 模型无法写入全局元组。
+        // Rebuilding the controlled Select across models may emit an empty value once; this is not a user selection.
+        // Propagating it would mark the model intent superseded and prevent the accepted model from being written to the global tuple.
         logger.debug("[v4-toolbar] ignore synthetic empty thought change", {
           model: effectiveConfig.model,
           provider: effectiveConfig.provider,
@@ -1113,7 +1114,7 @@ function V4ComposerModelControlsImpl({
     [effectiveConfig, onSelectThought],
   );
 
-  // Ctrl+T 热键：按目录顺序循环下一次 Submission 的思考深度。
+  // Ctrl+T shortcut: cycle the next Submission's reasoning depth in catalog order.
   const handleCycleThoughtLevel = useCallback(() => {
     if (!thoughtOption || thoughtOption.type !== "select") {
       return;
@@ -1137,10 +1138,30 @@ function V4ComposerModelControlsImpl({
       size: contextWindow.maxTokens,
       ...(contextWindow.cache ? { cache: contextWindow.cache } : {}),
       ...(contextWindow.breakdown ? { breakdown: contextWindow.breakdown } : {}),
+      ...(contextWindow.autoCompactThresholdTokens !== undefined
+        ? { autoCompactThresholdTokens: contextWindow.autoCompactThresholdTokens }
+        : {}),
+      ...(contextWindow.autoCompactThresholdAuthoritative === true
+        ? { autoCompactThresholdAuthoritative: true }
+        : {}),
+      ...(contextWindow.microcompactThresholdTokens !== undefined
+        ? { microcompactThresholdTokens: contextWindow.microcompactThresholdTokens }
+        : {}),
     };
   }, [usage?.contextWindow]);
-  // 工具条热键已转正为命令表命令：tooltip 快捷键文案读生效表，
-  // 改绑后按钮提示即时跟随（不能用硬编码文案）。
+  const usageTone = taskUsage
+    ? resolveContextBudgetTone({
+        autoCompactThresholdTokens:
+          taskUsage.autoCompactThresholdAuthoritative === true
+            ? taskUsage.autoCompactThresholdTokens
+            : undefined,
+        contextWindow: taskUsage.size,
+        microcompactThresholdTokens: taskUsage.microcompactThresholdTokens,
+        usedTokens: taskUsage.used,
+      })
+    : "normal";
+  // Toolbar shortcuts are now command-table commands: tooltip shortcut labels read from the active bindings,
+  // so button hints update immediately after rebinding (do not hard-code their text).
   const modelShortcutLabel = useShortcutCommandLabel("openModelMenu");
   const thoughtShortcutLabel = useShortcutCommandLabel("cycleThoughtLevel");
   const selectConnection = connectionSwitch.select;
@@ -1153,30 +1174,34 @@ function V4ComposerModelControlsImpl({
         pending: connectionSwitch.pending,
         // 团队目录查询不是用户的连接切换操作，不能把登录错误挂到 API 菜单。
         error: connectionSwitch.error,
-        onSelect: (group) => {
+        // ISSUE-058: provider rows only browse; this runs when a model row is picked in a
+        // browsed group, so the picked model (not the group's first one) is switched to.
+        onSelectModel: (group, value) => {
           // 原因：展示失败时设置可能已成功；已选连接仍须允许重试，不能被同 key 短路。
-          if (group.key === selectedPlanKey && !connectionSwitch.error) return;
-          if (group.connection) {
-            void selectConnection(group.connection, selectedPlanKey);
-          } else {
-            const model = chooseConnectionModel(
-              group.items,
-              decodeCustomModelValue(normalizedModelValue)?.modelName,
-            );
-            const providerId = decodeCustomModelValue(model?.value ?? "")?.providerId;
-            // 原因：普通 API 原先绕过连接切换 owner，缺少 loading 且会暴露旧目录。
-            if (providerId)
-              void selectConnection(
-                {
-                  key: group.key,
-                  label: group.label,
-                  providerId,
-                  family: connectionFamily,
-                  items: group.items,
-                },
-                selectedPlanKey,
-              );
+          if (group.key === selectedPlanKey && !connectionSwitch.error) {
+            handleModelValueChange(value);
+            return;
           }
+          const modelName = group.items.find((item) => item.value === value)?.name;
+          if (group.connection) {
+            void selectConnection(group.connection, selectedPlanKey, modelName);
+            return;
+          }
+          const providerId = decodeCustomModelValue(value)?.providerId;
+          // 原因：普通 API 原先绕过连接切换 owner，缺少 loading 且会暴露旧目录。
+          if (providerId)
+            void selectConnection(
+              {
+                key: group.key,
+                label: group.label,
+                providerId,
+                family: connectionFamily,
+                items: group.items,
+              },
+              selectedPlanKey,
+              modelName,
+            );
+          else handleModelValueChange(value);
         },
       },
       providerLabel: intl.formatMessage({ id: "chat.toolbar.combined.provider" }),
@@ -1198,7 +1223,7 @@ function V4ComposerModelControlsImpl({
       connectionSwitch.pending,
       connectionSwitch.error,
       selectConnection,
-      normalizedModelValue,
+      handleModelValueChange,
       connectionFamily,
       intl,
       thoughtShortcutLabel,
@@ -1209,13 +1234,14 @@ function V4ComposerModelControlsImpl({
   );
   const isModelOptionLocked = useCallback(() => false, []);
 
-  // 键盘热键（旧 useToolbarShortcutBindings）：Ctrl+M 打开模型菜单、Ctrl+T 循环思考深度。
-  // 模式循环（Ctrl+Shift+M）由 V4ComposerModeSwitch 单独绑定（modeOption 在彼处）。
-  // 模型留空是正常的待选择状态，包括已有会话；不能因为没有已选模型隐藏重选入口。
-  // 有可选组时正常显示；无组但有「管理模型」入口时也显示，避免用户零模型入口。
+  // Keyboard shortcuts (formerly useToolbarShortcutBindings): Ctrl+M opens the model menu; Ctrl+T cycles reasoning depth.
+  // Mode cycling (Ctrl+Shift+M) is bound separately by V4ComposerModeSwitch (modeOption lives there).
+  // An empty model is a valid awaiting-selection state, including for existing conversations; do not hide the reselection entry.
+  // Show it when selectable groups exist, and also when no groups exist but “Manage models” is available, so users always have a model entry point.
   const modelMenuVisible = modelSelectGroups.length > 0 || showManageModelsAction;
-  // Bug 根因：手机端固定宽度的二级菜单没有消费 Radix 测得的当前方向可用宽度，
-  // 共享 min-w-32 还会阻止极窄空间继续收缩。保持二级交互，同时把窗口边缘作为硬上限。
+  // Root cause: the fixed-width mobile submenu ignored the available width Radix measured for the
+  // current side, and the shared min-w-32 prevented further shrinking in very narrow spaces. Keep
+  // the submenu interaction while treating the viewport edge as a hard limit.
   const providerSubmenuClassName =
     isWebRemoteControl && isMobileViewport
       ? "w-40 min-w-0 max-w-(--radix-dropdown-menu-content-available-width)"
@@ -1235,10 +1261,11 @@ function V4ComposerModelControlsImpl({
   return (
     <>
       {/*
-        e2e 契约（TID_V4_MODEL_CONFIG）：Composer/usage 状态的 data-* 属性锚点。
-        Bug 原因：跨模型切换会主动清除源模型的显式 thought；此时可见控件已按目标模型
-        Option Spec 展示默认档位，但旧锚点仍暴露空的原始投影。data-thought 必须与用户
-        实际看到的受控值一致，不能重新引入一份草稿状态。
+        E2E contract (TID_V4_MODEL_CONFIG): data-* attribute anchors for Composer/usage state.
+        Bug cause: Switching models deliberately clears the source model's explicit thought setting. The
+        visible control then shows the target model's default level from its Option Spec, while the
+        old anchor still exposes the empty raw projection. data-thought must match the controlled
+        value the user actually sees; do not introduce a second draft state.
       */}
       <span
         data-testid={TID_V4_MODEL_CONFIG}
@@ -1259,9 +1286,10 @@ function V4ComposerModelControlsImpl({
         data-plan-enabled={draftConfig?.planEnabled ?? false}
         data-usage-used={usage?.contextWindow?.usedTokens ?? ""}
         data-usage-max={usage?.contextWindow?.maxTokens ?? ""}
+        data-usage-tone={usageTone}
         className="hidden"
       />
-      {/* Highspeed 卡激活即锁定模型；不能等动效交接完成才隐藏，否则 usage 圈圈会短暂闪现。 */}
+      {/* A Highspeed card locks the model the moment it activates; do not wait for the motion handoff to finish before hiding, or the usage ring briefly flashes. */}
       {!modelLocked ? (
         <ChatContextUsage
           codingPlanUsageRemaining={codingPlanUsageRemaining}
@@ -1274,7 +1302,7 @@ function V4ComposerModelControlsImpl({
           compressionDisabled={disabled || recoveryPending}
         />
       ) : null}
-      {/* 加速轮的模型由本次卡决定，选型菜单此时不可用，所以指示器优先于选型加载态。 */}
+      {/* The speed-wheel model is decided by the current card and the model picker is unavailable then, so the indicator takes precedence over the picker loading state. */}
       {highspeedPresented && highspeedModel ? (
         <HighspeedModelIndicator
           model={highspeedModel}

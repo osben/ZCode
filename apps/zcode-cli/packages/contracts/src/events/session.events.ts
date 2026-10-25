@@ -40,6 +40,8 @@ import type {
   TurnId,
 } from "../interfaces/shared.js";
 import type {
+  ExternalAgentConfigUpdatedPayload,
+  ExternalAgentStatusPayload,
   ModelNetworkStatusEvent,
   ModelSelection,
   ModelUsage,
@@ -88,6 +90,10 @@ export const SessionEventType = {
   SessionCompacted: "session_compacted",
   SessionTitleUpdated: "session_title_updated",
   SessionModeChanged: "session_mode_changed",
+  // ACP agent session selects (specs/acp-agent-runtime.md "S6"): config state, never a transcript row.
+  ExternalAgentConfigUpdated: "external_agent_config_updated",
+  // ACP agent stall/resume during a prompt: a transient turn status, never a transcript row.
+  ExternalAgentStatus: "external_agent_status",
   SessionEnded: "session_ended",
   TurnStarted: "turn_started",
   TurnInputReceived: "turn_input_received",
@@ -112,6 +118,7 @@ export const SessionEventType = {
   UserMessage: "user_message",
   AssistantMessage: "assistant_message",
   AssistantFeedbackUpdated: "assistant_feedback_updated",
+  RowPinnedUpdated: "row_pinned_updated",
   HighspeedMetricsUpdated: "highspeed_metrics_updated",
   // （2026-09-12）：原 ToolWidgetStateUpdated / SessionPluginUiStateUpdated 已删除，
   // 插件 UI widgetState 回退 renderer 内存，不再经 CLI 事件流。
@@ -332,7 +339,8 @@ export interface WorkflowBlockedMeta {
 /** 独立后台结果轮的展示元信息；批量轮可复用代表任务身份并合成 title，不从通知文本反向解析。 */
 export interface BackgroundResultOriginMeta {
   /** `workflow` 是 dynamic-workflow run（workId ≡ runId），复用整条后台通知管线。 */
-  backgroundSource: "bash" | "subagent" | "workflow";
+  /** `dream` is the /dream memory-consolidation completion notification. */
+  backgroundSource: "bash" | "subagent" | "workflow" | "dream";
   workId: string;
   title: string;
   /** 只在 backgroundSource === "workflow" 的单条通知轮上在场；manifest 渲染的唯一数据源。 */
@@ -671,13 +679,20 @@ export interface AssistantFeedbackUpdatedPayload {
   feedback: "like" | "dislike" | null;
 }
 
+/** Display-only pin bookmark (unix ms, CLI clock); null unpins. Not injected into agent context. */
+export interface RowPinnedUpdatedPayload {
+  entityId: string;
+  pinnedAt: number | null;
+}
+
 export interface HighspeedMetricsUpdatedPayload {
   entityId: string;
   highspeed: HighspeedMessageMetadata;
 }
 
 export interface SystemMessagePayload {
-  type: "init" | "compact_boundary" | "interrupted";
+  /** `external_agent_context_reset`: `content` is the agent id (specs/acp-agent-runtime.md "S5"). */
+  type: "init" | "compact_boundary" | "interrupted" | "external_agent_context_reset";
   content: string;
   compactBoundary?: CompactBoundaryPayload;
 }
@@ -848,6 +863,14 @@ export interface ModelCompletePayload {
   content: string;
   contextUsageBreakdown?: ContextUsageBreakdownItem[];
   contextWindow?: number;
+  /**
+   * Effective auto-compact threshold in tokens for the executing model and compact config, resolved by the
+   * runtime with the same math as `shouldAutoCompact`; `null` means auto-compact is disabled. Emitted on
+   * main-turn completions only; absent in older events.
+   */
+  autoCompactThresholdTokens?: number | null;
+  /** Effective microcompact threshold; null means disabled, absent is a legacy event. */
+  microcompactThresholdTokens?: number | null;
   fileChanges?: TurnFileChangeSummary;
   querySource?: string;
   stopReason: string;
@@ -894,6 +917,8 @@ export interface ToolCallScheduledPayload {
   toolCallId: ToolCallId;
   assistantMessageId?: MessageId;
   toolName: string;
+  /** Human-readable title of an external agent tool call (ACP `title`); absent for ZCode tools. */
+  title?: string;
   input: unknown;
   dependencies?: ToolCallId[];
   parallelGroupIndex?: number;
@@ -973,7 +998,8 @@ export interface BackgroundTaskPayloadBase {
   toolName?: string;
   // "workflow" = workflow run（CreateWorkflow）。追踪器的行为已按 per-tool lifecycleProvider
   // 分派，taskKind 只决定面板分组与图标，所以加宽是纯展示修正，不改任何生命周期语义。
-  taskKind?: "bash" | "subagent" | "workflow";
+  // "dream" = background memory consolidation launched by the /dream command (registry task, not a tool call).
+  taskKind?: "bash" | "subagent" | "workflow" | "dream";
   childSessionId?: SessionId | string;
   blocked?: boolean;
   blockedReason?: "interactive_prompt_detected" | "no_output_progress" | string;
@@ -1293,6 +1319,24 @@ export function createModelUsageSummaryFromEvents(
   return createModelUsageSummary(usages);
 }
 
+/**
+ * Latest ChatGPT plan (SIWC) usage reading carried by this turn's model_complete events. Keep provider id
+ * beside its snapshot so model switches and queued turns cannot attribute the reading using a later session selection.
+ */
+export function latestProviderRateLimitReadingFromEvents(
+  events: readonly SessionEvent[],
+): { providerId: string; usage: NonNullable<ModelUsage["providerRateLimits"]> } | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type !== SessionEventType.ModelComplete) continue;
+    const usage = (event.payload as Partial<ModelCompletePayload>).usage as ModelUsage | undefined;
+    if (usage?.providerRateLimits && usage.providerRateLimitProviderId) {
+      return { providerId: usage.providerRateLimitProviderId, usage: usage.providerRateLimits };
+    }
+  }
+  return undefined;
+}
+
 export type SessionEventPayload =
   | SessionCreatedPayload
   | SessionResumedPayload
@@ -1300,6 +1344,8 @@ export type SessionEventPayload =
   | SessionCompactedPayload
   | SessionTitleUpdatedPayload
   | SessionModeChangedPayload
+  | ExternalAgentConfigUpdatedPayload
+  | ExternalAgentStatusPayload
   | TurnStartedPayload
   | TurnInputReceivedPayload
   | TurnSteerQueuedPayload

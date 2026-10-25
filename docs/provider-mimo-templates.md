@@ -1,25 +1,25 @@
-# Xiaomi MiMo API 与 Token Plan 模板
+# Xiaomi MiMo API and Token Plan templates
 
-## 接入事实（2026-10-14 核验）
+## Integration facts (verified 2026-10-14)
 
-MiMo 按量 API 和 Token Plan 是独立接入产品。设置页需要提供两张模板，避免用户把订阅密钥填到按量地址。
+MiMo pay-as-you-go API and Token Plan are separate products. Settings must offer two templates so users do not paste a subscription key into the pay-as-you-go endpoint.
 
-| 模板 ID | 中英文名称 | Anthropic Base URL | 凭据 |
-| --- | --- | --- | --- |
-| `xiaomi-mimo` | Xiaomi MiMo API | `https://api.xiaomimimo.com/anthropic` | 按量 API Key，`sk-` |
-| `xiaomi-mimo-token-plan` | Xiaomi MiMo Token Plan | `https://token-plan-cn.xiaomimimo.com/anthropic` | 个人 `tp-` 或团队 `ttp-` |
+| Template ID              | Name                   | Anthropic Base URL                               | Credentials                   |
+| ------------------------ | ---------------------- | ------------------------------------------------ | ----------------------------- |
+| `xiaomi-mimo`            | Xiaomi MiMo API        | `https://api.xiaomimimo.com/anthropic`           | pay-as-you-go API key, `sk-`  |
+| `xiaomi-mimo-token-plan` | Xiaomi MiMo Token Plan | `https://token-plan-cn.xiaomimimo.com/anthropic` | personal `tp-` or team `ttp-` |
 
-凭据来自[官方控制台](https://platform.xiaomimimo.com/)。两种 Key 不能混用，但客户端不新增前缀校验。Token Plan 的实际地址以用户控制台为准；同协议也有 `token-plan-sgp.xiaomimimo.com`、`token-plan-ams.xiaomimimo.com` 集群，用户继续通过现有 Base URL 编辑入口覆盖。
+Credentials come from the [official console](https://platform.xiaomimimo.com/). The two key kinds are not interchangeable, but the client adds no prefix validation. The actual Token Plan endpoint follows the user's console; the same protocol also has `token-plan-sgp.xiaomimimo.com` and `token-plan-ams.xiaomimimo.com` clusters, which users override through the existing Base URL edit entry.
 
-官方依据：[首次调用](https://mimo.mi.com/docs/zh-CN/quick-start/summary/first-api-call)、[Token Plan 快速接入](https://mimo.mi.com/docs/zh-CN/tokenplan/Token%20Plan/quick-access)。
+Official references: [first call](https://mimo.mi.com/docs/zh-CN/quick-start/summary/first-api-call), [Token Plan quick access](https://mimo.mi.com/docs/zh-CN/tokenplan/Token%20Plan/quick-access).
 
-## 模型及兼容边界
+## Models and compatibility boundaries
 
-- 两模板提供 `mimo-v2.6-pro`、`mimo-v2.6-flash`，默认启用；模型事实共用规则，1M 上下文按现有配置单位记为 1000000，最大输出 131072，文本输出，支持文本、图像、视频及音频输入。Anthropic 的推理选项为 `disabled` / `enabled`，映射到 `thinking.type`，输出上限映射到 `max_tokens`。
-- 官方[模型列表](https://mimo.mi.com/docs/zh-CN/quick-start/summary/model)及 [Anthropic 协议](https://mimo.mi.com/docs/zh-CN/api/chat/anthropic-api)提供上述依据。[Token Plan 个人版](https://mimo.mi.com/docs/zh-CN/tokenplan)列出 Pro、Flash 的套餐支持；Ultraspeed 属定制服务，不作为通用模板默认成员；ASR/TTS 不属于本次聊天模型目录。
-- 官方公告 V2.5 Pro、V2.5 将于北京时间 2026-10-21 10:00 下线。原 API 模板暂时保留这两项及其规则，供已有选择继续解析；新 Token Plan 模板只提供 V2.6。此变更不自动改写用户的模型选择，用户需要主动切换到 V2.6。后续删除旧成员单独处理。
-- 原 `xiaomi-mimo` 的 templateId 不变，只更新默认展示名并增加 V2.6。Personal 的 providerId、自定义名称、enabled、Key、API 地址、模型覆盖不迁移、不重写。已有实例若手填 Token Plan 地址仍保留该地址。
-- 两模板复用现有 `xiaomi-mimo` 图标和模板创建流程；不引入 Provider 类型、品牌条件分支或新的状态源。
+- Both templates provide `mimo-v2.6-pro` and `mimo-v2.6-flash`, enabled by default; model facts share one rule set — 1M context recorded as 1000000 in the existing config units, max output 131072, text output, and text/image/video/audio input. Anthropic reasoning options are `disabled` / `enabled`, mapped to `thinking.type`; the output cap maps to `max_tokens`.
+- The official [model list](https://mimo.mi.com/docs/zh-CN/quick-start/summary/model) and [Anthropic protocol](https://mimo.mi.com/docs/zh-CN/api/chat/anthropic-api) back the above. [Token Plan personal](https://mimo.mi.com/docs/zh-CN/tokenplan) lists Pro/Flash plan support; Ultraspeed is a custom service and not a default template member; ASR/TTS are not part of this chat model catalog.
+- The official announcement retires V2.5 Pro and V2.5 at 2026-10-21 10:00 Beijing time. The original API template temporarily keeps both and their rules so existing selections keep resolving; the new Token Plan template offers V2.6 only. This change does not rewrite user model selections — users must actively switch to V2.6. Removing the old members is a separate later step.
+- The original `xiaomi-mimo` templateId is unchanged; only the default display name is updated and V2.6 added. Personal providerId, custom name, enabled, key, API URL, and model overrides are neither migrated nor rewritten. Existing instances that manually entered a Token Plan address keep it.
+- Both templates reuse the existing `xiaomi-mimo` icon and template creation flow; no new Provider type, brand conditional, or state source.
 
 ```text
 Built-in 模板 + 模型规则
@@ -29,14 +29,14 @@ Personal 实例 → Effective Provider → Registry → 新建模型请求
 设置页显式创建/编辑 → ProviderSettingsFacade → Personal 文件
 ```
 
-源文件为 `config/provider/zcode-builtin.json`，递增 revision，测试环境文件由 `pnpm provider:config:sync-test` 生成。下载、缓存和发布方式沿用现有合同，不随 MR 自动发布远端配置。
+The source file is `config/provider/zcode-builtin.json` with an incremented revision; the test-environment file is generated by `pnpm provider:config:sync-test`. Download, caching, and publishing keep the existing contract — the remote config is not published automatically with the MR.
 
-## 验收
+## Acceptance
 
-| ID | 场景 | 断言与证据 |
-| --- | --- | --- |
-| MIMO-01 | 生产/测试配置读取、两模板解析 | 名称、协议、地址、模型成员和启用规则正确；V2.6 能力与参数映射完整 |
-| MIMO-02 | 原实例及海外地址覆盖 | 名称、禁用状态、密钥、地址、个人模型配置保留；解析不修改 Personal |
-| MIMO-03 | 手机宽度中文浅色 / 桌面宽度英文深色 | 两张模板及 tooltip、图标显示正确；分别点击只交付对应 templateId；详情使用各自 Base URL，无额外写入或横向溢出 |
+| ID      | Scenario                                            | Assertions and evidence                                                                                                                                                   |
+| ------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MIMO-01 | Production/test config read, both templates resolve | Names, protocol, URLs, model members, and enable rules correct; V2.6 capabilities and parameter mappings complete                                                         |
+| MIMO-02 | Existing instances and overseas URL overrides       | Name, disabled state, key, URL, and personal model config preserved; resolution does not modify Personal                                                                  |
+| MIMO-03 | Mobile-width zh-CN light / desktop-width en dark    | Both templates, tooltips, and icons render correctly; each click delivers only its templateId; details use their own Base URL with no extra writes or horizontal overflow |
 
-配置/Resolver 单测覆盖 MIMO-01/02。浏览器 pending 用例覆盖 MIMO-03 的共享组件，详见[用例矩阵](testing/provider-settings-batch-20260910.md)。浏览器夹具隔离服务写入，不等同于完整 Electron、手机 shared-host 或真实官方付费请求验证。
+Config/Resolver unit tests cover MIMO-01/02. Pending browser cases cover the shared components of MIMO-03 — see the [case matrix](testing/provider-settings-batch-20260910.md). Browser fixtures isolate service writes and are not equivalent to full Electron, mobile shared-host, or real paid official-request verification.

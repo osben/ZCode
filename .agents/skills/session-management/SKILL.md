@@ -16,9 +16,18 @@ description: 修改 ZCode 会话管理（左侧任务列表、tasks-index.sqlite
 ```text
 CLI  db.sqlite      存在性(软删除 time_deleted)、title+title_source、time_created/updated、last_outcome、正文、goal、fork、trace
 Host tasks-index    project_id、pinned、archived、unread_at(+CAS)、sort_order、projects/roots/hosts、定时/闲时；控制端另存跨设备分组成员与顺序
-                    cli_* 列 = CLI 事实的只读镜像，唯一写者 taskIndexSyncer
-禁止：CLI 写 app 库；Host 写 db.sqlite；Host 对任何 cli_* 列写 Date.now() 或从 snapshot 推导的值
+                    cli_* 列 = CLI 事实的只读镜像，写者见下方「CLI 事实列写者」
+禁止：CLI 写 app 库；Host 写 db.sqlite；Host 对任何 cli_* 列写 Date.now() 或从 snapshot 推导的值。唯一例外：下方「CLI 事实列写者」中两条携带 CLI 活动时间的 `cli_updated_at` 写入
 ```
+
+### CLI 事实列写者（单写者规则）
+
+- `cli_title_source` 与 `cli_deleted` 只由 `TaskIndexRepo.applyCliFacts` 写入；`cli_updated_at` 的主写者也是它（取 max）。`applyCliFacts` 是 CLI 首次准入与之后每次 CLI 事实的入口。
+- `cli_updated_at` 另有两条显式 CLI 活动时间写入，作为上面禁止规则的例外：`syncTaskMeta`（meta 来自 CLI 快照或旧版导入，`syncer.syncSnapshotAndBroadcast`、适配器 `syncTaskIndexMeta`）与 `applyAgentPatch` 且 `patch.updatedAt` 存在（终态转换，`applyTerminalTransition` 的 `summary.lastActivityAt`）。两者都通过 `writeRecord` 的 `cliUpdatedAt` 参数传入 CLI 时间（取 max）。
+- 例外的原因：这两条路径承载 CLI 活动时间，却不经过 `applyCliFacts`。若删掉它们的写入，已准入行的排序会停在旧 CLI 时间（测试 `advances the CLI activity time of an admitted task on a terminal summary` 对此有回归保护）。
+- 后续：把这两条路径改为经 `applyCliFacts` 写入，届时删除本例外并删除 `cliUpdatedAt` 参数。在那之前，改动这两条路径时必须保留该参数。
+- 组织写不写 `cli_updated_at`：`updateTaskState`（重命名、置顶、归档、删除、未读）、`clearTaskUnreadIfMatches`、`deleteArchivedTask`、`seedTaskMetaIfMissing` 与新行插入。它们只改 Host 列（`updated_at` 等），因此 Host 时钟不会进入 CLI 时间。
+- 其余 `cli_*` 列在 `writeRecord` 的 ON CONFLICT 中仍按 Host 写入同步（`cli_title`、`cli_created_at`、`cli_last_outcome`），这些是既有镜像，本次改动未触及；改动它们前必须按本节重新核对写者。
 
 ### 为什么
 
@@ -73,6 +82,7 @@ Host tasks-index    project_id、pinned、archived、unread_at(+CAS)、sort_orde
 - 兼容退场三阶段：V1 只读新列、旧列只写不读；V2 写 `schema_floor` 并停双写；V3 物理删退场列 / `time_archived` 并重建主键。分组表已恢复为运行态，不能按旧计划删除。不要在任何阶段引入「永久」兼容分支。
 - 降级靠加法 schema，不靠备份；首次迁移遗留、旧版本新增或 CLI 首次发现的未归属 session 只判定一次：目录唯一匹配同 host 下未删除项目才归入，零个或多个匹配保留 NULL 并进入任务区，不自动建项目。唯一例外是远端 Source Server 的首次迁移：远端自身没有旧 workspace 清单，按历史任务目录建单 root 项目（虚拟项目 spec 2026-10-15 裁决）。旧 group、空组、系统组、颜色、成员和顺序继续读取；旧 Group → Project 转换取消，workspace → Project 保留。
 - `project_id IS NULL` 是合法未归类状态，不是待迁移标记。启动时先识别 `host_id IS NULL` 的旧版本新增行，再在同一事务补齐身份与首次归属；新版本创建或首次插入行时原子写入身份和归属。已处理的 NULL 行不因启动、对账或新增同目录项目而自动归入；全局新建任务显式保持未归类。
+- Fork 子会话在 `forkAssistant` ACK 时认领父会话的项目、cwd 与附加目录（`reserveCreatedTask({ forkOf })`）。父行尚未归属（`host_id IS NULL`）时认领返回「未认领」：ACK 记 warn 并照常成功，不建子会话行，子会话由 `admitForkSummary` 在父行归属后认领；父行归属于其他 Host 仍抛出 `project.host-mismatch`。`forked_from_task_id` 一经写入不被后续 upsert 替换（先写者胜出）。
 - 迁移复用同一 SQL / Repo，启动门禁在 Host Worker 完成后才初始化业务服务；异步等待锁，迁移事务提交后再发布 ready，失败 fail-closed（重试 / 打开备份目录）。不得另造迁移实现。
 
 ## 5. 改动前检查清单

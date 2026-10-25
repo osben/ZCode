@@ -94,8 +94,8 @@ export class GitCommitMessageGenerator {
     });
     const validation = validateGeneratedGitCommitMessage(rawMessage);
     if (!validation.ok) {
-      // 模型可能重复 prompt 或返回解释性长文本，直接塞给 UI 会让错误提示失控。
-      // 这里只保留短 preview 给用户，完整模型调用细节由 agent runtime 的模型日志记录。
+      // The model may repeat the prompt or return a long explanation; showing it directly in the UI would make the error message unwieldy.
+      // Keep only a short preview for the user; the agent runtime's model logs contain full call details.
       this.options.logger?.debug(undefined, "模型生成的 Git 提交消息不合规", {
         workspacePath: params.workspacePath,
         providerId: selection.providerId,
@@ -221,15 +221,18 @@ function buildGitCommitMessageGenerationPrompt(params: {
     .join("\n");
 }
 
-function resolveCommitMessageLanguage(locale?: Locale): "Chinese" | "English" {
+function resolveCommitMessageLanguage(locale?: Locale): "Chinese" | "English" | "Ukrainian" {
   const candidate = locale ?? readRuntimeLocale();
-  return candidate?.toLowerCase().startsWith("zh") ? "Chinese" : "English";
+  const normalized = candidate?.toLowerCase();
+  if (normalized?.startsWith("zh")) return "Chinese";
+  if (normalized?.startsWith("uk")) return "Ukrainian";
+  return "English";
 }
 
 function readRuntimeLocale(): string | undefined {
   try {
-    // 系统默认语言没有从 UI 显式传入时，服务层只能读取当前运行时的 Intl locale。
-    // 这里仍只接受 zh 为中文，其它未知或读取失败都按英文处理，避免误生成第三种语言。
+    // When the system language is not explicitly provided by the UI, the service layer can only read the current runtime's Intl locale.
+    // Recognize only zh / uk, which the UI supports; treat unknown values and read failures as English to avoid generating a language the UI does not support.
     return Intl.DateTimeFormat().resolvedOptions().locale;
   } catch {
     return undefined;

@@ -37,8 +37,8 @@ export async function recordMainTurnModelUsage(
     assistantMessageId: input.assistantMessageId,
     error: input.error,
     events: state.events,
-    // 运行中切模会立即更新 Session Selection；usage 若在 await 后重新读取它，
-    // 就会把旧请求的 token 归到新模型。这里只消费 model step 开始时的不可变快照。
+    // A model switch during execution updates Session Selection immediately. If usage rereads it after an await,
+    // tokens from the old request will be attributed to the new model. Use only the immutable snapshot from model-step start.
     model: input.model,
     networkEventStartIndex: input.networkEventStartIndex,
     parentUserMessageId: state.currentUserMessageId,
@@ -86,8 +86,8 @@ export function mainTurnCacheHitAggregateFromMessages(input: {
         return aggregate;
       }
 
-      // activeMessages 是 provider/context projection，Compact preserved usage
-      // 可能已被清零。active IDs 只决定分支成员，cache aggregate 必须读取持久化原始 tokens。
+      // activeMessages is a provider/context projection, and Compact may have cleared preserved usage.
+      // Active IDs determine branch membership only; cache aggregates must read the original persisted tokens.
       const inputTokens = nonNegativeInteger(message.info.tokens.input) ?? 0;
       const cacheReadTokens = nonNegativeInteger(message.info.tokens.cache.read) ?? 0;
       const cacheWriteTokens = nonNegativeInteger(message.info.tokens.cache.write) ?? 0;
@@ -130,8 +130,8 @@ export function recordMainTurnCacheHitUsage(
   if (!usage) {
     return undefined;
   }
-  // AI SDK v6 已把 Anthropic cache read/write 并入 inputTokens；
-  // 缓存命中率的分母应使用 total input，不能再把 cache 字段重复加到分母或上下文用量里。
+  // AI SDK v6 already includes Anthropic cache read/write in inputTokens.
+  // Cache-hit-rate denominator must use total input; do not add cache fields again to the denominator or context usage.
   const inputTokens = modelUsageInputWindowTokens(usage) ?? 0;
   const cacheReadTokens = nonNegativeInteger(usage.cacheReadTokens) ?? 0;
   const cacheWriteTokens = nonNegativeInteger(usage.cacheWriteTokens) ?? 0;
@@ -167,12 +167,12 @@ export function recordMainTurnCacheHitUsage(
 function modelUsageInputWindowTokens(usage?: ModelUsage): number | undefined {
   if (!usage) return undefined;
 
-  // core test/runtime 通过包入口解析 @zcode/contracts，新增 contracts helper 在未构建时不可用。
-  // 这里保留同一算法：按 Anthropic 口径把 cache read 并入当前请求的 input window。
+  // Core tests/runtime resolve @zcode/contracts through the package entry point, so new contracts helpers are unavailable before a build.
+  // Keep the same algorithm here: include cache read in the current request's input window according to Anthropic's accounting.
   const inputTokens = positiveInteger(usage.inputTokens);
   if (inputTokens !== undefined) {
-    // AI SDK v6 的 Anthropic inputTokens 已经是普通输入 + cache read/write 的 total input。
-    // 统一使用 provider 已归一化的 input，避免自动压缩和 UI context meter 重复计算 cache。
+    // AI SDK v6's Anthropic inputTokens already includes ordinary input + cache read/write as total input.
+    // Use the provider-normalized input consistently so automatic compaction and the UI context meter do not count cache twice.
     return inputTokens;
   }
 

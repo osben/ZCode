@@ -38,7 +38,7 @@ export interface GitRepositorySummary {
   workspacePath: string;
   repoRoot: string;
   workspaceInRepoPath: string;
-  /** Git 元数据 watcher 边界；workspace 内容 watcher 由 UI 按 workspace Host 平台决定。 */
+  /** Git metadata watcher boundary; the UI selects the workspace content watcher based on the workspace Host platform. */
   autoRefreshWatchPaths: GitRepositoryAutoRefreshWatchPath[];
   branchName: string | null;
   trackingBranchName: string | null;
@@ -97,6 +97,108 @@ export interface GitRepositoryRequest {
   workspacePath: string;
 }
 
+export interface GitWorktreePathIdentityRequest {
+  /** Local absolute paths to compare with paths returned by listWorktrees. */
+  paths: string[];
+}
+
+export type GitBranchMergeState = "merged" | "not_merged" | "unknown";
+
+/**
+ * Local-git observation of the workspace branch (not a session event).
+ *
+ * headRef is the workspace's current branch: the data model has no per-session
+ * branches, so the observation granularity is workspace + its current branch.
+ * state=unknown is returned for detached HEAD, missing origin/HEAD, a branch
+ * missing locally, and git errors — the UI hides the badge in that case.
+ */
+export interface GitBranchMergeStatus {
+  state: GitBranchMergeState;
+  /** Default branch resolved from origin/HEAD, e.g. "origin/main"; null when unknown. */
+  baseRef: string | null;
+  /** Workspace current branch at probe time; null for detached/unknown. */
+  headRef: string | null;
+  /** ISO timestamp of the branch tip commit; null when unknown. */
+  lastCommitAt: string | null;
+}
+
+export interface GitBranchMergeStatusRequest extends GitRepositoryRequest {
+  workspaceIdentity?: string;
+}
+
+export type PullRequestStage = "draft" | "open" | "merged" | "closed";
+
+export type PullRequestChecks = "passing" | "running" | "failing" | "optional_failing" | "none";
+
+export type SessionPullRequestReviewDecision = "approved" | "changes_requested" | "review_required";
+
+/** One GitHub pull request linked to a worktree session branch (specs/sidebar-pr-status.md). */
+export interface SessionPullRequest {
+  number: number;
+  url: string;
+  title: string;
+  /** "owner/name" display label of the base repository the pull request lives in. */
+  repository: string;
+  headRefName: string;
+  stage: PullRequestStage;
+  checks: PullRequestChecks;
+  failingCheckCount: number;
+  totalCheckCount: number;
+  /** mergeable === "CONFLICTING". */
+  hasConflict: boolean;
+  reviewDecision: SessionPullRequestReviewDecision | null;
+  additions: number;
+  deletions: number;
+  /** ISO timestamp of the last update. */
+  updatedAt: string;
+  /** ISO timestamp; null while unmerged. */
+  mergedAt: string | null;
+}
+
+/**
+ * Derived health of a task's open/draft pull requests (specs/sidebar-pr-status.md):
+ * the worst value wins, severity conflict > failing > optional_failing > running > passing > none.
+ */
+export type SessionPullRequestHealth =
+  | "conflict"
+  | "failing"
+  | "optional_failing"
+  | "running"
+  | "passing"
+  | "none";
+
+export interface SessionPullRequestStatus {
+  state: "ready" | "unavailable" | "rate_limited";
+  unavailableReason: "no_gh" | "auth" | "not_github" | "error" | null;
+  /** v1 links pull requests by branch; a later pinned source adds "pinned". */
+  source: "branch";
+  /** Sorted, primary first. */
+  pullRequests: SessionPullRequest[];
+  primaryNumber: number | null;
+  /** ISO timestamp of the last successful fetch; null when never fetched. */
+  fetchedAt: string | null;
+  /** true when serving the last in-memory value after a failed or rate-limited refresh. */
+  stale: boolean;
+}
+
+export interface SessionPullRequestsTaskInput {
+  taskId: string;
+  /** Persisted executionWorktree.branchName; null when absent. */
+  branchName: string | null;
+  /** executionWorktree.path; null when absent. */
+  worktreePath: string | null;
+}
+
+export interface SessionPullRequestsRequest extends GitRepositoryRequest {
+  workspaceIdentity?: string;
+  tasks: SessionPullRequestsTaskInput[];
+  /** Bypass the TTL for these tasks (turn end, git refresh, explicit Refresh). */
+  forceTaskIds?: string[];
+}
+
+/** One status entry per requested task; tasks never requested are absent. */
+export type SessionPullRequestsResult = Record<string, SessionPullRequestStatus>;
+
 export type GitCommitGraphRefKind = "branch" | "remote" | "tag" | "head";
 
 export interface GitCommitGraphRef {
@@ -136,6 +238,122 @@ export interface GitWorkspaceRepositoryInfo {
   isGitAvailable: boolean;
 }
 
+/** One configured git remote (`git remote -v`, fetch URL preferred over push). */
+export interface GitRepositoryRemote {
+  name: string;
+  url: string;
+}
+
+export interface GitRepositoryRemotesResult {
+  workspacePath: string;
+  isGitAvailable: boolean;
+  isRepository: boolean;
+  /** Empty when git is unavailable or the workspace is not inside a repository. */
+  remotes: GitRepositoryRemote[];
+}
+
+/** Modeled after `git worktree list --porcelain`: one entry per worktree of the repository. */
+export interface GitWorktreeEntry {
+  /** Absolute worktree path (from the porcelain `worktree` line). */
+  path: string;
+  headCommitHash: string | null;
+  /** Short branch name from refs/heads/<name>; null for detached HEAD and bare repositories. */
+  branchName: string | null;
+  /** The main worktree; porcelain always lists it first. */
+  isMain: boolean;
+  isBare: boolean;
+  isDetached: boolean;
+  /** True when this entry is the worktree that contains the requested workspacePath. */
+  isCurrent: boolean;
+}
+
+export interface GitWorktreeListResult {
+  isGitAvailable: boolean;
+  isRepository: boolean;
+  worktrees: GitWorktreeEntry[];
+}
+
+export interface GitWorktreeVerifyRequest extends GitRepositoryRequest {
+  /** Registered worktree path whose real directory should be verified on this Host. */
+  targetPath: string;
+}
+
+/**
+ * Real-directory verification for a registered worktree: `git worktree list` can keep a stale
+ * registration after the directory was removed by hand. Read-only; never prunes or deletes.
+ */
+export type GitWorktreeVerifyResult =
+  | { ok: true }
+  | { ok: false; reason: "missing-directory" | "missing-git-link" };
+
+export interface GitWorktreeExcludeRequest extends GitRepositoryRequest {
+  /** Absolute path of the worktree that was just created or reused. */
+  targetPath: string;
+}
+
+/**
+ * Best-effort local exclusion of `.worktrees/` for inside-placement worktrees. Failure is
+ * informational only; it never fails the worktree creation or reuse that triggered it.
+ */
+export type GitWorktreeExcludeResult = { ok: true } | { ok: false };
+
+/** Invalid-branch-name / branch-already-exists / target-branch-not-found / branch-in-other-worktree / unknown reuse the literals of GitBranchMutationIssueCode; the rest are worktree-specific. */
+export type GitWorktreeMutationIssueCode =
+  | "invalid-branch-name"
+  | "branch-already-exists"
+  | "target-branch-not-found"
+  | "branch-in-other-worktree"
+  | "target-path-invalid"
+  | "target-path-exists"
+  | "not-a-repository"
+  | "git-unavailable"
+  | "worktree-not-found"
+  | "worktree-dirty"
+  | "worktree-locked"
+  | "unknown";
+
+export interface GitWorktreeMutationIssue {
+  code: GitWorktreeMutationIssueCode;
+  message: string;
+  paths?: string[];
+  detail?: string | null;
+}
+
+export interface GitCreateWorktreeRequest extends GitRepositoryRequest {
+  branchName: string;
+  /** Start point of the newly created branch; defaults to HEAD. Ignored when branchName already exists locally. */
+  baseBranch?: string;
+  /** Absolute path of the worktree directory to create; must not exist yet. */
+  targetPath: string;
+}
+
+export interface GitWorktreeCreateResult {
+  ok: boolean;
+  /** The created worktree path on success; null on failure. */
+  worktreePath: string | null;
+  branchName: string | null;
+  issues: GitWorktreeMutationIssue[];
+}
+
+export interface GitRemoveWorktreeRequest extends GitRepositoryRequest {
+  /** Absolute path of the linked worktree directory to remove; must not be the main worktree. */
+  targetPath: string;
+  /** true skips the dirty and locked checks (git worktree remove --force). */
+  force?: boolean;
+}
+
+export interface GitWorktreeRemoveResult {
+  ok: boolean;
+  issues: GitWorktreeMutationIssue[];
+}
+
+export interface GitWorktreePruneResult {
+  ok: boolean;
+  /** Number of stale administrative records reported by `git worktree prune --verbose`; parse failure counts as 0. */
+  prunedCount: number;
+  issues: GitWorktreeMutationIssue[];
+}
+
 export interface GitSwitchBranchRequest extends GitRepositoryRequest {
   targetBranchName: string;
 }
@@ -151,6 +369,17 @@ export interface GitChangesRequest extends GitRepositoryRequest {
 
 export interface GitIgnoredPathsRequest extends GitRepositoryRequest {
   paths: string[];
+}
+
+/** One status entry a forced worktree removal would discard; `status` is a short code such as `M`, `UU` or `??`. */
+export interface GitWorktreeRemovalPreviewFile {
+  path: string;
+  status: string;
+}
+
+/** Every staged, unstaged, conflicted and untracked entry of a worktree (specs/session-deletion-cascade.md). */
+export interface GitWorktreeRemovalPreview {
+  files: GitWorktreeRemovalPreviewFile[];
 }
 
 export interface GitDiffQuery extends GitRepositoryRequest, GitDiffRequest {}
@@ -253,6 +482,8 @@ export interface GitRefreshResult {
   unstagedChanges: GitFileChange[];
   stagedChanges: GitFileChange[];
   branchComparison: GitBranchComparison | null;
+  /** Auxiliary comparison failure; summary, changes and identity are still current. */
+  branchComparisonError?: string | null;
 }
 
 export type GitCheckpointScope = "workspace";

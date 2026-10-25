@@ -82,8 +82,8 @@ export function WorkspacePurposeSection({
         {/* 原因：右侧 margin 与 action padding 叠加，多出 10px；与项目行统一保留 4px。 */}
         <div className="ml-2 mr-1 flex h-7 min-w-0 items-center">
           <CollapsibleTrigger asChild>
-            {/* purpose 分组标题之前使用 13px，比同级“已置顶”更小。
-                这里统一为 section title 的 text-ui-base，避免可折叠能力改变标题层级。 */}
+            {/* Purpose group headings previously used 13px, smaller than the same-level “Pinned” heading.
+                Use text-ui-base for all section titles so collapsibility does not change the heading hierarchy. */}
             <button
               ref={setActivatorNodeRef}
               {...attributes}

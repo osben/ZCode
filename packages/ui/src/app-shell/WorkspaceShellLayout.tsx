@@ -42,6 +42,24 @@ import {
   useRemotePaneSessionLookup,
 } from "@/v4/usePaneSessionPersistence.js";
 import { requestV4ComposerDraftWorkspaceTransfer } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
+import {
+  ComposerDraftWorktreeIntentContext,
+  createComposerDraftWorktreeIntentSlot,
+} from "@/v4/composer/composerDraftWorktreeIntent.js";
+import {
+  selectDraftBranchIntent,
+  selectWorktreeIntentActive,
+  useDraftBranchIntentStore,
+} from "@/v4/composer/draftBranchIntent.js";
+import {
+  BranchSwitchGuardContext,
+  useBranchSwitchGuardShell,
+} from "@/v4/composer/branchSwitchGuard.js";
+import {
+  ComposerDestinationControl,
+  readComposerDestinationControlEnabled,
+} from "@/v4/composer/ComposerDestinationControl.js";
+import { shouldRenderComposerDestinationControl } from "@/v4/composer/destinationControlVisibility.js";
 import { ProjectComposerMenu, ProjectDirectoryProvider } from "@/project-sidebar/index.js";
 import { DesktopTopOverlay } from "@/DesktopTopOverlay.js";
 import { DesktopWindowFrame } from "@/DesktopWindowFrame.js";
@@ -61,6 +79,7 @@ import { PluginStorePage } from "@/settings/PluginStorePage.js";
 import { TaskFindDialog } from "@/quickpick/TaskFindDialog.js";
 import { WebRemoteControlMobileShell } from "@/WebRemoteControlMobileShell.js";
 import { resolveTopOverlayLeadingPaddingClass, WorkspaceHeader } from "@/WorkspaceHeader.js";
+import { PullRequestStatusProbes } from "@/PullRequestStatusProbes.js";
 import { WorkspaceSidebar, type SidebarFileTreeOpenRequest } from "@/WorkspaceSidebar.js";
 import { AnimatedSidePanePanel } from "@/app-shell/AnimatedSidePanePanel.js";
 import {
@@ -299,6 +318,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
 
   onCreateTask,
   onCreateConversationTask,
+  onCreateTaskInWorkspace,
   onCreateConversationTaskOnSource,
   onResolveConversationWorkspace,
   onOpenWorkspace,
@@ -360,6 +380,9 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
   gitWorktreeChangeSummary,
   activeGitSourceId,
   gitState,
+  gitReviewState,
+  handleRefreshGitReview,
+  gitRepositoryWorkspacePath,
   browserNavigationRequest,
   browserRestoreUrls,
   providerConfigFile,
@@ -399,6 +422,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
   handleNavigateFileManager,
   handleOpenPluginMarket,
   handleOpenTerminalTab,
+  handleOpenModelTrajectory,
   handleToggleGit,
   handleOpenGitReview,
   handleToggleSidePane,
@@ -462,6 +486,10 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
     },
   );
   const [isWebRemoteControlTaskSwitching, setIsWebRemoteControlTaskSwitching] = useState(false);
+  // Child sessions opened as read-only subagent views or selection side chats, keyed by workspace.
+  const [childSessionCapabilityByWorkspace, setChildSessionCapabilityByWorkspace] = useState<
+    Record<string, { sessionId: string; kind: "subagent_child" | "selection_side_chat" }>
+  >({});
   const [draftHeaderDropTargetController, setDraftHeaderDropTargetController] =
     useState<ConversationDropTargetController | null>(null);
   const workspaceKey = workspaceIdentity?.trim() || workspaceAbsPath;
@@ -521,7 +549,26 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
     draftFocusVersion: workspaceShellZCodeState.draftFocusVersion,
     enabled: !isWebRemoteControlShell,
     restoreOnStartup: Boolean(isDesktop && restorePaneSession),
-    selectSession: (sessionId) => handleSelectTask(workspaceAbsPath, sessionId, workspaceIdentity),
+    activeReadOnly:
+      childSessionCapabilityByWorkspace[workspaceKey]?.sessionId === activeTaskId &&
+      childSessionCapabilityByWorkspace[workspaceKey]?.kind === "subagent_child",
+    activeSelectionSideChat:
+      childSessionCapabilityByWorkspace[workspaceKey]?.sessionId === activeTaskId &&
+      childSessionCapabilityByWorkspace[workspaceKey]?.kind === "selection_side_chat",
+    selectSession: (sessionId, capabilities) => {
+      const kind = capabilities?.readOnly
+        ? "subagent_child"
+        : capabilities?.selectionSideChat
+          ? "selection_side_chat"
+          : null;
+      setChildSessionCapabilityByWorkspace((current) => {
+        const next = { ...current };
+        if (kind) next[workspaceKey] = { sessionId, kind };
+        else delete next[workspaceKey];
+        return next;
+      });
+      handleSelectTask(workspaceAbsPath, sessionId, workspaceIdentity);
+    },
     lookupSession: isDesktop ? lookupPaneSession : undefined,
     onSessionMissing: () => handleStartDraftInWorkspace(workspaceAbsPath, workspaceIdentity),
   });
@@ -1236,9 +1283,24 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
               ...(workspaceRemoteSessionId ? { remoteSessionId: workspaceRemoteSessionId } : {}),
             },
             sessionId: activeTaskId,
+            ...(childSessionCapabilityByWorkspace[workspaceKey]?.sessionId === activeTaskId &&
+            childSessionCapabilityByWorkspace[workspaceKey]?.kind === "subagent_child"
+              ? { readOnly: true }
+              : {}),
+            ...(childSessionCapabilityByWorkspace[workspaceKey]?.sessionId === activeTaskId &&
+            childSessionCapabilityByWorkspace[workspaceKey]?.kind === "selection_side_chat"
+              ? { selectionSideChat: true }
+              : {}),
           }
         : null,
-    [activeTaskId, workspaceAbsPath, workspaceIdentity, workspaceRemoteSessionId],
+    [
+      activeTaskId,
+      childSessionCapabilityByWorkspace,
+      workspaceKey,
+      workspaceAbsPath,
+      workspaceIdentity,
+      workspaceRemoteSessionId,
+    ],
   );
   // 切入草稿曾改变侧栏选任务回调，让全部项目重渲染；点击时使用最近已提交的绑定，保留分屏导航语义。
   const shellWorkbenchBindingRef = useRef(shellWorkbenchBinding);
@@ -1266,7 +1328,20 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       targetWorkspaceIdentity?: string,
       targetRemoteSessionId?: string,
       expectedUnreadAt?: number,
-    ) => {
+      options?: { readOnly?: boolean; selectionSideChat?: boolean },
+    ): boolean => {
+      const childKind = options?.readOnly
+        ? "subagent_child"
+        : options?.selectionSideChat
+          ? "selection_side_chat"
+          : null;
+      const targetWorkspaceKey = targetWorkspaceIdentity?.trim() || targetWorkspacePath;
+      setChildSessionCapabilityByWorkspace((current) => {
+        const next = { ...current };
+        if (childKind) next[targetWorkspaceKey] = { sessionId: taskId, kind: childKind };
+        else delete next[targetWorkspaceKey];
+        return next;
+      });
       if (!isWebRemoteControlShell) {
         const workspaceResult = ensureTaskNavigationWorkspace({
           workspacePath: targetWorkspacePath,
@@ -1283,7 +1358,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
             workspacePath: targetWorkspacePath,
           });
           toast(intl.formatMessage({ id: "automations.runs.openSessionFailed" }));
-          return;
+          return false;
         }
         if (workspaceResult.openedLocalTab) {
           logger.info("[automations] 为运行历史会话补开本地 workspace tab", {
@@ -1305,6 +1380,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
             : {}),
           ...(resolvedRemoteSessionId ? { remoteSessionId: resolvedRemoteSessionId } : {}),
           sessionId: taskId,
+          ...(options?.readOnly ? { readOnly: true } : {}),
         };
         selectWorkbenchSession(shellWorkbenchBindingRef.current, target);
       }
@@ -1315,6 +1391,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       } else {
         handleSelectTask(targetWorkspacePath, taskId, targetWorkspaceIdentity);
       }
+      return true;
     },
     [handleSelectTask, intl, isWebRemoteControlShell, showChatMainView, tabStoreApi, workspaceTabs],
   );
@@ -1452,12 +1529,15 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
         remoteSessionId?: string;
       },
       sessionId: string,
+      capabilities?: { selectionSideChat?: boolean },
     ) => {
       handleSelectTaskInChat(
         scope.workspacePath,
         sessionId,
         scope.workspaceIdentity,
         scope.remoteSessionId,
+        undefined,
+        capabilities,
       );
     },
     [handleSelectTaskInChat],
@@ -1551,6 +1631,22 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
   );
   // 草稿头部保留项目菜单与 Git 分支；项目目录由共享 Provider 提供。
   // Shell 只连接既有导航回调，pane 不持有另一份项目列表或 cwd 归属推断。
+  // Fork: the draft branch intent (selection recorded for the future chat, disabled while the
+  // worktree setup owns the branch) and the unified destination control are wired here.
+  const draftWorktreeIntentSlot = useMemo(() => createComposerDraftWorktreeIntentSlot(), []);
+  const activeDraftWorkspaceKey = workspaceIdentity?.trim() || workspaceAbsPath;
+  const draftBranchIntent = useDraftBranchIntentStore((state) =>
+    selectDraftBranchIntent(state, activeDraftWorkspaceKey),
+  );
+  const worktreeIntentActive = useDraftBranchIntentStore((state) =>
+    selectWorktreeIntentActive(state, activeDraftWorkspaceKey),
+  );
+  const branchGuardShell = useBranchSwitchGuardShell({ workspaceTabs });
+  const [destinationControlEnabled] = useState(readComposerDestinationControlEnabled);
+  const canRenderGitDestinationControl = shouldRenderComposerDestinationControl({
+    activeWorkspaceKey: activeDraftWorkspaceKey,
+    gitState,
+  });
   const draftComposerHeader = useMemo(
     () => (
       <ProjectComposerMenu
@@ -1573,12 +1669,49 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
             workspaceIdentity={workspaceIdentity}
             remoteSessionId={workspaceRemoteSessionId ?? undefined}
           />
-        ) : !isOfficeMode && activeWorkspacePurpose === "project" ? (
+        ) : !isOfficeMode &&
+          activeWorkspacePurpose === "project" &&
+          canRenderGitDestinationControl &&
+          destinationControlEnabled ? (
+          <ComposerDestinationControl
+            remoteSessionId={workspaceRemoteSessionId ?? undefined}
+            workspacePath={workspaceAbsPath}
+            {...(workspaceIdentity ? { workspaceIdentity } : {})}
+            gitSummary={gitState.summary}
+            dirtyFileCount={gitDirtyFileCount}
+            onRefreshGit={handleRefreshGit}
+            compactForRemoteControl={isWebRemoteControlShell}
+          />
+        ) : !isOfficeMode &&
+          activeWorkspacePurpose === "project" &&
+          canRenderGitDestinationControl ? (
           <GitBranchSwitcher
             workspacePath={workspaceAbsPath}
             gitSummary={gitState.summary}
             dirtyFileCount={gitDirtyFileCount}
             onRefreshGit={handleRefreshGit}
+            // Draft intent mode: selection records the branch for the future chat (applied at
+            // send); disabled while the worktree setup owns the draft's branch.
+            disabled={worktreeIntentActive}
+            triggerTitle={
+              worktreeIntentActive
+                ? intl.formatMessage({
+                    id: "git.branchSwitcher.worktreeIntentHint",
+                  })
+                : undefined
+            }
+            selectionIntent={
+              worktreeIntentActive
+                ? undefined
+                : {
+                    branchName: draftBranchIntent,
+                    onSelect: (branchName) => {
+                      useDraftBranchIntentStore
+                        .getState()
+                        .setDraftBranchIntent(activeDraftWorkspaceKey, branchName);
+                    },
+                  }
+            }
             compactForRemoteControl={isWebRemoteControlShell}
             className="px-0 pt-0"
             popoverClassName="w-72"
@@ -1597,17 +1730,23 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       handleSelectComposerPlugin,
       allowRemoteWorkspace,
       activeWorkspacePurpose,
+      activeDraftWorkspaceKey,
+      canRenderGitDestinationControl,
+      destinationControlEnabled,
+      draftBranchIntent,
       gitDirtyFileCount,
       gitState.summary,
       handleRefreshGit,
       handleSelectConversationWorkspace,
       handleCreateTaskInChat,
+      intl,
       isWebRemoteControlShell,
       onOpenRemoteWorkspace,
       onConnectRemote,
       onCancelRemoteProject,
       workspaceAbsPath,
       workspaceIdentity,
+      worktreeIntentActive,
     ],
   );
   const handleV4SessionDeleted = useCallback(() => {
@@ -1787,6 +1926,23 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       });
     }
   }, [activeTaskId, workspaceKey]);
+  // The launcher entry targets the active task only; the tab owner dedupes by `model-trajectory:<taskId>`.
+  const handleOpenModelTrajectoryLauncher = useCallback(() => {
+    if (!activeTaskId) return;
+    handleOpenModelTrajectory({
+      taskId: activeTaskId,
+      title: resolvedActiveTaskMeta?.title ?? null,
+    });
+  }, [activeTaskId, handleOpenModelTrajectory, resolvedActiveTaskMeta]);
+  // The v2 launcher entry targets the active task only; its tab dedupes by `model-trajectory-v2:<taskId>` independently of v1.
+  const handleOpenModelTrajectoryV2Launcher = useCallback(() => {
+    if (!activeTaskId) return;
+    handleOpenModelTrajectory({
+      taskId: activeTaskId,
+      title: resolvedActiveTaskMeta?.title ?? null,
+      kind: "v2",
+    });
+  }, [activeTaskId, handleOpenModelTrajectory, resolvedActiveTaskMeta]);
   const hasUpdateStatusButton =
     updateReadyVersion !== null ||
     updateState?.kind === "update-available" ||
@@ -1850,7 +2006,8 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       workspaceRemoteSessionId={workspaceRemoteSessionId}
       activeTaskId={activeTaskId}
       sidePaneOwnerId={sidePaneOwnerId}
-      gitState={gitState}
+      gitState={gitReviewState}
+      gitRepositoryWorkspacePath={gitRepositoryWorkspacePath}
       activeGitSourceId={activeGitSourceId}
       panelRef={options.mobileOverlay ? mobileSidePanePanelRef : sidePanePanelRef}
       panelElementRef={
@@ -1883,19 +2040,24 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       onCreateTask={handleCreateTaskInChat}
       isMacDesktop={isMacDesktop}
       onOpenTerminalTab={handleOpenTerminalTab}
+      onOpenModelTrajectory={handleOpenModelTrajectoryLauncher}
+      onOpenModelTrajectoryV2={handleOpenModelTrajectoryV2Launcher}
       onOpenReviewTab={handleToggleGit}
       onOpenSelectionSideConversation={handleOpenSelectionSideConversationLauncher}
+      onOpenPlanDetail={handleOpenPlanDetail}
       onRevealGitFileInTree={handleRevealGitFileInTree}
       onOpenBrowserUrl={handleOpenBrowserUrl}
       onOpenCodeViewer={handleOpenCodeViewer}
       onOpenFileLink={handleOpenMarkdownFileLink}
       onOpenBackgroundBash={handleOpenBackgroundBash}
       onOpenSubagentSession={handleOpenSubagentSession}
+      onOpenSubagentDirectory={handleOpenSubagentDirectory}
+      onSyncSubagentSessionTabs={handleSyncSubagentSessionTabs}
       onOpenWorkflowActorSession={handleOpenWorkflowActorSession}
       onOpenWorkflowWorkspace={handleOpenWorkflowWorkspace}
       onOpenWorkflowArtifact={handleOpenWorkflowArtifact}
       onOpenWorkflowRun={handleOpenWorkflowRun}
-      onRefreshGit={handleRefreshGit}
+      onRefreshGit={handleRefreshGitReview}
       onBrowserNavigationRequestHandled={handleBrowserNavigationRequestHandled}
       onBrowserUrlChange={handleBrowserUrlChange}
       onBrowserPageMetadataChange={handleBrowserPageMetadataChange}
@@ -2184,7 +2346,17 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
                   allowEscapeStopOutsidePane={
                     isWorkspaceVisible && !isSidePaneOpen && !isSidePaneVisible
                   }
-                  readOnly={Boolean(workspaceReadOnlyReason)}
+                  readOnly={
+                    Boolean(workspaceReadOnlyReason) ||
+                    Boolean(
+                      childSessionCapabilityByWorkspace[workspaceKey]?.sessionId === activeTaskId &&
+                      childSessionCapabilityByWorkspace[workspaceKey]?.kind === "subagent_child",
+                    )
+                  }
+                  selectionSideChat={
+                    childSessionCapabilityByWorkspace[workspaceKey]?.sessionId === activeTaskId &&
+                    childSessionCapabilityByWorkspace[workspaceKey]?.kind === "selection_side_chat"
+                  }
                   workspacePath={workspaceAbsPath}
                   workspaceIdentity={workspaceIdentity}
                   isDesktop={isDesktop === true}
@@ -2193,6 +2365,8 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
                   provider={activeTaskProvider ?? undefined}
                   onSessionCreated={handleV4SessionCreated}
                   onSessionDeleted={handleV4SessionDeleted}
+                  onCreateTaskInWorkspace={onCreateTaskInWorkspace}
+                  remoteSessionId={workspaceRemoteSessionId ?? undefined}
                   draftComposerHeader={draftComposerHeader}
                   gitSummary={gitState.summary}
                   gitDirtyFileCount={gitDirtyFileCount}
@@ -2629,6 +2803,18 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
                                   isWorkspaceVisible && !isSidePaneOpen && !isSidePaneVisible
                                 }
                                 readOnly={Boolean(workspaceReadOnlyReason)}
+                                readOnlySessionId={
+                                  childSessionCapabilityByWorkspace[workspaceKey]?.kind ===
+                                  "subagent_child"
+                                    ? childSessionCapabilityByWorkspace[workspaceKey].sessionId
+                                    : null
+                                }
+                                selectionSideChatSessionId={
+                                  childSessionCapabilityByWorkspace[workspaceKey]?.kind ===
+                                  "selection_side_chat"
+                                    ? childSessionCapabilityByWorkspace[workspaceKey].sessionId
+                                    : null
+                                }
                                 foregroundEnabled={isWorkspaceVisible}
                                 workspacePath={workspaceAbsPath}
                                 workspaceIdentity={workspaceIdentity}
@@ -2640,6 +2826,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
                                 provider={activeTaskProvider ?? undefined}
                                 onSessionCreated={handleV4SessionCreated}
                                 onSessionDeleted={handleV4SessionDeleted}
+                                onCreateTaskInWorkspace={onCreateTaskInWorkspace}
                                 draftComposerHeader={draftComposerHeader}
                                 onPrimaryDraftDropTargetControllerChange={
                                   setDraftHeaderDropTargetController
@@ -2712,6 +2899,9 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
                       )}
                       services={services}
                       workspaceAbsPath={workspaceAbsPath}
+                      terminalCwd={
+                        resolvedActiveTaskMeta?.executionWorktree?.path ?? workspaceAbsPath
+                      }
                       workspaceIdentity={workspaceIdentity}
                       openWorkspaceKeys={openWorkspaceKeys}
                       isVisible={isTerminalVisible}
@@ -2763,6 +2953,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
             onGoBack={primaryNavigationBack}
             onGoForward={handleTaskNavForward}
             hideTaskNavigationButtons={simplifyHeaderForNarrowRemote}
+            showWebSidebarToggle={!isDesktop && !isWebRemoteControlShell}
           />
         </ScopedErrorBoundary>
 
@@ -2784,15 +2975,24 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
     </SavedWorkflowHubProvider>
   );
   return (
-    <DesktopWindowFrame
-      title={`ZCode / ${getPathLeaf(workspaceAbsPath)}`}
-      showHeader
-      isDesktop={isDesktop}
-      isMacDesktop={isMacDesktop}
-      isWindowsDesktop={isWindowsDesktop}
-      headerTestId={TID_APP_HEADER}
-    >
-      {isWebRemoteControlShell ? renderRemoteShell(wideContent) : wideContent}
-    </DesktopWindowFrame>
+    // Empty-state "New worktree" first-send interception slot: must wrap the subtree that contains ConversationComposer.
+    <ComposerDraftWorktreeIntentContext.Provider value={draftWorktreeIntentSlot}>
+      <BranchSwitchGuardContext.Provider value={branchGuardShell.confirm}>
+        <DesktopWindowFrame
+          title={`ZCode / ${getPathLeaf(workspaceAbsPath)}`}
+          showHeader
+          isDesktop={isDesktop}
+          isMacDesktop={isMacDesktop}
+          isWindowsDesktop={isWindowsDesktop}
+          headerTestId={TID_APP_HEADER}
+        >
+          {/* Mounted once at shell level so desktop, collapsed-sidebar and web-remote mobile
+              all feed the same PR status store (specs/sidebar-pr-status.md). */}
+          <PullRequestStatusProbes workspaceTabs={workspaceTabs} sortBy="updated" />
+          {isWebRemoteControlShell ? renderRemoteShell(wideContent) : wideContent}
+        </DesktopWindowFrame>
+        {branchGuardShell.dialog}
+      </BranchSwitchGuardContext.Provider>
+    </ComposerDraftWorktreeIntentContext.Provider>
   );
 });

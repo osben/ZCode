@@ -1,68 +1,44 @@
-# 修改 SSH 地址后，侧栏原地重连仍使用旧线路
+# After Changing the SSH Address, Sidebar In-Place Reconnect Still Used the Old Route
 
 Status: done
 
-## 预期
+## Expectation
 
-桌面 SSH 测试指南“设备与连接管理”要求地址与凭据修改在下次连接生效，留空保留原凭据。
-当前连接可以继续使用，下一次从原项目重连应使用保存后的 Connection Profile。
+The "device and connection management" requirement of the desktop SSH test guide: address and credential edits take effect on the next connection, and leaving credentials blank keeps the original credentials. The current connection can keep being used, and the next reconnect from the original project should use the saved Connection Profile.
 
-## 复现与证据
+## Reproduction and Evidence
 
-- 业务基线 `a13999a28927f629d0c64080a5096cf8b4f23bae`，服务器已验真构建。
-- case `conversation-session-ssh-remote-connection-management.test.ts`，编辑场景。
-- 批次 `r3-server-20261009183107835-42af65` 和 `r3-server-20261009221305938-a3e800`
-  的 `connection-management` 均在新线路实际连接数断言失败。
-- 打开同设备 A/B；在设置中修改线路名称、设备名和 SSH 端口到本 case 的转发代理，密码留空。
-  原项目 session 保持原值，新代理连接数为 0，符合“下次生效”。
-- 主动断开设备后，从原项目重连。项目重新取得 session，但新代理连接数仍为 0。
-- 原始 Desktop 日志中的设置写入证明 Profile 端口已更新；重连日志仍连接原端口。
-  之后旧端口还被注册为第二条 Profile。失败断言未放宽。
+- Business baseline `a13999a28927f629d0c64080a5096cf8b4f23bae`, server verified build.
+- Case `conversation-session-ssh-remote-connection-management.test.ts`, edit scenario.
+- `connection-management` in batches `r3-server-20261009183107835-42af65` and `r3-server-20261009221305938-a3e800` both failed the assertion on the actual connection count of the new route.
+- Open A/B on the same device; in Settings change the route name, device name and SSH port to this case's forwarding proxy, leaving the password blank. The original project session kept its original value and the new proxy connection count was 0, as expected for "takes effect next time".
+- After manually disconnecting the device, reconnect from the original project. The project got a session again, but the new proxy connection count was still 0.
+- The settings write in the original Desktop log proves the Profile port was updated; the reconnect log still connected to the original port. Afterwards the old port was also registered as a second Profile. The failing assertion was not relaxed.
 
-## 原回归轮次的静态定位
+## Static Location in the Original Regression Round
 
-`reconnectRemoteWorkspaceHistoryEntry` 从 `sessionEntry.target` 创建重连目标。
-`loadSourceServerProfileCredentials` 读取历史绑定 Profile 时仅取凭据，没有把 Profile 的最新
-host/port/认证方式作为连接目标。因而历史 Tab 快照与 Profile 可形成两个不同的线路事实。
+`reconnectRemoteWorkspaceHistoryEntry` creates the reconnect target from `sessionEntry.target`. When `loadSourceServerProfileCredentials` reads the historical bound Profile it takes only the credentials and does not use the Profile's latest host/port/authentication method as the connection target. The historical Tab snapshot and the Profile can therefore form two different route facts.
 
-批次 `r3-server-20261009223735233-3b63ee` 已明确等待旧 attachment 释放后复跑，新代理连接数仍为 0；排除了按钮异步完成时序影响。业务实现不在本任务修改。
-默认线路与移除设备另有独立场景，不能据此失败跳过其余管理验收。
+Batch `r3-server-20261009223735233-3b63ee` explicitly waited for the old attachment to be released before re-running, and the new proxy connection count was still 0, ruling out the timing of asynchronous button completion. The business implementation was not changed in that task. Default route and device removal have separate scenarios, so the remaining management acceptance must not be skipped because of this failure.
 
-## 根因修复（2026-10-10）
+## Root-Cause Fix (2026-10-10)
 
-修复起点 `1ed4575f887edcc73ee3924ffd6df85d2e60aafe`，相关重连业务代码与原测试基线相同。
-当前真实模块探针已复现：Profile 更新端口后，原项目重连仍传出旧端口并产生第二条 Profile；
-设置页按 Profile 连接则使用新端口，单独修改密码也能被原项目重连读取。
+Fix start `1ed4575f887edcc73ee3924ffd6df85d2e60aafe`, whose related reconnect business code equals the original test baseline. A real module probe reproduced it: after the Profile updated its port, the original project reconnect still passed out the old port and produced a second Profile; connecting by Profile from Settings used the new port, and a password-only change was also readable by the original project reconnect.
 
-修复在 Renderer 重连目标解析处按原项目历史绑定读取完整 SSH Profile，保持目录、Source 身份、
-原线路选择和 Host 生命周期不变。旧 session 仅为无 Profile 历史提供兼容输入；没有新凭据引用且
-认证配置相同时保留旧凭据引用，不复用已被切换的私钥口令。保持 sibling 复用发起方凭据与
-目录 admission 失败后的同设备恢复顺序。
+The fix reads the complete SSH Profile by the original project's historical binding at the Renderer reconnect target resolution, keeping directory, Source identity, original route choice and Host lifecycle unchanged. The old session serves only as compatible input for histories without a Profile; when there is no new credential reference and the authentication configuration is the same, the old credential reference is kept, and a switched private key passphrase is not reused. Sibling reuse of the initiator's credentials and the same-device recovery order after a directory admission failure stay unchanged.
 
 ```text
-保存：Profile（连接配置权威）更新，当前在线 session 不重启
-重连：项目 identity + path -> 原绑定 Profile -> 最新 SSH target + 凭据 -> 原 Host 连接入口
-成功：回填新 session / target，原 workspace identity 不变，不新增旧线路
+Save:      Profile (authority of connection configuration) updated, the current online session is not restarted
+Reconnect: project identity + path -> original bound Profile -> latest SSH target + credentials -> original Host connection entry
+Success:   backfill new session / target, original workspace identity unchanged, no old route added
 ```
 
-验证结果：
+Verification results:
 
-- 新增 8 项重连行为测试，修复前 6 项失败、2 项正常对照通过；修复后全部通过。
-  覆盖手动/自动恢复、新地址/用户、私钥切换、旧凭据兼容、新凭据缺失拒绝、原绑定线路选择与 sibling 凭据复用。
-  原来两个只测凭据 helper 的测试已由公开重连行为测试替代。
-- `pnpm test:unit:affected --base 1ed4575f887edcc73ee3924ffd6df85d2e60aafe`：
-  371 个 Vitest 文件 / 4378 项用例及 28 项 Node 审计通过；未跑根全量单测。
-- 根类型检查、E2E 类型检查、lint、架构与 fixture 检查通过；lint 保留 81 条既有警告。
-  改动代码格式与 diff 检查通过。设计规格既有表格格式和历史分支名术语告警与基线一致，
-  本次条款没有新增格式或术语问题。
-- macOS Electron → 独立 Linux SSH 容器，`R3_CONNECTION_MANAGEMENT_CASE=edit`：
-  `desktop-e2e-20261010-route-fix` **1/1 PASS**。新端口收到 1 次连接，密码留空后认证成功，
-  A/B 项目身份保留、B 获得新 session；仍为原 Profile，设备 active Profile 数为 1。
-  原“新代理实际连接数 > 0”断言保留，并补充 sibling 恢复与不得新增旧线路的断言。
-- 该 run 的 `connection-management.json`、`test-results.ndjson`、运行日志和
-  `build-source-evidence.json` 保留在 `.e2e-artifacts` 下。构建状态为 `fresh-stable`，
-  已核对重连模块源码 SHA-256 与最终工作区一致，核对结果见 `route-fix-verification.json`。
+- 8 new reconnect behavior tests: 6 failed and 2 normal controls passed before the fix; all pass after. Covers manual/automatic recovery, new address/user, private key switching, old-credential compatibility, rejection when a new credential is missing, original bound route selection, and sibling credential reuse. The two old tests that only tested the credential helper were replaced by public reconnect behavior tests.
+- `pnpm test:unit:affected --base 1ed4575f887edcc73ee3924ffd6df85d2e60aafe`: 371 Vitest files / 4378 cases and 28 Node audit cases pass; the root full unit suite was not run.
+- Root type check, E2E type check, lint, architecture and fixture checks pass; lint keeps 81 pre-existing warnings. Changed-code format and diff checks pass. The existing table format and historical branch-name terminology warnings in the design spec match the baseline, and this change's clauses add no format or terminology problem.
+- macOS Electron → independent Linux SSH container, `R3_CONNECTION_MANAGEMENT_CASE=edit`: `desktop-e2e-20261010-route-fix` **1/1 PASS**. The new port received 1 connection, authentication succeeded with the password left blank, A/B project identities were kept and B got a new session; still the original Profile, and the device's active Profile count is 1. The original assertion "new proxy actual connection count > 0" is kept, with added assertions for sibling recovery and no old route added.
+- This run's `connection-management.json`, `test-results.ndjson`, run log and `build-source-evidence.json` are kept under `.e2e-artifacts`. The build status is `fresh-stable`, the source SHA-256 of the reconnect module was checked against the final working tree, and the result is in `route-fix-verification.json`.
 
-本次完整 E2E 只复跑编辑变体；默认线路/移除的 lifecycle 变体保留原通过记录。
-私钥切换由真实重连函数单测覆盖，未另跑真实私钥 SSH E2E；未重跑原生 Windows、Linux 桌面宿主或手机 relay 整链路。
-不改变 WSL/Docker/Server 重连路径、RPC、Host owner 或 continuous/replayable 边界；未做人工转正或 CI 准入。
+This round re-ran only the edit variant of the full E2E; the default route / remove lifecycle variants keep their original passing records. Private key switching is covered by unit tests of the real reconnect function, with no separate real private-key SSH E2E; native Windows, a Linux desktop host and the whole mobile relay chain were not re-run. The WSL/Docker/Server reconnect paths, RPC, Host owner and the continuous/replayable boundary are unchanged; no manual promotion or CI admission was done.

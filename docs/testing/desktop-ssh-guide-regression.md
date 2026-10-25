@@ -1,151 +1,108 @@
-# 桌面 SSH 测试指南回归
+# Desktop SSH Test Guide Regression
 
 Status: done
 
-本轮依据《ZCode 远程连接新版测试指南》第 41 版（2026-10-09），业务基线为
-`a13999a28927f629d0c64080a5096cf8b4f23bae`。仅验证桌面 SSH；手机、WSL、Docker
-产品连接方式不在本轮范围。Linux 上的独立 Docker 容器只用于模拟真实 SSH 服务器。
+This round is based on the "ZCode Remote Connection New Test Guide" version 41 (2026-10-09); the business baseline is `a13999a28927f629d0c64080a5096cf8b4f23bae`. Only desktop SSH is verified; mobile, WSL and Docker product connection modes are out of scope. A standalone Linux Docker container is used only to simulate a real SSH server.
 
-复用服务器队列，每条使用独立 HOME、显示会话和 SSH 目标。先核验完整源码清单，再在服务器
-构建 Desktop、Server、Agent。模型回放用于功能与故障时序；真实模型另跑 live-zapi / live-team。
-PASS 必须同时有用户操作、对应断言和运行证据，不能用旧版本结果或经过某个页面代替覆盖。
+The server queue is reused; every case has its own HOME, display session and SSH target. The full source manifest is verified first, then Desktop, Server and Agent are built on the server. Model replay covers function and fault timing; real models run separately as live-zapi / live-team. A PASS needs a user action, the matching assertion and run evidence; an old-version result or merely passing through a page does not count as coverage.
 
 ```mermaid
 flowchart LR
-  G[指南功能点] --> C[case 的准备、操作与断言]
-  C --> S[核验源码并在服务器构建]
-  S --> E[独立桌面与 SSH 目标]
-  E --> P[通过并保留证据]
-  E --> F[失败：核对当前规格与运行日志]
-  F --> T[case 过时：只修改测试并复跑]
-  F --> B[业务问题：记录复现与影响，不改业务]
+  G[Guide feature] --> C[Case setup, action and assertion]
+  C --> S[Verify source, build on server]
+  S --> E[Independent desktop and SSH target]
+  E --> P[Pass and keep evidence]
+  E --> F[Fail: check current spec and run logs]
+  F --> T[Case outdated: change tests only and rerun]
+  F --> B[Business issue: record repro and impact, do not change business code]
 ```
 
-## 验收结果
+## Acceptance result
 
-本轮完成“桌面 SSH 功能点均有 case，且通过或有记录”的检查，**不是全绿**。
-100 个调度场景均已执行：95 PASS；3 个业务失败、1 个规格/入口行为差异、1 个账号模型前置阻塞。
-原始 runner 对后五项均记录 FAIL；没有修改原结果、跳过失败或放宽业务断言。
+The check "every desktop SSH feature point has a case that passes or is recorded" is complete; the round is **not all green**. All 100 scheduled scenarios ran: 95 PASS; 3 business failures, 1 spec/entry behavior difference, 1 account-model precondition block. The raw runner recorded FAIL for those five; no result was edited, no failure skipped, no business assertion loosened.
 
-后续修复（2026-10-10）：目录权限问题 [05](../issues/remote-e2e-stability/05-directory-permission-reattach.md)
-已修复，完整 `directory-denied` E2E 单独复跑通过，包含权限恢复后重试及原历史续聊。
-地址编辑后项目重连问题 [06](../issues/remote-e2e-stability/06-edited-route-ignored-by-project-reconnect.md)
-也已修复，`connection-management` 编辑变体单独复跑通过：新端口实际收到连接、留空密码可认证、
-两个原项目恢复，且不新增旧线路 Profile。
-原项目必须更新问题 [07](../issues/remote-e2e-stability/07-existing-project-upgrade-intent.md)
-已修复；四个版本策略变体独立复跑均通过，手动连接自动更新并恢复 A/B，后台等待、可选更新与
-“稍后”、本机过旧的行为保持。完整证据与本机首轮夹具准备超时的说明见问题记录。
-问题 [08](../issues/remote-e2e-stability/08-reinstall-history-visible-in-new-device.md) 的语义于
-2026-10-10 经用户确认：正式卸载保留数据时，重装必须沿用原设备、连接和项目，原历史可见且
-可续聊；只有独立数据环境替换才确认新身份。原 case 的“新设备不显示旧历史”不能用于保留数据
-重装。两变体独立复跑均已通过：原设备历史实际续聊，独立环境的确认/取消/归档与隔离保持。
-修复及运行证据记录在问题 08，原批次的统计和 ledger 保持不变。
-后续修复（2026-10-11）：多线路迁移的任务身份预检只比较 canonical 快照，漏掉 source 之间的冲突，
-重复打开会新建失败 ledger 并备份两库。新增 `history-conflict-sources`：修复前批次
-`r3-server-20261011024625012-2857c7` 失败，打开阶段已有 2 条失败 ledger 和 2 份迁移备份；修复后批次
-`r3-server-20261011025925916-fb3363` 中该项与 `history-conflict`、`history-merge` 均通过，重试前后
-只有同一条 ledger，远端没有迁移备份。
-以下统计和 ledger 保留原业务基线的结果，后续修复证据见各问题记录。
+Follow-up fixes (statistics and ledger below keep the original baseline result; evidence is in each issue record):
 
-以下队列 key 的具体 spec/环境变体由 `harness/remote/run-all-remote.sh` 单点声明。
-同一 spec 的目录故障、资源类型、版本策略、更新确认和管理路径按变体分开执行。
+- 2026-10-10: directory permission issue [05](../issues/remote-e2e-stability/05-directory-permission-reattach.md) fixed; the full `directory-denied` E2E passes alone, including retry after permission restore and the original history continuation.
+- Edited-route project reconnect issue [06](../issues/remote-e2e-stability/06-edited-route-ignored-by-project-reconnect.md) fixed; the `connection-management` edit variant passes alone: the new port really receives the connection, an empty password authenticates, both original projects recover, and no stale-route Profile is added.
+- Existing-project-must-update issue [07](../issues/remote-e2e-stability/07-existing-project-upgrade-intent.md) fixed; the four version-policy variants pass alone: manual connect auto-updates and restores A/B; background wait, optional update with "later", and local-too-old behavior are unchanged. Full evidence and the note on the local first-round fixture-preparation timeout are in the issue record.
+- Issue [08](../issues/remote-e2e-stability/08-reinstall-history-visible-in-new-device.md): semantics confirmed by the user on 2026-10-10. A formal uninstall that keeps data must keep the original device, connections and projects on reinstall, with the old history visible and continuable; only an independent data-environment replacement confirms a new identity. The old case expectation "new device shows no old history" does not apply to data-preserving reinstall. Both variants pass alone: the original device history is actually continued; confirm/cancel/archive and isolation for the independent environment hold.
+- 2026-10-11: the task-identity precheck of multi-route migration compared only canonical snapshots and missed conflicts between sources; reopening created a new failed ledger and backed up both databases. New case `history-conflict-sources`: before the fix, batch `r3-server-20261011024625012-2857c7` failed (2 failed ledgers and 2 migration backups already at open); after the fix, batch `r3-server-20261011025925916-fb3363` passes this case plus `history-conflict` and `history-merge`, with only the same single ledger before and after retry and no migration backup on the remote.
 
-| 指南功能点                                             | 对应 case / 实际证据                                                                                          | 结论                                                                                                                                 |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| 设备搜索、SSH 配置发现、新建连接、最近目录             | projectentry、kinddoubleclick、three-screen                                                                   | PASS                                                                                                                                 |
-| 错密码就地补充、缺密码、已在线连接复用                 | p0-conn、wizardcredentials                                                                                    | PASS                                                                                                                                 |
-| 首装版本/账号/路径/大小、真实阶段/日志、就地重试       | install-progress、log-contract、installfaults、downloadproxy、three-screen                                    | PASS                                                                                                                                 |
-| 收起、恢复、取消、关闭清空表单                         | cancelretry、three-screen                                                                                     | PASS                                                                                                                                 |
-| 改设备名、选目录、稍后选择保持在线且无项目             | devicecards、disconnectux、three-screen                                                                       | PASS                                                                                                                                 |
-| 首次目录页可关闭说明，后续与重启不重复                 | boundary                                                                                                      | PASS                                                                                                                                 |
-| 退出/断网后继续执行、重连不重复                        | app-exit-running、transportloss、coldreconnect、renderer、ackloss                                             | PASS；实体系统休眠另列环境记录                                                                                                       |
-| 多项目共享设备，等待确认不自动同意                     | p0-main、sharedwait、transportloss、taskcontrol                                                               | PASS                                                                                                                                 |
-| 1/3、2/3、3/3、耗尽失败、静默恢复与手动接管            | retry-budget、transportloss                                                                                   | PASS                                                                                                                                 |
-| 主动断开、启动开关、7 天守卫、远端重启                 | recov、coldreconnect、daemondet、serverfault                                                                  | PASS                                                                                                                                 |
-| 草稿禁发送/保留、只读内容、原会话及已删会话            | disconnectux、coldreconnect、rdux13、rdux14、mixed                                                            | PASS                                                                                                                                 |
-| 设备/连接名、地址/凭据下次生效、空值保留               | settings-safeguards、connection-management                                                                    | 名称与空凭据合同已测；侧栏地址重连失败，记录 [06](../issues/remote-e2e-stability/06-edited-route-ignored-by-project-reconnect.md)    |
-| 同设备多连接、当前/默认、设默认、移除线路              | sourcelines、connection-lifecycle                                                                             | PASS                                                                                                                                 |
-| 在线/离线定位、移除设备确认/默认取消、远端数据保留     | settings-safeguards、connection-lifecycle                                                                     | PASS                                                                                                                                 |
-| 未完成记录折叠/删除/清理不影响已连通设备               | devicecards、offlineicons                                                                                     | PASS                                                                                                                                 |
-| 必须/可选更新、后台等待、本机太旧与稍后                | version-manual-required、version-automatic-required、version-optional、version-controller-required            | 后台/本机过旧/可选提示与稍后 PASS；原项目自动更新差异记录 [07](../issues/remote-e2e-stability/07-existing-project-upgrade-intent.md) |
-| 运行中任务清单、取消/重试、强制确认、版本/项目恢复     | serverupdate、serverupdate-force、install-progress、installfaults                                             | PASS                                                                                                                                 |
-| 重装确认、取消、归档旧连接、旧历史不混入新设备         | uninstall（真实旧任务 + 可见新设备任务列表）                                                                  | 确认/取消/归档/数据保留 PASS；历史混入失败，记录 [08](../issues/remote-e2e-stability/08-reinstall-history-visible-in-new-device.md)  |
-| 同地址不同账号与同路径历史隔离                         | account-isolation                                                                                             | PASS                                                                                                                                 |
-| 平铺、五态、同名同路径、详情与各处设备标识             | projectnavigation、presentation、sidebar-menus、entryattr、pluginidentity、uipairwise                         | PASS                                                                                                                                 |
-| 拖动顺序持久化且上下线不重排                           | project-order                                                                                                 | PASS                                                                                                                                 |
-| 远端分享账号、不顶替、未登录拒绝、产物可打开           | share-authority（合成账号真实 SSH）+ share（真实云端）                                                        | PASS；手机入口不在桌面范围                                                                                                           |
-| 目录删除/变文件/无权限、其他项目恢复与修复重试         | directory-missing、directory-file、directory-denied                                                           | 删除/文件 PASS；权限收回失败，记录 [05](../issues/remote-e2e-stability/05-directory-permission-reattach.md)                          |
-| 单线路旧版升级、历史续聊、实际回退继续使用             | history-single                                                                                                | PASS                                                                                                                                 |
-| 多线路合并、backup、冲突、重试/放弃与旧版回退限制      | history-merge、history-conflict（实际旧程序、SQLite、GUI）                                                    | PASS；两条旧线路实际读取后原任务数据仍保留，不承诺所有旧视图完整                                                                     |
-| 文件浏览/编辑、终端、Git、首发/续聊、搜索/时间线       | p0-dev、p0-main、terminal、filelocal、taskactions                                                             | PASS                                                                                                                                 |
-| 置顶/归档、离线操作拒绝、不使用本机数据                | taskactions、projectnavigation、botremote、modelcand                                                          | PASS                                                                                                                                 |
-| 发送立即断线唯一执行、正文清理与后续草稿保留           | ackloss（ACK 扣留期间实际编辑新草稿）                                                                         | PASS                                                                                                                                 |
-| 排队、停止/恢复、权限、子智能体、压缩                  | queuesel、taskcontrol、subagent、compactgoal、taskfaults                                                      | PASS                                                                                                                                 |
-| 附件拖入/粘贴/发送、预览/下载、取消/断线后恢复         | attachments、mediapreview、attachment-cancel、attachment-disconnect                                           | PASS                                                                                                                                 |
-| 模型/默认自动同步、离线补齐、无模型引导                | provisioning、modelcand、modelswitch、provready、connectivity、live-zapi、live-team                           | 回放与真实 API Key PASS；真实 Team 请求前置阻塞，记录 [09](../issues/remote-e2e-stability/09-live-team-model-precondition.md)        |
-| Skills/MCP/插件/Hook/命令/子智能体的管理/实际保存/范围 | resource-skill/mcp/command/hook、settingsscopes、settings-safeguards、pluginidentity、pluginsync、remotehooks | PASS；每类有真实目标保存或执行/删除断言                                                                                              |
-| 本机设置与项目所在机器设置边界                         | desktopauthority、settingslocalboundary、settingsscopes                                                       | PASS                                                                                                                                 |
-| 机器人身份路由、离线拒绝、不误用本机/其他项目          | botidentity、botremote、botruntime                                                                            | PASS（合成渠道与真实 Host/MessagePort 链）；真实渠道与 SSH 端到端另列环境记录                                                        |
-| 中文/英文、深/浅主题、窄窗口与键盘安全                 | uipairwise、accessibility、devicecards、settings-safeguards                                                   | PASS                                                                                                                                 |
+The queue keys below map to specs/environment variants declared in one place by `harness/remote/run-all-remote.sh`. Directory faults, resource kinds, version policies, update confirmation and management paths of the same spec run as separate variants.
 
-## 构建与执行证据
+| Guide feature                                                                                | Case / actual evidence                                                                                        | Result                                                                                                                                                                                      |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Device search, SSH config discovery, new connection, recent directories                      | projectentry, kinddoubleclick, three-screen                                                                   | PASS                                                                                                                                                                                        |
+| Wrong password supplemented in place, missing password, reuse of an online connection        | p0-conn, wizardcredentials                                                                                    | PASS                                                                                                                                                                                        |
+| First install version/account/path/size, real stages/logs, in-place retry                    | install-progress, log-contract, installfaults, downloadproxy, three-screen                                    | PASS                                                                                                                                                                                        |
+| Collapse, restore, cancel, close clears the form                                             | cancelretry, three-screen                                                                                     | PASS                                                                                                                                                                                        |
+| Rename device, pick directory, choose later stays online with no project                     | devicecards, disconnectux, three-screen                                                                       | PASS                                                                                                                                                                                        |
+| First directory page has a dismissible note, not repeated later or after restart             | boundary                                                                                                      | PASS                                                                                                                                                                                        |
+| Continue running after exit/network loss, reconnect without duplication                      | app-exit-running, transportloss, coldreconnect, renderer, ackloss                                             | PASS; physical system sleep listed as an environment record                                                                                                                                 |
+| Several projects share a device, waiting confirmation is not auto-approved                   | p0-main, sharedwait, transportloss, taskcontrol                                                               | PASS                                                                                                                                                                                        |
+| 1/3, 2/3, 3/3, exhausted failure, silent recovery and manual takeover                        | retry-budget, transportloss                                                                                   | PASS                                                                                                                                                                                        |
+| Manual disconnect, startup switch, 7-day guard, remote restart                               | recov, coldreconnect, daemondet, serverfault                                                                  | PASS                                                                                                                                                                                        |
+| Draft send disabled/kept, read-only content, original and deleted sessions                   | disconnectux, coldreconnect, rdux13, rdux14, mixed                                                            | PASS                                                                                                                                                                                        |
+| Device/connection name, address/credential effective next time, empty value kept             | settings-safeguards, connection-management                                                                    | Name and empty-credential contracts tested; sidebar address reconnect failed, see [06](../issues/remote-e2e-stability/06-edited-route-ignored-by-project-reconnect.md)                      |
+| Several connections per device, current/default, set default, remove route                   | sourcelines, connection-lifecycle                                                                             | PASS                                                                                                                                                                                        |
+| Online/offline location, remove-device confirm/default cancel, remote data kept              | settings-safeguards, connection-lifecycle                                                                     | PASS                                                                                                                                                                                        |
+| Unfinished records collapse/delete/clean without affecting a connected device                | devicecards, offlineicons                                                                                     | PASS                                                                                                                                                                                        |
+| Required/optional update, background wait, local too old and later                           | version-manual-required, version-automatic-required, version-optional, version-controller-required            | Background / local-too-old / optional prompt and later PASS; existing-project auto-update difference recorded in [07](../issues/remote-e2e-stability/07-existing-project-upgrade-intent.md) |
+| Running task list, cancel/retry, force confirm, version/project recovery                     | serverupdate, serverupdate-force, install-progress, installfaults                                             | PASS                                                                                                                                                                                        |
+| Reinstall confirm, cancel, archive old connection, old history not mixed into the new device | uninstall (real old task + visible new-device task list)                                                      | Confirm/cancel/archive/data retention PASS; history mix-in failed, see [08](../issues/remote-e2e-stability/08-reinstall-history-visible-in-new-device.md)                                   |
+| Same address with different accounts, same-path history isolation                            | account-isolation                                                                                             | PASS                                                                                                                                                                                        |
+| Flat list, five states, same name and path, details and device marks everywhere              | projectnavigation, presentation, sidebar-menus, entryattr, pluginidentity, uipairwise                         | PASS                                                                                                                                                                                        |
+| Drag order persists and going online/offline does not reorder                                | project-order                                                                                                 | PASS                                                                                                                                                                                        |
+| Remote share account, no displacement, unauthenticated rejection, artifact opens             | share-authority (synthetic account, real SSH) + share (real cloud)                                            | PASS; mobile entry is out of desktop scope                                                                                                                                                  |
+| Directory deleted/turned into file/no permission, other projects recover, retry after repair | directory-missing, directory-file, directory-denied                                                           | Deleted/file PASS; permission revoke failed, see [05](../issues/remote-e2e-stability/05-directory-permission-reattach.md)                                                                   |
+| Single-route old-version upgrade, history continuation, actual fallback keeps working        | history-single                                                                                                | PASS                                                                                                                                                                                        |
+| Multi-route merge, backup, conflict, retry/give up and old-version fallback limits           | history-merge, history-conflict (real old program, SQLite, GUI)                                               | PASS; after both old routes are actually read the original task data remains, not promising every old view is complete                                                                      |
+| File browse/edit, terminal, Git, first send/continue, search/timeline                        | p0-dev, p0-main, terminal, filelocal, taskactions                                                             | PASS                                                                                                                                                                                        |
+| Pin/archive, offline operation rejected, local data not used                                 | taskactions, projectnavigation, botremote, modelcand                                                          | PASS                                                                                                                                                                                        |
+| Send then immediate disconnect executes once, body cleared, later draft kept                 | ackloss (a new draft is actually edited while the ACK is withheld)                                            | PASS                                                                                                                                                                                        |
+| Queue, stop/resume, permission, subagent, compaction                                         | queuesel, taskcontrol, subagent, compactgoal, taskfaults                                                      | PASS                                                                                                                                                                                        |
+| Attachment drag/paste/send, preview/download, recovery after cancel/disconnect               | attachments, mediapreview, attachment-cancel, attachment-disconnect                                           | PASS                                                                                                                                                                                        |
+| Model/default auto sync, offline catch-up, no-model guidance                                 | provisioning, modelcand, modelswitch, provready, connectivity, live-zapi, live-team                           | Replay and real API Key PASS; real Team request blocked by precondition, see [09](../issues/remote-e2e-stability/09-live-team-model-precondition.md)                                        |
+| Skills/MCP/plugin/Hook/command/subagent management, real save, scope                         | resource-skill/mcp/command/hook, settingsscopes, settings-safeguards, pluginidentity, pluginsync, remotehooks | PASS; each kind has a real-target save or execute/delete assertion                                                                                                                          |
+| Local settings vs project-machine settings boundary                                          | desktopauthority, settingslocalboundary, settingsscopes                                                       | PASS                                                                                                                                                                                        |
+| Bot identity routing, offline rejection, no misuse of local / other projects                 | botidentity, botremote, botruntime                                                                            | PASS (synthetic channel and real Host/MessagePort chain); real channel and SSH end to end listed as an environment record                                                                   |
+| zh/en, dark/light theme, narrow window and keyboard safety                                   | uipairwise, accessibility, devicecards, settings-safeguards                                                   | PASS                                                                                                                                                                                        |
 
-业务代码为 `a13999a28927f629d0c64080a5096cf8b4f23bae`，与任务恢复时的最新分支一致。
-完整源码 manifest 复算验真后，在服务器执行 `pnpm prepare:remote-assets`（Server / Agent）与
-Desktop `build:no-runtime-assets`，分别构建 test / production。最终构建指纹前缀分别为
-`60c92e7db6b5` / `8002e5ec70bb`。每条 case 使用独立 HOME、显示会话和 SSH 目标。
+## Build and execution evidence
 
-| 批次                                                                        | 范围/用途                                                        |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `r3-server-20261009170002590-cabde7`                                        | 主批次 80 项，55 PASS，定位旧 case 与新缺口                      |
-| `r3-server-20261009183107835-42af65`                                        | 38 项修正复跑，21 PASS                                           |
-| `r3-server-20261009221305938-a3e800`                                        | 恢复中断任务后 22 项，取得完整退出运行与权限故障的运行身份证据   |
-| `r3-server-20261009223735233-3b63ee`                                        | 两份最新构建，19 项验证发送后草稿、真实强制更新、分享账号路由等  |
-| `r3-server-20261009234650716-227ddc`                                        | 13 项，完成键盘/视觉、更新重试、旧版回退、附件断线、版本策略复验 |
-| `r3-server-20261010000352793-dc135c` / `r3-server-20261010001224807-40c41f` | 设备默认/移除最终通过；真实旧任务揭示重装后的历史混入            |
-| `r3-server-20261010001822450-9f7e7e`                                        | 多线路合并后实际回退旧程序并读取两条线路，核对原任务数据保留     |
+Business code is `a13999a28927f629d0c64080a5096cf8b4f23bae`, equal to the latest branch at task resume. After recomputing and verifying the full source manifest, `pnpm prepare:remote-assets` (Server / Agent) and Desktop `build:no-runtime-assets` ran on the server to build test / production; final build fingerprint prefixes are `60c92e7db6b5` / `8002e5ec70bb`. Each case uses its own HOME, display session and SSH target.
 
-另有早期首装/边界代表通过证据。构建指纹曾因 catalog/矩阵更新失效，
-`r3-server-20261009223615174-965622` 在启动 Electron 前将 19 项标为 BLOCKED_ENV；
-随后重新构建并执行，未把该批次算作通过证据。
+| Batch                                                                       | Scope / purpose                                                                                                        |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `r3-server-20261009170002590-cabde7`                                        | Main batch, 80 items, 55 PASS; located old-case and new gaps                                                           |
+| `r3-server-20261009183107835-42af65`                                        | 38-item corrected rerun, 21 PASS                                                                                       |
+| `r3-server-20261009221305938-a3e800`                                        | 22 items after resuming interrupted tasks; run-identity evidence for complete exit and permission faults               |
+| `r3-server-20261009223735233-3b63ee`                                        | Two latest builds, 19 items: post-send draft, real forced update, share account routing, etc.                          |
+| `r3-server-20261009234650716-227ddc`                                        | 13 items: keyboard/visual, update retry, old-version fallback, attachment disconnect, version-policy recheck           |
+| `r3-server-20261010000352793-dc135c` / `r3-server-20261010001224807-40c41f` | Device default/remove final pass; real old tasks revealed the post-reinstall history mix-in                            |
+| `r3-server-20261010001822450-9f7e7e`                                        | After multi-route merge, actual fallback to the old program reading both routes, confirming original task data is kept |
 
-最终逐项 ledger、各批 summary、构建凭证和脱敏诊断保存在
-`packages/desktop/.e2e-artifacts/desktop-ssh-guide-regression-20261010/`；完整运行日志与视频按
-上述 batchId / case key 保存在服务器原 artifact 中。ledger 保留每项最后实际执行的批次、
-源码指纹、spec、环境和原始状态，不累计早期失败次数制造最终通过率。
+Early first-install/boundary representative passes also exist. A build fingerprint was invalidated by a catalog/matrix update: `r3-server-20261009223615174-965622` marked 19 items BLOCKED_ENV before launching Electron; they were rebuilt and rerun, and that batch is not counted as pass evidence.
 
-## Case 修正与补齐
+The final per-item ledger, per-batch summaries, build proofs and redacted diagnostics are in `packages/desktop/.e2e-artifacts/desktop-ssh-guide-regression-20261010/`; full run logs and videos are kept in the original server artifacts under the batchId / case key above. The ledger records for each item the last actually executed batch, source fingerprint, spec, environment and raw status; early failure counts are not accumulated to manufacture a final pass rate.
 
-新增 11 类 SSH 候选 spec 及 case-local fixtures，覆盖账号隔离、完整退出、附件中途故障、
-连接管理、目录故障、排序、资源设置、重试预算、分享账号、旧版升级/回退、版本策略。
-沿用指南和既有接受规格；全部保留 `manual-review/pending`，未做人工转正或 CI 准入。
+## Case corrections and additions
 
-旧 case 的主要修正：三屏向导和可关闭说明替代旧弹框；使用当前上游回放入口；匿名回放
-不播种会触发真实控制面请求的假登录；菜单/设备按稳定身份定位；显式等待表单动画、历史
-正文与旧 attachment 释放；失败页实际点击重试；取消更新后按“重试→受保护自动更新”
-继续；CLI 控制命令不加过时子命令，解析最后 JSON 结果行；真实 Team 按 OAuth 换证合同
-验收。连续视觉采样使用 Electron 原生窗口 API 并断言实际尺寸。
+Eleven SSH candidate spec families with case-local fixtures were added: account isolation, complete exit, mid-attachment fault, connection management, directory faults, ordering, resource settings, retry budget, share account, old-version upgrade/fallback, version policy. They follow the guide and existing accepted specs; all stay in `manual-review/pending` with no manual promotion or CI admission.
 
-历史断言使用旧程序自然产生的真实任务，重装后的新设备检查实际可见任务列表；
-不以“文件哨兵存在”或内部 key 包含安装 UUID 代替用户历史隔离。合成冲突、版本元数据与
-分享账号 API 均在 artifact 明确分类，不冒充真实旧业务版本、账号或云端发布。
+Main corrections to old cases: the three-screen wizard and dismissible note replace the old dialog; the current upstream replay entry is used; anonymous replay does not seed a fake login that would trigger real control-plane requests; menus/devices are located by stable identity; explicit waits for form animation, history body and old attachment release; the failure page's retry is actually clicked; after cancelling an update, continue via "retry -> protected auto-update"; CLI control commands drop the stale subcommand and parse the last JSON result line; real Team is accepted by the OAuth token-exchange contract. Continuous visual sampling uses the Electron native window API and asserts actual sizes.
 
-## 验证与环境边界
+History assertions use real tasks produced naturally by the old program, and the post-reinstall new device checks the actually visible task list; "file sentinel exists" or "internal key contains install UUID" does not replace user-history isolation. Synthetic conflicts, version metadata and share-account APIs are classified explicitly in the artifacts and are not passed off as real old business versions, accounts or cloud releases.
 
-- `pnpm --filter @zcode/desktop typecheck:e2e`、根 `pnpm typecheck`、`pnpm lint` 通过。
-  Lint 的 81 条既有警告保留，无新错误。
-- `pnpm architecture:check --changed` 通过，0 新违规；受影响根单测 20 文件 / 110 用例和
-  14 条 Node 审计测试通过，未跑未经授权的全量单测。
-- 28 条回放/无模型修改 spec 的 fixture 检查通过；真实 Team 按真实请求前置单列，
-  不填写虚假的 `none` 或回放合同。队列审计 104 项无合同缺项，桌面 SSH 范围为其中 100 项。
-- 开源术语扫描、diff 空白检查通过。修改仅在 E2E、编排和文档，未改业务实现。
-- 实体客户端系统休眠未验证：同机 Linux Desktop/SSH 容器不能代表独立电脑休眠；
-  `app-exit-running` 与 `transportloss` 的通过不替代此维度。
-- 真实机器人渠道到 SSH 的完整投递/续聊未验证：现有机器人 case 是合成绑定与真实服务/RPC
-  路由证据，不扩写为真实渠道验收。
-- 当前 Desktop 的最低兼容版本等于自身版本，没有“更旧且兼容”的 Server 发行版供远端
-  可选 archive 更新。`version-optional` 使用兼容的较新 Server 验证双向可选提示与稍后，
-  不宣称远端可选 archive 更新分支已经运行。
+## Verification and environment boundaries
 
-业务/规格记录保持失败 case，真实账号请求阻塞与环境缺口单列。经用户明确授权，
-提交本轮测试、编排与记录改动；未推送或创建 MR。
+- `pnpm --filter @zcode/desktop typecheck:e2e`, root `pnpm typecheck` and `pnpm lint` pass. The 81 existing lint warnings remain, no new errors.
+- `pnpm architecture:check --changed` passes with 0 new violations; affected root unit tests (20 files / 110 cases) and 14 Node audit tests pass; no unauthorized full unit run.
+- Fixture checks pass for 28 replay/no-model modified specs; real Team is listed separately as a real-request precondition and does not carry a fake `none` or replay contract. The queue audit has 104 items with no contract gaps; the desktop SSH scope is 100 of them.
+- Open-source terminology scan and diff whitespace check pass. Changes are in E2E, orchestration and docs only; no business implementation changed.
+- Physical client system sleep is not verified: a same-machine Linux Desktop/SSH container cannot represent a separate computer sleeping; passes of `app-exit-running` and `transportloss` do not replace this dimension.
+- Full delivery/continuation from a real bot channel to SSH is not verified: the existing bot cases are synthetic bindings plus real service/RPC routing evidence and are not extended to real-channel acceptance.
+- The current Desktop's minimum compatible version equals its own version, so no "older and compatible" Server release exists for the remote optional archive update. `version-optional` uses a compatible newer Server to verify the bidirectional optional prompt and "later"; it does not claim the remote optional archive update branch ran.
+
+Business/spec records keep the failed cases; real-account request blocks and environment gaps are listed separately. With explicit user authorization the test, orchestration and record changes of this round were committed; nothing was pushed and no MR created.

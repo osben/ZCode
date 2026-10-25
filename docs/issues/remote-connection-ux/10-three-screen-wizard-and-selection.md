@@ -1,71 +1,69 @@
-# 10 — 三屏向导：骨架、统一选择屏与收起进度行
+# 10 — Three-Screen Wizard: Skeleton, Unified Selection Screen and Collapsed Progress Row
 
 Status: done
 
-**父规格：** [远程连接交互与视觉体验优化](./01-remote-connection-ux-optimization.md)
+**Parent spec:** [Remote Connection Interaction and Visual Experience Optimization](./01-remote-connection-ux-optimization.md)
 
-**被阻塞于：**
+**Blocked by:**
 
-- [04 — 向导止血与流程控制器抽取](./04-wizard-p0-fixes-and-flow-controller.md)
-- [06 — 交互原型与评审](./06-interaction-prototype-review.md)
+- [04 — Wizard P0 fixes and flow controller extraction](./04-wizard-p0-fixes-and-flow-controller.md)
+- [06 — Interaction prototype and review](./06-interaction-prototype-review.md)
 
-**要交付的行为：**
+**Behavior to deliver:**
 
-按评审通过的原型，把连接向导改为三屏：选择 → 连接中 → 选目录。
+Per the approved prototype, change the connection wizard to three screens: select → connecting → choose directory.
 
-- **整体结构**：去掉左侧的步骤栏，换成顶部一条轻量的进度提示；向导高度随内容自适应。
-- **第一屏：可搜索的统一列表**，包含：
-  - 已保存的设备，并附上各自的最近目录；
-  - `~/.ssh/config` 里的 Host；
-  - 检测到的 WSL 发行版，只在 Windows 上出现；
-  - 正在运行的 Docker 容器，只在 Docker 可用时出现。
+- **Overall structure**: remove the left step bar and replace it with a lightweight progress hint at the top; wizard height adapts to content.
+- **First screen: a searchable unified list**, containing:
+  - saved devices, each with its recent directories;
+  - Hosts in `~/.ssh/config`;
+  - detected WSL distributions, shown only on Windows;
+  - running Docker containers, shown only when Docker is available.
 
-  列表底部是"新建 SSH 连接"，以及 WSL 和 Docker 的手动输入入口。点击任意一项就直接开始连接。离线设备的最近目录也可以点击，效果是"连接并打开"。
+  The list bottom has "新建 SSH 连接" (new SSH connection) and manual entries for WSL and Docker. Clicking any item starts connecting directly. The recent directories of an offline device are also clickable, meaning "connect and open".
 
-- **收起**：收起向导后，侧栏项目区顶部显示一行进度，点击可恢复向导；连接失败的结果会保留，直到用户查看为止。
-- **关闭**：关闭向导即取消连接，并清空草稿；输入历史保留。
+- **Collapse**: after collapsing the wizard, a progress row shows at the top of the sidebar project area; clicking restores the wizard; a connection failure result is kept until the user views it.
+- **Close**: closing the wizard cancels the connection and clears the draft; input history is kept.
 
-对应父规格「连接向导（三屏）」一节中的整体结构、第一屏、表单、收起与关闭部分。
+It corresponds to the overall structure, first screen, form, collapse and close parts of the "connection wizard (three screens)" section of the parent spec.
 
-范围：
+Scope:
 
-- **表单**：
-  - 字段级校验：端口必须是数字，主机和用户名自动去掉首尾空格。
-  - 可以按回车提交，切换屏幕时焦点跟着移到新屏。
-- **一并修复的缺陷**：
-  - 别名提示只在真的选了别名时才出现，而且不重复。
-  - Docker 的下拉选择和手动输入互斥，并各有标签；"Docker 不可用"和"没有运行中的容器"分成两种提示。
-  - macOS 上不显示 WSL。
-  - 正式版不显示开发模式的提示。
-  - 首次使用的用户被标成"已完成第 1 步"，以及有已知连接时第 2 步先闪一下。
-- **状态 owner**：连接中的状态只有一个 owner，就是向导会话；侧栏进度行只读取这份状态，不另存副本。
+- **Form**:
+  - Field-level validation: the port must be numeric; host and username are trimmed.
+  - Enter submits, and focus follows to the new screen on screen switch.
+- **Defects fixed along the way**:
+  - The alias hint appears only when an alias is really selected, and not twice.
+  - The Docker dropdown selection and manual input are mutually exclusive, each labelled; "Docker unavailable" and "no running containers" are two different hints.
+  - WSL is not shown on macOS.
+  - The release build does not show dev-mode hints.
+  - A first-time user was marked "step 1 completed", and step 2 flashed first when known connections existed.
+- **State owner**: the connecting state has exactly one owner, the wizard session; the sidebar progress row only reads this state and keeps no copy.
 
-**原型评审结论**（[06 评审结论](./06-interaction-prototype-review.md#comments)）：界面按评审通过的原型实现，以下几点以 06 为准。
+**Prototype review conclusion** ([06 review conclusion](./06-interaction-prototype-review.md#comments)): the UI follows the approved prototype; these points follow 06.
 
-- 收起后的侧栏进度行改为两行小卡片：第一行是“正在连接 <设备名>…”和百分比，第二行是当前阶段，下面一条进度条；失败后保留为危险色卡片，写明原因并可点击查看。这一点与父规格的单行写法不同，以本票为准。
-- 选择屏和新建 SSH 表单的分组、布局与页脚按原型实现。
+- The collapsed sidebar progress row becomes a two-line small card: the first line "正在连接 <设备名>…" and a percentage, the second line the current stage, with a progress bar below; after failure it stays as a danger-colored card stating the reason and clickable to view. This differs from the parent spec's single-line form; this ticket prevails.
+- Grouping, layout and footer of the selection screen and the new SSH form follow the prototype.
 
-验收标准：
+Acceptance criteria (all met):
 
-- [x] **首次 SSH 连接的操作量**：从 config Host 开始，经过输入密码、安装确认、选目录，总共约 4～5 次点击、1 次输入。E2E 记录实际点击次数。
-- [x] **第一屏列表**：列表来源、搜索、点击即连接都按规格工作，有向导测试覆盖；离线设备的最近目录点击后能连接并打开该目录，有 E2E 覆盖。
-- [x] **表单与缺陷修复**：表单校验、回车提交、焦点移动，以及 Docker、WSL、macOS、开发提示这几处修复，都有测试覆盖。
-- [x] **收起与关闭**：收起后侧栏显示进度行，失败结果会保留；关闭后草稿被清空。有测试和 E2E 覆盖。
-- [x] **单一 owner**：侧栏进度行只读取向导会话的状态，没有第二份副本。
-- [x] **视觉核对**：界面与原型截图一致；另截浅色、深色和 900px 窗口下的截图。
-- [x] **规格更新**：更新 UX 规格和导航规格，并同步 E2E 用例目录。
-- [x] **提交前检查**：`pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed`、受影响的单测、受影响的 SSH E2E 全部通过后，在本地提交。
-
+- **Operation count of the first SSH connection**: starting from a config Host, through entering the password, install confirmation and choosing a directory, about 4-5 clicks and 1 input in total. E2E records the actual click count.
+- **First-screen list**: list sources, search and click-to-connect work per spec with wizard tests; clicking an offline device's recent directory connects and opens that directory, covered by E2E.
+- **Form and defect fixes**: form validation, Enter submit, focus movement, and the Docker, WSL, macOS and dev-hint fixes are all test-covered.
+- **Collapse and close**: after collapsing the sidebar shows the progress row and the failure result is kept; after closing the draft is cleared. Covered by tests and E2E.
+- **Single owner**: the sidebar progress row reads only the wizard session state, with no second copy.
+- **Visual check**: the UI matches the prototype screenshots; extra screenshots in light, dark and a 900px window.
+- **Spec update**: update the UX spec and navigation spec and sync the E2E case catalog.
+- **Pre-commit checks**: `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`, affected unit tests and affected SSH E2E all pass before the local commit.
 
 ## Comments
 
-### 实施与验收（2026-09-29）
+### Implementation and acceptance (2026-09-29)
 
-- 三屏顶部进度、统一搜索列表、SSH 表单布局及 Docker/WSL 手动入口已实现；离线最近目录沿原线路连接并打开。配置、连接、目录各屏均可收起恢复；目录请求卸载撤销，关闭与换目标清理草稿。侧栏只注册 DOM 容器，卡片由唯一向导会话直接渲染。
-- 向导 DOM 回归 54 条通过；覆盖 WSL 外部偏好、config 读取失败后的别名保留、目录迟到响应、关闭清空、后台成功收尾和已有连接意图。编辑连接及 SSH helper 回归同步。
-- RDUX-10-01～04 真实 SSH E2E 通过：`desktop-e2e-20260928160405047-p51001-d93013e144937095`。config Host 首装到打开目录实测 **5 次按钮点击、1 次密码输入**；离线最近目录、收起失败留存、查看与关闭草稿均有断言。共 16 张浅色/深色 × 1440/900px 截图（选择屏、已保存设备、新建 SSH、失败卡片），已对照 06 原型核对；截图保留在该 run 的本地 artifact 目录。
-- SSH CONN-01/02、CONN-03 通过：`desktop-e2e-20260928160027687-p49292-629542e903aac76c` 的对应两个 spec；CONN-06/07 通过：上述 `desktop-e2e-20260928160405047-p51001-d93013e144937095`。新用例仍为 Pending，未人工转正或准入 CI。
-- Standards / Spec 两轴复核无未解决发现。
-- 额外的全局 case coverage audit 仍报告原有 D19/I74/I75 引用与统计、生成文档漂移；使用实施起点 `bcc1ae5fc885d451975d59925cbb3f6e75195801` 的 catalog/matrix 复核得到相同错误。本次新增 fixture 合同检查通过，不扩展修改这些既有文档问题。
-
-- 最终验证：`pnpm typecheck`、`pnpm lint`（64 条既有警告、0 error）、`pnpm architecture:check --changed`、桌面 `typecheck:e2e`、新 fixture 检查通过。最终单测完整收集 2,035 文件、18,726 条测试，**18,712 通过、14 条原有跳过**；此前并发运行中两类原生/子进程加载检查发生超时，其独立串行复验 4/4 通过，最终全量也通过。手机 `/remote` 未改交互，相关现有单测随全量回归，未重复实跑手机 relay E2E。
+- The three-screen top progress, unified search list, SSH form layout and Docker/WSL manual entries are implemented; an offline recent directory connects and opens along the original route. The config, connecting and directory screens can all be collapsed and restored; the directory request is revoked on unmount, and closing or changing target clears the draft. The sidebar registers only a DOM container and the card is rendered directly by the single wizard session.
+- 54 wizard DOM regressions pass, covering the WSL external preference, alias retention after a config read failure, late directory responses, clearing on close, background success wrap-up and existing-connection intent. Edit-connection and SSH helper regressions are synced.
+- RDUX-10-01 to 04 real SSH E2E pass: `desktop-e2e-20260928160405047-p51001-d93013e144937095`. From config Host first install to opening a directory measured **5 button clicks and 1 password input**; offline recent directory, collapsed failure retention, viewing and draft clearing on close are asserted. 16 screenshots in total (light/dark × 1440/900px: selection screen, saved device, new SSH, failure card) were checked against the 06 prototype and stay in the local artifact directory of that run.
+- SSH CONN-01/02 and CONN-03 pass in the two corresponding specs of `desktop-e2e-20260928160027687-p49292-629542e903aac76c`; CONN-06/07 pass in `desktop-e2e-20260928160405047-p51001-d93013e144937095`. The new cases are still Pending, not promoted manually or admitted to CI.
+- The two-axis review (conventions/spec) has no unresolved finding.
+- The extra global case coverage audit still reports the pre-existing D19/I74/I75 references and statistics and generated-document drift; re-checking with the catalog/matrix of the implementation start `bcc1ae5fc885d451975d59925cbb3f6e75195801` gives the same errors. The new fixture contract check passes and these existing document issues are not extended.
+- Final verification: `pnpm typecheck`, `pnpm lint` (64 pre-existing warnings, 0 errors), `pnpm architecture:check --changed`, desktop `typecheck:e2e` and the new fixture check pass. The final unit run collected 2,035 files and 18,726 tests, **18,712 passing and 14 pre-existing skips**; two native/subprocess loading checks timed out in an earlier concurrent run, and their independent serial re-run passed 4/4, with the final full run passing too. Mobile `/remote` interaction is unchanged; related existing unit tests ran in the full regression and the mobile relay E2E was not re-run.

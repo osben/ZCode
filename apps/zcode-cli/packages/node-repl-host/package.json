@@ -20,16 +20,16 @@
     "lint": "oxlint src --no-ignore"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "2.0.0",
+    "@modelcontextprotocol/server": "2.3.1",
     "@zcode/contracts": "workspace:*",
     "@zcode/core": "workspace:*",
     "@zcode/shared": "workspace:*",
     "@zcode/zcode-cua": "workspace:*",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.0.0",
-    "@types/node": "^24.0.0",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@types/node": "^26.0.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.9.0",
     "vitest": "^4.1.5"

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IPromptAttachmentTransferService } from "@zcode/services";
 import type { PromptAttachmentTransferProgress } from "@zcode/services";
 import {
+  formatAttachmentSize,
   OversizedInlineImageAttachmentError,
   OversizedInlineVideoAttachmentError,
 } from "@/lib/chatAttachments.js";
@@ -24,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   },
   service: null as IPromptAttachmentTransferService | null,
   toast: vi.fn(),
+  attachmentPut: vi.fn(),
+  formatMessage: vi.fn(({ id }: { id: string }, _values?: Record<string, unknown>): string => id),
 }));
 
 vi.mock("@/components/ui/toast.js", () => ({ toast: mocks.toast }));
@@ -39,7 +42,7 @@ vi.mock("@/hooks/useServices.js", () => ({
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
     intl: {
-      formatMessage: ({ id }: { id: string }) => id,
+      formatMessage: mocks.formatMessage,
     },
   }),
 }));
@@ -166,7 +169,7 @@ function Probe(options: ProbeOptions) {
       ? undefined
       : (options.remoteSessionId ?? "remote-session-1");
   latestApi = useComposerAttachments({
-    attachmentPut: vi.fn(),
+    attachmentPut: mocks.attachmentPut,
     attachmentSessionId: options.attachmentSessionId,
     onRuntimeRestart: options.onRuntimeRestart,
     onRuntimeLifecycle: options.onRuntimeLifecycle,
@@ -208,10 +211,13 @@ function resultFor(operationId: string) {
 
 beforeEach(() => {
   latestApi = null;
+  mocks.attachmentPut.mockReset();
   mocks.platform.createTempTextAttachment.mockReset();
   mocks.platform.getPathForFile.mockReset();
   mocks.platform.selectFiles.mockReset();
   mocks.toast.mockClear();
+  mocks.formatMessage.mockReset();
+  mocks.formatMessage.mockImplementation(({ id }) => id);
   useComposerAttachmentUploadStore.setState({ scopes: {} });
 });
 
@@ -326,15 +332,51 @@ describe("useComposerAttachments eager upload", () => {
     act(() => root.unmount());
   });
 
-  it("只把 video inline 超限视为不可重试，不改变 image 的既有重试判定", () => {
+  it("inline 体积超限（image/video）是确定性失败，不应自动重试", () => {
     const options = { filename: "media.bin", maxSizeBytes: 1, sizeBytes: 2 };
 
     expect(isTransientAttachmentUploadError(new OversizedInlineVideoAttachmentError(options))).toBe(
       false,
     );
     expect(isTransientAttachmentUploadError(new OversizedInlineImageAttachmentError(options))).toBe(
-      true,
+      false,
     );
+  });
+
+  it("超过 20MiB 的 inline 图片直接 permanent failed，并给出本地化超限文案而非错误码 (ISSUE-040)", async () => {
+    mocks.service = createTransferService().service;
+    mocks.formatMessage.mockImplementation(({ id }, values) =>
+      values ? `${id}|${JSON.stringify(values)}` : id,
+    );
+    const { root } = renderProbe({
+      attachmentSessionId: "session-1",
+      localDesktop: true,
+      scopeId: "oversized",
+    });
+    try {
+      const bytes = 21 * 1024 * 1024;
+      act(() => {
+        latestApi?.addAttachmentFiles([
+          new File([new Uint8Array(bytes)], "huge.png", { type: "image/png" }),
+        ]);
+      });
+      await vi.waitFor(() => expect(latestApi?.attachments[0]?.uploadStatus).toBe("failed"));
+
+      const item = latestApi!.attachments[0]!;
+      expect(item).toMatchObject({ autoRetryCount: 0, uploadErrorKind: "permanent" });
+      expect(item.uploadError).not.toContain("oversized-inline-image-attachment");
+      expect(item.uploadError).toBe(
+        `chat.attachments.oversizedInlineImage|${JSON.stringify({
+          filename: "huge.png",
+          size: formatAttachmentSize(bytes),
+          maxSize: formatAttachmentSize(20 * 1024 * 1024),
+        })}`,
+      );
+      expect(latestApi?.hasUnreadyAttachments).toBe(true);
+      expect(mocks.attachmentPut).not.toHaveBeenCalled();
+    } finally {
+      act(() => root.unmount());
+    }
   });
 
   it("Excel 多表示剪贴板优先保留文本，不把合成 PNG 加为附件", () => {
@@ -1121,5 +1163,76 @@ describe("useComposerAttachments eager upload", () => {
     expect(latestApi?.attachments[0]?.runtimeRebuildRetryCount).toBe(1);
     expect(restart).toBeNull();
     act(() => root.unmount());
+  });
+});
+
+describe("captured incognito attachments before session creation", () => {
+  it("uploads only the frozen pathless file into the new session", async () => {
+    mocks.service = createTransferService().service;
+    mocks.attachmentPut.mockResolvedValue({ ref: "zcode-artifact://frozen" });
+    const { root } = renderProbe({
+      attachmentSessionId: null,
+      localDesktop: true,
+      scopeId: "incognito",
+    });
+    try {
+      act(() => {
+        latestApi?.addAttachmentFiles([
+          new File(["frozen content"], "first.txt", { type: "text/plain" }),
+        ]);
+      });
+      const id = latestApi!.attachments[0]!.id;
+      const captured = latestApi!.captureSubmission([id]);
+      expect(await captured.prepareForSend()).toBeNull();
+      expect(await captured.prepareForSend(undefined, { allowWaitingSession: true })).toEqual([]);
+      act(() => {
+        latestApi?.addAttachmentFiles([
+          new File(["new draft"], "later.txt", { type: "text/plain" }),
+        ]);
+      });
+      const refs = await captured.reuploadForSession("new-incognito");
+      expect(refs).toMatchObject([{ fileName: "first.txt", ref: "zcode-artifact://frozen" }]);
+      expect(mocks.attachmentPut).toHaveBeenCalledOnce();
+      expect(mocks.attachmentPut.mock.calls[0]?.[0]).toMatchObject({
+        sessionId: "new-incognito",
+        fileName: "first.txt",
+      });
+      act(() => captured.clearAttachments());
+      expect(latestApi!.attachments.map((a) => a.filename)).toEqual(["later.txt"]);
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+  it.each([true, false])("remote local paths require a staged receipt: %s", async (staged) => {
+    const transfer = createTransferService();
+    mocks.service = transfer.service;
+    transfer.stage.mockResolvedValue({ ...resultFor("remote-incognito"), staged });
+    const { root } = renderProbe({ attachmentSessionId: null, scopeId: "remote-incognito" });
+    try {
+      await addPaths(["/tmp/a.png"]);
+      const id = latestApi!.attachments[0]!.id;
+      const captured = latestApi!.captureSubmission([id]);
+      expect(transfer.stage).not.toHaveBeenCalled();
+      if (staged) {
+        expect(await captured.reuploadForSession("new-remote")).toMatchObject([
+          { ref: resultFor("remote-incognito").ref },
+        ]);
+        await captured.adoptSentAttachments();
+        expect(transfer.service.adopt).toHaveBeenCalledExactlyOnceWith(
+          expect.stringContaining("new-remote"),
+        );
+      } else
+        await expect(captured.reuploadForSession("new-remote")).rejects.toThrow("not materialized");
+      expect(transfer.stage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: "new-remote",
+          localPath: "/tmp/a.png",
+          remoteSessionId: "remote-session-1",
+        }),
+      );
+      expect(mocks.attachmentPut).not.toHaveBeenCalled();
+    } finally {
+      act(() => root.unmount());
+    }
   });
 });

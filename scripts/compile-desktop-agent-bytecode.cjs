@@ -18,7 +18,7 @@ async function compile() {
     filename: entryPath,
     importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER,
   });
-  // 仅编译，不调用模块；不能为了预热缓存触发 CLI 的存储、网络或进程副作用。
+  // Compile only; do not call modules or trigger CLI storage, network, or process side effects to warm the cache.
   const cachedData = script.createCachedData();
   await writeFile(outputPath, cachedData);
   process.stdout.write(

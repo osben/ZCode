@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
-// 终态通知行尾部的产物 chips 的**交互**（docs/dynamic-workflow/authoring.md「How the user sees them」）。
+// The **interaction** of the artifact chips at the tail of terminal notification rows
+// (docs/dynamic-workflow/authoring.md "How the user sees them").
 //
-// chips 的在场性与「+N」在 v4ConversationTurnGroup.test.ts 里（那里是整条通知行的静态渲染面）；
-// 点击与「不顺带把行展开」这两件事必须有真 DOM，所以单独一个 jsdom 文件。
+// Chip presence and the "+N" live in v4ConversationTurnGroup.test.ts (that is the static rendering surface of the
+// whole notification row); clicking and "not expanding the row along the way" need a real DOM, hence this dedicated jsdom file.
 //
-// ⚠ 术语：chip 上的 artifact 是脚本经 `artifact.*` 交付给用户的产出，不是引擎内部那个
-// 「脚本顶层返回值」的同名词（spec 的「术语」表）。
+// ⚠ Terminology: the artifact on a chip is an output the script delivered to the user via `artifact.*`, not the
+// engine-internal synonym for "the script's top-level return value" (the spec's terminology table).
 import { createElement } from "react";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,7 +20,7 @@ vi.mock("@/hooks/useWorkspaceServices.js", () => ({
   useWorkspaceServices: () => ({}),
 }));
 
-// eslint-disable-next-line import/first -- 必须在 mock 之后再引入被测组件。
+// eslint-disable-next-line import/first -- The component under test must be imported after the mocks.
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 // eslint-disable-next-line import/first
 import { TooltipProvider } from "@/components/ui/tooltip.js";
@@ -33,6 +34,7 @@ import { ConversationTurnGroup } from "@/v4/ConversationTurnGroup.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 // eslint-disable-next-line import/first
 import { buildConversationTurnRenderUnits } from "@/v4/conversationTurnRenderUnits.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const onOpenArtifact = vi.fn();
 
@@ -50,8 +52,8 @@ function terminal(
   };
 }
 
-// ToolLayout 的展开态按 `persistOpenKey` 记在模块级 Map 里，跨用例不清；每条用例给一个
-// 自己的 key，否则一条用例把行展开会让后面那条看不到折叠头部上的 chips。
+// ToolLayout records its expanded state by `persistOpenKey` in a module-level Map that is not cleared across cases;
+// give each case its own key, otherwise one case expanding the row would hide the chips on the collapsed header from the next case.
 let rowSeq = 0;
 
 function renderRow(notification: WorkflowNotificationMeta, options: { openable?: boolean } = {}) {
@@ -59,7 +61,7 @@ function renderRow(notification: WorkflowNotificationMeta, options: { openable?:
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(
         TooltipProvider,
         null,
@@ -78,7 +80,7 @@ function renderRow(notification: WorkflowNotificationMeta, options: { openable?:
 beforeEach(() => {
   cleanup();
   onOpenArtifact.mockClear();
-  // 助手正文的代码块按 matchMedia 选配色；jsdom 没有它，整棵树会在渲染时炸掉。
+  // Assistant-body code blocks pick a color scheme via matchMedia; jsdom lacks it and the whole tree would explode on render.
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
@@ -129,7 +131,9 @@ describe("通知行的产物 chips", () => {
     const view = renderRow(terminal([{ id: "book", kind: "file", title: long, version: 1 }]));
     const chip = view.getByTestId(TID_CHAT_WORKFLOW_ARTIFACT_CHIP);
     expect(chip.textContent?.endsWith("…")).toBe(true);
-    expect(chip.getAttribute("title")).toBe(`文件 · ${long}`);
+    expect(chip.getAttribute("title")).toBe(
+      `${expectedCopy("chat.toolCall.workflow.run.artifacts.kind.file")} · ${long}`,
+    );
   });
 
   it("宿主没注入打开能力时 chip 不可点，点了也什么都不发生", () => {
@@ -143,8 +147,8 @@ describe("通知行的产物 chips", () => {
   });
 
   it("点**禁用的** chip 同样不展开行：禁用只是把打开变成空操作，不是把 chip 交还给开关", () => {
-    // 回归：strip 之前只在 chip 自己的 onClick 里阻断冒泡，而禁用按钮上 React 不跑 onClick，
-    // 于是那一下点击一路冒到折叠开关，把整行展开了。
+    // Regression: before the strip, propagation was only stopped in the chip's own onClick, and React does not run
+    // onClick on a disabled button, so that click bubbled all the way to the collapse toggle and expanded the whole row.
     const view = renderRow(terminal([{ id: "book", kind: "file", version: 1 }]), {
       openable: false,
     });
@@ -162,8 +166,8 @@ describe("通知行的产物 chips", () => {
   });
 
   it("在 chip 上按 Enter 只打开产物，不顺带把行展开（键盘走的是开关的另一条通路）", () => {
-    // 折叠开关是一个 role=button 的 div，它自己听 keydown 里的 Enter/Space；chip 上的按键
-    // 会冒到它那里。strip 因此同时吞掉 click 与开合键。
+    // The collapse toggle is a role=button div that listens for Enter/Space on its own keydown; keys pressed on
+    // the chip bubble up to it. The strip therefore swallows both click and toggle keys.
     const view = renderRow(terminal([{ id: "book", kind: "file", version: 1 }]));
     fireEvent.keyDown(view.getByTestId(TID_CHAT_WORKFLOW_ARTIFACT_CHIP), { key: "Enter" });
     expect(view.container.querySelector("[aria-expanded]")?.getAttribute("aria-expanded")).toBe(
@@ -180,10 +184,11 @@ describe("通知行的产物 chips", () => {
   });
 });
 
-// ── 接线（docs/dynamic-workflow/authoring.md「How the user sees them」）──
-// 上面钉的是 chip 把**产物 id** 交给上一层；这里钉上一层把 id 变成什么样的打开请求。
-// 载荷带最新版的 `contentType`，宿主据它把 html 产物直接开成浏览器 tab 而不是开产物 tab；
-// 载荷刻意不带 `sourcePath`（状态帧体积），所以请求里也不该凭空出现一个。
+// ── Wiring (docs/dynamic-workflow/authoring.md "How the user sees them") ──
+// The cases above pin the chip handing the **artifact id** to the layer above; here we pin what open request that
+// layer turns the id into. The payload carries the latest version's `contentType`, which the host uses to open an
+// html artifact directly as a browser tab instead of an artifact tab;
+// the payload deliberately omits `sourcePath` (state-frame size), so the request must not invent one either.
 describe("ConversationTurnGroup 把通知行的 chip 变成打开请求", () => {
   const noopPlatform = {} as IPlatformService;
 
@@ -232,7 +237,7 @@ describe("ConversationTurnGroup 把通知行的 chip 变成打开请求", () => 
     return render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           PlatformProvider,
           { platform: noopPlatform },

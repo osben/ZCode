@@ -7,6 +7,7 @@ import type { ProviderEndpointRoutingPort } from "@zcode/contracts";
 import {
   resolveRuntimeZCodeEnv,
   resolveRuntimeZCodeEndpointOrigin,
+  stripZcodeForkVersionSuffix,
   ZCODE_APP_VERSION_ENV,
 } from "@zcode/shared";
 import {
@@ -72,7 +73,12 @@ function resolveAppVersionForHeaders(
   env: EnvRecord,
   options: Pick<RuntimeExecutionConfigOptions, "appVersion">,
 ): string | undefined {
-  return normalizePrintableHeaderValue(env[ZCODE_APP_VERSION_ENV] ?? options.appVersion);
+  const appVersion = normalizePrintableHeaderValue(
+    env[ZCODE_APP_VERSION_ENV] ?? options.appVersion,
+  );
+  // 对外版本只发上游基线：-fork.N 后缀按 semver 低于同基线正式版，
+  // 会被 z.ai 后端的版本门控误判为旧客户端。
+  return appVersion ? stripZcodeForkVersionSuffix(appVersion) : undefined;
 }
 
 function detectDefaultProviderSourceTitle(): ModelProviderSourceTitle {

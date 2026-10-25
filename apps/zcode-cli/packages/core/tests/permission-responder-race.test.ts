@@ -1,9 +1,13 @@
-// PermissionRequest hook 与交互 broker 的并发竞速（spec：docs/design/v2/permission-responder-race.md）。
+// Concurrency race between the PermissionRequest hook and the interaction broker
+// (spec: docs/design/v2/permission-responder-race.md).
 //
-// Bug 根因（2026-08-26 实机事故）：旧路径在 emitPermissionRequested 之后**串行** await
-// PermissionRequest hook 链，broker 的应答通道要等 hook 返回才建立。同步 hook（外部审批
-// 桥接）阻塞期间，确认窗已可见但用户点击全部被 resolveInteraction 按幂等语义静默丢弃，
-// 确认窗永久死亡。本文件钉住新契约：通道先建立、双方竞速、先到者胜、败者被 abort。
+// Bug root cause (2026-08-26 live incident): the old path would **serially** await the
+// PermissionRequest hook chain after emitPermissionRequested, so the broker's answer
+// channel was only established after the hooks returned. While a synchronous hook
+// (external approval bridging) blocked, the confirmation dialog was already visible but
+// every user click was silently dropped by resolveInteraction under idempotency
+// semantics, permanently killing the dialog. This file pins the new contract: the
+// channel is established first, both sides race, first responder wins, the loser is aborted.
 import { describe, expect, it, vi } from "vitest";
 import {
   createRootTraceContext,
@@ -106,7 +110,7 @@ describe("racePermissionResponders (unit)", () => {
       runHooks: async () => undefined,
       requestBroker: () => broker.promise,
     });
-    // hook 已退赛；broker 应答仍然收口整个竞速。
+    // The hook has already forfeited; the broker answer still settles the whole race.
     broker.resolve({ decision: "allow", reason: "late click" });
     await expect(outcomePromise).resolves.toEqual({
       result: { decision: "allow", reason: "late click" },
@@ -164,8 +168,10 @@ describe("racePermissionResponders (unit)", () => {
       runHooks: async () => ({ decision: "deny", reason: "hook same tick" }),
       requestBroker: async () => ({ decision: "allow", reason: "broker same tick" }),
     });
-    // 闩是先到先得：两个同 tick microtask 中启动顺序在前的 broker 先兑现。
-    // 断言的是「恰好一个胜者」而不是具体是谁——避免测试锁死调度实现细节。
+    // The latch is first-come-first-served: among two same-tick microtasks, the broker
+    // that started first settles first.
+    // What is asserted is "exactly one winner", not which one — to avoid locking the test
+    // to scheduling implementation details.
     expect(["hook", "broker"]).toContain(outcome.source);
     expect(outcome.result.reason).toBe(
       outcome.source === "hook" ? "hook same tick" : "broker same tick",
@@ -199,8 +205,9 @@ describe("permission responder race (executor integration)", () => {
     hookRun: (input: unknown, runOptions?: { signal?: AbortSignal }) => Promise<HookRunResult>;
     broker?: PermissionBrokerPort;
   }) {
-    // 提供的 hookRun 只作用于 PermissionRequest 事件；PreToolUse / PostToolUse 等
-    // 其余事件返回空结果，避免把与竞速无关的阶段也挂起。
+    // The provided hookRun only applies to PermissionRequest events; the remaining
+    // events such as PreToolUse / PostToolUse return an empty result, so unrelated
+    // phases are not also suspended.
     const scopedHookRun = (
       input: unknown,
       runOptions?: { signal?: AbortSignal },
@@ -253,7 +260,8 @@ describe("permission responder race (executor integration)", () => {
   }
 
   it("arms the broker while a PermissionRequest hook is still running (incident regression)", async () => {
-    // 事故场景：hook 永不返回。用户在确认窗上的点击（broker 应答）必须照常生效。
+    // Incident scenario: the hook never returns. The user's click in the confirmation
+    // dialog (broker answer) must still take effect.
     let hookStarted = false;
     let hookSignal: AbortSignal | undefined;
     const brokerCalled = createDeferred<void>();
@@ -274,7 +282,8 @@ describe("permission responder race (executor integration)", () => {
     });
 
     const resultPromise = harness.execute();
-    // 旧路径在 hook 返回前根本不会调用 broker——这一步就是回归断言本身。
+    // The old path never called the broker before the hooks returned — this step is the
+    // regression assertion itself.
     await brokerCalled.promise;
     expect(hookStarted).toBe(true);
     brokerAnswer.resolve({ decision: "allow", reason: "user clicked Start" });

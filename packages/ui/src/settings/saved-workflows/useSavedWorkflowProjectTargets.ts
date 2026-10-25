@@ -5,36 +5,47 @@ import type { SavedWorkflowProjectTarget } from "@/settings/saved-workflows/save
 import type { SavedWorkflowLaunchTarget } from "@/settings/saved-workflows/useSavedWorkflowLauncher.js";
 
 interface SavedWorkflowProjectTargets {
-  /** RPC target（含 remoteSessionId），供 store / 服务方法调用。 */
+  /** RPC target (including remoteSessionId), for store/service calls. */
   target: ZCodeAgentWorkspaceTarget;
-  /** 发往对话 / 打开实例的项目坐标：只有 workspacePath + identity（不带 remoteSessionId）。 */
+  /** Project coordinates for sending to a conversation/opening an instance: workspacePath + identity only (no remoteSessionId). */
   projectTarget: SavedWorkflowProjectTarget;
-  /** 直接启动的连接坐标：额外带 remoteSessionId，决定 conversation 连接 endpoint 与导航目标。 */
+  /** Coordinates for a direct-start connection: also includes remoteSessionId to determine the conversation connection endpoint and navigation target. */
   launchTarget: SavedWorkflowLaunchTarget;
 }
 
 /**
- * 一个项目组要用到的三套坐标（所有动作都带**本项目**的
- * target）。三者只在是否携带 remoteSessionId 上不同；引用在依赖不变时保持稳定，供 memo / effect 依赖。
+ * Three coordinate sets used by a project group (all actions use **that project's** target).
+ * They differ only in whether they include remoteSessionId; references stay stable while dependencies are unchanged for memo/effect dependencies.
  */
 export function useSavedWorkflowProjectTargets(
-  project: Pick<AutomationWorkspaceOption, "workspacePath" | "workspaceIdentity" | "projectId" | "hostId">,
+  project: Pick<
+    AutomationWorkspaceOption,
+    "workspacePath" | "workspaceIdentity" | "projectId" | "hostId"
+  >,
   remoteSessionId: string | null,
 ): SavedWorkflowProjectTargets {
   const target = useMemo<ZCodeAgentWorkspaceTarget>(
     () => ({
-      projectId: project.projectId, hostId: project.hostId,
+      projectId: project.projectId,
+      hostId: project.hostId,
       workspacePath: project.workspacePath,
       ...(project.workspaceIdentity?.trim()
         ? { workspaceIdentity: project.workspaceIdentity }
         : {}),
       ...(remoteSessionId ? { remoteSessionId } : {}),
     }),
-    [project.projectId, project.hostId, project.workspacePath, project.workspaceIdentity, remoteSessionId],
+    [
+      project.projectId,
+      project.hostId,
+      project.workspacePath,
+      project.workspaceIdentity,
+      remoteSessionId,
+    ],
   );
   const projectTarget = useMemo<SavedWorkflowProjectTarget>(
     () => ({
-      projectId: project.projectId, hostId: project.hostId,
+      projectId: project.projectId,
+      hostId: project.hostId,
       workspacePath: project.workspacePath,
       ...(project.workspaceIdentity ? { workspaceIdentity: project.workspaceIdentity } : {}),
     }),
@@ -42,12 +53,19 @@ export function useSavedWorkflowProjectTargets(
   );
   const launchTarget = useMemo<SavedWorkflowLaunchTarget>(
     () => ({
-      projectId: project.projectId, hostId: project.hostId,
+      projectId: project.projectId,
+      hostId: project.hostId,
       workspacePath: project.workspacePath,
       ...(project.workspaceIdentity ? { workspaceIdentity: project.workspaceIdentity } : {}),
       ...(remoteSessionId ? { remoteSessionId } : {}),
     }),
-    [project.projectId, project.hostId, project.workspacePath, project.workspaceIdentity, remoteSessionId],
+    [
+      project.projectId,
+      project.hostId,
+      project.workspacePath,
+      project.workspaceIdentity,
+      remoteSessionId,
+    ],
   );
   return { target, projectTarget, launchTarget };
 }

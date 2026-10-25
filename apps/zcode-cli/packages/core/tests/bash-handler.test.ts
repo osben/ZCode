@@ -4,7 +4,11 @@ import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { CoreErrorType, SessionEventType, createImageProcessorError } from "@zcode/contracts";
 import { isErrorForToolResult } from "../src/runtime/helpers/tool-result.js";
-import { decideBashCwdPolicy } from "../src/tool/handlers/bash-cwd-policy.js";
+import {
+  BASH_CONCURRENT_CWD_CHANGE_SUFFIX,
+  decideBashCwdPolicy,
+  guardBashCwdWriteBack,
+} from "../src/tool/handlers/bash-cwd-policy.js";
 import { bashHandler, bashToolEntry, createBashToolEntry } from "../src/tool/handlers/bash.js";
 import type { BashBackgroundLifecycleExecutionPort } from "../src/tool/handlers/bash-background-lifecycle.js";
 import { resolveTimeoutMs } from "../src/tool/executor/timeout.js";
@@ -210,6 +214,47 @@ describe("Bash cwd policy", () => {
         runtimeScope: "main",
       }),
     ).toEqual({ nextWorkingDirectory: "C:\\Repo\\..cache" });
+  });
+});
+
+describe("guardBashCwdWriteBack", () => {
+  const start = resolve("/repo");
+  const sub = resolve("/repo/src");
+
+  it("keeps the decision when the session cwd is unchanged since the command started", () => {
+    expect(
+      guardBashCwdWriteBack(
+        { nextWorkingDirectory: sub },
+        { startWorkingDirectory: start, currentWorkingDirectory: start, platform: "linux" },
+      ),
+    ).toEqual({ nextWorkingDirectory: sub });
+  });
+
+  it("drops a sibling's unchanged cwd silently after another command moved the session", () => {
+    expect(
+      guardBashCwdWriteBack(
+        { nextWorkingDirectory: start },
+        { startWorkingDirectory: start, currentWorkingDirectory: sub, platform: "linux" },
+      ),
+    ).toEqual({});
+  });
+
+  it("reports a lost directory change when both commands moved the cwd concurrently", () => {
+    expect(
+      guardBashCwdWriteBack(
+        { nextWorkingDirectory: resolve("/repo/lib") },
+        { startWorkingDirectory: start, currentWorkingDirectory: sub, platform: "linux" },
+      ),
+    ).toEqual({ stderrSuffix: BASH_CONCURRENT_CWD_CHANGE_SUFFIX });
+  });
+
+  it("keeps the decision when no live cwd reader is available", () => {
+    expect(
+      guardBashCwdWriteBack(
+        { nextWorkingDirectory: sub },
+        { startWorkingDirectory: start, currentWorkingDirectory: undefined },
+      ),
+    ).toEqual({ nextWorkingDirectory: sub });
   });
 });
 
@@ -1208,7 +1253,11 @@ describe("bashHandler", () => {
     ).rejects.toThrow("resize aborted");
   });
 
-  it("闲时轮复用显式后台及超时自动后台的 Bash 生命周期", async () => {
+  // Fork divergence (see specs/upstream-sync-cli-divergences.md): idle/off-peak turns reject explicit
+  // background Bash and never auto-background on timeout, so a background notification turn cannot
+  // run a full agent loop on the user's plan. Upstream 3.16.1 keeps idle background ownership in the
+  // runtime lifecycle instead; the fork keeps this guard.
+  it("rejects background execution and disables auto-background in idle-time turns", async () => {
     const runBashWithBackgroundLifecycle = vi.fn(async () => ({
       kind: "completed" as const,
       result: executionResult({ status: "completed", exitCode: 0 }),
@@ -1219,21 +1268,52 @@ describe("bashHandler", () => {
       runBashWithBackgroundLifecycle,
     };
 
+    const telemetry = recordingBashTelemetry([]);
+    const startCommand = vi.spyOn(telemetry, "startCommand");
     await expect(
       bashHandler(
         { command: "long-running command", run_in_background: true } satisfies BashInput,
-        contextWith(executionPort, { offPeakTurn: true }),
+        contextWith(executionPort, { offPeakTurn: true, telemetry }),
       ),
-    ).resolves.toBeDefined();
-    expect(runBashWithBackgroundLifecycle).toHaveBeenCalledTimes(1);
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("Idle-time tasks do not support background commands"),
+      recoverable: true,
+    });
+    // The rejection must precede the command span, otherwise the span is never finished.
+    expect(startCommand).not.toHaveBeenCalled();
+    expect(runBashWithBackgroundLifecycle).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
 
     const output = (await bashHandler(
       { command: "long-running command" } satisfies BashInput,
       contextWith(executionPort, { offPeakTurn: true }),
     )) as BashOutput;
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(runBashWithBackgroundLifecycle).not.toHaveBeenCalled();
+    expect(output.status).toBe("completed");
+  });
+
+  it("keeps explicit and timeout auto-background in ordinary turns", async () => {
+    const runBashWithBackgroundLifecycle = vi.fn(async () => ({
+      kind: "completed" as const,
+      result: executionResult({ status: "completed", exitCode: 0 }),
+    }));
+    const run = vi.fn(async () => executionResult({ status: "completed", exitCode: 0 }));
+    const executionPort: BashBackgroundLifecycleExecutionPort = {
+      run,
+      runBashWithBackgroundLifecycle,
+    };
+
+    await bashHandler(
+      { command: "long-running command", run_in_background: true } satisfies BashInput,
+      contextWith(executionPort, {}),
+    );
+    await bashHandler(
+      { command: "long-running command" } satisfies BashInput,
+      contextWith(executionPort, {}),
+    );
     expect(runBashWithBackgroundLifecycle).toHaveBeenCalledTimes(2);
     expect(run).not.toHaveBeenCalled();
-    expect(output.status).toBe("completed");
   });
 
   it("starts background execution when requested", async () => {

@@ -63,8 +63,8 @@ function createService(options?: {
     ...createProductionWebZaiOAuthConfig(),
     allowDevReturnToRedirect: options?.allowDevReturnToRedirect ?? false,
   };
-  // 每次调用模拟一个新的页面实例：同一标签页刷新，或同一浏览器的另一个标签页。
-  // 每个实例都有独立的 sessionStorage，只共享同源 localStorage；登录不能依赖标签页内的存储。
+  // Each call simulates a new page instance: a reload of the same tab, or another tab in the same browser.
+  // Each instance has its own sessionStorage and shares only the same-origin localStorage; login must not depend on per-tab storage.
   const openPage = () => {
     const storage = { localStorage, sessionStorage: new MemoryStorage() };
     return new WebAuthService({
@@ -114,7 +114,7 @@ describe("WebAuthService", () => {
     vi.unstubAllGlobals();
   });
 
-  it("设备页账号行读取当前平台与显示名；显示名缺失时回退用户名", () => {
+  it("device page account row reads the current platform and display name; falls back to username when display name is missing", () => {
     const { service, localStorage } = createService();
     expect(service.getActiveAccount()).toBeNull();
     localStorage.setItem("oauth:active_provider", "zai");
@@ -156,9 +156,7 @@ describe("WebAuthService", () => {
     expect(authorizeUrl.origin + authorizeUrl.pathname).toBe(
       "https://chat.z.ai/api/oauth/authorize",
     );
-    expect(authorizeUrl.searchParams.get("redirect_uri")).toBe(
-      "https://zcode.z.ai/remote/v4",
-    );
+    expect(authorizeUrl.searchParams.get("redirect_uri")).toBe("https://zcode.z.ai/remote/v4");
     expect(authorizeUrl.searchParams.get("client_id")).toBe("client_P8X5CMWmlaRO9gyO-KSqtg");
   });
 
@@ -215,8 +213,8 @@ describe("WebAuthService", () => {
       })),
     ),
   )(
-    // 回归：部分手机浏览器的回调页不是发起登录的标签页（或标签页被回收后重建），
-    // 登录记录原先只在发起页的 sessionStorage，回调页读不到就报 “OAuth CSRF 检测失败”。
+    // Regression: on some mobile browsers the callback page is not the tab that started the login (or the tab was rebuilt after being reclaimed),
+    // and the login record used to live only in the initiating page's sessionStorage, so the callback page could not read it and reported "OAuth CSRF check failed".
     "$provider $path completes login when the callback opens in another tab of the same browser, preserving QR parameters",
     async ({ provider, path }) => {
       const origin = "https://zcode.z.ai";
@@ -246,7 +244,7 @@ describe("WebAuthService", () => {
         }),
       }));
       vi.stubGlobal("fetch", fetchMock);
-      // 必须跨实例读取 pending 地址，不能靠发起登录页的内存保留地址。
+      // The pending redirect URI must be read across instances, not kept in memory by the page that started the login.
       const result = await h.openPage().handleCallback(callback.toString());
       expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
         provider,
@@ -469,18 +467,18 @@ describe("WebAuthService", () => {
 });
 
 /**
- * BigModel 登录。
+ * BigModel login.
  *
- * 起因：private 分享的 owner 判定用的是 provider 自己的 user id（BigModel 是
- * CustomerNumber 数字串，Z.ai 是 sub UUID），所以桌面端用 BigModel 发布的私享分享，
- * 在只能 z.ai 登录的分享页上永远匹配不到 owner，服务端按存在性隐匿返回 404/3211。
+ * Cause: the private-share owner check uses the provider's own user id (BigModel is a
+ * CustomerNumber numeric string, Z.ai is a sub UUID), so a private share published from the desktop app with BigModel
+ * never matches its owner on a share page that only accepts z.ai login, and the server hides existence by returning 404/3211.
  */
 describe("WebAuthService BigModel provider", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("授权 URL 用 BigModel 的参数名（redirect/appId），不是 ZAI 的那套", () => {
+  it("authorization URL uses BigModel's parameter names (redirect/appId), not the ZAI set", () => {
     const { assigned, localStorage, service } = createService();
 
     service.startLogin({
@@ -492,17 +490,17 @@ describe("WebAuthService BigModel provider", () => {
     expect(url.pathname).toBe("/login");
     expect(url.searchParams.get("redirect")).toBe("https://zcode.z.ai/cn/share/callback");
     expect(url.searchParams.get("appId")).toBe("zcode");
-    // ZAI 专用参数不能出现，否则 BigModel 侧会忽略 redirect 直接回默认地址
+    // ZAI-only parameters must not appear, otherwise the BigModel side ignores redirect and returns to the default address
     expect(url.searchParams.get("redirect_uri")).toBeNull();
     expect(url.searchParams.get("client_id")).toBeNull();
     expect(url.searchParams.get("response_type")).toBeNull();
-    // 回调页要靠它知道用哪个 provider 换 token
+    // the callback page uses it to know which provider to exchange the token with
     expect(JSON.parse(localStorage.getItem(PENDING_LOGINS_KEY)!)).toMatchObject([
       { provider: "bigmodel" },
     ]);
   });
 
-  it("换 token 时带 provider，并从 data.bigmodel.access_token 取值", async () => {
+  it("sends the provider when exchanging the token and reads the value from data.bigmodel.access_token", async () => {
     const { localStorage, service } = createService();
     seedPendingLogin(localStorage, {
       nonce: "nonce-1",
@@ -532,11 +530,11 @@ describe("WebAuthService BigModel provider", () => {
     expect(localStorage.getItem("oauth:active_provider")).toBe("bigmodel");
     expect(localStorage.getItem("oauth:bigmodel:access_token")).toBe("bigmodel-token");
     expect(localStorage.getItem("zcodejwttoken")).toBe("jwt-token");
-    // 登录记录用完即清，避免污染下一次登录
+    // Login records are cleared as soon as they are used, so they do not pollute the next login
     expect(localStorage.getItem(PENDING_LOGINS_KEY)).toBeNull();
   });
 
-  it("BigModel 响应缺 access_token 时不落半个登录态", async () => {
+  it("does not persist a half-finished login state when the BigModel response lacks access_token", async () => {
     const { localStorage, service } = createService();
     seedPendingLogin(localStorage, {
       nonce: "nonce-1",

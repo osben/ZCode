@@ -22,6 +22,9 @@ import type {
 } from "./types.js";
 import { validateInput } from "./validation.js";
 
+/** Per-batch executor concurrency when the runtime does not configure `toolConcurrency`. */
+export const DEFAULT_TOOL_MAX_CONCURRENCY = 10;
+
 export class ToolExecutorImpl implements ToolExecutor {
   private readonly deps: ToolExecutorDeps;
   private readonly backgroundTasks: BackgroundTaskTracker;
@@ -46,6 +49,7 @@ export class ToolExecutorImpl implements ToolExecutor {
       browserControlPort: options.browserControlPort,
       browserDocumentationRoot: options.browserDocumentationRoot,
       fileSystemPort: options.fileSystemPort,
+      lsp: options.lsp,
       httpClientPort: options.httpClientPort,
       imageProcessorPort: options.imageProcessorPort,
       pdfDocumentPort: options.pdfDocumentPort,
@@ -69,6 +73,7 @@ export class ToolExecutorImpl implements ToolExecutor {
       modelCatalogPort: options.modelCatalogPort,
       runtimeTaskRegistry: options.runtimeTaskRegistry,
       readFileState: options.readFileState ?? new Map(),
+      nestedInstructions: options.nestedInstructions,
       hasLoadedSkill: options.hasLoadedSkill,
       subagentBackgroundBashMaxMs: options.subagentBackgroundBashMaxMs,
       bashShellSelection: options.bashShellSelection,
@@ -90,8 +95,9 @@ export class ToolExecutorImpl implements ToolExecutor {
       runtimeScope: options.runtimeScope ?? "main",
       traceContext: options.traceContext,
       getMode: options.getMode ?? (() => options.mode ?? "build"),
-      maxConcurrency: options.maxConcurrency ?? 10,
+      maxConcurrency: options.maxConcurrency ?? DEFAULT_TOOL_MAX_CONCURRENCY,
       hookRunner: options.hookRunner,
+      validateToolExecution: options.validateToolExecution,
     };
     this.backgroundTasks = new BackgroundTaskTracker(this.deps);
   }
@@ -152,8 +158,9 @@ export class ToolExecutorImpl implements ToolExecutor {
     traceContext: TraceContext,
     turnId?: TurnId,
   ): Promise<void> {
-    // 与 submit 路径同一个 tracker 实例、同一条 trackBackgroundTask：resume 重臂的行为
-    // 按构造等于工具启动路径的行为，两条路径不可能漂移（见 ToolExecutor 接口注释）。
+    // Use the same tracker instance and trackBackgroundTask path as submit. Resume
+    // rearming is thereby equivalent to starting the task through the tool, so the paths
+    // cannot drift (see the ToolExecutor interface comment).
     return this.backgroundTasks.trackBackgroundTask(toolCall, output, traceContext, turnId);
   }
 

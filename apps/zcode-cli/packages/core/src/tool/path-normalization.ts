@@ -12,6 +12,15 @@ export function getToolPathApi(platform: ToolPathPlatform): ToolPathApi {
   return platform === "win32" ? path.win32 : path.posix;
 }
 
+/** Lexical containment: whether a `pathApi.relative(parent, child)` result points at or above `parent`'s parent. */
+export function isPathOutsideParent(relativePath: string, pathApi: ToolPathApi): boolean {
+  return (
+    relativePath === ".." ||
+    relativePath.startsWith(`..${pathApi.sep}`) ||
+    pathApi.isAbsolute(relativePath)
+  );
+}
+
 export function normalizeToolPathForComparison(
   filePath: string,
   platform: ToolPathPlatform = currentPlatform,
@@ -28,8 +37,8 @@ function normalizeWindowsToolPath(filePath: string): string {
 }
 
 function normalizeWindowsDriveAlias(filePath: string): string {
-  // Read/Edit/Write 和 Bash cwd 都会收到 Git Bash 风格的 /c/... 路径；
-  // 统一转换到 drive-letter 形式，避免各工具重复实现 Windows path 兼容逻辑。
+  // Read/Edit/Write and Bash cwd can receive Git Bash-style /c/... paths;
+  // convert them to drive-letter form here so each tool does not need its own Windows path compatibility logic.
   const driveAliasMatch = filePath.match(/^\/([A-Za-z])\//);
   if (!driveAliasMatch) return filePath;
 
@@ -43,7 +52,7 @@ function canonicalizeWindowsDriveLetter(filePath: string): string {
 }
 
 function stripWindowsExtendedPathPrefix(filePath: string): string {
-  // 只剥离 extended UNC 和 drive path，保留 Volume/GLOBALROOT 等设备命名空间。
+  // Strip only extended UNC and drive paths; preserve device namespaces such as Volume/GLOBALROOT.
   if (filePath.startsWith("\\\\?\\UNC\\")) return `\\\\${filePath.slice("\\\\?\\UNC\\".length)}`;
   if (filePath.startsWith("\\\\?\\") && filePath.length >= 7 && filePath[5] === ":") {
     return filePath.slice("\\\\?\\".length);

@@ -1,61 +1,81 @@
-# Settings Project Memory 分层导航
+# Settings Project Memory Layered Navigation
 
-## 问题摘要
+## Problem Summary
 
-Settings 的 Project Memory viewer 需要按 Workspace Scope 查看对应的 Memory 文件，并能用用户选择的编辑器直接打开真实文件。
-
-Memory 复用能力设置的 Scope 交互，但只提供 Workspace Scope，不提供 User Scope：
+The Settings Project Memory viewer must show the Memory files of a Workspace Scope and open the real file
+directly with the user's chosen editor. Memory reuses the Scope interaction of capability settings but offers
+only a Workspace Scope, no User Scope:
 
 ```text
-Workspace Memory 开关
-  └─ Workspace Scope + 当前记忆数量 + 刷新
-       └─ 当前 Workspace 的全部 Memory 文件
-            └─ 编辑器按钮打开真实文件
+Workspace Memory switch
+  └─ Workspace Scope + current memory count + refresh
+       └─ All Memory files of the current Workspace
+            └─ editor button opens the real file
 ```
 
-## 产品合同
+## Product Contract
 
-### Workspace Scope 与文件列表
+### Workspace Scope and File List
 
-- “工作区记忆”开关卡片固定显示在 Scope 工具栏上方；它是 Memory 功能入口设置。
-- 开关卡片使用单段精简说明：“在工作区中保存并复用长期上下文，新会话生效。开启后可能增加模型调用和 Token 成本。”，不再单独重复展示成本提示段落。
-- catalog 加载完成后默认选择第一个 Workspace；Scope 菜单只列出有 Memory catalog 的 Workspace，不显示 User 选项。项目名称优先复用应用已打开 Workspace 与最近 Workspace 记录中的真实名称，保留原始大小写和字符。
-- Scope 菜单以 `settings.json.recentProjects` 的最近使用顺序为准；能通过项目目录名匹配的 Memory Workspace 先按该顺序排列，未匹配的历史 Memory 保留 catalog 原顺序并追加在末尾。当前打开但尚未写入 `recentProjects` 的 Workspace 仅补充名称和末尾顺序，不覆盖 settings 顺序。
-- Scope 工具栏复用 MCP 的按钮、菜单宽度、Workspace 图标和选中态，左侧依次展示 Scope、分隔线和当前 Workspace 的 Memory 数量，右侧展示文件名搜索；`文件` 分组标题右侧展示刷新入口。
-- 切换 Scope 后直接替换下方文件列表，不经过项目列表或面包屑二级导航。Scope 表达 Memory 对项目的生效范围，不表达其物理存储位置；底层仍可存放在 User Home。
-- 搜索只过滤当前 Scope 的文件名，忽略大小写；切换 Workspace 时保留查询。无匹配结果时隐藏“文件”分组标题和列表，展示统一的搜索空状态。
-- 列表视觉与设置页的 MCP、Skills、Hooks 资源列表保持一致：`文件` 分组标题使用统一的 `h-7` 高度；列表容器无外边框、使用 `bg-surface`，各行之间使用独立的 `bg-border/50` 分隔元素。
-- 文件图标使用 `size-9`、`rounded-xl`、`bg-background` 的图标容器；行 hover 使用 `bg-hover`。
-- 数量包含该项目目录中 catalog 返回的全部 `.md` 文件，包括 `MEMORY.md`。
-- 项目继续沿用 service 的最近更新时间倒序，不在 UI 重新排序。
+- The "工作区记忆" (Workspace memory) switch card is fixed above the Scope toolbar; it is the Memory feature
+  entry setting. It uses one concise description: "在工作区中保存并复用长期上下文，新会话生效。开启后可能增加模型调用和 Token 成本。"
+  (Save and reuse long-term context in the workspace, effective for new sessions; enabling may increase model
+  calls and token cost), with no separate repeated cost-hint paragraph.
+- After the catalog finishes loading, the first Workspace is selected by default; the Scope menu lists only
+  Workspaces that have a Memory catalog and shows no User option. The project name prefers the real names from
+  the app's open Workspaces and recent Workspace records, keeping the original case and characters.
+- The Scope menu order follows the recent-use order of `settings.json.recentProjects`: Memory Workspaces that
+  match by project directory name come first in that order, unmatched historical Memory keeps the catalog's
+  original order appended at the end. A currently open Workspace not yet in `recentProjects` only adds its name
+  and an end order and does not override the settings order.
+- The Scope toolbar reuses MCP's button, menu width, Workspace icon and selected state, showing on the left in
+  turn the Scope, a divider and the current Workspace's Memory count, and filename search on the right; the
+  refresh entry sits at the right of the `文件` (Files) group title.
+- Switching Scope directly replaces the file list below, without a project list or breadcrumb second-level
+  navigation. Scope expresses the Memory's effective range over the project, not its physical storage location;
+  the underlying store may still be in User Home.
+- Search filters only file names of the current Scope, case-insensitively; the query is kept when switching
+  Workspace. With no match, the "Files" group title and list hide and a unified search empty state shows.
+- The list visuals match the MCP, Skills and Hooks resource lists of Settings: the `文件` group title uses a
+  unified `h-7` height; the list container has no outer border and uses `bg-surface`, with independent
+  `bg-border/50` separator elements between rows. The file icon uses a `size-9`, `rounded-xl`, `bg-background`
+  icon container; row hover uses `bg-hover`.
+- The count includes all `.md` files returned by the catalog for that project directory, including
+  `MEMORY.md`. Projects keep the service's most-recently-updated-first order, with no UI re-sorting.
 
-### Memory 文件列表
+### Memory File List
 
-- 列表平铺展示 catalog 返回的全部文件；`MEMORY.md` 是普通可选项，不再作为虚拟父节点。
-- 每个文件复用 `FileDisplayIcon`，根据文件扩展名展示文件类型图标；文件行仅展示信息，不读取或展开 Markdown 正文。
-- 文件行中部按两行展示文件名与更新时间：文件名使用 UI 字体、`font-medium` 主文字，更新时间使用次要小号文字；右侧保留独立的编辑器分段菜单。
-- Memory 文件分组标题使用统一的 `h-7` 高度；文件列表使用无边框 `bg-surface` 容器与独立分隔元素。
-- 每个文件行右侧复用顶部工具栏的 `WorkspaceEditorButtonGroup`：主按钮显示当前编辑器图标并直接打开文件，下箭头用于选择其他编辑器。
-- 文件行不显示展开箭头，不设置展开状态；按钮与行主体保持独立交互。
-- 文件行主体不是可展开按钮；只有右侧原生编辑器按钮组可操作。主按钮使用当前编辑器打开真实文件，箭头菜单切换编辑器。
+- The list shows all files returned by the catalog flat; `MEMORY.md` is an ordinary selectable item, no longer
+  a virtual parent node.
+- Each file reuses `FileDisplayIcon` to show a file-type icon by extension; a file row only shows information
+  and neither reads nor expands Markdown content.
+- The middle of a file row shows the file name and update time on two lines: the file name uses the UI font
+  with `font-medium` main text, the update time uses secondary small text; the right keeps an independent
+  editor segmented menu.
+- Each file row's right side reuses the top toolbar's `WorkspaceEditorButtonGroup`: the main button shows the
+  current editor icon and opens the file directly, the down arrow selects another editor. File rows show no
+  expand arrow and set no expand state; the buttons and the row body interact independently. The row body is
+  not an expandable button; only the right native-editor button group is operable.
 
-### 滚动合同
+### Scroll Contract
 
-- 与 Settings Plugin 列表/详情一致，由 Settings 主内容区统一承担纵向滚动，不为 Memory viewer 锁定外层滚动。
-- Memory 工具栏和文件列表参与同一条页面滚动链。
-- 不在 viewer 内创建第二条纵向滚动条，也不使用固定卡片头部。
+Like the Settings Plugin list/detail, the Settings main content area bears the vertical scrolling uniformly,
+and the outer scroll is not locked for the Memory viewer. The Memory toolbar and file list share the same page
+scroll chain. No second vertical scrollbar inside the viewer and no fixed card header.
 
-### 刷新
+### Refresh
 
-- Scope 工具栏保留显式刷新入口。
-- 刷新后当前 Workspace 仍存在则保留选择；当前 Workspace 消失时自动选择新的首项。
+The Scope toolbar keeps an explicit refresh entry. After refresh the selection is kept if the current Workspace
+still exists; when it disappears the new first item is selected automatically.
 
-### 空状态与加载状态
+### Empty and Loading States
 
-- catalog loading、无已保存记忆和仅本地可查看提示统一使用透明背景、`rounded-xl border border-dashed border-border` 的提示容器；功能关闭时只显示上方开关卡片，不渲染额外提示容器。
-- 空状态不伪造 Workspace Scope，不提供新建入口，也不改变现有 Memory 数据来源。
+Catalog loading, no saved memory and the local-view-only hint all use a transparent-background
+`rounded-xl border border-dashed border-border` hint container; when the feature is off only the switch card
+above shows and no extra hint container renders. The empty state fakes no Workspace Scope, offers no create
+entry and does not change the existing Memory data source.
 
-## 状态与事件
+## State and Events
 
 ```text
 memories(workspaceId)
@@ -66,41 +86,49 @@ memories(workspaceId)
        └─ workspace missing ───────────────> memories(firstWorkspaceId)
 ```
 
-UI 的 Scope 选择只存在于 `MemorySettingsSection` 挂载期间，不写入 setting、localStorage、Host、Runtime 或 catalog service。
+The UI's Scope selection exists only while `MemorySettingsSection` is mounted and is not written to setting,
+localStorage, Host, Runtime or the catalog service.
 
-## 平台与架构边界
+## Platform and Architecture Boundary
 
-- Desktop Settings 仍固定通过本地 Base Host 读取当前本地 profile。
-- Memory 目录解析和打开前的 `stat` 同样固定使用本地 Base Host；当前激活 SSH、WSL 或 Docker
-  workspace 时不得把本机 Memory 路径交给远端 Host。
-- catalog 返回每个文件的真实绝对路径；文件按钮将该路径交给既有 `IPlatformService.openInEditor`，Renderer 不自行拼接路径。
-- Web Remote / Mobile 仍只展示开关和“前往本地桌面端查看”提示，不调用 catalog。
-- 不聚合 SSH、WSL、Docker、custom-agent 或 external storage Memory。
-- 不修改 `memoryEnabled` 的 app-global 持久化与 session materialization 语义。
-- 不新增协议、watcher、polling、内联读取、删除、搜索或导出能力。
+- Desktop Settings still reads the current local profile through the local Base Host only.
+- Memory directory resolution and the `stat` before opening also use the local Base Host fixedly; with an active
+  SSH, WSL or Docker workspace the local Memory path must not be handed to the remote Host.
+- The catalog returns each file's real absolute path; the file button hands that path to the existing
+  `IPlatformService.openInEditor`, and the Renderer does not build paths itself.
+- Web Remote / Mobile still show only the switch and the "前往本地桌面端查看" (Go to the local desktop app to
+  view) hint and do not call the catalog.
+- No aggregation of SSH, WSL, Docker, custom-agent or external storage Memory. No change to the app-global
+  persistence and session materialization semantics of `memoryEnabled`. No new protocol, watcher, polling,
+  inline read, delete, search or export capability.
 
-## 响应式与无障碍
+## Responsive and Accessibility
 
-- Desktop 和手机宽度使用相同的 Scope 与文件列表语义，不因断点改变信息架构。
-- Scope 使用原生菜单键盘语义；Memory 文件行是静态信息容器，编辑器按钮组使用原生按钮键盘语义。
-- Folder/FileText 图标仅辅助识别，Workspace 名称和文件名仍是可访问名称的主体。
-- 长 Workspace 名和长文件名均允许截断，不展示 Tooltip。
-- 所有文案使用 i18n，所有颜色、字号、间距和圆角使用 `DESIGN.md` 的语义 token。
+- Desktop and phone widths use the same Scope and file list semantics; the information architecture does not
+  change at breakpoints.
+- Scope uses native menu keyboard semantics; a Memory file row is a static information container, and the editor
+  button group uses native button keyboard semantics. Folder/FileText icons only aid recognition; Workspace and
+  file names remain the main body of accessible names. Long Workspace and file names may truncate with no
+  Tooltip.
+- All copy uses i18n, and all colors, font sizes, spacing and radii use the semantic tokens of `DESIGN.md`.
 
-## 验收用例
+## Acceptance Cases
 
-| ID    | Setup                           | Action           | Assertions                                                                                     |
-| ----- | ------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------- |
-| PMN01 | Desktop、Memory 开启、两个项目  | catalog ready    | 开关在上；Scope 默认首项且无 User；工具栏显示数量；下方直接显示当前 Workspace 文件             |
-| PMN02 | Scope 菜单包含多个 Workspace    | 切换 Workspace   | 文件列表替换为目标 Workspace 内容，不出现项目列表或面包屑                                      |
-| PMN03 | 当前 Workspace 文件列表         | 查看并使用文件行 | 文件类型图标、名称、更新时间与右侧编辑器分段菜单正确；主按钮打开真实路径，下箭头选择其他编辑器 |
-| PMN04 | 已选择非首个 Workspace          | 显式刷新         | Workspace 仍存在时保留选择；消失时选择新的首项                                                 |
-| PMN05 | catalog loading、empty 或 error | 加载、重试       | loading/empty 使用统一透明虚线容器；错误保留明确反馈和显式刷新入口                             |
-| PMN06 | Web Remote / Mobile             | 打开 Memory      | 只展示开关和本地查看提示，catalog 零调用                                                       |
-| PMN07 | 文件列表超过视口                | 滚动             | 仅 Settings 主内容区纵向滚动                                                                   |
+| ID    | Setup                             | Action                  | Assertions                                                                                                                                                    |
+| ----- | --------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PMN01 | Desktop, Memory on, two projects  | catalog ready           | Switch on top; Scope defaults to the first item with no User; the toolbar shows the count; the current Workspace's files show directly below                  |
+| PMN02 | Scope menu has several Workspaces | Switch Workspace        | The file list is replaced with the target Workspace content, no project list or breadcrumb appears                                                            |
+| PMN03 | Current Workspace file list       | View and use a file row | File-type icon, name, update time and the right editor segmented menu are correct; the main button opens the real path, the down arrow selects another editor |
+| PMN04 | Non-first Workspace selected      | Explicit refresh        | Selection kept if the Workspace still exists; the new first item selected if it disappeared                                                                   |
+| PMN05 | catalog loading, empty or error   | Load, retry             | loading/empty use the unified transparent dashed container; errors keep clear feedback and an explicit refresh entry                                          |
+| PMN06 | Web Remote / Mobile               | Open Memory             | Only the switch and the local-view hint show; the catalog gets zero calls                                                                                     |
+| PMN07 | File list exceeds the viewport    | Scroll                  | Only the Settings main content area scrolls vertically                                                                                                        |
 
-## 剪枝
+## Pruning
 
-- 不枚举 Runtime、provider、desktop continuous 与 mobile replayable 消息组合：本改动不触发 Runtime 或协议，只用零调用不变量证明隔离。
-- 不新增 service 文件系统等价类：目录 containment、symlink、并发删除、原子更新和 5 MiB 上限继续由 `memoryService.test.ts` 覆盖。
-- 不保留旧 selector、虚拟树、折叠和 roving-focus 用例：这些交互退出产品合同，由原生按钮列表键盘语义替代。
+- Runtime, provider, desktop continuous and mobile replayable message combinations are not enumerated: the
+  change triggers no Runtime or protocol and proves isolation only by zero-call invariants.
+- No new service file-system equivalence classes: directory containment, symlink, concurrent delete, atomic
+  update and the 5 MiB limit stay covered by `memoryService.test.ts`.
+- The old selector, virtual tree, collapse and roving-focus cases are not kept: those interactions left the
+  product contract and are replaced by native button-list keyboard semantics.

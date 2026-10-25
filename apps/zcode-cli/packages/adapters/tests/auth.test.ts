@@ -12,6 +12,7 @@ import {
   createCodingPlanApiKeyResolver,
   createSharedZCodeCredentialStore,
   loadSharedZCodeCredentialSync,
+  resolveSharedZCodeCredentialsPath,
 } from "../src/auth/index.js";
 
 const TEST_ENV = {
@@ -23,6 +24,29 @@ afterEach(() => {
 });
 
 describe("shared ZCode credentials", () => {
+  it("uses the Desktop bootstrap dataBaseDir when the CLI env does not override it", async () => {
+    const home = await mkdtemp(join(tmpdir(), "zcode-auth-bootstrap-home-"));
+    const customDataDir = join(home, "custom-data");
+    const settingsPath = join(home, ".zcode", "v2", "setting.json");
+
+    try {
+      await mkdir(join(home, ".zcode", "v2"), { recursive: true });
+      await writeFile(settingsPath, JSON.stringify({ dataBaseDir: customDataDir }));
+      vi.stubEnv("HOME", home);
+
+      expect(resolveSharedZCodeCredentialsPath({ env: {} })).toBe(
+        join(customDataDir, ".zcode", "v2", "credentials.json"),
+      );
+      expect(
+        resolveSharedZCodeCredentialsPath({
+          env: { ZCODE_DATA_BASE_DIR: join(home, "environment-override") },
+        }),
+      ).toBe(join(home, "environment-override", ".zcode", "v2", "credentials.json"));
+    } finally {
+      await rm(home, { force: true, recursive: true });
+    }
+  });
+
   it("stores ZAI login credentials with z-code compatible encrypted keys", async () => {
     const dir = await mkdtemp(join(tmpdir(), "zcode-auth-"));
 

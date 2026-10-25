@@ -1,8 +1,8 @@
-// host（services 层）侧的 v4 命令信封构造与 ACK 收口共用件（send/交互回执收敛）。
+// Shared utilities on the host (services layer) for building v4 command envelopes and handling ACK outcomes (send/interaction receipt convergence).
 //
-// 与 renderer 的 packages/ui/src/v4/commandFactory.ts 平行：renderer 走浏览器
-// localStorage 持久化 clientId；host 进程用进程内稳定 clientId（host 重启 = 新提交端，
-// 幂等表以 commandId 为键不受影响）。不合并成一个实现的原因：ui 包不能被 services 反向依赖。
+// Mirrors the renderer's packages/ui/src/v4/commandFactory.ts: the renderer persists clientId in browser
+// localStorage; the host process uses a stable in-process clientId (a host restart is a new submitter,
+// while the idempotency table remains keyed by commandId). They are not combined because services must not depend on the UI package.
 import { randomBytes } from "node:crypto";
 import {
   COMMANDS_REQUIRING_BASE_REVISION,
@@ -15,7 +15,7 @@ import {
 
 const HEX = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, "0"));
 
-/** uuid v7（RFC 9562）：48-bit Unix ms 时间戳 + 74-bit 随机；与 renderer 工厂同构。 */
+/** UUID v7 (RFC 9562): 48-bit Unix millisecond timestamp + 74 random bits; matches the renderer factory. */
 export function uuidv7(now: number = Date.now()): string {
   const bytes = randomBytes(16);
   const ts = BigInt(now);
@@ -32,7 +32,7 @@ export function uuidv7(now: number = Date.now()): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-/** host services 进程稳定 clientId；pendingCommands 展示与幂等表以它区分提交端。 */
+/** Stable clientId for the host services process; pendingCommands display and the idempotency table use it to distinguish submitters. */
 const hostV4ClientId = `host-services-${uuidv7()}`;
 
 export function getHostV4ClientId(): string {
@@ -42,22 +42,22 @@ export function getHostV4ClientId(): string {
 export interface CreateHostCommandEnvelopeInput<T extends CommandType> {
   type: T;
   payload: CommandPayloadMap[T];
-  /** createSession 时为 null。 */
+  /** Null when calling createSession. */
   sessionId: string | null;
   /**
-   * 幂等键。手机 replayable 的 send_prompt 用 inputId（=traceId）作 commandId：
-   * CLI 侧 sendText 以 commandId 为 inputId 起 turn，终态事件的 inputId 才能与
-   * host command queue 的 traceId 对账收口（inputId→commandId 对齐）。
-   * 缺省生成 uuid v7（stop/resolveInteraction 等一次性命令）。
+   * Idempotency key. Mobile replayable send_prompt uses inputId (=traceId) as commandId:
+   * on the CLI side, sendText starts a turn with commandId as inputId, allowing the terminal event's inputId to be reconciled
+   * with the host command queue's traceId (inputId→commandId alignment).
+   * Defaults to a generated UUID v7 for one-shot commands such as stop/resolveInteraction.
    */
   commandId?: string;
-  /** 手机 replayable 保留原提交端 clientId；缺省用 host 进程稳定 id。 */
+  /** Mobile replayable preserves the original submitter clientId; defaults to the stable host process ID. */
   clientId?: string;
   baseRevision?: number;
   baseLogEpoch?: string;
 }
 
-/** 构造 host 侧命令信封；CAS 命令缺 baseRevision 就地抛出。 */
+/** Build a host-side command envelope; immediately throw if a CAS command lacks baseRevision. */
 export function createHostCommandEnvelope<T extends CommandType>(
   input: CreateHostCommandEnvelopeInput<T>,
 ): CommandEnvelope {
@@ -67,17 +67,13 @@ export function createHostCommandEnvelope<T extends CommandType>(
     );
   }
   if (ROW_TARGETING_COMMANDS.has(input.type) && !input.baseLogEpoch) {
-    throw new Error(
-      `command ${input.type} 是 row target 命令，必须携带 baseLogEpoch`,
-    );
+    throw new Error(`command ${input.type} 是 row target 命令，必须携带 baseLogEpoch`);
   }
   return {
     commandId: input.commandId ?? uuidv7(),
     clientId: input.clientId ?? hostV4ClientId,
     sessionId: input.sessionId,
-    ...(input.baseRevision !== undefined
-      ? { baseRevision: input.baseRevision }
-      : {}),
+    ...(input.baseRevision !== undefined ? { baseRevision: input.baseRevision } : {}),
     ...(input.baseLogEpoch ? { baseLogEpoch: input.baseLogEpoch } : {}),
     type: input.type,
     payload: input.payload,
@@ -85,7 +81,7 @@ export function createHostCommandEnvelope<T extends CommandType>(
   };
 }
 
-/** v4 命令被服务端否决（rejected/stale/failed）。code 供调用方结构化分流，不匹配错误文案。 */
+/** A v4 command rejected by the server (rejected/stale/failed). Callers branch on code, not error text. */
 export class ZCodeV4CommandRejectedError extends Error {
   readonly code = "ZCODE_V4_COMMAND_REJECTED";
 
@@ -104,10 +100,10 @@ export class ZCodeV4CommandRejectedError extends Error {
 }
 
 /**
- * ACK 错误映射（旧 op 抛错语义 → v4 六态）：
- * - accepted：正常收口；duplicate：同 commandId 重试回放，幂等成功；
- * - noop：晚到应答/已收口，幂等成功（resolveInteraction 先到先得语义）；
- * - rejected/stale/failed：抛结构化错误，reasonCode 原样携带给调用方。
+ * ACK error mapping (legacy op throw semantics → six v4 states):
+ * - accepted: normal completion; duplicate: replay of a retry with the same commandId, treated as idempotent success;
+ * - noop: late response/already completed, treated as idempotent success (resolveInteraction is first-wins);
+ * - rejected/stale/failed: throw a structured error and pass reasonCode to the caller unchanged.
  */
 export function assertV4CommandAckOk(
   commandType: CommandType,
@@ -121,13 +117,13 @@ export function assertV4CommandAckOk(
 }
 
 /**
- * CAS 命令的 host 侧提交（配置写下沉）：host services 没有本地 v4 投影，
- * 拿不到当前 conversation revision——「stale ACK 必带 revisionAtDecision」
- * 用服务端回报的最新 revision 收敛重试，与 renderer 的 dispatchConfigCas 同构
- * （packages/ui/src/v4/SessionPane.tsx）。首发 baseRevision=0 作探测，典型路径一次
- * stale 即命中；每次尝试新 commandId（stale 裁决不进幂等表，语义等价且避免歧义）。
- * 旧 facade 从不带 expectedRevision（无 CAS），这里 stale 仅意味着并发推进而非冲突，
- * 重试即为「无 CAS 提交」语义的保真；连续用尽仅在病态并发下出现，按拒绝抛出。
+ * Host-side submission for CAS commands (configuration writes delegated): host services has no local v4 projection
+ * and cannot read the current conversation revision. A stale ACK must include revisionAtDecision,
+ * which is used to retry with the latest revision reported by the server, matching the renderer's dispatchConfigCas
+ * (packages/ui/src/v4/SessionPane.tsx). Probe with baseRevision=0 on the first attempt; the typical path succeeds after one
+ * stale response. Use a new commandId for each attempt (stale decisions are not entered in the idempotency table, so this preserves equivalent semantics without ambiguity).
+ * The old facade never supplied expectedRevision (no CAS), so stale here means concurrent progress rather than conflict;
+ * retrying preserves the no-CAS submission semantics. Exhausting retries occurs only under pathological concurrency and is thrown as a rejection.
  */
 export async function sendHostCasCommandV4<T extends CommandType>(input: {
   send: (envelope: CommandEnvelope) => Promise<CommandAck>;

@@ -1,16 +1,20 @@
+import type { ZCodeTaskMeta } from "@zcode/shared";
 import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
 } from "@/components/ui/context-menu.js";
 import { TaskActionMenuContent } from "@/TaskActionMenuContent.js";
+import { TaskPullRequestMenuItems } from "@/components/TaskPullRequestMenuItems.js";
 
 export function TaskListItemContextMenu({
   organizationActions,
   intl,
+  task,
   isPinned,
   isArchived = false,
   fileManagerLabel,
+  canOpenInFileManager,
   taskSessionFile,
   activeSessionId,
   taskNativeSessionLogFile,
@@ -18,6 +22,8 @@ export function TaskListItemContextMenu({
   onTogglePinTask,
   onStartRenameTask,
   onArchiveTask,
+  onDeleteTask,
+  deleteDisabledReason,
   onMarkTaskAsUnread,
   onOpenTaskFeedback,
   onOpenTaskPathInFileManager,
@@ -25,7 +31,9 @@ export function TaskListItemContextMenu({
   onCopyTaskPath,
   onCopyTaskLogPath,
   onCopySessionId,
+  onCopyText,
   onViewModelTrajectory,
+  onViewModelTrajectoryV2,
   onOpenProviderConfig,
   disableTaskActions = false,
   disabledReason,
@@ -34,9 +42,11 @@ export function TaskListItemContextMenu({
   intl: {
     formatMessage: (desc: { id: string }, values?: Record<string, string>) => string;
   };
+  task: ZCodeTaskMeta;
   isPinned: boolean;
   isArchived?: boolean;
   fileManagerLabel: string;
+  canOpenInFileManager: boolean;
   taskSessionFile: { loading: boolean; path: string | null; exists: boolean };
   activeSessionId?: string | null;
   taskNativeSessionLogFile: {
@@ -48,6 +58,8 @@ export function TaskListItemContextMenu({
   onTogglePinTask: () => void;
   onStartRenameTask: () => void;
   onArchiveTask: () => void;
+  onDeleteTask?: () => void;
+  deleteDisabledReason?: string;
   onMarkTaskAsUnread: () => void;
   onOpenTaskFeedback: () => void;
   onOpenTaskPathInFileManager: () => void;
@@ -55,7 +67,9 @@ export function TaskListItemContextMenu({
   onCopyTaskPath: () => void;
   onCopyTaskLogPath: () => void;
   onCopySessionId?: () => void;
+  onCopyText: (label: string, value: string | null) => void;
   onViewModelTrajectory?: () => void;
+  onViewModelTrajectoryV2?: () => void;
   onOpenProviderConfig: () => void;
   disableTaskActions?: boolean;
   disabledReason?: string;
@@ -68,6 +82,7 @@ export function TaskListItemContextMenu({
         isPinned={isPinned}
         isArchived={isArchived}
         fileManagerLabel={fileManagerLabel}
+        canOpenInFileManager={canOpenInFileManager}
         taskSessionFile={taskSessionFile}
         activeSessionId={activeSessionId}
         taskNativeSessionLogFile={taskNativeSessionLogFile}
@@ -77,6 +92,8 @@ export function TaskListItemContextMenu({
         onTogglePinTask={onTogglePinTask}
         onStartRenameTask={onStartRenameTask}
         onArchiveTask={onArchiveTask}
+        onDeleteTask={onDeleteTask}
+        deleteDisabledReason={deleteDisabledReason}
         onMarkTaskAsUnread={onMarkTaskAsUnread}
         onOpenTaskFeedback={onOpenTaskFeedback}
         onOpenTaskPathInFileManager={onOpenTaskPathInFileManager}
@@ -85,9 +102,17 @@ export function TaskListItemContextMenu({
         onCopyTaskLogPath={onCopyTaskLogPath}
         onCopySessionId={onCopySessionId}
         onViewModelTrajectory={onViewModelTrajectory}
+        onViewModelTrajectoryV2={onViewModelTrajectoryV2}
         onOpenProviderConfig={onOpenProviderConfig}
         disableTaskActions={disableTaskActions}
         disabledReason={disabledReason}
+      />
+      <TaskPullRequestMenuItems
+        task={task}
+        intl={intl}
+        Item={ContextMenuItem}
+        Separator={ContextMenuSeparator}
+        onCopyText={onCopyText}
       />
     </ContextMenuContent>
   );

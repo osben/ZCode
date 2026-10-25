@@ -1,29 +1,28 @@
 # Treemapping
 
-Treemapping 是右侧 Side Pane 的当前轮 tool call 文件活动地图。它从当前 task 的 assistant message `toolCalls` 派生数据，不消费 Git Pane、Git status 或 Git diff。
+Treemapping is the current-turn tool call file activity map in the right Side Pane. It derives data from the
+current task's assistant message `toolCalls` and does not consume Git Pane, Git status or Git diff.
 
-## 数据与作用域
+## Data and Scope
 
-- Side Pane `+` 菜单打开当前轮 live map。
-- Assistant message 赞/踩右侧的 Treemapping 按钮打开该轮 snapshot。
-- v1 只看单轮；不跨轮累计。
-- v1 对 `bash/shell/exec` 只消费结构化 `changes` / path / diff metadata，不从普通 stdout 或复杂命令字符串猜路径。
+- The Side Pane `+` menu opens the current turn's live map.
+- The Treemapping button right of the assistant message like/dislike opens that turn's snapshot.
+- v1 looks at a single turn only, with no cross-turn accumulation.
+- For `bash/shell/exec`, v1 consumes only structured `changes` / path / diff metadata and does not guess paths
+  from plain stdout or complex command strings.
 
-## 视觉规则
+## Visual Rules
 
-- 目录是中性嵌套框，只表达层级、聚合 diff 和目录 views；目录面积参考子树聚合 `diffCount`。
-- 文件是叶子框：绿色新增、黄色修改、红色删除、蓝色仅查看。
-- 文件大小主要来自 `diffCount = added + removed`。
-- 无 diff 的变更使用最小变更权重，仅查看使用更小权重。
-- 删除文件会保留红色历史叶子，即使真实文件已经不存在。
+- A directory is a neutral nested box expressing only hierarchy, aggregate diff and directory views; its area
+  references the subtree's aggregate `diffCount`.
+- A file is a leaf box: green added, yellow modified, red deleted, blue view-only.
+- File size mainly comes from `diffCount = added + removed`. A change with no diff uses a minimum change
+  weight; view-only uses a smaller weight.
+- A deleted file keeps a red historical leaf even if the real file no longer exists.
 
-## 活动合并
+## Activity Merging
 
-同一文件在一轮里只显示一个框，事件流保留在详情区。状态优先级为：
+The same file shows one box per turn and the event stream stays in the detail area. State priority:
 
-1. deleted
-2. created
-3. modified
-4. viewed
-
-新建后修改仍显示绿色并累加 diff；查看后修改按变更色展示并保留 views。
+1. deleted, 2. created, 3. modified, 4. viewed. Created then modified still shows green and accumulates diff;
+   viewed then modified shows in the change color and keeps views.

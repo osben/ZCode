@@ -56,7 +56,6 @@ const windowsNativeSearchCmake = readFileSync(
   "utf8",
 );
 
-
 // 内网依赖源由环境显式配置；用中性主机，测试不依赖仓库默认的内网地址（开源导出里默认地址为空）。
 const INTRANET_ENV = { INTRANET_MACHINE_HOST: "intranet-deps.example" };
 const INTRANET_DEPS_BASE_URL = "http://intranet-deps.example:12345/zcode/deps";
@@ -195,7 +194,11 @@ describe("native search build", () => {
         `${INTRANET_DEPS_BASE_URL}/native-search-tools/ripgrep-v14.1.1-1/ripgrep-v14.1.1-1-aarch64-apple-darwin.tar.gz`,
       ],
     ]);
-    const linux = resolveNativeSearchPrebuiltPlan({ platform: "linux", arch: "x64", env: INTRANET_ENV });
+    const linux = resolveNativeSearchPrebuiltPlan({
+      platform: "linux",
+      arch: "x64",
+      env: INTRANET_ENV,
+    });
     expect(
       linux.artifacts.map(({ toolId, releaseFileName, source }) => [
         toolId,
@@ -217,10 +220,13 @@ describe("native search build", () => {
     ]);
     expect(linux.artifacts.at(-1)).toMatchObject({
       archiveSha256: NATIVE_SEARCH_OFFICIAL_RIPGREP_ASSETS["linux-x64"].sha256,
-      downloadUrl:
-        `${INTRANET_DEPS_BASE_URL}/native-search-tools/ripgrep-v14.1.1-1/ripgrep-v14.1.1-1-x86_64-unknown-linux-musl.tar.gz`,
+      downloadUrl: `${INTRANET_DEPS_BASE_URL}/native-search-tools/ripgrep-v14.1.1-1/ripgrep-v14.1.1-1-x86_64-unknown-linux-musl.tar.gz`,
     });
-    const windows = resolveNativeSearchPrebuiltPlan({ platform: "win32", arch: "x64", env: INTRANET_ENV });
+    const windows = resolveNativeSearchPrebuiltPlan({
+      platform: "win32",
+      arch: "x64",
+      env: INTRANET_ENV,
+    });
     expect(windows.artifacts).toMatchObject([
       {
         archiveExt: "zip",
@@ -660,7 +666,7 @@ describe("native search build", () => {
   it("Linux producer 按实际 Node、glibc、CC 与 CXX 能力放行", () => {
     expect(() =>
       assertLinuxNativeSearchBuildEnvironment({
-        nodeVersion: "24.14.0",
+        nodeVersion: "26.11.1",
         glibcVersion: "2.28",
         gccVersion: "12.2.1",
         cxxVersion: "12.2.1",
@@ -668,15 +674,15 @@ describe("native search build", () => {
     ).not.toThrow();
     expect(() =>
       assertLinuxNativeSearchBuildEnvironment({
-        nodeVersion: "22.16.0",
+        nodeVersion: "24.14.0",
         glibcVersion: "2.28",
         gccVersion: "12.2.1",
         cxxVersion: "12.2.1",
       }),
-    ).toThrow("Node 24");
+    ).toThrow("Node 26");
     expect(() =>
       assertLinuxNativeSearchBuildEnvironment({
-        nodeVersion: "24.14.0",
+        nodeVersion: "26.11.1",
         glibcVersion: "2.36",
         gccVersion: "12.2.1",
         cxxVersion: "12.2.1",
@@ -684,7 +690,7 @@ describe("native search build", () => {
     ).toThrow("glibc 2.28");
     expect(() =>
       assertLinuxNativeSearchBuildEnvironment({
-        nodeVersion: "24.14.0",
+        nodeVersion: "26.11.1",
         glibcVersion: "2.28",
         gccVersion: "8.5.0",
         cxxVersion: "12.2.1",
@@ -692,7 +698,7 @@ describe("native search build", () => {
     ).toThrow("GCC 12");
     expect(() =>
       assertLinuxNativeSearchBuildEnvironment({
-        nodeVersion: "24.14.0",
+        nodeVersion: "26.11.1",
         glibcVersion: "2.28",
         gccVersion: "12.2.1",
         cxxVersion: "13.2.1",

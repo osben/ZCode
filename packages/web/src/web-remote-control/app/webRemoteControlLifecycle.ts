@@ -27,9 +27,9 @@ export function createWebRemoteControlLifecycleRecovery({
   };
   const recover = (reason: "visible" | "pageshow" | "online" | "resume") => {
     if (!suspended) {
-      // Bugfix: 浏览器首屏加载也可能触发 pageshow，旧逻辑会在 terminal 仍处于 connecting 时强制 recover，
-      // 导致同一个远控链接建立第二条 terminal socket 并被 relay 踢成 KICKED。只有经历过 hidden/pagehide/freeze
-      // 这种真实暂停后，恢复事件才需要重连。
+      // Bugfix: the browser's first page load can also trigger pageshow. The old logic forced recover while the terminal was still connecting,
+      // which opened a second terminal socket for the same remote-control link and got kicked by the relay as KICKED. Only after a real pause of
+      // hidden/pagehide/freeze does the resume event need to reconnect.
       return;
     }
     suspended = false;

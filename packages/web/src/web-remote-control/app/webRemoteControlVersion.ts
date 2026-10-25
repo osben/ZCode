@@ -1,7 +1,7 @@
 import type { WebRemoteControlWindowBootstrapResult } from "@zcode/shared";
 
 interface WebRemoteControlVersionGuardOptions {
-  /** 只读取响应；依赖当前连接的副作用由 onAccepted 同步提交。 */
+  /** Only reads the response; side effects that depend on the current connection are committed synchronously by onAccepted. */
   requestBootstrap(): Promise<WebRemoteControlWindowBootstrapResult>;
   onAccepted?(result: WebRemoteControlWindowBootstrapResult): void;
   getUrl(): string;
@@ -10,7 +10,7 @@ interface WebRemoteControlVersionGuardOptions {
   onMismatch(desktopVersion: string): void;
 }
 
-/** 只管理当前手机连接的版本校验；资源路由由服务端处理。 */
+/** Only manages version checks for the current phone connection; resource routing is handled by the server. */
 export function createWebRemoteControlVersionGuard(options: WebRemoteControlVersionGuardOptions) {
   let generation = 0;
   let disposed = false;
@@ -44,7 +44,7 @@ export function createWebRemoteControlVersionGuard(options: WebRemoteControlVers
       const request = Promise.resolve()
         .then(() => options.requestBootstrap())
         .then((result) => {
-          // 重连可能让旧响应晚于新连接返回，不能用旧桌面的版本导航或初始化业务。
+          // A reconnect may let an old response arrive after the new connection; the old desktop's version navigation or business initialization must not be used.
           if (disposed || requestGeneration !== generation) return undefined;
           const version = result.desktopAppVersion?.trim();
           if (version) {
@@ -60,7 +60,7 @@ export function createWebRemoteControlVersionGuard(options: WebRemoteControlVers
               return undefined;
             }
           }
-          // 旧 bootstrap 曾先写入查看 epoch 再被丢弃；副作用必须和代际校验在同一同步段。
+          // The old bootstrap used to write the view epoch first and then discard it; side effects must be in the same synchronous segment as the generation check.
           options.onAccepted?.(result);
           return result;
         })

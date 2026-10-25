@@ -42,11 +42,11 @@ function formatRelativeTime(
   if (abs < 3600) return format.format(Math.round(diffSeconds / 60), "minute");
   if (abs < 86_400) return format.format(Math.round(diffSeconds / 3600), "hour");
   if (abs < 30 * 86_400) return format.format(Math.round(diffSeconds / 86_400), "day");
-  // 超过一个月的相对天数难以阅读，改用日期。
+  // Relative day counts beyond one month are hard to read, so a date is shown instead.
   return new Date(createdAtSeconds * 1000).toLocaleDateString(locale);
 }
 
-/** 分组内一行：左侧图标列固定，右侧内容带内缩分隔线（首行无分隔线）。 */
+/** One row in a group: a fixed left icon column, and right-side content with an indented separator (the first row has no separator). */
 export function WebRemoteControlDeviceRow({
   first,
   disabled,
@@ -85,7 +85,7 @@ export function WebRemoteControlDeviceRow({
   );
 }
 
-/** 多连接选择的行列表；独立导出便于在无 Portal 的环境中校验文案与禁用态。 */
+/** Row list for multi-connection selection; exported separately so copy and disabled states can be verified without a Portal. */
 export function WebRemoteControlConnectionList({
   device,
   locale,
@@ -137,7 +137,7 @@ export function WebRemoteControlConnectionList({
   );
 }
 
-/** 同一台电脑多个在线 ZCode 时的底部选择层；选择沿用与单连接相同的 admission。 */
+/** Bottom selection sheet used when several online ZCode instances run on the same computer; selection reuses the same admission as a single connection. */
 export function WebRemoteControlConnectionSheet({
   device,
   locale,

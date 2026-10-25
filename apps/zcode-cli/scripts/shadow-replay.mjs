@@ -1,13 +1,17 @@
-// 影子重放对账（交付 / 测试基建）。
-// 用途：把本机真实 CLI 库（默认 ~/.zcode/cli/db/db.sqlite）的历史会话全量喂给
-// 冷恢复管线（transcript 合成 → ProductProjection），输出守恒对账报告——
-// 每阶段上线门槛 = 全量重放无崩溃、无静默丢弃、失败清单审查完毕。
+// Shadow replay reconciliation (release / test infrastructure).
+// Purpose: feed all historical sessions from the local CLI database (default
+// ~/.zcode/cli/db/db.sqlite) into the cold-recovery pipeline (transcript synthesis →
+// ProductProjection) and emit a conservation report.
+// Release gate for each stage: replay all sessions without crashes or silent drops, and
+// review the complete failure list.
 //
-// 对源库只读：默认把 db（含 -wal/-shm）复制到临时目录再打开——store 打开时会跑
-// 迁移（0015/0016 等），不能直接落在用户真实库上（迁移应由 CLI 正常启动路径应用）。
-// 运行前先构建：pnpm -C apps/zcode-cli build（脚本从各包 dist 导入）。
+// The source database is read-only: by default, copy the db (including -wal/-shm) to a
+// temporary directory before opening it. Opening the store runs migrations (0015/0016,
+// etc.), which must not be applied directly to the user's database; the normal CLI startup
+// path is responsible for applying them.
+// Build first with `pnpm -C apps/zcode-cli build` (the script imports each package's dist).
 //
-// 用法：
+// Usage:
 //   node scripts/shadow-replay.mjs [--db <path>] [--limit <n>] [--session <id>] [--verbose] [--no-copy]
 import { parseArgs } from "node:util";
 import { homedir, tmpdir } from "node:os";
@@ -58,11 +62,11 @@ if (!args["no-copy"]) {
   }
 }
 
-const store = createSqliteSessionStore({ dbPath });
+const store = await createSqliteSessionStore({ dbPath });
 
 const sessions = args.session
   ? [{ id: args.session }]
-  : await store.listSessions({ includeArchived: true, limit: 100000 });
+  : await store.listSessions({ limit: 100000 });
 
 const totals = {
   sessions: 0,
@@ -103,8 +107,8 @@ for (const session of sessions) {
     for (const event of events) projection.applyEvent(event);
     const rows = projection.getSnapshot().rows.window;
 
-    // ── 守恒对账 ──
-    // assistant 守恒：每条可见 assistant text 必须出现在 rows（多重集覆盖）。
+    // ── Conservation checks ──
+    // Assistant conservation: every visible assistant text must appear in rows (multiset coverage).
     const expectedTexts = [];
     for (const message of messages) {
       if (message.info.role !== "assistant") continue;
@@ -129,7 +133,7 @@ for (const session of sessions) {
       report.problems.push(`assistant text 缺失 ${missingTexts}/${expectedTexts.length}`);
     }
 
-    // goal verify 守恒：part ∪ entry 的 lifecycle key 数 vs goalVerify marker 行数。
+    // Goal verification conservation: number of lifecycle keys in parts ∪ entries vs. goalVerify marker rows.
     const goalKeys = new Set();
     for (const message of messages) {
       for (const part of message.parts) {
@@ -158,19 +162,22 @@ for (const session of sessions) {
       report.problems.push(`goalVerify marker ${goalMarkers}/${goalKeys.size}`);
     }
 
-    // 可见 user 输入守恒：userInput 行数不得少于真实 user 文本消息数的下限估计
-    //（synthetic/model-only 不计；guide steer 内联也是可见行，计入两侧）。
-    // 已知误报：legacy 数据里 goal-continuation reminder / fork notice 以裸文本
-    // 持久化（无 synthetic/source/metadata 标记），分类器按文本前缀正确隐藏，
-    // 本启发式会把它们计成可见——flag 需人工核对（全量重放中 21 个
-    // flag 全为此类误报，真实守恒失败为 0）。
+    // Visible user-input conservation: userInput rows must be at least the estimated lower
+    // bound for real user text messages (synthetic/model-only messages are excluded;
+    // inline guide steers are visible rows and are counted on both sides).
+    // Known false positives: legacy data persists goal-continuation reminders / fork notices
+    // as plain text (without synthetic/source/metadata markers). The classifier correctly
+    // hides them by text prefix, but this heuristic counts them as visible. Review each flag
+    // manually (all 21 flags in the full replay were these false positives; there were no
+    // actual conservation failures).
     const expectedUsers = messages.filter(
       (message) =>
         message.info.role === "user" &&
         message.info.synthetic !== true &&
         message.info.visibility !== "model-only" &&
-        // compact 续接摘要（info.summary / semantics.kind=compact_summary）是
-        // providerContextOnly：分类器裁决不可见，不计入可见 user 下限。
+        // Compact continuation summaries (info.summary / semantics.kind=compact_summary)
+        // are providerContextOnly: the classifier treats them as invisible, so they are
+        // excluded from the visible-user lower bound.
         message.info.summary === undefined &&
         !message.info.semantics?.kind?.startsWith?.("compact") &&
         message.info.source === undefined &&
@@ -184,9 +191,10 @@ for (const session of sessions) {
       report.problems.push(`userInput 行 ${actualUsers}/${expectedUsers}`);
     }
 
-    // 可寻址性守恒：shadow replay 不能只证明“文本还在”。每条 transcript row 的
-    // entity/productTurn/message target，以及每个已发布 action，都必须由同一次 cold
-    // materialization 的 resolver 精确命中；否则 UI 会显示按钮但命令必然 stale/reject。
+    // Addressability conservation: shadow replay must prove more than "the text is still
+    // there." The resolver from the same cold materialization must resolve every transcript
+    // row's entity/productTurn/message target and every published action exactly; otherwise,
+    // the UI may show a button whose command is guaranteed to be stale/rejected.
     let entityTargetProblems = 0;
     let actionProblems = 0;
     const actionByFlag = [

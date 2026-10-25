@@ -8,8 +8,9 @@ export type OpenScopedPluginUiSideTabRequest = OpenPluginUiSideTabRequest & {
 };
 
 /**
- * 与 plan-detail 同构：按 workspaceKey + parentSessionId + 作用域派生稳定 id。
- * 工具卡片 `…:<toolCallId>`；面板 `…:surface:<surfaceId>`（面板 id 与 toolCallId 不同命名空间，前缀防撞）。
+ * Isomorphic to plan-detail: derives a stable id from workspaceKey + parentSessionId + scope.
+ * Tool card `…:<toolCallId>`; surface `…:surface:<surfaceId>` (surface ids are a different namespace
+ * from toolCallId; the prefix prevents collisions).
  */
 export function createPluginUiSidePaneTab(
   options: OpenScopedPluginUiSideTabRequest,
@@ -36,7 +37,7 @@ export function createPluginUiSidePaneTab(
   };
 }
 
-/** 同一作用域只保留一个 tab；重复打开只刷新标题并激活。 */
+/** Only one tab per scope; reopening just refreshes the title and activates it. */
 export function openPluginUiSidePane(
   current: WorkspaceSidePaneState | null,
   options: OpenScopedPluginUiSideTabRequest,

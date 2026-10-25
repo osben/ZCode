@@ -1,4 +1,30 @@
 import { remoteHostIdFromWorkspaceIdentity } from "@zcode/shared";
+import {
+  selectComposerWorktreePipeline,
+  useComposerWorktreePipelineStore,
+} from "@/store/composerWorktreePipelineStore.js";
+import { incognitoUnsupportedMessageId } from "@/lib/incognitoUnsupportedMessage.js";
+import { reportAppTelemetryEvent } from "@/lib/appTelemetry.js";
+import {
+  selectDraftIncognito,
+  useDraftIncognitoIntentStore,
+} from "@/v4/composer/draftIncognitoIntent.js";
+import { CHAT_ERROR_RESUME_MESSAGE } from "@/lib/chatErrorResume.js";
+import { useGitRepository } from "@/hooks/useGitRepository.js";
+import { useGitAutoRefresh } from "@/hooks/useGitAutoRefresh.js";
+import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
+import type {
+  ComposerWorktreePreparationParams,
+  ComposerWorktreePreparationSyncParams,
+} from "@/v4/composer/composerDraftWorktreeIntent.js";
+import { resolveComposerWorktreeRetryPreparation } from "@/v4/composer/composerWorktreePipeline.js";
+import { ConversationWorktreeCreatedNotice } from "@/v4/ConversationWorktreeCreatedNotice.js";
+import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
+import { FirstSubmissionStatus } from "@/v4/composer/ComposerWorktreeRecovery.js";
+import { useFirstSubmissionReconciliation } from "@/v4/firstSubmissionReconciliation.js";
+import { ensureAgentV4ConnectionHandshake } from "@/v4/agentV4ConnectionHandshake.js";
+import { ConversationPinnedBar, type PinnedConversationRow } from "@/v4/ConversationPinnedBar.js";
+import type { RowPinChangeHandler } from "@/v4/ConversationRowView.js";
 import { useRemoteConversationAvailable } from "@/v4/RemoteConversationAvailability.js";
 import {
   createRemoteWorkspaceDisconnectedError,
@@ -25,6 +51,11 @@ import {
   type ReactNode,
 } from "react";
 import { Hand } from "lucide-react";
+import {
+  PendingReservationGate,
+  reservedCreateSessionId,
+  trackReservedCreate,
+} from "./pendingReservationGate.js";
 import {
   BUILTIN_MODEL_PROVIDER_IDS,
   buildCustomSupplierKey,
@@ -71,6 +102,16 @@ import type {
 } from "@zcode/services";
 import { useCodingPlanBillingDiscountFromService } from "@/CodingPlanBillingDiscount.js";
 import { toast } from "@/components/ui/toast.js";
+import {
+  claimDraftExternalAgentChoices,
+  resolveExternalAgentId,
+  restoreDraftExternalAgentChoices,
+  sendClaimedDraftExternalAgentChoices,
+  sendExternalAgentConfigOption,
+  setDraftExternalAgentChoice,
+  type DraftExternalAgentChoices,
+  type DraftExternalAgentClaim,
+} from "@/v4/composer/externalAgentConfig.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
@@ -148,6 +189,14 @@ import {
   readPendingTaskDraft,
   resolveComposerScope,
   composerScopeKey,
+  readV4WorktreeRecoveryDrafts,
+  getV4FirstSubmissionVersion,
+  subscribeV4ComposerDrafts,
+  isV4FirstSubmissionActive,
+  setV4FirstSubmissionActive,
+  clearV4ComposerDraft,
+  moveV4ComposerDraft,
+  getV4WorktreeRecoveryScope,
 } from "@/v4/composer/composerDraftStore.js";
 import { resolveProviderLabel } from "@/lib/registryProviderView.js";
 import { resolveEntitledAccountProviderAccess } from "@/lib/accountProviderAccess.js";
@@ -170,6 +219,7 @@ import { useDraftModelReadinessGate } from "@/v4/composer/useDraftModelReadiness
 import { useSettings } from "@/hooks/useSettingService.js";
 import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import { useQuickPromptProject } from "@/quick-prompts/index.js";
 import {
   DEFAULT_CONVERSATION_SHARE_ACCESS_MODE,
   DEFAULT_CONVERSATION_SHARE_DOCK_STATE,
@@ -196,6 +246,7 @@ import { ConversationQuotaBanner } from "@/v4/ConversationQuotaBanner.js";
 import { PendingCommandRecoveryBanner } from "@/v4/PendingCommandRecoveryBanner.js";
 import { WorkspaceHookPendingBanner } from "@/v4/WorkspaceHookPendingBanner.js";
 import { ConversationStatusPanel } from "@/v4/ConversationStatusPanel.js";
+import { useLastTurnSectionModel } from "@/status-panel-insights/index.js";
 import { SessionSubscriptionErrorPanel } from "@/v4/SessionSubscriptionErrorPanel.js";
 import { ConversationTimeline } from "@/v4/ConversationTimeline.js";
 import type { ConversationLatestTurnSummary } from "@/v4/conversationTimelineLiveTail.js";
@@ -243,6 +294,7 @@ import {
   buildWorkflowGraphByToolCallId,
 } from "@/v4/workflowRunCardJoin.js";
 import { buildWorkflowDraftByToolCallId } from "@/v4/workflowDraftJoin.js";
+import { useStructurallySharedMemo } from "@/v4/useStructurallySharedMemo.js";
 import {
   WORKFLOW_RUN_DIRECTORY_LIMIT,
   countEndedWorkflowRuns,
@@ -250,6 +302,7 @@ import {
 } from "@/v4/workflowRunDirectoryModel.js";
 import {
   hasOlderRows,
+  hasVisibleRealUserFirstInputRow,
   requiresAcceptedInputProjection,
   shouldAutoLoadIncompleteLeadingTurn,
 } from "@/v4/conversationProjectionStore.js";
@@ -268,7 +321,12 @@ import {
   hasPluginReferenceUserRows,
   isSessionPluginCatalogReady,
 } from "@/v4/pluginReferenceIconProjection.js";
-import { shouldResyncForStaleAuthority } from "@/v4/staleAuthorityRecovery.js";
+import {
+  dispatchQueueCommandWithStaleRetry,
+  isQueueCommandSettledAck,
+  shouldReportSteerFailure,
+  shouldResyncForStaleAuthority,
+} from "@/v4/staleAuthorityRecovery.js";
 import { createCommandEnvelope } from "@/v4/commandFactory.js";
 import { createConfigCommandBarrier } from "@/v4/configCommandBarrier.js";
 import { recordV4CommandAck } from "@/v4/commandAckObservability.js";
@@ -368,6 +426,10 @@ export interface SessionPaneProps {
   activeSelectionSideChatSessionId?: string | null;
   workspacePath: string;
   workspaceIdentity?: string;
+  onCreateTaskInWorkspace?: (
+    workspacePath: string,
+    workspaceIdentity?: string,
+  ) => void | Promise<void>;
   remoteSessionId?: string | null;
   /** Prompt 模板埋点当前仅覆盖 Desktop；Web / 手机远控保留 UI 行为但不触发该事件。 */
   isDesktop?: boolean;
@@ -410,7 +472,11 @@ export interface SessionPaneProps {
   summaryPanelVariantOverride?: ChatViewSummaryPanelVariant | null;
   onSummaryPanelVariantOverrideChange?: (variant: ChatViewSummaryPanelVariant | null) => void;
   onRefreshGit?: () => void;
-  onOpenGitReview?: (sourceId?: GitChangeSourceId) => void;
+  onOpenGitReview?: (
+    sourceId?: GitChangeSourceId,
+    executionWorkspacePath?: string,
+    executionSessionId?: string,
+  ) => void;
   onOpenBrowserUrl?: (url: string) => void;
   onOpenAutomationsMain?: OpenAutomationsMain;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
@@ -439,6 +505,12 @@ export interface SessionPaneProps {
 }
 
 const MOBILE_PLAN_INTERACTION_RECONCILE_DELAY_MS = 500;
+/**
+ * createSession commands in flight, keyed by the reserved session id. The pane binds the reserved id
+ * before the host acknowledges the create, and a subscribe sent in that window is answered "not found"
+ * (see pendingReservationGate.ts), so the conversation lease waits for the acknowledgement.
+ */
+const pendingReservations = new PendingReservationGate();
 function createSessionErrorKey(
   sessionId: string | null | undefined,
   error: SessionErrorInfo,
@@ -677,6 +749,7 @@ export function SessionPane({
     highspeedCardService,
     modelSelectionService,
     usageStatsService,
+    zcodeAgentService,
     zcodeSessionService,
     zcodeTaskService,
   } = useServices();
@@ -691,6 +764,12 @@ export function SessionPane({
     () => resolveComposerScope(composerProjectId, workspaceIdentity, composerClientNamespace),
     [composerProjectId, workspaceIdentity, composerClientNamespace],
   );
+  // Project identity for the quick prompt row: the session's task in the project tree, or the draft's project.
+  const quickPromptProject = useQuickPromptProject({
+    sessionId,
+    workspaceKey: workspaceIdentity?.trim() || workspacePath,
+    workspaceIdentity,
+  });
   const composerDraftGeneration = useZCodeSessionStore(
     (store) => store.getWorkspaceState(workspacePath, workspaceIdentity).draftFocusVersion,
   );
@@ -801,9 +880,11 @@ export function SessionPane({
       new Set([...pendingShareRowIds].map((id) => shareDraft?.productTurnIdByRowId[id] ?? id)).size,
     [pendingShareRowIds, shareDraft],
   );
+  // Share items are only read while the share draft is open; building them on every window change
+  // was a second, uncached full render-unit pass over the conversation (570 ms on a 1052-message session).
   const shareRenderUnits = useMemo(
-    () => buildConversationTurnRenderUnits(snapshot?.rows.window ?? []),
-    [snapshot?.rows.window],
+    () => (shareActive ? buildConversationTurnRenderUnits(snapshot?.rows.window ?? []) : []),
+    [shareActive, snapshot?.rows.window],
   );
   const shareItems = useMemo(
     () =>
@@ -901,7 +982,10 @@ export function SessionPane({
       workspacePath,
     ],
   );
+  // Only the open share dock reads these ids (its popover is gated by shareActive, like shareRenderUnits);
+  // building the row map on every window change while no share is open was wasted work.
   const eligibleShareProductTurnIds = useMemo(() => {
+    if (!shareActive) return [];
     const rowsById = new Map((snapshot?.rows.window ?? []).map((row) => [row.rowId, row]));
     const seen = new Set<string>();
     return eligibleShareItems.flatMap((item) => {
@@ -910,7 +994,7 @@ export function SessionPane({
       seen.add(productTurnId);
       return [productTurnId];
     });
-  }, [eligibleShareItems, snapshot?.rows.window]);
+  }, [eligibleShareItems, shareActive, snapshot?.rows.window]);
   const sharePreflightCacheRef = useRef(new Map<string, ConversationShareTurnPreflightResult>());
   // 传输类失败会被按 turn 缓存成阻断项，仅靠选择变化无法再次触发 RPC；
   // 重试 token 变化时清缓存并重新发起，避免一次网络抖动把用户卡死在选择阶段。
@@ -1257,6 +1341,7 @@ export function SessionPane({
   const timelineScrollToQueryRef = useRef<
     ((target: { unitIndex: number; rowId: number }) => void) | null
   >(null);
+  const timelineScrollToRowRef = useRef<((rowId: number) => void) | null>(null);
   const conversationLayoutContainerRef = useRef<HTMLDivElement>(null);
   const hasExternalSummaryPanelVariantControl = Boolean(onSummaryPanelVariantOverrideChange);
   const effectiveSummaryPanelVariantOverride = hasExternalSummaryPanelVariantControl
@@ -1868,6 +1953,7 @@ export function SessionPane({
   ]);
   const modelSelectionView =
     modelSelectionRead.state.status === "ready" ? modelSelectionRead.state.view : null;
+  const providerStartupSettled = useZCodeSessionStore((state) => state.providerStartupSettled);
   const draftModelSelectionRevisionRef = useRef<number | null>(null);
   useEffect(() => {
     if (sessionId !== null) {
@@ -1945,9 +2031,31 @@ export function SessionPane({
       createSource?: SessionCreateSource,
       messageId?: string,
       taskGroupId?: string | null,
+      options?: { bind?: "immediate" },
     ) => {
       if (messageId) reportDraftCreated(createdSessionId, createSource ?? "session", messageId);
       const commit = () => {
+        if (messageId) {
+          const pending = readV4WorktreeRecoveryDrafts(
+            workspacePath,
+            workspaceIdentity,
+            `__draft__:${composerScopeKey(newTaskComposerScope)}`,
+          ).find(({ draft }) => draft.firstSubmission?.commandId === messageId);
+          if (
+            pending?.draft.firstSubmission &&
+            !moveV4ComposerDraft(
+              workspacePath,
+              workspaceIdentity,
+              pending.scope,
+              getV4WorktreeRecoveryScope(
+                createdSessionId,
+                pending.draft.firstSubmission.submissionId,
+              ),
+            )
+          ) {
+            logger.error("[first-submission] Could not bind the saved input to its session");
+          }
+        }
         // Bug 根因：Session 打开埋点只衡量已有 Session，但草稿首发过去会把新建/预热提升的
         // sessionId 直接交给同一 hook。预热 lease 还保留草稿期的 startedAt 与空 snapshot timing，
         // 因而把数小时闲置时间误记为 total/react。创建边界先标记本 pane 的首次绑定；离开后
@@ -1994,7 +2102,7 @@ export function SessionPane({
               await attempt();
             }
           : undefined;
-      if (commitCreatedTask) {
+      if (commitCreatedTask && options?.bind !== "immediate") {
         await commitCreatedTask(
           { taskId: createdSessionId, workspacePath, workspaceIdentity },
           commit,
@@ -2002,12 +2110,33 @@ export function SessionPane({
           organize,
         );
       } else {
-        void organize?.();
+        // First-submission reservation binds from the Host identity directly (specs/
+        // first-submission-lifecycle.md "Owners and event order"): draft-workspace rows
+        // may never join the project tree, and staging the bind on tree arrival leaves
+        // the conversation unreachable with an eternal "Preparing conversation" preview.
+        if (organize && commitCreatedTask) {
+          // Group placement still needs the real row: admitting before the index row is
+          // readable fails host-side with task-group.created-task-unavailable. Stage only
+          // the organize step on row arrival; it never gates the bind.
+          void commitCreatedTask(
+            { taskId: createdSessionId, workspacePath, workspaceIdentity },
+            () => {},
+            draftNavigation.controller.signal,
+            organize,
+          );
+        } else {
+          void organize?.();
+        }
+        // The immediate bind no longer rides the project-tree staging refresh, so make the
+        // grouped sidebar tree re-read on its own subscription instead of waiting for an
+        // unrelated taskListVersion bump.
+        useZCodeSessionStore.getState().bumpTaskListVersion(workspacePath, workspaceIdentity);
         commit();
       }
     },
     [
       commitCreatedTask,
+      newTaskComposerScope,
       baseWorkspaceServices.taskGroupService,
       refreshTaskGroups,
       intl,
@@ -2056,7 +2185,7 @@ export function SessionPane({
     },
     [onSessionCreated, sessionId],
   );
-  const dispatchCommand = useCallback(
+  const dispatchCommandUntracked = useCallback(
     async (
       type: CommandType,
       payload: Record<string, unknown>,
@@ -2075,6 +2204,12 @@ export function SessionPane({
       // 离线点击/快捷键不得进入 accepted 命令恢复账本，更不能在重连后自动发送。
       if (!remoteAvailable) throw createRemoteWorkspaceDisconnectedError();
       const submission = submissionConfigFromCommand(type, payload);
+      // A command aimed at another session (for example a worktree-prepared session created from this draft pane)
+      // must not be tracked in this pane's store, or its pending/projection state would leak across sessions.
+      const tracksOnPaneStore =
+        targetSessionId === null ||
+        targetSessionId === sessionId ||
+        targetSessionId === prewarmBindingRef.current?.sessionId;
       // 加速轮 payload 的 modelSelection 会被执行材料覆盖为隐藏加速 Provider；Recent 记录的是
       // 用户在 Composer 的原始选择（新任务草稿的模型种子），加速轮必须由调用方传入发送前
       // 冻结的 submission（spec §5.1）。接纳写入另有加速身份兜底拦截。
@@ -2190,7 +2325,7 @@ export function SessionPane({
               }
             : undefined,
       );
-      if (lease?.store && type !== "createSession") {
+      if (lease?.store && type !== "createSession" && tracksOnPaneStore) {
         lease.store.markCommandPending({
           commandId: envelope.commandId,
           type: envelope.type,
@@ -2252,6 +2387,7 @@ export function SessionPane({
       }
       if (
         lease?.store &&
+        tracksOnPaneStore &&
         requiresAcceptedInputProjection(type) &&
         (ack.status === "accepted" || ack.status === "duplicate")
       ) {
@@ -2353,7 +2489,239 @@ export function SessionPane({
       workspacePath,
     ],
   );
+  // The reservation mark is set before the untracked dispatch runs, so a lease effect cannot subscribe to a
+  // reserved id that is not yet marked (see pendingReservationGate.ts).
+  const dispatchCommand = useMemo(
+    () =>
+      trackReservedCreate(pendingReservations, dispatchCommandUntracked, reservedCreateSessionId),
+    [dispatchCommandUntracked],
+  );
   dispatchCommandRef.current = dispatchCommand;
+  const updateWorktreePreparationMarker = useCallback(
+    async (
+      targetSessionId: string,
+      preparation: {
+        branchName: string;
+        targetPath: string;
+        baseBranch?: string;
+        attemptId?: string;
+      },
+      expectedAttemptId = preparation.attemptId,
+    ): Promise<void> => {
+      const ack = await dispatchCommand(
+        "updateWorktreePreparation",
+        {
+          status: "preparing",
+          expectedAttemptId,
+          worktreePreparation: {
+            ...(preparation.attemptId ? { attemptId: preparation.attemptId } : {}),
+            branchName: preparation.branchName,
+            targetPath: preparation.targetPath,
+            ...(preparation.baseBranch ? { baseBranch: preparation.baseBranch } : {}),
+          },
+        },
+        targetSessionId,
+      );
+      if (ack.status !== "accepted") {
+        throw new Error(ack.reasonCode ?? "Worktree preparation update was rejected");
+      }
+    },
+    [dispatchCommand],
+  );
+  const prepareWorktreeSession = useCallback(
+    async (
+      { branchName, targetPath, baseBranch, attemptId }: ComposerWorktreePreparationParams,
+      options?: { shouldActivate: () => boolean },
+    ) => {
+      const existingSessionId = sessionIdRef.current;
+      const existingPreparation = snapshotRef.current?.meta.worktreePreparation;
+      if (existingSessionId && existingPreparation) {
+        const currentAttemptId =
+          selectComposerWorktreePipeline(
+            useComposerWorktreePipelineStore.getState(),
+            workspaceKey,
+            existingSessionId,
+          )?.params?.attemptId ?? existingPreparation.attemptId;
+        if (existingPreparation.status !== "preparing" || attemptId !== currentAttemptId) {
+          await updateWorktreePreparationMarker(
+            existingSessionId,
+            {
+              attemptId,
+              branchName,
+              targetPath,
+              ...(baseBranch ? { baseBranch } : {}),
+            },
+            currentAttemptId,
+          );
+        }
+        return existingSessionId;
+      }
+      const { draftCreateSource: createSource, draftTaskGroupId } = useZCodeSessionStore
+        .getState()
+        .getWorkspaceState(workspacePath, workspaceIdentity);
+      const ack = await dispatchCommand(
+        "createSession",
+        {
+          workspaceId: workspaceKey,
+          worktreePreparation: {
+            branchName,
+            targetPath,
+            ...(baseBranch ? { baseBranch } : {}),
+            ...(attemptId ? { attemptId } : {}),
+          },
+        },
+        null,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        createSource,
+      );
+      if (ack.status !== "accepted" || ack.result?.type !== "createSession") {
+        throw new Error(ack.reasonCode ?? "Worktree session preparation was rejected");
+      }
+      const createdSessionId = ack.result.sessionId;
+      const first = readV4WorktreeRecoveryDrafts(
+        workspacePath,
+        workspaceIdentity,
+        `__draft__:${composerScopeKey(newTaskComposerScope)}`,
+      ).find(
+        ({ draft }) =>
+          draft.firstSubmission &&
+          draft.firstSubmission.generation === composerDraftGeneration &&
+          isV4FirstSubmissionActive(
+            workspacePath,
+            workspaceIdentity,
+            draft.firstSubmission.submissionId,
+          ),
+      );
+      if (first?.draft.firstSubmission) {
+        if (
+          !moveV4ComposerDraft(
+            workspacePath,
+            workspaceIdentity,
+            first.scope,
+            getV4WorktreeRecoveryScope(createdSessionId, first.draft.firstSubmission.submissionId),
+          )
+        ) {
+          throw new Error("composer.draft-storage-unavailable");
+        }
+      }
+      if (!options || options.shouldActivate()) {
+        // Worktree binds at the reservation ACK with the same immediacy as the plain path
+        // (specs/first-submission-instant-ux.md P2): only the group placement stays staged
+        // on the project-tree row, and the sidebar re-reads via the task-list version bump.
+        void handleDraftSessionCreated(
+          createdSessionId,
+          createSource,
+          undefined,
+          draftTaskGroupId,
+          {
+            bind: "immediate",
+          },
+        );
+      }
+      return createdSessionId;
+    },
+    [
+      dispatchCommand,
+      handleDraftSessionCreated,
+      updateWorktreePreparationMarker,
+      workspaceIdentity,
+      workspaceKey,
+      workspacePath,
+      newTaskComposerScope,
+      composerDraftGeneration,
+    ],
+  );
+  const syncWorktreePreparation = useCallback(
+    ({
+      sessionId: preparedSessionId,
+      branchName,
+      targetPath,
+      baseBranch,
+      attemptId,
+    }: ComposerWorktreePreparationSyncParams) =>
+      updateWorktreePreparationMarker(preparedSessionId, {
+        attemptId,
+        branchName,
+        targetPath,
+        ...(baseBranch ? { baseBranch } : {}),
+      }),
+    [updateWorktreePreparationMarker],
+  );
+  const handleWorktreePreparationFailed = useCallback(
+    (failedSessionId: string, failureMessage: string, attemptId?: string) =>
+      dispatchCommand(
+        "updateWorktreePreparation",
+        { status: "failed", failureMessage, expectedAttemptId: attemptId },
+        failedSessionId,
+      ).then((ack) => {
+        if (ack.status !== "accepted")
+          throw new Error(ack.reasonCode ?? "Preparation failure update rejected");
+      }),
+    [dispatchCommand],
+  );
+  const handleWorktreePreparationRetry = useCallback(
+    async (expectedAttemptId?: string) => {
+      if (!sessionId) throw new Error("Worktree preparation session is unavailable");
+      // The durable Host marker is the compare-and-set authority; when the pane snapshot carries
+      // none (lost or not-yet-delivered failure report), the pipeline entry's frozen parameters
+      // still name the same attempt and destination, so the retry can proceed (ISSUE-051).
+      const frozen = resolveComposerWorktreeRetryPreparation({
+        preparation: snapshotRef.current?.meta.worktreePreparation ?? null,
+        pipelineEntry: selectComposerWorktreePipeline(
+          useComposerWorktreePipelineStore.getState(),
+          workspaceKey,
+          sessionId,
+        ),
+      });
+      if (!frozen) throw new Error("Preparation is unavailable");
+      const attemptId = crypto.randomUUID();
+      const ack = await dispatchCommand(
+        "updateWorktreePreparation",
+        {
+          status: "preparing",
+          expectedAttemptId: expectedAttemptId ?? frozen.attemptId,
+          worktreePreparation: {
+            branchName: frozen.branchName,
+            targetPath: frozen.targetPath,
+            ...(frozen.baseBranch ? { baseBranch: frozen.baseBranch } : {}),
+            attemptId,
+          },
+        },
+        sessionId,
+      );
+      if (ack.status !== "accepted") {
+        throw new Error(ack.reasonCode ?? "Worktree preparation retry was rejected");
+      }
+      return attemptId;
+    },
+    [dispatchCommand, sessionId, workspaceKey],
+  );
+  const handleWorktreePreparationCancel = useCallback(
+    async (expectedAttemptId?: string) => {
+      if (!sessionId) throw new Error("Preparation is unavailable");
+      const attemptId =
+        expectedAttemptId ??
+        selectComposerWorktreePipeline(
+          useComposerWorktreePipelineStore.getState(),
+          workspaceKey,
+          sessionId,
+        )?.params?.attemptId ??
+        snapshotRef.current?.meta.worktreePreparation?.attemptId;
+      const ack = await dispatchCommand(
+        "updateWorktreePreparation",
+        { status: "cancelled", expectedAttemptId: attemptId },
+        sessionId,
+      );
+      if (ack.status !== "accepted")
+        throw new Error(ack.reasonCode ?? "Preparation cancellation rejected");
+    },
+    [dispatchCommand, sessionId, workspaceKey],
+  );
 
   const handleFetchFileChanges = useCallback(
     (target: ConversationRowTarget, options: ConversationFileChangesRequestOptions) => {
@@ -2602,27 +2970,27 @@ export function SessionPane({
   );
   // 发起 toolCallId → 静态图：图是 run 的属性，
   // 三种来源的轮尾 run 卡都到这一张表取图。行窗口一遍建成，随窗口重建。
-  const workflowGraphByToolCallId = useMemo(
-    () => buildWorkflowGraphByToolCallId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  const workflowGraphByToolCallId = useStructurallySharedMemo(
+    buildWorkflowGraphByToolCallId,
+    snapshot?.rows.window,
   );
   // runId → 最新补全的有效脚本图（docs/dynamic-workflow/presentation.md「Holes on the timeline」）：补全之后
   // run 卡与侧板取它。行窗口一遍建成，随窗口重建。
-  const workflowFillGraphByRunId = useMemo(
-    () => buildWorkflowFillGraphByRunId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  const workflowFillGraphByRunId = useStructurallySharedMemo(
+    buildWorkflowFillGraphByRunId,
+    snapshot?.rows.window,
   );
   // 工作流工具行 → 草稿位置：稿号与
   // 「后面还有更新的一稿」都只能从行序读出，行窗口一遍建成，随窗口重建。
-  const workflowDraftByToolCallId = useMemo(
-    () => buildWorkflowDraftByToolCallId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  const workflowDraftByToolCallId = useStructurallySharedMemo(
+    buildWorkflowDraftByToolCallId,
+    snapshot?.rows.window,
   );
   // runId → 转写里认领过它的 SaveWorkflow 候选（docs/dynamic-workflow/transcript-and-notifications.md
   // 「Which workflow a run is saved as」规则 1）。行窗口一遍建成，随窗口重建。
-  const workflowSaveCandidatesByRunId = useMemo(
-    () => buildWorkflowSaveCandidatesByRunId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  const workflowSaveCandidatesByRunId = useStructurallySharedMemo(
+    buildWorkflowSaveCandidatesByRunId,
+    snapshot?.rows.window,
   );
   // Workflow 通知 manifest 的升级条目 Waiting→Answered 联查表（runId → 停驻 qid 集合）。
   const workflowRunPendingQuestionsByRunId = useMemo(
@@ -3118,21 +3486,131 @@ export function SessionPane({
   // ── 草稿态 v4 draft session 预热（m5）──
   // pane 未绑定会话时后台建 phase=draft 会话作预热载体：配置写 CAS 直达、首发复用。
   // 对外绑定语义不变（shell activeTaskId 仍 null），预热会话只是 pane 内部 effective 订阅目标。
+  const dispatchPrewarmCommand = useCallback(
+    (
+      type: CommandType,
+      payload: Record<string, unknown>,
+      targetSessionId: string | null,
+      creationProjectId?: string | null,
+    ) =>
+      dispatchCommand(
+        type,
+        payload,
+        targetSessionId,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        creationProjectId,
+      ),
+    [dispatchCommand],
+  );
+  const incognitoDraftActive = useDraftIncognitoIntentStore(
+    (state) => sessionId === null && selectDraftIncognito(state, workspaceKey) !== null,
+  );
   const { binding: prewarmBinding, waitForSession: waitForDraftSession } = useDraftSessionPrewarm({
-    enabled: sessionId === null && draftAgentStartupAllowed && !recoveringDraft,
+    // An incognito draft never warms a session: it would start with every extra loaded (specs/incognito-session.md).
+    enabled:
+      sessionId === null && draftAgentStartupAllowed && !recoveringDraft && !incognitoDraftActive,
     workspaceKey,
     paneId,
     invalidationVersion: draftRuntimeInvalidationVersion,
     // SessionDataLayer 来自 workspace connection registry：同 transport generation 的 pane/remount
     // 共享 identity；provider wrapper 重建产生的新 sendCommand 函数不能误判为 transport 换代。
     transportIdentity: layer,
-    dispatchCommand,
+    // 预热 createSession 的项目范围由草稿 pane 的 Root scope 决定（null = 未归属项目），
+    // 每代预热启动时捕获；不在失败重试时重新读取 store，避免写入另一个项目的目标。
+    dispatchCommand: dispatchPrewarmCommand,
+    creationProjectId: newTaskComposerScope.projectId,
     // 预热会话只消费当前 Root Composer Draft 的一次性初始化结果。
     resolveInitialConfig: resolveInitialDraftConfig,
   });
   const prewarmBindingRef = useRef(prewarmBinding);
   prewarmBindingRef.current = prewarmBinding;
   const prewarmSessionId = prewarmBinding?.sessionId ?? null;
+  const prepareFirstSubmission = useCallback(
+    async ({
+      submissionId,
+      incognito,
+      reservation,
+      onReservationCreated,
+    }: Parameters<
+      NonNullable<
+        import("@/v4/ConversationComposer.js").ConversationComposerProps["onPrepareFirstSubmission"]
+      >
+    >[0]) => {
+      if (!zcodeAgentService) return undefined;
+      const hello = await ensureAgentV4ConnectionHandshake(zcodeAgentService);
+      if (hello.capabilities.durableFirstSubmission !== true) return undefined;
+      if (
+        sessionId &&
+        snapshotRef.current?.meta.submissionPreparation?.submissionId === submissionId
+      )
+        return sessionId;
+      if (reservation) {
+        const queried = await layer.queryCommands({
+          commands: [{ sessionId: null, commandId: reservation.commandId }],
+        });
+        const result = queried.results[0]?.result;
+        if (result === "unknown" || !result)
+          throw new Error("Session reservation outcome is still unknown");
+        if (
+          (result.status === "accepted" || result.status === "duplicate") &&
+          result.result?.type === "createSession"
+        )
+          return result.result.sessionId;
+        if (result.status !== "failed" && result.status !== "rejected" && result.status !== "noop")
+          throw new Error("Session reservation is still pending");
+      }
+      const binding = !incognito ? prewarmBindingRef.current : null;
+      if (binding && !binding.beginPromotion())
+        throw new Error("Draft session changed before reservation");
+      const targetSessionId = reservation?.sessionId ?? binding?.sessionId ?? submissionId;
+      const ack = await dispatchCommand(
+        "createSession",
+        {
+          workspaceId: workspaceKey,
+          submissionPreparation: { submissionId },
+          sessionId: targetSessionId,
+          ...(incognito ? { incognito } : {}),
+        },
+        null,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        (envelope) =>
+          onReservationCreated?.({ sessionId: targetSessionId, commandId: envelope.commandId }),
+      );
+      if (
+        (ack.status !== "accepted" && ack.status !== "duplicate") ||
+        ack.result?.type !== "createSession"
+      )
+        throw new Error(ack.reasonCode ?? "Session reservation failed");
+      binding?.promote();
+      return ack.result.sessionId;
+    },
+    [dispatchCommand, layer, sessionId, workspaceKey, zcodeAgentService],
+  );
+  const handleFirstSubmissionReserved = useCallback(
+    (createdSessionId: string) => {
+      if (sessionId === createdSessionId) return;
+      const creation = useZCodeSessionStore
+        .getState()
+        .getWorkspaceState(workspacePath, workspaceIdentity);
+      void handleDraftSessionCreated(
+        createdSessionId,
+        creation.draftCreateSource,
+        undefined,
+        creation.draftTaskGroupId,
+        { bind: "immediate" },
+      ).catch((error) =>
+        logger.error("[first-submission] Could not bind the reserved session", error),
+      );
+    },
+    [handleDraftSessionCreated, sessionId, workspaceIdentity, workspacePath],
+  );
   // runtime 换代（CUA Helper 就绪、liveness 恢复等触发 workspace-dispose）会冲掉草稿态尚未
   // 持久化的预热会话。重建期间禁止发送，否则附件会挂在已消失的会话上（sessionNotFound）。
   const { rebuilding: draftRuntimeRebuilding } = useDraftRuntimeRebuildGate({
@@ -3146,6 +3624,61 @@ export function SessionPane({
   const ensureDraftPrewarmConfigBeforeSendRef = useRef<(targetSessionId: string) => Promise<void>>(
     async () => undefined,
   );
+  // S6 readiness: a draft's pre-submission choices. The key is one draft instance: the new-task generation
+  // (draftFocusVersion, bumped by every startDraft) within one workspace. It is not the project scope, which can
+  // resolve after the choice is made. A new-task entry starts a new key, and the effect below clears the store
+  // whenever the instance changes.
+  const [draftExternalAgentChoices, setDraftExternalAgentChoices] =
+    useState<DraftExternalAgentChoices>({});
+  // The ref is the source of truth for the send path: it changes synchronously when a send takes the choices.
+  const draftExternalAgentChoicesRef = useRef<DraftExternalAgentChoices>({});
+  const commitDraftExternalAgentChoices = useCallback((next: DraftExternalAgentChoices) => {
+    draftExternalAgentChoicesRef.current = next;
+    setDraftExternalAgentChoices(next);
+  }, []);
+  const draftChoiceKey = `draft#${workspaceIdentity?.trim() || workspacePath}#${composerDraftGeneration}`;
+  // Committed key only: React can abandon a render, and a restore must compare against the key that is on screen.
+  const draftChoiceKeyRef = useRef(draftChoiceKey);
+  useLayoutEffect(() => {
+    draftChoiceKeyRef.current = draftChoiceKey;
+  }, [draftChoiceKey]);
+  // A new-task entry is a new draft instance (new key): the store is cleared then. The pane's bound session does not
+  // reset the choices: the pane can bind the draft's own session while the draft is still being written (the
+  // prewarm/created session). A send claims the choices only on the draft route (see claimDraftChoicesForSend).
+  const draftChoiceStoreKeyRef = useRef(draftChoiceKey);
+  useEffect(() => {
+    if (draftChoiceStoreKeyRef.current === draftChoiceKey) return;
+    draftChoiceStoreKeyRef.current = draftChoiceKey;
+    commitDraftExternalAgentChoices({});
+  }, [commitDraftExternalAgentChoices, draftChoiceKey]);
+  // Only a draft send claims the draft's choices (synchronously, before any await). The send then delivers them to
+  // the session it creates or binds; a send that did not deliver them restores them.
+  const claimDraftChoicesForSend = useCallback((): DraftExternalAgentClaim | null => {
+    const agentId = resolveExternalAgentId(draftConfigRef.current.modelSelection?.providerId);
+    if (!agentId) return null;
+    const { state, claim } = claimDraftExternalAgentChoices({
+      state: draftExternalAgentChoicesRef.current,
+      draftKey: draftChoiceKey,
+      agentId,
+      sessionId: null,
+    });
+    if (claim) commitDraftExternalAgentChoices(state);
+    return claim;
+  }, [commitDraftExternalAgentChoices, draftChoiceKey]);
+  const restoreUndeliveredDraftChoices = useCallback(
+    (claim: DraftExternalAgentClaim | null) => {
+      // A claim of a draft instance that is gone must not be restored into the current one.
+      if (!claim || claim.delivered || claim.draftKey !== draftChoiceKeyRef.current) return;
+      commitDraftExternalAgentChoices(
+        restoreDraftExternalAgentChoices(draftExternalAgentChoicesRef.current, claim),
+      );
+    },
+    [commitDraftExternalAgentChoices],
+  );
+  const applyDraftExternalAgentChoicesRef = useRef<
+    (claim: DraftExternalAgentClaim | null, targetSessionId: string) => Promise<void>
+  >(async () => undefined);
+
   const effectiveSessionId = sessionId ?? recoveringDraft?.sessionId ?? prewarmSessionId;
   useEffect(() => {
     if (!recoveringDraft?.commandId || !remoteAvailable) return;
@@ -3268,10 +3801,21 @@ export function SessionPane({
     workspaceIdentity,
   });
 
+  const [reservationSettledRevision, setReservationSettledRevision] = useState(0);
   useEffect(() => {
     if (!effectiveSessionId) {
       setLease({ sessionId, layer, lease: null });
       return;
+    }
+    if (pendingReservations.isPending(effectiveSessionId)) {
+      // The create of this reserved id is not acknowledged yet; subscribing now would be answered "not found".
+      let cancelled = false;
+      void pendingReservations.whenSettled(effectiveSessionId).then(() => {
+        if (!cancelled) setReservationSettledRevision((revision) => revision + 1);
+      });
+      return () => {
+        cancelled = true;
+      };
     }
     const nextLease = layer.acquire(effectiveSessionId);
     // Bug 原因：acquire 会立即启动 connect，activation 可能在下一轮 effect 前释放
@@ -3284,7 +3828,7 @@ export function SessionPane({
       offOnlineModelTransition();
       nextLease.release();
     };
-  }, [layer, effectiveSessionId]);
+  }, [layer, effectiveSessionId, reservationSettledRevision]);
 
   useEffect(() => {
     if (!sessionId || !lease || snapshot?.sessionId !== sessionId) return;
@@ -3555,7 +4099,8 @@ export function SessionPane({
       options: ConversationComposerSendOptions | undefined,
       createSourceAtSend: SessionCreateSource,
       highspeedOriginAtSend: HighspeedPaneOrigin,
-      taskGroupIdAtSend?: string | null,
+      taskGroupIdAtSend: string | null | undefined,
+      draftClaim: DraftExternalAgentClaim | null,
     ) => {
       let onAcceptedSelection: (() => void) | undefined;
       const prepareHighspeedTurn = prepareHighspeedTurnFrom(highspeedOriginAtSend);
@@ -3596,8 +4141,11 @@ export function SessionPane({
       const readyAttachments = options?.attachments ?? [];
       const sharedContextRefs = options?.sharedContextRefs;
       const contextAttachmentCount = options?.contextAttachmentCount ?? 0;
+      const deferredIncognitoAttachments = Boolean(
+        options?.incognito && options.reuploadAttachmentsForSession,
+      );
       const slashCommand = parseV4VisibleSlashCommand(text, readyAttachments, {
-        contextAttachmentCount,
+        contextAttachmentCount: contextAttachmentCount + (deferredIncognitoAttachments ? 1 : 0),
       });
 
       if (!(await ensureDraftModelReadyForSend())) {
@@ -3656,8 +4204,20 @@ export function SessionPane({
           submission = { ...submission, modelSelection: chosen };
         }
       }
+      // Create route (specs/ui-draft-send-path.md): these sends cannot use the prewarm session.
+      // A worktree send needs the linked cwd, an incognito send needs its profile frozen at
+      // creation, and a prepared send must adopt the session reserved by the worktree pipeline.
+      const executionWorktree = options?.executionWorktree;
+      const incognito = options?.incognito;
+      const reservedSubmissionSessionId = options?.reservedSubmissionSessionId;
+      const preparedSessionId = options?.preparedSessionId ?? reservedSubmissionSessionId;
+      const createRoute =
+        preparedSessionId !== undefined ||
+        (sessionId === null && (executionWorktree !== undefined || incognito !== undefined));
       const prewarmTargetBeforeSend =
-        sessionId === null ? prewarmBindingRef.current?.sessionId : null;
+        sessionId === null && !incognito && !reservedSubmissionSessionId
+          ? prewarmBindingRef.current?.sessionId
+          : null;
       if (prewarmTargetBeforeSend) {
         // 屏障只保证已经入队的命令完成；若点击配置时预热 session/snapshot 尚未
         // 就绪，命令可能当时没有目标。首发绑定确定的预热 session 前再同步一次
@@ -3704,12 +4264,154 @@ export function SessionPane({
           return;
         }
       }
+      if (createRoute) {
+        // Only this route creates a session on the send path (specs/ui-draft-send-path.md, route 2).
+        // A failed or unknown createSession/sendText never retries under a new session or command.
+        const createAck = await dispatchSubmissionCommand(
+          "createSession",
+          {
+            workspaceId: workspaceKey,
+            ...buildDraftCreateConfigPayload(
+              { ...draftConfigRef.current, ...submission },
+              appFollowupMode,
+            ),
+            ...(executionWorktree ? { executionWorktree } : {}),
+            ...(incognito ? { incognito } : {}),
+            ...(preparedSessionId
+              ? {
+                  preparedSessionId,
+                  ...(reservedSubmissionSessionId
+                    ? {
+                        expectedSubmissionId: options?.firstSubmissionId,
+                        // The frozen first sendText an earlier attempt already created: the CLI checks
+                        // admission by this command id. A first attempt has none and sends no id.
+                        ...(options?.originalCommandId !== undefined
+                          ? { expectedFirstInputCommandId: options.originalCommandId }
+                          : {}),
+                      }
+                    : { expectedAttemptId: options?.preparedAttemptId }),
+                }
+              : {}),
+          },
+          null,
+        );
+        if (createAck.status !== "accepted") {
+          throw new Error(createAck.reasonCode ?? "createSession 被拒绝");
+        }
+        if (createAck.result?.type !== "createSession") {
+          throw new Error("createSession 缺少 sessionId");
+        }
+        const createdSessionId = createAck.result.sessionId;
+        // A prepared session was already activated by prepareWorktreeSession; only a plain draft creation is new here.
+        if (draftSlashCommand) {
+          const consumed = await dispatchSlashCommand(
+            draftSlashCommand,
+            createdSessionId,
+            0,
+            heldQueueDisposition,
+            expectedHeldQueueItemIds,
+            submission,
+            (messageId) => reportDraftCreated(createdSessionId, createSourceAtSend, messageId),
+          );
+          if (consumed === "confirmationRequired") return consumed;
+          if (consumed) {
+            if (!preparedSessionId) {
+              handleDraftSessionCreated(
+                createdSessionId,
+                createSourceAtSend,
+                undefined,
+                taskGroupIdAtSend,
+              );
+            }
+            return;
+          }
+        }
+        // input-admitted means the CLI found the admitted row of the frozen sendText's original command id,
+        // so resending it under a new command id would admit it twice: the composer settles it under that id
+        // (lifecycle rule 4). already-active does not prove that: another input may have set the marker, so
+        // the frozen sendText is sent below. Worktree activations never reach this guard with an original id
+        // (ConversationComposer sets reservedSubmissionSessionId only without an execution worktree or a
+        // prepared session).
+        if (
+          reservedSubmissionSessionId !== undefined &&
+          options?.originalCommandId !== undefined &&
+          createAck.result.preparedActivation === "input-admitted"
+        ) {
+          return "alreadyAdmitted" as const;
+        }
+        // Incognito has no prewarm upload target; worktree refs must belong to the execution session.
+        const needsAttachmentUpload =
+          deferredIncognitoAttachments || Boolean(executionWorktree && readyAttachments.length > 0);
+        let sessionAttachments = readyAttachments;
+        if (needsAttachmentUpload) {
+          const uploaded = await options?.reuploadAttachmentsForSession?.(createdSessionId);
+          if (!uploaded)
+            throw new Error("Draft attachments could not be transferred to the new session");
+          sessionAttachments = uploaded;
+        }
+        const highspeed = await prepareHighspeedSendContext(
+          createdSessionId,
+          prepareHighspeedTurn,
+          submission.modelSelection,
+        );
+        await applyDraftExternalAgentChoicesRef.current(draftClaim, createdSessionId);
+        const sendAck = await dispatchSubmissionCommand(
+          "sendText",
+          {
+            text,
+            ...submission,
+            ...(options?.requestedDelivery ? { requestedDelivery: options.requestedDelivery } : {}),
+            ...(sessionAttachments?.length ? { attachments: sessionAttachments } : {}),
+            ...(sharedContextRefs?.length ? { context_refs: sharedContextRefs } : {}),
+            ...(options?.source ? { source: options.source } : {}),
+            ...highspeed.override,
+            conversationQuotes: options?.conversationQuotes,
+            // The frozen first sendText of a reserved plain submission names its submission, so only this
+            // sendText may complete the durable preparation (the bridge matches it; see first-submission spec).
+            ...(reservedSubmissionSessionId !== undefined &&
+            options?.firstSubmissionId !== undefined
+              ? { firstSubmissionId: options.firstSubmissionId }
+              : {}),
+          },
+          createdSessionId,
+          undefined,
+          undefined,
+          options?.telemetrySeed,
+          highspeed.acceleratedCard,
+          options?.onCommandCreated
+            ? (envelope) => {
+                if (envelope.type === "sendText") options.onCommandCreated?.(envelope.commandId);
+              }
+            : undefined,
+          undefined,
+          undefined,
+          // Recent records the Composer's original selection before acceleration, not the payload Selection that was overridden.
+          submission,
+        );
+        if (sendAck.status !== "accepted") {
+          throw new Error(sendAck.reasonCode ?? "sendText 被拒绝");
+        }
+        if (!preparedSessionId) {
+          handleDraftSessionCreated(
+            createdSessionId,
+            createSourceAtSend,
+            sendAck.commandId,
+            taskGroupIdAtSend,
+          );
+        }
+        return;
+      }
       // Bug 根因：首发曾把 binding=null 当成无预热，绕过 owner 再建一个会话。
       // 文本、附件/context 和 goal 都等待同一创建任务，创建失败或换代直接保留草稿。
       const draftBinding = sessionId === null ? await waitForDraftSession() : null;
       if (draftBinding) {
         await ensureDraftPrewarmConfigBeforeSendRef.current(draftBinding.sessionId);
-        if (!draftBinding.beginPromotion()) throw new Error("草稿会话已切换，请重新发送");
+        await applyDraftExternalAgentChoicesRef.current(draftClaim, draftBinding.sessionId);
+        if (!draftBinding.beginPromotion()) {
+          // The choices went to the replaced draft session; the finally block must restore them for the retry.
+          if (draftClaim) draftClaim.delivered = false;
+          throw new Error("草稿会话已切换，请重新发送");
+        }
       }
       const targetSessionId = sessionId ?? draftBinding!.sessionId;
       if (draftBinding && draftSlashCommand) {
@@ -3833,6 +4535,9 @@ export function SessionPane({
       sessionId,
       settleCurrentQueueInputs,
       waitForDraftSession,
+      appFollowupMode,
+      draftConfigRef,
+      workspaceKey,
     ],
   );
 
@@ -3853,6 +4558,8 @@ export function SessionPane({
           ? useZCodeSessionStore.getState().getWorkspaceState(workspacePath, workspaceIdentity)
               .draftTaskGroupId
           : undefined;
+      // The draft's choices are taken at the click, so a queued send cannot read choices made after it.
+      const draftClaim = sessionId === null ? claimDraftChoicesForSend() : null;
       // followupMode 仍通过 Session CAS 同步；模型和模式已封装进 Submission，不再
       // 依赖“配置命令先到、sendText 后到”的跨命令时序。
       return configCommandBarrier.enqueue(async () => {
@@ -3863,6 +4570,7 @@ export function SessionPane({
             createSource,
             highspeedOrigin,
             taskGroupId,
+            draftClaim,
           );
         } catch (error) {
           if (sessionId === null && isProviderNotReadyError(error)) {
@@ -3872,15 +4580,19 @@ export function SessionPane({
             return "blocked" as const;
           }
           throw error;
+        } finally {
+          restoreUndeliveredDraftChoices(draftClaim);
         }
       });
     },
     [
       captureHighspeedPaneOrigin,
+      claimDraftChoicesForSend,
       configCommandBarrier,
       createSubmissionFromComposer,
       dispatchSendTextAfterConfig,
       markDraftProviderNotReady,
+      restoreUndeliveredDraftChoices,
       sessionId,
       workspacePath,
       workspaceIdentity,
@@ -3912,9 +4624,14 @@ export function SessionPane({
         if (shouldFocusLatest) {
           focusTimelineToLatest();
         }
-        return "sent";
+        return sendResult === "alreadyAdmitted" ? "alreadyAdmitted" : "sent";
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
+        const incognitoMessageId = incognitoUnsupportedMessageId(detail);
+        if (incognitoMessageId) {
+          toast(intl.formatMessage({ id: incognitoMessageId }), { variant: "warning" });
+          return "blocked";
+        }
         const runtimeModelUnavailable = detail.includes("provider.notInRegistry");
         // 首发前 switchModelConfig 失败只会抛回 Composer；Composer 为了保留草稿
         // 仅写日志，不会生成 snapshot.control.lastError，用户看到的结果就是“点击没反应”。
@@ -4098,6 +4815,59 @@ export function SessionPane({
     [dispatchCommand, sessionId],
   );
 
+  const handleRowPin = useCallback<RowPinChangeHandler>(
+    async (target, pinned) => {
+      const current = snapshotRef.current;
+      if (!sessionId || current === null) return false;
+      const ack = await dispatchCommand(
+        "setRowPinned",
+        { target, pinned },
+        sessionId,
+        current.revision,
+        current.logEpoch,
+      );
+      const accepted = ack.status === "accepted" || ack.status === "duplicate";
+      if (!accepted) {
+        logger.warn(`[v4-pane] 消息固定被拒绝: ${ack.status} ${ack.reasonCode ?? ""}`);
+      }
+      return accepted;
+    },
+    [dispatchCommand, sessionId],
+  );
+  const handlePinnedJump = useCallback((rowId: number) => {
+    timelineScrollToRowRef.current?.(rowId);
+  }, []);
+  const handlePinnedUnpin = useCallback(
+    (row: PinnedConversationRow) => {
+      if (!row.entityId) return;
+      void Promise.resolve(handleRowPin({ rowId: row.rowId, entityId: row.entityId }, false)).then(
+        (accepted) => {
+          if (accepted && platform) {
+            void reportAppTelemetryEvent(
+              platform,
+              {
+                elementName: "message_pin",
+                eventRegion: "chat",
+                eventType: "ck",
+                eventExtraDetail: { pinned: "unpinned" },
+                ...(sessionId ? { talkId: sessionId } : {}),
+                messageId: row.entityId,
+              },
+              "SessionPane",
+            );
+          }
+        },
+        (error: unknown) => {
+          logger.warn("[v4-pane] chip 取消固定提交失败", {
+            error: error instanceof Error ? error.message : String(error),
+            messageId: row.entityId,
+          });
+        },
+      );
+    },
+    [handleRowPin, platform, sessionId],
+  );
+
   const handleDeleteQueueItem = useCallback(
     (queueItemId: string) => {
       const current = snapshotRef.current;
@@ -4105,15 +4875,17 @@ export function SessionPane({
       const sourceCommandId = current.queue.items.find(
         (item) => item.queueItemId === queueItemId,
       )?.sourceCommandId;
-      void dispatchCommand("deleteQueueItem", { queueItemId }, sessionId, current.revision).then(
-        (ack) => {
-          if (ack.status !== "accepted" && ack.status !== "noop") {
-            logger.warn(`[v4-pane] deleteQueueItem 被拒绝: ${ack.status} ${ack.reasonCode ?? ""}`);
-            return;
-          }
-          if (sourceCommandId) pendingCommandRegistry.settle(sessionId, sourceCommandId);
-        },
-      );
+      void dispatchQueueCommandWithStaleRetry(
+        (baseRevision) =>
+          dispatchCommand("deleteQueueItem", { queueItemId }, sessionId, baseRevision),
+        current.revision,
+      ).then((ack) => {
+        if (ack.status !== "accepted" && ack.status !== "noop") {
+          logger.warn(`[v4-pane] deleteQueueItem 被拒绝: ${ack.status} ${ack.reasonCode ?? ""}`);
+          return;
+        }
+        if (sourceCommandId) pendingCommandRegistry.settle(sessionId, sourceCommandId);
+      });
     },
     [dispatchCommand, sessionId],
   );
@@ -4135,10 +4907,9 @@ export function SessionPane({
       queueEditOperationRef.current = operation;
       setQueueEditOperation(operation);
       try {
-        const ack = await dispatchCommand(
-          "deleteQueueItem",
-          { queueItemId },
-          sessionId,
+        const ack = await dispatchQueueCommandWithStaleRetry(
+          (baseRevision) =>
+            dispatchCommand("deleteQueueItem", { queueItemId }, sessionId, baseRevision),
           restoreTarget.baseRevision,
         );
         if (!shouldRestoreQueuedComposerFromAck(ack.status)) {
@@ -4214,23 +4985,39 @@ export function SessionPane({
           });
           return null;
         }
-        return dispatchCommand(
-          "sendQueuedNow",
-          { queueItemId, ...highspeedOverride },
-          sessionId,
+        return dispatchQueueCommandWithStaleRetry(
+          (baseRevision) =>
+            dispatchCommand(
+              "sendQueuedNow",
+              { queueItemId, ...highspeedOverride },
+              sessionId,
+              baseRevision,
+            ),
           latest.revision,
         );
-      })().then((ack) => {
-        if (!ack) return;
-        if (ack.status !== "accepted" && ack.status !== "noop") {
+      })().then(
+        (ack) => {
+          if (!ack || isQueueCommandSettledAck(ack.status)) return;
           logger.warn(`[v4-pane] sendQueuedNow 被拒绝: ${ack.status} ${ack.reasonCode ?? ""}`);
-        }
-      });
+          const itemStillQueued =
+            snapshotRef.current?.queue.items.some((item) => item.queueItemId === queueItemId) ??
+            false;
+          // ISSUE-072: a log-only rejection left Steer looking like a no-op; the item stays queued for a retry.
+          if (shouldReportSteerFailure(ack, itemStillQueued)) {
+            toast(intl.formatMessage({ id: "chat.queue.sendNowFailed" }));
+          }
+        },
+        (error: unknown) => {
+          logger.warn("[v4-pane] sendQueuedNow 命令失败", error);
+          toast(intl.formatMessage({ id: "chat.queue.sendNowFailed" }));
+        },
+      );
     },
     [
       captureHighspeedPaneOrigin,
       dispatchCommand,
       focusTimelineToLatest,
+      intl,
       prepareHighspeedTurnFrom,
       sessionId,
     ],
@@ -4240,10 +5027,14 @@ export function SessionPane({
     (queueItemId: string, beforeQueueItemId: string | null) => {
       const current = snapshotRef.current;
       if (!sessionId || current === null) return;
-      void dispatchCommand(
-        "reorderQueueItem",
-        { queueItemId, beforeQueueItemId },
-        sessionId,
+      void dispatchQueueCommandWithStaleRetry(
+        (baseRevision) =>
+          dispatchCommand(
+            "reorderQueueItem",
+            { queueItemId, beforeQueueItemId },
+            sessionId,
+            baseRevision,
+          ),
         current.revision,
       ).then((ack) => {
         if (ack.status !== "accepted" && ack.status !== "noop") {
@@ -4374,6 +5165,29 @@ export function SessionPane({
   );
   ensureDraftPrewarmConfigBeforeSendRef.current = ensureDraftPrewarmConfigBeforeSend;
 
+  // Sends a claimed draft's choices to the session that receives the first submission. A refusal throws before
+  // sendText; the send path then restores the claim, so the draft keeps its choices.
+  const applyDraftExternalAgentChoices = useCallback(
+    async (claim: DraftExternalAgentClaim | null, targetSessionId: string) => {
+      const outcome = await sendClaimedDraftExternalAgentChoices({
+        claim,
+        targetSessionId,
+        send: (target, configId, value) =>
+          sendExternalAgentConfigOption(dispatchCommand, target, configId, value, (detail) => {
+            logger.warn("[v4-pane] draft setExternalAgentConfigOption refused", {
+              configId,
+              ...detail,
+            });
+          }),
+      });
+      if (outcome.refusedMessageId) {
+        throw new Error(intl.formatMessage({ id: outcome.refusedMessageId }));
+      }
+    },
+    [dispatchCommand, intl],
+  );
+  applyDraftExternalAgentChoicesRef.current = applyDraftExternalAgentChoices;
+
   const followupModeSyncKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const targetSessionId = sessionId ?? prewarmSessionId;
@@ -4425,9 +5239,18 @@ export function SessionPane({
         model,
         branch: "composer-submission-intent",
       });
+      // ISSUE-035: a manual pick in an existing session announces its switch right away. The source is
+      // the model the composer showed before this pick; the helper ignores new-task drafts and no-op picks.
+      showModelChangeNotice(
+        sourceModel ?? {
+          provider: draftConfigRef.current.provider ?? "",
+          model: draftConfigRef.current.model ?? "",
+        },
+        { provider: resolvedProvider, model },
+      );
       handleDraftSelectModel(resolvedProvider, model, reasoningLevel);
     },
-    [activeHighspeedCard, draftConfigRef, handleDraftSelectModel, intl],
+    [activeHighspeedCard, draftConfigRef, handleDraftSelectModel, intl, showModelChangeNotice],
   );
 
   const handleSelectThought = useCallback(
@@ -4537,6 +5360,38 @@ export function SessionPane({
       handleDraftSwitchMode(mode);
     },
     [handleDraftSwitchMode],
+  );
+
+  // S6: one select of the session's ACP agent. The projection (config.externalAgentConfig) shows the
+  // result, so the pane keeps no optimistic value; a refusal is reported with a toast.
+  const handleSetExternalAgentConfigOption = useCallback(
+    (configId: string, value: string) => {
+      // A session exists: the choice is a command. Before the first submission the composer uses the draft instead.
+      if (!sessionId) return;
+      void sendExternalAgentConfigOption(dispatchCommand, sessionId, configId, value, (detail) => {
+        logger.warn("[v4-pane] setExternalAgentConfigOption refused", { configId, ...detail });
+      }).then((messageId) => {
+        if (messageId) toast(intl.formatMessage({ id: messageId }));
+      });
+    },
+    [dispatchCommand, intl, sessionId],
+  );
+
+  // S6 readiness: a draft's selects are UI-local until the first submission. They are sent once, after the draft
+  // session exists and before sendText; a refusal throws there, so the prompt is never sent with another mode.
+  const handleSetDraftExternalAgentChoice = useCallback(
+    (draftSessionId: string, agentId: string, configId: string, value: string) => {
+      commitDraftExternalAgentChoices(
+        setDraftExternalAgentChoice(
+          draftExternalAgentChoicesRef.current,
+          draftSessionId,
+          agentId,
+          configId,
+          value,
+        ),
+      );
+    },
+    [commitDraftExternalAgentChoices],
   );
 
   // context usage 面板的压缩入口（命令文本 = "/compact"，复用 slash 解析路径）。
@@ -4708,6 +5563,196 @@ export function SessionPane({
   // 提交时先 stop barrier 再 rewind/rerun；UI 不应再用 completed gate 把入口整轮隐藏。
   const editActionsEnabled = runtimeReady && !readOnly && !selectionSideChat && Boolean(sessionId);
   const isDraft = sessionId === null;
+  const firstSubmissionVersion = useSyncExternalStore(
+    subscribeV4ComposerDrafts,
+    () => getV4FirstSubmissionVersion(workspacePath, workspaceIdentity),
+    () => "",
+  );
+  const firstSubmissionScope = sessionId ?? `__draft__:${composerScopeKey(newTaskComposerScope)}`;
+  const firstSubmissionRecord = useMemo(
+    () =>
+      readV4WorktreeRecoveryDrafts(workspacePath, workspaceIdentity, firstSubmissionScope).find(
+        ({ draft }) =>
+          draft.firstSubmission &&
+          (sessionId !== null ||
+            !isV4FirstSubmissionActive(
+              workspacePath,
+              workspaceIdentity,
+              draft.firstSubmission.submissionId,
+            ) ||
+            draft.firstSubmission.generation === composerDraftGeneration),
+      ),
+    [
+      firstSubmissionVersion,
+      firstSubmissionScope,
+      workspacePath,
+      workspaceIdentity,
+      sessionId,
+      composerDraftGeneration,
+    ],
+  );
+  // Reconcile, not gate (specs/first-submission-instant-ux.md P1): the optimistic row hides
+  // only when a real realUser row is visible in this session's window — never on the
+  // queue-item projection, which was the header-preview blink.
+  const firstSubmissionRowProjected =
+    Boolean(firstSubmissionRecord) &&
+    snapshot?.sessionId === sessionId &&
+    hasVisibleRealUserFirstInputRow(snapshot.rows.window);
+  const firstSubmission = firstSubmissionRowProjected ? undefined : firstSubmissionRecord;
+  const hasFirstSubmission = Boolean(firstSubmission);
+  useFirstSubmissionReconciliation({
+    enabled: remoteAvailable,
+    workspacePath,
+    workspaceIdentity,
+    sessionId,
+    firstSubmission: firstSubmissionRecord?.draft.firstSubmission,
+    heldFirstSubmission: sessionId !== null ? composerDraft?.firstSubmission : undefined,
+    active: Boolean(
+      firstSubmissionRecord?.draft.firstSubmission &&
+      isV4FirstSubmissionActive(
+        workspacePath,
+        workspaceIdentity,
+        firstSubmissionRecord.draft.firstSubmission.submissionId,
+      ),
+    ),
+    realRowProjected: firstSubmissionRowProjected,
+    commandRowProjected: (commandId) =>
+      snapshot?.sessionId === sessionId &&
+      snapshot.rows.window.some(
+        (row) =>
+          row.kind === "userInput" &&
+          row.origin === "realUser" &&
+          row.sourceCommandId === commandId,
+      ),
+    snapshotLive: Boolean(sessionId && snapshot?.sessionId === sessionId),
+    hostPreparing: Boolean(snapshot?.meta.submissionPreparation),
+    hostRevision: snapshot?.sessionId === sessionId ? snapshot.revision : undefined,
+    queryCommands: (params) => layer.queryCommands(params),
+  });
+  useEffect(() => {
+    if (!firstSubmissionRowProjected || !firstSubmissionRecord) return;
+    const projectedSubmissionId = firstSubmissionRecord.draft.firstSubmission?.submissionId;
+    clearV4ComposerDraft(workspacePath, workspaceIdentity, firstSubmissionRecord.scope);
+    // The active flag dies with the accepted row (flag lifetime table in the instant-UX
+    // spec): it is not cleared at send-chain completion.
+    if (
+      projectedSubmissionId &&
+      isV4FirstSubmissionActive(workspacePath, workspaceIdentity, projectedSubmissionId)
+    )
+      setV4FirstSubmissionActive(workspacePath, workspaceIdentity, projectedSubmissionId, false);
+  }, [firstSubmissionRowProjected, firstSubmissionRecord?.scope, workspacePath, workspaceIdentity]);
+  // The optimistic first-input row: a pixel-real user bubble from the frozen record, rendered
+  // in the Send commit itself (P1). sourceCommandId rides along once the command exists so the
+  // reconcile predicate and any future dedup can match; attachments map through the mime
+  // fallback because uploads are still in flight at this point.
+  const optimisticFirstInputRow = useMemo(() => {
+    const pending = firstSubmission?.draft.firstSubmission;
+    if (!pending) return null;
+    // Stable negative rowId derived from the submission id (UUID): never collides with
+    // projected rowIds and keeps the virtual-list height cache keyed consistently.
+    const rowId = -(1 + (Number.parseInt(pending.submissionId.slice(0, 8), 16) % 1_000_000_000));
+    const attachments = (firstSubmission.draft.recoveryAttachments ?? []).map((file) => ({
+      ref: file.id,
+      fileName: file.filename,
+      mime: file.mimeType ?? "application/octet-stream",
+      bytes: file.sizeBytes ?? 0,
+    }));
+    return {
+      rowId,
+      turnId: `first-submission:${pending.submissionId}`,
+      productTurnId: `first-submission:${pending.submissionId}`,
+      entityId: pending.submissionId,
+      kind: "userInput" as const,
+      text: firstSubmission.draft.text,
+      origin: "realUser" as const,
+      ...(pending.commandId ? { sourceCommandId: pending.commandId } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
+      createdAt: firstSubmission.draft.updatedAt,
+      createdAtSeq: 0,
+    };
+  }, [firstSubmission]);
+  const sessionIndexScopes = useMemo(
+    () =>
+      remoteSessionId && !zcodeAgentService
+        ? []
+        : [
+            {
+              workspacePath,
+              ...(workspaceIdentity ? { workspaceIdentity } : {}),
+              ...(remoteSessionId ? { endpointKey: remoteSessionId } : {}),
+              ...(zcodeAgentService ? { agentService: zcodeAgentService } : {}),
+            },
+          ],
+    [remoteSessionId, workspaceIdentity, workspacePath, zcodeAgentService],
+  );
+  const { items: sessionIndexItems } = useWorkspaceSessionsIndexItems(sessionIndexScopes);
+  const sessionExecutionWorktree = isDraft
+    ? undefined
+    : sessionIndexItems.find((task) => task.taskId === sessionId)?.executionWorktree;
+  // Activation clears the Host preparation marker immediately, while the sessions-index refresh
+  // carrying executionWorktree lands a few hundred milliseconds later. The settled renderer
+  // pipeline entry (ready with its resolved path, or consumed) bridges exactly that gap for the
+  // timeline slot, so the worktree line never blinks out at the creating→created handoff. The
+  // index fact stays authoritative everywhere else (git panels, header).
+  const settledWorktreePipelineEntry = useComposerWorktreePipelineStore((state) =>
+    sessionId ? selectComposerWorktreePipeline(state, workspaceKey, sessionId) : null,
+  );
+  const bridgedExecutionWorktree =
+    sessionExecutionWorktree ??
+    (!isDraft &&
+    settledWorktreePipelineEntry?.sessionId === sessionId &&
+    (settledWorktreePipelineEntry.status === "consumed" ||
+      settledWorktreePipelineEntry.status === "ready")
+      ? {
+          path:
+            settledWorktreePipelineEntry.worktreePath ??
+            settledWorktreePipelineEntry.params?.targetPath ??
+            "",
+          ...(settledWorktreePipelineEntry.params?.branchName
+            ? { branchName: settledWorktreePipelineEntry.params.branchName }
+            : {}),
+        }
+      : undefined);
+  // Entry-driven setup slot (ISSUE-051): the Host preparation marker drives the persistent
+  // worktree line whenever the pane snapshot carries it; when the snapshot has no marker (lost or
+  // not-yet-delivered failure report), the renderer's live pipeline entry for the bound session
+  // keeps the failed/creating card visible, so navigation away and back resumes the same progress
+  // state. Same rule as the marker path: an orphaned entry renders with its orphan note, and this
+  // never starts Git by itself.
+  const liveWorktreeSetupEntry =
+    !isDraft &&
+    settledWorktreePipelineEntry?.sessionId === sessionId &&
+    (settledWorktreePipelineEntry.status === "creating" ||
+      settledWorktreePipelineEntry.status === "failed");
+  const executionGitPath = sessionExecutionWorktree?.path ?? workspacePath;
+  const [worktreeGitRefreshVersion, setWorktreeGitRefreshVersion] = useState(0);
+  const worktreeGitState = useGitRepository({
+    workspacePath: executionGitPath,
+    activeTaskId: sessionId,
+    enabled: Boolean(sessionExecutionWorktree),
+    refreshToken: worktreeGitRefreshVersion,
+    remoteSessionId,
+    workspaceIdentity,
+  });
+  const refreshWorktreeGit = useCallback(() => {
+    setWorktreeGitRefreshVersion((version) => version + 1);
+  }, []);
+  const worktreeGitDirtyFileCount =
+    (worktreeGitState.sourceOptions.find((option) => option.id === "unstaged")?.count ?? 0) +
+    (worktreeGitState.sourceOptions.find((option) => option.id === "staged")?.count ?? 0);
+  const worktreeGitChangeSummary = useMemo(() => {
+    const changes = [
+      ...worktreeGitState.datasets.unstaged.sections.flatMap((section) => section.changes),
+      ...worktreeGitState.datasets.staged.sections.flatMap((section) => section.changes),
+    ];
+    return changes.reduce(
+      (summary, change) => ({
+        added: summary.added + change.added,
+        removed: summary.removed + change.removed,
+      }),
+      { added: 0, removed: 0 },
+    );
+  }, [worktreeGitState.datasets]);
   // 滚动恢复必须使用与 sessionId 匹配的 lease projection。切换 session 的 render 与
   // passive effect 不在同一时刻，旧 lease 的 rows 若提前交给 timeline，会让新记忆按旧
   // 内容高度 clamp，后续目标 rows 到达时也无法区分这次临时落点。
@@ -4715,6 +5760,9 @@ export function SessionPane({
     !isDraft && (lease === null || sessionLeaseReady) && snapshot?.sessionId === sessionId
       ? snapshot
       : null;
+  // Status panel Last turn (specs/status-panel-context-and-last-turn.md): read from the session-matched snapshot so a
+  // session switch never shows the previous session's turn; stable until the turn's facts change.
+  const statusPanelLastTurn = useLastTurnSectionModel(timelineSnapshot?.rows.window);
   const shareHandoverContext =
     snapshot?.sharedContextImport && "contextId" in snapshot.sharedContextImport
       ? snapshot.sharedContextImport
@@ -4979,6 +6027,32 @@ export function SessionPane({
     draftModelReadinessError ??
     sendSubmissionError ??
     (quotaBanner.takesOverError ? null : projectedComposerError);
+  const resumableComposerError =
+    projectedComposerError !== null && composerError === projectedComposerError;
+  const resumePendingErrorKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const pendingKey = resumePendingErrorKeyRef.current;
+    if (pendingKey !== null && pendingKey !== controlLastErrorKey) {
+      resumePendingErrorKeyRef.current = null;
+    }
+  }, [controlLastErrorKey]);
+  const handleResumeError = useCallback(() => {
+    if (!controlLastErrorKey || resumePendingErrorKeyRef.current !== null) return;
+    resumePendingErrorKeyRef.current = controlLastErrorKey;
+    void handleSendText(CHAT_ERROR_RESUME_MESSAGE)
+      .then((result) => {
+        if (result === "blocked" || result === "confirmationRequired") {
+          resumePendingErrorKeyRef.current = null;
+          toast(intl.formatMessage({ id: "chat.error.resumeBlocked" }));
+        }
+      })
+      .catch((error: unknown) => {
+        resumePendingErrorKeyRef.current = null;
+        logger.warn("[v4-pane] Resume send failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }, [controlLastErrorKey, handleSendText, intl]);
   useEffect(() => {
     setSendSubmissionError(null);
   }, [sessionId]);
@@ -5406,24 +6480,31 @@ export function SessionPane({
   const composerNode = readOnly ? null : (
     <ConversationComposer
       key="conversation-composer"
+      voiceDictationEnabled={isDesktop || compactForRemoteControl}
       // Snapshot 仍服务用量、路由与运行态；工具栏的 mode/model 只读下方 Composer Draft。
       snapshot={snapshot}
       sessionId={sessionId}
       // 草稿 taskId 仍为 null，但 prewarm 已经拥有独立 AgentRuntime。
       // 只给 Skill catalog 下发 effective id，避免 UI 扫到 prewarm runtime 尚未加载的新 Skill。
-      skillCatalogSessionId={effectiveSessionId}
+      skillCatalogSessionId={incognitoDraftActive ? sessionId : effectiveSessionId}
       draftMode={isDraft}
       draftConfig={draftConfig}
       composerDraft={composerDraft}
       rootDraftScopeKey={composerScopeKey(newTaskComposerScope)}
       replaceComposerDraft={replaceComposerDraft}
-      submissionReady={composerSubmissionReady && runtimeReady && !recoveringDraft}
+      submissionReady={
+        // An active first submission no longer locks the composer (IUX01/IUX03, FSL rule 7):
+        // typing is always free and the next Send follows ordinary session readiness only.
+        composerSubmissionReady && runtimeReady && !recoveringDraft
+      }
       updateComposerContent={updateComposerContent}
       createSubmissionFromComposer={createSubmissionFromComposer}
       telemetryDraftConfig={telemetryDraftConfig}
-      // 完整视图浮窗默认是一条输入框：草稿项目栏不进入浮窗，切到对话 tab 再选择项目。
-      contextHeader={isDraft && !isFloatingPresentation ? draftComposerHeader : undefined}
-      centered={isDraft}
+      // The floating full-view composer shows only the input box by default: the draft project bar does not enter the floating view; pick a project after switching to the conversation tab.
+      contextHeader={
+        isDraft && !hasFirstSubmission && !isFloatingPresentation ? draftComposerHeader : undefined
+      }
+      centered={isDraft && !hasFirstSubmission}
       layout={isFloatingPresentation ? "inline" : "stacked"}
       workingDurationMs={
         floatingTurnRunning ? floatingLatestTurnSummary?.workDurationMs : undefined
@@ -5443,10 +6524,12 @@ export function SessionPane({
       workspacePath={workspacePath}
       workspaceIdentity={workspaceIdentity}
       remoteSessionId={remoteSessionId ?? undefined}
+      quickPromptProject={quickPromptProject}
       modelSelectionView={
         modelSelectionView ??
         (modelSelectionRead.state.status === "loading" ? modelSelectionRead.state.catalog : null)
       }
+      modelSelectionSettled={providerStartupSettled}
       modelSelectionState={modelSelectionRead.state}
       modelSelectionReload={modelSelectionRead.reload}
       modelSelectionRefresh={modelSelectionRead.refresh}
@@ -5458,6 +6541,14 @@ export function SessionPane({
       telemetryVisible={telemetryVisible && conversationTelemetryForegroundEnabled}
       readPlanIdentitySnapshot={readPlanIdentitySnapshot}
       onSendText={handleSendText}
+      durableFirstSubmission
+      firstSubmissionActive={hasFirstSubmission}
+      draftGeneration={composerDraftGeneration}
+      onPrepareFirstSubmission={prepareFirstSubmission}
+      onFirstSubmissionReserved={handleFirstSubmissionReserved}
+      onPrepareWorktreeSession={prepareWorktreeSession}
+      onSyncWorktreePreparation={syncWorktreePreparation}
+      onWorktreePreparationFailed={handleWorktreePreparationFailed}
       highspeedCard={activeHighspeedCard}
       highspeedActivationCardId={highspeedActivationCardId}
       onHighspeedActivationApplied={handleHighspeedActivationApplied}
@@ -5468,6 +6559,10 @@ export function SessionPane({
       onSelectModel={handleSelectModel}
       onSelectThought={handleSelectThought}
       onSwitchMode={handleSwitchMode}
+      onSetExternalAgentConfigOption={handleSetExternalAgentConfigOption}
+      draftExternalAgentChoices={draftExternalAgentChoices}
+      draftExternalAgentKey={sessionId === null ? draftChoiceKey : null}
+      onSetDraftExternalAgentChoice={handleSetDraftExternalAgentChoice}
       onOpenRunningBackgroundWorks={
         sessionId && runningBackgroundWorkCount > 0 ? handleOpenRunningBackgroundWorks : undefined
       }
@@ -5480,6 +6575,7 @@ export function SessionPane({
       onSendCompressionCommand={handleSendCompressionCommand}
       error={composerError}
       onDismissError={handleDismissComposerError}
+      onResumeError={resumableComposerError ? handleResumeError : undefined}
       onRetryInitialization={handleRetrySubscribe}
       onOpenModelSettings={handleOpenModelSettings}
       onOpenModelUpgrade={handleOpenModelUpgrade}
@@ -5577,6 +6673,11 @@ export function SessionPane({
               : undefined
           }
           onDismiss={quotaBanner.dismiss}
+          autoContinueDefault={sharedSettings?.codingPlanLimitAutoContinueDefaultEnabled !== false}
+          autoContinueReady={sharedSettings !== null}
+          onAutoContinue={
+            quotaBanner.state.providerLimitedResetAt !== null ? handleResumeError : undefined
+          }
         />
       ) : null}
       {recoverableCommand ? (
@@ -5629,8 +6730,9 @@ export function SessionPane({
       ) : null}
       {composerNode}
       {/* 办公模式显示主动任务推荐；编程模式保留原有小型场景入口。 */}
-      {/* 完整视图浮窗只露出输入框，草稿推荐提示不进入浮窗。 */}
+      {/* The floating full-view shows only the input box; draft suggestion hints do not enter the floating view. */}
       {isDraft &&
+      !hasFirstSubmission &&
       !isFloatingPresentation &&
       (!isOfficeMode || sharedSettings?.proactiveSuggestionsEnabled === true) ? (
         <ConversationDraftSuggestedPromptsContainer
@@ -5683,6 +6785,17 @@ export function SessionPane({
       uploadAttachment={pluginUiUploadAttachment}
       projectionStore={sessionLeaseReady ? lease?.store : null}
     >
+      {sessionExecutionWorktree ? (
+        <ExecutionWorktreeGitAutoRefresh
+          workspacePath={executionGitPath}
+          workspaceIdentity={workspaceIdentity}
+          remoteSessionId={remoteSessionId ?? undefined}
+          gitSummary={worktreeGitState.summary}
+          gitSummaryWorkspaceKey={worktreeGitState.workspaceKey}
+          enabled={focused}
+          onRefreshGit={refreshWorktreeGit}
+        />
+      ) : null}
       <div
         ref={paneRef}
         data-testid={testId(TID_V4_SESSION_PANE, paneId)}
@@ -5760,12 +6873,21 @@ export function SessionPane({
           {!isDraft ? (
             <ConversationStatusPanel
               workspacePath={workspacePath}
+              gitWorkspacePath={executionGitPath}
               workspaceIdentity={workspaceIdentity}
-              gitSummary={gitSummary}
-              gitDirtyFileCount={gitDirtyFileCount}
-              gitWorktreeReviewSourceId={gitWorktreeReviewSourceId}
-              gitWorktreeChangeSummary={gitWorktreeChangeSummary}
-              activeTaskChangeSummary={activeTaskChangeSummary}
+              activeTaskId={rootSessionId ?? sessionId ?? null}
+              gitSummary={sessionExecutionWorktree ? worktreeGitState.summary : gitSummary}
+              gitDirtyFileCount={
+                sessionExecutionWorktree ? worktreeGitDirtyFileCount : gitDirtyFileCount
+              }
+              executionWorktree={sessionExecutionWorktree}
+              gitWorktreeReviewSourceId={
+                sessionExecutionWorktree ? null : gitWorktreeReviewSourceId
+              }
+              gitWorktreeChangeSummary={
+                sessionExecutionWorktree ? worktreeGitChangeSummary : gitWorktreeChangeSummary
+              }
+              activeTaskChangeSummary={sessionExecutionWorktree ? null : activeTaskChangeSummary}
               goal={selectionSideChat ? null : (snapshot?.goal ?? null)}
               sessionPlans={state.sessionPlans}
               plan={snapshot?.plan ?? null}
@@ -5786,8 +6908,12 @@ export function SessionPane({
               onAgentSectionOpenChange={setAgentSectionOpen}
               workflowSectionOpen={workflowSectionOpen}
               onWorkflowSectionOpenChange={setWorkflowSectionOpen}
-              onRefreshGit={onRefreshGit}
-              onOpenGitReview={onOpenGitReview}
+              onRefreshGit={sessionExecutionWorktree ? refreshWorktreeGit : onRefreshGit}
+              onOpenGitReview={
+                sessionExecutionWorktree && sessionId
+                  ? (sourceId) => onOpenGitReview?.(sourceId, executionGitPath, sessionId)
+                  : onOpenGitReview
+              }
               onPauseGoal={
                 !readOnly && !selectionSideChat && snapshot?.availability.pauseGoal.allowed
                   ? handlePauseGoal
@@ -5829,6 +6955,11 @@ export function SessionPane({
                   ? handleOpenWorkflowRunDirectoryFromPanel
                   : undefined
               }
+              usage={timelineSnapshot?.usage ?? null}
+              lastTurn={statusPanelLastTurn}
+              fetchFileChanges={runtimeReady ? handleFetchFileChanges : undefined}
+              onOpenCodeViewer={onOpenCodeViewer}
+              workspaceRemoteSessionId={remoteSessionId ?? undefined}
             />
           ) : null}
 
@@ -5862,14 +6993,23 @@ export function SessionPane({
                 workspacePath={workspacePath}
                 workspaceIdentity={workspaceIdentity}
               >
+                {!readOnly && !selectionSideChat && sessionId ? (
+                  <ConversationPinnedBar
+                    rows={timelineSnapshot?.rows.window ?? []}
+                    onJumpToRow={handlePinnedJump}
+                    onUnpin={handlePinnedUnpin}
+                  />
+                ) : null}
                 <ConversationTimeline
                   compactForRemoteControl={compactForRemoteControl}
                   scrollToBottomActionRef={timelineScrollToBottomRef}
                   scrollToQueryActionRef={timelineScrollToQueryRef}
+                  scrollToRowActionRef={timelineScrollToRowRef}
                   selectionPanelLayoutContainerRef={conversationLayoutContainerRef}
                   rows={timelineSnapshot?.rows.window ?? []}
                   pendingGuides={timelineSnapshot ? pendingGuideProjection?.pendingGuides : []}
                   apiRetry={timelineSnapshot?.control.apiRetry ?? null}
+                  externalAgentStall={timelineSnapshot?.control.externalAgentStall ?? null}
                   totalCount={timelineSnapshot?.rows.totalCount ?? 0}
                   sessionKey={sessionId ?? "draft"}
                   scrollMemoryKey={timelineScrollMemoryKey}
@@ -5880,6 +7020,9 @@ export function SessionPane({
                     !readOnly && !selectionSideChat && sessionId
                       ? handleAssistantFeedback
                       : undefined
+                  }
+                  onPinChange={
+                    !readOnly && !selectionSideChat && sessionId ? handleRowPin : undefined
                   }
                   onEdit={editActionsEnabled ? handleEdit : undefined}
                   canLoadOlder={timelineSnapshot ? hasOlderRows(timelineSnapshot) : false}
@@ -5913,12 +7056,83 @@ export function SessionPane({
                       />
                     ) : null
                   }
+                  optimisticFirstInputRow={optimisticFirstInputRow}
+                  afterFirstUserInputSlot={
+                    firstSubmission ||
+                    (!isDraft &&
+                      (snapshot?.meta.worktreePreparation ||
+                        bridgedExecutionWorktree ||
+                        liveWorktreeSetupEntry)) ? (
+                      <>
+                        {firstSubmission ? (
+                          <FirstSubmissionStatus
+                            draft={firstSubmission.draft}
+                            active={isV4FirstSubmissionActive(
+                              workspacePath,
+                              workspaceIdentity,
+                              firstSubmission.draft.firstSubmission!.submissionId,
+                            )}
+                          />
+                        ) : null}
+                        {!isDraft &&
+                        (snapshot?.meta.worktreePreparation ||
+                          bridgedExecutionWorktree ||
+                          liveWorktreeSetupEntry) ? (
+                          snapshot?.meta.worktreePreparation ? (
+                            <ConversationWorktreeSetupSteps
+                              workspacePath={workspacePath}
+                              {...(workspaceIdentity ? { workspaceIdentity } : {})}
+                              sessionId={sessionId!}
+                              preparation={snapshot.meta.worktreePreparation}
+                              remoteSessionId={remoteSessionId ?? undefined}
+                              onRetryPreparation={handleWorktreePreparationRetry}
+                              onCancelPreparation={handleWorktreePreparationCancel}
+                              onPreparationFailed={handleWorktreePreparationFailed}
+                              onSyncPreparation={syncWorktreePreparation}
+                            />
+                          ) : liveWorktreeSetupEntry ? (
+                            // No Host marker in this snapshot (ISSUE-051): the card renders from
+                            // the renderer's live pipeline entry alone.
+                            <ConversationWorktreeSetupSteps
+                              workspacePath={workspacePath}
+                              {...(workspaceIdentity ? { workspaceIdentity } : {})}
+                              sessionId={sessionId!}
+                              remoteSessionId={remoteSessionId ?? undefined}
+                              onRetryPreparation={handleWorktreePreparationRetry}
+                              onCancelPreparation={handleWorktreePreparationCancel}
+                              onPreparationFailed={handleWorktreePreparationFailed}
+                              onSyncPreparation={syncWorktreePreparation}
+                            />
+                          ) : (
+                            <ConversationWorktreeCreatedNotice
+                              branchName={bridgedExecutionWorktree!.branchName}
+                              currentBranchName={
+                                sessionExecutionWorktree && worktreeGitState.summary.isRepository
+                                  ? worktreeGitState.summary.headRefType === "branch"
+                                    ? worktreeGitState.summary.branchName
+                                    : intl.formatMessage({
+                                        id: "git.head.detached",
+                                      })
+                                  : undefined
+                              }
+                              path={bridgedExecutionWorktree!.path}
+                              workspaceIdentity={workspaceIdentity}
+                              remoteSessionId={remoteSessionId}
+                              homePath={workspaceHomePath}
+                            />
+                          )
+                        ) : null}
+                      </>
+                    ) : null
+                  }
                   emptyState={
                     !remoteAvailable ? (
                       <div className="p-6 text-center text-ui-base text-foreground-subtle">
-                        {intl.formatMessage({ id: "remote.conversation.placeholder" })}
+                        {intl.formatMessage({
+                          id: "remote.conversation.placeholder",
+                        })}
                       </div>
-                    ) : isDraft ? (
+                    ) : isDraft && !hasFirstSubmission ? (
                       <div data-testid={TID_CHAT_EMPTY} className="w-full">
                         <ConversationDraftEmptyState
                           compactForRemoteControl={compactForRemoteControl}
@@ -5926,8 +7140,10 @@ export function SessionPane({
                       </div>
                     ) : null
                   }
-                  // 浮窗形态只露出底部输入区，空会话也必须贴底，不能居中。
-                  centerEmptyStateWithDock={isDraft && !isFloatingPresentation}
+                  // In the floating form only the bottom input area is shown; even an empty session must dock to the bottom rather than center.
+                  centerEmptyStateWithDock={
+                    isDraft && !hasFirstSubmission && !isFloatingPresentation
+                  }
                   floatingComposerDock={isFloatingPresentation}
                   onComposerDockHeightChange={
                     isFloatingPresentation && focused
@@ -5979,4 +7195,33 @@ export function SessionPane({
       </div>
     </PluginUiSessionProvider>
   );
+}
+
+function ExecutionWorktreeGitAutoRefresh({
+  workspacePath,
+  workspaceIdentity,
+  remoteSessionId,
+  gitSummary,
+  gitSummaryWorkspaceKey,
+  enabled,
+  onRefreshGit,
+}: {
+  workspacePath: string;
+  workspaceIdentity?: string | null;
+  remoteSessionId?: string | null;
+  gitSummary: GitRepositorySummary;
+  gitSummaryWorkspaceKey: string;
+  enabled: boolean;
+  onRefreshGit: () => void;
+}) {
+  useGitAutoRefresh({
+    workspacePath,
+    workspaceIdentity,
+    remoteSessionId,
+    gitSummary,
+    gitSummaryWorkspaceKey,
+    enabled,
+    onRefreshGit,
+  });
+  return null;
 }

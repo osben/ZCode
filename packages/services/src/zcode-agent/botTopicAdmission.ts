@@ -1,4 +1,4 @@
-/** Host 在途发送屏障；accepted input 和 commandId 幂等仍由 CLI 管理。 */
+/** Host-side in-flight send barrier; accepted-input and commandId idempotency remain managed by the CLI. */
 export function createBotTopicAdmission() {
   const versions = new Map<string, number>();
   const tails = new Map<string, Promise<void>>();
@@ -7,8 +7,8 @@ export function createBotTopicAdmission() {
   return {
     capture,
     async invalidate(key: string): Promise<void> {
-      // 先使尚未发送的准备工作失效，再等待已发送的命令收口。
-      // 若直接返回，Agent 内部等待连接/上下文的旧命令可能在取消完成后才发出。
+      // First invalidate preparation work that has not been sent, then wait for already-sent commands to settle.
+      // Returning directly would let old commands still waiting on connections/context be emitted after cancellation completes.
       versions.set(key, capture(key) + 1);
       await tails.get(key);
     },

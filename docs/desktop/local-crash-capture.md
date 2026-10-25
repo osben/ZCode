@@ -1,62 +1,71 @@
-# Desktop 本地 Crash 留档
+# Desktop local crash archive
 
-Desktop 主进程在启动早期配置 crash dump 路径，并同时保留两条链路：
+The Desktop main process configures the crash dump path early in startup and keeps two chains:
 
-- ARMS 接收 native crash 与 Electron main 异常，用于线上监控（`appARMSBootstrap.ts`）
-- 本地额外归档一份原始 minidump，方便用户或开发排查（`desktopCrashCapture.ts`）
+- ARMS receives native crashes and Electron main exceptions for online monitoring (`appARMSBootstrap.ts`).
+- A raw minidump copy is additionally archived locally for user or developer troubleshooting
+  (`desktopCrashCapture.ts`).
 
-ARMS crash collector 会扫描 `live` 目录中的全部 dump。为避免后代或外部程序继承
-Crashpad 后把 `hdc`、`plugin-container`、`chrome-headless-shell` 等 dump 混入 ZCode
-健康度，`beforeReport` 先保留 `binary_images` 中含当前 ZCode 产品可执行文件的事件；但仅有
-二进制命中不能证明是主进程崩溃。没有明确 `native_dump_process_role=main` 的 dump 会标记为
-`native_dump_unattributed`，继续保留原始诊断事件但不进入 App Crash / Crash-Free，避免
-Linux/Windows 共用 executable 的 helper/utility crash loop 污染产品稳定性指标。
-角色来源必须是 Crashpad dump 的结构化注解：`@arms/rum-electron` 的 crash collector
-必须从 minidump stream directory 定位 Crashpad info，并沿 annotation 的 RVA 引用读取
-`process_type` / `ptype` 后透传为事件 `meta.process_type`，应用侧再把 `browser` 归一化为
-`main`。不得扫描整个 dump 猜测相邻的 key/value 字节；未被 Crashpad annotation 结构引用的
-同名字节一律忽略。
-事件里的 `meta.process` 仅是应用名，不能作为进程角色回退；缺失或无法解析角色时必须保持
-`native_dump_unattributed`。
-可信可执行文件名同时取产品应用名与 `basename(process.execPath)`：生产包通常两者相同；
-本地开发运行实际使用 `Electron`，Linux Preview 则使用 `zcode-preview`，不能只拿
-`app.getName()` 与 dump 模块名比较。
-本地 `archive` 仍保留原始文件，过滤线上指标不会改变本地诊断链路。
+The ARMS crash collector scans all dumps in the `live` directory. To keep dumps such as `hdc`,
+`plugin-container` and `chrome-headless-shell` out of ZCode health metrics when descendants or external programs
+inherit Crashpad, `beforeReport` first keeps events whose `binary_images` contain the current ZCode product
+executable; but a binary hit alone does not prove a main-process crash. A dump without an explicit
+`native_dump_process_role=main` is marked `native_dump_unattributed`: the raw diagnostic event is kept but it does
+not enter App Crash / Crash-Free, so helper/utility crash loops sharing an executable on Linux/Windows do not
+pollute product stability metrics. The role source must be a structured Crashpad dump annotation: the
+`@arms/rum-electron` crash collector must locate the Crashpad info from the minidump stream directory, follow the
+annotation's RVA references to read `process_type` / `ptype`, and pass it through as event `meta.process_type`;
+the app side then normalizes `browser` to `main`. Scanning the whole dump to guess adjacent key/value bytes is
+forbidden; same-name bytes not referenced by the Crashpad annotation structure are ignored. `meta.process` in the
+event is only the app name and must not be a fallback for the process role; a missing or unparseable role must
+stay `native_dump_unattributed`.
 
-## 目录结构
+The trusted executable names are both the product app name and `basename(process.execPath)`: in production
+packages they are usually the same; local dev runs actually use `Electron`, and Linux Preview uses
+`zcode-preview`, so comparing only `app.getName()` with the dump module name is not enough. The local `archive`
+still keeps the raw files; filtering online metrics does not change the local diagnostic chain.
+
+## Directory layout
 
 ```
 <appConfigDir>/crash/
-  ├── live/        ← Electron / Crashpad 实时写入目录（`app.setPath("crashDumps")`）
-  └── archive/     ← ZCode 额外保留的本地副本
+  ├── live/        ← Electron / Crashpad real-time write directory (`app.setPath("crashDumps")`)
+  └── archive/     ← the extra local copy ZCode keeps
 ```
 
-`appConfigDir` 默认 `~/.zcode/v2/`；用户配置了自定义 `dataBaseDir` 时，路径为 `<dataBaseDir>/.zcode/v2/crash/`（依赖 `desktopEarlyDataBaseDirBootstrap` 在 crash 初始化前注入 `dataBaseDir`）。
+`appConfigDir` defaults to `~/.zcode/v2/`; with a custom `dataBaseDir` the path is
+`<dataBaseDir>/.zcode/v2/crash/` (relying on `desktopEarlyDataBaseDirBootstrap` to inject `dataBaseDir` before
+crash initialization).
 
-## 本地归档保留策略
+## Local archive retention
 
-`archive/` 只用于保留原始 minidump，供线上事件不足以定位问题时离线排查；它不参与
-Crashpad 采集或 ARMS 上报。为了避免历史 dump 无限占用用户磁盘，本地归档遵循以下规则：
+`archive/` only keeps raw minidumps for offline troubleshooting when online events are not enough to locate a
+problem; it takes no part in Crashpad collection or ARMS reporting. To keep historical dumps from occupying user
+disk without bound, the local archive follows these rules:
 
-- 最多保留最近 5 个 `.dmp`
-- 除最新一个外，归档总大小不得超过 100 MiB
-- 最新一个 `.dmp` 始终保留，即使它本身超过 100 MiB
-- 删除旧 `.dmp` 时一并删除同名 `.dmp.json` 元数据；若元数据删除暂时失败，后续清理会识别并重试删除不存在同名普通 `.dmp` 的孤立元数据，不处理其他 JSON 文件
-- 清理只作用于 `archive/`；`live/` 仍完全由 Electron Crashpad / ARMS 管理
+- keep at most the latest 5 `.dmp`;
+- apart from the newest one, the archive total size must not exceed 100 MiB;
+- the newest `.dmp` is always kept, even if it alone exceeds 100 MiB;
+- deleting an old `.dmp` also deletes the same-name `.dmp.json` metadata; if the metadata deletion fails
+  temporarily, later cleanup recognizes and retries deleting orphan metadata whose same-name regular `.dmp` no
+  longer exists, and does not touch other JSON files;
+- cleanup acts only on `archive/`; `live/` stays entirely managed by Electron Crashpad / ARMS.
 
-清理在每次归档完成后执行，按 `.dmp` 修改时间从新到旧保留。这样既限制历史文件累积，
-又保证最近一次原生崩溃仍有本地原始现场可供分析。若最新单个 dump 本身异常巨大，目录允许
-临时超过 100 MiB；这是保留最近崩溃诊断能力的有意例外，而不是严格磁盘配额。
+Cleanup runs after each archive completes, keeping files by `.dmp` modification time from newest to oldest. This
+limits historical accumulation while ensuring the most recent native crash always has a local raw scene for
+analysis. If the newest single dump is itself huge, the directory may temporarily exceed 100 MiB; this is an
+intentional exception to keep the latest crash diagnosable, not a strict disk quota.
 
-## 启动顺序
+## Startup order
 
-1. `desktopEarlyDataBaseDirBootstrap`：同步读取 `setting.json` 的 `dataBaseDir`
-2. `appCrashCaptureBootstrap`：配置 `crashDumps`、归档上一轮残留 `.dmp`
-3. `appARMSBootstrap`：初始化 ARMS（`collectors.crash: true`）
-4. `index.ts`：`app.setPath("userData")` / `sessionData` 等
-5. `registerCrashEventMonitor`：renderer / 子进程崩溃后延迟归档（避免 live 目录被 SDK 清理后无本地副本）
+1. `desktopEarlyDataBaseDirBootstrap`: synchronously reads `dataBaseDir` from `setting.json`.
+2. `appCrashCaptureBootstrap`: configures `crashDumps` and archives `.dmp` leftovers from the previous run.
+3. `appARMSBootstrap`: initializes ARMS (`collectors.crash: true`).
+4. `index.ts`: `app.setPath("userData")` / `sessionData` and so on.
+5. `registerCrashEventMonitor`: delayed archive after a renderer / child process crash (so the local copy exists
+   even if the SDK cleans the live directory).
 
-## 相关文件
+## Related files
 
 - `packages/desktop/src/main/desktopDataBaseDirBootstrap.ts`
 - `packages/desktop/src/main/desktopEarlyDataBaseDirBootstrap.ts`

@@ -14,9 +14,10 @@ import { publishCanonicalCredentials } from "../src/mcp/oauth-credentials.js";
 import { createCredentialKeyPrefix } from "../src/mcp/oauth.js";
 
 /**
- * 跨进程端到端验证:线上事故的竞态发生在多个真实 CLI 进程之间,同进程测试无法复现
- * 「两个进程同时读到临期 token / 同时抢授权」这个现场形态。本文件用 tsx 拉起真实 OS
- * 子进程驱动 adapters 源码,主进程只托管假授权服务器/假 MCP 并做协议级断言。
+ * Cross-process end-to-end verification: the production incident's race happened between multiple real CLI
+ * processes; a same-process test cannot reproduce the incident shape of "two processes reading a near-expiry
+ * token at the same time / both racing for authorization". This file uses tsx to launch real OS child processes
+ * driving the adapters source, while the main process only hosts the fake authorization server / fake MCP and makes protocol-level assertions.
  */
 
 const MCP_SCOPE = "mcp:tools";
@@ -47,7 +48,7 @@ interface StrictServerState {
     { challenge: string; clientId: string; redirectUri: string }
   >;
   clients: Map<string, { redirectUris: string[] }>;
-  /** 单次使用的 refresh token;二次使用即 invalid_grant(rotation reuse-detection)。 */
+  /** Single-use refresh token; a second use means invalid_grant (rotation reuse-detection). */
   consumedRefreshTokens: Set<string>;
   knownRefreshTokens: Set<string>;
   refreshRequestCount: number;
@@ -77,7 +78,7 @@ interface FakeStack {
   state: StrictServerState;
 }
 
-/** 假授权服务器 + 假受保护 MCP。redirect_uri 精确匹配(含端口),模拟 auth.exa.ai 行为。 */
+/** Fake authorization server + fake protected MCP. redirect_uri exact match (including port), mimicking auth.exa.ai behavior. */
 async function startFakeStack(): Promise<FakeStack> {
   const state = createState();
   const stack: FakeStack = { asBaseUrl: "", mcpUrl: "", state };
@@ -127,8 +128,8 @@ async function handleAuthServer(
         )
       : [];
     state.clients.set(clientId, { redirectUris });
-    // RFC 7591:注册响应必须回显已注册元数据;SDK 会对响应做 schema 校验
-    // (redirect_uris 必须是数组),只回 client_id 会在解析阶段失败。
+    // RFC 7591: the registration response must echo back the registered metadata; the SDK schema-validates the
+    // response (redirect_uris must be an array), so returning only client_id fails at the parsing stage.
     sendJson(res, 201, {
       ...body,
       client_id: clientId,
@@ -144,7 +145,7 @@ async function handleAuthServer(
     const redirectUri = params.redirect_uri ?? "";
     const challenge = params.code_challenge ?? "";
     const registered = state.clients.get(clientId);
-    // 精确匹配(含端口):对 loopback 不做 RFC 8252 端口豁免,模拟 auth.exa.ai。
+    // Exact match (including port): no RFC 8252 port exemption for loopback, mimicking auth.exa.ai.
     if (
       !registered ||
       !redirectUri ||
@@ -174,7 +175,7 @@ async function handleAuthServer(
         state.consumedRefreshTokens.has(refreshToken) ||
         !state.knownRefreshTokens.has(refreshToken)
       ) {
-        // 严格 rotation:同一 refresh token 二次使用即整族作废。
+        // Strict rotation: a second use of the same refresh token revokes the entire family.
         sendJson(res, 400, { error: "invalid_grant" });
         return;
       }
@@ -259,7 +260,7 @@ async function handleMcp(
     return;
   }
   if (message.method === "tools/list") {
-    // tools/list 必须真实返回工具:客户端建连的最后一跳就是它,回错误会让整次连接失败。
+    // tools/list must really return tools: it is the client's final hop when connecting; returning an error fails the whole connection.
     sendJson(res, 200, {
       id: message.id,
       jsonrpc: "2.0",
@@ -275,7 +276,7 @@ async function handleMcp(
     });
     return;
   }
-  // server/discover 回 -32601:让 modern 版本协商回退到 legacy initialize 握手。
+  // server/discover replies -32601: make modern version negotiation fall back to the legacy initialize handshake.
   if (message.method === "server/discover") {
     sendJson(res, 200, {
       error: { code: -32601, message: "Method not found" },
@@ -300,9 +301,9 @@ interface ChildHandle {
 }
 
 function runChild(config: Record<string, unknown>): ChildHandle {
-  // 用 `node --import tsx` 让驱动直接运行在本进程:tsx CLI 包装器会把自己的真正工作放进
-  // 子进程,SIGKILL 包装器只会留下孤儿——孤儿持有 lease 且 PID 存活,owner-dead 回收就
-  // 无法验证。--import 在进程内注册 loader,child.pid 即驱动进程本身。
+  // Use `node --import tsx` so the driver runs in-process: the tsx CLI wrapper puts its real work into
+  // a subprocess, and SIGKILLing the wrapper leaves an orphan — the orphan holds the lease and its PID is alive,
+  // so owner-dead reclamation cannot be verified. --import registers the loader in-process, so child.pid is the driver process itself.
   const child = spawn(process.execPath, ["--import", "tsx", CHILD_DRIVER, JSON.stringify(config)], {
     cwd: REPO_ROOT,
     env: process.env,
@@ -363,7 +364,7 @@ describe("MCP OAuth cross-process end-to-end", () => {
     stack.state.knownRefreshTokens.add("seed-rt-0");
     await publishCanonicalCredentials(credentialStore, keyPrefix, {
       clientInformation: { client_id: "seed-client" },
-      // 已经过期一小时:两个子进程的 token() 都会判定临期并进锁。
+      // Already expired one hour ago: both child processes' token() calls will judge it near-expiry and enter the lock.
       obtainedAt: Date.now() - 7_200_000,
       publishedBy: "cross-process-seed",
       tokens: {
@@ -384,15 +385,15 @@ describe("MCP OAuth cross-process end-to-end", () => {
     const racers = [runChild(config), runChild(config)];
     const [first, second] = await Promise.all(racers.map((child) => child.result));
 
-    // 根因 1 的现场形态:两个真实进程并发用同一 rotation refresh token 刷新。修复后,
-    // 跨进程文件锁 + 锁内 generation 合并保证只有一个请求到达 token endpoint;
-    // 若有两个,严格服务器会 invalid_grant、token family 被撤销,子进程会失败。
+    // The incident shape of root cause 1: two real processes concurrently refresh with the same rotation refresh token. After the fix,
+    // the cross-process file lock plus in-lock generation merging guarantee only one request reaches the token endpoint;
+    // with two, the strict server would invalid_grant and revoke the token family, and the child processes would fail.
     expect(first.token).toBe(ROTATED_ACCESS_TOKEN);
     expect(second.token).toBe(ROTATED_ACCESS_TOKEN);
     expect(stack.state.refreshRequestCount).toBe(1);
     expect(stack.state.refreshRequestBodies[0]?.grant_type).toBe("refresh_token");
     expect(stack.state.refreshRequestBodies[0]?.refresh_token).toBe("seed-rt-0");
-    // RFC 8707 resource 受众参数必须带上。
+    // The RFC 8707 resource audience parameter must be sent.
     expect(stack.state.refreshRequestBodies[0]?.resource).toBe(stack.mcpUrl);
   }, 90_000);
 
@@ -410,9 +411,9 @@ describe("MCP OAuth cross-process end-to-end", () => {
     const racers = [runChild(config), runChild(config)];
     const [first, second] = await Promise.all(racers.map((child) => child.result));
 
-    // 根因 2 的现场形态:过去两个连接各开一个 listener、各注册一个 client、各生成一个
-    // 授权 URL,且 client 的 redirect_uris 锁死各自的随机端口。修复后跨进程授权 lease
-    // 单飞:恰好一次 DCR、一个授权 URL;follower 观察 canonical 换代后用新凭据重连。
+    // The incident shape of root cause 2: previously the two connections each opened a listener, each registered a client, each generated
+    // an authorization URL, and the client's redirect_uris pinned each connection's random port. After the fix, the cross-process
+    // authorization lease is single-flight: exactly one DCR and one authorization URL; the follower observes the canonical generation change and reconnects with the new credentials.
     expect(first.status?.status).toBe("connected");
     expect(second.status?.status).toBe("connected");
     expect(first.status?.toolCount).toBe(1);
@@ -422,7 +423,7 @@ describe("MCP OAuth cross-process end-to-end", () => {
     expect(stack.state.registrations).toHaveLength(1);
     expect(stack.state.authorizationRequests).toHaveLength(1);
     expect(stack.state.tokenExchanges).toHaveLength(1);
-    // fresh DCR 注册的 redirect_uri 就是授权请求实际使用的地址(精确匹配服务器下必须一致)。
+    // The fresh DCR registration's redirect_uri is exactly the address the authorization request actually uses (must match under an exact-match server).
     expect(stack.state.registrations[0]?.redirect_uris).toEqual([
       stack.state.authorizationRequests[0]?.redirect_uri,
     ]);
@@ -435,18 +436,18 @@ describe("MCP OAuth cross-process end-to-end", () => {
     const keyPrefix = createCredentialKeyPrefix("cross", stack.mcpUrl, oauthConfig);
     const secret = "cross-process-kill";
     const leaderConfig = {
-      // 不 autoDrive:leader 会停在等回调,模拟用户还没在浏览器完成授权。
+      // No autoDrive: the leader stalls waiting for the callback, simulating a user who has not finished authorization in the browser.
       autoDrive: false,
       credentialsPath,
       mcpUrl: stack.mcpUrl,
       mode: "authorize" as const,
       secret,
-      // 必须与主进程计算 keyPrefix 用的 serverName 一致,否则轮询不到 pending 键。
+      // Must match the serverName the main process used to compute keyPrefix, otherwise the pending key is never polled.
       serverName: "cross",
     };
 
     const leader = runChild(leaderConfig);
-    // 等 leader 发布 pending_authorization 共享键(证明它已进入授权等待)。
+    // Wait for the leader to publish the pending_authorization shared key (proof it has entered the authorization wait).
     const pendingKey = `${keyPrefix}:pending_authorization`;
     for (let attempt = 0; attempt < 300; attempt += 1) {
       if (await credentialStore.load(pendingKey)) break;
@@ -454,13 +455,13 @@ describe("MCP OAuth cross-process end-to-end", () => {
     }
     expect(await credentialStore.load(pendingKey)).toBeTruthy();
 
-    // SIGKILL leader:不留任何清理机会,lease 目录里是死 PID 的 owner 文件。
-    // runChild 无法定向杀,所以这里绕过封装直接拿 child 进程。
+    // SIGKILL the leader: no chance for cleanup; the lease directory holds an owner file with a dead PID.
+    // runChild cannot target-kill, so here we bypass the wrapper and take the child process directly.
     leader.kill();
     await leader.result.catch(() => undefined);
     const successor = await runChild({ ...leaderConfig, autoDrive: true }).result;
-    // 接管者必须先回收死 owner 的锁,再以 fresh DCR 重新领导授权;被杀 leader 的 code
-    // 永远不会被交换(它从未收到回调),token endpoint 只应见到一次 exchange。
+    // The successor must first reclaim the dead owner's lock, then re-lead authorization with a fresh DCR; the killed leader's code
+    // can never be exchanged (it never received the callback), so the token endpoint should see exactly one exchange.
     expect(successor.status?.status).toBe("connected");
     expect(successor.authorizationUrls).toHaveLength(1);
     expect(stack.state.tokenExchanges).toHaveLength(1);
@@ -469,15 +470,16 @@ describe("MCP OAuth cross-process end-to-end", () => {
     const canonical = JSON.parse(canonicalRaw ?? "{}") as {
       client_information?: { client_id?: string };
     };
-    // 最终发布的必须是接管者这次授权的 client,不是死 leader 留下的注册。
+    // The finally-published client must be the successor's authorization client, not the registration left by the dead leader.
     expect(canonical.client_information?.client_id).toBe("cross-process-client-2");
     expect(stack.state.registrations).toHaveLength(2);
   }, 90_000);
 
   it("completes authorization that outlasts the caller budget (incident timeline replay)", async () => {
-    // 现场:2026-08-11 真人授权耗时约 74 秒,而 session 预算只有 15 秒。旧实现 15 秒后
-    // 关闭 listener,授权必败;新实现预算只约束 caller 等待,事务继续存活。
-    // 按比例缩放:caller 预算 100ms,「用户」1500ms 后才完成授权。
+    // Incident: on 2026-08-11 a human took about 74 seconds to authorize while the session budget was only 15 seconds. The old
+    // implementation closed the listener after 15 seconds, so authorization always failed; the new implementation lets the budget
+    // only bound the caller's wait, while the transaction stays alive.
+    // Scaled down proportionally: caller budget 100ms, the "user" finishes authorization after 1500ms.
     const stack = await startFakeStack();
     const { credentialStore, credentialsPath } = await createCredentials("cross-process-budget");
     const secret = "cross-process-budget";
@@ -500,7 +502,7 @@ describe("MCP OAuth cross-process end-to-end", () => {
         { type: "http", url: stack.mcpUrl, oauth: { type: "authorization_code", scope: MCP_SCOPE } },
         { oauthAuthorizationTimeoutMs: 100 },
       );
-      // 预算到点只返回快照:connecting + 授权 URL,事务没有被杀。
+      // When the budget expires, only a snapshot is returned: connecting + the authorization URL; the transaction was not killed.
       expect(budgeted.status).toBe("connecting");
       expect(budgeted.authorization?.authorizationUrl).toContain(stack.asBaseUrl);
 

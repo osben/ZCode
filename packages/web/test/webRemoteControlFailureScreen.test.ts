@@ -21,19 +21,19 @@ describe("WebRemoteControlFailureScreen", () => {
     expect(html).toContain("Desktop device is offline.");
     expect(html).toContain("Try Again");
   });
-  it("账号归属失败提供切换账号与选择其他设备两个动作", () => {
+  it("device-not-owned failure offers switch-account and choose-another-device actions", () => {
     const html = renderToStaticMarkup(
       createElement(WebRemoteControlFailureScreen, {
         failure: { reason: "device-not-owned" },
-        locale: "zh-CN",
+        locale: "en-US",
         onReload: () => {},
-        primaryActionLabel: "切换账号",
-        secondaryAction: { label: "选择其他设备", onClick: () => {} },
+        primaryActionLabel: "Switch account",
+        secondaryAction: { label: "Choose another device", onClick: () => {} },
       }),
     );
-    expect(html).toContain("该设备不属于当前账号");
-    expect(html).toContain("切换账号");
-    expect(html).toContain("选择其他设备");
-    expect(html).not.toContain(">重新连接</button>");
+    expect(html).toContain("This device does not belong to this account");
+    expect(html).toContain("Switch account");
+    expect(html).toContain("Choose another device");
+    expect(html).not.toContain(">Try Again</button>");
   });
 });

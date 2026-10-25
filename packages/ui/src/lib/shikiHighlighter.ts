@@ -57,12 +57,22 @@ const highlighterCache = new Map<
   string,
   Promise<HighlighterGeneric<BundledLanguage, BundledTheme>>
 >();
-const tokensCache = new Map<string, TokenizedCode>();
+// Each entry keeps a full ThemedToken grid; without a bound, every diff ever rendered stayed alive for the
+// renderer's lifetime. Map insertion order doubles as LRU order (hits are re-inserted). Bounded by entry count
+// and by total source characters, since a single input may be up to ~120k chars (spec: renderer-cache-bounds).
+export const SHIKI_TOKENS_CACHE_MAX_ENTRIES = 200;
+export const SHIKI_TOKENS_CACHE_MAX_CODE_CHARS = 2_000_000;
+// One retry per highlighter key per app session: a persistent WASM/grammar failure must not re-init on every mount.
+export const SHIKI_HIGHLIGHTER_MAX_ATTEMPTS = 2;
+const tokensCache = new Map<string, { tokenized: TokenizedCode; codeChars: number }>();
+let tokensCacheCodeChars = 0;
+const highlighterFailures = new Map<string, number>();
+const loggedHighlightErrors = new WeakSet<object>();
 const subscribers = new Map<string, Set<(result: TokenizedCode) => void>>();
-// 内存诊断计数器：tokensCache 目前无淘汰，是审计里
-// renderer 最可疑的增长点，先把条数落到日志里。
+// In-memory diagnostic counter for the token cache and highlighter instances.
 uiMemoryDiagnosticsRegistry.register("shiki", () => ({
   tokensCache: tokensCache.size,
+  tokensCacheCodeChars,
   highlighters: highlighterCache.size,
 }));
 
@@ -78,14 +88,32 @@ const getResolvedCodeTheme = (theme?: BundledTheme): BundledTheme => {
   return "github-light";
 };
 
-const getCodeTokensCacheKey = (
-  code: string,
-  language: BundledLanguage,
-  theme: BundledTheme,
-) => {
-  const start = code.slice(0, 100);
-  const end = code.length > 100 ? code.slice(-100) : "";
-  return `${theme}:${language}:${code.length}:${start}:${end}`;
+// Key on the full code: a length + head/tail sample collided for blocks that differ only in the middle,
+// returning another block's tokens and sharing its subscribers.
+const getCodeTokensCacheKey = (code: string, language: BundledLanguage, theme: BundledTheme) =>
+  `${theme}:${language}:${code}`;
+
+const forgetTokens = (key: string) => {
+  const entry = tokensCache.get(key);
+  if (!entry) return;
+  tokensCache.delete(key);
+  tokensCacheCodeChars -= entry.codeChars;
+};
+
+const rememberTokens = (key: string, tokenized: TokenizedCode, codeChars: number) => {
+  forgetTokens(key);
+  tokensCache.set(key, { tokenized, codeChars });
+  tokensCacheCodeChars += codeChars;
+  // Always keep the newest entry, even if it alone exceeds the character budget.
+  while (
+    tokensCache.size > 1 &&
+    (tokensCache.size > SHIKI_TOKENS_CACHE_MAX_ENTRIES ||
+      tokensCacheCodeChars > SHIKI_TOKENS_CACHE_MAX_CODE_CHARS)
+  ) {
+    const oldestKey = tokensCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    forgetTokens(oldestKey);
+  }
 };
 const getHighlighter = (
   language: BundledLanguage,
@@ -103,6 +131,19 @@ const getHighlighter = (
   });
 
   highlighterCache.set(cacheKey, highlighterPromise);
+  // Allow one retry after a transient failure; once attempts are exhausted the rejection stays cached so
+  // later mounts fall back to plain text without re-initializing Shiki.
+  // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then)
+  highlighterPromise.catch(() => {
+    const failures = (highlighterFailures.get(cacheKey) ?? 0) + 1;
+    highlighterFailures.set(cacheKey, failures);
+    if (
+      failures < SHIKI_HIGHLIGHTER_MAX_ATTEMPTS &&
+      highlighterCache.get(cacheKey) === highlighterPromise
+    ) {
+      highlighterCache.delete(cacheKey);
+    }
+  });
   return highlighterPromise;
 };
 
@@ -121,7 +162,7 @@ export const createRawCodeTokens = (code: string): TokenizedCode => ({
   ),
 });
 
-// 带缓存的异步高亮入口；React 组件只应在 effect 中调用。
+// Cached asynchronous highlighting entry point; React components should call it only in an effect.
 export const highlightCode = (
   code: string,
   language: string,
@@ -130,9 +171,9 @@ export const highlightCode = (
   callback?: (result: TokenizedCode) => void,
 ): TokenizedCode | null => {
   if (!shouldUseSyntaxHighlighting(language)) {
-    // 文本/日志代码块没有语法高亮收益，却会在聊天流式渲染和历史恢复时进入
-    // Shiki 的异步状态机。之前修掉了 render 阶段 setState，但这条纯文本路径仍可能把
-    // CodeViewer 拖进 React #185；这里直接返回 raw tokens，避免启动高亮副作用。
+    // Plain-text/log code blocks gain nothing from syntax highlighting, yet enter
+    // Shiki's async state machine during chat streaming and history restoration. The render-phase setState issue was fixed earlier, but this plain-text path could still put
+    // CodeViewer into React #185; return raw tokens directly to avoid starting highlighting side effects.
     return createRawCodeTokens(code);
   }
 
@@ -140,11 +181,13 @@ export const highlightCode = (
   const resolvedLanguage = normalizeCodeLanguage(language);
   const tokensCacheKey = getCodeTokensCacheKey(code, resolvedLanguage, resolvedTheme);
 
-  const cached = tokensCache.get(tokensCacheKey);
-  if (cached) {
-    // 缓存命中时也需要通知 effect，但不能同步触发 setState。
-    // 历史消息恢复时大量代码块会在同一次提交后挂载；同步 callback 会把 cache-hit 变成嵌套更新，
-    // 和 Streamdown 的重渲染叠在一起时容易触发 React #185。推迟到微任务后再交给幂等 setter。
+  const cachedEntry = tokensCache.get(tokensCacheKey);
+  if (cachedEntry) {
+    const cached = cachedEntry.tokenized;
+    rememberTokens(tokensCacheKey, cached, cachedEntry.codeChars);
+    // Notify the effect on a cache hit too, but do not trigger setState synchronously.
+    // Many code blocks mount in the same commit when restoring history; a synchronous callback turns a cache hit into a nested update,
+    // which can trigger React #185 when combined with Streamdown rerenders. Defer to a microtask, then use the idempotent setter.
     if (callback) {
       queueMicrotask(() => callback(cached));
     }
@@ -177,7 +220,7 @@ export const highlightCode = (
         tokens: result.tokens,
       };
 
-      tokensCache.set(tokensCacheKey, tokenized);
+      rememberTokens(tokensCacheKey, tokenized, code.length);
 
       const subs = subscribers.get(tokensCacheKey);
       if (subs) {
@@ -189,12 +232,17 @@ export const highlightCode = (
     })
     // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then), eslint-plugin-promise(prefer-await-to-callbacks)
     .catch((error) => {
-      // Shiki 加载或 tokenize 失败，组件会停留在无高亮的 rawTokens 状态。
+      // If Shiki loading or tokenization fails, the component stays in the unhighlighted rawTokens state.
+      subscribers.delete(tokensCacheKey);
+      // A cached (exhausted) highlighter rejection reaches every later call; log each distinct error once.
+      if (typeof error === "object" && error !== null) {
+        if (loggedHighlightErrors.has(error)) return;
+        loggedHighlightErrors.add(error);
+      }
       logger.error(
         `[ShikiHighlighter] 代码高亮失败: language=${resolvedLanguage}, theme=${resolvedTheme}`,
         error,
       );
-      subscribers.delete(tokensCacheKey);
     });
 
   return null;

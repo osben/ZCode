@@ -7,7 +7,8 @@ export type WebRemoteControlRegisteredDevice = NonNullable<
 export interface WebRemoteControlDeviceStorage {
   load(): Promise<WebRemoteControlRegisteredDevice | undefined>;
   save(device: WebRemoteControlRegisteredDevice): Promise<void>;
-  clearLegacy(): Promise<void>;
+  /** Removes pre-V2 pairing material; resolves to true when some was present (re-pair needed). */
+  clearLegacy(): Promise<boolean>;
 }
 
 export interface WebRemoteControlLogin {

@@ -1,34 +1,32 @@
 # Synthetic Timeline Dividers
 
-## 背景
+The chat area has several non-body timeline dividers: context compaction, session fork, model change and goal verification. They explain session state changes and are not assistant body. The turn view model is in [conversation-turn-view-model.md](./conversation-turn-view-model.md); the persistence spec is in [conversation-transcript-storage.md](./conversation-transcript-storage.md).
 
-聊天区存在几类非正文 timeline divider：上下文压缩、session fork、模型切换、goal 校验目标。这些消息用于解释会话状态变化，不属于 assistant 正文。新的 turn 视图模型见 [conversation-turn-view-model.md](./conversation-turn-view-model.md)，持久化存储规范见 [conversation-transcript-storage.md](./conversation-transcript-storage.md)。
+## Behavior constraints
 
-## 行为约束
+- A timeline divider is first classified as worklog or boundary, then turned into a ChatView render row.
+- Compact is an assistant-turn worklog: a completed auto compact may attach to the history prefix of the following assistant and be folded by "worked for xxx"; a running / retrying compact stays visible.
+- goal verification and session fork are boundaries: they must not attach to the history prefix / suffix of the previous or next assistant.
+- When compaction starts, sending `/compact` immediately inserts a local `context_compaction` started divider, so the user sees the "compressing context" state at once; on completion the same divider updates to completed.
+- The local optimistic compact divider and the agent lifecycle divider must merge into one UI message. The agent lifecycle may carry no `inputId`; then fall back to matching "the latest local running compact divider + a non-local operationId".
+- A running `context_compaction` and `goal_verification` timeline are already dedicated progress feedback, so the bottom ChatLoading is hidden during that active work. `session_fork` and `model_change` are explanatory dividers only and do not keep the main turn in running state.
+- A running / retrying compact and goal verification are assistant output boundaries, not part of the previous or next assistant's work duration; before entering such a divider the ordinary assistant still streaming must be frozen. A completed auto compact renders as the following assistant's worklog prefix and is no longer frozen as a top-level boundary. `session_fork` and `model_change` do not freeze assistant duration.
+- `session_fork` and `goal_verification` come from the agent / snapshot synthetic timeline and are restored with the snapshot.
+- Legacy `model_change` is a renderer-local UI timeline marking where a model switch happened. Under transcript v2 a newly occurring model change is written as agent-side `part.type="timeline"`. It is still not injected into agent context and not persisted as an agent message.
 
-- timeline divider 需要先归类为 worklog 或 boundary，再生成 ChatView render row。
-- compact 是 assistant turn 的 worklog：auto compact completed 可以挂到后续 assistant 的 history prefix，被“已工作 xxx”折叠；running / retrying compact 仍要保持可见。
-- goal verification 和 session fork 是 boundary：不得挂到前一个或后一个 assistant 的 history prefix / suffix 中。
-- 上下文压缩开始时，发送 `/compact` 后本地立即插入 `context_compaction` started divider，用户应马上看到“上下文正在压缩”状态；完成后同一 divider 更新为 completed。
-- 本地 optimistic compact divider 和 agent lifecycle divider 必须合并为同一条 UI 消息。agent lifecycle 可能没有 `inputId`，此时用“最新的本地 running compact divider + 非本地 operationId”作为兜底匹配。
-- running `context_compaction` 与 `goal_verification` timeline 已经是专用进度反馈，对应 active work 期间底部 ChatLoading 必须隐藏。`session_fork` 与 `model_change` 只是说明性 divider，本身不续住主轮 running 状态。
-- running / retrying compact 和 goal verification 是 assistant 输出边界，不属于前一条或后一条 assistant 的工作耗时；进入这类 divider 前必须冻结此前仍处于 streaming 的普通 assistant。completed auto compact 作为后续 assistant 的 worklog prefix 渲染，不再单独冻结为顶层边界。`session_fork` 与 `model_change` 不冻结 assistant 耗时。
-- `session_fork` 和 `goal_verification` 来自 agent / snapshot 的 synthetic timeline，需要随 snapshot 恢复。
-- legacy `model_change` 是 renderer 本地 UI timeline，用来标记模型切换发生的位置；transcript v2 后，新发生的 model change 应写入 agent 侧 `part.type="timeline"`。它仍不注入 agent 上下文，也不作为 agent message 持久化。
+## Stable identity
 
-## 稳定身份
-
-- `ZCodePersistedMessage.id` 保存协议侧原始 `messageId`。snapshot 恢复时优先使用该 id，避免实时消息与恢复消息使用不同 id。
-- 旧 snapshot 没有 `id` 时，UI 根据 timeline 语义生成 fallback id：
+- `ZCodePersistedMessage.id` stores the protocol-side original `messageId`. Snapshot restore prefers it so live and restored messages use the same id.
+- For an old snapshot without `id`, the UI generates a fallback id from timeline semantics:
   - `context_compaction`: `operationId`
-  - `goal_verification`: `targetId + goalIteration`；`verificationId` 只表示 verifier attempt
+  - `goal_verification`: `targetId + goalIteration` (`verificationId` is only the verifier attempt)
   - `session_fork`: `parentSessionId + targetMessageId + targetCheckpointId`
-- terminal snapshot 对齐时，timeline 去重同时检查 id 和语义身份。这样旧数据、replayable 恢复和 desktop continuous 终态 snapshot 都不会把同一个 divider 重复插入或挪到错误位置。
+- Terminal snapshot alignment dedupes timelines by both id and semantic identity, so old data, replayable recovery and the desktop continuous terminal snapshot never insert the same divider twice or move it.
 
-## 多端边界
+## Multi-end boundary
 
-本规范只调整消息投影、恢复去重和 ChatView 渲染，不改变任务实时链路：
+Only message projection, recovery dedupe and ChatView rendering change; task realtime paths do not:
 
-- 桌面端仍走 `desktop-continuous` direct realtime。
-- 手机远控仍走 `web-remote-replayable` snapshot / gap 恢复。
-- relay、main process 不新增 task/session 业务状态。
+- Desktop stays `desktop-continuous` direct realtime.
+- Mobile remote stays `web-remote-replayable` snapshot / gap recovery.
+- The relay and main process add no task/session business state.

@@ -159,8 +159,8 @@ describe("resolveOffPeakCredentials selected Coding Plan matrix", () => {
       kind: "zai-personal" as const,
     },
     {
-      // 修复原因：zai/bigmodel Team Plan 对称化。原 offPeakRuntimeModel 对 zai team key
-      // 直接 throw connection_unavailable，zai 团队用户无法走后台任务。锁定 zai-team 正常解析。
+      // Fix reason: zai/bigmodel Team Plan symmetry. The original offPeakRuntimeModel threw connection_unavailable for a
+      // zai team key, so zai team users could not use background tasks. Locks in zai-team resolving normally.
       name: "ZAI Team",
       family: "zai" as const,
       selection: {

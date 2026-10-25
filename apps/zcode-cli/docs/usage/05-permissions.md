@@ -1,20 +1,20 @@
-# 05 · 权限
+# 05 · Permissions
 
-启动非交互任务时显式指定 `--mode`，不要依赖用户配置或交互终端的默认值。`--prompt` 缺省使用 `yolo`。
+When starting a non-interactive task, set `--mode` explicitly; do not rely on defaults from user configuration or an interactive terminal. `--prompt` defaults to `yolo`.
 
-## 模式语义
+## Mode semantics
 
-- `plan`：限制普通写入和命令执行，主要用于分析。它不是操作系统级只读沙箱；当前实现还允许部分非破坏性 MCP 和会话控制能力。
-- `build`：常规写入及有副作用的工具通常需要审批。
-- `edit`：工作区文件编辑通常免审批，其余沿用 build 判定。
-- `yolo`：普通工具跳过权限提示，适合已隔离的无人值守任务。
-- `guarded`：当前源码支持。普通调用采用宽松策略，危险命令仍需逐次批准；不适合作为无人值守任务的“自动批准”模式。旧构建可能不支持。
+- `plan`: restricts ordinary writes and command execution, mainly for analysis. It is not an OS-level read-only sandbox; the current implementation also allows some non-destructive MCP and session control capabilities.
+- `build`: ordinary writes and tools with side effects usually need approval.
+- `edit`: workspace file edits usually need no approval; everything else follows the build judgment.
+- `yolo`: ordinary tools skip permission prompts; suited to isolated unattended tasks.
+- `guarded`: supported by the current source. Ordinary calls use a lenient policy and dangerous commands still need per-call approval; not suited as an "auto-approve" mode for unattended tasks. Older builds may not support it.
 
-`auto` 是内部保留值，不是可用的 CLI 自动模式。
+`auto` is an internal reserved value and not a usable CLI automatic mode.
 
-## 为什么 yolo 仍可能拒绝
+## Why yolo can still deny
 
-工具级交互要求、`alwaysAsk`、独立 Plan 状态、工作区 Hook 信任和 Hook 拦截都有自己的规则。不能把 yolo 简化成“任何代码都无条件执行”。配置中的普通 deny/allow 规则也不能替代操作系统隔离。
+Tool-level interaction requirements, `alwaysAsk`, the separate Plan state, workspace Hook trust and Hook interception each have their own rules. yolo must not be simplified to "any code runs unconditionally". Ordinary deny/allow rules in the configuration also do not replace OS isolation.
 
 ```text
 工具未注册 → 无法调用
@@ -24,12 +24,14 @@ allow + Hook 阻断 → 工具失败
 执行成功 → 仍需验证任务产物
 ```
 
-这张图说明用户可观察的结果，不代表内部每个检查的严格调用顺序。细节以[权限服务](../../packages/core/src/permission/service.ts)及工具执行器为准。
+(Tool not registered: cannot be called. Registered: validation and permission decision, allow / ask / deny. ask with no approval client: the tool fails. allow with a Hook block: the tool fails. Execution succeeded: the task artifacts still need verification.)
 
-## 验证权限
+This diagram shows user-observable outcomes, not the strict call order of every internal check. For details, the [permission service](../../packages/core/src/permission/service.ts) and the tool executor are authoritative.
 
-用一次性目录测试 Read、Write 和 Bash。对普通内置文件工具，plan 应拒绝写入，edit 可写文件；build 的写入审批在无客户端的 prompt 中可能失败。使用自定义工具、插件或 MCP 时，须分别验证其能力声明和权限规则。
+## Verify permissions
 
-出现 `No permission client configured` 时，检查当前模式和工具是否需要交互。不要仅通过重复提示模型来解决。移除不需要的交互工具，或选择具备审批客户端的交互入口。
+Test Read, Write and Bash in a throwaway directory. For ordinary built-in file tools, plan should deny writes and edit may write files; build write approval may fail in a prompt with no client. With custom tools, plugins or MCP, verify their capability declarations and permission rules separately.
 
-工具拒绝后模型仍可能继续回答，进程也可能返回 `0`。同时检查流式事件、工具结果和文件产物。需要按参数拦截某类工具时可使用同步 `PreToolUse` Hook，但简单命令正则不是完整沙箱，见[Hooks](09-hooks.md)。
+When `No permission client configured` appears, check whether the current mode and tool need interaction. Do not try to fix it by repeating the prompt to the model. Remove the interactive tools you do not need, or choose an interactive entry with an approval client.
+
+After a tool is denied the model may still continue answering and the process may return `0`. Check streamed events, tool results and file artifacts together. A synchronous `PreToolUse` Hook can block a kind of tool by arguments, but a simple command regex is not a complete sandbox; see [Hooks](09-hooks.md).

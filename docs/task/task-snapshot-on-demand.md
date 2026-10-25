@@ -1,29 +1,20 @@
-# Task Snapshot 按需加载（首期）
+# Task Snapshot On-Demand Loading (Phase 1)
 
-## 背景
+## Background
 
-手机远程控制首次打开历史任务时，`getTaskSnapshot` 之前会返回整份 `messages`，在历史较长时会带来明显首屏等待（传输、JSON 解析、渲染均受影响）。
+When mobile remote control first opened a historical task, `getTaskSnapshot` returned the entire `messages` array, so long histories made the first screen slow (transmission, JSON parsing and rendering).
 
-## 本次改动
+## Behavior
 
-- `IZCodeTaskService.getTaskSnapshot` 支持可选参数：`messageLimit?: number`
-- 服务端在 ZCode task snapshot 组装时对 `messages` 做尾部裁剪：
-  - 不传 `messageLimit`：保持现有全量行为
-  - `messageLimit <= 0`：返回空消息数组
-  - `messageLimit > 0`：返回最近 `messageLimit` 条消息
+- `IZCodeTaskService.getTaskSnapshot` takes an optional `messageLimit?: number`. The server trims the tail of `messages` when assembling the ZCode task snapshot:
+  - not passed: full behavior as before;
+  - `messageLimit <= 0`: empty messages array;
+  - `messageLimit > 0`: the most recent `messageLimit` messages.
+- Client enablement (Phase 1): only Web remote control passes `messageLimit = 100`. Desktop and non-remote-control scenarios pass nothing; behavior is unchanged.
+- Compatibility: the parameter is optional, so existing callers work unmodified.
 
-## 客户端启用策略（首期）
+## Follow-ups
 
-- 仅 Web 远程控制场景启用：`messageLimit = 100`
-- 桌面端与非远控场景默认不传该参数，行为不变
-
-## 兼容性
-
-- 新参数为可选字段，不影响现有调用方
-- 旧调用方无需修改即可继续工作
-
-## 后续建议
-
-- 为历史消息增加分页接口（cursor/beforeId）
-- UI 聊天列表增加“加载更早消息”入口
-- 逐步将桌面端切换到按需加载（灰度）
+- Add a pagination interface for historical messages (cursor/beforeId).
+- Add a "load older messages" entry to the UI chat list.
+- Gradually migrate desktop to on-demand loading (grayscale rollout).

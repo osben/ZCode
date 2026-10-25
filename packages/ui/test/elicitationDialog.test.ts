@@ -13,6 +13,7 @@ import {
   updateElicitationDraftsForOption,
 } from "../src/ElicitationDialog.js";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const SUBAGENT_ORIGIN = {
   kind: "subagent" as const,
@@ -29,23 +30,23 @@ function createMultiQuestionRequest(): ZCodeElicitationRequest {
     taskId: "task-1",
     traceId: "run-1",
     requestId: "request-1",
-    message: "请选择方案",
+    message: "Please choose an approach",
     options: [],
     questions: [
       {
-        question: "请选择方案",
-        header: "方案",
+        question: "Please choose an approach",
+        header: "Approach",
         options: [
-          { value: "fast", label: "快速" },
-          { value: "safe", label: "稳妥" },
+          { value: "fast", label: "Fast" },
+          { value: "safe", label: "Safe" },
         ],
       },
       {
-        question: "请选择保障项",
-        header: "保障项",
+        question: "Please choose the safeguards",
+        header: "Safeguards",
         options: [
-          { value: "tests", label: "测试" },
-          { value: "docs", label: "文档" },
+          { value: "tests", label: "Tests" },
+          { value: "docs", label: "Docs" },
         ],
       },
     ],
@@ -106,7 +107,10 @@ describe("ElicitationDialog", () => {
     ).toBeNull();
   });
 
-  it("renders a localized final-minute timer", () => {
+  it.each([
+    ["en-US", expectedCopy("taskList.stopCountdown"), ">59s</button>"],
+    ["zh-CN", "停止计时", ">59秒</button>"],
+  ] as const)("renders a localized final-minute timer (%s)", (locale, stopLabel, secondsMarkup) => {
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(940_001);
     const Dialog = ElicitationDialog as ComponentType<Record<string, unknown>>;
     const autoResolution = {
@@ -115,29 +119,23 @@ describe("ElicitationDialog", () => {
       visibleAt: 760_000,
       deadlineAt: 1_000_000,
     };
-    const render = (locale: "en-US" | "zh-CN") =>
-      renderToStaticMarkup(
-        createElement(
-          ZCodeIntlProvider,
-          { initialLocale: locale },
-          createElement(Dialog, {
-            request: createMultiQuestionRequest(),
-            autoResolution,
-            onFirstInteraction: () => {},
-            onRespond: () => {},
-          }),
-        ),
-      );
+    const html = renderToStaticMarkup(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: locale },
+        createElement(Dialog, {
+          request: createMultiQuestionRequest(),
+          autoResolution,
+          onFirstInteraction: () => {},
+          onRespond: () => {},
+        }),
+      ),
+    );
 
     try {
-      const zhHtml = render("zh-CN");
-      expect(zhHtml).toContain('data-elicitation-countdown-seconds="59"');
-      expect(zhHtml).toContain('aria-label="停止计时"');
-      expect(zhHtml).toContain(">59秒</button>");
-
-      const enHtml = render("en-US");
-      expect(enHtml).toContain(">59s</button>");
-      expect(enHtml).toContain('aria-label="Stop timer"');
+      expect(html).toContain('data-elicitation-countdown-seconds="59"');
+      expect(html).toContain(`aria-label="${stopLabel}"`);
+      expect(html).toContain(secondsMarkup);
     } finally {
       nowSpy.mockRestore();
     }
@@ -149,7 +147,7 @@ describe("ElicitationDialog", () => {
     const mainHtml = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(Dialog, {
           request,
           onRespond: () => {},
@@ -159,7 +157,7 @@ describe("ElicitationDialog", () => {
     const subagentHtml = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(Dialog, {
           request: {
             ...request,
@@ -172,8 +170,10 @@ describe("ElicitationDialog", () => {
 
     expect(mainHtml).not.toContain('data-interaction-origin-badge="subagent"');
     expect(subagentHtml).toContain('data-interaction-origin-badge="subagent"');
-    expect(subagentHtml).toContain("子智能体");
-    expect(subagentHtml).toContain("来自子智能体：general-purpose");
+    expect(subagentHtml).toContain(expectedCopy("chat.interactionOrigin.subagent"));
+    expect(subagentHtml).toContain(
+      expectedCopy("chat.interactionOrigin.subagent.title", { agentType: "general-purpose" }),
+    );
   });
 
   it("submits after the final question and includes the final selected option", () => {
@@ -187,27 +187,27 @@ describe("ElicitationDialog", () => {
     expect(getElicitationQuestionAdvanceKind(questions, 1)).toBe("submit");
     expect(buildElicitationResponseContent(questions, finalDrafts)).toEqual({
       answers: {
-        请选择方案: "fast",
-        请选择保障项: "tests",
+        "Please choose an approach": "fast",
+        "Please choose the safeguards": "tests",
       },
       answer_0: "fast",
       answer_1: "tests",
     });
   });
 
-  it("允许只提交部分问题的答案且不伪造未回答项", () => {
+  it("allows submitting answers to only some questions without fabricating unanswered ones", () => {
     const request = createMultiQuestionRequest();
     const questions = normalizeElicitationQuestions(request);
     const initialDrafts = createInitialElicitationDrafts(questions, request);
     const finalDrafts = updateElicitationDraftsForOption(initialDrafts, questions[1]!, "tests");
 
     expect(buildElicitationResponseContent(questions, finalDrafts)).toEqual({
-      answers: { 请选择保障项: "tests" },
+      answers: { "Please choose the safeguards": "tests" },
       answer_1: "tests",
     });
   });
 
-  it("允许提交零回答", () => {
+  it("allows submitting zero answers", () => {
     const request = createMultiQuestionRequest();
     const questions = normalizeElicitationQuestions(request);
     const drafts = createInitialElicitationDrafts(questions, request);
@@ -215,7 +215,7 @@ describe("ElicitationDialog", () => {
     expect(buildElicitationResponseContent(questions, drafts)).toEqual({ answers: {} });
   });
 
-  it("为截断的问题标题保留完整 hover title", () => {
+  it("keeps the full hover title for a truncated question header", () => {
     const Dialog = ElicitationDialog as ComponentType<Record<string, unknown>>;
     const longQuestion =
       "The PRD spans 4 native codebases plus shared contract and tokens. How should I sequence implementation?";
@@ -227,7 +227,7 @@ describe("ElicitationDialog", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(Dialog, {
           request,
           onRespond: () => {},
@@ -238,7 +238,7 @@ describe("ElicitationDialog", () => {
     expect(html).toContain(`title="${longQuestion}"`);
   });
 
-  it("长问题同时保留正文与完整title", () => {
+  it("keeps both the body and the full title for long questions", () => {
     const Dialog = ElicitationDialog as ComponentType<Record<string, unknown>>;
     const longQuestion =
       "The PRD spans 4 native codebases plus shared contract and tokens. How should I sequence implementation without hiding the decision text on mobile?";
@@ -250,7 +250,7 @@ describe("ElicitationDialog", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(Dialog, {
           request,
           onRespond: () => {},
@@ -259,40 +259,43 @@ describe("ElicitationDialog", () => {
     );
 
     expect(html).toContain(`title="${longQuestion}"`);
-    expect(html).toContain(">方案</span>");
+    expect(html).toContain(">Approach</span>");
     expect(html).toContain(`>${longQuestion}</span>`);
   });
 
-  it("长问题提供展开入口", () => {
+  it("provides an expand entry for long questions", () => {
     const Dialog = ElicitationDialog as ComponentType<Record<string, unknown>>;
     const longQuestion =
-      "假设你正在设计一个面向全球用户的下一代分布式实时协作平台，该平台需要支持百万级并发用户同时在线编辑文档、画板、表格和低代码应用，并且要求在离线状态下仍然可以正常编辑并在恢复网络后自动合并冲突。请在数据同步协议层面说明选择。";
+      "Imagine you are designing a next-generation distributed real-time collaboration platform for a global audience. It must support millions of concurrent users editing documents, whiteboards, spreadsheets and low-code apps, and still allow offline editing with automatic conflict merging once connectivity returns. Explain your choices at the data synchronization protocol level.";
     const request = createMultiQuestionRequest();
     request.questions![0] = {
       question: longQuestion,
-      header: "数据同步协议",
+      header: "Data sync protocol",
       options: [
         {
           value: "crdt",
           label: "CRDT (Conflict-free Replicated Data Types)",
-          description: "基于无冲突复制数据类型，天然支持去中心化同步和 P2P 场景。",
+          description:
+            "Based on conflict-free replicated data types, naturally supporting decentralized sync and P2P scenarios.",
         },
         {
           value: "ot",
           label: "OT (Operational Transform)",
-          description: "基于操作变换算法，依赖中央服务器对操作进行排序和转换。",
+          description:
+            "Based on operational transformation, relying on a central server to order and transform operations.",
         },
         {
           value: "hybrid",
-          label: "混合 CRDT + OT",
-          description: "客户端处理本地变更和离线缓冲，服务端处理最终排序。",
+          label: "Hybrid CRDT + OT",
+          description:
+            "The client handles local changes and offline buffering; the server handles final ordering.",
         },
       ],
     };
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(Dialog, {
           request,
           onRespond: () => {},
@@ -300,15 +303,15 @@ describe("ElicitationDialog", () => {
       ),
     );
 
-    expect(html).toContain('aria-label="展开问题"');
+    expect(html).toContain(`aria-label="${expectedCopy("chat.elicitation.expandQuestion")}"`);
   });
 
-  it("手机端阻塞弹窗提供整卡折叠入口并标记可隐藏内容", () => {
+  it("provides a whole-card collapse entry for the mobile blocking dialog and marks hideable content", () => {
     const Dialog = ElicitationDialog as ComponentType<Record<string, unknown>>;
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(Dialog, {
           request: createMultiQuestionRequest(),
           onRespond: () => {},
@@ -316,24 +319,24 @@ describe("ElicitationDialog", () => {
       ),
     );
 
-    expect(html).toContain('aria-label="折叠问题弹窗"');
+    expect(html).toContain(`aria-label="${expectedCopy("chat.elicitation.collapseDialog")}"`);
     expect(html).toContain('aria-expanded="true"');
     expect(html).toContain('data-elicitation-dialog-body="true"');
     expect(html).toContain('data-elicitation-dialog-footer="true"');
   });
 
-  it("选项显示标题与描述", () => {
+  it("shows option labels and descriptions", () => {
     const Dialog = ElicitationDialog as ComponentType<Record<string, unknown>>;
     const request = createMultiQuestionRequest();
     request.questions![0]!.options[0] = {
       value: "fast",
-      label: "快速",
-      description: "先处理核心路径",
+      label: "Fast",
+      description: "Handle the core path first",
     };
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(Dialog, {
           request,
           onRespond: () => {},
@@ -341,18 +344,36 @@ describe("ElicitationDialog", () => {
       ),
     );
 
-    expect(html).toContain(">快速</span>");
-    expect(html).toContain(">先处理核心路径</span>");
+    expect(html).toContain(">Fast</span>");
+    expect(html).toContain(">Handle the core path first</span>");
   });
 
-  it("plan approval title follows permission copy and approve option keeps approval copy in both locales", () => {
-    const Dialog = ElicitationDialog as ComponentType<Record<string, unknown>>;
-    const request = createPlanApprovalRequest();
-    const render = (locale: "en-US" | "zh-CN") =>
-      renderToStaticMarkup(
+  it.each([
+    {
+      lang: "en-US",
+      permissionTitle: expectedCopy("chat.permission.title"),
+      planTitle: expectedCopy("chat.permission.switchMode.placeholder"),
+      approveLabel: expectedCopy("chat.elicitation.planApproval.approve"),
+      approveDescription: expectedCopy("chat.elicitation.planApproval.approveDescription"),
+      forbidden: [">Allow</span>", "Allow only this time"],
+    },
+    {
+      lang: "zh-CN",
+      permissionTitle: "需要权限",
+      planTitle: "实施计划",
+      approveLabel: "批准",
+      approveDescription: "退出计划模式并开始实施。",
+      forbidden: [">允许</span>", ">Approve</span>", "Exit plan mode and start implementation."],
+    },
+  ] as const)(
+    "plan approval title follows permission copy and approve option keeps approval copy (%s)",
+    ({ lang, permissionTitle, planTitle, approveLabel, approveDescription, forbidden }) => {
+      const Dialog = ElicitationDialog as ComponentType<Record<string, unknown>>;
+      const request = createPlanApprovalRequest();
+      const html = renderToStaticMarkup(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: locale },
+          { initialLocale: lang },
           createElement(Dialog, {
             request,
             onRespond: () => {},
@@ -360,29 +381,19 @@ describe("ElicitationDialog", () => {
         ),
       );
 
-    const enHtml = render("en-US");
-    expect(enHtml).toContain("Permission required");
-    expect(enHtml).toContain("Implementation plan");
-    expect(enHtml).toContain(">Approve</span>");
-    expect(enHtml).toContain("Exit plan mode and start implementation.");
-    expect(enHtml).toContain(">1.</span>");
-    expect(enHtml).toContain(">2.</span>");
-    expect(enHtml).not.toContain(">Allow</span>");
-    expect(enHtml).not.toContain("Allow only this time");
+      expect(html).toContain(permissionTitle);
+      expect(html).toContain(planTitle);
+      expect(html).toContain(`${approveLabel}</span>`);
+      expect(html).toContain(approveDescription);
+      expect(html).toContain(">1.</span>");
+      expect(html).toContain(">2.</span>");
+      for (const text of forbidden) {
+        expect(html).not.toContain(text);
+      }
+    },
+  );
 
-    const zhHtml = render("zh-CN");
-    expect(zhHtml).toContain("需要权限");
-    expect(zhHtml).toContain("实施计划");
-    expect(zhHtml).toContain(">批准</span>");
-    expect(zhHtml).toContain("退出计划模式并开始实施。");
-    expect(zhHtml).toContain(">1.</span>");
-    expect(zhHtml).toContain(">2.</span>");
-    expect(zhHtml).not.toContain(">允许</span>");
-    expect(zhHtml).not.toContain(">Approve</span>");
-    expect(zhHtml).not.toContain("Exit plan mode and start implementation.");
-  });
-
-  it("自定义回答输入框 Enter 遵循当前题目和计划审批语义，并避开输入法组词态", () => {
+  it("custom answer input Enter follows the current question and plan approval semantics, and avoids IME composition", () => {
     expect(
       resolveElicitationCustomInputKeyAction({
         key: "Enter",
@@ -419,7 +430,7 @@ describe("ElicitationDialog", () => {
     ).toBe("previous");
   });
 
-  it("ExitPlanMode 自定义反馈输入框裸 Enter 提交", () => {
+  it("ExitPlanMode custom feedback input submits on bare Enter", () => {
     expect(
       resolveElicitationCustomInputKeyAction({
         key: "Enter",

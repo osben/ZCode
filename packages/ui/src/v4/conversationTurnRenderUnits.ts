@@ -1,10 +1,13 @@
 import type {
   ConversationTurnRenderUnit,
   BuildConversationTurnRenderUnitsOptions,
+  ConversationTurnRenderUnitCache,
+  ConversationTurnRenderUnitCacheEntry,
 } from "@/v4/conversationTurnRenderUnitTypes.js";
 export type {
   ConversationTurnRenderUnit,
   BuildConversationTurnRenderUnitsOptions,
+  ConversationTurnRenderUnitCache,
 } from "@/v4/conversationTurnRenderUnitTypes.js";
 import type {
   AssistantTextRow,
@@ -22,8 +25,10 @@ import {
 } from "@/v4/workflowLaunchTurn.js";
 import {
   buildConversationTurnWorkSegments,
+  type ConversationTurnWorkStatus,
   resolveConversationTurnWorkDurationMs,
   resolveConversationTurnWorkStatus,
+  withTurnOutputTokens,
 } from "@/v4/conversationTurnWorkSegments.js";
 import { markHighspeedOutputFooterUnits } from "@/highspeed/highspeedOutputFooter.js";
 
@@ -66,13 +71,13 @@ function isHookInvocationRow(row: ConversationRow): row is HookInvocationRow {
 
 function isVisibleAssistantWorkRow(row: AssistantWorkRow): boolean {
   if (row.kind === "reasoning" && row.text.trim().length === 0) {
-    // reasoning_start/reasoning_end 可能形成空的终态 block；只在共享
-    // render-unit 边界裁掉它，避免 completed 状态绕过 streaming renderer 的空行过滤。
+    // reasoning_start/reasoning_end can create an empty terminal block; trim it only at the shared
+    // render-unit boundary so completed state does not bypass the streaming renderer's empty-line filtering.
     return false;
   }
-  // EnterPlanMode 只是内部模式切换边界，把它当普通工具放进“已工作”，
-  // 会显示一条没有用户价值的“工具调用已执行”。只在 render unit 过滤，不改写协议投影，
-  // 以保留 desktop continuous / web remote replayable 共用的运行态与恢复语义。
+  // EnterPlanMode is only an internal mode-switch boundary. Treating it as an ordinary tool in "Worked"
+  // would display a useless "Tool call executed" row. Filter it only in render units; do not rewrite the protocol projection,
+  // preserving shared runtime and recovery semantics for desktop continuous and web remote replayable flows.
   return row.kind !== "toolCall" || row.toolName !== "EnterPlanMode";
 }
 
@@ -83,22 +88,13 @@ function isVisibleConversationRow(row: ConversationRow): boolean {
   return isVisibleAssistantWorkRow(row);
 }
 
-// 落位语义（lane）由 CLI 投影裁决下发（UI 不得按 marker type 自行推断）。
-// lane 缺省（不应发生）按 assistantWork 兜底——降级进折叠组，不丢行。
+// Lane placement is decided by the CLI projection; the UI must not infer it from the marker type.
+// If lane is absent (should not happen), fall back to assistantWork so the row stays in the collapsed group instead of being lost.
 function isTurnEndingTimelineMarkerRow(row: AssistantWorkRow): row is TimelineMarkerRow {
   return row.kind === "timelineMarker" && row.lane === "turnTailBoundary";
 }
 
-/**
- * artifact 行是分享投影追加到轮尾的产出物（insertDiscoveredArtifacts 插在该
- * productTurn 最后一行之后），但它同样属于 AssistantWorkRow，会成为 flow 的最后一行。
- * 于是折叠锚点的兜底条件「最后一行是 assistantText」失效——公开投影禁止 actions，
- * 分享页只有这条兜底——最终答复被卷进「已工作」并整轮默认展开。
- *
- * 它是追加的产出物、不属于对话流，按轮尾处理即可；与 browserTurnEndRows 摘轮尾截图同理。
- * 注意不能改成「取 flow 里最后一条 assistantText」：那会把 CUA 响应中途的正文
- * 提升成最终答复，拆散同一个 assistantResponseId 的分组。
- */
+/** Artifact rows are appended to the tail by the sharing projection (insertDiscoveredArtifacts places them after the final row of this productTurn), but they are also AssistantWorkRow and become the final flow row. This invalidates the fallback rule that assumes the final row is assistantText: public projections prohibit actions, so the share page only has this fallback, and the final answer gets pulled into "Worked" with the whole turn expanded by default. Artifacts are appended output, not part of the conversation stream, so handle them as turn-tail content, like browserTurnEndRows screenshots. Do not switch to "take the last assistantText in flow": that could promote a CUA response from the middle of the turn as the final answer and split rows with the same assistantResponseId. */
 function isTurnTrailingArtifactRow(row: AssistantWorkRow): boolean {
   return row.kind === "artifact";
 }
@@ -122,8 +118,8 @@ function splitTurnTailRows(rows: readonly AssistantWorkRow[]): {
 }
 
 function isBrowserTurnEndRow(row: AssistantWorkRow): boolean {
-  // 自动截图以完成态 tool row 持久化在最终正文之后，旧分组只把
-  // timeline boundary 识别为轮尾，导致截图被搬进上方“已工作”折叠区而不可见。
+  // Automatic screenshots are persisted after the final body as completed tool rows; the old grouping treated only
+  // the timeline boundary as turn-tail content, moving screenshots into the "Worked" collapse above where they became invisible.
   return (
     row.kind === "toolCall" &&
     row.display?.kind === "node_repl_images" &&
@@ -162,8 +158,8 @@ function resolveTurnRunning(
 ): boolean {
   if (draft.header) {
     if (draft.header.executionKind === "controlOnly") return false;
-    // turnHeader 是 projection 的权威轮次边界；已终态主轮不能被
-    // 同轮仍在运行的 background tool/subagent 行重新推成 running。
+    // turnHeader is the projection's authoritative turn boundary; a terminal main turn must not be
+    // pushed back to running because a background tool/subagent in the same turn is still running.
     return draft.header.state === "running";
   }
   if (
@@ -171,11 +167,11 @@ function resolveTurnRunning(
     options.sessionPhase === "completedInterrupted" ||
     options.sessionPhase === "error"
   ) {
-    // cold snapshot 只保留尾窗时可能裁掉 turnHeader；旧 fallback 会把
-    // 孤立的 inputStreaming/running tool row 重新推成 thinking，终态 control 必须优先。
+    // A cold snapshot may truncate turnHeader while retaining only the tail window; the old fallback would treat
+    // an isolated inputStreaming/running tool row as thinking again, so terminal control state must take priority.
     return false;
   }
-  // 仅兼容缺少 turnHeader 的旧投影；background-only work 不阻塞主轮完成。
+  // Compatibility only for old projections without turnHeader; background-only work does not block main-turn completion.
   return draft.assistantWorkRows.some(isCompletionBlockingWorkRowRunning);
 }
 
@@ -196,7 +192,7 @@ function materializeDraftUnit(
   options: BuildConversationTurnRenderUnitsOptions,
 ): ConversationTurnRenderUnit {
   const workflowLaunch = resolveWorkflowLaunchMeta(draft.header, draft.userInputs);
-  // 启动轮的用户行由 run 卡代言，不进可见输入也不进流。
+  // A launch turn is represented by its run card; its user row does not enter visible input or the stream.
   const renderedRows =
     workflowLaunch === undefined
       ? draft.orderedRows
@@ -209,7 +205,7 @@ function materializeDraftUnit(
     visibleAssistantWorkRows.length > 0 &&
     visibleAssistantWorkRows.every(isTimelineMarkerRow);
 
-  // modelChange 是轮顶轻边界，渲染在 user 输入之前，不进工作流。
+  // modelChange is a light boundary at the top of the turn, rendered before user input and excluded from work.
   const leadingBoundaryRows = timelineOnly
     ? []
     : visibleAssistantWorkRows.filter(isLightBoundaryMarkerRow);
@@ -217,8 +213,8 @@ function materializeDraftUnit(
   const bodyRows = timelineOnly
     ? visibleAssistantWorkRows
     : visibleAssistantWorkRows.filter((row) => !isLightBoundaryMarkerRow(row));
-  // Browser 自动截图要越过 file diff 摘要成为最后内容块，因此先单独抽取；
-  // 其余 row 仍按 CLI 全序处理，只有连续的真实轮尾 marker 后缀可从 flow 拆出。
+  // Browser automatic screenshots must follow file-diff summaries as the final content block, so extract them first;
+  // process all other rows in CLI order, splitting out only a contiguous suffix of actual turn-tail markers.
   const browserTurnEndRows: AssistantWorkRow[] = [];
   const nonBrowserRows: AssistantWorkRow[] = [];
   if (!timelineOnly) {
@@ -230,8 +226,8 @@ function materializeDraftUnit(
       }
     }
   }
-  // 不能用 filter 抽取所有 turnTailBoundary，并把 ExitPlanMode 也强行归入 tail，
-  // 会把计划和中间 marker 从原 tool row 搬到轮底。其余 row 必须留在 flow 中。
+  // Do not use filter to extract every turnTailBoundary and force ExitPlanMode into the tail;
+  // that would move plans and intermediate markers from their tool rows to the bottom of the turn. All other rows must stay in flow.
   const { flowRows, tailRows: assistantTailRows } = timelineOnly
     ? { flowRows: [], tailRows: [] }
     : splitTurnTailRows(nonBrowserRows);
@@ -241,12 +237,12 @@ function materializeDraftUnit(
   const isInterrupted = draft.header
     ? draft.header.state === "completedInterrupted"
     : options.sessionPhase === "completedInterrupted";
-  // 旧展开规则只看 running 和最终正文，异常终态一旦保留 partial assistant text
-  // 就会被当作正常完成而收起，隐藏中断/失败上下文。终态必须以 header 为权威；冷恢复
-  // 尾窗缺 header 时才回退 session phase，desktop continuous 与 mobile replayable 共用此边界。
+  // The old expansion rule checked only running and final-body text. If an abnormal terminal turn retains partial assistant text,
+  // it looks completed and collapses, hiding interruption/failure context. Trust the header for terminal status; use session phase only
+  // when cold recovery lacks a header. Desktop continuous and mobile replayable flows share this boundary.
   const forceOpenHistory = shouldForceOpenAbnormalHistory(draft.header, options.sessionPhase);
 
-  // product turn 的最终正文仍是唯一 action target；视觉工作段只改变折叠边界。
+  // The final body of a product turn remains the only action target; visual work segments change only collapse boundaries.
   const assistantTextRows = flowRows.filter(isAssistantTextRow);
   const actionAssistantTextRow = assistantTextRows.find(
     (row) => row.actions?.canFork === true || row.actions?.canRetry === true,
@@ -256,17 +252,20 @@ function materializeDraftUnit(
     actionAssistantTextRow ??
     (!isRunning && lastFlowRow && isAssistantTextRow(lastFlowRow) ? lastFlowRow : undefined);
   const workDurationMs = resolveConversationTurnWorkDurationMs(draft.header, options, isRunning);
-  const workStatus = resolveConversationTurnWorkStatus(
+  const workStatus = withTurnOutputTokens(
+    resolveConversationTurnWorkStatus(
+      draft.header,
+      bodyRows,
+      isRunning,
+      workDurationMs,
+      isInterrupted,
+    ),
     draft.header,
-    bodyRows,
-    isRunning,
-    workDurationMs,
-    isInterrupted,
   );
   const browserTurnEndRowIds = new Set(browserTurnEndRows.map((row) => row.rowId));
   const orderedBodyRows = visibleOrderedRows.filter(
-    // main 的 workSegments 会从 orderedRows 重建 flow；如果这里只从
-    // bodyRows 抽取截图，它仍会被塞回正文流并在轮尾再次渲染，造成重复和顺序错乱。
+    // The main workSegments flow is rebuilt from orderedRows; if screenshots are extracted only from
+    // bodyRows, they remain in the body flow and render again at the tail, causing duplicates and ordering errors.
     (row) => !leadingBoundaryRowIds.has(row.rowId) && !browserTurnEndRowIds.has(row.rowId),
   );
   const workSegments = buildConversationTurnWorkSegments({
@@ -294,7 +293,7 @@ function materializeDraftUnit(
     turnId: draft.turnId,
     ...(draft.header ? { header: draft.header } : {}),
     visibleUserInputs,
-    // 轻边界已经由 leadingBoundaryRows 独立承载，不能再算作 assistant work。
+    // Light boundaries are already carried separately by leadingBoundaryRows; they must not count as assistant work.
     assistantWorkRows: bodyRows,
     assistantHistoryRows: orderedAssistantHistoryRows,
     assistantFollowingRows,
@@ -306,7 +305,7 @@ function materializeDraftUnit(
     ...(latestAssistantTextRow ? { latestAssistantTextRow } : {}),
     flowItems,
     workSegments,
-    // renderRows 是查找/诊断用的平面视图，也必须服从 CLI row 全序。
+    // renderRows is a flat view for lookup/diagnostics and must also follow CLI row order.
     renderRows: visibleOrderedRows,
     isLastTurn,
     isRunning,
@@ -320,9 +319,9 @@ function materializeDraftUnit(
 
 function createDraftUnit(turnId: string): DraftTurnRenderUnit {
   return {
-    // cold snapshot 可能从同一 turn 的 assistant/tool 行中间截断，补到
-    // turnHeader 后首个可见 rowId 会变化。虚拟列表 key 必须只依赖协议稳定的 turnId，
-    // 否则补页会把原 turn 当成新节点重挂，丢失测高缓存和视口锚点。
+    // A cold snapshot may start in the middle of assistant/tool rows from the same turn, then reveal a different first visible rowId
+    // after turnHeader arrives. Virtual-list keys must depend only on protocol-stable turnId; otherwise paging treats the existing turn
+    // as a new node, losing measurement cache and viewport anchors.
     key: turnId,
     turnId,
     userInputs: [],
@@ -333,14 +332,14 @@ function createDraftUnit(turnId: string): DraftTurnRenderUnit {
 }
 
 function shouldKeepRenderUnit(unit: ConversationTurnRenderUnit): boolean {
-  // 隐形行清零后（投影不再产不可渲染 marker），任何工作行都可渲染；
-  // 「哪些 marker 可渲染」不再是 UI 的判断。
+  // Once invisible rows are removed (the projection no longer emits unrenderable markers), every work row is renderable;
+  // the UI no longer decides which markers can render.
   return (
     unit.visibleUserInputs.length > 0 ||
     unit.assistantWorkRows.length > 0 ||
     unit.hookInvocations.some((row) => row.executions.some((execution) => execution.didExecute)) ||
     unit.leadingBoundaryRows.length > 0 ||
-    // 直接启动轮：用户行不可见、无助手内容，轮由 run 卡呈现——它当然要留下。
+    // A direct-launch turn has an invisible user row and no assistant content, and is represented by a run card—it must remain.
     unit.workflowLaunch !== undefined ||
     unit.isRunning
   );
@@ -396,6 +395,200 @@ function normalizeRenderUnitPosition(
   };
 }
 
+/**
+ * Writes the live work clock into running turns. buildConversationTurnRenderUnits without nowMs leaves a
+ * running turn's duration open, so the timeline builds once per rows change and calls this per tick. Only
+ * running units can change: their unit-level workStatus and last work segment status are recomputed with the
+ * same helpers the builder uses, and every other unit keeps its object identity.
+ */
+export function applyConversationTurnLiveClock(
+  units: ConversationTurnRenderUnit[],
+  nowMs: number,
+): ConversationTurnRenderUnit[] {
+  if (!units.some((unit) => unit.isRunning)) return units;
+  return units.map((unit) => (unit.isRunning ? withLiveWorkClock(unit, nowMs) : unit));
+}
+
+function isSameWorkStatus(
+  a: ConversationTurnWorkStatus | undefined,
+  b: ConversationTurnWorkStatus | undefined,
+): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+function withLiveWorkClock(
+  unit: ConversationTurnRenderUnit,
+  nowMs: number,
+): ConversationTurnRenderUnit {
+  // A running turn is never interrupted: resolveTurnRunning rejects terminal headers and terminal session phases.
+  const isInterrupted = false;
+  const { header } = unit;
+  const workStatus = withTurnOutputTokens(
+    resolveConversationTurnWorkStatus(
+      header,
+      unit.assistantWorkRows,
+      true,
+      resolveConversationTurnWorkDurationMs(header, { nowMs }, true),
+      isInterrupted,
+    ),
+    header,
+  );
+  // Same row sets as materializeDraftUnit feeds to the segment builder, so the last segment is computed identically.
+  const leadingBoundaryRowIds = new Set(unit.leadingBoundaryRows.map((row) => row.rowId));
+  const browserTurnEndRowIds = new Set(unit.browserTurnEndRows.map((row) => row.rowId));
+  const liveSegments = buildConversationTurnWorkSegments({
+    key: unit.key,
+    ...(header ? { header } : {}),
+    orderedRows: unit.renderRows.filter(
+      (row) => !leadingBoundaryRowIds.has(row.rowId) && !browserTurnEndRowIds.has(row.rowId),
+    ),
+    assistantTailRows: unit.assistantTailRows,
+    ...(unit.latestAssistantTextRow ? { latestAssistantTextRow: unit.latestAssistantTextRow } : {}),
+    isRunning: true,
+    isLastTurn: unit.isLastTurn,
+    isInterrupted,
+    forceOpenHistory: false,
+    timelineOnly: unit.timelineOnly,
+    nowMs,
+  });
+  const liveLastStatus = liveSegments.at(-1)?.workStatus;
+  const baseSegments = unit.workSegments;
+  const lastBaseSegment = baseSegments?.at(-1);
+  const segmentStatusChanged =
+    lastBaseSegment !== undefined && !isSameWorkStatus(lastBaseSegment.workStatus, liveLastStatus);
+  if (isSameWorkStatus(unit.workStatus, workStatus) && !segmentStatusChanged) return unit;
+
+  const next: ConversationTurnRenderUnit = { ...unit };
+  if (workStatus) next.workStatus = workStatus;
+  else delete next.workStatus;
+  if (baseSegments && segmentStatusChanged) {
+    next.workSegments = baseSegments.map((segment, index) => {
+      if (index !== baseSegments.length - 1) return segment;
+      const patched = { ...segment };
+      if (liveLastStatus) patched.workStatus = liveLastStatus;
+      else delete patched.workStatus;
+      return patched;
+    });
+  }
+  return next;
+}
+
+export function createConversationTurnRenderUnitCache(): ConversationTurnRenderUnitCache {
+  return { entries: new Map() };
+}
+
+interface MaterializedDraftSlot {
+  unit: ConversationTurnRenderUnit;
+  /** Present only for non-running turns when a cache is supplied; running turns depend on nowMs and are never reused. */
+  entry?: ConversationTurnRenderUnitCacheEntry;
+}
+
+/**
+ * Plugin pin results are derived from the whole window (other turns can change a row's disposition), so the
+ * turn's cache key is the resolved value for its plugin rows, not the resolver closure identity.
+ */
+function resolvePinSignature(
+  orderedRows: readonly ConversationRow[],
+  resolver: BuildConversationTurnRenderUnitsOptions["pluginUiPinResolver"],
+): string {
+  if (!resolver) return "";
+  const parts: string[] = [];
+  for (const row of orderedRows) {
+    if (row.kind !== "toolCall") continue;
+    const display = row.display;
+    if (display?.kind !== "mcp_tool" || display.ui === undefined) continue;
+    parts.push(`${row.toolCallId}:${JSON.stringify(resolver(row.toolCallId) ?? null)}`);
+  }
+  return parts.join("\n");
+}
+
+function isSameDraftInputs(
+  entry: ConversationTurnRenderUnitCacheEntry,
+  draft: DraftTurnRenderUnit,
+  isLastDraft: boolean,
+  sessionPhase: BuildConversationTurnRenderUnitsOptions["sessionPhase"],
+  pinSignature: string,
+): boolean {
+  if (
+    entry.header !== draft.header ||
+    entry.sessionPhase !== sessionPhase ||
+    entry.isLastDraft !== isLastDraft ||
+    entry.pinSignature !== pinSignature ||
+    entry.orderedRows.length !== draft.orderedRows.length
+  ) {
+    return false;
+  }
+  return entry.orderedRows.every((row, index) => row === draft.orderedRows[index]);
+}
+
+function materializeCachedDraftUnit(
+  draft: DraftTurnRenderUnit,
+  index: number,
+  total: number,
+  options: BuildConversationTurnRenderUnitsOptions,
+  previous: ConversationTurnRenderUnitCacheEntry | undefined,
+): MaterializedDraftSlot {
+  const isLastDraft = index === total - 1;
+  const pinSignature = resolvePinSignature(draft.orderedRows, options.pluginUiPinResolver);
+  if (
+    previous &&
+    isSameDraftInputs(previous, draft, isLastDraft, options.sessionPhase, pinSignature)
+  ) {
+    return { unit: previous.materialized, entry: previous };
+  }
+  const unit = materializeDraftUnit(draft, index, total, options);
+  if (!options.cache || unit.isRunning) return { unit };
+  return {
+    unit,
+    entry: {
+      header: draft.header,
+      orderedRows: draft.orderedRows,
+      sessionPhase: options.sessionPhase,
+      isLastDraft,
+      pinSignature,
+      materialized: unit,
+    },
+  };
+}
+
+function normalizeCachedUnit(
+  slot: MaterializedDraftSlot,
+  index: number,
+  total: number,
+  options: BuildConversationTurnRenderUnitsOptions,
+): ConversationTurnRenderUnit {
+  const isLast = index === total - 1;
+  const entry = slot.entry;
+  if (!entry) return normalizeRenderUnitPosition(slot.unit, index, total, options);
+  if (entry.normalized?.source === slot.unit && entry.normalized.isLast === isLast) {
+    return entry.normalized.unit;
+  }
+  const unit = normalizeRenderUnitPosition(slot.unit, index, total, options);
+  entry.normalized = { source: slot.unit, isLast, unit };
+  return unit;
+}
+
+function isSameFooterMark(a: ConversationTurnRenderUnit, b: ConversationTurnRenderUnit): boolean {
+  return (
+    a.showHighspeedOutputFooter === b.showHighspeedOutputFooter &&
+    JSON.stringify(a.highspeedOutputFooterTarget ?? null) ===
+      JSON.stringify(b.highspeedOutputFooterTarget ?? null)
+  );
+}
+
+/** The footer pass rebuilds a target object on every call; keep the previous object while the mark is unchanged. */
+function reuseFooterMarkedUnit(
+  slot: MaterializedDraftSlot,
+  base: ConversationTurnRenderUnit,
+  marked: ConversationTurnRenderUnit,
+): ConversationTurnRenderUnit {
+  if (marked === base || !slot.entry) return marked;
+  const previous = slot.entry.footer;
+  if (previous?.base === base && isSameFooterMark(previous.unit, marked)) return previous.unit;
+  slot.entry.footer = { base, unit: marked };
+  return marked;
+}
+
 export function buildConversationTurnRenderUnits(
   rows: readonly ConversationRow[],
   options: BuildConversationTurnRenderUnitsOptions = {},
@@ -432,12 +625,26 @@ export function buildConversationTurnRenderUnits(
     unit.assistantWorkRows.push(row);
   }
 
-  const materializedUnits = units.map((unit, index) =>
-    materializeDraftUnit(unit, index, units.length, options),
+  const previousEntries = options.cache?.entries;
+  const nextEntries = new Map<string, ConversationTurnRenderUnitCacheEntry>();
+  const materializedSlots = units.map((unit, index) => {
+    const slot = materializeCachedDraftUnit(
+      unit,
+      index,
+      units.length,
+      options,
+      previousEntries?.get(unit.turnId),
+    );
+    if (slot.entry) nextEntries.set(unit.turnId, slot.entry);
+    return slot;
+  });
+  const keptSlots = materializedSlots.filter((slot) => shouldKeepRenderUnit(slot.unit));
+  const normalizedUnits = keptSlots.map((slot, index) =>
+    normalizeCachedUnit(slot, index, keptSlots.length, options),
   );
-  const keptUnits = materializedUnits.filter(shouldKeepRenderUnit);
-  const normalizedUnits = keptUnits.map((unit, index) =>
-    normalizeRenderUnitPosition(unit, index, keptUnits.length, options),
+  const markedUnits = markHighspeedOutputFooterUnits(normalizedUnits, options.nowMs ?? Date.now());
+  if (options.cache) options.cache.entries = nextEntries;
+  return markedUnits.map((unit, index) =>
+    reuseFooterMarkedUnit(keptSlots[index]!, normalizedUnits[index]!, unit),
   );
-  return markHighspeedOutputFooterUnits(normalizedUnits, options.nowMs ?? Date.now());
 }

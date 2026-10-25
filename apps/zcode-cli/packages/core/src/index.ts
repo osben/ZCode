@@ -20,14 +20,29 @@ export type { ToolSchedule, ToolScheduleItem, ToolDependency } from "./tool/sche
 export { createToolRegistry, ToolRegistry, ToolRegistryImpl } from "./tool/registry.js";
 export { createToolExecutor, ToolExecutor, ToolExecutorImpl } from "./tool/executor.js";
 export { builtInTools, registerBuiltInTools } from "./tool/handlers/index.js";
-// dwf driver 的 submit profile 运行时守卫要把 typed 声明换回通用声明。
+// Language-server (LSP) service: bootstrap constructs one per workspace and passes it through AgentRuntimeDeps.lsp.
+export {
+  LspService,
+  createLspService,
+  createLspDocumentSync,
+  LspServerRegistry,
+} from "./lsp/index.js";
+export type { LspDocumentSync } from "./lsp/index.js";
+export type {
+  LspServiceOptions,
+  LspQueryContext,
+  EditDiagnosticsRequest,
+  EditDiagnosticsResult,
+  LspServerMatch,
+} from "./lsp/index.js";
+// The DWF driver's submit-profile runtime guard converts the typed declaration back to a generic declaration.
 export {
   createSubmitResultToolEntry,
   submitResultToolEntry,
 } from "./tool/handlers/submit-result.js";
-// 已保存工作流的 store / codec：GUI 中枢的协议处理器住在
-// bootstrap，但解析器与序列化器只能有一份——写侧与读侧各自演化的症状是「刚保存的 workflow
-// 列不出来」，所以从这里导出而不是让 bootstrap 再抄一份。
+// Store/codec for saved workflows: the GUI hub's protocol handler lives in
+// bootstrap, but there must be only one parser and serializer. If the read and write sides evolve separately, a newly saved workflow
+// may not appear in the list, so export these here instead of duplicating them in bootstrap.
 export {
   SAVED_WORKFLOW_SENTINEL,
   findSavedWorkflowShadowing,
@@ -44,12 +59,11 @@ export {
   serializeSavedWorkflow,
   validateWorkflowArgs,
 } from "./tool/handlers/saved-workflows/index.js";
-// 同一个类型检查器（docs/dynamic-workflow/launch.md「`SaveWorkflow`」）：GUI 从一次 run 直接
-// 保存时走的也必须是它——「存得下来却跑不起来」是这个特性最难解释的一种坏掉方式，而两个入口
-// 各编译一次就是它的标准产地。
+// Use the same type checker (docs/dynamic-workflow/launch.md, “`SaveWorkflow`”) when the GUI saves directly from a run—
+// “it saves but cannot run” is one of the hardest failures to explain, and compiling separately in the two entry points is a common cause.
 export { analyzeScript } from "./tool/handlers/workflow-script-analysis.js";
-// 草稿铸名规则只此一份（docs/dynamic-workflow/launch.md「The draft after a fill」）：bootstrap 的 run
-// service 经注入拿它给启动时没写成草稿的 run 在补全时补铸一份，而不是把 slug / `-2` / `wx` 再抄一遍。
+// Keep draft naming rules in one place (docs/dynamic-workflow/launch.md, “The draft after a fill”): the bootstrap run
+// service receives this through injection and uses it to create a draft when completing a run that was not saved as one at launch, rather than duplicating slug / `-2` / `wx` logic.
 export {
   writeWorkflowDraft,
   type WriteWorkflowDraftInput,
@@ -92,7 +106,7 @@ export * from "./hooks/index.js";
 // MCP components
 export * from "./mcp/index.js";
 
-// Plugin 对话引用（@ Plugin capability hint）
+// Plugin conversation references (@ Plugin capability hint)
 export * from "./plugin-reference/index.js";
 
 // Node REPL/browser-use plugin runtime primitives
@@ -140,12 +154,18 @@ export type { PermissionConfig } from "./permission/index.js";
 
 // Runtime
 export { AgentRuntime } from "./runtime.js";
-export { createExternalTurnFaultError } from "./runtime/helpers/turn-errors.js";
+export {
+  createExternalTurnFaultError,
+  createTurnCancelReason,
+  hasPreserveQueueAutoDrainCancelIntent,
+} from "./runtime/helpers/turn-errors.js";
 export { repairPersistedRemoteSessionPaths } from "./runtime/helpers/persisted-remote-session-path-repair.js";
-// 「按值把一段转录复制进另一个会话」的克隆器。fork 之外的第二个消费者是 dwf 的 amend-resume
-// 转录截断（bootstrap 的 workflow-actor-transcript.ts）：同一个动作——新会话用本地 id 续写，
-// parentID / part 内嵌锚点随之重映射。导出而不是让它再写一份，是因为漏掉任何一处重映射的症状
-// （悬空 parentID、指向父会话的锚点）离成因都很远。
+// Shared with the CLI command-center so local usage replies match the runtime's wording.
+export { DREAM_COMMAND_USAGE_RESPONSE } from "./runtime/methods/dream.js";
+// Clone a transcript by value into another session. The second consumer besides fork is DWF amend-resume
+// transcript truncation (bootstrap's workflow-actor-transcript.ts): both perform the same operation—continue with local IDs in the new session,
+// remapping parentID and anchors embedded in parts. Export this instead of duplicating it because symptoms of a missed remap
+// (a dangling parentID or an anchor pointing to the parent session) are far from the cause.
 export { cloneMessageForFork, clonePartForFork } from "./runtime/helpers/steering.js";
 export type {
   ChildClientPortsContext,

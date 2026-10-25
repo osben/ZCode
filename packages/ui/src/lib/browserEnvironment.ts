@@ -6,6 +6,10 @@ export interface BrowserStorageLike extends BrowserReadableStorageLike {
   setItem(key: string, value: string): void;
 }
 
+interface BrowserRemovableStorageLike extends BrowserReadableStorageLike {
+  removeItem(key: string): void;
+}
+
 function getLocalStorageCandidate(): unknown {
   try {
     return typeof window !== "undefined"
@@ -18,9 +22,7 @@ function getLocalStorageCandidate(): unknown {
   }
 }
 
-function isBrowserReadableStorageLike(
-  storage: unknown,
-): storage is BrowserReadableStorageLike {
+function isBrowserReadableStorageLike(storage: unknown): storage is BrowserReadableStorageLike {
   return (
     Boolean(storage) &&
     typeof (storage as Partial<BrowserReadableStorageLike>).getItem === "function"
@@ -31,6 +33,13 @@ function isBrowserStorageLike(storage: unknown): storage is BrowserStorageLike {
   return (
     isBrowserReadableStorageLike(storage) &&
     typeof (storage as Partial<BrowserStorageLike>).setItem === "function"
+  );
+}
+
+function isBrowserRemovableStorageLike(storage: unknown): storage is BrowserRemovableStorageLike {
+  return (
+    isBrowserReadableStorageLike(storage) &&
+    typeof (storage as Partial<BrowserRemovableStorageLike>).removeItem === "function"
   );
 }
 
@@ -66,8 +75,19 @@ export function writeSafeLocalStorage(key: string, value: string): void {
   try {
     getSafeLocalStorage()?.setItem(key, value);
   } catch {
-    // SSR/测试环境或隐私模式下 localStorage 可能存在但不可写。
-    // 写入失败不应阻断 UI 渲染，真实偏好下次仍可从 settingService 或默认值恢复。
+    // In SSR/test environments or private mode, localStorage may exist but be unwritable.
+    // A failed write must not block UI rendering; the actual preference can be restored later from settingService or the default.
+  }
+}
+
+export function removeSafeLocalStorage(key: string): void {
+  try {
+    const storage = getLocalStorageCandidate();
+    if (isBrowserRemovableStorageLike(storage)) {
+      storage.removeItem(key);
+    }
+  } catch {
+    // In SSR/test environments or private mode, storage may exist but be unwritable.
   }
 }
 

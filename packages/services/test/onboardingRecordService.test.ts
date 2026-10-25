@@ -72,9 +72,7 @@ describe("onboardingRecordService", () => {
     expect(await service.getRecords()).toMatchObject({
       version: 2,
       entries: [],
-      decisions: [
-        { userId: "u1", status: "existing_local_user", reason: "existing_local_task" },
-      ],
+      decisions: [{ userId: "u1", status: "existing_local_user", reason: "existing_local_task" }],
     });
   });
 
@@ -128,9 +126,9 @@ describe("onboardingRecordService", () => {
     tempHomes.push(home);
     const service = await createServiceInHome(home, "u1");
     await service.appendRecord("device-a", makeEntry());
-    // 同一用户再次完成引导：覆盖而不是追加
+    // The same user completing onboarding again: overwrite instead of append
     await service.appendRecord("device-b", makeEntry({ occupation: "student" }));
-    // 换用户：新增一条
+    // A different user: adds a new entry
     const serviceU2 = await createServiceInHome(home, "u2");
     await serviceU2.appendRecord("device-c", makeEntry({ occupation: "finance" }));
 
@@ -219,7 +217,7 @@ describe("onboardingRecordService", () => {
     const dataBaseDir = mkdtempSync(join(tmpdir(), "zcode-onboarding-data-"));
     tempHomes.push(dataBaseDir);
     process.env.HOME = home;
-    // paths.ts 在模块导入时捕获 ZCODE_DATA_BASE_DIR；host 进程正是经该环境变量下发 dataBaseDir。
+    // paths.ts captures ZCODE_DATA_BASE_DIR at module import; the host process delivers dataBaseDir through exactly this env var.
     process.env.ZCODE_DATA_BASE_DIR = dataBaseDir;
     vi.resetModules();
     const mod = await import("../src/onboarding/onboardingRecordService.js");
@@ -260,19 +258,19 @@ describe("onboardingRecordService", () => {
   it("登录认领：null 条目移交给无条目的登录用户，已有条目/匿名态为空操作", async () => {
     const home = mkdtempSync(join(tmpdir(), "zcode-onboarding-home-"));
     tempHomes.push(home);
-    // 匿名答一次
+    // Answer once anonymously
     const anonymous = await createServiceInHome(home, null);
     await anonymous.appendRecord("device-a", makeEntry({ occupation: "student" }));
-    // 登录 A：移交（数组只有 null 一项时 null 变成 A）
+    // Login as A: handover (when the array has only a null entry, it becomes A's)
     const serviceA = await createServiceInHome(home, "u1");
     await serviceA.claimAnonymousRecord();
     expect(await serviceA.getRecords()).toMatchObject({
       entries: [{ userId: "u1", occupation: "student" }],
     });
-    // A 已有条目：幂等空操作
+    // A already has an entry: idempotent no-op
     await serviceA.claimAnonymousRecord();
     expect((await serviceA.getRecords())?.entries).toHaveLength(1);
-    // 登出后匿名态再答一条：[A, null]；登录 B 认领 null → [A, B]
+    // After logout, answer once more anonymously: [A, null]; login as B claims the null → [A, B]
     await anonymous.appendRecord("device-a", makeEntry({ occupation: "finance" }));
     const serviceB = await createServiceInHome(home, "u2");
     await serviceB.claimAnonymousRecord();
@@ -291,7 +289,7 @@ describe("onboardingRecordService", () => {
       "device-a",
       makeEntry({ occupation: "finance", memoryEnabled: true }),
     );
-    // 第二次完成（跳过语义的全 null 条目）覆盖第一次作答
+    // The second completion (all-null entries with skip semantics) overwrites the first answers
     await service.appendRecord(
       "device-a",
       makeEntry({
@@ -342,11 +340,11 @@ describe("onboardingRecordService", () => {
       userId: "u1",
       proactiveSuggestionsEnabled: false,
       memoryEnabled: true,
-      // 未指定的字段保持原值
+      // Unspecified fields keep their original values
       occupation: "developer",
     });
 
-    // 其他用户条目不受影响；无条目用户忽略
+    // Other users' entries are unaffected; users without entries are ignored
     const serviceU2 = await createServiceInHome(home, "u2");
     await serviceU2.updateRecordPreferences({ memoryEnabled: false });
     expect((await serviceU2.getRecords())?.entries).toHaveLength(1);
@@ -361,5 +359,47 @@ describe("onboardingRecordService", () => {
     const records = await service.getRecords();
     expect(records?.deviceMid).toBe("device-a");
     expect(records?.entries).toHaveLength(1);
+  });
+
+  it("getOnboardingEligibility 同时报告 shouldOnboard 与 recordFileExisted，且与 shouldOnboard 一致", async () => {
+    const home = mkdtempSync(join(tmpdir(), "zcode-onboarding-home-"));
+    tempHomes.push(home);
+    const service = await createServiceInHome(home, "u1");
+
+    // 首次打开：没有记录文件，应引导
+    expect(await service.getOnboardingEligibility("device-a")).toEqual({
+      shouldOnboard: true,
+      recordFileExisted: false,
+    });
+    expect(await service.shouldOnboard("device-a")).toBe(true);
+
+    await service.appendRecord("device-a", makeEntry());
+    // 当前用户已有作答：不再引导，记录文件存在
+    expect(await service.getOnboardingEligibility("device-a")).toEqual({
+      shouldOnboard: false,
+      recordFileExisted: true,
+    });
+    expect(await service.shouldOnboard("device-a")).toBe(false);
+
+    // 同一设备换另一身份：记录文件存在但没有该身份条目，仍需引导
+    const serviceU2 = await createServiceInHome(home, "u2");
+    expect(await serviceU2.getOnboardingEligibility("device-a")).toEqual({
+      shouldOnboard: true,
+      recordFileExisted: true,
+    });
+  });
+
+  it("getOnboardingEligibility 在本机存量用户判定中报告 recordFileExisted=false，并写入存量决定", async () => {
+    const home = mkdtempSync(join(tmpdir(), "zcode-onboarding-home-"));
+    tempHomes.push(home);
+    const service = await createServiceInHome(home, "u1", true);
+
+    expect(await service.getOnboardingEligibility("device-a")).toEqual({
+      shouldOnboard: false,
+      recordFileExisted: false,
+    });
+    expect(await service.getRecords()).toMatchObject({
+      decisions: [{ userId: "u1", status: "existing_local_user" }],
+    });
   });
 });

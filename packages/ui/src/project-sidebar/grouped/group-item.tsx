@@ -58,7 +58,6 @@ export function GroupItem({
   activeTaskId,
   mobileActiveTaskKey,
   getTaskRemoteSessionId,
-  getTaskWorkspaceLabel,
   onSelectTask,
   onCloseTask,
   onOpenFileTree,
@@ -91,7 +90,6 @@ export function GroupItem({
   activeTaskId: string | null;
   mobileActiveTaskKey?: string | null;
   getTaskRemoteSessionId: (task: ZCodeTaskMeta) => string | undefined;
-  getTaskWorkspaceLabel: (task: ZCodeTaskMeta) => string;
   onSelectTask: (workspacePath: string, taskId: string, workspaceIdentity?: string) => void;
   onCloseTask: (task: ZCodeTaskMeta) => void;
   onOpenFileTree?: (task: ZCodeTaskMeta) => void;
@@ -729,7 +727,6 @@ export function GroupItem({
                     groupId={node.group.id}
                     groups={groups}
                     getTaskRemoteSessionId={getTaskRemoteSessionId}
-                    getTaskWorkspaceLabel={getTaskWorkspaceLabel}
                     activeWorkspacePath={activeWorkspacePath}
                     activeWorkspaceIdentity={activeWorkspaceIdentity}
                     activeTaskId={activeTaskId}
@@ -757,7 +754,6 @@ export function GroupItem({
                       groupId={node.group.id}
                       groups={groups}
                       getTaskRemoteSessionId={getTaskRemoteSessionId}
-                      getTaskWorkspaceLabel={getTaskWorkspaceLabel}
                       activeWorkspacePath={activeWorkspacePath}
                       activeWorkspaceIdentity={activeWorkspaceIdentity}
                       activeTaskId={activeTaskId}

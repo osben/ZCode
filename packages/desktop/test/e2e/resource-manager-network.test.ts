@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DEFAULT_WORKSPACE, waitForWorkspaceApp } from "./helpers/desktop-app.js";
+import { expectedCopy } from "./helpers/help-client-config-fixture.js";
 import { skipOccupationOnboardingIfPresent } from "./helpers/occupation-onboarding.js";
 import {
   activateResourceManagerTab,
@@ -86,18 +87,11 @@ describe("资源管理器网络", () => {
         "renderer-network-test",
       );
       await $("input").setValue("");
-      for (const [theme, locale] of [
-        ["zai-dark", "en-US"],
-        ["zai-light", "zh-CN"],
-      ]) {
-        await browser.execute(
-          (themeValue, localeValue) => {
-            localStorage.setItem("zcode-theme", themeValue!);
-            localStorage.setItem("zcode-locale-preference", localeValue!);
-          },
-          theme,
-          locale,
-        );
+      for (const theme of ["zai-dark", "zai-light"] as const) {
+        await browser.execute((themeValue) => {
+          localStorage.setItem("zcode-theme", themeValue);
+          localStorage.setItem("zcode-locale-preference", "en-US");
+        }, theme);
         await browser.refresh();
         await waitForResourceManagerReady();
         await activateResourceManagerTab("network");
@@ -108,7 +102,7 @@ describe("资源管理器网络", () => {
         );
         await browser.saveScreenshot(join(tmpdir(), `zcode-network-${theme}.png`));
       }
-      await $('//button[normalize-space(.)="Clear" or normalize-space(.)="清空"]').click();
+      await $(`button=${expectedCopy("resourceManager.network.clear")}`).click();
       await browser.waitUntil(
         async () =>
           !(await $("[data-testid='resource-network-list']").getText()).includes(

@@ -107,7 +107,8 @@ export function readBuildMetadata() {
     return {
       ...metadata,
       minCompatibleVersion:
-        typeof metadata.minCompatibleVersion === "string" && metadata.minCompatibleVersion.length > 0
+        typeof metadata.minCompatibleVersion === "string" &&
+        metadata.minCompatibleVersion.length > 0
           ? normalizeVersion(metadata.minCompatibleVersion)
           : normalizeVersion(metadata.appVersion),
     };
@@ -121,9 +122,10 @@ export function getBuildMetadata() {
 }
 
 export function writeBuildMetadata() {
-  // About 之前分别在 tsup、vite 里各算一份 commit 和时间。
-  // 问题原因：两次构建是独立进程，时间点天然不一致；后面再打包时，最终安装包里展示的信息也不一定对应同一次产物。
-  // 这里先统一落盘成 build-meta.json，再让构建和运行时都复用同一份数据，保证 about 可追溯。
+  // About previously calculated separate commit and timestamp values in tsup and Vite.
+  // Because the builds run in separate processes, their timestamps naturally differ; later packaging
+  // could also show metadata from different artifacts. Write one build-meta.json first and reuse it in
+  // both the build and runtime so the About information remains traceable.
   const metadata = collectBuildMetadata();
   mkdirSync(metadataDir, { recursive: true });
   writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf-8");

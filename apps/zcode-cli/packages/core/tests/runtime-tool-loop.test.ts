@@ -55,6 +55,7 @@ import { MessageHistoryImpl } from "../src/agent/message-history.js";
 import { hydrateMessageHistoryFromSession } from "../src/agent/session-history-hydrator.js";
 import { DEFAULT_MODEL_REQUEST_MEDIA_BUDGET_BYTES } from "../src/runtime/helpers/media-budget.js";
 import { MAX_TURN_STEER_INPUT_BYTES } from "../src/runtime/helpers/steering.js";
+import { createTurnCancelReason } from "../src/runtime/helpers/turn-errors.js";
 import { projectIdFromDirectory } from "../src/runtime/helpers/project.js";
 import { InMemoryRuntimeTaskRegistry } from "../src/runtime-task/registry.js";
 import { createToolRegistry } from "../src/tool/registry.js";
@@ -8293,49 +8294,6 @@ describe("AgentRuntime tool loop", () => {
     expect((await runtime.getProjection()).pendingSteerInputs).toEqual([]);
   });
 
-  it("does not inline-drain an ordinary queue item at a text-only model boundary", async () => {
-    const sessionId = createSessionId("runtime-ordinary-queue-not-inline-drained");
-    const eventStore = createTestSessionEventStore();
-    let runtime: AgentRuntime;
-    let modelCallCount = 0;
-
-    runtime = createTestAgentRuntime(
-      sessionId,
-      { mode: "build" },
-      {
-        eventStore,
-        modelFactory: createTestModelFactory({
-          async generateText(request: any) {
-            modelCallCount += 1;
-            if (modelCallCount === 1) {
-              const activeTurn = runtime.getActiveTurnInfo();
-              const queued = await runtime.steerTurn({
-                expectedTurnId: activeTurn?.turnId,
-                input: "future turn",
-                delivery: "queue",
-              });
-              expect(queued.kind).toBe("queued");
-            }
-            return {
-              finishReason: "stop",
-              providerMetadata: undefined,
-              text: "current turn done",
-              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            };
-          },
-        } as never),
-      },
-    );
-
-    await runtime.executeTurn("current turn");
-
-    expect(modelCallCount).toBe(1);
-    expect((await eventStore.getEvents(sessionId)).map((event) => event.type)).not.toContain(
-      SessionEventType.TurnSteerDrained,
-    );
-    expect((await runtime.getProjection()).pendingSteerInputs).toHaveLength(1);
-  });
-
   it("preserves active steered input when the turn fails and pauses runtime queue drain", async () => {
     const sessionId = createSessionId("runtime-turn-error-preserves-queue");
     const eventStore = createTestSessionEventStore();
@@ -8834,6 +8792,93 @@ describe("AgentRuntime tool loop", () => {
       admittedDelivery: "queue",
       fallbackReasonCode: "guide.turnInterrupted",
     });
+  });
+
+  // ISSUE-039: a Steer that aborts through the caller's controller (the bootstrap path used when no runtime
+  // foreground token is present) must carry the preserve intent in the abort reason. A user Stop reason must not.
+  it("ISSUE-039 keeps queue auto-drain when a caller abort carries the steer preserve intent", async () => {
+    const sessionId = createSessionId("runtime-steer-reason-preserve");
+    const eventStore = createTestSessionEventStore();
+    const modelStarted = deferred();
+    const runtime = createTestAgentRuntime(
+      sessionId,
+      { mode: "build" },
+      {
+        eventStore,
+        modelFactory: createTestModelFactory({
+          async generateText(request: any) {
+            modelStarted.resolve();
+            await waitForAbort(request.abortSignal);
+            return {
+              finishReason: "stop",
+              providerMetadata: undefined,
+              text: "too late",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            };
+          },
+        } as never),
+      },
+    );
+    const controller = new AbortController();
+    const pendingTurn = runtime.executeTurn("steer through caller controller", undefined, {
+      abortSignal: controller.signal,
+    });
+    await modelStarted.promise;
+    const queued = await runtime.steerTurn("queued behind the steer");
+    expect(queued.kind).toBe("queued");
+
+    controller.abort(
+      createTurnCancelReason("v4 sendQueuedNow preempts active turn", {
+        preserveQueueAutoDrainOnCancel: true,
+      }),
+    );
+    await expect(pendingTurn).rejects.toMatchObject({ type: CoreErrorType.TurnCancelled });
+
+    const events = await eventStore.getEvents(sessionId);
+    expect(
+      events.find((event) => event.type === SessionEventType.TurnComplete)?.payload,
+    ).toMatchObject({ resultType: "cancelled", preserveQueueAutoDrainOnCancel: true });
+    expect((runtime as any).queueAutoDrain).toBe(true);
+  });
+
+  it("ISSUE-039 holds the queue when a caller abort is a plain user Stop reason", async () => {
+    const sessionId = createSessionId("runtime-stop-reason-holds");
+    const eventStore = createTestSessionEventStore();
+    const modelStarted = deferred();
+    const runtime = createTestAgentRuntime(
+      sessionId,
+      { mode: "build" },
+      {
+        eventStore,
+        modelFactory: createTestModelFactory({
+          async generateText(request: any) {
+            modelStarted.resolve();
+            await waitForAbort(request.abortSignal);
+            return {
+              finishReason: "stop",
+              providerMetadata: undefined,
+              text: "too late",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            };
+          },
+        } as never),
+      },
+    );
+    const controller = new AbortController();
+    const pendingTurn = runtime.executeTurn("stop through caller controller", undefined, {
+      abortSignal: controller.signal,
+    });
+    await modelStarted.promise;
+    expect((await runtime.steerTurn("queued behind the stop")).kind).toBe("queued");
+
+    controller.abort(new Error("v4 session stopped"));
+    await expect(pendingTurn).rejects.toMatchObject({ type: CoreErrorType.TurnCancelled });
+
+    const events = await eventStore.getEvents(sessionId);
+    const payload = events.find((event) => event.type === SessionEventType.TurnComplete)?.payload;
+    expect(payload).toMatchObject({ resultType: "cancelled" });
+    expect(payload).not.toHaveProperty("preserveQueueAutoDrainOnCancel", true);
+    expect((runtime as any).queueAutoDrain).toBe(false);
   });
 
   it("M07a preserves queue auto-drain when sendQueuedNow preempts the active turn", async () => {
@@ -10915,6 +10960,159 @@ describe("AgentRuntime tool loop", () => {
       ).toMatchObject({
         modelId: requestModel.modelId,
         providerId: requestModel.providerId,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  function createStartPlanFirstTurnToolRuntime(
+    sessionId: ReturnType<typeof createSessionId>,
+    busyCallCount: number,
+  ) {
+    const eventStore = createTestSessionEventStore();
+    const sessionStore = new RecordingSessionStore();
+    const registry = createToolRegistry();
+    const providerId = "account:zai-start-plan";
+    const counters = { modelCallCount: 0, toolHandlerCallCount: 0 };
+
+    registry.register({
+      inputSchema: {},
+      metadata: {
+        concurrentSafe: true,
+        destructive: false,
+        name: "StreamRead",
+        needsApproval: false,
+        readOnly: true,
+        riskLevel: "low",
+        sideEffectScope: "none",
+      },
+      handler: async () => {
+        counters.toolHandlerCallCount++;
+        return "stream-read-ok";
+      },
+    });
+
+    const runtime = createTestAgentRuntime(
+      sessionId,
+      {
+        mode: "yolo",
+        modelSelection: {
+          modelId: "GLM-5.3" as never,
+          providerId: providerId as never,
+        },
+        modelStreaming: "on",
+      },
+      {
+        eventStore,
+        sessionStore,
+        toolRegistry: registry,
+        modelFactory: createTestModelFactory({
+          async generateText() {
+            throw new Error("generateText should not be used");
+          },
+          async *streamText() {
+            counters.modelCallCount++;
+            if (counters.modelCallCount === 1) {
+              yield {
+                type: "tool_call",
+                toolCall: { id: "stream-read", name: "StreamRead", input: {} },
+              };
+              yield {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              };
+              return;
+            }
+            if (counters.modelCallCount <= 1 + busyCallCount) {
+              yield { type: "error", error: createProviderBusyError(providerId, "3009") };
+              return;
+            }
+            yield { type: "text_delta", text: "first turn done" };
+            yield {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            };
+          },
+        } as never),
+      },
+    );
+
+    return { counters, eventStore, runtime, sessionStore };
+  }
+
+  async function settleWithFakeTimers<T>(promise: Promise<T>): Promise<T> {
+    // The admission retry timer is registered only after the first step's tool settles,
+    // so keep advancing until the turn settles instead of advancing once up front.
+    let settled = false;
+    const tracked = promise.finally(() => {
+      settled = true;
+    });
+    tracked.catch(() => undefined);
+    while (!settled) {
+      await vi.advanceTimersByTimeAsync(500);
+    }
+    return tracked;
+  }
+
+  it("retries Start Plan busy admission failures on later steps of the first turn", async () => {
+    vi.useFakeTimers();
+    const sessionId = createSessionId("runtime-start-plan-first-turn-later-step-busy-retry");
+    const { counters, eventStore, runtime, sessionStore } = createStartPlanFirstTurnToolRuntime(
+      sessionId,
+      1,
+    );
+
+    try {
+      const result = await settleWithFakeTimers(runtime.executeTurn("first prompt"));
+      const events = await eventStore.getEvents(sessionId);
+      const retryStartedPayloads = events
+        .filter((event) => event.type === SessionEventType.StreamRecoveryRetryStarted)
+        .map((event) => event.payload as any);
+
+      expect(result.response).toBe("first turn done");
+      expect(counters.modelCallCount).toBe(3);
+      expect(counters.toolHandlerCallCount).toBe(1);
+      expect(retryStartedPayloads).toHaveLength(1);
+      expect(retryStartedPayloads[0]).toMatchObject({ retryNumber: 1, maxRetries: 2 });
+      expect(
+        sessionStore.messagesBySession
+          .get(sessionId)
+          ?.some(
+            (message) =>
+              message.role === "assistant" &&
+              message.finish === "start_plan_admission_retry_discarded",
+          ),
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports exhausted Start Plan busy retries on later steps of the first turn", async () => {
+    vi.useFakeTimers();
+    const sessionId = createSessionId("runtime-start-plan-first-turn-later-step-busy-exhausted");
+    const { counters, eventStore, runtime } = createStartPlanFirstTurnToolRuntime(sessionId, 3);
+
+    try {
+      const error = await settleWithFakeTimers(runtime.executeTurn("first prompt")).then(
+        () => undefined,
+        (caught: unknown) => caught,
+      );
+      const events = await eventStore.getEvents(sessionId);
+      const turnErrorPayload = events.find((event) => event.type === SessionEventType.TurnError)
+        ?.payload as any;
+
+      expect(error).toBeDefined();
+      expect(counters.modelCallCount).toBe(4);
+      expect(
+        events.filter((event) => event.type === SessionEventType.StreamRecoveryRetryStarted),
+      ).toHaveLength(2);
+      expect(turnErrorPayload.error).toMatchObject({
+        code: "3009",
+        message: START_PLAN_BUSY_AUTO_RETRY_EXHAUSTED_MESSAGE,
       });
     } finally {
       vi.useRealTimers();

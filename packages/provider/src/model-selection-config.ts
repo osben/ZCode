@@ -18,7 +18,10 @@ interface ModelSelectionCompletionView {
       readonly modelId: string;
       readonly config: {
         readonly optionSpecs: {
-          readonly reasoningLevel: { readonly values: readonly string[] };
+          readonly reasoningLevel: {
+            readonly values: readonly string[];
+            readonly default?: string | null;
+          };
         };
       };
     }[];
@@ -29,8 +32,8 @@ export function resolveInitialModelSelection(input: {
   readonly configuredDefault?: ModelSelection;
   readonly registry: ProviderRegistryView;
 }): InitialModelSelectionResolution {
-  // 这里只构造 Host 的初始推荐，不解析已有会话意图。失效默认是可丢弃偏好，
-  // 应继续按 Registry 顺序推荐；不能把历史选择留空的规则误用于新草稿初始化。
+  // This constructs only the Host's initial recommendation; it does not resolve intent from an existing session. An invalid default is a disposable preference,
+  // so keep recommending in Registry order; do not apply the rule for clearing historical selections to new-draft initialization.
   if (input.configuredDefault) {
     if (isSelectable(input.registry, input.configuredDefault)) {
       return {
@@ -40,7 +43,7 @@ export function resolveInitialModelSelection(input: {
     }
   }
 
-  // 仅用于全新草稿的 Host 初始推荐；历史未绑定状态不能进入这个初始化分支。
+  // Only for the Host's initial recommendation in a new draft; an unbound historical state must not enter this initialization branch.
   for (const provider of input.registry.providers) {
     if (provider.config.visibility === "hidden") continue;
     for (const model of provider.models) {
@@ -54,7 +57,7 @@ export function resolveInitialModelSelection(input: {
   return { source: "none" };
 }
 
-/** 仅在用户主动选模型或全新初始化时构造最高档；不能用于恢复/重解析已有选择。 */
+/** Build the highest level only when the user explicitly selects a model or during fresh initialization; do not use for restoring/re-resolving an existing selection. */
 export function completeNewModelSelection(
   registry: ModelSelectionCompletionView,
   selection: ModelSelection,
@@ -62,7 +65,10 @@ export function completeNewModelSelection(
   const model = registry.providers
     .find((provider) => provider.providerId === selection.providerId)
     ?.models.find((candidate) => candidate.modelId === selection.modelId);
-  const reasoningLevel = model?.config.optionSpecs.reasoningLevel.values.at(-1);
+  const reasoningSpec = model?.config.optionSpecs.reasoningLevel;
+  // An explicit catalog default wins for fresh selections; otherwise the highest value is the
+  // historical upstream behavior.
+  const reasoningLevel = reasoningSpec?.default ?? reasoningSpec?.values?.at(-1);
   if (!reasoningLevel) return undefined;
   return {
     providerId: selection.providerId,
@@ -72,9 +78,9 @@ export function completeNewModelSelection(
 }
 
 /**
- * 规范化一份待提交的 Selection。
- * 已有选择缺失或失效时只保留模型身份，等待用户选择档位；主动选模型另走 completion。
- * 任何执行入口都必须在此之后再次确认 Selection 完整，不能静默补档位。
+ * Normalize a Selection before submission.
+ * If an existing selection is missing or invalid, keep only the model identity and wait for the user to choose a level; explicit model selection uses completion separately.
+ * Every execution entry point must verify the Selection is complete afterward and must not silently fill in a level.
  */
 export function normalizeModelSelection(
   registry: ModelSelectionCompletionView,

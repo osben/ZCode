@@ -254,7 +254,7 @@ test("built CLI embeds the compact registry without a runtime Fig dependency", a
   }
 
   assert.match(bundle, /"@commercelayer\/cli"\s*:/);
-  assert.match(bundle, /(?:"git"|git)\s*:\s*\[\["git"\]/);
+  assert.match(bundle, /(?:"git"|git)\s*:\s*['"]\[\[(?:\\)?"git(?:\\)?"\]/);
   assert.doesNotMatch(bundle, /node_modules\/@withfig\/autocomplete/);
   assert.doesNotMatch(bundle, /@withfig\/autocomplete\/build/);
 });
@@ -277,4 +277,20 @@ test("request security subpath bundles through its edition entry", async () => {
       path.endsWith("shared/src/request-security-edition/index.ts"),
     ),
   );
+});
+
+test("bundles the public SQLite migration entrypoint without treating index.ts as a directory", async () => {
+  const result = await build({
+    stdin: {
+      contents: 'import * as migrations from "@zcode/shared/sqlite-migrations"; console.log(migrations);',
+      resolveDir: resolve(import.meta.dirname, ".."),
+    },
+    alias: resolveBuildAliases(),
+    bundle: true,
+    platform: "node",
+    write: false,
+    logLevel: "silent",
+  });
+  assert.equal(result.errors.length, 0);
+  assert.ok(result.outputFiles[0].text.length > 0);
 });

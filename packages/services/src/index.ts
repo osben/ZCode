@@ -9,6 +9,17 @@ export {
   type ProviderSettingsProviderView,
   type ProviderSettingsView,
 } from "./model-provider/providerFacadeServices.js";
+export type {
+  AcpAgentDetectionResult,
+  AcpAgentEnabledInput,
+  AcpAgentSaveInput,
+  AcpAgentLoginResult,
+  AcpAgentStatusReport,
+  AcpAgentSummary,
+  AcpAgentTestInput,
+  AcpAgentTestResult,
+  AcpFrameEvent,
+} from "./model-provider/acpAgentsContract.js";
 export {
   createAccountRequestAuthService,
   type IAccountRequestAuthService,
@@ -17,6 +28,39 @@ export {
   type AccountRequestAuthResolver,
 } from "./model-provider/accountRequestAuthService.js";
 export { IProviderProvisioningTargetService } from "./model-provider/providerProvisioning.js";
+export {
+  IVoiceDictationService,
+  type VoiceDictationRuntimeState,
+  type VoiceModelListItem,
+  type VoiceModelState,
+  type VoicePostProcessAvailability,
+  type VoicePostProcessProvider,
+  type VoicePostProcessRequest,
+  type VoicePostProcessResponse,
+  type VoiceStreamRequest,
+  type VoiceTranscriptionPreview,
+  type VoiceTranscriptionRequest,
+  type VoiceTranscriptionResponse,
+  type VoiceWarmUpRequest,
+} from "./voice-dictation/voiceDictation.js";
+export {
+  DEFAULT_POST_PROCESS_PROMPT,
+  POST_PROCESS_PROMPT_MAX_LENGTH,
+  POST_PROCESS_TEXT_VARIABLE,
+  applyPostProcessPrompt,
+} from "./voice-dictation/voicePostProcessPrompt.js";
+export {
+  resolveEngineLanguage,
+  filterVoiceModels,
+  isLiveStreamingModel,
+  languageSettingsPatch,
+  missingVoiceLanguages,
+  recommendVoiceModel,
+  resolveVoiceLanguages,
+  sortVoiceModels,
+  toNativeLanguage,
+  type VoiceModelFilter,
+} from "./voice-dictation/voiceModelLanguages.js";
 export {
   collectServiceMemoryDiagnostics,
   memoryDiagnosticsRegistry,
@@ -46,8 +90,8 @@ export type {
   ConversationShareTurnPreflightResult,
   PublishTextConversationInput,
 } from "./conversation-share/conversationShare.js";
-// Conversation share 的具体实现依赖 Node 文件系统，只能从 @zcode/services/node 引入；
-// 根入口必须保持 browser-safe，避免 renderer 解析到 node:* 模块。
+// The Conversation share implementation depends on the Node filesystem and must be imported from @zcode/services/node;
+// the root entry point must remain browser-safe so the renderer does not resolve node:* modules.
 export {
   createConversationTelemetryService,
   type ConversationTelemetryWorkspaceTarget,
@@ -77,34 +121,33 @@ export { ISettingService } from "./setting/setting.js";
 // Credential service — ICredentialService is both a type (interface) and value (descriptor)
 export { ICredentialService } from "./credential/credential.js";
 export { ISourceServerWorkspaceService } from "./source-server-workspace/sourceServerWorkspace.js";
-export {
-  ISourceServerManagementService,
-  type UpdateConnectionProfileInput,
-} from "./source-server-management/sourceServerManagement.js";
 
 // Broadcast service — IBroadcastService is both a type (interface) and value (descriptor)
 export { IBroadcastService } from "./broadcast/broadcast.js";
 
-// Onboarding 完成记录服务（本地持久化，后续上传服务器）
+// Onboarding completion record service (persisted locally and uploaded to the server later).
 export { IOnboardingRecordService } from "./onboarding/onboardingRecord.js";
 export type {
   CreateOnboardingRecordServiceOptions,
   OnboardingRecordServiceFactory,
+  OnboardingSettingsSyncPatch,
 } from "./onboarding/onboardingRecord.js";
-// 这里只能导出 descriptor 和类型。根 index 会被 renderer 经 value import 拉进浏览器包，
-// 若 value 导出 createOnboardingRecordService，会连带 fs/atomicFileUtils → @zcode/shared/node →
-// node:timers/promises 整条 Node 链进浏览器，模块加载直接抛错导致整个应用黑屏。
-// 工厂函数由 host 侧（node.ts）与测试从实现文件路径直接导入，与 createSettingService 同惯例。
+// Export only the descriptor and types here. The renderer imports the root index as a value into the browser bundle;
+// exporting createOnboardingRecordService would pull fs/atomicFileUtils → @zcode/shared/node →
+// node:timers/promises and the entire Node dependency chain into the browser, causing a module-load error and a blank app.
+// The host (node.ts) and tests import the factory directly from its implementation file, following the createSettingService convention.
 export type {
   BroadcastClaimAcquireResult,
   BroadcastClaimLease,
   BroadcastMessage,
 } from "./broadcast/broadcast.js";
 
-// ZCode task wrapper service — task 列表/置顶/归档等 app 侧包装状态入口。
+// ZCode task wrapper service — app-side wrapper state entry point for task lists, pinning, archiving, and related operations.
 export { IZCodeTaskService } from "./session/zcodeTaskService.js";
 export type {
   ZCodeArchivedTaskDeletionResult,
+  ZCodeTaskEraseResult,
+  ZCodeTaskTreeCounts,
   ZCodeModelTrajectory,
   ZCodeModelTrajectoryCallSource,
   ZCodeModelTrajectoryCallSourceKind,
@@ -119,7 +162,22 @@ export type {
   ZCodeTaskListWorkspaceScope,
   ZCodeTaskReadyOutcome,
 } from "./session/zcodeTaskService.js";
-export type { ZCodeTaskListItem } from "./session/zcodeTaskListTypes.js";
+// Model trajectory v2 response types (specs/model-trajectory-v2.md).
+export type * from "./model-trajectory-v2/contract.js";
+export type {
+  ZCodeGroupedTaskRef,
+  ZCodeGroupedTaskView,
+  ZCodeGroupedTaskViewNode,
+  ZCodeGroupedTaskViewOrderInput,
+  ZCodeGroupedTaskViewQuery,
+  ZCodeGroupedTaskViewStructure,
+  ZCodeGroupedTaskViewStructureMember,
+  ZCodeGroupedTaskViewStructureTopOrder,
+  ZCodeGroupedTaskViewTopLevelNodeRef,
+  ZCodeTaskGroup,
+  ZCodeTaskGroupColor,
+  ZCodeTaskListItem,
+} from "./session/zcodeTaskListTypes.js";
 
 export { IWindowControllerService } from "./window-controller/windowController.js";
 export {
@@ -222,10 +280,32 @@ export {
   PROJECT_MEMORY_FILE_CHANGED_ERROR_CODE,
   PROJECT_MEMORY_PREVIEW_LIMIT_EXCEEDED_ERROR_CODE,
 } from "./memory/memory.js";
-export type { ProjectMemoryFileSummary, ProjectMemoryWorkspaceSummary } from "./memory/memory.js";
+export type {
+  ProjectMemoryFileSummary,
+  ProjectMemoryItemType,
+  ProjectMemoryWorkspaceSummary,
+} from "./memory/memory.js";
+
+// User instructions service — IUserInstructionsService is both a type (interface) and value (descriptor).
+export {
+  IUserInstructionsService,
+  USER_INSTRUCTIONS_AGENT_READ_LIMIT_BYTES,
+  USER_INSTRUCTIONS_EDIT_LIMIT_BYTES,
+} from "./user-instructions/userInstructions.js";
+export type {
+  UserInstructionsEol,
+  UserInstructionsImportSource,
+  UserInstructionsReadErrorCode,
+  UserInstructionsReadResult,
+  UserInstructionsWriteParams,
+  UserInstructionsWriteResult,
+} from "./user-instructions/userInstructions.js";
 
 // OutputStyle service — IOutputStyleService is both a type (interface) and value (descriptor).
 export { IOutputStyleService } from "./output-style/outputStyle.js";
+// System-prompt section overrides — same dual type/value shape.
+export { ISystemPromptService } from "./system-prompt/systemPrompt.js";
+export type { SystemPromptSection } from "./system-prompt/systemPrompt.js";
 export type { SessionRealtimePort } from "./session/sessionRealtimePort.js";
 
 // FileWatcher service — IFileWatcherService is both a type (interface) and value (descriptor)
@@ -255,7 +335,7 @@ export {
   type ClientScenesResponse,
 } from "./client-scenes/clientScenes.js";
 export { isValidCronExpr } from "./session/automationCronValidation.js";
-// 闲时任务管理服务（与 automation 服务面独立）；接口/描述符 browser-safe。
+// Off-peak task management service (separate from the automation service surface); interfaces/descriptors are browser-safe.
 export { IOffPeakTaskService } from "./session/offPeakTask.js";
 export type { OffPeakUpdateTaskParams } from "./session/offPeakTask.js";
 
@@ -281,8 +361,69 @@ export {
 
 // Plugins service — IPluginsService is both a type (interface) and value (descriptor)
 export { IPluginsService } from "./plugins/plugins.js";
-// 设置页插件管理薄服务（UI 平台能力面不再直触 zcodeAgentService）
+// Thin Plugin Management service for Settings (the UI platform surface no longer calls zcodeAgentService directly).
 export { IPluginManagementService, withPluginTelemetry } from "./plugins/pluginManagement.js";
+
+// API surface used by packages/ui (upstream 3.16.1). Exports only; no new writers are wired here.
+export {
+  ISourceServerManagementService,
+  type UpdateConnectionProfileInput,
+} from "./source-server-management/sourceServerManagement.js";
+
+export { IProjectService, LEGACY_SINGLE_ROOT_PROJECT_PREFIX } from "#src/project/contract.js";
+export type {
+  ProjectDirectories,
+  ProjectRoot,
+  ProjectTask,
+  ProjectTaskRef,
+  ProjectTree,
+  SaveProjectInput,
+  VirtualProject,
+} from "#src/project/contract.js";
+
+export { ITaskGroupService } from "#src/task-groups/contract.js";
+export type {
+  TaskGroup,
+  TaskGroupColor,
+  TaskGroupStructure,
+  GroupTaskRef,
+  GroupNode,
+  MoveGroupNode,
+} from "#src/task-groups/contract.js";
+
+export { createReadOnlyQuickPromptService } from "#src/quick-prompts/readOnlyService.js";
+export {
+  IQuickPromptService,
+  QUICK_PROMPTS_CHANGED_CHANNEL,
+  QUICK_PROMPT_BODY_MAX_LENGTH,
+  QUICK_PROMPT_COLORS,
+  QUICK_PROMPT_LIST_LIMIT,
+  QUICK_PROMPT_NAME_MAX_LENGTH,
+  QUICK_PROMPT_READ_ONLY_ERROR,
+  findQuickPromptGlobalBlockers,
+  normalizeQuickPromptColor,
+} from "#src/quick-prompts/contract.js";
+export type {
+  QuickPrompt,
+  QuickPromptBody,
+  QuickPromptColor,
+  QuickPromptCreateInput,
+  QuickPromptProjectRef,
+  QuickPromptScope,
+  QuickPromptSnapshot,
+  QuickPromptUpdateInput,
+} from "#src/quick-prompts/contract.js";
+
+export { readProjectCatalog, projectSelectionId } from "#src/project-catalog/index.js";
+export type { ProjectCatalogPort, ProjectCatalogSnapshot } from "#src/project-catalog/contract.js";
+
+export { IRemoteProjectService } from "#src/remote-projects/contract.js";
+export type {
+  RemoteProjectCache,
+  RemoteProjectDirectory,
+  RemoteProjectEntry,
+  RemoteProjectHost,
+} from "#src/remote-projects/contract.js";
 
 // Subagents service — ISubagentsService is both a type (interface) and value (descriptor)
 export { ISubagentsService } from "./subagents/subagents.js";
@@ -319,29 +460,7 @@ export type {
   FeedbackTicketType,
 } from "@zcode/shared";
 
-export { IProjectService, LEGACY_SINGLE_ROOT_PROJECT_PREFIX } from "#src/project/contract.js";
-export type {
-  ProjectTree,
-  ProjectTask,
-  ProjectTaskRef,
-  VirtualProject,
-  ProjectRoot,
-  SaveProjectInput,
-  ProjectDirectories,
-} from "#src/project/contract.js";
-
-export { IRemoteProjectService } from "#src/remote-projects/contract.js";
-export type {
-  RemoteProjectHost,
-  RemoteProjectEntry,
-  RemoteProjectCache,
-  RemoteProjectDirectory,
-} from "#src/remote-projects/contract.js";
-
-export { readProjectCatalog, projectSelectionId } from "#src/project-catalog/index.js";
-export type { ProjectCatalogPort, ProjectCatalogSnapshot } from "#src/project-catalog/contract.js";
-
-// 插件 UI 桥：描述符、参数类型与工厂；App-Provided Tools 另有独立描述符。
+// Plugin UI bridge: descriptors, parameter types, and factories; App-Provided Tools has a separate descriptor.
 export {
   createPluginUiBridgeService,
   createPluginUiAppToolsService,
@@ -385,13 +504,7 @@ export { createHighspeedMockTransport } from "./highspeed/highspeedMockTransport
 
 export { IGenUiService } from "./gen-ui/contract.js";
 export type { GenUiPrepareParams } from "./gen-ui/contract.js";
-
-export { ITaskGroupService } from "#src/task-groups/contract.js";
-export type {
-  TaskGroup,
-  TaskGroupColor,
-  TaskGroupStructure,
-  GroupTaskRef,
-  GroupNode,
-  MoveGroupNode,
-} from "#src/task-groups/contract.js";
+export {
+  DEFINITION_PREVIEW_CHANNEL,
+  IDefinitionPreviewService,
+} from "./definition-preview/index.js";

@@ -2,7 +2,7 @@
 // Saved workflows - frontmatter codec
 // ============================================================
 //
-// 文件形状：
+// File format:
 //
 //     /* zcode-workflow
 //     description: ...
@@ -11,20 +11,20 @@
 //     */
 //     <plain dwf script>
 //
-// 为什么是**块注释**而不是 Markdown 那样的 `---` 围栏：保存的文件扩展名是 `.dwf.ts`，
-// 用户会在编辑器里打开它、也可能直接手改。块注释让整个文件仍是合法 TypeScript，于是高亮、
-// 括号匹配、格式化全都照常工作；`---` 会把文件第一行就变成语法错误。
+// Why use a **block comment** instead of Markdown-style `---` fences? Saved files use the `.dwf.ts` extension, and users open them in
+// editors or may edit them directly. A block comment keeps the whole file valid TypeScript, so syntax highlighting, bracket matching,
+// and formatting keep working; `---` would make the first line a syntax error.
 //
-// body 用 YAML 而不是 JSON：`yaml` 已经是 @zcode/core 的直接依赖（不新增依赖），而手改
-// 一段 YAML 比手改一段带引号和逗号的 JSON 容错得多——这个文件的读者是人。
+// Use YAML rather than JSON for the body: `yaml` is already a direct @zcode/core dependency, and hand-editing YAML is more forgiving
+// than editing JSON full of quotes and commas. This file is read by people.
 
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { SavedWorkflowMetaSchema, type SavedWorkflowMeta } from "@zcode/contracts";
 
-/** frontmatter 的开启标记。必须是文件的第一段非空白内容。 */
+/** Opening marker for frontmatter. Must be the first non-whitespace content in the file. */
 export const SAVED_WORKFLOW_SENTINEL = "/* zcode-workflow";
 
-/** frontmatter 的结束标记：一行只有块注释的收尾符。 */
+/** Closing marker for frontmatter: a line containing only the block-comment terminator. */
 const SAVED_WORKFLOW_TERMINATOR = "*/";
 
 export type SavedWorkflowParseErrorReason =
@@ -39,37 +39,37 @@ export type SavedWorkflowParseResult =
       meta: SavedWorkflowMeta;
       script: string;
       /**
-       * 正文之前有多少行（前导空行 + 起始标记 + YAML + 终止行）。诊断按**文件行**报出来时
-       * 就加它：`fileLine = bodyLine + bodyLineOffset`。编译看的是终止行之后那一段，所以两套行号必然相差
-       * 这个常数；让每个调用点自己数一遍，是「诊断行号对不上文件」这种 bug 的标准产地。
+       * Number of lines before the body (leading blanks + opening marker + YAML + closing line). Add this when reporting diagnostics
+       * using **file lines**: `fileLine = bodyLine + bodyLineOffset`. Compilation sees only the text after the closing line, so the two
+       * line-number systems always differ by this constant; counting it at every call site is a common source of mismatched diagnostics.
        */
       bodyLineOffset: number;
     }
   | { ok: false; reason: SavedWorkflowParseErrorReason; detail: string };
 
 /**
- * 元数据 + 脚本 → 文件正文。
+ * Metadata + script → file body.
  *
- * 脚本**逐字节**放在终止行之后：保存再读回来必须拿到作者写的那一份，否则 run 的脚本哈希
- * 与用户在编辑器里看到的东西对不上（resume 的比对基准正是脚本原文）。
+ * Put the script **byte-for-byte** after the closing line: reading after saving must return exactly what the author wrote. Otherwise,
+ * the run's script hash would differ from what the user sees in the editor (resume compares against the original script).
  */
 export function serializeSavedWorkflow(meta: SavedWorkflowMeta, script: string): string {
-  // 键序固定（description → whenToUse → args）而不是随对象字面量的插入序：保存两次要得到
-  // 逐字节相同的文件，否则每次 SaveWorkflow 都在 git 里造一个无意义的 diff。
+  // Fix key order (description → whenToUse → args) rather than relying on object insertion order: two saves must produce byte-identical
+  // files, or every SaveWorkflow call creates a meaningless git diff.
   const body: Record<string, unknown> = { description: meta.description };
   if (meta.whenToUse !== undefined) body.whenToUse = meta.whenToUse;
   if (meta.args !== undefined) body.args = meta.args;
 
-  // stringify 自带尾换行，所以终止行直接跟在它后面。
+  // stringify includes a trailing newline, so place the closing line directly after it.
   return `${SAVED_WORKFLOW_SENTINEL}\n${stringifyYaml(body)}${SAVED_WORKFLOW_TERMINATOR}\n${script}`;
 }
 
 /**
- * 文件正文 → 元数据 + 脚本。
+ * File body → metadata + script.
  *
- * 四种失败各有各的名字，因为它们要给用户不同的建议：没有 frontmatter 是"这不是一个保存的
- * workflow"，没闭合是"你删掉了一行"，YAML 坏是"缩进错了"，schema 不过是"字段名写错了"。
- * 一个笼统的 "parse error" 三种情况都帮不上忙。
+ * Each of the four failures has its own name because they need different user guidance: missing frontmatter means “this is not a
+ * saved workflow,” an unclosed block means “a line was deleted,” invalid YAML means “indentation is wrong,” and schema failure means
+ * “a field name is wrong.” A generic “parse error” would help with none of these.
  */
 export function parseSavedWorkflow(source: string): SavedWorkflowParseResult {
   const lines = source.split("\n");
@@ -95,7 +95,7 @@ export function parseSavedWorkflow(source: string): SavedWorkflowParseResult {
   }
 
   const bodyText = lines.slice(start + 1, end).join("\n");
-  // 终止行之后的一切都是脚本，原样保留（末行无换行的文件同样成立：slice 给出空数组）。
+  // Everything after the closing line is script, preserved as-is (also works when the file has no trailing newline; slice returns an empty array).
   const script = lines.slice(end + 1).join("\n");
 
   let body: unknown;
@@ -120,6 +120,6 @@ export function parseSavedWorkflow(source: string): SavedWorkflowParseResult {
     };
   }
 
-  // 正文从终止行的下一行开始，所以它前面正好有 `end + 1` 行。
+  // The body starts on the line after the closing line, so exactly `end + 1` lines precede it.
   return { ok: true, meta: parsed.data, script, bodyLineOffset: end + 1 };
 }

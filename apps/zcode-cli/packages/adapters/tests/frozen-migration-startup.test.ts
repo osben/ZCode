@@ -2,13 +2,14 @@ import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SQLITE_MIGRATIONS } from "../src/storage/session-store/migrations.js";
-import {
-  runSqliteSessionMigrations,
-  runSqliteSessionMigrationsAsync,
-} from "../src/storage/session-store/migration-runner.js";
+import { SESSION_DATABASE_MIGRATIONS } from "../src/storage/session-store/fork-migrations.js";
+import { runSqliteSessionMigrationsAsync } from "../src/storage/session-store/migration-runner.js";
 
 const SELECTION = "0020_provider_model_selection";
 const REASONING = "0022_backfilled_session_reasoning";
+// Ledger value written by fork builds whose 0020 SQL comments had been translated.
+const TRANSLATED_SELECTION_CHECKSUM =
+  "31fdaa50915e6ee967de3d8072a7f98bab64da0ac2864275589e4a2740eda788";
 const APPLIED_AT = 1_000;
 const databases: DatabaseSync[] = [];
 const checksum = (sql: string) => createHash("sha256").update(sql.trim()).digest("hex");
@@ -24,7 +25,7 @@ function createFixture() {
   return db;
 }
 function applyFrozen(db: DatabaseSync, before = "9999") {
-  for (const migration of SQLITE_MIGRATIONS.filter((m) => m.id < before)) {
+  for (const migration of SESSION_DATABASE_MIGRATIONS.filter((m) => m.id < before)) {
     if (db.prepare("SELECT 1 FROM schema_migration WHERE id=?").get(migration.id)) continue;
     db.exec(migration.sql);
     db.prepare("INSERT INTO schema_migration VALUES(?,?,?,?)").run(
@@ -134,20 +135,16 @@ afterEach(() => {
 });
 
 describe("Todo144：启动 runner 保持冻结迁移合同", () => {
-  it.each(["sync", "async"])(
-    "%s 启动执行原迁移：所有行、JSON、旧字段、时间与账本一致",
-    async (mode) => {
-      vi.spyOn(Date, "now").mockReturnValue(APPLIED_AT);
-      const oldDb = createFixture();
-      const nextDb = createFixture();
-      for (const db of [oldDb, nextDb]) seedSelections(db);
-      applyFrozen(oldDb);
-      if (mode === "async") await runSqliteSessionMigrationsAsync(nextDb, ":memory:");
-      else await runSqliteSessionMigrations(nextDb, ":memory:");
-      expect(snapshot(nextDb)).toEqual(snapshot(oldDb));
-      expect(nextDb.prepare("SELECT count(*) AS n FROM part").get()?.n).toBe(109);
-    },
-  );
+  it("启动执行原迁移：所有行、JSON、旧字段、时间与账本一致", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(APPLIED_AT);
+    const oldDb = createFixture();
+    const nextDb = createFixture();
+    for (const db of [oldDb, nextDb]) seedSelections(db);
+    applyFrozen(oldDb);
+    await runSqliteSessionMigrationsAsync(nextDb, ":memory:");
+    expect(snapshot(nextDb)).toEqual(snapshot(oldDb));
+    expect(nextDb.prepare("SELECT count(*) AS n FROM part").get()?.n).toBe(109);
+  });
 
   it("已迁移的原账本可反复读取；用户清空新选择后不重迁", async () => {
     const db = createFixture();
@@ -155,9 +152,31 @@ describe("Todo144：启动 runner 保持冻结迁移合同", () => {
     applyFrozen(db);
     db.exec("UPDATE session_entry SET data=json_set(data,'$.modelSelection',NULL)");
     const before = snapshot(db);
-    await runSqliteSessionMigrations(db, ":memory:");
+    await runSqliteSessionMigrationsAsync(db, ":memory:");
     applyFrozen(db);
     expect(snapshot(db)).toEqual(before);
+  });
+
+  it("accepts the 0020 ledger checksum written with translated SQL comments without rerunning or rewriting it", async () => {
+    const db = createFixture();
+    seedSelections(db);
+    const selectionMigration = SQLITE_MIGRATIONS.find((migration) => migration.id === SELECTION);
+    expect(selectionMigration).toBeDefined();
+    db.exec(selectionMigration!.sql);
+    db.prepare("INSERT INTO schema_migration VALUES(?,?,?,?)").run(
+      SELECTION,
+      TRANSLATED_SELECTION_CHECKSUM,
+      selectionMigration!.appVersion,
+      APPLIED_AT,
+    );
+    const partsBefore = db.prepare("SELECT * FROM part ORDER BY id").all();
+
+    await runSqliteSessionMigrationsAsync(db, ":memory:");
+
+    expect(db.prepare("SELECT checksum FROM schema_migration WHERE id=?").get(SELECTION)).toEqual({
+      checksum: TRANSLATED_SELECTION_CHECKSUM,
+    });
+    expect(db.prepare("SELECT * FROM part ORDER BY id").all()).toEqual(partsBefore);
   });
 
   it("checksum 不符仍失败并回滚，不篡改账本", async () => {
@@ -165,7 +184,9 @@ describe("Todo144：启动 runner 保持冻结迁移合同", () => {
     applyFrozen(db);
     db.prepare("UPDATE schema_migration SET checksum='changed' WHERE id=?").run(SELECTION);
     const before = snapshot(db);
-    await expect(runSqliteSessionMigrations(db, ":memory:")).rejects.toThrow(/checksum mismatch/);
+    await expect(runSqliteSessionMigrationsAsync(db, ":memory:")).rejects.toThrow(
+      /checksum mismatch/,
+    );
     expect(snapshot(db)).toEqual(before);
   });
 
@@ -176,11 +197,11 @@ describe("Todo144：启动 runner 保持冻结迁移合同", () => {
       "CREATE TRIGGER reject_part BEFORE UPDATE ON part BEGIN SELECT RAISE(ABORT,'fixture failure'); END",
     );
     const before = snapshot(db);
-    await expect(runSqliteSessionMigrations(db, ":memory:")).rejects.toThrow(/migration/);
+    await expect(runSqliteSessionMigrationsAsync(db, ":memory:")).rejects.toThrow(/migration/);
     expect(snapshot(db)).toEqual(before);
     expect(db.isTransaction).toBe(false);
     db.exec("DROP TRIGGER reject_part");
-    await runSqliteSessionMigrations(db, ":memory:");
+    await runSqliteSessionMigrationsAsync(db, ":memory:");
     expect(db.prepare("SELECT 1 FROM schema_migration WHERE id=?").get(REASONING)).toBeDefined();
   });
 });

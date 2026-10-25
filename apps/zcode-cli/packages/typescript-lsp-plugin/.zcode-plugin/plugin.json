@@ -1,0 +1,32 @@
+{
+  "name": "typescript-lsp",
+  "version": "0.1.0",
+  "description": "TypeScript and JavaScript language server (typescript-language-server) for diagnostics after edits and code navigation.",
+  "author": {
+    "name": "Z.ai"
+  },
+  "license": "MIT",
+  "lspServers": {
+    "typescript": {
+      "command": "typescript-language-server",
+      "args": [
+        "--stdio"
+      ],
+      "extensionToLanguage": {
+        ".ts": "typescript",
+        ".tsx": "typescriptreact",
+        ".js": "javascript",
+        ".jsx": "javascriptreact",
+        ".mts": "typescript",
+        ".cts": "typescript",
+        ".mjs": "javascript",
+        ".cjs": "javascript"
+      },
+      "initializationOptions": {
+        "tsserver": {
+          "useSyntaxServer": "never"
+        }
+      }
+    }
+  }
+}

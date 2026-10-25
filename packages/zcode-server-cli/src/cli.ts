@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Server lifecycle、首装、迁移与卸载命令共享同一 CLI 解析和安全边界。 */
+/* eslint-disable max-lines -- The CLI entry point centrally orchestrates subcommand dispatch and process management; splitting its flow across files would fragment it. */
 import { fork } from "node:child_process";
 import { access, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -319,8 +319,7 @@ async function runServe(
       const descriptorPath = serviceDescriptorPath(layout, descriptor);
       await writeFile(descriptorPath, descriptor.content, "utf8");
       await unregisterLegacyServiceForRoot(layout);
-      // 服务管理器已通过能力探测后，注册失败表示权限、descriptor 或真实系统异常。
-      // 此时必须向调用方返回根因，不能再用 detached fallback 掩盖。
+      // Registration failure must return the real error to the caller; detached fallback is allowed only with explicit opt-out.
       await registerService(descriptor, descriptorPath);
       serviceStarted = true;
     }
@@ -342,11 +341,11 @@ async function runServe(
         },
       );
       child.unref();
-      // Supervisor 是独立 daemon，不需要保留 CLI↔Supervisor 的 IPC 通道；关闭该通道
-      // 才能让一次性的 `serve --daemon` CLI 在返回 ready 后真正退出。
+      // Supervisor is an independent daemon and does not need the CLI↔Supervisor IPC channel to remain open; closing it
+      // lets the one-shot `serve --daemon` CLI actually exit after returning ready.
       child.disconnect();
-      // 子 Supervisor 以 detached + stdio ignore 启动，锁冲突等启动失败时静默退出；
-      // 记录早退信息让等待循环立即报告真实原因。
+      // The child Supervisor starts detached with stdio ignored and exits silently on startup failures such as lock conflicts;
+      // record early-exit information so the wait loop reports the actual cause immediately.
       child.once("exit", (code, signal) => {
         childEarlyExit = { code, signal };
       });
@@ -427,10 +426,10 @@ async function runServe(
   try {
     status = await waitForSupervisorReady(supervisor);
   } catch (error) {
-    // Core 进入 crash-loop 时不能把错误直接抛给 CLI 顶层返回：control
-    // socket 仍持有事件循环导致前台进程假死；用户 Ctrl+C（此时信号 handler 尚未注册，
-    // 走默认强杀）后锁文件与 socket 残留，后续 serve 永远报 "already running"。
-    // 启动失败必须先停 Supervisor 收口锁与 socket，再上抛错误。
+    // When Core enters a crash loop, do not throw directly to the top-level CLI handler: the control
+    // socket still holds the event loop and leaves the foreground process hung. If the user presses Ctrl+C (before a signal handler is registered,
+    // so default force-kill behavior runs), the lock file and socket remain, and later serve commands report "already running" forever.
+    // On startup failure, stop Supervisor and close the lock/socket before rethrowing the error.
     await supervisor.stop("startup-failed").catch(() => undefined);
     throw error;
   }
@@ -511,8 +510,8 @@ async function runControl(
       ) {
         throw error;
       }
-      // Supervisor 停止时会先关闭 control socket，再由 CLI 落盘 stopped 状态。
-      // 重复 stop 发生在这个窗口后不应因为 socket 不存在而变成失败。
+      // During Supervisor shutdown, the control socket closes before the CLI persists the stopped state.
+      // A repeated stop during this window must not fail just because the socket is gone.
       result = persisted.status ?? createStoppedServerStatus(ZCODE_VERSION);
     } else {
       throw error;
@@ -538,8 +537,8 @@ async function runUninstall(
   if (first !== "DELETE") throw new Error("Uninstall cancelled");
   const second = await (io.confirm?.("Type DELETE again to confirm: ") ?? Promise.resolve(""));
   if (second !== "DELETE") throw new Error("Uninstall cancelled");
-  // 不能把同一个 --server-root 同时作为 allowlist 根和删除目标：包含关系
-  // 恒成立，任何绝对目录都能被卸载流程递归删除。停止服务前必须先验证安装归属。
+  // Do not use the same --server-root as both the allowlist root and deletion target: containment always succeeds,
+  // allowing uninstall to recursively delete any absolute directory. Verify installation ownership before stopping the service.
   const ownership = await validateServerInstallOwnership(layout);
   try {
     await runControl("confirm-uninstall", io, json, { confirmation: "DELETE" }, layout);
@@ -608,9 +607,9 @@ async function finishUninstall(
     const preservedPaths = (await readdir(ownership.canonicalServerRoot))
       .filter((entry) => entry !== "run")
       .sort();
-    // server root 允许用户显式指定，不能递归删除未知内容。卸载只清理上面的
-    // ZCode allowlist，并把保留项写入结果供用户审计。先落盘 marker，再释放 lock，
-    // 让并发 Supervisor 在删除 run 目录的最后窗口也会 fail-closed。
+    // The server root may be explicitly chosen by the user, so do not recursively delete unknown content. Uninstall cleans only the ZCode
+    // allowlist above and records retained items in the result for audit. Persist the marker before releasing the lock,
+    // so a concurrent Supervisor also fails closed during the final window when the run directory is being deleted.
     await writeFile(
       layout.uninstalledFile,
       `${JSON.stringify({ uninstalled: true, uninstalledAt: Date.now(), version: ZCODE_VERSION, preservedPaths }, null, 2)}\n`,

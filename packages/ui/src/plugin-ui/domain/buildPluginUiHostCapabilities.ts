@@ -6,26 +6,27 @@ import {
   buildMcpAppsCspExperimentalCapability,
 } from "@zcode/shared/mcp-apps";
 
-/** 宿主实例真实可用的交互；缺省项对应的能力不声明，插件据此降级。 */
+/** Interactions actually available to the host instance; capabilities for absent items are not declared, so plugins degrade accordingly. */
 export interface PluginUiHostCapabilityInput {
   canSample?: boolean;
   canSendFollowUpMessage: boolean;
   canUpdateModelContext: boolean;
   canSetWidgetState: boolean;
-  /** 宿主能代理 resources/subscribe 并把 server 通知路由回本实例。 */
+  /** The host can proxy resources/subscribe and route server notifications back to this instance. */
   canSubscribeResources: boolean;
-  /** 平台有 saveFile（桌面）才声明 downloadFile。 */
+  /** downloadFile is declared only when the platform has saveFile (desktop). */
   canDownloadFile: boolean;
-  /** 常驻面板实例：宣告 `experimental["zcode/surface"]: { id }`，页面据此判断自己运行在面板里。 */
+  /** Persistent surface instance: declares `experimental["zcode/surface"]: { id }` so the page can tell it is running in a pane. */
   surfaceId?: string;
   /** 窗口恢复键，仅接受宿主派生的不透明摘要。 */
   surfaceStateKey?: string;
 }
 
 /**
- * hostCapabilities 的唯一构造点。声明与 handler 一一对应：没有会话动作绑定就不声明 message，没有 composer 就不声明
- * updateModelContext。ZCode 扩展（widgetState、resourceSubscribe、surface、csp 放宽）一律放 `experimental["zcode/…"]`，
- * 官方 SDK 的 zod 会剥掉标准位之外的未知能力键。
+ * Single construction point for hostCapabilities. Declarations map one-to-one to handlers: without a
+ * session action binding, message is not declared; without a composer, updateModelContext is not declared.
+ * ZCode extensions (widgetState, resourceSubscribe, surface, relaxed csp) all go in
+ * `experimental["zcode/…"]`; the official SDK's zod strips unknown capability keys outside the standard slots.
  */
 export function buildPluginUiHostCapabilities(
   input: PluginUiHostCapabilityInput,
@@ -37,7 +38,7 @@ export function buildPluginUiHostCapabilities(
     logging: {},
     ...(input.canSample ? { sampling: {} } : {}),
     ...(input.canDownloadFile ? { downloadFile: {} } : {}),
-    // image 随 text 一起声明（png / jpeg / webp，单张 ≤ 4 MiB）。
+    // image is declared alongside text (png / jpeg / webp, single image ≤ 4 MiB).
     ...(input.canSendFollowUpMessage ? { message: { text: {}, image: {} } } : {}),
     ...(input.canUpdateModelContext
       ? { updateModelContext: { text: {}, structuredContent: {}, image: {} } }

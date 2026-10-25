@@ -6,6 +6,8 @@ import type {
   GitChangeKind,
   GitDiffResult,
   GitHeadRefType,
+  GitWorktreeEntry,
+  GitWorktreeMutationIssue,
 } from "@zcode/shared";
 import {
   GIT_UNTRACKED_STAT_CHUNK_BYTES,
@@ -68,8 +70,8 @@ export function parseGitBranchMutationIssues(
   const lines = toNormalizedLines(detail ?? "");
   const normalizedDetail = detail?.toLowerCase() ?? "";
 
-  // 分支切换是否被阻塞，最终以 Git 原生命令的真实报错为准。
-  // 这里集中把常见 stderr 归一成稳定 issue code，避免 UI 直接依赖易变的原始文案。
+  // Whether a branch switch is blocked is ultimately determined by Git's actual error.
+  // Normalize common stderr messages into stable issue codes here so the UI does not depend on changeable raw wording.
 
   const trackedOverwritePaths = extractIndentedPaths(
     lines,
@@ -166,14 +168,134 @@ export function parseGitBranchMutationIssues(
   ];
 }
 
+export function toInvalidWorktreeBranchNameIssue(detail?: string | null): GitWorktreeMutationIssue {
+  return {
+    code: "invalid-branch-name",
+    message: "Branch name is invalid.",
+    detail: detail?.trim() || null,
+  };
+}
+
+export function parseGitWorktreeIssues(
+  result: GitCommandExecutionResult,
+): GitWorktreeMutationIssue[] {
+  const detail = result.stderr.trim() || result.stdout.trim() || null;
+  const normalizedDetail = detail?.toLowerCase() ?? "";
+
+  // Same principle as parseGitBranchMutationIssues: blockage is decided by Git's actual
+  // error, and common stderr wordings are normalized into stable issue codes for the UI.
+
+  if (normalizedDetail.includes("a branch named") && normalizedDetail.includes("already exists")) {
+    return [
+      {
+        code: "branch-already-exists",
+        message: "Branch already exists.",
+        detail,
+      },
+    ];
+  }
+
+  if (normalizedDetail.includes("is already used by worktree at")) {
+    return [
+      {
+        code: "branch-in-other-worktree",
+        message: "Branch is already checked out in another worktree.",
+        detail,
+      },
+    ];
+  }
+
+  if (normalizedDetail.includes("invalid reference:")) {
+    return [
+      {
+        code: "target-branch-not-found",
+        message: "Base branch was not found.",
+        detail,
+      },
+    ];
+  }
+
+  if (normalizedDetail.includes("already exists")) {
+    return [
+      {
+        code: "target-path-exists",
+        message: "Target path already exists.",
+        detail,
+      },
+    ];
+  }
+
+  return [
+    {
+      code: "unknown",
+      message: "Git could not create the worktree.",
+      detail,
+    },
+  ];
+}
+
+export function parseWorktreeListPorcelain(
+  stdout: string,
+): Array<Omit<GitWorktreeEntry, "isMain" | "isCurrent">> {
+  const entries: Array<Omit<GitWorktreeEntry, "isMain" | "isCurrent">> = [];
+  let entry: Omit<GitWorktreeEntry, "isMain" | "isCurrent"> | null = null;
+
+  const finishEntry = () => {
+    if (entry && entry.path.length > 0) {
+      entries.push(entry);
+    }
+    entry = null;
+  };
+
+  // 非 -z porcelain 会对部分路径做 C-quote，按行解析也无法表示路径中的换行。
+  // `-z` 以 NUL 分隔属性记录，因此可逐字保留 worktree 路径。
+  for (const record of stdout.split("\0")) {
+    if (record.length === 0) {
+      finishEntry();
+      continue;
+    }
+
+    if (record.startsWith("worktree ")) {
+      finishEntry();
+      entry = {
+        path: record.slice("worktree ".length),
+        headCommitHash: null,
+        branchName: null,
+        isBare: false,
+        isDetached: false,
+      };
+      continue;
+    }
+
+    if (!entry) {
+      continue;
+    }
+
+    if (record.startsWith("HEAD ")) {
+      entry.headCommitHash = record.slice("HEAD ".length).trim() || null;
+    } else if (record.startsWith("branch ")) {
+      const ref = record.slice("branch ".length).trim();
+      const headsPrefix = "refs/heads/";
+      entry.branchName = ref.startsWith(headsPrefix) ? ref.slice(headsPrefix.length) : ref;
+    } else if (record === "bare") {
+      entry.isBare = true;
+    } else if (record === "detached") {
+      entry.isDetached = true;
+    }
+  }
+
+  finishEntry();
+  return entries;
+}
+
 export function ensureGitCommandSucceeded(
   label: string,
   result: GitCommandExecutionResult,
   allowedExitCodes: number[] = [0],
 ): GitCommandExecutionResult {
   if (result.timedOut) {
-    // timeout 阈值和进程清理总耗时不是一回事；日志里同时保留两者，
-    // 避免把“15s 触发超时、随后等待清理”的场景误读成真正配置了更长超时。
+    // The timeout threshold and total process-cleanup time are different; log both
+    // to avoid misreading "timeout triggered at 15s, then cleanup waited" as a longer configured timeout.
     const timeoutMs = result.timeoutMs ?? result.durationMs;
     const details = [`elapsed=${result.durationMs}ms`];
     if (result.timeoutElapsedMs !== undefined) {
@@ -257,8 +379,8 @@ export function parseStatusPorcelain(stdout: string): {
   let ahead = 0;
   let behind = 0;
 
-  // `git status --porcelain=v2 -z` 的价值在于格式稳定，不受本地语言影响。
-  // 这里集中做一次解析，把 branch/header/rename/unmerged 等低层细节都挡在 repo 层里。
+  // `git status --porcelain=v2 -z` has a stable format that is independent of the local language.
+  // Parse it once here and keep low-level branch/header/rename/unmerged details inside the repo layer.
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index]!;
     if (record.startsWith("# ")) {
@@ -434,7 +556,7 @@ async function countUntrackedFileLines(absolutePath: string, buffer: Buffer): Pr
     let newlines = 0;
     let lastByte = 10;
     while (totalBytes <= GIT_UNTRACKED_STAT_MAX_BYTES) {
-      // 文件可能在 stat 后增长；实际读取也必须受预算约束，额外一字节只用于识别越界。
+      // A file may grow after stat; constrain the actual read to the budget too, with one extra byte used only to detect overflow.
       const length = Math.min(buffer.length, GIT_UNTRACKED_STAT_MAX_BYTES + 1 - totalBytes);
       const { bytesRead } = await file.read(buffer, 0, length, null);
       if (bytesRead === 0) return newlines + (lastByte === 10 ? 0 : 1);
@@ -452,6 +574,13 @@ async function countUntrackedFileLines(absolutePath: string, buffer: Buffer): Pr
   }
 }
 
+// A zero-byte regular file has no line count but is a genuine added file; the Review list must keep it
+// instead of treating +0/-0 as "nothing reviewable" (ISSUE-042). Binary, oversized and unreadable files stay excluded.
+async function isEmptyRegularFile(absolutePath: string): Promise<boolean> {
+  const info = await stat(absolutePath);
+  return info.isFile() && info.size === 0;
+}
+
 export async function buildUntrackedStats(
   repoRoot: string,
   entries: GitStatusEntry[],
@@ -459,18 +588,21 @@ export async function buildUntrackedStats(
   const stats = new Map<string, GitLineStat>();
   const untrackedEntries = entries.filter((entry) => entry.isUntracked);
   let nextIndex = 0;
-  // 并发 readFile 全部未跟踪文件、读取后才识别二进制会让 Host 瞬间分配数 GiB。
-  // 固定 worker 各复用一个小缓冲，逐文件限量读取；大文件仍保留变更条目，只跳过行数统计。
+  // Reading every untracked file concurrently and detecting binary content only after the read could make the Host allocate several GB at once.
+  // Reuse one small buffer per fixed worker and read each file with a limit; keep large files in the change list and skip only their line-count statistics.
   const worker = async () => {
     const buffer = Buffer.allocUnsafe(GIT_UNTRACKED_STAT_CHUNK_BYTES);
     while (nextIndex < untrackedEntries.length) {
       const entry = untrackedEntries[nextIndex++]!;
       const absolutePath = resolve(repoRoot, ...entry.path.split("/"));
       try {
-        stats.set(entry.path, {
-          added: await countUntrackedFileLines(absolutePath, buffer),
-          removed: 0,
-        });
+        const added = await countUntrackedFileLines(absolutePath, buffer);
+        stats.set(
+          entry.path,
+          added === 0 && (await isEmptyRegularFile(absolutePath))
+            ? { added, removed: 0, isEmptyFile: true }
+            : { added, removed: 0 },
+        );
       } catch {
         stats.set(entry.path, { added: 0, removed: 0 });
       }
@@ -527,10 +659,10 @@ export async function buildUntrackedTextDiffResult(
   try {
     const content = await readFile(absolutePath);
 
-    // 未跟踪文件的 patch 不能依赖 `git diff --no-index` 生成。
-    // 这类 patch 在 Windows 上会带入平台相关头部，而 `@pierre/diffs` 对某些 `diff --git`
-    // 头部格式本身也有兼容问题，最终会在 UI 展开时直接抛异常。
-    // 这里统一退回最稳定的 unified diff 形态，只保留单文件预览真正需要的 `---/+++ / @@` 信息。
+    // Do not rely on `git diff --no-index` to generate patches for untracked files.
+    // These patches include platform-specific headers on Windows, and `@pierre/diffs` also has compatibility issues with some `diff --git`
+    // header formats, causing the UI to throw when expanded.
+    // Use the most stable unified diff form instead, keeping only the `---/+++ / @@` information needed for a single-file preview.
     if (content.includes(0)) {
       return {
         path: absolutePath,

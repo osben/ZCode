@@ -2,7 +2,7 @@ import type { ConfigResult } from "@zcode/adapters/config";
 import { GEN_UI_OUTPUT_ROOT_ENV } from "@zcode/shared/node";
 import { resolveInitialModelSelection, type ModelSelectionOptions } from "@zcode/provider";
 import { resolveBashTimeoutPolicy, type AgentProfile, type AgentRuntimeConfig } from "@zcode/core";
-import { type BuiltInSubagentModelSelectionOverrides } from "@zcode/shared";
+import { incognitoExcludes, type BuiltInSubagentModelSelectionOverrides } from "@zcode/shared";
 import {
   type CollaborationMode,
   type HookConfigSource,
@@ -36,6 +36,10 @@ export function resolveAppRuntimeConfig(input: {
   configResult: ConfigResult;
   options: ZCodeAppOptions;
   persistedMode?: CollaborationMode;
+  /** System-prompt section overrides loaded from disk (docs/system-prompt-overrides.md). */
+  persistedSystemPromptOverrides?: AgentRuntimeConfig["systemPromptOverrides"];
+  /** Active output style loaded from disk (docs/output-styles-settings.md); explicit session config wins. */
+  persistedOutputStyle?: AgentRuntimeConfig["outputStyle"];
   builtInMcpServers?: Record<string, McpServerConfig>;
   builtInSubagentModelSelectionOverrides?: BuiltInSubagentModelSelectionOverrides;
   pluginHooks?: Partial<Record<HookEventName, HookMatcherConfig[]>>;
@@ -52,6 +56,8 @@ export function resolveAppRuntimeConfig(input: {
     configResult,
     options,
     persistedMode,
+    persistedSystemPromptOverrides,
+    persistedOutputStyle,
     builtInMcpServers,
     pluginMcpServers,
     pluginRuntimeFeatures,
@@ -61,8 +67,10 @@ export function resolveAppRuntimeConfig(input: {
     workspaceIdentity,
   } = input;
   const userInstructions = options.runtimeConfig?.userInstructions ?? { workingDirectory };
+  // Incognito profile (docs/design/v2/incognito-session.md): each excluded capability wins over every config source.
+  const incognito = options.runtimeConfig?.incognito;
   const registrySelection = resolveInitialRegistrySelection(options);
-  // 恢复历史不等于开始执行：失效/缺失选择保持未绑定，不能借 configured default 补齐。
+  // Restoring history does not start execution: an invalid or missing selection remains unbound and must not be filled from the configured default.
   const initialModelSelection = options.resume
     ? registrySelection?.selection
     : (options.runtimeConfig?.modelSelection ?? registrySelection?.selection);
@@ -88,12 +96,14 @@ export function resolveAppRuntimeConfig(input: {
               }
             : {}),
         };
-  // Protocol session/create 传入的 mcp.servers 只包含 UI MCP 设置里的用户配置，
-  // 不包含插件注册的 MCP。宿主内建 server 最后合并并保留其 identity，避免用户或第三方
-  // 用同名配置劫持 mcp__node_repl__*；普通 plugin MCP 仍允许显式用户配置覆盖。
+  // mcp.servers passed to Protocol session/create contains only user config from UI MCP settings,
+  // not MCP servers registered by plugins. Merge the host built-in server last and preserve its identity so user or third-party
+  // same-name config cannot hijack mcp__node_repl__*; explicit user config may still override ordinary plugin MCP servers.
   const configuredMcpServers = {
     ...pluginMcpServers,
-    ...(options.runtimeConfig?.mcp?.servers ?? configResult.config.mcp.servers),
+    ...(incognitoExcludes(incognito, "mcp")
+      ? {}
+      : (options.runtimeConfig?.mcp?.servers ?? configResult.config.mcp.servers)),
     ...builtInMcpServers,
   };
   const trustedOfficialCuaServerNames = resolveTrustedOfficialCuaServerNames(
@@ -116,8 +126,21 @@ export function resolveAppRuntimeConfig(input: {
   );
   const runtimeBuiltInModelSelectionOverrides =
     options.runtimeConfig?.subagents?.builtInModelSelectionOverrides ?? {};
+  // Attach the parent workspace reference to the execution-worktree fact so the env bullet can name
+  // it (spec: execution-worktree-model-context.md). options.runtimeConfig.workingDirectory is still
+  // the parent path here; the local workingDirectory below is the (possibly worktree) execution cwd.
+  const executionWorktreeFact = options.runtimeConfig?.executionWorktree;
+  const executionWorktreeWorkspacePath = options.runtimeConfig?.workingDirectory;
   const runtimeConfig: AgentRuntimeConfig = {
     ...options.runtimeConfig,
+    ...(executionWorktreeFact && executionWorktreeWorkspacePath
+      ? {
+          executionWorktree: {
+            ...executionWorktreeFact,
+            workspacePath: executionWorktreeWorkspacePath,
+          },
+        }
+      : {}),
     genUiOutputRoot: (options.env ?? process.env)[GEN_UI_OUTPUT_ROOT_ENV],
     bashTimeoutPolicy:
       options.runtimeConfig?.bashTimeoutPolicy ??
@@ -137,6 +160,12 @@ export function resolveAppRuntimeConfig(input: {
       }),
     runtimeFeatures: pluginRuntimeFeatures,
     language: options.runtimeConfig?.language,
+    systemPromptOverrides: incognitoExcludes(incognito, "systemPromptOverrides")
+      ? undefined
+      : (options.runtimeConfig?.systemPromptOverrides ?? persistedSystemPromptOverrides),
+    outputStyle: incognitoExcludes(incognito, "outputStyle")
+      ? undefined
+      : (options.runtimeConfig?.outputStyle ?? persistedOutputStyle),
     titleGeneration,
     workingDirectory,
     additionalDirectories: options.additionalDirectories,
@@ -160,25 +189,36 @@ export function resolveAppRuntimeConfig(input: {
       servers: autoConnectMcpServers,
       trustedOfficialCuaServerNames: [...trustedOfficialCuaServerNames],
     },
-    hooks: mergeRuntimeHooks(
-      options.runtimeConfig?.hooks
-        ? withHookConfigSource(options.runtimeConfig.hooks, { kind: "internal" })
-        : configResult.config.hooks,
-      input.pluginHooks,
-    ),
+    hooks: incognitoExcludes(incognito, "hooks")
+      ? undefined
+      : mergeRuntimeHooks(
+          options.runtimeConfig?.hooks
+            ? withHookConfigSource(options.runtimeConfig.hooks, { kind: "internal" })
+            : configResult.config.hooks,
+          input.pluginHooks,
+        ),
     subagents: {
       ...options.runtimeConfig?.subagents,
       enabled: options.runtimeConfig?.subagents?.enabled ?? configResult.config.features.subagent,
       outputRootDir: options.runtimeConfig?.subagents?.outputRootDir ?? subagentOutputRootDir,
-      builtInModelSelectionOverrides: {
-        ...(input.builtInSubagentModelSelectionOverrides ?? {}),
-        ...runtimeBuiltInModelSelectionOverrides,
-      },
-      profiles: [...(options.runtimeConfig?.subagents?.profiles ?? []), ...subagentProfiles],
+      // customAgents off must drop the model overrides with the profiles: built-in agents are
+      // still available, but a user-configured Explore/general-purpose model override is a
+      // custom-agent setting and would otherwise keep reaching them (incognito = default models).
+      builtInModelSelectionOverrides: incognitoExcludes(incognito, "customAgents")
+        ? {}
+        : {
+            ...(input.builtInSubagentModelSelectionOverrides ?? {}),
+            ...runtimeBuiltInModelSelectionOverrides,
+          },
+      profiles: incognitoExcludes(incognito, "customAgents")
+        ? []
+        : [...(options.runtimeConfig?.subagents?.profiles ?? []), ...subagentProfiles],
     },
     memory: {
       cliStorageRoot,
-      enabled: options.runtimeConfig?.memory?.enabled ?? configResult.config.features.memory,
+      enabled: incognitoExcludes(incognito, "memory")
+        ? false
+        : (options.runtimeConfig?.memory?.enabled ?? configResult.config.features.memory),
       ...(options.runtimeConfig?.memory?.extractionEnabled === undefined
         ? {}
         : { extractionEnabled: options.runtimeConfig.memory.extractionEnabled }),

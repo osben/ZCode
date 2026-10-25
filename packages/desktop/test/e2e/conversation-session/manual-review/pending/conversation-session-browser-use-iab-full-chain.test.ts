@@ -18,9 +18,7 @@ import {
   setInputValueByTestIdDom,
   waitForDefaultWorkspaceReady,
 } from "../../../helpers/desktop-app.js";
-import {
-  waitForUpstreamRequest,
-} from "../../../helpers/conversation-session-network.js";
+import { waitForUpstreamRequest } from "../../../helpers/conversation-session-network.js";
 import {
   assertToolCallNotFailedByToolCallId,
   waitForSuccessfulToolCallByToolCallId,
@@ -118,10 +116,7 @@ describe("Browser Use Desktop IAB 全链 E2E", () => {
     await waitForUpstreamRequest(
       {
         includes: [PROMPT_MARKER, "E2E_BROWSER_FIXTURE_URL:", TOOL_NAME],
-        excludes: [
-          "Generate a concise title",
-          "CRITICAL: Respond with TEXT ONLY",
-        ],
+        excludes: ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"],
       },
       "首轮请求没有暴露 Browser Use Node REPL 工具或 fixture marker",
       60000,
@@ -143,11 +138,7 @@ describe("Browser Use Desktop IAB 全链 E2E", () => {
           FIXTURE_TITLE,
           "Submit",
         ],
-        excludes: [
-          SUBMITTED_TEXT,
-          "Generate a concise title",
-          "CRITICAL: Respond with TEXT ONLY",
-        ],
+        excludes: [SUBMITTED_TEXT, "Generate a concise title", "CRITICAL: Respond with TEXT ONLY"],
       },
       "Browser bootstrap/goto/domSnapshot 没有真实进入 provider continuation",
       90000,
@@ -163,8 +154,9 @@ describe("Browser Use Desktop IAB 全链 E2E", () => {
       ACTION_TOOL_CALL_ID,
     );
 
-    // 修复回归：旧 CUA type 依赖 Electron 当前焦点，网页 click 与 type 间若 Composer
-    // autofocus 抢焦，文本会串进宿主。这里主动制造该时序，Browser type 仍必须只写 guest。
+    // Regression fix: the old CUA type depended on Electron's current focus; between the page click and the type,
+    // if Composer autofocus stole focus, text would leak into the host. Here we deliberately create that timing;
+    // Browser type must still write only to the guest.
     const composerAtFocusSteal = await focusEmptyV4Composer();
     expect(composerAtFocusSteal.focused).toBe(true);
     expect(composerAtFocusSteal.text).toBe("");
@@ -175,16 +167,8 @@ describe("Browser Use Desktop IAB 全链 E2E", () => {
     );
     await waitForUpstreamRequest(
       {
-        includes: [
-          PROMPT_MARKER,
-          ACTION_TOOL_CALL_ID,
-          ACTIONABILITY_RESULT_MARKER,
-          SUBMITTED_TEXT,
-        ],
-        excludes: [
-          "Generate a concise title",
-          "CRITICAL: Respond with TEXT ONLY",
-        ],
+        includes: [PROMPT_MARKER, ACTION_TOOL_CALL_ID, ACTIONABILITY_RESULT_MARKER, SUBMITTED_TEXT],
+        excludes: ["Generate a concise title", "CRITICAL: Respond with TEXT ONLY"],
       },
       "Browser locator fill/click/screenshot 结果没有进入 provider continuation",
       90000,
@@ -221,8 +205,9 @@ describe("Browser Use Desktop IAB 全链 E2E", () => {
     expect(guest.devicePixelRatio).toBe(1);
     expect((await readV4ComposerSnapshot()).text).toBe("");
 
-    // 模型主动 setViewportSize 的布局收敛期不应误报；最后一个 Browser command
-    // 刚结束时 operationUntil 仍有效，立即执行用户 resize，避免慢机跨过 active deadline。
+    // The layout convergence window after the model's own setViewportSize must not produce a false positive; right
+    // after the last Browser command finishes, operationUntil is still valid, so run the user resize immediately to
+    // keep slow machines from crossing the active deadline.
     expect(activeSurface.warningCount).toBe(0);
     await setInputValueByTestIdDom(TID_BROWSER_RESPONSIVE_WIDTH_INPUT, "380");
     const warningSurface = await waitForResizeWarning();
@@ -237,54 +222,37 @@ describe("Browser Use Desktop IAB 全链 E2E", () => {
     ]);
     await assertBrowserUseImageGalleryPreview();
 
-    // 修复回归：切到无 tab 的 B 时 A 的 webview 必须后台保活；切回 A 时必须主动展开，
-    // 不能沿用 B 的 collapsed 状态或创建新的 guest。
+    // Regression fix: when switching to B which has no tab, A's webview must stay alive in the background; when
+    // switching back to A it must expand proactively, not reuse B's collapsed state or create a new guest.
     await startNewV4Draft();
     const backgroundSurface = await readBrowserSurfaceSnapshot();
     expect(backgroundSurface.browserPaneVisible).toBe(false);
-    expect(
-      backgroundSurface.webviews.some(
-        (item) => item.id === originalWebContentsId,
-      ),
-    ).toBe(true);
-    const backgroundGuest = await waitForGuestSnapshot(
-      originalWebContentsId as number,
-    );
+    expect(backgroundSurface.webviews.some((item) => item.id === originalWebContentsId)).toBe(true);
+    const backgroundGuest = await waitForGuestSnapshot(originalWebContentsId as number);
     expect(backgroundGuest.status).toBe(SUBMITTED_TEXT);
 
     await selectV4TaskById(taskId, 30000);
     const restoredSurface = await waitForActiveBrowserSurface();
-    expect(
-      restoredSurface.webviews.some(
-        (item) => item.id === originalWebContentsId,
-      ),
-    ).toBe(true);
-    const restoredGuest = await waitForGuestSnapshot(
-      originalWebContentsId as number,
-    );
+    expect(restoredSurface.webviews.some((item) => item.id === originalWebContentsId)).toBe(true);
+    const restoredGuest = await waitForGuestSnapshot(originalWebContentsId as number);
     expect(restoredGuest.url).toBe(fixtureUrl);
     expect(restoredGuest.status).toBe(SUBMITTED_TEXT);
 
-    // 越界草稿保留但不得部分应用到真实 guest。
+    // The out-of-bounds draft is kept but must not be partially applied to the real guest.
     await setInputValueByTestIdDom(TID_BROWSER_RESPONSIVE_HEIGHT_INPUT, "2161");
     const invalidDraft = await readResponsiveDraftSnapshot();
     expect(invalidDraft.heightInput).toBe("2161");
     expect(invalidDraft.heightAriaInvalid).toBe("true");
     expect(invalidDraft.appliedHeight).toBe(667);
-    const invalidGuest = await waitForGuestSnapshot(
-      originalWebContentsId as number,
-    );
+    const invalidGuest = await waitForGuestSnapshot(originalWebContentsId as number);
     expect(invalidGuest.height).toBe(667);
 
     await setInputValueByTestIdDom(TID_BROWSER_RESPONSIVE_HEIGHT_INPUT, "1200");
     await waitForResponsiveSize(380, 1200);
-    const resizedGuest = await waitForGuestSnapshot(
-      originalWebContentsId as number,
-      {
-        height: 1200,
-        width: 380,
-      },
-    );
+    const resizedGuest = await waitForGuestSnapshot(originalWebContentsId as number, {
+      height: 1200,
+      width: 380,
+    });
     expect(resizedGuest.devicePixelRatio).toBe(1);
 
     await clickTestIdByWebDriver(TID_BROWSER_RESPONSIVE_ZOOM_SELECT);
@@ -299,22 +267,16 @@ describe("Browser Use Desktop IAB 全链 E2E", () => {
     for (const zoomLevel of [2, -2]) {
       await setDesktopZoomLevel(zoomLevel);
       const zoomSurface = await waitForDesktopZoomSurface(zoomLevel);
-      const zoomGuest = await waitForGuestSnapshot(
-        originalWebContentsId as number,
-        {
-          height: 1200,
-          width: 380,
-        },
-      );
+      const zoomGuest = await waitForGuestSnapshot(originalWebContentsId as number, {
+        height: 1200,
+        width: 380,
+      });
       expect(zoomGuest.devicePixelRatio).toBe(1);
       expect(zoomGuest.zoomFactor).toBeCloseTo(1, 4);
       expect(zoomSurface.responsiveWidth).toBe(380);
       expect(zoomSurface.responsiveHeight).toBe(1200);
       expect(zoomSurface.zoomValue?.replace("%", "")).toBe("50");
-      expect(zoomSurface.webviews[0]?.compositorScale).toBeCloseTo(
-        Math.pow(1.1, zoomLevel),
-        4,
-      );
+      expect(zoomSurface.webviews[0]?.compositorScale).toBeCloseTo(Math.pow(1.1, zoomLevel), 4);
       expect(zoomSurface.webviews[0]?.layoutScale).toBeCloseTo(
         zoomLevel < 0 ? 1 / Math.pow(1.1, zoomLevel) : 1,
         4,
@@ -322,15 +284,12 @@ describe("Browser Use Desktop IAB 全链 E2E", () => {
     }
     await setDesktopZoomLevel(0);
 
-    // cold restart 只恢复 conversation 图片事实；IAB tab 本身不承诺跨进程恢复。
+    // A cold restart only restores conversation image facts; the IAB tab itself promises no cross-process recovery.
     await browser.reloadSession();
     await waitForRendererAfterReloadSession();
     await waitForDefaultWorkspaceReady(60000);
     await selectV4TaskById(taskId, 60000);
-    const imagesAfterColdRestore = await waitForConversationImageFacts(
-      3,
-      60000,
-    );
+    const imagesAfterColdRestore = await waitForConversationImageFacts(3, 60000);
     expect(imagesAfterColdRestore).toEqual(imagesBeforeSwitch);
   });
 });
@@ -440,20 +399,14 @@ async function readBrowserSurfaceSnapshot(): Promise<BrowserSurfaceSnapshot> {
           rect.height > 0
         );
       };
-      const viewport = document.querySelector<HTMLElement>(
-        `[data-testid="${viewportTestId}"]`,
-      );
+      const viewport = document.querySelector<HTMLElement>(`[data-testid="${viewportTestId}"]`);
       const scaledFrame = document.querySelector<HTMLElement>(
         `[data-testid="${scaledFrameTestId}"]`,
       );
-      const zoom = document.querySelector<HTMLElement>(
-        `[data-testid="${zoomTestId}"]`,
-      );
+      const zoom = document.querySelector<HTMLElement>(`[data-testid="${zoomTestId}"]`);
       const scaledFrameRect = scaledFrame?.getBoundingClientRect() ?? null;
       const webviews = Array.from(
-        document.querySelectorAll<HTMLElement>(
-          `[data-testid="${webviewTestId}"]`,
-        ),
+        document.querySelectorAll<HTMLElement>(`[data-testid="${webviewTestId}"]`),
       ).map((element) => {
         const webview = element as HTMLElement & {
           getWebContentsId?: () => number;
@@ -475,25 +428,20 @@ async function readBrowserSurfaceSnapshot(): Promise<BrowserSurfaceSnapshot> {
         };
       });
       return {
-        // 修复原因：旧 TID_BROWSER_PANE 已无生产挂载点，继续拿它判断会出现
-        // “webview 可见但 pane 不可见”的假失败。responsive viewport 是当前
-        // Browser surface 的真实可见容器，也能区分任务切换后的 collapsed 状态。
+        // Reason for the fix: the old TID_BROWSER_PANE has no production mount point anymore, so judging with it
+        // produces the false failure "webview visible but pane not visible". The responsive viewport is the real
+        // visible container of the current Browser surface, and it also distinguishes the collapsed state after a
+        // task switch.
         browserPaneVisible: isVisible(viewport),
-        responsiveHeight:
-          Number(viewport?.dataset.responsiveHeight ?? "") || null,
-        responsiveScale:
-          Number(viewport?.dataset.responsiveScale ?? "") || null,
-        responsiveWidth:
-          Number(viewport?.dataset.responsiveWidth ?? "") || null,
+        responsiveHeight: Number(viewport?.dataset.responsiveHeight ?? "") || null,
+        responsiveScale: Number(viewport?.dataset.responsiveScale ?? "") || null,
+        responsiveWidth: Number(viewport?.dataset.responsiveWidth ?? "") || null,
         scaledFrame: scaledFrameRect
           ? { height: scaledFrameRect.height, width: scaledFrameRect.width }
           : null,
-        warningCount: document.querySelectorAll(
-          '[data-browser-resize-warning="visible"]',
-        ).length,
+        warningCount: document.querySelectorAll('[data-browser-resize-warning="visible"]').length,
         webviews,
-        zoomValue:
-          zoom?.getAttribute("data-value") ?? zoom?.textContent?.trim() ?? null,
+        zoomValue: zoom?.getAttribute("data-value") ?? zoom?.textContent?.trim() ?? null,
       };
     },
     TID_BROWSER_RESPONSIVE_VIEWPORT,
@@ -587,31 +535,23 @@ async function waitForGuestFocusedInput(
   const deadline = Date.now() + timeout;
   let latest = "";
   while (Date.now() <= deadline) {
-    // Bug 根因：WebdriverIO waitUntil 会把 predicate 抛出的工具错误当成重试信号，
-    // 最后只留下焦点超时。显式轮询可让真实的 node_repl 失败立即终止用例。
+    // Bug root cause: WebdriverIO waitUntil treats tool errors thrown by the predicate as retry signals, leaving only
+    // a focus timeout in the end. Explicit polling makes a real node_repl failure terminate the case immediately.
     await assertToolCallNotFailedByToolCallId(toolCallId);
     latest = await browser.electron.execute((electron, targetId) => {
       const guest = electron.webContents.fromId(targetId);
       if (!guest || guest.isDestroyed()) return "";
-      return guest.executeJavaScript(
-        "document.activeElement?.id ?? ''",
-      ) as Promise<string>;
+      return guest.executeJavaScript("document.activeElement?.id ?? ''") as Promise<string>;
     }, webContentsId);
     if (latest === expectedId) return latest;
-    await new Promise<void>((resolveDelay) =>
-      setTimeout(resolveDelay, 100),
-    );
+    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 100));
   }
-  throw new Error(
-    `guest 输入焦点没有收敛到 ${expectedId}: ${latest}`,
-  );
+  throw new Error(`guest 输入焦点没有收敛到 ${expectedId}: ${latest}`);
 }
 
 function readV4ComposerSnapshot() {
   return browser.execute((inputTestId) => {
-    const element = document.querySelector<HTMLElement>(
-      `[data-testid="${inputTestId}"]`,
-    );
+    const element = document.querySelector<HTMLElement>(`[data-testid="${inputTestId}"]`);
     const bridge = (
       element as
         | (HTMLElement & {
@@ -624,9 +564,7 @@ function readV4ComposerSnapshot() {
     )?.__zcodeLexicalInputE2E;
     return {
       focused: Boolean(
-        element &&
-        document.activeElement &&
-        element.contains(document.activeElement),
+        element && document.activeElement && element.contains(document.activeElement),
       ),
       text: bridge?.getText() ?? null,
     };
@@ -638,9 +576,7 @@ async function focusEmptyV4Composer(timeout = 10000) {
   await browser.waitUntil(
     async () => {
       latest = await browser.execute((inputTestId) => {
-        const element = document.querySelector<HTMLElement>(
-          `[data-testid="${inputTestId}"]`,
-        );
+        const element = document.querySelector<HTMLElement>(`[data-testid="${inputTestId}"]`);
         const bridge = (
           element as
             | (HTMLElement & {
@@ -654,9 +590,7 @@ async function focusEmptyV4Composer(timeout = 10000) {
         bridge?.focus();
         return {
           focused: Boolean(
-            element &&
-            document.activeElement &&
-            element.contains(document.activeElement),
+            element && document.activeElement && element.contains(document.activeElement),
           ),
           text: bridge?.getText() ?? null,
         };
@@ -681,10 +615,7 @@ interface ConversationImageFact {
   width: number;
 }
 
-async function waitForConversationImageFacts(
-  expectedCount: number,
-  timeout = 30000,
-) {
+async function waitForConversationImageFacts(expectedCount: number, timeout = 30000) {
   let latest: ConversationImageFact[] = [];
   let diagnostic = "not-read";
   try {
@@ -705,22 +636,17 @@ async function waitForConversationImageFacts(
                 return (result >>> 0).toString(16).padStart(8, "0");
               };
               const workGroupTrigger = Array.from(
-                timeline?.querySelectorAll<HTMLButtonElement>(
-                  'button[aria-expanded="false"]',
-                ) ?? [],
+                timeline?.querySelectorAll<HTMLButtonElement>('button[aria-expanded="false"]') ??
+                  [],
               ).find((button) => {
                 const text = button.innerText.replace(/\u00a0/g, " ").trim();
-                return (
-                  text.startsWith("Worked for") || text.startsWith("已工作")
-                );
+                return text.startsWith("Worked for") || text.startsWith("已工作");
               });
               workGroupTrigger?.click();
               const actionRow = Array.from(
                 timeline?.querySelectorAll<HTMLElement>("[data-row-id]") ?? [],
               ).find((row) =>
-                (row.innerText.replace(/\u00a0/g, " ").trim() ?? "").includes(
-                  actionTitle,
-                ),
+                (row.innerText.replace(/\u00a0/g, " ").trim() ?? "").includes(actionTitle),
               );
               const collapsedTrigger = Array.from(
                 actionRow?.querySelectorAll<HTMLElement>(
@@ -734,10 +660,8 @@ async function waitForConversationImageFacts(
                 ) ?? [],
               ).map((image) => {
                 const row = image.closest<HTMLElement>("[data-row-id]");
-                const rowText =
-                  row?.innerText.replace(/\u00a0/g, " ").trim() ?? "";
-                const mimeType =
-                  /^data:([^;,]+);base64,/iu.exec(image.src)?.[1] ?? "";
+                const rowText = row?.innerText.replace(/\u00a0/g, " ").trim() ?? "";
+                const mimeType = /^data:([^;,]+);base64,/iu.exec(image.src)?.[1] ?? "";
                 return {
                   bytes: image.src.length,
                   hash: hash(image.src),
@@ -757,8 +681,7 @@ async function waitForConversationImageFacts(
                   imageSources: Array.from(document.images)
                     .map((image) => image.src.slice(0, 80))
                     .slice(-8),
-                  rowCount:
-                    timeline?.querySelectorAll("[data-row-id]").length ?? 0,
+                  rowCount: timeline?.querySelectorAll("[data-row-id]").length ?? 0,
                   timelineFound: Boolean(timeline),
                   timelineTail: timeline?.innerText.slice(-800) ?? "",
                   workGroupTriggerFound: Boolean(workGroupTrigger),
@@ -785,8 +708,7 @@ async function waitForConversationImageFacts(
               image.width > 0 &&
               image.height > 0,
           ) &&
-          latest.filter((image) => image.kind === "explicit").length ===
-            expectedCount - 1 &&
+          latest.filter((image) => image.kind === "explicit").length === expectedCount - 1 &&
           latest.filter((image) => image.kind === "turn-end").length === 1
         );
       },
@@ -807,27 +729,19 @@ async function waitForConversationImageFacts(
 async function assertBrowserUseImageGalleryPreview() {
   const opened = await browser.execute(
     (timelineTestId, actionTitle) => {
-      const timeline = document.querySelector<HTMLElement>(
-        `[data-testid="${timelineTestId}"]`,
-      );
+      const timeline = document.querySelector<HTMLElement>(`[data-testid="${timelineTestId}"]`);
       const actionRow = Array.from(
         timeline?.querySelectorAll<HTMLElement>("[data-row-id]") ?? [],
       ).find((row) => row.innerText.includes(actionTitle));
-      const gallery = actionRow?.querySelector<HTMLElement>(
-        "[data-node-repl-image-gallery]",
-      );
+      const gallery = actionRow?.querySelector<HTMLElement>("[data-node-repl-image-gallery]");
       const buttons = Array.from(
-        gallery?.querySelectorAll<HTMLButtonElement>(
-          "[data-image-thumbnail-trigger]",
-        ) ?? [],
+        gallery?.querySelectorAll<HTMLButtonElement>("[data-image-thumbnail-trigger]") ?? [],
       );
       const button = buttons[1];
       button?.click();
       return {
         count: buttons.length,
-        horizontalOverflow: Boolean(
-          gallery && gallery.scrollWidth > gallery.clientWidth + 1,
-        ),
+        horizontalOverflow: Boolean(gallery && gallery.scrollWidth > gallery.clientWidth + 1),
         opened: Boolean(button),
       };
     },
@@ -842,18 +756,14 @@ async function assertBrowserUseImageGalleryPreview() {
   await browser.waitUntil(
     async () =>
       browser.execute(() =>
-        Boolean(
-          document.querySelector('[data-testid="node-repl-image-lightbox"]'),
-        ),
+        Boolean(document.querySelector('[data-testid="node-repl-image-lightbox"]')),
       ),
     { timeout: 10000, timeoutMsg: "Node REPL 图片大图预览没有打开" },
   );
   const initialAlt = await browser.execute(
     () =>
       document
-        .querySelector<HTMLImageElement>(
-          '[data-testid="node-repl-image-lightbox-image"]',
-        )
+        .querySelector<HTMLImageElement>('[data-testid="node-repl-image-lightbox-image"]')
         ?.getAttribute("alt") ?? "",
   );
   expect(initialAlt).toMatch(/2$/u);
@@ -861,19 +771,14 @@ async function assertBrowserUseImageGalleryPreview() {
   const nextAlt = await browser.execute(
     () =>
       document
-        .querySelector<HTMLImageElement>(
-          '[data-testid="node-repl-image-lightbox-image"]',
-        )
+        .querySelector<HTMLImageElement>('[data-testid="node-repl-image-lightbox-image"]')
         ?.getAttribute("alt") ?? "",
   );
   expect(nextAlt).toMatch(/1$/u);
   await browser.keys("Escape");
   await browser.waitUntil(
     async () =>
-      browser.execute(
-        () =>
-          !document.querySelector('[data-testid="node-repl-image-lightbox"]'),
-      ),
+      browser.execute(() => !document.querySelector('[data-testid="node-repl-image-lightbox"]')),
     { timeout: 10000, timeoutMsg: "Node REPL 图片大图预览没有被 Escape 关闭" },
   );
 }
@@ -896,12 +801,8 @@ async function waitForResizeWarning() {
 function readResponsiveDraftSnapshot() {
   return browser.execute(
     (heightTestId, viewportTestId) => {
-      const input = document.querySelector<HTMLInputElement>(
-        `[data-testid="${heightTestId}"]`,
-      );
-      const viewport = document.querySelector<HTMLElement>(
-        `[data-testid="${viewportTestId}"]`,
-      );
+      const input = document.querySelector<HTMLInputElement>(`[data-testid="${heightTestId}"]`);
+      const viewport = document.querySelector<HTMLElement>(`[data-testid="${viewportTestId}"]`);
       return {
         appliedHeight: Number(viewport?.dataset.responsiveHeight ?? "") || null,
         heightAriaInvalid: input?.getAttribute("aria-invalid") ?? null,
@@ -918,9 +819,7 @@ async function waitForResponsiveSize(width: number, height: number) {
   await browser.waitUntil(
     async () => {
       latest = await readBrowserSurfaceSnapshot();
-      return (
-        latest.responsiveWidth === width && latest.responsiveHeight === height
-      );
+      return latest.responsiveWidth === width && latest.responsiveHeight === height;
     },
     {
       timeout: 30000,
@@ -935,9 +834,7 @@ async function waitForZoomValue(expected: string) {
   await browser.waitUntil(
     async () => {
       latest = await readBrowserSurfaceSnapshot();
-      return (
-        latest.zoomValue === expected || latest.zoomValue === `${expected}%`
-      );
+      return latest.zoomValue === expected || latest.zoomValue === `${expected}%`;
     },
     {
       timeout: 10000,
@@ -955,20 +852,18 @@ async function setDesktopZoomLevel(zoomLevel: number) {
           !candidate.isDestroyed() &&
           candidate.webContents.getURL().includes("/renderer/index.html"),
       );
-      // 修复原因：restoreSession 启动 URL 不再携带 initialWorkspacePath，按 URL
-      // 查 workspace 会漏掉健康主窗口。E2E 只接受唯一 renderer BrowserWindow，
-      // 多窗口时直接失败，避免退化成 focused-window 猜测并改错窗口。
+      // Reason for the fix: the restoreSession startup URL no longer carries initialWorkspacePath, so looking up the
+      // workspace by URL misses the healthy main window. E2E accepts only the unique renderer BrowserWindow and fails
+      // outright with multiple windows, avoiding a fallback to focused-window guessing that would change the wrong
+      // window.
       if (candidates.length !== 1) {
         return {
           applied: false,
-          candidateUrls: candidates.map((candidate) =>
-            candidate.webContents.getURL(),
-          ),
+          candidateUrls: candidates.map((candidate) => candidate.webContents.getURL()),
         };
       }
       const target = candidates[0];
-      if (!target || target.isDestroyed())
-        return { applied: false, candidateUrls: [] };
+      if (!target || target.isDestroyed()) return { applied: false, candidateUrls: [] };
       target.webContents.setZoomFactor(Math.pow(1.1, nextZoomLevel));
       target.webContents.send(channel, { zoomLevel: nextZoomLevel });
       target.focus();
@@ -992,8 +887,7 @@ async function waitForDesktopZoomSurface(zoomLevel: number) {
       latest = await readBrowserSurfaceSnapshot();
       return latest.webviews.some(
         (webview) =>
-          webview.compositorScale !== null &&
-          Math.abs(webview.compositorScale - expected) < 0.0001,
+          webview.compositorScale !== null && Math.abs(webview.compositorScale - expected) < 0.0001,
       );
     },
     {
@@ -1013,17 +907,14 @@ async function waitForRendererAfterReloadSession() {
           .targets()
           .filter((target) => {
             try {
-              return new URL(target.url()).pathname.endsWith(
-                "/renderer/index.html",
-              );
+              return new URL(target.url()).pathname.endsWith("/renderer/index.html");
             } catch {
               return false;
             }
           })
           .at(-1);
         const targetId = rendererTarget
-          ? ((rendererTarget as unknown as { _targetId?: string })._targetId ??
-            null)
+          ? ((rendererTarget as unknown as { _targetId?: string })._targetId ?? null)
           : null;
         if (!targetId) return false;
         await browser.switchToWindow(targetId);
@@ -1083,20 +974,15 @@ async function waitForPermissionAndApproveOnce(expectedTitle: string) {
           allowOnceCount,
           count: listboxes.length,
           text: listboxes
-            .map(
-              (element) =>
-                element.parentElement?.innerText
-                  .replace(/\u00a0/g, " ")
-                  .trim() ?? "",
-            )
+            .map((element) => element.parentElement?.innerText.replace(/\u00a0/g, " ").trim() ?? "")
             .join("\n"),
         };
       });
       latest = JSON.stringify(state);
-      // 修复原因：V4 permission payload 只保留 toolName/summary/detail，不会把
-      // node_repl 输入里的模型 title 投影到 PermissionDialog。调用方已先用固定
-      // tool call/continuation 锁定阶段；这里要求唯一弹窗和唯一 allowOnce，避免
-      // 退化成“随便批准第一个”而误响应并发请求。
+      // Reason for the fix: the V4 permission payload keeps only toolName/summary/detail and does not project the
+      // model's title from the node_repl input onto the PermissionDialog. The caller has already locked the phase
+      // with fixed tool call/continuation pairs; requiring a unique dialog and a unique allowOnce here avoids
+      // degrading into "approve the first one" and mistakenly answering concurrent requests.
       return state.count === 1 && state.allowOnceCount === 1;
     },
     {
@@ -1106,7 +992,8 @@ async function waitForPermissionAndApproveOnce(expectedTitle: string) {
   );
 
   expect(await clickMatchingAllowOnce()).toBe(true);
-  // 修复原因：首个 tool result 后下一个权限可能在 100ms polling 间隔内立即出现。
-  // 旧 helper 看到“仍有 listbox”会再次点击，实际把下一次 Browser 调用也批准了。
-  // 单次 helper 只能点击一次；调用方用下一条 provider continuation 证明本次审批已生效。
+  // Reason for the fix: after the first tool result, the next permission may appear immediately within the 100ms
+  // polling interval. The old helper saw "a listbox still exists" and clicked again, in fact approving the next
+  // Browser call too. The once-helper may only click once; the caller proves this approval took effect with the next
+  // provider continuation.
 }

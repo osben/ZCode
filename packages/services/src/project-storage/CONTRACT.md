@@ -11,7 +11,7 @@ Host 项目组织态的持久化升级。调用者持有 app SQLite 连接，CLI
 - settings 的 remote 条目只首次导入本机入口缓存，不能变成本机权威 project；普通启动不再导入。
 - 迁移依赖 sqlite-migrations 公共端口；内部文件不被 UI/其他服务直接导入。目录/备份位置与 logger 均由启动入口注入。
 
-项目仓库的事务面：save/delete/move/reorder/reserveCreatedTask 不写 cli\_\* 列。列表与目录解析在同步 SQLite 读事务中完成，不跨 await。缺 root 移动需要 addMissingRoot=true；恢复必须同 host 且 roots 集合完全相同。项目唯一名称在写事务中分配。新建 task 归属只在未决定时提交，后续由 moveTask 显式变更。
+项目仓库的事务面：save/delete/move/reorder/reserveCreatedTask 不写 cli\_\* 列。discardCreatedTaskReservation 只删除仍匹配占位签名（无 CLI 事实）的预留行，同样不写 cli\_\* 列。列表与目录解析在同步 SQLite 读事务中完成，不跨 await。缺 root 移动需要 addMissingRoot=true；恢复必须同 host 且 roots 集合完全相同。项目唯一名称在写事务中分配。新建 task 归属只在未决定时提交，后续由 moveTask 显式变更。
 
 项目树任务沿用原列表/Controller 的执行后端过滤：仅 `provider=ZCODE_AGENT_PROVIDER`（当前 glm）。旧后端行即使已补齐 cli\_\* 也不进入项目、置顶、未归类、时间线、归档和未读投影；新导入的当前 CLI 会话保留，不按 migration_source、模型供应商或目录存在性过滤。只读，不改旧数据或 migration，已升级数据库无需再次转换；本地与远端持库 Host 使用同一规则。
 
@@ -32,3 +32,11 @@ Host 项目组织态的持久化升级。调用者持有 app SQLite 连接，CLI
 本地仍允许 0..n roots；可信 ownerHostId 非 local 的持库宿主只允许恰好一个固定 root。远程创建必须有项目，prepareSession、reserveCreatedTask 与 moveTask 不得产生无归属或附加目录；根路径更新和缺 root 拖动在写事务中拒绝。客户端 hostId 不能改变持库身份。历史迁移数据不被裁剪，失败不得部分写入。
 
 启动入口复用 session 模块公开的旧 Repo 与迁移适配器：先 SQL 迁移并提交，再逐一 ensureReady/close，最后标记 prepared。Worker 必须注入旧 settings 以完成首次项目导入；进度复制迁移事实，失败不撤回已提交计数。storage-startup 子路径保持不变。
+
+## 2026-10-21 Project tree read projection
+
+`readTree` runs synchronously on the Host event loop for every navigation. Its task query must not select `tasks.searchable_text` (the full-text body, unused by the tree); it keeps every other column dynamic so older table shapes still load. The returned tree is unchanged.
+
+## 2026-10-22 Reservation placeholder startup sweep
+
+`sweepAbandonedReservations` (`project-repository.ts`) deletes only the `RESERVATION_PLACEHOLDER_SQL` rows of host `local`. It runs inside `prepareTasksIndexStorage` after the migration COMMIT and before the repos open, and only when the caller passes `sweepAbandonedReservations: true`. That option must be passed only by the first prepare attempt of the first local Host of an app process. Main sets the flag through `packages/desktop/src/main/storage-sweep-gate/contract.ts` and holds later local `InitLocal` messages until that Host reports a startup phase past `preparing_host_storage` (`preparing_session_storage`, `starting_services`, `ready`) or `failed`, or exits. Rules, the replay argument and the open race are in `specs/first-submission-lifecycle.md` ("Placeholder startup sweep").

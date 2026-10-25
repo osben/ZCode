@@ -21,7 +21,7 @@ import {
   isGroupOwnerCommand,
   canAnswerGroupQuestion,
 } from "./groupSessions.js";
-/* eslint-disable max-lines -- Bots 服务仍复用原 RPC 文件名，先把鉴权、命令路由、ZCode Agent 桥接收口集中在同一服务内。 */
+/* eslint-disable max-lines -- The Bots service retains its original RPC filename and keeps authorization, command routing, and the ZCode Agent bridge together. */
 import { Buffer } from "node:buffer";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -83,7 +83,6 @@ import {
   type Locale,
   type SelectionPrompt,
 } from "@zcode/shared";
-import type { BotRemoteRuntimeService } from "#src/bot-project-runtime/contract.js";
 import {
   readProjectCatalog,
   projectSelectionId,
@@ -99,6 +98,7 @@ import type { IBroadcastService } from "../broadcast/broadcast.js";
 import type { ICredentialService } from "../credential/credential.js";
 import { getAppConfigDir } from "../paths.js";
 import type { ISettingService } from "../setting/setting.js";
+import type { ZCodeAgentAppRuntimePreferences } from "../zcode-agent/zcodeAgent.js";
 import type {
   IModelSelectionService,
   ModelSelectionView,
@@ -144,7 +144,7 @@ import {
   pollWeixinRegistration as pollWeixinQrRegistration,
 } from "./providers/weixinRegistration.js";
 import { createFeishuBotProvider, splitFeishuText } from "./providers/feishuProvider.js";
-import { formatBotMessage, type BotMessageId } from "./messages.js";
+import { formatBotMessage, normalizeBotMessageLocale, type BotMessageId } from "./messages.js";
 import {
   extractBotAssistantResponseMessages,
   formatBotAssistantReplyBlocks,
@@ -221,29 +221,47 @@ function parseBotModelOptionValue(value: string): ModelSelection | undefined {
 const BOT_REPLY_GRANULARITY_OPTIONS = [
   {
     id: "assistant_changes",
-    label: { "zh-CN": "标准回复", "en-US": "Standard reply" },
+    label: { "zh-CN": "标准回复", "en-US": "Standard reply", "uk-UA": "Стандартна відповідь" },
     aliases: ["assistant", "assistant_changes", "normal", "default", "standard", "标准回复"],
   },
   {
     id: "assistant_toolcalls_changes",
-    label: { "zh-CN": "完整回复", "en-US": "Full reply" },
+    label: { "zh-CN": "完整回复", "en-US": "Full reply", "uk-UA": "Повна відповідь" },
     aliases: ["full", "tool", "toolcalls", "assistant_toolcalls_changes", "完整回复"],
   },
   {
     id: "summary_changes",
-    label: { "zh-CN": "摘要回复", "en-US": "Summary reply" },
+    label: { "zh-CN": "摘要回复", "en-US": "Summary reply", "uk-UA": "Підсумкова відповідь" },
     aliases: ["summary", "summary_changes", "latest", "摘要回复"],
   },
   {
     id: "streaming_card",
-    label: { "zh-CN": "流式卡片", "en-US": "Streaming card" },
+    label: { "zh-CN": "流式卡片", "en-US": "Streaming card", "uk-UA": "Потокова картка" },
     aliases: ["stream", "streaming", "streaming_card", "流式", "流式卡片"],
   },
 ] as const satisfies ReadonlyArray<{
   id: BotReplyGranularity;
-  label: Record<"zh-CN" | "en-US", string>;
+  label: Record<Locale, string>;
   aliases: readonly string[];
 }>;
+
+const CURRENT_OPTION_SUFFIX: Record<Locale, string> = {
+  "zh-CN": "当前",
+  "en-US": "current",
+  "uk-UA": "вибрано",
+};
+
+const GLM_MODE_LABELS: Record<Locale, { default: string; plan: string }> = {
+  "zh-CN": { default: "默认", plan: "计划" },
+  "en-US": { default: "Default", plan: "Plan" },
+  "uk-UA": { default: "За замовчуванням", plan: "Планування" },
+};
+
+const TASK_COMPLETED_MESSAGE: Record<Locale, string> = {
+  "zh-CN": "任务已完成。",
+  "en-US": "Task completed.",
+  "uk-UA": "Завдання виконано.",
+};
 
 const BOT_EXCLUSIVE_CREDENTIAL_PROVIDERS = new Set<BotProvider>(["telegram", "feishu", "lark"]);
 const FEISHU_STREAMING_CARD_MIN_UPDATE_INTERVAL_MS = 1_000;
@@ -272,6 +290,7 @@ const helpMessageByCommand = {
   model: "helpModel",
   mode: "helpMode",
   thoughtLevel: "helpThoughtLevel",
+  remote: "helpRemote",
   reply: "helpReply",
 } as const satisfies Record<(typeof BOT_MENU_COMMAND_ORDER)[number], BotMessageId>;
 
@@ -320,21 +339,47 @@ interface BotsServiceDeps {
   modelSelectionService: Pick<IModelSelectionService, "getView">;
   remoteWorkspaceService?: BotRemoteWorkspaceService;
   repo?: BotsRepo;
-  // 修复原因：desktop-attached 远端启动阶段不应抢跑 bot 轮询、runtime lock 和模型候选缓存；
-  // 这些后台任务属于本地桌面 host，不属于 SSH/Docker 远端首屏连接路径。
+  // Fix rationale: do not start bot polling, runtime locks, or model candidate caching during desktop-attached remote startup.
+  // These background tasks belong to the local desktop host, not the initial SSH/Docker remote connection path.
   runStartupBackgroundTasks?: boolean;
 }
 
-type BotRemoteWorkspaceReconnectResult = Awaited<
-  ReturnType<BotRemoteRuntimeService["ensureConnected"]>
->;
-type BotRemoteWorkspaceService = Pick<BotRemoteRuntimeService, "isConnected" | "ensureConnected"> &
-  Partial<Omit<BotRemoteRuntimeService, "isConnected" | "ensureConnected">> & {
-    resolveWorkspace?: (target: {
-      workspacePath: string;
-      workspaceIdentity: string;
-    }) => Promise<{ workspacePath: string; workspaceIdentity: string } | null>;
-  };
+interface BotRemoteWorkspaceTarget {
+  workspacePath: string;
+  workspaceIdentity: string;
+  hostId?: string;
+}
+
+interface BotRemoteWorkspaceReconnectResult {
+  ok: boolean;
+  message?: string;
+}
+
+interface BotRemoteWorkspaceWebRemoteLinkResult {
+  ok: boolean;
+  url?: string;
+  sessionId?: string;
+  reason?: "workspace-not-open" | "feature-disabled";
+  error?: string;
+}
+
+interface BotRemoteWorkspaceService {
+  isConnected(target: BotRemoteWorkspaceTarget): Promise<boolean>;
+  ensureConnected(target: BotRemoteWorkspaceTarget): Promise<BotRemoteWorkspaceReconnectResult>;
+  mintWebRemoteLink?(target: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<BotRemoteWorkspaceWebRemoteLinkResult>;
+  getZCodeTaskService?(target: BotRemoteWorkspaceTarget): Promise<IZCodeTaskService | null>;
+  getModelSelectionService?(
+    target: BotRemoteWorkspaceTarget,
+  ): Promise<Pick<IModelSelectionService, "getView"> | null>;
+  syncAppRuntimePreferences?(preferences: ZCodeAgentAppRuntimePreferences): Promise<void>;
+  resolveWorkspace?(target: {
+    workspacePath: string;
+    workspaceIdentity: string;
+  }): Promise<{ workspacePath: string; workspaceIdentity: string } | null>;
+}
 
 interface PreparedTopicMessage {
   generation: number;
@@ -356,6 +401,7 @@ type BotAuthorizedCommand =
   | "model"
   | "mode"
   | "thoughtLevel"
+  | "remote"
   | "task"
   | "reply"
   | "stop"
@@ -441,7 +487,7 @@ function normalizeText(value: string): string {
 }
 
 function getReplyGranularityOptions(locale: Locale | undefined, provider?: BotProvider) {
-  const messageLocale = locale === "en-US" ? "en-US" : "zh-CN";
+  const messageLocale = normalizeBotMessageLocale(locale);
   const supportedIds = provider ? new Set(getSupportedBotReplyGranularities(provider)) : null;
   return BOT_REPLY_GRANULARITY_OPTIONS.filter(
     (option) => !supportedIds || supportedIds.has(option.id),
@@ -561,8 +607,8 @@ function formatSelectionFallback(selection: SelectionPrompt, locale?: Locale): s
     const description = option.description ? ` ${option.description}` : "";
     return `${index + 1}. ${option.label}${description}`;
   });
-  // Bugfix: 微信这类纯文本通道没有原生选项卡，之前把完整 slash command 和长路径展开，
-  // workspace/remote identity 会把消息刷得很长。这里只展示编号，数字解析仍走 pending selection。
+  // Bugfix: plain-text channels such as WeChat have no native option cards. Expanding the full slash command and long path
+  // made workspace/remote identity messages too long. Show only the number here; numeric parsing still uses pending selection.
   if (selection.showCancel === false) {
     return `${selection.title}\n${lines.join("\n")}\n\n${formatBotMessage(locale, "selectionTextHintNoCancel")}`;
   }
@@ -615,7 +661,22 @@ function sortBotPermissionOptions(
 
 function formatBotPermissionOptionLabel(option: ZCodePermissionOption, locale?: Locale): string {
   const displayKind = getBotPermissionOptionDisplayKind(option);
-  if (locale === "en-US") {
+  const messageLocale = normalizeBotMessageLocale(locale);
+  if (messageLocale === "uk-UA") {
+    switch (displayKind) {
+      case "allowOnce":
+        return "Дозволити";
+      case "allowAlways":
+        return "Завжди дозволяти";
+      case "rejectOnce":
+        return "Відхилити";
+      case "rejectAlways":
+        return "Завжди відхиляти";
+      case "custom":
+        return option.name;
+    }
+  }
+  if (messageLocale === "en-US") {
     switch (displayKind) {
       case "allowOnce":
         return "Allow";
@@ -653,7 +714,28 @@ function formatBotPermissionOptionDescription(
     return option.kind;
   }
   const scope = getPermissionRequestPreview(request).scope;
-  if (locale === "en-US") {
+  const messageLocale = normalizeBotMessageLocale(locale);
+  if (messageLocale === "uk-UA") {
+    if (displayKind === "allowOnce") {
+      return "Дозволити лише цього разу";
+    }
+    if (displayKind === "rejectOnce") {
+      return "Відхилити цього разу";
+    }
+    if (displayKind === "allowAlways") {
+      return scope === "command"
+        ? "Більше не запитувати для такої самої команди"
+        : scope === "file"
+          ? "Більше не запитувати для такої самої дії з файлом"
+          : "Більше не запитувати для такого самого запиту дозволу";
+    }
+    return scope === "command"
+      ? "Завжди відхиляти таку саму команду"
+      : scope === "file"
+        ? "Завжди відхиляти таку саму дію з файлом"
+        : "Завжди відхиляти такий самий запит дозволу";
+  }
+  if (messageLocale === "en-US") {
     if (displayKind === "allowOnce") {
       return "Allow this time only";
     }
@@ -713,11 +795,17 @@ function stripModelProviderDescriptionsForTextSelection(
   };
 }
 
+const REMOTE_WORKSPACE_LABEL: Record<Locale, string> = {
+  "zh-CN": "[远端]",
+  "en-US": "[Remote]",
+  "uk-UA": "[Віддалений]",
+};
+
 function formatWorkspaceOptionLabel(workspace: BotWorkspaceRef, locale?: Locale): string {
   if (!workspace.workspaceIdentity) {
     return workspace.label;
   }
-  const remoteLabel = locale === "en-US" ? "[Remote]" : "[远端]";
+  const remoteLabel = REMOTE_WORKSPACE_LABEL[normalizeBotMessageLocale(locale)];
   return `${workspace.label} ${remoteLabel}`;
 }
 
@@ -726,7 +814,7 @@ function delay(ms: number): Promise<void> {
 }
 
 const DEFAULT_BOT_ZCODE_PROVIDER: ZCodeProvider = ZCODE_AGENT_PROVIDER;
-// Bot 模式硬锁 yolo：所有 bot task 一律免交互权限，且禁止通过 /mode 切换运行模式。
+// Bot mode is locked to yolo: all bot tasks bypass interactive permissions, and /mode cannot change the run mode.
 const BOT_FORCED_MODE = "yolo";
 const BOT_TYPING_INTERVAL_MS = 4_000;
 const BOT_TASK_META_RETRY_DELAYS_MS = [80, 160, 320] as const;
@@ -803,7 +891,7 @@ export function createBotsService(
   >();
   const runtimeByBotId = new Map<string, BotRuntimeInfo>();
   const pendingSelectionsByContext = new Map<string, SelectionPrompt>();
-  // 只读取任务订阅和运行状态的数量，不暴露消息内容。
+  // Read only the number of task subscriptions and running states; do not expose message content.
   const memoryDiagnostics = registerMemoryDiagnosticsProvider("bots", () => ({
     streamSubs: streamSubscriptions.size,
     runningTasks: runningTasks.size,
@@ -850,7 +938,7 @@ export function createBotsService(
   let shutdownPromise: Promise<void> | null = null;
 
   function onDeliveryResult(bot: BotConfig, deliveryError: string | undefined): void {
-    // 收消息正常不代表回复已投递，不能把投递错误混成连接错误。
+    // Receiving a message successfully does not mean the reply was delivered; do not conflate delivery errors with connection errors.
     const current = runtimeByBotId.get(bot.id);
     setRuntimeStatus({
       botId: bot.id,
@@ -991,11 +1079,11 @@ export function createBotsService(
           topicUrl = resolved?.topicUrl;
           rootMessageId = resolved?.rootMessageId ?? rootMessageId;
         } catch {
-          // 原生事件已带话题身份时，缺少额外读取权限仅影响标题；不扩大历史读取范围。
+          // When a native event already includes thread identity, missing extra read permission affects only the title; do not expand history reads.
           topicTitle = actor.threadId;
         }
       }
-      // 话题只继承配置快照；不能复制默认任务的输入、问答或审批授权。
+      // A thread inherits only the configuration snapshot; do not copy the default task’s inputs, Q&A, or approval grants.
       const topic: BotContextState = {
         botId: bot.id,
         workspacePath: parent.workspacePath,
@@ -1093,7 +1181,7 @@ export function createBotsService(
     },
     render: async (key, providerMessageId, status) => {
       const scope = await readQueueCardScope(key);
-      // 话题复用单向状态记录，但不渲染或更新历史遗留排队卡。
+      // Threads reuse the one-way status record, but do not render or update legacy queued cards.
       if (!scope || scope.context.group?.threadId) return;
       const english = (await readMessageLocale()) === "en-US";
       const text: Record<BotGroupInputStatus, string> = english
@@ -1214,7 +1302,7 @@ export function createBotsService(
       });
     stateWriteTail = operation;
     await operation;
-    // 授权变更还必须失效尚未提交的材料，不能等旧准备返回后再生成回复。
+    // Authorization changes must also invalidate unsubmitted materials; do not wait for old preparation to return before replying.
     await Promise.all(invalidatedTopics.map(cancelTopicInputs));
     if (changedBindings.size)
       await deps.broadcastService
@@ -1244,7 +1332,7 @@ export function createBotsService(
             latest?.privateBindingId !== context.privateBindingId)
         )
           return;
-        // 群事件可能在停用、换绑或切换任务前开始处理；旧事件不能恢复已经撤销的关联。
+        // A group event may start processing before deactivation, rebinding, or task switching; an old event must not restore a revoked association.
         if (
           context.group &&
           !updateAuthorization &&
@@ -1260,11 +1348,11 @@ export function createBotsService(
                 enabled: latestGroup.enabled,
                 ownerId: latestGroup.ownerId,
                 authorizationId: latestGroup.authorizationId,
-                // 其他话题可能已更新群级历史开关，旧输入回写不能覆盖最新配置。
+                // Another thread may have updated the group-level history setting; an old input write-back must not overwrite the latest configuration.
                 historyEnabled: latestGroup.historyEnabled,
                 topicActive: latestGroup.topicActive ?? context.group.topicActive,
                 taskIds: [...new Set([...latestGroup.taskIds, ...context.group.taskIds])],
-                // 已确认的 admission 是终态，迟到的流事件不能写回 pending。
+                // A confirmed admission is terminal; late stream events must not write the state back to pending.
                 inputs: Object.fromEntries(
                   Object.entries({ ...latestGroup.inputs, ...context.group.inputs }).map(
                     ([id, input]) => {
@@ -1274,7 +1362,7 @@ export function createBotsService(
                         latestInput?.admission === "rejected"
                           ? latestInput
                           : input;
-                      // 流事件可能先于 admission 返回；写回接收结果时保留已推进的卡片状态。
+                      // A stream event may arrive before admission returns; preserve the card state that has already advanced when writing the receipt result.
                       return [
                         id,
                         { ...selected, progress: latestInput?.progress ?? selected.progress },
@@ -1287,9 +1375,9 @@ export function createBotsService(
                 deliveries: latestGroup.deliveries,
               }
             : context.group;
-        // 自动互答次数由入口串行持久化；迟到的任务/授权回写不能用旧快照恢复额度。
+        // The automatic-reply count is persisted serially at ingress; late task/authorization write-backs must not restore the allowance from an old snapshot.
         if (group && latestGroup?.autoReplyGuard) group.autoReplyGuard = latestGroup.autoReplyGuard;
-        // 背景检查点由入口/接收提交更新，旧任务快照不能覆盖或复活它。
+        // The background checkpoint is updated by ingress/receipt commits; an old task snapshot must not overwrite or revive it.
         if (group && latestGroup) group.backgroundHistory = latestGroup.backgroundHistory;
         if (group && (!group.enabled || state.bots[key]?.activeTaskId !== context.activeTaskId)) {
           group.deliveries = Object.fromEntries(
@@ -1339,7 +1427,7 @@ export function createBotsService(
           updatedAt: Date.now(),
         };
         if (updateAuthorization && group && !group.threadId) {
-          // 群授权是单一权威；停用或换绑必须在同一次写入中使所有话题卡片失效。
+          // Group authorization is the single source of truth; deactivation or rebinding must invalidate every thread card in the same write.
           for (const [topicKey, topic] of Object.entries(state.bots)) {
             if (
               topic.botId !== context.botId ||
@@ -1472,7 +1560,7 @@ export function createBotsService(
       workspaceIdentity: context.workspaceIdentity,
     });
     if (deleted?.includes(context.activeTaskId!)) return;
-    // 只读取权威快照以冷恢复，不提交输入，也不回放快照中的历史正文。
+    // Read only the authoritative snapshot for cold recovery; do not submit input or replay historical body text from the snapshot.
     await taskService.getTaskSnapshot({
       taskId: context.activeTaskId!,
       workspacePath: context.workspacePath,
@@ -1492,7 +1580,7 @@ export function createBotsService(
   }
 
   function weixinContextKey(bot: BotConfig, userId: string): string {
-    // 凭证按账号和接收人隔离；不进入普通 Bot 状态或日志。
+    // Credentials are isolated by account and recipient; they must not enter ordinary Bot state or logs.
     return `bot-weixin-context-${createHash("sha256")
       .update(JSON.stringify([bot.id, bot.providerUserId, bot.credentialRef, userId]))
       .digest("hex")}`;
@@ -1504,7 +1592,7 @@ export function createBotsService(
     if (!bot || bot.id !== message.botId) return;
     const context = await readContext(message.actor, bot);
     if (!context) return;
-    // iLink 的 config.providerUserId 是机器人身份，不能把它当成出站接收人。
+    // For iLink, config.providerUserId identifies the bot and must not be treated as an outbound recipient.
     await serializeStateWrite(async () => {
       const state = await repo.readState();
       const latest = state.bots[bot.id];
@@ -1546,7 +1634,7 @@ export function createBotsService(
       bot.providerUserId !== context.group.ownerId
     )
       return;
-    // 恢复仅订阅后续事件；远端断开时不建立新连接，也不重放已接收输入。
+    // Recovery subscribes only to subsequent events; when the remote side is disconnected, do not open a new connection or replay received input.
     if (!(await isRemoteWorkspaceConnected(context))) return;
     await watchTaskStream(
       bot,
@@ -1592,7 +1680,7 @@ export function createBotsService(
         },
       ];
     }
-    // 群启用不等于平台授权；首次与再次启用都提供同一权限入口。
+    // Enabling a group does not grant platform authorization; both initial and subsequent enablement should expose the same permission entry point.
     const activationValues = {
       permissionsUrl:
         bot.provider === "lark" ? "https://open.larksuite.com/app" : "https://open.feishu.cn/app",
@@ -1660,7 +1748,7 @@ export function createBotsService(
         authorizationId: randomUUID(),
         taskIds: [],
         currentOptions: {
-          // 模型重构后需继承完整选择，旧 model/thoughtLevel 字段已不再持久化。
+          // After model refactoring, inherit the complete selection; the old model/thoughtLevel fields are no longer persisted.
           modelSelection: bot.currentOptions.modelSelection,
           mode: "default",
         },
@@ -1725,9 +1813,9 @@ export function createBotsService(
     context: BotContextState,
     draftOptions?: BotDraftOptions,
   ): Promise<BotContextState> {
-    // Bugfix: 新建草稿状态以前散落在 /new 和 /workspace 分支里，各自手写 activeTaskId=null。
-    // workspace 切换后如果还带着旧 task/pending permission，Telegram 权限按钮会命中错误上下文。
-    // 这里把“进入新任务草稿”的服务端状态变更收口到同一个 helper，避免跨 workspace 复用旧任务状态。
+    // Bugfix: new-draft state used to be scattered across /new and /workspace branches, each setting activeTaskId=null independently.
+    // If an old task or pending permission remained after a workspace switch, Telegram permission buttons could target the wrong context.
+    // Centralize the server-side transition into a new task draft in one helper to prevent reusing task state across workspaces.
     const draftContext: BotContextState = {
       ...context,
       mode: "draft",
@@ -1776,8 +1864,8 @@ export function createBotsService(
     if (auth.context.weixinActivatedAt) {
       return null;
     }
-    // Bugfix: 微信扫码登录只返回 bot token/id，不返回可投递的用户 id。
-    // 第一条微信入站消息用于建立会话目标，因此只回激活说明，不把“你好”这类激活文本误当成任务 prompt。
+    // Bugfix: WeChat QR login returns only the bot token/id, not a deliverable user id.
+    // The first inbound WeChat message establishes the conversation target, so send only the activation notice and do not treat text such as “hello” as a task prompt.
     await writeContext({
       ...auth.context,
       weixinActivatedAt: Date.now(),
@@ -1847,8 +1935,8 @@ export function createBotsService(
   }
 
   function formatUserFacingBotError(error: unknown, locale: Locale | undefined): string {
-    // Bugfix: 旧 bot 消息或脏 task index 会让协议层抛出 Session not found。
-    // 直接把 session id 发给用户不可操作；这里保留日志原文，只引导用户新建任务恢复。
+    // Bugfix: an old bot message or stale task index can make the protocol layer throw Session not found.
+    // Exposing the session id is not actionable; keep the original error in logs and guide the user to create a new task.
     if (isSessionExpiredError(error)) {
       return msg(locale, "sessionExpiredNewTaskHint");
     }
@@ -1888,7 +1976,7 @@ export function createBotsService(
       /attachment download timed out/i.test(message) ||
       /download .+ timed out/i.test(message)
     ) {
-      // Bugfix: provider 下载错误会包含 Feishu/Telegram/HTTP 等内部细节，直接回给用户既不友好也不可行动。
+      // Bugfix: provider download errors contain internal Feishu/Telegram/HTTP details; sending them to users is neither helpful nor actionable.
       return msg(locale, "attachmentDownloadUnavailable");
     }
     return message;
@@ -1931,7 +2019,7 @@ export function createBotsService(
       return new Uint8Array(await response.arrayBuffer());
     } catch (error) {
       if ((error as { name?: unknown })?.name === "AbortError") {
-        // Bugfix: 附件下载卡住时必须尽快失败并回复用户，不能让 bot 回调一直悬挂。
+        // Bugfix: fail promptly and reply when attachment download stalls; do not leave the bot callback hanging.
         throw new Error(`download ${attachment.filename} timed out.`);
       }
       throw error;
@@ -2022,7 +2110,7 @@ export function createBotsService(
       });
       const dataBase64 = Buffer.from(resolved.data).toString("base64");
       if (isGroup) {
-        // 旧兼容入口只把文件路径拼进正文，既丢失 V4 附件又破坏末尾引用块；群输入只走标准寄存。
+        // The legacy compatibility path appended file paths to the body, losing V4 attachments and breaking the trailing reference block; group input must use standard registration only.
         zcodeAttachments.push({
           kind: cached.kind === "image" || cached.kind === "audio" ? cached.kind : "file",
           filename: cached.filename,
@@ -2039,13 +2127,13 @@ export function createBotsService(
           filename: cached.filename,
           mimeType: cached.mimeType,
           dataBase64,
-          // Bugfix：Bot 已把附件缓存到本地，ZCodePromptAttachment 也必须携带该路径。
-          // 只在 prompt 文本里描述路径会让下游附件策略无法选择本地文件读取。
+          // Bugfix: the Bot has cached the attachment locally, so ZCodePromptAttachment must include that path.
+          // Mentioning the path only in prompt text prevents downstream attachment policy from selecting local file access.
           localPath: cached.localPath,
         });
-        // Bugfix: bot 附件已经被 gateway 下载并缓存到本地。只把图片作为 ZCode Agent image block 传入时，
-        // 下游 agent 可能把内部临时 URL 再 curl 到 /tmp，导致重复下载、额外权限请求和模型安全拦截。
-        // 因此同时把本地缓存路径写进 prompt，明确后续工具操作只能围绕本地文件进行。
+        // Bugfix: the gateway has already downloaded and cached bot attachments locally. If an image is passed only as a ZCode Agent image block,
+        // a downstream agent may curl the internal temporary URL to /tmp again, causing duplicate downloads, extra permission requests, and model safety blocks.
+        // Include the local cache path in the prompt so subsequent tool operations use the local file.
         fileLines.push(
           `附件：${cached.filename} (${cached.mimeType}, ${formatAttachmentSize(cached.sizeBytes)})，已作为${cached.kind === "image" ? "图片" : "音频"}输入提供，并保存到：${cached.localPath}。如需读取附件，请直接使用这个本地路径，不要下载或访问临时/远程 URL。`,
         );
@@ -2081,8 +2169,8 @@ export function createBotsService(
       return true;
     }
     if (!deps.remoteWorkspaceService) {
-      // Bugfix: 远端 workspace 没有注入重连服务时，不能默认当作已连接。
-      // 否则 Bot 会继续使用缓存模型创建 task，最终在远端 API 层才暴露“模型不存在”等误导性错误。
+      // Bugfix: a remote workspace without an injected reconnection service must not be treated as connected.
+      // Otherwise the Bot continues creating tasks with cached models and only surfaces misleading errors such as “model not found” at the remote API.
       return false;
     }
     return deps.remoteWorkspaceService
@@ -2127,8 +2215,8 @@ export function createBotsService(
     if (remoteZCodeTaskService) {
       return remoteZCodeTaskService;
     }
-    // Bugfix: 远端 workspace 的 bot 请求不能缺 runtime 时静默走本地 zcodeTaskService。
-    // 否则 /root 这类远端路径会在 macOS/Windows 本地 host 创建任务，模型和文件系统都错位。
+    // Bugfix: bot requests for a remote workspace must not silently fall back to the local zcodeTaskService when runtime is missing.
+    // Otherwise a remote path such as /root creates a task on the local macOS/Windows host with the wrong model and filesystem.
     throw new BotAdminRequiredError(
       "remote",
       `当前远端项目 ${context.workspacePath} runtime 不可用，请发送 **/重连** 后重试。`,
@@ -2167,8 +2255,8 @@ export function createBotsService(
       adminAttention.clear(params.message.actor, params.context.group?.ownerId, "remote");
       return null;
     }
-    // Bugfix: 普通消息、配置修改和权限响应不应该隐式改变远端连接状态。
-    // 远端恢复只允许显式 /reconnect 触发，避免同一条消息有时执行、有时只是在后台打开连接。
+    // Bugfix: ordinary messages, configuration changes, and permission responses must not implicitly change remote connection state.
+    // Only an explicit /reconnect can restore a remote connection, so the same message is not sometimes executed and sometimes just opens a background connection.
     return [
       administratorReply(
         params.message.actor,
@@ -2185,7 +2273,7 @@ export function createBotsService(
   }
 
   function currentOptionSuffix(locale: Locale | undefined): string {
-    return locale === "en-US" ? "current" : "当前";
+    return CURRENT_OPTION_SUFFIX[normalizeBotMessageLocale(locale)];
   }
 
   function formatReplyGranularityLabel(
@@ -2228,7 +2316,7 @@ export function createBotsService(
     return [];
   }
   async function ensureBotStorageMigrated(): Promise<void> {
-    // 单向导入已收口到 Repo；这里只等待初始化，不再读取旧模型字段或重写当前状态。
+    // One-way import is now handled by the Repo; only wait for initialization here, without reading legacy model fields or rewriting current state.
     if (!botStorageMigrationPromise) {
       botStorageMigrationPromise = Promise.all([repo.readConfig(), repo.readState()])
         .then(() => undefined)
@@ -2238,6 +2326,66 @@ export function createBotsService(
         });
     }
     await botStorageMigrationPromise;
+    await ensureProjectIdentityMigrated();
+  }
+
+  let projectIdentityMigrationPromise: Promise<void> | null = null;
+
+  /**
+   * Persisted-state migration to `[hostId, projectId]` (specs/bots-project-identity-migration.md, sections 4-5).
+   * Failures never block bot reads: unmigrated entries keep their legacy form and the lazy upgrade still applies.
+   */
+  function ensureProjectIdentityMigrated(): Promise<void> {
+    projectIdentityMigrationPromise ??= migratePersistedBotProjectIdentities().catch(
+      (error: unknown) => {
+        projectIdentityMigrationPromise = null;
+        botsLogger.warn(
+          undefined,
+          "Bot project identity migration deferred",
+          error instanceof Error ? error.message : String(error),
+        );
+      },
+    );
+    return projectIdentityMigrationPromise;
+  }
+
+  async function migratePersistedBotProjectIdentities(): Promise<void> {
+    const catalog = await readProjectCatalog(deps);
+    const workspaces = workspaceRefsFromCatalog(catalog);
+    const config = await repo.readConfig();
+    const nextBots = await Promise.all(
+      config.bots.map(async (bot) => {
+        const normalized = await normalizeBotWorkspaceIdentities(bot);
+        const allowedWorkspaces = normalizeConfiguredAllowedWorkspaces(
+          normalized.allowedWorkspaces,
+          workspaces,
+        );
+        return allowedWorkspaces.join("\n") === bot.allowedWorkspaces.join("\n")
+          ? bot
+          : { ...bot, allowedWorkspaces };
+      }),
+    );
+    const configChanged = nextBots.some((bot, index) => bot !== config.bots[index]);
+    const state = await repo.readState();
+    const contextUpdates = Object.entries(state.bots).flatMap(([key, context]) => {
+      if (context.hostId !== undefined) return [];
+      const upgraded = upgradeLegacyContext(context, catalog);
+      // Only a unique exact match is written; an unmatched legacy context is left for the lazy upgrade.
+      return upgraded.projectId ? [{ key, upgraded }] : [];
+    });
+    if (!configChanged && contextUpdates.length === 0) return;
+    await repo.backupBeforeProjectIdentityMigration();
+    if (configChanged) {
+      await writeBotConfig({
+        ...config,
+        bots: nextBots,
+      });
+    }
+    for (const { key, upgraded } of contextUpdates) {
+      await repo.updateContext(key, (current) =>
+        current && current.hostId === undefined ? { ...current, ...upgraded } : undefined,
+      );
+    }
   }
 
   async function listActiveTaskConfigOptions(
@@ -2273,7 +2421,7 @@ export function createBotsService(
       };
       return {
         ...baseOption,
-        // 保持 Bot 与工具栏的模式展示一致。
+        // Keep the mode shown in the Bot and toolbar consistent.
         label: formatConfigOptionLabel(baseOption, {
           configId,
           locale: context.locale,
@@ -2295,12 +2443,12 @@ export function createBotsService(
     if (!provider) {
       return option.label;
     }
-    const isEnglish = locale === "en-US";
+    const modeLabels = GLM_MODE_LABELS[normalizeBotMessageLocale(locale)];
     const labels: Partial<Record<ZCodeProvider, Record<string, string>>> = {
       glm: {
-        default: isEnglish ? "Default" : "默认",
+        default: modeLabels.default,
         yolo: "Yolo",
-        plan: isEnglish ? "Plan" : "计划",
+        plan: modeLabels.plan,
       },
     };
     return labels[provider]?.[option.id] ?? option.label;
@@ -2354,8 +2502,8 @@ export function createBotsService(
     context: Pick<BotContextState, "workspacePath" | "workspaceIdentity" | "hostId">,
   ): Promise<BotModelProviderOption[]> {
     const view = await readModelSelectionView(context);
-    // 旧缓存没有 workspaceIdentity 隔离，远端断连时会显示其他 Host 的候选。
-    // 当前菜单只消费目标 View；失败留空，下一次正常读取即可恢复，不借本地补选。
+    // Older caches were not isolated by workspaceIdentity and could show another Host's candidates after a remote disconnect.
+    // This menu consumes only the target View; leave it empty on failure so the next normal read can recover, without filling from local data.
     if (!view) return [];
     return view.providers
       .map(createModelSelectionProviderOption)
@@ -2434,8 +2582,8 @@ export function createBotsService(
     const modelName = model.slice(separatorIndex + 1);
     const modelSelectionOptions = await listModelSelectionProviderOptions(context);
     const providerLabel = modelSelectionOptions.find((item) => item.id === providerId)?.label;
-    // Bugfix: /status 只应该暴露用户能识别的模型供应商名称。
-    // 旧 bot-state 或 task config 可能保存成 providerId/modelId，providerId 对用户没有意义。
+    // Bugfix: /status should show only model provider names that users recognize.
+    // Legacy bot-state or task config may store providerId/modelId; providerId is not meaningful to users.
     return providerLabel ? `${providerLabel}/${modelName}` : model;
   }
 
@@ -2544,8 +2692,8 @@ export function createBotsService(
   }
 
   function normalizeBotDraftOptions(draftOptions: BotDraftOptions): BotDraftOptions {
-    // Bugfix: bot-state 里可能还残留旧三方 CLI 草稿 provider。
-    // 如果直接复用，/new 后首条消息会重新创建第三方 runtime，绕过 ZCode Agent 单一事实源。
+    // Bugfix: bot-state may retain a draft provider from an old third-party CLI.
+    // Reusing it would recreate a third-party runtime on the first message after /new, bypassing the ZCode Agent's single source of truth.
     return {
       ...draftOptions,
       provider: normalizeAgentProviderToZCodeAgent(draftOptions.provider),
@@ -2560,8 +2708,8 @@ export function createBotsService(
       provider ?? DEFAULT_BOT_ZCODE_PROVIDER,
     );
     if (context.workspaceIdentity && !(await isRemoteWorkspaceConnected(context))) {
-      // Bugfix: 远端断连时初始化草稿也不能偷偷申请远端 ZCode Agent runtime。
-      // 只有 /reconnect 能恢复连接；草稿先保留最小默认值，重连成功后再刷新。
+      // Bugfix: initializing a draft while the remote is disconnected must not secretly request a remote ZCode Agent runtime.
+      // Only /reconnect restores the connection; keep minimal defaults in the draft and refresh after reconnection succeeds.
       return { provider: requestedProvider };
     }
     const resolvedProvider = requestedProvider;
@@ -2582,14 +2730,14 @@ export function createBotsService(
       () => [],
     );
     const resolvedProvider = normalizeAgentProviderToZCodeAgent(activeTask.provider);
-    // Bot 硬锁 yolo：继承当前 task 时也强制 yolo，不沿用原 task 的 mode。
+    // Bot mode is locked to yolo: force it even when inheriting the current task instead of carrying over its mode.
     const forcedMode = resolveSupportedDraftMode(
       configOptions,
       "group" in context && context.group ? "default" : BOT_FORCED_MODE,
       resolvedProvider,
     );
-    // 继承的是领域选择，不是菜单显示值；显示值中的 $max 曾被误存为 modelId。
-    // 由同一工作区的任务服务读取真实选择，保留 Provider、模型和显式思考等级。
+    // Inherit the domain selection, not the menu display value; `$max` from the display value was previously stored incorrectly as modelId.
+    // Read the actual selection through the task service for the same workspace, preserving the Provider, model, and explicit reasoning level.
     const taskService = await resolveZCodeTaskServiceForContext(context);
     const modelSelection = await taskService.getTaskModelSelection({
       taskId: context.activeTaskId,
@@ -2632,7 +2780,7 @@ export function createBotsService(
   async function resolveDraftOptionsForDisplay(context: BotContextState): Promise<BotDraftOptions> {
     const original = await ensureDraftOptions(context);
     const view = await readModelSelectionView(context, original.modelSelection);
-    // 菜单也必须展示派发将使用的身份。这里只返回副本；查看菜单不能写回原草稿。
+    // The menu must also show the identity that will be used for dispatch. Return a copy; viewing the menu must not write to the original draft.
     return {
       ...original,
       modelSelection:
@@ -2680,14 +2828,14 @@ export function createBotsService(
     if (!draftOptions) {
       return;
     }
-    // Bugfix: workspace configOptions 描述的是切换前的工作区模型，不能用来校验新 task 的配置。
-    // 例如 GLM 的 enabled 会被误下发给刚切换到的其他 provider 模型，导致首条微信消息回调失败。
+    // Bug fix: workspace configOptions describes the workspace model before switching and cannot validate the new task configuration.
+    // For example, GLM’s enabled option could be incorrectly sent to another provider model just selected, causing the first WeChat message callback to fail.
     const configOptions = await listActiveTaskConfigOptions(context, taskId);
     const modeOption = configOptions.find(
       (option) => option.category === "mode" && option.type === "select",
     );
-    // Bot 硬锁 yolo：无论草稿/继承的 mode 是什么，建 task 时一律下发 yolo。
-    // 这是 mode 真正进入 agent session 的唯一咽喉，保证任何 bot task 都免交互权限。
+    // Bot mode is locked to yolo: send yolo when creating a task regardless of the draft or inherited mode.
+    // This is the only point where mode enters the agent session, ensuring every bot task bypasses interactive permissions.
     const forcedDraftMode = resolveSupportedDraftMode(
       configOptions,
       context.group ? (draftOptions.mode ?? "default") : BOT_FORCED_MODE,
@@ -2700,7 +2848,7 @@ export function createBotsService(
         mode: (forcedDraftMode ?? "default") as ZCodeTaskMode,
       });
     } else if (modeOption?.id) {
-      // provider 不支持 yolo（非 ZCode Agent）：保持其自身默认模式，避免首条消息回调失败。
+      // Providers other than ZCode Agent do not support yolo; keep their own default mode to avoid failing the first message callback.
       botsLogger.debug(
         traceId,
         `skip forced yolo mode unsupported provider=${draftOptions.provider}`,
@@ -2719,7 +2867,7 @@ export function createBotsService(
   }
 
   function clearPrivatePendingSelectionsForBot(botId: string): void {
-    // 私聊新建不能清掉群成员的菜单；群 key 额外包含发送者这一段。
+    // Creating a direct-message entry must not clear a group member’s menu; the group key also includes the sender segment.
     const matchesBot = (contextKey: string): boolean =>
       contextKey === botId ||
       (contextKey.startsWith(`${botId}::`) &&
@@ -2772,15 +2920,15 @@ export function createBotsService(
       return null;
     }
     if (actor.provider !== "weixin") {
-      // Bugfix: 只有微信没有结构化选项，只能靠“回复数字”承接 pending selection。
-      // Telegram/飞书等 provider 有按钮回调，普通文本不应被隐式解析成菜单选择。
+      // Bugfix: only WeChat lacks structured options and must use “reply with a number” for pending selections.
+      // Telegram, Feishu, and other providers have button callbacks, so ordinary text must not be implicitly parsed as a menu selection.
       clearPendingSelection(actor);
       return null;
     }
     if (!isSelectionIndexValue(value)) {
-      // Bugfix: /task 等列表命令会留下 pending selection。
-      // 旧逻辑允许普通文本按 label 命中选项，用户输入与 task 标题同名的消息时会被误切 task。
-      // 隐式选择只接受纯数字；按 id/label 选择仍通过显式 /task <value> 等命令完成。
+      // Bugfix: list commands such as /task leave a pending selection.
+      // The old logic let ordinary text select an option by label, so a message matching a task title could switch tasks unexpectedly.
+      // Implicit selection accepts only a plain number; selecting by id/label still uses an explicit command such as /task <value>.
       clearPendingSelection(actor);
       return null;
     }
@@ -2834,8 +2982,8 @@ export function createBotsService(
     const key = getActorContextKey(actor);
     const existing = transientInteractionCards.get(key);
     if (existing) {
-      // 修复原因：交互推进时 POST 新卡再 DELETE 旧卡会显示撤回痕迹。
-      // callback token 更新失败后的降级路径也只能 PATCH 原 message_id，保持单卡身份稳定。
+      // Fix rationale: posting a new card and then deleting the old one during interaction progress shows a retraction.
+      // If updating the callback token fails, the fallback must also PATCH the original message_id to keep the card identity stable.
       await adapter?.updateTransientInteractionCard?.(existing.bot, existing.handle, message);
       return;
     }
@@ -2857,8 +3005,8 @@ export function createBotsService(
     }
     const adapter = providers[existing.bot.provider];
     try {
-      // 修复原因：交互完成后撤回卡片会让问答和计划从聊天历史消失，用户无法回看
-      // 决策上下文。终态只更新为无控件卡片并释放运行时句柄，后续交互会创建新卡。
+      // Fix rationale: retracting the card after interaction completion removes the question and plan from chat history,
+      // preventing users from reviewing the decision context. Update it to a card without controls and release the runtime handle; later interactions create a new card.
       await adapter?.updateTransientInteractionCard?.(existing.bot, existing.handle, fallback);
     } catch (error) {
       botsLogger.warn(
@@ -3013,7 +3161,7 @@ export function createBotsService(
     if (isFeishuBotProvider(bot.provider) && message.providerUserId.startsWith("oc_")) {
       await waitForGroupDeliverySlot(`${bot.provider}:${message.providerUserId}`);
     }
-    // 定时任务也使用稳定群目标；等待发送额度之后重新检查启用状态。
+    // Scheduled tasks also use a stable group target; recheck the enabled state after waiting for send capacity.
     if (authorize && !(await authorize())) return;
     if (isFeishuBotProvider(bot.provider) && message.groupTaskId) {
       const groupState = (await repo.readState()).bots[
@@ -3115,7 +3263,7 @@ export function createBotsService(
     task: () => Promise<T>,
     control = false,
   ): Promise<T> {
-    // 控制请求独立串行，不能被等待附件或 admission 的普通输入挡住。
+    // Control requests are serialized independently and must not be blocked by ordinary input waiting for attachments or admission.
     const actorContextKey = `${getBotConversationKey(actor)}${control ? ":control" : ""}`;
     const previous = inboundProcessingQueuesByContext.get(actorContextKey) ?? Promise.resolve();
     let releaseQueue = (): void => undefined;
@@ -3130,8 +3278,8 @@ export function createBotsService(
     inboundProcessingQueuesByContext.set(actorContextKey, current);
     await previous.catch(() => undefined);
     try {
-      // Bugfix: 同一个用户可能连续点击 AskUserQuestion 按钮或快速回复多条消息。
-      // 这里按 actor 串行化入站处理，避免两个并发请求同时读取同一个 pendingElicitation 并重复 respondElicitation。
+      // Bugfix: the same user may click AskUserQuestion buttons repeatedly or reply to several messages quickly.
+      // Serialize inbound handling per actor so concurrent requests cannot read the same pendingElicitation and call respondElicitation twice.
       return await task();
     } finally {
       releaseQueue();
@@ -3159,8 +3307,8 @@ export function createBotsService(
     if (recentInboundDeliveryAtByKey.has(deliveryKey)) {
       return false;
     }
-    // Bugfix: 飞书 WebSocket 可能重投同一条 im.message.receive_v1，微信/Telegram 也可能在重试后重放同一 message id。
-    // 普通消息有创建/发送任务的副作用，必须在进入业务处理前按 provider message id 幂等，避免同一句 hello 被执行两轮。
+    // Bugfix: Feishu WebSocket may redeliver the same im.message.receive_v1, and WeChat/Telegram may replay a message id after retrying.
+    // Ordinary messages can create or send tasks, so make them idempotent by provider message id before business handling to avoid executing the same “hello” twice.
     recentInboundDeliveryAtByKey.set(deliveryKey, now);
     return true;
   }
@@ -3193,8 +3341,8 @@ export function createBotsService(
     if (isLongRunningTyping) {
       return;
     }
-    // Bugfix: 飞书 sendTyping 只负责给本次入站消息加 Typing reaction。
-    // 短命令回复发送完成后必须按同一 messageId 显式删除，避免依赖定时兜底或等下一条命令清理。
+    // Bugfix: Feishu sendTyping adds a Typing reaction only for the current inbound message.
+    // After sending a short command reply, explicitly remove it by the same messageId instead of relying on a timer fallback or cleanup by the next command.
     await adapter
       .stopTyping(bot, {
         providerUserId: targetId,
@@ -3704,7 +3852,7 @@ export function createBotsService(
     const locale = await readMessageLocale();
     const config = await repo.readConfig();
     const callbackBot = findCallbackBot(config, provider, payload);
-    // 在读取引用附件和处理退群事件之前验证回调，避免未验证事件产生读写副作用。
+    // Validate the callback before reading referenced attachments or handling group-leave events, so unverified events cannot cause read/write side effects.
     if (callbackBot && isFeishuBotProvider(provider) && callbackBot.webhookSecretRef) {
       const expectedToken = await deps.credentialService.load(callbackBot.webhookSecretRef);
       const header = isRecord(payload) && isRecord(payload.header) ? payload.header : null;
@@ -3732,8 +3880,8 @@ export function createBotsService(
               getBotConversationKey({ botId: callbackBot.id, chatType: "group", chatId, threadId })
             ]
           : undefined;
-      // 根引用属于首次输入，不属于 active 状态；退出再接入不能重复读取它。
-      // 只信服务记录，外部回调不能声称已接收来跳过首次材料准备。
+      // The root reference belongs to the initial input, not the active state; reconnecting after leaving must not read it again.
+      // Trust only the service record; an external callback cannot claim receipt to skip initial material preparation.
       materialPayload = {
         ...payload,
         zcodeTopicHasAcceptedInput: Object.values(topic?.group?.inputs ?? {}).some(
@@ -3818,8 +3966,8 @@ export function createBotsService(
     }
     const parsedInboundMessages = adapter.parseCallback(parsePayload);
     if (isFeishuBotProvider(provider)) {
-      // Bugfix: 飞书 WebSocket connected 只代表长连接已建成，不代表事件订阅已经推到本机。
-      // 这里记录入口 payload 摘要和解析数量，方便区分“飞书未推事件”和“payload 形状未被解析”。
+      // Bugfix: Feishu WebSocket connected means only that the persistent connection is established, not that event subscriptions have reached this host.
+      // Record the inbound payload summary and parse count here to distinguish “Feishu sent no event” from “the payload shape was not parsed.”
       botsLogger.debug(
         undefined,
         `provider callback parsed provider=${provider} count=${parsedInboundMessages.length} ${summarizeCallbackPayload(preparedPayload)}`,
@@ -3871,7 +4019,7 @@ export function createBotsService(
             };
           }
         } catch (error) {
-          // Bugfix: 飞书 displayName 需要额外通讯录权限，权限缺失时不能阻断消息处理和绑定。
+          // Bugfix: Feishu displayName requires additional address book permissions; missing permission must not block message processing or binding.
           botsLogger.debug(
             undefined,
             `resolve actor displayName failed provider=${provider} bot=${inbound.botId} user=${inbound.actor.providerUserId}: ${error instanceof Error ? error.message : String(error)}`,
@@ -3889,7 +4037,7 @@ export function createBotsService(
         undefined,
         `provider callback provider=${provider} bot=${inboundMessage.botId} messageId=${inboundMessage.actor.providerMessageId ?? ""}`,
       );
-      // 回调失败和重连也走相同的话题提醒规则，保留 Provider 核验的提及事实。
+      // Callback failures and reconnects follow the same thread-notification rules, preserving mention facts verified by the Provider.
       inboundMessage = {
         ...inboundMessage,
         actor: { ...inboundMessage.actor, mentionedBot: inboundMessage.mentionedBot === true },
@@ -3943,8 +4091,8 @@ export function createBotsService(
       }
       replies.push(...outbound);
       if (inboundBusinessFailure) {
-        // Bugfix：错误提示发送成功不等于业务消息已经消费成功。此处不能执行 callback ACK，
-        // 否则飞书会移除按钮；最终 ok=false 也会阻止 Telegram/微信提交外部游标。
+        // Bugfix: successfully sending an error notice does not mean the business message was consumed.
+        // Do not ACK the callback here, or Feishu removes the button; returning ok=false also prevents Telegram/WeChat from advancing their external cursor.
         if (bot) {
           for (const outboundMessage of outbound) {
             await sendOutbound(bot, outboundMessage).catch((sendError) => {
@@ -3972,8 +4120,8 @@ export function createBotsService(
             ) &&
             Boolean(outbound[0])) ||
             (inboundMessage.groupCardAction === true && outbound[0]?.callbackToastOnly === true));
-        // Bugfix: 只做空 ACK 会让 Telegram 顶部 loading 消失但没有任何可见反馈。
-        // 这里在业务处理后把结果写进 answerCallbackQuery 的 toast，即使后续 sendMessage 失败，用户也能看到按钮结果。
+        // Bugfix: an empty ACK makes Telegram's loading indicator disappear without visible feedback.
+        // Put the result in the answerCallbackQuery toast after business handling so users still see the button outcome if sendMessage later fails.
         const callbackText = outbound[0]?.text ?? msg(locale, "received");
         let acknowledgeResult:
           | Awaited<ReturnType<NonNullable<typeof adapter.acknowledgeCallback>>>
@@ -4006,8 +4154,8 @@ export function createBotsService(
             }),
           ]);
         } catch (error) {
-          // 修复原因：飞书第二题原本必须等待 card/update 完成；credential 或 SDK 内部
-          // 任一步骤悬挂都会压住 fallback。主流程自己设 deadline，超时后立即另发下一题。
+          // Fix rationale: advancing to the second Feishu question previously waited for card/update to finish; a stall in credentials or the SDK
+          // could block the fallback. Set a deadline in the main flow and send the next question as soon as it expires.
           botsLogger.warn(
             undefined,
             `provider callback acknowledge failed provider=${provider} bot=${bot.id}: ${error instanceof Error ? error.message : String(error)}`,
@@ -4033,14 +4181,14 @@ export function createBotsService(
           transientCard &&
           outbound[0]?.elicitation
         ) {
-          // 修复原因：真实飞书日志确认 card/update 返回成功后客户端仍可能停在旧题。
-          // callback token 负责点击 ACK，随后再 PATCH 同一 message_id 强制刷新可见结构；
-          // 两次写入始终指向同一张卡，禁止退回“新建后撤回”的闪烁方案。
+          // Fix rationale: actual Feishu logs confirm that the client may still show the old question after card/update returns success.
+          // The callback token acknowledges the click, then PATCH the same message_id to force a visible refresh.
+          // Both writes target the same card; do not revert to the flickering “create new, then retract old” approach.
           await providers[transientCard.bot.provider]
             ?.updateTransientInteractionCard?.(transientCard.bot, transientCard.handle, outbound[0])
             .catch((error) => {
-              // 业务回答已被 Agent 接受且 callback token 已完成 ACK，PATCH 失败不能让
-              // Telegram/微信式外部游标重试整次回答，否则会重复提交同一交互。
+              // The Agent has accepted the answer and the callback token has been acknowledged. A PATCH failure must not make
+              // an external cursor such as Telegram/WeChat retry the whole answer, or the same interaction will be submitted twice.
               botsLogger.warn(
                 undefined,
                 `refresh transient interaction card failed provider=${provider} bot=${bot.id}: ${error instanceof Error ? error.message : String(error)}`,
@@ -4053,12 +4201,12 @@ export function createBotsService(
           !outbound[0]?.callbackToastOnly &&
           outbound[0]?.elicitation?.status !== "pending"
         ) {
-          // 修复原因：card_update_token 已把同一消息更新为只读终态，此时只释放内存句柄，
-          // 不能再 PATCH、DELETE 或另发结果卡。
+          // Fix rationale: card_update_token has updated the same message to a read-only terminal state. Release only the in-memory handle;
+          // do not PATCH, DELETE, or send another result card.
           transientInteractionCards.delete(getActorContextKey(inboundMessage.actor));
         }
-        // Bugfix: /reconnect 的“正在重连”必须在 ensureConnected 前实时发送。
-        // handleReconnect 只返回最终结果，避免重连完成后才把过期的开始状态一起吐给用户。
+        // Bugfix: send /reconnect's “reconnecting” status before ensureConnected runs.
+        // handleReconnect returns only the final result, preventing a stale starting status from being sent after reconnection completes.
         try {
           for (const outboundMessage of callbackHandledByCardUpdate ? [] : outbound) {
             if (transientCard && !outboundMessage.callbackToastOnly) {
@@ -4357,8 +4505,8 @@ export function createBotsService(
     pending: BotPendingElicitation,
     answers: BotPendingElicitation["answers"] = pending.answers,
   ): Record<string, unknown> {
-    // 修复原因：Bot 与桌面共用“缺少 key 表示跳过”的问答契约；未答题不能写成
-    // 空字符串，否则 Agent 会把它误判为用户提供的偏好。
+    // Fix rationale: Bots and desktop share the elicitation contract where a missing key means skipped.
+    // Do not write an unanswered field as an empty string, or the Agent will mistake it for a user-provided preference.
     const answerEntries = pending.questions.flatMap((question, index) => {
       const values = answers[getElicitationAnswerKey(index)] ?? [];
       const text = values.join(", ").trim();
@@ -4429,8 +4577,8 @@ export function createBotsService(
       clearTimeout(timeout);
     }
     if (outcome === "timeout") {
-      // 修复原因：v4/UI 进度广播只是辅助同步。广播 RPC 悬挂时若一直 await，
-      // 飞书按钮回调无法生成下一题，也到不了 card/update，用户会永久停在第一题。
+      // Fix rationale: v4/UI progress broadcasts are auxiliary synchronization. If the broadcast RPC hangs and remains awaited,
+      // Feishu button callbacks cannot create the next question or reach card/update, leaving the user stuck on the first question.
       botsLogger.warn(
         undefined,
         `elicitation progress broadcast timed out task=${pending.taskId} request=${pending.requestId}`,
@@ -4449,8 +4597,8 @@ export function createBotsService(
     const isCustomAnswerExpanded =
       pending.expandedCustomAnswerQuestionIndexes?.includes(pending.currentQuestionIndex) === true;
     if (pending.renderContext?.kind === "plan_approval") {
-      // Bugfix: Feishu 卡片能直接消费 schema.plan，但 Telegram/微信只渲染 message.text。
-      // 在共享出站标题中投影完整计划，确保所有纯文本渠道都保留审批上下文。
+      // Bugfix: Feishu cards can consume schema.plan directly, but Telegram/WeChat render only message.text.
+      // Project the complete plan into the shared outbound title so every plain-text channel retains approval context.
       return [
         pending.renderContext.plan,
         "------",
@@ -4487,14 +4635,14 @@ export function createBotsService(
         label: question.multiSelect
           ? `${selectedValues.has(option.value) ? "[x]" : "[ ]"} ${option.label}`
           : option.label,
-        // Plan approval 的说明属于语义元数据；纯文本渠道只展示批准/自定义两个动作，
-        // 避免把“退出计划模式”展开成额外正文，保持与 Feishu 卡片一致。
+        // Plan approval instructions are semantic metadata. Plain-text channels show only the approve/customize actions,
+        // avoiding extra body text for “exit plan mode” and matching the Feishu card.
         description:
           pending.renderContext?.kind === "plan_approval" ? undefined : option.description,
       })) ?? [];
     if (pending.renderContext?.kind === "plan_approval") {
-      // Bugfix: Feishu provider 会自行补自定义回答表单，但 Telegram/微信依赖共享 selection。
-      // Plan approval 必须在这里补入口，避免非卡片渠道只能批准、无法提交修改意见。
+      // Bugfix: the Feishu provider supplies its own custom-answer form, but Telegram/WeChat rely on shared selection.
+      // Add the plan approval entry point here so non-card channels can submit change requests as well as approve.
       options.push({
         id: BOT_ELICITATION_CUSTOM_OPTION_ID,
         label: msg(locale, "elicitationCustomOption"),
@@ -4619,8 +4767,8 @@ export function createBotsService(
       action,
       content,
     });
-    // 修复原因：v4 resolveInteraction 才是业务确认点。若在 ACK 前写 handledAt，
-    // 瞬时失败后的同一按钮重试会被误判为已处理，Agent 将永久停在等待用户输入。
+    // Fix rationale: v4 resolveInteraction is the business confirmation point. If handledAt is written before ACK,
+    // retrying the same button after a transient failure is mistaken as already handled, leaving the Agent waiting for user input indefinitely.
     const handledAt = Date.now();
     await writeContext({
       ...auth.context,
@@ -4636,10 +4784,10 @@ export function createBotsService(
     }
     if (action === "accept") {
       startTyping(auth.bot, actor, pending.taskId);
-      // Bugfix: AskUserQuestion 只是在回复问题，不属于命令配置成功；这里保留原问答提交文案，避免误回 /status。
+      // Bugfix: AskUserQuestion answers a question; it does not indicate a successful command or configuration change. Keep the elicitation submission text to avoid replying with /status by mistake.
       return [createCompletedElicitationOutbound(actor, pending, auth.locale, action)];
     }
-    // Bugfix: 取消/拒绝问答也应使用问答自己的结果文案，避免第三方 Bot 里出现无关的任务状态。
+    // Bugfix: cancellation or rejection of a question should use its own result text, not an unrelated task status in third-party Bots.
     return [createCompletedElicitationOutbound(actor, pending, auth.locale, action)];
   }
 
@@ -4668,8 +4816,8 @@ export function createBotsService(
       answers,
     };
     await writeContext({ ...auth.context, pendingElicitation: nextPending });
-    // Bugfix: Bot 侧代选 AskUserQuestion 后，UI 只收到最终响应会停留在旧本地草稿。
-    // 每次推进题号都同步当前题号和已选答案，让桌面/移动 Web 能保持同一选中态。
+    // Bugfix: after a Bot selects an AskUserQuestion option, sending only the final response leaves the UI on its old local draft.
+    // Sync the current question and selected answer on each advance so desktop and mobile Web keep the same selection state.
     await broadcastPendingElicitationProgress(auth.context, nextPending);
     return createElicitationReply(actor, nextPending, auth.locale);
   }
@@ -4698,8 +4846,8 @@ export function createBotsService(
     if (actor.provider !== "weixin") {
       const expectedToken = getPendingElicitationSelectionToken(pending);
       if (!parsedValue.token || parsedValue.token !== expectedToken) {
-        // Bugfix: Telegram/飞书/Webhook 的旧按钮可能在新一轮 AskUserQuestion 后才送达。
-        // 非微信通道必须带本轮短 token，避免把上一轮按钮编号误当成当前问题的答案。
+        // Bugfix: an old Telegram/Feishu/Webhook button may arrive after a new AskUserQuestion round starts.
+        // Non-WeChat channels must carry this round's short token so an old button number is not mistaken for the current answer.
         return [createOutbound(actor, msg(auth.locale, "elicitationExpired"))];
       }
     }
@@ -4717,8 +4865,8 @@ export function createBotsService(
       if (nextValues.length === 0) {
         return createElicitationReply(actor, pending, auth.locale);
       }
-      // Bugfix: 飞书/Lark 平铺选项由按钮维护草稿，表单只负责提交和自定义输入。
-      // 提交时需要合并当前 radio/checkbox 草稿和自定义输入，避免空表单把已选项覆盖掉。
+      // Bugfix: Feishu/Lark buttons maintain the draft for flat options; the form handles only submission and custom input.
+      // Merge the current radio/checkbox draft with custom input on submit so an empty form does not overwrite selected options.
       return advancePendingElicitation(auth, actor, pending, {
         ...pending.answers,
         [answerKey]: nextValues,
@@ -4759,7 +4907,7 @@ export function createBotsService(
         answers: { ...pending.answers, [answerKey]: nextValues },
       };
       await writeContext({ ...auth.context, pendingElicitation: nextPending });
-      // Bugfix: 多选题在 Bot 里 toggle 后不会触发 ZCode Agent response，必须主动同步草稿给 UI。
+      // Bugfix: toggling a multiple-choice answer in the Bot does not trigger a ZCode Agent response, so explicitly sync the draft to the UI.
       await broadcastPendingElicitationProgress(auth.context, nextPending);
       return createElicitationReply(actor, nextPending, auth.locale);
     }
@@ -4802,8 +4950,8 @@ export function createBotsService(
       /^[1-9]\d*$/u.test(value) &&
       Number.parseInt(value, 10) === question.options.length + 1
     ) {
-      // 修复原因：自由文本必须保留为用户数据；只有菜单显示的额外序号才是跳过，
-      // 避免吞掉名为 skip/next/跳过/__skip__ 的合法选项或自定义答案。
+      // Fix rationale: free text must be preserved as user data; only the extra number shown in the menu means skip,
+      // so valid options or custom answers named skip/next/skip/__skip__ are not consumed.
       return advancePendingElicitation(auth, actor, pending, pending.answers);
     }
     const values = question?.multiSelect
@@ -4859,23 +5007,23 @@ export function createBotsService(
       taskId: event.taskId,
       requestId: event.requestId,
       runId: event.traceId,
-      // Bugfix：subagent 发起的 elicitation 必须保留 origin；否则 Bot 广播和后续响应
-      // 无法还原请求归属，rebase 后只剩顶层 stream event 带 origin。
+      // Bugfix: preserve origin for elicitation initiated by a subagent; otherwise Bot broadcasts and later responses
+      // cannot recover request ownership, because after rebase only the top-level stream event carries origin.
       ...(event.origin ? { origin: event.origin } : {}),
       actorKey: getActorContextKey(actor),
       currentQuestionIndex: 0,
-      // 修复原因：ExitPlanMode 的协议问题和选项使用稳定英文；如果直接复用，中文 Bot 卡片会中英混杂。
-      // Bot 在出站边界按 App locale 本地化整组审批文案，普通 AskUserQuestion 保持模型原文。
+      // Fix rationale: ExitPlanMode protocol questions and options use stable English; reusing them directly would mix English and Chinese in Chinese Bot cards.
+      // Localize the full approval copy at the Bot outbound boundary using the app locale; keep ordinary AskUserQuestion text from the model unchanged.
       questions: normalizeBotElicitationQuestions(event, locale),
       answers: {},
-      // 修复原因：Feishu/Lark 会在自定义回答、完成和重启恢复时重建原卡片；
-      // 只把 schema 作为首次发送参数会让后续更新丢失 plan 并退回通用 Question 卡片。
+      // Fix rationale: Feishu/Lark rebuild the original card for custom answers, completion, and restart recovery.
+      // Passing schema only when first sending would make later updates lose plan and fall back to a generic Question card.
       ...(readBotElicitationRenderContext(event)
         ? { renderContext: readBotElicitationRenderContext(event) }
         : {}),
     };
-    // Bugfix: Bot 原先只消费 permission_request，没有把 ZCode Agent 的
-    // AskUserQuestion/elicitation_request 转成第三方可回答消息，任务会一直卡在等待用户输入。
+    // Bugfix: the Bot previously handled only permission_request and did not convert ZCode Agent's
+    // AskUserQuestion/elicitation_request into a replyable third-party message, leaving the task waiting for user input.
     if (context.pendingElicitation) {
       clearPendingElicitationSelection(context.pendingElicitation);
     }
@@ -4883,7 +5031,7 @@ export function createBotsService(
     await writeContext({ ...context, pendingElicitation }, false, context.activeTaskId);
     await broadcastPendingElicitationProgress(context, pendingElicitation);
     for (const reply of await createElicitationReply(actor, pendingElicitation, locale)) {
-      // 原因：临时交互卡绕过普通出站分支，曾丢失群任务和授权版本；选择传输方式前统一附加。
+      // Cause: temporary interaction cards bypassed the ordinary outbound branch and lost the group task and authorization version; attach them consistently before choosing the transport.
       const scopedReply = context.group
         ? {
             ...reply,
@@ -5010,14 +5158,14 @@ export function createBotsService(
     };
     const zcodeTaskService = await resolveZCodeTaskServiceForContext(context);
     if (context.group) {
-      // Bug 原因：旧会话尚未冷恢复时建立结果订阅会耗尽重试；先读取权威状态，
-      // 再监听未来事件，避免新请求执行结束后无人消费结果。这里不提交历史输入。
+      // Bug cause: creating a result subscription before a stale session has cold-recovered can exhaust retries; first read the authoritative state,
+      // then listen for future events so results are not left unconsumed when a new request finishes. This does not submit historical input.
       await zcodeTaskService.getBotGroupTaskBlockReason?.({
         taskId: context.activeTaskId,
         workspacePath: context.workspacePath,
         workspaceIdentity: context.workspaceIdentity,
       });
-      // 启动恢复与首条输入可能并发，等待期间另一路已建立订阅时直接复用。
+      // Startup recovery and the first input may run concurrently; reuse a subscription established by the other path while waiting.
       if (streamSubscriptions.has(streamSubscriptionKey)) return;
     }
     const automationGroupKey =
@@ -5097,7 +5245,7 @@ export function createBotsService(
                         .digest("hex"),
                     }
                   : {}),
-                // 来源保留在关联元数据中；拼进正文会产生多余的 Desktop／Mobile Web 标签。
+                // Keep the source in association metadata; adding it to the body creates redundant Desktop/Mobile Web labels.
                 text: message.text,
               }
             : message,
@@ -5233,8 +5381,8 @@ export function createBotsService(
         return;
       }
       const now = Date.now();
-      // Bugfix：旧实现只在成功后更新时间基准，Feishu 失败时每个 stream event 都会真实发请求；
-      // force 路径还会绕过普通节流。失败退避和熔断必须先于 force 判断，避免单次 400 被放大成风暴。
+      // Bugfix: the old implementation updated its time baseline only on success, so every stream event sent a real request after Feishu failed.
+      // The force path also bypassed normal throttling. Apply failure backoff and circuit breaking before checking force to prevent one 400 from becoming a request storm.
       if (streamingCardCircuitOpen || now < streamingCardNextAttemptAt) {
         return;
       }
@@ -5294,14 +5442,14 @@ export function createBotsService(
               if (!streamingCardHandle) {
                 streamingCardHandle = result ?? null;
                 if (!streamingCardHandle) {
-                  // Bug 根因：飞书创建接口可能 code=0 却不返回 message_id。若把这种静默失败
-                  // 当成成功推进 segmentIndex，未投递的中间段会被永久跳过；必须统一进入退避重试。
+                  // Bug cause: the Feishu create API may return code=0 without a message_id. Treating this silent failure
+                  // as success and advancing segmentIndex permanently skips an undelivered middle segment; route it through backoff retry.
                   throw new Error("Feishu create streaming card returned no message_id.");
                 }
               }
               if (index < states.length - 1) {
-                // 修复原因：当前卡片达到飞书元素预算后必须保留为 sealed 历史段，
-                // 后续 block 只写入新卡片，不能把已展示内容再次发送或继续更新旧 message_id。
+                // Fix rationale: once the current card reaches Feishu's element budget, preserve it as a sealed history segment.
+                // Write subsequent blocks to a new card; do not resend displayed content or keep updating the old message_id.
                 streamingCardSegmentIndex = index + 1;
                 streamingCardHandle = null;
               }
@@ -5311,8 +5459,8 @@ export function createBotsService(
             streamingCardConsecutiveFailures = 0;
             streamingCardNextAttemptAt = 0;
           } catch (error) {
-            // Bugfix: 第三方卡片只是 best-effort 展示，超时/失败不能阻塞 task_complete、
-            // task_error 或 typing 清理等生命周期事件。
+            // Bugfix: third-party cards are best-effort displays; timeout/failure must not block lifecycle events such as task_complete,
+            // task_error, or typing cleanup.
             if (persistentPrivate) {
               privateDeliveryFailed = true;
               privateCardDeliveryUnknown = !isRecord(error) || error.deliveryRejected !== true;
@@ -5349,8 +5497,8 @@ export function createBotsService(
       if (!streamingCardHandle) {
         return;
       }
-      // 修复原因：阻塞交互前的 Agent 输出与交互后的 continuation 属于两个可读段落。
-      // 旧实现继续复用同一 message_id，导致问题/Plan 卡夹在中间但后续正文回写到旧卡。
+      // Fix rationale: Agent output before a blocking interaction and the continuation afterward are separate readable sections.
+      // Reusing the same message_id left the question/Plan card in between while later text was written back to the old card.
       streamingCardStatus = "sealed";
       await syncStreamingCardReply("seal", true);
       streamingCardHandle = null;
@@ -5383,8 +5531,8 @@ export function createBotsService(
         if (shouldBroadcast) {
           await broadcastTaskStreamEvent(context, event);
         }
-        // Bugfix: 共享 host / 远控下 UI 收到的是 workspace 级 mirror batch。
-        // 旧逻辑只识别裸 stream event，导致 UI 正常流式显示但 Bot channel 没有任何可发送回复。
+        // Bugfix: with a shared host or remote control, the UI receives workspace-level mirror batches.
+        // The old logic recognized only bare stream events, so the UI streamed normally while the Bot channel had no reply to send.
         for (const op of event.ops) {
           if (op.kind === "stream_event") {
             await handleStreamEvent(op.event, false);
@@ -5414,7 +5562,7 @@ export function createBotsService(
             automationRuns.delete(event.traceId) ||
             automationPending;
           automationPending = false;
-          // 桌面/手机轮次只能同步输出，不能凭常驻订阅增加 IM 审批入口。
+          // Desktop/mobile turns can synchronize output only; a persistent subscription must not add an IM approval entry point.
           imInteractionRun = privateImTraces.has(
             JSON.stringify([streamSubscriptionKey, event.traceId]),
           );
@@ -5440,7 +5588,7 @@ export function createBotsService(
         }
         if (event.type === "task_complete" || event.type === "task_error") {
           if (runId) terminalRuns.add(runId);
-          // continuous 不重放旧轮；有界保留重复终态保护。
+          // continuous does not replay old turns; retain duplicate-terminal protection for a bounded period.
           if (terminalRuns.size > 128) terminalRuns.delete(terminalRuns.values().next().value!);
         }
         if (
@@ -5459,7 +5607,7 @@ export function createBotsService(
           !currentBot.enabled
         )
           return;
-        // 停止续接后旧输入可能迟到；不能用它覆盖新轮的缓存、表情或投递目标。
+        // After continuation is stopped, old input may arrive late; it must not overwrite the new turn’s cache, reaction, or delivery target.
         if (
           latest.group.threadId &&
           resultSourceCommandId &&
@@ -5483,7 +5631,7 @@ export function createBotsService(
               input.source.messageId,
               event.reason === "session_resumed" ? "discarded" : "cancelled",
             );
-            // 话题不再提供排队/Steer 交互；旧运行丢弃事件只更新原输入状态与表情。
+            // Threads no longer offer queue/Steer interactions; an old run’s discard event updates only the original input state and reaction.
             if (latest.group.threadId) continue;
             const locale = await readMessageLocale();
             const text =
@@ -5518,7 +5666,7 @@ export function createBotsService(
         if (event.type === "task_run_started") resultInputOrigin = event.inputOrigin ?? "desktop";
         if (event.type === "task_run_started" || event.inputId) {
           const source = event.inputId ? latest.group.inputs?.[event.inputId]?.source : undefined;
-          // 按本轮可信输入解析，不能把无来源的桌面结果或重试归给群 owner/最近发言者。
+          // Parse using this turn’s trusted input; do not attribute a source-less desktop result or retry to the group owner or most recent speaker.
           const isTopicReply = !!(source?.threadId ?? latest.group.threadId);
           resultMentionedUserIds = source
             ? [
@@ -5567,8 +5715,8 @@ export function createBotsService(
       if (shouldBroadcast) {
         await broadcastTaskStreamEvent(context, event);
       }
-      // Bugfix: 第三方默认回复需要随 AssistantMessageResponse 流式发送；
-      // 但 /status Progress 仍然要独立缓存，避免受发送颗粒度影响。
+      // Bugfix: default third-party replies must stream with AssistantMessageResponse,
+      // while /status Progress remains cached separately so it is independent of send chunk size.
       updateLiveStatusProgress(event);
       if (event.type === "agent_message_chunk") {
         assistantParts = appendAssistantMessagePart(assistantParts, {
@@ -5582,7 +5730,7 @@ export function createBotsService(
         }
         if (getMode() !== "summary_changes") {
           assistantReplyBuffer += event.content;
-          // 第三方平台消息是离散气泡；formatter 负责把当前 buffer 按长度约束拆成可发送消息。
+          // Third-party platforms use discrete message bubbles; the formatter splits the current buffer into messages within length limits.
           await flushAssistantReplyBuffer(false);
         }
         return;
@@ -5600,8 +5748,8 @@ export function createBotsService(
         if (!supportsStreamingCardReply()) {
           await flushAssistantReplyBuffer(true);
         }
-        // Bugfix: summary_changes 完成消息需要参考 UI latestPart。
-        // tool_call_update 可能在缺少 tool_call 首帧时先到，需像 UI 一样补一个 tool-call part 边界。
+        // Bugfix: summary_changes completion messages must account for the UI's latestPart.
+        // tool_call_update may arrive before the first tool_call frame, so add a tool-call part boundary as the UI does.
         if (!assistantPartToolIds.has(event.toolId)) {
           assistantPartToolIds.add(event.toolId);
           assistantParts = appendAssistantMessagePart(assistantParts, {
@@ -5646,8 +5794,8 @@ export function createBotsService(
         await broadcastTaskListChange(context, event.taskId, "permission_request", {
           permissionRequest: event,
         });
-        // Bugfix: UI 会把 ZCode Agent 原始权限选项规整成“允许/始终允许/拒绝”的固定顺序和文案；
-        // 机器人之前直接展示 provider 原始英文 name，还额外加取消按钮，导致同一个权限请求在飞书和 UI 看起来不一致。
+        // Bugfix: the UI normalizes raw ZCode Agent permission options into a fixed order and labels: allow/always allow/deny.
+        // Bots previously showed the provider's raw English names and added a cancel button, making the same permission request look different in Feishu and the UI.
         const permissionOptions = sortBotPermissionOptions(event.options);
         const permissionSelection: SelectionPrompt = {
           id: `permission-${event.requestId}`,
@@ -5668,8 +5816,8 @@ export function createBotsService(
             };
           }),
         };
-        // Bugfix: Telegram callback_data 只有 64 字节，真实 toolCallId/requestId 可能过长。
-        // 因此按钮只回传短序号，真实 requestId/optionId 暂存在当前 bot context 中再解析。
+        // Bugfix: Telegram callback_data is limited to 64 bytes, while real toolCallId/requestId values may be longer.
+        // Buttons therefore return only a short index; resolve the real requestId/optionId from the current bot context.
         const pendingPermissionOptions = permissionOptions.map((option) => {
           const isDenyCommand = isBotPermissionRejectOption(option);
           return {
@@ -5689,7 +5837,7 @@ export function createBotsService(
         );
         if (permissionReply) {
           if (shouldUseTransientInteractionCard(bot, user)) {
-            // 原因：Feishu 群配置归一化后也会走临时卡分支，不能因此跳过群卡授权字段。
+            // Cause: normalized Feishu group configuration also takes the temporary-card branch; that must not skip the group-card authorization fields.
             await upsertTransientInteractionCard(
               bot,
               actor,
@@ -5782,9 +5930,9 @@ export function createBotsService(
                 ),
           );
         }
-        // Bugfix: ZCode Agent 终态事件可能先于 task index/meta 落盘广播到 Bots。
-        // 如果这里立刻用旧 meta 更新 sidebar，随后列表再刷新到终态 meta，会出现状态/摘要跳一下。
-        // 因此终态广播前短重试读取一次稳定 meta，尽量用同一帧完成 UI 增量更新。
+        // Bugfix: a terminal ZCode Agent event may be broadcast to Bots before the task index/meta is persisted.
+        // Updating the sidebar immediately with old metadata and then refreshing to terminal metadata makes the status/summary jump.
+        // Briefly retry reading stable metadata before the terminal broadcast so the UI can update in one frame when possible.
         const completedTask = await readTerminalTaskMeta(context, event.taskId, event.type).catch(
           () => null,
         );
@@ -5827,7 +5975,7 @@ export function createBotsService(
         }
 
         if (context.group && /stop|cancel|interrupt|abort/iu.test(event.stopReason)) {
-          // 停止通知会触发群内其他机器人继续回复；主聊天与话题统一静默，前面的状态清理仍保留。
+          // Stop notifications can trigger other bots in the group to reply; silence both the main chat and threads while retaining the earlier state cleanup.
           return;
         }
         const mode = getMode();
@@ -5885,7 +6033,7 @@ export function createBotsService(
           const source = resultSourceCommandId
             ? context.group?.inputs?.[resultSourceCommandId]?.source
             : undefined;
-          // 无 @ 续聊允许模型不参与，空输出不能再被“任务已完成”兜底变成抢答。
+          // An @-free continuation may not involve the model; the empty-output fallback must not turn it into a “task completed” reply that races others.
           if (
             context.group?.threadId &&
             source?.botIdentity &&
@@ -5895,7 +6043,7 @@ export function createBotsService(
             return;
           await sendTaskOutbound(
             bot,
-            createOutbound(actor, locale === "en-US" ? "Task completed." : "任务已完成。"),
+            createOutbound(actor, TASK_COMPLETED_MESSAGE[normalizeBotMessageLocale(locale)]),
           );
           return;
         }
@@ -5954,8 +6102,8 @@ export function createBotsService(
       const nextStreamEvent = streamEventQueue.then(() =>
         handleStreamEvent(event, shouldBroadcast),
       );
-      // Bugfix: ZCode Agent 事件分发不保证等待 async listener。微信这类离散消息如果并发发送，
-      // task_complete 的 Change summary 可能抢在前面正文 flush 之前到达客户端，所以这里按任务串行消费。
+      // Bugfix: ZCode Agent event dispatch does not wait for async listeners. If discrete messages such as WeChat replies are sent concurrently,
+      // the task_complete Change summary may reach the client before the preceding body is flushed, so consume events serially per task.
       streamEventQueue = nextStreamEvent.catch((error: unknown) => {
         botsLogger.warn(
           event.traceId,
@@ -5969,8 +6117,8 @@ export function createBotsService(
     const dynamicTaskEvent = (
       zcodeTaskService as Partial<Pick<IZCodeTaskService, "onDynamicTaskEvent">>
     ).onDynamicTaskEvent;
-    // Bugfix: 远控/共享 host 场景会通过 workspace+task mirror 分发流事件。
-    // 这里优先订阅 workspace 级事件，避免只监听本地 taskId relay 时漏掉 channel 回复。
+    // Bugfix: remote-control/shared-host scenarios dispatch stream events through workspace+task mirrors.
+    // Subscribe to workspace-level events first so channel replies are not missed by listening only to the local taskId relay.
     const streamDisposable = taskStreamHub.add(
       JSON.stringify([
         getWorkspaceKey(context.workspacePath, context.workspaceIdentity),
@@ -5983,9 +6131,9 @@ export function createBotsService(
               workspacePath: context.workspacePath,
               workspaceIdentity: context.workspaceIdentity,
               taskId: context.activeTaskId!,
-              // Bugfix: Bot channel 使用 direct stream 语义。
-              // 手机远控 replayable 的 mirror replay / snapshot gap recovery 会改变 bot 回复边界，
-              // 这里使用 bot 专属 continuous 订阅，避免远控恢复逻辑影响飞书/微信等 channel。
+              // Bug fix: the Bot channel uses direct-stream semantics.
+              // Replayable mobile remote control uses mirror replay/snapshot-gap recovery, which changes bot reply boundaries,
+              // so use a bot-specific continuous subscription here to keep remote-control recovery from affecting Feishu/WeChat and other channels.
               deliveryKind: "bot-channel-continuous",
             })(receive)
           : zcodeTaskService.onDynamicStreamEvent(context.activeTaskId!)(receive),
@@ -6017,18 +6165,18 @@ export function createBotsService(
     extras: Pick<BotOutboundMessage, "elicitation" | "locale"> = {},
   ): Promise<BotOutboundMessage[]> {
     const markedSelection = markCurrentSelection(selection, locale);
-    // Bugfix: 微信没有原生选项卡能力，只能走纯文本编号选项。
-    // 之前纯文本 fallback 会同时展示标题里的“当前”和选项上的“当前”标记，
-    // 微信回复看起来像重复状态文案；这里让标题负责说明当前状态，列表只保留可回复的编号。
+    // Bugfix: WeChat has no native option cards and must use numbered plain-text options.
+    // The previous plain-text fallback showed “current” in both the title and option label,
+    // duplicating status text in WeChat replies. Let the title show current state and keep only replyable numbers in the list.
     const supportsStructuredSelection = actor.provider !== "weixin";
-    // Bugfix: 微信 /model 第一层选择的是供应商，之前复用 description 把模型列表也拼进同一行，
-    // 导致用户还没选供应商就看到两层信息。纯文本通道先只展示供应商，模型放到下一层再展示。
+    // Bugfix: the first WeChat /model selection is for the provider. Reusing description to append the model list on the same line
+    // showed two levels of information before the provider was selected. Plain-text channels now show only providers first and models on the next level.
     const textSelection = stripModelProviderDescriptionsForTextSelection(selection);
     const displaySelection = supportsStructuredSelection
       ? markedSelection
       : { ...textSelection, cancelLabel: markedSelection.cancelLabel };
     pendingSelectionsByContext.set(getActorContextKey(actor), displaySelection);
-    // 其他 provider 保留 selection，让 Telegram/飞书/Lark 渲染原生选项，也让 Webhook 接收结构化选项。
+    // Keep selection for other providers so Telegram/Feishu/Lark can render native options and Webhook can receive structured options.
     const text = supportsStructuredSelection
       ? displaySelection.title
       : formatSelectionFallback(displaySelection, locale);
@@ -6147,7 +6295,7 @@ export function createBotsService(
       await writeContext({ ...auth.context, draftOptions });
     }
     await reconcilePrivateSynchronization(auth.context.botId);
-    // 成功重连后统一回完整状态，避免命令完成文案和 /status 内容分裂。
+    // Return the full status after successful reconnection so command completion text and /status do not diverge.
     return createStatusReply(message.actor, auth.context, auth.locale);
   }
 
@@ -6182,9 +6330,9 @@ export function createBotsService(
       return [];
     }
     if (deliveryKey) {
-      // Bugfix: 飞书/微信/Telegram 都可能重投同一条 provider message。
-      // /reconnect 有副作用，必须在真正执行前就按 provider message id 幂等，
-      // 否则重投会再次命中“已连接”分支，用户会看到重复的成功提示。
+      // Bugfix: Feishu/WeChat/Telegram may all redeliver the same provider message.
+      // /reconnect has side effects and must be idempotent by provider message id before execution,
+      // or a redelivery can hit the “already connected” branch again and show a duplicate success message.
       recentRemoteReconnectDeliveryAtByKey.set(deliveryKey, now);
     }
 
@@ -6205,14 +6353,14 @@ export function createBotsService(
       return createStatusReply(message.actor, auth.context, auth.locale);
     }
 
-    // Bugfix: Feishu/Lark/Webhook 这类 provider 可能把同一条 /reconnect 在短时间内重复投递。
-    // /reconnect 本身有副作用，必须按 bot+用户+workspace 做幂等，否则会同时出现“已连接”和“正在重连”等互相打架的状态。
+    // Bugfix: providers such as Feishu/Lark/Webhook may deliver the same /reconnect repeatedly in a short time.
+    // /reconnect has side effects and must be idempotent by bot+user+workspace, or conflicting states such as “connected” and “reconnecting” can appear together.
     const reconnectPromise = (async () => {
       if (options.onReconnectStart) {
         try {
           await options.onReconnectStart(auth);
         } catch (error) {
-          // Bugfix: “正在重连”只是即时状态提示，发送失败不能中断真正的远端重连。
+          // Bugfix: “reconnecting” is only an immediate status notice; a send failure must not interrupt the actual remote reconnection.
           botsLogger.warn(
             undefined,
             `send reconnect starting failed provider=${message.actor.provider} bot=${message.botId} user=${message.actor.providerUserId}: ${error instanceof Error ? error.message : String(error)}`,
@@ -6229,6 +6377,45 @@ export function createBotsService(
     } finally {
       pendingRemoteReconnectsByKey.delete(reconnectKey);
     }
+  }
+
+  async function handleRemoteLink(message: BotInboundMessage): Promise<BotOutboundMessage[]> {
+    const locale = await readMessageLocale();
+    if (message.actor.chatType !== "private") {
+      // The link is a bearer credential; group replies are visible to every member, and
+      // cross-chat private delivery is not uniformly supported by providers, so groups are
+      // rejected outright in V1 instead of leaking the URL into the group transcript.
+      return [createOutbound(message.actor, msg(locale, "remoteLinkPrivateOnly"))];
+    }
+    const auth = await withAuthorizedContext(message, "remote");
+    if (!auth.ok) return auth.reply;
+    const mintWebRemoteLink = deps.remoteWorkspaceService?.mintWebRemoteLink;
+    if (!mintWebRemoteLink) {
+      return [createOutbound(message.actor, msg(auth.locale, "remoteLinkUnavailable"))];
+    }
+    const result = await mintWebRemoteLink({
+      workspacePath: auth.context.workspacePath,
+      ...(auth.context.workspaceIdentity
+        ? { workspaceIdentity: auth.context.workspaceIdentity }
+        : {}),
+    });
+    if (result.ok && result.url) {
+      return [
+        createOutbound(message.actor, msg(auth.locale, "remoteLinkReady", { url: result.url })),
+      ];
+    }
+    if (result.reason === "workspace-not-open") {
+      return [createOutbound(message.actor, msg(auth.locale, "remoteLinkWorkspaceNotOpen"))];
+    }
+    if (result.reason === "feature-disabled") {
+      return [createOutbound(message.actor, msg(auth.locale, "remoteLinkFeatureDisabled"))];
+    }
+    return [
+      createOutbound(
+        message.actor,
+        msg(auth.locale, "remoteLinkFailed", { message: result.error ?? "unknown" }),
+      ),
+    ];
   }
 
   async function withAuthorizedContext(
@@ -6437,8 +6624,8 @@ export function createBotsService(
       return { ok: false, reply: remoteDisconnectedReply };
     }
     if (isFeishuBotProvider(bot.provider) && !context.group) {
-      // Bugfix: 飞书短命令 typing 现在由同步回复完成后显式删除。
-      // 这里必须等 reaction 创建完成，否则 stopInboundTyping 可能先执行，最终留下无法清理的 Typing reaction。
+      // Bugfix: remove the Feishu short-command typing reaction explicitly after the synchronous reply completes.
+      // Wait for reaction creation first; otherwise stopInboundTyping may run early and leave an unremovable Typing reaction.
       await sendTyping(bot, message.actor);
     } else if (!context.group) {
       void sendTyping(bot, message.actor);
@@ -6470,8 +6657,8 @@ export function createBotsService(
     if (!bot) {
       return [createOutbound(message.actor, msg(locale, "bindBotMissing"))];
     }
-    // Bot 配置化后 /bind 只绑定当前 bot，不再向 bot 追加 allowedUsers。
-    // 重新绑定会覆盖旧 providerUserId，保证一个 bot 同一时间只有一个沟通对象。
+    // With Bot configuration, /bind binds only the current Bot and no longer appends to allowedUsers.
+    // Rebinding replaces the old providerUserId so each Bot has only one conversation partner at a time.
     const nextBot: BotConfig = {
       ...bot,
       providerUserId: message.actor.providerUserId,
@@ -6499,7 +6686,7 @@ export function createBotsService(
     if (!auth.ok) {
       return auth.reply;
     }
-    // 群内 /status 与配置后的状态回复共用脱敏入口，避免单独分支泄露绝对路径。
+    // In-group /status and post-configuration status replies share the same redaction entry point, avoiding absolute-path leaks in a separate branch.
     return createStatusReply(message.actor, auth.context, auth.locale);
   }
 
@@ -6529,12 +6716,12 @@ export function createBotsService(
     labelId: BotMessageId,
     value: string,
   ): string {
-    // Bugfix: /status 文案由服务层拼接，标签和值都要跟随 bot 当前 locale。
+    // Bugfix: /status text is assembled in the service, so both labels and values must follow the Bot's current locale.
     return `${msg(locale, labelId)}: ${value}`;
   }
 
   function formatStatusStateValue(locale: Locale | undefined, state: string): string {
-    if (locale === "en-US") {
+    if (normalizeBotMessageLocale(locale) === "en-US") {
       return state;
     }
     switch (state) {
@@ -6604,10 +6791,10 @@ export function createBotsService(
           })
           .catch(() => null)
       : null;
-    // Bugfix: activeTaskId 来自 bot context，不应依赖 listTasks 必然返回同一条任务。
-    // 某些筛选/索引时序下 listTasks 找不到 active task，之前会跳过 snapshot，导致 Progress 永远缺失。
+    // Bugfix: activeTaskId comes from bot context and must not depend on listTasks returning the same task.
+    // Some filtering/index timing can hide the active task from listTasks; skipping the snapshot then caused Progress to disappear permanently.
     const statusTask = activeTask ?? activeTaskSnapshot?.meta ?? null;
-    // Bugfix: 任务结束后 /status 只保留最终状态，避免把最后一次工具/思考进度误看成仍在执行。
+    // Bugfix: after a task ends, /status keeps only its final state so the last tool/thought progress is not mistaken for ongoing work.
     const latestProgress =
       context.activeTaskId && (!statusTask || taskStatus(statusTask) === "running")
         ? (liveStatusProgressByTaskId.get(context.activeTaskId)?.text ??
@@ -6621,7 +6808,7 @@ export function createBotsService(
       : [];
     const isDraftStatus = context.mode === "draft" || !context.activeTaskId;
     const draftOptions = !statusTask && isDraftStatus ? await ensureDraftOptions(context) : null;
-    // Bot Draft 属于 Select：未显式固定模型时只展示目标 Host 当前首选，不把默认值写回配置。
+    // A Bot Draft belongs to Select: if no model is explicitly pinned, show only the target Host's current preferred model without saving a default to config.
     const draftView = draftOptions
       ? await readModelSelectionView(context, draftOptions.modelSelection)
       : null;
@@ -6637,8 +6824,8 @@ export function createBotsService(
     return (
       [
         formatStatusLine(locale, "statusWorkspace", workspace?.label ?? context.workspacePath),
-        // Bugfix: active task 显示真实 task 状态；草稿态显示 draftOptions。
-        // /new 后草稿继承自当前 task，继续显示 "-" 会让用户误以为继承失败。
+        // Bugfix: show the real task state for active tasks and draftOptions for drafts.
+        // After /new, the draft inherits from the current task; continuing to show "-" would make users think inheritance failed.
         formatStatusLine(locale, "statusModel", statusModelLabel),
         "------",
         statusTask
@@ -6731,7 +6918,7 @@ export function createBotsService(
     let historyError: unknown;
 
     const generation = historyGeneration(context);
-    // 在异步读历史之前固定 revision，不能把等待期间的新背景误当成本轮已读。
+    // Fix the revision before asynchronously reading history; new context arriving during the wait must not be mistaken as read in this turn.
     const backgroundRevision = context.group.backgroundHistory?.revision;
     let historyDisabled = false;
     const inputThreadId = message.actor.threadId ?? context.group.threadId;
@@ -6778,7 +6965,7 @@ export function createBotsService(
             undefined,
             `topic history preparation failed bot=${bot.id}: ${error instanceof Error ? error.message : String(error)}`,
           );
-          // 读取失败必须阻止提交，不能用缺口附件替代必需历史后启动任务。
+          // A read failure must block submission; do not start the task by substituting incomplete attachments for required history.
           topicContext = undefined;
           historyError = error || new Error("Topic history unavailable");
         }
@@ -6814,7 +7001,7 @@ export function createBotsService(
     const { topicContext } = history;
     const inputThreadId = message.actor.threadId ?? context.group.threadId;
     const inputRootMessageId = message.actor.rootMessageId ?? context.group.rootMessageId;
-    // 历史/附件准备期间控制通道可以停用群；不能用准备前的授权继续提交。
+    // The control channel can deactivate a group while history/attachments are being prepared; do not submit using authorization from before preparation.
     const admissionContext = (await repo.readState()).bots[getBotStateKey(context)];
     const admissionBot = findBot(await repo.readConfig(), bot.id);
     if (
@@ -6827,7 +7014,7 @@ export function createBotsService(
       throw new Error("Group authorization changed before input admission");
     let attachmentOffset = 0;
     const admittedAttachments: ZCodePromptAttachment[] = [];
-    // 多个回调可能在首次接收前已各自准备根引用；提交时再按权威记录去重。
+    // Multiple callbacks may each prepare the root reference before the first receipt; deduplicate again at submission using the authoritative record.
     let rootIncluded = Object.values(admissionContext.group.inputs ?? {}).some(
       (input) => input.admission === "accepted",
     );
@@ -6842,7 +7029,7 @@ export function createBotsService(
           original.attachments?.[index]?.providerMetadata?.resourceMessageId;
         const rootAttachment = !!inputRootMessageId && resourceMessageId === inputRootMessageId;
         hasRootAttachment ||= rootAttachment;
-        // 根引用可能在上一轮接收前就已下载；提交时同时去重资源，不能只隐藏引用正文。
+        // The root reference may have been downloaded before the previous receipt; deduplicate resources at submission too, rather than merely hiding the reference text.
         if (rootAttachment && rootIncluded) return;
         attachmentIndexes.push(admittedAttachments.length);
         admittedAttachments.push(attachment);
@@ -6860,7 +7047,7 @@ export function createBotsService(
         attachmentIndexes,
       };
     });
-    // 历史文本附件在各条原始附件之后追加，保留它且不归给后续消息。
+    // Append the historical text attachment after each original attachment, preserving it without attributing it to a later message.
     if (topicBatch) admittedAttachments.push(...prepared.zcodeAttachments.slice(attachmentOffset));
     const source = {
       authorizationId: context.group.authorizationId,
@@ -6891,7 +7078,7 @@ export function createBotsService(
     };
     await writeContext(context);
     await watchTaskStream(bot, message.actor, context, { ...bot, replyMode: "summary_changes" });
-    // 原文已经寄存为文本附件；不能再通过来源元信息把整份历史塞进 command frame。
+    // The original text is already registered as a text attachment; do not put the full history into the command frame through source metadata.
     const { topicContext: archive, ...runtimeSource } = source;
     if (!isCurrent()) return [];
     const ack = await service.submitBotGroupInput({
@@ -6941,7 +7128,7 @@ export function createBotsService(
         const current = state.bots[getBotStateKey(context)];
         if (current?.group && isCurrent()) {
           current.group.topicActive = true;
-          // 只清除本轮已补读且没有被新背景替换的检查点；准备期间来的背景留给下一轮。
+          // Clear only checkpoints backfilled in this turn and not replaced by new context; context received during preparation stays for the next turn.
           if (
             history.topicContext &&
             history.backgroundRevision &&
@@ -6968,7 +7155,7 @@ export function createBotsService(
           title: `${bot.provider === "lark" ? "Lark" : "飞书"} · ${context.group.name}${context.group.threadId ? ` · ${context.group.topicTitle || context.group.threadId}` : ""}`,
         })
         .catch((error: unknown) => {
-          // 输入已经被 CLI 接受，标题写入失败不能释放去重并重新执行输入。
+          // The CLI has accepted the input; a title-write failure must not release deduplication and cause the input to run again.
           botsLogger.warn(
             undefined,
             `persist group task title failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -7038,12 +7225,12 @@ export function createBotsService(
             );
           });
       }
-      // CLI 终态可能早于 admission ACK；表情必须采用保存后的单向状态。
+      // The CLI terminal state may arrive before the admission ACK; reactions must use the persisted one-way state.
       if (inputId) {
         const latest = (await repo.readState()).bots[getBotStateKey(context)];
         state = latest?.group?.inputs?.[inputId]?.progress?.status ?? state;
       }
-      // 合批只合并执行，表情仍属于每条原消息，不能只更新最后一条。
+      // Batching combines execution only; each original message retains its own reaction, so do not update only the last one.
       const messageIds = entry?.[1].source.messages?.map((message) => message.messageId) ?? [
         messageId,
       ];
@@ -7057,7 +7244,7 @@ export function createBotsService(
         ),
       );
     } catch (error) {
-      // 表情只是状态投影；平台失败不能把已接受输入变成失败或触发重跑。
+      // Reactions are only a projection of state; platform failure must not turn accepted input into a failure or trigger a rerun.
       botsLogger.warn(
         undefined,
         `group input reaction update failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -7073,7 +7260,7 @@ export function createBotsService(
     if (!auth.ok) return auth.reply;
     const group = auth.context.group;
     const input = group?.inputs?.[sourceCommandId];
-    // 旧话题排队卡可能仍留在飞书，不能让它操作新话题的停止续接输入。
+    // An old thread queue card may remain in Feishu; it must not operate on the new thread’s stop/continue input.
     if (group?.threadId) {
       return [
         {
@@ -7149,12 +7336,12 @@ export function createBotsService(
   ): void {
     privateImTraces.add(JSON.stringify([taskStreamKey(context, actor), traceId]));
     streamSubscriptions.get(taskStreamKey(context, actor))?.imInput();
-    // 私聊常驻订阅不再随每轮建立；必须在本次输入派发前接管 Typing，
-    // 否则回调收尾会将它当作短命令表情立即删除。终态/交互等待沿用原清理路径。
+    // Direct-message persistent subscriptions are no longer created per turn; take over Typing before dispatching this input,
+    // otherwise callback cleanup will treat it as a short-lived command reaction and delete it immediately. Terminal and interaction waits keep the existing cleanup path.
     if (!context.group) startTyping(bot, actor, taskId);
-    // Bugfix: Telegram polling 是单循环顺序处理 update。如果这里 await session/prompt，
-    // 权限按钮 callback 会一直排队到整轮任务结束，导致用户点 inline keyboard 没反应。
-    // 因此 prompt 必须后台跑，polling loop 才能继续接收 /permission 回调。
+    // Bugfix: Telegram polling handles updates sequentially in one loop. If this awaits session/prompt,
+    // permission button callbacks stay queued until the entire task finishes and inline keyboard clicks appear unresponsive.
+    // Run the prompt in the background so the polling loop can continue receiving /permission callbacks.
     void resolveZCodeTaskServiceForContext(context)
       .then((zcodeTaskService) =>
         zcodeTaskService.sendPrompt({
@@ -7240,7 +7427,7 @@ export function createBotsService(
   }
 
   async function cancelGroupTopicInputs(actor: BotActor): Promise<void> {
-    // 群级撤销必须覆盖所有话题，包括尚未创建任务、仍在准备历史的输入。
+    // Group-level revocation must cover every thread, including input that has not created a task and is still preparing history.
     const states = (await repo.readState()).bots;
     const keys = new Set([...Object.keys(states), ...topicContinuations.keys()]);
     await Promise.all(
@@ -7293,8 +7480,8 @@ export function createBotsService(
     const id = message.actor.providerMessageId;
     if (!id) return message.senderType !== "app";
     let admitted = false;
-    // 新消息 ID 去重不足以阻断两台机器人互答。必须在停止/准备前原子占用次数，
-    // 与去重一起持久化；准备失败仍占一次，避免重投、并发和重启绕过上限。
+    // Deduplicating new message IDs is not enough to stop two bots from replying to each other. Atomically consume a count before stop/preparation,
+    // and persist it with deduplication; preparation failure still consumes one count to prevent retries, concurrency, or restarts from bypassing the limit.
     await serializeStateWrite(async () => {
       const state = await repo.readState();
       const context = state.bots[getBotConversationKey(message.actor)];
@@ -7322,7 +7509,7 @@ export function createBotsService(
             input.source.messages?.some((original) => original.messageId === id),
         )
       ) {
-        // 真人重试仍走原有准备/命令幂等流程，但不能重复恢复机器人额度。
+        // Human retries still use the existing preparation/command idempotency flow, but must not restore the bot allowance again.
         admitted = message.senderType !== "app";
         return;
       }
@@ -7346,7 +7533,7 @@ export function createBotsService(
     const key = getBotConversationKey(message.actor);
     const id = message.actor.providerMessageId;
     if (!id) throw new Error("Topic message identity is missing");
-    // 去重必须早于停止副作用；重投的已接收事件不能打断正在运行的新轮。
+    // Deduplication must happen before stop side effects; a redelivered, already-received event must not interrupt a new running turn.
     const stored = (await repo.readState()).bots[key];
     if (
       Object.values(stored?.group?.inputs ?? {}).some(
@@ -7362,7 +7549,7 @@ export function createBotsService(
       replies = new Map();
       topicReplies.set(key, replies);
     }
-    // 持久化接收去重在 handleMessage；这里只合并同时到达的同一事件。
+    // Persistent receipt deduplication happens in handleMessage; this only coalesces the same event arriving concurrently.
     if (replies.has(id)) return [];
     const pendingReplies = replies;
     const result = new Promise<BotOutboundMessage[]>((resolve) => pendingReplies.set(id, resolve));
@@ -7462,7 +7649,7 @@ export function createBotsService(
           }
         },
         failed: async (ids, error) => {
-          // 取消后的旧下载/停止异常不得修改新一代消息的状态或表情。
+          // An old download/cancellation error must not modify the state or reaction of a newer message.
           if (continuationGeneration !== (topicGenerations.get(key) ?? 0)) return;
           topicPreparation.update(
             key,
@@ -7556,7 +7743,7 @@ export function createBotsService(
         ),
       ];
     }
-    // CLI 重启后幂等窗口可能已变化；持久化接收记录不能只依赖内存事件去重。
+    // The idempotency window may change after a CLI restart; persisted receipt records cannot rely only on in-memory event deduplication.
     if (priorInput) {
       if (priorInput.admission === "accepted") return [];
       return [
@@ -7607,7 +7794,7 @@ export function createBotsService(
       ];
     }
     adminAttention.clear(message.actor, auth.bot.providerUserId, "history");
-    // commandText 属于单条消息；尾部纯 @ 不能抹掉停止期间批次里其他成员的有效需求。
+    // commandText belongs to one message; a trailing @-only input must not erase valid requests from other members in a batch during stop handling.
     const hasRequest = (topicBatch?.map((entry) => entry.message) ?? [message]).some((original) =>
       Boolean(
         (original.commandText ?? original.text).trim() ||
@@ -7627,11 +7814,11 @@ export function createBotsService(
           ),
         ];
       }
-      // 仅 @ 的输入已有引用或历史附件；补写指令会把系统文案伪装成用户正文。
-      // 保留原文中的 @，由标准引用／附件承载材料，不重新解析材料里的命令。
+      // An @-only input already has references or history attachments; adding an instruction would disguise system text as user content.
+      // Keep the @ in the original text; carry materials in standard references/attachments and do not reparse commands inside them.
     }
     if (message.referencedMessage) {
-      // 原先拼接消息 ID 会诱使模型再次查飞书；标准引用只携带真实原文，并复用 UI 展示。
+      // Appending message IDs previously prompted the model to query Feishu again; standard references carry only the real source text and reuse the UI presentation.
       const quote = message.referencedMessage.text;
       if (quote.length > CONVERSATION_SELECTION_MAX_TEXT_LENGTH) {
         return [
@@ -7652,9 +7839,9 @@ export function createBotsService(
         workspaceIdentity: auth.context.workspaceIdentity,
       });
       if (deletedTaskIds.includes(auth.context.activeTaskId)) {
-        // 桌面软删除只留下 tombstone，CLI 仍可恢复旧 session。
-        // Bot 不能只凭 activeTaskId 续跑隐藏任务；先清旧交互，再复用当前草稿有效选择和 V4 首发。
-        // 仅以删除记录为准，不能把列表过滤、归档或查询失败当成删除。
+        // Desktop soft deletion leaves a tombstone, so the CLI can still recover the old session.
+        // A Bot must not resume a hidden task based only on activeTaskId; clear old interactions first, then reuse valid draft selections and start through V4.
+        // Only a deletion record is authoritative; list filtering, archiving, or query failure does not mean the task was deleted.
         deletedTaskId = auth.context.activeTaskId;
         auth.context = await writeDraftContext(auth.context);
       }
@@ -7708,8 +7895,8 @@ export function createBotsService(
     if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
       const draftOptions =
         auth.context.draftOptions ?? (await buildInitializedDraftOptions(auth.context));
-      // 原因：直接提交旧账号身份会绕过统一解析。只在首次创建前解析原意图；
-      // 后续创建、配置和首发固定这份结果；绑定后以 Session 原选择解析下一次新输入。
+      // Rationale: submitting an old account identity directly bypasses unified resolution. Resolve the original intent only before initial creation;
+      // keep that result fixed for creation, configuration, and first input. After binding, resolve the next input from the Session's original selection.
       const selectionView = await readModelSelectionView(auth.context, draftOptions.modelSelection);
       const submissionModelSelection = draftOptions.modelSelection
         ? selectionView?.effectiveSelection
@@ -7738,9 +7925,9 @@ export function createBotsService(
         additionalDirectories: auth.context.additionalDirectories ?? [],
         provider: draftOptions.provider,
         modelSelection: submissionDraftOptions.modelSelection,
-        // 修复原因：Bot 旧 createTask 走 legacy session/create，却紧接着用 v4 sendText，
-        // 内存标志与 v4 draft 持久化边界不一致，session_input 会触发 FK。改为先创建
-        // v4 draft，再沿既有能力校验应用配置，最后通过 v4 sendText 首发。
+        // Fix rationale: the old Bot createTask used legacy session/create and then v4 sendText,
+        // so in-memory flags disagreed with the persisted v4 draft boundary and session_input violated the foreign key. Create
+        // a v4 draft first, validate app configuration through the existing capability, then send the first input through v4 sendText.
         v4Create: true,
         ...(auth.context.group ? { permissionScope: "session" as const } : {}),
       });
@@ -7762,8 +7949,8 @@ export function createBotsService(
           traceId,
         );
       } catch (error) {
-        // Bugfix: 初始配置失败时旧流程已把 context 切到 task，留下无法继续的空任务。
-        // 在持久化 Bot task 状态前完成配置，并删除临时 task，让用户修正配置后可以直接重试。
+        // Bugfix: when initial configuration failed, the old flow had already switched context to the task, leaving an unusable empty task.
+        // Configure before persisting Bot task state and delete the temporary task so users can correct the configuration and retry directly.
         await zcodeTaskService
           .deleteTask({
             taskId: task.taskId,
@@ -7780,8 +7967,8 @@ export function createBotsService(
         draftOptions: undefined,
       };
       await writeContext(context);
-      // Bugfix: Bot 首发不经过 UI 本地 deriveTaskTitle/optimistic cache。
-      // 如果 created 广播继续携带 createTask 的空标题，侧栏会一直显示 New task，直到整表刷新。
+      // Bugfix: a Bot's first input does not pass through the UI's local deriveTaskTitle/optimistic cache.
+      // If the created broadcast carries the empty title from createTask, the sidebar shows New task until the full list refreshes.
       await broadcastTaskListChange(context, task.taskId, "created", {
         task: broadcastTask,
       });
@@ -7790,7 +7977,7 @@ export function createBotsService(
           undefined,
           `replaced deleted Bot task bot=${auth.bot.id} oldTask=${deletedTaskId} newTask=${task.taskId} workspace=${getWorkspaceKey(context.workspacePath, context.workspaceIdentity)}`,
         );
-        // 切换已经持久化；通知失败不能让 callback 释放去重记录并重跑原消息。
+        // The switch is already persisted; notification failure must not release the callback's deduplication record and rerun the original message.
         await sendOutbound(
           auth.bot,
           createOutbound(message.actor, msg(auth.locale, "deletedTaskReplaced")),
@@ -7856,8 +8043,8 @@ export function createBotsService(
       workspacePath: auth.context.workspacePath,
       workspaceIdentity: auth.context.workspaceIdentity,
     });
-    // Bot 只是同一 Session 的输入端。菜单可能过滤无效值，不能拿它反推原选择，
-    // 更不能重新套用 Bot 创建默认值。解析只确定本次输入，不在此改写 Session。
+    // A Bot is only an input surface for the same Session. The menu may filter invalid values, so do not infer the original selection from it
+    // or reapply Bot creation defaults. Resolution applies to this input only and does not rewrite the Session.
     const originalSelection = await zcodeTaskService.getTaskModelSelection({
       taskId: auth.context.activeTaskId,
     });
@@ -7905,8 +8092,8 @@ export function createBotsService(
     if (message.actor.threadId) return createStatusReply(message.actor, auth.context, auth.locale);
     const blockReason = await getContextTaskBlockReason(auth.context);
     if (blockReason) {
-      // Bugfix: 运行中展示 /task 列表会让用户继续点选其它 task，
-      // 即使后续切换被拒绝，也会留下误导性的 pending selection。
+      // Bugfix: showing the /task list while a task is running lets users select another task,
+      // leaving a misleading pending selection even if the subsequent switch is rejected.
       return [createOutbound(message.actor, msg(auth.locale, blockReason))];
     }
     const taskEntries = (await listContextTaskSelectionEntries(auth.context, auth.user)).slice(
@@ -7931,8 +8118,8 @@ export function createBotsService(
       })),
     };
     if (taskEntries.length > 0) {
-      // Bugfix: 远端 task 展示时必须把 workspaceIdentity 一起缓存。
-      // 否则点击 /task 的序号后只剩 taskId，后续二次查询会退回 path-only 语义并提示 Task not found。
+      // Bugfix: cache workspaceIdentity when displaying a remote task.
+      // Otherwise, after selecting a /task number only taskId remains, and the next lookup falls back to path-only matching and reports Task not found.
       pendingTaskSelectionsByContext.set(
         getActorContextKey(message.actor),
         new Map(taskEntries.map((entry) => [entry.task.taskId, entry])),
@@ -7991,7 +8178,7 @@ export function createBotsService(
           : reason === "interaction"
             ? "groupTaskInteraction"
             : "taskRunning";
-      // 停止或在 Desktop 处理审批后，Bot 卡片缓存可能仍残留；不能让缓存否决 CLI 空闲状态。
+      // After stopping or handling approval on Desktop, a Bot card cache may remain; it must not override the CLI idle state.
       if (context.pendingElicitation || context.pendingPermissionOptions?.length) {
         if (context.pendingElicitation)
           clearPendingElicitationSelection(context.pendingElicitation);
@@ -8009,8 +8196,8 @@ export function createBotsService(
       return null;
     }
     if (context.workspaceIdentity && !(await isRemoteWorkspaceConnected(context))) {
-      // Bugfix: /workspace 这类本地命令只是在切换上下文，不能为了确认旧任务状态而创建远端 runtime。
-      // 断连时把内存 running 状态视为不可确认，交给显式 /reconnect 后再恢复查询。
+      // Bugfix: local commands such as /workspace only switch context and must not create a remote runtime to confirm old task state.
+      // Treat in-memory running state as unconfirmed while disconnected, and resume lookup after an explicit /reconnect.
       return null;
     }
     const zcodeTaskService = await resolveZCodeTaskServiceForContext(context);
@@ -8025,9 +8212,9 @@ export function createBotsService(
       activeTaskSnapshot?.meta.status === "completed" ||
       activeTaskSnapshot?.meta.status === "error"
     ) {
-      // Bugfix: Bots 进程内 runningTasks 可能因重启/流式终态事件丢失而和持久化状态不一致。
-      // ZCode Agent 历史任务的 status 为空也可能只是旧数据，不代表 UI 仍在运行；只有本进程确实发起
-      // 且尚未观察到终态的 task 才阻止 /task、/new 等上下文切换。
+      // Bugfix: the Bots process's runningTasks may disagree with persisted state after restart or a missed streaming terminal event.
+      // A blank status on a historical ZCode Agent task may also be old data and does not mean the UI is still running it. Only block context switches such as /task and /new
+      // for tasks started by this process that have not yet reached a terminal state.
       runningTasks.delete(context.activeTaskId);
       stopTyping(context.activeTaskId);
       return null;
@@ -8082,7 +8269,7 @@ export function createBotsService(
         warnAutomationDeliveryOnce({ target: params.target, reason: "group_not_authorized" });
         return;
       }
-      // 旧 alias 不能继续回退到默认任务；话题投递必须存在独立的授权会话。
+      // An old alias must no longer fall back to the default task; thread delivery requires a separately authorized session.
       conversationThreadId = state.group.threadId ?? null;
     }
     const actor: BotActor = {
@@ -8103,8 +8290,8 @@ export function createBotsService(
       activeTaskId: params.taskId,
       updatedAt: Date.now(),
     };
-    // Automation 回推固定为终态摘要；不能复用用户当前 replyMode，否则 streaming/card
-    // 会在后台任务执行过程中向原会话持续发送中间过程。
+    // Automation callbacks always send a terminal summary. Do not reuse the user's current replyMode, or streaming/card
+    // modes will keep sending intermediate background-task progress to the original conversation.
     await watchTaskStream(
       bot,
       actor,
@@ -8195,7 +8382,7 @@ export function createBotsService(
         let lastResolveNameError: unknown;
         for (const retryDelayMs of resolveRetryDelaysMs) {
           if (retryDelayMs > 0) {
-            // Bugfix: 飞书 / Lark 扫码创建应用后，应用信息接口可能短暂不可读；重试后再回填 Bot 名称。
+            // Bugfix: after creating an app by QR code in Feishu/Lark, the app info endpoint may be temporarily unavailable; retry before filling in the Bot name.
             await delay(retryDelayMs);
           }
           try {
@@ -8241,8 +8428,8 @@ export function createBotsService(
       if (bot.provider === "weixin") {
         weixinRuntime.stopPolling(bot.id);
       }
-      // Bugfix: 只移除密钥时如果保留旧绑定身份，UI 会显示“已连通”，但运行时已经没有 token 可用。
-      // 这里同步清理绑定状态，让 Bot token 行回到可重新添加的状态。
+      // Bugfix: removing only the secret while retaining the old binding identity makes the UI show “connected” even though runtime has no usable token.
+      // Clear binding state at the same time so the Bot token row returns to a state where it can be added again.
       const nextBot = normalizeBotConfig({
         ...bot,
         credentialRef: undefined,
@@ -8351,7 +8538,7 @@ export function createBotsService(
         (await providers[before.bot.provider]?.getGroupMemberNames?.(before.bot, params.chatId)) ??
         {};
       const after = await authorize();
-      // 查询期间停用、重新授权或切换凭据后，旧请求不得将姓名带回新会话。
+      // If the group is deactivated, reauthorized, or credentials are switched during lookup, the old request must not carry a name into the new session.
       if (
         before.group.authorizationId !== after.group.authorizationId ||
         before.bot.providerUserId !== after.bot.providerUserId ||
@@ -8466,7 +8653,7 @@ export function createBotsService(
       )
         throw new Error("Topic preparation workspace changed");
       await topicContinuations.get(key)?.settled();
-      // 已提交命令只能查询原接收结果；材料重试不能绕过去重，留下永久准备状态。
+      // A submitted command may only query its original receipt result; material retries must not bypass deduplication and leave a permanent preparing state.
       const latest = (await repo.readState()).bots[key];
       if (
         Object.values(latest?.group?.inputs ?? {}).some(
@@ -8640,7 +8827,7 @@ export function createBotsService(
     async handleInboundMessage(message: BotInboundMessage) {
       if (shutdownPromise) return [];
       if (message.senderType === "app") {
-        // 机器人只能使用真人已启用的群/话题；原生 @ 可触发普通群输入，不能获取控制权限。
+        // The bot may use only groups/threads enabled by a human; a native @ may trigger ordinary group input but cannot grant control permissions.
         if (
           message.actor.chatType !== "group" ||
           message.groupCardAction ||
@@ -8683,14 +8870,14 @@ export function createBotsService(
         const actor: BotActor = { ...message.actor, conversationThreadId: undefined };
         const state = await repo.readState();
         if (!state.bots[getBotConversationKey(actor)]) {
-          // alias 仅用于一次性安全迁移检查，不能再把话题路由到默认任务。
+          // The alias is used only for a one-time safe migration check and must no longer route a thread to the default task.
           for (const candidate of Object.values(state.bots)) {
             const group = candidate.group;
             if (!group || candidate.botId !== actor.botId || group.chatId !== actor.chatId)
               continue;
             const alias = group.topicAliases?.[actor.threadId!];
             if (!alias) continue;
-            // 默认会话可能已切换工作区；迁移检查必须使用旧任务自己的完整工作区身份。
+            // The default session may have switched workspaces; migration checks must use the old task’s complete workspace identity.
             const workspace = group.taskWorkspaces?.[alias.taskId] ?? candidate;
             const service = await resolveZCodeTaskServiceForContext({ ...candidate, ...workspace });
             if (
@@ -8715,7 +8902,7 @@ export function createBotsService(
             conversationThreadId: undefined,
           })
         ];
-        // 专用话题群根事件可能缺失 thread_id，必须通过原生消息解析，不能进入默认任务。
+        // A dedicated thread group’s root event may lack thread_id; resolve it from the native message and do not send it to the default task.
         if (
           parent?.group?.enabled &&
           parent.group.chatMode === "topic" &&
@@ -8737,7 +8924,7 @@ export function createBotsService(
         message.mentionedBot === false &&
         message.contentParts?.some((part) => part.type === "channelMention")
       ) {
-        // 已接入话题曾把发给别人的任务也当成新指令；只记录补读边界，不触发停止或 CLI admission。
+        // A joined thread previously treated tasks sent to others as new instructions; record only the history backfill boundary without triggering stop or CLI admission.
         if (message.actor.threadId)
           await serializeStateWrite(async () => {
             const state = await repo.readState();
@@ -8756,7 +8943,7 @@ export function createBotsService(
           });
         return [];
       }
-      // 机器人生成的 slash/审批文字只能作为输入材料，不能进入控制分支。
+      // Bot-generated slash/approval text may be used only as input material and must not enter the control branch.
       const commandType =
         message.senderType === "app"
           ? "message"
@@ -8780,7 +8967,7 @@ export function createBotsService(
           return handleStructuredElicitationResponse(message, message.elicitationResponse);
         }
         const parsedCommand = parseBotCommand(message.commandText ?? message.text);
-        // 群主聊天也会进入此分发器；仅改外层 commandType 不能阻止机器人触发控制/数字选择。
+        // The group owner’s chat also reaches this dispatcher; changing only the outer commandType cannot stop the bot from triggering control/numeric selection.
         const command =
           message.senderType === "app"
             ? ({ type: "message", text: message.text } as const)
@@ -8816,6 +9003,8 @@ export function createBotsService(
             return handleStatus(message);
           case "reconnect":
             return handleReconnect(message);
+          case "remote":
+            return handleRemoteLink(message);
           case "new": {
             const auth = await withAuthorizedContext(message, "new");
             if (!auth.ok) return auth.reply;
@@ -8843,7 +9032,7 @@ export function createBotsService(
             if (!auth.ok) return auth.reply;
             const blockReason = await getContextTaskBlockReason(auth.context);
             if (blockReason) {
-              // Bugfix: task 运行中不展示 workspace 选择，避免用户误以为可以切换上下文。
+              // Bugfix: hide workspace selection while a task is running so users do not think they can switch context.
               return [createOutbound(message.actor, msg(auth.locale, blockReason))];
             }
             const synced = await normalizeBotWorkspaceConfig(
@@ -8857,17 +9046,17 @@ export function createBotsService(
             );
             const options = visibleWorkspaces.map((workspace) => ({
               id: workspace.id,
-              // Bugfix: Telegram/飞书等按钮通道只展示 label，不展示 description。
-              // 远端标识必须合进 label，避免 /workspace 列表看不出哪些项目来自远端。
+              // Bugfix: button channels such as Telegram/Feishu show only the label, not the description.
+              // Include the remote marker in the label so /workspace makes remote projects distinguishable.
               label: formatWorkspaceOptionLabel(workspace, auth.locale),
             }));
             if (options.length === 0) {
               pendingWorkspaceSelectionsByContext.delete(getActorContextKey(message.actor));
               return [createOutbound(message.actor, msg(auth.locale, "workspaceMissing"))];
             }
-            // Bugfix: 远端 workspace 选项必须在展示时保留 workspaceIdentity。
-            // Telegram/飞书按钮会把点击变成 /workspace 序号，切换阶段若重新从 settings 解析，
-            // current remote context 可能不在候选列表里，最终表现成 /workspace 不支持远端。
+            // Bugfix: preserve workspaceIdentity when displaying remote workspace options.
+            // Telegram/Feishu buttons turn a click into a /workspace number; resolving it again from settings during switching can fail if
+            // the current remote context is absent from the candidate list, making /workspace appear not to support remote workspaces.
             pendingWorkspaceSelectionsByContext.set(
               getActorContextKey(message.actor),
               new Map(visibleWorkspaces.map((workspace) => [workspace.id, { workspace }])),
@@ -8924,7 +9113,7 @@ export function createBotsService(
             if (!auth.ok) return auth.reply;
             const blockReason = await getContextTaskBlockReason(auth.context);
             if (blockReason) {
-              // Bugfix: task 运行中不展示模型选择，避免产生运行中不可用的 pending selection。
+              // Bugfix: hide model selection while a task is running to avoid creating an unusable pending selection.
               return [createOutbound(message.actor, msg(auth.locale, blockReason))];
             }
             if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
@@ -9130,12 +9319,12 @@ export function createBotsService(
               const view = await readModelSelectionView(auth.context);
               const selection =
                 view && identity ? completeNewModelSelection(view, identity) : undefined;
-              // Bot 的主动选模也须取目标最高档；旧菜单失效/读取失败不能清掉已保存选择。
+              // Bot-initiated model selection must also use the target's highest tier; an expired menu or read failure must not clear the saved selection.
               if (!selection)
                 return [createOutbound(message.actor, msg(auth.locale, "modelMissing"))];
               const nextContext = await writeDraftOptions(auth.context, {
                 ...draftOptions,
-                // 模型身份切换必须构造全新的 Selection，不能把旧模型的显式 options 带过去。
+                // Switching model identity must create a new Selection and must not carry over explicit options from the old model.
                 modelSelection: selection,
               });
               return createStatusReply(message.actor, nextContext, auth.locale);
@@ -9163,8 +9352,8 @@ export function createBotsService(
             }
             const targetIdentity = customModel?.modelName
               ? {
-                  // Bugfix: bot /model 选择 custom provider 时，targetModel 会被降成纯模型名。
-                  // legacy task facade 必须额外拿到原始 provider 身份，否则同名模型会退回 glm/native。
+                  // Bugfix: when bot /model selects a custom provider, targetModel is reduced to the model name alone.
+                  // The legacy task facade also needs the original provider identity, or a same-named model falls back to glm/native.
                   providerId: customModel.providerId,
                   modelId: customModel.modelName,
                 }
@@ -9197,12 +9386,12 @@ export function createBotsService(
             const auth = await withAuthorizedContext(message, commandName);
             if (!auth.ok) return auth.reply;
             if (command.type === "mode.list" && !auth.context.group) {
-              // Bot 硬锁 yolo：不提供模式选择。
+              // Bot mode is locked to yolo; do not offer mode selection.
               return [createOutbound(message.actor, msg(auth.locale, "modeLocked"))];
             }
             const blockReason = await getContextTaskBlockReason(auth.context);
             if (blockReason) {
-              // Bugfix: task 运行中不展示模式/思考级别选择，避免和正在执行的上下文配置混淆。
+              // Bugfix: hide mode/thinking-level selection while a task is running to avoid confusing it with the active context configuration.
               return [createOutbound(message.actor, msg(auth.locale, blockReason))];
             }
             if (auth.context.mode === "draft" || !auth.context.activeTaskId) {
@@ -9313,7 +9502,7 @@ export function createBotsService(
             const auth = await withAuthorizedContext(message, commandName);
             if (!auth.ok) return auth.reply;
             if (command.type === "mode.set" && !auth.context.group) {
-              // Bot 硬锁 yolo：拒绝任何模式切换请求。
+              // Bot mode is locked to yolo; reject all mode-switch requests.
               return [createOutbound(message.actor, msg(auth.locale, "modeLocked"))];
             }
             const blockReason = await getContextTaskBlockReason(auth.context);
@@ -9331,7 +9520,7 @@ export function createBotsService(
                 originalOptions,
                 view,
               );
-              // 同一个快照给出候选与当前模型；失效原意图不能因副本为空退回 preferred。
+              // Use the same snapshot for candidates and current model; an invalid original intent must not fall back to preferred just because its copy is empty.
               const draftOptions = {
                 ...originalOptions,
                 modelSelection:
@@ -9453,9 +9642,9 @@ export function createBotsService(
                 ? await getContextTaskBlockReason(auth.context)
                 : null;
             if (blockReason) {
-              // Bugfix: 运行中的旧 task 已经建立了第三方 stream 订阅。
-              // 如果此时允许 /task 改写 activeTaskId，后续输入会落到新 task，
-              // 但旧 task 输出仍会继续回到同一 bot 会话，用户会误以为消息串线。
+              // Bugfix: a running old task already has a third-party stream subscription.
+              // If /task changes activeTaskId now, later input goes to the new task while output from the old task continues to reach the same Bot conversation,
+              // making messages appear mixed together.
               return [createOutbound(message.actor, msg(auth.locale, blockReason))];
             }
             const nextContext = {
@@ -9580,7 +9769,7 @@ export function createBotsService(
             runningTasks.delete(auth.context.activeTaskId);
             stopTyping(auth.context.activeTaskId);
             await broadcastTaskListChange(auth.context, auth.context.activeTaskId, "updated");
-            // 群聊成功停止只更新状态，避免状态卡再次触发机器人互答。
+            // A successful group-chat stop updates state only, preventing the status card from triggering another bot reply.
             return auth.context.group
               ? []
               : createStatusReply(message.actor, auth.context, auth.locale);
@@ -9609,8 +9798,8 @@ export function createBotsService(
               optionId: option.optionId,
               response: option.response,
             });
-            // 修复原因：权限和问答必须以同一个 v4 ACK 为提交点。ACK 失败前不能持久化
-            // handledAt，否则 Telegram/文本序号按钮无法重试，runtime 仍会继续等待权限。
+            // Fix rationale: permissions and elicitation must use the same v4 ACK as their commit point. Do not persist
+            // handledAt before ACK succeeds, or Telegram/plain-text numbered buttons cannot retry while runtime remains waiting for permission.
             const handledAt = Date.now();
             const nextPermissionOptions = auth.context.pendingPermissionOptions?.map((item) =>
               item.requestId === option.requestId ? { ...item, handledAt } : item,
@@ -9658,8 +9847,8 @@ export function createBotsService(
               return [createOutbound(message.actor, msg(auth.locale, "elicitationExpired"))];
             }
             if (message.actor.provider !== "weixin") {
-              // Bugfix: 非微信通道的“完成”应从带 token 的按钮进入 elicitation.respond。
-              // 直接 /elicitation submit 没有轮次标识，可能误提交上一轮 AskUserQuestion。
+              // Bugfix: for channels other than WeChat, “complete” must come from a tokenized button into elicitation.respond.
+              // Direct /elicitation submit has no round identifier and could submit the previous AskUserQuestion by mistake.
               return [createOutbound(message.actor, msg(auth.locale, "elicitationExpired"))];
             }
             return submitPendingElicitation(
@@ -9783,7 +9972,7 @@ export function createBotsService(
         return shutdownPromise;
       }
       memoryDiagnostics.dispose();
-      // 材料下载可能晚于 Host 关闭返回；先同步失效，再回收上传侧的取消代次。
+      // Material downloads may return after the Host closes; invalidate synchronously first, then reclaim the upload-side cancellation generation.
       topicPreparation.clear();
       const pendingTopicKeys = [...topicContinuations.keys()];
       for (const key of pendingTopicKeys) {
@@ -9837,8 +10026,8 @@ export function createBotsService(
       recentInboundDeliveryAtByKey.clear();
       automationDeliveryWarningAtByKey.clear();
       inboundProcessingQueuesByContext.clear();
-      // Bugfix：host 的异步资源回收会优先调用 disposeAllAndWait。保留统一 Promise，确保并发关闭
-      // 只执行一次，并在返回前等三类 Provider runtime 的请求、WebSocket 和跨进程锁全部收口。
+      // Bugfix: host asynchronous resource cleanup calls disposeAllAndWait first. Keep one shared Promise so concurrent shutdown runs cleanup only once
+      // and waits for requests, WebSockets, and inter-process locks from all three Provider runtimes to settle before returning.
       shutdownPromise = Promise.allSettled([
         cancelUploads,
         telegramRuntime.dispose(),
@@ -9849,7 +10038,7 @@ export function createBotsService(
     },
   };
   if (runStartupBackgroundTasks) {
-    // 远端连接没有 Bot 专属事件源；只检查已存在的连接，不建立额外连接或重放历史。
+    // Remote connections have no Bot-specific event source; inspect only existing connections without opening another connection or replaying history.
     privateRecoveryTimer = setInterval(() => {
       if (shutdownPromise || privateRecoveryPending) return;
       privateRecoveryPending = true;
@@ -9868,20 +10057,38 @@ export function createBotsService(
     void telegramRuntime.refresh();
     void weixinRuntime.refresh();
     void feishuRuntime.refresh();
-    void ensureBotStorageMigrated()
-      .then(async () => {
-        for (const context of Object.values((await repo.readState()).bots)) {
-          await restoreGroupSynchronization(context);
-          if (!context.group) await reconcilePrivateSynchronization(context.botId);
-        }
-      })
-      .catch((error: unknown) => {
-        // 首次读取失败必须可见，不能产生未处理 rejection；交互入口仍直接收到该错误。
-        botsLogger.error(
-          undefined,
-          `Bot storage initialization failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
+    void initializeBotStorageWithRetry(0);
   }
   return service;
+
+  // Bug fix: several app instances share one user data dir, so the startup chain can lose the
+  // bot-state file lock race and time out. The chain previously gave up after one failure, leaving
+  // bot storage uninitialized (no group synchronization restore) for the host's lifetime. Every
+  // step is a read or an idempotent restore and the migration promise resets itself on failure, so
+  // retrying the whole chain is safe; only the final failure logs the terminal error.
+  async function initializeBotStorageWithRetry(attempt: number): Promise<void> {
+    try {
+      await ensureBotStorageMigrated();
+      for (const context of Object.values((await repo.readState()).bots)) {
+        await restoreGroupSynchronization(context);
+        if (!context.group) await reconcilePrivateSynchronization(context.botId);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const retryDelayMs = BOT_STORAGE_INIT_RETRY_DELAYS_MS[attempt];
+      if (retryDelayMs === undefined) {
+        // A final failure must remain visible without creating an unhandled rejection; the interaction entry point still receives the error directly.
+        botsLogger.error(undefined, `Bot storage initialization failed: ${message}`);
+        return;
+      }
+      botsLogger.warn(
+        undefined,
+        `Bot storage initialization failed, retrying (${attempt + 1}/${BOT_STORAGE_INIT_RETRY_DELAYS_MS.length}): ${message}`,
+      );
+      await delay(retryDelayMs);
+      return initializeBotStorageWithRetry(attempt + 1);
+    }
+  }
 }
+
+const BOT_STORAGE_INIT_RETRY_DELAYS_MS = [1_000, 5_000] as const;

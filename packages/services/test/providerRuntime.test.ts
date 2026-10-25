@@ -324,7 +324,7 @@ describe("ProviderRuntime", () => {
         ],
       ]),
     });
-    // 首选值必须来自显式 Configured Default；不能依赖已取消的“首个模型自动补档”。
+    // The preferred value must come from an explicit Configured Default; it must not rely on the removed "auto-backfill of the first model".
     await seedDefault(join(root, "personal.json"), {
       providerId: "account-plan",
       modelId: "model-a",
@@ -519,7 +519,7 @@ describe("ProviderRuntime", () => {
     async (recommended) => {
       const root = await mkdtemp(join(tmpdir(), "zcode-provider-runtime-direct-save-"));
       const zcodeBuiltinFilePath = join(root, "zcode-builtin.json");
-      // 手动规则只包含开放编辑的叶子；MFJS 等隐藏能力和 maxOutput Map 必须来自 Built-in。
+      // Manual rules only include open-for-edit leaves; hidden capabilities like MFJS and the maxOutput Map must come from Built-in.
       await writeFile(
         zcodeBuiltinFilePath,
         JSON.stringify(

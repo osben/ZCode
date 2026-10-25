@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// 根 Vitest 只收集 .test.ts；本文件使用 createElement，不需要 TSX 扩展名。
+// Root Vitest only collects .test.ts; this file uses createElement and needs no TSX extension.
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -16,7 +16,7 @@ import {
   workspaceHookPendingDismissStore,
 } from "@/v4/WorkspaceHookPendingBanner.js";
 
-// 模拟 settingsNavigation，验证 [去审核] 同时设置 intent
+// Mock settingsNavigation to verify [Review] also sets the intent
 const settingsIntentMock = vi.hoisted(() => ({
   setPendingSettingsSectionIntent: vi.fn(),
 }));
@@ -25,14 +25,14 @@ vi.mock("@/lib/settingsNavigation.js", () => ({
   setPendingSettingsSectionIntent: settingsIntentMock.setPendingSettingsSectionIntent,
 }));
 
-// 模拟 TabStoreProvider 的 openSettingsTab
+// Mock TabStoreProvider's openSettingsTab
 const openSettingsTabMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/store/TabStoreProvider.js", () => ({
   useOptionalTabStore: () => openSettingsTabMock,
 }));
 
-// 模拟 workspaceHookReviewStore 的 findWorkspaceHookCommandBinding
+// Mock workspaceHookReviewStore's findWorkspaceHookCommandBinding
 const sendCommandMock = vi.hoisted(() => vi.fn(async () => ({ status: "accepted" })));
 const onCommandSettledMock = vi.hoisted(() => vi.fn());
 
@@ -61,14 +61,14 @@ vi.mock("@/store/workspaceHookReviewStore.js", () => ({
   }),
 }));
 
-// 模拟 V4ConversationContext 的 sendCommand
+// Mock V4ConversationContext's sendCommand
 vi.mock("@/v4/V4ConversationContext.js", () => ({
   useV4Conversation: () => ({
     sendCommand: sendCommandMock,
   }),
 }));
 
-// 模拟 workspaceHookReviewCommands 的 sendWorkspaceHookCommand
+// Mock workspaceHookReviewCommands' sendWorkspaceHookCommand
 const sendWorkspaceHookCommandMock = vi.hoisted(() => vi.fn(async () => ({ accepted: true })));
 
 vi.mock("@/settings/workspaceHookReviewCommands.js", () => ({
@@ -105,7 +105,7 @@ function renderBanner(props: {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(WorkspaceHookPendingBanner, {
         sessionId: props.sessionId ?? "sess-1",
         workspacePath: props.workspacePath ?? "/workspace",
@@ -122,7 +122,7 @@ function renderInteractiveBanner(admission = sampleAdmission) {
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(WorkspaceHookPendingBanner, {
         sessionId: "sess-1",
         workspacePath: "/workspace",
@@ -132,7 +132,7 @@ function renderInteractiveBanner(admission = sampleAdmission) {
   );
 }
 
-describe("WorkspaceHookPendingBanner（软门禁 D4）", () => {
+describe("WorkspaceHookPendingBanner (soft gate D4)", () => {
   beforeEach(() => {
     workspaceHookPendingDismissStore.clear();
     settingsIntentMock.setPendingSettingsSectionIntent.mockClear();
@@ -145,26 +145,26 @@ describe("WorkspaceHookPendingBanner（软门禁 D4）", () => {
 
   afterEach(() => cleanup());
 
-  it("pendingCount > 0 时渲染提示条", () => {
+  it("renders the banner when pendingCount > 0", () => {
     const html = renderBanner({ admission: sampleAdmission });
     expect(html).toContain('data-testid="' + TID_V4_WORKSPACE_HOOK_PENDING_BANNER + '"');
     expect(html).toContain("2");
   });
 
-  it("pendingCount === 0 时不渲染", () => {
+  it("does not render when pendingCount === 0", () => {
     const html = renderBanner({
       admission: { pendingCount: 0, bundleDigest: "b".repeat(64) },
     });
     expect(html).not.toContain('data-testid="' + TID_V4_WORKSPACE_HOOK_PENDING_BANNER + '"');
   });
 
-  it("admission 为 null 时不渲染", () => {
+  it("does not render when admission is null", () => {
     const html = renderBanner({ admission: null });
     expect(html).not.toContain('data-testid="' + TID_V4_WORKSPACE_HOOK_PENDING_BANNER + '"');
   });
 
-  it("bundle 变化后 dismiss 失效，提示条重新出现", () => {
-    // dismiss 旧 bundle
+  it("a bundle change invalidates the dismissal and the banner reappears", () => {
+    // Dismiss the old bundle
     workspaceHookPendingDismissStore.dismiss("sess-1", sampleAdmission.bundleDigest);
     const newAdmission = {
       pendingCount: 3,
@@ -176,7 +176,7 @@ describe("WorkspaceHookPendingBanner（软门禁 D4）", () => {
     expect(html).toContain("3");
   });
 
-  it("点击忽略后立即隐藏，bundleDigest 变化后重新出现", () => {
+  it("hides immediately after clicking dismiss and reappears when bundleDigest changes", () => {
     const view = renderInteractiveBanner();
     expect(screen.getByTestId(TID_V4_WORKSPACE_HOOK_PENDING_BANNER)).toBeTruthy();
 
@@ -186,7 +186,7 @@ describe("WorkspaceHookPendingBanner（软门禁 D4）", () => {
     view.rerender(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(WorkspaceHookPendingBanner, {
           sessionId: "sess-1",
           workspacePath: "/workspace",
@@ -197,7 +197,7 @@ describe("WorkspaceHookPendingBanner（软门禁 D4）", () => {
     expect(screen.getByTestId(TID_V4_WORKSPACE_HOOK_PENDING_BANNER)).toBeTruthy();
   });
 
-  it("requestWorkspaceHookReview reject 时通过 UI logger 记录 warn", async () => {
+  it("logs a warn through the UI logger when requestWorkspaceHookReview rejects", async () => {
     sendWorkspaceHookCommandMock.mockRejectedValueOnce(new Error("request rejected"));
     renderInteractiveBanner();
 
@@ -214,7 +214,7 @@ describe("WorkspaceHookPendingBanner（软门禁 D4）", () => {
     });
   });
 
-  it("[去审核] 按钮存在且 [忽略] 按钮存在", () => {
+  it("has both a [Review] button and a [Dismiss] button", () => {
     const html = renderBanner({ admission: sampleAdmission });
     expect(html).toContain('data-testid="' + TID_V4_WORKSPACE_HOOK_PENDING_REVIEW + '"');
     expect(html).toContain('data-testid="' + TID_V4_WORKSPACE_HOOK_PENDING_DISMISS + '"');

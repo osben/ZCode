@@ -1,7 +1,7 @@
-// 依赖与 architecture-policy.yaml 同步；新增文件必须属于此 managed 边界。
+// Dependencies stay in sync with architecture-policy.yaml; new files must belong to this managed boundary.
 export const desktopWebRemoteRelayModule = {
   id: "desktop-web-remote-relay",
-  requires: ["client", "desktop", "shared", "web-remote-relay"],
+  requires: ["client", "desktop", "shared", "remote-relay-protocol"],
   provides: ["desktop-web-remote-relay"],
   publicEntrypoints: ["index.ts", "contract.ts"],
 } as const;

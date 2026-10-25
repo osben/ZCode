@@ -1,28 +1,35 @@
 # Task List Context Menu
 
-任务列表项新增右键菜单，统一承接 task 级快捷操作，避免把所有动作都堆到 hover 按钮或 Header more。
+Task list items have a context menu that carries the task-level shortcuts so not every action piles onto
+hover buttons or the Header more menu.
 
-## 当前菜单项
+## Current Menu Items
 
-- Pin task
-- Rename task
-- Archive task
-- Mark as unread
-- Open in Finder / File Explorer / File Manager
-- Copy path
-- Copy log path
-- Go to config
+Pin task, Rename task, Archive task, Mark as unread, Open in Finder / File Explorer / File Manager, Copy
+path, Copy log path, Go to config.
 
-## 交互说明
+## Interaction
 
-- `Pin task` 会持久化到 task 元数据，刷新或恢复后仍保持置顶；已置顶项菜单会显示 `Unpin task`
-- 已置顶任务会常驻在列表顶部的独立 `Pinned` 分组里，不再和普通任务混排；折叠态下也始终可见
-- `Rename task` 使用弹窗完成，支持 `Enter` 提交、取消关闭
-- `Archive task` 会把任务标记为 archived，并从默认任务列表中隐藏
-- 任务行 hover 时展示行内归档入口；首次点击进入二次确认态。确认态是显式等待用户决策的状态，鼠标移出任务行后仍保持确认按钮可见；点击任务行外空白处或按 `Esc` 取消确认态。
-- `Mark as unread` 会持久化到 task 元数据；重新启动 app 后仍保留蓝点，打开该任务时再自动清除
-- 重命名会持久化到 `tasks-index.sqlite` 并同步更新运行中 task 的内存 meta；恢复和快照回写必须遵守 [Task Title Authority](./task-title-authority.md)，避免 raw session snapshot 把手动标题还原成自动标题
-- pin / unread / archive 也会同步更新运行中 task 的内存 meta，避免后续 session 持久化把旧状态写回来
-- `Copy path` 指向 task 的持久化快照文件路径
-- `Copy log path` 指向 task 对应的原生日志路径；ZCode Agent 使用按日期滚动的结构化 JSONL 日志
-- `Go to config` 会复用当前持久化的编辑器偏好；如果无法直接用编辑器打开，则回退到文件管理器
+- `Pin task` persists to task metadata and survives refresh or restore; a pinned item shows `Unpin task`.
+  Pinned tasks stay permanently in an independent `Pinned` group at the top of the list (not mixed with
+  ordinary tasks) and are visible even when collapsed.
+- `Rename task` uses a dialog: `Enter` submits, cancel closes.
+- `Archive task` marks the task archived and hides it from the default task list. On row hover an inline
+  archive entry appears; the first click enters a two-step confirm state. The confirm state is an explicit
+  wait for the user's decision: the confirm button stays visible after the mouse leaves the row; clicking
+  blank space outside the row or pressing `Esc` cancels it.
+- `Mark as unread` persists to task metadata; the blue dot survives an app restart and is cleared
+  automatically when the task is opened.
+- Rename persists to `tasks-index.sqlite` and updates the running task's in-memory meta; restore and
+  snapshot write-back must obey [Task Title Authority](./task-title-authority.md), so a raw session
+  snapshot cannot revert a manual title to an automatic one.
+- pin / unread / archive also update the running task's in-memory meta, so a later session persistence does
+  not write the old state back.
+- `Copy path` points to the task's persisted snapshot file path.
+- `Copy task path` (shared by the sidebar task menu, grouped task menu and Header more menu) shows only when
+  the Host reports the snapshot file `exists`; while loading or when the file is missing the whole item is
+  hidden. This is a fork divergence from upstream `0a1fc56d`, which always shows it.
+- `Copy log path` points to the task's native log path; the ZCode Agent uses date-rolling structured JSONL
+  logs.
+- `Go to config` reuses the currently persisted editor preference; if it cannot open directly in the
+  editor, it falls back to the file manager.

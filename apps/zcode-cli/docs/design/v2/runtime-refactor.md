@@ -1,37 +1,49 @@
 # Runtime Refactor
 
-## 背景
+## Background
 
-`packages/core/src/runtime.ts` 已经承担 session 配置、context 初始化、模型请求、tool loop、compact、rewind、事件持久化和后台任务等多种职责。文件体积过大后，agent 很难定位修改边界，也难以判断副作用是否集中在正确的 adapter 或 service 层。
+`packages/core/src/runtime.ts` carried session configuration, context initialization, model requests,
+the tool loop, compact, rewind, event persistence and background tasks. At that size the edit
+boundaries were hard to find and side effects were hard to place in the right adapter or service layer.
 
-## 目标
+## Goals
 
-- `./runtime.js` 的公开导出保持稳定，调用方继续使用 `AgentRuntime` 与现有 public types。
-- `AgentRuntime` 只保留构造、公开 API 类型和原型方法安装，不继续承载所有实现细节。
-- runtime 内部按高内聚能力拆分为 `context`、`model`、`turn`、`tools`、`compact`、`rewind`、`persistence`、`background` 和纯 helper 模块。
-- 模块之间只通过显式的 runtime internal contract 调度，不依赖文件顺序或隐式全局状态。
-- 新增或重构文件默认不超过 400 行；发现超过阈值时必须继续拆分或在同一变更中留下明确的后续拆分说明。
+- The public exports of `./runtime.js` stay stable; callers keep using `AgentRuntime` and the existing
+  public types.
+- `AgentRuntime` keeps only the constructor, the public API types and prototype method installation.
+- Runtime internals split by cohesive capability: `context`, `model`, `turn`, `tools`, `compact`,
+  `rewind`, `persistence`, `background` and pure helper modules.
+- Modules interact only through the explicit runtime internal contract, never through file order or
+  implicit global state.
+- New or refactored files stay at or under 400 lines; a file over the threshold must be split further
+  or carry an explicit follow-up split note in the same change.
 
-## 接口契约
+## Interface contract
 
-公开契约仍由 `packages/core/src/runtime.ts` 提供：
+The public contract remains in `packages/core/src/runtime.ts`:
 
 - `AgentRuntime`
 - `AgentRuntimeConfig`
 - `AgentRuntimeDeps`
-- turn、resume、permission、checkpoint 相关 public result types
+- public result types for turn, resume, permission and checkpoint
 - `RuntimeFactory`
 
-内部契约收敛到 `AgentRuntimeInternal`，它只在 `packages/core/src/runtime/*` 内使用，用于描述 runtime 状态字段和私有协作方法。外部包不得导入 runtime internal modules。
+The internal contract is `AgentRuntimeInternal`. It is used only inside `packages/core/src/runtime/*`
+and describes runtime state fields and private collaboration methods. External packages must not import
+runtime internal modules.
 
-## 错误与副作用
+## Errors and side effects
 
-- 模型、文件、子进程、MCP、artifact、session store 等外部 I/O 仍必须通过已有 port/adapter 进入。
-- 拆分过程中不改变错误类型、事件 payload、trace 传播、permission broker 行为和 session persistence 语义。
-- turn cancellation、model context exceeded、compact retry、rewind restore 等失败路径必须保持原有事件与日志可观测性。
+- Model, file, subprocess, MCP, artifact and session store I/O still enters through the existing
+  ports/adapters.
+- The split does not change error types, event payloads, trace propagation, permission broker behavior
+  or session persistence semantics.
+- Failure paths (turn cancellation, model context exceeded, compact retry, rewind restore) keep their
+  original events and log observability.
 
-## 测试覆盖
+## Test coverage
 
-- 现有 runtime tests 继续作为行为回归覆盖。
-- 增加 runtime module boundary 测试，确保 `runtime.ts` 不再膨胀回巨型实现文件。
-- 完成变更前运行 `npm run lint` 和 `npm test`；如果仓库中已有未归属变更导致失败，需要记录失败点与风险。
+- Existing runtime tests remain the behavior regression coverage.
+- A runtime module boundary test ensures `runtime.ts` does not grow back into a monolith.
+- Run `npm run lint` and `npm test` before finishing; if unrelated pre-existing changes cause failures,
+  record the failing point and the risk.

@@ -1,179 +1,172 @@
-# Todo 103：固定 staging 合入、双向行为审计与交付
+# Todo 103: Fixed Staging Merge, Bidirectional Behavior Audit and Delivery
 
-> 状态：执行中；2026-09-09。整合分支 `staging-integration-20260909`，目标分支 `provider-refactor-e2e-recovery`。未经最终验收不合回，不自动推送。
-> 本文保存用户批准的完整 Goal；不得用阶段进展替代完成条件。
+> Status: In progress (2026-09-09). Integration branch `staging-integration-20260909`; target branch
+> `provider-refactor-e2e-recovery`. Not merged back without final acceptance; no automatic push. This document holds the
+> user-approved Goal; progress updates do not replace the completion conditions.
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/todo-103-staging-safe-integration.md`
 
-### 2026-09-10 推送授权与人工验收交接
+## Push Authorization and Manual Acceptance Handoff (2026-09-10)
 
-用户明确授权将当前候选同步推送至 `provider-refactor-m2` 和 `provider-refactor-e2e-recovery`，Windows 实际安装器与隔离真实 SSH 验收由用户执行。本次授权允许在这两项人工验收完成前更新远端分支，优先于下文历史“不合回、不推送”的交付限制；不表示这两项已通过，也不表示 Todo103 的全部完成条件已满足。
+- The user authorized pushing the current candidate to `provider-refactor-m2` and `provider-refactor-e2e-recovery`;
+  Windows real-installer acceptance and isolated real-SSH acceptance are done by the user. This authorization overrides
+  the historical "no merge back, no push" delivery limit until those two acceptances finish. It does not mean they
+  passed or that all Todo103 completion conditions are met; Todo104's other packaging-verification limits remain.
+- Before pushing, staging was still `790884b1ce`, an ancestor of candidate `0ff7445a1a` (merge returned
+  `Already up to date`); both push targets were ancestors of the candidate, so a normal fast-forward push was used.
+- Push of `982835a57b` (atomic, both branches) was rejected by pre-push; neither remote updated. Lint 43 warnings /
+  0 errors, architecture check 0 violations; the affected check fell back to the full unit run because of source
+  deletions: 1637 files passed / 10 failed / 2 skipped, 14372 tests passed / 22 failed / 26 skipped (Provider name
+  display, Bot, Wiki account delivery, old config fixtures), not attributed one by one. Hooks were not bypassed.
+- After user-authorized gate repair: `8cfb2f82ce` fixed old test contracts and, via real Facade red tests, found and
+  fixed Registry freezing losing names and template metadata. Pro I13 passed; normal pre-push full run 14395 passed /
+  26 skipped / 0 failed, lint and architecture check passed. Both remote branches were atomically fast-forwarded to that
+  commit without bypassing hooks (attribution in the Todo104 ledger section on the push-gate follow-up batch).
+  Windows / isolated SSH acceptance stay with the user; Todo103 is not marked complete.
+- Queued request (2026-09-10): independent re-review and test of both sides' expected behavior and the Provider
+  refactor core, on the existing real merge candidate (not yet merged into recovery). A few unresolved items stay
+  unresolved; new evidence is in ledger §47.
 
-推送前重新获取远端：staging 仍为 `790884b1ce`，已经是候选 `0ff7445a1a` 的祖先，正常 merge 返回 `Already up to date`，没有新增冲突或代码增量。两个推送目标均是候选的祖先，采用正常快进推送，不覆盖远端独有提交。Todo104 记录的其他打包验证限制仍保留，不因本次推送被标为通过。
+## Goal: Merge Staging Safely, Keep Correct Behavior, Maintain the Refactor Contract
 
-实际推送结果：`982835a57b` 的双分支 atomic push 被 pre-push 拒绝，两个远端均未更新。lint 为 43 warning / 0 error，架构检查 0 violations；affected 检查因源码删除转为全量单测，结果 1637 文件通过 / 10 文件失败 / 2 文件跳过，14372 测试通过 / 22 失败 / 26 跳过。失败涉及 Provider 名称展示、Bot、Wiki 账号交付与旧配置 fixture 等，尚未完成逐项归因，不将其一概称为旧问题或产品回归。这些单测失败不属于交给用户的 Windows / SSH 实机验收；本次没有绕过钩子或扩修产品代码。
+Merge the fixed staging into recovery. Identify and handle explicit conflicts, implicit conflicts from automatic merges,
+and new code depending on old interfaces. Two results must both hold: staging's correct behavior is not discarded
+without grounds, and our decided architecture, product semantics and persistence boundaries are not broken.
 
-后续用户授权修复门禁：`8cfb2f82ce` 修正旧测试合同，并通过真实 Facade 红测发现、修复 Registry 冻结时丢失名称和模板元数据。Pro I13 通过；正常 pre-push 全量 14395通过 / 26跳过 / 0失败，lint与架构检查通过。两个远端分支已经原子快进至该修复提交，未绕过钩子。详细归因与证据见 Todo104 ledger 的“推送门禁补查批次”；Windows / 隔离 SSH 继续交由用户验收，不假标 Todo103 全部完成。
+Baselines: recovery `f0174b57f5`, staging `790884b1ce`. Confirm before executing; do not chase later staging commits.
 
-### 2026-09-10 排队消息：独立复审与测试
+## Boundaries and Precedence
 
-用户要求再次全面检查两边预期行为和 Provider 重构核心。实际前提为独立分支已有真实 merge 候选，并非已经合回 recovery；本次在该候选上执行合理的复审/测试部分，不假定两项关键平台验收已完成。继续保留少数未决项，不自动裁决、推送或改变合回门槛。新增证据见 ledger §47；复用前述全来源清单，按配置核心、Host、Worker、新功能入口及实际桌面请求交叉检查。
+When an architecture/product-semantics conflict has an explicit decision of ours, ours prevails without asking again.
 
-## Goal：安全合入 staging，保留正确行为并维护重构契约
+- Non-conflicting staging behavior is kept.
+- Behavior that can stay but depends on the old architecture is rewired to the current abstraction.
+- Staging behavior that itself violates our decisions: the conflicting part is not restored and the reason recorded;
+  other correct behavior in the same commit is handled separately.
+- An equivalent implementation already exists: verify coverage, do not stack code.
+- Documentation conflicts follow the latest explicit decision, not historical plans or stale comments.
+- Deferred drafts such as Todo101 are not implemented; no extension of independent CLI account architecture, no
+  rebuild of the sync system; others' changes, real user data and publishing are not touched.
 
-将固定版本的 staging 合入 recovery。完整识别并处理显式冲突、自动合并产生的隐式冲突，以及新增代码对旧接口的依赖。
+### Supplement (2026-09-09): Fix Scope and Execution Granularity
 
-确保两个结果同时成立：
+1. Safe merge, not a repair of both sides' existing bugs: merge-introduced regressions, missed interfaces in new code and
+   problems blocking approved behavior are fixed; unrelated existing problems are recorded with reason, evidence, impact.
+2. Per-feature decisions, batch implementation and shared acceptance: every source stays traceable to an outcome, but
+   small items need not each pass a full acceptance; low-risk changes without architecture intersection are batched;
+   build, typecheck, lint and regression runs are shared.
+3. Verification effort follows risk: high-risk intersections are verified closely; independent test/environment problems
+   suspend only the affected items; checks are repeated only when code, dependencies, environment or claims change.
+4. Test failures are attributed first (merge regression / existing product problem / stale test / environment
+   prerequisite) with evidence and whether they block retained behavior. A failure is neither auto-expanded into a fix
+   task nor written up as existing/passing before it is understood.
+5. Delivery standard is unchanged: architecture decisions, per-feature traceable records, bidirectional review and final
+   key acceptance stay; key acceptance may not be handed to Todo102 to avoid it.
 
-1. staging 的正确行为没有被无依据地丢弃。
-2. 我们已经明确裁决的架构、产品语义和持久化边界没有被破坏。
+### Re-decision (2026-09-09): Form a Real Merge Candidate Early
 
-初始基线：
+This supersedes the earlier "port every source before merging" order; review scope and final standard are unchanged.
 
-- recovery：f0174b57f5
-- staging：790884b1ce
+1. Keep existing commits, decisions, implementation and evidence; safely close the in-flight G17 / G06 batch first.
+2. Independent changes with no architecture intersection or implicit dependency risk are kept by a normal merge in bulk,
+   not re-made as commits or re-developed/re-accepted one by one.
+3. Run the real merge of fixed staging on the separate integration branch early; porting/accepting every source is no
+   longer a precondition. A conflicted merge worktree is only a candidate, not a completed merge commit.
+4. Explicit conflicts, automatic-merge intersections and old-interface dependencies are still checked per feature. Our
+   explicit decisions prevail; retained behavior is rewired to the current interface; no whole-file ours/theirs and no
+   `merge -s ours`.
+5. High-risk intersections are verified closely, low-risk items in batches with shared build and regression; then a
+   bidirectional review and cross-group regression of the full candidate. Local passes do not replace overall acceptance.
+6. Only merge regressions, missed interfaces and blockers of retained behavior are fixed.
+7. The source list records decided, implemented and verified separately; normal-merge retention is a valid implementation
+   destination.
 
-执行前确认基线；不在过程中擅自追入后续 staging 提交。
+The merge candidate is not merged back into recovery without final acceptance and is not pushed automatically. Known
+risk: earlier partial ports plus the staging merge may double-apply or auto-merge while changing a shared interface;
+handled with fixed baselines, a candidate diff list and per-feature intersection checks, not by re-porting all sources.
 
-## 边界与裁决优先级
+## Execution Approach
 
-发生架构或产品语义冲突，且我们已有明确裁决时，以我们的裁决为准，不重复询问。
+```text
+fix both baselines, create separate integration branch
+  -> complete commit/file/feature inventory
+  -> close the current modified batch, keep results and evidence
+  -> normal merge of fixed staging early to form a full candidate
+  -> bulk-keep low-risk independent changes; per-feature check of intersections
+       (keep directly / rewire to current abstraction / equivalent exists / exclude per decision / user decision pending)
+  -> verify by risk group, review per feature, record, resolve conflicts, commit the real merge
+  -> bidirectional review and cross-feature regression of the full candidate
+  -> merge back into recovery when acceptance conditions hold
+```
 
-具体遵循：
+Inventory must cover all explicit conflicts (including modify/delete and rename), all automatically merged regions
+changed on both sides, single-side new code depending on deleted interfaces, old fields or old state sources, and
+cross-file protocol, persistence, config, dependency, build and test contracts. Decisions are per feature, not per file.
+Each item records source commit, intent, current implementation, conflict point, decision basis, result, test evidence,
+review conclusion and open items; duplicates may be merged but every source must trace to a destination. New findings go
+into the same ledger.
 
-- 不冲突的 staging 行为，原则上保留。
-- 行为可以保留、但实现依赖旧架构：按当前抽象重新接入。
-- staging 的行为本身违反我们的明确裁决：不恢复冲突部分，记录理由；同一提交里的其他正确行为仍分别处理。
-- 当前已有等价实现：验证覆盖关系，不重复叠加代码。
-- 文档冲突按最新明确裁决判断，不能把历史计划或过时注释当成当前要求。
-- Todo101 等延期草案不实施；不借合并扩展独立 CLI 账号架构或重做整个同步系统。
-- 不覆盖其他工作者的改动，不改真实用户数据，不自动发布或推送。
+Implementation and review:
 
-### 2026-09-09 补充裁决：修复范围与执行粒度
+- Update or write the spec first, then discriminating tests, then implementation, for behavior that is rewired or
+  repaired. Independent existing features kept by the normal merge reuse their spec/tests and are verified in risk-based
+  batches.
+- No bulk whole-file ours/theirs; no large revert followed by restoration from memory.
+- After each group or low-risk batch, check all requirements of the covered features and related upstream/downstream
+  entries; small items share acceptance; independent blockers do not stop other groups.
+- Finally two independent checks: from staging toward the result (is correct behavior missing?) and from our refactor
+  toward the result (is old architecture, a bypass or a semantic regression reintroduced?).
+- Verification includes relevant unit tests, typecheck, lint, necessary builds and runnable Pro desktop/remote tests;
+  the standard is behavior assertions holding, not compilation.
 
-本节属于上方完整 Goal 的执行契约，也适用于后续实施、复审和完成判断；不是另建一个缩减目标。
+## When to Stop
 
-1. **安全合并，不做两边既有 Bug 的全面修复。** 合并引入的回归、新代码对旧接口的漏接，以及阻碍本次获准保留行为的问题必须处理。无关既有问题只记录原因、证据和影响，不自动扩修。
-2. **逐功能裁决，允许批量实施和共享验收。** 每个来源仍可追踪到处理结果，但不要求每个小项独立完成整套验收。低风险、无架构交集的改动可批量处理；共享构建、类型检查、lint 和回归测试尽量合并执行，以同一份证据覆盖对应事项。
-3. **验证投入按风险分配。** 高风险交集重点验证，组内小项可以一起验收。独立测试或环境问题只挂起受影响事项，不阻塞其他可推进工作。只有代码、依赖、环境或待证明结论变化时才补有新增证明价值的检查，不机械重复已通过的同一检查。
-4. **测试失败先归因再决定处理。** 区分合并回归、既有产品问题、过时测试和环境前置问题；记录归因证据及是否阻碍本次保留行为。不能仅因测试失败就自动扩成修复任务，也不能把尚未查清的失败写成既有问题或通过。
-5. **交付标准不变。** 原有架构裁决、逐功能可追踪记录、双向复审和最终关键验收全部保留。以上仅调整执行粒度和修复范围；本次关键验收不得转交 Todo102 规避。
+Stop the affected items and tell the user only when: a genuinely new product decision is required (no existing
+principle decides, or two valid decisions conflict); scope must grow significantly (local rewiring cannot solve it; new
+architecture, new migration or a deferred scheme would be needed); new permissions or irreversible operations (real user
+data, external publishing, destructive actions); parallel changes in the worktree cannot be safely isolated; key
+acceptance cannot be completed and independent work is exhausted. Small test prerequisite/tool/environment problems are
+recorded and the rest continues. Undecided parts stay isolated; an integration with unresolved risk is not merged back.
 
-### 2026-09-09 再次裁决：尽早形成真实 merge 候选
+## Completion Conditions
 
-本节调整执行顺序，优先于历史“全部来源逐项移植完才执行 merge”的要求；审查范围和最终交付标准不变。
+All must hold: every source has a destination with no unexplained discard or restore; all intersections decided and no
+open item affects delivery; all approved behavior implemented or proven equivalent; current architecture and product
+decisions obeyed; per-group (or low-risk batch) feature review, overall bidirectional review and key verification done,
+with shared evidence marking its coverage; critical regressions resolved and verification limits recorded honestly (no
+untested written as passing); code and records committed and the result safely merged back into recovery, without
+automatic push. Todo102's existing verification debt is managed separately; this merge's key verification may not be
+handed to it.
 
-1. 保留现有提交、裁决、实现和验证证据，不推倒重来。当前已修改的 G17 / G06 批次先安全收口，明确哪些已经验证、哪些验收仍待完成。
-2. 无架构交集、无隐式依赖风险的独立改动通过正常合并批量保留，不逐个重新制作提交，也不把旧功能逐个按新功能重新开发、验收。
-3. 尽早在独立整合分支执行固定 staging 的真实 merge，形成完整候选；所有来源逐项移植或验收完成不再是执行 merge 的前置条件。存在冲突的 merge 工作区只是待解决候选，不冒充已完成的合并提交。
-4. 显式冲突、自动合并交集、新代码对旧接口的依赖仍逐功能检查。已有明确架构/产品裁决以我们为准；保留行为按当前接口重接，不用整文件 ours/theirs 或 `merge -s ours` 跳过裁决。
-5. 高风险交集重点验证，低风险项批量验证，共享构建与回归；最后针对完整候选双向复审、跨组回归。局部通过不能代替整体验收。
-6. 只修合并回归、接口漏接和阻碍本次保留行为的问题；无关既有问题只记录，不扩修。
-7. 来源清单分别记录已裁决、已实现、已验证；正常合并保留也是实现去向，不以重新制作了多少来源提交衡量进度。历史单一 status / evidence 保留追溯，但不能代替三个维度的结论。
+## Evidence Entry Points
 
-合并候选未经最终验收不得合回 recovery，不自动推送。已知风险是已有局部移植与 staging 再合并可能产生重复应用、或自动通过却改变共享接口；以固定基线、候选差异清单和逐功能交集核对处理，不以重新移植全部来源来规避。
+- [Per-group decision and execution ledger](../research/todo103-staging-integration-ledger.md)
+- [Fixed source inventory](../research/todo103-staging-source-inventory.json): 193 non-merge commits, 60 merge commits,
+  941 net staging-changed paths (950 investigation paths including historically cancelled and explicit-conflict paths).
+  Recomputed on the fixed SHAs: 235 doubly changed paths, 107 explicit conflicts, 128 auto-merged doubly changed paths;
+  the smaller intersection from the first verbal scan is not an acceptance basis.
+- `pending` means decision or evidence check not finished. Groups are routing only; files can span groups and each
+  feature fragment must be checked.
 
-## 执行方式
+## Real Merge Candidate Rule
 
-固定两端基线，建立独立整合分支
-|
-v
-建立提交、文件、功能三者对应的完整清单
-|
-v
-收口当前已修改批次，保留已有成果和证据
-|
-v
-正常 merge 固定 staging，尽早形成完整候选
-|
-v
-批量保留低风险独立改动；逐功能检查并处理交集
-├─ 直接保留
-├─ 按当前抽象重接
-├─ 已有等价实现
-├─ 按明确裁决排除
-└─ 待用户裁决
-|
-v
-按风险分组验证、逐功能复审、记录，解决冲突并提交真实 merge
-|
-v
-针对完整候选的整体双向复审与跨功能回归
-|
-v
-满足验收条件后合回 recovery
+The integration branch starts from the fixed recovery baseline; completed group commits are kept. After the dirty batch
+is closed, run a normal `git merge --no-commit --no-ff` of fixed staging without waiting for other sources. Do not commit
+partial code in an index with unresolved conflicts. No `merge -s ours`, no conflict markers committed, no whole-file
+ours/theirs. A read-only `merge-tree` candidate is not deliverable code. The final proof must show fixed staging is an
+ancestor of the result and every source has a destination.
 
-### 调查与记录
+## Acceptance Status
 
-清单必须覆盖：
-
-- 所有显式冲突，包括修改／删除和重命名。
-- 所有双方改动的自动合并区域。
-- 单边新增代码对已删除接口、旧字段、旧状态来源的依赖。
-- 跨文件的协议、持久化、配置、依赖、构建和测试契约。
-
-按功能而非单纯按文件裁决。每项记录：
-
-来源提交、改动意图、当前实现、冲突点、裁决依据、处理结果、测试证据、复审结论、未决事项。
-
-允许合并重复事项，但每个来源必须能追踪到去向。调查中发现的新问题及时补入同一账本。
-
-### 实施与复审
-
-- 先明确或更新 spec，再补有区分力的测试，然后实现。
-- 上项适用于需要重接或修复的行为；正常合并保留的独立既有功能复用原 spec/测试，按风险批量核验，不强制重新开发或逐项重跑整套验收。
-- 不批量使用整文件 ours/theirs，不大范围 revert 后凭记忆恢复。
-- 每组或低风险批次完成后，核对覆盖功能的全部要求和相关上下游入口；允许组内小项共同验收、跨组共享构建和回归证据。不要求每个小项重复完整验收，也不因独立阻塞停止其他组。
-- 最后再独立做两轮检查：
-  - 从 staging 往结果看：正确行为是否遗漏？
-  - 从我们的重构往结果看：是否重新引入旧架构、旁路或语义回退？
-- 验证包括相关单测、类型检查、lint、必要构建，以及可运行的 Pro 桌面／远程测试。通过标准是行为断言成立，不只是编译通过。
-
-## 什么时候停下来
-
-只有以下情况需要停下相关事项，向用户说明：
-
-1. 真正需要新产品裁决：现有明确原则无法决定，或两个当前有效裁决互相冲突。
-2. 需要显著扩展范围：局部迁接无法解决，必须重做架构、引入新迁移或实施延期方案。
-3. 需要新增权限或不可逆操作：涉及真实用户数据、外部发布、破坏性操作等。
-4. 工作区发生无法安全隔离的并行修改。
-5. 关键验收无法完成，且剩余独立工作已经处理完。
-
-小的测试前置、工具、环境问题不让整个任务停摆；记录后继续其他独立事项。待裁决部分保持隔离，不能擅自选择一边，也不能将带有未决风险的整合结果合回 recovery。
-
-## 完成条件
-
-全部满足才标记 Goal 完成：
-
-- 来源清单全部有去向，无未解释的丢弃或恢复。
-- 所有交集完成裁决；无影响交付的未决项。
-- 所有获准保留的行为已实现或证明已有等价实现。
-- 当前明确架构和产品裁决均得到遵守。
-- 每组（可按低风险批次组织）的功能复审、整体双向复审和关键验证完成；共享证据明确标注覆盖范围。
-- 发现的关键回归已解决；验证限制如实记录，未把未测写成通过。
-- 代码与记录已提交，整合结果已安全合回 recovery；不自动推送。
-
-Todo102 的既有欠测继续单独管理。这次合并必须完成的关键验证，不能通过转交 102 来绕过验收。
-
-## 执行与证据入口
-
-- [逐组决策及执行账本](../research/todo103-staging-integration-ledger.md)
-- [固定来源清单](../research/todo103-staging-source-inventory.json)：193 个非 merge 提交、60 个 merge 提交、941 个 staging 净变更路径；包含历史净抵消及显式冲突后共 950 个调查路径。
-- 清单按固定 SHA 重算：235 个双改路径，其中 107 个显式冲突、128 个自动合并双改路径。初次口头扫描中的较小交集数不作为验收依据。
-- `pending` 表示尚未完成裁决或证据核验。分组只是调查路由，不表示整组已接受；文件可能跨组，必须各自检查功能片段。
-
-## 尽早形成候选并保留真实合并历史
-
-独立整合分支从 recovery 固定基线开始；已经完成的分组提交全部保留。当前脏批次收口后，对固定 staging 执行正常 `git merge --no-commit --no-ff`，不等待其余来源逐项移植或验收完。批量保留独立改动，在完整候选上检查所有显式冲突、自动合并交集、旧接口依赖和重复应用风险，再按功能补必要迁接与测试。不在存在未解决冲突的 index 中勉强提交局部代码；待冲突解决后形成真实 merge 提交，继续完整候选验收。
-
-不使用 `merge -s ours` 伪造合并完成，不提交冲突标记，不以整文件 ours/theirs 代替裁决。只读 `merge-tree` 候选不是可交付代码，更不能当成已通过的实现。最终必须证明固定 staging 是整合结果的祖先，且所有来源已有去向。
-
-## 验收状态
-
-- [x] 固定两端 SHA；独立分支与干净工作区；基线新鲜度检查。
-- [x] 建立包含非 merge / merge / 文件 / 冲突的可复查来源清单。
-- [x] 收口当前批次并启动固定 staging 的真实 merge：checkpoint `c4f8619d96`，`MERGE_HEAD=790884b1ce`；已有成果保留，不等待来源逐项移植/验收。
-- [x] 解决候选冲突并形成完整可运行的真实 merge 提交：`e1c611be98`，双亲为 checkpoint `c4f8619d96` 与固定 staging `790884b1ce`（不等于最终验收）。进度见 ledger 第 24～43 节及 real-merge-candidate 清单；正常 merge 已批量保留独立改动，交集按当前接口重接。193 条非 merge 来源按组记录裁决/实现/验证三个维度；文件级终审和关键平台验收仍在进行，不以冲突归零或局部通过代替完成。
-- [x] 所有功能组完成当前代码核验与裁决，全部来源有去向（ledger §43–44；来源文件全部区分裁决/实现/验证，验证不因此自动完成）。
-- [ ] 获准保留的行为实现、测试、逐组复审及提交。
-- [x] 固定 staging 真实合并、协议 / 依赖 / 构建整体检查（ledger §36–45；Windows 实际安装不是构建通过，仍在下一门槛）。
-- [x] staging → 结果、重构 → 结果两轮独立代码复审（ledger §43–45；不替代尚缺的关键实机验收）。
-- [ ] 关键验证完成；未决事项不影响交付；合回 recovery。
+- [x] Fixed both SHAs; separate branch and clean worktree; baseline freshness check.
+- [x] Reviewable inventory of non-merge / merge / file / conflict.
+- [x] Closed the current batch and started the real merge: checkpoint `c4f8619d96`, `MERGE_HEAD=790884b1ce`.
+- [x] Resolved candidate conflicts into a complete runnable real merge commit `e1c611be98` (parents: checkpoint
+      `c4f8619d96` and staging `790884b1ce`; ledger §24-43 and the real-merge-candidate list). 193 non-merge sources
+      record decided/implemented/verified; file-level final review and key platform acceptance continue.
+- [x] All feature groups verified against current code and decided; every source has a destination (ledger §43-44).
+- [ ] Approved retained behavior implemented, tested, reviewed per group and committed.
+- [x] Real merge of fixed staging and overall protocol / dependency / build checks (ledger §36-45; Windows real install
+      is not a build pass and is the next gate).
+- [x] Two independent code reviews, staging -> result and refactor -> result (ledger §43-45).
+- [ ] Key verification complete; no open item affects delivery; merged back into recovery.

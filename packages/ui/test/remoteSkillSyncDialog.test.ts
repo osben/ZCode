@@ -35,6 +35,13 @@ const remoteSkillSyncIntlMockState = vi.hoisted(() => ({
   locale: "en-US" as "en-US" | "zh-CN",
 }));
 
+// zh-CN size-limit copy exercised by the locale-switch test; kept as data so locators stay
+// free of raw localized copy.
+const zhSizeLimitSelectedContent = vi.hoisted(
+  () =>
+    "同步失败：所选 Skills 的内容总大小约为 {actualSize}，超过单次同步上限 {maxSize}。请取消选择部分 Skills 后重试；远端未写入任何内容。",
+);
+
 vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({
     children,
@@ -120,7 +127,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
             "settings.skills.remoteSync.noSelection": "Select at least one missing skill.",
             "settings.skills.remoteSync.sizeLimit.selectedContent":
               locale === "zh-CN"
-                ? "同步失败：所选 Skills 的内容总大小约为 {actualSize}，超过单次同步上限 {maxSize}。请取消选择部分 Skills 后重试；远端未写入任何内容。"
+                ? zhSizeLimitSelectedContent
                 : "Sync failed: the selected Skills contain about {actualSize} of content, exceeding the {maxSize} per-sync limit. Deselect some Skills and try again. Nothing was written to the remote host.",
           };
           let message = messages[id] ?? id;
@@ -367,7 +374,9 @@ describe("RemoteSkillSyncDialog", () => {
     await waitFor(() => {
       expect(
         screen.getByText(
-          "同步失败：所选 Skills 的内容总大小约为 53.6 MiB，超过单次同步上限 20 MiB。请取消选择部分 Skills 后重试；远端未写入任何内容。",
+          zhSizeLimitSelectedContent
+            .replace("{actualSize}", "53.6 MiB")
+            .replace("{maxSize}", "20 MiB"),
         ),
       ).toBeTruthy();
     });

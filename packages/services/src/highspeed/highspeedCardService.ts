@@ -25,10 +25,11 @@ export interface HighspeedServiceTransport {
 }
 
 /**
- * 加速推理的动态鉴权材料。加速走 /api/v1/highspeed/ 网关，与 draw 复用同一套 Coding Plan
- * 双 JWT 契约：zcode JWT 标识会话身份，Coding Plan 业务 JWT + Team 身份头校验套餐权益。
- * 这些字段必须来自同一次 selected connection 解析，禁止跨 Family 拼接
- * （ZAI JWT 配 BigModel key 只会在服务端取号时被拒）。
+ * Dynamic auth material for accelerated inference. Acceleration goes through the /api/v1/highspeed/ gateway
+ * and shares draw's Coding Plan dual-JWT contract: the zcode JWT identifies session identity, while the Coding
+ * Plan business JWT plus Team identity headers verify plan entitlement.
+ * These fields must come from the same selected-connection resolution; splicing across families is forbidden
+ * (pairing a ZAI JWT with a BigModel key is rejected server-side at token issuance).
  */
 export interface HighspeedInferenceAuth {
   zcodeJwt: string;
@@ -44,30 +45,39 @@ export interface HighspeedCardServiceOptions {
   now?: () => number;
   wait?: (milliseconds: number) => Promise<void>;
   /**
-   * 加速推理动态鉴权材料。加速卡按账号 Family 拆分，不跨 Family 静默迁移；必须与 draw
-   * 复用同一次 selected connection 解析。缺省夹具仅服务本地测试。
+   * Dynamic auth material for accelerated inference. Acceleration cards are split by account family and never
+   * migrate silently across families; must reuse the same selected-connection resolution as draw.
+   * The default fixture serves local tests only.
    */
   resolveInferenceAuth?: () => Promise<HighspeedInferenceAuth>;
-  /** Mock 抽中只验证业务状态，消息继续走 session 当前的普通推理路由。 */
+  /** A mocked draw only verifies business state; messages still go through the session's ordinary inference routing. */
   inferenceMode?: "highspeed" | "session-default";
-  /** draw 只对 Coding Plan 用户开放；缺省视为支持，保持 mock 与既有测试语义。 */
+  /** draw is only available to Coding Plan users; the default treats it as supported to keep mock and existing-test semantics. */
   resolveCodingPlanSupported?: () => Promise<boolean>;
   /**
-   * 会话模型必须属于所选 Coding Plan Provider 的模型目录才允许发起新 draw（spec §3 规则 14）；
-   * 缺省视为覆盖，保持 mock 与既有测试语义。判定异常按不通过处理，避免陈旧组合打到 draw 接口。
+   * The session model must belong to the selected Coding Plan provider's model catalog before a new draw may start (spec §3 rule 14);
+   * the default treats it as covered to keep mock and existing-test semantics. Resolution errors count as not covered, preventing stale combinations from hitting the draw API.
    */
   resolveModelCovered?: (providerId: string, modelId: string) => Promise<boolean>;
 }
 
 const DEFAULT_WAIT_BUDGET_MS = 1000;
+/**
+ * Cooldown entered after a draw rejection that a send actually observed within its budget (spec §3 rule 16).
+ * Without it, a persistently rejected draw (2026-10-19 production: HTTP 400 code=3001 on every draw) was
+ * re-issued by every following send, each paying the failing request's full latency before falling back.
+ * A late background rejection no turn observes must NOT set this — the next send still redraws (CR-01).
+ */
+const DRAW_FAILURE_RETRY_BACKOFF_MS = 60_000;
 
 type SendBudgetOutcome<T> = { kind: "settled"; value: T } | { kind: "timeout" };
-/** 让一段 await 与本次 prepareTurn 的发送预算竞速；预算耗尽只结束等待，不取消该请求。 */
+/** Races an await against the current prepareTurn's send budget; exhausting the budget only ends the wait and never cancels the request. */
 type SendBudget = <T>(task: Promise<T>) => Promise<SendBudgetOutcome<T>>;
 
 /**
- * Coding Plan 双 JWT + Team 身份头。draw 与加速推理走同一个 /api/v1/highspeed/ 网关、同一套
- * 鉴权中间件：两者必须携带完全一致的 Coding Plan 凭据，加速推理只是额外附带卡 ID。
+ * Coding Plan dual JWT + Team identity headers. draw and accelerated inference share the same /api/v1/highspeed/
+ * gateway and the same auth middleware: both must carry exactly identical Coding Plan credentials; accelerated
+ * inference only adds the card ID on top.
  */
 export function buildHighspeedCodingPlanAuthHeaders(params: {
   zcodeJwt: string;
@@ -85,7 +95,7 @@ export function buildHighspeedCodingPlanAuthHeaders(params: {
   }
   return {
     Authorization: /^Bearer\s/i.test(zcodeJwt) ? zcodeJwt : `Bearer ${zcodeJwt}`,
-    // 接口契约要求 Bearer 前缀；凭据库可能存裸 token，这里统一归一化。
+    // The API contract requires the Bearer prefix; the credential store may hold a bare token, so normalize here.
     "X-Bigmodel-Authorization": /^Bearer\s/i.test(codingPlanAuthorization)
       ? codingPlanAuthorization
       : `Bearer ${codingPlanAuthorization}`,
@@ -111,15 +121,17 @@ function toSnapshot(card: HighspeedCardApi): HighspeedCardSnapshot {
 }
 
 /**
- * 构造一次加速执行的选择与动态鉴权材料。Endpoint、API 形态和模型能力等静态事实由
- * ZCode Built-in Provider Config 提供，禁止再随单次发送下发 provider 定义。
+ * Builds the selection and dynamic auth material for one accelerated execution. Static facts such as endpoint,
+ * API shape, and model capabilities come from the ZCode Built-in Provider Config; provider definitions must never
+ * be sent down again per individual message.
  */
 export function buildHighspeedTurnExecution(params: {
   card: HighspeedCardSnapshot;
   auth: HighspeedInferenceAuth;
   /**
-   * 抽卡时的提交选择（会话原模型 + 思考档位）。加速只换端点不换模型，execution 选择沿用它的档位，
-   * 否则 CLI Registry 会因缺档位拒绝本轮；它同时是降级的退回目标，必须随 selectionFallback 下发。
+   * The submit-time selection at draw time (session's original model + reasoning level). Acceleration swaps the
+   * endpoint, not the model, so the execution selection reuses that level; otherwise the CLI Registry rejects the
+   * turn for a missing level. It is also the downgrade return target and must be sent along with selectionFallback.
    */
   sessionSelection: ModelSelection;
 }): HighspeedTurnExecution {
@@ -128,18 +140,18 @@ export function buildHighspeedTurnExecution(params: {
   return {
     modelSelection: {
       providerId,
-      // 卡回显的是请求时提交的 model：加速来自换端点，不换模型。
+      // The card echoes the model submitted at request time: acceleration comes from switching endpoints, not models.
       modelId: params.card.model,
-      // execution 作用域的选择必须完整：带上会话档位，否则 CLI Registry 会因缺档位拒绝本轮。
+      // The execution-scoped selection must be complete: include the session's reasoning level, otherwise the CLI Registry rejects the turn for a missing level.
       ...(reasoningLevel ? { options: { reasoningLevel } } : {}),
     },
     requestAuth: {
-      // Anthropic 兼容客户端会发送 x-api-key；服务端仍以 Authorization、Coding Plan 双 JWT 与卡 ID 裁决。
+      // Anthropic-compatible clients send x-api-key; the server still adjudicates with Authorization, the Coding Plan dual JWT, and the card ID.
       apiKey: params.auth.zcodeJwt,
       headers: {
-        // Bug 原因：加速推理曾只发 zcode JWT + 卡 ID，而它与 draw 走同一 highspeed 网关、同一
-        // 鉴权中间件，缺少 Coding Plan 双 JWT + Team 身份头时网关无法校验套餐权益，返回
-        // 401 auth_failed。这里复用与 draw 完全一致的 Coding Plan 头，再附加本次执行的卡 ID。
+        // Bug cause: accelerated inference used to send only the zcode JWT + card ID, but it shares draw's highspeed
+        // gateway and auth middleware. Without the Coding Plan dual JWT + Team identity headers the gateway cannot
+        // verify plan entitlement and returns 401 auth_failed. Reuse headers identical to draw's and add this execution's card ID.
         ...buildHighspeedCodingPlanAuthHeaders({
           zcodeJwt: params.auth.zcodeJwt,
           codingPlanAuthorization: params.auth.codingPlanAuthorization,
@@ -150,9 +162,11 @@ export function buildHighspeedTurnExecution(params: {
         "X-Highspeed-Card-ID": params.card.cardId,
       },
     },
-    // 加速请求任何失败都退回会话模型跑完本轮（spec §2.2）：规则按序匹配，卡过期（3402）单独给出
-    // 原因以便 Renderer 区分提示；兜底规则不带错误码，覆盖鉴权、限流、5xx、网络、超时、流中断。
-    // CLI 只按声明匹配，不自行解释错误码；带该声明的执行句柄在适配层 0 次重试，首次失败即退回。
+    // Any accelerated-request failure falls back to the session model to finish the turn (spec §2.2): rules match in order,
+    // card expiry (3402) gets its own reason so the Renderer can show a distinct message; the catch-all rule carries no error
+    // code and covers auth, rate limits, 5xx, network, timeouts, and stream interruptions.
+    // The CLI matches only on declarations and never interprets error codes itself; execution handles carrying these
+    // declarations get 0 retries in the adapter layer and fall back on the first failure.
     selectionFallback: {
       providerId,
       rules: [
@@ -162,11 +176,13 @@ export function buildHighspeedTurnExecution(params: {
         },
         { reason: "highspeed_request_failed" },
       ],
-      // Bug 根因：退回目标曾只依赖 CLI 内存里的会话常驻选择。桌面重启后冷恢复若落在 Registry 刚就绪、
-      // 账号权益未解析的窗口内，持久化选择校验失败不绑定；之后只发加速轮也不会再绑定，卡过期（3402）
-      // 时降级静默跳过，整轮按 "highspeed card is invalid" 失败弹错。发起方在这里明确知道原模型，
-      // 必须把它作为退回目标随声明下发（spec §2.2），不再押注 runtime 状态。
-      target: structuredClone(params.sessionSelection),
+      // Bug root cause: the fallback target used to rely only on the CLI's in-memory session-resident selection. After a desktop
+      // restart, cold recovery could land in a window where the Registry was just ready but account entitlement was unresolved, so
+      // the persisted-selection validation failed and no binding happened; afterwards only accelerated turns were sent, so no binding
+      // ever happened either, and card expiry (3402) downgraded silently and the whole turn failed with "highspeed card is invalid".
+      // The initiator knows the original model here, so it must send it as the fallback target with the declaration (spec §2.2)
+      // instead of betting on runtime state.
+      target: params.sessionSelection,
     },
   };
 }
@@ -203,17 +219,19 @@ export class HighspeedCardService implements IHighspeedCardService {
   }
 
   async prepareTurn(params: HighspeedPrepareTurnParams): Promise<HighspeedPrepareTurnResult> {
-    // Bug 原因：定时任务是后台输入轮，不应参与面向用户主动发送的抽卡；门禁必须只看
-    // 本轮 automationId，不能读取 Task 上粘性的 cronAutomationId，否则同会话手动输入也会失去加速。
+    // Bug cause: scheduled jobs are background input turns and must not participate in draws for user-initiated sends; the gate
+    // must look only at this turn's automationId, never the sticky cronAutomationId on the Task, otherwise manual inputs in the
+    // same session would lose acceleration too.
     if (params.automationId?.trim()) {
       return { kind: "fallback", reason: "automation", nextDrawAt: this.nextDrawAt };
     }
 
     const now = this.now();
     this.expireCard(now);
-    // Bug 根因：1s 预算曾只包住 draw 等待，门禁判定（模型目录要等 Provider Runtime 初始化）与
-    // 加速鉴权解析都在预算外单独 await，Registry 未就绪或凭据解析卡住时发送被无限期挂起。
-    // 预算从进入 prepareTurn 起算，所有 await 共享同一截止时间（spec §3 规则 12）。
+    // Bug root cause: the 1s budget used to cover only the draw wait, while the gate checks (the model catalog waits for Provider
+    // Runtime initialization) and accelerated-auth resolution each awaited outside the budget, so sends hung indefinitely whenever
+    // the Registry was not ready or credential resolution stalled.
+    // The budget starts when prepareTurn is entered; every await shares the same deadline (spec §3 rule 12).
     const withinBudget = this.createSendBudget(now, params.waitBudgetMs ?? DEFAULT_WAIT_BUDGET_MS);
 
     if (this.card) {
@@ -223,20 +241,20 @@ export class HighspeedCardService implements IHighspeedCardService {
       return { kind: "fallback", reason: "cooldown", nextDrawAt: this.nextDrawAt };
     }
 
-    // draw body 的 provider 契约是服务端白名单里的 Coding Plan builtin 身份
-    // （builtin:zai-coding-plan / builtin:bigmodel-coding-plan）；Start/Off-Peak/API Key/
-    // 自定义 Provider 解析不出白名单值，直接降级，不打必被服务端拒绝的请求。
-    // 回归约束：禁止把会话选择的完整 providerId（如 account:bigmodel-team-coding-plan）
-    // 或账号 Family（bigmodel）透传进 body，两者都会被白名单以 3001 参数错误拒绝。
+    // The draw body's provider contract requires Coding Plan builtin identities from the server's allowlist
+    // (builtin:zai-coding-plan / builtin:bigmodel-coding-plan); Start/Off-Peak/API Key/custom providers cannot resolve to an
+    // allowlisted value, so downgrade directly instead of sending a request that will certainly be rejected.
+    // Regression constraint: never pass the session selection's full providerId (e.g. account:bigmodel-team-coding-plan)
+    // or the account family (bigmodel) into the body; both are rejected by the allowlist with a 3001 parameter error.
     const drawProviderId = resolveHighspeedDrawProviderId(params.providerId);
     if (!drawProviderId) {
       return { kind: "fallback", reason: "unavailable", nextDrawAt: this.nextDrawAt };
     }
 
-    // 门禁只拦新 draw；in-flight 是之前合法发起的请求，不受门禁影响。
+    // The gate only blocks new draws; in-flight requests were legitimately started earlier and are unaffected by the gate.
     if (!this.inFlightDraw) {
       const gate = await withinBudget(this.checkDrawGates(params.providerId, params.model));
-      // 门禁超出预算按未就绪降级（规则 14），不发起 draw；判定本身不取消，完成后预热下一轮。
+      // A gate that overruns the budget downgrades as not ready (rule 14) without starting a draw; the check itself is not cancelled and warms up the next turn once it finishes.
       if (gate.kind === "timeout") {
         return { kind: "fallback", reason: "unavailable", nextDrawAt: this.nextDrawAt };
       }
@@ -246,7 +264,16 @@ export class HighspeedCardService implements IHighspeedCardService {
     }
 
     const draw = this.inFlightDraw ?? this.startDraw(params, drawProviderId);
-    const outcome = await withinBudget(draw);
+    let outcome;
+    try {
+      outcome = await withinBudget(draw);
+    } catch {
+      // Spec §3 rule 16: the draw rejection won this send's race, so this send falls back immediately and the
+      // service enters the failure cooldown instead of letting every following send re-issue the same doomed
+      // request. Only the max wins: a successful draw's next_draw_at (or an earlier cooldown) must not shorten.
+      this.nextDrawAt = Math.max(this.nextDrawAt ?? 0, this.now() + DRAW_FAILURE_RETRY_BACKOFF_MS);
+      return { kind: "fallback", reason: "draw-failed", nextDrawAt: this.nextDrawAt };
+    }
     if (outcome.kind === "timeout") {
       return { kind: "fallback", reason: "draw-timeout", nextDrawAt: this.nextDrawAt };
     }
@@ -281,10 +308,10 @@ export class HighspeedCardService implements IHighspeedCardService {
   }
 
   /**
-   * 新 draw 的门禁：规则 14 模型目录、规则 11 Coding Plan 支持，按序判定，返回 fallback 原因，
-   * 全部通过返回 null。判定异常按不通过处理；不改变卡、冷却与 in-flight 状态。
-   * 会话恢复出的陈旧（coding-plan provider, 已下线模型）组合会照常通过 provider 白名单，
-   * 必须由模型目录拦下，避免把无效组合或无效凭据打到 draw 接口。
+   * Gates for a new draw: rule 14 model catalog and rule 11 Coding Plan support, evaluated in order; returns the fallback reason,
+   * or null when all pass. Resolution errors count as failing; card, cooldown, and in-flight state stay untouched.
+   * A stale (coding-plan provider, retired model) combination restored from session recovery still passes the provider allowlist
+   * and must be caught by the model catalog, so invalid combinations or credentials never hit the draw API.
    */
   private async checkDrawGates(
     providerId: string,
@@ -296,8 +323,8 @@ export class HighspeedCardService implements IHighspeedCardService {
   }
 
   /**
-   * 截止时间在进入 prepareTurn 时固定；计时器按需懒创建且只建一次，后续各段 await 复用，
-   * automation / 冷却 / 白名单外等同步降级路径不注册计时器。
+   * The deadline is fixed on entering prepareTurn; the timer is lazily created once on demand and reused by every
+   * subsequent await. Synchronous downgrade paths (automation / cooldown / outside the allowlist) never create it.
    */
   private createSendBudget(startedAt: number, budgetMs: number): SendBudget {
     const deadline = startedAt + budgetMs;
@@ -370,12 +397,12 @@ export class HighspeedCardService implements IHighspeedCardService {
       };
     }
     const auth = await withinBudget(this.resolveInferenceAuth());
-    // 鉴权解析超出预算：本轮普通发送，复用 draw-timeout 语义（「卡未能在预算内就绪」）；
-    // 卡保留且随结果带回，下一轮鉴权就绪后直接复用加速。
+    // Auth resolution overran the budget: send this turn normally, reusing draw-timeout semantics ("card was not ready within budget");
+    // the card is kept and returned with the result, and the next turn reuses acceleration once auth is ready.
     if (auth.kind === "timeout") {
       return { kind: "fallback", reason: "draw-timeout", card, nextDrawAt: this.nextDrawAt };
     }
-    // 退回目标就是本次提交的会话选择（provider / model / 档位）：它与卡无关，也不依赖 CLI 运行态。
+    // The fallback target is the session selection submitted this turn (provider / model / level): it is independent of the card and does not depend on CLI runtime state.
     const sessionSelection: ModelSelection = {
       providerId: params.providerId,
       modelId: params.model,

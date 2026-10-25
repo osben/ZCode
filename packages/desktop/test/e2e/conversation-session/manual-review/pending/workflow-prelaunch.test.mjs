@@ -46,7 +46,7 @@ test("WFS02 编写无内容，待确认可展开；桌面深色与手机浅色",
       await summary.press("Enter");
       await page.locator("pre").first().waitFor();
       const code = page.getByTestId("workflow-script-codeblock");
-      assert.equal(await code.getByRole("button", { name: "Copy code" }).count(), 1);
+      assert.equal(await code.getByRole("button").count(), 1);
       // 高亮正文异步挂载，等待布局完成后再验证限高滚动。
       await page.waitForFunction(() => {
         const node = document.querySelector('[data-testid="workflow-script-codeblock"] .max-h-80');
@@ -57,7 +57,7 @@ test("WFS02 编写无内容，待确认可展开；桌面深色与手机浅色",
           .locator(".max-h-80")
           .evaluate((node) => node.clientHeight <= 320 && node.scrollHeight > node.clientHeight),
       );
-      const copy = code.getByRole("button", { name: "Copy code" });
+      const copy = code.getByRole("button");
       const before = await copy.boundingBox();
       await code.locator(".max-h-80").evaluate((node) => {
         node.scrollTop = 100;

@@ -1,59 +1,66 @@
 /**
- * driver 对一条 ask 的**观察**词汇表：用量（{@link AskStats}）与进度（{@link AskProgress}）——
- * 同一次 turn 解析上报的两半，一半是账，一半是「还在动吗」。
+ * Vocabulary for the driver's **observations** of an ask: usage ({@link AskStats}) and progress
+ * ({@link AskProgress}), the two halves of one turn-completion report—one is accounting, the other
+ * answers “is it still moving?”
  *
- * 从 types.ts 拆出的原因与 imported-cache-types.ts 同一条：那份契约已到 oxlint 的 max-lines
- * 上限。公开面不变——types.ts 原地再导出这里的每一个名字，导入路径仍是 `./types.js`。
+ * Split from types.ts for the same reason as imported-cache-types.ts: that contract reached
+ * oxlint's max-lines limit. The public surface is unchanged—types.ts re-exports every name here, so
+ * import paths remain `./types.js`.
  */
 
-/** driver 每完成一次 ask 上报的用量统计。 */
+/** Usage statistics reported by the driver each time an ask completes. */
 export interface AskStats {
   tokens: number;
   toolCalls: number;
   turns: number;
   /**
-   * 其中**看或动了外部世界**的调用数：读文件、跑命令、访问网络。
-   * 不含只把结果或问题交回引擎的协议工具（`submit_result`、`escalate`），所以一条只作答的 typed ask
-   * 这里是 0——那样的 ask 是**纯**的，只依赖指令与转录前缀，导入缓存关闭之后仍可从缓存结算。
-   * 老 journal 行没有这个键，一律按「碰过」处理（保守）。
+   * Number of calls that **read or changed the external world**: file reads, commands, network access.
+   * Excludes protocol tools that only return results or questions to the engine (`submit_result`,
+   * `escalate`), so this is 0 for a typed ask that only answers. Such an ask is **pure**, depending
+   * only on instructions and transcript prefix, and remains cacheable after the import cache closes.
+   * Old journal rows do not have this key and are treated conservatively as having touched the world.
    */
   worldToolCalls?: number;
 }
 
 /**
- * `node-queued` 上 `instructionsHead` 的字符上限（240）。够一两句把这次 ask 交代清楚，
- * 又不至于让事件表长出一份指令副本——完整指令在 `dwf_node.input_json` 那一侧。
+ * Character limit (240) for `instructionsHead` on `node-queued`. Enough for one or two sentences to
+ * describe the ask without duplicating the full instruction in the event table; the full text is in
+ * `dwf_node.input_json`.
  */
 export const INSTRUCTIONS_HEAD_MAX_CHARS = 240;
 
-/** `node-progress` 上 `lastTool.name` 的字符上限（64）：工具名，不是描述。 */
+/** Character limit (64) for `lastTool.name` on `node-progress`: tool name, not description. */
 export const LAST_TOOL_NAME_MAX_CHARS = 64;
 
 /**
- * `node-progress` 上 `lastTool.target` 的字符上限（120）：一条给人看的线索（文件路径 /
- * 命令头），不是入参本身——入参可以装下任何东西，而这条事件会被主代理读、被 GUI 画。
+ * Character limit (120) for `lastTool.target` on `node-progress`: a human-readable clue (file path /
+ * command prefix), not the argument itself—the argument can contain anything, and this event is
+ * read by the primary agent and rendered by the GUI.
  */
 export const LAST_TOOL_TARGET_MAX_CHARS = 120;
 
 /**
- * 最近一次被观察到的工具调用（{@link AskProgress} 的 `lastTool`）。
- * `target` 是给人看的**线索**，不是入参：文件类工具给路径，Bash 给命令头，认不出就缺席。
+ * Most recently observed tool call (`lastTool` in {@link AskProgress}).
+ * `target` is a human-readable **clue**, not the argument: file tools provide a path, Bash provides
+ * the command prefix, and it is absent if it cannot be identified.
  */
 export interface AskLastTool {
-  /** 工具名，≤ {@link LAST_TOOL_NAME_MAX_CHARS}。 */
+  /** Tool name, ≤ {@link LAST_TOOL_NAME_MAX_CHARS}. */
   name: string;
-  /** 简短目标，≤ {@link LAST_TOOL_TARGET_MAX_CHARS}；无从判断时缺席（不合成占位串）。 */
+  /** Short target, ≤ {@link LAST_TOOL_TARGET_MAX_CHARS}; absent when unknown (do not synthesize a placeholder). */
   target?: string;
 }
 
 /**
- * 一条 ask 在**turn 解析那一刻**的进度。
- * 与 {@link AskStats} 是同一次 driver 回报的两半：stats 是账（token），progress 是「还在动吗」。
+ * Progress for an ask **at the time a turn resolves**.
+ * Along with {@link AskStats}, this is one half of the same driver report: stats is accounting
+ * (tokens), and progress answers “is it still moving?”
  */
 export interface AskProgress {
-  /** 本 ask 内已解析的 turn 数，从 1 起（nudge 轮计数；repair 轮不计——它们不结束 turn）。 */
+  /** Number of turns resolved within this ask, starting at 1 (includes nudge rounds; excludes repair rounds, which do not end a turn). */
   turn: number;
-  /** 本 ask 内累计的工具调用数，与 {@link AskStats.toolCalls} 同一个计数器。 */
+  /** Cumulative tool-call count within this ask, using the same counter as {@link AskStats.toolCalls}. */
   toolCalls: number;
   lastTool?: AskLastTool;
 }

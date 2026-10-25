@@ -47,7 +47,7 @@ async function fixture(
     onPayload: vi.fn(),
   });
   cleanups.push(() => transport.dispose());
-  // 真实 HTTP/WebSocket 不随 fake clock 完成；等状态事件，避免固定延时在负载下抢跑。
+  // Real HTTP/WebSocket does not complete with the fake clock; wait for state events so fixed delays cannot race under load.
   const waitForState = async (state: string) => {
     if (states.at(-1) !== state)
       await once(stateEvents, `state:${state}`, { signal: AbortSignal.timeout(5000) });
@@ -60,7 +60,7 @@ async function settle() {
 }
 
 describe("desktop relay V2 transport", () => {
-  it("用一次性 token 认证，auth_init 仅发送 V2 字段与秒级时间戳", async () => {
+  it("authenticates with a one-time token; auth_init sends only V2 fields and second-level timestamps", async () => {
     const { relay, transport, states, device } = await fixture();
     transport.start();
     await vi.waitFor(() => expect(states.at(-1)).toBe("waiting_terminal"));
@@ -73,7 +73,7 @@ describe("desktop relay V2 transport", () => {
     expect((relay.messages[0]!.message as { client_ts: number }).client_ts).toBeLessThan(1e11);
     expect(relay.httpCalls.filter((call) => call.path.endsWith("/token"))).toHaveLength(1);
   });
-  it("每轮4~6秒心跳不带SID，15秒无ACK独立重连并重新申请token", async () => {
+  it("sends a heartbeat every 4-6 seconds without a SID; 15 seconds without ACK reconnects independently and requests a new token", async () => {
     const { relay, transport, states, waitForState } = await fixture({
       users: { jwt: "user" },
       onMessage: ({ message }) =>
@@ -82,7 +82,7 @@ describe("desktop relay V2 transport", () => {
     transport.start();
     await vi.waitFor(() => expect(states.at(-1)).toBe("waiting_terminal"));
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    // 当前连接的计时器先通过重连在 fake clock 下建立。
+    // The current connection's timers are first established under the fake clock through a reconnect.
     relay.disconnect({ role: "device" });
     await waitForState("connecting");
     await vi.advanceTimersByTimeAsync(1200);
@@ -104,7 +104,7 @@ describe("desktop relay V2 transport", () => {
     expect(states.at(-1)).toBe("waiting_terminal");
   });
 
-  it("KICKED首次2~5秒恢复，60秒内再次停止", async () => {
+  it("the first KICKED recovers after 2-5 seconds; a second KICKED within 60 seconds stops", async () => {
     const { relay, transport, states, waitForState } = await fixture();
     transport.start();
     await vi.waitFor(() => expect(states.at(-1)).toBe("waiting_terminal"));
@@ -124,7 +124,7 @@ describe("desktop relay V2 transport", () => {
     expect(relay.httpCalls.filter((call) => call.path.endsWith("/token"))).toHaveLength(2);
   });
 
-  it("token网络与5xx指数退避到30秒，auth_ack后重置", async () => {
+  it("token network and 5xx errors back off exponentially up to 30 seconds and reset after auth_ack", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     let failure: "network" | "server" | undefined = "server";
     const f = await fixture({
@@ -163,24 +163,27 @@ describe("desktop relay V2 transport", () => {
     expect(f.states.at(-1)).toBe("connecting");
   });
 
-  it.each([401, 403, 429])("token HTTP %s 是终止错误且不会自动重连", async (status) => {
-    const f = await fixture({
-      users: { jwt: "user" },
-      onHttp: (call) => (call.path.endsWith("/token") ? { status } : undefined),
-    });
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    f.transport.start();
-    await f.waitForState("error");
-    expect(f.states.at(-1)).toBe("error");
-    expect(f.errors[0]).toMatchObject({
-      reason: status === 401 ? "auth-required" : "relay-unavailable",
-    });
-    await vi.advanceTimersByTimeAsync(60000);
-    expect(f.relay.httpCalls.filter((call) => call.path.endsWith("/token"))).toHaveLength(1);
-  });
+  it.each([401, 403, 429])(
+    "token HTTP %s is a terminal error and does not reconnect automatically",
+    async (status) => {
+      const f = await fixture({
+        users: { jwt: "user" },
+        onHttp: (call) => (call.path.endsWith("/token") ? { status } : undefined),
+      });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      f.transport.start();
+      await f.waitForState("error");
+      expect(f.states.at(-1)).toBe("error");
+      expect(f.errors[0]).toMatchObject({
+        reason: status === 401 ? "auth-required" : "relay-unavailable",
+      });
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(f.relay.httpCalls.filter((call) => call.path.endsWith("/token"))).toHaveLength(1);
+    },
+  );
 
-  it("超过60秒的KICKED重新允许一次恢复", async () => {
-    // retry policy 在构造时捕获随机源，必须先注入；否则 3500ms 可能短于真实的随机退避。
+  it("a KICKED after more than 60 seconds allows one recovery again", async () => {
+    // The retry policy captures its random source at construction, so it must be injected first; otherwise 3500ms could be shorter than the real random backoff.
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     const f = await fixture();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
@@ -190,7 +193,7 @@ describe("desktop relay V2 transport", () => {
     await f.waitForState("connecting");
     await vi.advanceTimersByTimeAsync(3500);
     await f.waitForState("waiting_terminal");
-    // 跳过墙钟但不补发心跳，模拟两次KICKED间隔超过窗口。
+    // Skip wall-clock time without resending heartbeats, simulating two KICKED events more than the window apart.
     vi.setSystemTime(Date.now() + 60000);
     f.relay.sendError({ role: "device" }, "KICKED");
     await f.waitForState("connecting");
@@ -200,7 +203,7 @@ describe("desktop relay V2 transport", () => {
     expect(f.states.at(-1)).toBe("waiting_terminal");
   });
 
-  it("V2配对允许双向payload，terminal断开立即暂停发送并等待再次配对", async () => {
+  it("V2 pairing allows bidirectional payloads; a terminal disconnect pauses sending immediately and waits for pairing again", async () => {
     const f = await fixture();
     f.transport.start();
     await vi.waitFor(() => expect(f.states.at(-1)).toBe("waiting_terminal"));
@@ -235,7 +238,7 @@ describe("desktop relay V2 transport", () => {
     );
   });
 
-  it("逐轮重采样心跳jitter，4秒下界与6秒上界均可观察", async () => {
+  it("resamples heartbeat jitter every round; both the 4-second lower bound and the 6-second upper bound are observable", async () => {
     const random = vi.spyOn(Math, "random").mockReturnValue(0);
     const f = await fixture();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
@@ -260,7 +263,7 @@ describe("desktop relay V2 transport", () => {
     expect(queries()).toHaveLength(2);
   });
 
-  it("握手无ACK在15秒deadline后申请新token", async () => {
+  it("without a handshake ACK, a new token is requested after the 15-second deadline", async () => {
     const f = await fixture({ users: { jwt: "user" }, onMessage: () => ({ drop: true }) });
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     f.transport.start();

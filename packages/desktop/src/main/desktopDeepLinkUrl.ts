@@ -4,6 +4,7 @@ const OAUTH_CALLBACK_HOSTS = new Set(["oauth"]);
 const PAYMENT_CALLBACK_HOST = "payment";
 const WORKSPACE_OPEN_HOST = "workspace";
 const SHARE_IMPORT_HOST = "share";
+const TASK_NEW_HOST = "task";
 const DEEP_LINK_ADDITIONAL_DATA_KEY = "deepLinkUrl";
 const OPEN_WORKSPACE_ADDITIONAL_DATA_KEY = "openWorkspacePath";
 const OPEN_WORKSPACE_ARG = "--open-workspace";
@@ -77,6 +78,49 @@ export function extractWorkspaceOpenPath(parsedUrl: URL): string | null {
 
   const path = parsedUrl.searchParams.get("path");
   return path && path.length > 0 ? path : null;
+}
+
+export function isTaskNewUrl(parsedUrl: URL): boolean {
+  if (parsedUrl.protocol !== `${DEEP_LINK_SCHEME}:`) {
+    return false;
+  }
+
+  const normalizedPath = normalizeOAuthCallbackPath(parsedUrl.pathname);
+  if (parsedUrl.hostname === TASK_NEW_HOST) {
+    return normalizedPath === "/new";
+  }
+
+  if (parsedUrl.hostname) {
+    return false;
+  }
+
+  const [, host, ...pathParts] = normalizedPath.split("/");
+  return Boolean(host === TASK_NEW_HOST && `/${pathParts.join("/")}` === "/new");
+}
+
+export interface TaskNewRequest {
+  path: string;
+  prompt?: string;
+  promptFile?: string;
+}
+
+/**
+ * Structural validation only: `path` plus exactly one of `prompt` / `promptFile`. Text limits and file
+ * checks live in desktopTaskDraftDeepLink.ts so every rejection shares one reason vocabulary.
+ */
+export function extractTaskNewRequest(parsedUrl: URL): TaskNewRequest | null {
+  if (!isTaskNewUrl(parsedUrl)) {
+    return null;
+  }
+
+  const path = parsedUrl.searchParams.get("path");
+  const prompt = parsedUrl.searchParams.get("prompt");
+  const promptFile = parsedUrl.searchParams.get("promptFile");
+  if (!path || (prompt === null) === (promptFile === null)) {
+    return null;
+  }
+
+  return prompt !== null ? { path, prompt } : { path, promptFile: promptFile as string };
 }
 
 export function isShareImportUrl(parsedUrl: URL): boolean {
@@ -180,6 +224,10 @@ function isCompleteDeepLinkUrl(value: string): boolean {
     return extractShareImportCode(parsedUrl) !== null;
   }
 
+  if (isTaskNewUrl(parsedUrl)) {
+    return extractTaskNewRequest(parsedUrl) !== null;
+  }
+
   return true;
 }
 
@@ -190,9 +238,9 @@ export function extractDeepLinkUrlFromArgs(args: readonly string[]): string | nu
     for (const candidate of expandDecodedDeepLinkCandidates(arg)) {
       const match = extractFromCandidate(candidate);
       if (match) {
-        // Debian/xdg 的协议回调可能被浏览器或桌面门户多次编码，
-        // 也可能把 query 片段拆成相邻 argv。这里先生成有限候选再多轮解码，
-        // 避免浏览器确认“打开 ZCode”后主进程拿不到完整回调 URL。
+        // Debian/xdg protocol callbacks may be encoded multiple times by browsers or desktop portals,
+        // or query fragments may be split across adjacent argv entries. Generate bounded candidates first, then decode them repeatedly,
+        // so main still receives the complete callback URL after the browser confirms "Open ZCode."
         if (isCompleteDeepLinkUrl(match)) {
           return match;
         }
@@ -213,8 +261,8 @@ function trimArgValue(value: string): string {
   }
 
   if (/^[A-Za-z]:(?:\\.*)?["']$/.test(trimmed)) {
-    // Windows Explorer 的 Drive\shell 菜单会把 C:\ 代入 "%1"。
-    // 部分 argv 解析链会把末尾反斜杠和闭合引号折叠成尾引号，这里只修正盘符绝对路径。
+    // Windows Explorer's Drive\shell menu substitutes C:\ into "%1".
+    // Some argv parsing chains fold the trailing backslash and closing quote into a final quote; correct only drive-letter absolute paths here.
     return `${trimmed.slice(0, -1)}\\`;
   }
 
@@ -248,12 +296,32 @@ export function extractOpenWorkspacePathFromArgs(args: readonly string[]): strin
   return null;
 }
 
+// Electron #52020 (fixed upstream in electron/electron#52025): Chromium serializes additionalData, splits it on NUL,
+// and trims whitespace. A NUL followed by a whitespace byte corrupts the value, and non-ASCII paths can crash the
+// second-instance read. Percent-encoding keeps the payload ASCII-only with no whitespace. This is a mitigation on
+// Electron 41.x; the full fix is an Electron upgrade (>= 42.4.2).
+function encodeSingleInstanceValue(value: string): string {
+  return encodeURIComponent(value);
+}
+
+function decodeSingleInstanceValue(value: string): string {
+  // Values written before encoding are raw, and decodeURIComponent throws on a stray "%".
+  // Fall back to the raw value so legacy payloads from older instances are not dropped.
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export function createDeepLinkSingleInstanceData(args: readonly string[]): Record<string, string> {
   const url = extractDeepLinkUrlFromArgs(args);
   const openWorkspacePath = extractOpenWorkspacePathFromArgs(args);
   return {
-    ...(url ? { [DEEP_LINK_ADDITIONAL_DATA_KEY]: url } : {}),
-    ...(openWorkspacePath ? { [OPEN_WORKSPACE_ADDITIONAL_DATA_KEY]: openWorkspacePath } : {}),
+    ...(url ? { [DEEP_LINK_ADDITIONAL_DATA_KEY]: encodeSingleInstanceValue(url) } : {}),
+    ...(openWorkspacePath
+      ? { [OPEN_WORKSPACE_ADDITIONAL_DATA_KEY]: encodeSingleInstanceValue(openWorkspacePath) }
+      : {}),
   };
 }
 
@@ -267,7 +335,7 @@ export function extractDeepLinkUrlFromSingleInstanceData(additionalData: unknown
     return null;
   }
 
-  return extractDeepLinkUrlFromArgs([value]);
+  return extractDeepLinkUrlFromArgs([decodeSingleInstanceValue(value)]);
 }
 
 export function extractOpenWorkspacePathFromSingleInstanceData(
@@ -282,5 +350,8 @@ export function extractOpenWorkspacePathFromSingleInstanceData(
     return null;
   }
 
-  return extractOpenWorkspacePathFromArgs([`${OPEN_WORKSPACE_ARG}=${value}`]);
+  // Decode before the argv-style wrapper so trimArgValue still normalizes the real path.
+  return extractOpenWorkspacePathFromArgs([
+    `${OPEN_WORKSPACE_ARG}=${decodeSingleInstanceValue(value)}`,
+  ]);
 }

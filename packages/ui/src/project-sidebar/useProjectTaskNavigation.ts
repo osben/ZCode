@@ -30,9 +30,11 @@ export function useProjectTaskNavigation(
   useLayoutEffect(() => {
     latest.current = { props, tree, remoteService, activeWorkspaceIdentity };
   });
-  return useCallback((path, taskId, identity, remoteSessionId, unreadAt) => {
+  return useCallback((path, taskId, identity, remoteSessionId, unreadAt, options) => {
     const request = ++sequence.current;
     const { props, tree, remoteService, activeWorkspaceIdentity } = latest.current;
+    // Child sessions are not top-level tree rows; their parent owns the workspace attachment.
+    const ownerTaskId = options?.parentTaskId ?? taskId;
     const readFocus = () =>
       props.workspacePath
         ? useZCodeSessionStore
@@ -48,12 +50,12 @@ export function useProjectTaskNavigation(
       readFocus()?.draftFocusVersion === originFocus?.draftFocusVersion &&
       (!identity ||
         latest.current.tree.tasks.some(
-          (task) => task.taskId === taskId && task.workspaceIdentity === identity,
+          (task) => task.taskId === ownerTaskId && task.workspaceIdentity === identity,
         ));
     const open = async () => {
       const task = tree.tasks.find(
         (item) =>
-          item.taskId === taskId &&
+          item.taskId === ownerTaskId &&
           (item.workspaceIdentity || item.workspacePath) === (identity || path),
       );
       if (props.webRemoteControlWorkspaceSwitcher) {
@@ -104,7 +106,8 @@ export function useProjectTaskNavigation(
           });
         }
       }
-      props.onSelectTask(path, taskId, identity, remoteSessionId, unreadAt);
+      // Child sessions carry their capability (side chat → restricted commands) through to the shell.
+      props.onSelectTask(path, taskId, identity, remoteSessionId, unreadAt, options);
     };
     void open().catch((error) => {
       logger.error("[project-sidebar] 打开任务失败", error);

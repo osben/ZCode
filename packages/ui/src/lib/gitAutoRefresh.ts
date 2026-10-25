@@ -49,8 +49,8 @@ export function buildGitAutoRefreshWatchPaths(
     const path = normalizeWatchPath(watchPath.path);
     if (
       !path ||
-      // 兼容旧 remote server：旧 summary 仍可能携带 workspacePath，Linux 下不能让
-      // 这个历史字段重新绕过平台边界，触发慢速递归 watcher。
+      // For compatibility with older remote servers, old summaries may still include workspacePath. Do not let
+      // this legacy field bypass platform boundaries on Linux and trigger a slow recursive watcher.
       (path === workspacePath && !canWatchWorkspaceRecursively) ||
       watchPaths.some((entry) => entry.path === path)
     ) {
@@ -72,9 +72,7 @@ export function stringifyGitAutoRefreshWatchPaths(
   return JSON.stringify(watchPaths);
 }
 
-export function parseGitAutoRefreshWatchPaths(
-  signature: string,
-): GitAutoRefreshWatchPath[] {
+export function parseGitAutoRefreshWatchPaths(signature: string): GitAutoRefreshWatchPath[] {
   const parsed = JSON.parse(signature) as GitAutoRefreshWatchPath[];
   return parsed.map((watchPath) => ({
     path: watchPath.path,

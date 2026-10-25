@@ -1,6 +1,7 @@
 import {
   AccountProviderService,
   MutableAccountProviderConfigSource,
+  createDerivedAcpAgentConfigSource,
   parseAccountProviderConfigMap,
   type AccountProviderConfigSnapshot,
   type AccountProviderStates,
@@ -11,9 +12,14 @@ import {
   ZCODE_VERSION,
 } from "@zcode/shared";
 import { dirname, join } from "node:path";
+import { acpAgentPlatformSupported } from "@zcode/acp-agent-runtime";
 import {
+  NodeForkAcpAgentCatalogStore,
+  NodeForkAcpAgentStore,
   NodeModelSelectionConfigRepository,
   NodeProviderRegistryRuntime,
+  resolveForkAcpAgentCatalogFilePath,
+  resolveForkAcpAgentsFilePath,
   resolveNodeProviderRuntimePaths,
   downloadZCodeBuiltinRelease,
   resolveZCodeBuiltinClientPlatform,
@@ -22,16 +28,20 @@ import {
 } from "@zcode/provider-node";
 import {
   createSharedZCodeCredentialStore,
+  migrateLegacySiwcCredentials,
   type SharedZCodeCredentialStore,
 } from "@zcode/adapters/auth";
 import { readLegacyCliPersonalProviderConfig } from "./legacy-cli-personal-provider-config-importer.js";
 import {
+  createStandaloneChatGptPlanConfigSourceWrapper,
   createStandaloneProviderRuntimeHeadersPort,
   readStandaloneAccountProviderConfigSnapshot,
 } from "./standalone-account-provider-runtime.js";
 
 export interface ProcessProviderRegistryRuntimeOptions {
-  /** Standalone Prompt CLI / TUI 自己拥有账号凭据与旧配置的一次性导入。 */
+  /** Host platform for the ACP availability predicate; defaults to `process.platform` (tests inject it). */
+  readonly acpPlatform?: NodeJS.Platform;
+/** Standalone Prompt CLI / TUI owns its account credentials and one-time import of legacy config. */
   readonly standalone?: {
     readonly credentialStore?: SharedZCodeCredentialStore;
     readonly legacyCliUserConfigFilePath?: string;
@@ -55,12 +65,45 @@ export async function startProcessProviderRegistryRuntime(
   const credentialStore = options.standalone
     ? (options.standalone.credentialStore ?? createSharedZCodeCredentialStore({ env: { ...env } }))
     : undefined;
+  // The derived per-account ChatGPT plan entries must exist in EVERY process registry: a
+  // Desktop Worker resolves model executions against its own registry, and the host delivers
+  // account snapshots whose basedOnZCodeBuiltinRevision must match this config source. Workers
+  // enumerate the shared credential file read-only through the same wrapper (the local agent
+  // runs on the same machine and user as the host that owns the SIWC credentials).
+  const chatGptPlanConfigStore =
+    credentialStore ?? createSharedZCodeCredentialStore({ env: { ...env } });
+  // Migrate legacy flat SIWC credentials BEFORE the registry starts and before the credential
+  // change subscription below is installed: the derived reads stay write-free afterwards, so
+  // a listener-triggered account refresh can never wait on a migration write that is itself
+  // waiting for that listener (the credential store awaits its listeners on save). A failing
+  // migration must not block startup: the derived source degrades to no chatgpt entries and
+  // the fail-closed account overlay keeps the registry bootable.
+  await migrateLegacySiwcCredentials(chatGptPlanConfigStore).catch(() => undefined);
   let standaloneAccount: AccountProviderService | undefined;
   const bundledFile = options.standalone
     ? env[ZCODE_BUILTIN_PROVIDER_BUNDLED_CONFIG_FILE_ENV]?.trim()
     : undefined;
+  // ACP agent records (fork sidecar) are derived into this worker's Registry in the same order as
+  // the host: the ChatGPT plan wrapper is inner, the ACP derivation outer. The worker only reads the
+  // sidecar; the host owns the one-shot inline migration and every write.
+  const chatGptPlanConfigWrapper = createStandaloneChatGptPlanConfigSourceWrapper(chatGptPlanConfigStore);
+  const acpAgentStore = new NodeForkAcpAgentStore({
+    filePath: resolveForkAcpAgentsFilePath(paths.personalFilePath),
+  });
+  // The worker writes the catalog (last offered options) from its turns; the file lock serializes it with the host.
+  const acpAgentCatalog = new NodeForkAcpAgentCatalogStore({
+    filePath: resolveForkAcpAgentCatalogFilePath(paths.personalFilePath),
+  });
+  // Same availability value as the host (specs/acp-agent-runtime.md "Availability (platform rule)"):
+  // the worker derives `acp:` providers from the sidecar only on a supported platform.
+  const acpAgentsAvailable = acpAgentPlatformSupported(options.acpPlatform ?? process.platform);
   const runtime = new NodeProviderRegistryRuntime({
     ...paths,
+    wrapConfigSource: (source) =>
+      acpAgentsAvailable
+        ? createDerivedAcpAgentConfigSource(chatGptPlanConfigWrapper(source), acpAgentStore)
+        : chatGptPlanConfigWrapper(source),
+    acpExecutable: acpAgentsAvailable,
     ...(bundledFile
       ? {
           zcodeBuiltinFilePath: bundledFile,
@@ -91,7 +134,7 @@ export async function startProcessProviderRegistryRuntime(
             standaloneAccount = new AccountProviderService({
               configSource: configService,
               async resolve({ configRevision, configuredProviders }) {
-                // 使用本轮捕获的 Built-in，而不是异步读另一份文件后仅贴上新 revision。
+                // Use the Built-in value captured for this update rather than asynchronously reading another file and only attaching a new revision.
                 const snapshot = await readStandaloneAccountProviderConfigSnapshot(
                   credentialStore,
                   env,
@@ -110,7 +153,7 @@ export async function startProcessProviderRegistryRuntime(
               try {
                 options.standalone?.onAccountInitializationError?.(error);
               } catch {
-                /* 观测回调不能改变账号事实。 */
+                /* Observation callbacks must not change account facts. */
               }
             });
             return standaloneAccount;
@@ -130,15 +173,17 @@ export async function startProcessProviderRegistryRuntime(
   });
   const disposeRecovery = standaloneAccount
     ? runtime.onDidCheckZCodeBuiltin(async () => {
+        // Read through the derived source: the account snapshot is based on the derived
+        // builtin revision, so comparing against the raw revision would loop forever.
         const [config, account] = await Promise.all([
-          runtime.configService.read(),
+          runtime.registryConfigSource.read(),
           standaloneAccount!.read(),
         ]);
         if (config.zcodeBuiltinRevision !== account.basedOnZCodeBuiltinRevision)
           await standaloneAccount!.refresh("builtin-account-recovery");
       })
     : undefined;
-  // 复用 AccountService 的串行、过期结果丢弃机制，凭据变化与 Built-in 变化不能各自发布。
+  // Reuse AccountService's serialization and stale-result discard behavior; credential changes and Built-in changes must not publish independently.
   const standaloneHeaders = credentialStore
     ? createStandaloneProviderRuntimeHeadersPort(credentialStore, env)
     : undefined;
@@ -161,8 +206,9 @@ export async function startProcessProviderRegistryRuntime(
           if (standaloneAccount)
             throw new Error("Standalone Account 由本进程管理，不接收 Host 覆盖");
           const changed = accountSource.replace(next, "host-account-config");
-          // Source 去重只证明收过，不证明上次刷新成功。重交时仍刷新；配套配置未到
-          // 则由 Registry 保留完整旧快照，不能把接收确认冒充应用确认。
+          // Source deduplication proves only that the update was received, not that the last refresh
+          // succeeded. Refresh again on redelivery. If companion config has not arrived, the Registry keeps
+          // the full old snapshot; do not present receipt as application confirmation.
           await runtime.registryService.refresh("host-account-config");
           return changed;
         },
@@ -172,6 +218,7 @@ export async function startProcessProviderRegistryRuntime(
           disposeRecovery?.();
           standaloneAccount?.dispose();
           modelSelectionConfigRepository.dispose();
+          acpAgentStore.dispose();
           runtime.dispose();
         },
         ...(credentialStore
@@ -180,6 +227,9 @@ export async function startProcessProviderRegistryRuntime(
             }
           : {}),
         runtime,
+        /** Read-only view of the ACP sidecar for turn-time launch config (no migration here). */
+        acpAgentStore,
+        acpAgentCatalog,
         snapshot,
         modelSelectionConfigRepository,
         configuredDefaultModelSelection,
@@ -187,18 +237,20 @@ export async function startProcessProviderRegistryRuntime(
     } catch (error) {
       disposeCredentialSubscription?.();
       modelSelectionConfigRepository.dispose();
+      acpAgentStore.dispose();
       throw error;
     }
   } catch (error) {
     disposeCredentialSubscription?.();
     disposeRecovery?.();
     standaloneAccount?.dispose();
+    acpAgentStore.dispose();
     runtime.dispose();
     throw error;
   }
 }
 
-/** 把协议信封解析为进程 Registry 使用的第三层 Account Config Overlay。 */
+/** Parse the protocol envelope into the third-layer Account Config Overlay used by the process Registry. */
 export function parseProcessAccountProviderConfigSnapshot(input: {
   readonly revision: string;
   readonly basedOnZCodeBuiltinRevision: string;
@@ -213,7 +265,7 @@ export function parseProcessAccountProviderConfigSnapshot(input: {
   }
   const providers = parseAccountProviderConfigMap(input.providers);
   for (const [providerId, provider] of providers.entries()) {
-    // 仅约束托管 Worker 的普通账号信封；独立 CLI、API 和闲时不需要 current。
+    // Applies only to regular account envelopes for managed Workers; standalone CLI, API, and off-peak paths do not need current.
     if (
       isBuiltinModelProviderId(providerId) &&
       provider.access?.type === "zhipu-account" &&
@@ -227,7 +279,7 @@ export function parseProcessAccountProviderConfigSnapshot(input: {
     revision,
     basedOnZCodeBuiltinRevision,
     providers,
-    // 与 Overlay 属于同一快照；不能只更新 revision 却丢掉当前连接事实。
+    // This belongs to the same snapshot as the Overlay; do not update only the revision and lose the current connection state.
     ...(input.states ? { states: input.states } : {}),
   });
 }

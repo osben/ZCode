@@ -1,163 +1,122 @@
-# Todo 28：Model Rule 优先级与 Provider/Model 顺序规范化收口
+# Todo 28: Model Rule Precedence and Provider/Model Order Normalization Consolidation
 
-> 状态：已完成
+> Status: Completed
 >
-> 日期：2026-08-27
+> Date: 2026-08-27
 >
-> 来源：Todo 21/23 完成后的实现反向审查
+> Source: post-implementation reverse review after Todo 21/23
 >
-> 关联任务：[`Todo 21`](./todo-21-zcode-builtin-config-ownership-and-model-activation-order.md)、
-> [`Todo 23`](./todo-23-provider-refactor-decision-gap-closure.md)、
+> Related tasks: [`Todo 21`](./todo-21-zcode-builtin-config-ownership-and-model-activation-order.md),
+> [`Todo 23`](./todo-23-provider-refactor-decision-gap-closure.md),
 > [`Bugfix 02`](./bugfix-02-provider-reorder-drop-flicker.md)
 
-## 1. 任务定位
+## 1. Task Positioning
 
-Todo 21 已经确立 Model Rule 后置覆盖和 Provider/Model 三段顺序，Todo 23 已经完成 Model 编辑
-的 Host Preview 与原子保存。完成后审查发现两处机械实现仍未完全满足已裁决语义：
+Todo 21 established Model Rule deferred override and Provider/Model three-segment order; Todo 23 completed Model
+editing Host Preview and atomic save. Review found two mechanical implementations not yet satisfying the decided
+semantics: Effective Model Rules concatenated the Personal Rule original array directly (so Personal exact Rules were
+not guaranteed to be deferred), and Provider/Model write-side normalization put the requested order first and then
+appended missing members, inconsistent with the Resolver's "unsorted Built-in first" three-segment semantics. This is
+a consolidation Bugfix; Rules, Overlay, Settings Preview and drag interactions are not redesigned.
 
-1. Effective Model Rules 仍直接拼接 Personal Rule 原数组，不能保证 Personal 精确 Rule 始终后置；
-2. Provider/Model 写入侧规范化把请求顺序放在前面，再追加遗漏成员，与 Resolver 的“未排序
-   Built-in 在前”三段语义不一致。
+## 2. Boundaries with neighboring Todos
 
-本 Todo 是已有设计的收口 Bugfix，不重新设计 Rule、Overlay、Settings Preview 或拖拽交互。
+- Todo 23's Host Preview stays: Host reads the Effective Provider's real `api.type/baseURL` by `providerId` and moves
+  the Personal exact Rule first in preview state; this Todo keeps only a regression proof and creates no second
+  Preview interface.
+- Todo 25 (ZAPI retirement), Todo 26 (Zhipu Access Type/Mode) and Todo 27 (Overlay visuals, feedback, Team state,
+  Runtime Headers) are untouched.
+- Bugfix 02 owns only the short-term optimistic projection from drag release to Host View confirmation; this Todo
+  corrects only the final authoritative order written to Personal Config and creates no second UI Pending state.
 
-## 2. 与最近 Todo 的边界
+## 3. Model Rule precedence
 
-核对后没有产品设计冲突，边界固定如下：
-
-- Todo 23 已完成 Host Preview：Host 会根据 `providerId` 读取 Effective Provider 的真实
-  `api.type/baseURL`，并在预览态先移动 Personal 精确 Rule；本 Todo 只保留回归证明，不再建第二个
-  Preview 接口；
-- Todo 25 已完成 ZAPI 产品入口退役，不纳入本 Todo；
-- Todo 26 只改变智谱 Access Type/Mode，不改变 Model Rule 优先级或顺序成员语义；
-- Todo 27 处理 Model Overlay 视觉、成功反馈、Team 状态和 Runtime Headers，不修改本 Todo 的领域算法；
-- Bugfix 02 只管理拖拽松手至 Host View 确认之间的短期乐观投影；本 Todo 只修正最终写入
-  Personal Config 的权威顺序，不建第二份 UI Pending 状态。
-
-## 3. Model Rule 优先级
-
-Effective Model Rules 的唯一组合顺序固定为：
+Effective Model Rules are combined in one fixed order:
 
 ```text
-ZCode Built-in Rules（完整保留 Built-in 内部顺序）
+ZCode Built-in Rules (complete internal order retained)
                        +
-Personal Match Rules（保留 Personal Match 内部顺序）
+Personal Match Rules (Personal Match internal order retained)
                        +
-Personal provider-model Rules（保留 Personal 精确 Rule 内部顺序）
+Personal provider-model Rules (Personal exact Rule internal order retained)
 ```
 
-这条顺序同时用于：
+Used by: Registry/Resolver producing Effective Model Config; Settings new-model Preview; Settings Personal Model
+Draft Preview; connection testing, ModelFactory and other indirect consumers. ZCode Built-in Rules are not reordered
+(general, API, Provider and Endpoint specials follow the Built-in file author's order). Precedence is not achieved by
+rewriting Personal JSON physical arrangement; one deterministic grouping happens at the domain boundary that combines
+the Effective Rule array.
 
-- Registry/Resolver 产生 Effective Model Config；
-- Settings 新模型 Preview；
-- Settings Personal Model Draft Preview；
-- 连接测试、ModelFactory 和其他间接消费 Effective Model Config 的链路。
-
-不重排 ZCode Built-in Rules 自身；Built-in 中的通用、API、Provider 和 Endpoint 特化仍由 Built-in 文件
-的作者顺序决定。不要通过重写 Personal JSON 的物理排列实现优先级；应在组合 Effective Rule
-数组的领域边界做一次确定性分组。
-
-## 4. Provider/Model 三段顺序的唯一算法
-
-对任意拥有 Built-in 与 Personal 成员的有序集合，结果固定为：
+## 4. Provider/Model three-segment order algorithm
 
 ```text
-未出现在 requestedOrder 中的 Built-in 成员
+Built-in members not appearing in requestedOrder
                        +
-requestedOrder 中仍然有效的成员
+members still valid in requestedOrder
                        +
-未出现在 requestedOrder 中的 Personal 成员
+Personal members not appearing in requestedOrder
 ```
 
-同时遵守：
+- Built-in and Personal with the same ID: Built-in wins, one member.
+- Duplicates in the member array and in the requested order keep the first occurrence; stale IDs are discarded.
+- The result is the complete order of all current valid members.
+- `modelOrder` and `providerOrder` only sort; they do not create members, enable members or change source ownership.
 
-- Built-in 与 Personal 同 ID 时 Built-in wins，只有一个成员；
-- 成员数组和 requested order 中的重复 ID 都只保留第一次；
-- stale ID 直接丢弃；
-- 结果是当前全部有效成员的完整顺序；
-- `modelOrder` 和 `providerOrder` 只排序，不创建成员、不启用成员、不改变来源归属。
+Example: Built-in `[A, B]`, Personal `[P, Q]`, requested `[P, B, stale, P]` gives canonical `[A, P, B, Q]`.
 
-例如：
+For Providers the algorithm applies only to the sortable `standard-builtin/standard-personal` segment; Z.ai/BigModel
+Family Providers stay a fixed front segment and are not written to Personal `providerOrder`. Models have no extra fixed
+segment. The read Resolver and the write Config Service must reuse the same Provider domain pure function (or shared
+test-protected vectors), not two similar algorithms differing in member position.
 
-```text
-Built-in = [A, B]
-Personal = [P, Q]
-Requested = [P, B, stale, P]
+## 5. Write boundaries
 
-Canonical = [A, P, B, Q]
-```
+Normalization covers every Personal Config operation that changes members or order: add Built-in Provider Personal
+Overlay; create Personal-only Provider; Provider reorder and delete; normalizing history/hand-written members and
+order on Provider save; add, rename, delete and reorder Personal Model; membership/order updates in Model Draft
+atomic save. After any write, physical `providerOrder/modelOrder` is complete, deduplicated and free of stale IDs. The
+read side keeps tolerant normalization for hand-written or abnormal intermediate states; no migration or dual-read
+for the unreleased branch.
 
-Provider 的该算法只作用于可排序的 `standard-builtin/standard-personal` 段；Z.ai/BigModel Family
-Provider 保持固定前段，不写入 Personal `providerOrder`。Model 没有额外固定段。
+## 6. Principles
 
-读取 Resolver 和写入 Config Service 必须复用同一个 Provider 领域纯函数或共享同一组受测
-试向量，不得继续维护两个外观相近但遗漏成员位置不同的算法。
+Failing tests first; delete duplicate algorithms rather than add Resolver-only and ConfigService-only helpers; no Rule
+Registry, Order DTO, conflict objects, shadow Config or Renderer sort authority; Personal Match and exact Rule
+internal order unchanged; Model `enabled`, Provider visibility, executable/selectable, Active Model freeze and
+ModelSelection semantics unchanged; Local/Remote Host authority and Desktop continuous / Mobile replayable chains
+untouched.
 
-## 5. 写入边界
+## 7. Acceptance
 
-以上规范化必须覆盖所有会改变成员或顺序的 Personal Config 操作：
+### 7.1 Rule precedence
 
-- 添加 Built-in Provider Personal Overlay；
-- 创建 Personal-only Provider；
-- Provider 重排和删除；
-- 保存 Provider 时对历史/手写成员与顺序做规范化；
-- 添加、重命名、删除和重排 Personal Model；
-- Model Draft 原子保存中的 membership/order 更新。
+- A Personal exact Rule placed before a Match Rule in the physical array still resolves Match first, exact after.
+- Multiple Personal Match Rules and multiple Personal exact Rules each keep their internal override order.
+- Built-in Rule array keeps its complete order; Personal overrides only after Built-in.
+- Registry parsing, new-model Preview and Personal Draft Preview agree for the same input.
 
-任何写入完成后，物理 `providerOrder/modelOrder` 都应已是完整、去重、无 stale ID 的规范结果。
-读取侧仍保留容错规范化，以处理用户手写或异常中间态；不为未发布分支建 migration 或 dual-read。
+### 7.2 Order normalization
 
-## 6. 实施原则
+- Unsorted Built-in goes before the requested order, unsorted Personal after.
+- Stale/duplicate IDs in the requested order are deleted.
+- Built-in/Personal same ID keeps only the Built-in position.
+- Provider and Model use the same three-segment semantics.
+- Add, rename, delete, drag and Model Draft save all persist the complete normalized order.
+- Bugfix 02 UI Pending rollback on a save error is unaffected.
 
-- 先用失败测试证明 Personal Match/Exact 优先级和三段写入差异，再修改生产代码；
-- 优先删除重复算法，不再增加 Resolver-only 和 ConfigService-only helper；
-- 不新建 Rule Registry、Order DTO、冲突对象、影子 Config 或 Renderer 排序权威；
-- 不改变 Personal Match Rule 的内部顺序，不改变精确 Rule 的内部顺序；
-- 不改变 Model `enabled`、Provider visibility、executable/selectable、Active Model 冻结或 ModelSelection 语义；
-- 不影响 Local/Remote Host 权威边界，不触碰 Desktop continuous 或 Mobile replayable 链路。
+### 7.3 Authoritative regression
 
-## 7. 测试计划
+- `baseURLMatch` hits correctly in Host Preview.
+- An API-incomplete Provider returns a real validation issue; Renderer does not guess `anthropic-messages`.
+- Preview does not modify Personal Config, order or Registry revision.
 
-### 7.1 Rule 优先级
+## 8. Completion and Outcome
 
-- Personal 精确 Rule 在物理数组中位于 Match Rule 之前时，有效解析仍是 Match 先、精确后；
-- 多条 Personal Match 保持原内部覆盖顺序；
-- 多条 Personal 精确 Rule 保持原内部覆盖顺序；
-- Built-in Rule 数组保持完整顺序，Personal 仍只在 Built-in 之后覆盖；
-- Registry 解析、新模型 Preview 和 Personal Draft Preview 对同一输入得到一致结果。
-
-### 7.2 顺序规范化
-
-- 未排序 Built-in 放在 requested order 之前，未排序 Personal 放在之后；
-- requested order 中的 stale/duplicate ID 被删除；
-- Built-in/Personal 同 ID 只保留 Built-in 位置；
-- Provider 与 Model 使用同一组三段语义；
-- 添加、重命名、删除、拖拽与 Model Draft 保存后都持久化完整规范顺序；
-- 保存异常时 Bugfix 02 的 UI Pending 会回滚，不被本 Todo 的领域算法破坏。
-
-### 7.3 权威回归
-
-- `baseURLMatch` 在 Host Preview 中继续正确命中；
-- API 不完整的 Provider 返回真实 validation issue，Renderer 不猜 `anthropic-messages`；
-- Preview 不修改 Personal Config、order 或 Registry revision。
-
-## 8. 完成标准
-
-- Effective Rules 在所有解析面遵守 `Built-in + Personal Match + Personal provider-model`；
-- Resolver 与 Config Service 不再存在两个语义不同的顺序 helper；
-- 所有顺序写入边界产生完整、去重、无 stale ID 的规范顺序；
-- Todo 23 已完成的 Host Preview 边界保持不变；
-- 同步更新 `configuration.md`、配置体系综述与相关 Feature Graph，不再宣称写入规范化
-  已完而代码仍使用另一套算法；
-- Provider 定向单测、`pnpm typecheck`、`pnpm lint`、修改文件格式检查和 `git diff --check`
-  通过；
-- 完成后提交 Conventional Commit。
-
-## 9. 实施结果
-
-- `ModelConfigRules.composeEffective()` 成为 Resolver 与两个 Settings Preview 的唯一 Effective Rule
-  组合边界，物理 Personal JSON 不再改变 Match/精确优先级；
-- `resolveOwnedOrder()` 同时服务读取 Resolver 与 Provider/Model 写入规范化，删除写入侧 requested-first
-  重复算法；Family Provider 继续位于固定段之外；
-- 增加 Personal 精确 Rule 物理前置、Provider 三段写入及 Facade/Registry 一致性回归测试；
-- `@zcode/provider` 155 个测试、typecheck、lint 与 `git diff --check` 通过。
+- `ModelConfigRules.composeEffective()` is the sole Effective Rule combination boundary for the Resolver and both
+  Settings Previews; physical Personal JSON no longer changes Match/exact precedence.
+- `resolveOwnedOrder()` serves both the read Resolver and Provider/Model write normalization; the write-side
+  requested-first duplicate algorithm is deleted; Family Providers stay in the fixed segment outside it.
+- Added regression tests for Personal exact Rule physical-front placement, Provider three-segment write, and
+  Facade/Registry consistency.
+- `@zcode/provider` 155 tests, typecheck, lint and `git diff --check` passed; `configuration.md`, the configuration
+  system summary and related Feature Graph were synchronized.

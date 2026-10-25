@@ -8,7 +8,10 @@ import {
   TID_SETTINGS_MEMORY_FILE_EDITOR_ACTIONS,
   TID_SETTINGS_MEMORY_FILE_ICON,
   TID_SETTINGS_MEMORY_FILE_NAME,
+  TID_SETTINGS_MEMORY_FILE_TYPE,
   TID_SETTINGS_MEMORY_FILE_UPDATED_AT,
+  TID_SETTINGS_MEMORY_INDEX_LINES,
+  TID_SETTINGS_MEMORY_PREVIEW,
   TID_SETTINGS_MEMORY_REFRESH,
   TID_SETTINGS_MEMORY_SCOPE_ICON,
   TID_SETTINGS_MEMORY_SCOPE_TRIGGER,
@@ -368,6 +371,36 @@ async function verifyMemorySettingsViewer(expectedSessionId: string): Promise<vo
   expect(memoryIndex.fileName).toBe("MEMORY.md");
   expect(memoryIndex.updatedAt).not.toBe("");
   expect(memoryIndex.hasEditorSlot).toBe(true);
+
+  // Memory viewer v2: the seeded index is one line, so the budget chip must read "1/200".
+  const indexLines = await browser.execute(
+    (indexLinesTestId) =>
+      document.querySelector<HTMLElement>(`[data-testid="${indexLinesTestId}"]`)?.textContent ?? "",
+    TID_SETTINGS_MEMORY_INDEX_LINES,
+  );
+  expect(indexLines).toBe("1/200");
+  // The seeded fact file carries frontmatter, so its row shows the type badge.
+  expect(await hasTestId(testId(TID_SETTINGS_MEMORY_FILE_TYPE, "database-test-policy.md"))).toBe(
+    true,
+  );
+
+  // Rows expand accordion-style and load the Markdown preview lazily.
+  await clickTestIdByDom(testId(TID_SETTINGS_MEMORY_FILE_NAME, "database-test-policy.md"), {
+    timeout: 15_000,
+    timeoutMsg: "Memory file row is not clickable to expand",
+  });
+  await browser.waitUntil(
+    () => hasTestId(testId(TID_SETTINGS_MEMORY_PREVIEW, "database-test-policy.md")),
+    {
+      timeout: 15_000,
+      timeoutMsg: "Markdown preview did not appear after expanding the Memory file",
+    },
+  );
+  // Collapse again so the following scope-switch assertions start from a closed accordion.
+  await clickTestIdByDom(testId(TID_SETTINGS_MEMORY_FILE_NAME, "database-test-policy.md"), {
+    timeout: 15_000,
+    timeoutMsg: "Memory file row is not clickable to collapse",
+  });
 
   await openMemoryScopeMenu();
   expect(await countOpenMemoryScopeOptions()).toBe(2);

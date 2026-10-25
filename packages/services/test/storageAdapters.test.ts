@@ -45,9 +45,9 @@ describe("walkStorageRoot", () => {
     expect(result.directoriesScanned).toBe(5);
   });
 
-  // Windows 普通用户无 SeCreateSymbolicLinkPrivilege（开发者模式才赋予），fs.symlink 直接
-  // EPERM；普通文件扫描已拆到上一条跨平台用例，这里只验证链接目录不被递归，
-  // skipped 在报告里可见，覆盖由 CI Linux 承担。
+  // Windows regular users lack SeCreateSymbolicLinkPrivilege (granted only in developer mode), so fs.symlink fails
+  // directly with EPERM; plain-file scanning was split into the previous cross-platform case. This only verifies that
+  // linked directories are not recursed, skipped stays visible in the report, and coverage is carried by CI Linux.
   it.skipIf(process.platform === "win32")(
     "skips symlinked directories instead of recursing into them",
     async () => {
@@ -59,7 +59,7 @@ describe("walkStorageRoot", () => {
         onEntry: (e) => entries.push(e),
         concurrency: 2,
       });
-      // 链接目录不得被递归：目标内容不得重复出现，目录计数也不把它算作被扫描的目录。
+      // Linked directories must not be recursed: target content must not reappear, and the directory count must not treat it as scanned.
       expect(entries.map((e) => [e.relativePath, e.bytes]).sort()).toEqual([
         ["cli/debug/a.jsonl", 5],
         ["top.txt", 1],
@@ -155,7 +155,7 @@ describe("createFsStorageCleaner", () => {
       ],
       { keepDirectories: ["backup", "cli/debug"] },
     );
-    // 删除是有界并发的，failures 顺序不保证
+    // Deletion is bounded-concurrent; failures order is not guaranteed
     expect({
       ...result,
       failures: [...result.failures].sort((a, b) => a.path.localeCompare(b.path)),
@@ -203,7 +203,7 @@ describe("runStorageScan", () => {
       expect(home!.volume).not.toBeNull();
       const byId = (usage: typeof home, id: string) => usage!.categories.find((c) => c.id === id)!;
       expect(byId(home, "modelTrajectory")).toMatchObject({ bytes: 5, fileCount: 1 });
-      // home 根启用了自定义数据路径：v2 旧副本归「其他」
+      // The home root has a custom data path enabled: the legacy v2 copy falls under "other"
       expect(byId(home, "logs").bytes).toBe(0);
       expect(byId(home, "other")).toMatchObject({ bytes: 4, fileCount: 2 });
       expect(byId(dataBaseDir, "logs")).toMatchObject({ bytes: 4, fileCount: 1 });

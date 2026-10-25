@@ -1,4 +1,8 @@
-import { beginLocalTurnPreparation, type LocalTtftDetail } from "@zcode/contracts";
+import {
+  beginLocalTurnPreparation,
+  externalAgentTurnDriverOf,
+  type LocalTtftDetail,
+} from "@zcode/contracts";
 import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js";
 import { withConversationQuotes } from "../helpers/conversation-quotes.js";
 import { ensureGroupTaskPermissionScope } from "./input-intent-persistence.js";
@@ -10,6 +14,7 @@ import {
   createChildTraceContext,
   createQueryId,
   createModelUsageSummaryFromEvents,
+  latestProviderRateLimitReadingFromEvents,
   createMessageId,
   createTurnId,
   runWithContextAsync,
@@ -30,10 +35,12 @@ import type {
 } from "../deps.js";
 import {
   parseCompactCommand,
+  parseDreamCommand,
   parseRewindCommand,
   createTurnAbortScope,
   throwIfTurnAborted,
   createTurnFailureError,
+  hasPreserveQueueAutoDrainCancelIntent,
   isTurnCancellationError,
   appendTurnOutcomeEvent,
   buildDateChangeReminderBody,
@@ -52,6 +59,12 @@ import type { PromptRuntimeCommand } from "../command-queue.js";
 import { enqueueCancellableRuntimeCommand } from "./runtime-command-submit.js";
 import { buildReferencedSessionContextReminderBody } from "../../session-context/read-session-context.js";
 import { runRegularTurnLoop } from "./turn-loop.js";
+import {
+  buildExternalAgentPrompt,
+  externalAgentTurnRefusal,
+  externalAgentUsageSummary,
+  runExternalAgentTurn,
+} from "./external-agent-turn.js";
 import {
   maybeStartDeferredSessionTitleGeneration,
   maybeStartSessionTitleGeneration,
@@ -157,6 +170,7 @@ export async function executeTurnCommand(
     : undefined;
   const admittedOutputStyle = this.config.outputStyle;
   const compactInstructions = parseCompactCommand(input);
+  const dreamCommand = parseDreamCommand(input);
   const rewindCommand = parseRewindCommand(input);
   const turnId = startReservation?.turnId ?? createTurnId();
   const queryId = options?.queryId ?? (options?.inputId as QueryId | undefined) ?? createQueryId();
@@ -253,6 +267,8 @@ export async function executeTurnCommand(
       let creationFailure: { error: unknown } | undefined;
       // 创建期退回声明命中但所有候选都无法创建：TurnError 归因要带上该事实，Renderer 才能作废匹配卡。
       let creationFallbackUnavailable = false;
+      // Non-chat turn on an external-agent model: refused as a creation failure after the input is recorded.
+      let externalAgentRefusal: ReturnType<typeof externalAgentTurnRefusal>;
       try {
         admittedModel =
           rewindCommand === null
@@ -381,6 +397,22 @@ export async function executeTurnCommand(
           }
         }
       }
+      // Turns on an external-agent model (specs/acp-agent-runtime.md "Chat delegation") skip the regular
+      // loop, title sidecar and memory work below. Non-chat turns are refused here.
+      const externalAgentDriver = admittedModel ? externalAgentTurnDriverOf(admittedModel) : undefined;
+      if (externalAgentDriver) {
+        externalAgentRefusal = externalAgentTurnRefusal(externalAgentDriver.agentId, {
+          automationId: options?.automationId,
+          offPeakTaskId: options?.offPeakTaskId,
+          offPeakExecutionId: options?.offPeakExecutionId,
+          botGroupSource: options?.intent?.botGroupSource,
+          backgroundSource: options?.backgroundSource,
+          inputVisibility: options?.inputVisibility,
+          command:
+            compactInstructions !== null ? "compact" : dreamCommand !== null ? "dream" : undefined,
+        });
+        if (externalAgentRefusal) creationFailure ??= { error: externalAgentRefusal };
+      }
       let phaseStartedAt: number;
       // Bug 根因：创建错误确定后仍执行 Context/SessionStart，会在 TurnStarted 前被二次 I/O 错误覆盖，
       // 并提前消费一次性 SessionStart。失败轮跳过它们，只复用后续输入持久化与终态主链。
@@ -411,6 +443,27 @@ export async function executeTurnCommand(
         );
       }
 
+      if (externalAgentRefusal && (compactInstructions !== null || dreamCommand !== null)) {
+        // /compact and /dream never create a user message, so the refusal ends the turn here.
+        turnFailureHandled = true;
+        const coreError = createTurnFailureError(
+          externalAgentRefusal,
+          turnAbortSignal,
+          TURN_EXECUTION_FAILED_MESSAGE,
+        );
+        await appendTurnOutcomeEvent(this, {
+          coreError,
+          events,
+          durationMs: Date.now() - turnStartedAtMs,
+          turnPhase: "external_agent_refusal",
+          inputId: options?.inputId,
+          traceContext: turnTraceContext,
+          fallbackMessage: TURN_EXECUTION_FAILED_MESSAGE,
+          logEvent: "turn.failed",
+          logLabel: "Turn",
+        });
+        throw coreError;
+      }
       if (compactInstructions !== null) {
         const compactModel = await applySubmissionExecutionState(
           this,
@@ -427,6 +480,19 @@ export async function executeTurnCommand(
           turnAbortSignal,
           options?.inputId,
           compactModel,
+        );
+      }
+      if (dreamCommand !== null) {
+        return this.executeManualDream(
+          input,
+          dreamCommand,
+          turnId,
+          turnTraceContext,
+          turnAbortSignal,
+          options?.inputId,
+          // Same admission freeze as compact: the Memory agent must run on the model selected
+          // before any await, not on whatever the session switched to during initialization.
+          admittedModel,
         );
       }
       if (rewindCommand !== null) {
@@ -752,7 +818,11 @@ export async function executeTurnCommand(
           traceContext: turnTraceContext,
         });
         throwIfTurnAborted(turnAbortSignal);
-        if (options?.skipInputRecord !== true && options?.inputVisibility !== "model-only") {
+        if (
+          options?.skipInputRecord !== true &&
+          options?.inputVisibility !== "model-only" &&
+          externalAgentDriver === undefined
+        ) {
           // 修复原因：标题生成以前等主 turn 成功后才启动，用户 stop/cancel 首轮请求时
           // generated title 永远没有机会发起。首条 query 持久化后即可异步生成，避免被主链路取消拖死。
           const titleGenerationStarted = maybeStartSessionTitleGeneration.call(
@@ -785,7 +855,8 @@ export async function executeTurnCommand(
         if (!loopModel) {
           throw new Error("Turn model was not created before execution");
         }
-        startProjectMemoryRecallPrefetch(
+        if (externalAgentDriver === undefined)
+          startProjectMemoryRecallPrefetch(
           this,
           {
             model: loopModel,
@@ -859,7 +930,16 @@ export async function executeTurnCommand(
         openGoalStateChangeReminderDeferral(activeTurn);
         phaseStartedAt = startTurnPhase("regular_turn_loop");
         try {
-          await runRegularTurnLoop.call(this, loopState);
+          if (externalAgentDriver) {
+            await runExternalAgentTurn.call(
+              this,
+              loopState,
+              externalAgentDriver,
+              buildExternalAgentPrompt(input, resolvedAttachments),
+            );
+          } else {
+            await runRegularTurnLoop.call(this, loopState);
+          }
           completeTurnPhase("regular_turn_loop", phaseStartedAt);
         } finally {
           finishOutputTokenRecovery(loopState.turnRequestState);
@@ -867,7 +947,10 @@ export async function executeTurnCommand(
         }
         turnMachine = loopState.turnMachine;
 
-        const turnUsage = createModelUsageSummaryFromEvents(events);
+        // External-agent turns have no ModelComplete events; their reported usage is the turn summary.
+        const turnUsage =
+          createModelUsageSummaryFromEvents(events) ??
+          externalAgentUsageSummary(loopState.externalAgentUsage);
         // goal usage/active-run 先结算，再固定 exact goal/verifier boundary；只有两者都
         // 已持久化，TurnComplete 才能让 projection/UI 开放最终 assistant fork。
         await this.accountTargetTurnCompletion({
@@ -892,12 +975,22 @@ export async function executeTurnCommand(
             loopState.stableBoundaryAssistantMessageId,
           );
         }
+        // ChatGPT plan (SIWC) usage windows ride the completion usage so the host can record the
+        // latest per-account snapshot without extra network calls; absent for every other provider.
+        const providerRateLimitReading = latestProviderRateLimitReadingFromEvents(events);
+        const turnUsagePayload = providerRateLimitReading
+          ? {
+              ...(turnUsage ?? {}),
+              providerRateLimits: providerRateLimitReading.usage,
+              providerRateLimitProviderId: providerRateLimitReading.providerId,
+            }
+          : turnUsage;
         const completeEvent = this.createEvent(
           SessionEventType.TurnComplete,
           {
             response: loopState.modelResponse,
             tokenCount: loopState.tokenCount,
-            usage: turnUsage,
+            usage: turnUsagePayload,
             toolCallCount: loopState.toolCallCount,
             historyRoundCount: loopState.historyRoundCount,
             duration: Date.now() - turnMachine.state.startedAt.getTime(),
@@ -945,7 +1038,10 @@ export async function executeTurnCommand(
           toolCallCount: loopState.toolCallCount,
         });
         // 单轮执行策略只抑制本次成功 Turn 的后台提取，不修改 Session Memory 配置。
-        if (options?.modelExecution?.memoryExtraction !== "skip") {
+        if (
+          options?.modelExecution?.memoryExtraction !== "skip" &&
+          externalAgentDriver === undefined
+        ) {
           scheduleProjectMemoryExtraction(this, {
             model: loopState.model,
             traceContext: turnTraceContext,
@@ -979,17 +1075,23 @@ export async function executeTurnCommand(
             status: "failed",
           });
         }
-        const fallbackMessage = reportedCreationFailure
-          ? MODEL_CREATION_FAILED_MESSAGE
-          : TURN_EXECUTION_FAILED_MESSAGE;
+        // An external-agent refusal is a ModelError the user must read as-is; the fallback
+        // wording applies only to genuine model creation failures.
+        const fallbackMessage =
+          reportedCreationFailure && reportedCreationFailure.error !== externalAgentRefusal
+            ? MODEL_CREATION_FAILED_MESSAGE
+            : TURN_EXECUTION_FAILED_MESSAGE;
         const coreError = createTurnFailureError(
           reportedCreationFailure ? reportedCreationFailure.error : error,
           turnAbortSignal,
           fallbackMessage,
         );
+        // Two carriers of the steer intent: the runtime foreground token (stopActiveForegroundExecution), and the
+        // abort reason of a caller controller that had no runtime token yet (ISSUE-039). A plain Stop carries neither.
         const preserveQueueAutoDrainOnCancel =
           coreError.type === CoreErrorType.TurnCancelled &&
-          this.activeForegroundExecution?.preserveQueueAutoDrainOnCancel === true;
+          (this.activeForegroundExecution?.preserveQueueAutoDrainOnCancel === true ||
+            hasPreserveQueueAutoDrainCancelIntent(turnAbortSignal.reason));
         const finishedTarget = await this.finishTargetTurnAccounting({
           endedAtMs: Date.now(),
           inputID: targetRunInputID,

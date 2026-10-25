@@ -54,8 +54,9 @@ export interface ProviderFailureDetails {
 
 export function inspectProviderFailure(error: unknown): ProviderFailureDetails {
   const unwrapped = unwrapRetryError(error);
-  // 分类链路能读取 AI SDK parsed error，但观测链路只认识 ProviderBusinessError，
-  // 导致同一次失败在 status event 与最终 error context 中丢失 provider 诊断字段。
+  // The classification path can read AI SDK parsed errors, but the telemetry path recognizes only
+  // ProviderBusinessError. As a result, provider diagnostics were missing from both the status event
+  // and final error context for the same failure.
   const businessError =
     findProviderBusinessError(unwrapped) ?? readMappedAiSdkProviderBusinessError(unwrapped);
   if (businessError) {
@@ -135,8 +136,8 @@ export function classifyModelFailure(
     };
   }
 
-  // fetch 层提前抛出的 ProviderBusinessError 不走 APICallError，
-  // retry-after 必须在业务错误归一化时继续传下去。
+  // A ProviderBusinessError thrown early by fetch does not pass through APICallError, so preserve
+  // retry-after while normalizing the business error.
   const providerBusinessFailure = classifyProviderBusinessFailure(
     findProviderBusinessError(unwrapped) ?? unwrapped,
     statusCode,
@@ -146,8 +147,9 @@ export function classifyModelFailure(
     return providerBusinessFailure;
   }
 
-  // AI SDK 的请求错误保留在 APICallError.data.error，流式 SSE 错误则直接提供
-  // 已解析的 error 对象；这里统一消费这两种 AI SDK 输出，不新增 provider 原始响应旁路。
+  // AI SDK request errors are stored in APICallError.data.error, while streaming SSE errors provide
+  // a parsed error object directly. Consume both AI SDK outputs here without adding a path to raw
+  // provider responses.
   const aiSdkErrorFailure = classifyProviderBusinessFailure(
     readMappedAiSdkProviderBusinessError(unwrapped),
     statusCode,
@@ -157,8 +159,9 @@ export function classifyModelFailure(
     return aiSdkErrorFailure;
   }
 
-  // AI SDK 有时把 403 JSON（如 3007）包成 APICallError，不走 ProviderBusinessError；
-  // 若在通用 403 鉴权分支之前不解析 responseBody，会误显示 “Provider authentication failed.”。
+  // The AI SDK sometimes wraps 403 JSON (such as 3007) in APICallError instead of ProviderBusinessError.
+  // If responseBody is not parsed before the generic 403 authentication branch, the UI incorrectly
+  // displays “Provider authentication failed.”.
   const apiCallBodyFailure = classifyProviderBusinessFailureFromApiCallBody(
     unwrapped,
     statusCode,
@@ -483,8 +486,8 @@ export function findProviderBusinessError(
   }
   seen.add(error);
 
-  // AI SDK 可能把 fetch 层抛出的 ProviderBusinessError 包在 cause 里；
-  // 若只看外层 APICallError，会丢掉 providerCode/message/responseHeaders。
+  // The AI SDK may wrap a fetch-layer ProviderBusinessError in cause. Looking only at the outer
+  // APICallError would lose providerCode/message/responseHeaders.
   const cause = (error as { cause?: unknown }).cause;
   return cause && cause !== error ? findProviderBusinessError(cause, seen) : undefined;
 }
@@ -512,8 +515,9 @@ function resolveProviderBusinessCode(error: ProviderBusinessError): string | und
     return direct;
   }
 
-  // ProviderBusinessError 可能被 AI SDK/adapter 二次包装，外层 code 是包装类型，
-  // 真实 BigModel 码（如 1234/1261）只保留在 responseBodySummary 的深层结构里。
+  // ProviderBusinessError may be wrapped again by the AI SDK/adapter, making the outer code a
+  // wrapper type. Actual BigModel codes (such as 1234/1261) may remain only in the nested structure
+  // of responseBodySummary.
   return readNestedProviderCode(error.responseBodySummary);
 }
 

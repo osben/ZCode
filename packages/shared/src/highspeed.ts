@@ -7,16 +7,19 @@ import type { ModelSelection } from "./model-selection.js";
 import { BUILTIN_MODEL_PROVIDER_IDS } from "./model-provider-types.js";
 
 /**
- * 卡在 Turn 中过期时加速网关返回的业务错误码（HTTP 400 / provider_code=3402）。
- * 见 docs/highspeed/highspeed-card-spec.md：命中它要保留上下文并退回原模型跑完本轮。
+ * Business error code returned by the acceleration gateway when the card expires mid-turn
+ * (HTTP 400 / provider_code=3402).
+ * See docs/highspeed/highspeed-card-spec.md: on this code, keep the context and fall back to the
+ * original model to finish the turn.
  */
 export const HIGHSPEED_CARD_EXPIRED_PROVIDER_ERROR_CODE = "3402";
 
 /**
- * 加速卡的隐藏 Built-in Provider；端点与模型名单由 ZCode Built-in Provider Config 提供
- * （config/provider/zcode-builtin.json），这里只保留跨层引用的 ID。
- * 与 Off-Peak 同规则按账号 Family 拆分：卡是对当前账号 Coding Plan 权益的抽取，
- * 不跨 Family 静默迁移。
+ * Hidden Built-in Providers of the acceleration card; endpoints and model lists are provided by
+ * the ZCode Built-in Provider Config (config/provider/zcode-builtin.json), and only the IDs
+ * referenced across layers live here.
+ * Split by account family under the same rule as Off-Peak: the card is an extraction of the
+ * current account's Coding Plan entitlement and never migrates silently across families.
  */
 export const HIGHSPEED_PROVIDER_IDS = {
   zai: "account:zai-highspeed-card",
@@ -30,8 +33,9 @@ export function resolveHighspeedProviderId(
 }
 
 /**
- * 判定一次 Selection 是否指向加速卡 Provider。拆 Family 之后不能再和单个常量比较，
- * 否则 BigModel 账号的卡在队列提升时会被判成「非加速」而静默丢卡。
+ * Decide whether a Selection points at an acceleration-card provider. After the family split this
+ * can no longer be compared against a single constant, otherwise a BigModel account's card would
+ * be judged "not accelerated" during queue promotion and silently lose the card.
  */
 export function isHighspeedProviderId(providerId: string | undefined): boolean {
   if (providerId === undefined) return false;
@@ -39,10 +43,12 @@ export function isHighspeedProviderId(providerId: string | undefined): boolean {
 }
 
 /**
- * draw body 的 provider 契约值：服务端 highspeed 白名单只认 Coding Plan 的 builtin 身份
- * （builtin:zai-coding-plan / builtin:bigmodel-coding-plan，2026-09-17 与服务端确认；
- * 设计文档示例里的 "zai" 是缩写示意，非线上取值）。Start Plan、Off-Peak、API Key 与
- * 自定义 Provider 都不在白名单内，必须解析为 null 后降级，禁止映射后发送。
+ * Provider contract values of the draw body: the server's highspeed allowlist only accepts the
+ * Coding Plan builtin identities
+ * (builtin:zai-coding-plan / builtin:bigmodel-coding-plan, confirmed with the server team on
+ * 2026-09-17; the "zai" in design-doc examples is an abbreviation, not the production value).
+ * Start Plan, Off-Peak, API Keys, and custom providers are outside the allowlist: they must
+ * resolve to null and degrade; mapping-then-send is forbidden.
  */
 export const HIGHSPEED_DRAW_PROVIDER_IDS = {
   zai: "builtin:zai-coding-plan",
@@ -56,7 +62,7 @@ const HIGHSPEED_DRAW_PROVIDER_ID_BY_PROVIDER_ID = new Map<string, string>([
   [BUILTIN_MODEL_PROVIDER_IDS.bigmodelTeamCodingPlan, HIGHSPEED_DRAW_PROVIDER_IDS.bigmodel],
 ]);
 
-/** 把会话选择的 Provider ID 解析成 draw body 可用的白名单 provider 值；不命中返回 null。 */
+/** Resolves the session-selected provider ID into the allowlisted provider value usable in the draw body; returns null on no match. */
 export function resolveHighspeedDrawProviderId(providerId: string): string | null {
   return HIGHSPEED_DRAW_PROVIDER_ID_BY_PROVIDER_ID.get(providerId) ?? null;
 }
@@ -71,7 +77,8 @@ export const highspeedCardSchema = z.object({
 });
 
 /**
- * 写入 message.data 的协议级卡快照。版本字段保证后续扩展仍能宽容读取旧消息。
+ * Protocol-level card snapshot written into message.data. The version field keeps future
+ * extensions able to read old messages leniently.
  */
 export const highspeedMessageMetaSchema = z
   .object({
@@ -82,21 +89,21 @@ export const highspeedMessageMetaSchema = z
     model: z.string().min(1),
     issuedAt: z.number().int().nonnegative(),
     expiresAt: z.number().int().nonnegative(),
-    /** 发送该轮时从 Coding Plan 健康检查采样的普通 Pro/Max decode TPS。 */
+    /** Regular Pro/Max decode TPS sampled from the Coding Plan health check when this turn was sent. */
     regularTps: z.number().positive().optional(),
-    /** 完成态统计；这些字段由同一次 CLI 持久化更新原子写入。 */
+    /** Completion statistics; these fields are written atomically by a single CLI persistence update. */
     outputTokens: z.number().int().nonnegative().optional(),
     durationMs: z.number().nonnegative().optional(),
-    /** 卡到期后从 Highspeed healthy usage 采样的卡级平均 completion TPS。 */
+    /** Card-level average completion TPS sampled from Highspeed healthy usage after the card expired. */
     highspeedTps: z.number().positive().optional(),
     savedDurationMs: z.number().nonnegative().optional(),
-    /** CLI 从运行时事件聚合的真实耗时拆分；缺省时客户端回退到 20/80 估算。 */
+    /** Real duration split aggregated by the CLI from runtime events; when absent the client falls back to a 20/80 estimate. */
     modelDurationMs: z.number().nonnegative().optional(),
     toolDurationMs: z.number().nonnegative().optional(),
     otherDurationMs: z.number().nonnegative().optional(),
-    /** Turn 内加速请求失败并回落普通模型的时刻；只用于投影降级提示，不改变分享统计。 */
+    /** When an in-turn accelerated request failed and fell back to the regular model; used only for the projected degradation hint, does not change share statistics. */
     fallbackAt: z.number().int().nonnegative().optional(),
-    /** 回落原因：卡过期或其他加速请求失败；Renderer 据此选择提示文案，缺省按卡过期处理旧数据。 */
+    /** Fallback reason: card expiry or another accelerated request failure; the Renderer picks the hint copy from it, and legacy data without it is treated as card expiry. */
     fallbackReason: modelExecutionSelectionFallbackReasonSchema.optional(),
   })
   .strict();
@@ -153,6 +160,7 @@ export interface HighspeedCardSnapshot {
 export type HighspeedPrepareFallbackReason =
   | "automation"
   | "cooldown"
+  | "draw-failed"
   | "draw-miss"
   | "draw-timeout"
   | "expired"
@@ -163,40 +171,46 @@ export type HighspeedPrepareFallbackReason =
 export interface HighspeedPrepareTurnParams {
   taskId: string;
   /**
-   * 会话模型选择的 Provider ID。draw body 的 provider 契约是白名单里的 Coding Plan
-   * builtin 身份（builtin:zai-coding-plan / builtin:bigmodel-coding-plan），由服务层
-   * 发送前解析；调用方禁止直接传白名单值或把完整 providerId 透传上链路
-   * （透传会被服务端白名单拒绝并返回 3001 参数错误）。
+   * Provider ID of the session's model selection. The draw body's provider contract is the
+   * allowlisted Coding Plan builtin identity
+   * (builtin:zai-coding-plan / builtin:bigmodel-coding-plan), resolved by the service layer before
+   * sending; callers must not pass the allowlisted value directly or forward the full providerId
+   * up the wire (the server allowlist rejects it with the 3001 parameter error).
    */
   providerId: string;
   /**
-   * 会话当前选择的模型。除 provider 白名单外，模型还必须属于所选 Coding Plan Provider 的
-   * 模型目录（Built-in Provider Config 投影）才会发起新 draw；陈旧的 (coding-plan provider,
-   * 已下线模型) 组合按 unavailable 降级（spec §3 规则 14）。
+   * The session's currently selected model. Beyond the provider allowlist, the model must also
+   * belong to the selected Coding Plan provider's model catalog (a Built-in Provider Config
+   * projection) before a new draw is issued; a stale (coding-plan provider, retired model) pair
+   * degrades to unavailable (spec §3 rule 14).
    */
   model: string;
   /**
-   * 会话当前生效的思考档位。加速只换端点不换模型，卡的 modelSelection 必须带上与会话
-   * 一致的 reasoningLevel；否则 CLI Registry 会因 execution 选择缺档位判定
-   * reasoning-level-missing，抛出 "Reasoning level is required" 让整轮发送失败。
-   * 模型无思考档位时省略（不写 options）。
+   * The session's active reasoning level. Acceleration swaps the endpoint, not the model, so the
+   * card's modelSelection must carry the same reasoningLevel as the session; otherwise the CLI
+   * Registry judges the execution selection reasoning-level-missing for lacking a level and throws
+   * "Reasoning level is required", failing the whole turn send.
+   * Omit when the model has no reasoning levels (no options written).
    */
   reasoningLevel?: string;
-  /** 仅表示本轮由 Automation 派发；不得用 Task 上粘性的 cronAutomationId 代替。 */
+  /** Marks only that this turn was dispatched by Automation; the Task's sticky cronAutomationId must not be substituted. */
   automationId?: string;
   waitBudgetMs?: number;
 }
 
 /**
- * 单轮加速执行材料。静态事实（端点、API 形态、模型能力）由 Built-in Provider Config
- * 提供，这里只携带「本轮选哪个模型」和「本次执行的动态鉴权」，禁止再下发 provider 定义。
+ * Per-turn accelerated execution material. Static facts (endpoint, API shape, model capabilities)
+ * come from the Built-in Provider Config; this carries only "which model this turn selected" and
+ * "the dynamic auth of this execution". Re-delivering provider definitions is forbidden.
  */
 export interface HighspeedTurnExecution {
   modelSelection: ModelSelection;
   requestAuth: { apiKey: string; headers: Record<string, string> };
   /**
-   * 加速请求任何失败时退回原模型跑完本轮；卡过期（3402）与其他失败按规则给出不同原因。
-   * 退回目标 `target` 是抽卡时的提交选择（会话原模型 + 档位），CLI 优先用它，缺省才退回会话常驻选择。
+   * On any accelerated-request failure, fall back to the original model to finish the turn; card
+   * expiry (3402) and other failures get different reasons per the rules.
+   * The fallback `target` is the committed selection at draw time (the session's original model +
+   * level); the CLI prefers it and only falls back to the session's resident selection when absent.
    */
   selectionFallback: ModelExecutionSelectionFallback;
 }
@@ -206,7 +220,7 @@ export type HighspeedPrepareTurnResult =
       kind: "accelerated";
       card: HighspeedCardSnapshot;
       nextDrawAt: number;
-      /** Mock 只保留加速业务语义，省略该字段即可继续使用 session 普通推理路由。 */
+      /** Mocks keep only the acceleration business semantics; omitting this field keeps using the session's regular inference routing. */
       execution?: HighspeedTurnExecution;
     }
   | {

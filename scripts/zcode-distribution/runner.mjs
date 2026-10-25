@@ -99,7 +99,8 @@ function parseArgs(argv) {
 }
 
 function isLocalHost(host) {
-  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+  const normalized = host.trim().toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
 
 function shouldProtectHost(host) {
@@ -168,6 +169,12 @@ async function assertRuntimeFiles() {
 }
 
 async function serve(options) {
+  if (options.tokenEnabled === false && !isLocalHost(options.host)) {
+    // The Web server refuses non-loopback listeners without a token; fail here with a CLI-level hint.
+    throw new Error(
+      `--no-token is only allowed with a loopback --host (127.0.0.1, localhost, ::1); got "${options.host}".`,
+    );
+  }
   await assertRuntimeFiles();
   const port = options.port && options.port > 0 ? options.port : await pickPort(options.host);
   const protect = options.tokenEnabled ?? shouldProtectHost(options.host);
@@ -185,7 +192,7 @@ async function serve(options) {
       ZCODE_SERVER_HOST: options.host,
       ZCODE_SERVER_WORKSPACE: options.workspace,
       ZCODE_WEB_STATIC_ROOT: webRoot,
-      // 显式关闭 token 时必须清空继承值，否则 --no-token 仍会开启后端鉴权。
+      // Clear inherited values when the token is explicitly disabled; otherwise --no-token still enables backend authentication.
       ZCODE_SERVER_AUTH_TOKEN: token,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -262,7 +269,7 @@ try {
     if (argv.length === 1 && ["--help", "-h"].includes(argv[0])) {
       console.log("Web mode: zcode --web [options] (zcode --web --help for details)\n");
     }
-    // CLI 自启动子进程依赖 argv[1]；统一指向真正的 Agent 入口，保留 TTY 与所有原始参数。
+    // The CLI's self-started child process depends on argv[1]; point it to the actual Agent entry while preserving the TTY and all original arguments.
     process.argv[1] = agentEntry;
     await import(pathToFileURL(agentEntry).href);
   }

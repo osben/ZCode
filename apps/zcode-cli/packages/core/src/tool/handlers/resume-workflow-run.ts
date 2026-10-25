@@ -1,18 +1,17 @@
 // ============================================================
 // ResumeWorkflowRun Tool Handler
 // ============================================================
-// 恢复一个 stopped 的 dwf run（模型侧入口；可恢复集 = `stopped`，不论 reason）。见端口契约
+// Resume a stopped DWF run (model-facing entry point; resumable set = `stopped`, regardless of reason). See the port contract.
 // `DynamicWorkflowRunPort.resume`（contracts/src/interfaces/dynamic-workflow-run.port.ts）。
 //
-// handler 刻意**很薄**：门（可恢复集判定）、注册表替换、compileOnce/scriptHash 重验全部在
-// port.resume 服务端，这里只做三件事：取端口、透传 run_id、把结果投影成契约形状。
-// 输出的 backgrounded 形状让 executor 走 CreateWorkflow 同一条自动追踪
-// （call-runner → trackBackgroundTask），快照/等待/取消/通知零新代码。
+// Keep the handler **very thin**: the port.resume service owns the gate (resumable-state check), registry replacement, and
+// compileOnce/scriptHash revalidation. This handler only gets the port, passes through run_id, and projects the result to the contract
+// shape. The backgrounded output makes the executor use CreateWorkflow's automatic tracking path (call-runner → trackBackgroundTask),
+// with no new code for snapshots, waiting, cancellation, or notifications.
 //
-// resume 被 scriptHash
-// 钉死在 submit 时已获批准的同一脚本上，与 UI Resume 按钮同一风险档，模型调用直接执行；
-// PreToolUse deny 与项目 deny 规则仍可拦截。也不设 prepareApproval：无同步手段校验 runId，
-// 坏 id 批准后照样回 run_not_found 失败，弹窗裁不掉任何东西。
+// Resume is pinned by scriptHash to the same script approved at submit time, matching the UI Resume button's risk level, so model
+// calls execute directly. PreToolUse deny and project deny rules can still block them. There is no prepareApproval either: runId cannot
+// be validated synchronously, so an invalid ID would fail with run_not_found after approval; a dialog would prevent nothing.
 
 import {
   RESUME_WORKFLOW_RUN_TOOL_NAME,
@@ -33,19 +32,19 @@ import type {
 import { workflowRunNotFoundFailure } from "./workflow-run-introspection.js";
 
 const RESUME_WORKFLOW_RUN_TIMEOUT_MS = 15_000;
-/** 照 CreateWorkflow：输出只有一段引导文案，24k 绰绰有余。 */
+/** As with CreateWorkflow, output is only one guidance message, so 24k is ample. */
 const RESUME_WORKFLOW_RUN_MODEL_BYTES = 24_000;
 
 /**
- * 本地失败码表。数值本身不进模型（executor 把 errorCode 投影成 `code: "N"` 字符串），
- * 判别键唯一权威是 message 前缀——两处数值空间归属在注释里说清：
+ * Local failure-code table. Numbers are not exposed to the model (the executor projects errorCode to a `code: "N"` string); the
+ * message prefix is the only authoritative discriminator. The comments clarify ownership of the numeric spaces:
  *
- *   - `not_found` **复用内省表**（workflow-run-introspection.ts）的 RUN_NOT_FOUND 码与其
- *     message（同键同码），所以它不在本表里；
- *   - 本表的其余四码与内省表的数值空间**互相独立、禁止跨表比对**——刻意从 11 起编避免与
- *     内省表（1/2）视觉撞车，但真正防混淆的是「数值只是日志位，判别键在 message 前缀」。
- *     选择注释归属而非并入共享表：把 introspection 模块变成 dwf 失败码总表，等于让一个
- *     只读内省工具集背负执行面的失败语义。
+ *   - `not_found` **reuses the introspection table** (workflow-run-introspection.ts) RUN_NOT_FOUND code and message (same key and
+ *     code), so it is not listed here;
+ *   - The other four codes in this table are **independent from the introspection numeric space and must not be compared across
+ *     tables**. They start at 11 to avoid visual collisions with introspection (1/2), but the actual safeguard is that numbers are
+ *     only for logs and the message prefix is the discriminator. Document ownership here instead of merging into a shared table;
+ *     turning the introspection module into a DWF-wide failure-code table would burden a read-only tool set with execution semantics.
  */
 const RESUME_WORKFLOW_RUN_ERROR_CODE = {
   RESUME_UNAVAILABLE: 11,
@@ -67,9 +66,9 @@ const RESUME_WORKFLOW_RUN_DESCRIPTION = [
 ].join("\n");
 
 /**
- * 「本会话没有 resume 能力」。端口缺席（journal 不可用 → run service 整个不构造）与方法
- * 缺席（stub 不带 resume）回同一个失败：对模型这是同一件事（照 listRuns/getRunDetail 的
- * typeof 探测先例）。绝不静默降级——模型据此会去等一个永不到来的通知。
+ * “This session cannot resume runs.” Missing port (journal unavailable, so the run service is not constructed) and missing method
+ * (stub has no resume) produce the same failure; they mean the same thing to the model (following listRuns/getRunDetail typeof-probing
+ * precedent). Never silently downgrade; the model could otherwise wait for a notification that will never arrive.
  */
 function workflowResumeUnavailableFailure(): ToolHandlerFailure {
   return {
@@ -80,10 +79,10 @@ function workflowResumeUnavailableFailure(): ToolHandlerFailure {
   };
 }
 
-/** 端口的 reason → 各配可操作文案的结构化失败（判别键在 message 前缀）。 */
+/** Map port reasons to structured failures with actionable messages (the discriminator is the message prefix). */
 function resumeFailureFor(reason: string, runId: string, detail?: string): ToolHandlerFailure {
   switch (reason) {
-    // 已保存脚本可能不再适配当前 facade；编译失败时需先修订脚本，不能直接重放。
+    // A saved script may no longer fit the current facade; if compilation fails, revise the script before replaying it.
     case "compile_failed":
       return {
         result: false,
@@ -103,8 +102,9 @@ function resumeFailureFor(reason: string, runId: string, detail?: string): ToolH
         errorCode: RESUME_WORKFLOW_RUN_ERROR_CODE.SUPERSEDED,
         message: `workflow_run_superseded: run ${runId} was stopped by an AmendWorkflow and superseded; its unfinished work belongs to the successor run (see GetWorkflowRun's <superseded_by>). Read or amend the successor instead of resuming this run.`,
       };
-    // already_running 的门作用域是**本 run service 实例**（per-app/per-session）内的在飞
-    // 注册表：跨会话并发 resume 同一 journal run 不被拦——既有开放语义，此处文案只描述本实例的语义，不替跨实例行为做承诺。
+    // The already_running gate is scoped to the in-flight registry of **this run service instance** (per-app/per-session). Concurrent
+    // resume of the same journal run from different sessions is not blocked; this message describes only this instance's semantics and
+    // makes no promise about cross-instance behavior.
     case "already_running":
       return {
         result: false,
@@ -126,8 +126,8 @@ function resumeFailureFor(reason: string, runId: string, detail?: string): ToolH
         message: `workflow_run_script_mismatch: the stored script hash for run ${runId} no longer matches the stored script text — the journal record was modified by an outside force. Start a fresh run with CreateWorkflow instead.`,
       };
     default:
-      // 端口契约外的 reason：仍回结构化失败（不 throw——那是接线故障的通道），判别键用
-      // 保留前缀，文案带原词供日志排查。
+      // Reason outside the port contract: still return a structured failure (do not throw; that signals a wiring fault). Preserve the
+      // discriminator prefix and include the original term for log diagnosis.
       return {
         result: false,
         errorCode: RESUME_WORKFLOW_RUN_ERROR_CODE.NOT_RESUMABLE,
@@ -146,7 +146,7 @@ const resumeWorkflowRunHandler: ToolHandler = async (input, context: ToolExecuti
 
   const result = await port.resume(parsed.run_id);
   if (!result.ok) {
-    // not_found 复用内省工具的 run_not_found 键（同键同码同 message）。
+    // not_found reuses the introspection tool's run_not_found key (same key, code, and message).
     return result.reason === "not_found"
       ? workflowRunNotFoundFailure(parsed.run_id)
       : resumeFailureFor(result.reason, parsed.run_id, result.message);
@@ -155,13 +155,13 @@ const resumeWorkflowRunHandler: ToolHandler = async (input, context: ToolExecuti
   return {
     ok: true,
     runId: result.runId,
-    // 文案照 CreateWorkflow 的 backgrounded 引导（create-workflow.ts）：给出 id、说明仍在
-    // 跑、明确结果以通知形式回来、显式劝阻默认轮询（实测缺这句模型会立刻用
-    // TaskOutput 把异步 run 变成同步等待）。
+    // Follow CreateWorkflow's backgrounded guidance (create-workflow.ts): give the ID, say it is still running and results will arrive
+    // as a notification, and explicitly discourage default polling. Without that sentence, the model was observed to use TaskOutput
+    // immediately and turn the async run into a synchronous wait.
     response: `The workflow run ${result.runId} has been resumed and is running in the background. It is still running — you will be notified with the final output when it completes. Do not wait for it or poll it with TaskOutput; continue with other work unless the user asked you to wait.`,
     status: "backgrounded",
-    // backgroundTaskId ≡ runId（与 CreateWorkflow 的 backgrounded 输出同一恒等式）：
-    // 取消、TaskOutput 查询、终态通知三条路径共用这一个键。
+    // backgroundTaskId ≡ runId (same identity as CreateWorkflow's backgrounded output); cancellation, TaskOutput lookup, and terminal
+    // notifications share this key.
     backgroundTaskId: result.runId,
   } satisfies ResumeWorkflowRunOutput;
 };
@@ -178,8 +178,8 @@ export const resumeWorkflowRunToolEntry: ToolEntry = {
     shouldDefer: true,
     name: RESUME_WORKFLOW_RUN_TOOL_NAME,
     description: RESUME_WORKFLOW_RUN_DESCRIPTION,
-    // 恢复 = 重新启动执行子进程与 actor 会话（完结节点 replay、未完结重派发），与
-    // CreateWorkflow 同档，只读声明不成立。
+    // Resuming restarts the execution child process and actor session (replay settled nodes and redispatch unfinished ones), matching
+    // CreateWorkflow; the read-only declaration does not apply.
     readOnly: false,
     destructive: false,
     concurrentSafe: true,
@@ -187,7 +187,7 @@ export const resumeWorkflowRunToolEntry: ToolEntry = {
     maxOutputBytes: RESUME_WORKFLOW_RUN_MODEL_BYTES,
     sideEffectScope: "none",
     riskLevel: "low",
-    // 免确认：钉死在已批准的同一脚本上，不弹窗。
+    // No confirmation: the run is pinned to the same already-approved script.
     needsApproval: false,
   },
   handler: resumeWorkflowRunHandler,
@@ -201,12 +201,11 @@ export const resumeWorkflowRunToolEntry: ToolEntry = {
     reason: "resumeWorkflowRun.runConfirmation: resuming continues executing a stopped workflow run",
     riskLevel: "low",
     sideEffectScope: "none",
-    // resume 被
-    // scriptHash 钉死在 submit 时已获批准的同一脚本上，完结节点纯 replay，与 UI 按钮同一
-    // 风险档——模型调用直接执行。拦截面仍在：PreToolUse deny（call-runner，先于执行）与
-    // 项目 deny 规则（denyPriority:"beforeAsk"）照常生效。
+    // scriptHash pins resume to the same script approved at submit time; settled nodes only replay. Its risk matches the UI button,
+    // so model calls execute directly. PreToolUse deny (call-runner, before execution) and project deny rules
+    // (denyPriority:"beforeAsk") still apply.
     needsApproval: false,
-    // run_id 进入模式匹配面（照 TaskOutput 的 task_id），好让项目规则能约束到具体 run。
+    // Include run_id in the pattern-matching surface (like TaskOutput's task_id) so project rules can target a specific run.
     patternSources: ["toolName", "input"],
     alwaysAllowPatternSources: ["toolName"],
     denyPriority: "beforeAsk",

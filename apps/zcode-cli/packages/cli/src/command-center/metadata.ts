@@ -17,6 +17,7 @@ export function attachCurrentSessionMetadata(
     mode: result.mode ?? deps.getMode?.(),
     model: result.model ?? app?.getModel?.(),
     theme: result.theme ?? app?.getTheme?.(),
+    palette: result.palette ?? app?.getPalette?.(),
     thoughtLevel: result.thoughtLevel ?? app?.getThoughtLevel?.(),
   };
 }

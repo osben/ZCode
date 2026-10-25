@@ -43,16 +43,14 @@ import {
   TID_CHAT_MODEL_SELECT_TRIGGER,
   testId,
 } from "@zcode/shared/test-ids";
-import {
-  isCoarseTouchDevice,
-  shouldRestoreChatInputFocusAfterPickerClose,
-} from "@/lib/pickerFocus.js";
+import { restoreComposerInputFocusAfterPickerClose } from "@/lib/pickerFocus.js";
 import { ComposerTriggerTransition } from "@/chat-input-toolbar/ComposerTriggerTransition.js";
 import { RollingToolbarLabel } from "@/chat-input-toolbar/RollingToolbarLabel.js";
 import {
   ComposerModelMenu,
   ComposerThoughtIndicator,
   isGlmHighspeedModel,
+  type ComposerModelItemsOptions,
   type ComposerModelOptions,
 } from "@/chat-input-toolbar/ComposerModelMenu.js";
 import { ModelInputCapabilityBadge } from "@/components/ModelInputCapabilityBadge.js";
@@ -333,9 +331,9 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
   }, [currentTriggerTitle, pending, pendingLabel, tooltipTitle]);
 
   const renderModelItem = useCallback(
-    (item: ModelSelectGroupItem) => {
+    (item: ModelSelectGroupItem, options?: ComposerModelItemsOptions) => {
       const itemLocked = isItemLocked(item.value);
-      const itemSelected = item.value === normalizedValue;
+      const itemSelected = item.value === (options ? options.selectedValue : normalizedValue);
       // React 的 key 不能跟随 props spread 传入，否则开发环境会在 CDP console 报警。
       const itemKey = item.key;
       const commonProps = {
@@ -405,7 +403,8 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
           value={item.value}
           className="min-h-8 gap-2 pl-2 pr-8 text-ui-base"
           onSelect={(event) => {
-            handleModelValueChange(item.value);
+            if (options) options.onSelect(item.value);
+            else handleModelValueChange(item.value);
             // 合并菜单选模型后还可继续调档，阻止菜单项默认关闭；外侧点击仍走原关闭链路。
             if (composerOptions) event.preventDefault();
             else handlePopoverOpenChange(false);
@@ -426,9 +425,9 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
   );
 
   const renderModelItems = useCallback(
-    (items: readonly ModelSelectGroupItem[]) => (
-      <DropdownMenuRadioGroup value={normalizedValue}>
-        {items.map((item) => renderModelItem(item))}
+    (items: readonly ModelSelectGroupItem[], options?: ComposerModelItemsOptions) => (
+      <DropdownMenuRadioGroup value={options ? (options.selectedValue ?? "") : normalizedValue}>
+        {items.map((item) => renderModelItem(item, options))}
       </DropdownMenuRadioGroup>
     ),
     [normalizedValue, renderModelItem],
@@ -690,17 +689,10 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
               return;
             }
             event.preventDefault();
-            if (
-              !shouldRestoreChatInputFocusAfterPickerClose({
-                isCoarseTouchDevice: isCoarseTouchDevice(),
-              })
-            ) {
-              return;
-            }
-            // 聊天输入框的 data-testid 挂在 contenteditable 自身上，不是父节点。
-            // 这里与 mode 选择器保持同一个入口，避免关闭模型弹层后找不到输入框而丢失焦点。
-            const input = document.querySelector<HTMLElement>(focusSelectorOnClose);
-            input?.focus();
+            restoreComposerInputFocusAfterPickerClose({
+              anchor: triggerRef?.current ?? null,
+              fallbackSelector: focusSelectorOnClose,
+            });
           }}
         >
           {leadingItems !== undefined && leadingItems.length > 0 ? (
@@ -714,7 +706,6 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
               groups={modelGroups}
               normalizedValue={normalizedValue}
               options={composerOptions}
-              isItemLocked={isItemLocked}
               onSelectModel={handleModelValueChange}
               renderItems={renderModelItems}
               renderConnection={renderProviderConnectionHeader}

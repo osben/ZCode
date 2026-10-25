@@ -10,6 +10,7 @@ export const APP_PROTOCOL_VISIBLE_BUILTIN_SLASH_COMMAND_NAMES = [
   "workflow",
   "compact",
   "init",
+  "dream",
 ] as const;
 
 // Plan 由 Composer 本地操作提供，保留名称以防自定义命令接管该入口。

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-// 全局工作流组（docs/dynamic-workflow/launch.md）：顶部固定「全局」组，空也显示；载体走
-// useServices().zcodeAgentService，RPC 带 { scope: "global" }。卡片 / 实参窗 / 移动窗 / 详情页换桩，
-// 只看组的状态流与全局语义（运行带 scope、修订 / 创建落到本地项目、移到项目、-32602 提示、运行行项目列）。
+// The global workflow group (docs/dynamic-workflow/launch.md): a pinned "Global" group at the top, shown even when empty;
+// the carrier goes through useServices().zcodeAgentService with { scope: "global" } in the RPC. Cards / args dialog /
+// move dialog / detail view are stubbed; only the group's state stream and global semantics are asserted (runs carry
+// scope, revise / create land in the active local project, move to project, the -32602 notice, run-row project column).
 import { createElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +23,7 @@ import { testId } from "@zcode/shared/test-ids";
 import type { AutomationWorkspaceOption } from "@/settings/automationWorkspaceOptions.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { resetSavedWorkflowStoreForTests } from "@/store/savedWorkflowStore.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const confirmMock = vi.fn(async () => true);
 const toastMock = vi.fn();
@@ -126,7 +128,7 @@ vi.mock("@/settings/saved-workflows/SavedWorkflowCard.js", () => ({
     ),
 }));
 
-// 直接启动器换桩：组只负责按类型开窗 / 直发；launch 编排与导航由 useSavedWorkflowLauncher 单测覆盖。
+// Stub the launcher directly: the group only opens the right window / sends directly per type; launch orchestration and navigation are covered by useSavedWorkflowLauncher unit tests.
 const launchMock = vi.fn(async () => ({
   ok: true as const,
   sessionId: "s-1",
@@ -250,7 +252,7 @@ function entry(
 ): ZCodeSavedWorkflowEntry {
   return {
     name,
-    description: `${name} 的说明`,
+    description: `${name} description`,
     scope: "global",
     path: `/home/.zcode/workflows/${name}.dwf.ts`,
     ...overrides,
@@ -270,7 +272,7 @@ function mount(props: Partial<Parameters<typeof SavedWorkflowGlobalGroup>[0]> = 
   const utils = render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(SavedWorkflowGlobalGroup, {
         refreshSeq: 0,
         mode: { kind: "list" },
@@ -311,13 +313,13 @@ describe("SavedWorkflowGlobalGroup", () => {
     cleanup();
   });
 
-  it("空也渲染：头行「全局」+ 副标 +「通过对话创建」，正文一行空态；回报 { loaded:true, empty:true }", async () => {
+  it("renders even when empty: header row with Global + subtitle + Create in chat, one empty-state line; reports { loaded:true, empty:true }", async () => {
     const { onStateChange } = mount();
     await screen.findByTestId(TID_WORKFLOW_GLOBAL_GROUP);
-    expect(screen.getByText("全局")).toBeTruthy();
-    expect(screen.getByText("对所有项目可见")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("workflows.hub.global.title"))).toBeTruthy();
+    expect(screen.getByText(expectedCopy("workflows.hub.global.hint"))).toBeTruthy();
     expect(screen.getByTestId(testId(TID_WORKFLOWS_CREATE_VIA_CHAT, "global"))).toBeTruthy();
-    expect(screen.getByText(/还没有全局工作流/)).toBeTruthy();
+    expect(screen.getByText(/No global workflows yet/)).toBeTruthy();
     await waitFor(() =>
       expect(onStateChange).toHaveBeenLastCalledWith("global", {
         loaded: true,
@@ -325,12 +327,12 @@ describe("SavedWorkflowGlobalGroup", () => {
         count: 0,
       }),
     );
-    // RPC 带 scope: "global"（无 workspace）
+    // The RPC carries scope: "global" (no workspace)
     expect(agent.listSavedWorkflows).toHaveBeenCalledWith({ scope: "global" });
     expect(agent.listSavedWorkflowRuns).toHaveBeenCalledWith({ scope: "global", limit: 50 });
   });
 
-  it("有货：列出卡片，头行数量；运行始终弹实参窗，提交带 scope:global 的文案与选中项目", async () => {
+  it("with items: lists cards and the header count; running always opens the args dialog, and submitting carries the scope:global prompt and the selected project", async () => {
     listResult.current = {
       workflows: [entry("research")],
       invalid: [],
@@ -338,19 +340,19 @@ describe("SavedWorkflowGlobalGroup", () => {
     };
     mount();
     await screen.findByTestId(testId(TID_WORKFLOWS_LIST, "global"));
-    // 无实参也弹窗
+    // The dialog opens even without args
     fireEvent.click(screen.getByTestId(testId(TID_WORKFLOW_CARD_RUN, "research")));
     const dialog = await screen.findByTestId("launch-dialog");
     expect(dialog.getAttribute("data-targets")).toBe("/a");
     expect(dialog.getAttribute("data-default")).toBe(keyOfA);
     fireEvent.click(screen.getByTestId("launch-submit"));
     await waitFor(() => expect(launchMock).toHaveBeenCalledTimes(1));
-    // 全局档直接启动：目标 = 选中的「运行于」项目，scope = global。
+    // The global entry launches directly: target = the selected "run in" project, scope = global.
     expect(launchMock.mock.calls[0]?.[0]).toEqual({ workspacePath: "/a" });
     expect(launchMock.mock.calls[0]?.[1]).toEqual({ name: "research", scope: "global", args: {} });
   });
 
-  it("「通过对话创建」落到活动本地项目，文案为全局；修订同理", async () => {
+  it("Create in chat lands in the active local project with the global prompt; revise works the same way", async () => {
     listResult.current = {
       workflows: [entry("research")],
       invalid: [],
@@ -363,11 +365,11 @@ describe("SavedWorkflowGlobalGroup", () => {
     expect(onCreateViaChat.mock.calls[0]?.[0]).toContain('scope: "global"');
 
     fireEvent.click(screen.getByTestId("revise-research"));
-    expect(onCreateViaChat.mock.calls[1]?.[0]).toContain("请修订已保存的工作流");
+    expect(onCreateViaChat.mock.calls[1]?.[0]).toContain("Please revise the saved workflow");
     expect(onCreateViaChat.mock.calls[1]?.[1]).toEqual({ workspacePath: "/a" });
   });
 
-  it("没有本地项目时：创建按钮禁用，运行提交无 target 不发起", async () => {
+  it("with no local projects: the create button is disabled and a launch submit without a target does not start", async () => {
     listResult.current = {
       workflows: [entry("research")],
       invalid: [],
@@ -380,12 +382,12 @@ describe("SavedWorkflowGlobalGroup", () => {
         .disabled,
     ).toBe(true);
     fireEvent.click(screen.getByTestId(testId(TID_WORKFLOW_CARD_RUN, "research")));
-    fireEvent.click(await screen.findByTestId("launch-submit")); // targets 为空，target undefined
+    fireEvent.click(await screen.findByTestId("launch-submit")); // targets empty, target undefined
     expect(launchMock).not.toHaveBeenCalled();
     expect(onCreateViaChat).not.toHaveBeenCalled();
   });
 
-  it("删除：确认后带 scope:global 调 delete 并 toast", async () => {
+  it("delete: after confirmation calls delete with scope:global and toasts", async () => {
     listResult.current = {
       workflows: [entry("research")],
       invalid: [],
@@ -397,10 +399,12 @@ describe("SavedWorkflowGlobalGroup", () => {
     await waitFor(() =>
       expect(agent.deleteSavedWorkflow).toHaveBeenCalledWith({ scope: "global", name: "research" }),
     );
-    expect(toastMock).toHaveBeenCalledWith("已删除工作流「research」");
+    expect(toastMock).toHaveBeenCalledWith(
+      expectedCopy("workflows.hub.deleted", { name: "research" }),
+    );
   });
 
-  it("移到项目：move 窗提交 → move(目标项目, 无 to) 成功 toast + onMoved", async () => {
+  it("move to project: move-dialog submit -> move(target project, no to) with a success toast + onMoved", async () => {
     listResult.current = {
       workflows: [entry("research")],
       invalid: [],
@@ -417,10 +421,12 @@ describe("SavedWorkflowGlobalGroup", () => {
       }),
     );
     await waitFor(() => expect(onMoved).toHaveBeenCalledTimes(1));
-    expect(toastMock).toHaveBeenCalledWith("已移到 Alpha");
+    expect(toastMock).toHaveBeenCalledWith(
+      expectedCopy("workflows.hub.move.toast.project", { project: "Alpha" }),
+    );
   });
 
-  it("移到项目：target_exists → toast 目标已有同名，不 onMoved", async () => {
+  it("move to project: target_exists -> toast that the target already has this name, no onMoved", async () => {
     listResult.current = {
       workflows: [entry("research")],
       invalid: [],
@@ -435,11 +441,11 @@ describe("SavedWorkflowGlobalGroup", () => {
     fireEvent.click(screen.getByTestId(testId(TID_WORKFLOW_ACTION_MOVE, "research")));
     fireEvent.click(await screen.findByTestId("move-submit"));
     await waitFor(() => expect(agent.moveSavedWorkflow).toHaveBeenCalledTimes(1));
-    expect(toastMock).toHaveBeenCalledWith("目标位置已有同名工作流");
+    expect(toastMock).toHaveBeenCalledWith(expectedCopy("workflows.hub.move.targetExists"));
     expect(onMoved).not.toHaveBeenCalled();
   });
 
-  it("详情：projectLabel=「全局」，运行行项目列——cwd 命中本地项目→label 可开，否则 basename 不可开", async () => {
+  it("detail: projectLabel=Global and the run-row project column — a cwd matching a local project gives a label that can open; otherwise a basename that cannot", async () => {
     listResult.current = {
       workflows: [entry("research")],
       invalid: [],
@@ -469,7 +475,7 @@ describe("SavedWorkflowGlobalGroup", () => {
     ];
     mount({ mode: { kind: "detail", name: "research" } });
     const detail = await screen.findByTestId(TID_WORKFLOW_DETAIL);
-    expect(detail.getAttribute("data-project")).toBe("全局");
+    expect(detail.getAttribute("data-project")).toBe(expectedCopy("workflows.hub.global.title"));
     await waitFor(() => expect(screen.getByTestId("run-r-a")).toBeTruthy());
     expect(screen.getByTestId("run-r-a").getAttribute("data-run-project")).toBe("Alpha");
     expect(screen.getByTestId("run-r-a").getAttribute("data-run-canopen")).toBe("yes");
@@ -477,11 +483,11 @@ describe("SavedWorkflowGlobalGroup", () => {
     expect(screen.getByTestId("run-r-x").getAttribute("data-run-canopen")).toBe("no");
   });
 
-  it("旧 agent 不支持（-32602）：正文显示「当前 agent 不支持全局工作流」", async () => {
+  it("old agent without support (-32602): the body shows the unsupported notice", async () => {
     listResult.current = () => {
       throw Object.assign(new Error("Invalid params"), { code: -32602 });
     };
     mount();
-    await waitFor(() => expect(screen.getByText(/当前 agent 不支持全局工作流/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/does not support global workflows/)).toBeTruthy());
   });
 });

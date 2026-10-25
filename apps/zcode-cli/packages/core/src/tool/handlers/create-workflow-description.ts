@@ -1,11 +1,10 @@
-// CreateWorkflow 的常驻描述（docs/dynamic-workflow/authoring.md「The authoring surface」）。
+// Persistent description for CreateWorkflow (docs/dynamic-workflow/authoring.md, “The authoring surface”).
 //
-// 2026-09-21 起刻意收短：facade 声明、写作规则、阶段与命名规则、字段的完整语义都搬进了
-// `dynamic-workflows` 技能的「Tool reference」一节，由 resolveInput 上的技能门
-// （handlers/workflow-skill-gate.ts）保证模型在写脚本之前一定读过。此前这段描述连同 facade
-// 约 8k token，随每一次模型请求重发；现在只留三件必须常驻的事——它是什么、何时（不）用、
-// 先读技能。路由规则留在这里而不是技能里，因为它决定的是「要不要调这个工具」，在技能加载之前
-// 就得被读到。
+// Intentionally shortened starting 2026-09-21: the facade declaration, writing rules, phase and naming rules, and full field semantics
+// moved to the “Tool reference” section of the `dynamic-workflows` skill. The resolveInput skill gate
+// (handlers/workflow-skill-gate.ts) ensures the model has read it before writing a script. This description and the facade previously
+// used about 8k tokens, resent with every model request; it now keeps only three persistent essentials—what the tool is, when (not) to use it,
+// and to read the skill first. Routing rules stay here rather than in the skill because they determine whether to call this tool and must be read before the skill loads.
 
 import { DYNAMIC_WORKFLOW_SKILL_NAME } from "@zcode/contracts";
 
@@ -13,12 +12,12 @@ const INTRO =
   "Create and run a dynamic workflow: a TypeScript script that orchestrates multiple model-driven subagents with plain control flow (loops, conditionals, fan-out) and typed intermediate results. The script is typechecked, the user is asked to confirm it, and the run starts in the background; you are notified with its final result when it settles. Compilation errors come back as diagnostics.";
 
 /**
- * 只按「用户是否点名」路由（用户裁决 2026-09-16，docs/dynamic-workflow/launch.md「When the
- * model may call it」）：工作流只能由 `/workflow` 或明确请求发起，模型不得自行决定开一条。
+ * Route only by whether the user explicitly requested it (user decision on 2026-09-16; docs/dynamic-workflow/launch.md, “When the
+ * model may call it”): workflows can start only through `/workflow` or an explicit request; the model must not start one on its own.
  */
 const WHEN_TO_USE = [
   "When to use:",
-  '- The user explicitly asks for a workflow — "use a workflow", "with a workflow", "使用 workflow", "用工作流", or any phrasing that names workflow/工作流 as the means: this tool is mandatory. Do not substitute the Agent/Task subagent tools, do not do the work inline yourself, and do not judge the task too small for a workflow — the user chose the tool, and that choice is theirs. Size only decides how many subagents the script gets, never whether it is written.',
+  '- The user explicitly asks for a workflow — "use a workflow", "with a workflow", or the same request in any language that names a workflow as the means: this tool is mandatory. Do not substitute the Agent/Task subagent tools, do not do the work inline yourself, and do not judge the task too small for a workflow — the user chose the tool, and that choice is theirs. Size only decides how many subagents the script gets, never whether it is written.',
   "- Without such an explicit request, do not start a workflow: delegate with the Agent tool or do the work yourself, even for multi-step or multi-subagent tasks.",
 ].join("\n");
 

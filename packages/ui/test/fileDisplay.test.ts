@@ -17,6 +17,7 @@ describe("resolveFileDisplayDescriptor", () => {
   it.each([
     { extension: "doc", iconName: "word" },
     { extension: "docx", iconName: "word" },
+    { extension: "text", iconName: "document" },
     { extension: "xlsx", iconName: "table" },
     { extension: "pptx", iconName: "powerpoint" },
     { extension: "mp4", iconName: "video" },
@@ -148,6 +149,9 @@ describe("FileDisplayInline", () => {
     expect(html).toContain(buildMaterialFileIconSrc("typescript"));
     expect(html).toContain("Avatar.ts");
     expect(html).toContain("apps/web/src/");
+    // The path text is bidi-isolated so leading-ellipsis (direction: rtl) consumers
+    // cannot reorder leading/trailing slashes when the path fits.
+    expect(html).toContain("<bdi>apps/web/src/</bdi>");
   });
 
   it("hides the parent path when showFilePath is not enabled", () => {
@@ -160,5 +164,22 @@ describe("FileDisplayInline", () => {
     expect(html).toContain(buildMaterialFileIconSrc("typescript"));
     expect(html).toContain("Avatar.ts");
     expect(html).not.toContain("apps/web/src/");
+  });
+
+  it("pathBeforeName renders the directory before the name", () => {
+    const html = renderToStaticMarkup(
+      createElement(FileDisplayInline, {
+        path: "/Users/dev/Projects/element-web/apps/web/src/Avatar.ts",
+        options: {
+          basePath: "/Users/dev/Projects/element-web",
+          showFilePath: true,
+          pathBeforeName: true,
+        },
+      }),
+    );
+
+    expect(html).toContain("apps/web/src/");
+    expect(html).toContain("Avatar.ts");
+    expect(html.indexOf("apps/web/src/")).toBeLessThan(html.indexOf("Avatar.ts"));
   });
 });

@@ -12,7 +12,7 @@ import type { V4Method } from "@zcode/shared/zcode-protocol-v4";
 import type { z } from "zod";
 import type { ZCodeProtocolTransport } from "./zcodeProtocolTransport.js";
 
-/** 客户端可发的方法名：旧 zcodeProtocolMethods + v4/*（M3 起并存，M5 波次 2 收敛为 v4）。 */
+/** Method names the client can send: legacy zcodeProtocolMethods + v4/* (coexist since M3, converging on v4 in M5 wave 2). */
 export type ZCodeProtocolClientMethod = ZCodeProtocolMethod | V4Method;
 
 interface ZCodeProtocolClientOptions {
@@ -33,14 +33,14 @@ interface PendingRequest<T> {
   resumeTimeout: () => void;
   resolve: (value: T) => void;
   reject: (error: Error) => void;
-  /** dispose 批量拒绝时在此处挂 no-op catch，防止"取消即 unhandled"（见 rejectAll）。 */
+  /** Where a no-op catch is attached on dispose batch rejection, preventing "cancelled counts as unhandled" (see rejectAll). */
   promise?: Promise<T>;
   resultSchema?: z.ZodType<T>;
   cleanupAbort?: () => void;
 }
 
 interface ZCodeProtocolClientRequestOptions {
-  /** 观测不得参与 runtime 健康判定或业务空闲续期；默认保持业务请求语义。 */
+  /** Observations must not affect runtime health checks or extend business-idle timeouts; defaults to business request semantics. */
   lifecycle?: "operation" | "observation";
   signal?: AbortSignal;
   trace?: ZCodeProtocolTrace;
@@ -77,7 +77,7 @@ export class ZCodeProtocolClient implements IDisposable {
   private readonly notificationEmitter = new Emitter<ZCodeProtocolNotification>();
   private readonly requestEmitter = new Emitter<ZCodeProtocolRequest>();
   private readonly requestTimeoutEmitter = new Emitter<ZCodeProtocolRequestTimeoutEvent>();
-  // 业务请求归零时触发；观测完成不能给被观察进程续命。
+  // Triggered when business requests return to zero; a completed observation must not keep the observed process alive.
   private readonly pendingDrainedEmitter = new Emitter<void>();
   private readonly closeEmitter = new Emitter<void>();
   private readonly disposables: IDisposable[] = [];
@@ -86,10 +86,10 @@ export class ZCodeProtocolClient implements IDisposable {
   private readonly requestTimeoutMs: number;
 
   /**
-   * client 是否已 dispose（进程被回收/transport 关闭后为 true）。
-   * 调用方（如 getClient 复用 active entry）必须在复用前检查此标记，
-   * 避免对一个已被 processManager 回收但尚未触发 onClose 的 client 发请求，
-   * 否则会立即抛 "ZCode Protocol client is disposed"。
+   * Whether the client has been disposed (true after the process is reclaimed or transport closes).
+   * Callers (for example, getClient reusing an active entry) must check this before reuse,
+   * to avoid sending a request through a client already reclaimed by processManager but whose onClose has not fired yet;
+   * otherwise it immediately throws "ZCode Protocol client is disposed".
    */
   get isDisposed(): boolean {
     return this.disposed;
@@ -101,7 +101,7 @@ export class ZCodeProtocolClient implements IDisposable {
   readonly onPendingRequestsDrained = this.pendingDrainedEmitter.event;
   readonly onClose = this.closeEmitter.event;
 
-  /** 当前尚未收到响应的请求数。 */
+  /** Number of requests that have not received a response yet. */
   get pendingRequestCount(): number {
     return this.pending.size;
   }
@@ -134,12 +134,12 @@ export class ZCodeProtocolClient implements IDisposable {
   }
 
   /**
-   * 非 async 包装（CR 意见）：调用方持有的是本方法返回的 Promise，而 async 实现内部的
-   * resultPromise 经 return 传播拒绝时，外层 Promise 独立参与 unhandledRejection 判定。
-   * no-op catch 必须挂在最终返回对象创建点，才能覆盖 dispose/transport close 的批量拒绝
-   * 与调用方挂靠 .catch() 之间的时序窗口。该 handler 只影响 unhandled 判定，不改变
-   * rejection 向真实 awaiter 的传播；代价是调用方 fire-and-forget 忘挂 catch 时不再有
-   * unhandled 噪声暴露，属可接受取舍（仓库内 void 调用点均自带 catch）。
+   * Non-async wrapper (per code review): callers hold the Promise returned by this method, and when the inner
+   * resultPromise of an async implementation propagates a rejection via return, the outer Promise independently participates in unhandledRejection detection.
+   * The no-op catch must be attached at the point the final returned object is created, so it covers the timing window between the batch
+   * rejection on dispose/transport close and the caller attaching .catch(). The handler only affects the unhandled verdict, not the
+   * propagation of the rejection to the real awaiter; the cost is that a fire-and-forget caller forgetting to attach catch
+   * no longer surfaces unhandled noise, an acceptable trade-off (all void call sites in this repo attach their own catch).
    */
   request<T = unknown>(
     method: ZCodeProtocolClientMethod,
@@ -159,7 +159,7 @@ export class ZCodeProtocolClient implements IDisposable {
     options?: ZCodeProtocolClientRequestOptions,
   ): Promise<T> {
     this.assertNotDisposed();
-    // 不先创建请求/启动 watchdog；只在真实 COMMIT 后进入原有协议请求生命周期。
+    // Do not create a request or start a watchdog yet; enter the existing protocol request lifecycle only after a real COMMIT.
     if (this.storageStartup.isWaiting) await this.storageStartup.wait(options?.signal);
     this.assertNotDisposed();
     options?.signal?.throwIfAborted();
@@ -174,10 +174,10 @@ export class ZCodeProtocolClient implements IDisposable {
         pending?.cleanupAbort?.();
         this.deletePending(requestKey);
         const error = new ZCodeProtocolRequestTimeoutError(method, id, requestTimeoutMs);
-        // 子进程仍存活但协议 event loop 已无响应时，只让单次 request 超时是不够的：
-        // process manager 仍复用这个 stale client，导致后续 plugins/list 等请求连续卡在超时窗口。
-        // 超时事件把“连接已不可信”的事实上抛给 owner，由 owner 负责淘汰进程。
-        // 资源查询的短超时只表示本轮无数据，不能被升级成整个 Agent 的故障回收。
+        // If the subprocess is alive but its protocol event loop is unresponsive, timing out one request is not enough:
+        // process manager would keep reusing this stale client and later requests such as plugins/list would repeatedly time out.
+        // Send the "connection is no longer trusted" fact to the owner through a timeout event; the owner is responsible for reclaiming the process.
+        // A short timeout for resource queries means only that this round has no data; it must not be escalated to reclaiming the entire Agent.
         if (!observation) {
           this.requestTimeoutEmitter.fire({ method, requestId: id, timeoutMs: requestTimeoutMs });
         }
@@ -205,9 +205,9 @@ export class ZCodeProtocolClient implements IDisposable {
         },
         resolve: resolve as (value: unknown) => void,
         reject,
-        // Bug 复盘：这里曾在 executor 内直接引用外层 resultPromise，触发 TDZ
-        // ReferenceError（executor 同步运行于 const 赋值完成之前），每次 request 即抛。
-        // promise 绑定延后到 new Promise 返回之后完成。
+        // Bug post-mortem: this used to reference the outer resultPromise directly inside the executor, triggering a TDZ
+        // ReferenceError (the executor runs synchronously before the const assignment completes), throwing on every request.
+        // The promise binding is deferred until after new Promise returns.
         resultSchema,
         cleanupAbort: () => options?.signal?.removeEventListener("abort", abortHandler),
       };
@@ -219,16 +219,16 @@ export class ZCodeProtocolClient implements IDisposable {
       }
     });
 
-    // executor 内 pending.set 已同步完成；此处 resultPromise 已就绪，补绑给
-    // rejectAll 做 dispose 批量拒绝的 no-op catch。同步 abort 场景 pending 已
-    // 删除，get 返回 undefined，安全跳过。
+    // pending.set inside the executor has completed synchronously; resultPromise is ready here, so bind it for
+    // rejectAll to attach its no-op catch on dispose batch rejection. In the synchronous-abort case the pending entry is
+    // already deleted, get returns undefined, and we skip safely.
     const registeredPending = this.pending.get(requestKey);
     if (registeredPending) {
       registeredPending.promise = resultPromise;
     }
 
-    // 已在发送前取消的请求不能继续写入 transport；否则服务端会执行一个客户端已经
-    // 放弃、也无法接收响应的模型任务。
+    // A request cancelled before sending must not be written to the transport; otherwise, the server would run a model task that the client
+    // has already abandoned and cannot receive a response for.
     if (!this.pending.has(requestKey)) {
       return resultPromise;
     }
@@ -334,8 +334,8 @@ export class ZCodeProtocolClient implements IDisposable {
         message.method === "startup/storageState" &&
         this.storageStartup.accept((message as ZCodeProtocolNotification).params)
       ) {
-        // 自定义/旧部署命令无法事先声明能力；首个请求可能已发出。只有首次合法启动帧
-        // 能暂停这些计时器，ready 后恢复；该进程的终态不能被后续通知重新续期。
+        // Custom/legacy deployment commands cannot declare capabilities in advance; the first request may already have been sent. Only the first valid startup frame
+        // can pause these timers, which resume when ready; later notifications cannot extend the lifetime after this process has reached a terminal state.
         for (const pending of this.pending.values()) {
           clearTimeout(pending.timeout);
           if (this.storageStartup.snapshot?.phase === "ready") pending.resumeTimeout();
@@ -389,10 +389,10 @@ export class ZCodeProtocolClient implements IDisposable {
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout);
       pending.cleanupAbort?.();
-      // Bug 原因：dispose 批量拒绝发生在调用方 await 之外（如 dispose 与在飞观测长轮询
-      // 竞态），拒绝先于调用方任何处置被判 unhandledRejection（vitest 运行级失败，生产
-      // 等价未处理拒绝崩溃）。dispose 引发的拒绝语义是"取消"，这里先挂 no-op catch；
-      // 真实 awaiter 仍照常收到该 rejection，超时/abort 路径不受影响、照常上报。
+      // Bug cause: dispose batch rejection happens outside the caller's await (for example, dispose racing an in-flight
+      // observation long poll), and the rejection is flagged unhandledRejection before the caller handles it (a vitest run-level
+      // failure, equivalent to an unhandled-rejection crash in production). A rejection caused by dispose means "cancelled", so attach a no-op catch here;
+      // the real awaiter still receives the rejection as usual, and the timeout/abort paths are unaffected and still reported.
       void pending.promise?.catch(() => undefined);
       pending.reject(error);
     }

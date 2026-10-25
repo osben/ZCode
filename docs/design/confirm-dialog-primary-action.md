@@ -1,18 +1,23 @@
-# 二次确认弹窗主按钮规范
+# Secondary confirmation dialog primary button
 
-## 背景
+## Background
 
-二次确认弹窗用于保护用户即将执行的操作。此前不同业务会把确认按钮渲染成 primary、warning 或 destructive，导致同样是“确认继续”的按钮在不同弹窗里颜色跳变。
+Secondary confirmation dialogs protect user actions about to run. Different business units used to render the
+confirm button as primary, warning or destructive, so a semantically identical "confirm and continue" button
+changed color between dialogs.
 
-## 规范
+## Specification
 
-- 二次确认弹窗的确认按钮统一使用主按钮样式。
-- 取消按钮继续使用次级按钮样式，保持操作层级清晰。
-- 删除、停止、离开、刷新失效链接等风险语义通过标题、描述和按钮文案表达，不再通过确认按钮颜色区分。
-- `ConfirmDialogRequest` 不提供按钮颜色或 variant 配置，调用方不得通过弹窗请求覆盖确认按钮样式。
-- 独立使用 `AlertDialogAction` 的确认弹窗也应保持确认按钮为主按钮，除非后续设计规范明确引入新的确认按钮语义层级。
+- The confirm button in a secondary confirmation dialog always uses the primary button style.
+- The cancel button keeps the secondary button style, keeping the action hierarchy clear.
+- Risk semantics such as delete, stop, leave or refresh broken links are expressed through title,
+  description and button text, not through confirm-button color.
+- `ConfirmDialogRequest` provides no button color or variant configuration; callers must not override the
+  confirm button style through dialog requests.
+- Confirmation dialogs that use `AlertDialogAction` independently also keep the confirm button primary, unless
+  a future design spec explicitly introduces a new confirm-button semantic level.
 
-## 当前影响面
+## Impact scope
 
-- 全局 `ConfirmDialogHost` 的确认按钮。
-- 各业务自带确认弹窗使用的独立 `AlertDialogAction`。
+- The global `ConfirmDialogHost` confirm button.
+- Independent `AlertDialogAction` used by business-specific confirmation dialogs.

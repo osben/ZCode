@@ -46,6 +46,7 @@ import {
   type RemoteProjectHost,
   IProjectService,
   ITaskGroupService,
+  IQuickPromptService,
   IBroadcastService,
   IModelSelectionService,
   ISettingService,
@@ -161,7 +162,11 @@ import {
 } from "./cronRunLifecycle.js";
 import { connectServerRemote, type ServerRemoteConnection } from "./serverRemoteConnection.js";
 import { bindBotGroupTaskScope } from "./botGroupTaskScope.js";
-import { createWindowHostAttachmentRegistry } from "./windowHostAttachmentRegistry.js";
+import {
+  createWindowHostAttachmentFlowForwarder,
+  createWindowHostAttachmentRegistry,
+  type WindowHostAttachmentDisposeReason,
+} from "./windowHostAttachmentRegistry.js";
 import { exposeWindowHostAttachmentServices } from "./windowHostAttachmentRpcPolicy.js";
 import { scopeConversationShareServiceForAttachment } from "./conversationShareAttachmentService.js";
 import {
@@ -172,7 +177,7 @@ import {
 import { pushDynamicWorkflowUserModeToRemoteHosts } from "./remoteDynamicWorkflowUserMode.js";
 import { connectDesktopSourceServer } from "./connectDesktopSourceServer.js";
 import { prepareRemoteWorkspaceIdentity } from "./remoteWorkspacePreparation.js";
-import { createWindowHostControllerRuntime } from "./windowHostControllerService.js";
+import { createWindowHostControllerRuntime } from "@zcode/services/window-controller";
 import { resolveBotRemoteWorkspace } from "./botRemoteWorkspaceResolver.js";
 import { SourceServerDirectory } from "./sourceServerDirectory.js";
 import { connectSourceServerTarget } from "./connectSourceServerTarget.js";
@@ -180,6 +185,7 @@ import {
   SourceServerConnectionManager,
   SourceServerInstallRequiredError,
   SourceServerUpgradeRequiredError,
+  readHostKeyProfileId,
 } from "./sourceServerConnectionManager.js";
 import { createSourceServerRecoveryCloseEvent } from "./sourceServerRecoveryPolicy.js";
 import { runStartupReconnectBatch } from "./sourceServerStartupReconnect.js";
@@ -243,6 +249,39 @@ type RemoteAssetDirs = import("./windowRemoteConnectionRegistry.js").WindowRemot
 
 const { parentPort } = process;
 const hostNetworkCapture = createHostNetworkCapture(parentPort);
+
+interface PendingOpenWorkspaceInventoryRequest {
+  resolve: (inventory: { available: boolean; paths: string[] }) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const pendingOpenWorkspaceInventoryRequests = new Map<
+  string,
+  PendingOpenWorkspaceInventoryRequest
+>();
+let nextOpenWorkspaceInventoryRequestSeq = 0;
+function requestOpenWorkspaceInventory(): Promise<{
+  available: boolean;
+  paths: string[];
+}> {
+  if (!parentPort) return Promise.reject(new Error("parentPort unavailable"));
+  const requestId = `open-workspace-inventory-${Date.now()}-${nextOpenWorkspaceInventoryRequestSeq++}`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingOpenWorkspaceInventoryRequests.delete(requestId);
+      reject(new Error("Open workspace inventory request timed out."));
+    }, 5000);
+    pendingOpenWorkspaceInventoryRequests.set(requestId, { resolve, reject, timer });
+    try {
+      parentPort.postMessage({ type: HostResponseTypes.OpenWorkspaceInventoryRequest, requestId });
+    } catch (error) {
+      clearTimeout(timer);
+      pendingOpenWorkspaceInventoryRequests.delete(requestId);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
 
 // 进程检索体验优化：host 由 utilityProcess 拉起时外壳仍是 Electron Helper，
 // 这里根据 main 传入的窗口 label 补一层稳定的 zcode-* title，方便系统进程列表过滤。
@@ -581,17 +620,28 @@ function trackOffPeakRunOutcome(params: {
     workspacePath: params.workspacePath,
     workspaceIdentity: params.workspaceIdentity,
   };
+  // Check before registering so an unsupported Source does not leave a resident execution behind.
+  const onLifecycle = params.zcodeAgentService.onDynamicOffPeakLifecycle;
+  if (!onLifecycle) throw new Error("Off-peak lifecycle events unsupported by this Source");
   const registration = params.service.residentExecutions.register({
     offPeakTaskId: params.offPeakTaskId,
     executionId: params.traceId,
     sessionId: params.taskId,
     ticketId: params.ticketId,
-    control: (control) =>
-      params.zcodeAgentService.controlOffPeakExecutionV4({ ...target, control }),
+    control: (control) => {
+      // The agent service marks these optional for older Sources; a missing method is an explicit failure.
+      const controlExecution = params.zcodeAgentService.controlOffPeakExecutionV4;
+      if (!controlExecution)
+        throw new Error("Off-peak execution control unsupported by this Source");
+      return controlExecution.call(params.zcodeAgentService, { ...target, control });
+    },
     complete: (outcome) => finalizeOffPeakRun({ ...params, outcome }),
     disposed: () => disposeOffPeakRunSubscription(key),
   });
-  const disposable = params.zcodeAgentService.onDynamicOffPeakLifecycle(target)((event) => {
+  const disposable = onLifecycle.call(
+    params.zcodeAgentService,
+    target,
+  )((event) => {
     if (event.executionId !== params.traceId || event.sessionId !== params.taskId) return;
     void params.service.residentExecutions
       .handle(event)
@@ -1742,6 +1792,8 @@ let activeServices: ServiceCollection | null = null;
  * 也不能代表当前界面，所以只认 Main 的 InitLocal 初值与 application-locale-changed 变更。
  */
 let applicationLocale: Locale | undefined;
+// Main holds InitLocal while another Host starts, so a locale change can reach this Host first; the older InitLocal value must not overwrite it.
+let applicationLocaleChangedBeforeInit = false;
 let activeHostApiNetworkTransport: HostApiNetworkTransport | null = null;
 let sourceServerDirectory: SourceServerDirectory | null = null;
 let sourceServerConnectionManager: SourceServerConnectionManager | null = null;
@@ -1763,6 +1815,15 @@ function notifyProjectChange(): void {
 }
 
 /** Bot 只取得当前 Source 代际，不拥有连接，也不创建 logical tab。 */
+/** The fork's service accessor types the Source workspace service as optional; a missing one is an explicit failure, not a crash. */
+function requireSourceServerWorkspaceService<
+  T extends { readonly sourceServerWorkspaceService?: unknown },
+>(services: T): NonNullable<T["sourceServerWorkspaceService"]> {
+  const service = services.sourceServerWorkspaceService;
+  if (!service) throw new Error("Source Server workspace service unavailable");
+  return service as NonNullable<T["sourceServerWorkspaceService"]>;
+}
+
 function resolveBotProjectConnection(hostId: string): BotProjectConnection | undefined {
   const serverId = parseRemoteWorkspaceIdentity(
     buildRemoteHostWorkspaceIdentity(hostId, "/"),
@@ -1797,7 +1858,7 @@ function resolveBotProjectConnection(hostId: string): BotProjectConnection | und
     modelSelectionService: connection.services.modelSelectionService,
     agentService: connection.services.zcodeAgentService,
     bindWorkspace: async (target) => {
-      await connection.services.sourceServerWorkspaceService.resolveWorkspace({
+      await requireSourceServerWorkspaceService(connection.services).resolveWorkspace({
         workspacePath: target.workspacePath,
         legacyRouteHint: target.workspaceIdentity,
       });
@@ -1930,6 +1991,7 @@ async function createWindowRemoteConnectionHandle(params: {
     });
     params.signal.throwIfAborted();
     topicResourceRelay = createWindowTopicResourceRelay({
+      // Pin to the physical Source connection's agent service: `services` is reassigned on each reconnect generation.
       getPeerAgentService: () => connection?.services.zcodeAgentService,
       resolveServices: (scope) => windowRemoteConnectionRegistry.resolveScopedServices(scope),
       getBots: () => activeServices?.getOptional(IBotsService),
@@ -2141,7 +2203,7 @@ async function createWindowRemoteConnectionHandle(params: {
                 fallback: input.legacyRouteHint ?? currentRouteHint,
               });
               input.signal?.throwIfAborted();
-              await connection.services.sourceServerWorkspaceService.resolveWorkspace({
+              await requireSourceServerWorkspaceService(connection.services).resolveWorkspace({
                 workspacePath: input.workspacePath,
                 legacyRouteHint,
               });
@@ -2149,7 +2211,7 @@ async function createWindowRemoteConnectionHandle(params: {
           }
         : {
             bindWorkspaceIdentity: async (input) => {
-              await connection.services.sourceServerWorkspaceService.resolveWorkspace({
+              await requireSourceServerWorkspaceService(connection.services).resolveWorkspace({
                 workspacePath: input.workspacePath,
               });
             },
@@ -2203,11 +2265,25 @@ const windowRemoteConnectionRegistry = createWindowRemoteConnectionRegistry<
   resolveSourceServerId: (handle) => handle.capabilities?.sourceServerId,
   shouldKeepConnectionAlive: (handle) => handle.capabilities?.persistentSourceConnection === true,
   prepareWorkspaceIdentity: async (handle, input) => {
-    await prepareRemoteWorkspaceIdentity(
-      handle.services.get(IFileService),
-      input,
-      handle.capabilities?.bindWorkspaceIdentity,
-    );
+    // The workspace step of the connecting progress is driven by these [source-server:workspace] lines.
+    remoteConnectionProgressContext.report("info", [
+      `[source-server:workspace] Preparing ${input.workspacePath}`,
+    ]);
+    try {
+      await prepareRemoteWorkspaceIdentity(
+        handle.services.get(IFileService),
+        input,
+        handle.capabilities?.bindWorkspaceIdentity,
+      );
+    } catch (error) {
+      // A caller abort is a cancellation, not a folder failure, so it does not appear as a workspace error line.
+      if (!input.signal?.aborted) {
+        remoteConnectionProgressContext.report("error", [
+          `[source-server:workspace] ${error instanceof Error ? error.message : String(error)}`,
+        ]);
+      }
+      throw error;
+    }
   },
   releaseWorkspace: async (services, context) => {
     await services.get(IZCodeTaskService).releaseWorkspacePreparation({
@@ -2442,7 +2518,7 @@ function disposeLocalResourceTelemetry(): void {
 
 type ExposedServicePortHandle = {
   server: IChannelServer & { ready(): void };
-  dispose(): void;
+  dispose(reason?: WindowHostAttachmentDisposeReason): void;
 };
 
 function createControllerRoutedTaskService(
@@ -2588,10 +2664,10 @@ function exposeServicesOnMessagePort(
     ? createZCodeAgentConnectionScope(agentService, connectionContext)
     : undefined;
   services.register(IWindowControllerService, windowHostControllerRuntime.service);
-  // 未读自动写入只归窗口 base renderer；手机和 remote facade 不能重复消费同一完成信号。
-  const controllerAttachment = windowHostControllerRuntime.createAttachmentService(
-    clientMode === "desktop-continuous" && attachmentScope.kind === "local",
-  );
+  // Fork: every attachment owns unread signals (ownsUnreadSignals defaults to true), so the
+  // web-remote-replayable attachment forwards them to the phone sidebar as well. Upstream gates this
+  // to the local desktop-continuous attachment; that gate is not ported.
+  const controllerAttachment = windowHostControllerRuntime.createAttachmentService();
   const overrides = new Map<string, unknown>([
     [IWindowControllerService.channelName, controllerAttachment],
   ]);
@@ -2604,6 +2680,10 @@ function exposeServicesOnMessagePort(
     overrides.set(IProjectService.channelName, activeServices.get(IProjectService));
     overrides.set(IRemoteProjectService.channelName, activeServices.get(IRemoteProjectService));
     services.register(ITaskGroupService, activeServices.get(ITaskGroupService));
+    // Quick prompts are owned by the controller Host; mobile reads them through the read-only scope in
+    // exposeWindowHostAttachmentServices. Skip when the controller does not expose them.
+    const controllerQuickPrompts = activeServices.getOptional(IQuickPromptService);
+    if (controllerQuickPrompts) services.register(IQuickPromptService, controllerQuickPrompts);
   }
   // 远端媒体必须按 attachment 的 clientMode 选择数据面：桌面使用 Host loopback Range，手机保持 inline。
   const remoteMediaPreviewProxy =
@@ -2658,27 +2738,21 @@ function exposeServicesOnMessagePort(
     windowServices: activeServices ?? undefined,
   });
   let disposed = false;
-  let flowUpdateChain = Promise.resolve();
-  const forwardFlowState = (state: "saturated" | "drained" | "closed") => {
-    if (!connectionScope) return Promise.resolve();
-    const update = flowUpdateChain.then(() => connectionScope.setTransportFlowState(state));
-    flowUpdateChain = update.catch((error) => {
-      logger.warn("failed to forward attachment connection flow state", {
-        state,
-        message: error instanceof Error ? error.message : String(error),
-      });
+  const flowForwarder = createWindowHostAttachmentFlowForwarder(connectionScope, (state, error) => {
+    logger.warn("failed to forward attachment connection flow state", {
+      state,
+      message: error instanceof Error ? error.message : String(error),
     });
-    return update;
-  };
+  });
   const flowStateDisposable = protocol.onFlowState((state) => {
     if (disposed) return;
     // MessagePort sideband 已在 protocol 层与 Uint8Array 分流；这里只把 owning scope
     // 的 edge 串行送往 CLI，不能由 control object 指定 connectionId。
-    void forwardFlowState(state).catch(() => {});
+    void flowForwarder.forward(state).catch(() => {});
   });
   const handle: ExposedServicePortHandle = {
     server,
-    dispose() {
+    dispose(reason) {
       if (disposed) return;
       disposed = true;
       flowStateDisposable.dispose();
@@ -2691,9 +2765,7 @@ function exposeServicesOnMessagePort(
       });
       // close 排在所有已接收 SAT/DRN 之后；scope.dispose 自身会再次幂等确保 closed，
       // 但绝不让迟到 saturated 在 close 后复活 CLI pause state。
-      void forwardFlowState("closed")
-        .catch(() => {})
-        .then(() => connectionScope?.dispose());
+      void flowForwarder.close(reason);
       rawServer.dispose();
       protocol.disconnect();
     },
@@ -2951,15 +3023,29 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
 
   const msg = result.data;
   // 在任何 await 之前同步赋值：InitLocal 与变更消息同端口按序到达，初值不会覆盖较新的变更。
-  if (msg.type === HostMessageTypes.InitLocal && msg.locale) {
+  if (
+    msg.type === HostMessageTypes.InitLocal &&
+    msg.locale &&
+    !applicationLocaleChangedBeforeInit
+  ) {
     applicationLocale = msg.locale;
   }
   if (msg.type === HostMessageTypes.ApplicationLocaleChanged) {
     applicationLocale = msg.locale;
+    applicationLocaleChangedBeforeInit = true;
     return;
   }
   if (msg.type === HostMessageTypes.NetworkCapture) {
     hostNetworkCapture.setCaptureId(msg.control.captureId);
+    return;
+  }
+  if (msg.type === HostMessageTypes.OpenWorkspaceInventoryResult) {
+    const pending = pendingOpenWorkspaceInventoryRequests.get(msg.requestId);
+    if (pending) {
+      clearTimeout(pending.timer);
+      pendingOpenWorkspaceInventoryRequests.delete(msg.requestId);
+      pending.resolve({ available: msg.available, paths: msg.paths });
+    }
     return;
   }
   const port = e.ports[0];
@@ -3395,6 +3481,10 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
           error instanceof SourceServerInstallRequiredError
             ? { profileId: error.profileId }
             : {}),
+          // The host key trust step is keyed by the profile whose attempt observed the key.
+          ...(failure.code === "remote-host-key-unknown" && readHostKeyProfileId(error)
+            ? { profileId: readHostKeyProfileId(error) }
+            : {}),
           // 安装和升级等待固定 Main 解析后的 WSL 身份，不能从可编辑 Profile 重建。
           // 身份来自同一请求，独立于附加安装预览；只回传 WSL 的非敏感连接参数。
           ...((error instanceof SourceServerInstallRequiredError ||
@@ -3703,6 +3793,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
     });
     databaseStartup = createHostDatabaseStartup({
       startupId: msg.databaseStartupId,
+      sweepAbandonedReservations: msg.sweepAbandonedReservations === true,
       cwd: msg.agentSpawnFallbackCwd ?? process.cwd(),
       workingDirectories:
         msg.agentWarmupTargets?.map((target) => target.workspacePath) ??
@@ -3906,9 +3997,11 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
                     sourceServices: activeServices ?? undefined,
                   }),
                   async (workspacePath) => {
-                    await connection.services.sourceServerWorkspaceService.resolveWorkspace({
-                      workspacePath,
-                    });
+                    await requireSourceServerWorkspaceService(connection.services).resolveWorkspace(
+                      {
+                        workspacePath,
+                      },
+                    );
                     return buildServerRemoteWorkspaceIdentity({
                       serverId: sourceServerId,
                       workspacePath,
@@ -3946,6 +4039,12 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
               zcodeBuiltinProviderConfigFilePath: msg.zcodeBuiltinProviderConfigFilePath,
               processLifecycleReporter: runtimeProcessLifecycleReporter,
               taskRuntimeReporter: runtimeTaskReporter,
+              getOpenWorkspacePaths: async () => {
+                const inventory = await requestOpenWorkspaceInventory();
+                if (!inventory.available)
+                  throw new Error("Open workspace inventory is incomplete.");
+                return inventory.paths;
+              },
               feedback: {
                 getDeviceMid: () => msg.deviceMid,
                 apiBaseUrl: msg.feedbackApiBase,

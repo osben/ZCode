@@ -16,14 +16,44 @@ export {
   migrateSubagentStateFile,
 } from "./node/subagentMarkdownMigration.js";
 export {
+  atomicWriteFile,
   atomicWritePrivateTextFile,
   backupCorruptFile,
+  hashBytes,
   withFileLock,
+  type AtomicWriteFileOptions,
   type SharedFileLockOptions,
 } from "./node/privateFilePersistence.js";
+export {
+  getClaudeUserInstructionsFilePath,
+  getUserZcodeAgentsFilePath,
+  resolveAgentUserHomeDir,
+} from "./node/userInstructionsPaths.js";
 export {
   createNodeSelfResourceSampler,
   NODE_SELF_RESOURCE_SAMPLE_INTERVAL_MS,
   type NodeSelfResourceSampler,
   type NodeSelfResourceSamplerOptions,
 } from "./node/nodeSelfResourceTelemetry.js";
+
+export * from "./node/process-tree/processTreeSnapshot.js";
+export * from "./node/process-tree/processTreeTypes.js";
+export * from "./node/process-tree/processTreeTerminator.js";
+export * from "./node/process-tree/processTreeOwnership.js";
+export * from "./node/process-tree/windowsProcessListAsync.js";
+export * from "./node/process-tree/windowsTaskkillRunner.js";
+export * from "./node/process-tree/processTreeSnapshotAsync.js";
+export * from "./node/process-tree/processTreeWaiter.js";
+export { RefreshSingleflight } from "./node/refreshSingleflight.js";
+export {
+  DEFAULT_OAUTH_CALLBACK_APP_URL,
+  buildOAuthCallbackPage,
+  isSafeAppUrl,
+  renderOAuthCallbackPage,
+  respondWithOAuthCallbackPage,
+  type OAuthCallbackFlow,
+  type OAuthCallbackOutcome,
+  type OAuthCallbackPageOptions,
+  type OAuthCallbackSurface,
+  type RenderedOAuthCallbackPage,
+} from "./node/oauthCallbackPage.js";

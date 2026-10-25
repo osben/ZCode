@@ -16,6 +16,9 @@ export async function skipOccupationOnboardingIfPresent() {
     step++
   ) {
     const skip = $('//button[normalize-space(.)="Skip" or normalize-space(.)="跳过"]');
+    // WDIO v9 counts off-viewport elements as not clickable; the onboarding footer's Skip can
+    // sit below the fold on the 1200x800 e2e window, so scroll it into view before waiting.
+    await skip.scrollIntoView();
     await skip.waitForClickable({ timeout: 15000 });
     await skip.click();
   }

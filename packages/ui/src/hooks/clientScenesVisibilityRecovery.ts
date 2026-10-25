@@ -3,7 +3,7 @@ type VisibilityDocument = Pick<
   "visibilityState" | "addEventListener" | "removeEventListener"
 >;
 
-/** Page Visibility 恢复协调器：同一 authority 可有多个 React 消费方，每次重开只执行一个回调。 */
+/** Page Visibility recovery coordinator: one authority may have multiple React consumers, but reopening runs only one callback. */
 export function createClientScenesVisibilityRecovery(documentTarget: VisibilityDocument) {
   const activeRevalidators = new Map<object, Set<() => void>>();
   const handledGenerations = new WeakMap<object, number>();
@@ -48,8 +48,9 @@ export function createClientScenesVisibilityRecovery(documentTarget: VisibilityD
       }
 
       return () => {
-        // renderer 可能在没有 Scene 消费方挂载时被 hide/show；保留 authority 的已处理代次，
-        // 让同一缓存下次挂载时仍能观察到失效，而不是继续命中重开前的 10 分钟缓存。
+        // The renderer may be hidden and shown while no Scene consumer is mounted. Preserve the
+        // authority's processed generation so the next mount can still observe invalidation instead
+        // of continuing to use the ten-minute cache from before reopening.
         revalidators.delete(revalidate);
         if (revalidators.size === 0) activeRevalidators.delete(authority);
       };

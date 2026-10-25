@@ -1,11 +1,14 @@
 import { createServer, type ServerResponse } from "node:http";
+import {
+  buildOAuthCallbackPage,
+  respondWithOAuthCallbackPage,
+  type OAuthCallbackOutcome,
+} from "@zcode/shared/node";
 import type { AddressInfo } from "node:net";
 
 const LOCALHOST = "127.0.0.1";
-const SUCCESS_TEXT = "Authorization successful! You may close this window and return to the CLI.";
-const FAILURE_TEXT = "Authorization failed. You may close this window and return to the CLI.";
 
-/** 授权服务器按 RFC 6749 §4.1.2.1 回传 `error` 时使用的稳定错误码。 */
+/** Stable error code returned when the authorization server sends `error` per RFC 6749 §4.1.2.1. */
 export const MCP_OAUTH_CALLBACK_DENIED_ERROR_CODE = "MCP_OAUTH_CALLBACK_DENIED";
 
 export interface McpOAuthCallbackDeniedError extends Error {
@@ -18,7 +21,7 @@ function createCallbackDeniedError(
   oauthError: string,
   oauthErrorDescription: string | null,
 ): McpOAuthCallbackDeniedError {
-  // 不依赖错误文本做流程判断：调用方按 code/oauthError 结构化字段区分「用户拒绝」与超时。
+  // Do not branch on error text; callers distinguish user denial from timeout using the structured code/oauthError fields.
   const error = new Error(
     `OAuth authorization was rejected by the authorization server: ${oauthError}`,
   ) as McpOAuthCallbackDeniedError;
@@ -31,6 +34,12 @@ function createCallbackDeniedError(
 export interface LocalhostOAuthCallback {
   code: string;
   url: string;
+  /**
+   * Issued client id when the authorization server registers a dynamic client on first
+   * sign-in (SIWC). Absent on re-auth callbacks and for providers without dynamic
+   * registration; the full `url` remains available for other extra params.
+   */
+  clientId?: string;
 }
 
 export interface LocalhostOAuthCallbackServer {
@@ -56,31 +65,28 @@ export async function createLocalhostOAuthCallbackServer(input: {
     try {
       const requestUrl = new URL(request.url ?? "/", `http://${LOCALHOST}`);
       if (requestUrl.pathname !== input.callbackPath) {
-        writeText(response, 404, FAILURE_TEXT);
+        writePage(response, 404, "invalid");
         return;
       }
 
-      // state 不匹配过去会 reject 本事务的 callback promise。并发授权事务、
-      // 浏览器里残留的旧授权 URL 或预取请求都会打到本 listener；一个陌生 state 就能让
-      // 随后到达的正确回调再也无法成功。现在只回 400 并继续等待本 state 的回调。
+      // A state mismatch used to reject this transaction's callback promise. Concurrent authorization transactions,
+      // stale authorization URLs left in the browser, or prefetch requests can all reach this listener; one unknown
+      // state could prevent the correct callback from succeeding later. Now return 400 and keep waiting for this transaction's state.
       const state = requestUrl.searchParams.get("state") ?? "";
       if (state !== input.state) {
-        writeText(response, 400, FAILURE_TEXT);
+        writePage(response, 400, "invalid");
         return;
       }
 
-      // state 匹配说明这确实是本事务的授权响应。用户点「拒绝」时授权服务器回
-      // error=access_denied，过去要一直等到 caller 超时才失败；现在立即 settle。
+      // A matching state confirms this is the authorization response for this transaction. When the user denies access,
+      // the server returns error=access_denied; previously we waited for the caller to time out, but now settle immediately.
       const oauthError = requestUrl.searchParams.get("error");
       if (oauthError) {
-        writeText(response, 400, FAILURE_TEXT);
+        writePage(response, 400, "denied", requestUrl.searchParams.get("error_description"));
         if (!settled) {
           settled = true;
           rejectCallback(
-            createCallbackDeniedError(
-              oauthError,
-              requestUrl.searchParams.get("error_description"),
-            ),
+            createCallbackDeniedError(oauthError, requestUrl.searchParams.get("error_description")),
           );
         }
         return;
@@ -89,9 +95,9 @@ export async function createLocalhostOAuthCallbackServer(input: {
       const code =
         requestUrl.searchParams.get("authCode") ?? requestUrl.searchParams.get("code") ?? "";
       if (!code) {
-        // state 匹配但既无 code 也无 error：授权响应不合法，本事务不可能成功，直接失败，
-        // 不消耗剩余授权窗口。
-        writeText(response, 400, FAILURE_TEXT);
+        // A matching state with neither code nor error is an invalid response, so this transaction cannot succeed. Fail
+        // immediately instead of consuming the rest of the authorization window.
+        writePage(response, 400, "invalid");
         if (!settled) {
           settled = true;
           rejectCallback(new Error("OAuth callback is missing an authorization code."));
@@ -99,16 +105,20 @@ export async function createLocalhostOAuthCallbackServer(input: {
         return;
       }
 
-      writeText(response, 200, SUCCESS_TEXT);
+      writePage(response, 200, "success");
       if (!settled) {
         settled = true;
+        // Extra params (SIWC returns the issued client_id and iss) are tolerated and only the
+        // client_id is surfaced explicitly; everything else stays available via `url`.
+        const clientId = requestUrl.searchParams.get("client_id") ?? "";
         resolveCallback({
           code,
           url: requestUrl.toString(),
+          ...(clientId ? { clientId } : {}),
         });
       }
     } catch (error) {
-      writeText(response, 500, FAILURE_TEXT);
+      writePage(response, 500, "failed");
       if (!settled) {
         settled = true;
         rejectCallback(error instanceof Error ? error : new Error(String(error)));
@@ -141,11 +151,21 @@ export async function createLocalhostOAuthCallbackServer(input: {
   };
 }
 
-function writeText(response: ServerResponse, status: number, message: string): void {
-  response.writeHead(status, {
-    "Content-Type": "text/plain; charset=utf-8",
-  });
-  response.end(message);
+function writePage(
+  response: ServerResponse,
+  status: number,
+  outcome: OAuthCallbackOutcome,
+  detail?: string | null,
+): void {
+  respondWithOAuthCallbackPage(
+    response,
+    status,
+    buildOAuthCallbackPage(outcome, {
+      flow: "sign-in",
+      surface: "cli",
+      ...(detail ? { detail } : {}),
+    }),
+  );
 }
 
 function closeServer(server: ReturnType<typeof createServer>): Promise<void> {

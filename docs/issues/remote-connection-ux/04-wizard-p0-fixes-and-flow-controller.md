@@ -1,44 +1,44 @@
-# 04 — 向导止血与流程控制器抽取
+# 04 — Wizard P0 Fixes and Flow Controller Extraction
 
 Status: done
 
-**父规格：** [远程连接交互与视觉体验优化](./01-remote-connection-ux-optimization.md)
+**Parent spec:** [Remote Connection Interaction and Visual Experience Optimization](./01-remote-connection-ux-optimization.md)
 
-**被阻塞于：** 无，可立即开始。
+**Blocked by:** none.
 
-**要交付的行为：**
+**Behavior to deliver:**
 
-先修好连接向导里几处会卡住用户的问题：
+First fix the problems in the connection wizard that stall users:
 
-- **缺少已保存的密码**：主按钮改为"补充密码"，点击后回到表单，并让密码框获得焦点。
-- **目标设备已经在线**：明确告诉用户"已直接使用现有连接"，不保存这次新输入的凭据。
-- **正在连接时**：主按钮改为"取消连接"，并且可以点击。
-- **WSL 和 Docker 连接**：阶段文案不再显示 SSH 的说法。
-- **用户主动取消**：不再显示为错误。
+- **Saved password missing**: the primary button becomes "补充密码" (add password); clicking returns to the form and focuses the password field.
+- **Target device already online**: tell the user "已直接使用现有连接" (the existing connection was used directly), and do not save the credentials newly entered.
+- **While connecting**: the primary button becomes "取消连接" (cancel connection) and is clickable.
+- **WSL and Docker connections**: stage copy no longer uses SSH wording.
+- **User-initiated cancel**: no longer shown as an error.
 
-然后在行为不变的前提下，把向导的流程抽成一个可测试的控制器，包括入口意图、等待点、收起和关闭、结果去向。这样三屏重做（[10](./10-three-screen-wizard-and-selection.md)、[11](./11-connecting-and-directory-screens.md)）改起来会更容易。
+Then, with behavior unchanged, extract the wizard flow into a testable controller covering entry intent, wait points, collapse and close, and result destination. This makes the three-screen redo ([10](./10-three-screen-wizard-and-selection.md), [11](./11-connecting-and-directory-screens.md)) easier.
 
-范围：
+Scope:
 
-- **向导 P0 缺陷**：
-  - 缺凭据时点"重试"会反复失败。
-  - 目标设备已在线时被静默复用，没有任何提示。
-  - 正在连接时主按钮一直不能点。
-  - WSL 和 Docker 连接时显示 SSH 的阶段文案。
-  - 用户取消安装后，界面用红色错误面板展示。
-- **预重构**：
-  - 抽出流程控制器，所有可观察行为保持不变。
-  - 现有向导测试是通过截取子组件 props 来断言的，这次覆盖到的流程要改写成通过 DOM 和服务端口断言行为的测试。
+- **Wizard P0 defects**:
+  - Clicking "retry" with missing credentials fails repeatedly.
+  - A target device that is already online is silently reused with no hint.
+  - The primary button cannot be clicked while connecting.
+  - WSL and Docker connections show SSH stage copy.
+  - After the user cancels installation, the UI shows a red error panel.
+- **Pre-refactor**:
+  - Extract the flow controller with all observable behavior unchanged.
+  - Existing wizard tests assert by intercepting child component props; the flows covered this time are rewritten as tests asserting behavior through the DOM and service ports.
 
-验收标准：
+Acceptance criteria (all met):
 
-- [x] **缺凭据**：主按钮显示"补充密码"，点击后回到表单并聚焦密码框，不再出现必然失败的重试循环。需要向导测试和 E2E 覆盖。
-- [x] **目标设备已在线**：手动新建连接时，如果目标是一台已经在线的设备，显示"这台设备已通过 `<连接描述>` 连接，已直接使用现有连接"，并且不保存这次新输入的凭据。需要测试覆盖。
-- [x] **连接中**：主按钮是"取消连接"且可用；连接成功后自动进入下一步。
-- [x] **阶段文案**：SSH、WSL、Docker 三种连接方式各有自己的阶段文案，中英文都要有。
-- [x] **主动取消**：用户取消安装或取消连接后，界面显示"已取消"，而不是错误面板。
-- [x] **预重构**：流程控制器抽出后，改写前后的同一批行为用例都能通过；新写的测试不再截取子组件 props。
-- [x] **更新规格**：把"已在线复用提示"写进 UX 规格。其余缺陷用回归测试留痕。
-- [x] **必跑检查**：`pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed`、受影响的单测、受影响的 SSH E2E 全部通过后，本地提交。
+- **Missing credentials**: the primary button shows "补充密码"; clicking returns to the form and focuses the password field; no inevitably failing retry loop. Needs wizard tests and E2E.
+- **Target device already online**: when manually creating a connection whose target is an already-online device, show "这台设备已通过 `<连接描述>` 连接，已直接使用现有连接" (this device is already connected through `<connection description>`, the existing connection was used directly) and do not save the credentials newly entered. Needs tests.
+- **Connecting**: the primary button is "取消连接" and enabled; after success it advances to the next step automatically.
+- **Stage copy**: SSH, WSL and Docker each have their own stage copy in Chinese and English.
+- **User-initiated cancel**: after the user cancels installation or the connection, the UI shows "已取消" (cancelled), not an error panel.
+- **Pre-refactor**: after the flow controller is extracted, the same behavior cases pass before and after the rewrite; new tests no longer intercept child component props.
+- **Update spec**: write the "already-online reuse notice" into the UX spec; other defects are kept as regression tests.
+- **Required checks**: `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`, affected unit tests and affected SSH E2E all pass before the local commit.
 
-验收记录（2026-09-27）：`pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed`、`pnpm --filter @zcode/desktop typecheck:e2e` 通过；`pnpm test:unit --retry=1` 全量 2,028 文件、18,628 测试通过（既有 14 测试跳过），最后的流程收尾变更另经向导 DOM 34 用例验证。SSH CONN-01/02、CONN-03、CONN-06/07 对应三份 spec 实跑通过，artifact 见 [SSH P0 计划](../../testing/ssh-remote-p0-e2e-plan.md#rdux-04-向导回归)。Standards / Spec 两轴评审无未解决项；新 E2E 保留 pending，尚未人工转正。
+Acceptance record (2026-09-27): `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed` and `pnpm --filter @zcode/desktop typecheck:e2e` pass; full `pnpm test:unit --retry=1` ran 2,028 files and 18,628 tests passing (14 pre-existing skipped tests), and the last flow-closing change was additionally verified by the 34 wizard DOM cases. The three specs for SSH CONN-01/02, CONN-03 and CONN-06/07 ran and passed; the artifact is in the [SSH P0 plan](../../testing/ssh-remote-p0-e2e-plan.md#rdux-04-向导回归). The two-axis review (conventions/spec) has no unresolved item; the new E2E stays pending and has not been promoted manually.

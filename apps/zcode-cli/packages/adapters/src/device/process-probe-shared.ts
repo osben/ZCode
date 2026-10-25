@@ -2,13 +2,13 @@ import { execFile as nodeExecFile } from "node:child_process";
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process";
 
 /**
- * 通用进程探针的共享契约与平台无关工具。
- * 平台实现（darwin / linux / win32）各自一个文件，只依赖本文件，不互相依赖。
+ * Shared contract and platform-independent utilities for the generic process probe.
+ * Each platform implementation (darwin / linux / win32) has its own file, depends only on this file, and does not depend on the others.
  */
 export interface ProcessProbeSample {
   pid: number;
   rssKb: number;
-  /** 进程启动以来的累计 CPU 时间；Windows 无此数据，字段缺席而不是填 0 */
+  /** Cumulative CPU time since process start; Windows has no such data, so the field is absent rather than set to 0. */
   cpuTimeMs?: number;
 }
 
@@ -25,7 +25,7 @@ export type ProcessProbeExecFile = (
   options: ExecFileOptionsWithStringEncoding,
 ) => Promise<ProcessProbeCommandResult>;
 
-/** 进程间关系与 CPU 时间；RSS 由各平台单独取得（Linux 要多读一次 `status`）。 */
+/** Process relationships and CPU time; each platform retrieves RSS separately (Linux needs an extra `status` read). */
 export interface ProcessRelation {
   cpuTimeMs?: number;
   parentPid?: number;
@@ -41,10 +41,10 @@ export const PROCESS_PROBE_SAMPLE_TIMEOUT_MS = 1_000;
 
 const PROCESS_PROBE_MAX_BUFFER_BYTES = 8 * 1_024 * 1_024;
 
-/** 采样失败：调用方一律翻译成「本次无样本」，并累计连续失败次数。 */
+/** A sample failure: callers always treat it as “no sample this time” and increment the consecutive failure count. */
 export class ProcessProbeFailure extends Error {}
 
-/** 把进程表按 parentPid 展开成每个根 pid 的进程树；根不存在时不出现在结果里。 */
+/** Expand the process table into a tree for each root pid by parentPid; omit roots that do not exist. */
 export function groupProcessTrees(
   rows: readonly ProcessRow[],
   rootPids: readonly number[],
@@ -63,7 +63,7 @@ export function groupProcessTrees(
   return trees;
 }
 
-/** 每个根 pid 的进程树成员 pid（含根自身），按 DFS 顺序；根不在进程表里则整棵树缺席。 */
+/** Process pids in each root's tree (including the root), in DFS order; omit the entire tree if its root is absent from the process table. */
 export function collectProcessTreePids(
   relations: readonly ProcessRelation[],
   rootPids: readonly number[],

@@ -6,10 +6,22 @@ import type {
 } from "@zcode/shared";
 import "@zcode/ui/styles.css";
 import {
+  applyTheme,
+  migrateThemeSelection,
+  THEME_PALETTE_STORAGE_KEY,
+  THEME_STORAGE_KEY,
+} from "@zcode/ui/useTheme";
+import {
   ResourceManagerApp,
   ZCodeIntlProvider,
+  applyMonoFontFamily,
+  applyUiFontFamily,
   applyUiFontSizePx,
+  loadMonoFontFamily,
+  loadUiFontFamily,
   loadUiFontSizePx,
+  subscribeToMonoFontFamilyStorageChanges,
+  subscribeToUiFontFamilyStorageChanges,
   subscribeToUiFontSizeStorageChanges,
 } from "@zcode/ui";
 
@@ -24,43 +36,27 @@ declare global {
   }
 }
 
-type Theme = "light" | "dark" | "zai-light" | "zai-dark" | "system";
+const savedTheme = migrateThemeSelection(
+  localStorage.getItem(THEME_STORAGE_KEY),
+  localStorage.getItem(THEME_PALETTE_STORAGE_KEY),
+);
+applyTheme(savedTheme.mode, savedTheme.palette);
 
-function resolveTheme(theme: Theme): "light" | "dark" {
-  if (theme === "system") {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  }
-  return theme === "dark" || theme === "zai-dark" ? "dark" : "light";
-}
-
-function applyResourceManagerTheme(): void {
-  const savedTheme = (localStorage.getItem("zcode-theme") as Theme | null) ?? "zai-dark";
-  const resolvedTheme = resolveTheme(savedTheme);
-  const appliedTheme =
-    savedTheme === "system"
-      ? resolvedTheme === "dark"
-        ? "zai-dark"
-        : "zai-light"
-      : savedTheme === "dark"
-        ? "zai-dark"
-        : savedTheme === "light"
-          ? "zai-light"
-          : savedTheme;
-  document.documentElement.classList.toggle("dark", resolvedTheme === "dark");
-  document.documentElement.classList.toggle("theme-zai-light", appliedTheme === "zai-light");
-  document.documentElement.classList.toggle("theme-zai-dark", appliedTheme === "zai-dark");
-}
-
-applyResourceManagerTheme();
-// 资源管理器不创建主窗口的 Zustand store，text-ui-* 无法自动获得持久化基准。
-// 首屏前显式应用，运行中再由 storage 事件同步，且不改变 html font-size 或接入业务 Host。
+// The resource manager does not create the main window's Zustand store, so text-ui-* cannot automatically
+// get the persisted baseline. Apply it explicitly before the first screen and sync through storage events
+// afterward, without changing html font-size or connecting to the business Host.
 applyUiFontSizePx(loadUiFontSizePx());
 subscribeToUiFontSizeStorageChanges();
+applyUiFontFamily(loadUiFontFamily());
+applyMonoFontFamily(loadMonoFontFamily());
+subscribeToUiFontFamilyStorageChanges();
+subscribeToMonoFontFamilyStorageChanges();
 
 const root = document.getElementById("root");
 if (root) {
   createRoot(root).render(
-    // 语言沿用主窗口写入 localStorage 的偏好；不接 settingService，避免独立窗口再起一份 RPC。
+    // Reuse the language preference written to localStorage by the main window. Do not connect to
+    // settingService and create another RPC for this independent window.
     <ZCodeIntlProvider>
       <ResourceManagerApp
         setSamplingActive={window.resourceManager?.setSamplingActive}

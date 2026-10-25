@@ -7,7 +7,7 @@ export {
 } from "./analysis/hole-id.js";
 export { WORLD_READ_CAPS } from "./facade/world-read-caps.js";
 export { REPORT_CAPS } from "./facade/report-caps.js";
-// 用户面产物：上限常量、注册表词汇、编译期清单与诊断。
+// User-facing artifacts: cap constants, registry vocabulary, compile-time manifest, and diagnostics.
 export { ARTIFACT_CAPS, ARTIFACT_ID_PATTERN } from "./facade/artifact-caps.js";
 export {
   ARTIFACT_REGISTRY,
@@ -51,8 +51,8 @@ export {
 } from "./analysis/world-run.js";
 export { collectPhaseMarkerDiagnostics, PHASE_MARKER_CODE } from "./analysis/phases.js";
 export { collectPhaseNames, collectSitePhases } from "./analysis/site-phases.js";
-// 留白（docs/dynamic-workflow/authoring.md「Holes」）：规则 9012、站点类型、补全服务的拼接与
-// 稳定性复核。
+// Holes (docs/dynamic-workflow/authoring.md, “Holes”): rule 9012, site types, completion-service
+// splicing, and stability checks.
 export { collectHoleDiagnostics, HOLE_CODE, HOLE_NAME_MAX_CHARS } from "./analysis/hole-sites.js";
 export type { HoleSite } from "./analysis/sites.js";
 export {
@@ -86,9 +86,10 @@ export {
   type Step,
   type StepKind,
 } from "./analysis/causality-graph.js";
-// 贪心不可约传递归约。display
-// 裁剪层复用它对单一种类的边做无类型归约
-// ——全部前向边同 kind、回边作 carry，它就退化成普通的不可约归约，且在有环输入上可靠。
+// Greedy irreducible transitive reduction. The display
+// pruning layer reuses it for untyped reduction of one edge kind; when all forward edges have the
+// same kind and back edges are carried, it reduces to ordinary irreducible reduction and remains
+// reliable on cyclic input.
 export { reduceOrdering, type ReducibleEdge } from "./analysis/causality-reduce.js";
 export {
   UNPHASED_ID,
@@ -96,7 +97,7 @@ export {
   type StructuralRegionKind,
   type TraceRegionKind,
 } from "./analysis/causality-order.js";
-// 控制流投影：occurrence 级 CFG 与阶段商。
+// Control-flow projection: occurrence-level CFG and phase quotient.
 export {
   FLOW_ABORT,
   FLOW_ENTRY,
@@ -119,13 +120,13 @@ export {
   phaseGraphToMermaid,
   siteGraphToMermaid,
 } from "./analysis/mermaid.js";
-// 因果图的规范文本形式（快照面）。
+// Canonical text form of the causality graph (snapshot surface).
 export {
   serializeCausalityGraph,
   serializeControlFlow,
   serializeHandoffGraph,
 } from "./analysis/serialize.js";
-// 交接图投影：板面第二层的参与者卡与交接边。
+// Handoff-graph projection: participant cards and handoff edges in the second board layer.
 export {
   FANOUT_EXPAND_CAP,
   projectHandoffGraph,
@@ -134,8 +135,8 @@ export {
   type HandoffGraph,
   type HandoffParticipant,
 } from "./analysis/handoff-graph.js";
-// 统一分析的核心产物与其规范文本形式：
-// 站点图 / 因果图 / actor 图都是它上面的纯投影。
+// Unified analysis core and its canonical text form:
+// site graph / causality graph / actor graph are all pure projections of it.
 export {
   serializeCore,
   type AnalysisCore,
@@ -148,8 +149,9 @@ export {
   type CoreSites,
   type CoreTypes,
 } from "./analysis/core.js";
-// core 的 JSON 编解码：样例包把 `AnalysisCore` 冻结成
-// `core.json`，下游浏览器端在冻结产物上现场重算投影；Map 以有序 `[key, value][]` 落盘。
+// JSON encoding/decoding for core: the sample package freezes `AnalysisCore` into
+// `core.json`, and downstream browser code recomputes projections from the frozen artifact; Maps
+// are persisted as ordered `[key, value][]`.
 export {
   decodeAnalysisCore,
   encodeAnalysisCore,
@@ -170,7 +172,7 @@ export {
   type SchemaSynthesisResult,
 } from "./schema/synthesize.js";
 export { validate, formatViolation, formatViolations } from "./schema/validate.js";
-// 每个 actor 站点的 submit profile：编译期决定子代理拿 typed / generic / 无 submit_result 工具。
+// Submit profile for each actor site: compile-time decision for typed / generic / no submit_result tool on the subagent.
 export {
   GENERIC_SUBMIT_PROFILE,
   deriveActorSubmitProfiles,

@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   statSync,
+  type BigIntStats,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
@@ -160,6 +161,9 @@ function seedBundledOfficialPlugins(input: {
             for (const file of plugin.files) {
               const bytes = readSeedFileBytes(source, plugin, file);
               if (hashBytes(bytes) !== file.sha256) {
+                // Copy-path self-heal only: if a memoized hash went stale without a stat change,
+                // forget this plugin's hashes so the next call re-hashes instead of failing again.
+                forgetFilesystemSeedHashes(plugin.files);
                 throw new Error(
                   `Bundled plugin asset hash mismatch: ${plugin.definition.name}/${file.path}`,
                 );
@@ -372,18 +376,61 @@ function collectFilesystemPluginFiles(
     ...includedTopLevelPaths,
     ...(definition.runtimeTopLevelPaths ?? []),
   ]);
+  const visited = new Set<string>();
   for (const sourcePath of walkFiles(rootPath, allowedTopLevelPaths)) {
     const relativePath = toPosixPath(sourcePath.slice(rootPath.length + 1));
     if (!shouldIncludePluginFile(relativePath, allowedTopLevelPaths)) continue;
-    const bytes = readFileSync(sourcePath);
+    visited.add(sourcePath);
+    const stats = statSync(sourcePath, { bigint: true });
     files.push({
-      mode: modeForSeedFile(relativePath, statSync(sourcePath).mode),
+      mode: modeForSeedFile(relativePath, Number(stats.mode)),
       path: relativePath,
-      sha256: hashBytes(bytes),
+      sha256: hashFilesystemSeedFile(sourcePath, stats),
       sourcePath,
     });
   }
+  pruneFilesystemSeedHashMemo(rootPath, visited);
   return files.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+// Every discovery call (readPresentation, session runtime creation, skills) rebuilt the seed hash
+// list by reading and hashing all bundled plugin bytes (~63 MB packaged), which dominated the
+// synchronous plugin resolution on the CLI request queue. Hashes are reused only while the
+// file's exact (nanosecond) stat signature is unchanged; ctime and inode catch edits that preserve
+// size and mtime. Like git's racily-clean rule, a file whose mtime or ctime is within the window
+// before the read is hashed but not memoized: a later same-size edit inside the same coarse
+// timestamp tick (FAT 2 s, HFS+ 1 s, coarse ktime) would otherwise keep the signature and the old
+// hash, and isSeedCurrent would then skip the copy-time check that could catch it.
+const filesystemSeedHashMemo = new Map<string, { signature: string; sha256: string }>();
+const RACY_SEED_HASH_WINDOW_NS = 2_000_000_000n;
+
+function hashFilesystemSeedFile(sourcePath: string, stats: BigIntStats): string {
+  const signature = `${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}:${stats.ino}`;
+  const memo = filesystemSeedHashMemo.get(sourcePath);
+  if (memo?.signature === signature) return memo.sha256;
+  const memoizableBeforeNs = BigInt(Date.now()) * 1_000_000n - RACY_SEED_HASH_WINDOW_NS;
+  const sha256 = hashBytes(readFileSync(sourcePath));
+  if (stats.mtimeNs <= memoizableBeforeNs && stats.ctimeNs <= memoizableBeforeNs) {
+    filesystemSeedHashMemo.set(sourcePath, { signature, sha256 });
+  } else {
+    filesystemSeedHashMemo.delete(sourcePath);
+  }
+  return sha256;
+}
+
+function forgetFilesystemSeedHashes(files: ReadonlyArray<{ sourcePath?: string }>): void {
+  for (const file of files) {
+    if (file.sourcePath) filesystemSeedHashMemo.delete(file.sourcePath);
+  }
+}
+
+function pruneFilesystemSeedHashMemo(rootPath: string, visited: ReadonlySet<string>): void {
+  const prefix = `${rootPath}${sep}`;
+  for (const sourcePath of filesystemSeedHashMemo.keys()) {
+    if (sourcePath.startsWith(prefix) && !visited.has(sourcePath)) {
+      filesystemSeedHashMemo.delete(sourcePath);
+    }
+  }
 }
 
 function* walkFiles(

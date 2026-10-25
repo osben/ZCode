@@ -13,9 +13,9 @@ import { dirname, join, relative } from "node:path";
 import process from "node:process";
 import { runCommand } from "./spawn-command.mjs";
 
-// Bugfix: Windows GNU tar（Git Bash）会把绝对路径里的盘符冒号（C:）当成远程主机名，
-// 反斜杠路径也会被 MSYS 参数转换破坏。tar 参数统一转正斜杠，归档路径优先改用
-// 相对 cwd 的形式避开盘符冒号；对 bsdtar 与 Linux/macOS CI 无影响。
+// Bug fix: Windows GNU tar (Git Bash) treats the drive-letter colon (C:) in absolute paths as a remote host,
+// and MSYS argument conversion can corrupt backslash paths. Convert tar arguments to forward slashes and prefer
+// archive paths relative to cwd to avoid the drive-letter colon; this does not affect bsdtar or Linux/macOS CI.
 function toTarPosixPath(pathValue) {
   return pathValue.replaceAll("\\", "/");
 }
@@ -28,7 +28,7 @@ function resolveTarArchiveArg(archivePath, cwd) {
         return toTarPosixPath(relativeArchivePath);
       }
     } catch {
-      // 跨盘符时 relative 会抛错，退回正斜杠绝对路径（bsdtar 可用）。
+      // relative() throws across drives; fall back to a forward-slash absolute path (supported by bsdtar).
     }
   }
 
@@ -121,16 +121,16 @@ export async function extractPrebuiltBinary({
       throw new Error(`Failed to locate ${binaryName} in extracted archive`);
     }
 
-    // foreign target 不能靠执行目标文件验真，必须在覆盖正式路径前校验临时产物。
+    // A foreign target cannot be validated by executing the target file; validate the temporary artifact before replacing the final path.
     await validateBinary?.(extractedBinaryPath);
     copyFileSync(extractedBinaryPath, binaryPath);
     if (targetPlatform !== "win32") {
       chmodSync(binaryPath, 0o755);
     }
   } finally {
-    // Bugfix: Windows 下解压产物可能被杀毒/索引器或尚未退出的解压子进程短暂持有句柄，
-    // rmSync 立即删除会 EPERM，且 finally 里抛出的异常会掩盖真正的解压错误。
-    // 带重试删除，失败时仅告警，让原始错误正常抛出。
+    // Bug fix: on Windows, antivirus/indexing or a still-running extraction child process may briefly hold a handle to extracted files.
+    // An immediate rmSync can fail with EPERM, and an exception from finally would hide the original extraction error.
+    // Retry deletion and warn on failure so the original error can propagate.
     try {
       rmSync(tempDir, { force: true, recursive: true, maxRetries: 10, retryDelay: 500 });
     } catch (error) {

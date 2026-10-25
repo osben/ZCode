@@ -58,17 +58,17 @@ async function clickButton(text: string, root = "[data-settings-content-frame]")
 }
 
 async function more() {
-  await $('[data-settings-content-frame] button[aria-label="更多"]').click();
+  await $('[data-settings-content-frame] button[aria-label="More"]').click();
   await $('[role="menu"]').waitForDisplayed();
 }
 
-describe(`${CASE_MARKER}: 设置防护、连接编辑与机器标注`, () => {
+describe(`${CASE_MARKER}: settings guardrails, connection editing and device labels`, () => {
   after(async () => {
     await browser.electron.restoreAllMocks();
     await clearAppData();
   });
 
-  it("设置分区不显示正在编辑提示", async function () {
+  it("settings section does not show the editing hint", async function () {
     this.timeout(120_000);
     await prepareV4ConversationE2E({ skipProvider: true });
     const artifactDir = resolve(
@@ -103,7 +103,7 @@ describe(`${CASE_MARKER}: 设置防护、连接编辑与机器标注`, () => {
           await section(name);
           const frame = $("[data-settings-content-frame]");
           await frame.waitForDisplayed();
-          expect(await frame.getText()).not.toMatch(/正在编辑：|Editing:/u);
+          expect(await frame.getText()).not.toMatch(/Editing:/u);
           expect(await $("[data-settings-machine]").isExisting()).toBe(false);
           await browser.saveScreenshot(resolve(artifactDir, `${name}-${theme}-${width}.png`));
         }
@@ -111,7 +111,7 @@ describe(`${CASE_MARKER}: 设置防护、连接编辑与机器标注`, () => {
     }
   });
 
-  it("RDUX-05 真实 SSH 设置操作保持设备、连接与项目边界", async function () {
+  it("RDUX-05 real SSH settings actions keep device, connection and project boundaries", async function () {
     this.timeout(15 * 60_000);
     const config = readSSHRuntimeConfig(CASE_MARKER);
     const path = config.workspacePaths[0];
@@ -125,24 +125,27 @@ describe(`${CASE_MARKER}: 设置防护、连接编辑与机器标注`, () => {
     await waitForWorkspaceApp(path, 120_000);
     const tab = await waitForRemoteTab({ caseMarker: CASE_MARKER, expectedPath: path });
     await browser.execute(() => {
-      const actions = (window as Window & { __testActions?: { setLocale(locale: "zh-CN"): void } })
-        .__testActions;
+      const actions = (
+        window as Window & {
+          __testActions?: { setLocale(locale: "en-US" | "uk-UA" | "zh-CN"): void };
+        }
+      ).__testActions;
       if (!actions) throw new Error("Missing locale actions");
-      actions.setLocale("zh-CN");
+      actions.setLocale("en-US");
     });
     await section("remoteDevices");
     await $('[data-remote-connection-status="online"]').waitForDisplayed();
-    await clickButton("编辑");
+    await clickButton("Edit");
     await $("#edit-connection-name").setValue(connectionName);
     await $("#edit-device-name").setValue(deviceName);
-    expect(await $('[role="dialog"]').getText()).toContain("下次连接时生效");
-    await clickButton("保存更改", '[role="dialog"]');
+    expect(await $('[role="dialog"]').getText()).toContain("Takes effect next time you connect");
+    await clickButton("Save changes", '[role="dialog"]');
     await $('[role="dialog"]').waitForDisplayed({ reverse: true });
     await browser.waitUntil(
       async () => (await $("[data-settings-content-frame]").getText()).includes(deviceName),
       { timeout: 10_000 },
     );
-    await clickButton("编辑");
+    await clickButton("Edit");
     expect(await $("#edit-connection-name").getValue()).toBe(connectionName);
     expect(await $("#edit-device-name").getValue()).toBe(deviceName);
     expect(await $('[data-testid="ssh-auth-password"]').getAttribute("aria-pressed")).toBe("true");
@@ -188,7 +191,7 @@ describe(`${CASE_MARKER}: 设置防护、连接编辑与机器标注`, () => {
         window as Window & { __testActions?: { setLocale(value: "zh-CN"): void } }
       ).__testActions?.setLocale("zh-CN"),
     );
-    await clickButton("取消", '[role="dialog"]');
+    await clickButton("Cancel", '[role="dialog"]');
     await browser.electron.execute((electron) =>
       electron.BrowserWindow.getAllWindows()
         .find((candidate) => !candidate.isDestroyed())
@@ -197,18 +200,16 @@ describe(`${CASE_MARKER}: 设置防护、连接编辑与机器标注`, () => {
     for (const name of ["plugin", "mcp", "skill", "hooks", "subagents"]) {
       await section(name);
       expect(await $("[data-settings-machine]").isExisting()).toBe(false);
-      expect(await $("[data-settings-content-frame]").getText()).not.toMatch(
-        /正在编辑：|Editing:/u,
-      );
+      expect(await $("[data-settings-content-frame]").getText()).not.toMatch(/Editing:/u);
       const trigger = $('[data-plugin-scope-trigger="true"]');
-      expect(await trigger.getText()).toContain(name === "subagents" ? "本机" : deviceName);
+      expect(await trigger.getText()).toContain(name === "subagents" ? "This device" : deviceName);
     }
     await section("general");
     expect(await $("[data-settings-machine]").isExisting()).toBe(false);
-    expect(await $("[data-settings-content-frame]").getText()).not.toMatch(/正在编辑：|Editing:/u);
+    expect(await $("[data-settings-content-frame]").getText()).not.toMatch(/Editing:/u);
     await section("remoteDevices");
     await more();
-    await clickButton("在侧边栏中显示", '[role="menu"]');
+    await clickButton("Show in sidebar", '[role="menu"]');
     await browser.waitUntil(
       async () =>
         await browser.execute(
@@ -221,10 +222,10 @@ describe(`${CASE_MARKER}: 设置防护、连接编辑与机器标注`, () => {
     );
     await section("remoteDevices");
     await more();
-    await clickButton("移除设备", '[role="menu"]');
+    await clickButton("Remove device", '[role="menu"]');
     await $('[role="dialog"]').waitForDisplayed();
     expect(await $('[role="dialog"]').getText()).toContain(path);
-    expect(await browser.execute(() => document.activeElement?.textContent)).toContain("取消");
+    expect(await browser.execute(() => document.activeElement?.textContent)).toContain("Cancel");
     await browser.keys("Enter");
     await $('[role="dialog"]').waitForDisplayed({ reverse: true });
     expect(await $("[data-settings-content-frame]").getText()).toContain(deviceName);
@@ -233,15 +234,16 @@ describe(`${CASE_MARKER}: 设置防护、连接编辑与机器标注`, () => {
       await browser.execute(
         () =>
           [...document.querySelectorAll<HTMLButtonElement>("[data-source-server-card] button")]
-            .find((button) => button.textContent?.trim() === "断开")
+            .find((button) => button.textContent?.trim() === "Disconnect")
             ?.getAttribute("title") ?? null,
       ),
-    ).toContain("远端任务会继续运行");
-    await clickButton("断开");
+    ).toContain("Remote tasks will continue running");
+    await clickButton("Disconnect");
     await $('[data-remote-connection-status="offline"]').waitForDisplayed({ timeout: 20_000 });
     expect(await $('[role="dialog"]').isDisplayed()).toBe(false);
     await browser.waitUntil(
-      async () => (await $("[data-settings-content-frame]").getText()).includes("最近在线 刚刚"),
+      async () =>
+        (await $("[data-settings-content-frame]").getText()).includes("Last online just now"),
       { timeout: 10_000 },
     );
   });

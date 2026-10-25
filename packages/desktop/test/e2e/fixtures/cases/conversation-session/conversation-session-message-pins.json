@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-message-pins",
+  "spec": "./test/e2e/conversation-session/conversation-session-message-pins.test.ts",
+  "providerFixtures": [
+    "./test/e2e/fixtures/upstream/common.json",
+    "./test/e2e/fixtures/upstream/conversation-session/conversation-session-message-pins.json"
+  ],
+  "fileFixtures": [],
+  "requests": [
+    {
+      "id": "message-pins-title",
+      "description": "E2E_MESSAGE_PINS 首发的 case-local 标题生成响应。",
+      "kind": "common",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "E2E_MESSAGE_PINS 首发会触发默认 title sidecar；固定 case-local 标题响应，避免 default replay 回退 legacy provider-basic，并用该首发 marker 隔离跨 case 匹配。"
+    },
+    {
+      "id": "message-pins-main-turn",
+      "description": "消息固定 case 首轮：产出一条完整 assistant 回复作为 pin 目标行。",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "pin 目标必须是 state=complete 且落入 transcript 的 assistant 行；用可控快流确保完流稳定。"
+    }
+  ]
+}

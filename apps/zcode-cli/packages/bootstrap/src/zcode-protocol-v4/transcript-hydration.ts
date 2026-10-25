@@ -481,6 +481,15 @@ function epilogueStartOfMessage(message: MessageWithParts): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
+/**
+ * Display-only pin bookmark persisted on user/assistant message metadata; cold hydration replays it
+ * as a RowPinnedUpdated event after the row-creating event so live and cold projections agree.
+ */
+function pinnedAtOfMessage(message: MessageWithParts): number | undefined {
+  const value = message.info.metadata?.pinnedAt;
+  return typeof value === "number" ? value : undefined;
+}
+
 function contentBlocksToText(value: unknown): string | undefined {
   if (!Array.isArray(value)) return undefined;
   const chunks = value
@@ -515,6 +524,7 @@ function subagentInfoFromToolPart(
       stringField(metadata, "agentType") ??
       stringField(input, "agent") ??
       stringField(input, "agentType") ??
+      stringField(input, "subagent_type") ??
       "subagent",
     childSessionId:
       stringField(output, "childSessionId") ??
@@ -722,6 +732,9 @@ function synthesizeSubagentLifecycle(
   status: "completed" | "failed" | "cancelled",
   push: PushEvent,
   turnId: string,
+  // The persisted Agent tool part's times; without them the synthetic events sit 1 ms apart and a
+  // reloaded row shows "1s" instead of its real duration.
+  time?: { start?: number; end?: number },
 ): void {
   const agentId = info.agentId ?? `subagent-${turnId}`;
   push(
@@ -736,6 +749,7 @@ function synthesizeSubagentLifecycle(
       status: "running",
     },
     turnId,
+    time?.start,
   );
   push(
     SessionEventType.SubagentStopped,
@@ -750,6 +764,8 @@ function synthesizeSubagentLifecycle(
       status,
     },
     turnId,
+    // A part persisted mid-run has a start but no end; never stop before the row started.
+    time?.end ?? time?.start,
   );
 }
 
@@ -807,7 +823,13 @@ function synthesizeToolPart(
 
   const subagentInfo = subagentInfoFromToolPart(part);
   if (subagentInfo && started) {
-    synthesizeSubagentLifecycle(subagentInfo, subagentStatusFromToolPart(part), push, turnId);
+    synthesizeSubagentLifecycle(
+      subagentInfo,
+      subagentStatusFromToolPart(part),
+      push,
+      turnId,
+      "time" in part.state ? part.state.time : undefined,
+    );
   }
 
   if (part.state.status === "completed") {
@@ -1231,8 +1253,10 @@ function synthesizeAssistantParts(
           ? "success"
           : "error_during_execution"
       : message.info.role === "assistant" && message.info.time.completed === undefined
-        ? // Bug 根因：进程退出可能只持久化 step-start/partial，却没有 assistant error；
-          // 旧 cold hydration 默认 success，伪造正常 TurnComplete 并让异常 Worked 被收起。
+        ? // Bug root cause: a process exit may persist only step-start/partial without an
+          // assistant error;
+          // Old cold hydration defaulted to success, fabricating a normal TurnComplete and
+          // collapsing the abnormal Worked state.
           "cancelled"
         : "success";
   let toolCallCount = 0;
@@ -1291,6 +1315,14 @@ function synthesizeAssistantParts(
     push(
       SessionEventType.AssistantFeedbackUpdated,
       { entityId: String(message.info.id), feedback: assistantFeedback },
+      turnId,
+    );
+  }
+  const assistantPinnedAt = pinnedAtOfMessage(message);
+  if (assistantPinnedAt !== undefined) {
+    push(
+      SessionEventType.RowPinnedUpdated,
+      { entityId: String(message.info.id), pinnedAt: assistantPinnedAt },
       turnId,
     );
   }
@@ -1975,6 +2007,14 @@ export function synthesizeEventsFromMessages(
       turnId,
       turnStartedAtMs,
     );
+    const userPinnedAt = pinnedAtOfMessage(message);
+    if (userPinnedAt !== undefined) {
+      push(
+        SessionEventType.RowPinnedUpdated,
+        { entityId: String(message.info.id), pinnedAt: userPinnedAt },
+        turnId,
+      );
+    }
     index += 1;
 
     const collected = collectTurnOutput({

@@ -114,6 +114,51 @@ describe("task-facts contract", () => {
     );
     expect(vi.mocked(store.applyCliFacts).mock.calls[0]![0].meta).not.toHaveProperty("pinned");
   });
+  it("carries summary titleUpdatedAt into the CLI fact, and omits it when the summary has none", async () => {
+    const { port, store } = fixture();
+    const summary = {
+      sessionId: target.taskId,
+      workspaceId: "/repo",
+      title: "CLI",
+      titleSource: "custom" as const,
+      createdAt: 1,
+      lastActivityAt: 2,
+      phase: "completedSuccess" as const,
+      sessionEnded: true,
+      hasBackgroundWork: false,
+    };
+    await port.ingest(target, { ...summary, titleUpdatedAt: 555 });
+    await port.ingest(target, summary);
+
+    const calls = vi.mocked(store.applyCliFacts).mock.calls;
+    expect(calls[0]![0].meta).toMatchObject({ titleUpdatedAt: 555 });
+    expect(calls[1]![0].meta).not.toHaveProperty("titleUpdatedAt");
+  });
+
+  it("mirrors reconcile titleUpdatedAt into the CLI fact for refreshed rows", async () => {
+    const { port, store, source } = fixture();
+    vi.mocked(source.reconcile).mockResolvedValueOnce({
+      sessions: [
+        {
+          sessionId: target.taskId,
+          exists: true,
+          deleted: false,
+          title: "Renamed",
+          titleSource: "custom",
+          titleUpdatedAt: 900,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    });
+    await port.refresh(target);
+
+    expect(vi.mocked(store.applyCliFacts).mock.calls[0]![0].meta).toMatchObject({
+      title: "Renamed",
+      titleUpdatedAt: 900,
+    });
+  });
+
   it("does not manufacture a durable outcome when a live phase lacks lastOutcome", async () => {
     const { port, store } = fixture();
     await port.ingest(target, {

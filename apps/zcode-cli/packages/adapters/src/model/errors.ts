@@ -30,8 +30,10 @@ export type LocalProviderConfigurationErrorContext = Record<string, unknown> & {
 export function createLocalProviderConfigurationErrorContext(
   context: Pick<LocalProviderConfigurationErrorContext, "envKey" | "modelId" | "providerId">,
 ): LocalProviderConfigurationErrorContext {
-  // provider 缺失和鉴权配置错误发生在请求创建前，不会经过 runner 的错误归一化；
-  // 必须在 Model Execution 装配边界直接保留 runtime 归因，避免监控把本地配置问题记到上游 provider。
+  // Missing providers and authentication configuration errors occur before request creation and do
+  // not pass through runner error normalization. Preserve runtime attribution directly at the Model
+  // Execution assembly boundary so monitoring does not blame the upstream provider for local
+  // configuration problems.
   return {
     ...context,
     reason: ModelFailureReason.ProviderNotConfigured,

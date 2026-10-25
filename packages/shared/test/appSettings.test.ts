@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { appSettingsPatchSchema, appSettingsSchema } from "#src/validationAppSettings.js";
+import {
+  FORK_SETTING_KEYS,
+  forkAppSettingsPatchSchema,
+  forkAppSettingsSchema,
+  splitForkSettingsPatch,
+} from "../src/forkAppSettings.js";
+import { appSettingsPatchSchema, appSettingsSchema } from "../src/validationAppSettings.js";
 
 describe("app settings", () => {
   it("自动归档默认关闭并保留 30 天，已有天数不覆盖", () => {
@@ -226,8 +232,8 @@ describe("app settings", () => {
   });
 
   it("drops the removed CUA overlay/pip/background settings keys from stored configs", () => {
-    // 2026-08-17 设置面收敛：三个 key 已从 schema 删除；存量配置里的旧值被 zod strip 静默忽略，
-    // 不报错也不回流（overlay/PiP 由 services 装配层恒传 true，见 cuaGhostCursorSettingsWiring）。
+    // 2026-08-17 settings surface cleanup: the three keys were removed from the schema; old values in stored configs are
+    // silently stripped by zod — no error, no round-trip (overlay/PiP is always true via the services assembly layer, see cuaGhostCursorSettingsWiring).
     const stale = appSettingsSchema.parse({
       cuaGhostCursorEnabled: false,
       cuaPipMode: false,
@@ -335,6 +341,157 @@ describe("app settings", () => {
     ).toThrow();
   });
 
+  it("discards a damaged voiceDictation value without resetting other settings", () => {
+    // Non-critical preference: a damaged value or one written by a newer version should only discard itself, never fail parsing the whole settings.json.
+    // voiceDictation is fork-owned storage (forkAppSettings), so the main setting.json schema strips it.
+    const settings = appSettingsSchema.parse({
+      locale: "en-US",
+      recentProjects: ["/workspace/demo"],
+      voiceDictation: { modelId: 42, idleUnloadMinutes: 60 },
+    });
+
+    expect(settings.locale).toBe("en-US");
+    expect(settings.recentProjects).toEqual(["/workspace/demo"]);
+    expect(settings.voiceDictation).toBeUndefined();
+
+    // The sidecar read surface stays tolerant, and the patch surface stays strict: invalid values
+    // must be rejected at save time instead of being silently swallowed.
+    expect(
+      forkAppSettingsSchema.parse({
+        voiceDictation: { modelId: 42, idleUnloadMinutes: 60 },
+      }).voiceDictation,
+    ).toBeUndefined();
+    expect(
+      forkAppSettingsPatchSchema.safeParse({ voiceDictation: { pushToTalk: "yes" } }).success,
+    ).toBe(false);
+    expect(
+      forkAppSettingsPatchSchema.parse({ voiceDictation: { modelId: "parakeet" } }).voiceDictation,
+    ).toEqual({ modelId: "parakeet" });
+  });
+
+  it("accepts the feedback sound preferences and rejects out-of-range volume", () => {
+    const fork = forkAppSettingsSchema.parse({
+      voiceDictation: {
+        modelId: "parakeet",
+        feedbackSounds: true,
+        feedbackVolume: 54,
+        muteWhileRecording: true,
+      },
+    });
+    expect(fork.voiceDictation).toEqual({
+      modelId: "parakeet",
+      feedbackSounds: true,
+      feedbackVolume: 54,
+      muteWhileRecording: true,
+    });
+
+    // Absent fields keep the effective defaults handled by the consumers (off / 70).
+    expect(forkAppSettingsSchema.parse({}).voiceDictation).toBeUndefined();
+
+    expect(
+      forkAppSettingsPatchSchema.safeParse({ voiceDictation: { feedbackVolume: 101 } }).success,
+    ).toBe(false);
+    expect(
+      forkAppSettingsPatchSchema.safeParse({ voiceDictation: { feedbackVolume: -1 } }).success,
+    ).toBe(false);
+    expect(
+      forkAppSettingsPatchSchema.safeParse({ voiceDictation: { feedbackVolume: 70.5 } }).success,
+    ).toBe(false);
+  });
+
+  it("stores dictation languages and the clipboard preference, dropping only a malformed languages value on read", () => {
+    expect(
+      forkAppSettingsSchema.parse({
+        voiceDictation: {
+          modelId: "parakeet",
+          languages: ["uk", "en"],
+          copyToClipboard: true,
+          warmUpOnFocus: false,
+        },
+      }).voiceDictation,
+    ).toEqual({
+      modelId: "parakeet",
+      languages: ["uk", "en"],
+      copyToClipboard: true,
+      warmUpOnFocus: false,
+    });
+
+    // One bad languages value must not wipe the other voice preferences.
+    expect(
+      forkAppSettingsSchema.parse({
+        voiceDictation: { modelId: "parakeet", languages: "uk", pushToTalk: false },
+      }).voiceDictation,
+    ).toEqual({ modelId: "parakeet", pushToTalk: false });
+
+    // Saving stays strict so a bad value is rejected instead of silently dropped.
+    expect(
+      forkAppSettingsPatchSchema.safeParse({ voiceDictation: { languages: ["uk", ""] } }).success,
+    ).toBe(false);
+    expect(
+      forkAppSettingsPatchSchema.safeParse({ voiceDictation: { copyToClipboard: "yes" } }).success,
+    ).toBe(false);
+  });
+
+  it("stores post-processing preferences and drops only an unknown provider on read", () => {
+    expect(
+      forkAppSettingsSchema.parse({
+        voiceDictation: {
+          modelId: "parakeet",
+          postProcessEnabled: true,
+          postProcessProvider: "apple-fm",
+          postProcessPrompt: "Fix: {{text}}",
+        },
+      }).voiceDictation,
+    ).toEqual({
+      modelId: "parakeet",
+      postProcessEnabled: true,
+      postProcessProvider: "apple-fm",
+      postProcessPrompt: "Fix: {{text}}",
+    });
+
+    // A provider written by a newer build must not wipe the other voice preferences.
+    expect(
+      forkAppSettingsSchema.parse({
+        voiceDictation: { modelId: "parakeet", postProcessProvider: "some-future-provider" },
+      }).voiceDictation,
+    ).toEqual({ modelId: "parakeet" });
+
+    // An over-long prompt (hand edit or a newer build with a higher limit) drops only itself.
+    expect(
+      forkAppSettingsSchema.parse({
+        voiceDictation: { modelId: "parakeet", postProcessPrompt: "x".repeat(4001) },
+      }).voiceDictation,
+    ).toEqual({ modelId: "parakeet" });
+
+    expect(
+      forkAppSettingsPatchSchema.safeParse({ voiceDictation: { postProcessProvider: "other" } })
+        .success,
+    ).toBe(false);
+    expect(
+      forkAppSettingsPatchSchema.safeParse({
+        voiceDictation: { postProcessPrompt: "x".repeat(4001) },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps every registered fork-owned key out of the upstream-shared setting.json schema", () => {
+    // The upstream app shares setting.json with this fork and strips unknown keys on every write,
+    // so a fork-only key placed in appSettingsObjectSchema instead of FORK_SETTING_KEYS would be
+    // wiped by the next upstream write (this already deleted the selected dictation model once).
+    const probe = Object.fromEntries(FORK_SETTING_KEYS.map((key) => [key, null]));
+    const parsed = appSettingsSchema.parse(probe);
+    for (const key of FORK_SETTING_KEYS) {
+      expect(parsed).not.toHaveProperty(key);
+    }
+
+    // The patch splitter routes every registry key away from the base (setting.json) patch.
+    const { forkPatch, basePatch } = splitForkSettingsPatch(
+      Object.fromEntries(FORK_SETTING_KEYS.map((key) => [key, true])) as never,
+    );
+    expect(Object.keys(forkPatch).sort()).toEqual([...FORK_SETTING_KEYS].sort());
+    expect(Object.keys(basePatch)).toEqual([]);
+  });
+
   it("preserves localized pending post-update release notes", () => {
     const payload = {
       version: "3.1.4",
@@ -390,8 +547,8 @@ describe("app settings", () => {
   });
 });
 
-// DWG-19（docs/dynamic-workflow/launch.md「The user's choice」）：空串是删除选择的哨兵，
-// 读文件时的未知取值按「跟随」处理，不能把整份设置读坏。
+// DWG-19 (docs/dynamic-workflow/launch.md "The user's choice"): the empty string is the sentinel for deleting a choice;
+// an unknown value read from the file is treated as "follow" and must not corrupt reading the whole settings.
 describe("dynamicWorkflowMode 设置（DWG-19）", () => {
   it("补丁接受三个模式与空串哨兵，拒绝其它值", () => {
     for (const value of ["disabled", "onDemand", "alwaysOn", ""]) {

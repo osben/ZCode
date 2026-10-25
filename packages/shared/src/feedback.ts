@@ -1,3 +1,5 @@
+import type { ServiceLocale } from "./locale.js";
+
 export type FeedbackTicketType = "bug" | "usage" | "feature" | "performance";
 
 export type FeedbackTicketStatus =
@@ -30,8 +32,8 @@ export type FeedbackTicketModule =
 export type FeedbackTicketFramework = "zcode-agent";
 
 /**
- * UI 层 Select 不允许空字符串作为可选项 value（Radix 会抛错），
- * 这里给『未指定』提供一个 sentinel；提交工单前会被转换成 undefined。
+ * The UI Select does not allow an empty string as an option value (Radix throws an error),
+ * so use a sentinel for "unspecified" here; it is converted to undefined before submitting the ticket.
  */
 export const FEEDBACK_FRAMEWORK_NONE = "none" as const;
 export type FeedbackTicketFrameworkSelectValue =
@@ -57,17 +59,17 @@ export interface FeedbackDeviceInfo {
   osRelease?: string;
   osVersion?: string;
   osArch?: string;
-  /** 提交反馈时的当前 Agent。单 ZCode Agent 模式下固定为 ZCode Agent。 */
+  /** Current Agent when submitting feedback. Fixed to ZCode Agent in single-agent mode. */
   agentProvider?: string;
-  /** 提交反馈时归一到反馈平台的框架标识，当前固定为 zcode-agent。 */
+  /** Framework identifier normalized for the feedback platform; currently fixed to zcode-agent. */
   agentFramework?: FeedbackTicketFramework;
-  /** 提交反馈时当前模型配置里的原始选中值。 */
+  /** Raw selected value from the current model configuration when submitting feedback. */
   agentModel?: string;
-  /** 提交反馈时从模型列表匹配到的展示名；没有时回退到 agentModel。 */
+  /** Display name matched from the model list when submitting feedback; falls back to agentModel when unavailable. */
   agentModelDisplay?: string;
-  /** 提交反馈时当前模型列表的可选项数量。 */
+  /** Number of available options in the current model list when submitting feedback. */
   agentModelOptionCount?: number;
-  /** 提交反馈时当前模型列表的展示名预览，用于排查配置上下文。 */
+  /** Preview of display names in the current model list when submitting feedback, for troubleshooting configuration context. */
   agentModelOptionsPreview?: string[];
   hostname?: string;
   deviceMid?: string;
@@ -83,10 +85,10 @@ export interface CreateFeedbackTicketInput {
   source?: string;
   reporter?: FeedbackReporter;
   device?: FeedbackDeviceInfo;
-  /** 用户选填的联系方式（邮箱或其他社交账号），后端不强制要求。 */
+  /** Optional contact information from the user (email or another social account); not required by the backend. */
   contact?: string;
-  /** 当前界面语言，仅用于请求头透传，不写入后端工单正文。 */
-  locale?: "zh-CN" | "en-US";
+  /** Current UI language; forwarded only in the request header and not written into the ticket body on the backend. */
+  locale?: ServiceLocale;
 }
 
 export interface FeedbackTicketSummary {
@@ -97,13 +99,13 @@ export interface FeedbackTicketSummary {
   module?: FeedbackTicketModule;
   status: FeedbackTicketStatus;
   assignee_id?: string | null;
-  /** 当前处理人的展示名（由后端填充）；未指派为 null */
+  /** Display name of the current assignee (filled by the backend); null when unassigned. */
   assignee_display?: string | null;
-  /** 后端返回的报告人展示名 */
+  /** Reporter display name returned by the backend. */
   reporter_display?: string | null;
-  /** 自上次查看以来是否有新动作 */
+  /** Whether there has been a new action since the last view. */
   unread?: boolean;
-  /** 最近一次用户动作时间 */
+  /** Time of the most recent user action. */
   last_user_activity_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -149,7 +151,7 @@ export interface FeedbackCommentAttachment {
 
 export interface FeedbackComment {
   id: number;
-  /** 后端 message_id，用于补充消息创建后继续把附件绑定到该 message。 */
+  /** Backend message_id, used to keep attaching files to the message after the follow-up message is created. */
   message_id?: string;
   author_user_id?: string | null;
   author_display_name?: string | null;
@@ -214,7 +216,7 @@ export const FEEDBACK_TICKET_FRAMEWORK_OPTIONS: {
   label: string;
 }[] = [{ value: "zcode-agent", label: "ZCode Agent" }];
 
-/** 含「未指定」的完整列表，供管理端等场景使用。 */
+/** Full list including "unspecified," for admin and similar use cases. */
 export const FEEDBACK_TICKET_FRAMEWORKS: {
   value: FeedbackTicketFrameworkSelectValue;
   label: string;

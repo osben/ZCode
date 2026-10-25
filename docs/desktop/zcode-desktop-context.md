@@ -1,26 +1,25 @@
 # ZCode Desktop Context
 
-## 状态
+## Status
 
-- 本文是 ZCode Desktop 输出呈现约束进入 Agent system prompt 的当前功能规范。
-- Desktop context 继续负责要求 Agent 输出 `::code-comment{...}`；Renderer 的解析、卡片和 Review 跳转由
-  [Assistant Code Comment Cards](../ui/assistant-code-comment-cards.md) 独立规范，并受默认关闭的灰度能力控制。
-- Identity 中关于 terminal 展示的既有文案本阶段保持不变。
+- This is the current feature spec for injecting ZCode Desktop output-presentation constraints into the Agent system prompt.
+- Desktop context keeps asking the Agent to emit `::code-comment{...}`. Renderer parsing, cards and Review navigation are specified separately in [Assistant Code Comment Cards](../ui/assistant-code-comment-cards.md) and are controlled by a default-off gray-release capability.
+- The existing Identity wording about terminal display is unchanged.
 
-## 功能摘要
+## Feature Summary
 
-| 字段     | 结论                                                                                    |
-| -------- | --------------------------------------------------------------------------------------- |
-| 改动层级 | presentation、runtime config                                                            |
-| 用户入口 | ZCode Desktop 本地 workspace、Desktop-attached SSH/WSL/Docker workspace                 |
-| 评估入口 | `zcode --surface desktop --prompt <text>`                                               |
-| 权威状态 | Services 根据可信宿主事实推导、并在 Agent 启动时冻结的 `presentationSurface`            |
-| 默认值   | `terminal`                                                                              |
-| 不涉及   | UI directive 解析、协议 schema、telemetry、provider `sourceTitle`、V4 delivery/recovery |
+| Field               | Conclusion                                                                                     |
+| ------------------- | ---------------------------------------------------------------------------------------------- |
+| Change layer        | presentation, runtime config                                                                   |
+| User entry          | ZCode Desktop local workspace, Desktop-attached SSH/WSL/Docker workspace                       |
+| Evaluation entry    | `zcode --surface desktop --prompt <text>`                                                      |
+| Authoritative state | `presentationSurface`, derived by Services from trusted host facts and frozen at Agent start   |
+| Default             | `terminal`                                                                                     |
+| Not involved        | UI directive parsing, protocol schema, telemetry, provider `sourceTitle`, V4 delivery/recovery |
 
-## Context Section 契约
+## Context Section Contract
 
-Desktop surface 使用独立的 `buildDesktopContextSection()`，并遵守以下元数据：
+The Desktop surface uses a dedicated `buildDesktopContextSection()` with this metadata:
 
 ```text
 name: ZCode Desktop Context
@@ -29,7 +28,7 @@ injectionTarget: system
 cacheHint: stable
 ```
 
-正文固定为：
+The body is fixed:
 
 ```text
 # ZCode Desktop Context
@@ -49,42 +48,39 @@ cacheHint: stable
 - Example: ::code-comment{title="[P2] Off-by-one" body="Loop iterates past the end when length is 0." file="/path/to/foo.ts" start=10 end=11 priority=2}
 ```
 
-默认 system section 顺序为：
+Default system section order:
 
 ```text
 CLI Prefix
 Agent Identity
-ZCode Desktop Context       <- stable，仅 zcode_desktop
+ZCode Desktop Context       <- stable, zcode_desktop only
 Dynamic Behavior            <- dynamic
 Session Guidance
 Environment
 ...
 ```
 
-`ZCode Desktop Context` 与 Identity 进入同一个稳定 system message，不新增 system message 数量。
-`customSystemPrompt` 会替换默认 system prompt 体系，因此不注入 Desktop context。Subagent 使用独立
-context builder，也不注入 Desktop context。
+`ZCode Desktop Context` goes into the same stable system message as Identity; the number of system messages does not change. `customSystemPrompt` replaces the default system prompt set, so Desktop context is not injected. Subagents use a separate context builder and also do not get Desktop context.
 
-## Surface 与启动链路
+## Surface and Launch Chain
 
-内部类型：
+Internal type:
 
 ```ts
 type PresentationSurface = "terminal" | "zcode_desktop";
 ```
 
-真实 Desktop 不要求调用方显式拼接 CLI 参数。Services 使用已有宿主事实推导呈现面，再由
-`ZCodeAgentProcessManager` 统一追加 CLI 参数；CLI 评估仍使用公开参数入口：
+Real Desktop does not require callers to assemble CLI arguments. Services derive the presentation surface from existing host facts, and `ZCodeAgentProcessManager` appends the CLI arguments in one place. CLI evaluation uses the public argument entry:
 
 ```text
 Desktop Local Host
   └─ agentTelemetry.runtimeSurface=desktop_local_host ─────┐
-                                                           ├─> Services 内部推导 desktop
+                                                           ├─> Services derive desktop internally
 Desktop-attached Remote Host                               │            |
   └─ serviceAuthorityMode=desktop-attached-remote ─────────┘            v
                                                     app-server --stdio --surface desktop
                                                                        |
-zcode --surface desktop --prompt ... -> CLI 参数解析 ──────────────────+
+zcode --surface desktop --prompt ... -> CLI argument parsing ──────────+
                                                                        |
                                                                        v
                                                     presentationSurface=zcode_desktop
@@ -93,7 +89,7 @@ zcode --surface desktop --prompt ... -> CLI 参数解析 ───────�
                                               AgentRuntimeConfig -> ContextBuilderConfig
 ```
 
-远程 Desktop Host 的集成证据必须贯穿以下装配链，不能只分别断言 authority parser 或 surface helper：
+Integration evidence for the remote Desktop Host must cover this whole assembly chain, not only the authority parser or the surface helper separately:
 
 ```text
 remote connect command
@@ -105,36 +101,25 @@ remote connect command
   -> protocol runtime presentationSurface=zcode_desktop
 ```
 
-普通 `zcode --prompt`、TUI、HTTP server 或人工执行 `zcode app-server --stdio` 默认保持 `terminal`。
-`--surface` 只允许用于 `--prompt`、`--target`、`app-server` 和 `agent-server`；支持值为
-`terminal`、`desktop`。
+Plain `zcode --prompt`, TUI, HTTP server, or a manual `zcode app-server --stdio` stay `terminal` by default. `--surface` is allowed only with `--prompt`, `--target`, `app-server` and `agent-server`; supported values are `terminal` and `desktop`.
 
-`--surface desktop` 只模拟输出呈现能力，不修改：
+`--surface desktop` only simulates the output presentation capability. It does not change:
 
-- provider `sourceTitle`；headless CLI 仍是 `cli`，Protocol/Desktop 仍是 `electron`。
-- telemetry `runtimeSurface`。
-- Desktop `desktop-continuous` 与手机 `web-remote-replayable` 的 delivery/recovery 语义。
+- provider `sourceTitle`: headless CLI stays `cli`, Protocol/Desktop stays `electron`.
+- telemetry `runtimeSurface`.
+- the delivery/recovery semantics of Desktop `desktop-continuous` and mobile `web-remote-replayable`.
 
-## 多端与远程边界
+## Multi-surface and Remote Boundaries
 
-Desktop 本地 workspace 通过既有 `agentTelemetry.runtimeSurface=desktop_local_host` 识别，
-Desktop-attached SSH/WSL/Docker workspace 通过既有
-`serviceAuthorityMode=desktop-attached-remote` 识别；两者都使用 `zcode_desktop`。调用方不再传递独立的
-surface 配置，避免展示策略扩散到 Desktop Host 和 remote server 装配层。
+A Desktop local workspace is identified by the existing `agentTelemetry.runtimeSurface=desktop_local_host`; a Desktop-attached SSH/WSL/Docker workspace by the existing `serviceAuthorityMode=desktop-attached-remote`. Both use `zcode_desktop`. Callers do not pass a separate surface config, so the presentation policy does not spread into the Desktop Host and remote server assembly layers.
 
-手机 `/remote` 不会另起 Agent，而是 attach 到桌面窗口已有的 Host/CLI；它会看到同一 Agent 生成的文本，
-但仍使用 `web-remote-replayable`。Desktop Root 与手机 external relay、token/WebSocket 两条 workspace
-bridge Root 都显式开启灰度能力，Renderer 从同一原始 row text 确定性投影正文和 code-comment 卡片；
-普通 Web Server 入口保持默认关闭并继续显示原始 directive。该 UI 投影不改变 continuous/replayable
-交付边界，也不向 session snapshot 增加字段。
+Mobile `/remote` does not start its own Agent; it attaches to the Host/CLI already in the desktop window. It sees text produced by the same Agent but still uses `web-remote-replayable`. The Desktop Root and both mobile workspace bridge Roots (external relay, token/WebSocket) explicitly enable the gray-release capability, and the Renderer deterministically projects the body and code-comment cards from the same raw row text. The plain Web Server entry stays default-off and keeps showing the raw directive. This UI projection does not change the continuous/replayable delivery boundary and adds no field to the session snapshot.
 
-该配置不进入 ZCode Protocol request，也不参与 workspace identity。远程 workspace 仍使用
-`workspaceIdentity?.trim() || workspacePath` 做隔离，`workspacePath` 只用于 Agent cwd。
+The config does not enter ZCode Protocol requests and does not take part in workspace identity. Remote workspaces still isolate by `workspaceIdentity?.trim() || workspacePath`; `workspacePath` is only the Agent cwd.
 
-## Desktop SP 服务端灰度
+## Desktop SP Server-side Gray Release
 
-Desktop Main 在启动时旁路请求 `/api/v1/client/configs`，后续 Host 创建时按 1 小时 TTL 触发过期刷新，
-读取以下配置：
+Desktop Main requests `/api/v1/client/configs` on the side at startup, and later Host creation triggers an expired refresh on a 1-hour TTL. It reads:
 
 ```json
 {
@@ -149,56 +134,49 @@ Desktop Main 在启动时旁路请求 `/api/v1/client/configs`，后续 Host 创
 }
 ```
 
-只有 `code` 缺省或为 `0` 的成功响应才进入配置裁决：下发配置时要求 `enabled` 为 boolean；未下发
-`desktopContextPrompt` 时按 `{enabled:false}` 处理并覆盖旧的开启快照。Main 将本次裁决快照通过
-`ZCODE_DESKTOP_CONTEXT_PROMPT_ENABLED=1|0` 传给 Local Host，并沿现有 Remote runtime env 白名单
-传给 Desktop-attached 的远端 Host；Host 不请求服务端、不重新分桶。未提供该环境变量时，保留历史
-Host 装配语义，便于 CLI、普通 HTTP server 和已有测试继续运行。
+Only a successful response with `code` omitted or `0` is adjudicated: when the config is delivered, `enabled` must be a boolean; when `desktopContextPrompt` is not delivered it is treated as `{enabled:false}` and overrides an older enabled snapshot. Main passes the resulting snapshot to the Local Host through `ZCODE_DESKTOP_CONTEXT_PROMPT_ENABLED=1|0`, and along the existing Remote runtime env allowlist to Desktop-attached remote Hosts. Hosts do not call the server and do not re-bucket. When the variable is not provided, the historical Host assembly semantics are kept so CLI, plain HTTP server and existing tests keep running.
 
-成功结果在 Desktop Main 进程内缓存 1 小时，并合并同一时刻的 in-flight 请求。单次请求最多等待 3 秒：
+A successful result is cached in the Desktop Main process for 1 hour and concurrent in-flight requests are merged. A single request waits at most 3 seconds:
 
 ```text
 Main ready
    |
-   +-- request config (旁路，不阻塞首个 Host)
+   +-- request config (on the side, does not block the first Host)
    |       |
    |       +-- success + valid --> cache {enabled, config_version}
    |       |
    |       +-- error/invalid/timeout (>3s)
    |                    |
-   |                    +-- 有历史成功 --> 复用上一份快照
-   |                    +-- 无历史成功 --> {enabled:false}
+   |                    +-- earlier success exists --> reuse the previous snapshot
+   |                    +-- none                   --> {enabled:false}
    |
-   +-- Host spawn --> 读取当时快照 --> 注入/不注入 Desktop Context
+   +-- Host spawn --> read the current snapshot --> inject / do not inject Desktop Context
 ```
 
-网络失败、响应异常或超时都不会阻塞客户端启动。成功快照仅在当前 Desktop Main 生命周期内复用；
-新启动的 Host 读取最新快照，已经启动的 Agent 不在运行中动态切换呈现面。
+Network failure, a malformed response or a timeout never blocks client startup. A successful snapshot is reused only within the current Desktop Main lifetime; a newly started Host reads the latest snapshot, and an already-running Agent does not switch presentation surface at runtime.
 
-## 验收用例
+## Acceptance Cases
 
-| Case    | Setup                                                  | Action                             | Assertions                                               |
-| ------- | ------------------------------------------------------ | ---------------------------------- | -------------------------------------------------------- |
-| DCTX-01 | 默认/terminal ContextBuilder                           | 构建 context                       | 不包含 `desktop_context`                                 |
-| DCTX-02 | `zcode_desktop` ContextBuilder                         | 构建 context                       | section 恰好一次，元数据准确，位于 `dynamic_behavior` 前 |
-| DCTX-03 | `zcode_desktop` + custom system prompt                 | 构建 context                       | 不包含 `desktop_context`                                 |
-| DCTX-04 | subagent runtime                                       | 构建 context                       | 不包含 `desktop_context`                                 |
-| DCTX-05 | `--surface desktop --prompt`                           | 创建 App                           | runtime config 为 `zcode_desktop`，`sourceTitle` 不变    |
-| DCTX-06 | `app-server --stdio --surface desktop`                 | 启动 protocol runner               | 每个 session App 注入 `zcode_desktop`                    |
-| DCTX-07 | local Desktop runtime fact / attached remote authority | 创建 Services 并解析 Agent command | 参数包含 `--surface desktop`                             |
-| DCTX-08 | 普通 HTTP server/manual stdio，无 Desktop 宿主事实     | 创建 Services 并解析 Agent command | 不自动添加 Desktop surface                               |
-| DCTX-09 | 非法值/不支持命令                                      | CLI 参数校验                       | 返回清晰错误，不启动 App                                 |
-| DCTX-10 | `entry-stdio` 收到 `desktop-attached-remote`           | 经真实 Services 装配解析 Agent 命令 | authority、resolver surface、命令参数均保持 Desktop      |
+| Case    | Setup                                                  | Action                                               | Assertions                                                                |
+| ------- | ------------------------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------- |
+| DCTX-01 | default/terminal ContextBuilder                        | build context                                        | no `desktop_context`                                                      |
+| DCTX-02 | `zcode_desktop` ContextBuilder                         | build context                                        | section appears exactly once, metadata correct, before `dynamic_behavior` |
+| DCTX-03 | `zcode_desktop` + custom system prompt                 | build context                                        | no `desktop_context`                                                      |
+| DCTX-04 | subagent runtime                                       | build context                                        | no `desktop_context`                                                      |
+| DCTX-05 | `--surface desktop --prompt`                           | create App                                           | runtime config is `zcode_desktop`, `sourceTitle` unchanged                |
+| DCTX-06 | `app-server --stdio --surface desktop`                 | start protocol runner                                | every session App gets `zcode_desktop`                                    |
+| DCTX-07 | local Desktop runtime fact / attached remote authority | create Services and resolve Agent command            | arguments contain `--surface desktop`                                     |
+| DCTX-08 | plain HTTP server / manual stdio, no Desktop host fact | create Services and resolve Agent command            | Desktop surface is not added automatically                                |
+| DCTX-09 | invalid value / unsupported command                    | CLI argument validation                              | clear error, App not started                                              |
+| DCTX-10 | `entry-stdio` receives `desktop-attached-remote`       | resolve Agent command through real Services assembly | authority, resolver surface and command arguments all stay Desktop        |
 
-## 影响简报
+## Impact Brief
 
-| Rank           | 关系                                           | 结论                                      |
-| -------------- | ---------------------------------------------- | ----------------------------------------- |
-| must-inspect   | CLI parser -> Runtime config -> ContextBuilder | Desktop section 的唯一注入主链            |
-| must-inspect   | Host facts -> Services -> Agent process args   | 复用可信宿主事实推导 Desktop surface      |
-| conditional    | 手机 remote -> shared Host/CLI                 | 继承同一 prompt，但不改变 replayable 交付 |
-| invariant-only | `sourceTitle` / telemetry                      | 不随 CLI 评估参数改变                     |
-| invariant-only | custom prompt / subagent                       | 不注入 Desktop 默认 section               |
-| evidence-only  | Core/CLI/Bootstrap/Services/Server 集成测试    | 覆盖本地与远程宿主装配，不增加 UI E2E     |
-
-当前 codegraph 工具在环境中不可用，影响范围依据功能图、当前事实文档、源码直接调用方和既有测试核对。
+| Rank           | Relation                                             | Conclusion                                              |
+| -------------- | ---------------------------------------------------- | ------------------------------------------------------- |
+| must-inspect   | CLI parser -> Runtime config -> ContextBuilder       | the single injection chain for the Desktop section      |
+| must-inspect   | Host facts -> Services -> Agent process args         | reuses trusted host facts to derive the Desktop surface |
+| conditional    | mobile remote -> shared Host/CLI                     | inherits the same prompt, replayable delivery unchanged |
+| invariant-only | `sourceTitle` / telemetry                            | does not change with CLI evaluation arguments           |
+| invariant-only | custom prompt / subagent                             | the default Desktop section is not injected             |
+| evidence-only  | Core/CLI/Bootstrap/Services/Server integration tests | cover local and remote host assembly, no UI E2E         |

@@ -1,41 +1,47 @@
 /**
- * workflow run 的**用户面产物**在模型面的一行投影，被三处共用：
- * 完成通知的 `<artifacts>` 节（background-tasks.ts）、manifest 载荷的 `artifacts[]`（同上）、
- * 以及 `GetWorkflowRun` 模型文本的 `<artifacts>` 截面（handlers/get-workflow-run.ts）。
+ * One-line model-side projection of a workflow run's **user-facing artifacts**, shared
+ * in three places: the `<artifacts>` section in completion notifications
+ * (background-tasks.ts), the manifest payload's `artifacts[]` (same module), and the
+ * `<artifacts>` section in GetWorkflowRun model text (handlers/get-workflow-run.ts).
  *
- * ⚠ 术语：本文件里的 artifact 是**脚本经 `artifact.*` 发布
- * 给用户看的产出**——一个文件、一段 markdown、或一张由标签 `report` 喂养的图 / 表 / 指标 /
- * 看板。它与隔壁 `workflow-artifact.ts` 的 `serializeWorkflowArtifact` 是**两件不同的东西**：
- * 那个 artifact 是脚本的顶层返回值（引擎内部的 `RunSettlement.artifact`），给模型看的。
- * 两者在完成通知里同时出现（`<result>` 与 `<artifacts>`），所以文件也刻意分开。
+ * ⚠ Terminology: an artifact in this file is an **output published by the script through
+ * `artifact.*` for users**—a file, markdown text, or a chart / table / metric / dashboard
+ * populated by `report` tags. This is **different from** `serializeWorkflowArtifact` in
+ * the neighboring workflow-artifact.ts: that artifact is the script's top-level return
+ * value (`RunSettlement.artifact` internally), intended for the model. Both appear in
+ * completion notifications (`<result>` and `<artifacts>`), so they deliberately live in
+ * separate files.
  *
- * 为什么一行的格式只写一遍：三处的读者是同一个模型，格式分叉会让它以为通知里的产物和
- * `GetWorkflowRun` 里的产物是两套东西。
+ * Keep the one-line format in one place: all three consumers are the same model, and
+ * divergent formats could make it think notification artifacts and GetWorkflowRun
+ * artifacts are different things.
  */
 
-/** 一件产物在模型面需要的全部事实。三处的输入形状不同，取交集后收成这一个结构。 */
+/** All model-side facts for one artifact. The three input shapes differ; their intersection is represented by this structure. */
 interface PublishedArtifactSummary {
   id: string;
   kind: string;
   version: number;
   title?: string;
   contentType?: string;
-  /** 内容产物（file / markdown）最新版的字节数。预置看板没有字节。 */
+  /** Byte size of the latest version of a content artifact (file / markdown); built-in dashboards have no bytes. */
   bytes?: number;
-  /** 预置看板收到的标签 `report` 条数（数据量）。内容产物恒 0。 */
+  /** Number of `report` tags received by a built-in dashboard (its data volume); always 0 for content artifacts. */
   itemCount?: number;
-  /** run 的交付物：清单以它带头，行上标 `primary`。 */
+  /** The run's deliverable: it leads the list and its row is marked `primary`. */
   primary?: true;
-  /** 只有交付物的这一句进 manifest：完成卡把它画成带文字的一行。 */
+  /** This sentence enters the manifest only for the deliverable; the completion card renders it as a text row. */
   description?: string;
 }
 
-/** manifest 里交付物 `description` 的界（`ARTIFACT_CAPS.maxDescriptionLength`，与 shared 的 zod 同值）。 */
+/** Limit for the deliverable `description` in the manifest (`ARTIFACT_CAPS.maxDescriptionLength`, matching shared's zod schema). */
 const WORKFLOW_ARTIFACT_DESCRIPTION_MAX_CHARS = 500;
 
 /**
- * 交付物带头，其余保持原顺序（稳定排序）。三处清单都先过这一步再截，所以上界砍不到交付物。
- * 端口的 `artifactsOf` 已经排过；这里再排一次是为了快照与通知那条路（它们读的是投影的顺序）。
+ * Put the deliverable first and preserve the original order of the rest (stable sort).
+ * All three lists pass through this before truncation, so the deliverable is never cut.
+ * The port's `artifactsOf` is already sorted; sort again here for snapshot and
+ * notification paths, which use the projection order.
  */
 function primaryFirst<T extends { primary?: true }>(artifacts: readonly T[]): T[] {
   return [...artifacts].sort(
@@ -43,32 +49,34 @@ function primaryFirst<T extends { primary?: true }>(artifacts: readonly T[]): T[
   );
 }
 
-/** 完成通知里 `<artifacts>` 最多列几行。载荷上界（≤ 8）与文本行数刻意同值。 */
+/** Maximum rows in the completion notification's `<artifacts>` section. Deliberately matches the payload limit (≤ 8). */
 export const WORKFLOW_ARTIFACTS_NOTIFICATION_MAX_LINES = 8;
-/** `GetWorkflowRun` 的 `<artifacts>` 截面上界（有界 32 = `ARTIFACT_CAPS` 的每 run 上限）。 */
+/** Limit for the `<artifacts>` section in `GetWorkflowRun` (bounded at 32, the per-run `ARTIFACT_CAPS` limit). */
 export const WORKFLOW_ARTIFACTS_INTROSPECTION_MAX_LINES = 32;
-/** manifest 载荷里 title 的界（`ARTIFACT_CAPS.maxTitleLength`，与 shared 的 zod 同值）。 */
+/** Title limit in the manifest payload (`ARTIFACT_CAPS.maxTitleLength`, matching shared's zod schema). */
 const WORKFLOW_ARTIFACT_TITLE_MAX_CHARS = 120;
-/** id 的界（`ARTIFACT_CAPS.maxIdLength`，与 shared 的 zod 同值）。 */
+/** id limit (`ARTIFACT_CAPS.maxIdLength`, matching shared's zod schema). */
 const WORKFLOW_ARTIFACT_ID_MAX_CHARS = 64;
-/** contentType 的界（与 shared 的 zod 同值；MIME 本身没有这么长的合法形态）。 */
+/** contentType limit (matching shared's zod schema; no valid MIME type is this long). */
 const WORKFLOW_ARTIFACT_CONTENT_TYPE_MAX_CHARS = 255;
 
-/** 预置看板的四个成员：它们没有字节，数据量是标签 report 的条数。 */
+/** Four built-in dashboard types: they have no bytes, and their data volume is the number of report tags. */
 const PRESET_ARTIFACT_KINDS: ReadonlySet<string> = new Set(["chart", "table", "metrics", "board"]);
 
 /**
- * 一件产物 → 一行：`- {id} ({kind}, v{version}, {contentType}, {bytes} bytes): {title}`。
+ * Convert one artifact to one row: `- {id} ({kind}, v{version}, {contentType}, {bytes} bytes): {title}`.
  *
- * 缺席的部件整段省略而不是留一个空位——`(file, v2, , : )` 读起来像数据坏了。预置看板把字节
- * 换成 `{n} items`：一张图的「大小」是它有多少个点，字节数对它没有意义（它根本没有字节）。
- * `title` 缺席时连冒号一起省略（facade 的默认 title 就是 id，重复一遍没有信息）。
+ * Omit absent parts entirely instead of leaving blanks: `(file, v2, , : )` looks like
+ * corrupt data. For built-in dashboards, show `{n} items` instead of bytes: a chart's
+ * “size” is its number of points, and bytes are meaningless because it has none. If
+ * `title` is absent, omit the colon too (the facade's default title is the id, so
+ * repeating it adds no information).
  *
- * 刻意**不给 `uri`**：模型读不了 tool-artifact store。要内容就走 `GetWorkflowRun`，或者让
- * 子代理去读工作区里的原路径。
+ * Deliberately **omit `uri`**: the model cannot read the tool-artifact store. To get the
+ * content, use `GetWorkflowRun` or ask a subagent to read the original workspace path.
  */
 export function formatPublishedArtifactLine(artifact: PublishedArtifactSummary): string {
-  // `primary` 紧跟种类：`- report (markdown, primary, v2, …)`——模型据它知道该先把哪一件交给用户。
+  // Put `primary` right after the kind: `- report (markdown, primary, v2, …)`. This tells the model which artifact to deliver to the user first.
   const parts = artifact.primary === true ? [artifact.kind, "primary"] : [artifact.kind];
   parts.push(`v${artifact.version}`);
   if (artifact.contentType !== undefined && artifact.contentType.length > 0) {
@@ -86,20 +94,22 @@ export function formatPublishedArtifactLine(artifact: PublishedArtifactSummary):
   return title === undefined || title.length === 0 ? head : `${head}: ${title}`;
 }
 
-/** `<artifacts count shown>` 一节所需的三件事，与 `<reports>` 那一节同形。 */
+/** The three values needed for an `<artifacts count shown>` section, matching the `<reports>` section's shape. */
 interface WorkflowArtifactsNotificationSection {
-  /** **真实总件数**（不是列出来的行数）。 */
+  /** **Actual total count** (not the number of listed rows). */
   count: number;
-  /** 实际列出的行数；小于 count 即清单是局部的。 */
+  /** Number of rows actually listed; less than count means the list is partial. */
   shown: number;
   preview: string;
 }
 
 /**
- * 产物清单 → 完成通知 / `GetWorkflowRun` 的 `<artifacts>` 一节。
+ * Convert an artifact list into an `<artifacts>` section for a completion notification or `GetWorkflowRun`.
  *
- * 与 `<reports>` 同规：`count` 恒是真实总数，`count ≠ shown` 就是「清单是局部的、全量经 run id
- * 可取」的那个信号。零件时返回 `undefined`，调用方据此让整节缺席——不发一节空的 `<artifacts>`。
+ * Use the same rule as `<reports>`: `count` is always the actual total, and `count ≠ shown`
+ * signals that the list is partial and the full set can be retrieved by run id. Return
+ * `undefined` for zero items so the caller omits the entire section instead of emitting
+ * an empty `<artifacts>`.
  */
 export function buildWorkflowArtifactsNotificationSection(
   artifacts: readonly PublishedArtifactSummary[] | undefined,
@@ -110,7 +120,7 @@ export function buildWorkflowArtifactsNotificationSection(
   return { count: artifacts.length, shown: lines.length, preview: lines.join("\n") };
 }
 
-/** manifest 载荷（`WorkflowNotificationMeta.artifacts`）的一条。shared 的 zod 是同一组界。 */
+/** One entry in the manifest payload (`WorkflowNotificationMeta.artifacts`); shared's zod uses the same limits. */
 interface WorkflowArtifactManifestEntry {
   id: string;
   kind: "file" | "markdown" | "chart" | "table" | "metrics" | "board";
@@ -118,39 +128,45 @@ interface WorkflowArtifactManifestEntry {
   version: number;
   contentType?: string;
   primary?: true;
-  /** 只在 `primary` 的条目上（完成卡的交付物行念它；其余 chip 放不下也不需要）。 */
+  /** Present only on the `primary` entry (the completion card displays it on the deliverable row; other chips have no room or need for it). */
   description?: string;
 }
 
 /**
- * manifest 载荷的 `artifacts` 与 `artifactsTruncated`。
+ * Build `artifacts` and `artifactsTruncated` for the manifest payload.
  *
- * 与上面那一节**同源不同形**：GUI 把每条渲染成一枚 chip（图标 + 截短的 title），所以载荷带的是
- * 结构化字段而不是拼好的一行；`bytes` / `itemCount` 刻意不进载荷——chip 上放不下，点开侧板即可
- * 看到全部。截断在**构造前**完成：载荷随 turnHeader row 走协议，超界会让整行落库时 zod 拒收。
+ * This shares the source with the section above but has a **different shape**: the GUI
+ * renders each entry as a chip (icon + truncated title), so the payload carries
+ * structured fields instead of a formatted row. Deliberately omit `bytes` / `itemCount`:
+ * they do not fit on a chip, and the side panel shows all details. Truncate **before
+ * construction** because the payload travels in the turnHeader row; if it exceeds the
+ * limit, zod rejects the entire row when persisted.
  *
- * `kind` 不在六个字面量里的条目整条丢弃（不猜、不归一）：一个未知种类的 chip 在 GUI 上没有
- * 图标可画，而放行它会让整个载荷被 zod 拒掉，连带其余 chip 一起消失。
+ * Drop any entry whose `kind` is not one of the six literals (do not infer or normalize
+ * it). The GUI has no icon for an unknown chip kind, and passing it through would make
+ * zod reject the entire payload, removing all the other chips too.
  *
- * 零件时返回 `undefined`，调用方据此让两个字段一起缺席。
+ * Return `undefined` for zero items so the caller omits both fields.
  */
 export function buildWorkflowArtifactsManifestSection(
   artifacts: readonly PublishedArtifactSummary[] | undefined,
 ): { artifacts: WorkflowArtifactManifestEntry[]; artifactsTruncated?: true } | undefined {
   if (artifacts === undefined || artifacts.length === 0) return undefined;
   const entries: WorkflowArtifactManifestEntry[] = [];
-  // 交付物先进清单：8 的上界永远砍不到它。
+  // Add the deliverable first so the limit of 8 can never remove it.
   for (const artifact of primaryFirst(artifacts)) {
     if (entries.length >= WORKFLOW_ARTIFACTS_NOTIFICATION_MAX_LINES) break;
     const kind = manifestArtifactKind(artifact.kind);
-    // id 是 chip 的身份键，截短就是编造一个不存在的产物——超界只能整条丢，与未知 kind 同规。
-    // 两者都是「一条坏行不该把其余 chip 一起带走」：放行会让 zod 拒收整份载荷。
+    // id is the chip's identity key; truncating it would invent an artifact that does
+    // not exist, so an oversized id must drop the entire entry, like an unknown kind.
+    // A malformed row should not take other chips with it, but passing it through would
+    // make zod reject the whole payload.
     if (kind === undefined || artifact.id.length === 0) continue;
     if (artifact.id.length > WORKFLOW_ARTIFACT_ID_MAX_CHARS) continue;
-    // 版本号是 chip 的定位键之一，shared 的 zod 要求正整数；非正整数同样整条丢。
+    // Version is part of the chip's identifying key, and shared's zod requires a positive integer; drop the entire entry otherwise.
     if (!Number.isInteger(artifact.version) || artifact.version < 1) continue;
     const title = artifact.title?.trim();
-    // contentType 只是 chip 上的装饰，超界丢这一个键而不是整条。
+    // contentType is only decorative on the chip; omit this field if it is too long instead of dropping the entire entry.
     const contentType =
       artifact.contentType !== undefined &&
       artifact.contentType.length <= WORKFLOW_ARTIFACT_CONTENT_TYPE_MAX_CHARS
@@ -172,8 +188,9 @@ export function buildWorkflowArtifactsManifestSection(
     });
   }
   if (entries.length === 0) return undefined;
-  // 截断诚实：被上界砍掉的、以及被种类过滤掉的，都算「还有更多没画出来」——判据因此是
-  // 「画出来的比总数少」，而不是「命中了上界」。
+  // Report truncation accurately: entries removed by the limit or filtered by kind both
+  // count as “more items not shown”. Therefore compare displayed count with total count,
+  // rather than checking whether the limit was reached.
   const truncated = entries.length < artifacts.length;
   return { artifacts: entries, ...(truncated ? { artifactsTruncated: true as const } : {}) };
 }
@@ -192,11 +209,13 @@ function manifestArtifactKind(kind: string): WorkflowArtifactManifestEntry["kind
 }
 
 /**
- * 快照 / 端口详情上的产物 → 本模块的输入形状。`bytes` 只在版本项上（端口的顶层刻意不带它），
- * 所以从**最新版**取——那正是清单要描述的那一版。
+ * Convert artifacts from snapshots / port details into this module's input shape.
+ * `bytes` exists only on version entries (the port deliberately omits it at the top
+ * level), so read it from the **latest version**, which is the one the list describes.
  *
- * 形状照样防御性检查：输入跨包而来（端口实现、或一条冷恢复回来的行），一个坏条目不该让整节
- * 消失。不合形的整条跳过。
+ * Validate the shape defensively: input comes from another package (a port
+ * implementation or a row restored after restart), and one malformed entry should not
+ * remove the entire section. Skip entries with invalid shapes.
  */
 export function toPublishedArtifactSummaries(
   value: unknown,

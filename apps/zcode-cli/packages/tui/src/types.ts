@@ -13,6 +13,7 @@ import type {
   SupportedLocale,
   ToolResultDisplayPayload,
   UiThemeMode,
+  UiThemePalette,
   UiThemePreference,
   TurnId,
   TurnSteerResult,
@@ -22,7 +23,14 @@ export type TuiContextUsage = Pick<SessionProjection, "contextUsed" | "contextWi
 
 export type TuiSessionMetadata = Pick<
   TuiSubmitPromptResult,
-  "locale" | "model" | "theme" | "thoughtLevel" | "modelOptions" | "effortOptions" | "loginRequired"
+  | "locale"
+  | "model"
+  | "theme"
+  | "palette"
+  | "thoughtLevel"
+  | "modelOptions"
+  | "effortOptions"
+  | "loginRequired"
 >;
 
 export type TuiSwitchableMode = Extract<
@@ -157,6 +165,7 @@ export type TuiSubmitPromptResult = {
   mode?: CollaborationMode;
   model?: string;
   theme?: UiThemePreference;
+  palette?: UiThemePalette;
   projection?: Partial<TuiContextUsage>;
   response: string;
   resetSessionProjection?: boolean;
@@ -308,6 +317,7 @@ export type TuiOptions = {
   loginRequired?: boolean;
   locale?: SupportedLocale;
   theme?: UiThemePreference;
+  palette?: UiThemePalette;
   initialThemeMode?: UiThemeMode;
   developerMode?: boolean;
   version?: string;
@@ -348,6 +358,7 @@ export type TuiStartupOptions = Pick<
   | "loginRequired"
   | "locale"
   | "theme"
+  | "palette"
   | "modelOptions"
   | "effortOptions"
   | "slashCommands"

@@ -1,62 +1,65 @@
-# Desktop 开发构建 watcher 范围
+# Desktop dev build watcher scope
 
-## 背景
+## Background
 
-`pnpm dev:desktop` 在启动 Electron 前会并行运行 Vite 和 tsup watch。Desktop 包目录同时
-包含 E2E 缓存、远程 mock CDN、内置 Agent 和本地 CUA Helper 等生成物；这些内容不是
-TypeScript 开发源码，却会被默认的 `tsup --watch`（watch path 为 `.`）扫描。
+Before starting Electron, `pnpm dev:desktop` runs Vite and tsup watch in parallel. The Desktop package directory
+also holds generated content such as the E2E cache, the remote mock CDN, built-in Agents and the local CUA
+Helper; these are not TypeScript development sources but are scanned by the default `tsup --watch` (watch path
+`.`).
 
-当这些生成目录很大时，main/host 的构建 marker 迟迟不会出现，`dev.mjs` 只能持续输出
-`Waiting for build artifacts`。这条日志是等待状态，不是 Electron 自身的错误。
+When these generated directories are large, the main/host build marker takes long to appear and `dev.mjs` keeps
+printing `Waiting for build artifacts`. That log is a waiting state, not an Electron error.
 
-## 目标
+## Goal
 
-桌面开发 watch 只监听会触发 main/host/preload/scheduler 重建的源码和依赖，排除不会参与
-开发构建增量更新的生成目录，缩短首次启动和 watcher 建立时间。必须同时收窄 watch root；
-只设置 `--ignore-watch` 仍会让 tsup 先对 `.` 做全量 glob，无法解决首次扫描成本。
+The desktop dev watch listens only to the sources and dependencies that trigger main/host/preload/scheduler
+rebuilds and excludes generated directories that do not take part in incremental dev builds, shortening first
+start and watcher setup time. The watch root must be narrowed at the same time; only setting `--ignore-watch`
+still makes tsup glob `.` in full first and does not remove the first-scan cost.
 
-启动链路保持不变：
+The startup chain is unchanged:
 
 ```text
 dev:runtime
   +--> vite dev
-  +--> tsup --watch + 生成目录黑名单
+  +--> tsup --watch + generated-directory blacklist
   `--> dev.mjs
-          `--> 等待 main/host/preload marker 后启动 Electron
+          `--> start Electron after the main/host/preload markers appear
 ```
 
-## 黑名单
+## Blacklist
 
-以下路径相对于 `packages/desktop`，只用于本地开发 watcher 排除，不改变构建、打包或运行时
-资源准备：
+Paths relative to `packages/desktop`, used only to exclude local dev watchers; they do not change build,
+packaging or runtime resource preparation:
 
 - `mock-cdn/**`
 - `bundled-agents/**`
 - `.e2e-cache/**`
 - `.e2e-artifacts/**`
-- `.e2e-home-*/**`（E2E 隔离 home）
+- `.e2e-home-*/**` (E2E isolated home)
 - `dist-cua-helper/**`
 
-这些目录可以继续由 E2E、Helper 或 runtime asset 流程写入；写入不会触发 Desktop bundle
-重建。`out`、`.git` 和 `node_modules` 继续使用 tsup 默认排除规则。
+These directories can still be written by E2E, Helper or runtime asset flows; writing does not trigger a
+Desktop bundle rebuild. `out`, `.git` and `node_modules` keep using tsup's default exclusion rules.
 
-watch root 显式覆盖 `packages/desktop/src` 以及 `services`、`server`、`shared`、`rpc`、
-`client`、`provider`、`provider-node` 的 `src` 目录，保持 workspace 源码变更可触发重建。
+The watch root explicitly covers `packages/desktop/src` and the `src` directories of `services`, `server`,
+`shared`, `rpc`, `client`, `provider` and `provider-node`, so workspace source changes still trigger rebuilds.
 
-## 约束
+## Constraints
 
-1. `dev:runtime` 和 `dev:local-cli` 使用同一份 watch root 与 blacklist，避免标准桌面和远控
-   local-cli 启动路径行为漂移。
-2. 只改变 chokidar 的监听范围，不改变 tsup entry、输出目录、ready marker 或 Electron
-   启动门禁。
-3. 黑名单必须使用 glob 形式并在 shell 中引用，避免 `*` 被宿主 shell 提前展开。
-4. 修改后仍应保留 workspace 源码变化触发构建的能力；如果后续将依赖源码移出默认 watch
-   范围，需显式增加对应 source path 并更新本 spec。
+1. `dev:runtime` and `dev:local-cli` use the same watch root and blacklist, so the standard desktop and the
+   remote-control local-cli start paths do not drift.
+2. Only chokidar's watch scope changes; tsup entries, output directory, ready marker and the Electron start
+   gate are unchanged.
+3. The blacklist must use glob form and be quoted in the shell so `*` is not expanded early by the host shell.
+4. The ability of workspace source changes to trigger builds must be preserved; if dependency sources later move
+   out of the default watch range, add the corresponding source path explicitly and update this spec.
 
-## 验收
+## Acceptance
 
-- package scripts 中两个 Desktop watch 入口都包含完整黑名单。
-- 相关静态测试通过。
-- `tsup --watch` 日志显示每个黑名单路径在 `Ignoring changes` 中出现。
-- 在包含大体积生成目录的 checkout 中，watcher 不再因这些目录的扫描阻塞 ready marker。
-- `pnpm typecheck`、`pnpm lint` 和受影响单测通过。
+- Both Desktop watch entries in the package scripts include the full blacklist.
+- Related static tests pass.
+- The `tsup --watch` log shows each blacklist path under `Ignoring changes`.
+- In a checkout with large generated directories, the watcher no longer blocks the ready marker on scanning
+  them.
+- `pnpm typecheck`, `pnpm lint` and affected unit tests pass.

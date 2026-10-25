@@ -12,9 +12,9 @@ function decodeWslOutput(buffer: Buffer): string {
     return "";
   }
 
-  // `wsl.exe -l -v` 在 Windows 上常返回 UTF-16LE。
-  // 如果这里直接按 UTF-8 解码，行内会夹满 `\0`，distro 解析会全部失效。
-  // 通过检测 NUL 字节优先走 UTF-16LE，可以同时兼容 UTF-8/UTF-16LE 两种输出。
+  // `wsl.exe -l -v` often returns UTF-16LE on Windows.
+  // Decoding it directly as UTF-8 fills lines with `\0` and breaks all distro parsing.
+  // Detect NUL bytes and prefer UTF-16LE, supporting both UTF-8 and UTF-16LE output.
   if (buffer.includes(0)) {
     return buffer.toString("utf16le");
   }
@@ -27,6 +27,30 @@ function normalizeWslOutput(raw: string): string {
     .replaceAll("\u0000", "")
     .replace(/^\uFEFF/, "")
     .replace(/\r/g, "");
+}
+
+/**
+ * Builds the error for a failed wsl.exe call. The message prefers stderr, then stdout, then the Node error text, and
+ * appends the numeric exit code so the user can tell apart failures that print the same text.
+ * The original error stays as `cause`; the numeric code is exposed as `exitCode`.
+ */
+export function createWslExecError(error: Error, stdout: Buffer, stderr: Buffer): Error {
+  const message =
+    normalizeWslOutput(decodeWslOutput(stderr)).trim() ||
+    normalizeWslOutput(decodeWslOutput(stdout)).trim() ||
+    error.message;
+  // execFile reports a numeric exit code; a string code (for example ENOENT) is a spawn failure with no exit status.
+  const code: unknown = Reflect.get(error, "code");
+  const exitCode = typeof code === "number" ? code : undefined;
+  return Object.assign(
+    new Error(
+      exitCode === undefined ? message : `${message}\uFF08\u9000\u51FA\u7801 ${exitCode}\uFF09`,
+      {
+        cause: error,
+      },
+    ),
+    exitCode === undefined ? {} : { exitCode },
+  );
 }
 
 export function parseWSLDistroList(rawOutput: string): WSLDistro[] {
@@ -86,8 +110,7 @@ async function execWslForBuffer(args: string[]): Promise<Buffer> {
         const stderrBuffer = Buffer.isBuffer(stderr) ? stderr : Buffer.from(stderr ?? "");
 
         if (error) {
-          const stderrText = normalizeWslOutput(decodeWslOutput(stderrBuffer)).trim();
-          reject(new Error(stderrText || error.message));
+          reject(createWslExecError(error, stdoutBuffer, stderrBuffer));
           return;
         }
 
@@ -123,8 +146,8 @@ function getCachedDiscovery<T>(
   };
   cache.set(executor, entry);
   void entry.promise.catch(() => {
-    // 临时 WSL CLI 错误不能把 rejected Promise 固化到 TTL 结束，
-    // 后续显式重试需要立刻重新执行探测。
+    // A temporary WSL CLI error must not cache a rejected Promise until the TTL expires;
+    // a later explicit retry must probe again immediately.
     if (cache.get(executor) === entry) {
       cache.delete(executor);
     }

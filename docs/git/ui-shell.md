@@ -1,127 +1,96 @@
-# Git UI 开发现状
+# Git UI Landing Status
 
-更新日期：2026-07-07
+## Current Target
 
-## 当前目标
+The Git pane's "read real repository changes" main chain is connected, and a top lightweight write entry is added. The user can keep browsing changes and also commit or push from the top entry without leaving the current workspace.
 
-当前阶段已经把 Git pane 的“读真实仓库改动”主链路接上，并补回顶部轻量写操作入口。当前目标是让用户在不离开当前 workspace 的前提下，既能继续浏览改动，也能通过顶部入口完成提交或推送。
+## Commit Message Generation
 
-## 提交消息生成模型链路
+- The top "commit" popup is a compact lightweight operation panel in a standard overlay: current branch and the selection's `+/-` statistic at the top, the commit message input in the middle, the commit action list at the bottom.
+- The branch entry at the top of the popup reuses `GitBranchSwitcher`; clicking it only expands the switchable local branch list. After a successful switch the current branch's commit range is re-read so the old branch's staged / unstaged snapshot is not shown.
+- The popup `+/-` statistic prefers the current conversation's file modification summary, so a conversation that touched a few files is not inflated by other uncommitted changes in the work area; without a conversation summary it falls back to the Git statistic of the current commit range.
+- The commit message input supports manual entry and generation by clicking an icon. If the user clicks `commit` / `commit and push` with an empty message, UI first generates a Conventional Commit message and then continues the action.
+- Acceptance (QA ISSUE-043): the commit popup is a `Dialog` with a title and description. The title is an sr-only `DialogTitle` (`git.actionMenu.commitDialog.title`, "Commit changes") rendered before the loading or form branch, so the dialog has an accessible name from its first open and Radix emits no missing-title warning. The description is an sr-only `DialogDescription` from `git.actionMenu.commitDialog.description`. The changed-file count uses the explicit plural family `git.actionMenu.commitDialog.changesValue.one|.other` through `intl.formatPlural`, so one file reads "1 file". Catalogs follow this repo's plural-family convention, not ICU syntax, because `createIntl.formatMessage` only substitutes `{key}` placeholders.
+- The commit panel includes unstaged changes by default; the user can turn off `包含未暂存的更改` (include unstaged changes), after which commit, statistics and message generation reference only staged changes.
+- Generation carries the recent user / assistant text of the current conversation so the model understands the intent of this round; context is trimmed by message count and character count, and the generated result must not explicitly write meta-narration such as "according to the conversation" or "per the user's request".
+- Generation reuses the current workspace's model selection. The Git service only reads Git status/diff, builds a limited prompt and validates Conventional Commit output.
+- Model call chain: `Git service -> IZCodeAgentService -> ZCode Protocol workspace/generateText -> AgentRuntime -> modelAdapter.generateText`.
+- UI does not prefetch request-time auth material for Start Plan / zcode-plan for commit message generation, and passes no scoped runtime headers to the Git service.
+- Start Plan request-time runtime headers are refreshed by AgentRuntime through `providerRuntimeHeaders.request` before every real `modelAdapter.generateText` request, the same as ordinary conversation, prompt enhance and other independent model requests.
+- The Git service does not call an OpenAI / Anthropic compatible HTTP endpoint directly and does not parse provider responses / SSE; after the protocol layer returns plain text, the Git service cleans the output and converges errors.
 
-- 顶部“提交”弹窗采用带标准 overlay 的紧凑轻量操作面板：顶部展示当前分支和本次选择范围的 `+/-` 统计，中间是提交信息输入区，底部是提交动作列表。
-- 弹窗顶部的当前分支入口复用 `GitBranchSwitcher`，点击后只展开可切换的本地分支列表；切换成功后会重新读取当前分支的提交范围，避免继续展示旧分支的 staged / unstaged 快照。
-- 弹窗顶部 `+/-` 统计优先复用当前对话的文件修改 summary，避免当前对话只改了少量文件时被工作区里其他未提交改动放大；没有对话 summary 时才回退到当前提交范围的 Git 统计。
-- 提交信息输入区支持手动填写，也支持点击图标先生成；如果用户直接点击 `提交` / `提交并推送` 且消息为空，UI 会先生成 Conventional Commit 消息再继续执行动作。
-- 提交面板默认包含未暂存更改，用户可以关闭 `包含未暂存的更改`，此时提交、统计和生成消息都只参考已暂存更改。
-- 生成提交消息会随请求携带当前会话最近的用户 / assistant 文本上下文，用于让模型理解本轮修改意图；上下文按消息数和字符数裁剪，且生成结果不得显式写“根据对话”“按用户要求”等元叙述。
-- 生成提交消息复用当前 workspace 的当前模型选择；Git service 只负责读取 Git status/diff、构造受限 prompt、校验 Conventional Commit 输出。
-- 模型调用链路统一为 `Git service -> IZCodeAgentService -> ZCode Protocol workspace/generateText -> AgentRuntime -> modelAdapter.generateText`。
-- UI 不再为提交消息生成预取 Start Plan / zcode-plan 的请求期鉴权材料，也不向 Git service 传 scoped runtime headers。
-- Start Plan 的请求期 runtime headers 由 AgentRuntime 在 `modelAdapter.generateText` 每次真实请求前通过 `providerRuntimeHeaders.request` 自动刷新；该机制与普通对话、prompt enhance 等独立模型请求一致。
-- Git service 不再直连 OpenAI / Anthropic 兼容 HTTP endpoint，也不解析 provider response / SSE；协议层返回纯文本后由 Git service 做输出清洗和错误收敛。
+## Completed UI
 
-## 已完成的 UI
+### 1. Top Entry
 
-### 1. 顶部入口
+- The `WorkspaceHeader` top toolbar has the Git entry.
+- When the work area has `+/-` line statistics, the top shows an integrated capsule button "Git icon + +/- statistic", also when the Git pane is not open, so the user knows about changes without opening Git.
+- Click opens or closes the right Git pane.
 
-- `WorkspaceHeader` 顶部工具栏已接入 Git 入口
-- 当当前工作区能探测到 `+/-` 行数统计时，顶部会展示“Git 图标 + +/- 统计”的一体化胶囊按钮
-- 这块统计在 Git pane 未打开时也会显示，避免用户必须先点开 Git 才知道当前有改动
-- 点击该入口会打开或关闭右侧 Git pane
+### 2. Right Git Pane
 
-### 2. 右侧 Git pane
+- Reuses the right shared pane, sharing the slot with browser / code-viewer.
+- The pane top keeps the title and close button.
+- The body is a lighter single-column reading mode, avoiding too many operation areas up front.
 
-- Git 复用现有右侧共享 pane，与 browser / code-viewer 共用同一个槽位
-- pane 顶部保留标题和关闭按钮
-- 主体区已收敛为更轻的单列阅读模式，避免一开始就堆叠过多操作区
+### 3. Top Git Operation Entry
 
-### 3. 顶部 Git 操作入口
+- A "commit or push" capsule entry sits left of the terminal switch button in the `WorkspaceHeader` top toolbar.
+- The main button runs `commit` first according to the current Git status; with no uncommitted changes but pushable commits it runs `push`.
+- No three-dots / dropdown menu, so commit and push do not become two parallel paths.
+- `commit` opens an independent commit popup that by default stages and commits all uncommitted changes within the current workspace scope.
+- The commit popup also provides `commit and push`; after a successful commit it reuses the same Git service to push the current branch.
+- `push` opens an independent push popup and runs a real `git push`; when the current branch has no upstream, the first push adds `--set-upstream`.
 
-- 在 `WorkspaceHeader` 顶部工具栏里，终端切换按钮左侧新增“提交或推送”胶囊入口
-- 主按钮按当前 Git 状态优先执行 `提交`，没有未提交更改但存在可推送提交时执行 `推送`
-- 入口右侧不再提供三点 / 下拉菜单，避免把提交、推送入口拆成两套并列路径
-- `提交` 会打开独立提交弹窗，默认把当前 workspace 作用域内的全部未提交更改一起暂存并提交
-- 提交弹窗内额外提供 `提交并推送`，成功提交后立即复用同一 Git service 推送当前分支
-- `推送` 会打开独立推送弹窗，执行真实 `git push`；若当前分支尚未建立 upstream，会在首次推送时自动补 `--set-upstream`
+### 4. Source Switch
 
-### 4. 来源切换
+- Four sources: `Not staged`, `Staged`, `All branch changes`, `Previous round changes`.
+- The selected source is lifted into `App`, so the top entry statistic and the Git pane content always come from the same source.
 
-- 支持 4 个来源：
-  - `未暂存`
-  - `已暂存`
-  - `全部分支更改`
-  - `上一轮更改`
-- 当前选中的来源由 `App` 提升管理，保证顶部入口统计和 Git pane 内容始终来自同一来源
+### 5. File List and Diff
 
-### 5. 文件列表与 diff
+- Items show the workspace-relative full path.
+- File items expand / collapse; expanded, they show the inline diff directly without repeating path and `+/-`.
+- Non-`Not staged` items show a status badge by section, for example `Untracked`, `Conflicted`, `Staged`.
+- Diff uses the existing `PatchDiff` component and reuses the code preview theme configuration.
 
-- 列表项展示 workspace 相对路径全路径
-- 文件项支持展开 / 收起
-- 展开后直接展示 inline diff，不再重复显示路径和 `+/-` 统计
-- 非 `未暂存` 项会按 section 展示状态 badge，例如 `未跟踪`、`冲突`、`已暂存`
-- diff 使用现有 `PatchDiff` 组件，并复用代码预览主题配置
+### 6. File Tree Sidebar
 
-### 6. 文件树侧边栏
+- "Show file tree" expands a directory sidebar on the right of the Git pane.
+- Sidebar width is draggable and keeps the last dragged width.
+- A "filter files..." search box at the top filters instantly by file relative path in the current tree.
+- The sidebar shows directory and file leaf nodes; while filtering, ancestors of hit files are kept for hierarchy positioning.
+- Selecting a directory filters the main file list. Selecting a file leaf narrows the main area to that single file. Clicking the currently selected directory or file again returns to the full list.
+- The tree supports directory fold / unfold.
 
-- 点击“显示文件树”后，会在 Git pane 右侧展开一个目录侧边栏
-- 侧边栏宽度支持拖拽调整，并保留最近一次拖拽后的宽度
-- 侧边栏顶部提供“筛选文件...”搜索框，按当前目录树中的文件相对路径做即时筛选
-- 侧边栏会展示目录和文件叶子节点；筛选时会保留命中文件的祖先目录，方便继续沿层级定位
-- 选择目录后，会过滤主区文件列表
-- 选择文件叶子节点后，会把主区收敛到该单文件；再次点击当前选中目录或文件可回到完整列表
-- 文件树支持目录折叠 / 展开
+### 7. Conversation Input Area Bottom Bar
 
-### 7. 对话输入区底栏
+- The input box interior keeps only editing controls (input area, attachment, send / stop button).
+- Current agent, current model, mode setting and token context statistics are split out of the input box shell into a bottom bar below the input box.
+- The Git branch switch entry shares this bar and is fixed at the far right, reducing horizontal crowding inside the input box.
+- The current agent icon follows the task provider currently being viewed, so switching to a history or fork task does not show something inconsistent with the real conversation.
 
-- 对话输入框内部现在只保留编辑相关控件（输入区、附件、发送 / 停止按钮）
-- 当前 agent、当前模型、mode 设置、token 上下文统计从输入框壳体中拆出，统一放到输入框下方的底栏
-- Git 分支切换入口与这些状态控件共用同一条底栏，并固定到最右侧，减少输入框内部横向拥挤
-- 当前 agent 图标优先跟随“当前正在查看的 task provider”，避免切到历史 task / fork task 时出现展示与真实会话不一致
+## Current Data Source
 
-## 当前数据来源
+Real Git data (connected to the real `IGitService`): `Not staged`, `Staged`, `All branch changes`.
 
-### 真实 Git 数据
+- `useGitRepository` reads `refresh / getChanges / getBranchComparison` through `services.gitService`.
+- `App` fetches the real repository snapshot once; the header and the Git pane reuse the same status, avoiding duplicate Git commands.
+- Single-file diff is loaded on demand in the Git pane through `getDiff`, so the top entry statistic does not trigger full diff reads.
 
-以下来源现在已经接入真实 `IGitService`：
+Semi-real data: `Previous round changes` prefers the current task's per-turn file snapshot and summary from the ZCode task store; this is the data source closest to real agent output.
 
-- `未暂存`
-- `已暂存`
-- `全部分支更改`
+## Current Interaction Boundary
 
-接线方式：
+Not a complete Source Control workbench, but a set of lightweight write operations is exposed at the top: frontend `commit`, `push`, `create branch`.
 
-- `useGitRepository` 统一通过 `services.gitService` 读取 `refresh / getChanges / getBranchComparison`
-- `App` 只拉一次真实仓库快照，header 和 Git pane 复用同一份状态，避免重复执行 Git 命令
-- 单文件 diff 改为在 Git pane 中按需调用 `getDiff`，避免顶部入口统计也触发全量 diff 读取
+Not exposed: frontend `stage / unstage / discard`; commit area and batch operation area.
 
-### 半真实数据
+Connected read-only capabilities: real `git status`, real branch comparison, real single-file diff, real `user.name / user.email` reading (not displayed in UI yet).
 
-- `上一轮更改` 已优先复用当前 task 在 ZCode task store 里的 per-turn 文件快照和摘要
-- 这部分是当前 UI 中最接近真实 agent 输出的数据来源
+`packages/ui/src/hooks/useGitActions.ts` remains a placeholder extension point that can be reused when the service is connected.
 
-## 当前交互边界
-
-当前版本仍然不是完整 Source Control 工作台，但顶部已经放出一组轻量写操作：
-
-- 已接入前端 `commit`
-- 已接入前端 `push`
-- 已接入前端 `create branch`
-
-当前仍未放出的写操作：
-
-- 没有前端 `stage / unstage / discard`
-- 没有提交区与批量操作区
-
-已接入的只读能力：
-
-- 真实 `git status`
-- 真实分支比较
-- 真实单文件 diff
-- 真实 `user.name / user.email` 读取（当前 UI 暂未展示）
-
-`packages/ui/src/hooks/useGitActions.ts` 仍保留为占位扩展点，后续接 service 时可继续复用这层动作抽象。
-
-## 关键实现文件
+## Key Implementation Files
 
 - `packages/ui/src/App.tsx`
 - `packages/ui/src/v4/ConversationComposer.tsx`
@@ -135,14 +104,12 @@
 - `packages/services/src/git/gitService.ts`
 - `packages/services/src/git/repo/gitCliRepo.ts`
 
-## 当前验证状态
+## Tests
 
-- `pnpm typecheck`：当前仓库未完全通过，存在既有的 shared import / MCP typing 错误，非本轮 Git UI 改动引入
-- `pnpm lint`：仓库级 `oxlint` 仍有既有 warning；本轮改动文件已单独通过 `oxlint`
-- `pnpm exec vitest run packages/services/test/gitService.test.ts packages/ui/test/gitActionMenuDisplay.test.ts packages/ui/test/gitBranchSwitcherDisplay.test.ts`：通过
+`packages/services/test/gitService.test.ts`, `packages/ui/test/gitActionMenuDisplay.test.ts`, `packages/ui/test/gitBranchSwitcherDisplay.test.ts`.
 
-## 后续建议
+## Follow-ups
 
-1. 决定 Git pane 是否恢复 `stage / unstage / discard` 与批量操作区
-2. 为顶部提交 / 推送菜单补充更多空态、失败态和权限提示
-3. 继续补充 Git 为空、非仓库、Git 不可用等场景的交互打磨
+1. Decide whether the Git pane restores `stage / unstage / discard` with a batch operation area.
+2. Add more empty states, failure states and permission hints for the top commit / push menu.
+3. Keep refining Git interaction for empty / non-repository / Git-unavailable scenarios.

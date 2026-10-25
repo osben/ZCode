@@ -35,14 +35,16 @@ const localRuntimeScripts = [
   ...(nativeSearchReleasePlan.enabled ? ["prepare:native-search"] : []),
   ...(shouldPrepareWindowsBrowserImportHelper ? ["prepare:browser-import-helper"] : []),
   ...(shouldPrepareMacosWindowBounds ? ["prepare:macos-window-bounds"] : []),
+  // Optional (post-processing with the system model): the build script skips itself without a toolchain.
+  ...(shouldPrepareMacosWindowBounds ? ["prepare:macos-apple-fm"] : []),
 ];
 
-function runTimedPnpmScript(scriptName) {
+function runTimedPnpmScript(scriptName, cwd = desktopRoot) {
   const startMs = Date.now();
   console.log(`[ci][timer] prepare-runtime-assets:${scriptName} start`);
   try {
-    runCommand(pnpmCommand, [scriptName], {
-      cwd: desktopRoot,
+    runCommand(pnpmCommand, ["run", scriptName], {
+      cwd,
       env: process.env,
     });
   } finally {
@@ -50,6 +52,19 @@ function runTimedPnpmScript(scriptName) {
       `[ci][timer] prepare-runtime-assets:${scriptName} end duration_ms=${Date.now() - startMs}`,
     );
   }
+}
+
+// Fork divergence: the open-source installer build still needs the remote Source Server assets through
+// prepare:remote-assets (see docs/bootstrap.md), so the call stays unless the Windows job opts out.
+// The Windows desktop installer job sets ZCODE_SKIP_REMOTE_ASSETS=1 because it does not use mock-cdn
+// remote assets; running them there serialized cross-platform downloads and approached the CI time limit.
+const shouldSkipRemoteAssets = process.env.ZCODE_SKIP_REMOTE_ASSETS === "1";
+
+if (!shouldSkipRemoteAssets) {
+  // pnpm 12 does not look up missing package scripts in parent directories.
+  runTimedPnpmScript("prepare:remote-assets", resolve(desktopRoot, "../.."));
+} else {
+  console.log("[prepare:runtime-assets] skip prepare:remote-assets (ZCODE_SKIP_REMOTE_ASSETS=1)");
 }
 
 for (const scriptName of localRuntimeScripts) {

@@ -8,32 +8,67 @@ import type {
   ZCodeModelTrajectoryRecord,
   ZCodeModelTrajectoryUsage,
 } from "#src/session/zcodeTaskService.js";
+
+export type {
+  ZCodeModelTrajectoryRecord,
+  ZCodeModelTrajectoryTruncation,
+  ZCodeModelTrajectoryUsage,
+} from "#src/session/zcodeTaskService.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import {
+  boundPayload,
+  boundText,
   readTrajectoryFileTail,
   resolveModelIODirs,
   sanitizeSessionSegment,
+  withTruncation,
 } from "#src/zcode-agent/modelTrajectoryFileTail.js";
 import type { TrajectoryFileTail } from "#src/zcode-agent/modelTrajectoryFileTail.js";
 
-// model-io 默认最多返回的调用条数（保留最近 N 条），避免长 session 把 UI 压垮。
+// Maximum number of model-io calls returned by default (keep the latest N) to avoid overwhelming the UI with long sessions.
 const DEFAULT_TRAJECTORY_LIMIT = 200;
 const SESSION_TITLE_PROMPT_PREFIX = "Generate a concise title for this coding session.";
 const logger = createServiceLogger("model-trajectory");
 
 /**
- * 解析 ~/.zcode/cli/{debug,rollout} 下的 model-io JSONL，按 sessionId 还原某个 task 的模型调用轨迹。
+ * Parse model-io JSONL under ~/.zcode/cli/{debug,rollout} and reconstruct a task's model-call trajectory by sessionId.
  *
- * 设计说明：
- * - model-io 由 adapters/model/runner-debug.ts 落盘；一个 session 一个
- *   `model-io-<sanitizedSessionId>.jsonl`。
- * - ZCode Agent 把 taskId 当作 sessionId（见 zcodeTaskServiceAdapter），所以这里只读取
- *   该 session 的单文件，并按 `record.sessionId === taskId` 精确匹配。
+ * Design notes:
+ * - model-io is written by adapters/model/runner-debug.ts, with one
+ *   `model-io-<sanitizedSessionId>.jsonl` file per session.
+ * - ZCode Agent uses taskId as sessionId (see zcodeTaskServiceAdapter), so read only
+ *   that session's file and match exactly with `record.sessionId === taskId`.
  */
 export async function readModelTrajectory(
   taskId: string,
   limit = DEFAULT_TRAJECTORY_LIMIT,
 ): Promise<ZCodeModelTrajectory> {
+  const window = await readModelIORawWindow(taskId, limit);
+  // Input deltas are decided on the projected window only, so the first main record in the window is always full.
+  const trimmedRecords = projectModelTrajectoryInputDeltas(
+    window.records.map((record) => mapModelTrajectoryRecord(record)),
+  );
+
+  return {
+    taskId,
+    available: true,
+    records: trimmedRecords,
+    sourceFiles: window.sourceFiles,
+    truncated: window.truncated,
+  };
+}
+
+/** Kept raw model-io records after writer-delta expansion, oldest first. */
+export interface ModelIORawWindow {
+  records: Record<string, unknown>[];
+  sourceFiles: string[];
+  truncated: boolean;
+}
+
+export async function readModelIORawWindow(
+  taskId: string,
+  limit = DEFAULT_TRAJECTORY_LIMIT,
+): Promise<ModelIORawWindow> {
   const safeLimit =
     Number.isFinite(limit) && limit > 0 ? Math.trunc(limit) : DEFAULT_TRAJECTORY_LIMIT;
   const sanitized = sanitizeSessionSegment(taskId);
@@ -47,7 +82,7 @@ export async function readModelTrajectory(
     try {
       names = await readdir(dir);
     } catch {
-      // 目录不存在（没跑过对应模式）或不可读，跳过。
+      // Skip if the directory does not exist (the mode has not run) or is unreadable.
       continue;
     }
 
@@ -59,8 +94,8 @@ export async function readModelTrajectory(
       let tail: TrajectoryFileTail;
       const startedAt = Date.now();
       try {
-        // 同步读取并 split 整个 model-io 会阻塞 Host 事件循环，并在大文件上制造多份字符串峰值。
-        // 从尾部异步读取固定上限；若从行中间开始，则由 readTrajectoryFileTail 丢弃不完整残行。
+        // Synchronously reading and splitting the entire model-io file would block the Host event loop and create several peak string copies for large files.
+        // Read a fixed limit asynchronously from the end; if reading begins in the middle of a line, readTrajectoryFileTail discards the incomplete line.
         tail = await readTrajectoryFileTail(filePath);
         logger.debug(
           undefined,
@@ -97,7 +132,7 @@ export async function readModelTrajectory(
     }
   }
 
-  // 按开始时间排序；同毫秒/缺失时间时按 requestId 兜底，保证顺序稳定。
+  // Sort by start time; use requestId as a fallback for equal/missing timestamps to keep ordering stable.
   rawRecords.sort((left, right) => {
     const startDiff = toTime(asString(left.startedAt)) - toTime(asString(right.startedAt));
     if (startDiff !== 0) {
@@ -106,17 +141,54 @@ export async function readModelTrajectory(
     return (asString(left.requestId) ?? "").localeCompare(asString(right.requestId) ?? "");
   });
 
-  const records = expandModelIODeltaRecords(rawRecords).map((record) => mapRecord(record));
-  const truncated = inputTruncated || records.length > safeLimit;
-  const trimmedRecords = truncated ? records.slice(records.length - safeLimit) : records;
+  // Delta expansion must run over every raw record in order; projection (the costly part) runs only on the kept tail.
+  const expanded = expandModelIODeltaRecords(rawRecords);
+  const truncated = inputTruncated || expanded.length > safeLimit;
+  const kept = truncated ? expanded.slice(expanded.length - safeLimit) : expanded;
+  return { records: kept, sourceFiles, truncated };
+}
 
-  return {
-    taskId,
-    available: true,
-    records: trimmedRecords,
-    sourceFiles,
-    truncated,
-  };
+interface InputDeltaBase {
+  requestId: string;
+  length: number;
+  identities: string[];
+}
+
+/**
+ * Replace a main-session record's full input with the messages after the nearest preceding main record's input when
+ * that whole input is an exact prefix (message by message, role and parts, serialized after bounding).
+ * Sidecar, compact and subagent records are always full and never serve as a base; the first main record has no base.
+ */
+export function projectModelTrajectoryInputDeltas(
+  records: ZCodeModelTrajectoryRecord[],
+): ZCodeModelTrajectoryRecord[] {
+  let base: InputDeltaBase | undefined;
+  return records.map((record) => {
+    if (record.callSource?.kind !== "main") {
+      return record;
+    }
+    const messages = record.request.messages;
+    const identities = messages.map((message) => JSON.stringify(message));
+    const previous = base;
+    base = record.requestId
+      ? { requestId: record.requestId, length: messages.length, identities }
+      : undefined;
+    if (!previous || !isExactPrefix(previous.identities, identities)) {
+      return record;
+    }
+    return {
+      ...record,
+      inputDeltaOf: { previousRequestId: previous.requestId, sharedPrefixCount: previous.length },
+      request: { ...record.request, messages: messages.slice(previous.length) },
+    };
+  });
+}
+
+function isExactPrefix(prefix: readonly string[], values: readonly string[]): boolean {
+  if (prefix.length > values.length) {
+    return false;
+  }
+  return prefix.every((identity, index) => identity === values[index]);
 }
 
 function toTime(value?: string): number {
@@ -127,7 +199,9 @@ function toTime(value?: string): number {
   return Number.isNaN(time) ? 0 : time;
 }
 
-function mapRecord(record: Record<string, unknown>): ZCodeModelTrajectoryRecord {
+export function mapModelTrajectoryRecord(
+  record: Record<string, unknown>,
+): ZCodeModelTrajectoryRecord {
   const request = asObject(record.request);
   const response = asObject(record.response);
   const model = asObject(record.model);
@@ -158,11 +232,24 @@ function mapRecord(record: Record<string, unknown>): ZCodeModelTrajectoryRecord 
 
   if (response) {
     const responseToolCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
+    const responseText = asString(response.text);
+    const responseReasoning = asString(response.reasoningText);
+    const text = responseText === undefined ? undefined : boundText(responseText);
+    const reasoningText =
+      responseReasoning === undefined ? undefined : boundText(responseReasoning);
+    const responseTruncated =
+      text?.truncated || reasoningText?.truncated
+        ? {
+            ...(text?.truncated ? { text: text.truncated } : {}),
+            ...(reasoningText?.truncated ? { reasoningText: reasoningText.truncated } : {}),
+          }
+        : undefined;
     mapped.response = {
       finishReason: asString(response.finishReason),
-      text: asString(response.text),
-      reasoningText: asString(response.reasoningText),
+      text: text?.text,
+      reasoningText: reasoningText?.text,
       toolCalls: responseToolCalls.map((toolCall) => mapResponseToolCall(toolCall)),
+      ...(responseTruncated ? { truncated: responseTruncated } : {}),
       usage: mapUsage(response.usage),
       responseId: asString(response.responseId),
       modelId: asString(response.modelId),
@@ -289,8 +376,8 @@ function expandMessageCollection(
   metadataSource: Record<string, unknown> = target,
 ): void {
   if (metadataSource[keys.kindKey] === "tail") {
-    // model-io 文件超限或进程内缓存丢失后会写最近窗口 baseline。
-    // tail 是新的展开起点，不能继续拼接更早历史，否则又会把已裁剪的巨大上下文带回 UI 读取链路。
+    // A recent-window baseline is written when the model-io file exceeds its limit or its in-process cache is lost.
+    // The tail is the new expansion starting point; do not append earlier history or the trimmed large context would return to the UI read path.
     return;
   }
   if (metadataSource[keys.kindKey] !== "delta") {
@@ -302,7 +389,7 @@ function expandMessageCollection(
   if (!Array.isArray(deltaMessages) || !Array.isArray(previousMessages) || offset === undefined) {
     return;
   }
-  // 新 model-io 为了避免同一 session 内完整上下文梯度重复，只保存 delta；服务层读出时还原给 UI。
+  // New model-io stores only deltas to avoid duplicating the full context across a session; restore it for the UI when reading in the service layer.
   target[keys.collectionKey] = [...previousMessages.slice(0, offset), ...deltaMessages];
 }
 
@@ -313,17 +400,20 @@ function mapMessages(value: unknown): ZCodeModelTrajectoryMessage[] {
   return value.map((entry) => {
     const message = asObject(entry) ?? {};
     const role = asString(message.role) ?? "unknown";
-    return {
-      role,
-      parts: mapContent(message.content, role, {
-        toolCallId:
-          asString(message.toolCallId) ??
-          asString(message.tool_call_id) ??
-          asString(message.tool_use_id),
-        toolName: asString(message.toolName) ?? asString(message.name),
-        isError: message.isError === true || message.is_error === true,
-      }),
-    };
+    const parts = mapContent(message.content, role, {
+      toolCallId:
+        asString(message.toolCallId) ??
+        asString(message.tool_call_id) ??
+        asString(message.tool_use_id),
+      toolName: asString(message.toolName) ?? asString(message.name),
+      isError: message.isError === true || message.is_error === true,
+    });
+    // Normalized model-io keeps assistant tool calls in a top-level `toolCalls` array, not in content;
+    // mapping content alone dropped every historical call and left its tool results orphaned.
+    if (role === "assistant" && Array.isArray(message.toolCalls)) {
+      parts.push(...message.toolCalls.map((toolCall) => mapResponseToolCall(toolCall)));
+    }
+    return { role, parts };
   });
 }
 
@@ -334,22 +424,32 @@ function mapContent(
 ): ZCodeModelTrajectoryContentPart[] {
   if (typeof content === "string") {
     if (content.length === 0) return [];
-    // tool 角色的字符串内容即工具输出，单独标记为 tool-result 便于 UI 区分。
+    // String content with the tool role is tool output; mark it separately as tool-result so the UI can distinguish it.
     if (role === "tool") {
-      // 实际 model-io 把关联字段放在消息顶层，而 content 只保存字符串结果；
-      // 丢掉顶层字段会让 UI 无法把 TOOL 返回关联到对应 tool call。
+      const bounded = boundText(content);
+      // The actual model-io stores association fields at the message top level and keeps only the string result in content;
+      // dropping the top-level fields would prevent the UI from associating TOOL output with the corresponding tool call.
       return [
-        {
-          kind: "tool-result",
-          toolCallId: messageTool?.toolCallId,
-          toolName: messageTool?.toolName,
-          // 标准化 model-io 会把 error-text 展平为 content + isError；这里必须还原类型，
-          // 否则 UI 只能看到错误字符串，无法显示错误状态。
-          output: tryParseJson(content, messageTool?.isError),
-        },
+        withTruncation(
+          {
+            kind: "tool-result",
+            toolCallId: messageTool?.toolCallId,
+            toolName: messageTool?.toolName,
+            // Normalized model-io flattens error-text into content + isError; restore the type here,
+            // or the UI will see only an error string and cannot show the error state.
+            // A cut string is not parsed as JSON: the cut would make the parse fail and the structure is no longer complete anyway.
+            output: bounded.truncated
+              ? messageTool?.isError
+                ? { type: "error-text", value: bounded.text }
+                : bounded.text
+              : tryParseJson(content, messageTool?.isError),
+          },
+          bounded.truncated,
+        ),
       ];
     }
-    return [{ kind: "text", text: content }];
+    const bounded = boundText(content);
+    return [withTruncation({ kind: "text", text: bounded.text }, bounded.truncated)];
   }
 
   if (!Array.isArray(content)) {
@@ -365,48 +465,71 @@ function mapPart(
 ): ZCodeModelTrajectoryContentPart {
   const part = asObject(rawPart);
   if (!part) {
-    return { kind: "unknown", raw: rawPart };
+    return mapUnknownPart(rawPart);
   }
 
   switch (part.type) {
-    case "text":
-      return { kind: "text", text: asString(part.text) ?? "" };
-    case "reasoning":
-      return { kind: "reasoning", text: asString(part.text) ?? "" };
-    case "tool-call":
-      return {
-        kind: "tool-call",
-        toolCallId: asString(part.toolCallId),
-        toolName: asString(part.toolName) ?? "tool",
-        input: part.input ?? part.args,
-      };
-    case "tool-result":
-      return {
-        kind: "tool-result",
-        toolCallId: asString(part.toolCallId) ?? messageTool?.toolCallId,
-        toolName: asString(part.toolName) ?? messageTool?.toolName,
-        output: part.output ?? part.result,
-      };
+    case "text": {
+      const bounded = boundText(asString(part.text) ?? "");
+      return withTruncation({ kind: "text", text: bounded.text }, bounded.truncated);
+    }
+    case "reasoning": {
+      const bounded = boundText(asString(part.text) ?? "");
+      return withTruncation({ kind: "reasoning", text: bounded.text }, bounded.truncated);
+    }
+    case "tool-call": {
+      const input = boundPayload(part.input ?? part.args);
+      return withTruncation(
+        {
+          kind: "tool-call",
+          toolCallId: asString(part.toolCallId),
+          toolName: asString(part.toolName) ?? "tool",
+          input: input.value,
+        },
+        input.truncated,
+      );
+    }
+    case "tool-result": {
+      const output = boundPayload(part.output ?? part.result);
+      return withTruncation(
+        {
+          kind: "tool-result",
+          toolCallId: asString(part.toolCallId) ?? messageTool?.toolCallId,
+          toolName: asString(part.toolName) ?? messageTool?.toolName,
+          output: output.value,
+        },
+        output.truncated,
+      );
+    }
     case "image":
     case "file":
       return { kind: "image", mediaType: asString(part.mediaType) };
     default:
-      return { kind: "unknown", raw: rawPart };
+      return mapUnknownPart(rawPart);
   }
+}
+
+function mapUnknownPart(raw: unknown): ZCodeModelTrajectoryContentPart {
+  const bounded = boundPayload(raw);
+  return withTruncation({ kind: "unknown", raw: bounded.value }, bounded.truncated);
 }
 
 function mapResponseToolCall(rawToolCall: unknown): ZCodeModelTrajectoryContentPart {
   const toolCall = asObject(rawToolCall);
   if (!toolCall) {
-    return { kind: "unknown", raw: rawToolCall };
+    return mapUnknownPart(rawToolCall);
   }
-  return {
-    kind: "tool-call",
-    // 归一化后的 response.toolCalls 形如 {id, name, input}。
-    toolCallId: asString(toolCall.id) ?? asString(toolCall.toolCallId),
-    toolName: asString(toolCall.name) ?? asString(toolCall.toolName) ?? "tool",
-    input: toolCall.input ?? toolCall.args,
-  };
+  const input = boundPayload(toolCall.input ?? toolCall.args);
+  return withTruncation(
+    {
+      kind: "tool-call",
+      // Normalized response.toolCalls have the shape {id, name, input}.
+      toolCallId: asString(toolCall.id) ?? asString(toolCall.toolCallId),
+      toolName: asString(toolCall.name) ?? asString(toolCall.toolName) ?? "tool",
+      input: input.value,
+    },
+    input.truncated,
+  );
 }
 
 function mapUsage(value: unknown): ZCodeModelTrajectoryUsage | undefined {

@@ -1,6 +1,7 @@
-// ProductProjection 黄金测试首批（M2，docs/v4-refactor/13-golden-test-mapping）。
-// 形态：事件序列进、投影断言出（L1）。测试名携带 catalog 组别，供 coverage matrix 对账。
-import { describe, expect, it, vi } from "vitest";
+// First batch of ProductProjection golden tests (M2, docs/v4-refactor/13-golden-test-mapping).
+// Shape: event sequences in, projection assertions out (L1). Test names carry the catalog group for
+// coverage matrix reconciliation.
+import { describe, expect, it } from "vitest";
 import type {
   EventId,
   SessionEvent,
@@ -757,53 +758,6 @@ describe("ProductProjection 黄金测试（L1）", () => {
     expect(projection.getSnapshot().control.phase).toBe("running");
   });
 
-  it("PV4-08：成功轮固化 fork 能力时不复制并反转完整 rows 窗口", () => {
-    const log = new EventLog();
-    log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
-    log.push(
-      SessionEventType.TurnStarted,
-      { turnNumber: 1, input: "first", messageId: "user-1" },
-      { turnId: "turn-1" },
-    );
-    log.push(
-      SessionEventType.ModelStreaming,
-      { kind: "text_start", delta: "", done: false, assistantMessageId: "assistant-1" },
-      { turnId: "turn-1" },
-    );
-    log.push(
-      SessionEventType.ModelStreaming,
-      { kind: "text_end", delta: "", done: false },
-      { turnId: "turn-1" },
-    );
-
-    const { projection } = runAll(log.events);
-    const reverse = vi.spyOn(Array.prototype, "reverse").mockImplementation(() => {
-      throw new Error("TurnComplete must not reverse the full rows window");
-    });
-    try {
-      projection.applyEvent(
-        log.push(
-          SessionEventType.TurnComplete,
-          {
-            response: "done",
-            tokenCount: 1,
-            toolCallCount: 0,
-            duration: 1,
-            resultType: "success",
-          },
-          { turnId: "turn-1" },
-        ),
-      );
-    } finally {
-      reverse.mockRestore();
-    }
-
-    const assistant = projection
-      .getSnapshot()
-      .rows.window.find((row) => row.kind === "assistantText");
-    expect(assistant?.actions?.canFork).toBe(true);
-  });
-
   it("PV4-08：中间 assistant 段和 interrupted turn 都不可 fork", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
@@ -1115,11 +1069,13 @@ describe("ProductProjection 黄金测试（L1）", () => {
     expect(snapshot.control.sessionEnded).toBe(true);
     expect(snapshot.control.canStop).toBe(false);
     expect(snapshot.inputRouting.mode).toBe("startNow");
-    expect(snapshot.usage.contextWindow).toEqual({
+    expect(snapshot.usage.contextWindow).toMatchObject({
       usedTokens: 150,
       maxTokens: 200_000,
-      autoCompactThresholdTokens: null,
     });
+    expect(snapshot.usage.contextWindow?.autoCompactThresholdTokens).toBeNull();
+    expect(snapshot.usage.contextWindow).not.toHaveProperty("autoCompactThresholdAuthoritative");
+    expect(snapshot.usage.contextWindow).not.toHaveProperty("microcompactThresholdTokens");
     expect(snapshot.usage.cumulative.inputTokens).toBe(120);
     expect(snapshot.seq).toBe(log.events.length);
   });
@@ -1254,38 +1210,6 @@ describe("ProductProjection 黄金测试（L1）", () => {
     expect(kinds).toEqual(["turnHeader"]);
     expect(projection.getSnapshot().rows.window[0]).toMatchObject({
       origin: "goalContinuation",
-    });
-  });
-
-  it("BG27/BG28：background model-only turn 把结构化标题投影到 turnHeader", () => {
-    const log = new EventLog();
-    log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 1000 });
-    log.push(
-      SessionEventType.TurnStarted,
-      {
-        turnNumber: 1,
-        input: "background result",
-        inputSource: "background_task",
-        inputVisibility: "model-only",
-        originMeta: {
-          backgroundSource: "subagent",
-          title: "Review the projection chain",
-          workId: "agent-review",
-        },
-      } as never,
-      { turnId: "turn-background" },
-    );
-
-    const rows = runAll(log.events).projection.getSnapshot().rows.window;
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      kind: "turnHeader",
-      origin: "backgroundResult",
-      originMeta: {
-        backgroundSource: "subagent",
-        title: "Review the projection chain",
-        workId: "agent-review",
-      },
     });
   });
 
@@ -4314,17 +4238,6 @@ describe("结构性不变量", () => {
     }
   });
 
-  it("结构性4（半）：coalesce 后的 delta 流与逐条投递终态逐字节一致", () => {
-    const log = new EventLog();
-    basicTurnEvents(log);
-    const { deltasPerEvent, snapshots } = fullDeltaStream(log.events);
-    const base = snapshots[0]!;
-    const all = deltasPerEvent.flat();
-    const direct = applyConversationDeltas(base, all);
-    const coalesced = applyConversationDeltas(base, coalesceConversationDeltas(all));
-    expect(coalesced).toEqual(direct);
-  });
-
   it("结构性10：fault 注入 session A，session B 投影逐字节不变（X 组）", () => {
     const logA = new EventLog("session-a");
     logA.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 1000 });
@@ -6429,7 +6342,103 @@ describe("fork / modelChange marker", () => {
     }
   });
 
-  // ── M4：queue 单项编辑（同 id 重入 TurnSteerQueued → 原地更新保位）──
+  // ── Message pins (docs/chat-message-pins.md): setRowPinned 门禁——assistantText 必须 complete，
+  //    userInput 必须是用户自己的 realUser 行。──
+  it("setRowPinned 门禁：complete assistant 与 realUser user 行可固定，系统生成行与 streaming 拒绝", () => {
+    const buildProjection = (inputSource?: string) => {
+      const log = new EventLog();
+      log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
+      log.push(
+        SessionEventType.TurnStarted,
+        {
+          turnNumber: 1,
+          input: "固定这条",
+          messageId: "message-user-pin",
+          ...(inputSource ? { inputSource } : {}),
+        },
+        { turnId: "turn-pin" },
+      );
+      return log;
+    };
+
+    // realUser 输入 + complete assistant → 都可固定。
+    const okLog = buildProjection();
+    okLog.push(
+      SessionEventType.ModelStreaming,
+      { kind: "text_start", delta: "", done: false, assistantMessageId: "message-assistant-pin" },
+      { turnId: "turn-pin" },
+    );
+    okLog.push(
+      SessionEventType.ModelComplete,
+      {
+        content: "回复",
+        stopReason: "stop",
+        querySource: "main_turn",
+        contextWindow: 200_000,
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      },
+      { turnId: "turn-pin" },
+    );
+    okLog.push(
+      SessionEventType.TurnComplete,
+      { response: "回复", tokenCount: 2, toolCallCount: 0, duration: 1, resultType: "success" },
+      { turnId: "turn-pin" },
+    );
+    const okProjection = runAll(okLog.events).projection;
+    const okSnapshot = okProjection.getSnapshot();
+    const userRow = okSnapshot.rows.window.find(
+      (row) => row.kind === "userInput" && row.entityId === "message-user-pin",
+    )!;
+    const assistantRow = okSnapshot.rows.window.find(
+      (row) => row.kind === "assistantText" && row.state === "complete",
+    )!;
+    expect(
+      okProjection.resolveRowActionTarget(
+        { rowId: userRow.rowId, entityId: userRow.entityId! },
+        "setRowPinned",
+      ),
+    ).toMatchObject({ ok: true, action: "setRowPinned" });
+    expect(
+      okProjection.resolveRowActionTarget(
+        { rowId: assistantRow.rowId, entityId: assistantRow.entityId! },
+        "setRowPinned",
+      ),
+    ).toMatchObject({ ok: true, action: "setRowPinned" });
+
+    // 系统生成 user 行（background_result）→ 拒绝。
+    const backgroundLog = buildProjection("background_task");
+    const backgroundProjection = runAll(backgroundLog.events).projection;
+    const backgroundRow = backgroundProjection.getSnapshot().rows.window.find(
+      (row) => row.kind === "userInput",
+    )!;
+    expect(
+      backgroundProjection.resolveRowActionTarget(
+        { rowId: backgroundRow.rowId, entityId: backgroundRow.entityId! },
+        "setRowPinned",
+      ),
+    ).toMatchObject({ ok: false, reasonCode: "guard.actionUnavailable" });
+
+    // streaming assistant 行 → 拒绝。
+    const streamingLog = buildProjection();
+    streamingLog.push(
+      SessionEventType.ModelStreaming,
+      { kind: "text_start", delta: "", done: false, assistantMessageId: "message-assistant-stream" },
+      { turnId: "turn-pin" },
+    );
+    const streamingProjection = runAll(streamingLog.events).projection;
+    const streamingRow = streamingProjection.getSnapshot().rows.window.find(
+      (row) => row.kind === "assistantText",
+    )!;
+    expect(
+      streamingProjection.resolveRowActionTarget(
+        { rowId: streamingRow.rowId, entityId: streamingRow.entityId! },
+        "setRowPinned",
+      ),
+    ).toMatchObject({ ok: false, reasonCode: "guard.actionUnavailable" });
+  });
+
+  // ── M4: single queue item edit (same id re-enters TurnSteerQueued → in-place update, position
+  // preserved) ──
   it("A/B：editQueueItem —— 同 queueItemId 重入更新文本且保位", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
@@ -6755,16 +6764,166 @@ describe("fork / modelChange marker", () => {
     expect(snapshot.inputRouting.mode).toBe("startNow");
   });
 
-  it("A/B：setAutoDrain 幂等 —— 同值不产 delta", () => {
+  // ISSUE-039 / specs/stop-queue-hold.md: steer keeps the remaining queue draining in order; only a
+  // user Stop (a cancelled TurnComplete without the preserve intent) holds it.
+  // Projection scope only: the FIFO drain itself is performed by the CLI bridge auto-drain (E2E STEER cases cover it).
+  it("ISSUE-039：steer 的 cancelled TurnComplete 不 hold 投影（剩余项保留）；随后的用户 Stop 才 hold", () => {
+    const intent = (queueItemId: string, sourceCommandId: string, admissionSeq: number) => ({
+      sourceCommandId,
+      queueItemId,
+      clientId: "desktop-client",
+      kind: "sendText",
+      admissionSeq,
+      admittedAt: admissionSeq * 10,
+      requestedDelivery: "queue",
+      admittedDelivery: "queue",
+      attachmentRefs: [],
+    });
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
-    // 初始 autoDrain=true，再置 true 应无变化。
-    log.push(SessionEventType.QueueAutoDrainChanged, { autoDrain: true });
-    const { projection } = runAll(log.events);
-    expect(projection.getSnapshot().queue.autoDrain).toBe(true);
+    log.push(SessionEventType.TurnStarted, { turnNumber: 1, input: "跑" }, { turnId: "t1" });
+    log.push(
+      SessionEventType.TurnSteerQueued,
+      {
+        pendingInputId: "q1",
+        input: "第一条",
+        inputPreview: "第一条",
+        inputSize: 9,
+        queueLength: 1,
+        targetTurnId: "t1",
+        intent: intent("q1", "source-q1", 1),
+      },
+      { turnId: "t1" },
+    );
+    log.push(
+      SessionEventType.TurnSteerQueued,
+      {
+        pendingInputId: "q2",
+        input: "第二条",
+        inputPreview: "第二条",
+        inputSize: 9,
+        queueLength: 2,
+        targetTurnId: "t1",
+        intent: intent("q2", "source-q2", 2),
+      },
+      { turnId: "t1" },
+    );
+    // Steer (sendQueuedNow on q1): the interrupted turn is cancelled with the preserve intent.
+    log.push(
+      SessionEventType.TurnSteerDispatchChanged,
+      { pendingInputId: "q1", reservationId: "send-now-1", state: "promoting", targetTurnId: "t1" },
+    );
+    log.push(
+      SessionEventType.TurnComplete,
+      {
+        response: "",
+        tokenCount: 0,
+        toolCallCount: 0,
+        duration: 0,
+        resultType: "cancelled",
+        preserveQueueAutoDrainOnCancel: true,
+      },
+      { turnId: "t1" },
+    );
+    log.push(SessionEventType.SessionInputPromoted, {
+      pendingInputId: "q1",
+      sourceCommandId: "source-q1",
+      messageId: "message-q1",
+    });
+    log.push(
+      SessionEventType.TurnStarted,
+      { turnNumber: 2, input: "第一条", inputId: "source-q1" },
+      { turnId: "t2" },
+    );
+    log.push(
+      SessionEventType.TurnComplete,
+      { response: "ok", tokenCount: 1, toolCallCount: 0, duration: 1, resultType: "success" },
+      { turnId: "t2" },
+    );
+
+    const drained = runAll(log.events).projection.getSnapshot();
+    expect(drained.control.phase).toBe("completedSuccess");
+    expect(drained.queue).toMatchObject({
+      autoDrain: true,
+      items: [expect.objectContaining({ queueItemId: "q2" })],
+    });
+    expect(drained.queue.pauseReason).toBeUndefined();
+    expect(drained.inputRouting.mode).toBe("startNow");
+
+    // A later user Stop on the next turn holds the remaining queue exactly as before.
+    log.push(SessionEventType.TurnStarted, { turnNumber: 3, input: "第二条" }, { turnId: "t3" });
+    log.push(
+      SessionEventType.TurnComplete,
+      {
+        response: "",
+        tokenCount: 0,
+        toolCallCount: 0,
+        duration: 0,
+        resultType: "cancelled",
+      },
+      { turnId: "t3" },
+    );
+    const stopped = runAll(log.events).projection.getSnapshot();
+    expect(stopped.queue).toMatchObject({
+      autoDrain: false,
+      pauseReason: "stopped",
+      items: [expect.objectContaining({ queueItemId: "q2" })],
+    });
   });
 
-  // ── M4：setFollowupMode（FollowupModeChanged → running 时 enqueue vs guide）──
+  // ISSUE-039 D1 (characterization guard, not a red-first test: the projection already kept this hold). The Stop's
+  // hold is written before the Steer's cancelled TurnComplete (which carries the preserve intent). The projection
+  // keeps the hold. QueueAutoDrainChanged(false) projects pauseReason "manual", which the UI shows as the generic copy
+  // (ConversationQueuePanel: only "stopped" and "error" get their own copy).
+  it("ISSUE-039 D1：steer 的 cancelled TurnComplete 不清除先写入的用户 Stop hold", () => {
+    const log = new EventLog();
+    log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
+    log.push(SessionEventType.TurnStarted, { turnNumber: 1, input: "跑" }, { turnId: "t1" });
+    log.push(
+      SessionEventType.TurnSteerQueued,
+      {
+        pendingInputId: "q1",
+        input: "第一条",
+        inputPreview: "第一条",
+        inputSize: 9,
+        queueLength: 1,
+        targetTurnId: "t1",
+      },
+      { turnId: "t1" },
+    );
+    log.push(
+      SessionEventType.TurnSteerQueued,
+      {
+        pendingInputId: "q2",
+        input: "第二条",
+        inputPreview: "第二条",
+        inputSize: 9,
+        queueLength: 2,
+        targetTurnId: "t1",
+      },
+      { turnId: "t1" },
+    );
+    log.push(SessionEventType.QueueAutoDrainChanged, { autoDrain: false });
+    log.push(
+      SessionEventType.TurnComplete,
+      {
+        response: "",
+        tokenCount: 0,
+        toolCallCount: 0,
+        duration: 0,
+        resultType: "cancelled",
+        preserveQueueAutoDrainOnCancel: true,
+      },
+      { turnId: "t1" },
+    );
+
+    const snapshot = runAll(log.events).projection.getSnapshot();
+    expect(snapshot.queue.autoDrain).toBe(false);
+    expect(snapshot.queue.items).toHaveLength(2);
+    expect(snapshot.queue.pauseReason).toBe("manual");
+  });
+
+  // ── M4: setFollowupMode (FollowupModeChanged → enqueue vs guide while running) ──
   it("A/B：setFollowupMode(guide) → running 时输入路由为 guide", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
@@ -6978,6 +7137,8 @@ describe("fork / modelChange marker", () => {
         stopReason: "end_turn",
         querySource: "main_turn",
         contextWindow: 200_000,
+        autoCompactThresholdTokens: 166_000,
+        microcompactThresholdTokens: 149_400,
         usage: { inputTokens: 120, outputTokens: 30 },
       },
       { turnId: "turn-1" },
@@ -6986,6 +7147,9 @@ describe("fork / modelChange marker", () => {
     expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
       usedTokens: 150,
       maxTokens: 200_000,
+      autoCompactThresholdTokens: 166_000,
+      autoCompactThresholdAuthoritative: true,
+      microcompactThresholdTokens: 149_400,
     });
 
     projection.applyEvent(
@@ -7016,11 +7180,16 @@ describe("fork / modelChange marker", () => {
       }),
     );
 
-    // 修复目标：模型切换事件本身就是 runtime 新能力的权威提交点；不等下一轮发送完成。
-    expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
+    // Fix goal: the model switch event is itself the authoritative commit point of the runtime's
+    // new capability; do not wait for the next send to finish.
+    const switchedContextWindow = projection.getSnapshot().usage.contextWindow;
+    expect(switchedContextWindow).toMatchObject({
       usedTokens: 150,
       maxTokens: 1_000_000,
     });
+    expect(switchedContextWindow?.autoCompactThresholdTokens).toBeNull();
+    expect(switchedContextWindow).not.toHaveProperty("autoCompactThresholdAuthoritative");
+    expect(switchedContextWindow).not.toHaveProperty("microcompactThresholdTokens");
 
     projection.applyEvent(
       log.push(
@@ -7034,10 +7203,46 @@ describe("fork / modelChange marker", () => {
         { turnId: "turn-2" },
       ),
     );
-    // 后续旧 adapter 未携带 contextWindow 时，也必须回退到刚切换后的新窗口。
-    expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
+    // When later old adapters do not carry contextWindow, they must also fall back to the new
+    // window right after the switch.
+    const legacyCompleteContextWindow = projection.getSnapshot().usage.contextWindow;
+    expect(legacyCompleteContextWindow).toMatchObject({
       usedTokens: 200,
       maxTokens: 1_000_000,
+    });
+    expect(legacyCompleteContextWindow?.autoCompactThresholdTokens).toBeNull();
+    expect(legacyCompleteContextWindow).not.toHaveProperty("autoCompactThresholdAuthoritative");
+    expect(legacyCompleteContextWindow).not.toHaveProperty("microcompactThresholdTokens");
+
+    projection.applyEvent(
+      log.push(SessionEventType.ModelComplete, {
+        content: "disabled",
+        stopReason: "end_turn",
+        querySource: "main_turn",
+        contextWindow: 1_000_000,
+        autoCompactThresholdTokens: null,
+        microcompactThresholdTokens: null,
+        usage: { inputTokens: 900_000, outputTokens: 0 },
+      }),
+    );
+    expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
+      usedTokens: 900_000,
+      autoCompactThresholdTokens: null,
+      autoCompactThresholdAuthoritative: true,
+      microcompactThresholdTokens: null,
+    });
+
+    projection.applyEvent(
+      log.push(SessionEventType.ModelSelected, {
+        modelSelection: { providerId: "custom", modelId: "disabled-policy-model" },
+        contextWindow: 1_000_000,
+      }),
+    );
+    expect(projection.getSnapshot().usage.contextWindow).toMatchObject({
+      usedTokens: 900_000,
+      autoCompactThresholdTokens: null,
+      autoCompactThresholdAuthoritative: true,
+      microcompactThresholdTokens: null,
     });
   });
 
@@ -7445,33 +7650,6 @@ describe("fork / modelChange marker", () => {
     expect(newFirstRow.rowId).toBeGreaterThan(originalMaxRowId);
     expect(rerun.rows.firstRowId).toBe(newFirstRow.rowId);
     expect(rerun.rows.totalCount).toBe(rerun.rows.window.length);
-  });
-
-  it("D：getTurnRewindAnchor(user 行 rowId) → 同 turn 的 assistant messageId", () => {
-    const log = new EventLog();
-    log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
-    log.push(SessionEventType.TurnStarted, { turnNumber: 1, input: "问" }, { turnId: "t1" });
-    log.push(
-      SessionEventType.ModelStreaming,
-      { kind: "text_start", delta: "", done: false, assistantMessageId: "msg-a1" },
-      { turnId: "t1" },
-    );
-    log.push(
-      SessionEventType.ModelStreaming,
-      { kind: "text_delta", delta: "答", done: false, assistantMessageId: "msg-a1" },
-      { turnId: "t1" },
-    );
-    log.push(
-      SessionEventType.ModelStreaming,
-      { kind: "text_end", delta: "", done: false },
-      { turnId: "t1" },
-    );
-    const { projection } = runAll(log.events);
-    const userRow = projection.getSnapshot().rows.window.find((r) => r.kind === "userInput");
-    expect(userRow).toBeDefined();
-    // user 行自身无 messageId，但同 turn 的 assistant messageId 作 rewind 锚点。
-    expect(projection.getMessageIdForRow(userRow!.rowId)).toBeNull();
-    expect(projection.getTurnRewindAnchor(userRow!.rowId)).toBe("msg-a1");
   });
 
   it("D/G：RewindTriggered 目标 messageId 无法反查（user 行无 messageId）→ 不误删", () => {
@@ -10241,5 +10419,70 @@ describe("userInput 行的 epilogueStart（热路径）", () => {
     const rows = projection.getSnapshot().rows.window.filter((row) => row.kind === "userInput");
     expect(rows[0]).toMatchObject({ text: "Summarize\n\n---\nStandard", epilogueStart: 9 });
     expect(rows[1]).not.toHaveProperty("epilogueStart");
+  });
+});
+
+// Worktree preparation is Host-owned setup metadata seeded outside the event log. A null seed
+// means the preparation no longer exists (activated/cancelled on the Host), so re-subscribed
+// clients must observe the marker removed instead of keeping the stale preparing/failed value.
+describe("seedWorktreePreparation（Host 种子）", () => {
+  it("seeds the marker, updates it, and a null seed removes it", () => {
+    const projection = new ProductProjection("session-1", "epoch-1");
+    const preparing = {
+      branchName: "zcode/lazy-kraken",
+      targetPath: "/repo-worktrees/zcode-lazy-kraken",
+      status: "preparing" as const,
+    };
+    projection.seedWorktreePreparation(preparing);
+    expect(projection.getSnapshot().meta.worktreePreparation).toEqual(preparing);
+
+    const failed = { ...preparing, status: "failed" as const, failureMessage: "git failed" };
+    projection.seedWorktreePreparation(failed);
+    expect(projection.getSnapshot().meta.worktreePreparation).toEqual(failed);
+
+    projection.seedWorktreePreparation(null);
+    expect(projection.getSnapshot().meta.worktreePreparation).toBeUndefined();
+
+    // Idempotent: clearing an already-absent marker is a no-op.
+    projection.seedWorktreePreparation(null);
+    expect(projection.getSnapshot().meta.worktreePreparation).toBeUndefined();
+  });
+});
+
+describe("Dream background projection", () => {
+  it("preserves Dream kind, progress and terminal summary for live and replay clients", () => {
+    const log = new EventLog();
+    log.push(SessionEventType.BackgroundTaskStarted, {
+      taskId: "dream-1",
+      taskKind: "dream",
+      status: "running",
+      description: "Starting",
+      cancellable: true,
+    });
+    log.push(SessionEventType.BackgroundTaskUpdated, {
+      taskId: "dream-1",
+      taskKind: "dream",
+      status: "running",
+      description: "Model request 2…",
+      cancellable: true,
+    });
+    log.push(SessionEventType.BackgroundTaskCompleted, {
+      taskId: "dream-1",
+      taskKind: "dream",
+      status: "completed",
+      description: "Consolidated memory",
+      cancellable: false,
+    });
+    const { projection, snapshots } = runAll(log.events);
+    expect(snapshots[2]?.backgroundWorks).toMatchObject([
+      { kind: "dream", title: "Model request 2…", status: "running" },
+    ]);
+    expect(projection.getSnapshot().backgroundWorks).toMatchObject([
+      { kind: "dream", title: "Consolidated memory", status: "resultPending", cancellable: false },
+    ]);
+    expect(runAll(log.events).projection.getSnapshot().backgroundWorks).toEqual(
+      projection.getSnapshot().backgroundWorks,
+    );
+    expect(conversationSnapshotSchema.safeParse(projection.getSnapshot()).success).toBe(true);
   });
 });

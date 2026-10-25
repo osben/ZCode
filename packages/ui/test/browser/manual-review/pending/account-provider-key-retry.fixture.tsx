@@ -31,7 +31,8 @@ function Fixture() {
     setRefreshing(true);
     setRequests((value) => value + 1);
     try {
-      // 用受控网络响应验证真实按钮的异步交互；不模拟生产 OAuth 登录成功。
+      // Verify the real button's async interaction with a controlled network response; do not
+      // simulate a successful production OAuth login.
       const response = await fetch("/retry", { method: "POST" });
       if (response.ok) setReason("not-entitled");
     } finally {

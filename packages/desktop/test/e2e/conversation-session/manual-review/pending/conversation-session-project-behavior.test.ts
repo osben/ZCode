@@ -201,6 +201,9 @@ describe("虚拟项目旧产品体验", () => {
         } else {
           await $('[data-testid="virtual-project-delete"]').click();
         }
+        // Both entries confirm before deleting (ISSUE-028).
+        await $('[data-testid="confirm-dialog-confirm"]').waitForDisplayed();
+        await $('[data-testid="confirm-dialog-confirm"]').click();
         await target.waitForExist({ reverse: true });
         const orders = await browser.execute(() => {
           window.__projectDeletionTrace!.stop();

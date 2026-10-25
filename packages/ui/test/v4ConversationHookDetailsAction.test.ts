@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HookInvocationRow } from "@zcode/shared/zcode-protocol-v4";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ConversationHookDetailsAction } from "@/v4/ConversationHookDetailsAction.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const tooltipCapture = vi.hoisted(() => ({ opens: [] as Array<boolean | undefined> }));
 
@@ -74,11 +75,11 @@ function hookRow(
   };
 }
 
-function renderAction(rows: readonly HookInvocationRow[], locale: "zh-CN" | "en-US" = "zh-CN") {
+function renderAction(rows: readonly HookInvocationRow[], locale: "en-US" | "zh-CN" = "en-US") {
   return render(actionElement(rows, locale));
 }
 
-function actionElement(rows: readonly HookInvocationRow[], locale: "zh-CN" | "en-US" = "zh-CN") {
+function actionElement(rows: readonly HookInvocationRow[], locale: "en-US" | "zh-CN" = "en-US") {
   return createElement(
     ZCodeIntlProvider,
     { initialLocale: locale },
@@ -96,31 +97,34 @@ afterEach(() => {
 
 describe("ConversationHookDetailsAction", () => {
   it("shows executed Hooks in order without exposing implementation details or aggregating repeats", async () => {
-    renderAction([
-      hookRow(1, { displayName: "prepare-context", sourceKind: "user" }),
-      hookRow(4, { displayName: "prepare-context", sourceKind: "user" }),
-      hookRow(2, {
-        displayName: "validate-write",
-        event: "PreToolUse",
-        outcome: "failed",
-        sourceKind: "project",
-        toolName: "Write",
-      }),
-      hookRow(5, {
-        displayName: "validate-write",
-        event: "PreToolUse",
-        outcome: "failed",
-        sourceKind: "project",
-        toolName: "Read",
-      }),
-      hookRow(3, {
-        displayName: "plugin-check",
-        event: "PostToolUse",
-        pluginName: "Quality Plugin",
-        sourceKind: "plugin",
-        toolName: "Write",
-      }),
-    ]);
+    renderAction(
+      [
+        hookRow(1, { displayName: "prepare-context", sourceKind: "user" }),
+        hookRow(4, { displayName: "prepare-context", sourceKind: "user" }),
+        hookRow(2, {
+          displayName: "validate-write",
+          event: "PreToolUse",
+          outcome: "failed",
+          sourceKind: "project",
+          toolName: "Write",
+        }),
+        hookRow(5, {
+          displayName: "validate-write",
+          event: "PreToolUse",
+          outcome: "failed",
+          sourceKind: "project",
+          toolName: "Read",
+        }),
+        hookRow(3, {
+          displayName: "plugin-check",
+          event: "PostToolUse",
+          pluginName: "Quality Plugin",
+          sourceKind: "plugin",
+          toolName: "Write",
+        }),
+      ],
+      "zh-CN",
+    );
 
     expect(screen.getByTestId("hook-tooltip").textContent).toBe("钩子");
     expect(screen.queryByTestId("v4-hook-details-content-turn-1")).toBeNull();
@@ -154,6 +158,22 @@ describe("ConversationHookDetailsAction", () => {
     await waitFor(() => expect(tooltipCapture.opens.at(-1)).toBe(false));
   });
 
+  it("keeps its tooltip controlled for its whole lifetime while the Popover opens and closes", async () => {
+    // Radix warns "Tooltip is changing from controlled to uncontrolled" when `open` flips between a
+    // boolean and undefined; opening the Popover used to pass false, closing it undefined.
+    renderAction([hookRow(1, { displayName: "prepare-context", sourceKind: "user" })]);
+    const trigger = screen.getByTestId("v4-hook-details-trigger-turn-1");
+
+    fireEvent.click(trigger);
+    await screen.findByTestId("v4-hook-details-content-turn-1");
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("v4-hook-details-content-turn-1")).toBeNull());
+
+    expect(tooltipCapture.opens.length).toBeGreaterThan(2);
+    expect(tooltipCapture.opens.every((open) => typeof open === "boolean")).toBe(true);
+    expect(tooltipCapture.opens.at(-1)).toBe(false);
+  });
+
   it("does not render the action when no client-visible Hook actually executed", () => {
     const { container } = renderAction([
       hookRow(1, {
@@ -185,9 +205,9 @@ describe("ConversationHookDetailsAction", () => {
     const row = content.querySelector("li");
 
     expect(screen.getAllByText("：HOOK_PROMPT_BLOCK_REASON")).toHaveLength(1);
-    expect(row?.textContent).toContain("已阻止");
+    expect(row?.textContent).toContain(expectedCopy("chat.hooks.state.blocked"));
     expect(row?.textContent).toContain("HOOK_PROMPT_BLOCK_REASON");
-    expect(screen.getByTestId("hook-tooltip").textContent).toBe("钩子");
+    expect(screen.getByTestId("hook-tooltip").textContent).toBe(expectedCopy("chat.hooks.label"));
   });
 
   it("lists executions from one invocation by hookIndex without deduplicating them", async () => {
@@ -220,10 +240,14 @@ describe("ConversationHookDetailsAction", () => {
     fireEvent.click(screen.getByTestId("v4-hook-details-trigger-turn-1"));
     const content = await screen.findByTestId("v4-hook-details-content-turn-1");
 
+    const userSource = expectedCopy("chat.hooks.source.user");
+    const workspaceSource = expectedCopy("chat.hooks.source.project");
+    const pluginSource = expectedCopy("chat.hooks.source.plugin");
+    const failedState = expectedCopy("chat.hooks.state.failed");
     expect([...content.querySelectorAll("li")].map((item) => item.textContent)).toEqual([
-      "PreToolUse用户25ms",
-      "PreToolUse工作区25ms失败",
-      "PreToolUse插件25ms",
+      `PreToolUse${userSource}25ms`,
+      `PreToolUse${workspaceSource}25ms${failedState}`,
+      `PreToolUse${pluginSource}25ms`,
     ]);
   });
 
@@ -272,7 +296,7 @@ describe("ConversationHookDetailsAction", () => {
     const view = renderAction([running]);
     fireEvent.click(screen.getByTestId("v4-hook-details-trigger-turn-1"));
     expect((await screen.findByTestId("v4-hook-details-content-turn-1")).textContent).toContain(
-      "运行中",
+      expectedCopy("chat.hooks.state.running"),
     );
     expect(screen.getByTestId("v4-hook-details-content-turn-1").textContent).not.toContain("25ms");
 
@@ -283,8 +307,8 @@ describe("ConversationHookDetailsAction", () => {
     view.rerender(actionElement([completed]));
 
     const content = await screen.findByTestId("v4-hook-details-content-turn-1");
-    expect(content.textContent).not.toContain("运行中");
-    expect(content.textContent).not.toContain("已完成");
+    expect(content.textContent).not.toContain(expectedCopy("chat.hooks.state.running"));
+    expect(content.textContent).not.toContain(expectedCopy("chat.hooks.state.completed"));
     expect(content.textContent).toContain("25ms");
     expect(screen.getByTestId("v4-hook-details-trigger-turn-1").getAttribute("aria-expanded")).toBe(
       "true",

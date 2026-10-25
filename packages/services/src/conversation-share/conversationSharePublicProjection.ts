@@ -269,6 +269,9 @@ function projectTimelineMarker(
       return { ...row.marker };
     case "retryNotice":
       return { ...row.marker };
+    // Carries only the fixed agent id, so the shared transcript can show the same divider.
+    case "agentContextReset":
+      return { ...row.marker };
     case "forkNotice":
     case "forkCreated":
     case "checkpointRestored":

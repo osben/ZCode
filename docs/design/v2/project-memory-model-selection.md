@@ -1,49 +1,50 @@
-# Project Memory 模型归属与单轮 Extraction 控制
+# Project Memory model ownership and single-turn extraction control
 
-## 结论
+## Conclusion
 
-Project Memory 的模型选择遵循因果归属，而不是在后台工作开始时重新读取可变的
-Session Selection：
+Project Memory's model selection follows causal ownership instead of re-reading the mutable Session Selection
+when background work starts:
 
 ```text
-当前 Turn 的 Active Model
+Current Turn's Active Model
         |
-        +--> Semantic Recall（功能仍关闭）
+        +--> Semantic Recall (feature still disabled)
         |
-        `--> Turn 完成后调度的 Extraction
+        `--> Extraction scheduled after Turn completes
 
 Dream
-`--> 当前没有产品入口，本轮不调整；后续整体重构时单独裁决
+`--> No product entry points currently; not adjusted this round; decided separately during the overall refactor
 ```
 
-- Semantic Recall 服务当前 Turn，因此使用当前 Turn 已创建的 Active Model。
-- Extraction 由成功 Turn 产生，因此 Snapshot 保存该 Turn 的 Active Model。
-- 两条链路都不得在异步边界重新读取 Session Selection 或可变 Registry 来选择模型。
-- Model 的身份、Provider、Properties、访问绑定保持冻结；单次 Memory 请求仍可通过
-  `ModelRequest.options` 覆盖 `maxOutputTokens`、reasoning 等调用选项。
+- Semantic Recall serves the current Turn, so it uses the Active Model already created for that Turn.
+- Extraction is produced by a successful Turn, so the Snapshot saves the Active Model of that Turn.
+- Neither path may re-read Session Selection or the mutable Registry at async boundaries to choose a model.
+- The model's identity, Provider, Properties and access bindings stay frozen; a single Memory request can still
+  override `maxOutputTokens`, reasoning and other call options via `ModelRequest.options`.
 
 ## Semantic Recall
 
-Semantic Recall 当前保持关闭。本轮只收正模型归属这一项低成本实现，为后续开放清除
-Session Selection 重读：
+Semantic Recall stays disabled for now. Only this low-cost model ownership is implemented, clearing the way
+for later removal of Session Selection re-reading:
 
 ```text
 Turn admission
       |
       v
-创建本轮 Active Model
+Create this Turn's Active Model
       |
       +--> Main Loop
       `--> Recall Selector
-             ├─ 继承 Active Model 已装配的总输出预算
-             └─ 单次使用最低公开 reasoning 档位（模型声明该 Option 时）
+             ├─ Inherits Active Model's already-configured total output budget
+             └─ Uses one single invocation of the lowest public reasoning tier (when the model declares this Option)
 ```
 
-Selector 依赖严格 JSON Schema 输出。Active Model 未声明该能力时不得自动从 Registry
-寻找另一个模型。完整的 `MEMORY.md` 默认索引降级必须在 Semantic Recall 正式开放前完成；
-在功能仍关闭期间不为它新增第二套 Context 装配分支。
+The Selector depends on strict JSON Schema output. If the Active Model does not declare this capability, do
+not automatically search the Registry for another model. The complete `MEMORY.md` default index downgrade must
+be completed before Semantic Recall formally opens; while the feature is disabled, do not add a second Context
+assembly branch for it.
 
-Recall 通过请求专用 Option 表达低成本推理：
+Recall expresses low-cost reasoning through request-specific Options:
 
 ```ts
 model.generateText({
@@ -54,53 +55,55 @@ model.generateText({
 });
 ```
 
-`reasoningLevel.values` 按强度从低到高排列；Recall 在当前 `ModelRequest` 直接使用首项，并继续走正常
-Option Spec Map/Adapter 链路。最低档不要求模型支持关闭 Reasoning。
-Recall 不在 Core 猜测 Provider thinking budget；总输出预算继承 Active Model，reasoning 与
-max-output 分别通过同一 Option Map 链投影。严格 JSON Schema 继续约束响应形状。
+`reasoningLevel.values` is ordered from lowest to highest intensity; Recall uses the first item directly in the
+current `ModelRequest` and continues through the normal Option Spec Map/Adapter chain. The lowest tier does not
+require the model to support disabling Reasoning. Recall does not guess Provider thinking budgets in Core; the
+total output budget is inherited from the Active Model, with reasoning and max-output projected through the
+same Option Map chain. Strict JSON Schema keeps constraining response shapes.
 
 ## Extraction
 
-Extraction Scheduler 保持现有有界语义：最多一个 running Snapshot 和一个 latest pending
-Snapshot。当前实现已经在 Snapshot 中持有一个调度时创建的 Model；改为保存产生工作的
-Turn Active Model 不增加 Model 的滞留数量，也不新增资源生命周期。
+The Extraction Scheduler keeps its bounded semantics: at most one running Snapshot and one latest pending
+Snapshot. The implementation already held a Model created at scheduling time inside the Snapshot; saving the
+Active Model of the producing Turn instead does not increase the number of retained models or add resource
+lifecycles.
 
 ```text
-成功 Turn
+Successful Turn
    |
-   | Active Model + 消息边界 + 工具/读取状态
+   | Active Model + message boundaries + tool/read state
    v
 Extraction Snapshot
    |
-   +--> running（最多一个）
-   `--> latest pending（最多一个，覆盖更早 pending）
+   +--> running (at most one)
+   `--> latest pending (at most one, overriding earlier pending)
 ```
 
-Extraction 继续为自己的模型请求附加独立 telemetry、`skipTranscript` 和 Memory 工具权限，
-但这些属于 Invocation Context，不得借此重新创建或重新选择模型。
+Extraction keeps attaching independent telemetry, `skipTranscript` and Memory tool permissions to its model
+requests, but these belong to the Invocation Context and must not be used to recreate or re-select a model.
 
-## 单轮跳过 Extraction
+## Single-turn skip extraction
 
-CLI/Core 在现有单次 `modelExecution` 中增加可选参数：
+CLI/Core adds an optional parameter within the existing single `modelExecution`:
 
 ```ts
 modelExecution: {
-  // ...既有 execution-scoped Selection 约束
+  // ... existing execution-scoped Selection constraints
   memoryExtraction?: "skip";
 }
 ```
 
-它具有以下边界：
+Boundaries:
 
-- 只影响携带该参数的成功 Turn。
-- 不修改 Session 的 `memory.extractionEnabled`。
-- 不写入 Session Selection、消息历史或持久配置。
-- 不影响 Recall、前台 Memory 工具调用或 Dream。
-- 普通 Turn 缺省不传，继续遵循 Session 级 Extraction 开关。
-- Off-Peak 派发显式传入 `"skip"`，确定不运行自动 Memory Extraction，避免一次性执行
-  凭据在主 Turn 结束后被后台工作再次使用。
+- Affects only successful Turns carrying this parameter.
+- Does not modify the Session's `memory.extractionEnabled`.
+- Does not write Session Selection, message history or persistent configuration.
+- Does not affect Recall, foreground Memory tool calls or Dream.
+- Normal Turns do not pass it by default and keep following the Session-level Extraction toggle.
+- Off-Peak dispatch explicitly passes `"skip"`, so no automatic Memory Extraction runs and single-use
+  credentials are not used again by background work after the main Turn ends.
 
-协议和调用链：
+Protocol and call chain:
 
 ```text
 Host Off-Peak dispatch
@@ -113,12 +116,13 @@ Protocol V4 admission
 SubmitPromptOptions / ExecuteTurnOptions
         |
         v
-Turn 成功
+Turn success
         |
-        +-- skip --> 不调度 Extraction
-        `-- absent -> 按 Session 级开关调度
+        +-- skip --> do not schedule Extraction
+        `-- absent -> schedule per Session-level toggle
 ```
 
-该字段与 execution-scoped Selection、请求期访问材料和子 Agent 约束共用既有的
-`modelExecution` 单轮边界；它不进入可排队的普通 Submission Intent。当前调用方仅为要求
-idle start-now 的 Off-Peak 派发，因此不会在 CommandInbox 中丢失。
+This field shares the existing `modelExecution` single-turn boundary with execution-scoped Selection,
+request-period access materials and subagent constraints; it does not enter normal queueable Submission
+Intents. The current caller is only Off-Peak dispatch, which requires an idle start-now, so it cannot be lost
+in the CommandInbox.

@@ -2,11 +2,11 @@
 import { createElement } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import zhCN from "@/i18n/locales/zh-CN.js";
+import enUS from "@/i18n/locales/en-US.js";
 const ports = vi.hoisted(() => ({ reconnect: vi.fn(), details: vi.fn() }));
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
-    intl: { formatMessage: ({ id }: { id: keyof typeof zhCN }) => zhCN[id] ?? id },
+    intl: { formatMessage: ({ id }: { id: keyof typeof enUS }) => enUS[id] ?? id },
   }),
 }));
 vi.mock("@/project-sidebar/useRemoteProjectConnectionPresentation.js", () => ({
@@ -27,6 +27,7 @@ vi.mock("@/project-sidebar/useRemoteProjectConnectionPresentation.js", () => ({
     error: undefined,
   }),
 }));
+import { expectedCopy } from "./helpers/uiCopy.js";
 import { RemoteConversationDisconnected } from "@/project-sidebar/RemoteConversationDisconnected.js";
 import { persistV4ComposerDraft, readV4ComposerDraft } from "@/v4/composer/composerDraftStore.js";
 afterEach(() => {
@@ -34,10 +35,10 @@ afterEach(() => {
   localStorage.clear();
   vi.clearAllMocks();
 });
-describe("断线会话占位", () => {
-  it("显示原因、只读草稿和重连入口；回车不提交，重连不清草稿", () => {
+describe("disconnected session placeholder", () => {
+  it("shows the reason, a read-only draft and a reconnect entry; Enter does not submit and reconnect keeps the draft", () => {
     const identity = "remote:server:dev:/repo";
-    persistV4ComposerDraft("/repo", identity, "task-a", { text: "保留这份草稿" });
+    persistV4ComposerDraft("/repo", identity, "task-a", { text: "Keep this draft" });
     render(
       createElement(RemoteConversationDisconnected, {
         workspacePath: "/repo",
@@ -45,20 +46,25 @@ describe("断线会话占位", () => {
         sessionId: "task-a",
       }),
     );
-    expect(screen.getByText("设备未连接，连接后继续此会话")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("remote.conversation.placeholder"))).toBeTruthy();
     const input = screen.getByRole("textbox") as HTMLTextAreaElement;
-    expect(input.value).toBe("保留这份草稿");
+    expect(input.value).toBe("Keep this draft");
     expect(input.readOnly).toBe(true);
-    expect((screen.getByRole("button", { name: "发送" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: expectedCopy("chat.send") }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
     fireEvent.keyDown(input, { key: "Enter" });
     expect(ports.reconnect).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "重新连接" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: expectedCopy("remote.conversation.reconnect") }),
+    );
     expect(ports.reconnect).toHaveBeenCalledOnce();
-    expect(readV4ComposerDraft("/repo", identity, "task-a")?.text).toBe("保留这份草稿");
+    expect(readV4ComposerDraft("/repo", identity, "task-a")?.text).toBe("Keep this draft");
   });
 });
 
-it("离线项目占位只有一行连接入口，不渲染过期任务", async () => {
+it("the offline project placeholder has a single-line connect entry and renders no stale tasks", async () => {
   const { OfflineRemoteProjectRows } =
     await import("@/project-sidebar/OfflineRemoteProjectRows.js");
   const reconnect = vi.fn();
@@ -68,7 +74,7 @@ it("离线项目占位只有一行连接入口，不渲染过期任务", async (
         {
           id: "remote",
           kind: "workspace",
-          label: "项目",
+          label: "Project",
           workspacePath: "/repo",
           workspaceIdentity: "remote:server:dev:/repo",
         },

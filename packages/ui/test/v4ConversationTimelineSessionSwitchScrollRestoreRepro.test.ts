@@ -1,16 +1,21 @@
-// 复现测试（ZCT-2092635483465441280 / ZCT-2092650540916523008 / ZCT-202608-C5F84801）：
-// 切换/打开会话时滚动落在"既不是底部、也不是上次阅读位置"的随机历史中部。
+// Repro tests (ZCT-2092635483465441280 / ZCT-2092650540916523008 / ZCT-202608-C5F84801):
+// when switching/opening a session, the scroll lands in a random spot in the middle of history —
+// "neither the bottom nor the last reading position".
 //
-// 回归断言按【预期行为】书写，锁定以下两个曾经导致随机历史落点的边界：
-// 1. lease 竞态：SessionPane 切会话不重挂、lease 在 useEffect 里晚一拍到达，
-//    scrollMemoryKey/sessionKey 先变而 rows 仍是旧会话内容；恢复 effect
-//    （ConversationTimeline.tsx 会话切换 effect）在旧会话坐标系上执行像素钳制，
-//    之后 rows 换成新会话（keep-warm 30s 内不经过 0 行）也不再重跑恢复。
-// 2. 分片坐标系错位：记忆保存的是"全量窗口 × 真实测高"下的像素 scrollTop；
-//    冷开只有尾部 60 行 + 72px 估算（heightCache 已清），钳制后的落点不再对应
-//    保存时的阅读位置，且内容补齐后没有任何重新锚定。
+// The regression assertions are written against [expected behavior], locking down the two
+// boundaries that used to cause random history landing spots:
+// 1. Lease race: SessionPane switches sessions without remounting, and the lease arrives one beat
+//    late in a useEffect, so scrollMemoryKey/sessionKey change first while rows still hold the old
+//    session's content; the restore effect (ConversationTimeline.tsx's session-switch effect)
+//    performs its pixel clamp in the old session's coordinate system, and once rows are swapped to
+//    the new session (never passing through 0 rows within the 30s keep-warm window) the restore
+//    does not re-run either.
+// 2. Fragmented coordinate mismatch: the memory stores a pixel scrollTop from the
+//    "full window x real measured heights" regime; a cold open only has the tail 60 rows plus a
+//    72px estimate (heightCache cleared), so the clamped landing spot no longer corresponds to the
+//    reading position at save time, and nothing re-anchors after the content is backfilled.
 //
-// 器具复制自 v4ConversationTimelineScrollMemory.test.ts（最小 DOM + mock virtualizer）。
+// Harness copied from v4ConversationTimelineScrollMemory.test.ts (minimal DOM + mocked virtualizer).
 
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -162,7 +167,7 @@ function createMinimalElement(ownerDocument: Document, tagName = "div"): TestEle
     scrollTop: {
       get: () => scrollTop,
       set: (value: number) => {
-        // 与浏览器一致：赋值按当前内容高度钳制。
+        // Matches the browser: assignment is clamped against the current content height.
         scrollTop = Math.min(
           Math.max(Number(value) || 0, 0),
           Math.max(layout.scrollHeight - layout.clientHeight, 0),
@@ -274,7 +279,7 @@ function renderTimeline(
   root.render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(ConversationTimeline, {
         canLoadOlder: options.canLoadOlder,
         rows,
@@ -290,7 +295,7 @@ function renderTimeline(
 const KEY_A = "workspace::pane:a::session:a";
 const KEY_B = "workspace::pane:a::session:b";
 const ROWS_A = [userInputRow(1), userInputRow(2), userInputRow(3)];
-// 新会话的分片尾窗（rowId 不同即可；真实场景是最后 60 行）。
+// The new session's tail window (rowIds only need to differ; the real scenario is the last 60 rows).
 const ROWS_B_TAIL = [userInputRow(101), userInputRow(102), userInputRow(103)];
 
 beforeEach(() => {
@@ -320,12 +325,12 @@ afterEach(() => {
   delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: unknown }).IS_REACT_ACT_ENVIRONMENT;
 });
 
-describe("会话切换滚动恢复（ZCT 复现）", () => {
-  it("lease 迟一拍时，恢复必须以新会话内容为坐标系，而不是把旧会话钳制值当成最终落点", () => {
+describe("session-switch scroll restore (ZCT repro)", () => {
+  it("when the lease arrives one tick late, restore must use the new session content as its coordinate system, not the clamped old-session value", () => {
     const container = installMinimalDom();
     mountedRoot = createRoot(container);
 
-    // ── commit 0：正在看会话 A（无记忆 → 吸底）。
+    // -- commit 0: viewing session A (no memory -> pinned to bottom).
     act(() => renderTimeline(mountedRoot!, "session-a", KEY_A, ROWS_A));
     const timeline = findByTestId(container, TID_V4_TIMELINE)!;
     act(() => {
@@ -333,9 +338,10 @@ describe("会话切换滚动恢复（ZCT 复现）", () => {
       flushAnimationFrame();
       flushScheduledMicrotasks();
     });
-    expect(timeline.scrollTop).toBe(900); // A 的底部（1200 - 300）
+    expect(timeline.scrollTop).toBe(900); // A's bottom (1200 - 300)
 
-    // 会话 B 上次离开时处于离底阅读态：位置保存在 B 的全量坐标系（scrollHeight=20000）。
+    // Session B was left in an off-bottom reading state: the position is stored in B's full-window
+    // coordinate system (scrollHeight=20000).
     saveChatSessionScrollMemoryState(KEY_B, {
       scrollTop: 5000,
       scrollHeight: 20000,
@@ -344,18 +350,19 @@ describe("会话切换滚动恢复（ZCT 复现）", () => {
       updatedAt: 1,
     });
 
-    // ── commit 1：SessionPane 切到 B。sessionKey/scrollMemoryKey 立即变化，
-    // 但 lease 在 useEffect 里晚一拍 → rows 仍是 A 的内容（SessionPane.tsx rows
-    // 无 sessionLeaseReady 守卫）。恢复 effect 此刻执行：clamp(5000, 1200-300)=900。
+    // -- commit 1: SessionPane switches to B. sessionKey/scrollMemoryKey change immediately,
+    // but the lease arrives one beat late in a useEffect -> rows still hold A's content
+    // (SessionPane.tsx rows have no sessionLeaseReady guard). The restore effect runs at this
+    // moment: clamp(5000, 1200-300)=900.
     act(() => renderTimeline(mountedRoot!, "session-b", KEY_B, ROWS_A));
     act(() => {
-      flushAnimationFrame(); // 恢复 correction rAF（rows 仍是 A）
+      flushAnimationFrame(); // restore correction rAF (rows are still A)
       flushAnimationFrame(); // release guard rAF
       flushScheduledMicrotasks();
     });
 
-    // ── commit 2：lease 到位，B 在 keep-warm 内 → rows 直接替换为 B 的窗口，
-    // 从未经过 0 行；B 的内容高度为 2400。
+    // -- commit 2: the lease is in place and B is within keep-warm -> rows are swapped straight to
+    // B's window, never passing through 0 rows; B's content height is 2400.
     act(() => {
       layout.scrollHeight = 2400;
       renderTimeline(mountedRoot!, "session-b", KEY_B, ROWS_B_TAIL);
@@ -366,15 +373,17 @@ describe("会话切换滚动恢复（ZCT 复现）", () => {
       flushScheduledMicrotasks();
     });
 
-    // 预期行为：恢复应以 B 的实际内容为坐标系 → clamp(5000, 2400-300)=2100
-    //（至少要把保存位置在新坐标系下重放）。
-    // 回归前实现：停在 commit 1 里按 A 内容钳出的 900 —— 既不是 B 的上次位置，
-    // 也不是 B 的底部（2100），即工单描述的"落在历史中间"。
+    // Expected behavior: the restore must use B's actual content as its coordinate system ->
+    // clamp(5000, 2400-300)=2100 (at minimum, replay the saved position in the new coordinate
+    // system).
+    // Pre-fix implementation: it stopped at commit 1's 900, clamped against A's content — neither
+    // B's last position nor B's bottom (2100), i.e. the "lands in the middle of history" from the
+    // ticket.
     expect(timeline.scrollTop).toBe(2100);
   });
 
-  it("冷开时记忆的全量坐标像素被分片尾窗钳制后，内容补齐必须重新锚定回保存位置", () => {
-    // 上次离开：全量窗口（20000px 高）里读到 12000px 处。
+  it("after a cold open clamps the remembered full-coordinate pixels into the tail shard, backfill must re-anchor to the saved position", () => {
+    // Last leave: reading at 12000px inside the full window (20000px tall).
     saveChatSessionScrollMemoryState(KEY_B, {
       scrollTop: 12000,
       scrollHeight: 20000,
@@ -383,7 +392,7 @@ describe("会话切换滚动恢复（ZCT 复现）", () => {
       updatedAt: 1,
     });
 
-    // 冷开：只有尾部分片 + 72px 估算 → 内容只有 1200px 高。
+    // Cold open: only the tail fragment + a 72px estimate -> the content is only 1200px tall.
     const container = installMinimalDom();
     mountedRoot = createRoot(container);
     act(() =>
@@ -398,12 +407,13 @@ describe("会话切换滚动恢复（ZCT 复现）", () => {
       flushAnimationFrame();
       flushScheduledMicrotasks();
     });
-    // 恢复被钳进分片坐标系：clamp(12000, 900)=900。
+    // The restore is clamped into the fragment's coordinate system: clamp(12000, 900)=900.
     expect(timeline.scrollTop).toBe(900);
     expect(timeline.getAttribute("data-following")).toBe("false");
     expect(findByTestId(container, TID_V4_TIMELINE_BOTTOM)).not.toBeNull();
 
-    // 历史补拉 + 真实测高完成：更早的行前插，总高度回到 20000。
+    // History backfill + real measured heights complete: older rows are prepended and the total
+    // height returns to 20000.
     act(() => {
       layout.scrollHeight = 20000;
       renderTimeline(
@@ -420,9 +430,12 @@ describe("会话切换滚动恢复（ZCT 复现）", () => {
       flushScheduledMicrotasks();
     });
 
-    // 预期行为：内容补齐后应回到保存的阅读位置 12000。
-    // 回归前实现：prepend 锚定把"钳制瞬间恰好在视口里的那一行"当作阅读锚点平移
-    //（900 + 18800 = 19700），落点漂到接近底部/任意历史处，保存位置永久丢失。
+    // Expected behavior: after the content is backfilled it must return to the saved reading
+    // position of 12000.
+    // Pre-fix implementation: prepend anchoring translated the anchor by treating "the row that
+    // happened to be in the viewport at the clamp moment" as the reading anchor
+    // (900 + 18800 = 19700), so the landing drifted to near the bottom / somewhere arbitrary in
+    // history and the saved position was permanently lost.
     expect(timeline.scrollTop).toBe(12000);
   });
 });

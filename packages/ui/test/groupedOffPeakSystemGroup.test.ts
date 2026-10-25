@@ -1,0 +1,66 @@
+// D48-A：闲时侧栏分组收敛为 tasks-index 真实系统分组后的 UI 契约。
+// 纯逻辑走 group-title 单测；组件接线沿用仓库惯例做源码断言。
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+import { CRON_DEFAULT_GROUP_ID, OFF_PEAK_DEFAULT_GROUP_ID } from "@zcode/shared";
+import { getTaskGroupDisplayTitle } from "@/project-sidebar/grouped/group-title.js";
+
+function readSource(relativePath: string): string {
+  return readFileSync(resolve(process.cwd(), relativePath), "utf8");
+}
+
+describe("off-peak 系统分组 id 与标题", () => {
+  it("shared 常量与 cron 并列且互不相同", () => {
+    expect(OFF_PEAK_DEFAULT_GROUP_ID).toBe("zcode-default-group-off-peak");
+    expect(OFF_PEAK_DEFAULT_GROUP_ID).not.toBe(CRON_DEFAULT_GROUP_ID);
+  });
+
+  it("getTaskGroupDisplayTitle 本地化两个系统分组并透传普通分组标题", () => {
+    const titles = { cron: "定时任务", offPeak: "闲时任务" };
+    expect(getTaskGroupDisplayTitle({ id: CRON_DEFAULT_GROUP_ID, title: "cron" }, titles)).toBe(
+      "定时任务",
+    );
+    expect(
+      getTaskGroupDisplayTitle({ id: OFF_PEAK_DEFAULT_GROUP_ID, title: "off-peak" }, titles),
+    ).toBe("闲时任务");
+    expect(getTaskGroupDisplayTitle({ id: "custom", title: "My Group" }, titles)).toBe("My Group");
+  });
+});
+
+describe("grouped UI 收敛接线（源码断言）", () => {
+  it("GroupItem 用 isSystemGroup 统一裁剪改名/解散，标题走本地化", () => {
+    const source = readSource("packages/ui/src/project-sidebar/grouped/group-item.tsx");
+    expect(source).toContain("OFF_PEAK_DEFAULT_GROUP_ID");
+    expect(source).toContain("const isSystemGroup = isCronGroup || isOffPeakGroup;");
+    expect(source).not.toContain("{isCronGroup ? null : (");
+    expect(source.match(/\{isSystemGroup \? null : \(/g)).toHaveLength(2);
+    expect(source).toContain('offPeak: intl.formatMessage({ id: "offPeak.sidebar.groupTitle" })');
+  });
+
+  it("sticky header 对系统分组裁剪解散项（修掉 cron 存量缺口）", () => {
+    const source = readSource("packages/ui/src/project-sidebar/grouped/sticky-group-header.tsx");
+    expect(source).toContain("OFF_PEAK_DEFAULT_GROUP_ID");
+    expect(source).toContain("isSystemGroup ? null : (");
+  });
+
+  it("Section 把闲时组头「+」路由到 Automations，且投影去重已退役", () => {
+    const source = readSource("packages/ui/src/project-sidebar/TaskGroupedView.tsx");
+    expect(source).toContain("groupId === OFF_PEAK_DEFAULT_GROUP_ID");
+    expect(source).toContain("onOpenAutomations?.()");
+    expect(source).not.toContain("filterGroupedTaskViewForOffPeakSessions");
+    expect(source).not.toContain("useOffPeakTaskStore");
+    expect(source).not.toContain("excludeOffPeakSessions");
+  });
+
+  it("拖拽浮层与 sticky header 的标题同样本地化闲时组", () => {
+    for (const relativePath of [
+      "packages/ui/src/project-sidebar/grouped/group-drag-overlay.tsx",
+      "packages/ui/src/project-sidebar/grouped/sticky-group-header.tsx",
+    ]) {
+      expect(readSource(relativePath)).toContain(
+        'offPeak: intl.formatMessage({ id: "offPeak.sidebar.groupTitle" })',
+      );
+    }
+  });
+});

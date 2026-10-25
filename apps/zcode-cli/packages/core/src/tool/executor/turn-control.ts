@@ -29,8 +29,10 @@ export function withAutomationCreateLimitTurnStop(
     return result;
   }
 
-  // 创建上限是需要用户手动释放名额的产品边界，不是 Agent 可恢复错误。
-  // 给模型隐藏带有“Delete...”诱导性的原始错误，并请求 executor 取消当前 step 的后续工具。
+  // The creation limit is a product boundary that requires the user to free a slot; it
+  // is not an Agent-recoverable error. Hide the raw error, which may contain a
+  // "Delete..." suggestion, from the model and ask the executor to cancel later tools
+  // in the current step.
   return {
     ...result,
     modelContent: AUTOMATION_CREATE_LIMIT_MODEL_MESSAGE,
@@ -65,13 +67,15 @@ export function withPlanExitDeniedTurnStop(
         input: feedback,
         reasonSource: "plan_approval_feedback",
       },
-      // feedback 会通过 steer 成为真实 user message；tool_result 只能表达计划被拒绝，
-      // 不能承诺反馈一定跟随，否则 steer 被拒绝时 provider 会看到不存在的后续 user message。
+      // Feedback becomes a real user message through steer. tool_result can only say
+      // that the plan was denied; it cannot promise that feedback will follow, or the
+      // provider may see a nonexistent user message if steer is rejected.
       modelContent: EXIT_PLAN_DENIED_BY_USER_MESSAGE,
     };
   }
 
-  // 拒绝退出计划代表用户要继续讨论，不能把它当普通工具错误继续喂给模型自我重写计划。
+  // Denying plan exit means the user wants to continue discussing it; do not treat this
+  // as an ordinary tool error that prompts the model to rewrite the plan on its own.
   return {
     ...result,
     turnControl: {
@@ -85,8 +89,9 @@ function readPlanExitDeniedFeedback(result: ToolExecutionResult): string | undef
   if (result.error?.type !== CoreErrorType.PermissionDenied) {
     return undefined;
   }
-  // project rule / hook / broker 也可能返回 deny + reason；
-  // 只有 ExitPlanMode 审批自定义输入带上的专用 source 才能被解释为用户修改意见。
+  // Project rules, hooks, and the broker may also return deny + reason. Only the
+  // dedicated source attached to custom ExitPlanMode approval input can be interpreted
+  // as user feedback.
   if (result.error.reasonSource !== "plan_approval_feedback") {
     return undefined;
   }
@@ -98,11 +103,13 @@ function readPlanExitDeniedFeedback(result: ToolExecutionResult): string | undef
 }
 
 /**
- * workflow 运行确认窗的 Refine 应答。
- * 与 withPlanExitDeniedTurnStop 同构但更窄：只有反馈升级，没有停 turn 分支——
- * 普通 Deny 沿用既有语义（喂标准权限错误，turn 继续），反馈经 steer 成为真实
- * user message 后模型在同一 turn 内修订脚本重提，重提自然触发新一轮确认。
- * 不按 mode 键入：CreateWorkflow 的 ask 本就无视模式（alwaysAsk）。
+ * Handle a Refine response in the workflow-run approval dialog.
+ * This mirrors withPlanExitDeniedTurnStop but is narrower: it only promotes feedback
+ * and has no stop-turn branch. Ordinary Deny keeps its existing behavior (send the
+ * standard permission error and continue the turn). Feedback becomes a real user
+ * message through steer, after which the model revises and resubmits the script in the
+ * same turn, naturally triggering another approval request.
+ * Do not key this by mode: CreateWorkflow asks in every mode (alwaysAsk).
  */
 export function withWorkflowRefineDeniedFollowUp(
   result: ToolExecutionResult,
@@ -124,8 +131,9 @@ export function withWorkflowRefineDeniedFollowUp(
       input: feedback,
       reasonSource: "workflow_refine_feedback",
     },
-    // tool_result 只能表达运行未获批准，不能承诺反馈一定跟随，
-    // 否则 steer 被拒绝时 provider 会看到不存在的后续 user message。
+    // tool_result can only say that execution was not approved; it cannot promise that
+    // feedback will follow, or the provider may see a nonexistent user message if steer
+    // is rejected.
     modelContent: WORKFLOW_REFINE_DENIED_BY_USER_MESSAGE,
   };
 }
@@ -134,8 +142,8 @@ function readWorkflowRefineDeniedFeedback(result: ToolExecutionResult): string |
   if (result.error?.type !== CoreErrorType.PermissionDenied) {
     return undefined;
   }
-  // 同 readPlanExitDeniedFeedback：hook / project rule 的 deny + reason 不带该专用 source，
-  // 不得被升级成用户消息。
+  // As with readPlanExitDeniedFeedback, a deny + reason from a hook or project rule
+  // lacks the dedicated source and must not be promoted to a user message.
   if (result.error.reasonSource !== "workflow_refine_feedback") {
     return undefined;
   }
@@ -143,12 +151,14 @@ function readWorkflowRefineDeniedFeedback(result: ToolExecutionResult): string |
   return message || undefined;
 }
 
-// submit_result 之类的终态工具在其 ToolEntry.metadata 上声明 stopTurnOnSuccess=true：它们的
-// 成功结果表示一次终态提交，必须结束 actor 的 turn。这里读声明式 metadata，而不是按工具名硬编码
-// ——终态是一种一般性的内在能力（任何未来的终态工具都可复用），与失败侧
-// withPlanExitDeniedTurnStop / withAutomationCreateLimitTurnStop 按 tool 特定 error/state 键入的
-// 条件性 stop 不同。这些工具的 handler 保证成功⟺该终止（gate 抛错、reject 走失败），故无需
-// handler 侧信号通道。
+// Terminal tools such as submit_result declare stopTurnOnSuccess=true in
+// ToolEntry.metadata: success means a terminal submission and must end the actor's
+// turn. Read declarative metadata here instead of hard-coding tool names. Terminal
+// completion is a general capability reusable by future tools, unlike conditional
+// failure-side stops in withPlanExitDeniedTurnStop / withAutomationCreateLimitTurnStop,
+// which are keyed to tool-specific errors or state. These handlers guarantee that
+// success implies termination (the gate throws and rejection follows the failure path),
+// so no handler-side signaling channel is needed.
 export function withTerminalToolTurnStop(
   result: ToolExecutionResult,
   input: { entry: ToolEntry },

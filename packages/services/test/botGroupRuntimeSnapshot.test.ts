@@ -242,7 +242,7 @@ function makeSnapshotFrame(title: string): ConversationTopicFrame {
     pendingInteractions: [],
     pendingCommands: [],
     backgroundWorks: [],
-    // 软门禁 additive 字段:归一化形态(带 default(null))
+    // Soft-gate additive fields: normalized form (with default(null))
     workspaceHookAdmission: null,
     goal: null,
     plan: null,

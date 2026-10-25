@@ -1,29 +1,22 @@
-# Todo137：体验套餐 GLM-5.3 隐藏视觉标
+# Todo137: Hide the vision badge of GLM-5.3 on the trial (Start) plan
 
-> 状态：已实现，验收结果见下文。2026-09-12。
+> Status: implemented and accepted (2026-09-12).
 
-## 背景与裁决
+## Rule
 
-[Todo126 第4节](todo-126-glm-flash-pdf-and-coding-plan-turbo-defaults.md) 只覆盖个人、团队 Coding Plan 和手动套餐 Key。当前共用判断遗漏体验套餐 `start-plan`，旧单测还明确要求它显示视觉标。用户确认体验套餐也应隐藏 GLM-5.3 视觉标，沿用既有展示特例。
+[Todo126 section 4](todo-126-glm-flash-pdf-and-coding-plan-turbo-defaults.md) covered only personal and
+team Coding Plan and manual plan Key; the shared check missed the trial plan `start-plan` (and an old unit
+test required it to show the badge). The user confirmed the trial plan also hides the GLM-5.3 vision badge.
 
-## 修改后的规则
+- Not shown when `supportsImage !== true`.
+- Hidden when the model ID equals `glm-5.3` (case-insensitive, exact) and Access is a manual Coding Plan Key, or an account personal / team / trial plan. Applies to both Z.ai and BigModel trial plans.
+- Flash, other models, ordinary API Keys and off-peak plans keep current behavior.
+- Only the display condition of `shouldShowModelVisionBadge` changes. Settings page and model-selection menu share it (desktop and phone Web identical). Image upload, real image capability, model requests, config files, Schema and builtin revision are unchanged.
 
-- `supportsImage !== true` 时不显示。
-- 当模型 ID 忽略大小写后精确等于 `glm-5.3`，且 Access 是手动 Coding Plan Key，或账号个人／团队／体验套餐时隐藏。
-- Z.ai、BigModel 体验套餐都适用。Flash、其他型号、普通 API Key 与闲时套餐沿用现状。
-- 只改 `shouldShowModelVisionBadge` 的展示条件。设置页和模型选择菜单共用判断，桌面和手机 Web 一致；图片上传、实际图片能力、模型请求、配置文件、Schema 和 builtin revision 均不变。
+## Implementation and acceptance
 
-## 实施与验收
-
-- [x] 先扩充设置页与菜单单测，覆盖两家 Start、保留 Flash 和真实 supportsImage；确认旧实现失败。
-- [x] 共用判断增加 `start-plan`，注释说明遗漏原因，不增加状态、接口或额外判断链。
-- [x] 扩充现有浏览器用例，分别访问两家 Start，验证设置列表与打开的模型菜单；覆盖390中文浅色、1200英文深色，保留已有套餐回归。用例仍为 pending，不冒充原生端或手机 Host 联调。
-- [x] 跑相关单测、浏览器用例、typecheck、lint 与架构检查，记录结果后提交。
-
-## 实施记录（2026-09-12）
-
-- 生产仅修改 UI 共用纯函数：增加 `start-plan`，变量改名避免把体验套餐称为 Coding Plan；设置行和模型菜单现有调用链不变。
-- 先红：两个单测文件共3项失败（两家 Start 菜单、设置行），两项浏览器用例均因 Start 的 GLM-5.3 仍有视觉标失败。修复后77项单测、2项浏览器用例通过；每项浏览器用例遍历两家 Start、个人、团队与手动套餐 Key。
-- 浏览器覆盖390中文浅色与1200英文深色，实际打开模型菜单并检查设置行；GLM-5.3 隐藏、Flash 保留，截图在 `/tmp/zcode-provider-settings-batch/vision-start-*.png`。使用已有隔离 Chromium 运行库解决本机 libatk 缺失，没有修改系统或产品依赖。此为共享组件浏览器验收，不代替 Windows/macOS 原生包或真实手机远控。
-- 根 `pnpm typecheck` 通过；`pnpm lint` 为0错误、42条未修改文件警告；架构检查0违规。首次单独 E2E 类型检查遇到旧依赖声明，根类型构建完成后重跑 `pnpm --filter @zcode/desktop typecheck:e2e` 通过。
-- 没有修改 Provider/Model 配置、Schema、网络、图片能力或上传链路，没有 builtin revision 变动。
+- The shared pure function in UI gains `start-plan` (comment explains the omission; variable renamed so the trial plan is not called Coding Plan); settings row and menu call chains unchanged.
+- Red first: 3 unit failures (both Start menus, settings row) and two browser cases failing because Start's GLM-5.3 still showed the badge. After the fix: 77 unit tests and 2 browser cases pass; each browser case visits both Start plans, personal, team and manual plan Key.
+- Browser coverage at 390 Chinese light and 1200 English dark opens the real model menu and checks the settings row: GLM-5.3 hidden, Flash kept (screenshots `/tmp/zcode-provider-settings-batch/vision-start-*.png`). Shared-component browser acceptance only, not a native Windows/macOS package or real phone remote control.
+- Root `pnpm typecheck` passed; `pnpm lint` 0 errors / 42 warnings in unmodified files; architecture 0 violations; `pnpm --filter @zcode/desktop typecheck:e2e` passed after the root type build.
+- No change to Provider/Model config, Schema, network, image capability or upload chain; no builtin revision change.

@@ -23,6 +23,8 @@ import {
   IProviderProvisioningTargetService,
   IZCodeAgentService,
   IConversationShareService,
+  IQuickPromptService,
+  createReadOnlyQuickPromptService,
   ServiceCollection,
 } from "@zcode/services";
 import {
@@ -53,9 +55,9 @@ const log = createServiceLogger("server-core");
 
 async function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
   for (const client of wss.clients) {
-    // HTTP server.close() 不会收敛已经 upgrade 的 WebSocket，活跃 desktop
-    // continuous 连接会让 Core 的 shutdown ack 永远发不出去。先发 close frame 给正常
-    // 客户端一个短暂排空窗口，再 terminate 兜底，保证 Supervisor 能在预算内释放资源。
+    // HTTP server.close() does not close WebSockets that have already been upgraded; active desktop
+    // continuous connections would prevent Core from sending its shutdown ack. Send a close frame first and give normal
+    // clients a brief drain window, then terminate as a fallback so Supervisor can release resources within its budget.
     client.close(1001, "Server shutting down");
   }
   const deadline = Date.now() + WEBSOCKET_DRAIN_TIMEOUT_MS;
@@ -185,6 +187,17 @@ function exposeWebSocket(
       },
     });
   }
+  // Mobile (web-remote-replayable) reads the controller's quick prompts only; mutations reject with a stable code
+  // (spec rule 21, same wrapper as the desktop Host attachment policy).
+  if (clientMode === "web-remote-replayable") {
+    const quickPromptSource = services.getOptional(IQuickPromptService);
+    if (quickPromptSource) {
+      overrides.set(
+        IQuickPromptService.channelName,
+        createReadOnlyQuickPromptService(quickPromptSource),
+      );
+    }
+  }
   services.exposeOnChannelServer(server, overrides);
   socket.onClose(() => {
     peer?.dispose();
@@ -211,7 +224,8 @@ export async function createCoreHttpServer(
   const { injectWebSocket, upgradeWebSocket, wss } = createNodeWebSocket({ app });
   const host = options.host ?? "127.0.0.1";
   if (!isLoopbackHost(host)) {
-    // R2 当前只有本机/SSH 隧道入口，Core 尚未接入 token middleware；对外监听必须 fail-closed。
+    // R2 currently supports only local/SSH tunnel access, and Core has no token middleware yet;
+    // external listeners must fail closed.
     throw new Error(
       `Non-loopback host ${host} requires authentication before the server can listen`,
     );
@@ -233,8 +247,8 @@ export async function createCoreHttpServer(
       processResourceTelemetry: true,
     },
   });
-  // 裸 Set 无法落实 expiresAt，未消费的 capability 会一直有效并持续累积。
-  // 使用与 packages/server 兼容的 TTL 一次性 store，使有效期和消费语义与返回信息一致。
+  // A bare Set cannot enforce expiresAt, so unconsumed capabilities would remain valid and accumulate indefinitely.
+  // Use a one-time store with the TTL supported by packages/server so expiration and consumption semantics match the returned data.
   const capabilities = options.hostCapabilityStore ?? createHostCapabilityStore();
   app.use("*", async (context, next) => {
     if (!ingressToken) {

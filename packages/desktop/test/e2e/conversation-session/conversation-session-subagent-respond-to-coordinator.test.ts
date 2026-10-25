@@ -45,8 +45,9 @@ const ERROR_AGENT_TOOL_CALL_ID = "toolu_e2e_error_agent";
 const ERROR_RESPOND_TO_COORDINATOR_TOOL_CALL_ID = "toolu_e2e_error_respond_to_coordinator";
 const ERROR_TASK_OUTPUT_TOOL_CALL_ID = "toolu_e2e_error_task_output";
 const MISSING_TASK_ID = "task_e2e_missing";
-// Bug 原因：工具执行失败已经统一使用通用生命周期文案；旧断言仍期待 TaskOutput / RespondToCoordinator
-// 的专属失败文案，导致产品正确显示“执行失败”时 E2E 误报。中英文都按共享状态文案校验。
+// Bug cause: tool execution failures now uniformly use the generic lifecycle copy; the old assertions still expected
+// TaskOutput / RespondToCoordinator's dedicated failure copy, so E2E falsely reported a failure while the product
+// correctly displayed "execution failed". Both languages verify against the shared status copy.
 const TOOL_EXECUTION_FAILURE_LABELS = ["执行失败", "Failed"] as const;
 
 describe("会话区 BG25/O18/O19 coordinator 与 TaskOutput 专属卡片 E2E", () => {
@@ -63,9 +64,10 @@ describe("会话区 BG25/O18/O19 coordinator 与 TaskOutput 专属卡片 E2E", (
     await rm(ERROR_CHILD_RELEASE_FILE, { force: true });
     await writeFile(CONTINUED_WORK_FILE, "E2E_SUBAGENT_CONTINUED_WORK\n", "utf-8");
     await startNewV4Draft();
-    // Bug 原因：legacy helper 会遍历所有 workspace，只要任一旧 workspace 是 yolo
-    // 就误判当前 v4 draft 已切换，实际 session 仍以 build 启动，child Bash 永久等权限。
-    // 必须通过当前 v4 composer 明确写入 draft mode，再启动本 case 的 session。
+    // Bug cause: the legacy helper iterates all workspaces, and as long as any old workspace is yolo it wrongly
+    // judges the current v4 draft as switched; the session actually still starts in build and the child Bash waits for
+    // permission forever. We must explicitly write draft mode through the current v4 composer before starting this
+    // case's session.
     await selectCurrentV4FullAccessMode();
   });
 
@@ -91,8 +93,8 @@ describe("会话区 BG25/O18/O19 coordinator 与 TaskOutput 专属卡片 E2E", (
       const prompt =
         "E2E_SUBAGENT_RESPOND_TO_COORDINATOR: Launch a background agent, ask it E2E_SUBAGENT_COORDINATOR_QUESTION while it is running, consume its response, and wait for E2E_SUBAGENT_FINAL_RESULT.";
       const requestCountBefore = await getUpstreamRequestRecordCount();
-      // Bug 原因：v4 已删除 legacy chat-input/chat-view；旧 BG25 在 before hook
-      // 结束，RespondToCoordinator 主链路实际未运行。这里统一改读 v4 pane/timeline。
+      // Bug cause: v4 has removed the legacy chat-input/chat-view; the old BG25 ended in the before hook and the
+      // RespondToCoordinator main path never actually ran. Here everything reads the v4 pane/timeline instead.
       await sendV4Prompt(prompt);
       await waitForV4TimelineContaining("E2E_SUBAGENT_RESPOND_TO_COORDINATOR", 60000);
       await waitForToolCallBlockByToolCallId(PARENT_AGENT_TOOL_CALL_ID, 60_000);
@@ -156,9 +158,10 @@ describe("会话区 BG25/O18/O19 coordinator 与 TaskOutput 专属卡片 E2E", (
         "parent 消费 coordinator response 后没有回到 idle",
         90_000,
       );
-      // Bug 原因：child 原来固定 sleep 1 秒后结束，慢机器上 completion notification
-      // 会先并入 parent response turn，使 strict replay 无法分别验证两次 provider request。
-      // 只有 parent 已消费 response 且回到 idle 后才放行 child 终态，固定产品要求的顺序。
+      // Bug cause: the child used to finish after a fixed 1-second sleep; on slow machines the completion notification
+      // merged into the parent response turn first, so strict replay could not verify the two provider requests
+      // separately. The child's terminal state is only released once the parent has consumed the response and returned
+      // to idle, fixing the product-required order.
       await writeFile(FINAL_RELEASE_FILE, "release\n", "utf-8");
       const childFinalIndex = await waitForFirstRequestIndex(
         { includes: ["E2E_SUBAGENT_CONTINUED_WORK_TOOL_DONE"] },
@@ -221,9 +224,10 @@ describe("会话区 BG25/O18/O19 coordinator 与 TaskOutput 专属卡片 E2E", (
       );
       expect(compareRequestPositions(responsePosition, notificationPosition)).toBeLessThan(0);
 
-      // v4 P9 只在父 timeline 保留 Agent/subagent 摘要，child tool rows 归 child
-      // conversation，不再嵌进父 Agent 卡。BG25 的产品语义是双向消息链与 child
-      // 继续执行，前面的 provider request 顺序已覆盖；旧 renderer-store 镜像断言应移除。
+      // v4 P9 keeps only the Agent/subagent summary on the parent timeline; child tool rows belong to the child
+      // conversation and are no longer nested into the parent Agent card. BG25's product semantics are the
+      // bidirectional message chain and the child continuing to run, already covered by the earlier provider request
+      // ordering; the old renderer-store mirror assertions should be removed.
       const timeline = await getV4PaneSnapshot();
       expect(timeline.timelineText).not.toContain("E2E_SUBAGENT_RESPONSE_QUEUED");
       expect(timeline.timelineText).not.toContain("<subagent-message>");
@@ -237,7 +241,8 @@ describe("会话区 BG25/O18/O19 coordinator 与 TaskOutput 专属卡片 E2E", (
       await assertTaskOutputCard();
       await assertRespondToCoordinatorCard();
 
-      // 修复原因：BG25 不覆盖 compact；若 spec 误回 manual-review，小窗口配置会插入无关 divider。
+      // Reason for the fix: BG25 does not cover compact; if the spec wrongly falls back to manual-review, the
+      // small-window configuration would insert unrelated dividers.
       const compactMarkerCount = await browser.execute(
         () =>
           document.querySelectorAll('[data-row-kind="timelineMarker"][data-marker-type="compact"]')
@@ -460,9 +465,10 @@ async function openSubagentSidePane(parentAgentToolCallId: string): Promise<void
     throw new Error("BG25 parent Agent 卡的 child session 入口缺少 session id");
   }
 
-  // 测试原因：生产包中的 Agent 摘要可能在 completion 投影时重挂载，单次
-  // WebDriver element click 会落到旧节点。每轮都从当前 DOM 重新定位并点击，
-  // 只以目标 child session pane 真正可见作为成功条件，不改生产交互。
+  // Reason for the test: in the production bundle the Agent summary can remount during the completion projection, so
+  // a single WebDriver element click lands on a stale node. Each round re-locates from the current DOM and clicks
+  // again, taking the target child session pane actually becoming visible as the only success condition, without
+  // changing production interactions.
   for (let attempt = 0; attempt < 3; attempt += 1) {
     await browser.execute(
       (blockTestId, actionId) => {
@@ -575,9 +581,10 @@ function compareRequestPositions(
 }
 
 async function selectCurrentV4FullAccessMode() {
-  // Bug 根因：legacy session store 的 workspace configOptions 已不是 V4 草稿模式的
-  // 权威投影，且 DOM element.click() 无法稳定确认 Radix Select。复用 V4 helper 的
-  // 键盘确认链路，并以 composer 的 data-mode 投影判断配置命令已经回流。
+  // Bug root cause: the legacy session store's workspace configOptions is no longer the authoritative projection of
+  // V4 draft mode, and DOM element.click() cannot reliably confirm a Radix Select. Reuse the V4 helper's keyboard
+  // confirmation path, and judge that the configuration command has flowed back via the composer's data-mode
+  // projection.
   await switchV4Mode("yolo");
   await browser.waitUntil(async () => (await getV4ConfigProjection()).mode === "yolo", {
     timeout: 30_000,

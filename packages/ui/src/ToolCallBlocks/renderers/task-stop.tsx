@@ -69,8 +69,8 @@ function compactLegacyTaskStopResult(
     return message;
   }
 
-  // 旧 snapshot 只保存了会重复 command/prompt 的标准成功文案。
-  // 仅做完整模板匹配，避免裁剪 provider 返回的自定义结果。
+  // Old snapshots stored only the standard success message, which repeats the command/prompt.
+  // Match the complete template so custom provider results are never truncated.
   const standardMessage = `Successfully stopped task: ${taskId} (${command})`;
   return message === standardMessage ? `Successfully stopped task: ${taskId}` : message;
 }
@@ -115,7 +115,7 @@ export function TaskStopToolCallBlock(context: ToolCallBlockRenderContext) {
   const displayCommand = taskStopDisplay?.command;
   const legacyCommand = readStringField(output, ["command"]);
   const isLocalAgentTask = taskType === "local_agent";
-  // 旧 local_agent 快照的 command 可能是完整 prompt，只有 Core 投影的 display 才能作为短 description 展示。
+  // A command in an old local_agent snapshot may be the full prompt; only Core's display projection is safe to show as a short description.
   const taskDetail = isLocalAgentTask ? displayCommand : (displayCommand ?? legacyCommand);
   const resultCommand = displayCommand ?? legacyCommand;
   const outputMessage = taskStopDisplay?.message ?? readStringField(output, ["message"]);

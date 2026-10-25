@@ -1,32 +1,41 @@
 # Remote Directory Browser
 
-远程连接成功后的目录选择页复用 `DirectoryBrowser`，通过当前 remote workspace session 的 `systemService` 和 `fileService` 浏览远端文件系统。
+The directory picker shown after a remote connection succeeds reuses `DirectoryBrowser` and browses the
+remote file system through the current remote workspace session's `systemService` and `fileService`.
 
-## 起始路径
+## Start Path
 
-- 初次进入目录选择页时，`DirectoryBrowser` 调用当前服务集合的 `systemService.info()`。
-- 起始路径使用返回的 `homedir`。SSH 登录用户为 `root` 时通常是 `/root`；普通用户通常是 `/home/<user>`。
-- 路径输入框展示并提交远端绝对路径，不展示本机路径。
+- On first entry, `DirectoryBrowser` calls `systemService.info()` of the current service set.
+- The start path is the returned `homedir`: usually `/root` when the SSH user is `root`, otherwise
+  `/home/<user>`.
+- The path input shows and submits remote absolute paths, never local paths.
 
-## 目录展示
+## Directory Display
 
-- 目录内容通过 `fileService.readdir({ path })` 按需读取当前路径。
-- 目录选择页只展示 `type === "directory"` 的条目；文件不会出现在列表里。
-- 目录软链接由服务层跟随目标类型返回；当软链接目标是目录时返回 `type === "directory"`，因此目录选择页必须展示并允许进入。
-- 目录软链接只改变列表图标：`isSymbolicLink === true` 时展示软链接目录图标，点击和选择行为仍按目录处理。
-- 单击目录项进入该目录并刷新路径输入框与子目录列表；底部“在此目录打开工作区”确认当前浏览路径。目录项不能只切换选中样式，否则用户会失去逐级进入子目录的入口。
-- `..` 是 UI 提供的返回上级入口，不是 `readdir` 返回的真实条目。
-- 当过滤后没有可展示目录时，显示“无子目录”。
+- Contents are read on demand with `fileService.readdir({ path })`.
+- Only entries with `type === "directory"` are listed; files never appear.
+- The service layer follows directory symlinks and returns `type === "directory"` when the target is a
+  directory, so the picker must show them and allow entering.
+- A directory symlink only changes the list icon (`isSymbolicLink === true` shows the symlink-directory
+  icon); click and select behavior stay directory behavior.
+- A single click on a directory enters it and refreshes the path input and child list; the bottom
+  "Open workspace in this directory" confirms the current browse path. A directory item must not merely
+  toggle a selected style, or users lose the step-by-step entry into subdirectories.
+- `..` is a UI-provided up-level entry, not a real `readdir` entry.
+- When no directory remains after filtering, show "No subdirectories" (无子目录).
 
-## 隐藏目录
+## Hidden Directories
 
-- 默认保持旧行为：不传 `includeHidden`，隐藏 `.ssh`、`.config`、`.cache` 等 dot directory，避免远程 home 目录初始视图噪音过多。
-- 目录输入区提供“显示隐藏目录”按钮。
-- 用户开启后，当前路径会重新读取为 `fileService.readdir({ path, includeHidden: true })`。
-- 开启后只额外展示隐藏目录；隐藏文件即使由服务层返回，也继续被目录选择页过滤掉。
-- 用户关闭后，当前路径重新按默认规则读取，隐藏目录再次不可见。
+- Default behavior is unchanged: `includeHidden` is not passed, and dot directories such as `.ssh`,
+  `.config`, `.cache` are hidden to keep the remote home initial view quiet.
+- The directory input area offers a "Show hidden directories" button.
+- When enabled, the current path is re-read with `fileService.readdir({ path, includeHidden: true })`
+  and only hidden directories are additionally shown; hidden files returned by the service are still
+  filtered out by the picker.
+- When disabled, the current path is re-read with default rules and hidden directories vanish again.
 
-## 范围
+## Scope
 
-- 该功能只改变 `DirectoryBrowser` 的 UI 展示和 `fileService.readdir` 参数。
-- 不改变远程连接、remote workspace session、workspace identity、task realtime stream、desktop continuous 或 web remote replayable 的任何语义。
+Only the `DirectoryBrowser` UI display and the `fileService.readdir` parameters change. Remote
+connection, remote workspace session, workspace identity, task realtime stream, desktop continuous and
+web remote replayable semantics are untouched.

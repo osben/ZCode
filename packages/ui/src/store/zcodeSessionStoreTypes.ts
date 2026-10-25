@@ -29,6 +29,7 @@ import type { SessionConfigState, SubmissionMode } from "@zcode/shared/zcode-pro
 import type { ZCodeUiError } from "@/lib/zcodeUiError.js";
 import type {
   AutomationsNavigationTab,
+  TaskNavEntry,
   TaskNavigationHistory,
   WorkspaceNavEntry,
 } from "@/lib/taskNavigationHistory.js";
@@ -128,7 +129,7 @@ export interface ComposerTextInsertRequest {
   requestId: number;
   text: string;
   mention?: ComposerMentionPrefill;
-  mode?: "replace" | "prepend-if-missing";
+  mode?: "replace" | "prepend-if-missing" | "prepend-text";
 }
 
 export interface TimelineBottomRequest {
@@ -218,6 +219,12 @@ export interface ZCodeSessionStoreState {
   /** 按 workspace 维护聊天相关 UI 状态 */
   workspaces: Record<string, WorkspaceZCodeUIState>;
   getWorkspaceState: (workspacePath: string, workspaceIdentity?: string) => WorkspaceZCodeUIState;
+  /**
+   * Provider startup has settled (registry hydrated and account overlay check finished). Root is the
+   * only writer; composer model verdicts wait for it (specs/composer-unresolved-model-selection.md).
+   */
+  providerStartupSettled: boolean;
+  setProviderStartupSettled: (settled: boolean) => void;
 
   setActiveTaskId: (
     workspacePath: string,
@@ -236,7 +243,7 @@ export interface ZCodeSessionStoreState {
     text: string,
     workspaceIdentity?: string,
     mention?: ComposerMentionPrefill,
-    mode?: "replace" | "prepend-if-missing",
+    mode?: "replace" | "prepend-if-missing" | "prepend-text",
   ) => number;
   clearComposerTextInsertRequest: (
     workspacePath: string,
@@ -458,12 +465,13 @@ export interface ZCodeSessionStoreState {
   ) => void;
   /** 记录插件市场主视图导航。 */
   taskNavPushPluginStore: (workspacePath: string, workspaceIdentity?: string) => void;
-  /** 后退，返回目标 entry；到头了返回 null */
-  taskNavGoBack: () => WorkspaceNavEntry | null;
-  /** 前进，返回目标 entry；到头了返回 null */
-  taskNavGoForward: () => WorkspaceNavEntry | null;
-  /** task 被删除时清理导航历史中的对应 task 条目 */
-  removeTaskFromNavHistory: (taskId: string) => void;
+  /**
+   * 后退，返回目标 entry；到头了返回 null。
+   * isAvailable 判定失效的 task 条目会在同一次更新中清除，不改变其余条目的顺序。
+   */
+  taskNavGoBack: (isAvailable?: (entry: TaskNavEntry) => boolean) => WorkspaceNavEntry | null;
+  /** 前进，语义同 taskNavGoBack。 */
+  taskNavGoForward: (isAvailable?: (entry: TaskNavEntry) => boolean) => WorkspaceNavEntry | null;
 }
 
 // ────────────────────────────────────────────

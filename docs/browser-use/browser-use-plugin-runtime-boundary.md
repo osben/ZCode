@@ -1,28 +1,25 @@
-# Browser 官方插件运行时边界
+# Browser Official Plugin Runtime Boundary
 
-## 背景
+## Background
 
-`browser-use@zcode-plugins-official` 是 ZCode 官方插件。它的 manifest 仍只声明 `skills`，不扩展 plugin schema。
+`browser-use@zcode-plugins-official` is an official ZCode plugin. Its manifest still declares only `skills`; the plugin schema is not extended.
 
-目标是让 browser-use 插件的启停状态控制模型可见的浏览器 guidance/bridge，同时说清楚无状态
-`node_repl` MCP frontend、browser client 与插件物理资产载体的关系：
+The goal is for the enabled/disabled state of the browser-use plugin to control the model-visible browser guidance/bridge, while making clear the relation among the stateless `node_repl` MCP frontend, the browser client and the plugin's physical asset carrier:
 
-browser-use package 是这些 runtime asset 的物理发布载体；`enabled === false` 只关闭 skill/bridge，
-不把宿主 node_repl identity 转交给第三方插件。
+The browser-use package is the physical release carrier of these runtime assets; `enabled === false` turns off only the skill/bridge and does not hand the host node_repl identity over to a third-party plugin.
 
-- 启用 `browser-use@zcode-plugins-official`：会话通过宿主无状态 `node_repl` 的 `js` 工具使用 Browser Use。
-- 关闭或卸载该插件：宿主 `node_repl` identity 仍可被运行时保留，但 browser-use skill 不进入 skill roots，
-  且没有 Browser bridge/runtime feature。
+- With `browser-use@zcode-plugins-official` enabled: a session uses Browser Use through the `js` tool of the host stateless `node_repl`.
+- With the plugin disabled or uninstalled: the host `node_repl` identity may still be kept by the runtime, but the browser-use skill does not enter the skill roots, and there is no Browser bridge/runtime feature.
 
-## 设计
+## Design
 
-不允许任意插件通过 manifest 自声明高权限 runtime capability。ZCode core 只识别官方插件 id：
+Arbitrary plugins may not self-declare a high-privilege runtime capability through a manifest. ZCode core recognizes only the official plugin id:
 
 ```text
 browser-use@zcode-plugins-official
 ```
 
-bootstrap 在插件解析完成后读取 `PluginLoadOutcome.plugins`，只有当该官方插件 `enabled === true` 时，才向 `AgentRuntimeConfig.runtimeFeatures` 写入：
+After plugin resolution, bootstrap reads `PluginLoadOutcome.plugins` and writes the following into `AgentRuntimeConfig.runtimeFeatures` only when that official plugin has `enabled === true`:
 
 ```ts
 {
@@ -31,72 +28,43 @@ bootstrap 在插件解析完成后读取 `PluginLoadOutcome.plugins`，只有当
 }
 ```
 
-`node_repl` 由宿主 built-in MCP 配置注册，不再由 `browserControlPort` 隐式开启；Browser
-bridge 同时要求 `runtimeFeatures.browserUse` 和宿主注入的 `browserControlPort`。MCP frontend 不保存
-conversation 或 JavaScript kernel 状态；浏览器连续性继续由现有 session-scoped BrowserControl/tab
-owner 维持。这样 desktop browser view / CDP / 协议桥可以继续留在核心并保持 dormant。
+`node_repl` is registered by the host built-in MCP configuration and is no longer implicitly enabled by `browserControlPort`; the Browser bridge requires both `runtimeFeatures.browserUse` and the host-injected `browserControlPort`. The MCP frontend keeps no conversation or JavaScript kernel state; browser continuity is still maintained by the existing session-scoped BrowserControl/tab owner. So the desktop browser view / CDP / protocol bridge can stay in core and remain dormant.
 
-## 保留在核心的部分
+## Parts that stay in core
 
-- `interaction/browserExecute` 协议和 shared browser-use command/result schema。
-- Desktop main / host / renderer 的 browser view、CDP、IPC 与 tab 显示逻辑。
-- `NodeReplSession` 一次性 worker 内的单次调用执行引擎、权限、超时、图片结果格式化。
-- `browser-client` 对象图实现。
+- The `interaction/browserExecute` protocol and the shared browser-use command/result schema.
+- The browser view, CDP, IPC and tab display logic of Desktop main / host / renderer.
+- The single-call execution engine inside the `NodeReplSession` one-shot worker, permissions, timeout and image result formatting.
+- The `browser-client` object graph implementation.
 
-这些部分要么是跨进程基础设施，要么是高权限执行面，不由普通 plugin manifest 动态声明。
+These are either cross-process infrastructure or a high-privilege execution surface, and are not dynamically declared by an ordinary plugin manifest.
 
-## REPL 发布依赖边界
+## REPL release dependency boundary
 
-`@zcode/core/repl` 是 `NodeReplSession` 及其类型的独立公共入口，直接复用现有执行引擎；
-MCP server 的 core 依赖只能进入 `core/repl`，不能通过 `@zcode/core` 总入口带入 Agent、
-工具注册表、Subagent 或工作流编译器。core 总入口保留原有导出，兼容已有调用方。
-独立的 `browser-client.mjs` 继续通过 `@zcode/core/browser-client` 提供浏览器对象图。
+`@zcode/core/repl` is the standalone public entry for `NodeReplSession` and its types, reusing the existing execution engine directly; the core dependency of the MCP server may only enter `core/repl` and must not pull in the Agent, tool registry, Subagent or workflow compiler through the `@zcode/core` umbrella entry. The core umbrella entry keeps its existing exports for compatibility. The standalone `browser-client.mjs` keeps providing the browser object graph through `@zcode/core/browser-client`.
 
-App 的 Electron Node 模式、普通 Node CLI 和 SEA 内置 Node 共用 CLI 入口的轻量 plugin-host 分支：
+The Electron Node mode of the app, plain Node CLI and the SEA built-in Node share a light plugin-host branch of the CLI entry:
 
 ```text
-main → 环境清理 / SEA 工具准备 → plugin-host 鉴权 → MCP server → 一次性 Worker
-                              └ 普通 CLI 命令 → Provider 准备 → run / Agent Runtime
+main → environment cleanup / SEA tool preparation → plugin-host authentication → MCP server → one-shot Worker
+                              └ ordinary CLI command → Provider preparation → run / Agent Runtime
 ```
 
-`__zcode-plugin-host` 必须在导入通用 `run.ts` 和 Provider 初始化模块之前分流。REPL 子进程
-不求值 Agent Runtime、工具注册表或工作流模块；这些模块继续由对话所属的父 Agent 使用。
-复用原有 plugin-host 的凭据校验、argv 透传和退出 owner：鉴权失败在 import 前拒绝，成功 MCP
-继续依靠 stdio 存活，初始化失败仍由现有 watchdog 收口。插件参数不触发 Provider 初始化。
-回归测试须在业务入口求值时主动抛错，并证明普通与压缩 CLI 的 plugin-host 仍可正常加载插件。
-启动层通过 `@zcode/shared/runtime-env`、`@zcode/shared/mcp`、
-`@zcode/shared/runtime-tool-runtime` 和已有的 `@zcode/contracts/plugins` 读取环境处理、
-身份常量与 SEA 工具描述，避免总入口的无关 schema 初始化。所有入口指向原文件，
-broker 凭据 capture 仍是同一模块持有的唯一状态，不复制校验或环境实现。
+`__zcode-plugin-host` must branch off before the generic `run.ts` and Provider initialization modules are imported. The REPL child process does not evaluate the Agent Runtime, tool registry or workflow modules; these modules continue to be used by the parent Agent that owns the conversation. It reuses the credential check, argv passthrough and exit owner of the original plugin-host: an authentication failure is rejected before any import, on success the MCP keeps living on stdio, and an initialization failure is still settled by the existing watchdog. Plugin arguments do not trigger Provider initialization. A regression test must actively throw when business entries are evaluated, and prove that the plugin-host of the ordinary and compressed CLI still loads plugins normally. The startup layer reads environment handling, identity constants and SEA tool descriptions through `@zcode/shared/runtime-env`, `@zcode/shared/mcp`, `@zcode/shared/runtime-tool-runtime` and the existing `@zcode/contracts/plugins`, avoiding unrelated schema initialization of the umbrella entries. All entries point to the original files, and the broker credential capture is still the sole state held by the same module, with no copy of the validation or environment implementation.
 
-MCP server 通过 `@zcode/contracts/tools/node-repl` 读取 JS 工具 schema，通过
-`@zcode/contracts/mcp` 读取 MCP 结果元数据常量；browser bridge 通过
-`@zcode/shared/node-repl-browser-broker` 读取现有 broker 协议。禁止为了这些少量定义
-求值 contracts/shared 总入口，避免每个 MCP 进程及一次性 Worker 初始化无关业务 schema。
-这些公共子入口直接指向原文件，保留校验、工具描述和返回格式的唯一事实源。
+The MCP server reads the JS tool schema through `@zcode/contracts/tools/node-repl`, the MCP result metadata constants through `@zcode/contracts/mcp`; the browser bridge reads the existing broker protocol through `@zcode/shared/node-repl-browser-broker`. Evaluating the contracts/shared umbrella entries for these few definitions is forbidden, so that no MCP process or one-shot Worker initializes unrelated business schemas. These public sub-entries point directly to the original files, keeping the single source of truth for validation, tool descriptions and return format.
 
-本边界不改变 MCP 工具、一次性 Worker、模块目录隔离、超时/取消、
-浏览器 broker、结果格式、权限或 desktop continuous / mobile replayable 交付合同。
-验收复用真实 bundle 的 MCP 握手及 Worker 隔离测试，并检查构建依赖图不包含上述业务模块。
+This boundary does not change MCP tools, the one-shot Worker, module directory isolation, timeout/cancel, the browser broker, result format, permissions, or the desktop continuous / mobile replayable delivery contract. Acceptance reuses the real bundle's MCP handshake and Worker isolation tests and checks that the build dependency graph contains none of the business modules above.
 
-## 宿主与插件职责
+## Host and plugin responsibilities
 
-ZCode 在 MCP `2026-07-28` 后仍使用宿主 `node_repl` 工具 identity；官方 browser-use 插件携带
-frontend bundle、browser-client/docs/skills assets。协议桥和 desktop CDP 执行链路仍保留在宿主；
-禁用插件后没有 Browser Use skill/bridge，不创建另一套 `browser_use` 工具。
+After MCP `2026-07-28` ZCode still uses the host `node_repl` tool identity; the official browser-use plugin carries the frontend bundle and the browser-client/docs/skills assets. The protocol bridge and the desktop CDP execution chain stay on the host; with the plugin disabled there is no Browser Use skill/bridge, and no separate `browser_use` tool is created.
 
-## 验收
+## Acceptance
 
-- 默认启用官方 browser-use 插件时，桌面会话能看到 `mcp__node_repl__js` 和 `control-browser`
-  skill；不出现 `mcp__browser_use__*`，也不出现已删除的 `js_reset` / `js_add_node_module_dir`。
-- 显式禁用 `browser-use@zcode-plugins-official` 后，新会话不再提供 `control-browser` skill 或
-  `agent.browsers`；宿主可保留 `js` 这一个 node_repl tool identity 用于配置兼容，但模型文案仍限于
-  Browser Use 与 Computer Use 两个官方能力，不得把它改造成通用 JavaScript 工具。
-- 即使 host 仍注入 `browserControlPort`，没有 browser-use runtime feature 时也不会注入 Browser bridge；
-  node_repl identity 不因此被第三方配置接管。
-- 纯 CLI 未显式传 `--browser-use=headless` 时没有 browser host，不注入 `agent.browsers`。
-- 纯 CLI 显式启用 headless 时，由 CLI adapter 注入真实 managed `cdp` BrowserControlPort；完成 Chromium
-  handshake 后才可发现 backend。该路径继续使用官方 plugin 的 skill/client 和宿主 node_repl MCP，
-  不能绕过成 `agent-browser` 或另一套模型工具。
-- ZCode app-server 不消费 CLI managed headless 参数；Desktop/Web Remote 继续使用 shared-host 注入的
-  BrowserControlPort，不能为手机或协议 session 另起 browser runtime。
+- With the official browser-use plugin enabled by default, a desktop session sees `mcp__node_repl__js` and the `control-browser` skill; `mcp__browser_use__*` does not appear, and neither do the deleted `js_reset` / `js_add_node_module_dir`.
+- After explicitly disabling `browser-use@zcode-plugins-official`, a new session no longer provides the `control-browser` skill or `agent.browsers`; the host may keep the single `js` node_repl tool identity for configuration compatibility, but the model-facing text remains limited to the two official capabilities Browser Use and Computer Use and must not be turned into a generic JavaScript tool.
+- Even if the host still injects `browserControlPort`, the Browser bridge is not injected without the browser-use runtime feature; the node_repl identity is not taken over by third-party configuration as a result.
+- Pure CLI without an explicit `--browser-use=headless` has no browser host and does not inject `agent.browsers`.
+- Pure CLI with headless explicitly enabled: the CLI adapter injects a real managed `cdp` BrowserControlPort, and the backend is discoverable only after the Chromium handshake completes. This path keeps using the official plugin's skill/client and the host node_repl MCP and must not be bypassed into `agent-browser` or another model tool.
+- ZCode app-server does not consume the CLI managed headless argument; Desktop/Web Remote keep using the BrowserControlPort injected by the shared host, and no browser runtime is started separately for mobile or protocol sessions.

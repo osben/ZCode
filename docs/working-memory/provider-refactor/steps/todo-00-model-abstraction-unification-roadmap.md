@@ -1,314 +1,215 @@
-# 00 模型抽象统一清理路线图
+# 00 Model Abstraction Unification Cleanup Roadmap
 
-> 状态：已完成
+> Status: Completed
 >
-> 日期：2026-08-25
+> Date: 2026-08-25
 >
-> 来源审查：[`../research/model-abstraction-unification-cleanup-audit.md`](../research/model-abstraction-unification-cleanup-audit.md)
+> Source review: [`../research/model-abstraction-unification-cleanup-audit.md`](../research/model-abstraction-unification-cleanup-audit.md)
 >
-> 目标设计：[`../design/design.md`](../design/design.md)
+> Target design: [`../design/design.md`](../design/design.md)
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/todo-00-model-abstraction-unification-roadmap.md`
 
-## 0. 完成结果
+## 0. Completion Result
 
-Todo 01–10 已全部实施。生产主链只保留 `ModelSelection -> Provider Registry -> ModelFactory -> Model`：
-Core 不再查询 Connection 或 Adapter Registry，模型能力和请求兼容只来自完整 Model Config；账号连接选择、
-Off-Peak 和 ZCode Built-in Config 也已切入同一结构化事实链。
+Todos 01-10 are all implemented. The production main chain retains only
+`ModelSelection -> Provider Registry -> ModelFactory -> Model`: Core no longer queries Connection or Adapter Registry,
+and model capabilities and request compatibility come exclusively from the complete Model Config; account connection
+selection, Off-Peak and ZCode Built-in Config use the same structured fact chain.
 
-新增的 Todo 11 只保存 Provider Runtime 组合边界的后续审查，当前为“草案/不得实施”。Todo 12–14 已完成：
-用户选择 Facade 与执行校验分离；目标 Host、workspaceKey、稀疏结构化产品 Selection 和 Local-only Subagent
-Settings 已收口；MCS、Factory Contract、Legacy DTO 与死代码机械残留也已归零。这些后续工作不改变 Todo
-01–10 的完成结论。
+Todo 11 only saves the follow-up review of the Provider Runtime composition boundary and is "Draft / Not to be
+implemented". Todos 12-14 are completed: user selection Facade and execution validation separated; target Host,
+workspaceKey, sparse structured product Selection and Local-only Subagent Settings closed; MCS, Factory Contract,
+Legacy DTO and dead code mechanical residue reduced to zero. They do not change the completion conclusion of Todos
+01-10.
 
-2026-08-27 的完成后反向审查发现：Todo 05/07/12–14/20/21 的部分完成声明与当前代码仍有差异，包括公共
-`accessId`、`ForkModelRef`、Selection 字符串、Model 编辑事务和继承 UI。Todo 23 已关闭 Selection 与 Settings
-事务缺口；Todo 24 以最终裁决取代其 Access 切片，删除创建时账号绑定并收口请求期鉴权与签名；Todo 25 同时退役
-ZAPI 产品入口。当前路线图的机械归零结论已覆盖这些反向审查缺口。
+The post-completion reverse review on 2026-08-27 found that completion claims for Todos 05/07/12-14/20/21 still
+differed from code (public `accessId`, `ForkModelRef`, Selection strings, Model edit transactions, inheritance UI).
+Todo 23 closed the Selection and Settings transaction gap; Todo 24 replaced its Access slice with a final decision
+(deleting account binding at creation time and closing request-period authorization and signature); Todo 25 retired
+the ZAPI product entry. This roadmap's mechanical-zero conclusion covers these gaps.
 
-保留的旧字段只存在于明确的历史读取边界：Session Store codec 和 CLI Personal Config importer。它们只把
-已发布数据转换为当前结构，不向 Registry、Runtime 或新写入路径暴露旧类型。恢复旧会话的脚本已经改为
-直接写当前消息契约，不再制造新的 legacy 数据。
+Remaining old fields exist only in explicitly defined historical read boundaries: the Session Store codec and the CLI
+Personal Config importer. They convert published data to the current structure and do not expose old types to the
+Registry, Runtime or new write paths. Scripts restoring old sessions write directly to the current message contract and
+no longer produce new legacy data.
 
-## 1. 规划目标
+## 1. Planning Goal
 
-Provider Refactor 已建立 `ModelSelection -> Provider Registry -> ModelFactory -> Model` 主链，M4 也已把
-闲时任务、Compact 和 Subagent 等特殊执行并入这条链。本路线图负责完成下一步：物理删除仍能表达、装配
-或执行模型的旧抽象，使系统最终只有一套业务模型语义。
+M4 incorporated Off-Peak, Compact and Subagent special executions into the `ModelSelection -> Provider Registry ->
+ModelFactory -> Model` chain. This roadmap physically deletes old abstractions that can still express, assemble or
+execute models, leaving one set of business model semantics. Division of labor with the parallel new-code compliance
+review: that review checks whether new Config / Registry / ModelFactory implement confirmed design; this roadmap
+deletes old execution interfaces, old query interfaces and mixed-identity types remaining after the new chain.
 
-本路线图与并行的“新增 Provider/M4 代码符合性审查”分工如下：
-
-```text
-新增代码符合性审查
-`- 检查新 Config / Registry / ModelFactory 是否正确实现已确认设计
-
-本清理路线图
-`- 删除新链建立后仍存活的旧执行接口、旧查询接口和混合身份类型
-```
-
-最终结构为：
+Final structure:
 
 ```text
-持久化 / Protocol
-    ModelSelection
-          |
-          v
-Effective Provider Config + Effective Model Config Rules
-          |
-          v
-  业务 Provider Registry
-          |
-          v
-      ModelFactory
-          |
-          | 一次解析并冻结 Provider / Model 静态事实
-          v
-      Active Model
-      |- providerId / modelId
-      |- properties / optionSpecs / options
-      `- generateText / streamText
-          |
-          v
- Adapter 内部 AI SDK 执行实现
- |- Provider API 编码
- |- execution-provided 按 attempt 解析
- |- proxy / CA / endpoint routing / signing
- |- retry / stream recovery / error normalization
- `- status / telemetry（本轮保持现状）
-          |
-          v
-      Provider API
+Persisted / Protocol: ModelSelection
+  -> Effective Provider Config + Effective Model Config Rules -> Business Provider Registry -> ModelFactory
+  (one-time parse and freeze of Provider / Model static facts) -> Active Model
+     (providerId / modelId, properties / optionSpecs / options, generateText / streamText)
+  -> Adapter internal AI SDK execution (Provider API encoding, per-attempt execution-provided resolution,
+     proxy / CA / endpoint routing / signing, retry / stream recovery / error normalization, status / telemetry unchanged)
+  -> Provider API
 ```
 
-## 2. 要消失的并行抽象
+## 2. Parallel Abstractions to Disappear
 
-```text
-Todo 02/03 完成后的残留
+Before: Core -> `ModelConnectionPort`, and Core -> ModelFactory -> Model -> Adapter private execution closure -> AI SDK,
+with `ModelRef` also expressing identity / result / event. Goal: Core -> ModelFactory -> Model -> Adapter private
+execution closure -> AI SDK; future selection uses only `ModelSelection`; current execution uses only `Model`. What is
+retired is not the Adapter's network capability but its second set of model assembly and query semantics exposed to
+the business layer.
 
-Core ------------------> ModelConnectionPort
-  |
-  +--> ModelFactory --> Model --> Adapter 私有执行闭包 --> AI SDK
-  `--> ModelRef 仍同时表达 identity / result / event 等多种语义
+## 3. Confirmed Boundaries
 
-目标
+1. **Unique business abstraction.** `ModelSelection` expresses what Model will be created next (persistable, cross-process);
+   `ModelFactory` is the sole business-layer entry for creating root execution Models (an existing `Model` may derive
+   a Bound Model with the same identity, static facts and Executor via `Model.bind()`); `Model` is the sole object for
+   current execution (Core does not recognize Adapters or Connections); Adapters only convert already-parsed static
+   facts and requests into Provider API calls.
+2. **No new intermediate business state.** No `ExecutionModelBinding`, `ExecutionModelConfig`, `ModelIdentity` or
+   Execution Registry. Adapters may use private parameter objects, closures and caches but they never become
+   selectable, queryable, persistable or synchronizable business model state.
+3. **Lifecycle.** A Model created at Registry revision N freezes revision-N static facts; revision N+1 creates Model B
+   with N+1. Request-period Request Auth parses dynamic access material per attempt and does not rewrite endpoint,
+   `api.type` or properties. Config updates affect only later-created Models (no hot swap of Endpoint, API type,
+   Provider Options or capabilities through an Adapter Registry); dynamic authorization may still refresh per request
+   attempt.
+4. **Telemetry** has known design issues but is explicitly not refactored this round: no new Telemetry Context or
+   Observation DTO, no `ModelIdentity` from cleaning up `ModelRef`, no Product Status / Telemetry split; type
+   migrations only as needed to preserve existing event behavior.
 
-Core --> ModelFactory --> Model --> Adapter 私有执行闭包 --> AI SDK
-  |
-  +--> 未来选择只使用 ModelSelection
-  `--> 当前执行只使用 Model
-```
+## 4. Phased Todos
 
-需要退役的不是 Adapter 的网络能力，而是它向业务层暴露的第二套模型装配和查询语义。
+Status values: `Draft` (needs discussion, not authorized), `Pending` (decision clear, may implement but not verified),
+`Completed` (implementation, tests, documents and commits done).
 
-## 3. 已确认边界
+| Todo                                                                         | Status    | Task                                              | Goal                                                                                                                  | Primary dependency                 |
+| ---------------------------------------------------------------------------- | --------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| [`01`](./todo-01-core-model-adapter-boundary-cleanup.md)                     | Completed | Core Model Adapter Boundary Cleanup               | Delete Core `modelAdapter`, Compatibility Model, old ModelPort and Adapter direct execution entry                     | M4 completed                       |
+| [`02`](./todo-02-ai-sdk-execution-registry-retirement.md)                    | Completed | AI SDK Execution Registry Retirement              | Delete the Adapter's mutable Provider Registry and reverse query surface; assemble once at Model creation             | Completed with Todo 03             |
+| [`03`](./todo-03-provider-model-ownership-and-property-totality.md)          | Completed | Provider/Model New Implementation Compliance      | Complete member ownership, enabled/visibility and Properties completeness                                             | Completed with Todo 02             |
+| [`04`](./todo-04-core-model-connection-port-retirement.md)                   | Completed | Core Model Connection Port Retirement             | Capabilities read Active Model.properties only; Connection stays in Adapter private implementation                    | Todos 02, 03                       |
+| [`05`](./todo-05-model-ref-retirement.md)                                    | Completed | ModelRef Retirement                               | Selection uses ModelSelection, execution uses Model, redundant identity fields deleted per consumer                   | Todo 01                            |
+| [`06`](./todo-06-config-storage-envelope-repository-privatization.md)        | Completed | Config Storage Envelope Privatization             | Document, version envelope and migration exit the Provider Domain                                                     | After Todos 03, 05                 |
+| [`07`](./todo-07-account-connection-selection-and-access-context-cutover.md) | Completed | Account Connection Closure                        | Structured connection selection, Account Access, Request Auth, Off-Peak and MCP use one fact chain                    | Todo 03                            |
+| [`08`](./todo-08-legacy-model-catalog-retirement.md)                         | Completed | Legacy Model Catalog Retirement                   | Delete Catalog/override, Reasoning State; Config-driven MFJS Tool Schema projection                                   | Todos 02, 03                       |
+| [`09`](./todo-09-off-peak-model-selection-legacy-projection-retirement.md)   | Completed | Off-Peak Old Model Projection Retirement          | Hidden Provider through a scoped Selection View: candidates, Reasoning, dual validation                               | Todos 03, 08                       |
+| [`10`](./todo-10-zcode-builtin-provider-config-naming-cutover.md)            | Completed | ZCode Built-in Config Naming Cutover              | Provider Config `official` domain, code and physical naming exit atomically, no compatibility                         | Independent                        |
+| [`11`](./todo-11-provider-runtime-composition-boundary-cleanup.md)           | Draft     | Provider Runtime Composition Boundary Cleanup     | Review Node Config resources, Host/Agent composition roots and the unique lifecycle owner                             | Needs item-by-item manual decision |
+| [`12`](./todo-12-model-selection-validation-boundary-cutover.md)             | Completed | Model Selection Validation Boundary Closure       | Facade provides user candidates only; Registry/ModelFactory bears authoritative execution validation                  | Independent                        |
+| [`13`](./todo-13-target-host-model-selection-authority.md)                   | Completed | Target Host Model Selection Authority Closure     | local/remote read the target Host; delete temporary App/string selections; isolate state by workspaceKey              | After Todo 12                      |
+| [`14`](./todo-14-post-refactor-mechanical-zero.md)                           | Completed | Post-Refactor Mechanical Zero                     | Fix Full Compact MCS, tighten Factory, privatize Legacy DTO, delete dead code                                         | With Todos 12/13                   |
+| [`23`](./todo-23-provider-refactor-decision-gap-closure.md)                  | Completed | Decision Gap and Settings Transaction Closure     | Delete public connection ID / identically shaped ModelRef; close Selection and Model edit transactions                | Todo 24 replaces Access details    |
+| `24` (document kept in official version only)                                | Completed | Access and Request Authorization Contract Closure | Narrow Account Overlay, authorize per current connection, mechanical zero for Access Type and authorization admission | Replaces Todo 23 Access            |
+| [`25`](./todo-25-zapi-product-entry-retirement.md)                           | Completed | ZAPI Product Entry Retirement                     | Delete current product identity, exclusive Gate, UI entry and Legacy migration special case                           | Independent product decision       |
 
-### 3.1 唯一业务抽象
-
-- `ModelSelection` 表达未来要创建什么 Model，可以持久化和跨进程传输；
-- `ModelFactory` 是业务层创建根执行 Model 的唯一入口；已有 `Model` 可以通过 `Model.bind()` 派生同身份、
-  同静态事实和同 Executor 的绑定 Model；
-- `Model` 是当前执行使用的唯一模型对象，Core 不直接认识 Adapter 或 Connection；
-- Adapter 只把已经解析好的静态事实和请求转换为 Provider API 调用。
-
-### 3.2 不创建新的中间业务状态
-
-本轮不引入 `ExecutionModelBinding`、`ExecutionModelConfig`、`ModelIdentity` 或另一种 Execution Registry。
-Adapter 内部可以使用私有参数对象、闭包和缓存，但它们不成为可选择、可查询、可持久化或可同步的业务
-模型状态。
-
-### 3.3 生命周期
-
-```text
-Registry revision N ----> 创建 Model A ----> A 固定 revision N 的静态事实
-
-Registry revision N+1 --> 创建 Model B ----> B 使用 revision N+1
-
-请求期 Request Auth ----> 每个 attempt 解析动态访问材料
-                         `- 不改写 A/B 的 endpoint、api.type 或 properties
-```
-
-Config 更新只影响后来创建的 Model。已创建 Model 不通过 Adapter Registry 热切换 Endpoint、API 类型、
-Provider Options 或模型能力。动态鉴权仍可在当前 Model 的每次请求尝试中刷新。
-
-### 3.4 Telemetry
-
-Telemetry 当前设计另有问题，但本轮明确不重构：
-
-- 不新增 Telemetry Context 或 Observation DTO；
-- 不借清理 `ModelRef` 建立 `ModelIdentity`；
-- 不拆分 Product Status 与 Telemetry；
-- 必要的类型迁移以保持现有事件行为为限。
-
-## 4. 分阶段 Todo
-
-状态只使用三种稳定值：`草案` 表示仍需逐项讨论、不得直接实施；`待执行` 表示决策已经明确，可以实施或正在实施但
-尚未完成验收；`已完成` 表示实现、测试、文档和提交均已完成。
-
-| Todo                                                                         | 状态   | 任务                            | 目标                                                                                | 主要依赖                 |
-| ---------------------------------------------------------------------------- | ------ | ------------------------------- | ----------------------------------------------------------------------------------- | ------------------------ |
-| [`01`](./todo-01-core-model-adapter-boundary-cleanup.md)                     | 已完成 | Core Model Adapter 边界清理     | 删除 Core `modelAdapter`、Compatibility Model、旧 ModelPort 和 Adapter 直接执行入口 | M4 已完成                |
-| [`02`](./todo-02-ai-sdk-execution-registry-retirement.md)                    | 已完成 | AI SDK 执行 Registry 退役       | 删除 Adapter 的可变 Provider Registry 和反向查询面，改为创建 Model 时一次装配       | 与 Todo 03 同步完成      |
-| [`03`](./todo-03-provider-model-ownership-and-property-totality.md)          | 已完成 | Provider/Model 新实现符合性收口 | 完成成员所有权、enabled/visibility 和 Properties 完备性                             | 与 Todo 02 同步完成      |
-| [`04`](./todo-04-core-model-connection-port-retirement.md)                   | 已完成 | Core Model Connection Port 退役 | 能力只读 Active Model.properties，Connection 留在 Adapter 私有实现                  | Todo 02、03 已完成       |
-| [`05`](./todo-05-model-ref-retirement.md)                                    | 已完成 | ModelRef 退役                   | Selection 用 ModelSelection，执行用 Model，按消费者删除冗余身份字段                 | Todo 01 已完成           |
-| [`06`](./todo-06-config-storage-envelope-repository-privatization.md)        | 已完成 | Config 存储外壳私有化           | Document、版本外壳与 migration 退出 Provider Domain                                 | 建议 Todo 03、05         |
-| [`07`](./todo-07-account-connection-selection-and-access-context-cutover.md) | 已完成 | Account Connection 收口         | 结构化连接选择、Account Access、Request Auth、Off-Peak 与 MCP 使用同一事实链        | Todo 03 完整类型边界     |
-| [`08`](./todo-08-legacy-model-catalog-retirement.md)                         | 已完成 | Legacy Model Catalog 退役       | 删除 Catalog/override、Reasoning State，并以 Config 驱动 MFJS Tool Schema 投影      | Todo 02、03 已完成       |
-| [`09`](./todo-09-off-peak-model-selection-legacy-projection-retirement.md)   | 已完成 | Off-Peak 旧模型投影退役         | 隐藏 Provider 以 scoped Selection View 统一候选、Reasoning 与双重校验               | Todo 03、08              |
-| [`10`](./todo-10-zcode-builtin-provider-config-naming-cutover.md)            | 已完成 | ZCode Built-in Config 命名切换  | Provider Config 的 `official` 领域、代码和物理命名原子退出，不保留兼容              | 可独立执行               |
-| [`11`](./todo-11-provider-runtime-composition-boundary-cleanup.md)           | 草案   | Provider Runtime 组合边界清理   | 审查 Node Config 资源、Host/Agent 组合根和唯一生命周期 owner                        | 待人工逐项裁决           |
-| [`12`](./todo-12-model-selection-validation-boundary-cutover.md)             | 已完成 | Model Selection 校验边界收口    | Facade 只提供用户候选，Registry/ModelFactory 承担权威执行校验                       | 可独立执行               |
-| [`13`](./todo-13-target-host-model-selection-authority.md)                   | 已完成 | 目标 Host 模型选择权威收口      | local/remote 读取目标 Host，删除临时 App/字符串选择并按 workspaceKey 隔离状态       | 建议在 Todo 12 之后      |
-| [`14`](./todo-14-post-refactor-mechanical-zero.md)                           | 已完成 | Provider Refactor 最终机械归零  | 修复 Full Compact MCS，收紧 Factory，私有化 Legacy DTO 并删除死代码                 | 与 Todo 12/13 协调       |
-| [`23`](./todo-23-provider-refactor-decision-gap-closure.md)                  | 已完成 | 决策缺口与设置事务收口          | 删除公共连接 ID/同形 ModelRef，收口 Selection 与 Model 编辑事务                     | Todo 24 取代 Access 细节 |
-| `24`（文档仅官方版本保留）                                                   | 已完成 | Access 与请求安全校验契约收口   | 收窄 Account Overlay，按当前连接鉴权，Access Type 与安全校验准入机械归零            | 取代 Todo 23 Access      |
-| [`25`](./todo-25-zapi-product-entry-retirement.md)                           | 已完成 | ZAPI 产品入口退役               | 删除当前产品身份、专属 Gate、UI 入口和 Legacy 迁移特例                              | 独立产品裁决             |
-
-编号表示清理清单的稳定身份。实施期间按逐项确认、逐项实施推进；最终依赖链已经全部闭合：
-
-```text
-Todo 01 完成并验收
-        |
-        v
-Todo 02–10 逐项裁决并实施
-        |
-        v
-机械归零、全量验证和最终审计
-```
-
-Todo 02/03 建立完整 Model Properties 和唯一 Registry 类型边界；Todo 04/05 随后删除 Core Connection 查询和
-混合模型身份；Todo 06 收回存储外壳；Todo 07 建立结构化 Account Connection；Todo 08–10 最终删除 Catalog、
-Off-Peak 旧投影和错误的 Official 命名。Todo 11 是上述工作完成后发现的独立组合边界草案，不纳入既有完成链，
-不能在人工裁决前实施；Todo 12 是独立的已裁决校验边界清理；Todo 13 在 Todo 12 的最终校验边界上收口
-Host 用户选择事实、Workspace 默认与产品持久化；Todo 14 只完成已确认契约的最终机械归零。Telemetry 整体
-重构不属于本路线图。
+Dependency chain: Todo 01 -> Todos 02-10 decided and implemented item by item -> mechanical zero, full verification
+and final audit. Todos 02/03 establish complete Model Properties and unique Registry type boundaries; 04/05 delete
+Core Connection queries and mixed model identities; 06 reclaims the storage envelope; 07 establishes structured
+Account Connection; 08-10 delete Catalog, Off-Peak old projection and incorrect Official naming. Todo 11 is an
+independent composition boundary draft discovered afterwards (not in the completion chain; not implementable before a
+manual decision); Todo 12 is an independently reviewed validation boundary cleanup; Todo 13 closes Host user
+selection facts, Workspace defaults and product persistence on Todo 12's final validation boundary; Todo 14 completes
+only the confirmed contract's final mechanical zero. Telemetry overall refactoring is outside this roadmap.
 
 ## 5. Impact Brief
 
-### 5.1 功能摘要
+**5.1 Summary.** Intent: delete old model abstractions and unify Provider/Model assembly and execution boundaries.
+Capability: Provider Registry, Model creation, model execution. Layer: `commit-effect`, `validation`, `persistence
+contract`. Mode: incremental cleanup. Primary seeds: `AgentRuntime`, `ApiProviderModelRuntime`,
+`ModelConnectionPort`, `ModelRef`. Out of scope: Telemetry refactoring, account authorization product design, model
+selection product semantics, Queue/Recovery, Remote Provisioning.
 
-| 字段             | 结论                                                                                    |
-| ---------------- | --------------------------------------------------------------------------------------- |
-| Developer intent | 删除旧模型抽象，统一 Provider/Model 装配和执行边界                                      |
-| Capability       | Provider Registry、Model 创建、模型执行                                                 |
-| Change layer     | `commit-effect`、`validation`、`persistence contract`                                   |
-| Operating mode   | incremental cleanup                                                                     |
-| Primary seeds    | `AgentRuntime`、`ApiProviderModelRuntime`、`ModelConnectionPort`、`ModelRef`            |
-| Out of scope     | Telemetry 重构、账号鉴权产品设计、模型选择产品语义、Queue/Recovery、Remote Provisioning |
+**5.2 UI surface.** Beyond the Provider model enable/disable, visibility, member source and conflict interactions in
+Todo 03, no UI changes are planned. Normal model selection (Composer control; Model Selection Facade / Session
+Selection; filter disabled/hidden; Active Model is not hot-swapped by UI), Provider settings (Settings Facade /
+Personal Config; display and save enabled; do not expose hidden Providers), Automation/Subagent/Repo Wiki (each
+Draft/Persistence + Selection Facade; option source unchanged; do not unify each commit sink).
 
-### 5.2 UI Surface Matrix
+**5.3 Impact surface.** must-inspect: Core Runtime -> ModelFactory/Model (`apps/zcode-cli/packages/core/src/runtime`);
+Adapter runner -> AI SDK (preserve all Provider IO behavior while narrowing the assembly interface;
+`adapters/src/model/runner.ts`, `model-execution.ts`); Contracts -> ModelRef/Result/Event (`ModelRef` mixes identity,
+selection, variant; `contracts/src/model/index.ts`, `events/session.events.ts`). completed: Bootstrap -> Provider
+Registry -> Adapter (second mutable AI SDK Registry deleted, one-time assembly at Model creation:
+`provider-registry-model-runtime.ts`); Adapter old Registry tests reorganized by network responsibilities.
+should-inspect: Compact/Memory/Subagent/Title/Tools (only consume Active Model). conditional: Protocol/session
+persistence (when Todo 05 deletes or migrates fields). invariant-only: Off-Peak/Goal/Background (normal
+Selection/Factory/Active Model); desktop/mobile/remote (continuous, replayable, Queue, workspace identity unchanged).
 
-除 Todo 03 已明确的 Provider 模型启停、可见性、成员来源和冲突交互外，其余 Todo 不计划修改 UI。以下入口共享候选
-事实，但各自的状态和提交落点仍保持独立：
+**5.4 State owners.** Provider/Model static facts: Business Provider Registry (Adapter no longer copies a mutable
+query Registry). Future model selection: ModelSelection product state (not ModelRef or Adapter default Provider).
+Current execution model: Agent Loop Active Model (Core capabilities and execution read it). Provider network
+resources: Adapter private execution closure/process service (not a business Registry View). Dynamic Request Auth:
+Model request dependency (parsed per attempt, not in Config/Selection/Persistence). Session events/history: existing
+contract/persistence (Todo 05 decides per field: keep Selection, flatten identity, or delete).
 
-| 用户场景                      | UI 入口                | 权威来源                                   | 本轮要求             | 必须隔离                  |
-| ----------------------------- | ---------------------- | ------------------------------------------ | -------------------- | ------------------------- |
-| 普通模型选择                  | Composer model control | Model Selection Facade / Session Selection | 过滤 disabled/hidden | Active Model 不被 UI 热改 |
-| Provider 设置                 | Provider Settings      | Settings Facade / Personal Config          | 展示并保存 enabled   | 不暴露 hidden Provider    |
-| Automation/Subagent/Repo Wiki | 各自模型控件           | 各自 Draft/Persistence + Selection Facade  | 选项来源不变         | 不统一各自 commit sink    |
+**5.5 Invariants.**
 
-### 5.3 分级影响面
+1. All production model calls go through Models created by ModelFactory.
+2. One Loop/Step uses a determined Active Model; Config updates do not hot-swap it.
+3. Automatic Compact uses the current Active Model; Subagents create their own Model.
+4. hidden Providers remain normal complete Registry members, only invisible in the user Facade.
+5. execution-provided failures occur before the network and cover dynamic access material only.
+6. Provider SDK encoding, proxy, CA, endpoint routing, signing, retry, stream recovery and error normalization are not
+   lost.
+7. Session Selection, App Recent, Queue, Goal, Background and Off-Peak admission do not change.
+8. Replayable recovery semantics do not spread to desktop continuous; workspace identity unchanged.
+9. No second set of capability, identity, connection or execution config DTOs.
+10. Telemetry behavior stays as-is (no payload expansion or new context due to cleanup).
 
-| 等级           | 关系                                      | 为什么必须检查                                           | 证据                                                       |
-| -------------- | ----------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------- |
-| must-inspect   | Core Runtime -> ModelFactory/Model        | 删除旧 Adapter 和 Connection 入口                        | `apps/zcode-cli/packages/core/src/runtime`                 |
-| completed      | Bootstrap -> Provider Registry -> Adapter | 已删除第二份可变 AI SDK Registry，Model 创建时一次装配   | `provider-registry-model-runtime.ts`                       |
-| must-inspect   | Adapter runner -> AI SDK                  | 保留所有 Provider IO 行为，同时缩小装配接口              | `adapters/src/model/runner.ts`、`model-execution.ts`       |
-| must-inspect   | Contracts -> ModelRef/Result/Event        | `ModelRef` 混合身份、选择和 variant                      | `contracts/src/model/index.ts`、`events/session.events.ts` |
-| should-inspect | Compact/Memory/Subagent/Title/Tools       | 多个模型执行分支必须只消费 Active Model                  | Core 调用点与 Todo 01 测试                                 |
-| conditional    | Protocol/session persistence              | 只在 Todo 05 删除或迁移字段时进入                        | Session events、timeline/message persistence               |
-| invariant-only | Off-Peak/Goal/Background                  | 继续使用普通 Selection/Factory/Active Model              | M4 execution spec                                          |
-| invariant-only | desktop/mobile/remote                     | 不改变 continuous、replayable、Queue、workspace identity | Provider Environment 设计                                  |
-| completed      | Adapter 旧 Registry tests                 | 已按网络职责重组，不再保留 Registry 查询语义             | `adapters/tests/registry.test.ts` 等                       |
+**5.6 Code facts and graph drift.** `AiSdkModelRegistry`, config hot updates and Bootstrap full synchronization were
+zeroed in Todo 02. `ModelConnectionPort` spread through barrel export to Core Runtime, Tools, WebSearch, MCS and
+Embedded Search. `ModelRef` appeared in about 50 non-test production files. `dep:refs` default glob excludes
+`apps/zcode-cli/packages/*`; use `--scope apps/zcode-cli/packages`; barrel imports may underestimate interface symbol
+results, so deletion verification also combines `rg`, TypeScript and package tests. The feature graph already has
+Provider Registry, Model capabilities and Off-Peak execution nodes; this plan supplements execution abstraction cleanup
+seeds and invariants with no new UI surface.
 
-### 5.4 State owner 与提交落点
+## 6. Case Planning and Pruning
 
-| 状态/事实               | 权威 owner                        | 本轮结果                                               |
-| ----------------------- | --------------------------------- | ------------------------------------------------------ |
-| Provider/Model 静态事实 | 业务 Provider Registry            | Adapter 不再复制为可变查询 Registry                    |
-| 未来模型选择            | ModelSelection 所在产品状态       | 不用 ModelRef 或 Adapter 默认 Provider 表达            |
-| 当前执行模型            | Agent Loop 的 Active Model        | Core 能力和执行统一读取它                              |
-| Provider 网络资源       | Adapter 私有执行闭包/进程服务     | 不成为业务 Registry View                               |
-| 动态 Request Auth       | Model request dependency          | 每个 attempt 解析，不进入 Config/Selection/Persistence |
-| Session 事件/历史       | 既有 Session contract/persistence | Todo 05 逐字段判断保留 Selection、扁平身份或删除       |
+Dimensions: model lifecycle (update before / after creation: must test); Access (api-key / zhipu-account /
+execution-provided: must test); request form (generate / stream / retry: must test); execution source (main / compact /
+subagent / off-peak: representative); Provider API (Anthropic / OpenAI Responses / OpenAI-compatible: projection must
+test); client/remote mode (desktop continuous / mobile replayable / remote workspace: invariant regression only);
+Telemetry (status / trace / usage: regression only).
 
-### 5.5 必须保持的不变量
+Pruning: no UI surface x Provider API enumeration; no Queue/Recovery x Adapter enumeration; no per-model-ID cases
+(capabilities come from Config, no modelId hardcoding); do not migrate every old Registry single test as-is
+(reorganize behavior tests by retained network responsibilities); no new Telemetry case catalogs.
 
-1. 所有生产模型调用通过 ModelFactory 创建的 Model；
-2. 一个 Loop/Step 使用确定的 Active Model，Config 更新不热改它；
-3. Automatic Compact 使用当前 Active Model，Subagent 创建自己的 Model；
-4. hidden Provider 仍是普通完整 Registry 成员，只在用户 Facade 不可见；
-5. execution-provided 缺失在网络前失败，且只覆盖动态访问材料；
-6. Provider SDK 编码、代理、CA、Endpoint Routing、签名、Retry、Stream Recovery 和错误归一化不丢失；
-7. 不改变 Session Selection、App Recent、Queue、Goal、Background、Off-Peak admission；
-8. 不把 replayable 恢复语义扩散到 desktop continuous，也不改变 workspace identity；
-9. 不新增第二套 capability、identity、connection 或 execution config DTO；
-10. Telemetry 行为维持现状，不因清理扩大 payload 或引入新 context。
+| Case ID | Setup                                 | Action                                      | Assertions                                                                       |
+| ------- | ------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------- |
+| MAU-01  | Create Model A at Registry revision N | Continue requesting A after updating to N+1 | A's API/Endpoint/Properties unchanged                                            |
+| MAU-02  | Registry already at N+1               | Create Model B                              | B uses N+1                                                                       |
+| MAU-03  | execution-provided Model              | Request without Source                      | Type failure before network                                                      |
+| MAU-04  | execution-provided Model              | Refresh auth on Retry                       | Only auth changes, static execution facts unchanged                              |
+| MAU-05  | Main/Compact/Subagent                 | Each executes one request                   | Core only via Model, no Adapter/Connection fallback                              |
+| MAU-06  | Image/PDF/Video capability            | Allow/Deny request                          | Only read Model.properties; Adapter encoding restrictions still apply            |
+| MAU-07  | legacy ModelRef persistence           | Restore historical data                     | Convert to current semantics only at boundaries; domain no longer saves ModelRef |
+| MAU-08  | desktop/mobile/remote representative  | Execute model request                       | Selection, queue and recovery semantics unchanged                                |
 
-### 5.6 代码事实与图谱漂移
+These are cross-Todo stable Case IDs; single test files and finer assertions live in each Todo. E2E covers only true
+cross-process or existing main chain regression (no large-scale UI E2E for pure TypeScript abstraction deletions).
 
-- `AiSdkModelRegistry`、配置热更新和 Bootstrap 全量同步已经在 Todo 02 归零；
-- `ModelConnectionPort` 经 barrel export 扩散到 Core Runtime、Tool、WebSearch、MCS 和 Embedded Search；
-- `ModelRef` 当前仍出现在约 50 个非测试生产文件；
-- 仓库 `dep:refs` 默认 glob 不包含 `apps/zcode-cli/packages/*`，必须带
-  `--scope apps/zcode-cli/packages`；barrel import 会让部分 interface 的符号结果低估，因此删除验收还要结合
-  `rg`、TypeScript 和 package tests；
-- 功能图已有 Provider Registry、Model capabilities 和 Off-Peak execution 节点，本计划补充执行抽象清理
-  seeds 与不变量，不新增 UI surface。
+## 7. Uniform Implementation Rules for Each Todo
 
-## 6. 用例规划与剪枝
+1. Before starting, wait for or avoid overlapping files in parallel work trees.
+2. Update the corresponding spec/Todo first, then write failing tests.
+3. Migrate production assembly and test helpers first, then delete interfaces.
+4. Do not prolong old abstractions with deprecated aliases, `any` or compatibility fallbacks.
+5. Verify each Todo with `rg`/`dep:refs` zero conditions, affected single tests, `pnpm typecheck`, `pnpm lint` and
+   `pnpm fmt:check`.
+6. Todos stay independently reviewable; ones depending on the same fact chain and atomic switch may merge into one
+   Conventional Commit.
+7. If a product state, Protocol recovery or Telemetry semantic change is discovered, stop that Todo and decide
+   separately.
 
-### 6.1 主要维度
+## 8. Subsequent Unnumbered Issues
 
-| 维度            | 代表值                                                    | 处理                     |
-| --------------- | --------------------------------------------------------- | ------------------------ |
-| 模型生命周期    | 创建前 Config 更新 / 创建后更新                           | 必测                     |
-| Access          | api-key / zhipu-account / execution-provided              | 必测                     |
-| 请求形态        | generate / stream / retry                                 | 必测                     |
-| 执行来源        | main / compact / subagent / off-peak                      | 代表性覆盖               |
-| Provider API    | Anthropic / OpenAI Responses / OpenAI-compatible          | 必测投影                 |
-| 客户端/远程模式 | desktop continuous / mobile replayable / remote workspace | 不变量回归，不展开状态积 |
-| Telemetry       | status / trace / usage                                    | 仅回归，不设计新状态     |
-
-### 6.2 剪枝决定
-
-- 不枚举 UI surface × Provider API：本轮不修改 UI 或候选生成；
-- 不枚举 Queue/Recovery × Adapter 实现：没有状态或协议语义变化，只做主链回归；
-- 不为每个模型 ID 建用例：能力来自 Config，不允许 modelId hardcode；
-- 不把 Adapter Registry 的每个旧单测原样迁移；按保留的网络职责重新组织行为测试；
-- 不为 Telemetry 新建 case catalog；只验证现有事件没有因类型迁移丢失关键字段。
-
-### 6.3 稳定验收用例
-
-| Case ID | Setup                                | Action                  | Assertions                                      |
-| ------- | ------------------------------------ | ----------------------- | ----------------------------------------------- |
-| MAU-01  | Registry revision N 创建 Model A     | 更新到 N+1 后继续请求 A | A 的 API/Endpoint/Properties 不变               |
-| MAU-02  | Registry 已更新到 N+1                | 创建 Model B            | B 使用 N+1                                      |
-| MAU-03  | execution-provided Model             | 无 Source 发起请求      | 网络前类型化失败                                |
-| MAU-04  | execution-provided Model             | Retry 时刷新 auth       | 只变 auth，不变静态执行事实                     |
-| MAU-05  | Main/Compact/Subagent                | 各执行一次请求          | Core 只经 Model，无 Adapter/Connection fallback |
-| MAU-06  | Image/PDF/Video capability           | 允许/拒绝请求           | 只读 Model.properties，Adapter 编码限制仍生效   |
-| MAU-07  | legacy ModelRef persistence          | 恢复历史数据            | 只在边界转为当前语义，领域不继续保存 ModelRef   |
-| MAU-08  | desktop/mobile/remote representative | 执行模型请求            | Selection、队列和恢复语义不变                   |
-
-这些是跨 Todo 的稳定 Case ID。具体单测文件和更细断言写入各 Todo，E2E 只覆盖真正跨进程或已有主链
-回归，不为纯 TypeScript 抽象删除新增大规模 UI E2E。
-
-## 7. 每个 Todo 的统一实施规则
-
-1. 开工前等待或避开并行工作树中的重叠文件；
-2. 先更新对应 spec/Todo，再写失败测试；
-3. 先迁移生产装配和测试 helper，再删除接口；
-4. 不用 deprecated alias、`any` 或兼容 fallback 延长旧抽象；
-5. 每个 Todo 都以 `rg`/`dep:refs` 归零条件、受影响单测、`pnpm typecheck`、`pnpm lint` 和
-   `pnpm fmt:check` 验收；
-6. Todo 原则上保持可独立审查；存在同一事实链和原子切换依赖时，可以合并为一个 Conventional Commit；
-7. 若发现必须改变产品状态、Protocol 恢复或 Telemetry 语义，停止该 Todo 并单独裁决，不顺手扩 scope。
-
-## 8. 暂不编号的后续问题
-
-以下问题已知存在，但尚未完成逐项设计讨论，不进入上述 Todo：
-
-- Account Provider 动态凭据和 runtime header refresh 的长期归属；
-- Telemetry、Status、Context 和 Observation 的整体重构。
-
-这些项后续逐一讨论。未裁决前可以在前置 Todo 中删除已经失去调用方的死代码，但不能借机发明新的长期
-抽象或改变产品语义。
+Known but not yet designed item by item (not in the Todos above): long-term ownership of Account Provider dynamic
+credentials and runtime header refresh; overall refactoring of Telemetry, Status, Context and Observation. Until
+decided, caller-less dead code may be deleted by earlier Todos, but no new long-term abstractions or product semantics
+may be invented opportunistically.

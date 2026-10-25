@@ -38,7 +38,9 @@ export interface ForceUpdateGuardOptions {
   logger: ForceUpdateGuardLogger;
   endpointOrigin?: string;
   fetchRemoteConfig?: () => Promise<unknown>;
-  requestAutoUpdate?: (onStateChange?: (state: ForceAutoUpdateState) => void) => (() => void) | void;
+  requestAutoUpdate?: (
+    onStateChange?: (state: ForceAutoUpdateState) => void,
+  ) => (() => void) | void;
   onBlocked?: (requirement: ForceUpdateRequirement) => void;
 }
 
@@ -65,7 +67,7 @@ function getForceUpdateMinimalVersionFromClientConfig(config: unknown): string |
     };
   };
   if (typeof envelope.code === "number" && envelope.code !== 0) {
-    // /client/configs 与服务层一样只有 code=0 才可信，避免错误 envelope 携带旧 data 时误触发启动强更。
+    // As in the service layer, trust /client/configs only when code=0 so an error envelope with stale data cannot trigger a forced update at startup.
     throw new Error(`ZCode client config failed: ${envelope.code}`);
   }
   return getForceUpdateMinimalVersionFromConfig(envelope.data?.configs);
@@ -115,7 +117,7 @@ async function fetchRemoteForceUpdateConfig(
     request.on("response", (response) => {
       const statusCode = response.statusCode ?? 0;
       if (statusCode < 200 || statusCode >= 300) {
-        // 启动前强更 gate 不能把 4xx/5xx/HTML 错页当正常配置解析，统一走离线降级路径。
+        // The pre-start forced-update gate must not parse 4xx/5xx/HTML error pages as valid config; use the offline fallback path for all of them.
         fail(new Error(`force update config request failed with status ${statusCode}`));
         return;
       }
@@ -123,7 +125,7 @@ async function fetchRemoteForceUpdateConfig(
       response.on("data", (chunk) => {
         receivedBytes += Buffer.byteLength(chunk);
         if (receivedBytes > FORCE_UPDATE_CONFIG_MAX_RESPONSE_BYTES) {
-          // 远端配置在主窗口创建前读取，必须限制响应体，避免异常响应撑爆 main 进程内存。
+          // Remote config is read before the main window is created; cap the response body so an abnormal response cannot exhaust main-process memory.
           fail(new Error("force update config response too large"));
           return;
         }
@@ -173,7 +175,7 @@ export async function resolveDesktopForceUpdateRequirement(options: {
       return remoteRequirement;
     }
   } catch (error) {
-    // 预留离线跳过接口：完全离线时先不拉闸，后续可在这里接入显式 offline bypass 策略。
+    // Reserved for offline bypass: do not block startup when fully offline; an explicit offline-bypass policy can be added here later.
     options.logger.warn("[force-update] 读取远端强制升级配置失败，跳过强制升级校验", { error });
     return null;
   }
@@ -201,6 +203,17 @@ export function formatForceUpdateDialogText(
       autoUpdateButton: "自动升级",
       manualUpdateButton: "手动升级",
       quitButton: "退出",
+    };
+  }
+
+  if (locale === "uk-UA") {
+    return {
+      title: "Оновіть ZCode",
+      message: "Цією версією більше не можна користуватися",
+      detail: `Поточна версія: v${requirement.currentVersion}\nМінімальна підтримувана версія: v${requirement.minimalVersion}`,
+      autoUpdateButton: "Оновити автоматично",
+      manualUpdateButton: "Оновити вручну",
+      quitButton: "Вийти",
     };
   }
 
@@ -248,7 +261,7 @@ export async function maybeBlockStartupForForceUpdate(
     await shell.openExternal(url);
   }
 
-  // 强制升级命中后不能进入主界面；非自动升级路径处理完弹窗后退出，避免露出旧客户端功能。
+  // If a forced update applies, do not enter the main UI; after handling the dialog, exit on non-automatic-update paths to avoid exposing old client features.
   app.quit();
   return { blocked: true, requirement };
 }

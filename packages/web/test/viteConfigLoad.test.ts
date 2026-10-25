@@ -9,7 +9,7 @@ describe("web Vite config", () => {
   });
 
   it.each([undefined, "   ", " 3.12.9-beta.1 "])(
-    "构建版本使用手动值或 package 默认值：%s",
+    "build version uses the manual value or the package default: %s",
     async (override) => {
       vi.stubEnv("WEB_REMOTE_FRONTEND_VERSION", override);
       const webRoot = resolve(import.meta.dirname, "..");
@@ -28,7 +28,7 @@ describe("web Vite config", () => {
     },
   );
 
-  it("非法手动版本在构建配置加载时失败", async () => {
+  it("an invalid manual version fails when the build config loads", async () => {
     vi.stubEnv("WEB_REMOTE_FRONTEND_VERSION", "../latest");
     const webRoot = resolve(import.meta.dirname, "..");
     await expect(
@@ -61,7 +61,7 @@ describe("web Vite config", () => {
     );
   });
 
-  it("显式 ZCODE_ENV=production 时注入生产 ZAI OAuth 和 API 链接", async () => {
+  it("with ZCODE_ENV=production set explicitly, injects the production ZAI OAuth and API links", async () => {
     vi.stubEnv("ZCODE_ENV", "production");
     const webRoot = resolve(import.meta.dirname, "..");
     const configFile = resolve(webRoot, "vite.config.ts");
@@ -86,21 +86,24 @@ describe("web Vite config", () => {
   it.each([
     ["test", "https://bigmodel.cn"],
     ["production", "https://bigmodel.cn"],
-  ])("%s 构建向远控登录页注入对应 BigModel 授权域名", async (environment, origin) => {
-    vi.stubEnv("ZCODE_ENV", environment);
-    const webRoot = resolve(import.meta.dirname, "..");
-    const result = await loadConfigFromFile(
-      { command: "build", mode: "production", isPreview: false, isSsrBuild: false },
-      resolve(webRoot, "vite.config.ts"),
-      webRoot,
-      "silent",
-    );
-    expect(result?.config.define?.["import.meta.env.VITE_BIGMODEL_OAUTH_ORIGIN"]).toBe(
-      JSON.stringify(origin),
-    );
-  });
+  ])(
+    "%s build injects the matching BigModel authorization domain into the remote-control login page",
+    async (environment, origin) => {
+      vi.stubEnv("ZCODE_ENV", environment);
+      const webRoot = resolve(import.meta.dirname, "..");
+      const result = await loadConfigFromFile(
+        { command: "build", mode: "production", isPreview: false, isSsrBuild: false },
+        resolve(webRoot, "vite.config.ts"),
+        webRoot,
+        "silent",
+      );
+      expect(result?.config.define?.["import.meta.env.VITE_BIGMODEL_OAUTH_ORIGIN"]).toBe(
+        JSON.stringify(origin),
+      );
+    },
+  );
 
-  // Windows 跳过：环境配置差异导致断言失败，需要 CI 环境统一配置
+  // Skipped on Windows: environment config differences cause assertion failures and require a unified CI environment config
   const isWindows = process.platform === "win32";
 
   (isWindows ? it.skip : it)(

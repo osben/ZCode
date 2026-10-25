@@ -38,7 +38,7 @@ it("accepts device/token HTTP contracts and the server's omitted null data", () 
   });
 });
 
-it("拒绝请求中的未知身份字段和响应中的非法业务数据", () => {
+it("rejects unknown identity fields in requests and invalid business data in responses", () => {
   for (const [operation, body] of [
     ["register", { device_mid: "  " }],
     ["register", { device_mid: "a".repeat(129) }],
@@ -62,7 +62,7 @@ it("拒绝请求中的未知身份字段和响应中的非法业务数据", () =
     expect(parseWebRemoteControlRelayV2HttpResponse(operation, body)).toBeNull();
 });
 
-it("忽略 HTTP 信封和嵌套数据的新增字段，仅返回已声明字段", () => {
+it("ignores added HTTP envelope and nested data fields and returns only declared fields", () => {
   const device = {
     device_sid: "d_1",
     device_mid: "machine-1",

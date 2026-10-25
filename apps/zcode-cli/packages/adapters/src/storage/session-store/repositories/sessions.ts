@@ -1,6 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import {
   SESSION_TASK_TYPES,
+  type ChildSessionInfo,
   type ClaimLegacySessionWorkspaceInput,
   type CreateSessionInput,
   type FileDiff,
@@ -26,11 +27,12 @@ export function createSession(db: DatabaseSync, input: CreateSessionInput): Sess
     `
       insert into session (
         id, project_id, workspace_id, parent_id, trace_id, task_type, slug, directory, path,
+        execution_directory, execution_branch, fork_incognito,
         title, title_source, title_message_id, version,
         share_url, summary_additions, summary_deletions, summary_files, summary_diffs,
         revert, permission, time_created, time_updated, time_title_updated,
-        time_compacting
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, null, null, null, ?, ?, ?, ?, null)
+        time_compacting, time_archived
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, null, null, null, ?, ?, ?, ?, null, null)
       on conflict(id) do update set
         project_id = excluded.project_id,
         workspace_id = excluded.workspace_id,
@@ -40,6 +42,9 @@ export function createSession(db: DatabaseSync, input: CreateSessionInput): Sess
         slug = excluded.slug,
         directory = excluded.directory,
         path = excluded.path,
+        execution_directory = coalesce(session.execution_directory, excluded.execution_directory),
+        execution_branch = coalesce(session.execution_branch, excluded.execution_branch),
+        fork_incognito = coalesce(session.fork_incognito, excluded.fork_incognito),
         title = excluded.title,
         title_source = excluded.title_source,
         title_message_id = excluded.title_message_id,
@@ -59,6 +64,9 @@ export function createSession(db: DatabaseSync, input: CreateSessionInput): Sess
     input.slug,
     input.directory,
     input.path ?? null,
+    input.executionDirectory ?? null,
+    input.executionBranch ?? null,
+    encodeJson(input.incognito),
     input.title,
     input.titleSource ?? "first_input",
     input.titleMessageID ?? null,
@@ -73,6 +81,21 @@ export function createSession(db: DatabaseSync, input: CreateSessionInput): Sess
   return mustGetSession(db, input.id);
 }
 
+export function deleteEmptySession(db: DatabaseSync, sessionID: SessionId): boolean {
+  const result = db
+    .prepare(
+      `
+      delete from session
+      where id = ?
+        and not exists (select 1 from message where session_id = ?)
+        and not exists (select 1 from session_entry where session_id = ?)
+        and not exists (select 1 from session_input where session_id = ?)
+      `,
+    )
+    .run(sessionID, sessionID, sessionID, sessionID);
+  return Number(result.changes) > 0;
+}
+
 export async function updateSession(
   db: DatabaseSync,
   input: UpdateSessionInput,
@@ -84,7 +107,8 @@ export async function updateSession(
     fields.push(`${column} = ?`);
     values.push(value);
   };
-  // Bug 根因：先读整行再 await 会用旧快照覆盖并发标题、权限和结果；只更新本次输入拥有的列。
+  // Only the columns owned by this input are written: a read-then-write of the whole row lets a
+  // concurrent title, permission or outcome update be overwritten with the stale snapshot.
   set("directory", input.directory);
   set("path", input.path);
   set("title", input.title);
@@ -108,7 +132,8 @@ export async function updateSession(
   ) {
     set("time_title_updated", Date.now());
   }
-  // 标题及组织态不代表会话活动；活动时间只由消息/终态显式提交，且禁止回退。
+  // Title and organization state are not session activity; activity is committed explicitly by
+  // messages or terminal states, and never moves backwards.
   if (input.timeUpdated !== undefined) {
     fields.push("time_updated = max(time_updated, ?)");
     values.push(input.timeUpdated);
@@ -125,12 +150,12 @@ export async function updateSession(
   return mustGetSession(db, input.id);
 }
 
+/** Upstream tombstone: idempotent, keeps message/part rows and the activity time; listings hide it. */
 export function softDeleteSession(
   db: DatabaseSync,
   sessionID: SessionId,
   timeDeleted: number,
 ): void {
-  // 软删除保持幂等，并保留 message/part 及活动时间；旧 create/upsert 不能清除此字段。
   db.prepare("update session set time_deleted = coalesce(time_deleted, ?) where id = ?").run(
     timeDeleted,
     sessionID,
@@ -148,6 +173,7 @@ export async function listSessions(
   db: DatabaseSync,
   input: ListSessionsInput = {},
 ): Promise<SessionInfo[]> {
+  // Soft-deleted (tombstoned) sessions are hidden from every listing.
   const clauses: string[] = ["time_deleted is null"];
   const values: SQLInputValue[] = [];
 
@@ -201,15 +227,78 @@ export async function listSessions(
   return rows.map(decodeSessionRow);
 }
 
+/** Sidebar child facts cover exactly these task types (specs/sidebar-child-conversation-counts.md). */
+// Sidebar lists side chats only (spec sidebar-child-conversation-counts §9): subagents are reached from the parent conversation.
+const CHILD_SESSION_TASK_TYPES = ["selection_side_chat"] as const;
+
+function buildChildSessionScope(parentIds: readonly SessionId[]): {
+  where: string;
+  values: SQLInputValue[];
+} {
+  return {
+    where: `parent_id in (${parentIds.map(() => "?").join(", ")}) and task_type in (${CHILD_SESSION_TASK_TYPES.map(() => "?").join(", ")}) and time_deleted is null`,
+    values: [...parentIds, ...CHILD_SESSION_TASK_TYPES],
+  };
+}
+
+export function countChildSessions(
+  db: DatabaseSync,
+  parentIds: readonly SessionId[],
+): Map<string, { sideChats: number }> {
+  const result = new Map<string, { sideChats: number }>();
+  if (parentIds.length === 0) return result;
+  const scope = buildChildSessionScope(parentIds);
+  const rows = db
+    .prepare(`select parent_id, count(*) as n from session where ${scope.where} group by parent_id`)
+    .all(...scope.values) as unknown as Array<{ parent_id: string; n: number }>;
+  for (const row of rows) result.set(row.parent_id, { sideChats: row.n });
+  return result;
+}
+
+export function listChildSessions(
+  db: DatabaseSync,
+  parentIds: readonly SessionId[],
+  limitPerParent: number,
+): Map<string, ChildSessionInfo[]> {
+  const result = new Map<string, ChildSessionInfo[]>();
+  if (parentIds.length === 0 || limitPerParent <= 0) return result;
+  const scope = buildChildSessionScope(parentIds);
+  // Cap in SQL (row_number per parent): without it every refresh decodes every live child row of
+  // every tracked parent, which grows without bound as parents accumulate (spec §3 heat control).
+  const rows = db
+    .prepare(
+      `select * from (
+         select session.*, row_number() over (partition by parent_id order by time_updated desc, id desc) as child_rank
+         from session where ${scope.where}
+       ) where child_rank <= ?`,
+    )
+    .all(...scope.values, limitPerParent) as unknown as SessionRow[];
+  for (const row of rows) {
+    const info = decodeSessionRow(row);
+    if (info.taskType !== "selection_side_chat") continue;
+    const parentKey = String(info.parentID);
+    const bucket = result.get(parentKey) ?? [];
+    if (bucket.length >= limitPerParent) continue;
+    bucket.push({
+      id: info.id,
+      title: info.title,
+      taskType: info.taskType,
+      lastActivityAt: info.time.updated,
+    });
+    result.set(parentKey, bucket);
+  }
+  return result;
+}
+
 export function claimLegacySessionWorkspace(
   db: DatabaseSync,
   input: ClaimLegacySessionWorkspaceInput,
 ): number {
   const sessionIDs = [...new Set(input.sessionIDs)];
   if (sessionIDs.length === 0) return 0;
-  // 3.3.6 的 SSH/WSL session 没有 workspace_id，3.4 sessions-index 又按完整
-  // identity 严格查询，升级后历史任务全部不可见。这里只认 host tasks-index 给出的精确
-  // taskId allowlist，并叠加实际目录和 NULL identity，不能退化成按路径批量认领。
+  // SSH/WSL sessions from 3.3.6 have no workspace_id, while the 3.4 sessions index queries by the full
+  // identity. This made all historical tasks invisible after upgrade. Accept only exact entries from the host tasks index
+  // taskId allowlist, together with the actual directory and NULL identity; never fall back to bulk claims by path.
   const result = db
     .prepare(
       `update session
@@ -226,8 +315,8 @@ export function repairLegacyRemoteSessionWorkspace(
   db: DatabaseSync,
   input: RepairLegacyRemoteSessionWorkspaceInput,
 ): boolean {
-  // 3.4.2 把 WSL identity 当成执行路径，生产路径还可能先被 path.resolve
-  // 拼到真实 cwd 后落库。只按单 session 和完整旧目录精确迁移，禁止模糊搜索或批量认领。
+  // Version 3.4.2 treated the WSL identity as an execution path; production paths may also be path.resolve’d
+  // against the real cwd before persistence. Migrate only an exact single session and full old directory; do not search ambiguously or claim in bulk.
   const result = db
     .prepare(
       `update session
@@ -253,8 +342,8 @@ export function repairRemoteSessionPaths(
   db: DatabaseSync,
   input: RepairRemoteSessionPathsInput,
 ): boolean {
-  // 路径自愈曾复用全字段 updateSession，把读取快照中的标题、权限、回滚和
-  // 归档状态覆盖到并发新值上。维护性迁移只能拥有路径字段，并用旧路径做 CAS。
+  // Path repair previously reused the full-field updateSession, overwriting concurrent title, permission, rollback, and
+  // archive changes with values from the read snapshot. This maintenance migration may update only path fields and must use the old path for CAS.
   const result = db
     .prepare(
       `update session

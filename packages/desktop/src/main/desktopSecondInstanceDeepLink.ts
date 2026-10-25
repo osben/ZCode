@@ -1,5 +1,6 @@
 import type { BrowserWindow } from "electron";
 import type { ExternalWorkspaceOpenDialogCopy } from "./desktopOAuthDeepLink.js";
+import type { TaskDraftDialogCopy } from "./desktopTaskDraftDeepLink.js";
 import {
   extractDeepLinkUrlFromArgs,
   extractDeepLinkUrlFromSingleInstanceData,
@@ -17,6 +18,7 @@ interface SecondInstanceWorkspaceDeps {
     options: {
       canOpenWorkspace: () => boolean;
       confirmationCopy?: ExternalWorkspaceOpenDialogCopy;
+      taskDraftConfirmationCopy?: TaskDraftDialogCopy;
       onWorkspaceOpenBlocked: () => void;
       resolveApplicationWindow?: () => BrowserWindow | null;
     },
@@ -30,13 +32,14 @@ interface SecondInstanceWorkspaceDeps {
   ) => boolean;
   logger: { warn: (...args: unknown[]) => void };
   workspaceConfirmationCopy?: ExternalWorkspaceOpenDialogCopy;
+  taskDraftConfirmationCopy?: TaskDraftDialogCopy;
   resolveApplicationWindow?: () => BrowserWindow | null;
 }
 
 export function handleSecondInstanceWorkspaceRequest(deps: SecondInstanceWorkspaceDeps): boolean {
   const url =
-    // Linux 的 second-instance argv 可能被桌面环境重排或追加参数。
-    // Electron 官方建议精确参数走 additionalData，这里优先读取第二实例预解析出的 deep link。
+    // Linux desktop environments may reorder or append arguments to second-instance argv.
+    // Electron recommends passing exact arguments through additionalData; prefer the deep link pre-parsed by the second instance.
     extractDeepLinkUrlFromSingleInstanceData(deps.additionalData) ??
     extractDeepLinkUrlFromArgs(deps.argv);
   if (
@@ -44,6 +47,7 @@ export function handleSecondInstanceWorkspaceRequest(deps: SecondInstanceWorkspa
     deps.handleDeepLink(url, {
       canOpenWorkspace: () => !deps.forceUpdateBlocked,
       confirmationCopy: deps.workspaceConfirmationCopy,
+      taskDraftConfirmationCopy: deps.taskDraftConfirmationCopy,
       resolveApplicationWindow: deps.resolveApplicationWindow,
       onWorkspaceOpenBlocked: () => {
         deps.logger.warn(

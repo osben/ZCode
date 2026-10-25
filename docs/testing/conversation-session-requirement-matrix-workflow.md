@@ -1,90 +1,90 @@
 # Conversation Session Requirement Matrix Workflow
 
-本文定义 conversation session 领域的“需求澄清分支”实例。通用入口是 `.agents/skills/feature-boundary-planner` skill：用户先描述要新增或调整的功能，Agent 根据现有文档和代码找关联概念，形式化枚举状态组合，再和用户逐步剪枝，最后产出需要覆盖的 case 文档。
+Defines the "requirement clarification branch" instance for the conversation session domain. The generic entry is the `.agents/skills/feature-boundary-planner` skill: the user first describes the function to add or adjust, the Agent finds related concepts from existing documents and code, enumerates state combinations formally, prunes them step by step with the user, and finally produces the case documents that need coverage.
 
-## 目标
+## Goal
 
-- 把“我要改一个功能”转成可 review 的状态空间，而不是直接写 E2E。
-- 用现有 protocol、case catalog、coverage matrix 和 formal-proof 口径生成候选组合。
-- 把产品已经确认、需要继续确认、明确剪枝和暂不覆盖的组合分别落文档。
-- 只把 `accepted` case 交给后续 E2E manual-review / promotion 流水线。
+- Turn "I want to change a feature" into a reviewable state space rather than writing E2E directly.
+- Generate candidate combinations with the existing protocol, case catalog, coverage matrix and formal-proof basis.
+- Record separately in documents the combinations the product has confirmed, those still to be confirmed, those explicitly pruned and those not covered for now.
+- Hand only `accepted` cases to the later E2E manual-review / promotion pipeline.
 
-## 输入
+## Input
 
-用户只需要先给出自然语言变更，例如：
+The user only needs to give a natural-language change first, for example:
 
 ```text
-running 时 queue 里某条消息可以点立即发送
+While running, a message in the queue can be sent immediately
 ```
 
-如果描述不足，Agent 只先问最小必要问题，例如“这是已有行为修正，还是新增入口？”
+If the description is insufficient, the Agent first asks only the minimum necessary question, e.g. "is this a fix of existing behavior or a new entry?"
 
-## 上下文发现
+## Context discovery
 
-优先从文档找产品语义，再读代码确认当前实现和可观察证据：
+Find product semantics from documents first, then read code to confirm the current implementation and observable evidence:
 
-1. 协议层：`docs/conversation-protocol-declaration.md`
-2. case catalog：`docs/conversation-session-case-catalog.md`
-3. 覆盖矩阵：`docs/testing/conversation-session-e2e-coverage-matrix.md`
-4. 相关专项矩阵：fork、goal、fault、tool cross-product、network/SSE、recovery/isolation 等
-5. 当前实现：UI surface、store/runtime 状态、protocol event、fixture/helper
+1. Protocol layer: `docs/conversation-protocol-declaration.md`
+2. Case catalog: `docs/conversation-session-case-catalog.md`
+3. Coverage matrix: `docs/testing/conversation-session-e2e-coverage-matrix.md`
+4. Related dedicated matrices: fork, goal, fault, tool cross-product, network/SSE, recovery/isolation, etc.
+5. Current implementation: UI surface, store/runtime state, protocol event, fixture/helper
 
-输出一张 concept map，记录每个概念来自哪里、为什么和本次需求有关。
+Output a concept map recording where each concept comes from and why it relates to this requirement.
 
-## 维度提取
+## Dimension extraction
 
-维度只收会改变产品结果或断言的因素。常见维度包括：
+Collect only dimensions that change the product result or an assertion. Common dimensions:
 
-| 类型 | 示例 |
-| --- | --- |
-| 产品状态 | `session.phase`、`queue.length`、`queue.autoDrain`、`goal`、`compact.origin` |
-| 输入事件 | send text、`/goal`、`/compact`、stop、edit、fork、queue send-now |
-| 目标对象 | latest turn、old turn、assistant message、user query、queue item |
-| 入口 surface | composer、turn actions、queue actions、toolbar、goal control |
-| 运行形态 | text streaming、tool call、compact pending、goal verification |
-| 配置/环境 | model/provider/thought、desktop continuous、web remote replayable、Docker replay |
-| 证据层 | UI、runtime/store、protocol、network/SSE、files、logs |
+| Type                      | Examples                                                                         |
+| ------------------------- | -------------------------------------------------------------------------------- |
+| Product state             | `session.phase`, `queue.length`, `queue.autoDrain`, `goal`, `compact.origin`     |
+| Input event               | send text, `/goal`, `/compact`, stop, edit, fork, queue send-now                 |
+| Target object             | latest turn, old turn, assistant message, user query, queue item                 |
+| Entry surface             | composer, turn actions, queue actions, toolbar, goal control                     |
+| Run shape                 | text streaming, tool call, compact pending, goal verification                    |
+| Configuration/environment | model/provider/thought, desktop continuous, web remote replayable, Docker replay |
+| Evidence layer            | UI, runtime/store, protocol, network/SSE, files, logs                            |
 
-如果一个维度被不变量完全吞掉，不做全排列，但必须记录剪枝理由和代表 case。
+If a dimension is fully absorbed by an invariant, do not permute it fully, but record the pruning reason and a representative case.
 
-## 枚举与剪枝
+## Enumeration and pruning
 
-枚举视图沿用 formal-proof 的结构：
+The enumeration view follows the formal-proof structure:
 
 ```text
 state -> candidate -> guard -> effect -> case
 ```
 
-先做相关维度的笛卡尔积，再按 guard 和不变量剪枝。每个候选组合必须归入一个状态：
+First take the Cartesian product of the relevant dimensions, then prune by guards and invariants. Every candidate combination must fall into one state:
 
-| 状态 | 含义 |
-| --- | --- |
-| `accepted` | 产品语义明确，能写 setup/action/assert |
-| `undefined` | 真实可能发生，但产品语义未确认 |
-| `pruned` | 被 guard 或不变量明确剪掉 |
-| `ignored` | 存在但当前版本不覆盖，需要写清范围原因 |
-| `bug-candidate` | 当前实现疑似违反已确认协议 |
+| State           | Meaning                                                                            |
+| --------------- | ---------------------------------------------------------------------------------- |
+| `accepted`      | Product semantics are clear, setup/action/assert can be written                    |
+| `undefined`     | Can really happen but the product semantics are not confirmed                      |
+| `pruned`        | Explicitly cut by a guard or invariant                                             |
+| `ignored`       | Exists but is not covered by the current version; the scope reason must be written |
+| `bug-candidate` | The current implementation seems to violate a confirmed protocol                   |
 
-Agent 每次只拿小批量问题和用户确认，避免一次丢出巨大矩阵。问题要包含候选答案和影响面，用户回答后再回写文档。
+The Agent takes only a small batch of questions to the user at a time, to avoid dropping a huge matrix at once. Questions include candidate answers and the impact area, and documents are written back after the user answers.
 
-## 文档产出
+## Document output
 
-一次需求澄清至少产出或更新以下内容：
+One requirement clarification produces or updates at least:
 
-1. `docs/conversation-session-case-catalog.md`：新增/更新自然语言 case。
-2. `docs/testing/conversation-session-e2e-coverage-matrix.md`：把 accepted 但未实现的 case 标成 `missing` 或 `planned`。
-3. 若有 undefined：新增或更新 decision worksheet/backlog，并写清问题、候选口径、回写目标。
-4. 若是专项维度：同步对应专项矩阵，而不是把所有组合塞进主路径矩阵。
+1. `docs/conversation-session-case-catalog.md`: add/update natural-language cases.
+2. `docs/testing/conversation-session-e2e-coverage-matrix.md`: mark accepted but unimplemented cases as `missing` or `planned`.
+3. If there are undefined items: add or update the decision worksheet/backlog, stating the question, candidate bases and backfill targets.
+4. For a dedicated dimension: sync the matching dedicated matrix rather than stuffing all combinations into the main-path matrix.
 
-文档中的 accepted case 必须包含 setup、action、assertion 和至少一个非 UI 证据层。仅在某条路径中经过某个状态，不算覆盖。
+An accepted case in the documents must contain setup, action, assertion and at least one non-UI evidence layer. Merely passing through a state along some path does not count as coverage.
 
-## E2E 交接
+## E2E handoff
 
-只有 `accepted` case 进入 E2E 落地流程：
+Only `accepted` cases enter the E2E landing flow:
 
-1. 生成 `manual-review/pending` spec。
-2. 运行 manual/capture 并人工 review。
-3. 整理 case-local provider/file fixtures。
-4. promotion 后进入正式 replay 和 Docker suite。
+1. Generate a `manual-review/pending` spec.
+2. Run manual/capture and review by a human.
+3. Curate case-local provider/file fixtures.
+4. After promotion, enter the formal replay and the Docker suite.
 
-这个后续流程由 `.agents/skills/e2e-case-lifecycle` skill 负责。需求澄清分支不直接生成正式 E2E，也不把 `undefined` 写成测试断言。
+This follow-up flow is owned by the `.agents/skills/e2e-case-lifecycle` skill. The requirement clarification branch does not generate formal E2E directly and never writes `undefined` as a test assertion.

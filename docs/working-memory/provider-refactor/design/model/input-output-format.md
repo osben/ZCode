@@ -1,15 +1,16 @@
-# Model 输入输出格式
+# Model Input Output Format
 
-## 状态
+## Status
 
-- 本文是 Provider Refactor 中 Model 输入输出格式的目标事实规范。
-- 改动层级：`option-source + validation + persistence + commit-effect`。
-- 本文覆盖较早设计中的 `modalities` 数组、平铺 `supportsImages` / `supportsPdf` /
-  `supportsVideo`，以及 Runtime 的独立媒体 capability 投影。
+- Target fact specification for Model input/output format in the Provider Refactor.
+- Change level: `option-source + validation + persistence + commit-effect`.
+- Supersedes the `modalities` array, flat `supportsImages` / `supportsPdf` / `supportsVideo`, and independent
+  media capability projections from earlier designs.
 
-## 唯一事实结构
+## Single Source Structure
 
-Config、Registry、Model、Runtime 和跨进程协议共享同一份字段名称与嵌套结构：
+Config, Registry, Model, Runtime, and cross-process protocols share the same field names and nested
+structure:
 
 ```ts
 interface ModelInputFormat {
@@ -27,17 +28,17 @@ interface ModelOutputFormat {
 interface ModelProperties {
   input_format: ModelInputFormat;
   output_format: ModelOutputFormat;
-  // 其他既有 Model Properties 保持原有职责。
+  // Other existing Model Properties retain their original responsibilities.
 }
 ```
 
-这些 snake_case 名称是真实 Schema 名称，不在 Runtime 中转为 camelCase，也不投影成另一套
-`supports*` 字段。
+These snake_case names are the real Schema names; they are not converted to camelCase in Runtime, nor
+projected into another set of `supports*` fields.
 
-## Config Rule 与 Overlay
+## Config Rules and Overlay
 
-ZCode Built-in Model Config Rules 和 Personal Model Config Rules 使用同一结构。Rule 可以只声明
-需要覆盖的叶子字段；嵌套字段逐叶 overlay，Personal 规则拼接在 Built-in 规则之后：
+ZCode Built-in and Personal Model Config Rules use the same structure. Rules may declare only the leaf
+fields to cover; nested fields overlay per leaf, with Personal rules concatenated after Built-in:
 
 ```text
 ZCode Built-in Model Config Rules ─┐
@@ -48,21 +49,22 @@ Personal Model Config Rules ────────┘
                                   Effective Model Config
 ```
 
-Rule 中叶子字段的三态语义：
+Three-state semantics of leaf fields in Rules:
 
 ```text
-undefined -> 本层没有意见
-false     -> 本层明确关闭
-true      -> 本层明确开启
-null      -> 显式清除；若最终仍缺失则完整性校验失败
+undefined -> no opinion at this layer
+false     -> this layer explicitly disables
+true      -> this layer explicitly enables
+null      -> explicit clear; if still missing at the end, completeness validation fails
 ```
 
-Built-in 通用规则负责提供完整默认事实，具体模型规则只保存差异。Effective Model Config 必须形成
-完整的 `input_format` 和 `output_format`，Registry 不接受缺失叶子字段的 Model。
+Built-in general rules provide complete default facts; specific model rules save only differences.
+Effective Model Config must form complete `input_format` and `output_format`; the Registry does not accept
+Models with missing leaf fields.
 
-### 稀疏 Rule 与完整执行事实的边界
+### Sparse Rules and Complete Execution Facts Boundary
 
-Rule 的 `undefined/null` 只表达 Overlay 指令，不构成 Model Property 的第三种取值：
+Rule `undefined/null` is only an Overlay instruction, not a third value for Model Properties:
 
 ```text
 Sparse Built-in / Personal Rule
@@ -73,28 +75,32 @@ Effective Model Config
           |
           v
 Registry / Protocol / Active Model / Runtime / Adapter
-└─ support_* 只能是 true 或 false
+└─ support_* can only be true or false
 ```
 
-完整性校验成功后，不再允许 `properties?`、`input_format?`、optional `support_*` 或“能力 unknown”继续向
-下游传播。缺字段是 Config 错误，不得由 Registry、Protocol Mapper、Settings Draft、Runtime 或 Adapter
-通过 `?? true` / `?? false` 补齐。Registry 发布的 Model 类型必须静态表达这一完整性，使下游无需重复
-`requireCompleteProperties()` 或“字段齐全才发送 Properties”的兼容分支。
+After completeness validation succeeds, `properties?`, `input_format?`, optional `support_*`, or "capability
+unknown" no longer propagate downstream. Missing fields are Config errors; they must not be patched by
+Registry, Protocol Mapper, Settings Draft, Runtime, or Adapter through `?? true` / `?? false`. The
+Registry-published Model type must statically express this completeness, so downstream consumers need no
+`requireCompleteProperties()` repetition or "send Properties only when fields are complete" compatibility
+branches.
 
-这里不影响 Account availability 的 `unknown`、开放 JSON 值使用的 TypeScript `unknown`，也不取消
-Personal Rule 的稀疏覆盖。一次性 legacy importer 只能把旧文件明确表达的格式事实转换成 Personal Rule；
-旧文件没有声明的字段不写 Override，继续继承 Built-in 通用 Rule。Importer 不能补迁移专用默认，也不能按
-Catalog、modelId、Provider 类型或 Endpoint 猜能力；Overlay 后仍不完整则迁移失败。
+This does not affect Account availability `unknown`, TypeScript `unknown` for open JSON values, or Personal
+Rule sparse overlays. One-time legacy importers convert only format facts explicitly expressed in old files
+into Personal Rules; fields not declared in old files write no Overrides and keep inheriting Built-in general
+rules. Importers migrate no special defaults and guess no capabilities from Catalog, modelId, Provider type,
+or Endpoint; if incomplete after Overlay, migration fails.
 
-`validateComplete()` 负责为 Settings Preview 产生完整性诊断；Registry 发布前还必须经过类型收紧的
-`requireComplete` 边界。成功结果在静态类型上具有完整 Properties，失败候选只留在 Settings/diagnostics，
-不能进入 Registry。函数名可以由实现确定，但不能继续以同一个稀疏 `ModelConfig` 类型表达验证后的结果。
+`validateComplete()` produces completeness diagnostics for Settings Preview; Registry publishing still passes
+the type-tightened `requireComplete` boundary. The successful result statically has complete Properties;
+failed candidates stay in Settings/diagnostics and cannot enter Registry. The function name is an
+implementation choice, but the same sparse `ModelConfig` type must not keep expressing the validated result.
 
-不增加 `modalitiesConfigured`。旧版已发布配置中的 `modalities.input/output` 只能由一次性 legacy
-importer 转换；未发布的平铺 `supportsImages` / `supportsPdf` / `supportsVideo` 中间格式不作为新
-Provider Config 的兼容输入。
+No `modalitiesConfigured` is added. Old published config's `modalities.input/output` converts only through
+the one-time legacy importer; flat `supportsImages` / `supportsPdf` / `supportsVideo` intermediate formats
+are not accepted as compatibility input for new Provider Config.
 
-## Model 与 Runtime
+## Model and Runtime
 
 ```text
 Effective Model Config
@@ -105,89 +111,102 @@ ModelFactory
         v
 Active Model.properties
         |
-        +--> Core 输入检查 / 媒体投影
+        +--> Core input check / media projection
         +--> Compact / Memory / Child Agent
-        +--> Adapter 请求检查与协议编码
+        +--> Adapter request check and protocol encoding
 ```
 
-ModelFactory 把 Effective Model Config 的完整 Properties 固定到不可变 Active Model。正常请求、
-Compact、Memory、子 Agent 和闲时回合都读取本轮 Active Model 的
-`properties.input_format`，不从 Session 默认配置、Catalog 或 modelId 重新推断。
+ModelFactory fixes the complete Properties of Effective Model Config into immutable Active Models. Normal
+requests, Compact, Memory, child Agents, and idle turns all read `properties.input_format` from this round's
+Active Model; they do not re-infer from Session default configs, Catalogs, or modelId.
 
-异步链路需要冻结本轮事实时，优先持有 Active Model；无法持有执行对象时保存同结构的不可变
-`properties` 快照。快照只冻结生命周期，不产生新的领域字段。
+When async links need to freeze this round's facts, prefer holding the Active Model; when the execution
+object cannot be held, save an immutable `properties` snapshot of the same structure. Snapshots only freeze
+the lifecycle; they produce no new domain fields.
 
-以下迁移期概念不属于目标架构：
+Migration-period concepts that do not belong to the target architecture:
 
-- `ModelInputMediaCapabilities`；
-- Runtime Config 的 `modelInputMediaCapabilities`；
-- Turn 的平铺媒体 capability 字段；
-- AI SDK Registry 中按 `providerId/modelId` 保存的 `inputMediaCapabilities` map；
-- 从 Catalog、Provider 类型、URL 或具体 modelId 补齐输入格式的 Runtime helper。
+- `ModelInputMediaCapabilities`;
+- Runtime Config's `modelInputMediaCapabilities`;
+- Turn's flat media capability fields;
+- AI SDK Registry's `inputMediaCapabilities` map saved by `providerId/modelId`;
+- Runtime helpers that fill input formats from Catalog, Provider type, URL, or specific modelId.
 
-Adapter 的协议实现能力仍是独立约束。例如 `support_video` 表示模型接受 Video，并不表示任意
-Adapter 都已经能编码 Video；真实请求必须同时满足 Model Property 和目标 Adapter 的实现边界。
+The Adapter's protocol implementation capability remains an independent constraint: `support_video` means
+the model accepts Video, not that any Adapter can already encode Video; real requests must satisfy both
+Model Properties and the target Adapter implementation boundary.
 
-## 格式边界
+## Format Boundary
 
-| 格式        | Config / Model / Runtime | 设置页             | 本轮执行行为                                   |
-| ----------- | ------------------------ | ------------------ | ---------------------------------------------- |
-| Text input  | 支持                     | 固定展示、不可关闭 | 参与请求检查                                   |
-| Image input | 支持                     | 可切换             | 参与现有媒体检查和编码                         |
-| Video input | 支持                     | 可切换             | 参与现有媒体检查；仍受 Adapter 编码约束        |
-| Audio input | 支持                     | 不展示             | 本轮不新增内容块投影、附件入口或 Provider 编码 |
-| PDF input   | 支持                     | 可切换             | 参与现有媒体检查和编码                         |
-| Text output | 支持                     | 固定展示、不可关闭 | 当前唯一输出格式                               |
+| Format      | Config / Model / Runtime | Settings page                  | This round's execution behavior                                                    |
+| ----------- | ------------------------ | ------------------------------ | ---------------------------------------------------------------------------------- |
+| Text input  | Supported                | Fixed display, cannot turn off | Participate in request check                                                       |
+| Image input | Supported                | Toggleable                     | Participate in existing media check and encoding                                   |
+| Video input | Supported                | Toggleable                     | Participate in existing media check; still subject to Adapter encoding constraint  |
+| Audio input | Supported                | Not displayed                  | No new content block projection, attachment entry, or Provider encoding this round |
+| PDF input   | Supported                | Toggleable                     | Participate in existing media check and encoding                                   |
+| Text output | Supported                | Fixed display, cannot turn off | Current only output format                                                         |
 
-本轮不增加 Image、Video、Audio 或 PDF 输出字段。
+This round adds no Image, Video, Audio, or PDF output fields.
 
-## 设置页与协议
+## Settings Page and Protocol
 
-设置页草稿直接维护 `input_format` / `output_format`。可见控件只修改 Text、Image、Video、PDF；保存
-任何其他字段或切换可见格式时，隐藏的 Audio 必须原样保留。保存结果形成稀疏 Personal
-Model Config Rule，未触碰的隐藏字段不应被写成覆盖值。
+The settings page draft directly maintains `input_format` / `output_format`. Visible controls modify only
+Text, Image, Video, and PDF; saving any other field or toggling visible formats preserves the hidden Audio
+as-is. The save result forms a sparse Personal Model Config Rule; untouched hidden fields are not written as
+override values.
 
-Draft 从 Service 返回的完整 Effective Properties 初始化。设置页不能因为字段缺失而自行补
-Text=`true` 或其他格式=`false`；不完整 Config 应作为权威校验问题展示。
+Drafts initialize from the complete Effective Properties returned by the Service. The settings page cannot
+self-fill Text=`true` or other formats=`false` for missing fields; incomplete Config is presented as an
+authoritative validation issue.
 
-跨进程模型信息传输相同的嵌套 Properties，不再传输平铺 `supportsImages` / `supportsPdf` /
-`supportsVideo`。普通可选择 Model Option 必须携带完整 Properties；冲突等不可选择诊断使用明确的状态
-分支，不能用 `properties = undefined` 暗示未知能力。序列化是传输行为，不构成第二份能力事实。
+Cross-process model information transmission uses the same nested Properties; flat `supportsImages` /
+`supportsPdf` / `supportsVideo` are no longer transmitted. Ordinary selectable Models must carry complete
+Properties; unselectable diagnostics for conflicts use explicit state branches; `properties = undefined`
+must not imply unknown capabilities. Serialization is a transmission behavior, not a second set of
+capability facts.
 
-现有 Vision 标识只是 Model Property 的展示投影，不参与 Registry 准入、Runtime 判断、模型选择
-或持久化权威。Provider Settings 是唯一格式编辑入口；对话工具栏、自动化、Subagent 和 Repo Wiki
-继续只读模型事实。
+The existing Vision identifier is a presentation projection of Model Properties only; it participates in no
+Registry admission, Runtime judgment, model selection, or persistence authority. Provider Settings is the
+only format editing entry; conversation toolbars, automation, Subagents, and Repo Wiki only read model
+facts.
 
-## 客户端与状态边界
+## Client and State Boundary
 
-- Desktop、Web 和手机设置页使用同一 Service 契约。
-- 本轮不改变 local / remote Environment 的 Provider Config 权威关系。
-- 本轮不改变 desktop continuous、mobile replayable、任务队列、owner / lease 或恢复语义。
-- Config 更新只影响后来创建的 Model；已经创建的 Active Model 保持不可变。
+- Desktop, Web, and phone settings pages use the same Service contract.
+- This round does not change the Provider Config authority relationship of local / remote Environments.
+- This round does not change desktop continuous, mobile replayable, task queue, owner / lease, or recovery
+  semantics.
+- Config updates affect only later-created Models; already-created Active Models remain immutable.
 
-## 影响简表
+## Impact Summary Table
 
-| 等级           | 关系                                      | 原因                                       |
-| -------------- | ----------------------------------------- | ------------------------------------------ |
-| must-inspect   | Provider Config / Model Rules -> Registry | 新 Schema 与完整性校验的权威入口           |
-| must-inspect   | Registry -> ModelFactory -> Active Model  | Properties 必须原样固定且不可重新推断      |
-| must-inspect   | Active Model -> Core / Adapter            | 删除 Runtime capability 副本后的执行消费者 |
-| must-inspect   | Provider Settings -> Personal Model Rules | 可见字段修改和隐藏字段保留                 |
-| should-inspect | Model option protocol / remote runtime    | 跨进程使用同一嵌套结构                     |
-| invariant-only | Queue / replay / workspace identity       | 本轮不得改变既有状态与恢复语义             |
+| Level          | Relationship                              | Reason                                                           |
+| -------------- | ----------------------------------------- | ---------------------------------------------------------------- |
+| must-inspect   | Provider Config / Model Rules -> Registry | New Schema and completeness validation authority entry           |
+| must-inspect   | Registry -> ModelFactory -> Active Model  | Properties must be fixed as-is and cannot be re-inferred         |
+| must-inspect   | Active Model -> Core / Adapter            | Execution consumers after removing Runtime capability copies     |
+| must-inspect   | Provider Settings -> Personal Model Rules | Visible field modifications and hidden field preservation        |
+| should-inspect | Model option protocol / remote runtime    | Cross-process use the same nested structure                      |
+| invariant-only | Queue / replay / workspace identity       | This round must not change existing state and recovery semantics |
 
-## 验收用例
+## Acceptance Cases
 
-1. Built-in 完整规则与 Personal 稀疏规则逐叶合并，Personal 只覆盖明确声明的格式。
-2. Effective Model 缺少任一必填格式叶子时，Registry 完整性校验失败。
-3. Registry 创建的 Model 原样持有 Effective Properties；配置更新不修改已经创建的 Model。
-4. 普通请求、Compact、Memory、子 Agent 和闲时模型均读取本轮 Model Properties，不继承另一模型的
-   媒体事实。
-5. Image、PDF、Video 的允许与拒绝在 generate/stream 链路一致；Video 不能绕过 Adapter 编码限制。
-6. Audio 字段可以 overlay、保存、传输和读取，但不产生未实现的 Audio 请求。
-7. 设置页展示 Text/Image/Video/PDF input 和 Text output；编辑后隐藏 Audio 保持不变。
-8. Legacy `modalities` 只有在旧文件明确提供时才由 importer 转换；正式 Config Schema 拒绝旧平铺字段，
-   importer 不为缺失事实猜默认。
-9. 本地与远端协议携带相同 Properties；desktop continuous 与 mobile replayable 行为不变。
-10. Effective Config 以后所有 `support_*` 都是必填 boolean；UI、Protocol、Runtime 和 Adapter 不存在
-    optional capability 或 `?? true/false` fallback。
+1. Built-in complete rules and Personal sparse rules merge per-leaf; Personal overrides only explicitly
+   declared formats.
+2. Registry completeness validation fails when Effective Models lack any required format leaf.
+3. Models created by Registry hold Effective Properties as-is; config updates do not modify already-created
+   Models.
+4. Normal requests, Compact, Memory, child Agents, and idle models all read this round's Model Properties,
+   not inheriting another model's media facts.
+5. Image, PDF, Video allowance and rejection are consistent in generate/stream links; Video cannot bypass
+   Adapter encoding constraints.
+6. Audio fields can overlay, save, transmit, and read, but produce no unimplemented Audio requests.
+7. The settings page displays Text/Image/Video/PDF input and Text output; hidden Audio remains unchanged
+   after editing.
+8. Legacy `modalities` converts only when old files explicitly provide them; the formal Config Schema
+   rejects old flat fields; the importer guesses no defaults for missing facts.
+9. Local and remote protocols carry the same Properties; desktop continuous and mobile replayable behavior
+   remains unchanged.
+10. All `support_*` in Effective Config are required booleans going forward; UI, Protocol, Runtime, and
+    Adapter have no optional capability or `?? true/false` fallback.

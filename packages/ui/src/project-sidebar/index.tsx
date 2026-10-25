@@ -154,6 +154,7 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
     });
   };
   const projects = preferences.sort(selectSortedProjects(tree));
+  const pinnedProjects = projects.filter((project) => project.pinned);
   const expandableProjects = projects.filter(
     (project) => availability.get(projectKey(project))?.online !== false,
   );
@@ -243,7 +244,12 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
                 {/* 原因：项目侧栏迁移后普通滚动容器遗漏边缘渐隐；复用统一 mask，随实际滚动边界更新。 */}
                 <div className="relative flex min-h-0 flex-1 flex-col">
                   <div ref={setGroupedSticky} />
-                  <ScrollFadeViewport ref={scrollRef} className="overflow-x-hidden">
+                  <ScrollFadeViewport
+                    ref={scrollRef}
+                    className="overflow-x-hidden"
+                    // Bounds which expanded projects mount rows (specs/project-sidebar-deferred-rows.md).
+                    data-project-rows-viewport=""
+                  >
                     <div className="flex flex-col gap-3 pb-3">
                       {homeOnlySwitcher ? (
                         <HomeOnlyWorkspaceRows switcher={homeOnlySwitcher} />
@@ -255,11 +261,17 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
                             onSelect={onSelectTask}
                             refresh={refresh}
                           />
-                          <SortableProjects
-                            projects={projects.filter((project) => project.pinned)}
-                            renderProject={renderProject}
-                            onReorder={reorder}
-                          />
+                          {/* Cause: SortableProjects renders no DOM node, so without this wrapper each
+                              pinned project became a child of the gap-3 list and got section spacing. */}
+                          {pinnedProjects.length > 0 ? (
+                            <div>
+                              <SortableProjects
+                                projects={pinnedProjects}
+                                renderProject={renderProject}
+                                onReorder={reorder}
+                              />
+                            </div>
+                          ) : null}
                           <ProjectSections
                             tree={tree}
                             projects={projects}

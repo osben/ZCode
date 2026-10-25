@@ -65,7 +65,7 @@ describe("PLM-LC-008 插件管理关键可恢复失败 E2E", () => {
       timeout: 60000,
       timeoutMsg: "Catalog refresh retry did not clear the visible error",
     });
-    await clickPluginControl("plugin-store-browse-all");
+    await clickPluginControl("plugin-store-manage-back");
     await clickPluginControl("plugin-store-segment-personal");
 
     await removeLifecyclePluginSource(fixture);

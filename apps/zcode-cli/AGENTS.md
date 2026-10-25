@@ -1,103 +1,102 @@
-# Agent 指令
+# Agent Instructions
 
-这里是 TypeScript Node.js Coding Agent CLI，支持主流模型和操作系统。通用任务边界、spec、验证和提交条件遵循[根 AGENTS.md](../../AGENTS.md)；本文件补充 CLI 特有规则。Node 版本以仓库 [mise.toml](../../mise.toml) 为准。
+This is a TypeScript Node.js coding-agent CLI that supports mainstream models and operating systems. Follow the general task boundaries, spec, verification, and commit requirements in the [root AGENTS.md](../../AGENTS.md); this file adds CLI-specific rules. Use the Node.js version specified by the repository [mise.toml](../../mise.toml).
 
-## 工作规范（最重要）
+## Working Rules (Highest Priority)
 
-- CLI spec 位于 `apps/zcode-cli/docs/design/v2/`；新功能、行为变化先更新，bugfix 和纯重构按根规则判断。下文未带 `apps/zcode-cli/` 的代码与文档路径相对于本目录。
-- 改动任何 tool（新增、删除、schema、权限、执行、prompt、adapter、事件、UI/V4 投影等）之前，必须先阅读并更新 `docs/design/v2/tool/00-tool-change-chain.md`，按端到端链路检查。
-- 其次是测试 case 很关键，能证明结果是否符合预期
-- 功能文档更新到最终行为，复用已有 spec；bugfix 用回归证据留痕，非显然根因和防回归约束在修复点留中文注释。
-- agent 友好的项目，留好日志或者接口，让 agent 能完全接手操作
-- 长程任务优先：核心 agent loop 默认面向可持续运行的复杂任务设计，不用 tool call 次数做硬停止。资源与安全边界应由 token/context limit 自动 compact、用户取消、权限拒绝、工具超时、输出截断、provider retry 上限等明确条件承担。
-- 单个源文件默认上限为 800 行。已确认的存量超限文件由根 `.oxlintrc.json` 精确登记为行数告警；不要为满足行数机械拆分，职责分离确有收益时再重构。其他检查仍严格执行。
-- 字符串、数字等常量应提取为命名变量或常量，不要在业务逻辑中直接散落字面量，便于一处修改、统一维护。
-- 修改数据库结构时必须同步 CLI 负责人，仔细设计 migration
-- 键盘操作优先，核心逻辑都可以走键盘操作。鼠标操作是增益能力
+- CLI specs are in `apps/zcode-cli/docs/design/v2/`. Update them before new features and behavior changes; for bug fixes and pure refactors, follow the root rules. Code and documentation paths below are relative to this directory unless prefixed with `apps/zcode-cli/`.
+- Before changing any tool (adding, removing, or changing its schema, permissions, execution, prompt, adapter, event, or UI/V4 projection), read and update `docs/design/v2/tool/00-tool-change-chain.md` and check the end-to-end flow.
+- Tests are essential and should demonstrate whether the result meets expectations.
+- Update feature documentation to describe final behavior, reusing existing specs. For bug fixes, retain regression evidence and use English comments only when documenting non-obvious root causes and prevention constraints.
+- Make the project agent-friendly by providing logs or interfaces that let an agent take over the work.
+- Prioritize long-running tasks: the core agent loop is designed by default for complex tasks that can run continuously and does not impose a hard stop based on tool-call count. Token/context limits with automatic compaction, user cancellation, permission denial, tool timeouts, output truncation, and provider retry limits provide explicit resource and safety boundaries.
+- A single source file should stay within 800 lines by default (blank lines and comments excluded). Existing over-limit files are registered as warnings in the root `.oxlintrc.json`; do not split a file only to satisfy the count. Split it into cohesive, loosely coupled modules when a real responsibility boundary calls for it, rather than continuing to accumulate responsibilities in a large file.
+- Extract string and numeric constants into named variables or constants rather than scattering literals through business logic, so they can be changed in one place and maintained consistently.
+- When changing the database schema, coordinate with the CLI owner and carefully design the migration.
+- Prefer keyboard operation; core functionality should be accessible through the keyboard. Mouse operation is an enhancement.
 
-## 工具规范
+## Tooling Rules
 
-- 与操作系统交互之前，需要考虑同时支持 windows、mac、linux
-- 保持默认的发布路径为标准 Node.js CLI 打包方式。
-- 项目自有的环境变量统一使用 `ZCODE_` 前缀命名，但不要随便新增环境变量；新增前必须先在 `docs/design/v2` 的 spec 中定义用途、优先级、错误行为和测试覆盖，能用配置文件、CLI 参数或 session 配置表达的能力，优先不要做成环境变量。
+- Consider Windows, macOS, and Linux before interacting with the operating system.
+- Keep the standard Node.js CLI packaging method as the default release path.
+- Prefix project-owned environment variables with `ZCODE_`, but do not add variables casually. Before adding one, define its purpose, precedence, error behavior, and test coverage in a spec under `docs/design/v2`. Prefer configuration files, CLI arguments, or session configuration when they can express the capability.
 
-## 跨平台兼容原则
+## Cross-Platform Compatibility
 
-- 所有功能默认需要同时面向 Windows、macOS、Linux 设计；不要只按当前开发机的系统行为实现。
-- 路径处理优先使用 Node.js 标准库 `path`、`url`、`fs` 等跨平台 API，不手写路径分隔符、绝对路径前缀、换行符或临时目录位置。
-- 运行外部命令时优先使用 `child_process.spawn` / `execFile` 的参数数组形式，避免依赖 shell 字符串拼接、POSIX 专属语法、管道、重定向或内置命令。
-- 需要调用系统命令、编辑器、shell、包管理器或可执行文件时，要考虑 Windows 的 `.cmd` / `.exe`、空格路径、参数转义、环境变量大小写和 shell 差异。
-- 文件系统逻辑要考虑大小写敏感差异、权限模型差异、符号链接支持差异、可执行位差异、换行符差异和路径长度限制。
-- 终端交互要基于能力检测，而不是假设固定终端特性；颜色、TTY、Unicode、交互式输入、窗口尺寸和信号处理都需要有非交互或能力不足时的退路。
-- 涉及用户目录、缓存目录、配置目录、临时目录和项目目录时，应通过明确的跨平台解析逻辑获得，不硬编码 Unix 风格目录结构。
-- 新增与系统交互相关的能力时，应补充或更新覆盖跨平台差异的测试；无法在当前系统验证的行为，要在实现和说明中明确剩余风险。
+- Design all features by default for Windows, macOS, and Linux; do not implement behavior based only on the current development machine.
+- Prefer cross-platform Node.js standard-library APIs such as `path`, `url`, and `fs` for path handling. Do not hard-code path separators, absolute-path prefixes, line endings, or temporary-directory locations.
+- Prefer argument arrays with `child_process.spawn` / `execFile` to run external commands. Avoid shell-string concatenation and dependencies on POSIX-only syntax, pipes, redirection, or built-in commands.
+- When invoking system commands, editors, shells, package managers, or executables, account for Windows `.cmd` / `.exe` files, paths with spaces, argument escaping, environment-variable casing, and shell differences.
+- Filesystem logic must account for differences in case sensitivity, permission models, symbolic-link support, executable-bit support, line endings, and path-length limits.
+- Base terminal interaction on capability detection rather than fixed assumptions. Colors, TTY, Unicode, interactive input, window size, and signal handling need a fallback for non-interactive or limited environments.
+- Resolve user, cache, configuration, temporary, and project directories with explicit cross-platform logic; do not hard-code Unix-style directory layouts.
+- Add or update tests for cross-platform differences when introducing system-interaction capabilities. State any behavior that cannot be verified on the current system and the remaining risk in the implementation and documentation.
 
-## 模块边界与接口契约
+## Module Boundaries and Interface Contracts
 
-- 模块之间的交互必须通过显式、有限、稳定的接口完成。
-- 每个模块都应当可以被单独理解、测试和替换，并对外提供严格的类型声明、接口定义或 schema 声明。
-- 模块之间不是直接耦合实现，而是通过标准化契约互相调度。调用方不应依赖被调用模块的内部实现、目录结构、隐式全局状态或未声明约定。
-- 模块对外暴露的契约应清楚描述 capability、输入、输出、错误形态、状态变更和副作用。
-- 当数据会跨越进程、存储、网络、插件、工具调用或 LLM 边界时，应优先使用可运行时校验的 schema 描述，而不仅是 TypeScript 类型。
-- 新增模块间交互时，应先补齐接口契约，再实现具体逻辑。
+- Interactions between modules must use explicit, limited, stable interfaces.
+- Each module should be independently understandable, testable, and replaceable, and expose strict type declarations, interface definitions, or schema declarations.
+- Modules must coordinate through standardized contracts rather than depending directly on one another's implementations. Callers must not depend on a callee's internal implementation, directory structure, implicit global state, or undeclared conventions.
+- Public module contracts should clearly describe capabilities, inputs, outputs, error shapes, state changes, and side effects.
+- When data crosses a process, storage, network, plugin, tool-call, or LLM boundary, prefer schemas that can be validated at runtime over TypeScript types alone.
+- Define interface contracts before implementing new interactions between modules.
 
-## 外部 I/O 边界收敛
+## Converge External I/O at Boundaries
 
-- 所有外部副作用必须可被统一观察、审批、取消、重试、排队、审计和测试。业务逻辑只表达意图，不直接触碰外部世界。
-- 所有外部 I/O 都必须收敛到明确的基础设施层或 adapter 中，包括网络请求、文件系统读写、子进程调用、环境变量读取、终端输入输出、缓存、数据库、系统剪贴板和外部服务访问。
-- 除入口层、基础设施层和 adapter 外，业务模块不得直接调用 `fetch`、`http`、`fs`、`child_process`、`process.env` 等底层 I/O API，而应依赖项目内定义的接口、service 或 adapter。
-- I/O adapter 对外必须提供稳定的类型声明或 schema，明确输入、输出、错误类型、超时、取消、重试语义、幂等性和副作用范围。
-- 网络访问应通过统一请求入口完成，便于集中管理超时、重试、退避、鉴权、代理、自定义证书、限流、日志、审计和错误归一化。
-- 文件读写应通过统一文件系统入口完成，便于集中管理原子写入、并发控制、临时文件、队列写入、权限错误、路径规范化和跨平台差异。
-- 子进程执行应通过统一执行入口完成，便于集中管理 sandbox、权限审批、环境变量、超时、取消、输出截断、流式输出和退出码归一化。
-- 当 I/O 操作需要异步化、排队、重试、降级或审计时，应在 I/O 边界层处理，不应把这些机制散落到业务逻辑中。
+- All external side effects must be observable, approvable, cancellable, retryable, queueable, auditable, and testable through a unified mechanism. Business logic expresses intent; it does not touch the external world directly.
+- Route all external I/O through a clear infrastructure layer or adapter, including network requests, filesystem access, child-process calls, environment-variable reads, terminal input/output, caches, databases, the system clipboard, and external services.
+- Outside entry points, infrastructure layers, and adapters, business modules must not call low-level I/O APIs such as `fetch`, `http`, `fs`, `child_process`, or `process.env` directly. They should depend on interfaces, services, or adapters defined by the project.
+- I/O adapters must expose stable type declarations or schemas that define inputs, outputs, error types, timeout, cancellation, retry semantics, idempotency, and side-effect scope.
+- Route network access through a unified request entry point to centralize timeouts, retries, backoff, authentication, proxies, custom certificates, rate limits, logging, auditing, and error normalization.
+- Route file access through a unified filesystem entry point to centralize atomic writes, concurrency control, temporary files, queued writes, permission errors, path normalization, and platform differences.
+- Route child-process execution through a unified execution entry point to centralize sandboxing, permission approval, environment variables, timeouts, cancellation, output truncation, streaming output, and exit-code normalization.
+- Handle asynchronous execution, queuing, retries, degradation, or auditing at the I/O boundary when required; do not scatter those mechanisms through business logic.
 
-## 工具与副作用契约
+## Tool and Side-Effect Contracts
 
-- 每个 tool 都应声明明确的 `inputSchema`、`outputSchema`、是否只读、是否破坏性、是否并发安全、最大输出大小、超时、取消语义和权限需求。
-- tool 的副作用范围应显式声明，例如 `none`、`workspace`、`git`、`network`、`system`。权限系统、sandbox 和审批流程应读取这些声明，不依赖调用点临时猜测。
-- 有副作用的 tool 应尽量声明幂等性和可恢复策略，便于后续实现重试、回滚、队列执行和失败恢复。
-- 大体积 tool 结果不应直接回灌模型上下文；应落盘或进入 artifact/storage，只返回摘要、预览和可追踪引用。
-- MCP、plugin、subagent 等外部扩展必须通过 capability 声明、schema 校验、命名空间隔离和权限收口接入，不应直接获得内部模块实现能力。
+- Each tool should declare its `inputSchema`, `outputSchema`, whether it is read-only or destructive, whether it is safe to run concurrently, maximum output size, timeout, cancellation semantics, and permission requirements.
+- Tools must explicitly declare their side-effect scope, such as `none`, `workspace`, `git`, `network`, or `system`. Permission systems, sandboxes, and approval flows should read these declarations rather than infer behavior at the call site.
+- Tools with side effects should declare idempotency and recovery strategies where practical, to support retries, rollback, queued execution, and failure recovery.
+- Do not feed large tool results directly back into model context. Store them in an artifact/storage layer and return only a summary, preview, and traceable reference.
+- External extensions such as MCP, plugins, and subagents must be integrated through capability declarations, schema validation, namespace isolation, and centralized permissions. They must not receive direct access to internal module implementations.
 
-## 会话、配置与可观测性
+## Sessions, Configuration, and Observability
 
-- Coding agent CLI 应把 session、message、tool call、permission、checkpoint、队列和 pending 状态视为一等状态对象，支持恢复、分叉、回滚和并发 session。
-- TUI 只负责输入采集、布局渲染和临时交互态，例如光标、输入框、滚动位置和当前弹窗选择；session、mode、model、tool、todo、permission、checkpoint 等业务状态不得保存在 TUI 层，必须由 server/bootstrap/core/session 存储并通过显式接口或 session event 下发。
-- TUI 中的折叠/展开指示符统一使用 `+`/`-`（折叠为 `+`，展开为 `-`），不要使用 `v` 和 `>`。
-- 与用户交互相关的确认、选择、输入、进度、错误恢复等能力，应面向 TUI 和 ZCode Protocol V4 客户端设计为稳定的交互请求/响应接口或 session event；不同客户端只是呈现和传输适配层，不应把交互流程写死在单一前端中。
-- 所有任务执行都必须携带可传播的 `traceId`。`traceId` 默认对应一次顶层 session 的完整任务链，session 内创建的子 session、subagent、重试任务、后台队列任务和异步 I/O 都应归属到同一个 `traceId`。
-- `traceId` 位于 `sessionId` 之上；`sessionId`、`turnId`、`messageId`、`toolCallId`、`spanId`、`parentSpanId` 等应作为 `traceId` 下的结构化子标识，用于还原完整调用链。
-- 所有模块、service、adapter、tool runtime、provider client、I/O adapter 和权限判断逻辑都应接收并继续传递统一的执行上下文，不得在中途丢弃、覆盖或临时生成无关联的 `traceId`。
-- 任何异步任务、工具调用、外部 I/O、跨模块调用或子 session，如果无法关联到 `traceId`，都视为不可观测行为，应避免引入。
-- provider、model、MCP、存储、网络代理和证书都应通过 adapter 接入；session-core 不应写死具体供应商、传输协议或部署环境。
-- 配置需要有明确层级和优先级，例如 system、user、project、session、CLI 参数和环境变量；安全相关配置应能追踪来源。
-- 拥抱 `.agents Protocol` 和 `AGENTS.md` 的规范；后续设计尤其是配置发现、配置读取、优先级解析等相关能力时，默认需要兼容 `.agents Protocol`。
-- 从第一版开始保留调试和观测入口，覆盖模型请求、context 组成、token/cost、tool call、I/O、权限判断、重试、队列积压和队列丢弃。
-- 日志、trace 和调试输出应避免泄露密钥、token、隐私数据和完整用户内容；需要高敏信息时必须显式进入受控 debug 路径。
+- A coding-agent CLI should treat sessions, messages, tool calls, permissions, checkpoints, queues, and pending states as first-class state objects, with support for recovery, branching, rollback, and concurrent sessions.
+- The TUI handles input collection, layout rendering, and temporary interaction state such as the cursor, input box, scroll position, and current dialog selection. Business state such as session, mode, model, tool, todo, permission, and checkpoint must not live in the TUI layer. Store it in server/bootstrap/core/session and deliver it through explicit interfaces or session events.
+- Use `+` and `-` consistently for collapsed/expanded indicators in the TUI (`+` for collapsed, `-` for expanded); do not use `v` or `>`.
+- Design confirmations, selections, input, progress, error recovery, and other user interactions as stable interaction request/response interfaces or session events for both the TUI and ZCode Protocol V4 clients. Clients are presentation and transport adapters; do not hard-code interaction flows in one frontend.
+- Every task execution must carry a propagatable `traceId`. By default, `traceId` represents the full task chain of a top-level session. Child sessions, subagents, retries, background queue tasks, and asynchronous I/O created within the session must use the same `traceId`.
+- `traceId` sits above `sessionId`. Use `sessionId`, `turnId`, `messageId`, `toolCallId`, `spanId`, and `parentSpanId` as structured child identifiers under `traceId` to reconstruct the full call chain.
+- Every module, service, adapter, tool runtime, provider client, I/O adapter, and permission decision must receive and continue propagating the shared execution context. Do not drop or overwrite it, or create an unrelated `traceId` mid-flow.
+- Avoid introducing asynchronous tasks, tool calls, external I/O, cross-module calls, or child sessions that cannot be associated with a `traceId`; they are unobservable behavior.
+- Integrate providers, models, MCP, storage, network proxies, and certificates through adapters. Do not hard-code a specific vendor, transport protocol, or deployment environment in session-core.
+- Configuration must have clear layers and precedence, such as system, user, project, session, CLI arguments, and environment variables. Security-related configuration must retain source information.
+- Follow the `.agents Protocol` and `AGENTS.md` conventions. Future designs, especially configuration discovery, reading, and precedence resolution, should be compatible with the `.agents Protocol` by default.
+- Include debugging and observability entry points from the first version, covering model requests, context composition, tokens/cost, tool calls, I/O, permission decisions, retries, queue buildup, and dropped queue items.
+- Logs, traces, and debug output must not expose keys, tokens, private data, or complete user content. Highly sensitive information must use an explicitly controlled debug path.
 
-## 错误处理优先
+## Error Handling First
 
-- 错误是一等设计对象。新增功能时需要优先考虑失败路径、错误归属、传播方式和最终用户提示。
-- 默认让错误向上冒泡，直到到达真正有能力处理它的层。不要在低层模块随意吞掉错误、仅打印日志后继续执行，或提前把错误转换成普通字符串。
-- 只有在能够恢复、重试、降级、补充上下文、转换为用户可操作提示，或处于 CLI 入口边界时，才捕获错误。
-- 抛出或包装错误时应保留原始错误原因，并补充必要上下文，避免丢失调用链和系统错误信息。
-- 用户能感知系统深层的状态；错误、等待、重试、权限、模型、工具和 I/O 状态都应沿调用链向上暴露到 CLI/TUI 等用户界面，同时避免泄露密钥、隐私和完整原始内容。
-- 底层业务模块不应直接调用 `process.exit`、直接输出错误到终端，或决定最终退出码；CLI 入口层负责统一格式化错误、输出提示并设置退出码。
-- 不依赖错误文本做流程判断；需要区分错误类型时，使用稳定的错误类型、错误码或结构化字段。
-- 测试应覆盖关键失败路径，尤其是配置缺失、权限不足、网络失败、文件系统异常、用户输入非法和外部命令失败等 CLI 常见错误。
+- Treat errors as first-class design objects. When adding a feature, first consider failure paths, error ownership, propagation, and the final user-facing message.
+- Let errors bubble up by default until they reach a layer that can handle them. Do not casually swallow errors in low-level modules, log and continue, or prematurely convert errors to plain strings.
+- Catch errors only when the code can recover, retry, degrade, add context, turn them into actionable user guidance, or is at a CLI entry boundary.
+- When throwing or wrapping an error, preserve the original cause and add necessary context so the call chain and system error details are not lost.
+- Make deep system state visible to users: propagate errors, waiting, retries, permissions, model, tool, and I/O state through the call chain to interfaces such as the CLI/TUI, while keeping keys, private data, and complete raw content out of view.
+- Low-level business modules must not call `process.exit`, print errors directly to the terminal, or decide the final exit code. The CLI entry layer formats errors, prints guidance, and sets the exit code consistently.
+- Do not use error text to control program flow. Use stable error types, error codes, or structured fields when distinguishing errors.
+- Tests should cover critical failure paths, especially common CLI errors such as missing configuration, insufficient permissions, network failures, filesystem errors, invalid user input, and failed external commands.
 
-## 提交规范
+## Commit Conventions
 
-- 每个功能级别的变更创建一个独立提交。
-- 不要将无关的功能、重构、依赖更新和格式调整混在同一个提交中。
-- 保持提交足够小，以便独立审查。
-- 当一个功能的变更涉及多个文件时，将这些文件一起提交。
-- 如果一项任务需要多个功能级别的变更，按照应审查的顺序拆分为多个独立提交。
+- Create one separate commit for each feature-level change.
+- Do not mix unrelated features, refactors, dependency updates, or formatting changes in one commit.
+- Keep commits small enough to review independently.
+- When a feature change spans multiple files, include those files together.
+- If a task requires multiple feature-level changes, split them into separate commits in review order.
 
-## 验证
+## Verification
 
-以下命令从 z-code 仓库根目录执行；若当前已在 `apps/zcode-cli`，省略 `--dir apps/zcode-cli`。
-
-- CLI 代码变更除根验证矩阵外，运行 `pnpm --dir apps/zcode-cli typecheck`、`pnpm --dir apps/zcode-cli lint`，以及受影响 CLI 包与调用方的测试。用 CLI 自身的 package scripts / Turbo 选择范围，不能用根 `pnpm test:unit:affected` 代替。
-- 无法可靠确定影响范围，或修改 CLI 公共配置、测试基础设施时，运行 `pnpm --dir apps/zcode-cli test`。必要检查通过后不重复运行；纯文档、环境阻塞、提交条件均遵循根规则。
+- Before completing code changes, run `pnpm typecheck` and `pnpm lint` from the repository root. For CLI changes, also run `pnpm --dir apps/zcode-cli typecheck` and `pnpm --dir apps/zcode-cli lint`.
+- Determine test entry points from the target package's current `package.json` and actual test files; do not assume a unified test command exists. Run the relevant tests for behavior changes and cover E2E scenarios for interaction changes.
+- Accurately report commands run, results, and unverified areas. Do not claim checks passed when test entry points are missing, existing failures remain, or the environment prevented verification.

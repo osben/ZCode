@@ -1,52 +1,52 @@
 # Chat Long Paste Text Attachment
 
-## 背景
+## Background
 
-聊天输入框使用 Lexical 承载正文。用户把超长文本直接粘进输入框时，会让编辑器序列化、草稿同步和移动端输入体验都变重。现有附件链路已经能发送 `text/plain` 文件附件，因此长文本粘贴应进入附件语义，而不是继续扩张正文。
+The chat input uses Lexical for the body. Pasting very long text directly into it makes editor serialization, draft sync and the mobile input experience heavy. The existing attachment chain can already send `text/plain` file attachments, so long text paste enters attachment semantics instead of growing the body further.
 
-## 产品规则
+## Product rules
 
-- 仅处理剪贴板里的纯文本内容。
-- 当纯文本大于等于 5120 个 UTF-16 code units 时，粘贴操作不再把内容插入输入框正文，而是写入宿主临时目录并创建一个本地文件附件。
-- 触发判断不依赖行数：单行超长 JSON、日志或 base64 同样会转成附件；小段多行文本只要低于阈值，仍保持浏览器和 Lexical 默认粘贴行为。
-- 行数仍按 `\n` / `\r\n` / `\r` 兼容计算，但只作为附件 chip 的展示元信息，不参与是否转附件的判断。
-- 如果同一次粘贴包含文件，文件附件逻辑优先，避免把截图、拖出的文本文件或其他附件形态误判为正文粘贴。
-- 如果宿主临时文件创建失败，粘贴操作保持被拦截并展示附件错误，不回退把长文本塞入正文。
-- 转附件不自动改写输入框已有正文；空正文也允许只带附件提交。
-- 附件数量继续复用聊天附件上限：最多 8 个。
+- Only plain text in the clipboard is handled.
+- When the plain text is at least 5120 UTF-16 code units, the paste no longer inserts the content into the input body; it is written to the host temp directory and a local file attachment is created.
+- The trigger does not depend on line count: a single very long line of JSON, log or base64 also becomes an attachment; a short multi-line text below the threshold keeps the default browser and Lexical paste behavior.
+- Line count is still computed compatibly with `\n` / `\r\n` / `\r`, but serves only as display metadata of the attachment chip and plays no part in deciding whether to convert.
+- If the same paste contains files, the file attachment logic takes priority, so screenshots, dragged-out text files or other attachment forms are not mistaken for body paste.
+- If creating the host temp file fails, the paste stays intercepted and an attachment error is shown; the long text is not put into the body as a fallback.
+- Conversion to an attachment does not rewrite the existing input body; an empty body may be submitted with only the attachment.
+- The attachment count reuses the chat attachment cap: at most 8.
 
-## 附件数据
+## Attachment data
 
-长文本粘贴附件在 UI 侧记录为 `sourceKind: "clipboard-text"`，并保留：
+A long-paste attachment is recorded on the UI side as `sourceKind: "clipboard-text"` and keeps:
 
-- `lineCount`：原始剪贴板文本行数。
-- `charCount`：原始剪贴板文本字符数。
-- `sizeBytes`：宿主写入临时文件后的 UTF-8 字节数。
-- `filename`：机器可追踪的 `.txt` 文件名，例如 `pasted-text-20260627-153012.txt`。
-- `localPath`：宿主临时文件路径。
+- `lineCount`: line count of the original clipboard text.
+- `charCount`: character count of the original clipboard text.
+- `sizeBytes`: UTF-8 byte count after the host writes the temp file.
+- `filename`: a machine-traceable `.txt` file name, for example `pasted-text-20260627-153012.txt`.
+- `localPath`: host temp file path.
 
-长文本内容落盘到 `{ZCODE_DATA_BASE_DIR || HOME}/.zcode/tmp/paste-attachments/YYYY-MM-DD/`。文件名使用时间戳文件名加随机后缀，避免暴露正文内容或发生冲突。发送协议复用现有 `kind: "file"`、`mimeType: "text/plain"`、`localPath` 路径，并携带 `sourceKind: "clipboard-text"` 标记，不再携带 `textContent`，避免长文本直接进入 prompt payload 或模型上下文。
+The long text is written to `{ZCODE_DATA_BASE_DIR || HOME}/.zcode/tmp/paste-attachments/YYYY-MM-DD/`. The file name is a timestamp name plus a random suffix, to avoid exposing body content or collisions. The send protocol reuses the existing `kind: "file"`, `mimeType: "text/plain"`, `localPath` route with the `sourceKind: "clipboard-text"` marker and no `textContent`, so long text does not enter the prompt payload or model context directly.
 
-Agent 接收该标记后必须把它当作用户上传的临时本地文件附件处理：模型请求里只出现文件路径附件引用，不自动读取文件正文，也不生成 `prompt_attachment` system reminder。只有模型后续显式调用文件读取工具时，临时文件内容才进入上下文。普通用户上传的小型文本文件保持既有行为，可以继续被投影为 Read-like 附件上下文。
+After receiving the marker the Agent must treat it as a user-uploaded temporary local file attachment: the model request contains only a file-path attachment reference, the file body is not read automatically, and no `prompt_attachment` system reminder is generated. The temp file content enters context only when the model later calls a file-read tool explicitly. Ordinary small text files uploaded by the user keep the existing behavior and can still be projected as Read-like attachment context.
 
-普通 Web 没有宿主文件系统时不支持该能力；手机 Web 远控必须通过 shared-host/platform proxy 写到已连接的桌面宿主临时目录，不在手机浏览器本地伪造路径。
+Plain Web has no host file system and does not support this capability; mobile Web remote control must write to the connected desktop host temp directory through the shared-host/platform proxy, and must not fake a path in the phone browser.
 
-## UI 展示
+## UI
 
-Composer 附件区保持一行 chip：
+The composer attachment area keeps a one-line chip:
 
 ```text
 [clipboard-pen-line] 粘贴文本 · 128 行 [x]
 ```
 
-- 图标使用 lucide `ClipboardPenLine`。
-- 标题使用国际化文案，不直接展示机器文件名。
-- 行数作为同一行元信息展示；空间不足时标题/元信息整体截断，删除按钮固定在右侧。
-- chip 主体和删除按钮浮层都使用 `background` 作为底色，避免右侧遮罩和附件主体出现不同 surface 层级。
-- 删除按钮参考 side pane tab：在 chip 右侧使用 hover/focus 显示的浮层关闭区，并用渐变遮罩覆盖文本末尾，避免行数文本和按钮互相挤压。
-- 视觉风格复用现有 inline attachment chip，不新增卡片式容器。
+- The icon is lucide `ClipboardPenLine`.
+- The title uses i18n copy ("粘贴文本", pasted text) and does not show the machine file name.
+- The line count is shown as metadata on the same line; when space is short the title/metadata truncate as a whole and the delete button stays fixed on the right.
+- The chip body and the delete button overlay both use `background` as the base color, so the right-side mask and the attachment body do not have different surface levels.
+- The delete button follows the side pane tab: a close area overlay shown on hover/focus on the right of the chip, with a gradient mask over the end of the text, so the line-count text and the button do not squeeze each other.
+- The visual style reuses the existing inline attachment chip and adds no card container.
 
-## 多端边界
+## Cross-platform boundary
 
-- 桌面端、Web 端、手机远控都走同一 UI paste 逻辑和同一 prompt attachment 协议，不新增 runtime、不改变 shared-host attachment 架构。
-- 该功能只影响提交前的 composer 输入组织，不改变 desktop continuous 与 web remote replayable 的 task stream 语义。
+- Desktop, Web and mobile remote control all use the same UI paste logic and the same prompt attachment protocol; no new runtime, and the shared-host attachment architecture is unchanged.
+- The feature only affects composer input organization before submit and does not change the task stream semantics of desktop continuous and web remote replayable.

@@ -26,6 +26,7 @@ import {
   resolveShareImportFailurePresentation,
   type ShareImportIntent,
 } from "@/root/shareImportIntent.js";
+import { applyOpenTaskDraft } from "@/root/openTaskDraftIntent.js";
 
 export function useRootPlatformEffects({
   initialWorkspaceAbsPath,
@@ -81,7 +82,7 @@ export function useRootPlatformEffects({
   ) => void;
   startNewTaskFromActiveWorkspace: (source: string) => void;
   openWorkspace: () => void;
-  openWorkspacePath: (workspacePath: string) => void;
+  openWorkspacePath: (workspacePath: string) => void | Promise<void>;
   setWorkspaceActionError: (message: string | null) => void;
   allowOpenWorkspace?: boolean;
   isDesktop?: boolean;
@@ -214,6 +215,23 @@ export function useRootPlatformEffects({
           openWorkspacePath(path);
         })
       : () => {};
+    const disposeOpenTaskDraft = platform.onOpenTaskDraft
+      ? platform.onOpenTaskDraft((payload) => {
+          void applyOpenTaskDraft(payload, {
+            allowOpenWorkspace,
+            openWorkspacePath,
+            activateTabByPath,
+            startDraftInWorkspace,
+            requestComposerTextInsert: (...args) =>
+              useZCodeSessionStore.getState().requestComposerTextInsert(...args),
+            logger,
+          }).catch((error: unknown) => {
+            logger.warn("[Root] task/new 草稿处理失败", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        })
+      : () => {};
     const disposeShareImport = platform.onShareImport
       ? platform.onShareImport((payload) => {
           const current = pendingShareImportRef.current ?? activeShareImportRef.current;
@@ -320,6 +338,7 @@ export function useRootPlatformEffects({
       disposeNewTask();
       disposeOpenWorkspace();
       disposeOpenWorkspacePath();
+      disposeOpenTaskDraft();
       disposeShareImport();
       disposeNotificationClick();
       disposeUpdateCheckResult();

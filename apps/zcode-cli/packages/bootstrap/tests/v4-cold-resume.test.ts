@@ -11,7 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 //   v4 subscribe → snapshot 含历史行（transcript 合成路径）→ sendText 再发一轮成功；
 //   restoreWarning 语义保真（workspace 无可用模型时 sendText 被拒）；
 //   store 无此会话 → fault.subscribe.sessionNotFound。
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -236,7 +236,6 @@ describe("v4 冷恢复（gateway 单元）", () => {
             contextWindow: {
               usedTokens: 29908,
               maxTokens: 1_000_000,
-              autoCompactThresholdTokens: null,
             },
           },
         };
@@ -269,6 +268,15 @@ describe("v4 冷恢复（gateway 单元）", () => {
         usedTokens: 730,
         maxTokens: 500_000,
       });
+      expect(
+        result.initialFrame.payload.snapshot.usage.contextWindow?.autoCompactThresholdTokens,
+      ).toBeNull();
+      expect(result.initialFrame.payload.snapshot.usage.contextWindow).not.toHaveProperty(
+        "autoCompactThresholdAuthoritative",
+      );
+      expect(result.initialFrame.payload.snapshot.usage.contextWindow).not.toHaveProperty(
+        "microcompactThresholdTokens",
+      );
       expect(getSessionUsageSeed).not.toHaveBeenCalled();
     } finally {
       release.resolve();
@@ -979,6 +987,9 @@ function createColdFakeApp(
       // 合并后 sendText 的 afterLegacyStateMutation 会经 auto-drain 读前台执行位；
       // 与上面同一条论证：fake 必须显式声明没有前台工作，而不是让属性缺席变成 TypeError。
       getActiveForegroundExecutionId: () => undefined,
+      getExecutionWorktree: () => options?.runtimeConfig?.executionWorktree ?? null,
+      // The session index reads the incognito marker from the runtime; the fake reports the configured profile.
+      isIncognito: () => Boolean(options?.runtimeConfig?.incognito),
       getSessionModelSelection: () => {
         const separator = model.indexOf("/");
         return {
@@ -1145,6 +1156,7 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
       | "workflow_child"
       | "nested_workflow_child"
       | "selection_side_chat" = "interactive",
+    executionWorktree?: { path: string; branchName?: string },
   ): Promise<void> {
     const store = await createSqliteSessionStore({ dbPath });
     try {
@@ -1157,6 +1169,12 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
         slug: "cold-resume-session",
         directory: WORKSPACE_PATH,
         path: WORKSPACE_PATH,
+        ...(executionWorktree
+          ? {
+              executionDirectory: executionWorktree.path,
+              executionBranch: executionWorktree.branchName,
+            }
+          : {}),
         title: "Cold resume session",
         version: "test-version",
         time: { created: 1, updated: 4 },
@@ -1371,6 +1389,34 @@ describe("v4 冷恢复（集成：真 sqlite + server + binder）", () => {
       }
     } finally {
       await close();
+    }
+  });
+
+  it("creates a cold-resumed app with the persisted execution worktree", async () => {
+    const dbPath = join(tempRoot, "sessions.db");
+    const executionWorktree = {
+      path: join(tempRoot, "worktree-checkout"),
+      branchName: "zcode/sleepy-capybara",
+    };
+    // A resume of a missing worktree carries `missing: true`; this test covers the healthy path.
+    await mkdir(executionWorktree.path, { recursive: true });
+    await seedPersistedSession(dbPath, undefined, "interactive", executionWorktree);
+    const createdAppOptions: ZCodeAppOptions[] = [];
+    const { server, store } = await bootRestartedServer(dbPath, [], undefined, createdAppOptions);
+    try {
+      await requestResult(server, {
+        id: "cold-resume-worktree",
+        method: V4_METHODS.conversationSubscribe,
+        params: {
+          topic: conversationTopic(SESSION_ID),
+          connectionId: "conn-cold-resume-worktree",
+          clientMode: "desktop-continuous",
+        },
+      });
+
+      expect(createdAppOptions[0]?.runtimeConfig?.executionWorktree).toEqual(executionWorktree);
+    } finally {
+      store.close();
     }
   });
 

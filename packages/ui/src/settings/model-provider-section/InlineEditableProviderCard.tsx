@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- provider 卡片同时承载名称、连接、鉴权、模型和映射编辑；本阶段先维持单组件，后续再按表单域拆分。 */
+/* oxlint-disable eslint(max-lines) -- The provider card handles name, connection, authentication, model, and mapping edits; keep one component for this phase and split by form area later. */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   getProviderFormApiKey,
@@ -34,7 +34,7 @@ export type ProviderDraftCleanupAction = "commit" | "skip-delete";
 interface ProviderSaveNotificationTarget {
   modelId?: string;
   operation?: "delete";
-  /** 显式弹窗在原草稿中重试，不让外部通知另起一次脱离编辑事务的保存。 */
+  /** Retry the explicit dialog within the existing draft instead of letting an external notification start a save outside the edit transaction. */
   draftOwnsRetry?: boolean;
 }
 
@@ -100,9 +100,9 @@ export function resolveProviderNameEditKeyAction(event: {
   isComposing?: boolean;
   nativeEvent?: { isComposing?: boolean };
 }): ProviderNameEditKeyAction | null {
-  // 中文输入法用 Enter 确认候选时仍处于 composition 阶段。
-  // 部分平台的 keydown 标志会先恢复 false，因此同时读取本地 composition 状态，
-  // 避免提前 blur 打断候选提交，导致拼音原始按键被留在名称里。
+  // Pressing Enter to confirm an IME candidate still occurs during composition.
+  // On some platforms, the keydown flag resets to false first, so also read local composition state
+  // to avoid blurring before candidate submission and leaving the raw pinyin keystrokes in the name.
   if (isImeComposingKeyEvent(event)) {
     return null;
   }
@@ -260,11 +260,15 @@ export function InlineEditableProviderCard({
       draftRef.current[key] = value;
       apply(value);
     };
-    syncField("nameValue", resolvedLabel, setNameValue);
+    // A refresh must not replace the unconfirmed name, including before the first keystroke.
+    // Continue syncing other clean fields; only a provider identity change ends the edit.
+    if (!editingName || nameEditProviderIdRef.current !== provider.providerId) {
+      syncField("nameValue", resolvedLabel, setNameValue);
+    }
     syncField("apiFormat", resolvedApiFormat, setApiFormat);
     syncField("baseUrlValue", resolvedBaseUrl, setBaseUrlValue);
     syncField("apiKeyValue", resolvedApiKey, setApiKeyValue);
-  }, [provider]);
+  }, [provider, editingName]);
 
   const markDraftDirty = useCallback((field: keyof ProviderDraftValues) => {
     dirtyProviderFieldsRef.current.add(field);
@@ -358,8 +362,8 @@ export function InlineEditableProviderCard({
         throw error;
       }
     },
-    // runSaveOperation 参与卸载保存 effect 的依赖链。intl/provider 随渲染换引用时，
-    // 回调也换引用会先执行旧 effect cleanup，进而再次保存并形成循环；通知身份通过 ref 读取。
+    // runSaveOperation participates in the unmount-save effect dependency chain. When intl/provider references change on render,
+    // a new callback reference first runs the old effect cleanup, saving again and creating a loop; read notification identity through a ref.
     [],
   );
 
@@ -378,8 +382,8 @@ export function InlineEditableProviderCard({
     persist: persistModelOrder,
   });
 
-  // 成员与配置只有 Host View 一份事实。旧本地副本在异步成功/失败时会覆盖新 View，
-  // 甚至短暂移除正在编辑的模型。只保留拖拽顺序这一份明确的 pending intent。
+  // Host View is the sole source of truth for members and configuration. An old local copy can overwrite a newer View on async success/failure
+  // and even temporarily remove a model being edited. Keep only drag order as explicit pending intent.
   const models = useMemo(
     () => projectModelsToOrder(authoritativeModels, optimisticModelOrder.renderedIds),
     [authoritativeModels, optimisticModelOrder.renderedIds],
@@ -424,9 +428,9 @@ export function InlineEditableProviderCard({
       if (lastSubmittedDraftSignatureRef.current === signature) return;
       lastSubmittedDraftSignatureRef.current = signature;
 
-      // Linux 下点击左侧供应商切换时，输入框 blur 与 Popover 关闭顺序不稳定，
-      // 连接草稿可能在组件卸载前还没走到 blur 保存。这里在切换/卸载前兜底提交，
-      // 避免“新供应商接口地址一切走就恢复为空”。
+      // On Linux, when switching providers from the left side, the input blur and Popover-close order is unstable,
+      // so the connection draft may not be saved on blur before unmount. Save it as a fallback before switching/unmounting
+      // to avoid the new provider's API address appearing blank after the switch.
       logger.info("[ModelProviderSection] 切换前保存未提交的供应商草稿", {
         providerId: provider.providerId,
         reason,
@@ -451,7 +455,7 @@ export function InlineEditableProviderCard({
     if (savingEnabled) return;
     cancelIdleDraftSave();
     setSavingEnabled(true);
-    // 同一次保存带上尚未提交的连接草稿，避免开关保存把刚输入的 Key 覆盖回旧值。
+    // Include the uncommitted connection draft in the same save so a toggle save does not overwrite a newly entered key with the old value.
     const draft =
       resolvePendingProviderDraftSave({
         provider,
@@ -462,7 +466,7 @@ export function InlineEditableProviderCard({
     try {
       await saveProviderWithCleanupGuard({ ...draft, enabledUpdate: enabled });
     } catch {
-      // 统一保存入口已记录错误及可重试反馈；不乐观覆盖权威 enabled。
+      // The shared save entry point already records the error and retry feedback; do not optimistically overwrite authoritative enabled state.
     } finally {
       setSavingEnabled(false);
     }
@@ -475,8 +479,8 @@ export function InlineEditableProviderCard({
         deleteRequested: deleteRequestedRef.current,
       });
       if (cleanupAction === "skip-delete") {
-        // 确认删除会触发详情卡片卸载；如果 cleanup 继续补保存草稿，
-        // 被删除的 provider 会在 delete 后又被 save 重新创建。
+        // Confirmed deletion unmounts the detail card; if cleanup saves the draft afterward,
+        // save will recreate the provider that was just deleted.
         logger.info("[ModelProviderSection] 删除中的供应商跳过 cleanup 草稿保存", {
           providerId: provider.providerId,
         });
@@ -484,8 +488,8 @@ export function InlineEditableProviderCard({
       }
       if (selfSaveRequestedRef.current) {
         selfSaveRequestedRef.current = false;
-        // 模型编辑会先保存新的有效模型列表，随后父层乐观更新会触发本组件 cleanup。
-        // 此时如果再用旧草稿补保存，会覆盖刚提交的模型列表。
+        // Model editing first saves the new valid model list, then the parent's optimistic update triggers this component's cleanup.
+        // Saving the old draft afterward would overwrite the model list that was just committed.
         logger.info("[ModelProviderSection] 内部保存触发的刷新跳过 cleanup 草稿保存", {
           providerId: provider.providerId,
         });
@@ -525,7 +529,7 @@ export function InlineEditableProviderCard({
   );
 
   const handleNameBlur = useCallback(() => {
-    // Esc/切换供应商先取消编辑意图，随后发生的 blur 不得补发保存。
+    // Esc/provider switching cancels edit intent first; a later blur must not trigger a save.
     if (nameEditProviderIdRef.current !== provider.providerId) return;
     nameEditProviderIdRef.current = null;
     setEditingName(false);
@@ -594,8 +598,8 @@ export function InlineEditableProviderCard({
     if (event.key !== "Enter") {
       return;
     }
-    // 候选确认的 Enter 不能被当作表单提交。本地 ref 覆盖
-    // Electron/macOS 上 nativeEvent.isComposing 过早变回 false 的时序。
+    // Enter that confirms an IME candidate must not be treated as form submission. A local ref covers
+    // the timing issue where nativeEvent.isComposing resets to false too early in Electron/macOS.
     if (
       isImeComposingKeyEvent({
         compositionActive: technicalInputCompositionActiveRef.current,
@@ -622,9 +626,9 @@ export function InlineEditableProviderCard({
         });
       }
 
-      // 连接测试曾把 Renderer 模型快照交给外层重新保存，绕过了模型草稿的
-      // revision 边界。现在只 flush 本卡片唯一的 Provider 草稿；Service 会等待同一 Provider
-      // 操作队列和 Registry 刷新完成，再按正式 providerId/modelId 创建 Model。
+      // Connection testing previously passed the Renderer model snapshot outward for another save, bypassing the model draft's
+      // revision boundary. Now flush only this card's single Provider draft; Service waits for the same Provider operation queue and Registry refresh,
+      // then creates the Model using canonical providerId/modelId.
       await commitPendingDraft("connectivity-test");
       return onTestModel(provider.providerId, model);
     },
@@ -784,10 +788,11 @@ export function InlineEditableProviderCard({
                     : "settings.modelProvider.enableProvider",
                 })}
               >
-                {/* Tooltip 的 data-state 不能覆盖 Switch 的 checked 状态，否则轨道样式会消失。 */}
+                {/* Do not let the Tooltip's data-state override the Switch's checked state, or the track
+                    styling disappears. */}
                 <span className="inline-flex">
                   <Switch
-                    // 共享开关左右各扩展 12px，会覆盖相邻菜单；本标题栏仅保留 4px 横向热区。
+                    // Extending the shared toggle hit area 12px on both sides overlaps adjacent menus; keep only a 4px horizontal hit area in this title bar.
                     className="after:-inset-x-1"
                     data-testid="model-provider-enabled-switch"
                     aria-label={intl.formatMessage({
@@ -842,7 +847,7 @@ export function InlineEditableProviderCard({
         ) : null}
 
         <ProviderModelsSection
-          // 不同 Provider 可以有同名模型；不能复用上一供应商的打开中草稿和版本。
+          // Different Providers may have models with the same name; do not reuse an open draft/version from the previous provider.
           key={provider.providerId}
           providerId={provider.providerId}
           providerName={getProviderFormLabel(provider)}

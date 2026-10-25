@@ -66,9 +66,10 @@ function persistedTarget(
 }
 
 /**
- * projection 已证明 product turn 成功且 row 是轮尾 completed assistant；这里再以
- * transcript 顺序固定 raw user/assistant/tool message 边界。历史数据只有 parent/user
- * 边界唯一时才 fallback，随后把 anchor 惰性补写，后续重试固定使用同一组 id。
+ * The projection has confirmed that the product turn succeeded and the row is the completed
+ * assistant at its end. Use transcript order here to fix the raw user/assistant/tool message
+ * boundaries. Fall back for historical data only when the parent/user boundary is unique, then write
+ * the anchor lazily so later retries use the same IDs.
  */
 export async function resolveStableForkTargetFromTranscript(options: {
   candidate: StableForkCandidate;
@@ -152,8 +153,9 @@ async function legacyGoalBoundary(
 ): Promise<StableForkGoalBoundaryMetadata | null> {
   const boundary = messages.find((message) => String(message.info.id) === boundaryMessageId);
   if (!boundary) return null;
-  // Legacy transcript 没有 fork 点 goal 版本；parent 当前仍有 target 时不能把未来状态
-  // 冒充历史。无 current target 且无 verifier ledger 才可无歧义降级为 explicit none。
+  // Legacy transcripts have no goal version at the fork point. If the parent still has a current
+  // target, do not present future state as history. Fall back unambiguously to explicit none only
+  // when there is no current target and no verifier ledger.
   if (await store.readTarget({ sessionID: boundary.info.sessionID })) return null;
   if (!store.sessionEntries) return { kind: "none" };
   const entries = await store.sessionEntries({

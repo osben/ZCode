@@ -1,281 +1,164 @@
-# ZCode 官方 Server MCP：不可用时的输入框提示（额度耗尽 / 无 Coding Plan 权益）规格
+# ZCode Official Server MCP: Composer Notice When Unavailable (Quota Exhausted / No Coding Plan Entitlement)
 
-- 状态：T1（服务端错误码 → 输入框提示）已实现；T2（退登换 API Key 的本地分类）未实现，见 §10.2
-- 当前统一鉴权与 scope 事实见 `zcode-official-server-mcp-auth-spec.md`；本文只维护 quota/banner 产品行为。
-- 前置：`zcode-official-server-mcp-client-phase-1-spec.md`（下称 "phase-1"）。信任判定口径、身份头集合、
-  凭证解析与失败分类全部沿用 phase-1，本文不重复
-- 涉及仓库：`z-code`（客户端）与 `zcode-server`（服务端），两侧共用同一组 tool error code
-- 驱动需求：官方 Server MCP 有权益门槛与每日配额。两者任一不通过时，用户在界面上得不到任何解释，
-  只能看到模型"工具调用失败了"然后自行猜测
-- 文中行号取自 2026-08-20 的 staging，仅用于定位，会随代码漂移；§4 的契约以服务端
-  `internal/domain/servermcp/toolerror.go` 为准
+- Status: T1 (server error code -> composer notice) implemented; T2 (local classification after signing out and switching to API Key) not implemented (§10.2).
+- Current unified authentication and scope facts are in `zcode-official-server-mcp-auth-spec.md`; this document covers only quota/banner product behavior.
+- Prerequisite: `zcode-official-server-mcp-client-phase-1-spec.md` ("phase 1"). Trust validation, the identity-header set, credential resolution and failure classifications follow phase 1.
+- Repositories: `z-code` (client) and `zcode-server` (server); both share the same tool error codes.
+- Requirement: the official Server MCP has entitlement requirements and a daily quota. When either is unmet, the user gets no explanation (the model only says "The tool call failed").
+- Line numbers refer to the 2026-08-20 staging build and only locate code. The §4 contract is defined by the server's `internal/domain/servermcp/toolerror.go`.
 
-## 1. 目标
+## 1. Target
 
-官方 Server MCP 因**权益不足**或**当日配额耗尽**而不可用时，在输入框上方给出一条可读提示，
-说明是哪一种原因、是哪一类额度、何时恢复，并在权益不足时给出升级入口。
+When the official Server MCP is unavailable because of insufficient entitlement or exhausted daily quota, show a readable notice above the composer explaining the cause, which quota applies and when it resets, with an upgrade entry point when entitlement is insufficient. Reuse the existing `ConversationQuotaBanner` (the quota notice shown to Coding Plan users).
 
-形态复用现有的 `ConversationQuotaBanner`——即 Coding Plan 用户当前看到的那条额度提示。
+## 2. Why nothing was shown before
 
-## 2. 现状：为什么现在什么都不会显示
+### 2.1 Both server failures were plain text only
 
-### 2.1 服务端两种失败都只有文本
+Every official MCP tool call passes `Service.authorize` (`internal/domain/servermcp/service.go:155`): `CheckEligibility` returns `ErrCodingPlanRequired` without an available Coding Plan (`billing.go:58`); `CheckQuota` returns `ErrQuotaExceeded` when the daily bucket quota is exhausted (`quota.go:63`). Both were turned into strings with `fmt.Errorf`; the five local tool handlers `return nil, nil, fmt.Errorf(...)` (`internal/interfaces/web/controller/mcp_controller.go`), and go-sdk (`mcp/server.go:381`) wraps an ordinary handler error as `CallToolResult{IsError: true}` plus plain text. The client got free-form text without error code, bucket name or reset time, although `CheckQuota` had `used` / `limit` / `conf.NextRefreshAt(now)`.
 
-官方 MCP 的每次 tool call 都要过 `Service.authorize`（`internal/domain/servermcp/service.go:155`）：
+### 2.2 The client cannot see an "error state"
 
-1. `CheckEligibility` —— 无可用 Coding Plan 时返回 `ErrCodingPlanRequired`
-   （`internal/domain/servermcp/billing.go:58`）；
-2. `CheckQuota` —— 当日桶配额耗尽时返回 `ErrQuotaExceeded`
-   （`internal/domain/servermcp/quota.go:63`）。
+On the CLI side an MCP in-band `isError: true` counts as a successful execution: `turn-tools.ts:269` passes only `isError` to the model message while `result.success` stays `true`, so the v4 `toolCall` row has `status: "success"` and no `error.code`. The notice must rely on a structured identifier carried by the tool result itself, not the row's error state.
 
-两者都被 `fmt.Errorf` 拍成字符串再层层包裹，最后 5 个 local tool handler 直接
-`return nil, nil, fmt.Errorf(...)`（`internal/interfaces/web/controller/mcp_controller.go`）。
-go-sdk 在 `mcp/server.go:381` 把 handler 返回的普通 error 兜成
-`CallToolResult{IsError: true}` + 纯文本 content。
+### 2.3 "Sign out and switch to API Key" never sends requests
 
-结果：**客户端只拿到一段自由文本**，没有错误码、没有桶名、没有恢复时间——而这些字段在
-`CheckQuota` 里本来全都有（`used` / `limit` / `conf.NextRefreshAt(now)`），只是被字符串化丢掉了。
+After signing in with Coding Plan and configuring the official MCP, signing out and switching to an API Key makes `resolveOfficialMcpCredentials` (`packages/services/src/official-mcp/officialMcpCredentials.ts:173`) classify `official_auth_plan_required`. Under phase 1 §6.3.3 nothing is sent, the official MCP connection fails, the tool is not registered and the model cannot call it. The server entitlement code never reaches the client on this path, and the classification is only logged (`apps/zcode-cli/packages/adapters/src/mcp/index.ts:898`), not in `McpServerStatus`.
 
-### 2.2 客户端拿不到"错误态"
+### 2.4 The MCP route does not verify the plan
 
-MCP 的 in-band `isError: true` 在 CLI 侧算**成功执行**：`turn-tools.ts:269` 只把 `isError` 传给
-模型消息，`result.success` 仍为 `true`。因此 v4 的 `toolCall` row 是 `status: "success"`、
-没有 `error.code`。
+`internal/interfaces/web/router.go:163` uses `WithCodingPlanContext()`: it parses identity headers without verifying them, and missing headers return 400 (`/api/v1/mcp/usage` uses `WithCodingPlan` with a verifier). Plan invalidation is rejected by `CheckEligibility` inside the tool call as an in-band isError, not an HTTP error.
 
-⇒ 提示不能依赖 row 的错误态，只能靠**工具结果自身携带结构化标识**。
+### 2.5 Banner pattern exists
 
-### 2.3 "退登换 API Key" 这条路径根本不会发请求
+`provider-limited` (`packages/ui/src/v4/sessionQuotaBannerState.ts:198`) implements "show the backend message directly + dismissible"; the new kinds follow it with no new UI component.
 
-这是本次要覆盖的第二个场景，也是最容易被漏掉的一个：
+## 3. Scope
 
-用户先以 Coding Plan 登录、配好了官方 MCP，之后退出登录改用 API Key。此时
-`resolveOfficialMcpCredentials`（`packages/services/src/official-mcp/officialMcpCredentials.ts:173`）
-判定为 `official_auth_plan_required`，按 phase-1 §6.3.3 **一个字节都不会发出**；官方 MCP 连接失败，
-工具不进注册表，模型也就无从调用。
+In scope: the server gives the two failure types a structured representation in the tool result; the client parses it and passes it through tool result display -> v4 row -> banner; promoting the local `official_auth_plan_required` classification into MCP Status (§2.3; not done, §10.2); bilingual labels, dedup and priority rules, tests.
 
-⇒ 服务端的权益错误码在这条路径上**永远到不了客户端**。而该失败分类目前只写进日志
-（`apps/zcode-cli/packages/adapters/src/mcp/index.ts:898`），没有进入 `McpServerStatus`，UI 取不到。
+Out of scope: blocking input (`blocksSubmit` stays `false`); quota-value display (the composer popover already has an MCP quota entry); the server's quota policy; interfaces outside v4 `SessionPane`.
 
-### 2.4 MCP 路由不验套餐
+## 4. Protocol contract: `error_code` in tool error content
 
-`internal/interfaces/web/router.go:163` 用的是 `WithCodingPlanContext()`——只解析身份头、**不 verify**，
-头缺失直接回 400（`/api/v1/mcp/usage` 才用带 verifier 的 `WithCodingPlan`）。套餐失效是在 tool call
-内部被 `CheckEligibility` 拦下的，走 in-band isError，不是 HTTP 错误。
+The server renders the identifier in the JSON text of the tool error content (the initial design of `com.zcode/mcp-unavailable` in `CallToolResult._meta` was dropped).
 
-### 2.5 banner 有现成范式
+### 4.1 Format
 
-`provider-limited`（`packages/ui/src/v4/sessionQuotaBannerState.ts:198`）就是"用后端 message 直接展示 +
-可关闭"的实现，新 kind 照抄即可，不需要新的 UI 组件。
-
-## 3. 范围
-
-### 3.1 范围内
-
-- 服务端把两类失败类型化，并在 tool result 上带出结构化标识；
-- 客户端解析该标识，经 tool result display → v4 row → banner；
-- 客户端把本地 `official_auth_plan_required` 分类提升进 MCP 状态，覆盖 2.3 的场景；
-- 双语文案、去重与优先级规则、相应测试。
-
-### 3.2 范围外
-
-- 阻断输入（`blocksSubmit` 保持 `false`）：MCP 不可用不影响模型对话；
-- 额度数值展示：输入框浮层里已有 MCP 额度那一格，本文只做"不可用"提示；
-- 服务端配额策略本身（桶划分、各等级额度）；
-- v4 `SessionPane` 以外的界面（现有 quota banner 也只在这里）。
-
-## 4. 协议契约：tool error content 里的 `error_code`
-
-> 本节已按服务端 2026-08-20 的实现修正。设计初稿曾假设标识放在 `CallToolResult._meta` 的
-> `com.zcode/mcp-unavailable` 键上；服务端最终选择把它渲染进 **tool error content 的 JSON 文本**，
-> 客户端按后者实现。
-
-### 4.1 形态
-
-服务端 `internal/domain/servermcp/toolerror.go` 的 `ToolError.Error()` 输出一行 JSON，作为
-tool error 的 text content 下发（`IsError: true`）：
+`ToolError.Error()` in `internal/domain/servermcp/toolerror.go` outputs one JSON line as the text content of the tool error (`IsError: true`):
 
 ```json
-{"error_code":"quota_exceeded","message":"daily quota exceeded for bucket search_image (5/5), retry tomorrow or upgrade your coding plan","request_id":"..."}
+{
+  "error_code": "quota_exceeded",
+  "message": "daily quota exceeded for bucket search_image (5/5), retry tomorrow or upgrade your coding plan",
+  "request_id": "..."
+}
 ```
 
-两条产出路径：本地工具 handler 返回 `ToolErrorFor(err, requestID)`（go-sdk 把普通 error 兜成
-`IsError` 结果），上游转发用 `ToolErrorResult` 直接构造同形结果。
+A local tool handler returns `ToolErrorFor(err, requestID)` (go-sdk wraps the ordinary error as an `IsError` result); upstream forwarding uses `ToolErrorResult` to construct a result of the same shape.
 
-### 4.2 code
+### 4.2 Codes
 
-| code | 含义 | 客户端行为 |
-|---|---|---|
-| `quota_exceeded` | 当日桶配额耗尽 / 无可用配额 | 提示"今日额度用完"，可关闭，无动作 |
-| `coding_plan_required` | 无可用 Coding Plan（缺上下文或验签不过） | 提示"需要 Coding Plan"，可关闭，挂升级入口 |
-| `internal_error` | 其它一切失败的兜底掩码 | **不识别、不提示**——详情只在服务端日志，用户无法自助解决 |
+| Code                   | Meaning                                                                     | Client behavior                                                                         |
+| ---------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `quota_exceeded`       | Daily bucket quota exhausted / no quota available                           | Show "Today's quota is used up"; dismissible; no action                                 |
+| `coding_plan_required` | No available Coding Plan (context missing or signature verification failed) | Show "Coding Plan required"; dismissible; upgrade entry point                           |
+| `internal_error`       | Fallback mask for all other failures                                        | Do not recognize or show a notice; details stay in server logs; users cannot resolve it |
 
-### 4.3 约定
+### 4.3 Conventions
 
-- `error_code` 是唯一的分流依据。**不做文案匹配兜底**：那会让服务端改一句话就静默失效；
-- `message` 是英文，只用于日志与排障。界面文案一律走 i18n，因此客户端不把它搬到 banner 上
-  （这一点与 `provider-limited` 不同——后者的 message 是中文业务文案）；
-- `request_id` 用于与服务端日志对账；
-- 解析严格：必须是 JSON 对象且 `error_code` 命中已知 code，否则整体忽略；
-- 单一声明处：`packages/shared/src/official-mcp-tool-error.ts` 的
-  `OFFICIAL_MCP_TOOL_ERROR_CODES` 与 `parseOfficialMcpToolError`，被 CLI core、v4 row schema、
-  UI 三处消费，避免新增 code 时一侧识别、另一侧丢弃。
-- 客户端遇到未知 `code`、字段缺失或类型不符时**整体忽略**，不做兜底猜测，也不弹提示；
-- `IsError` 仍为 `true`、`content` 仍带同一段文本——模型侧行为不变，标识只是附加信息。
+- `error_code` is the sole routing criterion; never fall back to label matching (a one-line server message change could silently break it).
+- `message` is English, for logs and troubleshooting only. UI labels always use i18n; the client does not show it in the banner (unlike `provider-limited`, whose message is a Chinese product label).
+- `request_id` correlates with server logs.
+- Parse strictly: the value must be a JSON object and `error_code` a known code; otherwise ignore the whole payload (unknown code, missing field or type mismatch: no guessing, no notice).
+- Single declaration point: `OFFICIAL_MCP_TOOL_ERROR_CODES` and `parseOfficialMcpToolError` in `packages/shared/src/official-mcp-tool-error.ts`, consumed by CLI core, the v4 row schema and the UI.
+- `IsError` stays `true` and `content` still contains the same text; the identifier is additional and model-side behavior is unchanged.
 
-## 5. 服务端实现（`zcode-server`，已完成）
+## 5. Server side (`zcode-server`, completed)
 
-### 5.1 `ToolError` 统一承载
+- `ToolError{Code, Message, RequestID}` renders the §4.1 JSON from `Error()`; `Unwrap()` returns the internal sentinel (`ErrQuotaExceeded` / `ErrCodingPlanRequired`), keeping `errors.Is` without exposing the internal chain. `ToolErrorFor(err, requestID)` passes an existing `ToolError` through (adding the request ID), maps the two sentinels to their codes and masks everything else (upstream, gateway, infrastructure) as `internal_error`. `ToolErrorResult(err, requestID)` is the bare-handler (upstream forwarding) version.
+- `CheckQuota` (`quota.go`) returns `quota_exceeded` when the bucket has no owner, the tier has no quota, or the daily quota is exhausted (the label includes bucket name and used/limit). `CheckEligibility` (`billing.go`) returns `coding_plan_required` when the Coding Plan context is missing or verification fails. All five local handlers and upstream forwarding are wired (`mcp_controller.go`).
+- The server label does not include `next_refresh_at`, so the UI does not promise a reset time; it says "Resets tomorrow" (calendar-day reset by `QuotaConfig.NextRefreshAt`; the exact date is visible in the composer popover's MCP quota entry).
 
-`internal/domain/servermcp/toolerror.go`：
+## 6. Client side (`z-code`, T1 completed)
 
-- `ToolError{Code, Message, RequestID}`，`Error()` 渲染成 §4.1 的 JSON；`Unwrap()` 返回内部
-  sentinel（`ErrQuotaExceeded` / `ErrCodingPlanRequired`），既保住 `errors.Is` 语义，
-  又不把内部错误链暴露给客户端；
-- `ToolErrorFor(err, requestID)` 把服务错误映射成客户端可见形态：已是 `ToolError` 的直接透传
-  （补 request id），两个 sentinel 映射到对应 code，**其余一切**（上游、网关、基础设施失败）
-  统一掩成 `internal_error`，细节只留服务端日志；
-- `ToolErrorResult(err, requestID)` 是给裸 handler（上游转发）用的版本，直接构造 `IsError` 结果。
+| Trigger | Scenario                                                              | Signal                              | Status                  |
+| ------- | --------------------------------------------------------------------- | ----------------------------------- | ----------------------- |
+| T1      | Credentials present, request sent: quota exhausted / plan invalid     | `error_code` in tool error content  | Implemented             |
+| T2      | Signed out and switched to API Key, or not signed in: no request sent | Local `official_auth_plan_required` | Not implemented (§10.2) |
 
-### 5.2 拦截点
+### 6.1 Single contract declaration point
 
-- `CheckQuota`（`quota.go`）三种情况都返回 `ToolError{Code: quota_exceeded}`：桶无归属、
-  该等级无配额、当日已用满（文案含桶名与 used/limit）；
-- `CheckEligibility`（`billing.go`）两种情况返回 `ToolError{Code: coding_plan_required}`：
-  缺 Coding Plan 上下文、验签不过；
-- 5 个本地 tool handler 与上游转发都已接上（`mcp_controller.go`）。
+`packages/shared/src/official-mcp-tool-error.ts` declares `OFFICIAL_MCP_TOOL_ERROR_CODES` and `parseOfficialMcpToolError` (shared because CLI core parses results, the v4 row schema validates the code and the UI picks label/action). `McpToolDescriptor` adds `official?: boolean`.
 
-### 5.3 客户端未使用的字段
+### 6.2 Trust only HTTP official MCP (security-related)
 
-服务端文案里带了桶名与 used/limit，但**没有** `next_refresh_at`。因此界面不承诺具体恢复时刻，
-只说"明天恢复"——自然日重置这一点由 `QuotaConfig.NextRefreshAt` 保证，输入框浮层里的 MCP 额度
-那一格另有精确重置日期可看。
-## 6. 客户端实现（`z-code`，已完成 T1）
+Without a source check, any MCP server could put the same payload in a result and forge a Coding Plan notice (no credential exposure, but it could mislead users into buying or upgrading). The criterion is who produced the result, not who owns the Plugin (SG-02):
 
-| 触发源 | 场景 | 信号 | 状态 |
-|---|---|---|---|
-| T1 | 有凭证、请求已发出：配额耗尽 / 套餐失效 | tool error content 的 `error_code` | 已实现 |
-| T2 | 退登换 API Key、未登录：请求不发出 | 本地 `official_auth_plan_required` | 未实现，见 §10.2 |
+| Form                                 | Result producer                                                                         | Can forge `error_code`?                                                                    | Flagged |
+| ------------------------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------- |
+| `http` + `auth.type=zcode_official`  | ZCode backend (connection alive, per-request Origin validation passed and fails closed) | No: the Plugin can only send requests to real ZCode and does not control the response body | yes     |
+| `stdio` + `auth.type=zcode_official` | The Plugin process                                                                      | Yes, any string                                                                            | no      |
+| Other                                | Third-party server                                                                      | Yes                                                                                        | no      |
 
-### 6.1 契约单一声明处
+The Plugin's marketplace origin is intentionally not checked: it would break official Plugins from unofficial install sources (local testing, `zcode-plugins-test`) and is not a real security boundary (see "Known Residual Risks" in `isOfficialMcpOriginTrusted`).
 
-`packages/shared/src/official-mcp-tool-error.ts`：`OFFICIAL_MCP_TOOL_ERROR_CODES` 与
-`parseOfficialMcpToolError`。放 shared 是因为三个分属不同包的消费者要同源——CLI core（解析结果）、
-v4 row schema（校验 code）、UI（按 code 决定文案与动作）。
+Known cost: failures from the official stdio Plugin (`video-agent-kit`) no longer trigger a notice. No practical capability loss: it emits its own error label (`[ERROR] zcode_speech transcription failed: …`), which `parseOfficialMcpToolError` never matched. If stdio later needs to pass structured server failures, define a separate host-validated channel rather than weakening this validation.
 
-`McpToolDescriptor` 增加 `official?: boolean`（见 §6.2）。
+- `apps/zcode-cli/packages/adapters/src/mcp/index.ts`: at the `normalizeMcpToolDescriptor` call site pass `official` from `config.type === "http" && config.auth?.type === ZCODE_OFFICIAL_MCP_AUTH_TYPE`; `descriptor.ts` passes it through.
+- `apps/zcode-cli/packages/core/src/mcp/index.ts` passes the marker into `mcpPresentation`; `core/src/tool/types.ts` `mcpPresentation` gains the field.
 
-### 6.2 只信 http 官方 MCP（安全相关，不能省）
+### 6.3 Result-level display -> v4 row
 
-不判来源的话，**任意 MCP server 都能在结果里塞同样的 payload，伪造一条 Coding Plan 提示**。
-凭证不会外泄，但会误导用户去购买 / 升级套餐。
+- `core/src/tool/executor/result-display.ts`: `createMcpToolDisplay` takes an optional `output`; for official sources it reads `error_code` from text blocks in `output.content` and, if matched, adds `unavailable: { code }` to the `mcp_tool` display. `createToolResultDisplay` passes the result through (`call-runner.ts` already calls it with `output`).
+- Add the same field to both `.strict()` schemas or row validation rejects it: `apps/zcode-cli/packages/contracts/src/tools/tool-result-metadata.ts` (`mcpToolResultDisplayPayloadSchema`) and `packages/shared/src/zcode-protocol-v4/rows.ts` (`toolCallMcpDisplaySchema`); both code enums come from the §6.1 declaration.
+- `product-projection.ts` already passes `payload.result.display` whole to the `toolCall` row; no projection change.
 
-判据是**结果由谁产出**，而不是"插件是谁"（SG-02 修正）：
+### 6.4 Banner
 
-| 形态 | 结果产出方 | 能否伪造 `error_code` | 是否置位 |
-| --- | --- | --- | --- |
-| `http` + `auth.type=zcode_official` | ZCode 后端（连接存活即意味着逐请求 origin 校验通过且 fail closed） | 不能——插件只能把请求打到真实 ZCode，响应体不由它写 | ✓ |
-| `stdio` + `auth.type=zcode_official` | 插件进程自己 | **能**，任意字符串 | ✗ |
-| 其它 | 第三方 server | 能 | ✗ |
+- `packages/ui/src/v4/mcpUnavailableBannerNotice.ts`: `resolveMcpUnavailableNotice(rows)` produces `{ code, serverName, toolName, rowId }` from the latest `mcp_tool` row in the window that has `display.unavailable` (latest, not first: a session may first hit quota then switch connections and hit entitlement).
+- `sessionQuotaBannerState.ts`: kinds `mcp-quota-exhausted` / `mcp-plan-required`, placed after `provider-limited` and before the Start-Plan-only early return (Coding Plan sessions always hit that early return, so later placement would be unreachable); state fields `mcpServerName` / `mcpNoticeRowId`, the latter in the dismiss key.
+- `ConversationQuotaBanner.tsx`: two `MESSAGE_IDS` mappings; `server` passed as a label variable.
+- `useV4SessionQuotaBanner.ts`: `mcpUnavailableNotice` as an input (the caller parses it from rows; it is a session-event projection unrelated to the entitlement service).
+- `SessionPane.tsx`: parse the notice with `useMemo` and pass it into the hook. Rendering conditions unchanged; composer errors still take precedence.
 
-**刻意不按"插件是否来自官方 marketplace"判定**：那会让非官方安装源（本地自测、
-zcode-plugins-test）的官方插件直接失效，而它也不是真实屏障（详见 `isOfficialMcpOriginTrusted`
-的"已知残留风险"一节）。
+## 7. Display specification
 
-已知代价：stdio 官方插件（video-agent-kit）的失败不再触发提示。实际不构成能力损失——它输出的是
-自己的错误文案（`[ERROR] zcode_speech transcription failed: …`），本来就不匹配
-`parseOfficialMcpToolError` 的严格解析。若将来 stdio 确实要透传服务端的结构化失败，需要另设一条
-经宿主背书的通道，而不是放宽这里。
+| Field        | `mcp-quota-exhausted`                                               | `mcp-plan-required`                                                             |
+| ------------ | ------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Label        | `chat.quota.mcp.quotaExhausted` (names the server; resets tomorrow) | `chat.quota.mcp.codingPlanRequired` (names the server; Coding Plan required)    |
+| Action       | None (wait for calendar-day reset)                                  | Reuse the banner's existing `onUpgrade` (Coding Plan upgrade / purchase dialog) |
+| Dismissible  | Yes                                                                 | Yes                                                                             |
+| Blocks input | No                                                                  | No                                                                              |
+| Priority     | 6                                                                   | 8; both below all model quota kinds                                             |
+| Dedup key    | `kind` + `serverName` + `rowId`                                     | same                                                                            |
 
-- `apps/zcode-cli/packages/adapters/src/mcp/index.ts`：`normalizeMcpToolDescriptor` 调用处按
-  `config.type === "http" && config.auth?.type === ZCODE_OFFICIAL_MCP_AUTH_TYPE` 传入 official；
-  `descriptor.ts` 透传；
-- `apps/zcode-cli/packages/core/src/mcp/index.ts` 把标记带进 `mcpPresentation`；
-- `core/src/tool/types.ts` 的 `mcpPresentation` 同步加字段。
+- Priority must be lower than model quota kinds: model quota exhaustion directly affects the conversation.
+- The label uses i18n, not the server message (English, `daily quota exceeded for bucket ...`; unacceptable in a Chinese UI). The server message is only logged.
+- Including `rowId` in the dedup key means a dismissed notice does not reappear for the same call; a new failed call or another MCP server shows a new notice.
+- i18n keys exist for en-US and zh-CN.
 
-### 6.3 结果级 display → v4 row
+## 8. Tests
 
-- `core/src/tool/executor/result-display.ts`：`createMcpToolDisplay` 增加可选的 `output` 入参，
-  官方来源时从 `output.content` 的 text block 里读 `error_code`，命中则在 `mcp_tool` display 上
-  追加 `unavailable: { code }`。`createToolResultDisplay` 把结果透传进去（`call-runner.ts` 已经
-  拿 `output` 调它，无需改调用方）；
-- **两个 `.strict()` schema 同步加同一字段**，否则 row 会被校验拒掉：
-  `apps/zcode-cli/packages/contracts/src/tools/tool-result-metadata.ts`（`mcpToolResultDisplayPayloadSchema`）
-  与 `packages/shared/src/zcode-protocol-v4/rows.ts`（`toolCallMcpDisplaySchema`）；两处的 code
-  枚举都取自 §6.1 的单一声明；
-- `product-projection.ts` 已经把 `payload.result.display` 整体透传进 `toolCall` row，投影层零改动。
+Server: `toolerror_test.go` covers code mapping and the `internal_error` mask. Client:
 
-### 6.4 banner
+- shared `packages/shared/test/officialMcpToolError.test.ts`: normal parsing, omitted optional fields, `internal_error` and unknown codes not recognized, no label-based fallback for non-JSON text.
+- core `apps/zcode-cli/packages/core/tests/tool-result-display.test.ts`: both codes produced and passing the strict schema, non-official sources ignored, no identifier for unknown codes, non-JSON or successful results.
+- ui `packages/ui/test/v4SessionQuotaBannerState.test.ts`: routing by code, input not blocked, model quota kinds higher priority, dismiss key follows server and rowId, `resolveMcpUnavailableNotice` selects the latest row.
 
-- `packages/ui/src/v4/mcpUnavailableBannerNotice.ts`：`resolveMcpUnavailableNotice(rows)` 从窗口
-  内**最新**一条带 `display.unavailable` 的 `mcp_tool` row 产出 `{ code, serverName, toolName, rowId }`。
-  取最新而非第一条：同一会话可能先撞额度、后换连接又撞权益，提示要跟随最近事实；
-- `sessionQuotaBannerState.ts`：新增 kind `mcp-quota-exhausted` / `mcp-plan-required`，
-  **插在 `provider-limited` 之后、Start-Plan-only 早退之前**（Coding Plan 会话一定命中那道早退，
-  放其后永远不生效）；新增 `mcpServerName` / `mcpNoticeRowId` 两个 state 字段，后者进 dismiss key；
-- `ConversationQuotaBanner.tsx`：`MESSAGE_IDS` 两条映射，`server` 作为文案变量传入；
-- `useV4SessionQuotaBanner.ts`：新增入参 `mcpUnavailableNotice`（由调用方从 rows 解析——它是会话
-  事件投影，与 entitlement 服务无关，不放进这个 hook 里取）；
-- `SessionPane.tsx`：`useMemo` 解析 notice 后传进 hook。渲染条件不动——有 composer error 时仍以
-  错误为先。
+## 9. Acceptance
 
-## 7. 展示规格
+1. Server: `go test ./internal/domain/servermcp/... ./internal/interfaces/web/controller/...`.
+2. Client: `pnpm typecheck` (two strict schemas changed; cross-package compilation) + `pnpm lint` + the Vitest tests above.
+3. Quota: lower a bucket's daily quota (`internal/config` MCP quota config), start the server locally, call the bucket's official MCP tool in ZCode until exceeded: a notice appears above the composer naming the server; after dismissal it does not return; a new failure shows it again.
+4. Entitlement: make `CheckEligibility` fail (remove Coding Plan context or fail verification): the notice becomes "Coding Plan required" with an upgrade entry point.
+5. Forgery check: a local third-party MCP (`scripts/dev-official-mcp-server.mjs`) with non-official auth returning `{"error_code":"quota_exceeded"}` must not show the banner.
 
-| 项 | `mcp-quota-exhausted` | `mcp-plan-required` |
-|---|---|---|
-| 文案 | `chat.quota.mcp.quotaExhausted`（点名 server，说明明天恢复） | `chat.quota.mcp.codingPlanRequired`（点名 server，说明需要 Coding Plan） |
-| 动作 | 无（等自然日重置） | 复用 banner 现有 `onUpgrade`（Coding Plan 升级 / 购买对话框） |
-| 可关闭 | 是 | 是 |
-| 阻断输入 | 否 | 否 |
-| 优先级 | 6 | 8，均低于所有模型额度 kind |
-| 去重键 | `kind` + `serverName` + `rowId` | 同左 |
+## 10. Known gaps and trade-offs
 
-两条硬要求：
-
-- **优先级低于模型额度 kind**：模型额度耗尽直接影响对话本身，不能被 MCP 提示挡住；
-- **文案走 i18n 而不是服务端 message**。这与 `provider-limited` 不同：后者的 message 是中文业务
-  文案，可以直接展示；官方 MCP 的 message 是英文（`daily quota exceeded for bucket ...`），
-  直接展示在中文界面上不可接受。服务端 message 只进日志。
-
-去重键带 `rowId` 的效果：关闭一次提示后同一次调用不再弹，之后再有新的失败调用会重新弹；
-换一个 MCP server 也会重新弹。
-
-i18n key 已补 en-US / zh-CN 双份。
-
-## 8. 测试
-
-服务端：`toolerror_test.go` 已覆盖 code 映射与 `internal_error` 掩码。客户端：
-
-- shared：`packages/shared/test/officialMcpToolError.test.ts` —— 正常解析、可选字段缺省、
-  `internal_error` 与未知 code 不识别、非 JSON 文本不做文案兜底；
-- core：`apps/zcode-cli/packages/core/tests/tool-result-display.test.ts` —— 两种 code 的产出并过
-  strict schema、**非官方来源必须忽略**、未知 code / 非 JSON / 成功结果都不产出标识；
-- ui：`packages/ui/test/v4SessionQuotaBannerState.test.ts` —— 按 code 分流、不阻断输入、
-  模型额度 kind 优先级更高、dismiss key 跟随 server 与 rowId、`resolveMcpUnavailableNotice`
-  取最新一条。
-
-## 9. 验收
-
-1. 服务端：`go test ./internal/domain/servermcp/... ./internal/interfaces/web/controller/...`；
-2. 客户端：`pnpm typecheck`（改了两个 strict schema，注意跨包编译）+ `pnpm lint` + 上述 vitest；
-3. **配额**：把某个桶的每日额度配小（`internal/config` 的 mcp quota 配置）→ 本地起服务端 →
-   在 zcode 里把该桶的官方 MCP 工具调到超限 → 输入框上方出现提示并点名 server；关闭后不再重复弹；
-   之后再触发一次新的失败会重新弹；
-4. **权益**：让 `CheckEligibility` 失败（去掉 Coding Plan 上下文或让 verify 失败）→ 提示切换为
-   "需要 Coding Plan"，并带升级入口；
-5. **伪造校验**：用本地第三方 MCP（`scripts/dev-official-mcp-server.mjs` 配成非官方 auth）在结果里
-   返回同样的 `{"error_code":"quota_exceeded"}`，确认 banner **不**出现。
-
-## 10. 已知缺口与取舍
-
-1. **`rows.window` 是窗口视图**：会话滚动很远后旧标识可能不在窗口内，banner 随之消失。
-   刚发生的调用一定在窗口内，可接受；若要严格保留，需把它提升为会话级 state 而不是 row 字段。
-2. **T2（退登换 API Key）未实现**。那条路径上客户端本地就判 `official_auth_plan_required`、
-   请求根本不发出，服务端 code 永远到不了客户端；要覆盖它需把该分类从日志提升进 `McpServerStatus`
-   并让 UI 回落到它。代价是 API Key 模式下每个新会话都会提示一次（可关闭），是否要做由产品定。
-3. **MCP in-band `isError` 仍保持 row `status: "success"`**（未改现状），banner 也不接管
-   composer error——两者是独立的信息通道。
-4. **`internal_error` 不弹提示**。它是服务端对其它一切失败的兜底掩码，用户无法自助解决。
-5. **服务端不下发 `next_refresh_at`**，所以文案只说"明天恢复"，不承诺具体时刻。精确重置日期在
-   输入框浮层的 MCP 额度那一格里可看。
-6. **official 标记必须全链路不丢**：Plugin 配置 → descriptor → `mcpPresentation` → display 构造点，
-   任何一环丢掉，就退化为"任何 MCP 都能伪造 Coding Plan 提示"。改动这几处时需保持该不变量。
+1. `rows.window` is a windowed view: after scrolling far through a session an old identifier may leave the window and the banner disappears. The latest call is always in the window (acceptable); strict retention would need session-level state rather than storing it on a row.
+2. T2 (sign out and switch to API Key) is not implemented. The client classifies `official_auth_plan_required` locally and sends no request, so the server code never arrives. Covering it means promoting the classification from logs into `McpServerStatus` and having the UI fall back to it; trade-off: one dismissible notice per new session in API Key mode. Needs a product decision.
+3. MCP in-band `isError` still leaves row `status: "success"` (unchanged); the banner does not take over composer errors (separate channels).
+4. `internal_error` shows no notice.
+5. The server does not send `next_refresh_at`, so the label only says "Resets tomorrow".
+6. The `official` marker must be preserved end to end: Plugin config -> descriptor -> `mcpPresentation` -> display construction. If any step drops it, any MCP could forge a Coding Plan notice.

@@ -1,35 +1,30 @@
 # MCP OAuth Client Authentication
 
-> 后续设计：跨进程 OAuth 单飞与 refresh 竞态修复见 `docs/mcp-oauth-two-phase.md`（v4 两阶段连接）。
-> 本文描述配置形态、凭据完整性与设置页边界；两阶段连接的 provider 形态、锁契约与错误分类以该文为准。
+> Follow-up design: cross-process OAuth single-flight and refresh race fixes are in `docs/mcp-oauth-two-phase.md` (v4 two-phase connection). This document covers config shape, credential integrity, and settings-page boundaries; provider shape, lock contracts, and error classification for two-phase connection follow that document.
 
-## 背景
+## Background
 
-MCP 2025-11-25 Authorization 规范把授权定义在 HTTP-based transport 上：
+The MCP 2025-11-25 Authorization spec defines authorization for HTTP-based transports:
 
-- HTTP/SSE MCP client 需要支持 `WWW-Authenticate` challenge、OAuth Protected Resource Metadata（RFC 9728）、Authorization Server Metadata/OIDC discovery、Resource Indicators（RFC 8707）和 Bearer token 请求头。
-- stdio MCP 不走该规范，仍从进程环境变量读取凭据。
-- access token 禁止进入 URL query，必须通过 `Authorization: Bearer <access-token>` 发送。
+- HTTP/SSE MCP clients must support the `WWW-Authenticate` challenge, OAuth Protected Resource Metadata (RFC 9728), Authorization Server Metadata/OIDC discovery, Resource Indicators (RFC 8707), and the Bearer token header.
+- stdio MCP is out of scope and keeps reading credentials from process env vars.
+- Access tokens must never enter URL query parameters; always send `Authorization: Bearer <access-token>`.
 
-ZCode 当前 MCP adapter 已支持 `stdio`、`http`、`sse` transport，但 HTTP/SSE 原先只支持静态 headers。受保护 MCP server 返回 401 时，客户端必须能发现 OAuth metadata、完成用户授权或机器凭据授权、保存 token、重试请求，否则 Figma remote MCP 这类 OAuth server 无法开箱即用。
+The ZCode MCP adapter already supports `stdio`, `http`, and `sse`, but HTTP/SSE previously supported only static headers. When a protected MCP server returns 401, the client must discover OAuth metadata, complete user or machine authorization, store the token, and retry — otherwise OAuth servers like Figma remote MCP cannot work out of the box.
 
-## 目标
+## Goals
 
-把 OAuth 完整接入现有 MCP client 能力：
+1. The config layer lets HTTP/SSE MCP servers declare `oauth`.
+2. The agent runtime passes `oauth` unchanged from UI/desktop protocol, CLI config, and plugin MCP config into the MCP adapter.
+3. The MCP adapter injects the SDK `OAuthClientProvider` for HTTP/SSE transports, reusing the SDK's 401-challenge, metadata-discovery, token acquisition, refresh, resource-parameter, and bearer-header logic.
+4. Interactive `authorization_code` OAuth uses PKCE, dynamic client registration, localhost callback, browser authorization, token persistence, and reconnect retry — covering user-authorization servers like Figma remote MCP.
+5. `client_credentials` keeps supporting machine-credential OAuth without a browser.
+6. stdio MCP ignores `oauth` and keeps the env-var credential path.
+7. E2E tests use a local protected MCP HTTP server and a local OAuth authorization server: an initialize without a token gets 401, the client discovers metadata, opens the authorization URL, receives the callback code, exchanges the token, retries with a bearer token, and finally lists tools.
+8. When the authorization server needs user interaction, the MCP settings page shows a manual "open authorization" entry. Never auto-open the system browser by default, so status refreshes, background connects, or startup checks never interrupt the user.
+9. When a session starts MCP servers, the **caller wait budget** for `authorization_code` OAuth is fixed at 15 seconds; after that the server is marked failed for this session round and the session continues, so a missing human authorization cannot stall model requests for minutes. The 15 seconds bound only this caller, not the authorization transaction's lifetime: the transaction survives in the background under a 300-second global TTL, and background reconnect registers tools on completion. See `docs/mcp-oauth-two-phase.md`.
 
-1. 配置层允许 HTTP/SSE MCP server 声明 `oauth`。
-2. Agent runtime 将 `oauth` 从 UI/desktop protocol、CLI config、plugin MCP config 原样传入 MCP adapter。
-3. MCP adapter 为 HTTP/SSE transport 注入 SDK `OAuthClientProvider`，复用 SDK 的 401 challenge、metadata discovery、token 获取、refresh、resource parameter 和 bearer header 逻辑。
-4. `authorization_code` 交互式 OAuth 使用 PKCE、动态客户端注册、localhost callback、浏览器授权、token 持久化和重连 retry，覆盖 Figma remote MCP 这类用户授权 server。
-5. `client_credentials` 继续支持机器凭据 OAuth，不要求浏览器。
-6. stdio MCP 不消费 `oauth`，保持环境变量凭据路径。
-7. 端到端测试使用本地受保护 MCP HTTP server 和本地 OAuth authorization server 验证：未带 token 的 initialize 请求收到 401 后，客户端发现 metadata，打开授权 URL，接收 callback code，换取 token，带 bearer token 重试，最终 listTools 成功。
-8. 当授权服务器需要用户交互时，MCP 设置页展示手动“打开授权”入口；默认不自动打开系统浏览器，避免状态刷新、后台连接或启动检查打断用户当前操作。
-9. Session 启动 MCP 时，`authorization_code` OAuth 的 **caller 等待预算**固定为 15 秒；超过后该 MCP server 在本轮 session 标记失败并继续，避免无人工授权时把模型请求卡住数分钟。15 秒只是本 caller 的等待上限，不是授权事务寿命：授权事务在后台按 300 秒全局 TTL 继续存活，完成后由后台重连注册工具。见 `docs/mcp-oauth-two-phase.md`。
-
-## 配置
-
-支持的配置形态：
+## Config
 
 ```json
 {
@@ -49,125 +44,125 @@ ZCode 当前 MCP adapter 已支持 `stdio`、`http`、`sse` transport，但 HTTP
 }
 ```
 
-字段：
+Fields:
 
-- `oauth.type`: 支持 `"authorization_code"` 和 `"client_credentials"`。
-- `clientId`: OAuth client id；交互式 OAuth 可省略，省略时通过授权服务器动态注册获取。
-- `clientSecret`: OAuth client secret；仅机器凭据或预注册 confidential client 需要。
-- `scope`: 可选；如果 MCP server 要求固定 scope，建议显式配置。未配置时客户端不主动指定 scope，是否能通过取决于授权服务默认策略。
-- `clientName`: 可选，默认由 MCP server name 派生。
-- `redirectPath`: 可选，仅 `authorization_code` 使用；默认是 `/oauth/callback/mcp/<serverName>`，实际 redirect URI 使用本机随机 localhost 端口。
+- `oauth.type`: `"authorization_code"` or `"client_credentials"`.
+- `clientId`: OAuth client id; optional for interactive OAuth — omitted, it is obtained via dynamic registration at the authorization server.
+- `clientSecret`: OAuth client secret; only for machine credentials or a pre-registered confidential client.
+- `scope`: optional; configure explicitly if the server requires a fixed scope. Without it the client sends no scope, and acceptance depends on the server's default policy.
+- `clientName`: optional, derived from the MCP server name by default.
+- `redirectPath`: optional, `authorization_code` only; defaults to `/oauth/callback/mcp/<serverName>`, with the real redirect URI using a random localhost port.
 
-## 手动授权入口
+## Manual authorization entry
 
-`authorization_code` OAuth 仍由 agent MCP adapter 持有 PKCE verifier、localhost callback server 和 token 持久化。UI 不持有 token，也不把 OAuth 状态下沉到 desktop main、relay 或 web remote 业务状态。
+`authorization_code` OAuth keeps the PKCE verifier, localhost callback server, and token persistence inside the agent MCP adapter. The UI holds no token, and OAuth state never sinks into desktop main, relay, or web remote business state.
 
-凭据持久化 key 按 `serverName`、`serverUrl`、`clientId`、`scope`、`redirectPath` 五个维度隔离；其中任一授权语义字段变化都会触发重新授权，不复用旧 token 或动态注册 client 信息。
+Credential persistence keys are isolated by the five dimensions `serverName`, `serverUrl`, `clientId`, `scope`, and `redirectPath`; any change to these authorization-semantic fields requires re-authorization, never reusing old tokens or dynamic-registration client info.
 
-当 MCP adapter 发现需要用户授权时，会把本次 pending 授权的 authorization URL 放入 MCP status snapshot，但默认不自动打开系统浏览器。`mcp/list` 在检测到 pending OAuth 后应快速返回当前 status，而不是等待完整 5 分钟授权超时。设置页收到该状态后，在对应 MCP server 行展示手动打开按钮，点击后通过平台 `openExternal` 打开同一 authorization URL。
+When the MCP adapter detects that user authorization is needed, it puts the pending authorization URL into the MCP status snapshot but does not auto-open the browser. On seeing a pending OAuth, `mcp/list` returns the current status quickly instead of waiting out the full 5-minute authorization timeout. The settings page shows a manual open button on the server row; clicking opens the same authorization URL via the platform `openExternal`.
 
-Agent runtime 仍保留显式注入 `openAuthorizationUrl` 的能力，供端到端测试或特定自动化流程主动驱动授权跳转；未注入时，授权跳转必须由 UI 中的用户动作触发。
+The agent runtime keeps the ability to explicitly inject `openAuthorizationUrl` for E2E tests or specific automation flows; without injection, the authorization jump must be triggered by a user action in the UI.
 
-授权 URL 只在当前 pending 授权期间有效；用户完成浏览器授权后，localhost callback 回到 agent，adapter 完成 `finishAuth`、保存 token 并重连。access token 和 refresh token 不进入 URL，也不传给 UI。
+The authorization URL is valid only for the current pending authorization. After the user completes browser authorization, the localhost callback returns to the agent, the adapter runs `finishAuth`, saves the token, and reconnects. Access and refresh tokens never enter URLs or reach the UI.
 
-## Session 启动超时
+## Session startup timeout
 
-Session runtime 和设置页状态刷新使用不同的 OAuth 授权等待策略：
+Session runtime and settings-page refresh use different OAuth wait policies:
 
-- Session runtime 在 `connectConfiguredServers` 时传入 15 秒 OAuth 授权等待上限。用户没有立即完成浏览器授权时，只失败对应 MCP server，不阻塞本轮模型请求，也不终止后台授权事务（见 `docs/mcp-oauth-two-phase.md` 的 caller 预算与事务寿命分离）。
-- `mcp/list` 设置页状态刷新不传 session 上限，仍由 adapter 使用默认授权窗口，并在发现 pending authorization 后快速返回 URL、后台继续等待授权完成。
-- 设置页与 Session 命中同一份 pending OAuth 连接时，只共享 authorization URL、PKCE/state、callback 和底层连接生命周期；每个调用方仍使用自己的 `oauthAuthorizationTimeoutMs` 与 `AbortSignal` 等待边界。单个调用方超时或取消后返回当时的 runtime snapshot，不得关闭仍由其他调用方等待的 OAuth session。
-- MCP transport 的普通 `timeoutMs` 只约束 connect/listTools/callTool 等协议请求，不应把 session 的 15 秒 OAuth callback 等待重新拉长。
+- Session runtime passes a 15-second OAuth wait cap in `connectConfiguredServers`. Without an immediate browser authorization, only that MCP server fails — the round's model requests are not blocked, and the background authorization transaction is not terminated (caller budget vs transaction lifetime, per `docs/mcp-oauth-two-phase.md`).
+- `mcp/list` settings refresh passes no session cap; the adapter keeps the default authorization window, returning the URL quickly on pending authorization while waiting in the background.
+- When the settings page and a session hit the same pending OAuth connection, they share only the authorization URL, PKCE/state, callback, and underlying connection lifecycle; each caller keeps its own `oauthAuthorizationTimeoutMs` and `AbortSignal` wait boundary. A single caller's timeout or cancel returns the then-current runtime snapshot and must not close an OAuth session other callers still wait on.
+- The MCP transport's normal `timeoutMs` bounds only protocol requests (connect/listTools/callTool) and must not re-extend the session's 15-second OAuth callback wait.
 
-## 并发授权事务边界
+## Concurrent authorization transaction boundaries
 
-OAuth 状态分成事务态和配置级快照，禁止把独立字段跨生命周期拼接：
+OAuth state splits into transaction state and config-level snapshots; never stitch independent fields across lifecycles:
 
-- 动态注册 client information 和 PKCE `code_verifier` 在授权进行中都属于单次事务。provider 必须在同一个 OAuth `state` 生命周期内固定本事务 client；SDK 注册阶段、authorization code exchange 阶段重复调用 `clientInformation()` 时，不得重新读取其他事务发布的 client。动态注册结果同时立即写入 legacy client key，作为 provider 重建后发起新授权的恢复种子；当前事务仍只使用内存中固定的 client，不能因并发注册而换绑。
-- 成功换取 token 后，动态 client information 与 `access_token` / `refresh_token` 组成一个配置级 canonical credential pair。pair 必须写在同一个 credential key 中，通过一次带跨进程锁的 read-modify-write 原子发布；禁止继续分别覆盖共享 `client_information` 和 `tokens` key，否则最后写入的 client 与 token 可能来自不同事务。
-- canonical pair 的 provider 读取也必须按快照进行。同一 provider 的 `clientInformation()` 和 `tokens()` 读取同一个 pair，避免两次独立文件读取之间被其他进程换代。只有共享凭据 I/O、解析和快照派生全部成功后才能把缓存标记为已加载；锁超时或临时 I/O 失败必须保持未加载，使同一个 provider 的下一次调用能够重试。
-- discovery metadata 仍是配置级共享缓存；PKCE verifier 继续在 credential prefix 下按 OAuth `state` 隔离。不同 adapter、不同 callback 端口或并发重连不得读写同一个 verifier key。
+- Dynamically registered client information and the PKCE `code_verifier` belong to a single transaction while authorization is in flight. The provider must pin this transaction's client within one OAuth `state` lifecycle; repeated `clientInformation()` calls during SDK registration or code exchange must not re-read a client published by another transaction. The dynamic-registration result is also written immediately to the legacy client key as a recovery seed for a new authorization after provider rebuild; the current transaction still uses only its in-memory pinned client and never re-binds due to concurrent registration.
+- After a successful token exchange, the dynamic client information and `access_token` / `refresh_token` form one config-level canonical credential pair. The pair must be published atomically in one credential key via a single cross-process-locked read-modify-write; overwriting the shared `client_information` and `tokens` keys separately is forbidden — the last write could mix a client and tokens from different transactions.
+- Canonical-pair provider reads must also be snapshot-based. One provider's `clientInformation()` and `tokens()` read the same pair, avoiding a swap between two file reads by another process. The cache is marked loaded only after shared-credential I/O, parsing, and snapshot derivation all succeed; lock timeouts or transient I/O failures must keep it unloaded so the same provider's next call can retry.
+- Discovery metadata stays a config-level shared cache; PKCE verifiers stay isolated per OAuth `state` under the credential prefix. Different adapters, callback ports, or concurrent reconnects must never read/write the same verifier key.
 
-每次 `authorization_code` 授权保持独立的随机 `state`、PKCE verifier、localhost callback server 和动态端口。一个调用方超时、取消或关闭时，只能关闭自己的 callback server 并清理本事务的 verifier/client；不得清理相同 MCP 配置下其他 pending 授权，也不得无条件删除配置级 canonical pair。
+Each `authorization_code` authorization keeps its own random `state`, PKCE verifier, localhost callback server, and dynamic port. When one caller times out, cancels, or closes, it may close only its own callback server and clean its own transaction's verifier/client — never other pending authorizations under the same MCP config, and never unconditionally delete the config-level canonical pair.
 
-SDK 在 invalid client/grant 后会调用 `invalidateCredentials()` 并重试。provider 只能删除自己实际读取或发布的 canonical 原始快照：删除必须在凭据文件锁内比较当前值与期望值，匹配才删除。若另一个进程已经发布新 pair，compare-and-delete 必须失败并保留新值；随后当前 provider 清空本地快照并重新读取。仅比较 `publishedBy` 与当前 state 不足以覆盖 refresh，因为 refresh session 合法消费的是之前 state 发布的 pair。
+After invalid client/grant, the SDK calls `invalidateCredentials()` and retries. The provider may delete only the canonical raw snapshot it actually read or published: deletion must compare current vs expected values under the credential file lock and delete only on match. If another process has published a new pair, the compare-and-delete must fail and keep the new value; the provider then clears its local snapshot and re-reads. Comparing only `publishedBy` with the current state does not cover refresh, because a refresh session legitimately consumes the pair published by an earlier state.
 
-升级兼容采用双向兼容窗口：`saveTokens()` 在同一个凭据文件临界区原子发布 v2 canonical pair 及匹配的 legacy `client_information` / `tokens` 镜像。v2 reader 只在 legacy client 与 canonical client 相同时采用旧进程单独写入的新 token，此时可以确认是同一 client 的 refresh；legacy token 缺失仍表示旧进程已 invalidate。若 legacy client 与 token 相对 canonical 同时变化，无 generation 的旧格式无法证明两者来自同一事务，v2 reader 必须保留 legacy client、丢弃不可信 token 并重新授权，禁止猜测性拼接。v1 canonical 没有镜像承诺，仅在 legacy tokens 被旧进程重新写入且身份可确认时优先采用该更新。待所有共享凭据的受支持版本均能读取 canonical 后，再通过独立迁移版本移除 legacy key。CLI 与 desktop 可能独立升级却共享凭据文件，因此客户端遇到未知 canonical version 时必须保留原值并回退，禁止把新版本快照当损坏数据删除。
+Upgrade compatibility uses a two-way window: `saveTokens()` atomically publishes the v2 canonical pair plus matching legacy `client_information` / `tokens` mirrors in one credential-file critical section. A v2 reader adopts a new token written separately by an old process only when the legacy client equals the canonical client — confirming a refresh of the same client; a missing legacy token still means the old process invalidated it. If legacy client and token both changed relative to canonical, the generation-less old format cannot prove they came from one transaction: the v2 reader must keep the legacy client, drop the untrusted token, and re-authorize — no speculative stitching. The v1 canonical has no mirror promise and prefers that update only when legacy tokens were rewritten by an old process with a confirmable identity. Remove legacy keys later via a separate migration version, only after every supported version sharing the credentials can read canonical. CLI and desktop may upgrade independently while sharing the credential file, so a client seeing an unknown canonical version must keep the original value and fall back — never treat a newer snapshot as corruption and delete it.
 
-成功换取 token 后或授权会话关闭时，应清理本事务 verifier。callback server 继续使用 `listen(0)` 分配随机端口，不引入固定端口或跨进程端口互斥。
+Clean up the transaction verifier after a successful exchange or when the authorization session closes. The callback server keeps using `listen(0)` for a random port — no fixed ports, no cross-process port mutex.
 
-localhost callback 的随机端口、监听 socket 和 OAuth `state` 属于当前进程，进程退出后原浏览器回调不能继续投递；重建 provider 只恢复已注册 client 并发起新的授权尝试，不承诺恢复已失效的 callback URL。授权完成后的 verifier 清理是 best-effort，清理失败必须记录安全日志，但不能把已经成功的 token exchange 或连接重试反转为失败。
+The callback's random port, listening socket, and OAuth `state` belong to the current process; after exit, the original browser callback cannot be delivered. A rebuilt provider only restores the registered client and starts a new authorization attempt — it never promises to revive an expired callback URL. Post-authorization verifier cleanup is best-effort: failures must log a security event but never reverse a successful token exchange or connection retry into a failure.
 
-## 共享凭据文件完整性
+## Shared credential file integrity
 
-CLI adapter 与 desktop host process 会共同读写同一个 `credentials.json`。所有 read-modify-write 变更必须遵守以下约束：
+The CLI adapter and desktop host process both read/write the same `credentials.json`. All read-modify-write changes must follow:
 
-- 整个 read-modify-write 临界区使用同一套跨进程文件锁；只给单次 `writeFile` 加锁不能防止旧快照覆盖其他进程刚写入的 key。
-- 写入必须在目标目录创建临时文件，设置私有文件权限后通过 rename 原子替换；macOS/Windows 上的瞬时 rename 占用错误需要做有界重试。
-- `ENOENT` 才表示空凭据文件。JSON 损坏、schema 不合法或其他读取错误必须先按内容哈希幂等保留一份权限为 `0600` 的 `.corrupt-<content-hash>.bak` 证据，再抛出错误；同一损坏内容无论被多少进程重复读取都只能生成一份备份。禁止把损坏内容降级成 `{}` 后继续保存，否则会清空全部凭据。
-- 锁只覆盖本地凭据 I/O，不覆盖等待浏览器授权、网络 token exchange 或 15 秒 Session 授权窗口。
+- The whole read-modify-write critical section uses one cross-process file lock; locking only the individual `writeFile` cannot stop a stale snapshot from overwriting keys another process just wrote.
+- Writes create a temp file in the target directory, set private file permissions, and atomically replace via rename; transient rename occupancy errors on macOS/Windows need a bounded retry.
+- Only `ENOENT` means an empty credential file. Corrupt JSON, invalid schema, or other read errors must first idempotently preserve a `0600` `.corrupt-<content-hash>.bak` evidence copy keyed by content hash, then throw; the same corrupt content read by any number of processes produces exactly one backup. Never degrade corrupt content to `{}` and keep saving — that would wipe all credentials.
+- The lock covers local credential I/O only — never browser-authorization waits, network token exchange, or the 15-second session authorization window.
 
-并发诊断日志只记录安全标识：进程 PID、adapter instance id、credential key prefix、OAuth state 的短哈希和 callback 端口。不得记录 verifier、authorization code、access token、refresh token 或 client secret。
+Concurrency diagnostics log only safe identifiers: process PID, adapter instance id, credential key prefix, a short hash of the OAuth state, and the callback port. Never log verifiers, authorization codes, access/refresh tokens, or client secrets.
 
-## 影响与用例边界
+## Impact and case boundaries
 
-本次完整性修复的影响面限定为 `persistence + validation/recovery`，不改变设置页交互、MCP protocol DTO、desktop continuous 或 web-remote replayable 交付语义。
+The integrity fix's scope is `persistence + validation/recovery`; settings-page interaction, MCP protocol DTOs, and desktop-continuous / web-remote-replayable delivery semantics are unchanged.
 
-| 触发                                          | 归属边界           | 必须保持的结果                                                                         |
-| --------------------------------------------- | ------------------ | -------------------------------------------------------------------------------------- |
-| 两个 adapter 同时对相同 MCP 配置发起授权      | OAuth 事务状态     | 两个 state 分别读取自己的 verifier/client，并都能通过严格 PKCE 与 code/client 绑定校验 |
-| 两个授权事务先后成功并发布 token              | OAuth 配置快照     | canonical client 与 tokens 始终来自同一事务，后续 refresh 不发生身份错配               |
-| 旧进程注册新 client 与另一旧进程 refresh 交错 | 版本兼容窗口       | 无 generation 时丢弃无法证明归属的 token，重新授权而不拼接不同身份                     |
-| 失败事务与成功事务并发收口                    | OAuth 凭据失效     | 失败方只能 compare-and-delete 自己读取的旧快照，不得删除成功方新发布的 pair            |
-| CLI 与 desktop host 同时写不同凭据 key        | 共享凭据持久化     | 两个变更都保留，不发生 whole-file lost update                                          |
-| 凭据文件是无效 JSON 或 schema                 | 凭据恢复           | 保存失败、原文件不被覆盖，并产生可诊断备份                                             |
-| 单个授权等待超时或关闭                        | OAuth 事务生命周期 | 只清理本 state 的 callback/verifier，不影响其他 pending state                          |
+| Trigger                                                                          | Boundary                      | Required outcome                                                                                        |
+| -------------------------------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------- |
+| two adapters authorize the same MCP config at once                               | OAuth transaction state       | both states read their own verifier/client and both pass strict PKCE and code/client binding            |
+| two transactions succeed and publish tokens in turn                              | OAuth config snapshot         | canonical client and tokens always come from one transaction; later refreshes never mismatch identities |
+| an old process registers a client interleaved with another old process's refresh | version-compat window         | drop tokens of unprovable ownership without generations; re-authorize instead of stitching identities   |
+| a failing transaction settles concurrently with a successful one                 | OAuth credential invalidation | the failing side only compare-and-deletes its own old snapshot, never the newly published pair          |
+| CLI and desktop host write different credential keys simultaneously              | shared credential persistence | both changes survive; no whole-file lost update                                                         |
+| credential file is invalid JSON or schema                                        | credential recovery           | save fails, the original file is not overwritten, and a diagnosable backup exists                       |
+| a single authorization wait times out or closes                                  | OAuth transaction lifecycle   | only that state's callback/verifier is cleaned; other pending states unaffected                         |
 
-暂不在本次修复中合并设置页与 Session adapter 实例。
+Merging the settings page and session adapter instances is not part of this fix.
 
-跨进程 OAuth leader/lease 与 refresh-token single-flight 两项已在补齐真实进程/PID 运行时证据后转正，成为 v4 两阶段连接设计，见 `docs/mcp-oauth-two-phase.md`。该设计取代本节此前「暂不增加」的表述：
+Cross-process OAuth leader/lease and refresh-token single-flight have both graduated into the v4 two-phase connection design with real process/PID runtime evidence — see `docs/mcp-oauth-two-phase.md`. That design replaces this section's earlier "not for now" wording:
 
-- 被动连接改用纯 `AuthProvider`，零 listener、零 discovery、零 DCR；
-- 所有 refresh（主动与 reactive）汇入一把独立于 credentials 文件的跨进程 refresh 锁；
-- 交互授权由独立授权锁做跨进程与进程内两级单飞，DCR client 在授权事务内只存内存；
-- canonical pair 增加每次 publication 唯一的 `generation`，失效改用 generation 条件事务。
+- passive connections use a pure `AuthProvider` with zero listeners, zero discovery, zero DCR;
+- all refreshes (active and reactive) funnel through one cross-process refresh lock separate from the credentials file;
+- interactive authorization gets cross-process and in-process single-flight via a dedicated authorization lock; the DCR client lives in memory only within the authorization transaction;
+- the canonical pair gains a unique `generation` per publication; invalidation becomes a generation-conditional transaction.
 
-## 设置页 status-only 刷新边界
+## Settings-page status-only refresh boundaries
 
-- OAuth pending、授权回调后的 follow-up，以及从浏览器回到 app 的刷新统一使用 `mcp/list mode=status`，只读取 runtime status，不执行连接集合收敛。
-- 普通全量 `connect` 仍负责新增、删除、配置变更和 stale server 收敛；若同名 server 配置未变且已有 authorization-code OAuth 正在等待 callback，重复收敛必须复用该 pending 连接，不能关闭 callback/session 或生成新的授权 URL。
-- pending/follow-up 缓存、配置加载 readiness、排队请求和响应合并必须绑定 `workspaceKey = workspaceIdentity?.trim() || workspacePath`。切换 workspace 时立即清空旧配置与 OAuth 缓存；旧 workspace runner 尚未发送时直接丢弃，已发送请求的结果也不得合并到新 workspace，更不能把旧 workspace 的 env、headers 或 OAuth `clientSecret` 发送给新的本地或远程 Agent。
-- follow-up 是 pending 消失边沿触发的一次有界重试窗口；创建后，同 workspace 的 status snapshot merge 不能把它清空。只有重试耗尽、workspace 切换、重新进入 pending 或明确停止轮询时才结束该窗口。
-- pending 状态轮询使用从窗口创建时计算的 5 分钟墙钟 deadline；每次调度前和请求完成后都检查 deadline，不能用请求次数近似持续时间，避免慢请求把轮询窗口放大到数小时。
-- status-only 与全量 connect 使用独立 request epoch；status-only 开始时只推进自身 epoch，不清 authorization/tool count、不把其他 changed/unknown 行投影成 connecting，也不能作废同时进行的 connect 结果。
-- status-only 请求失败时，设置页保留已有 status snapshot、authorization URL 和其他 MCP 的连接态；不能按全量 connect 失败清空 snapshot 或批量标记错误。
-- 旧 Agent 若拒绝 `mode=status`，service 不得省略 `mode` 后静默重试默认 `connect`，并应返回稳定的“不支持 status-only”错误码。设置页识别后保留现有 UI snapshot，停止 pending/follow-up 定时轮询和焦点刷新，并一次性提示用户升级或重启后重新打开 MCP 设置执行完整刷新；切换 workspace 或成功执行显式全量刷新后再允许探测，避免持续告警或兼容路径改变 runtime 连接集合。
+- OAuth pending, post-callback follow-up, and refresh-on-return-to-app all use `mcp/list mode=status`, reading runtime status only and never converging the connection set.
+- A normal full `connect` still handles adds, removals, config changes, and stale-server convergence; if a same-named server's config is unchanged and an authorization-code OAuth is already waiting for callback, repeated convergence must reuse that pending connection — never close the callback/session or mint a new authorization URL.
+- Pending/follow-up caches, config-load readiness, queued requests, and response merging bind to `workspaceKey = workspaceIdentity?.trim() || workspacePath`. On workspace switch, immediately clear the old config and OAuth caches; requests not yet sent by the old workspace runner are dropped, results of already-sent requests must not merge into the new workspace, and the old workspace's env, headers, or OAuth `clientSecret` must never reach a new local or remote agent.
+- A follow-up is one bounded retry window triggered by the pending-disappears edge; once created, same-workspace status-snapshot merges must not clear it. Only retry exhaustion, workspace switch, re-entering pending, or explicitly stopping polling ends the window.
+- Pending-status polling uses a 5-minute wall-clock deadline computed at window creation; check it before each scheduling step and after each request completes — never approximate duration by request count, which slow requests could stretch into hours.
+- Status-only and full connect use independent request epochs; starting status-only advances only its own epoch — it must not clear authorization/tool counts, project other changed/unknown rows as connecting, or invalidate a concurrent connect's results.
+- On status-only failure, the settings page keeps the existing status snapshot, authorization URL, and other servers' connection states; never clear the snapshot or bulk-mark errors as a failed full connect would.
+- If an old agent rejects `mode=status`, the service must not silently retry the default `connect` by omitting `mode`; it returns a stable "status-only unsupported" error code. The settings page then keeps the current UI snapshot, stops pending/follow-up timers and focus refreshes, and prompts once to upgrade/restart and reopen MCP settings for a full refresh; probing resumes only after a workspace switch or an explicit full refresh — avoiding persistent alarms or a compatibility path that changes the runtime connection set.
 
-## 规范依据
+## Spec references
 
 - MCP Authorization specification: https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization
 - TypeScript SDK OAuth providers: https://www.npmjs.com/package/@modelcontextprotocol/sdk
 
-## 非目标
+## Non-goals
 
-- 不把 OAuth token 下沉到 desktop main、relay 或 web remote 业务状态；OAuth 行为只存在于 agent MCP adapter 的 HTTP/SSE transport。
-- 不为手机 `/remote` 创建独立 Agent runtime 或独立 MCP runtime。
-- 不实现 renderer 内嵌 OAuth WebView 或弹窗式登录；交互仍使用系统浏览器 + localhost callback，设置页按钮只是显式打开同一授权 URL。
-- 不为 stdio MCP 增加 OAuth 流程。
+- OAuth tokens never sink into desktop main, relay, or web remote business state; OAuth behavior lives only in the agent MCP adapter's HTTP/SSE transport.
+- No separate Agent runtime or MCP runtime for mobile `/remote`.
+- No embedded OAuth WebView or popup login in the renderer; interaction stays with the system browser + localhost callback, and the settings button just explicitly opens the same authorization URL.
+- No OAuth flow for stdio MCP.
 
-## 验证
+## Verification
 
-自动化验证需要覆盖：
+Automated coverage must include:
 
-- 配置 schema 接受 HTTP/SSE `oauth.authorization_code` 和 `oauth.client_credentials`，并拒绝缺少必要字段的配置。
-- ZCode Protocol DTO 在 session create/resume/mcp list 链路中保留 `oauth` 配置。
-- MCP adapter 对 HTTP/SSE transport 传入 `authProvider`，且静态 headers 仍保留。
-- MCP status snapshot 在 pending authorization_code OAuth 时返回 authorization URL，设置页展示手动打开按钮。
-- 端到端测试确认受保护 Streamable HTTP MCP server 在 401 -> authorize redirect -> callback code -> token -> retry 后连接成功并列出工具。
-- 严格 fake authorization server 每次动态注册返回不同 client，并校验 authorization code、client、redirect URI、S256 challenge/verifier 的绑定；两个并发 adapter 必须分别完成授权。
-- 并发事务完成后，持久化 canonical client/tokens 必须来自同一事务；新 provider 使用该 pair refresh 时不得退回重复授权。
-- 一个事务失败并触发 credential invalidation 时，不得删除另一个事务刚发布的 canonical pair。
-- 同进程并发和独立 Node 进程并发写入共享凭据文件时不丢 key。
-- CLI adapter 与 desktop credential service 遇到损坏凭据文件时都拒绝覆盖，并保留 `.corrupt-*.bak` 证据。
-- 同一损坏凭据被同进程或多进程重复读取时，备份按内容幂等且权限为 `0600`；内容变化后才创建新的诊断证据。
-- 新 provider 发布后旧 provider 仍能读取 legacy pair；旧 provider refresh 或 invalidate 后，新 provider 不得继续读取 stale canonical。
+- Config schema accepts HTTP/SSE `oauth.authorization_code` and `oauth.client_credentials` and rejects configs with missing required fields.
+- The ZCode Protocol DTO preserves `oauth` across session create/resume/mcp list.
+- The MCP adapter passes `authProvider` for HTTP/SSE transports, with static headers kept.
+- The MCP status snapshot returns the authorization URL on pending authorization_code OAuth, and the settings page shows the manual open button.
+- E2E: a protected Streamable HTTP MCP server connects and lists tools after 401 -> authorize redirect -> callback code -> token -> retry.
+- A strict fake authorization server returns a different client per dynamic registration and validates the authorization code, client, redirect URI, and S256 challenge/verifier binding; two concurrent adapters must each complete authorization.
+- After concurrent transactions complete, persisted canonical client/tokens come from one transaction; a new provider refreshing with that pair must not fall back to re-authorization.
+- When one transaction fails and triggers credential invalidation, it must not delete the canonical pair another transaction just published.
+- Concurrent writes to the shared credential file — same process and separate Node processes — lose no keys.
+- The CLI adapter and desktop credential service both refuse to overwrite a corrupt credential file and keep `.corrupt-*.bak` evidence.
+- Repeated reads of the same corruption, in one or many processes, produce an idempotent `0600` backup; only changed content creates new evidence.
+- After a new provider publishes, an old provider can still read the legacy pair; after the old provider refreshes or invalidates, the new provider must not keep reading stale canonical data.

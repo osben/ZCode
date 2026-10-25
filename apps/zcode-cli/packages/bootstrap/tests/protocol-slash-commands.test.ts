@@ -46,6 +46,7 @@ describe("protocol slash command surface", () => {
         { name: "workflow", source: "builtin" },
         { name: "compact", source: "builtin" },
         { name: "init", source: "builtin" },
+        { name: "dream", source: "builtin" },
         { name: "review", source: "custom" },
         { name: "ship", source: "custom" },
       ]);

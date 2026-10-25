@@ -42,9 +42,9 @@ export function decodeFilePathUriEscapes(path: string): string {
   }
 
   try {
-    // markdown/tool 输出里的本地文件路径可能已经按 URI 编码，
-    // 例如 workspace 名里的空格会变成 %20。这里用 decodeURI 只还原路径文本，
-    // 保留 %2F 这类分隔符转义，避免把文件名内容误拆成新的路径层级。
+    // Local file paths in markdown/tool output may already be URI-encoded;
+    // for example, spaces in a workspace name become %20. Use decodeURI to restore path text
+    // while preserving separator escapes such as %2F, so filename content is not misread as a new path segment.
     return decodeURI(path);
   } catch {
     return path;
@@ -66,9 +66,28 @@ export function joinFilePath(basePath: string, childPath: string): string {
   return `${normalizedBasePath}${separator}${normalizedChildPath}`;
 }
 
-// encodeURI 不转义 # 和 ?，但它们在 URL 里是 fragment/query 分隔符。
-// 文件名包含 # 时（如 index#v2.html）生成的 file URL 会被下游 URL 解析截断 pathname
-// （只剩 /E:/dir/index），shell 打开必然失败。这里在 encodeURI 之后补转义。
+/**
+ * Display-only `~` form of an absolute path under the Host home directory; any other path (or an
+ * unknown home) is returned unchanged. Never feed the result back into file operations.
+ */
+export function formatHomeRelativePath(path: string, homePath: string | undefined): string {
+  const home = homePath?.trim().replace(/[\\/]+$/, "");
+  if (!home || !isAbsoluteFilePath(home)) {
+    return path;
+  }
+  if (path === home) {
+    return "~";
+  }
+  const separator = path[home.length];
+  if (path.startsWith(home) && (separator === "/" || separator === "\\")) {
+    return `~${path.slice(home.length)}`;
+  }
+  return path;
+}
+
+// encodeURI does not escape # and ?, but they are fragment/query delimiters in URLs.
+// If a filename contains # (such as index#v2.html), downstream URL parsing truncates the pathname in the generated file URL
+// (leaving only /E:/dir/index), so opening it through the shell fails. Escape them after encodeURI.
 function encodeUriPathForFileUrl(value: string): string {
   return encodeURI(value).replace(/#/g, "%23").replace(/\?/g, "%3F");
 }

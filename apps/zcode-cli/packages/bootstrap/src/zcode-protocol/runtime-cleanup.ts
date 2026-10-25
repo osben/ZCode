@@ -1,4 +1,4 @@
-import type { Logger, McpPort } from "@zcode/contracts";
+import type { LanguageServerPort, Logger, McpPort } from "@zcode/contracts";
 import type { McpConnectionPool, McpTelemetryTracker } from "@zcode/adapters/mcp";
 import type { SqliteSessionStore } from "@zcode/adapters/storage";
 import { shutdownPreparedModelTelemetry } from "@zcode/telemetry";
@@ -19,14 +19,18 @@ export async function cleanupProtocolRuntime(options: {
   nodeReplBrowserBroker?: Pick<NodeReplBrowserBroker, "close">;
   mcpPort?: Pick<McpPort, "close">;
   mcpConnectionPool?: Pick<McpConnectionPool, "close">;
+  languageServerPort?: Pick<LanguageServerPort, "stopAll">;
   sessionStore?: SqliteSessionStore;
   providerRegistryRuntime?: { dispose(): unknown };
+  /** Resident ACP agent processes of this worker (specs/acp-agent-runtime.md). */
+  acpSessionPool?: { stopAll(): Promise<void> };
 }): Promise<void> {
   const deadline = options.deadlineAt ?? Date.now() + DEFAULT_CLEANUP_BUDGET_MS;
   const step = async (resource: string, cleanup: () => unknown | Promise<unknown>) => {
     let timeout: NodeJS.Timeout | undefined;
     try {
-      // 共用绝对 deadline；某项失败/挂起不阻止其余资源被尝试，也不逐项续时。
+      // Share one absolute deadline; a failed or hanging resource does not prevent attempts for the
+      // others, and the deadline is not extended per resource.
       await Promise.race([
         Promise.resolve().then(cleanup),
         new Promise<never>((_, reject) => {
@@ -54,14 +58,16 @@ export async function cleanupProtocolRuntime(options: {
   await step("projections", () => options.server?.disposeProjections());
   await Promise.all([
     step("node_repl_browser_broker", () => options.nodeReplBrowserBroker?.close()),
-    // 不能在同一个 finally 内 await：port 挂起时 pool 仍必须得到 close。
+    // Do not await inside the same finally block; the pool must still be closed if the port hangs.
     step("mcp", () => options.mcpPort?.close()),
     step("mcp_pool", () => options.mcpConnectionPool?.close()),
+    step("lsp_pool", () => options.languageServerPort?.stopAll()),
   ]);
   await Promise.all([
     step("session_store", () => {
       if (options.sessionStore) closeSessionStore(options.sessionStore);
     }),
+    step("acp_sessions", () => options.acpSessionPool?.stopAll()),
     step("provider_registry", () => options.providerRegistryRuntime?.dispose()),
     step("telemetry", () => shutdownPreparedModelTelemetry()),
   ]);

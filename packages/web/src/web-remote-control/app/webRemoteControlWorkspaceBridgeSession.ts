@@ -27,15 +27,15 @@ export function replayWebRemoteControlWorkspaceBridgeFrames(params: {
   activeRelayProtocol?: AcknowledgedWebRemoteControlRelayProtocolAdapter;
   pendingRelayProtocol?: AcknowledgedWebRemoteControlRelayProtocolAdapter;
 }): void {
-  // 能力校验未完成时新 bridge 仍是 pending；只重放 active 会让丢帧请求一直等到降级。
-  // 先恢复 pending，避免旧 active 已降级时阻断新 bridge；重放仍由各自 adapter 去重和限时。
+  // While capability validation is incomplete, the new bridge is still pending; replaying only active would leave dropped-frame requests waiting until degradation.
+  // Restore pending first, so a degraded old active does not block the new bridge; replay is still deduplicated and time-limited by each adapter.
   params.pendingRelayProtocol?.replayUnacknowledged();
   if (params.activeRelayProtocol?.isDegraded()) return;
-  // same-socket matched 也可能只丢了上一批 data/ACK；沿原序号去重和原始 45 秒期限重放。
+  // A same-socket matched may also have lost only the previous batch of data/ACK; replay using the original sequence-number dedup and the original 45-second deadline.
   params.activeRelayProtocol?.replayUnacknowledged();
 }
 
-/** 先接入待就绪 bridge 的收帧路径，验证能力后才由调用者发布服务。 */
+/** Attach the inbound-frame path for a bridge that is not ready yet first; the caller publishes the service only after capabilities are verified. */
 export async function connectWebRemoteControlWorkspaceBridgeServices(params: {
   relayProtocol: AcknowledgedWebRemoteControlRelayProtocolAdapter;
   windowProjectDirectory: boolean;
@@ -62,8 +62,8 @@ export async function connectWebRemoteControlWorkspaceBridgeServices(params: {
     const services = connectViaProtocol(params.relayProtocol.protocol, {
       windowProjectDirectory: params.windowProjectDirectory,
     });
-    // 事件监听没有就绪回包。若先等待 RPC 再接入收帧，回复会落到旧 bridge 而永久等待。
-    // 新导航或连接终止同时取消等待，迟到回复不能复活旧服务，也不回落 Source 目录。
+    // The event listener has no ready reply. If we wait for RPC before attaching the inbound-frame path, the reply lands on the old bridge and waits forever.
+    // A new navigation or connection termination cancels the wait at the same time; a late reply must not revive the old service or fall back to the Source directory.
     const capability = services.windowProjectDirectory
       ? services.windowProjectDirectory.changesService.getCapabilities().then((result) => {
           if (result?.version !== 1) throw new Error("window-project-directory.unsupported");
@@ -91,8 +91,8 @@ export function registerWebRemoteControlWorkspaceBridgeServices(params: {
     return { dispose: () => {} };
   }
 
-  // Bugfix: 手机 web relay 的远程 bridge 已经连上 host，但之前没有写入 remote session store。
-  // 这会让 hooks 按 workspaceIdentity 解析不到 session，转而走断连代理并报 ZCODE_REMOTE_WORKSPACE_DISCONNECTED。
+  // Bugfix: the remote bridge of the phone web relay had already connected to the host, but it was not written to the remote session store.
+  // As a result, hooks could not resolve the session by workspaceIdentity, fell back to the disconnected proxy, and reported ZCODE_REMOTE_WORKSPACE_DISCONNECTED.
   registerRemoteWorkspaceSession({
     sessionId: bridge.remoteSessionId,
     services,
@@ -102,9 +102,9 @@ export function registerWebRemoteControlWorkspaceBridgeServices(params: {
 
   return {
     dispose: () => {
-      // Bugfix: 手机硬恢复会为同一个 SSH session 重新创建 bridge，remoteSessionId 可能不变。
-      // 旧 bridge 的 dispose 晚于新 bridge 注册时，不能只按 sessionId 清理，否则会把新 services
-      // 和 identity/path 映射删掉，hooks 随后会误判为 ZCODE_REMOTE_WORKSPACE_DISCONNECTED。
+      // Bugfix: a phone hard recovery recreates the bridge for the same SSH session, and remoteSessionId may stay the same.
+      // When the old bridge's dispose runs after the new bridge has registered, cleanup must not key only on sessionId, otherwise the new services
+      // and identity/path mappings get deleted, and hooks then misjudge the state as ZCODE_REMOTE_WORKSPACE_DISCONNECTED.
       if (getRemoteWorkspaceSession(bridge.remoteSessionId)?.services !== services) {
         return;
       }

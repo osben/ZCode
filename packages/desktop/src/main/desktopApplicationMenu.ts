@@ -2,8 +2,10 @@ import { app, BrowserWindow, Menu } from "electron";
 import {
   DesktopCommandIds,
   desktopMenuMessageIds,
+  FALLBACK_UI_LOCALE,
   getDesktopMenuMessage,
   isValidShortcutBinding,
+  resolveSystemLocale,
   ZCODE_ENV,
   ZCODE_PRODUCT_FLAVOR,
   type DesktopCommandId,
@@ -32,10 +34,10 @@ export function getDesktopMenuLabel(
 }
 
 export function resolveSystemApplicationLocale(): Locale {
-  // macOS 系统语言为中文时，Electron app.getLocale() 仍可能返回 en-US；
-  // 优先读取系统首选语言列表，避免 System default 被误解析成英文。
+  // When the macOS system language is Chinese, Electron app.getLocale() may still return en-US.
+  // Prefer the system's preferred-language list so System default is not incorrectly parsed as English.
   const systemLocale = app.getPreferredSystemLanguages?.()[0] ?? app.getLocale();
-  return systemLocale.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
+  return resolveSystemLocale(systemLocale, FALLBACK_UI_LOCALE);
 }
 
 export function updateZCodeStdioTapDevMenuState() {
@@ -49,16 +51,18 @@ export function updateZCodeStdioTapDevMenuState() {
   item.visible = state.visible;
 }
 
-/** 菜单通道命令的快捷键共享 options 类型（shortcutBindings 为 setting.json 里的用户覆盖）。 */
+/** Shared options type for menu-channel command shortcuts (shortcutBindings contains user overrides from setting.json). */
 interface ApplicationMenuShortcutOptions {
   shortcutBindings?: Record<string, string[]>;
 }
 
 /**
- * 从用户覆盖解析菜单 accelerator：显式空数组 = 抢绑后的「未设置」（无 accelerator）；
- * 覆盖全部非法时回退硬编码默认值（与 renderer 生效表语义一致）。
- * main 进程只需要"命令 → accelerator 字符串"，完整生效表语义在 ui 快捷键内核。
- * 录制态返回 undefined（菜单项不带 accelerator，仍可点击），防止录制按键触发原命令。
+ * Resolve menu accelerators from user overrides: an explicit empty array means "unset" after a
+ * shortcut has been claimed (no accelerator). If all overrides are invalid, fall back to the
+ * hard-coded default, matching renderer effective-map semantics.
+ * Main needs only "command → accelerator string"; full effective-map semantics live in the UI
+ * shortcut engine. During recording, return undefined (leave the menu item clickable without an
+ * accelerator) so recorded keys do not trigger the original command.
  */
 function resolveMenuAccelerator(
   options: ApplicationMenuShortcutOptions & { disableShortcutAccelerators?: boolean },
@@ -68,9 +72,10 @@ function resolveMenuAccelerator(
   if (options.disableShortcutAccelerators) {
     return undefined;
   }
-  // `?.find(isValid) ?? fallback` 会把「显式空数组 = 未设置」和
-  // 「全部非法 = 回退默认」压成同一条路径，抢绑后被抢命令的默认 accelerator 复活，
-  // 同键双动作且与「被抢命令变未设置」的 UI 承诺矛盾。
+  // `?.find(isValid) ?? fallback` would collapse "explicit empty array = unset" and "all invalid =
+  // fall back to default" into one path. After a shortcut is claimed, the displaced command's
+  // default accelerator would reappear, causing two actions on one key and violating the UI promise
+  // that the displaced command becomes unset.
   const overrideList = options?.shortcutBindings?.[commandId];
   if (overrideList !== undefined) {
     if (overrideList.length === 0) {
@@ -84,13 +89,15 @@ function resolveMenuAccelerator(
 function buildApplicationMenuTemplate(options: {
   currentApplicationLocale: Locale;
   zcodeEndpointSelection?: "production" | "test" | "custom";
+  /** A distinct test origin exists (spec: specs/zcode-test-endpoint-menu.md); without it the Test radio is hidden. */
+  zcodeTestEndpointAvailable?: boolean;
   executeDesktopCommand: (
     command: DesktopCommandId,
     senderWindow?: BrowserWindow | null,
   ) => Promise<unknown>;
   currentZoomLevel?: number;
   shortcutBindings?: Record<string, string[]>;
-  /** 快捷键设置页录制态：true 时摘掉全部可配置 accelerator */
+  /** Shortcut-settings recording state: when true, remove all configurable accelerators. */
   disableShortcutAccelerators?: boolean;
 }): Electron.MenuItemConstructorOptions[] {
   const getLabel = (id: (typeof desktopMenuMessageIds)[keyof typeof desktopMenuMessageIds]) =>
@@ -103,8 +110,9 @@ function buildApplicationMenuTemplate(options: {
   const canResetZoom = currentZoomLevel !== 0;
   const canZoomIn = currentZoomLevel < DESKTOP_ZOOM_MAX_LEVEL;
   const canZoomOut = currentZoomLevel > DESKTOP_ZOOM_MIN_LEVEL;
-  // zoomIn 主绑定含 "=" 时保留 Plus 可见 + "=" 隐藏的双条目（Plus 在菜单显示更好，"=" 兜底 Windows 无 Shift 直按）。
-  // 录制态 accelerator 为 undefined（摘掉键位，菜单项保留可点击）。
+  // When zoomIn's main binding includes "=", keep both entries: show Plus in the menu and keep "="
+  // hidden as a fallback for direct typing on Windows without Shift. During recording, the
+  // accelerator is undefined (remove the key but keep the menu item clickable).
   const zoomInBinding = resolveMenuAccelerator(options, "zoomIn", "CmdOrCtrl+=");
   const zoomInVisibleAccelerator = zoomInBinding?.replace("=", "Plus");
 
@@ -118,7 +126,7 @@ function buildApplicationMenuTemplate(options: {
                 label: getLabel(desktopMenuMessageIds.helpAbout),
                 click: () => void options.executeDesktopCommand(DesktopCommandIds.ShowAbout),
               },
-              // 更新入口跟随产品身份：Preview 禁用更新器，生产后端的 Preview 也不例外。
+              // The update entry follows product identity: disable the updater in Preview, including Preview builds using the production backend.
               ...(ZCODE_PRODUCT_FLAVOR === "production"
                 ? [
                     {
@@ -173,16 +181,18 @@ function buildApplicationMenuTemplate(options: {
         {
           label: getLabel(desktopMenuMessageIds.fileCloseWindow),
           accelerator: resolveMenuAccelerator(options, "closeActiveContext", "CmdOrCtrl+W"),
-          // Electron 的 close role 会在 main 进程直接关闭窗口，renderer 没机会判断
-          // 右侧 side pane 是否有 active tab。这里改为业务命令，让快捷键先进入 workspace 状态机。
+          // Electron's close role closes the window directly in main, so the renderer cannot check
+          // whether the right side pane has an active tab. Use a business command instead so the
+          // shortcut first enters the workspace state machine.
           click: () => void options.executeDesktopCommand(DesktopCommandIds.CloseActiveContext),
         },
       ],
     },
     {
       label: getLabel(desktopMenuMessageIds.edit),
-      // 顶层使用 Electron 的 editMenu/windowMenu role 会按系统/Electron locale 生成文案，
-      // 和应用内 currentApplicationLocale 混用后出现“文件 Edit 视图 Window 帮助”的中英混排。
+      // Electron's top-level editMenu/windowMenu roles generate labels using the system/Electron
+      // locale, which can mix languages with currentApplicationLocale in the app (for example,
+      // Chinese File and Help labels with English Edit and Window labels).
       submenu: [
         { label: getLabel(desktopMenuMessageIds.editUndo), role: "undo" as const },
         { label: getLabel(desktopMenuMessageIds.editRedo), role: "redo" as const },
@@ -203,7 +213,7 @@ function buildApplicationMenuTemplate(options: {
           click: () => void options.executeDesktopCommand(DesktopCommandIds.ToggleFullScreen),
         },
         { type: "separator" as const },
-        // zoom 命令的 accelerator 跟随用户快捷键设置（shortcutBindings 用户覆盖）。
+        // Zoom command accelerators follow the user's shortcut settings (shortcutBindings overrides).
         {
           label: getLabel(desktopMenuMessageIds.viewZoomIn),
           accelerator: zoomInVisibleAccelerator,
@@ -306,14 +316,20 @@ function buildApplicationMenuTemplate(options: {
                         DesktopCommandIds.SetZCodeEndpointProduction,
                       ),
                   },
-                  {
-                    id: HELP_ZCODE_ENDPOINT_TEST_MENU_ID,
-                    label: getLabel(desktopMenuMessageIds.helpZCodeEndpointTest),
-                    type: "radio" as const,
-                    checked: options.zcodeEndpointSelection === "test",
-                    click: () =>
-                      void options.executeDesktopCommand(DesktopCommandIds.SetZCodeEndpointTest),
-                  },
+                  ...(options.zcodeTestEndpointAvailable
+                    ? [
+                        {
+                          id: HELP_ZCODE_ENDPOINT_TEST_MENU_ID,
+                          label: getLabel(desktopMenuMessageIds.helpZCodeEndpointTest),
+                          type: "radio" as const,
+                          checked: options.zcodeEndpointSelection === "test",
+                          click: () =>
+                            void options.executeDesktopCommand(
+                              DesktopCommandIds.SetZCodeEndpointTest,
+                            ),
+                        },
+                      ]
+                    : []),
                   { type: "separator" as const },
                   {
                     label: getLabel(desktopMenuMessageIds.helpZCodeEndpointCustom),
@@ -363,13 +379,15 @@ function buildApplicationMenuTemplate(options: {
 export function rebuildApplicationMenu(options: {
   currentApplicationLocale: Locale;
   zcodeEndpointSelection?: "production" | "test" | "custom";
+  /** A distinct test origin exists (spec: specs/zcode-test-endpoint-menu.md); without it the Test radio is hidden. */
+  zcodeTestEndpointAvailable?: boolean;
   executeDesktopCommand: (
     command: DesktopCommandId,
     senderWindow?: BrowserWindow | null,
   ) => Promise<unknown>;
   currentZoomLevel?: number;
   shortcutBindings?: Record<string, string[]>;
-  /** 快捷键设置页录制态：true 时摘掉全部可配置 accelerator */
+  /** Shortcut-settings recording state: when true, remove all configurable accelerators. */
   disableShortcutAccelerators?: boolean;
 }) {
   Menu.setApplicationMenu(
@@ -377,6 +395,7 @@ export function rebuildApplicationMenu(options: {
       buildApplicationMenuTemplate({
         currentApplicationLocale: options.currentApplicationLocale,
         zcodeEndpointSelection: options.zcodeEndpointSelection,
+        zcodeTestEndpointAvailable: options.zcodeTestEndpointAvailable,
         executeDesktopCommand: options.executeDesktopCommand,
         currentZoomLevel: options.currentZoomLevel,
         shortcutBindings: options.shortcutBindings,

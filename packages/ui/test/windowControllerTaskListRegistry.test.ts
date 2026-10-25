@@ -376,7 +376,7 @@ describe("windowControllerTaskListRegistry", () => {
   });
 });
 
-it("项目活动读取复用 Controller 快照，过滤离线来源且不输出任务事实", async () => {
+it("project overlays reuse the Controller snapshot, drop offline sources, and carry only activity and child facts", async () => {
   const frames = new Emitter<WindowHostControllerFrame>();
   const controller = {
     onDynamicControllerFrame: () => frames.event,
@@ -400,6 +400,37 @@ it("项目活动读取复用 Controller 快照，过滤离线来源且不输出�
     },
     sourceAvailability: "offline" as const,
   };
+  // Idle parent: no live activity, but Host child facts must still reach the sidebar (spec §7).
+  // An older host also sends subagent rows and counters; the overlay keeps side chats only (§9).
+  const idleParent = taskRow();
+  const sideChat = {
+    sessionId: "chat-1",
+    title: "side chat",
+    taskType: "selection_side_chat" as const,
+    lastActivityAt: 6,
+    running: false,
+  };
+  const childFacts = {
+    sideChatCount: 1,
+    subagentCount: 2,
+    runningSubagentCount: 1,
+    childSessions: [
+      {
+        sessionId: "child-1",
+        title: "child",
+        taskType: "subagent_child" as const,
+        lastActivityAt: 5,
+        running: true,
+        backgroundWorkId: "work-1",
+      },
+      sideChat,
+    ],
+  };
+  const idle = {
+    ...idleParent,
+    address: { taskId: "task-2", workspacePath: "/work/demo" },
+    meta: { ...idleParent.meta, taskId: "task-2", title: "task-2", ...childFacts },
+  };
   frames.fire({
     topic: CONTROLLER_TASKS_INDEX_TOPIC,
     subscriptionId: CONTROLLER_TASKS_INDEX_TOPIC,
@@ -409,10 +440,13 @@ it("项目活动读取复用 Controller 快照，过滤离线来源且不输出�
     sentAt: 1,
     payload: {
       kind: "snapshot",
-      snapshot: { protocolVersion: 1, logEpoch: "e", tasks: [live, offline] },
+      snapshot: { protocolVersion: 1, logEpoch: "e", tasks: [live, offline, idle] },
     },
   });
-  expect(registry.readActivities()).toEqual([{ address: live.address, activity: live.activity }]);
+  expect(registry.readTaskOverlays()).toEqual([
+    { address: live.address, activity: live.activity },
+    { address: idle.address, childFacts: { sideChatCount: 1, childSessions: [sideChat] } },
+  ]);
   stop();
-  expect(registry.readActivities()).toEqual([]);
+  expect(registry.readTaskOverlays()).toEqual([]);
 });

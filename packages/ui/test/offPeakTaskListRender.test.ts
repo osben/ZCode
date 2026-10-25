@@ -24,7 +24,7 @@ function renderList(tasks: ZCodeOffPeakTask[]) {
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(OffPeakTaskList, {
         tasks,
         busyOperationId: null,
@@ -40,7 +40,7 @@ function renderList(tasks: ZCodeOffPeakTask[]) {
 }
 
 describe("OffPeakTaskList render", () => {
-  it("超过 8 张卡片时 grid 自身滚动，8 张及以内不锁高度", () => {
+  it("scrolls the grid itself past 8 cards; 8 or fewer keeps the height unlocked", () => {
     const eight = Array.from({ length: 8 }, (_, i) => task({ offPeakTaskId: `t-${i}` }));
     const view = renderList(eight);
     const grid = view.getAllByTestId(TID_OFFPEAK_CARD)[0]!.parentElement!;
@@ -49,7 +49,7 @@ describe("OffPeakTaskList render", () => {
     view.rerender(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(OffPeakTaskList, {
           tasks: [...eight, task({ offPeakTaskId: "t-8" })],
           busyOperationId: null,

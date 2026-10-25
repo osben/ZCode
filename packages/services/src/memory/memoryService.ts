@@ -1,32 +1,45 @@
 import type { Memory, MemoryConfig } from "@zcode/shared";
+import { PROJECT_MEMORY_FILE_CHANGED_ERROR_CODE } from "./memory.js";
 import {
   type IMemoryService,
   type ProjectMemoryFileSummary,
   type ProjectMemoryWorkspaceSummary,
 } from "./memory.js";
-import {
-  lstat,
-  mkdir,
-  readFile,
-  readdir,
-  realpath,
-  writeFile,
-} from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
-import { readProjectMemoryFileFromStableHandle } from "#src/memory/projectMemoryStableRead.js";
+import {
+  readProjectMemoryFileFromStableHandle,
+  readProjectMemoryFileWithStableHandle,
+} from "#src/memory/projectMemoryStableRead.js";
+import {
+  type ProjectMemoryFrontmatterMeta,
+  parseProjectMemoryFrontmatter,
+  readProjectMemoryFrontmatterHead,
+} from "#src/memory/projectMemoryFrontmatter.js";
 import { getZCodeDataRootDir } from "#src/paths.js";
+import { readProjectMemoryIndexLineCount } from "#src/memory/projectMemoryIndexContent.js";
+import { createServiceLogger } from "#src/logger/serviceLogger.js";
 
+const logger = createServiceLogger("memory");
 const PROJECT_MEMORY_INDEX_FILE_NAME = "MEMORY.md";
 const PROJECT_MEMORY_DIRECTORY_NAME = "memory";
+// Success marker written by the runtime only after a Dream run completes (see
+// writeDreamConsolidatedAt in apps/zcode-cli/packages/core/src/memory/dream.ts). The lock file's
+// mtime marks a run start and survives crashes, so it must not back this display value.
+const PROJECT_MEMORY_DREAM_CONSOLIDATED_AT_FILE_NAME = ".consolidated-at";
 const PROJECT_KEY_SUFFIX_PATTERN = /^(.*)-[a-f0-9]{16}$/i;
 
 function isNotFoundError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+function isProjectMemoryFileChangedError(error: unknown): boolean {
   return (
     typeof error === "object" &&
     error !== null &&
     "code" in error &&
-    error.code === "ENOENT"
+    error.code === PROJECT_MEMORY_FILE_CHANGED_ERROR_CODE
   );
 }
 
@@ -69,18 +82,19 @@ async function isPlainDirectory(path: string): Promise<boolean> {
   }
 }
 
+// The index budget chip compares against the CLI injection line limit (MEMORY_INDEX_LINE_LIMIT in
+// apps/zcode-cli/packages/core/src/memory/index-content.ts), so the count must cover the whole
+// index file; the frontmatter head-scan bound only guards per-file metadata extraction.
 async function requirePlainDirectory(path: string): Promise<void> {
   const metadata = await lstat(path);
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
-    throw new Error(
-      `Project Memory directory is not a regular directory: ${path}`,
-    );
+    throw new Error(`Project Memory directory is not a regular directory: ${path}`);
   }
 }
 
 async function requireProjectMemoriesRoot(): Promise<string> {
   const projectsRoot = getProjectMemoriesRoot();
-  // 只校验 workspace 子目录时，projectsRoot symlink 会让 list/read 跟随到本地数据目录外。
+  // Checking only the workspace subdirectory would allow a projectsRoot symlink to make list/read follow paths outside the local data directory.
   await requirePlainDirectory(projectsRoot);
   return projectsRoot;
 }
@@ -93,11 +107,9 @@ async function requireExactProjectMemoryFile(
   const fileEntry = memoryEntries.find((entry) => entry.name === fileName);
   const requestedFilePath = join(memoryRoot, fileName);
   if (!fileEntry) {
-    // 文件确实不存在时继续透传原始 ENOENT；只有大小写别名能命中时才拒绝读取。
+    // Pass through the original ENOENT when the file truly does not exist; reject only when a case-insensitive alias would match.
     await lstat(requestedFilePath);
-    throw new Error(
-      `Project Memory file name does not match exactly: ${fileName}`,
-    );
+    throw new Error(`Project Memory file name does not match exactly: ${fileName}`);
   }
   if (!fileEntry.isFile() || fileEntry.isSymbolicLink()) {
     throw new Error(`Project Memory file is not a regular file: ${fileName}`);
@@ -112,14 +124,8 @@ async function assertContainedProjectMemoryPath(
   const projectsRootRealPath = await realpath(projectsRoot);
   const targetRealPath = await realpath(targetPath);
   const relativePath = relative(projectsRootRealPath, targetRealPath);
-  if (
-    relativePath === ".." ||
-    relativePath.startsWith(`..${sep}`) ||
-    isAbsolute(relativePath)
-  ) {
-    throw new Error(
-      `Project Memory path is outside the local profile: ${targetPath}`,
-    );
+  if (relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+    throw new Error(`Project Memory path is outside the local profile: ${targetPath}`);
   }
 }
 
@@ -133,6 +139,24 @@ function compareProjectMemoryFiles(
   return left.name.localeCompare(right.name, "en");
 }
 
+/**
+ * Completion time of the last successful Dream run, read from the runtime success-marker mtime
+ * (writeDreamConsolidatedAt in apps/zcode-cli/packages/core/src/memory/dream.ts). Missing marker →
+ * undefined.
+ */
+async function readLastDreamConsolidatedAt(memoryRoot: string): Promise<number | undefined> {
+  try {
+    const markerStat = await lstat(
+      join(memoryRoot, PROJECT_MEMORY_DREAM_CONSOLIDATED_AT_FILE_NAME),
+    );
+    if (!markerStat.isFile() || markerStat.isSymbolicLink()) return undefined;
+    return markerStat.mtimeMs;
+  } catch (error) {
+    if (isNotFoundError(error)) return undefined;
+    throw error;
+  }
+}
+
 function resolveUserHomeDir(): string {
   const envHome = process.env.HOME?.trim() || process.env.USERPROFILE?.trim();
   return envHome && envHome.length > 0 ? envHome : homedir();
@@ -143,15 +167,15 @@ function getUserMemoryDir(): string {
 }
 
 /**
- * 获取 agent 对应的 memory 文件名
+ * Get the memory file name for the agent.
  */
 function getMemoryFileName(_agentId: string): string {
-  // 目前只支持 MEMORY.md，后续可以根据 agent 类型扩展
+  // Only MEMORY.md is supported for now; extend later by agent type.
   return "MEMORY.md";
 }
 
 /**
- * 创建 Memory 服务实例
+ * Create a Memory service instance.
  */
 export function createMemoryService(): IMemoryService {
   async function loadMemory(params: {
@@ -164,7 +188,7 @@ export function createMemoryService(): IMemoryService {
       const fileName = getMemoryFileName(agentId);
       const memoryDir = getUserMemoryDir();
 
-      // 直接从用户级 ~/.claude/memory 目录读取
+      // Read directly from the user-level ~/.claude/memory directory.
       const filePath = join(memoryDir, fileName);
       try {
         const content = await readFile(filePath, "utf-8");
@@ -175,11 +199,11 @@ export function createMemoryService(): IMemoryService {
           },
         };
       } catch {
-        // 文件不存在，返回 null
+        // File does not exist; return null.
         return { memory: null };
       }
     } catch (error) {
-      console.error("Failed to load memory:", error);
+      logger.warn(undefined, "Failed to load memory:", error);
       return { memory: null };
     }
   }
@@ -192,7 +216,7 @@ export function createMemoryService(): IMemoryService {
     const { agentId, config } = params;
 
     try {
-      // 直接保存到用户级 ~/.claude/memory 目录
+      // Save directly to the user-level ~/.claude/memory directory.
       const memoryDir = getUserMemoryDir();
       await mkdir(memoryDir, { recursive: true });
 
@@ -200,15 +224,12 @@ export function createMemoryService(): IMemoryService {
       const filePath = join(memoryDir, fileName);
       await writeFile(filePath, config.content, "utf-8");
     } catch (error) {
-      console.error("Failed to save memory:", error);
+      logger.error(undefined, "Failed to save memory:", error);
       throw error;
     }
   }
 
-  async function clearMemory(params: {
-    workspacePath: string;
-    agentId: string;
-  }): Promise<void> {
+  async function clearMemory(params: { workspacePath: string; agentId: string }): Promise<void> {
     const { agentId } = params;
 
     try {
@@ -219,10 +240,10 @@ export function createMemoryService(): IMemoryService {
       try {
         await writeFile(filePath, "", "utf-8");
       } catch {
-        // 文件不存在，忽略错误
+        // File does not exist; ignore the error.
       }
     } catch (error) {
-      console.error("Failed to clear memory:", error);
+      logger.error(undefined, "Failed to clear memory:", error);
       throw error;
     }
   }
@@ -232,14 +253,12 @@ export function createMemoryService(): IMemoryService {
     try {
       await mkdir(memoryDir, { recursive: true });
     } catch {
-      // 目录已存在
+      // Directory already exists.
     }
     return { path: memoryDir };
   }
 
-  async function listProjectMemories(): Promise<
-    ProjectMemoryWorkspaceSummary[]
-  > {
+  async function listProjectMemories(): Promise<ProjectMemoryWorkspaceSummary[]> {
     let projectsRoot: string;
     let projectEntries;
     try {
@@ -261,10 +280,7 @@ export function createMemoryService(): IMemoryService {
       const workspaceId = projectEntry.name;
       const workspaceRoot = join(projectsRoot, workspaceId);
       const memoryRoot = join(workspaceRoot, PROJECT_MEMORY_DIRECTORY_NAME);
-      if (
-        !(await isPlainDirectory(workspaceRoot)) ||
-        !(await isPlainDirectory(memoryRoot))
-      ) {
+      if (!(await isPlainDirectory(workspaceRoot)) || !(await isPlainDirectory(memoryRoot))) {
         continue;
       }
 
@@ -272,7 +288,7 @@ export function createMemoryService(): IMemoryService {
       try {
         memoryEntries = await readdir(memoryRoot, { withFileTypes: true });
       } catch (error) {
-        // 目录检查后 Memory Agent 仍可能删除目录；catalog 快照只跳过已消失的 workspace。
+        // The Memory Agent may delete a directory after the check; the catalog snapshot skips only workspaces that have disappeared.
         if (isNotFoundError(error)) {
           continue;
         }
@@ -289,29 +305,65 @@ export function createMemoryService(): IMemoryService {
         }
 
         const filePath = join(memoryRoot, memoryEntry.name);
-        let fileMetadata;
+        const isIndex = memoryEntry.name === PROJECT_MEMORY_INDEX_FILE_NAME;
+        let frontmatterMeta: ProjectMemoryFrontmatterMeta = {};
+        let lineCount: number | undefined;
         try {
-          fileMetadata = await lstat(filePath);
+          const snapshot = await readProjectMemoryFileWithStableHandle({
+            fileName: memoryEntry.name,
+            filePath,
+            validatePath: async () => {
+              await requireProjectMemoriesRoot();
+              await requirePlainDirectory(workspaceRoot);
+              await requirePlainDirectory(memoryRoot);
+              await requireExactProjectMemoryFile(memoryRoot, memoryEntry.name);
+              await assertContainedProjectMemoryPath(projectsRoot, filePath);
+            },
+            readContent: async (handle) => {
+              let frontmatterHead: string | undefined;
+              try {
+                frontmatterHead = await readProjectMemoryFrontmatterHead(handle);
+              } catch {
+                // An unreadable frontmatter head degrades to a catalog row without YAML metadata.
+              }
+              let indexContent: string | undefined;
+              if (isIndex) {
+                try {
+                  indexContent = await handle.readFile({ encoding: "utf-8" });
+                } catch {
+                  // An unreadable index body omits only its optional line-count chip.
+                }
+              }
+              return { frontmatterHead, indexContent };
+            },
+          });
+          if (snapshot.content.frontmatterHead !== undefined) {
+            try {
+              frontmatterMeta = parseProjectMemoryFrontmatter(snapshot.content.frontmatterHead);
+            } catch {
+              // Missing or malformed YAML renders the file without meta.
+            }
+          }
+          if (snapshot.content.indexContent !== undefined) {
+            lineCount = readProjectMemoryIndexLineCount(snapshot.content.indexContent);
+          }
+          files.push({
+            name: memoryEntry.name,
+            path: filePath,
+            kind: isIndex ? "index" : "item",
+            size: snapshot.size,
+            updatedAt: snapshot.updatedAt,
+            ...(frontmatterMeta.description ? { description: frontmatterMeta.description } : {}),
+            ...(frontmatterMeta.type ? { type: frontmatterMeta.type } : {}),
+            ...(lineCount === undefined ? {} : { lineCount }),
+          });
         } catch (error) {
-          // readdir 后事实文件可能被并发删除；它不再属于本次只读快照。
-          if (isNotFoundError(error)) {
+          // A file removed or replaced during enumeration is omitted rather than exposing stale or external metadata.
+          if (isNotFoundError(error) || isProjectMemoryFileChangedError(error)) {
             continue;
           }
           throw error;
         }
-        if (!fileMetadata.isFile() || fileMetadata.isSymbolicLink()) {
-          continue;
-        }
-        files.push({
-          name: memoryEntry.name,
-          path: filePath,
-          kind:
-            memoryEntry.name === PROJECT_MEMORY_INDEX_FILE_NAME
-              ? "index"
-              : "item",
-          size: fileMetadata.size,
-          updatedAt: fileMetadata.mtimeMs,
-        });
       }
 
       if (files.length === 0) {
@@ -319,18 +371,18 @@ export function createMemoryService(): IMemoryService {
       }
 
       files.sort(compareProjectMemoryFiles);
+      const lastDreamConsolidatedAt = await readLastDreamConsolidatedAt(memoryRoot);
       workspaces.push({
         id: workspaceId,
         label: resolveWorkspaceLabel(workspaceId),
         updatedAt: Math.max(...files.map((file) => file.updatedAt)),
         files,
+        ...(lastDreamConsolidatedAt === undefined ? {} : { lastDreamConsolidatedAt }),
       });
     }
 
     workspaces.sort(
-      (left, right) =>
-        right.updatedAt - left.updatedAt ||
-        left.id.localeCompare(right.id, "en"),
+      (left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id, "en"),
     );
     return workspaces;
   }
@@ -353,11 +405,8 @@ export function createMemoryService(): IMemoryService {
     await requirePlainDirectory(workspaceRoot);
     await requirePlainDirectory(memoryRoot);
 
-    // Bugfix：大小写不敏感文件系统会让请求名称命中不同大小写的磁盘文件，绕过 catalog 白名单。
-    const filePath = await requireExactProjectMemoryFile(
-      memoryRoot,
-      params.fileName,
-    );
+    // Bugfix: on a case-insensitive filesystem, a requested name could match a disk file with different casing and bypass the catalog allowlist.
+    const filePath = await requireExactProjectMemoryFile(memoryRoot, params.fileName);
     return readProjectMemoryFileFromStableHandle({
       fileName: params.fileName,
       filePath,
@@ -371,6 +420,31 @@ export function createMemoryService(): IMemoryService {
     });
   }
 
+  async function getProjectMemoryDirectory(params: {
+    workspaceId: string;
+  }): Promise<{ path: string }> {
+    if (!isValidPathSegment(params.workspaceId)) {
+      throw new Error("Invalid Project Memory path");
+    }
+
+    const projectsRoot = await requireProjectMemoriesRoot();
+    const workspaceRoot = join(projectsRoot, params.workspaceId);
+    const memoryRoot = join(workspaceRoot, PROJECT_MEMORY_DIRECTORY_NAME);
+    // Bugfix: on a case-insensitive filesystem, a requested name could match a disk directory with different casing and bypass the catalog allowlist.
+    const projectEntries = await readdir(projectsRoot, { withFileTypes: true });
+    const projectEntry = projectEntries.find((entry) => entry.name === params.workspaceId);
+    if (!projectEntry) {
+      await lstat(workspaceRoot);
+      throw new Error(
+        `Project Memory workspace name does not match exactly: ${params.workspaceId}`,
+      );
+    }
+    await requirePlainDirectory(workspaceRoot);
+    await requirePlainDirectory(memoryRoot);
+    await assertContainedProjectMemoryPath(projectsRoot, memoryRoot);
+    return { path: memoryRoot };
+  }
+
   return {
     loadMemory,
     saveMemory,
@@ -378,5 +452,6 @@ export function createMemoryService(): IMemoryService {
     getUserMemoryDirectory,
     listProjectMemories,
     readProjectMemoryFile,
+    getProjectMemoryDirectory,
   };
 }

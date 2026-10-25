@@ -10,7 +10,7 @@ import { getCurrentModelInvocationContext } from "../deps.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { cloneModelSelection } from "../model-selection.js";
 import { createRefreshRuntimeHeadersBeforeModelAttempt } from "./model-runtime-headers.js";
-import { createRuntimeModel, withModelInvocationContext } from "./runtime-model.js";
+import { createRuntimeModel, withHostInvocationLayer } from "./runtime-model.js";
 import { applyRuntimeExecutionState } from "../execution-state.js";
 import { acceptOffPeakUserTakeover, selectionForPersistence } from "../off-peak/runtime.js";
 
@@ -91,9 +91,9 @@ export function acceptSubmissionModelSelection(
 }
 
 /**
- * 带退回声明且 Selection 指向声明 provider 的执行句柄只允许一次物理请求：失败后由 core 退回会话模型
- * 继续本轮，适配层再按默认预算退避重试只会把降级拖到数分钟之后（spec §2.2「加速请求 0 次重试」）。
- * 其余句柄返回 undefined，沿用按 taskType 解析的默认预算。
+ * An execution handle with a fallback declaration whose Selection points to that provider allows only one physical request: after failure, core falls back to the session model
+ * for the rest of the turn. Letting the adapter retry with its default backoff budget would delay fallback by minutes (spec §2.2, “Accelerated requests: 0 retries”).
+ * Return undefined for other handles so they use the default budget resolved from taskType.
  */
 export function resolveExecutionModelRetryBudget(input: {
   selection: ModelSelection | undefined;
@@ -119,7 +119,7 @@ export function createTurnModel(
     requestDependencies: options.requestDependencies,
     retryBudget: options.retryBudget,
   });
-  return withModelInvocationContext(model, (request) => ({
+  return withHostInvocationLayer(model, "turn", (request) => ({
     refreshRuntimeHeadersBeforeAttempt: createRefreshRuntimeHeadersBeforeModelAttempt(runtime, {
       abortSignal: request.abortSignal,
       model,
@@ -129,8 +129,8 @@ export function createTurnModel(
 }
 
 /**
- * 在 Submission 真正开始执行或 Guide 被下一次 model step 消费时应用其执行配置。
- * 选择只决定新创建的 Model；已经被其他 Loop 持有的 Model 不会被修改。
+ * Apply execution configuration when a Submission actually begins or when the next model step consumes a Guide.
+ * The selection affects only newly created Models; Models already held by another Loop are not modified.
  */
 export async function applySubmissionExecutionState(
   runtime: AgentRuntimeInternal,

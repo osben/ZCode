@@ -1,112 +1,102 @@
-# Browser Tab 进程内默认持久生命周期 Spec
+# Browser Tab in-process default-persistent lifecycle spec
 
-> 状态：产品生命周期语义已确认；32 个逻辑 tab 硬上限与跨重启恢复由
-> `2026-07-31-browser-tab-residency-budget-spec.md` 取代本文原来的“始终 live / 不跨重启 / 仅显式关闭”边界。
+> Status: product lifecycle semantics confirmed; the 32-logical-tab hard cap and cross-restart recovery of `2026-07-31-browser-tab-residency-budget-spec.md` replace this document's original boundary "always live / no cross-restart / explicit close only".
 >
-> 背景轨迹：`model-io-sess_3b29b7bb-c7b3-406f-8460-5462b4ce3d3a.jsonl` 中，第一轮图灵社区页被
-> 隐式保留为 handoff，第二轮百度页却因已有 handoff 而在 `turnEnded` 被自动关闭。该差异不是模型或
-> 用户主动关闭，而是旧的“只兜底保留一个 tab”策略造成的数据丢失型生命周期缺陷。
+> Background trace: in `model-io-sess_3b29b7bb-c7b3-406f-8460-5462b4ce3d3a.jsonl`, the first-turn Turing community page was implicitly kept as a handoff, while the second-turn Baidu page was auto-closed at `turnEnded` because a handoff already existed. That difference was not a model or user close; it was a data-loss lifecycle defect of the old "keep only one fallback tab" policy.
 
-## Feature/change summary
+## Change summary
 
-| 字段           | 决策                                                                                                                 |
-| -------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Change         | IAB tab 从“turn 临时资源、显式保留”改为“ZCode 进程内持久资源、显式关闭”                                              |
-| 用户可见入口   | agent `browser.tabs.new()` 创建的 browser-use tab；用户已打开并被 agent claim 的 tab                                 |
-| 状态 owner     | Electron main 的 `BrowserGuestManager` 管理控制权；residency coordinator 管理逻辑上限；renderer 保留 tab 壳          |
-| 关闭 authority | 模型显式 `tab.close()`；用户手动关闭；每窗口超过 32 个逻辑 tab 的 LRU 自动关闭；workspace 清空；recovery orphan 兜底 |
-| Out of scope   | 自适应 renderer 预算；extension/CDP 未实现 backend 的持久化                                                          |
+| Field              | Decision                                                                                                                                     |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Change             | IAB tabs change from "turn-temporary resources, explicit keep" to "ZCode in-process persistent resources, explicit close"                    |
+| User-visible entry | browser-use tabs created by agent `browser.tabs.new()`; user-opened tabs claimed by the agent                                                |
+| State owner        | `BrowserGuestManager` in Electron main manages control; the residency coordinator manages the logical cap; the renderer keeps the tab shell  |
+| Close authority    | model explicit `tab.close()`; manual user close; LRU auto-close beyond 32 logical tabs per window; workspace clear; recovery orphan fallback |
+| Out of scope       | adaptive renderer budget; persistence of the unimplemented extension/CDP backends                                                            |
 
-## Clarification log
+## Confirmed decisions
 
-| 轮次                             | 问题                                           | 用户确认                       | 固定边界                                                                                               |
-| -------------------------------- | ---------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| 1                                | 是否应依赖模型写 lifecycle JS 保留 tab         | 不应依赖，默认都保留           | `turnEnded` 不得自动关闭 tab                                                                           |
-| 2                                | `finalize({ keep })` 中未列出的 tab 是否可关闭 | 不可以；没有主动关闭就必须保留 | `keep` omission 不具有删除语义                                                                         |
-| 3                                | “默认保存”是否跨 ZCode 重启                    | 只要求当前 ZCode 进程运行期间  | `closeWindow`/进程退出可以回收；不新增持久化恢复                                                       |
-| 4（2026-07-31，2026-08-05 修订） | 是否引入 Tab 跨进程恢复与逻辑 tab 上限         | 引入，并按运行反馈修订         | Tab 壳可跨进程恢复；每窗口最多 32 个逻辑 tab，超限完整关闭最老安全候选；快照 100 页/64 MiB/500 history |
+| Round                              | Question                                                       | User confirmation                             | Fixed boundary                                                                                                                                                                |
+| ---------------------------------- | -------------------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1                                  | Should keeping a tab depend on the model writing lifecycle JS? | No; keep by default                           | `turnEnded` must not auto-close tabs                                                                                                                                          |
+| 2                                  | May tabs not listed in `finalize({ keep })` be closed?         | No; without an active close they must be kept | `keep` omission has no delete semantics                                                                                                                                       |
+| 3                                  | Does "keep by default" span ZCode restarts?                    | Only during the current ZCode process         | `closeWindow`/process exit may reclaim; no persistence recovery added                                                                                                         |
+| 4 (2026-07-31, revised 2026-08-05) | Introduce cross-process Tab recovery and a logical tab cap?    | Yes, revised by run feedback                  | Tab shells recover across processes; at most 32 logical tabs per window, the oldest safe candidate is fully closed beyond the cap; snapshots 100 pages / 64 MiB / 500 history |
 
-第 4 轮是新产品决策，取代第 3 轮的“不新增持久化恢复”，详细状态机见 residency spec。
+Round 4 is a new product decision that replaces round 3's "no persistence recovery"; the detailed state machine is in the residency spec.
 
 ## Boundary decisions
 
-| 边界                      | 决策                                                          | 禁止行为                                         |
-| ------------------------- | ------------------------------------------------------------- | ------------------------------------------------ |
-| `tabs.new()`              | 创建成功后默认持续可见、可控                                  | 不能因 turn 完成、异常或模型漏写 finalize 而关闭 |
-| `turnEnded`               | 只取消该 turn 的 pending request；保留全部 tab                | 不能选择“最终活动页”并关闭其它 tab               |
-| `tabs.finalize({ keep })` | 只对 `keep` 中 tab 应用 `handoff`/`deliverable` 标记          | 不能把未列入 `keep` 解释为 close                 |
-| `markHandoff()`           | 显式标记跨 turn 继续控制；不影响其它 tab                      | 不能使其它 active tab 变成临时页                 |
-| `markDeliverable()`       | turn 结束时释放该 tab 给原对话但保持可见                      | 不能关闭该 tab、其它 tab 或发布给其它对话        |
-| `closeSession`            | 取消 pending request，释放 tab 给原对话，保持 webview 可见    | 不能关闭 tab，也不能改成跨对话可认领             |
-| `tab.close()`             | 模型显式关闭一个 tab                                          | 不能扩散到同 scope 的其它 tab                    |
-| 用户关闭 tab              | 视为用户主动关闭并删除对应快照                                | 不能重新自动创建已关闭 tab                       |
-| 窗口/进程退出             | 只回收 live guest；保留符合持久化条件的 logical tab           | 不能解释为用户逐个关闭 tab                       |
-| 第 33 个逻辑 tab          | 按 LRU 完整关闭最老安全候选，并删除恢复事实和 renderer tab 壳 | 不能只销毁 guest 后保留 suspended tab 壳         |
-| forced restore orphan     | shell/page-state/restoreUrl 全缺失时定向关闭无法恢复的孤儿壳  | 不能用于普通快照淘汰；不能形成恢复/关闭循环      |
-| ZCode 退出                | 回收 live guest；按 page-state repository 恢复 logical tab 壳 | 不能一次性 mount 全部历史 guest                  |
+| Boundary                  | Decision                                                                                         | Forbidden                                                              |
+| ------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| `tabs.new()`              | After creation, visible and controllable by default                                              | Closing because a turn finished, errored, or the model forgot finalize |
+| `turnEnded`               | Only cancels that turn's pending requests; keeps all tabs                                        | Choosing a "final active page" and closing other tabs                  |
+| `tabs.finalize({ keep })` | Applies `handoff`/`deliverable` marks only to tabs in `keep`                                     | Interpreting "not in `keep`" as close                                  |
+| `markHandoff()`           | Explicitly marks continued control across turns; does not affect other tabs                      | Turning other active tabs into temporary pages                         |
+| `markDeliverable()`       | At turn end releases the tab to the original conversation but keeps it visible                   | Closing the tab or other tabs, or publishing to other conversations    |
+| `closeSession`            | Cancels pending requests, releases tabs to the original conversation, keeps webviews visible     | Closing tabs, or making them claimable across conversations            |
+| `tab.close()`             | The model explicitly closes one tab                                                              | Spreading to other tabs of the same scope                              |
+| User closes a tab         | Treated as an active user close; the matching snapshot is deleted                                | Re-creating a closed tab automatically                                 |
+| Window/process exit       | Reclaims only live guests; keeps logical tabs that meet persistence conditions                   | Interpreting it as the user closing tabs one by one                    |
+| 33rd logical tab          | LRU fully closes the oldest safe candidate, deleting recovery facts and the renderer tab shell   | Destroying only the guest and keeping a suspended tab shell            |
+| forced restore orphan     | When shell/page-state/restoreUrl are all missing, close the unrecoverable orphan shell by target | Using it for ordinary snapshot eviction; forming a restore/close loop  |
+| ZCode exit                | Reclaims live guests; restores logical tab shells from the page-state repository                 | Mounting all historical guests at once                                 |
 
 ## Domain scope and high-risk cross-products
 
-主域是 browser tool lifecycle、desktop main guest ownership 与 renderer side-pane 可见性。高风险组合：
+The main domain is browser tool lifecycle, desktop main guest ownership and renderer side-pane visibility. High-risk combinations:
 
-- 多 tab × 多 turn：已有 handoff 时，新 active tab 仍必须保留。
-- finalize keep subset × 未列出 tab：未列出 tab 保持原状态。
-- session close × agent-created/claimed user tab：两类都释放而不是关闭，且仍绑定原 session ownership。
-- desktop-continuous × web-remote-replayable：IAB 状态仍由 shared desktop host 持有，交付模式不能改变关闭语义。
-- window/process lifecycle × session lifecycle：窗口关闭/进程退出可以回收，不能把该规则提前套用到 turn/session。
-- logical tab × live guest：未触发上限时默认保留 stable tab identity；跨重启惰性恢复允许 guest renderer 与
-  `webContentsId` 变化；超限关闭则连 logical tab 一并删除。
+- multi-tab x multi-turn: with a handoff already present, a new active tab must still be kept.
+- finalize keep subset x unlisted tabs: unlisted tabs keep their state.
+- session close x agent-created/claimed user tab: both are released rather than closed and stay bound to the original session ownership.
+- desktop-continuous x web-remote-replayable: IAB state is still held by the shared desktop host; the delivery mode cannot change close semantics.
+- window/process lifecycle x session lifecycle: window close/process exit may reclaim; that rule must not be applied early to turn/session.
+- logical tab x live guest: below the cap, stable tab identity is kept by default; lazy cross-restart recovery allows the guest renderer and `webContentsId` to change; closing beyond the cap deletes the logical tab too.
 
 ## Concept map and state owners
 
-| 概念                                        | owner                                        | 证据                                                                                          |
-| ------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| tab guest、CDP attachment、lifecycle、scope | `BrowserGuestManager`                        | `packages/desktop/src/main/browserView/browserGuestManager.ts`                                |
-| logical tab 上限、保护 lease、恢复状态      | `BrowserTabResidencyCoordinator`             | `packages/desktop/src/main/browserView/browserTabResidencyCoordinator.ts`                     |
-| tab 可见 webview 和用户关闭动作             | renderer side pane                           | `packages/ui/src/hooks/useAppPanels.ts`、`packages/ui/src/browser-use/UnifiedBrowserView.tsx` |
-| turn/session lifecycle 通知                 | ZCode agent runtime → browser control broker | `apps/zcode-cli/packages/core/src/runtime/methods/turn.ts`、`agent-runtime.ts`                |
-| 模型 API 与 guidance                        | browser-use plugin API/docs/skill            | `apps/zcode-cli/packages/browser-use-plugin`                                                  |
-| 进程退出                                    | Electron main/window lifecycle               | `packages/desktop/src/main/index.ts`                                                          |
+| Concept                                           | Owner                                         | Evidence                                                                                      |
+| ------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| tab guest, CDP attachment, lifecycle, scope       | `BrowserGuestManager`                         | `packages/desktop/src/main/browserView/browserGuestManager.ts`                                |
+| logical tab cap, protection lease, recovery state | `BrowserTabResidencyCoordinator`              | `packages/desktop/src/main/browserView/browserTabResidencyCoordinator.ts`                     |
+| visible tab webview and user close action         | renderer side pane                            | `packages/ui/src/hooks/useAppPanels.ts`, `packages/ui/src/browser-use/UnifiedBrowserView.tsx` |
+| turn/session lifecycle notification               | ZCode agent runtime -> browser control broker | `apps/zcode-cli/packages/core/src/runtime/methods/turn.ts`, `agent-runtime.ts`                |
+| model API and guidance                            | browser-use plugin API/docs/skill             | `apps/zcode-cli/packages/browser-use-plugin`                                                  |
+| process exit                                      | Electron main/window lifecycle                | `packages/desktop/src/main/index.ts`                                                          |
 
-## Dimensions and candidate decisions
+## Cases
 
-| Case    | 初始状态                     | 事件                   | 预期 effect                                              | 分类                                      |
-| ------- | ---------------------------- | ---------------------- | -------------------------------------------------------- | ----------------------------------------- |
-| BTL-001 | 两个未标记 agent tab         | `turnEnded`            | 两个 tab 都保持 controlled/visible                       | accepted；旧实现为 bug-candidate          |
-| BTL-002 | 一个 handoff + 一个 active   | `turnEnded`            | 两个 tab 都保留，lifecycle 不被隐式重写                  | accepted；轨迹回归主 case                 |
-| BTL-003 | 多 tab                       | `finalize({keep:[A]})` | A 应用声明状态，B 保持原状态                             | accepted；旧实现为 bug-candidate          |
-| BTL-004 | agent tab + claimed user tab | `closeSession`         | 两者释放为原 session 的 user tabs，不触发 renderer close | accepted；全局 unclaimed 为 bug-candidate |
-| BTL-005 | 任意 open tab                | 模型 `tab.close()`     | 只关闭目标 tab并留下 tombstone                           | accepted                                  |
-| BTL-006 | 任意 open tab                | 用户关闭 tab           | webview 销毁，tab 不再可控且不自动重建                   | accepted                                  |
-| BTL-007 | 任意 open tabs               | 窗口关闭/ZCode 退出    | 回收 live guest；保留可恢复 logical tab                  | accepted；2026-07-31 新决策               |
-| BTL-008 | 上次进程曾有 tabs            | 新进程启动             | 恢复 tab 壳；当前/被访问 tab 惰性恢复 guest              | accepted；2026-07-31 新决策取代旧排除     |
-| BTL-009 | 创建第 33 个逻辑 tab         | residency 上限评估     | 按保护集合与 LRU 完整关闭最老安全候选                    | accepted；详见 residency spec             |
+| Case    | Initial state                | Event                     | Expected effect                                                             | Class                                                        |
+| ------- | ---------------------------- | ------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| BTL-001 | two unmarked agent tabs      | `turnEnded`               | both tabs stay controlled/visible                                           | accepted; old implementation bug-candidate                   |
+| BTL-002 | one handoff + one active     | `turnEnded`               | both tabs kept, lifecycle not implicitly rewritten                          | accepted; main trajectory-regression case                    |
+| BTL-003 | multiple tabs                | `finalize({keep:[A]})`    | A gets the declared state, B keeps its state                                | accepted; old implementation bug-candidate                   |
+| BTL-004 | agent tab + claimed user tab | `closeSession`            | both released as user tabs of the original session, no renderer close       | accepted; global unclaimed was a bug-candidate               |
+| BTL-005 | any open tab                 | model `tab.close()`       | only the target tab closes and leaves a tombstone                           | accepted                                                     |
+| BTL-006 | any open tab                 | user closes the tab       | webview destroyed, tab no longer controllable and not rebuilt automatically | accepted                                                     |
+| BTL-007 | any open tabs                | window close / ZCode exit | live guests reclaimed; recoverable logical tabs kept                        | accepted; new decision 2026-07-31                            |
+| BTL-008 | previous process had tabs    | new process starts        | tab shells restored; the current/visited tab lazily restores its guest      | accepted; the 2026-07-31 decision replaces the old exclusion |
+| BTL-009 | create the 33rd logical tab  | residency cap evaluation  | by protection set and LRU fully close the oldest safe candidate             | accepted; see the residency spec                             |
 
-## Accepted assertions and evidence
+## Assertions and evidence
 
-| Case        | Setup / action                 | Assertions                                                                                        | Evidence                                    |
-| ----------- | ------------------------------ | ------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| BTL-001/002 | 创建多 tab 后发送 `turnEnded`  | close callback 为 0；`tabs.list()` 返回全部 tab                                                   | manager unit test + response meta           |
-| BTL-003     | finalize 仅列出部分 tab        | 未列 tab 仍在 `tabs.list()`；deliverable 只进入 owner session 的 `user.openTabs()`                | manager unit test                           |
-| BTL-004     | 两类 tab 后发送 `closeSession` | close callback 为 0；owner controlled list 为空且 user list 包含全部；其它 session user list 为空 | manager unit test                           |
-| BTL-005     | 显式 `close`                   | 只收到目标 tab close callback；迟到 attach 被拒绝                                                 | 既有 manager unit test                      |
-| BTL-007     | 关闭窗口/manager dispose       | live guest 被清理；显式关闭的 tab 不恢复                                                          | lifecycle unit                              |
-| BTL-008     | 重启                           | stable tabId/shell 保留；guest 可替换；快照/URL 按新 spec 恢复                                    | repository + manager + Electron restart E2E |
-| BTL-009     | 打开第 33 个逻辑 tab           | 最老安全候选从 DOM、main registry、guest 与恢复仓库同时消失；重启不复活                           | manager + Electron 33-Tab E2E               |
+| Case        | Setup / action                            | Assertions                                                                                                                   | Evidence                                    |
+| ----------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| BTL-001/002 | create several tabs then send `turnEnded` | close callback count 0; `tabs.list()` returns all tabs                                                                       | manager unit test + response meta           |
+| BTL-003     | finalize lists only some tabs             | unlisted tabs stay in `tabs.list()`; deliverable enters only the owner session's `user.openTabs()`                           | manager unit test                           |
+| BTL-004     | send `closeSession` after both tab kinds  | close callback 0; owner controlled list empty and user list contains all; other sessions' user list empty                    | manager unit test                           |
+| BTL-005     | explicit `close`                          | only the target tab's close callback fires; late attach rejected                                                             | existing manager unit test                  |
+| BTL-007     | window close / manager dispose            | live guests cleaned; explicitly closed tabs are not restored                                                                 | lifecycle unit                              |
+| BTL-008     | restart                                   | stable tabId/shell kept; guest replaceable; snapshot/URL restored per the new spec                                           | repository + manager + Electron restart E2E |
+| BTL-009     | open the 33rd logical tab                 | the oldest safe candidate disappears from DOM, main registry, guest and recovery repository together; not revived on restart | manager + Electron 33-tab E2E               |
 
 ## Coverage and E2E handoff
 
-- 更新 `docs/testing/browser-use-codex-parity-coverage-matrix.md` 的 BCP-044/046/047/049/052。
-- turn/session lifecycle 仍由 `BrowserGuestManager` 单元测试覆盖；residency 另补 pure policy、repository、
-  manager/UI unit 与真实 Electron 33+ tab E2E。
-- 真实 UI E2E 继续复现“图灵社区 → turn 完成 → 百度 → turn 完成”；未触发上限时两个原 guest 都存在；
-  第 33 个逻辑 tab 的 E2E 则断言最老 tab 壳、guest 与恢复事实都被完整关闭。
-- desktop continuous 与手机 replayable 共用 desktop IAB manager；本次不向 relay/main 新增 task/session 状态。
+- Update BCP-044/046/047/049/052 in `docs/testing/browser-use-codex-parity-coverage-matrix.md`.
+- turn/session lifecycle stays covered by `BrowserGuestManager` unit tests; residency adds pure policy, repository, manager/UI unit tests and a real Electron 33+ tab E2E.
+- The real UI E2E keeps reproducing "Turing community -> turn done -> Baidu -> turn done"; below the cap both original guests exist; the 33rd-logical-tab E2E asserts that the oldest tab shell, guest and recovery facts are all fully closed.
+- Desktop continuous and phone replayable share the desktop IAB manager; no task/session state is added to relay/main.
 
-## `finalize({ keep })` 语义说明
+## `finalize({ keep })` semantics
 
-`tabs.finalize({ keep })` 不具有清理未列出临时 tab 的语义。本 spec 只保留“进程内不自动关闭”的
-产品语义；释放后的 tab 仍必须按对话隔离，详见
-`docs/browser-use/2026-07-14-browser-tab-conversation-isolation-spec.md`。API 形状保持不变：
-ZCode IAB 的 omission 不具有删除语义。所有模型提示、API semantics、实现和测试必须
-同时声明这一点，禁止用“未列出即清理”的文案诱导模型决定页面是否存活。
+`tabs.finalize({ keep })` has no semantics of cleaning unlisted temporary tabs. This spec keeps only the product semantics "no auto-close within the process"; released tabs must still be isolated per conversation, see `docs/browser-use/2026-07-14-browser-tab-conversation-isolation-spec.md`. The API shape is unchanged: in ZCode IAB omission has no delete semantics. All model prompts, API semantics, implementation and tests must state this together; wording like "unlisted means cleaned" that lures the model into deciding page survival is forbidden.

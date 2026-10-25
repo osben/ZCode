@@ -1,4 +1,5 @@
 import type { MessageId, MessageWithParts, ToolPart } from "@zcode/contracts";
+import { DEFAULT_MEMORY_EXTRACTION_PROMPT, renderSystemPromptTemplate } from "@zcode/shared";
 import { resolveContainedMemoryFilePath } from "./memory-file-path.js";
 import { formatMemoryManifest } from "./recall/manifest.js";
 import type { MemoryManifestEntry } from "./recall/types.js";
@@ -42,27 +43,18 @@ export interface MemoryExtractionScheduler<
 export function buildMemoryExtractionPrompt(input: {
   manifest: readonly MemoryManifestEntry[];
   messageCount: number;
+  /** `memory-extraction` system-prompt override; blank keeps the default instructions. */
+  override?: string;
 }): string {
   const existingMemories =
     input.manifest.length > 0
       ? `\n\n## Existing memory files\n\n${formatMemoryManifest(input.manifest)}\n\nCheck this list before writing \u2014 update an existing file rather than creating a duplicate.`
       : "";
 
-  return [
-    `You are now acting as the memory extraction subagent. Analyze the most recent ~${input.messageCount} messages above and use them to update your persistent memory systems.`,
-    "",
-    "Available tools: Read, Grep, Glob, read-only Bash (ls/find/cat/stat/wc/head/tail and similar), and Edit/Write for paths inside the memory directory only, and Bash rm with paths inside the memory directory only. All other tools \u2014 MCP, Agent, write-capable Bash, etc \u2014 will be denied.",
-    "",
-    "You have a limited turn budget. Edit requires a prior Read of the same file, so the efficient strategy is: turn 1 \u2014 issue all Read calls in parallel for every file you might update; turn 2 \u2014 issue all Write/Edit calls in parallel. Do not interleave reads and writes across multiple turns.",
-    "",
-    `You MUST only use content from the last ~${input.messageCount} messages to update your persistent memories. Do not waste any turns attempting to investigate or verify that content further \u2014 no grepping source files, no reading code to confirm a pattern exists, no git commands.${existingMemories}`,
-    "",
-    "If nothing is worth saving, output only 'Nothing to save.' Do not explain why.",
-    "",
-    "If the user explicitly asks you to remember something, save it immediately as whichever type fits best. If they ask you to forget something, find and remove the relevant entry.",
-    "",
-    "Apply the memory types, what-not-to-save criteria, and frontmatter format from the Memory section of your system prompt \u2014 it is already in your context above.",
-  ].join("\n");
+  return renderSystemPromptTemplate(input.override?.trim() || DEFAULT_MEMORY_EXTRACTION_PROMPT, {
+    existingMemories,
+    messageCount: String(input.messageCount),
+  });
 }
 
 export function evaluateMemoryExtraction(
@@ -133,7 +125,7 @@ export function createMemoryExtractionScheduler<
           try {
             await processSnapshot(acquisition.snapshot);
           } catch {
-            // 本次 error 不推进 cursor；latest pending 仍按既有 coalescing 语义继续。
+            // This error does not advance the cursor; latest pending work continues under the existing coalescing semantics.
           }
         }
         current = shuttingDown ? undefined : latestPending;
@@ -169,8 +161,8 @@ export function createMemoryExtractionScheduler<
     },
     shutdown() {
       if (shuttingDown) return;
-      // ZCode 关闭单个 session 后进程仍继续运行；旧 scheduler 只让调用方
-      // 放弃等待，running/pending Extraction 仍可能继续请求模型和写 Memory。
+      // The process continues running after ZCode closes an individual session. The old scheduler only let the caller
+      // stop waiting; running/pending Extraction work could still make model requests and write Memory.
       shuttingDown = true;
       latestPending = undefined;
       shutdownController.abort();

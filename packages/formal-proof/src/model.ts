@@ -4,8 +4,8 @@ export type CompactMemory = "never" | "compactable" | "justCompacted" | "notNeed
 export type GoalState = "none" | "active" | "verifying" | "verified" | "failed";
 export type TurnTarget = "latest" | "old" | "none";
 export type CandidateKind = "user" | "system";
-// held 状态输入不静默入队，
-// 由用户选择「清空 queue 后发送 / 保留 queue 立即发送」。
+// Input in the held state is not silently queued. The user chooses whether to clear the queue before
+// sending or keep the queue and send immediately.
 export type DecisionKind = "allow" | "reject" | "enqueue" | "choice" | "system" | "undefined";
 export type NodeKind = "state" | "candidate" | "guard" | "effect" | "case" | "summary";
 
@@ -411,7 +411,8 @@ function buildCandidateNode(
     children: [],
   });
 
-  // choice 不展开下一状态：clear/keep 两个 disposition 都终到 completedCanSend 路径。
+  // A choice does not expand into another state: both clear and keep dispositions end at
+  // completedCanSend.
   if (
     decision.next &&
     decision.kind !== "reject" &&
@@ -480,9 +481,9 @@ function effectTitle(decision: Decision): string {
   return "未定义：需要产品 review";
 }
 
-// 导出为可执行裁决表（02-projection「规则模块下沉」）：
-// CLI 投影的 guard 派生必须与本函数逐条一致，由 bootstrap 的
-// formal-proof-consistency 黄金测试机械背书。
+// Export this as an executable decision table (02-projection, "move rules into a module").
+// The CLI projection must derive each guard consistently with this function; bootstrap's
+// formal-proof-consistency golden test verifies the match mechanically.
 export function evaluate(context: ProductContext, candidate: Candidate): Decision {
   if (candidate.kind === "system") {
     return evaluateSystem(context, candidate);
@@ -551,8 +552,8 @@ function evaluateCompacting(context: ProductContext, candidate: Candidate): Deci
       "必须去重或禁用入口。",
     );
   }
-  // 重裁决（compactingAcceptsFutureInput）：
-  // compact 是维护步骤，用户输入是未来意图 → 入队，不打断 compact。
+  // Re-evaluation (compactingAcceptsFutureInput): compacting is maintenance, while user input expresses
+  // future intent, so enqueue it without interrupting compaction.
   if (candidate.id === "sendText" || candidate.id === "setGoal") {
     return enqueue(
       context,
@@ -631,10 +632,11 @@ function evaluateCompleted(context: ProductContext, candidate: Candidate): Decis
       compactMemory: "compactable",
     });
   }
-  // held 判定：completed 下仍滞留的 queue 只可能是 autoDrain=false 的 held queue
-  // （autoDrain=true 时 assistantComplete 即消费，completed+queue>0 不持久存在）。
-  // 重裁决（heldQueueInputRequiresChoice，替代原 heldQueueCapturesNewInput）：
-  // held 下输入不静默入队，由用户选择 clear/keep queue 后发送。
+  // Held-state check: a queue that remains after completion can only be a held queue with
+  // autoDrain=false. With autoDrain=true, assistantComplete consumes it, so completed with a non-empty
+  // queue does not persist.
+  // Re-evaluation (heldQueueInputRequiresChoice, replacing heldQueueCapturesNewInput): input while held
+  // is not silently queued; the user chooses whether to clear or keep the queue before sending.
   if (candidate.id === "sendText") {
     if (context.queue !== "empty") {
       return choice(
@@ -817,7 +819,8 @@ function choice(context: ProductContext, ruleId: string, title: string, reason: 
     ruleId,
     title,
     reason,
-    // 无 next：状态直到用户提交 disposition 才推进（clear/keep 都终到 startNow）。
+    // With no next transition, the state advances only after the user submits a disposition; both clear
+    // and keep eventually reach startNow.
     next: context,
     assertion: "必须呈现明确选择，用户裁决前不得入队、不得发送。",
   };

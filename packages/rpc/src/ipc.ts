@@ -1,18 +1,18 @@
 /**
- * Layer 4: 连接管理 —— IPCServer 和 IPCClient
+ * Layer 4: Connection management — IPCServer and IPCClient
  *
- * ChannelServer/ChannelClient 是单连接的 RPC 实现。
- * IPCServer/IPCClient 在其上构建连接管理能力：
+ * ChannelServer/ChannelClient implement RPC for a single connection.
+ * IPCServer/IPCClient build connection management on top:
  *
- * - IPCServer (1:N): 一个服务端接受多个客户端连接，
- *   每个连接独立创建 ChannelServer + ChannelClient。
- *   支持通过 Router 选择目标客户端进行调用。
+ * - IPCServer (1:N): one server accepts multiple client connections,
+ *   creating an independent ChannelServer + ChannelClient for each connection.
+ *   A Router can select the target client for calls.
  *
- * - IPCClient (1:1 双向): 既是客户端又是服务端，
- *   可以调远端的 channel，也可以注册自己的 channel 供远端调用。
+ * - IPCClient (1:1 bidirectional): acts as both client and server,
+ *   calling remote channels and registering its own channels for remote calls.
  *
- * 关键协议：客户端连接后发送的第一条消息是 ctx（上下文/客户端ID），
- * 服务端据此识别客户端身份。
+ * Key protocol: the first message sent after a client connects is ctx (context/client ID),
+ * which the server uses to identify the client.
  */
 
 import {
@@ -36,34 +36,34 @@ import {
 } from "./channels.js";
 
 // ============================================================================
-// Connection 相关接口
+// Connection interfaces
 // ============================================================================
 
-/** 客户端连接事件 */
+/** Client connection event. */
 export interface ClientConnectionEvent {
   protocol: IMessagePassingProtocol;
   readonly onDidClientDisconnect: Event<void>;
 }
 
-/** 客户端标识 */
+/** Client identifier. */
 export interface Client<TContext> {
   readonly ctx: TContext;
 }
 
-/** 连接 = 客户端标识 + 双向 channel */
+/** Connection = client identifier + bidirectional channel. */
 interface Connection<TContext> extends Client<TContext> {
   readonly channelServer: ChannelServer<TContext>;
   readonly channelClient: ChannelClient;
 }
 
-/** 连接中心——暴露所有活跃连接 */
+/** Connection hub — exposes all active connections. */
 export interface IConnectionHub<TContext> {
   readonly connections: Connection<TContext>[];
   readonly onDidAddConnection: Event<Connection<TContext>>;
   readonly onDidRemoveConnection: Event<Connection<TContext>>;
 }
 
-/** 路由器——在多客户端场景中选择目标客户端 */
+/** Router — selects a target client in a multi-client scenario. */
 export interface IClientRouter<TContext = string> {
   routeCall(
     hub: IConnectionHub<TContext>,
@@ -75,22 +75,22 @@ export interface IClientRouter<TContext = string> {
 }
 
 // ============================================================================
-// IPCServer —— 一对多服务端
+// IPCServer — one-to-many server
 // ============================================================================
 
 /**
- * IPCServer 是整个通信架构中的"大脑"。
+ * IPCServer is the "brain" of the communication architecture.
  *
- * 它同时是：
- * - IChannelServer: 注册 channel 供客户端调用
- * - IRoutingChannelClient: 可以反向调用客户端的 channel（通过 Router 选择目标）
- * - IConnectionHub: 暴露所有活跃连接，支持连接增删事件
+ * It is all of the following:
+ * - IChannelServer: registers channels for client calls
+ * - IRoutingChannelClient: can call client channels in reverse (Router selects the target)
+ * - IConnectionHub: exposes all active connections and connection add/remove events
  *
- * 工作流程：
- * 1. 监听 onDidClientConnect 事件
- * 2. 客户端连接后，等待第一条消息（ctx = 客户端ID）
- * 3. 为每个连接创建独立的 ChannelServer + ChannelClient
- * 4. 把已注册的 channel 推送到新连接的 ChannelServer
+ * Workflow:
+ * 1. Listen for the onDidClientConnect event.
+ * 2. After a client connects, wait for the first message (ctx = client ID).
+ * 3. Create an independent ChannelServer + ChannelClient for each connection.
+ * 4. Push registered channels to the new connection's ChannelServer.
  */
 export class IPCServer<TContext = string>
   implements IChannelServer<TContext>, IConnectionHub<TContext>, IDisposable
@@ -113,7 +113,7 @@ export class IPCServer<TContext = string>
   constructor(onDidClientConnect: Event<ClientConnectionEvent>) {
     this.disposables.add(
       onDidClientConnect(({ protocol, onDidClientDisconnect }) => {
-        // 等待客户端发来的第一条消息：ctx（客户端身份标识）
+        // Wait for the first message from the client: ctx (client identity).
         const onFirstMessage = Event.once(protocol.onMessage);
 
         this.disposables.add(
@@ -121,18 +121,18 @@ export class IPCServer<TContext = string>
             const reader = new BufferReader(msg);
             const ctx = deserialize(reader) as TContext;
 
-            // 为这个连接创建独立的 ChannelServer 和 ChannelClient
+            // Create an independent ChannelServer and ChannelClient for this connection.
             const channelServer = new ChannelServer(protocol, ctx);
             const channelClient = new ChannelClient(protocol);
 
-            // 把已注册的 channel 推送给新连接
+            // Push registered channels to the new connection.
             this.channels.forEach((channel, name) => channelServer.registerChannel(name, channel));
 
             const connection: Connection<TContext> = { channelServer, channelClient, ctx };
             this._connections.add(connection);
             this._onDidAddConnection.fire(connection);
 
-            // 客户端断开时清理
+            // Clean up when the client disconnects.
             this.disposables.add(
               onDidClientDisconnect(() => {
                 channelServer.dispose();
@@ -148,11 +148,11 @@ export class IPCServer<TContext = string>
   }
 
   /**
-   * 获取客户端的 channel（反向调用）。
+   * Get a client's channel (for reverse calls).
    *
-   * 当有多个客户端时，需要 router 或 filter 来选择目标：
-   * - router: 实现 IClientRouter 接口，自定义路由逻辑
-   * - filter: 简单的过滤函数，随机选一个匹配的客户端
+   * When there are multiple clients, use a router or filter to select a target:
+   * - router: implement IClientRouter for custom routing logic
+   * - filter: a simple filter function that selects a matching client at random
    */
   getChannel<T extends IChannel>(
     channelName: string,
@@ -209,7 +209,7 @@ export class IPCServer<TContext = string>
     } as T;
   }
 
-  /** 聚合所有匹配客户端的同名事件为一个事件 */
+  /** Aggregate same-named events from all matching clients into one event. */
   private getMulticastEvent<T>(
     channelName: string,
     filter: (c: Client<TContext>) => boolean,
@@ -247,7 +247,7 @@ export class IPCServer<TContext = string>
   registerChannel(channelName: string, channel: IServerChannel<TContext>): void {
     this.channels.set(channelName, channel);
 
-    // 推送到所有已连接的客户端
+    // Push to all connected clients.
     for (const connection of this._connections) {
       connection.channelServer.registerChannel(channelName, channel);
     }
@@ -267,15 +267,15 @@ export class IPCServer<TContext = string>
 }
 
 // ============================================================================
-// IPCClient —— 一对一双向
+// IPCClient — one-to-one, bidirectional
 // ============================================================================
 
 /**
- * IPCClient 是双向的：
- * - 可以调远端的 channel (IChannelClient)
- * - 也可以注册自己的 channel 供远端调用 (IChannelServer)
+ * IPCClient is bidirectional:
+ * - It can call remote channels (IChannelClient).
+ * - It can register its own channels for remote calls (IChannelServer).
  *
- * 第一条消息发送 ctx（自己的身份标识），这样服务端能识别你是谁。
+ * The first message sends ctx (its own identity), so the server can identify the client.
  */
 export class IPCClient<TContext = string>
   implements IChannelClient, IChannelServer<TContext>, IDisposable
@@ -284,7 +284,7 @@ export class IPCClient<TContext = string>
   private channelServer: ChannelServer<TContext>;
 
   constructor(protocol: IMessagePassingProtocol, ctx: TContext) {
-    // 第一条消息：发送自己的身份标识
+    // First message: send this client's identity.
     const writer = new BufferWriter();
     serialize(writer, ctx);
     protocol.send(writer.buffer);
@@ -308,12 +308,12 @@ export class IPCClient<TContext = string>
 }
 
 // ============================================================================
-// StaticRouter —— 简单路由器
+// StaticRouter — simple router
 // ============================================================================
 
 /**
- * 根据静态条件选择客户端的路由器。
- * 例: new StaticRouter(ctx => ctx === 'main-window')
+ * Routes to a client based on a static condition.
+ * Example: new StaticRouter(ctx => ctx === 'main-window')
  */
 export class StaticRouter<TContext = string> implements IClientRouter<TContext> {
   constructor(private fn: (ctx: TContext) => boolean | Promise<boolean>) {}
@@ -332,7 +332,7 @@ export class StaticRouter<TContext = string> implements IClientRouter<TContext> 
         return connection;
       }
     }
-    // 等待新连接到来
+    // Wait for a new connection.
     await Event.toPromise(hub.onDidAddConnection);
     return this.route(hub);
   }

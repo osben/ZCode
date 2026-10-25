@@ -1,19 +1,16 @@
 # Pinned Task Local Workspace Scope
 
-## 背景
+## Background
 
-Pinned 任务列表以前完全跟随当前窗口的 `workspaceTabs` 查询。这个链路在“先恢复 workspace tabs，再渲染 sidebar”的启动路径下没问题，但如果后续支持持久化恢复到某个任务视图，例如直接进入 pinned/timeline 视图，UI tabs 可能还没有创建，pinned 查询就会缺少 workspace scope。
+The pinned task list used to follow the current window's `workspaceTabs` queries entirely. That works when workspace tabs are restored before the sidebar renders, but if restoration directly into a task view (pinned/timeline) is supported later, UI tabs may not exist yet and the pinned query would lack workspace scope. Remote workspaces without a `remoteSessionId` must not be mixed into the pinned query scope either, or service resolution may fall to local services and cross-read same-path remote and local tasks.
 
-同时，远端 workspace 在没有 `remoteSessionId` 时不能混入 pinned 查询 scope。否则后续服务解析可能落到本地 services，导致同路径远端任务和本地任务串读。
+## Current Strategy
 
-## 当前策略
+1. `workspaceTabs` remains the UI state of currently opened workspaces in the window.
+2. Pinned queries get their scope from `useLocalWorkspaceScopes` and cover only currently opened local workspace tabs.
+3. With no local workspace tab there is no fallback to `lastWorkspaceSession`; the query scope is empty.
+4. Remote workspaces do not participate in this scope; remote pinned queries wait for the remote session and follow the corresponding remote service chain.
 
-- `workspaceTabs` 仍然是当前窗口已打开 workspace 的 UI 状态。
-- Pinned 查询使用 `useLocalWorkspaceScopes` 获取查询 scope。
-- Pinned 只按当前窗口已经打开的本地 workspace tabs 查询。
-- 没有本地 workspace tab 时不兜底读取 `lastWorkspaceSession`，查询 scope 为空。
-- 远程 workspace 不参与这个 fallback scope；远端 pinned 查询需要等远程 session 建立后走对应远端服务链路。
+## Boundaries
 
-## 边界
-
-这个调整只改变 pinned 任务查询的本地 scope 来源，不改变 app 启动时是否恢复真实 workspace tabs。未来如果新增远端 pinned 视图恢复，需要在远端 session ready 后单独接入远端查询 scope，不能通过本地 scope 兜底。
+Only the local scope source of pinned queries changes, not whether workspace tabs are restored at startup. If a remote pinned-view restore is added, the remote query scope must be connected separately after the remote session is ready and must not fall back through local scope.

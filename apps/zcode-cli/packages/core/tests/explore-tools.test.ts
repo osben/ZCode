@@ -12,26 +12,28 @@ describe("Explore tool policy", () => {
       "Bash",
       "Glob",
       "Grep",
+      "LSP",
       "Read",
       "WebFetch",
       "WebSearch",
       "TodoWrite",
     ]);
     expect(formatExploreAllowedToolsForAgentDescription()).toBe(
-      "Glob, Grep, Read, Bash, WebFetch, WebSearch, TodoWrite",
+      "Glob, Grep, Read, Bash, WebFetch, WebSearch, TodoWrite, LSP",
     );
 
     expect(buildExploreAllowedTools({ embeddedSearchEnabled: true })).toEqual([
       "ToolSearch",
       "DeferredToolCall",
       "Bash",
+      "LSP",
       "Read",
       "WebFetch",
       "WebSearch",
       "TodoWrite",
     ]);
     expect(formatExploreAllowedToolsForAgentDescription({ embeddedSearchEnabled: true })).toBe(
-      "Read, Bash, WebFetch, WebSearch, TodoWrite",
+      "Read, Bash, WebFetch, WebSearch, TodoWrite, LSP",
     );
   });
 });

@@ -200,8 +200,7 @@ describe("任务分组独立视图", () => {
       );
       await browser.waitUntil(
         async () =>
-          (await $('[data-testid="task-group-add"]').getAttribute("aria-label")) ===
-          (locale === "zh-CN" ? "新建分组" : "New group"),
+          (await $('[data-testid="task-group-add"]').getAttribute("aria-label")) === "New group",
       );
       await browser.saveScreenshot(
         join(process.env.ZCODE_E2E_ARTIFACT_DIR!, `task-groups-${theme}.png`),

@@ -1,8 +1,8 @@
-/* eslint-disable max-lines -- 编辑器检测需要集中维护跨平台路径、图标解析和缓存逻辑。 */
+/* eslint-disable max-lines -- Editor detection needs to keep cross-platform paths, icon resolution, and caching together. */
 /**
- * 编辑器检测与打开 —— 检测系统中已安装的编辑器/终端，获取图标，打开路径
+ * Editor detection and opening — detect installed editors/terminals, retrieve their icons, and open paths.
  *
- * 当前支持 macOS / Windows。Linux 后续再补。
+ * Currently supports macOS / Windows. Linux support can be added later.
  */
 
 import {
@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import { join, win32 as pathWin32 } from "node:path";
 import { app, nativeImage } from "electron";
 import type { EditorInfo } from "@zcode/shared";
@@ -33,11 +34,11 @@ const WINDOWS_EXPLORER_PATH = pathWin32.join(process.env.WINDIR ?? "C:/Windows",
 export interface EditorDef {
   id: string;
   name: string;
-  /** macOS .app bundle 路径 */
+  /** macOS .app bundle path. */
   appPath: string;
   appPathCandidates?: string[];
   windowsCommandAppNames?: string[];
-  /** CLI 命令名（如果有）。用于 open folder；null 则 fallback 到 `open -a` */
+  /** CLI command name, if available. Used to open a folder; null falls back to `open -a`. */
   command: string | null;
 }
 
@@ -65,17 +66,40 @@ interface ParsedIcnsPngCandidate {
   image: Buffer;
 }
 
+// JetBrains Toolbox installs app bundles under the user's home instead of /Applications:
+// Toolbox 3.x defaults to ~/Applications, and the install location can be customized to a
+// "JetBrains Toolbox" subfolder. Without these candidates the IDEs exist but never appear.
+function createMacToolboxAppEditorDef(
+  id: string,
+  name: string,
+  appBundleName: string,
+  command: string,
+): EditorDef {
+  const userApplicationsRoot = join(homedir(), "Applications");
+  return {
+    id,
+    name,
+    appPath: `/Applications/${appBundleName}`,
+    appPathCandidates: [
+      join(userApplicationsRoot, appBundleName),
+      join(userApplicationsRoot, "JetBrains Toolbox", appBundleName),
+    ],
+    command,
+  };
+}
+
 const MAC_EDITOR_DEFS: EditorDef[] = [
-  // 代码编辑器
+  // Code editors.
   {
     id: "vscode",
     name: "VS Code",
     appPath: "/Applications/Visual Studio Code.app",
     command: "code",
   },
-  // 这里之前只登记了稳定版 VS Code，`getInstalledEditors()` 又完全依赖这份静态白名单做 existsSync 过滤。
-  // 用户安装的是 `Visual Studio Code - Insiders.app` 时，主进程根本不会把它纳入候选列表，UI 自然也就显示不出来。
-  // 补上独立定义后，既能识别 Insiders，也能复用现有的 `code-insiders` CLI / `open -a` 降级打开链路。
+  // Previously, only stable VS Code was listed, and getInstalledEditors() used this static allowlist
+  // for existsSync filtering. When a user installed `Visual Studio Code - Insiders.app`, main never
+  // included it as a candidate, so the UI could not display it. This separate definition recognizes
+  // Insiders and reuses the existing `code-insiders` CLI / `open -a` fallback path.
   {
     id: "vscode-insiders",
     name: "VS Code Insiders",
@@ -93,28 +117,21 @@ const MAC_EDITOR_DEFS: EditorDef[] = [
   },
   { id: "codebuddy", name: "CodeBuddy", appPath: "/Applications/CodeBuddy.app", command: null },
   { id: "qoder", name: "Qoder", appPath: "/Applications/Qoder.app", command: null },
-  // JetBrains 系列
-  {
-    id: "idea",
-    name: "IntelliJ IDEA",
-    appPath: "/Applications/IntelliJ IDEA.app",
-    command: "idea",
-  },
-  {
-    id: "idea-ce",
-    name: "IntelliJ IDEA CE",
-    appPath: "/Applications/IntelliJ IDEA CE.app",
-    command: "idea",
-  },
-  { id: "webstorm", name: "WebStorm", appPath: "/Applications/WebStorm.app", command: "webstorm" },
-  { id: "pycharm", name: "PyCharm", appPath: "/Applications/PyCharm.app", command: "pycharm" },
-  { id: "goland", name: "GoLand", appPath: "/Applications/GoLand.app", command: "goland" },
-  { id: "phpstorm", name: "PhpStorm", appPath: "/Applications/PhpStorm.app", command: "phpstorm" },
-  { id: "rider", name: "Rider", appPath: "/Applications/Rider.app", command: "rider" },
-  { id: "clion", name: "CLion", appPath: "/Applications/CLion.app", command: "clion" },
-  { id: "rubymine", name: "RubyMine", appPath: "/Applications/RubyMine.app", command: "rubymine" },
-  { id: "datagrip", name: "DataGrip", appPath: "/Applications/DataGrip.app", command: "datagrip" },
-  // 终端（macOS 新版系统 Terminal 在 /System/Applications 下）
+  // JetBrains products.
+  createMacToolboxAppEditorDef("idea", "IntelliJ IDEA", "IntelliJ IDEA.app", "idea"),
+  createMacToolboxAppEditorDef("idea-ce", "IntelliJ IDEA CE", "IntelliJ IDEA CE.app", "idea"),
+  createMacToolboxAppEditorDef("webstorm", "WebStorm", "WebStorm.app", "webstorm"),
+  createMacToolboxAppEditorDef("pycharm", "PyCharm", "PyCharm.app", "pycharm"),
+  createMacToolboxAppEditorDef("goland", "GoLand", "GoLand.app", "goland"),
+  createMacToolboxAppEditorDef("phpstorm", "PhpStorm", "PhpStorm.app", "phpstorm"),
+  createMacToolboxAppEditorDef("rider", "Rider", "Rider.app", "rider"),
+  createMacToolboxAppEditorDef("clion", "CLion", "CLion.app", "clion"),
+  createMacToolboxAppEditorDef("rubymine", "RubyMine", "RubyMine.app", "rubymine"),
+  createMacToolboxAppEditorDef("datagrip", "DataGrip", "DataGrip.app", "datagrip"),
+  // Android Studio is JetBrains-based and Toolbox-managed; the `studio` CLI is only present when
+  // shell scripts are enabled, so `open -a` with the resolved bundle is the reliable path.
+  createMacToolboxAppEditorDef("android-studio", "Android Studio", "Android Studio.app", "studio"),
+  // Terminals (the current macOS Terminal app is under /System/Applications).
   {
     id: "terminal",
     name: "Terminal",
@@ -124,14 +141,15 @@ const MAC_EDITOR_DEFS: EditorDef[] = [
   { id: "iterm2", name: "iTerm", appPath: "/Applications/iTerm.app", command: null },
   { id: "ghostty", name: "Ghostty", appPath: "/Applications/Ghostty.app", command: null },
   { id: "warp", name: "Warp", appPath: "/Applications/Warp.app", command: null },
-  // 文件管理器
+  // File managers.
   {
     id: "finder",
     name: "Finder",
     appPath: "/System/Library/CoreServices/Finder.app",
     command: null,
   },
-  // 功能扩展：QSpace / QSpace Pro 是 macOS 第三方文件管理器，默认没有 CLI，复用 open -a app bundle 打开路径。
+  // Extension: QSpace / QSpace Pro are third-party macOS file managers without a CLI by default;
+  // reuse `open -a` with the app bundle to open paths.
   {
     id: "qspace",
     name: "QSpace",
@@ -187,6 +205,7 @@ function findWindowsJetBrainsExecutableCandidates(
   const roots = uniquePaths([
     ...getWindowsProgramFilesRoots().map((root) => pathWin32.join(root, "JetBrains")),
     pathWin32.join(getWindowsLocalProgramsRoot(), "JetBrains"),
+    getWindowsLocalProgramsRoot(),
   ]);
   const candidates: string[] = [];
 
@@ -206,6 +225,55 @@ function findWindowsJetBrainsExecutableCandidates(
       }
     } catch {
       // JetBrains products are optional; missing roots are expected.
+    }
+  }
+
+  return candidates;
+}
+
+function getWindowsJetBrainsToolboxAppsRoots(): string[] {
+  const systemDrive = process.env.SystemDrive || "C:";
+  return uniquePaths([
+    pathWin32.join(
+      process.env.LOCALAPPDATA || `${systemDrive}\\Users\\Default\\AppData\\Local`,
+      "JetBrains",
+      "Toolbox",
+      "apps",
+    ),
+  ]);
+}
+
+// Toolbox keeps each product under apps/<app-code>/ch-<channel>/<version> instead of the
+// standalone-installer layout scanned above, so the versioned levels must be walked explicitly.
+// Each app-code directory is optional: one installed edition must not mask its siblings.
+function findWindowsJetBrainsToolboxExecutableCandidates(
+  toolboxAppCodes: string[],
+  executableName: string,
+): string[] {
+  const candidates: string[] = [];
+
+  for (const root of getWindowsJetBrainsToolboxAppsRoots()) {
+    for (const appCode of toolboxAppCodes) {
+      try {
+        const appDirEntries = readdirSync(pathWin32.join(root, appCode), { withFileTypes: true });
+        for (const channelEntry of appDirEntries) {
+          if (!channelEntry.isDirectory() || !/^ch-\d+$/i.test(channelEntry.name)) {
+            continue;
+          }
+          const channelDir = pathWin32.join(root, appCode, channelEntry.name);
+          // Version directories are numeric build numbers (99.x, 243.x): a lexical sort would
+          // place "99.5.1" above "243.21565.193" and resolve the older build first.
+          const versionEntries = readdirSync(channelDir, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => entry.name)
+            .sort((left, right) => right.localeCompare(left, undefined, { numeric: true }));
+          for (const versionEntry of versionEntries) {
+            candidates.push(pathWin32.join(channelDir, versionEntry, "bin", executableName));
+          }
+        }
+      } catch {
+        // Toolbox products are optional; missing app-code directories are expected.
+      }
     }
   }
 
@@ -262,15 +330,15 @@ function deriveWindowsAppPathsFromCommand(command: string, appNames: string[]): 
     }
   }
 
-  // Windows PATH 常见的是 bin\code.cmd 这类 shim，真实 exe 才能提供和 mac 一致的应用图标。
+  // Windows PATH commonly contains shims such as bin\code.cmd; only the real exe provides an application icon like macOS.
   return uniquePaths(candidates).filter((candidate) => existsSync(candidate));
 }
 
 const WINDOWS_EDITOR_DEFS: EditorDef[] = [
-  // Workspace 顶部“Open in Editor”以前只把真正的 IDE 暴露给 UI，
-  // Windows 用户缺少最基础的“在资源管理器里打开”入口，只能回到其它菜单操作。
-  // 这里把系统文件管理器也作为 editor 列表的一员，让 macOS Finder / Windows 资源管理器体验对齐。
-  { id: "explorer", name: "资源管理器", appPath: WINDOWS_EXPLORER_PATH, command: null },
+  // The Workspace "Open in Editor" menu previously exposed only IDEs to the UI, leaving Windows
+  // users without a basic "Open in Explorer" entry and forcing them to use another menu.
+  // Include the system file manager in the editor list to align the macOS Finder and Windows Explorer experiences.
+  { id: "explorer", name: "File Explorer", appPath: WINDOWS_EXPLORER_PATH, command: null },
 ];
 
 const WINDOWS_ADDITIONAL_EDITOR_DEFS: EditorDef[] = [
@@ -314,18 +382,42 @@ const WINDOWS_ADDITIONAL_EDITOR_DEFS: EditorDef[] = [
   ]),
   createWindowsEditorDef("idea", "IntelliJ IDEA", [
     ...findWindowsJetBrainsExecutableCandidates("IntelliJ IDEA", "idea64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["IDEA-U", "IDEA-C"], "idea64.exe"),
   ]),
   createWindowsEditorDef("webstorm", "WebStorm", [
     ...findWindowsJetBrainsExecutableCandidates("WebStorm", "webstorm64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["WebStorm"], "webstorm64.exe"),
   ]),
   createWindowsEditorDef("pycharm", "PyCharm", [
     ...findWindowsJetBrainsExecutableCandidates("PyCharm", "pycharm64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["PyCharm-P", "PyCharm-C"], "pycharm64.exe"),
   ]),
   createWindowsEditorDef("goland", "GoLand", [
     ...findWindowsJetBrainsExecutableCandidates("GoLand", "goland64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["GoLand"], "goland64.exe"),
   ]),
   createWindowsEditorDef("clion", "CLion", [
     ...findWindowsJetBrainsExecutableCandidates("CLion", "clion64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["CLion"], "clion64.exe"),
+  ]),
+  createWindowsEditorDef("phpstorm", "PhpStorm", [
+    ...findWindowsJetBrainsExecutableCandidates("PhpStorm", "phpstorm64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["PhpStorm"], "phpstorm64.exe"),
+  ]),
+  createWindowsEditorDef("rider", "Rider", [
+    ...findWindowsJetBrainsExecutableCandidates("Rider", "rider64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["Rider"], "rider64.exe"),
+  ]),
+  createWindowsEditorDef("rubymine", "RubyMine", [
+    ...findWindowsJetBrainsExecutableCandidates("RubyMine", "rubymine64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["RubyMine"], "rubymine64.exe"),
+  ]),
+  createWindowsEditorDef("datagrip", "DataGrip", [
+    ...findWindowsJetBrainsExecutableCandidates("DataGrip", "datagrip64.exe"),
+    ...findWindowsJetBrainsToolboxExecutableCandidates(["DataGrip"], "datagrip64.exe"),
+  ]),
+  createWindowsEditorDef("android-studio", "Android Studio", [
+    ...windowsProgramFilesCandidates("Android", "Android Studio", "bin", "studio64.exe"),
   ]),
 ];
 
@@ -341,7 +433,7 @@ export function getEditorDefsForCurrentPlatform(): EditorDef[] {
   return getFileApplicationDefs();
 }
 
-/** 缓存检测结果，避免重复 IO */
+/** Cache detection results to avoid repeated I/O. */
 export function resolveEditorDefAppPath(def: EditorDef): string | null {
   const commandAppPaths =
     def.command && def.windowsCommandAppNames?.length
@@ -373,9 +465,9 @@ function getIcnsModule(): typeof import("@fiahfy/icns") | null {
   try {
     cachedIcnsModule = require("@fiahfy/icns") as typeof import("@fiahfy/icns");
   } catch (error) {
-    // 这里之前在模块顶层直接 require("@fiahfy/icns")。
-    // 一旦安装包漏掉它的子依赖（这次是 pngjs），主进程会在文件加载阶段直接崩溃，
-    // 连后面的 sips / file icon 降级路径都来不及执行。改成按需懒加载后，缺包时只降级图标解析。
+    // Previously, this required @fiahfy/icns directly at module load. If the package omitted one of
+    // its dependencies (pngjs in this case), main crashed while loading the file before reaching the
+    // sips/file-icon fallback. Lazy loading means a missing dependency only downgrades icon parsing.
     cachedIcnsModule = null;
     logger.warn("[editors] 加载 @fiahfy/icns 失败，图标解析将回退到 sips", {
       error: error instanceof Error ? error.message : String(error),
@@ -412,8 +504,8 @@ function resolveAppIconPath(appPath: string): ResolvedAppIconPath {
     };
   }
 
-  // `defaults read` 对不少第三方 .app 读不到 CFBundleIconFile，
-  // 会让所有编辑器误回退到 Electron 的通用文件图标；这里改为直接解析 Info.plist。
+  // `defaults read` cannot read CFBundleIconFile from many third-party .app bundles, causing all
+  // editors to fall back incorrectly to Electron's generic file icon. Parse Info.plist directly instead.
   const iconNames = [
     plist.CFBundleIconFile,
     ...(plist.CFBundleIconFiles ?? []),
@@ -439,9 +531,9 @@ function resolveAppIconPath(appPath: string): ResolvedAppIconPath {
 
     for (const candidateFileName of candidateFileNames) {
       const candidatePath = join(appPath, "Contents", "Resources", candidateFileName);
-      // Ghostty 这类应用会同时存在同名资源目录和真正的 .icns 文件。
-      // 之前这里只判断 existsSync，先命中目录后就会把目录当成图标文件读，
-      // 最终解析失败并退回成发白的系统 file icon。这里要求候选路径必须是文件。
+      // Applications such as Ghostty may have both a same-named resource directory and an actual
+      // .icns file. Checking only existsSync could select the directory and try to read it as an icon,
+      // then fall back to the washed-out system file icon. Require each candidate path to be a file.
       if (existsSync(candidatePath) && statSync(candidatePath).isFile()) {
         return {
           candidateIconNames: iconNames,
@@ -565,7 +657,7 @@ function loadNativeImageFromIcnsViaSips(
     try {
       rmSync(tempDirPath, { recursive: true, force: true });
     } catch {
-      // 临时目录清理失败不影响图标加载
+      // Failure to clean up the temporary directory does not affect icon loading.
     }
   }
 }
@@ -575,9 +667,9 @@ function loadNativeImageFromIcns(
   appPath: string,
   icnsPath: string,
 ): Electron.NativeImage | null {
-  // Electron 的 nativeImage 不适合直接读取 .icns，
-  // 这里优先用 npm 包解析出 PNG icon，减少每个图标都起系统子进程的成本；
-  // 只有遇到老格式或包解析不到的 case，才回退到 macOS 的 sips。
+  // Electron's nativeImage is not suitable for reading .icns directly. Prefer parsing a PNG icon
+  // with the npm package to avoid starting a system subprocess for every icon; fall back to macOS
+  // sips only for legacy formats or when the package cannot parse the icon.
   return (
     loadNativeImageFromIcnsViaPackage(editorId, appPath, icnsPath) ??
     loadNativeImageFromIcnsViaSips(editorId, appPath, icnsPath)
@@ -585,9 +677,8 @@ function loadNativeImageFromIcns(
 }
 
 /**
- * 从 .app bundle 的 Info.plist 读取多个可能的 icon 字段，
- * 然后把 .icns 转成 PNG，再生成可用于菜单的真实图标。
- * 如果解析不到真实图标，再 fallback 到 Electron 的 app.getFileIcon。
+ * Read possible icon fields from an .app bundle's Info.plist, convert .icns to PNG, and create a
+ * real icon for menus. If no real icon can be parsed, fall back to Electron's app.getFileIcon.
  */
 export function getAppIconDataUrl(editorId: string, appPath: string): Promise<string | null> {
   if (process.platform !== "darwin") {
@@ -603,12 +694,12 @@ export function getAppIconDataUrl(editorId: string, appPath: string): Promise<st
         return null;
       });
   }
-  // Step 1: 尝试从 .icns 文件加载真实 app 图标
+  // Step 1: try loading the real app icon from the .icns file.
   const resolvedIcon = resolveAppIconPath(appPath);
   if (resolvedIcon.path) {
     const icon = loadNativeImageFromIcns(editorId, appPath, resolvedIcon.path);
     if (icon && !icon.isEmpty()) {
-      // 缩放到合适大小（32x32 用于菜单显示）
+      // Scale to a suitable size (32x32 for menu display).
       const resized = icon.resize({ width: 32, height: 32 });
       return Promise.resolve(`data:image/png;base64,${resized.toPNG().toString("base64")}`);
     }
@@ -621,7 +712,7 @@ export function getAppIconDataUrl(editorId: string, appPath: string): Promise<st
     });
   }
 
-  // Step 2: fallback 到 Electron 的 app.getFileIcon
+  // Step 2: fall back to Electron's app.getFileIcon.
   return app
     .getFileIcon(appPath, { size: "normal" })
     .then((icon) => `data:image/png;base64,${icon.toPNG().toString("base64")}`)
@@ -636,8 +727,8 @@ export function getAppIconDataUrl(editorId: string, appPath: string): Promise<st
 }
 
 /**
- * 检测系统中已安装的编辑器/终端，返回带图标的列表。
- * 结果会被缓存（应用生命周期内不变）。
+ * Detect installed editors/terminals and return a list with icons.
+ * Cache the result for the lifetime of the application.
  */
 async function getBaseInstalledEditors(): Promise<EditorInfo[]> {
   if (cachedEditors) {

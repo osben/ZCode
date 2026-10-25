@@ -10,17 +10,17 @@ import {
 import { createWeekendPlanResultDialogMock } from "./helpers/weekendPlanDialogFixture.js";
 
 const mockInput = {
-  locale: "zh-CN" as const,
+  locale: "en-US" as const,
   planName: "Weekend Plan",
   amountLabel: "300,000,000 Tokens",
-  benefits: ["GLM-5.3-Flash 每日额度"],
-  endsAtLabel: "2026年9月4日 23:59",
-  title: "Weekend Plan 领取成功",
-  description: "GLM-5.3-Flash 已可使用。",
-  replayLabel: "重新播放票券动画",
-  confirmLabel: "模型设置",
-  shareLabel: "复制分享",
-  shareText: "Weekend Plan 分享内容",
+  benefits: ["GLM-5.3-Flash daily quota"],
+  endsAtLabel: "September 4, 2026 23:59",
+  title: "Weekend Plan claimed successfully",
+  description: "GLM-5.3-Flash is now available.",
+  replayLabel: "Replay the ticket animation",
+  confirmLabel: "Model settings",
+  shareLabel: "Copy share",
+  shareText: "Weekend Plan share content",
 };
 
 afterEach(() => cleanup());
@@ -62,12 +62,12 @@ describe("CloudDialogHero", () => {
       vi.useRealTimers();
     }
   });
-  it("用无同源权限的 iframe 加载交互资源并发送初始化数据", () => {
+  it("loads interactive resources in a sandboxed iframe and sends init data", () => {
     const payload = createWeekendPlanResultDialogMock(mockInput);
     render(
       createElement(CloudDialogHero, {
         hero: payload.dialog.hero,
-        locale: "zh-CN",
+        locale: "en-US",
         title: "Weekend Hero",
       }),
     );
@@ -85,19 +85,19 @@ describe("CloudDialogHero", () => {
       expect.objectContaining({
         channel: CLOUD_HERO_MESSAGE_CHANNEL,
         type: "init",
-        locale: "zh-CN",
+        locale: "en-US",
         data: expect.objectContaining({ planName: "Weekend Plan" }),
       }),
       "*",
     );
   });
 
-  it("只接受当前 iframe 与 instanceId 对应的 ready 消息", async () => {
+  it("accepts only ready messages matching the current iframe and instanceId", async () => {
     const payload = createWeekendPlanResultDialogMock(mockInput);
     render(
       createElement(CloudDialogHero, {
         hero: payload.dialog.hero,
-        locale: "zh-CN",
+        locale: "en-US",
         title: "Weekend Hero",
       }),
     );

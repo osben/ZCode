@@ -1,13 +1,15 @@
-# Store Listing 元数据放在市场目录层，展示时目录优先、manifest 回退
+# Store Listing Metadata Lives in the Marketplace Catalog, with plugin.json as Fallback
 
-插件商店化重设计需要 icon、hero 图、示例提示词、隐私/条款链接等展示元数据。我们决定把这些字段放在**市场目录**（marketplace.json 条目）而不是插件包内的 plugin.json：官方 CDN 只改目录 JSON 就能调整商店呈现（含 featured 名单），无需重新打包发布 zip；内置插件的目录由仓内 `official-plugin-definitions.ts` 生成，同样在仓内补字段。展示时目录 listing 字段优先，缺失则回退到 plugin.json 已有的 author/homepage——这让从未写过 listing 的个人来源插件也能免费获得开发者/网站信息行。
+Plugin store display metadata (icons, hero images, example prompts, privacy/terms links) lives in the **marketplace catalog** (marketplace.json entries), not in the plugin package's plugin.json. The official CDN can change store presentation (including featured listings) by editing catalog JSON alone, without repackaging a zip. The built-in plugin catalog is generated from `official-plugin-definitions.ts` in the repo, and its listing fields are added there.
+
+At display time, catalog listing fields take precedence. Missing fields fall back to the existing author/homepage values in plugin.json, so independently sourced plugins without a listing still get developer/site information.
 
 ## Considered Options
 
-- **manifest 内嵌**（listing 写进 plugin.json）：改一个作者名/换一张图都要重发 zip + 改 sha256，运营成本不可接受；个人来源插件依然不会有 icon，问题没解决。
-- **独立 listing 服务/接口**：多一个网络依赖与失败模式，目录 JSON 本来就是逐条描述插件的地方，没必要。
+- **Inline in manifest** (listing in plugin.json): changing an author name or swapping an image requires republishing the zip and updating the sha256; independently sourced plugins would still lack icons. Rejected.
+- **Separate listing service / API**: adds a network dependency and failure mode; the catalog JSON already describes plugins entry by entry. Rejected.
 
 ## Consequences
 
-- CDN marketplace.json 与内置 seed 生成逻辑成为商店呈现的事实来源；wire 类型（AvailablePluginSummary 等）需要把 listing 字段和 manifest 回退字段一路透传到 UI。
-- 同一信息可能在两处存在且不一致（目录说作者是 A，manifest 说是 B）——按本决定，UI 永远信目录。
+- The CDN's marketplace.json and the built-in seed generation logic are the source of truth for store presentation. Wire types (`AvailablePluginSummary`, etc.) propagate listing fields and manifest fallback fields through to the UI.
+- The same information may exist in two places with conflicting values (catalog says author A, manifest says author B); the UI always trusts the catalog.

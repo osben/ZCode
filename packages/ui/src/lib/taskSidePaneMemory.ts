@@ -8,15 +8,15 @@ import {
 export interface TaskSidePaneMemoryState {
   sidePaneState: WorkspaceSidePaneState | null;
   isSidePaneCollapsed: boolean;
-  /** 对话级展开/收起偏好；tabs 本身仍按 workspace 复用。 */
+  /** Conversation-level expand/collapse preference; tabs themselves are still reused per workspace. */
   sidePaneCollapsedByOwner: Record<string, boolean>;
-  /** 对话级完整视图状态（docs/ui/side-pane-full-view.md）；缺省表示普通视图。 */
+  /** Conversation-level full-view state (docs/ui/side-pane-full-view.md); absent means the normal view. */
   sidePaneFullViewByOwner: Record<string, SidePaneFullViewState>;
-  /** 工具调用的自动打开已消费记录；不随消息行卸载清空。 */
+  /** Records consumed automatic tool-call opens; retained when message rows unmount. */
   pluginUiAutoOpenKeys: ReadonlySet<string>;
   activeGitSourceId: GitChangeSourceId;
   browserUrls: Record<string, string>;
-  /** @deprecated 旧版单浏览器 tab 的 URL，保留用于读取历史内存状态。 */
+  /** @deprecated URL for the legacy single browser tab, retained to read historical in-memory state. */
   browserUrl: string | null;
 }
 
@@ -66,11 +66,10 @@ export function buildTaskSidePaneMemoryKey({
   workspaceIdentity?: string;
   taskId: string | null;
 }): string | null {
-  // side pane 的语义是“当前 workspace 右侧辅助工作区”，
-  // 不是 task 自己的私有上下文。之前把 taskId 拼进 key 之后，
-  // 同一 workspace 下切换 task 会命中一份全新的 side pane 内存，
-  // 导致用户正在看的 browser / git / code viewer 像是被“切任务顺手清空”。
-  // 这里改回只按 workspace 身份隔离，让同 workspace 的 task 共用同一份 side pane 状态。
+  // The side pane represents “the current workspace's right-side auxiliary workspace,”
+  // not private task context. Adding taskId to the key previously meant that switching tasks in the same workspace created a fresh side-pane state,
+  // making the browser / git / code viewer look as if it had been “cleared as part of switching tasks.”
+  // Key only by workspace identity again so tasks in the same workspace share side-pane state.
   void taskId;
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
   return workspaceKey.trim() ? workspaceKey : null;
@@ -107,9 +106,9 @@ export function saveTaskSidePaneMemoryState(
     return;
   }
 
-  // side pane memory 是 renderer 模块级缓存，长期切换大量 workspace 时旧 key
-  // 如果永不淘汰会持续持有 tabs、browser URL、diff patch 等状态。这里用简单 LRU 上限
-  // 保留最近访问的 workspace 状态，避免长时间运行时 Map 无界增长。
+  // Side-pane memory is a renderer module-level cache. If old keys are never evicted while switching among many workspaces,
+  // they keep tabs, browser URLs, diff patches, and other state alive. Use a simple LRU cap
+  // to retain recently visited workspace state and prevent unbounded Map growth in long-running sessions.
   const nextState = {
     ...DEFAULT_TASK_SIDE_PANE_MEMORY_STATE,
     ...taskSidePaneMemory.get(key),
@@ -193,8 +192,8 @@ export function claimPluginUiSidePaneAutoOpen(
   if (!workspaceKey) return false;
   const state = readTaskSidePaneMemoryState(workspaceKey);
   if (state.pluginUiAutoOpenKeys.has(requestKey)) return false;
-  // 根因：行内 useRef 在会话切换/虚拟卸载后丢失，旧 fullscreen 结果会覆盖已保存的收起状态。
-  // 与侧栏偏好共用同一内存 owner；同步消费也保证同一调用的多个锚点只触发一次。
+  // Root cause: An inline useRef is lost after a session switch or virtual unmount, allowing a stale fullscreen result to overwrite the saved collapsed state.
+  // Share the side-pane preference’s in-memory owner; synchronous consumption also ensures multiple anchors for one call trigger only once.
   saveTaskSidePaneMemoryState(workspaceKey, {
     pluginUiAutoOpenKeys: new Set([...state.pluginUiAutoOpenKeys, requestKey]),
   });

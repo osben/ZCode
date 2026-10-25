@@ -93,7 +93,7 @@ describe("BigModelCodingPlanSubscriptionProvider", () => {
 
   it("读取手动领取 preview 并归一化 plans", async () => {
     vi.stubEnv("ZCODE_ENDPOINT_ORIGIN", "https://preview.example.com");
-    // Bugfix: 开发机 ambient ZCODE_BASE_URL 优先级高于 ZCODE_ENDPOINT_ORIGIN，置空避免 preview 域被生产域覆盖
+    // Bugfix: a dev machine's ambient ZCODE_BASE_URL outranks ZCODE_ENDPOINT_ORIGIN; clear it so the preview domain is not overridden by the production domain.
     vi.stubEnv("ZCODE_BASE_URL", "");
     const apiClient: ApiClient = {
       request: vi.fn(async () =>
@@ -297,7 +297,7 @@ describe("BigModelCodingPlanSubscriptionProvider", () => {
         apiClient: { request },
         credentialService: { load: vi.fn() },
       });
-      // 由其他消费者填充真实共享缓存；预算不能再读出旧算法或发起刷新。
+      // Other consumers populate the real shared cache; the budget must no longer read the legacy algorithm or trigger a refresh.
       await provider.getForceUpdateConfig();
       request.mockClear();
       await expect(provider.getModelContextBudgetStrategy()).resolves.toBe("preflight-v1");
@@ -474,8 +474,8 @@ describe("BigModelCodingPlanSubscriptionProvider", () => {
 
   it("ZCODE_ENV=test 时 Z.ai Coding Plan 业务接口使用 api.z.ai", async () => {
     vi.stubEnv("ZCODE_ENV", "test");
-    // 修复原因：开发机若设了 ZAI_BUSINESS_BASE_URL=https://api.z.ai，
-    // resolveZaiBusinessBaseUrl 会优先读它，覆盖 ZCODE_ENV fallback，导致断言不稳定。
+    // Fix rationale: if a dev machine sets ZAI_BUSINESS_BASE_URL=https://api.z.ai,
+    // resolveZaiBusinessBaseUrl reads it first and overrides the ZCODE_ENV fallback, making assertions unstable.
     vi.stubEnv("ZAI_BUSINESS_BASE_URL", "");
     const apiClient: ApiClient = {
       request: vi.fn(async (input) => {
@@ -2350,9 +2350,9 @@ describe("ZaiCodingPlanSubscriptionProvider (family-aware Team Plan)", () => {
     vi.unstubAllEnvs();
   });
 
-  // 修复原因：开发机可能设了 ZAI_BUSINESS_BASE_URL=https://api.z.ai 环境变量，
-  // resolveZaiBusinessBaseUrl 会优先读它，覆盖 ZCODE_ENV 逻辑导致测试域名断言不稳定。
-  // 测试里统一 stub 成空，强制走 ZCODE_ENV fallback 链。
+  // Fix rationale: a dev machine may set the ZAI_BUSINESS_BASE_URL=https://api.z.ai env var, and
+  // resolveZaiBusinessBaseUrl reads it first, overriding the ZCODE_ENV logic and making test domain
+  // assertions unstable. Tests uniformly stub it to empty, forcing the ZCODE_ENV fallback chain.
   function createZaiCredentialService(token = "zai-business-jwt") {
     return {
       load: vi.fn(async (key: string) => (key === "oauth:zai:access_token" ? token : null)),
@@ -2392,7 +2392,7 @@ describe("ZaiCodingPlanSubscriptionProvider (family-aware Team Plan)", () => {
     });
 
     expect(result.productList[0]?.productId).toBe("zai-team-pro");
-    // 关键：zai 域名，不能误用 bigmodel.cn
+    // Key: zai domain; bigmodel.cn must not be used by mistake.
     expect(String(vi.mocked(apiClient.request).mock.calls[0]?.[0])).toBe(
       "https://api.z.ai/api/biz/campaign/partner/enterprise/pricing",
     );
@@ -2411,11 +2411,11 @@ describe("ZaiCodingPlanSubscriptionProvider (family-aware Team Plan)", () => {
     await provider.getEnterprisePricing({ authenticated: true });
 
     expect(apiClient.request).toHaveBeenCalledTimes(1);
-    // 关键：host 是 zai 域名，不是 bigmodel.cn
+    // Key: the host is the zai domain, not bigmodel.cn
     expect(String(vi.mocked(apiClient.request).mock.calls[0]?.[0])).toBe(
       "https://api.z.ai/api/biz/subscription/enterprise/v2/pricing",
     );
-    // 关键：token 是 zai 的，不带 Bearer
+    // Key: the token is zai's, without Bearer
     expect(vi.mocked(apiClient.request).mock.calls[0]?.[1]).toMatchObject({
       method: "GET",
       headers: {
@@ -2427,7 +2427,7 @@ describe("ZaiCodingPlanSubscriptionProvider (family-aware Team Plan)", () => {
 
   it("ZCODE_ENV=test 时 zai Team Plan 企业接口使用 api.z.ai", async () => {
     vi.stubEnv("ZCODE_ENV", "test");
-    // 开发机 ZAI_BUSINESS_BASE_URL 会覆盖 ZCODE_ENV fallback，这里 stub 成空强制走 fallback
+    // A dev machine's ZAI_BUSINESS_BASE_URL overrides the ZCODE_ENV fallback; stub it to empty here to force the fallback.
     vi.stubEnv("ZAI_BUSINESS_BASE_URL", "");
     const apiClient: ApiClient = {
       request: vi.fn(async () => createJsonResponse({ code: 200, data: { productList: [] } })),
@@ -2439,7 +2439,7 @@ describe("ZaiCodingPlanSubscriptionProvider (family-aware Team Plan)", () => {
 
     await provider.getEnterprisePricing({ authenticated: true });
 
-    // 关键：测试环境走 z.ai，不能把测试 token 发到生产 api.z.ai
+    // Key: the test environment uses z.ai; the test token must not be sent to the production api.z.ai
     expect(String(vi.mocked(apiClient.request).mock.calls[0]?.[0])).toBe(
       "https://api.z.ai/api/biz/subscription/enterprise/v2/pricing",
     );
@@ -2502,7 +2502,7 @@ describe("ZaiCodingPlanSubscriptionProvider (family-aware Team Plan)", () => {
           });
         }
         if (url.endsWith("/organization/zai-org/projects/zai-proj/api_keys")) {
-          // team-api-key 预热：返回已有可用 key，避免 create 调用
+          // team-api-key warmup: return the existing usable key, avoiding a create call
           return createJsonResponse({
             code: 200,
             data: [{ apiKey: "zai-team-ak", keyType: 2, name: "zcode-team-api-key" }],
@@ -2518,8 +2518,8 @@ describe("ZaiCodingPlanSubscriptionProvider (family-aware Team Plan)", () => {
 
     const result = await provider.getEnterprisePricing({ authenticated: true });
 
-    // 关键：pricing + customerInfo + team-api-key 预热都走 zai 域名，
-    // 不能串到 bigmodel.cn。预热也必须用 zai host（符合"除购买外路径可复用"契约）。
+    // Key: pricing + customerInfo + team-api-key warmup all use the zai domain and must not leak to
+    // bigmodel.cn. The warmup must also use the zai host (per the "paths except purchase are reusable" contract).
     expect(requestUrls).toEqual([
       "https://api.z.ai/api/biz/subscription/enterprise/v2/pricing",
       "https://api.z.ai/api/biz/customer/getCustomerInfo",
@@ -2600,7 +2600,7 @@ describe("createCodingPlanSubscriptionService (family routing)", () => {
 
     await service.getEnterprisePricing({ authenticated: true, family: "zai" });
 
-    // 关键：service 层按 family 路由，zai 不能误用 bigmodel.cn
+    // Key: the service layer routes by family; zai must not use bigmodel.cn by mistake.
     expect(String(vi.mocked(apiClient.request).mock.calls[0]?.[0])).toBe(
       "https://api.z.ai/api/biz/subscription/enterprise/v2/pricing",
     );

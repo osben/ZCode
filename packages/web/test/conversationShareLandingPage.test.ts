@@ -74,19 +74,56 @@ describe("ConversationShareLandingPage", () => {
       createElement(ConversationShareLandingPage, {
         shareCode: "share-1",
         preview,
-        locale: "zh-CN",
+        locale: "en-US",
       }),
     );
     expect(html).toContain("公开任务");
-    expect(html).toContain('title="公开任务"');
-    expect(html).toContain('data-share-header-ready="false"');
+    expect(html).toContain('data-share-header="true"');
+    expect(html).toContain('data-share-header-shell="true"');
+    expect(html).toContain('data-share-header-row="true"');
+    expect(html).toContain('data-share-brand="true"');
+    expect(html.match(/data-share-content-rail="true"/g)?.length).toBe(2);
+    expect(html.match(/data-share-content-inset="true"/g)?.length).toBe(3);
+    expect(html).toContain('data-share-body-rail="true"');
+    expect(html).toContain('data-share-title="true"');
+    expect(html).toContain('data-share-continue-slot="true"');
     expect(html).toContain('data-share-continue-visible="true"');
+    expect(html).toContain('data-share-continue-measure="true"');
+    expect(html).toContain('title="公开任务"');
+    // First paint (SSR/unmeasured) keeps the natural arrangement; after client
+    // measurement only the continuous geometry variables are written. No more
+    // switching between the inline and rail-aligned layouts.
+    expect(html).toContain('data-share-header-layout="continuous"');
+    expect(html).toContain('data-share-header-ready="false"');
+    expect(html).not.toContain('data-share-header-layout="compact"');
+    expect(html).not.toContain("absolute inset-x-0 bottom-0");
+    expect(html).toContain("bg-background backdrop-blur");
+    expect(html).not.toContain("bg-background/95");
+    expect(html).toContain("sticky");
+    expect(html).toContain("text-left");
+    expect(html).not.toContain("grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)]");
+    expect(html).toContain("max-w-4xl");
+    expect(html).toContain("sm:px-8");
+    expect(html).toContain("sm:py-10");
+    expect(html).toContain("data-share-metadata");
     expect(html).toContain("请生成一个文件");
-    expect(html).toContain("去 ZCode 继续");
+    expect(html).toContain("data-v4-user-input-bubble");
+    expect(html).toContain("group/assistant-row");
+    expect(html).toContain('data-share-scroll-viewport="true"');
+    expect(html).toContain('data-markdown-table-layout-root="true"');
+    expect(html).toContain("overflow-y-auto");
     expect(html).toContain('data-share-theme-toggle="true"');
-    expect(html).toContain("切换到深色主题");
+    expect(html.match(/data-share-continue-link="true"/g)?.length).toBe(2);
+    expect(html).toContain('data-share-continue-footer="true"');
     expect(html.match(/href="zcode:\/\/share\/import\?code=share-1"/g)?.length).toBe(2);
-    expect(html).not.toContain("Sign out");
+    expect(html.indexOf('data-share-continue-footer="true"')).toBeGreaterThan(
+      html.indexOf("data-conversation-share-timeline"),
+    );
+    expect(html).toContain("rounded-xl");
+    expect(html).toContain("bg-primary");
+    expect(html).toContain("text-primary-foreground");
+    expect(html).not.toContain("data-share-flag");
+    expect(html).toContain("zcode://share/import?code=share-1");
   });
 
   it("counts only artifact rows and excludes user input attachment manifests", () => {
@@ -166,11 +203,11 @@ describe("ConversationShareLandingPage", () => {
       createElement(ConversationShareLandingPage, {
         shareCode: "share-1",
         preview: mixedPreview,
-        locale: "zh-CN",
+        locale: "en-US",
       }),
     );
-    expect(html).toContain("1 个结果物");
-    expect(html).not.toContain("2 个结果物");
+    expect(html).toContain('data-share-artifact-count="1"');
+    expect(html).not.toContain('data-share-artifact-count="2"');
     expect(html).toContain("pasted-text.txt");
     expect(html).toContain("report.pdf");
   });
@@ -216,10 +253,10 @@ describe("ConversationShareLandingPage", () => {
       createElement(ConversationShareLandingPage, {
         shareCode: "share-1",
         preview: inputOnly,
-        locale: "zh-CN",
+        locale: "en-US",
       }),
     );
-    expect(html).not.toContain("个结果物");
+    expect(html).not.toContain("data-share-artifact-count=");
   });
 
   it("does not offer continuation for readonly shares", () => {
@@ -231,10 +268,9 @@ describe("ConversationShareLandingPage", () => {
       }),
     );
     expect(html).not.toContain("zcode://share/import");
-    expect(html).not.toContain("Open in ZCode");
-    expect(html).not.toContain("去 ZCode 继续");
     expect(html).toContain('data-share-theme-toggle="true"');
     expect(html).not.toContain('data-share-continue-footer="true"');
+    expect(html).toContain('data-share-continue-measure="true"');
     expect(html).toContain('data-share-continue-visible="false"');
   });
 
@@ -245,16 +281,16 @@ describe("ConversationShareLandingPage", () => {
         locale: "en-US",
       }),
     );
-    expect(html).toContain("Sign in to view this share");
+    expect(html).toContain('data-share-status="login_required"');
     expect(html).not.toContain("3211");
   });
 
   it.each([
-    ["zh-CN", "账号数据不互通", "回到首页"],
-    ["en-US", "do not share account data", "Back to home"],
+    ["zh-CN", 'data-share-locale="zh-CN"'],
+    ["en-US", 'data-share-locale="en-US"'],
   ] as const)(
-    "offers account guidance and home navigation for not_found in %s",
-    (locale, hint, home) => {
+    "keeps not_found status and locale in the share status surface for %s",
+    (locale, localeMarker) => {
       const html = renderToStaticMarkup(
         createElement(ConversationShareLandingStatus, {
           state: { kind: "error", error: "not_found" },
@@ -262,8 +298,9 @@ describe("ConversationShareLandingPage", () => {
           onRetry: () => {},
         }),
       );
-      expect(html).toContain(hint);
-      expect(html).toContain(home);
+      expect(html).toContain('data-share-status="error"');
+      expect(html).toContain('data-share-error="not_found"');
+      expect(html).toContain(localeMarker);
       expect(html).toContain('href="https://zcode.z.ai"');
       expect(html).not.toContain('target="_blank"');
     },
@@ -281,11 +318,11 @@ describe("ConversationShareLandingPage", () => {
     const html = renderToStaticMarkup(
       createElement(ConversationShareLandingStatus, {
         state: { kind: "error", error },
-        locale: "zh-CN",
+        locale: "en-US",
         onRetry: () => {},
       }),
     );
-    expect(html).not.toContain("账号数据不互通");
-    expect(html).not.toContain("回到首页");
+    expect(html).toContain(`data-share-error="${error}"`);
+    expect(html).not.toContain('href="https://zcode.z.ai"');
   });
 });

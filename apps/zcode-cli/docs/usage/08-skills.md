@@ -1,10 +1,10 @@
-# 08 · Skills 与自定义命令
+# 08 · Skills and custom commands
 
-Skill 是按需加载的任务说明；它不会自动增加操作系统权限。技能中的命令仍受当前工具、权限和运行环境约束。
+A skill is a task description loaded on demand; it does not automatically add operating system permissions. Commands in a skill are still constrained by the current tools, permissions and runtime environment.
 
-## 编写一个技能
+## Write a skill
 
-在项目中创建 `.agents/skills/greet/SKILL.md`：
+Create `.agents/skills/greet/SKILL.md` in the project:
 
 ```markdown
 ---
@@ -15,18 +15,20 @@ description: 用户要求问候时使用，用一句话问候。
 请用一句话问候用户，并在末尾加上 READY。
 ```
 
-当前默认发现路径包括用户及项目的 `.zcode/skills` 和 `.agents/skills`。Git 工作区中会向工作树根查找技能目录；同级 `.zcode` 优先于 `.agents`。启用的插件也可贡献技能。重复名称和 metadata 预算会影响最终可见集合，使用清单核对来源：
+(The sample skill: use when the user asks for a greeting; greet the user in one sentence and append READY.)
+
+The current default discovery paths include the user and project `.zcode/skills` and `.agents/skills`. In a Git workspace, skill directories are searched up to the worktree root; a sibling `.zcode` takes precedence over `.agents`. Enabled plugins can also contribute skills. Duplicate names and the metadata budget affect the final visible set, so check the source with the listing:
 
 ```sh
 zcode skills list --cwd /absolute/path/to/project --json
 zcode commands list --cwd /absolute/path/to/project --json
 ```
 
-`skills.roots` 可以增加技能根目录。运行配置中的 `features.skill`、`skills.enabled`、插件启用态以及单项覆盖都会影响结果。修改后用新进程验证；不要把磁盘上有 SKILL.md 当成已加载。
+`skills.roots` can add skill root directories. `features.skill`, `skills.enabled`, the plugin enabled state and per-item overrides in the runtime configuration all affect the result. After a change, verify with a new process; do not treat a SKILL.md on disk as loaded.
 
-## 调用与自定义命令
+## Invocation and custom commands
 
-普通 prompt 可以描述任务，让模型按技能说明使用；显式调用格式及命令是否存在，以 `commands list`、`skills list` 和对应构建的帮助为准。插件中的 `commands/hello.md` 可定义自定义斜杠命令：
+An ordinary prompt can describe the task and let the model use a skill per its description; the explicit invocation format and whether a command exists are determined by `commands list`, `skills list` and the help of the build. `commands/hello.md` in a plugin can define a custom slash command:
 
 ```markdown
 ---
@@ -37,6 +39,8 @@ argument-hint: "[名字]"
 请对 $ARGUMENTS 说一句问候。
 ```
 
-插件加载后可用 `zcode --prompt "/hello reader"`。自定义命令会展开为指令参与模型调用，不应与 `/help` 等本地返回命令的输出混为一谈。
+(The sample command: short greeting; the argument hint is "[name]"; say one greeting to `$ARGUMENTS`.)
 
-批量任务应固定技能版本和启用清单。需要无技能对照组时，同时检查用户目录、项目目录与插件贡献，避免开发机环境污染结果。
+Once the plugin is loaded, run `zcode --prompt "/hello reader"`. A custom command expands into instructions that take part in the model call; do not confuse it with the output of locally returning commands such as `/help`.
+
+Batch tasks should fix the skill version and the enabled list. For a no-skill control group, also check the user directory, project directory and plugin contributions, so the development machine environment does not contaminate results.

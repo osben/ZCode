@@ -32,8 +32,7 @@ vi.mock("@/v4/WorkbenchPane.js", async () => {
 vi.mock("@/v4/WorkbenchSplitDivider.js", async () => {
   const React = await import("react");
   return {
-    WorkbenchSplitDivider: () =>
-      React.createElement("div", { "data-testid": "mock-divider" }),
+    WorkbenchSplitDivider: () => React.createElement("div", { "data-testid": "mock-divider" }),
   };
 });
 
@@ -135,7 +134,8 @@ function renderClient(element: ReturnType<typeof createElement>): void {
 
 function createGroupedWorkbenchState({
   readOnlyChild = false,
-}: { readOnlyChild?: boolean } = {}): void {
+  selectionSideChat = false,
+}: { readOnlyChild?: boolean; selectionSideChat?: boolean } = {}): void {
   useWorkbenchGroupStore.getState().splitSessionIntoGroup(
     V4_PRIMARY_PANE_ID,
     "right",
@@ -143,6 +143,7 @@ function createGroupedWorkbenchState({
       workspaceScope: { workspacePath: "/workspace" },
       sessionId: "child-session",
       ...(readOnlyChild ? { readOnly: true } : {}),
+      ...(selectionSideChat ? { selectionSideChat: true } : {}),
     },
     {
       workspaceScope: { workspacePath: "/workspace" },
@@ -153,23 +154,25 @@ function createGroupedWorkbenchState({
   const activeGroup = activeGroupId
     ? useWorkbenchGroupStore.getState().groups[activeGroupId]
     : null;
-  expect(activeGroup ? leafPaneIds(activeGroup.root) : []).toEqual([
-    V4_PRIMARY_PANE_ID,
-    "pane-1",
-  ]);
+  expect(activeGroup ? leafPaneIds(activeGroup.root) : []).toEqual([V4_PRIMARY_PANE_ID, "pane-1"]);
 }
 
 function renderWorkspace({
   onPaneActiveSessionChange = vi.fn(),
+  sessionId = "main-session",
+  readOnlySessionId = null,
 }: {
   onPaneActiveSessionChange?: (
     scope: { workspacePath: string; workspaceIdentity?: string },
     sessionId: string,
   ) => void;
+  sessionId?: string;
+  readOnlySessionId?: string | null;
 } = {}) {
   renderClient(
     createElement(V4WorkspaceChatArea, {
-      sessionId: "main-session",
+      sessionId,
+      readOnlySessionId,
       workspacePath: "/workspace",
       onPaneActiveSessionChange,
     }),
@@ -198,6 +201,22 @@ describe("V4WorkspaceChatArea pane active sync", () => {
     );
   });
 
+  it("forwards the worktree-open callback through the shell binding to the primary pane", () => {
+    leafPaneCapture.props = [];
+    const onCreateTaskInWorkspace = vi.fn();
+    renderClient(
+      createElement(V4WorkspaceChatArea, {
+        sessionId: "main-session",
+        workspacePath: "/workspace",
+        onCreateTaskInWorkspace,
+      }),
+    );
+
+    const primaryPane = leafPaneCapture.props.find((props) => props.paneId === V4_PRIMARY_PANE_ID);
+    expect(primaryPane).toBeTruthy();
+    expect(primaryPane!.shell.onCreateTaskInWorkspace).toBe(onCreateTaskInWorkspace);
+  });
+
   it("does not sync read-only subagent pane focus into the shell active task", () => {
     createGroupedWorkbenchState({ readOnlyChild: true });
     const groupId = useWorkbenchGroupStore.getState().activeGroupId;
@@ -211,6 +230,40 @@ describe("V4WorkspaceChatArea pane active sync", () => {
       childPane!.onFocusRequest("pane-1");
     });
 
+    expect(onPaneActiveSessionChange).not.toHaveBeenCalled();
+  });
+
+  it("preserves selection-side-chat capability when a pane becomes shell active", () => {
+    createGroupedWorkbenchState({ selectionSideChat: true });
+    const groupId = useWorkbenchGroupStore.getState().activeGroupId;
+    expect(groupId).toBeTruthy();
+    useWorkbenchGroupStore.getState().focusPane(groupId!, V4_PRIMARY_PANE_ID);
+    const { onPaneActiveSessionChange } = renderWorkspace();
+    const sideChatPane = leafPaneCapture.props.find((props) => props.paneId === "pane-1");
+
+    expect(sideChatPane).toBeTruthy();
+    act(() => {
+      sideChatPane!.onFocusRequest("pane-1");
+    });
+
+    expect(onPaneActiveSessionChange).toHaveBeenCalledWith(
+      { workspacePath: "/workspace" },
+      "child-session",
+      { selectionSideChat: true },
+    );
+  });
+
+  it("keeps a standalone read-only subagent primary pane read-only when focused", () => {
+    const { onPaneActiveSessionChange } = renderWorkspace({
+      sessionId: "child-session",
+      readOnlySessionId: "child-session",
+    });
+    const primaryPane = leafPaneCapture.props.find((props) => props.paneId === V4_PRIMARY_PANE_ID);
+    expect(primaryPane).toBeTruthy();
+
+    act(() => {
+      primaryPane!.onFocusRequest(V4_PRIMARY_PANE_ID);
+    });
     expect(onPaneActiveSessionChange).not.toHaveBeenCalled();
   });
 });

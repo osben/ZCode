@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
-// 完成卡「保存 / 再次运行」的真实 DOM（docs/dynamic-workflow/transcript-and-notifications.md「Saving the
-// run, and running it again」）：弹层的两条路与三个字段、覆盖与拒绝、老 agent 的降级、⌘↩；表头两个槽位
-// 的门控、芯片是按钮还是文字、「再次运行」直接启动还是开实参窗。纯规则在 workflowRunSave.test.ts。
+// Real DOM of the completion card "Save / Run again" (docs/dynamic-workflow/transcript-and-notifications.md,
+// "Saving the run, and running it again"): the popover's two paths and three fields, overwrite and refusal,
+// the old-agent fallback, Cmd+Enter; header-slot gating, whether the chip is a button or text, and whether
+// "Run again" launches directly or opens the args dialog. Pure rules live in workflowRunSave.test.ts.
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement, createRef, type ReactNode } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,6 +14,7 @@ import {
   type ZCodeWorkflowsSaveResult,
 } from "@zcode/shared";
 import { testId } from "@zcode/shared/test-ids";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 vi.mock("@/logger.js", () => ({ logger: { debug: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
 const toastSpy = vi.hoisted(() => vi.fn());
@@ -38,7 +40,7 @@ vi.mock("@/project-workflow/useWorkflowRunSave.js", () => ({
   useWorkflowRunSave: () => controller.current,
 }));
 
-// eslint-disable-next-line import/first -- 必须在 mock 之后再引入被测组件。
+// eslint-disable-next-line import/first -- the component under test must be imported after the mocks.
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 // eslint-disable-next-line import/first
 import {
@@ -62,7 +64,7 @@ import { ServiceProvider } from "@/hooks/useServices.js";
 import { WorkflowRunStatusHeader } from "@/app-shell/WorkflowRunSidePaneSections.js";
 
 beforeAll(() => {
-  // Radix Popper 量尺寸用 ResizeObserver；jsdom 没有。
+  // Radix Popper measures with ResizeObserver; jsdom lacks it.
   globalThis.ResizeObserver ??= class {
     observe() {}
     unobserve() {}
@@ -85,7 +87,7 @@ function withIntl(node: ReactNode, locale: "en-US" | "zh-CN" = "en-US") {
   return createElement(ZCodeIntlProvider, { initialLocale: locale }, node);
 }
 
-// ── 弹层 ──
+// ── popover ──
 
 function popoverHost(overrides: Partial<WorkflowSavePopoverHost> = {}): WorkflowSavePopoverHost {
   return {
@@ -125,22 +127,45 @@ function renderPopover(host: WorkflowSavePopoverHost, locale: "en-US" | "zh-CN" 
 }
 
 describe("WorkflowSavePopover", () => {
-  it("zh：先是整条宽的 ZCode 主路，细线之下才是三个字段；名字按 run 名预填、名字框拿到焦点", () => {
-    renderPopover(popoverHost(), "zh-CN");
-    expect(screen.getByText("保存工作流")).toBeTruthy();
-    expect(screen.getByTestId("workflow-save-lead").textContent).toBe("让 ZCode 帮我提炼保存");
-    expect(screen.getByText("ZCode 会帮你提炼出可复用的工作流，再交你确认。")).toBeTruthy();
-    expect(screen.getByText("或按原样直接保存")).toBeTruthy();
-    const name = screen.getByTestId<HTMLInputElement>("workflow-save-name");
-    expect(name.value).toBe("pr-review");
-    expect(document.activeElement).toBe(name);
-    expect(screen.getByTestId("workflow-save-consequence").textContent).toContain(
-      ".zcode/workflows/pr-review.dwf.ts",
-    );
-    expect(screen.getByTestId("workflow-save-submit").textContent).toBe("直接保存");
-  });
+  it.each([
+    {
+      name: "zh-CN",
+      lang: "zh-CN" as const,
+      title: "保存工作流",
+      lead: "让 ZCode 帮我提炼保存",
+      leadHint: "ZCode 会帮你提炼出可复用的工作流，再交你确认。",
+      or: "或按原样直接保存",
+      submit: "直接保存",
+    },
+    {
+      name: "en-US",
+      lang: "en-US" as const,
+      title: expectedCopy("chat.toolCall.workflow.saveRun.title"),
+      lead: expectedCopy("chat.toolCall.workflow.saveRun.lead"),
+      leadHint: expectedCopy("chat.toolCall.workflow.saveRun.lead.hint"),
+      or: expectedCopy("chat.toolCall.workflow.saveRun.or"),
+      submit: expectedCopy("chat.toolCall.workflow.saveRun.submit"),
+    },
+  ])(
+    "$name: the full-width ZCode lead path first with the three fields below the divider; the name is prefilled from the run name and focused",
+    ({ lang, title, lead, leadHint, or, submit }) => {
+      cleanup();
+      renderPopover(popoverHost(), lang);
+      expect(screen.getByText(title)).toBeTruthy();
+      expect(screen.getByTestId("workflow-save-lead").textContent).toBe(lead);
+      expect(screen.getByText(leadHint)).toBeTruthy();
+      expect(screen.getByText(or)).toBeTruthy();
+      const name = screen.getByTestId<HTMLInputElement>("workflow-save-name");
+      expect(name.value).toBe("pr-review");
+      expect(document.activeElement).toBe(name);
+      expect(screen.getByTestId("workflow-save-consequence").textContent).toContain(
+        ".zcode/workflows/pr-review.dwf.ts",
+      );
+      expect(screen.getByTestId("workflow-save-submit").textContent).toBe(submit);
+    },
+  );
 
-  it("ZCode 主路：把填好的字段交出去，然后关掉", async () => {
+  it("ZCode lead path hands over the filled fields, then closes", async () => {
     const host = popoverHost();
     const { onOpenChange } = renderPopover(host);
     fireEvent.change(screen.getByTestId("workflow-save-description"), {
@@ -155,14 +180,14 @@ describe("WorkflowSavePopover", () => {
     });
   });
 
-  it("⌘↩ 从任何字段触发 ZCode 主路", async () => {
+  it("Cmd+Enter triggers the ZCode lead path from any field", async () => {
     const host = popoverHost();
     renderPopover(host);
     fireEvent.keyDown(screen.getByTestId("workflow-save-name"), { key: "Enter", metaKey: true });
     await waitFor(() => expect(host.sendLead).toHaveBeenCalledTimes(1));
   });
 
-  it("非法名字：helper 变成错误、「直接保存」禁用；空名字也禁用", () => {
+  it("invalid name: the helper turns into an error and direct save is disabled; an empty name disables it too", () => {
     renderPopover(popoverHost({ runName: "PR 分层评审" }));
     const submit = screen.getByTestId<HTMLButtonElement>("workflow-save-submit");
     expect(screen.getByTestId<HTMLInputElement>("workflow-save-name").value).toBe("");
@@ -174,7 +199,7 @@ describe("WorkflowSavePopover", () => {
     expect(submit.disabled).toBe(true);
   });
 
-  it("直接保存：按字段落盘、回调 onSaved、关掉", async () => {
+  it("direct save writes the fields, calls onSaved, and closes", async () => {
     const host = popoverHost();
     const { onOpenChange } = renderPopover(host);
     fireEvent.click(screen.getByTestId("workflow-save-submit"));
@@ -187,7 +212,7 @@ describe("WorkflowSavePopover", () => {
     expect(host.onSaved).toHaveBeenCalledWith({ name: "pr-review", scope: "project" });
   });
 
-  it("名字已被占用：探测回来就换成覆盖警告与「覆盖并直接保存」，再点才带 overwrite", async () => {
+  it("name already taken: once the probe returns, switch to the overwrite warning and overwrite-and-save label; the next click sends overwrite", async () => {
     const host = popoverHost({ checkNameTaken: vi.fn(async (_n, scope) => scope === "project") });
     renderPopover(host);
     await waitFor(() => expect(screen.getByTestId("workflow-save-overwrite")).toBeTruthy());
@@ -198,7 +223,7 @@ describe("WorkflowSavePopover", () => {
     );
   });
 
-  it("另一档也占着这个名字：后果句补上遮蔽那一句（按目标档说方向，句号随语言）", async () => {
+  it("the other scope also holds this name: the consequence sentence adds the shadowing clause (direction follows the target scope, punctuation follows the language)", async () => {
     renderPopover(popoverHost({ checkNameTaken: vi.fn(async (_n, scope) => scope === "global") }));
     await waitFor(() =>
       expect(screen.getByTestId("workflow-save-consequence").textContent).toContain(
@@ -208,7 +233,7 @@ describe("WorkflowSavePopover", () => {
     expect(screen.queryByTestId("workflow-save-overwrite")).toBeNull();
   });
 
-  it("agent 拒绝（target_exists 之外）：画出它的原因与诊断，弹层留着——什么都没写", async () => {
+  it("agent refuses (other than target_exists): show its reason and diagnostics, keep the popover open — nothing was written", async () => {
     const host = popoverHost({
       save: vi.fn(
         async (): Promise<ZCodeWorkflowsSaveResult> => ({
@@ -228,7 +253,7 @@ describe("WorkflowSavePopover", () => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
-  it("老 agent 没有 workflows/save：只留 ZCode 那条路，提示里说清楚", () => {
+  it("an older agent without workflows/save keeps only the ZCode path, and the hint says so", () => {
     renderPopover(popoverHost({ directSaveUnsupported: true }));
     expect(screen.getByTestId("workflow-save-lead")).toBeTruthy();
     expect(screen.queryByTestId("workflow-save-name")).toBeNull();
@@ -236,7 +261,7 @@ describe("WorkflowSavePopover", () => {
     expect(screen.getByText(/This agent cannot save directly\./u)).toBeTruthy();
   });
 
-  it("宿主没有发送路径：没有 ZCode 那一枚、也没有分隔线，只剩字段", () => {
+  it("host without a send path: no ZCode button and no divider, only the fields", () => {
     const host = popoverHost();
     delete host.sendLead;
     renderPopover(host);
@@ -246,7 +271,7 @@ describe("WorkflowSavePopover", () => {
   });
 });
 
-// ── 表头两个槽位 ──
+// ── header slots ──
 
 interface ControllerOverrides {
   entry?: ZCodeSavedWorkflowEntry;
@@ -313,10 +338,10 @@ function renderSlots(
   );
 }
 
-describe("表头槽位", () => {
+describe("header slots", () => {
   beforeEach(() => setController());
 
-  it("还没保存：只有「保存」，没有芯片；点开就是那个弹层", () => {
+  it("not saved yet: only the save verb, no chip; clicking opens that popover", () => {
     renderSlots();
     expect(screen.queryByTestId("workflow-saved-chip")).toBeNull();
     const save = screen.getByTestId("workflow-save-open");
@@ -325,7 +350,7 @@ describe("表头槽位", () => {
     expect(screen.getByTestId("workflow-save-popover")).toBeTruthy();
   });
 
-  it("已保存：芯片在状态之前、动词换成「再次运行」；没有中枢时芯片只是文字", () => {
+  it("saved: the chip precedes the status and the verb becomes run-again; without the hub the chip is plain text", () => {
     setController({ entry: ENTRY });
     renderSlots();
     const chip = screen.getByTestId("workflow-saved-chip");
@@ -337,7 +362,7 @@ describe("表头槽位", () => {
     expect(screen.queryByTestId("workflow-save-open")).toBeNull();
   });
 
-  it("有中枢：芯片是按钮，点开落到那个工作流", () => {
+  it("with the hub: the chip is a button that opens that workflow", () => {
     setController({ entry: ENTRY });
     const openWorkflow = vi.fn();
     renderSlots({}, { hub: { openWorkflow } });
@@ -351,7 +376,7 @@ describe("表头槽位", () => {
     });
   });
 
-  it("门关着（只读 / 灰度）：芯片是事实照常在，动词整个缺席", () => {
+  it("gate closed (read-only / gray release): the fact chip stays, the verb is entirely absent", () => {
     setController({ entry: ENTRY });
     renderSlots({ canSave: false });
     expect(screen.getByTestId("workflow-saved-chip")).toBeTruthy();
@@ -359,7 +384,7 @@ describe("表头槽位", () => {
     expect(screen.queryByTestId("workflow-save-open")).toBeNull();
   });
 
-  it("再次运行：无实参的项目档直接启动，不开窗", async () => {
+  it("run again: a project entry without args launches directly without a dialog", async () => {
     const launch = vi.fn(async () => ({ ok: true }));
     setController({ entry: ENTRY, launch });
     renderSlots();
@@ -368,7 +393,7 @@ describe("表头槽位", () => {
     expect(screen.queryByTestId(TID_WORKFLOW_LAUNCH_DIALOG)).toBeNull();
   });
 
-  it("再次运行直接启动失败：toast 说出启动器的原因（窗外路径）", async () => {
+  it("run-again direct launch fails: the toast reports the launcher reason (out-of-dialog path)", async () => {
     toastSpy.mockClear();
     const launch = vi.fn(async () => ({
       ok: false,
@@ -381,7 +406,7 @@ describe("表头槽位", () => {
     expect(toastSpy).toHaveBeenCalledWith("The workflow script did not compile");
   });
 
-  it("再次运行：有实参就开窗，预填这次 run 跑过的那一份", async () => {
+  it("run again: with args it opens the dialog prefilled with what this run used", async () => {
     const entry: ZCodeSavedWorkflowEntry = {
       ...ENTRY,
       args: { base: { type: "string", default: "main" } },
@@ -404,7 +429,7 @@ describe("WorkflowRunSaveSlotsBoundary", () => {
   beforeEach(() => setController({ entry: ENTRY }));
   const host: WorkflowRunSaveSlotsHost = { workspacePath: "/repo", runId: "run-1", canSave: true };
 
-  it("没有服务上下文（静态渲染、回放、分享只读）：不挂控制器，卡就是原来那张卡", () => {
+  it("no service context (static render, replay, share read-only): no controller mounts and the card stays as it was", () => {
     const seen: unknown[] = [];
     render(
       withIntl(
@@ -420,7 +445,7 @@ describe("WorkflowRunSaveSlotsBoundary", () => {
     expect(seen).toEqual([null]);
   });
 
-  it("有服务上下文：交出两个槽位", () => {
+  it("with a service context: hand out both slots", () => {
     let seen: unknown = undefined;
     render(
       withIntl(
@@ -440,7 +465,7 @@ describe("WorkflowRunSaveSlotsBoundary", () => {
   });
 });
 
-describe("run 侧板状态头", () => {
+describe("run side pane status header", () => {
   function renderHeader(saveSlots: { leading: ReactNode; trailing: ReactNode } | null) {
     return render(
       withIntl(
@@ -466,7 +491,7 @@ describe("run 侧板状态头", () => {
     );
   }
 
-  it("动词排在 Stop 之前，芯片在第二行状态词之后", () => {
+  it("the verb precedes Stop and the chip follows the second-row status word", () => {
     renderHeader({
       leading: createElement("span", { "data-testid": "chip" }, "Saved"),
       trailing: createElement("button", { "data-testid": "verb", type: "button" }, "Run again"),

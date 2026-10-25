@@ -1,11 +1,22 @@
 import type { RemoteEnvironment } from "@zcode/server/remote/backend.js";
+import type { PublicZCodeErrorCode } from "@zcode/shared";
+
+export const REMOTE_POSIX_SHELL_ONLY_MESSAGE =
+  "当前 remote 模式仅支持 POSIX shell 环境，暂不支持 Windows 原生远程主机";
+
+/** Builds the public unsupported-platform error so the connection path classifies it by code, not by message. */
+export function createUnsupportedRemotePlatformError(message: string): Error {
+  return Object.assign(new Error(message), {
+    code: "remote-platform-unsupported" satisfies PublicZCodeErrorCode,
+  });
+}
 
 export function assertSupportedRemoteEnvironment(env: RemoteEnvironment): void {
   if (env.platform !== "win32") {
     return;
   }
 
-  // deploy/connect 之前各自硬编码 Windows 拒绝逻辑，后续容易出现 skipDeploy 绕过或错误信息不一致。
-  // 当前 remote 后端和启动命令仍依赖 POSIX shell；先集中能力边界，等 Windows shell strategy 接入后再统一放开。
-  throw new Error("当前 remote 模式仅支持 POSIX shell 环境，暂不支持 Windows 原生远程主机");
+  // Previously deploy/connect each hardcoded Windows rejection logic, which could be bypassed by skipDeploy or produce inconsistent errors.
+  // Current remote backends and startup commands still depend on a POSIX shell; centralize the capability boundary until a Windows shell strategy is added.
+  throw createUnsupportedRemotePlatformError(REMOTE_POSIX_SHELL_ONLY_MESSAGE);
 }

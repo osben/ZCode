@@ -1,26 +1,54 @@
-# 07 — 收口：删除 V1 契约与旧 Docker 构建链，文档与验收对齐
+# 07 — Wrap-up: remove the V1 contract and old Docker build chains, align docs and acceptance
 
-**What to build:** 两端都只剩 V2 之后，做 contract 阶段：删除 shared 中的 V1 relay 契约与二维码 `hash`/`t` 支持，删除 `/remote`、`/remote/v3`、`/remote/v4` 三条旧 Docker 构建链及对已迁走基础设施的引用，把架构文档、静态部署文档收口到最终行为，标注被取代的旧设计，并在测试环境完成完整真机验收矩阵。完成后仓库内没有任何 V1 代码路径，也没有能把 V2 页面误发到旧单一部署的脚本。
+**What to build:** With both ends on V2 only, do the contract phase: delete the V1 relay contract in shared and
+the QR `hash`/`t` support; delete the three old `/remote`, `/remote/v3`, `/remote/v4` Docker build chains and
+references to the migrated infrastructure; bring the architecture and static-deployment docs to the final
+behavior; mark the superseded old design; and run the complete real-device acceptance matrix in the test
+environment. Afterwards the repo has no V1 code path and no script that could ship the V2 page to the old
+single deployment.
 
-**Blocked by:** 03、04、05、06
+**Blocked by:** 03, 04, 05, 06
 
 **Status:** in-progress
 
-**Parent:** [Web 远控接入 Relay V2：手机登录后连接桌面](./01-relay-v2-login-pairing.md)
+**Parent:** [Web remote control on Relay V2: phone logs in, then connects to the desktop](./01-relay-v2-login-pairing.md)
 
-## 验收标准
+## Acceptance criteria
 
-- [x] shared 删除 V1 relay 消息类型、V1 解析分支、proof 测试向量、二维码 `hash`/`t` 的构建与解析支持、V1 心跳常量；两端与测试无任何引用。
-- [ ] 删除 `/remote`、`/remote/v3`、`/remote/v4` 的 Dockerfile、nginx 配置、构建/推送/验证脚本与 package.json 命令；仅被这些 Docker 链使用的辅助脚本一并删除，被 OSS 流水线或 `/remote/__test__` 复用的保留。`/remote/__test__` 链与 OSS 流水线继续可用。
-- [x] 删除脚本与文档中对 旧基础设施仓库、其路径环境变量和旧 Deployment 文件 的引用。
-- [x] 文档收口：架构文档删除 V1 与 Docker 部署段落、"静态部署"节改为只描述 OSS 多版本链路并标注旧 Docker 部署冻结在最后一次 V1 镜像；`remote-v4-static-deployment.md` 同步删除 Docker/Jenkins 段落；`docs/superpowers/specs/2026-04-28-web-remote-login-design.md` 顶部标注被本 spec 取代；`relay-v2-pairing.md` 补已知限制（旧链接连新桌面停在等待页、离线设备无 `meta`、`KICKED` 语义折中）与外部依赖表。
-- [ ] 测试环境完整真机验收矩阵执行并记录到 `relay-v2-pairing.md`：扫码首次登录、已登录直连、无码选设备、账号不匹配与切换账号、另一台手机接管（本机停止重连并提示）、桌面登出后手机断开与登录后恢复、relay 滚动导致的 `KICKED` 自动恢复。
-- [ ] 全部文档链接、命令与引用一致性检查通过；`pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed`、受影响单测、`pnpm verify:pre-push` 通过。
+- [x] shared deletes V1 relay message types, the V1 parse branch, proof test vectors, QR `hash`/`t` build and
+      parse support and V1 heartbeat constants; no reference remains in either end or in tests.
+- [ ] Delete the Dockerfiles, nginx configs, build/push/verify scripts and package.json commands of `/remote`,
+      `/remote/v3`, `/remote/v4`; helper scripts used only by these Docker chains go too, those reused by the OSS
+      pipeline or `/remote/__test__` stay. The `/remote/__test__` chain and the OSS pipeline keep working.
+- [x] Delete references in scripts and docs to the old infrastructure repo, its path environment variables and
+      old Deployment files.
+- [x] Docs closed out: the architecture doc drops V1 and Docker deployment sections and its "static deployment"
+      section describes only the OSS multi-version chain, noting the old Docker deployment is frozen at the last V1
+      image; `remote-v4-static-deployment.md` drops the Docker/Jenkins sections; the top of
+      `docs/superpowers/specs/2026-04-28-web-remote-login-design.md` marks it superseded by this spec;
+      `relay-v2-pairing.md` gains known limitations (old link to a new desktop stalls at the waiting page, offline
+      devices have no `meta`, `KICKED` semantic compromise) and the external-dependency table.
+- [ ] Execute the full test-environment real-device matrix and record it in `relay-v2-pairing.md`: first scan
+      with login, logged-in direct connect, no-code device selection, account mismatch and switching, takeover by
+      another phone (this phone stops reconnecting and says so), phone disconnect after desktop logout and recovery
+      after login, automatic `KICKED` recovery after relay rolling restarts.
+- [ ] All doc link, command and reference consistency checks pass; `pnpm typecheck`, `pnpm lint`,
+      `pnpm architecture:check --changed`, affected unit tests and `pnpm verify:pre-push` pass.
 
-## 实施记录（2026-09-19）
+## Implementation record (2026-09-19)
 
-- V1 relay 类型、proof 向量、QR overload 和心跳常量已删除。QR 默认解析 V2、拒绝旧凭据参数；共享 payload 序列化器默认时间戳收口为 Unix 秒。
-- 三条旧单目录 Docker 构建/推送/验证入口及 npm 命令已移除。OSS 工具保留；独立测试发布脚本只构建推送镜像，旧基础设施仓库更新/MR 逻辑删除。
-- 测试 Dockerfile 实际构建发现缺 patches；已补齐补丁、provider、public 与 Git 安装工具，回归通过。再次构建在私有 CUA Git 依赖认证失败，尚未完成 Docker smoke，不能勾选完整可用性。
-- 架构、静态部署、登录文档已对齐最终行为；历史部署步骤归档并链接现行入口。真机矩阵与外部依赖见 [Relay V2](../../web-remote-control/relay-v2-pairing.md#测试环境真机验收矩阵07)，全部真机场景仍待执行。
-- 完整验证结果见同文档的 07 验证记录。必要验证未全部完成，保持 `in-progress`；按仓库规则保留工作区改动，不自动提交。
+- V1 relay types, proof vectors, QR overloads and heartbeat constants are deleted. The QR default parses V2 and
+  rejects old credential parameters; the shared payload serializer's default timestamp is unified to Unix
+  seconds.
+- The three old single-directory Docker build/push/verify entries and their npm commands are removed. OSS
+  tooling is kept; the standalone test publish script only builds and pushes an image, with the old
+  infrastructure-repo update/MR logic deleted.
+- Building the test Dockerfile revealed missing patches; patches, provider, public and Git install tools were
+  added and the regression passes. A second build failed on authentication for the private CUA Git dependency,
+  so the Docker smoke is incomplete and full availability is not checked off.
+- Architecture, static-deployment and login docs match the final behavior; historical deployment steps are
+  archived with a link to the current entry. The real-device matrix and external dependencies are in
+  [Relay V2](../../web-remote-control/relay-v2-pairing.md#测试环境真机验收矩阵07); all real-device scenarios are
+  still to be run.
+- Full verification results are in the same doc's 07 verification record. Required verification is incomplete,
+  so the status stays `in-progress`; per repo rules the workspace changes are kept and not auto-committed.

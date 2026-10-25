@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { extname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const productionRoots = [
@@ -42,6 +42,22 @@ const testRoots = [
   "packages/ui/test",
 ] as const;
 
+interface SourceFileSnapshot {
+  readonly path: string;
+  readonly content: string;
+}
+
+let productionSnapshot: readonly SourceFileSnapshot[];
+let testSnapshot: readonly SourceFileSnapshot[];
+
+beforeAll(async () => {
+  // Reason: every boundary assertion would otherwise re-walk and re-read the whole source tree; the suite never mutates source, so a shared read-only snapshot preserves all checks.
+  [productionSnapshot, testSnapshot] = await Promise.all([
+    readSourceSnapshot(productionRoots),
+    readSourceSnapshot(testRoots),
+  ]);
+});
+
 describe("M2 completion boundary", () => {
   it("旧 Provider DTO 只属于一次性物理迁移边界", async () => {
     const matches = await findProductionFilesMatching(/\bModelProviderConfig\b/u);
@@ -49,7 +65,7 @@ describe("M2 completion boundary", () => {
   });
 
   it("非迁移测试不再以旧 Provider DTO 组织夹具", async () => {
-    const matches = await findFilesMatching(testRoots, /\bModelProviderConfig\b/u);
+    const matches = await findFilesMatching(testSnapshot, /\bModelProviderConfig\b/u);
     expect(matches).toEqual([...legacyDtoTestOwners].sort());
   });
 
@@ -68,18 +84,31 @@ async function findProductionFilesContaining(needle: string): Promise<string[]> 
 }
 
 async function findProductionFilesMatching(pattern: RegExp): Promise<string[]> {
-  return findFilesMatching(productionRoots, pattern);
+  return findFilesMatching(productionSnapshot, pattern);
 }
 
-async function findFilesMatching(roots: readonly string[], pattern: RegExp): Promise<string[]> {
+async function readSourceSnapshot(
+  roots: readonly string[],
+): Promise<readonly SourceFileSnapshot[]> {
   const files = (
     await Promise.all(roots.map((root) => collectSourceFiles(resolve(repositoryRoot, root))))
   ).flat();
-  const matches: string[] = [];
+  const snapshot: SourceFileSnapshot[] = [];
   for (const file of files) {
-    if (pattern.test(await readFile(file, "utf-8"))) {
-      // 路径作为跨平台模块标识，统一 POSIX 分隔符比较（Windows readdir 产出 \）。
-      matches.push(relative(repositoryRoot, file).replaceAll("\\", "/"));
+    snapshot.push({ path: file, content: await readFile(file, "utf-8") });
+  }
+  return snapshot;
+}
+
+async function findFilesMatching(
+  snapshot: readonly SourceFileSnapshot[],
+  pattern: RegExp,
+): Promise<string[]> {
+  const matches: string[] = [];
+  for (const file of snapshot) {
+    if (pattern.test(file.content)) {
+      // Paths act as cross-platform module identifiers; compare with POSIX separators uniformly (Windows readdir produces \).
+      matches.push(relative(repositoryRoot, file.path).replaceAll("\\", "/"));
     }
   }
   return matches.sort();

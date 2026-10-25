@@ -10,11 +10,13 @@ import {
 
 const HIDE_ANIMATION_MS = 120;
 /**
- * 兜底隐藏时限。主导隐藏的是 turn 终态 / session 关闭 / runtime 不可用 / workspace 销毁
- * 这几条显式清除路径，这个计时器只在它们全部失约时收场，保证浮层不会无限期停留。
+ * Fallback hide deadline. Normal hiding happens through explicit cleanup paths for turn terminal,
+ * session close, unavailable runtime, or workspace destruction. This timer intervenes only if all
+ * of them fail, ensuring the overlay never remains visible indefinitely.
  *
- * 取 30s 而不是更短：CUA 事实现在按 cell 上报（每个 node_repl cell 一次），同一 turn 内
- * 后续 cell 会刷新计时器，但单个 cell 本身可以跑很久，10s 会让浮层在操作中途熄灭。
+ * Use 30s instead of a shorter interval: CUA facts are reported per cell (once per node_repl cell),
+ * and later cells in the same turn refresh the timer, but a single cell can run for a long time.
+ * A 10-second deadline would hide the overlay in the middle of an operation.
  */
 const AUTO_HIDE_MS = 30_000;
 const CREATE_RETRY_MS = 250;
@@ -135,8 +137,9 @@ export function createWindowsCuaOperationIndicator(
       const sourceKeys = activeTurnKeysBySource.get(source);
       if (!sourceKeys?.delete(key)) return;
       if (sourceKeys.size === 0) activeTurnKeysBySource.delete(source);
-      // 安全计时器是 fail-hidden 边界：即使 runtime 没有补发 inactive，也不能让
-      // 原生浮层无限期可见；后续 CUA tool-started 会重新建立该键并重新计时。
+      // The safety timer is a fail-hidden boundary: even if runtime fails to send inactive again,
+      // the native overlay cannot remain visible indefinitely. A later CUA tool-started event creates
+      // the key again and restarts the timer.
       if (!hasActiveTurns()) beginHide();
     }, AUTO_HIDE_MS);
     timers.set(key, timer);
@@ -189,8 +192,8 @@ export function createWindowsCuaOperationIndicator(
 
   function showWindowOnTop(target: WindowsCuaOperationIndicatorWindow): void {
     target.showInactive();
-    // Windows 隐藏透明窗口后可能清除 WS_EX_TOPMOST；showInactive 只恢复可见性，
-    // 不会恢复原生 Z-order，因此每次显示后都必须重新声明层级并移到该层级最前方。
+    // Hiding a transparent window may clear WS_EX_TOPMOST on Windows. showInactive restores
+    // visibility only, not native Z-order, so after each show explicitly set the level and move it to the front of that level.
     target.setAlwaysOnTop(true, "screen-saver");
     target.moveTop();
   }
@@ -205,8 +208,9 @@ export function createWindowsCuaOperationIndicator(
           windowReady = true;
           setupRetryAvailable = false;
           if (!hasActiveTurns()) {
-            // refreshContent 可能发生在窗口已经隐藏之后；HTML 默认是 active，必须在
-            // 无活跃 turn 时显式恢复离场状态，避免后续错误 show() 暴露假提示。
+            // refreshContent may run after the window has been hidden. HTML defaults to active, so
+            // explicitly restore the inactive state when there is no active turn to avoid a later
+            // incorrect show() displaying a false indicator.
             setDocumentState("leaving");
             return;
           }
@@ -227,7 +231,7 @@ export function createWindowsCuaOperationIndicator(
     if (window && !window.isDestroyed()) {
       if (repositionExisting) positionWindow(window);
       setDocumentState("active");
-      // 根因：退场只隐藏而不销毁窗口；后续 turn 复用时必须重新显示已加载的窗口。
+      // Cause: exit hides the window without destroying it, so a later turn must show the already-loaded window again.
       if (windowReady && !windowShown) {
         showWindowOnTop(window);
         windowShown = true;
@@ -245,8 +249,9 @@ export function createWindowsCuaOperationIndicator(
         alwaysOnTop: true,
         focusable: false,
         frame: false,
-        // 旧窗口只给 CSS shadow 留 1px 透明边，并叠加默认 DWM 矩形阴影，
-        // 导致圆角阴影被裁成硬边和灰带；扩大透明画布后由 CSS 独占阴影。
+        // The old window left only 1px of transparent space for the CSS shadow and added the default
+        // DWM rectangular shadow, clipping the rounded shadow into a hard edge and gray band. Expand
+        // the transparent canvas and let CSS own the shadow.
         hasShadow: false,
         resizable: false,
         show: false,
@@ -279,7 +284,7 @@ export function createWindowsCuaOperationIndicator(
           windowShown = false;
         }
         if (failedDuringSetup || disposed || !hasActiveTurns() || reconcileTimer) return;
-        // 原因：系统意外关闭窗口时 Host 的 turn 仍然活跃，必须主动重建，不能等下一条状态。
+        // Cause: if the system unexpectedly closes the window, the Host turn is still active; recreate it now instead of waiting for the next state update.
         setupRetryAvailable = true;
         reconcileTimer = schedule(() => {
           reconcileTimer = null;
@@ -300,8 +305,9 @@ export function createWindowsCuaOperationIndicator(
       windowShown = false;
       return;
     } catch (error) {
-      // 关闭是这个浮层的安全底线：它在声称"ZCode 正在操作电脑"，隐藏失败就等于向用户
-      // 撒谎。hide() 抛错时降级为销毁窗口——下一个 CUA cell 会由 ensureWindow 重建。
+      // Closing is the overlay's safety boundary: it claims "ZCode is operating the computer," so a
+      // hide failure would mislead the user. If hide() throws, destroy the window instead; the next
+      // CUA cell will recreate it through ensureWindow.
       options.logger.warn("[cua-operation-indicator] hide failed, destroying window", error);
     }
     if (window === target) {
@@ -349,7 +355,7 @@ export function createWindowsCuaOperationIndicator(
       nextKeys.add(key);
       activeTurnKeysBySource.set(source, nextKeys);
       scheduleAutoHide(source, key);
-      // 只有 aggregate 从空变为非空时按当前鼠标显示器重定位，避免并行 source 让窗口跳动。
+      // Reposition on the display under the current pointer only when the aggregate changes from empty to non-empty, avoiding jumps from concurrent sources.
       ensureWindow(!wasActive);
       return;
     }

@@ -1,19 +1,19 @@
-# 设置页预览版更新文案
+# Settings preview-update copy
 
-## 背景
+## Background
 
-设置页里 `receivePreviewUpdates` 控制桌面自动更新使用 stable 还是 preview 通道。这个开关面向普通用户展示，文案应避免暴露实现字段和裸英文通道名作为主要表达。
+In Settings, `receivePreviewUpdates` controls whether desktop auto-update uses the stable or preview channel. The switch is shown to ordinary users, so copy must not expose implementation field names or bare English channel names as the primary wording.
 
-## 文案要求
+## Copy requirements
 
-- 标题使用用户能直接理解的“提前收到预览版更新”，不使用 `preview 版本` 这类实现侧说法。
-- 描述说明开启后的收益：最快、提前体验新功能和改进版本。
-- 描述说明关闭后的结果：随着版本发布节奏获得版本推送更新。
-- 英文文案保持同一语义，使用 `preview updates` / `regular updates` 这类面向用户的说法。
+- The title uses user-comprehensible "receive preview updates early"; do not use implementation-side wording like `preview 版本`.
+- The description states the benefit when enabled: earliest access to new features and improved versions.
+- The description states the result when disabled: update pushes follow the regular release cadence.
+- English copy keeps the same meaning with user-facing wording such as `preview updates` / `regular updates`.
 
-## 当前文案
+## Current copy
 
-- 中文标题：`接受提前收到预览版更新`
-- 中文描述：`开启后将最快、提前体验新功能和改进版本，关闭后将随着版本发布节奏获得版本推送更新。`
-- 英文标题：`Receive preview updates early`
-- 英文描述：`When enabled, you will get the earliest access to new features and improvements. When disabled, you will receive update pushes according to the regular release schedule.`
+- zh-CN title: `接受提前收到预览版更新`
+- zh-CN description: `开启后将最快、提前体验新功能和改进版本，关闭后将随着版本发布节奏获得版本推送更新。`
+- English title: `Receive preview updates early`
+- English description: `When enabled, you will get the earliest access to new features and improvements. When disabled, you will receive update pushes according to the regular release schedule.`

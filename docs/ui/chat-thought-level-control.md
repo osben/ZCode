@@ -1,50 +1,50 @@
 # Chat Thought Level Control
 
-## 目标
+## Goal
 
-聊天输入框工具栏的 thought level 控件需要直接展示当前思考阶梯文案，让用户不打开额外浮层也能知道当前档位。
+The thought level control in the composer toolbar shows the current thinking level text directly, so users can see the current level without opening an extra popover.
 
-## 当前实现
+## Current implementation
 
 - `packages/ui/src/chat-input-toolbar/ThoughtLevelCycleControl.tsx`
-  - 控件默认使用 select 菜单交互，点击后展开当前模型支持的 thought level 列表。
-  - 旧版点击循环切换交互保留为 `interactionMode="cycle"` 参数，便于在需要更快切换的场景恢复。
-  - 触发器显示脑图标、当前阶梯文案和竖向阶梯条；文案来自当前 `thought_level` option 的本地化展示名。
-  - 当前阶梯文案切换时使用轻量纵向滚动动效；系统开启 reduced motion 时直接静态替换。
-  - 桌面宽度展示当前阶梯文案；窄屏沿用工具栏的 `labelVisibilityClassName` 收起文字，保证手机 Web 不挤压输入框。
-  - 竖向阶梯进度条只在 composer 的 `sm` 到 `xl` 区间显示：小于 `sm` 的超窄宽度隐藏进度条，仅保留脑图标；达到 `xl` 后进度条随当前阶梯文案出现而隐藏。
-  - V4 composer 在小于 `xl` 的窄宽度隐藏下拉箭头，但保留脑图标和上述阶梯条响应规则；继续缩到 `sm` 以下时，trigger 收敛为正方形图标按钮。达到 `xl` 后恢复箭头。
-  - tooltip 会根据当前阶梯文案是否显示在按钮里切换：文案可见时显示功能名，英文为 `Thought Level`、中文为“思考级别”；文案因输入框变窄被收起时，tooltip 标题改为当前阶梯文案。
-  - 默认点击展开 select 菜单；恢复 `cycle` 模式后点击只循环切换阶梯，不主动弹出 tooltip。
-  - `Ctrl+T` 始终保留快速切换语义，按当前展示顺序直接切到下一个 thought level，不打开 select 菜单。
-  - `aria-label` 继续使用当前阶梯文案，方便读屏直接读出当前值。
+  - The control defaults to select-menu interaction: a click expands the list of thought levels supported by the current model.
+  - The old click-to-cycle interaction is kept as the `interactionMode="cycle"` parameter, so it can be restored where faster switching is needed.
+  - The trigger shows a brain icon, the current level text and a vertical level bar; the text is the localized display name of the current `thought_level` option.
+  - When the level text changes a light vertical scroll animation is used; under system reduced motion it is replaced statically.
+  - Desktop width shows the current level text; narrow screens collapse the text via the toolbar's `labelVisibilityClassName`, so mobile Web does not squeeze the input.
+  - The vertical level progress bar shows only between the composer's `sm` and `xl`: below `sm` the bar is hidden and only the brain icon remains; from `xl` the bar is hidden as the level text appears.
+  - The V4 composer hides the dropdown arrow below `xl` but keeps the brain icon and the level-bar responsive rule above; shrinking below `sm`, the trigger becomes a square icon button. The arrow returns from `xl`.
+  - The tooltip switches on whether the level text is shown in the button: when the text is visible it shows the function name, `Thought Level` in English and "思考级别" in Chinese; when the text is collapsed because the input is narrow, the tooltip title becomes the current level text.
+  - By default a click expands the select menu; in restored `cycle` mode a click only cycles the level and does not pop up a tooltip.
+  - `Ctrl+T` always keeps the quick-switch semantic: it moves to the next thought level in the current display order without opening the select menu.
+  - `aria-label` keeps using the current level text so screen readers read the current value directly.
 
-## 档位文案与顺序（Todo153）
+## Level text and order (Todo153)
 
-模型配置提供可选档位及其顺序。控件只做展示投影，不凭 value 或 name 重新排序；下拉菜单、点击循环和 `Ctrl+T` 使用同一配置顺序，末项循环到首项。配置按低到高声明 minimal 在 low 前、ultra 在 max 后；开启是开关语义，不固定插入高与极高之间。
+The model config provides the selectable levels and their order. The control only projects for display and never re-sorts by value or name; the dropdown, click cycle and `Ctrl+T` use the same configured order, and the last item cycles to the first. The config declares levels from low to high, with minimal before low and ultra after max; "on" is a switch semantic and is not fixed between high and extra high.
 
-| 原始 value                                                         | 中文 | 英文       |
-| ------------------------------------------------------------------ | ---- | ---------- |
-| disabled / false / no / none / nothink / no-think / no_think / off | 关闭 | Off        |
-| enable / enabled / on / true                                       | 开启 | On         |
-| minimal                                                            | 极低 | Minimal    |
-| low                                                                | 低   | Low        |
-| medium                                                             | 中   | Medium     |
-| high                                                               | 高   | High       |
-| xhigh / extra-high / extra_high                                    | 极高 | Extra high |
-| max                                                                | 最高 | Max        |
-| ultra                                                              | 极致 | Ultra      |
+| Raw value                                                          | Chinese | English    |
+| ------------------------------------------------------------------ | ------- | ---------- |
+| disabled / false / no / none / nothink / no-think / no_think / off | 关闭    | Off        |
+| enable / enabled / on / true                                       | 开启    | On         |
+| minimal                                                            | 极低    | Minimal    |
+| low                                                                | 低      | Low        |
+| medium                                                             | 中      | Medium     |
+| high                                                               | 高      | High       |
+| xhigh / extra-high / extra_high                                    | 极高    | Extra high |
+| max                                                                | 最高    | Max        |
+| ultra                                                              | 极致    | Ultra      |
 
-文案匹配对 value 去首尾空格并转小写；选中与提交保留原始 value，不合并同名选项。extra-high／extra_high 为保留别名，不额外扩充其他拼写。
+Text matching trims the value and lowercases it; selection and submission keep the raw value and same-name options are not merged. extra-high / extra_high are reserved aliases and no other spellings are added.
 
-light、shallow、balanced、default、normal、standard、deep、maximum、very-high、very_high 取消固定归类，和其他未知值一样显示来源提供的 name，仍可选择。不按 name 猜强度或是否关闭，不自动新增档位或改写配置。
+light, shallow, balanced, default, normal, standard, deep, maximum, very-high and very_high are no longer fixedly categorized; like other unknown values they show the name provided by the source and remain selectable. Strength or off state is not guessed from the name, and no level is added or config rewritten automatically.
 
-阶梯条仅将关闭类 value 视为零强度；非关闭项按其在配置中非关闭项序列的位置递增。即使关闭项不在首位，也不扣减后方关闭项而误显示零进度。未选／失效值保持零进度与占位；单档有效选择只读。
+The level bar treats only off-class values as zero strength; non-off items increase by their position in the sequence of non-off items in the config. Even if an off item is not first, an off item after it is not subtracted so zero progress is never shown wrongly. An unselected / invalid value keeps zero progress and a placeholder; a single valid level is read-only.
 
-验收覆盖中英文文案、未知名称回退、原值提交、自定义顺序、菜单／键盘／触控／循环一致、阶梯条以及空值／失效／单档边界。桌面与手机尺寸、深浅主题使用共用控件；自动任务、Subagent 复用相同规则。
+Acceptance covers Chinese and English text, fallback for unknown names, raw-value submission, custom order, consistency across menu / keyboard / touch / cycle, the level bar, and empty / invalid / single-level boundaries. Desktop and mobile sizes and light/dark themes use the shared control; automation tasks and Subagent reuse the same rules.
 
-## 兼容边界
+## Compatibility boundary
 
-- Todo153 调整 UI 展示并移除前端名称排序，保留来源顺序；不改变 currentValue 写入、workspace 默认思考等级、请求参数映射或 task realtime 链路。
-- 桌面端和 Web 端共用同一 React 组件；手机端只受响应式文字显隐影响，不改变 remote replayable 语义。
-- `Ctrl+T` 不依赖触发器 click，避免默认 select 交互覆盖快捷键快速切换。
+- Todo153 adjusts UI display and removes the frontend name sorting, keeping the source order; it does not change currentValue writes, the workspace default thinking level, request parameter mapping or the task realtime chain.
+- Desktop and Web share one React component; mobile is affected only by responsive text visibility and remote replayable semantics are unchanged.
+- `Ctrl+T` does not depend on the trigger click, so the default select interaction does not override the quick-switch shortcut.

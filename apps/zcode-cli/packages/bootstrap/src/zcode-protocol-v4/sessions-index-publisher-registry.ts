@@ -3,8 +3,9 @@ import type { SessionsIndexPublisher } from "./sessions-index-publisher.js";
 const GATEWAY_DISPOSED_FAULT = "fault.gateway.disposed";
 
 /**
- * sessions-index publisher 的 workspace 级生命周期边界：同键异步操作串行，dispose 后禁止回写。
- * gateway 只负责构造/投影；并发等待、失败后重试与销毁代际统一收敛在这里。
+ * Workspace-level lifecycle boundary for the sessions-index publisher: serialize async operations
+ * for the same key and prevent writes after dispose. The gateway only constructs/projects; this
+ * module owns concurrent waiting, retries after failure, and disposal generations.
  */
 export class SessionsIndexPublisherRegistry {
   private readonly publishers = new Map<string, SessionsIndexPublisher>();
@@ -38,7 +39,7 @@ export class SessionsIndexPublisherRegistry {
       try {
         await pending;
       } catch {
-        // 前序失败不能封死当前请求；销毁会由 ensureActive 阻断，其他失败允许重试。
+        // A prior failure must not block the current request. ensureActive blocks operations after disposal; other failures can be retried.
       }
       this.ensureActive();
       return this.runExclusive(workspaceId, operation);

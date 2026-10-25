@@ -1,14 +1,7 @@
-import type {
-  BotConfig,
-  BotProviderCallbackResult,
-  BotsConfigFile,
-} from "@zcode/shared";
+import type { BotConfig, BotProviderCallbackResult, BotsConfigFile } from "@zcode/shared";
 import type { ICredentialService } from "../credential/credential.js";
 import type { BotProviderAdapter } from "./providers/types.js";
-import {
-  fetchBotProvider,
-  fetchBotProviderJson,
-} from "./providers/providerRequest.js";
+import { fetchBotProvider, fetchBotProviderJson } from "./providers/providerRequest.js";
 import {
   acquireTelegramPollingLock,
   assertBotCallbackSucceeded,
@@ -26,8 +19,8 @@ interface TelegramGetUpdatesResponse {
   description?: string;
 }
 
-// Telegram 服务端长轮询最多等待 25 秒；客户端额外预留传输时间，但必须覆盖响应体读取，
-// 避免半开连接永久占用 polling lock，导致配置刷新无法接管 runtime。
+// Telegram server long polling waits up to 25 seconds. Add transport headroom on the client, but include response-body reading
+// so a half-open connection cannot hold the polling lock forever and prevent a configuration refresh from taking over the runtime.
 const TELEGRAM_LONG_POLL_REQUEST_TIMEOUT_MS = 40_000;
 
 interface TelegramChannelRuntimeDeps {
@@ -74,8 +67,8 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
 
   async function syncCommands(bot: BotConfig): Promise<void> {
     if (deps.runBackgroundTasks === false) {
-      // 修复原因：desktop-attached 远端不拥有 Telegram runtime；
-      // 删除或禁用 bot 时也不能为了清命令访问第三方 API。
+      // Reason for fix: a desktop-attached remote does not own the Telegram runtime;
+      // deleting or disabling a Bot must not access the third-party API just to clear commands.
       return;
     }
     await deps.telegramProvider?.syncCommands?.(bot).catch((error: unknown) => {
@@ -86,10 +79,25 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
     });
   }
 
+  async function readOffsetForStatus(bot: BotConfig): Promise<number | undefined> {
+    // Bug fix: status payloads show the stored offset, but a rejected status-path read (for example the shared
+    // bot-state file-lock timeout under cross-instance contention) escaped the polling loop's error handlers
+    // and permanently stopped polling. Offset ownership stays with writeTelegramOffset; a failed display read
+    // must be reported as undefined instead of ending the runtime. The getUpdates cursor read stays strict so a
+    // storage failure never silently re-fetches the queue from an older offset.
+    try {
+      return await deps.readTelegramOffset(bot.id);
+    } catch (error) {
+      deps.logger.debug(
+        undefined,
+        `read Telegram offset for status failed bot=${bot.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return undefined;
+    }
+  }
+
   async function pollBot(bot: BotConfig, signal: AbortSignal): Promise<void> {
-    const token = bot.credentialRef
-      ? await deps.credentialService.load(bot.credentialRef)
-      : null;
+    const token = bot.credentialRef ? await deps.credentialService.load(bot.credentialRef) : null;
     if (!token?.trim()) {
       deps.statusSink.setRuntimeStatus({
         botId: bot.id,
@@ -104,22 +112,19 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
     while (!signal.aborted) {
       let lock: Awaited<ReturnType<typeof acquireTelegramPollingLock>>;
       try {
-        lock = await (deps.acquirePollingLock ?? acquireTelegramPollingLock)(
-          token,
-          bot.id,
-        );
+        lock = await (deps.acquirePollingLock ?? acquireTelegramPollingLock)(token, bot.id);
       } catch (error) {
         if (signal.aborted) {
           return;
         }
-        // Bugfix: 锁目录/rename 的瞬时 I/O 异常发生在轮询 try 之外时会终止后台 Promise。
-        // 锁也是 runtime 生命周期的一部分，必须可观测、可取消地退避重试。
+        // Bug fix: a transient lock-directory/rename I/O error outside the polling try block would terminate the background Promise.
+        // Locking is part of the runtime lifecycle and must use observable, cancellable retries with backoff.
         deps.statusSink.setRuntimeStatus({
           botId: bot.id,
           provider: "telegram",
           status: "error",
           message: `Telegram polling lock failed: ${error instanceof Error ? error.message : String(error)}`,
-          offset: await deps.readTelegramOffset(bot.id),
+          offset: await readOffsetForStatus(bot),
         });
         await waitFor(5_000, signal);
         continue;
@@ -131,22 +136,19 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
           status: "idle",
           messageId: "bots.runtime.telegramLongPollingHandledElsewhere",
           message: "Telegram long polling is handled by another ZCode window.",
-          offset: await deps.readTelegramOffset(bot.id),
+          offset: await readOffsetForStatus(bot),
         });
         await waitFor(BOT_RUNTIME_LOCK_RETRY_MS, signal);
         continue;
       }
       try {
         try {
-          await fetchBotProvider(
-            `https://api.telegram.org/bot${token}/deleteWebhook`,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ drop_pending_updates: false }),
-              signal,
-            },
-          );
+          await fetchBotProvider(`https://api.telegram.org/bot${token}/deleteWebhook`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ drop_pending_updates: false }),
+            signal,
+          });
         } catch {
           if (signal.aborted) {
             return;
@@ -156,29 +158,28 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
           botId: bot.id,
           provider: "telegram",
           status: "polling",
-          // 修复：运行状态会直接展示到 UI。补充 messageId，让前端按当前语言渲染，message 仅作为旧版本兜底。
+          // Fix: runtime status is displayed directly in the UI. Include messageId so the frontend can render in the current language; message is only a fallback for older versions.
           message: "Telegram long polling is running.",
           messageId: "bots.runtime.telegramLongPollingRunning",
-          offset: await deps.readTelegramOffset(bot.id),
+          offset: await readOffsetForStatus(bot),
         });
 
         while (!signal.aborted) {
           const offset = await deps.readTelegramOffset(bot.id);
-          const response =
-            await fetchBotProviderJson<TelegramGetUpdatesResponse>(
-              `https://api.telegram.org/bot${token}/getUpdates`,
-              {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({
-                  timeout: 25,
-                  ...(offset !== undefined ? { offset } : {}),
-                  allowed_updates: ["message", "callback_query"],
-                }),
-                signal,
-              },
-              TELEGRAM_LONG_POLL_REQUEST_TIMEOUT_MS,
-            );
+          const response = await fetchBotProviderJson<TelegramGetUpdatesResponse>(
+            `https://api.telegram.org/bot${token}/getUpdates`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                timeout: 25,
+                ...(offset !== undefined ? { offset } : {}),
+                allowed_updates: ["message", "callback_query"],
+              }),
+              signal,
+            },
+            TELEGRAM_LONG_POLL_REQUEST_TIMEOUT_MS,
+          );
           if (!response.ok) {
             deps.statusSink.setRuntimeStatus({
               botId: bot.id,
@@ -199,9 +200,7 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
               botId: bot.id,
               provider: "telegram",
               status: "error",
-              message:
-                payload?.description ??
-                "Telegram getUpdates returned an invalid response.",
+              message: payload?.description ?? "Telegram getUpdates returned an invalid response.",
               offset,
             });
             await waitFor(5_000, signal);
@@ -215,17 +214,15 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
               return;
             }
             const updateId =
-              isRecord(update) && typeof update.update_id === "number"
-                ? update.update_id
-                : null;
+              isRecord(update) && typeof update.update_id === "number" ? update.update_id : null;
             const callbackResult = await deps.processProviderCallback("telegram", {
               botId: bot.id,
               update,
             });
             assertBotCallbackSucceeded("Telegram", callbackResult);
             if (updateId !== null) {
-              // Bugfix: offset 是 Telegram 外部队列的消费确认点。业务回调失败前推进会让
-              // 用户消息、权限和 elicitation 响应永久跳过；成功后逐条提交才能安全重试。
+              // Bug fix: offset acknowledges consumption of Telegram's external queue. Advancing before a business callback fails permanently skips
+              // user messages, permissions, and elicitation responses; commit each offset only after success to allow safe retries.
               await deps.writeTelegramOffset(bot.id, updateId + 1);
             }
           }
@@ -233,10 +230,10 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
             botId: bot.id,
             provider: "telegram",
             status: "polling",
-            // 修复：运行状态会直接展示到 UI。补充 messageId，让前端按当前语言渲染，message 仅作为旧版本兜底。
+            // Fix: runtime status is displayed directly in the UI. Include messageId so the frontend can render in the current language; message is only a fallback for older versions.
             message: "Telegram long polling is running.",
             messageId: "bots.runtime.telegramLongPollingRunning",
-            offset: await deps.readTelegramOffset(bot.id),
+            offset: await readOffsetForStatus(bot),
           });
         }
       } catch {
@@ -249,7 +246,7 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
           status: "error",
           messageId: "bots.runtime.telegramPollingFailedRetrying",
           message: "Telegram polling failed; retrying.",
-          offset: await deps.readTelegramOffset(bot.id),
+          offset: await readOffsetForStatus(bot),
         });
         await waitFor(5_000, signal);
       } finally {
@@ -300,28 +297,30 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
       fingerprint,
       done: Promise.resolve(),
     };
-    runtime.done = pollBot(bot, controller.signal).catch((error: unknown) => {
-      // Bugfix: 后台 runtime 的最终 Promise 必须显式收口，避免异常升级为 host 未处理 rejection。
-      deps.logger.warn(
-        undefined,
-        `Telegram polling stopped unexpectedly bot=${bot.id}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }).finally(() => {
-      if (runtimes.get(bot.id) === runtime) {
-        runtimes.delete(bot.id);
-        const previous = deps.statusSink.getRuntimeStatus(bot.id);
-        if (previous?.status === "polling") {
-          deps.statusSink.setRuntimeStatus({
-            botId: bot.id,
-            provider: "telegram",
-            status: "idle",
-            messageId: "bots.runtime.telegramLongPollingStopped",
-            message: "Telegram long polling is stopped.",
-            offset: previous.offset,
-          });
+    runtime.done = pollBot(bot, controller.signal)
+      .catch((error: unknown) => {
+        // Bug fix: explicitly handle the background runtime's final Promise so an exception does not become an unhandled host rejection.
+        deps.logger.warn(
+          undefined,
+          `Telegram polling stopped unexpectedly bot=${bot.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      })
+      .finally(() => {
+        if (runtimes.get(bot.id) === runtime) {
+          runtimes.delete(bot.id);
+          const previous = deps.statusSink.getRuntimeStatus(bot.id);
+          if (previous?.status === "polling") {
+            deps.statusSink.setRuntimeStatus({
+              botId: bot.id,
+              provider: "telegram",
+              status: "idle",
+              messageId: "bots.runtime.telegramLongPollingStopped",
+              message: "Telegram long polling is stopped.",
+              offset: previous.offset,
+            });
+          }
         }
-      }
-    });
+      });
     runtimes.set(bot.id, runtime);
   }
 
@@ -329,8 +328,8 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
     config: BotsConfigFile | undefined,
     isLatest: () => boolean,
   ): Promise<void> {
-    // Bugfix: polling 游标和微信 buf 会写入 bot-state.v3.json。
-    // 启动轮询前必须先完成旧 state 迁移，否则迁移写回可能覆盖刚更新的第三方游标。
+    // Bug fix: the polling cursor and WeChat buffer are written to bot-state.v3.json.
+    // Complete migration of the old state before starting polling, or a migration write may overwrite a newly updated third-party cursor.
     await deps.ensureBotStorageMigrated();
     const currentConfig = config ?? (await deps.readConfig());
     if (!isLatest()) {
@@ -338,10 +337,7 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
     }
     const activeTelegramIds = new Set(
       currentConfig.bots
-        .filter(
-          (bot) =>
-            bot.provider === "telegram" && bot.enabled && bot.credentialRef,
-        )
+        .filter((bot) => bot.provider === "telegram" && bot.enabled && bot.credentialRef)
         .map((bot) => bot.id),
     );
     for (const botId of runtimes.keys()) {
@@ -364,8 +360,8 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
         }
         const runtime = runtimes.get(bot.id);
         if (runtime && runtime.fingerprint !== fingerprint) {
-          // Bugfix: Bot id 不变不代表连接身份不变。必须等旧 token 的轮询和锁完全退出，
-          // 再启动新凭据，避免配置已更新但后台仍消费旧账号或两个实例短暂并行。
+          // Bug fix: an unchanged Bot ID does not mean the connection identity is unchanged. Wait for polling with the old token and its lock to fully exit
+          // before starting with new credentials, so the background does not keep consuming the old account or briefly run two instances in parallel.
           await stopPolling(bot.id);
           if (!isLatest()) {
             return;
@@ -391,8 +387,8 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
 
   function scheduleRefresh(config?: BotsConfigFile): void {
     if (deps.runBackgroundTasks === false) {
-      // 修复原因：配置变更后的轮询刷新也是 bot runtime 后台任务；
-      // attached remote 不能绕过构造期保护启动 Telegram polling。
+      // Reason for fix: refreshing polling after a configuration change is also a background Bot runtime task;
+      // an attached remote must not bypass the constructor-time guard and start Telegram polling.
       return;
     }
     void refresh(config).catch((error: unknown) => {
@@ -409,7 +405,7 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
     for (const runtime of activeRuntimes) {
       runtime.controller.abort();
     }
-    // Bugfix：服务销毁返回前必须等长轮询退出并释放 token 锁，避免新 host 被迫等待下一轮重试。
+    // Bug fix: wait for long polling to exit and release the token lock before service destruction returns, so a new host does not have to wait for another retry.
     await Promise.allSettled(activeRuntimes.map((runtime) => runtime.done));
     for (const [botId, runtime] of runtimes) {
       if (activeRuntimes.includes(runtime)) {

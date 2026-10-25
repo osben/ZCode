@@ -1,12 +1,12 @@
-# Assistant Streaming Text Rendering（当前事实）
+# Assistant Streaming Text Rendering (Current Facts)
 
-Assistant 正文来自 V4 `assistantText` row。CLI reducer 产生 row delta，`ConversationProjectionStore` 应用后，`ConversationRowView` 把当前完整 `row.text` 交给 `MessageResponse`/Streamdown 渲染。
+Assistant text comes from the V4 `assistantText` row. The CLI reducer produces row deltas, `ConversationProjectionStore` applies them, and `ConversationRowView` hands the current complete `row.text` to `MessageResponse`/Streamdown for rendering.
 
-当前没有旧 `useTaskStreamEvents` 50ms batch，也没有 UI 自行维护的逐词 reveal 队列。节奏由权威 delta 到达和 React 渲染决定；结束态必须与 snapshot 中的 row 文本逐字一致。
+There is no old `useTaskStreamEvents` 50ms batch and no word-by-word reveal queue maintained by the UI. Pacing is determined by the arrival of authoritative deltas and React rendering; the final state must match the row text in the snapshot character for character.
 
 ```text
 CLI text event -> ProductProjection row delta -> SessionDataLayer
   -> ConversationProjectionStore -> ConversationRowView -> MessageResponse
 ```
 
-优化流式体验时不能在 UI 生成第二份正文或用 timer 改写最终文本；合批必须保持 seq、rowId 和 snapshot/delta 收敛语义。
+When optimizing the streaming experience the UI must not generate a second copy of the text or rewrite the final text with a timer; batching must keep the seq, rowId and snapshot/delta convergence semantics.

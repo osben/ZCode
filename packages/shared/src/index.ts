@@ -15,6 +15,8 @@ export type {
   WorkspaceFileEntry,
   SystemInfo,
   AppSettings,
+  VoiceDictationSettings,
+  VoiceModelIdleUnloadMinutes,
   ElectronReleaseChannel,
   IntegratedTerminalShellDialect,
   IntegratedTerminalShellOption,
@@ -32,10 +34,28 @@ export type {
   RemoteTargetSnapshot,
   RemoteWorkspaceSessionEntry,
   PersistedWorkspaceSessionEntry,
+  WorktreeLocationMode,
+  WorktreeProjectOverrideSettings,
 } from "./protocol.js";
 export type { WorkspacePurpose } from "./workspacePurpose.js";
 export { DEFAULT_LOCALE } from "./protocol.js";
-export { ZCODE_VERSION, ZCODE_COMMIT, ZCODE_BUILD_TIME } from "./version.js";
+export {
+  FALLBACK_UI_LOCALE,
+  SUPPORTED_LOCALES,
+  isLocale,
+  isLocalePreference,
+  matchSupportedLocale,
+  resolveSystemLocale,
+  toServiceLocale,
+} from "./locale.js";
+export type { ServiceLocale } from "./locale.js";
+export {
+  ZCODE_VERSION,
+  ZCODE_COMMIT,
+  ZCODE_BUILD_TIME,
+  ZCODE_UPSTREAM_BASE_VERSION,
+  stripZcodeForkVersionSuffix,
+} from "./version.js";
 export type { HelloMessage, HelloAckMessage } from "./handshake.js";
 export type { ArmsRumEnv, ZCodeEnv, ZCodeProductFlavor } from "./env.js";
 export type { RemoteAssetInstallMode } from "./remoteAssetInstallMode.js";
@@ -76,6 +96,9 @@ export {
   ZCODE_ARMS_RUM_ENDPOINT,
   ZCODE_TELEMETRY_REPORT_ENDPOINT,
   ZCODE_AUTO_UPDATE_ENABLED,
+  ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE_DEFAULT,
+  ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL_DEFAULT,
+  ZCODE_WEB_REMOTE_CONTROL_URL_DEFAULT,
   mapZCodeEnvToArmsRumEnv,
   normalizeZCodeEnv,
   normalizeZCodeProductFlavor,
@@ -86,7 +109,7 @@ export * from "./validation.js";
 export * from "./api.js";
 export * from "./zcode-protocol/index.js";
 export * from "./account-provider-state.js";
-// re-home：旧协议承重面的幸存文件（消费者继续走 barrel，零感知）
+// Re-homed survivor of the legacy protocol's core types (consumers continue using the barrel without noticing).
 export * from "./zcode-protocol-legacy-types.js";
 export * from "./zcode-task-types-core.js";
 export * from "./task-realtime-core.js";
@@ -100,8 +123,11 @@ export * from "./conversation-message-projection-policy.js";
 export * from "./conversation-share.js";
 export * from "./conversation-share-content.js";
 export * from "./conversation-preview-artifacts.js";
+export * from "./contextBudgetPolicy.js";
 export * from "./zcode-session-task-status.js";
 export * from "./zcode-session-content-profile.js";
+export type { ZCodeWorkspaceStateSnapshot } from "./zcode-workspace-state.js";
+export type { WorkspaceHookReviewTrustState } from "./zcode-protocol-v4/workspace-hook-review.js";
 export * from "./zcode-tool-projection-memory.js";
 export * from "./zcode-slash-command-help.js";
 export * from "./zcodeEndpoint.js";
@@ -124,6 +150,8 @@ export interface ICredentialStore {
   delete(key: string): Promise<void>;
 }
 
+// Compat: upstream moved test ids to the "@zcode/shared/test-ids" subpath; unsynced packages still import them from the root.
+export * from "./test-ids.js";
 export * from "./test-ids-workflow.js";
 export * from "./channels.js";
 export * from "./storage.js";
@@ -144,6 +172,8 @@ export {
   DesktopCommandIds,
   buildLocalMediaPreviewUrl,
   createOpenInEditorRemoteTarget,
+  DESKTOP_LOCAL_DEVELOPMENT_RUNTIME_ARG,
+  hasDesktopLocalDevelopmentRuntimeArg,
 } from "./platform.js";
 export type {
   ArmsCustomEventPayload,
@@ -189,6 +219,7 @@ export type {
   BindRemoteWorkspaceSessionContextRequest,
   BindRemoteWorkspaceSessionContextIpcResult,
   BindRemoteWorkspaceSessionContextResult,
+  BotRemoteWorkspaceReconnectedEvent,
   BrowserTabResidencyState,
   BrowserViewCloseTabNotification,
   BrowserViewCloseTabRequest,
@@ -248,6 +279,7 @@ export type {
   UpdateStatePayload,
   WSLDistro,
   WindowControlsOverlayReadyPayload,
+  WindowScreenshotResult,
   ZCodeStdioTapDevState,
 } from "./platform.js";
 export type {
@@ -294,6 +326,8 @@ export * from "./process-names.js";
 export * from "./mcp.js";
 export * from "./runtime-tool-runtime.js";
 export * from "./git.js";
+export * from "./gitRemoteWebUrl.js";
+export * from "./sessionPullRequestHealth.js";
 export * from "./bots.js";
 export * from "./assistant-message-parts.js";
 export * from "./zcodePersistedMessageMerge.js";
@@ -304,7 +338,6 @@ export * from "./streaming-tool-input-preview.js";
 export * from "./tool-plan-adapter.js";
 export * from "./permission-request-preview.js";
 export * from "./web-remote-control.js";
-export * from "#src/web-remote-relay/index.js";
 
 export * from "./web-remote-control-rpc-transport.js";
 export * from "./settings-sync.js";
@@ -317,6 +350,7 @@ export * from "./intranetDefaults.js";
 export * from "./hooks.js";
 export * from "./memory.js";
 export * from "./output-style.js";
+export * from "./system-prompt.js";
 export * from "./openrouter-attribution.js";
 export * from "./workspaceSessionRestore.js";
 export * from "./skill-scan-policy.js";
@@ -336,6 +370,7 @@ export * from "./execution-state.js";
 export { bashOutputDisplaySchema } from "./bash-output-display.js";
 
 export * from "./subagent-runtime-config.js";
+export * from "./incognito-profile.js";
 
 export * from "./subagent-profile.js";
 export { parseAgentProfileFromMarkdown } from "./subagent-profile-parser.js";

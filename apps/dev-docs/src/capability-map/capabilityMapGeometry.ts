@@ -1,8 +1,9 @@
 export const CAPABILITY_NODE_WIDTH = 264;
 export const CAPABILITY_NODE_HEIGHT = 60;
 
-// 修复原因：双语标题、owner 与 LOC/入出度徽标的真实高度超过旧版 ELK 顶部留白，
-// 因此标题盒与子元素起点必须共享常量，并额外扣除父框边线后保留稳定净空。
+// Cause: bilingual titles, owners, and LOC/in-degree/out-degree badges are taller than the old ELK
+// top padding. The title box and child start position must share a constant, with the parent border
+// deducted to keep spacing consistent.
 export const CAPABILITY_HEADER_CONTENT_GAP = 12;
 export const CAPABILITY_GROUP_FRAME_BORDER_WIDTH = 1;
 export const CAPABILITY_GROUP_HEADER_HEIGHT = 112;

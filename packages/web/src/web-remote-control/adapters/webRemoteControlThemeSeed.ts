@@ -38,8 +38,8 @@ export function seedWebRemoteControlThemePreference(qrTheme?: string | null): vo
   const storedTheme = localStorage.getItem("zcode-theme");
   const resolvedTheme = resolveWebRemoteControlInitialTheme({ storedTheme, qrTheme });
   if (!storedTheme && isWebRemoteControlThemeSeed(qrTheme)) {
-    // Bugfix: 手机远控首次打开原来只用 Web 默认主题，无法继承扫码时桌面端主题。
-    // 这里只在手机本地还没有主题偏好时写入一次，后续手机改主题不会反向影响桌面端。
+    // Bugfix: the first open of phone remote control used to apply only the Web default theme and could not inherit the desktop theme at scan time.
+    // This writes only once, when the phone has no local theme preference yet; later phone theme changes do not flow back to the desktop.
     localStorage.setItem("zcode-theme", resolvedTheme);
   }
 }

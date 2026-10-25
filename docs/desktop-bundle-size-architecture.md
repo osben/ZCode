@@ -1,106 +1,96 @@
 # Desktop Bundle Size Architecture
 
-桌面端打包现在改成“两套资源明确分层”：
+Desktop packaging uses two clearly separated asset layers:
 
-- desktop 本地 agent 运行时按当前平台准备后进入安装包
-- remote 专用资源由 `@zcode/server-cli stage:remote-assets` 产出到 `mock-cdn/releases/...`，不再进入安装包
+- The desktop local agent runtime is prepared for the current platform and enters the installer.
+- Remote-only assets are produced by `pnpm --filter @zcode/server-cli exec tsx src/packaging/stageRemoteAssetsCli.ts` into `mock-cdn/releases/...` and no longer enter the installer.
 
-## 目录约定
+## Directory layout
 
 - `packages/desktop/bundled-agents/<platform>/`
-  - 当前目标平台的最小运行时目录
-  - 当前产品路径只要求 `glm/`
-  - 同目录下会生成 `*-<platform>.tgz` 归档，便于审计和后续远程分发复用
+  - Minimal runtime directory for the current target platform.
+  - Current product paths require only `glm/`.
+  - `*-<platform>.tgz` archives are generated alongside for auditing and later remote-distribution reuse.
 - `packages/desktop/mock-cdn/`
-  - 开发态 remote 资源入口
-  - 统一按 `releases/<version>/...` 保存 `source-server-release.json` 与四个平台 Source Server archive
+  - Dev-time remote asset entry point.
+  - Stores `source-server-release.json` and the four-platform Source Server archives under `releases/<version>/...`.
 
-## 生产态
+## Production
 
-- 生产安装包不再包含 `remote-assets`
-- 生产态 remote 资源通过 CDN 版本根的 `source-server-release.json` 与 `zcode-server-<platform-arch>.tar.gz` 分发
-- 首次安装或显式更新时按 descriptor 校验 SHA-256/大小；本地下载模式缓存完整 archive 后上传，SSH 远端下载模式在目标机下载同一 archive，最终都进入 immutable release installer
-- `ZCODE_ENV=production` 时默认内置两组官方 CDN：
-  - 国内：`https://cdn.codegeex.cn/zcode/electron/releases/<version>`
-  - 海外：`https://cdn-zcode.z.ai/zcode/electron/releases/<version>`
-- CI 若配置 `CDN_DOMAIN` / `OSS_PATH_PREFIX`，生产包会在构建期把这些变量展开为 remote CDN 候选列表。
-  `CDN_DOMAIN` 的仓库默认值统一为 `cdn-zcode.z.ai`，覆盖 CI 全局变量、CDN URL 前缀校验、OSS 上传 URL 生成和 CDN 预热脚本；默认发布路径仍为 `zcode/electron/releases`。显式配置单域名或多域名列表时，继续按配置顺序解析 bucket、路径和预热账号。
-  迁移期可使用逗号列表让 `3.1.3` 优先新 CDN、保留旧 CDN 兜底；切换完成后把 CI 变量收敛为单个新 CDN 即可。
-- 默认优先级按“应用语言 + 本地时区”决定：
-  - `locale` 为中文，且时区处于 UTC+8：优先国内 CDN，海外 CDN 作为备选
-  - 其他情况：优先海外 CDN，国内 CDN 作为备选
-- 如果构建期注入了 `CDN_DOMAIN` 列表，则按 CI 列表顺序使用，不再按语言/时区重排。
-- `ZCODE_ENV=test` 时默认使用内网测试资源根：
-  `http://intranet.example.invalid:12345/ssh-remote-assets/<version>`。该目录由 CI 的
-  `build:remote:assets` job 同步 descriptor 与四个 archive。
-- `remoteCdnBaseUrl` 仍可通过环境变量覆盖；一旦显式设置，就只使用该自定义基址，不再套用
-  `ZCODE_ENV` 默认值或 production 地区分流
-- SSH 远端服务器下载模式会在远端临时目录下载并校验完整 archive；最终安装到 `~/.zcode/server/releases/`，并通过 `current.json` 原子切换。
+- Production installers no longer contain `remote-assets`.
+- Production remote assets are distributed via the CDN version root's `source-server-release.json` and `zcode-server-<platform-arch>.tar.gz`.
+- On first install or explicit update, SHA-256/size are verified against the descriptor; local-download mode caches the full archive before uploading, SSH remote-download mode downloads the same archive on the target machine, and both end in the immutable release installer.
+- With `ZCODE_ENV=production`, two official CDNs are built in by default:
+  - CN: `https://cdn.codegeex.cn/zcode/electron/releases/<version>`
+  - Overseas: `https://cdn-zcode.z.ai/zcode/electron/releases/<version>`
+- When CI sets `CDN_DOMAIN` / `OSS_PATH_PREFIX`, the production build expands them into the remote CDN candidate list at build time. The repo default for `CDN_DOMAIN` is uniformly `cdn-zcode.z.ai`, overriding the CI global variable, CDN URL prefix validation, OSS upload URL generation, and the CDN warm-up script; the default publish path stays `zcode/electron/releases`. An explicit single domain or comma-separated list still resolves buckets, paths, and warm-up accounts in configured order.
+- During migration a comma list can put `3.1.3` on the new CDN first with the old CDN as fallback; once the switch is done, collapse the CI variable to the single new CDN.
+- Default priority follows "app language + local timezone":
+  - `locale` zh with a UTC+8 timezone: CN CDN first, overseas CDN as fallback.
+  - Otherwise: overseas CDN first, CN CDN as fallback.
+- If a `CDN_DOMAIN` list was injected at build time, the CI list order is used as-is, without re-sorting by language/timezone.
+- `ZCODE_ENV=test` defaults to the intranet test asset root: `http://intranet.example.invalid:12345/ssh-remote-assets/<version>`. CI's `build:remote:assets` job syncs the descriptor and four archives there.
+- `remoteCdnBaseUrl` is still overridable by env var; once set explicitly, only that custom base is used — no `ZCODE_ENV` defaults or production regional routing.
+- SSH remote-server download mode downloads and verifies the full archive in a remote temp directory, installs to `~/.zcode/server/releases/`, and switches atomically via `current.json`.
 
-## 开发态切换公网 CDN
+## Switching to the public CDN in dev
 
-- 开发态默认使用本轮 Source Server staging 写入的 `mock-cdn/releases/<version>/...`
-- 若要在开发态强制走公网 CDN，可设置环境变量：`ZCODE_DEV_REMOTE_ASSET_USE_CDN=1`
-- 开启后，remote deploy 不再读取 `mock-cdn`，会直接进入 descriptor/CDN + 本地 archive cache 链路
-- 未设置 `ZCODE_REMOTE_ASSET_CDN_BASE_URL` 时，仍按上面的地区分流规则生成“主 CDN + 备选 CDN”候选列表
-- 可配合 `ZCODE_REMOTE_ASSET_CDN_BASE_URL` 指向自定义 CDN 基址
-- 可设置 `ZCODE_REMOTE_ASSET_CACHE_DIR` 覆盖 remote cache 目录；例如 dev 启动时指向正式版 `~/Library/Application Support/ZCode/remote-assets-cache`，只复用 remote 资源缓存，不切换 Electron `userData`
-- 上述 remote asset 环境变量可从 shell 传入，也可写在仓库根目录或 `packages/desktop` 下的 `.env.local`；shell 环境变量优先级更高
-- 若要一键启动“desktop dev + 生产态 remote SSH 下载/cache 链路”，使用 `pnpm dev:desktop:remote-prod`
+- Dev defaults to `mock-cdn/releases/<version>/...` written by this round's Source Server staging.
+- To force the public CDN in dev, set `ZCODE_DEV_REMOTE_ASSET_USE_CDN=1`.
+- With it on, remote deploy stops reading `mock-cdn` and goes straight into the descriptor/CDN + local archive cache chain.
+- Without `ZCODE_REMOTE_ASSET_CDN_BASE_URL`, the regional routing rules above still generate the "primary CDN + fallback CDN" candidate list.
+- `ZCODE_REMOTE_ASSET_CDN_BASE_URL` can point at a custom CDN base.
+- `ZCODE_REMOTE_ASSET_CACHE_DIR` overrides the remote cache directory; e.g. point a dev run at the production `~/Library/Application Support/ZCode/remote-assets-cache` to reuse only the remote asset cache without switching Electron `userData`.
+- These remote-asset env vars can come from the shell or from `.env.local` at the repo root or under `packages/desktop`; shell variables win.
+- To launch "desktop dev + production remote SSH download/cache chain" in one command, use `pnpm dev:desktop:remote-prod`.
 
-## Source Server 准备链路
+## Source Server preparation chain
 
-1. `@zcode/server-cli stage:remote-assets` 构建 Server CLI/Core 与 Agent bundle。
-2. 按 linux/darwin × x64/arm64 收集目标 Node、node-pty、官方插件和 native tools。
-3. 每个平台生成一个完整 archive，并写入统一 `source-server-release.json`。
-4. 开发态与生产态使用同一 archive 安装合同，不再生成散组件、wrapper 或 legacy manifest。
+1. `pnpm --filter @zcode/server-cli exec tsx src/packaging/stageRemoteAssetsCli.ts` builds the Server CLI/Core and the Agent bundle.
+2. Target Node, node-pty, official plugins, and native tools are collected for linux/darwin × x64/arm64.
+3. One full archive per platform, plus the unified `source-server-release.json`.
+4. Dev and production share the same archive install contract; no loose components, wrappers, or legacy manifests.
 
-桌面侧与 remote 侧共用同一份编译后的 `zcode.cjs`，不再按平台下载内嵌 Node 的原生 `zcode-agent`：
+Desktop and remote share one compiled `zcode.cjs`; the platform-specific Node-embedded native `zcode-agent` is no longer downloaded:
 
-- `scripts/build-desktop-agent-cli.mjs` 构建 `apps/zcode-cli/packages/cli/dist/zcode.cjs`，并构建、校验 node-repl-host、Browser Use client 和模拟器等 Dev 必需的官方插件 runtime。`pnpm dev:desktop` 在 `pre-dev` 后执行该脚本，开发态 resolver 优先直接使用 workspace 内的 bundle；`stage:remote-assets` 也通过它取得 Agent bundle。
-- 桌面打包的 `prepare:agent-bundle` 将 `zcode.cjs` 和官方插件 seed 资源写入 `packages/desktop/bundled-agents/<platform>/glm/`，再由 electron-builder 复制到安装包。
-- `scripts/download-glm.mjs` 与 desktop `prepare:glm` 仅保留为手动兼容兜底，不进入默认 Dev、桌面打包或 remote 资产准备链路。
+- `scripts/build-desktop-agent-cli.mjs` builds `apps/zcode-cli/packages/cli/dist/zcode.cjs` plus the official plugin runtimes Dev requires (node-repl-host, Browser Use client, simulator), validating them. `pnpm dev:desktop` runs it after `pre-dev`; the dev resolver prefers the in-workspace bundle, and `stageRemoteAssetsCli.ts` gets the Agent bundle through it too.
+- Desktop packaging's `prepare:agent-bundle` writes `zcode.cjs` and the official plugin seed assets into `packages/desktop/bundled-agents/<platform>/glm/`, copied into the installer by electron-builder.
+- `scripts/download-glm.mjs` and desktop `prepare:glm` remain manual compatibility fallbacks only — not part of default Dev, desktop packaging, or remote asset preparation.
 
-## 哪些资源禁止进入安装包
+## Resources forbidden from the installer
 
-- 本地 agent 目录里的非当前目标平台 native
-- `node_modules` 里的非当前目标平台 native package / prebuild
-- renderer 已经完成 bundle、桌面 Node runtime 不会加载的 optional native dependency；当前包括
-  `pdfjs-dist` 为 Node 环境声明的 `@napi-rs/canvas*`
-- `node-pty/build`、`node-pty/bin` 和非当前目标平台的 `node-pty/prebuilds/<platform-arch>`；桌面包
-  只保留 `node-pty/prebuilds/<target-platform-arch>`
-- 仅用于准备目标 prebuild 的 `@lydell/node-pty-*` 包；Linux 打包在 `beforePack` 将目标二进制复制到
-  `node-pty/prebuilds/<target-platform-arch>` 后也必须排除这些源包
+- Non-target-platform natives inside the local agent directory
+- Non-target-platform native packages/prebuilds inside `node_modules`
+- Optional native dependencies already bundled for the renderer that desktop Node never loads — currently the `@napi-rs/canvas*` declared by `pdfjs-dist` for Node
+- `node-pty/build`, `node-pty/bin`, and non-target `node-pty/prebuilds/<platform-arch>`; the desktop package keeps only `node-pty/prebuilds/<target-platform-arch>`
+- `@lydell/node-pty-*` packages used only to prepare the target prebuild; Linux packaging must also exclude these source packages after `beforePack` copies the target binary into `node-pty/prebuilds/<target-platform-arch>`
 - `mock-cdn/`
 - `*.map`
 - `*.pdb`
 - `*.tgz`
 - `*.tsbuildinfo`
-- `docs/`、`doc/`、`man/`
-- `example/`、`examples/`
-- `test/`、`tests/`、`__tests__/`
-- 非许可证 markdown
+- `docs/`, `doc/`, `man/`
+- `example/`, `examples/`
+- `test/`, `tests/`, `__tests__/`
+- Non-license markdown
 
-## 审计
+## Audit
 
-`packages/desktop/scripts/audit-bundle-size.mjs` 会在 macOS bundle 后自动执行，校验：
+`packages/desktop/scripts/audit-bundle-size.mjs` runs automatically after the macOS bundle and checks:
 
-- `.app` 总大小
-- `Resources/*` 目录体积
-- `Frameworks/*` 目录体积
-- 前 30 个最大资源项
+- Total `.app` size
+- `Resources/*` directory size
+- `Frameworks/*` directory size
+- Top 30 largest resource entries
 
-超过阈值会直接失败，避免包体回涨。
+Exceeding a threshold fails the build, so size cannot regress silently.
 
-除安装文件大小阈值外，`electron-builder` 的 `afterPack` 和 bundle 完成后的机械审计还必须校验：
+Beyond installer size thresholds, `electron-builder`'s `afterPack` and the post-bundle mechanical audit must also verify:
 
-- 安装包中不存在 `@napi-rs/canvas*` 和 `@lydell/node-pty-*`
-- `node-pty` 只包含当前 `targetPlatform.key` 对应的 prebuild，不包含安装机或其他目标平台产物
-- `.node`、`.dll`、`.dylib`、原生辅助 `.exe` 以及 node-pty 的无扩展名 helper 在 asar header 中
-  标记为 unpack，不得同时作为 packed payload 留在 `app.asar` 并在 `app.asar.unpacked` 再保留一份
+- No `@napi-rs/canvas*` and no `@lydell/node-pty-*` in the installer
+- `node-pty` contains only the prebuild for the current `targetPlatform.key` — nothing for the build machine or other targets
+- `.node`, `.dll`, `.dylib`, native helper `.exe`, and node-pty's extension-less helpers are marked unpack in the asar header; they must not remain in `app.asar` as packed payload while also sitting in `app.asar.unpacked`
 
-asar 内容审计必须由 Node 直接调用项目锁定版本的 `@electron/asar` CLI。禁止通过 `pnpm exec asar`
-获取待解析输出，避免 workspace engine warning 等 pnpm 诊断信息混入 stdout 后被误判为 asar 条目。
+The asar content audit must invoke the project-pinned `@electron/asar` CLI directly from Node. Never obtain the parsed output via `pnpm exec asar` — pnpm diagnostics such as workspace engine warnings could mix into stdout and be misread as asar entries.
 
-`pnpm-workspace.yaml#supportedArchitectures` 只控制工作区安装阶段允许准备哪些平台依赖，不能作为安装包
-资源边界。最终安装包资源集合必须由 `ZCODE_TARGET_OS` / `ZCODE_TARGET_ARCH` 决定。
+`pnpm-workspace.yaml#supportedArchitectures` only controls which platform dependencies the workspace install may prepare; it is not an installer resource boundary. The final installer resource set is decided by `ZCODE_TARGET_OS` / `ZCODE_TARGET_ARCH`.

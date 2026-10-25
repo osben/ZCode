@@ -1,172 +1,170 @@
-# Todo 101 Draft：多个具体 Account Provider 并存
+# Todo 101 Draft: Multiple Specific Account Providers Coexisting
 
-> 状态：Draft / 延后实施；2026-09-09。
-> 用户裁决：先按现有架构完成本次上线，本项只记录未来方向，不在本次实施。
-> 本文不是当前运行契约，不自动覆盖现行 spec、迁移规则、Todo99 或 Todo100 的裁决。
+> Status: Draft / implementation postponed (2026-09-09). User decision: the current launch proceeds with the existing
+> single-connection architecture; this item only records future direction. It is not a running contract and does not
+> override the current spec, migration rules, Todo99 or Todo102 decisions. It must not be marked implemented, current
+> launch scope, or "current design replaced".
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/todo-101-concurrent-account-providers-draft.md`
 
-## 一、已明确的未来产品方向
+## I. Future Product Direction
 
-1. 个人套餐、Team A、Team B 可以同时连接和使用，不再通过一个全局当前连接互斥。
-2. 设置页在个人/团队之间切换，只切换展示页面，不改变全局执行状态。
-3. 每份显式 ModelSelection 必须指向具体个人/团队 Provider；删除根据当前连接自动对应另一个 Provider 的逻辑。
-4. 旧 ModelSelection 的 Provider 迁移必须重新设计，不能沿用“统一迁到个人，再由运行时对应当前套餐”。
-5. 模型选择器增加抽屉式界面，将多个 Account Provider 放在上方。抽屉具体形态待确认。
-6. 仍然只能同时登录一个账号；多个个人/团队套餐并存不等于多个登录账号并存。闲时 Provider 由该登录账号决定，不增加个人/Team A/Team B 的闲时供额选择。
-
-```text
-唯一登录账号下，多个 Account Provider 并存
-├─ 个人套餐
-├─ Team A
-├─ Team B
-└─ Start Plan（具体并存/接入边界待细化）
-
-会话甲   -> Team A / Model / Reasoning
-会话乙   -> 个人 / Model / Reasoning
-定时任务 -> Team B / Model / Reasoning
-
-设置页查看哪个套餐，不影响上述执行身份
-```
-
-## 二、本次上线与未来改造的边界
-
-- 本次继续使用现有单连接架构；不提前删除 current 门禁，不提前停止现行有效选择对应，也不提前更换 Provider ID。
-- 不提前变更 Settings / Selection 持久化格式、账号鉴权归属、模板规则或选择器布局。
-- Todo100 已确认的同步完整性、真实确认、派发参数丢失等问题，仍须按本次上线要求逐项裁决，不能因为未来会移除 current 就将现有 Bug 标记为无需处理。
-- 现有暂停实验保持暂停；本文不授权恢复 Todo99、不授权推送或部署。
-- 本文状态不能记为“已实现”“本次上线范围”或“现行设计已替换”。
-
-### 对当前修复方向的指导
-
-1. 临时同步修正确性即可，不为它建设难以移除的新平台。Worker 生命周期归口的具体方案仍按当前讨论单独裁决。
-2. 保留公共 applied snapshot、完整性校验、原意图保护和精确 ModelFactory，这些能力未来仍然需要。
-3. 当前如需修复个人/Team 的自动对应，复用已有公共规则，不增加更多业务特判；其未来删除边界要清楚。
-4. 暂不把“根据全局连接自动换 Provider”固化进 Model.bind 或底层 Factory。未来仍需精确创建，不值得围绕将淘汰的语义扩大公共 API。
-5. 不以未来架构为理由删掉当下正常功能，也不为未来预先引入双套账号身份/迁移路径。
-
-## 三、代码调查已确认的结构限制
-
-调查基线：`86bbe157c88e8e599694afb53c39f6dac125ac08`。以下是设计依据，不是本项已实现内容。
-
-| 当前结构 | 未来必须调整的原因 | 代码入口 |
-| --- | --- | --- |
-| 每个域只有一个固定 Team Provider ID | Team A/B 共用 ID，无法在 Selection 中同时独立指定 | `packages/shared/src/model-provider-types.ts` |
-| 每个 Family 保存一项 connection selection | 表达的是互斥当前连接，而非多个账号实例 | `packages/shared/src/provider-family-connection-selection.ts` |
-| Settings 导航写入 connection selection | 浏览页面会改变执行侧事实 | `packages/ui/src/settings/ModelProviderSection.tsx` 的 `persistProviderFamilyModeForNavItem` |
-| Account Resolver 通过 current 限制执行范围 | 多个具体 Provider 并存后不再需要普通账号 current 门禁 | `packages/provider/src/resolver.ts`、`packages/services/src/model-provider/accountProviderConnectionResolver.ts` |
-| 请求鉴权读取当前兼容连接 | 即使 UI 选了 Team A，也不能在请求期改取 Team B 的凭据 | `accountProviderConnectionResolver.ts` 的 `resolveCurrentAccountAccess` |
-| 旧 Coding Plan 统一映射 Individual | 正确性依赖后续自动对应；删除对应后必须重订迁移策略 | `packages/shared/src/legacy-model-provider-identity.ts` |
-| Account 选择器按固定 Family/Plan 生成组标签 | 动态团队实例需要唯一 key、准确标签和同名模型来源区分 | `packages/ui/src/lib/modelSelectionGroups.ts`、`packages/ui/src/ModelConfigSelect.tsx` |
-
-## 四、建议架构方向（尚未冻结实现）
-
-### 4.1 具体 Provider 身份与实例化
+1. Personal plans, Team A and Team B are connectable and usable simultaneously; no single global current connection.
+2. Settings navigation between personal/team only switches the displayed page, not global execution state.
+3. Every explicit ModelSelection points to a specific personal/team Provider; the logic that maps a selection to another
+   Provider by current connection is deleted.
+4. Old ModelSelection Provider migration must be redesigned; "migrate everything to personal, then map at runtime to the
+   current plan" cannot continue.
+5. The model selector gets a drawer-style interface with Account Providers at the top (specifics pending).
+6. Only one account can be logged in at a time; coexisting plans are not coexisting login accounts. Off-peak Providers
+   follow that logged-in account; no extra personal/Team A/Team B off-peak quota selection is added.
 
 ```text
-Built-in：套餐类型的公共定义/模型规则
-                    |
-Account：个人、Team A、Team B 的具体身份与权益
-                    |
-                    v
-             具体 Provider 实例
-                    |
-Personal：具体实例的配置覆盖、模型启停和顺序
-                    |
-                    v
-             完整 Registry / View
+Single logged-in account: Personal plan, Team A, Team B, Start Plan (coexistence boundaries to be refined)
+Session A -> Team A / Model / Reasoning;  Session B -> Personal / ...;  Scheduled task -> Team B / ...
+The plan being viewed in Settings does not affect these execution identities.
 ```
 
-- 具体实例拥有稳定 Provider ID，不使用团队名称、列表序号、Token 等作为身份。
-- ModelSelection 可以继续保留 providerId/modelId/options 的结构；团队身份由 Provider 对应的账号实例事实提供，不把凭据塞入 Selection。
-- 组织、项目、产品等哪些字段参与稳定身份，需要核实服务端实体语义；请求需要某字段，不代表该字段必然适合做长期 ID。
-- Built-in 与 Account 的职责从“固定一个 Team Provider + 当前团队”变成“公共类型定义 + 具体实例”。评估复用现有 Template 能力，不把账号实例伪装成普通用户自建 Provider。
-- 是否把登录主体纳入实例身份、如何处理同域账号退出后换人登录，必须明确，不能让旧选择无声绑定到另一个人的套餐。
+## II. Current Delivery vs Future Transformation
 
-### 4.2 精确选择、精确鉴权
+- The current launch keeps the single-connection architecture: no preemptive removal of current gates, effective
+  selection mapping, Provider ID changes, Settings/Selection persistence format, account authentication ownership,
+  template rules or selector layout changes.
+- Todo100-confirmed issues (sync completeness, real confirmation, dispatch parameter loss) are still decided item by
+  item for the current launch; they are not "no need to handle" because the model will be removed later.
+- Suspended experiments stay suspended; this document does not authorize resuming Todo99, pushing or deploying.
+
+Guidance for current fixes:
+
+1. Fix temporary sync correctness only; build no irretrievable new platforms.
+2. Keep public applied snapshots, integrity validation, original-intent protection and exact ModelFactory; they are
+   needed in future.
+3. If personal/Team automatic mapping needs a fix, reuse existing public rules without more business special cases.
+4. Do not entrench "switch Provider by global connection" into Model.bind or the bottom-layer Factory.
+5. Do not delete current functions on future-architecture reasoning or pre-introduce dual account identity/migration paths.
+
+## III. Structural Limitations Confirmed in Code (baseline `86bbe157`)
+
+| Current structure                                         | Why future must adjust                                                            | Code entry                                                                                                       |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| One fixed Team Provider ID per domain                     | Team A/B share an ID; Selection cannot specify them independently                 | `packages/shared/src/model-provider-types.ts`                                                                    |
+| Each Family saves one connection selection                | Expresses a mutually exclusive current connection, not multiple instances         | `packages/shared/src/provider-family-connection-selection.ts`                                                    |
+| Settings navigation writes connection selection           | Browsing pages changes execution-side facts                                       | `packages/ui/src/settings/ModelProviderSection.tsx` `persistProviderFamilyModeForNavItem`                        |
+| Account Resolver limits execution scope by current        | Not needed once multiple specific Providers coexist                               | `packages/provider/src/resolver.ts`, `packages/services/src/model-provider/accountProviderConnectionResolver.ts` |
+| Request auth reads current-compatible connections         | UI selecting Team A cannot switch to Team B credentials at request time           | `accountProviderConnectionResolver.ts` `resolveCurrentAccountAccess`                                             |
+| Old Coding Plan uniformly maps to Individual              | Correctness depends on later automatic mapping; removing it needs a new migration | `packages/shared/src/legacy-model-provider-identity.ts`                                                          |
+| Account selector builds group labels by fixed Family/Plan | Dynamic team instances need unique keys, accurate labels, same-name model sources | `packages/ui/src/lib/modelSelectionGroups.ts`, `packages/ui/src/ModelConfigSelect.tsx`                           |
+
+## IV. Suggested Architecture Direction (Not Frozen)
+
+### 4.1 Specific Provider Identity and Instantiation
 
 ```text
-Selection 指向具体 Team A Provider
-                |
-                v
-同一完整快照内校验 Provider / Model / Reasoning
-                |
-                v
-ModelFactory 精确创建
-                |
-                v
-按 Team A 身份取得或刷新凭据
+Built-in: public definition / plan-type model rules
+Account: personal, Team A, Team B specific identities and entitlements -> specific Provider instances
+Personal: instance config overrides, model enable/disable, ordering -> complete Registry / View
 ```
 
-- 删除个人→Team、Team A→Team B 的运行时自动对应。
-- 可以保留公共输入式 Selection View 与有效性结果，但不能更换输入 providerId；Provider/Model 不可用时保留原意图，执行明确失败或 UI 按既定规则暂时留空。
-- 动态刷新 Token/Key 不等于动态改变请求归属。Team A 失效不能用 Team B 凭据继续执行。
-- 隐式 Subagent 仍继承父 Active Model；显式选择使用具体 Provider；固定执行、重试和内部 override 保持既定边界。
-- Account availability/entitled 仍有用途；普通账号 current 不再作为执行门禁。设置页当前浏览项仅属 UI 状态。
+- Instances have stable Provider IDs; team names, list indices and Tokens are not identities.
+- `ModelSelection` keeps `providerId/modelId/options`; team identity comes from the account instance facts of the
+  Provider; credentials never go into Selection.
+- Which of organization/project/product fields form a stable identity needs server-side entity verification; a field
+  needed for requests is not necessarily a good long-term ID.
+- Built-in/Account shift from "one fixed Team Provider + current team" to "public type definitions + specific
+  instances"; evaluate reusing Template capabilities, but do not disguise account instances as user-built Providers.
+- Whether login subject is part of instance identity, and how same-domain logout/re-login behaves, must be defined so old
+  selections never silently bind to another person's plan.
 
-### 4.3 多入口 UI
-
-- 个人、各 Team、Start 的显示状态、权益和模型分别展示；页面导航不修改执行状态。
-- 选择器将 Account Provider 放在上方，展开 Provider 与选择模型是不同动作；仅展开不能修改草稿选择。
-- 同名模型必须能够区分个人/Team A/Team B 来源；内部 ID 不直接当用户文案。
-- Composer、Automation、Bot、Wiki、Subagent 复用候选与分组规则，各自保持草稿、提交和保存边界。
-- 桌面和手机共享选择语义；抽屉形态、搜索、键盘导航、主题、双语与长团队名在正式设计时一起确定。
-
-## 五、迁移专项：必须重新讨论
-
-### 5.1 不再依赖运行时自动对应
-
-| 原数据证据 | 建议处理方向 |
-| --- | --- |
-| 普通自定义/API Provider 明确身份 | 保留原身份，正常格式迁移 |
-| 明确个人或完整团队身份 | 迁到对应具体 Provider，不要求它当前有权益/模型可执行 |
-| 仅旧通用 Coding Plan ID，无具体归属 | 不能凭空恢复历史团队，必须裁决一次性归属策略 |
-| 旧 Team Provider 下的个人模型覆盖/排序 | 必须裁决归给哪个实例，不能默认复制到全部团队 |
-
-候选方案：优先使用记录自身/可验证旧关联信息；不足时，把升级前保存的旧连接作为一次性迁移默认。该默认不代表历史真实执行归属，尚未获用户确认。仍无法确定时如何保留原记录与提示用户，另行裁决。
-
-### 5.2 本次先上线会改变未来兼容范围
-
-- 以前“不兼容本分支未上线中间格式”的原则，不能用于忽略**本次正式发布后真实写入的数据**。
-- 未来实施前，必须按实际发布版本确认迁移来源，包括届时正式保存的个人/固定 Team Provider ID 与旧连接信息。
-- 如果旧通用选择已经迁成个人，且原归属证据不再存在，未来不能仅凭个人 ID 推断它原来属于哪个团队；需承认信息不足，明确用户确认或一次性映射策略。
-- 本次不因此预先修改数据或增加迁移字段。正式实施前重新审计数据证据与兼容范围，不能照搬当前 Draft 假设。
-- 迁移阶段识别旧字段，正式运行不持续回读旧连接来决定 Provider；网络/Registry 暂时不可用不构成删除持久选择的理由。
-
-## 六、Off-Peak、同步与隔离边界
-
-- 已裁决：唯一登录账号决定使用 BigModel 或 Z.ai 对应的既有闲时 Provider。普通个人/团队 Provider 可以并存，但不新增“为闲时任务选择个人/团队供额连接”的产品操作。
-- 设置页浏览项、普通模型选择都不参与闲时 Provider 的选择；删除的是普通套餐的全局互斥选择，不是登录账号身份。
-- 已取得的 Ticket 保持既定绑定；更换登录账号不能把已有 Ticket 自动改绑。资格、凭据和 Ticket 仍按闲时既有协议取得，未来实现时核对旧代码对普通 current connection 的依赖，不把它转化成新的用户选择项。
-- 同步需要传完整账号实例事实；旧 current 字段将退出，但完整接收、正确应用、Worker 生命周期与失效恢复仍有价值。
-- 保留目标 Host 权威、workspaceIdentity 隔离、手机 shared-host attachment，以及 desktop continuous / web replayable 分界。
-- 本轮不扩展独立 CLI 的账号能力；多个登录账号同时在线明确不在本项范围。
+### 4.2 Precise Selection, Precise Authentication
 
 ```text
-唯一登录账号
-    ├─ 该账号的个人 / Team A / Team B -> 各自独立的普通 Provider
-    `─ 账号所属体系 BigModel / Z.ai   -> 对应闲时 Provider -> Ticket
+Selection -> specific Team A Provider -> verify Provider/Model/Reasoning in one complete snapshot
+  -> ModelFactory exact creation -> credentials obtained/refreshed by Team A identity
 ```
 
-## 七、尚待裁决
+- Runtime automatic mapping personal -> Team and Team A -> Team B is deleted.
+- Selection View and validity results stay public but never change the input providerId; unavailable Provider/Model
+  keeps original intent, with explicit execution failure or temporary UI blank per established rules.
+- Dynamic Token/Key refresh does not change request ownership; Team A failure never continues with Team B credentials.
+- Implicit Subagents inherit the parent Active Model; explicit selections use specific Providers; fixed execution, retry
+  and internal overrides keep established boundaries.
+- Account availability/entitlement stays useful; the normal current account stops being an execution gate; the Settings
+  browsing item is UI state only.
 
-1. 登录后自动发现/开放全部有资格套餐，还是用户逐个显式连接？查看页面不能隐含连接/创建 Key 等副作用。
-2. 单账号约束已定；退出后换人登录时，原具体 Provider 身份和持久选择如何隔离、保留和恢复，仍需在身份设计中明确。
-3. Team 实例的稳定身份粒度：组织、项目、产品分别承担什么角色？重命名、续费、重新登录如何保持选择稳定？
-4. 旧通用选择的迁移默认、信息不足时的处理，以及旧 Personal Team 覆盖的归属。
-5. “抽屉式”是选择器内展开 Provider，还是完整侧边/底部面板？关闭与取消是否只影响浏览状态？
+### 4.3 Multi-Entry UI
 
-闲时归属问题已裁决，不再列为待选方案：由唯一登录账号确定，保留既有 Ticket 绑定。
+- Personal, each Team and Start show status, entitlements and models separately; navigation does not modify execution state.
+- Selector: Account Providers on top; expanding a Provider differs from selecting a model and does not modify the draft.
+- Same-name models are distinguishable by personal/Team A/Team B source; internal IDs are not user-facing copy.
+- Composer, Automation, Bot, Wiki and Subagents share candidates and grouping rules and keep their own drafts, submission
+  and save boundaries. Desktop and mobile share selection semantics; drawer form, search, keyboard navigation, themes,
+  bilingual copy and long team names are decided in formal design.
 
-## 八、未来实施顺序与验收方向
+## V. Migration (Must Be Re-discussed)
 
-实施前重新调查上线后的真实代码和数据，再补正式 spec 与测试；以下只是建议顺序：
+### 5.1 No Runtime Automatic Mapping
 
-1. 稳定实例身份、连接生命周期和配置实例化。
-2. 按具体实例查询权益、取得凭据；删除请求期全局连接依赖。
-3. 明确迁移来源及一次性迁移规则、个人覆盖归属。
-4. Registry / Selection 删除 current 与跨 Provider 自动对应。
-5. 设置页纯导航、公共选择器抽屉与准确来源标签。
-6. 多入口派发、后台任务、Ticket、同步、归因和桌面/手机/SSH 验证。
+| Original data evidence                                   | Suggested handling                                                                           |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Ordinary custom/API Providers with explicit identities   | Keep identities; normal format migration                                                     |
+| Explicit personal or complete team identities            | Migrate to the specific Provider; no requirement that entitlements/models are executable now |
+| Only old general Coding Plan IDs, no specific ownership  | Historical teams cannot be recovered; a one-time ownership strategy must be decided          |
+| Personal model overrides/sorting under old Team Provider | Must decide which instance receives them; never default-copy to all teams                    |
 
-关键验收：Team A/B 并行请求各自正确计费；查看另一页面不影响任何选择；A 失效不改投 B；同名模型可辨认；重启/重命名不丢实例；个人覆盖不串团队；未确定迁移不毁原数据；已固定执行和 Ticket 不被替换。
+Candidate approach: use records' own verifiable old association; when insufficient, use the pre-upgrade saved old
+connection as a one-time default (this does not represent historical true ownership and is not yet user-confirmed). How
+to preserve originals and prompt users while undetermined is decided separately.
 
-完成本 Draft 的记录不代表开始实施。用户重新启动本项并完成待裁决边界后，才更新正式运行契约。
+### 5.2 Compatibility Scope Changed by Launch
+
+- "Incompatible with this branch's unshipped intermediate formats" does not excuse real data written after the formal
+  release. Before implementing, confirm migration sources against actually published versions (personal/fixed Team
+  Provider IDs and saved old connection info).
+- If old general selections already migrated to personal and ownership evidence is gone, the original team cannot be
+  inferred from the personal ID; acknowledge insufficient information, ask for user confirmation, or use a one-time mapping.
+- No data pre-modification or migration fields are added now. Migration identifies old fields; formal running does not
+  re-read old connections to decide Providers; temporary network/Registry unavailability never deletes persisted selections.
+
+## VI. Off-Peak, Sync, and Isolation Boundaries
+
+- Decided: the single logged-in account determines the BigModel or Z.ai existing off-peak Provider. No "off-peak task
+  selects personal/team quota connection" operation is added. Settings browsing and normal model selections do not
+  participate in off-peak Provider selection; what is deleted is the global mutual exclusion of ordinary plans, not login
+  identity.
+- Obtained Tickets keep their bindings; switching login accounts does not rebind them. Qualification, credentials and
+  Tickets follow existing off-peak protocols; verify old-code dependence on ordinary current connections when implementing.
+- Sync must carry complete account instance facts; old current fields exit; complete receiving, correct application,
+  Worker lifecycle and failure recovery remain valuable.
+- Keep target Host authority, workspaceIdentity isolation, mobile shared-host attachments and desktop continuous / web
+  replayable boundaries. Independent CLI account capabilities are not extended; multiple simultaneous login accounts are out of scope.
+
+## VII. Pending Decisions
+
+1. Auto-discover/open all qualified plans after login, or explicit per-plan connection? Viewing pages must not imply
+   connection or Key creation side effects.
+2. After logout and re-login, how original specific Provider identities and persisted selections are isolated, preserved
+   and restored (single-account constraint is decided).
+3. Stable identity granularity of Team instances (organization/project/product roles; stability across renaming, renewal,
+   re-login).
+4. Migration defaults for old general selections, handling of insufficient information, ownership of old Personal Team overrides.
+5. Whether "drawer-style" means expanding Providers inside the selector or a full side/bottom panel; whether closing and
+   canceling only affect viewing state.
+
+Off-peak ownership is decided (single logged-in account; existing Ticket bindings kept).
+
+## VIII. Future Implementation Order and Acceptance Direction
+
+Re-investigate real code and data after launch before formal specs and tests. Suggested order:
+
+1. Stable instance identities, connection lifecycles, configuration instantiation.
+2. Entitlement queries and credentials per specific instance; remove request-period global connection dependence.
+3. Migration sources and one-time rules; personal override ownership.
+4. Remove current and cross-Provider automatic mapping from Registry / Selection.
+5. Settings as pure navigation, public selector drawer, accurate source labels.
+6. Multi-entry dispatch, background tasks, Tickets, sync, attribution, desktop/mobile/SSH verification.
+
+Key acceptance: Team A/B parallel requests are each billed correctly; viewing another page affects no selection; A
+failure does not redirect to B; same-name models are identifiable; restart/renaming keeps instances; personal overrides
+do not cross teams; undetermined migrations do not destroy original data; fixed execution and Tickets are not replaced.
+
+Implementation requires the user to restart this item and settle the pending decisions before formal contracts change.

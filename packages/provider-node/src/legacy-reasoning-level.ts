@@ -9,7 +9,7 @@ import { legacyReasoningLevelRenames as renames } from "./legacy-reasoning-level
 
 const oldRulesCache = new WeakMap<ModelConfigRules, ModelConfigRules>();
 
-/** 只为历史 Selection 恢复已知 Built-in 旧值域；不迁移 Personal 配置或在执行层放宽校验。 */
+/** Restore known legacy Built-in value ranges only for historical Selections; do not migrate Personal config or relax execution-layer validation. */
 export function resolveLegacyReasoningLevel(
   snapshot: ProviderRegistryServiceSnapshot,
   selection: ModelSelection,
@@ -34,8 +34,7 @@ export function resolveLegacyReasoningLevel(
   if (!oldRules) {
     oldRules = new ModelConfigRules(
       builtin.rules().map((rule) => {
-        // matcher 简化会改变字符串身份：同时认旧缓存和新选择器，但恢复范围仍用历史 matcher。
-        // 否则老选择会失效，或把新放宽的后缀误认成曾经支持 off/nothink 的型号。
+        // Must be the resolved original rule with no site/API restrictions; a newly added site rule with the same name must not inherit the legacy alias accidentally.
         const rename =
           rule.type === "model"
             ? renames.find(
@@ -66,7 +65,7 @@ export function resolveLegacyReasoningLevel(
     );
     oldRulesCache.set(builtin, oldRules);
   }
-  // 用原规则引擎处理大小写、前后缀、API/站点与后续覆盖，不复制第二套匹配逻辑。
+  // Use the original rule engine for case, prefixes/suffixes, API/site rules, and later overrides; do not duplicate matching logic.
   const values = oldRules.resolve({
     providerId: selection.providerId,
     modelId: selection.modelId,

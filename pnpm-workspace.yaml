@@ -18,6 +18,8 @@ supportedArchitectures:
     - current
     - glibc
 allowBuilds:
+  # Root prepare installs hooks once, including migration from legacy hooksPath.
+  lefthook: false
   cpu-features: true
   edgedriver: true
   electron: true
@@ -30,3 +32,20 @@ allowBuilds:
   protobufjs: true
   ssh2: true
   unsafe-pointer: true
+
+nodeLinker: hoisted
+# Keep script execution free of implicit installs, as with the pnpm 10 toolchain.
+verifyDepsBeforeRun: false
+overrides:
+  react: "19.3.0"
+  react-dom: "19.3.0"
+  koffi: "2.15.6"
+  builder-util-runtime: "9.7.0"
+  extract-zip>yauzl: "3.4.0"
+patchedDependencies:
+  "@radix-ui/react-collapsible@1.1.12": patches/@radix-ui__react-collapsible@1.1.12.patch
+  "vitest@4.1.7": patches/vitest@4.1.7.patch
+  "wdio-electron-service@9.2.1": patches/wdio-electron-service@9.2.1.patch
+  "@arms/rum-electron@0.0.3": patches/@arms__rum-electron@0.0.3.patch
+  "@ai-sdk/openai-compatible@2.0.60": patches/@ai-sdk__openai-compatible@2.0.60.patch
+  "@ai-sdk/anthropic@3.0.81": patches/@ai-sdk__anthropic@3.0.81.patch

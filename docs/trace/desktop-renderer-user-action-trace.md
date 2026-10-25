@@ -1,28 +1,28 @@
-# Desktop Renderer 用户操作 Trace
+# Desktop Renderer User Action Trace
 
-## 状态
+## Status
 
-- 本文是 Electron Desktop Renderer 用户语义操作 Trace 的实现规范。
-- 只新增 `ui_action` Span；Web、手机、Host、CLI、RPC 与 ZCode Protocol 不接入。
-- `/event/report` 保持现有事件、字段与计数，不复用本 Catalog。
+- Implementation spec of the Electron Desktop Renderer user-semantic action Trace.
+- Adds only the `ui_action` Span; Web, mobile, Host, CLI, RPC and ZCode Protocol are not wired in.
+- `/event/report` keeps its current events, fields and counts and does not reuse this Catalog.
 
-## 架构
+## Architecture
 
 ```text
-用户操作
+user action
   -> Renderer Feature Catalog
-  -> Renderer 创建/结束 ui_action
-  -> Renderer 有界批处理
-  -> Main 透明 Broker
+  -> Renderer creates/ends ui_action
+  -> Renderer bounded batching
+  -> Main transparent Broker
   -> OTLP
 ```
 
-Main 只分发灰度配置、校验 batch 并使用自身凭据导出。Main 不创建、结束、重采样、
-改写或重新挂接 Span；Host/CLI 不接收 Trace Context。
+Main only distributes the canary config, validates batches and exports with its own credentials. Main
+never creates, ends, resamples, rewrites or reparents Spans; Host/CLI receive no Trace Context.
 
 ## Catalog
 
-### Core：25 个叶子 feature
+### Core: 25 leaf features
 
 | feature_id                         | action                                                                                                              |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -51,7 +51,7 @@ Main 只分发灰度配置、校验 batch 并使用自身凭据导出。Main 不
 | `extension.mcp`                    | `authorize` / `refresh` / `enable` / `disable`                                                                      |
 | `automation.lifecycle`             | `create` / `update` / `run_now` / `enable` / `disable` / `pause` / `resume` / `delete`                              |
 
-### Settings：17 个叶子 feature
+### Settings: 17 leaf features
 
 | feature_id               | action                                                                                                                                                                         |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -71,28 +71,30 @@ Main 只分发灰度配置、校验 batch 并使用自身凭据导出。Main 不
 | `settings.memory`        | `toggle_memory` / `refresh_memory` / `change_memory_scope`                                                                                                                     |
 | `settings.browser`       | `toggle_browser_use` / `import_browser_data` / `toggle_insecure_certificates` / `clear_cache` / `clear_all_data`                                                               |
 
-`toggle_*` 通过 `state_after=enabled|disabled` 表达目标值；`change_*` 只允许低基数枚举；
-`save_*` 只在显式提交时开始。`toggle_memory` 不删除已有 Memory。
+`toggle_*` expresses the target value via `state_after=enabled|disabled`; `change_*` allows only
+low-cardinality enums; `save_*` starts only on explicit submit. `toggle_memory` does not delete existing
+Memory.
 
-## 生命周期与字段
+## Lifecycle and fields
 
-操作通过本地校验、即将产生真实语义副作用时开始。导航在目标视图提交后结束，设置在相应
-偏好或服务写入成功后结束，Command 仅在 Renderer 收到 `accepted` ACK 后完成。确认型操作
-从最终确认开始；超时或卸载为 `abandoned`。遥测异常不得改变业务结果。
+An action starts when local validation passes and a real semantic side effect is about to happen.
+Navigation ends once the target view is committed; settings end once the preference or service write
+succeeds; Commands complete only when the Renderer receives the `accepted` ACK. Confirm-type actions
+start from the final confirmation; timeout or unmount ends as `abandoned`. Telemetry exceptions must not
+change the business result.
 
-固定 outcome：`completed` / `failed` / `rejected` / `cancelled` / `noop` / `abandoned`。
+Fixed outcome: `completed` / `failed` / `rejected` / `cancelled` / `noop` / `abandoned`. Fixed result
+source: `local_commit` / `shared_settings` / `setting_service` / `platform_result` / `authority_ack` /
+`optimistic_projection`.
 
-固定 result source：`local_commit` / `shared_settings` / `setting_service` /
-`platform_result` / `authority_ack` / `optimistic_projection`。
+Span Name is fixed `ui_action`, service.name fixed `zcode-desktop-renderer`. Allowed fields: Catalog
+identifiers, surface/trigger, result, controlled state, workspace/remote type and action_id. Forbidden:
+prompt, reply, file content, paths, workspaceIdentity, remoteSessionId, proxy address, certificate path,
+font name, Cookie, browsing history, Model I/O, full error and stack.
 
-Span Name 固定为 `ui_action`，service.name 固定为 `zcode-desktop-renderer`。允许字段仅包括
-Catalog 标识、surface/trigger、结果、受控状态、workspace/remote 类型和 action_id。禁止 prompt、
-回复、文件内容、路径、workspaceIdentity、remoteSessionId、代理地址、证书路径、字体名称、
-Cookie、浏览记录、Model I/O、完整错误和 stack。
+## Canary, batching and failure contract
 
-## 灰度、批次与失败合同
-
-`/api/v1/client/configs` 的 `data.configs.rendererActionTrace` 下发：
+`/api/v1/client/configs` delivers `data.configs.rendererActionTrace`:
 
 ```json
 {
@@ -103,18 +105,19 @@ Cookie、浏览记录、Model I/O、完整错误和 stack。
 }
 ```
 
-- 生产默认关闭；缺失、首次超时、解析失败或非法配置均不采集。
-- 生产 sampleRatio 只允许 0～0.20；开发/自动化测试显式使用 1.0。
-- 未知 group 忽略；配置更新只影响新 Span。
-- Renderer queue 256；batch 32 条/256 KiB；2 秒或满批触发。
-- Main ingress 32 batch；OTLP timeout 3 秒，最多重试一次。
-- 满队列、非法 DTO 或导出失败只丢遥测，不回压业务。
+1. Off by default in production; a missing config, first timeout, parse failure or invalid config
+   collects nothing.
+2. Production sampleRatio is limited to 0..0.20; development/automated tests use 1.0 explicitly.
+3. Unknown groups are ignored; config updates affect only new Spans.
+4. Renderer queue 256; batch 32 items / 256 KiB; triggered at 2 seconds or a full batch.
+5. Main ingress 32 batches; OTLP timeout 3 seconds, at most one retry.
+6. A full queue, invalid DTO or export failure only drops telemetry and never back-pressures the business.
 
-## 验收
+## Acceptance
 
-- Catalog feature/action 唯一且完整。
-- `/event/report` 调用和 payload 零变化。
-- Host/CLI/RPC/Protocol 零改动。
-- Web/手机不初始化、不发送 batch。
-- Main 保留 Renderer 生成的 traceId/spanId/时间/Resource/Attribute。
-- 无敏感字段，无新增 50ms Long Task，Renderer Heap 增量不超过 10 MB，batch IPC P95 小于 5ms。
+- Catalog feature/action unique and complete.
+- `/event/report` calls and payloads unchanged.
+- Host/CLI/RPC/Protocol unchanged.
+- Web/mobile do not initialize or send batches.
+- Main preserves the Renderer-generated traceId/spanId/time/Resource/Attribute.
+- No sensitive fields; no new 50 ms Long Task; Renderer Heap increase at most 10 MB; batch IPC P95 under 5 ms.

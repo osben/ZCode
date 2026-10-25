@@ -1271,6 +1271,7 @@ function inferComponentTypesFromMetadata(plugin: PluginMetadata): string[] {
   if (plugin.declaredMcpServerNames.length > 0 || plugin.mcpServerNames.length > 0) {
     types.push("mcp");
   }
+  if (plugin.lspServerNames.length > 0) types.push("lsp");
   if (plugin.hookDetails.length > 0) types.push("hook");
   if (plugin.uiSurfaces?.length) types.push("ui");
   return types;

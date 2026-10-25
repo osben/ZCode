@@ -96,6 +96,46 @@ describe("ToolExecutor hook additional context", () => {
     expect(result.modelContent).toContain("post failure context");
   });
 
+  it("keeps terminal provider facts when PostToolUseFailure adds context", async () => {
+    const fixture = createExecutorFixture("tool-hook-provider-failure-context");
+    fixture.registry.register(
+      createTestToolEntry("ProviderFailingTool", async () => {
+        throw Object.assign(new Error("request has been blocked"), {
+          context: { providerCode: "3012", retryable: false, source: "provider", statusCode: 405 },
+        });
+      }),
+    );
+    const hookRunner = createInMemoryHookRunner({
+      hooks: [
+        {
+          event: HookEventName.PostToolUseFailure,
+          matcher: "ProviderFailingTool",
+          callback: async (input) => ({
+            hookSpecificOutput: {
+              additionalContext: "post failure context",
+              hookEventName: input.hookEventName,
+            },
+          }),
+        },
+      ],
+    });
+
+    const result = await fixture.createExecutor(hookRunner).execute(
+      {
+        id: createToolCallId("provider-failure-context"),
+        input: {},
+        name: "ProviderFailingTool",
+      },
+      { traceContext: fixture.traceContext },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.modelContent).toContain(
+      "request has been blocked\n\nProvider failure: status=405 provider_error_code=3012 retryable=false",
+    );
+    expect(result.modelContent).toContain("post failure context");
+  });
+
   it("keeps PreToolUse context when hook-updated input fails schema validation", async () => {
     const fixture = createExecutorFixture("tool-hook-invalid-update-context");
     let handlerRan = false;

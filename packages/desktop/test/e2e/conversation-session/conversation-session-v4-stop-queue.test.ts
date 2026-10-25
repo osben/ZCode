@@ -1,11 +1,9 @@
-// catalog B02/B04（stopKeepsQueueAndDisablesAutoDrain）+ B06（暂停队列发送确认）
+// catalog B02/B02a/B04 (stopKeepsQueueAndDisablesAutoDrain) + B06 (paused-queue send confirmation)
 // + B08（sendQueuedPromptNow）+ B14/B15（暂停队列继续）验收。
 // 证据层 L3：running 中入队 → stop → queue 原样保留并显示暂停提示；正常发送按钮
 // 打开 modal 后执行 keep/clear；idle 继续按 FIFO 到空；running 继续只武装、不抢占。
 // 语料来源：manual-review/pending 的 stop-held-queue（B02-B04）/ interrupted-actions 语义移植。
-import {
-  clearAppData,
-} from "../helpers/desktop-app.js";
+import { clearAppData } from "../helpers/desktop-app.js";
 import {
   clickV4PausedQueueResume,
   clickV4QueueItemSendNow,
@@ -38,11 +36,23 @@ async function setupHeldQueue(queueTexts: string[]) {
     await waitForV4QueueCount(i + 1, 30000);
   }
   await clickV4Stop();
+  await waitForV4Pane((s) => !s.canStop, "stop 后没有退出 running（canStop 仍在）", 30000);
+}
+
+/** 建立「running 慢流 + 入队 N 条」的前置状态，不 stop：用于 Steer（立即发送）路径。 */
+async function setupRunningQueue(queueTexts: string[]) {
+  await prepareV4ConversationE2E();
+  await sendV4Prompt("E2E_V4_HELD_SLOW 慢慢回答这个问题");
+  await waitForV4TimelineContaining("V4_HELD_STREAMING", 45000);
   await waitForV4Pane(
-    (s) => !s.canStop,
-    "stop 后没有退出 running（canStop 仍在）",
-    30000,
+    (s) => s.canStop && s.sessionId !== "draft" && s.sessionId !== null,
+    "首轮没有进入 running（canStop）",
+    45000,
   );
+  for (let i = 0; i < queueTexts.length; i++) {
+    await sendV4Prompt(queueTexts[i]!);
+    await waitForV4QueueCount(i + 1, 30000);
+  }
 }
 
 describe("v4 catalog B 组：stop 后暂停队列、发送确认与继续消费", () => {
@@ -52,10 +62,7 @@ describe("v4 catalog B 组：stop 后暂停队列、发送确认与继续消费"
   });
 
   it("B02/B04：stop 后 queue 原样保留、autoDrain=false，并显示暂停提示", async () => {
-    await setupHeldQueue([
-      "E2E_V4_HELD_Q1 排队的第一条",
-      "E2E_V4_HELD_Q2 排队的第二条",
-    ]);
+    await setupHeldQueue(["E2E_V4_HELD_Q1 排队的第一条", "E2E_V4_HELD_Q2 排队的第二条"]);
 
     // queue=2 原样保留（不被 stop 丢弃）
     const items = await getV4QueueItems();
@@ -67,15 +74,33 @@ describe("v4 catalog B 组：stop 后暂停队列、发送确认与继续消费"
     await browser.pause(3000);
     const after = await getV4QueueItems();
     expect(after).toHaveLength(2);
-    const snapshot = await waitForV4Pane(
-      () => true,
-      "读取快照失败",
-      5000,
-    );
+    const snapshot = await waitForV4Pane(() => true, "读取快照失败", 5000);
     expect(snapshot.timelineText).not.toContain("V4_HELD_Q1_REPLY");
 
     await waitForV4PausedQueueBanner(15000);
     expect(await hasV4PausedQueueSendDialog()).toBe(false);
+  });
+
+  it("B02a: after stop the paused queue starts no turn and admits nothing during the observation window; only an explicit resume consumes it", async () => {
+    await setupHeldQueue(["E2E_V4_HELD_Q1 排队的第一条"]);
+    await waitForV4PausedQueueBanner(15000);
+
+    // 5 s observation window, checked every 500 ms: no running state, no consumed queue head, no Q1 reply.
+    const observeUntil = Date.now() + 5000;
+    while (Date.now() < observeUntil) {
+      const snapshot = await waitForV4Pane(() => true, "读取快照失败", 5000);
+      expect(snapshot.canStop).toBe(false);
+      expect(snapshot.timelineText).not.toContain("V4_HELD_Q1_REPLY");
+      expect(await getV4QueueItems()).toHaveLength(1);
+      await browser.pause(500);
+    }
+    expect(await hasV4PausedQueueBanner()).toBe(true);
+
+    // An explicit resume is the only recovery path: only then is the queue head consumed and answered.
+    await clickV4PausedQueueResume();
+    await waitForV4TimelineContaining("V4_HELD_Q1_REPLY", 45000);
+    await waitForV4QueueCount(0, 15000);
+    await waitForV4Pane((s) => !s.canStop, "显式继续后没有回到 idle", 30000);
   });
 
   it("B06：正常发送按钮打开 modal；keep 保留队列发送，clear 清空队列发送", async () => {
@@ -99,9 +124,11 @@ describe("v4 catalog B 组：stop 后暂停队列、发送确认与继续消费"
 
     // queue 清空后暂停提示与确认 modal 都退出。
     await browser.waitUntil(
-      async () =>
-        !(await hasV4PausedQueueBanner()) && !(await hasV4PausedQueueSendDialog()),
-      { timeout: 15000, timeoutMsg: "queue 清空后暂停提示或确认 modal 仍然存在" },
+      async () => !(await hasV4PausedQueueBanner()) && !(await hasV4PausedQueueSendDialog()),
+      {
+        timeout: 15000,
+        timeoutMsg: "queue 清空后暂停提示或确认 modal 仍然存在",
+      },
     );
     // 被清空的 Q1 不应被消费
     const snapshot = await waitForV4Pane(() => true, "读取快照失败", 5000);
@@ -109,10 +136,7 @@ describe("v4 catalog B 组：stop 后暂停队列、发送确认与继续消费"
   });
 
   it("B14：idle 暂停队列点继续后按 Q1/Q2 FIFO 自动消费到空", async () => {
-    await setupHeldQueue([
-      "E2E_V4_HELD_Q1 排队的第一条",
-      "E2E_V4_HELD_Q2 排队的第二条",
-    ]);
+    await setupHeldQueue(["E2E_V4_HELD_Q1 排队的第一条", "E2E_V4_HELD_Q2 排队的第二条"]);
     await waitForV4PausedQueueBanner(15000);
 
     await clickV4PausedQueueResume();
@@ -174,5 +198,80 @@ describe("v4 catalog B 组：stop 后暂停队列、发送确认与继续消费"
     await waitForV4QueueCount(0, 15000);
     await waitForV4Pane((s) => !s.canStop, "send-now 后没有回到 idle", 30000);
     expect(await getV4QueueItems()).toHaveLength(0);
+  });
+
+  it("STEER：running 中立即发送队首（不 stop）→ 队首先消费，剩余队列续跑，不出现暂停提示", async () => {
+    await setupRunningQueue(["E2E_V4_HELD_Q1 排队的第一条", "E2E_V4_HELD_Q2 排队的第二条"]);
+    const items = await getV4QueueItems();
+    expect(items).toHaveLength(2);
+    expect(await clickV4QueueItemSendNow(items[0]!.queueItemId)).toBe(true);
+    // Bounded probe at the steered item's promotion: the queue shrinks to [Q2] only when Q1 is committed. With the
+    // QA symptom the banner is already present at that moment, so this assertion fails there (no sampling loop).
+    await waitForV4QueueCount(1, 15000);
+    expect(await hasV4PausedQueueBanner()).toBe(false);
+    // Deterministic check when the steered item's reply is visible.
+    await waitForV4TimelineContaining("V4_HELD_Q1_REPLY", 45000);
+    expect(await hasV4PausedQueueBanner()).toBe(false);
+    await waitForV4TimelineContaining("V4_HELD_Q2_REPLY", 45000);
+    await waitForV4QueueCount(0, 15000);
+    await waitForV4Pane((s) => !s.canStop, "steer 后队列没有回到 idle", 30000);
+
+    const snapshot = await waitForV4Pane(() => true, "读取 steer 终态失败", 5000);
+    expect(snapshot.timelineText.indexOf("V4_HELD_Q1_REPLY")).toBeGreaterThanOrEqual(0);
+    expect(snapshot.timelineText.indexOf("V4_HELD_Q2_REPLY")).toBeGreaterThan(
+      snapshot.timelineText.indexOf("V4_HELD_Q1_REPLY"),
+    );
+    expect(await hasV4PausedQueueBanner()).toBe(false);
+  });
+
+  it("STEER 后用户 Stop：被立即发送的队首运行中按 Stop 仍保留剩余队列并暂停", async () => {
+    await setupRunningQueue(["E2E_V4_HELD_KEEP 保留队列并保持慢流", "E2E_V4_HELD_Q2 排队的第二条"]);
+    const items = await getV4QueueItems();
+    expect(items).toHaveLength(2);
+    expect(await clickV4QueueItemSendNow(items[0]!.queueItemId)).toBe(true);
+    await waitForV4TimelineContaining("V4_HELD_KEEP_STREAMING", 45000);
+    await waitForV4Pane((s) => s.canStop, "steer 后 Q1 没有进入 running", 15000);
+
+    await clickV4Stop();
+    await waitForV4Pane((s) => !s.canStop, "用户 stop 后没有退出 running", 30000);
+    await waitForV4PausedQueueBanner(15000);
+
+    // Stop 仍是 hold：Q2 原样保留且 3s 内不自动消费。
+    await browser.pause(3000);
+    expect(await getV4QueueItems()).toHaveLength(1);
+    const snapshot = await waitForV4Pane(() => true, "读取 stop 后快照失败", 5000);
+    expect(snapshot.timelineText).not.toContain("V4_HELD_Q2_REPLY");
+  });
+
+  it("STEER 第二项：立即发送队列第二项 → 第二项先消费，第一项随后按 FIFO 出队", async () => {
+    await setupRunningQueue(["E2E_V4_HELD_Q1 排队的第一条", "E2E_V4_HELD_Q2 排队的第二条"]);
+    const items = await getV4QueueItems();
+    expect(await clickV4QueueItemSendNow(items[1]!.queueItemId)).toBe(true);
+    await waitForV4TimelineContaining("V4_HELD_Q2_REPLY", 45000);
+    await waitForV4TimelineContaining("V4_HELD_Q1_REPLY", 45000);
+    await waitForV4QueueCount(0, 15000);
+    await waitForV4Pane((s) => !s.canStop, "steer second 后没有回到 idle", 30000);
+    expect(await hasV4PausedQueueBanner()).toBe(false);
+  });
+
+  it("STEER 刚进入 running：不等流式输出即立即发送 → 队列按序续跑", async () => {
+    await prepareV4ConversationE2E();
+    await sendV4Prompt("E2E_V4_HELD_SLOW 慢慢回答这个问题");
+    await waitForV4Pane(
+      (s) => s.canStop && s.sessionId !== "draft" && s.sessionId !== null,
+      "首轮没有进入 running（canStop）",
+      45000,
+    );
+    await sendV4Prompt("E2E_V4_HELD_Q1 排队的第一条");
+    await waitForV4QueueCount(1, 30000);
+    await sendV4Prompt("E2E_V4_HELD_Q2 排队的第二条");
+    await waitForV4QueueCount(2, 30000);
+    const items = await getV4QueueItems();
+    expect(await clickV4QueueItemSendNow(items[0]!.queueItemId)).toBe(true);
+    await waitForV4TimelineContaining("V4_HELD_Q1_REPLY", 45000);
+    await waitForV4TimelineContaining("V4_HELD_Q2_REPLY", 45000);
+    await waitForV4QueueCount(0, 15000);
+    await waitForV4Pane((s) => !s.canStop, "immediate steer 后没有回到 idle", 30000);
+    expect(await hasV4PausedQueueBanner()).toBe(false);
   });
 });

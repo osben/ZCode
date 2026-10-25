@@ -158,7 +158,7 @@ describe("useSettings AskUserQuestion runtime preference", () => {
 
   it("isolates Source settings snapshots from the local renderer snapshot", async () => {
     const { useSettings } = await import("@/hooks/useSettingService.js");
-    settingService.get.mockResolvedValueOnce({ locale: "zh-CN" } as AppSettings);
+    settingService.get.mockResolvedValueOnce({ locale: "uk-UA" } as AppSettings);
     const local = renderHook(() => useSettings({ cacheKey: "test-local" }));
     await waitFor(() => expect(local.result.current.loading).toBe(false));
 
@@ -166,14 +166,14 @@ describe("useSettings AskUserQuestion runtime preference", () => {
     const source = renderHook(() => useSettings({ cacheKey: "source:server-a" }));
     await waitFor(() => expect(source.result.current.loading).toBe(false));
 
-    expect(local.result.current.settings?.locale).toBe("zh-CN");
+    expect(local.result.current.settings?.locale).toBe("uk-UA");
     expect(source.result.current.settings?.locale).toBe("en-US");
     local.unmount();
     source.unmount();
   });
 
   it("isolates default snapshots by service accessor without requiring every caller to name a cache", async () => {
-    const createServices = (locale: "zh-CN" | "en-US") =>
+    const createServices = (locale: "en-US" | "uk-UA") =>
       ({
         broadcastService,
         settingService: {
@@ -183,7 +183,7 @@ describe("useSettings AskUserQuestion runtime preference", () => {
         zcodeAgentService,
         botsService,
       }) as unknown as IServiceAccessor;
-    const controllerServices = createServices("zh-CN");
+    const controllerServices = createServices("uk-UA");
     const sourceServices = createServices("en-US");
     const { useSettings } = await import("@/hooks/useSettingService.js");
     const controller = renderHook(() => useSettings({ services: controllerServices }));
@@ -194,7 +194,7 @@ describe("useSettings AskUserQuestion runtime preference", () => {
       expect(source.result.current.loading).toBe(false);
     });
 
-    expect(controller.result.current.settings?.locale).toBe("zh-CN");
+    expect(controller.result.current.settings?.locale).toBe("uk-UA");
     expect(source.result.current.settings?.locale).toBe("en-US");
     controller.unmount();
     source.unmount();
@@ -205,7 +205,7 @@ describe("useSettings AskUserQuestion runtime preference", () => {
       get: vi.fn(
         async () =>
           ({
-            locale: "zh-CN",
+            locale: "en-US",
           }) as AppSettings,
       ),
       update: vi.fn(async () => undefined),
@@ -249,11 +249,11 @@ describe("useSettings AskUserQuestion runtime preference", () => {
     await act(async () => {
       await updateSettingsAndRefreshSnapshot({
         settingService,
-        patch: { locale: "zh-CN" },
+        patch: { locale: "uk-UA" },
       });
     });
 
-    expect(hook.result.current.settings?.locale).toBe("zh-CN");
+    expect(hook.result.current.settings?.locale).toBe("uk-UA");
     hook.unmount();
   });
   it("persists ToolSearch mode without synchronizing or broadcasting to active runtimes", async () => {

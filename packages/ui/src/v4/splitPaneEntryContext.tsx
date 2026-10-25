@@ -1,6 +1,6 @@
-// 侧栏会话项拖拽的可用性开关（拖到项目上移动任务）。手机与 /remote web-remote 不启用。
-// 2026-10-16 起「在分屏打开 / 拖到对话区分屏」入口已下线，这里只保留拖拽闸门；
-// 用 context 而不是逐层 props：会话项 drag source 被多个侧栏 Section 共用，判定源收敛在 WorkspaceShellLayout 一处。
+// Availability switch for the sidebar session drag entry point (dragging a session onto a project moves the task). Not enabled on mobile or /remote web-remote.
+// Since 2026-10-16 the "Open in split view / drag to split view" entry points are retired; only the drag gate remains.
+// Use context instead of threading props through each layer: the session item drag source is shared by several sidebar sections, so the decision stays in WorkspaceShellLayout.
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 
 interface V4SplitPaneEntryContextValue {

@@ -5,7 +5,7 @@ import {
   automationSessionCreateTelemetrySchema,
   sessionCreateTelemetrySchema,
 } from "./sessionCreateTelemetry.js";
-/* eslint-disable max-lines -- 运行时 schema 当前集中在共享包入口，外部 relay payload 校验加入后先保持单一导出面。 */
+/* eslint-disable max-lines -- Runtime schemas are currently centralized at the shared-package entry point; keep one export surface for now as external relay-payload validation is added. */
 import { z } from "zod";
 import { networkCaptureControlSchema, networkCaptureBatchSchema } from "./networkCapture.js";
 import { browserCommandSchema } from "./browser-use/commands.js";
@@ -46,6 +46,7 @@ import { wslUserSchema } from "./wslUserValidation.js";
 import { legacyZCodeProviderSchema } from "./zcode-agent-policy.js";
 import { errorAttributionSchema } from "./zcode-protocol-v4/snapshot.js";
 import {
+  zcodeExecutionWorktreeSchema,
   zcodeMcpResourceSamplesSchema,
   zcodeMcpTelemetryEventSchema,
   zcodeProcessResourceSampleSchema,
@@ -59,7 +60,30 @@ export {
   appSettingsSchema,
   localeSchema,
   postUpdateReleaseNotesPayloadSchema,
+  sharedLocalePreferenceSchema,
+  sharedLocaleSchema,
 } from "./validationAppSettings.js";
+export type {
+  LegacyLocaleMigrationPlan,
+  LocaleOverrides,
+  LocaleSplit,
+  SharedLocale,
+  SharedLocalePreference,
+} from "./forkAppSettings.js";
+export {
+  FORK_SETTING_KEYS,
+  extractLegacyForkSettings,
+  forkAppSettingsPatchSchema,
+  forkAppSettingsSchema,
+  forkAppSettingsStoredSchema,
+  appSettingsSyncPatchSchema,
+  pickForkSettings,
+  planLegacyLocaleMigration,
+  resolveEffectiveLocale,
+  splitForkSettingsPatch,
+  splitLocaleSettings,
+} from "./forkAppSettings.js";
+export type { ForkAppSettings, ForkAppSettingsStored, ForkSettingKey } from "./forkAppSettings.js";
 export { isValidWslUser, WSL_USER_MAX_LENGTH, wslUserSchema } from "./wslUserValidation.js";
 export { zcodeTaskModeSchema } from "./zcode-task-mode-schema.js";
 
@@ -74,8 +98,8 @@ export function formatZodError(error: z.ZodError): string {
 
 export const nonEmptyStringSchema = z.string().trim().min(1);
 export const stringArraySchema = z.array(z.string());
-// Task04B：topic physical-frame 计量器按 bridge/recovery id 的协议最大长度计算
-// mobile relay 外壳；不在不可信 payload 入口机械限长，1MiB 上限就只是估算。
+// Task04B: the topic physical-frame meter uses the protocol maximum length for bridge/recovery IDs
+// as the mobile relay envelope. Do not apply this limit mechanically at the untrusted payload boundary, or the 1 MiB ceiling is only an estimate.
 const webRemoteControlTransportIdSchema = nonEmptyStringSchema
   .max(PROTOCOL_V4_LIMITS.transportEnvelopeIdMaxChars)
   .regex(/^[A-Za-z0-9._~-]+$/u);
@@ -113,6 +137,27 @@ export const webRemoteControlReconnectWorkspaceResultSchema = z.union([
     error: z.string(),
   }),
 ]);
+
+export const webRemoteControlTaskTargetSchema = z.object({
+  taskId: nonEmptyStringSchema,
+  title: z.string(),
+  workspacePath: nonEmptyStringSchema,
+  workspaceIdentity: nonEmptyStringSchema.optional(),
+  remoteSessionId: nonEmptyStringSchema.optional(),
+  workspaceLabel: nonEmptyStringSchema,
+  workspaceKind: z.enum(["local", "remote"]),
+  createdAt: z.number().finite(),
+  updatedAt: z.number().finite(),
+  provider: zcodeProviderSchema.optional(),
+  unreadAt: z.number().finite().optional(),
+  displayStatus: z.enum(["idle", "running", "completed", "error"]).optional(),
+  hasBackgroundWork: z.boolean().optional(),
+  workflowActivity: sessionWorkflowActivitySchema.optional(),
+  pinned: z.boolean().optional(),
+  archived: z.boolean().optional(),
+});
+
+export const webRemoteControlTaskTargetsSchema = z.array(webRemoteControlTaskTargetSchema);
 
 export const webRemoteControlFailureReasonSchema = z.enum([
   "session-not-found",
@@ -199,11 +244,13 @@ export const webRemoteControlWindowBootstrapResultSchema = z.object({
   workspaces: webRemoteControlWorkspaceTargetsSchema,
   initialViewState: webRemoteControlMobileViewStateSchema.optional(),
   mobileViewState: webRemoteControlMobileViewStateSchema.optional(),
+  tasks: webRemoteControlTaskTargetsSchema.optional(),
   mobileTaskViewEpoch: webRemoteControlTransportIdSchema.optional(),
 });
 
 export const webRemoteControlWorkspaceListResultSchema = z.object({
   workspaces: webRemoteControlWorkspaceTargetsSchema,
+  tasks: webRemoteControlTaskTargetsSchema.optional(),
   activeWorkspaceKey: nonEmptyStringSchema.optional(),
   activeTaskId: nonEmptyStringSchema.optional(),
 });
@@ -213,9 +260,19 @@ export const webRemoteControlPlatformMethodSchema = z.enum([
   "listWSLDistros",
   "listDockerContainers",
   "listSSHConfigAliases",
+  // Bug fix: the upstream v3.15.1 bulk import (aac47556) added createTempTextAttachment to
+  // WebRemoteControlPlatformMethodArgsMap but missed this enum. The enum is the runtime
+  // allow-list for relay platform-request / platform-response, so the missing entry made the
+  // desktop transport drop the method outright, breaking temporary text attachments from the
+  // phone over the relay.
+  "createTempTextAttachment",
   "loadMcpFromUserDirectory",
   "saveMcpToUserDirectory",
   "migrateLegacyCommonMcp",
+  "getInstalledEditors",
+  "openInEditor",
+  "openInFileManager",
+  "openExternalFile",
 ]);
 
 const webRemoteControlAppPayloadSchemas = [
@@ -320,6 +377,27 @@ const webRemoteControlAppPayloadSchemas = [
     error: z.string(),
   }),
   z.object({
+    zcode_type: z.literal("workspace-open-request"),
+    requestId: nonEmptyStringSchema,
+    workspacePath: nonEmptyStringSchema,
+    workspaceIdentity: nonEmptyStringSchema.optional(),
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-open-response"),
+    requestId: nonEmptyStringSchema,
+    workspacePath: nonEmptyStringSchema,
+    workspaceIdentity: nonEmptyStringSchema.optional(),
+    success: z.literal(true),
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-open-response"),
+    requestId: nonEmptyStringSchema,
+    workspacePath: nonEmptyStringSchema,
+    workspaceIdentity: nonEmptyStringSchema.optional(),
+    success: z.literal(false),
+    error: z.string(),
+  }),
+  z.object({
     zcode_type: z.literal("mobile-view-state-update"),
     viewState: webRemoteControlMobileViewStateSchema,
     deviceInfo: webRemoteControlMobileDeviceInfoSchema.optional(),
@@ -360,8 +438,8 @@ const webRemoteControlAppPayloadSchemas = [
     success: z.literal(false),
     error: z.string(),
   }),
-  // Bugfix：04D-3 必须让 fragment/ACK 与 acknowledged adapter 原子切换。
-  // 继续接受 legacy 单片会让 raw bytes 绕过 ACK/replay owner 和 1MiB 外壳硬边界。
+  // Bug fix: 04D-3 must switch fragments/ACKs and the acknowledged adapter atomically.
+  // Continuing to accept legacy single-part messages lets raw bytes bypass the ACK/replay owner and the 1 MiB envelope limit.
   webRemoteControlRpcTransportFrameSchema,
   webRemoteControlRpcTransportAckSchema,
   z.object({
@@ -414,10 +492,10 @@ const webRemoteControlAppPayloadSchemas = [
   }),
 ] as const;
 
-// Bugfix: app payload 里多个消息共享 zcode_type（例如 platform-response），
-// 不能直接用 z.discriminatedUnion("zcode_type")，否则 schema 初始化会因重复值失败。
-// 这里保留同一批运行时约束，改用普通 union，让外部 relay 的不可信 payload
-// 在进入 desktop/web 路由前仍然先被机械校验。
+// Bugfix: Multiple messages in an app payload share zcode_type (for example, platform-response),
+// so z.discriminatedUnion("zcode_type") cannot be used directly; duplicate values would make schema initialization fail.
+// Keep the same runtime constraints but use a regular union, so untrusted payloads from the external relay
+// are still validated mechanically before entering Desktop/Web routing.
 export const webRemoteControlAppPayloadSchema = z.union(webRemoteControlAppPayloadSchemas);
 
 export function parseWebRemoteControlAppPayload(
@@ -563,7 +641,7 @@ export const hostInitLocalMessageSchema = z.object({
   feedbackApiBase: z.string().url().optional(),
   workspacePath: nonEmptyStringSchema.optional(),
   workspaceIdentity: nonEmptyStringSchema.optional(),
-  // 启动只预热 active workspace（desktop STARTUP_AGENT_WARMUP_LIMIT = 1），协议层同步收紧上限。
+  // Startup prewarms only the active workspace (desktop STARTUP_AGENT_WARMUP_LIMIT = 1), so the protocol layer tightens the limit accordingly.
   agentWarmupTargets: z.array(hostAgentWarmupTargetSchema).max(1).optional(),
   agentSpawnFallbackCwd: nonEmptyStringSchema.optional(),
   remoteAssets: remoteAssetDirsSchema.optional(),
@@ -573,6 +651,8 @@ export const hostInitLocalMessageSchema = z.object({
   runtimeProcessEnvPatch: z
     .record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string())
     .optional(),
+  /** Set by Main only on the first local Host of an app process; see specs/first-submission-lifecycle.md "Placeholder startup sweep". */
+  sweepAbandonedReservations: z.boolean().optional(),
 });
 
 export const windowHostRemoteWorkspaceDescriptorSchema = z
@@ -678,8 +758,8 @@ export const hostDisposeRemoteWorkspaceSessionMessageSchema = z
 export const hostAttachServicePortMessageSchema = z
   .object({
     type: z.literal("attach-service-port"),
-    // main 只能声明 attachment 来源；connectionId 仍由 host process 分配。
-    // desktop reload/remote reattach 必须显式 continuous，手机 shared-host 必须 replayable。
+    // main can declare only the attachment source; the host process still assigns connectionId.
+    // Desktop reload/remote reattach must explicitly use continuous; mobile shared-host must use replayable.
     requestId: nonEmptyStringSchema,
     attachmentId: nonEmptyStringSchema,
     clientMode: z.enum(["desktop-continuous", "web-remote-replayable"]),
@@ -741,6 +821,39 @@ export const hostTaskOwnerCommandResultMessageSchema = z.object({
   result: taskOwnerCommandResultSchema,
 });
 
+export const hostBotRemoteWorkspaceReconnectResultMessageSchema = z.object({
+  type: z.literal("bot-remote-workspace-reconnect-result"),
+  requestId: nonEmptyStringSchema,
+  ok: z.boolean(),
+  sessionId: nonEmptyStringSchema.optional(),
+  error: z.string().optional(),
+});
+
+export const hostBotRemoteWorkspaceConnectionStatusResultMessageSchema = z.object({
+  type: z.literal("bot-remote-workspace-connection-status-result"),
+  requestId: nonEmptyStringSchema,
+  ok: z.boolean(),
+  connected: z.boolean().optional(),
+  error: z.string().optional(),
+});
+
+export const hostBotRemoteWorkspaceRuntimePortMessageSchema = z.object({
+  type: z.literal("bot-remote-workspace-runtime-port"),
+  requestId: nonEmptyStringSchema,
+  ok: z.boolean(),
+  error: z.string().optional(),
+});
+
+export const hostBotRemoteWorkspaceWebRemoteLinkResultMessageSchema = z.object({
+  type: z.literal("bot-remote-workspace-web-remote-link-result"),
+  requestId: nonEmptyStringSchema,
+  ok: z.boolean(),
+  url: z.string().optional(),
+  sessionId: z.string().optional(),
+  reason: z.enum(["workspace-not-open", "feature-disabled"]).optional(),
+  error: z.string().optional(),
+});
+
 export const sessionMessageRequestSchema = z.object({
   content: nonEmptyStringSchema,
   createdAt: nonEmptyStringSchema,
@@ -781,8 +894,17 @@ export const hostFeedbackLogArchiveResultMessageSchema = z.object({
   error: z.string().optional(),
 });
 
-// main → host：定时任务到点派发。会话内 cron 带 targetTaskId 时直接 sendPrompt 到当前会话；
-// 历史未绑定任务才 fallback createTask + sendPrompt 建 session。
+export const hostOpenWorkspaceInventoryResultMessageSchema = z
+  .object({
+    type: z.literal("open-workspace-inventory-result"),
+    requestId: nonEmptyStringSchema,
+    available: z.boolean(),
+    paths: z.array(nonEmptyStringSchema),
+  })
+  .strict();
+
+// main → host: dispatch a scheduled task when it is due. A session-bound cron with targetTaskId sends
+// the prompt directly to the current session; only older unbound tasks fall back to createTask + sendPrompt.
 export const hostCronRunMessageSchema = z.object({
   type: z.literal("cron-run"),
   automationId: nonEmptyStringSchema,
@@ -798,9 +920,10 @@ export const hostCronRunMessageSchema = z.object({
   mode: z.string().optional(),
 });
 
-// main → host：闲时任务派发（仿 cron-run，字段独立不复用）。首跑不带 conversationId/sessionId，
-// host createTask 新建 session；3h 续跑 / 中断恢复带上两者 resume 同一会话。
-// serverTicketId 供 idle plan 适配层注入 X-Off-Peak-Ticket-ID 请求头（run 作用域）。
+// main → host: dispatch an off-peak task (mirrors cron-run but uses independent fields). The first run
+// omits conversationId/sessionId and the host creates a new session with createTask. A three-hour
+// continuation or interrupted recovery includes both to resume the same session.
+// The idle-plan adapter uses serverTicketId to inject the run-scoped X-Off-Peak-Ticket-ID header.
 export const hostOffPeakRunMessageSchema = z.object({
   type: z.literal("off-peak-run"),
   offPeakTaskId: nonEmptyStringSchema,
@@ -810,7 +933,8 @@ export const hostOffPeakRunMessageSchema = z.object({
   hostId: nonEmptyStringSchema.optional(),
   additionalDirectories: z.array(nonEmptyStringSchema).max(256).optional(),
   prompt: nonEmptyStringSchema,
-  // 权限四档映射现有 ZCodeTaskMode；与 cron-run 的 mode 同样按宽松 string 传输
+  // The four permission levels map to the existing ZCodeTaskMode; like cron-run mode, transmit as a
+  // permissive string.
   permissionMode: nonEmptyStringSchema,
   modelSelection: modelSelectionSchema,
   conversationId: z.string().optional(),
@@ -818,7 +942,7 @@ export const hostOffPeakRunMessageSchema = z.object({
   serverTicketId: z.string().optional(),
 });
 
-// main → host：browser-use 命令执行结果（按 requestId 关联到 host 的 pending）。
+// main → host: result of a browser-use command, matched to the host's pending request by requestId.
 export const hostBrowserExecuteResultMessageSchema = z.object({
   type: z.literal("browser-execute-result"),
   requestId: nonEmptyStringSchema,
@@ -835,7 +959,7 @@ export const hostLocalMediaPreviewPathAuthorizeResultMessageSchema = z
   })
   .strict();
 
-/** main → host：插件 UI 沙箱登记结果（PluginSandboxRegisterResultPayload）。 */
+/** main → host: plugin UI sandbox registration result (PluginSandboxRegisterResultPayload). */
 export const hostPluginSandboxRegisterResultMessageSchema = z
   .object({
     type: z.literal("plugin-sandbox-register-result"),
@@ -846,16 +970,16 @@ export const hostPluginSandboxRegisterResultMessageSchema = z
     initId: z.number().int().nonnegative().optional(),
     shellUrl: nonEmptyStringSchema.optional(),
     partition: nonEmptyStringSchema.optional(),
-    // 登记时生效的呈现字段（资源级优先合并后的值），回 renderer 定初始高度 / 边框。
-    // Bugfix：这条 schema 是 strict 的——句柄多带一个未声明字段，整条回包会被 host 拒收，桥永远等不到句柄，
-    // 卡片卡在 preparing（2026-09-12 inline e2e 复现）。改 PluginSandboxHandle 必须同步这里。
+    // Presentation fields effective at registration (after resource-level overrides are merged), returned to the renderer to set the initial height/border.
+    // Bug fix: this schema is strict—a handle containing one undeclared field makes the host reject the entire response, leaving the bridge waiting forever for a handle,
+    // and the card stuck in preparing (reproduced in inline E2E on 2026-09-12). Changes to PluginSandboxHandle must be reflected here.
     resourceMeta: z
       .object({
         prefersBorder: z.boolean().optional(),
         heightHint: z.number().int().positive().optional(),
         minFrameHeight: z.number().int().positive().optional(),
         showInline: z.boolean().optional(),
-        // 资源声明的浏览器权限随句柄回 renderer（进 hostContext.permissions）；与登记请求的 permissions 同一枚举。
+        // Browser permissions declared by the resource are returned to the renderer with the handle (in hostContext.permissions); they use the same enum as registration permissions.
         permissions: z
           .array(z.enum(["camera", "microphone", "geolocation", "clipboardWrite"]))
           .optional(),
@@ -984,9 +1108,14 @@ export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
   hostTaskRunLeaseResultMessageSchema,
   hostTaskOwnerCommandDeliverMessageSchema,
   hostTaskOwnerCommandResultMessageSchema,
+  hostBotRemoteWorkspaceReconnectResultMessageSchema,
+  hostBotRemoteWorkspaceConnectionStatusResultMessageSchema,
+  hostBotRemoteWorkspaceRuntimePortMessageSchema,
+  hostBotRemoteWorkspaceWebRemoteLinkResultMessageSchema,
   hostSessionMessageDeliverMessageSchema,
   hostSessionMessageDeliveryResultMessageSchema,
   hostFeedbackLogArchiveResultMessageSchema,
+  hostOpenWorkspaceInventoryResultMessageSchema,
   hostCronRunMessageSchema,
   hostOffPeakRunMessageSchema,
   hostBrowserExecuteResultMessageSchema,
@@ -1041,6 +1170,16 @@ export const hostRemoteWorkspaceConnectionLogResponseSchema = z
   })
   .strict();
 
+// Resolved WSL identity echoed on install/upgrade-required failures (shape of Required<WSLConnectOptions>).
+// Optional: older hosts do not send it. Deferred compat item from #189; keep in step with remoteTarget.ts.
+const resolvedWslTargetSchema = z
+  .object({
+    kind: z.literal("wsl"),
+    distro: nonEmptyStringSchema,
+    user: nonEmptyStringSchema,
+  })
+  .strict();
+
 export const hostRemoteWorkspaceConnectFailedResponseSchema = z
   .object({
     type: z.literal("remote-workspace-connect-failed"),
@@ -1049,14 +1188,7 @@ export const hostRemoteWorkspaceConnectFailedResponseSchema = z
     reasonCode: nonEmptyStringSchema.optional(),
     retryable: z.boolean().optional(),
     profileId: z.string().uuid().optional(),
-    resolvedWslTarget: z
-      .object({
-        kind: z.literal("wsl"),
-        distro: nonEmptyStringSchema,
-        user: wslUserSchema.refine((value) => value.length > 0),
-      })
-      .strict()
-      .optional(),
+    resolvedWslTarget: resolvedWslTargetSchema.optional(),
   })
   .strict();
 
@@ -1090,7 +1222,7 @@ export const zcodeTaskMigrationSourceSchema = z.enum(["claudeCode"]);
 
 export const hostAgentProcessSpawnedResponseSchema = z.object({
   type: z.literal("agent-process-spawned"),
-  /** 进程泳道（mcp-status 等），旧 Host 不带该字段。 */
+  /** Process lane (such as mcp-status); older Hosts omit this field. */
   lane: nonEmptyStringSchema.optional(),
   pid: z.number().int().positive(),
   provider: zcodeProviderSchema,
@@ -1105,7 +1237,7 @@ export type HostAgentProcessSpawnedResponse = z.infer<typeof hostAgentProcessSpa
 
 export const hostAgentProcessReadyResponseSchema = z.object({
   type: z.literal("agent-process-ready"),
-  /** 进程泳道（mcp-status 等），旧 Host 不带该字段。 */
+  /** Process lane (such as mcp-status); older Hosts omit this field. */
   lane: nonEmptyStringSchema.optional(),
   pid: z.number().int().positive(),
   provider: zcodeProviderSchema,
@@ -1119,7 +1251,7 @@ export type HostAgentProcessReadyResponse = z.infer<typeof hostAgentProcessReady
 
 export const hostAgentProcessExitedResponseSchema = z.object({
   type: z.literal("agent-process-exited"),
-  /** 进程泳道（mcp-status 等），旧 Host 不带该字段。 */
+  /** Process lane (such as mcp-status); older Hosts omit this field. */
   lane: nonEmptyStringSchema.optional(),
   pid: z.number().int().positive(),
   provider: zcodeProviderSchema,
@@ -1129,7 +1261,7 @@ export const hostAgentProcessExitedResponseSchema = z.object({
   endedAt: z.number().int().nonnegative(),
   terminationKind: z.enum(["expected", "unexpected", "watchdog_recycle"]),
   terminationReason: z.string().optional(),
-  /** rolling-upgrade 兼容：旧 Host 缺字段时 desktop 映射 crash_phase=unknown。 */
+  /** Rolling-upgrade compatibility: when an older Host omits this field, desktop maps crash_phase to unknown. */
   runtimeReady: z.boolean().optional(),
   runtimeGeneration: z.number().int().positive(),
   runtimeInstanceId: nonEmptyStringSchema.optional(),
@@ -1142,7 +1274,7 @@ export type HostAgentProcessExitedResponse = z.infer<typeof hostAgentProcessExit
 
 export const hostAgentProcessErrorResponseSchema = z.object({
   type: z.literal("agent-process-error"),
-  /** 进程泳道（mcp-status 等），旧 Host 不带该字段。 */
+  /** Process lane (such as mcp-status); older Hosts omit this field. */
   lane: nonEmptyStringSchema.optional(),
   pid: z.number().int().positive().nullable(),
   provider: zcodeProviderSchema,
@@ -1177,11 +1309,13 @@ export type HostAgentProcessExceptionResponse = z.infer<
 >;
 
 /**
- * services 打标后的 CLI 资源样本。
+ * CLI resource sample tagged by services.
  *
- * `lane` 不是 CLI 协议字段：CLI 进程不知道自己被哪个进程管理器拉起，由 services 层在解析
- * 协议样本时按所属进程管理器补上。样本自身仍按 CLI 协议 schema 严格校验，因此 CLI 自报 lane
- * 会被协议层直接拒绝。`lane` 可选是为了兼容版本落后、还没打标的远端 server。
+ * `lane` is not a CLI protocol field: the CLI process does not know which process manager launched it.
+ * The services layer adds it while parsing the protocol sample, based on the owning process manager.
+ * The sample itself is still strictly validated against the CLI protocol schema, so a lane supplied by
+ * the CLI is rejected by the protocol layer. `lane` is optional for compatibility with older remote
+ * servers that do not add the tag yet.
  */
 export const processResourceCliLaneSchema = z.enum(PROCESS_RESOURCE_CLI_LANES);
 export const agentLaneResourceSampleSchema = zcodeProcessResourceSampleSchema
@@ -1189,7 +1323,7 @@ export const agentLaneResourceSampleSchema = zcodeProcessResourceSampleSchema
   .strict();
 export type AgentLaneResourceSample = z.infer<typeof agentLaneResourceSampleSchema>;
 
-/** Host 仅传运行环境的 SHA-256 哈希，避免原始主机、用户或 URL 进入消息与日志。 */
+/** Host sends only a SHA-256 hash of the runtime environment so raw host, user, or URL data does not enter messages or logs. */
 const resourceTelemetryEnvironmentKeySchema = z.string().regex(/^[a-f0-9]{64}$/);
 
 export const hostAgentResourceSampleResponseSchema = z
@@ -1203,16 +1337,18 @@ export const hostAgentResourceSampleResponseSchema = z
 export type HostAgentResourceSampleResponse = z.infer<typeof hostAgentResourceSampleResponseSchema>;
 
 /**
- * Node 进程（host / scheduler）每 60 秒自采的瞬时事实
+ * Instantaneous facts sampled every 60 seconds by Node processes (host / scheduler).
  *
- * 只带这三项：CPU 与 RSS 由 main 的 `getAppMetrics()` 负责，heap 只有进程自己读得到。
+ * Include only these three values: main's `getAppMetrics()` provides CPU and RSS, while only the process
+ * itself can read its heap.
  */
 export const nodeSelfResourceSampleSchema = z
   .object({
     /**
-     * 整机归一化 CPU 百分比，100 表示所有逻辑核占满。
-     * 上限刻意放宽（与 CLI 的 `zcodeProcessResourceSampleSchema` 同口径）：读数异常时宁可让
-     * 样本带着离谱数值上去、由平台侧数值异常规则暴露，也不在客户端静默丢样本。
+     * Whole-machine normalized CPU percentage; 100 means all logical cores are fully occupied.
+     * The upper bound is intentionally permissive, matching CLI's `zcodeProcessResourceSampleSchema`:
+     * when a reading is anomalous, allow the sample to carry the unusual value so platform-side
+     * anomaly rules can surface it instead of silently dropping the sample on the client.
      */
     cpuPercent: z.number().finite().nonnegative().max(100_000),
     rssKb: z.number().finite().nonnegative().max(Number.MAX_SAFE_INTEGER),
@@ -1222,10 +1358,10 @@ export const nodeSelfResourceSampleSchema = z
 export type NodeSelfResourceSample = z.infer<typeof nodeSelfResourceSampleSchema>;
 
 /**
- * 主窗口 renderer 每 60 秒经 preload 桥送 main 的 heap 读数
+ * Heap readings sent from the main-window renderer to main through the preload bridge every 60 seconds.
  *
- * 只带 heap：renderer 的 CPU 与 RSS 由 main 的 `getAppMetrics()` 负责，
- * renderer 自己也读不到。`strict` 保证 UI 侧不会顺手夹带路径、session 等隐私字段。
+ * Include only heap: main's `getAppMetrics()` provides renderer CPU and RSS, which the renderer cannot
+ * read itself. `strict` prevents the UI from including private fields such as paths or sessions.
  */
 export const rendererHeapSampleSchema = z
   .object({
@@ -1364,6 +1500,40 @@ export const hostTaskOwnerCommandResultResponseSchema = z.object({
   result: taskOwnerCommandResultSchema,
 });
 
+export const hostBotRemoteWorkspaceReconnectRequestResponseSchema = z.object({
+  type: z.literal("bot-remote-workspace-reconnect-request"),
+  requestId: nonEmptyStringSchema,
+  workspacePath: nonEmptyStringSchema,
+  workspaceIdentity: nonEmptyStringSchema,
+  target: remoteTargetSchema,
+});
+
+export const hostBotRemoteWorkspaceConnectionStatusRequestResponseSchema = z.object({
+  type: z.literal("bot-remote-workspace-connection-status-request"),
+  requestId: nonEmptyStringSchema,
+  workspacePath: nonEmptyStringSchema,
+  workspaceIdentity: nonEmptyStringSchema,
+  target: remoteTargetSchema,
+});
+
+export const hostBotRemoteWorkspaceRuntimePortRequestResponseSchema = z.object({
+  type: z.literal("bot-remote-workspace-runtime-port-request"),
+  requestId: nonEmptyStringSchema,
+  workspacePath: nonEmptyStringSchema,
+  workspaceIdentity: nonEmptyStringSchema,
+  target: remoteTargetSchema,
+});
+
+// Unlike the three remote-only Bot workspace requests above, a web-remote link is also minted for
+// local workspaces, so workspaceIdentity and target are optional here.
+export const hostBotRemoteWorkspaceWebRemoteLinkRequestResponseSchema = z.object({
+  type: z.literal("bot-remote-workspace-web-remote-link-request"),
+  requestId: nonEmptyStringSchema,
+  workspacePath: nonEmptyStringSchema,
+  workspaceIdentity: nonEmptyStringSchema.optional(),
+  target: remoteTargetSchema.optional(),
+});
+
 export const hostSessionMessageSendRequestedResponseSchema = z.object({
   type: z.literal("session-message-send-requested"),
   request: sessionMessageRequestSchema,
@@ -1385,7 +1555,14 @@ export const hostFeedbackLogArchiveRequestResponseSchema = z.object({
   sourceDir: nonEmptyStringSchema,
 });
 
-// host → main：定时任务派发结果。ok=已成功创建 session 且 prompt 已发出。
+export const hostOpenWorkspaceInventoryRequestResponseSchema = z
+  .object({
+    type: z.literal("open-workspace-inventory-request"),
+    requestId: nonEmptyStringSchema,
+  })
+  .strict();
+
+// host → main: scheduled-task dispatch result. ok means the session was created and the prompt was sent.
 export const hostCronRunResultResponseSchema = z.object({
   type: z.literal("cron-run-result"),
   runId: nonEmptyStringSchema,
@@ -1396,12 +1573,13 @@ export const hostCronRunResultResponseSchema = z.object({
   failureKind: z.enum(["transient", "permanent"]).optional(),
 });
 
-// host → main：闲时任务派发结果。ok=session 已确保存在且 prompt 已发出；迟到结果用 offPeakTaskId 兜底结算。
+// host → main: off-peak task dispatch result. ok means the session exists and the prompt was sent; use
+// offPeakTaskId to reconcile a late result.
 export const hostOffPeakRunResultResponseSchema = z.object({
   type: z.literal("off-peak-run-result"),
   offPeakTaskId: nonEmptyStringSchema,
   ok: z.boolean(),
-  /** Host 已在开放 CLI 生命周期事件前完成接纳落库；调度器只清理退避。 */
+  // The Host accepted and persisted the run before the CLI lifecycle event; the scheduler only clears backoff.
   lifecycleManaged: z.literal(true).optional(),
   conversationId: z.string().optional(),
   sessionId: z.string().optional(),
@@ -1409,23 +1587,23 @@ export const hostOffPeakRunResultResponseSchema = z.object({
   failureKind: z.enum(["transient", "permanent"]).optional(),
 });
 
-// host → main：manual run 落库后的 scheduler 唤醒请求；业务数据仍由 scheduler 从 sqlite 读取。
+// host → main: wake the scheduler after a manual run is persisted; the scheduler still reads business data from sqlite.
 export const hostCronSchedulerWakeRequestResponseSchema = z.object({
   type: z.literal("cron-scheduler-wake-request"),
   automationId: nonEmptyStringSchema,
 });
 
-// host → main：闲时任务 schedulable 翻转后的 scheduler 唤醒；业务数据仍由 scheduler 从 sqlite 读取。
+// host → main: wake the scheduler after an off-peak task becomes schedulable; the scheduler still reads business data from sqlite.
 export const hostOffPeakSchedulerWakeRequestResponseSchema = z.object({
   type: z.literal("off-peak-scheduler-wake-request"),
   offPeakTaskId: z.string().optional(),
 });
 
-// host → main：执行一条 browser-use 命令（main 用 WebContentsView+CDP 执行）。
+// host → main: execute one browser-use command (main executes it through WebContentsView + CDP).
 export const hostBrowserExecuteRequestResponseSchema = z.object({
   type: z.literal("browser-execute-request"),
   requestId: nonEmptyStringSchema,
-  // 迁移兼容：旧 host bundle 没有 browserId/context；新 browser-client 链路始终携带。
+  // Migration compatibility: older host bundles omit browserId/context; the new browser-client path always includes them.
   browserId: nonEmptyStringSchema.optional(),
   browserGeneration: z.number().int().nonnegative().optional(),
   sessionId: nonEmptyStringSchema,
@@ -1447,7 +1625,7 @@ export const hostLocalMediaPreviewPathAuthorizeRequestResponseSchema = z
   })
   .strict();
 
-/** host → main：登记已校验的插件 UI HTML。 */
+/** host → main: register validated plugin UI HTML. */
 export const hostPluginSandboxRegisterRequestResponseSchema = z
   .object({
     type: z.literal("plugin-sandbox-register-request"),
@@ -1459,12 +1637,12 @@ export const hostPluginSandboxRegisterRequestResponseSchema = z
     sessionId: nonEmptyStringSchema,
     contentKind: z.literal("gen-ui").optional(),
     pluginId: nonEmptyStringSchema.optional(),
-    // 资源所属 MCP server 运行时名：沙箱 partition 按它派生。
+    // Runtime name of the MCP server owning the resource; the sandbox partition is derived from it.
     serverName: nonEmptyStringSchema.optional(),
-    // 沙箱作用域 id（`tool:<toolCallId>` / `surface:<surfaceId>`），main 只当不透明字符串。
+    // Sandbox scope ID (`tool:<toolCallId>` / `surface:<surfaceId>`); main treats it as an opaque string.
     scopeId: nonEmptyStringSchema,
     html: z.string(),
-    // MCP Apps 资源级 CSP 的四类域；与 mcp-apps 的 mcpToolUiCspSchema 同步。
+    // The four domain types for MCP Apps resource-level CSP; keep in sync with mcpToolUiCspSchema in mcp-apps.
     csp: z
       .object({
         connectDomains: z.array(z.string()).optional(),
@@ -1474,17 +1652,17 @@ export const hostPluginSandboxRegisterRequestResponseSchema = z
       })
       .strict()
       .optional(),
-    // 资源级 `_meta["zcode/csp"]` 放宽项；与 mcp-apps 的 mcpAppCspRelaxationsSchema 同步。
+    // Resource-level `_meta["zcode/csp"]` relaxations; keep in sync with mcpAppCspRelaxationsSchema in mcp-apps.
     cspRelaxations: z
       .object({ unsafeEval: z.boolean().optional(), wasmUnsafeEval: z.boolean().optional() })
       .strict()
       .optional(),
-    // 资源级 `_meta.ui.permissions`（规范四键）；与 mcp-apps 的 MCP_APPS_RESOURCE_PERMISSIONS 同步。
+    // Resource-level `_meta.ui.permissions` (the four standard keys); keep in sync with MCP_APPS_RESOURCE_PERMISSIONS in mcp-apps.
     permissions: z
       .array(z.enum(["camera", "microphone", "geolocation", "clipboardWrite"]))
       .optional(),
     prefersBorder: z.boolean().optional(),
-    // 资源级尺寸提示，main 原样放进句柄的 resourceMeta。strict schema：改 PluginSandboxRegisterRequestPayload 必须同步这里。
+    // Resource-level size hints, copied unchanged by main into the handle’s resourceMeta. This is a strict schema; changes to PluginSandboxRegisterRequestPayload must be reflected here.
     heightHint: z.number().int().positive().optional(),
     minFrameHeight: z.number().int().positive().optional(),
     showInline: z.boolean().optional(),
@@ -1600,10 +1778,15 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
   hostTaskRunLeaseReleaseResponseSchema,
   hostTaskOwnerCommandRequestResponseSchema,
   hostTaskOwnerCommandResultResponseSchema,
+  hostBotRemoteWorkspaceReconnectRequestResponseSchema,
+  hostBotRemoteWorkspaceConnectionStatusRequestResponseSchema,
+  hostBotRemoteWorkspaceRuntimePortRequestResponseSchema,
+  hostBotRemoteWorkspaceWebRemoteLinkRequestResponseSchema,
   hostSessionMessageSendRequestedResponseSchema,
   hostSessionRouteAnnounceResponseSchema,
   hostSessionMessageDeliverResultResponseSchema,
   hostFeedbackLogArchiveRequestResponseSchema,
+  hostOpenWorkspaceInventoryRequestResponseSchema,
   hostBrowserExecuteRequestResponseSchema,
   hostLocalMediaPreviewPathAuthorizeRequestResponseSchema,
   hostPluginSandboxRegisterRequestResponseSchema,
@@ -1627,8 +1810,9 @@ export const zcodePromptImageAttachmentSchema = z.object({
   localPath: z.string().optional(),
 });
 
-// 附件 TypeScript 联合类型新增 video 后，手写的持久化运行时 schema 未同步，
-// session 恢复解析会拒绝含视频的用户消息。字段与 image 的 inline/local 引用语义保持一致。
+// After video was added to the TypeScript attachment union, the hand-written persistence runtime schema
+// was not updated, so session recovery rejected user messages containing video. Keep these fields
+// consistent with the inline/local reference semantics used for images.
 export const zcodePromptVideoAttachmentSchema = z.object({
   kind: z.literal("video"),
   filename: z.string(),
@@ -1702,12 +1886,16 @@ export const zcodePersistedMessageSchema = z.object({
   timestamp: z.number().int().nonnegative(),
   model: z.string().optional(),
   characterCount: z.number().int().nonnegative().optional(),
-  // assistant 历史耗时已经在服务层落盘为 durationMs，
-  // 但校验 schema 没同步，saveTask/getTaskSnapshot 解析时会把它静默剥掉，
-  // 导致新消息结束后 UI 仍然只能看到“Worked”。这里补上字段以保留持久化值。
+  // Assistant historical duration is already persisted by the service layer as durationMs, but the
+  // validation schema was not updated. saveTask/getTaskSnapshot silently stripped it during parsing,
+  // so after a new message ended the UI could show only "Worked". Include the field to preserve the
+  // persisted value.
   durationMs: z.number().int().nonnegative().optional(),
   interrupted: z.boolean().optional(),
   feedback: z.enum(["like", "dislike"]).optional(),
+  // Display-only pin bookmark (unix ms, CLI clock); must be parsed explicitly or Zod strips it from
+  // the session file like the historical durationMs loss above.
+  pinnedAt: z.number().optional(),
   attachments: z.array(zcodePromptAttachmentSchema).optional(),
   tools: z.array(zcodePersistedToolCallSchema).optional(),
   thought: z.string().optional(),
@@ -1716,8 +1904,9 @@ export const zcodePersistedMessageSchema = z.object({
   checkpointReason: z.enum(["tool_completed", "part_boundary", "periodic"]).optional(),
   checkpointUpdatedAt: z.number().int().nonnegative().optional(),
   turnIndex: z.number().int().nonnegative().optional(),
-  // snapshot 按需加载依赖 bodyRefs（content/thought -> refId）定位完整内容；
-  // 若 schema 缺字段，Zod 会在解析 session 文件时静默剥离，导致“加载完整内容”功能失效。
+  // On-demand snapshot loading uses bodyRefs (content/thought -> refId) to locate full content. If the
+  // schema omits this field, Zod silently strips it while parsing the session file and the "load full
+  // content" feature stops working.
   bodyRefs: z
     .array(
       z.object({
@@ -1757,8 +1946,8 @@ export const zcodeTaskGoalSchema = z.object({
   sessionID: nonEmptyStringSchema,
   targetID: nonEmptyStringSchema,
   objective: nonEmptyStringSchema,
-  // 2.15.0 之前的 /goal 历史任务没有写 summaryTitle。
-  // 读取 task index 老数据时要补成 null，否则整个任务列表会被运行时 schema 拒绝。
+  // Historical /goal tasks created before 2.15.0 have no summaryTitle. Default it to null when reading
+  // old task-index data, or the runtime schema will reject the entire task list.
   summaryTitle: z.string().min(1).nullable().default(null),
   status: zcodeTaskGoalStatusSchema,
   tokenBudget: z.number().int().positive().nullable(),
@@ -1789,6 +1978,8 @@ export const zcodeTaskMetaSchema = z.object({
   traceId: nonEmptyStringSchema,
   title: z.string(),
   titleOverridden: z.boolean().optional(),
+  // Title recency (docs/ui/task-title-authority.md). Optional for compatibility with metas written before the field existed.
+  titleUpdatedAt: z.number().int().nonnegative().optional(),
   workspacePath: nonEmptyStringSchema,
   workspaceIdentity: nonEmptyStringSchema.optional(),
   workspacePurpose: z.enum(["project", "conversation"]).optional(),
@@ -1798,17 +1989,41 @@ export const zcodeTaskMetaSchema = z.object({
   model: z.string().optional(),
   thoughtLevel: nonEmptyStringSchema.optional(),
   runtimeEpoch: z.number().int().nonnegative().optional(),
-  // meta 直接解析自 tasks-index/旧 session 文件；历史 provider 值在此归一为 glm。
+  // meta is parsed directly from tasks-index/legacy session files; normalize historical provider values to glm here.
   provider: legacyZCodeProviderSchema.optional(),
   migrationSource: zcodeTaskMigrationSourceSchema.optional(),
   forkedFromTaskId: nonEmptyStringSchema.optional(),
-  // cron automation 身份：随 meta_json 一起持久化（单一来源），同时在写入时投影到 tasks 表
-  // cron_automation_id 索引列，供按 automation 反查 session。runId 属于 automation_runs /
-  // 投递 metadata，不属于 task 表。
+  sideChatCount: z.number().int().nonnegative().optional(),
+  subagentCount: z.number().int().nonnegative().optional(),
+  runningSubagentCount: z.number().int().nonnegative().optional(),
+  childSessions: z
+    .array(
+      z.object({
+        sessionId: nonEmptyStringSchema,
+        title: z.string(),
+        taskType: z.enum(["selection_side_chat", "subagent_child"]),
+        lastActivityAt: z.number().int().nonnegative(),
+        running: z.boolean(),
+        backgroundWorkId: nonEmptyStringSchema.optional(),
+      }),
+    )
+    .optional(),
+  // Cron automation identity is persisted with meta_json as the single source of truth and projected to
+  // the tasks table's cron_automation_id index column on write, allowing sessions to be looked up by
+  // automation. runId belongs to automation_runs/delivery metadata, not the task table.
   cronAutomationId: nonEmptyStringSchema.optional(),
-  // off-peak 身份：与 cron 同款持久化策略——meta_json 单一来源 + tasks 表
-  // off_peak_task_id 索引投影列（兜底/反查）。
+  // Off-peak identity uses the same persistence strategy as cron: meta_json is the single source of
+  // truth, with an off_peak_task_id index projection column in the tasks table for fallback/lookups.
   offPeakTaskId: nonEmptyStringSchema.optional(),
+  // Execution worktree fact (BUG-GWT-010, docs/testing/git-worktree-qa/bugs/BUG-GWT-010.md): converged from
+  // the live sessions-index overlay into meta_json at the Host boundary so the sidebar worktree marker and the
+  // Sessions Environment/Branch classification survive an app restart for closed workspaces. Runtime snapshot
+  // syncs preserve the fact (preserve-on-absent in TaskIndexRepo.syncTaskMeta); the live overlay stays the
+  // freshness source. Same shape as the sessions-index summary field (zcodeExecutionWorktreeSchema).
+  executionWorktree: zcodeExecutionWorktreeSchema.optional(),
+  // Incognito marker persisted in meta_json (specs/incognito-session.md "Sidebar marker durability").
+  // The profile is frozen per session, so only `true` is ever converged; absence means "not known".
+  incognito: z.boolean().optional(),
   unreadAt: z.number().int().nonnegative().optional(),
   status: zcodeTaskPersistStatusSchema.optional(),
   lastError: z
@@ -1855,10 +2070,10 @@ export const zcodeTaskSessionBindingStateSchema = z.enum([
 ]);
 
 export const zcodeTaskSessionBindingSchema = z.object({
-  // 绑定状态由 services 从持久化数据投影；旧绑定残留的历史 provider 值在此归一为 glm。
+  // Binding state is projected by services from persisted data; normalize historical provider values left by old bindings to glm here.
   provider: legacyZCodeProviderSchema,
   sessionId: nonEmptyStringSchema,
-  // 绑定锚点需要支持空 task 的 -1，所以这里不能套 nonnegative。
+  // The binding anchor must support -1 for an empty task, so do not apply nonnegative here.
   lastSyncedTurnIndex: z.number().int(),
   state: zcodeTaskSessionBindingStateSchema,
 });

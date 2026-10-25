@@ -1,3 +1,5 @@
+import { toServiceLocale } from "./locale.js";
+import type { ServiceLocale } from "./locale.js";
 import type { Locale } from "./protocol.js";
 
 interface RemoteAppConfigLike {
@@ -8,7 +10,7 @@ interface RemoteAppConfigLike {
   forceUpdate?: unknown;
 }
 
-type LocaleUrlMap = Partial<Record<Locale, string>>;
+type LocaleUrlMap = Partial<Record<ServiceLocale, string>>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value != null;
@@ -61,7 +63,7 @@ export function getCommunityUrlsFromConfig(config: unknown): LocaleUrlMap {
 
 export function getCommunityUrlFromConfig(config: unknown, locale: Locale): string | undefined {
   const communityUrls = getCommunityUrlsFromConfig(config);
-  return communityUrls[locale];
+  return communityUrls[toServiceLocale(locale)];
 }
 
 export function getCommunityUrlFromConfigs(
@@ -72,9 +74,10 @@ export function getCommunityUrlFromConfigs(
   const remoteUrls = getCommunityUrlsFromConfig(remoteConfig);
   const localUrls = getCommunityUrlsFromConfig(localConfig);
 
-  // 社群渠道具有语言边界。只允许远端覆盖同语言的内置入口，
-  // 对应语言缺失时保持隐藏，避免中文和英文用户被导向错误渠道。
-  return remoteUrls[locale] ?? localUrls[locale];
+  // Community channels are language-specific. Allow remote config to override only built-in entries in the same language,
+  // and keep the entry hidden when that language is missing, so Chinese and English users are not sent to the wrong channel.
+  const serviceLocale = toServiceLocale(locale);
+  return remoteUrls[serviceLocale] ?? localUrls[serviceLocale];
 }
 
 export function getForceUpdateMinimalVersionFromConfig(config: unknown): string | undefined {

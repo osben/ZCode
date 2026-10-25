@@ -1,7 +1,9 @@
-/* off-peak 服务端五接口客户端。
-   只负责 额度快照/取号/批量查状态/结算 四个 JSON 接口——messages 调模型不走这里
-   （由 idle plan per-turn provider 在 agent 进程内直连，D33）。
-   无内建重试：排队/退避语义在调用方（offPeakTaskService 轮询 / 适配层 D24）。 */
+/* Client for the five off-peak server endpoints.
+   Handles only the JSON endpoints for quota snapshots, ticket acquisition, batch status checks,
+   and settlement. Model messages do not go through this client; the idle plan per-turn provider
+   connects directly from the agent process (D33).
+   There are no built-in retries; queueing and backoff are handled by callers
+   (offPeakTaskService polling and the adapter layer, D24). */
 import { z } from "zod";
 import type { OffPeakTakeNumberAvailability } from "@zcode/shared";
 import type { ServiceLogger } from "../logger/serviceLogger.js";
@@ -15,7 +17,7 @@ import {
   type OffPeakCredentialSnapshot,
 } from "./offPeakRuntimeModel.js";
 
-/** 服务端准入态（两轴状态机的服务端轴）。 */
+/** Server admission state (the server axis of the two-axis state machine). */
 export const offPeakTicketStateSchema = z.enum([
   "queued",
   "ready",
@@ -26,16 +28,16 @@ export const offPeakTicketStateSchema = z.enum([
 ]);
 export type OffPeakTicketState = z.infer<typeof offPeakTicketStateSchema>;
 
-// 响应字段 snake_case 按服务端 v2；宽容解析（loose），未知字段不报错。
-// ⚠ next_poll_after 单位按"秒"实现（与 Retry-After 同惯例）。
+// Response fields use the server v2 snake_case format; parse loosely and ignore unknown fields.
+// ⚠ next_poll_after is in seconds (following the Retry-After convention).
 const takeTicketResponseSchema = z
   .object({
     ticket_id: z.string().min(1),
     task_id: z.string().optional(),
     state: offPeakTicketStateSchema,
     accepted: z.boolean().optional(),
-    // 服务端仅在 queued 态返回数字，进入 ready/active 等状态后会显式返回 null；
-    // 这里接受 null，并在领域模型映射时归一化为字段缺省，避免整批状态同步被解析失败中断。
+    // The server returns a number only in the queued state and explicitly returns null for states such as ready/active;
+    // accept null here and normalize it to an omitted field in the domain model so one parse failure does not interrupt the entire status sync.
     position: z.number().int().nonnegative().nullish(),
     next_poll_after: z.number().nonnegative().optional(),
     queued_at: z.number().optional(),
@@ -76,7 +78,7 @@ const takeNumberAvailabilityResponseSchema = z
   })
   .passthrough();
 
-/** 业务错误体（HTTP 非 2xx 时尽力解析；zai 网关惯例 code/msg，字段缺失容忍）。 */
+/** Business error body (best-effort parsing for non-2xx HTTP responses; follows the Z.AI gateway code/msg convention and tolerates missing fields). */
 const errorBodySchema = z
   .object({
     code: z.number().optional(),
@@ -94,7 +96,7 @@ export interface OffPeakTakeTicketResult {
   ticketId: string;
   state: OffPeakTicketState;
   position?: number;
-  /** 下次轮询间隔（毫秒；服务端下发秒，此处已换算）。 */
+  /** Delay before the next poll in milliseconds; server seconds have already been converted. */
   nextPollAfterMs?: number;
   registeredAt: number;
 }
@@ -111,7 +113,7 @@ export interface OffPeakBatchStatusResult {
   tickets: OffPeakTicketStatusEntry[];
 }
 
-/** 类型化服务端错误：调用方按 bizCode 分流（3101 无资格 / 3103 取号超限 / 其余）。 */
+/** Typed server error: callers branch on bizCode (3101 not eligible / 3103 ticket limit exceeded / other). */
 export class OffPeakServerError extends Error {
   constructor(
     message: string,
@@ -126,9 +128,9 @@ export class OffPeakServerError extends Error {
 }
 
 export interface OffPeakServerClientDeps {
-  /** API origin（真实服务端或 mock 网关，ZCODE_OFFPEAK_MOCK 切换在装配层）；mock 网关懒启动故允许异步。 */
+  /** API origin (real server or mock gateway; ZCODE_OFFPEAK_MOCK is selected during assembly); async is allowed because the mock gateway starts lazily. */
   resolveOrigin: () => string | Promise<string>;
-  /** 凭证快照：四个 ticket 接口统一携带同一次 selected credential snapshot。 */
+  /** Credential snapshot: all four ticket endpoints use the same selected credential snapshot. */
   resolveCredentials: () => Promise<OffPeakCredentialSnapshot>;
   fetchImpl?: typeof fetch;
   logger: ServiceLogger;
@@ -152,9 +154,9 @@ export function createOffPeakServerClient(deps: OffPeakServerClientDeps): OffPea
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       const origin = await deps.resolveOrigin();
-      // 该 client 直接使用 fetch，过去绕过 NodeApiClient 的来源头与 request id 注入；
-      // test 服务端只能看到 user_agent=node，且客户端日志无法关联 2007/裸 429 的服务端请求。
-      // 这里只补标准非敏感来源头和链路 id，JWT/API Key 仍禁止进入日志。
+      // This client uses fetch directly and previously bypassed NodeApiClient source-header and request-ID injection;
+      // the test server could see only user_agent=node, and client logs could not be correlated with server requests returning 2007/bare 429.
+      // Add only standard non-sensitive source headers and the trace ID here; JWT/API keys must still never enter logs.
       const headers = withRequestIdHeader({
         ...buildZCodeSourceHeaders(),
         ...(body === undefined ? {} : { "content-type": "application/json" }),
@@ -177,7 +179,7 @@ export function createOffPeakServerClient(deps: OffPeakServerClientDeps): OffPea
           response.headers.get(REQUEST_ID_HEADER_NAME)?.trim() ||
           headers.get(REQUEST_ID_HEADER_NAME)?.trim() ||
           undefined;
-        // 可恢复的服务端拒绝使用 warn；只记录契约元数据，禁止记录凭证原文、指纹或响应体。
+        // Use warn for recoverable server rejections; record contract metadata only, never raw credentials, fingerprints, or response bodies.
         deps.logger.warn(undefined, "off-peak request rejected", {
           bizCode: errorBody.code,
           credentialKind: credentials.kind,
@@ -194,7 +196,7 @@ export function createOffPeakServerClient(deps: OffPeakServerClientDeps): OffPea
           requestId,
         );
       }
-      // 兼容裸体与 {code:0,data} 信封两种形态（v2 文档为裸体；网关惯例可能包信封）。
+      // Support both bare responses and {code:0,data} envelopes (v2 docs specify bare responses; gateway conventions may wrap them).
       if (
         json &&
         typeof json === "object" &&
@@ -213,8 +215,8 @@ export function createOffPeakServerClient(deps: OffPeakServerClientDeps): OffPea
     async getTakeNumberAvailability() {
       const raw = await request("GET", "/ticket/availability");
       const parsed = takeNumberAvailabilityResponseSchema.parse(raw);
-      // 缺少恢复时间的 false 快照会让 UI 无法安排重查，再次形成永久灰态。
-      // 契约要求 false 必带 next_take_at；脏响应按查询失败处理，由 UI fail-open、POST /ticket 兜底。
+      // A false snapshot without a recovery time prevents the UI from scheduling another check and can leave it disabled permanently.
+      // The contract requires next_take_at when false; treat malformed responses as query failures so the UI can fail open and POST /ticket can serve as fallback.
       if (!parsed.can_take_number && parsed.next_take_at === undefined) {
         throw new Error("off-peak availability missing next_take_at while unavailable");
       }
@@ -242,8 +244,8 @@ export function createOffPeakServerClient(deps: OffPeakServerClientDeps): OffPea
     },
     async batchStatus(ticketIds) {
       if (ticketIds.length === 0) return { tickets: [] };
-      // 契约上限 ≤100；调用方 listNonTerminal 规模远小于此，超限截断并警告而非拆包。
-      // 单用户非终态任务数达到 100 前，服务端取号上限早就先挡住了。
+      // The contract limit is ≤100; listNonTerminal callers use far fewer, so truncate and warn instead of splitting the response.
+      // The server's ticket limit is reached well before a user can have 100 nonterminal tasks.
       const limited = ticketIds.slice(0, 100);
       if (limited.length < ticketIds.length) {
         deps.logger.warn(`off-peak batch status truncated ${ticketIds.length} -> 100`);
@@ -265,7 +267,7 @@ export function createOffPeakServerClient(deps: OffPeakServerClientDeps): OffPea
       };
     },
     async settle(ticketId) {
-      // 幂等：重复上报/未知票一律 2xx；无 body。
+      // Idempotent: duplicate reports and unknown tickets always return 2xx with no body.
       const raw = await request("POST", `/ticket/${encodeURIComponent(ticketId)}/settle`);
       settleResponseSchema.parse(raw);
       deps.logger.info(undefined, `off-peak settle acked ticket=${ticketId}`);

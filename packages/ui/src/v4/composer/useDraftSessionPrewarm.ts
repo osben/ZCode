@@ -19,6 +19,8 @@ type DispatchCommand = (
   type: CommandType,
   payload: Record<string, unknown>,
   targetSessionId: string | null,
+  /** createSession 的项目范围；null 是「未归属项目」，省略则由调用方回落到 store（仅非预热路径）。 */
+  creationProjectId?: string | null,
 ) => Promise<CommandAck>;
 
 export interface DraftPrewarmController {
@@ -205,23 +207,35 @@ class DraftSessionPrewarmCoordinator {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private dispatchCommand: DispatchCommand;
   private resolveInitialConfig: (() => Partial<SessionConfigState> | undefined) | undefined;
+  /** The pane's current project scope; each generation captures it when it starts. */
+  private creationProjectId: string | null;
 
   constructor(
     private readonly workspaceKey: string,
     dispatchCommand: DispatchCommand,
     resolveInitialConfig: (() => Partial<SessionConfigState> | undefined) | undefined,
+    creationProjectId: string | null,
     private readonly onEmpty: () => void,
   ) {
     this.dispatchCommand = dispatchCommand;
     this.resolveInitialConfig = resolveInitialConfig;
+    this.creationProjectId = creationProjectId;
   }
 
   update(
     dispatchCommand: DispatchCommand,
     resolveInitialConfig: (() => Partial<SessionConfigState> | undefined) | undefined,
+    creationProjectId: string | null,
   ): void {
     this.dispatchCommand = dispatchCommand;
     this.resolveInitialConfig = resolveInitialConfig;
+    if (this.creationProjectId === creationProjectId) return;
+    this.creationProjectId = creationProjectId;
+    // Bug 根因：预热代只在 createSession 时读取 store 的 draftProjectId，失败重试与之后的
+    // 创建会读到另一个项目范围的值。范围变化必须退休旧代（旧代的重试随之取消），再以新范围
+    // 启动；已在飞的 createSession 不可取消，onSettled 之后才启动新代。
+    if (this.current && !this.current.retiring) this.retireCurrent();
+    if (this.subscribers.size > 0) this.reconcile();
   }
 
   async waitForSession(
@@ -372,10 +386,13 @@ class DraftSessionPrewarmCoordinator {
     const completion = new Promise<void>((resolve) => {
       complete = resolve;
     });
+    // Capture the scope once for this generation: its first attempt and every bounded retry use it,
+    // even if the pane's scope changes while the generation is still alive.
+    const generationProjectId = this.creationProjectId;
     const controller = startDraftSessionPrewarm({
       workspaceKey: this.workspaceKey,
       dispatchCommand: (type, payload, targetSessionId) =>
-        this.dispatchCommand(type, payload, targetSessionId),
+        this.dispatchCommand(type, payload, targetSessionId, generationProjectId),
       resolveInitialConfig: () => this.resolveInitialConfig?.(),
       onReady: (sessionId) => {
         if (this.current !== current || current.retiring) {
@@ -397,6 +414,12 @@ class DraftSessionPrewarmCoordinator {
               return;
             }
             current.controller.markPromoted();
+            // A promoted prewarm is consumed (specs/first-submission-lifecycle.md "Owners and
+            // event order"): keep exposing it and the next submission in this draft pane would
+            // reserve the already-used session, which the CLI must reject. Detach so the next
+            // reservation creates a fresh session by its own submission id.
+            current.binding = null;
+            this.emitBindings();
           },
           discard: () => {
             if (this.current !== current || current.binding !== binding) {
@@ -487,6 +510,7 @@ function getDraftSessionPrewarmCoordinator(params: {
   transportIdentity: unknown;
   dispatchCommand: DispatchCommand;
   resolveInitialConfig: (() => Partial<SessionConfigState> | undefined) | undefined;
+  creationProjectId: string | null;
 }): DraftSessionPrewarmCoordinator {
   let transportCoordinators = draftPrewarmCoordinatorsByTransport.get(params.transportIdentity);
   if (!transportCoordinators) {
@@ -500,6 +524,7 @@ function getDraftSessionPrewarmCoordinator(params: {
       params.workspaceKey,
       params.dispatchCommand,
       params.resolveInitialConfig,
+      params.creationProjectId,
       () => {
         if (transportCoordinators?.get(ownerKey) !== coordinator) {
           return;
@@ -528,6 +553,8 @@ export function useDraftSessionPrewarm(params: {
   dispatchCommand: DispatchCommand;
   /** 预热会话初始 config（全局「上次选择」，同步解析）；让投影首帧即全局、不闪。 */
   resolveInitialConfig?: () => Partial<SessionConfigState> | undefined;
+  /** 本草稿 pane 的项目范围（null = 未归属项目）；每代预热在启动时捕获，createSession 始终携带。 */
+  creationProjectId: string | null;
 }): DraftSessionPrewarm {
   const {
     enabled,
@@ -537,6 +564,7 @@ export function useDraftSessionPrewarm(params: {
     invalidationVersion = 0,
     dispatchCommand,
     resolveInitialConfig,
+    creationProjectId,
   } = params;
   // workspace/pane/transport 共同定义逻辑 owner：同 owner 重挂复用 single-flight，transport
   // 换代仍生成新 coordinator，确保旧 session 的清理不会误走新 transport。
@@ -552,12 +580,13 @@ export function useDraftSessionPrewarm(params: {
         transportIdentity,
         dispatchCommand,
         resolveInitialConfig,
+        creationProjectId,
       }),
     [owner],
   );
   useLayoutEffect(() => {
-    coordinator.update(dispatchCommand, resolveInitialConfig);
-  }, [coordinator, dispatchCommand, resolveInitialConfig]);
+    coordinator.update(dispatchCommand, resolveInitialConfig, creationProjectId);
+  }, [coordinator, creationProjectId, dispatchCommand, resolveInitialConfig]);
   const generation = useMemo(() => ({ owner }), [enabled, invalidationVersion, owner]);
   const [ready, setReady] = useState<{
     generation: typeof generation;

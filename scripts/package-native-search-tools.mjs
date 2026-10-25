@@ -25,7 +25,7 @@ export function resolveNativeSearchPackagedArtifactPath({ artifact, artifactsDir
 async function packWindowsZip(binaryPath, binaryName, archivePath) {
   const { ZipFile } = require("yazl");
   const zip = new ZipFile();
-  // Bugfix: yazl 按本地时区编码 DOS 时间；固定本地时间并禁用扩展时间戳才能跨时区复现。
+  // Bugfix: yazl encodes DOS timestamps in the local timezone; pin the local time and disable extended timestamps for reproducible archives across timezones.
   zip.addFile(binaryPath, binaryName, {
     mtime: new Date(1980, 0, 1, 0, 0, 0, 0),
     mode: 0o100755,

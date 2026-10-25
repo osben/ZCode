@@ -33,8 +33,8 @@ export function completedToolPartMetadata(result: ToolExecutionResult): Complete
     ...(modelContent.success ? { modelContent: modelContent.data } : {}),
     ...(result.display ? { display: result.display } : {}),
     ...(serialization ? { serialization } : {}),
-    // resume 需要恢复模型当时真实读到的文件快照；只依赖 tool_result 文本
-    // 会把主路径绑死在 provider 展示格式上，所以新 session 结构化持久化 read-state。
+    // Resume must restore the file snapshot the model actually read. Depending only on tool_result text
+    // would tie the main path to provider display formatting, so persist read-state structurally in the new session.
     ...(result.readFileStateMetadata ? { readFileState: result.readFileStateMetadata } : {}),
   };
 }

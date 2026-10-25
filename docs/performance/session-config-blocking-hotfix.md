@@ -1,115 +1,139 @@
-# 3.12.2 聊天配置等待隔离
+# 3.12.2 Chat Config Wait Isolation
 
-基线：`origin/hotfix/3.12.2`，`5f7d77dac3`。本记录只描述本次修复；下面是 2026-09-14 macOS arm64 的现场结果。
+Baseline: `origin/hotfix/3.12.2`, `5f7d77dac3`. This record describes only this fix; the field results
+below are from 2026-09-14 on macOS arm64.
 
-## Feature Summary
+## Feature summary
 
-| 项目 | 决策 |
-| --- | --- |
-| 意图 / capability | 聊天创建与冷恢复不依赖可选远端配置；OffPeak 工具在实际调用时准入 |
-| 层级 / mode | validation、recovery、运行期默认值；implementation-handoff |
-| Primary seeds | createZCodeAgentService、getModelContextBudgetStrategy、AgentRuntime、getAutoCompactThreshold |
-| 不包含 | draft 重复创建、MCP 启动、配置网络故障本身、页面灰度、配额/计费算法 |
+- Intent / capability: chat creation and cold resume do not depend on optional remote configuration;
+  the OffPeak tools are admitted at actual call time.
+- Layer / mode: validation, recovery, runtime defaults; implementation-handoff.
+- Primary seeds: `createZCodeAgentService`, `getModelContextBudgetStrategy`, `AgentRuntime`,
+  `getAutoCompactThreshold`.
+- Not included: duplicate draft creation, MCP startup, the config network failure itself, page gray
+  release, quota/billing algorithms.
 
-## UI Surface Matrix
+## UI surface matrix
 
-| 场景 / UI | 本地状态 / 命令 | 共享 owner | 行为 / 边界 |
-| --- | --- | --- | --- |
-| 冷 draft / Composer | Renderer draft → V4 createSession | Host capability → CLI Runtime | 本地注册工具；配置 pending 不阻塞发送 |
-| 已有会话 / Composer | sendText | 同一 CLI Runtime | 无新增预算读取；FIFO 不变 |
-| 侧栏冷恢复 | subscribe → resumePersistedSession | workspace capability → createRecord | 保留原 workspace 策略通道，恢复历史与工具 |
-| 闲时创建工具 | approval → OffPeakCreate | Host handler → OffPeakTaskService | 调用时校验灰度/套餐/模型，之后才取号/落库 |
-| 闲时查询工具 | OffPeakList | Host 本地 task repo | workspaceKey 隔离；无新增远端查询 |
-| 手机 / remote workspace | trusted attachment → preferences | 现有 shared-host/remote bridge | 同一固定预算；remote 仍不注册闲时工具 |
-| 闲时页面 | 原 store / form | 原 subscription + task service | 页面灰度与准入规则不变 |
+| Scenario / UI               | Local state / command              | Shared owner                         | Behavior / boundary                                                            |
+| --------------------------- | ---------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------ |
+| Cold draft / Composer       | Renderer draft → V4 createSession  | Host capability → CLI Runtime        | tools registered locally; a pending config does not block sending              |
+| Existing session / Composer | sendText                           | same CLI Runtime                     | no new budget read; FIFO unchanged                                             |
+| Sidebar cold resume         | subscribe → resumePersistedSession | workspace capability → createRecord  | keeps the original workspace policy channel, restores history and tools        |
+| Idle create tool            | approval → OffPeakCreate           | Host handler → OffPeakTaskService    | gray release / plan / model validated at call time, then take number / persist |
+| Idle query tool             | OffPeakList                        | Host local task repo                 | workspaceKey isolated; no new remote query                                     |
+| Mobile / remote workspace   | trusted attachment → preferences   | existing shared-host/remote bridge   | same fixed budget; remote still registers no idle tools                        |
+| Idle page                   | original store / form              | original subscription + task service | page gray release and admission rules unchanged                                |
 
-## Shared And Divergent Behavior
+## Shared and divergent behavior
 
-两处 Host resolver 都直接返回同一共享预算常量；CLI 在 Runtime 与协议物化边界归一 legacy 输入。
-工具注册只说明本机可承接调用，创建准入说明账号此刻能否取号。页面可见性独立，不随注册放开。
+Both Host resolvers directly return the same shared budget constant; the CLI normalizes legacy input at
+the Runtime and protocol materialization boundaries. Tool registration only says this machine can accept
+the call; create admission says whether the account can take a number right now. Page visibility is
+independent and is not opened up by registration.
 
-## Relationships / Owners / Invariants
+## Relationships / owners / invariants
 
-| Rank | 关系 | owner / sink / 证明 |
-| --- | --- | --- |
-| must-inspect | workspace 同步与 legacy/V4 创建 → 工具注册 | Host 本地能力；策略测试与 SCB01/02 |
-| must-inspect | OffPeakCreate → 校验 → createTask | Host handler；SCB03 拒绝时 createTask=0，既有允许路径 |
-| must-inspect | Runtime budget → compact / 每步输出 cap / 子 Agent | Core 统一 preflight；SCB04 / OTB / subagent 单测 |
-| invariant-only | trusted clientMode、workspaceIdentity、owner/FIFO | 原 attachment/CLI 权威，不创建队列或 Host |
-| invariant-only | client-config 成功缓存/强制刷新/其他消费者 | 原 provider owner；未增加缓存、计时器、后台刷新 |
+- workspace sync and legacy/V4 creation -> tool registration: a Host local capability; policy tests and
+  SCB01/02.
+- OffPeakCreate -> validation -> createTask: Host handler; SCB03 rejection means createTask=0, the
+  existing allowed path is unchanged.
+- Runtime budget -> compact / per-step output cap / sub-Agent: unified Core preflight; SCB04 / OTB /
+  subagent unit tests.
+- Invariant only: trusted clientMode, workspaceIdentity, owner/FIFO stay with the original
+  attachment/CLI authority; no queue or Host is created.
+- Invariant only: client-config success cache / forced refresh / other consumers stay with the original
+  provider owner; no cache, timer or background refresh was added.
 
-不新增数据库/Settings 持久化；兼容协议仍接受 legacy，新 Runtime 不采用旧算法。
+No database/Settings persistence is added; the compatible protocol still accepts legacy input, and the
+new Runtime does not adopt the old algorithm.
 
-## Codegraph / Graph Drift / Delta
+## Graph / planning handoff
 
-新 worktree 无 `.codegraph`，按约定不建立索引；通过精确函数/调用点检索检查深度 2 的
-Host → 配置 / CLI → Runtime → compact、output cap 路径。未声称执行 codegraph 扫描。
-图谱缺少聊天启动不得等待这两类配置的约束，已在 conversation-runtime 与 off-peak-model-execution
-节点加入用户确认的不变量。其他节点/边与持久化结构不变。
+No `.codegraph` existed in the new worktree and by convention none was built; depth-2 paths Host ->
+config / CLI -> Runtime -> compact, output cap were checked by exact function/call-site search; no
+codegraph scan is claimed. The capability graph lacked the constraint that chat startup must not wait on
+these two configs; the user-confirmed invariant was added to the conversation-runtime and
+off-peak-model-execution nodes. Other nodes/edges and persistence are unchanged.
 
-## Planning Handoff
-
-用户最终确认：本地工具始终注册、灰度只在实际创建时查；预算固定 preflight-v1，取消远端回退。
-SCB01–05 的 setup/action/assertion 与证据层已先写入 case catalog 和 coverage matrix。
-网络延迟参数不做全排列：pending 屏障代表最坏等待；配置拒绝由 Host 单测代表；旧进程热升级剪枝。
-无未决产品项。新增 E2E 仍在 manual-review/pending，不标为已人工审阅或 Docker 已准入。
+User final confirmation: local tools are always registered and the gray release is checked only at
+actual creation; the budget is fixed at preflight-v1 and the remote fallback is dropped. SCB01-05
+setup/action/assertion and evidence layers were written into the case catalog and coverage matrix
+first. Network-latency parameters are not fully permuted: the pending barrier represents the worst
+wait; config rejection is represented by Host unit tests; hot upgrade of an old process is pruned. No
+open product item. The new E2E stays in manual-review/pending and is not marked as manually reviewed or
+Docker-admitted.
 
 ## Validation
 
-### 运行链路与计时
+### Run chain and timing
 
 ```text
-Enter -> Host 本地能力 + 固定预算 -> CLI 接纳 -> 页面绑定/用户消息 -> provider HTTP
-               client/configs 始终 pending，不参与上述等待
-OffPeakCreate -> 现有审批 -> Host 灰度/套餐/模型 -> createTask -> 取号/落库
+Enter -> Host local capability + fixed budget -> CLI admission -> page binding/user message -> provider HTTP
+               client/configs stays pending and takes no part in the waits above
+OffPeakCreate -> existing approval -> Host gray release/plan/model -> createTask -> take number/persist
 ```
 
-同一隔离配置网关、相同 fixture；baseline 临时恢复基线生产源码后重建测试，随后恢复全部修复。
-以下为单次样本（毫秒），不代表线上分位数。HTTP 点为本地 provider 代理收到请求的时间，
-接纳点取 CLI 的 `v4 prompt admitted` 日志；页面绑定与用户消息可见由 DOM observer 记录。
+Same isolated config gateway and fixture; the baseline temporarily restored the baseline production
+source and rebuilt the tests, then restored all fixes. Single samples in milliseconds, not online
+percentiles. The HTTP point is the time the local provider proxy received the request; the admission
+point is the CLI `v4 prompt admitted` log; page binding and user message visibility are recorded by a
+DOM observer.
 
-| 场景 | CLI 接纳 | 页面绑定 | 用户消息可见 | HTTP 请求 |
-| --- | ---: | ---: | ---: | ---: |
-| 基线冷 draft | 39444 | 39486 | 40081 | 40091 |
-| 修复冷 draft | 591 | 613 | 1259 | 3373 |
-| 修复已有会话续发 | 16 | 0 | 115 | 36 |
-| 修复重启冷恢复后发送 | 45 | 0 | 113 | 1476 |
+| Scenario                             | CLI admission | Page binding | User message visible | HTTP request |
+| ------------------------------------ | ------------: | -----------: | -------------------: | -----------: |
+| baseline cold draft                  |         39444 |        39486 |                40081 |        40091 |
+| fixed cold draft                     |           591 |          613 |                 1259 |         3373 |
+| fixed existing-session follow-up     |            16 |            0 |                  115 |           36 |
+| fixed send after restart cold resume |            45 |            0 |                  113 |         1476 |
 
-续发/恢复行的页面绑定 0 表示 Enter 前已打开该会话。基线有 8 个配置请求、0 个响应，
-最终发送后因工具列表没有 OffPeakCreate 而失败；修复三个阶段分别 6/6/10 请求、始终 0 响应。
-原始证据在工作区 `packages/desktop/.e2e-artifacts/scb-baseline/` 与 `scb-final/`，
-各自 `timing-reviewed.json` 保留关联 session id 与原始时间戳，runtime-logs 保留接纳日志。
+Page binding 0 in follow-up/resume rows means the session was already open before Enter. The baseline
+had 8 config requests and 0 responses and finally failed because the tool list lacked OffPeakCreate;
+the three fixed stages had 6/6/10 requests and always 0 responses. Raw evidence is in the workspace
+`packages/desktop/.e2e-artifacts/scb-baseline/` and `scb-final/`, each `timing-reviewed.json` keeping
+the associated session id and raw timestamps and runtime-logs keeping the admission logs.
 
-新增用例进一步要求 Enter 到 HTTP 小于现有单次配置超时 15 秒，不能以“等超时后最终成功”通过。
-独立重跑 `scb-guard-isolated/` 通过，冷/续发/恢复 HTTP 为 2743/87/2118 ms，配置仍无响应。
+The new case additionally requires Enter-to-HTTP below the existing 15-second single config timeout, so
+"finally succeeds after waiting out the timeout" cannot pass. The independent rerun `scb-guard-isolated/`
+passed with cold/follow-up/resume HTTP at 2743/87/2118 ms and the config still unanswered.
 
-### 自动化结果
+### Automated results
 
-- 定向服务/Host 4 文件 91 项、Core 6 文件 59 项、会话协议 2 文件 90 项通过。
-- shared-host attachment、remote workspace bridge、connection scope 3 文件 38 项通过。
-- 闲时工具 bridge、真实临时数据库/模拟网关集成、task service 3 文件 29 项通过。
-- Desktop 实际 Electron E2E：配置等待隔离、model-output-token-budget、model-output-token-preflight
-  三个 spec 通过；Compact 94K 阈值、21K reserve、summary 20K 与逐请求上限均走真实 Runtime/HTTP。
-- root `pnpm typecheck`、Desktop `typecheck:e2e`、Core typecheck 通过；root lint 0 errors，
-  Core/bootstrap/contracts 的独立 lint 0 errors；架构检查 0 新增问题。
-- `ZCODE_AFFECTED_TEST_BASE=origin/hotfix/3.12.2 pnpm verify:pre-push` 通过：
-  按基线 `5f7d77dac3` 到实现 commit 的真实差异运行 lint、架构、变更单测和 related 单测，
-  并非未提交差异下的跳过结果。最终仅补本文记录与 D49 文档格式，生产代码和测试未再改变。
-- fixture metadata check 通过。新 case 保留 manual-review/pending，不声称人工审阅或 Docker 准入。
+- Targeted service/Host 4 files 91 items, Core 6 files 59 items, session protocol 2 files 90 items pass.
+- shared-host attachment, remote workspace bridge, connection scope 3 files 38 items pass.
+- Idle tool bridge, real temporary database / mock gateway integration, task service 3 files 29 items
+  pass.
+- Desktop real Electron E2E: config-wait isolation, model-output-token-budget and
+  model-output-token-preflight specs pass; the Compact 94K threshold, 21K reserve, summary 20K and
+  per-request cap all go through the real Runtime/HTTP.
+- root `pnpm typecheck`, Desktop `typecheck:e2e`, Core typecheck pass; root lint 0 errors, separate lint
+  of Core/bootstrap/contracts 0 errors; architecture check 0 new issues.
+- `ZCODE_AFFECTED_TEST_BASE=origin/hotfix/3.12.2 pnpm verify:pre-push` passes, running lint,
+  architecture, changed unit tests and related unit tests on the real diff from baseline `5f7d77dac3`
+  to the implementation commit (not the skipped result under an uncommitted diff). Only this record and
+  the D49 doc formatting were added afterwards; production code and tests did not change.
+- The fixture metadata check passes. The new case stays manual-review/pending, claiming no manual
+  review or Docker admission.
 
-### 未通过项与边界
+### Not passed and boundaries
 
-- Bootstrap 协议测试 109/111 通过，两项失败在原基线复现：remote Cron denylist、
-  Account Config providers 的数组/对象契约。未顺带修改这些行为。
-- 全局 conversation coverage audit 9 项错误在原基线一致：I74/I75 引用、四项统计、三份生成文档陈旧。
-  graph YAML 可解析且无重复 id；四条悬空边在原基线一致，本次只增加两个节点的不变量。
-- 附加 `conversation-session-offpeak-create` E2E 在 beforeSession 因既有 mock 配置代码按对象
-  读取现有数组形式的 providers，报缺少 `account:zai-offpeak-idle-plan.api`，未进入测试正文，
-  不计通过。取号/落库正常路径由服务集成测试验证。
-- 一次附加配置 E2E 捕获模型切换期间 Host `runtime is not running`，没有提交用户消息；
-  日志保存在 `scb-final-guard/`。本次未处理模型切换/重复 draft 竞态；独立重跑通过，
-  不把该失败解释为配置等待，也不以重跑宣称这个竞态已修复。
-- 手机链路本次验证到 shared-host/remote bridge 的协议与服务层，未跑真机手机、SSH/WSL/Docker
-  完整 GUI；未执行 Windows/Linux Desktop。continuous/replayable、owner 与 identity 代码未改。
-- CLI 顶层 lint wrapper 缺少可用 turbo 配置；上述逐包 lint 为实际执行结果。
-- 未修改配置网络/MCP 启动根因，不新增缓存或后台刷新；旧运行进程升级前仍使用自身算法。
+- Bootstrap protocol tests 109/111 pass; two fail and reproduce on the baseline: the remote Cron
+  denylist and the array/object contract of Account Config providers. Not changed in passing.
+- The global conversation coverage audit has 9 errors identical to the baseline: I74/I75 references,
+  four statistics, three stale generated docs. The graph YAML parses with no duplicate ids; four
+  dangling edges are identical to the baseline, and this change only added the invariants of two nodes.
+- The extra `conversation-session-offpeak-create` E2E failed in beforeSession because the existing mock
+  config code reads providers as an object while the existing shape is an array, reporting a missing
+  `account:zai-offpeak-idle-plan.api`; it never reached the test body and is not counted as passed. The
+  normal take-number/persist path is verified by service integration tests.
+- One extra config E2E captured a Host `runtime is not running` during a model switch with no user
+  message submitted; logs are in `scb-final-guard/`. The model-switch / duplicate-draft race is not
+  handled here; the independent rerun passed, and that failure is not explained as a config wait nor is
+  the race claimed fixed by the rerun.
+- The mobile chain was verified to the shared-host/remote bridge protocol and service layers; no real
+  mobile device, no complete SSH/WSL/Docker GUI, no Windows/Linux Desktop run. continuous/replayable,
+  owner and identity code are unchanged.
+- The CLI top-level lint wrapper lacks a usable turbo config; the per-package lint above is the actual
+  executed result.
+- The config network / MCP startup root cause is untouched and no cache or background refresh was
+  added; running processes before upgrade still use their own algorithm.

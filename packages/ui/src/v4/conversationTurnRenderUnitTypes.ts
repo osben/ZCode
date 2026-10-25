@@ -1,5 +1,6 @@
 import type { PluginUiRowPinResolver } from "@/plugin-ui/index.js";
 import type { BotTopicPreparation } from "@zcode/shared";
+import type { ReactNode } from "react";
 import type {
   AssistantTextRow,
   ConversationRow,
@@ -18,50 +19,85 @@ import type {
 import type { HighspeedOutputFooterMark } from "@/highspeed/highspeedOutputFooter.js";
 
 export interface ConversationTurnRenderUnit extends HighspeedOutputFooterMark {
-  /** 未接受的 Bot 消息展示投影，不写入 CLI rows 或导航/分享索引。 */
+  /** Display projection of unaccepted bot messages; not written to CLI rows or the navigation/share index. */
   topicPreparations?: readonly BotTopicPreparation[];
+  /**
+   * Session-level context row (worktree setup/created) rendered right after this unit's user
+   * inputs — the second timeline item, below the first user message (specs/composer-worktree-setup-steps.md).
+   * Attached only to the first unit; timeline-only fallback units render it above their content.
+   */
+  afterFirstUserInputSlot?: ReactNode;
   key: string;
   turnId: string;
   header?: TurnHeaderRow;
   visibleUserInputs: UserInputRow[];
   assistantWorkRows: AssistantWorkRow[];
   /**
-   * 所有 visual work segment 的历史行聚合，仅供复制、预览和旧调用兼容。
-   * 实际折叠边界读取 workSegments，且各段内部必须保持 CLI row 全序。
+   * Aggregated history rows across all visual work segments, kept for copy, preview, and
+   * legacy-call compatibility. Actual collapse boundaries read workSegments, and each
+   * segment must preserve the CLI row total order internally.
    */
   assistantHistoryRows: AssistantWorkRow[];
-  /** 操作正文锚点之后、真正轮尾 marker 之前的 row；保持 CLI 全序原位渲染。 */
+  /** Rows after the action body anchor and before the real turn-end marker; rendered in place, preserving CLI total order. */
   assistantFollowingRows: AssistantWorkRow[];
   assistantTailRows: AssistantWorkRow[];
-  /** Browser 自动轮尾截图：完成态渲染在 file diff 摘要之后、消息操作栏之前。 */
+  /** Browser auto turn-end screenshots: rendered after the file diff summary and before the message actions bar in the completed state. */
   browserTurnEndRows: AssistantWorkRow[];
-  /** turn-local Hook product rows；不进入 assistant work/折叠，只供轮尾详情 action。 */
+  /** Turn-local hook product rows; excluded from assistant work/collapse, used only by the turn-end details action. */
   hookInvocations: HookInvocationRow[];
-  /** S2：整轮全部 assistant text 段，用于复制/预览聚合，不代表渲染位置。 */
+  /** S2: all assistant text segments in the turn, used for copy/preview aggregation; not a render position. */
   assistantTextRows: AssistantTextRow[];
-  /** 轻边界（modelChange，S13）：渲染在 user 输入之前的轮顶分隔。 */
+  /** Lightweight boundary (modelChange, S13): turn-top divider rendered before user input. */
   leadingBoundaryRows: TimelineMarkerRow[];
-  /** 完成态轮尾最终正文；fork/retry/action/preview 只挂这一段。 */
+  /** Final completed-state body at the turn tail; fork/retry/action/preview attach only to this segment. */
   latestAssistantTextRow?: AssistantTextRow;
-  /** 同一 product turn 内 user/assistant 的可见交错顺序；相邻工作行保持成组。 */
+  /** Visible interleaving order of user/assistant within one product turn; adjacent work rows stay grouped. */
   flowItems: ConversationTurnFlowItem[];
-  /** 原始输入与每条 accepted guide 分别对应一个独立视觉工作段。 */
+  /** The original input and each accepted guide each map to one distinct visual work segment. */
   workSegments?: ConversationTurnWorkSegment[];
   renderRows: ConversationRow[];
   isLastTurn: boolean;
   isRunning: boolean;
   assistantHistoryDefaultOpen: boolean;
   timelineOnly: boolean;
-  /** turn 级聚合工作状态，仅供旧调用兼容；新组件消费 workSegments[].workStatus。 */
+  /** Turn-level aggregated work status, kept for legacy-call compatibility; new components consume workSegments[].workStatus. */
   workStatus?: ConversationTurnWorkStatus;
   startedAt?: number;
-  /** 中枢直接启动轮的启动元数据（规则见 `workflowLaunchTurn.ts`）；在场时轮由 run 卡呈现、无用户气泡。 */
+  /** Launch metadata for turns started directly from the hub (rules in `workflowLaunchTurn.ts`); when present the turn renders as a run card with no user bubble. */
   workflowLaunch?: WorkflowLaunchMeta;
 }
 
 export interface BuildConversationTurnRenderUnitsOptions {
   nowMs?: number;
   sessionPhase?: SessionPhase;
-  /** 插件卡片折叠裁决（时间线由推导结果 + 手动状态组装）。 */
+  /** Plugin card collapse adjudication (the timeline is assembled from derived results + manual state). */
   pluginUiPinResolver?: PluginUiRowPinResolver;
+  /**
+   * Per-timeline memo. When supplied, a non-running turn whose inputs are unchanged keeps the same unit object
+   * across calls (docs/ui/v4-chat-turn-render-units.md, 渲染性能规则). Owned by one timeline instance.
+   */
+  cache?: ConversationTurnRenderUnitCache;
+}
+
+export interface ConversationTurnRenderUnitCache {
+  entries: Map<string, ConversationTurnRenderUnitCacheEntry>;
+}
+
+/** Inputs that decide a turn's materialized unit, plus the derived unit objects reused while those inputs hold. */
+export interface ConversationTurnRenderUnitCacheEntry {
+  header: TurnHeaderRow | undefined;
+  orderedRows: readonly ConversationRow[];
+  sessionPhase: SessionPhase | undefined;
+  isLastDraft: boolean;
+  pinSignature: string;
+  materialized: ConversationTurnRenderUnit;
+  normalized?: {
+    source: ConversationTurnRenderUnit;
+    isLast: boolean;
+    unit: ConversationTurnRenderUnit;
+  };
+  footer?: {
+    base: ConversationTurnRenderUnit;
+    unit: ConversationTurnRenderUnit;
+  };
 }

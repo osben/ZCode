@@ -1,9 +1,6 @@
 import type { ConversationTurnRenderUnit } from "@/v4/conversationTurnRenderUnits.js";
 
-export type ConversationTurnNavigatorAssistantPreviewKind =
-  | "empty"
-  | "running"
-  | "text";
+export type ConversationTurnNavigatorAssistantPreviewKind = "empty" | "running" | "text";
 
 export interface ConversationTurnNavigatorItem {
   key: string;
@@ -14,6 +11,7 @@ export interface ConversationTurnNavigatorItem {
   assistantPreview: string;
   assistantPreviewKind: ConversationTurnNavigatorAssistantPreviewKind;
   isRunning: boolean;
+  isPinned: boolean;
 }
 
 export interface BuildConversationTurnNavigatorItemsOptions {
@@ -119,6 +117,59 @@ function truncatePreview(text: string, maxChars: number): string {
   return `${text.slice(0, normalizedMaxChars - 3).trimEnd()}...`;
 }
 
+/**
+ * Raw characters of the joined assistant text that a preview may scan. The preview shows at most `maxPreviewChars`
+ * normalized characters, and every rebuild of the navigator reruns this, so a long session must not normalize all of its text each time.
+ */
+const PREVIEW_SCAN_CHARS = 4_096;
+const PARAGRAPH_SEPARATOR = /\n\s*\n/u;
+
+function normalizePreviewParagraph(paragraph: string): string {
+  return paragraph.replace(/\s+/gu, " ").trim();
+}
+
+/** The first `limit` code units of `texts.join("\n\n")`, built without joining the rest. `whole` means the join fit entirely. */
+function takeJoinedPreviewPrefix(
+  texts: readonly string[],
+  limit: number,
+): { text: string; whole: boolean } {
+  let prefix = "";
+  for (const [index, text] of texts.entries()) {
+    if (index > 0) {
+      if (prefix.length + 2 > limit) return { text: prefix, whole: false };
+      prefix += "\n\n";
+    }
+    const room = limit - prefix.length;
+    if (text.length > room) return { text: prefix + text.slice(0, room), whole: false };
+    prefix += text;
+  }
+  return { text: prefix, whole: true };
+}
+
+/**
+ * Preview from a non-final prefix of the joined text, or null when the prefix cannot prove the result.
+ *
+ * Every piece except the last is terminated by a separator inside the prefix, so the separator matches are the same as in the full text.
+ * If `limit` such pieces normalize to non-empty text, the output is exactly those paragraphs.
+ * Otherwise the last piece may still grow, but its normalized text is a prefix of the full paragraph.
+ * It can then be used only when that prefix alone exceeds `maxChars`: the full output starts with it, so the truncation is unchanged.
+ */
+function buildBoundedPreviewText(
+  prefixText: string,
+  limit: number,
+  maxChars: number,
+): string | null {
+  const pieces = prefixText.split(PARAGRAPH_SEPARATOR);
+  const terminated = pieces.slice(0, -1).map(normalizePreviewParagraph).filter(Boolean);
+  if (terminated.length >= limit) {
+    return truncatePreview(terminated.slice(0, limit).join("\n"), maxChars);
+  }
+  const unterminated = normalizePreviewParagraph(pieces[pieces.length - 1] ?? "");
+  const paragraphs = unterminated ? [...terminated, unterminated] : terminated;
+  const joined = paragraphs.slice(0, limit).join("\n");
+  return joined.length > maxChars ? truncatePreview(joined, maxChars) : null;
+}
+
 function buildPreviewText({
   texts,
   fallback,
@@ -130,7 +181,22 @@ function buildPreviewText({
   maxPreviewChars: number;
   maxPreviewParagraphs: number;
 }): string {
-  const paragraphs = normalizePreviewParagraphs(texts.join("\n\n"), maxPreviewParagraphs);
+  const prefix = takeJoinedPreviewPrefix(texts, PREVIEW_SCAN_CHARS);
+  if (!prefix.whole) {
+    const bounded = buildBoundedPreviewText(
+      prefix.text,
+      Math.max(1, maxPreviewParagraphs),
+      Math.max(8, maxPreviewChars),
+    );
+    if (bounded !== null) {
+      return bounded;
+    }
+  }
+  // Short or pathological inputs (for example, a long whitespace run before the first paragraph) use the full normalization.
+  const paragraphs = normalizePreviewParagraphs(
+    prefix.whole ? prefix.text : texts.join("\n\n"),
+    maxPreviewParagraphs,
+  );
   if (paragraphs.length === 0) {
     return fallback;
   }
@@ -176,30 +242,29 @@ export function buildConversationTurnNavigatorItems(
   const resolvedOptions: Required<BuildConversationTurnNavigatorItemsOptions> = {
     ...options,
     maxPreviewChars: options.maxPreviewChars ?? DEFAULT_MAX_PREVIEW_CHARS,
-    maxPreviewParagraphs:
-      options.maxPreviewParagraphs ?? DEFAULT_MAX_PREVIEW_PARAGRAPHS,
+    maxPreviewParagraphs: options.maxPreviewParagraphs ?? DEFAULT_MAX_PREVIEW_PARAGRAPHS,
   };
 
   return units.flatMap((unit, unitIndex) => {
-    // provider/store 的物理 role=user 还包含 background/goal/mailbox
-    // 等系统上下文；目录代表用户主动 query，只能使用投影明确裁决的 realUser。
-    const realUserInputs = unit.visibleUserInputs.filter(
-      (row) => row.origin === "realUser",
-    );
+    // The provider/store's physical role=user also includes system context such as background/goal/mailbox;
+    // the navigator represents user-initiated queries and must use only realUser, as explicitly classified by the projection.
+    const realUserInputs = unit.visibleUserInputs.filter((row) => row.origin === "realUser");
     if (unit.timelineOnly || realUserInputs.length === 0) {
       return [];
     }
 
-    // 导航项按 query 拆分，但 hover 的 assistant 摘要保持旧产品语义：
-    // 取所属 product turn 的文本结果，不在 renderer 猜测 guide 回复分段。
-    const { assistantPreview, assistantPreviewKind } = buildAssistantPreview(
-      unit,
-      resolvedOptions,
+    // Split navigator items by query, but preserve the old product semantics for the assistant hover summary:
+    // use the text result from the owning product turn; do not infer guide-response segments in the renderer.
+    const { assistantPreview, assistantPreviewKind } = buildAssistantPreview(unit, resolvedOptions);
+    // Pinned lookup mirrors PinnedConversationRow (userInput/assistantText only); all of a unit's assistantText
+    // rows live in assistantTextRows, because turn-tail rows are only markers/artifacts.
+    const turnHasPinnedAssistantText = unit.assistantTextRows.some(
+      (row) => row.pinnedAt !== undefined,
     );
     return realUserInputs.map((row, queryIndex) => ({
-      // 不能以 product turn 为目录粒度，并把同一 turn 的 steer query
-      // 全部拼进一个 preview。目录真正导航的是用户可见 query，必须用稳定 row
-      // 身份逐条建项，turnId 只负责把虚拟列表先定位到所属容器。
+      // Do not use product turns as navigator entries and concatenate every steer query from the same turn into one preview.
+      // The navigator represents user-visible queries, so create one entry per query using stable row identity;
+      // turnId only locates the owning container in the virtual list.
       key: `${unit.key}:query:${row.entityId ?? row.rowId}`,
       turnId: unit.turnId,
       unitIndex,
@@ -212,9 +277,11 @@ export function buildConversationTurnNavigatorItems(
       }),
       assistantPreview,
       assistantPreviewKind,
-      // 同一 running product turn 可能已有多个已结束 guide segment；只有最后一条
-      // query 仍代表当前工作，避免所有旧 query 一起呈现 running 强调。
+      // One running product turn may already contain several completed guide segments; only the last
+      // query represents current work, preventing all old queries from appearing highlighted as running.
       isRunning: unit.isRunning && queryIndex === realUserInputs.length - 1,
+      // A pinned answer marks the query that produced it, so pinned content stays findable from the rail.
+      isPinned: row.pinnedAt !== undefined || turnHasPinnedAssistantText,
     }));
   });
 }
@@ -235,8 +302,7 @@ export function resolveConversationTurnNavigatorActiveUnitIndex({
 
   const itemByUnitIndex = new Map(items.map((item) => [item.unitIndex, item]));
   const viewportStart = resolveFiniteNonNegative(scrollOffsetPx);
-  const viewportEnd =
-    viewportStart + Math.max(1, resolveFiniteNonNegative(viewportHeightPx));
+  const viewportEnd = viewportStart + Math.max(1, resolveFiniteNonNegative(viewportHeightPx));
 
   let activeUnitIndex: number | undefined;
   let activeDistance = Number.POSITIVE_INFINITY;
@@ -250,8 +316,7 @@ export function resolveConversationTurnNavigatorActiveUnitIndex({
     if (rowEnd < viewportStart || rowStart > viewportEnd) {
       continue;
     }
-    const distanceToViewportStart =
-      rowStart <= viewportStart ? 0 : rowStart - viewportStart;
+    const distanceToViewportStart = rowStart <= viewportStart ? 0 : rowStart - viewportStart;
     if (distanceToViewportStart < activeDistance) {
       activeUnitIndex = item.unitIndex;
       activeDistance = distanceToViewportStart;
@@ -286,8 +351,7 @@ export function resolveConversationTurnNavigatorActiveQueryRowId({
   if (positions.length === 0) return undefined;
 
   const viewportStart = resolveFiniteNonNegative(scrollOffsetPx);
-  const viewportEnd =
-    viewportStart + Math.max(1, resolveFiniteNonNegative(viewportHeightPx));
+  const viewportEnd = viewportStart + Math.max(1, resolveFiniteNonNegative(viewportHeightPx));
   const normalized = positions
     .map((position) => {
       const start = resolveFiniteNonNegative(position.start);
@@ -304,8 +368,7 @@ export function resolveConversationTurnNavigatorActiveQueryRowId({
   );
   if (visible.length > 0) {
     return visible.reduce((nearest, candidate) =>
-      Math.abs(candidate.start - viewportStart) <
-      Math.abs(nearest.start - viewportStart)
+      Math.abs(candidate.start - viewportStart) < Math.abs(nearest.start - viewportStart)
         ? candidate
         : nearest,
     ).rowId;

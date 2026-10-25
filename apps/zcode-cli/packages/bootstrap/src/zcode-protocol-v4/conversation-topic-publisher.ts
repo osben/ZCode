@@ -95,19 +95,23 @@ interface Subscription {
   connectionId: string;
   profile: DeliveryProfile;
   /**
-   * 这条订阅认不认得 `workflowRun.*` 键级增量（握手能力位，由可信 host 注入）。
-   * false = 旧消费者：增量折成整键 patch、快照裁到旧界（conversation-workflow-run-deltas.ts）。
+   * Whether this subscription understands `workflowRun.*` key-level deltas (a handshake
+   * capability injected by the trusted host). false means an old consumer: fold deltas into
+   * whole-key patches and trim snapshots to the legacy boundary
+   * (conversation-workflow-run-deltas.ts).
    */
   workflowRunDeltas: boolean;
-  /** flush buffer：push 时已过 profile 过滤与该订阅的编码，flush 时 coalesce 打帧。 */
+  /** Flush buffer: profile filtering and per-subscription encoding happen on push; flush coalesces them into a frame. */
   buffer: ConversationDelta[];
   bufferBytes: number;
-  /** buffer 超限后只保留恢复意图，不继续为慢订阅者积压 delta。 */
+  /** After buffer overflow, keep only the recovery intent; do not keep accumulating deltas for a slow subscriber. */
   resyncRequired: boolean;
-  /** 帧区间记账水位：下一帧 fromSeq（(fromSeq, toSeq] 语义）。 */
+  /** Frame interval accounting watermark: fromSeq of the next frame ((fromSeq, toSeq] semantics). */
   sentSeq: number;
-  /** 编码/写入期间保留的稳定 logical frame。 */
+  /** Stable logical frame reserved during encoding/writing. */
   inFlight: TopicFrameReservation<ConversationTopicFrame> | null;
+  /** Metadata snapshot requests that arrived after the current frame was reserved. */
+  snapshotRequestGeneration: number;
   nextLogicalFrameOrdinal: number;
 }
 
@@ -262,7 +266,9 @@ export class ConversationTopicPublisher {
   private readonly subscriptionIdByConnection = new Map<string, string>();
   private nextSubscriptionSerial = 1;
   private nextLogicalFrameSerial = 1;
-  /** 当前 snapshot logical frame 的保守上界；流式追加只累计增量，逼近上限才精确序列化。 */
+  /** Preparation metadata is not sequenced with conversation events; keep its history for reconnect decisions. */
+  private worktreePreparationWasSeeded = false;
+  /** Conservative upper bound for the current logical snapshot frame; streaming appends accumulate only deltas and serialize exactly near the limit. */
   private wireSnapshotBytesUpperBound: number;
 
   constructor(
@@ -317,6 +323,12 @@ export class ConversationTopicPublisher {
     this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
   }
 
+  /** Stored ACP agent selects (S6): seeded without a delta; an event value always wins. */
+  seedExternalAgentConfig(state: ConversationSnapshot["config"]["externalAgentConfig"] | null): void {
+    this.projection.seedExternalAgentConfig(state);
+    this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
+  }
+
   /** 分享导入提示是静态只读元数据，不进入 delta/revision；可在 hydration 后幂等补种。 */
   seedSharedContextImport(
     source: ConversationSnapshot["sharedContextImport"] | null | undefined,
@@ -325,7 +337,34 @@ export class ConversationTopicPublisher {
     this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
   }
 
-  /** usage 种子注入：冷恢复用持久化 token 水位覆盖 transcript 合成的 0 占位。 */
+  /** Worktree preparation is Host-owned setup metadata; it does not enter transcript deltas. */
+  seedWorktreePreparation(
+    preparation: ConversationSnapshot["meta"]["worktreePreparation"] | null | undefined,
+  ): void {
+    if (preparation) this.worktreePreparationWasSeeded = true;
+    this.projection.seedWorktreePreparation(preparation);
+    this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
+  }
+
+  seedSubmissionPreparation(
+    preparation: ConversationSnapshot["meta"]["submissionPreparation"] | null | undefined,
+  ): void {
+    if (preparation) this.worktreePreparationWasSeeded = true;
+    this.projection.seedSubmissionPreparation(preparation);
+    this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
+  }
+
+  /** Invalidate each subscriber's pending frame and make its next flush carry the current snapshot. */
+  requestSnapshotForSubscribers(): void {
+    for (const subscription of this.subscriptions.values()) {
+      subscription.buffer = [];
+      subscription.bufferBytes = 0;
+      subscription.resyncRequired = true;
+      subscription.snapshotRequestGeneration += 1;
+    }
+  }
+
+  /** Inject a usage seed: on cold restore, persisted token watermarks replace the 0 placeholders synthesized from the transcript. */
   seedUsage(seed: SessionUsageSeed): void {
     this.projection.seedUsage(seed);
     this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
@@ -857,6 +896,7 @@ export class ConversationTopicPublisher {
       resyncRequired: false,
       sentSeq: 0,
       inFlight: null,
+      snapshotRequestGeneration: 0,
       nextLogicalFrameOrdinal: 1,
     };
     this.subscriptions.set(subscription.subscriptionId, subscription);
@@ -881,7 +921,11 @@ export class ConversationTopicPublisher {
     };
 
     const base = params.base;
+    // Host-owned preparation metadata is seeded outside the conversation event log. A matching
+    // transcript watermark therefore cannot prove that a reconnecting client has the latest
+    // preparing/failed state; send an authoritative snapshot while that metadata is present.
     const resumable =
+      !this.worktreePreparationWasSeeded &&
       base !== undefined &&
       base.logEpoch === this.logEpoch &&
       base.seq >= this.floorSeq &&
@@ -1038,6 +1082,7 @@ export class ConversationTopicPublisher {
     const base = request.base;
     const resumable =
       !request.forceSnapshot &&
+      !this.worktreePreparationWasSeeded &&
       base !== null &&
       base.logEpoch === this.logEpoch &&
       base.seq >= this.floorSeq &&
@@ -1156,6 +1201,7 @@ export class ConversationTopicPublisher {
     deliveryKind: TopicFrameDeliveryKind,
   ): TopicFrameReservation<ConversationTopicFrame> {
     let committed = false;
+    const snapshotRequestGeneration = subscription.snapshotRequestGeneration;
     const reservation: TopicFrameReservation<ConversationTopicFrame> = {
       deliveryKind,
       logicalFrameId: `${subscription.subscriptionId}-lf-${this.nextLogicalFrameSerial++}`,
@@ -1171,9 +1217,13 @@ export class ConversationTopicPublisher {
         }
         subscription.sentSeq = frame.toSeq;
         subscription.inFlight = null;
-        if (snapshotRecovery) {
-          // snapshot 在途时 resyncRequired 会停止收 delta。
-          // 若权威水位又推进，下一 reservation 必须再发最新 snapshot。
+        if (subscription.snapshotRequestGeneration > snapshotRequestGeneration) {
+          // Metadata may have changed while this frame waited for transport admission. Keep the
+          // current ACK/resync reservation intact, then send a fresh authoritative snapshot.
+          subscription.resyncRequired = true;
+        } else if (snapshotRecovery) {
+          // While a snapshot is in flight, resyncRequired stops accepting deltas.
+          // If the authoritative watermark advances again, the next reservation must send the latest snapshot.
           subscription.resyncRequired = this.currentSeq > frame.toSeq;
         }
         committed = true;

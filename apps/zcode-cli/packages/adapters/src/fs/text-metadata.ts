@@ -166,6 +166,25 @@ export function getUtf8CompletionBytes(buffer: Buffer): number {
   return Math.max(0, sequenceBytes - (buffer.length - start));
 }
 
+/**
+ * Drops an incomplete UTF-8 sequence at the end of a buffer cut by a byte limit. Encoding detection runs on the cut
+ * buffer, so a split character makes UTF-8 validation fail and the whole file is then decoded as a legacy encoding.
+ * The trim only applies when the remaining prefix is valid UTF-8, so other encodings keep their bytes.
+ */
+export function trimTruncatedUtf8Tail(buffer: Buffer): Buffer {
+  for (let back = 1; back <= Math.min(MAX_UTF8_SEQUENCE_BYTES - 1, buffer.length); back += 1) {
+    const byte = buffer[buffer.length - back]!;
+    // A continuation byte (10xxxxxx): its lead byte is further back.
+    if ((byte & 0xc0) === 0x80) continue;
+    const sequenceLength = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
+    // The lead byte is complete when the bytes after it fill its sequence (ASCII is always complete).
+    if (sequenceLength <= back) return buffer;
+    const prefix = buffer.subarray(0, buffer.length - back);
+    return isValidUtf8(prefix) ? prefix : buffer;
+  }
+  return buffer;
+}
+
 function isValidUtf8(buffer: Buffer): boolean {
   try {
     // stream 模式会把 GBK 的 D6 暂存为 UTF-8 候选；必须补齐后严格校验，拒绝 D6 D0 等非法序列。

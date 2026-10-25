@@ -1,92 +1,71 @@
-# AskUserQuestion TUI 规划
+# AskUserQuestion TUI Plan
 
-## 背景
+## Background
 
-`AskUserQuestion` 的 contract、core handler 和基于 permission broker 的 TUI
-交互已经存在。当前实现可以解析 `AskUserQuestion` 输入，在 TUI 中显示问题，支持
-单选、多选、自动 Other 文本、Esc 拒绝、preview 文本展示、preview annotation
-回填、多问题 review tab 和 composer draft 保留，并通过 `modifiedInput.answers`
-让 tool 继续执行。
+The `AskUserQuestion` contract, core handler and permission-broker-based TUI interaction already exist. The current implementation can parse `AskUserQuestion` input and show the question in the TUI, with single-select, multi-select, automatic Other text, Esc reject, preview text display, preview annotation fill-back, a multi-question review tab and composer draft preservation, and lets the tool continue through `modifiedInput.answers`.
 
-它仍不是完整的可恢复 user interaction subsystem：
+It is still not a complete recoverable user interaction subsystem:
 
-- 交互状态仍由 `PermissionBrokerRequest` / approval queue 桥接，缺少独立的
-  user interaction pending state 和 session event 投影。
-- pending prompt 主要是内存态，session 恢复、SDK list/reply/reject、plugin API
-  还没有统一接口。
-- ZCode app-server 已通过 `zcode.dev/elicitation/create` 扩展承载 `AskUserQuestion`，但官方
-  ZCode app-server elicitation 和通用 `UserInteractionPort` 仍未收口。
-- HTML preview 已做 fragment schema 校验，TUI 只按纯文本展示，不提供 sandbox
-  或富渲染。
-- 多问题导航已支持 `Tab`、`PageUp` / `PageDown`、左右方向键和数字快捷键；
-  `Shift+Tab` 尚未作为独立反向导航实现。
+- Interaction state is still bridged by `PermissionBrokerRequest` / the approval queue, and lacks a standalone user interaction pending state and session event projection.
+- The pending prompt is mainly in-memory state; session recovery, SDK list/reply/reject and plugin API have no unified interface yet.
+- The ZCode app-server already carries `AskUserQuestion` through the `zcode.dev/elicitation/create` extension, but the official ZCode app-server elicitation and a generic `UserInteractionPort` are still not converged.
+- HTML preview already has fragment schema validation; the TUI shows only plain text and provides no sandbox or rich rendering.
+- Multi-question navigation already supports `Tab`, `PageUp` / `PageDown`, left/right arrow keys and number shortcuts; `Shift+Tab` is not yet implemented as independent reverse navigation.
 
-本规划的目标是把现有 MVP 升级成可恢复、可审计、agent 友好的用户澄清 TUI，而不是把所有能力继续塞进通用权限弹窗。
+The goal of this plan is to upgrade the existing MVP into a recoverable, auditable, agent-friendly user clarification TUI, instead of continuing to stuff all capability into the generic permission dialog.
 
-## 当前实现状态（2026-05-08）
+## Current implementation status (2026-05-08)
 
-已落地能力：
+Landed capabilities:
 
-- `packages/contracts/src/tools/ask-user-question.ts` 提供 runtime schema、JSON
-  Schema、答案 schema、preview annotation schema，以及 markdown / HTML fragment
-  preview 校验。
-- `packages/core/src/tool/handlers/ask-user-question.ts` 注册内置 tool，声明
-  `requiresUserInteraction`、只读、低风险、`userInteraction` side effect scope，
-  并只接受已回填答案的输入。
-- `packages/tui/src/app-question-state.ts` / `packages/tui/src/app-model.ts` 使用独立
-  `QuestionPromptState` 承载 TUI 内部选择、Other buffer、review 和 annotation；
-  当前仍通过 permission broker resolve `modify`。
-- `packages/tui/src/app-question-panel.tsx` 渲染问题面板、review tab、完成态 tab、纯文本 preview
-  和多选状态。
-- `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-entrypoint.ts` 对 ZCode protocol client 使用 `zcode.dev/elicitation/create`
-  扩展，把 elicitation answer 和 annotation 转回 `modifiedInput`。
+- `packages/contracts/src/tools/ask-user-question.ts` provides the runtime schema, JSON Schema, answer schema, preview annotation schema, and markdown / HTML fragment preview validation.
+- `packages/core/src/tool/handlers/ask-user-question.ts` registers the built-in tool, declares `requiresUserInteraction`, read-only, low risk, `userInteraction` side effect scope, and accepts only input whose answers are already filled in.
+- `packages/tui/src/app-question-state.ts` / `packages/tui/src/app-model.ts` use a standalone `QuestionPromptState` for TUI-internal selection, Other buffer, review and annotation; it still resolves `modify` through the permission broker.
+- `packages/tui/src/app-question-panel.tsx` renders the question panel, review tab, completed-state tab, plain-text preview and multi-select state.
+- `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-entrypoint.ts` uses the `zcode.dev/elicitation/create` extension for the ZCode protocol client and converts the elicitation answer and annotation back to `modifiedInput`.
 
-已覆盖测试：
+Covered tests:
 
-- `packages/contracts/tests/ask-user-question.test.ts` 覆盖单选 schema、重复问题、重复
-  label、禁止模型提供 Other、执行前必须有答案、markdown preview、HTML preview fragment
-  与 unsafe HTML 拒绝。
-- `packages/tui/tests/tui.unit.test.ts` 覆盖单问题 Other、composer draft 保留、preview
-  annotation、多问题 review、多选 Space、Other 输入和 `Ctrl+U` 清空 Other buffer。
-- `packages/bootstrap/tests/zcode-protocol.test.ts` 覆盖 ZCode app-server `AskUserQuestion` 走 ZCode elicitation
-  扩展并回填多问题答案。
+- `packages/contracts/tests/ask-user-question.test.ts` covers single-select schema, duplicate question, duplicate label, forbidding the model to provide Other, answers required before execution, markdown preview, HTML preview fragment and unsafe HTML rejection.
+- `packages/tui/tests/tui.unit.test.ts` covers single-question Other, composer draft preservation, preview annotation, multi-question review, multi-select Space, Other input and `Ctrl+U` clearing the Other buffer.
+- `packages/bootstrap/tests/zcode-protocol.test.ts` covers ZCode app-server `AskUserQuestion` going through the ZCode elicitation extension and filling back multi-question answers.
 
-## 设计要点
+## Design points
 
-工具与权限：
+Tool and permission:
 
-- `AskUserQuestion` 是 `shouldDefer`、`isReadOnly`、`isConcurrencySafe`、`requiresUserInteraction` 的特殊 tool。
-- tool 自身 `checkPermissions` 返回 ask，但 UI 语义是回答问题，不是审批危险操作。
-- 当远程 channel 模式下用户不在 TUI 时禁用该 tool，避免无人响应导致会话挂起；工具只在允许的 collaboration mode 中暴露，不可用时返回明确 unavailable message。
-- plan approval 和 clarification 严格分离，避免用 AskUserQuestion 问“是否执行计划”。
+- `AskUserQuestion` is a special tool with `shouldDefer`, `isReadOnly`, `isConcurrencySafe` and `requiresUserInteraction`.
+- The tool's own `checkPermissions` returns ask, but the UI semantics is answering a question, not approving a dangerous operation.
+- When the user is not in the TUI under remote channel mode, the tool is disabled to avoid the session hanging with nobody to respond; the tool is exposed only in allowed collaboration modes and returns a clear unavailable message when unavailable.
+- Plan approval and clarification are strictly separated; AskUserQuestion is not used to ask "execute the plan?".
 
-挂起与事件：
+Suspension and events:
 
-- 提问时由 session 发出请求事件，active turn 挂起等待答案；pending user input 存在 turn state 中，用户回答前不会启动额外 continuation。
-- 独立 service 管理 `ask/list/reply/reject`，pending request 用 Deferred 等待；通过 asked/replied/rejected 事件同步 TUI、HTTP API 和 plugin API。
-- API 暴露 list/reply/reject，适合 SDK、远程 UI、插件和自动化接管。
+- On asking, the session emits a request event and the active turn suspends waiting for the answer; the pending user input lives in the turn state, and no extra continuation starts before the user answers.
+- A standalone service manages `ask/list/reply/reject`, and the pending request waits on a Deferred; asked/replied/rejected events synchronize the TUI, HTTP API and plugin API.
+- The API exposes list/reply/reject, suiting takeover by SDK, remote UI, plugins and automation.
 
-交互与输出：
+Interaction and output:
 
-- TUI 把 question prompt 和 permission prompt 分开展示，且 permission 存在时禁用普通输入。
-- 一次显示一个问题，Enter 前进，最后提交；PageUp/PageDown 支持多问题导航；多问题使用 tab + confirm review；单问题单选可以直接回答并关闭。
-- 单选支持 option `preview`，有 preview 时切到选项列表 + 预览面板。
-- “Other” 由客户端自动提供，模型不得自己添加。
-- 输出会把答案、选中 preview 和用户 notes 一起序列化给模型。
+- The TUI displays the question prompt and permission prompt separately, and disables ordinary input when a permission exists.
+- One question is shown at a time, Enter advances and the last submits; PageUp/PageDown supports multi-question navigation; multiple questions use tabs + a confirm review; a single-question single-select can answer directly and close.
+- Single-select supports option `preview`; when a preview exists it switches to an option list + preview panel.
+- "Other" is provided automatically by the client; the model must not add it itself.
+- The output serializes the answer, the selected preview and the user's notes together to the model.
 
-## 设计目标
+## Design goals
 
-1. `AskUserQuestion` 是用户澄清交互，不是普通权限审批。
-2. pending prompt 必须是 session/turn 状态对象，携带 `traceId`、`turnId`、`toolCallId`、`requestId`。
-3. TUI、SDK、远程 channel 使用同一套 reply/reject/cancel 语义。
-4. yolo/自动权限模式不能绕过用户交互；非交互入口必须 fail closed 或在 tool registry 中禁用。
-5. TUI 要优先保证低摩擦：单问题单选最快回答，多问题/多选提供 review。
-6. preview 和 annotation 作为契约能力保留，MVP 可先文本渲染，后续再做富渲染。
-7. AskUserQuestion 出现时接管原来的 composer/input 区域；普通用户输入框被隐藏或禁用，但用户已有 draft 必须保留，问题回答结束后恢复。
+1. `AskUserQuestion` is a user clarification interaction, not an ordinary permission approval.
+2. The pending prompt must be a session/turn state object carrying `traceId`, `turnId`, `toolCallId`, `requestId`.
+3. TUI, SDK and remote channel use the same reply/reject/cancel semantics.
+4. yolo/automatic permission modes cannot bypass user interaction; non-interactive entries must fail closed or disable the tool in the tool registry.
+5. The TUI prioritizes low friction: single-question single-select answers fastest, multi-question/multi-select provide review.
+6. preview and annotation are kept as contract capabilities; the MVP may first render text, with rich rendering later.
+7. When AskUserQuestion appears it takes over the original composer/input area; the ordinary user input box is hidden or disabled, but the user's existing draft must be preserved and restored after the question is answered.
 
-## 推荐架构
+## Recommended architecture
 
-新增或补齐一个 `UserInteractionPort`，不要让 TUI 直接依赖 permission 特例：
+Add or complete a `UserInteractionPort`, and do not let the TUI depend on a permission special case:
 
 ```ts
 interface UserInteractionPrompt {
@@ -109,147 +88,146 @@ interface UserInteractionResult {
 }
 ```
 
-第一阶段可以继续由 `PermissionBroker` 桥接，确保兼容现有 executor：
+The first phase may keep bridging through `PermissionBroker`, ensuring compatibility with the existing executor:
 
-1. `PermissionService` 识别 `requiresUserInteraction`，始终进入交互路径。
-2. `UserInteractionBroker` 发布 `user_interaction_requested`，等待 answer/reject/cancel。
-3. 桥接层把 answer 转成 `PermissionBrokerResult { decision: "modify", modifiedInput }`。
-4. 后续 executor 支持 native user interaction 后，再移除 permission 桥接。
+1. `PermissionService` recognizes `requiresUserInteraction` and always enters the interaction path.
+2. `UserInteractionBroker` publishes `user_interaction_requested` and waits for answer/reject/cancel.
+3. The bridge layer converts the answer into `PermissionBrokerResult { decision: "modify", modifiedInput }`.
+4. After the executor supports native user interaction, the permission bridge is removed.
 
-建议新增事件：
+Suggested new events:
 
 - `user_interaction_requested`
 - `user_interaction_answered`
 - `user_interaction_rejected`
 - `user_interaction_cancelled`
 
-projection 中保存 `pendingUserInteractions`，用于 session resume、SDK list 和 TUI 重绘。
+The projection stores `pendingUserInteractions`, for session resume, SDK list and TUI redraw.
 
-## TUI 交互规格
+## TUI interaction spec
 
-### 面板布局
+### Panel layout
 
-- permission prompt 和 question prompt 分开渲染，但共用 action panel 队列。
-- question prompt 替换底部普通输入框所在区域，而不是追加在输入框之上；此时普通 prompt submit、slash command、history recall、附件粘贴等 composer 行为暂停。
-- 当同时有 permission 和 question 时，permission 优先；question 保持 pending。
-- 单问题单选：不显示 review tab，选择后直接提交。
-- 多问题或多选：显示 header tabs 和最后的 Review/Submit tab。
-- 每个 tab 显示 `header`；已回答 tab 使用完成态标识，未回答保持 dim。
+- The permission prompt and question prompt are rendered separately but share the action panel queue.
+- The question prompt replaces the area of the ordinary bottom input box instead of being appended above it; ordinary composer behaviors such as prompt submit, slash command, history recall and attachment paste pause at that time.
+- When both a permission and a question exist, the permission takes priority; the question stays pending.
+- Single-question single-select: no review tab is shown, and selecting submits directly.
+- Multi-question or multi-select: header tabs and a final Review/Submit tab are shown.
+- Each tab shows its `header`; answered tabs use a completed marker, unanswered ones stay dim.
 
-### 输入焦点模型
+### Input focus model
 
-AskUserQuestion 有自己的内部输入框，主要用于 Other 或后续 notes。它与普通 composer 共享同一条 stdin/key event 管道，但语义不同：
+AskUserQuestion has its own internal input box, mainly for Other or later notes. It shares the same stdin/key event pipeline as the ordinary composer, but with different semantics:
 
-- `screen.input` 中已有的普通 draft 在进入 question prompt 时保持不变，不参与问题回答。
-- question prompt 激活期间，所有可打印字符默认交给 question panel；只有进入 Other/notes 输入态时才写入内部 buffer。
-- 内部输入态的 `Enter` 是接受当前 Other/notes，不是发送普通 prompt。
-- 内部输入态的 `Esc` 先退出内部输入态；主 question 面板上的 `Esc` 才 reject 整个问题。
-- question 结束后，普通 composer 恢复原 draft、光标和附件状态，用户可以继续输入或发送。
-- 如果 turn 被 `Ctrl-C` 取消，pending question 和内部输入 buffer 清理，但普通 composer draft 不应被清空。
+- The ordinary draft already in `screen.input` stays unchanged when entering the question prompt and takes no part in answering.
+- While the question prompt is active, all printable characters go to the question panel by default; they are written to the internal buffer only in the Other/notes input state.
+- `Enter` in the internal input state accepts the current Other/notes; it does not send an ordinary prompt.
+- `Esc` in the internal input state first exits the internal input state; `Esc` on the main question panel rejects the whole question.
+- After the question ends, the ordinary composer restores the original draft, cursor and attachment state, and the user can continue to type or send.
+- If the turn is cancelled by `Ctrl-C`, the pending question and the internal input buffer are cleared, but the ordinary composer draft must not be cleared.
 
-### Composer draft 保留
+### Composer draft preservation
 
-这是 AskUserQuestion 替换输入框时的硬约束：
+This is a hard constraint when AskUserQuestion replaces the input box:
 
-- 替换只影响当前渲染和输入路由，不修改已有 `screen.input`、`draftAttachments`、selection/slash command draft 之外的普通 composer 状态。
-- 如果用户在触发 AskUserQuestion 前已经输入了内容，例如 `please keep this draft`，question 面板关闭后普通输入框必须继续显示同一段内容。
-- Other/notes 的内部输入 buffer 不能复用 `screen.input`，也不能在提交答案时覆盖 `screen.input`。
-- 拒绝问题、回答问题、取消 turn、permission queue 切换和 TUI 重绘都不能清空原 draft。
-- 只有用户在普通 composer 激活时主动提交、清空或编辑，才允许改变原 draft。
+- The replacement affects only the current rendering and input routing and does not modify the existing `screen.input`, `draftAttachments`, or ordinary composer state outside the selection/slash command draft.
+- If the user had already typed content before AskUserQuestion triggered, for example `please keep this draft`, the ordinary input box must keep showing the same content after the question panel closes.
+- The internal input buffer for Other/notes must not reuse `screen.input`, nor overwrite `screen.input` when the answer is submitted.
+- Rejecting the question, answering the question, cancelling the turn, permission queue switching and TUI redraw must not clear the original draft.
+- Only a user's active submit, clear or edit while the ordinary composer is active may change the original draft.
 
-### 键盘
+### Keyboard
 
-- `Up/Down` 或 `k/j`：移动选项。
-- 数字 `1-5`：直接选择对应选项或 Other。
-- 单选：`Enter` 选择当前项；如果只有一个问题则立即提交，否则进入下一题。
-- 多选：`Space` 切换当前项；`Enter` 进入下一题或 Review；至少一个答案后才能提交。
-- `Tab` / `Shift+Tab`：多问题时在问题 tab 和 Review tab 间切换。
-- `PageUp/PageDown`：多问题时上一题/下一题。
-- `o` 或选中 Other 后 `Enter`：进入自定义输入。
-- Other 输入中：`Enter` 接受，`Esc` 取消输入，`Ctrl+U` 清空，`Backspace` 删除。
-- 主面板 `Esc`：reject 本次问题，并生成用户可见的 declined result。
-- `Ctrl-C`：取消当前 turn，通过 abort signal 清理 pending prompt。
+- `Up/Down` or `k/j`: move options.
+- Digits `1-5`: directly select the corresponding option or Other.
+- Single-select: `Enter` selects the current item; with only one question it submits immediately, otherwise it goes to the next question.
+- Multi-select: `Space` toggles the current item; `Enter` goes to the next question or Review; submit only after at least one answer.
+- `Tab` / `Shift+Tab`: with multiple questions switch between question tabs and the Review tab.
+- `PageUp/PageDown`: with multiple questions, previous/next question.
+- `o` or `Enter` after selecting Other: enter custom input.
+- In Other input: `Enter` accepts, `Esc` cancels input, `Ctrl+U` clears, `Backspace` deletes.
+- Main panel `Esc`: reject this question and generate a user-visible declined result.
+- `Ctrl-C`: cancel the current turn and clear the pending prompt through the abort signal.
 
-### Other 与 annotations
+### Other and annotations
 
-- UI 永远自动提供 Other，schema 继续禁止模型显式添加 `Other` option。
-- 单选 Other 提交为该问题唯一答案。
-- 多选 Other 作为一个答案项并参与逗号拼接。
-- 选中带 `preview` 的 option 时，回填 `annotations[question].preview`。
-- 后续可以增加 notes 输入，回填 `annotations[question].notes`；第一版不强制。
+- The UI always provides Other automatically; the schema keeps forbidding the model from adding an `Other` option explicitly.
+- A single-select Other is submitted as the only answer of that question.
+- A multi-select Other counts as one answer item and takes part in comma joining.
+- When an option with `preview` is selected, `annotations[question].preview` is filled back.
+- A notes input may be added later, filling back `annotations[question].notes`; not required in the first version.
 
 ### Preview
 
-MVP：
+MVP:
 
-- markdown/html preview 都先作为纯文本框展示。
-- 单选问题且当前 option 有 `preview` 时，在选项列表下方展示当前选项的纯文本
-  preview，并在提交该选项时回填 `annotations[question].preview`。
-- multiSelect 问题暂不展示 preview，并在 schema/prompt 中继续建议不要对 multiSelect 使用 preview。
+- Both markdown/html previews are first shown as a plain-text box.
+- For a single-select question where the current option has a `preview`, the plain-text preview of the current option is shown below the option list, and `annotations[question].preview` is filled back when that option is submitted.
+- A multiSelect question does not show preview for now, and the schema/prompt keep advising against using preview with multiSelect.
 
-后续：
+Later:
 
-- markdown 使用现有终端 markdown renderer。
-- HTML preview 必须先经过 fragment validation，再考虑 sandbox/fallback rendering。
+- markdown uses the existing terminal markdown renderer.
+- HTML preview must first go through fragment validation, then consider sandbox/fallback rendering.
 
-## 非交互与远程行为
+## Non-interactive and remote behavior
 
-- `--prompt`、后台任务、无 TTY、无 broker 的入口默认不暴露 `AskUserQuestion`，或执行时返回 `interaction_unavailable`。
-- 远程 channel 如果无法把问题 relay 给用户，应禁用该 tool。
-- SDK/HTTP/插件入口应暴露 pending list/reply/reject，而不是让宿主进程解析 permission prompt。
-- subagent 默认不允许 `AskUserQuestion`，除非未来有 parent-mediated interaction 设计。
+- Entries with `--prompt`, background tasks, no TTY or no broker do not expose `AskUserQuestion` by default, or return `interaction_unavailable` when executed.
+- If a remote channel cannot relay the question to the user, the tool should be disabled.
+- SDK/HTTP/plugin entries should expose pending list/reply/reject instead of letting the host process parse the permission prompt.
+- A subagent does not allow `AskUserQuestion` by default, unless a parent-mediated interaction design appears in future.
 
-## 实施阶段
+## Implementation phases
 
-### Phase 0：锁定现状
+### Phase 0: Lock the current state
 
-- 补一组当前 MVP 的快照测试，证明单选、多选、Other、Esc 拒绝能工作。
-- 明确现有 `PermissionBroker` 桥接只是临时路径，在 spec 中标注迁移目标。
+- Add a set of snapshot tests of the current MVP proving single-select, multi-select, Other and Esc reject work.
+- State clearly that the existing `PermissionBroker` bridge is only a temporary path, and mark the migration target in the spec.
 
-### Phase 1：补 interaction contract
+### Phase 1: Add the interaction contract
 
-- 在 contracts 中新增 user interaction request/result schema 和事件 payload。
-- session projection 增加 `pendingUserInteractions`。
-- core 增加 user interaction broker，默认 deny/unavailable，支持 abort signal 和 timeout。
-- permission bridge 保持兼容：answer -> `modify`，reject/cancel -> deny/error。
+- Add user interaction request/result schema and event payloads in contracts.
+- The session projection adds `pendingUserInteractions`.
+- Core adds a user interaction broker, default deny/unavailable, supporting abort signal and timeout.
+- The permission bridge stays compatible: answer -> `modify`, reject/cancel -> deny/error.
 
-### Phase 2：补完整 TUI prompt
+### Phase 2: Complete the TUI prompt
 
-- 将 `QuestionPromptState` 从 approval state 中拆成独立渲染模型，或至少建立清晰 adapter。
-- 增加 tab/review、多问题跳转、数字快捷键、`j/k`、`PageUp/PageDown`。
-- 保持现有单问题快速路径，避免最常见场景变重。
-- TUI action panel 只处理队首交互，普通输入在 pending 期间禁用。
+- Split `QuestionPromptState` out of the approval state into a standalone render model, or at least build a clear adapter.
+- Add tab/review, multi-question jump, number shortcuts, `j/k`, `PageUp/PageDown`.
+- Keep the existing single-question fast path so the most common scenario does not get heavier.
+- The TUI action panel handles only the head-of-queue interaction, and ordinary input is disabled while pending.
 
-### Phase 3：preview 与 annotation
+### Phase 3: preview and annotation
 
-- 渲染文本 preview 面板。
-- 选择 option 时记录 preview annotation。
-- tool result 和 transcript 中展示 answer summary，不把大 preview 全量刷屏；模型内容仍按 budget 序列化。
+- Render the text preview panel.
+- Record the preview annotation when an option is selected.
+- The tool result and transcript show an answer summary and do not flood the screen with large previews; model content is still serialized by budget.
 
-### Phase 4：恢复与外部入口
+### Phase 4: Recovery and external entries
 
-- session event log 持久化 requested/answered/rejected/cancelled。
-- resume 后重建 pending prompt，已取消的 prompt 不重新等待。
-- SDK/HTTP/plugin 暴露 `listPendingUserInteractions`、`answerUserInteraction`、`rejectUserInteraction`。
+- The session event log persists requested/answered/rejected/cancelled.
+- After resume rebuild the pending prompt; an already cancelled prompt does not wait again.
+- SDK/HTTP/plugin expose `listPendingUserInteractions`, `answerUserInteraction`, `rejectUserInteraction`.
 
-### Phase 5：清理 permission 耦合
+### Phase 5: Clean up permission coupling
 
-- executor 原生支持 `requiresUserInteraction` tool 的 defer/wait/continue。
-- `AskUserQuestion` 不再依赖 permission decision 表达答案回填。
-- permission UI 只服务权限，question UI 只服务澄清。
+- The executor natively supports defer/wait/continue for `requiresUserInteraction` tools.
+- `AskUserQuestion` no longer depends on a permission decision to express answer fill-back.
+- The permission UI serves only permission, the question UI serves only clarification.
 
-## 测试计划
+## Test plan
 
-最低测试集：
+Minimum test set:
 
-- contract：问题数量 1-4、选项数量 2-4、重复 question、重复 label、禁止 Other。
-- core：缺少 `answers` 字段时执行失败；显式 `answers: {}`、部分答案和完整答案均执行成功；reject/cancel 不执行 handler；yolo 不自动 allow。
-- broker：answer/reject/cancel/timeout/abort 都清理 pending 并保留 trace 信息。
-- TUI：单选快速提交；每题可跳过且末题允许以 `answers: {}` 提交；多选 Space 切换；Other 输入/取消/清空；多问题 tab/review；Esc reject；Ctrl-C cancel；AskUserQuestion 结束后恢复进入前已有的 composer draft。
-- preview：选择带 preview 的 option 后回填 annotation；超长 preview 被截断显示但不丢模型预算规则。
-- resume：恢复 session 后 pending prompt 仍可回答；已回答 prompt 不重复显示。
-- 非交互：无 TTY 或无 broker 时返回结构化 unavailable，不悬挂。
+- contract: 1-4 questions, 2-4 options, duplicate question, duplicate label, forbidding Other.
+- core: execution fails when the `answers` field is missing; explicit `answers: {}`, partial and full answers all execute successfully; reject/cancel does not execute the handler; yolo does not auto-allow.
+- broker: answer/reject/cancel/timeout/abort all clear pending and keep trace information.
+- TUI: single-select quick submit; every question can be skipped and the last question may submit with `answers: {}`; multi-select Space toggle; Other input/cancel/clear; multi-question tab/review; Esc reject; Ctrl-C cancel; after AskUserQuestion ends, the composer draft that existed before entering is restored.
+- preview: after selecting an option with preview, the annotation is filled back; an over-long preview is truncated for display without losing the model budget rule.
+- resume: after restoring a session the pending prompt can still be answered; an answered prompt is not shown again.
+- non-interactive: with no TTY or no broker a structured unavailable is returned, without hanging.
 
-## 优先级建议
+## Priority suggestion
 
-先做 Phase 0-2，得到可用且好测的 TUI；再做 Phase 3 的 preview。Phase 4-5 是架构收口，和 SDK/远程入口价值强相关，可以在第一版可用后拆独立功能级提交。
+Do Phase 0-2 first to get a usable and testable TUI; then Phase 3 preview. Phase 4-5 are architecture closure strongly tied to the value of SDK/remote entries, and can be split into separate feature-level commits after the first version is usable.

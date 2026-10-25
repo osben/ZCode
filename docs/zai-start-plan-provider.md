@@ -1,44 +1,40 @@
 # Z.AI / BigModel Start Plan Provider
 
-## 当前 Provider 架构（Todo154：Start 独立）
+## Current Provider architecture (Todo154: Start is independent)
 
-账号选择继续保存 `providerFamilyDomain` 与 `providerFamilyConnectionSelections`；不增加迁移。
-Account Source 每轮同时发布账号状态（availability/current/effectiveAt）及 Config Overlay
-（entitled/动态模型成员），Settings 和 Registry 消费同一 revision。Off-Peak 沿用静态 hidden，
-不设置 current；普通 Personal/Template Provider 也不受 current 限制。
+Account selection keeps saving `providerFamilyDomain` and `providerFamilyConnectionSelections`; no
+migration is added. Each round the Account Source publishes both the account state
+(availability/current/effectiveAt) and the Config Overlay (entitled / dynamic model members), and
+Settings and Registry consume the same revision. Off-Peak keeps its static hidden and sets no
+current; ordinary Personal/Template Providers are not restricted by current.
 
 ```text
-账号查询 + Family 选择
-  -> Account 状态 + Overlay（同轮）
-     -> Settings：可查看 available/pending
-     -> Registry：匹配当前账号访问上下文 + entitled + 完整且启用的模型
+account query + Family selection
+  -> Account state + Overlay (same round)
+     -> Settings: can view available/pending
+     -> Registry: matches current account access context + entitled + complete, enabled models
 ```
 
-Start 余额查询与个人 Coding Plan 查询独立；Team 需要具体组织/项目身份，不能猜某个团队。
-待生效为 pending/entitled=false，保留 Unix 秒 effectiveAt；已生效但无模型仍 entitled=true，
-模型成员为空，不沿用旧白名单。查询未知只保留同一账号/Team 的最近成功结果。
-非法连接只提示并回到可操作的设置入口，不改写保存的 Family 选择，也不替换会话模型。
-领取结果默认只打开模型设置，不切换 Start；此前的自动“立即体验”不属于固定 staging 默认行为。
+- The Start balance query is independent of the personal Coding Plan query. Team needs a concrete org/project identity; a team is never guessed.
+- Pending is `pending`/`entitled=false` and keeps the Unix-seconds `effectiveAt`. Effective but with no models is still `entitled=true` with empty model members and does not reuse the old allowlist. An unknown query keeps only the last successful result of the same account/Team.
+- An invalid connection only prompts and returns to an actionable settings entry; it does not rewrite the saved Family selection or replace the session model.
+- A claim result opens model settings by default and does not switch to Start. The earlier automatic "use now" is not default staging behavior.
+- Start follows the current App login and needs no separate connection. `current` means matching the account access context: Start and the current personal/team plan of the same brand may both be true; Start's connectionKey does not include the paid-plan selection. Expiry, unknown state and disabled models still follow the original entitlement and Registry checks; login does not auto-claim.
+- Settings lists a standalone `Start Plan` beside the "智谱" (Zhipu) group. Both brands share the user-provided Z icon (`model-provider-start-plan.png`, same original image for light and dark themes) and keep the original `account:*` ids; personal/team plans keep their brand icons. Start detail keeps entitlement, quota, claim and model management, and drops connect/disconnect and the paid-connection dropdown; browsing and claiming never change the paid connection.
+- In the model picker, both brands' trial-plan group title is `Start Plan` with a pill label ("免费" in Chinese, "Free" in English). Chat, scheduled tasks, subagents and Wiki use the same display rule. The group keeps the real model list and capability tags and does not change Provider/model selection values.
+- A saved Start selection resolves exactly by original Provider id, model and options, never across brands and never falling back to paid quota. Personal/team still map by the current single paid connection. Historical sessions, tasks, Automation, Subagent, Bot and Wiki are not batch-rewritten; Session keeps its write-back after a successful run. The legacy `kind: start-plan` is still read, but startup no longer activates Start by writing it.
+- In-conversation model-switch dividers, first-use hints and the matching toast label BigModel/Z.ai account-plan models as `<model name>(<plan type>)` with plan types 个人套餐 (personal), 体验套餐 (trial), 团队套餐 (team), e.g. `GLM-5.3(团队套餐) → GLM-5.3(体验套餐)`, so same-name models stay distinguishable by quota source. The type comes from the hint's recorded before/after Provider ids, never the current global connection or composer draft; built-in plans are still recognized when the Provider is no longer in the current catalog. Plan names are translated with the UI language, ordinary custom providers keep the original naming rule, desktop and mobile share the display logic, and history needs no migration.
+- Recommendation: on submitting a new message, saving a scheduled task after creating/changing its model, manual Wiki generation, and saving an explicit Subagent model, if the effective selection is a paid model and Start has the same, thinking-compatible, executable model with a clear positive quota, recommend the trial plan. Unknown quota or query failure skips it, and submission never waits for a forced quota refresh. "切换套餐" (switch plan) remembers the Start selection for that entry at the original submit/save boundary; "不了" (no thanks) continues with the original selection; closing keeps the draft and does not run the action.
+- The recommendation dialog footer puts "不再提示" (don't show again) on the left and the "不了 / 切换套餐" button group on the right, vertically centered on one row; when narrow screens or longer translations lack room, the button group wraps as a whole and stays right-aligned.
+- `startPlanRecommendationDismissed` is a unified persisted preference of the current App/Host. Ticking "不再提示" and confirming either button only turns off the recommendation; each entry keeps using its own saved model. Closing the dialog does not save the tick. Another entry, or a mobile phone connected to the same Host, rereads the preference on its next submit. Real quota/auth errors still show; no cross-Host account cloud sync is added.
+- Not prompted: Bot, background execution, task-list "run now", dequeue of an existing queue, retry, Wiki failure-page fill-in, Subagent inherit / thinking-only or text-only edits. The global account-connection-invalid hint observes only paid connections; Start keeps its own quota and unavailable feedback.
 
-Start 跟随当前 App 登录，无需单独连接。`current` 表示匹配账号访问上下文：同一品牌的 Start 与当前个人／团队可以同时为 true；Start 的 connectionKey 不包含付费套餐选择。到期、未知、模型禁用等仍按原权益及 Registry 校验，登录不代表自动领取。
+Full boundaries and acceptance SIP-01..21: [Todo154](working-memory/provider-refactor/steps/todo-154-start-plan-independent-provider.md).
 
-设置页在“智谱”分组并列显示独立 `Start Plan`，两家共用用户提供的 Z 字图标（`model-provider-start-plan.png`，深浅主题使用同一原图），保留原 `account:*` ID；个人／团队套餐继续使用各自品牌图标。Start 详情保留权益、额度、领取和模型管理，移除连接／断开以及付费连接下拉；浏览和领取不改变付费连接。
+`builtin:*` ids in the legacy interface notes below are the pre-migration identity; they now correspond
+to `account:*`, and the old Provider Store must not be restored.
 
-模型选择菜单中，两家体验套餐分组标题统一为 `Start Plan`，胶囊标签中文显示“免费”、英文显示“Free”；聊天、定时任务、子智能体和 Wiki 使用同一展示规则。分组内保留实际模型列表和原有能力标签，不改变 Provider／模型选择值。
-
-保存的 Start 选择按原 Provider ID、模型和选项精确解析，不跨品牌映射，不回退到付费额度。个人／团队继续按当前唯一付费连接映射。历史会话、任务、Automation、Subagent、Bot 和 Wiki 不批量改写，Session 沿用成功执行后的原有写回；旧 `kind: start-plan` 保留读取，启动不再通过写入它激活 Start。
-
-会话内的模型切换分隔提示、首次使用提示及对应切换 toast，对 BigModel／Z.ai 的账号套餐模型使用 `模型名(套餐类型)`：个人套餐、体验套餐、团队套餐。例如 `GLM-5.3(团队套餐) → GLM-5.3(体验套餐)`，即使模型同名也能区分额度来源。类型分别取提示记录的前后 Provider ID，不读取当前全局连接或输入框草稿；Provider 已不在当前目录时仍可识别内置套餐。套餐名称随界面语言翻译，普通自定义供应商继续使用原名称规则；桌面和手机使用相同展示逻辑，历史数据无需迁移。
-
-用户提交新消息、创建／修改模型后保存定时任务、手动生成 Wiki，以及保存显式 Subagent 模型时，若当前有效选择为付费模型、Start 有相同且思考选项兼容的可执行模型及明确正额度，可推荐使用体验套餐。额度未知或查询失败跳过，不为提交等待一次强制额度刷新。用户点“切换套餐”后按原提交／保存边界记住本入口的 Start 选择；点“不了”继续原选择；关闭则保留草稿、不执行本次操作。
-
-推荐弹窗底部将“不再提示”放在左侧，“不了／切换套餐”按钮组放在右侧，同排垂直居中；窄屏或较长翻译导致空间不足时，按钮组整体换行并保持右对齐。
-
-`startPlanRecommendationDismissed` 是当前 App／Host 的统一持久化偏好。勾选“不再提示”并确认任一按钮只关闭推荐，各入口下次仍使用自己保存的模型；关闭弹窗不保存勾选。另一入口或连接同 Host 的手机在下次提交时重新读取该偏好。实际额度／鉴权错误照常提示，不增加跨 Host 的账号云同步。
-
-Bot、后台执行、任务列表“立即运行”、已有队列出队、重试、Wiki 失败页补齐、Subagent 继承／仅思考或文本修改不提示。全局账号连接失效提示只观察付费连接，Start 保留自身额度和不可用反馈。完整边界与 SIP-01～21 验收见 [Todo154](working-memory/provider-refactor/steps/todo-154-start-plan-independent-provider.md)。
-
-以下旧接口说明中的 `builtin:*` 是迁移前身份；当前对应 `account:*`，不得恢复旧 Provider Store。
+## Provider ids, endpoint and balance API
 
 Start Plan is represented by dedicated built-in model provider ids:
 
@@ -47,14 +43,12 @@ builtin:zai-start-plan
 builtin:bigmodel-start-plan
 ```
 
-Both providers intentionally reuse the same `zcode-plan` runtime endpoint and
-free model set. OAuth preset sync derives each Start Plan provider from its own
-brand login domain, so runtime model calls can continue to use the same
-`zcode-plan` endpoint while keeping credentials isolated by provider id.
+Both intentionally reuse the same `zcode-plan` runtime endpoint and free model set. OAuth preset
+sync derives each Start Plan provider from its own brand login domain, so runtime model calls use the
+same `zcode-plan` endpoint while credentials stay isolated by provider id.
 
-Status checks are separate from paid Coding Plan checks. `builtin:zai-start-plan`
-reads the active free plan identity and the daily quota bucket renewal time from
-one balance request:
+Status checks are separate from paid Coding Plan checks. `builtin:zai-start-plan` reads the active
+free plan identity and the daily quota bucket renewal time from one balance request:
 
 ```http
 GET https://zcode.z.ai/api/v1/zcode-plan/billing/balance?app_version=<ZCODE_VERSION>
@@ -63,65 +57,83 @@ Authorization: Bearer <zcodejwttoken>          # BigModel
 X-Device-Mid: <telemetry-state.json deviceMid>  # required; missing -> 400 {"code":3001,"msg":"parameter error"}
 ```
 
-`X-Device-Mid` is required by the backend for this endpoint even though it is an
-optional field in the generic source-header rules. Every runtime that issues
-this request (Desktop host, remote `zcode-server`, CLI) must therefore ensure
-its own `deviceMid` exists before the first balance query; see
-`docs/zcode-endpoint-device-mid-header.md`. A `400 parameter error` here is
-classified as `unknown` availability and disables executable Start models, so a
-missing header must never be treated as a backend outage.
+`X-Device-Mid` is required by the backend for this endpoint even though it is optional in the generic
+source-header rules. Every runtime that issues this request (Desktop host, remote `zcode-server`,
+CLI) must ensure its own `deviceMid` exists before the first balance query; see
+`docs/zcode-endpoint-device-mid-header.md`. A `400 parameter error` here is classified as `unknown`
+availability and disables executable Start models, so a missing header must never be treated as a
+backend outage.
 
-`billing/current` is deprecated for Start Plan. The `balance` response must
-include `data.plans` for active-plan detection and subscription metadata, plus
-`data.balances` for quota/remaining display. Clients must not call `current`
-before `balance` or issue a second `balance` request for the same snapshot.
+`billing/current` is deprecated for Start Plan. The `balance` response must include `data.plans` for
+active-plan detection and subscription metadata, plus `data.balances` for quota/remaining display.
+Clients must not call `current` before `balance` or issue a second `balance` request for the same
+snapshot. `app_version` always uses the current app `ZCODE_VERSION`, including development builds.
 
-`app_version` always uses the current app `ZCODE_VERSION`, including development
-builds, so backend gating observes the same version identity as the running app.
-
-`zcodejwttoken` is the OAuth backend JWT saved during Z.AI or BigModel login.
-BigModel passes the one-time callback `code` directly to
-`https://zcode.z.ai/api/v1/oauth/token` with `state`, `redirect_uri`, and
-`provider: "bigmodel"` to save the same JWT shape used by Z.AI Start Plan.
-Paid Coding Plan providers continue to use `/api/biz/subscription/list`;
-monitor quota APIs remain reserved for Coding Plan usage/limit views.
+`zcodejwttoken` is the OAuth backend JWT saved during Z.AI or BigModel login. BigModel passes the
+one-time callback `code` directly to `https://zcode.z.ai/api/v1/oauth/token` with `state`,
+`redirect_uri` and `provider: "bigmodel"` to save the same JWT shape used by Z.AI Start Plan. Paid
+Coding Plan providers keep using `/api/biz/subscription/list`; monitor quota APIs stay reserved for
+Coding Plan usage/limit views.
 
 ## Independent Selection And Availability
 
-Start is a permanent Provider entry for the current login brand, independent of the paid connection selection. No active entitlement, a failed query or pending activation changes the status panel, not the existence of this entry. The executable model menu remains controlled by Account Source and Registry; an unavailable Start never falls back to paid quota.
+Start is a permanent Provider entry for the current login brand, independent of the paid connection
+selection. No active entitlement, a failed query or pending activation changes the status panel, not
+the existence of the entry. The executable model menu stays controlled by Account Source and
+Registry; an unavailable Start never falls back to paid quota.
 
 - Composer quota follows the effective Provider/model in that composer. Start does not require a saved `kind: start-plan`; paid quota still uses the exact personal/team scope.
 - Unresolved legacy team identity blocks that paid access only; it does not stop Start entitlement discovery.
 - Paid connection selection uses the saved/pending family selection and exact org/project/product identity, not a copied navigation item's `provider.current`. No matching choice displays the normal placeholder; a sole unselected option remains actionable.
 - Start details reuse the existing loading text/spinner, active/pending subscription cards, quota buckets, zero-balance presentation, reset time and model management. There is no new skeleton, exhausted warning, persistent refresh-failure overlay or status-dot color system.
 - Signed-out Start offers login; conclusive no-plan shows no available trial plan and the existing introduction/eligible campaign. A first query failure offers retry, explicit auth expiry offers login, and configuration-unavailable is reserved for actual missing configuration. Silent refresh retains existing data only under the existing cache/error rules.
-- Claim success remains success if subsequent refresh fails. The settings action is “查看套餐 / View plan”; no automatic model guide or implicit model/paid-connection mutation remains.
+- Claim success remains success if the subsequent refresh fails. The settings action is "查看套餐 / View plan"; no automatic model guide or implicit model/paid-connection mutation remains.
 
 ### Recommendation freshness and account changes
 
-Recommendation, settings and composer balance use the same Start request/cache identity for the same Host/account/Provider. Reuse the existing Provider entitlement fingerprint, refresh events and UsageEntitlement cache; do not introduce another balance owner. Settings refresh publishes new quota to the recommendation consumer.
+Recommendation, settings and composer balance use the same Start request/cache identity for the same
+Host/account/Provider. Reuse the existing Provider entitlement fingerprint, refresh events and
+UsageEntitlement cache; do not introduce another balance owner. Settings refresh publishes new quota
+to the recommendation consumer.
 
-Page entry and interactive submission perform an access refresh check with the existing 60-second throttle, in-flight merging and error backoff. Account/claim changes use the existing auth/purchase refresh path. No idle polling is introduced.
+Page entry and interactive submission perform an access refresh check with the existing 60-second
+throttle, in-flight merging and error backoff. Account/claim changes use the existing auth/purchase
+refresh path. No idle polling is introduced.
 
-Only a successful snapshot sampled at most 60 seconds ago can support a recommendation. Reading or remounting does not renew its age. At submission time, add elapsed local time since sampling to the server reference time before checking bucket expiration. An expired bucket never supports a recommendation, even in a fresh snapshot. Missing/stale quota triggers background refresh and this submission proceeds with its original selection, without waiting or later resending. Query failures skip recommendations; they do not extend old positive quota validity. This limit applies to recommendation decisions, not automatic clearing of visible plan cards.
+Only a successful snapshot sampled at most 60 seconds ago can support a recommendation. Reading or
+remounting does not renew its age. At submission time, add elapsed local time since sampling to the
+server reference time before checking bucket expiration. An expired bucket never supports a
+recommendation, even in a fresh snapshot. Missing/stale quota triggers a background refresh and this
+submission proceeds with its original selection, without waiting or later resending. Query failures
+skip recommendations and do not extend old positive quota validity. This limit applies to
+recommendation decisions, not to automatic clearing of visible plan cards.
 
 ```text
-account/claim change → existing entitlement refresh → shared quota snapshot
-page entry/submit  → access freshness check ────────↗
-submission → fresh snapshot + valid bucket + compatible same-model quota?
-  yes → existing recommendation/choice → original owner commit
-  no  → original selection commits; quota refresh stays in background
+account/claim change -> existing entitlement refresh -> shared quota snapshot
+page entry/submit  -> access freshness check -----------^
+submission -> fresh snapshot + valid bucket + compatible same-model quota?
+  yes -> existing recommendation/choice -> original owner commit
+  no  -> original selection commits; quota refresh stays in background
 ```
 
 ### Side conversation first input
 
-`/side <text>` is also an interactive first submission. Resolve the child-inherited effective model before recommendation; never substitute an unsubmitted parent composer draft. `createSelectionSideSession.firstInput` accepts optional complete `modelSelection`, used for the child creation and first input, preserving reasoning options. Old text-only payloads keep their existing inheritance. Cancel keeps the inherited selection; closing the recommendation leaves the draft and sends no create command. Empty `/side` only opens a child and does not recommend.
+`/side <text>` is also an interactive first submission. Resolve the child-inherited effective model
+before recommendation; never substitute an unsubmitted parent composer draft.
+`createSelectionSideSession.firstInput` accepts an optional complete `modelSelection`, used for the
+child creation and first input, preserving reasoning options. Old text-only payloads keep their
+existing inheritance. Cancel keeps the inherited selection; closing the recommendation leaves the
+draft and sends no create command. Empty `/side` only opens a child and does not recommend.
 
-The existing atomic creation/first-input command, command id, admission and ACK own execution and deduplication. Parent model/queue and global paid connection remain unchanged. Desktop continuous and mobile replayable still use the same owner and original recovery paths. Accepted regressions are SF-01 through SF-19 in [Todo156](working-memory/provider-refactor/steps/todo-156-start-plan-followup-final-decisions.md).
+The existing atomic creation/first-input command, command id, admission and ACK own execution and
+deduplication. Parent model/queue and global paid connection remain unchanged. Desktop continuous and
+mobile replayable still use the same owner and original recovery paths. Accepted regressions
+SF-01..SF-19: [Todo156](working-memory/provider-refactor/steps/todo-156-start-plan-followup-final-decisions.md).
 
-The settings status panel uses the Start Plan provider identity to present a
-free-plan state with a paid Coding Plan upgrade entry. The panel projection is
-multi-plan aware:
+## Settings status panel
+
+The settings status panel uses the Start Plan provider identity to present a free-plan state with a
+paid Coding Plan upgrade entry. The panel projection is multi-plan aware:
 
 ```text
 billing/balance (server priority order)
@@ -141,96 +153,61 @@ billing/balance (server priority order)
 
 Field contract (server guaranteed, no legacy fallbacks on the client):
 
-- every `plans[]` entry carries `plan_id`, `status`, and `ends_at`
+- every `plans[]` entry carries `plan_id`, `status` and `ends_at`
 - every `balances[]` entry carries `plan_id` and `expires_at`
-- every `balances[]` bucket belongs to an active `plans[]` entry: the server
-  must not return buckets whose `plan_id` is missing or maps to a non-active
-  plan. The provider logs a tripwire warn
-  (`warnOnUnattributedStartPlanBuckets`) when this contract is violated,
-  because the settings multi-card path silently drops such buckets while the
-  chat input bubble still shows them.
-- Plan card grouping still uses `plan_id`; reset labels use `expires_at`,
-  without falling back to `period_end`. Bucket reminders additionally preserve
-  `bucket_id`, `user_plan_id`, `period_start`, and `period_end`: the bucket and
-  period identify a single reminder, while `user_plan_id` joins the entitlement
-  period label for the exact user-plan instance. See `start-plan-daily-quota-banner.md`.
+- every `balances[]` bucket belongs to an active `plans[]` entry: the server must not return buckets whose `plan_id` is missing or maps to a non-active plan. The provider logs a tripwire warn (`warnOnUnattributedStartPlanBuckets`) when this is violated, because the settings multi-card path silently drops such buckets while the chat input bubble still shows them.
+- Plan card grouping uses `plan_id`; reset labels use `expires_at`, without falling back to `period_end`. Bucket reminders additionally preserve `bucket_id`, `user_plan_id`, `period_start` and `period_end`: the bucket and period identify a single reminder, while `user_plan_id` joins the entitlement period label for the exact user-plan instance. See `start-plan-daily-quota-banner.md`.
 
-- Active plans are rendered in the exact order returned by `data.plans`; the
-  client must not sort them again because the server has already applied
-  product priority.
-- Every plan reuses the existing Plan Card surface and shows its own remote
-  name, `ends_at`, and quota buckets.
-- A bucket belongs to a card only when its `plan_id` matches that plan. A bucket
-  without a matching `plan_id` is not attached to any card; the client must not
-  fall back to plan-less buckets, otherwise the same bucket would be copied
-  into every card.
-- Each quota bucket formats its own `expires_at` as its reset time; a
-  plan-level or earliest reset time must never be copied to sibling buckets.
-  Start Plan cards do not render a plan-level renew time at all. The chat
-  input toolbar context balance bubble follows the same rule: every meter reads
-  only its own bucket's `expires_at` (`limit.nextResetTime`), never the
-  aggregated `remaining.nextResetTime` or the plan-level renew time. Bucket
-  reset time formatting is aligned with Coding Plan through the shared
-  `formatQuotaResetTime({ format: "adaptive" })`: same-day resets render
-  `HH:mm` only, other-day resets render the date only.
-- The read-only Models section remains outside all plan cards at the bottom of
-  the provider detail. Its content is the case-insensitive union of model
-  capabilities from all returned buckets, preserving first occurrence order.
-- This presentation does not change balance fetching, provider selection,
-  runtime routing, or model synchronization. The entitlement snapshot only
-  preserves the plan/bucket identity already present in the same balance
-  response so the settings UI can render the correct grouping.
+Presentation rules:
 
-Telemetry identity impact: `subscription.details` now carries all active plans
-in server priority order, so the `plan_product_id` reported by `send_btn`
-telemetry reads `details[0]` — the highest-priority active plan. Server-side
-reordering intentionally flips this id. See
-`docs/monitoring/business-monitoring.md` for the reporting contract.
+- Active plans render in the exact order returned by `data.plans`; the client must not sort again because the server applied product priority.
+- Every plan reuses the existing Plan Card surface and shows its own remote name, `ends_at` and quota buckets.
+- A bucket belongs to a card only when its `plan_id` matches that plan. A bucket without a matching `plan_id` attaches to no card; the client must not fall back to plan-less buckets, or the same bucket would be copied into every card.
+- Each quota bucket formats its own `expires_at` as its reset time; a plan-level or earliest reset time is never copied to sibling buckets. Start Plan cards render no plan-level renew time. The chat input toolbar context balance bubble follows the same rule: every meter reads only its own bucket's `expires_at` (`limit.nextResetTime`), never the aggregated `remaining.nextResetTime` or the plan-level renew time. Reset time formatting is aligned with Coding Plan through the shared `formatQuotaResetTime({ format: "adaptive" })`: same-day resets render `HH:mm` only, other-day resets render the date only.
+- The read-only Models section stays outside all plan cards at the bottom of the provider detail. Its content is the case-insensitive union of model capabilities from all returned buckets, in first-occurrence order.
+- This presentation does not change balance fetching, provider selection, runtime routing or model synchronization. The entitlement snapshot only preserves the plan/bucket identity already in the same balance response.
 
-The shared Plan Card behavior remains:
+Telemetry identity: `subscription.details` carries all active plans in server priority order, so the
+`plan_product_id` reported by `send_btn` telemetry reads `details[0]`, the highest-priority active
+plan. Server-side reordering intentionally flips this id. See `docs/monitoring/business-monitoring.md`.
+
+Shared Plan Card behavior:
 
 - title: `{provider} - Start Plan`
-- purchased metadata: `Start Free` badge and the plan expire time from
-  `balance.data.plans[].ends_at`, rendered as a date only (year omitted for the
-  current year). Bucket reset times come only from each bucket's `expires_at`.
-- upgrade button is shown; pricing cards remain hidden until the user clicks
-  upgrade
-- manage and unlink actions are both hidden for Start Plan plan cards: the
-  free tier has no management page and the login state is managed at the
-  family connection level; the card keeps only the expiry date and the
-  upgrade-to-Coding-Plan action (with its billing-discount badge)
+- purchased metadata: `Start Free` badge and the plan expire time from `balance.data.plans[].ends_at`, rendered as a date only (year omitted for the current year). Bucket reset times come only from each bucket's `expires_at`.
+- the upgrade button is shown; pricing cards stay hidden until the user clicks upgrade
+- manage and unlink actions are both hidden for Start Plan plan cards: the free tier has no management page and the login state is managed at the family connection level; the card keeps only the expiry date and the upgrade-to-Coding-Plan action (with its billing-discount badge)
 
-The settings detail form does not expose manual connection fields for Start
-Plan. `Base URL`, `API Format`, and `API Key` are replaced by a Start Plan card,
-because those values are maintained by OAuth/preset sync and should not look
-user-editable.
+The settings detail form exposes no manual connection fields for Start Plan. `Base URL`, `API Format`
+and `API Key` are replaced by a Start Plan card, because OAuth/preset sync maintains those values and
+they must not look user-editable.
 
-Start Plan 的模型目录仍由 `billing/balance` 与 `client/configs.builtinModels`
-共同管理，用户不能新增、删除或改名模型，也不能修改最大输出 Token、输入/输出模态等
-服务端模型事实。模型行只开放两项本地操作：
+The Start Plan model catalog stays managed jointly by `billing/balance` and
+`client/configs.builtinModels`; users cannot add, delete or rename models, nor change server-owned
+model facts such as max output tokens or input/output modalities. A model row opens only two local
+operations:
 
-- 修改上下文窗口；保存后的用户值必须在 provider 刷新时保留，并传入 runtime registry。
-- 测试当前模型连通性；测试继续使用 Start Plan 当前凭据和固定 endpoint。
+- Edit the context window; the saved user value must survive provider refresh and be passed to the runtime registry.
+- Test the model's connectivity; the test keeps using the current Start Plan credential and the fixed endpoint.
 
-因此设置页必须保持模型 ID 只读、隐藏新增/删除入口，并在受限编辑弹窗中只渲染上下文
-窗口字段。远端刷新仍可更新模型清单及上下文之外的 metadata；若模型已不在 entitlement
-权威清单中，应照常移除，不得因为本地修改过上下文而继续保留。
+So Settings keeps model ids read-only, hides add/delete entries, and renders only the context-window
+field in a restricted edit dialog. Remote refresh may still update the model list and metadata other
+than context; a model no longer in the authoritative entitlement list is removed as usual and not
+kept because its context was edited locally.
 
 ## Signed-out Preview
 
-When a user opens either Start Plan entry before logging in, the settings panel
-shows the free Start Plan preview followed by the paid Coding Plan pricing
-cards:
+When a user opens either Start Plan entry before logging in, the settings panel shows the free Start
+Plan preview followed by the paid Coding Plan pricing cards:
 
 ```tsx
 <StartPlanCard />
 <CodingPlanPricingCards />
 ```
 
-Both sections read from the same unauthenticated client config endpoint, and the
-service layer must share one `client/configs` payload between the preview card,
-pricing cards, and any other client-config consumers in the same provider
-instance:
+Both read from the same unauthenticated client config endpoint, and the service layer must share one
+`client/configs` payload between the preview card, pricing cards and any other client-config
+consumers in the same provider instance:
 
 ```http
 GET https://zcode.z.ai/api/v1/client/configs?app_version=<ZCODE_VERSION>&platform=<platform>-<arch>
@@ -252,258 +229,120 @@ interface StartPlanPreviewConfig {
 }
 ```
 
-The current payload is provider-neutral, so Z.AI Start Plan and BigModel Start
-Plan both show the same Start Plan preview. The provider-specific difference is
-the paid pricing list underneath:
+The current payload is provider-neutral, so Z.AI Start Plan and BigModel Start Plan both show the
+same preview. The provider-specific difference is the paid pricing list underneath:
 
-- `builtin:zai-start-plan` preview card: `configs.startPlanPreview`
-- `builtin:zai-start-plan` pricing cards:
-  `configs.codingPlanStaticProducts["builtin:zai-coding-plan"]`
-- `builtin:bigmodel-start-plan` preview card: `configs.startPlanPreview`
-- `builtin:bigmodel-start-plan` pricing cards:
-  `configs.codingPlanStaticProducts["builtin:bigmodel-coding-plan"]`
+- `builtin:zai-start-plan` preview card: `configs.startPlanPreview`; pricing cards: `configs.codingPlanStaticProducts["builtin:zai-coding-plan"]`
+- `builtin:bigmodel-start-plan` preview card: `configs.startPlanPreview`; pricing cards: `configs.codingPlanStaticProducts["builtin:bigmodel-coding-plan"]`
 
-If `configs.startPlanPreview` is missing, the signed-out Start Plan surface must
-not render the Start free preview or the free Start SKU / 体验套餐 content. Paid
-Coding Plan pricing cards may still render from `codingPlanStaticProducts`; the
-free Start content is controlled only by `startPlanPreview`, not by a local
-hard-coded fallback.
+If `configs.startPlanPreview` is missing, the signed-out Start Plan surface must not render the Start
+free preview or the free Start SKU / 体验套餐 content. Paid Coding Plan pricing cards may still render
+from `codingPlanStaticProducts`; the free Start content is controlled only by `startPlanPreview`, not
+by a local hard-coded fallback.
 
-The BigModel signed-out purchase choice banner follows the same rule. The Start
-Plan entry is rendered only when `configs.startPlanPreview` exists and has
-displayable `model_usage` entitlements. Its title uses `startPlanPreview.name`,
-its large quota metric is calculated from the entitlement `grantUnits`, and its
-description lists the remote entitlement model names and quota groups. When the
-preview is missing, the personal/team purchase entries may remain visible, but
-the Start Plan entry and all Start-specific copy must be absent.
+The BigModel signed-out purchase choice banner follows the same rule. The Start Plan entry renders
+only when `configs.startPlanPreview` exists and has displayable `model_usage` entitlements. Its title
+uses `startPlanPreview.name`, its large quota metric is calculated from the entitlement `grantUnits`,
+and its description lists the remote entitlement model names and quota groups. When the preview is
+missing, the personal/team purchase entries may remain visible, but the Start Plan entry and all
+Start-specific copy must be absent.
 
-When the user unlinks the active Z.ai / BigModel OAuth session while the same
-family still has an API key, the family domain remains selected, but the current
-Start/Coding detail must return to the signed-out Start view. This preserves the
-family settings context and re-shows the Start preview plus pricing cards when
-`startPlanPreview` is present, instead of leaving the user on a disconnected
-Coding Plan card with no next action.
+When the user unlinks the active Z.ai / BigModel OAuth session while the same family still has an API
+key, the family domain remains selected, but the current Start/Coding detail returns to the signed-out
+Start view. This preserves the family settings context and re-shows the Start preview plus pricing
+cards when `startPlanPreview` is present, instead of leaving the user on a disconnected Coding Plan
+card with no next action.
 
 ## Manual claim banner
 
-The workspace sidebar queries `GET /api/v1/zcode-plan/billing/preview` with the
-current client version/platform. A ZCode JWT is attached when available, while
-signed-out preview is sent without Authorization. It renders one banner
-directly above the profile footer only when `data.plans` contains a claimable
-plan. Multiple plans are resolved by descending `priority`, then ascending
-`plan_id` for deterministic display. An empty response or a request failure
-renders no banner on the first read. A transient refresh failure preserves the last
-successful preview; an authoritative empty response removes it. Reading preview never claims or activates a plan.
+The workspace sidebar queries `GET /api/v1/zcode-plan/billing/preview` with the current client
+version/platform. A ZCode JWT is attached when available; signed-out preview is sent without
+Authorization. It renders one banner directly above the profile footer only when `data.plans` contains
+a claimable plan. Multiple plans resolve by descending `priority`, then ascending `plan_id` for
+deterministic display. An empty response or a request failure renders no banner on the first read. A
+transient refresh failure preserves the last successful preview; an authoritative empty response
+removes it. Reading preview never claims or activates a plan.
 
-`preview`、`claim` 与 `balance` 的 `data.server_time` 是各自响应内时间字段的业务权威，
-接口单位统一为 Unix 秒；Service 暴露给 Renderer 时统一转换为毫秒。客户端不得用
-`generatedAt` 替代 `server_time`：前者仍表示本地快照生成时间，后者用于比较同一响应内的
-`starts_at`、`ends_at`、`effective_at` 与 `expires_at`。兼容旧服务端时允许字段缺失并回退
-`Date.now()`，非法值按缺失处理；不得跨接口复用一次旧 `server_time`。`server_time` 不是活动
-批次 ID，也不改变 10 分钟/30 秒轮询周期；下一轮活动仍以新 preview 的可领取结果为准。
+The `data.server_time` of `preview`, `claim` and `balance` is the business authority for time fields
+within that response, in Unix seconds on the wire; the Service converts to milliseconds for the
+Renderer. The client must not substitute `generatedAt` for `server_time`: the former is still the
+local snapshot generation time, the latter is used to compare `starts_at`, `ends_at`, `effective_at`
+and `expires_at` within the same response. For older servers a missing field is allowed and falls
+back to `Date.now()`; an invalid value counts as missing; an old `server_time` is never reused across
+endpoints. `server_time` is not an activity batch id and does not change the 10 min / 30 s polling
+cycle; the next round of activity is still determined by the claimable result of the new preview.
 
 ### Manual claim interaction
 
-`preview` 是公开曝光接口：未登录请求不带 Authorization，登录后可附带 ZCode
-JWT。`claim` 必须登录；官方版本在 claim 前还会执行安全校验（下图 `verifying`）。Banner 点击后的状态机如下：
+`preview` is a public exposure endpoint: signed-out requests carry no Authorization, signed-in ones may
+carry the ZCode JWT. `claim` requires login; official builds also run a security check before claim
+(`verifying` below). State machine after a Banner click:
 
 ```text
 idle -> checking-auth -> verifying -> claiming -> success-dialog -> refreshing -> hidden/idle
                                 \-> failure-dialog ---------------------------> idle
 ```
 
-- 未登录点击时只发起登录，不调用安全校验或 claim；登录完成后由用户再次确认领取。
-- 点击 Banner 右上角关闭按钮时不得立即隐藏 Banner，应先显示标准确认弹窗，标题提示用户将错过一次领取机会，
-  说明本次活动领取机会有限且关闭后可能错过本次机会；确认文案不得把 Start Plan 描述为活动，也不得断言无法再次领取。
-  “确认领取”关闭确认弹窗并复用同一领取状态机；“关闭”才隐藏当前渲染周期内的 Banner。
-  按 Escape、点击遮罩或其他取消方式只关闭确认弹窗，不隐藏 Banner，也不发起 claim。
-- 同一时刻最多存在一次领取请求，pending 期间 Banner 禁止重复点击。
-- 官方版本的领取前安全校验成功后才调用 claim；失败、取消或交互总超时则结束 pending 并显示
-  领取失败结果，禁止让 Banner 无限旋转。
-- `POST /api/v1/zcode-plan/billing/claim` 使用当前 ZCode JWT，body 为
-  `{ "plan_id": plan.planId }`；官方版本的安全校验结果通过请求头传递。
-- 请求成功时显示 Start Plan 专属结果弹窗；请求失败时复用标准 `AlertDialog` 模板。成功弹窗
-  上部是随弹窗宽度响应式缩放的 `4:3` 主题 Hero 权益展示区（480px 宽时为 480 × 360px），
-  并放置 ticket 样式的套餐卡，下部
-  说明与操作区按内容、间距和内边距自然撑高；完整桌面弹窗宽度为 `480px`，总高度不再
-  固定，窄屏时收缩到视口安全区。
-  Hero 的内容描述由 `createWeekendPlanResultDialogMock()` 按未来云端协议生成；当前星空、票券、
-  入场、空闲压感、指针倾斜、动态光照、点击翻转和 Replay 已迁移到独立
-  `weekend-plan-hero.html` 资源，并通过 `CloudDialogHero` 在仅启用 `allow-scripts` 的 sandbox
-  iframe 中加载。资源只通过带实例 ID 的 `postMessage` 接收主题、语言、减少动态效果和本次权益
-  数据，不得访问 Renderer DOM、Node、preload 或业务 Service。当前阶段不请求真实云端内容；
-  mock 资源 URL 由 Vite 打包生成。真实云端接入、资源签名和缓存契约见
-  `docs/cloud-content-dialog.md`。
-  失败弹窗使用标准 `AlertDialogContent`、Header、Title、Description、Footer 与 Action，
-  只显示失败标题、按业务码本地化的失败说明和确认按钮；不得渲染状态图标、关闭按钮、Hero、
-  Ticket、星空、Replay、分享文本或图片操作，也不得增加专属尺寸、居中布局或自定义按钮外形。
-  Banner 是营销视觉特例；除 Banner 外，领取弹窗必须遵循根目录 `DESIGN.md`：应用界面
-  字体只使用 `text-ui-*`，弹窗、底部状态区、输入框、按钮和菜单使用语义颜色与现有 UI
-  组件，并兼容 Zai Light / Zai Dark。Ticket 背板必须与正面共用 `bg-primary`，在 Zai Light
-  下均为黑色、Zai Dark 下均为白色；该营销视觉规则不得扩散到普通控件和正文。
-  底部结果标题使用 `text-ui-xl`，描述使用 `text-ui-base/relaxed`。
-  成功描述按当前语言渲染“**{showName}** is ready to use.”语义，`showName` 读取本次领取的
-  entitlement `show_name`，使用真实 `<b>` 与 `font-semibold text-foreground`，不得通过解析翻译
-  HTML 实现，也不得回退为固定 `Start Plan` 文案。
-  Claim 成功弹窗只读取本次 Claim 响应 `plan.entitlements[].effective_at`；若 Ticket 展示的任一
-  entitlement 尚未生效，使用其中最晚的 `effective_at` 作为完整权益开始时间。该时间晚于同次
-  Claim 响应的 `data.server_time` 时，表示权益
-  已领取但尚未开始：成功描述改为“{showName} will be available on {time}.”语义，时间按当前语言和
-  本地时区格式化。无论权益立即生效还是待生效，默认主按钮都显示“模型设置 / Model settings”，
-  点击后关闭弹窗并定位模型设置的供应商分区，不写入 Start Plan 连接设置，也不触发模型入口引导。
-  次要按钮显示“复制分享 / Copy & share”，点击后直接复制分享文案，不打开二级分享面板。
-  弹窗不得读取领取后的 balance，也不得回退 Claim 响应的 `plan.starts_at` 推测 entitlement
-  生效状态。Claim 缺少有效 `effective_at` 时按立即可用反馈；领取后的 balance 刷新只负责更新
-  Model Settings 的套餐、额度和 Provider 状态，不得反向覆盖已经展示的领取结果。
-  待生效说明使用 `text-foreground-subtle`；其中套餐名与格式化时间使用
-  `font-semibold text-foreground` 独立强调；时间额外使用虚线下划线，但保持默认鼠标指针，
-  不表达可点击语义，也不使用未定义的颜色 token。
+- Clicking while signed out only starts login; it calls neither the security check nor claim. After login the user confirms the claim again.
+- Clicking the Banner's top-right close button must not hide the Banner immediately; first show the standard confirmation dialog whose title warns the user will miss a claim chance and states that the chance is limited and may be missed after closing. The confirmation text must not describe Start Plan as an "activity" nor assert it cannot be claimed again. "确认领取" (confirm claim) closes the dialog and reuses the same claim state machine; "关闭" (close) hides the Banner for the current render cycle. Escape, backdrop click or any other cancel only closes the confirmation, neither hiding the Banner nor starting claim.
+- At most one claim request exists at a time; the Banner ignores repeated clicks while pending.
+- In official builds, claim is called only after the pre-claim security check succeeds; failure, cancel or total interaction timeout ends pending and shows the claim-failure result. The Banner never spins indefinitely.
+- `POST /api/v1/zcode-plan/billing/claim` uses the current ZCode JWT, body `{ "plan_id": plan.planId }`; the official-build security check result is passed in a request header.
+- Success shows a Start Plan result dialog; failure reuses the standard `AlertDialog` template.
 
-  领取成功说明（包括立即可用和待生效）不得使用固定 `Start Plan`：应读取本次领取的
-  entitlement `show_name`。立即可用时中文显示“`{showName}` 已可使用”，英文显示
-  “`{showName}` is ready to use”。待生效时读取决定该等待时间的 entitlement `show_name`，
-  中文显示“`{showName}` 将于 `{time}` 生效”，英文显示“`{showName}` will be available on
-  `{time}`”。完整时间作为不可拆分的行内整体，避免日期与时间分别换行。同一生效时间存在多个
-  entitlement 时，名称去重后按语言连接。
-  `effective_at = 0` 继续按立即生效处理，不展示待生效说明。
-  分享面板复制文案成功后，复制按钮应原位短暂切换为“✓ 已复制”，避免用户视线离开当前操作；
-  复制图片成功使用全局 Toast。剪贴板或图片生成失败时显示失败 Toast，不能只写日志后静默结束。
-  分享文案必须包含 `https://zcode.z.ai` 入口，并邀请接收者下载安装 ZCode 后领取。中文链接独占最后一行；
-  英文链接直接跟在完整句子后。两种语言都不使用冒号引出链接，且链接必须位于文案末尾，避免社交平台把后续文字错误识别为 URL 的一部分。
+Success dialog layout:
 
-  设置页 Start Plan 套餐卡中，若套餐 entitlement 的 `effective_at` 晚于当前时间，状态行显示
-  “待生效 `{date} HH:mm` · 过期时间 `{date} HH:mm` / Pending `{date} HH:mm` · Expires `{date} HH:mm`”；生效时间为
-  客户端本地日期的当天或次日时，日期分别简化为“今天 / Today”和“明天 / Tomorrow”，例如
-  “待生效 明天 22:00 / Pending Tomorrow 22:00”；更远日期继续展示月日。两项使用普通
-  元信息样式，不把生效时间渲染为徽标；生效时间文字使用语义化成功色，分隔点与过期时间
-  保持次要文字色。排期时间到达但 balance 尚未返回匹配 `plan_id` 的额度桶时，状态行切换为
-  紧凑的“刷新权益 / Refresh access”outline pill 按钮与过期时间；按钮使用成功色描边、成功色
-  半透明背景和成功色文字，
-  文字前使用 outline 风格的刷新图标，刷新期间原位切换为旋转 loading 图标并禁用按钮。按钮复用
-  Model Settings 已有的 provider、entitlement 和额度刷新链路。成功拿到该套餐额度桶后按钮消失，
-  只保留过期时间。
-  `effective_at = 0` 或没有排期时间的立即生效权益不得显示该按钮。余额区域仍只在 balance 返回
-  匹配 `plan_id` 的额度桶后展示。
+- Top: a theme Hero showing the entitlement, `4:3` and scaling responsively with dialog width (480 x 360 px at 480 px wide), with a ticket-style plan card. Bottom: description and action area, height following content, spacing and padding. Full desktop dialog width is `480px`, total height not fixed, shrinking to the viewport safe area on narrow screens.
+- Hero content is generated by `createWeekendPlanResultDialogMock()` per the future cloud protocol. The starfield, ticket, entrance, idle press, pointer tilt, dynamic lighting, click flip and Replay live in a standalone `weekend-plan-hero.html` resource, loaded by `CloudDialogHero` in an iframe sandboxed with only `allow-scripts`. The resource receives theme, language, reduced-motion and this entitlement data only through instance-id `postMessage`, and must not access the Renderer DOM, Node, preload or business Services. The current phase requests no real cloud content; the mock resource URL is bundled by Vite. Real cloud integration, resource signing and cache contract: `docs/cloud-content-dialog.md`.
+- Except for the Banner (a marketing-visual exception), the claim dialog follows the root `DESIGN.md`: app UI fonts use only `text-ui-*`; dialog, bottom status area, inputs, buttons and menus use semantic colors and existing UI components, compatible with Zai Light / Zai Dark. The Ticket back plate shares `bg-primary` with the front (black on Zai Light, white on Zai Dark); this marketing visual rule must not spread to ordinary controls and body text.
+- Bottom result: title `text-ui-xl`, description `text-ui-base/relaxed`, titles and descriptions centered, no extra success icon, on `bg-popover` with uniform `p-6` padding; the second row's read-only input and "获取图片" (get image) outline button use `bg-background` on their own (the input keeps it when focused).
+- Title: "You now have access to {plan}" in English, "{plan} 领取成功" in Chinese, where `{plan}` is the real plan name from this claim result, without extra quote marks.
+- Description (immediate or pending) must not use a fixed `Start Plan`: it reads the entitlement `show_name` of this claim. Immediately available: "`{showName}` 已可使用" / "`{showName}` is ready to use". Pending: read the `show_name` of the entitlement that determines the wait: "`{showName}` 将于 `{time}` 生效" / "`{showName}` will be available on `{time}`". Rendered with a real `<b>` and `font-semibold text-foreground`, not by parsing translated HTML. The full time is an unbreakable inline whole (date and time never wrap separately), emphasized with a dashed underline, default mouse cursor, no clickable semantics, and no undefined color token. With several entitlements at the same effective time, names are deduped and joined per language. Pending text uses `text-foreground-subtle`, with the plan name and formatted time in `font-semibold text-foreground`. No model-settings link in the description.
+- Pending detection: the dialog reads only `plan.entitlements[].effective_at` of this Claim response. If any entitlement shown on the Ticket is not yet effective, use the latest `effective_at` as the full-entitlement start time; if that is later than the same response's `data.server_time`, the entitlement is claimed but not started and the pending description is used, formatted by current language and local time zone. `effective_at = 0` is the server sentinel for "effective immediately": it is not the Unix Epoch, not treated as missing, never shows a 1970 time, and shows no pending text. The dialog must not read the post-claim balance, nor infer effectiveness from the Claim response's `plan.starts_at`. A Claim lacking a valid `effective_at` gets the immediately-available feedback. The post-claim balance refresh only updates Model Settings plans, quota and Provider state and never overwrites the claim result already shown.
+- Actions: side-by-side `h-10 min-w-32 rounded-full` primary and secondary buttons with `gap-2`. Primary "模型设置 / Model settings" (both immediate and pending) closes the dialog and navigates to the provider section of model settings; it does not write the Start Plan connection settings or trigger model-entry guidance. Secondary "复制分享 / Copy & share" copies the share text directly without opening a secondary panel; on success it briefly shows "内容已复制 / Text copied" in place (or "✓ 已复制" on the share panel's copy button); copying an image uses the global Toast. Clipboard or image-generation failure shows a failure Toast, never just a log. Title and description form a centered status area with `gap-3`; the outer gap between status area and action area is `gap-6`.
+- Share text: localized by current language, contains only the model entitlement, `#ZCode` and `@zcode_ai` (no plan name, total quota or start/end time), e.g. Chinese `我在 ZCode 领取了 {权益明细}。#ZCode @zcode_ai`. It must include the `https://zcode.z.ai` entry and invite the recipient to download ZCode and claim; the Chinese link takes the last line alone, the English link follows the full sentence directly; neither language uses a colon to introduce the link, and the link sits at the end so social platforms do not take following text as part of the URL.
+- Ticket content: one line per `model_usage` entitlement (different periods are not merged): gift icon, `show_name`, that entry's `period` and `grant_units`; `daily` shows "每日" (daily), `one_time` shows no period. The visual area shows only `plan.ends_at`, centered on one line as "有效期至 / Valid until + time" in the current language and local time zone, with heavier weight and size on the deadline; a missing field shows a placeholder, and preview time is never used to infer the real entitlement term. The Ticket time area does not repeat the start time. The middle dashed divider is `h-px` (1px) with long dashes.
 
-  `effective_at = 0` 是服务端“立即生效”的哨兵值，不得解释为 Unix Epoch，也不得按字段缺失
-  处理。按钮直接进入可用状态，界面不展示 1970 年时间。
-  底部结果区域使用 `bg-popover` 与统一 `p-6` 内边距；第二排的只读输入框和“获取图片”
-  outline 按钮单独使用 `bg-background`，输入框聚焦时仍保持该背景。
-  Ticket 视觉区只展示 `plan.ends_at`，按当前语言与本地时区居中单行显示“有效期至 / Valid until + 时间”，
-  使用单行布局并通过更高字重、字号强调截止时间；字段缺失时显示占位符，不使用 preview
-  时间推断实际权益期限。待生效描述只使用同次 Claim 返回的 entitlement `effective_at`，
-  不使用 balance 或 `plan.starts_at`，Ticket 时间区不重复展示开始时间。
-  桌面端指针在 ticket 内移动时，卡片按指针相对中心的位置产生轻量三维下压、动态高光
-  与轮廓阴影；按下时进一步下沉，点击后沿 Y 轴完成一次 360° 横向翻转，经过背面时
-  显示无镜像文字、与正面同色的主题背板，结束后回到正面。该反馈不改变领取行为，并在
-  `prefers-reduced-motion` 下停用空间变换。指针未悬停时，ticket 模拟一个不可见指针按
-  左上、右上、右下、左下四角循环，角点之间平滑移动，压力点、高光、倾角与阴影同步；
-  真实指针进入时立即停止自动运动并切换为跟随，离开后恢复四角环绕。
-  点击翻转方向须跟随按压位置：点击 ticket 左半边沿 Y 轴向左旋转 `-360°`，点击右半边
-  向右旋转 `+360°`，以卡片几何中心为分界。
-  Ticket 使用 `cursor-default`；压力和翻转反馈不使用链接手型指针。
-  弹窗首次出现时，ticket 从远处的小尺寸主题背面向前靠近，同时沿 Y 轴翻转 180° 并
-  停在近处正面；入场动画只执行一次，不替代后续点击 360° 翻转。Hero 左上角提供圆形
-  Replay 图标按钮，用于初始化重播整套 Hero：银河和星轨重新开始、ticket 从远处主题色
-  背面重新入场、四角压感计时归零；Replay 控件不进入导出的分享图片。
-  Replay 按钮复用 Dialog 关闭按钮的 `Button` 规格：`ghost + icon-sm`、`top-4`、圆形与
-  no-drag 行为一致，仅将位置从右上改为左上。两者悬浮在固定深色 Galaxy Hero 上，是主题
-  语义色的局部例外：无论系统亮暗主题都固定使用半透明白色图标、白色弱 hover 背景和白色
-  focus ring，不能随 `foreground` 切换而失去对比度。
-  入场时 ticket 从深景深中的小尺寸正面开始，向前靠近并绕 X 轴上下连续翻转
-  `2` 圈，在约 `0.9s` 内以正面落位；旋转使用起步与落位较慢、中段加速的 `ease-in-out`
-  曲线。所有背面阶段只显示独立、不透明且与正面 `bg-primary` 一致的主题背景；
-  点击后的手动翻转仍沿 Y 轴横向旋转。
-  Ticket 中部虚线分隔线使用 `h-px`（1px），保留长线段样式。
-  主题背板在远景阶段也必须保持不透明，距离感仅由景深、缩放和旋转表达，不能通过降低
-  ticket 整体透明度而透出 Hero 背景。
-  正反面须使用独立合成层并沿 Z 轴错开极小距离，避免共面图层在旋转途中发生穿透或
-  z-fighting，导致主题背板混入正面或 Hero 颜色。背板预旋转轴必须与入场动画一致使用
-  X 轴，并显式设置不透明的 `--color-primary` 与 `backface-visibility`，不得在上下翻转时沿用 Y 轴背板。
-  为规避 Chromium 在 mask 与嵌套 3D 合成下偶发忽略背面隐藏，入场的正反面还须按旋转
-  区间显式门控可见性：`180°` 与 `540°` 区间只允许主题背板可见，`360°` 与 `720°`
-  区间只允许正面可见；切换发生在卡片侧对镜头时。入场完成后结束门控，恢复普通双面 3D。
-  入场门控期间主题背板须临时允许双面绘制，避免 Chromium 再次用背面裁剪把已选中的主题
-  背板隐藏；该覆盖只存在于入场 animation 内，结束后仍恢复 `backface-visibility: hidden`。
-  实现上使用仅服务于入场的双面主题色遮罩，背面区间显示、正面区间隐藏；普通 3D 背板在
-  入场期间完全隐藏，动画结束后再恢复给点击翻转使用，避免两种职责互相影响。
-  翻转必须使用连续的单段速度曲线，避免在中间关键帧停顿。自动四角压感须等入场完成后
-  再启动，避免两套三维变换与阴影计算在首屏同时运行造成卡顿。
-  Hero 背景使用带明亮核心、椭圆星云盘和旋臂的深空银河，并叠加低密度中心放射星点与
-  短光轨循环；动画层不可接收指针事件、不可遮挡 ticket 内容，并在减少动态效果时隐藏。
-  底部结果区沿用原有主题语义颜色，只调整内容布局：标题与说明居中排版，不显示额外成功图标。成功标题
-  使用“You now have access to {plan}”句式，中文使用更简洁的“{plan} 领取成功”，其中 `{plan}`
-  来自本次领取结果展示的真实套餐名，不额外添加书名号。成功说明只保留模型和状态：立即生效时为“{showName}
-  已可使用”，待生效时为“{showName} 将于 {time} 生效”；英文分别使用“{showName} is ready
-  to use”和“{showName} will be available on {time}”。待生效时间继续用虚线下划线强调，并保持
-  日期时间整体不拆行。描述中不得出现模型设置链接。操作区使用并排的
-  `h-10 min-w-32 rounded-full` 主次按钮：主按钮“模型设置 / Model settings”负责导航，
-  secondary 按钮“复制分享 / Copy & share”直接复制面向 Twitter/X 的分享文案；复制成功后
-  原位短暂显示“内容已复制 / Text copied”，不展开额外面板。
-  推文按当前语言本地化，只包含模型权益、`#ZCode` 和 `@zcode_ai`，不重复套餐名、总额度或
-  起止时间，避免社交文案过长。中文格式示例：`我在 ZCode 领取了 {权益明细}。#ZCode @zcode_ai`。
-  主按钮与复制分享按钮之间使用 `gap-2`。领取成功标题与说明组成
-  居中状态区，内部使用 `gap-3`；状态区与操作区的外层使用 `gap-6`。
-  失败文案按业务码本地化，未知错误与网络错误使用通用失败文案，不向用户暴露服务端
-  内部错误。`1005` 表示当日领取额度耗尽：claim 失败响应须保留 `data.plan.ends_at`，按用户
-  本地时区判断；活动当天结束时提示“今日领取名额已用完，欢迎下次再来”，明天或之后结束时
-  提示“今日领取名额已用完，请明天再来”，字段缺失或无效时只提示“今日领取名额已用完”。
-  `1001`、`1002`、`1003`、`1004`、`3001`、`3007` 与登录失效继续使用各自稳定文案，未知码
-  才回退通用失败文案。失败态确认按钮使用“知道了 / Got it”；标准 `AlertDialog` 不增加状态图标
-  或关闭按钮。失败态不启动 Ticket 动画帧，也不构造或执行分享流程。
+Ticket and Hero motion (marketing visual; summarized rules):
 
-- 领取成功后立即显示成功弹窗，并在弹窗展示期间并行重新读取 preview、刷新 billing
-  balance 与 Account Source / provider/model，不得等用户关闭弹窗后才开始。
-  Claim 成功是不可逆业务事实；上述领取后刷新均为 best-effort。任一刷新失败只能记录降级
-  日志，不能把成功结果改写为领取失败，也不能阻止用户关闭或打开模型设置。
-  preview 刷新成功时应独立更新 Banner，即使 entitlement 或 provider 刷新失败也不得丢弃该结果。
-  entitlement 尚未返回时成功弹窗必须已经可见，但主操作暂时禁用；快照完成或失败后原位更新
-  待生效状态并启用“查看套餐 / View plan”。成功弹窗右上角关闭只关闭弹窗。
-  2026-09-06 按固定 staging 的默认行为恢复：不启用历史“Start using”开关，领取流程不写
-  `providerFamilyConnectionSelections`，不派发 Composer 自动选模指令。Provider/权益刷新通过
-  当前 ProviderSettingsService 与 UsageEntitlementService 完成，不恢复旧 Provider Store。
-  失败状态直接复用标准 `AlertDialog` 模板：使用默认的 Content、Header、Title、Description、
-  Footer 与 Action，不增加状态图标、关闭图标、专属尺寸、居中布局或自定义按钮外形。
-- 历史自动选模引导及专用 consumer 已退役；领取成功不派发模型切换请求。
-- Banner 右上角提供关闭按钮；关闭仅隐藏当前渲染周期内的 Banner，不发起 claim、
-  不修改服务端 preview，也不持久化为永久关闭。整个 Banner 是领取触发区，支持鼠标点击
-  及键盘 Enter/Space；模型副标题与右侧领取状态胶囊位于同一行；
-  两者间距使用 `gap-1.5`；
-  领取状态胶囊只负责装饰和 loading 展示，不是独立按钮；视觉使用组件库的 `outline`、
-  `xs` 标准样式，通过 `rounded-full` 保留 pill 外形，
-  按钮文字使用 `text-xs`，边框使用随主题变化的 `border-foreground`，
-  并对齐 Banner 内容区最右侧；只有顶部标题行
-  为右上角关闭按钮预留空间。领取期间胶囊文字替换为 `size-3` 旋转 loading 图标，
-  Banner 禁止重复领取；右上角关闭图标保持不变但暂时禁用。
+- Pointer over the ticket (desktop): light 3D press, dynamic highlight and outline shadow by pointer position relative to center; pressing sinks further; a click flips 360° around Y toward the pressed side (left half `-360°`, right half `+360°`, split at the card's geometric center), passing the back (mirror-free text, same-color theme plate), then returns to front. Without a hovering pointer the ticket simulates an invisible pointer circling top-left, top-right, bottom-right, bottom-left with smooth transitions and synchronized pressure, highlight, tilt and shadow; a real pointer stops the auto motion immediately and follows, resuming the corner loop on leave. Flips use one continuous single-segment speed curve without mid-frame pauses. `cursor-default`; no link hand cursor. Spatial transforms are disabled under `prefers-reduced-motion`. The feedback never changes claim behavior.
+- Entrance (once only; does not replace later click flips): the ticket starts as a small front face in deep depth of field, approaches, flips vertically around X for `2` turns, and lands on the front within about `0.9s`, with ease-in-out (slow start and landing, fast middle). All back phases show only an independent, opaque theme background identical to the front `bg-primary`; opacity of the whole ticket is never lowered to show distance (distance is conveyed by depth, scale and rotation). Front and back use independent compositing layers offset by a tiny Z distance to avoid coplanar z-fighting; the back pre-rotation axis is X, matching the entrance, with explicit opaque `--color-primary` and `backface-visibility`. To work around Chromium occasionally ignoring back-face hiding under mask and nested 3D, the entrance gates visibility by rotation interval: `180°` and `540°` show only the theme back; `360°` and `720°` show only the front; switches happen when the card is edge-on to the camera. Gating ends when the entrance completes. During gating the theme back temporarily allows double-sided painting (only inside the entrance animation; `backface-visibility: hidden` is restored afterwards); implementation uses an entrance-only double-sided theme-color mask (shown in back intervals, hidden in front intervals) and fully hides the ordinary 3D back plate during the entrance. The automatic corner press starts only after the entrance completes, so two 3D/shadow computations do not run together on the first frame.
+- Replay: a circular icon button at the Hero's top-left restarts the whole Hero (galaxy and star trails, ticket entrance from the distant theme back, corner-press timer reset); the Replay control is excluded from the exported share image. It reuses the Dialog close button's `Button` spec (`ghost + icon-sm`, `top-4`, circular, no-drag), only moved from top-right to top-left. Both float over the fixed dark Galaxy Hero, a local exception to theme semantic colors: always translucent white icon, faint white hover background and white focus ring regardless of system theme.
+- Hero background: deep-space galaxy with a bright core, elliptical nebula disc and spiral arms, plus low-density central radiating stars and short light-trail loops; the animation layer receives no pointer events, never covers ticket content, and is hidden under reduced motion.
 
-Banner 顶部按 `ZCode 图标与 wordmark SVG [gap-1.5] plan.name` 排列，不显示分隔点；
-为避免品牌名重复，Banner 展示前从 `plan.name` 中移除独立的 `ZCode`（忽略大小写）
-并清理多余空格。活动名称使用普通前景色而非蓝色，并在剩余宽度内截断。服务端原始 `plan.name` 同时用于
-领取结果 Ticket 的套餐名称。Banner 最小高度为 `96px`，内部使用 `gap-1.5`，内容在容器中
-整体垂直居中；内容增高时允许自然撑开。主标题取全部
-`model_usage` entitlement 中最大的 `grant_units`，按当前 locale 添加数字分组并展示完整
-Token 数量，不换算为 `Million` 或“亿”；`Tokens` 作为较小字号的单位跟在额度后面，
-例如 `300,000,000 Tokens`。Banner 副标题只显示 `show_name` 模型名称，多个模型使用 `·` 分隔，不显示 `period` 对应的每日、一次性、
-Daily、One-time 或 bonus 等额度周期信息，也不显示闪电图标。界面字号放大时，
-模型名称在剩余宽度内截断。Banner
-使用固定的 `10px / 18px / 12px` 字号层级，不跟随全局 UI 字号缩放。
+Failure dialog and codes:
 
-Ticket 按 `model_usage` entitlement 逐项换行展示权益，不再把不同周期的模型合并为一句：
-每行由礼物图标、`show_name`、该项 `period` 和 `grant_units` 组成；`daily` 显示“每日”，
-`one_time` 不额外显示周期。
+- Failure uses the standard `AlertDialogContent`, Header, Title, Description, Footer and Action; shows only a failure title, a business-code-localized explanation and a confirm button. No status icon, close button, Hero, Ticket, starfield, Replay, share text or image actions; no dedicated size, centered layout or custom button shape; the confirm button reads "知道了 / Got it". The failed state starts no Ticket animation frame and builds/runs no share flow.
+- Copy is localized by business code; unknown and network errors use the generic failure copy and never expose internal server errors. `1005` means the day's claim quota is exhausted: the claim failure response must keep `data.plan.ends_at`, judged in the user's local time zone: if the activity ends today show "今日领取名额已用完，欢迎下次再来"; if it ends tomorrow or later show "今日领取名额已用完，请明天再来"; if the field is missing or invalid show only "今日领取名额已用完". `1001`, `1002`, `1003`, `1004`, `3001`, `3007` and login expiry keep their own stable copy; only unknown codes fall back to the generic failure copy.
 
-Banner 必须同时支持 Zai Light 与 Zai Dark：亮色容器使用 `bg-neutral-50`、`border-card-border` 与
-`shadow-md/5`，主文字与
-ZCode wordmark 使用 `text-foreground`，辅助文字使用 `text-foreground-subtle`。暗色通过 `.dark`
-恢复活动 Banner 原有的 `neutral-950` 黑底、白色弱边框、内高光深阴影及中性灰文字；关闭按钮与
-领取状态胶囊也分别保留亮色语义色和原暗色视觉。不得用普通暗色 `bg-card` 替代活动 Banner 的
-深色质感。
+Settings Start Plan card (pending state):
 
-## 测试与覆盖契约
+- If the plan entitlement's `effective_at` is later than now, the status row shows "待生效 `{date} HH:mm` · 过期时间 `{date} HH:mm`" / "Pending `{date} HH:mm` · Expires `{date} HH:mm`". When the effective date is today or tomorrow in the client's local date, the date is simplified to "今天 / Today" or "明天 / Tomorrow" (e.g. "待生效 明天 22:00 / Pending Tomorrow 22:00"); farther dates show month and day. Both use ordinary meta style, the effective time is not a badge; the effective-time text uses the semantic success color, the separator dot and the expiry time keep the secondary text color.
+- When the scheduled time has arrived but balance has not returned a quota bucket with the matching `plan_id`, the status row shows a compact "刷新权益 / Refresh access" outline pill button plus the expiry time: success-color outline, translucent success background and success text, an outline-style refresh icon before the text; during refresh the icon switches in place to a spinning loading icon and the button is disabled. The button reuses Model Settings' existing provider, entitlement and quota refresh chain and disappears once the plan's quota bucket arrives, leaving only the expiry time.
+- An `effective_at = 0` or unscheduled immediately-effective entitlement never shows the button. The balance area still appears only after balance returns a quota bucket with the matching `plan_id`.
 
-手动领取体验的状态维度、剪枝决定、Desktop E2E 候选和分支覆盖率口径统一记录在
-[`docs/testing/start-plan-manual-claim-e2e-coverage.md`](testing/start-plan-manual-claim-e2e-coverage.md)。
-该功能的覆盖率必须以首次合入前共同提交 `ebae2814f5` 为 diff 基线；由于功能提交已经进入
-`staging`，禁止使用当前 `origin/staging` 的空 diff 声称覆盖完成。验收要求新增生产源码可执行行在
-focused unit/component 的标准 Istanbul line coverage 中达到 95% 以上；Desktop E2E coverage 单独作为
-跨进程链路证据，禁止合并不同 instrumentation 的 statement id 虚增覆盖率。
+Post-claim sequence:
+
+- On success the dialog is shown at once, and while it is shown the client concurrently rereads preview, refreshes billing balance and Account Source / provider/model; it must not wait until the dialog is closed.
+- Claim success is an irreversible business fact; all post-claim refreshes are best-effort. A refresh failure only logs a degradation, never rewrites success as a claim failure, and never blocks closing the dialog or opening model settings. A successful preview refresh independently updates the Banner, even if the entitlement or provider refresh fails.
+- Until the entitlement returns, the success dialog is already visible but the primary action is temporarily disabled; once the snapshot completes or fails, the pending state updates in place and "查看套餐 / View plan" is enabled. The success dialog's top-right close only closes the dialog.
+- Since 2026-09-06 default behavior matches pinned staging: the historical "Start using" switch is off, the claim flow does not write `providerFamilyConnectionSelections` and dispatches no Composer auto-model-select instruction. Provider/entitlement refresh goes through the current ProviderSettingsService and UsageEntitlementService; the old Provider Store is not restored. The historical auto-model guidance and its dedicated consumer are retired; a successful claim dispatches no model-switch request.
+
+Banner layout:
+
+- The top-right close button only hides the Banner for the current render cycle: it starts no claim, does not modify the server preview and is not persisted as a permanent close. The whole Banner is the claim trigger, supporting mouse click and keyboard Enter/Space. The model subtitle and the right-side claim-state pill share one row with `gap-1.5`. The pill is only decoration and loading display, not an independent button: library `outline`, `xs` standard style with `rounded-full`, `text-xs`, theme-following `border-foreground`, aligned to the far right of the content area; only the top title row reserves space for the top-right close button. While claiming, the pill text is replaced by a `size-3` spinning loading icon, repeated claims are disabled, and the close icon stays unchanged but temporarily disabled.
+- The top is laid out as `ZCode icon and wordmark SVG [gap-1.5] plan.name`, with no separator dot. To avoid repeating the brand, a standalone `ZCode` (case-insensitive) and extra spaces are removed from `plan.name` before display. The activity name uses normal foreground color (not blue) and truncates in the remaining width. The original server `plan.name` is also the plan name on the claim-result Ticket.
+- Minimum height `96px`, inner `gap-1.5`, content vertically centered in the container, growing naturally with taller content. The main title takes the largest `grant_units` among all `model_usage` entitlements, adds digit grouping for the current locale and shows the full Token count without converting to `Million` or "亿", with `Tokens` as a smaller unit after it, e.g. `300,000,000 Tokens`. The subtitle shows only `show_name` model names separated by `·`; it shows no period information (daily, one-time, Daily, One-time, bonus) and no lightning icon; with enlarged UI font, model names truncate in the remaining width. The Banner uses fixed `10px / 18px / 12px` font sizes and does not scale with the global UI font size.
+- The Banner must support Zai Light and Zai Dark: the light container uses `bg-neutral-50`, `border-card-border` and `shadow-md/5`, main text and the ZCode wordmark use `text-foreground`, secondary text uses `text-foreground-subtle`. Dark restores the activity Banner's original `neutral-950` black base, faint white border, inner highlight with deep shadow and neutral gray text through `.dark`; the close button and claim-state pill likewise keep light semantic colors and their original dark look. An ordinary dark `bg-card` must not replace the activity Banner's deep dark texture.
+
+## Test and coverage contract
+
+State dimensions, pruning decisions, Desktop E2E candidates and the branch-coverage basis of the manual
+claim experience are recorded in
+[`docs/testing/start-plan-manual-claim-e2e-coverage.md`](testing/start-plan-manual-claim-e2e-coverage.md).
+Coverage for this feature must use the common commit `ebae2814f5` before the first merge as its diff
+baseline; because the feature commits are already in `staging`, using an empty diff against the
+current `origin/staging` to claim completion is forbidden. Acceptance requires newly added executable
+production source lines to reach at least 95% in focused unit/component standard Istanbul line
+coverage; Desktop E2E coverage is separate cross-process evidence, and statement ids from different
+instrumentation must not be merged to inflate coverage.

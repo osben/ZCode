@@ -57,41 +57,90 @@ export function createCuaPipSessionService(options: {
   let tail: Promise<void> = Promise.resolve();
   let disposed = false;
   /**
-   * 被 `credentials-unavailable` 丢掉的那条 `turn-started`，等凭据可用时补发。
+   * The `turn-started` event dropped with `credentials-unavailable`, to be replayed when credentials become available.
    *
-   * PiP 以 turn 为作用域，没有
-   * `turn-started` 就没有 PiP 窗口。而它**必然**早于 Helper —— Helper 由首次 CUA 工具
-   * 调用懒启动，`turn-started` 在 turn 一开始就发；此时 `resolveCredentials()` 既没有
-   * 托管 host、又探不到稳定 socket（那条路径是 probe-only、不拉起），于是返回 undefined。
-   * 日志实证：turn-started(seq 3) → credentials-unavailable；随后 Helper 起来，
-   * focus-changed(rev 11/12/13) 全部 applied:true；turn-ended(seq 3862) →
-   * applied:false / turn-mismatch。通道是通的，只是开场那一条掉了。
+   * PiP is scoped to a turn; without
+   * `turn-started`, no PiP window opens. This event **must** come before the Helper—the Helper starts lazily on the first CUA tool
+   * call, while `turn-started` is sent at the beginning of the turn. At that point, `resolveCredentials()` has neither
+   * a managed host nor a stable socket to probe (that path is probe-only and does not start it), so it returns undefined.
+   * Logs confirmed: turn-started(seq 3) → credentials-unavailable; then the Helper starts,
+   * focus-changed(rev 11/12/13) all have applied:true; turn-ended(seq 3862) →
+   * applied:false / turn-mismatch. The channel works; only the opening event was dropped.
    *
-   * 本文件早先的注释已经写明"过去会静默丢掉 turn-started，PiP 永久停在上一轮完成态"，
-   * 但当时只补了 warn 日志、没有补发。单条 prompt 的任务没有第二个 turn，所以实际效果
-   * 是 PiP 永远不出现。
+   * An earlier comment in this file already said "turn-started used to be silently dropped, leaving PiP permanently on the previous completed turn",
+   * but the earlier fix added only a warn log and did not replay it. A single-prompt task has no second turn, so in practice
+   * PiP never appeared.
    *
-   * 只缓存一条：新的 turn-started 直接顶掉旧的（旧 turn 已经过去，补发它只会开一个
-   * 早该关闭的 turn）。协调器按 `sequenceNumber` 判重，补发因此是幂等的。
+   * Cache only one event: a new turn-started replaces the old one (the old turn has ended, and replaying it would open a turn
+   * that should already be closed). The coordinator deduplicates by `sequenceNumber`, so replay is idempotent.
    */
   let pendingTurnStarted: { event: PipSessionEvent; turnId: string } | null = null;
   /**
-   * 补发重试定时器。
+   * Replay retry timer.
    *
-   * 为什么不能只等"下一个恰好发生的事件"来触发补发
-   *   20:18:15.628  turn-started → credentials-unavailable（Helper 未起）
-   *   20:18:23      Helper 起来 → 首次 capture_app → bindCapture → pending-turn
-   *                 （协调器侧 PIP_SESSION_CAPTURE_PENDING_TTL_MS = 2s，约 20:18:25 过期）
-   *   20:18:30.420  下一个事件才来，补发成功 applied:true —— 但已晚了 5 秒
-   * 结果 turn 开起来时暂存的 capture 已过期，captureAccepted 不再触发，窗口仍然不起。
+   * Why waiting for "the next event that happens to arrive" is not enough to trigger a replay:
+   *   20:18:15.628  turn-started → credentials-unavailable (Helper not running)
+   *   20:18:23      Helper starts → first capture_app → bindCapture → pending-turn
+   *                 (coordinator's PIP_SESSION_CAPTURE_PENDING_TTL_MS = 2s, expires around 20:18:25)
+   *   20:18:30.420  next event arrives; replay succeeds with applied:true—but 5 seconds too late
+   * The capture staged when the turn began has expired, captureAccepted no longer fires, and the window still does not open.
    *
-   * 所以凭据一可用就要立刻补发：暂存的同时起一个有界轮询，命中即停。间隔取 250ms，
-   * 远小于协调器那 2s 的 TTL；上限 30s 覆盖 Helper 冷启动（含首次 TCC 授权对话框）。
+   * Therefore, replay as soon as credentials become available: start bounded polling when staging the event and stop when it succeeds. Use a 250 ms interval,
+   * far below the coordinator's 2 s TTL; the 30 s limit covers Helper cold start (including the initial TCC authorization dialog).
    */
   let replayTimer: ReturnType<typeof setTimeout> | null = null;
   const REPLAY_RETRY_MS = 250;
   const REPLAY_DEADLINE_MS = 30_000;
   let replayDeadline = 0;
+  /**
+   * Skip-streak aggregation for delivery-skip logging. Focus events fire on every window-focus change, so a Helper
+   * without credentials spammed one warn per event (554 warns/day, log triage 2026-10-15). While skips continue for
+   * the same reason, only the first skip logs at warn, repeats go to debug with a running total, and delivery
+   * recovery emits a single warn carrying the aggregate. Replay behavior is not affected.
+   */
+  let skipStreak: {
+    reason: "credentials-unavailable" | "transport-disabled";
+    dropped: number;
+  } | null = null;
+  let deliveryFailureStreak = 0;
+
+  // Any successful send ends the streak, including the retry-timer replay of a deferred
+  // turn-started: transport recovered there too, so a later skip must start a new warn
+  // streak instead of continuing the previous debug-only streak.
+  const reportDeliveryRecovered = (): void => {
+    if (skipStreak !== null) {
+      logger.warn(undefined, "[cua-pip-session] event delivery recovered", {
+        skipReason: skipStreak.reason,
+        skippedEvents: skipStreak.dropped,
+      });
+      skipStreak = null;
+    }
+    if (deliveryFailureStreak > 0) {
+      logger.info(undefined, "[cua-pip-session] event delivery recovered after send failures", {
+        failureStreak: deliveryFailureStreak,
+      });
+      deliveryFailureStreak = 0;
+    }
+  };
+
+  const reportDeliveryFailed = (event: PipSessionEvent, error: unknown, message: string): void => {
+    deliveryFailureStreak += 1;
+    const log = deliveryFailureStreak === 1 ? logger.warn : logger.debug;
+    log(undefined, message, {
+      ...eventLogContext(event),
+      failureStreak: deliveryFailureStreak,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+  };
+
+  const closesPendingTurn = (
+    event: PipSessionEvent,
+    pending: { event: PipSessionEvent; turnId: string },
+  ): boolean =>
+    (event.kind === "turn-ended" || event.kind === "session-closed") &&
+    ("turnId" in event
+      ? pending.turnId === event.turnId
+      : pending.event.sessionId === event.sessionId);
 
   const cancelReplayRetry = () => {
     if (replayTimer !== null) {
@@ -134,8 +183,8 @@ export function createCuaPipSessionService(options: {
   };
 
   /**
-   * 有界轮询：凭据一可用就把暂存的 turn-started 发出去，不等下一个事件。
-   * 经同一条 `tail` 串行，避免与 publish 竞态导致补发排到当前事件之后。
+   * Bounded polling: send the staged turn-started as soon as credentials are available, without waiting for another event.
+   * Serialize through the same `tail` to avoid a race with publish that could put the replay after the current event.
    */
   const scheduleReplayRetry = (): void => {
     cancelReplayRetry();
@@ -156,7 +205,7 @@ export function createCuaPipSessionService(options: {
         try {
           resolution = await getClient();
         } catch {
-          // 连接失败（Helper 刚起、还没 listen）：继续等下一轮。
+          // Connection failed (Helper has just started and is not listening yet): wait for the next poll.
           scheduleReplayRetry();
           return;
         }
@@ -173,16 +222,21 @@ export function createCuaPipSessionService(options: {
             applied: result.applied,
             reason: result.reason,
           });
+          reportDeliveryRecovered();
         } catch (error) {
-          logger.warn(undefined, "[cua-pip-session] replay of deferred turn-started failed", {
-            ...eventLogContext(replay.event),
-            errorMessage: error instanceof Error ? error.message : String(error),
-          });
+          // Keep the event staged so the next bounded poll can retry after a transient send failure.
+          pendingTurnStarted = replay;
+          scheduleReplayRetry();
+          reportDeliveryFailed(
+            replay.event,
+            error,
+            "[cua-pip-session] replay of deferred turn-started failed",
+          );
         }
       });
       tail = operation;
     }, REPLAY_RETRY_MS);
-    // 轮询定时器不应该让进程活着：它只是在等一个可能永远不出现的 Helper。
+    // The polling timer must not keep the process alive; it waits for a Helper that may never appear.
     replayTimer.unref?.();
   };
 
@@ -196,33 +250,41 @@ export function createCuaPipSessionService(options: {
             resolution.skipReason === "credentials-unavailable" ||
             resolution.skipReason === "transport-disabled"
           ) {
-            // 记账（见 pendingTurnStarted 的根因说明）：turn-started 丢了就等凭据可用时
-            // 补发；同一 turn 的 turn-ended 也丢了则连缓存一起作废 —— 那个 turn 已经在
-            // 没有传输的窗口里走完，补发只会开一个早该关闭的 turn。
+            // Account for lost events (see the root-cause comment for pendingTurnStarted): if turn-started is dropped, replay it when credentials become available;
+            // if turn-ended for the same turn is also dropped, invalidate the cache too—the turn completed while
+            // transport was unavailable, and replaying it would open a turn that should already be closed.
             if (event.kind === "turn-started") {
               pendingTurnStarted = { event, turnId: event.turnId };
               replayDeadline = Date.now() + REPLAY_DEADLINE_MS;
               scheduleReplayRetry();
             } else if (
-              (event.kind === "turn-ended" || event.kind === "session-closed") &&
               pendingTurnStarted !== null &&
-              ("turnId" in event
-                ? pendingTurnStarted.turnId === event.turnId
-                : pendingTurnStarted.event.sessionId === event.sessionId)
+              closesPendingTurn(event, pendingTurnStarted)
             ) {
               pendingTurnStarted = null;
               cancelReplayRetry();
             }
-            // Bug 诊断：Helper 常驻但凭据交接失败时，过去会静默丢掉 turn-started，PiP
-            // 永久停在上一轮完成态。生命周期事件每轮只有常数条，生产 warn 不会随帧刷盘。
-            logger.warn(undefined, "[cua-pip-session] event delivery skipped", {
-              ...eventLogContext(event),
-              skipReason: resolution.skipReason,
-            });
+            // Bug diagnosis: when the Helper was running but credential handoff failed, turn-started used to be silently dropped, leaving PiP
+            // permanently on the previous completed turn. The first skip of a streak stays at warn so a real outage remains visible; repeats are
+            // demoted to debug (see skipStreak) and a recovery warn reports the aggregated count.
+            if (skipStreak !== null && skipStreak.reason === resolution.skipReason) {
+              skipStreak.dropped += 1;
+              logger.debug(undefined, "[cua-pip-session] event delivery skipped", {
+                ...eventLogContext(event),
+                skipReason: resolution.skipReason,
+                droppedTotal: skipStreak.dropped,
+              });
+            } else {
+              skipStreak = { reason: resolution.skipReason, dropped: 1 };
+              logger.warn(undefined, "[cua-pip-session] event delivery skipped", {
+                ...eventLogContext(event),
+                skipReason: resolution.skipReason,
+              });
+            }
           } else {
-            // service-disabled / service-disposed 过去完全静默 return，
-            // 于是「一条 PiP 事件都没发」与「发了但被拒」在日志上不可区分——排查时只能反推
-            // 投递链上四处静默早退。生命周期事件每轮常数条，warn 不会随帧刷盘。
+            // service-disabled / service-disposed used to return silently,
+            // making "no PiP event was sent" indistinguishable in logs from "sent but rejected"—troubleshooting had to infer four silent early returns in the delivery path.
+            // Lifecycle events are constant per turn, so warnings do not create per-frame disk writes.
             logger.warn(undefined, "[cua-pip-session] event delivery dropped", {
               ...eventLogContext(event),
               skipReason: resolution.skipReason,
@@ -230,8 +292,8 @@ export function createCuaPipSessionService(options: {
           }
           return;
         }
-        // 凭据到位了：先把开场那条补上，协调器才有一个开着的 turn 可以承接后面的事件。
-        // 当前事件本身就是 turn-started 时不补发（它已经顶掉了缓存）。
+        // Credentials are available: replay the opening event first so the coordinator has an open turn to receive subsequent events.
+        // Do not replay when the current event is itself turn-started; it has already replaced the cached event.
         cancelReplayRetry();
         const replay = event.kind === "turn-started" ? null : pendingTurnStarted;
         pendingTurnStarted = null;
@@ -244,27 +306,31 @@ export function createCuaPipSessionService(options: {
               reason: replayed.reason,
             });
           } catch (error) {
-            // 补发失败不能拖垮当前事件：当前事件仍要发出去，最坏退回 turn-mismatch。
-            logger.warn(undefined, "[cua-pip-session] replay of deferred turn-started failed", {
-              ...eventLogContext(replay.event),
-              errorMessage: error instanceof Error ? error.message : String(error),
-            });
+            // Keep retrying the opening event while still delivering the current event, unless the
+            // current event ends that turn or closes that session: a later replay would reopen it.
+            if (!closesPendingTurn(event, replay)) {
+              pendingTurnStarted = replay;
+              scheduleReplayRetry();
+            }
+            reportDeliveryFailed(
+              replay.event,
+              error,
+              "[cua-pip-session] replay of deferred turn-started failed",
+            );
           }
         }
         const result = await resolution.client.send(event);
-        // Bug 诊断：PiP 切组跨 Main、Host、broker 三个进程；成功与幂等拒绝 ACK 若只写
-        // debug，生产包无法区分 turn-started 未发送和 stale-sequence/turn-mismatch。
-        // 这是低频生命周期日志，不记录截图、token 或 prompt，可安全保留在生产环境。
+        reportDeliveryRecovered();
+        // Bug diagnosis: PiP group switching crosses Main, Host, and broker processes; if successful and idempotently rejected ACKs are logged only at
+        // debug, packaged builds cannot distinguish an unsent turn-started from stale-sequence/turn-mismatch.
+        // These are low-frequency lifecycle logs and contain no screenshots, tokens, or prompts, so they are safe to keep in production.
         logger.info(undefined, "[cua-pip-session] event delivery acknowledged", {
           ...eventLogContext(event),
           applied: result.applied,
           reason: result.reason,
         });
       } catch (error) {
-        logger.warn(undefined, "[cua-pip-session] event delivery failed", {
-          ...eventLogContext(event),
-          errorMessage: error instanceof Error ? error.message : String(error),
-        });
+        reportDeliveryFailed(event, error, "[cua-pip-session] event delivery failed");
       }
     });
     tail = operation;

@@ -1,5 +1,11 @@
 import { HookEventName } from "../deps.js";
-import type { HookRunResult, Model, TraceContext, TurnState } from "../deps.js";
+import type {
+  CompactTrigger,
+  HookRunResult,
+  Model,
+  TraceContext,
+  TurnState,
+} from "../deps.js";
 import type { HookEventName as HookEventNameType } from "@zcode/contracts";
 import type { AgentRuntimeInternal } from "../internal.js";
 import {
@@ -8,6 +14,8 @@ import {
 } from "../../agent/message-history.js";
 
 const MAX_STOP_HOOK_CONTINUATIONS = 3;
+/** SessionEnd runs inside close(); a slow hook must not delay session teardown. */
+const SESSION_END_HOOK_BUDGET_MS = 5_000;
 
 const EMPTY_HOOK_RESULT: HookRunResult = {
   additionalContexts: [],
@@ -100,6 +108,94 @@ export async function runStopHooks(
       turnId: traceContext.turnId,
     },
     { signal },
+  );
+}
+
+export async function runPreCompactHooks(
+  this: AgentRuntimeInternal,
+  trigger: CompactTrigger,
+  customInstructions: string | undefined,
+  preCompactTokenCount: number,
+  traceContext: TraceContext,
+  signal?: AbortSignal,
+): Promise<HookRunResult> {
+  if (!this.hookRunner) return EMPTY_HOOK_RESULT;
+
+  return this.hookRunner.run(
+    {
+      agentName: this.config.agentName,
+      cwd: this.workingDirectory,
+      customInstructions,
+      hookEventName: HookEventName.PreCompact,
+      mode: this.getMode(),
+      preCompactTokenCount,
+      sessionId: this.sessionId,
+      timestamp: new Date().toISOString(),
+      traceId: traceContext.traceId,
+      trigger,
+      turnId: traceContext.turnId,
+    },
+    { matchValue: trigger, signal },
+  );
+}
+
+export async function runPostCompactHooks(
+  this: AgentRuntimeInternal,
+  trigger: CompactTrigger,
+  preCompactTokenCount: number,
+  postCompactTokenCount: number,
+  traceContext: TraceContext,
+  signal?: AbortSignal,
+): Promise<HookRunResult> {
+  if (!this.hookRunner) return EMPTY_HOOK_RESULT;
+
+  return this.hookRunner.run(
+    {
+      agentName: this.config.agentName,
+      cwd: this.workingDirectory,
+      hookEventName: HookEventName.PostCompact,
+      mode: this.getMode(),
+      postCompactTokenCount,
+      preCompactTokenCount,
+      sessionId: this.sessionId,
+      timestamp: new Date().toISOString(),
+      traceId: traceContext.traceId,
+      trigger,
+      turnId: traceContext.turnId,
+    },
+    { matchValue: trigger, signal },
+  );
+}
+
+export async function runSessionEndHooks(
+  this: AgentRuntimeInternal,
+  traceContext: TraceContext,
+): Promise<HookRunResult> {
+  if (!this.hookRunner) return EMPTY_HOOK_RESULT;
+  // The whole SessionEnd dispatch shares one short budget: hooks cancelled by it are recorded
+  // as cancelled lifecycle events instead of delaying session teardown.
+  const controller = new AbortController();
+  // The timer is deliberately not cleared when run() returns: `async: true` hooks keep running
+  // after dispatch resolves and must still be cancelled by this budget. unref() keeps an
+  // unfired timer from holding the process open.
+  const budget = setTimeout(
+    () => controller.abort("session_end_hook_budget_exceeded"),
+    SESSION_END_HOOK_BUDGET_MS,
+  );
+  budget.unref?.();
+  return this.hookRunner.run(
+    {
+      agentName: this.config.agentName,
+      cwd: this.workingDirectory,
+      hookEventName: HookEventName.SessionEnd,
+      mode: this.getMode(),
+      reason: "close",
+      sessionId: this.sessionId,
+      timestamp: new Date().toISOString(),
+      traceId: traceContext.traceId,
+      turnId: traceContext.turnId,
+    },
+    { signal: controller.signal },
   );
 }
 

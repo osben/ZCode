@@ -1,35 +1,49 @@
-# Windows CIM 进程清理与告警降噪设计
+# Windows CIM Process Cleanup and Alert Noise Reduction Design
 
-## 目标
+## Goal
 
-在 Windows 10 及以上环境中移除 WMIC 进程查询后端，统一使用 PowerShell `Get-CimInstance Win32_Process`，并将 Agent 进程清理的 error 告警收敛到最终重试失败，减少 `runtime process tree cleanup incomplete` 的误报警，同时保持 PID reuse 防护和 fail-closed 安全边界。
+On Windows 10 and later, remove the WMIC process-query backend and use PowerShell
+`Get-CimInstance Win32_Process` uniformly. Narrow the Agent process cleanup error alert to the final retry
+failure, reducing false `runtime process tree cleanup incomplete` alarms while keeping PID-reuse protection and
+the fail-closed safety boundary.
 
-## 非目标
+## Non-goals
 
-- 不改变 `transport_ready` / `functional_ready` 两阶段 Helper 启动协议。
-- 不允许仅凭裸 PID 调用 `taskkill /PID /T /F`；仍由 Host 持有且确认存活的受管
-  `ChildProcess` root 句柄属于独立所有权证据，不按裸 PID 处理。
-- 不引入 Windows Job Object；该方案另行设计。
-- 不扩大 Windows 进程清理 deadline。
+- No change to the two-phase `transport_ready` / `functional_ready` Helper startup protocol.
+- Never call `taskkill /PID /T /F` on a bare PID alone. A managed `ChildProcess` root handle still held and
+  confirmed alive by the Host is independent ownership evidence and is not treated as a bare PID.
+- No Windows Job Object; that approach is designed separately.
+- No larger Windows process cleanup deadline.
 
-## 设计
+## Design
 
 ### CIM capability
 
-Local Host 生命周期内维护 PowerShell/CIM 能力状态。首次全量 CIM 查询即完成真实能力确认并缓存结果，不额外启动一次探测进程；能力探测必须验证 `powershell.exe` 和 `Get-CimInstance Win32_Process` 的真实可调用性，而不是只检查可执行文件存在。
+The Local Host keeps PowerShell/CIM capability state for its lifetime. The first full CIM query confirms the
+real capability and caches the result, with no extra probe process; the capability check must verify that
+`powershell.exe` and `Get-CimInstance Win32_Process` are actually callable, not merely that the executable
+exists.
 
-能力状态至少区分：
+Capability states distinguish at least:
 
-- `cim`：当前 Host 可执行 CIM 查询。
-- `identity-unavailable`：PowerShell 不存在、被策略阻止或本轮查询不可用。
+- `cim`: the current Host can run CIM queries.
+- `identity-unavailable`: PowerShell is missing, blocked by policy, or the query is unavailable this round.
 
-硬失败可以在 Host 生命周期内缓存；单次 timeout 不得永久污染后续 cleanup，仍需允许下一轮重试。
+A hard failure may be cached for the Host lifetime; a single timeout must not permanently poison later
+cleanups and the next round may retry.
 
 ### Process snapshot and force verification
 
-Agent cleanup 开始时执行一次异步全量 CIM 查询，按 PID 建立索引，保存 `pid`、`parentPid` 和规范化的 `CreationDate`。后代只从本次快照和受管 root 生命周期推导。
+When Agent cleanup starts it runs one async full CIM query, indexes by PID, and stores `pid`, `parentPid` and
+the normalized `CreationDate`. Descendants are derived only from this snapshot and the managed root lifecycle.
 
-Graceful 退出等待后，force 阶段仍须对快照中的已知 root/descendant 做定向 CIM 身份复核。后代只有 PID 与 CreationDate 同时匹配才允许执行 `taskkill /PID /T /F`；查询失败、超时或身份不匹配时继续 fail-closed。root 另有一个受限例外：cleanup 未进入 `unverifiedRootOnly`，且 Host 持有的原始 `ChildProcess` 仍满足 `exitCode/signalCode` 均为 `null`、句柄可发送信号并确认 PID 存活时，可仅对该 root 执行 graceful `/T` 或 deadline `/T /F` 兜底。该例外不允许沿 root PID 重新发现或认领后代，也不允许把未复核后代加入 `/F` 目标。
+After the graceful-exit wait, the force phase still does a targeted CIM identity recheck of the known
+root/descendants in the snapshot. A descendant may get `taskkill /PID /T /F` only when both PID and
+CreationDate match; a query failure, timeout or identity mismatch stays fail-closed. The root has one bounded
+exception: when cleanup has not entered `unverifiedRootOnly` and the original `ChildProcess` held by the Host
+still has `exitCode/signalCode` both `null`, can send signals and the PID is confirmed alive, graceful `/T` or
+the deadline `/T /F` fallback may be applied to that root only. The exception must not rediscover or claim
+descendants via the root PID, nor add unverified descendants to the `/F` targets.
 
 ```text
 Host init
@@ -51,16 +65,21 @@ cleanup
 
 ### Alert policy
 
-`cleanupManagedProcessWithRetry` 的第一次失败只记录可恢复的 `warn` 并保留原始错误；retry 成功时最终 cleanup 视为成功，不产生 error 告警。只有 retry 也失败时，才记录一次最终 `error`，并保留最终错误作为返回值。
+The first failure in `cleanupManagedProcessWithRetry` logs only a recoverable `warn` and keeps the original
+error; if the retry succeeds the final cleanup counts as success with no error alert. Only when the retry also
+fails is a single final `error` logged, with the final error kept as the return value.
 
-## 验收标准
+## Acceptance
 
-1. 代码和测试中不再启动 `wmic.exe`。
-2. WMIC 不存在时不再产生 `wmic.exe ENOENT` warning。
-3. PowerShell/CIM 可用时全量快照、定向身份复核和 force 行为保持正确。
-4. `identityVerification: "unavailable"` / `unverifiedRootOnly` 路径仍 fail-closed，不发送裸
-   PID `/F`；受管 live root 句柄例外只能作用于 root，不能扩散到未复核后代。
-5. cleanup 第一次失败、retry 成功时不产生最终 error；两次失败只产生一次最终 error。
-6. 相关 Windows 单测和 Agent process manager 单测通过。
-7. 回归测试覆盖定向 CIM 复核失败时的受管 root-only `/F` 兜底，以及
-   `unverifiedRootOnly` 下不发送任何 root `/F`。
+1. Code and tests no longer launch `wmic.exe`.
+2. A missing WMIC no longer produces a `wmic.exe ENOENT` warning.
+3. With PowerShell/CIM available, the full snapshot, targeted identity recheck and force behavior stay
+   correct.
+4. The `identityVerification: "unavailable"` / `unverifiedRootOnly` paths still fail closed and send no bare
+   PID `/F`; the managed live root handle exception applies only to the root and must not spread to unverified
+   descendants.
+5. A first cleanup failure with a successful retry yields no final error; two failures yield exactly one final
+   error.
+6. Related Windows unit tests and Agent process manager unit tests pass.
+7. Regression tests cover the managed root-only `/F` fallback when the targeted CIM recheck fails, and that no
+   root `/F` is sent under `unverifiedRootOnly`.

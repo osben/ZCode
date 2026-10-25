@@ -110,6 +110,17 @@ export interface ModelTrajectorySidePaneTab {
   title?: string | null;
 }
 
+export interface ModelTrajectoryV2SidePaneTab {
+  id: string;
+  type: "model-trajectory-v2";
+  ownerTaskId?: string | null;
+  workspaceKey?: string | null;
+  openedAt?: number;
+  /** Target task/session id; independent of the v1 tab. */
+  taskId: string;
+  title?: string | null;
+}
+
 export interface PluginMarketSidePaneTab {
   id: "plugin-market";
   type: "plugin-market";
@@ -231,6 +242,7 @@ export interface PlanDetailSidePaneTab {
   workspaceIdentity?: string;
   remoteSessionId?: string;
   parentSessionId: string;
+  rootSessionId?: string;
   toolCallId: string;
   markdown: string;
   planFilePath?: string;
@@ -238,6 +250,7 @@ export interface PlanDetailSidePaneTab {
 
 export interface OpenPlanDetailSideTabRequest {
   parentSessionId: string;
+  rootSessionId?: string;
   toolCallId: string;
   markdown: string;
   planFilePath?: string;
@@ -573,6 +586,7 @@ export type WorkspaceSidePaneTab =
   | TreemappingSidePaneTab
   | WhiteboardSidePaneTab
   | ModelTrajectorySidePaneTab
+  | ModelTrajectoryV2SidePaneTab
   | PluginMarketSidePaneTab
   | DeveloperToolsSidePaneTab
   | TerminalSidePaneTab
@@ -729,6 +743,20 @@ function createModelTrajectorySidePaneTab(options: {
   };
 }
 
+function createModelTrajectoryV2SidePaneTab(options: {
+  taskId: string;
+  title?: string | null;
+}): ModelTrajectoryV2SidePaneTab {
+  return {
+    // Deduped separately from v1, so the v1 and v2 views of one task can be open together.
+    id: `model-trajectory-v2:${options.taskId}`,
+    type: "model-trajectory-v2",
+    openedAt: Date.now(),
+    taskId: options.taskId,
+    title: options.title ?? null,
+  };
+}
+
 function createDeveloperToolsSidePaneTab(): DeveloperToolsSidePaneTab {
   return {
     id: "developer-tools",
@@ -858,6 +886,7 @@ export function createPlanDetailSidePaneTab(
     ...(options.workspaceIdentity ? { workspaceIdentity: options.workspaceIdentity } : {}),
     ...(options.remoteSessionId ? { remoteSessionId: options.remoteSessionId } : {}),
     parentSessionId: options.parentSessionId,
+    ...(options.rootSessionId ? { rootSessionId: options.rootSessionId } : {}),
     toolCallId: options.toolCallId,
     markdown: options.markdown,
     ...(options.planFilePath ? { planFilePath: options.planFilePath } : {}),
@@ -1179,7 +1208,6 @@ export function isSidePaneTabVisibleInScope(
     case "bash-output":
       return tab.rootSessionId === scope.ownerTaskId;
     case "selection-side-chat":
-    case "plan-detail":
     case "plugin-ui":
     case "workflow-run":
     case "workflow-directory":
@@ -1187,12 +1215,15 @@ export function isSidePaneTabVisibleInScope(
     case "workflow-workspace":
     case "workflow-artifact":
       return tab.parentSessionId === scope.ownerTaskId;
+    case "plan-detail":
+      return (tab.rootSessionId ?? tab.parentSessionId) === scope.ownerTaskId;
     case "browser":
     case "browser-permissions":
     case "file-manager":
     case "code-viewer":
     case "whiteboard":
     case "model-trajectory":
+    case "model-trajectory-v2":
     case "new-tab":
     case "terminal":
       return sidePaneOwnerKey(tab.ownerTaskId) === sidePaneOwnerKey(scope.ownerTaskId);
@@ -1824,6 +1855,16 @@ export function openModelTrajectorySidePane(
   return activateSidePaneTab(current, createModelTrajectorySidePaneTab(options));
 }
 
+export function openModelTrajectoryV2SidePane(
+  current: WorkspaceSidePaneState | null,
+  options: {
+    taskId: string;
+    title?: string | null;
+  },
+): WorkspaceSidePaneState {
+  return activateSidePaneTab(current, createModelTrajectoryV2SidePaneTab(options));
+}
+
 export function activatePluginMarketSidePane(
   current: WorkspaceSidePaneState | null,
 ): WorkspaceSidePaneState {
@@ -1991,7 +2032,11 @@ export function openPlanDetailSidePane(
   );
   // 同一个 toolCall 只保留一个 tab；再次点击用卡片当前正文刷新 fallback，
   // 详情组件的实时正文仍以父 conversation projection 为权威。
-  return activateSidePaneTab(current, existing ? { ...existing, ...nextTab } : nextTab);
+  if (!existing) return activateSidePaneTab(current, nextTab);
+  // 不能让旧的 rootSessionId 在没有新值时残留；展开 spread 会保留 existing 的字段。
+  const merged: PlanDetailSidePaneTab = { ...existing, ...nextTab };
+  if (nextTab.rootSessionId === undefined) delete merged.rootSessionId;
+  return activateSidePaneTab(current, merged);
 }
 
 /**

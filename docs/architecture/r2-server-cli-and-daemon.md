@@ -1,65 +1,65 @@
-# R2 独立 Server CLI 与 daemon 规格
+# R2 Standalone Server CLI and Daemon Specification
 
-## 1. 状态与范围
+## 1. Status and Scope
 
-- 状态：P0/P1 已实现；本次 hardening 已补齐 Core 父进程断连、更新指针清理和稳定 Server identity；Linux x64 已完成 SSH 实机验证
-- 阶段：统一多端远程架构 R2 / D4
-- 本阶段目标：交付可独立安装、可后台运行、与 UI 生命周期解耦的 ZCode Server CLI
-- 本文定位：R2 的实现规格和边界；可执行测试补充见 [R2 lifecycle test plan](./r2-server-cli-and-daemon-test-plan.md)
-- R2 不切换 Desktop 的生产远程连接主链
+- Status: P0/P1 implemented; this hardening completes Core parent-process disconnect handling, update-pointer cleanup, and stable Server identity; Linux x64 has been verified on a real machine over SSH
+- Phase: Unified multi-client remote architecture R2 / D4
+- Goal for this phase: deliver a ZCode Server CLI that can be installed independently, run in the background, and is decoupled from the UI lifecycle
+- Purpose: R2 implementation specification and boundaries; see the [R2 lifecycle test plan](./r2-server-cli-and-daemon-test-plan.md) for executable test supplements
+- R2 does not switch Desktop's production remote-connection path
 
-本文基于：
+This document is based on:
 
-- [ZCode 统一多端远程连接架构与产品方案（评审稿）](https://internal-docs.example.invalid/redacted)
-- [R1 窗口级单 Host 进程重构规格](./r1-single-window-host-refactor.md)
-- [Agent Electron/Node runtime 事实](../runtime-tools/agent-electron-node-runtime.md)
-- [ZCode Lite / Server 统一多端架构实施计划](./unified-zcode-lite-server-multi-server-plan.md)
+- [ZCode unified multi-client remote-connection architecture and product proposal (review draft)](https://internal-docs.example.invalid/redacted)
+- [R1 single window-scoped Host process refactor specification](./r1-single-window-host-refactor.md)
+- [Agent Electron/Node runtime facts](../runtime-tools/agent-electron-node-runtime.md)
+- [ZCode Lite / Server unified multi-client architecture implementation plan](./unified-zcode-lite-server-multi-server-plan.md)
 
-R2 交付：
+R2 delivers:
 
-- 独立安装的 `zcode` Server CLI；
-- `serve`、`serve --daemon`、`status`、`stop`、`restart`、`update`、`uninstall`；
-- Supervisor、Server Core、Agent 的进程边界；
-- macOS、Linux、Windows 的用户级自启动服务；
-- 单实例、崩溃退避和任务中断语义；
-- HTTP/WebSocket ingress 边界及 R1 Host RPC 兼容性验证；
-- 与现有远端资产流程一致的独立 Node runtime。
+- An independently installable `zcode` Server CLI;
+- `serve`, `serve --daemon`, `status`, `stop`, `restart`, `update`, `uninstall`;
+- Process boundaries for Supervisor, Server Core, and Agent;
+- User-level startup services on macOS, Linux, and Windows;
+- Single-instance, crash-backoff, and task-interruption semantics;
+- HTTP/WebSocket ingress boundaries and R1 Host RPC compatibility verification;
+- A standalone Node runtime consistent with the existing remote-asset flow.
 
-R2 不交付：
+R2 does not deliver:
 
-- SSH、WSL、Docker、Direct URL、WS/WSS 的 Transport Adapter；
-- Desktop Host 到 Server daemon 的连接发现、安装和连接管理；
-- Web 多 Server Controller；
-- 手机独立创建 Server、Host 或 Agent runtime；
-- `sourceServerId`、Connection Profile、Resource Store 和完整 compatibility manifest；
-- Desktop 新远程生产链切换。
+- Transport Adapters for SSH, WSL, Docker, Direct URL, or WS/WSS;
+- Connection discovery, installation, and connection management from Desktop Host to the Server daemon;
+- A Web multi-Server Controller;
+- Independent creation of a Server, Host, or Agent runtime by mobile;
+- `sourceServerId`, Connection Profile, Resource Store, or a complete compatibility manifest;
+- Switching Desktop to a new production remote-connection path.
 
-## 2. 核心决策
+## 2. Core Decisions
 
-| 决策项               | R2 结论                                                                                                                                                                                                                                                                                                            |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 新代码目录           | 新建 `packages/zcode-server-cli`；R2 不在 `packages/server` 中增加代码                                                                                                                                                                                                                                             |
-| 旧 `packages/server` | 仅作为现有 HTTP/WS、stdio、远程部署和协议行为参考；保持其当前入口兼容                                                                                                                                                                                                                                              |
-| 用户入口             | 独立发行包提供 `zcode`；无参数继续进入既有 TUI                                                                                                                                                                                                                                                                     |
-| Server Core          | 新目录内实现新的 Core 入口和生命周期合同，不继承旧 `entry-http` / `entry-stdio` 的进程语义                                                                                                                                                                                                                         |
-| 业务服务             | 经过审查后复用 `@zcode/services`、`@zcode/shared`、`@zcode/rpc` 等底层能力                                                                                                                                                                                                                                         |
-| Supervisor           | 只拥有生命周期状态，不拥有 task/session/stream/queue/snapshot 业务状态                                                                                                                                                                                                                                             |
-| 监听地址             | 默认回环地址和动态端口；非回环监听必须启用鉴权                                                                                                                                                                                                                                                                     |
-| Web / WS             | R2 实现并验证 Core 的 HTTP/WS ingress；具体远程 Transport 留给后续阶段                                                                                                                                                                                                                                             |
-| 数据目录             | 复用 `getZCodeDataRootDir()` 和 `ZCODE_DATA_BASE_DIR`；标准目录为 `<dataRoot>/server`。OS service 必须携带内部参数 `--server-root <absolute-path>`，不得依赖注册时 shell 的环境                                                                                                                                    |
-| Node runtime         | 沿用现有远端资产流程的 Node `v22.16.0`；Server CLI 不依赖系统 Node 或 Electron Node                                                                                                                                                                                                                                |
-| 崩溃策略             | 5 次/5 分钟预算，退避 1、2、4、8、16 秒；超出后进入 `crash-loop-stopped`                                                                                                                                                                                                                                           |
-| Task 恢复            | Core 崩溃或更新后，运行中的 Task 中断，不自动恢复或重放输入                                                                                                                                                                                                                                                        |
-| stop                 | 停止当前实例，但保留自启动注册                                                                                                                                                                                                                                                                                     |
-| uninstall            | 停止实例、移除服务注册、删除 ZCode 自有数据；Workspace/Repo/用户文件不删除                                                                                                                                                                                                                                         |
-| update               | 默认从配置的 release catalog 在线下载并校验；无网络时可应用本地 pending；使用原子切换和失败回滚                                                                                                                                                                                                                    |
-| 组件更新             | 以 Node、server、agent、official-plugins、native-search-tools 五个粗粒度组件做内容寻址缓存；完整 release 仍是原子运行单元                                                                                                                                                                                          |
-| 平台服务注册         | 先探测当前用户的 launchctl / systemctl --user / schtasks 能力；Linux 非交互会话可从 `/run/user/<uid>/bus` 恢复 user bus 环境。服务管理器不可访问时自动由 detached Supervisor 启动；能力探测成功后的真实注册失败仍返回可诊断错误，不做伪装 fallback。OS service 或 detached Supervisor 二选一成为 daemon 启动 owner |
+| Decision                      | R2 conclusion                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| New code directory            | Create `packages/zcode-server-cli`; R2 adds no code to `packages/server`                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Existing `packages/server`    | Reference only for current HTTP/WS, stdio, remote deployment, and protocol behavior; keep its current entry points compatible                                                                                                                                                                                                                                                                                                                                                                             |
+| User entry point              | The standalone distribution provides `zcode`; no arguments continue to launch the existing TUI                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Server Core                   | Implement a new Core entry point and lifecycle contract in the new directory; do not inherit process semantics from the old `entry-http` / `entry-stdio`                                                                                                                                                                                                                                                                                                                                                  |
+| Business services             | Reuse lower-level capabilities such as `@zcode/services`, `@zcode/shared`, and `@zcode/rpc` after review                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Supervisor                    | Owns lifecycle state only, not task/session/stream/queue/snapshot business state                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Listen address                | Loopback address and dynamic port by default; non-loopback listening requires authentication                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Web / WS                      | R2 implements and verifies the Core HTTP/WS ingress; specific remote transports are deferred to later phases                                                                                                                                                                                                                                                                                                                                                                                              |
+| Data directory                | Reuse `getZCodeDataRootDir()` and `ZCODE_DATA_BASE_DIR`; the standard directory is `<dataRoot>/server`. OS services must pass the internal argument `--server-root <absolute-path>` and must not depend on the shell environment at registration time                                                                                                                                                                                                                                                     |
+| Node runtime                  | Use Node `v22.16.0` from the existing remote-asset flow; Server CLI does not depend on system Node or Electron Node                                                                                                                                                                                                                                                                                                                                                                                       |
+| Crash policy                  | Budget of 5 attempts per 5 minutes, with 1, 2, 4, 8, and 16-second backoff; after that, enter `crash-loop-stopped`                                                                                                                                                                                                                                                                                                                                                                                        |
+| Task recovery                 | After a Core crash or update, running Tasks are interrupted; do not automatically resume them or replay input                                                                                                                                                                                                                                                                                                                                                                                             |
+| stop                          | Stop the current instance but retain startup registration                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| uninstall                     | Stop the instance, remove service registration, and delete ZCode-owned data; do not delete Workspaces/Repos/user files                                                                                                                                                                                                                                                                                                                                                                                    |
+| update                        | By default, download and validate online from the configured release catalog; apply a local pending release when offline; use atomic switching and rollback on failure                                                                                                                                                                                                                                                                                                                                    |
+| Component updates             | Use content-addressed caches for five coarse-grained components: Node, server, agent, official-plugins, and native-search-tools; the complete release remains the atomic runtime unit                                                                                                                                                                                                                                                                                                                     |
+| Platform service registration | First probe the current user's launchctl / systemctl --user / schtasks capability. On Linux non-interactive sessions, the user bus environment can be restored from `/run/user/<uid>/bus`. If the service manager is inaccessible, a detached Supervisor starts automatically. A real registration failure after a successful capability probe still returns a diagnosable error, with no disguised fallback. Exactly one of the OS service or the detached Supervisor becomes the daemon's startup owner |
 
-## 3. 进程与职责模型
+## 3. Process and Responsibility Model
 
 ```text
-安装后的 zcode
+Installed zcode
 └── bin/zcode
     ├── serve
     │   └── Supervisor
@@ -71,105 +71,105 @@ R2 不交付：
     │           └── Server Core
     │               └── Agent CLI
     ├── status / stop / restart / update / uninstall
-    │   └── 本地 Unix Socket / Windows Named Pipe
+    │   └── Local Unix Socket / Windows Named Pipe
     │       └── Supervisor
-    └── 无参数及其他既有 CLI 命令
-        └── 发行包内既有 CLI/TUI bundle
+    └── No arguments and other existing CLI commands
+        └── Existing CLI/TUI bundle in the distribution
 ```
 
 ### 3.1 Server CLI
 
-Server CLI 负责：
+Server CLI is responsible for:
 
-- 解析 Server 生命周期命令；
-- 对 Supervisor 发起本地控制请求；
-- 输出人类可读或 `--json` 状态；
-- 执行 update/uninstall 的交互确认；
-- 在不加载 Server Core 的情况下保持 TUI 启动路径；
-- 将无参数和非 Server 生命周期命令转发给发行包内已有 CLI/TUI bundle。
+- Parsing Server lifecycle commands;
+- Sending local control requests to Supervisor;
+- Outputting human-readable or `--json` status;
+- Handling interactive confirmation for update/uninstall;
+- Preserving the TUI startup path without loading Server Core;
+- Forwarding no-argument and non-Server-lifecycle commands to the existing CLI/TUI bundle in the distribution.
 
-CLI 不直接持有 Server 业务状态，也不直接杀 Core 或 Agent 的裸 PID。
+The CLI does not directly own Server business state or kill Core/Agent by raw PID.
 
 ### 3.2 Supervisor
 
-Supervisor 负责：
+Supervisor is responsible for:
 
-- 获取和维护 data-root 级单实例锁；
-- 启动、停止、重启 Server Core；
-- 通过私有 child IPC 接收 Core ready、heartbeat、运行任务数量和退出原因；
-- 执行崩溃退避和 crash-loop 熔断；
-- 处理 update/uninstall 前的运行任务保护；
-- 管理平台服务注册、启动、停止和移除。
+- Acquiring and maintaining the data-root-level single-instance lock;
+- Starting, stopping, and restarting Server Core;
+- Receiving Core ready, heartbeat, running-task count, and exit reason over private child IPC;
+- Applying crash backoff and the crash-loop circuit breaker;
+- Enforcing running-task protection before update/uninstall;
+- Managing platform service registration, startup, shutdown, and removal.
 
-Supervisor 不持有：
+Supervisor does not own:
 
-- Session 正文；
-- Task conversation 或 stream；
-- CommandInbox、queued prompt 或 permission payload；
-- Workspace、Repo 或用户文件内容。
+- Session content;
+- Task conversation or stream;
+- CommandInbox, queued prompts, or permission payloads;
+- Workspace, Repo, or user-file content.
 
 ### 3.3 Server Core
 
-Server Core 是无界面的业务服务进程，负责：
+Server Core is a headless business-service process responsible for:
 
-- 以 `standalone-server` authority 组装服务；
-- 管理多个 Workspace 和 Workspace Agent；
-- 提供 HTTP API 和 WebSocket API；
-- 维护 task/session/runtime 的权威状态；
-- 把运行任务数量以只读生命周期快照提供给 Supervisor；
-- 响应 SIGINT、SIGTERM 并有界释放服务资源。
+- Composing services with `standalone-server` authority;
+- Managing multiple Workspaces and Workspace Agents;
+- Providing HTTP and WebSocket APIs;
+- Maintaining authoritative task/session/runtime state;
+- Providing Supervisor with a read-only lifecycle snapshot of the running-task count;
+- Responding to SIGINT/SIGTERM and releasing service resources within bounded time.
 
-Core 崩溃后由 Supervisor 启动新的 Core。旧 Core 中运行中的任务不自动续跑，遵循现有 CLI/runtime 的冷恢复语义。
+After a Core crash, Supervisor starts a new Core. Tasks running in the old Core do not resume automatically; existing CLI/runtime cold-recovery semantics apply.
 
 ### 3.4 Agent CLI
 
-Agent CLI 继续作为每个 Workspace 的独立子进程运行：
+The Agent CLI continues to run as a separate child process for each Workspace:
 
-- Agent 负责命令队列、Session、模型调用和工具执行；
-- Server Core 负责 Workspace 到 Agent 的生命周期和路由；
-- Supervisor 不直接管理 Agent 的业务状态；
-- Agent 重启、Core 重启和 Desktop attachment 断开不得自动重放已接受的输入。
+- Agent handles the command queue, Session, model calls, and tool execution;
+- Server Core handles the lifecycle and routing between Workspaces and Agents;
+- Supervisor does not directly manage Agent business state;
+- Agent restarts, Core restarts, and Desktop attachment disconnections must not automatically replay accepted input.
 
-## 4. 进程间通信
+## 4. Inter-Process Communication
 
 ```text
-CLI 控制请求 ── Unix Socket / Windows Named Pipe ──> Supervisor
-Supervisor ── 私有 child IPC ──> Server Core
+CLI control request ── Unix Socket / Windows Named Pipe ──> Supervisor
+Supervisor ── private child IPC ──> Server Core
 Server Core ── stdio/RPC ──> Agent CLI
 Server Core ── HTTP/WS ──> Desktop Host / Browser / future Transport
 ```
 
 ### 4.1 CLI ↔ Supervisor
 
-本地控制协议由 `packages/zcode-server-cli` 自己拥有，使用严格运行时 schema 和 JSONL framing，至少包括：
+The local control protocol is owned by `packages/zcode-server-cli` and uses strict runtime schemas and JSONL framing. It includes at least:
 
-- `status`；
-- `stop`；
-- `restart`；
-- `prepare-update` / `apply-update`；
-- `prepare-uninstall` / `confirm-uninstall`；
-- `ping`。
+- `status`;
+- `stop`;
+- `restart`;
+- `prepare-update` / `apply-update`;
+- `prepare-uninstall` / `confirm-uninstall`;
+- `ping`.
 
-控制 socket/pipe 必须位于当前 data root 下，并使用权限收紧的运行时路径。响应不得泄露 token、凭据或完整用户路径之外的敏感内容。
+The control socket/pipe must be under the current data root and use a runtime path with restricted permissions. Responses must not expose tokens, credentials, or sensitive information beyond full user paths.
 
 ### 4.2 Supervisor ↔ Core
 
-Core 通过私有 child IPC 发送：
+Core sends the following over private child IPC:
 
-- `ready`：监听地址、端口、Core 版本和实例 generation；
-- `heartbeat`：单调递增时间戳和运行任务数量；
-- `task-activity`：运行任务数量发生变化时的只读更新；
-- `shutdown-ack`：资源释放完成；
-- `fatal`：不可恢复错误摘要；
-- `exit`：Core 主动或异常退出原因。
+- `ready`: listen address, port, Core version, and instance generation;
+- `heartbeat`: monotonically increasing timestamp and running-task count;
+- `task-activity`: read-only update when the running-task count changes;
+- `shutdown-ack`: resources released;
+- `fatal`: summary of an unrecoverable error;
+- `exit`: reason for a normal or abnormal Core exit.
 
-运行任务数量必须来自 Core 内部 Agent runtime 发布的权威 turn lifecycle fact，不能由 Supervisor
-维护第二份 task registry。Core-local `TaskActivityTracker` 订阅所有已连接 workspace 的
-`turn.started` / `turn.terminal`，只保留按 `workspaceKey + sessionId` 去重的活动 key，并把数量作为
-生命周期快照发给 Supervisor。它不是公开 RPC 接口，也不持有正文、stream、queue 或 snapshot。
-Task facade 与直接调用 `IZCodeAgentService` v4 的 `desktop-continuous` 路径必须汇入同一 tracker；
-`web-remote-replayable` 仍只按自己的 gap/snapshot 边界向客户端恢复，活动计数不得改变两种 delivery
-语义。
+The running-task count must come from authoritative turn-lifecycle facts emitted by the Agent runtime inside Core; Supervisor must not
+maintain a second task registry. Core-local `TaskActivityTracker` subscribes to all connected workspaces'
+``turn.started` / `turn.terminal`, retains only activity keys deduplicated by `workspaceKey + sessionId`, and sends the count as a
+lifecycle snapshot to Supervisor. It is not a public RPC interface and does not own content, streams, queues, or snapshots.
+The Task facade and the `desktop-continuous` path that calls `IZCodeAgentService` v4 directly must feed the same tracker;
+`web-remote-replayable` continues to recover clients only within its own gap/snapshot boundary; activity counts must not change the two delivery
+semantics.
 
 ```text
 desktop-continuous ── sendConversationCommandV4 ─┐
@@ -185,7 +185,7 @@ web-remote-replayable ─ Task/Agent command ──────┘             �
 
 ## 5. HTTP / WebSocket ingress
 
-R2 不把 Server Core 设计成 SSH 专用服务。Web、WS、WSS、SSH、WSL、Docker 后续都应只是到达同一个 Core 的不同 Transport。
+R2 does not design Server Core as an SSH-specific service. Web, WS, WSS, SSH, WSL, and Docker should all be different transports to the same Core.
 
 ```text
 Desktop Host / Browser Web / Mobile Controller
@@ -197,44 +197,44 @@ Desktop Host / Browser Web / Mobile Controller
               Server Core
 ```
 
-R2 Core 实现和验证：
+R2 implements and verifies the following in Core:
 
-- HTTP server-info 能力；
-- Web replayable WebSocket 合同；
-- capability-gated desktop continuous WebSocket 合同；
-- `desktop-continuous` 和 `web-remote-replayable` 的 delivery 边界；
-- `workspaceIdentity`、`workspacePath` 的传递和隔离；`remoteSessionId` 不属于 R2 Core ingress 合同，仍由 R3 Transport/Host 连接层负责透传。
+- HTTP server-info capability;
+- Web replayable WebSocket contract;
+- capability-gated desktop continuous WebSocket contract;
+- Delivery boundaries for `desktop-continuous` and `web-remote-replayable`;
+- Propagation and isolation of `workspaceIdentity` and `workspacePath`; `remoteSessionId` is not part of the R2 Core ingress contract and remains the responsibility of the R3 Transport/Host connection layer to forward.
 
-R2 的 Core 是 Supervisor 的 child process。除显式 `shutdown` 外，Core 还必须监听 IPC
-`disconnect`：Supervisor 被强杀、崩溃或 IPC 通道断开时，Core 要自行关闭 HTTP/WebSocket、释放
-Agent/SQLite 等资源并退出，不能成为绕过 data-root lock 的孤儿进程。Supervisor 只依据自己的
-lock ownership 判断实例存活，不能把 Core 的孤儿状态当作可安全复用。
+R2 Core is a child process of Supervisor. In addition to explicit `shutdown`, Core must listen for IPC
+`disconnect`: if Supervisor is force-killed, crashes, or loses the IPC channel, Core must close HTTP/WebSocket itself, release
+Agent/SQLite and other resources, and exit. It must not become an orphan process that bypasses the data-root lock. Supervisor determines instance liveness only from its own
+lock ownership and must not treat an orphaned Core as safe to reuse.
 
 ```text
 Supervisor ── SIGKILL/crash ──X IPC ──disconnect──> Core
                                                     │
                                                     ├─ close HTTP/WebSocket
                                                     ├─ dispose Agent/SQLite
-                                                    └─ exit；端口不再可用
+                                                    └─ exit; port is no longer available
 ```
 
-在线 catalog 已确认当前 release 与磁盘上的 `current.json` 一致时，`prepareOnlineUpdate` 会删除
-不可能高于当前版本的遗留 `pending.json`。这样离线更新不会在一次“已是最新”的在线检查之后
-意外降级到旧 release；如果 pending 明确指向更高的未来版本，则保留它作为显式的离线候选。
+When the online catalog confirms that the current release matches the on-disk `current.json`, `prepareOnlineUpdate` deletes
+a stale `pending.json` that cannot be newer than the current version. This prevents offline update from
+accidentally downgrading to an older release after an online check reports “already up to date.” If pending explicitly points to a newer future version, retain it as an explicit offline candidate.
 
-`/api/server-info.serverId` 使用 `install.json.installationId` 作为持久用户数据环境的稳定身份。只有直接调用
-Core HTTP 工厂且未提供 server root 的测试/嵌入场景才回退到 hostname；真实 Supervisor 启动的
-Core 必须通过 `ZCODE_SERVER_ROOT` 校验 ownership marker 后注入 installationId。
+`/api/server-info.serverId` uses `install.json.installationId` as the stable identity of the persistent user data environment. Only tests/embedded use cases that call
+the Core HTTP factory without a server root fall back to the hostname. A Core started by a real Supervisor
+must validate the ownership marker through `ZCODE_SERVER_ROOT` before injecting installationId.
 
-现有 `packages/server` 中的 `/api/server-info`、`/api/rpc-host-capability`、`/ws`、`/ws/host` 等行为作为兼容性参考；新 Core 不直接导入旧入口，而是通过合同测试决定需要保留的边界。
+Behavior of `/api/server-info`, `/api/rpc-host-capability`, `/ws`, `/ws/host`, and similar endpoints in existing `packages/server` serves as a compatibility reference. The new Core does not import old entry points directly; contract tests determine which boundaries to preserve.
 
-R2 默认只监听回环地址和动态端口，并把实际端口写入 `status.json`。非回环监听必须显式配置鉴权。R2 不实现公网暴露、Relay、配对、Direct URL 发现和 Transport Adapter。
+By default, R2 listens only on a loopback address and dynamic port, and writes the actual port to `status.json`. Non-loopback listening requires explicitly configured authentication. R2 does not implement public exposure, Relay, pairing, Direct URL discovery, or Transport Adapters.
 
-当前 loopback-only ingress 的安全边界是网络位置边界，不是进程身份边界：同一台机器上能够发现该动态端口的其他进程，理论上可以访问普通 `/ws` replayable RPC 和申请 host capability。R2 的 `authRequired: false` 因此只表示“未启用调用方认证”，不应被解释为跨用户或公网安全保证。该阶段暂接受受控本机/SSH 隧道的威胁模型；在启用 Direct URL、WSS、Relay 或其他非回环 Transport 前，必须补充 token、Unix socket peer credential 或 Windows named-pipe ACL 等调用方认证，并更新对应连接合同。
+The current loopback-only ingress boundary is based on network location, not process identity: in theory, another process on the same machine that discovers the dynamic port can access ordinary `/ws` replayable RPC and request host capability. Therefore, R2 `authRequired: false` means only “caller authentication is not enabled”; it must not be interpreted as a cross-user or public-network security guarantee. This phase temporarily accepts the threat model of a controlled local machine/SSH tunnel. Before enabling Direct URL, WSS, Relay, or another non-loopback transport, add caller authentication such as a token, Unix socket peer credentials, or Windows named-pipe ACLs, and update the corresponding connection contract.
 
-手机 `/remote` 仍只能 attachment 到已经存在的 Desktop Host；R2 daemon 不得成为手机独立 Agent 的创建入口。
+Mobile `/remote` can still attach only to an existing Desktop Host; the R2 daemon must not become an entry point for creating an independent mobile Agent.
 
-## 6. 新代码目录与依赖边界
+## 6. New Code Directory and Dependency Boundaries
 
 ```text
 packages/zcode-server-cli/
@@ -249,35 +249,35 @@ packages/zcode-server-cli/
 └── package.json
 ```
 
-依赖规则：
+Dependency rules:
 
-- 新 Core 不依赖 `@zcode/server` 的入口实现；
-- 不修改 `packages/server` 的 `entry-http`、`entry-stdio` 和 `build:remote`；
-- 只复用经过审查的 `@zcode/services`、`@zcode/shared`、`@zcode/rpc` 和服务类型；
-- 不把 Electron、Renderer、Desktop Main 或 Window Host 打入 Server CLI 包；
-- 不新增 App ↔ Agent 协议；若未来必须修改该协议，另行修改 `packages/shared/src/zcode-protocol` 并增加 schema 验证；
-- 新增 IO 使用异步 API；锁、状态和 release 切换必须可恢复、可审计。
+- The new Core does not depend on `@zcode/server` entry-point implementations;
+- Do not modify `entry-http`, `entry-stdio`, or `build:remote` in `packages/server`;
+- Reuse only reviewed `@zcode/services`, `@zcode/shared`, `@zcode/rpc`, and service types;
+- Do not bundle Electron, Renderer, Desktop Main, or Window Host into the Server CLI package;
+- Do not add an App ↔ Agent protocol. If that protocol must change in the future, update `packages/shared/src/zcode-protocol` separately and add schema validation;
+- Use asynchronous APIs for new IO; locks, state, and release switching must be recoverable and auditable.
 
-## 7. 安装包与 Node runtime
+## 7. Installation Package and Node Runtime
 
-R2 Server CLI 不使用 Electron 内置 Node，也不要求目标服务器预装 Node。
+R2 Server CLI does not use Electron-bundled Node and does not require Node to be preinstalled on the target server.
 
-当前事实：
+Current facts:
 
-- Desktop Host/Agent 使用 Electron 41 内置 Node 24.x；
-- SSH/WSL/Docker 远端资产使用独立 Node `v22.16.0`；
-- CLI bundle 当前以 `node22` 为最低运行目标。
+- Desktop Host/Agent use Node 24.x bundled with Electron 41;
+- SSH/WSL/Docker remote assets use standalone Node `v22.16.0`;
+- The CLI bundle currently targets `node22` as its minimum runtime.
 
-R2 沿用第二条远端资产链路，并把它扩展为独立 Server CLI 的发行 runtime：
+R2 reuses the second remote-asset path and extends it into the distribution runtime for the standalone Server CLI:
 
-- Node 版本固定为 `v22.16.0`；
-- CLI、Supervisor、Server Core、Agent 共用同一 Node；
-- 每个 OS/架构随包提供对应 Node；
-- 运行时不联网下载 Node；
-- `node-pty` 等原生依赖按 OS/架构随包准备；
-- 根目录构建仍可使用 Node 24+，但不代表发行 runtime 使用 Node 24。
+- Pin the Node version to `v22.16.0`;
+- CLI, Supervisor, Server Core, and Agent share the same Node runtime;
+- Bundle the matching Node binary for each OS/architecture;
+- Do not download Node at runtime;
+- Bundle native dependencies such as `node-pty` for each OS/architecture;
+- Root-level builds may still use Node 24+, but this does not mean the distribution runtime uses Node 24.
 
-发行包结构：
+Distribution layout:
 
 ```text
 zcode-server-<os>-<arch>/
@@ -285,74 +285,65 @@ zcode-server-<os>-<arch>/
 │   ├── zcode
 │   └── zcode.cmd
 ├── runtime/
-│   ├── node                 # Windows 为 node.exe
-│   ├── package.json         # {"type":"module"}，让 .js 入口按 ESM 解析
-│   ├── server-cli.js        # ESM bundle（tsup 产物，含 __dirname banner）
-│   ├── server-core.js       # ESM bundle，server-cli 以同目录相对路径 fork
-│   ├── zcode.cjs            # 既有 CLI/Agent bundle（自包含 CJS）
-│   ├── node_modules/        # bundle 外置依赖闭包（含 node-pty 平台 prebuilds）
-│   ├── tools/               # bfs/rg/ugrep（Windows 为 rg/ugrep）
-│   └── packages/            # Agent 实际启用的官方插件
+│   ├── node                 # Windows uses node.exe
+│   ├── package.json         # {"type":"module"} so .js entry points are parsed as ESM
+│   ├── server-cli.js        # ESM bundle (tsup output, with __dirname banner)
+│   ├── server-core.js       # ESM bundle; server-cli forks it using a relative path in the same directory
+│   ├── zcode.cjs            # Existing CLI/Agent bundle (self-contained CJS)
+│   ├── node_modules/        # External bundle dependency closure (includes node-pty platform prebuilds)
+│   ├── tools/               # bfs/rg/ugrep (Windows uses rg/ugrep)
+│   └── packages/            # Official plugins actually enabled by Agent
 └── manifest.json
 ```
 
-入口用 ESM `.js` 而不是最初设想的 `.cjs`：`@zcode/services` 依赖链已按 ESM 组织，
-CJS 化 bundle 风险更高；`server-cli.js` 通过 `new URL("./server-core.js", import.meta.url)`
-fork Core，通过同目录 `zcode.cjs` 委派既有 CLI，因此三个入口必须位于同一 `runtime/` 目录。
+Use an ESM `.js` entry point instead of the originally proposed `.cjs`: the `@zcode/services` dependency chain is organized for ESM,
+and bundling it as CJS is riskier. `server-cli.js` forks Core through `new URL("./server-core.js", import.meta.url)`
+and delegates to the existing CLI through `zcode.cjs` in the same directory, so all three entry points must be in the same `runtime/` directory.
 
-### 7.1 发行包 staging
+### 7.1 Release Package Staging
 
-staging 由 `packages/zcode-server-cli/src/packaging/stage.ts` 实现，
-`pnpm --filter @zcode/server-cli stage --target <os>-<arch>` 触发，只做本地组装，不上传、不发布：
+Staging is implemented in `packages/zcode-server-cli/src/packaging/stage.ts`,
+and is triggered by `pnpm --filter @zcode/server-cli stage --target <os>-<arch>`. It assembles locally only; it does not upload or publish:
 
-- 入口 bundle 来自本包 `tsup` 产物；`zcode.cjs` 来自 `apps/zcode-cli/packages/cli/dist/zcode.cjs`
-  （由 `scripts/build-desktop-agent-cli.mjs` 构建，与远端资产链同源）；
-- `runtime/node_modules` 内容以**产物扫描**为事实源：扫描 bundle 顶层裸模块引用，
-  与 workspace `node_modules` 求交集后递归收集生产依赖闭包，从 workspace 复制为扁平布局；
-  不使用 `tsup` external 声明列表作为事实源，避免声明与实际引用漂移；
-- Server CLI/Core 的 ESM bundle 必须将仍由 services 间接使用的 `yazl` 外置，
-  由 Node 加载其 CommonJS 实现及内置模块依赖；删除 CLI 自身的直接调用不能据此删除
-  external 配置。staging 继续通过产物中的裸模块引用收集 `yazl` 的生产依赖闭包。
-  `tsupConfig.test.ts` 使用实际 tsup 配置构建并在独立 Node 进程执行
-  `server-cli.js --version --json`，防止只验证源码或模拟发行布局而漏掉入口加载错误。
-- `node-pty` 复制时剔除 `build/`（本机编译产物，交叉打包时会被 loadNativeModule 优先加载导致
-  错误架构崩溃），只保留目标平台 `prebuilds/<os>-<arch>/`；linux 平台官方包无 prebuild，
-  从 workspace `@lydell/node-pty-linux-<arch>` 补 `pty.node`；darwin 保留官方 `pty.node` 与
-  `spawn-helper`；
-- Node 二进制固定 `v22.16.0`：优先复用 `packages/desktop/mock-cdn/releases/<version>/node/<platform>/`
-  已下载的缓存，缺失时从 nodejs.org 下载目标格式（POSIX 为 `tar.xz`，Windows 为 `zip`）并缓存；
-- 同时产出目录形态和 `zcode-server-<os>-<arch>.tar.gz`（供 scp 到远端解压验证）；
-- staging 实现六个目标：`darwin-x64/arm64`、`linux-x64/arm64`、`win32-x64/arm64`；POSIX
-  产出 `tar.gz`，Windows 产出 `zip` 和 `zcode.cmd`。Windows 不打包 `bfs`，使用 `rg.exe`、
-  `ugrep.exe`，并保留系统/Git Bash fallback。
-- Agent bundle 的外置依赖以运行时入口扫描和官方插件定义为事实源；不再只扫描 Server CLI/Core，
-  因而 `@zcode/tui`、`playwright-core` 等 bundle 运行时依赖不会被遗漏。
-- `runtime/tools` 由 `scripts/prepare-native-search-tools.mjs` 按目标 release plan 准备到
-  `node_modules/.cache/zcode-server-cli/tools/<target>`（内网依赖源已配置时下载，未配置时解包仓库归档），
-  不复用 mock-cdn 或 bundled-tools 目录（远端 macOS 固定为 rg13）；每个工具目录同时携带
-  `THIRD-PARTY-NOTICES.txt` 与 `SOURCES.json`。运行时通过
-  `ZCODE_SERVER_RUNTIME_ROOT` 解析；`runtime/packages` 包含当前官方插件定义中需要 seed 的七个
-  plugin（browser-use、document-skills、skill-creator、zcode-guide、android-emulator、
-  ios-simulator、restore-legacy-sessions）。
-- 内置技能包不变量：`stageRelease` 从独立的 `bundledSkillsDir` 参数发布
-  `runtime/packages/bundled-skills`（生产入口传入 `apps/zcode-cli/packages/bundled-skills`），
-  只复制 `README.md` 与 `skills/`，排除其他顶层文件。Agent 在
-  `zcode.cjs` 旁按官方插件同款候选目录原地读取它，`/workflow` 依赖的 `dynamic-workflows` 技能
-  只在这里。它只属于 `agent-runtime` 组件并参与其内容哈希与归档，不写入 manifest 的 `plugins`。
-  官方插件目录不提供也不覆盖技能包，发布不依赖插件缓存中是否存在同名目录。
-  `stageRelease` 按 Agent 的必需文件清单 fail-closed 校验，缺任一文件时 staging 失败。
-- 官方插件 MCP runtime 不变量：凡 `plugin.json` 的 `mcpServers` 通过 `${ZCODE_PLUGIN_ROOT}/...`
-  引用的文件（当前为 android-emulator、ios-simulator、browser-use 的 `dist/mcp/server.js`）必须随
-  archive 一起发布。这些 dist 不入库，由 `scripts/build-desktop-agent-cli.mjs` 的 MCP runtime 清单在
-  staging 前构建；`stageRelease` 以 plugin.json 声明为事实源 fail-closed 校验，manifest 缺失或入口
-  文件不存在时 staging 失败，不产出只含 skills、缺 MCP 入口的残缺插件。
+- Entry bundles come from this package's `tsup` output; `zcode.cjs` comes from `apps/zcode-cli/packages/cli/dist/zcode.cjs`
+  (built by `scripts/build-desktop-agent-cli.mjs`, sharing the same source as the remote-asset path);
+- The source of truth for `runtime/node_modules` is **output scanning**: scan top-level bare-module references in the bundles,
+  intersect them with the workspace `node_modules`, recursively collect the production dependency closure, then copy it from the workspace into a flat layout;
+  do not use the `tsup` external declaration list as the source of truth, avoiding drift between declarations and actual references;
+- The Server CLI/Core ESM bundle must externalize `yazl`, which services still use indirectly: Node loads its CommonJS implementation and built-in module dependencies. Deleting the CLI's direct call must not remove this external configuration on that basis. Staging continues to collect the production dependency closure of `yazl` through bare module references in the artifacts. `tsupConfig.test.ts` builds with the actual tsup configuration and runs `server-cli.js --version --json` in a separate Node process, so entry-loading errors are not missed by source-only checks or simulated distribution layouts.
+- When copying `node-pty`, exclude `build/` (a locally compiled artifact that `loadNativeModule` would load first during cross-packaging, causing
+  crashes on the wrong architecture). Keep only the target platform's `prebuilds/<os>-<arch>/`. The official Linux package has no prebuild,
+  so add `pty.node` from the workspace `@lydell/node-pty-linux-<arch>`. On Darwin, retain the official `pty.node` and
+  `spawn-helper`;
+- Pin the Node binary to `v22.16.0`: first reuse the downloaded cache at `packages/desktop/mock-cdn/releases/<version>/node/<platform>/`
+  and, if it is missing, download and cache the target format from nodejs.org (POSIX `tar.xz`, Windows `zip`);
+- Produce both a directory layout and `zcode-server-<os>-<arch>.tar.gz` (for copying to a remote host with scp and extracting for verification);
+- Staging supports six targets: `darwin-x64/arm64`, `linux-x64/arm64`, and `win32-x64/arm64`. POSIX
+  produces `tar.gz`; Windows produces `zip` and `zcode.cmd`. Windows does not bundle `bfs`; it uses `rg.exe`,
+  `ugrep.exe`, and retains the system/Git Bash fallback.
+- The source of truth for external Agent bundle dependencies is runtime entry-point scanning plus official plugin definitions; no longer scan only Server CLI/Core,
+  so runtime dependencies such as `@zcode/tui` and `playwright-core` are not missed.
+- `runtime/tools` is prepared by `scripts/prepare-native-search-tools.mjs` according to the target release plan at
+  `node_modules/.cache/zcode-server-cli/tools/<target>` (download when an intranet dependency source is configured; otherwise extract the repository archive),
+  without reusing the mock-cdn or bundled-tools directories (remote macOS is pinned to rg13). Each tool directory also carries
+  `THIRD-PARTY-NOTICES.txt` and `SOURCES.json`. At runtime, resolve it through
+  `ZCODE_SERVER_RUNTIME_ROOT`; `runtime/packages` contains the seven packages that need to be seeded by the current official plugin definitions
+  plugin(browser-use, document-skills, skill-creator, zcode-guide, android-emulator,
+  ios-simulator, restore-legacy-sessions).
+- Bundled skills package invariant: `stageRelease` publishes `runtime/packages/bundled-skills` from a separate `bundledSkillsDir` parameter
+  (the production entry passes `apps/zcode-cli/packages/bundled-skills`), copying only `README.md` and `skills/` and excluding other top-level files.
+  The Agent reads it in place next to `zcode.cjs`, using the same candidate directories as official plugins; the `dynamic-workflows` skill that `/workflow` depends on
+  lives only here. It belongs only to the `agent-runtime` component and participates in that component's content hash and archive; it is not written to the manifest's `plugins`.
+  The official plugin directory neither provides nor overrides the skills package, and publishing does not depend on whether a same-named directory exists in the plugin cache.
+  `stageRelease` validates against the Agent's required-file list and fails closed: staging fails if any file is missing.
+- Official plugin MCP runtime invariant: any file that `plugin.json`'s `mcpServers` references through `${ZCODE_PLUGIN_ROOT}/...` (currently the `dist/mcp/server.js` files of android-emulator, ios-simulator, and browser-use) must be published in the same archive. These dist outputs are not committed; they are built by the MCP runtime manifest in `scripts/build-desktop-agent-cli.mjs` before staging. `stageRelease` treats the `plugin.json` declarations as the source of truth and fails closed: if the manifest is missing or an entry file does not exist, staging fails, so an incomplete plugin with skills but no MCP entry is never produced.
 
-Agent 接线约定：发行包内 Core 不在 monorepo、也没有 Electron runtime。Supervisor 每次启动 Core
-时必须根据该 Core 所属 release 的 `runtime/` 重新计算接线（`runtime/node zcode.cjs app-server
---stdio`），不得由旧 `server-cli.js` 把自动推导结果永久写入全局 `process.env`。显式配置的
-`ZCODE_AGENT_SERVER_COMMAND` 仍永远优先；开发态没有 release runtime 时不注入。
+Agent wiring convention: Core in the distribution package is outside the monorepo and has no Electron runtime. Every time Supervisor starts Core,
+it must recalculate wiring from that Core release's `runtime/` (`runtime/node zcode.cjs app-server
+--stdio`). Do not let an old `server-cli.js` permanently write auto-derived values to global `process.env`. Explicit
+`ZCODE_AGENT_SERVER_COMMAND` always takes precedence; do not inject it in development when no release runtime exists.
 
-安装后的程序和数据分离：
+Separate installed programs from data:
 
 ```text
 ~/.zcode/server/
@@ -362,43 +353,38 @@ Agent 接线约定：发行包内 Core 不在 monorepo、也没有 Electron runt
 │   └── manifest.json
 ├── current.json
 ├── pending.json
-├── bin/zcode                       # Windows 为 zcode.cmd；OS service 稳定入口
-├── service/<root-hash>.<platform>  # 运行时按 canonical root 生成，显式携带 --server-root
+├── bin/zcode                       # Windows uses zcode.cmd; stable OS service entry point
+├── service/<root-hash>.<platform>  # Generated at runtime per canonical root; explicitly passes --server-root
 ├── cache/components/<target>/<component>/<sha256>/
-├── config/provider/zcode-builtin-<sha256>.json   # Core 启动时按内容 hash 物化的 ZCode Built-in Provider Config（2026-09-07 起）
+├── config/provider/zcode-builtin-<sha256>.json   # ZCode Built-in Provider Config, materialized by Core at startup by content hash (since 2026-09-07)
 └── run/
     ├── server.lock
-    ├── update.lock                  # 跨 Supervisor handoff 的 CLI update/uninstall 单 owner
+    ├── update.lock                  # Single owner for CLI update/uninstall across Supervisor handoff
     ├── status.json
-    ├── ingress-token                # R3：0600，每次 daemon 启动轮换
+    ├── ingress-token                # R3: mode 0600, rotated on every daemon start
     └── control.sock / named pipe
 ```
 
-`config/provider/zcode-builtin-<sha256>.json` 由 Core（`server-core/core.ts`）在启动时从构建期 define
-`__ZCODE_BUILTIN_PROVIDER_CONFIG_JSON__` 物化（tmp + rename；同 hash 幂等，内容不一致则启动失败），
-`ZCODE_BUILTIN_PROVIDER_CONFIG_FILE` 显式指定时跳过物化。它落在 server root 而不是 release 自带的
-`runtime/`：release 目录不可变，同一 releaseId 重装时 `assertExistingReleaseMatches` 会重算整棵树的内容
-哈希，多出的物化文件会让校验失败；文件名含内容 hash，跨 release 共用安全。当前 `zcode uninstall` 的
-allowlist 不含 `config/`，卸载后该目录会保留并列入 `uninstalled.json.preservedPaths`。
+`config/provider/zcode-builtin-<sha256>.json` is materialized by Core (`server-core/core.ts`) at startup from the build-time define `__ZCODE_BUILTIN_PROVIDER_CONFIG_JSON__` (temp file plus rename; idempotent for the same hash, and startup fails if contents differ). When `ZCODE_BUILTIN_PROVIDER_CONFIG_FILE` is set explicitly, materialization is skipped. The file lives under the server root rather than the release's own `runtime/`: release directories are immutable, and reinstalling the same releaseId makes `assertExistingReleaseMatches` recompute the content hash of the whole tree, so extra materialized files would fail verification. The file name contains the content hash, so sharing it across releases is safe. The current `zcode uninstall` allowlist does not include `config/`; after uninstall this directory is retained and listed in `uninstalled.json.preservedPaths`.
 
-descriptor 不随 release archive 打包，而是在 `serve --daemon` 注册时由
-`platform/serviceManager.ts` 动态写入 `service/`。显式传入非标准 `--server-root` 时，Server CLI
-将该目录同时作为 `dataBaseDir`，因此 Agent/SQLite 等本地状态位于该 root 的 `.zcode/` 隔离目录；
-卸载仍只删除 ZCode allowlist，未知文件会保留并列入 `uninstalled.json.preservedPaths`。
+The descriptor is not bundled in the release archive; it is written dynamically during `serve --daemon` registration by
+`platform/serviceManager.ts` into `service/`. When a nonstandard `--server-root` is explicitly provided, Server CLI
+also uses that directory as `dataBaseDir`, so local state such as Agent/SQLite is isolated in that root's `.zcode/` directory;
+uninstall still deletes only the ZCode allowlist; unknown files are retained and listed in `uninstalled.json.preservedPaths`.
 
-`current.json` 和 `pending.json` 只通过临时文件加 rename 更新。release 目录按 archive SHA 内容寻址
-且不可变：安装器只能把完整临时目录原子 promote 到尚不存在的 `releases/<releaseId>`；目标已存在
-时校验 archive identity 与 runtime manifest 后复用，内容不一致必须失败，禁止删除、覆盖或 rename
-走一个可能正被 Core 使用的 release 目录。组件缓存命中时只下载变化组件并组装新的 release，最后
-仍只切换一次 `current.json`。任何启动失败都恢复旧 pointer，临时目录和半成品缓存会被清理。
+Update `current.json` and `pending.json` only through temp files plus rename. Release directories are content-addressed by archive SHA
+and immutable: the installer may atomically promote a complete temporary directory only to a nonexistent `releases/<releaseId>`. If the target exists,
+validate the archive identity and runtime manifest before reuse. Fail on content mismatch; never delete, overwrite, or rename
+a release directory that Core may be using. On a component-cache hit, download only changed components and assemble a new release; finally,
+switch `current.json` only once. On any startup failure, restore the old pointer and clean up temporary directories and partial caches.
 
-完整 archive 安装与组件增量组装必须复用同一个 immutable promote 语义：`incoming` 只能 rename 到
-不存在的目标；目标已存在时只允许校验完整 release identity 与内容 hash 后复用。无论复用还是失败，
-未 promote 的 `incoming` 都必须清理。禁止为了发布新内容把既有目标移动到 backup；该目标可能已在
-另一个并发 update 完成后成为活动 release。
+Full archive installs and incremental component assembly must use the same immutable-promote semantics: `incoming` may be renamed only to
+a nonexistent target. If the target exists, reuse it only after validating the full release identity and content hash. Whether reused or failed,
+clean up any `incoming` that was not promoted. Do not move an existing target to a backup to publish new content; it may already have become active
+after another concurrent update completes.
 
-更新回滚必须先收口未就绪的新 Core，再恢复旧 pointer 并启动旧 release；超时但仍存活的 Core
-不得与回滚后的旧 Core 并存：
+For update rollback, first stop the new Core that is not ready, then restore the old pointer and start the old release. A Core that has timed out but is still alive
+must not coexist with the rolled-back old Core:
 
 ```text
 apply pending
@@ -406,86 +392,73 @@ apply pending
     ▼
 new Core ── ready ───────────────────────────────> commit
     │
-    ├─ spawn error + close（无 exit）─┐
+    ├─ spawn error + close (no exit) ─┐
     └─ timeout / fatal / exit ────────┴─> stop if alive ─> restore current ─> old Core ready
 ```
 
-`fork()` 的 `error`、`exit` 与 `close` 必须收敛到同一个、最多执行一次的 Core 终态入口。spawn error
-也是可回滚的启动失败，必须被 Supervisor 消费并进入 crash budget，不能成为未处理事件让 Supervisor
-崩溃；运行中 ChildProcess 的 `error` 本身不等价于进程已经退出。停止流程只有观察到 `exit`/`close`
-才能释放 data-root lock；SIGKILL 后仍未收口则进入 `stop-failed`，保留 Core 引用和锁，禁止启动替代 Core。
+The `error`, `exit`, and `close` events from `fork()` must converge on the same Core terminal-state entry point, which runs at most once. A spawn error
+is also a recoverable startup failure and must be handled by Supervisor and counted against the crash budget; it must not become an unhandled event that crashes Supervisor
+. A running ChildProcess `error` does not by itself mean the process has exited. The stop flow may release the data-root lock only after observing `exit`/`close`;
+if shutdown is still incomplete after SIGKILL, enter `stop-failed`, retain the Core reference and lock, and prohibit starting a replacement Core.
 
-停止预算由 `contracts.ts` 的常量统一定义：Core 优雅退出宽限 5 秒，SIGKILL 后最多再等 10 秒终态。
-SIGKILL 只能被不可中断等待推迟；Rosetta 转译叠加 swap 的远端按事故时序推算回收约需 3.5～5.4 秒，旧的 2 秒
-预算会把“慢但必然结束”的退出误判为 `stop-failed`。所有等待 Supervisor 停止的调用方（update
-handoff、fallback→service 迁移、卸载）共用由宽限 + 强杀等待 + control socket 关闭推导出的 20 秒
-上限，不得各自写死比 Supervisor 停止流程更短的时间；`apply-update` 客户端超时同样按三次停止和两次
-ready 等待推导。
+The stop budget is defined by constants in `contracts.ts`: Core has a 5-second graceful-exit grace period, followed by at most 10 more seconds to reach a terminal state after SIGKILL. SIGKILL can only be deferred by uninterruptible waits. Under Rosetta translation plus swap on a remote host, reclaiming the process is estimated to take about 3.5 to 5.4 seconds, so the old 2-second budget misclassified slow but certain exits as `stop-failed`. All callers that wait for the Supervisor to stop (the update handoff, fallback-to-service migration, and uninstall) share one 20-second ceiling derived from the grace period, the forced-kill wait, and control-socket closure. No caller may hard-code a time shorter than the Supervisor's stop flow. The `apply-update` client timeout is likewise derived from three stops and two ready waits.
 
-`stop-failed` 时 Supervisor 保留锁和 control socket，直到收到下一次 `stop`。迟到的 `exit`/`close`
-只清除 Core 引用（status `pid:null`），不会自动释放锁。`serve --daemon` 发现现有 Supervisor 处于
-`stop-failed` 且 `pid:null`（已无存活 Core）时，先向它发送 `stop` 并等待 stopped 与锁释放，再走正常
-启动；遗留的更新事务仍由新 Supervisor 的启动恢复按既有规则处理。`pid` 仍存在时不得发送替代停止或
-绕过锁启动新实例。
+On `stop-failed`, the Supervisor retains the lock and control socket until the next `stop` arrives. A late `exit`/`close` only clears the Core reference (status `pid:null`) and does not release the lock automatically. When `serve --daemon` finds an existing Supervisor in `stop-failed` with `pid:null` (no live Core), it first sends `stop`, waits for the stopped state and lock release, and then starts normally. Legacy update transactions are still handled by the new Supervisor's startup recovery under the existing rules. While `pid` is present, do not send a substitute stop or start a new instance by bypassing the lock.
 
 ```text
 Supervisor ── shutdown ──> Core
-    │ 5s 内未退出
-    ├── SIGKILL ──> Core ── ≤10s exit/close ──> 继续 stop / restart / update
-    └── 10s 仍无终态 ──> stop-failed（保留 Core 引用、锁、control）
-                             └── 迟到 exit ──> pid:null，仍 stop-failed
-serve --daemon ── status ──> stop-failed + pid:null ── stop ──> stopped + 释放锁 ──> 正常启动
-                          └> stop-failed + pid≠null ──────────────────────────────> 沿用锁冲突失败
+    │ no exit within 5s
+    ├── SIGKILL ──> Core ── ≤10s exit/close ──> continue stop / restart / update
+    └── no terminal state after 10s ──> stop-failed (retain Core reference, lock, control)
+                             └── late exit ──> pid:null, still stop-failed
+serve --daemon ── status ──> stop-failed + pid:null ── stop ──> stopped + lock released ──> normal start
+                          └> stop-failed + pid≠null ─────────────────────────────> lock-conflict failure
 ```
 
-Supervisor 的 `stop`、`restart`、`apply-update`、`confirm-uninstall` 共用一个生命周期 operation gate。
-同类幂等 stop 可复用当前 Promise；其他并发写操作立即返回 retryable `operation-in-progress`，不排队。
-Core IPC listener 必须绑定具体 child 与 generation，非当前 child 的消息全部丢弃；Core 终止或换代时
-清空 host、port、startedAt 与 runningTaskCount，不能让已中断任务继续污染下一代 guard。
+Supervisor's `stop`, `restart`, `apply-update`, and `confirm-uninstall` share one lifecycle operation gate.
+Idempotent stops of the same kind may reuse the current Promise; other concurrent write operations immediately return retryable `operation-in-progress` and are not queued.
+Core IPC listeners must bind to a specific child and generation; discard all messages from noncurrent children. When Core terminates or is replaced,
+clear host, port, startedAt, and runningTaskCount so interrupted tasks cannot contaminate the next generation's guard.
 
-`serve --daemon` 的启动 owner 只有 OS service。descriptor 的命令必须指向 data root 下的稳定入口
-`<serverRoot>/bin/zcode`（Windows 为 `zcode.cmd`），参数固定包含 `serve --supervisor --service-entry
---server-root <absolute-path>`；不得记录注册时 release 的 `server-cli.js` 绝对路径。CLI 注册并启动
-service 后等待现有 Supervisor 报告 ready；service entry 不能再次注册自身或 fork 第二个 Supervisor。
-只有 OS service entry 才报告 `serviceRegistered=true`；显式跳过 service registration 的 detached
-fallback 必须报告 false。服务管理器注册失败时保留 descriptor 并返回可诊断错误，不能把 fallback
-伪装成注册成功。update 可以先由当前 Supervisor 验证候选 Core ready，但更新命令只有在旧 Supervisor
-退出、目标 release 的新 Supervisor 与 Core 都 ready，并完成 runtime identity 校验后才能返回成功。
-handoff 由独立的目标版本 CLI 协调，不在持有 data-root lock/control socket 的 Supervisor 进程内自举；
-OS service 与 detached fallback 都必须经过同一收敛门。`stop` 请求导致的正常退出不得被 launchd 自动
-重启，但 update handoff 会由协调 CLI 显式从目标 immutable release 重新执行 `serve --daemon`。
+The OS service is the sole startup owner for `serve --daemon`. The descriptor command must point to the stable entry under the data root
+`<serverRoot>/bin/zcode` (`zcode.cmd` on Windows), with fixed arguments `serve --supervisor --service-entry
+--server-root <absolute-path>`. Do not record the absolute path to the `server-cli.js` release used at registration. After the CLI registers and starts the
+service, it waits for the existing Supervisor to report ready; the service entry must not register itself again or fork a second Supervisor.
+Only the OS service entry reports `serviceRegistered=true`; a detached fallback that explicitly skips service registration
+must report false. If service-manager registration fails, retain the descriptor and return a diagnosable error; do not make a fallback
+look like a successful registration. `update` may first have the current Supervisor verify that the candidate Core is ready, but the update command returns success only after the old Supervisor has exited, the target release's new Supervisor and Core are both ready, and the runtime identity check has passed. The handoff is coordinated by the separate target-version CLI and is not bootstrapped inside the Supervisor process that holds the data-root lock and control socket. The OS service and the detached fallback must both pass through the same convergence gate. A normal exit caused by a `stop` request must not be restarted by launchd, but an update handoff explicitly re-runs `serve --daemon` from the target immutable release through the coordinating CLI.
 
-OS service identity 必须按 canonical server root 隔离，使用稳定 root hash 派生 launchd Label、systemd
-unit name、Windows task name 和 descriptor 文件名。兼容清理旧固定 service id 时，只有旧 descriptor
-中的 canonical `--server-root` 与当前 root 相同才允许卸载，禁止误删另一个 root 的服务。
+OS service identities must be isolated by canonical server root. Derive launchd Labels, systemd
+unit names, Windows task names, and descriptor filenames from a stable root hash. When cleaning up a legacy fixed service ID, uninstall it only if the old descriptor
+has a canonical `--server-root` matching the current root; do not accidentally remove another root's service.
 
-`--server-root` 是 service/fallback daemon 使用的内部全局参数，值必须是绝对路径。CLI 的 control
-endpoint、status、release、service descriptor 和 uninstall 均从该参数解析同一个 layout；Core/Agent
-同时获得对应的 `ZCODE_DATA_BASE_DIR`。因此自定义 data root 的 daemon 不得在默认 root 创建第二份
-status、lock、Core 或 SQLite。
+`--server-root` is an internal global parameter for service/fallback daemons; its value must be an absolute path. The CLI's control
+endpoint, status, release, service descriptor, and uninstall all resolve the same layout from this parameter. Core/Agent
+also receive the corresponding `ZCODE_DATA_BASE_DIR`. A daemon with a custom data root must therefore not create a second
+status, lock, Core, or SQLite under the default root.
 
-POSIX 稳定入口 `bin/zcode` 读取 `current.json.releaseDir`，只执行 `<root>/releases/` 下的 release；
-越界时输出 `Invalid current ZCode Server release` 并以 1 退出。该边界必须和写入方比较同一种路径：
-生命周期命令写 `current.json` 前已把 server root 收敛为 canonical（`realpath`）路径，launcher 也必须
-用物理路径（`cd -P` + `pwd -P`）计算 root。远端以 `"$HOME/.zcode/server/bin/zcode"` 调用入口，
-`$HOME` 可能经过符号链接（例如 NAS 的 `/var/services/homes -> /volume1/homes`、`/home -> /var/home`），
-这种别名不得让合法 release 被判为越界。
+The POSIX stable entry point `bin/zcode` reads `current.json.releaseDir` and runs only releases under `<root>/releases/`;
+if the path is out of bounds it prints `Invalid current ZCode Server release` and exits with 1. This boundary must compare the same kind of path as the writer:
+lifecycle commands have already normalized the server root to a canonical (`realpath`) path before writing `current.json`, so the launcher must also
+compute the root from the physical path (`cd -P` + `pwd -P`). The remote host invokes the entry point as `"$HOME/.zcode/server/bin/zcode"`,
+and `$HOME` may pass through a symlink (for example a NAS's `/var/services/homes -> /volume1/homes` or `/home -> /var/home`);
+such an alias must not cause a valid release to be judged out of bounds.
 
-组件增量组装先从旧 release 复制，再删除所有已变化或已移除组件声明的旧路径，之后解压新组件并
-校验新 manifest；这样新 manifest 移除插件/工具等组件时不会把旧文件带入新 release。
+Incremental component assembly first copies from the old release, then deletes old paths declared by changed or removed components, then extracts the new components and
+validates the new manifest. This prevents files from removed plugins/tools and other components from carrying over to the new release.
 
-R2 至少准备以下平台资产：
+R2 must prepare at least the following platform assets:
 
-- `darwin-x64`、`darwin-arm64`；
-- `linux-x64`、`linux-arm64`；
-- `win32-x64`、`win32-arm64`。
+- `darwin-x64`, `darwin-arm64`;
+- `linux-x64`, `linux-arm64`;
+- `win32-x64`, `win32-arm64`.
 
-## 8. CLI 命令语义
+## 8. CLI Command Semantics
 
 ```bash
-zcode                  # 无参数仍进入 TUI
-zcode serve            # 前台 Server Core
-zcode serve --daemon   # 注册并启动 daemon
+zcode                  # No arguments still launch the TUI
+zcode serve            # Foreground Server Core
+zcode serve --daemon   # Register and start the daemon
 zcode status
 zcode stop
 zcode restart
@@ -494,41 +467,39 @@ zcode update --force
 zcode uninstall
 ```
 
-| 命令             | 行为                                                                                                                                                                                                                                                                                                                                                                                |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `serve`          | 由当前 CLI 进程运行 Supervisor/Core；不注册 OS 自启动；终止信号后有界退出                                                                                                                                                                                                                                                                                                           |
-| `serve --daemon` | 安装/复用当前用户的服务注册，并启动或复用 Supervisor/Core                                                                                                                                                                                                                                                                                                                           |
-| `status`         | 返回注册状态、Core 状态、PID、端口、版本、最近退出原因和 crash budget                                                                                                                                                                                                                                                                                                               |
-| `stop`           | 请求 Supervisor 停止 Core；保留自启动注册                                                                                                                                                                                                                                                                                                                                           |
-| `restart`        | 有界停止并重新启动；不自动恢复中断 Task                                                                                                                                                                                                                                                                                                                                             |
-| `update`         | 获取 catalog 中当前 target 的新 release（或使用已有 pending），校验并安装后应用；在线 daemon 必须完成 Supervisor/Core/Agent 的整棵进程树换代与 runtime identity 校验后才返回成功；catalog 与 current archive 相同返回成功的 `up-to-date`，不得继续请求 apply；未配置 catalog 且没有 pending 时返回明确的 release source 错误；有运行 Task 时默认返回可操作的 guard 错误，不中断任务 |
-| `update --force` | 明确允许中断运行 Task 后应用 release                                                                                                                                                                                                                                                                                                                                                |
-| `uninstall`      | 检查运行 Task（有运行 Task 时拒绝并保持原状态），要求两次输入 `DELETE`，停止并移除服务，删除允许列表内的 ZCode 数据                                                                                                                                                                                                                                                                 |
+| Command          | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `serve`          | Run Supervisor/Core in the current CLI process; do not register OS startup; exit within a bounded time after a termination signal                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `serve --daemon` | Install/reuse the current user's service registration and start/reuse Supervisor/Core                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `status`         | Return registration status, Core state, PID, port, version, most recent exit reason, and crash budget                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `stop`           | Ask Supervisor to stop Core; retain startup registration                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `restart`        | Stop and restart within bounded time; do not automatically resume interrupted Tasks                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `update`         | Fetch the new release for the current target from the catalog (or use an existing pending release), validate/install it, then apply it; for an online daemon, return success only after the whole process tree (Supervisor, Core, and Agent) has been replaced and runtime identity has been verified; if the catalog and current archive match, return successful `up-to-date` and do not request apply again; if no catalog is configured and no pending release exists, return an explicit release-source error; when Tasks are running, return an actionable guard error by default without interrupting them |
+| `update --force` | Explicitly allow interrupting running Tasks before applying the release                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `uninstall`      | Check for running Tasks (reject and preserve the original state if any are running), require entering `DELETE` twice, stop and remove the service, and delete allowlisted ZCode data                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
-`uninstall` 允许删除：
+`uninstall` may delete:
 
-- R2 程序 release；
-- Supervisor/Core 运行记录；
-- ZCode 配置、缓存、runtime 记录；
-- ZCode 自有状态数据库和日志。
+- R2 program releases;
+- Supervisor/Core runtime records;
+- ZCode configuration, caches, and runtime records;
+- ZCode-owned state databases and logs.
 
-`uninstall` 禁止删除：
+`uninstall` must not delete:
 
-- Workspace 文件；
-- Git 仓库和工作树；
-- 用户 home 下的其他文件；
-- 用户显式指定的外部目录；
-- 任何无法通过 canonical path 和 allowlist 校验的路径。
+- Workspace files;
+- Git repositories and worktrees;
+- Other files in the user's home directory;
+- External directories explicitly specified by the user;
+- Any path that does not pass canonical-path and allowlist validation.
 
-初始化 server root 时必须写入严格 schema 的 `install.json` 所有权标记，包含 product、schema version、
-canonical server root 和 installation id。`uninstall` 只有在 `realpath` 后的 root 与该标记一致时才允许
-自动清理；无标记或标记不匹配时拒绝并提示手工处理。卸载只删除 `releases/`、`run/`、`cache/`、
-`bin/`、`service/`、`current.json`、`pending.json` 等 allowlist 项；`install.json` 与用户数据
-一并保留，原地重装复用原 installation id。server root 内未知文件也必须保留；结果的
-`preservedPaths` 包含身份标记及其他保留项。完成后在保留的 root 下写 `uninstalled.json`，含卸载时间
-与版本；R2 不实现 Controller UI。
+When initializing a server root, write an ownership marker with a strict schema to `install.json`, including product, schema version,
+canonical server root, and installation ID. `uninstall` may automatically clean up only if the root after `realpath` matches this marker;
+otherwise, reject and instruct the user to handle it manually. Uninstall deletes only allowlisted items such as `releases/`, `run/`, `cache/`,
+`bin/`, `service/`, `current.json`, and `pending.json`. `install.json` (the ownership marker) and user data are retained together, and an in-place reinstall reuses the original installation ID. Unknown files inside the server root also must be retained and listed in the result's `preservedPaths`, which includes the identity marker and other retained items. After completion, write `uninstalled.json` under the retained root with the uninstall timestamp
+and version. R2 does not implement a Controller UI.
 
-## 9. 数据、状态与不变量
+## 9. Data, State, and Invariants
 
 ```text
 OS Service Manager
@@ -544,66 +515,69 @@ Server Core
     └── Agent runtime lifecycle
 
 Workspace / Repo / User files
-└── user-owned state，R2 不负责删除
+└── user-owned state; R2 is not responsible for deleting it
 ```
 
-必须保持：
+Must remain true:
 
-- 单实例 key = 当前 OS 用户 + data root；
-- stale lock 回收必须先按 ownership token 原子 claim 到隔离路径；release 只能删除仍属于自己的 token，禁止按一次陈旧的 PID 判断直接删除当前路径；
-- Workspace 隔离使用 `workspaceKey = workspaceIdentity?.trim() || workspacePath`；
-- 路径执行继续使用 `workspacePath`；
-- 远程 identity 不得只使用 `workspacePath`；
-- Supervisor 不创建第二份 CommandInbox 或 Task queue；
-- Desktop `continuous` 不拼接 Web `replayable` 恢复消息；
-- Mobile `replayable` 不绕过 gap/snapshot 恢复；
-- Core 崩溃、更新和卸载都不自动恢复已中断输入；
-- Main、relay 和未来 Transport 不下沉业务状态；
-- 生产日志使用 `createServiceLogger`，高频 heartbeat/RPC 明细使用 debug，不记录 secret。
+- Single-instance key = current OS user + data root;
+- Stale-lock recovery must first atomically claim the lock to an isolated path using the ownership token; release may delete only a token that still belongs to it. Never delete the current path based on a single stale PID check;
+- Lock and recovery-gate records are published only complete: write the full record to a unique temp file next to the target, fsync it, then `link()` it to the target (exclusive, fails with EEXIST) and remove the temp file. A live owner therefore never exposes an empty or partial record, so unparseable content at the target means a crash or corruption and is recoverable like a stale lock. Leftover temp files never block acquisition. Only when the filesystem does not support hard links may the writer fall back to exclusive create-then-write, which reopens that window;
+- Workspace isolation uses `workspaceKey = workspaceIdentity?.trim() || workspacePath`;
+- Path operations continue to use `workspacePath`;
+- Remote identity must not use `workspacePath` alone;
+- Supervisor does not create a second CommandInbox or Task queue;
+- Desktop `continuous` does not append Web `replayable` recovery messages;
+- Mobile `replayable` does not bypass gap/snapshot recovery;
+- Core crashes, updates, and uninstalls do not automatically resume interrupted input;
+- Main, Relay, and future transports do not own business state;
+- Production logs use `createServiceLogger`; high-frequency heartbeat/RPC details use debug; never log secrets.
 
-## 10. 实施顺序
+## 10. Implementation Order
 
-1. 保留本文作为 R2 spec，并补充 [R2 lifecycle test plan](./r2-server-cli-and-daemon-test-plan.md)；涉及 conversation/session 的用例先更新 case catalog 和 coverage matrix。
-2. 在 `packages/zcode-server-cli` 建立 CLI、IPC、runtime layout 和 contract schema，先写测试。
-3. 实现单实例锁、状态文件、canonical path 和 allowlist 校验。
-4. 实现 Server Core 新入口，接入 `standalone-server` 服务并提供 HTTP/WS ingress。
-5. 实现 Supervisor、Core 私有 child IPC、崩溃预算和 running-task guard。
-6. 实现 macOS launchd、Linux systemd --user、Windows Task Scheduler adapter。
-7. 实现 Server CLI 命令路由、TUI/既有 CLI lazy delegation、`--json` 和确认流程。
-8. 实现六平台 Node runtime、node-pty、native search tools 和官方 plugins 的 staging；不改 `packages/server` 的构建入口。
-9. 实现 ReleaseCatalog/Downloader/Installer、组件内容寻址缓存、原子 current/pending 切换和失败回滚。
-10. 完成真实 OS service manager adapter、在线下载合同测试、Windows 合同测试和 R1 Host RPC compatibility。
-11. 执行 `pnpm typecheck`、`pnpm lint`、新包测试及 conversation coverage audit。
+Implemented in this order; the order remains the dependency order for follow-up changes:
 
-## 11. 验收用例
+1. This document is the R2 spec, supplemented by the [R2 lifecycle test plan](./r2-server-cli-and-daemon-test-plan.md); update the case catalog and coverage matrix first for cases involving conversations/sessions.
+2. `packages/zcode-server-cli`: CLI, IPC, runtime layout, and contract schemas, tests first.
+3. Single-instance lock, state files, canonical-path validation, and allowlist validation.
+4. New Server Core entry point connected to `standalone-server` services, with HTTP/WS ingress.
+5. Supervisor, private Core child IPC, crash budget, and running-task guard.
+6. Adapters for macOS launchd, Linux systemd --user, and Windows Task Scheduler.
+7. CLI command routing, lazy delegation to the TUI/existing CLI, `--json`, and confirmation flows.
+8. Six-platform staging of the Node runtime, node-pty, native search tools, and official plugins; the `packages/server` build entry point is unchanged.
+9. ReleaseCatalog/Downloader/Installer, content-addressed component caches, atomic current/pending switching, and rollback on failure.
+10. Real OS service-manager adapters, online-download contract tests, Windows contract tests, and R1 Host RPC compatibility.
+11. `pnpm typecheck`, `pnpm lint`, new-package tests, and the conversation coverage audit.
 
-| Case      | 验收目标                                                                     |
-| --------- | ---------------------------------------------------------------------------- |
-| R2-CLI-01 | 无参数不加载 Server Core，仍进入 TUI                                         |
-| R2-CLI-02 | 前台 `serve` 启动 Core、监听回环动态端口并完成 ready                         |
-| R2-CLI-03 | `serve --daemon` 注册平台服务并启动 Supervisor                               |
-| R2-CLI-04 | 重复启动复用当前实例，不产生第二个 Core                                      |
-| R2-CLI-05 | `status`、`stop`、`restart` 状态收敛且幂等                                   |
-| R2-CLI-06 | Core 崩溃按 1/2/4/8/16 秒退避，超过预算进入熔断                              |
-| R2-CLI-07 | Core 崩溃后运行 Task 中断，不自动恢复                                        |
-| R2-CLI-08 | 无运行 Task 时 update 原子切换 release 并完成 ready                          |
-| R2-CLI-09 | 有运行 Task 时 update 默认返回 guard 错误且不中断任务，`--force` 才允许中断  |
-| R2-CLI-10 | uninstall 双重 `DELETE` 确认并移除服务注册                                   |
-| R2-CLI-11 | uninstall 保留 Workspace、Repo 和用户文件                                    |
-| R2-CLI-12 | HTTP/WS ingress 通过 server-info、Web replayable 和 Host continuous 合同测试 |
-| R2-CLI-13 | 不同 data root 互相隔离，单实例锁不误伤其他 root                             |
-| R2-CLI-14 | macOS/Linux/Windows service descriptor 和 Node runtime 可启动                |
+## 11. Acceptance Cases
 
-## 12. 发布与回滚
+| Case      | Acceptance goal                                                                                                                |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| R2-CLI-01 | No arguments do not load Server Core; the TUI still launches                                                                   |
+| R2-CLI-02 | Foreground `serve` starts Core, listens on a dynamic loopback port, and becomes ready                                          |
+| R2-CLI-03 | `serve --daemon` registers the platform service and starts Supervisor                                                          |
+| R2-CLI-04 | Repeated startup reuses the current instance and does not create a second Core                                                 |
+| R2-CLI-05 | `status`, `stop`, and `restart` converge to an idempotent state                                                                |
+| R2-CLI-06 | Core crash backoff is 1/2/4/8/16 seconds; exceeding the budget trips the circuit breaker                                       |
+| R2-CLI-07 | Running Tasks are interrupted after a Core crash and do not resume automatically                                               |
+| R2-CLI-08 | When no Tasks are running, update atomically switches the release and becomes ready                                            |
+| R2-CLI-09 | When Tasks are running, update returns a guard error without interrupting them by default; only `--force` permits interruption |
+| R2-CLI-10 | uninstall requires `DELETE` confirmation twice and removes service registration                                                |
+| R2-CLI-11 | uninstall retains Workspaces, Repos, and user files                                                                            |
+| R2-CLI-12 | HTTP/WS ingress passes server-info, Web replayable, and Host continuous contract tests                                         |
+| R2-CLI-13 | Different data roots are isolated; the single-instance lock does not affect other roots                                        |
+| R2-CLI-14 | Service descriptors and Node runtimes start on macOS/Linux/Windows                                                             |
 
-R2 只在内部环境验证，不改变 Desktop 当前生产远程连接。发布前必须同时具备：
+## 12. Release and Rollback
 
-- 安装、启动、停止、重启、卸载成功；
-- 单实例和 crash-loop 行为稳定；
-- Node runtime 和 native dependency 在三平台矩阵通过；
-- R1 Host RPC 边界通过合同测试；
-- 无 Workspace/Repo/用户文件误删；
-- 日志不泄露 secret；
-- `pnpm typecheck` 和 `pnpm lint` 通过。
+R2 is verified only in internal environments and does not change Desktop's current production remote connection. Before release, all of the following must be true:
 
-失败时只回滚当前 Server CLI release 或 Desktop 版本，不做数据库破坏性迁移，不切换或修复现有 `packages/server` 远程链路。
+- Install, start, stop, restart, and uninstall succeed;
+- Single-instance and crash-loop behavior is stable;
+- Node runtime and native dependencies pass the three-platform matrix;
+- R1 Host RPC boundaries pass contract tests;
+- No Workspace/Repo/user files are deleted by mistake;
+- Logs do not expose secrets;
+- `pnpm typecheck` and `pnpm lint` pass.
+
+On failure, roll back only the current Server CLI release or Desktop version. Do not perform destructive database migrations or switch/repair the existing `packages/server` remote path.

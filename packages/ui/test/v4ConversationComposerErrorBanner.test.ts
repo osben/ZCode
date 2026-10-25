@@ -5,6 +5,7 @@ import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { ConversationComposer } from "@/v4/ConversationComposer.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { RemoteConversationAvailability } from "@/v4/RemoteConversationAvailability.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const captured = vi.hoisted(() => ({
   chatErrorBannerProps: null as Record<string, unknown> | null,
@@ -163,7 +164,7 @@ function renderComposerWithError(
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(AnyConversationComposer, {
         snapshot: null,
         sessionId: "session-1",
@@ -195,13 +196,16 @@ function renderComposerWithSnapshot(
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(RemoteConversationAvailability, {
         available: remoteAvailable,
         children: createElement(AnyConversationComposer, {
           snapshot,
           sessionId: "session-1",
           workspacePath: "/workspace",
+          composerDraft: { text: "", updatedAt: 0 },
+          updateComposerContent: vi.fn(),
+          replaceComposerDraft: vi.fn(),
           provider: undefined,
           onSendText: vi.fn(async () => {}),
           onStop: vi.fn(),
@@ -219,7 +223,7 @@ function renderHighspeedComposer(overrides: Record<string, unknown> = {}): strin
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(AnyConversationComposer, {
         snapshot: makeSnapshot(),
         sessionId: "session-1",
@@ -248,7 +252,7 @@ function renderBlockedComposer(): string {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(AnyConversationComposer, {
         snapshot: makeSnapshot(),
         sessionId: "session-1",
@@ -330,7 +334,7 @@ describe("ConversationComposer error banner", () => {
     expect(captured.chatErrorBannerProps?.onOpenUpgrade).toBe(onOpenModelUpgrade);
   });
 
-  it("不再把 snapshot api retry 状态传入输入框工具条", () => {
+  it("no longer passes the snapshot api retry state into the input toolbar", () => {
     const snapshot = makeSnapshot();
     snapshot.control.apiRetry = {
       attempt: 1,
@@ -398,13 +402,13 @@ describe("ConversationComposer error banner", () => {
   });
 });
 
-it("离线输入栏优先显示禁发送原因，不让不可用模型控件挤占窄窗空间", async () => {
+it("the offline composer shows the send-unavailable reason first instead of letting an unusable model control crowd a narrow window", async () => {
   const { RemoteConversationAvailability } = await import("@/v4/RemoteConversationAvailability.js");
   captured.modelControlsProps = null;
   const html = renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(
         RemoteConversationAvailability,
         { available: false },
@@ -425,12 +429,12 @@ it("离线输入栏优先显示禁发送原因，不让不可用模型控件挤�
       ),
     ),
   );
-  expect(html).toContain("设备未连接，暂时无法发送");
+  expect(html).toContain(expectedCopy("remote.conversation.sendUnavailable"));
   expect(captured.modelControlsProps).toBeNull();
 });
 
 describe("ConversationComposer Highspeed style", () => {
-  it("激活卡传递到期时间并锁定模型", () => {
+  it("an active card passes the expiry time and locks the model", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_000);
 
     const html = renderHighspeedComposer();
@@ -442,7 +446,7 @@ describe("ConversationComposer Highspeed style", () => {
     });
   });
 
-  it("没有激活请求的卡（切回 Task、快照恢复）直接呈现稳定态，不重播激活动效", () => {
+  it("a card without an activation request (switched back to Task, snapshot restore) renders the stable state directly without replaying the activation motion", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_000);
 
     const html = renderHighspeedComposer();
@@ -458,7 +462,7 @@ describe("ConversationComposer Highspeed style", () => {
     });
   });
 
-  it("draw 新命中的激活请求从扩散起点播放，模型与倒计时等待交接后再展示", () => {
+  it("an activation request newly hit by draw plays from the diffusion origin; the model and countdown wait for the handover before appearing", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_000);
 
     const html = renderHighspeedComposer({ highspeedActivationCardId: "hsc-composer" });
@@ -475,7 +479,7 @@ describe("ConversationComposer Highspeed style", () => {
 
 describe("history-first initialization", () => {
   it.each([true, false])("respects the remote gate when available=%s", (remoteAvailable) => {
-    // 合并时两道门禁不能互相覆盖：runtime 就绪也不能放行断开的远程项目。
+    // The two gates must not override each other when merged: a ready runtime must not unblock a disconnected remote project.
     const html = renderComposerWithSnapshot(
       {
         ...makeSnapshot(),

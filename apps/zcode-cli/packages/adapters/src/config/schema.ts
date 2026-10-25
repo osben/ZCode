@@ -1,6 +1,6 @@
 /* eslint-disable max-lines -- zcode-cli 配置 schema 需要集中维护文件解析和 provider 继承，拆散会让配置语义更难对齐。 */
 import { z } from "zod";
-import type { RuntimeConfigPatch } from "@zcode/contracts";
+import { UI_THEME_PALETTES, type RuntimeConfigPatch } from "@zcode/contracts";
 
 const stringRecordSchema = z.record(z.string(), z.string());
 const unknownRecordSchema = z.record(z.string(), z.unknown());
@@ -211,8 +211,11 @@ const loggingSchema = z.object({
 });
 
 const uiSchema = z.object({
-  locale: z.enum(["auto", "en-US", "zh-CN"]).optional(),
+  // Ignore an unknown locale as unset (for example, when a newer version wrote it and an older version reads it) so parsing does not reject the entire config.
+  locale: z.enum(["auto", "en-US", "zh-CN", "uk-UA"]).optional().catch(undefined),
   theme: z.enum(["auto", "dark", "light"]).optional(),
+  // Ignore an unknown palette as unset (for example, when a newer version wrote it and an older version reads it), matching the locale compatibility policy.
+  palette: z.enum(UI_THEME_PALETTES).optional().catch(undefined),
 });
 
 const toolConcurrencySchema = z.object({
@@ -278,6 +281,9 @@ export const hooksSchema = z
         PostToolUse: z.array(hookMatcherSchema).optional(),
         PostToolUseFailure: z.array(hookMatcherSchema).optional(),
         Stop: z.array(hookMatcherSchema).optional(),
+        PreCompact: z.array(hookMatcherSchema).optional(),
+        PostCompact: z.array(hookMatcherSchema).optional(),
+        SessionEnd: z.array(hookMatcherSchema).optional(),
       })
       .strict()
       .optional(),

@@ -14,6 +14,9 @@ export const WORKSPACE_HOOK_SCHEMA_FIELDS = {
     "PostToolUse",
     "PostToolUseFailure",
     "Stop",
+    "PreCompact",
+    "PostCompact",
+    "SessionEnd",
   ],
   process: ["type", "command", "enabled", "args", "timeoutMs", "statusMessage"],
   command: [
@@ -74,8 +77,9 @@ export const workspaceHookReasonCodeSchema = z.enum([
   "workspace_hooks_snapshot_mismatch",
   "workspace_hooks_review_superseded",
   "workspace_hooks_config_write_failed",
-  // 读取失败与写入失败必须可区分：config_write_failed 曾被 mutation 在
-  // readFile/JSON.parse 失败时抛出，误导用户重试「写入」。
+  // Read and write failures must be distinguishable: a mutation used to throw
+  // config_write_failed when readFile/JSON.parse failed, misleading users into retrying the
+  // "write".
   "workspace_hooks_config_unreadable",
   "workspace_hooks_config_rebuild_failed",
   "workspace_hooks_revoked",
@@ -193,6 +197,9 @@ export const workspaceHookEventNameSchema = z.enum([
   "PostToolUse",
   "PostToolUseFailure",
   "Stop",
+  "PreCompact",
+  "PostCompact",
+  "SessionEnd",
 ]);
 
 const canonicalEntryBaseShape = {

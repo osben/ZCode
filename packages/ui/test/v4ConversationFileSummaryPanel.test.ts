@@ -8,6 +8,7 @@ import type {
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ConversationFileSummaryPanel } from "@/v4/ConversationFileSummaryPanel.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 
 const { collapsibleOpenChanges, openSplitButtonProps } = vi.hoisted(() => ({
@@ -42,7 +43,7 @@ vi.mock("@/OpenSplitButton.js", async () => {
   return {
     OpenSplitButton: (props: Record<string, unknown>) => {
       openSplitButtonProps.push(props);
-      return React.createElement("button", { type: "button" }, "打开");
+      return React.createElement("button", { type: "button" }, "Open");
     },
   };
 });
@@ -184,7 +185,7 @@ afterEach(() => {
 
 describe("ConversationFileSummaryPanel", () => {
   it.each([false, true])(
-    "visualize 混合摘要只统计普通文件，compact=%s",
+    "the visualize mixed summary counts only regular files, compact=%s",
     async (compactForRemoteControl) => {
       const container = installMinimalDom();
       const root = createRoot(container);
@@ -202,7 +203,7 @@ describe("ConversationFileSummaryPanel", () => {
         root.render(
           createElement(
             ZCodeIntlProvider,
-            { initialLocale: "zh-CN" },
+            { initialLocale: TEST_LOCALE },
             createElement(ConversationFileSummaryPanel, {
               header: header({
                 fileChanges: { files: 2, additions: 77, deletions: 3, state: "active" },
@@ -220,7 +221,9 @@ describe("ConversationFileSummaryPanel", () => {
         );
       });
       expect(fetchFileChanges).toHaveBeenCalledTimes(1);
-      expect(collectText(container)).toContain("1 个文件已更改");
+      expect(collectText(container)).toContain(
+        expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }),
+      );
       expect(collectText(container)).toContain("+7");
       expect(collectText(container)).toContain("-2");
       expect(collectText(container)).not.toContain("+77");
@@ -231,7 +234,7 @@ describe("ConversationFileSummaryPanel", () => {
     },
   );
 
-  it("仅有 visualize 时，详情到达前后都不显示摘要", async () => {
+  it("with only visualize, no summary shows before or after details arrive", async () => {
     const container = installMinimalDom();
     const root = createRoot(container);
     const path = "/workspace/calendar.html";
@@ -240,7 +243,7 @@ describe("ConversationFileSummaryPanel", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: TEST_LOCALE },
           createElement(ConversationFileSummaryPanel, {
             header: header(),
             assistantText: `::visualize${JSON.stringify({ path })}`,
@@ -264,7 +267,7 @@ describe("ConversationFileSummaryPanel", () => {
     await act(async () => root.unmount());
   });
 
-  it("切换轮次后不接受旧请求晚到的详情", async () => {
+  it("after switching turns, late details from the stale request are rejected", async () => {
     const container = installMinimalDom();
     const root = createRoot(container);
     const path = "/workspace/calendar.html";
@@ -283,7 +286,7 @@ describe("ConversationFileSummaryPanel", () => {
     const render = (rowId: number) =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: TEST_LOCALE },
         createElement(ConversationFileSummaryPanel, {
           header: header({ rowId, entityId: `header-${rowId}` }),
           context,
@@ -309,7 +312,7 @@ describe("ConversationFileSummaryPanel", () => {
     await act(async () => root.unmount());
   });
 
-  it("详情失败时保留原摘要，展开可重试过滤", async () => {
+  it("on detail failure the original summary stays and expanding retries the filtering", async () => {
     const container = installMinimalDom();
     const root = createRoot(container);
     const path = "/workspace/calendar.html";
@@ -321,7 +324,7 @@ describe("ConversationFileSummaryPanel", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: TEST_LOCALE },
           createElement(ConversationFileSummaryPanel, {
             header: header(),
             assistantText: `::visualize${JSON.stringify({ path })}`,
@@ -335,7 +338,9 @@ describe("ConversationFileSummaryPanel", () => {
         ),
       ),
     );
-    expect(collectText(container)).toContain("1 个文件已更改");
+    expect(collectText(container)).toContain(
+      expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }),
+    );
     await act(async () => collapsibleOpenChanges.at(-1)?.(true));
     expect(fetchFileChanges).toHaveBeenCalledTimes(2);
     expect(collectText(container)).toBe("");
@@ -380,7 +385,7 @@ describe("ConversationFileSummaryPanel", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: TEST_LOCALE },
           createElement(ConversationFileSummaryPanel, {
             header: header(),
             context,
@@ -388,7 +393,9 @@ describe("ConversationFileSummaryPanel", () => {
         ),
       );
     });
-    expect(collectText(container)).toContain("1 个文件已更改");
+    expect(collectText(container)).toContain(
+      expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }),
+    );
 
     await act(async () => {
       collapsibleOpenChanges.at(-1)?.(true);
@@ -398,10 +405,12 @@ describe("ConversationFileSummaryPanel", () => {
     const text = collectText(container);
     expect(text).toContain("input.html");
     expect(text).toContain("+11");
-    expect(text).not.toContain("2 次修改");
-    expect(text).toContain("审查");
-    expect(text).toContain("打开");
-    expect(text).not.toContain("暂时无法预览这份 Diff。");
+    expect(text).not.toContain(
+      expectedCopy("chat.changeSummary.rewindDialog.operationCount", { count: 2 }),
+    );
+    expect(text).toContain(expectedCopy("chat.changeSummary.review"));
+    expect(text).toContain("Open");
+    expect(text).not.toContain(expectedCopy("chat.changeSummary.diffUnavailable"));
     expect(openSplitButtonProps.at(-1)).toMatchObject({
       hideOpenWithMenu: false,
       target: {
@@ -418,7 +427,7 @@ describe("ConversationFileSummaryPanel", () => {
     });
   });
 
-  it("运行中详情进入终态后丢弃旧 revision 结果并重新读取", async () => {
+  it("a running detail that reaches a terminal state discards the stale revision result and re-reads", async () => {
     const container = installMinimalDom();
     const root: Root = createRoot(container);
     const partialResult = {
@@ -465,7 +474,7 @@ describe("ConversationFileSummaryPanel", () => {
     const renderPanelForState = (state: TurnHeaderRow["state"]) =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: TEST_LOCALE },
         createElement(ConversationFileSummaryPanel, {
           header: header({ state }),
           context,
@@ -501,7 +510,7 @@ describe("ConversationFileSummaryPanel", () => {
     await act(async () => root.unmount());
   });
 
-  it("fileChanges 进入 reverted 后清空撤销前详情并按新状态重查", async () => {
+  it("when fileChanges becomes reverted the pre-rewind details are cleared and re-queried with the new state", async () => {
     const container = installMinimalDom();
     const root: Root = createRoot(container);
     const activeResult: V4ConversationFileChangesResult = {
@@ -528,7 +537,7 @@ describe("ConversationFileSummaryPanel", () => {
     const renderPanelForFileState = (state: "active" | "reverted") =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: TEST_LOCALE },
         createElement(ConversationFileSummaryPanel, {
           header: header({
             fileChanges: {

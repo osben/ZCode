@@ -1,3 +1,4 @@
+import type { AcpAgentSummary } from "@zcode/services";
 import {
   BIGMODEL_PROVIDER_ID,
   buildBigModelApiUrl,
@@ -136,9 +137,9 @@ export type ModelProviderNavItem =
   | {
       key: string;
       type: "preset";
-      /** 品牌入口图标独立于其历史 Start 导航身份。 */
+      /** Brand entry icon is independent of its historical Start navigation identity. */
       logo?: ProviderSettingsFormProvider["config"]["logo"];
-      /** 账号组圆点只展示当前具体连接的公共执行结果。 */
+      /** The account-group dot shows only the shared execution result for the currently selected connection. */
       statusProvider?: ProviderSettingsFormProvider | null;
       presetId: BuiltinModelProviderId;
       label: string;
@@ -154,7 +155,7 @@ export type ModelProviderNavItem =
       label: string;
       providerName: string;
       provider: ProviderSettingsFormProvider | null;
-      /** Account Overlay 是否已启用该 Provider。 */
+      /** Whether Account Overlay has enabled this Provider. */
       accountEntitled?: boolean;
       status: CodingPlanStatus;
       planLevel?: string | null;
@@ -164,10 +165,10 @@ export type ModelProviderNavItem =
       subscriptionExpireTime?: string | null;
       subscriptionDetails?: UsageEntitlementSubscriptionDetail[];
       quotaLimits?: UsageQuotaLimit[];
-      /** 官方 Server MCP 额度（服务端下发的总额度）。不在 quota.limits[] 里，单独透传给额度卡片。 */
+      /** Official Server MCP quota (total quota sent by the server). Not part of quota.limits[]; passed separately to the quota card. */
       mcpQuotaLimit?: UsageQuotaLimit | null;
       purchaseUrl?: string;
-      /** 权益查询明确要求重新登录；文案不参与操作分支判定。 */
+      /** Entitlement query explicitly requires reauthentication; copy does not participate in operation-branch decisions. */
       accountLoginRequired?: boolean;
       statusLabelId?: string;
       statusMessage?: string | null;
@@ -185,7 +186,7 @@ export type ModelProviderNavItem =
       organizationId?: string | null;
       projectId?: string | null;
       provider: ProviderSettingsFormProvider | null;
-      /** Account Overlay 是否已启用该 Provider。 */
+      /** Whether Account Overlay has enabled this Provider. */
       accountEntitled?: boolean;
       status: CodingPlanStatus;
       planLevel?: string | null;
@@ -195,12 +196,12 @@ export type ModelProviderNavItem =
       subscriptionExpireTime?: string | null;
       subscriptionDetails?: UsageEntitlementSubscriptionDetail[];
       quotaLimits?: UsageQuotaLimit[];
-      /** 官方 Server MCP 额度（服务端下发的总额度）。不在 quota.limits[] 里，单独透传给额度卡片。 */
+      /** Official Server MCP quota (total quota sent by the server). Not part of quota.limits[]; passed separately to the quota card. */
       mcpQuotaLimit?: UsageQuotaLimit | null;
       purchaseUrl?: string;
       statusLabelId?: string;
       statusMessage?: string | null;
-      /** Team 状态的业务原因。交互不得再从 i18n 文案反推。 */
+      /** Business reason for Team status. Interaction must not infer it from i18n copy. */
       availabilityReason?: TeamPlanAvailabilityReason;
       inactivePlanTitle?: string | null;
       statusActive: boolean;
@@ -218,9 +219,50 @@ export type ModelProviderNavItem =
       label: string;
       provider: ProviderSettingsFormProvider;
       statusActive: boolean;
+    }
+  | {
+      /** One detected ACP agent CLI; the stable selection key is `acp-agent:<agentId>`. */
+      key: string;
+      type: "acpAgent";
+      label: string;
+      agentId: string;
+      agent: AcpAgentSummary;
+      /** The CLI is on this machine; an uninstalled agent is listed only while its provider is managed. */
+      installed: boolean;
+      /** `acp:<agentId>` personal provider exists and is enabled. */
+      enabled: boolean;
+      /** Another personal provider already occupies the `acp:<agentId>` id. */
+      conflict: boolean;
+      /** Shared status dot: enabled and not in conflict. */
+      statusActive: boolean;
+    }
+  | {
+      /** Empty or failed detection: the entry that opens the supported-agent catalog. */
+      key: string;
+      type: "acpDetect";
+      label: string;
+      detection: "empty" | "error";
+    }
+  | {
+      /** First detection in flight; not selectable. */
+      key: string;
+      type: "acpLoading";
+      label: string;
     };
 
-export type ModelProviderNavGroupId = "preset" | "custom";
+export type ModelProviderNavGroupId = "preset" | "chatgpt" | "custom" | "acp";
+
+/** Nav rows that display status but cannot be selected (loading placeholders). */
+export type ModelProviderSelectableNavItem = Exclude<
+  ModelProviderNavItem,
+  { type: "codingPlanLoading" | "acpLoading" }
+>;
+
+export function isSelectableNavItem(
+  item: ModelProviderNavItem,
+): item is ModelProviderSelectableNavItem {
+  return item.type !== "codingPlanLoading" && item.type !== "acpLoading";
+}
 
 export interface ModelProviderNavGroup {
   id: ModelProviderNavGroupId;

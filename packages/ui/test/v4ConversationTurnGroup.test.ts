@@ -2,13 +2,19 @@ import { readFileSync } from "node:fs";
 import { createElement, type ContextType } from "react";
 import { DeliveryContext } from "@/v4/botGroupDeliveryContext.js";
 import { withTopicPreparationMessages } from "@/v4/topicPreparationRenderUnits.js";
+import {
+  withAfterFirstUserInputSlot,
+  withOptimisticFirstInputRow,
+} from "@/v4/conversationTurnUnitSlots.js";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 import type { IPlatformService } from "@zcode/shared";
 import type {
   ApiRetryState,
   AssistantTextRow,
   ConversationRowTarget,
+  ExternalAgentStallState,
   HookInvocationRow,
   ReasoningRow,
   SubagentRow,
@@ -45,6 +51,14 @@ vi.mock("@/hooks/useWorkspaceServices.js", () => ({
 vi.mock("@/hooks/useServices.js", () => ({
   useOptionalServices: () => ({
     highspeedCardService: { share: vi.fn() },
+  }),
+  // The live throughput pipeline (useSessionThroughput → useSessionDebug) reads the session debug snapshot;
+  // returning null in tests is enough and does not affect assertions (the throughput label renders only when
+  // data exists).
+  useServices: () => ({
+    zcodeAgentService: {
+      readSessionDebug: async () => null,
+    },
   }),
 }));
 const topicInterrupted = vi.hoisted(() => vi.fn(() => false));
@@ -299,7 +313,7 @@ function baseUnit(overrides: Partial<ConversationTurnRenderUnit>): ConversationT
 function renderUnit(
   unit: ConversationTurnRenderUnit,
   options: {
-    locale?: "zh-CN" | "en-US";
+    locale?: Locale;
     botContext?: ContextType<typeof DeliveryContext>;
     chatLoadingBlockedByActiveWork?: boolean;
     chatLoadingBlockedByInteraction?: boolean;
@@ -307,12 +321,15 @@ function renderUnit(
     messageStreamShowReasoning?: boolean;
     messageStreamShowTodos?: boolean;
     apiRetry?: ApiRetryState | null;
+    externalAgentStall?: ExternalAgentStallState | null;
     nowMs?: number;
     onFork?: (rowId: number) => void;
     onRetry?: (target: ConversationRowTarget) => void;
     onFeedbackChange?: (target: ConversationRowTarget, feedback: "like" | "dislike" | null) => void;
     /** 覆盖行渲染上下文的若干键（产物 chips 的门就是 `sessionId` + `onOpenWorkflowArtifact`）。 */
     context?: Partial<ConversationRowRenderContext>;
+    onPinChange?: () => void;
+    onEdit?: () => void;
   } = {},
 ): string {
   return renderToStaticMarkup(
@@ -321,7 +338,7 @@ function renderUnit(
       { value: options.botContext ?? null },
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: options.locale ?? "zh-CN" },
+        { initialLocale: options.locale ?? TEST_LOCALE },
         createElement(
           PlatformProvider,
           { platform: noopPlatform },
@@ -332,6 +349,7 @@ function renderUnit(
               unit,
               nowMs: options.nowMs,
               apiRetry: options.apiRetry,
+              externalAgentStall: options.externalAgentStall,
               context: {
                 ...rowContext,
                 chatLoadingBlockedByActiveWork: options.chatLoadingBlockedByActiveWork,
@@ -344,6 +362,8 @@ function renderUnit(
               onFork: options.onFork,
               onRetry: options.onRetry,
               onFeedbackChange: options.onFeedbackChange,
+              ...(options.onPinChange ? { onPinChange: options.onPinChange } : {}),
+              ...(options.onEdit ? { onEdit: options.onEdit } : {}),
             }),
           ),
         ),
@@ -424,9 +444,15 @@ describe("ConversationTurnGroup layout", () => {
     const visibleHtml = renderUnit(hiddenUnit!, { messageStreamShowReasoning: true });
 
     expect(hiddenUnit?.flowItems.map((item) => item.kind)).toContain("cuaGroup");
-    expect(hiddenHtml).toContain("3 个事件, 1 条消息");
-    expect(hiddenHtml).not.toContain("4 个事件");
-    expect(visibleHtml).toContain("4 个事件, 1 条消息");
+    expect(hiddenHtml).toContain(
+      `${expectedCopy("chat.toolCall.cua.group.event.other", { count: 3 })}, ${expectedCopy("chat.toolCall.cua.group.message.one", { count: 1 })}`,
+    );
+    expect(hiddenHtml).not.toContain(
+      expectedCopy("chat.toolCall.cua.group.event.other", { count: 4 }),
+    );
+    expect(visibleHtml).toContain(
+      `${expectedCopy("chat.toolCall.cua.group.event.other", { count: 4 })}, ${expectedCopy("chat.toolCall.cua.group.message.one", { count: 1 })}`,
+    );
   });
 
   it("does not mount an empty history collapsible after inner work projection", () => {
@@ -458,7 +484,7 @@ describe("ConversationTurnGroup Hook footer", () => {
     const html = renderUnit(unit!, { compactForRemoteControl: true });
     const assistantIndex = html.indexOf("完成回复");
     const hookIndex = html.indexOf('data-testid="v4-hook-details-trigger-turn-complete"');
-    const boundaryIndex = html.indexOf("从对话中派生");
+    const boundaryIndex = html.indexOf(expectedCopy("chat.message.fork.derivedFrom"));
 
     expect(assistantIndex).toBeGreaterThanOrEqual(0);
     expect(hookIndex).toBeGreaterThan(assistantIndex);
@@ -512,7 +538,7 @@ describe("ConversationTurnGroup Hook footer", () => {
       );
       expect(html.includes('data-highspeed-output-footer="true"')).toBe(highspeed);
       expect(html.indexOf("v4-hook-details-trigger-turn-complete")).toBeLessThan(
-        html.indexOf("从对话中派生"),
+        html.indexOf(expectedCopy("chat.message.fork.derivedFrom")),
       );
       expect(html.includes('data-testid="v4-copy-4"')).toBe(hasAssistantText);
     },
@@ -737,18 +763,18 @@ describe("ConversationTurnGroup assistant history status", () => {
       }),
     );
 
-    expect(html).toContain("已工作 14 分 41 秒");
+    expect(html).toContain(expectedCopy("chat.history.workedFor", { duration: "14m 41s" }));
     expect(html).toContain('data-highspeed-duration="true"');
     expect(html).toContain("text-icon-purple");
-    expect(html).toContain("节省约 12 分 43 秒");
+    expect(html).toContain(expectedCopy("chat.highspeed.savedDuration", { duration: "12m 43s" }));
     expect(html).toContain('data-highspeed-saved-duration="true"');
     expect(html).toContain('data-highspeed-status-tag="true"');
     expect(html).not.toContain('data-highspeed-gradient="true"');
     expect(html).toContain("HighSpeed");
     expect(html).toContain('data-highspeed-output-footer="true"');
-    expect(html).toContain("以上由 Highspeed 生成");
+    expect(html).toContain(expectedCopy("chat.highspeed.generatedBy"));
     expect(html).toContain('data-highspeed-output-share="true"');
-    expect(html).toContain("查看");
+    expect(html).toContain(expectedCopy("chat.highspeed.viewAction"));
     const shareButton = html.match(/<button[^>]*data-highspeed-output-share="true"[^>]*>/)?.[0];
     expect(shareButton).toBeDefined();
     expect(shareButton).not.toMatch(/\sdisabled(?:=""|(?=[\s>]))/);
@@ -1052,7 +1078,7 @@ describe("ConversationTurnGroup assistant history status", () => {
       }),
     );
 
-    expect(html).toContain("已工作 14 分 41 秒");
+    expect(html).toContain(expectedCopy("chat.history.workedFor", { duration: "14m 41s" }));
     expect(html).toContain('data-highspeed-duration="true"');
     expect(html).toContain("text-icon-purple");
     expect(html).toContain('data-highspeed-status-tag="true"');
@@ -1109,8 +1135,10 @@ describe("ConversationTurnGroup assistant history status", () => {
     expect(html).not.toContain("/Goal");
     expect(html).toContain("Goal");
     expect(html).toContain("开发一个招投标管理系统");
-    expect(html).not.toContain("已工作 1 秒");
-    expect(html.match(/工作中 3 秒/g)).toHaveLength(1);
+    expect(html).not.toContain(expectedCopy("chat.history.workedFor", { duration: "1s" }));
+    expect(html.split(expectedCopy("chat.history.workingFor", { duration: "3s" })).length - 1).toBe(
+      1,
+    );
     expect(html.match(/chat-assistant-history-trigger/g)).toHaveLength(1);
   });
 
@@ -1123,7 +1151,7 @@ describe("ConversationTurnGroup assistant history status", () => {
       }),
     );
 
-    expect(html).toContain("工作中 5 秒");
+    expect(html).toContain(expectedCopy("chat.history.workingFor", { duration: "5s" }));
   });
 
   it("ETS01/ETS03：运行工作段尾部的单个 Explore 工具不创建父分组", () => {
@@ -1172,8 +1200,8 @@ describe("ConversationTurnGroup assistant history status", () => {
       }),
     );
 
-    expect(html).toContain("已工作 5 秒");
-    expect(html).not.toContain("工作中 5 秒");
+    expect(html).toContain(expectedCopy("chat.history.workedFor", { duration: "5s" }));
+    expect(html).not.toContain(expectedCopy("chat.history.workingFor", { duration: "5s" }));
   });
 
   it("labels an authoritative topic interruption separately from a manual stop", () => {
@@ -1187,7 +1215,9 @@ describe("ConversationTurnGroup assistant history status", () => {
         assistantHistoryRows: [row],
         renderRows: [row],
       });
-      expect(renderUnit(unit, { locale: "zh-CN" })).toContain("已被新消息中断");
+      expect(renderUnit(unit, { locale: TEST_LOCALE })).toContain(
+        expectedCopy("chat.history.topicInterrupted"),
+      );
       expect(renderUnit(unit, { locale: "en-US" })).toContain("Interrupted by a new message");
     } finally {
       topicInterrupted.mockReturnValue(false);
@@ -1208,8 +1238,12 @@ describe("ConversationTurnGroup assistant history status", () => {
 
     expect(renderUnit(interruptedUnit, { locale: "en-US" })).toContain("Stopped");
     expect(renderUnit(interruptedUnit, { locale: "en-US" })).not.toContain("Worked for 5s");
-    expect(renderUnit(interruptedUnit, { locale: "zh-CN" })).toContain("已停止");
-    expect(renderUnit(interruptedUnit, { locale: "zh-CN" })).not.toContain("已工作 5 秒");
+    expect(renderUnit(interruptedUnit, { locale: TEST_LOCALE })).toContain(
+      expectedCopy("chat.history.stopped"),
+    );
+    expect(renderUnit(interruptedUnit, { locale: TEST_LOCALE })).not.toContain(
+      expectedCopy("chat.history.workedFor", { duration: "5s" }),
+    );
   });
 
   it("按语言格式化工作时长的单位间距", () => {
@@ -1225,7 +1259,9 @@ describe("ConversationTurnGroup assistant history status", () => {
     });
 
     expect(renderUnit(completedUnit, { locale: "en-US" })).toContain("Worked for 7m 30s");
-    expect(renderUnit(completedUnit, { locale: "zh-CN" })).toContain("已工作 7 分 30 秒");
+    expect(renderUnit(completedUnit, { locale: TEST_LOCALE })).toContain(
+      expectedCopy("chat.history.workedFor", { duration: "7m 30s" }),
+    );
   });
 
   it.each([
@@ -1368,7 +1404,7 @@ describe("ConversationTurnGroup assistant history status", () => {
         { id: "book", kind: "file", title: "审计报告", version: 2 },
         { id: "perf", kind: "chart", title: "每轮耗时", version: 1 },
       ]),
-      { context: artifactContext, locale: "zh-CN" },
+      { context: artifactContext, locale: TEST_LOCALE },
     );
 
     expect(html).toContain('data-testid="workflow-notification-artifacts"');
@@ -1382,7 +1418,9 @@ describe("ConversationTurnGroup assistant history status", () => {
     // 「这次跑的是第 2 版」是一件值得在收据上看到的事；长写在 tooltip 里。
     expect(html).toContain('data-testid="workflow-run-artifact-version"');
     expect(html).toContain(">v2<");
-    expect(html).toContain('title="第 2 版"');
+    expect(html).toContain(
+      `title="${expectedCopy("chat.toolCall.workflow.run.artifacts.version", { version: 2 })}"`,
+    );
   });
 
   it("超过 3 件时只摆 3 枚，其余折进「+N」", () => {
@@ -1395,7 +1433,7 @@ describe("ConversationTurnGroup assistant history status", () => {
           version: 1,
         })),
       ),
-      { context: artifactContext, locale: "zh-CN" },
+      { context: artifactContext, locale: TEST_LOCALE },
     );
 
     expect(
@@ -1411,7 +1449,7 @@ describe("ConversationTurnGroup assistant history status", () => {
       workflowNotificationUnit([{ id: "a", kind: "file", title: "只剩一件", version: 1 }], {
         artifactsTruncated: true,
       }),
-      { context: artifactContext, locale: "zh-CN" },
+      { context: artifactContext, locale: TEST_LOCALE },
     );
 
     expect(html).toContain('data-testid="workflow-notification-artifacts-more"');
@@ -1421,7 +1459,7 @@ describe("ConversationTurnGroup assistant history status", () => {
   it("载荷缺席（批量轮 / 旧 CLI / 旧 transcript）⇒ 无 chips，通知行其余部分逐字不变", () => {
     const withoutArtifacts = renderUnit(workflowNotificationUnit(undefined), {
       context: artifactContext,
-      locale: "zh-CN",
+      locale: TEST_LOCALE,
     });
     expect(withoutArtifacts).not.toContain('data-testid="workflow-notification-artifacts"');
     expect(withoutArtifacts).toContain("flaky-test-triage");
@@ -1430,7 +1468,7 @@ describe("ConversationTurnGroup assistant history status", () => {
     // 与「一件产物都没有」的空数组同构：两者都不该长出 chips。
     const emptyArtifacts = renderUnit(workflowNotificationUnit([]), {
       context: artifactContext,
-      locale: "zh-CN",
+      locale: TEST_LOCALE,
     });
     expect(emptyArtifacts).not.toContain('data-testid="workflow-notification-artifacts"');
   });
@@ -1438,7 +1476,7 @@ describe("ConversationTurnGroup assistant history status", () => {
   it("宿主没注入打开能力时 chips 仍在场，只是不可点——交付了什么是事实，能不能打开是能力", () => {
     const html = renderUnit(
       workflowNotificationUnit([{ id: "book", kind: "file", title: "审计报告", version: 1 }]),
-      { locale: "zh-CN" },
+      { locale: TEST_LOCALE },
     );
 
     expect(html).toContain(`data-testid="${TID_CHAT_WORKFLOW_ARTIFACT_CHIP}"`);
@@ -1468,7 +1506,7 @@ describe("ConversationTurnGroup assistant history status", () => {
       }),
       assistantTextRow(6, { text: "后台总结最终段" }),
     ]);
-    const html = renderUnit(unit!, { context: artifactContext, locale: "zh-CN" });
+    const html = renderUnit(unit!, { context: artifactContext, locale: TEST_LOCALE });
     expect(html).not.toContain('data-testid="workflow-notification-artifacts"');
   });
 
@@ -1526,8 +1564,10 @@ describe("ConversationTurnGroup assistant history status", () => {
 
     // 折叠态不挂载详情正文；计数同时包含 reasoning 与 message，证明兼容路径没有退化为仅 child tools。
     // CuaGroupToolCallBlock 的 forceOpen 测试另行覆盖详情正文渲染。
-    expect(html).toContain("3 个事件, 1 条消息");
-    expect(html).not.toContain("1 个事件");
+    expect(html).toContain(
+      `${expectedCopy("chat.toolCall.cua.group.event.other", { count: 3 })}, ${expectedCopy("chat.toolCall.cua.group.message.one", { count: 1 })}`,
+    );
+    expect(html).not.toContain(expectedCopy("chat.toolCall.cua.group.event.one", { count: 1 }));
   });
 
   it("旧 background result 缺少结构化标题时保持耗时折叠兼容分支", () => {
@@ -1542,7 +1582,7 @@ describe("ConversationTurnGroup assistant history status", () => {
       }),
     );
 
-    expect(html).toContain("已工作 5 秒");
+    expect(html).toContain(expectedCopy("chat.history.workedFor", { duration: "5s" }));
     expect(html).toContain("chat-assistant-history-trigger");
     expect(html).not.toContain("chat-background-result-title");
   });
@@ -1624,7 +1664,7 @@ describe("ConversationTurnGroup assistant history status", () => {
       }),
     );
 
-    expect(html).toContain("1 个文件已更改");
+    expect(html).toContain(expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }));
     expect(html).toContain("+2");
     expect(html).toContain("-1");
   });
@@ -1644,7 +1684,7 @@ describe("ConversationTurnGroup assistant history status", () => {
       finalText,
     ]);
     const html = renderUnit(unit!, { context: { fetchFileChanges: async () => ({ items: [] }) } });
-    expect(html).not.toContain("1 个文件已更改");
+    expect(html).not.toContain(expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }));
     expect(html).not.toContain("+70");
     expect(html).toContain("可视化已完成");
   });
@@ -1652,7 +1692,7 @@ describe("ConversationTurnGroup assistant history status", () => {
   it("renders the completed assistant action toolbar after the file change summary", () => {
     const createdAt = new Date();
     createdAt.setHours(7, 15, 0, 0);
-    const timeLabel = new Intl.DateTimeFormat("zh-CN", {
+    const timeLabel = new Intl.DateTimeFormat(TEST_LOCALE, {
       hour: "2-digit",
       minute: "2-digit",
     }).format(createdAt);
@@ -1677,7 +1717,9 @@ describe("ConversationTurnGroup assistant history status", () => {
       }),
     );
 
-    const summaryIndex = html.indexOf("1 个文件已更改");
+    const summaryIndex = html.indexOf(
+      expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }),
+    );
     const actionIndex = html.indexOf('data-testid="v4-copy-20"');
     const timeIndex = html.indexOf(`>${timeLabel}</span>`);
 
@@ -1730,10 +1772,12 @@ describe("ConversationTurnGroup assistant history status", () => {
     });
 
     const cardIndex = html.indexOf(`data-testid="${TID_CRON_CREATE_CARD}"`);
-    const summaryIndex = html.indexOf("1 个文件已更改");
+    const summaryIndex = html.indexOf(
+      expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }),
+    );
     const dislikeIndex = html.indexOf('data-testid="v4-feedback-dislike-6"');
     const forkActionIndex = html.indexOf('data-testid="v4-fork-6"');
-    const boundaryIndex = html.indexOf("从对话中派生");
+    const boundaryIndex = html.indexOf(expectedCopy("chat.message.fork.derivedFrom"));
 
     expect(cardIndex).toBeGreaterThanOrEqual(0);
     expect(summaryIndex).toBeGreaterThan(cardIndex);
@@ -1753,7 +1797,9 @@ describe("ConversationTurnGroup assistant history status", () => {
     ]);
     const html = renderUnit(unit!);
 
-    expect(html.indexOf('data-testid="v4-copy-6"')).toBeLessThan(html.indexOf("目标校验中"));
+    expect(html.indexOf('data-testid="v4-copy-6"')).toBeLessThan(
+      html.indexOf(expectedCopy("chat.goalVerification.checking")),
+    );
   });
 
   it("renders CronCreate success card after the assistant reply while keeping the tool row ordinary", () => {
@@ -2034,7 +2080,9 @@ describe("ConversationTurnGroup assistant history status", () => {
 
     // lastIndexOf 取 Website 卡片标题，避开正文中更早出现的同一 URL。
     const previewIndex = html.lastIndexOf("localhost:3000");
-    const summaryIndex = html.indexOf("1 个文件已更改");
+    const summaryIndex = html.indexOf(
+      expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }),
+    );
     const screenshotIndex = html.indexOf("data:image/png;base64,AAAA");
     const actionIndex = html.indexOf('data-testid="v4-copy-20"');
 
@@ -2113,7 +2161,7 @@ describe("ConversationTurnGroup assistant history status", () => {
   it("按复制、赞、踩、分叉顺序渲染反馈工具栏，手机远控常显", () => {
     const createdAt = new Date();
     createdAt.setHours(7, 15, 0, 0);
-    const timeLabel = new Intl.DateTimeFormat("zh-CN", {
+    const timeLabel = new Intl.DateTimeFormat(TEST_LOCALE, {
       hour: "2-digit",
       minute: "2-digit",
     }).format(createdAt);
@@ -2251,9 +2299,9 @@ describe("ConversationTurnGroup assistant history status", () => {
     expect(collapsedIndexes).toEqual([...collapsedIndexes].sort((left, right) => left - right));
     expect(collapsedHtml).not.toContain('data-row-id="4"');
     expect(collapsedHtml.match(/chat-assistant-history-trigger/g)).toHaveLength(3);
-    expect(collapsedHtml).toContain("已工作 5 秒");
-    expect(collapsedHtml).toContain("已工作 2 秒");
-    expect(collapsedHtml).toContain("已工作 1 秒");
+    expect(collapsedHtml).toContain(expectedCopy("chat.history.workedFor", { duration: "5s" }));
+    expect(collapsedHtml).toContain(expectedCopy("chat.history.workedFor", { duration: "2s" }));
+    expect(collapsedHtml).toContain(expectedCopy("chat.history.workedFor", { duration: "1s" }));
 
     const expandedHtml = renderUnit({
       ...units[0]!,
@@ -2301,7 +2349,7 @@ describe("ConversationTurnGroup ChatLoading lifecycle", () => {
       },
     );
 
-    expect(html).toContain("重新连接中... 3/10");
+    expect(html).toContain(expectedCopy("chat.apiRetryStatus", { attempt: 3, maxRetries: 10 }));
     expect(html).not.toContain('data-testid="chat-loading"');
   });
 
@@ -2321,7 +2369,9 @@ describe("ConversationTurnGroup ChatLoading lifecycle", () => {
       },
     );
 
-    expect(html).not.toContain("重新连接中...");
+    expect(html).not.toContain(
+      expectedCopy("chat.apiRetryStatus", { attempt: 3, maxRetries: 10 }).replace(" 3/10", ""),
+    );
     expect(html).toContain('data-testid="chat-loading"');
     expect(html).toContain('data-zcode-chat-loading-slot="true"');
   });
@@ -2343,8 +2393,50 @@ describe("ConversationTurnGroup ChatLoading lifecycle", () => {
       },
     );
 
-    expect(html).not.toContain("重新连接中...");
+    expect(html).not.toContain(
+      expectedCopy("chat.apiRetryStatus", { attempt: 3, maxRetries: 10 }).replace(" 3/10", ""),
+    );
     expect(html).not.toContain('data-testid="chat-loading"');
+  });
+
+  it("S6: an external agent stall replaces the running turn's loading and clears when null", () => {
+    const stall: ExternalAgentStallState = {
+      agentId: "mock",
+      since: 1_700_000_001_000,
+      silentMs: 30_000,
+    };
+    const stalled = renderUnit(baseUnit({ isRunning: true, assistantHistoryDefaultOpen: true }), {
+      externalAgentStall: stall,
+      apiRetry: {
+        attempt: 3,
+        maxAttempts: 11,
+        nextRetryAt: 1_700_000_001_000,
+        reasonCode: "fault.provider.rateLimited",
+      },
+    });
+    expect(stalled).toContain('data-external-agent-stall="true"');
+    expect(stalled).toContain(expectedCopy("chat.externalAgent.stalled"));
+    // Precedence: stall over the apiRetry status and the generic loading indicator.
+    expect(stalled).not.toContain('data-testid="chat-loading"');
+    expect(stalled).not.toContain(
+      expectedCopy("chat.apiRetryStatus", { attempt: 3, maxRetries: 10 }).replace(" 3/10", ""),
+    );
+
+    const cleared = renderUnit(baseUnit({ isRunning: true, assistantHistoryDefaultOpen: true }), {
+      externalAgentStall: null,
+    });
+    expect(cleared).not.toContain('data-external-agent-stall="true"');
+    expect(cleared).not.toContain(expectedCopy("chat.externalAgent.stalled"));
+    expect(cleared).toContain('data-testid="chat-loading"');
+  });
+
+  it("S6: the stall status follows the interaction gate like the loading indicator", () => {
+    const html = renderUnit(baseUnit({ isRunning: true, assistantHistoryDefaultOpen: true }), {
+      chatLoadingBlockedByInteraction: true,
+      externalAgentStall: { agentId: "mock", since: 1_700_000_001_000, silentMs: 30_000 },
+    });
+    expect(html).not.toContain('data-external-agent-stall="true"');
+    expect(html).not.toContain(expectedCopy("chat.externalAgent.stalled"));
   });
 
   it("retry 清除后恢复当前 running turn 的通用 loading", () => {
@@ -2356,7 +2448,9 @@ describe("ConversationTurnGroup ChatLoading lifecycle", () => {
       { apiRetry: null },
     );
 
-    expect(html).not.toContain("重新连接中...");
+    expect(html).not.toContain(
+      expectedCopy("chat.apiRetryStatus", { attempt: 3, maxRetries: 10 }).replace(" 3/10", ""),
+    );
     expect(html).toContain('data-testid="chat-loading"');
   });
 
@@ -2950,7 +3044,55 @@ describe("topic preparation flow membership", () => {
       expect(html.indexOf("<section")).toBeLessThan(preparation);
       expect(html.indexOf("</section>")).toBeGreaterThan(preparation);
       expect(html).toContain('data-v4-user-input-collapsible-content="true"');
-      expect(html).toContain('aria-label="正在准备材料"');
+      expect(html).toContain(`aria-label="${expectedCopy("chat.topicPreparation.preparing")}"`);
     }
+  });
+});
+
+// specs/first-submission-instant-ux.md P1 + specs/composer-worktree-setup-steps.md: the
+// optimistic first-input turn is a timeline-only unit, yet its user bubble must render — and
+// render above the worktree setup slot attached to it while the Host prepares the session.
+describe("optimistic first-submission turn", () => {
+  const optimisticRow = userInputRow(-42, {
+    turnId: "first-submission:sub-1",
+    text: "Frozen first message",
+  });
+
+  it("renders the frozen message bubble before any transcript row exists", () => {
+    const [unit] = withOptimisticFirstInputRow([], optimisticRow);
+    expect(renderUnit(unit!)).toContain("Frozen first message");
+  });
+
+  it("withholds pin, edit and attachment actions for the negative rowId but stays readable", () => {
+    const row = userInputRow(-42, {
+      turnId: "first-submission:sub-1",
+      entityId: "sub-1",
+      text: "Frozen first message",
+      actions: { canEdit: true } as UserInputRow["actions"],
+      attachments: [{ ref: "local-file", fileName: "notes.txt", mime: "text/plain", bytes: 3 }],
+    });
+    const html = renderUnit(withOptimisticFirstInputRow([], row)[0]!, {
+      onPinChange: () => {},
+      onEdit: () => {},
+      context: { readAttachment: async () => new Uint8Array() } as never,
+    });
+    expect(html).toContain("Frozen first message");
+    expect(html).not.toContain('data-testid="v4-pin');
+    expect(html).not.toContain('data-testid="v4-edit');
+    expect(html).toContain('data-optimistic-first-input="true"');
+    // Readable, not hidden: no inert/aria-hidden around the user's own pending message.
+    expect(html).not.toContain("inert");
+    expect(html).not.toMatch(/data-optimistic-first-input="true"[^>]*aria-hidden/);
+  });
+
+  it("keeps the message above the worktree setup slot attached to the same unit (FSL02)", () => {
+    const [unit] = withAfterFirstUserInputSlot(
+      withOptimisticFirstInputRow([], optimisticRow),
+      createElement("div", null, "Worktree setup steps"),
+    );
+    const html = renderUnit(unit!);
+    expect(html).toContain("Frozen first message");
+    expect(html).toContain("Worktree setup steps");
+    expect(html.indexOf("Frozen first message")).toBeLessThan(html.indexOf("Worktree setup steps"));
   });
 });

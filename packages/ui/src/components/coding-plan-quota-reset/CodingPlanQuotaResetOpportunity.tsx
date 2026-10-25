@@ -1,4 +1,5 @@
 import { GiftIcon } from "lucide-react";
+import { TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY } from "@zcode/shared";
 import { useEffect, useState } from "react";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import {
@@ -39,8 +40,8 @@ export function CodingPlanQuotaResetOpportunity({
   const [uncontrolledDialogOpen, setUncontrolledDialogOpen] = useState(false);
   const resolvedDialogOpen = dialogOpen ?? uncontrolledDialogOpen;
   const setDialogOpen = onDialogOpenChange ?? setUncontrolledDialogOpen;
-  // 弹框在 dialog 分支内常驻挂载，机会数从多降到单/零都不会提前卸载成功动画中的 Dialog；
-  // 这里只决定文案与倒计时形态：多机会显示「获得 N 次」，单机会保留原文案 + 倒计时。
+  // The dialog stays mounted in the dialog branch, so a count dropping from multiple to one/zero does not unmount a dialog mid-success animation.
+  // This only chooses copy and countdown shape: multiple opportunities show "N granted"; one keeps the original copy + countdown.
   const hasMultipleOpportunities = count > 1;
 
   useEffect(() => {
@@ -62,11 +63,11 @@ export function CodingPlanQuotaResetOpportunity({
     { id: "codingPlan.quotaReset.expiresIn" },
     { time: formatCodingPlanQuotaResetCountdown(remainingSeconds, intl.formatMessage) },
   );
-  // 多机会入口复用了不带参数的固定文案，用户无法直接确认当前可用次数。
-  // 这里让可见文案与 aria-label 共用同一个动态结果，避免视觉和无障碍名称再次不一致。
+  // The multiple-opportunity entry reused fixed copy without a count, so users could not tell how many remained.
+  // Use the same dynamic result for visible copy and aria-label to keep visual and accessible names aligned.
   const openDialogLabel = intl.formatMessage({ id: "codingPlan.quotaReset.openDialog" }, { count });
   const label = hasMultipleOpportunities ? openDialogLabel : opportunityLabel;
-  // 弹框存活期间徽标不收起：单机会在弹框打开后过期时，入口不能从按钮位置塌缩。
+  // Keep the badge visible while the dialog is mounted: if a single opportunity expires while open, the entry must not collapse from the button position.
   const effectiveVisible =
     visible && (hasMultipleOpportunities || resolvedDialogOpen || remainingSeconds > 0);
   const commonClassName = [
@@ -89,10 +90,11 @@ export function CodingPlanQuotaResetOpportunity({
   );
 
   if (dialog) {
-    // 单机会同样可以点开重置弹框；文案与倒计时保持单机会形态，仅交互升级为按钮。
+    // A single opportunity can also open the reset dialog; keep its copy/countdown shape and only make the interaction a button.
     const button = (
       <button
         type="button"
+        data-testid={TID_CODING_PLAN_QUOTA_RESET_OPPORTUNITY}
         aria-label={label}
         aria-hidden={!effectiveVisible}
         className={`${commonClassName} hover:bg-interaction-confirmation-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50`}

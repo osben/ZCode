@@ -18,17 +18,22 @@ import type { ProviderOrderView } from "@/lib/modelProviderOrdering.js";
 export function useModelProviders(target: {
   workspacePath: string;
   workspaceIdentity?: string;
-  /** 本地 Provider Settings 的连通性测试使用的本地 cwd；不复用远程激活路径。 */
+  /** Local cwd for connectivity tests in Provider Settings; do not reuse a remote activation path. */
   connectivityWorkspacePath?: string;
-  /** 远程激活时没有本地 cwd 必须 fail-closed，不能回退到远程 workspacePath。 */
+  /** If no local cwd exists during remote activation, fail closed; do not fall back to remote workspacePath. */
   connectivityWorkspaceRequired?: boolean;
-  /** 没有本地 workspace 时展示给用户的本地化错误文案。 */
+  /** Localized error message shown when there is no local workspace. */
   connectivityUnavailableMessage?: string;
 }) {
   const { providerSettingsService } = useServices();
   const providerSettingsRead = useProviderSettingsServiceView(providerSettingsService);
-  const providerSettingsView =
-    providerSettingsRead.state.status === "ready" ? providerSettingsRead.state.view : null;
+  // No ACP filter here: the host derives `acp:<agentId>` providers only on a supported platform
+  // (specs/acp-agent-runtime.md "Availability (platform rule)"), and ACP-managed providers never
+  // reach the custom group.
+  const providerSettingsView = useMemo(
+    () => (providerSettingsRead.state.status === "ready" ? providerSettingsRead.state.view : null),
+    [providerSettingsRead.state],
+  );
   const effectiveModelProviders = useMemo(
     () =>
       resolveProviderSettingsFormProviders({
@@ -46,9 +51,9 @@ export function useModelProviders(target: {
   );
   const commitProviderSettingsView = useCallback(
     (view: ProviderSettingsView): void => {
-      // 远端 mutation 的返回值是目标 Environment 已刷新后的权威 View，
-      // 只依赖 onDidChange 会在 attachment 换代/事件丢失时留下删除前的 UI 快照。
-      // 统一在 Hook 边界提交返回 View，仍由 useProviderSettingsServiceView 做 Service/revision 守卫。
+      // The remote mutation's return value is the authoritative View after the target Environment was refreshed.
+      // Relying only on onDidChange can leave a pre-deletion UI snapshot after an attachment replacement or lost event.
+      // Commit the returned View at the hook boundary; useProviderSettingsServiceView still guards by Service/revision.
       providerSettingsRead.commit(view);
     },
     [providerSettingsRead.commit],
@@ -66,8 +71,8 @@ export function useModelProviders(target: {
     } catch (err) {
       logger.error("[useModelProviders] 加载模型供应商失败", err);
     } finally {
-      // 用户连续触发刷新时，旧请求可能先返回。
-      // 若不做 token 守卫，旧请求 finally 会把 refreshing 提前置 false，导致标题 loading 提示闪灭。
+      // If the user triggers refresh repeatedly, an older request may return first.
+      // Without a token guard, its finally block can clear refreshing early and make the title's loading indicator flicker off.
       if (refreshToken === latestRefreshTokenRef.current) {
         setRefreshing(false);
       }
@@ -76,8 +81,8 @@ export function useModelProviders(target: {
 
   const saveProvider = useCallback(
     async (provider: ProviderSettingsFormProvider) => {
-      // 新建 Provider 尚未进入 Registry，自然也不会出现在当前 Settings View。
-      // 保存边界允许缺少继承层，并直接从新建表单构造完整配置。
+      // A newly created Provider is not yet in the Registry, so it cannot appear in the current Settings View.
+      // The save boundary permits a missing inherited layer and builds the full configuration directly from the create form.
       const savedView = await persistPersonalProvider({ provider, providerSettingsService });
       commitProviderSettingsView(savedView);
       return projectProviderSettingsViewToFormProviders(savedView);

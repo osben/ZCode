@@ -5,7 +5,7 @@ import type {
   SessionSummary,
 } from "@zcode/shared/zcode-protocol-v4";
 import { describe, expect, it, vi } from "vitest";
-import { createWindowHostSessionsIndexObserver } from "../src/host/windowHostSessionsIndexObserver.js";
+import { createWindowHostSessionsIndexObserver } from "@zcode/services/window-controller";
 
 function summary(overrides: Partial<SessionSummary> = {}): SessionSummary {
   return {

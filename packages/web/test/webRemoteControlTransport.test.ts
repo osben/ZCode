@@ -149,8 +149,8 @@ afterEach(async () => {
       const sockets = serverSockets.get(server);
       serverSockets.delete(server);
       for (const socket of sockets ?? []) {
-        // Bugfix: 失败的异步断言会跳过 transport.dispose()，只 close server 会等待仍存活的 WS。
-        // 测试清理阶段直接终止客户端连接，避免全量单测里 afterEach 因悬挂连接超时。
+        // Bugfix: a failed async assertion skips transport.dispose(); closing only the server would wait on WS connections that are still alive.
+        // The test cleanup phase terminates client connections directly, to avoid afterEach timing out on hanging connections during the full unit test run.
         socket.terminate();
       }
       return new Promise<void>((resolve) => {
@@ -323,8 +323,8 @@ describe("WebRemoteControlTerminalTransport", () => {
     });
 
     transport.start();
-    // Bugfix: permessage-deflate 握手和大 payload 压缩都走真实 ws/socket，CI 全量并发时
-    // event loop 可能被其它用例挤压；这里放宽等待并标注阶段，避免 500ms 抖动误报且便于定位。
+    // Bugfix: the permessage-deflate handshake and large-payload compression both go through the real ws/socket; under full concurrent CI runs the
+    // event loop may be squeezed by other cases; the wait is relaxed here and the phase is labeled, to avoid false alarms from 500ms jitter and to make failures easier to locate.
     await waitUntil(
       () => relay.messages.some((message) => message.type === "auth_init"),
       2_000,
@@ -432,8 +432,8 @@ describe("WebRemoteControlTerminalTransport", () => {
     });
 
     transport.start();
-    // Bugfix: 服务端收到第 2 次 heartbeat 不代表客户端已经处理 matched ACK。
-    // 这里直接等待 onSendReady，避免全量并发测试时断言抢在 WebSocket message 回调前执行。
+    // Bugfix: the server receiving the 2nd heartbeat does not mean the client has processed the matched ACK.
+    // Wait directly on onSendReady, so assertions do not run ahead of the WebSocket message callback during full concurrent test runs.
     await waitUntil(() => sendReady.mock.calls.length === 1, 2_000);
 
     expect(sendReady).toHaveBeenCalledOnce();
@@ -1188,7 +1188,7 @@ it.each([
   ["freeze", "lifecycle-first"],
   ["freeze", "reporter-first"],
 ] as const)(
-  "MRO03：%s/%s 在真实 transport 挂起前撤销查看，同 socket 恢复不用新 epoch",
+  "MRO03: %s/%s revokes the view before the real transport suspends; recovery on the same socket does not use a new epoch",
   async (pause, order) => {
     const relay = await createRelayServer(({ message, socket }) => {
       if (message.type === "auth_init")
@@ -1295,7 +1295,7 @@ it.each([
 );
 
 it.each(["online", "resume"])(
-  "MRO03：%s 恢复连接但页面仍 hidden 时不能重报缓存任务",
+  "MRO03: %s recovers the connection but the page is still hidden; cached tasks must not be reported again",
   async (reason) => {
     const relay = await createRelayServer(({ message, socket }) => {
       if (message.type === "auth_init")
@@ -1366,7 +1366,7 @@ it.each(["online", "resume"])(
       (reason === "online" ? windowTarget : documentTarget).dispatchEvent(new Event(reason));
       await recovery;
       expect(state).toBe("paired");
-      // 有序 socket 上的额外请求/响应确认恢复后的发送已被观察，无需用等待猜没有任务报告。
+      // Extra request/response acknowledgements on the ordered socket show that the post-recovery send was observed, so there is no need to guess with a wait that no task report happened.
       transport.sendPayload({
         zcode_type: "bootstrap-request",
         requestId: "after-hidden-recovery",
@@ -1390,7 +1390,7 @@ it.each(["online", "resume"])(
   },
 );
 
-it("MRO03：真实 socket 换代清旧 epoch，漏掉重申请求时仍从 bootstrap 新 epoch 恢复", async () => {
+it("MRO03: a real socket generation change clears the old epoch; when the re-declaration request is missed, recovery still proceeds from the new bootstrap epoch", async () => {
   let authCount = 0;
   let breakHealthCheck = false;
   const relay = await createRelayServer(({ message, socket }) => {

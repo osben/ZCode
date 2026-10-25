@@ -21,6 +21,7 @@ function makeServices(id: string): IServiceAccessor {
     conversationShareService: { id, service: "conversation-share" },
     fileWatcherService: { id, service: "fileWatcher" },
     skillsService: { id, service: "skills" },
+    definitionPreviewService: { id, service: "definition-preview" },
     skillSyncService: { id, service: "skill-sync" },
     mcpSyncService: { id, service: "mcp-sync" },
     pluginSyncService: { id, service: "plugin-sync" },
@@ -34,6 +35,9 @@ function makeServices(id: string): IServiceAccessor {
     broadcastService: { id, service: "broadcast" },
     modelSelectionService: { id, service: "model-selection" },
     providerSettingsService: { id, service: "provider-settings" },
+    userInstructionsService: { id, service: "user-instructions" },
+    outputStyleService: { id, service: "output-style" },
+    systemPromptService: { id, service: "system-prompt" },
   } as unknown as IServiceAccessor;
 }
 
@@ -61,6 +65,8 @@ describe("buildRemoteWorkspaceSessionServices", () => {
     expect(merged.modelSelectionService).toBe(remoteServices.modelSelectionService);
     expect(merged.providerSettingsService).toBe(remoteServices.providerSettingsService);
     expect(merged.skillsService).toBe(remoteServices.skillsService);
+    // Definition roots are discovered on the remote host, so previews must read there too.
+    expect(merged.definitionPreviewService).toBe(remoteServices.definitionPreviewService);
     expect(merged.skillSyncService).toBe(remoteServices.skillSyncService);
     expect(merged.mcpSyncService).toBe(remoteServices.mcpSyncService);
     expect(merged.pluginSyncService).toBe(remoteServices.pluginSyncService);
@@ -70,6 +76,13 @@ describe("buildRemoteWorkspaceSessionServices", () => {
     // hooksService 曾被 ...baseServices 展开静默回落到本机 host，远程机器上的
     // workspace hooks（含待审项）永远加载不出来。hooks 读写与 trust 授权必须打到远端。
     expect(merged.hooksService).toBe(remoteServices.hooksService);
+    // Same fall-through class for host-scope user files (~/.zcode/AGENTS.md, ~/.zcode/output-styles,
+    // ~/.zcode/system-prompt): a local instance would silently edit the desktop machine's files
+    // while the remote CLI reads the remote host's copies, so these services must route to the
+    // remote accessor.
+    expect(merged.userInstructionsService).toBe(remoteServices.userInstructionsService);
+    expect(merged.outputStyleService).toBe(remoteServices.outputStyleService);
+    expect(merged.systemPromptService).toBe(remoteServices.systemPromptService);
 
     expect(merged.clientScenesService).toBe(baseServices.clientScenesService);
     expect(merged.settingService).toBe(baseServices.settingService);

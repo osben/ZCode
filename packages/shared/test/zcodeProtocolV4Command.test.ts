@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   COMMANDS_REQUIRING_BASE_REVISION,
+  ROW_TARGETING_COMMANDS,
   SAVED_WORKFLOW_START_REJECTED_FAULT_PREFIX,
   V4_WIRE_PROTOCOL_VERSION,
   WORKFLOW_RUN_SETTINGS_REJECTED_FAULT_PREFIX,
+  assistantTextRowSchema,
   commandAckSchema,
   commandPayloadSchemas,
   commandResultSchema,
@@ -11,6 +13,7 @@ import {
   parseCommandEnvelope,
   savedWorkflowStartRejectionReasonSchema,
   modelSelectionSchema,
+  userInputRowSchema,
   workflowRunSettingsRejectionReasonSchema,
 } from "../src/zcode-protocol-v4/index.js";
 
@@ -122,6 +125,21 @@ describe("zcode-protocol-v4 command", () => {
         requestedDelivery: "queue",
       }),
     ).toEqual({ text: "opposite follow-up", requestedDelivery: "queue" });
+  });
+
+  it("round-trips the frozen first sendText's submission id and rejects an empty or non-string one", () => {
+    expect(
+      commandPayloadSchemas.sendText.parse({ text: "frozen", firstSubmissionId: "submission-1" }),
+    ).toMatchObject({ text: "frozen", firstSubmissionId: "submission-1" });
+    expect(commandPayloadSchemas.sendText.parse({ text: "plain" })).not.toHaveProperty(
+      "firstSubmissionId",
+    );
+    expect(
+      commandPayloadSchemas.sendText.safeParse({ text: "x", firstSubmissionId: "" }).success,
+    ).toBe(false);
+    expect(
+      commandPayloadSchemas.sendText.safeParse({ text: "x", firstSubmissionId: 7 }).success,
+    ).toBe(false);
   });
 
   it("validates bot delivery target on sendText", () => {
@@ -342,8 +360,8 @@ describe("zcode-protocol-v4 command", () => {
         issuedAt: 1_000,
         expiresAt: 60_000,
       };
-      // 显式重跑会重新抽卡，因此 Selection 与执行材料必须能整体刷新；加速轮永远是
-      // execution 作用域，不允许改写 Session Selection。
+      // An explicit rerun re-draws the card, so Selection and execution materials must be refreshable as a whole; the
+      // highspeed round is always execution-scoped and must not rewrite the Session Selection.
       const modelSelection = {
         providerId: "account:bigmodel-highspeed-card",
         modelId: "GLM-5.3",
@@ -360,7 +378,7 @@ describe("zcode-protocol-v4 command", () => {
             { reason: "highspeed_card_expired" as const, providerErrorCode: "3402" },
             { reason: "highspeed_request_failed" as const },
           ],
-          // 退回目标随声明下发：重跑时也必须带上当时的会话原模型，CLI 不再依赖运行态常驻选择。
+          // The fallback target is delivered with the declaration: a rerun must also carry the session's original model at that time; the CLI no longer depends on a runtime-resident selection.
           target: { providerId: "account:bigmodel-team-coding-plan", modelId: "GLM-5.3" },
         },
       };
@@ -412,6 +430,77 @@ describe("zcode-protocol-v4 command", () => {
       expect(result.ok).toBe(false);
     },
   );
+
+  it("allows createSession without firstInput (draft session, 2026-07-05 ruling)", () => {
+    const result = parseCommandEnvelope({
+      commandId: "cmd-2",
+      clientId: "client-1",
+      sessionId: null,
+      type: "createSession",
+      payload: { workspaceId: "ws-1" },
+      issuedAt: 1000,
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("parses createSession executionWorktree (session runs in a worktree, listed under workspaceId)", () => {
+    const result = parseCommandEnvelope({
+      commandId: "cmd-create-worktree",
+      clientId: "client-1",
+      sessionId: null,
+      type: "createSession",
+      payload: {
+        workspaceId: "ws-1",
+        executionWorktree: {
+          path: "/repo/../worktrees/zcode-sleepy-capybara",
+          branchName: "zcode/sleepy-capybara",
+        },
+      },
+      issuedAt: 1000,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(
+        (
+          result.envelope.payload as {
+            executionWorktree?: { path: string; branchName: string };
+          }
+        ).executionWorktree,
+      ).toEqual({
+        path: "/repo/../worktrees/zcode-sleepy-capybara",
+        branchName: "zcode/sleepy-capybara",
+      });
+    }
+  });
+
+  it("updates a prepared worktree target together with its retry status", () => {
+    const result = parseCommandEnvelope({
+      commandId: "cmd-update-worktree-preparation",
+      clientId: "client-1",
+      sessionId: "session-1",
+      type: "updateWorktreePreparation",
+      payload: {
+        status: "preparing",
+        worktreePreparation: {
+          branchName: "zcode/retry",
+          targetPath: "/repo/.worktrees/retry",
+          baseBranch: "integration",
+        },
+      },
+      issuedAt: 1000,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.envelope.payload).toMatchObject({
+        status: "preparing",
+        worktreePreparation: {
+          branchName: "zcode/retry",
+          targetPath: "/repo/.worktrees/retry",
+          baseBranch: "integration",
+        },
+      });
+    }
+  });
 
   it("parses an atomic Submission in createSession.firstInput", () => {
     const result = parseCommandEnvelope({
@@ -514,6 +603,108 @@ describe("zcode-protocol-v4 command", () => {
     ).toEqual({ type: "createSelectionSideSession", sessionId: "child-1" });
   });
 
+  it("carries createSession preparedActivation on the ACK result as a closed enum", () => {
+    for (const preparedActivation of [
+      "materialized",
+      "input-pending",
+      "input-admitted",
+      "already-active",
+    ] as const) {
+      const ack = commandAckSchema.parse({
+        commandId: "cmd-prepared-activation",
+        status: "accepted",
+        revisionAtDecision: 3,
+        result: { type: "createSession", sessionId: "prepared-1", preparedActivation },
+      });
+      expect(ack.result).toEqual({
+        type: "createSession",
+        sessionId: "prepared-1",
+        preparedActivation,
+      });
+    }
+    // Absent from older Core builds: still a valid ACK result.
+    expect(
+      commandAckSchema.parse({
+        commandId: "cmd-prepared-absent",
+        status: "accepted",
+        revisionAtDecision: 3,
+        result: { type: "createSession", sessionId: "prepared-1" },
+      }).result,
+    ).toEqual({ type: "createSession", sessionId: "prepared-1" });
+    // An unknown outcome is rejected, not silently stripped, so the UI never reads a guess.
+    expect(
+      commandAckSchema.safeParse({
+        commandId: "cmd-prepared-unknown",
+        status: "accepted",
+        revisionAtDecision: 3,
+        result: { type: "createSession", sessionId: "prepared-1", preparedActivation: "resent" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("round-trips expectedFirstInputCommandId only on a reserved submission activation", () => {
+    const reserved = {
+      workspaceId: "ws-1",
+      preparedSessionId: "prepared-1",
+      expectedSubmissionId: "sub-1",
+    };
+    expect(
+      commandPayloadSchemas.createSession.parse({
+        ...reserved,
+        expectedFirstInputCommandId: "cmd-frozen-1",
+      }),
+    ).toMatchObject({ expectedFirstInputCommandId: "cmd-frozen-1" });
+    const parsed = parseCommandEnvelope({
+      commandId: "cmd-activate-1",
+      clientId: "client-1",
+      sessionId: null,
+      type: "createSession",
+      payload: { ...reserved, expectedFirstInputCommandId: "cmd-frozen-1" },
+      issuedAt: 1000,
+    });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.envelope.payload).toMatchObject({
+        expectedFirstInputCommandId: "cmd-frozen-1",
+      });
+    }
+    // Wrong type or empty id is rejected, not stripped.
+    expect(
+      commandPayloadSchemas.createSession.safeParse({ ...reserved, expectedFirstInputCommandId: 7 })
+        .success,
+    ).toBe(false);
+    expect(
+      commandPayloadSchemas.createSession.safeParse({
+        ...reserved,
+        expectedFirstInputCommandId: "",
+      }).success,
+    ).toBe(false);
+    // Only a reserved submission activation may carry it: not a worktree activation, not a generic
+    // reservation without expectedSubmissionId, not with an input of its own.
+    expect(
+      commandPayloadSchemas.createSession.safeParse({
+        workspaceId: "ws-1",
+        preparedSessionId: "prepared-1",
+        expectedAttemptId: "attempt-1",
+        expectedFirstInputCommandId: "cmd-frozen-1",
+      }).success,
+    ).toBe(false);
+    expect(
+      commandPayloadSchemas.createSession.safeParse({
+        workspaceId: "ws-1",
+        preparedSessionId: "prepared-1",
+        expectedFirstInputCommandId: "cmd-frozen-1",
+      }).success,
+    ).toBe(false);
+    expect(
+      commandPayloadSchemas.createSession.safeParse({
+        ...reserved,
+        expectedFirstInputCommandId: "cmd-frozen-1",
+        firstInput: { text: "second" },
+      }).success,
+    ).toBe(false);
+  });
+
   it("keeps omitted createSession.config.mode absent so workspace default mode can win", () => {
     const result = parseCommandEnvelope({
       commandId: "cmd-create-config-no-mode",
@@ -611,12 +802,88 @@ describe("zcode-protocol-v4 command", () => {
         "retryTurn",
         "sendQueuedNow",
         "setAssistantFeedback",
+        "setRowPinned",
         "setAutoDrain",
         "setFollowupMode",
         "switchCollaborationMode",
         "switchModelConfig",
       ].sort(),
     );
+    // stop never goes stale: not in the CAS set
+    expect(COMMANDS_REQUIRING_BASE_REVISION.has("compact")).toBe(false);
+    expect(COMMANDS_REQUIRING_BASE_REVISION.has("stop")).toBe(false);
+    expect(COMMANDS_REQUIRING_BASE_REVISION.has("resolveInteraction")).toBe(false);
+    // Completion-state metrics are an idempotent background write for the same user message and must not be dropped by Renderer revision drift.
+    expect(COMMANDS_REQUIRING_BASE_REVISION.has("setHighspeedMetrics")).toBe(false);
+    // Row-targeting commands resolve their target through the projection guard.
+    expect(ROW_TARGETING_COMMANDS.has("setRowPinned")).toBe(true);
+  });
+
+  // Message pins (docs/chat-message-pins.md): display-only bookmark, additive wire surface.
+  it("parses setRowPinned and rejects non-boolean pinned", () => {
+    const ok = parseCommandEnvelope({
+      commandId: "cmd-row-pin",
+      clientId: "desktop-1",
+      sessionId: "s-1",
+      baseRevision: 8,
+      baseLogEpoch: "epoch-1",
+      type: "setRowPinned",
+      payload: {
+        target: { rowId: 9, entityId: "assistant-1" },
+        pinned: true,
+      },
+      issuedAt: 1000,
+    });
+    expect(ok.ok).toBe(true);
+
+    const bad = parseCommandEnvelope({
+      commandId: "cmd-row-pin-bad",
+      clientId: "desktop-1",
+      sessionId: "s-1",
+      baseRevision: 8,
+      baseLogEpoch: "epoch-1",
+      type: "setRowPinned",
+      payload: {
+        target: { rowId: 9, entityId: "assistant-1" },
+        pinned: "yes",
+      },
+      issuedAt: 1000,
+    });
+    expect(bad.ok).toBe(false);
+  });
+
+  it("keeps pinnedAt additive on assistant/user rows (old snapshots without it still parse)", () => {
+    const assistantBase = {
+      rowId: 1,
+      turnId: "t-1",
+      entityId: "a-1",
+      createdAt: 1000,
+      createdAtSeq: 1,
+      kind: "assistantText",
+      text: "回复",
+      state: "complete",
+    } as const;
+    // Old CLI snapshot: no pinnedAt → parses, field absent.
+    const legacy = assistantTextRowSchema.parse(assistantBase);
+    expect("pinnedAt" in legacy).toBe(false);
+    // New CLI snapshot: pinnedAt present → parses and round-trips.
+    expect(assistantTextRowSchema.parse({ ...assistantBase, pinnedAt: 1500 })).toMatchObject({
+      pinnedAt: 1500,
+    });
+    const userBase = {
+      rowId: 2,
+      turnId: "t-1",
+      entityId: "u-1",
+      createdAt: 900,
+      createdAtSeq: 1,
+      kind: "userInput",
+      text: "问题",
+      origin: "realUser",
+    } as const;
+    expect("pinnedAt" in userInputRowSchema.parse(userBase)).toBe(false);
+    expect(userInputRowSchema.parse({ ...userBase, pinnedAt: 1400 })).toMatchObject({
+      pinnedAt: 1400,
+    });
   });
 
   it("parses persisted Highspeed completion metrics", () => {
@@ -654,8 +921,8 @@ describe("zcode-protocol-v4 command", () => {
     expect(ok.ok).toBe(true);
   });
 
-  // M5 ③-2 additive：resolveInteraction answer 的 action/content——elicitation
-  // 回执收敛（多题答案/注解无损）。黄金断言：旧形态（仅 optionId/freeText）继续合法。
+  // M5 ③-2 additive: resolveInteraction answer action/content — converged elicitation
+  // receipts (multi-question answers/annotations lossless). Golden assertion: the legacy shape (optionId/freeText only) stays valid.
   it("parses resolveInteraction with additive action/content and keeps legacy answers valid", () => {
     const legacy = parseCommandEnvelope({
       commandId: "cmd-ri-1",
@@ -868,7 +1135,7 @@ describe("zcode-protocol-v4 command", () => {
   });
 
   it("parses a startSavedWorkflow payload and rejects bad shapes", () => {
-    // 直接启动命令：不携 baseRevision，与 cancel / resume 同类。
+    // Direct start command: no baseRevision, same family as cancel / resume.
     expect(
       parseCommandEnvelope({
         commandId: "018f0000-0000-7000-8000-0000000000aa",
@@ -879,13 +1146,13 @@ describe("zcode-protocol-v4 command", () => {
         issuedAt: 1000,
       }).ok,
     ).toBe(true);
-    // scope 可选：项目档缺省不传。
+    // scope optional: the project tier is omitted by default.
     expect(commandPayloadSchemas.startSavedWorkflow.parse({ name: "cleanup" })).toEqual({
       name: "cleanup",
     });
-    // 空名字被拒（invalid_name 属于运行时诊断，但 schema 先挡空串）。
+    // Empty name rejected (invalid_name is a runtime diagnostic, but the schema blocks empty strings first).
     expect(commandPayloadSchemas.startSavedWorkflow.safeParse({ name: "" }).success).toBe(false);
-    // scope 只认 project / global。
+    // scope accepts only project / global.
     expect(
       commandPayloadSchemas.startSavedWorkflow.safeParse({ name: "x", scope: "team" }).success,
     ).toBe(false);
@@ -907,7 +1174,7 @@ describe("zcode-protocol-v4 command", () => {
       runId: "run-123",
       toolCallId: "launch-abc",
     });
-    // runId / toolCallId 必带且非空。
+    // runId / toolCallId required and non-empty.
     expect(
       commandResultSchema.safeParse({ type: "startSavedWorkflow", runId: "", toolCallId: "x" })
         .success,
@@ -928,10 +1195,10 @@ describe("zcode-protocol-v4 command", () => {
     ]);
   });
 
-  // 「配置」弹层的命令（docs/dynamic-workflow/launch.md「Changing a run's settings from the GUI」）。
+  // Commands of the "settings" popover (docs/dynamic-workflow/launch.md "Changing a run's settings from the GUI").
   it("parses amendWorkflowRunSettings payloads with the omit / null / value tri-state", () => {
     const schema = commandPayloadSchemas.amendWorkflowRunSettings;
-    // 不携 baseRevision，与 cancel / resume 同类。
+    // No baseRevision, same family as cancel / resume.
     expect(
       parseCommandEnvelope({
         commandId: "018f0000-0000-7000-8000-0000000000ab",

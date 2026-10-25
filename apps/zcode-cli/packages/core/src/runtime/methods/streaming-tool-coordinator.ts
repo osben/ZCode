@@ -19,6 +19,12 @@ import type { AgentRuntimeInternal } from "../internal.js";
 import type { StreamedToolExecutionResult } from "../types.js";
 import { createSyntheticStreamedToolResult } from "./streaming-tool-synthetic-result.js";
 import {
+  resolveRuntimePermissionCapability,
+  resolveToolSchedulingFlags,
+} from "../../tool/executor/permission-capability.js";
+import { DEFAULT_TOOL_MAX_CONCURRENCY } from "../../tool/executor/impl.js";
+import { resolveRuntimeToolCapabilityContext } from "../helpers/runtime-tools.js";
+import {
   beginStreamRecoveryAttempt,
   emitStreamRecoveryRetryEvents,
   emitStreamRecoveryStarted,
@@ -53,6 +59,9 @@ export function createStreamingToolCoordinator(
   const abortController = new AbortController();
   const handles = new Map<string, Promise<StreamedToolExecutionResult | undefined>>();
   const acceptedToolCalls = new Map<string, { call: ToolCall; error?: Error }>();
+  // Early calls must form the leading prefix (the scheduler's first parallel group); a later
+  // read-only call must not observe state from before an earlier call that waits for finish.
+  let earlyExecutionPrefixOpen = true;
   let discardedReasoningBytes = 0;
   let discardedTextBytes = 0;
 
@@ -94,7 +103,7 @@ export function createStreamingToolCoordinator(
     state.modelStepCount += 1;
     recordModelHistoryRound(state);
     state.toolCallCount += settlement.streamedToolResults.length;
-    // 完整 tool_call 已建立配对义务；切换模型前必须让 live、durable ToolPart 与冷恢复看到同一组 call/result。
+    // A complete tool_call creates a pairing obligation; before switching models, live state, durable ToolPart, and cold restore must all see the same call/result pair.
     commitTurnRequestEntries(runtime, state.turnRequestState, [
       createRuntimeAssistantEntry("", settlement.toolCalls, undefined, options.model),
     ]);
@@ -120,17 +129,25 @@ export function createStreamingToolCoordinator(
   return {
     admit: (toolCall: ModelToolCall) => admit(toolCall).call,
     accept(toolCall: ModelToolCall) {
-      // 保留 runtime admission 后的空名，使正常 finish 走 registry miss，断流则保留 synthetic interrupted error。
+      // Preserve empty names after runtime admission so normal finish follows the registry-miss path, while stream interruption retains the synthetic interrupted error.
       const normalizedToolCall = { ...toolCall };
       if (normalizedToolCall.providerExecuted) return;
       const admission = admit(normalizedToolCall);
       const acceptedCall = admission.call;
-      if (admission.error || !shouldExecuteToolDuringStream(runtime, acceptedCall)) return;
       if (handles.has(normalizedToolCall.id)) return;
+      if (!earlyExecutionPrefixOpen) return;
+      if (
+        admission.error ||
+        handles.size >= resolveStreamingToolExecutionLimit(runtime) ||
+        !isToolCallEligibleDuringStream(runtime, acceptedCall)
+      ) {
+        earlyExecutionPrefixOpen = false;
+        return;
+      }
       const promise = executeDuringStream(runtime, state, {
         abortSignal: abortController.signal,
         assistantMessageId: options.assistantMessageId,
-        // model admission 已去重；只读工具可能先落盘，序号必须来自全部本地声明。
+        // Model admission already deduplicated calls; read-only tools may be persisted first, so sequence numbers must come from all local declarations.
         declarationIndex: acceptedToolCalls.size - 1,
         model: options.model,
         toolSearch: options.toolSearch,
@@ -277,8 +294,8 @@ async function executeDuringStream(
   const metadata = mcpToolPartMetadata(
     runtime.registry.getMetadata(toolCall.name)?.mcpPresentation,
   );
-  // during_stream 是 pending/running part 的首个 durable writer；若绕过
-  // turn-tools 的 metadata 写入，Stop 发生在 drain 前时冷恢复只能退化成通用工具卡。
+  // during_stream is the first durable writer for pending/running parts. If it bypasses metadata writing in
+  // turn-tools, a Stop before drain leaves cold recovery able to render only a generic tool card.
   await persistPendingToolPart(runtime, {
     assistantMessageId: options.assistantMessageId,
     declarationIndex: options.declarationIndex,
@@ -369,7 +386,13 @@ async function executeDuringStream(
   };
 }
 
-function shouldExecuteToolDuringStream(
+/**
+ * Whether a closed tool call may start before the model stream finishes. Uses the same
+ * input-aware capability as `scheduleTools` and the permission check, so read-only Bash
+ * qualifies while mutating, directory-changing, or Guarded-dangerous Bash does not.
+ * This is a timing gate only: the executor still runs hooks and the permission decision.
+ */
+export function isToolCallEligibleDuringStream(
   runtime: AgentRuntimeInternal,
   toolCall: ModelToolCall,
 ): boolean {
@@ -381,17 +404,39 @@ function shouldExecuteToolDuringStream(
   }
   const entry = runtime.registry.get(toolCall.name);
   if (!entry) return false;
-  const metadata = entry.metadata;
-  const sideEffectScope = entry.permission?.sideEffectScope ?? metadata.sideEffectScope;
-  const requiresUserInteraction = entry.requiresUserInteraction ?? metadata.requiresUserInteraction;
+  // A detached job outlives the stream attempt, so stream-failure abort cannot settle it.
+  if (isRecord(toolCall.input) && toolCall.input.run_in_background === true) return false;
+
+  const context = resolveRuntimeToolCapabilityContext(runtime);
+  const capability = resolveRuntimePermissionCapability(entry, toolCall.input, context);
+  const flags = resolveToolSchedulingFlags(entry, toolCall.input, context);
+  const needsApproval = capability.permission?.needsApproval ?? capability.needsApproval;
+  const alwaysAsk = capability.permission?.alwaysAsk ?? capability.alwaysAsk;
+  const requiresUserInteraction =
+    entry.requiresUserInteraction ?? capability.requiresUserInteraction;
   return (
-    metadata.readOnly &&
-    metadata.concurrentSafe &&
-    !metadata.destructive &&
-    !metadata.needsApproval &&
+    flags.readOnly === true &&
+    flags.concurrentSafe === true &&
+    flags.destructive !== true &&
+    flags.sideEffectScope === "none" &&
+    !needsApproval &&
+    !alwaysAsk &&
     !requiresUserInteraction &&
-    sideEffectScope === "none"
+    capability.userApprovalRule === undefined
   );
+}
+
+/**
+ * Each early call runs as its own executor batch, so the per-batch `maxConcurrency` cap does
+ * not bound them together. Limit early calls per stream attempt to the same cap; the rest run
+ * in the end-of-stream schedule, which the executor caps as usual.
+ */
+export function resolveStreamingToolExecutionLimit(runtime: AgentRuntimeInternal): number {
+  return runtime.config.toolConcurrency?.maxConcurrency ?? DEFAULT_TOOL_MAX_CONCURRENCY;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 async function raceWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {

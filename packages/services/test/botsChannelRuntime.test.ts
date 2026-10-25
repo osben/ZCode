@@ -126,6 +126,77 @@ describe("telegram channel runtime", () => {
     runtime.dispose();
   });
 
+  it("keeps polling when status-path offset reads fail with the shared state lock timeout", async () => {
+    vi.useFakeTimers();
+    // The first completed getUpdates cycle proves polling recovered; later polls hang like a real
+    // long poll so the fake-timer loop does not spin on instant empty responses.
+    let getUpdatesCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string | URL, init?: RequestInit) => {
+        const requestUrl = String(url);
+        if (requestUrl.endsWith("/getUpdates")) {
+          getUpdatesCalls += 1;
+          if (getUpdatesCalls === 1) {
+            return Promise.resolve(
+              new Response(JSON.stringify({ ok: true, result: [] }), { status: 200 }),
+            );
+          }
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(new DOMException("aborted", "AbortError")),
+              { once: true },
+            );
+          });
+        }
+        return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      }),
+    );
+    const statuses = new Map();
+    const lockTimeoutError = new Error("Timed out after 8000ms waiting for the ZCode file lock");
+    let offsetReadCalls = 0;
+    const readTelegramOffset = vi.fn(async (): Promise<number | undefined> => {
+      offsetReadCalls += 1;
+      if (offsetReadCalls <= 3) throw lockTimeoutError;
+      return 7;
+    });
+    const acquirePollingLock = vi.fn(async () => ({ release: vi.fn(async () => undefined) }));
+    const runtime = createTelegramChannelRuntime({
+      credentialService: f.createCredentialService({ "telegram-token": "token" }),
+      telegramProvider: {
+        test: vi.fn(async () => ({ ok: true, message: "ok" })),
+        send: vi.fn(async () => undefined),
+        parseCallback: vi.fn(() => []),
+      },
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() },
+      statusSink: {
+        getRuntimeStatus: (botId) => statuses.get(botId),
+        setRuntimeStatus: (status) => statuses.set(status.botId, status),
+      },
+      ensureBotStorageMigrated: vi.fn(async () => undefined),
+      readConfig: vi.fn(async () => f.telegramConfig),
+      readTelegramOffset,
+      writeTelegramOffset: vi.fn(async () => undefined),
+      processProviderCallback: vi.fn(async () => ({ ok: true, status: 200, replies: [] })),
+      acquirePollingLock,
+    });
+
+    await runtime.refresh(f.telegramConfig);
+
+    // The first cycle hits failing offset reads (status display read, getUpdates cursor read, and
+    // the error-handler display read). Polling must survive all three and poll again.
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(acquirePollingLock).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/getUpdates"), expect.anything()),
+    );
+    await vi.waitFor(() =>
+      expect(statuses.get("telegram-1")).toMatchObject({ status: "polling", offset: 7 }),
+    );
+    runtime.dispose();
+  });
+
   it("commits an update offset only after the business callback succeeds", async () => {
     vi.useFakeTimers();
     vi.stubGlobal(
@@ -326,8 +397,9 @@ describe("telegram channel runtime", () => {
 
     await runtime.refresh(f.telegramConfig);
     await vi.waitFor(() => expect(events).toContain("acquire:old-token"));
-    // Bugfix 回归：fetch 已返回 headers 但 body 永不结束时，40 秒 deadline 仍需中断读取；
-    // 退避结束后 finally 释放锁，配置刷新才能启动新 credential 的 runtime。
+    // Bugfix regression: when fetch has returned headers but the body never ends, the 40-second deadline
+    // must still interrupt the read; after backoff ends, the finally block releases the lock so a config
+    // refresh can start a runtime with the new credential.
     await vi.advanceTimersByTimeAsync(45_000);
     await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
 
@@ -772,7 +844,8 @@ describe("bot channel runtime lock", () => {
     tempDir = mkdtempSync(join(tmpdir(), "zcode-bot-runtime-lock-"));
     setDataBaseDir(tempDir);
 
-    // 回归：旧实现先发布空锁目录再写 owner，并发请求会把初始化中的锁当成 stale 删除。
+    // Regression: the old implementation published an empty lock directory before writing the owner, so
+    // concurrent requests could delete a lock still being initialized as if it were stale.
     const locks = await Promise.all(
       Array.from({ length: 20 }, (_, index) =>
         acquireTelegramPollingLock("shared-token", `bot-${index}`),

@@ -8,6 +8,7 @@ const DRIVE_MENU_KEY = `HKCU\\Software\\Classes\\Drive\\shell\\${MENU_KEY_NAME}`
 const MENU_LABELS: Record<Locale, string> = {
   "zh-CN": "在ZCode中打开",
   "en-US": "Open in ZCode",
+  "uk-UA": "Відкрити в ZCode",
 };
 
 type Logger = {
@@ -88,8 +89,8 @@ export async function installWindowsOpenFolderContextMenu(options: {
   }
 
   const appArgs =
-    // 开发态 Windows 的 process.execPath 是 Electron 可执行文件。
-    // 注册表命令必须同时带上应用入口，否则 Explorer 右键菜单只能启动空 Electron。
+    // In Windows development builds, process.execPath is the Electron executable.
+    // The registry command must include the app entry too, or Explorer's context menu will launch an empty Electron process.
     options.isDefaultApp && options.argv[1] ? [resolve(options.argv[1])] : [];
   const operations = buildWindowsOpenFolderRegistryOperations({
     executablePath: options.executablePath,

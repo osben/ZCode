@@ -1,6 +1,6 @@
 # Task Find Dialog
 
-> **当前状态**：本文描述 V4 conversation find 与 Git file-change find 的当前边界。
+> Current state: this document describes the current boundary of V4 conversation find and Git file-change find.
 
 `Cmd/Ctrl+F` opens the task find dialog. It is separate from `Cmd/Ctrl+P`, which continues to open the file quick picker.
 

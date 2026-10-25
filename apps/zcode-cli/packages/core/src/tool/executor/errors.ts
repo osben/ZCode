@@ -1,6 +1,12 @@
 import { CoreErrorType, createCoreError, isCoreError } from "@zcode/contracts";
+import type { ErrorAttribution } from "@zcode/contracts";
 import { projectExecutionErrorPayload } from "../../errors/error-payload.js";
-import type { ExecutableToolCall, ToolExecutionResult, ToolHandlerFailure } from "../types.js";
+import type {
+  ExecutableToolCall,
+  ToolErrorAttribution,
+  ToolExecutionResult,
+  ToolHandlerFailure,
+} from "../types.js";
 import { getInitialInputValidationModelContent } from "./validation.js";
 
 export function createErrorResult(
@@ -15,27 +21,41 @@ export function createErrorResult(
     isCoreError(error) && isToolHandlerFailure(error.context?.toolHandlerFailure)
       ? error.context.toolHandlerFailure
       : undefined;
-  // 根因：通用错误层按 tool name 拼接 provider 文案会反向依赖具体工具。
-  // handler 只返回自己的 code/message；这里统一组装 envelope，并保留裸 message 给 UI 和日志。
-  const modelContent =
+  // Building provider text by tool name in the generic error layer would create a
+  // reverse dependency on concrete tools. Handlers return their own code/message; this
+  // layer assembles the envelope and preserves the raw message for the UI and logs.
+  const ownModelContent =
     getInitialInputValidationModelContent(error) ??
     (handlerFailure ? `<tool_use_error>${handlerFailure.message}</tool_use_error>` : undefined);
-  // subagent/turn/model 错误常把真实 provider 原因包在 cause 链里；
-  // tool result 是父模型和 UI hover 的共同来源，必须在这里统一投影成可读摘要。
+  // Subagent/turn/model errors often wrap the provider's actual cause in a cause chain.
+  // The tool result is shared by the parent model and UI hover, so project it to a
+  // readable summary here.
   const projectedError = projectExecutionErrorPayload(error);
+  const attribution = toToolErrorAttribution(projectedError.attribution);
   const reasonSource =
     isCoreError(error) &&
     (error.context?.reasonSource === "plan_approval_feedback" ||
       error.context?.reasonSource === "workflow_refine_feedback")
       ? error.context.reasonSource
       : undefined;
-  // ExitPlanMode / workflow Refine 的用户反馈会暂存在 PermissionDenied.message，
-  // 后续还要原样转成 steer 输入；这里不能被展示摘要器截断，否则超长反馈不会触发 input_too_large。
-  // 普通拒绝附带的自由文本反馈（preserveReasonFormatting）同理原样保留。
+  // User feedback for ExitPlanMode / workflow Refine is temporarily stored in
+  // PermissionDenied.message and later passed unchanged as steer input. Do not truncate
+  // it in the display summarizer, or oversized feedback will not trigger input_too_large.
+  // Preserve free-form feedback attached to ordinary denials (preserveReasonFormatting)
+  // unchanged for the same reason.
   const message =
     reasonSource !== undefined || options?.preserveReasonFormatting === true
       ? error.message
       : projectedError.message;
+  // Without the provider's terminal facts the parent model invents causes and retry plans
+  // for a failed child (e.g. 405/3012 read as a concurrency limit). Stored as modelContent
+  // so persistence and cold resume replay the same text the live run sent.
+  const providerFactsLine =
+    ownModelContent === undefined && reasonSource === undefined
+      ? formatTerminalProviderFailureFacts(attribution)
+      : undefined;
+  const modelContent =
+    ownModelContent ?? (providerFactsLine ? `${message}\n\n${providerFactsLine}` : undefined);
   return {
     toolCallId: toolCall.id,
     toolName: toolCall.name,
@@ -44,6 +64,7 @@ export function createErrorResult(
     error: {
       type: isCoreError(error) ? error.type : error.name,
       message,
+      ...(attribution ? { attribution } : {}),
       ...(handlerFailure
         ? { code: String(handlerFailure.errorCode) }
         : projectedError.code
@@ -58,6 +79,48 @@ export function createErrorResult(
     startedAt: new Date(),
     completedAt: new Date(),
   };
+}
+
+function toToolErrorAttribution(
+  attribution: ErrorAttribution | undefined,
+): ToolErrorAttribution | undefined {
+  if (!attribution) return undefined;
+  const { providerErrorCode, retryable, source, statusCode } = attribution;
+  if (providerErrorCode === undefined && retryable === undefined && statusCode === undefined) {
+    return undefined;
+  }
+  return {
+    ...(source !== undefined ? { source } : {}),
+    ...(providerErrorCode !== undefined ? { providerErrorCode } : {}),
+    ...(retryable !== undefined ? { retryable } : {}),
+    ...(statusCode !== undefined ? { statusCode } : {}),
+  };
+}
+
+/**
+ * A terminal upstream failure whose facts the parent model should see. Every CoreError defaults to
+ * retryable=false, so only an explicit provider source marks it; tool or runtime errors must not be
+ * labelled as provider facts. Callers branch on this structured check, never on the rendered text.
+ */
+export function isTerminalProviderFailure(attribution: ToolErrorAttribution | undefined): boolean {
+  return (
+    attribution?.source === "provider" &&
+    attribution.retryable === false &&
+    (attribution.statusCode !== undefined || attribution.providerErrorCode !== undefined)
+  );
+}
+
+function formatTerminalProviderFailureFacts(
+  attribution: ToolErrorAttribution | undefined,
+): string | undefined {
+  if (!attribution || !isTerminalProviderFailure(attribution)) return undefined;
+  const { providerErrorCode, statusCode } = attribution;
+  const parts = [
+    ...(statusCode !== undefined ? [`status=${statusCode}`] : []),
+    ...(providerErrorCode !== undefined ? [`provider_error_code=${providerErrorCode}`] : []),
+    "retryable=false",
+  ];
+  return `Provider failure: ${parts.join(" ")}`;
 }
 
 export function createToolHandlerFailureError(

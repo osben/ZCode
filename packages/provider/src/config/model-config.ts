@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- Model Config、嵌套 Overlay 与有序规则共同定义一份领域类型，暂不为行数拆散。 */
+/* oxlint-disable eslint(max-lines) -- Model Config, nested overlays, and ordered rules jointly define one domain type; do not split by line count for now. */
 import { ConfigOverlay, type ConfigValidationIssue } from "../config-overlay.js";
 import type { z } from "zod";
 import {
@@ -18,7 +18,7 @@ import {
   type modelConfigDataSchema,
 } from "@zcode/shared/model-config";
 import { validateConfigSchema } from "./schema-validation.js";
-import { clearManualModelConfig } from "./manual-model-config.js";
+import { clearManualModelConfig, omitCatalogOwnedOptionFields } from "./manual-model-config.js";
 import {
   providerModelConfigRuleSchema,
   manualProviderModelConfigRuleSchema,
@@ -42,6 +42,7 @@ export type EnumOptionSpecConfigInput = Readonly<z.infer<typeof enumOptionSpecDa
 
 export class EnumOptionSpecConfig extends ConfigOverlay<EnumOptionSpecConfig> {
   readonly values?: EnumOptionSpecConfigInput["values"];
+  readonly default?: EnumOptionSpecConfigInput["default"];
   readonly map?: EnumOptionSpecConfigInput["map"];
 
   constructor(input: EnumOptionSpecConfigInput = {}) {
@@ -52,13 +53,20 @@ export class EnumOptionSpecConfig extends ConfigOverlay<EnumOptionSpecConfig> {
         : input.values === null
           ? null
           : Object.freeze([...input.values]);
+    this.default = input.default;
     this.map = input.map;
     Object.freeze(this);
   }
 
   overlay(next: EnumOptionSpecConfig): EnumOptionSpecConfig {
+    // A replacement level list must not inherit a default it no longer supports.
+    const inheritedDefault =
+      next.values != null && this.default != null && !next.values.includes(this.default)
+        ? undefined
+        : this.default;
     return new EnumOptionSpecConfig({
       values: this.overlayValue(this.values, next.values),
+      default: this.overlayValue(inheritedDefault, next.default),
       map: this.overlayValue(this.map, next.map),
     });
   }
@@ -70,6 +78,7 @@ export class EnumOptionSpecConfig extends ConfigOverlay<EnumOptionSpecConfig> {
   toJSON(): EnumOptionSpecConfigInput {
     return objectWithoutUndefined({
       values: this.values,
+      default: this.default,
       map: this.map,
     });
   }
@@ -342,7 +351,7 @@ export type ModelMatchConfigRule = RuleWithConfig<ModelMatchConfigRuleData>;
 export type ModelApiMatchConfigRule = RuleWithConfig<ModelApiMatchConfigRuleData>;
 export type ProviderSiteMatchConfigRule = RuleWithConfig<ProviderSiteMatchConfigRuleData>;
 
-/** type 只标识内存执行规则的来源层，不写入配置文件；分组不能再按字段有无猜测。 */
+/** type identifies the source layer of an in-memory execution rule and is not written to config files; do not infer groups from field presence. */
 export type ModelConfigRule =
   | (ProviderModelConfigRule & { readonly type: "provider-model" })
   | (ManualProviderModelConfigRule & { readonly type: "manual-provider-model" })
@@ -375,7 +384,7 @@ export class ModelConfigRules {
     return new ModelConfigRules();
   }
 
-  /** Built-in 保留原层次和组内顺序；个人只包含普通/手动精确规则。 */
+  /** Built-in preserves its original hierarchy and order within groups; Personal contains only regular/manual exact rules. */
   static composeEffective(builtin: ModelConfigRules, personal: ModelConfigRules): ModelConfigRules {
     return new ModelConfigRules([...builtin.rules(), ...personal.rules().filter(isExactModelRule)]);
   }
@@ -390,8 +399,8 @@ export class ModelConfigRules {
     for (const rule of this.#rules) {
       if (isExactModelRule(rule)) {
         if (rule.providerId !== input.providerId || rule.modelId !== input.modelId) continue;
-        // 手动规则要求所有可编辑叶子齐全，因此可直接覆盖；系统叶子继续来自当前身份的规则。
-        // 清空整份基线会既丢失系统映射，也迫使 UI 把旧模型的隐藏配置复制进个人规则。
+        // Manual rules require every editable leaf, so they can be applied directly; system leaves continue to come from the current identity's rule.
+        // Clearing the entire baseline would lose system mappings and force the UI to copy hidden settings from old models into personal rules.
         result = (
           rule.type === "manual-provider-model"
             ? ModelConfig.fromData(clearManualModelConfig(result.toJSON()))
@@ -404,7 +413,7 @@ export class ModelConfigRules {
           result = result.overlay(rule.config);
         continue;
       }
-      // 只放宽推荐规则匹配，不改真实请求里的模型 ID。
+      // Relax matching only for recommendation rules; do not change the model ID in the actual request.
       if (!matchesRule(rule.modelMatch, input.modelId, true)) continue;
       if (
         (rule.type === "model-api" || rule.type === "provider-site") &&
@@ -433,7 +442,7 @@ export class ModelConfigRules {
       useRecommendedConfig === undefined
         ? previous?.type === "manual-provider-model"
         : !useRecommendedConfig;
-    // 保存入口复用整条规则 schema，不再另写一份“完整但忽略 enabled”的校验。
+    // The save entry point reuses the full rule schema; do not create a second validation path that is "complete but ignores enabled."
     const data = { providerId, modelId, config: config.toJSON() };
     (manual ? manualProviderModelConfigRuleSchema : providerModelConfigRuleSchema).parse(data);
     const replacement: ExactModelConfigRule = {
@@ -516,11 +525,13 @@ export class ModelConfigRules {
   }
 
   toPersonalJSON(): PersonalModelConfigRulesData {
-    // 完整规则必须在编码边界再校验，不能把直接构造的不完整手动值写入文件。
-    return personalModelConfigRulesSchema.parse({
-      providerModelRules: this.#collect("provider-model"),
-      manualProviderModelRules: this.#collect("manual-provider-model"),
-    });
+    // Validate full rules again at the encoding boundary so an incomplete manual value constructed directly cannot be written to disk.
+    return personalModelConfigRulesSchema.parse(
+      omitCatalogOwnedOptionFields({
+        providerModelRules: this.#collect("provider-model"),
+        manualProviderModelRules: this.#collect("manual-provider-model"),
+      }),
+    );
   }
 
   toJSON() {
@@ -547,7 +558,7 @@ function matchesRule(pattern: string, value: string, ignoreCase = false): boolea
 
 function normalizeBaseURLForRuleMatch(value: string): string | undefined {
   try {
-    // Host 大小写、默认端口和尾部斜杠不应改变配置命中；URL parser 会保留 path/query 大小写。
+    // Host case, default port, and trailing slash must not change config matching; the URL parser preserves path/query case.
     const parsed = new URL(value);
     const suffix = `${parsed.search}${parsed.hash}`;
     const serialized = parsed.toString();

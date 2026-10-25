@@ -1,71 +1,58 @@
-# Account Provider 的配置、访问范围与请求鉴权
+# Account Provider Configuration, Access Scope, and Request Authentication
 
-> 调查日期：2026-08-17
+> Investigation Date: 2026-08-17
 >
-> 适用范围：M2 Account Access Source 与后续 ModelFactory 的边界设计
+> Scope: M2 Account Access Source and subsequent ModelFactory boundary design
 >
-> 文档身份：历史现状调研。Account Config、请求期鉴权和 Remote Environment 权威边界已经由
-> [`../steps/02-provider-config-and-registry-human-in-the-loop.md`](../steps/02-provider-config-and-registry-human-in-the-loop.md)
-> 裁决，并进入当前 Design 与 M2 实现；正文保留调查当时的上下文。
+> Document identity: Historical status investigation. Account Config, request-period authentication, and Remote Environment authoritative boundaries have been ruled by
+> [`02-provider-config-and-registry-human-in-the-loop.md`](../steps/02-provider-config-and-registry-human-in-the-loop.md)
+> and have entered the current Design and M2 implementation; the main text preserves the context at the time of investigation.
 
-本文梳理现有 Start Plan、Personal Coding Plan 与 Team Plan 链路中的事实归属。它记录现状与迁移边界，不改变当前 Provider Family 的选择行为。
+This document clarifies fact ownership in the Start Plan, Personal Coding Plan, and Team Plan chains. It records the then-current status and migration boundaries and does not change Provider Family selection behavior.
 
-## 结论
+## Conclusions
 
-现有实现把三类生命周期不同的数据装进同一份 Provider Registry Snapshot：
+The pre-M2 implementation packed three data types with different lifecycles into the same Provider Registry Snapshot:
 
 ```text
-Provider / Model 静态定义
+Provider / Model static definitions
         +
-账号与套餐允许范围
+Account and plan allowed scope
         +
-JWT / Runtime API Key / 一次性安全校验 Header
+JWT / Runtime API Key / one-time security verification header
         |
         v
-旧 ZCodeProviderRegistrySnapshot
+Old ZCodeProviderRegistrySnapshot
 ```
 
-新链路需要按事实生命周期拆开：
+The new chain splits facts by lifecycle:
 
 ```text
 Official Config
-├─ Account Provider 的 providerId、label、apiFormat、baseURL
-├─ Provider 声明的模型全集与顺序
-└─ Model Properties、Option Specs 与 reasoning mapping
+├─ Account Provider's providerId, label, apiFormat, baseURL
+├─ Full set and order of models declared by the Provider
+└─ Model Properties, Option Specs, and reasoning mapping
 
 Account Access
-├─ 当前账号实际允许发布的 Account Provider
-├─ 每个 Provider 当前允许发布的 modelId
-└─ 创建 Model 时必须固定的非敏感账号访问身份
+├─ Account Provider actually allowed for the current account
+├─ modelId allowed for each Provider currently
+└─ Non-sensitive account access identity that must be fixed when creating a Model
 
 Request Auth
-├─ 登录 Token / JWT
+├─ Login Token / JWT
 ├─ Personal Coding Plan API Key
 ├─ Team Project Runtime API Key
-├─ 一次性安全校验 Header
-└─ 失败后的刷新与重试策略
+├─ One-time security verification header
+└─ Refresh and retry strategies after failure
 ```
 
-Registry 只组合前两类事实。请求期鉴权不进入 Registry，也不序列化给 Renderer。
+The Registry composes only the first two types of facts. Request-period authentication does not enter the Registry, nor is it serialized to the Renderer.
 
-## 为什么 Account Access 还需要访问身份
+## Why Account Access Still Needs an Access Identity
 
-当前 Personal Coding Plan 和 Team Plan 可以共用同一个 `providerId`。如果 Model 只保存 `providerId + modelId`，每次请求再读取“当前选中的连接”，会出现下面的时序：
+Personal Coding Plan and Team Plan can share the same `providerId`. If a Model stores only `providerId + modelId` and each request reads "the currently selected connection," a loop that created its Model on the Personal plan silently switches to Team after the user changes the connection. This violates the established Model lifecycle: the model identity and execution configuration held by one continuous execution remain stable. Registry-published Account Access entries therefore include a fixable access identity that locates "which account/plan connection to request credentials from" and contains no secrets.
 
-```text
-Loop A 创建 Model
-└─ 当时选择 Personal Coding Plan
-
-用户切换到 Team Plan
-└─ Account Service 的当前连接发生变化
-
-Loop A 的下一次请求
-└─ 如果只按 providerId 取凭据，会静默改用 Team Plan
-```
-
-这违反已经确定的 Model 生命周期：同一段连续执行持有的模型身份与执行配置保持稳定。因此 Account Access 发布给 Registry 的条目需要包含一个可固定的访问身份。它只定位“向哪一个账号/套餐连接索取请求凭据”，不包含 Secret。
-
-M2 使用如下语义：
+M2 semantics:
 
 ```ts
 interface AccountProviderAccessEntry {
@@ -75,84 +62,57 @@ interface AccountProviderAccessEntry {
 }
 ```
 
-ModelFactory 创建 Model 时复制 `accessId`。每次模型请求由 Request Auth Service 使用该 ID 取得当前有效凭据。Token 刷新可以影响下一次请求，但不能把 Personal 连接换成 Team 连接，也不能更换 Provider 或 Model。
+The ModelFactory copies `accessId` when creating a Model. Each request uses this ID through the Request Auth Service to obtain the current valid credential. Token refreshes can affect the next request, but cannot swap a Personal connection for a Team connection, nor swap the Provider or Model.
 
-## 当前 Family 行为
+## Current Family Behavior
 
-`filterResolvedProviderFamiliesForRegistry()` 当前会在 Z.ai 和 BigModel 两个 Family 中各挑选一个生效 Provider：
+`filterResolvedProviderFamiliesForRegistry()` selects one active Provider from each of the Z.ai and BigModel families:
 
 ```text
 API Key mode
 └─ API Provider
 
 OAuth mode
-├─ 已选 Team Plan -> Coding Plan Provider
-├─ Personal Coding Plan 可用 -> Coding Plan Provider
-└─ 否则 -> Start Plan Provider
+├─ Team Plan selected -> Coding Plan Provider
+├─ Personal Coding Plan available -> Coding Plan Provider
+└─ Otherwise -> Start Plan Provider
 ```
 
-这项行为同时承担产品选择和旧 Registry 去重。M2 当前不改变该行为。Account Access Source 应先投影同样的“当前生效 Provider + 模型范围”，再由后续独立设计判断是否允许同一 Family 同时发布多个连接。
+This simultaneously handles product selection and old Registry deduplication; M2 does not change it. The Account Access Source first projects the same "current active Provider + model scope"; whether multiple connections can be published from the same Family is a later independent design.
 
-## 静态模型事实的现状
+## Current Status of Static Model Facts
 
-现有静态事实来自多个位置：
+Pre-M2 static facts came from `/client/configs` (remote Providers, models, Schemas), `presetModelDefaults.ts` (GLM fallback model set), `modelProviderServiceStorage.ts` (fallback Providers, Endpoints, models), `model-provider-types.ts` (Start Plan free models, reasoning special cases), and China LLM Catalog plus runtime code (Properties, Option Specs, Provider Options Patches).
 
-- `/client/configs` 提供远端 Provider、模型和 Schema。
-- `presetModelDefaults.ts` 提供 GLM Provider 的 fallback 模型集合。
-- `modelProviderServiceStorage.ts` 提供 fallback Provider、Endpoint 和模型。
-- `model-provider-types.ts` 保存 Start Plan 免费模型与 reasoning 特例。
-- China LLM Catalog 与运行时代码继续补充 Properties、Option Specs 和 Provider Options Patch。
+Under the target design these sources cannot independently participate in the Registry: stable facts migrate to Official Config; model IDs returned by account interfaces serve only as Account Access filter scope. Start Plan is the clearest example — `billing/balance` returns the plan-allowed model IDs and `client/configs.builtinModels` supplements their facts. In the new design, Official Config maintains the complete model-fact set and Balance returns only the current available subset. When Balance and Official are temporarily inconsistent, the Account Source explicitly adopts last-known-good or reports configuration inconsistency, rather than creating half-complete models with only modelIds in the Registry.
 
-这些来源在目标设计中不能继续独立参与 Registry。稳定事实需要迁入 Official Config；账号接口返回的可用模型 ID 只作为 Account Access 的过滤范围。
+## Endpoints and Product Environments
 
-Start Plan 当前是最清楚的例子：`billing/balance` 返回套餐允许的模型 ID，`client/configs.builtinModels` 为这些 ID 补充模型事实。新设计中，Official Config 应维护模型事实全集，Balance 只返回当前可用子集。Balance 与 Official 暂时不一致时，需要在 Account Source 明确采用 last-known-good 或报告配置不一致，不能在 Registry 临时创造只有 modelId 的半完整模型。
+Account Provider Endpoints have production, testing, and other environment branches; e.g., Z.ai Coding Plan uses `resolveZaiBusinessBaseUrl(process.env)` and Start Plan uses a zcode-plan gateway derived from the current ZCode Endpoint. Once Official Config is the single source of truth, the Registry and Provider Factory must not rewrite these fields from `process.env`. Each product environment receives a fully resolved Official Config (production / test / dev-injected endpoints) with the same Schema, generated per environment by the publishing service; runtime Sources read one complete document. Environment selection belongs to Official Config publishing and injection, not a fourth fact source for the Registry.
 
-## Endpoint 与产品环境
-
-Account Provider Endpoint 目前存在生产、测试等环境分支。例如 Z.ai Coding Plan 使用 `resolveZaiBusinessBaseUrl(process.env)`，Start Plan 使用当前 ZCode Endpoint 派生出的 zcode-plan 网关。
-
-Official Config 成为唯一事实源后，Registry 和 Provider Factory 不能再次用 `process.env` 改写这些字段。每个产品环境应取得一份已经完整解析的 Official Config：
-
-```text
-Production Official Config
-└─ production endpoints
-
-Test Official Config
-└─ test endpoints
-
-Dev / injected Official Config
-└─ local or developer endpoints
-```
-
-它们使用相同 Schema，可以由发布服务按环境生成；运行时 Source 仍只读取一份完整文档。这样环境选择属于 Official Config 的发布和注入，不成为 Registry 的第四个事实来源。
-
-## 请求鉴权现状
-
-三类 Plan 的请求凭据不同：
+## Current Request Authentication
 
 ```text
 Start Plan
-├─ 登录产生的 zcode JWT
-└─ 请求 attempt 前取得一次性安全校验 Header
+├─ zcode JWT from login
+└─ One-time security verification header obtained before request attempt
 
 Personal Coding Plan
-├─ OAuth access token 用于查询账号与套餐
-└─ 通过业务接口创建或复制模型调用 API Key
+├─ OAuth access token for querying account and plan
+└─ Model call API Key created or copied through business interfaces
 
 Team Plan
-├─ 选中的 organization / project
-└─ 为该项目创建或复制 Runtime API Key
+├─ Selected organization / project
+└─ Runtime API Key created or copied for that project
 ```
 
-旧实现有时把复制出的 Key 或 JWT 写入/投影为 Provider `apiKey`。新 Account Access Source 不得沿用这种形态。Request Auth Service 需要按固定的访问身份获取请求材料，并自行处理缓存、刷新和鉴权失败后的强制刷新；这些策略不会改变 Registry View。
+The old implementation sometimes wrote or projected copied Keys or JWT as Provider `apiKey`; the new Account Access Source must not continue this. The Request Auth Service obtains request materials from a fixed access identity and independently handles caching, refreshing, and forced refresh after authentication failures; these strategies do not change the Registry View.
 
-## 实施前仍需裁决
-
-Account Access Source 的实现需要先确定一项产品语义：
+## Still to be Ruled Before Implementation
 
 ```text
-方案 A：每个 Provider Family 只发布当前生效的一个连接
-方案 B：同时发布多个可用连接，并让 ModelSelection 包含连接身份
+Option A: Each Provider Family publishes only one current active connection
+Option B: Publish multiple available connections simultaneously, and let ModelSelection include connection identity
 ```
 
-方案 A 保持当前行为，也保持 `providerId + modelId + options` 足以表达 Selection。方案 B 会扩大选择器、Session 持久化、Submission 协议和 Model 身份边界。M2 采用方案 A；无论未来是否扩展，Model 都必须固定创建时的 `accessId`，避免运行中随全局选择漂移。
+Option A maintains current behavior and keeps `providerId + modelId + options` sufficient to express Selection. Option B expands selectors, Session persistence, Submission protocol, and Model identity boundaries. M2 adopts Option A; regardless of future extensions, Models must fix the `accessId` at creation time, avoiding runtime drift with global selection changes.

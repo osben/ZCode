@@ -1,5 +1,12 @@
 import { ChannelClient, ChannelServer, createQueuePair } from "@zcode/rpc";
-import { ISettingService, ITerminalService, ServiceCollection } from "@zcode/services";
+import {
+  DEFINITION_PREVIEW_CHANNEL,
+  IQuickPromptService,
+  ISettingService,
+  ITerminalService,
+  ServiceCollection,
+  type QuickPromptSnapshot,
+} from "@zcode/services";
 import { describe, expect, it, vi } from "vitest";
 import { ServiceChannels } from "@zcode/shared";
 import {
@@ -26,11 +33,18 @@ describe("Window Host attachment RPC policy", () => {
     expect(policy?.allowedChannels.has(ServiceChannels.TaskGroups)).toBe(true);
     expect(policy?.allowedChannels.has(ServiceChannels.RemoteProjects)).toBe(true);
     expect(policy?.allowedChannels.has("repo-wiki")).toBe(false);
-    const registeredChannels = new Set<string>(Object.values(ServiceChannels));
+    // Fork channels use literal descriptors (as gen-ui does) so the upstream table stays untouched;
+    // each one is reviewed and listed here explicitly.
+    expect(policy?.allowedChannels.has(DEFINITION_PREVIEW_CHANNEL)).toBe(true);
+    const registeredChannels = new Set<string>([
+      ...Object.values(ServiceChannels),
+      DEFINITION_PREVIEW_CHANNEL,
+    ]);
     expect([...policy!.allowedChannels].every((channel) => registeredChannels.has(channel))).toBe(
       true,
     );
-    expect(policy?.allowedChannels.size).toBe(46);
+    expect(policy?.allowedChannels.has(ServiceChannels.QuickPrompts)).toBe(true);
+    expect(policy?.allowedChannels.size).toBe(48);
   });
 
   it("keeps the complete service surface for desktop attachments", () => {
@@ -68,6 +82,60 @@ describe("Window Host attachment RPC policy", () => {
       client.dispose();
       server.dispose();
     }
+  });
+
+  it("exposes the controller's quick prompts to mobile read-only and to desktop with mutations", async () => {
+    const snapshot: QuickPromptSnapshot = { project: null, globals: [], projectPrompts: [] };
+    const quickPromptCreate = vi.fn(async () => {
+      throw new Error("desktop create reached the service");
+    });
+    const quickPromptService = {
+      read: vi.fn(async () => snapshot),
+      readProjects: vi.fn(async () => []),
+      create: quickPromptCreate,
+    };
+    const services = new ServiceCollection().register(
+      IQuickPromptService,
+      quickPromptService as never,
+    );
+    const runScenario = async (
+      clientMode: "web-remote-replayable" | "desktop-continuous",
+    ): Promise<{ read: unknown; create: unknown }> => {
+      const [serverProtocol, clientProtocol] = createQueuePair();
+      const server = new ChannelServer(serverProtocol, "host", 20);
+      const client = new ChannelClient(clientProtocol);
+      try {
+        exposeWindowHostAttachmentServices({ server, services, clientMode });
+        const channel = client.getChannel(IQuickPromptService.channelName);
+        const read = await channel.call("read", [{ project: null }]).then(
+          () => "ok",
+          (error: Error) => error.message,
+        );
+        const create = await channel
+          .call("create", [{ scope: "global", project: null, name: "x" }])
+          .then(
+            () => "ok",
+            (error: Error) => error.message,
+          );
+        return { read, create };
+      } finally {
+        client.dispose();
+        server.dispose();
+      }
+    };
+
+    await expect(runScenario("web-remote-replayable")).resolves.toEqual({
+      read: "ok",
+      create: "quick-prompt.read-only",
+    });
+    expect(quickPromptCreate).not.toHaveBeenCalled();
+
+    // Desktop keeps the full surface: the same create reaches the registered service.
+    await expect(runScenario("desktop-continuous")).resolves.toEqual({
+      read: "ok",
+      create: "desktop create reached the service",
+    });
+    expect(quickPromptCreate).toHaveBeenCalledOnce();
   });
 
   it("keeps Terminal RPC available to desktop attachments", async () => {

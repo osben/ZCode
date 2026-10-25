@@ -1,114 +1,153 @@
-# Composer 仅持久化文字草稿
+# Composer persists text drafts only
 
-> 2026-10-16 当前实现：新建草稿与 Recent 按项目/未归类任务归属，未发送任务复用执行目录；详见 [统一生命周期](project-task-draft-lifecycle.md)。下文 2026-10-14 的 workspace Root/Recent 与手机暂缓条款记录原实现，当前行为以新规格及其验证记录为准；正式 Session 恢复与非空文字规则继续适用。
+> Current implementation (2026-10-16): new drafts and Recent belong to a project/uncategorized task, and an unsent task reuses its execution directory; see [unified lifecycle](project-task-draft-lifecycle.md). The 2026-10-14 workspace Root/Recent and mobile-deferral clauses below record the original implementation; current behavior follows the new spec and its verification records. The formal Session restore and non-empty-text rules still apply.
 
-## 规则与范围
+Full history (verification diaries and implementation order): `git show b8876e8b:docs/ui/composer-text-draft-persistence.md`.
 
-2026-10-14：用户确认“没有输入文字就不算草稿，不做持久化”。本文替代 Todo71 中空正文保留配置的规则。
-正文以 `text.trim().length > 0` 判定；键入、粘贴和模板预填等价，空格、换行、空 editor JSON、仅改模型/权限不构成可持久化草稿。引用 chip 的显示正文沿用编辑器现有文本序列化，不新增附件序列化。
+## Rules and scope
 
-有文字时保存正文、编辑器状态、权限、Plan、完整 ModelSelection；删空时删除记录。发送沿用既有乐观清空：先冻结 Submission，再清空正文和记录；失败且未被后续编辑取代时恢复，接纳后更新 Recent。读取旧版本空草稿时只过滤，显式写入时清理，不让旧配置继续阻挡默认值。
-当前输入框的配置仍由 `useDraftConfigControl` 的内存态唯一持有；不因不写盘而在普通 render、目录刷新或 Snapshot 到达时回退。重新进入空白新建页使用当前 workspace Recent，已有 Session 始终从当前 Snapshot 恢复权限与 Plan，有文字草稿时只恢复其中的正文与模型。显式 New Task 即使复用当前 pane，也开启新的空白编辑生命周期；有文字的草稿继续恢复。
+2026-10-14: the user confirmed "no typed text means no draft, no persistence". This replaces the Todo71 rule that kept configuration for an empty body. The body is judged by `text.trim().length > 0`; typing, pasting and template prefill are equivalent; spaces, newlines, an empty editor JSON, and changing only model/permission do not form a persistable draft. The only exception is the explicit model selection of an existing Session, see "Explicit model selection of an existing Session" below. The display text of reference chips follows the editor's existing text serialization; no attachment serialization is added.
 
-```mermaid
-flowchart LR
-    A[空白输入框：内存配置] -->|输入文字| B[持久文字草稿]
-    B -->|删空| A
-    B -->|提交| C[冻结 Submission，乐观清空正文与记录]
-    C -->|accepted| D[更新 Recent]
-    C -->|失败且未被新编辑取代| B
-    D -->|再次新建且无文字草稿| E[读取最新 Recent]
-```
+With text, the body, editor state, permission, Plan and the full ModelSelection are saved; emptying the text deletes the record. Sending keeps the existing optimistic clear: freeze the Submission first, then clear the body and the record; on failure, restore unless superseded by later edits; on accept, update Recent. Reading an old empty draft only filters it, and an explicit write cleans it, so old config does not keep blocking defaults.
 
-## 首个 Provider 就绪后的模型补选
-
-2026-10-16：新建 Root 草稿在空 Provider 配置下可能已初始化权限并输入正文。若它没有任何
-`modelSelection` 原意图，目标 Host 的首个合法 `preferredSelection` 到达后，现有 Composer
-owner 自动补选该完整模型。补选只写模型，保留正文、编辑器状态、权限和 Plan；不更新 Recent，
-不发送模型请求，也不启动第二个 Agent。不新增同步定时器或第二份状态。
-
-已有选择（包括失效模型或失效 reasoning）不补选；已有 Session 和分享导入不应用此 Root
-规则。后续目录变化不得覆盖已补选或用户显式选择的模型。仍按 workspace identity 隔离，
-桌面与手机使用同一 Hook，不改变 continuous/replayable 的传输边界。
+The current composer's config is held solely by the in-memory state of `useDraftConfigControl`; it does not fall back on an ordinary render, directory refresh or Snapshot arrival just because nothing is written to disk. Re-entering the blank new-task page uses the current workspace's Recent; an existing Session always restores permission and Plan from the current Snapshot, and with a text draft only the body and model are restored from it. An explicit New Task opens a new blank editing lifecycle even if it reuses the current pane; a text draft is still restored.
 
 ```mermaid
 flowchart LR
-    A[Root 草稿无模型意图] --> B[目标 Host 首选模型就绪]
-    B --> C[Composer 只补齐模型]
-    C --> D[正文与权限保留，发送恢复]
-    E[已有模型意图或已有 Session] --> F[保持原意图，不自动替换]
+    A[Blank input: in-memory config] -->|type text| B[Persistent text draft]
+    B -->|empty it| A
+    B -->|submit| C[Freeze Submission, optimistically clear body and record]
+    C -->|accepted| D[Update Recent]
+    C -->|failed and not superseded by new edit| B
+    D -->|New again with no text draft| E[Read latest Recent]
 ```
 
-验证：I23/I24 桌面 E2E 覆盖空配置、历史读取、保存首个 Provider、原文保留、发送恢复和唯一
-Agent；Hook 单测覆盖本地/远端 identity、权限/Plan 保留、已选/失效选择与既有 Session 排除。
+## Model backfill once the first Provider is ready
 
-## 状态归属与影响面
+2026-10-16: a new Root draft may have initialized permission and typed a body under an empty Provider config. If it has no original `modelSelection` intent, the existing Composer owner automatically backfills the full model once the target Host's first legal `preferredSelection` arrives. The backfill writes only the model, keeps the body, editor state, permission and Plan, does not update Recent, sends no model request and starts no second Agent. No synchronization timer and no second copy of state is added.
 
-| 场景 / 入口                  | 唯一 owner / 提交路径                                   | 持久化与初始化                                                     | 影响级别       |
-| ---------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------ | -------------- |
-| 新建 / 当前 Session 输入框   | useDraftConfigControl → Submission → CLI admission      | composerDraftStore 只保存文字；Recent 仅 accepted 更新             | must-inspect   |
-| New Task / 项目与分组菜单    | workspace UI store 的 draftProjectId / draftTaskGroupId | 当前创建意图留内存；有文字时随草稿保存，手机冷恢复只读取有文字草稿 | must-inspect   |
-| 分享首次导入                 | 导航参数 → Composer owner                               | 一次初始化配置仅内存；不伪造磁盘草稿、不修改 Recent                | must-inspect   |
-| 离线页与刷新                 | composerDraftStore 的只读结果                           | 只恢复有文字草稿，不新增离线队列                                   | should-inspect |
-| 自动化、子智能体、已接受队列 | 原有 record / CLI owner                                 | 不消费 Composer 草稿、不更改冻结的 Submission                      | invariant-only |
+An existing selection (including an invalid model or invalid reasoning) is not backfilled; an existing Session and share import do not apply this Root rule. Later catalog changes must not overwrite a backfilled or user-explicit model. It is still isolated by workspace identity; desktop and mobile use the same Hook and the continuous/replayable transport boundary is unchanged.
 
-共享行为是草稿读写与有效模型解析；新建读 Recent，已有 Session 读自身 Snapshot，两者不统一为全局配置。权限/Plan 恢复以当前 Session Snapshot 为准；历史授权只用于本次打开周期内识别新变化，不存入草稿。
-工作区隔离始终使用 `workspaceIdentity?.trim() || workspacePath`；桌面 continuous 与手机 replayable 的传输、shared-host、owner/lease 和队列协议不变。没有新增 Host/Agent 状态或同步定时器。
+```mermaid
+flowchart LR
+    A[Root draft without model intent] --> B[Target Host preferred model ready]
+    B --> C[Composer backfills only the model]
+    C --> D[Body and permission kept, send resumes]
+    E[Existing model intent or existing Session] --> F[Keep the original intent, no auto replacement]
+```
 
-Recent 的作用域不变：同一项目/工作区内新建继承最近已接纳配置；当前全局未分类新建会分配新的工作目录，不自动复制另一个工作区的 Recent。桌面回归显式从同一项目入口创建，避免把工作区切换误判为空草稿恢复。
+Verification: the I23/I24 desktop E2E cover an empty config, history read, saving the first Provider, original text kept, send resumed and a single Agent; Hook unit tests cover local/remote identity, permission/Plan retention, selected/invalid selection and exclusion of an existing Session.
 
-## 实施顺序
+## Explicit model selection of an existing Session (ISSUE-035, 2026-10-22)
 
-1. 更新 spec、catalog、coverage；先写存储与 Hook 回归并观察旧实现失败。
-2. 将项目/分组当前创建意图收口到现有 workspace UI store，迁移原来从空草稿读它们的调用方；首次分享导入改为临时交接。
-3. 存储入口统一过滤空正文并清理旧记录；Hook 在 New Task 生命周期边界重新初始化空输入框，保持当前编辑与迟到 ACK 的 scope 防护。
-4. 更新已有空草稿测试，并扩展桌面 pending E2E；运行必要门禁后提交。
+2026-10-22 (user ruling, option b): only for an **existing Session**, reverse "changing only the model is not a persistable draft" above. A new Root draft still follows the rule above: an empty body with only a model change is not written to disk.
 
-## 用例与剪枝
+- After the user explicitly picks a model in an existing Session's input (menu or shortcut), a record is saved even with an empty body, containing the full `modelSelection` plus `modelSelectionPicked: true`. This flag is the only reason an empty-body record is kept.
+- A model inherited from the Snapshot, changing only permission/Plan, and a model initialized from Recent or defaults carry no flag and are not written when the body is empty.
+- Switching away from the task or refreshing and returning to that Session restores the chosen model; permission and Plan still follow the current Snapshot.
+- Once the Host accepts a flagged model intent the flag is cleared; if the body is also empty the record is deleted, and the model then follows the Session's latest Snapshot. On send failure or non-acceptance, the flag and the record are kept.
+- Writes go only through `persistV4ComposerDraft`, and the in-memory config is still held solely by `useDraftConfigControl`. The retention rule is the same on read and write sides: an old empty record without the flag is still filtered.
+- **Priority versus ISSUE-026**: when the chosen model currently cannot be resolved (the Registry cannot resolve the selection), the expiry rules below do not apply. The user's intent is kept: the flag and model stay unchanged, no other model is substituted, and send stays blocked for the model reason. Only a resolvable stale selection has its flag removed (decision 1 of `specs/composer-unresolved-model-selection.md`).
+- Storage keeps isolation by `workspaceIdentity?.trim() || workspacePath` plus the Session id; different workspaces or remote identities do not share records.
+- Recent is not updated by picking a model and is still updated only on accepted. "Picking adopts it as Recent" is not implemented in this round.
+- **Baseline model (C-1)**: the record also stores the model of the Session snapshot at pick time (`modelSelectionPickedFrom`). If the Session's provider and model later leave this baseline (another window, a Host fallback or a CLI change), the selection is stale: the flag is deleted and the draft model is changed to the Session's current model. The body is kept (whether or not there is one).
+- **The baseline comparison looks only at provider and model (MF1)**: the reasoning level is not compared. A snapshot omitting the level, or another window changing only the level, does not make the selection stale.
+- **With no baseline (MF3)**: if the pick happened before the first snapshot arrived (or an old record has no baseline field), the first arriving snapshot becomes the baseline and expires by the previous rule afterwards. If that snapshot's model equals the pick, it is a no-op selection and the flag is cleared too.
+- **Known limitation for old records**: an old flag without `modelSelectionPickedFrom` takes the first arriving snapshot as baseline after reopening. A Session model change while the app was closed is therefore not detected: the selection is kept as an intent for the Session's current model and does not expire. New records written after the snapshot has arrived carry a baseline and are not subject to this limit.
+- **Not expiring when unresolvable (MF2)**: see "Priority versus ISSUE-026" above.
+- **Selection equal to the Session's (C-4, MF1)**: a selection with the same provider and model as the Session's current model writes no flag; if there was one, it is cleared. A selection of the same model with a different level also falls here.
+- **Changing only the thinking level (C-4)**: a thinking-level change is not a model selection, writes no flag, and with no body is not persisted, consistent with the above.
+- **Delete or archive (C-2)**: the Session's draft record is not cleaned. The UI has no unified session delete/archive draft hook (permanent delete covers only the archive management page). A session is recoverable after archiving, so the record is kept; a record after permanent deletion is an orphan, at most one small record per Session.
 
-| ID   | 前置与操作                                                              | 断言                                                                    | 层次 / 状态                                     |
-| ---- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------- |
-| TD01 | 全新输入框只选 yolo + A，然后切走/刷新                                  | 内存当前选择可用；localStorage 无草稿，重开按默认来源初始化             | storage + Hook / accepted                       |
-| TD02 | 首发 yolo + A；打开一次空白页；回原 Session 改 build + B 并提交；再新建 | Recent 为 build + B；新页同值、无空白持久记录；真实按钮和模型切换       | Desktop E2E / accepted pending                  |
-| TD03 | 输入文字并改权限模型，切 Session 后返回/刷新                            | 恢复文字及模型，已有 Session 权限/Plan 采用当前快照；不改 Recent        | Hook + Desktop E2E / accepted pending           |
-| TD04 | 文字删空或只剩空格后重新新建                                            | 旧持久记录删除，新页按最新 Recent；同 pane 的重复 New Task 不保留空配置 | storage + Hook + Desktop E2E / accepted pending |
-| TD05 | 发送成功、失败、ACK 迟到且用户已输入下一条                              | 成功只清原提交；失败保留正文配置；旧 ACK 不覆盖新 scope/新文字          | existing submission tests + Hook / accepted     |
-| TD06 | 存量空记录与同路径不同远端的有文字记录                                  | 仅清空记录；远端身份隔离、有文字坏模型保留待修正                        | storage / accepted                              |
-| TD07 | 未输入时选择项目/分组，随后输入并首发                                   | 空页面不写盘，首发仍进入所选项目/分组；有文字可冷恢复                   | store + navigation tests / accepted             |
-| TD08 | 首次分享导入、View 延迟、已有 Session reused                            | 导航初始化不写空草稿，导入仍遵循新建初始化；用户改选优先，reused 不重置 | Hook / accepted                                 |
+| ID   | Setup and action                                                                             | Must observe                                                                                               |
+| ---- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| MP01 | Existing Session with empty body, pick model B; switch to another task and return            | Model is still B; body empty; record exists with the flag                                                  |
+| MP02 | Same as MP01, refresh the window and reopen the Session                                      | Model restored to B                                                                                        |
+| MP03 | Existing Session with empty body, change only permission or Plan                             | Nothing written; no record                                                                                 |
+| MP04 | Existing Session inheriting the Snapshot model, empty body, switch away and back             | Nothing written; model follows the Snapshot                                                                |
+| MP05 | Pick B, send and be accepted, body empty                                                     | Flag cleared, record deleted; the model follows the Snapshot afterwards                                    |
+| MP06 | Pick B, send fails                                                                           | Flag and record kept; model still B                                                                        |
+| MP07 | New Root blank page, pick only a model                                                       | Nothing written (rule above unchanged)                                                                     |
+| MP08 | The chosen model becomes invalid in the Registry                                             | Intent kept, no auto replacement (ISSUE-026 unchanged)                                                     |
+| MP09 | Same path, different workspaceIdentity, same Session id                                      | Records are invisible to each other                                                                        |
+| MP10 | After picking B (baseline A), the Session model is changed externally to C                   | Flag deleted; draft model is C; body kept; record deleted (if body empty)                                  |
+| MP11 | Pick B and then pick A (the Session's current model) again                                   | Flag and record cleared; draft model is A                                                                  |
+| MP12 | Pick B and then change only the thinking level (no body)                                     | Nothing written; no record                                                                                 |
+| MP13 | After picking B, the Session snapshot omits or changes the level while the model stays A     | Flag kept; draft still B                                                                                   |
+| MP14 | Pick B (unresolvable in the Registry), then the Session moves to a resolvable C              | Flag and model B kept; send stays blocked for the model reason                                             |
+| MP15 | The pick happens before the first snapshot, then moves away after the first snapshot arrives | The first snapshot becomes the baseline; after moving away it expires and the draft model is the new model |
 
-纯样式、主题和国际化没有变化，沿用共享控件，不枚举全套外观叉乘。模型使用同 provider 两个合法模型作为代表；权限使用 yolo/build。队列 admission 与执行配置保持冻结，只验证发送草稿边界，不扩展队列功能。附件目前没有跨重启草稿持久化，不增加此能力。
+## Ownership of editor content on scope switch (ISSUE-060, 2026-10-23)
 
-## 扫描证据与后续验证
+When one pane switches from an existing Session to a new draft (or switches project or session), the same Composer and Lexical editor instance are reused.
 
-codegraph 工具不可用；使用精确调用方检索追踪 storage → Hook → SessionPane/Root 及一跳项目菜单和分享入口，未声称完成 codegraph 扫描。功能图原有 conversation-model-control 缺少 text-only persistence 与新建生命周期关系，本次补充语义节点。没有待用户裁决的产品边界；空白不持久化已获确认。
+- **Invariant**: until the new scope's draft restore actually lands in the editor, the editor content still belongs to the old scope. No write path (Lexical onChange, the 350 ms debounce, `blur`/`pagehide` flush, unmount flush, the new-draft reader) may write it into the new scope.
+- **Defect (confirmed)**: the scope effect first switches `draftScopeRef` and the owner callbacks to the new scope, then schedules the editor's clear/restore for the next frame (`requestAnimationFrame`). In that gap the editor still shows the old Session's body, and a window `blur` or further user input then writes the old body (or "old body + new input") into the new draft.
+- **Field trigger (hypothesis, to be re-verified)**: the main window keeps Electron's default `backgroundThrottling` (`desktopWindowChrome.ts`), so when the window is occluded or in the background the next frame can be delayed by seconds, which is why QA could still read the old body after 2.5 s.
+- **Rule**: on a scope switch with an existing editor, restore the new scope's draft synchronously in the same effect without waiting for the next frame. Only when the editor is not ready (first mount or the editor is remounting) is it deferred to the next frame; until the deferred restore lands, the write paths above are all skipped and write no empty value (writing empty would delete the draft the new scope already saved).
+- The write barrier is raised in the commit phase (layout effect), earlier than the scope effect; a send during the barrier is ignored and the old body in the editor is not sent. If the workspace switches again during the barrier and the draft is transferred, what transfers is the pending-restore scope's own draft, not the editor content.
+- No timer is used to mask this; the old scope's draft is covered by the immediate write on body change, and the scope switch itself writes nothing extra to the old scope.
 
-验证记录（2026-10-14，基线 `7d60f53393`）：
+| ID    | Setup and action                                                                                       | Must observe                                                                            |
+| ----- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| DL01  | Session A draft "qa draft A"; the same pane switches to a new draft, window blur before the next frame | New draft has no record; editor empty; A is still "qa draft A"                          |
+| DL02  | Same as DL01, type "qa draft new" before the next frame                                                | New draft is "qa draft new" without "qa draft A"; A unchanged                           |
+| DL03  | Editor not ready at scope switch, window blur before it is ready, then the editor becomes ready        | No write to the new draft; after ready it shows the new scope's draft, not "qa draft A" |
+| DL03b | Same as DL03, but the editor becomes ready without the Composer re-rendering                           | The new scope's draft is restored on the next frame; later input writes normally        |
+| DL04  | Trigger send while the editor is not ready                                                             | Not sent; A unchanged                                                                   |
+| DL05  | The new draft is transferred to another workspace while a restore is pending                           | The target workspace gets "qa draft new", not "qa draft A"                              |
 
-- 先运行 TD01/02/04/06 存储和 Hook 回归观察失败，修改后通过；最终 `pnpm test:unit:affected` 为 301 文件、3,885 用例全部通过。含失败恢复、迟到 ACK、新任务配置继承、分享导入和手机项目初始化。
-- `pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed`、case-local fixture 检查通过；Lint 为 0 errors（仓库既有 210 warnings）。功能图新增节点/边和源码种子检查无新增问题，图中既有 4 条悬空边未扩展处理；codegraph 未执行。
-- Linux Electron + Xvfb，回放 `common.json` 与本用例 fixture。`desktop-e2e-20261014-093656-755`：TD01/03/04 独立用例通过（空白不保存、正文/权限刷新恢复、空格删空、同项目重复新建）；截图与 JSON 为该 run 下 `conversation-session-composer-recent-mode/00-text-only-draft.*`。
-- 完整 I74/I75 + TD02 发送链路未通过：首条输入即报“草稿会话已切换，请重新发送”，尚未到 A→B 切换断言。将全部修改的产品源码临时还原到基线并重新构建，对照 run `desktop-e2e-20261014-093347-523` 同样在首发报错；Agent 日志同时记录预热 session 的 `loadPersistedEvents / Session not found`。产品源码随后完整恢复。本次不修改预热/Host/CLI 生命周期，TD02 的 Hook 回归通过不能替代这项 E2E。
-- 手机只完成共享逻辑与导航单测，未做手机实机、macOS、Windows GUI 验证。E2E 保持 pending，不自动晋级 formal/CI；完整发送流程需在基线预热问题修复后补跑。
+## State ownership and impact
 
-MR 集成补充：同步最新 staging 的远程目录确认流程后，普通项目入口与远程目录确认统一通过 `createProjectTask` 读取 workspace UI store 的 `draftTaskGroupId`。空白输入框选择分组也必须能随远程目录确认传递；已有任务仍不继承新建草稿分组。
+| Scenario / entry                       | Sole owner / commit path                                 | Persistence and initialization                                                                                                    | Impact level   |
+| -------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| New / current Session input            | useDraftConfigControl -> Submission -> CLI admission     | composerDraftStore saves text only; Recent updates only on accepted                                                               | must-inspect   |
+| New Task / project and group menu      | workspace UI store `draftProjectId` / `draftTaskGroupId` | The current creation intent stays in memory; with text it is saved with the draft, and mobile cold restore reads only text drafts | must-inspect   |
+| First share import                     | navigation params -> Composer owner                      | One-time initial config in memory only; no fake disk draft and no Recent change                                                   | must-inspect   |
+| Offline page and refresh               | read-only result of composerDraftStore                   | Restores only text drafts, adds no offline queue                                                                                  | should-inspect |
+| Automation, sub-agents, accepted queue | original record / CLI owner                              | Does not consume the Composer draft or change the frozen Submission                                                               | invariant-only |
 
-同步基线 `f67f7570ba` 后复验：项目菜单 38 用例通过；受影响单测 304 文件 / 3,948 用例通过；typecheck、lint（0 errors、210 既有 warnings）、architecture 通过。重新构建的 Linux Electron run `desktop-e2e-20261014-111418-638` 仅选择 TD01/03/04，1/1 通过。完整发送用例本轮未重跑，仍保留上述未通过记录。
+The shared behavior is draft read/write and effective model resolution; a new draft reads Recent, an existing Session reads its own Snapshot, and the two are not unified into a global config. Permission/Plan restore follows the current Session Snapshot; historical grants are used only to recognize new changes during this open period and are not stored in the draft. Workspace isolation always uses `workspaceIdentity?.trim() || workspacePath`; desktop continuous and mobile replayable transport, shared-host, owner/lease and queue protocol are unchanged. No new Host/Agent state or synchronization timer is added.
 
-## Review 后的简化规则（2026-10-14）
+Recent's scope is unchanged: a new draft in the same project/workspace inherits the most recent accepted config; a currently global uncategorized new draft is allocated a new working directory and does not copy another workspace's Recent. Desktop regressions create from the same project entry explicitly so a workspace switch is not mistaken for an empty-draft restore.
 
-用户确认：已有 Session 的文字草稿重新打开时，恢复正文和模型选择，权限与 Plan 使用该 Session 最新 Snapshot。当前打开期间的菜单选择仍归 Composer；普通快照不能覆盖，真实新授权/Plan 工具变化按最新 Snapshot 更新对应字段。首次匹配快照只建立当前状态和观察基线，不重放其中的历史授权。Snapshot 暂时缺席不重置观察基线；切换 scope/卸载才结束。
+## Cases and pruning
 
-删除持久草稿的 lastPermissionGrantId、lastPlanTransitionId 和 initializeFromNewTask；旧字段读取时忽略。新建 Root 的文字草稿仍恢复其完整选择（尚无真实 Session）。首次导入由导航 owner 显式交付新建初始化配置；既有 Session/reused 不走导入初始化。首发绑定真实 Session 是同一 Composer 编辑周期的迁移，保留发送期间的新输入；离开后再打开才应用 Session 恢复规则。
+| ID   | Setup and action                                                                                                   | Assertion                                                                                                                                               | Layer / status                                  |
+| ---- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| TD01 | Fresh input, pick only yolo + A, then switch away/refresh                                                          | The in-memory current selection works; localStorage has no draft, and reopening initializes from the default source                                     | storage + Hook / accepted                       |
+| TD02 | First send yolo + A; open a blank page once; return to the original Session, change build + B and submit; then New | Recent is build + B; the new page has the same value and no blank persistent record; real buttons and model switch                                      | Desktop E2E / accepted pending                  |
+| TD03 | Type text and change permission and model, switch Session and return/refresh                                       | Text and model restored; an existing Session's permission/Plan use the current snapshot; Recent unchanged                                               | Hook + Desktop E2E / accepted pending           |
+| TD04 | Empty the text or leave only spaces and New again                                                                  | The old persistent record is deleted, the new page uses the latest Recent; a repeated New Task in the same pane keeps no empty config                   | storage + Hook + Desktop E2E / accepted pending |
+| TD05 | Send succeeds, fails, or a late ACK arrives after the user typed the next one                                      | Success clears only the original submit; failure keeps body and config; the old ACK does not overwrite the new scope/new text                           | existing submission tests + Hook / accepted     |
+| TD06 | Existing empty records and text records of a different remote with the same path                                   | Only empty records are cleared; remote identity is isolated; a text record with a broken model is kept for correction                                   | storage / accepted                              |
+| TD07 | Pick a project/group before typing, then type and send first                                                       | An empty page writes nothing, the first send still goes to the chosen project/group; a text draft can cold-restore                                      | store + navigation tests / accepted             |
+| TD08 | First share import, delayed View, existing Session reused                                                          | Navigation initialization writes no empty draft, import still follows new-draft initialization; user re-selection takes priority, reused does not reset | Hook / accepted                                 |
 
-首发不再使用全局 seed Map：当前 pane 只允许同 workspaceKey、同 draft generation 的已接受结果迁移；New Task、切页、卸载使旧回调失效。分享导入初始化附着于已有 workspace 导航动作，接收后清除，切任务/新建时废弃；不保存成空草稿。提交配置仍在发送时冻结，不因后续编辑变化。
+Pure style, theme and i18n are unchanged and reuse shared controls, so no full appearance cross product is enumerated. Two legal models of the same provider are the model representative; yolo/build are the permission representative. Queue admission and execution config stay frozen; only the send-draft boundary is verified and queue features are not extended. Attachments currently have no cross-restart draft persistence and none is added.
 
-读取草稿只解析/过滤，不写 localStorage；旧空记录在显式写入时清理。无文字不保存，新建使用 workspace Recent，Recent 只在 accepted 时更新。
+## Scan evidence and open verification
 
-本轮明确不修改手机项目/导航恢复；共享 Composer 逻辑仍同时用于 desktop continuous 和 mobile replayable，不改变 Host、CLI、queue 或传输恢复语义。实现计划见 [状态简化规划](../plans/composer-state-simplification.md)。
+The codegraph tool was unavailable; exact caller search traced storage -> Hook -> SessionPane/Root and one hop of the project menu and share entry, and no codegraph scan is claimed. The existing conversation-model-control in the feature graph lacked the text-only persistence and new-draft lifecycle relations, so semantic nodes were added. There is no product boundary awaiting a user ruling; not persisting blanks was confirmed.
 
-新增回归 CS01–08、CS10：历史授权/Plan 不重放；有文字恢复最新权限与 Plan；live 新变化只更新对应字段；重复/迟到投影不覆盖编辑；首发迁移保留新输入且旧回调不清新页；导入初始化随导航消费/失效；render 读取零写入。CS09 手机项目恢复由用户明确排除。
+Verification summary (2026-10-14 baseline `7d60f53393`, re-verified on `f67f7570ba`): the TD01/02/04/06 storage and Hook regressions failed first and passed after the change; `pnpm test:unit:affected` passed in full; `pnpm typecheck`, `pnpm lint` (0 errors, 210 existing warnings) and `pnpm architecture:check --changed` pass. Linux Electron runs `desktop-e2e-20261014-093656-755` and `desktop-e2e-20261014-120739-442` pass TD01/03/04 (blank not saved, text restored on refresh, default taken after emptying and New Task).
 
-验证（2026-10-14）：新增回归先在旧实现失败；最终受影响单测 305 文件 / 3,956 用例通过。Hook/storage 定向 50 用例通过。浏览器 `share-import-selection.test.mjs` 14 组通过（导入 10 组，Session 恢复 4 组；390/1200px、中文浅色/英文深色），使用真实 Hook 与工具栏、受控 Snapshot，覆盖切回/刷新、历史记录不重放、live 授权/Plan 与重复投影。该浏览器夹具不代表真实 CLI 或手机 remote 链路。
+**Open**: the full I74/I75 + TD02 send-chain E2E did not pass: the first input reports "the draft session has switched, please send again" before reaching the A -> B switch assertion. Restoring all modified product sources to the baseline and rebuilding reproduces the same first-send error (run `desktop-e2e-20261014-093347-523`), and the Agent log also records `loadPersistedEvents / Session not found` for the pre-warmed session. It is not changed here (pre-warm/Host/CLI lifecycle), the Hook regression of TD02 cannot replace this E2E, and the full send flow needs a rerun after the baseline pre-warm issue is fixed. Mobile has only shared-logic and navigation unit tests; no real-device mobile, macOS or Windows GUI verification. The E2E stays in manual-review/pending and is not auto-promoted to formal/CI.
 
-Linux Electron 重建后 run `desktop-e2e-20261014-120739-442`，TD01/03/04 1/1 通过：空白不保存、文字刷新恢复、删空后 New Task 取默认。`pnpm typecheck`、`pnpm lint`（0 errors，210 既有 warnings）、`pnpm architecture:check --changed` 通过。完整 A→B 发送 E2E 仍保留此前基线预热阻塞，本轮未重跑；手机项目代码未进一步修改，手机实机、macOS/Windows GUI 未验证。用例仍在 manual-review/pending。
+MR integration: after syncing the latest staging remote directory confirmation flow, the ordinary project entry and the remote directory confirmation uniformly read `draftTaskGroupId` from the workspace UI store through `createProjectTask`. Choosing a group in the blank input must also travel with the remote directory confirmation; an existing task still does not inherit the new-draft group.
+
+## Simplified rules after review (2026-10-14)
+
+The user confirmed: when the text draft of an existing Session is reopened, the body and model selection are restored, while permission and Plan use that Session's latest Snapshot. Menu selections during the current open period still belong to the Composer; an ordinary snapshot cannot overwrite them, and a real new authorization/Plan tool change updates the matching field from the latest Snapshot. The first matching snapshot only establishes the current state and the observation baseline and does not replay historical grants. A Snapshot being temporarily absent does not reset the observation baseline; only a scope switch/unmount ends it.
+
+The persistent draft's `lastPermissionGrantId`, `lastPlanTransitionId` and `initializeFromNewTask` are removed; old fields are ignored on read. A new Root's text draft still restores its full selection (no real Session yet). The first import is delivered explicitly by the navigation owner as new-draft initialization config; an existing Session/reused does not go through import initialization. Binding the first send to a real Session is a migration within the same Composer editing cycle and keeps new input made during sending; the Session restore rule applies only when reopening after leaving.
+
+The first send no longer uses a global seed Map: the current pane allows only an accepted result with the same workspaceKey and the same draft generation to migrate; New Task, page switch and unmount invalidate old callbacks. Share-import initialization attaches to the existing workspace navigation action, is cleared on receipt and discarded on task switch/New; it is not saved as an empty draft. The submit config is still frozen at send time and does not change with later edits.
+
+Reading drafts only parses/filters and does not write localStorage; old empty records are cleaned on explicit writes. No text means nothing is saved; New uses the workspace Recent, and Recent updates only on accepted.
+
+This round explicitly does not modify mobile project/navigation restore; the shared Composer logic still serves both desktop continuous and mobile replayable and does not change Host, CLI, queue or transport recovery semantics. Plan: [state simplification plan](../plans/composer-state-simplification.md).
+
+New regressions CS01-08, CS10: historical grants/Plan are not replayed; a text draft restores the latest permission and Plan; a live new change updates only the matching field; a repeated/late projection does not overwrite edits; the first-send migration keeps new input and old callbacks do not clear the new page; import initialization is consumed/invalidated with navigation; render reads write nothing. CS09 mobile project restore is explicitly excluded by the user.
+
+Verification: the new regressions failed on the old implementation first; final affected unit tests 305 files / 3,956 cases pass; Hook/storage targeted 50 cases pass. The browser `share-import-selection.test.mjs` passes 14 groups (10 import, 4 Session restore; 390/1200px, Chinese light/English dark) using the real Hook and toolbar with a controlled Snapshot, covering switch back/refresh, history not replayed, live grants/Plan and repeated projections. That browser fixture does not represent the real CLI or mobile remote chain.

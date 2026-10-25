@@ -13,6 +13,13 @@ import {
   CommandShortcut,
 } from "@/components/ui/command.js";
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
+import {
+  buildLocalTaskSearchScopes,
+  buildTaskSearchProjectNames,
+  getTaskSearchTaskKey,
+  type TaskSearchScope,
+} from "@/project-sidebar/taskSearchScope.js";
+import { useOptionalProjectDirectory } from "@/project-sidebar/ProjectDirectoryProvider.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { formatCommandShortcutLabel, matchesPrimaryShortcut } from "@/lib/keyboardShortcuts.js";
@@ -31,6 +38,9 @@ import type { WorkspaceTabState } from "@/store/tabStore.js";
 
 const TASK_SEARCH_RESULT_LIMIT = 9;
 const TASK_SEARCH_GROUP_COLLAPSED_SNIPPET_LIMIT = 3;
+// Each query is a host RPC that scans the whole tasks index, so only the query that has stopped
+// changing for this long is sent to useGlobalTaskList. The input itself always updates instantly.
+const TASK_SEARCH_QUERY_SETTLE_MS = 200;
 
 type TaskSearchResultItem = ZCodeTaskMeta & {
   searchSnippet?: string;
@@ -104,18 +114,37 @@ export function TaskSearchDialog({
   const [expandedTaskKeys, setExpandedTaskKeys] = useState<Set<string>>(() => new Set());
   const shortcutLabel = formatCommandShortcutLabel("G");
   const trimmedQuery = query.trim();
-  const searchWorkspaceTabs = useMemo(
-    () => (open ? workspaceTabs : []),
-    [open, workspaceTabs],
+  const [settledQuery, setSettledQuery] = useState("");
+  const projectTree = useOptionalProjectDirectory()?.tree;
+  // Search covers every local project of the sidebar, not only the open tabs (specs/task-search-debounce.md, Search scope).
+  const localSearchScopeKey = useMemo(
+    () =>
+      JSON.stringify(
+        buildLocalTaskSearchScopes({
+          tree: open ? projectTree : null,
+          openTabs: open ? workspaceTabs : [],
+        }),
+      ),
+    [open, projectTree, workspaceTabs],
+  );
+  // Keyed by content: a new tree object with the same scope does not change the query key.
+  const searchWorkspaceTabs = useMemo<TaskSearchScope[]>(
+    () => JSON.parse(localSearchScopeKey) as TaskSearchScope[],
+    [localSearchScopeKey],
+  );
+  const projectNameByTaskKey = useMemo(
+    () => buildTaskSearchProjectNames(projectTree),
+    [projectTree],
   );
   const taskList = useGlobalTaskList({
     kind: "active",
-    // 修复原因：搜索弹窗组件常驻在 App 里，但未打开时不需要 recent/search 结果。
-    // 传空 workspace 可以复用 useGlobalTaskList 的空态路径，避免空闲时多一组 listTaskList
-    // 和 workspace 事件订阅，减轻启动期 renderer/RPC 压力。
+    // Fix rationale: the search dialog component stays mounted in the App, but does not need
+    // recent/search results while closed. Passing an empty workspace reuses useGlobalTaskList's
+    // empty-state path, avoiding an extra listTaskList subscription plus workspace event
+    // subscriptions while idle, reducing renderer/RPC pressure during startup.
     workspaceTabs: searchWorkspaceTabs,
     sortBy: "updated",
-    searchQuery: trimmedQuery,
+    searchQuery: settledQuery,
     expanded: false,
     collapsedLimit: TASK_SEARCH_RESULT_LIMIT,
   });
@@ -126,6 +155,8 @@ export function TaskSearchDialog({
       ),
     [workspaceTabs],
   );
+  // Mode follows the typed query, not the settled one: the list is still the previous result during the
+  // settle window, and deriving the mode from settledQuery would flip the empty-state wording and snippets to recents.
   const hasQuery = trimmedQuery.length > 0;
   const getTaskResultKey = useCallback(
     (task: Pick<TaskSearchResultItem, "workspaceIdentity" | "workspacePath" | "taskId">) =>
@@ -143,8 +174,9 @@ export function TaskSearchDialog({
         continue;
       }
 
-      // Bugfix: 搜索结果可能从查询缓存和跨工作区聚合路径带入同一个 task。
-      // 这里先按会话 key 合并，再按片段文本去重，避免列表里出现重复标题或重复摘要。
+      // Bugfix: search results can bring in the same task from the query cache and the
+      // cross-workspace aggregation path. Merge by session key first, then dedupe by snippet
+      // text, so the list shows no duplicate titles or summaries.
       taskByKey.set(taskKey, {
         ...existingTask,
         searchSnippets: [
@@ -156,9 +188,7 @@ export function TaskSearchDialog({
 
     for (const task of taskByKey.values()) {
       const taskKey = getTaskResultKey(task);
-      const snippets = hasQuery
-        ? getUniqueTaskSearchSnippets(task)
-        : [];
+      const snippets = hasQuery ? getUniqueTaskSearchSnippets(task) : [];
       if (snippets.length === 0) {
         rows.push({
           key: taskKey,
@@ -211,7 +241,7 @@ export function TaskSearchDialog({
       }
 
       onSelectSearchResult?.(row.task, {
-        query: trimmedQuery,
+        query: settledQuery,
         searchSnippet: row.searchSnippet?.trim() || row.task.searchSnippet?.trim() || undefined,
         snippetIndex: row.snippetIndex,
       });
@@ -219,7 +249,7 @@ export function TaskSearchDialog({
       setOpen(false);
       setQuery("");
     },
-    [getTaskResultKey, onSelectSearchResult, onSelectTask, trimmedQuery],
+    [getTaskResultKey, onSelectSearchResult, onSelectTask, settledQuery],
   );
   const selectTaskHeader = useCallback(
     (task: TaskSearchResultItem) => {
@@ -231,29 +261,41 @@ export function TaskSearchDialog({
   );
 
   useEffect(() => {
-    if (!open || !trimmedQuery) {
+    if (!trimmedQuery) {
+      // Clearing the input empties the list at once; the previous settled query must not linger.
+      setSettledQuery("");
       return;
     }
 
-    // Bugfix: 正文搜索上线后，旧的空搜索结果可能已经被 task query cache 记为 fresh。
-    // 弹窗输入查询词时主动刷新一次，确保服务层新补的正文索引和按需回填逻辑能够生效。
-    void taskList.refresh();
-  }, [open, taskList.refresh, trimmedQuery]);
-
-  useEffect(() => {
-    setExpandedTaskKeys(new Set());
+    const timer = setTimeout(() => setSettledQuery(trimmedQuery), TASK_SEARCH_QUERY_SETTLE_MS);
+    return () => clearTimeout(timer);
   }, [trimmedQuery]);
 
   useEffect(() => {
-    if (!open || !trimmedQuery) {
+    if (!open || !settledQuery) {
+      return;
+    }
+
+    // Bugfix: after body-text search shipped, stale empty search results may already be marked
+    // fresh in the task query cache. Refresh once when a query is typed so the service layer's
+    // new body index and on-demand backfill take effect.
+    void taskList.refresh();
+  }, [open, taskList.refresh, settledQuery]);
+
+  useEffect(() => {
+    setExpandedTaskKeys(new Set());
+  }, [settledQuery]);
+
+  useEffect(() => {
+    if (!open || !settledQuery) {
       return;
     }
 
     const snippetCount = visibleResults.filter((result) => result.searchSnippet?.trim()).length;
     logger.info(
-      `[TaskSearchDialog] 搜索结果 query=${JSON.stringify(trimmedQuery)} items=${visibleResults.length} snippets=${snippetCount} firstSnippet=${JSON.stringify(visibleResults[0]?.searchSnippet?.slice(0, 80) ?? "")}`,
+      `[TaskSearchDialog] 搜索结果 query=${JSON.stringify(settledQuery)} items=${visibleResults.length} snippets=${snippetCount} firstSnippet=${JSON.stringify(visibleResults[0]?.searchSnippet?.slice(0, 80) ?? "")}`,
     );
-  }, [open, trimmedQuery, visibleResults]);
+  }, [open, settledQuery, visibleResults]);
 
   useEffect(() => {
     if (openRequestId <= 0) {
@@ -337,6 +379,7 @@ export function TaskSearchDialog({
                 const task = result.task;
                 const title = getTaskTitle(task, intl.formatMessage({ id: "taskList.untitled" }));
                 const workspaceLabel =
+                  projectNameByTaskKey.get(getTaskSearchTaskKey(task)) ??
                   workspaceLabelByKey.get(task.workspaceIdentity?.trim() || task.workspacePath) ??
                   task.workspacePath;
                 const searchSnippet = hasQuery ? result.searchSnippet?.trim() : undefined;
@@ -364,7 +407,11 @@ export function TaskSearchDialog({
                     ) : null}
                     <CommandItem
                       value={`${title} ${workspaceLabel} ${searchSnippet ?? ""}`}
-                      className={isExpandRow ? "min-h-7 items-center px-2.5 text-ui-base" : quickPickItemClassName}
+                      className={
+                        isExpandRow
+                          ? "min-h-7 items-center px-2.5 text-ui-base"
+                          : quickPickItemClassName
+                      }
                       onSelect={() => selectTask(result)}
                     >
                       {isExpandRow ? (
@@ -379,11 +426,7 @@ export function TaskSearchDialog({
                         </span>
                       ) : (
                         <>
-                          <span
-                            className={
-                              "flex min-w-0 flex-1 flex-col justify-center py-0.5"
-                            }
-                          >
+                          <span className={"flex min-w-0 flex-1 flex-col justify-center py-0.5"}>
                             {searchSnippet ? (
                               <span className="min-w-0 truncate text-ui-base font-normal leading-4 text-foreground-subtle">
                                 <HighlightedMatchText text={searchSnippet} query={query} />

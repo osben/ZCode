@@ -1,28 +1,26 @@
-# AI Agent Commit Message 规范
+# AI Agent Commit Message Specification
 
-更新日期：2026-09-15
+## Applicable Scope
 
-## 适用范围
+This specification applies to all Git commit messages and PR titles generated or assisted by an AI agent in this project.
 
-本规范适用于本项目中由 AI Agent 生成或协助生成的所有 Git 提交信息（commit message）与 PR 标题。
+Goal: stay consistent with `Conventional Commits` and the semantic commit conventions in the Electron documentation, to cut history-tracing and release-distribution cost.
 
-目标是与 `Conventional Commits` 保持一致，并参考 Electron 文档中的语义化提交约定，降低历史追溯和发布分发成本。
+## Basic Format
 
-## 基本格式
-
-提交标题（第一行）必须使用语义前缀：
+The commit title (first line) must use semantic prefixes:
 
 ```text
 <type>(<scope>): <subject>
 ```
 
-说明：
+Explanation:
 
-- `<type>`：提交类型，必填
-- `<scope>`：影响范围，建议填写（如 `ui`、`services`、`agent`、`git`）
-- `<subject>`：简短描述本次变更的结果，使用小写开头
+- `<type>`: Commit type, required
+- `<scope>`: Affected scope, recommended (e.g. `ui`, `services`, `agent`, `git`)
+- `<subject>`: Brief description of the change result, using lowercase opening
 
-示例：
+Examples:
 
 ```text
 fix(ui): avoid stale workspace path in git pane
@@ -30,65 +28,65 @@ feat(services): add provider config file resolver
 docs(git): add ai agent commit message guidelines
 ```
 
-## 类型约定（与 Electron 语义前缀对齐）
+## Type Conventions (Aligned with Electron Semantic Prefixes)
 
-- `fix`：缺陷修复
-- `feat`：新功能
-- `docs`：文档变更
-- `test`：测试补充或修正
-- `build`：构建系统相关变更
-- `ci`：CI 配置或脚本变更
-- `perf`：性能优化（无功能语义变化）
-- `refactor`：重构（不新增功能、不修复缺陷）
-- `style`：代码风格/格式化（不影响代码语义）
-- `chore`：杂项维护（依赖、脚手架、非功能性清理）
+- `fix`: Bug fix
+- `feat`: New feature
+- `docs`: Documentation change
+- `test`: Test supplement or correction
+- `build`: Build system related change
+- `ci`: CI configuration or script change
+- `perf`: Performance optimization (no functional semantic change)
+- `refactor`: Refactoring (no new functionality, no bug fix)
+- `style`: Code style/formatting (does not affect code semantics)
+- `chore`: Miscellaneous maintenance (dependencies, scaffolding, non-functional cleanups)
 
-## 标题与正文规则
+## Title and Body Rules
 
-参考 Electron 规范，提交信息应满足：
+Following the Electron specification, a commit message satisfies:
 
-1. 第一行尽量控制在 50 字符内，最长不超过 72 字符
-2. 第一行后保留一个空行
-3. 正文按约 72 列换行
-4. 提交信息描述 **做了什么 + 为什么**，不要只写“改了哪些文件”
+1. The first line is at most 50 characters; never more than 72
+2. An empty line after the first line
+3. The body is wrapped at about 72 characters
+4. The message explains **what was done and why**, not only which files changed
 
-推荐正文结构：
+Recommended body structure:
 
 ```text
 <type>(<scope>): <subject>
 
 Why:
-- 背景/问题
-- 触发条件或用户影响
+- Background / problem
+- Trigger conditions or user impact
 
 What:
-- 关键方案 1
-- 关键方案 2
+- Key solution 1
+- Key solution 2
 
 Risk:
-- 兼容性或回归风险
-- 已做的验证（typecheck/lint/test）
+- Compatibility or regression risk
+- Already done verification (typecheck/lint/test)
 ```
 
-## AI Agent 专项要求
+## AI Agent Specific Requirements
 
-为保证提交历史可维护，AI Agent 需额外遵守以下规则：
+An AI agent follows these additional rules:
 
-1. 不写过程噪音：不要在 commit message 里写“按提示修改”“根据对话修复”“AI 自动生成”。
-2. 不写工具流水账：不要罗列“运行了什么命令”，除非它构成变更价值（如迁移脚本）。
-3. 一个提交只表达一个意图：避免把“重构 + 新功能 + 样式调整”混在一个提交里。
-4. 修 bug 必须写清根因与修复策略；非显然根因与代码内中文注释保持一致，不为显然修改添加重复注释。
-5. PR 标题与最终 squash commit 标题都必须使用语义前缀
+1. Do not write process noise: Do not write "according to the prompt modified", "according to conversation fixed", "AI auto-generated" in commit message
+2. Do not write tool flow accounts: Do not list "what commands were run", unless it constitutes a change value (e.g. migration script)
+3. A commit should express only one intention: Avoid mixing "refactoring + new feature + style adjustment" in a single commit
+4. Bug fixes state the root cause and the fix strategy; keep non-obvious root causes consistent with code-internal Chinese comments, and do not add redundant comments for obvious modifications
+5. PR title and final squash commit title must both use semantic prefixes
 
-## Breaking Change 规则
+## Breaking Change Rules
 
-若引入不兼容变更，在正文或 footer 使用：
+When introducing incompatible changes, use in the body or footer:
 
 ```text
 BREAKING CHANGE: <impact>
 ```
 
-示例：
+Examples:
 
 ```text
 feat(agent): remove legacy provider handshake
@@ -96,9 +94,9 @@ feat(agent): remove legacy provider handshake
 BREAKING CHANGE: legacy agent providers before v2 can no longer connect.
 ```
 
-## 不推荐写法
+## Unrecommended Writing Methods
 
-以下写法会降低历史可读性，禁止使用：
+Prohibited (they hurt history readability):
 
 - `update code`
 - `fix bug`
@@ -106,18 +104,18 @@ BREAKING CHANGE: legacy agent providers before v2 can no longer connect.
 - `wip`
 - `try fix`
 
-## 提交前检查清单
+## Pre-commit Checklist
 
-在创建 commit 前，AI Agent 必须确认：
+Before creating a commit, the agent confirms:
 
-- 提交标题符合 `Conventional Commits`
-- 标题与正文能解释“为什么要改”
-- 变更范围与 `scope` 一致
-- 已通过[根 AGENTS.md](../../AGENTS.md)中适用于本次变更的必要验证；纯文档按文档检查，代码按代码检查，CLI/E2E 按各自范围验证
-- 必要验证阻塞或失败时保留工作区改动，不自动提交；已有失败与本次引入的问题分开报告
+- Commit title conforms to `Conventional Commits`
+- Title and body can explain "why the change was made"
+- Changed scope is consistent with `scope`
+- The verification required by the applicable AGENTS.md has run: documentation follows document checks, code follows code checks, CLI/E2E follows its own scope verification
+- When required verification is blocked or failed, keep the workspace changes and do not auto-commit; report failures and issues introduced by this change separately
 
-## 参考
+## References
 
 - [Conventional Commits](https://www.conventionalcommits.org/)
-- [Electron Commit Message Guidelines](../electron/docs/development/pull-requests.md#commit-message-guidelines)
-- 项目规则：[AGENTS.md](../../AGENTS.md)
+- Electron Commit Message Guidelines (`docs/electron/docs/development/pull-requests.md#commit-message-guidelines`)
+- Project rules: [AGENTS.md](../../AGENTS.md)

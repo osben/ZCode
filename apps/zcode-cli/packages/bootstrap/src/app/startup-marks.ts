@@ -2,6 +2,7 @@ import type { ConfigResult } from "@zcode/adapters/config";
 import { discoverNodePluginsSync } from "@zcode/adapters/plugins";
 import type { AgentRuntimeConfig } from "@zcode/core";
 import type { Logger, McpServerConfig, PluginLoadOutcome } from "@zcode/contracts";
+import { incognitoExcludes, type IncognitoProfile } from "@zcode/shared";
 import type { StartupTimer } from "../startup-logging.js";
 import { resolveOfficialPluginRoots } from "./bundled-plugins.js";
 import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS } from "./official-plugin-definitions.js";
@@ -13,6 +14,8 @@ export function resolveStartupPlugins(input: {
   cliStorageRoot: string;
   configResult: ConfigResult;
   env?: NodeJS.ProcessEnv;
+  /** Incognito profile; plugins off yields the same empty outcome as `plugins.enabled: false`. */
+  incognito?: IncognitoProfile;
   logger?: Logger;
   options: Pick<ZCodeAppOptions, "officialPluginRoots" | "pluginStorageRoot" | "includeVisualize">;
   startupTimer: StartupTimer;
@@ -21,7 +24,9 @@ export function resolveStartupPlugins(input: {
   const pluginStorageRoot =
     input.options.pluginStorageRoot ?? getPluginStorageRoot(input.cliStorageRoot);
   const pluginOutcome = discoverNodePluginsSync({
-    config: input.configResult.config.plugins,
+    config: incognitoExcludes(input.incognito, "plugins")
+      ? { ...input.configResult.config.plugins, enabled: false }
+      : input.configResult.config.plugins,
     env: input.env ?? process.env,
     officialPluginRoots: resolveOfficialPluginRoots({
       extraRoots: input.options.officialPluginRoots,
@@ -29,10 +34,10 @@ export function resolveStartupPlugins(input: {
       storageRoot: pluginStorageRoot,
       suppressedBuiltins: new Set(input.configResult.config.plugins.suppressedBuiltins),
     }),
-    // defaultEnabled 的 official plugin (如 skill-creator) 只有在这里
-    // 把名单传给 discoverNodePluginsSync 才会真正默认开启。CLI 子命令路径
-    // (resolveZCodePlugins) 和应用启动路径都要传，否则 `/skill skill-creator` 在会话里
-    // 报 "Skill not found: skill-creator"，但 `zcode plugins list` 却显示它是 enabled。
+    // An official plugin with defaultEnabled (such as skill-creator) is actually enabled by default
+    // only when its name is passed to discoverNodePluginsSync here. Both the CLI subcommand path
+    // (resolveZCodePlugins) and app startup must pass it; otherwise `/skill skill-creator` reports
+    // "Skill not found: skill-creator" in a session while `zcode plugins list` says it is enabled.
     officialPluginsEnabledByDefault: DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS,
     storageRoot: pluginStorageRoot,
     workingDirectory: input.workingDirectory,

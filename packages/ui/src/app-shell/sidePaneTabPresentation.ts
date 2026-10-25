@@ -9,6 +9,7 @@ export interface SidePaneTabPresentationLabels {
   treemappingTitle: string;
   whiteboardTitle: string;
   modelTrajectoryTitle: string;
+  modelTrajectoryV2Title: string;
   developerToolsTitle: string;
   pluginMarketTitle: string;
   newTabTitle?: string;
@@ -39,14 +40,14 @@ export function getSidePaneTabSearchHint(tab: WorkspaceSidePaneTab): string {
     return `${tab.parentSessionId} workflow runs directory history ended`;
   }
   if (tab.type === "workflow-actor-session") {
-    // 会话 id 也进搜索面：排查时手里往往只有它（日志与 journal 都记它）。
+    // Include the session ID in search; it is often the only identifier available during debugging (both logs and journals record it).
     return `${tab.actorName ?? ""} ${tab.siteId}@${tab.ordinal} ${tab.actorSessionId ?? ""} ${tab.runId} ${tab.parentSessionId} workflow subagent actor transcript`;
   }
   if (tab.type === "workflow-workspace") {
     return `${tab.workflowName ?? ""} ${tab.runId} ${tab.toolCallId} ${tab.parentSessionId} workflow script steps workspace transcript files git run`;
   }
   if (tab.type === "workflow-artifact") {
-    // 产物 id 是脚本里写死的字面量，用户与排查者手里往往就是它。
+    // Artifact IDs are hard-coded literals in scripts and are often the only identifier users and debuggers have.
     return `${tab.title ?? ""} ${tab.artifactId} ${tab.runId} ${tab.parentSessionId} workflow artifact deliverable`;
   }
   if (tab.type === "selection-side-chat") {
@@ -69,6 +70,9 @@ export function getSidePaneTabSearchHint(tab: WorkspaceSidePaneTab): string {
   if (tab.type === "whiteboard") return `${tab.title} whiteboard canvas draw sketch`;
   if (tab.type === "model-trajectory") {
     return `${tab.title ?? ""} ${tab.taskId} model trajectory call io`;
+  }
+  if (tab.type === "model-trajectory-v2") {
+    return `${tab.title ?? ""} ${tab.taskId} model trajectory v2 call io timing ledger`;
   }
   if (tab.type === "plugin-market") return "plugin marketplace store plugins";
   if (tab.type === "developer-tools") {
@@ -95,6 +99,7 @@ export function getLocalizedSidePaneTabTitle(
       "treemapping.title": labels.treemappingTitle,
       "whiteboard.title": labels.whiteboardTitle,
       "modelTrajectory.title": labels.modelTrajectoryTitle,
+      "modelTrajectoryV2.title": labels.modelTrajectoryV2Title,
       "developerTools.title": labels.developerToolsTitle,
       "workspace.openPluginsSettings": labels.pluginMarketTitle,
       "terminal.title": labels.terminalTitle,
@@ -135,6 +140,7 @@ export function getSidePaneTabTypeLabel(
   if (tab.type === "treemapping") return labels.treemappingTitle;
   if (tab.type === "whiteboard") return labels.whiteboardTitle;
   if (tab.type === "model-trajectory") return labels.modelTrajectoryTitle;
+  if (tab.type === "model-trajectory-v2") return labels.modelTrajectoryV2Title;
   if (tab.type === "developer-tools") return labels.developerToolsTitle;
   if (tab.type === "terminal" || tab.type === "bash-output") return labels.terminalTitle;
   return labels.codeViewerTitle;

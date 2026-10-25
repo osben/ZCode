@@ -4,9 +4,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ExecuteGroupToolCallBlock } from "@/ToolCallBlocks/renderers/execute-group.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 function renderExecuteGroup(
-  locale: "zh-CN" | "en-US",
+  locale: "en-US" | "zh-CN",
   statuses: Array<"pending" | "completed" | "failed" | "stopped" | "in_progress">,
   options: { forceOpen?: boolean } = {},
 ) {
@@ -18,7 +19,7 @@ function renderExecuteGroup(
         nestedToolRenderer: ToolPresentation,
         toolCallNode: {
           toolCall: {
-            toolId: "execute:tool-1",
+            toolCallId: "execute:tool-1",
             kind: "Execute",
             title: "Execute",
             input: {},
@@ -54,7 +55,9 @@ function renderExecuteGroup(
         rawFileSummaries: [],
         isRunning: statuses.includes("in_progress") || statuses.includes("pending"),
         statusLabel:
-          statuses.includes("in_progress") || statuses.includes("pending") ? "执行中" : "已完成",
+          statuses.includes("in_progress") || statuses.includes("pending")
+            ? "Running"
+            : "Completed",
         childToolList: null,
         forceOpen: options.forceOpen ?? false,
         canToggle: true,
@@ -70,12 +73,12 @@ describe("ExecuteGroupToolCallBlock", () => {
     const enHtml = renderExecuteGroup("en-US", ["completed", "in_progress"]);
 
     expect(html).toContain(">终端</span>");
-    expect(enHtml).toContain(">Terminal</span>");
+    expect(enHtml).toContain(`>${expectedCopy("chat.toolCall.executeGroup.label")}</span>`);
     expect(html).toContain("正在执行");
     expect(html).toContain("pnpm test");
     expect(html).not.toContain("2 个命令");
     expect(html).toContain(">·</span>");
-    expect(enHtml).toContain(">Running</span>");
+    expect(enHtml).toContain(`>${expectedCopy("chat.toolCall.execute.running")}</span>`);
     expect(enHtml).toContain(">pnpm test</code>");
   });
 
@@ -84,7 +87,9 @@ describe("ExecuteGroupToolCallBlock", () => {
     const summaryEnd = html.indexOf('data-slot="collapsible-content"');
     const summary = html.slice(0, summaryEnd);
 
-    expect(summary).toContain("2 commands");
+    expect(summary).toContain(
+      expectedCopy("chat.toolCall.executeGroup.command.other", { count: 2 }),
+    );
     expect(summary).not.toContain("Running");
     expect(summary).not.toContain("pnpm test");
   });
@@ -102,9 +107,11 @@ describe("ExecuteGroupToolCallBlock", () => {
 
     expect(zhHtml).toContain("2 个命令");
     expect(zhHtml).toContain("1 个失败");
-    expect(enHtml).toContain("2 commands");
-    expect(enHtml).toContain("1 failed");
-    expect(enHtml).toContain(">Terminal</span>");
+    expect(enHtml).toContain(
+      expectedCopy("chat.toolCall.executeGroup.command.other", { count: 2 }),
+    );
+    expect(enHtml).toContain(expectedCopy("chat.toolCall.executeGroup.failed", { count: 1 }));
+    expect(enHtml).toContain(`>${expectedCopy("chat.toolCall.executeGroup.label")}</span>`);
     expect(enHtml).toContain(">·</span>");
   });
 });

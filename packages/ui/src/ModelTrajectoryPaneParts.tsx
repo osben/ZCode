@@ -3,12 +3,19 @@ import type {
   ZCodeModelTrajectoryRecord,
   ZCodeModelTrajectoryUsage,
 } from "@zcode/services";
-import { Fragment } from "react";
+import { Fragment, useContext, useState } from "react";
 import { cn } from "@/components/lib/utils.js";
 import { Badge } from "@/components/ui/badge.js";
+import { Button } from "@/components/ui/button.js";
 import type { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { ContentPartView, EmptyState, summarizeRecords } from "@/ModelTrajectoryPaneDetails.js";
 import { ExpandableTrajectoryMessage } from "@/ModelTrajectoryExpandableMessage.js";
+import {
+  resolveInputRowWindow,
+  TRAJECTORY_COLLAPSED_BY_DEFAULT_ROWS,
+  TRAJECTORY_ROW_PAGE_SIZE,
+  TrajectoryExpansionRegistryContext,
+} from "@/ModelTrajectoryExpansion.js";
 import { ModelTrajectoryErrorBlock } from "@/ModelTrajectoryErrorBlock.js";
 import {
   formatTrajectoryClockTime,
@@ -16,6 +23,10 @@ import {
   formatTrajectoryDuration,
 } from "@/ModelTrajectoryFormat.js";
 import { trajectoryRoleTextClass } from "@/ModelTrajectoryRoleStyles.js";
+import {
+  type TrajectoryInputContext,
+  TrajectorySearchRevealContext,
+} from "@/ModelTrajectorySearch.js";
 import { TrajectorySectionTitle } from "@/ModelTrajectorySectionTitle.js";
 
 export { EmptyState, summarizeRecords } from "@/ModelTrajectoryPaneDetails.js";
@@ -26,18 +37,85 @@ export function CallCard({
   record,
   index,
   inputMessages,
+  inputContext = "full",
   expansionKeyPrefix,
   intl,
 }: {
   record: ZCodeModelTrajectoryRecord;
   index: number;
   inputMessages: ZCodeModelTrajectoryMessage[];
+  inputContext?: TrajectoryInputContext;
   expansionKeyPrefix?: string;
   intl: IntlShape;
 }) {
   const response = record.response;
   const usage = response?.usage;
   const hasInput = inputMessages.length > 0;
+  const registry = useContext(TrajectoryExpansionRegistryContext);
+  const searchRevealKey = useContext(TrajectorySearchRevealContext);
+  const [localRowLimit, setLocalRowLimit] = useState(TRAJECTORY_ROW_PAGE_SIZE);
+  const storedRowLimit =
+    expansionKeyPrefix && registry ? registry.rowLimits.get(expansionKeyPrefix) : undefined;
+  const pageRowLimit = storedRowLimit ?? localRowLimit;
+  // A search reveal past the page mounts a window around the target; the window is derived in render only.
+  const revealedRowIndex = expansionKeyPrefix
+    ? inputRevealIndex(searchRevealKey, expansionKeyPrefix)
+    : undefined;
+  const rowWindow = resolveInputRowWindow({
+    total: inputMessages.length,
+    limit: pageRowLimit,
+    revealIndex: revealedRowIndex,
+  });
+  const rowsDefaultOpen = inputMessages.length <= TRAJECTORY_COLLAPSED_BY_DEFAULT_ROWS;
+  const setPageLimit = (nextLimit: number) => {
+    if (expansionKeyPrefix && registry) {
+      registry.setRowLimit(expansionKeyPrefix, nextLimit);
+    } else {
+      setLocalRowLimit(nextLimit);
+    }
+  };
+  // "Show next" grows the page by min(page, hidden rows before the gap). It stops at the reveal window's start,
+  // so the window is never swallowed and the click mounts exactly the rows the label counts.
+  const showMoreControl = (hiddenRows: number) => (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      data-trajectory-rows-more=""
+      onClick={() =>
+        setPageLimit(rowWindow.pageEnd + Math.min(TRAJECTORY_ROW_PAGE_SIZE, hiddenRows))
+      }
+      className="col-span-full h-8 justify-start rounded-none px-3 font-mono text-ui-xs text-foreground-subtle"
+    >
+      {intl.formatMessage(
+        { id: "modelTrajectory.showMoreRows" },
+        {
+          count: Math.min(TRAJECTORY_ROW_PAGE_SIZE, hiddenRows),
+          total: inputMessages.length,
+        },
+      )}
+    </Button>
+  );
+  const renderInputRows = (from: number, to: number) =>
+    inputMessages.slice(from, to).map((message, offset) => {
+      const messageIndex = from + offset;
+      return (
+        <Fragment key={`${index}:${messageIndex}`}>
+          <TrajectoryRowDivider />
+          <MessageBlock
+            message={message}
+            callStartedAt={record.startedAt}
+            callDurationMs={record.durationMs}
+            isAlt={messageIndex % 2 === 1}
+            defaultOpen={rowsDefaultOpen}
+            expansionKey={
+              expansionKeyPrefix ? `${expansionKeyPrefix}:input:${messageIndex}` : undefined
+            }
+            intl={intl}
+          />
+        </Fragment>
+      );
+    });
 
   return (
     <article data-trajectory-call="" className="col-span-full grid grid-cols-subgrid">
@@ -77,21 +155,31 @@ export function CallCard({
               kind="input"
               label={intl.formatMessage({ id: "modelTrajectory.inputSection" })}
             />
-            {inputMessages.map((message, messageIndex) => (
-              <Fragment key={`${index}:${messageIndex}`}>
-                <TrajectoryRowDivider />
-                <MessageBlock
-                  message={message}
-                  callStartedAt={record.startedAt}
-                  callDurationMs={record.durationMs}
-                  isAlt={messageIndex % 2 === 1}
-                  expansionKey={
-                    expansionKeyPrefix ? `${expansionKeyPrefix}:input:${messageIndex}` : undefined
-                  }
-                  intl={intl}
-                />
-              </Fragment>
-            ))}
+            {inputContext === "base-missing" ? (
+              <p
+                data-trajectory-input-context="base-missing"
+                className="col-span-full px-3 py-1 font-mono text-ui-xs text-foreground-subtlest"
+              >
+                {intl.formatMessage({ id: "modelTrajectory.inputBaseMissing" })}
+              </p>
+            ) : null}
+            {renderInputRows(0, rowWindow.pageEnd)}
+            {rowWindow.hiddenBefore > 0 ? showMoreControl(rowWindow.hiddenBefore) : null}
+            {renderInputRows(rowWindow.revealStart, rowWindow.revealEnd)}
+            {rowWindow.windowed && rowWindow.hiddenAfter > 0 ? (
+              <p
+                data-trajectory-rows-hidden=""
+                className="col-span-full px-3 py-1 font-mono text-ui-xs text-foreground-subtlest"
+              >
+                {intl.formatMessage(
+                  { id: "modelTrajectory.rowsHidden" },
+                  { count: rowWindow.hiddenAfter },
+                )}
+              </p>
+            ) : null}
+            {!rowWindow.windowed && rowWindow.hiddenAfter > 0
+              ? showMoreControl(rowWindow.hiddenAfter)
+              : null}
           </section>
         ) : null}
 
@@ -122,7 +210,7 @@ function SourceTitle({ record, intl }: { record: ZCodeModelTrajectoryRecord; int
   return (
     <span
       data-trajectory-source-title=""
-      // E2E 曾把英文展示文案当成功能合同，切换到中文后误报轨迹投影失败；稳定属性保留原始语义，文案继续独立国际化。
+      // E2E once treated English display text as a functional contract and falsely reported projection failures after localization. Stable attributes preserve semantics while copy remains independently localized.
       data-trajectory-source-kind={callSource.kind}
       data-trajectory-query-source={callSource.querySource}
       className="min-w-0 shrink truncate text-ui-sm font-medium text-foreground"
@@ -170,6 +258,7 @@ function MessageBlock({
   callStartedAt,
   callDurationMs,
   isAlt,
+  defaultOpen,
   expansionKey,
   intl,
 }: {
@@ -177,23 +266,23 @@ function MessageBlock({
   callStartedAt: string;
   callDurationMs?: number;
   isAlt: boolean;
+  defaultOpen: boolean;
   expansionKey?: string;
   intl: IntlShape;
 }) {
-  // 只有已知角色才有 i18n key，未知角色直接展示原始 role，避免触发缺失 key。
+  // Only known roles have i18n keys; display an unknown role as-is to avoid a missing-key lookup.
   const knownRole = ["system", "user", "assistant", "tool"].includes(message.role);
   const roleLabel = knownRole
     ? intl.formatMessage({ id: `modelTrajectory.role.${message.role}` })
     : message.role;
 
-  if (
-    (message.role === "system" || message.role === "user" || message.role === "tool") &&
-    message.parts.length > 0
-  ) {
+  // Every known-role message with content goes through the collapsible row, so a large input never mounts
+  // full segment bodies outside the row state (collapsed rows mount no body).
+  if (knownRole && message.parts.length > 0) {
     return (
       <ExpandableTrajectoryMessage
         message={message}
-        role={message.role}
+        role={message.role as "system" | "user" | "assistant" | "tool"}
         roleLabel={roleLabel}
         callDurationLabel={
           typeof callDurationMs === "number" ? formatTrajectoryDuration(callDurationMs) : "—"
@@ -201,6 +290,7 @@ function MessageBlock({
         callDatetimeLabel={formatTrajectoryDateTime(callStartedAt)}
         callDatetimeTitle={callStartedAt}
         isAlt={isAlt}
+        defaultOpen={defaultOpen}
         expansionKey={expansionKey}
         intl={intl}
       />
@@ -248,6 +338,16 @@ function MessageBlock({
   );
 }
 
+function inputRevealIndex(
+  revealKey: string | null,
+  expansionKeyPrefix: string,
+): number | undefined {
+  const marker = `${expansionKeyPrefix}:input:`;
+  if (!revealKey?.startsWith(marker)) return undefined;
+  const index = Number(revealKey.slice(marker.length));
+  return Number.isSafeInteger(index) && index >= 0 ? index : undefined;
+}
+
 function ResponseBlock({
   response,
   callStartedAt,
@@ -279,7 +379,18 @@ function ResponseBlock({
   if (response.reasoningText) {
     rows.push({
       key: "reasoning",
-      message: { role: "assistant", parts: [{ kind: "text", text: response.reasoningText }] },
+      message: {
+        role: "assistant",
+        parts: [
+          {
+            kind: "text",
+            text: response.reasoningText,
+            ...(response.truncated?.reasoningText
+              ? { truncated: response.truncated.reasoningText }
+              : {}),
+          },
+        ],
+      },
       roleLabel: intl.formatMessage({ id: "modelTrajectory.reasoning" }),
       visualRole: "reasoning",
     });
@@ -287,7 +398,16 @@ function ResponseBlock({
   if (response.text) {
     rows.push({
       key: "message",
-      message: { role: "assistant", parts: [{ kind: "text", text: response.text }] },
+      message: {
+        role: "assistant",
+        parts: [
+          {
+            kind: "text",
+            text: response.text,
+            ...(response.truncated?.text ? { truncated: response.truncated.text } : {}),
+          },
+        ],
+      },
       roleLabel: intl.formatMessage({ id: "modelTrajectory.role.assistant" }),
     });
   }

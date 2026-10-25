@@ -1,104 +1,107 @@
-# GLM-5.3 模型适配设计
+# GLM-5.3 Model Adapter Design
 
-## 背景
+## Background
 
-GLM-5.3 已由 App 动态 provider 配置下发。供应商既可能直接使用官方模型 ID，也可能
-在前后拼接 ToB 路由标识，因此以下 ID 都代表同一能力身份：
+GLM-5.3 is delivered by the App's dynamic provider configuration. A vendor may use the official model ID or
+wrap it with ToB routing identifiers, so all of these IDs denote the same capability identity:
 
-- `glm-5.3`；
-- `toB-glm-5.3`；
-- `proxy/GLM-5.3-cc`。
+- `glm-5.3`;
+- `toB-glm-5.3`;
+- `proxy/GLM-5.3-cc`.
 
-识别规则为大小写不敏感地包含 `glm-5.3`，但该 token 后不能紧跟十进制数字，避免把
-`glm-5.30`、`glm-5.31` 等未来模型误识别为 GLM-5.3。模型 ID 只用于能力识别，最终
-provider 请求仍保留配置中的原始 ID。
+The recognition rule is a case-insensitive "contains `glm-5.3`", where the token must not be followed by a
+decimal digit, so future models such as `glm-5.30` and `glm-5.31` are not mistaken for GLM-5.3. The model ID is
+used only for capability recognition; the final provider request keeps the original configured ID.
 
-当前 catalog 默认配置事实为：
+Current catalog default facts:
 
-- 模型 ID：`glm-5.3`；
-- 上下文窗口：1,000,000 tokens；
-- 最大输出：128,000 tokens；
-- 输入/输出模态：text -> text；
-- reasoning 档位：`low` / `high` / `max`，默认 `max`。
+- model ID: `glm-5.3`;
+- context window: 1,000,000 tokens;
+- max output: 128,000 tokens;
+- input/output modality: text -> text;
+- reasoning levels: `low` / `high` / `max`, default `max`.
 
-这些 context、output 和模态值是 catalog 对精确模型的默认 metadata，不是对 App 动态
-provider 的强制覆盖。App 创建和读取模型时会先把缺失或非法 context 归一化为 200K，并尝试
-从已知 metadata 解析 max output；用户随后修改的 context、max output 和输入模态继续作为
-显式配置沿用。读取期 catalog enrichment 不参与 context 覆盖；max output 采用 fill-only，
-已有合法值一律保留，字段缺失时才补 catalog 值；catalog 也没有对应 output 时保持既有 32K
-runtime fallback。
+These context, output and modality values are the catalog's default metadata for the exact model, not a forced
+override of App dynamic providers. When the App creates and reads models it first normalizes a missing or
+illegal context to 200K and tries to resolve max output from known metadata; the context, max output and input
+modality the user later changes stay as explicit configuration. Read-time catalog enrichment does not take part
+in context override; max output is fill-only: any existing legal value is kept and the catalog value is filled
+only when the field is missing; when the catalog has no matching output either, the existing 32K runtime
+fallback stays.
 
-CLI 默认策略和 workspace 动态投影需要让上述模型身份拥有最高能力判定优先级，并在读取
-可能缺失或过时的入站 reasoning metadata 之前，按真实 transport 重建三个官方档位。
-否则同时包含 DeepSeek、Claude、GPT 等其他 token 的路由别名可能被宽泛策略覆盖。
+The CLI default policy and the workspace dynamic projection must give these model identities the highest
+capability-decision priority and, before reading possibly missing or stale inbound reasoning metadata, rebuild
+the three official levels by the real transport. Otherwise a routing alias that also contains other tokens such
+as DeepSeek, Claude or GPT could be overridden by a broad policy.
 
-App catalog metadata enrichment 保持更窄的持久化边界：只对大小写不敏感的精确
-`glm-5.3` ID 补齐缺失的 canonical metadata。带路径、前缀或后缀的真实路由 ID 不在 App store
-中关联 canonical metadata，统一交给 CLI 默认策略和 workspace dynamic overlay 识别。
+App catalog metadata enrichment keeps a narrower persistence boundary: it fills missing canonical metadata only
+for the case-insensitive exact `glm-5.3` ID. Real routing IDs with a path, prefix or suffix are not associated
+with canonical metadata in the App store and are handed entirely to the CLI default policy and the workspace
+dynamic overlay.
 
-GLM-5.3 的 image 能力采用 GLM-5.2 已有的 provider-aware 判定，而不是由模型身份写死：
+GLM-5.3 image capability uses GLM-5.2's existing provider-aware decision rather than hard-coding by model
+identity:
 
-- provider registry 或 catalog 明确下发的 `supportsImages=true/false` 优先；
-- 未知能力经 OpenAI Chat transport 时按 text-only 处理；
-- 未知的 `glm-5.2-*` / `glm-5.3-*` 真实后缀变体保留 unknown，由显式配置或 provider
-  决定；归一化后最终模型段精确为 `glm-5.2-highspeed` 或 `glm-5.3-highspeed` 时例外，
-  大小写不敏感地按 text-only 处理；OpenAI Chat 仍统一按 text-only 处理；
-- 未知能力经官方 GLM provider/host 的 Anthropic transport 时保留 unknown，允许既有
-  provider-side media 链路处理；
-- 其他未知的第三方 GLM provider fail closed 为不支持 image。
+- `supportsImages=true/false` explicitly delivered by the provider registry or catalog takes priority;
+- unknown capability over the OpenAI Chat transport is treated as text-only;
+- unknown real suffix variants `glm-5.2-*` / `glm-5.3-*` stay unknown, decided by explicit configuration or the
+  provider; the exception is when the normalized final model segment is exactly `glm-5.2-highspeed` or
+  `glm-5.3-highspeed`, which is case-insensitively text-only; OpenAI Chat is still uniformly text-only;
+- unknown capability over the Anthropic transport of the official GLM provider/host stays unknown, allowing the
+  existing provider-side media chain to handle it;
+- other unknown third-party GLM providers fail closed as not supporting image.
 
-[智谱官方通用参数文档](https://docs.bigmodel.cn/cn/guide/start/concept-param)确认 GLM-5.2
-及以上模型使用 `reasoning_effort` 表达推理深度。
+The [official Zhipu general parameter docs](https://docs.bigmodel.cn/cn/guide/start/concept-param) confirm that
+GLM-5.2 and later express reasoning depth with `reasoning_effort`.
 
-## 目标
+## Goals
 
-- 在中国模型目录的 Z.AI、BigModel 及各自 Coding Plan provider 中注册 `glm-5.3`。
-- 在 bundled models.dev catalog 的对应四个 OpenAI-compatible provider 中注册
-  `glm-5.3`。
-- CLI 默认策略与 workspace dynamic overlay 使用同一 GLM-5.3 身份判断：大小写不敏感
-  地包含 `glm-5.3`，且 token 后不能紧跟数字；GLM-5.3 在所有宽泛模型策略之前判定，
-  或在顺序合并的策略列表中作为最终覆盖项。
-- App catalog 只对大小写不敏感的精确 `glm-5.3` ID 补齐缺失 metadata；带路径、前缀或后缀
-  的 ID 不做 canonical enrichment。精确模型已有的 200K 或其他合法 context 也视为显式配置，
-  不升级为 catalog 的 1M。
-- catalog 和无显式 override 的 CLI 默认能力为 1M context、128K output 与 text -> text；
-  App 动态 provider 保留入站或用户配置的 context、max output 和输入模态，仅统一重建
-  `low` / `high` / `max` 三档，默认 `max`。
-- GLM-5.3 缺失 image metadata 时复用 GLM-5.2 的 provider-aware 判定，不把所有
-  GLM-5.3 路由别名一律视为 text-only 或 vision-capable。
-- OpenAI-compatible 请求把所选档位投影为
-  `openaiCompatible.reasoningEffort`，最终 wire 字段为 `reasoning_effort`。
-- Anthropic 动态 provider 把三档投影为 `anthropic.effort` 与固定 thinking budget。
-- 不改写原始模型 ID，保证 ToB provider 仍收到其真实路由名。
+- Register `glm-5.3` in the Z.AI, BigModel and their Coding Plan providers of the China model catalog.
+- Register `glm-5.3` in the corresponding four OpenAI-compatible providers of the bundled models.dev catalog.
+- CLI default policy and the workspace dynamic overlay use the same GLM-5.3 identity check: case-insensitively
+  contains `glm-5.3` with no digit after the token; GLM-5.3 is decided before all broad model policies, or is
+  the final override in a sequentially merged policy list.
+- The App catalog fills missing metadata only for the case-insensitive exact `glm-5.3` ID; IDs with a path,
+  prefix or suffix get no canonical enrichment. A 200K or other legal context already on the exact model is
+  also explicit configuration and is not upgraded to the catalog's 1M.
+- Catalog and CLI default capability without explicit override is 1M context, 128K output and text -> text; App
+  dynamic providers keep the inbound or user-configured context, max output and input modality, and only
+  uniformly rebuild the three levels `low` / `high` / `max`, default `max`.
+- When GLM-5.3 image metadata is missing, reuse GLM-5.2's provider-aware decision, without treating all GLM-5.3
+  routing aliases as always text-only or always vision-capable.
+- OpenAI-compatible requests project the chosen level to `openaiCompatible.reasoningEffort`; the final wire
+  field is `reasoning_effort`.
+- Anthropic dynamic providers project the three levels to `anthropic.effort` and a fixed thinking budget.
+- The original model ID is never rewritten, so a ToB provider still receives its real routing name.
 
-## 非目标
+## Non-goals
 
-- 不给 GLM-5.3 增加 `off`、`none`、`nothink`、`medium` 或 `xhigh` 档位。
-- 不改变 GLM-5.2 的 `max` / `high` / `nothink` 语义。
-- 不改变其他 GLM 模型的 `enabled` / `disabled` thinking toggle。
-- 不用 GLM-5.3 模型身份覆盖用户显式配置的 context、max output 或 image 能力。
-- 不改变 builtin provider 的远端 entitlement、默认模型或可见性决策。
-- 不修改 UI、模型选择提交语义、session/task 状态或 desktop continuous / web
-  remote replayable 边界。
+- No `off`, `none`, `nothink`, `medium` or `xhigh` level for GLM-5.3.
+- No change to GLM-5.2's `max` / `high` / `nothink` semantics.
+- No change to the `enabled` / `disabled` thinking toggle of other GLM models.
+- GLM-5.3 identity does not override user-configured context, max output or image capability.
+- No change to the remote entitlement, default model or visibility decisions of builtin providers.
+- No change to UI, model selection commit semantics, session/task state or the desktop continuous / web remote
+  replayable boundary.
 
-## 能力与请求链路
+## Capability and request chain
 
 ```text
-中国模型目录                      bundled models.dev snapshot
-  Anthropic providers               OpenAI-compatible providers
-  glm-5.3                            glm-5.3
-  context=1,000,000                  context=1,000,000
-  output=128,000                     output=128,000
-  low/high/max                       reasoning=true
-          │                                  │
-          └──────────────┬───────────────────┘
+China model catalog              bundled models.dev snapshot
+  Anthropic providers              OpenAI-compatible providers
+  glm-5.3                          glm-5.3
+  context=1,000,000                context=1,000,000
+  output=128,000                   output=128,000
+  low/high/max                     reasoning=true
+          │                                │
+          └──────────────┬─────────────────┘
                          ▼
                  CLI model catalog
                          │
           shared GLM-5.3 identity matcher
               contains glm-5.3, next != digit
                          │
-                 default policy 收敛
+                 default policy converges
                  levels=[low, high, max]
                  default=max
                          │
@@ -110,14 +113,14 @@ GLM-5.3 的 image 能力采用 GLM-5.2 已有的 provider-aware 判定，而不�
                          ▼
  provider wire: reasoning_effort="low|high|max"
 
-App 动态 provider（含 ToB 别名）
-          ├─ context / output / media：保留显式配置
+App dynamic provider (including ToB aliases)
+          ├─ context / output / media: keep explicit configuration
           │                         │
-          │                         └─ image 未知时复用 GLM-5.2
+          │                         └─ image unknown: reuse the GLM-5.2
           │                            provider-aware fallback
           │
           └─ shared identity matcher
-             在入站 reasoning 前重建官方三档
+             rebuilds the official three levels before inbound reasoning
                           │
                           ▼
              anthropic.effort + thinking budget
@@ -126,139 +129,83 @@ App 动态 provider（含 ToB 别名）
              provider wire: output_config.effort + thinking
 ```
 
-模型能力仍是思考档位的事实源。既有 UI 根据能力列表渲染并切换档位，不增加
-`glm-5.3` 模型 ID 分支。
+Model capability remains the source of truth for thinking levels. The existing UI renders and switches levels
+from the capability list and gets no `glm-5.3` model ID branch.
 
-## 实现
+## Implementation
 
-1. 在 `reasoning-policy.ts` 新增 GLM-5.3 的三档常量与 OpenAI-compatible factory。
-2. 在 shared 增加统一模型身份判断，并由 `default-policy.ts` 使用；该策略放在所有宽泛
-   模型策略之后，作为顺序合并的最终覆盖项。互斥分支则在 Kimi、DeepSeek、Claude、GPT
-   等模型判断之前先判断 GLM-5.3。
-3. 更新 `models_catalog_china_llm_zcode_2026-06-03.json`，为四个 Anthropic
-   provider 增加 GLM-5.3，档位与当前动态 Anthropic 请求事实一致。
-4. 更新 `apps/zcode-cli/api.json` 中四个对应 provider，并重新生成
-   `models-dev-snapshot.ts`。
-5. App catalog 仅在模型 ID 大小写不敏感地精确等于 `glm-5.3` 时使用 canonical catalog
-   metadata；带路径、前缀或后缀的路由 ID 不做关联。
-6. workspace dynamic overlay 在通用 GLM 分支之前识别 GLM-5.3，按 OpenAI-compatible
-   或 Anthropic transport 重建官方三档和 provider options；不覆盖入站 context、max
-   output 或媒体能力。
-7. GLM-5.3 默认 reasoning 策略不声明 `supportsImages`；runtime 媒体能力缺失时与
-   GLM-5.2 共用 provider-aware fallback，并把 `glm-5.3-*` 后缀变体纳入相同 unknown
-   语义；精确 Highspeed 变体除外，该已知 text-only 变体 fail closed。
+1. Add the GLM-5.3 three-level constants and the OpenAI-compatible factory in `reasoning-policy.ts`.
+2. Add a unified model identity check in shared, used by `default-policy.ts`; the policy sits after all broad
+   model policies as the final override of the sequential merge. A mutually exclusive branch checks GLM-5.3
+   before the Kimi, DeepSeek, Claude, GPT and similar model checks.
+3. Update `models_catalog_china_llm_zcode_2026-06-03.json` to add GLM-5.3 to the four Anthropic providers, with
+   levels consistent with the current dynamic Anthropic request facts.
+4. Update the four corresponding providers in `apps/zcode-cli/api.json` and regenerate
+   `models-dev-snapshot.ts`.
+5. The App catalog uses the canonical catalog metadata only when the model ID case-insensitively equals exactly
+   `glm-5.3`; routing IDs with a path, prefix or suffix are not associated.
+6. The workspace dynamic overlay recognizes GLM-5.3 before the generic GLM branch and rebuilds the official
+   three levels and provider options by OpenAI-compatible or Anthropic transport; it does not override inbound
+   context, max output or media capability.
+7. The GLM-5.3 default reasoning policy does not declare `supportsImages`; when runtime media capability is
+   missing it shares the provider-aware fallback with GLM-5.2 and brings `glm-5.3-*` suffix variants into the
+   same unknown semantics; the exact Highspeed variant is the exception, a known text-only variant that fails
+   closed.
 
-## 测试
+## Tests
 
-- shared/default policy：官方 ID、大小写、provider path、任意前缀与非数字后缀均命中
-  1M/128K/三档；即使同时包含 DeepSeek、Claude、GPT 或 Opus token 也以
-  GLM-5.3 为准；`glm-5.30`、`glm-5.31` 与 GLM-5.2 不误命中。
-- reasoning factory：三个档位都只生成对应的
-  `openaiCompatible.reasoningEffort`，默认 `max`。
-- models.dev snapshot：四个 provider 都包含 GLM-5.3 的基础能力。
-- 中国模型目录：四个 provider 都包含 GLM-5.3、三档 reasoning 与 Anthropic patch。
-- wire：OpenAI-compatible 的 `low` / `high` / `max` 都生成顶层
-  `reasoning_effort`。
-- App catalog：`glm-5.3` / `GLM-5.3` 能补齐缺失 output 等 metadata 并扩展 canonical
-  reasoning；缺失 context 使用 App 的 200K 默认值，已有其他合法 context 保持不变；带路径、
-  前缀或后缀的 ID 不做 canonical enrichment，非目录自定义 reasoning 保持不变。
-- dynamic overlay：无 reasoning metadata 或带通用 toggle 的 GLM-5.3 别名仍被重建为
-  `low` / `high` / `max`，并按真实 transport 生成参数；显式 context、max output 和
-  media 配置保持不变。
-- runtime media：GLM-5.3 与 GLM-5.2 一样保留显式 `supportsImages`；缺失时覆盖
-  OpenAI Chat、官方 Anthropic、第三方 provider 和后缀变体的 provider-aware 分支；
-  精确 Highspeed 为 text-only，更长后缀仍保持 unknown。
+- shared/default policy: official ID, case, provider path, any prefix and non-digit suffix all hit
+  1M/128K/three levels; GLM-5.3 prevails even when DeepSeek, Claude, GPT or Opus tokens are also present;
+  `glm-5.30`, `glm-5.31` and GLM-5.2 are not falsely matched.
+- reasoning factory: each of the three levels generates only the matching `openaiCompatible.reasoningEffort`,
+  default `max`.
+- models.dev snapshot: all four providers contain GLM-5.3's base capability.
+- China model catalog: all four providers contain GLM-5.3, three-level reasoning and the Anthropic patch.
+- wire: OpenAI-compatible `low` / `high` / `max` all generate the top-level `reasoning_effort`.
+- App catalog: `glm-5.3` / `GLM-5.3` fill missing metadata such as output and extend canonical reasoning; a
+  missing context uses the App's 200K default and any other existing legal context is kept; IDs with a path,
+  prefix or suffix get no canonical enrichment, and non-catalog custom reasoning is unchanged.
+- dynamic overlay: a GLM-5.3 alias without reasoning metadata or with a generic toggle is still rebuilt as
+  `low` / `high` / `max` with parameters generated by the real transport; explicit context, max output and
+  media configuration are unchanged.
+- runtime media: like GLM-5.2, GLM-5.3 keeps explicit `supportsImages`; when missing, the provider-aware
+  branches for OpenAI Chat, official Anthropic, third-party providers and suffix variants are covered; exact
+  Highspeed is text-only, longer suffixes stay unknown.
 
-## 影响简报
-
-### Feature Summary
-
-| Field            | Value                                                                       |
-| ---------------- | --------------------------------------------------------------------------- |
-| Developer intent | 按 Kimi K3 的分层方式补齐 GLM-5.3，并与 GLM-5.2 共用媒体能力判定            |
-| Capability       | Model capabilities / provider catalog                                       |
-| Change layer     | option-source、validation                                                   |
-| Operating mode   | implementation-handoff                                                      |
-| Primary seeds    | matcher、catalog、dynamic overlay、reasoning policy、runtime media resolver |
-| Out of scope     | UI、session/replay、builtin entitlement                                     |
-
-### Shared And Divergent Behavior
-
-| Concern              | Shared across surfaces                   | Deliberately different                            | Why it matters               |
-| -------------------- | ---------------------------------------- | ------------------------------------------------- | ---------------------------- |
-| Option source        | 各模型选择入口消费同一 provider registry | 各入口保持既有过滤与默认值                        | catalog 补齐后无需 UI 硬编码 |
-| Reasoning capability | low/high/max、默认 max                   | OpenAI-compatible 与 Anthropic 各自映射 wire 参数 | 不能把 namespace 混用        |
-| Media capability     | 显式 provider/catalog metadata 优先      | 缺失时按 GLM-5.2 provider-aware fallback 判定     | 避免误 strip 或误透传图片    |
-| Persistence/recovery | 保持既有 provider/session 持久化         | desktop continuous 与 web replayable 各守原边界   | 本次不引入同步状态           |
-
-### Feature Relationships
-
-| Rank           | From                   | Semantic edge                    | To                             | Condition             | Evidence                      |
-| -------------- | ---------------------- | -------------------------------- | ------------------------------ | --------------------- | ----------------------------- |
-| must-inspect   | model catalog          | projects capabilities to         | provider registry              | 加载 GLM-5.3          | catalog source tests          |
-| must-inspect   | default policy         | supplies missing facts to        | CLI model catalog              | 静态或自定义 provider | adapter tests                 |
-| must-inspect   | thought level          | projects to                      | provider request options       | low/high/max          | wire tests                    |
-| must-inspect   | shared model identity  | classifies                       | CLI policies + dynamic overlay | GLM-5.3 aliases       | shared/adapter/protocol tests |
-| must-inspect   | App catalog lookup     | enriches exact model only        | provider store metadata        | exact `glm-5.3` only  | service tests                 |
-| must-inspect   | App dynamic provider   | rebuilds reasoning before        | workspace catalog overlay      | GLM-5.3 aliases       | protocol tests                |
-| must-inspect   | runtime media resolver | classifies unknown image support | provider request projection    | GLM-5.3 metadata 缺失 | model-selection tests         |
-| invariant-only | provider registry      | must not change                  | session/replay boundaries      | all clients           | no UI/protocol state diff     |
+## Impact brief
 
 ### State Owners And Commit Sinks
 
-| State/fact           | Draft/display owner         | Authoritative owner           | Commit sink            | Evidence                 |
-| -------------------- | --------------------------- | ----------------------------- | ---------------------- | ------------------------ |
-| GLM-5.3 静态能力     | 各模型选择入口              | catalog + CLI default policy  | 既有 provider registry | catalog/adapter tests    |
-| 当前 reasoning 档位  | composer/runtime projection | session settings              | 既有 model switch      | wire test                |
-| 动态 reasoning patch | workspace overlay           | shared identity + CLI overlay | 既有协议同步           | protocol regression test |
-| 动态 image 能力      | provider registry / catalog | runtime media resolver        | provider request 投影  | model-selection tests    |
+| State/fact                | Draft/display owner         | Authoritative owner           | Commit sink                 | Evidence                 |
+| ------------------------- | --------------------------- | ----------------------------- | --------------------------- | ------------------------ |
+| GLM-5.3 static capability | each model-selection entry  | catalog + CLI default policy  | existing provider registry  | catalog/adapter tests    |
+| current reasoning level   | composer/runtime projection | session settings              | existing model switch       | wire test                |
+| dynamic reasoning patch   | workspace overlay           | shared identity + CLI overlay | existing protocol sync      | protocol regression test |
+| dynamic image capability  | provider registry / catalog | runtime media resolver        | provider request projection | model-selection tests    |
 
 ### Must-Preserve Invariants
 
-| Invariant                                      | Proof needed                                | Evidence              |
-| ---------------------------------------------- | ------------------------------------------- | --------------------- |
-| 只有 low/high/max，默认 max                    | capability equality                         | adapter/catalog tests |
-| GLM-5.2 与普通 GLM 策略不变                    | negative assertions + existing suite        | default-policy tests  |
-| ToB alias 不落入其他宽泛模型策略               | 冲突 token 下仍得到官方三档                 | adapter/protocol test |
-| 原始 ToB 模型 ID 不被 canonical 化             | provider registry key 与请求 model 保持原值 | service/wire test     |
-| App catalog 不 enrichment 路由别名             | 前后缀和 path ID 保持入站 metadata          | service test          |
-| 显式 image 配置优先，unknown 与 GLM-5.2 同判定 | provider/transport/后缀组合断言             | bootstrap unit tests  |
-| 不改变 provider entitlement 与 UI/session 状态 | related files absent from diff              | diff review           |
+| Invariant                                                 | Proof needed                                                  | Evidence              |
+| --------------------------------------------------------- | ------------------------------------------------------------- | --------------------- |
+| Only low/high/max, default max                            | capability equality                                           | adapter/catalog tests |
+| GLM-5.2 and ordinary GLM policies unchanged               | negative assertions + existing suite                          | default-policy tests  |
+| ToB alias does not fall into other broad model policies   | still gets the official three levels under conflicting tokens | adapter/protocol test |
+| The original ToB model ID is not canonicalized            | provider registry key and request model keep the original     | service/wire test     |
+| App catalog does not enrich routing aliases               | prefix/suffix and path IDs keep inbound metadata              | service test          |
+| Explicit image config first, unknown decided like GLM-5.2 | provider/transport/suffix combination assertions              | bootstrap unit tests  |
+| No change to provider entitlement and UI/session state    | related files absent from diff                                | diff review           |
 
-### Codegraph Evidence
+## Case plan
 
-当前环境没有可用 codegraph 工具，按 skill 约定使用 `rg` 回退。调用链为：
+| Case ID   | Setup                                      | Action                                   | Assertions                                             | Evidence layer        | E2E status |
+| --------- | ------------------------------------------ | ---------------------------------------- | ------------------------------------------------------ | --------------------- | ---------- |
+| GLM53-001 | models.dev disabled                        | query official/ToB/path/near IDs         | non-digit suffix hits, digit continuation rejected     | shared + adapter unit | not-needed |
+| GLM53-002 | load bundled snapshot                      | iterate the four providers               | all have GLM-5.3 base capability                       | adapter integration   | not-needed |
+| GLM53-003 | load China model catalog                   | iterate the four providers               | three levels/default/Anthropic patch correct           | service unit          | not-needed |
+| GLM53-004 | OpenAI-compatible fake fetch               | select each of the three levels          | wire has the matching reasoning_effort                 | adapter wire          | not-needed |
+| GLM53-005 | dynamic Anthropic/OpenAI fixture           | sync a ToB alias without metadata        | three levels and matching transport options rebuilt    | protocol integration  | not-needed |
+| GLM53-006 | App config with exact and routing IDs      | load provider                            | exact ID filled; routing ID not enriched               | service integration   | not-needed |
+| GLM53-007 | GLM-5.3 missing or explicit image metadata | resolve capability by provider/transport | consistent with GLM-5.2 fallback; explicit value first | bootstrap unit        | not-needed |
 
-```text
-catalog/default-policy
-        -> ModelCatalogSource / ModelCatalogService
-        -> workspace model catalog override
-        +-> runtime thought-level providerOptions -> AI SDK request body
-        +-> runtime media capability resolver -> provider-visible messages
-```
-
-### Graph Delta
-
-| Status    | Node                            | Semantic reason                                                | Action             |
-| --------- | ------------------------------- | -------------------------------------------------------------- | ------------------ |
-| confirmed | `capability.model-capabilities` | GLM-5.3 spec、reasoning factory 与 media resolver 成为事实入口 | 更新 feature graph |
-
-### Unresolved Questions
-
-无。用户已明确任意前后缀都允许，只排除 `glm-5.3` 后紧跟数字；动态 context/output/media
-保留显式配置，缺失 image 能力与 GLM-5.2 使用相同 provider-aware 判定。
-
-## 用例规划
-
-| Case ID   | Setup                             | Action                         | Assertions                           | Evidence layer        | E2E status |
-| --------- | --------------------------------- | ------------------------------ | ------------------------------------ | --------------------- | ---------- |
-| GLM53-001 | 关闭 models.dev                   | 查询官方/ToB/带 path/近似 ID   | 非数字后缀命中，数字续写拒绝         | shared + adapter unit | not-needed |
-| GLM53-002 | 加载 bundled snapshot             | 遍历四个 provider              | 都有 GLM-5.3 基础能力                | adapter integration   | not-needed |
-| GLM53-003 | 加载中国模型目录                  | 遍历四个 provider              | 三档/default/Anthropic patch 正确    | service unit          | not-needed |
-| GLM53-004 | OpenAI-compatible fake fetch      | 分别选择三档                   | wire 有对应 reasoning_effort         | adapter wire          | not-needed |
-| GLM53-005 | 动态 Anthropic/OpenAI fixture     | 同步无 metadata 的 ToB alias   | 重建三档与对应 transport options     | protocol integration  | not-needed |
-| GLM53-006 | App config 含 exact 与路由 ID     | 加载 provider                  | exact ID 补齐；路由 ID 不 enrichment | service integration   | not-needed |
-| GLM53-007 | GLM-5.3 缺失或显式 image metadata | 按 provider/transport 解析能力 | 与 GLM-5.2 fallback 一致；显式值优先 | bootstrap unit        | not-needed |
-
-本次不增加 conversation E2E：没有修改 UI 交互、模型切换提交、session 状态或
-realtime/replayable 语义，分层单元与 wire 测试直接覆盖新增行为。
+No conversation E2E is added: no UI interaction, model switch commit, session state or realtime/replayable
+semantics changed, and the layered unit and wire tests cover the new behavior directly.

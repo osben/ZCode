@@ -168,7 +168,7 @@ describe("恢复查询的意图与模式边界", () => {
     );
     await act(async () => {});
     expect(missing).not.toHaveBeenCalled();
-    expect(readPersistedPaneSession(workspaceKey)).toBe("task-a");
+    expect(readPersistedPaneSession(workspaceKey)).toEqual({ sessionId: "task-a" });
     const nextLookup = vi.fn(async () => true);
     await act(async () => rerender({ lookupSession: nextLookup }));
     expect(nextLookup).toHaveBeenCalledWith("task-a");
@@ -233,7 +233,7 @@ describe("恢复查询的意图与模式边界", () => {
       }),
     );
     await act(async () => {});
-    expect(readPersistedPaneSession(workspaceKey)).toBe("desktop-task");
+    expect(readPersistedPaneSession(workspaceKey)).toEqual({ sessionId: "desktop-task" });
     expect(selectSession).not.toHaveBeenCalled();
     expect(lookup).not.toHaveBeenCalled();
     expect(missing).not.toHaveBeenCalled();

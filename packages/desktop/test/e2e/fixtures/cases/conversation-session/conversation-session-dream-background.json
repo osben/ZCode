@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-dream-background",
+  "spec": "./test/e2e/conversation-session/conversation-session-dream-background.test.ts",
+  "providerFixtures": [
+    "./test/e2e/fixtures/upstream/common.json",
+    "./test/e2e/fixtures/upstream/conversation-session/conversation-session-dream-background.json"
+  ],
+  "fileFixtures": [],
+  "requests": [
+    {
+      "id": "dream-title",
+      "kind": "common",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "Deterministic manual Dream lifecycle, concurrent input and cancellation window."
+    },
+    {
+      "id": "dream-extraction",
+      "kind": "ignore",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "Deterministic manual Dream lifecycle, concurrent input and cancellation window."
+    },
+    {
+      "id": "dream-read",
+      "kind": "main",
+      "timingPolicy": "controlled-stream",
+      "source": "synthetic",
+      "syntheticReason": "Deterministic manual Dream lifecycle, concurrent input and cancellation window."
+    },
+    {
+      "id": "dream-final",
+      "kind": "main",
+      "timingPolicy": "controlled-stream",
+      "source": "synthetic",
+      "syntheticReason": "Deterministic manual Dream lifecycle, concurrent input and cancellation window."
+    },
+    {
+      "id": "dream-main-history",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "Deterministic manual Dream lifecycle, concurrent input and cancellation window."
+    },
+    {
+      "id": "dream-main-current",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "Deterministic manual Dream lifecycle, concurrent input and cancellation window."
+    },
+    {
+      "id": "dream-main-parallel",
+      "kind": "main",
+      "timingPolicy": "fast-text",
+      "source": "synthetic",
+      "syntheticReason": "Deterministic manual Dream lifecycle, concurrent input and cancellation window."
+    }
+  ]
+}

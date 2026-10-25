@@ -35,6 +35,7 @@ import type {
 } from "@zcode/contracts";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { SessionEventType, isFileSystemPortError } from "@zcode/contracts";
+import { ACP_PROVIDER_ID_PREFIX } from "@zcode/provider";
 import type { ZCodeWorkspaceRef } from "@zcode/shared";
 import { extractMarkdownArtifactImageRefs } from "@zcode/shared";
 import type {
@@ -173,6 +174,7 @@ function rowTargetActionForCommand(
     case "retryTurn":
     case "applyFileRewind":
     case "setAssistantFeedback":
+    case "setRowPinned":
     case "setHighspeedMetrics":
       return type;
     default:
@@ -217,13 +219,37 @@ interface BinaryReadCacheEntry {
   payload: Promise<{ bytes: Uint8Array; mediaType: string }>;
 }
 
+/** sessions-index metadata for one session: derived by the host, carried into summary derivation. */
+interface SessionIndexMeta {
+  createdAt: number;
+  lastActivityAt: number;
+  lastOutcome?: SessionSummary["lastOutcome"];
+  parentSessionId?: string;
+  /** Execution worktree facts from the runtime; present only for worktree sessions. */
+  executionWorktree?: { path: string; branchName?: string };
+  /**
+   * Sidebar child-conversation facts (spec: sidebar-child-conversation-counts.md §3): true totals
+   * from the store plus the capped newest-first list; running facts come from the live registry.
+   */
+  sideChatCount?: number;
+  subagentCount?: number;
+  runningSubagentCount?: number;
+  childSessions?: SessionSummary["childSessions"];
+  /** True when the worktree directory is absent on disk (host-side stat); drives the missing badge. */
+  executionWorktreeMissing?: boolean;
+  /** True for an incognito session; drives the sidebar incognito marker. */
+  incognito?: boolean;
+}
+
 export interface V4GatewayHost {
   cliVersion?: string;
-  /** 会话是否在宿主注册表中活跃（inbox 的 sessionNotFound 裁决依据）。 */
+  /** Whether the session is active in the host registry (basis for the inbox's sessionNotFound decision). */
   sessionExists(sessionId: string): boolean;
+  /** Restore a persisted runtime-less preparation before subscribe decides between live and cold resume. */
+  restorePreparedSession?(sessionId: string): Promise<void>;
   /**
-   * V4 冷恢复钩子。gateway 用同一个 READY promise 包住 runtime activation 与 projection
-   * hydration；宿主只负责恢复 record。
+   * V4 cold-recovery hook. The gateway wraps runtime activation and projection hydration in the same
+   * READY promise; the host only restores the record.
    */
   loadPersistedMessages?(sessionId: string): Promise<MessageWithParts[]>;
   retainSessionRuntime?(sessionId: string): Promise<() => void>;
@@ -253,13 +279,19 @@ export interface V4GatewayHost {
    * 未实现（旧宿主）→ sessions-index 路径整体不激活（no-op），不影响 conversation。
    */
   getSessionWorkspaceId?(sessionId: string): string | null;
+  /** Parent of a side-chat record (sidebar §9); subagents and primary forks are excluded by the host. */
+  getChildSessionParentId?(sessionId: string): string | null;
+  /** Side-chat activity refreshes the parent summary without changing its activity timestamp. */
+  onChildSessionActivity?(parentSessionId: string, childSessionId: string): void;
   /** sessions-index：会话的列表用元信息（createdAt/父会话/最后活动时刻）。 */
-  getSessionIndexMeta?(sessionId: string): {
-    createdAt: number;
-    lastActivityAt: number;
-    lastOutcome?: SessionSummary["lastOutcome"];
-    parentSessionId?: string;
-  } | null;
+  getSessionIndexMeta?(sessionId: string): SessionIndexMeta | null;
+  /** Runtime-less Host-owned setup facts for a preparing session's initial conversation snapshot. */
+  getSessionSubmissionPreparationSeed?(
+    sessionId: string,
+  ): ConversationSnapshot["meta"]["submissionPreparation"] | null;
+  getSessionPreparationSeed?(
+    sessionId: string,
+  ): ConversationSnapshot["meta"]["worktreePreparation"] | null;
   /**
    * config 种子：会话 runtime 的当前真值（模型选型/思考深度/协作模式）。
    * 投影初值不能写死空值——runtime 的启动默认模型、项目持久化 mode 偏好、历史会话
@@ -268,6 +300,14 @@ export interface V4GatewayHost {
    * 会话不在册返回 null（gateway 跳过，保持空初值）；未实现（旧宿主/测试桩）同。
    */
   getSessionConfigSeed?(sessionId: string): SessionConfigSeed | null;
+  /**
+   * Stored selects of the session's ACP agent (specs/acp-agent-runtime.md "S6"). Session events live in
+   * memory only, so a cold projection reads the offered options from the session binding instead.
+   */
+  getSessionExternalAgentConfigSeed?(
+    sessionId: string,
+    providerId: string,
+  ): Promise<ConversationSnapshot["config"]["externalAgentConfig"] | null>;
   /** 只读会话创建期 App 开关，不读取实时设置或推断 Memory 工具使用。 */
   getSessionMemoryEnabled?(sessionId: string): boolean | undefined;
   /**
@@ -628,11 +668,15 @@ export class ConversationV4Gateway {
     string,
     Map<string, Set<ProjectionEventCommitWaiter>>
   >();
-  /** 没有独立 bootstrap record、但由父 runtime 持续转发 raw events 的 live child。 */
+  /** Live child with no separate bootstrap record, whose parent runtime continues forwarding raw events. */
   private readonly detachedLiveSessions = new Set<string>();
+  /** Detached subagents currently between TurnStarted and their terminal event. */
+  private readonly detachedRunningSessions = new Set<string>();
   /**
-   * detached subagent child 的父 record 归属与终态时间。child 没有自己的 record，publisher 只能随父 record 释放，
-   * 或在 turn 结束且无订阅者、超过 grace 后由低频 tick 释放；否则会驻留到进程退出。
+   * Parent-record ownership and terminal time for a detached subagent child. The child has no record
+   * of its own, so the publisher can be released with the parent record or by a low-frequency tick
+   * after the turn ends, there are no subscribers, and the grace period expires; otherwise it stays
+   * resident until process exit.
    */
   private readonly detachedChildParent = new Map<string, string>();
   private readonly detachedChildrenByParent = new Map<string, Set<string>>();
@@ -686,6 +730,22 @@ export class ConversationV4Gateway {
     publisher.seedSharedContextImport(source);
     for (const [routeKey, state] of this.flushStates) {
       if (state.sessionId === sessionId) this.scheduleFlush(routeKey, state, publisher);
+    }
+  }
+
+  /** Publish the initial list/topic projection for a Host-reserved session identity. */
+  notifyPreparedSessionChanged(sessionId: string): void {
+    try {
+      const publisher = this.ensurePublisher(sessionId);
+      publisher.seedWorktreePreparation(this.host.getSessionPreparationSeed?.(sessionId));
+      publisher.seedSubmissionPreparation(this.host.getSessionSubmissionPreparationSeed?.(sessionId));
+      publisher.requestSnapshotForSubscribers();
+      for (const [routeKey, state] of this.flushStates) {
+        if (state.sessionId === sessionId) this.scheduleFlush(routeKey, state, publisher);
+      }
+      this.publishCurrentSummaryToIndex(sessionId);
+    } catch (error) {
+      this.host.onError?.("v4.preparedSession.publish", error);
     }
   }
 
@@ -1126,8 +1186,11 @@ export class ConversationV4Gateway {
       if (state.sessionId !== sessionId) continue;
       this.scheduleFlush(routeKey, state, publisher);
     }
-    // sessions-index fan-out（防御式：任何异常都不能打断 conversation 主路径）。
+    // Fan out to sessions-index defensively; no exception may interrupt the main conversation path.
     this.fanOutToIndex(sessionId, event);
+    if (event.type !== SessionEventType.ModelStreaming) {
+      this.notifyParentOfChildActivity(sessionId);
+    }
   }
 
   /**
@@ -1152,19 +1215,47 @@ export class ConversationV4Gateway {
       }
       children.add(sessionId);
     }
-    // child 是一次性 session，没有 record 也没有后继 turn，publisher 曾驻留到进程退出。
-    // 记下终态时间，供 pruneDetachedChildPublishers 在 grace 后释放；child 再次开 turn 则撤销。
+    // The child is a one-shot session with no record or later turn; its publisher previously stayed
+    // until process exit. Record terminal time so pruneDetachedChildPublishers releases it after the
+    // grace period; clear the mark if the child starts another turn.
     if (event.type === SessionEventType.TurnComplete || event.type === SessionEventType.TurnError) {
       this.detachedTerminalAt.set(sessionId, Date.now());
+      this.detachedRunningSessions.delete(sessionId);
     } else if (event.type === SessionEventType.TurnStarted) {
       this.detachedTerminalAt.delete(sessionId);
+      this.detachedRunningSessions.add(sessionId);
     }
     this.ingest(sessionId, event);
   }
 
+  /** Detached subagents have no host session record, so expose their gateway-owned lifecycle facts. */
+  getDetachedChildSessionFacts(): Array<{
+    parentSessionId: string;
+    sessionId: string;
+    running: boolean;
+  }> {
+    return [...this.detachedChildParent].map(([sessionId, parentSessionId]) => ({
+      parentSessionId,
+      sessionId,
+      running: this.detachedRunningSessions.has(sessionId),
+    }));
+  }
+
+  private notifyParentOfChildActivity(sessionId: string): void {
+    // Sidebar child facts cover side chats only (§9); detached subagents never notify the parent.
+    const parentSessionId = this.host.getChildSessionParentId?.(sessionId) ?? null;
+    if (!parentSessionId || parentSessionId === sessionId) return;
+    try {
+      this.host.onChildSessionActivity?.(parentSessionId, sessionId);
+    } catch (error) {
+      this.host.onError?.("v4.sessionsIndex.childActivity", error);
+    }
+  }
+
   /**
-   * 低频 tick 兜底：释放已终态、无订阅者、且没有自己 record 的 detached child publisher。
-   * 释放后再被订阅走既有 cold resume（child 作为 subagent_child 持久化在 session store）。返回释放数。
+   * Low-frequency fallback tick: release detached child publishers that are terminal, have no
+   * subscribers, and have no record of their own. A later subscription uses the existing cold-resume
+   * path (the child is persisted as subagent_child in the session store). Returns the number released.
    */
   pruneDetachedChildPublishers(
     nowMs: number = Date.now(),
@@ -1235,18 +1326,42 @@ export class ConversationV4Gateway {
   }
 
   /** 会话列表元信息（宿主 hook 缺省时的兜底：createdAt=0，lastActivityAt=now）。 */
-  private resolveIndexMeta(sessionId: string): {
-    createdAt: number;
-    lastActivityAt: number;
-    lastOutcome?: SessionSummary["lastOutcome"];
-    parentSessionId?: string;
-  } {
+  /** Re-derive a live parent summary after its child facts cache refreshes. */
+  publishSessionIndexSummary(sessionId: string): void {
+    this.publishCurrentSummaryToIndex(sessionId);
+  }
+
+  /** Publish child-store facts for an existing index row, including parents with no live runtime. */
+  publishSessionIndexChildFacts(
+    sessionId: string,
+    facts: Pick<
+      SessionSummary,
+      "sideChatCount" | "subagentCount" | "runningSubagentCount" | "childSessions"
+    >,
+  ): void {
+    for (const workspaceId of this.indexPublishers.keys()) {
+      const publisher = this.indexPublishers.get(workspaceId);
+      if (publisher?.updateChildFacts(sessionId, facts)) this.flushIndex(workspaceId);
+    }
+  }
+
+  /** 会话列表元信息（宿主 hook 缺省时的兜底：createdAt=0，lastActivityAt=now）。 */
+  private resolveIndexMeta(sessionId: string): SessionIndexMeta {
     const meta = this.host.getSessionIndexMeta?.(sessionId);
     return {
       createdAt: meta?.createdAt ?? 0,
       lastActivityAt: meta?.lastActivityAt ?? this.now(),
       ...(meta?.lastOutcome ? { lastOutcome: meta.lastOutcome } : {}),
       ...(meta?.parentSessionId ? { parentSessionId: meta.parentSessionId } : {}),
+      ...(meta?.executionWorktree ? { executionWorktree: meta.executionWorktree } : {}),
+      ...(meta?.sideChatCount ? { sideChatCount: meta.sideChatCount } : {}),
+      ...(meta?.subagentCount ? { subagentCount: meta.subagentCount } : {}),
+      ...(meta?.runningSubagentCount ? { runningSubagentCount: meta.runningSubagentCount } : {}),
+      ...(meta?.childSessions && meta.childSessions.length > 0
+        ? { childSessions: meta.childSessions }
+        : {}),
+      ...(meta?.executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
+      ...(meta?.incognito ? { incognito: true } : {}),
     };
   }
 
@@ -1505,6 +1620,10 @@ export class ConversationV4Gateway {
     if (sessionId === null) {
       throw new Error(`Unsupported topic: ${params.topic}`);
     }
+    // A subscribe may race the createSession that reserved this id (the renderer subscribes as soon as it
+    // reserves). Wait for that create, so "not found" is only answered for a session that does not exist.
+    await this.inbox.whenSessionCreationSettles(sessionId);
+    await this.host.restorePreparedSession?.(sessionId);
     const isLiveConversation = this.hasLiveConversation(sessionId);
     this.host.onDebug?.(
       `subscribe conversation session=${sessionId} coldResume=${String(!isLiveConversation)}`,
@@ -1547,6 +1666,8 @@ export class ConversationV4Gateway {
                 params.additionalDirectories,
               )
             : await this.hydratePublisher(sessionId);
+    publisher.seedWorktreePreparation(this.host.getSessionPreparationSeed?.(sessionId));
+      publisher.seedSubmissionPreparation(this.host.getSessionSubmissionPreparationSeed?.(sessionId));
     const cliSessionRestoreMs = !isLiveConversation
       ? Math.max(0, Math.round(performance.now() - restoreStartedAt))
       : undefined;
@@ -2764,6 +2885,10 @@ export class ConversationV4Gateway {
     return this.getQueueLength(sessionId) > 0 || this.inbox.hasPinnedSessionState(sessionId);
   }
 
+  getQueueAutoDrain(sessionId: string): boolean | null {
+    return this.publishers.get(sessionId)?.getSnapshot().queue.autoDrain ?? null;
+  }
+
   getQueueHead(sessionId: string): {
     autoDrain: boolean;
     dispatchState: QueueItem["dispatch"]["state"];
@@ -2952,8 +3077,10 @@ export class ConversationV4Gateway {
     if (options.clearCommandInbox) this.inbox.clearSession(sessionId);
     this.telemetryNormalizer.clearSession(sessionId);
     this.detachedLiveSessions.delete(sessionId);
+    this.detachedRunningSessions.delete(sessionId);
     this.projectionFaultedSessions.delete(sessionId);
-    // detached child 归属清理：自己作为 child 从父表摘除；作为父则连带释放没有 record 的 child。
+    // Clean up detached-child ownership: if this session is a child, remove it from the parent map;
+    // if it is a parent, also release children without their own record.
     this.detachedTerminalAt.delete(sessionId);
     const parentId = this.detachedChildParent.get(sessionId);
     if (parentId !== undefined) {
@@ -3005,6 +3132,7 @@ export class ConversationV4Gateway {
     this.rawSequenceStates.clear();
     this.telemetryEventIds.clear();
     this.detachedLiveSessions.clear();
+    this.detachedRunningSessions.clear();
     this.detachedChildParent.clear();
     this.detachedChildrenByParent.clear();
     this.detachedTerminalAt.clear();
@@ -3041,8 +3169,10 @@ export class ConversationV4Gateway {
         now: this.now,
       });
       this.publishers.set(sessionId, publisher);
-      // config 种子：创建即注入 runtime 真值（不产 delta / 不 bump revision）。
+      // Config seed: inject runtime truth at creation (emits no delta and does not bump revision).
       this.seedPublisherConfig(sessionId, publisher);
+      publisher.seedWorktreePreparation(this.host.getSessionPreparationSeed?.(sessionId));
+      publisher.seedSubmissionPreparation(this.host.getSessionSubmissionPreparationSeed?.(sessionId));
     }
     return publisher;
   }
@@ -3321,6 +3451,7 @@ export class ConversationV4Gateway {
       // 创建时种子可能落空（record 尚未入册），首次订阅补一次（幂等、事件优先）。
       this.hydrationBuffers.delete(sessionId);
       this.seedPublisherConfig(sessionId, latestPublisher);
+      await this.seedPublisherExternalAgentConfig(sessionId, latestPublisher);
       if (loaded.sharedContextImport) {
         latestPublisher.seedSharedContextImport(loaded.sharedContextImport);
       }
@@ -3437,6 +3568,7 @@ export class ConversationV4Gateway {
     // （reconcileResumedRuntimeSettings），而合成/持久化事件里可能没有 ModelSelected——
     // 种子只填事件未触碰的字段，日志有值时以日志为准（冷恢复口径）。
     this.seedPublisherConfig(sessionId, publisher);
+    await this.seedPublisherExternalAgentConfig(sessionId, publisher);
     if (loaded.usageSeed === undefined) {
       await this.seedPublisherUsage(sessionId, publisher, persistedMessages);
     }
@@ -3586,6 +3718,24 @@ export class ConversationV4Gateway {
    */
   private hasLiveConversation(sessionId: string): boolean {
     return this.host.sessionExists(sessionId) || this.detachedLiveSessions.has(sessionId);
+  }
+
+  private async seedPublisherExternalAgentConfig(
+    sessionId: string,
+    publisher: ConversationTopicPublisher,
+  ): Promise<void> {
+    const getSeed = this.host.getSessionExternalAgentConfigSeed;
+    if (!getSeed) return;
+    // Only an ACP agent session has an external config binding. Any other session skips the store, so a
+    // plain subscribe never reads the shared session database for it.
+    if (!publisher.getSnapshot().config.provider.startsWith(ACP_PROVIDER_ID_PREFIX)) return;
+    try {
+      publisher.seedExternalAgentConfig(
+        await getSeed.call(this.host, sessionId, publisher.getSnapshot().config.provider),
+      );
+    } catch (error) {
+      this.host.onError?.("v4.externalAgentConfigSeed", error);
+    }
   }
 
   private async seedPublisherUsage(

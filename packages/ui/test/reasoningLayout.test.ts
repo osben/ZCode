@@ -1,5 +1,5 @@
 import type { IBroadcastService, IServiceAccessor } from "@zcode/services";
-import type { IPlatformService } from "@zcode/shared";
+import type { IPlatformService, Locale } from "@zcode/shared";
 import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ServiceProvider } from "@/hooks/useServices.js";
 import { createElement } from "react";
@@ -7,6 +7,7 @@ import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 import { StoreProvider } from "@/store/StoreProvider.js";
 import {
   getReasoningBottomDistance,
@@ -61,7 +62,7 @@ function renderReasoningContent(
   content: string,
   reasoningProps: Partial<ComponentProps<typeof Reasoning>> = {},
   contentProps: Partial<ComponentProps<typeof ReasoningContent>> = {},
-  locale: "zh-CN" | "en-US" = "zh-CN",
+  locale: Locale = TEST_LOCALE,
 ) {
   return renderToStaticMarkup(
     createElement(
@@ -147,8 +148,8 @@ describe("Reasoning layout", () => {
       isStreaming: true,
     });
 
-    expect(html).toContain("正在思考");
-    expect(html).not.toContain("思考过程");
+    expect(html).toContain(expectedCopy("chat.reasoning.thinking"));
+    expect(html).not.toContain(expectedCopy("modelTrajectory.reasoning"));
     expect(html).toContain("animated-gradient-text");
     expect(html).not.toContain("正在分析输入。");
     expect(html).toContain("继续检查实现。");
@@ -178,9 +179,9 @@ describe("Reasoning layout", () => {
       isStreaming: true,
     });
 
-    expect(html).toContain("思考");
-    expect(html).not.toContain("思考过程");
-    expect(html).toContain("持续了 7 秒");
+    expect(html).toContain(expectedCopy("chat.reasoning.thought"));
+    expect(html).not.toContain(expectedCopy("modelTrajectory.reasoning"));
+    expect(html).toContain(expectedCopy("chat.reasoning.durationSeconds.other", { count: 7 }));
     expect(html).toContain('data-state="open"');
     expect(html).not.toContain("animated-gradient-text");
     expect(html).not.toContain('data-reasoning-streaming-line="true"');
@@ -197,6 +198,23 @@ describe("Reasoning layout", () => {
     expect(html).toContain("Thought");
     expect(html).toContain("2 seconds");
     expect(html).not.toContain("for 2 seconds");
+  });
+
+  it('pluralizes the duration per locale (ISSUE-059: no "1 seconds")', () => {
+    const render = (duration: number, locale: Locale) =>
+      renderReasoningContent(
+        "Checking.",
+        { defaultOpen: false, duration, isStreaming: false },
+        {},
+        locale,
+      );
+
+    expect(render(1, "en-US")).toContain("1 second<");
+    expect(render(1, "en-US")).not.toContain("1 seconds");
+    expect(render(2, "en-US")).toContain("2 seconds");
+    expect(render(1, "uk-UA")).toContain("1 с");
+    expect(render(5, "uk-UA")).toContain("5 с");
+    expect(render(1, "zh-CN")).toContain("持续了 1 秒");
   });
 
   it("adds a two-sided fade mask only while the streaming summary overflows", () => {
@@ -217,9 +235,9 @@ describe("Reasoning layout", () => {
       isStreaming: false,
     });
 
-    expect(html).toContain("思考");
-    expect(html).not.toContain("思考过程");
-    expect(html).toContain("持续了");
+    expect(html).toContain(expectedCopy("chat.reasoning.thought"));
+    expect(html).not.toContain(expectedCopy("modelTrajectory.reasoning"));
+    expect(html).toContain(expectedCopy("chat.reasoning.durationFewSeconds"));
     expect(html).not.toContain("animated-gradient-text");
     expect(html).not.toContain("已经完成的思考。");
     expect(html).toContain('data-state="closed"');

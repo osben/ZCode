@@ -1,190 +1,189 @@
 # Side Pane Tabs E2E Case Catalog
 
-## 范围
+## Scope
 
-本文记录 Side Pane Tab strip 的响应式宽度、溢出、操作按钮和标题 Tooltip 的桌面端 UI E2E 语义。该能力属于 UI shell presentation，不依赖 Agent、provider fixture、session realtime 或持久化恢复。
+This document records the desktop UI E2E semantics of the Side Pane Tab strip: responsive width, overflow, action buttons and title Tooltip. The capability belongs to UI shell presentation and does not depend on the Agent, provider fixtures, session realtime or persistence recovery.
 
-## 状态维度与剪枝
+## State Dimensions and Pruning
 
-| 维度          | 等价类                                                       | 决策                                                                                  |
-| ------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| 可用宽度      | 可容纳 156px / 需要在 156px 与 60px 间收缩 / 60px 仍无法容纳 | 三类均覆盖                                                                            |
-| Tab 类型      | Browser / Terminal / Diff / Code Viewer / session-scoped tab | 使用可重复创建的 Terminal 代表共享 `SidePaneTabTrigger`；类型专属内容不在本组重复覆盖 |
-| Tab 状态      | active / inactive                                            | 关闭按钮 case 同时覆盖                                                                |
-| Tooltip hover | 未满 1500ms / 满 1500ms / 跨 Tab                             | 三类均覆盖                                                                            |
-| 客户端        | Desktop / mobile Web touch                                   | Desktop 覆盖；触屏不依赖 hover，剪枝 Tooltip；移动布局由组件级响应式测试覆盖          |
-| 鼠标中键      | active / inactive tab                                        | Desktop 覆盖；中键关闭不激活目标 tab，并阻止浏览器默认中键滚动                        |
-| 其他交互      | 拖拽、右键、标签总览                                         | 不属于本次改动，使用既有组件测试，不在本组重复覆盖                                    |
+| Dimension         | Equivalence classes                                                       | Decision                                                                                                                         |
+| ----------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Available width   | fits 156px / must shrink between 156px and 60px / 60px still does not fit | All three covered                                                                                                                |
+| Tab type          | Browser / Terminal / Diff / Code Viewer / session-scoped tab              | A repeatedly creatable Terminal represents the shared `SidePaneTabTrigger`; type-specific content is not repeated here           |
+| Tab state         | active / inactive                                                         | Covered together by the close-button case                                                                                        |
+| Tooltip hover     | under 1500ms / 1500ms reached / across Tabs                               | All three covered                                                                                                                |
+| Client            | Desktop / mobile Web touch                                                | Desktop covered; touch does not rely on hover so Tooltip is pruned; mobile layout is covered by component-level responsive tests |
+| Middle click      | active / inactive tab                                                     | Desktop covered; a middle click closes without activating the target tab and prevents the browser's default middle-click scroll  |
+| Other interaction | drag, right click, tab overview                                           | Not part of this change; existing component tests, not repeated here                                                             |
 
-## 接受的 Case
+## Accepted Cases
 
-### SPT-E2E-000 独立面板平台圆角与拖动指示线
+### SPT-E2E-000 Independent panel platform radius and drag indicator
 
-- Setup：桌面新任务草稿，展开 Side Pane 和底部 Terminal，分别使用亮暗主题。
-- Action：等待平台状态和布局就绪，hover 并拖动 Sidebar、Side Pane、Terminal 手柄。
-- Assertions：Windows 5px，Sequoia 及更早 macOS 6px，Tahoe 26+ 12px，Linux 12px；三处热区保持 4px，指示线为沿边 2px foreground-subtlest/50、无 mask，默认隐藏且 hover/拖动可见，尺寸真实变化。
-- 数据链路补充：useAppChromeStateAutoUpdate.test.ts 运行真实 hook，以平台异步查询返回 macOS 15/26，验证半径与订阅清理；用于在非 macOS CI 中捕获 macOS 查询被守卫跳过的问题。不能替代 macOS 原生视觉验收。
+- Setup: desktop new-task draft, Side Pane and bottom Terminal expanded, light and dark theme each.
+- Action: wait for platform state and layout readiness, hover and drag the Sidebar, Side Pane and Terminal handles.
+- Assertions: Windows 5px, Sequoia and earlier macOS 6px, Tahoe 26+ 12px, Linux 12px; three hit areas stay 4px, the indicator is a 2px along-edge foreground-subtlest/50 line with no mask, hidden by default and visible on hover/drag, and sizes really change.
+- Data-chain addition: `useAppChromeStateAutoUpdate.test.ts` runs the real hook, with the async platform query returning macOS 15/26, verifying radius and subscription cleanup; it catches a macOS query skipped by a guard on non-macOS CI. It does not replace macOS native visual acceptance.
 
-### SPT-E2E-001 默认宽度与跟随加号
+### SPT-E2E-001 Default width and the following plus button
 
-- Setup：桌面窗口打开 Side Pane，仅创建一个 Terminal tab，空间足以容纳默认宽度。
-- Action：观察 tab strip。
-- Assertions：Tab 宽度为 156px（允许亚像素误差）；横向 viewport 无溢出；新增按钮位于滚动内容内并紧跟最后一个 Tab。
+- Setup: desktop window with Side Pane open and a single Terminal tab, with enough space for the default width.
+- Action: observe the tab strip.
+- Assertions: Tab width is 156px (sub-pixel tolerance); the horizontal viewport has no overflow; the add button sits inside the scroll content right after the last Tab.
 
-### SPT-E2E-002 等宽收缩但不滚动
+### SPT-E2E-002 Equal shrink without scrolling
 
-- Setup：创建三个 Terminal tabs，把窗口调整到需要收缩但仍能让每个 Tab 大于 60px 的宽度。
-- Action：等待 ResizeObserver 完成布局。
-- Assertions：所有 Tab 宽度相等；宽度处于 `[60px, 156px)`；横向 viewport 无溢出；新增按钮仍位于滚动内容内。
+- Setup: three Terminal tabs, window resized to need shrinking while every Tab stays above 60px.
+- Action: wait for ResizeObserver to finish layout.
+- Assertions: all Tab widths are equal; width is in `[60px, 156px)`; no horizontal viewport overflow; the add button is still inside the scroll content.
 
-### SPT-E2E-003 达到最小宽度后滚动
+### SPT-E2E-003 Scrolling after the minimum width is reached
 
-- Setup：继续创建 Terminal tabs，使 60px 最小宽度之和超过可用空间。
-- Action：等待溢出状态更新。
-- Assertions：所有 Tab 不小于 60px；viewport 的 `scrollWidth > clientWidth`；新增按钮移到 viewport 外、固定在右侧操作区。
+- Setup: keep creating Terminal tabs until the sum of 60px minimum widths exceeds the available space.
+- Action: wait for the overflow state to update.
+- Assertions: no Tab is below 60px; viewport `scrollWidth > clientWidth`; the add button moves outside the viewport, fixed in the right action area.
 
-### SPT-E2E-004 选中或 hover 时显示关闭按钮且不激活
+### SPT-E2E-004 Close button shows when selected or hovered and does not activate
 
-- Setup：至少两个 Tab，第二个为 active，第一个为 inactive。
-- Action：移开鼠标并清除焦点，检查关闭按钮可见性；hover inactive Tab 后点击其关闭按钮。
-- Assertions：active Tab 的关闭按钮可见；inactive Tab 未 hover 时隐藏、hover 后可见；inactive Tab 被关闭；原 active Tab 保持 active。
+- Setup: at least two Tabs, the second active, the first inactive.
+- Action: move the mouse away and clear focus, check close-button visibility; hover the inactive Tab and click its close button.
+- Assertions: the active Tab's close button is visible; the inactive Tab's is hidden when not hovered and visible on hover; the inactive Tab is closed; the original active Tab stays active.
 
-### SPT-E2E-005 Tooltip 独立等待 1500ms
+### SPT-E2E-005 Tooltip waits 1500ms independently
 
-- Setup：至少两个 Tab。
-- Action：hover 第一个 Tab 不满 1500ms，移到第二个 Tab，再等待到第二个 Tab 自己满 1500ms。
-- Assertions：第一个等待窗口内不显示 Tooltip；跨 Tab 后不会继承已等待时长；第二个 Tab 满 1500ms 后显示包含完整标题的 Tooltip。
+- Setup: at least two Tabs.
+- Action: hover the first Tab for under 1500ms, move to the second Tab, then wait until the second Tab itself reaches 1500ms.
+- Assertions: no Tooltip within the first wait window; the waited time is not inherited across Tabs; after the second Tab reaches 1500ms, a Tooltip with the complete title shows.
 
-### SPT-E2E-006 鼠标中键关闭且不激活
+### SPT-E2E-006 Middle-click close without activation
 
-- Setup：至少两个 Tab，第二个为 active，第一个为 inactive。
-- Action：在 inactive Tab 的标签主体上派发鼠标中键（`button=1`）事件。
-- Assertions：inactive Tab 被关闭；原 active Tab 保持 active；事件默认行为被阻止，且不会触发标签激活。
+- Setup: at least two Tabs, the second active, the first inactive.
+- Action: dispatch a middle-button (`button=1`) event on the label body of the inactive Tab.
+- Assertions: the inactive Tab is closed; the original active Tab stays active; the event default is prevented and no tab activation is triggered.
 
-### SPT-E2E-007 插件面板的空态与新标签页双入口
+### SPT-E2E-007 Plugin panel: empty state and new-tab dual entries
 
-- Setup：真实 `AnimatedSidePanePanel`、插件发现 hook 与打开动作；fixture 通过 `activateNewTabSidePane` 和统一归属函数创建并激活标签。推荐名单收录两个 surface，另一个开发 surface 不推荐；覆盖 1200px/en-US/亮色与 390px/zh-CN/暗色。
-- Action：从首次展开的默认 new-tab launcher 打开插件，再点击「+」创建 new-tab，从 active tabpanel 的 launcher 重复打开同一插件；新建另一个标签，使用 Tab/Enter 打开第二个插件。
-- Assertions：两入口展示相同推荐与本地化标题；请求保留工作区/会话字段，重复打开复用 plugin tab；安装、启用后必须另点打开。草稿会话隐藏整个应用插件区及分隔线、查看所有插件入口；已有会话从默认空态或显式新标签页进入市场均可返回来源，默认空态返回后保持面板展开。无宿主、无 bridge 无插件项；推荐为空或配置失败显示空态；冷加载显示 skeleton。新标签页保持可见，窄屏无横向溢出。
-- 操作进度回归：控制安装/启用响应，确认只有目标插件显示加载并禁用，其他插件保留原文案与可点击状态。连续提交两个不同插件安装，各自保留进度；一个失败或成功只清理自身，已启用插件仍可打开。同一插件重复点击只提交一次，失败可重试，成功不自动打开。覆盖空态与新标签页、桌面亮色英文与手机暗色中文。
-- 加载图标回归：等待响应期间，目标入口显示可见的旋转图标与 `aria-busy`；成功或失败后全部清除。同一插件的两个 surface 同步显示进度，其他插件无进度；减少动画偏好下图标保留但不旋转。
-- 边界：服务由浏览器 fixture 注入，在 plugin tab owner 边界检查请求，不启动沙箱、Agent 或真实手机远控。
-- 当前验证：2026-10-19 自动浏览器 E2E 16/16 通过，含 4 组并发安装与操作互不阻塞、8 组操作进度，以及同插件多 surface / 减少动画偏好回归。夹具按当前面板 owner 初始化默认 new-tab；仍为 manual-review/pending，不代表真实 Agent 安装、插件沙箱或手机远控验证。
+- Setup: real `AnimatedSidePanePanel`, plugin discovery hook and open action; the fixture creates and activates tabs through `activateNewTabSidePane` and the unified ownership function. The recommended list contains two surfaces and another development surface is not recommended; covers 1200px/en-US/light and 390px/zh-CN/dark.
+- Action: open a plugin from the default new-tab launcher on first expansion, click "+" to create a new-tab, and repeat-open the same plugin from the active tabpanel's launcher; create another tab and open a second plugin with Tab/Enter.
+- Assertions: both entries show the same recommendations and localized titles; requests keep the workspace/session fields, repeated opens reuse the plugin tab; after install or enable a separate click is needed to open. A draft session hides the whole app plugin area with its divider and the view-all-plugins entry; an existing session entering the marketplace from the default empty state or an explicit new tab can return to the source, and after returning from the default empty state the panel stays expanded. With no host and no bridge there are no plugin items; an empty recommendation or failed config shows the empty state; cold load shows a skeleton. The new tab stays visible and a narrow screen has no horizontal overflow.
+- Operation progress: with controlled install/enable responses, only the target plugin shows loading and is disabled, others keep their original copy and clickable state. Two different plugin installs submitted in a row each keep their progress; one failing or succeeding clears only itself, and enabled plugins can still be opened. Repeated clicks on the same plugin submit once, failure is retryable, success does not auto-open. Covers the empty state and new tab, desktop light English and phone dark Chinese.
+- Loading icon: while waiting for the response, the target entry shows a visible rotating icon and `aria-busy`, cleared on success or failure; the same plugin's two surfaces show progress in sync, other plugins show none; with reduced-motion preference the icon stays but does not rotate.
+- Boundary: services are injected by the browser fixture and requests are checked at the plugin tab owner boundary; no sandbox, Agent or real phone remote control. Browser E2E 16/16 passed (4 groups of concurrent install without blocking, 8 of operation progress, same-plugin multi-surface / reduced-motion regression). Stays manual-review/pending; it does not represent real Agent install, plugin sandbox or phone remote verification.
 
-### SPT-E2E-008 对话隔离的关闭与恢复（manual-review/pending）
+### SPT-E2E-008 Conversation-isolated close and restore (manual-review/pending)
 
-- Setup：同一工作区的 A/B 两个对话各有 Browser 和站点权限设置 tab。
-- Action：B 关闭其他、关闭全部；切回 A 检查保留，再关闭 A 的设置 tab；切 B 检查最近关闭，再切回 A 重新打开。
-- Assertions：B 的关闭不删除 A 的隐藏 tab；最近关闭仅显示当前 owner 的记录；A 重新打开恢复原设置 tab；Browser main 关闭与 UI 一致。
-- 证据：真实 Electron 菜单/标签/设置页面与 renderer 日志。不请求模型，不改网页权限决策，不需要 provider fixture。自动通过仍保持人工 review pending。
-- 单测补充：同路径不同 workspaceIdentity、公共/对话/草稿 tab、各 intrinsic owner 类型、无可见标签、异步关闭等待中切换工作区/对话或打开新 tab、main 拒绝关闭。
+- Setup: conversations A and B in the same workspace each have a Browser and a site-permission settings tab.
+- Action: B closes others and closes all; switch back to A and check retention, then close A's settings tab; switch to B and check recently closed, then switch back to A and reopen.
+- Assertions: B's close does not delete A's hidden tabs; recently closed shows only the current owner's records; reopening in A restores the original settings tab; the Browser main close matches the UI.
+- Evidence: real Electron menu/tab/settings page and renderer logs. No model request, no site-permission decision change, no provider fixture. A passing run still keeps manual review pending.
+- Unit supplements: same path with different workspaceIdentity, public / conversation / draft tabs, each intrinsic owner type, no visible tab, switching workspace/conversation or opening a new tab while an async close waits, main rejecting a close.
 
-## 不变量
+## Invariants
 
-- `+` 不参与 Tab 等宽计算。
-- 滚动只能发生在所有 Tab 已达到 60px 下限之后。
-- 关闭按钮点击不得触发 Tab 激活或拖拽。
-- 鼠标中键关闭不得先激活目标 Tab，也不得触发浏览器默认中键滚动。
-- Tooltip 的定时状态不得改变 Tab 的 flex shrink 行为。
-- 本组测试不得启动模型请求或依赖 provider replay fixture。
+- `+` does not take part in the equal-width computation of Tabs.
+- Scrolling can only happen after all Tabs have reached the 60px floor.
+- A close-button click must not trigger Tab activation or dragging.
+- A middle-click close must not activate the target Tab first nor trigger the browser's default middle-click scroll.
+- The timing state of Tooltip must not change the flex-shrink behavior of Tabs.
+- This group must not start model requests or depend on a provider replay fixture.
 
-## 通用 / 编程界面模式 M1
+## General / Coding mode M1
 
-范围与 MODE-01～07 用例见 [模式验证矩阵](general-coding-mode-verification.md)。新增桌面用例位于 `packages/desktop/test/e2e/ui-shell/general-coding-mode.test.ts`，覆盖设置偏好、入口隐藏和已有面板保留；已人工验收并转为 ui-shell 正式用例，尚未加入 Docker preset。对话展示由组件单测补充，验证状态以该矩阵为准。
+Scope and MODE-01 to MODE-07 cases: see the [mode verification matrix](general-coding-mode-verification.md). The desktop case is `packages/desktop/test/e2e/ui-shell/general-coding-mode.test.ts` (settings preference, entry hiding, existing panel retained); manually accepted and promoted to a formal ui-shell case, not yet in a Docker preset. Conversation display is covered by component unit tests; verification status follows that matrix.
 
-### 新标签页多开与标准标签行为
+### New tab multi-open and standard tab behavior
 
-- Setup：打开一个 Terminal 标签。
-- Action：连续点击两次「+」，选择第一个新标签页，再分别关闭两个新标签页。
-- Assert：两个 id 独立、最新页激活、标题为新标签页、宽度不超过 156px；旧页可重新聚焦并显示启动入口，关闭仅移除目标标签。
-- 入口调整：原加号菜单选择改为新标签页内的启动行，仍使用既有应用打开动作。
+- Setup: open one Terminal tab.
+- Action: click "+" twice in a row, select the first new tab, then close the two new tabs separately.
+- Assert: the two ids are independent, the latest page is active, the title is the new-tab title, width does not exceed 156px; the old page can regain focus and shows the launcher; closing removes only the target tab.
+- Entry change: the former plus-menu selection became a launcher row inside the new tab, still using the existing app open action.
 
-### SPT-E2E-009 默认新标签页与工具替换
+### SPT-E2E-009 Default new tab and tool replacement
 
-- Setup：新任务草稿，无当前 scope 标签。
-- Action：展开、选择终端、收起再展开、点击加号、关闭新增标签及最后一个工具标签。
-- Assertions：首次恰有一个新标签页及加号；终端替换该标签；收起恢复保留原 id；加号独立新增；关闭最后一个标签后面板收起；再次展开创建新标签页。
-- 范围：桌面交互及共享 UI 状态，跨 scope 和异步关闭由 hook 回归补充。
+- Setup: new task draft with no tab in the current scope.
+- Action: expand, choose terminal, collapse and expand again, click plus, close the added tab and the last tool tab.
+- Assertions: first expansion shows exactly one new tab and the plus; terminal replaces that tab; restore after collapse keeps the original id; plus adds independently; closing the last tab collapses the panel; expanding again creates a new tab.
+- Scope: desktop interaction and shared UI state; cross-scope and async close are supplemented by hook regression.
 
-SPT-E2E-009 补充：末标签关闭后面板收起且无补建；重新展开创建新标签页。真实关闭菜单命令关闭唯一新标签页后，下一次关闭上下文事件不被 App 拦截，可进入关窗 fallback。
+SPT-E2E-009 addition: after the last tab is closed the panel collapses with no rebuild; re-expanding creates a new tab. After the real close-menu command closes the only new tab, the next close-context event is not intercepted by the App and can enter the window-close fallback.
 
-## 完整视图（SPFV，spec：`docs/ui/side-pane-full-view.md`）
+## Full view (SPFV, spec: `docs/ui/side-pane-full-view.md`)
 
-### 状态维度与剪枝
+### State dimensions and pruning
 
-| 维度     | 等价类                               | 决策                                                                 |
-| -------- | ------------------------------------ | -------------------------------------------------------------------- |
-| 入口     | 按钮 / 快捷键                        | 两者都覆盖进入与退出                                                 |
-| surface  | 对话 tab / 面板 tab / 无可见面板 tab | 前两类覆盖；无可见 tab 时启动页由组件逻辑承接，不单独覆盖            |
-| 浮窗形态 | 收起 / 收起 + 操作栏 / 展开 / 最小化 | 全部覆盖                                                             |
-| 退出方式 | 按钮 / 快捷键 / ◫ / 关闭最后一个 tab | 前三类覆盖；关闭最后一个 tab 复用既有收起逻辑，由 owner 记忆单测覆盖 |
-| owner    | 同 session 切回 / 不同 session       | 由 provider 用例覆盖                                                 |
-| 阻塞交互 | 收起态出现 / 最小化时出现            | 最小化时出现覆盖（同时证明卡片在浮窗内）                             |
-| 客户端   | 桌面 / Web / 手机远控                | 只做桌面；Web 与远控不渲染入口，由组件条件单测覆盖                   |
+| Dimension            | Equivalence classes                                       | Decision                                                                                                         |
+| -------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Entry                | button / shortcut                                         | Both cover enter and exit                                                                                        |
+| surface              | conversation tab / panel tab / no visible panel tab       | First two covered; with no visible tab the launch page is handled by component logic, not covered separately     |
+| Float form           | collapsed / collapsed + action bar / expanded / minimized | All covered                                                                                                      |
+| Exit                 | button / shortcut / ◫ / close the last tab                | First three covered; closing the last tab reuses the existing collapse logic, covered by owner-memory unit tests |
+| owner                | switch back to the same session / different session       | Covered by the provider case                                                                                     |
+| Blocking interaction | appears when collapsed / appears when minimized           | Appearing when minimized is covered (also proves the card is inside the float)                                   |
+| Client               | desktop / Web / phone remote                              | Desktop only; Web and remote do not render the entry, covered by component condition unit tests                  |
 
-### SPFV-E2E-001 进入、退出与单实例
+### SPFV-E2E-001 Enter, exit and single instance
 
-- Setup：桌面草稿，打开 Side Pane 并新建一个 Terminal tab；给主 SessionPane 根节点打上 DOM 标记。
-- Action：点「进入完整视图」；再用快捷键退出；再点按钮进入。
-- Assertions：完整视图中左侧任务列表宽度不变、左上角按钮组仍在、WorkspaceHeader 不存在、Side Pane 外框宽度接近 `#content` 宽度；tab 栏第一个为对话 tab，且计算样式 `-webkit-app-region` 为 `no-drag`（真实鼠标可点击）；退出后侧栏和面板宽度回到进入前；全过程 SessionPane 根节点仍带同一 DOM 标记（未重新挂载）。
+- Setup: desktop draft, open the Side Pane and create a Terminal tab; put a DOM marker on the main SessionPane root.
+- Action: click «进入完整视图» (enter full view); exit with the shortcut; enter again with the button.
+- Assertions: in full view the left task list width is unchanged, the top-left button group remains, WorkspaceHeader does not exist, the Side Pane frame width is close to the `#content` width; the first tab in the tab strip is the conversation tab, with computed style `-webkit-app-region` of `no-drag` (clickable with a real mouse); after exit the sidebar and panel widths return to those before entering; throughout, the SessionPane root keeps the same DOM marker (not remounted).
 
-### SPFV-E2E-002 对话 tab 全宽与面板 tab 浮窗
+### SPFV-E2E-002 Conversation tab full width and panel tab float
 
-- Setup：接 001，完整视图中当前为 Terminal tab。
-- Action：点对话 tab；再点 Terminal tab。
-- Assertions：对话 tab 激活时对话宿主覆盖 slot（误差 2px 内），浮窗不存在，输入框为两行布局（`data-composer-layout=stacked`）且有草稿项目栏；回到 Terminal tab 后浮窗出现在 slot 右下角（距边 16px），只露出输入区：输入区与浮窗同宽、底边对齐，没有外层留白，抽屉不可见；输入框为单行（`data-composer-layout=inline`，浮窗高度不超过 64px，「+」、输入区、发送按钮从左到右排在同一行、垂直居中误差 2px 内，输入区至少占一半宽度），没有草稿项目栏；切换前打在输入框节点上的 DOM 标记仍在（编辑器未重新挂载）。
+- Setup: after 001, the current tab in full view is Terminal.
+- Action: click the conversation tab; then click the Terminal tab.
+- Assertions: with the conversation tab active the conversation host covers the slot (within 2px), the float does not exist, the input is a two-row layout (`data-composer-layout=stacked`) with the draft project bar; back on the Terminal tab the float appears at the slot's bottom-right (16px from the edge) exposing only the input area: input area and float have the same width and aligned bottoms, no outer padding, the drawer invisible; the input is single-row (`data-composer-layout=inline`, float height at most 64px, "+", the input area and the send button on one row left to right, vertically centered within 2px, the input area at least half the width), with no draft project bar; the DOM marker put on the input node before switching is still there (editor not remounted).
 
-### SPFV-E2E-003 操作栏、最小化与恢复
+### SPFV-E2E-003 Action bar, minimize and restore
 
-- Setup：接 002，浮窗收起态。
-- Action：点击浮窗输入框并输入文字；点击面板空白处；再聚焦输入框后点「−」；点击圆形按钮。
-- Assertions：输入框有焦点时抽屉滑出、操作栏可见且不含标题（空闲时也没有 loading），抽屉一直延伸到输入框底边（底边误差 1.5px 内，两侧没有凹口）；失焦后隐藏；「−」后只剩圆形按钮；点击后恢复收起态并且输入框获得焦点、文字仍在；切到对话 tab 后主输入框显示同一段文字。
+- Setup: after 002, float collapsed.
+- Action: click the float input and type; click blank panel space; focus the input again and click «−» (minimize); click the round button.
+- Assertions: when the input has focus the drawer slides out and the action bar is visible without a title (no loading even when idle), and the drawer extends to the input's bottom edge (within 1.5px, no notch on either side); hidden on blur; after «−» only the round button remains; after clicking it the collapsed state is restored, the input gets focus and the text is still there; after switching to the conversation tab the main input shows the same text.
 
-### SPFV-E2E-004 拖动吸附与菜单
+### SPFV-E2E-004 Drag snap and menu
 
-- Setup：接 003，浮窗收起态。
-- Action：拖动 ⠿ 到 slot 左上区域松手；点击 ⠿ 打开菜单，选「在完整视图中打开」。
-- Assertions：松手后浮窗贴 slot 左上（16px）；全局偏好 `zcode:side-pane-full-view:floating-anchor` 写为 `top-left`；菜单项选择后切到对话 tab，且浮窗展开态不被菜单点击改变（回归：portal 事件沿 React 树冒泡）。
+- Setup: after 003, float collapsed.
+- Action: drag ⠿ to the slot's top-left area and release; click ⠿ to open the menu and choose «在完整视图中打开» (open in full view).
+- Assertions: after release the float sticks to the slot's top-left (16px); the global preference `zcode:side-pane-full-view:floating-anchor` is written as `top-left`; after choosing the menu item the conversation tab is shown and the float's expanded state is not changed by the menu click (regression: portal events bubble along the React tree).
 
-### SPFV-MODEL-001 浮窗模型菜单关闭（pending）
+### SPFV-MODEL-001 Float model menu dismissal (pending)
 
-- Setup：完整视图浮窗，背后为独立插件页面；有两个可用模型及一个锁定模型。
-- Action：打开模型菜单后点击插件区域；再次打开并选择模型（包括当前模型和键盘确认），再点击外侧关闭；调档和切换 Provider；Escape 关闭。
-- Assertions：一次外侧点击关闭菜单，且不触发底层插件操作；可用模型被选择后选择生效、菜单保持打开，锁定模型不关闭；调档与 Provider 导航保持打开；选模型后仍可点击外侧一次关闭，关闭后插件仍可交互。桌面 Electron 使用真实 webview，浏览器手机宽度使用独立 iframe，覆盖深浅主题。
-- 候选自动化：`packages/ui/test/browser/manual-review/pending/composer-menu-dismiss.test.mjs`；配合既有 `ui-shell/side-pane-full-view.test.ts` 验证完整 App 的浮窗行为。组件级夹具不覆盖插件安装、Agent 握手和远控连接。
+- Setup: full-view float over a standalone plugin page; two available models and one locked model.
+- Action: open the model menu and click the plugin area; open it again and select a model (including the current model and keyboard confirmation), then click outside to close; change level and switch Provider; close with Escape.
+- Assertions: one outside click closes the menu and does not trigger the underlying plugin action; selecting an available model takes effect and keeps the menu open, a locked model does not close it; level change and Provider navigation keep it open; after selecting a model one outside click still closes it, and the plugin remains interactive afterwards. Desktop Electron uses a real webview; browser phone width uses a standalone iframe; both themes covered.
+- Candidate automation: `packages/ui/test/browser/manual-review/pending/composer-menu-dismiss.test.mjs`, together with the existing `ui-shell/side-pane-full-view.test.ts` for the full App's float behavior. The component-level fixture does not cover plugin install, Agent handshake and remote connection.
 
-### SPFV-E2E-005 展开与收起消息流
+### SPFV-E2E-005 Expand and collapse the message stream
 
-- Setup：浮窗收起 + 操作栏。
-- Action：点「⌃」按钮；再点「⌄」按钮。
-- Assertions：展开后浮窗高度大于 400px 且时间线可见，按钮 `aria-expanded=true`；消息滚动容器底边在输入区顶边之上至少 8px（滚动条不延伸到输入框后面）；再点回到收起态。
+- Setup: float collapsed + action bar.
+- Action: click the «⌃» button; then click the «⌄» button.
+- Assertions: after expanding the float height is above 400px and the timeline is visible, the button has `aria-expanded=true`; the bottom edge of the message scroll container is at least 8px above the input area's top edge (the scrollbar does not extend behind the input); clicking again returns to the collapsed state.
 
-### SPFV-E2E-009 插件页面层不被面板外框遮挡
+### SPFV-E2E-009 Plugin page layer not covered by the panel frame
 
-- Setup：接 005，完整视图浮窗形态，当前为 Terminal tab。
-- Action：按 `pluginUiPagePlane` 的同一套样式，在 `body` 末尾的停靠层（`[data-sandbox-page-parking]`，`position:fixed; inset:0`，无 z-index）放入一个 `position:fixed; z-index:10`、覆盖 slot 的页面节点；在 slot 右下区域取 `elementFromPoint`。
-- Assertions：命中该页面节点，不是面板外框内的元素（回归：外框 `z-10` 遮住插件 UI，插件 tab 空白）。
+- Setup: after 005, full-view float form, current tab is Terminal.
+- Action: using the same styles as `pluginUiPagePlane`, put a `position:fixed; z-index:10` page node covering the slot into the parking layer at the end of `body` (`[data-sandbox-page-parking]`, `position:fixed; inset:0`, no z-index); run `elementFromPoint` in the slot's bottom-right area.
+- Assertions: it hits that page node and not an element inside the panel frame (regression: the frame's `z-10` covered the plugin UI and the plugin tab was blank).
 
-### SPFV-E2E-006 面板开关退出
+### SPFV-E2E-006 Panel toggle exit
 
-- Setup：完整视图。
-- Action：点面板开关 ◫；再点 WorkspaceHeader 上的面板开关重新打开。
-- Assertions：关闭后回到普通布局；重新打开后仍是普通视图（不回到完整视图）。
+- Setup: full view.
+- Action: click the panel toggle ◫; then click the panel toggle on WorkspaceHeader to reopen.
+- Assertions: after closing, the normal layout is back; after reopening it is still the normal view (does not return to full view).
 
-### SPFV-E2E-007 浮窗发送与按 session 记忆（provider）
+### SPFV-E2E-007 Float send and per-session memory (provider)
 
-- Setup：已有会话 A（首条消息完成），打开 Terminal tab，进入完整视图。
-- Action：在浮窗输入框发送一条消息；完整视图下用命令面板（⌘K → New task）新建草稿；在左侧任务列表切回 A。
-- Assertions：消息出现在 A 的时间线并收到回复；回答结束后浮窗上方弹出回答气泡，只含回答正文（无图标、无标题）；草稿为普通视图；切回 A 后恢复完整视图与浮窗，气泡仍在（只有 × 或点击才消失）；点气泡后浮窗展开、气泡消失，收起后不再出现（回归：切换会话不出现 React #185，面板不停在收起态）。
+- Setup: existing session A (first message completed), Terminal tab open, enter full view.
+- Action: send a message in the float input; in full view create a draft with the command palette (⌘K → New task); switch back to A in the left task list.
+- Assertions: the message appears in A's timeline and a reply arrives; after the answer ends an answer bubble pops up above the float containing only the answer body (no icon, no title); the draft is the normal view; after switching back to A the full view and float are restored and the bubble is still there (it disappears only via the x or by clicking); clicking the bubble expands the float and the bubble disappears, and it does not appear again after collapsing (regression: switching sessions does not produce React #185 and the panel does not stay collapsed).
 
-### SPFV-E2E-008 最小化时出现 AskUserQuestion（provider）
+### SPFV-E2E-008 AskUserQuestion appearing while minimized (provider)
 
-- Setup：接 007，会话 A 在完整视图，当前为 Terminal tab。
-- Action：在浮窗发送触发 AskUserQuestion 的提示（回放延迟 4s），用户消息出现后立即最小化，等待问答请求。
-- Assertions：用户消息出现后（问答请求到达前，对话运行中）操作栏「⌃ / ⌄」右侧显示 loading，输入框占位文字为「工作中 N 秒」/ `Working for …`，与流式消息最后一行运行时长文本完全相同；浮窗自动恢复为收起态，问答卡片显示在浮窗内；提交回答后卡片消失、输入框恢复；回答结束弹出新气泡（`spfv-ask-done`），点 × 后气泡消失、浮窗保持收起；对话空闲后聚焦浮窗，操作栏可见但没有 loading。
+- Setup: after 007, session A in full view, current tab Terminal.
+- Action: send a prompt that triggers AskUserQuestion in the float (replay delay 4s), minimize right after the user message appears, wait for the question request.
+- Assertions: after the user message appears (before the question request arrives, while the conversation is running) loading shows to the right of the action bar «⌃ / ⌄», the input placeholder is "工作中 N 秒" / `Working for …`, exactly the same as the running-duration text on the last line of the streaming message; the float auto-restores to collapsed and the question card shows inside the float; after submitting the answer the card disappears and the input recovers; a new bubble (`spfv-ask-done`) pops up when the answer ends, and after clicking the x the bubble disappears and the float stays collapsed; after the conversation is idle, focusing the float shows the action bar without loading.
 
-### 不变量
+### Invariants
 
-- 完整视图切换不得重新挂载 SessionPane，不得写入面板占比或侧栏宽度持久化。
-- 浮窗与对话 tab 共用同一份草稿。
-- 面板 tab 的 webview / 终端实例在 surface 切换时保持挂载。
+- Switching full view must not remount SessionPane and must not write panel ratio or sidebar width persistence.
+- The float and the conversation tab share the same draft.
+- Webview / terminal instances of panel tabs stay mounted when the surface switches.

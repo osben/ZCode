@@ -24,6 +24,7 @@ import { logger as defaultLogger } from "./logger.js";
 const STREAM_MIRROR_FLUSH_INTERVAL_MS = 1000;
 const STREAM_MIRROR_MAX_REPLAY_BATCHES = 60;
 const STREAM_MIRROR_MAX_REPLAY_BYTES = 512 * 1024;
+// UTF-8 bytes of the serialized batch; see measureBatchEvent.
 const STREAM_MIRROR_MAX_BATCH_BYTES = 512 * 1024;
 const STREAM_MIRROR_TEXT_OP_MAX_CHARS = 128 * 1024;
 const OWNER_COMMAND_TIMEOUT_MS = 30_000;
@@ -57,6 +58,12 @@ interface TaskRunLease {
   updatedAt: number;
 }
 
+/** A batch op paired with its serialized JSON length, measured once per flush. */
+interface MeasuredStreamOp {
+  op: TaskStreamMirrorOp;
+  bytes: number;
+}
+
 interface PendingStreamBatch {
   batchKey: string;
   workspaceKey: string;
@@ -72,6 +79,9 @@ interface PendingStreamBatch {
   nextOpSeq: number;
   pendingOps: TaskStreamMirrorPublishOp[];
   replay: TaskStreamMirrorBatchEvent[];
+  /** Serialized length of each replay entry, index-aligned with replay. */
+  replaySizes: number[];
+  replayByteTotal: number;
   replayUnavailable: boolean;
   timer: ReturnType<typeof setTimeout> | null;
   replayInitializedHostIds: Set<string>;
@@ -354,7 +364,7 @@ export class TaskRealtimeBus {
     return { leaseRequestId: request.leaseRequestId, acquired: true, ownerHostId: hostId };
   }
 
-  /** 内存诊断计数器；只读 size。 */
+  /** In-memory diagnostic counter; read-only size. */
   collectMemoryDiagnostics(): Record<string, number> {
     return {
       streamBatches: this.streamBatches.size,
@@ -446,6 +456,8 @@ export class TaskRealtimeBus {
       nextOpSeq: 1,
       pendingOps: [],
       replay: [],
+      replaySizes: [],
+      replayByteTotal: 0,
       replayUnavailable: false,
       timer: null,
       replayInitializedHostIds: new Set<string>(),
@@ -507,14 +519,26 @@ export class TaskRealtimeBus {
         (op) => op.kind === "stream_event" && this.isTerminalEventType(op.event.type),
       ),
     };
-    if (JSON.stringify(event).length > STREAM_MIRROR_MAX_BATCH_BYTES) {
-      // 单次 mirror batch 过大时，RPC/base64/JSON 会在链路上多次复制，导致 host 堆内存打满。
-      // owner 仍依赖 mirror seq 流渲染主动发送端，所以这里对 owner 做小批次分片；observer
-      // 不消费正文流，只收到 snapshot invalidation/remoteGenerating 状态。
-      this.deliverOversizedStreamBatchFallback(batch, event);
+    // Serialize each op once; the batch size is derived from these UTF-8 byte lengths, not from
+    // re-stringifying the whole batch.
+    const measuredOps = ops.map((op) => ({
+      op,
+      bytes: Buffer.byteLength(JSON.stringify(op), "utf8"),
+    }));
+    const eventBytes = this.measureBatchEvent(
+      event,
+      measuredOps.reduce((total, entry) => total + entry.bytes, 0),
+      measuredOps.length,
+    );
+    if (eventBytes > STREAM_MIRROR_MAX_BATCH_BYTES) {
+      // An oversized mirror batch is copied multiple times as RPC/base64/JSON, which can exhaust the
+      // Host heap. The owner still relies on the mirror sequence stream from the renderer sender, so
+      // send smaller batches to the owner. Observers do not consume the body stream; they receive
+      // only snapshot invalidation/remoteGenerating state.
+      this.deliverOversizedStreamBatchFallback(batch, event, measuredOps);
       return;
     }
-    this.rememberReplayBatch(batch, event);
+    this.rememberReplayBatch(batch, event, eventBytes);
     this.deliverStreamBatch(batch, event);
 
     if (event.terminal) {
@@ -525,13 +549,16 @@ export class TaskRealtimeBus {
   private deliverOversizedStreamBatchFallback(
     batch: PendingStreamBatch,
     event: TaskStreamMirrorBatchEvent,
+    measuredOps: readonly MeasuredStreamOp[],
   ): void {
-    // 不能丢弃 owner 的 mirror seq。ZCode Agent 有 realtime port 时 owner direct stream 会被关闭，
-    // 如果 oversized batch 只发 gap，service 会因为后续 seq 缺口禁用 mirror，桌面端就停到终态快照。
-    // 这里只给 owner 发送连续小批次；observer 和 late subscriber 统一走快照补齐，避免大 payload 扩散。
+    // Do not drop mirror sequences for the owner. When the ZCode Agent has a realtime port, the
+    // owner's direct stream is closed. If an oversized batch sends only a gap, the service disables
+    // the mirror because of the following sequence gap and Desktop remains at a terminal snapshot.
+    // Send consecutive small batches only to the owner; observers and late subscribers are filled
+    // from snapshots to avoid spreading large payloads.
     batch.replayUnavailable = true;
-    batch.replay = [];
-    for (const chunk of this.splitOversizedBatchForOwner(batch, event)) {
+    this.clearReplay(batch);
+    for (const chunk of this.splitOversizedBatchForOwner(batch, event, measuredOps)) {
       this.deliverStreamBatchToHost(batch.ownerHostId, batch, chunk, "relay_owner");
     }
     this.deliverSnapshotInvalidation(
@@ -546,49 +573,101 @@ export class TaskRealtimeBus {
     }
   }
 
+  /**
+   * Greedy packing in seq order, with the same boundaries as measuring each candidate chunk whole
+   * (UTF-8 bytes). Each op's byte length is measured once by the caller; a candidate's length is its
+   * header plus the running op-byte total, so the split costs O(ops) rather than O(ops x chunk bytes).
+   */
   private splitOversizedBatchForOwner(
     batch: PendingStreamBatch,
     event: TaskStreamMirrorBatchEvent,
+    measuredOps: readonly MeasuredStreamOp[],
   ): TaskStreamMirrorBatchEvent[] {
     const chunks: TaskStreamMirrorBatchEvent[] = [];
     let pendingOps: TaskStreamMirrorOp[] = [];
+    let pendingOpBytes = 0;
+    let pendingTerminal = false;
 
-    const createChunk = (
-      ops: TaskStreamMirrorOp[],
-      batchSeq: number,
-    ): TaskStreamMirrorBatchEvent => ({
+    const buildChunk = (chunk: {
+      ops: TaskStreamMirrorOp[];
+      batchSeq: number;
+      fromSeq: number;
+      toSeq: number;
+      terminal: boolean;
+    }): TaskStreamMirrorBatchEvent => ({
       ...event,
-      eventId: `stream-${batch.workspaceKey}-${batch.taskId}-${batch.runId}-${batchSeq}`,
-      batchSeq,
-      fromSeq: ops[0]?.seq ?? event.fromSeq,
-      toSeq: ops[ops.length - 1]?.seq ?? event.toSeq,
-      ops,
-      terminal: ops.some(
-        (op) => op.kind === "stream_event" && this.isTerminalEventType(op.event.type),
-      ),
+      eventId: `stream-${batch.workspaceKey}-${batch.taskId}-${batch.runId}-${chunk.batchSeq}`,
+      batchSeq: chunk.batchSeq,
+      fromSeq: chunk.fromSeq,
+      toSeq: chunk.toSeq,
+      ops: chunk.ops,
+      terminal: chunk.terminal,
     });
 
     const flushPending = () => {
       if (pendingOps.length === 0) {
         return;
       }
-      chunks.push(createChunk(pendingOps, batch.nextBatchSeq++));
+      chunks.push(
+        buildChunk({
+          ops: pendingOps,
+          batchSeq: batch.nextBatchSeq++,
+          fromSeq: pendingOps[0]?.seq ?? event.fromSeq,
+          toSeq: pendingOps[pendingOps.length - 1]?.seq ?? event.toSeq,
+          terminal: pendingTerminal,
+        }),
+      );
       pendingOps = [];
+      pendingOpBytes = 0;
+      pendingTerminal = false;
     };
 
-    for (const op of event.ops) {
-      const candidate = [...pendingOps, op];
-      const candidateChunk = createChunk(candidate, batch.nextBatchSeq);
-      if (
-        pendingOps.length > 0 &&
-        JSON.stringify(candidateChunk).length > STREAM_MIRROR_MAX_BATCH_BYTES
-      ) {
-        flushPending();
+    for (const { op, bytes } of measuredOps) {
+      const opIsTerminal = this.isTerminalStreamOp(op);
+      if (pendingOps.length > 0) {
+        const candidateBytes = this.measureBatchEvent(
+          buildChunk({
+            ops: [],
+            batchSeq: batch.nextBatchSeq,
+            fromSeq: pendingOps[0]?.seq ?? event.fromSeq,
+            toSeq: op.seq,
+            terminal: pendingTerminal || opIsTerminal,
+          }),
+          pendingOpBytes + bytes,
+          pendingOps.length + 1,
+        );
+        if (candidateBytes > STREAM_MIRROR_MAX_BATCH_BYTES) {
+          flushPending();
+        }
       }
       pendingOps.push(op);
+      pendingOpBytes += bytes;
+      pendingTerminal = pendingTerminal || opIsTerminal;
     }
     flushPending();
     return chunks;
+  }
+
+  /**
+   * UTF-8 byte length of a batch whose ops are already measured. Equals
+   * Buffer.byteLength(JSON.stringify(event), "utf8"): the header serialized with `ops: []` (which
+   * contains "[]"), plus the op bytes, plus one comma between consecutive ops. Concatenation is
+   * byte-exact because the JSON structural characters are ASCII.
+   */
+  private measureBatchEvent(
+    event: TaskStreamMirrorBatchEvent,
+    opByteTotal: number,
+    opCount: number,
+  ): number {
+    return (
+      Buffer.byteLength(JSON.stringify({ ...event, ops: [] }), "utf8") +
+      opByteTotal +
+      Math.max(opCount - 1, 0)
+    );
+  }
+
+  private isTerminalStreamOp(op: TaskStreamMirrorOp): boolean {
+    return op.kind === "stream_event" && this.isTerminalEventType(op.event.type);
   }
 
   private coalesceOps(ops: TaskStreamMirrorPublishOp[]): TaskStreamMirrorPublishOp[] {
@@ -635,8 +714,9 @@ export class TaskRealtimeBus {
         continue;
       }
 
-      // 文本 chunk 可能被 coalesce 合成超大单 op；后续即使按 op 分 batch，
-      // 单个 op 仍会超过 RPC 安全预算。这里先把文本切成连续小 op，再统一分配 seq。
+      // Text chunks may be coalesced into one oversized operation; batching by operation afterward
+      // would still exceed the RPC safety budget. Split text into consecutive smaller operations
+      // first, then assign sequences to all of them.
       for (
         let offset = 0;
         offset < op.event.content.length;
@@ -704,9 +784,10 @@ export class TaskRealtimeBus {
         event: {
           ...event,
           originHostId: batch.ownerHostId,
-          // owner 和 observer 以前消费两条不同事件源：owner 走不可重放 direct event，
-          // observer 走 mirror batch。切换 task 或跨端 relay 时两边会因为事件丢失/乱序产生分叉。
-          // 这里统一把 mirror batch 回投给 owner，让所有 renderer 都按同一条 seq 流更新 task store。
+          // Previously, owner and observer consumed different event sources: owner used non-replayable
+          // direct events and observer used mirror batches. Switching tasks or relaying across devices
+          // could make them diverge due to lost/reordered events. Feed mirror batches back to the
+          // owner so all renderers update the task store from one sequence stream.
           deliveryPurpose: target.hostId === batch.ownerHostId ? "relay_owner" : "observer",
         } satisfies TaskRealtimeDeliveredEvent,
       });
@@ -733,20 +814,35 @@ export class TaskRealtimeBus {
     });
   }
 
-  private rememberReplayBatch(batch: PendingStreamBatch, event: TaskStreamMirrorBatchEvent): void {
-    // 无上限 replay 在长任务中会线性占用主进程内存。
-    // 这里恢复批次数+字节数双阈值，超限后由 replayVisibleRunsToHost 触发 stream_mirror_gap 并走快照补齐。
+  private rememberReplayBatch(
+    batch: PendingStreamBatch,
+    event: TaskStreamMirrorBatchEvent,
+    eventBytes: number,
+  ): void {
+    // Unbounded replay uses main-process memory linearly during long tasks.
+    // Restore both batch-count and byte-count limits; after the limit, replayVisibleRunsToHost emits
+    // stream_mirror_gap and uses snapshot recovery.
+    // Track sizes incrementally: re-serializing the whole buffer on every push is O(n) per batch.
     batch.replay.push(event);
+    batch.replaySizes.push(eventBytes);
+    batch.replayByteTotal += eventBytes;
     while (batch.replay.length > STREAM_MIRROR_MAX_REPLAY_BATCHES) {
-      batch.replay.shift();
+      this.evictOldestReplay(batch);
     }
-    while (this.replayBytes(batch.replay) > STREAM_MIRROR_MAX_REPLAY_BYTES) {
-      batch.replay.shift();
+    while (batch.replayByteTotal > STREAM_MIRROR_MAX_REPLAY_BYTES && batch.replay.length > 0) {
+      this.evictOldestReplay(batch);
     }
   }
 
-  private replayBytes(replay: TaskStreamMirrorBatchEvent[]): number {
-    return replay.reduce((total, replayEvent) => total + JSON.stringify(replayEvent).length, 0);
+  private evictOldestReplay(batch: PendingStreamBatch): void {
+    batch.replay.shift();
+    batch.replayByteTotal -= batch.replaySizes.shift() ?? 0;
+  }
+
+  private clearReplay(batch: PendingStreamBatch): void {
+    batch.replay = [];
+    batch.replaySizes = [];
+    batch.replayByteTotal = 0;
   }
 
   private replayVisibleRunsToHost(hostId: string, workspaceKeys: Iterable<string>): void {

@@ -23,16 +23,16 @@ function ensureCachedBinaryExecutable(binaryPath, targetPlatform) {
   if (process.platform === "win32" || targetPlatform === "win32") return;
   if ((statSync(binaryPath).mode & 0o111) !== 0) return;
 
-  // 缓存元数据只校验内容，不能让意外丢失的 Unix 可执行权限随 skip 流程继续传递。
+  // Cache metadata validates content only; do not let accidentally missing Unix executable permissions pass through the skip path.
   chmodSync(binaryPath, 0o755);
 }
 
 /**
- * native search 预编译工具的唯一准备入口（desktop prepare:native-search、SEA、server-cli、remote 共用）。
+ * The single preparation entry point for native search prebuilt tools, shared by desktop prepare:native-search, SEA, server-cli, and remote.
  *
- * 来源由 resolveNativeSearchArtifactSource 判定：内网依赖源已配置时原样走既有
- * downloadNativeSearchTools（同一 release plan、SHA-256 校验与 bundle meta 缓存语义）；
- * 未配置时才解包仓库内置归档。两条路径都在返回前刷新工具目录旁的许可声明。
+ * `resolveNativeSearchArtifactSource` selects the source: when an intranet dependency source is configured, use the existing
+ * `downloadNativeSearchTools` path (same release plan, SHA-256 verification, and bundle metadata cache semantics);
+ * otherwise unpack the built-in repository archives. Both paths refresh the license notices next to the tool directory before returning.
  */
 export async function prepareNativeSearchTools({
   platform = process.env.ZCODE_TARGET_OS || process.platform,

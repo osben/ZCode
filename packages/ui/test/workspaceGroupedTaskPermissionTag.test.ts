@@ -106,7 +106,6 @@ function renderGroupedTaskRow(
         activeWorkspacePath: task.workspacePath,
         activeWorkspaceIdentity: task.workspaceIdentity,
         activeTaskId: null,
-        workspaceLabel: "workspace",
         onSelectTask: () => {},
         onCloseTask: () => {},
         onMoveTaskToGroup: () => {},
@@ -118,6 +117,15 @@ function renderGroupedTaskRow(
     ),
   );
 }
+
+describe("GroupedTaskRow running spinner", () => {
+  it("rotates an HTML wrapper instead of the SVG so running rows avoid per-frame SVG style recalcs", () => {
+    const html = renderGroupedTaskRow({ phase: "running", permissionCount: 0 });
+
+    expect(html).toMatch(/<span[^>]*animate-spin[^>]*>\s*<svg/);
+    expect(html).not.toMatch(/<svg[^>]*animate-spin/);
+  });
+});
 
 describe("GroupedTaskRow pending interaction tag", () => {
   it("把权限等待渲染为 pill badge", () => {
@@ -189,8 +197,7 @@ describe("GroupedTaskRow pending interaction tag", () => {
       permissionCount: 0,
     });
 
-    expect(html).toContain("bg-sky-500");
-    expect(html).toContain("dark:bg-sky-400");
+    expect(html).toContain("bg-icon-blue");
     expect(html).not.toContain("bg-brand");
   });
 
@@ -205,7 +212,7 @@ describe("GroupedTaskRow pending interaction tag", () => {
       phase: "completedSuccess",
     });
 
-    expect(html).toContain("bg-sky-500");
+    expect(html).toContain("bg-icon-blue");
     expect(html).toContain('data-cron-task-icon="true"');
     expect(html).toContain('aria-label="定时任务"');
     expect(html).toContain("刚刚");

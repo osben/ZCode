@@ -7,6 +7,12 @@ export type SlashCommand =
     }
   | {
       args: string;
+      name: "dream";
+      rawName: string;
+      type: "known";
+    }
+  | {
+      args: string;
       name: "effort";
       rawName: string;
       type: "known";

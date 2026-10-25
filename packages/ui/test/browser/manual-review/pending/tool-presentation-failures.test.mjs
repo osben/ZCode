@@ -57,7 +57,7 @@ after(async () => {
 
 for (const width of [390, 1200])
   for (const theme of ["light", "dark"])
-    for (const locale of ["zh-CN", "en-US"])
+    for (const locale of ["en-US"])
       for (const failure of ["result", "reject"]) {
         test(`SHARE-REVIEW ${width} ${theme} ${locale} ${failure}`, async () => {
           const page = await browser.newPage({ viewport: { width, height: 900 } });
@@ -69,15 +69,11 @@ for (const width of [390, 1200])
           });
           await page.goto(`${origin}fixture?theme=${theme}&locale=${locale}&failure=${failure}`);
           const preview = page.getByTestId("image-preview");
-          await preview.getByText(locale === "en-US" ? /Loading/ : /加载/).waitFor();
+          await preview.getByText(/Loading/).waitFor();
           await page.getByRole("button", { name: "failure", exact: true }).click();
-          await preview
-            .getByText(locale === "en-US" ? "Could not load preview" : "预览加载失败")
-            .waitFor();
+          await preview.getByText("Could not load preview").waitFor();
           await page.getByRole("button", { name: "empty", exact: true }).click();
-          await preview
-            .getByText(locale === "en-US" ? "Preview unavailable" : "预览不可用")
-            .waitFor();
+          await preview.getByText("Preview unavailable").waitFor();
           await page.getByRole("button", { name: "success", exact: true }).click();
           await preview.getByRole("img").waitFor();
           const src = await preview.getByRole("img").getAttribute("src");
@@ -87,7 +83,7 @@ for (const width of [390, 1200])
           assert.equal(await page.getByRole("menuitem", { name: /Word/ }).count(), 0);
           await page.getByRole("menuitem", { name: /VS Code/ }).click();
           await page
-            .getByText(locale === "en-US" ? "Could not open this file" : "无法打开此文件", {
+            .getByText("Could not open this file", {
               exact: true,
             })
             .waitFor();

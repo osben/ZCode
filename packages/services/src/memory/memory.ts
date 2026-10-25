@@ -4,16 +4,28 @@ import { createServiceDescriptor } from "../descriptors.js";
 
 export const PROJECT_MEMORY_PREVIEW_LIMIT_EXCEEDED_ERROR_CODE =
   "PROJECT_MEMORY_PREVIEW_LIMIT_EXCEEDED";
-export const PROJECT_MEMORY_FILE_CHANGED_ERROR_CODE =
-  "PROJECT_MEMORY_FILE_CHANGED";
+export const PROJECT_MEMORY_FILE_CHANGED_ERROR_CODE = "PROJECT_MEMORY_FILE_CHANGED";
+
+export const PROJECT_MEMORY_ITEM_TYPES = ["user", "feedback", "project", "reference"] as const;
+export type ProjectMemoryItemType = (typeof PROJECT_MEMORY_ITEM_TYPES)[number];
 
 export interface ProjectMemoryFileSummary {
   name: string;
-  /** 已由 MemoryService 校验并限制在本地 Project Memory 根目录内的实际路径。 */
+  /** Actual path validated by MemoryService and constrained to the local Project Memory root. */
   path: string;
   kind: "index" | "item";
   size: number;
   updatedAt: number;
+  /** Optional frontmatter description; absent when the file has no parsable frontmatter. */
+  description?: string;
+  /** Optional frontmatter metadata.type; absent when missing or not a known Memory type. */
+  type?: ProjectMemoryItemType;
+  /**
+   * Post-frontmatter line count of the index file, compared against the CLI injection limit
+   * (MEMORY_INDEX_LINE_LIMIT in apps/zcode-cli index-content.ts) by the viewer budget chip.
+   * Absent for fact files.
+   */
+  lineCount?: number;
 }
 
 export interface ProjectMemoryWorkspaceSummary {
@@ -21,13 +33,20 @@ export interface ProjectMemoryWorkspaceSummary {
   label: string;
   updatedAt: number;
   files: ProjectMemoryFileSummary[];
+  /**
+   * mtime of `<memoryRoot>/.consolidated-at` — the completion time of the last Dream run that
+   * finished without failing (see writeDreamConsolidatedAt in
+   * apps/zcode-cli/packages/core/src/memory/dream.ts). Absent when the workspace has never
+   * completed a Dream. Display-only metadata; lock ownership stays with the runtime.
+   */
+  lastDreamConsolidatedAt?: number;
 }
 
 export interface IMemoryService {
   /**
-   * 加载指定 agent 的 memory 文件
-   * @param workspacePath workspace 路径
-   * @param agentId agent ID (如 'claude', 'gemini' 等)
+   * Load the memory file of the specified agent
+   * @param workspacePath workspace path
+   * @param agentId agent ID (e.g. 'claude', 'gemini')
    */
   loadMemory(params: {
     workspacePath: string;
@@ -35,7 +54,7 @@ export interface IMemoryService {
   }): Promise<{ memory: Memory | null }>;
 
   /**
-   * 保存 memory 配置
+   * Save the memory configuration
    */
   saveMemory(params: {
     workspacePath: string;
@@ -44,28 +63,26 @@ export interface IMemoryService {
   }): Promise<void>;
 
   /**
-   * 清除 memory 内容
+   * Clear the memory content
    */
-  clearMemory(params: {
-    workspacePath: string;
-    agentId: string;
-  }): Promise<void>;
+  clearMemory(params: { workspacePath: string; agentId: string }): Promise<void>;
 
   /**
-   * 获取用户级 memory 目录路径，并确保目录存在
+   * Get the user-level memory directory path and ensure the directory exists
    */
   getUserMemoryDirectory(): Promise<{ path: string }>;
 
-  /** 列出当前本地 profile 中可查看的 Project Memory。 */
+  /** List Project Memory files viewable in the current local profile. */
   listProjectMemories(): Promise<ProjectMemoryWorkspaceSummary[]>;
 
-  /** 原样读取一个 Project Memory Markdown 文件。 */
+  /** Read a Project Memory Markdown file without modification. */
   readProjectMemoryFile(params: {
     workspaceId: string;
     fileName: string;
   }): Promise<{ content: string; updatedAt: number }>;
+
+  /** Resolve the local Project Memory directory of a workspace; the path is validated and contained in the local profile. */
+  getProjectMemoryDirectory(params: { workspaceId: string }): Promise<{ path: string }>;
 }
 
-export const IMemoryService = createServiceDescriptor<IMemoryService>(
-  ServiceChannels.Memory,
-);
+export const IMemoryService = createServiceDescriptor<IMemoryService>(ServiceChannels.Memory);

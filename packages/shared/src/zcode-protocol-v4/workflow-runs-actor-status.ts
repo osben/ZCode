@@ -1,35 +1,36 @@
 // ============================================================
-// actor 三态的**派生**（workflowRuns 归约的一条规则）
+// **Derived** actor tri-state (one rule in workflowRuns reduction).
 // ============================================================
-// 住在归约主文件之外，与 workflow-runs-concurrency.ts / -phases.ts / -started.ts / -caps.ts
-// 同一个理由（主文件的 max-lines 门），也同一条纪律：纯函数、无时钟、无 I/O。
+// Lives outside the main reduction file for the same reason as workflow-runs-concurrency.ts /
+// -phases.ts / -started.ts / -caps.ts (the main file's max-lines limit), and follows the same
+// discipline: pure functions, no clock, no I/O.
 //
-// 为什么必须派生：引擎的 Boundary C 除了 `actor-created` 之外**不发任何 actor 生命周期事件**，
-// 所以「这个子代理在动吗、在等吗、干完了吗」没有事件可搬，只能由它名下节点的相位与 run 的
-// 终态推出来。每一条改动了 nodes 或 run.status 的事件之后都要重跑一遍这个函数。
+// Why this must be derived: outside `actor-created`, the engine's Boundary C **emits no actor lifecycle events**,
+// so there are no events to transport for "is this subagent active, waiting, or done?"; derive that from the phases of its nodes and the run's
+// terminal status. Re-run this function after every event that changes nodes or run.status.
 
 import type { WorkflowRunActor, WorkflowRunState } from "./workflow-runs.js";
 
 /**
- * 键用 `\0` 连接而不是任何可打印字符：siteId 是引擎给的字符串，用 `-` 之类会让
- * ("a-1", 2) 与 ("a", "1-2") 撞车。（源码里写成转义 `\0` 而不是裸 NUL 字节——同一个运行时
- * 字符串，但文件不再是 grep 眼里的二进制。）
+ * Join the key with `\0` instead of a printable character: siteId is a string supplied by the engine, and a separator such as `-` would make
+ * ("a-1", 2) collide with ("a", "1-2"). (The source uses the escaped `\0` rather than a raw NUL byte — the runtime string is the same,
+ * but grep no longer treats the file as binary.)
  */
 function actorKey(siteId: string, ordinal: number): string {
   return `${siteId}\0${ordinal}`;
 }
 
 /**
- * 三态推导（docs/dynamic-workflow/concurrency.md「Protocol state」）：
- *   running   有节点在 executing / repairing / nudged（模型请求已发出、正在跑）
- *   waiting   有 live 节点（queued / dispatched / waiting），或尚无任何节点且 run 未终态
- *   completed 其余：全部节点已结算，或 run 已终态（终态压过一切：一个终态 run 里没有任何人
- *             还在跑或在等，哪怕某个节点的 settled 事件没来得及落下）
- * `dispatched` 归 waiting 而不是 running：它是「会话就绪、首个请求尚未准入」的短暂相位，
- * 真正在跑由 node-executing 说。
+ * Three-state derivation (docs/dynamic-workflow/concurrency.md, "Protocol state"):
+ *   running   at least one node is executing / repairing / nudged (a model request has been sent and is running)
+ *   waiting   a live node exists (queued / dispatched / waiting), or there are no nodes yet and the run is non-terminal
+ *   completed otherwise: all nodes have settled or the run is terminal (terminal state takes precedence; nobody in a terminal run
+ *             is still running or waiting, even if a node's settled event has not arrived yet)
+ * `dispatched` maps to waiting rather than running: it is the brief phase where the session is ready but the first request has not
+ * been admitted yet. `node-executing` marks actual execution.
  *
- * 状态没变的 actor 保持**引用不变**——键级增量按引用先判一遍"这条变了吗"，这里每次都造新对象
- * 会让每条节点事件都把整张 actors 表搬上线。
+ * Keep actors whose state has not changed **referentially stable**. Key-level deltas first check by reference whether an entry changed;
+ * creating a new object every time would cause each node event to resend the entire actors table.
  */
 export function withDerivedWorkflowActorStatuses(run: WorkflowRunState): WorkflowRunState {
   const executing = new Set<string>();

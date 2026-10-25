@@ -1,6 +1,8 @@
-# Model 与 ModelRequest
+# Model and ModelRequest
 
-业务代码通过 Model 发起模型请求。调用方只选择模型、准备 messages/tools/schema 和本次通用 Options，不读取 Provider 凭据、Endpoint 或协议参数。
+Business code initiates model requests through the Model. Callers only select models, prepare
+messages/tools/schema, and pass per-call general Options; they do not read Provider credentials, Endpoints,
+or protocol parameters.
 
 ```ts
 const model = modelFactory({
@@ -15,11 +17,12 @@ const result = await model.generateText({
 });
 ```
 
-主 Agent、Subagent、Automatic Compact、Title、Goal、Project Memory、Git、Repo Wiki、WebFetch、WebSearch 和其他模型任务都使用这条调用边界。
+The main Agent, Subagent, Automatic Compact, Title, Goal, Project Memory, Git, Repo Wiki, WebFetch,
+WebSearch, and other model tasks all use this call boundary.
 
-## Model 表达什么
+## What Model Expresses
 
-Model 是已经确定 Provider、模型配置和通用 Options 的可调用对象：
+Model is a callable object with determined Provider, model config, and general Options:
 
 ```ts
 interface Model {
@@ -36,18 +39,21 @@ interface Model {
 }
 ```
 
-`providerId` 和 `modelId` 提供稳定身份；`properties`、`optionSpecs` 与 `options` 是 ModelFactory 在创建时
-固定的完整执行事实。完整 `RegistryProviderConfig/RegistryModelConfig` 只作为 ModelFactory 交给 Adapter 的
-私有创建输入，不从公共 Model 暴露。Model 不接受稀疏 Overlay Config，也不在执行期补齐 Properties。
+`providerId` and `modelId` provide stable identity; `properties`, `optionSpecs`, and `options` are complete
+execution facts fixed by ModelFactory at creation time. Complete `RegistryProviderConfig/RegistryModelConfig`
+is a private creation input for ModelFactory handed to the Adapter; it is not exposed through the public
+Model. Model accepts no sparse Overlay Config and fills no Properties at execution time.
 
-Model 创建后不可变，并允许并发调用。Provider Config 或 Registry 更新不会修改现有 Model；新的执行通过
-ModelFactory 基于当前 Registry 创建新 Model。
+Model is immutable after creation and allows concurrent calls. Provider Config or Registry updates do not
+modify existing Models; new executions create new Models through ModelFactory from the current Registry.
 
-`bind(options)` 在同一 Provider 和模型上派生另一份不可变 Model。它主要服务 Agent Loop、Subagent 或独立任务固定自己的 Options。实现可以复用底层执行器和长期 Service，不要求重新创建 HTTP Client 或 Provider SDK 基础设施。
+`bind(options)` derives another immutable Model on the same Provider and model. It mainly serves Agent Loops,
+Subagents, or independent tasks fixing their own Options. The implementation may reuse underlying executors
+and long-term Services; it need not recreate HTTP Clients or Provider SDK infrastructure.
 
-## 一次 Request
+## A Single Request
 
-ModelRequest 只描述本次调用：
+ModelRequest describes only this call:
 
 ```ts
 interface ModelRequest {
@@ -59,23 +65,17 @@ interface ModelRequest {
 }
 ```
 
-请求的有效 Options 按以下顺序形成：
+The request's valid Options form in order: `Model Options` overridden by `Request's per-call value` →
+`Effective Request Options`. Request Options affect only this call and do not modify Model. Tasks such as
+Compact wanting a smaller output limit explicitly provide `maxOutputTokens` in the Request; Model validates
+without silently clamping for the caller.
 
-```text
-Model Options
-        |
-        | Request 本次调用值覆盖
-        v
-Effective Request Options
-```
+The Request carries no providerId, modelId, API Key, Endpoint, Adapter kind, or any `providerOptions` —
+these are already determined by Model's execution implementation.
 
-Request Options 只影响这次调用，不修改 Model。Compact 等任务如果希望更小的输出上限，应在构造 Request 时明确提供 `maxOutputTokens`；Model 负责校验，不静默替调用方 clamp。
+Properties, Option Specs, Options merge, and Request validation: [`contract.md`](./contract.md).
 
-Request 不携带 providerId、modelId、API Key、Endpoint、Adapter kind 或任意 `providerOptions`。这些内容已经由 Model 的执行实现确定。
-
-Properties、Option Specs、Options 合并和 Request 校验见 [`contract.md`](./contract.md)。
-
-## 从 Model 到 Provider API
+## From Model to Provider API
 
 ```text
 ModelRequest
@@ -86,24 +86,30 @@ Provider-neutral effective request
       |
       v
 Provider Adapter
-├─ 协议字段转换
-├─ per-option 原始 Request Body Patch
-├─ 动态 Token / Header
-├─ 路由与重试
-└─ 错误归一
+├─ Protocol field conversion
+├─ per-option raw Request Body Patch
+├─ Dynamic Token / Header
+├─ Routing and retry
+└─ Error normalization
       |
       v
 Provider API
 ```
 
-业务调用方不理解不同 Provider 的字段形状。普通 API Key 可以来自 Model 创建时的 ProviderConfig；Account Provider 的动态鉴权由请求时 Service 提供。完整边界见 [`../registry/model-creation.md`](../registry/model-creation.md)。
+Business callers do not understand different Providers' field shapes. Ordinary API Keys come from the
+ProviderConfig at Model creation time; Account Provider dynamic auth is provided by request-time services.
+Complete boundary: [`../registry/model-creation.md`](../registry/model-creation.md).
 
-Temperature、top-p、top-k、penalty 和 seed 不进入公共 ModelRequest。新的通用 Option 需要先形成固定 Schema、Option Spec 和跨 Adapter 语义，不能通过任意 Record 向业务层开放。Option Map 的受限 CEL 与最终请求体边界见 [`model-option-map.md`](./model-option-map.md)。
+Temperature, top-p, top-k, penalty, and seed do not enter the public ModelRequest. New general Options need
+fixed Schema, Option Specs, and cross-Adapter semantics first; they cannot be exposed to business layers
+through arbitrary Records. Constrained CEL and the final request body boundary for Option Maps:
+[`model-option-map.md`](./model-option-map.md).
 
-## Model 生命周期
+## Model Lifecycle
 
-Session 持久化完整 ModelSelection：模型身份固定；支持 Reasoning 的模型同时保存具体档位。执行开始时，
-Registry/ModelFactory 校验并冻结 Selection 已明确的 Option；单次输出预算由具体执行调用方提供：
+Sessions persist complete ModelSelection: model identity is fixed; models supporting Reasoning also save
+the specific level. At execution start, Registry/ModelFactory validates and freezes the Option explicitly
+specified by Selection; per-output budget is provided by specific execution callers:
 
 ```text
 Session ModelSelection
@@ -118,52 +124,54 @@ Agent Loop Active Model
 └─ Step N
 ```
 
-普通 Step 与 Automatic Compact 使用 Loop 当前的 Active Model。Composer Selection、Session Selection 和 Registry 的普通变化不修改它。Guide/“立即”被当前 Loop 接收后，在 Model Step 边界创建并切换新的 Active Model；已经发出的请求继续使用旧 Model。
+Normal Steps and Automatic Compact use the Loop's current Active Model. Composer Selection, Session
+Selection, and ordinary Registry changes do not modify it. After a Guide/"Immediate" is received by the
+current Loop, a new Active Model is created and switched at the Model Step boundary; already-issued requests
+continue on the old Model.
 
-Subagent 有自己的 Model。存在显式 Selection 时创建对应模型，没有显式 Selection 时按 Execution 继承规则取得父级 Selection。Title、Memory、Repo Wiki 等独立任务也各自取得 Model，不绕过公共调用接口。
+Subagents have their own Models: with an explicit Selection, create the corresponding model; without one,
+obtain the parent Selection per execution inheritance rules. Independent tasks such as Title, Memory, and
+Repo Wiki also each obtain Models; they do not bypass the public call interface.
 
-普通 Model 对象由 JavaScript GC 回收。Timer、Socket、Watcher、子进程和其他需要确定释放的资源由长期 Service owner 管理，不依赖 Model 对象何时被回收。
+Ordinary Model objects are reclaimed by JavaScript GC. Timers, Sockets, Watchers, subprocesses, and other
+resources requiring definite release are managed by long-term Service owners, independent of when Model
+objects are reclaimed.
 
-## Result、Event 与归因
+## Result, Event, and Attribution
 
-`ModelResult` 统一非流式调用结果，`ModelEvent` 统一流式事件。Provider SDK 原始类型和原始错误封装在 Adapter 内，不直接泄漏给业务代码。
+`ModelResult` unifies non-streaming call results; `ModelEvent` unifies streaming events. Provider SDK raw
+types and raw errors are encapsulated within the Adapter and do not leak to business code.
 
-每次请求的 Usage、Trace、Model IO、cost、quota 和错误从实际 Model 取得：
+Usage, Trace, Model IO, cost, quota, and errors for each request are obtained from the actual Model
+(`providerId`, `modelId`, effective options). Attribution does not read the input box's current selection,
+later-changed Session Selection, or the optional model field in the Provider's response. The model name
+returned by the Provider can serve as routing diagnostic information.
+
+## View and Execution Separation
+
+Settings pages and model selection pages read ProviderConfig, ModelConfig, member source, and status from
+Registry/Facade projections:
 
 ```text
-实际 Model
-├─ providerId
-├─ modelId
-└─ effective options
-        |
-        v
-Usage / Trace / Diagnostics
-```
-
-归因不读取输入框当前选择、后来变化的 Session Selection 或 Provider 响应中的可选 model 字段。Provider 返回的模型名称可以作为路由诊断信息。
-
-## 查看与执行分离
-
-设置页面和模型选择页面读取 Registry/Facade 投影的 ProviderConfig、ModelConfig、成员来源和状态：
-
-```text
-查看与选择
+View and Selection
 └─ Registry / Facade View
    ├─ ProviderConfig
    ├─ ModelConfig
    └─ builtin / enabled / completeness
 
-真正执行
+True Execution
 └─ ModelFactory(selection)
    ├─ Registry lookup / validate
    ├─ Adapter private create
    └─ Model
 ```
 
-因此 Host 可以展示、分组和校验模型，而无需构造可调用 Model。disabled 与 incomplete 是创建前状态，
-不进入 Model 请求契约；重复成员已经在 Inventory 阶段按“保留第一次、Built-in-wins”确定化。Model 只在
-Agent Loop 或独立模型任务真正开始时创建。
+The Host can therefore display, group, and validate models without constructing callable Models. `disabled`
+and `incomplete` are pre-creation states; they do not enter the Model request contract; duplicate members
+are already deterministic at the Inventory stage per "keep the first, Built-in-wins." Models are created
+only when Agent Loops or independent model tasks truly begin.
 
-## 子文档
+## Sub-documents
 
-[`contract.md`](./contract.md) 定义 ModelProperties、ModelOptionSpecs、ModelOptions、ModelRequest 检查、结果语义和 Provider reasoning 映射边界。
+[`contract.md`](./contract.md) defines ModelProperties, ModelOptionSpecs, ModelOptions, ModelRequest checks,
+result semantics, and Provider reasoning mapping boundaries.

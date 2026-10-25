@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, win32 as pathWin32 } from "node:path";
 
 vi.mock("electron", () => ({
   app: {
@@ -33,12 +36,7 @@ afterEach(() => {
   vi.resetModules();
 });
 
-async function importEditorsWithWindowsCommandMocks(
-  existingPaths: string[],
-  whereOutput: string,
-  whereError?: Error,
-) {
-  setProcessPlatform("win32");
+function mockNodeFsExistsSync(existingPaths: string[]) {
   const existingPathSet = new Set(existingPaths);
 
   vi.doMock("node:fs", async () => {
@@ -48,6 +46,15 @@ async function importEditorsWithWindowsCommandMocks(
       existsSync: vi.fn((path: string) => existingPathSet.has(path)),
     };
   });
+}
+
+async function importEditorsWithWindowsCommandMocks(
+  existingPaths: string[],
+  whereOutput: string,
+  whereError?: Error,
+) {
+  setProcessPlatform("win32");
+  mockNodeFsExistsSync(existingPaths);
 
   vi.doMock("node:child_process", async () => {
     const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
@@ -64,6 +71,13 @@ async function importEditorsWithWindowsCommandMocks(
       }),
     };
   });
+
+  return import("../src/main/editors.js");
+}
+
+async function importEditorsWithExistingPaths(platform: NodeJS.Platform, existingPaths: string[]) {
+  setProcessPlatform(platform);
+  mockNodeFsExistsSync(existingPaths);
 
   return import("../src/main/editors.js");
 }
@@ -109,6 +123,134 @@ describe("editors", () => {
     );
   });
 
+  it("macOS detects JetBrains IDEs installed by Toolbox under ~/Applications", async () => {
+    const toolboxAppPath = join(homedir(), "Applications", "IntelliJ IDEA.app");
+    const { getEditorDefsForCurrentPlatform, resolveEditorDefAppPath } =
+      await importEditorsWithExistingPaths("darwin", [toolboxAppPath]);
+
+    const ideaDef = getEditorDefsForCurrentPlatform().find((def) => def.id === "idea");
+    if (!ideaDef) {
+      throw new Error("missing idea editor def");
+    }
+
+    expect(resolveEditorDefAppPath(ideaDef)).toBe(toolboxAppPath);
+  });
+
+  it("macOS adds Android Studio with user-level app candidates", async () => {
+    const toolboxAppPath = join(homedir(), "Applications", "Android Studio.app");
+    const { getEditorDefsForCurrentPlatform, resolveEditorDefAppPath } =
+      await importEditorsWithExistingPaths("darwin", [toolboxAppPath]);
+
+    const androidStudioDef = getEditorDefsForCurrentPlatform().find(
+      (def) => def.id === "android-studio",
+    );
+    if (!androidStudioDef) {
+      throw new Error("missing android-studio editor def");
+    }
+
+    expect(androidStudioDef.appPath).toBe("/Applications/Android Studio.app");
+    expect(androidStudioDef.appPathCandidates).toEqual([
+      toolboxAppPath,
+      join(homedir(), "Applications", "JetBrains Toolbox", "Android Studio.app"),
+    ]);
+    expect(resolveEditorDefAppPath(androidStudioDef)).toBe(toolboxAppPath);
+  });
+
+  it("Windows names the system file manager in English instead of a hardcoded locale string", async () => {
+    setProcessPlatform("win32");
+
+    const { getEditorDefsForCurrentPlatform } = await import("../src/main/editors.js");
+    const explorerDef = getEditorDefsForCurrentPlatform().find((def) => def.id === "explorer");
+
+    expect(explorerDef?.name).toBe("File Explorer");
+  });
+
+  it("Windows detects JetBrains IDEs installed by the Toolbox apps layout", async () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "zcode-editors-toolbox-"));
+    const originalLocalAppData = process.env.LOCALAPPDATA;
+    process.env.LOCALAPPDATA = pathWin32.join(fixtureRoot, "Local");
+    const programsRoot = pathWin32.join(process.env.LOCALAPPDATA, "Programs");
+    const directIdeaDir = pathWin32.join(programsRoot, "IntelliJ IDEA Ultimate");
+    const directIdeaExe = pathWin32.join(directIdeaDir, "bin", "idea64.exe");
+    const appsRoot = pathWin32.join(process.env.LOCALAPPDATA, "JetBrains", "Toolbox", "apps");
+    const ideaDir = pathWin32.join(appsRoot, "IDEA-U");
+    const channelDir = pathWin32.join(ideaDir, "ch-0");
+    const legacyIdeaExe = pathWin32.join(channelDir, "243.21565.193", "bin", "idea64.exe");
+    // Only the Community edition is installed: the missing PyCharm-P directory must not stop
+    // the scan from finding its sibling app code.
+    const pycharmDir = pathWin32.join(appsRoot, "PyCharm-C");
+    const pycharmChannelDir = pathWin32.join(pycharmDir, "ch-1");
+    const pycharmExe = pathWin32.join(pycharmChannelDir, "2026.1.2", "bin", "pycharm64.exe");
+    const directories = new Map<string, string[]>([
+      [programsRoot, ["IntelliJ IDEA Ultimate"]],
+      [appsRoot, ["IDEA-U", "PyCharm-C"]],
+      [ideaDir, ["ch-0", "settings.json"]],
+      // A legacy short-numbered build must sort below the current one: a lexical sort would
+      // place "99.5.1" above "243.21565.193" and resolve the older build first.
+      [channelDir, ["243.21565.193", "242.2365.12", "99.5.1"]],
+      [pycharmDir, ["ch-1"]],
+      [pycharmChannelDir, ["2026.1.2"]],
+    ]);
+    const files = new Set<string>([
+      pathWin32.join(ideaDir, "settings.json"),
+      directIdeaExe,
+      legacyIdeaExe,
+      pathWin32.join(channelDir, "99.5.1", "bin", "idea64.exe"),
+      pycharmExe,
+    ]);
+
+    try {
+      setProcessPlatform("win32");
+      vi.doMock("node:fs", async () => {
+        const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+        return {
+          ...actual,
+          existsSync: vi.fn((path: string) => files.has(path)),
+          readdirSync: vi.fn((path: string, options?: { withFileTypes?: boolean }) => {
+            const names = directories.get(path);
+            if (!names) {
+              // Missing directories must throw like the real readdirSync so the scan's
+              // per-app-code error handling is actually exercised.
+              throw Object.assign(
+                new Error(`ENOENT: no such file or directory, scandir '${path}'`),
+                { code: "ENOENT" },
+              );
+            }
+            if (!options?.withFileTypes) {
+              return names;
+            }
+            return names.map((name) => ({
+              name,
+              isDirectory: () => !files.has(pathWin32.join(path, name)),
+              isFile: () => files.has(pathWin32.join(path, name)),
+            }));
+          }),
+        };
+      });
+
+      const { getEditorDefsForCurrentPlatform, resolveEditorDefAppPath } =
+        await import("../src/main/editors.js");
+      const ideaDef = getEditorDefsForCurrentPlatform().find((def) => def.id === "idea");
+      if (!ideaDef) {
+        throw new Error("missing idea editor def");
+      }
+      const pycharmDef = getEditorDefsForCurrentPlatform().find((def) => def.id === "pycharm");
+      if (!pycharmDef) {
+        throw new Error("missing pycharm editor def");
+      }
+
+      expect(resolveEditorDefAppPath(ideaDef)).toBe(directIdeaExe);
+      expect(resolveEditorDefAppPath(pycharmDef)).toBe(pycharmExe);
+    } finally {
+      if (originalLocalAppData === undefined) {
+        delete process.env.LOCALAPPDATA;
+      } else {
+        process.env.LOCALAPPDATA = originalLocalAppData;
+      }
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   it("Windows 应把常见 IDE 纳入 workspace 顶部打开菜单候选", async () => {
     setProcessPlatform("win32");
 
@@ -116,7 +258,18 @@ describe("editors", () => {
     const editorIds = getEditorDefsForCurrentPlatform().map((editor) => editor.id);
 
     expect(editorIds).toEqual(
-      expect.arrayContaining(["explorer", "vscode", "trae", "idea", "pycharm"]),
+      expect.arrayContaining([
+        "explorer",
+        "vscode",
+        "trae",
+        "idea",
+        "pycharm",
+        "phpstorm",
+        "rider",
+        "rubymine",
+        "datagrip",
+        "android-studio",
+      ]),
     );
   });
 

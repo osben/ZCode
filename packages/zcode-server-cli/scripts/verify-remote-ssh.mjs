@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * 远程验证编排：把 staged 发行包部署到带 sshd 的
- * Linux 容器里，从本机经 `ssh -L` 隧道验证 daemon 生命周期与 HTTP/WS ingress 合同。
+ * Remote verification orchestration: deploy the staged release package to a Linux container with sshd,
+ * then verify daemon lifecycle and HTTP/WS ingress contracts from the local machine through an `ssh -L` tunnel.
  *
- * 用法：
+ * Usage:
  *   node scripts/verify-remote-ssh.mjs [--target linux-x64|linux-arm64] [--keep]
  *
- * 前置：docker 可用；已运行 `pnpm --filter @zcode/server-cli stage --target <target>`。
- * `--keep` 保留容器与隧道供手工调试（脚本会打印连接方式）。
+ * Prerequisites: Docker is available; `pnpm --filter @zcode/server-cli stage --target <target>` has been run.
+ * `--keep` retains the container and tunnel for manual debugging (the script prints how to connect).
  */
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -47,7 +47,7 @@ async function main() {
     );
   });
 
-  // 一次性 ssh 密钥，容器仅信任本次运行生成的公钥。
+  // Use a one-time SSH key; the container trusts only the public key generated for this run.
   const workDir = await mkdtemp(join(tmpdir(), "zcode-server-verify-"));
   cleanups.push(() => rm(workDir, { force: true, recursive: true }));
   const keyPath = join(workDir, "id_ed25519");
@@ -188,7 +188,7 @@ async function main() {
   assert(ingressToken.length >= 32, "daemon writes a non-empty ingress token");
   log(`remote core ready at 127.0.0.1:${remotePort} (pid ${daemonStatus.pid})`);
 
-  // Core 只监听远端回环地址；ssh -L 隧道是到达它的唯一路径。
+  // Core listens only on the remote loopback address; the ssh -L tunnel is the only way to reach it.
   const localPort = await findFreePort();
   log(`open tunnel 127.0.0.1:${localPort} -> remote 127.0.0.1:${remotePort}`);
   const tunnel = spawn(
@@ -231,8 +231,8 @@ async function main() {
   });
 
   log("verify /ws/host capability gate");
-  // capability middleware 在 WS 升级前检查请求头，普通 GET 即可验证 401 边界；
-  // undici fetch 禁止手动设置 upgrade 头，也不需要。
+  // Capability middleware checks the request header before the WS upgrade, so a regular GET can verify the 401 boundary;
+  // undici fetch forbids manually setting the upgrade header, which is also unnecessary.
   const unauthorized = await fetch(`${baseUrl}/ws/host`);
   assert(
     unauthorized.status === 401,
@@ -271,7 +271,7 @@ async function main() {
   assert(replayed.status === 401, `replayed ticket must be 401, got ${replayed.status}`);
   log("ws contracts ok (replayable upgrade, host gate, one-time ticket)");
 
-  // linux 的 pty.node 走 @lydell 补齐路径（打包时特殊处理），必须在真实目标平台验证可加载。
+  // On Linux, pty.node uses the @lydell replacement path (handled specially during packaging), so it must be verified on the actual target platform.
   log("verify node-pty spawns a real pty on remote");
   await ssh(
     `RELEASE_DIR=$(/root/zcode-bootstrap/runtime/node -e "console.log(JSON.parse(require('node:fs').readFileSync('${serverRoot}/current.json','utf8')).releaseDir)") && cd "$RELEASE_DIR/runtime" && ./node -e "const pty=require('node-pty');const p=pty.spawn('/bin/echo',['pty-ok'],{cols:80,rows:24});let o='';p.onData(d=>o+=d);p.onExit(()=>{process.exit(o.includes('pty-ok')?0:1)})"`,
@@ -313,7 +313,7 @@ try {
     try {
       await cleanup();
     } catch {
-      // 清理失败不掩盖主流程结果。
+      // Cleanup failure must not mask the main-flow result.
     }
   }
 }

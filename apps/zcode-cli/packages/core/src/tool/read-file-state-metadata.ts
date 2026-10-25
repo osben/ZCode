@@ -3,8 +3,12 @@ import { createReadFileStateKey } from "./read-file-state.js";
 import type { ReadFileStateEntry, ReadFileStateMap } from "./types.js";
 
 export const READ_FILE_STATE_METADATA_SCHEMA_VERSION = 1;
-// `CreateWorkflow` / `AmendWorkflow` / `FillWorkflowHole`：内联草稿（或 fill 文件）的字节就是模型那次
-// 调用的 `script` 入参，与 Write 同理记作完整视图（handlers/workflow-draft-read-state.ts）。
+// Model-visible result of a Read whose cached view is still fresh. It carries no file body, so the nested AGENTS.md
+// history probe must not treat it as the model having seen the file (context/nested-instructions/history.ts).
+export const FILE_UNCHANGED_STUB =
+  "Wasted call — file unchanged since your last Read. Refer to that earlier tool_result instead.";
+// `CreateWorkflow` / `AmendWorkflow` / `FillWorkflowHole`: bytes from an inline draft (or fill file) are the `script` input from the model's call;
+// like Write, record them as a complete view (handlers/workflow-draft-read-state.ts).
 export type PersistedReadFileStateTool =
   | "Read"
   | "Write"
@@ -62,8 +66,8 @@ export function createReadFileStateMetadataFromEntry(input: {
   const entry = input.entry;
   if (!entry) return undefined;
   if (entry.mtimeMs === undefined || entry.sizeBytes === undefined || !entry.revisionId) {
-    // resume stale guard 必须恢复文件时间戳和 adapter revision；
-    // 缺 freshness metadata 的历史文件状态不能冒充已读，否则会放过 stale 写入。
+    // The resume stale guard must restore the file timestamp and adapter revision;
+    // historical file state without freshness metadata must not be treated as read, or it could allow a stale write.
     return undefined;
   }
 

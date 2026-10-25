@@ -1,10 +1,14 @@
-// session/read 的 contentProfile="index" 裁剪。
-// 背景：task index 每次 turn 完成 / 改标题 / 变可见都会 existing-only 读一次 session，
-// 旧实现拿到的是完整历史（长 session 单行可达 ~15MB），host stdio 与 JSON 解析被打满，
-// 而 index 只需要 title / searchableText / hasUserVisibleContent / status / model。
-// 这里只剥离这些派生都不读取的大载荷字段，保持 message / part 数量、顺序、id、type、metadata 不变，
-// 以保证可见性与投影策略判定和 full snapshot 完全一致（spec：docs/task/task-sqlite-index.md「Index read profile」）。
-// 不能改用 messageLimit：searchableText 取前 200K 字符、标题回退首条真实用户输入，都依赖历史开头。
+// Trimming for session/read with contentProfile="index".
+// Background: the task index performs an existing-only session read on every turn completion /
+// title change / visibility change. The old implementation fetched the full history (a single
+// line of a long session can reach ~15MB), saturating the host stdio pipe and JSON parsing, while
+// the index only needs title / searchableText / hasUserVisibleContent / status / model.
+// This strips only the large payload fields none of those projections read, keeping message /
+// part counts, order, ids, types, and metadata unchanged, so visibility and projection policy
+// decisions match the full snapshot exactly (spec: docs/task/task-sqlite-index.md, "Index read
+// profile").
+// messageLimit cannot be used instead: searchableText takes the first 200K characters and the
+// title falls back to the first real user input — both depend on the start of the history.
 import type { ZCodeSessionStateSnapshot } from "./zcode-protocol/index.js";
 import type { ZCodeMessagePart, ZCodeMessageWithParts } from "./zcode-protocol-legacy-types.js";
 
@@ -56,7 +60,7 @@ function elideMessageForIndex(message: ZCodeMessageWithParts): ZCodeMessageWithP
   return changed ? { ...message, parts } : message;
 }
 
-/** 生成 task index 专用的轻量 snapshot；不修改入参（CLI 侧 messages 可能来自共享缓存）。 */
+/** Produces the lightweight snapshot dedicated to the task index; does not mutate the input (CLI-side messages may come from a shared cache). */
 export function elideSessionSnapshotForIndex<T extends ZCodeSessionStateSnapshot>(snapshot: T): T {
   return { ...snapshot, messages: snapshot.messages.map(elideMessageForIndex) };
 }

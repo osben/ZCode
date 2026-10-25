@@ -47,6 +47,10 @@ const forkIsolatedTests = [
   "packages/services/test/mcpSyncService.test.ts",
   "packages/services/test/providerRuntimeResolver.test.ts",
   "packages/services/test/runtimeToolResolver.test.ts",
+  // Bugfix（CI 稳定性）：该用例用真实 fs watcher 验证「目录被替换时丢弃在途读取」，
+  // 边界约 5s。GitHub 2 核 runner 上并行 worker 的磁盘调度会打穿时限（本地 3/3 绿）。
+  // 沿用本组先例：串行 fork 隔离，收敛调度竞争。
+  "packages/services/test/subagentRuntimeConfig.test.ts",
   // 该集成测试会真实启动 tsx、Supervisor 与多代 Core；放在普通 threads 中时，
   // 并行 worker 的进程启动压力会让 15 秒 ready barrier 偶发超时。
   "packages/zcode-server-cli/test/runtimeUpdateIntegration.test.ts",
@@ -55,6 +59,47 @@ const forkIsolatedTests = [
   // 波及面收敛到本文件，其余测试结果可完整收集；崩溃根因见
   // docs/windows-test-compatibility.md。
   "packages/ui/test/pdfJsCMapSupport.test.ts",
+];
+
+// Fork 的 node:test 用例（tsx --test，见 package.json test:node）不能用 vitest 收集，
+// 必须从 unit include 中排除，否则报 "No test suite found"。
+const forkNodeTestFiles = [
+  "packages/services/test/botMessagesLocale.test.ts",
+  "packages/services/test/branchMergeStatusService.test.ts",
+  // session PR status node:test cases (mapping + service); run via test:node.
+  "packages/services/test/sessionPullRequestMapping.test.ts",
+  "packages/services/test/sessionPullRequestsService.test.ts",
+  // Real-git + fake-gh integration over the host path; run via test:node.
+  "packages/services/test/sessionPullRequestsIntegration.test.ts",
+  // Missing comma here made the whole config fail to parse (TransformError at the next entry).
+  "packages/services/test/sessionPullRequestsServiceLogging.test.ts",
+  // node:test cases run via test:node; excluded here so Vitest does not collect them.
+  "packages/services/test/systemPromptService.test.ts",
+  "packages/services/test/outputStyleService.test.ts",
+  "packages/services/test/userInstructionsService.test.ts",
+  // 该文件使用 node:test；随 test:node 运行，避免被 Vitest 二次收集。
+  "packages/services/test/zcodeUpstreamBaseVersion.test.ts",
+  // 语音听写的 node:test 用例（模型下载/转写/RPC 契约）；随 test:node 运行，避免被 Vitest 二次收集。
+  "packages/services/test/voiceDictation.test.ts",
+  "packages/services/test/voiceDictationRpc.test.ts",
+  "packages/services/test/voiceModelLanguages.test.ts",
+  "packages/services/test/voicePostProcess.test.ts",
+  "packages/ui/test/voiceDictation.test.ts",
+  "packages/ui/test/chatErrorResume.test.ts",
+  "packages/ui/test/branchMergeStatusProbeRunner.test.ts",
+  // session PR status prober node:test cases; run via test:node.
+  "packages/ui/test/pullRequestStatusProbeRunner.test.ts",
+  "packages/ui/test/i18nCatalogParity.test.ts",
+  "packages/ui/test/intlPlural.test.ts",
+  "packages/ui/test/localeContentCatalogs.test.ts",
+  "packages/ui/test/localeFormatting.test.ts",
+  "packages/ui/test/localeSettingsSchema.test.ts",
+  "packages/ui/test/localeSupport.test.ts",
+  "packages/ui/test/sessionThroughput.test.ts",
+  "packages/ui/test/themeContrast.test.ts",
+  "packages/ui/test/themeMigration.test.ts",
+  "packages/ui/test/updateReleaseNotes.test.ts",
+  "packages/ui/test/userInstructionsEditorModel.test.ts",
 ];
 
 export default defineConfig({
@@ -117,13 +162,24 @@ export default defineConfig({
             // Gen UI 目录回归位于源码旁，默认入口也必须执行，避免只在手动定向运行时生效。
             "packages/shared/src/node/genUiPaths.test.ts",
             "packages/services/src/gen-ui/**/*.test.ts",
+            // Definition preview confinement tests live beside the managed module's source.
+            "packages/services/src/definition-preview/**/*.test.ts",
+            // CI runs only the root suite; pin upstream checksums of the shared CLI session DB here.
+            "apps/zcode-cli/packages/adapters/tests/upstream-migration-checksum-pin.test.ts",
+            // CI runs only the root suite; the model-io timing contract test must run there too.
+            "apps/zcode-cli/packages/adapters/tests/runner-debug-stream-timing.test.ts",
             "scripts/assert-safe-cua-helper-zip.test.mjs",
             "scripts/ci/ci-telemetry-keyword-guard.test.mjs",
           ],
-          exclude: ["packages/desktop/test/e2e/**", "packages/zcode-cua/**", ...forkIsolatedTests],
-          // Node 24/macOS 的 threads 全量运行可触发 V8 SIGSEGV；诊断时切换进程隔离，测试范围不变。
+          exclude: [
+            "packages/desktop/test/e2e/**",
+            "packages/zcode-cua/**",
+            ...forkIsolatedTests,
+            ...forkNodeTestFiles,
+          ],
+          // Full-run threads on macOS can trigger a V8 SIGSEGV; switch to process isolation when diagnosing, the test scope stays the same.
           pool: process.env.ZCODE_TEST_POOL === "forks" ? "forks" : "threads",
-          maxWorkers: process.env.ZCODE_TEST_POOL === "forks" ? 2 : 4,
+          maxWorkers: process.env.CI || process.env.ZCODE_TEST_POOL === "forks" ? 2 : 4,
           sequence: { groupOrder: 0 },
         },
       },

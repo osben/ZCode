@@ -1,35 +1,32 @@
-# Edit Tool 模型可见结果契约
+# Edit Tool model-visible result contract
 
-## 背景
+## Background
 
-Edit 工具的 provider-visible `tool_result` 是模型判断编辑是否生效、是否需要重读文件的依据。
-本文约束 Edit 成功与失败时的模型可见文本、`old_string` 的转义匹配，以及 read-before-edit
-的读取状态判定。
+The provider-visible `tool_result` of the Edit tool is how the model judges whether an edit took effect and whether the file must be re-read. This document constrains the model-visible text on Edit success and failure, escaped matching of `old_string`, and read-state judgment for read-before-edit.
 
-## 行为
+## Behavior
 
-- 成功 Edit 的模型可见文本需要带 freshness suffix：
-  ` (file state is current in your context — no need to Read it back)`。
-- Edit 执行错误进入模型上下文时需要包装为
-  `<tool_use_error>...</tool_use_error>`，但 UI/日志使用的原始错误消息仍保持裸文本。
-- `old_string` 中的 `\uXXXX` escape 应能匹配文件中的真实字符，例如
-  `<tag>` 匹配 `<tag>`。
-- 已读取且未变更的 partial view read state 可作为 Edit 的 read-before-edit 依据；
-  文件变更后仍必须走 stale guard。
+- A successful Edit's model-visible text carries the freshness suffix:
+  ` (file state is current in your context — no need to Read it back)`.
+- Edit execution errors entering the model context are wrapped as
+  `<tool_use_error>...</tool_use_error>`, while the raw error message used by UI/logs stays bare text.
+- `\uXXXX` escapes in `old_string` must match the real characters in the file; e.g.
+  `<tag>` matches `<tag>`.
+- A partial-view read state of a file that was read and has not changed since counts as Edit's read-before-edit basis; after a file change, the stale guard still applies.
 
-## 目标
+## Goals
 
-1. Edit success/error 的模型可见文本使用上述固定形态。
-2. 保持 Edit error 的结构化错误类型和 UI 展示消息不被 `<tool_use_error>` 包装污染。
-3. 支持 unicode escape fallback 的 `old_string` 匹配。
-4. 保持 stale 文件保护，不因为允许 partial read state 而放宽已变更文件的写入保护。
+1. Edit success/error model-visible text uses the fixed forms above.
+2. Edit error's structured error types and UI display messages stay unpolluted by the `<tool_use_error>` wrapper.
+3. `old_string` matching supports the unicode-escape fallback.
+4. Stale-file protection is preserved; allowing partial read state does not loosen write protection for changed files.
 
-## 非目标
+## Non-goals
 
-- 不修改桌面端、Web 端或手机远控链路。
-- 不修改 Read/Bash/WebSearch 等其它 tool 的模型可见错误格式。
+- No changes to desktop, Web, or mobile remote paths.
+- No changes to the model-visible error formats of other tools (Read/Bash/WebSearch/etc.).
 
-## 验证
+## Verification
 
 - `apps/zcode-cli/packages/core/tests/edit-tool-contract.test.ts`
 - `pnpm typecheck`

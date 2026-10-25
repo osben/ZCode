@@ -27,8 +27,8 @@ function shouldTreatPersistedRunningTaskAsRunning(
     return true;
   }
 
-  // task meta cache 可能晚于 stream terminal event 刷新，仍短暂保留 running。
-  // 如果本地 runtime 已有明确非运行态，断连收口不能再被滞后的 meta running 覆盖成 failed。
+  // The task meta cache may update later than the stream terminal event and briefly remain running.
+  // If the local runtime already has an explicit non-running state, disconnect cleanup must not let stale meta running overwrite it as failed.
   return isRunningRuntimeStatus(runtimeState.status);
 }
 
@@ -88,9 +88,9 @@ export function markRemoteWorkspaceRunningTasksFailed({
       }
 
       markedTaskKeys.add(taskKey);
-      // SSH 半开断连时远端 task_error 可能到不了 renderer，
-      // 仅清 remoteSessionId 会让任务列表继续按 running/streaming 显示 loading。
-      // 这里只收口本地 UI runtime，不写远端 snapshot；重连后仍以远端持久状态为准。
+      // During a half-open SSH disconnect, the remote task_error may not reach the renderer.
+      // Clearing only remoteSessionId leaves the task list showing loading as running/streaming.
+      // Finalize only the local UI runtime here, not the remote snapshot; after reconnect, remote persisted state remains authoritative.
       setTaskRuntimeState(tab.workspacePath, taskId, "failed", reason, tab.workspaceIdentity);
     }
   }

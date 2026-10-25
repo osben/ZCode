@@ -21,17 +21,23 @@ import {
 import type { ArchiveOperation } from "@/project-sidebar/useArchiveManagement.js";
 import type { ProjectTask } from "@/project-sidebar/contract.js";
 
+function isRemoteTask(task: ProjectTask) {
+  return Boolean(task.workspaceIdentity?.trim());
+}
+
 export function ArchiveGroupCard({
   group,
   name,
   sort,
   disabled,
+  allowPermanentDelete = false,
   onAction,
 }: {
   group: ArchiveGroup;
   name: string;
   sort: ArchiveSort;
   disabled: boolean;
+  allowPermanentDelete?: boolean;
   onAction: (rows: ProjectTask[], operation: ArchiveOperation) => Promise<void>;
 }) {
   const { intl, locale } = useZCodeIntl();
@@ -45,6 +51,10 @@ export function ArchiveGroupCard({
   const msg = (id: string) => intl.formatMessage({ id: `archives.${id}` });
   const [limit, setLimit] = useState(50);
   const [open, setOpen] = useState(false);
+  // Remote rows cannot be permanently deleted from this surface; the reason is shown on their entry.
+  const remoteUnavailableReason = intl.formatMessage({ id: "taskDelete.remoteUnavailable" });
+  const groupHasLocalRows = group.tasks.some((task) => !task.workspaceIdentity?.trim());
+  const groupDeleteUnavailable = !allowPermanentDelete || !groupHasLocalRows;
   return (
     <Collapsible open={open} onOpenChange={setOpen} asChild>
       <section
@@ -73,7 +83,7 @@ export function ArchiveGroupCard({
             </CollapsibleTrigger>
           </h3>
           <span className="shrink-0 text-ui-sm text-foreground-subtle">
-            {intl.formatMessage({ id: "archives.count" }, { count: group.tasks.length })}
+            {intl.formatPlural({ id: "archives.count" }, group.tasks.length)}
           </span>
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
@@ -97,6 +107,8 @@ export function ArchiveGroupCard({
               <DropdownMenuItem
                 data-testid="archive-group-delete"
                 variant="destructive"
+                disabled={groupDeleteUnavailable}
+                title={groupDeleteUnavailable ? remoteUnavailableReason : undefined}
                 onSelect={() => void onAction(group.tasks, "delete")}
               >
                 {msg("deleteAll")}
@@ -133,7 +145,12 @@ export function ArchiveGroupCard({
                       data-testid="archive-delete"
                       size="icon-sm"
                       variant="ghost"
-                      disabled={disabled}
+                      disabled={disabled || !allowPermanentDelete || isRemoteTask(task)}
+                      title={
+                        !allowPermanentDelete || isRemoteTask(task)
+                          ? remoteUnavailableReason
+                          : undefined
+                      }
                       aria-label={intl.formatMessage(
                         { id: "archives.deleteTask" },
                         { title: task.title },

@@ -1,37 +1,23 @@
 # Goal Query Readonly
 
-## 背景
+`/goal` and `/target` show in the chat as user queries but are not ordinary prompts:
 
-`/goal` 和 `/target` 在聊天区虽然以用户 query 的形态展示，但它们不是普通 prompt：
+- The send entry routes them to session goal control commands.
+- set / replace writes the current session target and may trigger goal continuation.
+- pause / resume / clear / show are goal state controls and must not be treated as retryable natural-language queries.
 
-- 发送入口会把它们路由到 session goal 控制命令。
-- set / replace 会写入当前 session target，并可能触发 goal continuation。
-- pause / resume / clear / show 是 goal 状态控制，不应被当作可重试的自然语言 query。
+## Interaction rules
 
-## 交互约束
+User messages produced from plain-text `/goal ...` or `/target ...` stay read-only:
 
-聊天区中由纯文本 `/goal ...` 或 `/target ...` 产生的用户消息保持只读：
+- No edit / retry action on the user message. Read-only actions (copy, time display, expanding long text) stay available.
+- The leading `/goal` / `/target` is submit-control syntax. The read-only user bubble keeps the Goal icon and command semantic color with a `goal` / `target` label but does not render the leading `/`; the rest of the goal text keeps the ordinary user-text style.
+- Copy, inline edit and command intent still use the original `UserInputRow.text`; omitting the `/` in the display layer must not lose the original `/goal` / `/target`.
+- Mentioning `/goal` in ordinary body text is unaffected.
+- `/goal ...` with attachments is not handled as a goal slash command and keeps ordinary message behavior. This includes context attachments such as web elements or conversation selections: stripping the context block from the visible body must not make the message render as a goal query.
 
-- 不展示用户消息的编辑 / retry action。
-- 复制、时间展示、展开长文本等只读操作保持可用。
-- query 正文开头的 `/goal` / `/target` 是提交控制语法；只读用户气泡继续用 Goal
-  图标和 command 语义色展示 `goal` / `target` 标签，但不渲染开头的 `/`，后续目标
-  正文保持普通用户文本样式。
-- 复制、行内编辑和 command intent 仍使用原始 `UserInputRow.text`，不能因为展示层
-  省略 `/` 而丢失原始 `/goal` / `/target`。
-- 普通正文中提到 `/goal` 不受影响。
-- 带附件的 `/goal ...` 不按 goal slash command 处理，仍沿用普通消息行为。
-- 带网页元素、会话选区等上下文附件的 `/goal ...` 同样按普通消息展示，不能只因
-  上下文块从可见正文中被剥离就误渲染为 goal query。
+Omitting the `/` only changes the renderer's read-only body. It does not change message text, copied content, the edit target or the desktop continuous / web remote replayable projection semantics. Desktop and mobile Web share the same row component and use existing semantic colors for light and dark themes.
 
-命令 token 省略 `/` 只改变 renderer 的只读正文，不改变消息文本、复制内容、编辑目标或
-desktop continuous / web remote replayable 的投影语义；桌面端和手机 Web 端共用同一
-行渲染组件，并使用已有语义色以兼容亮色、暗色主题。
+## Implementation constraints
 
-## 实现约束
-
-UI 判断必须复用和发送入口一致的 visible slash command 语义，不能只通过字符串包含
-`/goal` 判断。这样可以避免普通讨论文本、国际化文案、带文件或上下文附件的消息被
-误判为 goal query。展示解析只用来识别已确认 goal query，并在 command 标签中省略
-开头的 `/`；权威原文仍使用 `UserInputRow.text`，不能从渲染结果反推或重写 command
-intent。
+The UI check must reuse the same visible slash command semantics as the send entry, not a string-contains check for `/goal`; this avoids misclassifying ordinary discussion text, i18n copy and messages with file or context attachments. Display parsing only identifies confirmed goal queries and omits the leading `/` in the command label; the authoritative source text stays `UserInputRow.text`, and command intent is never reconstructed from the rendered result.

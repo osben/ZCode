@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import type { ProjectReservationCleanupContract } from "#src/project-storage/reservation-contract.js";
 import type { AppSettings } from "@zcode/shared";
 import type { MigrationResult } from "@zcode/shared/sqlite-migrations";
 
@@ -22,6 +23,31 @@ export interface ProjectStorageContract {
   admitTaskIdentity(db: DatabaseSync, task: ProjectTaskRef, hostId?: string): void;
 }
 
+/** A plain create always resolves its directories; a fork resolves null while its parent has no owner yet. */
+export type ReserveCreatedTaskResult<T extends ReserveCreatedTaskInput> = T extends {
+  forkOf: ProjectTaskRef;
+}
+  ? ProjectDirectories | null
+  : ProjectDirectories;
+
+/**
+ * A plain create names its project and directories. A fork names only its parent: the child takes over the parent's
+ * project, cwd and resolved directories, and a row that already has an owner is left unchanged. An unowned parent gives no claim (null).
+ */
+export type ReserveCreatedTaskInput =
+  | {
+      task: ProjectTaskRef;
+      projectId: string | null;
+      /** Host 已固化的执行目录；首次预留持久化，重试不改。undefined 为普通新建。 */
+      additionalDirectories?: string[];
+      forkOf?: undefined;
+    }
+  | {
+      task: ProjectTaskRef;
+      forkOf: ProjectTaskRef;
+      projectId?: undefined;
+      additionalDirectories?: undefined;
+    };
 export interface ProjectRoot {
   rootPath: string;
   position: number;
@@ -74,6 +100,11 @@ export interface SaveProjectInput {
   primaryRoot?: string;
   pinned?: boolean;
   restoreProjectId?: string;
+  /**
+   * Open-directory intent: return the local project already bound to this single root instead of creating a
+   * duplicate. Only valid for one local root with no other fields (see the project service schema).
+   */
+  reuseExistingRoot?: boolean;
 }
 export interface ProjectDirectories {
   workspacePath: string;
@@ -86,7 +117,7 @@ export interface AutoArchiveInput {
   cutoff: number;
   activeTasks: readonly ProjectTaskRef[];
 }
-export interface ProjectRepositoryContract {
+export interface ProjectRepositoryContract extends ProjectReservationCleanupContract {
   /** 单事务纯按 CLI 最后活动时间筛选，置顶与 activeTasks 除外，仅写组织态；覆盖未归类 cwd。 */
   archiveInactive(input: AutoArchiveInput): ProjectTaskRef[];
   /** 可只取目录，并参与调用方已有的 SQLite 读快照。 */
@@ -102,11 +133,9 @@ export interface ProjectRepositoryContract {
   moveTask(input: { task: ProjectTaskRef; projectId: string; addMissingRoot?: boolean }): void;
   reorderProjects(ids: string[]): void;
   resolveSessionDirectories(task: ProjectTaskRef): ProjectDirectories;
-  /** CLI 创建之前原子预留归属；无事实的预留行不进入列表，重试不覆盖组织操作。 */
-  reserveCreatedTask(input: {
-    task: ProjectTaskRef;
-    projectId: string | null;
-    /** Host 已固化的执行目录；首次预留持久化，重试不改。undefined 为普通新建。 */
-    additionalDirectories?: string[];
-  }): ProjectDirectories;
+  /**
+   * CLI 创建之前原子预留归属；无事实的预留行不进入列表，重试不覆盖组织操作。
+   * 分叉的父行尚未归属（host_id NULL）时返回 null：子行不写入，由 admitForkSummary 在父行归属后认领。
+   */
+  reserveCreatedTask<T extends ReserveCreatedTaskInput>(input: T): ReserveCreatedTaskResult<T>;
 }

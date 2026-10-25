@@ -13,6 +13,7 @@ import type {
   ZCodeTaskChangeSummary,
 } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
+import { logger } from "@/logger.js";
 import { useServices } from "@/hooks/useServices.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type { AssistantPreviewCardsAutoOpenRequest } from "@/lib/assistantPreviewCards.js";
@@ -122,6 +123,8 @@ interface PaneRestoredGuardProps {
   paneId: string;
   scope: PaneWorkspaceScope;
   sessionId: string;
+  subagentOnly: boolean;
+  selectionSideChatOnly: boolean;
   onConfirmed: (paneId: string) => void;
   onMissing: (paneId: string) => void;
 }
@@ -142,6 +145,8 @@ function PaneRestoredGuard({
   paneId,
   scope,
   sessionId,
+  subagentOnly,
+  selectionSideChatOnly,
   onConfirmed,
   onMissing,
 }: PaneRestoredGuardProps) {
@@ -167,6 +172,42 @@ function PaneRestoredGuard({
         return;
       }
       settled = true;
+      if (subagentOnly || selectionSideChatOnly) {
+        // Child tasks (subagent / selection side chat) are not listed in the main sessions index,
+        // so confirm them with a direct kind-filtered lookup instead of the index membership check.
+        const expectedKind = subagentOnly ? "subagent_child" : "selection_side_chat";
+        void agentService
+          .listSessions({
+            workspacePath,
+            ...(workspaceIdentity ? { workspaceIdentity } : {}),
+            ...(remoteSessionId ? { remoteSessionId } : {}),
+            sessionIds: [sessionId],
+          })
+          .then((sessions) => {
+            if (disposed) return;
+            if (
+              sessions.some(
+                (session) =>
+                  session.sessionId === sessionId && session.sessionKind === expectedKind,
+              )
+            ) {
+              onConfirmed(paneId);
+            } else {
+              onMissing(paneId);
+            }
+          })
+          .catch((error: unknown) => {
+            if (disposed) return;
+            settled = false;
+            logger.warn("[workbench] restored child task type lookup failed", {
+              error: error instanceof Error ? error.message : String(error),
+              sessionId,
+              workspaceIdentity,
+              workspacePath,
+            });
+          });
+        return;
+      }
       const exists = store.getSessions().some((summary) => summary.sessionId === sessionId);
       if (exists) {
         onConfirmed(paneId);
@@ -185,6 +226,8 @@ function PaneRestoredGuard({
     agentService,
     paneId,
     sessionId,
+    subagentOnly,
+    selectionSideChatOnly,
     workspacePath,
     workspaceIdentity,
     remoteSessionId,
@@ -202,6 +245,8 @@ export interface WorkbenchShellBinding {
   remoteSessionId?: string;
   /** Prompt 模板埋点当前仅覆盖 Desktop。 */
   isDesktop?: boolean;
+  readOnlySessionId?: string | null;
+  selectionSideChatSessionId?: string | null;
   readOnly?: boolean;
   allowEscapeStopOutsidePane?: boolean;
   compactForRemoteControl?: boolean;
@@ -224,8 +269,16 @@ export interface WorkbenchShellBinding {
   summaryPanelVariantOverride?: ChatViewSummaryPanelVariant | null;
   onSummaryPanelVariantOverrideChange?: (variant: ChatViewSummaryPanelVariant | null) => void;
   onRefreshGit?: () => void;
-  onOpenGitReview?: (sourceId?: GitChangeSourceId) => void;
+  onOpenGitReview?: (
+    sourceId?: GitChangeSourceId,
+    executionWorkspacePath?: string,
+    executionSessionId?: string,
+  ) => void;
   onOpenBrowserUrl?: (url: string) => void;
+  onCreateTaskInWorkspace?: (
+    workspacePath: string,
+    workspaceIdentity?: string,
+  ) => void | Promise<void>;
   onOpenAutomationsMain?: OpenAutomationsMain;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
   onAutoOpenAssistantPptx?: (request: AssistantPreviewCardsAutoOpenRequest) => void;
@@ -372,7 +425,12 @@ export function WorkbenchLeafPane({
     : (binding?.sessionId ?? null);
   const readOnly = Boolean(
     (isPrimary ? primaryBinding?.readOnly : binding?.readOnly) ||
-    (isShellWorkspace && shell.readOnly),
+    (isShellWorkspace && shell.readOnly) ||
+    (sessionId && sessionId === shell.readOnlySessionId),
+  );
+  const selectionSideChat = Boolean(
+    (isPrimary ? primaryBinding?.selectionSideChat : binding?.selectionSideChat) ||
+    (sessionId && sessionId === shell.selectionSideChatSessionId),
   );
   const shouldUseShellStatusPanel = isShellWorkspace;
   const paneSearchResultHighlightRequest =
@@ -401,6 +459,10 @@ export function WorkbenchLeafPane({
             paneId={paneId}
             scope={scope}
             sessionId={sessionId}
+            subagentOnly={Boolean((isPrimary ? primaryBinding : binding)?.readOnly)}
+            selectionSideChatOnly={Boolean(
+              (isPrimary ? primaryBinding : binding)?.selectionSideChat,
+            )}
             onConfirmed={onConfirmRestoredSession}
             onMissing={onClosePane}
           />
@@ -408,6 +470,7 @@ export function WorkbenchLeafPane({
         <SessionPane
           paneId={paneId}
           readOnly={readOnly}
+          selectionSideChat={selectionSideChat}
           sessionId={sessionId}
           openTrigger={isPrimary ? "sidebar" : "split"}
           activeSelectionSideChatSessionId={resolvePaneActiveSelectionSideChatSessionId(
@@ -453,6 +516,7 @@ export function WorkbenchLeafPane({
           onRefreshGit={shouldUseShellStatusPanel ? shell.onRefreshGit : undefined}
           onOpenGitReview={shouldUseShellStatusPanel ? shell.onOpenGitReview : undefined}
           onOpenBrowserUrl={shell.onOpenBrowserUrl}
+          onCreateTaskInWorkspace={shell.onCreateTaskInWorkspace}
           onOpenAutomationsMain={shell.onOpenAutomationsMain}
           onOpenCodeViewer={shell.onOpenCodeViewer}
           onAutoOpenAssistantPptx={shell.onAutoOpenAssistantPptx}

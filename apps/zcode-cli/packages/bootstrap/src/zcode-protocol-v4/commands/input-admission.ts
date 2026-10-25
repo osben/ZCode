@@ -111,6 +111,28 @@ export async function applyHeldQueueDisposition(
   if (disposition === "clearQueueAndSend") {
     await record.app.clearQueueItems();
     host.clearQueuedTurnExecutions?.(record.app.sessionId);
+    await releaseClearedQueueHold(host, record);
+  }
+}
+
+/**
+ * ISSUE-063 (specs/stop-queue-hold.md rule 15): the Stop's hold protected the items it cleared; leaving
+ * autoDrain=false let it outlive its queue and hold the next item queued on an un-stopped turn. Released only
+ * after the clear, so no drain window opens over the old items. The false->true write arms core's external
+ * drain for old projected items; the queue is empty, so it is ended at once or inline Guide consumption stays off.
+ */
+async function releaseClearedQueueHold(
+  host: V4CommandCoreHost,
+  record: V4SessionRecordView,
+): Promise<void> {
+  try {
+    await record.app.setQueueAutoDrain(true);
+    record.app.completeExternalQueueDrain();
+  } catch (error) {
+    host.logger?.warn?.("v4 clearQueueAndSend failed to release queue hold", {
+      error: error instanceof Error ? error.message : String(error),
+      sessionId: record.app.sessionId,
+    });
   }
 }
 
@@ -192,4 +214,93 @@ export function resolveOrdinaryQueueModelSelection(
     );
   }
   return selection;
+}
+
+/**
+ * Stop queue hold (ISSUE-010, specs/stop-queue-hold.md). A stop that will cancel writes autoDrain=false and
+ * waits for the authority write before any abort. The verifier path has already passed the ordinary turn
+ * catch, so TurnComplete(cancelled) cannot be relied on to close the runtime queue gate. Nothing is written
+ * for an empty queue or a queue the user already paused. Returns whether this stop wrote the hold; a failed
+ * write is logged and the stop still proceeds.
+ */
+export async function holdFollowingQueue(
+  host: V4CommandCoreHost,
+  record: V4SessionRecordView,
+  willCancel: boolean,
+): Promise<boolean> {
+  const sessionId = record.app.sessionId;
+  if (
+    !willCancel ||
+    (host.getQueueLength?.(sessionId) ?? 0) === 0 ||
+    host.getQueueAutoDrain?.(sessionId) === false
+  )
+    return false;
+  try {
+    await record.app.setQueueAutoDrain(false);
+    return true;
+  } catch (error) {
+    host.logger?.warn?.("v4 stop failed to hold following queue", {
+      error: error instanceof Error ? error.message : String(error),
+      sessionId,
+    });
+    return false;
+  }
+}
+
+/**
+ * Undoes a hold written by a stop that cancelled nothing: the turn ended on its own while the hold was
+ * being written, and its turn-end drain check already saw autoDrain=false. Resuming goes through the same
+ * ready hook as setAutoDrain(true) so an idle session promotes the queue head at once.
+ */
+export async function releaseFollowingQueue(
+  host: V4CommandCoreHost,
+  record: V4SessionRecordView,
+): Promise<void> {
+  try {
+    await record.app.setQueueAutoDrain(true);
+    await host.afterLegacyStateMutation?.(record, "queue_auto_drain_resumed");
+  } catch (error) {
+    host.logger?.warn?.("v4 stop failed to release following queue", {
+      error: error instanceof Error ? error.message : String(error),
+      sessionId: record.app.sessionId,
+    });
+  }
+}
+
+/**
+ * ISSUE-039 D1. Any cancel already in flight (a Steer, a goal pause, a projection-fault termination): the target was
+ * aborted and has not torn down yet. A stop that wrote its own hold keeps it (a user Stop always holds). The inputs are observed by the
+ * caller: runtimeIdle (stopActiveForegroundExecution returned idle), runtimeIdRegistered (the execution is still
+ * registered, so idle means aborted, not torn down), compatAbortedBefore (no runtime token, the controller was
+ * aborted before the stop began).
+ */
+export function isStopCancelInFlight(input: {
+  held: boolean;
+  runtimeIdle: boolean;
+  runtimeIdRegistered: boolean;
+  compatAbortedBefore: boolean;
+}): boolean {
+  return input.held && input.runtimeIdle && (input.runtimeIdRegistered || input.compatAbortedBefore);
+}
+
+/** goal-pause barrier 共用件：stop 与 sendQueuedNow（抢占重发）复用，不复制。 */
+export async function pauseActiveGoal(
+  host: V4CommandCoreHost,
+  record: V4SessionRecordView,
+): Promise<boolean> {
+  // 注意：方法必须经 app 调用（不可解构，实现可能依赖 this 绑定）。
+  const target = await record.app.readTarget();
+  if (!target || target.status !== "active") {
+    return false;
+  }
+  try {
+    const paused = await record.app.updateTargetStatus("paused");
+    return Boolean(paused);
+  } catch (error) {
+    host.logger?.warn?.("v4 stop failed to pause active goal", {
+      error: error instanceof Error ? error.message : String(error),
+      sessionId: record.app.sessionId,
+    });
+    return false;
+  }
 }

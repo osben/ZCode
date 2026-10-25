@@ -1,10 +1,21 @@
 import type { EnvInfo, Model } from "@zcode/contracts";
-import { isEnvInfoGitRepository } from "../context/sections/env-info.js";
+import {
+  isEnvInfoGitRepository,
+  type ExecutionWorktreeEnvFact,
+  formatExecutionWorktreeSentence,
+} from "../context/sections/env-info.js";
 
 export interface SubagentEnvironmentContextOptions {
   agentPrompt: string;
   envInfo: EnvInfo;
   model?: Model;
+  /** Worktree isolation notice projected from the parent runtime config; absent for plain sessions. */
+  executionWorktree?: ExecutionWorktreeEnvFact;
+  /**
+   * `environment` toggle off: keep only the worktree isolation line inside the `<env>` tags. Returns
+   * an empty string when no worktree applies, so callers omit the section.
+   */
+  worktreeOnly?: boolean;
 }
 
 export function buildSubagentCommonNotes(): string {
@@ -25,11 +36,22 @@ export function buildSubagentEnvironmentContext(
   const modelLine = model
     ? [`You are powered by the model named ${model.providerId}/${model.modelId}.`]
     : [];
+  // Subagents share the parent's execution cwd: a worktree session must carry the same isolation
+  // notice inside the <env> block, right after the working directory line. Plain sessions and
+  // facts without a parent reference keep a byte-identical block.
+  const executionWorktreeLine = options.executionWorktree
+    ? formatExecutionWorktreeSentence(options.executionWorktree)
+    : null;
+
+  if (options.worktreeOnly) {
+    return executionWorktreeLine ? ["<env>", executionWorktreeLine, "</env>"].join("\n") : "";
+  }
 
   return [
     "Here is useful information about the environment you are running in:",
     "<env>",
     `Working directory: ${envInfo.cwd}`,
+    ...(executionWorktreeLine ? [executionWorktreeLine] : []),
     `Is directory a git repo: ${isEnvInfoGitRepository(envInfo) ? "Yes" : "No"}`,
     `Platform: ${envInfo.platform}`,
     `Shell: ${envInfo.shell}`,

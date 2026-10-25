@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MarkdownImage } from "@/components/ai-elements/markdown-image.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 let optionalServices: {
   fileService: {
@@ -23,8 +24,8 @@ function renderMarkdownImage(src: string, workspacePath?: string) {
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
-      createElement(MarkdownImage, { alt: "示例图", src, workspacePath }),
+      { initialLocale: "en-US" },
+      createElement(MarkdownImage, { alt: "Sample image", src, workspacePath }),
     ),
   );
 }
@@ -37,11 +38,11 @@ afterEach(() => {
 });
 
 describe("MarkdownImage loading state", () => {
-  it("远程图片加载完成前显示状态，完成后显示图片", () => {
+  it("shows the loading state until a remote image finishes loading, then shows the image", () => {
     renderMarkdownImage("https://example.com/image.png");
 
-    expect(screen.getByRole("status", { name: "加载中..." })).toBeTruthy();
-    const image = screen.getByRole("img", { name: "示例图" });
+    expect(screen.getByRole("status", { name: expectedCopy("common.loading") })).toBeTruthy();
+    const image = screen.getByRole("img", { name: "Sample image" });
     expect(image.className).toContain("invisible");
 
     fireEvent.load(image);
@@ -50,43 +51,47 @@ describe("MarkdownImage loading state", () => {
     expect(image.className).not.toContain("invisible");
   });
 
-  it("远程图片加载失败后显示不可用状态", () => {
+  it("shows the unavailable state after a remote image fails to load", () => {
     renderMarkdownImage("https://example.com/missing.png");
 
-    fireEvent.error(screen.getByRole("img", { name: "示例图" }));
+    fireEvent.error(screen.getByRole("img", { name: "Sample image" }));
 
     expect(screen.queryByRole("status")).toBeNull();
-    expect(screen.getByRole("img", { name: "暂时无法显示这张图片。" })).not.toBeNull();
+    expect(
+      screen.getByRole("img", { name: expectedCopy("codeViewer.imageUnavailable") }),
+    ).not.toBeNull();
   });
 
-  it("src 切换后忽略旧图片的失败事件", () => {
+  it("ignores failure events from the old image after src changes", () => {
     const view = renderMarkdownImage("https://example.com/old.png");
-    const oldImage = screen.getByRole("img", { name: "示例图" });
+    const oldImage = screen.getByRole("img", { name: "Sample image" });
 
     view.rerender(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(MarkdownImage, {
-          alt: "示例图",
+          alt: "Sample image",
           src: "https://example.com/new.png",
         }),
       ),
     );
     fireEvent.error(oldImage);
 
-    expect(screen.getByRole("status", { name: "加载中..." })).not.toBeNull();
-    expect(screen.queryByLabelText("暂时无法显示这张图片。")).toBeNull();
+    expect(screen.getByRole("status", { name: expectedCopy("common.loading") })).not.toBeNull();
+    expect(screen.queryByLabelText(expectedCopy("codeViewer.imageUnavailable"))).toBeNull();
   });
 
-  it("卸载时清理预览关闭后的焦点恢复任务", () => {
+  it("cleans up the focus restoration task scheduled after the preview closes on unmount", () => {
     vi.useFakeTimers();
     const focus = vi.spyOn(HTMLElement.prototype, "focus");
     const view = renderMarkdownImage("https://example.com/image.png");
-    const image = screen.getByRole("img", { name: "示例图" });
+    const image = screen.getByRole("img", { name: "Sample image" });
     fireEvent.load(image);
-    fireEvent.click(screen.getByRole("button", { name: "打开图片预览" }));
-    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: expectedCopy("chat.attachments.preview.open") }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.close") }));
     focus.mockClear();
 
     view.unmount();
@@ -95,7 +100,7 @@ describe("MarkdownImage loading state", () => {
     expect(focus).not.toHaveBeenCalled();
   });
 
-  it("本地预览数据无法解码时显示失败状态", async () => {
+  it("shows the failure state when local preview data cannot be decoded", async () => {
     optionalServices = {
       fileService: {
         readMediaPreview: async () => ({
@@ -106,9 +111,11 @@ describe("MarkdownImage loading state", () => {
     };
     renderMarkdownImage("./broken.png", "/workspace");
 
-    const image = await waitFor(() => screen.getByRole("img", { name: "示例图" }));
+    const image = await waitFor(() => screen.getByRole("img", { name: "Sample image" }));
     fireEvent.error(image);
 
-    expect(screen.getByRole("img", { name: "暂时无法显示这张图片。" })).not.toBeNull();
+    expect(
+      screen.getByRole("img", { name: expectedCopy("codeViewer.imageUnavailable") }),
+    ).not.toBeNull();
   });
 });

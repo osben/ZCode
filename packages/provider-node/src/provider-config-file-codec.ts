@@ -85,8 +85,8 @@ const legacyCompleteManualSchema = completeModelConfigDataSchema.extend({
   enabled: modelConfigDataSchema.shape.enabled,
 });
 
-// 旧编辑器曾把 MFJS 当作手动必填项；隐藏后仅在文件边界识别旧合法形状，
-// 提取现行可编辑字段，避免整个个人配置加载失败或继续冻结系统能力。
+// The old editor treated MFJS as a required manual field. After hiding it, recognize the old valid shape only at the file boundary
+// and extract current editable fields, so personal config does not fail to load or keep pinning system capabilities.
 const legacyEditableManualSchema = manualModelConfigSchema.extend({
   properties: manualModelConfigSchema.shape.properties.extend({
     requiresMfjsToolSchema:
@@ -100,7 +100,7 @@ function normalizeLegacyManualRules(input: unknown): unknown {
     ...input,
     manualProviderModelRules: input.manualProviderModelRules.map((rule: unknown) => {
       if (!isRecord(rule) || manualModelConfigSchema.safeParse(rule.config).success) return rule;
-      // 仅识别旧完整形状，不把未知/损坏配置通过删字段伪装成成功；公共写入入口仍严格拒绝隐藏叶子。
+      // Recognize only the old complete shape; do not make unknown/corrupt config appear valid by deleting fields. The public write entry point still strictly rejects hidden leaves.
       const legacy = z
         .union([legacyCompleteManualSchema, legacyEditableManualSchema])
         .safeParse(rule.config);

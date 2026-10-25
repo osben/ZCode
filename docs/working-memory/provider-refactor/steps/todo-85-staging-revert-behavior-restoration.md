@@ -1,46 +1,46 @@
-# Todo 85：staging 合并撤销后的功能恢复与逐项审计
+# Todo85: Restore Functionality After Reverting the Staging Merge and Audit Each Item
 
-> 验证归属更新（2026-09-09）：本文残余欠测/失败/人工晋级统一转交 [Todo102](todo-102-verification-debt-closeout.md)，关闭在本文中的独立验证排期；历史证据保留，转交不代表测试通过。 显式 Subagent 的旧暂缓条款已由 Todo99 实现取代；Off-Peak Ticket 例外和不增加发送前同步的边界不变。
+> Verification ownership update (2026-09-09): remaining untested/failed/manual-promotion items were transferred to [Todo102](todo-102-verification-debt-closeout.md), closing this document's separate verification schedule. Historical evidence remains; transfer does not mean tests passed. The old deferred clause for explicit Subagent behavior was superseded by the Todo99 implementation. The Off-Peak Ticket exception and the boundary against adding pre-send synchronization remain unchanged.
 
-> 状态：恢复与逐项审计已完成，2026-09-07；交付证据与明确排除项见恢复审计表。
-> 起点：`a43049c265`，分支 `provider-refactor-e2e-recovery`，含此前恢复工作与其他任务的未提交改动。
-> 最新进度：65 文件及关联人工处理均有归属和最终去向。领取/账号、导航、MCP、CUA、Hook、附件、Goal 恢复均已提交；D02/Todo87 已接入公共层、Composer、Automation、Bot、Wiki及闲时只读保护。D01 明确不恢复；显式 Subagent 自动对应、闲时跨账号/Ticket 迁移明确排除。最新 Air 四组复测 12/12，其他验证及尚未覆盖的真实环境组合均如实记录，不等于全产品全量回归。
+> Status: restoration and item-by-item audit completed on 2026-09-07. See the restoration audit table for delivery evidence and explicit exclusions.
+>
+> Starting point: `a43049c265`, branch `provider-refactor-e2e-recovery`, including earlier restoration work and uncommitted changes from other tasks.
+>
+> Latest progress: all 65 files and related manual interventions have an owner and disposition. Claim/account, navigation, MCP, CUA, Hook, attachments and Goal restorations were committed. D02/Todo87 is wired into the shared layer, Composer, Automation, Bot, Wiki and off-peak read-only protection. D01 is explicitly not restored; explicit Subagent auto-correlation and cross-account/Ticket migration for off-peak are explicitly excluded. The latest four Air retest groups passed 12/12. Other checks and untested real-environment combinations are recorded honestly; this is not a full-product regression.
 
-## 目标与范围
+## Goal and scope
 
-追踪那次 staging 合并中的撤销和人工处理，恢复未经裁决丢掉的正确行为。默认保留 staging；只有与当前 Provider 架构或已明确改变的产品语义冲突时，才适配或提出裁决。不能把技术适配一律交给用户决定。
+Trace the reverts and manual handling from that staging merge and restore correct behavior that was discarded without a decision. Keep staging behavior by default; adapt it or propose a decision only where it conflicts with the current Provider architecture or explicitly changed product semantics. The user is not asked to decide every technical adaptation.
 
-- 当时 staging：`16d999f6a48b180b691a4d909479c063580d2ad0`。
-- 合并 `aaa68edbca`：第一父提交 `88fdfc34e0` 是当时当前分支，第二父提交是上述 staging。不能颠倒父提交，不能用第一父提交代表 staging。
-- 合并撤销 `7016d1e09a`，涉及 50 个文件。
-- 插件混合提交 `b9118cc192`、撤销 `cb16b3c8fd`、后补 UI `2ee9b8d0c6`。
-- 人工处理 `0ed79bae57`（SessionPane）及关联补丁；沿历史扩展查找其他同类冲突处理，新增范围必须记录来源。
-- 不合入固定基线之后新增的 staging，不执行 Todo 80，不借此重写整个 Provider/Session 架构。
+- Staging at the time: `16d999f6a48b180b691a4d909479c063580d2ad0`.
+- Merge `aaa68edbca`: first parent `88fdfc34e0` was the then-current branch; second parent was the staging revision above (do not reverse the parents).
+- Merge revert `7016d1e09a` (50 files); mixed plugin commit `b9118cc192`, its revert `cb16b3c8fd`, follow-up UI `2ee9b8d0c6`; manual handling `0ed79bae57` (`SessionPane`) and related patches. Other similar conflict handling is searched for and any expanded scope is recorded with its source.
+- Out of scope: staging changes after the fixed baseline, executing Todo80, rewriting the whole Provider/Session architecture.
 
-提交在 ancestry 中不是功能保留的证明；出现 revert 也不是当前缺失的证明。每项必须追到当前代码及后续补丁。
+A commit in ancestry does not prove a feature was retained and a revert does not prove it is still missing: every item is traced through current code and follow-up patches.
 
-## 执行与记录
+## Method
 
 ```text
-撤销/人工处理补丁 -> 按原功能归组 -> 查原意和调用链
-  -> 追踪后续恢复 -> 对照当前实现
-  -> 完整保留 / 等价实现 / 待恢复 / 待裁决
-  -> 写 spec、恢复测试、适配代码 -> 验证 -> 反向复查 -> 更新记录
+revert/manual-handling patches -> group by original feature -> inspect intent and call chain
+  -> trace later restoration -> compare with current implementation
+  -> fully retained / equivalent implementation / to restore / decision required
+  -> write spec, restore tests, adapt code -> verify -> reverse-audit -> update record
 ```
 
-详细过程统一写入 [恢复与裁决表](../plan/staging-conflict-restoration-audit.md)，不再建多份相互矛盾的结论。每组写清原提交、撤销位置、原行为、当前结果、裁决理由、代码位置、测试结果和下一步。补充逐文件索引，确保撤销补丁内每个文件都有所属功能及去向。
+Detailed records live only in the [restoration and decision table](../plan/staging-conflict-restoration-audit.md) (original commit, revert location, original behavior, current result, reason, code locations, test results, next step, plus a per-file index so every file in the revert patches has a feature owner and disposition).
 
-1. 建立完整清单。先审计两个 revert 和人工处理，不把两个分支全量差异冒充事故范围。
-2. 优先完成直接保留项。按功能还原完整上下游；混合文件只移植相关行为。已在其他任务修改的文件先核对差异，不覆盖并行工作。
-3. 架构适配。保持 ModelSelection、目标 Host Registry、Account State/Overlay、稀疏配置和既定迁移边界；不恢复旧 Provider Store、旧 Runtime Config 或 Account-first 自动选模。
-4. 需裁决项。记录具体用户行为、与当前约定的冲突、可选方案和建议；暂停该项，继续其他独立事项。2026-09-07 最新裁决：D01 不恢复发送前远端同步；D02 已由 [Todo 87](./todo-87-selection-view-unified-resolution.md) 实现，不恢复旧切模 helper。没有未决产品阻塞项。
-5. 验证与复查。先用能证明原问题的定向测试，再做 typecheck/lint；交互在 MacBook Air 独立 E2E 工作树验证，保留构建版本和结果。保留 Desktop continuous / Web replayable、workspaceIdentity 隔离。不把“代码存在”“类型通过”写成真实 E2E 通过。
-6. 分功能提交。仅提交已核实属于本任务的改动，保留他人工作；验证不通过不能标完成。每个提交附真实 Agent 会话 trailer。
+1. Build the complete inventory by auditing the reverts and manual changes first, not the full diff between two branches.
+2. Complete direct-retention items first, restoring the whole upstream/downstream flow by feature and transplanting only the relevant behavior from mixed files; compare before touching files changed by other tasks.
+3. Adapt to the current architecture: preserve ModelSelection, target Host Registry, Account State/Overlay, sparse config and the established migration boundaries; do not restore the old Provider Store, old Runtime Config or account-first automatic model selection.
+4. For items needing a decision, record the exact user behavior, the conflict with current rules, options and a recommendation, and pause that item while continuing independent work. Latest decision (2026-09-07): D01 does not restore pre-send remote synchronization; D02 was implemented by [Todo87](./todo-87-selection-view-unified-resolution.md) and the old switching helper is not restored. No unresolved product blockers.
+5. Verify and review: focused tests that show the original issue, then typecheck/lint; interactions verified in a dedicated MacBook Air E2E worktree with build version and results recorded; keep Desktop continuous / Web replayable and `workspaceIdentity` isolation; "code exists" or "typecheck passes" is not E2E success.
+6. Commit by feature, only verified changes of this task, preserving others' work, with an actual Agent-session trailer; do not mark complete if verification fails.
 
-## 完成条件
+## Completion criteria
 
-- 每个已定位撤销/人工处理文件都有去向，所有功能均有证据支持的结论，不留泛泛“需要核对”。
-- 能确定且可实施的缺口均已处理，恢复前后测试及整体复查有记录。
-- 未决项已分析到用户可以作出具体选择的程度，不把技术调查留给用户。
-- 环境阻塞与真实测试失败分别记录，不伪称完成；最终报告明确尚未恢复、待裁决和待验证内容。
-- 本任务不以“staging 全部提交在历史里”或“仅跑了单测”作为恢复成功标准。
+- Every located file affected by a revert/manual change has a disposition and every feature an evidence-based conclusion.
+- All understood, actionable gaps are addressed with restoration tests and an overall review recorded.
+- Unresolved items are analyzed enough for the user to choose among concrete options.
+- Environment blocks are recorded separately from real test failures; the final report names items not restored, needing a decision or still requiring verification.
+- "All staging commits are in history" or "only unit tests ran" does not count as successful restoration.

@@ -53,7 +53,7 @@ function normalizeSuppressedEventNames(value: unknown): string[] {
   return [...new Set(names)];
 }
 
-/** Main-process 内存 ring；不写磁盘，也不进入 renderer store。 */
+/** Main-process in-memory ring; not written to disk or added to the renderer store. */
 export function createFinalArmsCustomEventE2EController(
   options: {
     capacity?: number;
@@ -106,10 +106,10 @@ export function createFinalArmsCustomEventE2EController(
 }
 
 /**
- * main 侧共享的 E2E 捕获环。
+ * Shared E2E capture ring on the main side.
  *
- * renderer 经 IPC 来的自定义事件与 main 自己发出的资源 / 稳定性事件必须进同一个环，
- * 否则 E2E 只能看到 renderer 那一半。由 `desktopMainIpcRemote` 在双门禁下开启。
+ * Custom events from the renderer over IPC and resource/stability events emitted by main must use the same ring,
+ * or E2E will see only the renderer half. `desktopMainIpcRemote` enables this behind a two-part gate.
  */
 let sharedFinalArmsCustomEventE2E: FinalArmsCustomEventE2EController | null = null;
 
@@ -161,7 +161,7 @@ export function buildFinalArmsCustomEventPayload(params: {
   };
 }
 
-/** 捕获发生在 sendCustom 调用前，网络抑制只跳过目标 event name。 */
+/** Capture happens before sendCustom; network suppression skips only the target event name. */
 export function dispatchFinalArmsCustomEvent(params: {
   payload: ArmsCustomEventPayload;
   context: Parameters<typeof buildFinalArmsCustomEventPayload>[0]["context"];

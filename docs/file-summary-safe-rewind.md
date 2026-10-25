@@ -1,43 +1,39 @@
-# Summary 文件撤销安全预检
+# Summary file rewind safety precheck
 
-## 背景
+## Background
 
-消息 summary 中的文件变更按钮用于撤销本轮文件修改。旧链路直接调用 workspace rewind，
-只依赖 checkpoint 的 `beforeContent` 写回，无法确认用户点击时文件是否已经被其他进程改过。
-当同一个文件在同一轮里被多个 tool 连续修改时，也必须按照 checkpoint 的创建顺序倒序逐次回放，
-不能只使用最终聚合 diff 做一次写回。
+The file-change button on a message summary rewinds this turn's file changes. The old path called workspace rewind directly and relied only on writing back checkpoint `beforeContent`, with no confirmation that the file was unchanged since the user's click. When one file is modified by several tools in the same turn, rewind must replay checkpoints in reverse creation order, not do a single write-back from the final aggregated diff.
 
-## 目标
+## Goals
 
-- 点击 summary 的文件撤销按钮时先弹出确认弹窗。
-- 弹窗按文件展示哪些文件可以安全撤销、哪些文件不能安全撤销。
-- bash/shell 类工具产生的文件修改不参与 summary 文件撤销，也不出现在可撤销列表中。
-- 一个文件被多个非 bash tool 修改时，执行撤销必须按 checkpoint 倒序逐次回放。
-- 应用撤销前必须重新预检；只要存在 unsafe 文件，本次不写任何文件。
-- 桌面端和手机远控都复用当前 session host，不创建独立 runtime。
+- Clicking the summary file-rewind button opens a confirmation dialog first.
+- The dialog lists per file which files can and cannot be safely rewound.
+- File changes made by bash/shell tools do not take part in summary file rewind and never appear in the rewindable list.
+- A file modified by multiple non-bash tools must be rewound by replaying checkpoints in reverse order.
+- Re-run the precheck before applying; if any unsafe file exists, write no file this time.
+- Desktop and mobile remote control reuse the current session host; no separate runtime.
 
-## 非目标
+## Non-goals
 
-- 不实现“重新应用”。当前 checkpoint artifact 只可靠保存变更前内容，不能安全恢复变更后内容。
-- 不做部分撤销。P0 采用 all-or-nothing：存在 unsafe 文件时禁用确认按钮。
-- 不根据 UI 的 `fileChanges.snapshots` 或 tool result 推断写回内容；真正的预检和写回由 agent runtime 完成。
+- No "re-apply". Checkpoint artifacts reliably store only pre-change content; post-change content cannot be safely restored.
+- No partial rewind. P0 is all-or-nothing: any unsafe file disables the confirm button.
+- The write-back content is not inferred from UI `fileChanges.snapshots` or tool results; the precheck and write-back are done by the agent runtime.
 
-## 与 editUserQuery 组合重置的边界
+## Boundary with editUserQuery combined reset
 
-- summary 的 `applyFileRewind` 保持 workspace-only；它可以展示 ignored shell 文件并撤销其余安全文件。
-- 行内编辑的 `editUserQuery(workspaceMode=rewind)` 要求完整回滚目标轮：unsafe、ignored shell、
-  unsupported 或没有安全 checkpoint 都返回结构化 blocked，不写文件、不裁 conversation、不发模型请求。
-- 组合模式必须在同一 Agent command 内重新预检、写文件、提交 branch cut；UI 禁止串联两条 CAS 命令。
-- 多文件写入使用补偿 journal；branch/admission 在提交点前失败时恢复命令前文件内容和旧 branch metadata。
+- Summary `applyFileRewind` stays workspace-only; it may show ignored shell files and rewind the remaining safe files.
+- Inline-edit `editUserQuery(workspaceMode=rewind)` requires a full rollback of the target turn: unsafe, ignored-shell, unsupported, or missing safe checkpoints all return a structured blocked result, writing no file, trimming no conversation, and sending no model request.
+- The combined mode must re-run the precheck, write files, and commit the branch cut inside one Agent command; the UI must not chain two CAS commands.
+- Multi-file writes use a compensation journal; if branch/admission fails before the commit point, restore the pre-command file contents and old branch metadata.
 
-## 协议
+## Protocol
 
-新增两个 ZCode Protocol session 方法：
+Two new ZCode Protocol session methods:
 
 - `session/previewFileRewind`
 - `session/applyFileRewind`
 
-参数复用 session 历史 target：
+Parameters reuse the session history target:
 
 ```ts
 {
@@ -47,7 +43,7 @@
 }
 ```
 
-preview 返回文件级结果：
+preview returns per-file results:
 
 ```ts
 {
@@ -80,31 +76,26 @@ preview 返回文件级结果：
 }
 ```
 
-`applyFileRewind` 返回重新预检后的 preview、是否 applied，以及应用后的 snapshot。
+`applyFileRewind` returns a fresh post-precheck preview, whether it applied, and the resulting snapshot.
 
-## Runtime 算法
+## Runtime algorithm
 
-1. 根据 target 定位 checkpoint owner。checkpoint 以本轮 user message 为 owner；
-   UI 传入 assistant message 时，协议层先归一化到 parent user message，再兜底匹配同 parent 下的 raw assistant step。
-   `turn` target 同样解析到对应轮次的 user message。
-2. 读取该 owner 对应的 workspace/both checkpoint。若该轮有多个 checkpoint，按创建顺序保留。
-3. 读取所有 checkpoint artifact；读取失败的 checkpoint 涉及文件标记为 unsafe。
-4. 忽略 bash/shell/terminal 类 artifact。
-5. 对非 bash artifact 构建操作序列，按 checkpoint 创建顺序倒序检查。
-6. 每个文件当前内容必须等于该 checkpoint 的 after 内容，才允许把它写回 before 内容。
-   after 内容优先由 artifact 显式字段提供；旧 artifact 可由 `beforeContent + structuredPatch` 重建。
-7. 预检阶段只模拟写回，不改磁盘。apply 阶段重新执行同一预检；`canApply=false` 时不写文件。
-8. apply 写回同样按 checkpoint 倒序逐步执行，保证多 tool 修改同一文件时恢复到本轮开始前状态。
+1. Locate the checkpoint owner from the target. Checkpoints are owned by this turn's user message; when the UI passes an assistant message, the protocol layer normalizes to the parent user message, then falls back to matching a raw assistant step under the same parent. A `turn` target likewise resolves to that turn's user message.
+2. Read the owner's workspace/both checkpoints. Multiple checkpoints in one turn are kept in creation order.
+3. Read all checkpoint artifacts; files of a checkpoint whose artifact fails to read are marked unsafe.
+4. Ignore bash/shell/terminal artifacts.
+5. Build the operation sequence from non-bash artifacts and check in reverse checkpoint creation order.
+6. A file's current content must equal that checkpoint's after content before it may be written back to its before content. The after content comes preferably from an explicit artifact field; old artifacts can rebuild it from `beforeContent + structuredPatch`.
+7. Precheck simulates the write-back and never touches disk. Apply re-runs the same precheck; with `canApply=false`, no file is written.
+8. Apply writes back step by step in reverse checkpoint order, so multi-tool files return to their state before the turn.
 
-## UI 行为
+## UI behavior
 
-- summary header 的按钮只负责打开弹窗。
-- 弹窗显示可撤销文件；只有存在 unsafe 文件时才显示不可安全撤销区块。文件行展示文件路径、动作、涉及 tool 数/操作数。
-- 有 unsafe 文件时确认按钮禁用，并提示需要先手动处理这些文件。
-- apply 成功后刷新 session snapshot，summary 的 `fileState` 更新为 `reverted`。
+- The summary header button only opens the dialog.
+- The dialog shows rewindable files; the unsafe block appears only when unsafe files exist. File rows show path, action, and tool/operation counts.
+- With unsafe files, the confirm button is disabled and the user is told to handle those files first.
+- On successful apply, refresh the session snapshot; the summary's `fileState` becomes `reverted`.
 
-## 远控边界
+## Remote-control boundary
 
-该能力是 session command，不改变 task realtime 传输语义。桌面端仍保持
-`desktop-continuous` 主链路；手机远控通过 shared-host attachment 调用同一 session host，
-再按 replayable snapshot 恢复 UI，不把 replayable 运行态恢复逻辑扩散到桌面端。
+This is a session command and does not change task realtime transport semantics. Desktop keeps the `desktop-continuous` main link; mobile remote control calls the same session host through the shared-host attachment and restores UI from the replayable snapshot, without spreading replayable runtime-restore logic to desktop.

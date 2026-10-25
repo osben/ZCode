@@ -7,6 +7,7 @@ import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { RemoteConnectionFields } from "@/RemoteConnectionFields.js";
 import type { IPlatformService } from "@zcode/shared";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const platform: IPlatformService = {
   activateOrSetWorkspace: vi.fn(),
@@ -48,7 +49,7 @@ beforeEach(() => {
 });
 
 function renderRemoteConnectionFields(
-  locale: "zh-CN" | "en-US",
+  locale: "en-US" | "zh-CN" = "en-US",
   overrides: Partial<ComponentProps<typeof RemoteConnectionFields>> = {},
 ) {
   return render(
@@ -107,38 +108,59 @@ function renderRemoteConnectionFields(
   );
 }
 
-it("认证与下载方式有组名和选中状态，密码可显示再隐藏", () => {
-  renderRemoteConnectionFields("zh-CN");
-  const auth = screen.getByRole("group", { name: "认证方式" });
-  expect(within(auth).getByRole("button", { pressed: true }).textContent).toBe("密码");
-  const password = screen.getByLabelText("密码");
+it("auth and download methods have group names and pressed state, and the password can be shown then hidden", () => {
+  renderRemoteConnectionFields();
+  const auth = screen.getByRole("group", {
+    name: expectedCopy("ssh.authMethod"),
+  });
+  expect(within(auth).getByRole("button", { pressed: true }).textContent).toBe(
+    expectedCopy("ssh.auth.password"),
+  );
+  const password = screen.getByLabelText(expectedCopy("ssh.password"));
   expect(password.getAttribute("type")).toBe("password");
-  fireEvent.click(screen.getByRole("button", { name: "显示密码" }));
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.showPassword") }));
   expect(password.getAttribute("type")).toBe("text");
-  fireEvent.click(screen.getByRole("button", { name: "隐藏密码" }));
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.hidePassword") }));
   expect(password.getAttribute("type")).toBe("password");
-  fireEvent.click(screen.getByRole("button", { name: /高级/ }));
-  const download = screen.getByRole("group", { name: "资源下载方式" });
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: new RegExp(expectedCopy("ssh.advancedOptions"), "i"),
+    }),
+  );
+  const download = screen.getByRole("group", {
+    name: expectedCopy("ssh.assetInstallMode"),
+  });
   expect(within(download).getByRole("button", { pressed: true })).toBeTruthy();
   expect(within(download).getByRole("button", { pressed: false })).toBeTruthy();
 });
 
 it.each([
-  { kind: "ssh", sshAuthMethod: "privateKey", label: "私钥口令（可选）" },
-  { kind: "server", sshAuthMethod: "password", label: "Token（可选）" },
-] as const)("$kind 的口令字段可以显示和隐藏且标签关联", ({ kind, sshAuthMethod, label }) => {
-  renderRemoteConnectionFields("zh-CN", { kind, sshAuthMethod });
-  const input = screen.getByLabelText(label);
-  expect(input.getAttribute("type")).toBe("password");
-  fireEvent.click(screen.getByRole("button", { name: "显示密码" }));
-  expect(input.getAttribute("type")).toBe("text");
-  fireEvent.click(screen.getByRole("button", { name: "隐藏密码" }));
-  expect(input.getAttribute("type")).toBe("password");
-});
+  {
+    kind: "ssh",
+    sshAuthMethod: "privateKey",
+    label: expectedCopy("ssh.privateKeyPassphrase"),
+  },
+  {
+    kind: "server",
+    sshAuthMethod: "password",
+    label: expectedCopy("server.token"),
+  },
+] as const)(
+  "$kind passphrase field can be shown and hidden and is label-associated",
+  ({ kind, sshAuthMethod, label }) => {
+    renderRemoteConnectionFields("en-US", { kind, sshAuthMethod });
+    const input = screen.getByLabelText(label);
+    expect(input.getAttribute("type")).toBe("password");
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.showPassword") }));
+    expect(input.getAttribute("type")).toBe("text");
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.hidePassword") }));
+    expect(input.getAttribute("type")).toBe("password");
+  },
+);
 
-it("Docker 容器列表可从搜索框使用方向键与回车选择", async () => {
+it("the Docker container list can be picked from the search box with arrow keys and Enter", async () => {
   const setDockerContainer = vi.fn();
-  renderRemoteConnectionFields("zh-CN", {
+  renderRemoteConnectionFields("en-US", {
     kind: "docker",
     dockerContainer: "alpha",
     dockerAvailable: true,

@@ -1,86 +1,53 @@
-# browser-client 库 + node_repl 注入规格（T6，P0 验收）
+# browser-client library and node_repl injection spec (T6, P0 acceptance)
 
-> 状态：已实现。
-> 2026-07-13 边界更新：对象图实现继续复用 core，但“session 创建时自动注入”已由
-> `2026-07-13-node-repl-mcp-runtime-spec.md` 的 plugin `scripts/browser-client.mjs` 显式 bootstrap 取代；
-> 下文注入段落只记录历史 T6 路线。
-> 上位：`2026-07-07-browser-use-cdp-node-repl-spec.md`；依赖 T1-T5 全部就位。
-> 范围：实现 `agent.browsers.*` 对象图（browser-client 库）+ 在 node_repl 注入它（桥到 T3 的 `BrowserControlPort`）。达成 P0 验收：agent 写 JS → 控制 main WebContentsView → 截图回来。
+> Status: implemented.
+> 2026-07-13 boundary update: the object graph still reuses core, but "inject at session creation" was replaced by the explicit bootstrap of the plugin `scripts/browser-client.mjs` in `2026-07-13-node-repl-mcp-runtime-spec.md`; the injection section below records the historical T6 route only.
+> Parent: `2026-07-07-browser-use-cdp-node-repl-spec.md`; depends on T1-T5.
+> Scope: implement the `agent.browsers.*` object graph (browser-client library) and inject it into node_repl, bridged to the T3 `BrowserControlPort`. P0 acceptance: agent writes JS -> controls the main WebContentsView -> screenshot returns.
 
-## 1. 落点
+## 1. Locations
 
-- `apps/zcode-cli/packages/core/src/browser-client/index.ts`（新）：`setupBrowserRuntime` + `agent.browsers` 对象图。
-- `apps/zcode-cli/packages/core/src/browser-client/facade.ts`（新）：`BrowsersFacade`/`Browser`/`Tab` 类，把方法调用构造成 `BrowserCommand` → `execute(cmd)`。
-- 改 `packages/core/src/tool/handlers/node-repl.ts`：`getSession` 用 `context.browserControlPort` 构造注入 globals。
+- `apps/zcode-cli/packages/core/src/browser-client/index.ts`: `setupBrowserRuntime` + the `agent.browsers` object graph.
+- `apps/zcode-cli/packages/core/src/browser-client/facade.ts`: `BrowsersFacade` / `Browser` / `Tab` classes that turn method calls into a `BrowserCommand` -> `execute(cmd)`.
+- `packages/core/src/tool/handlers/node-repl.ts`: `getSession` builds injected globals from `context.browserControlPort`.
 
-## 2. 对象图（P0 核心子集）
+## 2. Object graph (P0 core subset)
 
-```ts
-// browser-client/index.ts
-export function setupBrowserRuntime(opts: {
-  globals: Record<string, unknown>;
-  execute: (command: BrowserCommand) => Promise<BrowserCommandResult>;
-}): void {
-  const agent = (opts.globals.agent ??= {}) as { browsers?: BrowsersFacade };
-  agent.browsers = new BrowsersFacade(opts.execute);
-}
-```
-```ts
-// facade.ts
-class BrowsersFacade {
-  constructor(private execute: ExecuteFn) {}
-  async open(url?: string): Promise<Browser>;   // 若 url，先 navigate
-  get default(): Browser;                        // 返回当前（单 tab P0）
-}
-class Browser {
-  async navigate(url): Promise<BrowserCommandResult>;  // {method:"navigate",url}
-  async getState(): Promise<BrowserCommandResult>;
-  async screenshot(): Promise<BrowserCommandResult>;   // {method:"screenshot"} → {image:{base64}}
-  // P0 骨架保留、throw NotImplemented：
-  async snapshot(): Promise<never>;   // T8
-  async click(): Promise<never>;
-  async type(): Promise<never>;
-  get playwright(): never;  // getter throw（结构先占位，逃生舱 T10）
-  get cua(): never;
-  get dom_cua(): never;
-}
-```
-- 每方法：构造 `BrowserCommand` → `await execute(cmd)` → 返回 `BrowserCommandResult`（`ok:false` 时不 throw，让模型读 error；仅未实现的 snapshot/click/... throw NotImplemented，让未支持方法显式抛错）。
-- 库纯 TS，外部效果全经注入的 `execute`（I/O 边界收敛）。
+`setupBrowserRuntime({ globals, execute })` sets `globals.agent.browsers = new BrowsersFacade(execute)`, where `execute: (command: BrowserCommand) => Promise<BrowserCommandResult>`.
 
-## 3. node_repl 注入桥
+- `BrowsersFacade`: `open(url?)` returns a `Browser` (navigates first when `url` is given); `default` returns the current one (single tab in P0).
+- `Browser`: `navigate(url)` -> `{method:"navigate",url}`; `getState()`; `screenshot()` -> `{method:"screenshot"}` -> `{image:{base64}}`. P0 skeleton methods that throw NotImplemented: `snapshot` (T8), `click`, `type`, and the getters `playwright`, `cua`, `dom_cua` (escape hatch, T10).
+- Each method builds a `BrowserCommand`, awaits `execute(cmd)` and returns the `BrowserCommandResult`; `ok:false` does not throw (the model reads the error); only unimplemented methods throw NotImplemented.
+- The library is pure TS; all external effects go through the injected `execute`.
 
-- `getSession(context)` 构造 session 时：若 `context.browserControlPort` 存在，注入 globals：
-  ```ts
-  const execute = (command) => context.browserControlPort!.execute({ sessionId: context.sessionId, command });
-  const globals = {};
-  setupBrowserRuntime({ globals, execute });   // globals.agent.browsers 就位
-  new NodeReplSession({ injectedGlobals: { agent: globals.agent, setupBrowserRuntime } });
-  ```
-  即 REPL 里 `agent.browsers` **开箱可用**（无需模型手动 import）。同时也注入 `setupBrowserRuntime`（供高级用法与 bootstrap 文档中的显式初始化写法）。
-- `browserControlPort` 缺省（纯 CLI/远控）：不注入 `agent.browsers`；REPL 里 `agent` 无 browsers，模型调用得到 undefined（或注入一个 stub throw "browser unavailable"）——P0 注入 stub throw 更友好。
-- **注意**：port 来自首次调用的 context；同 session 后续调用复用已建 session（port 不变，安全）。
+## 3. node_repl injection bridge
 
-## 4. P0 验收（端到端，真机）
+- When `getSession(context)` builds the session and `context.browserControlPort` exists, it injects globals with `execute = (command) => context.browserControlPort!.execute({ sessionId: context.sessionId, command })`, calls `setupBrowserRuntime({ globals, execute })`, and creates `new NodeReplSession({ injectedGlobals: { agent: globals.agent, setupBrowserRuntime } })`. `agent.browsers` is available out of the box in the REPL; `setupBrowserRuntime` is injected too for advanced use and explicit initialization in bootstrap docs.
+- `browserControlPort` absent (plain CLI / remote control): `agent.browsers` is not injected; P0 injects a stub that throws "browser unavailable".
+- The port comes from the first call's context; later calls in the same session reuse the existing session (port unchanged, safe).
 
-`ZCODE_BROWSER_USE=1`(或临时在 desktop 装配无条件启用 includeNodeRepl + browserControlPort) 起 desktop → agent 会话里模型：
+## 4. P0 acceptance (end to end, real machine)
+
+With `ZCODE_BROWSER_USE=1` (or temporarily unconditional includeNodeRepl + browserControlPort in the desktop wiring) start desktop; in an agent session the model runs:
+
 ```js
 const b = await agent.browsers.open("https://example.com");
 nodeRepl.write(JSON.stringify(await b.getState()));
 const shot = await b.screenshot();
 nodeRepl.write("shot bytes: " + (shot.image ? shot.image.base64.length : "none"));
 ```
-断言：main 日志见 WebContentsView 创建 + CDP attach + Page.captureScreenshot；REPL 返回非空 base64；getState.url === example.com。
 
-## 5. 开关（P0 最小）
+Assertions: main log shows WebContentsView creation + CDP attach + `Page.captureScreenshot`; the REPL returns non-empty base64; `getState.url === example.com`.
 
-- node_repl 工具需 `includeNodeRepl:true`（T2 的 opt-in）。desktop 装配传 true（P0 先无条件，后续接 settings 开关）。
-- `browserControlPort` 已在 desktop 路径注入（T3/T4）。
-- 纯 CLI：includeNodeRepl 可开（纯 REPL 有用），browserControlPort 不注入 → agent.browsers 报 unavailable。
+## 5. Switches (P0 minimum)
 
-## 6. 验证点（T6 单测）
+- The node_repl tool needs `includeNodeRepl:true` (T2 opt-in); the desktop wiring passes true (unconditional in P0, later tied to a settings switch).
+- `browserControlPort` is already injected on the desktop path (T3/T4).
+- Plain CLI: includeNodeRepl may be on (a plain REPL is useful) while `browserControlPort` is not injected, so `agent.browsers` reports unavailable.
 
-- `BrowsersFacade`/`Browser`：假 execute（记录命令）→ `open(url)` 发 navigate、`screenshot()` 发 screenshot、`getState()` 发 getState；命令结构正确。
-- 未实现方法（snapshot/click/playwright getter）throw NotImplemented。
-- node_repl 注入：给 handler 假 `browserControlPort` 的 context → REPL 里 `return typeof agent.browsers.open`（"function"）；`await agent.browsers.open("https://x")` 触发 port.execute（假 port 返回预设 result）→ REPL 拿到结果。
-- 无 port 的 context → REPL 里 agent.browsers 调用报 browser unavailable。
+## 6. Verification (T6 unit tests)
+
+- `BrowsersFacade` / `Browser` with a fake execute: `open(url)` sends navigate, `screenshot()` sends screenshot, `getState()` sends getState; command shapes are correct.
+- Unimplemented methods (snapshot/click/playwright getter) throw NotImplemented.
+- node_repl injection: a context with a fake `browserControlPort` -> `typeof agent.browsers.open` is "function"; `await agent.browsers.open("https://x")` triggers `port.execute` and the REPL gets the preset result.
+- A context without a port -> calls on `agent.browsers` report browser unavailable.

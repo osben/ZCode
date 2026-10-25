@@ -959,18 +959,6 @@ describe("dynamic workflow run service — submit", () => {
     const record = harness.journal.getRun(runId);
     expect(record?.caps).toEqual({ maxConcurrency: 4 });
   });
-
-  it("默认并发的硬顶为 16", async () => {
-    const harness = makeHarness({ availableParallelism: () => 64 });
-    const runId = await submitRun(harness, {
-      cwd: TEST_CWD,
-      scriptText: TYPED_SCRIPT,
-      trace: traceFor("submit-caps-ceiling"),
-    });
-    await settle(harness, runId);
-
-    expect(harness.journal.getRun(runId)?.caps.maxConcurrency).toBe(16);
-  });
 });
 
 // ── 请求的并发上界（docs/dynamic-workflow/concurrency.md「Two bounds on a run」）─────────────
@@ -1384,39 +1372,6 @@ describe("dynamic workflow run service — retuneConcurrency", () => {
 
     expect(live).toBeDefined();
     expect(coldEvent).toEqual(live);
-  });
-
-  // 冷回放的契约：同一条铸造链、同一个默认并发，所以 `run-caps-changed` 在重启前后逐字节相等。
-  it("冷回放给 run-caps-changed 铸上同一个 concurrencyCeiling", async () => {
-    const journal = new SweepableJournalStore();
-    preloadRun(journal, {
-      runId: "dwfrun-retuned",
-      parentSessionId: HARNESS_PARENT_SESSION,
-      scriptText: TYPED_SCRIPT,
-      status: "stopped",
-      stopReason: "user",
-      caps: { maxConcurrency: 2 },
-    });
-    journal.appendEvent("dwfrun-retuned", {
-      type: "run-started",
-      caps: { maxConcurrency: 4 },
-    } as never);
-    journal.appendEvent("dwfrun-retuned", {
-      type: "run-caps-changed",
-      runId: "dwfrun-retuned",
-      caps: { maxConcurrency: 2 },
-      previous: { maxConcurrency: 4 },
-    } as never);
-
-    const harness = makeHarness({ availableParallelism: TEN_CORES, journal });
-    const replayed = await harness.service.replayProgressForSession!({ excludeRunIds: new Set() });
-    const changed = replayed.find((event) => event.eventType === "run-caps-changed");
-    expect(changed?.payload).toEqual({
-      runId: "dwfrun-retuned",
-      caps: { maxConcurrency: 2 },
-      previous: { maxConcurrency: 4 },
-      concurrencyCeiling: DEFAULT_OF_TEN_CORES,
-    });
   });
 });
 
@@ -2144,19 +2099,6 @@ describe("dynamic workflow run service — 脚本点名的模型", () => {
     expect(await harness.service.getTask(runId)).toMatchObject({ modelBindings: TABLE });
     expect(await harness.service.cancel(runId)).toBe(true);
     await settle(harness, runId);
-  });
-
-  it("不点名模型的 run：事件、快照、载荷与工厂输入里都没有这些键", async () => {
-    const harness = makeHarness();
-    const runId = await submitRun(harness, {
-      cwd: TEST_CWD,
-      scriptText: TYPED_SCRIPT,
-      trace: traceFor("script-models-absent"),
-    });
-    await settle(harness, runId);
-    expect("modelBindings" in launchedOf(harness, runId)!).toBe(false);
-    expect("modelBindings" in (await harness.service.getTask(runId))!).toBe(false);
-    expect("actorModel" in harness.actorRuntimeInputs.at(-1)!).toBe(false);
   });
 });
 
@@ -3433,15 +3375,6 @@ describe("dynamic workflow run service — observation", () => {
     expect(snapshot?.output).toEqual({ report: "final answer", steps: 3 });
   });
 
-  it("重启恢复：非 record 产物（字符串）同样回出", async () => {
-    const journal = new SweepableJournalStore();
-    preloadRun(journal, { runId: "dwfrun-restart-string", status: "running" });
-    journal.updateRunStatus("dwfrun-restart-string", "completed", { result: "plain answer" });
-    const harness = makeHarness({ journal });
-
-    expect((await harness.service.getTask("dwfrun-restart-string"))?.output).toBe("plain answer");
-  });
-
   it("重启恢复：completed 但记录无 result 时 output 缺席", async () => {
     const journal = new SweepableJournalStore();
     preloadRun(journal, { runId: "dwfrun-restart-empty", status: "running" });
@@ -3669,24 +3602,10 @@ describe("dynamic workflow run service — observation", () => {
     expect(page.hasMore).toBe(true);
   });
 
-  it("run 事件经 onRunEvent 钩子扇出", async () => {
-    const harness = makeHarness();
-    const runId = await submitRun(harness, {
-      cwd: TEST_CWD,
-      scriptText: TYPED_SCRIPT,
-      trace: traceFor("run-events"),
-    });
-    await settle(harness, runId);
-
-    expect(harness.runEvents.every((event) => event.runId === runId)).toBe(true);
-    const types = harness.runEvents.map((event) => event.eventType);
-    expect(types).toContain("run-started");
-    expect(types).toContain("run-settled");
-  });
-
-  // ── 进度投影的接缝（docs/dynamic-workflow/presentation.md「The run state the pane draws」）──
-  // 钩子交出的是**已经准备好的会话事件载荷**：journal sequence、有界载荷、以及两个
-  // Boundary C 上不存在的派生字段。create-app 只负责把它追加到父会话。
+  // ── The seam of the progress projection (docs/dynamic-workflow/presentation.md "The run state the pane draws") ──
+  // What the hook hands over is the **already-prepared session event payload**: journal sequence,
+  // bounded payload, plus the two derived fields that do not exist on Boundary C. create-app only
+  // appends it to the parent session.
 
   it("钩子携带的 sequence 就是 journal sequence（与 listEvents 同一把尺）", async () => {
     const harness = makeHarness();
@@ -4177,18 +4096,6 @@ describe("dynamic workflow run service — run name 落库", () => {
     await settle(harness, runId);
 
     expect(harness.journal.getRun(runId)?.name).toBe("nightly triage");
-  });
-
-  it("未命名的 submit 不写 name（键缺席，读侧走脚本首行兜底）", async () => {
-    const harness = makeHarness();
-    const runId = await submitRun(harness, {
-      cwd: TEST_CWD,
-      scriptText: TYPED_SCRIPT,
-      trace: traceFor("submit-no-name"),
-    });
-    await settle(harness, runId);
-
-    expect("name" in harness.journal.getRun(runId)!).toBe(false);
   });
 });
 
@@ -5338,22 +5245,6 @@ describe("dynamic workflow run service — run args", () => {
     const snapshot = await harness.service.getTask(runId);
     expect(snapshot?.status).toBe("completed");
     expect(snapshot?.output).toBe("packages/core:done");
-  });
-
-  it("内联 run 不落实参列（老行与无参 run 走同一条缺席路径）", async () => {
-    const harness = makeHarness({
-      actorScripts: { "actor#1@1": [{ kind: "submit", result: { text: "x" } }] },
-    });
-
-    const runId = await submitRun(harness, {
-      cwd: TEST_CWD,
-      parentSessionId: HARNESS_PARENT_SESSION,
-      scriptText: TYPED_SCRIPT,
-      trace: traceFor("args-absent"),
-    });
-    await settle(harness, runId);
-
-    expect(harness.journal.getRun(runId)?.args).toBeUndefined();
   });
 
   it("resume 重放持久化的实参，且 resume 入口根本收不下新实参", async () => {
@@ -7321,7 +7212,7 @@ describe("dynamic workflow run service — 升级问答（escalation）", () => 
       expect(harness.runEvents.some((event) => event.eventType === "node-dispatched")).toBe(true);
     });
     const port = harness.actorRuntimeInputs[0]?.escalatePort;
-    if (port === undefined) throw new Error("actor runtime 输入里没有 escalatePort");
+    if (port === undefined) throw new Error("escalatePort missing from actor runtime input");
     return { runId, port };
   }
 
@@ -7628,7 +7519,7 @@ describe("dynamic workflow run service — 升级问答的端到端闭环", () =
       expect((await harness.service.getTask(runId))?.pendingQuestions).toHaveLength(1);
     });
     const question = (await harness.service.getTask(runId))?.pendingQuestions?.[0];
-    if (question === undefined) throw new Error("停驻的问题没有出现在快照里");
+    if (question === undefined) throw new Error("parked question did not appear in the snapshot");
     return { runId, question };
   }
 

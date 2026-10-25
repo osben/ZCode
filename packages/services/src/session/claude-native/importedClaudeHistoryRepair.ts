@@ -1,4 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
 import type {
   ZCodeAgentMcpServer,
   ZCodeSessionImportHistory,
@@ -13,6 +12,7 @@ import { buildImportedClaudeTaskId } from "#src/session/claude-native/buildImpor
 import { claudeNativeSessionImportRepo } from "#src/session/claude-native/claudeNativeSessionImportRepo.js";
 import { parseClaudeNativeSessionFile } from "#src/session/claude-native/claudeNativeSessionImportParser.js";
 import { safeParseLegacyTaskSessionFile } from "#src/session/legacyTaskSessionFile.js";
+import { readFirstJsonFile } from "#src/session/readFirstJsonFile.js";
 
 export interface ImportedClaudeHistoryRepairTarget {
   workspacePath: string;
@@ -70,9 +70,9 @@ export function shouldRepairImportedClaudeSnapshot(
     /^msg_import_\d+$/u.test(message.info.messageId),
   );
   if (!snapshot.session.sessionId.startsWith("claude-import-") && !hasLegacyFixedMessageIds) {
-    // user-only / assistant-first 只是异常形态，不等于 Claude 导入。
-    // 只有稳定导入 taskId 或旧版全局 msg_import_* 污染能证明它属于迁移修复边界，
-    // 避免普通 ZCode session 被同名 legacy 备份误回填成 Claude 历史。
+    // user-only / assistant-first is only an anomalous shape and does not prove a Claude import.
+    // Only a stable imported taskId or legacy global msg_import_* contamination shows that it belongs to the migration repair boundary,
+    // preventing an ordinary ZCode session from being incorrectly backfilled with Claude history from a same-named legacy backup.
     return false;
   }
   const hasAssistant = snapshot.messages.some((message) => message.info.role === "assistant");
@@ -82,34 +82,28 @@ export function shouldRepairImportedClaudeSnapshot(
   if (snapshot.messages[0]?.info.role === "assistant") {
     return true;
   }
-  // 旧协议导入把所有 Claude session 都写成 msg_import_0/msg_import_1。
-  // 这些 ID 是全局主键，后续导入会把前一个 session 的消息改绑到新 session，
-  // 即使当前快照里有 assistant，也必须按原 Claude jsonl 重新回填，修正串会话和反序。
+  // The legacy protocol importer assigned msg_import_0/msg_import_1 to every Claude session.
+  // These IDs are global primary keys, so later imports could rebind an earlier session's messages to a new session.
+  // Even if the current snapshot contains an assistant message, reload from the original Claude jsonl to fix cross-session mixing and ordering.
   return hasLegacyFixedMessageIds;
 }
 
-function readLegacyImportedClaudeHistory(
+async function readLegacyImportedClaudeHistory(
   target: ImportedClaudeHistoryRepairTarget,
-): ImportedClaudeHistoryRepairResult | null {
-  const snapshotPath = [
-    getLegacyTaskSessionSnapshotPath(
-      target.workspacePath,
-      target.taskId,
-      target.workspaceIdentity,
-    ),
+): Promise<ImportedClaudeHistoryRepairResult | null> {
+  const rawSnapshot = await readFirstJsonFile([
+    getLegacyTaskSessionSnapshotPath(target.workspacePath, target.taskId, target.workspaceIdentity),
     getLegacyDeletedTaskSessionSnapshotPath(
       target.workspacePath,
       target.taskId,
       target.workspaceIdentity,
     ),
-  ].find((path) => existsSync(path));
-  if (!snapshotPath) {
+  ]);
+  if (rawSnapshot === null) {
     return null;
   }
 
-  const parsed = safeParseLegacyTaskSessionFile(
-    JSON.parse(readFileSync(snapshotPath, "utf-8")) as unknown,
-  );
+  const parsed = safeParseLegacyTaskSessionFile(rawSnapshot);
   if (!parsed.success || parsed.data.meta.migrationSource !== "claudeCode") {
     return null;
   }
@@ -161,7 +155,7 @@ async function readNativeImportedClaudeHistory(
 export async function resolveImportedClaudeHistoryForRepair(
   target: ImportedClaudeHistoryRepairTarget,
 ): Promise<ImportedClaudeHistoryRepairResult | null> {
-  const legacyHistory = readLegacyImportedClaudeHistory(target);
+  const legacyHistory = await readLegacyImportedClaudeHistory(target);
   if (legacyHistory && countAssistantMessages(legacyHistory.messages) > 0) {
     return legacyHistory;
   }
@@ -169,10 +163,11 @@ export async function resolveImportedClaudeHistoryForRepair(
   const nativeHistory = await readNativeImportedClaudeHistory(target);
   if (
     nativeHistory &&
-    countAssistantMessages(nativeHistory.messages) >= countAssistantMessages(legacyHistory?.messages ?? [])
+    countAssistantMessages(nativeHistory.messages) >=
+      countAssistantMessages(legacyHistory?.messages ?? [])
   ) {
-    // 旧版本可能已经把 user-only 的 legacy 备份写坏了。
-    // 这时 legacy 不能再作为权威来源，需要按 taskId 反查原 Claude jsonl 重建 assistant。
+    // Older versions may already have corrupted the user-only legacy backup.
+    // In that case, legacy data is no longer authoritative; look up the original Claude jsonl by taskId and reconstruct the assistant message.
     return nativeHistory;
   }
 
@@ -194,9 +189,9 @@ export async function repairImportedClaudeSessionSnapshot<T>(params: {
   }
 
   params.onRepair?.(history);
-  // 早期导入可能已经创建了真实 ZCode session，但没有把 Claude 历史写入
-  // zcode-cli sessionStore，或用了全局 msg_import_* 导致串会话。这里统一用同名 sessionId
-  // 幂等回填 importedHistory，让 session/read、task snapshot 和远控恢复路径走同一套修复。
+  // Early imports may have created real ZCode sessions without writing Claude history to
+  // the zcode-cli sessionStore, or may have used global msg_import_* IDs that mixed sessions. Use the same sessionId here
+  // to idempotently backfill importedHistory, so session/read, task snapshots, and remote recovery share the same repair path.
   return params.createSession({
     workspacePath: params.target.workspacePath,
     workspaceIdentity: params.target.workspaceIdentity,

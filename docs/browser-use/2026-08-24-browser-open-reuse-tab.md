@@ -1,82 +1,67 @@
-# open() 同站 tab 复用（reuseTab）设计记录
+# open() Same-Site Tab Reuse (`reuseTab`) Design Record
 
-- 日期：2026-08-24
-- 分支：`feat/browser-open-reuse-tab`
-- 关联工单：BUA 用户反馈「操作网页时每次都重新打开一个网页，任务结束后右侧内置浏览器堆满标签页」；另见 ZCT-2090747918255304704（同主题工单，真因另有截图秒败/设置页掐订阅两条正交线索）。
+- Date: 2026-08-24
+- Origin: BUA user feedback "every time the page is operated a new page is opened, and after the task the right-side embedded browser is full of tabs"; see also ticket ZCT-2090747918255304704 (same theme; the real causes there were two orthogonal lines: instant screenshot failure and the settings page cutting the subscription).
 
-## 背景与诊断
+## Background and diagnosis
 
-标签页堆积是三个因素叠加，全部在 monorepo 工具层，与桌面 main 进程无关：
+Tab pile-up came from three factors, all in the monorepo tool layer and unrelated to the desktop main process:
 
-1. `browser.open(url)` 无条件 `tabs.new()` + `goto()`（facade.ts 旧实现，源自「open 必须创建 agent-owned tab」的旧 bugfix）；
-2. 没有任何按 URL 复用已有 tab 的代码——`selection.ts` 的 `urlMatchRank` 只用于选 backend，tab 复用全靠模型自觉走 `tabs.list() → get(id)` 文档流程，无代码兜底；
-3. 任务结束按设计不关 tab（见 `browser-use-plugin/docs/tab-cleanup-iab.md`），右侧面板只进不出。
+1. `browser.open(url)` unconditionally ran `tabs.new()` + `goto()` (the old facade.ts implementation, from an old bugfix "open must create an agent-owned tab").
+2. There was no code reusing an existing tab by URL: `urlMatchRank` in `selection.ts` was only used to pick a backend, and tab reuse relied on the model following the `tabs.list() -> get(id)` documentation flow, with no code fallback.
+3. By design a finished task does not close tabs (see `browser-use-plugin/docs/tab-cleanup-iab.md`), so the right panel only fills up.
 
-注意：`navigate` 命令本身不会新开 tab——main 端 `resolveTab`（browserGuestManager.ts）已有完整 currentTab 复用链，问题只在 `open()` 与模型调用习惯。
+The `navigate` command itself never opens a tab: main `resolveTab` (browserGuestManager.ts) already has a complete currentTab reuse chain. The problem is only `open()` and the model's calling habits.
 
-## 设计（用户已确认）
+## Design (confirmed by the user)
 
 ```
 open(url?, { reuseTab = true } = {}):
   browser = getDefault()
   if url && reuseTab:
-    tabs.list()                     // 仅本 scope agent-owned tabs，不会误接管用户 tab
-    selectTabForUrl(url, tabs):     // urlMatchRank，阈值 rank <= 2（同 hostname）
-                                   // rank 3 父子域不复制用（可能是不同站点，误跳风险）
-                                   // 同 rank 优先 active，否则取最新
-    命中 → activateTab（激活给用户看到）→ goto(url) 原地跳转 → 返回
-    未命中 / list 失败 → 降级 tabs.new() + goto（复用链路绝不阻断任务）
-  否则（无 url / reuseTab:false）→ tabs.new() + goto
+    tabs.list()                     // only agent-owned tabs of this scope, never takes over a user tab
+    selectTabForUrl(url, tabs):     // urlMatchRank, threshold rank <= 2 (same hostname)
+                                    // rank 3 parent/child domain is not reused (may be a different site, risk of a wrong jump)
+                                    // among equal ranks prefer active, otherwise the newest
+    hit  -> activateTab (activate so the user sees it) -> goto(url) in place -> return
+    miss / list failure -> degrade to tabs.new() + goto (the reuse path never blocks the task)
+  else (no url / reuseTab:false) -> tabs.new() + goto
 ```
 
-关键取舍：
-- **默认 `reuseTab: true`**：治本必须默认复用；默认 false 等于又回到「靠模型自觉」的软约束老路。
-- **保留显式逃生口**：模型填表一半时想开同站对照页，默认复用会导航走表单页——传 `reuseTab: false` 或 `tabs.new()` 可强制并行 tab。
-- **`tabs.new()` 语义不变**、main 端不动、任务结束回收不做（用户选择，维持 tab-cleanup-iab.md 既有设计）。
+Key trade-offs:
 
-## 改动清单
+- **Default `reuseTab: true`**: the fix must reuse by default; a default of false would return to the soft constraint of "relying on the model".
+- **Explicit escape hatch kept**: when the model is half-way through a form and wants a same-site comparison page, default reuse would navigate the form page away; passing `reuseTab: false` or `tabs.new()` forces a parallel tab.
+- The semantics of `tabs.new()` are unchanged, main is untouched, and no recycling at task end (user's choice, keeping the existing design of tab-cleanup-iab.md).
 
-| 文件 | 内容 |
-|---|---|
-| `apps/zcode-cli/packages/core/src/browser-client/selection.ts` | 新增纯函数 `selectTabForUrl()`（与 `selectBrowserForUrl` 共享 `urlMatchRank`） |
-| `apps/zcode-cli/packages/core/src/browser-client/facade.ts` | `BrowserTabs.reuse(url)`（单次 list + activateTab）；`open()` 接入并整体降级 |
-| `apps/zcode-cli/packages/core/src/browser-client/documentation.ts` | fallback 文档：`open()` 教成默认导航入口 |
-| `apps/zcode-cli/packages/browser-use-plugin/skills/control-browser/SKILL.md`、`docs/overview.md` | 模型指引同步 |
-| `apps/zcode-cli/packages/core/tests/browser-client.test.ts` | 新增 9 用例（TDD）：精确/同域/父子域/无匹配/list 失败降级/无 url/reuseTab:false/active 优先/最新兜底 |
+## Touch points
 
-## 验证
+- `apps/zcode-cli/packages/core/src/browser-client/selection.ts`: pure function `selectTabForUrl()` (shares `urlMatchRank` with `selectBrowserForUrl`).
+- `apps/zcode-cli/packages/core/src/browser-client/facade.ts`: `BrowserTabs.reuse(url)` (one list + activateTab); `open()` hooks in and degrades as a whole.
+- `apps/zcode-cli/packages/core/src/browser-client/documentation.ts`: fallback docs teach `open()` as the default navigation entry.
+- `apps/zcode-cli/packages/browser-use-plugin/skills/control-browser/SKILL.md` and `docs/overview.md`: model guidance in sync.
+- `apps/zcode-cli/packages/core/tests/browser-client.test.ts`: cases for exact/same-domain/parent-child domain/no match/list-failure degrade/no url/`reuseTab:false`/active preferred/newest fallback.
 
-- core 包 browser 相关 36/36 绿；browser-use-plugin 35/35 绿；两包 typecheck 通过。
-- 命令序列断言：复用路径 `[list, activateTab{tabId}, navigate{url, tabId}]`；降级路径 `[list, newTab, navigate]`。
-- desktop `bundled-agents` 打包副本非 git-tracked，构建时自动再生成，无需同步。
+Command sequence assertions: reuse path `[list, activateTab{tabId}, navigate{url, tabId}]`; degrade path `[list, newTab, navigate]`.
 
-## 顺带修复：tool-contracts 守卫红（staging 基线）
+## Release
 
-同分支 `ea09daa8e7`：`js_reset`/`js_add_node_module_dir` 的 metadata 与 permission/timeout 声明不同步——
-`sideEffectScope` metadata 写 `system` 而 permission 侧一直按 `none` 生效（统一为 `none`，与兄弟工具先例一致）；两个工具缺
-`metadata.timeoutMs`（补 `5000` 与 `SHORT_TIMEOUT.defaultMs` 一致）。运行时审批与超时行为零变化。
-修复后 staging 基线剩余已知红：`bash-run-conformance`（硬编码开发者本机绝对路径）、`io-boundary`、`runtime-module-boundary`（均与本分支无关，未动）。
+Plugin version `0.3.1 -> 0.4.0`; the five version sources are bumped in sync per `docs/browser-use/2026-08-14-browser-use-plugin-version-0-3-0-spec.md`. Risk of not bumping: desktop would hit the `0.3.1` stale seed and the old SKILL.md and an old api.json without the `open` declaration would never ship.
 
-## 发布
+Also fixed in the same change: the tool-contracts guard was red on the staging baseline because the `js_reset`/`js_add_node_module_dir` metadata was out of sync with permission/timeout declarations. `sideEffectScope` metadata said `system` while permission always applied `none` (unified to `none`, matching sibling tools), and both tools lacked `metadata.timeoutMs` (added `5000`, equal to `SHORT_TIMEOUT.defaultMs`). Runtime approval and timeout behavior is unchanged. Known remaining red on the staging baseline, unrelated to this change: `bash-run-conformance` (hard-coded developer absolute path), `io-boundary`, `runtime-module-boundary`.
 
-插件版本 `0.3.1 → 0.4.0`（`88249773df`），五个版本事实源按
-`docs/browser-use/2026-08-14-browser-use-plugin-version-0-3-0-spec.md` 约定同步 bump。
-不 bump 的风险：desktop 命中 `0.3.1` stale seed，旧 SKILL.md 与无 `open` 声明的旧 api.json 发不出去。
+## Known boundaries
 
-## 已知边界
+- A model calling `browser.tabs.new()` directly still opens a new tab (explicit semantics, not closed off); if pile-up is still seen online, first check the source of the `newTab` command in the model trajectory.
+- Reuse matching looks only at the URL and is unaware of page state; a half-filled form depends on the model passing `reuseTab: false` (taught in the docs).
+- The policy of not recycling tabs at task end is unchanged; for a later cap-based recycle or one-click cleanup see point 3 of "Background" and the `keep` mechanism of tab-cleanup-iab.md.
 
-- 模型直接调 `browser.tabs.new()` 仍会开新 tab（显式语义，未收口）——若线上仍见堆积，先查模型轨迹里 `newTab` 命令来源。
-- 复用匹配只看 URL，不感知页面状态；表单半填场景依赖模型传 `reuseTab: false`（文档已教）。
-- 任务结束不回收 tab 的策略不变；如后续要做上限回收/一键清理，见本文件「背景」第 3 点与 tab-cleanup-iab.md 的 `keep` 机制。
+## Addendum: manifest hideUnknown blind spot
 
-## 补遗（2026-08-24）：manifest hideUnknown 盲区
+During doc sync it was found that the REPL-injected `agent.browsers` is a hideUnknown proxy from `asRuntimeObject()` (facade.ts), so `open()` not declared in the `Browsers` manifest is hidden as **undefined**, and a call taught by SKILL.md would throw TypeError. Bare-facade unit tests never go through the proxy and could not catch it. Fix:
 
-文档同步时发现：REPL 注入的 `agent.browsers` 是 `asRuntimeObject()` 的 hideUnknown 代理（facade.ts），
-`open()` 不在 `Browsers` manifest 声明里会被隐藏成 **undefined**——SKILL.md 教的调用会直接 TypeError。
-而裸 facade 单测走不到代理，测不出该缺陷。修复（`d6fe5ae7be`）：
+- declare it in both manifests: core `FALLBACK_MANIFEST` and the plugin `docs/api.json` (the two must be maintained in sync);
+- the old test assertion "open must be undefined" (locking the old design of hiding open as a compat entry) was reversed into a visibility guard;
+- new cases go through the real `asRuntimeObject()` proxy path.
 
-- 两处 manifest 补声明：core 的 `FALLBACK_MANIFEST` 与插件 `docs/api.json`（二者需同步维护）；
-- 旧测试「open 必须是 undefined」的断言（锁的是 open 作为兼容入口刻意隐藏的旧设计）反转为可见性守卫；
-- 新增用例走 `asRuntimeObject()` 真实代理路径验证。
-
-教训：**给模型新增可见 API 时，必须同时声明 manifest（两处）并用代理路径测试**，裸对象直测是盲区。
+Lesson: **when adding a model-visible API, declare it in the manifest (both places) and test through the proxy path**; direct tests on a bare object are a blind spot.

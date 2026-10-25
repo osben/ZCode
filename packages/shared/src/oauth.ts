@@ -1,30 +1,34 @@
 /**
- * OAuth 领域类型定义
+ * OAuth domain type definitions.
  *
- * 说明：敏感信息（如 appSecret）以及 provider 默认端点配置
- * 只允许放在 services 的 provider 模块中，不能放 shared 层。
+ * Sensitive information (such as appSecret) and provider default endpoint configuration
+ * belong only in the provider modules under services, never in the shared layer.
  */
+import {
+  buildChatGptPlanAccountProviderId,
+  isChatGptPlanAccountKey,
+} from "./model-provider-types.js";
 
-/** 内置 BigModel provider id */
+/** Built-in BigModel provider ID. */
 export const BIGMODEL_PROVIDER_ID = "bigmodel" as const;
 
-/** 内置 ZAI provider id */
+/** Built-in ZAI provider ID. */
 export const ZAI_PROVIDER_ID = "zai" as const;
 
-/** 凭据解密失败错误前缀 */
+/** Credential decryption failure error prefix. */
 export const CREDENTIAL_DECRYPT_ERROR_PREFIX = "凭据解密失败：" as const;
 
-/** 凭据解密失败稳定错误码 */
+/** Stable error code for credential decryption failures. */
 export const CREDENTIAL_DECRYPT_ERROR_CODE = "ZCODE_CREDENTIAL_DECRYPT_FAILED" as const;
 
-/** 判断错误是否来自本地凭据解密失败 */
+/** Whether the error represents a local credential decryption failure. */
 export function isCredentialDecryptError(error: unknown): boolean {
   const code = readCredentialErrorCode(error);
   if (code) {
     return code === CREDENTIAL_DECRYPT_ERROR_CODE;
   }
 
-  // 兼容历史错误和跨边界丢失 code 的旧 payload；新错误应优先携带稳定 code。
+  // Support legacy errors and old payloads that lost their code across a boundary; new errors should carry the stable code.
   if (readCredentialErrorMessage(error).startsWith(CREDENTIAL_DECRYPT_ERROR_PREFIX)) {
     return true;
   }
@@ -52,13 +56,17 @@ function readCredentialErrorMessage(error: unknown): string {
   return "";
 }
 
-/** OAuth provider 标识 */
+/** ChatGPT plan (official OpenAI SIWC) OAuth provider ID; an independent identity domain. */
+export const CHATGPT_OAUTH_PROVIDER_ID = "chatgpt" as const;
+
+/** OAuth provider identifier. */
 export type OAuthProviderId =
   | typeof BIGMODEL_PROVIDER_ID
+  | typeof CHATGPT_OAUTH_PROVIDER_ID
   | typeof ZAI_PROVIDER_ID
   | (string & { readonly __oauthProviderBrand?: never });
 
-/** Provider 展示元信息 */
+/** Provider display metadata. */
 export interface OAuthProviderMeta {
   id: OAuthProviderId;
   displayName: string;
@@ -66,19 +74,19 @@ export interface OAuthProviderMeta {
   order: number;
 }
 
-/** 发起 OAuth 请求 */
+/** OAuth start request. */
 export interface OAuthStartRequest {
   provider: OAuthProviderId;
 }
 
-/** 发起 OAuth 返回 */
+/** OAuth start response. */
 export interface OAuthStartResponse {
   provider: OAuthProviderId;
   authorizeUrl: string;
   state: string;
 }
 
-/** 应用登录回调结果 */
+/** Application login callback result. */
 export interface OAuthSessionCallbackResult {
   kind: "session";
   provider: OAuthProviderId;
@@ -90,46 +98,46 @@ export interface OAuthSessionCallbackResult {
   };
 }
 
-/** 只携带归因参数的 OAuth deep link 回调结果 */
+/** OAuth deep-link callback result carrying attribution parameters only. */
 export interface OAuthAttributionCallbackResult {
   kind: "attribution";
   provider: OAuthProviderId;
   attribution: OAuthLoginAttribution;
 }
 
-/** 同一登录已由 polling 完成后迟到的 deep link；调用方只需忽略。 */
+/** A late deep link after polling completed the same login; callers can ignore it. */
 export interface OAuthDuplicateCallbackResult {
   kind: "duplicate";
   provider: OAuthProviderId;
 }
 
-/** OAuth 回调归一化结果 */
+/** Normalized OAuth callback result. */
 export type OAuthCallbackResult =
   | OAuthSessionCallbackResult
   | OAuthAttributionCallbackResult
   | OAuthDuplicateCallbackResult;
 
-/** Main 进程路由 deep link 时使用的 state 上报结构 */
+/** State registration used when the Main process routes a deep link. */
 export interface OAuthStateRegistration {
   state: string;
   provider?: OAuthProviderId;
 }
 
-/** 归一化后的回调参数 */
+/** Normalized callback parameters. */
 export interface OAuthCallbackParams {
   state: string;
   code: string;
   attribution?: OAuthLoginAttribution;
 }
 
-/** OAuth 登录归因参数：来自官网中转页或投放链接 */
+/** OAuth login attribution parameters from the official site redirect page or an ad link. */
 export interface OAuthLoginAttribution {
   channel_id?: string;
   utm_source?: string;
   utm_campaign?: string;
 }
 
-/** 归一化 token 结构 */
+/** Normalized token structure. */
 export interface OAuthTokenSet {
   accessToken: string;
   refreshToken?: string;
@@ -161,8 +169,8 @@ export type JwtExpirationResult =
   | { kind: "unknown" };
 
 /**
- * 只解析 JWT 的 exp 来判断本地生命周期，不承担签名校验。
- * 无法证明已过期的历史或非标准 token 保持兼容，最终有效性仍由服务端决定。
+ * Parse only the JWT exp claim to determine its local lifetime; this does not verify the signature.
+ * Preserve compatibility with legacy or nonstandard tokens whose expiration cannot be confirmed; the server remains the authority on validity.
  */
 export function resolveJwtExpiration(
   token: string,
@@ -193,7 +201,7 @@ export function resolveJwtExpiration(
   }
 }
 
-/** 归一化用户信息 */
+/** Normalized user information. */
 export interface OAuthUserProfile {
   id: string;
   username: string;
@@ -202,5 +210,152 @@ export interface OAuthUserProfile {
   rawProfile?: unknown;
 }
 
-/** 登出范围 */
+/** Logout scope. */
 export type OAuthLogoutScope = "active" | "all";
+
+/** ChatGPT plan (SIWC) user summary for UI display. */
+export interface SiwcPlanUserSummary {
+  displayName: string;
+  email: string | null;
+  subject: string;
+}
+
+/** ChatGPT plan (SIWC) connection status. */
+export interface SiwcPlanStatus {
+  planUsageEntitled: boolean;
+  signedIn: boolean;
+  user: SiwcPlanUserSummary | null;
+}
+
+/** ChatGPT plan (SIWC) login start result; displayAuthorizeUrl masks id_token_hint/login_hint. */
+export interface SiwcLoginStart {
+  authorizeUrl: string;
+  displayAuthorizeUrl: string;
+  state: string;
+}
+
+/** ChatGPT plan (SIWC) login poll result; null while the browser has not returned. */
+export interface SiwcLoginCompletionResult extends SiwcPlanAccountStatus {
+  newUser: boolean;
+}
+
+/**
+ * Multi-account SIWC credential key names. Pure string builders live here so the
+ * Desktop host service and the CLI resolver (deliberately duplicated SIWC stacks)
+ * cannot drift; both are pinned by mirrored tests.
+ */
+
+/** Credential index of signed-in ChatGPT plan accounts (JSON array, not a secret). */
+export const SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY = "oauth:chatgpt:accounts" as const;
+
+/** Per-account SIWC credential keys in the shared credential store. */
+export interface SiwcAccountCredentialKeys {
+  clientId: string;
+  accessToken: string;
+  refreshToken: string;
+  idToken: string;
+  userInfo: string;
+  scopes: string;
+  accessExpiresAt: string;
+  earliestRefreshAt: string;
+}
+
+function requireValidSiwcAccountKey(accountKey: string): string {
+  const normalized = accountKey.trim();
+  if (!isChatGptPlanAccountKey(normalized)) {
+    throw new Error(`Invalid ChatGPT plan account key: ${normalized}`);
+  }
+  return normalized;
+}
+
+/** Build the per-account SIWC credential key set (`oauth:chatgpt:<accountKey>:*`). */
+export function buildSiwcAccountCredentialKeys(accountKey: string): SiwcAccountCredentialKeys {
+  const key = requireValidSiwcAccountKey(accountKey);
+  return {
+    clientId: `oauth:chatgpt:${key}:client_id`,
+    accessToken: `oauth:chatgpt:${key}:access_token`,
+    refreshToken: `oauth:chatgpt:${key}:refresh_token`,
+    idToken: `oauth:chatgpt:${key}:id_token`,
+    userInfo: `oauth:chatgpt:${key}:user_info`,
+    scopes: `oauth:chatgpt:${key}:scopes`,
+    accessExpiresAt: `oauth:chatgpt:${key}:access_expires_at`,
+    earliestRefreshAt: `oauth:chatgpt:${key}:earliest_refresh_at`,
+  };
+}
+
+/** Account-provider identity key of one ChatGPT plan account slot. */
+export function buildSiwcAccountProviderIdentityKey(accountKey: string): string {
+  return `account-provider:${buildChatGptPlanAccountProviderId(accountKey)}:identity`;
+}
+
+/** Account-provider auth-source key of one ChatGPT plan account slot. */
+export function buildSiwcAccountProviderAuthSourceKey(accountKey: string): string {
+  return `account-provider:${buildChatGptPlanAccountProviderId(accountKey)}:auth-source`;
+}
+
+/** Cross-process refresh lock file name of one ChatGPT plan account (host and CLI must match). */
+export function buildSiwcAccountRefreshLockFileName(accountKey: string): string {
+  return `siwc-chatgpt.${requireValidSiwcAccountKey(accountKey)}.refresh`;
+}
+
+/**
+ * Cross-process lock guarding shared SIWC account-file mutations (legacy migration and the
+ * account-index read-merge-write). Host and CLI must use the same name; the lock file lives
+ * next to the shared credentials file in both processes.
+ */
+export const SIWC_ACCOUNTS_LOCK_FILE_NAME = "siwc-chatgpt.accounts" as const;
+
+/** Pre-multi-account flat credential keys; read-only input for the one-time migration. */
+export const SIWC_LEGACY_CREDENTIAL_KEYS = {
+  clientId: "oauth:chatgpt:client_id",
+  accessToken: "oauth:chatgpt:access_token",
+  refreshToken: "oauth:chatgpt:refresh_token",
+  idToken: "oauth:chatgpt:id_token",
+  userInfo: "oauth:chatgpt:user_info",
+  scopes: "oauth:chatgpt:scopes",
+  accessExpiresAt: "oauth:chatgpt:access_expires_at",
+  earliestRefreshAt: "oauth:chatgpt:earliest_refresh_at",
+  providerIdentity: "account-provider:account:chatgpt-plan:identity",
+  providerAuthSource: "account-provider:account:chatgpt-plan:auth-source",
+} as const;
+
+/** Signed-in account descriptor persisted in the account index (no secrets). */
+export interface SiwcStoredAccountRecord {
+  accountKey: string;
+  sub: string;
+  email: string | null;
+  name: string | null;
+  addedAt: string;
+}
+
+/**
+ * One ChatGPT plan usage window (5-hour primary or weekly secondary) captured
+ * passively from model response headers. `resetsAt` is the RFC3339 string kept
+ * verbatim from the `x-codex-*-reset-at` header.
+ */
+export interface SiwcPlanUsageWindow {
+  usedPercent: number;
+  windowMinutes?: number;
+  resetsAt?: string;
+}
+
+/** Latest ChatGPT plan usage snapshot of one account (primary 5h window; weekly secondary when reported). */
+export interface SiwcPlanUsageSnapshot {
+  primary: SiwcPlanUsageWindow;
+  secondary?: SiwcPlanUsageWindow;
+}
+
+/** Connection status of one signed-in ChatGPT plan account (user is always present). */
+export interface SiwcPlanAccountStatus extends Omit<SiwcPlanStatus, "user"> {
+  accountKey: string;
+  user: SiwcPlanUserSummary;
+  /** Latest plan usage snapshot (usage probe or passive capture); absent until one exists. */
+  usage?: SiwcPlanUsageSnapshot;
+  /** A codex-flavor usage grant is linked for this account (probe runs on status reads). */
+  usageLinked?: boolean;
+}
+
+/** Aggregate status across all signed-in ChatGPT plan accounts. */
+export interface SiwcPlanAccountsStatus {
+  accounts: readonly SiwcPlanAccountStatus[];
+}

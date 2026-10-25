@@ -43,7 +43,6 @@ import {
   type PluginStoreActions,
 } from "@/settings/PluginStoreCard.js";
 import { SettingsBreadcrumbReporter } from "@/settings/SettingsHeaderBreadcrumb.js";
-import { SettingsScopeBadge } from "@/settings/SettingsScopeBadge.js";
 import {
   buildPluginConfigPatch,
   type PluginOptionDraftValue,
@@ -54,6 +53,11 @@ import {
   buildPluginStoreTryPrompt,
 } from "@/settings/pluginStoreTryPrompt.js";
 import { usePluginUninstall } from "@/settings/usePluginUninstall.js";
+import {
+  CodeIntelligenceSettingRow,
+  PluginLanguageServerList,
+} from "@/settings/PluginLanguageServers.js";
+import { useLspStore, type LspWorkspaceTarget } from "@/store/lspStore.js";
 import {
   buildStoreItems,
   type StorePluginItem,
@@ -317,6 +321,28 @@ function PluginList({
   useEffect(() => {
     onVisibleCountChange?.(visibleInstalledPlugins.length + visibleBuiltInPlugins.length);
   }, [onVisibleCountChange, visibleBuiltInPlugins.length, visibleInstalledPlugins.length]);
+  const lspEnabled = useLspStore((state) => state.enabled);
+  const lspServers = useLspStore((state) => state.servers);
+  const lspLoadError = useLspStore((state) => state.loadError);
+  const lspSaveErrorKey = useLspStore((state) => state.saveErrorKey);
+  const lspPendingKey = useLspStore((state) => state.pendingKey);
+  const refreshLsp = useLspStore((state) => state.refresh);
+  const setLspEnabled = useLspStore((state) => state.setEnabled);
+  const setLspDiagnosticsAfterEdit = useLspStore((state) => state.setDiagnosticsAfterEdit);
+  const lspWorkspacePath = target?.workspacePath;
+  const lspWorkspaceIdentity = target?.workspaceIdentity;
+  const lspRemoteSessionId = target?.remoteSessionId;
+  const lspTarget = useMemo<LspWorkspaceTarget | null>(
+    () =>
+      lspWorkspacePath
+        ? {
+            workspacePath: lspWorkspacePath,
+            ...(lspWorkspaceIdentity ? { workspaceIdentity: lspWorkspaceIdentity } : {}),
+            ...(lspRemoteSessionId ? { remoteSessionId: lspRemoteSessionId } : {}),
+          }
+        : null,
+    [lspWorkspacePath, lspWorkspaceIdentity, lspRemoteSessionId],
+  );
   const refreshAfterPluginChange = useCallback(async () => {
     if (!target || !targetServiceResolution.rpcReady) return;
     await initialize({
@@ -341,6 +367,9 @@ function PluginList({
         ? resolveManagedPluginDisplay(plugin, storeItemById.get(plugin.id), locale).name
         : pluginId;
       const succeeded = await setEnabled(pluginId, enabled, pluginManagementService, configScope);
+      if (lspTarget && targetServiceResolution.rpcReady) {
+        void refreshLsp(pluginManagementService, lspTarget);
+      }
       if (!succeeded) {
         toast(
           usePluginManagementStore.getState().error ??
@@ -522,6 +551,10 @@ function PluginList({
     targetServiceResolution.rpcReady,
   ]);
 
+  useEffect(() => {
+    if (!lspTarget || !targetServiceResolution.rpcReady) return;
+    void refreshLsp(pluginManagementService, lspTarget);
+  }, [lspTarget, pluginManagementService, refreshLsp, targetServiceResolution.rpcReady]);
   const renderPluginRows = (items: ZCodePluginInfo[]) => (
     <div className="overflow-hidden rounded-xl bg-surface">
       {items.map((plugin, index) => (
@@ -557,28 +590,6 @@ function PluginList({
                     }
                   </div>
                 ) : null}
-                <div className="mt-1">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <SettingsScopeBadge
-                      scope={plugin.enabledSource ?? "default"}
-                      label={
-                        configScope === "user" && plugin.enabledSource === "user"
-                          ? intl.formatMessage({
-                              id: "settings.plugins.scope.userDefault",
-                            })
-                          : plugin.enabledSource === "user"
-                            ? intl.formatMessage({
-                                id: "settings.plugins.scope.inheritedUser",
-                              })
-                            : plugin.enabledSource === "workspace"
-                              ? intl.formatMessage({
-                                  id: "settings.plugins.scope.workspaceOverride",
-                                })
-                              : undefined
-                      }
-                    />
-                  </div>
-                </div>
               </div>
             </button>
             <PluginStoreUpdateButton item={storeItemById.get(plugin.id)} actions={actions} />
@@ -703,6 +714,29 @@ function PluginList({
               }),
             });
           }}
+          languageServers={
+            selectedPlugin.packageStatus === "missing" || !lspTarget ? undefined : (
+              <PluginLanguageServerList
+                servers={lspServers.filter((server) => server.pluginId === selectedPlugin.id)}
+                globalEnabled={lspEnabled}
+                pendingKey={lspPendingKey}
+                loadFailed={lspLoadError !== null}
+                failedServerId={
+                  lspSaveErrorKey?.startsWith("diagnostics:")
+                    ? lspSaveErrorKey.slice("diagnostics:".length)
+                    : null
+                }
+                onSetDiagnosticsAfterEdit={(serverId, enabled) => {
+                  void setLspDiagnosticsAfterEdit(
+                    pluginManagementService,
+                    lspTarget,
+                    serverId,
+                    enabled,
+                  );
+                }}
+              />
+            )
+          }
           advanced={
             selectedPlugin.packageStatus === "missing" ? undefined : (
               <PluginStoreAdvancedSection>
@@ -771,6 +805,18 @@ function PluginList({
 
   return (
     <section className="space-y-6" aria-labelledby="plugin-installed-title">
+      {searchQuery.trim() || !lspTarget ? null : (
+        <CodeIntelligenceSettingRow
+          enabled={lspEnabled ?? true}
+          pending={lspPendingKey === "enabled"}
+          disabled={lspEnabled === null || !targetServiceResolution.rpcReady}
+          saveFailed={lspSaveErrorKey === "enabled"}
+          onChange={(enabled) => {
+            if (!lspTarget) return;
+            void setLspEnabled(pluginManagementService, lspTarget, enabled);
+          }}
+        />
+      )}
       {hasEmptySearchResult ? (
         <EmptyState
           message={intl.formatMessage({
@@ -818,7 +864,7 @@ function PluginList({
                   data-testid={TID_PLUGIN_STORE_BROWSE}
                   onClick={onAdd}
                 >
-                  {intl.formatMessage({ id: "settings.plugin.plugins.browse" })}
+                  {intl.formatMessage({ id: "chat.plugins.browseMarketplace" })}
                 </Button>
                 <PluginAddMenu
                   testId="plugin-settings-add"
@@ -871,7 +917,7 @@ function PluginList({
                 <Button type="button" variant="default" size="lg" onClick={onAdd}>
                   <Plus aria-hidden="true" data-icon="inline-start" />
                   {intl.formatMessage({
-                    id: "settings.plugin.plugins.browse",
+                    id: "chat.plugins.browseMarketplace",
                   })}
                 </Button>
               ) : undefined

@@ -713,7 +713,7 @@ describe("workflow concurrency governor — 调高上界即起跳（docs/dynamic
     const seen: ConcurrencyChange[] = [];
     governor.subscribe("r", (change) => seen.push(change));
     governor.setRunBound("r", 8);
-    outcome.completed(admitNow("r")); // 用过这个 key，此刻空闲
+    outcome.completed(admitNow("r")); // has used this key, currently idle
     expect(governor.snapshot(KEY_A)?.cap).toBe(8);
     governor.setRunBound("r", 32);
     expect(governor.snapshot(KEY_A)).toMatchObject({ cap: 32, growthLimit: 32 });

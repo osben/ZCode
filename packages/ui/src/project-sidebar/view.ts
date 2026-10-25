@@ -12,6 +12,8 @@ import type {
   WindowHostTaskAddress,
   WindowHostControllerTaskActivity,
 } from "@/project-sidebar/contract.js";
+import type { TaskChildSessionFacts } from "@/v4/windowControllerTaskListRegistry.js";
+import type { ConfirmDialogRequest } from "@/store/confirmDialogStore.js";
 import { attachTaskListRowActivity } from "@/v4/taskListRowActivity.js";
 import { compareTaskListItemsByTime, compareZCodeTaskListItems } from "@/lib/taskListOrdering.js";
 import { buildTaskEntityKey } from "@/lib/taskQueryCache.js";
@@ -21,22 +23,27 @@ import {
   stabilizeTaskListItems,
 } from "@/v4/taskListItemStabilization.js";
 
-/** 活动态只覆盖已有行的 UI sidecar；Controller 快照不能替代项目树的行集合和事实。 */
-export function applyProjectTaskActivities(
+/**
+ * 活动态只覆盖已有行的 UI sidecar；Controller 快照不能替代项目树的行集合和事实。
+ * Child-conversation facts ride the same overlay: the task index never stores them, so dropping
+ * them here hid the sidebar child marker in every view (spec sidebar-child-conversation-counts §7).
+ */
+export function applyProjectTaskOverlays(
   tree: ProjectTree,
-  activities: readonly {
+  overlays: readonly {
     address: WindowHostTaskAddress;
-    activity: WindowHostControllerTaskActivity;
+    activity?: WindowHostControllerTaskActivity;
+    childFacts?: TaskChildSessionFacts;
   }[],
 ): ProjectTree {
-  const byKey = new Map(
-    activities.map(({ address, activity }) => [buildTaskEntityKey(address), activity]),
-  );
+  const byKey = new Map(overlays.map((overlay) => [buildTaskEntityKey(overlay.address), overlay]));
   return {
     ...tree,
     tasks: tree.tasks.map((task) => {
-      const activity = byKey.get(buildTaskEntityKey(task));
-      return activity ? attachTaskListRowActivity(task, activity) : task;
+      const overlay = byKey.get(buildTaskEntityKey(task));
+      if (!overlay) return task;
+      const withFacts = overlay.childFacts ? { ...task, ...overlay.childFacts } : task;
+      return overlay.activity ? attachTaskListRowActivity(withFacts, overlay.activity) : withFacts;
     }),
   };
 }
@@ -195,6 +202,7 @@ export function mergeProjectTrees(
 } {
   const projects = [...local.projects];
   const tasks = [...local.tasks];
+  // Local deletion facts carry hostId "local" (see LOCAL_TASK_HOST_ID in deletedTaskFacts.ts); the remote rows below are filtered by host id.
   const deletedTasks = [...(local.deletedTasks ?? [])];
   const availability = new Map(
     local.projects.map((project) => [projectKey(project), { online: true } as ProjectAvailability]),
@@ -270,4 +278,23 @@ export function formatProjectError(
   if (code === "project.connection-unavailable")
     return formatMessage({ id: "project.connectionUnavailable" });
   return String(cause);
+}
+
+/**
+ * Confirmation for deleting a project. Both delete entries (row menu and editor) use this one
+ * request so the copy and the destructive variant cannot drift. Deleting a project keeps its
+ * tasks, so the description says so instead of warning about task loss.
+ */
+export function projectDeleteConfirmRequest(
+  formatMessage: (descriptor: { id: string }, values?: Record<string, string>) => string,
+  projectName: string,
+): ConfirmDialogRequest {
+  return {
+    title: formatMessage({ id: "project.deleteConfirmTitle" }, { name: projectName }),
+    description: formatMessage({ id: "project.deleteConfirmDescription" }),
+    confirmLabel: formatMessage({ id: "project.deleteConfirmAction" }),
+    cancelLabel: formatMessage({ id: "project.cancel" }),
+    confirmVariant: "destructive",
+    testId: "project-delete-confirm",
+  };
 }

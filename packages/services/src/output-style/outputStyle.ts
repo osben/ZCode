@@ -4,37 +4,37 @@ import { createServiceDescriptor } from "../descriptors.js";
 
 export interface IOutputStyleService {
   /**
-   * 加载所有可用的 output styles
+   * Load all available output styles
    */
   listStyles(): Promise<{ styles: OutputStyle[] }>;
 
   /**
-   * 添加新的 output style
+   * Add a new output style
    */
   addStyle(params: { config: OutputStyleConfig }): Promise<void>;
 
   /**
-   * 更新现有的 output style
+   * Update an existing output style
    */
   updateStyle(params: { id: string; config: OutputStyleConfig }): Promise<void>;
 
   /**
-   * 删除 output style
+   * Delete an output style
    */
   deleteStyle(params: { id: string }): Promise<void>;
 
   /**
-   * 获取用户 output styles 目录路径
+   * Get the user's output styles directory path
    */
   getUserStylesDirectory(): Promise<{ path: string }>;
 
   /**
-   * 设置当前激活的 output style
+   * Set the currently active output style
    */
   setActiveStyle(params: { styleId: string }): Promise<void>;
 
   /**
-   * 获取当前激活的 output style
+   * Get the currently active output style
    */
   getActiveStyle(): Promise<{ styleId: string | null }>;
 }

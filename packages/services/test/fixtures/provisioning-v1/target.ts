@@ -1,4 +1,4 @@
-// 冻结基线 0e40230d34 的旧协议/Target，防止新 schema 掩盖混版本破坏性删除回归。
+// Frozen copy of the old protocol/Target from baseline 0e40230d34, so a newer schema cannot mask mixed-version destructive-deletion regressions.
 import { providerProvisioningEnvelopeSchema } from "./schema.js";
 /* eslint-disable max-lines -- Provisioning target keeps transaction and rollback invariants together. */
 import { readFile } from "node:fs/promises";
@@ -49,7 +49,7 @@ interface ProvisioningStateFile {
   readonly records: readonly ProvisioningStateRecord[];
 }
 
-/** 运行在目标 Environment 内的 Provisioning target；负责写正式 Store 并在失败时回滚。 */
+/** Provisioning target running inside the target Environment; writes the real Store and rolls back on failure. */
 export function createProviderProvisioningTarget(
   options: ProviderProvisioningTargetOptions,
 ): IProviderProvisioningTargetService {
@@ -81,7 +81,7 @@ export function createProviderProvisioningTarget(
         };
 
         try {
-          // 先登记再写入：底层原子写即使在替换完成后才抛错，也必须进入回滚集合。
+          // Register before writing: even if the underlying atomic write throws after the swap completes, the entry must join the rollback set.
           applied.settings = true;
           await options.settingService.update({
             providerFamilyDomain: envelope.accountSettings.providerFamilyDomain ?? undefined,
@@ -101,7 +101,7 @@ export function createProviderProvisioningTarget(
 
           applied.personalConfig = true;
           await options.personalRepository.update((current) => {
-            // 其他域写入期间 Personal 可能已被编辑；检查与替换必须在同一个文件锁内。
+            // Personal may have been edited while other domains were written; the check and the replacement must happen under the same file lock.
             if (!samePersonalConfig(current, before.personal)) {
               throw new Error("Personal Provider Config 在同步期间被其它操作修改");
             }
@@ -131,8 +131,8 @@ export function createProviderProvisioningTarget(
           await writeStateFile(options.stateFilePath, appendStateRecord(previousState, result));
           return result;
         } catch (error) {
-          // 回滚前对每个 domain 做 CAS 式校验；若期间已有其它写入，宁可报告
-          // rollback_failed，也不能用过期快照覆盖或删除用户的新配置。
+          // CAS-style check per domain before rolling back; if anything else was written in the meantime, report
+          // rollback_failed rather than overwriting or deleting the user's newer config with a stale snapshot.
           const rollbackError = await rollback(before, applied, options);
           if (rollbackError) {
             return {
@@ -173,7 +173,7 @@ interface AppliedProvisioningState {
 }
 
 function parsePersonalConfig(envelope: ProviderProvisioningEnvelope): ProviderConfigLayerUpdate {
-  // 信封与本地保存复用正式 Personal codec，不在接收端另建字段清单或模式判断。
+  // The envelope and local persistence reuse the official Personal codec; do not build a separate field list or mode detection on the receiving side.
   return decodeProviderConfigFile({ schemaVersion: 1, config: envelope.personalConfig });
 }
 
@@ -217,7 +217,7 @@ async function rollback(
         if (!samePersonalConfig(current, applied.personalConfigExpected)) {
           throw new Error("Personal Provider Config 在同步期间被其它操作修改，跳过回滚");
         }
-        // 默认选择与 Provider/Model 共用一份 CAS；不能分别回滚制造混合状态或覆盖新选择。
+        // Default selection shares one CAS with Provider/Model; rolling them back separately would create mixed state or overwrite newer selections.
         return before.personal;
       });
     } catch (error) {
@@ -249,7 +249,7 @@ async function rollback(
       const current = await options.settingService.get();
       const previousSettings = toProvisioningAccountSettings(before.settings);
       if (sameAccountSettings(current, previousSettings)) {
-        // 写入失败发生在落盘前，目标已经处于回滚前的状态。
+        // The write failed before persisting, so the target is already in its pre-rollback state.
       } else if (!sameAccountSettings(current, applied.settingsExpected)) {
         errors.push(new Error("Account Settings 在同步期间被其它操作修改，跳过回滚"));
       } else {

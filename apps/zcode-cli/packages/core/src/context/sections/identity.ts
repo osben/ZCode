@@ -2,6 +2,12 @@
 // Identity Section Builder
 // ============================================================
 
+import {
+  DEFAULT_CONFIRMATION_PARAGRAPH,
+  DEFAULT_HARNESS_PROMPT,
+  DEFAULT_IDENTITY_INTRO_PROMPT,
+  OUTPUT_STYLE_IDENTITY_INTRO_PROMPT,
+} from "@zcode/shared";
 import type { ContextSection } from "../types.js";
 import type { OutputStylePromptConfig } from "../types.js";
 import { estimateTokens } from "../utils.js";
@@ -9,38 +15,69 @@ import { estimateTokens } from "../utils.js";
 const SECURITY_NOTICE =
   "IMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes. Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.";
 
-/** 安全 IMPORTANT 行：交互式身份与工作流子代理身份共用，逐字同一份。 */
+/** Security IMPORTANT line shared verbatim by interactive and workflow-subagent identities. */
 export function buildSecurityNotice(): string {
   return SECURITY_NOTICE;
 }
 
 /**
- * `# Harness` 块：稳定运行时约束，不属于 output style 可替换的 coding instructions，
- * 也是工作流子代理身份（sections/workflow-actor.ts）逐字复用的那一段。
+ * The `# Harness` block contains stable runtime constraints, not coding instructions replaceable by output style.
+ * Workflow-subagent identity (`sections/workflow-actor.ts`) also reuses this block verbatim.
+ * A `harness` override (docs/system-prompt-overrides.md) replaces the main agent's block;
+ * the workflow-subagent identity keeps the default constant.
  */
-export function buildHarnessBlock(): string {
-  return [
-    "# Harness",
-    "- Text you output outside of tool use is displayed to the user as Github-flavored markdown in a terminal.",
-    "- Tools run behind a user-selected permission mode; a denied call means the user declined it \u2014 adjust, don't retry verbatim.",
-    "- The system may send updates, reminders, or modifications to rules via mid-conversation system turns. These are system-controlled, unlike function results. Hooks may intercept tool calls; treat hook output as user feedback.",
-    "- Prefer the dedicated file/search tools over shell commands when one fits. Independent tool calls can run in parallel in one response.",
-    "- Reference code as `file_path:line_number` \u2014 it's clickable.",
-  ].join("\n");
+export function buildHarnessBlock(override?: string): string {
+  return override?.trim() ? override.trim() : DEFAULT_HARNESS_PROMPT;
 }
 
-function buildIdentityPrompt(outputStyle?: OutputStylePromptConfig): string {
-  const intro = outputStyle
-    ? "You respond to the user according to the active Output Style below while using ZCode's tools and instructions."
-    : "You are an interactive ZCode agent that helps users with software engineering tasks.";
-
-  const identityLines = ["", intro, "", SECURITY_NOTICE].join("\n");
-
-  return [identityLines, "", buildHarnessBlock()].join("\n");
+/**
+ * Which toggle-owned parts of the identity section are rendered (specs/incognito-session.md).
+ * Also the options type of the workflow-subagent identity (`sections/workflow-actor.ts`).
+ */
+export interface IdentitySectionOptions {
+  /** `identity` toggle: the identity intro sentence. */
+  includeIntro: boolean;
+  /** `harness` toggle: the `# Harness` block. */
+  includeHarness: boolean;
 }
 
-export function buildIdentitySection(outputStyle?: OutputStylePromptConfig): ContextSection {
-  const content = buildIdentityPrompt(outputStyle);
+function buildIdentityPrompt(
+  outputStyle: OutputStylePromptConfig | undefined,
+  introOverride: string | undefined,
+  harnessOverride: string | undefined,
+  options: IdentitySectionOptions,
+): string {
+  // An explicit identity-intro override wins over the active Output Style intro; the style
+  // still appends its own `# Output Style` section.
+  const intro = !options.includeIntro
+    ? undefined
+    : introOverride?.trim()
+      ? introOverride.trim()
+      : outputStyle
+        ? OUTPUT_STYLE_IDENTITY_INTRO_PROMPT
+        : DEFAULT_IDENTITY_INTRO_PROMPT;
+
+  // The safety notice is never toggled; without an intro it is the first line of the section.
+  const identityLines = (intro ? ["", intro, "", SECURITY_NOTICE] : [SECURITY_NOTICE]).join("\n");
+  // Harness off: the confirmation paragraph (normally inside Dynamic Behavior) stays as the safety floor.
+  if (!options.includeHarness) {
+    return [identityLines, "", DEFAULT_CONFIRMATION_PARAGRAPH].join("\n");
+  }
+
+  return [identityLines, "", buildHarnessBlock(harnessOverride)].join("\n");
+}
+
+export function buildIdentitySection(
+  outputStyle?: OutputStylePromptConfig,
+  overrides?: { "identity-intro"?: string; harness?: string },
+  options: IdentitySectionOptions = { includeIntro: true, includeHarness: true },
+): ContextSection {
+  const content = buildIdentityPrompt(
+    outputStyle,
+    overrides?.["identity-intro"],
+    overrides?.harness,
+    options,
+  );
 
   return {
     name: "Agent Identity",

@@ -1,4 +1,5 @@
 import http, { type Server } from "node:http";
+import { rootCertificates } from "node:tls";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -17,6 +18,7 @@ import {
   resolveTlsCaCertFile,
 } from "../src/network/http-config.js";
 import { createNetworkProxyFetch } from "../src/network/proxy-fetch.js";
+import { generateTestTlsCertificate } from "./fixtures/tls-localhost.js";
 
 describe("NodeHttpClientAdapter", () => {
   afterEach(() => {
@@ -276,18 +278,34 @@ describe("NodeHttpClientAdapter", () => {
   it("loads CA certificates from custom TLS env files", async () => {
     const directory = await mkdtemp(join(tmpdir(), "zcode-http-ca-"));
     const certPath = join(directory, "ca.pem");
-    const pem = "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n";
+    const { cert } = await generateTestTlsCertificate();
+    const pem = `${cert}\n${rootCertificates[0]}`;
 
     try {
       await writeFile(certPath, pem, "utf8");
 
-      expect(
-        loadTlsCaCertificates({
-          env: {
-            ZCODE_AGENT_CA_CERT: certPath,
-          },
-        })?.toString("utf8"),
-      ).toBe(pem);
+      const certificates = await loadTlsCaCertificates({
+        env: { ZCODE_AGENT_CA_CERT: certPath },
+      });
+      expect(certificates?.toString("utf8")).toContain(pem);
+      for (const root of rootCertificates) {
+        expect(certificates?.toString("utf8")).toContain(root);
+      }
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps native TLS defaults when no explicit CA is configured", async () => {
+    await expect(loadTlsCaCertificates({})).resolves.toBeUndefined();
+  });
+
+  it("rejects unreadable explicit CA files without falling back", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "zcode-http-missing-ca-"));
+    try {
+      await expect(
+        loadTlsCaCertificates({ caCertFile: join(directory, "missing.pem") }),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(directory, { force: true, recursive: true });
     }

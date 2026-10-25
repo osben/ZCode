@@ -5,16 +5,19 @@ import {
   resolveClaudeMigrationScanLimit,
   UNLIMITED_SCAN_LIMIT_INPUT,
 } from "@/hooks/useClaudeSessionMigration.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
     intl: {
-      formatMessage: ({ id }: { id: string }, values?: Record<string, string>) => {
+      formatMessage: ({ id }: { id: string }, values?: Record<string, string | number>) => {
         if (id === "onboarding.sessions.count") {
-          return `${values?.count ?? ""} 个会话`;
+          return expectedCopy("onboarding.sessions.count", {
+            count: values?.count ?? "",
+          });
         }
         if (id === "onboarding.sessions.unlimited") {
-          return "不限制";
+          return expectedCopy("onboarding.sessions.unlimited");
         }
         return id;
       },
@@ -67,10 +70,10 @@ describe("OnboardingSessionsStep", () => {
       }),
     );
 
-    expect(html).toContain("30 个会话");
-    expect(html).toContain("50 个会话");
-    expect(html).toContain("100 个会话");
-    expect(html).toContain("不限制");
+    expect(html).toContain(expectedCopy("onboarding.sessions.count", { count: 30 }));
+    expect(html).toContain(expectedCopy("onboarding.sessions.count", { count: 50 }));
+    expect(html).toContain(expectedCopy("onboarding.sessions.count", { count: 100 }));
+    expect(html).toContain(expectedCopy("onboarding.sessions.unlimited"));
     expect(html).toContain('data-value="unlimited"');
   });
 });

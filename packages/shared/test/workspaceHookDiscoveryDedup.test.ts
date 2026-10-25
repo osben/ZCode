@@ -39,20 +39,20 @@ describe("workspace hook config discovery 去重（#10）", () => {
       },
     });
 
-    // 不传 explicit：auto-discovery 发现一个文件
+    // Without explicit: auto-discovery finds one file
     const withoutExplicit = discoverWorkspaceHookConfigPaths({
       workingDirectory: workspace,
     });
     expect(withoutExplicit).toHaveLength(1);
     expect(withoutExplicit[0]?.explicitProjectConfig).toBe(false);
 
-    // 传 explicit 且指向同一文件：去重后仍只有一个条目
+    // With explicit pointing at the same file: still one entry after dedup
     const withExplicit = discoverWorkspaceHookConfigPaths({
       workingDirectory: workspace,
       explicitProjectConfigPath: configPath,
     });
     expect(withExplicit).toHaveLength(1);
-    // 首次出现者（auto-discovered）保留，explicit 重复条目被丢弃
+    // First occurrence (auto-discovered) is kept; the duplicate explicit entry is dropped
     expect(withExplicit[0]?.explicitProjectConfig).toBe(false);
     expect(withExplicit[0]?.path).toBe(configPath);
   });
@@ -69,7 +69,7 @@ describe("workspace hook config discovery 去重（#10）", () => {
       },
     });
 
-    // explicit 指向一个额外文件
+    // explicit points at an additional file
     const extraPath = join(workspace, "custom-config.json");
     writeJson(extraPath, {
       hooks: {
@@ -129,7 +129,7 @@ describe("workspace hook config discovery 去重（#10）", () => {
       explicitProjectConfigPath: configPath,
     });
 
-    // 去重后只应有一个 source（auto-discovered），explicit 重复被丢弃
+    // After dedup there should be exactly one source (auto-discovered); the duplicate explicit entry is dropped
     expect(sources).toHaveLength(1);
     expect(sources[0]?.explicitProjectConfig).toBe(false);
     expect(sources[0]?.discoveryOrder).toBe(0);

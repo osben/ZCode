@@ -1,66 +1,60 @@
-# `/event/report` 登录地址与错误正文隐私边界
+# `/event/report` Login Address & Error Body Privacy Boundary
 
-## 目标与取舍（2026-09-18）
+## Objectives & trade-offs
 
-旧实现将完整 OAuth authorizeUrl 写入 `app_login_ck.login_url`，并允许任意事件的
-`error_msg` 原文进入 HTTP body；自动化的局部正则会漏掉 Bearer 后的值和未知格式密钥。
-用户确认首期优先隐私：不加密上传错误原文，不依赖正则猜测哪些片段是秘密。
+Old implementation wrote complete OAuth authorizeUrl into `app_login_ck.login_url`, and allowed arbitrary events' `error_msg` original text into HTTP body; automated local regex would miss values after Bearer and unknown-format keys.
+User confirmed first phase prioritizes privacy: do not encrypt-upload error original text, do not rely on regex guessing which segments are secrets.
 
-- 保留 `login_url` 字段名，仅发送 HTTP(S) URL 的小写 hostname，去掉 userinfo、端口、
-  路径、query 和 fragment。无效或非 HTTP(S) URL 返回空串；已规范化 hostname 可重复处理。
-- **所有事件**的 `event_extra_detail.error_msg`：非空字符串统一为 `[redacted]`；空串保持空，
-  原本缺失的字段不新增。包括当前 conversation/automation 及未来新增事件。
-- 对话事件保留既有 `error_type`；自动化创建失败补齐固定 `error_code`：
-  `limit` / `timeout` / `network` / `auth` / `validation` / `unknown`，成功为空。
-  在本地按此顺序识别已知错误码/模式；未知或缺失文本归为 `unknown`，只提供粗粒度归因，
-  不回传匹配内容、不承诺恢复原文的全部诊断能力。状态、耗时和关联 ID 保持不变。
-- 处理只作用于 telemetry 副本，不改 OAuth 浏览器地址、登录 state、工具结果或业务错误展示。
-- UI 上报前与 Core 序列化前使用同一个纯函数；函数幂等、不修改调用方对象。
-  agent_step/message_completion 调试 payload 只记录已清洗副本，改用 debug。
-- 认证请求头 Authorization 仍用于正常鉴权，不移除或复制进 JSON；与错误正文的删除是两回事。
+- Retain `login_url` field name, only send lowercase hostname of HTTP(S) URL, remove userinfo、port、path、query and fragment. Invalid or non-HTTP(S) URL returns empty string; already normalized hostname can be repeatedly processed.
+- **All events** `event_extra_detail.error_msg`: non-empty strings uniformly become `[redacted]`; empty strings remain empty, originally missing fields not added. Including current conversation/automation and future new events.
+- Conversation events retain existing `error_type`; automation creation failure fills fixed `error_code`:
+  `limit` / `timeout` / `network` / `auth` / `validation` / `unknown`, success is empty.
+  Locally identify known error codes/patterns in this order; unknown or missing text classified as `unknown`, only provides coarse-grained attribution,
+  does not return matching content, does not promise full diagnostic capability of restored original text. Status, duration and correlation ID unchanged.
+- Processing only affects telemetry copies, does not change OAuth browser address, login state, tool results or business error display.
+- UI before reporting and Core before serialization use the same pure function; function is idempotent, does not modify caller objects.
+  agent_step/message_completion debug payload only records cleaned copies, changed to debug.
+- Authentication request header Authorization still used for normal auth, not removed or copied into JSON; deletion of error body is separate matter.
 
-## 链路与兼容性
+## Chain & Compatibility
 
 ```text
-OAuth 原 URL -> 浏览器（原值）
+OAuth original URL -> browser (original value)
            `-> login_url hostname -> UI sanitize -> IPC -> Core sanitize -> POST
-其他 UI 事件 -> error_msg [redacted] -> 同一链路
-Host/Main 事件 ---------------------------------> Core sanitize -> POST
+Other UI events -> error_msg [redacted] -> same chain
+Host/Main events ---------------------------------> Core sanitize -> POST
 ```
 
-共享实现不依赖 Node、文件系统或平台 API。Windows/macOS/Linux 的路径、任意 URL、
-Authorization 值、密钥（含多行 PEM）都随着非空错误正文整体移除。
-Desktop continuous 和手机 web-remote-replayable 的订阅、队列、恢复、消息归属不改；
-手机仍只转发既有 strict session_create。主题、语言和 UI 交互不改。
-本期范围是 `/event/report` 的 login_url/error_msg；不扩展到 ARMS、OTLP、compaction.reason、
-模板正文、`event_text` 或其他业务字段。既有服务端历史数据不由此客户端修复清除。
+Shared implementation does not depend on Node, file system or platform API. Windows/macOS/Linux paths, arbitrary URLs,
+Authorization values, keys (including multi-line PEM) all removed along with non-empty error body.
+Desktop continuous and mobile web-remote-replayable subscription, queue, recovery, message attribution unchanged;
+mobile still only forwards existing strict session_create. Theme, language and UI interaction unchanged.
+This phase scope is `/event/report` login_url/error_msg; does not extend to ARMS, OTLP, compaction.reason,
+template body, `event_text` or other business fields. Existing server-side historical data not repaired or cleared by this client.
 
-## 验收
+## Acceptance
 
-先用旧代码运行新增用例确认失败，再验证：登录完整 URL 只用于 openExternal；
-UI reporter/调试日志和直接调用 Core 的最终请求体都没有错误原文；空/缺失/重复清洗语义稳定；
-未来未知事件同样清洗；原对象不变；网络重试复用清洗后的 body 和 event_id；正常 Authorization
-header 保持；以本机受控 HTTP 接收器验证实际收到的 body 不含合成敏感标记。
-运行相关单测、pnpm typecheck、pnpm lint；未覆盖的真实 Electron/手机/跨 OS 实机记录在提交说明。
+First run new test cases with old code to confirm failure, then verify: login complete URL only used for openExternal;
+UI reporter/debug log and directly called Core final request body have no error original text; empty/missing/duplicate cleaning semantics stable;
+future unknown events also cleaned; original object unchanged; network retry reuses cleaned body and event_id; normal Authorization
+header maintained; verify actual received body with local controlled HTTP receiver does not contain synthetic sensitive markers.
+Run related unit tests, pnpm typecheck, pnpm lint; uncovered real Electron/mobile/cross-OS real machine records in commit description.
 
-## 验证记录
+## Verification limits
 
-- 新增回归先在旧实现上运行：33 项失败，涵盖原 URL、原错误正文、日志和最终 HTTP body。
-- 修改后相关 15 个测试文件、202 项通过，含真实本机 HTTP 接收器、重试 body、
-  正常鉴权 header、OAuth 原地址、父/子代理、workflow、自动化、手机 session_create 边界。
-- macOS + Node 24.14.0 执行；没有真实账号、生产网络上报或真实用户隐私样本。
-- Windows/Linux 路径作为输入用例覆盖，未跑 Windows/Linux 实机、真实 Electron 登录或手机浏览器 E2E。
-- architecture:check 通过；shared/ui/services 是当前策略的 legacy/unmanaged 模块，
-  通过不等于自动证明其全部运行时边界。共享清洗是无 I/O 的纯函数，未改变业务状态 owner。
+The new regression was first run against the old implementation and failed (original URL, original error body,
+logs and final HTTP body); it passes now, including a real local HTTP receiver, retry body, normal auth header,
+OAuth original address, parent/child agent, workflow, automation and the mobile `session_create` boundary. Windows/
+Linux paths are covered as input cases only; no Windows/Linux real machine, real Electron login, mobile browser
+E2E, real account or production network reporting was run. `architecture:check` passing does not prove all runtime
+boundaries of the legacy/unmanaged shared/ui/services modules; the shared cleaning is an I/O-free pure function and
+changes no business state owner.
 
-完整 `pnpm typecheck`、`pnpm lint`（55 条非本次修改文件警告，0 errors）、
-修改文件 oxfmt 检查与 `git diff --check` 通过。
+## Field Table & Report Migration
 
-## 字段表与报表迁移
+- [Business monitoring agent_step / message_completion field table](business-monitoring.md): use `error_type` to aggregate failures, no longer cluster or search by `error_msg` original text.
+- [Automation message telemetry field table](automation-message-telemetry.md): same error body privacy semantics.
+- [Performance telemetry catalog](performance-telemetry-catalog.md): only constrains `/event/report` fields here, not extending to ARMS/OTLP.
+- [Scheduled task management report](../ui/scheduled-tasks-main-view.md): `automation_create_result` original `error_code` was empty; this fills classification, report uses this field. Classification coverage needs separate `unknown` ratio check, cannot treat unknown classification as success.
 
-- [业务监控 agent_step / message_completion 字段表](business-monitoring.md)：使用 `error_type` 聚合失败，不再按 `error_msg` 原文聚类或搜索。
-- [自动化消息 telemetry 字段表](automation-message-telemetry.md)：同一错误正文隐私语义。
-- [性能 telemetry 目录](performance-telemetry-catalog.md)：这里只约束 `/event/report` 的字段，不扩大到 ARMS/OTLP。
-- [定时任务管理上报](../ui/scheduled-tasks-main-view.md)：`automation_create_result` 原来的 `error_code` 恒空；本次补齐分类，报表使用该字段。分类覆盖需单独看 `unknown` 比例，不能把未知分类当成功。
-
-修复审查 CR-01/CR-02：先同步以上既有 spec，再以实际 reporter 的失败/成功上报验证分类及隐私；缺少错误信息的失败也必须发出 `unknown`，成功不得携带过期错误分类。
+Review fixes CR-01/CR-02: first sync above existing specs, then verify classification and privacy with actual reporter's failure/success reporting; failures lacking error info must still emit `unknown`, success must not carry stale error classification.

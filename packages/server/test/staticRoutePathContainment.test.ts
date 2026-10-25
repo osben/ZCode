@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { AddressInfo } from "node:net";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -7,22 +6,24 @@ import win32 from "node:path/win32";
 import posix from "node:path/posix";
 import { ServiceCollection } from "@zcode/services";
 import { createHttpServer, isInsideDirectory, isPathDriveQualified } from "../src/http.js";
+import { listeningAddress } from "./listeningAddress.js";
 
-// 背景：Windows 上 path.resolve('C:\\web', 'Z:/x') 直接切到 Z 盘，而跨盘时
-// path.relative 返回的是绝对路径（不以 ".." 开头），旧的越界检查因此把它误判为
-// 「静态根目录内」，通配静态路由又不在 token 中间件保护范围内，导致另一块盘上
-// 的任意文件可被未授权读取（含 %3A 编码形式与映射的网络盘）。这里固化三道防线：
-// 盘符路径前置拒绝、relative 结果为绝对路径一律视为越界、以及原有 ".." 检查回归。
+// Background: on Windows, path.resolve('C:\\web', 'Z:/x') switches to drive Z directly. Cross-drive
+// path.relative returns an absolute path that does not start with "..", so the old containment check
+// treated it as inside the static root. The wildcard static route is outside the token middleware, so
+// arbitrary files on another drive (including %3A-encoded forms and mapped network drives) could be
+// read without authorization. These tests pin three guards: drive-qualified paths are rejected up
+// front, absolute relative results count as outside, and the existing ".." check still holds.
 
 describe("isPathDriveQualified", () => {
-  it("识别 URL 形式与反斜杠形式的盘符路径", () => {
+  it("detects drive-qualified paths in URL and backslash forms", () => {
     expect(isPathDriveQualified("Z:/marker.txt")).toBe(true);
     expect(isPathDriveQualified("z:\\marker.txt")).toBe(true);
-    // 无分隔符的盘符相对路径在 win32 resolve 下同样会切盘（resolve 成 Z:\<file>）
+    // A drive-relative path without a separator also switches drives under win32 resolve.
     expect(isPathDriveQualified("Z:marker.txt")).toBe(true);
   });
 
-  it("不误伤正常相对路径", () => {
+  it("does not flag ordinary relative paths", () => {
     expect(isPathDriveQualified("assets/app.js")).toBe(false);
     expect(isPathDriveQualified("assets/Z-report.txt")).toBe(false);
     expect(isPathDriveQualified("index.html")).toBe(false);
@@ -30,16 +31,16 @@ describe("isPathDriveQualified", () => {
 });
 
 describe("isInsideDirectory", () => {
-  it("win32 跨盘符：relative 返回绝对路径，必须判为越界（回归用例）", () => {
-    // 修复前：path.win32.relative('C:\\zcode\\web', 'Z:\\marker.txt') === 'Z:\\marker.txt'
-    // 不以 ".." 开头，被旧实现误判为在目录内
+  it("treats a cross-drive win32 relative result as outside (regression)", () => {
+    // Before the fix: path.win32.relative('C:\\zcode\\web', 'Z:\\marker.txt') === 'Z:\\marker.txt',
+    // which does not start with ".." and was wrongly accepted as inside the directory.
     expect(isInsideDirectory("C:\\zcode\\web", "Z:\\marker.txt", win32)).toBe(false);
     expect(
       isInsideDirectory("C:\\zcode\\web", win32.resolve("C:\\zcode\\web", "index.html"), win32),
     ).toBe(true);
   });
 
-  it("posix 语义保持不变", () => {
+  it("keeps posix semantics unchanged", () => {
     expect(isInsideDirectory("/srv/web", "/srv/web/assets/app.js", posix)).toBe(true);
     expect(isInsideDirectory("/srv/web", "/srv/web", posix)).toBe(true);
     expect(isInsideDirectory("/srv/web", "/srv/etc/passwd", posix)).toBe(false);
@@ -80,20 +81,22 @@ describe("static route path containment", () => {
       spaFallback: true,
     });
     servers.push(server);
-    return (server.address() as AddressInfo).port;
+    // serve() listens asynchronously; wait for the bound address instead of reading it synchronously.
+    return (await listeningAddress(server)).port;
   }
 
-  it("盘符路径（明文与 %3A 编码）一律 404，不再解析到其他盘", async () => {
+  it("answers 404 for drive-qualified paths, plain or %3A-encoded, without resolving another drive", async () => {
     const port = await startStaticServer();
     expect((await fetch(`http://127.0.0.1:${port}/Z:/marker.txt`)).status).toBe(404);
     expect((await fetch(`http://127.0.0.1:${port}/Z%3A/marker.txt`)).status).toBe(404);
   });
 
-  it("编码形式的 .. 在 WHATWG URL 归一化后落回根内，未命中时走 SPA fallback 而非越界", async () => {
+  it("falls back to index.html for encoded ../ after URL normalization instead of escaping the root", async () => {
     const port = await startStaticServer();
     const response = await fetch(`http://127.0.0.1:${port}/%2e%2e/secret.txt`);
-    // new URL() 会把 %2e%2e 折叠为 .. 并归一化路径，路由收到的是根内的 /secret.txt；
-    // 该文件不存在，落到 SPA fallback 返回 index.html —— 证明响应来自 fallback 而非越界文件
+    // new URL() folds %2e%2e into .. and normalizes the path, so the route receives the in-root
+    // /secret.txt. That file does not exist, so the SPA fallback returns index.html. This shows the
+    // response came from the fallback, not from a file outside the root.
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("<html>home</html>");
   });

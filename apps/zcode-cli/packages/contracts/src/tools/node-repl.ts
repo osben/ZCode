@@ -2,10 +2,12 @@ import { z } from "zod";
 import { toToolJsonSchema } from "./json-schema.js";
 
 const JsInputBaseShape = {
-  // 同一模型 schema 同时服务 persistent core REPL 与 fresh-kernel Browser Use MCP；
-  // 字段文案不能替任一执行边界承诺跨调用状态，生命周期由各自 tool description 说明。
+  // The same model schema serves both the persistent core REPL and the fresh-kernel Browser
+  // Use MCP. Field descriptions must not promise cross-call state for either execution
+  // boundary; each tool description explains its own lifecycle.
   code: z.string().describe("JavaScript code to execute in the Node REPL session"),
-  // 只写 optional 无法让模型判断何时覆盖默认值，长等待容易在副作用完成后超时。
+  // Marking this optional alone does not tell the model when to override the default; a long
+  // wait could otherwise time out after the side effect has completed.
   timeout_ms: z
     .number()
     .int()
@@ -24,7 +26,7 @@ const JsUserTitleSchema = z
     "Required short user-facing title in the user's language that describes the intended action without implementation terms such as js, JavaScript, or node_repl",
   );
 
-/** js：在持久 REPL 里执行一段 JS 代码。 */
+/** js: execute a JavaScript snippet in the persistent REPL. */
 export const JsInputSchema = z
   .object({
     ...JsInputBaseShape,
@@ -33,7 +35,7 @@ export const JsInputSchema = z
   .strict();
 export type JsInput = z.infer<typeof JsInputSchema>;
 
-// 新调用必须提供用户可读标题，但旧会话和第三方 provider 的历史调用可能没有该字段。
+// New calls must provide a user-readable title, but historical calls from old sessions and third-party providers may lack it.
 export const JsRuntimeInputSchema = z
   .object({
     ...JsInputBaseShape,
@@ -53,9 +55,10 @@ export const JsOutputSchema = z
         stack: z.string().optional(),
       })
       .optional(),
-    // nodeRepl.emitImage 收集的图片（如 tab.screenshot 的截图）；formatModelContent 会转成 image 内容块给模型。
+    // Images collected by nodeRepl.emitImage (such as a tab.screenshot); formatModelContent
+    // converts them to image content blocks for the model.
     images: z.array(z.object({ base64: z.string(), mimeType: z.string() }).strict()).optional(),
-    // 模型显式 tab.screenshot() 原始 PNG 的 session artifact 绝对路径。
+    // Absolute session-artifact path to the original PNG from an explicit model call to tab.screenshot().
     browserScreenshotPaths: z.array(z.string()).optional(),
     responseMeta: z.record(z.string(), z.unknown()).optional(),
   })

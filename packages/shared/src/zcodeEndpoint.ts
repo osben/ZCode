@@ -11,7 +11,6 @@ export const DEFAULT_ZAI_BUSINESS_BASE_URL = "https://api.z.ai";
 export const TEST_ZAI_BUSINESS_BASE_URL = "https://api.z.ai";
 export const DEFAULT_ZAI_OAUTH_CLIENT_ID = "client_P8X5CMWmlaRO9gyO-KSqtg";
 export const TEST_ZAI_OAUTH_CLIENT_ID = "client_P8X5CMWmlaRO9gyO-KSqtg";
-export const DEFAULT_WEB_REMOTE_CONTROL_RELAY_WS_URL = "wss://zcode.z.ai/api/v1/remote/ws2";
 export const WEB_REMOTE_CONTROL_V4_MIN_APP_VERSION = "3.4.0";
 
 export interface BuildZCodeEndpointUrlsOptions {
@@ -23,8 +22,9 @@ function isWebRemoteControlV4AppVersion(appVersion: string | undefined): boolean
     return false;
   }
 
-  // zcodeEndpoint 会被 Vite 配置在 Node 加载期直接导入，不能依赖源码态 `.js` runtime import。
-  // 这里只比较固定的稳定版门槛；高于 3.4.0 的预发布版本仍满足门槛，3.4.0 自身的预发布版本不满足。
+  // zcodeEndpoint is imported directly by Vite configs during Node load, so it cannot rely on
+  // source-state `.js` runtime imports. Compare against a fixed stable-version threshold only;
+  // prereleases above 3.4.0 still satisfy it, while 3.4.0's own prereleases do not.
   const normalizedVersion = appVersion.trim().replace(/^v/i, "");
   const match = normalizedVersion.match(
     /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([^+]+))?(?:\+(.+))?$/,
@@ -197,7 +197,8 @@ export function resolveZCodeEndpointOrigin(options?: {
 }
 
 export function resolveRuntimeZCodeEnv(env: RuntimeZCodeEndpointEnv = {}): ZCodeEnv {
-  // 独立 CLI / 服务测试未注入 ZCODE_ENV 时默认生产域；桌面测试包会显式下发 ZCODE_ENV=test。
+  // Standalone CLI / service tests without an injected ZCODE_ENV default to the production domain;
+  // desktop test builds explicitly ship ZCODE_ENV=test.
   return env.ZCODE_ENV?.trim().toLowerCase() === "test" ? "test" : "production";
 }
 
@@ -232,20 +233,68 @@ export function buildRuntimeZCodeApiUrl(env: RuntimeZCodeEndpointEnv = {}, path:
   return `${resolveRuntimeZCodeEndpointOrigin(env)}${normalizedPath}`;
 }
 
+/** Relay V2 WebSocket path; must equal `WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH` (guarded by a test). */
+export const WEB_REMOTE_CONTROL_RELAY_WS_PATH = "/api/v1/remote/ws2";
+
+const RELAY_ORIGIN_ONLY_PATHS = new Set(["", "/", "/ws", "/ws/"]);
+
+/**
+ * Fork: a configured relay value (runtime env or baked release default) is a relay origin or an explicit
+ * WS URL. Release builds baked the V1 endpoint `wss://host/ws`, which the V2 relay rejects, so a bare
+ * origin or that legacy path maps to the V2 WS path. Owner and rules: specs/relay-v2-migration.md §11.1.
+ */
+export function normalizeConfiguredWebRemoteControlRelayWsUrl(
+  value: string | null | undefined,
+): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return trimmed;
+  }
+  if (!RELAY_ORIGIN_ONLY_PATHS.has(url.pathname)) {
+    return trimmed;
+  }
+  if (url.protocol === "https:") url.protocol = "wss:";
+  if (url.protocol === "http:") url.protocol = "ws:";
+  url.pathname = WEB_REMOTE_CONTROL_RELAY_WS_PATH;
+  return url.toString();
+}
+
+/** Relay HTTP origin for a relay WS URL: wss to https, ws to http; the path is always the relay API root. */
+export function resolveWebRemoteControlRelayHttpOrigin(relayWsUrl: string): string {
+  const url = new URL(relayWsUrl);
+  url.protocol = url.protocol === "wss:" ? "https:" : "http:";
+  return url.origin;
+}
+
 export function resolveWebRemoteControlRelayWsUrl(options?: {
   endpointOrigin?: string | null | undefined;
   overrideUrl?: string | null | undefined;
+  /** Fork release baked default (public deployment input); wins over endpoint-derived defaults, loses to `overrideUrl`. */
+  defaultUrl?: string | null | undefined;
 }): string {
   const overrideUrl = options?.overrideUrl?.trim();
   if (overrideUrl) {
     return overrideUrl;
   }
 
+  const defaultUrl = options?.defaultUrl?.trim();
+  if (defaultUrl) {
+    return defaultUrl;
+  }
+
+  // The relay is derived from the endpoint origin, so test, production and self-hosted endpoints
+  // each pair with their own relay. No production relay host is hardcoded here.
   const origin = new URL(
     normalizeZCodeEndpointOrigin(options?.endpointOrigin?.trim() || DEFAULT_ZCODE_ENDPOINT_ORIGIN),
   );
   origin.protocol = origin.protocol === "https:" ? "wss:" : "ws:";
-  origin.pathname = "/api/v1/remote/ws2";
+  origin.pathname = WEB_REMOTE_CONTROL_RELAY_WS_PATH;
   return origin.toString();
 }
 
@@ -269,8 +318,8 @@ export function buildBigModelApiUrl(env: RuntimeBigModelApiEnv = {}, path: strin
 }
 
 export function buildBigModelCodingPlanPersonalManageUrl(env: RuntimeBigModelApiEnv = {}): string {
-  // 修复原因：BigModel Coding Plan 管理页要跟随 ZCODE_ENV；
-  // 测试环境如果继续写死 bigmodel.cn，会把测试账号带到生产套餐页。
+  // Fix rationale: the BigModel Coding Plan manage page must follow ZCODE_ENV;
+  // hardcoding bigmodel.cn in the test environment would take test accounts to the production plan page.
   return buildBigModelApiUrl(env, "/coding-plan/personal/overview");
 }
 
@@ -368,7 +417,8 @@ export function buildZCodeEndpointUrls(
   const parsed = new URL(normalizedOrigin);
   const wsProtocol = parsed.protocol === "https:" ? "wss:" : "ws:";
   const wsOrigin = `${wsProtocol}//${parsed.host}`;
-  // 无法解析或低于分界版本时保守使用 v3，避免开发版本和旧客户端进入未兼容的 v4 页面。
+  // Fall back to v3 when the version is unparseable or below the cutoff, keeping dev builds and
+  // old clients off the incompatible v4 page.
   const remoteVersion = isWebRemoteControlV4AppVersion(options.appVersion) ? "v4" : "v3";
 
   return {
@@ -377,7 +427,7 @@ export function buildZCodeEndpointUrls(
     remoteUrl: `${normalizedOrigin}/remote/${remoteVersion}`,
     webRemoteCallbackUrl: `${normalizedOrigin}/remote/v4`,
     webShareCallbackUrl: `${normalizedOrigin}/cn/share/callback`,
-    relayWsUrl: `${wsOrigin}/api/v1/remote/ws2`,
+    relayWsUrl: `${wsOrigin}${WEB_REMOTE_CONTROL_RELAY_WS_PATH}`,
     zcodePlanOpenAiBaseUrl: `${normalizedOrigin}/api/v1/zcode-plan`,
     zcodePlanAnthropicBaseUrl: `${normalizedOrigin}/api/v1/zcode-plan/anthropic`,
     zcodePlanBillingCurrentUrl: `${normalizedOrigin}/api/v1/zcode-plan/billing/current`,
@@ -408,4 +458,53 @@ export function rewriteZCodeEndpointUrl(input: string | URL, endpointOrigin: str
   target.search = parsed.search;
   target.hash = parsed.hash;
   return target.toString();
+}
+
+type ZCodeTestEndpointEnvSource = Record<string, string | undefined>;
+
+export type ZCodeEndpointMenuEntry = "production" | "test" | "custom";
+
+/**
+ * Test origin offered by the Help → ZCode Endpoint menu (spec: specs/zcode-test-endpoint-menu.md).
+ * The open-source import set TEST_ZCODE_ENDPOINT_ORIGIN to the production origin, so a distinct test
+ * endpoint exists only when ZCODE_TEST_BASE_URL points somewhere else.
+ */
+export function resolveZCodeTestEndpointOrigin(options: {
+  processEnv: ZCodeTestEndpointEnvSource;
+  localEnv: ZCodeTestEndpointEnvSource;
+}): string | undefined {
+  // The first candidate that parses wins, so a malformed process value does not hide a valid .env one.
+  const candidates = [
+    options.processEnv["ZCODE_TEST_BASE_URL"],
+    options.localEnv["ZCODE_TEST_BASE_URL"],
+    TEST_ZCODE_ENDPOINT_ORIGIN,
+  ];
+  for (const candidate of candidates) {
+    const trimmed = candidate?.trim();
+    if (!trimmed) continue;
+    try {
+      const origin = normalizeZCodeEndpointOrigin(trimmed);
+      return origin === DEFAULT_ZCODE_ENDPOINT_ORIGIN ? undefined : origin;
+    } catch {
+      // Try the next source.
+    }
+  }
+  return undefined;
+}
+
+export function selectZCodeEndpointMenuEntry(options: {
+  zcodeEnv: ZCodeEnv;
+  currentOrigin: string;
+  testOrigin: string | undefined;
+}): ZCodeEndpointMenuEntry {
+  if (options.zcodeEnv === "production") {
+    return "production";
+  }
+  if (options.currentOrigin === DEFAULT_ZCODE_ENDPOINT_ORIGIN) {
+    return "production";
+  }
+  if (options.testOrigin !== undefined && options.currentOrigin === options.testOrigin) {
+    return "test";
+  }
+  return "custom";
 }

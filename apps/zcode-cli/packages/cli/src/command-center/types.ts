@@ -172,6 +172,26 @@ export type CommandCenterBigmodelLoginResult = {
   providerId: "bigmodel";
 };
 
+export type CommandCenterChatGptLoginOptions = {
+  abortSignal?: AbortSignal;
+  onAuthorizeUrl?: (data: { authorizeUrl: string }) => Promise<void> | void;
+};
+
+export type CommandCenterChatGptLoginResult = {
+  browser?: {
+    opened: boolean;
+    reason?: string;
+  };
+  configPath: string;
+  model: string;
+  planUsageEntitled: boolean;
+  user: {
+    sub: string;
+    email?: string;
+    name?: string;
+  };
+};
+
 export type CommandCenterApiKeyOptions = {
   apiKey: string;
   providerId: "bigmodel" | "zai";
@@ -195,6 +215,7 @@ export type CommandCenterApp = {
   getCurrentModelOption?(): CommandCenterModelOption | undefined;
   getLocale?(): TuiSubmitPromptResult["locale"];
   getTheme?(): TuiSubmitPromptResult["theme"];
+  getPalette?(): TuiSubmitPromptResult["palette"];
   getThoughtLevel?(): string | undefined;
   loadSessionTranscript?(): Promise<NonNullable<TuiSubmitPromptResult["restoredMessages"]>>;
   readSubagents?: import("@zcode/tui").TuiReadSubagents;
@@ -311,6 +332,9 @@ export type CommandCenterDeps = {
   loginBigmodel?: (
     options?: CommandCenterBigmodelLoginOptions,
   ) => Promise<CommandCenterBigmodelLoginResult>;
+  loginChatGpt?: (
+    options?: CommandCenterChatGptLoginOptions,
+  ) => Promise<CommandCenterChatGptLoginResult>;
   configureApiKey?: (options: CommandCenterApiKeyOptions) => Promise<CommandCenterApiKeyResult>;
   loadCustomCommand?: (name: string) => Promise<CommandCenterCustomCommandContent>;
   newApp?: () => Promise<CommandCenterApp>;

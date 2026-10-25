@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- zcodeSessionService 聚合 desktop-continuous session 操作、draft lifecycle 和 task index 同步边界，拆分需要单独设计。 */
+/* eslint-disable max-lines -- zcodeSessionService groups desktop-continuous session operations, draft lifecycle, and task-index synchronization boundaries; splitting it requires separate design. */
 import type { IZCodeAgentService } from "#src/zcode-agent/zcodeAgent.js";
 import type { ZCodeTaskIndexSyncer } from "#src/zcode-agent/zcodeTaskIndexSyncer.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
@@ -34,11 +34,10 @@ const logger = createServiceLogger("zcode-session-service");
 interface CreateZCodeSessionServiceOptions {
   agentService: IZCodeAgentService;
   /**
-   * 后台 task index sqlite 同步器。注入后，每次 session 被创建/恢复/发送 prompt 或
-   * 订阅事件时都会通知 syncer 维护 shadow 订阅，保证 desktop-continuous 路径下
-   * sqlite 仍能跟随 runtime 状态收敛；同时每次会变更 session 状态的操作完成后会
-   * 主动把最新 snapshot 同步到 sqlite 并广播 workspace_task_list_changed，
-   * 让侧边栏列表立刻看到 first_input title 和 updatedAt 排序刷新。
+   * Background task-index SQLite synchronizer. When injected, it is notified whenever a session is created/restored, a prompt is sent, or
+   * events are subscribed to, so it can maintain shadow subscriptions and keep SQLite aligned with runtime state in the desktop-continuous path.
+   * It also syncs the latest snapshot to SQLite and broadcasts workspace_task_list_changed after every session-state-changing operation,
+   * so the sidebar immediately reflects the first_input title and updatedAt ordering.
    */
   taskIndexSyncer?: ZCodeTaskIndexSyncer;
   cuaProductMcpServerResolver?: CuaProductMcpServerResolver;
@@ -64,9 +63,9 @@ export function createZCodeSessionService({
   }
 
   function getSessionSnapshotDiagnostics(snapshot: ZCodeSessionStateSnapshot) {
-    // 日志诊断不能假设测试 mock 或未来 partial snapshot 一定带齐 messages/pendingRequestIds。
-    // 原因是 readSession 的业务结果已经由 agent 层校验，服务层这里只记录观测字段；若日志读取抛错，会反过来打断
-    // desktop-continuous snapshot 恢复。这里仅对诊断值做空数组统计，不修改返回给 UI 的 snapshot 本体。
+    // Logging diagnostics must not assume that test mocks or future partial snapshots always include messages/pendingRequestIds.
+    // readSession's business result has already been validated by the agent layer, and the service records only observation fields; a logging error would otherwise interrupt
+    // desktop-continuous snapshot recovery. Count missing diagnostic values as empty arrays without modifying the snapshot returned to the UI.
     const messages = Array.isArray(snapshot.messages) ? snapshot.messages : [];
     const pendingRequestIds = Array.isArray(snapshot.runtime.pendingRequestIds)
       ? snapshot.runtime.pendingRequestIds
@@ -117,10 +116,10 @@ export function createZCodeSessionService({
     return availableThoughtLevels === null || availableThoughtLevels.has(params.thoughtLevel);
   }
 
-  // zcodeSessionService 是 desktop-continuous 主路径，状态变更后必须
-  // 广播 snapshot，否则 sqlite 永远停留在 createSession 时写的 "New session"，侧边栏也收不到
-  // workspace_task_list_changed。旧写路径（send/steer/fork/compact/rewind pass-through）
-  // 已删除，仅剩 createSession/resumeSession/setModel 等生命周期与配置 op 调用本方法。
+  // zcodeSessionService is the desktop-continuous main path and must broadcast a snapshot after state changes;
+  // otherwise SQLite remains at the "New session" written by createSession and the sidebar never receives
+  // workspace_task_list_changed. Legacy write paths (send/steer/fork/compact/rewind pass-through) have been removed;
+  // only lifecycle/configuration operations such as createSession/resumeSession/setModel call this method.
   async function broadcastSnapshot(
     snapshot: ZCodeSessionStateSnapshot,
     tag: string,
@@ -128,7 +127,7 @@ export function createZCodeSessionService({
       modelOverride?: string;
       thoughtLevelOverride?: string;
       moveGroupedTaskToTop?: boolean;
-      /** 设计修正：必填，发射点必须声明变更类别。 */
+      /** Design correction: required; the emission site must declare the change category. */
       broadcastReason: ZCodeWorkspaceTaskListChanged["reason"];
     },
   ): Promise<void> {
@@ -136,7 +135,7 @@ export function createZCodeSessionService({
       return;
     }
     try {
-      // 排查日志（左侧列表随输入框操作刷新）：确认是哪个生命周期 op（setModel/createSession/resumeSession）触发了 snapshot 广播。
+      // Diagnostic log (the left list refreshes with input-box operations): identify which lifecycle op (setModel/createSession/resumeSession) triggered the snapshot broadcast.
       logger.debug(
         undefined,
         `[list-refresh-trace] broadcastSnapshot tag=${tag} taskId=${snapshot.session.sessionId}`,
@@ -179,20 +178,19 @@ export function createZCodeSessionService({
     if (resolvedMcpServers === params.mcpServers) {
       return params;
     }
-    // desktop-continuous session 路径绕过 legacy task adapter，之前不会执行
-    // filesystem MCP 的 workspace 注入，导致同一 MCP 在直接 session 首发时缺少当前项目授权。
-    // 这里只改发往 runtime 的临时参数，不回写用户配置，避免污染跨 workspace 的 MCP 设置；
-    // product CUA broker socket/token 同样只注入 runtime 参数。
+    // The desktop-continuous session path bypasses the legacy task adapter and previously skipped
+    // workspace injection for filesystem MCP, so the same MCP lacked current-project authorization on direct session startup.
+    // Change only the temporary parameters sent to runtime; do not write user config and contaminate MCP settings across workspaces.
+    // Product CUA broker socket/token are likewise injected only into runtime parameters.
     return { ...params, mcpServers: resolvedMcpServers };
   }
 
   return {
     async initializeWorkspace(params: ZCodeSessionWorkspaceTarget) {
       const result = await agentService.initialize(params);
-      // task index 的 v4 摄入（sessions-index/workspace-config）是
-      // workspace 级常驻订阅。v4 命令路径（createSession/sendText 走 v4/command）
-      // 不再经过本 service 的 session 操作入口，必须在 workspace 预热点建立订阅，
-      // 否则纯 v4 会话的终态/标题/配置目录永远进不了 sqlite 与 workspace 广播。
+      // V4 task-index ingestion (sessions-index/workspace-config) is a persistent workspace-level subscription.
+      // V4 command paths (createSession/sendText through v4/command) no longer pass through this service's session operations;
+      // establish the subscription during workspace prewarming, or terminal state/title/config catalogs from pure V4 sessions will never reach SQLite or workspace broadcasts.
       if (result.available && taskIndexSyncer) {
         taskIndexSyncer.ensureWorkspaceSubscription({
           workspacePath: params.workspacePath,
@@ -230,28 +228,27 @@ export function createZCodeSessionService({
         workspacePath: agentParams.workspacePath,
       });
       if (agentParams.persistence === "deferred") {
-        // 未发送前的草稿 session 只用于让 toolbar 和 agent runtime 共用同一份状态。
-        // 这类空 session 不能进入 app 的 task index sqlite，否则侧边栏/搜索会出现没有用户输入的会话。
-        // 同时记录这个草稿，后续 setModel 等状态变更也必须被挡在 task index 之外。
+        // A draft session before the first send lets the toolbar and agent runtime share the same state.
+        // Do not add an empty session like this to the app task-index SQLite, or the sidebar/search will show a session with no user input.
+        // Track this draft so later state changes such as setModel are also kept out of the task index.
         deferredDraftSessions.remember(agentParams, snapshot);
         return snapshot;
       }
-      // desktop-continuous 路径不会经过 ZCode task adapter，sqlite 的 task index 全靠
-      // syncer 的 shadow 订阅刷新。createSession 成功后立刻 ensure，保证后续 runtime
-      // 事件首条到达前订阅已就位。
+      // The desktop-continuous path bypasses the ZCode task adapter, so SQLite's task index depends entirely on
+      // the syncer's shadow subscription. Ensure it immediately after createSession succeeds, before the first runtime event arrives.
       notifySyncer({
         workspacePath: snapshot.session.workspace.workspacePath,
         workspaceIdentity: snapshot.session.workspace.workspaceIdentity,
         sessionId: snapshot.session.sessionId,
       });
-      // 立刻把初始 snapshot 也同步到 sqlite + 广播，让 UI 列表第一时间看到新会话行。
-      // desktop-continuous 首发不会经过 legacy createTask，必须在这里同步写 grouped 顶部顺序。
+      // Sync the initial snapshot to SQLite and broadcast immediately so the UI list sees the new session row right away.
+      // The initial desktop-continuous send bypasses legacy createTask, so grouped top-level ordering must be written here.
       const snapshotWithRuntime = withApiRetryRuntime(snapshot);
       const broadcastStartedAt = Date.now();
       await broadcastSnapshot(snapshotWithRuntime, "createSession", {
         moveGroupedTaskToTop: true,
-        // 首发广播沿用 task_meta_changed 旧语义（低频，一个任务一次）；
-        // 语义化成 task_created（insert-active）需连同乐观插入去重一起改。
+        // The first-send broadcast retains the legacy task_meta_changed semantics (low frequency, once per task);
+        // changing it to task_created (insert-active) also requires changing optimistic-insert deduplication.
         broadcastReason: "task_meta_changed",
       });
       logger.info(sessionTraceId, "[zcode-session-service] createSession task index 同步完成", {
@@ -284,9 +281,9 @@ export function createZCodeSessionService({
             thoughtLevel: requestedThoughtLevelOverride,
           })
         ) {
-          // 恢复历史 task 时，模型已经被切回 task-local 模型，但旧 task config
-          // 仍可能带着上一模型的 thoughtLevel，例如 GLM-5-Turbo 被传入 max。
-          // snapshot.settings.thoughtLevel.available 是当前模型能力事实源，不支持时不能再重放给 agent。
+          // When restoring a historical task, the model has already switched back to its task-local model, but the old task config
+          // may still carry the previous model's thoughtLevel (for example, GLM-5-Turbo with max).
+          // snapshot.settings.thoughtLevel.available is the source of truth for current model capabilities; do not replay unsupported values to the agent.
           thoughtLevelOverride = undefined;
           logger.warn(
             undefined,
@@ -312,9 +309,9 @@ export function createZCodeSessionService({
           workspaceIdentity: agentParams.workspaceIdentity ?? null,
           workspacePath: agentParams.workspacePath,
         });
-        // 打开历史 task 时，resume 返回的 snapshot 可能仍带同 workspace 草稿态的最新思考强度。
-        // 这里对同一个 session 显式重放 task-local thoughtLevel，再把修正后的 snapshot 广播出去；
-        // 否则 syncer/UI 会把草稿的 high 写回原本是 max 的 active task。
+        // When opening a historical task, the resume snapshot may still contain the latest thought level from a draft in the same workspace.
+        // Explicitly replay the task-local thoughtLevel for this session and broadcast the corrected snapshot;
+        // otherwise syncer/UI could write the draft's high value back to an active task that was set to max.
         snapshot = await repairEmptyImportedClaudeSession(
           withApiRetryRuntime(
             await agentService.setThoughtLevel({
@@ -341,8 +338,8 @@ export function createZCodeSessionService({
             }
           : undefined;
       if (shouldBroadcastSnapshot) {
-        // 打开/恢复任务是快照收敛，不改变 pin/archive/unread 归属；
-        // 缺省 task_meta_changed 会让"每次点开任务"都触发全局 membership 重拉。
+        // Opening/restoring a task reconciles its snapshot without changing pin/archive/unread ownership;
+        // defaulting to task_meta_changed would trigger a global membership reload every time a task is opened.
         await broadcastSnapshot(snapshot, "resumeSession", {
           ...syncOptions,
           broadcastReason: "task_status_changed",
@@ -407,8 +404,8 @@ export function createZCodeSessionService({
       if (!wasDeferredDraft) {
         return Promise.resolve();
       }
-      // 手机 replayable 首发由 task facade 消费 deferred draft，需要在这里清除草稿标记
-      // 并通知 task index 同步，避免桌面后续控制同一 task 时仍按 deferred 规则跳过同步。
+      // The mobile replayable first send consumes the deferred draft through the task facade. Clear the draft marker here
+      // and notify task-index sync so later desktop control of the same task does not keep skipping sync under deferred rules.
       notifySyncer(params);
       logger.info(undefined, "[zcode-session-service] deferred draft session 已提升为 task", {
         sessionId: params.sessionId,
@@ -434,8 +431,8 @@ export function createZCodeSessionService({
         }
         return closed;
       } catch (error) {
-        // 旧 Agent 会拒绝 expectedPersistence。安全降级是保留旧 session 并创建新草稿，
-        // 不能回退到无条件 close，否则可能关闭刚被其他客户端提升的 active task。
+        // Older Agents reject expectedPersistence. The safe fallback is to retain the old session and create a new draft;
+        // do not fall back to unconditional close, which could close an active task just promoted by another client.
         logger.warn(
           undefined,
           "[zcode-session-service] 条件关闭 deferred draft 失败，保留旧 session",
@@ -457,15 +454,15 @@ export function createZCodeSessionService({
       }
       const snapshot = withApiRetryRuntime(await agentService.setModel(params));
       if (isDeferredDraft) {
-        // deferred draft 只存在于 runtime 内存中，setModel 返回的是无消息空快照。
-        // 如果这里订阅/写入 task index，进程重启后列表会留下无法 resume 的 "Session not found" 脏会话。
+        // A deferred draft exists only in runtime memory, and setModel returns an empty snapshot with no messages.
+        // If it is subscribed/written to the task index here, restarting the process leaves a dirty "Session not found" session that cannot resume.
         return snapshot;
       }
       await broadcastSnapshot(snapshot, "setModel", {
         modelOverride: formatModelPickerValue(params.model),
-        // 切模型属于纯配置变更，广播必须用 task_model_changed；
-        // 之前落到缺省 task_meta_changed，UI 会误判为归属相关变更，
-        // 触发全局 membership 重拉 + 左侧所有列表整刷。
+        // Changing models is a configuration-only update, so broadcast task_model_changed.
+        // It previously fell through to the default task_meta_changed, causing the UI to treat it as an ownership change
+        // and reload global membership plus every left-side list.
         broadcastReason: "task_model_changed",
       });
       return snapshot;
@@ -483,8 +480,8 @@ export function createZCodeSessionService({
       return agentService.respondProviderRuntimeHeaders(params);
     },
 
-    // M5 删波次 2：onDynamicSessionEvent（renderer 侧旧 session/subscribe 订阅面）已删。
-    // v4 UI 的会话事件走 agentService 的 conversation 帧通道，本 service 不再向
-    // agentService.onDynamicSessionEvent 建立任何订阅。
+    // M5 removal wave 2: onDynamicSessionEvent (the old Renderer session/subscribe surface) has been removed.
+    // V4 UI session events use agentService's conversation frame channel; this service no longer subscribes to
+    // agentService.onDynamicSessionEvent.
   };
 }

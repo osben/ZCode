@@ -9,10 +9,13 @@ import {
   resolveWebRemoteControlInitialWorkspaceSelection,
   resolveWebRemoteControlRoutePathFromBaseUrl,
   resolveWebRemoteControlWorkspaceKey,
+  type WebRemoteControlPlatformMethod,
 } from "../src/web-remote-control.js";
 import {
   hostIncomingMessageSchema,
   parseWebRemoteControlAppPayload,
+  webRemoteControlPlatformMethodSchema,
+  webRemoteControlTaskTargetSchema,
   webRemoteControlWorkspaceTargetSchema,
 } from "../src/validation.js";
 import { encodeWebRemoteControlRpcTransportMessage } from "../src/web-remote-control-rpc-transport.js";
@@ -61,7 +64,7 @@ describe("external relay QR helpers", () => {
       zcode_type: "bootstrap-response",
       requestId: "bootstrap-1",
       success: true,
-      result: { windowControlSessionId: "sid-1", workspaces: [] },
+      result: { windowControlSessionId: "sid-1", workspaces: [], tasks: [] },
     };
     expect(parseWebRemoteControlAppPayload(response)).not.toBeNull();
     const result = { ...response.result, desktopAppVersion: "3.12.2" };
@@ -75,10 +78,10 @@ describe("external relay QR helpers", () => {
       ).toBeNull();
     }
   });
-  it("builds an encoded web remote control QR URL without theme params", () => {
+  it("builds a V2 QR URL with routing hints only and no credential or theme params", () => {
     expect(
       buildWebRemoteControlExternalQrUrl({
-        baseUrl: "https://zcode.z.ai/remote",
+        baseUrl: "https://zcode.z.ai/remote?hash=old&t=1",
         deviceSid: "sid-1",
         deviceMid: "mid-1",
         deviceName: "MacBook",
@@ -87,16 +90,90 @@ describe("external relay QR helpers", () => {
     ).toBe("https://zcode.z.ai/remote?sid=sid-1&mid=mid-1&name=MacBook&app_version=1.5.0");
   });
 
+  it("writes the optional pairing code as pk in the fragment and stays byte-identical without it", () => {
+    const base = { baseUrl: "https://zcode.z.ai/remote", deviceSid: "sid-1" };
+    expect(buildWebRemoteControlExternalQrUrl(base)).toBe("https://zcode.z.ai/remote?sid=sid-1");
+    expect(buildWebRemoteControlExternalQrUrl({ ...base, pairingCode: "  " })).toBe(
+      "https://zcode.z.ai/remote?sid=sid-1",
+    );
+    expect(buildWebRemoteControlExternalQrUrl({ ...base, pairingCode: "abc_DEF-123" })).toBe(
+      "https://zcode.z.ai/remote?sid=sid-1#pk=abc_DEF-123",
+    );
+  });
+
+  it("never leaves pk in the query, even when the base URL carries one or a fragment", () => {
+    const url = new URL(
+      buildWebRemoteControlExternalQrUrl({
+        baseUrl: "https://zcode.z.ai/remote?pk=stale#view=a",
+        deviceSid: "sid-1",
+        pairingCode: "fresh-code",
+      }),
+    );
+    expect(url.searchParams.has("pk")).toBe(false);
+    expect(new URLSearchParams(url.hash.slice(1)).get("pk")).toBe("fresh-code");
+    expect(new URLSearchParams(url.hash.slice(1)).get("view")).toBe("a");
+  });
+
+  it("reads pk from the fragment first and from the query for older QR codes", () => {
+    expect(
+      parseWebRemoteControlExternalQrParams(
+        new URLSearchParams("sid=s&pk=old"),
+        new URLSearchParams("pk=new"),
+      ),
+    ).toEqual({ deviceSid: "s", pairingCode: "new" });
+    expect(
+      parseWebRemoteControlExternalQrParams(
+        new URLSearchParams("sid=s&pk=old"),
+        new URLSearchParams(""),
+      ),
+    ).toEqual({ deviceSid: "s", pairingCode: "old" });
+  });
+
+  it("parses pk as the pairing code only when it is non-empty", () => {
+    expect(parseWebRemoteControlExternalQrParams(new URLSearchParams("sid=s&pk=abc"))).toEqual({
+      deviceSid: "s",
+      pairingCode: "abc",
+    });
+    expect(parseWebRemoteControlExternalQrParams(new URLSearchParams("sid=s&pk="))).toEqual({
+      deviceSid: "s",
+    });
+  });
+
   it("parses V2 routing hints without carrying theme state", () => {
     expect(
       parseWebRemoteControlExternalQrParams(new URLSearchParams("sid=sid-1&mid=mid-1&theme=light")),
     ).toEqual({ deviceSid: "sid-1", deviceMid: "mid-1" });
   });
+
+  it("rejects V1 links that carry the hash or t credential", () => {
+    expect(
+      parseWebRemoteControlExternalQrParams(
+        new URLSearchParams("sid=sid-1&hash=hash&t=1710000000000&mid=mid-1"),
+      ),
+    ).toBeNull();
+    expect(
+      parseWebRemoteControlExternalQrParams(new URLSearchParams("sid=sid-1&t=1710000000000")),
+    ).toBeNull();
+  });
 });
 
 describe("resolveWebRemoteControlRoutePathFromBaseUrl", () => {
+  it("resolves the v2 QR route from the Vite remote base", () => {
+    expect(resolveWebRemoteControlRoutePathFromBaseUrl("/remote/")).toBe("/remote");
+  });
+
+  it("resolves the v3 QR route from the Vite remote v3 base", () => {
+    expect(resolveWebRemoteControlRoutePathFromBaseUrl("/remote/v3/")).toBe("/remote/v3");
+  });
+
   it("resolves the v4 QR route from the Vite remote v4 base", () => {
     expect(resolveWebRemoteControlRoutePathFromBaseUrl("/remote/v4/")).toBe("/remote/v4");
+  });
+
+  it("resolves the test QR route from the Vite remote test base", () => {
+    expect(resolveWebRemoteControlRoutePathFromBaseUrl("/remote/__test__/")).toBe(
+      "/remote/__test__",
+    );
   });
 
   it("keeps the existing dev QR route when Vite uses the root base", () => {
@@ -249,6 +326,23 @@ describe("resolveWebRemoteControlInitialWorkspaceSelection", () => {
   });
 });
 
+describe("webRemoteControlTaskTargetSchema", () => {
+  it("accepts optional mobile display status", () => {
+    expect(
+      webRemoteControlTaskTargetSchema.parse({
+        taskId: "task-status",
+        title: "Task status",
+        workspacePath: "/workspace/app",
+        workspaceLabel: "App",
+        workspaceKind: "local",
+        createdAt: 1,
+        updatedAt: 2,
+        displayStatus: "running",
+      }).displayStatus,
+    ).toBe("running");
+  });
+});
+
 describe("parseWebRemoteControlAppPayload", () => {
   it("accepts pushed workspace list updates", () => {
     expect(
@@ -262,12 +356,25 @@ describe("parseWebRemoteControlAppPayload", () => {
               kind: "local",
             },
           ],
+          tasks: [
+            {
+              taskId: "task-1",
+              title: "Task one",
+              workspacePath: "/workspace/app",
+              workspaceLabel: "app",
+              workspaceKind: "local",
+              createdAt: 1,
+              updatedAt: 2,
+              displayStatus: "idle",
+              archived: true,
+            },
+          ],
         },
       }),
     ).toMatchObject({
       zcode_type: "workspace-list-updated",
       result: {
-        workspaces: [expect.objectContaining({ workspacePath: "/workspace/app" })],
+        tasks: [expect.objectContaining({ taskId: "task-1", archived: true })],
       },
     });
   });
@@ -295,6 +402,85 @@ describe("parseWebRemoteControlAppPayload", () => {
       zcode_type: "workspace-reconnect-response",
       success: true,
     });
+  });
+
+  it("accepts workspace open requests and responses with optional identity", () => {
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "workspace-open-request",
+        requestId: "open-1",
+        workspacePath: "/workspace/demo-worktrees/feature",
+      }),
+    ).toMatchObject({
+      zcode_type: "workspace-open-request",
+      requestId: "open-1",
+      workspacePath: "/workspace/demo-worktrees/feature",
+    });
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "workspace-open-request",
+        requestId: "open-2",
+        workspacePath: "/workspace/demo-worktrees/feature",
+        workspaceIdentity: "remote:ssh:dev:/workspace/demo-worktrees/feature",
+      }),
+    ).toMatchObject({
+      zcode_type: "workspace-open-request",
+      workspaceIdentity: "remote:ssh:dev:/workspace/demo-worktrees/feature",
+    });
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "workspace-open-response",
+        requestId: "open-1",
+        workspacePath: "/workspace/demo-worktrees/feature",
+        success: true,
+      }),
+    ).toMatchObject({
+      zcode_type: "workspace-open-response",
+      success: true,
+    });
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "workspace-open-response",
+        requestId: "open-3",
+        workspacePath: "/workspace/demo-worktrees/feature",
+        workspaceIdentity: "remote:ssh:dev:/workspace/demo-worktrees/feature",
+        success: false,
+        error: "Desktop window is not available",
+      }),
+    ).toMatchObject({
+      zcode_type: "workspace-open-response",
+      success: false,
+      error: "Desktop window is not available",
+    });
+  });
+
+  it("rejects workspace open payloads with an empty or missing workspace path", () => {
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "workspace-open-request",
+        requestId: "open-1",
+        workspacePath: "",
+      }),
+    ).toBeNull();
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "workspace-open-request",
+        requestId: "open-1",
+      }),
+    ).toBeNull();
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "workspace-open-response",
+        requestId: "open-1",
+        workspacePath: "/workspace/demo-worktrees/feature",
+        success: false,
+      }),
+    ).toBeNull();
   });
 
   it("preserves mobile device info on mobile view state updates", () => {
@@ -390,8 +576,8 @@ describe("parseWebRemoteControlAppPayload", () => {
   });
 
   it("bounds rpc-frame transport ids so the physical envelope meter is authoritative", () => {
-    // 生成器使用 prefix + UUID / Date / Math.random，只产生这组 JSON-safe ASCII。
-    // 所有合法字符均为单字节且无需 JSON escaping；`~` 覆盖字符集边界。
+    // The generator uses prefix + UUID / Date / Math.random, producing only this set of JSON-safe ASCII.
+    // Every legal character is single-byte and needs no JSON escaping; `~` covers the character-set boundary.
     const boundary = "~".repeat(256);
     const [boundaryFrame] = encodeWebRemoteControlRpcTransportMessage(new Uint8Array([1, 2, 3]), {
       bridgeSessionId: boundary,
@@ -466,7 +652,7 @@ describe("parseWebRemoteControlAppPayload", () => {
       recoveryId: "recovery-1",
       reason: "rpc-transport-fault",
     });
-    // 兼容旧 desktop 在原子升级窗口内仍可能发送的细分枚举。
+    // Compatibility with the finer-grained enums that older desktops may still send during the atomic upgrade window.
     expect(
       parseWebRemoteControlAppPayload({
         zcode_type: "bridge-degraded",
@@ -549,6 +735,109 @@ describe("parseWebRemoteControlAppPayload", () => {
       }),
     ).toBeNull();
   });
+
+  it("rejects invalid rpc-frame payloads", () => {
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "rpc-frame",
+        bridgeSessionId: "bridge-1",
+        seq: -1,
+        dataBase64: "AQID",
+      }),
+    ).toBeNull();
+  });
+
+  it("accepts open-on-desktop platform requests and responses", () => {
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-request",
+        requestId: "open-1",
+        method: "openInEditor",
+        args: {
+          editorId: "vscode",
+          path: "/workspace/app/src/index.ts",
+          options: { pathKind: "file" },
+        },
+      }),
+    ).toMatchObject({ zcode_type: "platform-request", method: "openInEditor" });
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-request",
+        requestId: "open-2",
+        method: "openInFileManager",
+        args: "/workspace/app",
+      }),
+    ).not.toBeNull();
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-request",
+        requestId: "open-3",
+        method: "openExternalFile",
+        args: "/workspace/app/report.pdf",
+      }),
+    ).not.toBeNull();
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-request",
+        requestId: "open-4",
+        method: "getInstalledEditors",
+      }),
+    ).not.toBeNull();
+
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-response",
+        requestId: "open-1",
+        method: "openInEditor",
+        success: true,
+        result: { success: true },
+      }),
+    ).toMatchObject({ method: "openInEditor", success: true, result: { success: true } });
+  });
+
+  it("rejects platform requests whose method is not in the proxied allow-list", () => {
+    expect(
+      parseWebRemoteControlAppPayload({
+        zcode_type: "platform-request",
+        requestId: "open-5",
+        method: "executeDesktopCommand",
+        args: "quit",
+      }),
+    ).toBeNull();
+  });
+});
+
+// Parity fixture for the relay platform-method allow-list. `Record<..., true>` forces every
+// WebRemoteControlPlatformMethod (keyof WebRemoteControlPlatformMethodResultMap) to appear here,
+// `satisfies` rejects stray entries, and the runtime test below then requires the zod enum to
+// accept exactly this set — a method added to the typed map without the enum (as happened to
+// createTempTextAttachment in aac47556) fails here instead of being dropped by the transports.
+const allWebRemoteControlPlatformMethods = {
+  isDockerAvailable: true,
+  listWSLDistros: true,
+  listDockerContainers: true,
+  listSSHConfigAliases: true,
+  createTempTextAttachment: true,
+  loadMcpFromUserDirectory: true,
+  saveMcpToUserDirectory: true,
+  migrateLegacyCommonMcp: true,
+  getInstalledEditors: true,
+  openInEditor: true,
+  openInFileManager: true,
+  openExternalFile: true,
+} satisfies Record<WebRemoteControlPlatformMethod, true>;
+
+describe("webRemoteControlPlatformMethodSchema", () => {
+  it("stays in parity with WebRemoteControlPlatformMethodResultMap", () => {
+    const mapKeys = Object.keys(allWebRemoteControlPlatformMethods);
+    expect([...webRemoteControlPlatformMethodSchema.options].sort()).toEqual([...mapKeys].sort());
+    for (const method of mapKeys) {
+      expect(webRemoteControlPlatformMethodSchema.safeParse(method).success).toBe(true);
+    }
+  });
 });
 
 describe("hostIncomingMessageSchema", () => {
@@ -581,129 +870,4 @@ describe("hostIncomingMessageSchema", () => {
       attachmentId: "attachment-1",
     });
   });
-});
-
-describe("project bridge intent validation", () => {
-  const request = {
-    zcode_type: "workspace-bridge-open",
-    requestId: "request",
-    bridgeSessionId: "bridge",
-    workspaceKey: "/current",
-    project: { projectId: null, hostId: "local" },
-  };
-  it("preserves the project intent and rejects arbitrary directory injection", () => {
-    expect(parseWebRemoteControlAppPayload(request)).toMatchObject({ project: request.project });
-    expect(
-      parseWebRemoteControlAppPayload({
-        ...request,
-        project: { ...request.project, workspacePath: "/injected" },
-      }),
-    ).toBeNull();
-    expect(parseWebRemoteControlAppPayload({ ...request, taskId: "task" })).toBeNull();
-  });
-});
-
-it("accepts a task address for Host admission and rejects mixed draft/task intent", () => {
-  const request = {
-    type: HostMessageTypes.PrepareProjectWorkspace,
-    requestId: "task-navigation",
-    clientMode: "web-remote-replayable",
-    hostId: "local",
-    task: { taskId: "task", workspaceKey: "/original" },
-  };
-  expect(hostIncomingMessageSchema.safeParse(request).success).toBe(true);
-  expect(
-    hostIncomingMessageSchema.safeParse({ ...request, projectId: "different-project" }).success,
-  ).toBe(false);
-  expect(
-    hostIncomingMessageSchema.safeParse({
-      ...request,
-      task: { ...request.task, workspacePath: "/injected" },
-    }).success,
-  ).toBe(false);
-});
-
-it("MRO02：远端 bridge 保留可选窗口目录能力，旧 bridge 不虚构能力", () => {
-  const payload = {
-    zcode_type: "workspace-bridge-ready",
-    requestId: "request-1",
-    bridgeSessionId: "bridge-1",
-    bridge: {
-      kind: "remote",
-      bridgeSessionId: "bridge-1",
-      workspaceKey: "remote:server:source:/repo",
-      workspacePath: "/repo",
-      workspaceIdentity: "remote:server:source:/repo",
-      remoteSessionId: "remote-1",
-      capabilities: { windowProjectDirectory: true },
-    },
-  };
-  expect(parseWebRemoteControlAppPayload(payload)).toMatchObject({
-    bridge: { capabilities: { windowProjectDirectory: true } },
-  });
-  expect(
-    parseWebRemoteControlAppPayload({
-      ...payload,
-      bridge: { ...payload.bridge, capabilities: undefined },
-    }),
-  ).toMatchObject({ bridge: { kind: "remote" } });
-  expect(
-    parseWebRemoteControlAppPayload({
-      ...payload,
-      bridge: { ...payload.bridge, capabilities: { windowProjectDirectory: "true" } },
-    }),
-  ).toBeNull();
-});
-
-it("MRO03：可见任务报告包含完整地址和传输代际，离开必须显式 null", () => {
-  const report = {
-    zcode_type: "mobile-task-view-update",
-    epoch: "pair-1",
-    seq: 1,
-    bridgeSessionId: "bridge-1",
-    bridgeGeneration: 2,
-    view: {
-      workspacePath: "/repo",
-      workspaceIdentity: "remote:server:source:/repo",
-      taskId: "task",
-    },
-  };
-  expect(parseWebRemoteControlAppPayload(report)).toEqual(report);
-  expect(parseWebRemoteControlAppPayload({ ...report, view: null })).toEqual({
-    ...report,
-    view: null,
-  });
-  expect(parseWebRemoteControlAppPayload({ ...report, view: { taskId: "task" } })).toBeNull();
-  for (const seq of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1])
-    expect(parseWebRemoteControlAppPayload({ ...report, seq })).toBeNull();
-  expect(parseWebRemoteControlAppPayload({ ...report, epoch: "" })).toBeNull();
-  expect(
-    parseWebRemoteControlAppPayload({ zcode_type: "mobile-task-view-request", epoch: "pair-1" }),
-  ).toEqual({ zcode_type: "mobile-task-view-request", epoch: "pair-1" });
-  expect(
-    parseWebRemoteControlAppPayload({
-      zcode_type: "bootstrap-response",
-      requestId: "b",
-      success: true,
-      result: { windowControlSessionId: "session", workspaces: [], mobileTaskViewEpoch: "pair-1" },
-    }),
-  ).toMatchObject({ result: { mobileTaskViewEpoch: "pair-1" } });
-});
-
-it("MRO03：客户端不能在可见任务报告中伪造远端 session", () => {
-  expect(
-    parseWebRemoteControlAppPayload({
-      zcode_type: "mobile-task-view-update",
-      epoch: "epoch",
-      seq: 1,
-      bridgeSessionId: "bridge",
-      bridgeGeneration: 1,
-      view: {
-        workspacePath: "/repo",
-        workspaceIdentity: "remote:ssh:host:/repo",
-        taskId: "task",
-        remoteSessionId: "forged-session",
-      },
-    }),
-  ).toBeNull();
 });

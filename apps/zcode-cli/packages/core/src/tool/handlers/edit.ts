@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Edit 工具需要集中维护文本匹配、read-before-edit 与写回状态，避免 bugfix 期间拆分扩大行为面。 */
+/* eslint-disable max-lines -- the Edit tool centralizes text matching, read-before-edit, and write-back state; splitting it during a bug fix would expand the behavior surface. */
 // ============================================================
 // Edit Tool Handler
 // ============================================================
@@ -28,6 +28,8 @@ import {
   type TraceContext,
 } from "@zcode/contracts";
 import { createStructuredPatch } from "../diff.js";
+import { publishFileMutation } from "../file-mutation.js";
+import { changedRangeFromHunks } from "../../lsp/results.js";
 import { stampMemoryOriginSessionId } from "../../memory/origin-session.js";
 import {
   findEditMatch,
@@ -109,8 +111,8 @@ export const editHandler: ToolHandler = async (input, context) => {
   }
 
   if (!file_path) {
-    // 空路径由共享 path-policy 抛出普通异常，绕过了 Edit 自己维护的
-    // code + message 失败契约，导致 provider-visible 内容丢失 tool_use_error envelope。
+    // An empty path threw a regular exception from the shared path policy, bypassing Edit's own
+    // code + message failure contract and causing provider-visible content to lose the tool_use_error envelope.
     return editFailure(EditErrorCode.INVALID_PATH, "Tool path must not be empty");
   }
 
@@ -193,7 +195,7 @@ export const editHandler: ToolHandler = async (input, context) => {
   if (filePath.endsWith(".ipynb")) {
     return editFailure(
       EditErrorCode.NOTEBOOK_FILE,
-      "File is a Jupyter Notebook. Use the NotebookEdit to edit this file.",
+      "Edit does not support Jupyter Notebook (.ipynb) files. No notebook editing tool is available; read the notebook and rewrite its JSON with Write if a change is required.",
     );
   }
 
@@ -447,7 +449,7 @@ function hasReadStateChanged(
 ): boolean {
   const currentMtimeMs = currentRead.revision?.mtimeMs;
   if (lastRead.mtimeMs !== undefined && currentMtimeMs !== undefined) {
-    // 亚毫秒级精度，只在当前文件的整数毫秒晚于 Read 记录或大小变化时判 stale，减少误报。
+    // Sub-millisecond precision; mark stale only when this file's integer-millisecond mtime is later than the Read record or its size changed, reducing false positives.
     const normalizedCurrentMtimeMs = normalizeReadFileStateMtimeMs(currentMtimeMs);
     const normalizedLastReadMtimeMs = normalizeReadFileStateMtimeMs(lastRead.mtimeMs);
     const mtimeAdvanced =
@@ -533,7 +535,13 @@ async function writeEditResult(input: {
     oldContent: input.originalFile,
     newContent: contentToWrite,
   });
-  // perf 里 totalBytes/maxFileBytes 语义相同，缓存结果避免大文件编辑时重复扫描新内容。
+  publishFileMutation(input.context, {
+    path: input.filePath,
+    kind: "changed",
+    content: contentToWrite,
+    changedRange: changedRangeFromHunks(structuredPatch),
+  });
+  // totalBytes/maxFileBytes have the same meaning in perf; cache the result to avoid rescanning new content during large-file edits.
   const newContentBytes = fileByteCount(contentToWrite);
 
   return attachToolExecutionTelemetry(
@@ -628,7 +636,7 @@ function replaceLiteral(
   replacement: string,
   replaceAll: boolean,
 ): string {
-  // String.replace 的字符串 replacement 会把 $$/$& 当特殊 token；
+  // A string replacement in String.replace treats $$/$& as special tokens;
   return replaceAll
     ? content.replaceAll(search, () => replacement)
     : content.replace(search, () => replacement);

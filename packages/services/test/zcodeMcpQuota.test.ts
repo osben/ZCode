@@ -69,7 +69,7 @@ function createMcpUsageResponse(): unknown {
   };
 }
 
-/** 服务端 2026-08 之前的形状。留着它是为了锁住"接口再换形状时必须可查"这条。 */
+/** The pre-2026-08 server shape. Kept to lock in "the interface must stay diagnosable if the shape changes again". */
 function createLegacyBucketUsageResponse(): unknown {
   return {
     code: 0,
@@ -120,7 +120,7 @@ describe("官方 Server MCP 额度汇总", () => {
       nextResetTime: 1_755_609_600_000,
     });
 
-    // 剩余 1032 / 额度 1230 ≈ 83.9% 剩余 → 已使用 16.1%
+    // Remaining 1032 / quota 1230 ≈ 83.9% remaining, i.e. 16.1% used
     expect(aggregate).toMatchObject({
       type: MCP_USAGE_QUOTA_LIMIT_TYPE,
       remaining: 1032,
@@ -165,9 +165,9 @@ describe("官方 Server MCP 额度汇总", () => {
         projectId: "proj-1",
       }),
     ).toBe(true);
-    // 同 family 但个人 / 团队不一致
+    // Same family but personal vs team mismatch
     expect(matchesMcpQuotaScope(teamScope, { providerFamily: "bigmodel" })).toBe(false);
-    // 团队不同项目
+    // Team, different project
     expect(
       matchesMcpQuotaScope(teamScope, {
         providerFamily: "bigmodel",
@@ -175,7 +175,7 @@ describe("官方 Server MCP 额度汇总", () => {
         projectId: "proj-2",
       }),
     ).toBe(false);
-    // 跨 family
+    // Cross-family
     expect(
       matchesMcpQuotaScope(
         { providerFamily: "zai", targetType: "PERSONAL" },
@@ -205,7 +205,7 @@ describe("官方 Server MCP 额度汇总", () => {
               targetType: "TEAM" as const,
             },
             providerFamily: "zai" as const,
-            // 与 Off-Peak 保持一致：wire 不发送 Team identity。
+            // Consistent with Off-Peak: the wire does not send Team identity.
             wireScope: null,
           },
         })),
@@ -268,7 +268,7 @@ describe("entitlement 快照携带官方 Server MCP 额度", () => {
     });
 
     expect(mcpRequests).toHaveLength(1);
-    // 身份头必须与 server MCP 调用完全一致：不改名、不补头、不换通道。
+    // Identity headers must match the server MCP call exactly: no renaming, no extra headers, no different channel.
     expect(mcpRequests[0]?.headers).toEqual({
       Authorization: "Bearer zcode-jwt",
       "X-Bigmodel-Authorization": "Bearer bigmodel-maas-jwt",
@@ -277,7 +277,7 @@ describe("entitlement 快照携带官方 Server MCP 额度", () => {
     expect(snapshot.mcpQuota).toMatchObject({
       level: "pro",
       scope: { providerFamily: "bigmodel", targetType: "PERSONAL" },
-      // 接口是 Unix 秒，快照统一毫秒
+      // The API uses Unix seconds; the snapshot unifies on milliseconds
       serverTime: 1_755_571_234_000,
     });
     expect(snapshot.mcpQuota?.aggregate).toMatchObject({
@@ -285,14 +285,15 @@ describe("entitlement 快照携带官方 Server MCP 额度", () => {
       remaining: 1929,
       usage: 71,
     });
-    // 现有额度不受影响
+    // The existing quota is unaffected
     expect(snapshot.quota?.limits).toHaveLength(1);
   });
 
   it("只返回老的 buckets 形状时降级为 mcpQuota 为空，不抛错", async () => {
-    // 这就是 2026-08 那次故障：服务端把 buckets 换成 total_usage，客户端 schema 校验失败，
-    // 而 mcpQuota 是可选数据面（失败即静默降级），表现为额度条无声消失、其余额度照常。
-    // 这条用例锁住"接口再换形状时只丢一行、不崩、且有日志可查"这个行为。
+    // This is exactly the 2026-08 incident: the server replaced buckets with total_usage, client schema
+    // validation failed, and since mcpQuota is an optional data plane (failures degrade silently), the
+    // quota bar vanished without a sound while the other quotas kept working.
+    // This case locks in: if the interface changes shape again, lose one line, do not crash, and leave a searchable log.
     const apiClient: ApiClient = {
       request: vi.fn(async (input) => {
         const url = input.toString();
@@ -327,7 +328,7 @@ describe("entitlement 快照携带官方 Server MCP 额度", () => {
     });
 
     expect(snapshot.mcpQuota).toBeNull();
-    // 其余 entitlement 一切照常——可选数据面绝不影响主快照
+    // The rest of the entitlement is unaffected — an optional data plane must never impact the main snapshot
     expect(snapshot.quota?.level).toBe("pro");
     expect(snapshot.unavailableReason).toBeUndefined();
   });
@@ -473,7 +474,7 @@ describe("entitlement 快照携带官方 Server MCP 额度", () => {
     const provider = createProvider({
       apiClient,
       credentialSource: {
-        // 当前选中的是 Z.ai 连接，本次查询的是 BigModel 个人 Coding Plan。
+        // The currently selected connection is Z.ai; this query targets the BigModel personal Coding Plan.
         resolve: vi.fn(async () => ({
           ok: true as const,
           snapshot: {

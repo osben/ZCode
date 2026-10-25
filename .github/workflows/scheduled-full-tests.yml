@@ -1,0 +1,82 @@
+name: Scheduled full tests
+
+on:
+  schedule:
+    # Nightly 03:30 UTC: safety net for the import-graph blind spots of PR affected selection
+    # (specs/pr-affected-unit-tests.md). Runs on the default branch (fork).
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Deliberately not part of fork-build.yml: that workflow's concurrency group serializes
+# builds; the full test run must not delay or be delayed by them.
+concurrency:
+  group: scheduled-full-tests
+  cancel-in-progress: false
+
+env:
+  # Persistent V8 compile cache (Node >= 22.1), same contract as pr-checks.yml: the unit suite is
+  # import-bound, and the cache step below persists this directory between runs.
+  NODE_COMPILE_CACHE: .v8-cache
+
+jobs:
+  unit-tests:
+    name: Unit tests (full)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # scripts/*.test.mjs (pre-commit fixtures) read the real fork-upstream-base.json and fail
+      # loudly when pendingUpstreamCommit is set but absent from the clone.
+      - name: Fetch pending upstream commit
+        run: node scripts/fork-format-pending.mjs --fetch
+
+      - name: Restore V8 compile cache
+        uses: actions/cache@v4
+        with:
+          path: .v8-cache
+          key: node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.job }}-${{ github.sha }}
+          restore-keys: |
+            node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.job }}-
+            node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            node-compile-v1-${{ runner.os }}-${{ hashFiles('.nvmrc') }}-
+            node-compile-v1-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # pnpm can skip dependency postinstalls when a warm store cache is restored. Re-run
+      # Electron's installer (it skips a valid installation) and assert the binary exists.
+      - name: Ensure Electron binary
+        run: |
+          electron_package_dir="$(node -p 'require("node:path").dirname(require.resolve("electron"))')"
+          env -u ELECTRON_SKIP_BINARY_DOWNLOAD node "$electron_package_dir/install.js"
+          electron_binary="$(node -e 'const fs = require("node:fs"); const path = require("node:path"); const dir = path.dirname(require.resolve("electron")); const name = fs.readFileSync(path.join(dir, "path.txt"), "utf8").trim(); process.stdout.write(path.join(dir, "dist", name))')"
+          test -x "$electron_binary"
+
+      - name: Build workspace packages needed by unit tests
+        # storage-preparation 协议用例经 bootstrap 源码引用 @zcode/adapters/storage 的 dist 导出，
+        # 其类型链依赖 contracts 与 dynamic-workflow，需按拓扑顺序先构建。
+        run: >
+          pnpm --filter @zcode/contracts --filter @zcode/dynamic-workflow --filter @zcode/adapters --filter @zcode/e2e-report build
+
+      - name: Build official plugin runtimes needed by unit tests
+        # bootstrap official-plugin-definitions.ts requires built artifacts that are not committed:
+        # dist/server.mjs and dist/ui/* for the document viewers (office-runtime build), and
+        # dist/mcp/server.js for node-repl-host (also used by browser-use). "@zcode/node-repl-host..."
+        # builds its workspace dependencies (@zcode/core and friends) first.
+        run: >
+          pnpm --filter "@zcode/node-repl-host..." --filter @zcode/browser-use-plugin --filter @zcode/documents-plugin --filter @zcode/pdf-plugin --filter @zcode/presentations-plugin --filter @zcode/spreadsheets-plugin build
+
+      - name: Tests
+        run: pnpm test

@@ -1,33 +1,41 @@
-# 自动下载并安装更新
+# Auto download and install updates
 
-## 背景
+## Background
 
-Electron 自动更新弹窗需要支持用户选择“以后自动下载并安装更新”。该偏好必须持久化到全局设置，并和设置页里的同名开关保持一致。独立更新窗口不挂完整 workspace service，因此不能直接依赖 UI 层的 `settingService`。
+The Electron auto-update dialog lets the user choose "download and install updates automatically from now on".
+The preference must persist in global settings and stay consistent with the same-named switch in the settings
+page. The standalone update window does not mount the full workspace services, so it cannot depend on the UI
+layer's `settingService` directly.
 
-## 行为
+## Behavior
 
-- 新增设置项 `autoDownloadAndInstallUpdates`，默认关闭。
-- 更新弹窗在“未下载”状态的底部按钮上方展示左对齐 checkbox：`以后自动下载并安装更新`。
-- 在设置页通用分组中展示同一个开关。
-- 当该设置开启并检测到可用更新时，main 进程自动调用当前下载流程。
-- 下载中主更新入口只展示进度/加载态，不允许点击打开更新弹窗。
-- 下载完成后用户点击“重启以更新”：
-  - 若没有运行中的 Agent session，直接执行现有 `quitAndInstallUpdate()`。
-  - 若存在运行中任务，先提示应用将退出并重启、进行中的任务会中断；用户确认后再执行更新。
+- New setting `autoDownloadAndInstallUpdates`, off by default.
+- In the "not downloaded" state, the update dialog shows a left-aligned checkbox above the bottom button:
+  `以后自动下载并安装更新` (download and install updates automatically from now on).
+- The settings page general group shows the same switch.
+- When the setting is on and an available update is detected, the main process automatically calls the current
+  download flow.
+- While downloading, the main update entry shows only progress/loading and cannot be clicked to open the update
+  dialog.
+- After download completes the user clicks `重启以更新` (restart to update):
+  - with no running Agent session, run the existing `quitAndInstallUpdate()` directly;
+  - with running tasks, first warn that the app will quit and restart and in-progress tasks will be
+    interrupted; run the update after the user confirms.
 
-## 架构
+## Architecture
 
-- 设置持久化继续使用 `AppSettings` 和 `settingService`。
-- 主进程 `autoUpdater` 在 `update-available` 事件中读取设置并触发自动下载，避免依赖任何 renderer 窗口是否打开。
-- 独立更新窗口通过窄平台接口读写自动更新偏好，不暴露完整 setting service。
-- 重启前任务检查复用现有 `IPlatformService.getDesktopSessionActivity()`，避免 UI 层直接读取任务 store 或跨层访问服务实现。
+- Setting persistence keeps using `AppSettings` and `settingService`.
+- The main-process `autoUpdater` reads the setting on the `update-available` event and triggers the download,
+  independent of whether any renderer window is open.
+- The standalone update window reads/writes the auto-update preference through a narrow platform interface and
+  does not expose the full setting service.
+- The pre-restart task check reuses the existing `IPlatformService.getDesktopSessionActivity()`, so the UI layer
+  neither reads the task store directly nor reaches into service implementations.
 
-## 验证
+## Verification
 
-- 单测覆盖：
-  - 设置 schema 默认值和 patch。
-  - 开启偏好后检测到更新自动开始下载。
-  - 弹窗 checkbox 写入设置并在当前可用更新下触发下载。
-  - 下载中主更新入口禁用。
-  - 有运行中任务时重启按钮先请求确认。
-- 仍需执行 `pnpm typecheck` 和 `pnpm lint`。
+- Unit tests cover: settings schema default and patch; auto-download starts when an update is detected with the
+  preference on; the dialog checkbox writes the setting and triggers download for the currently available
+  update; the main update entry is disabled while downloading; the restart button asks for confirmation when
+  tasks are running.
+- `pnpm typecheck` and `pnpm lint` still run.

@@ -52,7 +52,7 @@ export async function runServerCore(generation: number): Promise<void> {
       sourceServerId,
       zcodeBuiltinProviderConfigFilePath,
       providerProvisioningTargetEnabled: true,
-    topicResourceRelayChannel: (request) => topicResourcePeers.getChannel(request),
+      topicResourceRelayChannel: (request) => topicResourcePeers.getChannel(request),
     });
   const taskActivityTracker = createTaskActivityTracker(services.getOptional(IZCodeAgentService));
   const ingressToken = await createIngressToken(layout);
@@ -69,13 +69,13 @@ export async function runServerCore(generation: number): Promise<void> {
       try {
         process.send?.(message, () => resolve());
       } catch {
-        // 父进程断连后的最后一条生命周期消息不应阻塞资源释放。
+        // The final lifecycle message after parent disconnect must not block resource cleanup.
         resolve();
       }
     });
   };
-  // ready.version 的语义是 Core 版本；不能误发 Node runtime 版本常量
-  // （22.16.0），否则消费方读取会拿到错误值。
+  // ready.version means the Core version; do not send the Node runtime version constant
+  // (22.16.0), or consumers will read the wrong value.
   await send({
     type: "ready",
     host: http.host,
@@ -144,10 +144,10 @@ export async function runServerCore(generation: number): Promise<void> {
     try {
       process.disconnect?.();
     } catch {
-      // 父进程已断连时 disconnect 可能报告 IPC_CHANNEL_CLOSED；不影响资源已释放后的退出。
+      // After the parent disconnects, disconnect may report IPC_CHANNEL_CLOSED; this does not affect exit after resources are released.
     }
-    // 仅设置 exitCode 无法关闭 Agent/SQLite 等仍持有的事件循环；Supervisor 的有界停止
-    // 会因此等待到超时。资源释放完成后显式退出，确保 stop/restart/uninstall 真正收口。
+    // Setting only exitCode does not close the event loop held by Agent/SQLite; the Supervisor's bounded stop
+    // would then wait until timeout. Exit explicitly after resources are released so stop/restart/uninstall can finish.
     process.exit(0);
   };
   if (parentDisconnected) void shutdown("parent-disconnected");

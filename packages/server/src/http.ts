@@ -1,9 +1,9 @@
-/* eslint-disable max-lines -- HTTP、WebSocket 与静态资源路由集中注册，保持同一鉴权顺序。 */
+/* eslint-disable max-lines -- HTTP, WebSocket, and static-asset routes are registered together to preserve one authorization order. */
 import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
-import { hostname, userInfo } from "node:os";
 import * as nodePath from "node:path";
 import { basename, extname, resolve } from "node:path";
+import { hostname, userInfo } from "node:os";
 import { Hono, type Context } from "hono";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
@@ -15,34 +15,48 @@ import {
   ChannelServer,
   ChannelClient,
   LoggingChannelServer,
+  ProxyChannel,
   type ISocket,
 } from "@zcode/rpc";
-import type { TopicResourcePeers } from "@zcode/services/node";
+import {
+  SourceServerWorkspaceIdentityChannelServer,
+  type SourceServerWorkspaceIdentityMapper,
+  type TopicResourcePeers,
+} from "@zcode/services/node";
+import { createWindowHostControllerRuntime } from "@zcode/services/window-controller";
 import { TOPIC_RESOURCE_RELAY_CHANNEL } from "@zcode/shared";
 import {
   ServiceCollection,
   IZCodeAgentService,
   createZCodeAgentConnectionScope,
+  IFileService,
+  IGitService,
+  ISystemService,
+  ITerminalService,
   IBotsService,
   IProviderProvisioningTargetService,
+  IZCodeTaskService,
+  IWindowControllerService,
+  IQuickPromptService,
+  createReadOnlyQuickPromptService,
 } from "@zcode/services";
 import {
   botProviders,
   formatLogPrefix,
+  formatZodError,
+  remoteTargetSchema,
   serverRemoteInfoOutputSchema,
   SERVER_REMOTE_PROTOCOL_VERSION,
-  ZCODE_RPC_HOST_CAPABILITY_HEADER,
   ZCODE_COMPATIBILITY_MANIFEST,
+  ZCODE_RPC_HOST_CAPABILITY_HEADER,
   ZCODE_VERSION,
   type BotProvider,
   type ServerRemoteInfo,
   type ServerRemoteWorkspaceInfo,
 } from "@zcode/shared";
-import {
-  SourceServerWorkspaceIdentityChannelServer,
-  type SourceServerWorkspaceIdentityMapper,
-} from "@zcode/services/node";
+import { connectRemote, createRemoteBackend, type RemoteConnection } from "./remote/index.js";
 import { createHostCapabilityStore } from "./hostCapability.js";
+import { createRemoteConnectionStore } from "./remoteConnectionStore.js";
 
 function wrapWebSocket(ws: WebSocket): ISocket {
   const onData = new Emitter<VSBuffer>();
@@ -96,8 +110,9 @@ function setupChannelServer(
   const socket = wrapWebSocket(ws);
   const protocol = new SocketProtocol(socket);
   const rawServer = new ChannelServer(protocol, "server");
-  // 用日志中间件包装，统一记录所有 RPC 调用
+  // Wrap with logging middleware so all RPC calls are recorded consistently.
   const loggedServer = new LoggingChannelServer(rawServer, log);
+  // Workspace identity mapping is applied only when the host supplies a mapper (standalone server-cli).
   const server = workspaceIdentityMapper
     ? new SourceServerWorkspaceIdentityChannelServer(loggedServer, workspaceIdentityMapper)
     : loggedServer;
@@ -118,8 +133,9 @@ function setupChannelServer(
   if (connectionScope) {
     overrides.set(IZCodeAgentService.channelName, connectionScope.service);
   }
-  // Provisioning 携带跨 Environment 凭据，只允许 Desktop trusted host 使用；普通 Web
-  // remote/replayable 客户端即使知道频道名，也不能获得 target 写入接口。
+  // Provisioning carries credentials across Environments and is available only to a trusted Desktop
+  // host. Ordinary Web remote/replayable clients cannot access the target-write interface even if they
+  // know the channel name.
   if (
     clientMode !== "desktop-continuous" &&
     services.getOptional(IProviderProvisioningTargetService)
@@ -130,13 +146,76 @@ function setupChannelServer(
       },
     });
   }
+  // Mobile (web-remote-replayable) reads the controller's quick prompts only; mutations reject with a stable code
+  // (spec rule 21, same wrapper as the desktop Host attachment policy).
+  if (clientMode === "web-remote-replayable") {
+    const quickPromptSource = services.getOptional(IQuickPromptService);
+    if (quickPromptSource) {
+      overrides.set(
+        IQuickPromptService.channelName,
+        createReadOnlyQuickPromptService(quickPromptSource),
+      );
+    }
+  }
   services.exposeOnChannelServer(server, overrides);
+  const taskService = services.getOptional(IZCodeTaskService);
+  const needsStandaloneController =
+    clientMode === "web-remote-replayable" &&
+    taskService &&
+    !services.getOptional(IWindowControllerService);
+  // This private Host observer is independent of the browser's terminal handshake
+  // and route. Never publish its trusted facade as a client-accessible channel.
+  const controllerConnectionScope =
+    needsStandaloneController && agentService
+      ? createZCodeAgentConnectionScope(agentService, {
+          connectionId: `server-controller-${randomUUID()}`,
+          clientMode: "desktop-continuous",
+          role: "trusted-host-relay",
+        })
+      : undefined;
+  // Standalone Web uses the same list contract as Desktop, but has no window Host
+  // to register it. Keep this projection and its passive observers socket-owned.
+  const controller = needsStandaloneController
+    ? createWindowHostControllerRuntime({
+        createId: randomUUID,
+        maxSources: 64,
+        maxConcurrentSourceRefreshes: 4,
+        resolveSource: (scope) => ({
+          scope: { kind: "local", ...scope },
+          taskService,
+          agentService: controllerConnectionScope?.service,
+          sourceAvailability: "online",
+        }),
+        onSourceError: (_scope, operation, error) =>
+          log("[standalone-controller]", operation, error),
+      })
+    : undefined;
+  if (controller) {
+    server.registerChannel(
+      IWindowControllerService.channelName,
+      ProxyChannel.fromService(controller.service),
+    );
+  }
   socket.onClose(() => {
+    controller?.dispose();
+    void controllerConnectionScope
+      ?.dispose()
+      .catch((error) => log("[standalone-controller] dispose failed", error));
     peer?.dispose();
     reverseClient?.dispose();
     void connectionScope?.dispose();
     rawServer.dispose();
   });
+}
+
+/** Remote connections opened in web mode, keyed by unguessable IDs until a WebSocket claims them. */
+const remoteConnections = createRemoteConnectionStore();
+
+const DEFAULT_HTTP_HOST = "127.0.0.1";
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "::1" || normalized === "localhost";
 }
 
 export interface HttpServerOptions {
@@ -147,7 +226,6 @@ export interface HttpServerOptions {
   workspaceIdentityMapper?: SourceServerWorkspaceIdentityMapper;
   name?: string;
   host?: string;
-  authRequired?: boolean;
   authToken?: string;
   spaFallback?: boolean;
   staticRoot?: string;
@@ -178,7 +256,10 @@ function resolveServerWorkspaces(options: HttpServerOptions): ServerRemoteWorksp
   ];
 }
 
-function createServerInfo(options: HttpServerOptions): ServerRemoteInfo {
+function createServerInfo(
+  options: HttpServerOptions,
+  authToken: string | undefined,
+): ServerRemoteInfo {
   return serverRemoteInfoOutputSchema.parse({
     serverId: resolveHttpServerId(options),
     ...(options.name?.trim() || readTrimmedEnv("ZCODE_SERVER_NAME")
@@ -186,7 +267,8 @@ function createServerInfo(options: HttpServerOptions): ServerRemoteInfo {
       : {}),
     version: ZCODE_VERSION,
     protocolVersion: SERVER_REMOTE_PROTOCOL_VERSION,
-    authRequired: options.authRequired ?? Boolean(readTrimmedEnv("ZCODE_SERVER_TOKEN")),
+    // Derived from the token only, so the advertised state cannot diverge from enforcement.
+    authRequired: Boolean(authToken),
     workspaces: resolveServerWorkspaces(options),
     compatibility: ZCODE_COMPATIBILITY_MANIFEST,
     migration: { failedPathCount: options.migrationFailedPathCount ?? 0 },
@@ -259,25 +341,67 @@ function hasValidLiteToken(c: Context, token: string): boolean {
   return parseCookieHeader(c.req.header("cookie")).get(zcodeLiteTokenCookieName) === token;
 }
 
-function isTokenProtectedPath(pathname: string): boolean {
-  return pathname === "/ws" || pathname.startsWith("/ws/") || pathname.startsWith("/api/");
+function isApiOrWsPath(pathname: string): boolean {
+  return (
+    pathname === "/ws" ||
+    pathname.startsWith("/ws/") ||
+    pathname === "/api" ||
+    pathname.startsWith("/api/")
+  );
 }
 
-function isStaticFallbackAllowed(pathname: string): boolean {
-  return !isTokenProtectedPath(pathname);
+function tryDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
-// 盘符路径（"Z:/x"、"Z:\x"、"Z:x"）在 Windows 的 path.resolve 下会被当作绝对/盘符相对
-// 路径解析到另一块盘（含 subst 虚拟盘与映射的网络盘），一律拒绝，不做静态资源解析。
+const maxPathDecodeRounds = 4;
+
+/**
+ * Hono routes on decodeURI(rawPath), so `/%61pi/...` reaches `/api/...` handlers while the raw
+ * URL pathname does not look protected. Check a superset of every form the router could see:
+ * the routed and raw paths, repeatedly decoded, lowercased, with slashes normalized.
+ */
+function targetsApiOrWs(c: Context): boolean {
+  for (const seed of [c.req.path, new URL(c.req.url).pathname]) {
+    let current = seed;
+    for (let round = 0; round <= maxPathDecodeRounds; round += 1) {
+      const normalized = current
+        .toLowerCase()
+        .replace(/\\/g, "/")
+        .replace(/\/{2,}/g, "/");
+      if (isApiOrWsPath(normalized)) {
+        return true;
+      }
+      const decoded = tryDecodeURIComponent(current);
+      if (decoded === current) {
+        break;
+      }
+      current = decoded;
+    }
+  }
+  return false;
+}
+
+/** Deny by default: only GET/HEAD for static Web assets may skip the token. */
+function requiresToken(c: Context): boolean {
+  return (c.req.method !== "GET" && c.req.method !== "HEAD") || targetsApiOrWs(c);
+}
+
+// Drive-qualified paths ("Z:/x", "Z:\x", "Z:x") are resolved by win32 path.resolve onto another
+// drive (including subst and mapped network drives), so they are rejected before any resolution.
 const DRIVE_QUALIFIED_PATH_PATTERN = /^[a-zA-Z]:/;
 
 export function isPathDriveQualified(pathname: string): boolean {
   return DRIVE_QUALIFIED_PATH_PATTERN.test(pathname);
 }
 
-// pathApi 可注入便于跨平台测试。Windows 跨盘时 path.relative 返回的是绝对路径（如
-// "Z:\marker.txt"），不以 ".." 开头，曾因此被误判为「在静态根内」导致越盘读取；
-// relative 结果为绝对路径的一律视为越界，posix 语义不受影响。
+// pathApi is injectable for cross-platform tests. On Windows, path.relative across drives returns
+// an absolute path (e.g. "Z:\marker.txt") that does not start with "..", so it was wrongly treated
+// as inside the static root. Absolute relative results are therefore always treated as outside.
 export function isInsideDirectory(
   root: string,
   candidate: string,
@@ -296,8 +420,8 @@ async function resolveStaticFile(
   const root = resolve(staticRoot);
   const normalizedPathname = pathname === "/" ? "/index.html" : pathname;
   const relativePath = decodeURIComponent(normalizedPathname).replace(/^\/+/, "");
-  // 盘符路径必须在 resolve 之前拦截（含 %3A 解码后的形式），否则 Windows 上会解析到
-  // 静态根所在盘之外的路径；直接 404，也不进入 SPA fallback。
+  // Reject drive-qualified paths before resolve(), including the %3A-decoded form. Respond 404 and
+  // skip the SPA fallback so the request never reaches a file outside the static root.
   if (isPathDriveQualified(relativePath)) {
     return null;
   }
@@ -320,10 +444,10 @@ async function resolveStaticFile(
       return candidate;
     }
   } catch {
-    // 静态资源未命中时再进入 SPA fallback，保留真实文件错误的 404 语义。
+    // Enter the SPA fallback only when no static asset matches, preserving 404 semantics for real file errors.
   }
 
-  if (!spaFallback || !isStaticFallbackAllowed(pathname)) {
+  if (!spaFallback) {
     return null;
   }
   const indexFile = resolve(root, "index.html");
@@ -339,21 +463,40 @@ function staticContentType(filePath: string): string {
   return staticMimeTypes[extname(filePath).toLowerCase()] ?? "application/octet-stream";
 }
 
+/**
+ * Resolve the listen host, defaulting to loopback. Without a token, /api/rpc-host-capability and
+ * /api/connect-remote are open to anyone who can reach the listener, so non-loopback binds must fail
+ * closed (same rule as zcode-server-cli).
+ */
+export function resolveHttpListenHost(
+  options: Pick<HttpServerOptions, "host" | "authToken">,
+): string {
+  const host = options.host?.trim() || DEFAULT_HTTP_HOST;
+  if (!options.authToken?.trim() && !isLoopbackHost(host)) {
+    throw new Error(
+      `Refusing to listen on non-loopback host ${host} without authentication; ` +
+        "set ZCODE_SERVER_AUTH_TOKEN or bind ZCODE_SERVER_HOST/HOST to 127.0.0.1",
+    );
+  }
+  return host;
+}
+
 export function createHttpServer(
   services: ServiceCollection,
   port = 3030,
   options: HttpServerOptions = {},
 ) {
+  const authToken = options.authToken?.trim() || undefined;
+  const host = resolveHttpListenHost(options);
+
   const app = new Hono();
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
   const hostCapabilities = createHostCapabilityStore();
 
-  const authToken = options.authToken?.trim();
   if (authToken) {
     app.use("*", async (c, next) => {
-      const pathname = new URL(c.req.url).pathname;
       const validToken = hasValidLiteToken(c, authToken);
-      if (!isTokenProtectedPath(pathname) || validToken) {
+      if (!requiresToken(c) || validToken) {
         await next();
         return;
       }
@@ -361,11 +504,11 @@ export function createHttpServer(
     });
   }
 
-  app.get("/api/server-info", (c) => c.json(createServerInfo(options)));
+  app.get("/api/server-info", (c) => c.json(createServerInfo(options, authToken)));
   app.post("/api/rpc-host-capability", (c) => c.json(hostCapabilities.issue()));
 
-  // 普通 `/ws` 永远是 terminal-client；浏览器/任意客户端设置旧 mode header
-  // 都不能再把自己提升为 trusted host。
+  // Plain `/ws` is always terminal-client; browser or other clients cannot promote themselves to trusted
+  // host by setting the legacy mode header.
   app.get(
     "/ws",
     upgradeWebSocket(() => ({
@@ -399,6 +542,27 @@ export function createHttpServer(
     await next();
   });
   app.get("/ws/host", upgradeTrustedHostWebSocket);
+
+  // Start a remote connection in web mode.
+  app.post("/api/connect-remote", async (c) => {
+    const rawBody = await c.req.json();
+    const parsedBody = remoteTargetSchema.safeParse(rawBody);
+    if (!parsedBody.success) {
+      return c.json({ error: `Invalid request body: ${formatZodError(parsedBody.error)}` }, 400);
+    }
+    const body = parsedBody.data;
+
+    try {
+      const backend = await createRemoteBackend(body);
+      const connection = await connectRemote(backend);
+      const id = remoteConnections.add(connection);
+
+      return c.json({ id });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 500);
+    }
+  });
 
   const handleBotCallback = async (c: Context) => {
     const provider = c.req.param("provider") as BotProvider;
@@ -437,8 +601,9 @@ export function createHttpServer(
       return c.json(responseBody, 401);
     }
     if (result.status === 503) {
-      // Bugfix：Bot 业务失败必须把可重试状态透传给 HTTP provider；返回 200 会让
-      // webhook/网关误以为消息已消费，效果与提前提交 Telegram offset 相同。
+      // Bot business failures must preserve their retryable status for the HTTP provider. Returning 200
+      // would make the webhook/gateway think the message was consumed, like committing a Telegram offset
+      // too early.
       return c.json(responseBody, 503);
     }
     return c.json(responseBody, 200);
@@ -447,14 +612,54 @@ export function createHttpServer(
   app.post("/api/bots/:provider", handleBotCallback);
   app.post("/api/bots/:provider/:botId", handleBotCallback);
 
-  // Bug 原因：旧 `/api/connect-remote` + `/ws/remote/:id` 会在 Server 内另起临时 stdio
-  // runtime，绕过 R3 的 Window Host → Source Server attachment 主链；两个入口必须一起不可达。
+  // WebSocket endpoint for remote connections, bridging remote services to the browser.
+  app.get(
+    "/ws/remote/:id",
+    upgradeWebSocket((c) => {
+      const id = c.req.param("id");
+      let claimedConnection: RemoteConnection | undefined;
+      return {
+        onOpen(_event, ws) {
+          if (!id) {
+            ws.close(4000, "Missing remote connection id");
+            return;
+          }
+          const connection = remoteConnections.claim(id);
+          if (!connection) {
+            ws.close(4004, "Remote connection not found");
+            return;
+          }
+          claimedConnection = connection;
+
+          // Wrap remote services in a ServiceCollection and reuse exposeOnChannelServer for consistent registration.
+          const remoteServices = new ServiceCollection()
+            .register(IFileService, connection.services.fileService)
+            .register(IGitService, connection.services.gitService)
+            .register(ISystemService, connection.services.systemService)
+            .register(ITerminalService, connection.services.terminalService);
+
+          // This route serves a different backend (SSH/Docker target). The source-server identity mapper
+          // translates this server's own workspace identities, so it must not apply here.
+          setupChannelServer(
+            ws.raw as WebSocket,
+            remoteServices,
+            "web-remote-replayable",
+            undefined,
+          );
+        },
+        onClose() {
+          claimedConnection?.dispose();
+        },
+      };
+    }),
+  );
 
   if (options.staticRoot?.trim()) {
     const staticRoot = options.staticRoot.trim();
     app.get("*", async (c) => {
       const pathname = new URL(c.req.url).pathname;
-      const filePath = await resolveStaticFile(staticRoot, pathname, options.spaFallback ?? true);
+      const spaFallback = (options.spaFallback ?? true) && !targetsApiOrWs(c);
+      const filePath = await resolveStaticFile(staticRoot, pathname, spaFallback);
       if (!filePath) {
         return c.notFound();
       }
@@ -467,11 +672,14 @@ export function createHttpServer(
     });
   }
 
-  const server = serve({ fetch: app.fetch, hostname: options.host, port }, () => {
+  const server = serve({ fetch: app.fetch, hostname: host, port }, () => {
     const address = server.address();
-    const listenPort = typeof address === "object" && address ? address.port : port;
-    const listenHost = options.host?.trim() || "localhost";
-    log(`http://${listenHost}:${listenPort}`);
+    if (typeof address === "object" && address) {
+      const listenHost = address.family === "IPv6" ? `[${address.address}]` : address.address;
+      log(`http://${listenHost}:${address.port}`);
+    } else {
+      log(`http://${host}:${port}`);
+    }
   });
 
   injectWebSocket(server);

@@ -81,8 +81,8 @@ describe("BrowserOAuthCredentialRepo", () => {
     expect(localStorage.getItem("oauth:zai:user_info")).toBeNull();
   });
 
-  // private 分享的 owner 身份是 provider 特定的（bigmodel 是数字 ID，z.ai 是 UUID），
-  // 所以 BigModel 登录必须能独立存取，不能被 zai 的 key 段和判定挡掉。
+  // Private share owner identity is provider-specific (bigmodel uses a numeric ID, z.ai uses a UUID),
+  // so BigModel login must be stored and read independently and must not be blocked by zai's key segment or checks.
   it("saves and restores a complete BigModel web session", () => {
     const localStorage = new MemoryStorage();
     const repo = new BrowserOAuthCredentialRepo({ localStorage });
@@ -98,11 +98,11 @@ describe("BrowserOAuthCredentialRepo", () => {
     });
     expect(repo.loadZCodeJwtToken()).toBe("jwt-token");
     expect(localStorage.getItem("oauth:bigmodel:access_token")).toBe("bigmodel-token");
-    // 不能污染 zai 的 key 段
+    // must not pollute zai's key segment
     expect(localStorage.getItem("oauth:zai:access_token")).toBeNull();
   });
 
-  it("切换 provider 时清掉上一个身份的残片", () => {
+  it("clears leftover state from the previous identity when switching providers", () => {
     const localStorage = new MemoryStorage();
     const repo = new BrowserOAuthCredentialRepo({ localStorage });
 
@@ -120,7 +120,7 @@ describe("BrowserOAuthCredentialRepo", () => {
     expect(repo.loadCachedSession()?.id).toBe("53291785835589288");
   });
 
-  it("只读返回当前 provider 的账号展示资料，缺 JWT 或资料损坏也不清理存储", () => {
+  it("read-only returns the current provider's account display data; a missing JWT or corrupt profile does not clean up storage", () => {
     const localStorage = new MemoryStorage();
     const repo = new BrowserOAuthCredentialRepo({ localStorage });
 
@@ -142,7 +142,7 @@ describe("BrowserOAuthCredentialRepo", () => {
 
     localStorage.setItem("oauth:bigmodel:user_info", "{not json");
     expect(repo.loadActiveAccount()).toBeNull();
-    // 展示读取不是登录门禁：不能像 loadCachedSessionState 那样顺手清理残缺凭据。
+    // Display reads are not a login gate: they must not clean up partial credentials the way loadCachedSessionState does.
     expect(localStorage.getItem("oauth:active_provider")).toBe("bigmodel");
     expect(localStorage.getItem("oauth:bigmodel:user_info")).toBe("{not json");
   });
@@ -166,7 +166,7 @@ describe("BrowserOAuthCredentialRepo", () => {
     expect(localStorage.getItem("oauth:zai:user_info")).toBeNull();
   });
 
-  it("登录记录跨标签页可取回，取出即删，清理登录凭据时保留", () => {
+  it("login records can be retrieved across tabs, are deleted once taken, and survive clearing login credentials", () => {
     const localStorage = new MemoryStorage();
     const tabA = new BrowserOAuthCredentialRepo({ localStorage });
     const tabB = new BrowserOAuthCredentialRepo({ localStorage });
@@ -177,7 +177,7 @@ describe("BrowserOAuthCredentialRepo", () => {
     };
 
     tabA.savePendingLogin(login);
-    // 回调页可能先跑登录门禁，残缺凭据清理不能顺带删掉进行中的登录。
+    // The callback page may run the login gate first; clearing partial credentials must not also delete an in-progress login.
     tabB.clearAll();
 
     expect(tabB.takePendingLogin("nonce-1")).toEqual(login);
@@ -185,7 +185,7 @@ describe("BrowserOAuthCredentialRepo", () => {
     expect(localStorage.getItem("oauth_pending_logins")).toBeNull();
   });
 
-  it("只取 nonce 匹配的登录记录，不匹配时不改动其他记录", () => {
+  it("takes only the login record whose nonce matches, and leaves other records untouched when none matches", () => {
     const localStorage = new MemoryStorage();
     const repo = new BrowserOAuthCredentialRepo({ localStorage });
     const loginA = { nonce: "a", provider: "zai" as const, redirectUri: "https://zcode.z.ai/a" };
@@ -204,7 +204,7 @@ describe("BrowserOAuthCredentialRepo", () => {
     expect(repo.takePendingLogin("b")).toEqual(loginB);
   });
 
-  it("最多保留最近 5 条登录记录", () => {
+  it("keeps at most the 5 most recent login records", () => {
     const localStorage = new MemoryStorage();
     const repo = new BrowserOAuthCredentialRepo({ localStorage });
     for (let index = 0; index < 6; index += 1) {
@@ -220,7 +220,7 @@ describe("BrowserOAuthCredentialRepo", () => {
     expect(repo.takePendingLogin("nonce-5")).not.toBeNull();
   });
 
-  it("损坏或字段不完整的登录记录视为不存在", () => {
+  it("treats corrupt or incomplete login records as absent", () => {
     const localStorage = new MemoryStorage();
     const repo = new BrowserOAuthCredentialRepo({ localStorage });
 

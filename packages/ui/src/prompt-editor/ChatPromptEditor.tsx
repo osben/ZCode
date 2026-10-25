@@ -8,6 +8,7 @@ import type {
   ReactNode,
 } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { VoiceTranscriptionPreview } from "@zcode/services";
 import { TID_CHAT_SEND_BUTTON } from "@zcode/shared/test-ids";
 import { ArrowUpIcon, Hand, XIcon } from "lucide-react";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -20,7 +21,7 @@ import {
   type LexicalChatInputHandle,
 } from "@/LexicalChatInput.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import type { AppSlashCommand } from "@/slashCommandHelpers.js";
+import type { AppSlashCommand, QuickPromptSlashItem } from "@/slashCommandHelpers.js";
 import {
   hasWorkspaceFileDragPayload,
   readWorkspaceFileDragPayload,
@@ -39,6 +40,7 @@ function runAfterFrame(callback: () => void) {
 }
 
 export function ChatPromptEditor({
+  voicePreview,
   workspacePath,
   workspaceIdentity,
   taskId,
@@ -50,6 +52,7 @@ export function ChatPromptEditor({
   disabledReason,
   submitting = false,
   submitDisabled = false,
+  onSubmitBlocked,
   allowSubmitWhenEmpty = false,
   enterSubmits = true,
   submitLabel,
@@ -66,6 +69,7 @@ export function ChatPromptEditor({
   attachmentAction,
   betweenCancelAndSubmitAction,
   submitControl,
+  hideSubmit = false,
   inputTestId,
   submitTestId,
   cancelTestId,
@@ -91,6 +95,7 @@ export function ChatPromptEditor({
   excludedSlashCommandNames,
   appSlashCommands,
   enableMentionPanel,
+  quickPrompts,
 }: {
   workspacePath: string;
   workspaceIdentity?: string;
@@ -104,6 +109,8 @@ export function ChatPromptEditor({
   disabledReason?: string;
   submitting?: boolean;
   submitDisabled?: boolean;
+  /** Enter while submitDisabled is taken by the composer (keeps the draft, no newline) when provided. */
+  onSubmitBlocked?: () => void;
   allowSubmitWhenEmpty?: boolean;
   enterSubmits?: boolean;
   submitLabel: string;
@@ -127,6 +134,9 @@ export function ChatPromptEditor({
   /** 行内编辑专用：固定插在取消与主提交之间的第二动作。 */
   betweenCancelAndSubmitAction?: ReactNode;
   submitControl?: ReactNode;
+  /** Hosts that own the submit action elsewhere (e.g. a dialog footer) render no send button. */
+  hideSubmit?: boolean;
+  voicePreview?: VoiceTranscriptionPreview | null;
   inputTestId?: string;
   submitTestId?: string;
   cancelTestId?: string;
@@ -139,12 +149,13 @@ export function ChatPromptEditor({
   avoidIosInputFocusZoom?: boolean;
   compactPlaceholder?: boolean;
   /**
-   * stacked：输入区在上、工具栏在下；inline：[+] 输入区 [控件][发送] 排成一行，控件只显示图标
-   * （Side Pane 完整视图浮窗，docs/ui/side-pane-full-view.md）。两种布局共用同一棵 DOM 树，
-   * 切换时编辑器不重新挂载。
+   * stacked: input area above, toolbar below; inline: [+] input area [controls][send] in one row, with icon-only controls
+   * (side pane full-view floating composer, docs/ui/side-pane-full-view.md). Both layouts share one DOM tree,
+   * so the editor is not remounted when switching.
    */
   layout?: "stacked" | "inline";
-  onChange?: (value: string) => void;
+  /** `programmatic` is true for the editor's own clears and restores, false for typing. */
+  onChange?: (value: string, meta: { programmatic: boolean }) => void;
   // 适配：返回 false 表示业务层拒绝/延迟本次提交，Lexical 不自行 reset（草稿保留）。
   onSubmit: (value: string) => boolean | void;
   onModifiedSubmit?: (value: string) => boolean | void;
@@ -160,6 +171,8 @@ export function ChatPromptEditor({
   appSlashCommands?: readonly AppSlashCommand[];
   /** mention 面板开关（透传 LexicalChatInput）。 */
   enableMentionPanel?: boolean;
+  /** Quick prompts for the "/" panel; the quick prompt editor omits it so its own body cannot insert quick prompts. */
+  quickPrompts?: readonly QuickPromptSlashItem[];
 }) {
   const { intl } = useZCodeIntl();
   const isInline = layout === "inline";
@@ -214,9 +227,9 @@ export function ChatPromptEditor({
   }, [initialValue, resolvedInputApiRef, syncInitialValueOnMount]);
 
   const handleTextChange = useCallback(
-    (value: string) => {
+    (value: string, meta: { programmatic: boolean }) => {
       latestTextRef.current = value;
-      onChange?.(value);
+      onChange?.(value, meta);
     },
     [onChange],
   );
@@ -314,7 +327,8 @@ export function ChatPromptEditor({
           payload: workspaceFilePayload,
           workspacePath,
           workspaceIdentity,
-          onTextChange: handleTextChange,
+          // A dropped file mention is an insertion the editor performs, not typing.
+          onTextChange: (text) => handleTextChange(text, { programmatic: true }),
         });
         return;
       }
@@ -345,12 +359,14 @@ export function ChatPromptEditor({
       : undefined;
 
   const editorNode = (
-    // 单行时输入区至少占一半宽度，上下留白与 h-7 控件对齐；两行布局下 contents 不改变原有排版。
+    // With a single line, the input area takes at least half the width; vertical padding aligns it with the h-7 controls. In the two-line layout, contents leaves the original layout unchanged.
     <div className={isInline ? "min-w-1/2 flex-1 py-1 [&_[contenteditable]]:min-h-5" : "contents"}>
       <LexicalChatInput
+        voicePreview={voicePreview}
         placeholder={placeholder}
         disabled={disabled}
         submitDisabled={submitDisabled}
+        onSubmitBlocked={onSubmitBlocked}
         allowSubmitWhenEmpty={allowSubmitWhenEmpty}
         enterSubmits={enterSubmits}
         onSubmit={handleEditorSubmit}
@@ -372,6 +388,7 @@ export function ChatPromptEditor({
         excludedSlashCommandNames={excludedSlashCommandNames}
         appSlashCommands={appSlashCommands}
         enableMentionPanel={enableMentionPanel}
+        quickPrompts={quickPrompts}
       />
     </div>
   );
@@ -472,21 +489,30 @@ export function ChatPromptEditor({
               </ControlHintTooltip>
             ) : null}
             {betweenCancelAndSubmitAction}
-            {submitControl ?? (
-              <ControlHintTooltip title={submitLabel} shortcut={enterSubmits ? "Enter" : undefined}>
-                <Button
-                  type="submit"
-                  size="icon-md"
-                  disabled={submitDisabled}
-                  data-testid={submitTestId ?? TID_CHAT_SEND_BUTTON}
-                  aria-label={submitLabel}
-                  className="gap-1 rounded-lg bg-brand text-ui-base text-foreground-inverse hover:bg-brand/80"
-                >
-                  {submitting ? <Spinner className="size-4" /> : <ArrowUpIcon className="size-4" />}
-                  <span className="sr-only">{submitLabel}</span>
-                </Button>
-              </ControlHintTooltip>
-            )}
+            {hideSubmit
+              ? null
+              : (submitControl ?? (
+                  <ControlHintTooltip
+                    title={submitLabel}
+                    shortcut={enterSubmits ? "Enter" : undefined}
+                  >
+                    <Button
+                      type="submit"
+                      size="icon-md"
+                      disabled={submitDisabled}
+                      data-testid={submitTestId ?? TID_CHAT_SEND_BUTTON}
+                      aria-label={submitLabel}
+                      className="gap-1 rounded-lg bg-brand text-ui-base text-foreground-inverse hover:bg-brand/80"
+                    >
+                      {submitting ? (
+                        <Spinner className="size-4" />
+                      ) : (
+                        <ArrowUpIcon className="size-4" />
+                      )}
+                      <span className="sr-only">{submitLabel}</span>
+                    </Button>
+                  </ControlHintTooltip>
+                ))}
           </div>
         </div>
       </div>

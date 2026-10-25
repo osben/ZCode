@@ -210,12 +210,14 @@ describe("BrowserUseSidePaneContent", () => {
     expect(received).toEqual([null, "request-1", null]);
   });
 
-  // 跨进程恢复的 browser tab（browser: 前缀）在 renderer registry 里的 browserId/
-  // browserGeneration 仍是持久 shell 里旧进程的值；main 侧 owner 已被新一轮 scope 接管。
-  // 七元组严格匹配会让 prepare 被静默忽略——恢复 tab 的 AI 截图必 3s 超时（dev 实测：
-  // 同一 turn 内新开 tab ok=true/407ms，恢复 tab ok=false/3000ms 且无 renderer ready）。
-  // prepare 匹配必须降级到 workspaceKey+sessionId+tabId；stale 防护由 main 侧用请求内
-  // generation 做（coordinator 已有），renderer 不承担该职责。
+  // A browser tab restored across processes (browser: prefix) keeps the browserId/
+  // browserGeneration of the old process in the renderer registry; the main-side owner
+  // has been taken over by a new scope. Strict seven-field matching would silently drop
+  // prepare — AI screenshots of the restored tab would hit the 3s timeout (measured in
+  // dev: a tab newly opened in the same turn got ok=true/407ms, the restored tab got
+  // ok=false/3000ms with no renderer ready). prepare matching must degrade to
+  // workspaceKey+sessionId+tabId; stale protection is done main-side with the in-request
+  // generation (the coordinator already does this); the renderer owns none of it.
   it("跨进程恢复 tab 的 browserId/browserGeneration 漂移时仍接受 prepare", () => {
     const received: Array<string | null> = [];
     const restoredTab: BrowserUseSidePaneTab = {
@@ -256,9 +258,11 @@ describe("BrowserUseSidePaneContent", () => {
     });
     expect(received).toEqual([null, "request-restore-2"]);
 
-    // release 由 main settleGroup 在截图结算时发出；期间 tab 若被重新接管，
-    // payload 携带的是新 scope 元数据。严格匹配会让 release 永不命中，
-    // browser pane 停留在近透明 fixed 层（用户感知为透明遮罩假死，只能重启）。
+    // release is emitted by the main settleGroup when the screenshot settles; if the tab
+    // is re-taken-over in the meantime, the payload carries the new scope's metadata.
+    // Strict matching would never hit release, leaving the browser pane stuck in a
+    // nearly transparent fixed layer (users see a dead translucent overlay; only a
+    // restart recovers).
     act(() => {
       h.releaseListeners.forEach((listener) =>
         listener({

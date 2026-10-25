@@ -1,43 +1,19 @@
 # Docker Container Select Refresh Design
 
-## Background
+The Docker remote connection dialog loads running containers once when the Docker settings step opens and held them for the dialog's lifetime, so the "Choose a running container" dropdown could show stale data. The list now refreshes when the dropdown opens.
 
-Docker remote connection currently loads running containers when the remote connection dialog first enters the Docker settings step. The list is then held in UI state for the lifetime of that dialog instance. If containers are started or stopped after that initial load, opening the "Choose a running container" dropdown can show stale data.
+Behavior:
 
-## Goal
+- The Docker settings step keeps its first lazy availability/container load on open.
+- Opening the dropdown triggers one refresh against the platform Docker APIs; closing does not. A refresh already in flight absorbs further open events (no second Docker command).
+- Success replaces the list and reconciles the selection: a previously selected container no longer running is cleared, so the trigger shows the empty-state hint instead of a stale name.
+- Failure keeps the previous list and surfaces the existing remote options load error banner.
+- If Docker reports unavailable, the list is cleared (no daemon-backed list exists).
+- The chooser uses the common `Popover + Command` searchable-dropdown pattern (not Radix `Select`), shows a loading indicator in the trigger and a loading row in the menu while refreshing, and a short grey "no running containers" hint when empty or unavailable.
+- A separate manual "Container" input below the chooser covers incomplete lists or unavailable detection. Manual input and dropdown selection are independent state: choosing an item does not fill the input, typing does not change the selection. When the manual input is empty it shows a localized grey helper text about entering a container name or ID.
 
-Refresh the Docker running-container list when the Docker container dropdown opens, while keeping the existing initial lazy load when the user enters the Docker settings step.
+Connect resolution: non-empty manual input wins over the dropdown selection; empty manual input falls back to the selected container.
 
-## Behavior
+Boundaries: UI components never call Docker/platform APIs — `useRemoteConnectionForm` owns platform access and state; `RemoteConnectionFields` only reports that the select opened. Dropdown empty-state and helper texts are localized in `zh-CN` and `en-US`.
 
-- The Docker settings step still performs its first lazy Docker availability/container load when opened.
-- Opening the running-container dropdown triggers one additional refresh against the platform Docker APIs.
-- Closing the dropdown does not refresh.
-- If a refresh is already in flight, another dropdown-open event does not start a second Docker command.
-- Refresh success replaces the dropdown list with the latest running containers.
-- Refresh success also reconciles the selected container with the latest running-container list. If the previously selected container is no longer running, the dropdown selection is cleared so the trigger shows the empty-state hint instead of a stale container name.
-- Refresh failure keeps the previous dropdown list and surfaces the existing remote options load error banner.
-- If Docker is reported unavailable, the container list is cleared because there is no current daemon-backed list to show.
-- The running-container chooser uses the same `Popover + Command` interaction pattern as other searchable dropdowns in the UI instead of Radix `Select`.
-- While a dropdown-open refresh is running, the chooser shows a loading indicator in the trigger and a loading row in the menu.
-- When no running containers are available or Docker availability detection reports unavailable, the trigger and menu show a short grey hint that no running containers were detected.
-- A separate manual "Container" input remains available below the chooser for cases where the running-container list is incomplete or Docker detection is unavailable.
-- The manual input and dropdown selection are independent state values. Choosing an item from the dropdown must not populate the manual input, and typing in the manual input must not change the dropdown selection.
-- When connecting, a non-empty manual input value takes precedence over the dropdown selection. If the manual input is empty, the selected dropdown container is used.
-- When the manual input is empty, the UI shows a grey localized hint explaining that users can manually enter a container name or ID if the running-container list is incomplete.
-
-## Boundaries
-
-- UI components do not call Docker or platform APIs directly. `useRemoteConnectionForm` owns platform access and state updates.
-- `RemoteConnectionFields` only reports that the Docker container select opened.
-- The dropdown empty-state hint and manual-input helper text are localized in both `zh-CN` and `en-US`.
-
-## Verification
-
-- Add a unit test proving the Docker select open event invokes the supplied refresh callback only when the select opens.
-- Add a unit test proving Docker option loading calls Docker APIs and reports errors without throwing.
-- Add a unit test proving stale selected Docker containers are cleared after a successful refresh removes them from the running-container list.
-- Add a unit test proving the Docker chooser is rendered through `Popover + Command`, shows loading, and renders the empty-state hint when there are no containers.
-- Add a unit test proving the manual Docker container input renders independently from the dropdown selection and shows its helper text.
-- Add a unit test proving Docker connection target creation prefers manual input over dropdown selection and falls back to the dropdown selection when manual input is empty.
-- Run targeted unit tests, `pnpm typecheck`, and `pnpm lint`.
+Verification: unit tests for refresh-on-open only, error reporting without throwing, stale selection cleared after refresh, `Popover + Command` rendering with loading and empty hints, manual input independence and helper text, and connect target preference (manual over dropdown, fallback when empty).

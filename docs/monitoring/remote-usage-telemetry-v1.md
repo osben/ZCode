@@ -1,24 +1,24 @@
-# 远程场景使用量埋点 V1
+# Remote scenario usage telemetry V1
 
-> 状态：已实现
+> Status: implemented
 
-## 目标与口径
+## Goals and definitions
 
-本埋点用于回答以下产品问题：
+This telemetry answers these product questions:
 
-- 有多少用户成功使用 SSH、WSL、Docker、Server 远程工作区。
-- 有多少用户成功使用手机 Web Remote Control。
-- Web Remote Control 从入口曝光、启动、配对到工作区 bridge 的转化情况。
-- 上述场景涉及多少台桌面设备。
+- How many users successfully use SSH, WSL, Docker or Server remote workspaces.
+- How many users successfully use mobile Web Remote Control.
+- The conversion of Web Remote Control from entry exposure through start and pairing to the workspace bridge.
+- How many desktop devices the above scenarios involve.
 
-用户 UV 优先按 `/event/report` 公共字段 `user_id` 去重；未登录时回退按
-`device_mid` 去重。桌面设备数只按 `device_mid` 去重。渗透率分母统一使用
-`app_daily_active` 的同口径 UV。
+User UV is de-duplicated by the `/event/report` common field `user_id` first; when logged out it falls back to
+`device_mid`. The desktop device count is de-duplicated by `device_mid` only. The penetration-rate denominator
+uniformly uses the same-definition UV of `app_daily_active`.
 
-V1 不统计手机物理设备数，也不统计 SSH 主机数。前者缺少稳定、合规的设备标识，后者会引入
-远端主机身份和隐私风险。
+V1 counts neither mobile physical devices (no stable, compliant device identifier) nor SSH hosts (it would
+introduce remote host identity and privacy risk).
 
-## 架构边界
+## Architecture boundary
 
 ```text
 Desktop renderer               Desktop main / manager              Telemetry core
@@ -27,155 +27,152 @@ Desktop renderer               Desktop main / manager              Telemetry cor
        |--------------------------------->|                               |
        |                                  | terminal lifecycle result     |
        |                                  |------------------------------>|
-       |                                  | 仅低基数字段 + 公共身份字段     |
+       |                                  | low-cardinality fields + common identity |
        |                                  |                               |
 
 Mobile Web -- replayable RPC --> relay/main passthrough --> shared desktop host
-                 不新增 reporter         不解析 rpc-frame       bridge 成功后由桌面上报
+                 no new reporter         does not parse rpc-frame       desktop reports after the bridge succeeds
 ```
 
-- 桌面 main 只在已有连接、配对和 host attachment 生命周期的终态上报，不承载 session/task
-  业务状态。
-- 手机 Web 继续使用 `web-remote-replayable`；桌面继续使用 `desktop-continuous`，埋点不得改变
-  两条消息链路的恢复语义。
-- 外部 relay 不解析 `rpc-frame`，Web bundle 不新增独立上报器。
-- 远程工作区远控继续使用 shared-host attachment，不新建 Agent runtime、local host 或远程
-  session。
-- 埋点失败必须 best effort，不得阻断连接、配对或 bridge。
+- Desktop main reports only at the terminal state of the existing connect, pairing and host-attachment
+  lifecycles and holds no session/task business state.
+- Mobile Web keeps `web-remote-replayable` and desktop keeps `desktop-continuous`; telemetry must not change the
+  recovery semantics of either message chain.
+- The external relay does not parse `rpc-frame` and the Web bundle adds no separate reporter.
+- Remote-workspace remote control keeps using the shared-host attachment and creates no Agent runtime, local host
+  or remote session.
+- Telemetry failure is best effort and must not block connecting, pairing or the bridge.
 
-## 事件定义
+## Event definitions
 
-所有事件全量上报低频生命周期终态。`event_extra_detail` 仅允许下表字段，值均为字符串。
+All events report low-frequency lifecycle terminal states in full. `event_extra_detail` allows only the fields in
+the tables below, with string values.
 
 ### `remote_workspace_connect_result`
 
-触发点：用户发起的远程工作区连接在 desktop main 得到成功或失败终态时。
+Trigger: a user-initiated remote-workspace connection reaches a success or failure terminal state in desktop main.
 
-| 字段              | 允许值                              | 说明                     |
-| ----------------- | ----------------------------------- | ------------------------ |
-| `result`          | `success` / `failure`               | 连接结果                 |
-| `remote_kind`     | `ssh` / `wsl` / `docker` / `server` | 远程类型                 |
-| `connect_trigger` | `new` / `reconnect` / `restore`     | 新建、用户重连或启动恢复 |
-| `error_category`  | 见错误分类；成功为空字符串          | 低基数失败分类           |
+| Field             | Allowed values                         | Description                            |
+| ----------------- | -------------------------------------- | -------------------------------------- |
+| `result`          | `success` / `failure`                  | Connection result                      |
+| `remote_kind`     | `ssh` / `wsl` / `docker` / `server`    | Remote kind                            |
+| `connect_trigger` | `new` / `reconnect` / `restore`        | New, user reconnect or startup restore |
+| `error_category`  | see error categories; empty on success | Low-cardinality failure category       |
 
-当前启动恢复只恢复 disconnected tab，不自动连接，因此 V1 不产生 `restore`；该枚举为后续真实自动
-恢复预留，不能把 tab 恢复误记为连接。
+Startup restore currently restores only disconnected tabs and does not auto-connect, so V1 produces no `restore`;
+the enum is reserved for a future real auto-restore, and a tab restore must not be recorded as a connection.
 
 ### `web_remote_control_entry_view`
 
-触发点：用户点击 Web Remote Control 入口并打开对话框时。
+Trigger: the user clicks the Web Remote Control entry and the dialog opens.
 
-| 字段             | 允许值                                         | 说明                                   |
-| ---------------- | ---------------------------------------------- | -------------------------------------- |
-| `workspace_kind` | `local` / `remote`                             | 当前桌面工作区类型                     |
-| `remote_kind`    | `ssh` / `wsl` / `docker` / `server` / 空字符串 | 可由统一 workspace identity 解析时上报 |
+| Field            | Allowed values                                     | Description                                                  |
+| ---------------- | -------------------------------------------------- | ------------------------------------------------------------ |
+| `workspace_kind` | `local` / `remote`                                 | Current desktop workspace kind                               |
+| `remote_kind`    | `ssh` / `wsl` / `docker` / `server` / empty string | Reported when resolvable from the unified workspace identity |
 
 ### `web_remote_control_start_result`
 
-触发点：desktop main 处理显式启动或重新配对请求并得到终态时。
+Trigger: desktop main handles an explicit start or re-pair request and reaches a terminal state.
 
-| 字段             | 允许值                                         | 说明                                       |
-| ---------------- | ---------------------------------------------- | ------------------------------------------ |
-| `result`         | `success` / `failure` / `cancelled`            | 显式启动或重新配对终态；`cancelled` 仅兼容历史数据 |
-| `workspace_kind` | `local` / `remote`                             | 目标工作区类型                             |
-| `remote_kind`    | `ssh` / `wsl` / `docker` / `server` / 空字符串 | 可由统一 workspace identity 解析时上报     |
-| `error_category` | 见错误分类；非失败为空字符串                   | 低基数失败分类                             |
+| Field            | Allowed values                                     | Description                                                                                  |
+| ---------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `result`         | `success` / `failure` / `cancelled`                | Explicit start or re-pair terminal state; `cancelled` only for historical-data compatibility |
+| `workspace_kind` | `local` / `remote`                                 | Target workspace kind                                                                        |
+| `remote_kind`    | `ssh` / `wsl` / `docker` / `server` / empty string | Reported when resolvable from the unified workspace identity                                 |
+| `error_category` | see error categories; empty when not a failure     | Low-cardinality failure category                                                             |
 
-自动恢复已有远控运行时不属于显式启动漏斗，不产生本事件。
-当前 Desktop 启动和刷新链路不再弹原生确认，因此只产生 `success` / `failure`；schema 保留
-`cancelled` 仅用于兼容历史事件或其他可取消平台实现，并且不得计入失败率。
+Auto-restoring an existing remote-control runtime is not part of the explicit start funnel and produces no such
+event. The current Desktop start and refresh chains no longer show a native confirmation, so only `success` /
+`failure` occur; the schema keeps `cancelled` only for historical events or other cancellable platform
+implementations, and it must not count toward the failure rate.
 
 ### `web_remote_control_pair_result`
 
-触发点：桌面收到 relay 的配对终态状态变化时。
+Trigger: the desktop receives a pairing terminal state change from the relay.
 
-| 字段             | 允许值                                         | 说明                                    |
-| ---------------- | ---------------------------------------------- | --------------------------------------- |
-| `result`         | `success` / `failure`                          | 配对结果                                |
-| `pair_kind`      | `initial` / `reconnect`                        | 当前 manager 生命周期首次配对或之后重连 |
-| `workspace_kind` | `local` / `remote`                             | 启动远控时的目标工作区类型              |
-| `remote_kind`    | `ssh` / `wsl` / `docker` / `server` / 空字符串 | 可由统一 workspace identity 解析时上报  |
-| `error_category` | 见错误分类；成功为空字符串                     | 低基数失败分类                          |
+| Field            | Allowed values                                     | Description                                                   |
+| ---------------- | -------------------------------------------------- | ------------------------------------------------------------- |
+| `result`         | `success` / `failure`                              | Pairing result                                                |
+| `pair_kind`      | `initial` / `reconnect`                            | First pairing in this manager lifecycle, or a later reconnect |
+| `workspace_kind` | `local` / `remote`                                 | Target workspace kind when remote control started             |
+| `remote_kind`    | `ssh` / `wsl` / `docker` / `server` / empty string | Reported when resolvable from the unified workspace identity  |
+| `error_category` | see error categories; empty on success             | Low-cardinality failure category                              |
 
-相同 transport 状态重复通知不重复上报；从断开态再次进入 paired 记为 `reconnect`。
+Repeated notifications of the same transport state do not report again; entering paired again from a
+disconnected state is `reconnect`.
 
 ### `web_remote_control_bridge_result`
 
-触发点：手机请求打开工作区 bridge，shared-host attachment 成功建立或失败时。
+Trigger: the phone requests opening the workspace bridge and the shared-host attachment is established or fails.
 
-| 字段             | 允许值                                         | 说明                      |
-| ---------------- | ---------------------------------------------- | ------------------------- |
-| `result`         | `success` / `failure`                          | bridge 结果               |
-| `workspace_kind` | `local` / `remote`                             | 目标工作区类型            |
-| `remote_kind`    | `ssh` / `wsl` / `docker` / `server` / 空字符串 | 远程目标类型；本地为空    |
-| `entry_kind`     | `home` / `task`                                | 打开工作区首页或指定 task |
-| `error_category` | 见错误分类；成功为空字符串                     | 低基数失败分类            |
+| Field            | Allowed values                                     | Description                                  |
+| ---------------- | -------------------------------------------------- | -------------------------------------------- |
+| `result`         | `success` / `failure`                              | Bridge result                                |
+| `workspace_kind` | `local` / `remote`                                 | Target workspace kind                        |
+| `remote_kind`    | `ssh` / `wsl` / `docker` / `server` / empty string | Remote target kind; empty for local          |
+| `entry_kind`     | `home` / `task`                                    | Opened the workspace home or a specific task |
+| `error_category` | see error categories; empty on success             | Low-cardinality failure category             |
 
-bridge 成功是“实际使用 Web Remote Control”的主口径。配对成功但没有打开工作区不计入实际使用
-用户。
+Bridge success is the primary definition of "actually using Web Remote Control". Pairing succeeded without opening
+a workspace does not count as an actual-use user.
 
-## 错误分类与隐私
+## Error categories and privacy
 
-`error_category` 只允许：
+`error_category` allows only: `auth`, `connect`, `deploy`, `host_start`, `attach`, `relay`, `unknown`.
 
-- `auth`
-- `connect`
-- `deploy`
-- `host_start`
-- `attach`
-- `relay`
-- `unknown`
-
-分类器可以在本地读取错误码或错误消息，但只上传枚举值。任何事件都禁止上传：
+The classifier may read error codes or messages locally but uploads only the enum value. No event may upload:
 
 - `workspacePath`
 - `workspaceIdentity`
 - `remoteSessionId`
-- SSH host、用户名或端口
+- SSH host, user name or port
 - Docker container
 - WSL distro
-- 原始错误消息或错误堆栈
+- raw error message or stack
 
-## 指标计算
+## Metric computation
 
-| 指标                          | 计算                                                                                    |
-| ----------------------------- | --------------------------------------------------------------------------------------- |
-| SSH 使用用户数                | `remote_workspace_connect_result` 中 `result=success && remote_kind=ssh`，按 actor 去重 |
-| 各远程类型使用用户数          | 同上，按 `remote_kind` 分组并按 actor 去重                                              |
-| Web Remote Control 使用用户数 | `web_remote_control_bridge_result` 中 `result=success`，按 actor 去重                   |
-| Web Remote Control 使用率     | Web Remote Control 使用用户数 / 同期 `app_daily_active` actor UV                        |
-| 桌面设备数                    | 对目标成功事件按 `device_mid` 去重                                                      |
-| 漏斗转化                      | entry view → start success → pair success → bridge success，同期分别按 actor UV         |
+| Metric                         | Computation                                                                                        |
+| ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| SSH usage users                | `remote_workspace_connect_result` with `result=success && remote_kind=ssh`, de-duplicated by actor |
+| Usage users per remote kind    | Same, grouped by `remote_kind` and de-duplicated by actor                                          |
+| Web Remote Control usage users | `web_remote_control_bridge_result` with `result=success`, de-duplicated by actor                   |
+| Web Remote Control usage rate  | Web Remote Control usage users / same-period `app_daily_active` actor UV                           |
+| Desktop device count           | Target success events de-duplicated by `device_mid`                                                |
+| Funnel conversion              | entry view → start success → pair success → bridge success, each by actor UV in the same period    |
 
-actor 的查询规则是 `user_id` 非空时使用 `user_id`，否则使用 `device_mid`。客户端不新增
-`actor_id` 字段，也不做跨事件 UV 去重。
+The actor query rule is `user_id` when non-empty, otherwise `device_mid`. The client adds no `actor_id` field and
+does no cross-event UV de-duplication.
 
-## 状态所有权与实现位置
+## State ownership and implementation location
 
-| 状态 / 事实                 | Owner                                            | 埋点位置                      |
-| --------------------------- | ------------------------------------------------ | ----------------------------- |
-| 远程工作区连接终态          | desktop remote IPC / session manager             | IPC 返回成功或失败前          |
-| Web Remote Control 入口曝光 | desktop renderer                                 | 对话框打开动作                |
-| 显式启动终态                | desktop remote IPC                               | start/reset 请求终态          |
-| relay 配对状态              | WebRemoteControlManager                          | transport 状态迁移            |
-| workspace-scope Host attachment | WebRemoteControlManager + shared-host attachment | bridge attachment 终态        |
-| 用户与桌面设备公共字段      | TelemetryCore                                    | 现有 `/event/report` 公共字段 |
+| State / fact                          | Owner                                            | Telemetry location                     |
+| ------------------------------------- | ------------------------------------------------ | -------------------------------------- |
+| Remote workspace connection terminal  | desktop remote IPC / session manager             | Before the IPC returns success/failure |
+| Web Remote Control entry exposure     | desktop renderer                                 | Dialog-open action                     |
+| Explicit start terminal               | desktop remote IPC                               | start/reset request terminal           |
+| relay pairing state                   | WebRemoteControlManager                          | transport state transition             |
+| workspace-scope Host attachment       | WebRemoteControlManager + shared-host attachment | bridge attachment terminal             |
+| User and desktop device common fields | TelemetryCore                                    | Existing `/event/report` common fields |
 
-## Case 规划与剪枝
+## Case planning and pruning
 
-必须覆盖：
+Must cover:
 
-- SSH/WSL/Docker/Server 新建连接成功与失败的字段稳定性。
-- reconnect 显式携带 `connect_trigger=reconnect`，普通连接默认 `new`。
-- 本地和远程 workspace 的入口、启动与 bridge 事件。
-- 首次 paired 和断开后的 reconnect paired。
-- attachment 失败只产生允许的错误分类，不泄漏目标信息。
-- telemetry 上报失败不改变原业务返回值。
+- Field stability for SSH/WSL/Docker/Server new-connection success and failure.
+- reconnect explicitly carries `connect_trigger=reconnect`; an ordinary connection defaults to `new`.
+- Entry, start and bridge events for local and remote workspaces.
+- First paired and reconnect paired after a disconnect.
+- Attachment failure produces only allowed error categories and leaks no target information.
+- A telemetry report failure does not change the original business return value.
 
-本期剪枝：
+Pruned in this phase:
 
-- 不新增 conversation/session E2E；本功能不修改 conversation 状态语义或协议。
-- V1 不统计手机设备数、远端主机数、逻辑 session 并发或连接时长；逻辑 session 并发与可观测连接时长由
-  [远程工作区连接 ARMS 自定义事件](./remote-usage-arms-telemetry.md)承接，ARMS 的 `active_target_count` 仅作脱敏诊断，不等价于远端主机数。
-- 不为启动恢复的 disconnected tab 伪造连接事件。
-- 不在 relay、Web bundle 或 `rpc-frame` 中增加埋点。
+- No new conversation/session E2E; this feature changes neither conversation state semantics nor the protocol.
+- V1 counts no mobile devices, remote hosts, logical-session concurrency or connection duration; logical-session
+  concurrency and observable connection duration are covered by
+  [remote workspace connection ARMS custom events](./remote-usage-arms-telemetry.md), where the ARMS
+  `active_target_count` is only a redacted diagnostic and not equal to the remote host count.
+- No connection event is forged for a startup-restored disconnected tab.
+- No telemetry is added in the relay, the Web bundle or `rpc-frame`.

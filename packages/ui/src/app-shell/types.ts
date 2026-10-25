@@ -207,6 +207,10 @@ export interface GitChangeSummary {
 export type WorkspaceMainView = "chat" | "automations" | "plugin-store";
 
 export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackService"> {
+  onCreateTaskInWorkspace?: (
+    workspacePath: string,
+    workspaceIdentity?: string,
+  ) => void | Promise<void>;
   workspaceReadOnlyReason?: string;
   workspaceMainView: WorkspaceMainView;
   pluginStoreOpenVersion: number;
@@ -283,6 +287,9 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   gitWorktreeChangeSummary: GitChangeSummary;
   activeGitSourceId: GitChangeSourceId;
   gitState: ReturnType<typeof import("@/hooks/useGitRepository.js").useGitRepository>;
+  gitReviewState: ReturnType<typeof import("@/hooks/useGitRepository.js").useGitRepository>;
+  handleRefreshGitReview: () => void;
+  gitRepositoryWorkspacePath: string;
   browserNavigationRequest: BrowserNavigationRequest | null;
   browserRestoreUrls: Record<string, string>;
   providerConfigFile: ReturnType<
@@ -341,6 +348,11 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   handleNavigateFileManager: (tabId: string, source: CodeViewerSource) => void;
   handleOpenPluginMarket: () => void;
   handleOpenTerminalTab: () => void;
+  handleOpenModelTrajectory: (params: {
+    taskId: string;
+    title?: string | null;
+    kind?: "v1" | "v2";
+  }) => void;
   handleToggleGit: () => void;
   handleOpenGitReview: (sourceId?: GitChangeSourceId) => void;
   handleToggleSidePane: () => void;

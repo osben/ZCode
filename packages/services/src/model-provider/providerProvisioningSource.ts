@@ -41,7 +41,7 @@ export interface ProviderProvisioningSourceOptions {
   readonly cipherProvider?: CredentialCipherProvider;
 }
 
-/** 从 Local Environment 读取可 Provision 的事实；不会读取或导出完整 Registry Snapshot。 */
+/** Read provisionable facts from Local Environment; do not read or export the full Registry Snapshot. */
 export function createProviderProvisioningSource(
   options: ProviderProvisioningSourceOptions,
 ): ProviderProvisioningSource {
@@ -52,7 +52,7 @@ export function createProviderProvisioningSource(
         options.settingService.get(),
         readProvisioningCredentials(options.credentialFilePath, options.cipherProvider),
       ]);
-      // 默认与规则来自同一份持锁读取，不能把两次读取的值拼成不存在的配置版本。
+      // Defaults and rules come from the same locked read; do not combine values from two reads into a configuration version that never existed.
       const personalConfig = encodeProviderConfigFile(personal).config;
       const accountSettings = {
         providerFamilyDomain: settings.providerFamilyDomain ?? null,
@@ -69,7 +69,7 @@ export function createProviderProvisioningSource(
   };
 }
 
-/** 分发读取不能把坏文件的内存降级当成权威；Source 与 Target 使用同一完整读取约束。 */
+/** Provisioning reads must not treat in-memory fallback from a corrupt file as authoritative; Source and Target use the same full-read constraints. */
 export async function readProvisionablePersonalConfig(
   repository: PersonalProviderConfigRepository,
   filePath: string,
@@ -81,7 +81,7 @@ export async function readProvisionablePersonalConfig(
   } catch (error) {
     if (isFileNotFound(error)) {
       const rules = personal.models.toPersonalJSON();
-      // 首次尚无 Personal 文件是合法空配置；已有内容后文件消失不能继续导出旧快照。
+      // A missing Personal file on first use is a valid empty configuration; if a file that previously had content disappears, do not continue exporting an old snapshot.
       if (
         personal.providers.keys().length === 0 &&
         rules.providerModelRules.length === 0 &&
@@ -125,11 +125,12 @@ async function readProvisioningCredentials(
   const cipher = cipherProvider ?? createCredentialCipherProvider();
   const allowedKeys = new Set<string>(PROVIDER_PROVISIONING_OAUTH_CREDENTIAL_KEYS);
   const entries: ProviderProvisioningCredentialEntry[] = [];
-  // Credential Store 还可能包含不属于 Provisioning allowlist 的历史记录；
-  // 这些记录不是本次同步事实，不能因为其值损坏而阻断合法账号凭据的同步。
-  // allowlist 内的条目仍保持字符串和解密校验，避免把未知内容当成 Secret 传输。
+  // Credential Store may also contain legacy records outside the Provisioning allowlist;
+  // these records are not part of this sync, and corruption in them must not block syncing valid account credentials.
+  // Entries in the allowlist still require string and decryption validation so unknown content is not transferred as a Secret.
   for (const [key, encrypted] of Object.entries(parsed)) {
-    // OAuth 换证不再依赖旧账号 Key；它的坏密文也不能阻断远端登录态同步。
+    // OAuth token exchange no longer depends on the legacy account key; its bad ciphertext
+    // must not block syncing the remote login state either.
     if (!allowedKeys.has(key)) continue;
     if (typeof encrypted !== "string") {
       throw new Error(`Credential allowlist value must be a string: ${key}`);
@@ -158,7 +159,7 @@ export function resolveCredentialFilePath(appConfigDir: string): string {
   return join(appConfigDir, CREDENTIAL_FILE_NAME);
 }
 
-/** 只枚举 Provisioning allowlist 的物理 key，供目标端实现 replace-allowlist 删除语义。 */
+/** Enumerate only the physical keys in the Provisioning allowlist so the target can implement replace-allowlist deletion semantics. */
 export async function listProviderProvisioningCredentialKeys(
   credentialFilePath: string,
 ): Promise<readonly string[]> {

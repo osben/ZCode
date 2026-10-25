@@ -87,7 +87,7 @@ describe("botsService config", () => {
 
   it("accepts v3 bots config and rejects legacy bot config fields", () => {
     expect(f.botsConfigFileSchema.safeParse(f.baseConfig).success).toBe(true);
-    // Bugfix: Bots v3 不做旧 channels.json 隐式迁移；schema 必须 strict，避免未知字段被 Zod strip。
+    // Bugfix: Bots v3 does no implicit migration of the legacy channels.json; the schema must be strict so unknown fields are not stripped by Zod.
     expect(f.botsConfigFileSchema.safeParse({ version: 1, channels: [] }).success).toBe(false);
     expect(f.botsConfigFileSchema.safeParse({ ...f.baseConfig, channels: [] }).success).toBe(false);
   });

@@ -15,7 +15,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSubagentsService } from "../src/subagents/subagentsService.js";
 
-// 仅观察真实补扫的 stat 次数，以实际进入稳定等待作为时序证据。
+// Only observe real backfill-scan stat counts; actually entering the stable wait serves as the timing evidence.
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return { ...actual, stat: vi.fn(actual.stat) };
@@ -39,9 +39,10 @@ async function pair(prepareHome?: (homeDir: string) => Promise<void>) {
   const workspace = { workspacePath: join(homeDir, "workspace") };
   await a.prepareRuntimeState(workspace);
   await b.prepareRuntimeState(workspace);
-  // Bug 根因：macOS 上 fs.watch 走 FSEvents，watch() 返回、Chokidar ready 之后原生流仍需
-  // 短暂时间才真正生效，期间的变更会直接丢失（实测立即写入约 1/8 丢失、200ms 后为 0）。
-  // 整份文件连续运行时负载更高，用例随机等不到事件；先越过启动空窗再开始改文件。
+  // Bug root cause: on macOS fs.watch goes through FSEvents, and even after watch() returns and Chokidar is ready the
+  // native stream still needs a short time to become effective; changes in that window are silently lost (measured:
+  // about 1/8 of immediate writes lost, 0 lost after 200ms). Running the whole file back-to-back is under higher load,
+  // so cases randomly miss events; cross the startup dead window before mutating files.
   await delay(500);
   const both = async (expected: unknown) =>
     until(async () => {
@@ -105,7 +106,7 @@ describe("native subagent Host watchers", () => {
       completed = true;
     });
     try {
-      // 等待期间持续写入，不能先停止写入再证明准备及写队列已释放。
+      // Writes continue while waiting; we must not stop writing first and then prove preparation and the write queue are released.
       await vi.waitFor(() => expect(completed).toBe(true), { timeout: 4000 });
       for (const workspace of others)
         expect(await f.a.readRuntimeConfig(workspace)).toEqual(before);
@@ -164,7 +165,7 @@ describe("native subagent Host watchers", () => {
         }
         if (operation !== "update")
           await expect(stat(actual)).rejects.toMatchObject({ code: "ENOENT" });
-        // 文件已成功落盘后，两个独立缓存都必须收敛；不能用重启或手动 reload 修正结果。
+        // After the file has been persisted, both independent caches must converge; restart or manual reload must not be needed to fix the result.
         await f.both({
           profiles:
             operation === "delete"
@@ -242,7 +243,7 @@ describe("native subagent Host watchers", () => {
       const storage = join(homeDir, "linked-storage");
       await mkdir(join(storage, "agents"), { recursive: true });
       await mkdir(join(storage, "v2"));
-      // Windows 使用无需管理员权限的目录 junction；其余平台使用目录符号链接。
+      // Windows uses a directory junction (no admin rights needed); other platforms use a directory symlink.
       await symlink(
         storage,
         join(homeDir, ".zcode"),
@@ -371,7 +372,7 @@ describe("native subagent Host watchers", () => {
       await mkdir(join(home, "workspace", ".zcode"), { recursive: true });
     });
     const root = join(f.workspace.workspacePath, ".zcode", "agents");
-    // 目标缺失时，连临时监听的空父目录也可能被整体移走。
+    // When the target is missing, even the temporarily watched empty parent directory can be moved away wholesale.
     await rename(
       join(f.workspace.workspacePath, ".zcode"),
       join(f.workspace.workspacePath, "saved"),
@@ -458,7 +459,7 @@ describe("native subagent Host watchers", () => {
       await f.both({ profiles: [] });
       await f.a.setEnabled({ agentId: agent.id, enabled: true });
       await f.both({ profiles: [{ name: "researcher" }] });
-      // state 无读取权限使迁移失败；先写入的新 Markdown 是真实磁盘事实，watcher 仍会观察。
+      // Unreadable state makes the migration fail; the Markdown written beforehand is a real on-disk fact that the watcher still observes.
       const statePath = join(f.homeDir, ".zcode", "v2", "agents-state.json");
       await mkdir(join(f.homeDir, ".zcode", "v2"), { recursive: true });
       await writeFile(statePath, JSON.stringify({ disabledAgentIds: [] }));

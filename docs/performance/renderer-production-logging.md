@@ -1,30 +1,47 @@
-# Renderer 生产日志策略
+# Renderer Production Logging Policy
 
-## 背景
+## Background
 
-Renderer 层运行在桌面窗口和 Web 远控页面内，日志调用会和 React 渲染、消息流处理、远控恢复链路抢主线程时间。历史上 UI 日志统一写 console，并在桌面端通过 `window.zcode.log` 转发到 main 进程落盘；当会话流、工具调用、任务快照和远控同步变多时，这些同步格式化、IPC 转发和文件写入会放大生产版本的性能成本。
+The renderer runs inside the desktop window and the Web remote page, and log calls compete with React
+rendering, message stream handling and remote recovery for main-thread time. UI logs used to be written
+to console and forwarded on desktop through `window.zcode.log` to the main process for disk logging;
+when sessions streams, tool calls, task snapshots and remote sync grow, this synchronous formatting, IPC
+forwarding and file writing amplifies production performance cost.
 
-## 目标
+## Goals
 
-- 生产构建里的 renderer 本地日志默认不输出。
-- 生产构建里的 UI 日志不再通过 `window.zcode.log` 转发到 main 进程落盘。
-- 开发构建继续保留 renderer console 和桌面日志桥，方便本地排查。
-- 正式监控链路不属于本策略的关闭范围，例如 ARMS、telemetry、crash capture、用户主动导出日志、服务层和 host/main 进程日志。
+- Local renderer logs are off by default in production builds.
+- UI logs in production builds are no longer forwarded to the main process through `window.zcode.log`
+  for disk logging.
+- Development builds keep the renderer console and the desktop log bridge for local debugging.
+- Formal monitoring chains are outside this policy's scope: ARMS, telemetry, crash capture, user-
+  initiated log export, service-layer logs and host/main process logs.
 
-## 环境边界
+## Environment boundary
 
-日志开关以 Vite 构建态 `import.meta.env.PROD` 为准，而不是 `ZCODE_ENV`。原因是 `ZCODE_ENV=production` 只表示连接生产产品环境；`dev:desktop:prod` 仍是本地开发运行态，仍需要 renderer 日志辅助调试。只有真实生产构建才应让 renderer 本地日志 no-op。测试或诊断场景可以通过 `globalThis.__ZCODE_RENDERER_DISABLE_LOGGING__ === true` 强制关闭 renderer 日志；该开关只能额外关闭日志，不能在生产构建中重新打开日志。
+The log switch follows the Vite build state `import.meta.env.PROD`, not `ZCODE_ENV`:
+`ZCODE_ENV=production` only means connecting to the production product environment, and
+`dev:desktop:prod` is still a local development runtime that needs renderer logs for debugging. Only a
+real production build makes local renderer logs no-op. Tests or diagnostics may force-disable renderer
+logs with `globalThis.__ZCODE_RENDERER_DISABLE_LOGGING__ === true`; that switch can only disable logging
+additionally and never re-enables it in a production build.
 
-## 实现约束
+## Implementation constraints
 
-- `packages/ui/src/logger.ts` 是 UI 层唯一日志入口；生产构建中 `debug` / `info` / `warn` / `error` / `trace` 都直接返回，不写 console、不转发桌面 bridge。
-- `packages/client` 中面向 renderer 的连接日志必须遵循同一生产构建边界，避免绕过 UI logger。
-- 唯一例外是 `logger.logMemoryDiagnostics`：它是 [进程内存本地诊断日志](../monitoring/memory-diagnostics-log.md) 的正式监控出口，最多每 60 秒一行、有变化才写，生产构建仍经桌面桥落盘；Web 端无桥时 no-op。其他模块不得借用它输出业务日志。
-- 桌面和 Web renderer 入口里的 console 调试输出只允许在非生产构建执行。
-- Web 远控 relay trace 继续保持开发态限定；高频消息日志不得进入生产 renderer。
+- `packages/ui/src/logger.ts` is the only UI log entry; in production builds `debug` / `info` / `warn` /
+  `error` / `trace` return immediately, writing no console and forwarding to no desktop bridge.
+- Renderer-facing connection logs in `packages/client` must follow the same production-build boundary
+  and must not bypass the UI logger.
+- The only exception is `logger.logMemoryDiagnostics`: it is the formal monitoring exit of the
+  [process memory local diagnostic log](../monitoring/memory-diagnostics-log.md), at most one line per 60
+  seconds and written only on change; production builds still persist it via the desktop bridge, and it
+  is a no-op on Web without a bridge. Other modules must not borrow it for business logs.
+- Console debug output in the desktop and Web renderer entries may run only in non-production builds.
+- Web remote relay trace stays development-only; high-frequency message logs must not enter the
+  production renderer.
 
-## 验证
+## Verification
 
-- 单测覆盖开发构建会输出、生产构建不输出。
-- 运行 `pnpm typecheck`。
-- 运行 `pnpm lint`。
+- Unit tests cover output in development builds and no output in production builds.
+- Run `pnpm typecheck`.
+- Run `pnpm lint`.

@@ -1,6 +1,6 @@
-# Submission 接收与投递
+# Submission Receipt and Delivery
 
-CoreSubmission 固定一次输入的完整意图：
+CoreSubmission deterministically captures the complete intent of a single input:
 
 ```ts
 interface CoreSubmission {
@@ -11,69 +11,71 @@ interface CoreSubmission {
 }
 ```
 
-特殊执行可以携带额外的 execution context，但不会改变 prompt、attachments、mode 和唯一一份
-ModelSelection 必须原子接收的原则。闲时任务的 Request Auth、Ticket、归因信息和 Subagent override
-由执行设计定义；它们不会形成第二套 Selection，Submission 也不携带完整 ProviderConfig 或
-ModelConfig。
+Special executions may carry additional execution context, but prompt, attachments, mode, and the single
+ModelSelection are always received atomically. The Request Auth, Ticket, attribution, and Subagent override
+for idle tasks are defined by the execution design; they form no second Selection, and Submissions carry no
+complete ProviderConfig or ModelConfig.
 
 ## Start now
 
-Core 空闲时，Submission 直接启动新的 Agent Loop：
+When Core is idle, the Submission directly starts a new Agent Loop:
 
 ```text
 Submission B accepted
         |
         +-- Session Selection = B
-        +-- Registry 创建 Model B
-        `-- 启动 Agent Loop B
+        +-- Registry creates Model B
+        `-- Start Agent Loop B
 ```
 
-如果 Model 无法创建，Submission 不会只更新 Session Selection。创建和启动成功后再提交对应状态变化。
+If the Model cannot be created, the Submission does not merely update Session Selection; corresponding state
+changes are submitted only after creation and start succeed.
 
-### 特殊 start-now：闲时任务
+### Special start-now: Idle tasks
 
-闲时 Submission 同样携带标准 ModelSelection，但 execution context 将它标记为只作用于当前 Loop：
+Idle Submissions also carry a standard ModelSelection, but the execution context marks them as applying to
+the current Loop only:
 
 ```text
 Idle Submission accepted while Core is idle
         |
-        +-- App Recent：不变
-        +-- Session Selection：不变
-        +-- Registry 创建闲时 Model
-        +-- Request Auth 在请求期注入
-        `-- 启动闲时 Agent Loop
+        +-- App Recent: unchanged
+        +-- Session Selection: unchanged
+        +-- Registry creates idle Model
+        +-- Request Auth injected during request period
+        `-- Start idle Agent Loop
 ```
 
-这不是临时 Provider，也不是第二套 ModelFactory。Core 忙碌时闲时 Submission 直接拒绝，不进入普通
-Queue；它结束后也不需要“恢复”Session Selection，因为执行前从未改写该状态。
+This is not a temporary Provider, nor a second ModelFactory. When Core is busy, idle Submissions are directly
+rejected and do not enter the ordinary Queue; after they end there is nothing to "restore" because Session
+Selection was never rewritten.
 
 ## Queue
 
-### Todo151：提交字段保真
+### Todo151: Submission field fidelity
 
-CLI 的 `TurnInputIntentMetadata -> QueueItem -> TurnInputIntentMetadata` 必须保留模型选择、权限、
-附件／共享上下文和来源关联。QueueItem 是协议投影，同时被提升执行路径读取，不能把字段遗漏
-当成纯展示问题。原位编辑只改正文；重排不改内容；自动／手动提升保留原 sourceCommandId。
-兼容旧事件时可保留同一项已有字段，不能读取当前 Composer 或可变 Session 补成新选择。
-新增 Plan 状态沿同一路径传递，false 与缺失不同。不引入 Host 队列或新的调度／重放语义。
+The CLI's `TurnInputIntentMetadata -> QueueItem -> TurnInputIntentMetadata` must preserve model selection,
+permissions, attachments/shared context, and source association. QueueItem is a protocol projection,
+simultaneously read by the elevated execution path; field omissions are not mere display issues. In-place
+editing modifies only the body; reordering does not change content; automatic/manual elevation preserves the
+original sourceCommandId. Compatibility with old events may preserve the same item's existing fields;
+reading the current Composer or a mutable Session to fabricate new selections is not allowed. New Plan
+states pass along the same path, and `false` differs from missing. Introduce no Host queues or new
+scheduling/replay semantics.
 
-Core 忙碌时，Queue item 保存完整 Submission：
+When Core is busy, Queue items save the complete Submission: `prompt`, `attachments`, `mode`,
+`ModelSelection`.
 
-```text
-Queued Submission
-├─ prompt
-├─ attachments
-├─ mode
-└─ ModelSelection
-```
+When entering the Queue, the App may update App Recent; Session Selection and Active Model keep their
+current execution values. Session Selection is updated and the Model created only when the Queue item is
+truly dequeued and starts a new Loop.
 
-进入 Queue 时，App 可以更新 App Recent；Session Selection 和 Active Model 保持当前执行值。Queue item 真正出队并启动新 Loop 时，再更新 Session Selection 并创建 Model。
+Queue reordering does not change any Submission content. If the product later allows editing queued items'
+models, the operation directly modifies that Queue item's ModelSelection as a traceable explicit event.
 
-Queue 重排不改变任何 Submission 内容。未来若允许编辑排队项的模型，操作需要直接修改该 Queue item 的 ModelSelection，并形成可追溯的显式事件。
+## Guide and "Immediate"
 
-## Guide 与“立即”
-
-Guide 是“立即”进入当前 Agent Loop 的 Core 语义：
+Guide is the Core semantics for "Immediate" entering the current Agent Loop:
 
 ```text
 Active Loop
@@ -82,38 +84,44 @@ Active Loop
           +
 Guide Submission B
           |
-          | 创建 Model B 并完成 admission
+          | Create Model B and complete admission
           v
 Active Loop
-├─ Context 加入 Guide input
+├─ Context adds Guide input
 ├─ Session Selection A -> B
 └─ Active Model A -> B
 ```
 
-Context 注入、Session Selection 更新和 Active Model 切换构成一个接收结果。创建 Model、Context 注入或 admission 失败时，不提交其中一部分；完整 Submission 转入普通 Queue。
+Context injection, Session Selection update, and Active Model switching form a single receipt result. When
+creating the Model, injecting Context, or admission fails, do not submit only part of it; the complete
+Submission falls into the ordinary Queue.
 
-已经发出的模型请求继续由 Model A 完成，Usage 归因到 A。切换发生在 Model Step 边界，后续 Step 和后续自动 Compact 使用 Model B。
+Already-issued model requests continue to be completed by Model A, with Usage attributed to A. The switch
+occurs at the Model Step boundary; subsequent Steps and subsequent automatic Compact use Model B.
 
-“立即”可以来自当前 Composer，也可以来自已有 Queue item。两种情况都使用目标 Submission 已经保存的 Selection，不读取点击时 Composer 的当前选择。
+"Immediate" can come from the current Composer or an existing Queue item. Both use the Selection already
+saved by the target Submission, not the current Composer selection at the moment of clicking.
 
-## App Recent 与 Session Selection
+## App Recent and Session Selection
 
 ```text
-App 接受 Submission
-├─ start-now -> 更新 App Recent
-├─ queue     -> 更新 App Recent
-└─ Guide     -> 更新 App Recent
+App accepts Submission
+├─ start-now -> update App Recent
+├─ queue     -> update App Recent
+└─ Guide     -> update App Recent
 
-Core 开始执行 Submission
-├─ start new Loop -> 更新 Session Selection
-└─ accept Guide   -> 更新 Session Selection
+Core begins executing Submission
+├─ start new Loop -> update Session Selection
+└─ accept Guide   -> update Session Selection
 ```
 
-这两个时间点解决不同问题：App Recent 服务下一次新建 App Session；Session Selection 服务当前 Session 的延续执行。排队但尚未执行的 Submission 不提前改变 Session Selection。
+These two time points solve different problems: App Recent serves the next new App Session; Session
+Selection serves the continued execution of the current Session. Submissions queued but not yet executed do
+not prematurely change Session Selection.
 
-## Edit 与 Retry
+## Edit and Retry
 
-Edit 和 Retry 以已有 Submission 为来源：
+Edit and Retry take existing Submissions as their source:
 
 ```text
 Source Submission
@@ -124,14 +132,17 @@ Source Submission
         └─ Retry -> prompt X + ModelSelection A
 ```
 
-缺省继承源 Selection，使操作不受当前 Composer 状态影响。如果产品增加“使用当前选择重试”，该命令应显式提供新的 ModelSelection，并生成新的完整 Submission。
+Default inheritance of the source Selection keeps the operation independent of the current Composer state.
+A future "retry with current selection" command must explicitly provide a new ModelSelection and generate a
+new complete Submission.
 
-## 接收约束
+## Receive Constraints
 
-- Submission 的 Selection 在 Entry 提交时固定。
-- start-now、Queue 和 Guide 共用同一个 Submission 类型。
-- App Recent 的更新不代表 Submission 已经开始执行。
-- Session Selection 的更新必须与执行接收保持一致。
-- Active Model 切换不修改旧 Model，也不重新归因已经发出的请求。
-- 投递失败时保留完整 Submission，不留下只更新部分状态的中间结果。
-- 闲时特殊 start-now 不写 App Recent 或 Session Selection，也不进入普通 Queue。
+- The Submission's Selection is fixed at Entry submission.
+- start-now, Queue, and Guide share the same Submission type.
+- App Recent updates do not mean the Submission has started executing.
+- Session Selection updates must be consistent with execution receipt.
+- Active Model switching does not modify the old Model or re-attribute already-issued requests.
+- Delivery failures retain the complete Submission, leaving no intermediate results with only partially
+  updated state.
+- Idle special start-now writes no App Recent or Session Selection and enters no ordinary Queue.

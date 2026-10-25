@@ -1,0 +1,164 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-dream-background",
+  "spec": "./test/e2e/conversation-session/conversation-session-dream-background.test.ts",
+  "fixtures": [
+    {
+      "id": "dream-title",
+      "metadata": {
+        "kind": "common",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "Deterministic manual Dream lifecycle, concurrent input and cancellation window."
+      },
+      "maxMatches": 2,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["Generate a concise title", "E2E_DREAM_"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": "{\"title\":\"Dream background E2E\"}"
+      }
+    },
+    {
+      "id": "dream-extraction",
+      "metadata": {
+        "kind": "ignore",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "Deterministic manual Dream lifecycle, concurrent input and cancellation window."
+      },
+      "maxMatches": 10,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["You are now acting as the memory extraction subagent", "E2E_DREAM_"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": "No durable facts."
+      }
+    },
+    {
+      "id": "dream-read",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "controlled-stream",
+        "source": "synthetic",
+        "syntheticReason": "Deterministic manual Dream lifecycle, concurrent input and cancellation window."
+      },
+      "maxMatches": 2,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["# Dream: Memory Consolidation", "E2E_DREAM_"],
+        "bodyExcludes": ["dream_read"]
+      },
+      "response": {
+        "statusCode": 200,
+        "delayMs": 1000,
+        "toolUse": {
+          "id": "dream_read",
+          "name": "Read",
+          "input": {
+            "file_path": "{{memoryRoot}}/MEMORY.md"
+          }
+        }
+      }
+    },
+    {
+      "id": "dream-final",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "controlled-stream",
+        "source": "synthetic",
+        "syntheticReason": "Deterministic manual Dream lifecycle, concurrent input and cancellation window."
+      },
+      "maxMatches": 2,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["# Dream: Memory Consolidation", "dream_read", "E2E_DREAM_"]
+      },
+      "response": {
+        "statusCode": 200,
+        "delayMs": 45000,
+        "text": "E2E_DREAM_SUMMARY"
+      }
+    },
+    {
+      "id": "dream-main-history",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "Deterministic manual Dream lifecycle, concurrent input and cancellation window."
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_DREAM_HISTORY"],
+        "bodyExcludes": [
+          "# Dream: Memory Consolidation",
+          "Generate a concise title",
+          "You are now acting as the memory extraction subagent"
+        ]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": "E2E_DREAM_HISTORY_DONE"
+      }
+    },
+    {
+      "id": "dream-main-current",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "Deterministic manual Dream lifecycle, concurrent input and cancellation window."
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_DREAM_CURRENT"],
+        "bodyExcludes": [
+          "# Dream: Memory Consolidation",
+          "Generate a concise title",
+          "You are now acting as the memory extraction subagent"
+        ]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": "E2E_DREAM_CURRENT_DONE"
+      }
+    },
+    {
+      "id": "dream-main-parallel",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "Deterministic manual Dream lifecycle, concurrent input and cancellation window."
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_DREAM_PARALLEL"],
+        "bodyExcludes": [
+          "# Dream: Memory Consolidation",
+          "Generate a concise title",
+          "You are now acting as the memory extraction subagent"
+        ]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": "E2E_DREAM_PARALLEL_DONE"
+      }
+    }
+  ]
+}

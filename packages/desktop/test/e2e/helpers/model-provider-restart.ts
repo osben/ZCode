@@ -83,10 +83,10 @@ export async function seedHighspeedLoginCredential() {
 }
 
 /**
- * 为需要实际进入 BigModel Start Plan 的 E2E 补齐 zcode JWT。
+ * Fills in the zcode JWT for E2E cases that need to actually enter BigModel Start Plan.
  *
- * Start Plan 与个人 Coding Plan 共用 OAuth 用户身份，但请求授权读取的是
- * `zcodejwttoken`；只 seed business access token 会让菜单把 Start Plan 判成未认证。
+ * Start Plan and the personal Coding Plan share the OAuth user identity, but request authorization reads
+ * `zcodejwttoken`; seeding only the business access token makes the menu judge Start Plan as unauthenticated.
  */
 export async function seedBigModelStartPlanCredential() {
   await writeJsonPatch(CREDENTIALS_FILE, {
@@ -116,9 +116,10 @@ export async function seedReplayProvider(params: {
   const provider: PersonalProviderConfigSeed = {
     id: params.id,
     label: params.name,
-    // 内建 account provider 的模型规则按 anthropic-messages 匹配；若用 OpenAI Chat Completions
-    // 格式覆盖连接配置，GLM builtin model rules 不会命中，模型在 Registry 中
-    // 会因缺少完整 option/properties 被过滤，UI 菜单就看不到该计划模型。
+    // Built-in account provider model rules match on anthropic-messages; overriding the connection config
+    // with the OpenAI Chat Completions format means the GLM builtin model rules never hit, the model gets
+    // filtered out of the Registry for missing complete option/properties, and the plan model never shows
+    // up in the UI menu.
     apiFormat: params.id.startsWith("account:") ? "anthropic-messages" : "openai-chat-completions",
     apiKey: params.apiKey ?? getUpstreamApiKey(),
     baseURL,
@@ -168,7 +169,8 @@ export async function readLastSelectedAgentConfig() {
       const raw = window.localStorage.getItem(`${keyPrefix}:${workspacePath}`);
       if (!raw) return null;
       const recent: unknown = JSON.parse(raw);
-      // Recent 扩展为模型与权限并列保存；重启断言同时兼容旧的纯模型种子。
+      // Recent is extended to persist model and permission side by side; the restart assertion stays
+      // compatible with the old model-only seed.
       const record = recent && typeof recent === "object" && !Array.isArray(recent) ? recent : null;
       const selection =
         record && "modelSelection" in record ? record.modelSelection : (record ?? recent);
@@ -233,16 +235,18 @@ export async function waitForLastSelectedAgentConfig(params: {
 
 export async function seedGlobalAgentReasoningLevel(thoughtLevel: string) {
   const databasePath = join(paths.storageRoot, "cli", "db", "db.sqlite");
-  // Bug 根因：workspace UI ready 不代表 Agent DB migration ready；直接打开 writable DB
-  // 会在父目录尚未创建时报 unable to open，甚至可能抢先生成缺少 schema 的空库。
+  // Root cause of the bug: workspace UI ready does not mean the Agent DB migration is ready; opening the
+  // writable DB directly reports "unable to open" when the parent directory does not exist yet, and may
+  // even race ahead and create an empty DB missing the schema.
   await waitForSqliteTable(databasePath, "local_setting");
   const db = new DatabaseSync(databasePath);
   const now = Date.now();
   try {
     db.exec("pragma busy_timeout = 5000");
-    // Bug 根因：同一 spec 内 Agent SQLite 会跨 case 保留上一条显式 thought，
-    // 只 seed renderer localStorage 不能隔离跨模型默认值。这里固定 Agent 侧前置状态，
-    // 避免 I39 的 GLM high 泄漏到 I42，让用例真正验证 Turbo enabled → GLM 默认值。
+    // Root cause of the bug: within the same spec the Agent SQLite keeps the previous explicit thought
+    // across cases; seeding only the renderer localStorage cannot isolate cross-model defaults. Here we
+    // pin the Agent-side pre-state so I39's GLM high does not leak into I42, letting the case really
+    // verify Turbo enabled → GLM default.
     db.prepare(`
       insert into local_setting (
         scope, scope_id, namespace, key, value, schema_version, time_created, time_updated
@@ -274,8 +278,9 @@ export async function waitForDraftThoughtLevelState(params: {
   let latest: Awaited<ReturnType<typeof getV4DraftThoughtState>> | null = null;
   await browser.waitUntil(
     async () => {
-      // Bugfix：legacy workspace 目录可能仍属于上一模型；当前值与能力集优先读 V4
-      // 当前模型投影，避免把 Turbo 二态误判成旧模型的 off/high/max。
+      // Bugfix: a legacy workspace directory may still belong to the previous model; the current value
+      // and capability set are read from the V4 current-model projection first, avoiding misjudging the
+      // Turbo two-state as the old model's off/high/max.
       latest = await getV4DraftThoughtState(paths.workspace);
       const actualValues = [...latest.values].sort();
       const expectedValues = [...params.values].sort();
@@ -337,7 +342,7 @@ export async function waitForPlanModelIoRequest(expectedText: string) {
               return true;
             }
           } catch {
-            // model IO 正在追加时可能读到半行，下一轮重试即可。
+            // While model IO is appending, a partial line may be read; the next retry round handles it.
           }
         }
       }

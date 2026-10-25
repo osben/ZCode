@@ -290,8 +290,8 @@ export function ExecuteToolCallBlock(context: ToolCallBlockRenderContext) {
   const failureVisibleText =
     toolCall.status === "failed" ? (errorText ?? resultText ?? undefined) : undefined;
   const secondaryTextNode = useMemo(
-    // 收起态 command 属于摘要正文，使用 UI sans 与同一行文案保持一致；
-    // 展开后的完整命令仍保留 font-mono，便于阅读和复制技术内容。
+    // In the collapsed state, command is part of the summary text and uses the UI sans font to match
+    // the rest of the row. Keep the full command in font-mono when expanded for readability and copying.
     () => <code className="truncate font-sans">{secondaryText}</code>,
     [secondaryText],
   );

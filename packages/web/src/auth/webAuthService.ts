@@ -34,7 +34,7 @@ interface WebAuthLoginOptions {
   devReturnTo?: string;
   appReturnTo?: string;
   redirectUri?: string;
-  /** 缺省 zai，保持 /remote 等既有入口行为不变。 */
+  /** Defaults to zai so existing entry points such as /remote keep their behavior. */
   provider?: WebOAuthProviderId;
 }
 
@@ -149,8 +149,8 @@ export class WebAuthService {
       throw new Error("OAuth callback missing code");
     }
 
-    // provider 与回调地址必须取跳转前记下的那条：authorize 参数名和 token 响应里 access_token
-    // 的位置都是 provider 特定的，token 请求也要用授权时的完整回调地址。
+    // The provider and redirect URI must come from the record saved before the redirect: authorize parameter names and the location of access_token
+    // in the token response are provider-specific, and the token request must also use the full redirect URI from authorization.
     const pendingLogin = this.repo.takePendingLogin(statePayload.nonce);
     if (!pendingLogin) {
       throw new Error("OAuth CSRF 检测失败");
@@ -187,7 +187,7 @@ export class WebAuthService {
     return this.repo.loadZCodeJwtToken();
   }
 
-  /** 设备页账号行的展示资料；只读，不参与登录判断。 */
+  /** Display data for the account row on the device page; read-only, it does not participate in the login decision. */
   getActiveAccount(): {
     displayName: string;
     avatarUrl?: string;

@@ -1,18 +1,17 @@
 /**
- * ZCode Session Store 导航切片 —— 任务前进/后退历史管理
+ * ZCode Session Store navigation slice — task forward/back history management.
  *
- * 从 zcodeSessionStore.ts 拆分出来，封装所有任务导航相关的初始状态和 action。
- * 通过 createNavigationSlice(set, get) 返回可直接展开到 store 的对象。
+ * Split from zcodeSessionStore.ts; encapsulates initial state and actions related to task navigation.
+ * createNavigationSlice(set, get) returns an object that can be spread directly into the store.
  */
 import { Emitter } from "@zcode/rpc";
 import {
   createTaskNavigationHistory,
-  goBack as navGoBack,
-  goForward as navGoForward,
   pushAutomationsNavEntry,
   pushPluginStoreNavEntry,
-  removeTaskFromHistory,
+  stepTaskNavigationHistory,
   type AutomationsNavigationTab,
+  type TaskNavigationDirection,
   type WorkspaceNavEntry,
   type TaskNavEntry,
 } from "@/lib/taskNavigationHistory.js";
@@ -25,6 +24,21 @@ type SetFn = (
     | ((state: ZCodeSessionStoreState) => ZCodeSessionStoreState | Partial<ZCodeSessionStoreState>),
 ) => void;
 type GetFn = () => ZCodeSessionStoreState;
+type TaskNavAvailability = (entry: TaskNavEntry) => boolean;
+
+const alwaysAvailable: TaskNavAvailability = () => true;
+
+// Stepping and purging happen in one store update, so the caller never observes a cursor that a removal moved.
+function stepTaskNav(
+  set: SetFn,
+  get: GetFn,
+  direction: TaskNavigationDirection,
+  isAvailable: TaskNavAvailability,
+): WorkspaceNavEntry | null {
+  const step = stepTaskNavigationHistory(get().taskNavHistory, direction, isAvailable);
+  set({ taskNavHistory: step.history });
+  return step.entry;
+}
 
 // 查看事实只由完整导航提交发布；tab 激活与历史游标移动都可能暴露缓存任务，不能代替提交。
 const taskNavigationCommitted = new Emitter<TaskNavEntry>();
@@ -34,13 +48,12 @@ export function notifyTaskNavigationCommitted(target: Omit<TaskNavEntry, "kind">
 }
 
 /**
- * 创建导航切片，供 store creator 展开使用：
+ * Creates a navigation slice for the store creator to spread:
  * `...createNavigationSlice(set, get)`
  */
 export function createNavigationSlice(set: SetFn, get: GetFn) {
   return {
     taskNavHistory: createTaskNavigationHistory(),
-
     taskNavPushAutomations: (
       workspacePath: string,
       workspaceIdentity?: string,
@@ -68,32 +81,11 @@ export function createNavigationSlice(set: SetFn, get: GetFn) {
       }));
     },
 
-    taskNavGoBack: (): WorkspaceNavEntry | null => {
-      const state = get();
-      const result = navGoBack(state.taskNavHistory);
-      if (!result) {
-        return null;
-      }
+    taskNavGoBack: (isAvailable: TaskNavAvailability = alwaysAvailable): WorkspaceNavEntry | null =>
+      stepTaskNav(set, get, "back", isAvailable),
 
-      set({ taskNavHistory: result.history });
-      return result.entry;
-    },
-
-    taskNavGoForward: (): WorkspaceNavEntry | null => {
-      const state = get();
-      const result = navGoForward(state.taskNavHistory);
-      if (!result) {
-        return null;
-      }
-
-      set({ taskNavHistory: result.history });
-      return result.entry;
-    },
-
-    removeTaskFromNavHistory: (taskId: string) => {
-      set((state) => ({
-        taskNavHistory: removeTaskFromHistory(state.taskNavHistory, taskId),
-      }));
-    },
+    taskNavGoForward: (
+      isAvailable: TaskNavAvailability = alwaysAvailable,
+    ): WorkspaceNavEntry | null => stepTaskNav(set, get, "forward", isAvailable),
   };
 }

@@ -37,6 +37,10 @@ export type WindowHostControllerTaskListItem = ZCodeTaskListItem & {
   remoteSessionId?: string;
   sourceAvailability: "online" | "offline";
   liveStatus: WindowHostControllerTaskRow["liveStatus"];
+  executionWorktree?: WindowHostControllerTaskRow["executionWorktree"];
+  executionWorktreeMissing?: WindowHostControllerTaskRow["executionWorktreeMissing"];
+  incognito?: WindowHostControllerTaskRow["incognito"];
+  worktreePreparation?: WindowHostControllerTaskRow["worktreePreparation"];
   activity?: WindowHostControllerTaskRow["activity"];
 };
 
@@ -56,8 +60,8 @@ export interface WindowHostTaskUnreadSignal {
 }
 
 /**
- * 窗口级 Controller 服务只承载列表投影与跨 source 路由。
- * conversation/file/git/terminal 仍由 attachment 对应的 scoped facade 提供。
+ * The window-level Controller service carries only list projections and cross-source routing.
+ * conversation/file/git/terminal are still provided by the scoped facade for each attachment.
  */
 export interface IWindowControllerService {
   deleteArchivedTask(params: { address: WindowHostTaskAddress }): Promise<boolean>;

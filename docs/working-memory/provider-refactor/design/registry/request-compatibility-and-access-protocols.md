@@ -1,247 +1,150 @@
-# 模型请求兼容与 Provider Access 产品协议
+# Model Request Compatibility and Provider Access Product Protocols
 
-> 状态：当前有效设计；Compatibility Config 已删除
+> Current effective design; Compatibility Config has been deleted.
 >
-> 最近更新：2026-10-07（官方版本安全校验细节迁出，本文改为中性概括）
+> Last updated: 2026-10-07 (official-version security verification details moved out; this document is now a neutral summary).
 
-本文划定模型历史回放、API 请求编码差异与 Provider Access/产品协议的归属。Model Config 不再提供通用
-Compatibility 容器；协议差异必须归入已有的真实领域契约，否则不进入配置。
+This document owns model historical replay, API request encoding differences, and Provider Access/product protocols. Model Config provides no universal Compatibility container; a protocol difference must belong to an existing real domain contract or it does not enter config.
 
-## 1. 总原则
+## 1. General Principles
 
-模型响应进入 ZCode 后，默认遵守无损回放原则：
+After model responses enter ZCode, the default compliance principle is lossless replay:
 
 ```text
-Provider 返回的真实 content / reasoning / metadata
-                        |
-                        v
-              Canonical Message 保存
-                        |
-                        v
-              历史消息与持久化
-                        |
-                        v
-              Adapter 请求序列化
-                        |
-                        v
-          同一模型续轮时完整、原样写回
+Real content / reasoning / metadata returned by Provider
+  -> Canonical Message saving
+  -> Historical messages and persistence
+  -> Adapter request serialization
+  -> Complete, verbatim rewriting on same-model re-runs
 ```
 
-“原样”指语义和值不变，不要求中间每一层使用相同的 wire JSON。Provider 的非标准字段如果会被 AI SDK 的标准类型
-丢弃，Adapter 可以在输入/输出边界做无损投影；投影只能搬运真实返回的数据，不能借机猜测、补造或修复不存在的值。
+"Verbatim" means semantic and value equality, not identical wire JSON at every layer. Where AI SDK standard types would discard a Provider's non-standard fields, Adapters may do lossless projections at the input/output boundaries — projections only move truly returned data and never guess, fabricate, or repair values.
 
-新增 Adapter 协议投影必须同时满足下列条件：
+A new Adapter protocol projection requires all of:
 
-1. 当前 AI SDK 或目标 Adapter 的标准编码不能表达该服务的真实协议；
-2. 行为能够由当前官方契约、ZCode 产品服务契约或可复现真实请求证明；
-3. 归属已有 Model/Provider 契约，Adapter 不需要按具体 ID hardcode；
-4. 失败行为明确，兼容投影不能静默丢数据；
-5. 它不是另一领域的 Access、安全校验、排队或鉴权状态机。
+1. The current AI SDK or target Adapter's standard encoding cannot express the service's real protocol.
+2. Behavior is provable by current official contracts, ZCode product/service contracts, or reproducible real requests.
+3. It belongs to an existing Model/Provider contract; Adapters hardcode no specific IDs.
+4. Failure is explicit; compatibility projections never silently drop data.
+5. It is not another domain's Access, security verification, queuing, or auth state machine.
 
-不得为协议特例重新建立通用 Compatibility 字段或 Personal Model Rule。
+No universal Compatibility fields or Personal Model Rules are re-established for protocol exceptions.
 
-## 2. 字段归属裁决
+## 2. Field Ownership Decisions
 
-| 现有字段/行为                                 | 最终归属                                    | 裁决                                                                                           |
-| --------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| OpenAI-compatible reasoning 回放              | 无额外配置                                  | 保留真实 reasoning，由当前 OpenAI-compatible SDK 编码 `reasoning_content`                      |
-| Anthropic-compatible 无 thinking 的 tool-call | Canonical replay                            | 不为空 tool-call 补造 synthetic thinking；只回放服务端真实返回内容                             |
-| Anthropic thinking signature                  | Canonical reasoning metadata + Adapter 投影 | 保存真实 signature/redacted data 并原样回放；不得制造真实签名                                  |
-| Z.ai text/tool block signature 候选 patch     | 不采用                                      | 不在当前 HEAD/staging，不把外部分支候选带入本次重构；可独立实测服务 wire，但测试不等于自动合入 |
-| `omitMaxOutputTokens`                         | 删除                                        | 旧 GitHub Copilot 特判不为当前未正式支持的接入保留                                             |
-| `maxOutputTokensRequestField`                 | 删除                                        | 当前先不支持 Snowflake Cortex，不为它保留字段、Rule 或请求体改写                               |
-| 官方版本访问安全校验字段                      | `zhipu-account/start-plan`                  | 从 Model Config 移除；动态材料仍由官方版本产品链路提供                                         |
-| `failureProtocol`                             | `zhipu-account/off-peak`                    | 字符串 marker、跨进程错误与 UI 状态机行为保持不变                                              |
-| 官方版本请求安全校验准入                      | Provider 请求协议                           | 由显式 Access 与官方域名决定是否进入，具体规则只在官方版本维护                                 |
-| `requiresMfjsToolSchema`                      | Model Config                                | 保留模型/API 请求编码事实；仅为显式匹配的 Model Config 启用，失败时报错；设置页置于最后        |
+| Existing field/behavior                         | Final ownership                                   | Decision                                                                                                                                                          |
+| ----------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenAI-compatible reasoning replay              | No additional config                              | Retain real reasoning, encoded by current OpenAI-compatible SDK `reasoning_content`                                                                               |
+| Anthropic-compatible tool-call without thinking | Canonical replay                                  | Never fabricate synthetic thinking for empty tool-calls; replay only what the server truly returns                                                                |
+| Anthropic thinking signature                    | Canonical reasoning metadata + Adapter projection | Save real signature/redacted data and replay verbatim; never fabricate signatures                                                                                 |
+| Z.ai text/tool block signature candidate patch  | Not adopted                                       | Not in current HEAD/staging; do not import candidate branches from external branches into this refactor; independent real-wire tests allowed but never auto-merge |
+| `omitMaxOutputTokens`                           | Deleted                                           | The old GitHub Copilot special case is not kept for currently unsupported integrations                                                                            |
+| `maxOutputTokensRequestField`                   | Deleted                                           | Snowflake Cortex currently unsupported; keep no fields, Rules, or request body rewriting for it                                                                   |
+| Official-version access security verification   | `zhipu-account/start-plan`                        | Removed from Model Config; dynamic materials come from the official-version product pipeline                                                                      |
+| `failureProtocol`                               | `zhipu-account/off-peak`                          | String marker, cross-process errors, and UI state machine behavior unchanged                                                                                      |
+| Official-version request security verification  | Provider request protocol                         | Decided by explicit Access and official domain; specific rules are maintained only in the official version                                                        |
+| `requiresMfjsToolSchema`                        | Model Config                                      | Kept as model/API request-encoding fact; enabled only on explicit Model Config match; errors on failure; placed last on the settings page                         |
 
-## 3. Reasoning 历史回放
+## 3. Reasoning Historical Replay
 
 ### 3.1 OpenAI-compatible
 
-ZCode 必须保存服务端真实返回的 reasoning block，并把同一段 canonical 历史交回 Adapter。当前
-`@ai-sdk/openai-compatible` 已能把 assistant reasoning content 编码为 `reasoning_content`，因此不再需要
-`withOpenAiCompatibleReasoningContent()` 重新提取、删除 reasoning part 或为空 tool-call 制造
-`reasoning_content: ""`。
+ZCode saves the reasoning block the server truly returns and hands the same canonical history back to the Adapter. The current `@ai-sdk/openai-compatible` already encodes assistant reasoning as `reasoning_content`, so `withOpenAiCompatibleReasoningContent()` no longer needs to re-extract, strip reasoning, or manufacture `reasoning_content: ""` for empty tool-calls. Chain: real `reasoning_content` → AI SDK reasoning part + provider metadata → ZCode canonical reasoning block → AI SDK assistant reasoning part → OpenAI-compatible SDK `reasoning_content`.
 
-目标链路为：
+If a future SDK regresses, discover it through request-body contract tests and fix it at the SDK boundary; never restore a second fact source keyed by model name.
 
-```text
-真实 reasoning_content
-        |
-        v
-AI SDK reasoning part + provider metadata
-        |
-        v
-ZCode canonical reasoning block
-        |
-        v
-AI SDK assistant reasoning part
-        |
-        v
-OpenAI-compatible SDK 编码 reasoning_content
-```
+### 3.2 Standard Anthropic Behavior
 
-如果未来 SDK 版本回归，应通过请求体契约测试发现并在 SDK 边界修复，不能恢复按模型名判断的第二事实源。
-
-### 3.2 Anthropic 标准行为
-
-Anthropic 的真实 thinking block、空 thinking、signature 和 redacted thinking 必须完整保存并在 tool-use 续轮中
-原样回放。以下两种“空”必须区分：
+Anthropic's real thinking blocks, empty thinking, signatures, and redacted thinking are saved completely and replayed verbatim in tool-use re-runs. Distinguish two "empties":
 
 ```text
-服务端返回 empty thinking + real signature
-└─ 真实响应事实，必须原样保存和回放
+Server returns empty thinking + real signature
+└─ Real response fact; save and replay verbatim
 
-服务端完全没有返回 thinking
-└─ 默认不能凭空制造 empty thinking / empty signature
+Server returns no thinking at all
+└─ Never fabricate empty thinking / empty signatures
 ```
 
-有些 Anthropic-compatible 流把真实 thinking signature 放在 `content_block_start`，而 AI SDK 只读取
-`signature_delta`。`anthropic-stream-compat` 可以把这份已经收到的真实值投影为 SDK 能识别的标准事件；这属于无损
-搬运，不是生成签名。
+Some Anthropic-compatible streams put the real thinking signature in `content_block_start` while AI SDK reads only `signature_delta`. `anthropic-stream-compat` may project that already-received real value into SDK-recognizable standard events — lossless transport, not signature generation.
 
-### 3.3 不合成空 thinking
+### 3.3 No Synthetic Empty Thinking
 
-任何 Anthropic-compatible Provider 都统一执行 canonical replay：服务端返回真实 thinking/signature 时原样保存和
-回放；服务端没有返回时不补造 block 或 signature。该行为不接受 Model ID、Provider ID 或配置开关分流。
+All Anthropic-compatible Providers run canonical replay uniformly: real thinking/signatures are saved and replayed verbatim; absent blocks or signatures are never fabricated. This behavior has no per-Model-ID, per-Provider-ID, or config-switch branching.
 
-2026-09-10 补充：历史签名兼容判断与上述 block 编码规则分开。旧 Coding Plan ID 与同服务的 Individual/Team ID
-可以通过 Adapter 内集中、精确枚举的纯函数判为回放兼容；模型 ID 仍须一致。Z.ai、BigModel 分组隔离，其他
-Provider 保留精确 ID 判断，不新增配置或持久化字段、不重写历史身份，也不把该函数用于选型和鉴权。
-完整边界与验证见 [Reasoning History Replay](../../../../../apps/zcode-cli/docs/design/v2/model/anthropic-reasoning-history-replay.md#coding-plan-provider-identity-compatibility)。
+2026-09-10 supplement: historical-signature compatibility judgment is separate from the block encoding rules. Old Coding Plan IDs and same-service Individual/Team IDs are judged replay-compatible by centralized, precise pure functions inside Adapters; model IDs must still match. Z.ai and BigModel groups stay isolated; other Providers keep precise ID judgment. No new configs or persisted fields; historical identities are not rewritten; the function is never used for selection or auth. Complete boundaries and verification: [Reasoning History Replay](../../../../../apps/zcode-cli/docs/design/v2/model/anthropic-reasoning-history-replay.md#coding-plan-provider-identity-compatibility).
 
-### 3.4 Z.ai text/tool block signature：候选实现不采用
+### 3.4 Z.ai text/tool block signatures: Candidate implementations not adopted
 
-当前 HEAD 与 `origin/staging` 没有 text/tool block signature replay；相关实现只存在于未合入候选分支。本次重构不采用、
-不移植这份候选实现。可以单独对真实 Z.ai 服务做 wire 测试，以确认是否存在非标准 signature；但测试结果只形成新证据，
-不让候选分支自动进入设计。
+Current HEAD and `origin/staging` have no text/tool block signature replay; implementations exist only in unmerged candidate branches, and this refactor adopts or transplants none of them. Real Z.ai service wire tests may run separately to confirm whether non-standard signatures exist, but results are new evidence only and never let candidate branches auto-enter the design.
 
-如果未来基于真实证据重新立项，原则仍只能是“收到什么就传回什么”：
+If this is re-projected later on real evidence, the principle stays "send what you receive": real non-standard `block.signature` → Adapter captures and stores it in block metadata → persistence keeps it → SDK serializer boundary writes the original block back. The standard Anthropic SDK currently allows signatures only on thinking blocks, so real future wire behavior would force an SDK-boundary redesign — missing signatures are never generated and empty thinking never fabricated.
 
-```text
-真实非标准 block.signature
-        |
-        v
-Adapter 捕获并存入对应 block metadata
-        |
-        v
-持久化不丢失
-        |
-        v
-SDK serializer 边界写回原 block
-```
+## 4. Output Token Upper Limit Compatibility
 
-标准 Anthropic SDK 当前只允许 thinking block 携带 signature，所以未来确有该 wire 行为时也只能重新设计 SDK 边界，
-不得生成缺失 signature，也不得补造空 thinking。
+### 4.1 Delete GitHub Copilot Omit Special Judgment
 
-## 4. 输出 Token 上限兼容
+`omitMaxOutputTokens=true` served the old GitHub Copilot + GPT matching. GitHub Copilot is not a Built-in Provider in this round; with no current product contract, the field, Built-in Rules, Runner branches, and related construction tests are deleted. When Copilot is officially integrated, redesign per the then-current interface; never restore old rules as defaults.
 
-### 4.1 删除 GitHub Copilot omit 特判
+### 4.2 Snowflake Cortex Currently Unsupported
 
-`omitMaxOutputTokens=true` 当前用于旧 GitHub Copilot + GPT 匹配。GitHub Copilot 不是本轮正式支持的 Built-in
-Provider，这条历史规则没有当前产品契约支撑，因此删除字段、Built-in Rule、Runner 分支和相关构造测试。未来正式接入
-Copilot 时按当时接口重新设计，不能恢复旧规则作为默认。
+`maxOutputTokensRequestField="max_completion_tokens"` renamed the SDK-generated `max_tokens` only for Snowflake Cortex. Snowflake is unsupported this round: the field, Built-in Rules, request body rewriting, and dedicated tests are deleted with no compatibility reads. Future official support redesigns per the then-current interface; old rules are not restored as default facts.
 
-### 4.2 Snowflake Cortex 暂不支持
+## 5. Provider Access Product Protocols
 
-`maxOutputTokensRequestField="max_completion_tokens"` 当前只为 Snowflake Cortex 把 SDK 生成的 `max_tokens` 改名。
-本轮裁决为暂不支持 Snowflake，因此删除该字段、Built-in Rule、请求体改写与专属测试，不保留兼容读取。未来如果正式
-支持 Snowflake，根据当时接口重新设计，不能把这条旧规则作为默认事实恢复。
+### 5.1 Official Version Access Security Verification
 
-## 5. Provider Access 产品协议
+Start Plans require extra access security verification in official versions. This is a product protocol, not a static model capability or API encoding preference. `access.type=zhipu-account + mode=start-plan` is the only static dispatch fact; dynamic materials are generated and injected by the request-time pipeline and never persisted into Model Config. Implementation lives only in the official version.
 
-### 5.1 官方版本访问安全校验
+### 5.2 Official Version Request Security Verification
 
-Start Plan 在官方版本中需要额外的访问安全校验。它是产品协议，不是某个模型的静态能力或 API 编码偏好。
-`access.type=zhipu-account + mode=start-plan` 是唯一静态分派事实；动态材料由请求期链路生成和注入，
-不持久化进 Model Config。具体实现只在官方版本中维护。
+Individual/Team Coding Plans, explicit manual plan Access, and official-domain requests pass additional request security verification in official versions. Admission rules and implementation are maintained only in the official version; the open design reserves only these boundaries:
 
-### 5.2 官方版本请求安全校验
+- Manual Access types are preserved as-is through override, serialization, key editing, and model binding, and are never downgraded to ordinary `api-key` at save time.
+- Admission judgment uses the configuration snapshot bound to the current Model: it reads no live Registry, modifies no saved Access, Templates, or Model Selection, and adds no migrations.
+- It does not belong to Model Config and never infers admission from model ID, Template ID, or key content.
+- Connection tests, normal requests, sub-tasks, and local/remote executions share the same Adapters; desktop-continuous, mobile-replayable, and Host/Worker state ownership are unchanged.
+- Key acquisition uses `apiKeyManagementUrl` for display metadata only, one entry for personal/team shared templates; no identity-specific link fields, and authentication is never inferred from links (Todo116).
 
-Individual/Team Coding Plan、显式手动套餐 Access 以及官方域名请求在官方版本中会经过额外的请求安全校验，
-具体准入规则与实现只在官方版本中维护。开源设计只保留以下边界：
+### 5.3 Off-Peak Execution Protocol Belongs to Access
 
-- 两种手动 Access 的 type 在覆盖、序列化、编辑 Key 和绑定 Model 时原样保留；不能在保存时降回普通 `api-key`；
-- 准入判断使用本次 Model 已绑定的配置快照，不读取实时 Registry，不修改保存的 Access、Template 或 Model Selection，
-  也不增加迁移；
-- 不属于 Model Config，不按模型 ID、Template ID 或 Key 内容推测准入；
-- 连接测试、普通请求、子任务、本地与远程执行继续走共享 Adapter；不改变桌面 continuous、手机 replayable
-  或 Host/Worker 状态所有权；
-- 获取 Key 仅使用 `apiKeyManagementUrl` 展示元数据，个人／团队共用模板的单一入口，不新增身份专用链接字段，
-  也不由链接推断鉴权（Todo116）。
+Off-Peak queuing, Tickets, and failure retries are execution protocols for accessing the product service, not model facts. `access.type=zhipu-account + mode=off-peak` is the only static dispatch fact.
 
-### 5.3 Off-Peak 执行协议归入 Access
+The Adapter currently throws string errors containing `off-peak-ticket-expired`, which Desktop/Renderers identify by string or regex. This runtime state machine stays equivalent this round — the config ownership migration must not casually convert it to structured errors. Maintained: delete Model Config `failureProtocol` (same behavior via complete Provider Access `mode="off-peak"`); existing ticket marker strings; existing cross-process propagation and UI identification; Off-Peak queue, Ticket, recovery, and scheduling semantics. This stays a clear technical debt for future independent design; do not disguise a "field reorganization" as a state machine migration.
 
-Off-Peak 的排队、Ticket 和失效重试属于访问该产品服务的执行协议，不是模型事实。
-`access.type=zhipu-account + mode=off-peak` 是唯一静态分派事实。
+### 5.4 Coding Plan Request Source Attribution Headers
 
-当前 Adapter 抛出包含 `off-peak-ticket-expired` 的字符串错误，Desktop/Renderer 再按字符串或正则识别。这套运行状态机
-本轮保持等价，不因为配置归属迁移而顺手改成结构化错误。
+Every model request sends `x-zcode-session-type` at the Adapter per-request layer, with values `main`, `subagent`, `side_chat`, `other`. It names the host session type; titles, Memory, and tool-internal requests inherit the host; call purpose is expressed independently by `x-zcode-query-source`. Workspace-independent requests such as connection tests are `other`.
 
-本轮保持：
+The header is request-level source attribution — not a Provider/Model static capability and not auth material: it never enters Provider Config, Model Config, Registry, or Active Models; it is never inferred from Provider ID, Model ID, Endpoint, or Access Mode; it is produced from the current call context and overrides same-named forged values in Provider static Headers; streaming, non-streaming, and Adapter retries share the same construction logic and retries never change source classification.
 
-- 删除 Model Config `failureProtocol`，由完整 Provider Access 的 `mode="off-peak"` 启用同一行为；
-- 现有 ticket marker 字符串；
-- 现有跨进程传播和 UI 识别；
-- Off-Peak 队列、Ticket、恢复与调度语义。
+Full classification table and compatibility rules: [`Agent Model Request Attribution Header`](../../../../superpowers/specs/2026-06-09-agent-model-request-session-header-design.md).
 
-不得在本轮顺手改为结构化错误，也不得把一次“字段整理”伪装成产品状态机迁移。它作为明确技术债保留，未来独立设计。
+## 6. Settings Boundaries
 
-### 5.4 Coding Plan 请求来源归因 Header
+The first model editing page does not display: Zhipu Provider Access `family`/`mode`; the deleted `openai-reasoning-content`, `omitMaxOutputTokens`, `maxOutputTokensRequestField`, and Model Config `failureProtocol`.
 
-所有模型请求在 Adapter 的 per-request 层发送 `x-zcode-session-type`，值域为 `main`、`subagent`、
-`side_chat`、`other`。它表示宿主会话类型；标题、Memory 与工具内部请求继承宿主，调用用途通过
-`x-zcode-query-source` 独立表达。连接测试等工作区独立请求归为 `other`。
+`requiresMfjsToolSchema` stays editable but sits at the end of the advanced area. Conversion runs only when explicitly true; conversion failure must error, never silently send a different Tool Schema.
 
-该 Header 是请求级来源归因，不是 Provider/Model 静态能力，也不是鉴权材料：
+## 7. Implementation and Verification Thresholds
 
-- 不进入 Provider Config、Model Config、Registry 或 Active Model；
-- 不按 Provider ID、Model ID、Endpoint 或 Access Mode 推断；
-- 由本次调用上下文产生，并覆盖 Provider 静态 Header 中的同名伪造值；
-- 流式、非流式和 Adapter retry 使用同一构造逻辑，retry 不改变来源分类。
+1. Prove with final HTTP request-body tests that the current OpenAI-compatible SDK replays non-empty reasoning natively, then delete ZCode helpers.
+2. Delete GitHub Copilot omit fields and rules; keep no compatibility reads.
+3. Official-version security verification is dispatched by `zhipu-account.mode` and explicit Access; dynamic materials and runtime states never enter Config.
+4. Off-Peak enablement fact is `mode=off-peak`; string markers and the existing runtime state machine stay equivalent.
+5. DeepSeek runs canonical replay uniformly; no synthetic empty thinking or Compatibility Config kept.
+6. Z.ai text/tool signature candidate implementations are not adopted; real-wire tests are independent evidence tasks.
+7. Delete Snowflake fields and dedicated request rewriting; Snowflake is currently unsupported.
+8. Adapters restore no universal Compatibility Config, Registry queries, or ID hardcoding.
 
-完整分类表和兼容规则见
-[`Agent 模型请求归因 Header`](../../../../superpowers/specs/2026-06-09-agent-model-request-session-header-design.md)。
+## 8. Current Evidence Records
 
-## 6. Settings 边界
+Only verifiable entries this round's decisions rely on; no per-commit or per-leaf historical audits.
 
-第一版 Model 编辑页不展示：
-
-- 智谱 Provider Access 的 `family` 与 `mode`；
-- 已删除的 `openai-reasoning-content`、`omitMaxOutputTokens`、`maxOutputTokensRequestField` 和
-  Model Config `failureProtocol`。
-
-`requiresMfjsToolSchema` 仍属于允许编辑的 Model Config，但放在高级区域最后。转换只在该字段明确为 true 时执行；转换
-失败必须报错，不能静默发送另一种 Tool Schema。
-
-## 7. 实施与验证门槛
-
-1. 先用最终 HTTP request body 测试证明当前 OpenAI-compatible SDK 能原生回放非空 reasoning，再删除 ZCode helper；
-2. 删除 GitHub Copilot omit 字段和规则，不保留兼容读取；
-3. 官方版本安全校验按 `zhipu-account.mode` 与显式 Access 分派，并保持动态材料与运行状态不进入 Config；
-4. Off-Peak 启用事实是 `mode=off-peak`，字符串 marker 与现有运行状态机保持等价；
-5. DeepSeek 统一执行 canonical replay，不保留 synthetic empty-thinking 或 Compatibility Config；
-6. Z.ai text/tool signature 候选实现不采用；真实 wire 测试作为独立证据任务；
-7. 删除 Snowflake 字段和专属请求改写，当前不支持 Snowflake；
-8. Adapter 不恢复通用 Compatibility Config、Registry 查询或 ID hardcode。
-
-## 8. 当前证据记录
-
-本节只保存本轮裁决所依赖的可复核入口，不建立逐 commit、逐叶子的重型历史审计。
-
-- Anthropic 官方 Extended Thinking：<https://platform.claude.com/docs/en/build-with-claude/thinking>。明确要求 tool-use
-  续轮完整、原样传回真实 thinking blocks 和 signatures，并允许真实 empty thinking 携带有效 signature；
-- DeepSeek 官方 Thinking Mode：<https://api-docs.deepseek.com/guides/thinking_mode>。OpenAI 格式工具续轮要求回传
-  服务端真实 `reasoning_content`；
-- DeepSeek 官方 Anthropic API：<https://api-docs.deepseek.com/guides/anthropic_api>。当前只声明支持 `thinking`、
-  `tool_use`、`tool_result` 等格式，没有 synthetic empty thinking 或 signature 要求；
-- 当前 `@ai-sdk/openai-compatible@2.0.60` 的
-  `convert-to-openai-compatible-chat-messages.ts` 会把 assistant reasoning parts 编码为 `reasoning_content`；SDK
-  changelog 自 2.0.20 起明确包含多轮 tool call 的 reasoning content；
-- `apps/zcode-cli/packages/adapters/src/model/anthropic-reasoning-metadata.ts` 是当前 synthetic empty thinking 实现；
-  `apps/zcode-cli/docs/design/v2/model/anthropic-reasoning-history-replay.md` 保存历史内部设计主张，但不是外部服务证据；
-- 当前 DeepSeek Replay fixtures 的 `syntheticReason` 明确表明相关 wire shape 是构造数据，不能单独证明服务端约束；
-- text/tool block signature 候选提交 `70546bde31` 只位于
-  `origin/anthropic-block-signature-replay-staging-latest`，不是当前 HEAD 或 `origin/staging` 的祖先；
-- Off-Peak 当前 marker 常量为 `off-peak-ticket-expired`，Adapter 与 UI 仍通过错误字符串传递和识别，本轮按既有行为保留。
+- Anthropic Official Extended Thinking: <https://platform.claude.com/docs/en/build-with-claude/thinking>. Tool-use re-runs must return real thinking blocks and signatures verbatim; real empty thinking with a valid signature is allowed.
+- DeepSeek Official Thinking Mode: <https://api-docs.deepseek.com/guides/thinking_mode>. OpenAI-format tool re-runs must return the server's real `reasoning_content`.
+- DeepSeek Official Anthropic API: <https://api-docs.deepseek.com/guides/anthropic_api>. Declares support only for `thinking`, `tool_use`, `tool_result` formats; no synthetic empty thinking or signature requirement.
+- Current `@ai-sdk/openai-compatible@2.0.60` `convert-to-openai-compatible-chat-messages.ts` encodes assistant reasoning parts as `reasoning_content`; the SDK changelog includes multi-round tool-call reasoning content since 2.0.20.
+- `apps/zcode-cli/packages/adapters/src/model/anthropic-reasoning-metadata.ts` is the current synthetic empty-thinking implementation; `apps/zcode-cli/docs/design/v2/model/anthropic-reasoning-history-replay.md` holds historical internal design claims, not external service evidence.
+- Current DeepSeek replay fixtures' `syntheticReason` marks the wire shape as constructed data and cannot alone prove server-side constraints.
+- text/tool block signature candidate commit `70546bde31` exists only on `origin/anthropic-block-signature-replay-staging-latest`, not in current HEAD or `origin/staging` ancestors.
+- The Off-Peak marker constant is `off-peak-ticket-expired`; Adapters and UIs still pass and identify it through error strings; this round preserves existing behavior.

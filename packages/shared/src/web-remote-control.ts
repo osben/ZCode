@@ -1,16 +1,15 @@
-import type { MobilePluginDiscoveryTelemetry } from "./telemetry.js";
 import { z } from "zod";
 import type { MobileSessionCreateTelemetry } from "./sessionCreateTelemetry.js";
-/* eslint-disable max-lines -- Web 远程控制共享 App payload 与 workspace bridge 契约。 */
-import type { WebRemoteControlRelayV2PairStatus } from "#src/web-remote-relay/index.js";
+import type { MobilePluginDiscoveryTelemetry } from "./telemetry.js";
+/* eslint-disable max-lines -- the web remote-control shared protocol holds the app payload and workspace bridge contracts; split by transport when it is broken up later. */
+import type { WebRemoteControlRelayV2PairStatus } from "./web-remote-relay/index.js";
+import type { DockerContainerInfo, SSHConfigAliasOption, WSLDistro } from "./platform.js";
 import type {
-  DockerContainerInfo,
-  SSHConfigAliasOption,
-  WSLDistro,
   CreateTempTextAttachmentRequest,
   CreateTempTextAttachmentResult,
+  EditorInfo,
+  OpenInEditorOptions,
 } from "./platform.js";
-
 import type {
   LoadCliMcpFromUserDirectoryRequest,
   LoadCliMcpFromUserDirectoryResult,
@@ -36,7 +35,7 @@ export interface WebRemoteControlContext {
   theme?: WebRemoteControlThemeSeed;
 }
 
-/** Renderer 只通知会话变化；main 必须重新读取本地凭据。 */
+/** Renderer only notifies that the session changed; main must re-read local credentials. */
 export const webRemoteControlAuthStateChangeSchema = z
   .object({
     state: z.enum(["signed-in", "signed-out"]),
@@ -77,8 +76,9 @@ export function createWebRemoteControlConnectionRecoveryTimeoutFailure(
   message: string,
 ): WebRemoteControlFailure {
   return {
-    // Bugfix: 手机端长时间后台后恢复超时，真实问题是手机连接未恢复，
-    // 不能映射成 desktop-disconnected，否则错误页会误导用户以为电脑端离线。
+    // Bugfix: recovery timing out after the phone was backgrounded for a long time means the
+    // phone's connection was not recovered; it must not be mapped to desktop-disconnected,
+    // otherwise the error page misleads the user into thinking the desktop is offline.
     reason: "connection-recovery-timeout",
     message,
   };
@@ -113,19 +113,28 @@ export interface WebRemoteControlMobileDeviceInfo extends WebRemoteControlRelayD
   updatedAt: number;
 }
 
+/** Relay V2 QR routing hints. They never carry a credential; `hash` and `t` are rejected on parse. */
 export interface WebRemoteControlV2QrParams {
   deviceSid?: string;
   deviceMid?: string;
   deviceName?: string;
   appVersion?: string;
+  /**
+   * Fork device-key relay mode only: single-use pairing code (`pk`) the phone exchanges for a relay
+   * session. Absent in zai-jwt mode, which keeps the QR byte-identical to upstream.
+   */
+  pairingCode?: string;
 }
 
 export type BuildWebRemoteControlExternalQrUrlOptions = WebRemoteControlV2QrParams & {
   baseUrl: string;
 };
 
-function readNonEmptySearchParam(params: URLSearchParams, name: string): string | undefined {
-  const value = params.get(name)?.trim();
+function readNonEmptySearchParam(
+  params: URLSearchParams | undefined,
+  name: string,
+): string | undefined {
+  const value = params?.get(name)?.trim();
   return value ? value : undefined;
 }
 
@@ -157,8 +166,9 @@ export function resolveWebRemoteControlRoutePathFromBaseUrl(baseUrl: string): st
 }
 
 export function matchesWebRemoteControlRoutePath(pathname: string, routePath: string): boolean {
-  // Bugfix: dev / production 入口可能带 /remote/ 尾斜杠；
-  // 路由判断需要接受 /remote 与 /remote/，但不能把 /remote/favicon.ico 当成应用入口。
+  // Bugfix: dev / production entry paths may carry a trailing /remote/ slash;
+  // route matching must accept both /remote and /remote/, but must not treat /remote/favicon.ico
+  // as the app entry.
   const normalizeRoutePath = (value: string) => value.replace(/\/+$/, "") || "/";
   return normalizeRoutePath(pathname) === normalizeRoutePath(routePath);
 }
@@ -169,10 +179,11 @@ export function buildWebRemoteControlExternalQrUrl({
   deviceMid,
   deviceName,
   appVersion,
+  pairingCode,
 }: BuildWebRemoteControlExternalQrUrlOptions): string {
   const url = new URL(baseUrl);
   if (deviceSid !== undefined) url.searchParams.set("sid", deviceSid);
-  // 旧凭据只允许清除，不能从 base URL 重新带入新二维码。
+  // Legacy credentials may only be removed; they must never be carried into a new QR code from the base URL.
   url.searchParams.delete("hash");
   url.searchParams.delete("t");
 
@@ -185,11 +196,22 @@ export function buildWebRemoteControlExternalQrUrl({
   if (appVersion?.trim()) {
     url.searchParams.set("app_version", appVersion);
   }
+  // The pairing code is a credential: it travels in the fragment, which browsers never send to the web host,
+  // so it cannot reach access logs. A `pk` already in the base URL's query is dropped for the same reason.
+  url.searchParams.delete("pk");
+  if (pairingCode?.trim()) {
+    const fragment = new URLSearchParams(url.hash.replace(/^#/, ""));
+    fragment.set("pk", pairingCode.trim());
+    url.hash = fragment.toString();
+  }
   return url.toString();
 }
 
+/** Parses V2 routing hints only. Links carrying the V1 `hash` or `t` credential are rejected. */
 export function parseWebRemoteControlExternalQrParams(
   params: URLSearchParams,
+  /** Parsed URL fragment. `pk` is read from here first and from the query second (QRs from older Desktops). */
+  fragmentParams?: URLSearchParams,
 ): WebRemoteControlV2QrParams | null {
   if (params.has("hash") || params.has("t")) return null;
   const result: WebRemoteControlV2QrParams = {};
@@ -198,8 +220,11 @@ export function parseWebRemoteControlExternalQrParams(
     ["deviceMid", "mid"],
     ["deviceName", "name"],
     ["appVersion", "app_version"],
+    ["pairingCode", "pk"],
   ] as const) {
-    const value = readNonEmptySearchParam(params, param);
+    const value =
+      (key === "pairingCode" ? readNonEmptySearchParam(fragmentParams, param) : undefined) ??
+      readNonEmptySearchParam(params, param);
     if (value) result[key] = value;
   }
   return result;
@@ -258,7 +283,7 @@ export interface WebRemoteControlStartCancelledResult {
   status: "cancelled";
 }
 
-/** 兼容仍可返回取消终态的平台实现；当前 Desktop 启动和刷新链路不会产生该结果。 */
+/** Compat with platform implementations that can still return the cancelled terminal state; the current Desktop start and refresh paths never produce it. */
 export type WebRemoteControlStartOperationResult =
   | WebRemoteControlStartResult
   | WebRemoteControlStartCancelledResult;
@@ -272,8 +297,8 @@ export interface WebRemoteControlStatus {
   expiresAt?: number;
   mobileConnected?: boolean;
   mobileViewState?: WebRemoteControlMobileViewState;
-  /** Main 校验后的瞬时可见任务；remoteSessionId 仅由所属 bridge 注入，不接受 Web 自报。 */
-  mobileTaskView?: (WebRemoteControlMobileTaskView & { remoteSessionId?: string }) | null;
+  /** Transient visible task validated by Main; remoteSessionId is injected only by the owning bridge, never self-reported by the Web client. */
+  mobileTaskView?: WebRemoteControlMobileTaskView | null;
   mobileDeviceInfo?: WebRemoteControlMobileDeviceInfo;
   qrUrl?: string;
   connectUrl?: string;
@@ -283,6 +308,8 @@ export interface WebRemoteControlStatus {
   initialTaskId?: string;
   error?: string;
   failure?: WebRemoteControlFailure;
+  /** Pre-V2 pairing was discarded for this run; every phone must scan the new QR code to pair again. */
+  repairRequired?: boolean;
 }
 
 export interface WebRemoteControlSessionCreateRequest {
@@ -320,6 +347,13 @@ export interface WebRemoteControlBootstrapErrorResponse {
   reason: WebRemoteControlFailureReason;
 }
 
+/** Arguments for the proxied openInEditor call; mirrors IPlatformService.openInEditor(editorId, path, options?). */
+export interface WebRemoteControlOpenInEditorArgs {
+  editorId: string;
+  path: string;
+  options?: OpenInEditorOptions;
+}
+
 export interface WebRemoteControlPlatformMethodArgsMap {
   isDockerAvailable: undefined;
   listWSLDistros: undefined;
@@ -329,6 +363,10 @@ export interface WebRemoteControlPlatformMethodArgsMap {
   loadMcpFromUserDirectory: LoadCliMcpFromUserDirectoryRequest | undefined;
   saveMcpToUserDirectory: SaveCliMcpToUserDirectoryRequest;
   migrateLegacyCommonMcp: MigrateLegacyCommonMcpRequest | undefined;
+  getInstalledEditors: undefined;
+  openInEditor: WebRemoteControlOpenInEditorArgs;
+  openInFileManager: string;
+  openExternalFile: string;
 }
 
 export interface WebRemoteControlPlatformMethodResultMap {
@@ -340,6 +378,10 @@ export interface WebRemoteControlPlatformMethodResultMap {
   loadMcpFromUserDirectory: LoadCliMcpFromUserDirectoryResult;
   saveMcpToUserDirectory: { success: boolean; error?: string };
   migrateLegacyCommonMcp: MigrateLegacyCommonMcpResult;
+  getInstalledEditors: EditorInfo[];
+  openInEditor: { success: boolean; error?: string };
+  openInFileManager: { success: boolean; error?: string };
+  openExternalFile: { success: boolean; error?: string };
 }
 
 export type WebRemoteControlPlatformMethod = keyof WebRemoteControlPlatformMethodResultMap;
@@ -395,7 +437,7 @@ export interface WebRemoteControlExternalRemoteWorkspaceBridge {
   workspaceIdentity: string;
   remoteSessionId: string;
   initialTaskId?: string;
-  /** 旧桌面不声明；客户端不能根据惰性 RPC proxy 是否存在猜测能力。 */
+  /** Older desktops do not declare this; the client must not infer capabilities from a lazy RPC proxy. */
   capabilities?: { windowProjectDirectory?: true };
 }
 
@@ -442,7 +484,7 @@ export interface WebRemoteControlWorkspaceBridgeOpenPayload {
   taskId?: string;
   project?: { projectId: string | null; hostId?: string; draftId?: string; reuseDraft?: boolean };
   taskHostId?: string;
-  /** 仅解析任务目录供文件树使用，不选择任务或标记已读。 */
+  /** Resolves the task directory for the file tree only; it neither selects a task nor marks it read. */
   fileTreeTaskId?: string;
 }
 
@@ -486,18 +528,38 @@ export type WebRemoteControlWorkspaceReconnectResponsePayload =
       error: string;
     };
 
+/** Mobile/Web asks the desktop to open (or reuse) a local workspace; success only means Main dispatched the open to the window renderer. */
+export interface WebRemoteControlWorkspaceOpenRequestPayload {
+  zcode_type: "workspace-open-request";
+  requestId: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+}
+
+export type WebRemoteControlWorkspaceOpenResponsePayload =
+  | {
+      zcode_type: "workspace-open-response";
+      requestId: string;
+      workspacePath: string;
+      workspaceIdentity?: string;
+      success: true;
+    }
+  | {
+      zcode_type: "workspace-open-response";
+      requestId: string;
+      workspacePath: string;
+      workspaceIdentity?: string;
+      success: false;
+      error: string;
+    };
+
 export interface WebRemoteControlMobileViewStatePayload {
   zcode_type: "mobile-view-state-update";
   viewState: WebRemoteControlMobileViewState;
   deviceInfo?: WebRemoteControlMobileDeviceInfo;
 }
 
-export interface WebRemoteControlMobileTaskView {
-  workspacePath: string;
-  workspaceIdentity?: string;
-  taskId: string;
-}
-
+/** Desktop-to-phone task view snapshot; `epoch` scopes it to one phone view, `seq` orders updates within it. */
 export interface WebRemoteControlMobileTaskViewUpdatePayload {
   zcode_type: "mobile-task-view-update";
   epoch: string;
@@ -507,6 +569,7 @@ export interface WebRemoteControlMobileTaskViewUpdatePayload {
   view: WebRemoteControlMobileTaskView | null;
 }
 
+/** Phone-to-desktop request for the current task view of one epoch. */
 export interface WebRemoteControlMobileTaskViewRequestPayload {
   zcode_type: "mobile-task-view-request";
   epoch: string;
@@ -539,7 +602,7 @@ export type WebRemoteControlPlatformResponsePayload =
       error: string;
     };
 
-/** @deprecated 仅供 legacy adapter 单测/迁移使用；production parser 自 04D-3 起拒绝。 */
+/** @deprecated Only for legacy adapter unit tests/migration; the production parser has rejected it since 04D-3. */
 export interface WebRemoteControlRpcFramePayload {
   zcode_type: "rpc-frame";
   bridgeSessionId: string;
@@ -554,12 +617,7 @@ export interface WebRemoteControlBridgeDegradedPayload {
   bridgeSessionId: string;
   bridgeGeneration?: number;
   recoveryId?: string;
-  reason:
-    | "rpc-transport-fault"
-    | "rpc-frame-gap"
-    | "buffer-overflow"
-    | "buffer-timeout"
-    | "source-session-replaced";
+  reason: "rpc-transport-fault" | "rpc-frame-gap" | "buffer-overflow" | "buffer-timeout";
   seq?: number;
   expectedSeq?: number;
   droppedCount?: number;
@@ -615,6 +673,8 @@ export type WebRemoteControlAppPayload =
   | WebRemoteControlWorkspaceBridgeErrorPayload
   | WebRemoteControlWorkspaceReconnectRequestPayload
   | WebRemoteControlWorkspaceReconnectResponsePayload
+  | WebRemoteControlWorkspaceOpenRequestPayload
+  | WebRemoteControlWorkspaceOpenResponsePayload
   | WebRemoteControlMobileViewStatePayload
   | WebRemoteControlMobileTaskViewUpdatePayload
   | WebRemoteControlMobileTaskViewRequestPayload
@@ -624,6 +684,15 @@ export type WebRemoteControlAppPayload =
   | WebRemoteControlBridgeDegradedPayload
   | WebRemoteControlAppErrorPayload
   | WebRemoteControlMobileDiagnosticPayload;
+
+/** Task the mobile client is viewing. Plain shape only; the relay payloads that carry it are not part of this module's transport. */
+export interface WebRemoteControlMobileTaskView {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  taskId: string;
+  /** Set only by the owning bridge; the Web client never supplies it. */
+  remoteSessionId?: string;
+}
 
 export interface WebRemoteControlWorkspaceTarget {
   workspacePath: string;
@@ -654,6 +723,8 @@ export type WebRemoteControlReconnectWorkspaceResult =
       error: string;
     };
 
+export type WebRemoteControlTaskDisplayStatus = "idle" | "running" | "completed" | "error";
+
 export interface WebRemoteControlTaskTarget {
   taskId: string;
   hostId?: string;
@@ -667,10 +738,24 @@ export interface WebRemoteControlTaskTarget {
   updatedAt: number;
   provider?: ZCodeProvider;
   unreadAt?: number;
+  displayStatus?: WebRemoteControlTaskDisplayStatus;
+  // The session has background work attached (dynamic workflow run / background bash / detached
+  // subagent). Participates only in list run-level ordering,
+  // not the displayStatus icon; absent is treated as false, and older desktop snapshots parse as
+  // usual.
+  hasBackgroundWork?: boolean;
+  // Workflow run summary (docs/dynamic-workflow/presentation.md, "The sidebar run line"): the
+  // phone row draws the same run line as the desktop under the title.
+  // Draw-only; it does not participate in sorting or the status pill; absent when there is no run,
+  // and older desktop snapshots parse as usual.
+  workflowActivity?: SessionWorkflowActivity;
+  pinned?: boolean;
+  archived?: boolean;
 }
 
 export interface WebRemoteControlWorkspaceListResult {
   workspaces: WebRemoteControlWorkspaceTarget[];
+  tasks?: WebRemoteControlTaskTarget[];
   activeWorkspaceKey?: string;
   activeTaskId?: string;
 }
@@ -678,14 +763,14 @@ export interface WebRemoteControlWorkspaceListResult {
 export type WebRemoteControlMobileNavigationIntent = "chat";
 
 export interface WebRemoteControlWorkspaceSwitchOptions {
-  /** 仅 Web 页面导航使用，不发送给 Host；目标 Root 打开文件面板。 */
+  /** Web page navigation only; not sent to the Host. Opens the file panel on the target root. */
   openFileManager?: boolean;
   taskId?: string;
   taskHostId?: string;
-  /** 仅解析任务目录供文件树使用，不选择任务或标记已读。 */
+  /** Resolves the task directory for the file tree only; it neither selects a task nor marks it read. */
   fileTreeTaskId?: string;
   mobileNavigationIntent?: WebRemoteControlMobileNavigationIntent;
-  /** 手机端从项目侧栏打开未读任务时携带；目标 bridge 建立后只清除这次快照对应的未读。 */
+  /** Used only by the phone's task home; after the target bridge is established, only the unread matching this snapshot is cleared. */
   markTaskReadExpectedUnreadAt?: number;
 }
 
@@ -725,12 +810,14 @@ export type WebRemoteControlWorkspaceBridge =
 
 export interface WebRemoteControlWindowBootstrapResult {
   windowControlSessionId: string;
-  /** 当前连接的桌面实际版本；旧桌面缺失时手机保留原 URL。 */
+  /** The desktop's actual current version; when an older desktop omits it, the phone keeps the original URL. */
   desktopAppVersion?: string;
   workspaces: WebRemoteControlWorkspaceTarget[];
+  /** V1 desktops only; V2 bootstrap responses omit it. */
+  tasks?: WebRemoteControlTaskTarget[];
   initialViewState?: WebRemoteControlMobileViewState;
   mobileViewState?: WebRemoteControlMobileViewState;
-  /** 仅新端提供；用 bootstrap 补足配对瞬间的重申请求，不能用来恢复可见任务。 */
+  /** Only newer desktops provide it; the bootstrap uses it to re-request the task view after pairing. */
   mobileTaskViewEpoch?: string;
 }
 
@@ -782,8 +869,10 @@ export function resolveWebRemoteControlInitialWorkspaceSelection({
     };
   }
 
-  // Bugfix: 手机端列表会展示已断开的 SSH workspace，但这类项没有 remoteSessionId，
-  // 不能作为初始 bridge 目标。否则重连状态尚未同步时会反复进入“尚未连接”的错误页。
+  // Bugfix: the phone's list may show a disconnected SSH workspace, but such entries have no
+  // remoteSessionId and
+  // must not become the initial bridge target. Otherwise, before reconnect state has synced, the
+  // user repeatedly lands on the "not yet connected" error page.
   const firstWorkspace = bridgeableWorkspaces[0];
   if (!firstWorkspace) {
     if (selectedWorkspaceKey && allWorkspaceKeys.has(selectedWorkspaceKey)) {
@@ -922,16 +1011,43 @@ export interface WebRemoteControlMobileViewStateUpdate {
   deviceInfo?: WebRemoteControlMobileDeviceInfo;
 }
 
+/** Window-control variant of the workspace-open request (relay → desktop); correlation fields match the sibling window-control messages. */
+export interface WebRemoteControlWorkspaceOpenRequest {
+  type: "workspace-open-request";
+  requestId: string;
+  windowControlSessionId: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+}
+
+export interface WebRemoteControlWorkspaceOpenSuccessResponse {
+  type: "workspace-open-response";
+  requestId: string;
+  windowControlSessionId: string;
+  success: true;
+}
+
+export interface WebRemoteControlWorkspaceOpenErrorResponse {
+  type: "workspace-open-response";
+  requestId: string;
+  windowControlSessionId: string;
+  success: false;
+  error: string;
+}
+
 export type WebRemoteControlWindowControlRequest =
   | WebRemoteControlWindowBootstrapRequest
   | WebRemoteControlWorkspaceBridgeRequest
-  | WebRemoteControlMobileViewStateUpdate;
+  | WebRemoteControlMobileViewStateUpdate
+  | WebRemoteControlWorkspaceOpenRequest;
 
 export type WebRemoteControlWindowControlResponse =
   | WebRemoteControlWindowBootstrapSuccessResponse
   | WebRemoteControlWindowBootstrapErrorResponse
   | WebRemoteControlWorkspaceBridgeSuccessResponse
-  | WebRemoteControlWorkspaceBridgeErrorResponse;
+  | WebRemoteControlWorkspaceBridgeErrorResponse
+  | WebRemoteControlWorkspaceOpenSuccessResponse
+  | WebRemoteControlWorkspaceOpenErrorResponse;
 
 export type RelayDesktopControlEvent =
   | { type: "tunnel-registered"; tunnelId: string }

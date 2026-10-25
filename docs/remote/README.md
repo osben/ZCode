@@ -1,53 +1,52 @@
-# 远程主链阅读入口
+# Remote main-chain reading entry
 
-当前规格覆盖 SSH / WSL / Docker Source Server。按改动选择事实文档，不把历史计划当作当前合同。
-运行时 owner、workspace identity、单 Window Host 与 continuous/replayable 边界见
-[runtime 边界](../agents/runtime-boundaries.md)。
+The current specs cover SSH / WSL / Docker Source Server. Pick the fact document by the change; historical
+plans are not the current contract. For runtime owners, workspace identity, the single per-window Host and the
+continuous/replayable boundary, see [runtime boundaries](../agents/runtime-boundaries.md).
 
 ```text
-R3 主规格（身份 / 连接 / 迁移）
-  ├─ 连接 UX（向导 / 五态 / 设备管理）
-  ├─ 项目导航（目录意图 / 断线体验 / 导航恢复）
-  └─ 专项合同（Provisioning / Renderer 挂回 / 持久化兼容）
-场景目录 → 覆盖矩阵 → 按基线保存的运行证据
-未决问题 → 问题台账；旧过程正文 → 历史快照入口
+R3 main spec (identity / connection / migration)
+  ├─ connection UX (wizard / five states / device management)
+  ├─ project navigation (directory intent / disconnect experience / navigation recovery)
+  └─ dedicated contracts (Provisioning / Renderer reattach / persistence compatibility)
+scenario catalog → coverage matrix → run evidence saved per baseline
+open questions → issue ledger; old process text → historical snapshot entry
 ```
 
-## 当前合同
+## Current contracts
 
-下表的主规格均指 [R3 Source Server 架构](../architecture/r3-source-server-remote-architecture.md)。
+"Main spec" in the table below means the [R3 Source Server architecture](../architecture/r3-source-server-remote-architecture.md).
 
-| 改动                                                     | 事实源                                                                                                                                                                                                          |
-| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Source/Profile/三层 workspace identity、任务地址         | 主规格 §3                                                                                                                                                                                                       |
-| 进程、Transport、安装与升级、远端 daemon/archive         | 主规格 §4–5；[Server CLI/daemon](../architecture/r2-server-cli-and-daemon.md)                                                                                                                                   |
-| 握手、鉴权、兼容门与更新                                 | 主规格 §6                                                                                                                                                                                                       |
-| 物理连接、启动静默连接、重试与恢复换代                   | 主规格 §7                                                                                                                                                                                                       |
-| RPC 服务归属、设备管理与迁移                             | 主规格 §8–9                                                                                                                                                                                                     |
-| Renderer reload、Source 上线后的项目挂回                 | [Renderer 重挂](desktop-remote-session-renderer-reattach.md)                                                                                                                                                    |
-| Projection、open set、strict schema、R4 待迁移事项       | [投影与持久化兼容](../architecture/remote-domain-simplification-and-conversation-workspace-spec.md)                                                                                                             |
-| 三屏向导、统一五态、错误日志、设备卡、安装预览与任务清单 | [连接 UX](../architecture/remote-device-connection-ux-spec.md)                                                                                                                                                  |
-| 平铺项目、原地重连、目录权限、恢复原项目与会话           | [项目导航](project-first-remote-navigation-spec.md)；远程无项目聊天 UI 已停用，数据保留                                                                                                                         |
-| Provider 自动下发与本地模型设置                          | [Provisioning](provider-provisioning.md)；[应用配置归属](../ssh-remote-app-global-state-authority.md)                                                                                                           |
-| 手机已有 Host attachment 与 replayable 恢复              | [远控架构](../web-remote-control/web-remote-control-architecture.md)、[任务实时同步](../web-remote-control/task-realtime-sync.md)、[手机工作区重连](../web-remote-control/mobile-remote-workspace-reconnect.md) |
-| WSL                                                      | [实时边界](wsl-remote-realtime-boundary.md)、[Provider headers](wsl-provider-runtime-headers.md)、[WSL 设计](../wsl-remote-workspace-design.md)                                                                 |
-| Windows 资产缓存                                         | [缓存 rename](windows-remote-asset-cache-rename-hardening.md)                                                                                                                                                   |
-| Desktop descriptor/archive 网络策略                      | [远端资产网络策略](zcode-agent-remote-deployment.md)                                                                                                                                                            |
-| dev-only Server 直连                                     | [Server workspace](server-remote-workspace-connection.md)；旧进程描述以主规格为准                                                                                                                               |
-| 发布产物与 CI                                            | [CI/CD](../desktop-ci-cd.md)、[产物布局](../desktop-ci-artifact-layout.md)                                                                                                                                      |
+| Change                                                                                              | Source of truth                                                                                                                                                                                                                                      |
+| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source/Profile/three-layer workspace identity, task address                                         | main spec §3                                                                                                                                                                                                                                         |
+| Process, Transport, install and upgrade, remote daemon/archive                                      | main spec §4-5; [Server CLI/daemon](../architecture/r2-server-cli-and-daemon.md)                                                                                                                                                                     |
+| Handshake, authentication, compatibility gate and updates                                           | main spec §6                                                                                                                                                                                                                                         |
+| Physical connection, silent startup connection, retry and recovery generation                       | main spec §7                                                                                                                                                                                                                                         |
+| RPC service ownership, device management and migration                                              | main spec §8-9                                                                                                                                                                                                                                       |
+| Renderer reload, project reattach after Source comes online                                         | [Renderer reattach](desktop-remote-session-renderer-reattach.md)                                                                                                                                                                                     |
+| Projection, open set, strict schema, R4 pending items                                               | [projection and persistence compatibility](../architecture/remote-domain-simplification-and-conversation-workspace-spec.md)                                                                                                                          |
+| Three-screen wizard, unified five states, error log, device card, install preview and task list     | [connection UX](../architecture/remote-device-connection-ux-spec.md)                                                                                                                                                                                 |
+| Flat projects, in-place reconnect, directory permission, restoring the original project and session | [project navigation](project-first-remote-navigation-spec.md); the remote no-project chat UI is disabled, data is kept                                                                                                                               |
+| Automatic Provider delivery and local model settings                                                | [Provisioning](provider-provisioning.md); [app config ownership](../ssh-remote-app-global-state-authority.md)                                                                                                                                        |
+| Mobile existing Host attachment and replayable recovery                                             | [remote-control architecture](../web-remote-control/web-remote-control-architecture.md), [task realtime sync](../web-remote-control/task-realtime-sync.md), [mobile workspace reconnect](../web-remote-control/mobile-remote-workspace-reconnect.md) |
+| WSL                                                                                                 | [realtime boundary](wsl-remote-realtime-boundary.md), [Provider headers](wsl-provider-runtime-headers.md), [WSL design](../wsl-remote-workspace-design.md)                                                                                           |
+| Windows asset cache                                                                                 | [cache rename](windows-remote-asset-cache-rename-hardening.md)                                                                                                                                                                                       |
+| Desktop descriptor/archive network policy                                                           | [remote asset network policy](zcode-agent-remote-deployment.md)                                                                                                                                                                                      |
+| dev-only direct Server connection                                                                   | [Server workspace](server-remote-workspace-connection.md); old process descriptions defer to the main spec                                                                                                                                           |
+| Release artifacts and CI                                                                            | [CI/CD](../desktop-ci-cd.md), [artifact layout](../desktop-ci-artifact-layout.md)                                                                                                                                                                    |
 
-## 问题与验证
+## Issues and verification
 
-- [项目创建与远程连接管理分离](../issues/remote-connection-ux/15-project-device-selection-and-connection-management.md)：包含三入口、设备选择、分类添加、返回草稿与验收场景；实施与验证范围见子票 #16–#22 的完成记录，父票状态及未验证平台以各票记录为准。
+- [Separating project creation from remote connection management](../issues/remote-connection-ux/15-project-device-selection-and-connection-management.md): three entries, device selection, categorized add, return to draft and acceptance scenarios; implementation and verification scope is in the completion records of sub-tickets #16-#22; parent ticket status and unverified platforms follow each ticket's record.
+- [Choose a remote folder after connecting from chat and enter the project](../issues/remote-connection-ux/21-chat-settings-round-trip.md): implemented per #23-#26 on 2026-10-14; the folder is chosen explicitly every time, unique / multiple / zero matches enter the project, cancel restores the original target, and sending is blocked until the project is ready. Current verification evidence and unrun platforms are in the spec; candidates keep the manual review boundary.
+- [R3 issue ledger](../architecture/r3-source-server-remote-open-issues.md): unfixed, to-verify and pending product decisions; closed items are no longer queued for repair.
+- [UX sub-task index](../issues/remote-connection-ux/01-remote-connection-ux-optimization.md): completed implementation and the open ssh-agent evaluation.
+- [Test plan](../testing/r3-remote-automation-plan.md), [R3A matrix](../testing/r3-remote-automation-case-matrix.md): full acceptance targets and coverage gaps.
+- [Case catalog](../conversation-session-case-catalog.md), [coverage matrix](../testing/conversation-session-e2e-coverage-matrix.md): stable IDs, test files, pending/formal status and evidence.
+- [SSH P0](../testing/ssh-remote-p0-e2e-plan.md): dedicated assertions and project entry; [harness](../../harness/remote/README.md): run commands and environment isolation.
+- [2026-10 desktop SSH guide regression](../testing/desktop-ssh-guide-regression.md): the original batch of 100 scheduled scenarios and later targeted fixes; it cannot support a claim that mobile/WSL/Docker are all green.
+- [2026-09-10 historical rerun](../testing/r3-remote-full-rerun-2026-09-10.md): original baseline result; the [historical archive index](../archive/remote-r3/README.md) locates earlier evidence.
 
-- [聊天连接后必选远程文件夹并进入项目](../issues/remote-connection-ux/21-chat-settings-round-trip.md)：2026-10-14 已按 #23–#26 实施；每次显式选目录，按唯一／多个／零匹配进入项目，取消恢复原目标，项目准备完成前禁止发送。当前验证证据与未实跑平台见规格，候选仍保留人工审核边界。
-
-- [R3 问题台账](../architecture/r3-source-server-remote-open-issues.md)：保留未修复、待验证与产品待决项，关闭项不再排入修复顺序。
-- [UX 子任务索引](../issues/remote-connection-ux/01-remote-connection-ux-optimization.md)：已完成实施与未决 ssh-agent 评估。
-- [测试方案](../testing/r3-remote-automation-plan.md)、[R3A 矩阵](../testing/r3-remote-automation-case-matrix.md)：完整验收目标及覆盖差距。
-- [case 目录](../conversation-session-case-catalog.md)、[覆盖矩阵](../testing/conversation-session-e2e-coverage-matrix.md)：稳定 ID、测试文件、pending/formal 状态和证据。
-- [SSH P0](../testing/ssh-remote-p0-e2e-plan.md)：专项断言与项目入口；[harness](../../harness/remote/README.md)：执行命令及环境隔离。
-- [2026-10 桌面 SSH 指南回归](../testing/desktop-ssh-guide-regression.md)：100 个调度场景原批次及后续定向修复，不能据此声称手机/WSL/Docker 全绿。
-- [2026-09-10 历史重跑](../testing/r3-remote-full-rerun-2026-09-10.md)：原基线结果；[历史归档索引](../archive/remote-r3/README.md)可定位更早证据。
-
-记录中的 PASS 只适用于所列源码、构建、场景与环境。文档压缩不补跑测试、不改变状态，也不删除原始 artifact。
+A PASS in any record applies only to the listed source, build, scenario and environment. Documentation
+compaction does not rerun tests, change status or delete original artifacts.

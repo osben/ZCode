@@ -1,4 +1,4 @@
-import { IGenUiService } from "@zcode/services";
+import { IDefinitionPreviewService, IGenUiService } from "@zcode/services";
 import { ProxyChannel, type IChannelClient } from "@zcode/rpc";
 import {
   IFileService,
@@ -16,8 +16,10 @@ import {
   IZCodeSessionService,
   IProjectService,
   ITaskGroupService,
+  IQuickPromptService,
   IRemoteProjectService,
   ICuaPermissionService,
+  IVoiceDictationService,
   IConversationShareService,
   IBotsService,
   IFileWatcherService,
@@ -48,7 +50,9 @@ import {
   ICommandsService,
   IHooksService,
   IMemoryService,
+  IUserInstructionsService,
   IOutputStyleService,
+  ISystemPromptService,
   ISettingsSyncService,
   IFeedbackService,
   IPromptAttachmentTransferService,
@@ -61,9 +65,9 @@ import {
 } from "@zcode/services";
 
 /**
- * RemoteServiceAccess — 通过 ChannelClient 自动创建类型安全的服务代理
+ * RemoteServiceAccess — automatically create type-safe service proxies through ChannelClient.
  *
- * 新增服务只需在此添加一个 getter。
+ * To add a service, add a getter here.
  */
 export class RemoteServiceAccess implements IServiceAccessor {
   readonly windowProjectDirectory?: WindowProjectDirectoryServices;
@@ -82,18 +86,21 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly zcodeAgentService: IZCodeAgentService;
   readonly zcodeSessionService: IZCodeSessionService;
   readonly taskGroupService: ITaskGroupService;
+  /** Fork: composer quick prompts, owned by the controller Host (specs/composer-quick-prompts.md). */
+  readonly quickPromptService: IQuickPromptService;
   readonly projectService: IProjectService;
   readonly remoteProjectService: IRemoteProjectService;
-  // cuaPermissionService 在 IServiceAccessor 上是可选（远端/bots host 不提供），但桌面 renderer
-  // 经 RPC 一定能拿到（main host 始终注册此 descriptor；非 macOS / 未启用时方法返回 available:false）。
+  // cuaPermissionService is optional on IServiceAccessor (remote/bots hosts do not provide it), but the Desktop renderer
+  // can always access it through RPC (the main host always registers this descriptor; on non-macOS or when disabled, methods return available:false).
   readonly cuaPermissionService: ICuaPermissionService;
+  readonly voiceDictationService: IVoiceDictationService;
   readonly conversationShareService: IConversationShareService;
   readonly botsService: IBotsService;
   readonly fileWatcherService: IFileWatcherService;
   readonly oauthService: IOAuthService;
   readonly providerSettingsService: IProviderSettingsService;
   readonly modelSelectionService: IModelSelectionService;
-  /** Host-only target proxy；不属于 IServiceAccessor，避免向 Renderer 暴露 Secret 写入接口。 */
+  /** Host-only target proxy; it is not part of IServiceAccessor, so the Renderer does not receive the Secret write interface. */
   readonly providerProvisioningTargetService!: IProviderProvisioningTargetService;
   readonly sourceServerWorkspaceService: ISourceServerWorkspaceService;
   /** 仅 desktop base attachment 注册；其他 scope 必须按可选能力消费。 */
@@ -110,6 +117,7 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly skillSyncService: ISkillSyncService;
   readonly mcpSyncService: IMcpSyncService;
   readonly genUiService: IGenUiService;
+  readonly definitionPreviewService: IDefinitionPreviewService;
   readonly pluginUiBridgeService: IPluginUiBridgeService;
   readonly pluginUiSamplingService: IPluginUiSamplingService;
   readonly pluginUiAppToolsService: IPluginUiAppToolsService;
@@ -120,7 +128,9 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly commandsService: ICommandsService;
   readonly hooksService: IHooksService;
   readonly memoryService: IMemoryService;
+  readonly userInstructionsService: IUserInstructionsService;
   readonly outputStyleService: IOutputStyleService;
+  readonly systemPromptService: ISystemPromptService;
   readonly settingsSyncService: ISettingsSyncService;
   readonly feedbackService: IFeedbackService;
   readonly promptAttachmentTransferService: IPromptAttachmentTransferService;
@@ -146,8 +156,8 @@ export class RemoteServiceAccess implements IServiceAccessor {
     this.fileService = ProxyChannel.toService<IFileService>(
       channelClient.getChannel(IFileService.channelName),
     );
-    // Host 已注册 media-preview channel，但遗漏 renderer proxy 时，PreviewPane
-    // 会静默回退到 8 MiB 的 file.readMediaPreview，导致大 MP4 无法打开。
+    // If the Host registers the media-preview channel but the renderer proxy is missing, PreviewPane
+    // silently falls back to the 8 MiB file.readMediaPreview limit, preventing large MP4 files from opening.
     this.mediaPreviewService = ProxyChannel.toService<IMediaPreviewService>(
       channelClient.getChannel(IMediaPreviewService.channelName),
     );
@@ -190,6 +200,9 @@ export class RemoteServiceAccess implements IServiceAccessor {
     this.taskGroupService = ProxyChannel.toService<ITaskGroupService>(
       channelClient.getChannel(ITaskGroupService.channelName),
     );
+    this.quickPromptService = ProxyChannel.toService<IQuickPromptService>(
+      channelClient.getChannel(IQuickPromptService.channelName),
+    );
     this.projectService = ProxyChannel.toService<IProjectService>(
       channelClient.getChannel(IProjectService.channelName),
     );
@@ -198,6 +211,9 @@ export class RemoteServiceAccess implements IServiceAccessor {
     );
     this.cuaPermissionService = ProxyChannel.toService<ICuaPermissionService>(
       channelClient.getChannel(ICuaPermissionService.channelName),
+    );
+    this.voiceDictationService = ProxyChannel.toService<IVoiceDictationService>(
+      channelClient.getChannel(IVoiceDictationService.channelName),
     );
     this.conversationShareService = ProxyChannel.toService<IConversationShareService>(
       channelClient.getChannel(IConversationShareService.channelName),
@@ -269,6 +285,9 @@ export class RemoteServiceAccess implements IServiceAccessor {
     this.genUiService = ProxyChannel.toService<IGenUiService>(
       channelClient.getChannel(IGenUiService.channelName),
     );
+    this.definitionPreviewService = ProxyChannel.toService<IDefinitionPreviewService>(
+      channelClient.getChannel(IDefinitionPreviewService.channelName),
+    );
     this.pluginUiBridgeService = ProxyChannel.toService<IPluginUiBridgeService>(
       channelClient.getChannel(IPluginUiBridgeService.channelName),
     );
@@ -299,8 +318,14 @@ export class RemoteServiceAccess implements IServiceAccessor {
     this.memoryService = ProxyChannel.toService<IMemoryService>(
       channelClient.getChannel(IMemoryService.channelName),
     );
+    this.userInstructionsService = ProxyChannel.toService<IUserInstructionsService>(
+      channelClient.getChannel(IUserInstructionsService.channelName),
+    );
     this.outputStyleService = ProxyChannel.toService<IOutputStyleService>(
       channelClient.getChannel(IOutputStyleService.channelName),
+    );
+    this.systemPromptService = ProxyChannel.toService<ISystemPromptService>(
+      channelClient.getChannel(ISystemPromptService.channelName),
     );
     this.settingsSyncService = ProxyChannel.toService<ISettingsSyncService>(
       channelClient.getChannel(ISettingsSyncService.channelName),

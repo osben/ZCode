@@ -1,10 +1,17 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ZCODE_DYNAMIC_WORKFLOW_MODE_ENV, type ApiClient } from "@zcode/shared";
 import { BigModelCodingPlanSubscriptionProvider } from "../src/coding-plan-subscription/bigmodelCodingPlanSubscriptionProvider.js";
 import { createCodingPlanSubscriptionService } from "../src/coding-plan-subscription/codingPlanSubscriptionService.js";
 
-// 动态工作流灰度快照的 Host 侧读取（docs/dynamic-workflow/launch.md「Gray release」）：
-// 复用 client/configs 通道，本地覆盖短路远端，失败 fail-closed 且不抛给调用方。
+// A packaged preview Desktop always writes ZCODE_DYNAMIC_WORKFLOW_MODE=alwaysOn into the Host env,
+// and test runs spawned from it inherit that value; the provider reads process.env directly, so an
+// ambient value flips every non-stubbed case onto the override path. Scrub it before each test and
+// restore the original afterwards.
+const originalDynamicWorkflowMode = process.env[ZCODE_DYNAMIC_WORKFLOW_MODE_ENV];
+
+// Host-side reads of the dynamic workflow gray-release snapshot (docs/dynamic-workflow/launch.md, "Gray release"):
+// reuses the client/configs channel; local overrides short-circuit the remote value, and failures are
+// fail-closed without throwing to the caller.
 
 function createConfigsResponse(dynamicWorkflow: unknown): Response {
   return new Response(
@@ -25,10 +32,22 @@ function createProvider(apiClient: ApiClient) {
 }
 
 describe("getDynamicWorkflowClientConfig", () => {
+  beforeEach(() => {
+    delete process.env[ZCODE_DYNAMIC_WORKFLOW_MODE_ENV];
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+  });
+
+  afterAll(() => {
+    if (originalDynamicWorkflowMode === undefined) {
+      delete process.env[ZCODE_DYNAMIC_WORKFLOW_MODE_ENV];
+    } else {
+      process.env[ZCODE_DYNAMIC_WORKFLOW_MODE_ENV] = originalDynamicWorkflowMode;
+    }
   });
 
   it("本地覆盖命中时直接返回，不打远端（无 TTL、无首次 Host 竞态）", async () => {

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  BUILTIN_MODEL_PROVIDER_IDS,
+  buildChatGptPlanAccountProviderId,
   zcodeProtocolMethods,
   zcodeProtocolNotifications,
   requiresRequestVerification,
@@ -7,7 +9,7 @@ import {
 import type { AccountRequestAuthMaterial } from "../src/model-provider/accountRequestAuthService.js";
 import { offPeakSelectionView } from "./fixtures/offPeakSelection.js";
 
-// 账号套餐的 provider runtime headers 由 Host 自动应答，不依赖 Renderer。
+// Account-plan provider runtime headers are answered automatically by the Host, without depending on the Renderer.
 const target = {
   workspacePath: "/test/account-auth",
   sessionId: "sess-account-auth",
@@ -22,6 +24,13 @@ async function setup(
       headers: { Authorization: "Bearer host-only" },
     }),
   ),
+  chatGptPlanRequestAuth?: {
+    resolve: (input: {
+      expectedAccountScope?: string;
+      forceRefresh: boolean;
+      providerId: string;
+    }) => Promise<{ accountScope?: string; apiKey: string }>;
+  },
 ) {
   let receive: ((request: unknown) => void) | undefined;
   let notify: ((message: unknown) => void) | undefined;
@@ -61,6 +70,7 @@ async function setup(
   const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
   const service = createZCodeAgentService({
     modelSelectionReadinessSource: { getView: async () => offPeakSelectionView() },
+    ...(chatGptPlanRequestAuth ? { chatGptPlanRequestAuth } : {}),
     accountRequestAuthService: {
       resolveCurrent,
       resolveAccessCurrent: async () => null,
@@ -89,15 +99,56 @@ async function setup(
         ...(rejectedProjectTokenFingerprint ? { rejectedProjectTokenFingerprint } : {}),
       },
     });
+  const chatgptAccountProviderId = buildChatGptPlanAccountProviderId("a1b2c3d4e5f60718");
+  const fireChatgpt = (expectedAccountScope?: string, rejectedProjectTokenFingerprint?: string) =>
+    receive?.({
+      id: "protocol-1",
+      method: zcodeProtocolMethods.interactionRequestProviderRuntimeHeaders,
+      params: {
+        requestId: target.requestId,
+        sessionId: target.sessionId,
+        workspace,
+        providerId: chatgptAccountProviderId,
+        modelSelection: {
+          providerId: chatgptAccountProviderId,
+          modelId: "gpt-6.1-sol",
+        },
+        reason: "model-request",
+        ...(expectedAccountScope ? { expectedAccountScope } : {}),
+        ...(rejectedProjectTokenFingerprint ? { rejectedProjectTokenFingerprint } : {}),
+      },
+    });
   const cancel = () =>
     notify?.({
       method: zcodeProtocolNotifications.providerRuntimeHeadersCancelled,
       params: { requestId: target.requestId, sessionId: target.sessionId, workspace },
     });
-  return { service, fire, cancel, respond, resolveCurrent };
+  return { service, fire, fireChatgpt, cancel, respond, resolveCurrent };
 }
 
 describe("Host 自动应答账号请求鉴权", () => {
+  it("ChatGPT plan request auth is answered without a renderer interaction", async () => {
+    const accountScope = "c".repeat(64);
+    const resolve = vi.fn(async () => ({ apiKey: "chatgpt-token", accountScope }));
+    const { service, fireChatgpt, respond } = await setup(undefined, { resolve });
+    try {
+      fireChatgpt();
+      await vi.waitFor(() =>
+        expect(respond).toHaveBeenCalledWith("protocol-1", {
+          headersApplied: true,
+          requestAuth: { apiKey: "chatgpt-token", accountScope },
+        }),
+      );
+      expect(resolve).toHaveBeenCalledWith({
+        expectedAccountScope: undefined,
+        forceRefresh: false,
+        providerId: buildChatGptPlanAccountProviderId("a1b2c3d4e5f60718"),
+      });
+    } finally {
+      service.disposeAll();
+    }
+  });
+
   it("individual-coding-plan：凭据解析期间取消，不回传迟到材料", async () => {
     const deferred = Promise.withResolvers<AccountRequestAuthMaterial>();
     const { service, fire, cancel, respond } = await setup(vi.fn(() => deferred.promise));

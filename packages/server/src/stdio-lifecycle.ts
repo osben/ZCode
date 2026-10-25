@@ -57,7 +57,7 @@ export function registerStdioProcessLifecycle(options: StdioProcessLifecycleOpti
           (error: unknown) => ({ kind: "failed" as const, error }),
         );
         const timedOut = new Promise<{ kind: "timed-out" }>((resolve) => {
-          // timer 不能 unref，否则外部 Promise 永久 pending 时它无法独立保证收口。
+          // Do not unref the timer; if an external Promise stays pending forever, the timer must still guarantee shutdown.
           timeout = setTimeout(() => resolve({ kind: "timed-out" }), timeoutMs);
         });
         const result = await Promise.race([operationResult, timedOut]);
@@ -75,8 +75,8 @@ export function registerStdioProcessLifecycle(options: StdioProcessLifecycleOpti
         return true;
       };
 
-      // 整个 cleanup 不能只设一个 race；stopRpc 一旦超时就直接 exit，
-      // service dispose 永远没有机会关闭 Agent 子进程。两个外部异步边界必须各自有界并独立推进。
+      // Do not put the entire cleanup behind one race; if stopRpc times out and exits immediately,
+      // service disposal never gets a chance to close Agent child processes. Bound and advance the two external async boundaries independently.
       if (
         !(await runPhase("rpc-stop", stopRpc, "stdio shutdown RPC stop failed", rpcStopTimeoutMs))
       ) {
@@ -97,9 +97,9 @@ export function registerStdioProcessLifecycle(options: StdioProcessLifecycleOpti
     })();
   };
 
-  // 远程项目静置时可能长时间没有 client->server RPC 输入，但窗口仍然打开。
-  // 不能再按空闲时间主动退出；只在 stdio 明确关闭或报错时结束远端 server，
-  // 让远程连接生命周期跟随用户关闭项目/应用或底层 SSH 断连。
+  // An idle remote project may have no client-to-server RPC input for a long time while its window remains open.
+  // Do not exit based on idle time; stop the remote server only when stdio closes explicitly or errors,
+  // so the remote connection lifetime follows the user closing the project/app or the underlying SSH disconnect.
   stdin.on("end", () => {
     log("stdin closed, shutting down");
     requestShutdown(0);
@@ -110,8 +110,8 @@ export function registerStdioProcessLifecycle(options: StdioProcessLifecycleOpti
   });
   for (const signal of TERMINATION_SIGNALS) {
     signalSource.on(signal, () => {
-      // SSH 断连在不同 sshd/shell 上可能表现为 stdin EOF，也可能先向前台进程发送信号。
-      // 两类入口必须进入同一个幂等清理链路，否则 detached Agent 会绕过父进程退出而成为孤儿。
+      // SSH disconnects may appear as stdin EOF on some sshd/shell combinations, or as a signal sent to the foreground process on others.
+      // Both entry points must use the same idempotent cleanup path, or a detached Agent can outlive its parent as an orphan.
       log("termination signal received, shutting down", signal);
       requestShutdown(1);
     });

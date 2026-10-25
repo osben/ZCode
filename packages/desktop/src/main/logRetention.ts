@@ -32,10 +32,7 @@ function parseLogDateFromFileName(fileName: string): Date | null {
   return parsed;
 }
 
-function getLogRetentionCutoffDate(
-  now: Date,
-  retentionDays: number = LOG_RETENTION_DAYS,
-): Date {
+function getLogRetentionCutoffDate(now: Date, retentionDays: number = LOG_RETENTION_DAYS): Date {
   const cutoff = getStartOfLocalDay(now);
   cutoff.setDate(cutoff.getDate() - Math.max(retentionDays - 1, 0));
   return cutoff;
@@ -85,8 +82,8 @@ export function cleanupExpiredLogFiles(
 
       const filePath = join(logDir, entry.name);
       try {
-        // 主日志目前只有按天切分，没有保留期，旧文件会无限累积。
-        // 这里在启动时清理 14 天前的日志，先用最小成本把磁盘增长控制住。
+        // Main logs are currently rotated by day but have no retention period, so old files accumulate indefinitely.
+        // Remove logs older than 14 days at startup to limit disk growth at minimal cost.
         unlinkSync(filePath);
         deletedFiles.push(entry.name);
       } catch {

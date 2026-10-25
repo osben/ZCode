@@ -28,14 +28,16 @@ export const ZCODE_KNOWN_TOOL_NAMES = [
   "Task",
   "Skill",
   "CreateWorkflow",
-  // 修订入口：登记进 workflow family 让确认窗
-  // 按 family 选中运行确认块；工具行侧则按名先分流（resolveRenderer.ts），family 兜底不会吞掉它。
+  // Revision entry point: register it in the workflow family to show the confirmation dialog.
+  // Select the run confirmation block by family; tool rows first dispatch by name (resolveRenderer.ts), so the family fallback will not consume it.
   "AmendWorkflow",
-  // 留白补全（docs/dynamic-workflow/launch.md「The `FillWorkflowHole` tool」）：同 AmendWorkflow 登记进
-  // workflow family——确认窗按 family 选运行确认块；工具行侧按名先分流到 CreateWorkflow 渲染器换留白词汇。
+  // Hole filling (docs/dynamic-workflow/launch.md "The `FillWorkflowHole` tool"): like
+  // AmendWorkflow, register it in the workflow family so the confirmation dialog selects the run
+  // confirmation block by family; tool rows first dispatch by name to the CreateWorkflow renderer
+  // with hole-filling wording.
   "FillWorkflowHole",
-  // wire 名就是 snake_case 的 submit_result（仓库里唯一一个），下划线必须字面在场：
-  // 未登记时 UI identity 退回 unknown，动态工作流 actor 的提交会落到 raw fallback renderer。
+  // The wire name is snake_case submit_result (the only one in the repository), so the underscore must be present literally:
+  // If unregistered, UI identity falls back to unknown and Dynamic Workflow actor submissions use the raw fallback renderer.
   "submit_result",
 ] as const;
 
@@ -77,13 +79,13 @@ const TOOL_FAMILY_BY_NAME: Record<ZCodeKnownToolName, ZCodeToolFamily> = {
   SendMessage: "message",
   RespondToCoordinator: "message",
   TaskOutput: "task-control",
-  // TaskStop 未登记时 UI identity 会退回 unknown，最终落到 raw fallback renderer。
+  // If TaskStop is unregistered, UI identity falls back to unknown and ultimately uses the raw fallback renderer.
   TaskStop: "task-control",
   js: "node-repl",
   js_reset: "node-repl",
   js_add_node_module_dir: "node-repl",
-  // node_repl 由 MCP 暴露，进入 UI 的工具名因此带 MCP 前缀。
-  // 若这里只登记旧 built-in 名称，专用 REPL renderer 会退回 unknown fallback。
+  // node_repl is exposed through MCP, so its tool name in the UI has an MCP prefix.
+  // If only the legacy built-in name is registered here, the dedicated REPL renderer falls back to unknown.
   mcp__node_repl__js: "node-repl",
   mcp__node_repl__js_reset: "node-repl",
   mcp__node_repl__js_add_node_module_dir: "node-repl",
@@ -127,4 +129,24 @@ export function isZCodeToolFamily(
 
 export function isZCodeFileContentWriteToolName(value: string | null | undefined): boolean {
   return normalizeZCodeToolName(value) === "Write";
+}
+
+export const ZCODE_ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
+export const ZCODE_EXIT_PLAN_MODE_TOOL_NAME = "ExitPlanMode";
+
+/** Exact wire-name match, shared by the CLI projection, Host adapter and UI projection. */
+export function isZCodeAskUserQuestionToolName(value: string | null | undefined): boolean {
+  return value === ZCODE_ASK_USER_QUESTION_TOOL_NAME;
+}
+
+/** Exact wire-name match, shared by the CLI projection, Host adapter and UI projection. */
+export function isZCodeExitPlanModeToolName(value: string | null | undefined): boolean {
+  return value === ZCODE_EXIT_PLAN_MODE_TOOL_NAME;
+}
+
+/** Permissions answered through the user-input flow (questions and plan approval), not allow/deny. */
+export function isZCodeUserInputBackedPermissionToolName(
+  value: string | null | undefined,
+): boolean {
+  return isZCodeAskUserQuestionToolName(value) || isZCodeExitPlanModeToolName(value);
 }

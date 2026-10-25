@@ -5,16 +5,18 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Emitter } from "@zcode/rpc";
 import type { SourceServerManagementSnapshot } from "@zcode/shared";
-import zhCN from "@/i18n/locales/zh-CN.js";
+import enUS from "@/i18n/locales/en-US.js";
 import { SourceServerManagementPanel } from "@/settings/SourceServerManagementPanel.js";
 
 /**
- * §9 门禁 1：本轮触达的带占位符 i18n key 必须有「渲染含实值」断言，防 {time} 类回归。
- * mock 复刻 IntlProvider.createIntl 的真实语义（真实 zh-CN 消息 + {key} replaceAll 插值），
- * 断言渲染结果含具体值且不残留任何 `{placeholder}` 字面量。
+ * §9 gate 1: every placeholder-bearing i18n key reached in this round must have a
+ * "renders concrete values" assertion, guarding against {time}-style regressions.
+ * The mock replicates IntlProvider.createIntl's real semantics (real en-US messages +
+ * {key} replaceAll interpolation) and asserts the rendered result contains the concrete
+ * values and leaves no raw `{placeholder}` literals behind.
  */
-function formatZhMessage({ id }: { id: string }, values?: Record<string, string | number>): string {
-  let message = zhCN[id] ?? id;
+function formatEnMessage({ id }: { id: string }, values?: Record<string, string | number>): string {
+  let message = enUS[id] ?? id;
   if (values) {
     for (const [key, value] of Object.entries(values)) {
       message = message.replaceAll(`{${key}}`, String(value));
@@ -25,8 +27,8 @@ function formatZhMessage({ id }: { id: string }, values?: Record<string, string 
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
-    intl: { formatMessage: formatZhMessage },
-    locale: "zh-CN",
+    intl: { formatMessage: formatEnMessage },
+    locale: "en-US",
   }),
 }));
 
@@ -103,8 +105,9 @@ describe("SourceServerManagementPanel placeholder values", () => {
           lastOnlineAt: Date.now() - 16.5 * 60_000,
         },
       ],
-      // §9 门禁 5：项目数按 workspaceKey 去重——同 identity 合并（A/B）、
-      // 缺 identity 按路径回退合并（C/D）、同路径不同 identity 不合并（E）→ 共 3 个项目。
+      // §9 gate 5: project count dedupes by workspaceKey — same identity merges (A/B),
+      // missing identity falls back to path merging (C/D), same path with a different identity
+      // does not merge (E) → 3 projects in total.
       workspaceHistory: [
         {
           workspacePath: "/srv/a",
@@ -147,10 +150,17 @@ describe("SourceServerManagementPanel placeholder values", () => {
     expect(await screen.findByRole("button", { name: "b" })).toBeTruthy();
     expect(container.querySelectorAll("[data-device-project]")).toHaveLength(3);
     expect(screen.queryByText("+2")).toBeNull();
-    expect(screen.queryByText("显示全部 (3)")).toBeNull();
+    expect(
+      screen.queryByText(enUS["settings.source.showAllProjects"].replace("{count}", "3")),
+    ).toBeNull();
     const connection = container.querySelector("[data-device-connection]")?.textContent ?? "";
     expect(connection).toContain("v3.8.1");
-    expect(connection).toContain("最近在线 16 分钟前");
+    expect(connection).toContain(
+      enUS["settings.source.lastOnline"].replace(
+        "{time}",
+        enUS["common.minutesAgo"].replace("{count}", "16"),
+      ),
+    );
     expectNoRawPlaceholders(container);
   });
 
@@ -169,9 +179,11 @@ describe("SourceServerManagementPanel placeholder values", () => {
 
     const { container } = renderPanel(snapshot);
 
-    expect(await screen.findByText("0 个项目")).toBeTruthy();
-    // 单条连接时“当前 / 默认”没有区分意义，不显示。
-    expect(screen.queryByText("当前")).toBeNull();
+    expect(
+      await screen.findByText(enUS["settings.source.projectCount"].replace("{count}", "0")),
+    ).toBeTruthy();
+    // With a single connection "current / default" carries no meaning, so it is not shown.
+    expect(screen.queryByText(enUS["settings.source.currentProfile"])).toBeNull();
     expectNoRawPlaceholders(container);
   });
 
@@ -193,9 +205,17 @@ describe("SourceServerManagementPanel placeholder values", () => {
 
     const { container } = renderPanel(snapshot);
 
-    expect(await screen.findByText("可更新到 v3.8.2")).toBeTruthy();
     expect(
-      screen.getByText("当前 v3.8.1 · 最低兼容 v3.7.0 · 更新期间远程任务会短暂中断"),
+      await screen.findByText(
+        enUS["settings.source.updateAvailableVersion"].replace("{version}", "3.8.2"),
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        enUS["settings.source.versionDetails"]
+          .replace("{current}", "3.8.1")
+          .replace("{minimum}", "3.7.0"),
+      ),
     ).toBeTruthy();
     expectNoRawPlaceholders(container);
   });

@@ -1,13 +1,13 @@
 // ============================================================
 // submit_result Tool Handler
 // ============================================================
-// 工作流 actor（子 AgentRuntime）用它提交本次 ask 的结构化终态结果。handler 把结果交给
-// 注入的 WorkflowSubmitPort，阻塞等待引擎裁决：
-//   - accept → 返回成功 output；executor 会在成功结果上挂 turnControl 终止本 turn。
-//   - reject → 以 ToolHandlerFailure 形式返回违规列表；它成为一条 error tool_result，
-//     不带 turnControl，循环继续，模型在同一会话内重试——这就是修复通道。
-// 具体 per-ask schema 不进工具声明，而是随 ask 指令的 epilogue 下发（frozen-tool 缓存
-// 不变式）；本 handler 只做通用转交，schema 校验由引擎在 port 侧完成。
+// A workflow actor (child AgentRuntime) uses this tool to submit the structured terminal result for the current ask. The handler
+// passes it to the injected WorkflowSubmitPort and waits for the engine's decision:
+//   - accept → return successful output; the executor attaches turnControl to end this turn on success.
+//   - reject → return the violations as ToolHandlerFailure; it becomes an error tool_result without turnControl, so the loop continues
+//     and the model retries in the same session. This is the repair path.
+// The per-ask schema is not part of the tool declaration; it is supplied with the ask instruction's epilogue (preserving the
+// frozen-tool cache invariant). This handler only forwards the request; the engine validates the schema on the port side.
 
 import {
   CoreErrorType,
@@ -28,15 +28,14 @@ import type { ToolEntry, ToolHandler, ToolHandlerFailure } from "../types.js";
 
 const MAX_SUBMIT_RESULT_MODEL_BYTES = 16_000;
 
-// reject 的违规列表以此 errorCode 归一化，落到 error tool_result 的 code 字段。
+// Normalize rejected violation lists to this errorCode for the error tool_result's code field.
 const SUBMIT_RESULT_REJECTED_ERROR_CODE = 1;
 
 const submitResultHandler: ToolHandler = async (input, context) => {
   const parsed = SubmitResultInputSchema.parse(input) as SubmitResultInput;
 
-  // Gate：workflow actor 会话才注入 workflowSubmitPort。不按 runtimeScope 判断——workflow
-  // actor 是 taskType "workflow_child"，其 runtimeScope 目前是 "main"；端口存在与否才是
-  // 与 taskType 无关的正确判据。
+  // Gate: workflowSubmitPort is injected only in workflow actor sessions. Do not check runtimeScope; a workflow actor's taskType is
+  // "workflow_child" while its runtimeScope is currently "main". Port presence is the correct criterion independent of taskType.
   if (!context.workflowSubmitPort) {
     throw createCoreError(
       CoreErrorType.ConfigurationError,
@@ -61,17 +60,18 @@ const submitResultHandler: ToolHandler = async (input, context) => {
     return { status: "accepted" } satisfies SubmitResultOutput;
   }
 
-  // reject：以 ToolHandlerFailure 返回，call-runner 将其转成 error tool_result，
-  // 违规列表作为 modelContent 存活；不挂 turnControl，循环继续 → 模型在会话内修复重试。
+  // Reject: return ToolHandlerFailure, which call-runner converts to error tool_result. The violations remain in modelContent; without
+  // turnControl, the loop continues and the model can repair and retry in-session.
   return submitResultRejection(verdict.violations);
 };
 
 /**
- * submit_result 的工具条目。不带 schema = 通用声明（`result` 任意 JSON，per-ask schema 走 ask 尾注）；
- * 带 schema = dwf mono 子代理的 typed 声明（`result` 就是该 actor 唯一的 ask 结果 schema，对该 actor
- * 冻结、跨 ask 不变，因此不破坏缓存前缀），并标 `strict` 资格让 Anthropic adapter 原生约束它。
- * 两者只有 provider 可见的声明与描述不同：handler、权限、并发组、终止语义、预算逐字节相同——
- * 引擎侧校验对两者一致，typed 声明只是让 provider 也看见（并在支持时强制）这份形状。
+ * submit_result tool entry. Without a schema, use the generic declaration (`result` accepts any JSON; per-ask schema comes in the
+ * ask suffix). With a schema, use a typed declaration for DWF mono subagents (`result` is that actor's only ask result schema, frozen
+ * and stable across asks so the cache prefix is preserved), and mark it eligible for `strict` so the Anthropic adapter can enforce it
+ * natively. Only provider-visible declaration and description differ: handler, permissions, concurrency group, terminal semantics, and
+ * budget are byte-for-byte identical. Engine validation is the same for both; the typed declaration only lets the provider see (and
+ * when supported, enforce) the shape too.
  */
 export function createSubmitResultToolEntry(resultSchema?: JsonSchema): ToolEntry {
   const typed = resultSchema !== undefined;
@@ -85,13 +85,13 @@ export function createSubmitResultToolEntry(resultSchema?: JsonSchema): ToolEntr
         : "Submit the structured result for the current ask. The required JSON shape is described in the ask instructions.",
       readOnly: false,
       destructive: false,
-      // 载荷性质：声明 concurrentSafe:false，调度器会把它放进独立的串行组。这样一个有效提交
-      // （成功即请求终止 turn）执行时，晚于它调度的兄弟工具会收到既有的合成 ToolCancelled，
-      // 早于它的先行完成——终止语义无需新增机制。
+      // Payload semantics: declare concurrentSafe:false so the scheduler places it in a separate serial group. When a valid submission
+      // runs (success terminates the turn), later-scheduled sibling tools receive the existing synthetic ToolCancelled and earlier
+      // ones finish first; no new termination mechanism is needed.
       concurrentSafe: false,
-      // 终态工具：一次有效提交（引擎 accept）就是成功，且必须结束 actor 的 turn。用声明式
-      // metadata 表达该内在能力，executor 的通用 withTerminalToolTurnStop 据此在成功结果上挂
-      // turnControl，无需在执行点按工具名硬编码，也无需 handler 侧新增 stop 信号通道。
+      // Terminal tool: a valid submission (engine accept) is success and must end the actor's turn. Declare this intrinsic capability
+      // in metadata so the executor's generic withTerminalToolTurnStop attaches turnControl on success, without hard-coding the tool
+      // name at execution or adding a stop-signal channel to the handler.
       stopTurnOnSuccess: true,
       maxOutputBytes: MAX_SUBMIT_RESULT_MODEL_BYTES,
       sideEffectScope: "session",
@@ -103,7 +103,7 @@ export function createSubmitResultToolEntry(resultSchema?: JsonSchema): ToolEntr
     inputSchema: typed ? typedSubmitResultInputSchema(resultSchema) : SubmitResultInputJsonSchema,
     ...(typed ? { strict: true } : {}),
     outputSchema: SubmitResultOutputJsonSchema,
-    // 运行时 zod 校验两者同一份（result 任意 JSON）：per-ask 形状由引擎在端口侧校验并给出可修复的违规。
+    // Runtime Zod validation is the same for both (result accepts any JSON); the engine validates per-ask shape on the port side and returns repairable violations.
     runtimeInputSchema: SubmitResultInputSchema,
     runtimeOutputSchema: SubmitResultOutputSchema,
     permission: {
@@ -125,7 +125,7 @@ export function createSubmitResultToolEntry(resultSchema?: JsonSchema): ToolEntr
         direction: "head",
       },
     },
-    // 引擎裁决可能耗时任意长；用 kind:"none" 不设墙钟超时，取消由中止该 tool call（abort）处理。
+    // Engine decisions may take arbitrarily long; kind:"none" sets no wall-clock timeout, and cancellation aborts the tool call.
     timeout: {
       kind: "none",
     },
@@ -143,7 +143,7 @@ export function createSubmitResultToolEntry(resultSchema?: JsonSchema): ToolEntr
   };
 }
 
-/** 通用声明的条目（内建工具表里的那一份）。 */
+/** Generic declaration entry (the one in the built-in tool table). */
 export const submitResultToolEntry: ToolEntry = createSubmitResultToolEntry();
 
 function submitResultRejection(violations: readonly SubmitViolation[]): ToolHandlerFailure {
@@ -154,8 +154,7 @@ function submitResultRejection(violations: readonly SubmitViolation[]): ToolHand
   };
 }
 
-// 违规格式与 dynamic-workflow 合成侧一致：一行一条，`<path>: expected <expected>, got <got>`，
-// 便于模型逐条对照修复。
+// Match the dynamic-workflow synthesis format: one violation per line, `<path>: expected <expected>, got <got>`, so the model can fix them one by one.
 function formatSubmitViolations(violations: readonly SubmitViolation[]): string {
   const header = "The submitted result does not match the required schema:";
   if (violations.length === 0) {

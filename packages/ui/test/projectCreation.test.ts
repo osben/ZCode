@@ -26,7 +26,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
     intl: {
       formatMessage: ({ id }: { id: string }) => {
         if (!state.locale) return id;
-        const messages: Record<string, string> = state.locale === "zh-CN" ? zhCN : enUS;
+        const messages: Record<string, string> = state.locale?.startsWith("zh") ? zhCN : enUS;
         return messages[id] ?? id;
       },
     },

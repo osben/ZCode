@@ -1,12 +1,12 @@
-# Model 创建与请求鉴权
+# Model Creation and Request Auth
 
-Model 创建只有一条公共链路：
+Model creation has one public chain:
 
 ```text
 ModelSelection
       |
       v
-当前 Agent Registry lookup + validation
+Current Agent Registry lookup + validation
       |
       v
 ProviderConfig + ModelConfig + ModelOptions
@@ -18,8 +18,9 @@ ModelFactory
 Model
 ```
 
-普通会话、设置页连通性测试、Subagent、Compact、Goal、Background、Repo Wiki 和闲时任务都使用这条
-链。Visibility 只影响用户 Facade，不产生第二个 Registry、ModelFactory 或 execution-only create API。
+Normal sessions, settings page connectivity tests, Subagents, Compact, Goal, Background, Repo Wiki, and idle
+tasks all use this chain. Visibility affects only user Facades; it produces no second Registry,
+ModelFactory, or execution-only create API.
 
 ## ModelSelection
 
@@ -33,30 +34,39 @@ interface ModelSelection {
 }
 ```
 
-Selection 不携带 Endpoint、Access Secret、Provider Config、Model Config、Adapter 类型或模型能力。
-Registry 根据 `providerId + modelId` 查找当前 Effective Config，并按 Option Specs 校验 options。
+Selection carries no Endpoint, Access Secrets, Provider Config, Model Config, Adapter type, or model
+capabilities. Registry locates the current Effective Config by `providerId + modelId` and validates options
+against Option Specs.
 
-Selection 中的 options 是选择事实，不是 Provider/Model Config 快照：
+Selection's options are selection facts, not Provider/Model Config snapshots:
 
-- 正式 Selection 必须携带合法 `reasoningLevel`；创建全新缺省选择时，只允许 Host Initial Selection Resolver 按 `values.at(-1)` 补全一次；
-- `maxOutputTokens` 不属于 Selection；Agent/调用方根据模型的 `optionSpecs.maxOutputTokens.max` 与当前任务预算，为每个 Model Request 显式决定；
-- `options: {}` 归一化为字段缺失，正式 Selection 不保存 `null`；patch 的 `null` 只表达删除覆盖；
-- ModelFactory 只校验和冻结，不从 Option Spec 补执行默认值，也不反写 Selection 或任意产品 record。
+- Formal Selections must carry a valid `reasoningLevel`; when creating a new default selection, only the
+  Host Initial Selection Resolver may fill once by `values.at(-1)`;
+- `maxOutputTokens` is not part of Selection; Agents/callers explicitly decide per Model Request from the
+  model's `optionSpecs.maxOutputTokens.max` and the current task budget;
+- `options: {}` normalizes to field absence; formal Selections save no `null`; patch `null` expresses only
+  deletion of overrides;
+- ModelFactory only validates and freezes; it fills no execution defaults from Option Specs and writes
+  nothing back to Selection or product records.
 
-历史运行需要记录实际值时使用 Model/execution facts；不能用后来变化的 Option Spec 重新解释旧 Selection。
+When historical runs need actual values, use Model/execution facts; do not re-interpret old Selections with
+later-changed Option Specs.
 
-Registry lookup 同时执行 Model Config `enabled` 门禁。`enabled=false` 的模型仍可在 Settings 中编辑和重新
-启用，但不能进入普通候选、默认/fallback 选择，也不能通过内部精确 ID 创建 Model。Visibility 只控制用户
-界面暴露范围，不绕过 enabled。
+Registry lookup simultaneously executes Model Config `enabled` gates. `enabled=false` models can still be
+edited and re-enabled in Settings but cannot enter normal candidates, default/fallback selections, or create
+Models through internal exact IDs. Visibility controls only user interface exposure; it does not bypass
+enabled.
 
-只有 Provider 具有 `visibility`，缺省为 `visible`。用户入口使用 Selection Facade，只能选择 visible Provider
-中的 executable Model；内部产品能力可以按精确 ID 使用 Registry 中 hidden Provider 的 enabled Model。这个差异是
-候选 View 的差异，不是鉴权或安全边界。
+Only Providers have `visibility`, defaulting to `visible`. User entries use the Selection Facade and can
+select only executable Models from visible Providers; internal product capabilities can create Models from
+enabled Models in hidden Providers using Registry by exact ID. This difference is a candidate View
+difference, not an auth or security boundary.
 
-## ModelFactory 输入
+## ModelFactory Input
 
-运行时 `ModelFactory` 接收 `ModelSelection`，并在真正创建 Model 前向当前 Agent Registry 做最终完整
-校验。校验通过后，内部装配层再把已经查好的完整输入交给 Adapter；Adapter 不反向查询 Registry：
+The runtime `ModelFactory` receives `ModelSelection` and performs final completeness validation against the
+current Agent Registry before truly creating a Model. After validation passes, the internal assembly layer
+passes the already-looked-up complete input to the Adapter; the Adapter does not query Registry in reverse:
 
 ```ts
 interface AdapterModelFactoryInput {
@@ -69,23 +79,27 @@ interface AdapterModelFactoryInput {
 }
 ```
 
-用户 `ModelSelectionFacade` 只提供 visible candidates，不暴露执行校验方法。内部产品可以在保存或派发前
-使用具体 Service 的窄 Registry 检查，但不能替代 ModelFactory 的最终校验。
+The user `ModelSelectionFacade` provides only visible candidates; it exposes no execution validation
+methods. Internal product capabilities may use narrow Registry checks from specific Services before saving
+or dispatching, but cannot replace ModelFactory's final validation.
 
-`RegistryProviderConfig` / `RegistryModelConfig` 是同一个 Effective Config 通过唯一完整性边界后的静态
-收窄结果；Factory 不接受稀疏 Overlay Config，也不在 Bootstrap/Adapter 中再次补字段或证明完整性。
+`RegistryProviderConfig` / `RegistryModelConfig` are static narrowed results of the same Effective Config
+through a single completeness boundary; Factories accept no sparse Overlay Config, nor refill fields or
+prove completeness in Bootstrap/Adapter.
 
-`ModelRequestDependencies` 包含进程级网络/签名 Service，也允许装配本次执行作用域的 Request Auth
-Source。Source 是 Model 的执行依赖，不是 Config、Selection 或新的 Model 类型；Model 在每个 request
-attempt 上向它取当前材料。普通公共 `ModelRequest` 不增加凭据字段。
+`ModelRequestDependencies` includes process-level network/signing Services and allows assembling the current
+execution scope's Request Auth Source. The Source is an execution dependency of the Model — not Config,
+Selection, or a new Model type; the Model takes current materials from it on each request attempt. The
+ordinary public `ModelRequest` adds no credential fields.
 
-这样 Factory 可以在测试、不同 Entry 和同一 Registry 的 visible/hidden Provider 间复用。Registry 更新后
-只影响后续输入；已经创建的 Model 持有旧 Config、Options 和执行资源，继续完成当前生命周期。
+The Factory is thereby reusable across tests, Entries, and visible/hidden Providers on the same Registry.
+After Registry updates, only subsequent inputs are affected; already-created Models hold old configs,
+Options, and execution resources, completing their current lifecycle.
 
-## Provider Config 到执行装配
+## Provider Config to Execution Assembly
 
-ModelFactory 把 Registry 中同一个完整 Provider/Model Config 引用直接交给 Adapter；Bootstrap 不复制
-Provider map，也不先编译同形执行 DTO：
+ModelFactory passes the same complete Provider/Model Config references from the Registry directly to the
+Adapter; Bootstrap copies no Provider map and compiles no same-shape execution DTO first:
 
 ```text
 RegistryProviderConfig + RegistryModelConfig
@@ -100,11 +114,12 @@ Adapter private execution closure
 └─ model factory cache
 ```
 
-私有执行闭包没有独立 Source，不参与 Config Overlay、模型选择、Visibility 或 Model Properties 解析。
-Adapter 只持有进程级网络、签名、路由、重试等执行基础设施；它不持有 Provider 列表，也不存在可供业务
-调用方更新的 `replaceRegistryConfig()`。
+The private execution closure has no independent Source; it participates in no Config Overlay, model
+selection, Visibility, or Model Properties resolution. The Adapter holds only process-level network,
+signing, routing, retry, and other execution infrastructure; it holds no Provider lists and exposes no
+`replaceRegistryConfig()` that business callers can update.
 
-## Access 类型
+## Access Types
 
 ### api-key
 
@@ -120,8 +135,8 @@ ModelFactory / Adapter
 Provider Request
 ```
 
-API Key 是静态 Config 字段。缺少 Key 的 Effective Provider 不完整，不进入 Registry。Settings 可以展示
-问题并补齐；测试连接使用保存后的正式 Model。
+API Key is a static Config field. Effective Providers missing a Key are incomplete and do not enter
+Registry. Settings can display the issue and fill it in; connectivity tests use the saved formal Model.
 
 ### zhipu-account
 
@@ -131,10 +146,10 @@ ZCode Built-in Provider Config
    └─ family + mode
         |
         v
-ModelFactory 固定静态账号访问类别
+ModelFactory fixes static account access category
         |
         v
-每个 request attempt
+Each request attempt
         |
         v
 Account Request Auth Service(current compatible connection)
@@ -143,19 +158,22 @@ Account Request Auth Service(current compatible connection)
 ModelRequestAuth { apiKey, headers }
 ```
 
-Access 显式保存调用装配所需的 Family 和 Mode。账号身份、商品和 Team scope 由 Account Connection
-Service 拥有；每个 attempt 根据静态类别解析当前兼容连接。切换到不兼容的 Family/Plan 或退出账号时在
-网络前失败；同一 Family/Plan 的当前连接和刷新后的凭据可以被旧 Active Model 使用。
+Access explicitly saves the Family and Mode needed for call assembly. Account identity, products, and Team
+scope are owned by the Account Connection Service; each attempt resolves the current compatible connection
+from the static category. Switching to an incompatible Family/Plan or logging out fails before the network;
+the current connection and refreshed credentials of the same Family/Plan remain usable by old Active Models.
 
-Start Plan、Individual Coding Plan 和 Team Plan 可以共享 Account Provider 基础设施，但分别对应固定类型
-的独立 Built-in Provider。Account Built-in Overlay 只为当前账号投影 `access.entitled`。Account Service
-决定如何取得请求材料；服务端决定最终是否授权。
+Start Plan, Individual Coding Plan, and Team Plan share Account Provider infrastructure but correspond to
+independently typed Built-in Providers. The Account Built-in Overlay projects only `access.entitled` for the
+current account. Account Services decide how to obtain request materials; the server decides final
+authorization.
 
-Provider 顶层不存在 `enabled`；账号套餐资格通过 `zhipu-account.entitled` 表达。Start Plan 还可以用账号接口返回的
-非空 `builtinModelIds` 约束成员；Individual/Team 继承 Built-in 成员。任何这类
-Account Overlay 必须与产生它的 ZCode Built-in revision 匹配后，才允许 Registry 创建后续 Model。
+There is no `enabled` at the top level of Providers; account plan eligibility is expressed through
+`zhipu-account.entitled`. Start Plan may also constrain members with non-empty `builtinModelIds` returned by
+the account interface; Individual/Team inherit Built-in members. Any such Account Overlay may create
+subsequent Models by Registry only after matching the ZCode Built-in revision that produced it.
 
-### Off-Peak 请求期材料
+### Off-Peak Request-time Materials
 
 ```text
 Provider Config
@@ -163,10 +181,10 @@ Provider Config
    └─ mode = off-peak
         |
         v
-ModelFactory 创建普通 Model
+ModelFactory creates ordinary Model
         |
         v
-每个 Model request attempt
+Each Model request attempt
         |
         v
 ModelRequestDependencies.requestAuth.resolve()
@@ -175,18 +193,18 @@ ModelRequestDependencies.requestAuth.resolve()
         `-- missing              -> typed auth error before network
 ```
 
-Off-Peak 不保存 Secret。它的动态材料由本次闲时执行在 Model 创建时装配，而普通
-`zhipu-account` Mode 由 Account Request Auth Service 在调用时解析。
+Off-Peak saves no Secrets. Its dynamic materials are assembled by this idle execution at Model creation
+time, while ordinary `zhipu-account` Modes are resolved by the Account Request Auth Service at call time.
 
-Request Auth 是执行作用域内、按 request attempt 读取的依赖：
+Request Auth is a per-request-attempt dependency within the execution scope:
 
-- 不进入 ProviderConfig、ModelConfig 或 Registry View；
-- 不进入 Session Selection、App Recent 或 Personal Config；
-- 不进入 conversation event、snapshot 或日志；
-- Retry 只能在当前有效调用/执行上下文内复用或刷新；
-- 缺少、过期或无法解析时在网络前失败。
+- Does not enter ProviderConfig, ModelConfig, or Registry View;
+- Does not enter Session Selection, App Recent, or Personal Config;
+- Does not enter conversation events, snapshots, or logs;
+- Retries can only reuse or refresh within the current valid call/execution context;
+- Fails before the network when missing, expired, or unresolvable.
 
-## 静态与动态 Header
+## Static and Dynamic Headers
 
 ```text
 ProviderConfig.api.headers          -> static headers
@@ -194,13 +212,15 @@ Account / Off-Peak request source   -> dynamic auth headers
 ModelRequest / Adapter options      -> protocol request fields
 ```
 
-Adapter 按固定优先级合并并保护鉴权字段。Renderer、Core 业务逻辑和 Model Config Rules 不拼 JWT、Ticket、
-一次性安全校验、organization/project 或 Provider 方言 Header。
+The Adapter merges and protects auth fields at fixed priorities. Renderer, Core business logic, and Model
+Config Rules assemble no JWTs, Tickets, one-time security verification, organization/project, or Provider
+dialect Headers.
 
-## 闲时任务
+## Idle Tasks
 
-`account:zai-offpeak-idle-plan` 与 `account:bigmodel-offpeak-idle-plan` 是两个完整的 ZCode Built-in Provider；
-Scheduler 按当前账号 Family 精确选择其中一个，Provider 本身不在执行期切换 Family：
+`account:zai-offpeak-idle-plan` and `account:bigmodel-offpeak-idle-plan` are two complete ZCode Built-in
+Providers; the Scheduler precisely selects one by current account Family; the Provider itself does not
+switch Families at execution time:
 
 ```text
 ProviderConfig
@@ -209,15 +229,16 @@ ProviderConfig
 ├─ access.mode = off-peak
 ├─ api.type
 ├─ api.baseURL
-├─ static headers（如有）
+├─ static headers (if any)
 └─ builtinModelIds
 
 Model Config Rules
-└─ properties / optionSpecs（含 per-option raw-body map）
+└─ properties / optionSpecs (including per-option raw-body map)
 ```
 
-Host/Scheduler 派发普通 ModelSelection，并为本次自动 Turn 提供 Request Auth、Ticket 和必要归因。它不
-携带 Provider/Model 静态快照，也不建立临时 Provider Source：
+The Host/Scheduler dispatches an ordinary ModelSelection and provides Request Auth, Tickets, and necessary
+attribution for this automatic Turn. It carries no Provider/Model static snapshots and creates no temporary
+Provider Sources:
 
 ```text
 Core Submission
@@ -229,34 +250,35 @@ Core Submission
             |
             v
 Registry lookup + ModelFactory
-            | 装配本轮 requestAuth source
-            |
+            |  Assemble this round's requestAuth source
             v
 Idle Active Model
 ```
 
-Request Auth/Ticket 只对当前有效派发生效。Ticket 过期、取消、失败、成功、抢占或进程重启后，Scheduler
-结束当前执行上下文；重新取票后用新的 Submission 创建新 Model。任务排队、续跑和 settle 不属于
-Provider/Registry。
+Request Auth/Tickets are valid only for this dispatch. When a Ticket expires, is cancelled, fails, succeeds,
+is preempted, or the process restarts, the Scheduler ends the current execution context; after re-securing a
+ticket it sends a new Submission and creates a new Model. Task queuing, re-runs, and settlement belong to
+the Off-Peak domain, not Provider/Registry.
 
 ## Active Model
 
-ModelFactory 返回的 Model 是不可变执行对象：
+The Model returned by ModelFactory is an immutable execution object:
 
 ```text
 Model
 ├─ fixed providerId / modelId
 ├─ fixed ProviderConfig / ModelConfig
 ├─ fixed Selection/Binding Options
-├─ fixed account family / mode（若适用）
+├─ fixed account family / mode (if applicable)
 └─ request-time dependency ports
 ```
 
-普通 Config 更新、Composer 选择变化或账号全局切换不修改旧 Model。Guide 在明确 Step 边界创建并切换
-新的 Active Model；已经发出的请求继续由旧 Model 完成。
+Ordinary config updates, Composer selection changes, or account global switches do not modify old Models.
+Guides create and switch new Active Models at explicit Step boundaries; already-issued requests continue on
+the old Model.
 
-闲时任务创建自己的 Loop Active Model，但不写 Session Selection。Automatic Compact 使用当前 Active
-Model；Subagent 按最终 Selection 创建自己的 Model。
+Idle tasks create their own Loop Active Models but write no Session Selection. Automatic Compact uses the
+current Active Model; Subagents create their own Models from the final Selection.
 
 ## Subagent
 
@@ -274,13 +296,13 @@ Registry / ModelFactory
 Child-owned Model
 ```
 
-每个 Child 拥有自己的 Model，不借用父级可变对象。闲时任务通过通用 override 固定 Foreground Child
-的 idle Selection，并把当前 Request Auth/Ticket context 传到 Child request；Background 由 Tool Policy
-在模型请求前拒绝。
+Each Child owns its own Model and does not borrow the parent's mutable object. Idle tasks pin Foreground
+Children's idle Selection through general override and pass the current Request Auth/Ticket context to Child
+requests; Background is refused by Tool Policy before making model requests.
 
 ## Adapter
 
-Adapter 只负责 Provider 协议和 IO：
+The Adapter is responsible only for Provider protocol and IO:
 
 ```text
 ModelRequest
@@ -295,50 +317,44 @@ Adapter
 └─ error normalization
 ```
 
-Core 不理解 `reasoning_effort`、`enable_thinking`、`thinkingBudget` 或具体 Header 名；Model Config Rules
-给出公共 Options 到 Adapter 参数的映射。输入输出格式直接读取 Model.properties，不按 modelId 推断。
+Core does not understand `reasoning_effort`, `enable_thinking`, `thinkingBudget`, or specific Header names;
+Model Config Rules provide the mapping of public Options to Adapter parameters. Input/output formats are
+read directly from Model.properties, not inferred by modelId.
 
-## Usage、Trace 与错误
+## Usage, Trace, and Errors
 
-每次请求记录实际 Model 身份：
+Each request records the actual Model identity: `providerId`, `modelId`, effective options, request source /
+task attribution, usage, error. Off-Peak taskId, Goal, Compact, Subagent, and Repo Wiki are execution source
+dimensions; they do not replace Provider/Model attribution. Retries cannot attribute a request to another
+Model; if the product explicitly switches the Model, a new Model and new execution boundary must be created.
 
-```text
-providerId
-modelId
-effective options
-request source / task attribution
-usage
-error
-```
+## Error Boundaries
 
-Off-Peak taskId、Goal、Compact、Subagent 和 Repo Wiki 是执行来源维度，不替代 Provider/Model 归因。Retry
-不能把一次请求归因到另一个 Model；如果产品明确切换 Model，必须创建新 Model 和新的执行边界。
+| Stage           | Typical Errors                                                                       |
+| --------------- | ------------------------------------------------------------------------------------ |
+| Config parse    | schema/unknown field                                                                 |
+| Completeness    | Missing access/api/baseURL/models/model config                                       |
+| Selection       | provider/model/options does not exist or is invalid                                  |
+| ModelFactory    | Adapter/execution dependencies cannot assemble                                       |
+| Request auth    | Invalid Account Access, missing/expired Request Auth                                 |
+| Adapter/network | Auth rejection, rate limiting, service errors, protocol parsing, stream interruption |
 
-## 错误边界
+Each layer reports only its own errors; it never silently falls back to old Runtime Snapshots, Catalogs, or
+default Providers.
 
-| 阶段            | 典型错误                                    |
-| --------------- | ------------------------------------------- |
-| Config parse    | schema/unknown field                        |
-| completeness    | access/api/baseURL/models/model config 缺失 |
-| Selection       | provider/model/options 不存在或非法         |
-| ModelFactory    | Adapter/执行依赖无法装配                    |
-| request auth    | Account Access 无效、Request Auth 缺失/过期 |
-| Adapter/network | 鉴权拒绝、限流、服务错误、协议解析、流中断  |
+## Invariants
 
-每层只报告自己的错误，不使用旧 Runtime Snapshot、Catalog 或默认 Provider 静默兜底。
-
-## 不变量
-
-- 所有 Model 都通过同一 Registry/ModelFactory 链创建。
-- Visibility 只影响用户 Facade。
-- Hidden Provider 仍使用普通完整性和 Access 校验。
-- Disabled Model 不进入候选、fallback 或 ModelFactory 创建；内部精确 lookup 也不能绕过。
-- Adapter 私有 Factory 不反向查询 Registry；运行时 ModelFactory 必须在创建边界查询当前 Agent Registry 并
-  完整校验 Selection。
-- Config 更新不热改已创建 Model。
-- API Key 可以由 Config 保存；Account 和 Off-Peak 动态材料在请求期取得。
-- Account Provider 固定 `family + mode`；当前账号、商品和 Team scope 不进入 Model。
-- Request Auth 缺失必须在网络前失败。
-- Submission 不携带完整 ProviderConfig 或 ModelConfig。
-- Adapter 执行投影没有独立事实源。
-- Usage、Trace 和错误归因到实际 Model。
+- All Models are created through the same Registry/ModelFactory chain.
+- Visibility affects only user Facades.
+- Hidden Providers still use ordinary completeness and Access validation.
+- Disabled Models do not enter candidates, fallback, or ModelFactory creation; internal exact lookups cannot
+  bypass either.
+- Adapter private Factories do not query Registry in reverse; runtime ModelFactories must query the current
+  Agent Registry at the creation boundary and fully validate Selection.
+- Config updates do not hot-modify already-created Models.
+- API Keys can be saved by Config; Account and Off-Peak dynamic materials are obtained at request time.
+- Account Providers fix `family + mode`; current account, products, and Team scope do not enter Models.
+- Missing Request Auth must fail before the network.
+- Submissions carry no complete ProviderConfig or ModelConfig.
+- Adapter execution projections have no independent fact sources.
+- Usage, Trace, and errors are attributed to actual Models.

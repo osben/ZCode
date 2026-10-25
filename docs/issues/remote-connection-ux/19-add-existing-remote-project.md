@@ -1,47 +1,46 @@
-# 19: 添加已有远程项目
+# 19: Add an Existing Remote Project
 
 Status: done
 
-**Parent:** [#15 — 项目创建与远程连接管理分离](15-project-device-selection-and-connection-management.md)
+**Parent:** [#15 — Separating project creation from remote connection management](15-project-device-selection-and-connection-management.md)
 
-**What to build:** 在新的项目表单选择远程设备后，用户可以通过「添加此设备上的已有项目…」浏览并添加原项目，在本机继续访问其任务。这个路径与新建项目明确分开，返回时保留尚未提交的新项目草稿。
+**What to build:** After choosing a remote device in the new project form, the user can browse and add the original project through "添加此设备上的已有项目…" and keep accessing its tasks on this machine. This path is clearly separate from creating a project, and returning keeps the uncommitted new-project draft.
 
-**Blocked by:** [#18 — 直接创建项目与选择已有设备](18-direct-project-creation-and-device-selection.md)。本票需要该表单、所选设备和在项目内显式连接的完整路径。
+**Blocked by:** [#18 — Direct project creation and selecting an existing device](18-direct-project-creation-and-device-selection.md). This ticket needs that form, the selected device and the complete path of explicit connection inside the project.
 
-**Spec coverage:** Q9；RDUX15-15、RDUX15-16，并覆盖 RDUX15-07／18／20 的离线连接、等待及失效分支。RDUX15-23／24／25 覆盖该列表的交互与平台边界。
+**Spec coverage:** Q9; RDUX15-15, RDUX15-16, and the offline-connection, waiting and invalidation branches of RDUX15-07/18/20. RDUX15-23/24/25 cover the list's interaction and platform boundary.
 
 ## Acceptance criteria
 
-- [x] 项目表单选择远程设备后，在源文件夹区域提供「添加此设备上的已有项目…」次要入口；不要求先填写新项目名称或目录。
-- [x] 点击后在同一弹窗内进入该设备的已有项目列表。离线设备在当前项目流程内连接，保留选择已有项目的意图；补凭据、安装或重试成功后继续原列表，不进入新建项目或设置添加页。
-- [x] 用户选择列表中的项目后，仅登记该项目的本机入口，并能继续访问其原任务；不调用新建项目来模拟添加已有项目。
-- [x] 同设备同目录的不同项目保持不同项目身份并可分别选择；重复添加同一项目不产生重复本机入口。新建同目录项目的既有语义不被改为自动复用。
-- [x] 从列表返回时，名称、设备和已选目录恢复到原创建草稿；列表加载、失败、取消和重试不覆盖或提交该草稿。
-- [x] 旧远端仅支持读取已有项目时，仍可浏览和添加；不把只读能力误报为无项目，也不允许不支持的新建操作。
-- [x] 列表请求返回前切换设备、取消流程或使原意图失效，旧结果不得替换新设备的列表、添加项目或触发导航；取消只释放本次资源，不影响共享连接。
-- [x] 已有项目的明确打开／重连仍保留原项目身份和目录，不被当作另一份新项目草稿；项目历史与任务归属不迁移、不删除。
-- [x] 列表的键盘选择、返回焦点、空态／错误、长名称和路径在中英文、当前深浅主题及窄窗口下可用，Web／手机遵守原有 Host 能力。
-- [x] 先补测试再实现，完成下面的端到端身份断言及取消验证；已有入口迁移完并确认无使用者后，才移除被替代的入口与无用接线。
+- [x] After choosing a remote device in the project form, the source-folder area offers the secondary entry "添加此设备上的已有项目…"; it does not require filling in a new project name or directory first.
+- [x] Clicking enters that device's existing-project list in the same dialog. An offline device connects inside the current project flow, keeps the intent of choosing an existing project; after credential supply, install or retry succeeds it continues the original list and does not enter new-project creation or the Settings add page.
+- [x] After the user selects a project in the list, only the local entry of that project is registered, and its original tasks stay accessible; project creation is not called to simulate adding an existing project.
+- [x] Different projects at the same device and directory keep different project identities and can be selected separately; adding the same project twice produces no duplicate local entry. The existing semantics of creating a same-directory project are not changed into automatic reuse.
+- [x] Returning from the list restores name, device and chosen directories to the original creation draft; list loading, failure, cancel and retry neither overwrite nor submit that draft.
+- [x] When an old remote supports only reading existing projects, browsing and adding still work; read-only capability is not misreported as no projects, and unsupported create operations are not allowed.
+- [x] If the device is switched, the flow cancelled or the original intent invalidated before the list request returns, the old result must not replace the new device's list, add a project or trigger navigation; cancel only releases this attempt's resources and does not affect shared connections.
+- [x] An explicit open/reconnect of an existing project keeps the original project identity and directory and is not treated as another new-project draft; project history and task ownership are neither migrated nor deleted.
+- [x] Keyboard selection, return focus, empty/error states, long names and paths of the list work in Chinese/English, current dark/light themes and narrow windows, and Web/mobile follow the original Host capabilities.
+- [x] Tests before implementation; the end-to-end identity assertions and cancel verification below are done; the replaced entry and useless wiring are removed only after existing entries are migrated and confirmed to have no users.
 
 ## Verification
 
-- 在真实远端准备已有任务的项目，从新表单添加后读取原任务，断言项目 ID、任务归属和本机入口数量；重复添加也要断言，而不只检查项目名称出现。
-- 准备同目录不同项目与旧远端只读能力，验证选择、去重与能力门禁；沿用现有项目服务合同和 E2E 组织方式。
-- 延迟已有项目列表或连接结果，取消或换目标后释放，验证旧结果无副作用；返回草稿时核对全部原值。
-- 实施需通过类型检查、lint、架构门禁、受影响单测、对应 Desktop E2E，以及适用的共享 UI／手机回归和视觉检查；记录真实远端与只读兼容验证的证据边界。
+- Prepare a project with existing tasks on a real remote, add it from the new form and read the original tasks, asserting project ID, task ownership and local entry count; also assert repeated adds, not only that the project name appears.
+- Prepare same-directory different projects and an old remote with read-only capability, verifying selection, dedupe and capability gating; follow the existing project service contracts and E2E organization.
+- Delay the existing-project list or connection result, release after cancel or target change, and verify the old result has no side effect; when returning to the draft check all original values.
+- Implementation passes typecheck, lint, the architecture gate, affected unit tests, the corresponding Desktop E2E, and the applicable shared-UI/mobile regression and visual checks; record the evidence boundary of real-remote and read-only compatibility verification.
 
 ## Scope and handoff
 
-- 不新增项目按路径去重、远程项目迁移或任务重归属逻辑。只调整入口与交接，复用既有远端项目查询和本机入口登记能力。
-- 该流程的后台继续与显式恢复由 [#22](22-background-connection-and-explicit-resume.md) 接入；本票前台返回、取消和迟到结果保护必须先完整可用。
-
+- No project dedupe by path, remote project migration or task reassignment is added. Only entries and handoff are adjusted, reusing the existing remote project query and local entry registration.
+- Background continue and explicit recovery for this flow are connected by [#22](22-background-connection-and-explicit-resume.md); this ticket's foreground return, cancel and late-result protection must be fully usable first.
 
 ## Comments
 
-2026-10-12：按 Q9 完成已有项目入口与前台取消边界。ProjectEditor 保留同一份创建草稿，RemoteProjectList 只读取所选设备并在显式选择后以原 projectId 登记入口；旧连接入口的创建路径仍通过兼容包装器保留。只读旧端在 UI 与项目服务合同中验证：可读、可选、可登记，创建受限。
+2026-10-12: per Q9 the existing-project entry and the foreground cancel boundary are done. ProjectEditor keeps the same creation draft, and RemoteProjectList reads only the selected device and, after an explicit selection, registers the entry with the original projectId; the creation path of the old connection entry is kept through a compatibility wrapper. The read-only old remote is verified in the UI and the project service contract: readable, selectable, registrable, creation restricted.
 
-验证：根 `pnpm typecheck`、`pnpm lint`（208 条既有 warning、0 error）、架构门禁、E2E 类型与 fixture 检查通过。本票 `--files` 受影响选择 661 个测试文件，Vitest 主组 657 文件／6367 测试及 Node 审计通过；旧端/项目存储与入口 4 份合同共 24 项通过。合入 #20 后，创建/设置返回/取消及启动凭据 5 文件 93 项重点回归通过。
+Verification: root `pnpm typecheck`, `pnpm lint` (208 pre-existing warnings, 0 errors), the architecture gate, E2E type and fixture checks pass. This ticket's `--files` affected selection of 661 test files, the main Vitest group 657 files / 6367 tests and the Node audit pass; the 4 contracts of old remote / project storage and entry pass 24 tests. After merging #20, 5 files / 93 key regression tests for creation / Settings return / cancel and startup credentials pass.
 
-真实 SSH Desktop E2E 1/1 通过：原项目与任务 ID/归属、同目录两个项目、重复添加后入口 ID/数量不变、返回草稿、迟到列表取消，以及离线显式连接后继续原列表均有断言。证据：`packages/desktop/.e2e-artifacts/desktop-e2e-20261012110913073-p90850-7427869e2d36d636/`。已检查中英 × Zai Light/Dark × 1440/480px 的 8 组截图。几何回归先测出默认 grid 行高 48px 容不下 65px 文字（scrollTop=0），改为内容行高后逐行边界断言与全部截图通过；失败证据保留在 `desktop-e2e-20261012110708521-p87877-215c3ab6cbef90b0`。
+Real SSH Desktop E2E passes 1/1: original project and task ID/ownership, two projects at the same directory, entry ID/count unchanged after repeated add, return to the draft, late-list cancel, and continuing the original list after explicit offline connection are all asserted. Evidence: `packages/desktop/.e2e-artifacts/desktop-e2e-20261012110913073-p90850-7427869e2d36d636/`. 8 sets of screenshots (Chinese/English × Zai Light/Dark × 1440/480px) were checked. A geometry regression first found that the default grid row height of 48px could not hold 65px of text (scrollTop=0); with content row height, row-by-row boundary assertions and all screenshots pass. Failure evidence is kept in `desktop-e2e-20261012110708521-p87877-215c3ab6cbef90b0`.
 
-证据边界：真实 SSH 使用当前 runtime；旧版本二进制未单独运行，兼容分支由既有 legacy 服务 fixture 和可观察 UI 测试验证。WSL 与手机实机按用户要求保留 TODO，不将其标为通过。新 E2E 仍为 manual-review/pending，未转正或纳入 CI。
+Evidence boundary: real SSH uses the current runtime; old-version binaries were not run separately, and the compatibility branch is verified by the existing legacy service fixture and observable UI tests. Real WSL and phones are kept as TODO at the user's request and not marked as passing. The new E2E is still manual-review/pending, not promoted or added to CI.

@@ -54,8 +54,8 @@ export async function runRegularTurnLoop(
     throwIfTurnAborted(state.turnAbortSignal);
     refreshOffPeakTurnAfterTakeover(this, state);
     const outputTokenRecoveryActive = state.turnRequestState.outputTokenContinuationCount > 0;
-    // guide 只允许由完整 tool result batch 设置这个一次性诊断；普通 queue 不在
-    // model roundtrip 起点消费，避免把未来 turn 错并入当前 product turn。
+      // Only a complete tool-result batch may set this one-time guide diagnostic; ordinary queue items are not consumed
+      // at the start of a model roundtrip, preventing a future turn from being incorrectly merged into the current product turn.
     const drainedSteerForNextRequest = state.drainedSteerForNextRequest;
     state.drainedSteerForNextRequest = undefined;
 
@@ -122,7 +122,7 @@ export async function runRegularTurnLoop(
 
     const finishMcp = beginLocalTurnPreparation(state.turnTraceContext, "mcp");
     await this.initializeMcp(state.turnTraceContext);
-    // tools/list_changed 只在回合开始前生效。
+    // Apply tools/list_changed only before a turn starts.
     await this.refreshMcpToolsIfChanged(state.turnTraceContext);
     finishMcp();
     throwIfTurnAborted(state.turnAbortSignal);
@@ -131,6 +131,17 @@ export async function runRegularTurnLoop(
     finishTools();
     if (!outputTokenRecoveryActive) {
       await appendRuntimeAgentListing(this, state.turnRequestState, tools, state.turnTraceContext);
+    }
+    // Only runtimes with a language-server service pay for this step; others keep the exact previous microtask sequence.
+    if (!outputTokenRecoveryActive && this.lspService) {
+      // Post-edit LSP diagnostics: returns at once unless a file was mutated since the previous request (spec §6).
+      const lspDiagnosticsBody = await this.collectLspEditDiagnosticsBody(state.turnAbortSignal);
+      throwIfTurnAborted(state.turnAbortSignal);
+      if (lspDiagnosticsBody) {
+        commitTurnRequestEntries(this, state.turnRequestState, [
+          systemReminderAttachmentEntry("diagnostics", lspDiagnosticsBody),
+        ]);
+      }
     }
     if (!outputTokenRecoveryActive && this.needsPlanModeExitReminder) {
       this.needsPlanModeExitReminder = false;
@@ -174,8 +185,8 @@ export async function runRegularTurnLoop(
         ? buildRuntimeOutputStyleReminderBody(state.turnOutputStyle)
         : null;
     if (outputStyleReminderBody) {
-      // output_style 是 provider-visible 的当前 turn runtime attachment，
-      // 需要进入内存历史参与后续 request 的增量轨迹；但不把它落 session。
+        // output_style is a provider-visible runtime attachment for the current turn and must enter in-memory history
+        // to participate in incremental traces for later requests, but it is not persisted to the session.
       commitTurnRequestEntries(this, state.turnRequestState, [
         systemReminderAttachmentEntry("output_style", outputStyleReminderBody),
       ]);
@@ -206,8 +217,8 @@ export async function runRegularTurnLoop(
     // （2026-09-12）：原"回合开始注入 plugin_ui_state reminder"已删除，插件给模型的信息
     // 一律走 ui/update-model-context。
     const providerEntries = [...state.turnRequestState.entries];
-    // Dream 可能在同一 turn 的首个模型请求期间完成；每次 attachment collection 都检查，
-    // 才能把一次性更新放进紧随其后的模型请求，而不是延迟到下一次用户输入。
+    // Dream may finish while the first model request in the same turn is running; check on each attachment collection
+    // so its one-time update is included in the next model request instead of waiting for the next user input.
     const memoryUpdate = outputTokenRecoveryActive
       ? undefined
       : consumePendingProjectMemoryUpdate(this);
@@ -248,8 +259,8 @@ export async function runRegularTurnLoop(
       ),
     );
 
-    // 生产包需要知道 Turn 是否已经跨过 provider 边界；这里只记录请求元数据，
-    // 不记录 prompt、消息内容或 streaming chunk，避免泄露内容并控制日志量。
+      // Production needs to know whether a Turn crossed the provider boundary. Record request metadata only;
+      // do not log prompts, message content, or streaming chunks, to avoid content exposure and control log volume.
     this.logger?.info("Model request started", {
       ...traceContextToLogContext(state.turnTraceContext),
       event: "model.request.started",

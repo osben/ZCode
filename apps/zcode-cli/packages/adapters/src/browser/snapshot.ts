@@ -10,8 +10,9 @@ type SnapshotCollection = { refElements: Element[]; snapshot: BrowserSnapshot };
 const pageRefs = new WeakMap<Page, Map<string, ElementHandle<Element>>>();
 
 /**
- * 这段函数由 Playwright 序列化到页面执行，不能引用模块闭包。Element ref 不写入页面
- * globalThis，而由 adapter 从返回的 handle collection 接管，避免不可信页面脚本替换 ref map。
+ * Playwright serializes this function and executes it in the page, so it cannot reference the module closure.
+ * Do not store Element refs on the page's globalThis; the adapter takes ownership through the returned handle
+ * collection, preventing untrusted page scripts from replacing the ref map.
  */
 function collectSnapshot(options: SnapshotOptions): SnapshotCollection {
   const actionSelector =

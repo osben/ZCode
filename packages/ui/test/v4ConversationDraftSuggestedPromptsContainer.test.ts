@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { ConversationDraftSuggestedPromptsContainer } from "@/v4/ConversationDraftSuggestedPromptsContainer.js";
 import { advanceComposerDraftRevision } from "@/v4/composer/composerDraftRevision.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const getPluginReferenceCatalog = vi.hoisted(() => vi.fn());
 const resolveSuggestedPluginReference = vi.hoisted(() => vi.fn());
@@ -56,7 +57,7 @@ function render(ui: ReactNode) {
 
 vi.mock("@/components/ui/toast.js", () => ({ dismissToast, toast }));
 
-// 推荐容器新增共享偏好读取；单测沿用独立 hook mock，避免依赖真实 ServiceProvider。
+// The recommendations container now reads shared preferences; this suite keeps a standalone hook mock to avoid the real ServiceProvider.
 vi.mock("@/hooks/useSettingService.js", () => {
   const value = {
     settings: { proactiveSuggestionsEnabled: false, onboardingOccupation: null },
@@ -80,7 +81,7 @@ vi.mock("@/logger.js", () => ({
 }));
 
 vi.mock("@/hooks/useWorkspaceServices.js", () => {
-  // 生产 hook 会 memoize resolution/services；测试也必须保持引用稳定，否则 effect setState 后会被假服务引用反复触发。
+  // The production hook memoizes resolution/services; the test must keep references stable too, otherwise effect setState re-fires on each fake service reference.
   const services = {
     clientScenesService: { list: listClientScenes },
     pluginManagementService: {
@@ -107,41 +108,35 @@ vi.mock("@/hooks/useWorkspaceServices.js", () => {
   };
 });
 
-vi.mock("@/i18n/IntlProvider.js", () => ({
-  useZCodeIntl: () => ({
-    locale: "zh-CN",
-    intl: {
-      formatMessage: ({ id }: { id: string }, values?: { pluginLabel?: string; error?: string }) =>
-        id === "chat.draft.suggestedPrompt.pluginFlow.installConfirmation"
-          ? `安装${values?.pluginLabel ?? ""}插件`
-          : id === "chat.draft.suggestedPrompt.pluginFlow.enableConfirmation"
-            ? `开启${values?.pluginLabel ?? ""}插件`
-            : id === "chat.draft.suggestedPrompt.pluginFlow.installFailureToast"
-              ? `${values?.pluginLabel ?? ""} 安装失败：${values?.error ?? ""}`
-              : ({
-                  "chat.draft.suggestedPrompt.pluginFlow.installing": "正在安装插件…",
-                  "chat.draft.suggestedPrompt.pluginFlow.enabling": "正在启用插件…",
-                  "chat.draft.suggestedPrompt.pluginFlow.checking": "正在检查插件状态…",
-                  "chat.draft.suggestedPrompt.pluginFlow.confirm": "确认",
-                  "chat.draft.suggestedPrompt.pluginFlow.installSucceeded": "安装成功",
-                  "chat.draft.suggestedPrompt.pluginFlow.installFailed": "插件安装失败",
-                  "chat.draft.suggestedPrompt.pluginFlow.installTimedOut": "安装超时",
-                  "chat.draft.suggestedPrompt.pluginFlow.installReturnedEmpty": "未返回已安装插件",
-                  "chat.draft.suggestedPrompt.pluginFlow.enableSucceeded": "开启成功",
-                  "chat.draft.suggestedPrompt.pluginFlow.enableFailed": "插件开启失败",
-                }[id] ?? id),
-    },
-  }),
-}));
+vi.mock("@/i18n/IntlProvider.js", async () => {
+  const { expectedCopy } = await import("./helpers/uiCopy.js");
+  return {
+    useZCodeIntl: () => ({
+      locale: "en-US",
+      intl: {
+        formatMessage: ({ id }: { id: string }, values?: Record<string, string | number>) => {
+          try {
+            return expectedCopy(id, values);
+          } catch {
+            return id;
+          }
+        },
+      },
+    }),
+  };
+});
 
 const plainPrompt = "检查当前工作区近 7 天的 Git commit，概括主要改动并指出潜在风险。";
+const plainPromptEn = "Check the workspace commits.";
 const pluginPrompt = "根据当前工作区内容制作一份 PDF 文档。";
+const pluginPromptEn = "Create a PDF from the workspace.";
+const pluginChipLabel = "Document skills";
 const automationsPrompt = "打开自动化面板。";
 const offPeakPrompt = "打开闲时任务面板。";
-const plainLabel = "检查 commit";
-const pluginLabel = "制作 PDF";
-const automationsLabel = "自动化";
-const offPeakLabel = "闲时任务";
+const plainLabel = "Check commits";
+const pluginLabel = "Create PDF";
+const automationsLabel = "Automations";
+const offPeakLabel = "Idle-time";
 
 async function applyPendingComposerTextInsert(workspacePath: string, workspaceIdentity?: string) {
   const request = await waitFor(() => {
@@ -429,7 +424,7 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
         eventText: pluginLabel,
         eventExtraDetail: {
           template_id: "create-pdf",
-          template_prompt: pluginPrompt,
+          template_prompt: pluginPromptEn,
         },
       }),
     );
@@ -451,7 +446,7 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
       expect(
         useZCodeSessionStore.getState().getWorkspaceState(workspacePath).composerTextInsertRequest
           ?.text,
-      ).toBe(plainPrompt),
+      ).toBe(plainPromptEn),
     );
   });
 
@@ -490,7 +485,7 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
         useZCodeSessionStore.getState().getWorkspaceState(workspacePath).composerTextInsertRequest,
       ).toEqual({
         requestId: 1,
-        text: plainPrompt,
+        text: plainPromptEn,
       }),
     );
     expect(getPluginReferenceCatalog).not.toHaveBeenCalled();
@@ -523,7 +518,9 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
     ).toBeNull();
     expect(insertSpy).not.toHaveBeenCalled();
     expect(toast).not.toHaveBeenCalled();
-    expect(screen.queryByText("正在检查插件状态…")).toBeNull();
+    expect(
+      screen.queryByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.checking")),
+    ).toBeNull();
     expect(document.querySelector('[data-draft-suggested-plugin-popover="progress"]')).toBeNull();
 
     act(() => {
@@ -544,7 +541,7 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
           .composerTextInsertRequest,
       ).toEqual({
         requestId: 1,
-        text: `[@文档技能](plugin://document-skills@zcode-plugins-official) ${pluginPrompt}`,
+        text: `[@${pluginChipLabel}](plugin://document-skills@zcode-plugins-official) ${pluginPromptEn}`,
         mention: expect.objectContaining({
           id: "plugin:document-skills@zcode-plugins-official",
           category: "plugins",
@@ -611,7 +608,7 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
         useZCodeSessionStore.getState().getWorkspaceState(workspacePath).composerTextInsertRequest,
       ).toEqual({
         requestId: 1,
-        text: pluginPrompt,
+        text: pluginPromptEn,
       }),
     );
     expect(toast).not.toHaveBeenCalled();
@@ -638,7 +635,7 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
     expect(getPluginReferenceCatalog).not.toHaveBeenCalled();
     expect(
       useZCodeSessionStore.getState().getWorkspaceState(workspacePath).composerTextInsertRequest,
-    ).toEqual({ requestId: 1, text: pluginPrompt });
+    ).toEqual({ requestId: 1, text: pluginPromptEn });
     expect(toast).not.toHaveBeenCalled();
   });
 
@@ -711,14 +708,20 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
 
     expect(await applyPendingComposerTextInsert(workspacePath, workspaceIdentity)).toEqual({
       requestId: 1,
-      text: pluginPrompt,
+      text: pluginPromptEn,
     });
-    const installAction = await screen.findByRole("button", { name: "确认" });
+    const installAction = await screen.findByRole("button", {
+      name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+    });
     const confirmationPopover = document.querySelector<HTMLElement>(
       '[data-draft-suggested-plugin-popover="confirmation"]',
     );
     expect(confirmationPopover?.getAttribute("data-anchor-item-id")).toBe("create-pdf");
-    expect(confirmationPopover?.textContent).toContain("安装文档技能插件");
+    expect(confirmationPopover?.textContent).toContain(
+      expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installConfirmation", {
+        pluginLabel: pluginChipLabel,
+      }),
+    );
     expect(installPlugin).not.toHaveBeenCalled();
     expect(toast).not.toHaveBeenCalled();
 
@@ -736,7 +739,9 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
         operationId: expect.any(String),
       }),
     );
-    expect(await screen.findByText("正在安装插件…")).not.toBeNull();
+    expect(
+      await screen.findByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installing")),
+    ).not.toBeNull();
     expect(
       document.querySelector('[data-draft-suggested-plugin-popover="progress"]'),
     ).not.toBeNull();
@@ -758,7 +763,9 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
       pluginId: "document-skills@zcode-plugins-official",
       icon: "https://cdn.example/document-skills.svg",
     });
-    expect(screen.queryByText("安装成功")).toBeNull();
+    expect(
+      screen.queryByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installSucceeded")),
+    ).toBeNull();
     vi.useFakeTimers();
     try {
       await act(async () => {
@@ -769,7 +776,9 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(screen.getByText("安装成功")).not.toBeNull();
+      expect(
+        screen.getByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installSucceeded")),
+      ).not.toBeNull();
       expect(
         document.querySelector('[data-draft-suggested-plugin-popover="success"]'),
       ).not.toBeNull();
@@ -777,12 +786,16 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
         vi.advanceTimersByTime(1_999);
         await Promise.resolve();
       });
-      expect(screen.getByText("安装成功")).not.toBeNull();
+      expect(
+        screen.getByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installSucceeded")),
+      ).not.toBeNull();
       await act(async () => {
         vi.advanceTimersByTime(1);
         await Promise.resolve();
       });
-      expect(screen.queryByText("安装成功")).toBeNull();
+      expect(
+        screen.queryByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installSucceeded")),
+      ).toBeNull();
       expect(toast).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
@@ -811,7 +824,9 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
     const operationId = resolveSuggestedPluginReference.mock.calls[0]?.[0].operationId as string;
     act(() => emitPluginOperationProgress(operationId));
 
-    expect(await screen.findByText("正在检查插件状态…")).not.toBeNull();
+    expect(
+      await screen.findByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.checking")),
+    ).not.toBeNull();
     const loadingPopover = document.querySelector<HTMLElement>(
       '[data-draft-suggested-plugin-popover="progress"]',
     );
@@ -831,14 +846,22 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
     await waitFor(() =>
       expect(
         useZCodeSessionStore.getState().getWorkspaceState(workspacePath).composerTextInsertRequest,
-      ).toEqual({ requestId: 1, text: pluginPrompt }),
+      ).toEqual({ requestId: 1, text: pluginPromptEn }),
     );
-    expect(screen.queryByRole("button", { name: "确认" })).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+      }),
+    ).toBeNull();
 
     act(() => {
       useZCodeSessionStore.getState().clearComposerTextInsertRequest(workspacePath, 1);
     });
-    expect(await screen.findByRole("button", { name: "确认" })).not.toBeNull();
+    expect(
+      await screen.findByRole("button", {
+        name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+      }),
+    ).not.toBeNull();
     const confirmationPopover = document.querySelector<HTMLElement>(
       '[data-draft-suggested-plugin-popover="confirmation"]',
     );
@@ -876,24 +899,36 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
     await waitFor(() =>
       expect(
         useZCodeSessionStore.getState().getWorkspaceState(workspacePath).composerTextInsertRequest,
-      ).toEqual({ requestId: 1, text: pluginPrompt }),
+      ).toEqual({ requestId: 1, text: pluginPromptEn }),
     );
-    expect(await screen.findByText("正在检查插件状态…")).not.toBeNull();
+    expect(
+      await screen.findByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.checking")),
+    ).not.toBeNull();
     const checkingPopover = document.querySelector<HTMLElement>(
       '[data-draft-suggested-plugin-popover="progress"]',
     );
     expect(document.querySelectorAll("[data-draft-suggested-plugin-popover]")).toHaveLength(1);
-    expect(screen.queryByRole("button", { name: "确认" })).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+      }),
+    ).toBeNull();
     act(() => {
       useZCodeSessionStore.getState().clearComposerTextInsertRequest(workspacePath, 1);
     });
-    const enableAction = await screen.findByRole("button", { name: "确认" });
+    const enableAction = await screen.findByRole("button", {
+      name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+    });
     const confirmationPopover = document.querySelector<HTMLElement>(
       '[data-draft-suggested-plugin-popover="confirmation"]',
     );
     expect(confirmationPopover).toBe(checkingPopover);
     expect(confirmationPopover?.getAttribute("data-anchor-item-id")).toBe("create-pdf");
-    expect(confirmationPopover?.textContent).toContain("开启文档技能插件");
+    expect(confirmationPopover?.textContent).toContain(
+      expectedCopy("chat.draft.suggestedPrompt.pluginFlow.enableConfirmation", {
+        pluginLabel: pluginChipLabel,
+      }),
+    );
     expect(toast).not.toHaveBeenCalled();
     fireEvent.click(enableAction);
 
@@ -906,7 +941,9 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
         operationId: expect.any(String),
       }),
     );
-    expect(await screen.findByText("正在启用插件…")).not.toBeNull();
+    expect(
+      await screen.findByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.enabling")),
+    ).not.toBeNull();
     expect(
       document.querySelector('[data-draft-suggested-plugin-popover="progress"]'),
     ).not.toBeNull();
@@ -916,12 +953,20 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
           ?.requestId,
       ).toBe(2),
     );
-    expect(screen.queryByText("安装成功")).toBeNull();
+    expect(
+      screen.queryByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installSucceeded")),
+    ).toBeNull();
     act(() => {
       useZCodeSessionStore.getState().clearComposerTextInsertRequest(workspacePath, 2);
     });
-    expect(screen.queryByText("安装成功")).toBeNull();
-    expect(await screen.findByText("开启成功")).not.toBeNull();
+    expect(
+      screen.queryByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installSucceeded")),
+    ).toBeNull();
+    expect(
+      await screen.findByText(
+        expectedCopy("chat.draft.suggestedPrompt.pluginFlow.enableSucceeded"),
+      ),
+    ).not.toBeNull();
     expect(
       document.querySelector('[data-draft-suggested-plugin-popover="success"]'),
     ).not.toBeNull();
@@ -944,10 +989,18 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: pluginLabel }));
     await applyPendingComposerTextInsert(workspacePath);
-    fireEvent.click(await screen.findByRole("button", { name: "确认" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+      }),
+    );
 
-    expect(await screen.findByText("正在启用插件…")).not.toBeNull();
-    expect(await screen.findByText("插件开启失败")).not.toBeNull();
+    expect(
+      await screen.findByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.enabling")),
+    ).not.toBeNull();
+    expect(
+      await screen.findByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.enableFailed")),
+    ).not.toBeNull();
     expect(document.querySelector('[data-draft-suggested-plugin-popover="error"]')).not.toBeNull();
     expect(toast).not.toHaveBeenCalled();
   });
@@ -980,7 +1033,7 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
         const plainRequest = useZCodeSessionStore
           .getState()
           .getWorkspaceState(workspacePath).composerTextInsertRequest;
-        expect(plainRequest).toEqual({ requestId: 1, text: pluginPrompt });
+        expect(plainRequest).toEqual({ requestId: 1, text: pluginPromptEn });
         act(() => {
           useZCodeSessionStore
             .getState()
@@ -989,7 +1042,11 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
         await act(async () => {
           await Promise.resolve();
         });
-        expect(screen.getByRole("button", { name: "确认" })).not.toBeNull();
+        expect(
+          screen.getByRole("button", {
+            name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+          }),
+        ).not.toBeNull();
 
         await act(async () => {
           vi.advanceTimersByTime(60_000);
@@ -1000,7 +1057,11 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
         expect(installPlugin).not.toHaveBeenCalled();
         expect(setPluginEnabled).not.toHaveBeenCalled();
         expect(cancelPluginOperation).not.toHaveBeenCalled();
-        expect(screen.getByRole("button", { name: "确认" })).not.toBeNull();
+        expect(
+          screen.getByRole("button", {
+            name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+          }),
+        ).not.toBeNull();
 
         fireEvent.pointerDown(document.body);
         await act(async () => {
@@ -1009,7 +1070,11 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
         });
 
         expect(cancelPluginOperation).toHaveBeenCalledOnce();
-        expect(screen.queryByRole("button", { name: "确认" })).toBeNull();
+        expect(
+          screen.queryByRole("button", {
+            name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+          }),
+        ).toBeNull();
         expect(toast).not.toHaveBeenCalled();
         expect(
           useZCodeSessionStore.getState().getWorkspaceState(workspacePath)
@@ -1035,7 +1100,11 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: pluginLabel }));
     await applyPendingComposerTextInsert(workspacePath);
-    expect(await screen.findByRole("button", { name: "确认" })).not.toBeNull();
+    expect(
+      await screen.findByRole("button", {
+        name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+      }),
+    ).not.toBeNull();
 
     const plainRecommendation = screen.getByRole("button", { name: plainLabel });
     fireEvent.pointerDown(plainRecommendation);
@@ -1045,9 +1114,13 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
     await waitFor(() =>
       expect(
         useZCodeSessionStore.getState().getWorkspaceState(workspacePath).composerTextInsertRequest,
-      ).toEqual({ requestId: 2, text: plainPrompt }),
+      ).toEqual({ requestId: 2, text: plainPromptEn }),
     );
-    expect(screen.queryByRole("button", { name: "确认" })).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+      }),
+    ).toBeNull();
     expect(installPlugin).not.toHaveBeenCalled();
   });
 
@@ -1070,7 +1143,7 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
       )
       .mockReturnValueOnce(
         new Promise(() => {
-          // 第二次安装保持 pending，用于验证恢复后的确认按钮确实可重试。
+          // The second install stays pending to verify the restored confirm button really retries.
         }),
       );
     render(
@@ -1082,10 +1155,16 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
     fireEvent.click(await screen.findByRole("button", { name: pluginLabel }));
     expect(await applyPendingComposerTextInsert(workspacePath)).toEqual({
       requestId: 1,
-      text: pluginPrompt,
+      text: pluginPromptEn,
     });
-    fireEvent.click(await screen.findByRole("button", { name: "确认" }));
-    expect(await screen.findByText("正在安装插件…")).not.toBeNull();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+      }),
+    );
+    expect(
+      await screen.findByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installing")),
+    ).not.toBeNull();
     const progressPopover = document.querySelector(
       '[data-draft-suggested-plugin-popover="progress"]',
     );
@@ -1097,16 +1176,26 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
         diagnostics: [{ code: "install_failed", message: "offline", severity: "error" }],
       });
     });
-    const retryAction = await screen.findByRole("button", { name: "确认" });
+    const retryAction = await screen.findByRole("button", {
+      name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+    });
     const retryPopover = document.querySelector(
       '[data-draft-suggested-plugin-popover="confirmation"]',
     );
     expect(retryPopover).toBe(progressPopover);
-    expect(screen.queryByText("插件安装失败")).toBeNull();
+    expect(
+      screen.queryByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installFailed")),
+    ).toBeNull();
     expect(document.querySelector('[data-draft-suggested-plugin-popover="error"]')).toBeNull();
-    expect(toast).toHaveBeenCalledWith("文档技能 安装失败：offline", {
-      variant: "warning",
-    });
+    expect(toast).toHaveBeenCalledWith(
+      expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installFailureToast", {
+        pluginLabel: pluginChipLabel,
+        error: "offline",
+      }),
+      {
+        variant: "warning",
+      },
+    );
     expect(loggerWarn).toHaveBeenCalledWith(
       "[v4-suggested-prompts] 推荐插件安装失败，恢复确认态以便重试",
       expect.objectContaining({
@@ -1120,7 +1209,9 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
     fireEvent.click(retryAction);
     await waitFor(() => expect(installPlugin).toHaveBeenCalledTimes(2));
     expect(installPlugin.mock.calls[1]?.[0]?.operationId).not.toBe(firstOperationId);
-    expect(await screen.findByText("正在安装插件…")).not.toBeNull();
+    expect(
+      await screen.findByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installing")),
+    ).not.toBeNull();
     expect(getPluginReferenceCatalog).not.toHaveBeenCalled();
     expect(
       useZCodeSessionStore.getState().getWorkspaceState(workspacePath).composerTextInsertRequest,
@@ -1160,7 +1251,7 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
       const plainRequest = useZCodeSessionStore
         .getState()
         .getWorkspaceState(workspacePath).composerTextInsertRequest;
-      expect(plainRequest).toEqual({ requestId: 1, text: pluginPrompt });
+      expect(plainRequest).toEqual({ requestId: 1, text: pluginPromptEn });
       act(() => {
         useZCodeSessionStore
           .getState()
@@ -1169,18 +1260,34 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
       await act(async () => {
         await Promise.resolve();
       });
-      await vi.waitFor(() => expect(screen.getByRole("button", { name: "确认" })).not.toBeNull());
+      await vi.waitFor(() =>
+        expect(
+          screen.getByRole("button", {
+            name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+          }),
+        ).not.toBeNull(),
+      );
 
-      fireEvent.click(screen.getByRole("button", { name: "确认" }));
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+        }),
+      );
       expect(installPlugin).toHaveBeenCalledOnce();
-      expect(screen.getByText("正在安装插件…")).not.toBeNull();
+      expect(
+        screen.getByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installing")),
+      ).not.toBeNull();
 
       await act(async () => {
         vi.advanceTimersByTime(9_999);
         await Promise.resolve();
       });
       expect(cancelPluginOperation).not.toHaveBeenCalled();
-      expect(screen.queryByRole("button", { name: "确认" })).toBeNull();
+      expect(
+        screen.queryByRole("button", {
+          name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+        }),
+      ).toBeNull();
 
       await act(async () => {
         vi.advanceTimersByTime(1);
@@ -1190,18 +1297,28 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
       });
 
       expect(cancelPluginOperation).toHaveBeenCalledWith({ operationId: expect.any(String) });
-      expect(screen.getByRole("button", { name: "确认" })).not.toBeNull();
+      expect(
+        screen.getByRole("button", {
+          name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+        }),
+      ).not.toBeNull();
       expect(
         document.querySelector('[data-draft-suggested-plugin-popover="confirmation"]'),
       ).not.toBeNull();
       expect(document.querySelector('[data-draft-suggested-plugin-popover="error"]')).toBeNull();
-      expect(toast).toHaveBeenCalledWith("文档技能 安装失败：安装超时", {
-        variant: "warning",
-      });
+      expect(toast).toHaveBeenCalledWith(
+        expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installFailureToast", {
+          pluginLabel: pluginChipLabel,
+          error: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installTimedOut"),
+        }),
+        {
+          variant: "warning",
+        },
+      );
       expect(loggerWarn).toHaveBeenCalledWith(
         "[v4-suggested-prompts] 推荐插件安装失败，恢复确认态以便重试",
         expect.objectContaining({
-          error: "安装超时",
+          error: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installTimedOut"),
           operationId: expect.any(String),
           pluginId: "document-skills@zcode-plugins-official",
           workspaceKey: workspacePath,
@@ -1232,8 +1349,14 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
       expect(
         useZCodeSessionStore.getState().getWorkspaceState(workspacePath).composerTextInsertRequest,
       ).toBeNull();
-      expect(screen.queryByText("安装成功")).toBeNull();
-      expect(screen.getByRole("button", { name: "确认" })).not.toBeNull();
+      expect(
+        screen.queryByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installSucceeded")),
+      ).toBeNull();
+      expect(
+        screen.getByRole("button", {
+          name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+        }),
+      ).not.toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -1264,7 +1387,7 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
     await waitFor(() => expect(resolveSuggestedPluginReference).toHaveBeenCalledOnce());
     expect(
       useZCodeSessionStore.getState().getWorkspaceState(workspacePath).composerTextInsertRequest,
-    ).toEqual({ requestId: 1, text: pluginPrompt });
+    ).toEqual({ requestId: 1, text: pluginPromptEn });
     expect(toast).not.toHaveBeenCalled();
     expect(resolveSuggestedPluginReference).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1305,11 +1428,17 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
     fireEvent.click(await screen.findByRole("button", { name: pluginLabel }));
     expect(await applyPendingComposerTextInsert(workspacePath)).toEqual({
       requestId: 1,
-      text: pluginPrompt,
+      text: pluginPromptEn,
     });
-    fireEvent.click(await screen.findByRole("button", { name: "确认" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+      }),
+    );
     await waitFor(() => expect(installPlugin).toHaveBeenCalledOnce());
-    expect(await screen.findByText("正在安装插件…")).not.toBeNull();
+    expect(
+      await screen.findByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installing")),
+    ).not.toBeNull();
     fireEvent.click(
       screen.getByRole("button", {
         name: plainLabel,
@@ -1320,10 +1449,12 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
       expect(
         useZCodeSessionStore.getState().getWorkspaceState(workspacePath).composerTextInsertRequest
           ?.text,
-      ).toBe(plainPrompt),
+      ).toBe(plainPromptEn),
     );
     await waitFor(() => expect(cancelPluginOperation).toHaveBeenCalledOnce());
-    expect(screen.queryByText("正在安装插件…")).toBeNull();
+    expect(
+      screen.queryByText(expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installing")),
+    ).toBeNull();
     expect((screen.getByRole("button", { name: pluginLabel }) as HTMLButtonElement).disabled).toBe(
       true,
     );
@@ -1367,13 +1498,11 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
       useZCodeSessionStore.getState().getWorkspaceState(workspacePath).composerTextInsertRequest,
     ).toEqual({
       requestId: 2,
-      text: plainPrompt,
+      text: plainPromptEn,
     });
     expect(getPluginReferenceCatalog).not.toHaveBeenCalled();
     expect(
-      toast.mock.calls.some(
-        ([message]) => String(message).includes("取消") || String(message).includes("中断"),
-      ),
+      toast.mock.calls.some(([message]) => /cancel|abort|interrupt/u.test(String(message))),
     ).toBe(false);
     expect(document.querySelector("[data-draft-suggested-plugin-popover]")).toBeNull();
   });

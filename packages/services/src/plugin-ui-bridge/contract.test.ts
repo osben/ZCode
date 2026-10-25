@@ -12,8 +12,9 @@ describe("plugin-ui-bridge contract", () => {
   });
 
   it("句柄能带的全部资源级字段都过 main → host 的 strict 回包 schema", () => {
-    // 回包 schema 是 strict 的：PluginSandboxHandle.resourceMeta 新增字段没同步到 validation.ts，
-    // 整条回包会被 host 拒收，桥永远等不到句柄，卡片卡在 preparing（2026-09-20 permissions 复现）。
+    // The reply schema is strict: if a new PluginSandboxHandle.resourceMeta field is not synced to validation.ts,
+    // the host rejects the whole reply, the bridge never receives the handle, and the card stays in preparing
+    // (reproduced 2026-09-20 in permissions).
     const handle: PluginSandboxHandle = {
       instance: {
         runtimeId: "test-agent",
@@ -65,7 +66,7 @@ describe("plugin-ui-bridge contract", () => {
       readResource: async (params) => ({
         contents: [{ uri: params.uri, mimeType: "model/gltf-binary", blob: "AAAA" }],
       }),
-      // 资源订阅接口扩展后，契约示例的替身也必须完整实现，避免类型检查被旧样例阻断。
+      // After the resource subscription interfaces grew, the contract example's stand-in must implement them fully, or the old sample blocks type checking.
       listResources: async () => ({ resources: [] }),
       listResourceTemplates: async () => ({ resourceTemplates: [] }),
       subscribeResource: async () => undefined,

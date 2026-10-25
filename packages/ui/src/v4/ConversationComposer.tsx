@@ -4,6 +4,7 @@ import { useRemoteProjectReconnect } from "@/hooks/RemoteProjectPresentationCont
 import { useOptionalRemoteWorkspaceController } from "@/remote/useRemoteWorkspaceController.js";
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { useRemoteConversationAvailable } from "@/v4/RemoteConversationAvailability.js";
+import { restartPreparedWorktreeCreation } from "@/v4/composer/restartPreparedWorktreeCreation.js";
 import { getLocalTtftObserver } from "@/v4/telemetry/localTtftObserver.js";
 import { formatConversationWorkDuration } from "@/v4/conversationWorkDuration.js";
 /**
@@ -25,9 +26,12 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useId,
   useRef,
   useState,
+  useSyncExternalStore,
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -37,6 +41,7 @@ import { HighspeedComposerBackground } from "@/highspeed/HighspeedActivationVisu
 import { useHighspeedComposerEntrance } from "@/highspeed/useHighspeedComposerEntrance.js";
 import {
   type HighspeedCardSnapshot,
+  type IncognitoProfile,
   type PlanIdentitySnapshot,
   type ZCodeProvider,
 } from "@zcode/shared";
@@ -135,7 +140,11 @@ import {
 } from "@/lib/workspaceFileDrag.js";
 import { appendWorkspaceFileMentionToComposer } from "@/lib/workspaceFileComposer.js";
 import { resolveProviderBaseURL } from "@/lib/registryProviderView.js";
-import type { ModelSelectionView } from "@zcode/services";
+import type {
+  ModelSelectionView,
+  QuickPromptProjectRef,
+  VoiceTranscriptionPreview,
+} from "@zcode/services";
 import type {
   ModelSelectionState,
   ModelSelectionRefreshResult,
@@ -145,7 +154,71 @@ import {
   resolveComposerAutoFocus,
   type ComposerAutoFocusOptions,
 } from "@/v4/composer/composerAutoFocus.js";
-import { V4_DRAFT_SCOPE_ROOT, type V4ComposerDraft } from "@/v4/composer/composerDraftStore.js";
+import {
+  clearV4ComposerDraft,
+  getV4FirstSubmissionVersion,
+  getV4WorktreeRecoveryScope,
+  isV4FirstSubmissionActive,
+  moveV4ComposerDraft,
+  persistV4ComposerDraft,
+  readV4ComposerDraft,
+  readV4WorktreeRecoveryDrafts,
+  subscribeV4ComposerDrafts,
+  updateV4FirstSubmission,
+  setV4FirstSubmissionActive,
+  V4_DRAFT_SCOPE_ROOT,
+  type V4ComposerDraft,
+  type V4ComposerRecoveryContexts,
+} from "@/v4/composer/composerDraftStore.js";
+import {
+  buildV4RecoveryAttachmentsManifest,
+  buildV4WorktreeIntentFromParams,
+} from "@/v4/composer/composerRecoveryRecord.js";
+import { restoreComposerRecoveryContexts } from "@/v4/composer/composerRecoveryContexts.js";
+import {
+  useComposerDraftWorktreeIntentSlot,
+  type ComposerExecutionWorktree,
+  type ComposerWorktreePreparationParams,
+  type ComposerWorktreePreparationSync,
+} from "@/v4/composer/composerDraftWorktreeIntent.js";
+import {
+  armWorktreeSendContinuation,
+  peekWorktreeSendContinuation,
+  releaseWorktreeSendContinuation,
+  selectComposerWorktreePipeline,
+  useComposerWorktreePipelineStore,
+  type ArmedWorktreeSendContinuation,
+} from "@/store/composerWorktreePipelineStore.js";
+import { rehydrateComposerRecoveryAttachments } from "@/v4/composer/composerRecoveryAttachments.js";
+import { useWorktreeFailureReturnStore } from "@/store/worktreeFailureReturnStore.js";
+import { moveComposerAttachmentScopeItems } from "@/store/composerAttachmentUploadStore.js";
+import {
+  applyDraftBranchIntentForSend,
+  selectDraftBranchIntent,
+  selectWorktreeIntentActive,
+  applyPersistedWorktreeIntent,
+  isSamePersistedWorktreeIntent,
+  selectPersistableWorktreeIntent,
+  useDraftBranchIntentStore,
+} from "@/v4/composer/draftBranchIntent.js";
+import {
+  selectDraftIncognito,
+  useDraftIncognitoIntentStore,
+} from "@/v4/composer/draftIncognitoIntent.js";
+import {
+  shouldRenderComposerIncognitoControl,
+  V4ComposerIncognitoControl,
+} from "@/v4/composer/V4ComposerIncognitoControl.js";
+import { V4ComposerDictationControl } from "@/v4/composer/V4ComposerDictationControl.js";
+import { isComposerSubmissionOwnerCurrent } from "@/v4/composer/composerSubmissionOwner.js";
+import { ComposerWorktreeRecovery } from "@/v4/composer/ComposerWorktreeRecovery.js";
+import {
+  isComposerModelBlockReason,
+  resolveComposerSubmitBlockReason,
+} from "@/v4/composer/composerSubmitBlockReason.js";
+import { useBranchSwitchGuard } from "@/v4/composer/branchSwitchGuard.js";
+import { toast } from "@/components/ui/toast.js";
+import { useOptionalWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
 import {
   resolveOppositeFollowupDelivery,
   resolveFollowupModifierTooltip,
@@ -154,6 +227,11 @@ import {
 } from "@/v4/composer/followupModeSettings.js";
 import { isAppleKeyboardPlatform } from "@/lib/keyboardShortcuts.js";
 import { usePrimaryFollowupModifier } from "@/v4/composer/usePrimaryFollowupModifier.js";
+import {
+  QuickPromptBar,
+  composeQuickPromptSlashItems,
+  useQuickPrompts,
+} from "@/quick-prompts/index.js";
 import {
   consumeV4ComposerDraftAttachments,
   registerV4ComposerDraftReader,
@@ -182,10 +260,11 @@ import { useConversationSelectionReferences } from "@/v4/composer/useConversatio
 import { ConversationBackgroundWorkTrigger } from "@/v4/composer/ConversationBackgroundWorkTrigger.js";
 import { V4ComposerCuaEntry } from "@/v4/composer/V4ComposerCuaEntry.js";
 import {
-  V4ComposerModeSwitch,
   V4ComposerModelControls,
   type ModelSelectionSource,
 } from "@/v4/composer/V4ComposerToolbar.js";
+import { V4ComposerModeArea } from "@/v4/composer/V4ExternalAgentConfigControls.js";
+import type { DraftExternalAgentChoices } from "@/v4/composer/externalAgentConfig.js";
 import {
   resolveV4ComposerConfigPickerState,
   type V4ComposerConfigPicker,
@@ -203,10 +282,13 @@ import {
   trackUnsettledComposerSubmission,
 } from "@/v4/composer/composerSubmissionSettlement.js";
 import { resolveAttachableShareContext } from "@/lib/conversationShareContext.js";
+import { parseV4VisibleSlashCommand } from "@/v4/slashCommands.js";
 
 const MODEL_SELECTION_LOADING_STATE: ModelSelectionState = { status: "loading" };
 
 export interface ConversationComposerSendOptions {
+  firstSubmissionId?: string;
+  reservedSubmissionSessionId?: string;
   /** 原始正文供接纳恢复对账；协议正文可能已经附加文件或页面上下文。 */
   submittedDraftText?: string;
   /** 点击发送时复制的配置；null 表示未完成选择，Host 不得从 Session 补齐。 */
@@ -216,8 +298,17 @@ export interface ConversationComposerSendOptions {
   expectedHeldQueueItemIds?: readonly string[];
   /** 附件命令面：已序列化附件（宿主转 AttachmentRef 后随 v4 sendText/createSession 发送）。 */
   attachments?: AttachmentRef[];
+  /** Upload frozen draft attachments into the newly created worktree or incognito session. */
+  reuploadAttachmentsForSession?: (sessionId: string) => Promise<AttachmentRef[]>;
   /** Prompt 文本内携带的上下文附件数量；用于阻止 /goal 等本地命令误消费。 */
   contextAttachmentCount?: number;
+  /** 已 ready 的 worktree 执行位置；只能由 worktree 准备流水线给出。 */
+  executionWorktree?: ComposerExecutionWorktree;
+  /** worktree 准备流水线已为此消息预留的 session。 */
+  preparedSessionId?: string;
+  preparedAttemptId?: string;
+  /** 只属于草稿首发的无痕配置，由 Session 冻结后不再受后续草稿影响。 */
+  incognito?: IncognitoProfile;
   conversationQuotes?: import("@zcode/shared").ConversationSelectionText[];
   /** renderer-only：ACK accepted 后由 SessionPane 绑定真实 commandId/sessionId。 */
   telemetrySeed?: ConversationPromptTelemetrySeed;
@@ -225,12 +316,27 @@ export interface ConversationComposerSendOptions {
   requestedDelivery?: "startNow" | "queue" | "guide";
   /** 提交命令创建后由 Composer 订阅权威 projection，覆盖 ACK 丢失后的收口。 */
   onCommandCreated?: (commandId: string) => void;
+  /**
+   * The command id an earlier attempt of this reserved first submission already created. It is sent as
+   * expectedFirstInputCommandId, and only an input-admitted activation under it settles without resending
+   * (ConversationComposerSendResult).
+   */
+  originalCommandId?: string;
   sharedContextRefs?: Array<{ kind: "shared_context_import"; context_id: string }>;
   /** 插件 UI 代发：随 sendText 持久化，用户消息卡片显示"来自插件 X"。 */
   source?: import("@zcode/shared/zcode-protocol-v4").ConversationInputSource;
 }
 
-export type ConversationComposerSendResult = "sent" | "blocked" | "confirmationRequired";
+/**
+ * "alreadyAdmitted": a prepared submission whose frozen input the Host had already admitted under its
+ * original command id (preparedActivation input-admitted); the pane sent no new sendText. The composer
+ * settles it as sending under that id. An already-active activation is not this result: it sends normally.
+ */
+export type ConversationComposerSendResult =
+  | "sent"
+  | "blocked"
+  | "confirmationRequired"
+  | "alreadyAdmitted";
 function getComposerAttachmentTypeLabel(filename: string, mimeType: string): string {
   const leaf = filename.split(/[\\/]/u).at(-1) ?? filename;
   const dotIndex = leaf.lastIndexOf(".");
@@ -244,7 +350,19 @@ export interface ExternalTextInsertRequest {
   requestId: number;
   text: string;
   mention?: ComposerMentionPrefill;
-  mode?: "replace" | "prepend-if-missing";
+  mode?: "replace" | "prepend-if-missing" | "prepend-text";
+}
+
+function pickPersistedComposerContent(draft: Pick<V4ComposerDraft, "editorStateJson" | "text">): {
+  text: string;
+  editorStateJson?: string;
+} {
+  return draft.text.trim()
+    ? {
+        text: draft.text,
+        ...(draft.editorStateJson ? { editorStateJson: draft.editorStateJson } : {}),
+      }
+    : { text: "" };
 }
 
 export function restorePersistedComposerDraftIntoInput({
@@ -304,6 +422,20 @@ export function applyExternalTextInsertRequestToComposer({
   }
   if (!inputApi) {
     return appliedRequestId;
+  }
+  if (request.mode === "prepend-text") {
+    // zcode://task/new fills a draft the user may already have typed into; keep their unsent text after the task text.
+    const existing = inputApi.getMarkdown();
+    const combined = existing.trim() === "" ? request.text : `${request.text}\n\n${existing}`;
+    if (combined.includes("](plugin://")) {
+      inputApi.setTextWithPluginMentions(combined);
+    } else {
+      inputApi.setText(combined);
+    }
+    updateText(combined);
+    scheduleDraftPersist();
+    requestFocus();
+    return request.requestId;
   }
   if (request.mode === "prepend-if-missing" && request.mention) {
     if (!inputApi.prependMentionIfMissing(request.mention)) {
@@ -407,7 +539,7 @@ export interface ConversationComposerProps {
   composerDraft: V4ComposerDraft;
   rootDraftScopeKey?: string;
   updateComposerContent: (
-    content: Pick<V4ComposerDraft, "text" | "editorStateJson" | "mention">,
+    content: Pick<V4ComposerDraft, "text" | "editorStateJson" | "mention" | "firstSubmission">,
   ) => void;
   replaceComposerDraft: (draft: Omit<V4ComposerDraft, "updatedAt">) => void;
   /** 当前 Composer 是否能构造完整 Submission；空模型或空 Reasoning 时为 false。 */
@@ -454,8 +586,12 @@ export interface ConversationComposerProps {
   workspacePath: string;
   workspaceIdentity?: string;
   remoteSessionId?: string;
+  /** Project identity of the session or draft for the quick prompt row (null = pinned globals only). */
+  quickPromptProject?: QuickPromptProjectRef | null;
   /** SessionPane 从目标 Host 原子读取的选择事实；Composer 不自行解析 Host。 */
   modelSelectionView?: ModelSelectionView | null;
+  /** Provider startup has settled; until then a stored-model verdict keeps the generic reason (ISSUE-026). */
+  modelSelectionSettled?: boolean;
   modelSelectionState?: ModelSelectionState;
   /** Model Selection 首次读取失败后的显式重试入口。 */
   modelSelectionReload?: () => void;
@@ -475,6 +611,28 @@ export interface ConversationComposerProps {
     text: string,
     options?: ConversationComposerSendOptions,
   ) => Promise<ConversationComposerSendResult | void>;
+  onPrepareFirstSubmission?: (params: {
+    submissionId: string;
+    incognito?: IncognitoProfile;
+    reservation?: { sessionId: string; commandId: string };
+    onReservationCreated?: (reservation: { sessionId: string; commandId: string }) => void;
+  }) => Promise<string | undefined>;
+  onFirstSubmissionReserved?: (sessionId: string) => void;
+  /** Reserve/open the Host-owned session before the worktree Git operation begins. */
+  onPrepareWorktreeSession?: (
+    params: ComposerWorktreePreparationParams,
+    options?: { shouldActivate: () => boolean },
+  ) => Promise<string>;
+  /**
+   * Realign the Host preparation marker when Git settles the worktree at a directory other than the
+   * frozen target, so the strict activation check accepts the path the composer sends.
+   */
+  onSyncWorktreePreparation?: ComposerWorktreePreparationSync;
+  onWorktreePreparationFailed?: (
+    sessionId: string,
+    failureMessage: string,
+    attemptId?: string,
+  ) => Promise<void>;
   /** 把当前输入文本上抛给父组件（editUserQuery 用 composer 文本作 newText）。 */
   onTextChange?: (text: string) => void;
   /** queue 撤回 admission 读取的完整 composer 占用态；附件包含上传中状态。 */
@@ -490,6 +648,17 @@ export interface ConversationComposerProps {
   /** 选中思考深度；同时带上用户操作时看到的模型，避免异步回流后把 thought 归到另一模型。 */
   onSelectThought: (thought: string, modelContext: { provider: string; model: string }) => void;
   onSwitchMode: (mode: string) => void;
+  /** S6: sends the user's choice for one select of the session's ACP agent (setExternalAgentConfigOption). */
+  onSetExternalAgentConfigOption?: (configId: string, value: string) => void;
+  /** S6 readiness: the draft's choices per ACP agent, and the setter (no session command before the first submission). */
+  draftExternalAgentChoices?: DraftExternalAgentChoices;
+  draftExternalAgentKey?: string | null;
+  onSetDraftExternalAgentChoice?: (
+    draftSessionId: string,
+    agentId: string,
+    configId: string,
+    value: string,
+  ) => void;
   /** 打开当前 session 的 Status panel，并直达 Running 明细。 */
   onOpenRunningBackgroundWorks?: () => void;
   /**
@@ -508,6 +677,8 @@ export interface ConversationComposerProps {
   /** v4 会话级错误（snapshot.control.lastError），展示在输入框上方。 */
   error?: ZCodeUiError | null;
   onDismissError?: () => void;
+  /** Resume action for the error banner. SessionPane sends the fixed continuation prompt as a new user message. */
+  onResumeError?: () => void;
   /** 无可用模型横幅的恢复动作；由 SessionPane 注入壳层导航，组件不直接操作 tab。 */
   onOpenModelSettings?: () => void;
   onOpenModelUpgrade?: () => void;
@@ -536,6 +707,13 @@ export interface ConversationComposerProps {
   appSlashCommands?: readonly AppSlashCommand[];
   /** 把 composer 的 drop 路由暴露给整个对话 pane / 桌面草稿标题栏。 */
   onDropTargetControllerChange?: (controller: ConversationDropTargetController | null) => void;
+  /** Voice input entry: desktop transcribes in the Desktop Host; web remote control transcribes in the browser (Web Speech API, hidden when unsupported). */
+  voiceDictationEnabled?: boolean;
+  /** Host supports durable first-submission reservation (specs/first-submission-lifecycle.md). */
+  durableFirstSubmission?: boolean;
+  /** A first submission is frozen or recovering for this composer; start-only controls (the incognito icon) hide. */
+  firstSubmissionActive?: boolean;
+  draftGeneration?: number;
 }
 
 function formatAttachmentLineCount(attachment: ChatComposerAttachment, locale: string): string {
@@ -571,7 +749,9 @@ function ConversationComposerImpl({
   workspacePath,
   workspaceIdentity,
   remoteSessionId,
+  quickPromptProject = null,
   modelSelectionView = null,
+  modelSelectionSettled = false,
   modelSelectionState = MODEL_SELECTION_LOADING_STATE,
   modelSelectionReload,
   modelSelectionRefresh,
@@ -589,6 +769,10 @@ function ConversationComposerImpl({
   onSelectModel,
   onSelectThought,
   onSwitchMode,
+  onSetExternalAgentConfigOption,
+  draftExternalAgentChoices,
+  draftExternalAgentKey,
+  onSetDraftExternalAgentChoice,
   onOpenRunningBackgroundWorks,
   backgroundWorkOpenTarget = "panel",
   runningSubagentCount = 0,
@@ -608,6 +792,16 @@ function ConversationComposerImpl({
   suppressGoalCommands = false,
   appSlashCommands,
   onDropTargetControllerChange,
+  onPrepareWorktreeSession,
+  onPrepareFirstSubmission,
+  onFirstSubmissionReserved,
+  onSyncWorktreePreparation,
+  onWorktreePreparationFailed,
+  onResumeError,
+  voiceDictationEnabled = false,
+  durableFirstSubmission = false,
+  firstSubmissionActive = false,
+  draftGeneration = 0,
 }: ConversationComposerProps) {
   const remoteAvailable = useRemoteConversationAvailable();
   const remoteController = useOptionalRemoteWorkspaceController();
@@ -638,9 +832,81 @@ function ConversationComposerImpl({
     sessionId ??
     (rootDraftScopeKey ? `${V4_DRAFT_SCOPE_ROOT}:${rootDraftScopeKey}` : V4_DRAFT_SCOPE_ROOT);
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
+  const retryFirstSubmissionRef = useRef<V4ComposerDraft["firstSubmission"]>(undefined);
+  const renderedOwnerRef = useRef({
+    workspaceKey,
+    scopeId: draftScopeId,
+    draftGeneration,
+    epoch: 0,
+  });
+  useLayoutEffect(() => {
+    const currentOwner = renderedOwnerRef.current;
+    if (
+      currentOwner.workspaceKey === workspaceKey &&
+      currentOwner.scopeId === draftScopeId &&
+      currentOwner.draftGeneration === draftGeneration
+    )
+      return;
+    retryFirstSubmissionRef.current = undefined;
+    renderedOwnerRef.current = {
+      workspaceKey,
+      scopeId: draftScopeId,
+      draftGeneration,
+      epoch: currentOwner.epoch + 1,
+    };
+  }, [workspaceKey, draftScopeId, draftGeneration]);
+  const reservingWorktreeRef = useRef<{ epoch: number; id: string } | null>(null);
+  const queuedSubmissionIdRef = useRef<string | null>(null);
+  const composerAliveRef = useRef(true);
+  useEffect(() => {
+    composerAliveRef.current = true;
+    return () => {
+      composerAliveRef.current = false;
+    };
+  }, []);
+  // Empty-state "New worktree" first-send interception slot (stable object; value changes do not re-render).
+  const worktreeIntentSlot = useComposerDraftWorktreeIntentSlot();
   const configPickerScopeKey = `${workspaceKey}\0${draftScopeId}`;
   const [text, setText] = useState("");
   const [pending, setPending] = useState(false);
+  // Worktree setup queue (specs/composer-worktree-setup-steps.md): unlike `pending`, the queued
+  // state never reports busy to the empty state and never blocks editing; it only shows the
+  // spinner on the send button and rejects duplicate sends while creation is in flight.
+  const [worktreeQueued, setWorktreeQueued] = useState(false);
+  useEffect(() => {
+    if (
+      reservingWorktreeRef.current &&
+      reservingWorktreeRef.current.epoch !== renderedOwnerRef.current.epoch
+    ) {
+      queuedSubmissionIdRef.current = null;
+      setWorktreeQueued(false);
+    }
+  }, [workspaceKey, draftScopeId]);
+  // Local cache of the armed worktree-send continuation; the authoritative copy lives in the
+  // module-scope registry (composerWorktreePipelineStore) so it survives the first-send view
+  // promotion remounting the composer as another instance (BUG-GWT-005 live path).
+  const pendingWorktreeSendRef = useRef<ArmedWorktreeSendContinuation | null>(null);
+  const reportedWorktreeFailuresRef = useRef(new Set<string>());
+  const worktreePipeline = useComposerWorktreePipelineStore((state) =>
+    selectComposerWorktreePipeline(state, workspaceKey, sessionId),
+  );
+  const worktreeIntentActive = useDraftBranchIntentStore((state) =>
+    selectWorktreeIntentActive(state, workspaceKey),
+  );
+  const incognitoDraftActive = useDraftIncognitoIntentStore(
+    (state) =>
+      draftMode && sessionId === null && selectDraftIncognito(state, workspaceKey) !== null,
+  );
+  // Draft branch intent (specs/composer-branch-switcher-semantics.md): the guard and git access
+  // needed to apply the intent at send time. Null services/guard = harness or compact shell
+  // without providers; the branch resolution then never runs.
+  const workspaceServiceResolution = useOptionalWorkspaceServicesResolution(
+    workspacePath,
+    remoteSessionId,
+    workspaceIdentity,
+  );
+  const baseWorkspaceServices = workspaceServiceResolution?.services ?? null;
+  const branchSwitchGuard = useBranchSwitchGuard();
   const [presentedHighspeedCardId, setPresentedHighspeedCardId] = useState<string | null>(null);
   const [highspeedSweepActive, setHighspeedSweepActive] = useState(false);
   const highspeedCardId = highspeedCard?.cardId ?? null;
@@ -711,7 +977,14 @@ function ConversationComposerImpl({
   // submit 经 ref 读取最新文本/pending，避免回调随每次输入变更引用。
   const textRef = useRef("");
   const contentRevisionRef = useRef(0);
-  const pendingRef = useRef(false);
+  // Repeat-submit owner token (specs/first-submission-instant-ux.md, flag lifetimes): the id of
+  // the submission holding it. Only that owner releases it, so an earlier chain's `finally`
+  // cannot clear a later send's guard; a first submission releases it at the P2 bind.
+  const pendingRef = useRef<string | null>(null);
+  const [pendingOwner, setPendingOwner] = useState<string | null>(null);
+  // Repeat-click guard: the claim records the content revision it left behind. A submit at that
+  // same revision is the same submission (a double click); any editor change makes a new draft.
+  const claimedSubmissionRef = useRef<{ submissionId: string; revision: number } | null>(null);
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
   // 这条线断过一次：composer 原本读一个平行的 sharedContextImport prop，而 SessionPane 从没
@@ -719,7 +992,35 @@ function ConversationComposerImpl({
   // 现在从必然拿到的 snapshot 推导，理由与边界见 resolveAttachableShareContext。
   const activeShareContext = resolveAttachableShareContext(snapshot?.sharedContextImport);
   const pendingShareContext = activeShareContext?.status === "pending" ? activeShareContext : null;
+  // Restore re-attaches a recovered submission's shared context: the failed or queued worktree
+  // submission never reached the CLI, so its reference is still unconsumed, but the session snapshot
+  // may no longer offer it. A restored reference wins for the draft scope it was restored into.
+  const [restoredShareContext, setRestoredShareContext] = useState<{
+    scopeId: string;
+    contextId: string;
+  } | null>(null);
+  const activeShareContextId =
+    (restoredShareContext?.scopeId === draftScopeId ? restoredShareContext.contextId : null) ??
+    pendingShareContext?.contextId ??
+    null;
   const inputApiRef = useRef<LexicalChatInputHandle | null>(null);
+  // Single quick prompt read for this composer: the row and the "/" panel both derive from it.
+  const quickPrompts = useQuickPrompts(quickPromptProject);
+  const quickPromptSlashItems = useMemo(
+    () => composeQuickPromptSlashItems(quickPrompts.snapshot),
+    [quickPrompts.snapshot],
+  );
+  const voiceScopeRef = useRef<HTMLDivElement | null>(null);
+  // Streaming ghost preview (specs/voice-dictation.md, "Ghost preview"): display state only; it is
+  // drawn by the editor and never enters the draft text, submission, or undo history.
+  const [voicePreview, setVoicePreview] = useState<VoiceTranscriptionPreview | null>(null);
+  const insertVoiceTranscript = useCallback((text: string) => {
+    const api = inputApiRef.current;
+    if (!api) return;
+    // Must go through the editor transaction API: getText/setText rebuild the editor as plain text nodes, flattening existing structured mentions.
+    api.insertTextAtSelection(text);
+    api.focus();
+  }, []);
   const commandResolutionCleanupsRef = useRef(new Set<() => void>());
   const reportedErrorKeysRef = useRef(new Set<string>());
   const isMobileTextInputViewport = useIsMobileTextInputViewport();
@@ -912,6 +1213,14 @@ function ConversationComposerImpl({
   });
   const draftPersistTimerRef = useRef<number | null>(null);
   const suppressDraftPersistRef = useRef(false);
+  // ISSUE-060: set while a scope switch waits for the editor to receive the new scope's draft. The
+  // editor (and textRef) still hold the previous scope's text then, so no writer may persist it.
+  const scopeRestorePendingRef = useRef(false);
+  // Whether the restore for the previous target was still pending when the target changed again.
+  const priorScopeRestorePendingRef = useRef(false);
+  const draftPersistClaimRef = useRef<string | null>(null);
+  const updateComposerContentRef = useRef(updateComposerContent);
+  updateComposerContentRef.current = updateComposerContent;
 
   const snapshotDraftOfEditor = useCallback((): {
     text: string;
@@ -934,14 +1243,16 @@ function ConversationComposerImpl({
     // 新建 scope 已包含项目身份；不能只匹配旧的裸 __draft__ 而漏掉当前编辑器。
     if (!draftScopeId.startsWith(V4_DRAFT_SCOPE_ROOT)) return;
     return registerV4ComposerDraftReader(workspaceKey, () => ({
-      draft: { ...ownerDraftRef.current.draft, ...snapshotDraftOfEditor() },
+      draft: scopeRestorePendingRef.current
+        ? ownerDraftRef.current.draft
+        : { ...ownerDraftRef.current.draft, ...snapshotDraftOfEditor() },
       attachments: attachmentsApi.attachments,
     }));
   }, [draftScopeId, workspaceKey, snapshotDraftOfEditor, attachmentsApi.attachments]);
 
   const persistDraftNow = useCallback(
     (scopeId: string) => {
-      if (suppressDraftPersistRef.current) return;
+      if (suppressDraftPersistRef.current || scopeRestorePendingRef.current) return;
       const content = snapshotDraftOfEditor();
       if (scopeId === draftScopeRef.current) {
         updateComposerContent(content);
@@ -1097,6 +1408,20 @@ function ConversationComposerImpl({
     workspaceKey,
   ]);
 
+  // Raise the write guard at commit time: an editor change can land before the passive scope
+  // effect below runs, and it must not reach the new scope's owner with the old scope's text.
+  useLayoutEffect(() => {
+    const previousTarget = draftTargetRef.current;
+    if (
+      previousTarget.scopeId === draftScopeId &&
+      previousTarget.workspacePath === workspacePath &&
+      previousTarget.workspaceIdentity === workspaceIdentity
+    )
+      return;
+    priorScopeRestorePendingRef.current = scopeRestorePendingRef.current;
+    scopeRestorePendingRef.current = true;
+  }, [draftScopeId, workspaceIdentity, workspacePath]);
+
   // scope 切换：先落旧 scope 草稿，再恢复新 scope（editorStateJson 优先，退纯文本）。
   useEffect(() => {
     const previousTarget = draftTargetRef.current;
@@ -1110,7 +1435,11 @@ function ConversationComposerImpl({
         window.clearTimeout(draftPersistTimerRef.current);
         draftPersistTimerRef.current = null;
       }
-      const previousDraft = snapshotDraftOfEditor();
+      // While the previous target's restore was still pending, the editor holds an even older
+      // scope's text; the previous target's own content is its owner draft.
+      const previousDraft = priorScopeRestorePendingRef.current
+        ? pickPersistedComposerContent(ownerDraftRef.current.draft)
+        : snapshotDraftOfEditor();
       const shouldTransferDraft =
         previousTarget.scopeId.startsWith(V4_DRAFT_SCOPE_ROOT) &&
         draftScopeId.startsWith(V4_DRAFT_SCOPE_ROOT) &&
@@ -1157,6 +1486,7 @@ function ConversationComposerImpl({
       const api = inputApiRef.current;
       if (!api) return;
       restoreDraftInto(api);
+      scopeRestorePendingRef.current = false;
       // Bug 根因（R3A-B-07）：ACK 丢失时传输先 reject，提交正文被恢复回草稿；随即断连让
       // SessionPane 连同本组件卸载，闭包里的结算订阅一起消失。重连重挂后正文从草稿回填，
       // 权威 projection 到达却无人清空，用户再点发送就重复归属。这里在回填后向模块级账本
@@ -1183,9 +1513,28 @@ function ConversationComposerImpl({
       // 草稿恢复后把光标交还输入框（切会话/切草稿/挂载）；连接中会话待可编辑后兑现。
       requestComposerFocus();
     };
+    if (targetChanged) {
+      // ISSUE-060: the reused editor still shows the previous scope's text while every writer
+      // already targets the new scope. The next frame can be late (a throttled background window
+      // delays it), so restore in this effect when the editor exists, and block writes until the
+      // restore lands.
+      scopeRestorePendingRef.current = true;
+      if (inputApiRef.current) {
+        applyDraft();
+        return () => unsubscribeSettled?.();
+      }
+    }
     // Lexical root 可能晚一帧就绪；draft 恢复排到下一帧（与旧 initialValue 回填同款时序）。
     if (typeof requestAnimationFrame === "function") {
-      const frame = requestAnimationFrame(applyDraft);
+      // A switched scope keeps writes blocked until its draft lands, so wait for the editor to attach.
+      const applyWhenReady = () => {
+        if (scopeRestorePendingRef.current && !inputApiRef.current) {
+          frame = requestAnimationFrame(applyWhenReady);
+          return;
+        }
+        applyDraft();
+      };
+      let frame = requestAnimationFrame(applyWhenReady);
       return () => {
         cancelAnimationFrame(frame);
         unsubscribeSettled?.();
@@ -1304,7 +1653,7 @@ function ConversationComposerImpl({
     hasPptxElementReferences ||
     hasConversationSelectionReferences ||
     hasPluginUiContexts ||
-    Boolean(pendingShareContext);
+    Boolean(activeShareContextId);
   const hasComposerDraftContent =
     text.length > 0 ||
     hasAttachments ||
@@ -1313,7 +1662,7 @@ function ConversationComposerImpl({
     hasPptxElementReferences ||
     hasConversationSelectionReferences ||
     hasPluginUiContexts ||
-    Boolean(pendingShareContext);
+    Boolean(activeShareContextId);
   useEffect(() => {
     onDraftStateChange?.({
       hasContent: hasComposerDraftContent,
@@ -1324,21 +1673,284 @@ function ConversationComposerImpl({
   // V4 重构时把 guide 当成“不可提交”状态，导致按钮和 Enter 同时失效；
   // guide 是 CLI 已授权的 busy 输入路由，是否最终 steer 或回退 queue 由命令层裁决。
   const routingAllowsSend = draftMode || (snapshot !== null && mode !== "reject");
-  const attachmentsReady = !attachmentsApi.hasUnreadyAttachments;
+  // Incognito has no prewarm session: waiting files are uploaded only after its profile-bound create.
+  const deferAttachmentUpload = draftMode && sessionId === null && incognitoDraftActive;
+  const attachmentsReady =
+    !attachmentsApi.hasUnreadyAttachments ||
+    (deferAttachmentUpload &&
+      attachmentsApi.attachments.every(
+        (item) => item.uploadStatus === "ready" || item.uploadStatus === "waitingSession",
+      ));
   const canSend =
     !disabled &&
     !pending &&
+    !worktreeQueued &&
     hasDraftToSubmit &&
     routingAllowsSend &&
     attachmentsReady &&
     submissionReady &&
     !runtimeBlocked;
+  // Same predicate as submit() (composerSubmitBlockReason), from render state: the bound-session
+  // barrier and an in-flight first submission disable Send visibly instead of dropping the click.
+  const heldFirstSubmission = composerDraft?.firstSubmission;
+  const heldOutcomeUnresolved =
+    heldFirstSubmission?.status === "sending" || heldFirstSubmission?.status === "unknown";
+  const submitBlockReasonFor = (retrying: boolean, outcomeUnresolved: boolean) =>
+    resolveComposerSubmitBlockReason({
+      remoteAvailable,
+      runtimeBlocked,
+      submissionReady,
+      submissionConfigured: true,
+      modelSelectionIssue: modelSelectionView?.selectionIssue,
+      modelSelectionSettled,
+      sendInProgress: pendingOwner !== null || worktreeQueued,
+      preparedSessionAwaitingFirstInput: Boolean(sessionId && snapshot?.meta.submissionPreparation),
+      retrying,
+      outcomeUnresolved,
+      attachmentsReady,
+    });
+  const sendBlockReason = submitBlockReasonFor(Boolean(heldFirstSubmission), heldOutcomeUnresolved);
+  const sendBarrierActive =
+    sendBlockReason === "firstSubmissionDelivering" ||
+    sendBlockReason === "outcomeUnresolved" ||
+    (sendBlockReason === "sendInProgress" && pendingOwner !== null && !pending);
+  const retryBlockReason = submitBlockReasonFor(true, false);
+  // A settled (failed / restart-preparing) first-submission record of this session is not "still
+  // being delivered": the barrier then names the record that needs Retry or Remove.
+  useSyncExternalStore(
+    subscribeV4ComposerDrafts,
+    () => getV4FirstSubmissionVersion(workspacePath, workspaceIdentity),
+    () => "",
+  );
+  const sessionFirstSubmission =
+    sessionId !== null
+      ? readV4WorktreeRecoveryDrafts(workspacePath, workspaceIdentity, sessionId).find(
+          ({ draft }) => draft.firstSubmission,
+        )?.draft.firstSubmission
+      : undefined;
+  const sendBlockMessageId =
+    sendBlockReason === "firstSubmissionDelivering" &&
+    sessionFirstSubmission &&
+    !isV4FirstSubmissionActive(
+      workspacePath,
+      workspaceIdentity,
+      sessionFirstSubmission.submissionId,
+    ) &&
+    (sessionFirstSubmission.status === "failed" || sessionFirstSubmission.status === "preparing")
+      ? "composer.sendBlocked.firstSubmissionNeedsAction"
+      : sendBlockReason
+        ? `composer.sendBlocked.${sendBlockReason}`
+        : null;
+  // Enter during a model block keeps the draft (no newline) and repeats the inline copy, so the
+  // reason is never only visible after a silent keypress (ISSUE-026).
+  const handleModelBlockedEnter = useCallback(() => {
+    if (!hasDraftToSubmit || !sendBlockMessageId) return;
+    toast(intl.formatMessage({ id: sendBlockMessageId }), { dedupeKey: sendBlockMessageId });
+  }, [hasDraftToSubmit, intl, sendBlockMessageId]);
   // 旧 UI 状态机：streaming + 空草稿 → Stop；有草稿 → 发送键（入队）。
   const showStopControl = canStop && !hasDraftToSubmit;
 
   useEffect(() => {
     if (!canSend) setSendTooltipOpen(false);
   }, [canSend]);
+
+  // Queued worktree send (specs/composer-worktree-setup-steps.md): dispatch exactly once when the
+  // pipeline turns ready. The draft is claimed at queue time (the composer frees immediately and
+  // the chat area shows the pending bubble), so a creation failure restores the message into the
+  // composer for a plain re-send.
+  useEffect(() => {
+    let armed = pendingWorktreeSendRef.current;
+    // The composer that armed the continuation may have unmounted when the first-send view
+    // promoted this draft into the prepared session (BUG-GWT-005 live path): adopt the armed
+    // continuation from the module-scope registry so the prepared session's composer can still
+    // dispatch it when a retried creation turns ready.
+    if (!armed && sessionId !== null) {
+      const adopted = peekWorktreeSendContinuation(workspaceKey, sessionId);
+      if (adopted) {
+        pendingWorktreeSendRef.current = adopted;
+        armed = adopted;
+        if (adopted.restoredFailureKey) {
+          reportedWorktreeFailuresRef.current.add(adopted.restoredFailureKey);
+        }
+        if (worktreePipeline?.status === "creating") setWorktreeQueued(true);
+      }
+    }
+    const queued = armed;
+    if (!queued) return;
+    if (sessionId === queued.preparedSessionId) queued.hasBoundPreparedSession = true;
+    // Every settled outcome detaches the queued submission first; only what happens next differs.
+    const detachQueued = () => {
+      pendingWorktreeSendRef.current = null;
+      releaseWorktreeSendContinuation(queued.workspaceKey, queued.preparedSessionId);
+      setWorktreeQueued(false);
+    };
+    if (
+      queued.workspaceKey !== workspaceKey ||
+      (queued.hasBoundPreparedSession && sessionId !== queued.preparedSessionId) ||
+      (sessionId !== null && sessionId !== queued.preparedSessionId)
+    ) {
+      detachQueued();
+      useComposerWorktreePipelineStore
+        .getState()
+        .detachQueuedSend(queued.workspaceKey, queued.preparedSessionId);
+      queued.restore();
+      return;
+    }
+    if (queued.attemptId && worktreePipeline?.params?.attemptId !== queued.attemptId) {
+      const liveAttemptId = worktreePipeline?.params?.attemptId;
+      if (
+        !liveAttemptId ||
+        (worktreePipeline?.status !== "creating" && worktreePipeline?.status !== "ready")
+      ) {
+        detachQueued();
+        queued.restore();
+        return;
+      }
+      // Retry restarts the same prepared session under a new attempt; the frozen submission
+      // follows it instead of being detached.
+      queued.attemptId = liveAttemptId;
+    }
+    if (worktreePipeline?.orphaned || worktreePipeline?.status === "discarded") {
+      // Orphaned withdrawal and authoritative Host cancellation both stop local delivery; the
+      // queued submission is restored and never dispatched.
+      detachQueued();
+      queued.restore();
+      return;
+    }
+    if (
+      worktreePipeline?.status === "ready" &&
+      worktreePipeline.worktreePath &&
+      worktreePipeline.params
+    ) {
+      detachQueued();
+      void queued.dispatch(
+        {
+          path: worktreePipeline.worktreePath,
+          branchName: worktreePipeline.params.branchName,
+        },
+        queued.preparedSessionId,
+        queued.attemptId,
+      );
+      return;
+    }
+    if (worktreePipeline?.status === "failed") {
+      if (worktreePipeline.returningToDraft) {
+        // The return-to-draft orchestrator owns this failure (specs/composer-worktree-setup-steps.md
+        // §Return to draft on failure): it reports to the Host, transfers the recovery record into
+        // the draft pending scope, and settles the session. Running the local failure handling here
+        // would re-create the session-scope recovery record the transfer just moved.
+        // Keep the armed continuation registered: a Host-rejected hand-off falls back to the failed
+        // row, where Retry must still admit the frozen submission. A successful hand-off releases it.
+        pendingWorktreeSendRef.current = null;
+        setWorktreeQueued(false);
+        return;
+      }
+      const failureKey = `${queued.preparedSessionId}\0${worktreePipeline.params?.attemptId ?? ""}\0${worktreePipeline.failureMessage ?? ""}`;
+      // After a failed tombstone the return-to-draft hand-off already reported the failure to the
+      // Host; this effect must not send a second failure report. Retry stays armed below.
+      if (
+        onWorktreePreparationFailed &&
+        !worktreePipeline.tombstoneFailed &&
+        !reportedWorktreeFailuresRef.current.has(failureKey)
+      ) {
+        reportedWorktreeFailuresRef.current.add(failureKey);
+        void onWorktreePreparationFailed(
+          queued.preparedSessionId,
+          worktreePipeline.failureMessage ?? "Worktree creation failed",
+          worktreePipeline.params?.attemptId,
+        ).catch((error) => {
+          logger.warn("[WorktreePipeline] could not persist the preparation failure", {
+            error: String(error),
+            sessionId: queued.preparedSessionId,
+          });
+        });
+      }
+      if (worktreePipeline.params) {
+        // Retryable failure: the frozen submission stays recoverable but also armed, so the
+        // pipeline's Retry (a new attempt on this session) still activates it once it is ready.
+        if (queued.restoredFailureKey !== failureKey) {
+          queued.restoredFailureKey = failureKey;
+          queued.restoreForRetry();
+        }
+        setWorktreeQueued(false);
+        return;
+      }
+      detachQueued();
+      queued.restore();
+    }
+  }, [onWorktreePreparationFailed, worktreePipeline, workspaceKey, sessionId]);
+
+  // Explicitly turning worktree mode off withdraws the queued send. Navigation only detaches the
+  // renderer callback; Host preparation remains durable and can be resumed on return.
+  useEffect(() => {
+    const queued = pendingWorktreeSendRef.current;
+    if (!queued) {
+      return;
+    }
+    if (sessionId === queued.preparedSessionId) queued.hasBoundPreparedSession = true;
+    const navigatedAway =
+      queued.workspaceKey !== workspaceKey ||
+      (queued.hasBoundPreparedSession && sessionId !== queued.preparedSessionId) ||
+      (sessionId !== null && sessionId !== queued.preparedSessionId);
+    if (navigatedAway) {
+      pendingWorktreeSendRef.current = null;
+      releaseWorktreeSendContinuation(queued.workspaceKey, queued.preparedSessionId);
+      setWorktreeQueued(false);
+      useComposerWorktreePipelineStore
+        .getState()
+        .detachQueuedSend(queued.workspaceKey, queued.preparedSessionId);
+      queued.restore();
+      return;
+    }
+    // Once the composer is bound to the prepared session, the draft-only intent mirror must not
+    // withdraw the queued send: the mirror flips off for non-user reasons when the empty-state
+    // worktree toggle unmounts at first-send promotion, which stranded the armed submission after
+    // a retried creation turned ready (BUG-GWT-005). Explicit toggles withdraw the store entry
+    // themselves; the queued-send effect abandons delivery on that orphaned flag.
+    if (sessionId === queued.preparedSessionId) return;
+    if (worktreeIntentActive && sessionId === null) return;
+    pendingWorktreeSendRef.current = null;
+    releaseWorktreeSendContinuation(queued.workspaceKey, queued.preparedSessionId);
+    setWorktreeQueued(false);
+    useComposerWorktreePipelineStore
+      .getState()
+      .withdraw(queued.workspaceKey, queued.preparedSessionId);
+    queued.restore();
+  }, [draftMode, sessionId, worktreeIntentActive, workspaceKey]);
+
+  // Composer unmount (workspace/tab switch, or the first-send view promotion remounting the
+  // composer as the prepared session's composer) releases only the local cache: while the
+  // pipeline is still recoverable the continuation stays armed in the module-scope registry, so
+  // the composer instance that mounts next for that prepared session adopts it and a Retry that
+  // turns ready still admits the frozen submission exactly once (BUG-GWT-005 live path). The
+  // Host-owned preparation and Git operation continue for the same session either way; only an
+  // unrecoverable pipeline falls back to detaching and restoring the frozen draft.
+  useEffect(
+    () => () => {
+      const queued = pendingWorktreeSendRef.current;
+      if (!queued) return;
+      pendingWorktreeSendRef.current = null;
+      setWorktreeQueued(false);
+      const entry = selectComposerWorktreePipeline(
+        useComposerWorktreePipelineStore.getState(),
+        queued.workspaceKey,
+        queued.preparedSessionId,
+      );
+      const recoverable =
+        entry !== null &&
+        !entry.orphaned &&
+        (entry.status === "creating" ||
+          entry.status === "ready" ||
+          (entry.status === "failed" && entry.params !== undefined));
+      if (recoverable) return;
+      releaseWorktreeSendContinuation(queued.workspaceKey, queued.preparedSessionId);
+      useComposerWorktreePipelineStore
+        .getState()
+        .detachQueuedSend(queued.workspaceKey, queued.preparedSessionId);
+      queued.restore();
+    },
+    [workspaceKey],
+  );
 
   const submit = useCallback(
     async (
@@ -1347,6 +1959,8 @@ function ConversationComposerImpl({
       existingTelemetrySeed?: ConversationPromptTelemetrySeed,
       requestedDelivery?: "startNow" | "queue" | "guide",
     ) => {
+      // The editor does not hold this scope's draft yet (ISSUE-060); its text is not this scope's input.
+      if (scopeRestorePendingRef.current) return;
       const trimmed = textRef.current.trim();
       const submittedQueueItemIds =
         snapshotRef.current?.queue.items.map((item) => item.queueItemId) ?? [];
@@ -1361,163 +1975,402 @@ function ConversationComposerImpl({
       const hasPendingPptxElementReferences = currentPptxElementReferences.length > 0;
       const currentConversationSelections = conversationSelectionReferences;
       const hasPendingConversationSelections = currentConversationSelections.length > 0;
-      const submittedShareContext = pendingShareContext;
-      // 草稿首发 accepted 后同一 composer 会原地从 __draft__ promotion 到
-      // session scope；若成功清理时再读可变 ref，会误清新 scope，并把首条输入残留在
-      // __draft__，下次新建任务又恢复。发送开始时冻结真正提交的 scope。
+      const submittedShareContextId = activeShareContextId;
+      // After first draft send is accepted, this Composer promotes in place from __draft__ to session scope.
+      // If success cleanup reads the mutable ref later, it may clear the new scope by mistake and leave the first input in
+      // __draft__, restoring it when the next task is created. Freeze the actual submitted scope at send start.
       const submittedDraft = snapshotDraftOfEditor();
-      const submittedScopeKey = `${workspaceKey}\0${draftScopeRef.current}`;
+      // Recovery carries the contexts actually included in this submission, so Restore
+      // re-establishes exactly this input after navigation or reload.
+      const submittedRecoveryContexts: V4ComposerRecoveryContexts | undefined =
+        currentConversationSelections.length ||
+        currentCodeCommentContexts.length ||
+        currentWebElementContexts.length ||
+        currentPptxElementReferences.length ||
+        currentPluginUiContexts.length ||
+        submittedShareContextId
+          ? {
+              ...(currentConversationSelections.length
+                ? { conversationQuotes: [...currentConversationSelections] }
+                : {}),
+              ...(currentCodeCommentContexts.length
+                ? { codeComments: [...currentCodeCommentContexts] }
+                : {}),
+              ...(currentWebElementContexts.length
+                ? { webElements: [...currentWebElementContexts] }
+                : {}),
+              ...(currentPptxElementReferences.length
+                ? { pptxElements: [...currentPptxElementReferences] }
+                : {}),
+              ...(currentPluginUiContexts.length
+                ? { pluginUiContexts: [...currentPluginUiContexts] }
+                : {}),
+              ...(submittedShareContextId
+                ? {
+                    sharedContextRefs: [
+                      {
+                        kind: "shared_context_import" as const,
+                        context_id: submittedShareContextId,
+                      },
+                    ],
+                  }
+                : {}),
+            }
+          : undefined;
+      const retryFirstSubmission = retryFirstSubmissionRef.current ?? composerDraft.firstSubmission;
+      const submissionId = retryFirstSubmission?.submissionId ?? crypto.randomUUID();
+      let frozenFirstSubmission: V4ComposerDraft["firstSubmission"];
+      let reservedSubmissionSessionId: string | undefined;
+      let incognitoSubmission: ReturnType<
+        ReturnType<typeof useDraftIncognitoIntentStore.getState>["captureForSubmission"]
+      >;
+      const pendingRecoveryScope = getV4WorktreeRecoveryScope(draftScopeId, submissionId);
+      const submittedOwner = {
+        epoch: renderedOwnerRef.current.epoch,
+        workspaceKey,
+        scopeId: draftScopeId,
+        revision: contentRevisionRef.current,
+      };
+      const shouldActivatePreparedSession = () =>
+        composerAliveRef.current &&
+        renderedOwnerRef.current.workspaceKey === submittedOwner.workspaceKey &&
+        renderedOwnerRef.current.scopeId === submittedOwner.scopeId &&
+        renderedOwnerRef.current.epoch === submittedOwner.epoch;
+      const clearQueuedSubmissionState = () => {
+        if (queuedSubmissionIdRef.current !== submissionId) return;
+        queuedSubmissionIdRef.current = null;
+        setWorktreeQueued(false);
+      };
+      const isCurrentOwner = () =>
+        isComposerSubmissionOwnerCurrent(
+          { ...submittedOwner, revision: cleanupRevision },
+          { ...renderedOwnerRef.current, revision: contentRevisionRef.current },
+        );
       let cleanupRevision = contentRevisionRef.current;
-      const submission = createSubmissionFromComposer?.() ?? null;
-      const submittedAttachmentIds = attachmentsApi.attachments.map((item) => item.id);
-      if (
-        (!trimmed &&
-          !hasPendingAttachments &&
-          !hasPendingCodeCommentContexts &&
-          !hasPendingWebElementContexts &&
-          !hasPendingPptxElementReferences &&
-          !hasPendingConversationSelections &&
-          !hasPendingPluginUiContexts &&
-          !submittedShareContext) ||
-        pendingRef.current ||
-        targetSelectionPendingRef.current ||
-        !remoteAvailable ||
-        !submissionReady ||
-        runtimeBlocked ||
-        (createSubmissionFromComposer !== undefined && submission === null) ||
-        attachmentsApi.hasUnreadyAttachments
-      ) {
-        return;
-      }
-      const sendAction = startUserAction({
-        featureId: "conversation.composer.message",
-        action: "send",
-        trigger: sendTriggerRef.current === "button" ? "button" : "shortcut",
-        workspaceKind: workspaceIdentity?.trim() ? "remote" : "local",
-      });
-      pendingRef.current = true;
-      setPending(true);
-      // Bug 根因：草稿 intent 只保存用户显式改动，正常继承模型位于冻结初始化 config。
-      // prewarm snapshot 尚未到达时若只读 draftConfig，send_btn 会错误落成空模型/glm。
-      const telemetryConfig = telemetryDraftConfig ?? snapshotRef.current?.config ?? draftConfig;
-      let telemetrySeed: ConversationPromptTelemetrySeed;
-      if (existingTelemetrySeed) {
-        // 队列二次确认复用首次点击的 seed：不重报 send_click，也不重置发送触发来源，
-        // 保证 send_click 与 send_result 严格 1:1。
-        telemetrySeed = existingTelemetrySeed;
-        if (telemetrySeed.localTtft)
-          getLocalTtftObserver()?.confirmation(telemetrySeed.localTtft, false);
-      } else {
-        const freshSeed: ConversationPromptTelemetrySeed = {
-          sendTime: Date.now(),
-          localTtft: !workspaceIdentity?.trim()
-            ? getLocalTtftObserver()?.start(
-                workspacePath,
-                (snapshotRef.current !== null &&
-                  snapshotRef.current.inputRouting.mode !== "startNow") ||
-                  false,
-                trimmed.startsWith("/"),
-              )
-            : undefined,
-          extraDetail: buildV4ConversationPromptTelemetryExtraDetail({
-            askMode: telemetryConfig?.mode,
-            modelName: telemetryConfig?.model,
-            configProvider: telemetryConfig?.provider,
-            agentProvider: provider,
-            providerBaseURL: resolveProviderBaseURL(telemetryConfig?.provider, modelSelectionView),
-            planIdentitySnapshot: readPlanIdentitySnapshot?.(),
-          }),
-        };
-        const sendTrigger = sendTriggerRef.current;
-        sendTriggerRef.current = "shortcut";
-        // recordSendClick 回填 sendClickId，必须用它的返回值作为后续 seed，
-        // 否则落定时拿不到关联键，send_result 会被当成后台任务跳过。
-        telemetrySeed =
-          conversationTelemetry?.recordSendClick({
-            sessionId: sessionId ?? null,
-            seed: freshSeed,
-            trigger: sendTrigger,
-          }) ?? freshSeed;
-      }
-      let promptHistoryBeforeSend: readonly string[] | null = null;
-      let promptHistoryAfterAppend: readonly string[] | null = null;
-      let promptHistoryWasPersisted = false;
+      const acquirePending = () => {
+        pendingRef.current = submissionId;
+        setPendingOwner(submissionId);
+        setPending(true);
+      };
+      // Only the owner releases: a later send may already hold the token.
+      const releasePending = () => {
+        if (pendingRef.current !== submissionId) return;
+        pendingRef.current = null;
+        setPendingOwner(null);
+        setPending(false);
+      };
+      // Draft claim lives in the submit scope (not inside the send closure): a queued worktree
+      // send claims the draft at queue time so the composer frees immediately, and the same
+      // claim/restore pair guards the eventual dispatch.
       let draftSubmissionClaimed = false;
       let editorClearedOptimistically = false;
-      let submittedCommandId: string | null = null;
-      let submittedCommandResolved = false;
-      const claimSubmittedDraft = () => {
+      const claimSubmittedDraft = (clearEditor = true) => {
+        // A queued worktree send claims at queue time; the eventual dispatch re-enters here and
+        // must not wipe text typed while the creation was in flight.
+        if (draftSubmissionClaimed) return;
+        if (!isCurrentOwner()) throw new Error("Submission owner changed before admission");
         if (draftPersistTimerRef.current !== null) {
           window.clearTimeout(draftPersistTimerRef.current);
           draftPersistTimerRef.current = null;
         }
-        // 首发 promotion 会在 onSendText 返回前切换 scope 或重建 Composer。
-        // 若仍允许旧 scope effect 落盘，新 Composer 会把已经发送的正文当草稿恢复。
-        // 提交前先占用并隐藏该草稿；失败路径再恢复，避免用等待时间掩盖竞态。
+        // First-send promotion may switch scope or remount Composer before onSendText returns.
+        // If the old scope effect can still persist, the new Composer restores already-sent text as a draft.
+        // Claim and hide the draft before submission; restore it on failure rather than masking the race with a delay.
         suppressDraftPersistRef.current = true;
-        updateComposerContent({ text: "" });
+        draftPersistClaimRef.current = submissionId;
+        // The persisted draft must drop the submitted text even when the editor stays visible until
+        // acceptance: the debounced persist may have already stored it, and the first-send promotion
+        // re-applies that draft into the promoted session, so the input never clears. Failure
+        // recovery does not read this store — restoreSubmittedDraft uses the frozen snapshot.
+        updateComposerContentRef.current({ text: "", firstSubmission: undefined });
+        if (clearEditor) {
+          inputApiRef.current?.clear();
+          updateText("");
+          editorClearedOptimistically = true;
+        }
+        cleanupRevision = contentRevisionRef.current;
+        if (clearEditor)
+          claimedSubmissionRef.current = { submissionId, revision: contentRevisionRef.current };
         draftSubmissionClaimed = true;
+      };
+      const releaseRepeatClickGuard = () => {
+        if (claimedSubmissionRef.current?.submissionId === submissionId)
+          claimedSubmissionRef.current = null;
       };
       const restoreSubmittedDraft = () => {
         if (!draftSubmissionClaimed) return;
-        // 用户在等待期间已经产生更新时，当前完整正文是更新后的事实；旧失败回包不能覆盖。
-        if (contentRevisionRef.current === cleanupRevision) {
-          updateComposerContent(submittedDraft);
+        if (frozenFirstSubmission)
+          setV4FirstSubmissionActive(workspacePath, workspaceIdentity, submissionId, false);
+        // Clipboard-text path metadata persists only for local workspaces (remote targets keep
+        // the reattach requirement); the worktree intent snapshot prefills Retry/Change actions.
+        const persistPathMetadata = !workspaceIdentity?.trim();
+        const preparationParams = preparedSessionIdForSend
+          ? selectComposerWorktreePipeline(
+              useComposerWorktreePipelineStore.getState(),
+              workspaceKey,
+              preparedSessionIdForSend,
+            )?.params
+          : undefined;
+        const restoredDraft: Omit<V4ComposerDraft, "updatedAt"> = {
+          ...composerDraft,
+          ...submittedDraft,
+          ...(frozenFirstSubmission
+            ? {
+                firstSubmission: {
+                  ...frozenFirstSubmission,
+                  commandId: submittedCommandId ?? frozenFirstSubmission.commandId,
+                  status:
+                    submittedCommandId && !submittedCommandResolved
+                      ? ("unknown" as const)
+                      : ("failed" as const),
+                },
+              }
+            : {}),
+          ...(submittedRecoveryContexts ? { recoveryContexts: submittedRecoveryContexts } : {}),
+          ...(preparationParams
+            ? { worktreeIntent: buildV4WorktreeIntentFromParams(preparationParams) }
+            : {}),
+          recoveryAttachments: buildV4RecoveryAttachmentsManifest(
+            attachmentsApi.attachments.filter((item) => submittedAttachmentIds.includes(item.id)),
+            { persistPathMetadata },
+          ),
+        };
+        // Recovery belongs to the frozen submission once a Host session exists; pre-reservation
+        // failures keep the ordinary draft scope so blocked sends stay editable inline.
+        const persistFrozenRecovery =
+          preparedSessionIdForSend ||
+          queueWorktreeSend ||
+          (frozenFirstSubmission &&
+            (reservedSubmissionSessionId || frozenFirstSubmission.reservation));
+        if (persistFrozenRecovery) {
+          // Persist where the user is looking (specs/first-submission-lifecycle.md): the reserved
+          // session only once the bind moved the record there; otherwise the scope it still lives
+          // in, with the reservation kept inside the record so Retry reuses it.
+          const recoveryOwner =
+            reservedSubmissionSessionId && reservationRecordBound
+              ? reservedSubmissionSessionId
+              : (preparedSessionIdForSend ?? submittedOwner.scopeId);
+          const recovered = persistV4ComposerDraft(
+            workspacePath,
+            workspaceIdentity,
+            getV4WorktreeRecoveryScope(recoveryOwner, submissionId),
+            restoredDraft,
+          );
+          if (recovered)
+            submittedAttachments.moveToScope?.(
+              `${workspaceKey}\0${getV4WorktreeRecoveryScope(recoveryOwner, submissionId)}`,
+            );
+          if (
+            recovered &&
+            pendingRecoveryScope !== getV4WorktreeRecoveryScope(recoveryOwner, submissionId)
+          )
+            clearV4ComposerDraft(workspacePath, workspaceIdentity, pendingRecoveryScope);
+          // Every unknown outcome is in the unsettled ledger (FSL07), whichever scope holds it.
           if (submittedCommandId && !submittedCommandResolved) {
-            // 传输层失败不等于 CLI 未 admission（ACK 丢失即如此）。正文虽已恢复回草稿，
-            // 该 command 仍待权威结论；登记到模块级账本，让卸载重挂后的 composer 也能收口。
+            trackUnsettledComposerSubmission(`${workspaceKey}\0${recoveryOwner}`, {
+              commandId: submittedCommandId,
+              text: submittedDraft.text,
+            });
+          }
+        } else if (isCurrentOwner()) {
+          if (frozenFirstSubmission && !reservedSubmissionSessionId) {
+            clearV4ComposerDraft(workspacePath, workspaceIdentity, pendingRecoveryScope);
+          }
+          updateComposerContentRef.current({
+            ...submittedDraft,
+            ...(frozenFirstSubmission && !reservedSubmissionSessionId
+              ? { firstSubmission: undefined }
+              : {}),
+          });
+          if (editorClearedOptimistically) {
+            if (submittedDraft.editorStateJson)
+              inputApiRef.current?.setEditorStateJson(submittedDraft.editorStateJson);
+            else inputApiRef.current?.setText(submittedDraft.text);
+            updateText(submittedDraft.text);
+          }
+          // A transport failure is not proof the CLI did not admit the command (ACK can be lost):
+          // keep the command in the module ledger so a remounted composer can still settle it.
+          if (submittedCommandId && !submittedCommandResolved) {
             trackUnsettledComposerSubmission(submittedScopeKey, {
               commandId: submittedCommandId,
               text: submittedDraft.text,
             });
           }
-        }
-        suppressDraftPersistRef.current = false;
-        draftSubmissionClaimed = false;
-        if (editorClearedOptimistically && contentRevisionRef.current === cleanupRevision) {
-          if (submittedDraft.editorStateJson) {
-            inputApiRef.current?.setEditorStateJson(submittedDraft.editorStateJson);
-          } else {
-            inputApiRef.current?.setText(submittedDraft.text);
+        } else {
+          persistV4ComposerDraft(
+            workspacePath,
+            workspaceIdentity,
+            getV4WorktreeRecoveryScope(submittedOwner.scopeId, submissionId),
+            restoredDraft,
+          );
+          if (submittedCommandId && !submittedCommandResolved) {
+            trackUnsettledComposerSubmission(`${workspaceKey}\0${submittedOwner.scopeId}`, {
+              commandId: submittedCommandId,
+              text: submittedDraft.text,
+            });
           }
-          updateText(submittedDraft.text);
-          editorClearedOptimistically = false;
         }
+        if (draftPersistClaimRef.current === submissionId) {
+          suppressDraftPersistRef.current = false;
+          draftPersistClaimRef.current = null;
+        }
+        releaseRepeatClickGuard();
+        draftSubmissionClaimed = false;
+      };
+      // Nothing reached the Host (cancelled checkout guard, failed preflight or validation, storage
+      // failure): withdraw the frozen submission at every such return site (specs/first-submission-
+      // lifecycle.md). With an empty editor the text returns inline and the record is deleted; text
+      // typed meanwhile is never overwritten (spec decision 2), so the message stays as a plain
+      // recovery card — never as a second optimistic turn. Ownership ignores the content revision:
+      // the editor's own clear echo bumps it without changing who owns the view.
+      const withdrawUnreservedSubmission = () => {
+        if (!draftSubmissionClaimed) return;
+        if (frozenFirstSubmission)
+          setV4FirstSubmissionActive(workspacePath, workspaceIdentity, submissionId, false);
+        const sameView =
+          composerAliveRef.current &&
+          isComposerSubmissionOwnerCurrent(
+            { ...submittedOwner, revision: 0 },
+            { ...renderedOwnerRef.current, revision: 0 },
+          );
+        if (sameView && textRef.current.trim().length === 0) {
+          clearV4ComposerDraft(workspacePath, workspaceIdentity, pendingRecoveryScope);
+          updateComposerContentRef.current({ ...submittedDraft, firstSubmission: undefined });
+          if (editorClearedOptimistically) {
+            if (submittedDraft.editorStateJson)
+              inputApiRef.current?.setEditorStateJson(submittedDraft.editorStateJson);
+            else inputApiRef.current?.setText(submittedDraft.text);
+            updateText(submittedDraft.text);
+          }
+        } else {
+          persistV4ComposerDraft(workspacePath, workspaceIdentity, pendingRecoveryScope, {
+            ...composerDraft,
+            ...submittedDraft,
+            firstSubmission: undefined,
+            ...(submittedRecoveryContexts ? { recoveryContexts: submittedRecoveryContexts } : {}),
+            recoveryAttachments: buildV4RecoveryAttachmentsManifest(
+              attachmentsApi.attachments.filter((item) => submittedAttachmentIds.includes(item.id)),
+              { persistPathMetadata: !workspaceIdentity?.trim() },
+            ),
+          });
+        }
+        if (draftPersistClaimRef.current === submissionId) {
+          suppressDraftPersistRef.current = false;
+          draftPersistClaimRef.current = null;
+        }
+        releaseRepeatClickGuard();
+        draftSubmissionClaimed = false;
+      };
+      const restoreForRetry = () => {
+        restoreSubmittedDraft();
+        draftSubmissionClaimed = true;
       };
       const finalizeSubmittedDraft = () => {
         if (!draftSubmissionClaimed) return;
-        suppressDraftPersistRef.current = false;
+        if (draftPersistClaimRef.current === submissionId) {
+          suppressDraftPersistRef.current = false;
+          draftPersistClaimRef.current = null;
+        }
         draftSubmissionClaimed = false;
       };
+      const submission = createSubmissionFromComposer?.() ?? null;
+      const submittedAttachmentIds = attachmentsApi.attachments.map((item) => item.id);
+      const submittedAttachments = attachmentsApi.captureSubmission?.(submittedAttachmentIds) ?? {
+        ...attachmentsApi,
+        moveToScope: undefined,
+      };
+      // Upstream settlement (composerSubmissionSettlement + pendingCommandRegistry): an accepted or
+      // authoritative command projection settles the captured content even when the send ACK is lost.
+      const submittedScopeKey = `${workspaceKey}\0${draftScopeRef.current}`;
+      let submittedCommandId: string | null = null;
+      let submittedCommandResolved = false;
+      // Single logical bind writer for a reserved first submission (specs/first-submission-
+      // instant-ux.md, P2 bind moment): move the frozen record into the session scope, hand
+      // the attachments over, and promote the pane — gated by navigation ownership (FSL rule 7).
+      // Called at the reservation identity (plain: createSession envelope) and retried after
+      // admission only when it could not run earlier (storage failure or the navigation gate).
+      let reservationRecordBound = false;
+      const bindReservedSessionRecord = () => {
+        if (reservationRecordBound || !reservedSubmissionSessionId) return;
+        const targetScope = getV4WorktreeRecoveryScope(reservedSubmissionSessionId, submissionId);
+        if (
+          !moveV4ComposerDraft(workspacePath, workspaceIdentity, pendingRecoveryScope, targetScope)
+        ) {
+          logger.warn(
+            "[v4-composer] first-submission draft move failed; keeping pending recovery scope",
+          );
+          return;
+        }
+        reservationRecordBound = true;
+        // P2 bind releases the repeat-submit ref: a genuinely new draft now takes the ordinary
+        // send path (double clicks stay caught by the repeat-click guard).
+        releasePending();
+        submittedAttachments.moveToScope?.(`${workspaceKey}\0${reservedSubmissionSessionId}`);
+        if (shouldActivatePreparedSession())
+          onFirstSubmissionReserved?.(reservedSubmissionSessionId);
+      };
       let submittedContentSettled = false;
+      let sendPreparedSessionId: string | undefined;
       const settleSubmittedContent = async () => {
         if (submittedContentSettled) return;
         submittedContentSettled = true;
-        await attachmentsApi.adoptSentAttachments(submittedAttachmentIds);
-        // 权威 projection 已确认原 command 被接管；等待期间的新正文属于下一次提交。
-        if (contentRevisionRef.current === cleanupRevision) {
+        // Transfer staged content to the task only after the send is accepted; on failure the draft keeps ownership.
+        await submittedAttachments.adoptSentAttachments(submittedAttachmentIds);
+        const recoverySessionId =
+          reservedSubmissionSessionId ?? sendPreparedSessionId ?? preparedSessionIdForSend;
+        if (recoverySessionId && !frozenFirstSubmission) {
+          clearV4ComposerDraft(
+            workspacePath,
+            workspaceIdentity,
+            getV4WorktreeRecoveryScope(recoverySessionId, submissionId),
+          );
+        }
+        if (!frozenFirstSubmission)
+          clearV4ComposerDraft(workspacePath, workspaceIdentity, pendingRecoveryScope);
+        // Bug cause: text entered while the send is pending belongs to the next Submission; an old ACK must not clear it.
+        if (isCurrentOwner()) {
           inputApiRef.current?.clear();
           updateText("");
-          updateComposerContent({ text: "" });
+          updateComposerContentRef.current({ text: "" });
         }
-        attachmentsApi.clearAttachments(submittedAttachmentIds);
+        submittedAttachments.clearAttachments(submittedAttachmentIds);
+        // As with attachments, remove only refs frozen for this send; refs added while waiting belong to the next message.
         currentCodeCommentContexts.forEach(removeCodeCommentContext);
         currentWebElementContexts.forEach((context) => removeWebElementContext(context.id));
         currentPluginUiContexts.forEach((context) => removePluginUiContext(context.id));
+        if (submittedShareContextId) {
+          setRestoredShareContext((current) =>
+            current?.contextId === submittedShareContextId ? null : current,
+          );
+        }
         currentPptxElementReferences.forEach((reference) =>
           removePptxElementReference(reference.id),
         );
         currentConversationSelections.forEach((reference) =>
           removeConversationSelectionReference(reference.id),
         );
+        // On success, clear the scope draft captured by this submission. Prompt history was synchronously persisted before the real send,
+        // avoiding loss during first-send promotion or clearing the new scope created by promotion.
         finalizeSubmittedDraft();
       };
       const subscribeToCommandResolution = (commandId: string) => {
         let active = true;
         let cleanup = () => undefined;
         submittedCommandId = commandId;
+        if (frozenFirstSubmission)
+          updateV4FirstSubmission(workspacePath, workspaceIdentity, submissionId, {
+            commandId,
+            status: "sending",
+          });
         const unsubscribe = pendingCommandRegistry.subscribeResolution(commandId, (resolution) => {
           if (!active) return;
+          if (resolution === "unknown") {
+            if (frozenFirstSubmission)
+              updateV4FirstSubmission(workspacePath, workspaceIdentity, submissionId, {
+                status: "unknown",
+              });
+            return;
+          }
           submittedCommandResolved = true;
           cleanup();
           if (
@@ -1537,179 +2390,759 @@ function ConversationComposerImpl({
         };
         commandResolutionCleanupsRef.current.add(cleanup);
       };
-      const rollbackPromptHistory = () => {
-        if (!promptHistoryWasPersisted || !promptHistoryBeforeSend || !promptHistoryAfterAppend) {
-          return;
-        }
-        const currentPromptHistory = readPromptHistoryEntries(workspacePath);
-        if (arePromptHistoryEntriesEqual(currentPromptHistory, promptHistoryAfterAppend)) {
-          persistPromptHistoryEntries(workspacePath, promptHistoryBeforeSend);
-          setPromptHistory(promptHistoryBeforeSend);
-          return;
-        }
-        setPromptHistory(currentPromptHistory);
-      };
-      try {
-        // 二次门禁：只消费预传完成的 ref，不在点击发送时回落上传。
-        const readyAttachmentRefs = await attachmentsApi.prepareForSend();
-        if (readyAttachmentRefs === null) {
-          if (telemetrySeed.localTtft)
-            getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "rejected");
-          // send_click 已上报，此处不落定会留下无配对的悬空样本，污染成功率分母。
-          conversationTelemetry?.settleSendResult({
-            seed: telemetrySeed,
-            sessionId: sessionId ?? null,
-            status: "fail",
-            reasonCode: "attachment_not_ready",
-          });
-          sendAction.fail({ failureStage: "attachment_not_ready" });
-          return;
-        }
-        // 外部上下文不走协议附件；按 selection -> code comment -> web -> PPTX 的固定尾块顺序
-        // 序列化，历史 user row 才能按相反顺序无损解析并隐藏内部 prompt block。
-        //
-        // 分享 handover 不在这里序列化：share URL 块纯粹是 renderer 自产自销（CLI/shared
-        // 里没有任何东西解析它），唯一作用是驱动一个已被产品裁掉的 chip，代价却是把一个
-        // share URL 塞进发给模型的正文。模型侧内容由隐藏的 shared_context 消息经
-        // inputIntent.sharedContextRefs 注入，与正文无关。
-        const promptText = serializeComposerPromptContexts(trimmed, {
-          codeComments: currentCodeCommentContexts,
-          conversationSelections: [],
-          webElements: currentWebElementContexts,
-          pptxElements: currentPptxElementReferences,
-          pluginUiContexts: currentPluginUiContexts,
+      const hasNothingToSend =
+        !trimmed &&
+        !hasPendingAttachments &&
+        !hasPendingCodeCommentContexts &&
+        !hasPendingWebElementContexts &&
+        !hasPendingPptxElementReferences &&
+        !hasPendingConversationSelections &&
+        !hasPendingPluginUiContexts &&
+        !submittedShareContextId;
+      const submitBlockReason = resolveComposerSubmitBlockReason({
+        remoteAvailable,
+        runtimeBlocked,
+        submissionReady,
+        submissionConfigured: !(createSubmissionFromComposer !== undefined && submission === null),
+        modelSelectionIssue: modelSelectionView?.selectionIssue,
+        modelSelectionSettled,
+        sendInProgress:
+          pendingRef.current !== null ||
+          targetSelectionPendingRef.current ||
+          worktreeQueued ||
+          reservingWorktreeRef.current?.epoch === renderedOwnerRef.current.epoch ||
+          pendingWorktreeSendRef.current !== null,
+        preparedSessionAwaitingFirstInput: Boolean(snapshotRef.current?.meta.submissionPreparation),
+        retrying: Boolean(retryFirstSubmission),
+        outcomeUnresolved:
+          retryFirstSubmission?.status === "sending" || retryFirstSubmission?.status === "unknown",
+        attachmentsReady,
+      });
+      // A blocked Send with content must say why; a silent return looks like a lost message.
+      // A failed worktree preparation keeps its frozen send armed (pendingWorktreeSendRef) after
+      // worktreeQueued is cleared; that block is the failed first message awaiting Retry, not an
+      // in-flight send, so it is named instead of being dropped with sendInProgress.
+      const noticeReason =
+        submitBlockReason === "sendInProgress" &&
+        pendingWorktreeSendRef.current !== null &&
+        !worktreeQueued
+          ? "firstSubmissionNeedsAction"
+          : submitBlockReason;
+      // The reason is the dedupe key: toast() replaces the notice with the same key, so Enter spam keeps
+      // one visible notice per reason. A live sendInProgress clears itself when the in-flight send settles,
+      // and the Send tooltip already names it, so it gets no notice.
+      if (!hasNothingToSend && noticeReason !== null && noticeReason !== "sendInProgress")
+        toast(intl.formatMessage({ id: `composer.sendBlocked.${noticeReason}` }), {
+          dedupeKey: `composer.sendBlocked.${noticeReason}`,
         });
-        const contextAttachmentCount =
-          countComposerPromptContexts({
+      if (
+        hasNothingToSend ||
+        submitBlockReason !== null ||
+        // A double click: no editor change since this composer's last claim.
+        (claimedSubmissionRef.current !== null &&
+          claimedSubmissionRef.current.revision === contentRevisionRef.current &&
+          !retryFirstSubmissionRef.current)
+      ) {
+        return;
+      }
+      const localCommand = parseV4VisibleSlashCommand(trimmed, attachmentsApi.attachments, {
+        contextAttachmentCount: Number(Boolean(submittedRecoveryContexts)),
+      });
+      if (durableFirstSubmission && (draftMode || retryFirstSubmission) && !localCommand) {
+        incognitoSubmission =
+          draftMode && sessionId === null
+            ? useDraftIncognitoIntentStore.getState().captureForSubmission(workspaceKey)
+            : undefined;
+        frozenFirstSubmission = {
+          submissionId,
+          ownerKey: retryFirstSubmission?.ownerKey ?? draftScopeId,
+          generation: draftGeneration,
+          status: "preparing",
+          // Freezing overwrites the stored record: keep the id of an earlier attempt's sendText so a
+          // failure before this attempt creates its own command still leaves it reconcilable.
+          ...(retryFirstSubmission?.commandId ? { commandId: retryFirstSubmission.commandId } : {}),
+          ...(retryFirstSubmission?.incognito || incognitoSubmission?.profile
+            ? { incognito: retryFirstSubmission?.incognito ?? incognitoSubmission?.profile }
+            : {}),
+          ...(retryFirstSubmission?.reservation
+            ? { reservation: retryFirstSubmission.reservation }
+            : {}),
+        };
+        const saved = persistV4ComposerDraft(
+          workspacePath,
+          workspaceIdentity,
+          pendingRecoveryScope,
+          {
+            ...composerDraft,
+            ...submittedDraft,
+            firstSubmission: frozenFirstSubmission,
+            recoveryContexts: submittedRecoveryContexts,
+            recoveryAttachments: buildV4RecoveryAttachmentsManifest(attachmentsApi.attachments, {
+              persistPathMetadata: !workspaceIdentity?.trim(),
+            }),
+          },
+        );
+        if (!saved) {
+          toast(intl.formatMessage({ id: "composerRecovery.storageUnavailable" }));
+          return;
+        }
+        setV4FirstSubmissionActive(workspacePath, workspaceIdentity, submissionId, true);
+        // Claim at freeze (FSL owners: past this point the send closure reads only the frozen
+        // snapshot, module draft stores and the reserved session id): the editor frees for the
+        // next draft in the same commit as the optimistic turn, and the reservation-time bind
+        // can no longer abort the send through the "Submission owner changed" guard. The
+        // claim's suppress flags neutralize the editor-clear echo (357f25ca).
+        claimSubmittedDraft();
+        retryFirstSubmissionRef.current = undefined;
+      }
+      // Worktree setup pipeline (specs/composer-worktree-setup-steps.md): the first send with an
+      // active "New worktree" intent starts creation WITHOUT blocking or disabling the composer.
+      // The shell presents a provisional chat from pipeline state; the frozen send dispatches only
+      // after the worktree is ready. A reused ready worktree (retry or orphan reuse) dispatches immediately.
+      const worktreeIntent = worktreeIntentSlot?.current;
+      let executionWorktree: ComposerExecutionWorktree | undefined;
+      let preparedSessionIdForSend: string | undefined;
+      let queueWorktreeSend = false;
+      if (
+        Boolean(sessionId && snapshotRef.current?.meta.worktreePreparation) ||
+        (draftMode && sessionId === null && worktreeIntent?.workspaceKey === workspaceKey)
+      ) {
+        const pipeline = sessionId
+          ? selectComposerWorktreePipeline(
+              useComposerWorktreePipelineStore.getState(),
+              workspaceKey,
+              sessionId,
+            )
+          : null;
+        const currentPreparedSessionId = snapshotRef.current?.meta.worktreePreparation
+          ? sessionId
+          : null;
+        if (
+          pipeline?.status === "ready" &&
+          pipeline.worktreePath &&
+          pipeline.params &&
+          (!currentPreparedSessionId || pipeline.sessionId === currentPreparedSessionId)
+        ) {
+          executionWorktree = {
+            path: pipeline.worktreePath,
+            branchName: pipeline.params.branchName,
+          };
+          preparedSessionIdForSend = currentPreparedSessionId ?? pipeline.sessionId;
+        } else if (pipeline?.status === "creating") {
+          // Continue only the preparation bound to this session.
+          if (!currentPreparedSessionId && !pipeline.sessionId) {
+            withdrawUnreservedSubmission();
+            return;
+          }
+          preparedSessionIdForSend = currentPreparedSessionId ?? pipeline.sessionId;
+          queueWorktreeSend = true;
+        } else {
+          // The Host session is reserved below before beginCreation starts any Git work.
+          preparedSessionIdForSend = currentPreparedSessionId ?? undefined;
+          queueWorktreeSend = true;
+        }
+      }
+      // Draft branch intent, checkout mode only (the worktree pipeline owns the branch while its
+      // intent is active): a different branch runs the guard, then the switch; a cancelled guard
+      // or failed switch aborts the send with the draft and the intent preserved (spec §1).
+      const branchIntentGitService = baseWorkspaceServices?.gitService;
+      const draftBranchIntent =
+        !queueWorktreeSend &&
+        executionWorktree === undefined &&
+        draftMode &&
+        sessionId === null &&
+        branchIntentGitService
+          ? selectDraftBranchIntent(useDraftBranchIntentStore.getState(), workspaceKey)
+          : null;
+      if (draftBranchIntent && branchIntentGitService) {
+        acquirePending();
+        try {
+          const resolution = await applyDraftBranchIntentForSend({
+            gitService: branchIntentGitService,
+            ...(branchSwitchGuard ? { guard: branchSwitchGuard } : {}),
+            workspaceKey,
+            workspacePath,
+            branchName: draftBranchIntent,
+          });
+          if (resolution.outcome === "aborted") {
+            withdrawUnreservedSubmission();
+            if (resolution.reason === "switch-failed") {
+              toast(
+                resolution.message ??
+                  intl.formatMessage({ id: "git.branchSwitcher.error.unknown" }),
+              );
+            } else if (resolution.reason === "switch-error") {
+              toast(
+                intl.formatMessage(
+                  { id: "git.branchSwitcher.error.requestFailed" },
+                  { error: resolution.message ?? "" },
+                ),
+              );
+            }
+            // "guard" is a user cancellation: no toast, draft and intent preserved.
+            return;
+          }
+        } finally {
+          releasePending();
+        }
+      }
+      // Frozen-send closure: runs the actual dispatch either immediately (plain sends,
+      // reused ready worktree) or from the queued-worktree effect when the pipeline turns ready.
+      const runSend = async (
+        executionWorktree: ComposerExecutionWorktree | undefined,
+        preparedSessionId?: string,
+        preparedAttemptId?: string,
+      ): Promise<void> => {
+        sendPreparedSessionId = preparedSessionId ?? preparedSessionIdForSend;
+        const sendAction = startUserAction({
+          featureId: "conversation.composer.message",
+          action: "send",
+          trigger: sendTriggerRef.current === "button" ? "button" : "shortcut",
+          workspaceKind: workspaceIdentity?.trim() ? "remote" : "local",
+        });
+        acquirePending();
+        // Bug cause: draft intent stores only explicit user changes; the normally inherited model is in frozen initialization config.
+        // If the prewarm snapshot has not arrived and we read only draftConfig, send_btn incorrectly becomes an empty model/glm.
+        const telemetryConfig = telemetryDraftConfig ?? snapshotRef.current?.config ?? draftConfig;
+        let telemetrySeed: ConversationPromptTelemetrySeed;
+        if (existingTelemetrySeed) {
+          // Queue re-confirmation reuses the seed from the first click: do not report send_click again or reset the trigger source,
+          // keeping send_click and send_result strictly 1:1.
+          telemetrySeed = existingTelemetrySeed;
+          if (telemetrySeed.localTtft)
+            getLocalTtftObserver()?.confirmation(telemetrySeed.localTtft, false);
+        } else {
+          const freshSeed: ConversationPromptTelemetrySeed = {
+            sendTime: Date.now(),
+            localTtft: !workspaceIdentity?.trim()
+              ? getLocalTtftObserver()?.start(
+                  workspacePath,
+                  (snapshotRef.current !== null &&
+                    snapshotRef.current.inputRouting.mode !== "startNow") ||
+                    false,
+                  trimmed.startsWith("/"),
+                )
+              : undefined,
+            extraDetail: buildV4ConversationPromptTelemetryExtraDetail({
+              askMode: telemetryConfig?.mode,
+              modelName: telemetryConfig?.model,
+              configProvider: telemetryConfig?.provider,
+              agentProvider: provider,
+              providerBaseURL: resolveProviderBaseURL(
+                telemetryConfig?.provider,
+                modelSelectionView,
+              ),
+              planIdentitySnapshot: readPlanIdentitySnapshot?.(),
+            }),
+          };
+          const sendTrigger = sendTriggerRef.current;
+          sendTriggerRef.current = "shortcut";
+          // recordSendClick fills in sendClickId; use its returned value as the next seed.
+          // Otherwise finalization lacks the correlation key and send_result is skipped as a background task.
+          telemetrySeed =
+            conversationTelemetry?.recordSendClick({
+              sessionId: sessionId ?? null,
+              seed: freshSeed,
+              trigger: sendTrigger,
+            }) ?? freshSeed;
+        }
+        let promptHistoryBeforeSend: readonly string[] | null = null;
+        let promptHistoryAfterAppend: readonly string[] | null = null;
+        let promptHistoryWasPersisted = false;
+        // Set when onSendText threw: SessionPane.handleSendText has already set its admission-failure banner.
+        let sendTextFailureShown = false;
+        const rollbackPromptHistory = () => {
+          if (!promptHistoryWasPersisted || !promptHistoryBeforeSend || !promptHistoryAfterAppend) {
+            return;
+          }
+          const currentPromptHistory = readPromptHistoryEntries(workspacePath);
+          if (arePromptHistoryEntriesEqual(currentPromptHistory, promptHistoryAfterAppend)) {
+            persistPromptHistoryEntries(workspacePath, promptHistoryBeforeSend);
+            setPromptHistory(promptHistoryBeforeSend);
+            return;
+          }
+          setPromptHistory(currentPromptHistory);
+        };
+        try {
+          // First submissions free the submit control at the fire moment (IUX "no dead Send"):
+          // the background chain owns everything from here; the repeat-submit ref stays armed
+          // until the P2 bind, restore or chain end (owner token), and the repeat-click guard
+          // catches double clicks after that.
+          if (frozenFirstSubmission) setPending(false);
+          // Freeze the profile before attachment preparation; later draft edits belong to another submission.
+          if (!frozenFirstSubmission && draftMode && sessionId === null)
+            incognitoSubmission = useDraftIncognitoIntentStore
+              .getState()
+              .captureForSubmission(workspaceKey);
+          const incognito = frozenFirstSubmission?.incognito ?? incognitoSubmission?.profile;
+          if (
+            frozenFirstSubmission &&
+            !executionWorktree &&
+            !preparedSessionId &&
+            onPrepareFirstSubmission
+          ) {
+            reservedSubmissionSessionId = await onPrepareFirstSubmission({
+              submissionId,
+              ...(incognito ? { incognito } : {}),
+              reservation: frozenFirstSubmission.reservation,
+              onReservationCreated: (reservation) => {
+                frozenFirstSubmission = {
+                  ...frozenFirstSubmission!,
+                  reservation,
+                };
+                try {
+                  updateV4FirstSubmission(workspacePath, workspaceIdentity, submissionId, {
+                    reservation,
+                  });
+                } catch (error) {
+                  // The in-memory frozen record keeps the reservation; restore persists it.
+                  logger.warn(
+                    "[v4-composer] could not persist the first-submission reservation",
+                    error,
+                  );
+                }
+                // P2 bind moment: the reservation identity is known (client-proposed,
+                // ACK-stable session id + command id), so hand the record to the session
+                // scope and bind the pane now — never after sendText. Gated by navigation
+                // ownership (FSL rule 7); a skipped bind reconciles from the record.
+                reservedSubmissionSessionId = reservation.sessionId;
+                bindReservedSessionRecord();
+              },
+            });
+          }
+          const readyAttachmentRefs = await submittedAttachments.prepareForSend(
+            queueWorktreeSend ? submittedAttachmentIds : undefined,
+            { allowWaitingSession: incognito !== undefined },
+          );
+          if (readyAttachmentRefs === null) {
+            if (frozenFirstSubmission) restoreSubmittedDraft();
+            if (telemetrySeed.localTtft)
+              getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "rejected");
+            // send_click has already been reported; failing to finalize here leaves an unmatched sample and skews the success-rate denominator.
+            conversationTelemetry?.settleSendResult({
+              seed: telemetrySeed,
+              sessionId: sessionId ?? null,
+              status: "fail",
+              reasonCode: "attachment_not_ready",
+            });
+            sendAction.fail({ failureStage: "attachment_not_ready" });
+            return;
+          }
+          // External context is not sent as protocol attachments. Serialize it in the fixed trailing order selection → code comment → web → PPTX
+          // so historical user rows can parse it losslessly in reverse and hide internal prompt blocks.
+          //
+          // Do not serialize share handover here: the share URL block is renderer-only (nothing in CLI/shared parses it).
+          // Its only purpose was to drive a chip that the product removed, while also putting a share URL into the model prompt.
+          // Model-side content is injected by the hidden shared_context message through inputIntent.sharedContextRefs, independently of the body.
+          const promptText = serializeComposerPromptContexts(trimmed, {
             codeComments: currentCodeCommentContexts,
-            conversationSelections: currentConversationSelections,
+            conversationSelections: [],
             webElements: currentWebElementContexts,
             pptxElements: currentPptxElementReferences,
             pluginUiContexts: currentPluginUiContexts,
-          }) + (submittedShareContext ? 1 : 0);
-        if (trimmed) {
-          promptHistoryBeforeSend = readPromptHistoryEntries(workspacePath);
-          promptHistoryAfterAppend = appendPromptHistoryEntry(promptHistoryBeforeSend, trimmed);
-          if (!arePromptHistoryEntriesEqual(promptHistoryBeforeSend, promptHistoryAfterAppend)) {
-            // 预热首发 accepted 后，SessionPane 会立即 promote 到新 session，
-            // draft composer 可能在 await 恢复前卸载；不能把写盘藏在 React state updater 里。
-            // 这里继续沿用旧 UI 的 localStorage history，不接 input_history 数据库：
-            // 发起真实发送前先同步写盘，若发送失败再恢复到发送前快照。
-            persistPromptHistoryEntries(workspacePath, promptHistoryAfterAppend);
-            promptHistoryWasPersisted = true;
-            setPromptHistory(promptHistoryAfterAppend);
+          });
+          const contextAttachmentCount =
+            countComposerPromptContexts({
+              codeComments: currentCodeCommentContexts,
+              conversationSelections: currentConversationSelections,
+              webElements: currentWebElementContexts,
+              pptxElements: currentPptxElementReferences,
+              pluginUiContexts: currentPluginUiContexts,
+            }) + (submittedShareContextId ? 1 : 0);
+          if (trimmed) {
+            promptHistoryBeforeSend = readPromptHistoryEntries(workspacePath);
+            promptHistoryAfterAppend = appendPromptHistoryEntry(promptHistoryBeforeSend, trimmed);
+            if (!arePromptHistoryEntriesEqual(promptHistoryBeforeSend, promptHistoryAfterAppend)) {
+              // After prewarm first-send is accepted, SessionPane immediately promotes to a new session, and the draft Composer
+              // may unmount before the await resumes; do not hide persistence inside a React state updater.
+              // Keep using the old UI's localStorage history rather than the input_history database:
+              // synchronously persist before the real send, then restore the pre-send snapshot if sending fails.
+              persistPromptHistoryEntries(workspacePath, promptHistoryAfterAppend);
+              promptHistoryWasPersisted = true;
+              setPromptHistory(promptHistoryAfterAppend);
+            }
           }
-        }
-        claimSubmittedDraft();
-        if (requestedDelivery === "startNow") {
-          // 原子抢占需要等旧 turn 退出并提交新 TurnStarted ACK；
-          // 若编辑器也等整条链路才清空，用户会误以为快捷键未生效。
-          // 先清空可见正文；命令拒绝时用冻结 editor state 原样恢复。
-          inputApiRef.current?.clear();
-          updateText("");
-          cleanupRevision = contentRevisionRef.current;
-          editorClearedOptimistically = true;
-        }
-        const sendResult = await onSendText(promptText, {
-          submittedDraftText: submittedDraft.text,
-          submission,
-          ...(currentConversationSelections.length
-            ? {
-                conversationQuotes: currentConversationSelections.map(
-                  ({ text, path, senderName, senderId, messageId, sentAt }) => ({
-                    text,
-                    path,
-                    senderName,
-                    senderId,
-                    messageId,
-                    sentAt,
-                  }),
-                ),
-              }
-            : {}),
-          telemetrySeed,
-          onCommandCreated: subscribeToCommandResolution,
-          ...(requestedDelivery ? { requestedDelivery } : {}),
-          ...(heldQueueDisposition ? { heldQueueDisposition } : {}),
-          ...(expectedHeldQueueItemIds ? { expectedHeldQueueItemIds } : {}),
-          ...(readyAttachmentRefs.length > 0 ? { attachments: readyAttachmentRefs } : {}),
-          ...(contextAttachmentCount > 0 ? { contextAttachmentCount } : {}),
-          ...(submittedShareContext
-            ? {
-                sharedContextRefs: [
-                  {
-                    kind: "shared_context_import" as const,
-                    context_id: submittedShareContext.contextId,
-                  },
-                ],
-              }
-            : {}),
-        });
-        if (sendResult === "blocked") {
-          if (telemetrySeed.localTtft)
-            getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "rejected");
-          // 产品 guard 是一次正常拒绝，不应借异常路径表达；回滚发送前暂记的 history，
-          // 同时不 clear editor/draft/附件，让用户切换模式后可以直接重试。
+          // Keep the ordinary editor visible until the send is accepted. Worktree-queued sends
+          // have already claimed and cleared it so the user can start another draft during Git setup.
+          claimSubmittedDraft(false);
+          if (requestedDelivery === "startNow" && contentRevisionRef.current === cleanupRevision) {
+            // Atomic takeover waits for the old turn to exit and the new TurnStarted ACK to commit.
+            // If the editor also waits for the full flow before clearing, the user may think the shortcut did nothing.
+            // Clear visible text first; if the command is rejected, restore the frozen editor state exactly.
+            inputApiRef.current?.clear();
+            updateText("");
+            cleanupRevision = contentRevisionRef.current;
+            editorClearedOptimistically = true;
+          }
+          const sendResult = await onSendText(promptText, {
+            ...(frozenFirstSubmission ? { firstSubmissionId: submissionId } : {}),
+            ...(reservedSubmissionSessionId ? { reservedSubmissionSessionId } : {}),
+            ...(retryFirstSubmission?.commandId
+              ? { originalCommandId: retryFirstSubmission.commandId }
+              : {}),
+            submittedDraftText: submittedDraft.text,
+            submission,
+            onCommandCreated: subscribeToCommandResolution,
+            ...(executionWorktree ? { executionWorktree } : {}),
+            ...(incognito ? { incognito } : {}),
+            ...(preparedSessionId ? { preparedSessionId, preparedAttemptId } : {}),
+            ...(currentConversationSelections.length
+              ? {
+                  conversationQuotes: currentConversationSelections.map(
+                    ({ text, path, senderName, senderId, messageId, sentAt }) => ({
+                      text,
+                      path,
+                      senderName,
+                      senderId,
+                      messageId,
+                      sentAt,
+                    }),
+                  ),
+                }
+              : {}),
+            telemetrySeed,
+            ...(requestedDelivery ? { requestedDelivery } : {}),
+            ...(heldQueueDisposition ? { heldQueueDisposition } : {}),
+            ...(expectedHeldQueueItemIds ? { expectedHeldQueueItemIds } : {}),
+            ...(readyAttachmentRefs.length > 0 ? { attachments: readyAttachmentRefs } : {}),
+            ...((executionWorktree || incognito) && submittedAttachmentIds.length > 0
+              ? {
+                  reuploadAttachmentsForSession: (targetSessionId: string) =>
+                    submittedAttachments.reuploadForSession(
+                      targetSessionId,
+                      submittedAttachmentIds,
+                    ),
+                }
+              : {}),
+            ...(contextAttachmentCount > 0 ? { contextAttachmentCount } : {}),
+            ...(submittedShareContextId
+              ? {
+                  sharedContextRefs: [
+                    {
+                      kind: "shared_context_import" as const,
+                      context_id: submittedShareContextId,
+                    },
+                  ],
+                }
+              : {}),
+          }).catch((error: unknown) => {
+            sendTextFailureShown = true;
+            throw error;
+          });
+          if (sendResult === "blocked") {
+            if (telemetrySeed.localTtft)
+              getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "rejected");
+            // A product guard is a normal rejection and should not use the exception path. Roll back history staged before sending,
+            // but keep the editor/draft/attachments so the user can switch modes and retry directly.
+            rollbackPromptHistory();
+            restoreSubmittedDraft();
+            conversationTelemetry?.settleSendResult({
+              seed: telemetrySeed,
+              sessionId: sessionId ?? null,
+              status: "fail",
+              reasonCode: "blocked",
+            });
+            sendAction.reject({ resultSource: "authority_ack", admissionResult: "rejected" });
+            return;
+          }
+          if (sendResult === "confirmationRequired") {
+            if (telemetrySeed.localTtft)
+              getLocalTtftObserver()?.confirmation(telemetrySeed.localTtft, true);
+            rollbackPromptHistory();
+            restoreSubmittedDraft();
+            const latestQueueItemIds =
+              snapshotRef.current?.queue.items.map((item) => item.queueItemId) ?? [];
+            // Freeze the current queue on first submit; if it goes stale across clients, replace it with the latest projection and ask the user to confirm again.
+            setHeldQueueConfirmation({
+              // Mark queueConfirmed; after confirmation, reuse this seed for finalization so send_cost_ms includes time spent in the dialog.
+              telemetrySeed: { ...telemetrySeed, queueConfirmed: true },
+              ...(requestedDelivery ? { requestedDelivery } : {}),
+              queueItemIds:
+                latestQueueItemIds.length > 0 ? latestQueueItemIds : submittedQueueItemIds,
+            });
+            sendAction.noop();
+            return;
+          }
+          if (sendResult === "alreadyAdmitted" && frozenFirstSubmission) {
+            // The Host already admitted this submission's frozen input under its original command id
+            // (no new sendText was sent). The copy stays outstanding under that id until the real row
+            // projects; the record keeps the id it was retried with, never a new one (FSL rule 4).
+            try {
+              updateV4FirstSubmission(workspacePath, workspaceIdentity, submissionId, {
+                status: "sending",
+                ...(retryFirstSubmission?.commandId
+                  ? { commandId: retryFirstSubmission.commandId }
+                  : {}),
+              });
+            } catch (error) {
+              logger.warn(
+                "[v4-composer] could not persist the admitted first-submission outcome",
+                error,
+              );
+            }
+          }
+          if (reservedSubmissionSessionId) {
+            // Fallback for a bind that could not run at the reservation moment (draft-storage
+            // failure, or the navigation gate while the user was away): retry after admission,
+            // when the pane may have returned to this draft. The owner race that used to forbid
+            // promoting before admission is gone — the draft was claimed at freeze.
+            bindReservedSessionRecord();
+          }
+          if (incognitoSubmission) {
+            // The session now owns the frozen profile; the next draft starts normal again — unless
+            // a newer draft re-armed or changed the intent while this send was in flight.
+            useDraftIncognitoIntentStore
+              .getState()
+              .releaseAfterSend(workspaceKey, incognitoSubmission.generation);
+          }
+          if (executionWorktree) {
+            // Setup pipeline terminal success: this worktree result is consumed by exactly this session.
+            useComposerWorktreePipelineStore
+              .getState()
+              .consume(
+                workspaceKey,
+                preparedSessionId ?? preparedSessionIdForSend,
+                preparedAttemptId,
+              );
+          }
+          setHeldQueueConfirmation(null);
+          // Settle the captured content (idempotent with the command-resolution subscription).
+          await settleSubmittedContent();
+          sendAction.complete({ resultSource: "authority_ack", admissionResult: "accepted" });
+        } catch (error) {
           rollbackPromptHistory();
-          restoreSubmittedDraft();
+          // ACK-side failures may settle first; a settled submission must not restore its text again.
+          if (!submittedContentSettled) restoreSubmittedDraft();
+          if (telemetrySeed.localTtft)
+            getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "failed");
+          // On failure, keep the draft in the input (do not clear it) and record only the reason.
+          logger.warn(`[v4-composer] 发送失败: ${String(error)}`);
+          // The restored text is the only trace of a failed send when no record was kept (the
+          // reservation never landed). Say so, otherwise the user sees an unchanged composer.
+          // A failure thrown by onSendText is already announced by the pane banner; only a failure in
+          // the composer flow itself (no banner) gets this notice.
+          if (!submittedContentSettled && !sendTextFailureShown)
+            toast(intl.formatMessage({ id: "chat.error.sendFailed" }));
+          // SessionPane already finalizes ACK-side failures; reaching this point means Composer's own flow failed.
           conversationTelemetry?.settleSendResult({
             seed: telemetrySeed,
             sessionId: sessionId ?? null,
             status: "fail",
-            reasonCode: "blocked",
+            reasonCode: "composer_error",
           });
-          sendAction.reject({ resultSource: "authority_ack", admissionResult: "rejected" });
+          sendAction.fail({ failureStage: "composer_send" });
+        } finally {
+          // The active-first-submission flag is NOT cleared here (flag lifetime table in the
+          // instant-UX spec): SessionPane clears it when the real user row is projected, and
+          // restore paths clear it on failure — a chain that ends between the two would flash
+          // the composer back into the locked-looking state.
+          releasePending();
+        }
+      };
+      if (queueWorktreeSend) {
+        const recoveryDraft: Omit<V4ComposerDraft, "updatedAt"> = {
+          ...composerDraft,
+          ...submittedDraft,
+          ...(frozenFirstSubmission ? { firstSubmission: frozenFirstSubmission } : {}),
+          ...(submittedRecoveryContexts ? { recoveryContexts: submittedRecoveryContexts } : {}),
+          recoveryAttachments: buildV4RecoveryAttachmentsManifest(attachmentsApi.attachments, {
+            persistPathMetadata: !workspaceIdentity?.trim(),
+          }),
+        };
+        const recoverySaved = persistV4ComposerDraft(
+          workspacePath,
+          workspaceIdentity,
+          pendingRecoveryScope,
+          recoveryDraft,
+        );
+        if (!recoverySaved) {
+          withdrawUnreservedSubmission();
+          toast(intl.formatMessage({ id: "composerRecovery.storageUnavailable" }));
           return;
         }
-        if (sendResult === "confirmationRequired") {
-          if (telemetrySeed.localTtft)
-            getLocalTtftObserver()?.confirmation(telemetrySeed.localTtft, true);
-          rollbackPromptHistory();
+        claimSubmittedDraft();
+        if (!onPrepareWorktreeSession || (!worktreeIntent && !preparedSessionIdForSend)) {
+          if (preparedSessionIdForSend) restoreSubmittedDraft();
+          else withdrawUnreservedSubmission();
+          useComposerWorktreePipelineStore
+            .getState()
+            .markValidationFailed(workspaceKey, "Worktree session preparation is unavailable");
+          return;
+        }
+        const prepareOwnedSession = (params: ComposerWorktreePreparationParams) =>
+          onPrepareWorktreeSession(params, { shouldActivate: shouldActivatePreparedSession });
+        queuedSubmissionIdRef.current = submissionId;
+        setWorktreeQueued(true);
+        const currentPipeline = selectComposerWorktreePipeline(
+          useComposerWorktreePipelineStore.getState(),
+          workspaceKey,
+          sessionId,
+        );
+        if (
+          currentPipeline?.status === "ready" &&
+          preparedSessionIdForSend &&
+          currentPipeline.worktreePath &&
+          currentPipeline.params
+        ) {
+          clearQueuedSubmissionState();
+          pendingWorktreeSendRef.current = null;
+          await runSend(
+            { path: currentPipeline.worktreePath, branchName: currentPipeline.params.branchName },
+            preparedSessionIdForSend,
+            currentPipeline.params.attemptId,
+          );
+          return;
+        }
+        if (!preparedSessionIdForSend || currentPipeline?.status !== "creating") {
+          const reservation = { epoch: renderedOwnerRef.current.epoch, id: submissionId };
+          reservingWorktreeRef.current = reservation;
+          let begin;
+          try {
+            const preparation = snapshotRef.current?.meta.worktreePreparation;
+            begin =
+              preparedSessionIdForSend && preparation && baseWorkspaceServices
+                ? await restartPreparedWorktreeCreation({
+                    workspaceKey,
+                    workspacePath,
+                    ...(workspaceIdentity ? { workspaceIdentity } : {}),
+                    sessionId: preparedSessionIdForSend,
+                    preparation,
+                    gitService: baseWorkspaceServices.gitService,
+                    prepareSession: prepareOwnedSession,
+                    syncPreparedWorktree: onSyncWorktreePreparation,
+                    submissionId,
+                    formatMessage: (id, values) => intl.formatMessage({ id }, values),
+                  })
+                : await worktreeIntent!.beginCreation(
+                    trimmed,
+                    prepareOwnedSession,
+                    onSyncWorktreePreparation,
+                    submissionId,
+                  );
+          } catch (error) {
+            logger.warn("[WorktreePipeline] Preparation reservation failed", error);
+            if (reservingWorktreeRef.current === reservation) setWorktreeQueued(false);
+            restoreSubmittedDraft();
+            return;
+          } finally {
+            if (reservingWorktreeRef.current === reservation) reservingWorktreeRef.current = null;
+          }
+          if (!begin.ok) {
+            setWorktreeQueued(false);
+            withdrawUnreservedSubmission();
+            return;
+          }
+          preparedSessionIdForSend = begin.sessionId;
+        }
+        const pendingRecoveryDraft = readV4ComposerDraft(
+          workspacePath,
+          workspaceIdentity,
+          pendingRecoveryScope,
+        );
+        if (pendingRecoveryDraft) {
+          const persisted = moveV4ComposerDraft(
+            workspacePath,
+            workspaceIdentity,
+            pendingRecoveryScope,
+            getV4WorktreeRecoveryScope(preparedSessionIdForSend, submissionId),
+          );
+          if (!persisted) {
+            setWorktreeQueued(false);
+            restoreSubmittedDraft();
+            toast(intl.formatMessage({ id: "composerRecovery.storageUnavailable" }));
+            return;
+          }
+        }
+        // The queued draft is already claimed (editor cleared), so later content revisions are the
+        // editor's own clear echo or the user's next draft — neither changes submission ownership
+        // (specs/first-submission-lifecycle.md rule 7: composing the next draft while preparation
+        // proceeds must not withdraw the queued submission). Only owner identity decides.
+        const queueOwnerCurrent = isComposerSubmissionOwnerCurrent(
+          { ...submittedOwner, revision: 0 },
+          { ...renderedOwnerRef.current, revision: 0 },
+        );
+        if (
+          !queueOwnerCurrent &&
+          !(
+            renderedOwnerRef.current.workspaceKey === workspaceKey &&
+            renderedOwnerRef.current.scopeId === preparedSessionIdForSend
+          )
+        ) {
+          setWorktreeQueued(false);
           restoreSubmittedDraft();
-          const latestQueueItemIds =
-            snapshotRef.current?.queue.items.map((item) => item.queueItemId) ?? [];
-          // 首次提交冻结当前队列；跨端 stale 后用最新投影替换，要求用户重新确认。
-          setHeldQueueConfirmation({
-            // 标记 queueConfirmed：确认后复用该 seed 落定，send_cost_ms 含用户在弹窗上的停留。
-            telemetrySeed: { ...telemetrySeed, queueConfirmed: true },
-            ...(requestedDelivery ? { requestedDelivery } : {}),
-            queueItemIds:
-              latestQueueItemIds.length > 0 ? latestQueueItemIds : submittedQueueItemIds,
-          });
-          sendAction.noop();
           return;
         }
-        setHeldQueueConfirmation(null);
-        // 发送成功或 ACK 丢失后由权威 projection 结算：清本次提交捕获的内容，
-        // prompt history 已在真实发送前同步写盘，避免首发 promote 丢失或误清新 scope。
-        await settleSubmittedContent();
-        sendAction.complete({ resultSource: "authority_ack", admissionResult: "accepted" });
-      } catch (error) {
-        rollbackPromptHistory();
-        // 权威 ACK/投影可能在 Promise 失败回调前先到达；清理已开始时不能再把旧草稿恢复回来。
-        if (!submittedContentSettled) restoreSubmittedDraft();
-        if (telemetrySeed.localTtft)
-          getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "failed");
-        // 发送失败草稿保留在输入框（不清空），仅记录原因。
-        logger.warn(`[v4-composer] 发送失败: ${String(error)}`);
-        // ACK 侧失败已由 SessionPane 落定；能走到这里的是 composer 自身链路异常。
-        conversationTelemetry?.settleSendResult({
-          seed: telemetrySeed,
-          sessionId: sessionId ?? null,
-          status: "fail",
-          reasonCode: "composer_error",
-        });
-        sendAction.fail({ failureStage: "composer_send" });
-      } finally {
-        pendingRef.current = false;
-        setPending(false);
+        // Worktree send acceptance: every failure check above has passed, so the send is committed.
+        // The worktree creation keeps the base it captured at registration (its pipeline params
+        // carry baseBranch), and the draft's base intent is consumed here, the worktree-mode
+        // counterpart of applyDraftBranchIntentForSend's checkout success clear. Failures before this
+        // point restore the draft with its base intent intact.
+        if (draftMode && sessionId === null)
+          useDraftBranchIntentStore.getState().clearDraftBranchIntent(workspaceKey);
+        const joinedPipeline = selectComposerWorktreePipeline(
+          useComposerWorktreePipelineStore.getState(),
+          workspaceKey,
+          preparedSessionIdForSend,
+        );
+        if (
+          joinedPipeline?.status === "ready" &&
+          joinedPipeline.worktreePath &&
+          joinedPipeline.params
+        ) {
+          // A repeat of this submission can find its own pipeline already ready. Dispatch immediately: no store transition will
+          // re-run the queued-send effect, so arming the ref would strand the claimed submission
+          // with the editor already cleared and no recovery card in the current view.
+          clearQueuedSubmissionState();
+          pendingWorktreeSendRef.current = null;
+          await runSend(
+            { path: joinedPipeline.worktreePath, branchName: joinedPipeline.params.branchName },
+            preparedSessionIdForSend,
+            joinedPipeline.params.attemptId,
+          );
+          return;
+        }
+        submittedAttachments.moveToScope?.(`${workspaceKey}\0${preparedSessionIdForSend}`);
+        const armedContinuation: ArmedWorktreeSendContinuation = {
+          workspaceKey,
+          preparedSessionId: preparedSessionIdForSend,
+          hasBoundPreparedSession: renderedOwnerRef.current.scopeId === preparedSessionIdForSend,
+          attemptId: selectComposerWorktreePipeline(
+            useComposerWorktreePipelineStore.getState(),
+            workspaceKey,
+            preparedSessionIdForSend,
+          )?.params?.attemptId,
+          dispatch: runSend,
+          restore: restoreSubmittedDraft,
+          restoreForRetry,
+        };
+        // The authoritative armed continuation lives in the module-scope registry (not this
+        // instance's ref): the first-send view promotion can unmount this composer and mount the
+        // prepared session's composer as another instance, which adopts it from the registry
+        // (BUG-GWT-005 live path).
+        armWorktreeSendContinuation(armedContinuation);
+        pendingWorktreeSendRef.current = armedContinuation;
+        return;
       }
+      await runSend(
+        executionWorktree,
+        preparedSessionIdForSend,
+        selectComposerWorktreePipeline(
+          useComposerWorktreePipelineStore.getState(),
+          workspaceKey,
+          preparedSessionIdForSend,
+        )?.params?.attemptId,
+      );
     },
     [
       attachmentsApi,
+      attachmentsReady,
+      baseWorkspaceServices,
+      branchSwitchGuard,
       conversationSelectionReferences,
       conversationTelemetry,
       draftConfig,
+      composerDraft,
+      draftMode,
       createSubmissionFromComposer,
       submissionReady,
       remoteAvailable,
@@ -1717,8 +3150,16 @@ function ConversationComposerImpl({
       getCodeCommentContexts,
       telemetryDraftConfig,
       modelSelectionView,
+      modelSelectionSettled,
+      intl,
+      onPrepareWorktreeSession,
+      onSyncWorktreePreparation,
       onSendText,
-      pendingShareContext,
+      onPrepareFirstSubmission,
+      onFirstSubmissionReserved,
+      durableFirstSubmission,
+      draftGeneration,
+      activeShareContextId,
       provider,
       readPlanIdentitySnapshot,
       removeCodeCommentContext,
@@ -1732,22 +3173,392 @@ function ConversationComposerImpl({
       updateText,
       updateComposerContent,
       webElementContexts,
+      worktreeIntentSlot,
+      worktreeIntentActive,
       pptxElementReferences,
       workspaceIdentity,
+      workspaceKey,
       workspacePath,
     ],
   );
 
+  // One restore implementation shared by the recovery card's Restore and the return-to-draft
+  // auto-restore (spec §Return to draft on failure): composer content, editor state, frozen
+  // contexts (replaced, never merged), and the worktree intent that re-arms Retry/Change.
+  const applyWorktreeRecoveryDraft = useCallback(
+    (draft: V4ComposerDraft) => {
+      retryFirstSubmissionRef.current = draft.firstSubmission;
+      // The frozen plan state and mode are part of the submission (spec scenario 22), so they
+      // replace the live values; updateComposerContent would keep the current plan/mode.
+      replaceComposerDraft({
+        ...composerDraft,
+        text: draft.text,
+        editorStateJson: draft.editorStateJson,
+        mention: draft.mention,
+        mode: draft.mode ?? composerDraft.mode,
+        modelSelection: draft.modelSelection ?? composerDraft.modelSelection,
+        firstSubmission: draft.firstSubmission,
+        planEnabled: draft.planEnabled ?? composerDraft.planEnabled,
+      });
+      if (draft.editorStateJson) inputApiRef.current?.setEditorStateJson(draft.editorStateJson);
+      else inputApiRef.current?.setText(draft.text);
+      updateText(draft.text);
+      clearConversationSelectionReferences();
+      clearCodeCommentContexts();
+      clearWebElementContexts();
+      clearPptxElementReferences();
+      clearPluginUiContexts();
+      // Restore re-establishes exactly the frozen submission: the next draft's contexts are
+      // replaced, never merged, and the frozen contexts return through the normal add paths.
+      const restoredContextId = draft.recoveryContexts?.sharedContextRefs?.[0]?.context_id;
+      setRestoredShareContext(
+        restoredContextId ? { scopeId: draftScopeId, contextId: restoredContextId } : null,
+      );
+      restoreComposerRecoveryContexts(draft.recoveryContexts, {
+        sessionId,
+        workspaceKey,
+        workspacePath,
+        ...(workspaceIdentity ? { workspaceIdentity } : {}),
+      });
+      if (draft.worktreeIntent) applyPersistedWorktreeIntent(workspaceKey, draft.worktreeIntent);
+    },
+    [
+      clearCodeCommentContexts,
+      clearConversationSelectionReferences,
+      clearPluginUiContexts,
+      clearPptxElementReferences,
+      clearWebElementContexts,
+      composerDraft,
+      draftScopeId,
+      replaceComposerDraft,
+      sessionId,
+      updateText,
+      workspaceIdentity,
+      workspaceKey,
+      workspacePath,
+    ],
+  );
+
+  // Frozen destination persistence (spec §Return to draft on failure, "Restored intent survives
+  // reload"). The draft store is the store's mirror, not a second owner: the in-memory frozen
+  // destination wins while mounted, and the root draft's `worktreeIntent` is hydrated only once per
+  // mount so a released destination is not re-armed from the stale mirror.
+  const frozenWorktreeDestination = useDraftBranchIntentStore(
+    (state) => state.frozenWorktreeIntentByWorkspaceKey[workspaceKey],
+  );
+  const draftBranchBase = useDraftBranchIntentStore(
+    (state) => state.intentByWorkspaceKey[workspaceKey],
+  );
+  const hydratedWorktreeIntentKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (draftScopeId !== V4_DRAFT_SCOPE_ROOT) return;
+    const hydrationKey = `${workspaceKey}\0${draftScopeId}`;
+    const persisted = composerDraft.worktreeIntent;
+    if (hydratedWorktreeIntentKeyRef.current !== hydrationKey) {
+      hydratedWorktreeIntentKeyRef.current = hydrationKey;
+      if (
+        persisted &&
+        !useDraftBranchIntentStore.getState().frozenWorktreeIntentByWorkspaceKey[workspaceKey]
+      ) {
+        applyPersistedWorktreeIntent(workspaceKey, persisted);
+        return;
+      }
+    }
+    const desired = selectPersistableWorktreeIntent(
+      useDraftBranchIntentStore.getState(),
+      workspaceKey,
+    );
+    if (!isSamePersistedWorktreeIntent(desired, persisted)) {
+      replaceComposerDraft({ ...composerDraft, worktreeIntent: desired });
+    }
+  }, [
+    composerDraft,
+    draftBranchBase,
+    draftScopeId,
+    frozenWorktreeDestination,
+    replaceComposerDraft,
+    workspaceKey,
+  ]);
+
+  // ── Return-to-draft requests (workspace-scoped store; spec §Return to draft on failure) ──
+  // The failure hand-off moves the frozen submission into the draft pending recovery scope and
+  // bumps a restore request; the mounted draft composer consumes it by performing exactly the
+  // card's Restore. A non-empty draft is never overwritten — the card stays and the modal says
+  // the message is saved (spec decision 2).
+  const failureReturnRestoreRequest = useWorktreeFailureReturnStore(
+    (state) => state.restoreRequestByWorkspaceKey[workspaceKey],
+  );
+  const failureReturnRestoreScope = useWorktreeFailureReturnStore(
+    (state) => state.restoreScopeByWorkspaceKey[workspaceKey],
+  );
+  const failureReturnSubmitRequest = useWorktreeFailureReturnStore(
+    (state) => state.submitRequestByWorkspaceKey[workspaceKey],
+  );
+  const appliedFailureReturnRestoreRef = useRef(0);
+  const appliedFailureReturnSubmitRef = useRef(0);
+  const failureReturnDraftOccupiedRef = useRef<() => boolean>(() => false);
+  failureReturnDraftOccupiedRef.current = () =>
+    hasDraftToSubmit || pending || worktreeQueued || attachmentsApi.attachments.length > 0;
+
+  useEffect(() => {
+    if (sessionId !== null || !failureReturnRestoreRequest) return;
+    if (appliedFailureReturnRestoreRef.current >= failureReturnRestoreRequest) return;
+    appliedFailureReturnRestoreRef.current = failureReturnRestoreRequest;
+    // The scope-switch draft restore is queued on the next animation frame and would overwrite a
+    // restore applied now. Apply this restore in a later frame. It is not cancelled by effect
+    // cleanup: the applied ref is already set, so a cancelled frame would never be retried.
+    const restore = () => {
+      useWorktreeFailureReturnStore.getState().consumeDraftRestoreRequest(workspaceKey);
+      // The request names the failed submission's recovery scope. Never fall back to another pending
+      // record: the oldest one may belong to an earlier failure, and this failure would stay stranded.
+      if (!failureReturnRestoreScope) return;
+      const savedDraft = readV4ComposerDraft(
+        workspacePath,
+        workspaceIdentity,
+        failureReturnRestoreScope,
+      );
+      if (!savedDraft) return;
+      const saved = { scope: failureReturnRestoreScope, draft: savedDraft };
+      rehydrateComposerRecoveryAttachments({
+        workspaceKey,
+        recoveryScope: saved.scope,
+        manifest: saved.draft.recoveryAttachments ?? [],
+      });
+      if (failureReturnDraftOccupiedRef.current()) {
+        // The draft filled after the hand-off's draftEmpty check. The record stays on the recovery
+        // card, so the modal must not keep Retry (it would submit the newer draft).
+        useWorktreeFailureReturnStore.getState().markFailureSavedNotRestored(workspaceKey);
+        return;
+      }
+      moveComposerAttachmentScopeItems(
+        `${workspaceKey}\0${saved.scope}`,
+        `${workspaceKey}\0${V4_DRAFT_SCOPE_ROOT}`,
+        (saved.draft.recoveryAttachments ?? []).map((item) => item.id),
+      );
+      applyWorktreeRecoveryDraft(saved.draft);
+      clearV4ComposerDraft(workspacePath, workspaceIdentity, saved.scope);
+    };
+    if (typeof requestAnimationFrame !== "function") {
+      restore();
+      return;
+    }
+    requestAnimationFrame(restore);
+  }, [
+    applyWorktreeRecoveryDraft,
+    failureReturnRestoreRequest,
+    failureReturnRestoreScope,
+    sessionId,
+    workspaceIdentity,
+    workspaceKey,
+    workspacePath,
+  ]);
+
+  // Retry from the recovery card for a failed first submission (specs/first-submission-instant-ux.md,
+  // Retry surface): restore the frozen record, then run the ordinary submit over it on the next
+  // render, when the restored text/attachments are committed. The record moves to this composer's
+  // own recovery scope for that submissionId so the retry freeze overwrites it in place: one record
+  // per submission, and the optimistic turn never blinks.
+  const [recoveryRetryRequest, setRecoveryRetryRequest] = useState(0);
+  const appliedRecoveryRetryRef = useRef(0);
+  const retryBlockedRef = useRef(false);
+  retryBlockedRef.current = retryBlockReason !== null;
+  const retryWorktreeRecoveryDraft = useCallback(
+    (draft: V4ComposerDraft, recoveryScope: string) => {
+      const submissionId = draft.firstSubmission?.submissionId;
+      if (!submissionId) return;
+      // Same predicate as submit(): a blocked Retry must not restore into the editor, or the card
+      // would then report the editor as occupied and lock itself.
+      if (retryBlockedRef.current) return;
+      const ownScope = getV4WorktreeRecoveryScope(draftScopeId, submissionId);
+      if (
+        recoveryScope !== ownScope &&
+        !moveV4ComposerDraft(workspacePath, workspaceIdentity, recoveryScope, ownScope)
+      ) {
+        toast(intl.formatMessage({ id: "composerRecovery.storageUnavailable" }));
+        return;
+      }
+      applyWorktreeRecoveryDraft(draft);
+      setRecoveryRetryRequest((request) => request + 1);
+    },
+    [applyWorktreeRecoveryDraft, draftScopeId, intl, workspaceIdentity, workspacePath],
+  );
+  // Remove (specs/first-submission-instant-ux.md, Retry surface): the frozen text returns to the
+  // editor and the record is deleted — locally only, never a Host cancel or delete. A reserved
+  // record keeps `firstSubmission` on this composer's draft so the next Send still activates the
+  // prepared session; an unresolved command id goes to the unsettled ledger so its authoritative
+  // acceptance clears the unedited editor instead of inviting a duplicate.
+  const removedSettlementRef = useRef<(() => void) | null>(null);
+  useEffect(
+    () => () => {
+      removedSettlementRef.current?.();
+      removedSettlementRef.current = null;
+    },
+    [draftScopeId, workspaceKey],
+  );
+  const removeFirstSubmissionRecord = useCallback(
+    (draft: V4ComposerDraft, recoveryScope: string) => {
+      const pending = draft.firstSubmission;
+      if (!pending) return;
+      // An unresolved outcome is always held (the copy must stay unsendable until decided), even
+      // for an unreserved draft record; a decided one keeps only a reservation worth reusing.
+      const keepReservation = Boolean(
+        pending.reservation ||
+        sessionId !== null ||
+        pending.status === "sending" ||
+        pending.status === "unknown",
+      );
+      applyWorktreeRecoveryDraft(
+        keepReservation ? draft : { ...draft, firstSubmission: undefined },
+      );
+      if (!keepReservation) retryFirstSubmissionRef.current = undefined;
+      clearV4ComposerDraft(workspacePath, workspaceIdentity, recoveryScope);
+      if (pending.commandId && (pending.status === "sending" || pending.status === "unknown")) {
+        const scopeKey = `${workspaceKey}\0${draftScopeId}`;
+        trackUnsettledComposerSubmission(scopeKey, {
+          commandId: pending.commandId,
+          text: draft.text,
+        });
+        const restoredRevision = contentRevisionRef.current;
+        removedSettlementRef.current?.();
+        removedSettlementRef.current = subscribeComposerSubmissionSettled(scopeKey, (settled) => {
+          // The original was admitted: the frozen submission is done even if the copy was edited
+          // or unlocked, so the next message must not reuse its id through the Retry path.
+          const current = composerDraftRef.current?.firstSubmission;
+          const done = current?.commandId === settled.commandId;
+          if (done && retryFirstSubmissionRef.current?.commandId === settled.commandId)
+            retryFirstSubmissionRef.current = undefined;
+          const unedited =
+            settled.text === draft.text && contentRevisionRef.current === restoredRevision;
+          if (unedited) {
+            inputApiRef.current?.clear();
+            updateText("");
+          }
+          if (unedited || done)
+            updateComposerContent({
+              text: unedited ? "" : textRef.current,
+              ...(done ? { firstSubmission: undefined } : {}),
+            });
+        });
+      }
+    },
+    [
+      applyWorktreeRecoveryDraft,
+      draftScopeId,
+      sessionId,
+      updateComposerContent,
+      updateText,
+      workspaceIdentity,
+      workspaceKey,
+      workspacePath,
+    ],
+  );
+  // Remove hold: a restored submission whose sendText outcome is still undecided stays unsendable
+  // until an authoritative acceptance (the copy is dropped from the submission, and the ledger
+  // clears an unedited editor) or a failed/discarded decision (it becomes an ordinary Retry). The
+  // decision arrives through the command registry: a live ACK/projection, or the pane's
+  // reconciliation result (specs/first-submission-instant-ux.md, Reconciliation).
+  const composerDraftRef = useRef(composerDraft);
+  composerDraftRef.current = composerDraft;
+  const heldCommandId = heldOutcomeUnresolved ? heldFirstSubmission?.commandId : undefined;
+  const [heldResubscribe, setHeldResubscribe] = useState(0);
+  useEffect(() => {
+    if (!heldCommandId) return;
+    return pendingCommandRegistry.subscribeResolution(heldCommandId, (resolution) => {
+      const held = composerDraftRef.current?.firstSubmission;
+      if (held?.commandId !== heldCommandId) return;
+      // The registry drops its listeners after a notification; an "unknown" keeps the hold.
+      if (resolution === "unknown") {
+        setHeldResubscribe((value) => value + 1);
+        return;
+      }
+      const decided =
+        resolution === "accepted" || resolution === "duplicate" || resolution === "authoritative"
+          ? undefined
+          : { ...held, status: "failed" as const };
+      retryFirstSubmissionRef.current = decided;
+      updateComposerContent({ text: textRef.current, firstSubmission: decided });
+    });
+  }, [heldCommandId, heldResubscribe, updateComposerContent]);
+  // Unlock (specs/first-submission-instant-ux.md, Remove): a held copy whose outcome may never be
+  // decided must not leave the composer dead. Only an explicit, confirmed click turns it into an
+  // ordinary Retry of the same submission; it never sends by itself, and the ledger still clears
+  // the unedited copy if the original turns out accepted before the user sends.
+  const [heldUnlockConfirmOpen, setHeldUnlockConfirmOpen] = useState(false);
+  useEffect(() => setHeldUnlockConfirmOpen(false), [heldCommandId]);
+  const heldUnlockWarningId = useId();
+  const heldUnlockButtonRef = useRef<HTMLButtonElement | null>(null);
+  const heldUnlockConfirmRef = useRef<HTMLButtonElement | null>(null);
+  const heldUnlockFocusReturnRef = useRef(false);
+  useEffect(() => {
+    // Focus follows the confirmation: onto Unlock sending when it opens, back to the trigger
+    // when it is cancelled.
+    if (heldUnlockConfirmOpen) heldUnlockConfirmRef.current?.focus();
+    else if (heldUnlockFocusReturnRef.current) {
+      heldUnlockFocusReturnRef.current = false;
+      heldUnlockButtonRef.current?.focus();
+    }
+  }, [heldUnlockConfirmOpen]);
+  const unlockHeldFirstSubmission = useCallback(() => {
+    const held = composerDraftRef.current?.firstSubmission;
+    setHeldUnlockConfirmOpen(false);
+    if (!held || (held.status !== "sending" && held.status !== "unknown")) return;
+    const unlocked = { ...held, status: "failed" as const };
+    retryFirstSubmissionRef.current = unlocked;
+    updateComposerContent({ text: textRef.current, firstSubmission: unlocked });
+  }, [updateComposerContent]);
+  useEffect(() => {
+    if (recoveryRetryRequest <= appliedRecoveryRetryRef.current) return;
+    appliedRecoveryRetryRef.current = recoveryRetryRequest;
+    void submit();
+  }, [recoveryRetryRequest, submit]);
+
+  // "Retry" from the failure modal: run the ordinary submit over the restored submission — no
+  // second dispatch path. The submit waits for any pending restore request to land first, so the
+  // idempotency guard and the double-action protections of submit() apply unchanged.
+  useEffect(() => {
+    if (sessionId !== null || !failureReturnSubmitRequest) return;
+    if (appliedFailureReturnSubmitRef.current >= failureReturnSubmitRequest) return;
+    if (useWorktreeFailureReturnStore.getState().restoreRequestByWorkspaceKey[workspaceKey]) {
+      return;
+    }
+    appliedFailureReturnSubmitRef.current = failureReturnSubmitRequest;
+    useWorktreeFailureReturnStore.getState().consumeDraftSubmitRequest(workspaceKey);
+    void submit();
+  }, [failureReturnSubmitRequest, sessionId, submit, workspaceKey]);
+
+  // Lexical onChange (the first character is also reported reliably; see LexicalChatInput.TextContentPlugin).
   // Lexical onChange（首字符也稳定回传，见 LexicalChatInput.TextContentPlugin）。
+  // The only writer that drops the draft branch intent: the user emptying a non-empty draft
+  // (spec §1). Programmatic editor updates (send claim, restore, replace) are reported with
+  // `programmatic: true` and never clear it; a successful send consumes the intent separately.
   const handleEditorChange = useCallback(
-    (value: string) => {
+    (value: string, meta?: { programmatic: boolean }) => {
+      // An absent flag means a direct call, which is typing as far as the draft is concerned.
+      const userEmptiedDraft =
+        meta?.programmatic !== true &&
+        value.trim().length === 0 &&
+        textRef.current.trim().length > 0;
+      // The editor has not received the current scope's draft yet; this change is not that scope's.
+      if (scopeRestorePendingRef.current) return;
+      suppressDraftPersistRef.current = false;
       conversationTelemetry?.recordComposerTextChange(value);
       updateText(value);
+      if (userEmptiedDraft && draftMode && sessionId === null) {
+        useDraftBranchIntentStore.getState().clearDraftBranchIntent(workspaceKey);
+      }
       // 正文先进入与 mode/model 相同的内存 Draft；防抖只负责补充最新 Lexical JSON。
       updateComposerContent({ text: value });
       scheduleDraftPersist();
     },
-    [conversationTelemetry, scheduleDraftPersist, updateComposerContent, updateText],
+    [
+      conversationTelemetry,
+      draftMode,
+      scheduleDraftPersist,
+      sessionId,
+      updateComposerContent,
+      updateText,
+      workspaceKey,
+    ],
   );
 
   const handleEditorFocus = useCallback(() => {
@@ -1829,6 +3640,14 @@ function ConversationComposerImpl({
 
   // 发送键是 type="submit"，与 Enter 共用 handleEditorSubmit；DOM 事件顺序保证 click 早于
   // submit，故这里只置标记，由 submit() 读取并复位。
+  // Quick prompt ⌘/Ctrl-click send (rule 8): the same submit path as Enter and the Send button.
+  const handleQuickPromptSend = useCallback(
+    (markdown: string) => {
+      handleEditorSubmit(markdown);
+    },
+    [handleEditorSubmit],
+  );
+
   const handleSendButtonClick = useCallback(
     (event: ReactMouseEvent<HTMLButtonElement>) => {
       sendTriggerRef.current = "button";
@@ -2125,7 +3944,7 @@ function ConversationComposerImpl({
                         data-testid={testId(TID_V4_ATTACHMENT_UPLOAD_PROGRESS, attachment.id)}
                         role={attachment.uploadStatus === "failed" ? "alert" : "status"}
                         aria-label={uploadStatusLabel}
-                        className="absolute inset-0 grid place-items-center rounded-lg bg-background/85 text-[7px] font-semibold text-foreground"
+                        className="absolute inset-0 grid place-items-center rounded-lg bg-background/85 text-ui-xs font-semibold text-foreground"
                       >
                         <svg
                           aria-hidden="true"
@@ -2302,7 +4121,7 @@ function ConversationComposerImpl({
     removePluginUiContext,
     removePptxElementReference,
     conversationSelectionReferences,
-    pendingShareContext,
+    activeShareContextId,
     webElementContexts,
     pluginUiContexts,
     pptxElementReferences,
@@ -2383,6 +4202,15 @@ function ConversationComposerImpl({
             />
           </span>
         ) : null}
+        {voiceDictationEnabled ? (
+          <V4ComposerDictationControl
+            disabled={disabled}
+            onTranscript={insertVoiceTranscript}
+            onPreviewChange={setVoicePreview}
+            scopeRef={voiceScopeRef}
+            webRemote={isWebRemoteControl}
+          />
+        ) : null}
         {showStopControl ? (
           <ControlHintTooltip title={stopTooltipTitle} shortcut="Esc">
             <Button
@@ -2413,7 +4241,11 @@ function ConversationComposerImpl({
               aria-label={resolvedSendTooltipTitle}
               className="cursor-pointer gap-1 rounded-lg bg-brand text-ui-base text-foreground-inverse hover:bg-brand/80"
             >
-              {pending ? <Spinner className="size-4" /> : <ArrowUpIcon className="size-4" />}
+              {pending || worktreeQueued ? (
+                <Spinner className="size-4" />
+              ) : (
+                <ArrowUpIcon className="size-4" />
+              )}
               <span className="sr-only">{resolvedSendTooltipTitle}</span>
             </Button>
           </ControlHintTooltip>
@@ -2422,6 +4254,7 @@ function ConversationComposerImpl({
     ),
     [
       canSend,
+      worktreeQueued,
       activeConfigPicker,
       composerPhase,
       composerUsage,
@@ -2464,12 +4297,15 @@ function ConversationComposerImpl({
     ],
   );
 
+  // S6: the session's own model and the projected agent selects; the draft's model decides which control renders.
+  const externalAgentConfig = snapshot?.config.externalAgentConfig;
+  const externalAgentSessionProviderId = snapshot?.config.modelSelection?.providerId;
   // 左下：模式选择 + CUA 入口 + 当前 session 后台任务入口。followupMode 由 app 设置页同步到 CLI，
   // 不在 composer 暴露局部开关；后台入口只消费同一 snapshot，不维护第二份任务状态。
   const leadingActionsNode = useMemo(
     () => (
       <>
-        <V4ComposerModeSwitch
+        <V4ComposerModeArea
           workspacePath={workspacePath}
           workspaceIdentity={workspaceIdentity}
           provider={provider}
@@ -2478,6 +4314,13 @@ function ConversationComposerImpl({
           activeConfigPicker={activeConfigPicker}
           onConfigPickerOpenChange={handleConfigPickerOpenChange}
           onSwitchMode={onSwitchMode}
+          sessionId={sessionId}
+          sessionProviderId={externalAgentSessionProviderId}
+          externalAgentConfig={externalAgentConfig}
+          onSetExternalAgentConfigOption={onSetExternalAgentConfigOption}
+          draftExternalAgentChoices={draftExternalAgentChoices}
+          draftExternalAgentKey={draftExternalAgentKey}
+          onSetDraftExternalAgentChoice={onSetDraftExternalAgentChoice}
         />
         {/* Bug 原因：附件画廊 rebase 曾整段覆盖 leadingActions，误删 staging 的 CUA 常驻入口。
             入口自身继续负责平台、远程与设置可见性，不在 composer 重复判定。 */}
@@ -2507,6 +4350,13 @@ function ConversationComposerImpl({
       backgroundWorkOpenTarget,
       onOpenRunningBackgroundWorks,
       onSwitchMode,
+      onSetExternalAgentConfigOption,
+      draftExternalAgentChoices,
+      draftExternalAgentKey,
+      onSetDraftExternalAgentChoice,
+      externalAgentConfig,
+      externalAgentSessionProviderId,
+      sessionId,
       provider,
       remoteSessionId,
       runningSubagentCount,
@@ -2516,6 +4366,18 @@ function ConversationComposerImpl({
     ],
   );
   const isBlockedByInteraction = blockingRequestId !== null;
+
+  // specs/incognito-session.md "Composer toggle": top row, after the project and branch chips.
+  // Start-only like choosing Git: a frozen first submission drops the icon even before the
+  // reserved session is bound, so preparation-time drafts cannot arm or change the frozen profile.
+  const incognitoComposerControl = shouldRenderComposerIncognitoControl({
+    draftMode,
+    sessionId,
+    isWebRemoteControl,
+    firstSubmissionActive,
+  }) ? (
+    <V4ComposerIncognitoControl workspaceKey={workspaceKey} disabled={disabled} />
+  ) : null;
 
   // v4 pendingInteractions 是 bottom dock 阻塞态；composer 必须保留挂载，
   // 只在视觉和可访问树中隐藏，避免权限/问答卡片出现时丢失草稿和编辑器内部状态。
@@ -2569,6 +4431,7 @@ function ConversationComposerImpl({
                 : undefined
             }
             onDismiss={onDismissError}
+            onResume={onResumeError}
             onOpenModelSettings={onOpenModelSettings}
             onOpenUpgrade={onOpenModelUpgrade}
             modelConfigTarget={modelConfigTarget}
@@ -2599,9 +4462,23 @@ function ConversationComposerImpl({
           ) : null}
         </div>
       ) : null}
+      {quickPrompts.service ? (
+        <QuickPromptBar
+          snapshot={quickPrompts.snapshot}
+          project={quickPromptProject}
+          service={quickPrompts.service}
+          refresh={quickPrompts.refresh}
+          inputApiRef={inputApiRef}
+          draftHasContent={hasDraftToSubmit}
+          onSendMarkdown={handleQuickPromptSend}
+          workspacePath={workspacePath}
+          workspaceIdentity={workspaceIdentity}
+        />
+      ) : null}
       <div
         data-highspeed-composer={highspeedCard ? "true" : undefined}
         data-highspeed-entrance={highspeedCard ? highspeedEntrance : undefined}
+        ref={voiceScopeRef}
         className={cn(
           "chat-composer-input-surface relative w-full",
           contextHeader && "rounded-2xl bg-surface shadow-xl/5",
@@ -2616,12 +4493,17 @@ function ConversationComposerImpl({
             onModelTransitionStart={handleHighspeedModelTransitionStart}
           />
         ) : null}
-        {contextHeader ? (
+        {contextHeader || incognitoComposerControl ? (
           // 旧 ChatViewComposer contextHeaderContent 同款包装（workspace 菜单 + Git 分支）。
-          <div className="relative z-10 p-1.5 flex min-w-0 flex-wrap items-center gap-0">
+          // specs/incognito-session.md "Composer toggle": the incognito control closes the row after the chips.
+          <div
+            data-composer-context-row=""
+            className="relative z-10 p-1.5 flex min-w-0 flex-wrap items-center gap-0"
+          >
             <ComposerSubmissionPendingContext.Provider value={updateTargetSelectionPending}>
               {contextHeader}
             </ComposerSubmissionPendingContext.Provider>
+            {incognitoComposerControl}
           </div>
         ) : null}
         {conversationSelectionLimitReason ? (
@@ -2635,6 +4517,7 @@ function ConversationComposerImpl({
           </div>
         ) : null}
         <ChatPromptEditor
+          voicePreview={voicePreview}
           workspacePath={workspacePath}
           workspaceIdentity={workspaceIdentity}
           taskId={sessionId}
@@ -2647,7 +4530,13 @@ function ConversationComposerImpl({
           disabled={disabled || mode === "reject"}
           submitting={pending}
           submitDisabled={
-            runtimeBlocked || pending || !routingAllowsSend || !attachmentsReady || !submissionReady
+            runtimeBlocked ||
+            pending ||
+            sendBarrierActive ||
+            worktreeQueued ||
+            !routingAllowsSend ||
+            !attachmentsReady ||
+            !submissionReady
           }
           allowSubmitWhenEmpty={
             // 发送按钮已把代码评论视为可发送上下文，但这里曾漏掉同一状态，
@@ -2677,6 +4566,7 @@ function ConversationComposerImpl({
           // secondary pane 按产品能力隐藏 goal，不再追加任何内建命令或别名。
           excludedSlashCommandNames={suppressGoalCommands ? ["goal"] : undefined}
           appSlashCommands={runtimeBlocked ? [] : appSlashCommands}
+          quickPrompts={runtimeBlocked ? undefined : quickPromptSlashItems}
           enableMentionPanel
           leadingActions={leadingActionsNode}
           submitControl={submitControlNode}
@@ -2685,13 +4575,96 @@ function ConversationComposerImpl({
           shellClassName={
             highspeedCard
               ? "relative z-10 !rounded-none !border-0 !bg-transparent !transition-none hover:!border-transparent focus-within:!border-transparent focus-within:!bg-transparent"
-              : undefined
+              : incognitoDraftActive
+                ? "!border-incognito hover:!border-incognito focus-within:!border-incognito"
+                : undefined
+          }
+          onSubmitBlocked={
+            isComposerModelBlockReason(sendBlockReason) ? handleModelBlockedEnter : undefined
           }
           onChange={handleEditorChange}
           onFocus={handleEditorFocus}
           onSubmit={handleEditorSubmit}
           onWhiteboardMentionSelected={attachmentsApi.handleWhiteboardMentionSelected}
           onPaste={attachmentsApi.handlePaste}
+        />
+        {(sendBarrierActive || isComposerModelBlockReason(sendBlockReason)) &&
+        hasDraftToSubmit &&
+        sendBlockMessageId ? (
+          <div className="flex flex-col gap-2 px-3 pb-2 text-ui-sm text-foreground-subtle">
+            <p role="status" data-testid="composer-send-blocked-reason">
+              {intl.formatMessage({ id: sendBlockMessageId })}
+            </p>
+            {sendBlockReason === "outcomeUnresolved" ? (
+              heldUnlockConfirmOpen ? (
+                <div className="flex flex-col gap-2">
+                  <p
+                    id={heldUnlockWarningId}
+                    role="alert"
+                    data-testid="composer-held-unlock-warning"
+                    className="text-warning"
+                  >
+                    {intl.formatMessage({ id: "composer.heldCopy.warning" })}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      ref={heldUnlockConfirmRef}
+                      size="sm"
+                      variant="outline"
+                      data-testid="composer-held-unlock-confirm"
+                      aria-describedby={heldUnlockWarningId}
+                      onClick={unlockHeldFirstSubmission}
+                    >
+                      {intl.formatMessage({ id: "composer.heldCopy.confirm" })}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      data-testid="composer-held-unlock-cancel"
+                      onClick={() => {
+                        heldUnlockFocusReturnRef.current = true;
+                        setHeldUnlockConfirmOpen(false);
+                      }}
+                    >
+                      {intl.formatMessage({ id: "common.cancel" })}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <Button
+                    ref={heldUnlockButtonRef}
+                    size="sm"
+                    variant="ghost"
+                    data-testid="composer-held-unlock"
+                    onClick={() => setHeldUnlockConfirmOpen(true)}
+                  >
+                    {intl.formatMessage({ id: "composer.heldCopy.unlock" })}
+                  </Button>
+                </div>
+              )
+            ) : null}
+          </div>
+        ) : null}
+        <ComposerWorktreeRecovery
+          workspacePath={workspacePath}
+          workspaceIdentity={workspaceIdentity}
+          scopeId={draftScopeId}
+          editorEmpty={!hasDraftToSubmit && !pending && !worktreeQueued}
+          attachments={attachmentsApi.attachments}
+          retryBlockedReason={
+            retryBlockReason
+              ? intl.formatMessage({ id: `composer.sendBlocked.${retryBlockReason}` })
+              : null
+          }
+          onRemove={removeFirstSubmissionRecord}
+          onDiscardAttachments={async (ids, recoveryScope) => {
+            await attachmentsApi
+              .captureSubmission?.(ids, `${workspaceKey}\0${recoveryScope}`)
+              .discardAttachments();
+          }}
+          onRestore={applyWorktreeRecoveryDraft}
+          onRetry={retryWorktreeRecoveryDraft}
         />
         {attachmentsApi.attachmentError ? (
           <p className="flex items-start gap-2 p-3 text-ui-base text-warning">
@@ -2749,11 +4722,9 @@ function ConversationComposerImpl({
               {intl.formatMessage({ id: "chat.queue.sendConfirm.title" })}
             </DialogTitle>
             <DialogDescription className="text-ui-base sm:text-ui-lg">
-              {intl.formatMessage(
+              {intl.formatPlural(
                 { id: "chat.queue.sendConfirm.description" },
-                {
-                  count: String(heldQueueConfirmation?.queueItemIds.length ?? 0),
-                },
+                heldQueueConfirmation?.queueItemIds.length ?? 0,
               )}
             </DialogDescription>
           </DialogHeader>

@@ -1,75 +1,87 @@
 # Background Task POSIX Process Tree Stop
 
-## 状态
+- Date: 2026-08-14
+- Status: accepted
+- Type: bugfix
 
-- 日期：2026-08-14
-- 状态：accepted
-- 类型：bugfix
+## Problem
 
-## 问题
+`NodeExecutionAdapter` starts executions with `detached: true` on POSIX. The old stop logic sent `SIGTERM`
+only to the process group of `-rootPid` and `SIGKILL` to the same group after 750ms.
 
-`NodeExecutionAdapter` 在 POSIX 上以 `detached: true` 启动 execution。旧停止逻辑只向
-`-rootPid` 对应的进程组发送 `SIGTERM`，并在 750ms 后向同一进程组发送 `SIGKILL`。
+Bash job control, pipelines, `xargs -P` or a PTY can put processes that are still descendants of the root PPID
+tree into a different PGID. Signalling only the root process group leaves them running after `TaskStop` or
+session close.
 
-Bash job control、pipeline、`xargs -P` 或 PTY 可以让仍属于 root PPID 后代树的进程进入不同
-PGID。只按根进程组发信号时，这些后代不会随 `TaskStop` 或 session close 一起停止。
+## Behavior contract
 
-## 行为合同
-
-本次只实现 POSIX Bash process-tree stop，不改变 Windows、TaskStop 协议、UI、
-background notification、desktop continuous 或 web remote replayable 行为。
+Only POSIX Bash process-tree stop is implemented. Windows, the TaskStop protocol, UI, background notification,
+desktop continuous and web remote replayable behavior are unchanged.
 
 ```text
 cancel / close
       |
-      +--> 异步读取一次 `ps -A -o pid= -o ppid=`（最多等待 500ms）
+      +--> async read `ps -A -o pid= -o ppid=` once (wait at most 500ms)
       |          |
-      |          +--> SIGTERM 根进程组；失败时退化为 root PID
-      |          +--> SIGTERM 本次快照中的传递 PPID 后代
+      |          +--> SIGTERM root process group; on failure fall back to root PID
+      |          +--> SIGTERM transitive PPID descendants in this snapshot
       |
-      +--> 固定等待 1500ms
+      +--> fixed wait 1500ms
                  |
-                 +--> SIGKILL 根进程组（best effort）
-                 +--> 重新读取一次 `ps`，再 SIGKILL 当次仍挂在 root 下的传递后代
+                 +--> SIGKILL root process group (best effort)
+                 +--> re-read `ps` once, SIGKILL transitive descendants still under root
 ```
 
-必须满足：
+Rules:
 
-1. 每次 process-tree signal 都先用独立、最多 500ms 的 `ps` 快照计算传递 PPID 后代。
-2. 每次都先发根进程组信号；组信号失败时回退到 root PID；随后逐个向快照后代发同一信号。
-3. 首轮 `SIGTERM` 不阻塞 stop ACK；1500ms 后无条件执行 `SIGKILL` escalation，不提前轮询退出。
-4. escalation 使用新的 PPID 快照，不记忆首轮后代，不读取启动时间，也不增加 PID identity 校验。
-5. `ps` 启动失败、报错或超时时按空后代集合处理，根进程组/root PID fallback 仍继续。
-6. 单次 execution 与 stop ACK 不显式等待 escalation Promise；adapter shutdown 会等待已经登记的
-   1500ms escalation timer 及升级轮次的实际 PPID 快照/信号发送，并引用其清理句柄以保活。
-   2026-09-08 补充：Bash 直写后不能依赖 pipe 保活，也不能认为单独 await Promise 会阻止 Node 退出。
-7. Windows 保持现有 `taskkill /T /F` 路径。
-8. 该合同只适用于 `command.shellProfile === "posix-bash"` 的 Bash execution。通用 shell、argv、
-   hook 和自定义命令展开继续保持既有 POSIX 进程组停止策略：立即向根进程组发送 `SIGTERM`，
-   750ms 后仅在进程组仍存活时发送 `SIGKILL`；不得为这些执行枚举 PPID 后代或登记 Bash escalation。
-9. 2026-09-08 当前 Bash 直写合同：root 自然退出即结算，不再进入 foreground pipe drain，
-   也不主动清理后代。Bash process-tree stop 只由 task cancel、adapter close、abort/timeout
-   和 output limit 等真实终止路径触发；本次 shutdown 保活修复不恢复历史 drain 行为。
+1. Every process-tree signal first computes transitive PPID descendants from an independent `ps` snapshot of
+   at most 500ms.
+2. Each round signals the root process group first; on group failure fall back to the root PID; then signal
+   each snapshot descendant with the same signal.
+3. The first `SIGTERM` does not block the stop ACK; after 1500ms the `SIGKILL` escalation runs
+   unconditionally, with no early exit polling.
+4. Escalation uses a fresh PPID snapshot: it does not remember first-round descendants, reads no start time
+   and adds no PID identity check.
+5. If `ps` fails to start, errors or times out, treat descendants as the empty set; the root process
+   group/root PID fallback still proceeds.
+6. A single execution and the stop ACK do not explicitly await the escalation Promise; adapter shutdown waits
+   for the registered 1500ms escalation timer and the escalated round's actual PPID snapshot/signal sending,
+   and references the cleanup handle to keep the process alive. (2026-09-08: after direct-write Bash, pipes
+   cannot be relied on for keep-alive, and awaiting a Promise alone does not stop Node from exiting.)
+7. Windows keeps the existing `taskkill /T /F` path.
+8. The contract applies only to Bash executions with `command.shellProfile === "posix-bash"`. Generic shell,
+   argv, hook and custom command expansions keep the existing POSIX process-group stop: `SIGTERM` the root
+   group immediately and, after 750ms, `SIGKILL` only if the group is still alive; no PPID descendant
+   enumeration or Bash escalation registration for them.
+9. Current Bash direct-write contract (2026-09-08): the execution settles when the root exits naturally, no
+   longer enters foreground pipe drain, and does not actively clean up descendants. Bash process-tree stop is
+   triggered only by real termination paths: task cancel, adapter close, abort/timeout and output limit. The
+   shutdown keep-alive fix does not restore the historical drain behavior.
 
-## 已知边界
+## Known limitations
 
-以下边界有意保留，本次不额外增强：
+Intentionally kept, not strengthened here:
 
-- 首轮 TERM 后已经 reparent、且忽略 TERM 的跨 PGID 后代不会出现在第二次 PPID 快照中，可能继续存活。
-- 快照与逐 PID 发信号之间没有 PID/start-time identity 校验。
-- 不新增 cgroup、systemd scope、Windows Job Object、额外进程 ownership 或新的 stop surface。
+- Cross-PGID descendants that were reparented after the first TERM and ignore TERM do not appear in the second
+  PPID snapshot and may survive.
+- There is no PID/start-time identity check between the snapshot and per-PID signalling.
+- No cgroup, systemd scope, Windows Job Object, extra process ownership or new stop surface is added.
 
-## 验证
+## Verification
 
-- POSIX 真实进程测试：background Bash 通过 job control 创建独立 PGID 的 cooperative worker；
-  stop 后 launcher 与 worker 都退出，结果收口为 cancelled。
-- POSIX 真实进程测试：generic argv execution 创建独立 PGID worker；取消只停止原进程组，worker
-  保持存活并由测试自行清理，证明 Bash 杀树策略没有扩散到通用 ExecutionPort 调用方。
-- 当前 Bash 直写回归：root 自然退出即结算，后代仍可写文件并由测试负责收尾；不再要求历史
-  foreground Bash pipe drain。通用 argv/Hook 的 pipe drain 与停止策略继续保留。
-- 独立 Node 进程回归：abort、close、后台 Stop、timeout、output limit 后调用 adapter close，
-  忽略 TERM 的同组 worker 必须终止，且 Node 退出前已完成 close，不能依赖测试框架 IPC 保活。
-- 可控时钟回归：1500ms timer 到期后，shutdown 仍须等待异步 SIGKILL 查表与信号发送完成。
-- 既有同组后代、通用执行的继承 pipe / foreground drain、adapter close 和 Windows tree-kill
-  测试继续保留。
-- `pnpm typecheck` 与 `pnpm lint` 必须通过。
+- Real POSIX process test: background Bash creates a cooperative worker in its own PGID via job control; after
+  stop both launcher and worker exit and the result settles as cancelled.
+- Real POSIX process test: a generic argv execution creates a worker in its own PGID; cancel stops only the
+  original process group, the worker stays alive (the test cleans it up), proving the Bash tree-kill policy
+  does not spread to generic ExecutionPort callers.
+- Current Bash direct-write regression: root natural exit settles, descendants may still write files and the
+  test cleans up; the historical foreground Bash pipe drain is no longer required. Pipe drain and stop policy
+  for generic argv/Hook stay.
+- Standalone Node process regression: after abort, close, background Stop, timeout and output limit call
+  adapter close, a TERM-ignoring same-group worker must terminate, and close must finish before Node exits,
+  without relying on test-framework IPC keep-alive.
+- Controllable clock regression: after the 1500ms timer fires, shutdown still waits for the async SIGKILL
+  lookup and signal sending.
+- Existing tests stay: same-group descendants, inherited pipe / foreground drain for generic execution,
+  adapter close, Windows tree-kill.
+- `pnpm typecheck` and `pnpm lint` must pass.

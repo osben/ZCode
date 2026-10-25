@@ -30,7 +30,7 @@ function readRuntimePackage(moduleLookupRoots, moduleName, parentPackagePath = n
         };
       }
     } catch {
-      // 父包相对解析失败时，继续走 workspace lookup roots 兜底。
+      // If resolution relative to the parent package fails, fall back to the workspace lookup roots.
     }
   }
 
@@ -91,11 +91,12 @@ export function collectRuntimeModuleClosureEntries(moduleNames, moduleLookupRoot
     for (const [dependencyName, isOptional] of dependencyEntries.sort(([left], [right]) =>
       left.localeCompare(right),
     )) {
-      // 运行时外置包进了 app.asar 时，它的 hoisted 子依赖不会自动跟着进包。
-      // 递归收集 dependencies，让打包注入和产物校验覆盖完整运行时解析链。
-      // pnpm 多版本同名依赖下，不能每层都从固定 lookup roots 取第一个目录。
-      // 例如 yazl 需要 buffer-crc32@1.x，而 desktop 测试依赖里还有 0.2.x；
-      // 必须从父包 package.json 相对解析，才能复制到真实运行时会加载的版本。
+      // When an external runtime package is included in app.asar, its hoisted child dependencies are not
+      // included automatically. Recursively collect dependencies so packaging and artifact validation
+      // cover the complete runtime resolution chain.
+      // With multiple pnpm versions of a dependency, do not pick the first directory from fixed lookup
+      // roots at every level. For example, yazl needs buffer-crc32@1.x while desktop test dependencies
+      // also contain 0.2.x. Resolve relative to the parent package.json to copy the version runtime will load.
       visit(dependencyName, isOptional, packageJsonPath);
     }
   }

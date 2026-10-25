@@ -7,6 +7,11 @@ import {
   readPromptHistoryEntries,
 } from "@/lib/promptHistoryStorage.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { TEST_LOCALE, expectedCopy } from "./helpers/uiCopy.js";
+import { findReactPropsByTestId } from "./v4ConversationComposerLateAckHarness.js";
+import { toast } from "@/components/ui/toast.js";
+import type { ModelSelectionView } from "@zcode/services";
+import type { EffectiveModelSelectionResult } from "@zcode/shared/model-selection";
 import {
   ConversationComposer,
   type ConversationComposerSendResult,
@@ -56,6 +61,12 @@ function expectedTelemetrySendOptions() {
     },
   });
 }
+
+// Blocked and failed sends now announce themselves with a toast; the toast animates with
+// requestAnimationFrame, which this DOM harness does not provide.
+vi.mock("@/components/ui/toast.js", () => ({
+  toast: vi.fn(),
+}));
 
 vi.mock("@/components/ui/dialog.js", async () => {
   const React = await import("react");
@@ -249,10 +260,13 @@ function installMinimalDom() {
     nodeType: 9,
     removeEventListener: () => {},
   } as unknown as Document & { defaultView?: unknown };
+  const body = createMinimalElement(documentMock as unknown as Document, "body");
+  Object.assign(documentMock, { body });
   const windowMock = {
     addEventListener: target.addEventListener.bind(target),
     cancelAnimationFrame: () => {},
     clearTimeout,
+    dispatchEvent: (event: Event) => target.dispatchEvent(event),
     document: documentMock,
     HTMLIFrameElement: function HTMLIFrameElement() {},
     HTMLElement: function HTMLElement() {},
@@ -292,6 +306,13 @@ function flushAsyncWork() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+// A settled Host view whose stored selection cannot be resolved (no providers to choose from).
+function modelSelectionViewWith(
+  selectionIssue: NonNullable<EffectiveModelSelectionResult["selectionIssue"]>,
+): ModelSelectionView {
+  return { revision: 1, providers: [], selectionIssue } as unknown as ModelSelectionView;
+}
+
 function renderComposerElement(
   onSendText: (text: string, options?: unknown) => Promise<ConversationComposerSendResult | void>,
   sessionId: string | null,
@@ -307,6 +328,10 @@ function renderComposerElement(
     content: Pick<V4ComposerDraft, "text" | "editorStateJson" | "mention">,
   ) => void,
   submissionReady = true,
+  modelOptions: {
+    modelSelectionView?: ModelSelectionView | null;
+    modelSelectionSettled?: boolean;
+  } = {},
 ) {
   const scopeId = sessionId ?? V4_DRAFT_SCOPE_ROOT;
   let ownedDraft = composerDraft ??
@@ -322,7 +347,7 @@ function renderComposerElement(
     });
   return createElement(
     ZCodeIntlProvider,
-    { initialLocale: "zh-CN" },
+    { initialLocale: TEST_LOCALE },
     createElement(ConversationComposer, {
       draftMode: sessionId === null,
       onSelectModel: vi.fn(),
@@ -330,6 +355,8 @@ function renderComposerElement(
       onSendText,
       createSubmissionFromComposer,
       submissionReady,
+      modelSelectionView: modelOptions.modelSelectionView ?? null,
+      modelSelectionSettled: modelOptions.modelSelectionSettled ?? false,
       composerDraft: ownedDraft,
       updateComposerContent: persistOwnedContent,
       replaceComposerDraft: (next) => {
@@ -384,20 +411,20 @@ afterEach(() => {
 });
 
 describe("ConversationComposer prompt history", () => {
-  it("真实编辑器文本变更会推进草稿 revision，保护迟到的推荐 Prompt", async () => {
+  it("a real editor text change advances the draft revision, protecting late recommended prompts", async () => {
     const { root } = renderComposer(vi.fn(async () => {}));
     const revisionBefore = getComposerDraftRevision("/workspace");
     const onChange = chatPromptEditorProps.at(-1)?.onChange;
 
     await act(async () => {
-      (onChange as (value: string) => void)("用户正在输入");
+      (onChange as (value: string) => void)("user is typing");
     });
 
     expect(getComposerDraftRevision("/workspace")).toBe(revisionBefore + 1);
     await act(async () => root.unmount());
   });
 
-  it("草稿预热 Session 只作为 Skill catalog authority 传给输入区", async () => {
+  it("the draft prewarm session is passed to the input area only as the skill catalog authority", async () => {
     const container = installMinimalDom();
     const root: Root = createRoot(container);
     act(() => {
@@ -418,7 +445,7 @@ describe("ConversationComposer prompt history", () => {
     await act(async () => root.unmount());
   });
 
-  it("prewarm snapshot 未到时仍用冻结草稿 config 建立 send telemetry seed", async () => {
+  it("builds the send telemetry seed from the frozen draft config even before the prewarm snapshot arrives", async () => {
     const onSendText = vi.fn(async () => {});
     const { root } = renderComposer(onSendText, {
       mode: "build",
@@ -428,12 +455,12 @@ describe("ConversationComposer prompt history", () => {
     const submit = chatPromptEditorProps.at(-1)?.onSubmit;
 
     await act(async () => {
-      (submit as (value: string) => boolean)("立即发送草稿");
+      (submit as (value: string) => boolean)("send the draft now");
       await flushAsyncWork();
     });
 
     expect(onSendText).toHaveBeenCalledWith(
-      "立即发送草稿",
+      "send the draft now",
       expect.objectContaining({
         telemetrySeed: expect.objectContaining({
           extraDetail: expect.objectContaining({
@@ -448,14 +475,14 @@ describe("ConversationComposer prompt history", () => {
     await act(async () => root.unmount());
   });
 
-  it("存在非 ready 附件时 submit 不发送，也不调用最终附件提交入口", async () => {
+  it("with non-ready attachments submit does not send and does not call the final attachment submission entry", async () => {
     attachmentState.hasUnreadyAttachments = true;
     const onSendText = vi.fn(async () => {});
     const { root } = renderComposer(onSendText);
     const submit = chatPromptEditorProps.at(-1)?.onSubmit;
 
     await act(async () => {
-      (submit as (value: string) => boolean)("不能提前发送");
+      (submit as (value: string) => boolean)("must not send early");
       await flushAsyncWork();
     });
 
@@ -466,7 +493,7 @@ describe("ConversationComposer prompt history", () => {
     await act(async () => root.unmount());
   });
 
-  it("等待附件就绪期间切换模型，本次请求仍使用点击发送时的选择", async () => {
+  it("switching models while attachments become ready: the request still uses the selection from the moment send was clicked", async () => {
     const container = installMinimalDom();
     const root = createRoot(container);
     const onSendText = vi.fn(async () => {});
@@ -491,7 +518,7 @@ describe("ConversationComposer prompt history", () => {
     );
     const submit = chatPromptEditorProps.at(-1)!.onSubmit as (text: string) => boolean;
     await act(async () => {
-      submit("冻结本次选择");
+      submit("freeze this selection");
       await flushAsyncWork();
     });
     expect(readSubmission).toHaveBeenCalledTimes(1);
@@ -510,7 +537,7 @@ describe("ConversationComposer prompt history", () => {
     });
     expect(readSubmission).toHaveBeenCalledTimes(1);
     expect(onSendText).toHaveBeenCalledWith(
-      "冻结本次选择",
+      "freeze this selection",
       expect.objectContaining({
         submission: {
           mode: "build",
@@ -525,7 +552,7 @@ describe("ConversationComposer prompt history", () => {
     await act(async () => root.unmount());
   });
 
-  it("模型或 reasoning 选择不完整时禁止提交并保留正文", async () => {
+  it("submits are disabled while model or reasoning selection is incomplete, and the text is kept", async () => {
     const onSendText = vi.fn(async () => {});
     const container = installMinimalDom();
     const root = createRoot(container);
@@ -546,7 +573,9 @@ describe("ConversationComposer prompt history", () => {
 
     expect(chatPromptEditorProps.at(-1)?.submitDisabled).toBe(true);
     await act(async () => {
-      (chatPromptEditorProps.at(-1)!.onSubmit as (text: string) => boolean)("等待补全选择");
+      (chatPromptEditorProps.at(-1)!.onSubmit as (text: string) => boolean)(
+        "waiting for selection completion",
+      );
       await flushAsyncWork();
     });
 
@@ -555,7 +584,107 @@ describe("ConversationComposer prompt history", () => {
     await act(async () => root.unmount());
   });
 
-  it("发送成功删除持久草稿，内存保留当前模式和模型选择", async () => {
+  it("an unresolved stored model names the reason under the draft, and Enter keeps the text without a newline (ISSUE-026)", async () => {
+    const onSendText = vi.fn(async () => {});
+    const container = installMinimalDom();
+    const root = createRoot(container);
+    act(() =>
+      root.render(
+        renderComposerElement(
+          onSendText,
+          "session-a",
+          undefined,
+          null,
+          () => null,
+          { text: "", updatedAt: 0, mode: "build" },
+          undefined,
+          false,
+          {
+            modelSelectionView: modelSelectionViewWith("model-not-found"),
+            modelSelectionSettled: true,
+          },
+        ),
+      ),
+    );
+    act(() => (chatPromptEditorProps.at(-1)!.onChange as (value: string) => void)("send me"));
+
+    expect(findReactPropsByTestId(container, "composer-send-blocked-reason")?.children).toBe(
+      expectedCopy("composer.sendBlocked.modelUnavailable"),
+    );
+    const onSubmitBlocked = chatPromptEditorProps.at(-1)?.onSubmitBlocked as
+      | (() => void)
+      | undefined;
+    expect(typeof onSubmitBlocked).toBe("function");
+    act(() => onSubmitBlocked!());
+
+    expect(toast).toHaveBeenCalledWith(
+      expectedCopy("composer.sendBlocked.modelUnavailable"),
+      expect.objectContaining({ dedupeKey: "composer.sendBlocked.modelUnavailable" }),
+    );
+    expect(onSendText).not.toHaveBeenCalled();
+    expect(inputClear).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it("an account connection problem names the sign-in copy instead of the model copy", async () => {
+    const container = installMinimalDom();
+    const root = createRoot(container);
+    act(() =>
+      root.render(
+        renderComposerElement(
+          vi.fn(async () => {}),
+          "session-a",
+          undefined,
+          null,
+          () => null,
+          { text: "", updatedAt: 0, mode: "build" },
+          undefined,
+          false,
+          {
+            modelSelectionView: modelSelectionViewWith("account-connection-unavailable"),
+            modelSelectionSettled: true,
+          },
+        ),
+      ),
+    );
+    act(() => (chatPromptEditorProps.at(-1)!.onChange as (value: string) => void)("send me"));
+
+    expect(findReactPropsByTestId(container, "composer-send-blocked-reason")?.children).toBe(
+      expectedCopy("composer.sendBlocked.modelAccountUnavailable"),
+    );
+    await act(async () => root.unmount());
+  });
+
+  it("before startup has settled the verdict is not shown; the generic not-ready reason stays (ISSUE-026 cold start)", async () => {
+    const container = installMinimalDom();
+    const root = createRoot(container);
+    act(() =>
+      root.render(
+        renderComposerElement(
+          vi.fn(async () => {}),
+          "session-a",
+          undefined,
+          null,
+          () => null,
+          { text: "", updatedAt: 0, mode: "build" },
+          undefined,
+          false,
+          {
+            modelSelectionView: modelSelectionViewWith("provider-not-found"),
+            modelSelectionSettled: false,
+          },
+        ),
+      ),
+    );
+    act(() => (chatPromptEditorProps.at(-1)!.onChange as (value: string) => void)("send me"));
+
+    // The generic reason keeps its existing behavior: no inline notice and no model-specific Enter path.
+    expect(findReactPropsByTestId(container, "composer-send-blocked-reason")).toBeNull();
+    expect(chatPromptEditorProps.at(-1)?.onSubmitBlocked).toBeUndefined();
+    await act(async () => root.unmount());
+  });
+
+  it("a successful send deletes the persisted draft while memory keeps the current mode and model selection", async () => {
     const container = installMinimalDom();
     const root = createRoot(container);
     const selection = {
@@ -564,7 +693,7 @@ describe("ConversationComposer prompt history", () => {
       options: { reasoningLevel: "high" },
     };
     let draft: V4ComposerDraft = {
-      text: "会被发送",
+      text: "will be sent",
       mode: "yolo",
       modelSelection: selection,
       updatedAt: 1,
@@ -590,7 +719,7 @@ describe("ConversationComposer prompt history", () => {
       ),
     );
     await act(async () => {
-      (chatPromptEditorProps.at(-1)!.onSubmit as (text: string) => boolean)("会被发送");
+      (chatPromptEditorProps.at(-1)!.onSubmit as (text: string) => boolean)("will be sent");
       await flushAsyncWork();
     });
     expect(readV4ComposerDraft("/workspace", undefined, "session-a")).toBeNull();
@@ -602,7 +731,7 @@ describe("ConversationComposer prompt history", () => {
     await act(async () => root.unmount());
   });
 
-  it("迟到的发送成功不能清除等待期间产生的新正文", async () => {
+  it("a late send success must not clear new text written while waiting", async () => {
     let resolveSend!: () => void;
     const onSendText = vi.fn(
       () =>
@@ -615,27 +744,29 @@ describe("ConversationComposer prompt history", () => {
     const onChange = chatPromptEditorProps.at(-1)!.onChange as (text: string) => void;
     inputClear.mockClear();
     await act(async () => {
-      submit("第一条");
+      submit("first message");
       await flushAsyncWork();
     });
-    await act(async () => onChange("下一条"));
+    await act(async () => onChange("next message"));
     await act(async () => {
       resolveSend();
       await flushAsyncWork();
     });
     expect(inputClear).not.toHaveBeenCalled();
-    expect(readV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT)?.text).toBe("下一条");
+    expect(readV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT)?.text).toBe(
+      "next message",
+    );
     await act(async () => root.unmount());
   });
 
-  it("二次门禁返回 null 时保留编辑器且不发送", async () => {
+  it("when the second gate returns null the editor is kept and nothing is sent", async () => {
     attachmentState.prepareForSend.mockResolvedValueOnce(null);
     const onSendText = vi.fn(async () => {});
     const { root } = renderComposer(onSendText);
     const submit = chatPromptEditorProps.at(-1)?.onSubmit;
 
     await act(async () => {
-      (submit as (value: string) => boolean)("提交边界再次检查");
+      (submit as (value: string) => boolean)("boundary check again");
       await flushAsyncWork();
     });
 
@@ -662,12 +793,12 @@ describe("ConversationComposer prompt history", () => {
     expect(typeof submit).toBe("function");
 
     await act(async () => {
-      (submit as (value: string) => boolean)("你回答 1");
+      (submit as (value: string) => boolean)("you answer 1");
       await flushAsyncWork();
     });
 
-    expect(onSendText).toHaveBeenCalledWith("你回答 1", expectedTelemetrySendOptions());
-    expect(readPromptHistoryEntries("/workspace")).toEqual(["你回答 1"]);
+    expect(onSendText).toHaveBeenCalledWith("you answer 1", expectedTelemetrySendOptions());
+    expect(readPromptHistoryEntries("/workspace")).toEqual(["you answer 1"]);
 
     await act(async () => {
       root.unmount();
@@ -681,18 +812,18 @@ describe("ConversationComposer prompt history", () => {
       throw new Error("send failed");
     });
     const { root } = renderComposer(onSendText);
-    persistPromptHistoryEntries("/workspace", ["上一条"]);
+    persistPromptHistoryEntries("/workspace", ["previous message"]);
     const submit = chatPromptEditorProps.at(-1)?.onSubmit;
 
     expect(typeof submit).toBe("function");
 
     await act(async () => {
-      (submit as (value: string) => boolean)("失败的消息");
+      (submit as (value: string) => boolean)("the failing message");
       await flushAsyncWork();
     });
 
-    expect(onSendText).toHaveBeenCalledWith("失败的消息", expectedTelemetrySendOptions());
-    expect(readPromptHistoryEntries("/workspace")).toEqual(["上一条"]);
+    expect(onSendText).toHaveBeenCalledWith("the failing message", expectedTelemetrySendOptions());
+    expect(readPromptHistoryEntries("/workspace")).toEqual(["previous message"]);
 
     await act(async () => {
       root.unmount();
@@ -705,16 +836,19 @@ describe("ConversationComposer prompt history", () => {
     const submit = chatPromptEditorProps.at(-1)?.onSubmit;
 
     await act(async () => {
-      (submit as (value: string) => boolean)("/goal 保留这段输入");
+      (submit as (value: string) => boolean)("/goal keep this input");
       await flushAsyncWork();
     });
 
-    expect(onSendText).toHaveBeenCalledWith("/goal 保留这段输入", expectedTelemetrySendOptions());
+    expect(onSendText).toHaveBeenCalledWith(
+      "/goal keep this input",
+      expectedTelemetrySendOptions(),
+    );
     expect(inputClear).not.toHaveBeenCalled();
     expect(attachmentState.adoptSentAttachments).not.toHaveBeenCalled();
     expect(readPromptHistoryEntries("/workspace")).toEqual([]);
     expect(readV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT)?.text).toBe(
-      "/goal 保留这段输入",
+      "/goal keep this input",
     );
 
     await act(async () => {
@@ -728,7 +862,7 @@ describe("ConversationComposer prompt history", () => {
     const submit = chatPromptEditorProps.at(-1)?.onSubmit;
 
     await act(async () => {
-      (submit as (value: string) => boolean)("等待确认的消息");
+      (submit as (value: string) => boolean)("message awaiting confirmation");
       await flushAsyncWork();
     });
 
@@ -737,7 +871,7 @@ describe("ConversationComposer prompt history", () => {
     expect(attachmentState.adoptSentAttachments).not.toHaveBeenCalled();
     expect(readPromptHistoryEntries("/workspace")).toEqual([]);
     expect(readV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT)?.text).toBe(
-      "等待确认的消息",
+      "message awaiting confirmation",
     );
 
     await act(async () => root.unmount());
@@ -749,7 +883,7 @@ describe("ConversationComposer prompt history", () => {
     const firstSubmit = chatPromptEditorProps.at(-1)?.onSubmit;
 
     await act(async () => {
-      (firstSubmit as (value: string) => boolean)("重复消息");
+      (firstSubmit as (value: string) => boolean)("duplicate message");
       await flushAsyncWork();
     });
 
@@ -758,12 +892,16 @@ describe("ConversationComposer prompt history", () => {
     const duplicateSubmit = chatPromptEditorProps.at(-1)?.onSubmit;
 
     await act(async () => {
-      (duplicateSubmit as (value: string) => boolean)("  重复消息  ");
+      (duplicateSubmit as (value: string) => boolean)("  duplicate message  ");
       await flushAsyncWork();
     });
 
-    expect(onSendText).toHaveBeenNthCalledWith(2, "重复消息", expectedTelemetrySendOptions());
-    expect(readPromptHistoryEntries("/workspace")).toEqual(["重复消息"]);
+    expect(onSendText).toHaveBeenNthCalledWith(
+      2,
+      "duplicate message",
+      expectedTelemetrySendOptions(),
+    );
+    expect(readPromptHistoryEntries("/workspace")).toEqual(["duplicate message"]);
     expect(setItem).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -780,7 +918,7 @@ describe("ConversationComposer prompt history", () => {
     const firstSubmit = chatPromptEditorProps.at(-1)?.onSubmit;
 
     await act(async () => {
-      (firstSubmit as (value: string) => boolean)("重复消息");
+      (firstSubmit as (value: string) => boolean)("duplicate message");
       await flushAsyncWork();
     });
 
@@ -789,11 +927,11 @@ describe("ConversationComposer prompt history", () => {
     const duplicateSubmit = chatPromptEditorProps.at(-1)?.onSubmit;
 
     await act(async () => {
-      (duplicateSubmit as (value: string) => boolean)("重复消息");
+      (duplicateSubmit as (value: string) => boolean)("duplicate message");
       await flushAsyncWork();
     });
 
-    expect(readPromptHistoryEntries("/workspace")).toEqual(["重复消息"]);
+    expect(readPromptHistoryEntries("/workspace")).toEqual(["duplicate message"]);
     expect(setItem).not.toHaveBeenCalledWith(
       getPromptHistoryStorageKey("/workspace"),
       expect.any(String),
@@ -816,7 +954,7 @@ describe("ConversationComposer prompt history", () => {
     const submit = chatPromptEditorProps.at(-1)?.onSubmit;
 
     await act(async () => {
-      (submit as (value: string) => boolean)("首条消息");
+      (submit as (value: string) => boolean)("first message");
       await flushAsyncWork();
     });
 
@@ -836,10 +974,10 @@ describe("ConversationComposer prompt history", () => {
   });
 });
 
-// ── R3A-B-07：ACK 丢失 + 断连期间 composer 卸载重挂后的结算 ──
+// ── R3A-B-07: settlement after ACK loss + composer unmount/remount during disconnect ──
 const REMOUNT_SESSION_ID = "sess_remount";
 const REMOUNT_COMMAND_ID = "cmd_remount_1";
-const REMOUNT_TEXT = "E2E_R3_ACK_LOSS_ACK 请回复";
+const REMOUNT_TEXT = "E2E_R3_ACK_LOSS_ACK please reply";
 
 function authoritativeSnapshot(): ConversationSnapshot {
   return {
@@ -858,7 +996,7 @@ function authoritativeSnapshot(): ConversationSnapshot {
   } as unknown as ConversationSnapshot;
 }
 
-/** 测试自持的草稿对象，等价于 useDraftConfigControl 持有并跨组件实例存活的 composerDraft。 */
+/** Draft object owned by the test itself, equivalent to the composerDraft held by useDraftConfigControl and surviving across component instances. */
 function createDraftOwner() {
   const owner = {
     draft: { text: "", updatedAt: 0 } as V4ComposerDraft,
@@ -894,7 +1032,7 @@ function mountRemountSession(
   return { root, container };
 }
 
-/** onSendText 先回报 commandId，再挂起等待测试决定传输结果。 */
+/** onSendText first reports the commandId, then suspends until the test decides the transport outcome. */
 function makePendingSend() {
   let reject: (error: Error) => void = () => {};
   const pending = new Promise<void>((_resolve, rej) => {
@@ -918,7 +1056,7 @@ async function typeAndSubmitRemountText(text = REMOUNT_TEXT) {
   });
 }
 
-/** 模拟远端 ChannelClient.dispose() 拒绝在途 RPC。 */
+/** Simulates a remote ChannelClient.dispose() rejecting in-flight RPCs. */
 async function closeTransport(reject: (error: Error) => void) {
   await act(async () => {
     const error = new Error("ChannelClient disposed");
@@ -941,17 +1079,17 @@ async function submitAndLoseTransport() {
   const { root, container } = mountRemountSession(onSendText, owner);
   await typeAndSubmitRemountText();
   expect(onSendText).toHaveBeenCalledTimes(1);
-  // claimSubmittedDraft：草稿 store 先被占用清空。
+  // claimSubmittedDraft: the draft store is claimed and cleared first.
   expect(owner.writes.at(-1)).toBe("");
   await closeTransport(reject);
-  // catch → restoreSubmittedDraft：正文写回草稿 store，编辑器未清空。
+  // catch → restoreSubmittedDraft: the text is written back to the draft store; the editor is not cleared.
   expect(owner.writes.at(-1)).toBe(REMOUNT_TEXT);
   expect(inputClear).not.toHaveBeenCalled();
   return { owner, root, container };
 }
 
 describe("ConversationComposer settles submissions across pane remount (R3A-B-07)", () => {
-  it("对照：composer 保持挂载时，传输关闭后权威投影仍能清空正文", async () => {
+  it("control: while the composer stays mounted, the authoritative projection can still clear the text after the transport closes", async () => {
     const { owner, root } = await submitAndLoseTransport();
     await applyAuthoritativeSnapshot();
     expect(inputClear).toHaveBeenCalledTimes(1);
@@ -959,14 +1097,14 @@ describe("ConversationComposer settles submissions across pane remount (R3A-B-07
     await act(async () => root.unmount());
   });
 
-  it("断连期间卸载重挂后，权威投影到达时清空回填的正文与草稿", async () => {
+  it("after unmount/remount during disconnect, the arriving authoritative projection clears the refilled text and draft", async () => {
     const { owner, root, container } = await submitAndLoseTransport();
-    // 断连：V4PaneConversationProvider rpcReady=false 返回 null → SessionPane/composer 卸载。
+    // Disconnect: V4PaneConversationProvider returns null when rpcReady=false → SessionPane/composer unmount.
     await act(async () => root.unmount());
     inputClear.mockClear();
     inputSetText.mockClear();
 
-    // 重连：重挂载，正文从草稿 store 回填到编辑器。
+    // Reconnect: remount; the text is refilled into the editor from the draft store.
     const { root: remounted } = mountRemountSession(
       vi.fn(async () => {}),
       owner,
@@ -983,7 +1121,7 @@ describe("ConversationComposer settles submissions across pane remount (R3A-B-07
     await act(async () => remounted.unmount());
   });
 
-  it("权威投影先于重挂到达时，重挂后的 composer 同步清空回填正文", async () => {
+  it("when the authoritative projection arrives before remount, the remounted composer clears the refilled text synchronously", async () => {
     const { owner, root, container } = await submitAndLoseTransport();
     await act(async () => root.unmount());
     await applyAuthoritativeSnapshot();
@@ -1002,7 +1140,7 @@ describe("ConversationComposer settles submissions across pane remount (R3A-B-07
     await act(async () => remounted.unmount());
   });
 
-  it("重挂后用户已修改正文时，迟到的权威投影不得清空新输入", async () => {
+  it("after remount with user-edited text, a late authoritative projection must not clear the new input", async () => {
     const { owner, root, container } = await submitAndLoseTransport();
     await act(async () => root.unmount());
     inputClear.mockClear();
@@ -1017,16 +1155,16 @@ describe("ConversationComposer settles submissions across pane remount (R3A-B-07
     });
     const props = chatPromptEditorProps.at(-1)!;
     await act(async () => {
-      (props.onChange as (value: string) => void)(`${REMOUNT_TEXT} 补充`);
+      (props.onChange as (value: string) => void)(`${REMOUNT_TEXT} extra`);
     });
 
     await applyAuthoritativeSnapshot();
     expect(inputClear).not.toHaveBeenCalled();
-    expect(owner.draft.text).toBe(`${REMOUNT_TEXT} 补充`);
+    expect(owner.draft.text).toBe(`${REMOUNT_TEXT} extra`);
     await act(async () => remounted.unmount());
   });
 
-  it("命令以失败终态收口时，重挂后的 composer 保留正文供用户重试", async () => {
+  it("when the command settles as failed, the remounted composer keeps the text for the user to retry", async () => {
     const envelope = {
       commandId: REMOUNT_COMMAND_ID,
       clientId: "client-1",
@@ -1063,9 +1201,10 @@ describe("ConversationComposer settles submissions across pane remount (R3A-B-07
   });
 });
 
-// 冲突整合回归：projection 已接管提交后，附件 adoption 尚在等待时的传输失败
-// 不能再恢复旧正文，否则 accepted 输入会重新出现在待发草稿中。
-it("权威投影开始接管附件后，传输失败不能恢复已提交正文", async () => {
+// Conflict-integration regression: once the projection has taken over the submission, a transport failure
+// while attachment adoption is still pending must not restore the old text; otherwise accepted input would
+// reappear in the outgoing draft.
+it("once the authoritative projection starts adopting attachments, a transport failure must not restore the submitted text", async () => {
   let completeAdoption = () => {};
   attachmentState.adoptSentAttachments.mockImplementationOnce(
     () =>

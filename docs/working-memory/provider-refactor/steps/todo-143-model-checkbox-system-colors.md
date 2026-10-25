@@ -1,26 +1,18 @@
-# Todo143：模型配置勾选框颜色对齐系统组件
+# Todo143: Match model-setting checkboxes to system colors
 
-状态：已实现并完成本地验证／复审。2026-09-12 用户授权实现并提 MR。
+Status: implemented, locally verified and reviewed (user authorized implementation and MR creation on 2026-09-12).
 
-## 要求与边界
+## Rule
 
-- 输入类型、模型能力的勾选框沿用系统 Checkbox 颜色：选中使用 `border-primary bg-primary text-primary-foreground`；未选中使用 `border-input-border bg-input`。
-- Zai 深色选中为白色框体／黑勾，浅色为黑色框体／白勾；不再让边框跟随对号的反色。
-- 保留 16px 方框、12px Check 图形，以及外层选项按钮的底色反馈、个人覆盖边框、尺寸、点击与键盘语义。文本仍强制选中且不可取消。
-- 指示框仍是不可交互的装饰元素；不在现有按钮中嵌套可交互 Checkbox，不修改全局组件或模型配置／保存逻辑。
+- Checkboxes for input types and model capabilities use the system Checkbox colors: selected `border-primary bg-primary text-primary-foreground`; unselected `border-input-border bg-input`.
+- Selected Zai dark theme: white box / black check; light theme: black box / white check. The border must not invert with the check mark (root cause: the original `border-current` followed `text-primary-foreground`).
+- Keep the 16px square, the 12px Check icon, and the outer option button's background feedback, personal-overlay border, dimensions, click and keyboard semantics. Text remains required and cannot be unchecked.
+- The indicator stays a non-interactive decorative element: no interactive Checkbox nested in the button, no global component or model config/save behavior change.
 
-## 验证与复审
+## Verification and review
 
-- 先在真实组件浏览器夹具增加与系统 Checkbox 的 computed style 对照，覆盖中文浅色手机宽度、英文深色桌面宽度，选中／未选中及普通／个人覆盖选项。
-- 保留点击、键盘单次切换、外层高亮和文本锁定断言；查看截图，运行相关单测、类型检查、lint、架构检查。
-- Mac Electron／真实手机远控不为这次纯颜色修改重新全量运行；浏览器夹具不冒充原生整链验证。
-
-根因：原 `border-current` 随 `text-primary-foreground` 变为勾号颜色，导致边框与填充反色。修复仅收口该指示框的语义颜色。
-
-## 结果
-
-- TDD：新增颜色断言在旧实现下两例均失败；修复后颜色／交互两例与 Todo141 编辑器四例合批 **6/6 通过**，相关单测 **51/51 通过**。
-- `pnpm typecheck`（含桌面 E2E 类型）、`pnpm lint` 通过；lint 为既有 42 warnings、0 errors。架构检查 0 violations，`git diff --check` 通过。
-- 已查看 `/tmp/zcode-provider-settings-batch/selected-{390,1200}-0.png`：深浅色框体／勾号符合系统组件。Linux 当前中文字库不完整，中文截图部分文字缺字，不声明字体视觉验收通过；不影响已执行的颜色、尺寸及交互断言。
-- 复审：生产代码仅一个共享指示框的 class 分支变化；两个调用类别均覆盖，无新增状态、事件、IO、协议、持久化或模型能力变更。外层个人覆盖、文本锁定、按钮键盘语义和勾号图形未改，未嵌套可交互控件。
-- 未重跑 Mac Electron／真实手机 shared-host；此项是共享 UI 颜色修复，不改变桌面 continuous／手机 replayable 链路。
+- Computed-style comparison against the system Checkbox in a real-component browser fixture (Chinese/light/mobile width, English/dark/desktop width, selected/unselected, ordinary/personal-overlay); click, single keyboard toggle, outer highlight and text-lock assertions kept.
+- TDD: both new color assertions failed on the old implementation; after the fix two color/interaction tests and four Todo141 editor tests pass together (**6/6**); related unit tests **51/51**. `pnpm typecheck` (incl. desktop E2E types) and `pnpm lint` (0 errors / 42 existing warnings) pass; architecture check 0 violations; `git diff --check` passed.
+- Screenshots `/tmp/zcode-provider-settings-batch/selected-{390,1200}-0.png`: light/dark box and check colors match the system control. The Linux CJK font was incomplete (some Chinese glyphs missing), so Chinese typography is not claimed verified.
+- The production change is one class branch on the shared indicator covering both call categories; no state, event, I/O, protocol, persistence or capability change.
+- Mac Electron and real mobile shared-host suites were not rerun for this color-only change; the browser fixture is not native end-to-end verification; desktop continuous / mobile replayable paths unaffected.

@@ -152,8 +152,8 @@ export function LightweightDiffPreview({
 
           return (
             <div className="flex min-w-full w-full" key={index} style={lineStyles.rowStyle}>
-              {/* 不换行时由内层滚动面统一计算 max-content 宽度。
-              如果每行各自 w-max，横向滚动到右侧时短行背景会提前结束，产生黑色断层。 */}
+              {/* When wrapping is disabled, the inner scroll area calculates a shared max-content width.
+              If each row uses its own w-max, short-row backgrounds end early when scrolling horizontally, leaving black gaps. */}
               {codePreviewSettings.showLineNumbers ? (
                 <span
                   aria-hidden="true"
@@ -174,8 +174,8 @@ export function LightweightDiffPreview({
                     : "whitespace-pre",
                 )}
               >
-                {/* 轻量 diff 只用行背景、状态条和行号颜色表达增删，和富 DiffViewer 保持一致；
-                不能把 unified diff 的 `+/-/空格` 协议 marker 当成代码内容显示出来。 */}
+                {/* Lightweight diffs show additions/deletions using row backgrounds, status bars, and line-number colors, matching the full DiffViewer;
+                do not display unified diff protocol markers (`+/-/spaces`) as code content. */}
                 {renderLineContent?.(lineParts, index) ?? (lineParts.content || " ")}
               </code>
             </div>

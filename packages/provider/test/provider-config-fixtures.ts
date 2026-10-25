@@ -1,5 +1,6 @@
 import {
   ApiKeyAccessConfig,
+  ChatgptAccountAccessConfig,
   ProviderApiConfig,
   ProviderConfig,
   ZhipuAccountAccessConfig,
@@ -33,7 +34,7 @@ interface AccountProviderFixtureInput extends CommonProviderFixtureInput {
   readonly entitled?: boolean | null;
 }
 
-/** 测试夹具把常用字段压平；生产 Schema 仍使用 access/api 两个明确边界。 */
+/** Test fixtures flatten common fields; the production schema still uses the two explicit access/api boundaries. */
 export function createApiKeyProviderConfig(input: ApiKeyProviderFixtureInput = {}): ProviderConfig {
   return new ProviderConfig({
     group: input.group === null ? undefined : (input.group ?? "standard-personal"),
@@ -65,6 +66,21 @@ export function createAccountProviderConfig(
     }),
     api: createProviderApi(input),
     builtinModelIds: input.models,
+    visibility: input.visibility,
+  });
+}
+
+/** ChatGPT plan (SIWC) provider fixture; entitlement is resolved at runtime from the host account source. */
+export function createChatgptAccountProviderConfig(
+  input: CommonProviderFixtureInput = {},
+): ProviderConfig {
+  return new ProviderConfig({
+    group: input.group === null ? undefined : input.group,
+    logo: input.logo,
+    access: new ChatgptAccountAccessConfig(),
+    api: createProviderApi(input),
+    builtinModelIds: input.models,
+    personalModelIds: input.personalModels,
     visibility: input.visibility,
   });
 }

@@ -252,6 +252,47 @@ describe("transcript→event 合成", () => {
     ).not.toHaveProperty("feedback");
   });
 
+  it("assistant/user 消息固定从 transcript metadata 恢复为权威 row 字段；旧格式不含 pinnedAt 照常恢复", () => {
+    const user = userMessage("u-pin", "问题", 1000);
+    user.info.metadata = { pinnedAt: 1500 };
+    const assistant = assistantMessage("a-pin", "u-pin", "回复", 1001);
+    assistant.info.metadata = { pinnedAt: 1600 };
+    const legacyUser = userMessage("u-legacy", "旧格式问题", 2000);
+    const legacyAssistant = assistantMessage("a-legacy", "u-legacy", "旧格式回复", 2001);
+
+    const { events, projection } = reduce([user, assistant, legacyUser, legacyAssistant]);
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: SessionEventType.RowPinnedUpdated,
+        payload: { entityId: "u-pin", pinnedAt: 1500 },
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: SessionEventType.RowPinnedUpdated,
+        payload: { entityId: "a-pin", pinnedAt: 1600 },
+      }),
+    );
+    const window = projection.getSnapshot().rows.window;
+    expect(window.find((row) => row.kind === "userInput" && row.entityId === "u-pin")).toMatchObject(
+      { pinnedAt: 1500 },
+    );
+    expect(
+      window.find((row) => row.kind === "assistantText" && row.entityId === "a-pin"),
+    ).toMatchObject({ pinnedAt: 1600 });
+    // 旧 transcript（无 pinnedAt）不产生事件，行照常恢复且不带该字段。
+    expect(events.filter((event) => event.type === SessionEventType.RowPinnedUpdated)).toHaveLength(
+      2,
+    );
+    expect(
+      window.find((row) => row.kind === "userInput" && row.entityId === "u-legacy"),
+    ).not.toHaveProperty("pinnedAt");
+    expect(
+      window.find((row) => row.kind === "assistantText" && row.entityId === "a-legacy"),
+    ).not.toHaveProperty("pinnedAt");
+  });
+
   it("首订阅晚于完成时仍从真实持久化语义恢复 assistant 正文", () => {
     const persistedAssistant = assistantMessage("a1", "u1", "快速首轮回复", 1001);
     const messages = [
@@ -586,6 +627,46 @@ describe("transcript→event 合成", () => {
         retryable: true,
       },
     });
+  });
+
+  it("cold provider business failure keeps its business code and drops the synthetic trace id", () => {
+    const failed = assistantMessage("a-concurrency", "u-concurrency", "", 1001);
+    const { projection } = reduce([
+      userMessage("u-concurrency", "hit the model concurrency cap", 1000),
+      {
+        ...failed,
+        info: {
+          ...failed.info,
+          error: {
+            name: "AiSdkModelAdapterError",
+            data: {
+              message: "model concurrency limit exceeded",
+              code: "model_rate_limited",
+              attribution: {
+                source: "provider",
+                reason: "rate_limited",
+                errorPhase: "stream",
+                exceptionKind: "provider_business",
+                providerId: "account:zai-start-plan",
+                modelId: "GLM-5.3",
+                statusCode: 429,
+                providerErrorCode: "3009",
+                retryable: false,
+              },
+            },
+          },
+        },
+      } satisfies MessageWithParts,
+    ]);
+
+    const lastError = projection.getSnapshot().control.lastError;
+    expect(lastError).toMatchObject({
+      message: "model concurrency limit exceeded",
+      source: "provider",
+      attribution: { providerErrorCode: "3009", providerId: "account:zai-start-plan" },
+    });
+    // The hydration trace id is a replay sentinel, not a support-traceable request id.
+    expect(lastError?.traceId).toBeUndefined();
   });
 
   it("cold empty output-limit exhaustion restores only its error state", () => {
@@ -1560,6 +1641,79 @@ describe("transcript→event 合成", () => {
     ).toMatchObject({
       childSessionId: "sess_subagent_agent-bg26",
     });
+  });
+
+  it("restores a finished foreground subagent row's real duration and type after cold hydration", () => {
+    const toolCallId = "call-agent-explore";
+    const messages = [
+      userMessage("u1", "study the repo", 1000),
+      assistantMessageWithParts(
+        "a1",
+        "u1",
+        [
+          {
+            id: "a1-tool-agent-explore" as never,
+            sessionID: "s1" as never,
+            messageID: "a1" as never,
+            type: "tool",
+            callID: toolCallId,
+            tool: "Agent",
+            state: {
+              status: "completed",
+              input: { description: "Study CLI runtime", subagent_type: "Explore", prompt: "go" },
+              output: "agentId: agent-explore\nCLI runtime overview",
+              title: "Agent Study CLI runtime",
+              metadata: {},
+              time: { start: 1_100, end: 292_000 },
+            },
+          },
+        ],
+        1001,
+      ),
+    ];
+
+    const { projection } = reduce(messages);
+    const row = projection
+      .getSnapshot()
+      .rows.window.find((item) => item.kind === "subagent" && item.parentToolCallId === toolCallId);
+    expect(row).toMatchObject({ startedAt: 1_100, endedAt: 292_000, subagentType: "Explore" });
+  });
+
+  it("never ends a reloaded running subagent row before it started", () => {
+    const toolCallId = "call-agent-interrupted";
+    const messages = [
+      userMessage("u1", "study the repo", 1000),
+      assistantMessageWithParts(
+        "a1",
+        "u1",
+        [
+          {
+            id: "a1-tool-agent-interrupted" as never,
+            sessionID: "s1" as never,
+            messageID: "a1" as never,
+            type: "tool",
+            callID: toolCallId,
+            tool: "Agent",
+            // The app stopped mid-run: the part was persisted running, with a start but no end.
+            state: {
+              status: "running",
+              input: { description: "Study CLI runtime", subagent_type: "Explore" },
+              title: "Agent Study CLI runtime",
+              metadata: {},
+              time: { start: 50_000 },
+            },
+          },
+        ],
+        1001,
+      ),
+    ];
+
+    const { projection } = reduce(messages);
+    const row = projection
+      .getSnapshot()
+      .rows.window.find((item) => item.kind === "subagent" && item.parentToolCallId === toolCallId);
+    expect(row).toMatchObject({ startedAt: 50_000 });
+    expect((row as { endedAt?: number }).endedAt).toBeGreaterThanOrEqual(50_000);
   });
 
   it("selection side chat 的继承历史只进 provider context，冷恢复时间线从新问题开始", () => {

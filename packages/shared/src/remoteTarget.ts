@@ -27,15 +27,15 @@ export interface DockerConnectOptions {
 
 export interface ServerConnectOptions {
   kind: "server";
-  /** 已运行的 zcode-server HTTP(S)/WS(S) 入口。 */
+  /** Entry point of an already-running zcode-server over HTTP(S)/WS(S). */
   url: string;
-  /** 用户可读名称，仅用于展示。 */
+  /** User-readable name, display-only. */
   name?: string;
-  /** 临时连接凭据；持久化时必须转成 credential key。 */
+  /** Ephemeral connection credential; must be converted to a credential key when persisted. */
   token?: string;
-  /** 服务端默认工作区路径，可被连接流程中的 workspacePath 覆盖。 */
+  /** Server default workspace path; may be overridden by workspacePath during the connection flow. */
   workspacePath?: string;
-  /** 远端服务实例稳定标识，用于 workspaceIdentity authority。 */
+  /** Stable identifier of the remote service instance, used as the workspaceIdentity authority. */
   serverId?: string;
 }
 
@@ -45,7 +45,7 @@ export type RemoteTarget =
   | DockerConnectOptions
   | ServerConnectOptions;
 
-/** 删除只应存在于当前连接流程中的 secret，供长期内存状态和跨进程回包使用。 */
+/** Removes secrets that should exist only during the current connection flow, for long-lived in-memory state and cross-process responses. */
 export function stripRemoteTargetSecrets(target: RemoteTarget): RemoteTarget {
   if (target.kind === "ssh") {
     const {

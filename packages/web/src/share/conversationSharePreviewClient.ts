@@ -9,7 +9,8 @@ import {
   parseConversationSharePathname,
   type ConversationShareErrorKind,
   type ConversationSharePreview,
-  type Locale,
+  type ServiceLocale,
+  toServiceLocale,
 } from "@zcode/shared";
 
 const SHARE_CODE_PATTERN = /^[A-Za-z0-9._~-]{1,512}$/u;
@@ -56,10 +57,10 @@ export function parseConversationShareRoute(pathname: string): string | null {
   return isSafeConversationShareCode(code) ? code : null;
 }
 
-/** 页面语言由路径前缀决定：/cn/share 中文，裸 /share 英文；非分享路径回退到浏览器语言。 */
-export function resolveConversationShareRouteLocale(pathname: string): Locale {
+/** Page language is determined by the path prefix: /cn/share is Chinese, bare /share is English; non-share paths fall back to the browser language. */
+export function resolveConversationShareRouteLocale(pathname: string): ServiceLocale {
   const parsed = parseConversationSharePathname(pathname);
-  if (parsed) return parsed.locale;
+  if (parsed) return toServiceLocale(parsed.locale);
   return /^zh(?:-|$)/iu.test(navigator.language) ? "zh-CN" : "en-US";
 }
 
@@ -81,8 +82,8 @@ export interface ConversationSharePreviewDiagnostics {
   warn(event: string, details: Record<string, unknown>): void;
 }
 
-// fetch/CORS/DNS 异常不能统一折叠为 network：需要看到请求是否发起以及实际 endpoint。
-// 日志只保留脱敏目标和传输元数据，禁止记录 share code、JWT、响应正文或 Signed URL。
+// Do not collapse fetch/CORS/DNS failures into one network error; we need to know whether the request started and which endpoint was used.
+// Logs retain only a redacted target and transport metadata; never log share codes, JWTs, response bodies, or signed URLs.
 const DEFAULT_DIAGNOSTICS: ConversationSharePreviewDiagnostics = {
   info(event, details) {
     console.info("[conversation-share-web]", event, details);
@@ -103,7 +104,7 @@ export class ConversationSharePreviewClient {
 
   constructor(options: ConversationSharePreviewClientOptions) {
     this.baseUrl = options.baseUrl.trim().replace(/\/+$/u, "");
-    // 直接保存 window.fetch 后以实例方法调用会把 this 绑定到 Client，Chromium 因此抛 Illegal invocation。
+    // Saving window.fetch directly and calling it as an instance method binds this to Client, causing Chromium to throw Illegal invocation.
     this.fetchImpl = options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
     this.diagnostics = options.diagnostics ?? DEFAULT_DIAGNOSTICS;
   }
@@ -201,7 +202,7 @@ export class ConversationSharePreviewClient {
     if (!response.ok) {
       const parsedError = conversationShareErrorEnvelopeSchema.safeParse(payload);
       if (parsedError.success) {
-        // 未知业务码保留 code 和请求 ID，方便关联服务端日志。
+        // Unknown business codes keep the code and request ID so server logs can be correlated.
         throw new ConversationSharePreviewClientError({
           kind: classifyConversationShareError(response.status, parsedError.data.code),
           message: parsedError.data.msg,
@@ -229,8 +230,8 @@ export class ConversationSharePreviewClient {
       });
     }
     const data = parsed.data.data;
-    // 落地页镜像是独立部署、独立回滚的，所以它随时可能比发布分享的客户端旧。版本高于本
-    // build 认知时要说「请升级」，不能混进「分享格式无效」。
+    // The landing-page mirror is deployed and rolled back independently, so it may be older than the client that published the share.
+    // If it reports a version newer than this build understands, ask the user to upgrade instead of calling the share format invalid.
     if (!isConversationShareSchemaVersionSupported(data.schema_version)) {
       this.diagnostics.warn("preview_schema_version_unsupported", {
         requestTarget,
@@ -243,7 +244,7 @@ export class ConversationSharePreviewClient {
         requestId,
       });
     }
-    // 逐行降级：认不出的行跳过并计数，不让整页打不开。
+    // Degrade row by row: skip and count unrecognized rows so the entire page remains available.
     const decoded = decodeConversationShareRows(data.rows);
     if (decoded.unsupportedCount > 0) {
       this.diagnostics.info("preview_dropped_unsupported_rows", {

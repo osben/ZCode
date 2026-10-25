@@ -1,10 +1,20 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createVitest } from "vitest/node";
 import { git, cleanGitEnv } from "./affected-unit-tests/process.mjs";
 import { resolveScope } from "./affected-unit-tests/scope.mjs";
+
+// Node 26 enables Web Storage by default, and without --localstorage-file the global
+// `localStorage` is undefined in test workers. jsdom suites that call localStorage.clear()
+// in beforeEach then fail. scripts/run-vitest.mjs passes this flag through NODE_OPTIONS for
+// `pnpm test:unit`; this runner runs Vitest in-process, so a direct start must set it too.
+// It has to be in NODE_OPTIONS: a CLI-only flag does not reach Vitest's worker threads.
+const WEBSTORAGE_FLAG = "--no-experimental-webstorage";
+const hasWebstorageFlag = () =>
+  (process.env.NODE_OPTIONS ?? "").split(/\s+/u).includes(WEBSTORAGE_FLAG);
 
 export async function parseArgs(argv) {
   const options = {};
@@ -33,6 +43,12 @@ export async function parseArgs(argv) {
       )
         throw new Error("文件清单无效");
       options.files = [...(options.files ?? []), ...parsed.files];
+    } else if (arg === "--on-full") {
+      const value = argv[++i];
+      if (!value || value.startsWith("--")) throw new Error("--on-full 需要参数");
+      if (value !== "run" && value !== "skip")
+        throw new Error(`--on-full 只接受 run 或 skip：${value}`);
+      options.onFull = value;
     } else throw new Error(`未知参数：${arg}`);
   }
   return options;
@@ -47,7 +63,7 @@ export async function main(argv = process.argv.slice(2)) {
     const options = await parseArgs(argv);
     if (options.help) {
       console.log(
-        "用法：pnpm test:unit:affected [--scope worktree|push] [--base <commit>] [--files <files...>] [--dry-run] [--json]\n使用 Vitest 官方选择；全量选择跳过 UT 并成功退出，脏工作区 Push 和错误非零退出。0=通过/无选中测试/跳过全量，1=测试失败，2=阻止执行/脚本错误。",
+        "用法：pnpm test:unit:affected [--scope worktree|push] [--base <commit>] [--files <files...>] [--on-full run|skip] [--dry-run] [--json]\n使用 Vitest 官方选择；全量选择默认跳过 UT 并成功退出（--on-full run 则执行全量），脏工作区 Push 和错误非零退出。0=通过/无选中测试/跳过全量，1=测试失败，2=阻止执行/脚本错误。",
       );
       return 0;
     }
@@ -94,12 +110,18 @@ export async function main(argv = process.argv.slice(2)) {
       if (options.dryRun)
         for (const test of tests) console.log(`  ${test.project}/${test.pool}: ${test.path}`);
     }
-    // 全量选择不是测试失败；加载测试前跳过并成功退出，避免仅因不跑全量而阻止 Push。
+    // 全量选择不是测试失败。pre-push 默认跳过以不因全量阻塞 Push；CI 用 --on-full run
+    // 走同一入口执行全量，避免 PR 在零测试执行的情况下拿到绿色 Unit tests 结论。
     if (all.length && all.every((spec) => selected.has(specKey(spec)))) {
+      if ((options.onFull ?? "skip") === "skip") {
+        console.warn(
+          `[affected] Vitest 官方选择了整个根 UT 套件（${all.length} 个规格），已跳过 UT（未执行测试），不因此阻止 Push。改动文件：${[...related].map((file) => relative(root, file)).join(", ")}`,
+        );
+        return 0;
+      }
       console.warn(
-        `[affected] Vitest 官方选择了整个根 UT 套件（${all.length} 个规格），已跳过 UT（未执行测试），不因此阻止 Push。改动文件：${[...related].map((file) => relative(root, file)).join(", ")}`,
+        `[affected] Vitest 官方选择了整个根 UT 套件（${all.length} 个规格），--on-full run：执行全量。`,
       );
-      return 0;
     }
     if (!specs.length || options.dryRun) return 0;
     await vitest.standalone();
@@ -120,5 +142,28 @@ export async function main(argv = process.argv.slice(2)) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href)
-  process.exitCode = await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  if (hasWebstorageFlag()) process.exitCode = await main();
+  else {
+    // Re-execute with the flag so direct `node scripts/run-affected-unit-tests.mjs` matches the
+    // `pnpm test:unit` path. Exit status mirrors scripts/run-vitest.mjs: a signal counts as failure.
+    const child = spawnSync(
+      process.execPath,
+      [fileURLToPath(import.meta.url), ...process.argv.slice(2)],
+      {
+        stdio: "inherit",
+        env: {
+          ...process.env,
+          NODE_OPTIONS: [process.env.NODE_OPTIONS, WEBSTORAGE_FLAG].filter(Boolean).join(" "),
+        },
+      },
+    );
+    if (child.error) {
+      console.error(`[affected] 无法启动子进程：${child.error.message}`);
+      process.exitCode = 2;
+    } else if (child.signal) {
+      console.error(`[affected] 子进程被信号 ${child.signal} 终止`);
+      process.exitCode = 1;
+    } else process.exitCode = child.status ?? 1;
+  }
+}

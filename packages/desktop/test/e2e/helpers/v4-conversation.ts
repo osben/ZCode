@@ -1,10 +1,10 @@
-import { selectCombinedComposerThoughtLevel } from "./composer-model-picker.js";
-/* eslint-disable max-lines -- v4 conversation e2e helper 集中承载 pane/composer/queue/分屏等全部定位与断言原语，拆分会让 spec 的导入面漂移。 */
-// v4 竖切（protocol-v4）conversation e2e helper。
-// 与旧 conversation-session.ts 的区别：所有定位走 TID_V4_* 常量（testid contract v2，
-// 带 paneId 维度），状态断言读 v4 pane 的 data-* 投影属性，不再依赖旧 ChatView DOM。
-// 旧 helper 的登录/工作区/provider 部分继续复用（desktop-app.ts / upstream-provider.ts）。
-import { encodeCustomModelValue } from "@zcode/shared";
+/* eslint-disable max-lines -- the v4 conversation e2e helper concentrates all locating and assertion primitives (pane/composer/queue/split); splitting it would make the specs' import surface drift. */
+// v4 vertical slice (protocol-v4) conversation e2e helper.
+// Difference from the old conversation-session.ts: all locating goes through TID_V4_* constants
+// (testid contract v2, with the paneId dimension), state assertions read the v4 pane's data-*
+// projection attributes, and the old ChatView DOM is no longer depended on.
+// The old helper's login/workspace/provider parts are still reused
+// (desktop-app.ts / upstream-provider.ts).
 import {
   TID_CHAT_MODE_SELECT_ITEM,
   TID_CHAT_MODE_SELECT_TRIGGER,
@@ -57,8 +57,9 @@ import {
   TID_V4_TURN_NAVIGATOR,
   TID_V4_TURN_NAVIGATOR_ITEM,
   TID_V4_TURN_NAVIGATOR_TOOLTIP,
+  encodeCustomModelValue,
   testId,
-} from "@zcode/shared/test-ids";
+} from "@zcode/shared";
 import {
   clickTestIdByDom,
   DEFAULT_WORKSPACE,
@@ -67,6 +68,7 @@ import {
   setInputValueByTestIdDom,
   waitForDefaultWorkspaceReady,
 } from "./desktop-app.js";
+import { ensureLocalProjectRow, startDraftFromProject } from "./project-sidebar.js";
 import {
   ensureUpstreamProviderForE2E,
   selectUpstreamModel,
@@ -76,7 +78,6 @@ import { readV4ChatRootSnapshotInBrowser } from "./conversation-session-chat-roo
 import { getTaskStoreSnapshot as readTaskStoreSnapshotForDiagnostics } from "./conversation-session-store.js";
 import { sel } from "./selectors.js";
 import { skipOccupationOnboardingIfPresent } from "./occupation-onboarding.js";
-import { startDraftFromProject, waitForProjectRow } from "#e2e/helpers/project-sidebar";
 
 export const LOGIN_API_KEY = "e2e-login-api-key";
 export const E2E_REPLY_TOKEN = "upstream-e2e-ok";
@@ -84,23 +85,21 @@ export const E2E_REPLY_TOKEN = "upstream-e2e-ok";
 interface PrepareV4ConversationE2EOptions {
   resetDraftBeforeProvider?: boolean;
   skipProvider?: boolean;
-  /** 跳过 ensureV4ShellReady 的 ZCodeProject 等待。已登录冷启（真实凭据 seed 后 reloadSession）
-   * 的 app 按 startupWorkspace 语义落在 conversation backing workspace，ZCodeProject 永远不出现；
-   * 调用方需自行等待 v4 shell 就绪（如侧栏新任务按钮）。见 ANALYSIS r3-rerun §46。 */
+  /** Skip the ZCodeProject wait in ensureV4ShellReady; a logged-in cold start lands on the conversation backing workspace and the caller waits for the shell itself. */
   skipShellReady?: boolean;
 }
 
-/** 单 pane 竖切固定 paneId（V4ChatPane 写死 workspace-main）。 */
+/** Fixed paneId for the single-pane vertical slice (V4ChatPane hardcodes workspace-main). */
 export const V4_MAIN_PANE_ID = "workspace-main";
 
 export interface V4PaneSnapshot {
-  /** data-session-id；draft 表示未绑定 CLI session。 */
+  /** data-session-id; "draft" means not yet bound to a CLI session. */
   sessionId: string | null;
   initialDraftProvider: string;
   initialDraftModel: string;
-  /** stop 按钮是否存在（= projection.control.canStop）。 */
+  /** Whether the stop button exists (= projection.control.canStop). */
   canStop: boolean;
-  /** timeline 全部行文本（虚拟滚动下为当前渲染窗口内的行）。 */
+  /** All timeline row text (under virtual scrolling, the rows in the current render window). */
   timelineText: string;
   rowCount: number;
 }
@@ -148,8 +147,10 @@ export async function prepareV4ConversationE2E(options: PrepareV4ConversationE2E
     await waitForDefaultWorkspaceReady(30000);
   }
   if (!options.skipProvider) {
-    // 新 Composer 会保留已经初始化的空选择。仅写 Recent 不能覆盖这个草稿；
-    // 测试准备必须像用户一样选择目标模型和档位，不能依赖旧初始化副作用。
+    // The new Composer keeps the already-initialized empty selection; writing Recent alone
+    // cannot override this draft.
+    // Test setup must select the target model and tier like a user, not rely on the old
+    // initialization side effects.
     await selectUpstreamModel();
     await selectUpstreamThoughtLevel();
   }
@@ -157,9 +158,12 @@ export async function prepareV4ConversationE2E(options: PrepareV4ConversationE2E
 
 async function ensureV4ShellReady() {
   try {
-    // 新隔离 profile 的职业引导会遮住工作区，先复用真实 UI 跳过流程。
+    // The occupation onboarding of a fresh isolated profile covers the workspace; reuse the real
+    // UI to skip it first.
     await skipOccupationOnboardingIfPresent();
-    await waitForProjectRow(DEFAULT_WORKSPACE, { timeout: 30000 });
+    // ISSUE-024: the fork does not seed projects from settings, so the default project is created
+    // through the project form when the restore path has not registered it.
+    await ensureLocalProjectRow(DEFAULT_WORKSPACE);
     return;
   } catch (error) {
     if (!(await hasApiKeyLoginButton())) {
@@ -167,7 +171,7 @@ async function ensureV4ShellReady() {
     }
     await loginWithApiKey();
     await skipOccupationOnboardingIfPresent();
-    await waitForProjectRow(DEFAULT_WORKSPACE, { timeout: 30000 });
+    await ensureLocalProjectRow(DEFAULT_WORKSPACE);
   }
 }
 
@@ -243,7 +247,7 @@ export async function loginWithApiKey() {
   });
 }
 
-/** 新建草稿：点侧栏新任务按钮，等 v4 pane 回到 draft 态。 */
+/** Start a new draft: click the sidebar new-task button and wait for the v4 pane to return to the draft state. */
 export async function startNewV4Draft() {
   await clickTestIdByDom(TID_TASK_NEW_BUTTON, {
     timeout: 15000,
@@ -297,8 +301,10 @@ export async function waitForV4Pane(
       cause: error,
     });
   }
-  // 原因：会话切换时 pane 可能短暂经过 draft。waitUntil 已命中目标快照后若再读一次 DOM，
-  // 调用方拿到的可能反而是下一帧过渡态，造成“条件通过但返回值不满足条件”的假失败。
+  // Reason: during a session switch the pane may briefly pass through draft. If the DOM is read
+  // once more after waitUntil has matched the target snapshot, the caller may instead get the
+  // next frame's transitional state, causing a false failure where "the condition passed but the
+  // return value does not satisfy it".
   return latest ?? getV4PaneSnapshot(paneId);
 }
 
@@ -322,8 +328,9 @@ export async function waitForV4ConversationState(
       cause: error,
     });
   }
-  // 修复原因：命中 predicate 后再次读取会跨过 running/completed 瞬时边界，
-  // 让调用方拿到与 waitUntil 判定不一致的状态。
+  // Reason for the fix: reading again after the predicate matched can cross the transient
+  // running/completed boundary, giving the caller a state inconsistent with the waitUntil
+  // verdict.
   return latest ?? getV4ConversationState();
 }
 
@@ -402,8 +409,9 @@ export async function getV4ConversationState(): Promise<V4ConversationStateSnaps
 }
 
 /**
- * v4 composer 输入（M5 起为 Lexical contenteditable）：写入走
- * setInputValueByTestIdDom 的 __zcodeLexicalInputE2E bridge 分支（驱动真实 editor state）。
+ * v4 composer input (a Lexical contenteditable since M5): writes go through
+ * setInputValueByTestIdDom's __zcodeLexicalInputE2E bridge branch (driving the real editor
+ * state).
  */
 export async function sendV4Prompt(prompt: string) {
   await setV4ComposerText(prompt);
@@ -428,8 +436,10 @@ export async function sendV4Prompt(prompt: string) {
       },
     );
   } catch (error) {
-    // 修复原因：会话切换竞态发生时，单独的“按钮 disabled”无法区分 projection connecting、
-    // 上一轮仍在运行或 composer 未写入；把失败瞬间的 DOM 状态带回日志，避免继续靠猜测修复。
+    // Reason for the fix: when the session-switch race happens, "button disabled" alone cannot
+    // distinguish projection connecting, the previous turn still running, or the composer never
+    // written; bring the DOM state at the moment of failure back into the log instead of
+    // continuing to fix by guessing.
     const diagnostics = await browser.execute(
       (paneTestId, inputTestId, sendTestId, stopTestId) => {
         const panes = Array.from(
@@ -496,8 +506,10 @@ export async function sendV4Prompt(prompt: string) {
 }
 
 /**
- * 发送普通 prompt 并等待 renderer 明确接受：主 pane composer 清空且真实 user row 出现。
- * 不重试 submit，避免首发已进入 Host、但慢渲染尚未投影时重复发送同一条消息。
+ * Sends a plain prompt and waits for the renderer to explicitly accept it: the main pane's
+ * composer is cleared and a real user row appears.
+ * submit is not retried, to avoid sending the same message twice when the first send already
+ * entered the Host but slow rendering has not projected yet.
  */
 export async function sendV4PromptAndWaitAccepted(
   prompt: string,
@@ -564,7 +576,7 @@ export async function sendV4PromptAndWaitAccepted(
   }
 }
 
-/** 只写入 v4 composer，不触发发送。 */
+/** Writes only into the v4 composer, without triggering a send. */
 export async function setV4ComposerText(text: string) {
   await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, text, {
     timeout: 15000,
@@ -579,7 +591,7 @@ export async function waitForV4ComposerText(expected: string, timeoutMsg: string
   });
 }
 
-/** 点击 v4 composer 发送按钮（输入已由调用方写入，如 slash 命令）。 */
+/** Clicks the v4 composer send button (input already written by the caller, e.g. a slash command). */
 export async function clickV4Send() {
   await browser.waitUntil(
     async () =>
@@ -609,8 +621,9 @@ export async function waitForV4TimelineContaining(text: string, timeout = 60000)
 }
 
 /**
- * 只等待当前 V4 pane 的 assistant 正文，避免用户 prompt 中的同名 marker
- * 抢先满足完成屏障。formal case 不应为此回退到 legacy conversation helper。
+ * Waits only for the current V4 pane's assistant body, so a same-named marker in the user's
+ * prompt cannot satisfy the completion barrier first. A formal case must not fall back to the
+ * legacy conversation helper for this.
  */
 export async function waitForV4AssistantMessageContaining(
   text: string,
@@ -727,7 +740,7 @@ export async function clickV4Stop() {
   });
 }
 
-/** 点击第一个可见的 fork 按钮（完成态 assistant 行），返回是否点到。 */
+/** Clicks the first visible fork button (a completed assistant row); returns whether one was clicked. */
 export async function clickFirstV4Fork() {
   const buttons = await browser.$$('[data-testid^="v4-fork-"]');
   for (const button of buttons) {
@@ -735,9 +748,11 @@ export async function clickFirstV4Fork() {
     if (!(await button.isDisplayed()) || !(await button.isEnabled())) {
       continue;
     }
-    // Bug 根因：直接在 renderer 里调用 HTMLElement.click() 会绕过 WebDriver 的
-    // 用户交互路径；Radix/React 组合控件在长批次中可能只更新视觉层而未提交 fork。
-    // 使用 WebDriver 原生 click，保留同一个按钮和断言语义，确保触发真实 pointer/click 事件。
+    // Bug root cause: calling HTMLElement.click() directly inside the renderer bypasses the
+    // WebDriver user-interaction path; Radix/React composite controls in long batches may update
+    // only the visual layer without committing the fork.
+    // Use a native WebDriver click — same button, same assertion semantics — to guarantee real
+    // pointer/click events are fired.
     await button.click();
     return true;
   }
@@ -766,13 +781,14 @@ async function moveV4ForkRowIntoHoverState(button: WebdriverIO.Element): Promise
     button,
   );
   const row = rowTestId ? await browser.$(`[data-row-id="${rowTestId}"]`) : await button.$("..");
-  // Bug 根因：assistant action toolbar 默认由 group-hover 隐藏，旧 helper 只检查 DOM
-  // 存在就直接点隐藏按钮；长列表中该 click 不会触发真实 fork。先把所属 turn 移入
-  // hover 状态，再用可见且 enabled 的按钮完成同一用户操作，不改变 case 证明。
+  // Bug root cause: the assistant action toolbar is hidden by group-hover by default; the old
+  // helper checked DOM presence and clicked the hidden button anyway, and in a long list that
+  // click never triggers a real fork. Move the owning turn into hover state first, then complete
+  // the same user action with a visible, enabled button — the case's proof is unchanged.
   await row.moveTo();
 }
 
-/** 点击第一个可见的 edit 按钮（user 行），返回是否点到。 */
+/** Clicks the first visible edit button (a user row); returns whether one was clicked. */
 export async function clickFirstV4Edit() {
   return browser.execute(() => {
     const btn = document.querySelector<HTMLButtonElement>('[data-testid^="v4-edit-"]');
@@ -794,22 +810,23 @@ export async function waitForV4Edit(timeout = 60000) {
   );
 }
 
-/** 读取 v4 queue 面板当前项数与文本。 */
+/** Reads the v4 queue panel's current item count and texts. */
 export function getV4QueueItems(): Promise<Array<{ queueItemId: string; text: string }>> {
   return browser.execute(() =>
     Array.from(document.querySelectorAll<HTMLElement>('li[data-testid^="v4-queue-item-"]'))
-      // 修复原因：删除/编辑/立即发送按钮以及行内输入都共享
-      // `v4-queue-item-*` 前缀和 data-queue-item-id；只按前缀会把一个 item
-      // 统计成 4~5 个，误报 projection 没有显示 queue。列表项元素是唯一权威行。
+      // Reason for the fix: the delete/edit/send-now buttons and the inline input all share the
+      // `v4-queue-item-*` prefix and data-queue-item-id; filtering by prefix alone would count
+      // one item as 4–5, falsely reporting that the projection shows no queue. The list-item
+      // element is the single authoritative row.
       .filter((el) => el.hasAttribute("data-queue-item-id"))
       .map((el) => ({
         queueItemId: el.getAttribute("data-queue-item-id") ?? "",
-        text: (el.innerText || "").replace(/ /g, " ").trim(),
+        text: (el.innerText || "").trim(),
       })),
   );
 }
 
-/** 读取 queue.autoDrain 权威 DOM 投影，供 fault/恢复 case 证明错误后不会自动消费。 */
+/** Reads the authoritative DOM projection of queue.autoDrain, for fault/recovery cases to prove errors do not auto-consume. */
 export function getV4QueueAutoDrain(): Promise<boolean | null> {
   return browser.execute((queueTestId) => {
     const queue = document.querySelector<HTMLElement>(`[data-testid="${queueTestId}"]`);
@@ -825,7 +842,7 @@ export async function waitForV4QueueCount(expected: number, timeout = 30000) {
   });
 }
 
-/** 点击某 queue 项的删除按钮（按 queueItemId）。 */
+/** Clicks a queue item's delete button (by queueItemId). */
 export async function clickV4QueueItemDelete(queueItemId: string) {
   return browser.execute((id) => {
     const btn = document.querySelector<HTMLButtonElement>(
@@ -836,7 +853,7 @@ export async function clickV4QueueItemDelete(queueItemId: string) {
   }, queueItemId);
 }
 
-/** 点击某 queue 项的编辑按钮（按 queueItemId，撤回到 composer）。 */
+/** Clicks a queue item's edit button (by queueItemId; pulls back into the composer). */
 export async function clickV4QueueItemEdit(queueItemId: string, clickCount = 1) {
   return browser.execute(
     (id, count) => {
@@ -853,7 +870,7 @@ export async function clickV4QueueItemEdit(queueItemId: string, clickCount = 1) 
   );
 }
 
-/** 点击某 queue 项的立即发送按钮（按 queueItemId）。 */
+/** Clicks a queue item's send-now button (by queueItemId). */
 export async function clickV4QueueItemSendNow(queueItemId: string) {
   return browser.execute((id) => {
     const btn = document.querySelector<HTMLButtonElement>(
@@ -864,12 +881,13 @@ export async function clickV4QueueItemSendNow(queueItemId: string) {
   }, queueItemId);
 }
 
-// ── 暂停队列发送确认与恢复（B06/B07/B14/B15/C08）──
-// 原因：旧 E2E 把 clear/keep 当作 composer 的两颗替代发送按钮；产品交互改成
-// 正常发送按钮先打开 modal 后，必须显式走“发送 → 等 modal → 选择”，否则测试会
-// 把只打开弹窗误判成消息已经提交。
+// ── Paused-queue send confirmation and resume (B06/B07/B14/B15/C08) ──
+// Reason: the old E2E treated clear/keep as two alternative send buttons of the composer; after
+// the product interaction changed so the normal send button opens a modal first, the test must
+// explicitly go "send → wait for modal → choose", otherwise it mistakes merely opening the
+// dialog for the message having been submitted.
 
-/** 暂停队列发送确认 modal 与两个操作按钮是否同时存在。 */
+/** Whether the paused-queue send-confirmation modal and both action buttons exist together. */
 export function hasV4PausedQueueSendDialog(): Promise<boolean> {
   return browser.execute(
     (dialogTestId, clearTestId, keepTestId) =>
@@ -884,7 +902,7 @@ export function hasV4PausedQueueSendDialog(): Promise<boolean> {
   );
 }
 
-/** 等待正常发送按钮提交后出现暂停队列确认 modal。 */
+/** Waits for the paused-queue confirmation modal to appear after the normal send button submits. */
 export async function waitForV4PausedQueueSendDialog(timeout = 30000) {
   await browser.waitUntil(async () => hasV4PausedQueueSendDialog(), {
     timeout,
@@ -892,7 +910,7 @@ export async function waitForV4PausedQueueSendDialog(timeout = 30000) {
   });
 }
 
-/** 通过正常发送按钮打开 modal，再选择“保留队列并发送”。 */
+/** Opens the modal via the normal send button, then chooses "keep the queue and send". */
 export async function sendV4PausedQueueKeep(prompt: string) {
   await sendV4Prompt(prompt);
   await waitForV4PausedQueueSendDialog();
@@ -902,7 +920,7 @@ export async function sendV4PausedQueueKeep(prompt: string) {
   });
 }
 
-/** 通过正常发送按钮打开 modal，再选择“清空队列并发送”。 */
+/** Opens the modal via the normal send button, then chooses "clear the queue and send". */
 export async function sendV4PausedQueueClear(prompt: string) {
   await sendV4Prompt(prompt);
   await waitForV4PausedQueueSendDialog();
@@ -912,7 +930,7 @@ export async function sendV4PausedQueueClear(prompt: string) {
   });
 }
 
-/** 暂停提示条与“继续”按钮是否同时存在。 */
+/** Whether the paused banner and the "resume" button exist together. */
 export function hasV4PausedQueueBanner(): Promise<boolean> {
   return browser.execute(
     (bannerTestId, resumeTestId) =>
@@ -932,7 +950,7 @@ export async function waitForV4PausedQueueBanner(timeout = 30000) {
   });
 }
 
-/** 点击暂停队列提示条的“继续”，恢复 CLI FIFO 自动消费。 */
+/** Clicks the paused banner's "resume" to restore the CLI's FIFO auto-consumption. */
 export async function clickV4PausedQueueResume() {
   await waitForV4PausedQueueBanner();
   await clickTestIdByDom(TID_V4_QUEUE_RESUME, {
@@ -941,7 +959,7 @@ export async function clickV4PausedQueueResume() {
   });
 }
 
-/** 读取后台工作面板项（workId + status）。 */
+/** Reads background work panel items (workId + status). */
 export function getV4BackgroundWorks(): Promise<Array<{ workId: string; status: string | null }>> {
   return browser.execute((itemPrefix) => {
     return Array.from(
@@ -953,13 +971,13 @@ export function getV4BackgroundWorks(): Promise<Array<{ workId: string; status: 
   }, TID_V4_BACKGROUND_WORK_ITEM);
 }
 
-/** 读取 Composer 当前 session 的后台任务计数与响应式展示形态；无入口返回 null。 */
+/** Reads the current session's background-task counts and responsive display form in the Composer; returns null when there is no entry point. */
 export function getV4ComposerBackgroundWorkCounts(): Promise<{
   bashCount: number;
   workflowCount: number;
   subagentCount: number;
   totalCount: number;
-  /** 入口点击的落点（docs/dynamic-workflow/presentation.md）："panel" | "workflow-run"。 */
+  /** Where an entry-point click lands (docs/dynamic-workflow/presentation.md): "panel" | "workflow-run". */
   openTarget: string;
   typedVisible: boolean;
   compactVisible: boolean;
@@ -985,14 +1003,13 @@ export function getV4ComposerBackgroundWorkCounts(): Promise<{
   }, TID_V4_COMPOSER_BACKGROUND_WORK_TRIGGER);
 }
 
-/** Electron driver 不实现 WebDriver window/rect；通过主进程 BrowserWindow 调整 viewport。 */
 export async function setV4ElectronWindowSize(width: number, height: number) {
   // Bug 根因：外框和 renderer 内容区的差值随平台及 zoom 改变，固定误差会误报超时。
   // 复用精确绑定当前窗口的内容区 helper，同时保留尺寸应用失败的断言。
   await setCurrentElectronRendererContentSize(width, height);
 }
 
-/** 从 Composer 单一入口展开 Status panel，并直达所有非空后台类型区块。 */
+/** Expands the Status panel from the Composer's single entry point and opens every non-empty background-type section. */
 export async function openV4ComposerRunningBackgroundWorks(timeout = 30000) {
   await clickTestIdByDom(TID_V4_COMPOSER_BACKGROUND_WORK_TRIGGER, {
     timeout,
@@ -1025,7 +1042,7 @@ export async function openV4ComposerRunningBackgroundWorks(timeout = 30000) {
   );
 }
 
-/** 展开统一 status panel 的非空后台类型区块；定位只依赖结构化属性，不依赖中英文。 */
+/** Expands the unified status panel's non-empty background-type sections; locating depends only on structured attributes, not on language. */
 export async function openV4RunningBackgroundWorks(timeout = 30000) {
   await browser.waitUntil(
     async () =>
@@ -1090,7 +1107,7 @@ export function getLatestV4CommandAck(type: string): Promise<{
   }, type);
 }
 
-/** 等待指定 v4 command 的结构化 ACK，避免业务断言把 command 卡住误报成模型无回复。 */
+/** Waits for a structured ACK of the given v4 command, so business assertions do not mistake a stuck command for "the model did not reply". */
 export async function waitForLatestV4CommandAck(type: string, timeout = 30000) {
   let latest: Awaited<ReturnType<typeof getLatestV4CommandAck>> = null;
   await browser.waitUntil(
@@ -1103,7 +1120,7 @@ export async function waitForLatestV4CommandAck(type: string, timeout = 30000) {
   return latest!;
 }
 
-/** 点击某后台工作的取消按钮（cancelBackgroundWork 命令，按 workId）。 */
+/** Clicks a background work's cancel button (the cancelBackgroundWork command, by workId). */
 export async function clickV4BackgroundWorkCancel(workId: string) {
   return browser.execute((id) => {
     const btn = document.querySelector<HTMLButtonElement>(
@@ -1114,7 +1131,7 @@ export async function clickV4BackgroundWorkCancel(workId: string) {
   }, workId);
 }
 
-/** 点击会话删除按钮（deleteSession 命令）。 */
+/** Clicks the session delete button (the deleteSession command). */
 export async function clickV4DeleteSession() {
   return clickTestIdByDom(TID_V4_DELETE_SESSION, {
     timeout: 15000,
@@ -1122,7 +1139,7 @@ export async function clickV4DeleteSession() {
   });
 }
 
-/** 读取 Composer 当前 mode/模型选择显示。 */
+/** Reads the Composer's current mode/model selection display. */
 export function getV4ModelConfig(): Promise<{
   mode: string | null;
   provider: string | null;
@@ -1142,7 +1159,7 @@ export function getV4ModelConfig(): Promise<{
   }, TID_V4_MODEL_CONFIG);
 }
 
-/** 等待当前 Composer 已从持久 Draft 完成 mode/模型选择初始化。 */
+/** Waits until the current Composer has finished mode/model selection initialization from the persisted Draft. */
 export async function waitForV4ComposerSelectionReady(timeout = 30_000) {
   let latest = await getV4ModelConfig();
   await browser.waitUntil(
@@ -1162,7 +1179,7 @@ export async function waitForV4ComposerSelectionReady(timeout = 30_000) {
   );
 }
 
-/** 读取 draft 当前模型及其思考档位；V4 投影优先，legacy 目录仅作水合前 fallback。 */
+/** Reads the draft's current model and its reasoning tier; the V4 projection wins, the legacy directory is only a pre-hydration fallback. */
 export function getV4DraftThoughtState(workspacePath: string): Promise<{
   current: string | null;
   model: string | null;
@@ -1211,13 +1228,15 @@ export function getV4DraftThoughtState(workspacePath: string): Promise<{
 }
 
 /**
- * 通过 composer 工具条切换模型 + 思考深度（switchModelConfig 命令）。
- * M5：调试表单（provider/model/thought 文本框 + 应用）已被真实模型选择器替换——
- * helper 适配为驱动 ModelConfigSelect（含 provider 分组二级菜单）与思考深度选择器，
- * spec 的断言语义不变（config 投影更新为目标值）。
+ * Switches model + reasoning depth via the composer toolbar (the switchModelConfig command).
+ * M5: the debug form (provider/model/thought text boxes + apply) was replaced by real model
+ * selectors — this helper now drives ModelConfigSelect (including the provider-grouped submenu)
+ * and the reasoning-depth selector; the spec's assertion semantics are unchanged (the config
+ * projection updates to the target values).
  */
 export async function switchV4Model(provider: string, model: string, thought: string) {
-  // 1) 模型：打开菜单 → （必要时展开 provider 分组子菜单）→ 点目标模型项。
+  // 1) Model: open the menu → (expand the provider group's submenu if needed) → click the
+  // target model item.
   const modelItemTestId = testId(
     TID_CHAT_MODEL_SELECT_ITEM,
     encodeCustomModelValue(provider, model),
@@ -1225,8 +1244,9 @@ export async function switchV4Model(provider: string, model: string, thought: st
   const providerGroupTestIds = [
     testId(TID_CHAT_MODEL_SELECT_GROUP, `registry-provider:${provider}`),
   ];
-  // 模型菜单是受控 DropdownMenu（pointerdown 打开），element.click() 不触发；
-  // 与旧 upstream helper 同口径用 WebDriver 真实点击。
+  // The model menu is a controlled DropdownMenu (opens on pointerdown); element.click() does not
+  // trigger it.
+  // Same approach as the old upstream helper: a real WebDriver click.
   const modelTrigger = $(sel(TID_CHAT_MODEL_SELECT_TRIGGER));
   await modelTrigger.waitForClickable({ timeout: 30000 });
   await modelTrigger.click();
@@ -1239,21 +1259,13 @@ export async function switchV4Model(provider: string, model: string, thought: st
             item.click();
             return true;
           }
-          // 自定义 provider 模型在二级菜单：先触发分组展开（hover + click 双保险）。
+          // Custom-provider models live in a submenu: trigger the group's expansion first
+          // (hover + click, belt and braces).
           const group = groupTestIds
             .map((groupTestId) =>
               document.querySelector<HTMLElement>(`[data-testid="${groupTestId}"]`),
             )
             .find((candidate): candidate is HTMLElement => Boolean(candidate));
-          if (!group) {
-            const providerTrigger = document.querySelector<HTMLElement>(
-              '[data-testid="composer-provider-trigger"]',
-            );
-            providerTrigger?.focus();
-            providerTrigger?.dispatchEvent(
-              new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }),
-            );
-          }
           if (group) {
             group.focus();
             for (const eventName of ["pointerenter", "mouseenter", "mousemove"] as const) {
@@ -1278,27 +1290,23 @@ export async function switchV4Model(provider: string, model: string, thought: st
     },
   );
 
-  // 模型 config 投影落定后再切思考深度：thought 命令的 provider/model 参数取自
-  // 最新投影，模型切换未回流前切 thought 会被 UI 跳过（config-empty 防御）。
+  // Switch the reasoning depth only after the model config projection has settled: the thought
+  // command's provider/model arguments come from the latest projection, and switching thought
+  // before the model switch has flowed back is skipped by the UI (the config-empty guard).
   await browser.waitUntil(async () => (await getV4ModelConfig()).model === model, {
     timeout: 30000,
     timeoutMsg: `模型切换后 config.model 投影没有更新为 ${model}`,
   });
 
-  if (thought && (await selectCombinedComposerThoughtLevel(thought))) return;
-  if (!thought && (await modelTrigger.getAttribute("data-composer-combined-model")) === "true") {
-    await browser.keys("Escape");
-    return;
-  }
-
-  // 无 reasoning metadata 的 custom provider 不渲染 thought selector。协议类 E2E
-  // 传空值表示只切模型，不能把不存在的思考深度控件当作模型切换失败。
+  // Custom providers without reasoning metadata render no thought selector. Protocol-type E2Es
+  // pass an empty value to mean "switch the model only"; a missing reasoning-depth control must
+  // not be treated as a model-switch failure.
   if (!thought) {
     return;
   }
 
-  // 2) 思考深度：Radix Select 的 item 在真实 pointer 事件上确认（element.click() 无效），
-  // trigger/item 都用 WebDriver 真实点击。
+  // 2) Reasoning depth: a Radix Select item confirms on real pointer events (element.click() does
+  // nothing); both trigger and item are clicked with real WebDriver clicks.
   await selectRadixOption(
     TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER,
     testId(TID_CHAT_THOUGHT_LEVEL_SELECT_ITEM, thought),
@@ -1306,7 +1314,7 @@ export async function switchV4Model(provider: string, model: string, thought: st
   );
 }
 
-/** Radix Select 通用驱动：真实点击 trigger 展开，item 需要完整 pointer 手势才会确认。 */
+/** Generic Radix Select driver: a real click expands the trigger; the item needs a full pointer gesture to confirm. */
 async function selectRadixOption(triggerTestId: string, itemTestId: string, timeoutMsg: string) {
   const trigger = $(sel(triggerTestId));
   await trigger.waitForClickable({ timeout: 30000 });
@@ -1317,8 +1325,9 @@ async function selectRadixOption(triggerTestId: string, itemTestId: string, time
   } catch (error) {
     throw new Error(timeoutMsg, { cause: error });
   }
-  // Radix SelectItem 的确认：mouse 手势要求 trusted pointer 链路（合成事件被手势
-  // 判定忽略），键盘路径（item 聚焦 + Enter，SELECTION_KEYS）是自动化下最稳的确认方式。
+  // Confirming a Radix SelectItem: the mouse gesture requires a trusted pointer chain (synthetic
+  // events are ignored by the gesture detection), so the keyboard path (focus the item + Enter,
+  // SELECTION_KEYS) is the most reliable confirmation under automation.
   const confirmResult = await browser.execute((currentTestId) => {
     const element = document.querySelector<HTMLElement>(`[data-testid="${currentTestId}"]`);
     if (!element) {
@@ -1345,7 +1354,8 @@ async function selectRadixOption(triggerTestId: string, itemTestId: string, time
   if (!confirmResult || confirmResult.ok !== true) {
     throw new Error(`${timeoutMsg}（item 确认阶段异常: ${JSON.stringify(confirmResult)}）`);
   }
-  // 选择生效 ⇔ SelectContent 卸载（item 消失）；未关闭说明确认未生效，抛诊断。
+  // Selection took effect ⇔ SelectContent unmounted (the item is gone); if it did not close, the
+  // confirmation did not take effect — throw with diagnostics.
   await browser
     .waitUntil(
       async () =>
@@ -1360,7 +1370,7 @@ async function selectRadixOption(triggerTestId: string, itemTestId: string, time
     });
 }
 
-/** 读取 goal 横幅（data-goal-status / data-goal-objective 投影属性）；无目标返回 null。 */
+/** Reads the goal banner (data-goal-status / data-goal-objective projection attributes); returns null when there is no goal. */
 export function getV4GoalProjection(): Promise<{
   status: string | null;
   objective: string | null;
@@ -1381,7 +1391,7 @@ export function getV4GoalProjection(): Promise<{
   );
 }
 
-/** 打开 latest user query 行内编辑并填入新文本，但不提交。 */
+/** Opens the latest user query's inline edit and fills in new text, without submitting. */
 export async function beginFirstV4UserQueryEdit(newText: string) {
   let rowId: string | null = null;
   let lastClickedRowId: string | null = null;
@@ -1439,9 +1449,11 @@ export async function beginFirstV4UserQueryEdit(newText: string) {
   if (!rowId) {
     throw new Error("v4 latest user edit action 没有出现");
   }
-  // Bug 根因：compact success 会先投影成功 marker，再清理 active work；这两帧之间
-  // 旧 edit action 可能短暂可见后被 canEdit 收口撤下。单次 DOM click 会把刚打开的
-  // 本地 editing 状态随 onEdit 消失一起关闭。等待稳定 input，并在 action 恢复后重试。
+  // Bug root cause: compact success projects the success marker first and cleans up the active
+  // work afterwards; between those two frames the old edit action may be briefly visible before
+  // the canEdit gate pulls it. A single DOM click would close the just-opened local editing state
+  // together with the vanished onEdit. Wait for a stable input and retry once the action is
+  // back.
   await setInputValueByTestIdDom(testId(TID_V4_EDIT_INPUT, rowId), newText, {
     timeout: 15000,
     timeoutMsg: `v4 行内编辑输入框没有出现: rowId=${rowId}`,
@@ -1449,7 +1461,7 @@ export async function beginFirstV4UserQueryEdit(newText: string) {
   return rowId;
 }
 
-/** 按真实行内编辑交互提交 latest user query，主 composer 草稿不参与。 */
+/** Submits the latest user query through the real inline-edit interaction; the main composer draft is not involved. */
 export async function editFirstV4UserQuery(newText: string) {
   const rowId = await beginFirstV4UserQueryEdit(newText);
   await clickTestIdByDom(testId(TID_V4_EDIT_SUBMIT, rowId), {
@@ -1459,7 +1471,7 @@ export async function editFirstV4UserQuery(newText: string) {
   return rowId;
 }
 
-/** 提交行内编辑的“对话 + 文件重置”路径。 */
+/** Submits the inline edit's "conversation + files reset" path. */
 export async function clickV4EditWorkspaceReset(rowId: string) {
   await clickTestIdByDom(testId(TID_V4_EDIT_REWIND_WORKSPACE, rowId), {
     timeout: 15000,
@@ -1485,7 +1497,7 @@ export async function clickV4EditConflictConversationOnly() {
   });
 }
 
-/** 读取结构化 compact marker；状态与来源只读 data-*，不依赖本地化 label。 */
+/** Reads structured compact markers; status and origin are read only from data-*, not from localized labels. */
 export function getV4CompactMarkers(
   paneId: string = V4_MAIN_PANE_ID,
 ): Promise<V4CompactMarkerSnapshot[]> {
@@ -1511,7 +1523,7 @@ export function getV4CompactMarkers(
   );
 }
 
-/** 等待结构化 compact marker；不读取本地化 label。 */
+/** Waits for a structured compact marker; localized labels are not read. */
 export async function waitForV4CompactMarker(
   expected: { status: string; origin: "manual" | "auto" },
   timeout = 90000,
@@ -1528,7 +1540,7 @@ export async function waitForV4CompactMarker(
   );
 }
 
-/** 读取会话标题显示（data-title 投影属性）。 */
+/** Reads the session title display (the data-title projection attribute). */
 export function getV4SessionTitle(): Promise<string | null> {
   return browser.execute((titleTestId) => {
     const el = document.querySelector<HTMLElement>(`[data-testid="${titleTestId}"]`);
@@ -1536,7 +1548,7 @@ export function getV4SessionTitle(): Promise<string | null> {
   }, TID_V4_SESSION_TITLE);
 }
 
-/** 在 header 重命名输入框写入标题并点提交（renameSession 命令）。 */
+/** Writes a title into the header rename input and clicks submit (the renameSession command). */
 export async function renameV4Session(title: string) {
   await setInputValueByTestIdDom(TID_V4_RENAME_INPUT, title, {
     timeout: 15000,
@@ -1548,7 +1560,7 @@ export async function renameV4Session(title: string) {
   });
 }
 
-/** 读取输入控制条：autoDrain（data-auto-drain）与 followupMode（data-followup-mode）。 */
+/** Reads the input control bar: autoDrain (data-auto-drain) and followupMode (data-followup-mode). */
 export function getV4InputControlState(): Promise<{
   autoDrain: string | null;
   followupMode: string | null;
@@ -1567,7 +1579,7 @@ export function getV4InputControlState(): Promise<{
   );
 }
 
-/** 点击 autoDrain 开关（setAutoDrain 命令）。 */
+/** Clicks the autoDrain toggle (the setAutoDrain command). */
 export async function clickV4AutoDrainToggle() {
   return clickTestIdByDom(TID_V4_AUTODRAIN_TOGGLE, {
     timeout: 15000,
@@ -1575,7 +1587,7 @@ export async function clickV4AutoDrainToggle() {
   });
 }
 
-/** 点击 followupMode 开关（setFollowupMode 命令）。 */
+/** Clicks the followupMode toggle (the setFollowupMode command). */
 export async function clickV4FollowupToggle() {
   return clickTestIdByDom(TID_V4_FOLLOWUP_TOGGLE, {
     timeout: 15000,
@@ -1583,7 +1595,7 @@ export async function clickV4FollowupToggle() {
   });
 }
 
-/** 拖拽某 queue 项到目标 queue 项上（按 queueItemId）。 */
+/** Drags one queue item onto a target queue item (by queueItemId). */
 export async function dragV4QueueItemOnto(sourceQueueItemId: string, targetQueueItemId: string) {
   const positions = (await browser.execute(
     (sourceId, targetId) => {
@@ -1660,8 +1672,8 @@ export async function dragV4QueueItemOnto(sourceQueueItemId: string, targetQueue
   ]);
   await browser.releaseActions();
 
-  // 修复原因：dnd-kit 会屏蔽拖拽结束后的紧随 click，E2E 用空白 click 消耗这次屏蔽，
-  // 避免后续按钮点击被误吞。
+  // Reason for the fix: dnd-kit swallows the click immediately following a drag end; the E2E
+  // burns that suppression with a blank click so later button clicks are not eaten by mistake.
   await browser.execute(() => {
     document.body.dispatchEvent(
       new MouseEvent("click", {
@@ -1674,26 +1686,27 @@ export async function dragV4QueueItemOnto(sourceQueueItemId: string, targetQueue
   await browser.pause(50);
 }
 
-// ── M5④ 虚拟滚动：timeline 滚动状态读写 ──
-// 虚拟化后 DOM 只有挂载的 turn units；raw 行数分别走 timeline 容器的
-// data-window-row-count（rows.window）与 data-total-row-count（rows.totalCount），
-// 避免把 mounted unit、logical unit 与持久 raw row 三种计量单位混用。
+// ── M5④ Virtual scrolling: timeline scroll state read/write ──
+// After virtualization the DOM only holds the mounted turn units; raw row counts go through the
+// timeline container's data-window-row-count (rows.window) and data-total-row-count
+// (rows.totalCount), avoiding a mix of the three counting units: mounted unit, logical unit, and
+// persisted raw row.
 
 export interface V4TimelineScrollState {
   scrollTop: number;
   scrollHeight: number;
   clientHeight: number;
-  /** raw projection window 行数。 */
+  /** Raw projection window row count. */
   windowRowCount: number;
-  /** turn-level logical render unit 数。 */
+  /** Turn-level logical render unit count. */
   renderUnitCount: number;
-  /** 全序行数（data-total-row-count）。 */
+  /** Total row count over the full sequence (data-total-row-count). */
   totalRowCount: number;
-  /** 底部跟随态（data-following："true" | "false"）。 */
+  /** Bottom-following state (data-following: "true" | "false"). */
   following: string | null;
-  /** 实际挂载到 DOM 的 turn unit 数（虚拟化窗口 + overscan）。 */
+  /** Turn units actually mounted to the DOM (virtualized window + overscan). */
   mountedRenderUnitCount: number;
-  /** 「回到底部」按钮是否出现。 */
+  /** Whether the "back to bottom" button is present. */
   hasBackToBottom: boolean;
 }
 
@@ -1720,23 +1733,29 @@ export function getV4TimelineScrollState(): Promise<V4TimelineScrollState> {
 }
 
 /**
- * 把 timeline 滚到顶（scrollTop=0，触发原生 scroll 事件 → 解除底部跟随），
- * 并等虚拟化窗口对齐到新滚动位置后才返回。
+ * Scrolls the timeline to the top (scrollTop=0, firing a native scroll event → releases bottom
+ * following), and returns only after the virtualized window has aligned to the new scroll
+ * position.
  *
- * bugfix（虚拟化语义）：scrollTop 赋值后 scroll 事件要到下一渲染帧才派发，
- * virtualizer 收到事件才重渲染顶端行——期间 DOM 仍是旧的底部窗口
- * （实测：scrollTop=0 后旧行 58..72 还挂在视口下方 3272px 处），此时视口里没有
- * 任何行。CDP execute 往返快于一帧，调用方紧接着的 DOM 采样会读到过期窗口。
- * 这里等「有行真正落进视口」（虚拟窗口已对齐当前滚动位置）再返回。
- * 注意不能等 scrollTop 停在 0：到顶会触发 loadOlder，prepend 锚定会立刻把
- * scrollTop 平移到保持阅读位置的新值（这正是被测语义），0 只是瞬态。
+ * bugfix (virtualization semantics): after scrollTop is assigned, the scroll event only fires on
+ * the next render frame, and only when the virtualizer receives it does it re-render the top
+ * rows — meanwhile the DOM still shows the old bottom window
+ * (measured: after scrollTop=0 the old rows 58..72 still hung 3272px below the viewport), so the
+ * viewport holds no rows at all. A CDP execute round-trip is faster than a frame, so the
+ * caller's immediately following DOM sample would read a stale window.
+ * Here we wait until "rows have genuinely landed in the viewport" (the virtual window has aligned
+ * to the current scroll position) before returning.
+ * Note we cannot wait for scrollTop to rest at 0: reaching the top triggers loadOlder, and
+ * prepend anchoring immediately translates scrollTop to a new value that keeps the reading
+ * position (exactly the semantics under test); 0 is only transient.
  */
 export async function scrollV4TimelineToTop() {
   await browser.execute((timelineTestId) => {
     const timeline = document.querySelector<HTMLElement>(`[data-testid="${timelineTestId}"]`);
     if (!timeline) return;
-    // 修复原因：ConversationTimeline 会先用 wheel/touch/key 记录真实用户意图，
-    // 仅写 scrollTop 的脚本滚动可能被布局保护窗口归类为虚拟化校正，继续保持底部跟随。
+    // Reason for the fix: ConversationTimeline first records real user intent via wheel/touch/key;
+    // a scripted scroll that only writes scrollTop may be classified by the layout-protection
+    // window as a virtualization correction, keeping bottom following.
     timeline.dispatchEvent(
       new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -600 }),
     );
@@ -1768,7 +1787,7 @@ export async function scrollV4TimelineToTop() {
   );
 }
 
-/** 点「回到底部」按钮（恢复跟随并贴底）。 */
+/** Clicks the "back to bottom" button (restores following and sticks to the bottom). */
 export async function clickV4TimelineBackToBottom() {
   return clickTestIdByDom(TID_V4_TIMELINE_BOTTOM, {
     timeout: 15000,
@@ -1776,7 +1795,7 @@ export async function clickV4TimelineBackToBottom() {
   });
 }
 
-// ── TN：v4 对话轮次导航 minimap ──
+// ── TN: the v4 conversation turn navigator minimap ──
 
 export interface V4TurnNavigatorState {
   centerOffsetPx: number;
@@ -1959,12 +1978,12 @@ export async function waitForV4TurnNavigatorTooltip(
   return getV4TurnNavigatorTooltipText();
 }
 
-// ── M5⑤ 分屏（Layout/Focus 两层）：pane 级定位与焦点断言 ──
-// 分屏后同 testid（composer 输入/发送等）在两个 pane 各有一份，全局 helper 只会
-// 命中 DOM 序第一个（primary）。以下 helper 一律先按 v4-pane-shell-<paneId>
-// 收口作用域再定位，焦点断言读外壳的 data-focused。
+// ── M5⑤ Split panes (Layout/Focus layers): pane-level locating and focus assertions ──
+// After a split, the same testid (composer input/send, etc.) exists once per pane; a global
+// helper would only hit the first in DOM order (primary). The helpers below always scope by
+// v4-pane-shell-<paneId> before locating, and focus assertions read the shell's data-focused.
 
-/** 读取当前 focused pane 的 paneId（data-focused="true" 的外壳）；无外壳返回 null。 */
+/** Reads the current focused pane's paneId (the shell with data-focused="true"); returns null when there is no shell. */
 export function getV4FocusedPaneId(): Promise<string | null> {
   return browser.execute((shellPrefix) => {
     const focused = document.querySelector<HTMLElement>(
@@ -1974,7 +1993,7 @@ export function getV4FocusedPaneId(): Promise<string | null> {
   }, TID_V4_PANE_SHELL);
 }
 
-/** 点击侧栏会话项并等待 primary pane 绑定到该 session。 */
+/** Clicks a sidebar session item and waits for the primary pane to bind to that session. */
 export async function selectV4TaskById(sessionId: string, taskListTimeout = 15000) {
   await clickTestIdByDom(testId(TID_TASK_ITEM, sessionId), {
     timeout: taskListTimeout,
@@ -1988,7 +2007,7 @@ export async function selectV4TaskById(sessionId: string, taskListTimeout = 1500
   );
 }
 
-/** 对 pane 外壳派发 pointerdown（Focus 层 onPointerDownCapture → focus 该 pane）。 */
+/** Dispatches pointerdown on a pane shell (the Focus layer's onPointerDownCapture → focuses that pane). */
 export async function focusV4Pane(paneId: string) {
   const dispatched = await browser.execute(
     (shellTestId) => {
@@ -2008,7 +2027,7 @@ export async function focusV4Pane(paneId: string) {
   });
 }
 
-/** pane 作用域内点 stop（分屏时全局 TID_V4_STOP 会命中 DOM 序第一个 pane）。 */
+/** Clicks stop within a pane's scope (with a split, the global TID_V4_STOP would hit the first pane in DOM order). */
 export async function clickV4StopInPane(paneId: string) {
   const clicked = await browser.execute(
     (shellTestId, stopTestId) => {
@@ -2025,7 +2044,7 @@ export async function clickV4StopInPane(paneId: string) {
   }
 }
 
-/** pane 作用域内点分屏 pane 的 session pane snapshot（按 paneId）。 */
+/** Waits for a split pane's session pane snapshot within that pane's scope (by paneId). */
 export async function waitForV4PaneById(
   paneId: string,
   predicate: (snapshot: V4PaneSnapshot) => boolean,
@@ -2035,11 +2054,12 @@ export async function waitForV4PaneById(
   return waitForV4Pane(predicate, timeoutMsg, timeout, paneId);
 }
 
-/** pane 作用域内写 composer 文本并点发送（同 sendV4Prompt，但按 paneId 收口）。 */
+/** Writes composer text and clicks send within a pane's scope (same as sendV4Prompt, but scoped by paneId). */
 export async function sendV4PromptInPane(paneId: string, prompt: string) {
   const paneShellTestId = testId(TID_V4_PANE_SHELL, paneId);
-  // M5：composer 为 Lexical contenteditable——写入走编辑器挂载的 __zcodeLexicalInputE2E
-  // bridge（驱动真实 editor state）；bridge.focus() 同时驱动 Focus 层 → composer 归属该 pane。
+  // M5: the composer is a Lexical contenteditable — writes go through the editor-mounted
+  // __zcodeLexicalInputE2E bridge (driving the real editor state); bridge.focus() also drives the
+  // Focus layer, so the composer belongs to that pane.
   await browser.waitUntil(
     async () =>
       browser.execute(
@@ -2090,7 +2110,7 @@ export async function sendV4PromptInPane(paneId: string, prompt: string) {
   );
 }
 
-/** 等待 v4 权限弹窗出现（V4InteractionDialogs → PermissionDialog，role=listbox）。 */
+/** Waits for the v4 permission dialog to appear (V4InteractionDialogs → PermissionDialog, role=listbox). */
 export function hasV4PermissionDialog(): Promise<boolean> {
   return browser.execute(() => {
     const normalize = (value: string | null | undefined) => (value ?? "").replace(/ /g, " ").trim();
@@ -2103,7 +2123,7 @@ export function hasV4PermissionDialog(): Promise<boolean> {
   });
 }
 
-/** V4 普通 permission 声明 freeText 能力时，底部输入行必须实际挂载。 */
+/** When a plain v4 permission declares the freeText capability, the bottom input row must actually be mounted. */
 export function hasV4PermissionFeedbackInput(): Promise<boolean> {
   return browser.execute(() =>
     Boolean(
@@ -2180,7 +2200,8 @@ async function readV4PermissionDockState(): Promise<V4PermissionDockState> {
 }
 
 /**
- * 等待真实权限弹窗进入 v4 composer dock，并确认阻塞期间 composer 只隐藏不卸载。
+ * Waits for the real permission dialog to enter the v4 composer dock, and confirms the composer
+ * is only hidden, not unmounted, while blocked.
  */
 export async function waitForV4PermissionDialogInComposerDock(timeout = 60000) {
   await waitForV4PermissionDialog(timeout);
@@ -2200,9 +2221,10 @@ export async function waitForV4PermissionDialogInComposerDock(timeout = 60000) {
 }
 
 /**
- * 批准 v4 权限弹窗的第一个选项（Allow once）。PermissionDialog 首项默认选中，
- * 单击已选中项即确认 onRespond → resolveInteraction 命令。为稳妥点两次
- *（第一次若只是选中，第二次确认）。
+ * Approves the v4 permission dialog's first option (Allow once). PermissionDialog's first item is
+ * selected by default, and clicking the already-selected item confirms onRespond → the
+ * resolveInteraction command. For safety, click twice (if the first click only selected, the
+ * second confirms).
  */
 export async function approveV4Permission(feedback?: string) {
   await waitForV4PermissionDialog();
@@ -2227,7 +2249,8 @@ export async function approveV4Permission(feedback?: string) {
       return Boolean(option);
     });
   await confirmFirstOption();
-  // 弹窗消失即视为已应答；若首次点击只是选中，再点一次确认。
+  // The dialog disappearing counts as answered; if the first click only selected, click once more
+  // to confirm.
   const dismissed = await browser
     .waitUntil(
       async () => {
@@ -2253,7 +2276,7 @@ export async function approveV4Permission(feedback?: string) {
   return dismissed;
 }
 
-/** 填写拒绝反馈并确认 Deny，反馈走同一个 resolveInteraction 应答。 */
+/** Fills in the deny feedback and confirms Deny; the feedback goes through the same resolveInteraction answer. */
 export async function denyV4PermissionWithFeedback(feedback: string, submitWithEnter = false) {
   await waitForV4PermissionDialog();
   const input = await $(
@@ -2262,7 +2285,8 @@ export async function denyV4PermissionWithFeedback(feedback: string, submitWithE
   await input.waitForDisplayed({ timeout: 15000 });
   await input.setValue(feedback);
 
-  // 空白输入行不能提交；普通 Deny 仍可确认且只回传基础拒绝文案。
+  // A blank input row must not submit; plain Deny can still be confirmed and returns only the
+  // base rejection copy.
   if (!feedback.trim() && !submitWithEnter) {
     await browser.execute(() => {
       document
@@ -2303,7 +2327,8 @@ export async function denyV4PermissionWithFeedback(feedback: string, submitWithE
             return label === "Permission required" || label === "需要权限";
           },
         );
-        // 按稳定的阻塞交互区域定位，避免新增视觉分组后依赖 listbox 的直接父节点。
+        // Locate by the stable blocking-interaction region, so a new visual grouping does not
+        // make this depend on the listbox's direct parent.
         const confirmButton = listbox
           ?.closest('[data-v4-composer-dock="true"]')
           ?.querySelector<HTMLButtonElement>(
@@ -2323,7 +2348,7 @@ export async function denyV4PermissionWithFeedback(feedback: string, submitWithE
     .catch(() => false);
 }
 
-/** 选择携带 CLI suggestion 的项目级始终允许选项。 */
+/** Selects the project-level always-allow option carrying the CLI suggestion. */
 export async function approveV4PermissionAlways() {
   await waitForV4PermissionDialog();
   const confirmAlwaysOption = () =>
@@ -2360,9 +2385,9 @@ export async function approveV4PermissionAlways() {
     .catch(() => false);
 }
 
-// ── M5 composer 工具条 / slash 面板 ──
+// ── M5 composer toolbar / slash panel ──
 
-/** 读取 composer 当前文本（Lexical E2E bridge）。bridge 未挂载返回 null。 */
+/** Reads the composer's current text (the Lexical E2E bridge). Returns null when the bridge is not mounted. */
 export function getV4ComposerText(): Promise<string | null> {
   return browser.execute((inputTestId) => {
     const element = document.querySelector<HTMLElement>(`[data-testid="${inputTestId}"]`);
@@ -2373,7 +2398,7 @@ export function getV4ComposerText(): Promise<string | null> {
   }, TID_V4_COMPOSER_INPUT);
 }
 
-/** composer 本体或其 Lexical 子节点当前是否持有焦点。 */
+/** Whether the composer itself or its Lexical child currently holds focus. */
 export function isV4ComposerFocused(): Promise<boolean> {
   return browser.execute((inputTestId) => {
     const element = document.querySelector<HTMLElement>(`[data-testid="${inputTestId}"]`);
@@ -2381,7 +2406,7 @@ export function isV4ComposerFocused(): Promise<boolean> {
   }, TID_V4_COMPOSER_INPUT);
 }
 
-/** 读取 composer 附件卡片的可观察文件名与 ready 状态。 */
+/** Reads the composer attachment cards' observable filename and ready state. */
 export function getV4ComposerAttachments(): Promise<
   Array<{ text: string; uploadStatus: string | null }>
 > {
@@ -2390,8 +2415,8 @@ export function getV4ComposerAttachments(): Promise<
       Array.from(document.querySelectorAll<HTMLElement>(`[data-testid^="${attachmentPrefix}-"]`))
         .filter((element) => element.hasAttribute("data-upload-status"))
         .map((element) => {
-          // Bug 原因：媒体卡片按产品设计只展示缩略图，文件名在 img alt 中；读取
-          // innerText 会把 ready 的图片误判成“附件没有进入 ready”。
+          // Bug cause: by design media cards only show a thumbnail, with the filename in the img
+          // alt; reading innerText would mistake a ready image for "attachment not ready".
           const mediaFilename = element.querySelector<HTMLImageElement>("img[alt]")?.alt.trim();
           return {
             text: mediaFilename || (element.innerText || element.textContent || "").trim(),
@@ -2402,7 +2427,7 @@ export function getV4ComposerAttachments(): Promise<
   );
 }
 
-/** slash 候选面板是否出现。 */
+/** Whether the slash suggestion panel has appeared. */
 export function hasV4SlashPanel(): Promise<boolean> {
   return browser.execute(
     (panelTestId) => Boolean(document.querySelector(`[data-testid="${panelTestId}"]`)),
@@ -2410,7 +2435,7 @@ export function hasV4SlashPanel(): Promise<boolean> {
   );
 }
 
-/** 读取 slash 面板当前候选项 id（如 "slash:compact"）。 */
+/** Reads the slash panel's current option ids (e.g. "slash:compact"). */
 export function getV4SlashOptionIds(): Promise<string[]> {
   return browser.execute((optionPrefix) => {
     return Array.from(
@@ -2419,7 +2444,7 @@ export function getV4SlashOptionIds(): Promise<string[]> {
   }, TID_PROMPT_SUGGESTION_OPTION);
 }
 
-/** 等待 slash 面板出现且包含目标候选项。 */
+/** Waits for the slash panel to appear and contain the target option. */
 export async function waitForV4SlashOption(optionId: string, timeout = 15000) {
   await browser.waitUntil(
     async () => (await hasV4SlashPanel()) && (await getV4SlashOptionIds()).includes(optionId),
@@ -2431,16 +2456,17 @@ export async function waitForV4SlashOption(optionId: string, timeout = 15000) {
 }
 
 /**
- * 点选 slash 候选项。面板选项在 mousedown 上确认（preventDefault 防 blur），
- * element.click() 不派发 mousedown，这里显式 dispatch。
+ * Clicks a slash option. Panel options confirm on mousedown (preventDefault to avoid blur), and
+ * element.click() does not dispatch mousedown, so it is dispatched explicitly here.
  */
 export async function clickV4SlashOption(optionId: string) {
   const optionTestId = testId(TID_PROMPT_SUGGESTION_OPTION, optionId);
   let dispatched = false;
   await browser.waitUntil(
     async () => {
-      // Bug 根因：Windows Skill option id 含反斜杠，动态 CSS selector 无法精确命中；
-      // 同时 React 可能在候选加载时重挂载节点，所以定位与 mousedown 必须在一次查询内重试。
+      // Bug root cause: on Windows the Skill option id contains a backslash, so a dynamic CSS
+      // selector cannot match it exactly; React may also remount nodes while candidates load, so
+      // locating and mousedown must retry within a single query.
       dispatched = await browser.execute(dispatchMouseDownByExactTestId, optionTestId);
       return dispatched;
     },
@@ -2452,7 +2478,7 @@ export async function clickV4SlashOption(optionId: string) {
   return dispatched;
 }
 
-/** 通过 composer 工具条切换协作模式（switchCollaborationMode 命令）。 */
+/** Switches the collaboration mode via the composer toolbar (the switchCollaborationMode command). */
 export async function switchV4Mode(mode: string) {
   await selectRadixOption(
     TID_CHAT_MODE_SELECT_TRIGGER,
@@ -2461,7 +2487,7 @@ export async function switchV4Mode(mode: string) {
   );
 }
 
-/** 读取 config 投影扩展锚点（data-mode / data-usage-*，M5 additive）。 */
+/** Reads the config projection's extension anchor (data-mode / data-usage-*, M5 additive). */
 export function getV4ConfigProjection(): Promise<{
   mode: string | null;
   planEnabled: boolean;
@@ -2479,13 +2505,14 @@ export function getV4ConfigProjection(): Promise<{
   }, TID_V4_MODEL_CONFIG);
 }
 
-// ── M5 composer mention（@/#/$）/ 附件 ──
-// mention 面板与 slash 面板共用 TID_PROMPT_SUGGESTION_PANEL / _OPTION 契约，
-// 故读取/点选原语与 slash 同源；option-id 前缀区分（file:/session:/skill:）。
+// ── M5 composer mention (@/#/$) / attachments ──
+// The mention panel and the slash panel share the TID_PROMPT_SUGGESTION_PANEL / _OPTION contract,
+// so the read/click primitives share the slash implementation; the option-id prefix tells them
+// apart (file:/session:/skill:).
 
 /**
- * 等待 mention 面板出现且含以 prefix 打头的候选项（如 "session:"）。
- * 返回首个命中的完整 option-id。
+ * Waits for the mention panel to appear with an option starting with prefix (e.g. "session:").
+ * Returns the first matching full option-id.
  */
 export async function waitForV4MentionOptionPrefix(
   prefix: string,
@@ -2506,7 +2533,7 @@ export async function waitForV4MentionOptionPrefix(
   return matched as string;
 }
 
-/** 经真实 paste 事件向 v4 composer 加入一个 File，并走既有 eager upload。 */
+/** Adds a File to the v4 composer via a real paste event, going through the existing eager upload. */
 export async function pasteV4ComposerFileAttachment(
   filename = "e2e-pasted.png",
   options: { base64?: string; mimeType?: string; pngBase64?: string } = {},
@@ -2518,8 +2545,9 @@ export async function pasteV4ComposerFileAttachment(
         input?.querySelector<HTMLElement>('[contenteditable="true"]') ??
         (input?.getAttribute("contenteditable") === "true" ? input : null);
       if (!editable) return false;
-      // 修复原因：旧 fixture 虽能被 file 识别为 PNG，但 production Jimp 会拒绝其尾部数据；
-      // 使用已通过同一解码器验证的 1×1 PNG，避免图片 E2E 在业务读取前退化为占位文本。
+      // Reason for the fix: the old fixture was recognized as PNG by `file`, but production Jimp
+      // rejects its trailing data; use a 1×1 PNG already validated by the same decoder so image
+      // E2Es do not degrade to placeholder text before the business code reads them.
       const imageBase64 =
         explicitBase64 ??
         explicitPngBase64 ??
@@ -2551,7 +2579,7 @@ export async function pasteV4ComposerFileAttachment(
   return filename;
 }
 
-/** 向 v4 composer 派发图片文件；保留既有 case 的语义化入口。 */
+/** Dispatches an image file into the v4 composer; kept as the semantic entry point for existing cases. */
 export function pasteV4ComposerImageAttachment(
   filename = "e2e-pasted.png",
   options: { base64?: string; mimeType?: string; pngBase64?: string } = {},
@@ -2559,7 +2587,7 @@ export function pasteV4ComposerImageAttachment(
   return pasteV4ComposerFileAttachment(filename, options);
 }
 
-/** 等待某个 user 行渲染出附件簇，返回文件 pill 文本及媒体缩略图的可访问文件名。 */
+/** Waits for a user row to render its attachment cluster, returning the file pill text and the media thumbnails' accessible filenames. */
 export async function waitForV4RowAttachments(
   timeout = 60000,
   expectedNames: readonly string[] = [],
@@ -2570,15 +2598,15 @@ export async function waitForV4RowAttachments(
       text = await browser.execute((attachmentsPrefix) => {
         const el = document.querySelector<HTMLElement>(`[data-testid^="${attachmentsPrefix}-"]`);
         if (!el) return "";
-        // Bug 原因：已发送媒体只有缩略图，文件名由 img alt 承载，不能用 innerText
-        // 是否为空来判断附件簇有没有渲染。
+        // Bug cause: sent media only has a thumbnail, with the filename carried by the img alt;
+        // whether innerText is empty cannot tell whether the attachment cluster rendered.
         const visibleText = (el.innerText ?? "").trim();
         const mediaFilenames = Array.from(el.querySelectorAll<HTMLImageElement>("img[alt]"))
           .map((image) => image.alt.trim())
           .filter(Boolean);
         return [visibleText, ...mediaFilenames].filter(Boolean).join("\n");
       }, TID_V4_ROW_ATTACHMENTS);
-      // 文本卡和媒体缩略图异步挂载；需要整组附件的 case 不能把第一张卡当作全组就绪。
+      // Text cards and media thumbnails mount asynchronously; a multi-file case must wait for the whole group.
       return text.trim().length > 0 && expectedNames.every((name) => text.includes(name));
     },
     { timeout, timeoutMsg: "user 行没有渲染出附件簇（TID_V4_ROW_ATTACHMENTS）" },

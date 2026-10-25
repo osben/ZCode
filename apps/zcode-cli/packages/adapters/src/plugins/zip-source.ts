@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, chmod, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import * as yauzl from "yauzl";
@@ -169,7 +169,7 @@ async function downloadZipArchive(input: {
   signal?: AbortSignal;
   url: string;
 }): Promise<Uint8Array> {
-  // agent 会封存用户 shell 代理，ZIP 下载必须和其他应用层 fetch 一样读取 captured proxy fallback。
+  // The agent sanitizes the user's shell proxy, so ZIP downloads must read the captured proxy fallback like other application-level fetches.
   const client = createNodeWebFetchHttpClientAdapter({
     env: process.env,
     maxResponseBytes: ZIP_DOWNLOAD_MAX_BYTES,
@@ -197,7 +197,7 @@ async function downloadZipArchive(input: {
         throw new Error(`Plugin zip download redirect is missing Location header: ${currentUrl}`);
       }
       const redirectUrl = new URL(location, currentUrl);
-      // 跨 CDN origin 继续发送 marketplace 自定义 header 会把内部元数据泄露给跳转目标。
+      // Forwarding marketplace custom headers across CDN origins would leak internal metadata to the redirect target.
       if (redirectUrl.origin !== new URL(currentUrl).origin) {
         currentHeaders = undefined;
       }
@@ -271,6 +271,15 @@ async function extractZipArchive(input: {
             }
             await mkdir(dirname(targetPath), { recursive: true });
             await writeFile(targetPath, bytes);
+            // Bug fix: the entry's Unix permission bits were dropped entirely, so plugin hook executables shipped in
+            // marketplace zips (for example superpowers' run-hook.cmd) were extracted non-executable and every hook
+            // spawn failed with EACCES/exit 126. chmod after write applies the archived rwx bits verbatim; writeFile's
+            // mode would be masked by the process umask. Entries without Unix attributes (mode 0) keep the platform
+            // default instead of being forced executable, and setuid/setgid/sticky are never restored.
+            const unixMode = (entry.externalFileAttributes >>> 16) & 0o777;
+            if (unixMode !== 0) {
+              await chmod(targetPath, unixMode);
+            }
             zipFile.readEntry();
           } catch (error) {
             rejectOnce(error);

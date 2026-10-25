@@ -4,18 +4,19 @@ import { createElement, useState } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderModelReasoningLevelEditor } from "@/settings/model-provider-section/ProviderModelReasoningLevelEditor.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 afterEach(cleanup);
 
 describe("ProviderModelReasoningLevelEditor", () => {
-  it("只聚焦档位再离开不创建个人覆盖", () => {
+  it("does not create a personal override when a level is only focused then blurred", () => {
     const onChange = vi.fn();
     render(
       createElement(ProviderModelReasoningLevelEditor, {
         values: ["low", "high"],
         overridden: false,
-        addLabel: "添加档位",
-        deleteLabel: "删除档位",
+        addLabel: expectedCopy("settings.modelProvider.reasoningLevelAdd"),
+        deleteLabel: expectedCopy("settings.modelProvider.reasoningLevelDelete"),
         onChange,
       }),
     );
@@ -23,14 +24,14 @@ describe("ProviderModelReasoningLevelEditor", () => {
     fireEvent.blur(screen.getByDisplayValue("low"));
     expect(onChange).not.toHaveBeenCalled();
   });
-  it("完成键盘排序、编辑、添加和删除", () => {
+  it("completes keyboard reordering, editing, adding and deleting", () => {
     function Harness() {
       const [values, setValues] = useState<readonly string[]>(["low", "high"]);
       return createElement(ProviderModelReasoningLevelEditor, {
         values,
         overridden: true,
-        addLabel: "添加档位",
-        deleteLabel: "删除档位",
+        addLabel: expectedCopy("settings.modelProvider.reasoningLevelAdd"),
+        deleteLabel: expectedCopy("settings.modelProvider.reasoningLevelDelete"),
         onChange: setValues,
       });
     }
@@ -64,12 +65,20 @@ describe("ProviderModelReasoningLevelEditor", () => {
     fireEvent.keyDown(screen.getByDisplayValue("medium"), { key: "Enter" });
     expect(readValues()).toEqual(["low", "medium"]);
 
-    fireEvent.click(screen.getByRole("button", { name: "添加档位" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: expectedCopy("settings.modelProvider.reasoningLevelAdd"),
+      }),
+    );
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "max" } });
     fireEvent.keyDown(screen.getByDisplayValue("max"), { key: "Enter" });
     expect(readValues()).toEqual(["low", "medium", "max"]);
 
-    fireEvent.click(screen.getByRole("button", { name: "删除档位: low" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: `${expectedCopy("settings.modelProvider.reasoningLevelDelete")}: low`,
+      }),
+    );
     expect(readValues()).toEqual(["medium", "max"]);
     expect(container.querySelector('[data-personal-override="true"]')).toBeTruthy();
   });

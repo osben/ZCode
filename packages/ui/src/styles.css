@@ -2,6 +2,8 @@
 @import "tw-animate-css";
 @import "tailwind-scrollbar-hide/v4";
 @import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter/index.css";
+@import "@fontsource-variable/jetbrains-mono/index.css";
 @import "@xterm/xterm/css/xterm.css";
 @import "katex/dist/katex.min.css";
 @import "./highspeed/highspeed-activation.css";
@@ -138,14 +140,35 @@ html[data-document-hidden] *::after {
   }
 }
 
+/* Buttons, links, and interactive role elements should signal clickability consistently.
+ * Exclude disabled controls, including Radix items that use data-disabled instead of :disabled. */
+@layer base {
+  a[href]:not([aria-disabled="true"]),
+  button:not(:disabled):not([aria-disabled="true"]),
+  [role="button"]:not(:disabled):not([aria-disabled="true"]):not([data-disabled]),
+  [role="menuitem"]:not([aria-disabled="true"]):not([data-disabled]),
+  [role="menuitemcheckbox"]:not([aria-disabled="true"]):not([data-disabled]),
+  [role="menuitemradio"]:not([aria-disabled="true"]):not([data-disabled]),
+  [role="option"]:not([aria-disabled="true"]):not([data-disabled]),
+  [role="treeitem"]:not([aria-disabled="true"]):not([data-disabled]),
+  summary:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+}
+
 /* === 主题变量 === */
 
 @theme {
   /* 修复原因：Windows 的 Consolas 不含中文字形，Tailwind 默认栈最终会让中文落到宋体。
    * 保留各平台西文等宽字体，并在通用 monospace 前显式加入各平台 CJK 无衬线字体。 */
+  /* Bundled defaults. Custom user fonts override --font-sans / --font-mono at
+   * runtime via documentElement.style.setProperty; a missing override falls back to these values. */
+  --font-sans:
+    "Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-mono:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
-    "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", monospace;
+    "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", "Microsoft YaHei UI", "Microsoft YaHei",
+    "PingFang SC", "Noto Sans CJK SC", monospace;
   /* 设置页直接恢复通用大字号会绕过 UI 字号体系；专用 token 保留默认 24px / 30px，并跟随界面字号缩放。 */
   --text-ui-settings-title: calc(var(--ui-font-size) + 10px);
   --text-ui-settings-title--line-height: calc(4 / 3);
@@ -176,8 +199,18 @@ html[data-document-hidden] *::after {
   --color-trajectory-user: #2563eb;
   --color-trajectory-assistant: #0f766e;
   --color-trajectory-reasoning: #7c3aed;
+  --color-quick-prompt-red: var(--color-red-500);
+  --color-quick-prompt-orange: var(--color-orange-600);
+  --color-quick-prompt-yellow: var(--color-yellow-700);
+  --color-quick-prompt-green: var(--color-green-600);
+  --color-quick-prompt-blue: var(--color-blue-500);
+  --color-quick-prompt-violet: var(--color-violet-500);
+  --color-quick-prompt-pink: var(--color-pink-500);
   --color-trajectory-tool-call: #d97706;
   --color-trajectory-tool-result: #0284c7;
+  --color-trajectory-skill: #4f46e5;
+  --color-trajectory-memory: #db2777;
+  --color-trajectory-mcp: #b45309;
   /* 工作流因果图仪表化渲染（docs/dynamic-workflow/presentation.md）：
    * rule 比 --color-border 更弱——刻度与空闲轨道每图重复约 40 次，10% 会积成灰雾。 */
   --color-workflow-rule: color-mix(in oklab, var(--color-neutral-950) 5.5%, transparent);
@@ -279,6 +312,18 @@ html[data-document-hidden] *::after {
   --color-success-foreground: var(--color-foreground-inverse);
   --color-idle-task: var(--color-violet-600);
   --color-idle-task-surface: var(--color-violet-50);
+  /* Worktree-session GitBranch marker; same hue family as idle-task by approved v1 decision (specs/worktree-icon-visibility.md). */
+  --color-worktree-task: var(--color-violet-600);
+  /* Pull request lifecycle stages (specs/sidebar-pr-status.md): GitHub colors as
+     aliases of existing semantic tokens, theme-aware through var() indirection. */
+  --color-pr-open: var(--color-success);
+  --color-pr-draft: var(--color-foreground-subtle);
+  --color-pr-merged: var(--color-icon-purple);
+  --color-pr-closed: var(--color-destructive);
+  /* Incognito composer tint and toggle (specs/incognito-session.md); sidebar marker stays uncolored. */
+  --color-incognito: var(--color-cyan-600);
+  /* Pinned-entry bars in the conversation turn navigator (specs/turn-navigator-pin-highlight.md). */
+  --color-pinned-turn: var(--color-amber-600);
   --color-destructive: var(--color-red-600);
   --color-destructive-foreground: var(--color-foreground-inverse);
   --color-warning: var(--color-yellow-600);
@@ -348,8 +393,18 @@ html[data-document-hidden] *::after {
   --color-trajectory-user: #60a5fa;
   --color-trajectory-assistant: #2dd4bf;
   --color-trajectory-reasoning: #a78bfa;
+  --color-quick-prompt-red: var(--color-red-400);
+  --color-quick-prompt-orange: var(--color-orange-400);
+  --color-quick-prompt-yellow: var(--color-yellow-400);
+  --color-quick-prompt-green: var(--color-green-400);
+  --color-quick-prompt-blue: var(--color-blue-400);
+  --color-quick-prompt-violet: var(--color-violet-400);
+  --color-quick-prompt-pink: var(--color-pink-400);
   --color-trajectory-tool-call: #f59e0b;
   --color-trajectory-tool-result: #38bdf8;
+  --color-trajectory-skill: #818cf8;
+  --color-trajectory-memory: #f472b6;
+  --color-trajectory-mcp: #fbbf24;
   --color-workflow-rule: color-mix(in oklab, var(--color-white) 6.5%, transparent);
   --color-workflow-trace: color-mix(in oklab, var(--color-white) 35%, transparent);
   --color-workflow-trace-strong: color-mix(in oklab, var(--color-white) 60%, transparent);
@@ -452,6 +507,9 @@ html[data-document-hidden] *::after {
   --color-success-foreground: var(--color-foreground-inverse);
   --color-idle-task: var(--color-violet-400);
   --color-idle-task-surface: color-mix(in oklab, var(--color-violet-950) 50%, transparent);
+  --color-worktree-task: var(--color-violet-400);
+  --color-incognito: var(--color-cyan-400);
+  --color-pinned-turn: var(--color-amber-400);
   --color-destructive: var(--color-red-500);
   --color-destructive-foreground: var(--color-foreground-inverse);
   --color-warning: var(--color-yellow-500);
@@ -520,8 +578,18 @@ html[data-document-hidden] *::after {
   --color-trajectory-user: #2563eb;
   --color-trajectory-assistant: #0f766e;
   --color-trajectory-reasoning: #7c3aed;
+  --color-quick-prompt-red: var(--color-red-500);
+  --color-quick-prompt-orange: var(--color-orange-600);
+  --color-quick-prompt-yellow: var(--color-yellow-700);
+  --color-quick-prompt-green: var(--color-green-600);
+  --color-quick-prompt-blue: var(--color-blue-500);
+  --color-quick-prompt-violet: var(--color-violet-500);
+  --color-quick-prompt-pink: var(--color-pink-500);
   --color-trajectory-tool-call: #d97706;
   --color-trajectory-tool-result: #0284c7;
+  --color-trajectory-skill: #4f46e5;
+  --color-trajectory-memory: #db2777;
+  --color-trajectory-mcp: #b45309;
   --color-workflow-rule: rgba(13, 13, 13, 0.055);
   --color-workflow-trace: rgba(13, 13, 13, 0.3);
   --color-workflow-trace-strong: rgba(13, 13, 13, 0.55);
@@ -616,6 +684,9 @@ html[data-document-hidden] *::after {
   --color-success-foreground: #ffffff;
   --color-idle-task: #9e77ed;
   --color-idle-task-surface: #f5f3ff;
+  --color-worktree-task: #9e77ed;
+  --color-incognito: #0e9fb8;
+  --color-pinned-turn: var(--color-amber-600);
   --color-destructive: #e03131;
   --color-destructive-foreground: #ffffff;
   --color-warning: #e07b00;
@@ -684,8 +755,18 @@ html[data-document-hidden] *::after {
   --color-trajectory-user: #60a5fa;
   --color-trajectory-assistant: #2dd4bf;
   --color-trajectory-reasoning: #a78bfa;
+  --color-quick-prompt-red: var(--color-red-400);
+  --color-quick-prompt-orange: var(--color-orange-400);
+  --color-quick-prompt-yellow: var(--color-yellow-400);
+  --color-quick-prompt-green: var(--color-green-400);
+  --color-quick-prompt-blue: var(--color-blue-400);
+  --color-quick-prompt-violet: var(--color-violet-400);
+  --color-quick-prompt-pink: var(--color-pink-400);
   --color-trajectory-tool-call: #f59e0b;
   --color-trajectory-tool-result: #38bdf8;
+  --color-trajectory-skill: #818cf8;
+  --color-trajectory-memory: #f472b6;
+  --color-trajectory-mcp: #fbbf24;
   --color-workflow-rule: rgba(255, 255, 255, 0.065);
   --color-workflow-trace: rgba(255, 255, 255, 0.35);
   --color-workflow-trace-strong: rgba(255, 255, 255, 0.6);
@@ -780,6 +861,9 @@ html[data-document-hidden] *::after {
   --color-success-foreground: #000000;
   --color-idle-task: #7b5ce5;
   --color-idle-task-surface: #160d38;
+  --color-worktree-task: #7b5ce5;
+  --color-incognito: #22b8cf;
+  --color-pinned-turn: var(--color-amber-400);
   --color-destructive: #ff5c5c;
   /* 修复原因：Zai Dark 曾把 destructive 前景设为黑色，与红色危险按钮的固定白字设计冲突。 */
   --color-destructive-foreground: #ffffff;
@@ -837,6 +921,391 @@ html[data-document-hidden] *::after {
   --color-plugin-node-foreground: #efc58f;
   --color-plugin-paid-plan-badge: #5a341b;
   --color-plugin-paid-plan-badge-foreground: #ffd8b8;
+}
+
+/*
+ * The accent palette covers --color-brand, --color-accent, and --color-primary (primary fills for buttons, switches, checkboxes, and badges),
+ * or selection states are barely visible. The primary foreground is light in light mode and dark in dark mode; test/themeContrast.test.ts checks a 4.5:1 contrast ratio.
+ * Surface tokens (background, sidebar, header, panel, card, popover, input) and the window root background --color-background-win-alt (visible sidebar) are also overridden by the palette for the same reason.
+ * The light block (0,1,0) takes effect after the :root emitted by @theme; the dark block (0,2,0) overrides it under .dark.
+ * Hex values must match the accent in lib/themePalettes.ts; test/themeContrast.test.ts verifies them.
+ * --color-ring follows the primary color too: it is not defined in styles.css, or ring-ring and outline focus styles would have no color.
+ * var() is resolved on the element, so dark mode reads --color-primary from the dark block without a separately declared dark block.
+ */
+.palette-ocean {
+  --color-brand: #2563eb;
+  --color-accent: color-mix(in oklab, #2563eb 12%, transparent);
+  --color-primary: #2563eb;
+  --color-primary-foreground: #fafafa;
+  --color-ring: var(--color-primary);
+  --color-background: #e4ecfb;
+  --color-sidebar: #c6d7f7;
+  --color-background-win-alt: #ced7e8;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #c6d7f7;
+  --color-panel: #c6d7f7;
+  --color-card: #f4f8ff;
+  --color-popover: #f4f8ff;
+  --color-input: #f4f8ff;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-input-focused: var(--color-input);
+}
+
+.palette-ocean.dark {
+  --color-brand: #60a5fa;
+  --color-accent: color-mix(in oklab, #60a5fa 16%, transparent);
+  --color-primary: #60a5fa;
+  --color-primary-foreground: #0a0a0a;
+  --color-background: #20262e;
+  --color-sidebar: #12171d;
+  --color-background-win-alt: #2d343c;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #20262e;
+  --color-panel: #20262e;
+  --color-card: #2c3037;
+  --color-popover: #2c3037;
+  --color-input: #2c3037;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 94%, var(--color-white));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-input-focused: var(--color-input);
+}
+
+.palette-forest {
+  --color-brand: #15803d;
+  --color-accent: color-mix(in oklab, #15803d 12%, transparent);
+  --color-primary: #15803d;
+  --color-primary-foreground: #fafafa;
+  --color-ring: var(--color-primary);
+  --color-background: #e5eee6;
+  --color-sidebar: #c8dbcb;
+  --color-background-win-alt: #ced9d0;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #c8dbcb;
+  --color-panel: #c8dbcb;
+  --color-card: #f4f9f5;
+  --color-popover: #f4f9f5;
+  --color-input: #f4f9f5;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-input-focused: var(--color-input);
+}
+
+.palette-forest.dark {
+  --color-brand: #4ade80;
+  --color-accent: color-mix(in oklab, #4ade80 16%, transparent);
+  --color-primary: #4ade80;
+  --color-primary-foreground: #0a0a0a;
+  --color-background: #202b23;
+  --color-sidebar: #121b14;
+  --color-background-win-alt: #2e3930;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #202b23;
+  --color-panel: #202b23;
+  --color-card: #2c342e;
+  --color-popover: #2c342e;
+  --color-input: #2c342e;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 94%, var(--color-white));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-input-focused: var(--color-input);
+}
+
+.palette-ember {
+  --color-brand: #c2410c;
+  --color-accent: color-mix(in oklab, #c2410c 12%, transparent);
+  --color-primary: #c2410c;
+  --color-primary-foreground: #fafafa;
+  --color-ring: var(--color-primary);
+  --color-background: #f7e8e3;
+  --color-sidebar: #efcfc5;
+  --color-background-win-alt: #e4d2cd;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #efcfc5;
+  --color-panel: #efcfc5;
+  --color-card: #fdf6f3;
+  --color-popover: #fdf6f3;
+  --color-input: #fdf6f3;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-input-focused: var(--color-input);
+}
+
+.palette-ember.dark {
+  --color-brand: #fb923c;
+  --color-accent: color-mix(in oklab, #fb923c 16%, transparent);
+  --color-primary: #fb923c;
+  --color-primary-foreground: #0a0a0a;
+  --color-background: #2e241e;
+  --color-sidebar: #1d1610;
+  --color-background-win-alt: #3d322b;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #2e241e;
+  --color-panel: #2e241e;
+  --color-card: #372f2a;
+  --color-popover: #372f2a;
+  --color-input: #372f2a;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 94%, var(--color-white));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-input-focused: var(--color-input);
+}
+
+.palette-violet {
+  --color-brand: #7c3aed;
+  --color-accent: color-mix(in oklab, #7c3aed 12%, transparent);
+  --color-primary: #7c3aed;
+  --color-primary-foreground: #fafafa;
+  --color-ring: var(--color-primary);
+  --color-background: #ece9fb;
+  --color-sidebar: #d7d0f7;
+  --color-background-win-alt: #d6d3e9;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #d7d0f7;
+  --color-panel: #d7d0f7;
+  --color-card: #f7f6ff;
+  --color-popover: #f7f6ff;
+  --color-input: #f7f6ff;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-input-focused: var(--color-input);
+}
+
+.palette-violet.dark {
+  --color-brand: #a78bfa;
+  --color-accent: color-mix(in oklab, #a78bfa 16%, transparent);
+  --color-primary: #a78bfa;
+  --color-primary-foreground: #0a0a0a;
+  --color-background: #25242e;
+  --color-sidebar: #16151d;
+  --color-background-win-alt: #33313c;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #25242e;
+  --color-panel: #25242e;
+  --color-card: #302f37;
+  --color-popover: #302f37;
+  --color-input: #302f37;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 94%, var(--color-white));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-input-focused: var(--color-input);
+}
+
+.palette-slate {
+  --color-brand: #475569;
+  --color-accent: color-mix(in oklab, #475569 12%, transparent);
+  --color-primary: #475569;
+  --color-primary-foreground: #fafafa;
+  --color-ring: var(--color-primary);
+  --color-background: #e7e8eb;
+  --color-sidebar: #cccfd5;
+  --color-background-win-alt: #d1d3d5;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #cccfd5;
+  --color-panel: #cccfd5;
+  --color-card: #f5f6f7;
+  --color-popover: #f5f6f7;
+  --color-input: #f5f6f7;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-input-focused: var(--color-input);
+}
+
+.palette-slate.dark {
+  --color-brand: #94a3b8;
+  --color-accent: color-mix(in oklab, #94a3b8 16%, transparent);
+  --color-primary: #94a3b8;
+  --color-primary-foreground: #0a0a0a;
+  --color-background: #242527;
+  --color-sidebar: #151618;
+  --color-background-win-alt: #323335;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #242527;
+  --color-panel: #242527;
+  --color-card: #2f3031;
+  --color-popover: #2f3031;
+  --color-input: #2f3031;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 94%, var(--color-white));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-input-focused: var(--color-input);
+}
+
+.palette-rose {
+  --color-brand: #be185d;
+  --color-accent: color-mix(in oklab, #be185d 12%, transparent);
+  --color-primary: #be185d;
+  --color-primary-foreground: #fafafa;
+  --color-ring: var(--color-primary);
+  --color-background: #f7e6e9;
+  --color-sidebar: #efcad1;
+  --color-background-win-alt: #e4cfd4;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #efcad1;
+  --color-panel: #efcad1;
+  --color-card: #fef5f6;
+  --color-popover: #fef5f6;
+  --color-input: #fef5f6;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-input-focused: var(--color-input);
+}
+
+.palette-rose.dark {
+  --color-brand: #f472b6;
+  --color-accent: color-mix(in oklab, #f472b6 16%, transparent);
+  --color-primary: #f472b6;
+  --color-primary-foreground: #0a0a0a;
+  --color-background: #2e2227;
+  --color-sidebar: #1d1318;
+  --color-background-win-alt: #3c2f35;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #2e2227;
+  --color-panel: #2e2227;
+  --color-card: #372d31;
+  --color-popover: #372d31;
+  --color-input: #372d31;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 94%, var(--color-white));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-input-focused: var(--color-input);
+}
+
+.palette-sand {
+  --color-brand: #a16207;
+  --color-accent: color-mix(in oklab, #a16207 12%, transparent);
+  --color-primary: #a16207;
+  --color-primary-foreground: #fafafa;
+  --color-ring: var(--color-primary);
+  --color-background: #f2eae4;
+  --color-sidebar: #e4d4c5;
+  --color-background-win-alt: #ded5cd;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #e4d4c5;
+  --color-panel: #e4d4c5;
+  --color-card: #fbf7f3;
+  --color-popover: #fbf7f3;
+  --color-input: #fbf7f3;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-input-focused: var(--color-input);
+}
+
+.palette-sand.dark {
+  --color-brand: #facc15;
+  --color-accent: color-mix(in oklab, #facc15 16%, transparent);
+  --color-primary: #facc15;
+  --color-primary-foreground: #0a0a0a;
+  --color-background: #2d291e;
+  --color-sidebar: #1d1a11;
+  --color-background-win-alt: #3c382c;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #2d291e;
+  --color-panel: #2d291e;
+  --color-card: #36332a;
+  --color-popover: #36332a;
+  --color-input: #36332a;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 94%, var(--color-white));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-input-focused: var(--color-input);
+}
+
+.palette-mint {
+  --color-brand: #0f766e;
+  --color-accent: color-mix(in oklab, #0f766e 12%, transparent);
+  --color-primary: #0f766e;
+  --color-primary-foreground: #fafafa;
+  --color-ring: var(--color-primary);
+  --color-background: #e4eceb;
+  --color-sidebar: #c7d8d6;
+  --color-background-win-alt: #ced7d6;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #c7d8d6;
+  --color-panel: #c7d8d6;
+  --color-card: #f4f8f7;
+  --color-popover: #f4f8f7;
+  --color-input: #f4f8f7;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 94%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-neutral-950));
+  --color-input-focused: var(--color-input);
+}
+
+.palette-mint.dark {
+  --color-brand: #2dd4bf;
+  --color-accent: color-mix(in oklab, #2dd4bf 16%, transparent);
+  --color-primary: #2dd4bf;
+  --color-primary-foreground: #0a0a0a;
+  --color-background: #1f2a28;
+  --color-sidebar: #111a18;
+  --color-background-win-alt: #2d3836;
+  --color-background-alt: color-mix(in oklab, var(--color-background-win-alt) 60%, transparent);
+  --color-header: #1f2a28;
+  --color-panel: #1f2a28;
+  --color-card: #2b3432;
+  --color-popover: #2b3432;
+  --color-input: #2b3432;
+  --color-menu: var(--color-popover);
+  --color-menu-hover: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-popover-header: color-mix(in oklab, var(--color-popover) 88%, var(--color-neutral-950));
+  --color-tooltip: color-mix(in oklab, var(--color-popover) 85%, var(--color-neutral-950));
+  --color-tooltip-tag: color-mix(in oklab, var(--color-popover) 94%, var(--color-white));
+  --color-card-selected: color-mix(in oklab, var(--color-popover) 92%, var(--color-white));
+  --color-input-focused: var(--color-input);
 }
 
 /*

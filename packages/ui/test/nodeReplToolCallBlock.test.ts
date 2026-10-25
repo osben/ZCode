@@ -2,6 +2,7 @@ import type { IBroadcastService } from "@zcode/services";
 import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { buildNodeReplDisplayModel } from "@/lib/nodeReplToolDisplay.js";
 import { StoreProvider } from "@/store/StoreProvider.js";
@@ -53,7 +54,7 @@ function renderWithProviders(element: ReactElement) {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: TEST_LOCALE },
       createElement(
         StoreProvider,
         { broadcastService: mockBroadcastService },
@@ -73,7 +74,7 @@ describe("node repl tool display", () => {
         title: "js",
         input: {
           code: "globalThis.browser = await agent.browsers.getDefault();",
-          title: "选择浏览器并读取操作说明",
+          title: "Select the browser and read the instructions",
         },
         output: {
           type: "text",
@@ -83,7 +84,7 @@ describe("node repl tool display", () => {
       }),
     ).toMatchObject({
       operation: "run",
-      userTitle: "选择浏览器并读取操作说明",
+      userTitle: "Select the browser and read the instructions",
       code: "globalThis.browser = await agent.browsers.getDefault();",
       resultText: "# Selected Browser\n- Name: ZCode In-app Browser",
     });
@@ -94,7 +95,7 @@ describe("node repl tool display", () => {
       toolId: "tool-node-repl-leading-code-lines",
       toolName: "js",
       kind: "js",
-      title: "检查页面",
+      title: "Check the page",
       input: { code: "\n \t\r\n  const title = await tab.title();\n  return title;\n" },
       output: { type: "text", value: "Example" },
       status: "completed",
@@ -108,7 +109,7 @@ describe("node repl tool display", () => {
       toolId: "tool-node-repl-mcp-content",
       toolName: "mcp__node_repl__js",
       kind: "mcp__node_repl__js",
-      title: "检查页面截图",
+      title: "Check the page screenshot",
       input: { code: "await nodeRepl.emitImage(await tab.screenshot());" },
       output: {
         content: [
@@ -128,7 +129,7 @@ describe("node repl tool display", () => {
       toolId: "tool-node-repl-display-image",
       toolName: "mcp__node_repl__js",
       kind: "mcp__node_repl__js",
-      title: "截图查看",
+      title: "View screenshot",
       input: { code: "nodeRepl.emitImage(await tab.screenshot());" },
       output: "(no output)\n[Attached image/png: MCP image]",
       raw: {
@@ -149,7 +150,7 @@ describe("node repl tool display", () => {
         viewerSource: null,
         rawFileSummaries: [],
         isRunning: false,
-        statusLabel: "已执行",
+        statusLabel: expectedCopy("chat.toolCall.status.completed"),
         childToolList: null,
         forceOpen: true,
         canToggle: true,
@@ -163,13 +164,13 @@ describe("node repl tool display", () => {
     expect(html).not.toContain("Attached image");
   });
 
-  it("投影 CUA App 身份，摘要保留模型标题且不重复 App 名", () => {
+  it("projects the CUA App identity while the summary keeps the model title without repeating the App name", () => {
     const toolCall = {
       toolId: "tool-node-repl-cua-app",
       toolName: "mcp__node_repl__js",
       kind: "mcp__node_repl__js",
-      title: "在备忘录里新建一条笔记",
-      input: { code: "await app.elements(); await el.click();", title: "在备忘录里新建一条笔记" },
+      title: "Create a new note",
+      input: { code: "await app.elements(); await el.click();", title: "Create a new note" },
       output: "clicked",
       raw: {
         schemaVersion: 1,
@@ -192,7 +193,7 @@ describe("node repl tool display", () => {
         viewerSource: null,
         rawFileSummaries: [],
         isRunning: false,
-        statusLabel: "已执行",
+        statusLabel: expectedCopy("chat.toolCall.status.completed"),
         childToolList: null,
         forceOpen: false,
         canToggle: true,
@@ -200,17 +201,18 @@ describe("node repl tool display", () => {
       }),
     );
 
-    // 摘要行仍只显示模型给的 title，不额外拼 App 名（否则和 title 重复）。
-    expect(html).toContain("在备忘录里新建一条笔记");
+    // The summary row still shows only the model-provided title without
+    // appending the App name (it would duplicate the title).
+    expect(html).toContain("Create a new note");
     expect(html).not.toContain("Notes");
   });
 
-  it("没有 App 身份时保持原有的 node_repl 图标路径", () => {
+  it("keeps the original node_repl icon path when there is no App identity", () => {
     const model = buildNodeReplDisplayModel({
       toolId: "tool-node-repl-no-app",
       toolName: "mcp__node_repl__js",
       kind: "mcp__node_repl__js",
-      title: "算一下",
+      title: "Do a quick calculation",
       input: { code: "1 + 1" },
       output: "=> 2",
       status: "completed",
@@ -245,7 +247,7 @@ describe("node repl tool display", () => {
         viewerSource: null,
         rawFileSummaries: [],
         isRunning: false,
-        statusLabel: "已执行",
+        statusLabel: expectedCopy("chat.toolCall.status.completed"),
         childToolList: null,
         showIcon: true,
       }),
@@ -253,8 +255,8 @@ describe("node repl tool display", () => {
 
     expect(model.displaySource).toBe("browser_turn_end");
     expect(html).toContain('src="data:image/png;base64,AAAA"');
-    expect(html).not.toContain("查看执行详情");
-    expect(html).not.toContain("执行 JavaScript");
+    expect(html).not.toContain(expectedCopy("chat.toolCall.nodeRepl.details"));
+    expect(html).not.toContain("Run JavaScript");
   });
 
   it("removes internal completion markers from projected results", () => {
@@ -263,15 +265,15 @@ describe("node repl tool display", () => {
         toolId: "tool-node-repl-completion-marker",
         toolName: "js",
         kind: "js",
-        title: "打开目标页面",
+        title: "Open the target page",
         input: { code: "await tab.goto('https://example.com');" },
         output: { type: "text", value },
         status: "completed",
       });
 
-    expect(createModel("=> 已打开目标页面").resultText).toBe("已打开目标页面");
-    expect(createModel("页面加载完成\n=> 已打开目标页面").resultText).toBe(
-      "页面加载完成\n已打开目标页面",
+    expect(createModel("=> Opened the target page").resultText).toBe("Opened the target page");
+    expect(createModel("Page loaded\n=> Opened the target page").resultText).toBe(
+      "Page loaded\nOpened the target page",
     );
   });
 
@@ -333,11 +335,11 @@ describe("node repl tool display", () => {
       title: "js",
       input: {
         code: "globalThis.browser = await agent.browsers.getDefault();",
-        title: "选择浏览器并读取操作说明",
+        title: "Select the browser and read the instructions",
       },
       output: {
         type: "text",
-        value: "已选择应用内浏览器，并读取操作说明。",
+        value: "Selected the in-app browser and read the instructions.",
       },
       status: "completed" as const,
       raw: {
@@ -354,7 +356,7 @@ describe("node repl tool display", () => {
         viewerSource: null,
         rawFileSummaries: [],
         isRunning: false,
-        statusLabel: "已执行",
+        statusLabel: expectedCopy("chat.toolCall.status.completed"),
         childToolList: null,
         forceOpen: true,
         canToggle: true,
@@ -362,12 +364,12 @@ describe("node repl tool display", () => {
       }),
     );
 
-    expect(html).toContain("选择浏览器并读取操作说明");
-    expect(html).toContain("已完成");
-    expect(html).toContain("已选择应用内浏览器，并读取操作说明。");
-    expect(html).not.toContain(">结果</span>");
-    expect(html).not.toContain('aria-label="复制结果"');
-    expect(html).toContain("查看执行细节");
+    expect(html).toContain("Select the browser and read the instructions");
+    expect(html).toContain(expectedCopy("chat.toolCall.nodeRepl.completed"));
+    expect(html).toContain("Selected the in-app browser and read the instructions.");
+    expect(html).not.toContain(`>${expectedCopy("chat.toolCall.nodeRepl.result")}</span>`);
+    expect(html).not.toContain(`aria-label="${expectedCopy("chat.toolCall.nodeRepl.copyResult")}"`);
+    expect(html).toContain(expectedCopy("chat.toolCall.nodeRepl.details"));
     expect(html).not.toContain("Parameters");
     expect(html).not.toContain("raw-tool-id-should-not-render");
     expect(html).not.toContain("secretDebugField");
@@ -385,12 +387,12 @@ describe("node repl tool display", () => {
       raw: {
         rawInput: JSON.stringify({
           code: "return await tab.title();",
-          title: "读取当前页面标题",
+          title: "Read the current page title",
         }),
       },
     });
 
-    expect(model.userTitle).toBe("读取当前页面标题");
+    expect(model.userTitle).toBe("Read the current page title");
   });
 
   it("uses friendly summaries for reset and working-directory configuration", () => {
@@ -429,9 +431,9 @@ describe("node repl tool display", () => {
       }),
     );
 
-    expect(resetHtml).toContain("已重置操作环境");
+    expect(resetHtml).toContain(expectedCopy("chat.toolCall.nodeRepl.reset"));
     expect(resetHtml).not.toContain("&quot;ok&quot;");
-    expect(configureHtml).toContain("已配置运行目录");
+    expect(configureHtml).toContain(expectedCopy("chat.toolCall.nodeRepl.configured"));
     expect(configureHtml).toContain("/workspace/node_modules");
     expect(configureHtml).not.toContain("&quot;dirs&quot;");
   });
@@ -472,8 +474,8 @@ describe("node repl tool display", () => {
       }),
     );
 
-    expect(resetHtml).toContain("已重置操作环境");
-    expect(configureHtml).toContain("已配置运行目录");
+    expect(resetHtml).toContain(expectedCopy("chat.toolCall.nodeRepl.reset"));
+    expect(configureHtml).toContain(expectedCopy("chat.toolCall.nodeRepl.configured"));
     expect(configureHtml).toContain("/workspace/node_modules");
   });
 
@@ -487,7 +489,7 @@ describe("node repl tool display", () => {
             kind: "mcp__node_repl__js",
             input: {
               code: "return await tab.title();",
-              title: "读取当前页面标题",
+              title: "Read the current page title",
             },
             output: {
               content: [{ type: "text", text: "=> Example" }],
@@ -508,7 +510,7 @@ describe("node repl tool display", () => {
       }),
     );
 
-    expect(html).toContain("读取当前页面标题");
+    expect(html).toContain("Read the current page title");
     expect(html).toContain("lucide-square-mouse-pointer");
     expect(html).not.toContain(">Node repl<");
   });

@@ -71,7 +71,7 @@ function createBigModelTeamPlanApiKeyPayload(): {
   return {
     name: BIGMODEL_TEAM_PLAN_API_KEY_NAME,
     keyType: BIGMODEL_TEAM_PLAN_API_KEY_TYPE,
-    // keyType 描述团队 Key 类型，usageScene 描述编程套餐用途，两者不能互相替代。
+    // keyType describes the team key type, while usageScene describes the coding-plan purpose; the two cannot substitute for each other.
     usageScene: API_KEY_USAGE_SCENE.CODING_PLAN,
   };
 }
@@ -127,8 +127,8 @@ export async function ensureBigModelTeamPlanProjectApiKeyWithStatus(params: {
     };
   }
 
-  // 一个账号可能有多个 Team Plan 项目，每个项目都需要自己的 keyType=2
-  // 项目级 API Key；只给当前选中团队创建会导致切换到其他团队后 runtime 无法投影。
+  // An account may have multiple Team Plan projects, and each needs its own project-level keyType=2 API key.
+  // Creating one only for the currently selected team prevents the runtime from projecting data after switching to another team.
   const createPayload = await readApiJson<BigModelBizEnvelope<BigModelTeamPlanApiKeySummary>>(
     params.apiClient,
     listUrl,

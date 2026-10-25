@@ -1,49 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { HostResponseTypes } from "../src/channels.js";
+import { coalesceConsecutiveZCodeAssistants } from "../src/zcodePersistedMessageMerge.js";
 import {
   appSettingsSchema,
   appSettingsPatchSchema,
+  forkAppSettingsPatchSchema,
+  forkAppSettingsSchema,
+  forkAppSettingsStoredSchema,
   hostIncomingMessageSchema,
-  webRemoteControlAppPayloadSchema,
   hostResponseMessageSchema,
   wslConnectOptionsSchema,
   zcodePersistedMessageSchema,
 } from "../src/validation.js";
-
-it("PD01 手机任务草稿身份通过两层协议，且不能注入路径或混用项目", () => {
-  const intent = {
-    projectId: null,
-    draftId: "12345678-1234-4234-8234-123456789012",
-    reuseDraft: true,
-  };
-  const bridge = {
-    zcode_type: "workspace-bridge-open",
-    requestId: "draft",
-    bridgeSessionId: "bridge",
-    workspaceKey: "draft",
-    project: intent,
-  };
-  const host = {
-    type: "prepare-project-workspace",
-    requestId: "draft",
-    clientMode: "web-remote-replayable",
-    ...intent,
-  };
-  expect(webRemoteControlAppPayloadSchema.safeParse(bridge).success).toBe(true);
-  expect(hostIncomingMessageSchema.safeParse(host).success).toBe(true);
-  for (const invalid of [
-    { draftId: "../escape" },
-    { projectId: "project" },
-    { draftId: undefined },
-    { workspacePath: "/injected" },
-  ]) {
-    expect(
-      webRemoteControlAppPayloadSchema.safeParse({ ...bridge, project: { ...intent, ...invalid } })
-        .success,
-    ).toBe(false);
-    expect(hostIncomingMessageSchema.safeParse({ ...host, ...invalid }).success).toBe(false);
-  }
-});
 
 it("资源查询取消必须指定 requestId 且不接受附加字段", () => {
   const cancel = { type: "resource-usage-snapshot-cancel", requestId: "sample-1" };
@@ -71,6 +39,34 @@ it("accepts persisted user messages with video attachments", () => {
       ],
     }).success,
   ).toBe(true);
+});
+
+it("keeps the display-only pinnedAt pin on persisted messages (Zod would strip unknown keys)", () => {
+  const parsed = zcodePersistedMessageSchema.parse({
+    role: "assistant",
+    content: "回复",
+    timestamp: 1,
+    feedback: "like",
+    pinnedAt: 1500,
+  });
+  expect(parsed.pinnedAt).toBe(1500);
+  expect(parsed.feedback).toBe("like");
+});
+
+it("coalescing consecutive assistant segments carries a pin from either segment", () => {
+  const earlyPin = coalesceConsecutiveZCodeAssistants([
+    { role: "user", content: "q", timestamp: 0 },
+    { role: "assistant", content: "a", timestamp: 1, pinnedAt: 100 },
+    { role: "assistant", content: "b", timestamp: 2 },
+  ]);
+  expect(earlyPin.find((message) => message.role === "assistant")?.pinnedAt).toBe(100);
+
+  const latePin = coalesceConsecutiveZCodeAssistants([
+    { role: "user", content: "q", timestamp: 0 },
+    { role: "assistant", content: "a", timestamp: 1 },
+    { role: "assistant", content: "b", timestamp: 2, pinnedAt: 200 },
+  ]);
+  expect(latePin.find((message) => message.role === "assistant")?.pinnedAt).toBe(200);
 });
 
 describe("hostResponseMessageSchema", () => {
@@ -373,16 +369,10 @@ describe("hostResponseMessageSchema", () => {
         remoteCdnBaseUrl: "",
         remoteCdnBaseUrls: ["https://cdn.codegeex.cn/zcode/electron/releases/0.0.0-test"],
         remoteCacheDir: "/tmp/remote-cache",
-        sourceServerArtifactPolicy: "development-content-addressed",
       },
     });
 
     expect(parsed.success).toBe(true);
-    if (parsed.success && parsed.data.type === "connect-remote-workspace") {
-      expect(parsed.data.remoteAssets.sourceServerArtifactPolicy).toBe(
-        "development-content-addressed",
-      );
-    }
   });
 
   it("accepts encrypted SSH private key passphrase in window Host connect payload", () => {
@@ -547,6 +537,54 @@ describe("hostResponseMessageSchema", () => {
     ).toBe(false);
   });
 
+  it("recovers an invalid saved Coding Plan auto-continue default and validates boolean patches", () => {
+    // The key is fork-owned storage (forkAppSettings sidecar): the read surface keeps recovering an
+    // invalid saved value to the default, and the patch surface stays strict — but both live in the
+    // fork schema, and the upstream-shared setting.json schema strips the key entirely.
+    const invalidSavedValue = forkAppSettingsSchema.safeParse({
+      codingPlanLimitAutoContinueDefaultEnabled: "false",
+    });
+    const explicitDisabled = forkAppSettingsSchema.parse({
+      codingPlanLimitAutoContinueDefaultEnabled: false,
+    });
+    const validPatch = forkAppSettingsPatchSchema.parse({
+      codingPlanLimitAutoContinueDefaultEnabled: false,
+    });
+    const invalidPatch = forkAppSettingsPatchSchema.safeParse({
+      codingPlanLimitAutoContinueDefaultEnabled: "false",
+    });
+    const strippedFromMainSchema = appSettingsSchema.parse({
+      codingPlanLimitAutoContinueDefaultEnabled: false,
+    });
+
+    expect(invalidSavedValue.success).toBe(true);
+    if (invalidSavedValue.success) {
+      expect(invalidSavedValue.data.codingPlanLimitAutoContinueDefaultEnabled).toBe(true);
+    }
+    expect(explicitDisabled.codingPlanLimitAutoContinueDefaultEnabled).toBe(false);
+    expect(validPatch.codingPlanLimitAutoContinueDefaultEnabled).toBe(false);
+    expect(invalidPatch.success).toBe(false);
+    expect(strippedFromMainSchema).not.toHaveProperty("codingPlanLimitAutoContinueDefaultEnabled");
+  });
+
+  it("defaults resource telemetry to off and keeps it out of setting.json", () => {
+    // specs/resource-telemetry-toggle.md: fork-owned key, materialised default false, never stored.
+    expect(forkAppSettingsSchema.parse({}).resourceTelemetryEnabled).toBe(false);
+    expect(
+      forkAppSettingsSchema.parse({ resourceTelemetryEnabled: "yes" }).resourceTelemetryEnabled,
+    ).toBe(false);
+    expect(forkAppSettingsStoredSchema.parse({})).not.toHaveProperty("resourceTelemetryEnabled");
+    expect(
+      forkAppSettingsSchema.parse({ resourceTelemetryEnabled: true }).resourceTelemetryEnabled,
+    ).toBe(true);
+    expect(forkAppSettingsPatchSchema.safeParse({ resourceTelemetryEnabled: "true" }).success).toBe(
+      false,
+    );
+    expect(appSettingsSchema.parse({ resourceTelemetryEnabled: true })).not.toHaveProperty(
+      "resourceTelemetryEnabled",
+    );
+  });
+
   it("首次统一开启消息流 reasoning，迁移后保留用户选择", () => {
     const defaults = appSettingsSchema.parse({});
     const migratedMissing = appSettingsSchema.parse({
@@ -661,7 +699,7 @@ describe("hostResponseMessageSchema", () => {
       embeddedBrowserAllowInsecureCertificates: true,
     });
 
-    // 降低安全性的开关必须默认关闭，升级到新版本的用户不能被动获得放行行为。
+    // Security-lowering switches must default to off; users upgrading to a new version must not passively gain the relaxed behavior.
     expect(parsed.embeddedBrowserAllowInsecureCertificates).toBe(false);
     expect(enabled.embeddedBrowserAllowInsecureCertificates).toBe(true);
     expect(patch.embeddedBrowserAllowInsecureCertificates).toBe(true);
@@ -672,8 +710,8 @@ describe("hostResponseMessageSchema", () => {
     const shown = appSettingsSchema.parse({ computerUseComposerEntryHidden: false });
     const patch = appSettingsPatchSchema.parse({ computerUseComposerEntryHidden: false });
 
-    // 2026-08-21 产品决定输入框入口默认不展示，设置项保留、默认关闭。
-    // 显式存过 false 的用户保持展示——default 只对缺省字段生效，不覆盖既有选择。
+    // 2026-08-21 product decision: the composer entry is hidden by default; the setting is kept and defaults to hidden.
+    // Users who explicitly stored false keep showing it — the default only applies to absent fields and never overrides an existing choice.
     expect(parsed.computerUseComposerEntryHidden).toBe(true);
     expect(shown.computerUseComposerEntryHidden).toBe(false);
     expect(patch.computerUseComposerEntryHidden).toBe(false);
@@ -794,6 +832,7 @@ describe("hostResponseMessageSchema", () => {
       {
         kind: "remote",
         workspacePath: "/workspace/demo",
+        // Upstream 3.16.1: remote session entries default workspacePurpose to "project".
         workspacePurpose: "project",
         target: {
           kind: "docker",
@@ -855,45 +894,20 @@ describe("hostResponseMessageSchema", () => {
     }
     expect(sessionEntry.target).not.toHaveProperty("resourcePackages");
   });
-});
 
-it("项目导航 IPC 只接受项目意图与可信手机模式，不接受客户端目录/scope", () => {
-  const request = {
-    type: "prepare-project-workspace",
-    requestId: "navigation",
-    projectId: "p",
-    hostId: "remote:server:s",
-    clientMode: "web-remote-replayable",
-  };
-  expect(hostIncomingMessageSchema.safeParse(request).success).toBe(true);
-  expect(
-    hostIncomingMessageSchema.safeParse({ ...request, workspacePath: "/injected" }).success,
-  ).toBe(false);
-  expect(
-    hostIncomingMessageSchema.safeParse({ ...request, clientMode: "desktop-continuous" }).success,
-  ).toBe(false);
-  expect(
-    hostResponseMessageSchema.safeParse({
-      type: "project-workspace-prepared",
-      requestId: "navigation",
-      result: {
-        ok: true,
-        value: {
-          hostId: "remote:server:s",
-          projectId: "p",
-          workspacePath: "/root",
-          workspaceIdentity: "remote:server:s:/root",
-          additionalDirectories: [],
-          remote: {
-            sourceServerId: "s",
-            remoteSessionId: "scope",
-            generation: 1,
-            target: { kind: "server", serverId: "s", url: "http://source" },
-            workspacePath: "/root",
-            workspaceIdentity: "remote:server:s:/root",
-          },
-        },
-      },
-    }).success,
-  ).toBe(true);
+  it("drops retired ZCode Agent proxy settings from legacy settings files", () => {
+    const parsed = appSettingsSchema.safeParse({
+      recentProjects: [],
+      locale: "zh-CN",
+      retiredProxyUrl: "127.0.0.1:7890",
+      retiredProxyUseSystemCa: true,
+      retiredProxyCaCertPath: "C:\\Users\\test\\proxy-ca.pem",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data).not.toHaveProperty("retiredProxyUrl");
+    expect(parsed.data).not.toHaveProperty("retiredProxyUseSystemCa");
+    expect(parsed.data).not.toHaveProperty("retiredProxyCaCertPath");
+  });
 });

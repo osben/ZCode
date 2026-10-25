@@ -1,3 +1,4 @@
+import { isExternalAgentModel } from "@zcode/contracts";
 /* eslint-disable max-lines -- subagent runtime wiring 集中衔接 child runtime、tool pool、权限、MCP 与 activity watchdog，拆分需单独迁移。 */
 import {
   RESPOND_TO_COORDINATOR_TOOL_NAME,
@@ -220,13 +221,26 @@ export function createDefaultSubagentPort(
             { recoverable: true },
           );
         }
-        const childModel = baseChildModelFactory({ selection: childSelection });
+        // External-agent (ACP) models run only foreground chat turns. An inherited selection can
+        // carry the parent's ACP model into a child, so every child model is checked here.
+        const requireSubagentModel: NonNullable<AgentRuntimeDeps["modelFactory"]> = (target) => {
+          const model = baseChildModelFactory(target);
+          if (isExternalAgentModel(model)) {
+            throw createCoreError(
+              CoreErrorType.ConfigurationError,
+              `Subagents cannot run the external agent model ${String(model.providerId)}/${String(model.modelId)}; choose a ZCode model for this subagent.`,
+              { recoverable: true },
+            );
+          }
+          return model;
+        };
+        const childModel = requireSubagentModel({ selection: childSelection });
         const childModelFactory: NonNullable<AgentRuntimeDeps["modelFactory"]> = (target) =>
           target.selection.providerId === childSelection.providerId &&
           target.selection.modelId === childSelection.modelId &&
           target.selection.options?.reasoningLevel === childSelection.options?.reasoningLevel
             ? childModel
-            : baseChildModelFactory(target);
+            : requireSubagentModel(target);
         const parentToolCallId = traceStringAttribute(request.traceContext, "parentToolCallId");
         // 对外交互端口（permission broker + provider runtime headers）：与 dwf actor、legacy
         // workflow child 共用同一条派生，路由身份统一落到本 runtime 的会话。
@@ -283,6 +297,10 @@ export function createDefaultSubagentPort(
             modelSelection: cloneModelSelection(childSelection),
             modelContextBudgetStrategy: this.config.modelContextBudgetStrategy,
             workingDirectory: request.workingDirectory,
+            // The child runs in the same (possibly linked-worktree) cwd as the parent; carrying the
+            // fact lets the subagent env block render the same isolation notice as the main agent.
+            executionWorktree: this.config.executionWorktree,
+            incognito: this.config.incognito,
             // 执行模型只由 child Active Model 投影进 Context；envInfo 不保存第二份模型事实。
             envInfo: childRuntimeEnvInfo,
             // Explore 子运行时之前没有继承主会话的流式配置，Protocol 桌面端虽已默认

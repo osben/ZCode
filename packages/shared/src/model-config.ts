@@ -20,7 +20,7 @@ function optionMapSchema(variableName: "reasoningLevel" | "maxOutputTokens") {
 
 export const completeEnumOptionSpecDataSchema = z
   .object({
-    /** 按语义强度从低到高排列；首项是辅助调用可选的最低公开档位。 */
+    /** Ordered from lowest to highest semantic strength; the first entry is the lowest public tier available to auxiliary calls. */
     values: z
       .array(
         z
@@ -30,9 +30,20 @@ export const completeEnumOptionSpecDataSchema = z
       .min(1, "reasoningLevel.values 不能为空")
       .refine((values) => new Set(values).size === values.length, "reasoningLevel.values 不能重复")
       .readonly(),
+    /** Explicit level for fresh selections; null clears an inherited default, and omission falls back to the highest value. */
+    default: z.string().min(1).nullable().optional(),
     map: optionMapSchema("reasoningLevel"),
   })
-  .strict();
+  .strict()
+  .superRefine((spec, context) => {
+    if (spec.default != null && !spec.values.includes(spec.default)) {
+      context.addIssue({
+        code: "custom",
+        path: ["default"],
+        message: "reasoningLevel.default 必须是 values 之一",
+      });
+    }
+  });
 
 export const completeLimitOptionSpecDataSchema = z
   .object({
@@ -114,7 +125,7 @@ export const modelConfigDataSchema = z
   })
   .strict();
 
-// 跨层只共享数据合同；Provider 行为类与 IO 不进入公共 Schema。
+// Share only data contracts across layers; Provider behavior and I/O do not belong in the public Schema.
 export type ModelInputFormatData = z.infer<typeof completeModelInputFormatDataSchema>;
 export type ModelOutputFormatData = z.infer<typeof completeModelOutputFormatDataSchema>;
 export type ModelPropertiesData = z.infer<typeof completeModelPropertiesDataSchema>;

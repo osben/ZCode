@@ -16,10 +16,10 @@ const ZAI_USER_INFO_KEY = "oauth:zai:user_info";
 const BIGMODEL_ACCESS_TOKEN_KEY = "oauth:bigmodel:access_token";
 const BIGMODEL_USER_INFO_KEY = "oauth:bigmodel:user_info";
 const OAUTH_PENDING_LOGINS_KEY = "oauth_pending_logins";
-// 同一浏览器多个标签页可以同时发起登录；只留最近几条，放弃的登录不会无限累积。
+// Multiple tabs in the same browser can start logins at the same time; keep only the most recent few so abandoned logins do not pile up.
 const MAX_PENDING_LOGINS = 5;
 
-/** 本仓支持的登录 provider。private 分享的 owner 身份是 provider 特定的，两边都要能登。 */
+/** Login providers supported by this repository. Private share owner identity is provider-specific, so both providers must be able to sign in. */
 export type WebOAuthProviderId = typeof ZAI_PROVIDER_ID | typeof BIGMODEL_PROVIDER_ID;
 
 export function isWebOAuthProviderId(value: unknown): value is WebOAuthProviderId {
@@ -27,10 +27,10 @@ export function isWebOAuthProviderId(value: unknown): value is WebOAuthProviderI
 }
 
 /**
- * 每个 provider 用独立的 key 段。
+ * Each provider uses its own key segment.
  *
- * 刻意不复用一套「中性」key：zai 的两个 key 已经在线上承载着 /remote 的登录态，换 key 会
- * 让所有已登录用户在发版当天掉线。加一段 bigmodel 前缀是零风险的做法，代价只是多一个映射。
+ * Do not reuse one "neutral" key set: zai's two keys already carry the /remote login state in production, and changing them would
+ * sign out every logged-in user on release day. Adding a bigmodel prefix is risk-free and costs only one extra mapping.
  */
 function providerKeys(provider: WebOAuthProviderId): { accessToken: string; userInfo: string } {
   return provider === BIGMODEL_PROVIDER_ID
@@ -42,7 +42,7 @@ interface BrowserOAuthCredentialRepoStorage {
   localStorage: Storage;
 }
 
-/** 一次跳出去的登录：回调页靠它校验 state，并用同一 provider 与回调地址换 token。 */
+/** One login redirect that left the app: the callback page uses it to validate state and exchange the token with the same provider and redirect URI. */
 export interface PendingOAuthLogin {
   nonce: string;
   provider: WebOAuthProviderId;
@@ -79,7 +79,7 @@ function hasText(value: string | null): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-/** 浏览器 OAuth 凭据仓储：统一收敛 localStorage 读写，避免业务层散落认证状态判断。 */
+/** Browser OAuth credential repository: centralizes localStorage reads and writes so auth-state checks do not spread across business logic. */
 export class BrowserOAuthCredentialRepo {
   private readonly localStorage: Storage;
   private readonly now: () => number;
@@ -129,8 +129,8 @@ export class BrowserOAuthCredentialRepo {
   }
 
   /**
-   * 只读的账号展示资料（设备页账号行）。不是登录门禁：不校验 JWT、不清理残缺凭据，
-   * 否则渲染一次列表就可能提前登出；登录事实仍由 loadCachedSessionState / JWT 决定。
+   * Read-only account display data (account row on the device page). This is not a login gate: it does not validate the JWT or clear partial credentials,
+   * otherwise rendering the list could sign the user out early. Login state is still decided by loadCachedSessionState and the JWT.
    */
   loadActiveAccount(): { provider: WebOAuthProviderId; userInfo: UserInfo } | null {
     try {
@@ -148,7 +148,7 @@ export class BrowserOAuthCredentialRepo {
   loadCachedSessionState(): OAuthCachedSessionRestoreResult {
     const activeProvider = this.localStorage.getItem(ACTIVE_PROVIDER_KEY);
     const zcodeJwtToken = this.localStorage.getItem(ZCODE_JWT_TOKEN_KEY);
-    // 一次只有一个 activeProvider（切换 provider = 重新登录并覆盖），所以按它选 key 段读。
+    // Only one activeProvider exists at a time (switching providers means logging in again and overwriting it), so use it to select the key segment.
     const keys = isWebOAuthProviderId(activeProvider) ? providerKeys(activeProvider) : null;
     const accessToken = keys ? this.localStorage.getItem(keys.accessToken) : null;
     const rawUserInfo = keys ? this.localStorage.getItem(keys.userInfo) : null;
@@ -161,7 +161,7 @@ export class BrowserOAuthCredentialRepo {
     }
 
     if (resolveJwtExpiration(zcodeJwtToken, this.now()).kind === "expired") {
-      // Web localStorage 之前只检查 JWT 是否存在，过期后仍会恢复伪登录态。
+      // Web localStorage previously checked only whether the JWT existed, which restored a fake logged-in state after expiry.
       this.clearAll();
       return { status: "reauthentication-required", reason: "jwt-expired" };
     }
@@ -172,8 +172,8 @@ export class BrowserOAuthCredentialRepo {
         return { status: "authenticated", userInfo };
       }
     } catch {
-      // localStorage 可能留下旧版或手工写入的损坏 JSON。
-      // 这里按未登录处理并清理残缺态，避免 Web 远控入口误判成已登录后继续连接。
+      // localStorage may contain corrupt JSON left by an older version or by manual edits.
+      // Treat it as signed out and clear the partial state, so the Web remote-control entry does not mistake it for a logged-in session and connect.
     }
 
     this.clearAll();
@@ -200,8 +200,8 @@ export class BrowserOAuthCredentialRepo {
   clearAll(): void {
     this.localStorage.removeItem(ACTIVE_PROVIDER_KEY);
     this.localStorage.removeItem(ZCODE_JWT_TOKEN_KEY);
-    // 两个 provider 的 key 段一起清：切换 provider 时不能留下上一个身份的残片，
-    // 否则 loadCachedSessionState 可能读到半套凭据。
+    // Clear both providers' key segments together: switching providers must not leave fragments of the previous identity,
+    // otherwise loadCachedSessionState could read a half-complete credential set.
     this.localStorage.removeItem(ZAI_ACCESS_TOKEN_KEY);
     this.localStorage.removeItem(ZAI_USER_INFO_KEY);
     this.localStorage.removeItem(BIGMODEL_ACCESS_TOKEN_KEY);
@@ -209,19 +209,19 @@ export class BrowserOAuthCredentialRepo {
   }
 
   /**
-   * 记住这次跳出去的登录，按 nonce 区分。
+   * Remember this login redirect, keyed by nonce.
    *
-   * 修复：原先 nonce/provider/回调地址存在发起页的 sessionStorage。部分手机浏览器的 OAuth
-   * 回调不在发起登录的标签页里，或标签页被系统回收后重建，回调页读不到 nonce，换 token 前
-   * 就报 “OAuth CSRF 检测失败”，重新登录也一样失败。改存同源 localStorage 后，同一浏览器的
-   * 任意标签页都能完成回调；nonce 仍随机且只用一次，CSRF 校验强度不变。
+   * Fix: the nonce, provider and redirect URI used to live in the initiating page's sessionStorage. On some mobile browsers the OAuth
+   * callback does not open in the tab that started the login, or that tab is rebuilt after the OS reclaims it. The callback page cannot read the nonce and fails with
+   * "OAuth CSRF check failed" before the token exchange, and re-login fails the same way. Storing them in same-origin localStorage lets any tab in the same browser
+   * complete the callback. The nonce is still random and single-use, so CSRF strength is unchanged.
    */
   savePendingLogin(login: PendingOAuthLogin): void {
     const logins = this.readPendingLogins().filter((pending) => pending.nonce !== login.nonce);
     this.writePendingLogins([...logins, login].slice(-MAX_PENDING_LOGINS));
   }
 
-  /** 取出并删除 nonce 对应的登录记录；找不到时不改动其他标签页的记录。 */
+  /** Take and delete the login record for this nonce; if none matches, leave other tabs' records untouched. */
   takePendingLogin(nonce: string): PendingOAuthLogin | null {
     const logins = this.readPendingLogins();
     const login = logins.find((pending) => pending.nonce === nonce);
@@ -237,7 +237,7 @@ export class BrowserOAuthCredentialRepo {
       const parsed: unknown = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed.filter(isPendingOAuthLogin) : [];
     } catch {
-      // 损坏的记录不能当成本次登录；下一次发起登录会整体覆盖。
+      // A corrupt record must not be treated as this login; the next login attempt overwrites the whole value.
       return [];
     }
   }

@@ -206,7 +206,7 @@ describe("虚拟项目手机 shared-host 导航", () => {
         viewport: { width: 390, height: 844 },
         isMobile: true,
         hasTouch: true,
-        locale: "zh-CN",
+        locale: "en-US",
       });
       // 原因：旧用例依赖真实登录态，Personal-only 启动会停在配对门禁。
       // 只替换外部账号/relay；Main、Host、手机 renderer 和应用 RPC 仍走真实链路。
@@ -252,7 +252,7 @@ describe("虚拟项目手机 shared-host 导航", () => {
         expect(await page.getByTestId(`task-item-${id}`).count()).toBe(0);
       const imported = page.getByTestId(`task-item-${CURRENT_IMPORTED_TASK_ID}`);
       await imported.waitFor();
-      await imported.getByRole("button", { name: /取消置顶任务|Unpin task/ }).tap();
+      await imported.getByRole("button", { name: /Unpin task/ }).tap();
       await page
         .getByTestId("conversation-section")
         .getByTestId(`task-item-${CURRENT_IMPORTED_TASK_ID}`)
@@ -397,7 +397,7 @@ describe("虚拟项目手机 shared-host 导航", () => {
       // PCD03：先明确当前是草稿；从首页创建后应选择新项目并返回聊天。
       await mobileProject.getByTestId("virtual-project-create-task").tap();
       await page.locator('[data-mobile-page="chat"]').waitFor();
-      await page.getByRole("button", { name: /返回任务首页|Back to task home/ }).tap();
+      await page.getByRole("button", { name: /Back to task home/ }).tap();
       await page.getByTestId("virtual-project-add").tap();
       await page.getByTestId("virtual-project-name").waitFor();
       await page.screenshot({
@@ -411,9 +411,7 @@ describe("虚拟项目手机 shared-host 导航", () => {
       expect(
         await savedDevice.getByTestId("virtual-project-device-status").getAttribute("data-status"),
       ).toBe("offline");
-      expect(
-        await page.getByRole("option", { name: /添加远程设备|Add remote device/ }).count(),
-      ).toBe(0);
+      expect(await page.getByRole("option", { name: /Add remote device/ }).count()).toBe(0);
       await savedDevice.tap();
       await page.getByRole("listbox").waitFor({ state: "hidden" });
       expect(await page.getByTestId("virtual-project-browse").textContent()).toMatch(
@@ -453,7 +451,7 @@ describe("虚拟项目手机 shared-host 导航", () => {
       );
       await directoryPicker.locator("input").fill(cwd);
       await directoryPicker.locator("input").press("Enter");
-      await directoryPicker.getByRole("button", { name: /^(选择文件夹|Choose folder)$/ }).tap();
+      await directoryPicker.getByRole("button", { name: /^(Choose folder)$/ }).tap();
       await page.screenshot({
         path: join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "VP19-mobile-editor.png"),
       });
@@ -524,7 +522,7 @@ describe("虚拟项目手机 shared-host 导航", () => {
       await page.screenshot({
         path: join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "PCD03-mobile-created-project.png"),
       });
-      await page.getByRole("button", { name: /返回任务首页|Back to task home/ }).tap();
+      await page.getByRole("button", { name: /Back to task home/ }).tap();
       enterStage("project draft");
       await browser.keys("Escape");
       await mobileProject.getByTestId("virtual-project-create-task").click();
@@ -545,7 +543,7 @@ describe("虚拟项目手机 shared-host 导航", () => {
       });
       expect(await readDraft()).toEqual({ path: cwd, projectId, activeTaskId: null });
       enterStage("D3 mobile inherits active project draft");
-      await page.getByRole("button", { name: /返回任务首页|Back to task home/ }).tap();
+      await page.getByRole("button", { name: /Back to task home/ }).tap();
       await mobileProject.waitFor();
       await page.getByTestId("task-new-button").tap();
       await page.locator('[data-mobile-page="chat"]').waitFor();
@@ -554,7 +552,7 @@ describe("虚拟项目手机 shared-host 导航", () => {
       enterStage("persist task");
       for (const theme of ["zai-light", "zai-dark"]) {
         // 主题测试入口随首页卸载；从首页设置主题，再通过项目入口进入真实聊天页。
-        await page.getByRole("button", { name: /返回任务首页|Back to task home/ }).tap();
+        await page.getByRole("button", { name: /Back to task home/ }).tap();
         await mobileProject.waitFor();
         await page.evaluate(
           (theme) => (window as VirtualProjectTestWindow).__testActions!.setTheme(theme),
@@ -609,7 +607,7 @@ describe("虚拟项目手机 shared-host 导航", () => {
           animations: "disabled",
         });
         await name.fill("E2E_MOBILE_EDIT_CANCELLED");
-        await page.getByRole("button", { name: /^(取消|Cancel)$/ }).tap();
+        await page.getByRole("button", { name: /^(Cancel)$/ }).tap();
         await name.waitFor({ state: "hidden" });
         expect(await trigger.textContent()).toContain("E2E_VP13_PROJECT");
         if (theme === "zai-light") {
@@ -646,7 +644,7 @@ describe("虚拟项目手机 shared-host 导航", () => {
           await menu.getByTestId("composer-create-project").tap();
           await menu.waitFor({ state: "hidden" });
           await page.getByTestId("virtual-project-name").fill("E2E_COMPOSER_MOBILE_CANCELLED");
-          await page.getByRole("button", { name: /^(取消|Cancel)$/ }).tap();
+          await page.getByRole("button", { name: /^(Cancel)$/ }).tap();
           await page.getByTestId("virtual-project-name").waitFor({ state: "hidden" });
           expect(await readDraft()).toEqual(beforeCreate);
           expect(await page.getByTestId(TID_V4_COMPOSER_INPUT).textContent()).toBe(
@@ -714,13 +712,13 @@ describe("虚拟项目手机 shared-host 导航", () => {
       const createdTaskId = projectTaskState.activeTaskId;
       expect(createdTaskId).toBeTruthy();
       enterStage("D3 mobile inherits persisted session project");
-      await page.getByRole("button", { name: /返回任务首页|Back to task home/ }).click();
+      await page.getByRole("button", { name: /Back to task home/ }).click();
       await page.getByTestId("task-new-button").click();
       await page.locator('[data-mobile-page="chat"]').waitFor();
       await browser.waitUntil(async () => (await readDraft()).activeTaskId === null);
       expect(await readDraft()).toEqual({ path: cwd, projectId, activeTaskId: null });
       enterStage("global draft");
-      await page.getByRole("button", { name: /返回任务首页|Back to task home/ }).click();
+      await page.getByRole("button", { name: /Back to task home/ }).click();
       await page.getByTestId("virtual-project-new-task").click();
       await page.locator('[data-mobile-page="chat"]').waitFor();
       await browser.waitUntil(async () => (await readDraft()).path !== cwd, { timeout: 30_000 });
@@ -731,7 +729,7 @@ describe("虚拟项目手机 shared-host 导航", () => {
       enterStage("PD01/02/10 mobile pending task directory and draft recovery");
       const taskInput = page.getByTestId(TID_V4_COMPOSER_INPUT);
       await taskInput.fill("E2E_PD_MOBILE_DRAFT");
-      await page.getByRole("button", { name: /返回任务首页|Back to task home/ }).click();
+      await page.getByRole("button", { name: /Back to task home/ }).click();
       await page.getByTestId("virtual-project-new-task").click();
       await taskInput.waitFor();
       expect(await readDraft()).toEqual(globalDraft);
@@ -744,7 +742,7 @@ describe("虚拟项目手机 shared-host 导航", () => {
       await page.getByTestId(TID_V4_COMPOSER_SEND).click();
       await page.getByText("E2E_VP13_HISTORY_READY", { exact: true }).waitFor({ timeout: 60_000 });
       expect((await readDraft()).activeTaskId).toBeTruthy();
-      await page.getByRole("button", { name: /返回任务首页|Back to task home/ }).click();
+      await page.getByRole("button", { name: /Back to task home/ }).click();
       await page.getByTestId("virtual-project-new-task").click();
       await taskInput.waitFor();
       expect((await readDraft()).path).not.toBe(globalDraft.path);
@@ -754,7 +752,7 @@ describe("虚拟项目手机 shared-host 导航", () => {
           () => (window as VirtualProjectTestWindow).__zcodeTabStoreE2E?.getState().tabs.length,
         ),
       ).toBe(desktopTabs);
-      await page.getByRole("button", { name: /返回任务首页|Back to task home/ }).click();
+      await page.getByRole("button", { name: /Back to task home/ }).click();
       const toggle = mobileProject.getByTestId("virtual-project-toggle");
       if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
       const taskRow = page.getByTestId(testId(TID_TASK_ITEM, createdTaskId!));
@@ -801,7 +799,7 @@ describe("虚拟项目手机 shared-host 导航", () => {
       await taskRow.tap();
       await page.locator('[data-mobile-page="chat"]').waitFor();
       expect((await readDraft()).activeTaskId).toBe(createdTaskId);
-      await page.getByRole("button", { name: /返回任务首页|Back to task home/ }).tap();
+      await page.getByRole("button", { name: /Back to task home/ }).tap();
       enterStage("file-only cross-workspace bridge");
       // 手机远控原本关闭 session 原生拖拽；共享目标装饰不能意外开放该手势或改变容器尺寸。
       expect(await taskRow.getAttribute("draggable")).toBe("false");
@@ -830,10 +828,10 @@ describe("虚拟项目手机 shared-host 导航", () => {
         });
       }
       await taskRow.click({ button: "right" });
-      await page.getByRole("menuitem", { name: /^(置顶任务|Pin task)$/ }).click();
+      await page.getByRole("menuitem", { name: /^(Pin task)$/ }).click();
       await page.getByTestId(`task-files-${createdTaskId}`).waitFor();
       await page.getByTestId(`task-files-${createdTaskId}`).click();
-      // 文件已改为右侧 Files 标签；旧侧栏选择器会在文件已显示时仍超时。
+      // Files moved to the right-side Files tab; the old sidebar selector would still time out after the file is already shown.
       const filesTab = page.locator(
         '[data-side-pane-tab-id^="file-manager:"][data-state="active"]',
       );
@@ -847,7 +845,7 @@ describe("虚拟项目手机 shared-host 导航", () => {
       });
       await filesTab.getByRole("button").click();
       await filesTab.waitFor({ state: "detached" });
-      await page.getByRole("button", { name: /返回任务首页|Back to task home/ }).click();
+      await page.getByRole("button", { name: /Back to task home/ }).click();
       enterStage("reopen task");
       await page.getByTestId("sidebar-view-menu").tap();
       await page.getByTestId("sidebar-view-timeline").tap();
@@ -890,7 +888,7 @@ describe("虚拟项目手机 shared-host 导航", () => {
       );
       expect((await readHostProcesses()).length).toBe(hostCount);
       await closeResourceManagerWindow();
-      await page.getByRole("button", { name: /返回任务首页|Back to task home/ }).click();
+      await page.getByRole("button", { name: /Back to task home/ }).click();
       await page.getByTestId("sidebar-view-menu").tap();
       await page.getByTestId("sidebar-view-projects").tap();
       await page.getByRole("menu").waitFor({ state: "hidden" });

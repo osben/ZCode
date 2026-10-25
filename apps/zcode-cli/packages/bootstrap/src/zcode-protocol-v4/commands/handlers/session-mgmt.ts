@@ -37,6 +37,46 @@ async function createSession(
   envelope: CommandEnvelope,
 ): Promise<CommandResult | undefined> {
   const payload = envelope.payload as CommandPayloadMap["createSession"];
+  if (payload.submissionPreparation) {
+    if (!host.prepareSubmissionSession) throw new Error("Durable submission preparation is unavailable");
+    const prepared = await host.prepareSubmissionSession({
+      workspaceId: payload.workspaceId,
+      ...(payload.sessionId ? { sessionId: payload.sessionId } : {}),
+      submissionId: payload.submissionPreparation.submissionId,
+      incognito: payload.incognito,
+    });
+    return { type: "createSession", sessionId: prepared.sessionId };
+  }
+  if (payload.worktreePreparation) {
+    if (
+      payload.preparedSessionId ||
+      payload.firstInput ||
+      payload.executionWorktree ||
+      payload.config ||
+      payload.permissionScope
+    ) {
+      throw new V4InputAdmissionRejectedError(
+        "proto.invalidPayload",
+        "worktree preparation cannot include runtime or input settings",
+      );
+    }
+    // Second guard besides the shared schema refinement: the prepared row is reserved without a
+    // profile, so an incognito request here would be silently dropped by the reservation write.
+    if (payload.incognito) {
+      throw new V4InputAdmissionRejectedError(
+        "proto.invalidPayload",
+        "worktree preparation cannot include an incognito profile; send it on the activation createSession",
+      );
+    }
+    if (!host.prepareWorktreeSession) {
+      throw new Error("v4 createSession requires host.prepareWorktreeSession capability");
+    }
+    const prepared = await host.prepareWorktreeSession({
+      workspaceId: payload.workspaceId,
+      ...payload.worktreePreparation,
+    });
+    return { type: "createSession", sessionId: prepared.sessionId };
+  }
   if (!host.createSessionRecord) {
     throw new Error("v4 createSession requires host.createSessionRecord capability");
   }
@@ -47,99 +87,160 @@ async function createSession(
   ) {
     throw new V4InputAdmissionRejectedError("proto.invalidPayload", "input must not be empty");
   }
-  const { sessionId } = await host.createSessionRecord({
-    ...(payload.sessionId ? { sessionId: payload.sessionId } : {}),
-    ...(payload.additionalDirectories
-      ? { additionalDirectories: payload.additionalDirectories }
-      : {}),
-    workspaceId: payload.workspaceId,
-    ...(payload.permissionScope ? { permissionScope: payload.permissionScope } : {}),
-    mcpServers: payload.mcpServers,
-    offPeakToolEnabled: payload.offPeakToolEnabled,
-    dynamicWorkflowEnabled: payload.dynamicWorkflowEnabled,
-    dynamicWorkflowMode: payload.dynamicWorkflowMode,
-  });
-  // createSession.config 消费——草稿态 UI 的先行选择（模型/思考深度/
-  // 模式）在首发之前应用并补发事件，首条 turn 即用所选配置。必须在 firstInput 之前。
-  // 普通配置保留既有 warn 降级；Guarded 是明确的授权选择，失败不得用缺省模式执行。
-  if (payload.config) {
-    const record = requireRecord(host, sessionId);
-    try {
-      await applyRequestedSessionConfig(host, record, payload.config);
-    } catch (error) {
-      if (payload.config.mode === "guarded" || payload.firstInput?.mode === "guarded") {
-        // 根因：旧 catch 吞掉模式应用失败后仍提交首轮，Guarded 会静默退化。
-        try {
-          await host.deleteSession?.(sessionId);
-        } catch (closeError) {
-          host.logger?.warn?.("v4 guarded draft cleanup failed", { sessionId, closeError });
+  const runActivation = async (): Promise<CommandResult | undefined> => {
+    const { sessionId, preparedActivation } = await host.createSessionRecord!({
+      ...(payload.sessionId ? { sessionId: payload.sessionId } : {}),
+      ...(payload.additionalDirectories
+        ? { additionalDirectories: payload.additionalDirectories }
+        : {}),
+      workspaceId: payload.workspaceId,
+      ...(payload.preparedSessionId ? { preparedSessionId: payload.preparedSessionId } : {}),
+      ...(payload.expectedAttemptId ? { expectedAttemptId: payload.expectedAttemptId } : {}),
+      ...(payload.expectedSubmissionId ? { expectedSubmissionId: payload.expectedSubmissionId } : {}),
+      ...(payload.expectedFirstInputCommandId
+        ? { expectedFirstInputCommandId: payload.expectedFirstInputCommandId }
+        : {}),
+      ...(payload.permissionScope ? { permissionScope: payload.permissionScope } : {}),
+      mcpServers: payload.mcpServers,
+      ...(payload.executionWorktree ? { executionWorktree: payload.executionWorktree } : {}),
+      incognito: payload.incognito,
+      offPeakToolEnabled: payload.offPeakToolEnabled,
+      dynamicWorkflowEnabled: payload.dynamicWorkflowEnabled,
+      dynamicWorkflowMode: payload.dynamicWorkflowMode,
+    });
+    if (preparedActivation === "already-active") {
+      // A completed activation's durable receipt: the same session is returned without re-applying
+      // startup configuration or admitting the frozen first input a second time.
+      return { type: "createSession", sessionId, preparedActivation };
+    }
+    if (preparedActivation === "input-admitted") {
+      // The frozen input already reached Core durably; only the completion receipt may be missing.
+      await completePreparedActivation(host, sessionId);
+      return { type: "createSession", sessionId, preparedActivation };
+    }
+    // createSession.config 消费——草稿态 UI 的先行选择（模型/思考深度/
+    // 模式）在首发之前应用并补发事件，首条 turn 即用所选配置。必须在 firstInput 之前。
+    // 普通配置保留既有 warn 降级；Guarded 是明确的授权选择，失败不得用缺省模式执行。
+    if (payload.config) {
+      const record = requireRecord(host, sessionId);
+      try {
+        await applyRequestedSessionConfig(host, record, payload.config);
+      } catch (error) {
+        if (payload.config.mode === "guarded" || payload.firstInput?.mode === "guarded") {
+          // 根因：旧 catch 吞掉模式应用失败后仍提交首轮，Guarded 会静默退化。
+          try {
+            if (!payload.preparedSessionId) await host.deleteSession?.(sessionId);
+          } catch (closeError) {
+            host.logger?.warn?.("v4 guarded draft cleanup failed", { sessionId, closeError });
+          }
+          throw error;
+        }
+        host.logger?.warn?.(
+          "v4 createSession config apply failed; session keeps runtime defaults",
+          {
+            error: error instanceof Error ? error.message : String(error),
+            sessionId,
+          },
+        );
+      }
+    }
+    let firstInput:
+      | {
+          delivery: "startNow" | "queue" | "guide";
+          inputId: string;
+          messageId?: string;
+        }
+      | undefined;
+    if (payload.firstInput) {
+      // 附件命令面：firstInput.attachments（AttachmentRef → TurnAttachment）随首条发送。
+      const record = requireRecord(host, sessionId);
+      const admission = commandAdmissionOf(envelope);
+      const durableAdmission =
+        (await host.admitInputCommand?.(envelope, sessionId, admission)) ?? null;
+      try {
+        const attachments = await mapAttachmentRefsToTurnAttachments(
+          record.app,
+          payload.firstInput.attachments,
+        );
+        const intent = inputIntentMetadata(envelope, {
+          text: payload.firstInput.text,
+          requestedDelivery: "startNow",
+          attachmentRefs: payload.firstInput.attachments,
+          ...resolveSubmittedExecutionState(record, payload.firstInput),
+        });
+        const started = await startPromptTurn(host, record, {
+          content: payload.firstInput.text,
+          inputId: envelope.commandId,
+          intent,
+          ...(attachments ? { attachments } : {}),
+        });
+        firstInput = {
+          delivery: started.admission.kind === "queued" ? "queue" : "startNow",
+          inputId: envelope.commandId,
+          ...(started.messageId ? { messageId: started.messageId } : {}),
+        };
+      } catch (error) {
+        if (durableAdmission) {
+          try {
+            await host.cancelInputCommand?.(
+              sessionId,
+              admission.queueItemId,
+              "fault.command.inputRejected",
+            );
+          } catch (cancelError) {
+            // 取消账本失败不能覆盖真正的首发失败；否则客户端会拿到错误的失败原因，
+            // 而 admission 仍可在重启查询时按 discarded 收口，不会被误判为成功。
+            host.logger?.warn?.("v4 createSession first input cancellation failed", {
+              cancelError: cancelError instanceof Error ? cancelError.message : String(cancelError),
+              inputError: error instanceof Error ? error.message : String(error),
+              queueItemId: admission.queueItemId,
+              sessionId,
+            });
+          }
         }
         throw error;
       }
-      host.logger?.warn?.("v4 createSession config apply failed; session keeps runtime defaults", {
-        error: error instanceof Error ? error.message : String(error),
-        sessionId,
-      });
     }
-  }
-  let firstInput:
-    | {
-        delivery: "startNow" | "queue" | "guide";
-        inputId: string;
-        messageId?: string;
-      }
-    | undefined;
-  if (payload.firstInput) {
-    // 附件命令面：firstInput.attachments（AttachmentRef → TurnAttachment）随首条发送。
-    const record = requireRecord(host, sessionId);
-    const admission = commandAdmissionOf(envelope);
-    const durableAdmission =
-      (await host.admitInputCommand?.(envelope, sessionId, admission)) ?? null;
-    try {
-      const attachments = await mapAttachmentRefsToTurnAttachments(
-        record.app,
-        payload.firstInput.attachments,
-      );
-      const intent = inputIntentMetadata(envelope, {
-        text: payload.firstInput.text,
-        requestedDelivery: "startNow",
-        attachmentRefs: payload.firstInput.attachments,
-        ...resolveSubmittedExecutionState(record, payload.firstInput),
-      });
-      const started = await startPromptTurn(host, record, {
-        content: payload.firstInput.text,
-        inputId: envelope.commandId,
-        intent,
-        ...(attachments ? { attachments } : {}),
-      });
-      firstInput = {
-        delivery: started.admission.kind === "queued" ? "queue" : "startNow",
-        inputId: envelope.commandId,
-        ...(started.messageId ? { messageId: started.messageId } : {}),
-      };
-    } catch (error) {
-      if (durableAdmission) {
-        try {
-          await host.cancelInputCommand?.(
-            sessionId,
-            admission.queueItemId,
-            "fault.command.inputRejected",
-          );
-        } catch (cancelError) {
-          // 取消账本失败不能覆盖真正的首发失败；否则客户端会拿到错误的失败原因，
-          // 而 admission 仍可在重启查询时按 discarded 收口，不会被误判为成功。
-          host.logger?.warn?.("v4 createSession first input cancellation failed", {
-            cancelError: cancelError instanceof Error ? cancelError.message : String(cancelError),
-            inputError: error instanceof Error ? error.message : String(error),
-            queueItemId: admission.queueItemId,
-            sessionId,
-          });
-        }
-      }
-      throw error;
+    // Complete the preparation at the first input's admission boundary, before the model response
+    // finishes, so the conversation snapshot and sessions-index stop carrying the preparation marker
+    // and later sends target the active session through ordinary queue/guide routing.
+    if (payload.preparedSessionId && (!payload.expectedSubmissionId || firstInput)) {
+      await completePreparedActivation(host, sessionId);
     }
+    return {
+      type: "createSession",
+      sessionId,
+      ...(preparedActivation ? { preparedActivation } : {}),
+      ...(firstInput ? { input: firstInput } : {}),
+    };
+  };
+  if (payload.preparedSessionId && host.withPreparedWorktreeActivation) {
+    // Hold the per-session preparation lock across materialization, config, first-input admission,
+    // and completion so a concurrent retry cannot observe a half-activated session and re-send the
+    // frozen input under a new command id.
+    return host.withPreparedWorktreeActivation(payload.preparedSessionId, runActivation);
   }
-  return { type: "createSession", sessionId, ...(firstInput ? { input: firstInput } : {}) };
+  return runActivation();
+}
+
+/**
+ * Best-effort completion of a prepared-session activation. Core has already admitted the input at
+ * this point, so a receipt-write failure must not fail the ACK; the next repeat activation heals
+ * the receipt through the "input-admitted" outcome.
+ */
+async function completePreparedActivation(
+  host: V4CommandCoreHost,
+  sessionId: string,
+): Promise<void> {
+  if (!host.completePreparedWorktreeActivation) return;
+  try {
+    await host.completePreparedWorktreeActivation(sessionId);
+  } catch (error) {
+    host.logger?.warn?.("v4 createSession prepared activation completion failed", {
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 /**
@@ -170,13 +271,27 @@ async function deleteSession(
   host: V4CommandCoreHost,
   envelope: CommandEnvelope,
 ): Promise<CommandResult | undefined> {
-  const record = requireRecord(host, envelope.sessionId);
+  if (!envelope.sessionId) throw new Error("Session identity is required for deletion");
+  if (!host.hasPreparedSession?.(envelope.sessionId)) requireRecord(host, envelope.sessionId);
   if (!host.deleteSession) {
     // 关闭不能静默降级：钩子缺失说明 binder 接线不完整，直接失败（ACK failed）。
     throw new Error("v4 deleteSession requires host.deleteSession capability");
   }
-  await host.deleteSession(record.app.sessionId);
+  await host.deleteSession(envelope.sessionId);
   return undefined;
+}
+
+async function updateWorktreePreparation(
+  host: V4CommandCoreHost,
+  envelope: CommandEnvelope,
+): Promise<CommandResult | undefined> {
+  const sessionId = envelope.sessionId;
+  if (!sessionId || !host.updateWorktreePreparation) {
+    throw new Error("v4 worktree preparation update requires a Host-owned session");
+  }
+  const payload = envelope.payload as CommandPayloadMap["updateWorktreePreparation"];
+  await host.updateWorktreePreparation(sessionId, payload);
+  return { type: "worktreePreparationUpdated", status: payload.status };
 }
 
 async function discardSharedContext(
@@ -201,5 +316,6 @@ export const sessionMgmtHandlers = {
   createSession,
   renameSession,
   deleteSession,
+  updateWorktreePreparation,
   discardSharedContext,
 };

@@ -18,6 +18,14 @@ export type {
   ZCodeModelOption,
 } from "./app/types.js";
 export * from "./auth-login.js";
+export { loginChatGptPlan, logoutChatGptPlan } from "./auth-login-chatgpt.js";
+export type {
+  ChatGptPlanUser,
+  LoginChatGptPlanOptions,
+  LoginChatGptPlanResult,
+  LogoutChatGptPlanOptions,
+  LogoutChatGptPlanResult,
+} from "./auth-login-chatgpt.js";
 export {
   inspectZCodeCustomCommand,
   listZCodeCustomCommands,
@@ -79,7 +87,12 @@ export { runZCodeProtocolAgent } from "./zcode-protocol-entrypoint.js";
 export { mapSessionEvent } from "./zcode-protocol/session-mapper.js";
 export { prepareZCodeTelemetryEnv, shutdownZCodeTelemetry } from "./telemetry-bootstrap.js";
 export type { SessionTranscriptMessage, SessionTranscriptPart } from "./session-transcript.js";
-export { listZCodeSessions, resolveLatestSession } from "./sessions.js";
+export {
+  listZCodeSessions,
+  readPersistedIncognitoProfile,
+  resolveLatestSession,
+  type ReadPersistedIncognitoProfileOptions,
+} from "./sessions.js";
 export { inspectZCodeSkill, listZCodeSkills } from "./skills.js";
 export type {
   InspectZCodeSkillOptions,

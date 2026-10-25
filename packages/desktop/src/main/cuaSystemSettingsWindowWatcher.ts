@@ -1,12 +1,14 @@
 /**
- * 系统设置窗口位置的数据源：spawn 常驻的 `zcode-window-bounds` 并读它的 stdout。
+ * System Settings window-position source: spawn a persistent `zcode-window-bounds` process and read its stdout.
  *
- * 设计约束全部来自「吸附是观感增强、不是可用性前提」这一条：
- *   - 二进制缺失、spawn 失败、进程崩溃、输出损坏 —— 全部表现为 `latest() === null`，由
- *     positioner 走 fail-open 分支把面板放到屏幕底部。**任何路径都不得抛错**，否则会把一个
- *     纯装饰问题升级成"授权引导打不开"。
- *   - 进程死后立刻停止报告陈旧位置：否则面板会永久钉在设置页最后出现的地方，比放在屏幕底部
- *     更糟（用户会以为面板卡死了）。
+ * All design constraints follow one principle: snapping improves appearance but is not required for
+ * usability.
+ *   - A missing binary, spawn failure, process crash, or malformed output all produce
+ *     `latest() === null`; the positioner then fails open and puts the panel at the bottom of the
+ *     screen. **No path may throw**, or a cosmetic failure could become "authorization guidance cannot open."
+ *   - Stop reporting stale positions immediately when the process exits; otherwise the panel could
+ *     remain pinned to the last System Settings location, which is worse than the bottom-of-screen
+ *     fallback because users may think the panel is stuck.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -15,7 +17,7 @@ import type { Rect } from "./cuaPermissionPanelPositioner.js";
 export interface SystemSettingsWindowWatcher {
   start(): void;
   stop(): void;
-  /** 最近一次成功解析到的系统设置主窗口 bounds；拿不到时为 null。 */
+  /** Most recently parsed bounds for the System Settings main window; null when unavailable. */
   latest(): Rect | null;
 }
 
@@ -42,8 +44,8 @@ interface RawWindow {
 
 function toRect(raw: RawWindow): Rect | null {
   const { x, y, w, h, layer } = raw;
-  // 只认 layer 0：设置页会带出 layer > 0 的辅助层（工具提示、弹出选择器），
-  // 吸附到它们会把面板扔到屏幕角落。
+  // Accept only layer 0: Settings also creates layer > 0 auxiliary windows (tooltips, pop-up
+  // pickers), and snapping to them would throw the panel into a screen corner.
   if (layer !== 0) return null;
   if (
     typeof x !== "number" ||
@@ -68,12 +70,12 @@ function parseLine(line: string): Rect | null {
   }
   if (!Array.isArray(parsed)) return null;
 
-  // 取面积最大的 layer-0 窗口，而不是 z-order 上的第一个。
+  // Choose the largest layer-0 window, not the first one in z-order.
   //
-  // 拖拽落地后系统设置会弹一个模态提示（"…may not be able to record
-  // the contents of your screen until it is quit…"），它同属 System Settings 进程、同样是
-  // layer 0，而且 z-order 比主窗更靠前。取第一个会让浮窗吸附到提示框底部，把自己塞到它下面。
-  // 设置页主窗总是这些窗口里最大的那个。
+  // After a drag ends, System Settings shows a modal warning ("…may not be able to record the
+  // contents of your screen until it is quit…"). It belongs to the same process, is also layer 0,
+  // and is above the main window in z-order. Choosing the first window would snap the panel to the
+  // warning's bottom and place it underneath. The main Settings window is always the largest of these windows.
   let best: Rect | null = null;
   let bestArea = 0;
   for (const entry of parsed) {
@@ -99,7 +101,7 @@ export function createSystemSettingsWindowWatcher(
 
   let child: ChildProcess | null = null;
   let current: Rect | null = null;
-  // stdout 的分块与行边界无关，必须自己攒行；按 chunk 直接 parse 会在真机上间歇性失败。
+  // stdout chunks do not align with line boundaries, so assemble lines here; parsing each chunk directly fails intermittently on real machines.
   let buffer = "";
 
   function reset(): void {
@@ -113,7 +115,7 @@ export function createSystemSettingsWindowWatcher(
       try {
         child = spawnProcess(options.binaryPath, [String(intervalMs)]);
       } catch (error) {
-        // 二进制未随包/无执行权限：fail-open，面板照样能用，只是不吸附。
+        // Binary missing from the package or not executable: fail open; the panel still works, but does not snap.
         options.logger.warn(
           "[cua-permission-panel] window bounds helper unavailable; panel will not anchor",
           error instanceof Error ? error.message : String(error),
@@ -125,9 +127,9 @@ export function createSystemSettingsWindowWatcher(
       child.stdout?.on("data", (chunk: Buffer | string) => {
         buffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
         const lines = buffer.split("\n");
-        // 最后一段可能是不完整行，留在 buffer 里等下一个 chunk
+        // The final segment may be an incomplete line; keep it in the buffer for the next chunk.
         buffer = lines.pop() ?? "";
-        // 只取最后一条完整行：中间的都是过期位置
+        // Keep only the latest complete line; earlier lines contain stale positions.
         for (let i = lines.length - 1; i >= 0; i -= 1) {
           const line = lines[i]!;
           if (line.trim().length === 0) continue;
@@ -143,7 +145,7 @@ export function createSystemSettingsWindowWatcher(
       });
 
       child.on("exit", (code: number | null) => {
-        // 进程死了就别再报陈旧位置 —— 面板钉死在旧位置比退回屏幕底部更让人困惑。
+        // Do not report stale positions after the process dies; a panel stuck at an old location is more confusing than falling back to the bottom of the screen.
         if (code !== 0 && code !== null) {
           options.logger.warn("[cua-permission-panel] window bounds helper exited", code);
         }
@@ -157,7 +159,7 @@ export function createSystemSettingsWindowWatcher(
         try {
           child.kill();
         } catch {
-          // 已退出，忽略
+          // Already exited; ignore.
         }
         child = null;
       }

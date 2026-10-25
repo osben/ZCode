@@ -87,8 +87,9 @@ function createMinimalElement(ownerDocument: Document, tagName = "div"): TestEle
     },
     childNodes: [] as TestElement[],
     dispatchEvent: (event: Event) => {
-      // Bug 回归：ConversationTimeline 会在 commit 后派发标准 scroll 事件同步
-      // virtualizer；最小 DOM 必须实现真实依赖，不能只提供测试专用 dispatchScroll。
+      // Bug regression: ConversationTimeline dispatches a native scroll event after
+      // commit to sync the virtualizer; the minimal DOM must implement the real
+      // dependency instead of a test-only dispatchScroll.
       const forwardedEvent = {
         bubbles: event.bubbles,
         cancelBubble: event.cancelBubble,
@@ -316,7 +317,7 @@ function renderTimeline(
   root.render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(ConversationTimeline, {
         canLoadOlder: options.canLoadOlder,
         onLoadOlder: options.onLoadOlder,
@@ -326,10 +327,13 @@ function renderTimeline(
         sessionKey,
         scrollMemoryKey,
         rowContext,
-        // composer dock。它上方那条浮层带随浮岛一起删除，圆钮回到自己的居中定位。
+        // Composer dock. The floating strip above it was removed together with the
+        // island, and the round button returned to its own centered positioning.
         ...(options.withComposerDock
           ? {
-              bottomDock: createElement("div", { "data-testid": "test-composer-dock" }),
+              bottomDock: createElement("div", {
+                "data-testid": "test-composer-dock",
+              }),
             }
           : {}),
       }),
@@ -366,9 +370,12 @@ afterEach(() => {
 });
 
 describe("ConversationTimeline renderer-local scroll memory", () => {
-  it("跟随时先提交新行高再吸底，用户离底后 resize 不抢回滚动权", () => {
+  it("while following, commits the new row height before pinning to bottom; a resize after the user leaves the bottom must not steal scroll ownership", () => {
     const container = installMinimalDom();
-    const observations: Array<{ target: Element; callback: ResizeObserverCallback }> = [];
+    const observations: Array<{
+      target: Element;
+      callback: ResizeObserverCallback;
+    }> = [];
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -393,7 +400,10 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
       const column = findByTestId(container, "true", "data-v4-timeline-virtual-history")!;
       let measuredHeight = 1200;
       let contentWidth = 1000;
-      Object.defineProperty(column, "clientWidth", { configurable: true, get: () => contentWidth });
+      Object.defineProperty(column, "clientWidth", {
+        configurable: true,
+        get: () => contentWidth,
+      });
       const row = {
         getAttribute: () => "0",
         getBoundingClientRect: () => ({ height: measuredHeight }),
@@ -401,7 +411,8 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
       const query = vi
         .spyOn(column, "querySelectorAll")
         .mockReturnValue([row] as unknown as NodeListOf<Element>);
-      // 模拟库已测高但 React 尚未提交占位高度；只有重新 render 才能读到新布局。
+      // Simulate the library having measured but React not yet committing the
+      // placeholder height; only a re-render reads the new layout.
       const totalSize = vi.spyOn(virtualizer, "getTotalSize").mockImplementation(() => {
         layout.scrollHeight = measuredHeight;
         return measuredHeight;
@@ -435,7 +446,8 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
         for (const observer of observers) observer.callback([], {} as ResizeObserver);
       });
       expect(timeline.scrollTop).toBe(2100);
-      // 用户在批量测高期间上滚，提交后必须再次检查跟随权。
+      // The user scrolled up during the batch measuring; after commit, following
+      // ownership must be checked again.
       virtualizer.resizeItem.mockImplementationOnce(() => dispatchWheel(timeline, -120));
       const beforeInterrupt = timeline.scrollTop;
       act(() => {
@@ -517,7 +529,8 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
       }),
     );
 
-    // 旧锚点已在 viewport + 8 行 overscan 之外，DOM 查询和旧 totalSize 都无法给出位移。
+    // The old anchor is outside viewport + 8-row overscan, so neither a DOM query
+    // nor the old totalSize can produce the shift.
     expect(timeline.querySelectorAll('[data-v4-turn-unit="true"]')).toHaveLength(0);
     expect(timeline.scrollTop).toBe(1500);
   });

@@ -1,27 +1,23 @@
-# Embedded Search 与 Provider 依赖调研
+# Embedded Search and Provider Dependency Investigation
 
-> 状态：调研完成；尚未修改生产代码
-> 日期：2026-08-10
-> 对应阶段设计：[`../steps/01-model-and-request.md`](../steps/01-model-and-request.md)
+> Status: Investigation complete; no production code modified yet
+> Date: 2026-08-10
+> Corresponding stage design: [`../steps/01-model-and-request.md`](../steps/01-model-and-request.md)
 
-## 结论
+## Conclusion
 
-Embedded Search 是 Environment 提供的工具能力，与 Model Provider 无关。当前代码虽然通过 `ModelConnectionPort` 解析模型连接，但分支结果只取决于功能开关和 Bash 是否可用。Provider 依赖可以移除，不需要转移到新的 `Model` 接口。
-
-目标入口可以收敛为：
+Embedded Search is a tool capability provided by the Environment, unrelated to Model Providers. The current code parses model connections through `ModelConnectionPort`, but branch results depend only on the feature flag and Bash availability. The Provider dependency can be removed without transferring it to the new `Model` interface. The target entry point consolidates to:
 
 ```ts
 resolveEmbeddedSearchBranchCapability({
   bashAvailable,
   embeddedSearchBranchEnabled,
-})
+});
 ```
 
-## 代码事实
+## Code Facts
 
-`resolveEmbeddedSearchBranchCapability()` 当前接收 Bash 状态、shell selection、model ref 和 `ModelConnectionPort`。函数会解析 Connection，并把 model、provider kind、base URL 与移除凭据后的 Connection 放进 decision context。
-
-真正决定结果的只有：
+`resolveEmbeddedSearchBranchCapability()` at `apps/zcode-cli/packages/core/src/embedded-search/capability.ts` currently receives Bash status, shell selection, model refs, and `ModelConnectionPort`, and parses the Connection into the decision context. The only true inputs are:
 
 ```text
 embedded-search feature flag
@@ -32,29 +28,23 @@ embedded-search feature flag
  useEmbeddedSearchBranch
 ```
 
-model ref、provider kind、base URL、Provider options 和 shell selection 都没有参与判断。Connection 解析失败时，函数仍返回相同结果。
-
-这个结果被三个位置使用：
+Model refs, provider kind, base URL, Provider options, and shell selection are not involved; when Connection parsing fails the function still returns the same result. Three callers, all reading only `useEmbeddedSearchBranch`:
 
 ```text
-主 Runtime tool exposure
-└─ 决定是否隐藏 direct Glob / Grep
+Main Runtime tool exposure (runtime/methods/embedded-search-branch.ts)
+└─ Decides whether to hide direct Glob / Grep
 
-Tool executor
-└─ 写入 embeddedSearch.enabled
+Tool executor (tool/executor/call-runner.ts)
+└─ Writes embeddedSearch.enabled
 
-Subagent Runtime
-└─ 决定 child tool surface
+Subagent Runtime (runtime/methods/subagent.ts)
+└─ Decides child tool surface
 ```
 
-三个调用方最终都只读取 `useEmbeddedSearchBranch`。
+Existing tests require retaining some Provider context on the grounds that branching by model may occur in the future; the historical design also states first-party is uniformly enabled without distinguishing by provider, source, or variant. This proves Provider Connection is reserved information, not a current behavior dependency.
 
-判断函数位于 `apps/zcode-cli/packages/core/src/embedded-search/capability.ts`；三处调用分别位于 `runtime/methods/embedded-search-branch.ts`、`tool/executor/call-runner.ts` 和 `runtime/methods/subagent.ts`。
+## Cleanup Boundaries
 
-现有测试要求保留部分 Provider context，理由是未来可能按模型分支；历史设计也明确写过 first-party 当前固定启用，不按 provider、source 或 variant 区分。这些内容证明 Provider Connection 是预留信息，不是当前行为依赖。
+The cleanup synchronously modifies capability input types, Main Runtime, Tool executor, Subagent call sites, and related tests. Whether a shell supports prelude injection continues to be judged by the execution/adapter layer and does not affect the embedded tool surface seen by the Agent.
 
-## 清理边界
-
-实现时需要同步修改 capability 输入类型、主 Runtime、Tool executor、Subagent 调用点和相关测试。Shell 是否支持 prelude 注入继续由 execution/adapter 层判断，不影响 Agent 看到的 embedded tool surface。
-
-这项清理没有 UI、持久化或协议变化，也不依赖新的 `Model` 接口落地。必须保持的行为是：功能开关开启且 Bash 可用时隐藏 direct Glob/Grep；Bash 不可用或开关关闭时继续暴露 direct tools。
+No UI, persistence, or protocol changes, and no dependency on the new `Model` interface landing. Behavior to maintain: feature flag on + Bash available → hide direct Glob/Grep; Bash unavailable or flag off → keep exposing direct tools.

@@ -29,7 +29,7 @@ describe("request-scoped provider runtime headers response", () => {
     ).toBe(true);
   });
   it("preserves setup errors and rejects unexpected fields", () => {
-    // Agent 协议不接受旧裸 headers 成功格式；UI 提供的请求级输入由 Host 另行合成。
+    // The Agent protocol does not accept the old bare-headers success format; UI-provided request-level input is synthesized separately by the Host.
     expect(
       zcodeProviderRuntimeHeadersResponseSchema.safeParse({
         headersApplied: true,

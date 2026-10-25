@@ -41,15 +41,80 @@ describe("子代理冷恢复主列表隔离", () => {
 
     // 真正重启 CLI 清空 detached publisher；打开历史详情必须恢复原身份。
     await restartIntoWorkspacePreservingProfile();
-    const parent = $(`[data-testid="${testId(TID_TASK_ITEM, parentId)}"]`);
-    await parent.waitForDisplayed({ timeout: 30000 });
-    await parent.click();
-    await waitForV4AssistantMessageContaining(PARENT_DONE, 30000);
-    await openChild();
     await assertChildIsolated(childId);
+    // Spec §9: the sidebar lists side chats only, so a parent with only a subagent child shows
+    // no marker and no child row in the projects view and in the grouped view.
+    await assertNoSidebarSubagent(
+      $(`[data-testid="${testId(TID_TASK_ITEM, parentId)}"]`),
+      parentId,
+      childId,
+    );
+    await activateGroupedView();
+    await assertNoSidebarSubagent(
+      $(`[data-grouped-task-key*="${encodeURIComponent(parentId)}"]`),
+      parentId,
+      childId,
+    );
+    await openChildTrajectoryFromAgentRow(childId);
     expect(readChildId(parentId)).toBe(childId);
   });
 });
+
+async function assertNoSidebarSubagent(
+  parent: ReturnType<typeof $>,
+  parentId: string,
+  childId: string,
+) {
+  await parent.waitForDisplayed({ timeout: 30000 });
+  await parent.click();
+  await waitForV4Pane(
+    (state) => state.sessionId === parentId,
+    "selecting the parent row did not open the parent session",
+    30000,
+  );
+  await waitForV4AssistantMessageContaining(PARENT_DONE, 30000);
+  expect(await parent.$('[data-child-sessions-marker="true"]').isExisting()).toBe(false);
+  expect(await $(`[data-child-session-id="${childId}"]`).isExisting()).toBe(false);
+}
+
+// specs/conversation-agent-row-context-menu.md: right-clicking the Agent row opens the child's
+// model trajectory v2 tab.
+async function openChildTrajectoryFromAgentRow(childId: string) {
+  const block = await waitForToolCallBlockByToolCallId("toolu_e2e_subagent_sidebar", 30000);
+  const row = $(`[data-testid="${block.testId}"]`);
+  await row.waitForDisplayed({ timeout: 30000 });
+  await row.click({ button: "right" });
+  const item = $(`[data-agent-row-menu-trajectory="${childId}"]`);
+  await item.waitForDisplayed({ timeout: 15000 });
+  await item.click();
+  await $(`[data-side-pane-tab-id="model-trajectory-v2:${childId}"]`).waitForExist({
+    timeout: 30000,
+  });
+}
+
+async function activateGroupedView() {
+  const labels = ["Group", "分组"];
+  let groupTabIndex = -1;
+  await browser.waitUntil(
+    async () => {
+      const tabs = await $$('[role="tab"]');
+      for await (const [index, tab] of tabs.entries()) {
+        if (labels.includes((await tab.getText()).trim())) {
+          groupTabIndex = index;
+          return true;
+        }
+      }
+      return false;
+    },
+    { timeout: 15000, timeoutMsg: "侧栏没有 grouped 视图入口" },
+  );
+  const tabs = await $$('[role="tab"]');
+  await tabs[groupTabIndex]?.click();
+  await browser.waitUntil(
+    () => browser.execute(() => document.querySelectorAll("[data-grouped-task-key]").length > 0),
+    { timeout: 15000, timeoutMsg: "侧栏没有渲染 grouped task rows" },
+  );
+}
 
 function readChildId(parentId: string): string {
   const db = new DatabaseSync(join(paths.storageRoot, "cli", "db", "db.sqlite"), {

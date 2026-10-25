@@ -1,86 +1,228 @@
 # Model HTTP Proxy
 
-## 目标
+## Goals
 
-模型 provider 的 HTTP(S) 请求必须支持 ZCode 显式代理配置，便于桌面端、debug app 或用户通过受控入口观察请求 URL、host、状态和流式响应。
+HTTP(S) requests of model providers must support explicit ZCode proxy configuration, so the desktop app,
+the debug app or the user can observe request URL, host, status and streamed responses through a
+controlled entry.
 
-同一套代理解析规则也必须复用于 `HttpClientPort`，这样 `WebFetch` 等非 provider HTTP I/O 不会和模型请求出现“一个走代理、一个直连”的漂移行为。`WebSearch` handler 发起的内部 provider-native `web_search` side request 仍走 provider transport，因此继续跟随模型请求代理策略。
+The same proxy resolution rules are reused by `HttpClientPort`, so non-provider HTTP I/O such as
+`WebFetch` does not drift into "one goes through the proxy, the other connects directly". The internal
+provider-native `web_search` side request issued by the `WebSearch` handler still uses the provider
+transport and therefore follows the model request proxy policy.
 
-同一套网络出口策略还必须进入子进程与扩展边界。ZCode 自己启动的 `Bash`、后台终端、stdio MCP server 等子进程如果可能发起网络请求，应先隔离 app/provider 运行时，再在 tool 边界恢复用户 shell 里的 `HTTP_PROXY` / `http_proxy` / `NODE_EXTRA_CA_CERTS` 等网络变量，避免这些变量意外污染模型请求，同时保留用户命令自己的网络环境。
+The same egress policy applies at the child-process and extension boundary. For subprocesses ZCode
+starts itself (`Bash`, background terminals, stdio MCP servers) that may issue network requests, the
+app/provider runtime is isolated first, and the user shell's `HTTP_PROXY` / `http_proxy` /
+`NODE_EXTRA_CA_CERTS` and similar network variables are restored at the tool boundary. This keeps them
+from polluting model requests while preserving the network environment of user commands.
 
-桌面端 renderer 里的 `fetch`、XHR、页面资源和内嵌浏览器 WebView 同样属于 ZCode 自身出口。它们必须从设置页的显式 HTTP 代理读取策略，通过 Electron `session.setProxy` 分别应用到 `defaultSession` 与 `persist:zcode-embedded-browser`；不得依赖用户 shell 环境变量，即不继承 `HTTP_PROXY` / `HTTPS_PROXY` / `NODE_EXTRA_CA_CERTS`。设置页留空时两个 Session 的兜底行为不同：`defaultSession` 直连，把 ZCode 自身的后端与模型流量收敛到显式配置；`persist:zcode-embedded-browser` 跟随本机系统代理，因为它承载的是用户自己的浏览行为，必须与用户本机浏览器可达的站点保持一致。系统代理读取的是 OS 网络设置而非 shell 环境变量，因此不与上面的「不继承 shell 环境变量」冲突。
+Desktop renderer `fetch`, XHR, page resources and the embedded-browser WebView are also ZCode egress.
+They read the explicit HTTP proxy from the settings page and apply it through Electron
+`session.setProxy` separately to `defaultSession` and `persist:zcode-embedded-browser`. They must not
+depend on user shell environment variables (no inheriting `HTTP_PROXY` / `HTTPS_PROXY` /
+`NODE_EXTRA_CA_CERTS`). When the settings page is empty the two sessions fall back differently:
+`defaultSession` connects directly, which keeps ZCode backend and model traffic on the explicit
+configuration; `persist:zcode-embedded-browser` follows the OS system proxy, because it carries the
+user's own browsing and must reach the same sites as the user's local browser. The system proxy comes
+from OS network settings, not shell environment variables, so it does not conflict with "no inheriting
+shell variables".
 
-Desktop Window Host 在 SSH/WSL/Docker 部署期间发起的远程资源 manifest、组件归档和进度 `HEAD` 请求也属于 app-managed 出口。它们必须通过 Host 生命周期内冻结的 request-scoped transport 消费同一份设置页代理、No Proxy 和自定义 CA；禁止依赖裸 `globalThis.fetch` 或进程全局 dispatcher。`remote-download` 的组件归档仍由远端 `curl`/`wget` 下载，不继承桌面代理。
+Remote resource manifest, component archive and progress `HEAD` requests that the Desktop Window Host
+issues during SSH/WSL/Docker deployment are app-managed egress too. They must use the request-scoped
+transport frozen for the Host lifetime, consuming the same settings-page proxy, No Proxy and custom CA;
+bare `globalThis.fetch` and process-global dispatchers are forbidden. `remote-download` component
+archives are still downloaded by remote `curl`/`wget` and do not inherit the desktop proxy.
 
-## 配置来源与优先级
+## Sources and precedence
 
-1. 桌面端 `AppSettings.httpProxy`，由设置页显式填写并在启动 agent 时注入。
-2. `network.httpProxy` 配置，适用于显式配置的统一模型代理。
-3. `ZCODE_HTTP_PROXY` 环境变量，适用于 app/debug server/CLI runtime 显式注入。
+1. Desktop `AppSettings.httpProxy`, filled in on the settings page and injected when the agent starts.
+2. `network.httpProxy` config, for an explicitly configured unified model proxy.
+3. `ZCODE_HTTP_PROXY` environment variable, injected explicitly by the app/debug server/CLI runtime.
 
-Provider/app/通用 `HttpClientPort` 自身只使用以上显式来源；`WebFetch` 专用
-`HttpClientPort` 在未命中显式 proxy 时，还可以读取 runtime 封存到
-`ZCODE_TOOL_ENV_PASSTHROUGH_JSON` 的用户标准 proxy 变量作为 fallback。该 fallback 只读取封存副本，不直接继承当前进程里的裸标准环境变量，顺序为
-`https_proxy`、`HTTPS_PROXY`、`http_proxy`、`HTTP_PROXY`、`all_proxy`、`ALL_PROXY`，即小写优先，与 undici 的读取顺序一致。
+The provider/app/general `HttpClientPort` use only these explicit sources. The `WebFetch`-specific
+`HttpClientPort`, when no explicit proxy matches, may also read the user's standard proxy variables that
+the runtime sealed into `ZCODE_TOOL_ENV_PASSTHROUGH_JSON` as a fallback. The fallback reads only the
+sealed copy, never bare standard variables of the current process, in the order `https_proxy`,
+`HTTPS_PROXY`, `http_proxy`, `HTTP_PROXY`, `all_proxy`, `ALL_PROXY` (lowercase first, matching undici).
 
-No Proxy 来源：
+No Proxy sources:
 
-1. 桌面端 `AppSettings.httpProxyNoProxy`，由设置页显式填写并在启动 agent 时注入。
-2. `network.noProxy` 配置，适用于显式配置的统一模型代理绕过规则。
-3. `ZCODE_NO_PROXY` 环境变量，适用于 app/debug server/CLI runtime 显式注入。
+1. Desktop `AppSettings.httpProxyNoProxy`, filled in on the settings page and injected when the agent
+   starts.
+2. `network.noProxy` config, bypass rules for the explicit unified model proxy.
+3. `ZCODE_NO_PROXY` environment variable, injected explicitly by the app/debug server/CLI runtime.
 
-No Proxy 对以上代理来源都生效，支持 `*`、精确 host、host:port、`.example.com` 和 `*.example.com` 形式。Provider/app/通用 `HttpClientPort` 不读取用户 shell 里的 `NO_PROXY` / `no_proxy`，避免绕过显式代理策略；`WebFetch` 专用 `HttpClientPort` 只在未命中显式 proxy 时读取 runtime 封存副本，按 `no_proxy`、`NO_PROXY` 小写优先。tool 子进程会在 passthrough 边界恢复用户自己的 no-proxy 环境，并由显式 No Proxy 配置覆盖同名变量。
+No Proxy applies to all proxy sources above and supports `*`, exact host, host:port, `.example.com` and
+`*.example.com`. The provider/app/general `HttpClientPort` does not read the user shell `NO_PROXY` /
+`no_proxy`, so the explicit proxy policy cannot be bypassed. The `WebFetch`-specific `HttpClientPort`
+reads the sealed runtime copy only when no explicit proxy matches, lowercase `no_proxy` before
+`NO_PROXY`. Tool subprocesses restore the user's own no-proxy environment at the passthrough boundary,
+and the explicit No Proxy config overrides same-named variables.
 
-自定义 TLS CA 来源：
+Custom TLS CA sources:
 
-1. `network.caCertFile` 配置。
-2. 桌面端 `AppSettings.httpProxyCaCertPath`，由设置页显式填写。
-3. `ZCODE_AGENT_CA_CERT` 环境变量，适用于 app/debug server/CLI runtime 显式注入。
+1. `network.caCertFile` config.
+2. Desktop `AppSettings.httpProxyCaCertPath`, filled in on the settings page.
+3. `ZCODE_AGENT_CA_CERT` environment variable, injected explicitly by the app/debug server/CLI runtime.
 
-运行时继承环境会过滤 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`、`NODE_EXTRA_CA_CERTS` / `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE` / `GIT_SSL_CAINFO` 以及包管理器代理/CA 变量。过滤前会把这些用户 shell 网络变量封存到 ZCode 内部 `ZCODE_TOOL_ENV_PASSTHROUGH_JSON`；该变量不参与 app/provider/通用 `HttpClientPort` 的代理解析，只作为 `WebFetch` 专用 fallback，或在 tool 子进程环境构造时恢复。
+The inherited runtime environment filters `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`,
+`NODE_EXTRA_CA_CERTS` / `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE` / `GIT_SSL_CAINFO` and
+package-manager proxy/CA variables. Before filtering, these user shell network variables are sealed into
+the internal `ZCODE_TOOL_ENV_PASSTHROUGH_JSON`. That variable plays no role in proxy resolution for the
+app/provider/general `HttpClientPort`; it serves only as the `WebFetch`-specific fallback or is restored
+when a tool subprocess environment is built.
 
-子进程代理与证书环境先恢复用户 shell 网络变量，再由显式网络策略覆盖同类目标。如果命中 `network.httpProxy`、`AppSettings.httpProxy` 或 `ZCODE_HTTP_PROXY`，adapter 会补齐 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 及小写形式；如果命中 `network.noProxy`、`AppSettings.httpProxyNoProxy` 或 `ZCODE_NO_PROXY`，adapter 会补齐 `NO_PROXY` 与 `no_proxy`；如果命中 `network.caCertFile`、`AppSettings.httpProxyCaCertPath` 或 `ZCODE_AGENT_CA_CERT`，adapter 会补齐 `NODE_EXTRA_CA_CERTS`、`SSL_CERT_FILE`、`REQUESTS_CA_BUNDLE`、`CURL_CA_BUNDLE` 和 `GIT_SSL_CAINFO`，提升 Node、OpenSSL/curl、Python requests 和 git 的一致性。`env.base: "empty"` 的命令不恢复用户 shell passthrough，只保留显式网络配置和命令级 overlay。
+Subprocess proxy and certificate environments first restore the user shell network variables, then the
+explicit network policy overrides the same targets:
 
-## 行为
+- If `network.httpProxy`, `AppSettings.httpProxy` or `ZCODE_HTTP_PROXY` matches, the adapter fills
+  `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and the lowercase forms.
+- If `network.noProxy`, `AppSettings.httpProxyNoProxy` or `ZCODE_NO_PROXY` matches, it fills `NO_PROXY`
+  and `no_proxy`.
+- If `network.caCertFile`, `AppSettings.httpProxyCaCertPath` or `ZCODE_AGENT_CA_CERT` matches, it fills
+  `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE` and `GIT_SSL_CAINFO`,
+  for consistency across Node, OpenSSL/curl, Python requests and git.
 
-- 代理解析逻辑由 adapter 统一实现，并同时服务模型请求与 `HttpClientPort`。
-- 只代理 AI SDK provider 发起的模型 HTTP(S) 请求，不改写 provider `baseURL`。
-- 动态 provider endpoint routing 必须先按
-  [`provider-endpoint-routing.md`](./provider-endpoint-routing.md) 解析最终 URL，再执行 Proxy/No Proxy
-  匹配；配置接口自身使用独立 `HttpClientPort`，不得进入 routing 形成递归。
-- 无代理配置或命中显式 No Proxy 时继续使用原生 `fetch`。
-- 启用代理时通过 adapter 层统一 fetch 转发，保留响应流，避免破坏 streaming。
-- 当命中了自定义 CA 配置时，adapter 必须确保直连 HTTPS、HTTPS proxy 和 HTTP CONNECT 路径都使用同一份额外信任链。
-- Desktop main 必须在创建首个窗口前把 Electron 网络策略独立应用到 `defaultSession` 与 `persist:zcode-embedded-browser`：设置页存在 `httpProxy` 时两个 Session 都使用 `session.setProxy({ mode: "fixed_servers", proxyRules, proxyBypassRules })`，其中 `proxyBypassRules` 来自 `httpProxyNoProxy`；留空时 `defaultSession` 使用 `mode: "direct"`，`persist:zcode-embedded-browser` 使用 `mode: "system"`，并在更新策略后关闭旧连接池。留空时不下发 `proxyBypassRules`——bypass 规则只对 `fixed_servers` 有意义，`system` 模式的例外列表由 OS 自己维护。两个 Session 中任意一个应用失败都不得阻止另一个继续配置；配置变更只保证下次应用启动生效，设置页必须提示用户重启。
-- Desktop Window Host 必须把其托管的 proxy-aware transport 作为 `RemoteAssetNetworkPort` 注入 desktop-attached remote 部署。manifest、组件归档和进度 `HEAD` 不得在 transport 缺失或失败时回退裸 `fetch`；standalone server 未注入该 port 时保持原有直连合同。
-- Chromium Session 的自定义 CA 不读取 `NODE_EXTRA_CA_CERTS`。仅当设置页存在 `httpProxyCaCertPath` 时，main 进程读取 PEM bundle，并分别用两个 Session 的 `setCertificateVerifyProc` 对链路中包含该 CA 的证书放行；留空时恢复 Chromium 默认校验。
-- `persist:zcode-coding-plan` 等其它专用 WebView Session 不继承内置浏览器的网络策略。该边界只修复 renderer 与内置 Browser / Browser Use 的显式出口配置，不增加全局证书忽略开关，也不放行未配置的自签名证书。
-- adapter 自己发请求（代理、自定义 CA、`WebFetch` 公网 DNS 校验）时，对上游状态码的处理必须与原生 `fetch` 一致，且**一次响应永远不能打死 agent 进程**：`HttpClientPort` 原样带回任何状态码，包括 200–599 之外的非标准码（LinkedIn 对爬虫回 `999`），由调用方按普通非 2xx 处理；204 / 205 / 304 等无正文状态得到空正文。proxy-aware fetch 必须返回 WHATWG `Response`，它表示不了 200–599 之外的状态，所以那一次请求以带 `code: "ZCODE_UNSUPPORTED_HTTP_STATUS"` 与 `status` 的 `TypeError` 失败，与网络错误同一条路径。把 Node 响应转成上层对象的代码一律在 `http.request` 回调里 try/catch，失败即销毁响应并 reject 这一次请求。
-- `HttpClientPort` 响应应携带脱敏后的 `egress` 摘要，至少包含是否走代理、代理来源、代理 host、是否命中 `NO_PROXY`、是否使用自定义 CA。
-- `ExecutionPort` 在 spawn 子进程前必须从基础设施层构造环境变量：先选择继承或空环境并过滤通用运行时/代理/证书变量，再恢复已封存的用户 tool 网络环境，然后注入显式网络出口策略，最后应用单次执行的 `env.set` / `env.unset` overlay。这样普通命令默认拿到用户 shell 网络配置，同时保留 app/provider 的显式网络边界和命令级例外。
-- 当 `network.httpProxy` 或 `ZCODE_HTTP_PROXY` 存在时，子进程环境必须补齐 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 及对应小写变量；用户标准代理变量不作为 provider/app/通用 `HttpClientPort` 继承输入，只能通过 `WebFetch` 专用 fallback 或 tool passthrough 进入受控边界。
-- 当 `network.noProxy` 或 `ZCODE_NO_PROXY` 存在时，子进程环境必须同时补齐大小写形式；标准 `NO_PROXY` / `no_proxy` 不作为 provider/app/通用 `HttpClientPort` 继承输入，但可作为 `WebFetch` 专用 fallback，或作为用户 tool passthrough 恢复。
-- stdio MCP server 的启动环境必须走同一个子进程网络环境构造函数；HTTP/SSE MCP transport 必须传入 proxy-aware fetch，不能依赖 Node 的 global fetch 自动读取代理环境。
-- core、bootstrap、CLI、TUI 和普通业务 adapter 不得直接调用 `fetch`、`http.request` 或 `https.request`；例外只允许在明确的网络 adapter/provider transport 边界中出现，并由架构测试守住。
+A command with `env.base: "empty"` does not restore the user shell passthrough; it keeps only the
+explicit network configuration and the command-level overlay.
 
-## 边界
+## Behavior
 
-本阶段是“默认网络出口收敛”，不是不可绕过的系统级防火墙。子进程仍可以在命令内部删除代理环境、使用自带网络栈或通过非 HTTP 协议出网。强制所有网络流量必须经过统一出口，需要后续引入 OS sandbox、容器网络策略或本机防火墙级别能力。
+- Proxy resolution is implemented once in the adapter and serves both model requests and
+  `HttpClientPort`.
+- Only model HTTP(S) requests issued by the AI SDK provider are proxied; the provider `baseURL` is not
+  rewritten.
+- Dynamic provider endpoint routing first resolves the final URL per
+  [`provider-endpoint-routing.md`](./provider-endpoint-routing.md), and only then Proxy/No Proxy matching
+  runs. The routing config interface uses its own `HttpClientPort` and must not enter routing, to avoid
+  recursion.
+- Without proxy config, or when explicit No Proxy matches, native `fetch` is used.
+- With a proxy, the adapter layer forwards through one fetch, keeping the response stream so streaming
+  is not broken.
+- When a custom CA is configured, the adapter must make direct HTTPS, HTTPS proxy and HTTP CONNECT paths
+  all use the same extra trust chain.
+- The explicit CA is additive trust: the CLI network adapter merges Node `tls.rootCertificates` with the
+  user PEM bundle and passes the result as `ca`; it must not pass only the user CA and replace the
+  standard public roots. Model/provider/MCP fetch and `HttpClientPort` share this loader. Global TLS
+  defaults are not changed and certificate or hostname verification is never disabled. Without a
+  configured CA the native default behavior is kept.
+- The CA file is loaded with async IO when the client first needs it. Each client holds a single loading
+  Promise that concurrent requests reuse. A read failure fails the request and clears the failed
+  Promise, so later requests can retry; it must not degrade to default trust or ignore certificate
+  errors. The timeout/abort of one request covers its wait for the CA: it cancels only that request's
+  wait, not the file read shared with other requests. Successful results stay cached; a config change
+  still requires rebuilding the client. Order:
 
-## 测试覆盖
+  ```text
+  request → client-owned CA Promise → async PEM read → Node public roots + PEM
+                ↑ concurrent requests reuse it             ↓
+  caller timeout/abort → stop own wait         direct / CONNECT / HTTPS proxy
+  ```
 
-- `ZCODE_HTTP_PROXY` 能让模型请求经过本地 HTTP proxy。
-- `network.noProxy` 或 `ZCODE_NO_PROXY` 命中时模型请求绕过代理直连上游。
-- `ZCODE_HTTP_PROXY` 也能让 `WebFetch` 经过同一代理；`WebSearch` handler 内部模型请求会复用 provider 传输层代理。
-- `ZCODE_AGENT_CA_CERT` 能让 `WebFetch` 信任自定义 CA；`WebSearch` handler 内部模型请求会复用 provider 证书策略。
-- `network.httpProxy` 或 `ZCODE_HTTP_PROXY` 能注入到 `ExecutionPort` 子进程环境，并补齐大小写代理变量。
-- `network.caCertFile`、`AppSettings.httpProxyCaCertPath` 或 `ZCODE_AGENT_CA_CERT` 能被补齐到 Node、curl、git、Python requests 常见变量。
-- 桌面端设置页 `httpProxy` 能在重启后同时应用到 Electron `defaultSession` 与 `persist:zcode-embedded-browser`，使 renderer 和内置 Browser / Browser Use 流量走显式代理；留空时 `defaultSession` 直连，`persist:zcode-embedded-browser` 跟随系统代理，使内置浏览器与用户本机浏览器可达的站点保持一致。
-- 桌面端设置页 `httpProxyNoProxy` 能在重启后同时应用到两个目标 Session 的 `proxyBypassRules`，并注入 agent 的 `ZCODE_NO_PROXY` / `NO_PROXY` / `no_proxy`。
-- 桌面端设置页 `httpProxyCaCertPath` 能在重启后注入 agent `NODE_EXTRA_CA_CERTS`，并让两个目标 Session 信任由该 CA 签发的 TLS 证书；其它专用 WebView Session 不受影响。
-- 桌面端设置页 `httpProxy`、`httpProxyNoProxy` 和 `httpProxyCaCertPath` 能控制 Window Host 的远程资源 manifest、组件归档和进度 `HEAD` 请求；显式代理失败时不得发生直连请求。
-- `defaultSession` 网络策略应用失败时，`persist:zcode-embedded-browser` 仍继续配置；反向同理，并按 Session 名称记录可诊断日志。
-- 用户 shell 里的标准代理/证书变量不会直接进入模型请求、app runtime 或 `WebFetch`；`WebFetch` 只读取 `ZCODE_TOOL_ENV_PASSTHROUGH_JSON` 中封存的标准 proxy/no-proxy fallback。它们也会经该封存变量恢复到继承式 tool/MCP/Bash 子进程。命令级 env overlay 仍可显式覆盖或删除。
-- stdio MCP server 能继承统一网络环境，HTTP/SSE MCP transport 能获得 proxy-aware fetch。
-- 走代理时上游回 `999` / `204` / `304`：`HttpClientPort` 带回原状态码（204 / 304 正文为空）；proxy-aware fetch 对 204 / 304 返回空正文的 `Response`，对 `999` 以 `ZCODE_UNSUPPORTED_HTTP_STATUS` 失败；两者都不产生 uncaughtException（`packages/adapters/tests/http-response-status.test.ts`）。
-- 架构测试扫描进程内源码，防止新增直接 HTTP 出口绕过统一网络边界。
+- Desktop main must apply the Electron network policy to `defaultSession` and
+  `persist:zcode-embedded-browser` independently before creating the first window. With `httpProxy` set,
+  both sessions use `session.setProxy({ mode: "fixed_servers", proxyRules, proxyBypassRules })`, where
+  `proxyBypassRules` comes from `httpProxyNoProxy`. When empty, `defaultSession` uses `mode: "direct"`
+  and `persist:zcode-embedded-browser` uses `mode: "system"`, and old connection pools are closed after
+  the policy update. When empty, `proxyBypassRules` is not sent: bypass rules only make sense for
+  `fixed_servers`, and the exception list in `system` mode is maintained by the OS. A failure applying
+  one session must not block configuring the other. Changes take effect on the next app start only, and
+  the settings page must prompt the user to restart.
+- The Desktop Window Host must inject its managed proxy-aware transport as `RemoteAssetNetworkPort` into
+  desktop-attached remote deployment. Manifest, component archive and progress `HEAD` must not fall back
+  to bare `fetch` when the transport is missing or fails; when a standalone server does not inject the
+  port, the original direct-connection contract holds.
+- A Chromium session's custom CA does not read `NODE_EXTRA_CA_CERTS`. Only when the settings page has
+  `httpProxyCaCertPath` does main read the PEM bundle and allow, through each session's
+  `setCertificateVerifyProc`, certificates whose chain contains that CA; when empty, Chromium default
+  verification is restored.
+- Other dedicated WebView sessions such as `persist:zcode-coding-plan` do not inherit the embedded
+  browser network policy. This boundary only fixes the explicit egress of the renderer and the embedded
+  Browser / Browser Use; it adds no global certificate-ignore switch and does not allow unconfigured
+  self-signed certificates.
+- When the adapter issues requests itself (proxy, custom CA, `WebFetch` public-DNS validation), upstream
+  status codes are handled like native `fetch`, and **one response can never kill the agent process**:
+  `HttpClientPort` returns any status code unchanged, including non-standard codes outside 200–599
+  (LinkedIn answers crawlers with `999`), and callers treat it as an ordinary non-2xx; bodyless statuses
+  such as 204 / 205 / 304 yield an empty body. The proxy-aware fetch must return a WHATWG `Response`,
+  which cannot represent statuses outside 200–599, so that one request fails with a `TypeError`
+  carrying `code: "ZCODE_UNSUPPORTED_HTTP_STATUS"` and `status`, on the same path as network errors.
+  Code that converts a Node response into an upper-layer object always wraps the `http.request` callback
+  in try/catch; on failure it destroys the response and rejects that one request.
+- `HttpClientPort` responses carry a redacted `egress` summary with at least: whether a proxy was used,
+  the proxy source, the proxy host, whether `NO_PROXY` matched and whether a custom CA was used.
+- Before spawning a subprocess, `ExecutionPort` must build the environment from the infrastructure
+  layer: choose inherited or empty environment and filter the generic runtime/proxy/certificate
+  variables, then restore the sealed user tool network environment, then inject the explicit egress
+  policy, and finally apply the per-execution `env.set` / `env.unset` overlay. Normal commands thus get
+  the user shell network configuration by default while the explicit app/provider network boundary and
+  command-level exceptions are preserved.
+- When `network.httpProxy` or `ZCODE_HTTP_PROXY` exists, the subprocess environment must fill
+  `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and the lowercase forms. User standard proxy variables are
+  not inherited input for the provider/app/general `HttpClientPort`; they enter a controlled boundary
+  only through the `WebFetch`-specific fallback or tool passthrough.
+- When `network.noProxy` or `ZCODE_NO_PROXY` exists, the subprocess environment must fill both cases.
+  Standard `NO_PROXY` / `no_proxy` is not inherited input for the provider/app/general
+  `HttpClientPort`, but may serve as the `WebFetch`-specific fallback or be restored as user tool
+  passthrough.
+- The startup environment of stdio MCP servers goes through the same subprocess network environment
+  builder; HTTP/SSE MCP transports must receive a proxy-aware fetch and must not rely on Node global
+  fetch reading proxy environment variables.
+- core, bootstrap, CLI, TUI and ordinary business adapters must not call `fetch`, `http.request` or
+  `https.request` directly. Exceptions are allowed only at explicit network adapter/provider transport
+  boundaries, guarded by an architecture test.
+
+## Boundary
+
+This stage converges the default network egress; it is not an unbypassable system firewall. A subprocess
+can still delete proxy variables inside the command, use its own network stack, or leave through a
+non-HTTP protocol. Forcing all traffic through one egress needs an OS sandbox, container network policy
+or a host-firewall-level capability later.
+
+## Test coverage
+
+- `ZCODE_HTTP_PROXY` routes model requests through a local HTTP proxy.
+- A match of `network.noProxy` or `ZCODE_NO_PROXY` makes model requests bypass the proxy and connect
+  upstream directly.
+- `ZCODE_HTTP_PROXY` also routes `WebFetch` through the same proxy; the internal model request of the
+  `WebSearch` handler reuses the provider transport proxy.
+- Explicit CA loading result contains all Node standard public roots and the full user PEM bundle; a
+  missing file fails explicitly; without config the default policy is returned. With a delayed CA read,
+  requests still cancel/time out in time, uncancelled concurrent requests complete and reuse the same
+  read, and a failed first read is retried by the next request. Test TLS key/cert are generated at run
+  time with the certificate start time set back one day; the HTTPS proxy and upstream use separate
+  certificates, covering rejection on each side. Both CLI HTTP clients trust the configured test CA over
+  direct, HTTP CONNECT and HTTPS proxy, and still reject untrusted self-signed certificates.
+- `ZCODE_AGENT_CA_CERT` lets `WebFetch` trust the custom CA; the internal model request of the
+  `WebSearch` handler reuses the provider certificate policy.
+- `network.httpProxy` or `ZCODE_HTTP_PROXY` is injected into the `ExecutionPort` subprocess environment
+  with both cases of the proxy variables filled.
+- `network.caCertFile`, `AppSettings.httpProxyCaCertPath` or `ZCODE_AGENT_CA_CERT` is filled into the
+  common Node, curl, git and Python requests variables.
+- Desktop settings `httpProxy` applies after restart to both Electron `defaultSession` and
+  `persist:zcode-embedded-browser`, so renderer and embedded Browser / Browser Use traffic uses the
+  explicit proxy; when empty, `defaultSession` connects directly and `persist:zcode-embedded-browser`
+  follows the system proxy so the embedded browser reaches the same sites as the user's local browser.
+- Desktop settings `httpProxyNoProxy` applies after restart to the `proxyBypassRules` of both target
+  sessions and is injected into the agent as `ZCODE_NO_PROXY` / `NO_PROXY` / `no_proxy`.
+- Desktop settings `httpProxyCaCertPath` is injected after restart into the agent `NODE_EXTRA_CA_CERTS`
+  and makes both target sessions trust TLS certificates issued by that CA; other dedicated WebView
+  sessions are unaffected.
+- Desktop settings `httpProxy`, `httpProxyNoProxy` and `httpProxyCaCertPath` control the Window Host
+  remote resource manifest, component archive and progress `HEAD` requests; no direct request happens
+  when the explicit proxy fails.
+- When applying the `defaultSession` network policy fails, `persist:zcode-embedded-browser` is still
+  configured, and vice versa; diagnosable logs are recorded by session name.
+- User shell standard proxy/certificate variables do not enter model requests, the app runtime or
+  `WebFetch` directly; `WebFetch` reads only the sealed standard proxy/no-proxy fallback in
+  `ZCODE_TOOL_ENV_PASSTHROUGH_JSON`. They are also restored through that sealed variable into inherited
+  tool/MCP/Bash subprocesses. Command-level env overlays can still override or delete them.
+- stdio MCP servers inherit the unified network environment and HTTP/SSE MCP transports get a
+  proxy-aware fetch.
+- Upstream `999` / `204` / `304` through a proxy: `HttpClientPort` returns the original status (empty
+  body for 204 / 304); the proxy-aware fetch returns a `Response` with empty body for 204 / 304 and
+  fails `999` with `ZCODE_UNSUPPORTED_HTTP_STATUS`; neither produces an uncaughtException
+  (`packages/adapters/tests/http-response-status.test.ts`).
+- An architecture test scans in-process sources to prevent new direct HTTP egress from bypassing the
+  unified network boundary.

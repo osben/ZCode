@@ -1,14 +1,16 @@
 import { join } from "node:path";
 import { waitForWorkspaceApp, DEFAULT_WORKSPACE } from "../../../helpers/desktop-app.js";
 
-describe("输入框项目选择器", () => {
-  it("VP30：未打开项目与侧栏一致、搜索项目、零 root 选择与改名同步", async function () {
+describe("Composer project picker", () => {
+  it("VP30: unopened projects match the sidebar; search projects, zero-root selection and rename stay in sync", async function () {
     this.timeout(120_000);
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
     await browser.execute(() => {
       (
-        window as Window & { __testActions?: { setLocale(locale: "zh-CN"): void } }
-      ).__testActions!.setLocale("zh-CN");
+        window as Window & {
+          __testActions?: { setLocale(locale: "en-US" | "uk-UA" | "zh-CN"): void };
+        }
+      ).__testActions!.setLocale("en-US");
     });
     const names = Array.from({ length: 7 }, (_, i) => `E2E_PROJECT_PICKER_${i}`);
     for (const name of names) {
@@ -25,7 +27,7 @@ describe("输入框项目选择器", () => {
     await $('[data-testid="composer-workspace-trigger"]').click();
     const menu = $('[data-testid="composer-project-menu"]');
     await menu.waitForDisplayed();
-    expect(await menu.$('input[placeholder="搜索项目或设备"]').isExisting()).toBe(true);
+    expect(await menu.$('input[placeholder="Search projects or devices"]').isExisting()).toBe(true);
     const menuNames = () =>
       browser.execute(() =>
         [
@@ -69,6 +71,9 @@ describe("输入框项目选择器", () => {
       '[data-project-name="E2E_PROJECT_PICKER_RENAMED"] [data-testid="virtual-project-row"]',
     ).click({ button: "right" });
     await $('[data-testid="virtual-project-delete"]').click();
+    // Project deletion is confirmed first (ISSUE-028); Delete is the destructive confirm button.
+    await $('[data-testid="confirm-dialog-confirm"]').waitForDisplayed();
+    await $('[data-testid="confirm-dialog-confirm"]').click();
     await $('[data-project-name="E2E_PROJECT_PICKER_RENAMED"]').waitForExist({ reverse: true });
     await trigger.click();
     expect(await menuNames()).not.toContain("E2E_PROJECT_PICKER_RENAMED");

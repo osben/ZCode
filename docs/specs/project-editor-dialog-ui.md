@@ -1,69 +1,69 @@
-# 创建项目弹窗布局
+# Create Project Dialog Layout
 
-状态：已实现，2026-10-15。布局经原型确认（选用变体 B，原型保存在 `prototype/project-editor-dialog` 分支，不合入）。
+Status: implemented (2026-10-15). The layout was confirmed via a prototype (variant B; kept on the `prototype/project-editor-dialog` branch, not merged).
 
-## 1. 范围
+## 1. Scope
 
-| 项目     | 内容                                                                                                                                     |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| 组件     | `ProjectEditor`（创建 / 编辑项目表单）、`RemoteProjectList` 内嵌页（添加已有项目）                                                       |
-| 变更层   | 只改展示；连接流程、保存链、状态机、props 契约、目录信任确认、目录浏览器都不变                                                           |
-| 覆盖入口 | 侧栏项目加号、聊天「在此设备创建项目」；Desktop、Web、手机共享同一组件，不单独做手机布局                                                 |
-| 状态来源 | 设备状态点只从 `resolveRemoteConnectionPresentation` 取，组件不自行挑颜色                                                                |
-| 相关规格 | [创建前确认信任文件夹](project-creation-folder-confirmation.md)、[远程设备状态展示](../architecture/remote-device-connection-ux-spec.md) |
+| Item          | Content                                                                                                                                                                            |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Components    | `ProjectEditor` (create / edit project form), the embedded `RemoteProjectList` page (add existing project)                                                                         |
+| Change layer  | Presentation only; connection flow, save chain, state machine, props contract, folder trust confirmation and folder browser are unchanged                                          |
+| Entries       | Sidebar project plus, chat "create project on this device"; Desktop, Web and mobile share one component, no separate mobile layout                                                 |
+| State source  | The device status dot comes only from `resolveRemoteConnectionPresentation`; the component never picks colors itself                                                               |
+| Related specs | [Confirm trusting folders before creating a project](project-creation-folder-confirmation.md), [remote device status display](../architecture/remote-device-connection-ux-spec.md) |
 
-## 2. 表单布局
+## 2. Form Layout
 
-字段从上到下：**项目名称 → 设备 → 源文件夹**（2026-10-16 调整）。设备选择与其下方的已有项目入口作为一组，放在名称之后、源文件夹之前；键盘焦点顺序与字段顺序一致。
+Fields top to bottom: **project name → device → source folders**. The device selector and the existing-project entry below it form one group placed after the name and before the source folders; keyboard focus order matches field order.
 
 ```
-┌ 创建项目 ─────────────────────────────┐
-│ 项目名称                                │
-│ [ 新项目                             ]  │
-│ 设备                                    │
-│ [🖥/🗄 名称                 ● 状态  ▾]  │
-│ 这台设备上已有项目？ 添加到侧栏 >       │  ← 只在选中远程设备时显示
-│ 源文件夹                                │
+┌ Create project ───────────────────────┐
+│ Project name                            │
+│ [ New project                        ]  │
+│ Device                                  │
+│ [🖥/🗄 name                 ● status ▾]  │
+│ Projects already on this device? Add to sidebar > │  ← only when a remote device is selected
+│ Source folders                          │
 │ ┌┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┐  │
-│ ┆   (📁+)  选择文件夹 / 副文案        ┆  │  ← 零目录时的虚线空态
+│ ┆   (📁+)  Choose folder / subtext   ┆  │  ← dashed empty state with zero folders
 │ └┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┘  │
-│                         [取消] [创建]   │
+│                      [Cancel] [Create]  │
 └─────────────────────────────────────────┘
 ```
 
-- 三个字段的标签统一用 `text-ui-sm font-medium`。名称是标准 Input，没有前缀图标；placeholder 是保存时的默认名「新项目」。
-- 聊天已确认目录（`fixedFolder`）时不显示设备选择，设备名作为只读文字留在名称下方，目录行仍显示完整路径。
+- The three field labels use `text-ui-sm font-medium`. The name is a standard Input with no prefix icon; its placeholder is the default name saved ("新项目", New project).
+- When chat already confirmed a folder (`fixedFolder`), the device selector is hidden; the device name stays as read-only text under the name, and the folder row still shows the full path.
 
-## 3. 设备选择
+## 3. Device Selection
 
-- 继续用 Select 下拉。触发器和每个选项都是「图标 + 名称 + 状态」：此电脑用 `Monitor`，远程设备用 `Server`。不区分 SSH / WSL / Docker。
-- 状态靠右显示，用 `resolveRemoteConnectionPresentation({ state })` 的 `dot` 画圆点；连接中用转圈代替圆点。
-- 在线只显示圆点，文字只给读屏；其余 4 种状态同时显示圆点和短文字（`project.deviceStatus.*`）。
-- 名称过长时截断，状态和选中对勾保持可见。
-- 「添加远程设备…」放在末尾，前面有 `Plus` 图标，和设备列表之间用分隔线隔开。
+- Still a Select dropdown. Trigger and every option are "icon + name + status": `Monitor` for this computer, `Server` for remote devices; SSH / WSL / Docker are not distinguished.
+- Status sits at the right and draws the dot from `resolveRemoteConnectionPresentation({ state }).dot`; connecting shows a spinner instead of a dot.
+- Online shows the dot only (text for screen readers only); the other 4 states show dot plus short text (`project.deviceStatus.*`).
+- Long names truncate; status and the selected checkmark stay visible.
+- "添加远程设备…" (Add remote device…) is last, prefixed with a `Plus` icon and separated from the device list by a divider.
 
-## 4. 添加已有项目入口
+## 4. Add Existing Project Entry
 
-- 位置：设备选择框正下方，只在选中远程设备、且提供了 `onBrowseExisting` 时显示。
-- 形态：一行 `text-ui-sm` 的说明「这台设备上已有项目？」，后面接一个带下划线、`text-brand` 的链接按钮「添加到侧栏 >」。问句说明用途，链接是唯一可点区域。
-- 行为不变：点击走 `onBrowseExisting`，设备未在线时先连接再打开列表；设备状态不禁用这个入口。
-- 返回后焦点回到这个链接。
+- Position: directly under the device selector; shown only when a remote device is selected and `onBrowseExisting` is provided.
+- Form: one `text-ui-sm` line "这台设备上已有项目？" (Projects already on this device?) followed by an underlined `text-brand` link button "添加到侧栏 >" (Add to sidebar >). The question states the purpose; the link is the only clickable area.
+- Behavior unchanged: click calls `onBrowseExisting`; if the device is offline it connects first and then opens the list; device status does not disable the entry.
+- Focus returns to this link on return.
 
-## 5. 源文件夹
+## 5. Source Folders
 
-- 零目录：虚线边框卡片，圆底 `FolderPlus` 图标，主文案「选择文件夹」，副文案「ZCode 可读取和编辑这些文件夹」。
-- 远程设备未在线：主文案改为「连接并选择文件夹」，副文案显示「设备当前{状态}，点击后先连接」。
-- 有目录：沿用一个带边框的列表；本地项目末行是「添加文件夹」。非主要目录的「设为主要」是 ghost 小按钮，手机上也常显，不做 hover 才显示。
+- Zero folders: dashed-border card, round `FolderPlus` icon, main text "选择文件夹" (Choose folder), subtext "ZCode 可读取和编辑这些文件夹" (ZCode can read and edit these folders).
+- Remote device offline: main text becomes "连接并选择文件夹" (Connect and choose folder), subtext "设备当前{状态}，点击后先连接" (Device is currently {status}; click to connect first).
+- With folders: one bordered list; for local projects the last row is "添加文件夹" (Add folder). "设为主要" (Set as primary) on non-primary folders is a small ghost button, always visible on mobile (not hover-only).
 
-## 6. 已有项目列表页（内嵌）
+## 6. Existing Projects List Page (embedded)
 
-- 返回按钮在标题左侧：`ArrowLeft` 图标按钮，aria-label 为「返回新建项目」，`data-testid="remote-project-back"` 不变。
-- 原来列表底部的「返回新建项目」按钮删除。
-- 独立弹窗形态（非内嵌）不变。
+- The back button sits left of the title: an `ArrowLeft` icon button with aria-label "返回新建项目" (Back to create project); `data-testid="remote-project-back"` is unchanged.
+- The old "返回新建项目" button at the bottom of the list is removed.
+- The standalone dialog form (non-embedded) is unchanged.
 
-## 7. 验证
+## 7. Verification
 
-- UI 单测：`packages/ui/test/projectEditorLayout.test.ts` 覆盖字段顺序、5 种状态的圆点与文字、已有项目提示行、空态文案、返回按钮位置与焦点。
-- E2E：`project-device-selection`、`existing-remote-project`、`virtual-project-mobile`、`background-connection` 中受影响的选择器同步更新。2026-10-15 桌面 3 个用例在本地 SSH 容器通过；手机用例未运行。
-- 视觉：深浅两种主题、中英文、1440 / 480 窗口宽度，取自桌面 E2E 截图。
-- 2026-10-16 字段对调：布局单测 6/6 通过；真实 `ProjectEditor` 浏览器挂载在 390 / 1200px、Zai Light / Dark、中英文共 8 组通过，检查本地与远程布局、已有项目入口随设备移动、Tab 顺序和名称保留。截图与几何数据位于 `packages/desktop/.e2e-artifacts/project-editor-order/`；桌面 SSH 与手机远控 E2E 断言已同步，本轮未重跑完整链路。
+- UI unit test `packages/ui/test/projectEditorLayout.test.ts`: field order, dots and text for the 5 states, existing-project hint row, empty-state copy, back button position and focus.
+- E2E: affected selectors updated in `project-device-selection`, `existing-remote-project`, `virtual-project-mobile`, `background-connection`. The 3 desktop cases passed against a local SSH container (2026-10-15); the mobile case was not run.
+- Visual: light/dark, Chinese/English, 1440 / 480 window widths, from desktop E2E screenshots.
+- Name/device field reorder (2026-10-16): layout unit tests 6/6 passed; the real `ProjectEditor` browser mount passed 8 combinations (390 / 1200px × Zai Light / Dark × Chinese/English), checking local and remote layout, the existing-project entry moving with the device, Tab order and name retention. Screenshots and geometry are in `packages/desktop/.e2e-artifacts/project-editor-order/`; the desktop SSH and mobile remote E2E assertions were updated but the full chain was not rerun.

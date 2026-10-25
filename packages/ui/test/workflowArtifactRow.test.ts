@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
-// 交付物行（docs/dynamic-workflow/transcript-and-notifications.md「Artifact tiles」）与它的两条呈现规则
-// （`resolvePrimaryArtifact` / `orderArtifactsPrimaryFirst`，docs/dynamic-workflow/authoring.md「Ids, tags and versions」）。
-// 行在完成卡与 run 侧板上的**落位**分别在 workflowCompletionCard.test.ts 与 workflowRunArtifactsSection.test.ts；
-// 这里只钉行自己的形态，与两条纯函数。
+// The artifact row (docs/dynamic-workflow/transcript-and-notifications.md "Artifact tiles") and
+// its two presentation rules (`resolvePrimaryArtifact` / `orderArtifactsPrimaryFirst`,
+// docs/dynamic-workflow/authoring.md "Ids, tags and versions"). The row's **placement** on the
+// completion card and the run side panel is covered by workflowCompletionCard.test.ts and
+// workflowRunArtifactsSection.test.ts; here we only pin the row's own shape and the two pure functions.
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -52,12 +53,13 @@ function renderRow(
 }
 
 describe("WorkflowArtifactRow", () => {
-  it("一颗按钮：预览框是 inert 兄弟节点；细节、版本与打开回调保真", () => {
+  it("one button: the preview frame is an inert sibling; detail, version, and open callback stay faithful", () => {
     const onOpen = vi.fn();
     const view = renderRow(REPORT, { onOpen });
     const row = view.getByTestId("workflow-artifact-row") as HTMLButtonElement;
     expect(row.tagName).toBe("BUTTON");
-    // 框与按钮是兄弟：markdown 缩略里的控件（表格的复制按钮）不能嵌进按钮；点击面由 ::after 铺满。
+    // Frame and button are siblings: controls inside the markdown thumbnail (a table's copy
+    // button) must not nest inside the button; the hit area is laid out by ::after.
     const shell = row.parentElement!;
     expect(row.className).toContain("wf-tile-hit");
     const frame = view.getByTestId("workflow-artifact-row-frame");
@@ -74,11 +76,11 @@ describe("WorkflowArtifactRow", () => {
     expect(view.getByTestId("workflow-artifact-tile-open")).toBeTruthy();
     fireEvent.click(row);
     expect(onOpen).toHaveBeenCalledWith("report");
-    // 没有「primary」字样。
+    // No "primary" wording.
     expect(row.textContent).not.toMatch(/primary/iu);
   });
 
-  it("没有回调：禁用、无 aria-label、无 ↗；说明与版本仍在；tooltip 可由宿主覆盖", () => {
+  it("no callback: disabled, no aria-label, no ↗; description and version remain; the host can override the tooltip", () => {
     const view = renderRow(REPORT, { title: "File · 季度基准报告\nout/report.pdf" });
     const row = view.getByTestId("workflow-artifact-row") as HTMLButtonElement;
     expect(row.disabled).toBe(true);
@@ -88,19 +90,22 @@ describe("WorkflowArtifactRow", () => {
     expect(row.getAttribute("title")).toBe("File · 季度基准报告\nout/report.pdf");
   });
 
-  it("看板的细节是条数；说明缺席时那一行不画；v1 不写版本；zh-CN 的 kind 词", () => {
-    const view = renderRow(
-      { id: "perf", kind: "chart", title: "每轮耗时", version: 1, itemCount: 12 },
-      { locale: "zh-CN" },
-    );
-    expect(view.queryByTestId("workflow-artifact-row-description")).toBeNull();
-    expect(view.queryByTestId("workflow-artifact-tile-version")).toBeNull();
-    expect(view.getByTestId("workflow-artifact-row-detail").textContent).toBe("图表·items");
-    cleanup();
-    // 字节未知、无条数：只剩 kind 词，没有点。
-    const bare = renderRow({ id: "notes", kind: "markdown", version: 1 });
-    expect(bare.getByTestId("workflow-artifact-row-detail").textContent).toBe("Document");
-  });
+  it.each([["zh-CN"]] as const)(
+    "a chart's detail is the item count; a missing description omits the line; v1 writes no version; zh-CN kind word",
+    (locale) => {
+      const view = renderRow(
+        { id: "perf", kind: "chart", title: "每轮耗时", version: 1, itemCount: 12 },
+        { locale },
+      );
+      expect(view.queryByTestId("workflow-artifact-row-description")).toBeNull();
+      expect(view.queryByTestId("workflow-artifact-tile-version")).toBeNull();
+      expect(view.getByTestId("workflow-artifact-row-detail").textContent).toBe("图表·items");
+      cleanup();
+      // Bytes unknown, no item count: only the kind word, no dot.
+      const bare = renderRow({ id: "notes", kind: "markdown", version: 1 });
+      expect(bare.getByTestId("workflow-artifact-row-detail").textContent).toBe("Document");
+    },
+  );
 });
 
 describe("resolvePrimaryArtifact / orderArtifactsPrimaryFirst", () => {
@@ -108,14 +113,14 @@ describe("resolvePrimaryArtifact / orderArtifactsPrimaryFirst", () => {
   const b = { id: "b", primary: true as const };
   const c = { id: "c" };
 
-  it("旗子优先，位置无关；没有旗子时只有单件才算交付物；两件以上无旗子 ⇒ 没有", () => {
+  it("the flag wins regardless of position; without a flag only a single item counts as the artifact; two or more without a flag ⇒ none", () => {
     expect(resolvePrimaryArtifact([a, b, c])).toBe(b);
     expect(resolvePrimaryArtifact([a])).toBe(a);
     expect(resolvePrimaryArtifact([a, c])).toBeUndefined();
     expect(resolvePrimaryArtifact([])).toBeUndefined();
   });
 
-  it("交付物带头，其余保持原顺序；没有旗子时原样复制（不按单件规则重排——只有一件也没什么可排）", () => {
+  it("the artifact leads and the rest keep their order; without a flag it is copied as-is (no single-item reordering — with one item there is nothing to sort)", () => {
     expect(orderArtifactsPrimaryFirst([a, b, c]).map((x) => x.id)).toEqual(["b", "a", "c"]);
     expect(orderArtifactsPrimaryFirst([b, a, c]).map((x) => x.id)).toEqual(["b", "a", "c"]);
     const plain = [a, c];

@@ -2,8 +2,8 @@ import type { WebRemoteControlRelayV2Device } from "@zcode/shared/web-remote-rel
 import type { KnownDevice, WebRemoteControlDeviceGroup } from "#src/web-remote-control/contract.js";
 
 /**
- * MID 只负责设备展示；保留全部在线 SID，连接与业务状态仍按 SID 隔离。
- * knownDevices 是本机记住的 MID → 设备名/平台：离线记录的 meta 为空，只能靠它显示名字和平台图标。
+ * MID is only responsible for device display; all online SIDs are kept, while connections and business state remain isolated by SID.
+ * knownDevices is the locally remembered MID → device name/platform: offline records have empty meta, so this is the only way to show the name and platform icon.
  */
 export function groupWebRemoteControlDevices(
   records: WebRemoteControlRelayV2Device[],
@@ -11,7 +11,7 @@ export function groupWebRemoteControlDevices(
   knownDevices: ReadonlyMap<string, KnownDevice> = new Map(),
 ): WebRemoteControlDeviceGroup[] {
   const collator = new Intl.Collator(locale);
-  // 显示名优先取记录自带的 meta.name，缺失时回退到记住的名字；排序与聚合共用同一口径。
+  // The display name prefers the record's own meta.name and falls back to the remembered name when missing; sorting and aggregation share the same rule.
   const displayName = (record: WebRemoteControlRelayV2Device) =>
     record.meta.name?.trim() || knownDevices.get(record.device_mid)?.name || "";
   const displayPlatform = (record: WebRemoteControlRelayV2Device) =>
@@ -38,12 +38,12 @@ export function groupWebRemoteControlDevices(
       };
       groups.set(record.device_mid, group);
     }
-    // 在线记录排在前面，平台取第一条能给出平台的记录；缺失字段不写入，保持旧投影形状。
+    // Online records come first; the platform is taken from the first record that can provide one. Missing fields are not written, keeping the old projection shape.
     if (!group.platform) {
       const platform = displayPlatform(record);
       if (platform) group.platform = platform;
     }
-    // 历史离线注册不再生成设备行；在线 SID 不能去重成一个随意选择的连接目标。
+    // Historical offline registrations no longer generate device rows; online SIDs must not be deduplicated into one arbitrarily chosen connection target.
     if (record.online) group.onlineConnections.push(record);
   }
   return [...groups.values()];

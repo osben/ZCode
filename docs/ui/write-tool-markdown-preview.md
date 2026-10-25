@@ -1,16 +1,16 @@
 # Write Tool Markdown Preview
 
-> **当前状态**：V4 tool row 通过统一的 `ToolCallBlocks` 正文组件实现该预览。
+> **Current state**: V4 tool rows implement this preview through the shared `ToolCallBlocks` body component.
 
-`write` / `create` / `save` 类工具在卡片详情里展示文件内容预览时，如果目标文件扩展名是 `.md`，会直接按 Markdown 正文渲染；其他文本文件继续使用代码块高亮。
+When a `write` / `create` / `save` tool card shows a file content preview and the target file extension is `.md`, the content is rendered as Markdown. Other text files keep code-block highlighting.
 
-## 交互规则
+## Interaction Rules
 
-- Markdown 预览复用聊天消息的 `MessageResponse` 渲染能力，支持标题、列表、代码块和链接。
-- 指向工作区内文件的相对链接会继续走 Code Viewer 打开。
-- 预览区保留固定最大高度和滚动容器，避免长文档撑开工具卡片。
+- The Markdown preview reuses the chat message `MessageResponse` renderer and supports headings, lists, code blocks and links.
+- Relative links to files inside the workspace still open in the Code Viewer.
+- The preview keeps a fixed max height and a scroll container so long documents do not stretch the tool card.
 
-## 实现入口
+## Entry Points
 
-- `packages/ui/src/ToolCallBlocks/ToolCallBody.tsx` 的 `InlineCodeContent`
-- `packages/ui/src/lib/codeViewer.ts` 的 `inferCodeLanguage`
+- `InlineCodeContent` in `packages/ui/src/ToolCallBlocks/ToolCallBody.tsx`
+- `inferCodeLanguage` in `packages/ui/src/lib/codeViewer.ts`

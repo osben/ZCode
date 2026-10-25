@@ -1,17 +1,17 @@
 // ============================================================
 // escalate Tool Handler
 // ============================================================
-// 工作流 actor（子 AgentRuntime）用它把一个**真阻塞**升级给创建这条工作流的主代理，并停驻
-// 在自己那次 ask 里等答案。handler 把问题交给注入的 WorkflowEscalatePort，阻塞等待结局：
-//   - answered → 返回主代理给的答案文本；actor 的轮次就地继续，ask 照常 settle。
-//   - refused  → 返回端口写好的文案（预算已尽 / 无在飞 ask）。
+// A workflow actor (child AgentRuntime) uses this tool to escalate a **real blocker** to the primary agent that created the workflow,
+// then waits in its ask for an answer. The handler passes the question to the injected WorkflowEscalatePort and waits for the outcome:
+//   - answered → return the primary agent's answer; the actor's turn continues in place and the ask settles normally.
+//   - refused  → return the message supplied by the port (budget exhausted / no ask in flight).
 //
-// 两支都是**普通工具结果**，不是 ToolHandlerFailure。这与 submit_result 的 reject 分道：
-// 那里的 error tool_result 是「修复通道」（模型该重试），而这里没有可修复的东西——把
-// 「升级预算已尽」渲染成错误只会让模型反复撞同一堵墙，而投机绕过正是本特性要消灭的行为。
+// Both outcomes are **ordinary tool results**, not ToolHandlerFailure. This differs from submit_result's rejection:
+// its error tool_result is a repair path (the model should retry), but there is nothing to repair here. Rendering “escalation budget
+// exhausted” as an error would make the model repeatedly hit the same wall, and speculative workarounds are exactly what this feature prevents.
 //
-// 端口缺席仍然抛 ConfigurationError（照 submit_result）：本工具只在注入了端口的 actor 会话
-// 注册，走到这里就是接线故障，不是一种结局。
+// If the port is absent, still throw ConfigurationError (as submit_result does). This tool is registered only in actor sessions with
+// the port injected, so reaching this point indicates a wiring fault, not an outcome.
 
 import {
   CoreErrorType,
@@ -27,13 +27,13 @@ import {
 } from "@zcode/contracts";
 import type { ToolEntry, ToolHandler } from "../types.js";
 
-/** 答案可能是一整段说明；与 submit_result 同档的模型面上限。 */
+/** An answer may be a full explanation; use the same model-facing limit as submit_result. */
 const MAX_ESCALATE_MODEL_BYTES = 16_000;
 
 /**
- * 工具描述 = actor 侧的**使用纪律**，它比这个工具的机制更重要：机制只让 actor 能提问，
- * 纪律才让它在该提问的时候提问。文案的四条约束：最后手段（不是好奇）、
- * 一次一个聚焦问题、阻塞可能很久、per-ask 上限 3。
+ * The tool description defines the actor's **usage discipline**, which matters more than the mechanism: the mechanism only lets an
+ * actor ask; the discipline ensures it asks only when appropriate. The description sets four constraints: last resort (not curiosity),
+ * one focused question at a time, blocking may take a long time, and a maximum of three per ask.
  */
 const ESCALATE_DESCRIPTION = [
   "Escalates a question that is BLOCKING you to the main agent that created this workflow, and waits here for the answer.",
@@ -53,7 +53,7 @@ const ESCALATE_DESCRIPTION = [
 const escalateHandler: ToolHandler = async (input, context) => {
   const parsed = EscalateInputSchema.parse(input) as EscalateInput;
 
-  // Gate 与 submit_result 同款：以端口存在为判据，与 runtimeScope / taskType 无关。
+  // Same gate as submit_result: port presence is the criterion, independent of runtimeScope / taskType.
   if (!context.workflowEscalatePort) {
     throw createCoreError(
       CoreErrorType.ConfigurationError,
@@ -83,8 +83,8 @@ const escalateHandler: ToolHandler = async (input, context) => {
     } satisfies EscalateOutput;
   }
 
-  // 拒绝的文案由端口写好（陈述现状与下一步），这里原样透传——判别键与文案分开维护，
-  // 两处迟早会说不同的话，而这里的读者是模型。
+  // The port supplies the refusal message (current state and next step); pass it through unchanged. Maintaining the discriminator
+  // and message separately would eventually make them disagree, and the reader here is the model.
   return {
     status: "refused",
     message: outcome.message,
@@ -100,8 +100,8 @@ export const escalateToolEntry: ToolEntry = {
     description: ESCALATE_DESCRIPTION,
     readOnly: false,
     destructive: false,
-    // 与 submit_result 刻意不同：升级**不是**终态工具。它不结束 turn，也不排斥兄弟工具——
-    // 停驻的是这一次调用，不是整个 actor。
+    // Intentionally differs from submit_result: escalation is **not** a terminal tool. It does not end the turn or exclude sibling
+    // tools; only this call is suspended, not the entire actor.
     concurrentSafe: true,
     maxOutputBytes: MAX_ESCALATE_MODEL_BYTES,
     sideEffectScope: "session",
@@ -133,8 +133,8 @@ export const escalateToolEntry: ToolEntry = {
       direction: "head",
     },
   },
-  // 等待可能任意长（按设计不设超时——「超时后自行判断」恰恰重新引入投机绕过）。逃生舱是
-  // 既有的取消：driver 的 cancelAsk 会连同停驻中的升级 deferred 一起拒绝。
+  // Waiting may take arbitrarily long (there is intentionally no timeout; “decide for yourself after a timeout” would reintroduce
+  // speculative workarounds). Existing cancellation is the escape hatch: the driver's cancelAsk also rejects the suspended escalation deferred.
   timeout: {
     kind: "none",
   },
@@ -151,7 +151,7 @@ export const escalateToolEntry: ToolEntry = {
   },
 };
 
-/** 模型只读到一段文本：答案本身，或拒绝的文案。判别位不进模型面。 */
+/** The model sees only text: the answer or refusal message. The discriminator is not exposed to the model. */
 function formatEscalateModelContent(output: unknown): string {
   const parsed = EscalateOutputSchema.safeParse(output);
   if (!parsed.success) return "escalate returned an invalid result.";

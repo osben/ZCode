@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { HighspeedModelIndicator } from "@/highspeed/HighspeedModelIndicator.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 
 afterEach(cleanup);
 
@@ -13,7 +14,7 @@ function renderIndicator(sweepActive = false, animateEntrance = true) {
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: TEST_LOCALE },
       createElement(
         TooltipProvider,
         null,
@@ -28,7 +29,7 @@ function renderIndicator(sweepActive = false, animateEntrance = true) {
   );
 }
 
-/** 翻页动效挂在图标与文字外层的 motion 容器上。 */
+/** The flip animation lives on the motion container wrapping the icon and text. */
 function readFlipContainerOpacity(container: HTMLElement): string | undefined {
   const flip = container.querySelector('[data-highspeed-model-icon="true"]')?.parentElement;
   return flip?.style.opacity;
@@ -43,18 +44,24 @@ describe("HighspeedModelIndicator", () => {
     expect(container.querySelector('[data-chat-toolbar-popover-trigger="true"]')).toBeNull();
   });
 
-  it("在 hover 时展示加速前的原模型", async () => {
+  it("shows the pre-acceleration original model on hover", async () => {
     renderIndicator();
 
     fireEvent.pointerMove(screen.getByLabelText("GLM-5.3 HighSpeed"), {
       pointerType: "mouse",
     });
 
-    expect((await screen.findAllByText("原模型：GLM-5.2")).length).toBeGreaterThan(0);
-    expect(screen.queryByText(/剩余时间/)).toBeNull();
+    expect(
+      (
+        await screen.findAllByText(
+          expectedCopy("chat.highspeed.originalModel", { model: "GLM-5.2" }),
+        )
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText(/Time remaining/)).toBeNull();
   });
 
-  it("draw 新命中从翻页起点入场；切回或恢复时直接呈现静止标识", () => {
+  it("a fresh draw hit enters from the flip start point; switching back or restoring shows the resting indicator directly", () => {
     const activation = renderIndicator(false, true);
     expect(readFlipContainerOpacity(activation.container)).toBe("0");
     activation.unmount();

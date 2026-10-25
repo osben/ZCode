@@ -4,7 +4,7 @@ export function getWebRemoteControlBridgeRecoveryRetryDelay(attempt: number): nu
   return WEB_REMOTE_CONTROL_BRIDGE_RECOVERY_RETRY_DELAYS_MS[attempt] ?? null;
 }
 
-/** 同一恢复 owner 串行重建 bridge；重连成功必须等旧离线快照收口后再核对目标并恢复。 */
+/** The same recovery owner rebuilds the bridge serially; after a successful reconnect, the target must be verified and restored only after the old offline snapshot has closed out. */
 export function createWebRemoteControlBridgeRecoveryRunner(
   recover: (reason: string) => Promise<void>,
 ) {
@@ -16,7 +16,7 @@ export function createWebRemoteControlBridgeRecoveryRunner(
     }
     if (shouldRecoverAfterCurrent && !shouldRecoverAfterCurrent()) return;
     if (!flight) {
-      // 先登记 flight 再调用 recover，避免 markDegraded 同步回调再次进入恢复。
+      // Register the flight before calling recover, so that a synchronous markDegraded callback does not re-enter recovery.
       const next = Promise.resolve()
         .then(() => recover(reason))
         .finally(() => {

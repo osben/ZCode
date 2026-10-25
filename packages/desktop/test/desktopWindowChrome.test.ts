@@ -132,7 +132,8 @@ describe("desktopWindowChrome", () => {
       logger: { warn: vi.fn() },
     });
 
-    // 功能约束：主窗口高度需要兼容 720p 可用高度，同时避免桌面端核心区域被压缩到不可用。
+    // Functional constraint: the main window height must fit a 720p usable height, while keeping the desktop's core
+    // area from being squeezed into unusability.
     expect(electronMocks.browserWindowConstructor).toHaveBeenCalledWith(
       expect.objectContaining({
         width: 1200,
@@ -144,8 +145,9 @@ describe("desktopWindowChrome", () => {
   });
 
   it("forwards a NativeImage icon to the BrowserWindow (dev DEV badge on Windows/Linux)", async () => {
-    // CR-01 回归护栏：dev 模式主窗口图标是内存中的 NativeImage（叠加了 DEV 角标），
-    // createBrowserWindow 必须把它原样透传给 BrowserWindow 的 icon，而不是只接受路径字符串。
+    // CR-01 regression guard: in dev mode the main window icon is an in-memory NativeImage (with the DEV badge
+    // overlaid); createBrowserWindow must pass it through verbatim to BrowserWindow's icon instead of only accepting
+    // a path string.
     const { createBrowserWindow } = await import("../src/main/desktopWindowChrome.js");
     const badgeIcon = { isEmpty: () => false } as unknown as Electron.NativeImage;
 
@@ -268,14 +270,14 @@ describe("desktopWindowChrome", () => {
       logger: { warn: vi.fn() },
     });
 
-    // CDP-on-guest pivot：内置浏览器改回 `<webview>` 渲染，宿主必须开 webviewTag。
+    // CDP-on-guest pivot: the embedded browser is back to rendering via `<webview>`; the host must enable webviewTag.
     expect(electronMocks.browserWindowConstructor).toHaveBeenCalledWith(
       expect.objectContaining({
         webPreferences: expect.objectContaining({ webviewTag: true }),
       }),
     );
 
-    // 宿主需注册 will/did-attach-webview 以硬化 guest + 路由 popup。
+    // The host must register will/did-attach-webview to harden the guest and route popups.
     const registeredEvents = electronMocks.browserWindowInstance.webContents.on.mock.calls.map(
       ([event]) => event,
     );
@@ -292,8 +294,9 @@ describe("desktopWindowChrome", () => {
       logger: { warn: vi.fn() },
     });
 
-    // Bug 原因：永久 backgroundThrottling=false 会让同一 BrowserWindow 的 renderer、所有
-    // browser-use guest 和 GPU 在窗口后台时持续跑帧。截图期间由 main 的 activity lease 临时唤醒。
+    // Bug cause: a permanent backgroundThrottling=false keeps the same BrowserWindow's renderer, all browser-use
+    // guests, and the GPU running frames while the window is in the background. During screenshots, main's activity
+    // lease wakes it temporarily.
     expect(electronMocks.browserWindowConstructor).toHaveBeenCalledWith(
       expect.objectContaining({
         webPreferences: expect.not.objectContaining({ backgroundThrottling: false }),
@@ -324,10 +327,10 @@ describe("desktopWindowChrome", () => {
       nodeIntegrationInSubFrames: true,
       sandbox: true,
     });
-    // Bugfix：preload 路径由被测代码用宿主 path.join 拼出，Windows 上是
-    // `...\preload\embeddedBrowserJavaScriptDialog.cjs`，而这里原来写死 POSIX 片段，
-    // 用例在 Windows 上必然失败。用宿主 join 组装期望片段，断言仍然表达同一个
-    // 「preload 目录下的隔离 JavaScript Dialog preload」。
+    // Bugfix: the preload path is assembled by the code under test with the host's path.join; on Windows it is
+    // `...\preload\embeddedBrowserJavaScriptDialog.cjs`, while this used to hardcode a POSIX fragment and would
+    // always fail on Windows. Assembling the expected fragment with the host's join keeps the assertion expressing
+    // the same "isolated JavaScript Dialog preload under the preload directory".
     expect(webPreferences.preload).toEqual(
       expect.stringContaining(join("preload", "embeddedBrowserJavaScriptDialog.cjs")),
     );
@@ -348,8 +351,8 @@ describe("desktopWindowChrome", () => {
     willAttach({ preventDefault: vi.fn() }, officialPreferences, {
       src: "https://zcode.z.ai/coding-plan?provider=zai&embedded=app",
     });
-    // Bugfix：同上，preload 路径由宿主 path.join 拼出，Windows 上分隔符是 `\`，
-    // 写死 POSIX 片段的断言在 Windows 上必然失败。
+    // Bugfix: same as above; the preload path is assembled with the host's path.join and the Windows separator is
+    // `\`, so an assertion hardcoding a POSIX fragment always fails on Windows.
     expect(officialPreferences.preload).toEqual(
       expect.stringContaining(join("preload", "codingPlanWebview.cjs")),
     );
@@ -380,7 +383,7 @@ describe("desktopWindowChrome", () => {
         src: "http://127.0.0.1:4567/coding-plan?provider=zai&embedded=app",
       });
 
-      // Bugfix：同上，Windows 上宿主 join 产出 `preload\codingPlanWebview.cjs`。
+      // Bugfix: same as above; on Windows the host's join produces `preload\codingPlanWebview.cjs`.
       expect(webPreferences.preload).toEqual(
         expect.stringContaining(join("preload", "codingPlanWebview.cjs")),
       );
@@ -412,7 +415,8 @@ describe("desktopWindowChrome", () => {
     expect(resizedHandler).toBeTypeOf("function");
     resizedHandler?.();
 
-    // Bugfix: resize 结束后必须要求 Chromium 整帧重绘，否则新尺寸区域可能残留宿主底色。
+    // Bugfix: after a resize finishes, Chromium must be asked to repaint the whole frame, otherwise the newly sized
+    // area can keep the host background color.
     expect(electronMocks.browserWindowInstance.webContents.invalidate).toHaveBeenCalledTimes(1);
 
     vi.advanceTimersByTime(32);
@@ -515,7 +519,8 @@ describe("desktopWindowChrome", () => {
 
     const windowOptions = electronMocks.browserWindowConstructor.mock.calls[0]?.[0];
 
-    // Linux 外壳由 renderer 按 16px 裁切；BrowserWindow 必须提供透明底，四角才能露出桌面。
+    // The Linux shell is clipped by the renderer at 16px; the BrowserWindow must provide a transparent base so the
+    // four corners can reveal the desktop.
     expect(windowOptions).toMatchObject({
       backgroundColor: "#00000000",
       transparent: true,
@@ -619,8 +624,9 @@ describe("desktopWindowChrome", () => {
     const event = { preventDefault: vi.fn() };
     willNavigateHandler(event, "https://evil.example/phishing");
 
-    // 修复原因：PayPal 授权页仍显示在 Coding Plan 购买壳内，离开预期支付域必须外开，
-    // 否则第三方页面会伪装成 App 内升级流程且用户没有后退入口。
+    // Reason for the fix: the PayPal authorization page is still shown inside the Coding Plan purchase shell; leaving
+    // the expected payment domain must open externally, otherwise a third-party page can masquerade as the in-app
+    // upgrade flow with no way back for the user.
     expect(event.preventDefault).toHaveBeenCalledTimes(1);
     expect(electronMocks.shellOpenExternal).toHaveBeenCalledWith("https://evil.example/phishing");
     expect(warn).not.toHaveBeenCalledWith(
@@ -659,7 +665,8 @@ describe("desktopWindowChrome", () => {
     const event = { preventDefault: vi.fn() };
     willNavigateHandler(event, "https://evil.example/followup");
 
-    // 修复原因：30x 重定向不会逐跳触发 will-navigate，不能让当前 URL 决定是否还属于购买会话。
+    // Reason for the fix: a 30x redirect does not trigger will-navigate hop by hop; the current URL must not decide
+    // whether the purchase session still applies.
     expect(event.preventDefault).toHaveBeenCalledTimes(1);
     expect(electronMocks.shellOpenExternal).toHaveBeenCalledWith("https://evil.example/followup");
   });
@@ -941,8 +948,9 @@ describe("desktopWindowChrome", () => {
     )?.[1];
     expect(willNavigateHandler).toBeTypeOf("function");
 
-    // returnTo 与回调页不同源即应外部打开；用中性域名表达“不同源”，不依赖测试环境域名
-    //（开源导出会把测试域名改写成正式域名，回调与 returnTo 就变成同源）。
+    // If returnTo is cross-origin with the callback page it must open externally; a neutral domain expresses the
+    // "different origin" without depending on the test-environment domain (the open-source export rewrites test
+    // domains to production domains, which would make the callback and returnTo same-origin).
     const returnTo = encodeURIComponent(
       "https://other-origin.example/coding-plan?provider=zai&embedded=app",
     );
@@ -1121,8 +1129,9 @@ describe("desktopWindowChrome", () => {
     ]);
     expect(template[8]).toMatchObject({ role: "selectAll", enabled: true });
   });
-  // DEV 角标删除后 applyAppIcon 只接收图标路径（原先为角标内存图额外接受 NativeImage），
-  // 用例随之改为验证按路径加载并设置 Dock 图标。
+  // After the DEV badge was removed, applyAppIcon only takes an icon path (it previously additionally accepted a
+  // NativeImage for the badge's in-memory image); the case was updated accordingly to verify loading by path and
+  // setting the Dock icon.
   it("applyAppIcon 在 darwin 下按路径加载图标并设置 Dock 图标", async () => {
     stubProcessPlatform("darwin");
     const setIcon = vi.fn();

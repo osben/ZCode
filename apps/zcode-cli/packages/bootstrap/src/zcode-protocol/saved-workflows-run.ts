@@ -1,13 +1,14 @@
-// 从一次 run 出发的两个方法（docs/dynamic-workflow/transcript-and-notifications.md
-// 「Saving the run, and running it again」）：把这次 run 跑过的脚本存成定义，以及回答
-// 「这次 run 对应哪个已保存工作流」。
+// Two methods that start from a single run (docs/dynamic-workflow/transcript-and-notifications.md
+// "Saving the run, and running it again"): saving the script this run executed as a definition, and answering
+// "which saved workflow does this run correspond to".
 //
-// 与 saved-workflows.ts 同一条纪律（解析器、序列化器、名字规则与类型检查器都只从 @zcode/core 取，
-// 不变式 3），分文件只为守住 400 行的门。
+// Same discipline as saved-workflows.ts (parser, serializer, name rules, and type checker all come only from @zcode/core,
+// invariant 3); the separate file exists only to keep the 400-line gate.
 //
-// 为什么保存**不收脚本**只收 runId：要写下去的正文是这次 run 实际执行的那一份，而它在 journal
-// 里（`scriptText`）。经由调用方转一圈有两处会坏：修订过的 run 该存**结算它的**那一份，而工具行
-// 入参被快照裁成预览的老对话里，调用方手上根本没有完整脚本。
+// Why saving **takes no script**, only a runId: the text to write down is the one this run actually executed,
+// and it lives in the journal (`scriptText`). Routing through the caller breaks in two ways: a revised run should save
+// **the one that settled it**, and in old conversations where the tool-call input was trimmed to a preview by the snapshot,
+// the caller simply does not have the full script.
 import {
   SavedWorkflowMetaSchema,
   isValidSavedWorkflowName,
@@ -35,13 +36,14 @@ import type { RunRecord } from "@zcode/dynamic-workflow";
 import { resolveDynamicWorkflowJournalStore } from "../app/dynamic-workflow-run-service.js";
 import { parseParams, type ZCodeProtocolAgentServerContext } from "./server-types.js";
 
-/** 诊断回给 GUI 的上界：弹层里只放得下开头几条，完整诊断属于模型那条路。 */
+/** Upper bound for diagnostics returned to the GUI: the popup only fits the first few entries; the full diagnostics belong on the model path. */
 const SAVE_DIAGNOSTICS_MAX_LINES = 5;
 const SAVE_DIAGNOSTICS_MAX_CHARS = 1_000;
 
 /**
- * 脚本比对要扫的文件数上界。一个项目的定义是个位到两位数量级；给个常数只为让异常目录
- * （有人把几千个文件倒进 `.zcode/workflows/`）不至于把一次查询变成一次全盘读。
+ * Upper bound on files scanned for script comparison. A project's definitions are in the single-to-double-digit
+ * range; the constant exists only so an anomalous directory (someone dumping thousands of files into `.zcode/workflows/`)
+ * cannot turn one query into a full read of everything.
  */
 const SCRIPT_MATCH_SCAN_LIMIT = 50;
 
@@ -65,7 +67,7 @@ function boundedDiagnostics(
     : text;
 }
 
-/** 解析结果 → 协议 entry（与 `workflows/list` 的行同形，不含脚本正文）。 */
+/** Resolution result → protocol entry (same shape as the `workflows/list` row, without the script text). */
 function entryOf(resolved: ResolvedSavedWorkflow): ZCodeSavedWorkflowEntry {
   return {
     name: resolved.name,
@@ -86,10 +88,11 @@ function runRecordOf(
 }
 
 /**
- * 完成卡的「直接保存」：按 runId 取脚本、按 SaveWorkflow 的同一套规则落盘。
+ * The completion card's "save directly": fetch the script by runId, persist it under the same rules as SaveWorkflow.
  *
- * 顺序有意与工具一致：名字合法性 → 脚本可得 → 覆盖判定 → 类型检查 → 写。覆盖排在类型检查
- * 之前，是因为「已经有同名的了」是调用方要先回答的问题，而编译失败时本来就一个字节都不会写。
+ * The order deliberately mirrors the tool: name validity → script available → overwrite decision → type check → write.
+ * Overwrite comes before the type check because "one with the same name already exists" is a question the caller must answer
+ * first, and a failed compilation would not write a single byte anyway.
  */
 export async function saveSavedWorkflowFromRunOp(
   context: ZCodeProtocolAgentServerContext,
@@ -98,20 +101,20 @@ export async function saveSavedWorkflowFromRunOp(
   const params = parseParams(zcodeWorkflowsSaveParamsSchema, rawParams);
   const cwd = params.workspace.workspacePath;
   const scope = scopeOf(params);
-  // 名字先验后拼路径：这条顺序是路径穿越的防线本身（store.ts 的同一论证）。
+  // Validate the name before building the path: this order is itself the defense against path traversal (same argument as store.ts).
   if (!isValidSavedWorkflowName(params.name)) return { ok: false, reason: "invalid_name" };
-  // shared 与 contracts 的 meta schema 逐字对齐，但序列化器认的是 contracts 那份；再过一遍，
-  // 让「两边漂移」炸在这里，而不是写出一个自己读不回来的文件（updateMeta 的同一条）。
+  // shared's and contracts' meta schemas are aligned verbatim, but the serializer trusts contracts' copy; run it through again
+  // so "the two sides drift" blows up here instead of writing a file we cannot read back (same rule as updateMeta).
   const meta = SavedWorkflowMetaSchema.parse(params.meta);
 
   const record = runRecordOf(context, params.runId);
   if (record === undefined) return { ok: false, reason: "run_not_found" };
   const script = record.scriptText;
-  // scriptText 落库始于 workflow-live-run；更早的记录没有可保存的脚本原文。
+  // scriptText persistence started with workflow-live-run; older records carry no savable script text.
   if (script === undefined) return { ok: false, reason: "script_missing" };
 
   const path = savedWorkflowPath(savedWorkflowRoot(cwd, scope), params.name);
-  // 覆盖是用户的决定，不是一次保存的副作用：没说要覆盖就拒绝，由调用方把警告摆出来再来一次。
+  // Overwriting is the user's decision, not a side effect of saving: refuse unless overwrite was asked for, and let the caller present the warning and retry.
   if (params.overwrite !== true && savedWorkflowExists({ cwd, name: params.name, scope })) {
     return { ok: false, reason: "target_exists", path };
   }
@@ -134,27 +137,29 @@ export async function saveSavedWorkflowFromRunOp(
       name: params.name,
       scope: written.scope,
       path: written.path,
-      // 写的那一刻重新判定，不回抄入参（SaveWorkflow handler 的同一条理由）。
+      // Re-decide at the moment of writing; do not copy the input back (same reason as the SaveWorkflow handler).
       overwritten: written.overwritten,
       ...(shadowing === undefined ? {} : { shadowing }),
     };
   } catch (error) {
-    // 写失败（只读挂载、权限）是一条业务分支，不是协议错误：GUI 要把它画在弹层里。
+    // Write failure (read-only mount, permissions) is a business branch, not a protocol error: the GUI needs to render it in the popup.
     return { ok: false, reason: "write_error", path, detail: describeError(error) };
   }
 }
 
 /**
- * 「这次 run 对应哪个已保存工作流」。三条规则按序命中即返回（spec 的同一顺序）：
+ * "Which saved workflow does this run correspond to". Three rules, returned on the first hit in order (spec's same order):
  *
- * 1. **对话说的**：模型用 SaveWorkflow 存过并认领了这次 run（入参 `run_id`），调用方把名字
- *    转写成候选交上来。这里仍要解析一遍——用户后来把那份删了，它就不再是事实。
- * 2. **run 跑的**：某份定义的正文与这次 run 存下的脚本逐字节相同。GUI 的「直接保存」按构造
- *    落在这一条上，而且在对话不在了之后依然成立。
- * 3. **run 叫的**：某份定义的名字与 run 名相同——中枢把运行历史归属到工作流用的就是这条规则，
- *    所以从中枢启动的 run 天然「已保存」。
+ * 1. **What the conversation says**: the model saved via SaveWorkflow and claimed this run (input `run_id`), and the
+ *    caller transcribed the name as a candidate. It must still be resolved here — if the user deleted that file since,
+ *    it is no longer a fact.
+ * 2. **What the run ran**: some definition's body is byte-identical to the script saved from this run. The GUI's "save
+ *    directly" lands on this rule by construction, and it keeps holding even after the conversation is gone.
+ * 3. **What the run is named**: some definition's name equals the run name — the hub uses exactly this rule to attribute
+ *    run history to a workflow, so a run launched from the hub is "saved" by nature.
  *
- * 查不到 run 记录时只跳过 2、3（候选仍然算数）：一条查不到的 run 不该让整个查询失败。
+ * When the run record cannot be found, only rules 2 and 3 are skipped (candidates still count): one unfindable run
+ * must not fail the whole query.
  */
 export async function findSavedWorkflowForRunOp(
   context: ZCodeProtocolAgentServerContext,
@@ -163,7 +168,7 @@ export async function findSavedWorkflowForRunOp(
   const params = parseParams(zcodeWorkflowsForRunParamsSchema, rawParams);
   const cwd = params.workspace.workspacePath;
   const record = runRecordOf(context, params.runId);
-  // 实参与命中与否无关：它服务的是「再次运行」的实参窗预填，run 在就给。
+  // runArgs is independent of whether anything matches: it serves the "run again" argument-window prefill; if the run exists, provide it.
   const runArgs = record?.args === undefined ? {} : { runArgs: record.args };
 
   for (const candidate of params.candidates ?? []) {
@@ -178,7 +183,7 @@ export async function findSavedWorkflowForRunOp(
 
   const script = record?.scriptText;
   if (script !== undefined) {
-    // 项目档先于全局档：同名遮蔽的方向就是这个方向，内容相同时也该报本项目那一份。
+    // Project scope before global scope: same-name shadowing points this way, and with identical content the project copy should be reported.
     for (const scope of ["project", "global"] as const) {
       const listed = listSavedWorkflows({ cwd, scope });
       for (const entry of listed.entries.slice(0, SCRIPT_MATCH_SCAN_LIMIT)) {
@@ -192,7 +197,7 @@ export async function findSavedWorkflowForRunOp(
 
   const name = record?.name;
   if (name !== undefined && isValidSavedWorkflowName(name)) {
-    // 不定向：项目档 first-wins，与中枢之外的所有按名查找同规。
+    // Not scoped: project scope first-wins, the same rule as every by-name lookup outside the hub.
     const resolved = resolveSavedWorkflow({ cwd, name });
     if (resolved.ok) return { entry: entryOf(resolved), match: "name", ...runArgs };
   }

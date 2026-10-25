@@ -1,14 +1,16 @@
-/* eslint-disable max-lines -- Explore 聚合渲染同时维护分类、父级摘要和可复用子工具摘要，拆开会让父子展示规则更难对齐 */
+/* eslint-disable max-lines -- Explore's aggregate renderer maintains categories, parent summaries, and reusable child-tool summaries; splitting it would make parent/child display rules harder to keep aligned. */
 import { SearchIcon } from "lucide-react";
 import { extractPlanStepsFromToolInput, extractPlanStepsFromToolOutput } from "@zcode/shared";
 import { ToolSnapshotFieldNotice } from "@/ToolCallBlocks/ToolSnapshotFieldNotice.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import type { IntlInstance } from "@/i18n/createIntl.js";
 import { getExecuteSecondaryText } from "@/ToolCallBlocks/renderers/execute.js";
 import { buildReadSummary, ReadFileChip } from "@/ToolCallBlocks/renderers/read.js";
 import { getWebFetchPrimaryText } from "@/ToolCallBlocks/renderers/web-fetch.js";
 import { getSearchPrimaryText } from "@/ToolCallBlocks/renderers/search.js";
 import { renderFilePath } from "@/ToolCallBlocks/shared.js";
 import { resolveToolCallIdentity } from "@/lib/toolIdentity.js";
+import { useStageDurationText } from "@/ToolCallBlocks/useStageDurationText.js";
 import { ToolLayout } from "../ToolLayout.js";
 import type { ToolCallBlockRenderContext } from "../shared.js";
 import { useCallback, type ReactNode } from "react";
@@ -17,9 +19,7 @@ import type { ZCodePlanStep } from "@zcode/shared";
 
 const EXPLORE_TOOL_ICON = <SearchIcon className="size-4 shrink-0 text-foreground-subtle" />;
 
-type IntlLike = {
-  formatMessage: (descriptor: { id: string }, values?: Record<string, string>) => string;
-};
+type IntlLike = Pick<IntlInstance, "formatMessage" | "formatPlural">;
 
 export type ExploreChildSummary = {
   animationKey: string;
@@ -133,26 +133,11 @@ function getBucketLabel(intl: IntlLike, bucket: ExploreBucket, count: number) {
             : "chat.toolCall.explore.bucket.fetch.other",
       });
     case "search":
-      return intl.formatMessage({
-        id:
-          count === 1
-            ? "chat.toolCall.explore.bucket.search.one"
-            : "chat.toolCall.explore.bucket.search.other",
-      });
+      return intl.formatPlural({ id: "chat.toolCall.explore.bucket.search" }, count);
     case "list":
-      return intl.formatMessage({
-        id:
-          count === 1
-            ? "chat.toolCall.explore.bucket.list.one"
-            : "chat.toolCall.explore.bucket.list.other",
-      });
+      return intl.formatPlural({ id: "chat.toolCall.explore.bucket.list" }, count);
     case "file":
-      return intl.formatMessage({
-        id:
-          count === 1
-            ? "chat.toolCall.explore.bucket.file.one"
-            : "chat.toolCall.explore.bucket.file.other",
-      });
+      return intl.formatPlural({ id: "chat.toolCall.explore.bucket.file" }, count);
     default:
       return intl.formatMessage({ id: "chat.toolCall.explore.bucket.items" });
   }
@@ -437,6 +422,7 @@ export function ExploreToolCallBlock(context: ToolCallBlockRenderContext) {
   const kindLabel = intl.formatMessage({
     id: "chat.toolCall.explore.label",
   });
+  const durationText = useStageDurationText(toolCall.durationMs, isRunning);
   const collapsedChildSummary = isRunning
     ? getLatestExploreChildSummaryFromChildren(intl, childToolCalls, context, {
         includeChildActionKindLabel: true,
@@ -484,8 +470,8 @@ export function ExploreToolCallBlock(context: ToolCallBlockRenderContext) {
         sourceLabel={context.sourceLabel}
         primaryText={collapsedChildSummary ? collapsedChildSummary.primaryText : summary}
         expandedPrimaryText={summary}
-        secondaryText={collapsedChildSummary?.secondaryText}
-        expandedSecondaryText={null}
+        secondaryText={collapsedChildSummary ? collapsedChildSummary.secondaryText : durationText}
+        expandedSecondaryText={durationText ?? null}
         summaryContentSeparator="·"
         animateSummaryContent
         disableSummaryContentAnimation={context.disableSummaryContentAnimation}

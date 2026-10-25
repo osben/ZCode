@@ -144,7 +144,7 @@ describe("createAccountProviderConfigSource", () => {
         access: { type: "zhipu-account", entitled: true },
       },
       [BUILTIN_MODEL_PROVIDER_IDS.zaiStartPlan]: {
-        // 未选中不等于没有权益；current 由状态层隔离，不能反写为未授权。
+        // Not selected does not mean unentitled; `current` is isolated by the state layer and must not be written back as unauthorized.
         access: { type: "zhipu-account", entitled: true },
         builtinModelIds: ["remote-start-model"],
       },

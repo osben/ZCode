@@ -1,11 +1,11 @@
-/* eslint-disable max-lines -- Lexical slash 插件的 trigger/面板/键盘导航同属一个协议状态机，oxfmt 换行后略超 400 行。 */
+/* eslint-disable max-lines -- The Lexical slash plugin's trigger, panel, and keyboard navigation form one protocol state machine; formatting puts it slightly over 400 lines. */
 /**
- * SlashCommandPlugin — Lexical trigger 面板插件
+ * SlashCommandPlugin — Lexical trigger-panel plugin
  *
- * 处理 `/` 面板里的 slash commands 和 subagents：
- * 1. `/` 直接展示 ZCode Agent 广播的真实 slash commands，并补充可用 subagents
- * 2. 面板通过 portal 渲染到输入区上方的独立挂载层，展开时直接覆盖消息区
- * 3. 支持 Esc 关闭、上下键切换、Enter / Tab 选中，以及跟随输入做模糊搜索
+ * Handles slash commands and subagents in the `/` panel:
+ * 1. `/` displays the actual slash commands broadcast by ZCode Agent and adds available subagents.
+ * 2. The panel renders through a portal into a separate mount above the input and overlays the message area when expanded.
+ * 3. Supports closing with Esc, navigating with the arrow keys, selecting with Enter / Tab, and fuzzy search as the user types.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ZCodeProvider } from "@zcode/shared";
@@ -41,6 +41,9 @@ import {
 import { MentionPanel } from "./mentions/components/MentionPanel.js";
 import {
   buildAppSlashCommandSuggestions,
+  buildQuickPromptSuggestions,
+  isQuickPromptSuggestion,
+  QUICK_PROMPT_SUGGESTION_ID_PREFIX,
   buildSkillSuggestions,
   buildSubagentSuggestions,
   buildSlashSuggestions,
@@ -49,7 +52,10 @@ import {
   normalizeSlashCommandValue,
   type SlashCommandPluginProps,
 } from "./slashCommandHelpers.js";
-import { useSlashCommandMentionPanelSections } from "./slashCommandPanelSections.js";
+import {
+  buildSlashFlatSuggestions,
+  useSlashCommandMentionPanelSections,
+} from "./slashCommandPanelSections.js";
 import { getCurrentTextNodeSelection } from "./mentions/mentionHelpers.js";
 import {
   getActivePromptInputTokenReplacementRange,
@@ -57,6 +63,11 @@ import {
   type ActivePromptInputTokenSnapshot,
 } from "./mentions/activePromptInputToken.js";
 import { shouldSlashPanelProcessUpdate } from "./lib/slashPanelUpdateFilter.js";
+import {
+  $replaceSelectionWithSerializedPromptBody,
+  parseSerializedPromptBodyNodes,
+} from "@/prompt-body/index.js";
+import { logger } from "./logger.js";
 
 export function SlashCommandPlugin({
   workspacePath,
@@ -67,12 +78,13 @@ export function SlashCommandPlugin({
   disabled = false,
   excludedCommandNames,
   appCommands,
+  quickPrompts,
 }: SlashCommandPluginProps & { provider: ZCodeProvider }) {
   const [editor] = useLexicalComposerContext();
   const { intl, locale } = useZCodeIntl();
   const [activeTrigger, setActiveTrigger] = useState<ActivePromptInputTrigger | null>(null);
-  // 远程 workspace 的 slashCommands 写在 workspaceIdentity 桶。
-  // 这里只按 workspacePath 读取会落到 path 桶，表现为 ZCode Agent 已收到 available_commands_update 但 / 面板为空。
+  // Slash commands for a remote workspace are stored in the workspaceIdentity bucket.
+  // Reading only by workspacePath here would use the path bucket, making it appear that ZCode Agent received available_commands_update while the `/` panel stayed empty.
   const commands = useSlashCommands(workspacePath, workspaceIdentity);
   const {
     agents,
@@ -98,7 +110,7 @@ export function SlashCommandPlugin({
     const cliSuggestions = buildSlashSuggestions(commands).filter(
       (item) => !excluded.has(item.value),
     );
-    // App 层命令追加在 CLI catalog 之后展示；CLI 已提供同名命令时以 CLI 为准，避免遮蔽。
+    // Append app-level commands after the CLI catalog; when the CLI already provides a command with the same name, prefer the CLI to avoid masking it.
     const cliValues = new Set(cliSuggestions.map((item) => item.value));
     const appSuggestions = buildAppSlashCommandSuggestions(appCommands ?? []).filter(
       (item) => !cliValues.has(item.value) && !excluded.has(item.value),
@@ -126,13 +138,40 @@ export function SlashCommandPlugin({
     () => filterPromptInputSuggestions(skillSuggestions, activeTrigger?.query ?? null),
     [skillSuggestions, activeTrigger?.query],
   );
+  const quickPromptSuggestions = useMemo(
+    () => (quickPrompts ? buildQuickPromptSuggestions(quickPrompts) : undefined),
+    [quickPrompts],
+  );
+  const filteredQuickPromptSuggestions = useMemo(
+    () =>
+      quickPromptSuggestions
+        ? filterPromptInputSuggestions(quickPromptSuggestions, activeTrigger?.query ?? null)
+        : undefined,
+    [quickPromptSuggestions, activeTrigger?.query],
+  );
+  // Same order and visibility as the panel sections, so the flat keyboard index addresses the rendered rows.
   const filteredSuggestions = useMemo(
-    () => [
-      ...filteredCommandSuggestions,
-      ...filteredSkillSuggestions,
-      ...filteredSubagentSuggestions,
+    () =>
+      buildSlashFlatSuggestions({
+        commands: filteredCommandSuggestions,
+        skills: filteredSkillSuggestions,
+        skillsLoading,
+        skillsError,
+        subagents: filteredSubagentSuggestions,
+        subagentsLoading,
+        subagentsError,
+        quickPrompts: filteredQuickPromptSuggestions,
+      }),
+    [
+      filteredCommandSuggestions,
+      filteredSkillSuggestions,
+      skillsLoading,
+      skillsError,
+      filteredSubagentSuggestions,
+      subagentsLoading,
+      subagentsError,
+      filteredQuickPromptSuggestions,
     ],
-    [filteredCommandSuggestions, filteredSkillSuggestions, filteredSubagentSuggestions],
   );
   const activeSignature = useMemo(
     () => getPromptInputTriggerSignature(activeTrigger),
@@ -145,9 +184,9 @@ export function SlashCommandPlugin({
   }, [activeSignature]);
 
   useEffect(() => {
-    // 面板展示需要保留 commands/subagents 分组顺序，但键盘默认选中不能固定落在第一个分组。
-    // 例如 `/rev` 时 command 描述里的弱匹配可能排在 subagent 分组前面，导致无法默认选中最佳 subagent。
-    // 这里按统一的模糊评分选择全局最佳项，同时不改变面板的分组展示顺序。
+    // The panel must preserve the commands/subagents group order, but the keyboard's default selection must not be fixed to the first group.
+    // For example, with `/rev`, a weak match in a command description may appear before the subagent group and prevent the best subagent from being selected by default.
+    // Use the shared fuzzy score to select the best item overall without changing the group display order.
     setSelectedIndex(
       getBestPromptInputSuggestionIndex(filteredSuggestions, activeTrigger?.query ?? null),
     );
@@ -175,8 +214,8 @@ export function SlashCommandPlugin({
   useEffect(() => {
     return editor.registerUpdateListener(({ dirtyElements, dirtyLeaves, editorState, tags }) => {
       editorState.read(() => {
-        // 历史导航回填含 / 的历史条目时，不应重新打开 slash 面板，
-        // 否则面板以 COMMAND_PRIORITY_CRITICAL 注册方向键处理器，吞掉后续历史翻阅按键。
+        // When history navigation restores an entry containing `/`, the slash panel should not reopen,
+        // or its COMMAND_PRIORITY_CRITICAL arrow-key handler will consume subsequent history-navigation keys.
         if (!shouldSlashPanelProcessUpdate(tags)) {
           activeTokenRef.current = null;
           setActiveTrigger(null);
@@ -246,6 +285,20 @@ export function SlashCommandPlugin({
   const applySuggestion = useCallback(
     (suggestion: PromptInputSuggestionItem) => {
       const isAppCommand = isAppSlashCommandSuggestion(suggestion);
+      // Quick prompts insert their stored body (mention chips intact) in place of the typed `/query` token.
+      let quickPromptNodes: ReturnType<typeof parseSerializedPromptBodyNodes> | null = null;
+      if (isQuickPromptSuggestion(suggestion)) {
+        const promptId = suggestion.id.slice(QUICK_PROMPT_SUGGESTION_ID_PREFIX.length);
+        const item = quickPrompts?.find((candidate) => candidate.promptId === promptId);
+        if (!item) return;
+        try {
+          quickPromptNodes = parseSerializedPromptBodyNodes(item.nodes);
+        } catch (cause) {
+          // Never log the body or the name; the id alone identifies the broken row.
+          logger.warn("[quick-prompts] 快捷提示正文无法解析，已取消插入", { promptId, cause });
+          return;
+        }
+      }
       editor.update(() => {
         const selectionState = getCurrentTextNodeSelection();
         if (!selectionState) {
@@ -281,8 +334,14 @@ export function SlashCommandPlugin({
         );
 
         if (isAppCommand) {
-          // App 层命令"选中即执行"：只移除输入中的 `/xxx` token，不插入 mention、不发送。
+          // App-level commands that run on selection only remove the `/xxx` token from the input; they do not insert a mention or send a message.
           selectionState.selection.removeText();
+          return;
+        }
+
+        if (quickPromptNodes) {
+          // The token range is removed before inserting, so a body with no paragraphs leaves no "/query" behind.
+          $replaceSelectionWithSerializedPromptBody(selectionState.selection, quickPromptNodes);
           return;
         }
 
@@ -308,7 +367,7 @@ export function SlashCommandPlugin({
         editor.focus();
       });
     },
-    [appCommands, editor],
+    [appCommands, editor, quickPrompts],
   );
 
   const selectSuggestion = useCallback(
@@ -393,8 +452,8 @@ export function SlashCommandPlugin({
         event?.preventDefault();
         event?.stopPropagation();
 
-        // 如果 Esc 关闭后只记 query，不区分 `/` 和 `@`，两个触发器同名查询会互相把面板压住。
-        // 这里保存 trigger + query 组合签名，只有当前 token 真正变化后才重新打开，避免一关闭就立刻弹回。
+        // If Escape records only the query and does not distinguish `/` from `@`, matching queries from the two triggers can suppress each other's panels.
+        // Store a combined trigger + query signature here and reopen only after the current token actually changes, preventing the panel from immediately returning after it closes.
         dismissedSignatureRef.current = activeSignatureRef.current;
         setActiveTrigger(null);
         setSelectedIndex(0);
@@ -441,6 +500,7 @@ export function SlashCommandPlugin({
     filteredSubagentSuggestions,
     subagentsLoading,
     subagentsError,
+    filteredQuickPromptSuggestions,
   );
 
   if (!isOpen || !container) {

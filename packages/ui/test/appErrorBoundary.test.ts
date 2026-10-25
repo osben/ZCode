@@ -92,7 +92,8 @@ describe("AppErrorBoundary", () => {
     const boundary = new AppErrorBoundary({
       children: createElement("div", null, "ok"),
     });
-    // jsdom 下 setState 在脱离 React 树时会走 noop updater，这里只验证上报副作用。
+    // Under jsdom, setState on a component detached from the React tree hits a noop updater;
+    // this test only verifies the reporting side effect.
     boundary.setState = vi.fn();
 
     boundary.componentDidCatch(new Error("root boom"), {

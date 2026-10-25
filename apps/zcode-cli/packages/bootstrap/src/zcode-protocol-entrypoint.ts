@@ -1,4 +1,6 @@
-import { createConfig } from "@zcode/adapters/config";
+import { createConfig, resolvePath } from "@zcode/adapters/config";
+import { createNodeFileSystemAdapter } from "@zcode/adapters/fs";
+import { createLanguageServerPool } from "@zcode/adapters/lsp";
 import type { McpElicitationPort, McpNotificationPort } from "@zcode/contracts";
 import { createNodeModelSelectionFacade } from "@zcode/provider-node";
 import { createNodeLoggerFactory } from "@zcode/adapters/logging";
@@ -16,9 +18,13 @@ import {
 import type { SqliteSessionStore } from "@zcode/adapters/storage";
 import { traceContextToLogContext, createRootTraceContext } from "@zcode/contracts";
 import type { McpPort, ModelSelection } from "@zcode/contracts";
-import type { PresentationSurface } from "@zcode/core";
+import { createLspDocumentSync, type PresentationSurface } from "@zcode/core";
 import type { RunZCodeProtocolAgentOptions, ZCodeAppOptions } from "./app/types.js";
 import { createZCodeApp } from "./app/create-app.js";
+import { createLspPreferencesStore } from "./app/lsp-preferences.js";
+import { createLspRuntimeHub, type LspRuntimeHub } from "./app/lsp-runtime-hub.js";
+import { getCliStorageRoot } from "./app/paths.js";
+import { resolveZCodePlugins } from "./plugins.js";
 import {
   createNodeReplBrowserBroker,
   type NodeReplBrowserBroker,
@@ -29,6 +35,8 @@ import {
 } from "./zcode-protocol/storage-startup.js";
 import { closeSessionStore, getSessionDbPath } from "./app/session-store.js";
 import { startProcessProviderRegistryRuntime } from "./app/process-provider-registry-runtime.js";
+import type { AcpSessionPool } from "./acp-agent/acp-session-pool.js";
+import { createAcpWorkerAgents } from "./acp-agent/acp-worker-agents.js";
 import { scheduleStartupLogRetentionCleanup } from "./log-retention.js";
 import { resolveProcessProviderEndpointRoutingPort } from "./provider-endpoint-routing.js";
 import { StartupTimer, startupNow } from "./startup-logging.js";
@@ -65,9 +73,9 @@ export function applyProtocolPresentationSurface(
 }
 
 /**
- * 进程级 Registry 已就绪后，它就是当前 Environment 的模型事实源。
+ * Once the process-level Registry is ready, it is the source of truth for models in the current Environment.
  *
- * 旧 workspace snapshot 不再参与 Provider 和 Model 执行。
+ * The old workspace snapshot no longer participates in Provider or Model execution.
  */
 export function applyProtocolProviderRegistry(
   options: Omit<ZCodeAppOptions, "providerRegistry">,
@@ -127,6 +135,7 @@ export async function runZCodeProtocolAgent(
   let serverForCleanup: ZCodeProtocolAgentServer | undefined;
   let nodeReplBrowserBroker: NodeReplBrowserBroker | undefined;
   let mcpConnectionPool: McpConnectionPool | undefined;
+  let lspRuntimeHub: LspRuntimeHub | undefined;
   let mcpPort: McpPort | undefined;
   let mcpTelemetryTracker: McpTelemetryTracker | undefined;
   let mcpResourceSink: ((samples: ZCodeMcpResourceSample[]) => void) | undefined;
@@ -135,8 +144,9 @@ export async function runZCodeProtocolAgent(
   let providerRegistryRuntime:
     | Awaited<ReturnType<typeof startProcessProviderRegistryRuntime>>
     | undefined;
+  let acpSessionPool: AcpSessionPool | undefined;
   try {
-    // 数据库准备先于账号、Registry 和遥测，不把远端材料等待混进迁移门禁。
+    // Prepare the database before accounts, Registry, and telemetry; do not mix waiting for remote materials into the migration gate.
     const configResult = createConfig({ env: options.env });
     sessionStore = await acquireProtocolStartupResource({
       signal: options.lifecycle?.signal,
@@ -199,22 +209,23 @@ export async function runZCodeProtocolAgent(
         network: configResult.config.network,
         sourceTitle: "electron",
       });
-    // 官方 MCP 身份头端口（spec §7.1/§7.2）：连接池构造早于 server，故用惰性 holder 回填。
-    // server 就绪前该端口返回 official_auth_unavailable；HTTP tools/call 会匿名交给服务端
-    // 返回结构化权限错误，stdio 则把 reason 下发给插件。连接与工具发现都不受影响。
+    // Official MCP identity-header port (spec §7.1/§7.2): the connection pool is constructed before the server, so
+    // populate a lazy holder later. Before the server is ready, the port returns
+    // official_auth_unavailable. HTTP tools/call reaches the server anonymously and receives a
+    // structured permission error; stdio passes the reason to the plugin. Connection and tool discovery are unaffected.
     let officialMcpAuthContext: OfficialMcpAuthRequestContext | undefined;
-    // stdio 官方 MCP 没有 url 可供校验，targetOrigin 只能由宿主给出。
-    // 与下面 trustedOrigins 的 resolveZCodeApiOrigin 必须是同一个表达式，否则两侧判定分叉。
+    // Official stdio MCP has no URL to validate, so the host must provide targetOrigin.
+    // It must use the same expression as resolveZCodeApiOrigin for trustedOrigins below, or the two checks can diverge.
     const resolveZCodeApiOrigin = (): string =>
       resolveRuntimeZCodeEndpointOrigin(options.env ?? process.env);
     const workspaceIdentity = (options.env ?? process.env)[ZCODE_WORKSPACE_IDENTITY_ENV]?.trim();
     const officialMcpAuth = {
       authHeadersPort: createOfficialMcpAuthHeadersPort({
         resolveContext: () => officialMcpAuthContext,
-        // workspaceKey 必须遵守仓库约定 `workspaceIdentity?.trim() || workspacePath`，
-        // 否则同路径不同 identity 的远端 workspace 在审计上下文里无法区分。
-        // 注意：agent 进程当前没有 identity 来源，因此实际多为 undefined，key 退化为 path；
-        // 详见 official-mcp-auth-port.ts 的"剩余缺口"说明。
+        // workspaceKey must follow the repository convention `workspaceIdentity?.trim() || workspacePath`,
+        // or remote workspaces with the same path and different identities cannot be distinguished in audit context.
+        // Note: the agent process currently has no identity source, so this is usually undefined and the key
+        // falls back to path; see "Remaining gap" in official-mcp-auth-port.ts.
         resolveWorkspace: ({ workspaceIdentity, workspacePath }) => {
           const path = workspacePath ?? options.cwd;
           if (!path) return undefined;
@@ -228,14 +239,14 @@ export async function runZCodeProtocolAgent(
       }),
       resolveZCodeApiOrigin,
       ...(workspaceIdentity ? { workspaceIdentity } : {}),
-      // 信任判定只看一条：目标 origin 等于当前 ZCode API origin（https）。pluginId 不参与。
-      // origin 运行时解析（跟随 production/test 与自建环境），不硬编码域名。
+      // Trust check has one criterion: target origin equals the current ZCode API origin (https). pluginId is not involved.
+      // Resolve origin at runtime for production/test and self-hosted environments; do not hardcode a domain.
       trustedOrigins: createOfficialMcpTrustedOriginRegistry({
         devTrustedOriginsRaw: (options.env ?? process.env)[OFFICIAL_MCP_DEV_TRUSTED_ORIGINS_ENV],
         resolveZCodeApiOrigin,
       }),
     };
-    // MCP elicitation 归属到协议 server 的会话；pool 先于 server 创建，端口延迟绑定。
+    // MCP elicitation belongs to the protocol server's session; the pool is created before the server, so the port binds lazily.
     let elicitationServer: {
       requestMcpElicitation: McpElicitationPort["requestElicitation"];
       handleMcpNotification: McpNotificationPort["onNotification"];
@@ -250,7 +261,7 @@ export async function runZCodeProtocolAgent(
                   ? elicitationServer.requestMcpElicitation(request, elicitationOptions)
                   : Promise.resolve({ action: "decline" as const }),
             },
-            // server 通知同样延迟绑定到协议 server。
+            // Server notifications also bind lazily to the protocol server.
             notifications: {
               onNotification: (notification) =>
                 elicitationServer?.handleMcpNotification(notification),
@@ -268,7 +279,29 @@ export async function runZCodeProtocolAgent(
             workingDirectory: options.cwd,
           });
     mcpPort = mcpConnectionPool?.acquireLease({ leaseId: "protocol-settings" });
+    // One language server pool and one preferences owner per process, shared by all sessions.
+    lspRuntimeHub = createLspRuntimeHub({
+      port: createLanguageServerPool({ baseEnv: options.env ?? process.env, logger }),
+      documents: createLspDocumentSync({ fileSystem: createNodeFileSystemAdapter(), logger }),
+      preferences: createLspPreferencesStore({
+        cliStorageRoot: getCliStorageRoot(resolvePath(configResult.config.storage.dir)),
+        fileSystem: createNodeFileSystemAdapter(),
+        logger,
+      }),
+      resolveServers: (workspacePath) =>
+        resolveZCodePlugins({ logger, workingDirectory: workspacePath }).lspServers,
+      logger,
+    });
+    const activeLspRuntimeHub = lspRuntimeHub;
     const activeProviderRegistryRuntime = providerRegistryRuntime;
+    const acpAgents = createAcpWorkerAgents({
+      records: activeProviderRegistryRuntime.acpAgentStore,
+      catalog: activeProviderRegistryRuntime.acpAgentCatalog,
+      logger,
+      sessionDbPath: getSessionDbPath(configResult),
+    });
+    acpSessionPool = acpAgents.pool;
+    const externalAgents = acpAgents.externalAgents;
     const modelSelectionFacade = createNodeModelSelectionFacade(
       activeProviderRegistryRuntime.runtime.registryService,
     );
@@ -281,7 +314,8 @@ export async function runZCodeProtocolAgent(
             activeProviderRegistryRuntime.runtime.registryService,
             activeProviderRegistryRuntime.configuredDefaultModelSelection,
           ),
-          // 只读同进程已应用快照；不为子任务另发 Host RPC，也不在 ModelFactory 偷换模型。
+          externalAgents,
+          // Read only the applied snapshot in this process; do not issue another Host RPC for a child task or switch models inside ModelFactory.
           resolveEffectiveModelSelection: (selection) => {
             const view = modelSelectionFacade.getView(undefined, undefined, { selection });
             return {
@@ -295,6 +329,7 @@ export async function runZCodeProtocolAgent(
             ...(telemetryDeviceMid ? { ZCODE_TELEMETRY_DEVICE_MID: telemetryDeviceMid } : {}),
           },
           ...(nodeReplBrowserBroker ? { nodeReplBrowserBroker } : {}),
+          lspRuntimeHub: activeLspRuntimeHub,
           ...(mcpConnectionPool
             ? {
                 mcpPortFactory: () =>
@@ -312,9 +347,12 @@ export async function runZCodeProtocolAgent(
       cwd: options.cwd,
       env: options.env,
       loggerFactory,
+      lsp: activeLspRuntimeHub.protocolHost,
+      externalAgentConfig: acpAgents.config,
       mcpPort,
       mcpTelemetry: mcpTelemetryTracker,
       sessionStore,
+      storageRoot: resolvePath(configResult.config.storage.dir),
       syncAccountProviderConfig: activeProviderRegistryRuntime.syncAccountProviderConfig,
       refreshProviderRegistry: async (reason) => {
         await activeProviderRegistryRuntime.runtime.registryService.refresh(reason);
@@ -353,7 +391,7 @@ export async function runZCodeProtocolAgent(
         params: samples,
       });
     mcpTelemetrySink = (event) => {
-      // 五分钟资源通知取代旧内存通知；tracker 内部孤儿事实仍保留原判据。
+      // The five-minute resource notification replaces the old memory notification; the tracker's internal orphan facts retain their existing criteria.
       if (event.kind === "memory") return;
       connection.send({
         method: zcodeProtocolNotifications.mcpTelemetry,
@@ -393,8 +431,10 @@ export async function runZCodeProtocolAgent(
       nodeReplBrowserBroker,
       mcpPort,
       mcpConnectionPool,
+      languageServerPort: lspRuntimeHub?.port,
       sessionStore,
       providerRegistryRuntime,
+      acpSessionPool,
     });
     logger.info("ZCode Protocol agent shutdown completed", {
       ...traceContextToLogContext(traceContext),
@@ -408,7 +448,7 @@ export async function runZCodeProtocolAgent(
 function resolveProtocolRuntimeSurface(
   env: NodeJS.ProcessEnv,
 ): "desktop_local_host" | "remote_workspace_host" {
-  // Bug 根因：入口曾无条件覆盖 Host 注入值，远程 SSH/WSL/容器 Trace 被归入本地 Desktop。
+  // Bug root cause: the entry point used to unconditionally overwrite the Host-injected value, assigning remote SSH/WSL/container traces to the local Desktop.
   return env.ZCODE_TELEMETRY_RUNTIME_SURFACE?.trim() === "remote_workspace_host"
     ? "remote_workspace_host"
     : "desktop_local_host";

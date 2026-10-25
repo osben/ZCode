@@ -1,959 +1,583 @@
-# ZCode CLI 架构设计 v2
+# ZCode CLI Architecture Design v2
 
-## 文档定位
+## Document positioning
 
-`architecture-v2` 是架构边界文档，不是接口实现文档。
+`architecture-v2` is a boundary document, not an interface-implementation document. It keeps the
+valuable parts of v1 — module division, dependency direction, state principles, evolution order —
+and deliberately omits premature code detail. Candidate variable, module, interface and event
+names may appear, but not field lists, method signatures, full enums, protocol payloads, class
+implementations, sample code or database structures: module boundaries for a coding-agent CLI
+only stabilize after repeated feedback from implementers, testers and real user flows. The
+architect defines direction, constraints, verification questions and feedback loops first.
 
-它保留 `architecture-v1` 中有价值的模块划分、依赖方向、状态原则和演进顺序，但刻意删除所有过早的代码细节。本文可以保留候选变量名、模块名、接口名和事件概念，但不定义字段列表、方法签名、枚举全集、协议载荷、类实现、示例代码或数据库结构。
+This document:
 
-原因很简单：Coding Agent CLI 的模块边界必须经过一线实现者、测试者和真实用户流程反复反馈之后才能稳定。架构师此时应该先定义方向、约束、验证问题和反馈闭环，而不是提前把每个 port、schema、tool contract、provider capability 和 storage record 写死。
+- defines system layering and dependency direction;
+- defines which capabilities must converge into infrastructure boundaries;
+- defines what core may and may not depend on;
+- marks which interfaces are candidate names only, not yet stable contracts;
+- marks where detailed design must be driven by implementation feedback.
 
-本文的目标：
+It does not contain TypeScript pseudocode, concrete fields/methods/parameters, a complete RPC
+method table, final provider/tool/storage/sandbox schemas, or examples treated as decisions.
 
-- 明确系统分层和依赖方向。
-- 明确哪些能力必须收敛到基础设施边界。
-- 明确 core 能依赖什么、不能依赖什么。
-- 明确哪些接口只是候选名，尚未进入稳定 contract。
-- 明确实现阶段中需要由执行反馈推动的详细设计。
+## 1. Overall Architecture
 
-本文不做的事：
+ZCode CLI is organized in four layers: `app/bootstrap`, `application/core`, `adapters/infra`,
+`contracts/`.
 
-- 不写 TypeScript 伪代码。
-- 不写具体字段、方法和参数。
-- 不写完整 RPC 方法表。
-- 不写 provider、tool、storage、sandbox 的最终 schema。
-- 不把示例实现当成架构决策。
+### 1.1 Layer responsibilities
 
----
+`contracts/` is the contract layer for all cross-boundary interaction: stable schemas, port
+names, capability descriptions, event semantics, error types and permission metadata. It depends
+on no business implementation, adapter, UI, provider SDK, filesystem, network or process
+environment.
 
-## 一、总体架构
+`core/` is the business state machine and scheduling layer: session, turn, agent loop, tool
+lifecycle, permission, compact, rewind, subagent, mailbox, memory, hooks, mode. Core expresses
+intent only; it never touches the external world directly.
 
-ZCode CLI 按四层组织：
+`adapters/` is the external I/O implementation layer: filesystem, child processes, network,
+SQLite, artifacts, providers, MCP, ZCode app-server, config loading, logging, metrics, sandbox.
+Every adapter exposes its capability through contracts.
 
-- `app/bootstrap`
-- `application/core`
-- `adapters/infra`
-- `contracts/`
+`bootstrap/` is the composition and entry layer: startup of CLI, TUI, server and SDK entries,
+dependency assembly, rendering, exit codes, process boundaries. It is the only place allowed to
+assemble core and adapters together.
 
-### 1.1 分层职责
+### 1.2 Layer responsibilities in detail
 
-`contracts/` 是所有跨边界交互的契约层。它只承载稳定 schema、port 名称、capability 描述、event 语义、错误类型和权限元信息。它不依赖业务实现、adapter、UI、provider SDK、文件系统、网络或进程环境。
+- `contracts/src/`: `interfaces/` (ports), `events/`, `errors/`, `capabilities/`. No business
+  logic or implementation detail.
+- `core/src/`: `agent/` (AgentRuntime scheduler), `session/`, `tool/` (ToolSystem),
+  `permission/` (PermissionService), `provider/`, `hooks/` (HookRunner), `subagent/`
+  (SubagentRuntime + Mailbox), `state/` (Compact + Rewind), `memory/` (MemoryPipeline),
+  `sandbox/` (SandboxPort). Business state machines, agent-loop driving, turn scheduling,
+  session management, tool/provider/permission orchestration; no direct external I/O.
+- `adapters/src/`: `storage/`, `fs/`, `exec/`, `http/`, `provider/` (model adapters). Implements
+  the contracts ports; all external I/O side effects and provider SDK adaptation.
+- `bootstrap/`: composition root, dependency-injection configuration, layer assembly, application
+  start and exit.
 
-`core/` 是业务状态机和调度层。它负责 session、turn、agent loop、tool lifecycle、permission、compact、rewind、subagent、mailbox、memory、hooks、mode 等领域逻辑。core 只表达意图，不直接触碰外部世界。
+### 1.3 Dependency direction
 
-`adapters/` 是外部 I/O 实现层。它负责文件系统、子进程、网络、SQLite、artifact、provider、MCP、ZCode app-server、config loader、logger、metrics、sandbox 等具体副作用。所有 adapter 都必须通过 contracts 暴露能力。
+Allowed compile-time dependencies:
 
-`bootstrap/` 是组合层和入口层。它负责 CLI、TUI、server、SDK 等入口的启动、依赖装配、渲染、退出码和进程边界。它是唯一允许把 core 和 adapter 组装到一起的地方。
+- `bootstrap` may depend on `contracts`, `core`, `adapters`, `cli`, `tui`.
+- `core` depends only on `contracts`.
+- `adapters` depends only on `contracts`.
+- `contracts` depends on no upper layer.
 
-### 1.2 分层职责详细说明
+Forbidden:
 
-#### contracts/
+- core depending on adapters;
+- core depending on provider SDKs;
+- core depending on SQLite, filesystem, network, child processes, `process.env`;
+- adapters depending on core;
+- contracts depending on core, adapters or bootstrap.
 
-**职责**：
-- 定义所有跨边界交互的 port 接口
-- 定义 session event 类型和语义
-- 定义错误类型和错误码
-- 定义 provider/tool 的 capability 描述
-- 不承载任何业务逻辑或实现细节
+Runtime may call back into adapter capabilities through dependency injection, but compile-time
+dependencies stay one-directional.
 
-**内部结构**：
-```
-contracts/src/
-├── interfaces/         # Port 接口定义
-├── events/           # Event 类型和语义
-├── errors/           # 错误类型和错误码
-└── capabilities/    # Capability 描述
-```
+### 1.4 Startup principles
 
-#### core/
+Startup keeps only the architectural order, not implementation detail:
 
-**职责**：
-- 业务状态机实现
-- agent loop 驱动
-- turn 调度和状态转移
-- session 管理
-- tool、provider、permission 的编排
-- 不直接调用外部 I/O
+1. The entry layer parses minimal startup info and creates the top-level execution context.
+2. The config system merges defaults, user config, project config, environment variables and CLI
+   arguments under an explicit precedence.
+3. All project-owned environment variables use the `ZCODE_` prefix.
+4. bootstrap creates base adapters and injects them into core.
+5. Storage runs required initialization and migrations.
+6. Core restores or creates the session and builds projections through event replay.
+7. UI, CLI, SDK or server subscribes to state changes.
+8. Every user input advances the session through session events, never implicit in-memory state.
 
-**内部结构**：
-```
-core/
-├── src/
-│   ├── agent/        # AgentRuntime - 核心调度器
-│   ├── session/      # Session 管理
-│   ├── tool/        # ToolSystem
-│   ├── permission/  # PermissionService
-│   ├── provider/    # Provider 编排
-│   ├── hooks/       # HookRunner
-│   ├── subagent/    # SubagentRuntime + Mailbox
-│   ├── state/       # Compact + Rewind
-│   ├── memory/      # MemoryPipeline
-│   └── sandbox/    # SandboxPort
-```
+### 1.5 CLI/TUI default entry contract
 
-#### adapters/
+For interactive use, bare `zcode` enters the local TUI by default instead of printing help.
+`zcode tui` is an explicit alias of the same entry; `zcode --prompt <text>` stays the
+script-friendly single-turn non-interactive entry.
 
-**职责**：
-- 实现 contracts 定义的 port 接口
-- 处理所有外部 I/O 副作用
-- 文件系统、子进程、HTTP、SQLite 等具体实现
-- provider SDK 适配
+The TUI occupies the full terminal screen with an input box at the bottom (Enter submits) and the
+user/agent message history above, in order. The TUI only does input collection, layout rendering,
+status hints and exit cleanup; it never holds provider, tool, permission or event-store
+internals.
 
-**内部结构**：
-```
-adapters/
-├── storage/   # SQLite、File 等存储实现
-├── fs/       # 文件系统
-├── exec/     # 子进程执行
-├── http/     # HTTP 客户端
-└── provider/ # 模型适配器
-```
+In TUI mode the entry layer must take over raw `process.stderr` before loading bootstrap,
+provider, storage or any module that may emit process-level diagnostics. During a normal TUI
+session raw `stderr` must not reach the terminal — Node runtime warnings, adapter warnings and
+background diagnostics would break the full-screen UI; they go to a TUI diagnostics buffer or
+controlled log. Controlled errors (entry layer, argument parsing, TUI startup failure) may be
+written back through an explicit passthrough so real errors are never silently dropped, but
+startup-time raw warnings are never flushed into the UI. Non-TUI CLI modes keep the Unix I/O
+contract (results to `stdout`, diagnostics and errors to `stderr`); the entry layer may filter
+only Node runtime warnings that are explicitly attributed and cannot change the user's outcome —
+for example the experimental-SQLite notice Node 24+ prints when loading `node:sqlite` — never
+silence all of `stderr`.
 
-#### bootstrap/
+TUI submissions go through a restricted callback injected by the entry layer into bootstrap/core.
+The callback creates or reuses the session, carries the same trace chain, runs the turn and
+returns the final reply to the TUI; subsequent submissions within the same runtime reuse the
+session-level message history instead of rebuilding context each turn, so multi-turn local agent
+interaction works while the UI/business state machine boundary stays clean.
 
-**职责**：
-- composition root
-- 依赖注入配置
-- 各层装配
-- 应用启动和退出
+## 2. Repository structure
 
----
-
-### 1.3 依赖方向
-
-允许的编译依赖方向：
-
-- `bootstrap` 可以依赖 `contracts`、`core`、`adapters`、`cli`、`tui`。
-- `core` 只依赖 `contracts`。
-- `adapters` 只依赖 `contracts`。
-- `contracts` 不依赖任何上层。
-
-禁止的依赖方向：
-
-- core 依赖 adapters。
-- core 依赖 provider SDK。
-- core 依赖 SQLite、文件系统、网络、子进程、`process.env`。
-- adapters 依赖 core。
-- contracts 依赖 core、adapters 或 bootstrap。
-
-运行时可以通过依赖注入反向调用 adapter 能力，但编译依赖必须保持单向。
-
-### 1.4 启动原则
-
-启动流程只保留架构顺序，不固定实现细节：
-
-1. 入口层解析最小启动信息，并创建顶层执行上下文。
-2. 配置系统按明确优先级合并默认值、用户配置、项目配置、环境变量和 CLI 参数。
-3. 所有项目自有环境变量使用 `ZCODE_` 前缀。
-4. bootstrap 创建基础 adapter，并把它们注入 core。
-5. storage 执行必要初始化和迁移。
-6. core 恢复或创建 session，并通过事件重放生成 projection。
-7. UI、CLI、SDK 或 server 订阅状态变化。
-8. 每一轮用户输入都通过 session event 推进，而不是靠隐式内存状态推进。
-
-### 1.5 CLI/TUI 默认入口契约
-
-面向人工交互时，`zcode` 不带命令和参数应默认进入本地 TUI，而不是打印 help。`zcode tui` 是同一入口的显式别名；`zcode --prompt <text>` 继续作为脚本友好的单轮非交互入口。
-
-TUI 默认占用整个终端屏幕，底部保留输入框，回车提交当前问题；上方按时间顺序展示用户消息和 agent 回复。TUI 只负责输入采集、布局渲染、状态提示和退出清理，不直接持有 provider、tool、permission 或 event store 的内部实现。
-
-TUI 模式下入口层必须在加载 bootstrap、provider、storage 等可能产生进程级诊断输出的模块之前接管 raw `process.stderr`。正常 TUI 会话期间 raw `stderr` 不得直接写入终端，避免 Node runtime warning、adapter warning 或后台诊断破坏全屏界面；这些输出应先进入 TUI 诊断缓冲或受控日志。入口层、参数解析和 TUI 启动失败等受控错误可以通过显式 passthrough 写回终端，避免真实错误静默，但不得把启动期 raw warning 直接刷回用户界面。非 TUI 的 CLI 模式继续保持 Unix 风格 I/O 契约：结果写 `stdout`，诊断和错误写 `stderr`；入口层只能过滤已经明确归因、不会改变用户操作结果的 Node runtime warning，例如 Node 24+ 加载 `node:sqlite` 时打印的实验性 SQLite 提示，不能把全量 `stderr` 静默。
-
-TUI 提交问题时通过入口层注入的受限回调进入 bootstrap/core。该回调负责创建或复用 session、传递同一个 trace 链、执行 turn，并把最终回复返回给 TUI 渲染；同一个 runtime 内的后续提交必须复用 session 级 message history，而不是每轮重新构造上下文。这样可以保证连续多轮的本地 agent CLI 交互体验，同时仍保持 UI 与业务状态机的边界清晰。
-
----
-
-## 二、仓库结构
-
-```
+```text
 packages/
-├── contracts/          # 协议层 - port、event、error、capability 定义
-│   ├── src/
-│   │   ├── interfaces/
-│   │   ├── events/
-│   │   ├── errors/
-│   │   └── capabilities/
-│   └── package.json
-│
-├── core/              # 核心业务层 - agent runtime、session、tool 等
-│   ├── src/
-│   │   ├── agent/
-│   │   ├── session/
-│   │   ├── tool/
-│   │   ├── permission/
-│   │   └── ...
-│   └── package.json
-│
-├── adapters/          # 适配器层 - 外部 I/O 实现
-│   ├── src/
-│   │   ├── storage/
-│   │   ├── fs/
-│   │   ├── exec/
-│   │   ├── http/
-│   │   └── provider/
-│   └── package.json
-│
-├── bootstrap/         # 组合层 - 依赖装配和启动
-│   ├── src/
-│   └── package.json
-│
-├── cli/               # CLI 入口
-├── tui/               # TUI 入口
-├── shared-types/      # 共享类型
-└── swift-bridge/     # Swift 桥接（不动）
+├── contracts/          # protocol layer: port, event, error, capability definitions
+├── core/               # core business layer: agent runtime, session, tool, ...
+├── adapters/           # adapter layer: external I/O implementations
+├── bootstrap/          # composition layer: dependency assembly and startup
+├── cli/                # CLI entry
+├── tui/                # TUI entry
+├── shared-types/       # shared types
+└── swift-bridge/       # Swift bridge (unchanged)
 ```
 
----
+## 3. Interface maturity
 
-## 三、接口成熟度
+v2 introduces interface maturity instead of defining every interface up front.
 
-v2 引入接口成熟度，而不是一次性定义所有接口。
+### 3.1 Maturity levels
 
-### 3.1 成熟度分层
+- `L0 Concept`: domain concept and boundary confirmed only (for example `ToolRuntime`,
+  `ProviderAdapter`, `SessionEventStore`).
+- `L1 Candidate Contract`: candidate interface name, responsibility and constraints exist, but
+  fields, methods and error shapes are not promised stable.
+- `L2 Executable Contract`: validated by a first implementation; runtime schema, error types,
+  permission metadata, timeout and cancellation semantics completed.
+- `L3 Stable Contract`: validated by real tools, providers, session recovery, cross-platform
+  tests and failure paths; enters the stable API.
 
-`L0 Concept`：只确认领域概念和边界。例如 `ToolRuntime`、`ProviderAdapter`、`SessionEventStore`。
+### 3.2 Feedback loop
 
-`L1 Candidate Contract`：出现候选接口名、职责和约束，但不承诺字段、方法和错误形态稳定。
+Every key contract lands through: architecture proposes boundary and invariants; an implementer
+does a minimal implementation or spike; leaked details, duplicated adaptation logic and
+hard-to-test paths are recorded; architecture adjusts the contract from that feedback; schema,
+error types, tests and observation points are completed; only then is maturity raised.
 
-`L2 Executable Contract`：经过首轮实现验证，补齐 runtime schema、错误类型、权限元信息、超时和取消语义。
+### 3.3 Interfaces that must not be frozen in v2
 
-`L3 Stable Contract`：经过真实工具、provider、session 恢复、跨平台测试和失败路径验证后，进入稳定 API。
+`Tool`, `ToolRegistry`, `ToolRuntime`, `ProviderAdapter`, `ProviderCapabilities`,
+`ModelCapabilities`, `FileSystemPort`, `FileWriteAdapter`, `ExecutionPort`, `HttpClient`,
+`SandboxPort`, `PermissionPort`, `SessionEventStore`, `ArtifactStore`, `MemoryPort`,
+`Transport`, `McpAdapter`, `AppServerTransport`. These names may appear as candidate boundaries,
+but fields, methods, schemas and error shapes must be confirmed through separate design and
+implementation feedback.
 
-### 3.2 反馈闭环
+## 4. Application-layer communication architecture
 
-每个关键 contract 的落地必须经历：
+A clear protocol boundary between core logic and the interaction layer supports both local
+direct connection and remote proxy forms.
 
-1. 架构提出边界和不变量。
-2. 执行者做最小实现或 spike。
-3. 记录实现中被迫泄漏的细节、重复的适配逻辑和难以测试的路径。
-4. 架构根据反馈调整 contract。
-5. 补齐 schema、错误类型、测试和观测点。
-6. 再决定是否提升成熟度。
+### 4.1 Local mode
 
-### 3.3 不能提前稳定的接口
+CLI and TUI may run core in the same process. The interaction layer never reads or writes core
+internals directly; it submits commands, subscribes to events and reads projections through a
+unified transport boundary. Candidate names: `Transport`, `LocalTransport`, `AgentCore`,
+`ServerNotification` — direction only, not final signatures.
 
-以下 contract 不能在 v2 里写死细节：
+### 4.2 Remote mode
 
-- `Tool`
-- `ToolRegistry`
-- `ToolRuntime`
-- `ProviderAdapter`
-- `ProviderCapabilities`
-- `ModelCapabilities`
-- `FileSystemPort`
-- `FileWriteAdapter`
-- `ExecutionPort`
-- `HttpClient`
-- `SandboxPort`
-- `PermissionPort`
-- `SessionEventStore`
-- `ArtifactStore`
-- `MemoryPort`
-- `Transport`
-- `McpAdapter`
-- `AppServerTransport`
+Remote mode serves SDK integration, remote TUI, background servers and multi-process scenarios.
+The remote protocol must support request/response, server push, cancellation, error
+normalization, trace propagation and permission interaction. Candidate names:
+`WebSocketTransport`, `JsonRpcServer`, `RpcRequest`, `RpcResponse`. v2 does not define a concrete
+RPC method table; RPC methods must sediment out of real CLI/TUI/SDK operation flows, not be
+enumerated once from an architecture document.
 
-这些名称可以作为候选边界出现，但字段、方法、schema 和错误形态必须在单独设计和实现反馈后确认。
+### 4.3 Communication principles
 
----
+- UI subscribes to event streams or projections, never to core internal objects.
+- The remote protocol carries trace context.
+- Large content goes to artifact/storage and returns a reference; it is not stuffed into protocol
+  messages.
+- Protocol errors must be stably identifiable by UI, logs and automated tests.
+- Local and remote modes reuse the same set of domain commands and event semantics as much as
+  possible.
 
-## 四、应用层通信架构
+## 5. Cross-cutting capabilities
 
-核心逻辑和交互层之间需要有明确协议边界，支持本地直连和远程代理两类形态。
+### 5.1 Logger and Trace
 
-### 4.1 本地模式
+Logging and tracing are first-class. Every session, turn, message, tool call, provider request,
+permission, subagent, storage operation and external I/O belongs under the same top-level
+`traceId`. Detailed contract: [logging.md](./logging.md). Candidate names: `Logger`,
+`TraceContext`, `ExecutionContext`.
 
-CLI 和 TUI 在本地模式下可以和 core 运行在同一进程。交互层不直接读写 core 的内部对象，而是通过统一传输边界提交命令、订阅事件和读取 projection。
-
-候选命名：
-
-- `Transport`
-- `LocalTransport`
-- `AgentCore`
-- `ServerNotification`
-
-这些名称只代表方向，不代表最终接口签名。
-
-### 4.2 远程模式
-
-远程模式服务于 SDK 集成、远程 TUI、后台 server 或多进程场景。远程协议需要支持请求响应、服务端推送、取消、错误归一化、trace 传播和权限交互。
-
-候选命名：
-
-- `WebSocketTransport`
-- `JsonRpcServer`
-- `RpcRequest`
-- `RpcResponse`
-
-v2 不定义具体 RPC 方法表。RPC 方法必须从真实 CLI/TUI/SDK 操作流中沉淀，而不是从架构文档里一次性枚举。
-
-### 4.3 通信原则
-
-- UI 订阅的是事件流或 projection，不订阅 core 内部对象。
-- 远程协议携带 trace 上下文。
-- 大体积内容不直接塞进协议消息，应进入 artifact/storage 后返回引用。
-- 协议错误必须可被 UI、日志和自动化测试稳定识别。
-- 本地和远程模式尽量复用同一组领域命令和事件语义。
-
----
-
-## 五、横向能力
-
-横向能力必须优先设计边界，因为它们会贯穿所有模块。
-
-### 5.1 Logger 与 Trace
-
-日志和 trace 是一等基础能力。每个 session、turn、message、tool call、provider request、permission、subagent、storage 操作和外部 I/O 都应归属到同一个顶层 `traceId` 之下。
-
-详细契约见 [logging.md](./logging.md)。
-
-候选命名：
-
-- `Logger`
-- `TraceContext`
-- `ExecutionContext`
-
-设计约束：
-
-- trace 必须能跨异步任务传播。
-- trace 必须能跨进程或远程协议传播。
-- 日志不得默认泄露密钥、token、隐私数据或完整用户内容。
-- adapter 和 core service 都必须接收上下文，而不是临时生成不相关的 trace。
+Constraints: trace must propagate across async tasks, processes and the remote protocol; logs
+must not leak keys, tokens, private data or full user content by default; adapters and core
+services must receive context instead of generating unrelated traces ad hoc.
 
 ### 5.2 Config
 
-配置是显式层级系统，不是散落的环境变量读取。
+Configuration is an explicit layered system, not scattered environment-variable reads. Precedence
+covers at least: system default, user config, project config, session config, environment, CLI
+arguments.
 
-配置优先级应保持清晰，至少覆盖：
-
-- system default
-- user config
-- project config
-- session config
-- environment
-- CLI arguments
-
-设计约束：
-
-- 自有环境变量统一使用 `ZCODE_` 前缀。
-- 安全相关配置需要能追踪来源。
-- core 不直接读取环境变量。
-- provider、model、tool、sandbox 等差异不应全部塞进基础配置。
-- 配置订阅应是 scoped 的，不应变成全局广播。
-
-候选命名：
-
-- `ConfigPort`
-- `RuntimeConfig`
-- `ConfigStorage`
+Constraints: project-owned environment variables use the `ZCODE_` prefix; security-relevant
+config keeps source tracking; core does not read environment variables directly;
+provider/model/tool/sandbox differences do not all pile into base config; config subscriptions
+are scoped, not global broadcasts. Candidate names: `ConfigPort`, `RuntimeConfig`,
+`ConfigStorage`.
 
 ### 5.3 Storage
 
-存储需要区分事实、视图和大体积内容。
+Storage separates facts, views and large content:
 
-存储分层：
+- `EventStore`: session truth, append-only.
+- `Projection`: rebuildable query views.
+- `ArtifactStore`: large results, attachments, model stream fragments, tool output references.
+- `ConfigStorage`: config persistence.
+- `MemoryStore`: cross-session long-term memory.
 
-- `EventStore`：session truth，append-only。
-- `Projection`：可重建查询视图。
-- `ArtifactStore`：大体积结果、附件、模型流片段、工具输出引用。
-- `ConfigStorage`：配置持久化。
-- `MemoryStore`：跨 session 的长期记忆。
-
-设计约束：
-
-- session event 是事实来源。
-- projection 损坏后可以丢弃重建。
-- 大体积 tool result 不直接回灌模型上下文。
-- storage adapter 必须处理迁移、并发、损坏恢复和结构化错误。
-- 具体数据库表结构不在 v2 定义。
-
-候选命名：
-
-- `SessionEventStore`
-- `ProjectionStorage`
-- `ArtifactStore`
-- `MemoryStore`
+Constraints: session events are the source of truth; a corrupted projection can be dropped and
+rebuilt; large tool results are not fed back into model context directly; storage adapters
+handle migration, concurrency, corruption recovery and structured errors. Concrete database
+schemas are not defined in v2. Candidate names: `SessionEventStore`, `ProjectionStorage`,
+`ArtifactStore`, `MemoryStore`.
 
 ### 5.4 Feature Gate
 
-默认使用本地 feature gate。远程 feature flag 只能是可选 adapter，不能成为 P0 启动路径。
-
-设计约束：
-
-- 网络不可用时 CLI 仍可启动。
-- 远程 gate 必须有本地 fallback 和 kill switch。
-- feature 判断需要可测试、可追踪。
-- 远程服务、代理、自定义证书等细节收敛到网络 adapter。
-
-候选命名：
-
-- `FeatureGate`
+Local feature gate by default; a remote feature flag can only be an optional adapter, never a P0
+startup path. Constraints: the CLI still starts when the network is unavailable; remote gates
+have a local fallback and kill switch; feature decisions are testable and traceable; remote
+service, proxy and custom-certificate details converge into the network adapter. Candidate name:
+`FeatureGate`.
 
 ### 5.5 i18n
 
-i18n 用于 UI 文案、错误提示和用户可见消息。它不应把业务错误变成普通字符串。
-
-设计约束：
-
-- 错误类型和错误码先稳定，再做本地化。
-- core 可以依赖消息 key，但不能依赖 UI 渲染。
-- 至少支持中文和英文。
-- fallback 规则必须明确。
-
-候选命名：
-
-- `I18n`
-- `MessageKey`
-- `Locale`
+i18n covers UI copy, error hints and user-visible messages; it must not turn business errors into
+plain strings. Constraints: error types and codes stabilize before localization; core may depend
+on message keys but not on UI rendering; at least Chinese and English are supported; fallback
+rules are explicit. Candidate names: `I18n`, `MessageKey`, `Locale`.
 
 ### 5.6 Network
 
-所有网络访问收敛到统一网络边界，不能在业务模块里直接调用底层网络 API。
+All network access converges into a unified network boundary; business modules never call
+low-level network APIs directly. Constraints: timeout, cancellation, retry, backoff, proxy,
+custom certificates and error normalization are supported; trace context propagates; provider,
+MCP, remote feature gate and web fetch all use the same class of network adapter; network errors
+are never discriminated by text. Candidate names: `HttpClient`, `RequestOptions`.
 
-设计约束：
+## 6. Core layer modules
 
-- 支持超时、取消、重试、退避、代理、自定义证书和错误归一化。
-- trace 上下文必须传播。
-- provider、MCP、远程 feature gate、web fetch 等都走同一类网络 adapter。
-- 网络错误不能只靠文本判断。
-
-候选命名：
-
-- `HttpClient`
-- `RequestOptions`
-
----
-
-## 六、Core 层模块
-
-core 是业务状态机。它只依赖 contracts，不直接做外部 I/O。
+Core is the business state machine. It depends only on contracts and does no external I/O
+directly.
 
 ### 6.1 Agent Runtime
 
-Agent Runtime 是核心调度器，负责接收输入、推进 turn、调用 provider、调度工具、处理取消、恢复 session 和生成事件。它不承载具体业务逻辑，而是编排各子系统。
+The Agent Runtime is the core scheduler: receiving input, advancing turns, calling providers,
+scheduling tools, handling cancellation, restoring sessions and emitting events. It orchestrates
+subsystems; it carries no concrete business logic itself.
 
-设计约束：
+Constraints: every state transition first becomes a session event; in-memory state is only a
+projection or runtime cache, not truth; model streams, tool calls, permission requests, errors
+and cancellations are all eventified; crash recovery relies on event replay; rewind appends new
+state changes instead of deleting history.
 
-- 任何状态推进都先形成 session event。
-- 内存状态只是 projection 或运行时缓存，不是 truth。
-- 模型流、工具调用、权限请求、错误和取消都要事件化。
-- crash recovery 依靠事件重放。
-- rewind 不删除历史，而是追加新的状态变化。
-
-候选命名：
-
-- `AgentRuntime`
-- `SessionService`
-- `EventReducer`
-- `SessionProjection`
-- `ConversationView`
-- `ToolCallView`
-- `PendingPermissionView`
+Candidate names: `AgentRuntime`, `SessionService`, `EventReducer`, `SessionProjection`,
+`ConversationView`, `ToolCallView`, `PendingPermissionView`.
 
 ### 6.2 Session Event
 
-Session Event 是系统的事实来源，但 v2 不定义具体事件字段和完整事件枚举。
+Session events are the system's source of truth, but v2 does not define concrete event fields or
+a complete enumeration. Event semantics must cover: session/turn/message lifecycle, model request
+and streaming, tool-call lifecycle, permission request and resolution, checkpoint, snapshot,
+compact, rewind, artifact lifecycle, subagent and mailbox, error, cancel and interrupt.
 
-事件语义需要覆盖：
-
-- session 生命周期
-- turn 生命周期
-- message 生命周期
-- model request 和 streaming
-- tool call 生命周期
-- permission request 和 resolution
-- checkpoint、snapshot、compact、rewind
-- artifact 生命周期
-- subagent 和 mailbox
-- error、cancel、interrupt
-
-设计约束：
-
-- 事件必须带有可传播上下文。
-- 事件必须可持久化、可重放、可迁移。
-- 事件 payload 需要 runtime schema。
-- 事件版本升级需要兼容策略。
-
-候选命名：
-
-- `SessionEvent`
-- `SessionEventType`
+Constraints: events carry propagatable context; events are persistable, replayable and
+migratable; event payloads have runtime schemas; event version upgrades have a compatibility
+strategy. Candidate names: `SessionEvent`, `SessionEventType`.
 
 ### 6.3 Tool System
 
-Tool System 负责把模型意图变成可审批、可审计、可取消、可恢复的外部动作。
+The Tool System turns model intent into approvable, auditable, cancellable, recoverable external
+actions. v2 keeps only the tool boundary, not interface detail.
 
-v2 只保留工具边界，不定义工具接口细节。
+Constraints: every tool declares input schema, output schema, read-only-ness, destructiveness,
+concurrency safety, timeout, cancellation semantics, permission requirements, maximum output size
+and side-effect scope; side-effecting tools declare idempotency and recovery strategies where
+practical; oversized tool output goes to artifact/storage and returns only a summary and
+reference; the tool runtime never bypasses permission, trace, audit and adapter contracts; tools
+exposed by MCP, plugins and subagents also pass unified capability and schema validation.
 
-设计约束：
-
-- 每个 tool 必须声明输入 schema、输出 schema、只读性、破坏性、并发安全、超时、取消语义、权限需求、最大输出大小和副作用范围。
-- 有副作用的 tool 需要尽量声明幂等性和恢复策略。
-- 工具输出过大时进入 artifact/storage，只返回摘要和引用。
-- tool runtime 不应绕过 permission、trace、audit 和 adapter contract。
-- MCP、plugin、subagent 暴露的工具也必须经过统一 capability 和 schema 校验。
-
-候选命名：
-
-- `Tool`
-- `ToolRegistry`
-- `ToolRuntime`
-- `ToolResult`
-- `ToolContext`
-
-首批工具方向：
-
-- 文件读取与检索
-- 文件写入与编辑
-- 子进程执行
-- web 搜索与抓取
-- todo / task 类内部工具
-
-具体工具 contract 另开设计。
+Candidate names: `Tool`, `ToolRegistry`, `ToolRuntime`, `ToolResult`, `ToolContext`. First tool
+directions: file read/search, file write/edit, subprocess execution, web search/fetch, todo/task
+internal tools. Concrete tool contracts are designed separately.
 
 ### 6.4 Provider
 
-Provider 是 capability-first 的模型适配边界。core 不读取具体供应商 SDK、私有 HTTP 字段或模型分支。
+Provider is a capability-first model adaptation boundary. Core reads no vendor SDK, private HTTP
+fields or model branches.
 
-设计约束：
+Constraints: provider/model capabilities are explicitly probed or declared; tool calling,
+structured output, streaming, reasoning, cache, parallel tools, token limits and retry policy are
+all capability design; model config only selects and holds user overrides, not all behavior
+branches; provider errors are normalized while keeping the original cause; provider adapters
+support trace, cancellation, timeout and audit.
 
-- provider/model 能力需要显式探测或声明。
-- 工具调用、结构化输出、streaming、reasoning、cache、parallel tool、token 限制和重试策略都属于 capability 设计。
-- model config 只负责选择和用户覆盖，不承载全部行为分支。
-- provider 错误需要归一化，同时保留原始 cause。
-- provider adapter 必须支持 trace、取消、超时和审计。
+Candidate names: `ProviderAdapter`, `ProviderCapabilities`, `ModelCapabilities`, `ModelPort`.
 
-候选命名：
+Current state: the base model-capability contract is split into `model/README.md` and landed as
+the `ModelCapability` / catalog query interface, adapter default policy and core runtime
+consumption path. The full `ProviderCapabilities` stable schema is still open, especially
+provider-level network, cache, parallel-tool and retry-budget capabilities.
 
-- `ProviderAdapter`
-- `ProviderCapabilities`
-- `ModelCapabilities`
-- `ModelPort`
+### 6.5 Permission and Mode
 
-当前基础模型能力 contract 已在 `model/README.md` 拆出并落地为 `ModelCapability` / catalog
-查询接口、adapter 默认策略和 core runtime 消费路径。完整 `ProviderCapabilities` 稳定 schema
-仍待继续收口，尤其是 network、cache、parallel tool、retry budget 等 provider 级能力。
+Permission owns collaboration mode, approval policy, risk policy and audit policy. It does not
+implement filesystem, network or subprocess isolation itself.
 
-### 6.5 Permission 与 Mode
+Constraints: permission decisions are eventified; auto-approval never bypasses schema validation,
+adapter contracts, audit events or high-risk rules; Plan, Build, Yolo and Auto modes are
+permission-policy inputs, not scattered if-branches; the tool catalog does not change with mode —
+mode only changes the decision after a tool call reaches the permission gate, so tools-schema
+changes never break provider caches; sandbox is a separate boundary that permission may compose
+with, never the same concept.
 
-Permission 负责 collaboration mode、approval policy、risk policy 和 audit policy。它不直接实现文件系统、网络或子进程隔离。
+Current P0 mode semantics:
 
-设计约束：
-
-- 权限判断必须事件化。
-- 自动批准不能绕过 schema 校验、adapter contract、审计事件或高风险规则。
-- Plan、Build、Yolo、Auto 等模式是权限策略输入，不是到处散落的 if 分支。
-- tool catalog 不随 mode 变化；mode 只影响 tool call 到达 permission gate 后的判定，避免 tools schema 变化破坏 provider cache。
-- sandbox 是独立边界，可以被 permission 组合使用，但不能混成同一个概念。
-
-当前 P0 mode 语义：
-
-| Mode | Permission 行为 |
+| Mode | Permission behavior |
 | --- | --- |
-| `plan` | 允许 `readOnly=true` 且 `destructive=false` 的工具；拒绝 workspace/git/system/network 写入和其他非只读工具。 |
-| `build` | 默认模式；只读工具直接允许，有副作用、破坏性或高风险工具进入 `ask`，等待后续 UI/SDK 审批链路接管。 |
-| `yolo` | 跳过 permission prompts，直接 `allow`；仍不跳过 tool registry、schema/adapter contract、trace 和审计。 |
-| `auto` | 保留模式，暂不实现；如果被配置到 runtime，permission 明确拒绝并写入可调试原因。 |
+| `plan` | Allows tools with `readOnly=true` and `destructive=false`; rejects workspace/git/system/network writes and other non-read-only tools. |
+| `build` | Default mode; read-only tools are allowed directly, side-effecting, destructive or high-risk tools enter `ask` and wait for the UI/SDK approval chain. |
+| `yolo` | Skips permission prompts and allows directly; still does not skip the tool registry, schema/adapter contracts, trace or audit. |
+| `auto` | Reserved, not implemented; if configured, permission explicitly denies it with a debuggable reason. |
 
-Permission decision 必须携带 `mode`、`toolName`、`riskLevel`、`sideEffectScope`、`decision`、`ruleId` 和用户可读 `reason`，并在 tool executor 处记录结构化 debug 日志。日志只记录输入摘要；需要审批的 `permission_requested` event 可携带原始 input 供 UI 展示。
+A permission decision must carry `mode`, `toolName`, `riskLevel`, `sideEffectScope`, `decision`,
+`ruleId` and a human-readable `reason`, and be recorded as structured debug logs at the tool
+executor. Logs record only an input summary; the approval-requiring `permission_requested` event
+may carry the raw input for UI display.
 
-候选命名：
-
-- `PermissionPort`
-- `PermissionService`
-- `PermissionResult`
-- `CollaborationMode`
-- `ApprovalPolicy`
-- `RiskPolicy`
+Candidate names: `PermissionPort`, `PermissionService`, `PermissionResult`,
+`CollaborationMode`, `ApprovalPolicy`, `RiskPolicy`.
 
 ### 6.6 Hooks
 
-Hooks 是扩展点，不是隐藏的全局事件总线。
+Hooks are extension points, not a hidden global event bus.
 
-设计约束：
+Constraints: hooks have an explicit phase, input, output, timeout, cancellation and error policy;
+hook side effects go through adapters; hooks never implicitly mutate core internal state; hook
+results are observable. Candidate names: `Hook`, `HookRunner`, `HookPhase`.
 
-- hooks 必须有明确 phase、输入、输出、超时、取消和错误策略。
-- hooks 的副作用必须走 adapter。
-- hooks 不能隐式修改 core 内部状态。
-- hooks 结果需要可观测。
+### 6.7 Subagent and Mailbox
 
-候选命名：
+Subagent and Mailbox are durable lifecycles, not in-memory maps.
 
-- `Hook`
-- `HookRunner`
-- `HookPhase`
+Constraints: spawn, state changes, message delivery, ack, failure, cancellation and recovery are
+all eventified; the mailbox is point-to-point communication with no global event bus; messages
+have capacity limits, expiry policy, duplicate-delivery protection and failure propagation; child
+agents inherit the parent's trace, workspace scope and permission policy, but permission requests
+are still explicitly eventified; a spawn guard prevents runaway recursion.
 
-### 6.7 Subagent 与 Mailbox
+Candidate names: `SubagentRuntime`, `SubagentRecord`, `SubagentPolicy`, `Mailbox`,
+`InterAgentMessage`. Concrete lifecycle, backpressure and recovery strategies are designed
+separately.
 
-Subagent 和 Mailbox 是 durable lifecycle，不是内存 Map。
+### 6.8 Compact and Rewind
 
-设计约束：
+Compact manages current-session context compression; rewind manages rollback semantics. They
+share session state but are not the same thing.
 
-- spawn、状态变化、消息投递、ack、失败、取消和恢复都必须事件化。
-- mailbox 是点对点通信，不引入全局 Event Bus。
-- 消息需要容量限制、过期策略、重复投递防护和失败传播。
-- 子 agent 继承父 agent 的 trace、workspace scope 和权限策略，但权限请求仍需显式事件化。
-- spawn guard 必须防止递归失控。
+Constraints: the compact boundary is auditable state, not a pure in-memory marker; rewind never
+physically deletes history; prompt building understands post-compact context boundaries; compact,
+snapshot and rewind coordinate with the event store, projections and artifacts.
 
-候选命名：
-
-- `SubagentRuntime`
-- `SubagentRecord`
-- `SubagentPolicy`
-- `Mailbox`
-- `InterAgentMessage`
-
-具体 lifecycle、backpressure 和恢复策略另开设计。
-
-### 6.8 Compact 与 Rewind
-
-Compact 管理当前 session 上下文压缩。Rewind 管理回退语义。两者共享 session state，但不等同。
-
-设计约束：
-
-- compact boundary 是可审计状态，不是纯内存标记。
-- rewind 不能物理删除历史。
-- prompt 构建需要能理解 compact 后的上下文边界。
-- compact、snapshot 和 rewind 必须与 event store、projection、artifact 协同。
-
-候选命名：
-
-- `CompactBoundary`
-- `RewindPoint`
-- `SessionStateManager`
-
-具体 boundary 字段和恢复策略另开设计。
+Candidate names: `CompactBoundary`, `RewindPoint`, `SessionStateManager`. Concrete boundary
+fields and recovery strategies are designed separately.
 
 ### 6.9 Memory
 
-Memory 是跨 session 的长期记忆系统。它不同于 Compact。
+Memory is cross-session long-term memory, distinct from compact: compact compresses a single
+session's context; memory is cross-session knowledge extraction, retrieval, merging and expiry.
 
-设计约束：
+Constraints: memory extraction is disableable, observable and source-traceable; memory does not
+leak privacy or sensitive content by default; memory injection into prompts has an explicit
+priority and token budget.
 
-- Compact 是单 session 上下文压缩。
-- Memory 是跨 session 知识提取、检索、合并和过期。
-- memory 提取必须可关闭、可观测、可追踪来源。
-- memory 不能默认泄露隐私或敏感内容。
-- memory 注入 prompt 需要有明确优先级和 token 预算。
-
-候选命名：
-
-- `MemoryPort`
-- `MemoryPipeline`
-- `MemoryEntry`
-- `MemorySource`
-
-具体提取策略、置信度、过期策略和合并策略另开设计。
+Candidate names: `MemoryPort`, `MemoryPipeline`, `MemoryEntry`, `MemorySource`. Extraction
+strategy, confidence, expiry and merge strategy are designed separately.
 
 ### 6.10 Skill
 
-Skill 是 core 可理解的领域概念，但加载来源属于 adapter。
+Skill is a core-understandable domain concept, but loading sources belong to adapters.
+Implementation planning: [Skill Integration Plan](./skill.md).
 
-实现级规划见 [Skill Integration Plan](./skill.md)。
-
-设计约束：
-
-- skill 的触发、指令和依赖需要 schema。
-- skill 加载不能直接把文件系统细节带入 core。
-- skill 与 tool、MCP、plugin 的关系需要通过 capability 声明收口。
-
-候选命名：
-
-- `Skill`
-- `SkillLoader`
-- `SkillTrigger`
+Constraints: skill triggers, instructions and dependencies have schemas; skill loading never
+pulls filesystem detail into core; the relationship between skills, tools, MCP and plugins is
+converged through capability declarations. Candidate names: `Skill`, `SkillLoader`,
+`SkillTrigger`.
 
 ### 6.11 Sandbox
 
-Sandbox 是独立 port，不和 Permission 合并。
-
-设计约束：
-
-- sandbox 提供执行隔离或策略增强。
-- permission 决定是否允许，sandbox 决定如何隔离或约束。
-- sandbox 错误需要结构化，并保留底层 cause。
-- sandbox 能力可能随平台差异变化，必须可探测。
-
-候选命名：
-
-- `SandboxPort`
-- `SandboxPolicy`
+Sandbox is an independent port, never merged with permission. It provides execution isolation or
+policy enhancement: permission decides whether to allow; sandbox decides how to isolate or
+constrain. Sandbox errors are structured with the underlying cause preserved; sandbox
+capabilities may vary by platform and must be detectable. Candidate names: `SandboxPort`,
+`SandboxPolicy`.
 
 ### 6.12 File Watcher
 
-File Watcher 是提示机制，不是正确性机制。
+File Watcher is a hint mechanism, not a correctness mechanism. It reminds the session that the
+user or an external process changed a file; watcher events never replace pre-write validation —
+write correctness belongs to the file write adapter's re-read, revision/hash, lock and structured
+errors. Cross-platform watcher differences are handled by the adapter. Candidate names:
+`FileWatcher`, `FileChangeEvent`, `FileReadState`.
 
-设计约束：
+## 7. External I/O boundaries
 
-- watcher 用于提醒 session 用户或外部进程修改了文件。
-- watcher 事件不能替代写前校验。
-- 文件写入正确性由 file write adapter 的重读、revision/hash、锁和结构化错误负责。
-- watcher 的跨平台差异由 adapter 处理。
+All external side effects converge into adapters.
 
-候选命名：
+### 7.1 Filesystem
 
-- `FileWatcher`
-- `FileChangeEvent`
-- `FileReadState`
+Filesystem capabilities are exposed through a unified port and adapter. Path handling uses Node
+standard cross-platform APIs; no hand-written separators, absolute-path prefixes, temp
+directories or newline assumptions. Stale writes are handled before writing; atomic writes,
+permission errors, symlinks, case sensitivity, BOM, line endings and Windows rename behavior are
+part of the adapter contract. Candidate names: `FileSystemPort`, `FileWriteAdapter`.
 
----
+### 7.2 Subprocess
 
-## 七、外部 I/O 边界
+Subprocess execution goes through a unified execution adapter. Prefer argument-array form; avoid
+shell string concatenation; account for Windows `.cmd`/`.exe`, paths with spaces, environment
+variable casing and shell differences; support timeout, cancellation, output truncation, streamed
+output, exit-code normalization and permission auditing. Candidate name: `ExecutionPort`.
 
-所有外部副作用必须收敛到 adapter，不能散落在业务模块中。
+### 7.3 Network
 
-### 7.1 文件系统
-
-文件系统能力必须通过统一 port 和 adapter 暴露。
-
-设计约束：
-
-- 路径处理使用 Node 标准跨平台能力。
-- 不手写路径分隔符、绝对路径前缀、临时目录或换行符。
-- 写入前必须处理 stale write。
-- 原子写入、权限错误、符号链接、大小写敏感、BOM、换行和 Windows rename 行为必须纳入 adapter contract。
-
-候选命名：
-
-- `FileSystemPort`
-- `FileWriteAdapter`
-
-### 7.2 子进程
-
-子进程执行必须通过统一 execution adapter。
-
-设计约束：
-
-- 优先使用参数数组形式。
-- 避免 shell 字符串拼接。
-- 考虑 Windows `.cmd`、`.exe`、空格路径、环境变量大小写和 shell 差异。
-- 支持超时、取消、输出截断、流式输出、退出码归一化和权限审计。
-
-候选命名：
-
-- `ExecutionPort`
-
-### 7.3 网络
-
-网络能力统一进入 `HttpClient` 类边界。provider、MCP、web fetch、remote config 和 telemetry 不各自发明网络行为。
+Network capabilities converge into an `HttpClient`-class boundary. Provider, MCP, web fetch,
+remote config and telemetry do not each invent their own network behavior.
 
 ### 7.4 Artifact
 
-artifact 用于承载大体积结果、附件、下载文件、模型流片段、工具输出和可追踪引用。
+Artifacts carry large results, attachments, downloaded files, model stream fragments, tool
+outputs and traceable references. Model context receives only summaries and references; artifacts
+carry hash, source, permission scope and lifecycle; the physical artifact-storage structure is
+not defined in v2.
 
-设计约束：
+## 8. Multi-session parallel execution
 
-- 模型上下文只接收摘要和引用。
-- artifact 需要 hash、来源、权限范围和生命周期。
-- artifact storage 的物理结构不在 v2 定义。
+Session, message, tool call, permission, checkpoint, queue and pending states are first-class
+objects.
 
----
+### 8.1 Session isolation
 
-## 八、多 Session 并行执行
+Every session has its own event stream, projection, file-read baseline, pending permission and
+runtime state. Sessions share no in-memory truth; inter-session communication passes only hints
+or requests; shared-resource access is coordinated through adapters or managers; fork, resume,
+rollback and concurrent sessions all keep their trace. Candidate names: `SessionManager`,
+`SharedStateHandle`, `SessionMailbox`.
 
-ZCode CLI 需要把 session、message、tool call、permission、checkpoint、队列和 pending 状态视为一等对象。
+### 8.2 Write conflicts
 
-### 8.1 Session 隔离
+Write conflicts are P0/P1 problems, not late-phase work. Default is to reject stale writes, never
+auto three-way merge. Read records a sufficient file baseline — a truncated read never authorizes
+a full-file write. Edit, Write and Patch re-read the current file and validate before writing. A
+per-path lock only resolves in-process interleaving and is not a cross-process correctness
+guarantee; modifications by the user, IDE, formatters and other processes are discovered through
+pre-write re-reads.
 
-每个 session 有独立 event stream、projection、file read baseline、pending permission 和 runtime 状态。
+### 8.3 Watcher and concurrency
 
-设计约束：
+The watcher only provides context hints. Real concurrency safety is carried by the file write
+adapter and the session event state together.
 
-- session 之间不共享内存 truth。
-- session 间通信只传递 hint 或请求。
-- 共享资源访问必须通过 adapter 或 manager 协调。
-- fork、resume、rollback 和并发 session 都必须保留 trace。
+## 9. Error handling and observability
 
-候选命名：
+Errors are first-class design objects. Low levels throw structured errors upward by default;
+errors are caught only where the code can recover, retry, degrade, add context, or format at the
+CLI boundary. Wrapped errors keep the original cause. Program flow never keys on error text. The
+CLI entry layer uniformly prints user guidance and sets exit codes. Tests cover critical failure
+paths.
 
-- `SessionManager`
-- `SharedStateHandle`
-- `SessionMailbox`
+Observability keeps entry points from the first version: model request, context composition,
+token/cost, tool call, permission, external I/O, queue/backpressure, retry, compact/rewind,
+provider capability, session recovery.
 
-### 8.2 写入冲突
+## 10. Implementation order
 
-写入冲突是 P0/P1 级问题，不能等到后期再补。
+Implementation phases define review order only; interface details stay unfixed.
 
-设计约束：
+- **Phase 0 — Protocol baseline**: first `contracts/` version; `TraceContext` and execution
+  context boundary; error type/code direction; session event semantic scope; base port names and
+  responsibilities.
+- **Phase 1 — Bootstrap and base I/O**: bootstrap composition root; config loading; logger and
+  trace propagation; minimal event store; minimal filesystem, execution, http and artifact
+  adapters.
+- **Phase 2 — Session and Agent Runtime**: minimal session create/resume/fork loop; event reducer
+  and projection; model streaming events; tool-call lifecycle events; interrupt, cancel and crash
+  recovery.
+- **Phase 3 — Tool / provider / file contract deepening**: Tool Contract detailed design;
+  Provider/Model Capability detailed design (model-capability catalog main line landed;
+  provider-level stable schema still converging); FileWriteAdapter detailed design; Read / Edit /
+  Write / Bash first-tool validation; cross-platform file and subprocess failure-path tests.
+- **Phase 4 — Permission, modes and security boundary**: permission event lifecycle; collaboration
+  mode; approval policy; sandbox port spike; high-risk tool policy.
+- **Phase 5 — Advanced state and concurrency**: subagent lifecycle; durable mailbox; compact
+  boundary; rewind; multi-session; file watcher.
+- **Phase 6 — Extensions and ecosystem**: hooks; skills; MCP / ZCode app-server; plugin
+  capability; metrics and telemetry; memory pipeline.
 
-- 默认拒绝 stale write，不自动三方合并。
-- Read 记录足够的文件基线；截断读取不能授权完整文件写入。
-- Edit、Write、Patch 写入前重读当前文件并校验。
-- per-path lock 只解决本进程内交错，不是跨进程正确性依据。
-- 用户、IDE、格式化器和其他进程的修改必须通过写前重读发现。
+## 11. Key design decisions
 
-### 8.3 Watcher 与并发
+### 11.1 Core does not depend on infra
 
-watcher 只提供上下文提示。真正的并发安全由 file write adapter 和 session event 状态共同承担。
+Core must be independently testable. Provider, MCP, SQLite, filesystem, network and subprocess
+must not leak into the business state machine.
 
----
+### 11.2 Session events are truth
 
-## 九、错误处理与可观测性
+Resume, fork, rollback, pending permission, streaming parts, tool lifecycle and crash recovery
+all depend on event facts. Projections can be rebuilt; in-memory objects are never the source of
+truth.
 
-错误是一等设计对象。
+### 11.3 No global event bus
 
-设计约束：
+A global bus hides dependencies, ordering and failure propagation. Cross-agent or cross-session
+communication uses explicit mailboxes, commands or projection hints.
 
-- 低层默认向上抛出结构化错误。
-- 只有能恢复、重试、降级、补充上下文或在 CLI 边界格式化时才捕获。
-- 包装错误必须保留原始 cause。
-- 不依赖错误文本做流程判断。
-- CLI 入口层统一输出用户提示并设置退出码。
-- 测试必须覆盖关键失败路径。
+### 11.4 Provider capability first
 
-可观测性从第一版保留入口：
+Provider differences are more than model names. Tool calling, structured output, streaming,
+reasoning, cache, parallel tools, token limits and error shapes are all capability-ized.
 
-- model request
-- context composition
-- token/cost
-- tool call
-- permission
-- external I/O
-- queue/backpressure
-- retry
-- compact/rewind
-- provider capability
-- session recovery
+### 11.5 Tool contracts must be audit-friendly
 
----
+A tool is not just a function call. It is a composition of permission, audit, cancellation,
+recovery, output management and side-effect boundaries.
 
-## 十、实现顺序
+### 11.6 File watcher is not a lock
 
-实现阶段只定义审查顺序，不把接口细节写死。
+The watcher can only hint at file changes. Write correctness is guaranteed by pre-write re-reads,
+revision/hash, locks and structured errors.
 
-### Phase 0：Protocol Baseline
+### 11.7 Architecture defines constraints first, not all interfaces
 
-目标：建立最小 contracts 包、执行上下文、错误模型、事件语义和 adapter port 占位。
+v2 deliberately does not freeze fields and methods. Interfaces are shaped by implementation
+feedback, failure paths, cross-platform validation and real tool integration.
 
-关键输出：
+## 12. Detailed designs to split
 
-- `contracts/` 初版。
-- `TraceContext` 和执行上下文边界。
-- 错误类型和错误码方向。
-- session event 语义范围。
-- 基础 port 名称和职责说明。
+The following must become separate design documents or implementation RFCs. Completed RFCs stay
+listed here so automation does not re-treat the same capability as a gap.
 
-### Phase 1：Bootstrap 与基础 I/O
+Split and landed:
 
-目标：让 CLI 可以在统一装配路径下启动，并把外部 I/O 收敛到 adapter。
+- Tool Contract: `tool/README.md` and `tool/*.md`. As of the 2026-05-07 check, the public
+  contract, built-in tool declarations, registry projection, executor/scheduler consumption,
+  output-schema validation and artifact result budget have a code and test loop.
+- Provider / Model Capability: `model/README.md`. As of the 2026-05-07 check, `ModelRef`,
+  provider-neutral request/result, the `ModelCapability` catalog, adapter default policy, config
+  override projection, AI SDK registry/runner and the core runtime model loop have a code and
+  test loop; provider-level network/cache/parallel-tool/retry-budget capabilities are still not
+  promoted to a stable capability schema.
 
-关键输出：
+Still to split:
 
-- `bootstrap` composition root。
-- config 加载路径。
-- logger 和 trace 传播。
-- event store 最小实现。
-- file system、execution、http、artifact adapter 的最小可用版本。
-
-### Phase 2：Session 与 Agent Runtime
-
-目标：建立可恢复、可事件化的 turn loop。
-
-关键输出：
-
-- session create/resume/fork 的最小闭环。
-- event reducer 和 projection。
-- model streaming 事件化。
-- tool call lifecycle 事件化。
-- interrupt、cancel 和 crash recovery。
-
-### Phase 3：Tool / Provider / File Contract 深化
-
-目标：把最容易泄漏细节的边界拉出来单独设计。
-
-关键输出：
-
-- Tool Contract 详细设计。
-- Provider / Model Capability 详细设计；模型能力 catalog 主线已落地，provider 级稳定 schema
-  继续收口。
-- FileWriteAdapter 详细设计。
-- Read / Edit / Write / Bash 首批工具验证。
-- 跨平台文件与子进程失败路径测试。
-
-### Phase 4：权限、模式与安全边界
-
-目标：把用户授权、自动模式、风险策略、sandbox 和 audit 接到统一流程里。
-
-关键输出：
-
-- permission event lifecycle。
-- collaboration mode。
-- approval policy。
-- sandbox port spike。
-- 高风险工具策略。
-
-### Phase 5：高级状态与并发
-
-目标：完善复杂 agent 场景。
-
-关键输出：
-
-- subagent lifecycle。
-- durable mailbox。
-- compact boundary。
-- rewind。
-- multi-session。
-- file watcher。
-
-### Phase 6：扩展与生态
-
-目标：接入外部扩展，同时保持能力和权限收口。
-
-关键输出：
-
-- hooks。
-- skills。
-- MCP / ZCode app-server。
-- plugin capability。
-- metrics 和 telemetry。
-- memory pipeline。
-
----
-
-## 十一、关键设计决策
-
-### 11.1 Core 不依赖 Infra
-
-core 必须可单独测试。provider、MCP、SQLite、文件系统、网络和子进程不应泄漏进业务状态机。
-
-### 11.2 Session Event 是 Truth
-
-resume、fork、rollback、pending permission、streaming part、tool lifecycle 和 crash recovery 都依赖事件事实。projection 可以重建，内存对象不能作为事实来源。
-
-### 11.3 不用全局 Event Bus
-
-全局 bus 会隐藏依赖、顺序和失败传播。跨 agent 或跨 session 通信使用明确 mailbox、command 或 projection hint。
-
-### 11.4 Provider Capability First
-
-provider 差异不只是模型名称。工具调用、结构化输出、streaming、reasoning、cache、parallel tool、token 限制和错误形态都需要 capability 化。
-
-### 11.5 Tool Contract 必须审计友好
-
-tool 不只是函数调用。它是权限、审计、取消、恢复、输出管理和副作用边界的组合。
-
-### 11.6 File Watcher 不是锁
-
-watcher 只能提示文件变化。写入正确性必须由写前重读、revision/hash、锁和结构化错误保证。
-
-### 11.7 架构先定义约束，不提前定义所有接口
-
-v2 故意不把字段和方法写死。接口应由实现反馈、失败路径、跨平台验证和真实工具接入共同塑形。
-
----
-
-## 十二、待拆分详细设计
-
-以下内容必须拆成独立设计文档或 implementation RFC。已完成的 RFC 保留在本节，避免后续自动化把同一能力重复当作缺口实现。
-
-已拆分并落地：
-
-- Tool Contract：见 `tool/README.md` 和 `tool/*.md`。2026-05-07 核对时，公共契约、内置 tool 声明、registry 投影、executor/scheduler 消费、output schema 校验和 artifact result budget 已有代码与测试闭环。
-- Provider / Model Capability：见 `model/README.md`。2026-05-07 核对时，`ModelRef`、provider-neutral request/result、`ModelCapability` catalog、adapter default policy、config override 投影、AI SDK registry/runner 和 core runtime model loop 已有代码与测试闭环；provider 级 network/cache/parallel-tool/retry budget 仍未晋升为稳定 capability schema。
-
-仍待拆分：
-
-- Provider Capability stable schema（network / cache / parallel tool / retry budget）
+- Provider Capability stable schema (network / cache / parallel tool / retry budget)
 - FileSystem / FileWriteAdapter
 - Execution Adapter
 - Session Event schema
@@ -969,32 +593,23 @@ v2 故意不把字段和方法写死。接口应由实现反馈、失败路径�
 - MCP / ZCode app-server integration
 - Metrics / Observability
 
-每个详细设计都必须包含：
+Each detailed design must include: goals and non-goals; candidate contract names; runtime schema;
+error types; permission and side-effect scope; timeout, cancellation and retry semantics;
+cross-platform notes; a minimal implementation plan; implementation feedback records; and the
+conditions for promotion to a stable contract.
 
-- 目标和非目标。
-- 候选 contract 名称。
-- runtime schema。
-- 错误类型。
-- 权限和副作用范围。
-- 超时、取消、重试语义。
-- 跨平台注意事项。
-- 最小实现计划。
-- 执行反馈记录。
-- 晋升到稳定 contract 的条件。
+## 13. Current TODO
 
----
-
-## 十三、当前 TODO
-
-- [x] 建立 repo 结构（packages/contracts、adapters、bootstrap）
-- [x] 确认各层职责写入 design
-- [x] Agent Loop 子模块设计（见 `loop/architecture.md`）
-- [x] Agent Loop 实现计划（见 `loop/plan.md`）
-- [x] M1: 基础数据结构（contracts/interfaces, contracts/events）
-- [x] M2: Event 和 EventReducer
-- [x] M3: Turn 状态机
+- [x] Repository structure (packages/contracts, adapters, bootstrap)
+- [x] Layer responsibilities written into the design
+- [x] Agent Loop sub-module design (`loop/architecture.md`)
+- [x] Agent Loop implementation plan (`loop/plan.md`)
+- [x] M1: base data structures (contracts/interfaces, contracts/events)
+- [x] M2: Event and EventReducer
+- [x] M3: Turn state machine
 - [x] M4: Tool Scheduler
-- [x] M5: Agent Runtime 骨架
-- [x] Tool Contract RFC（见 `tool/README.md` 的实现核对）
-- [x] Provider / Model Capability RFC 基础实现（见 `model/README.md` 的实现核对）
-- [ ] Provider Capability stable schema（network/cache/parallel tool/retry budget）
+- [x] M5: Agent Runtime skeleton
+- [x] Tool Contract RFC (`tool/README.md` implementation check)
+- [x] Provider / Model Capability RFC base implementation (`model/README.md` implementation
+  check)
+- [ ] Provider Capability stable schema (network/cache/parallel tool/retry budget)

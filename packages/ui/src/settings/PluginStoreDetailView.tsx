@@ -4,6 +4,7 @@ import {
   Anchor,
   ArrowRight,
   Bot,
+  Braces,
   ChevronRight,
   ExternalLink,
   Loader2,
@@ -54,10 +55,18 @@ import type { PluginComponentDisplayGroup } from "@/settings/PluginComponentGrou
 import type { PluginDescribeEntry } from "@/store/pluginManagementStore.js";
 
 // 组件分区顺序与截图一致：MCP 服务器 → 技能 → 命令 → 子智能体 → Hooks。
-const SECTION_ORDER: ZCodePluginComponentKind[] = ["mcp", "skill", "command", "agent", "hook"];
+const SECTION_ORDER: ZCodePluginComponentKind[] = [
+  "mcp",
+  "lsp",
+  "skill",
+  "command",
+  "agent",
+  "hook",
+];
 
 const SECTION_TITLE_IDS: Record<ZCodePluginComponentKind, string> = {
   mcp: "settings.plugins.store.section.mcp",
+  lsp: "settings.plugins.detail.component.lsp",
   skill: "settings.plugins.store.section.skills",
   command: "settings.plugins.store.section.commands",
   agent: "settings.plugins.store.section.agents",
@@ -67,6 +76,7 @@ const SECTION_TITLE_IDS: Record<ZCodePluginComponentKind, string> = {
 // 与各资源设置列表共用同一图标语义，避免详情页用近似图标造成识别不一致。
 const SECTION_ICONS: Record<ZCodePluginComponentKind, typeof Server> = {
   mcp: Server,
+  lsp: Braces,
   skill: WandSparkles,
   command: Terminal,
   agent: Bot,
@@ -98,6 +108,7 @@ export function PluginStoreDetailView({
   onRetryDescribe,
   onUsePrompt,
   advanced,
+  languageServers,
 }: {
   item: StorePluginItem;
   actions: PluginStoreActions;
@@ -107,6 +118,8 @@ export function PluginStoreDetailView({
   onUsePrompt: (item: StorePluginItem, prompt: string) => void;
   /** 高级折叠区（rootPath/Hook 明细/配置项），仅已安装且有运行时信息时由父级注入。 */
   advanced?: ReactNode;
+  /** Language-server (LSP) panel slot, injected by the parent only for installed plugins with a workspace target. */
+  languageServers?: ReactNode;
 }) {
   const { intl, locale } = useZCodeIntl();
   const displayName = resolveItemDisplayName(item, locale);
@@ -238,6 +251,8 @@ export function PluginStoreDetailView({
       ) : (
         orderedGroups.map((group) => <ComponentSection key={group.kind} group={group} />)
       )}
+
+      {languageServers}
 
       {/* 信息区：listing 优先，manifest（运行时/describe）回退；无值整行省略（ADR-0001）。 */}
       <InfoSection item={item} describeMetadata={describeMetadata} />

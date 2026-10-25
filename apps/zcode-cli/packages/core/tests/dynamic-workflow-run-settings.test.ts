@@ -1,14 +1,18 @@
-// GUI「配置」的 runtime 方法（docs/dynamic-workflow/launch.md「Changing a run's settings from the
-// GUI」）。它是 `port.amend` 的第二个调用方，与 AmendWorkflow 工具共用三态归一，但不经模型轮、
-// 不开确认窗，并用一条排队的 controlOnly「设置轮」记下这件事。
+// Runtime method for the GUI "Configure" action (docs/dynamic-workflow/launch.md "Changing a run's
+// settings from the GUI"). It is the second caller of `port.amend`, shares the three-state
+// normalization with the AmendWorkflow tool, but does not go through a model turn, does not open a
+// confirmation dialog, and records the fact with a queued controlOnly "settings turn".
 //
-// 钉住的不变式：
-//   1. 每一种拒绝都发生在 `port.amend` 之前——零 amend、零消息、零事件。
-//   2. 成功路径：amend 入参（沿用脚本、inheritArgs、新设置、settings- 前缀）+ 合成 AmendWorkflow
-//      追踪 + 设置轮（元数据带 amend 块、无 scope/path/script）。
-//   2b. 新 run 记下脚本文件：前驱的文件仍是这份字节就继续记它，否则写一份新草稿（与工具沿用脚本
-//      同一条规则，docs/dynamic-workflow/launch.md「Provenance」）。
-//   3. 主代理在一轮里时，设置轮等这一轮结束；活动 turn 的吸收在它这里停下，后到的通知排在它后面。
+// Pinned invariants:
+//   1. Every rejection happens before `port.amend` — zero amends, zero messages, zero events.
+//   2. Success path: amend input (inherited script, inheritArgs, new settings, settings- prefix) +
+//      synthetic AmendWorkflow trace + settings turn (metadata carries the amend block, no
+//      scope/path/script).
+//   2b. The new run records a script file: if the predecessor's file is still these bytes, keep
+//      recording it; otherwise write a new draft (same rule as the tool inheriting the script,
+//      docs/dynamic-workflow/launch.md "Provenance").
+//   3. When the main agent is inside a turn, the settings turn waits for that turn to end; the
+//      active turn's absorption stops here, and later notifications queue behind it.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -102,7 +106,8 @@ const CATALOG: ModelCatalogPort = {
   ],
 };
 
-// 成功路径会在工作目录下写草稿，所以工作目录必须是用完即删的临时目录，而不是一个共享的 /tmp 路径。
+// The success path writes drafts into the working directory, so the working directory must be a
+// throwaway temp directory, not a shared /tmp path.
 const SETTINGS_CWD = mkdtempSync(join(tmpdir(), "dwf-settings-"));
 afterAll(() => rmSync(SETTINGS_CWD, { recursive: true, force: true }));
 
@@ -118,8 +123,9 @@ function makeRuntime(options: {
     | { ok: true; runId: string; supersededRunId?: string }
     | { ok: false; reason: "run_not_found" | "missing_boundaries" };
   /**
-   * `retuneConcurrency` 的答复（docs/dynamic-workflow/launch.md「The fork」）。缺席即端口没有这个
-   * 方法（老宿主的形状）——那时只改并发的「配置」照旧落成一次修订。
+   * Reply from `retuneConcurrency` (docs/dynamic-workflow/launch.md "The fork"). Absent means the
+   * port lacks this method (old host shape) — in that case a concurrency-only "Configure" still
+   * lands as a regular revision.
    */
   retune?: DynamicWorkflowRunRetuneResult;
 }): {
@@ -168,7 +174,7 @@ function makeRuntime(options: {
         },
         async getTask(runId: string) {
           if (runId === PREVIOUS) return snapshot;
-          // 新 run 在追踪器眼里一直在跑（waiter 永不 settle），不产生任何通知。
+          // The new run keeps running in the tracker's eyes (the waiter never settles), producing no notifications.
           return {
             runId,
             taskId: runId,
@@ -206,7 +212,7 @@ function makeRuntime(options: {
   return { runtime, events, store, amends, retunes, getScriptCalls, sessionId };
 }
 
-/** 设置轮经运行时队列落下；空闲会话里入队即跑，等到它的 TurnComplete。 */
+/** The settings turn lands through the runtime queue; in an idle session it runs as soon as it is enqueued; wait for its TurnComplete. */
 async function settleQueue(events: SessionEvent[]): Promise<void> {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (events.some((event) => event.type === SessionEventType.TurnComplete)) return;
@@ -327,8 +333,9 @@ describe("amendWorkflowRunSettings — 拒绝在 port.amend 之前", () => {
   });
 });
 
-// docs/dynamic-workflow/launch.md「On the agent」：重跑的是 run 自己的脚本，脚本点名的模型沿用
-// launch 时那张绑定表（用户在确认窗里换过的模型因此留得住），并对着目录再解析一遍。
+// docs/dynamic-workflow/launch.md "On the agent": what re-runs is the run's own script; models named
+// by the script reuse the binding table from launch time (so models the user swapped in the
+// confirmation dialog survive) and are resolved against the catalog again.
 describe("amendWorkflowRunSettings — 脚本点名的模型", () => {
   const JUDGED_SCRIPT = [
     'phase("judge");',
@@ -340,7 +347,7 @@ describe("amendWorkflowRunSettings — 脚本点名的模型", () => {
     const { runtime, amends } = makeRuntime({
       name: "models-kept",
       script: JUDGED_SCRIPT,
-      // 用户在前驱确认窗里把 "GLM-5.3-Flash" 这一行换成了 GLM-5.3。
+      // The user swapped the "GLM-5.3-Flash" entry to GLM-5.3 in the predecessor's confirmation dialog.
       snapshot: { modelBindings: { "GLM-5.3-Flash": "bigmodel/GLM-5.3" } },
     });
     const result = await runtime.amendWorkflowRunSettings({ runId: PREVIOUS, maxConcurrency: 4 });
@@ -392,10 +399,10 @@ describe("amendWorkflowRunSettings — 成功路径", () => {
       inheritArgs: true,
       phaseNames: ["plan"],
     });
-    // 展示名不传：service 沿用前驱的名字。
+    // Display name not passed: the service keeps the predecessor's name.
     expect(amends[0]!.name).toBeUndefined();
 
-    // 追踪：合成 AmendWorkflow 描述子 → BackgroundTaskStarted（workflow 面板、可取消）。
+    // Trace: synthetic AmendWorkflow descriptor -> BackgroundTaskStarted (workflow panel, cancellable).
     const started = events.find((event) => event.type === SessionEventType.BackgroundTaskStarted);
     expect(started?.payload).toMatchObject({
       cancellable: true,
@@ -420,7 +427,7 @@ describe("amendWorkflowRunSettings — 成功路径", () => {
         ceiling: 13,
       },
     });
-    // 设置轮不指保存文件，也不带脚本（脚本是前驱的，侧板要的只是图）。
+    // The settings turn points at no saved file and carries no script (the script belongs to the predecessor; the side panel only needs the graph).
     expect(meta).not.toHaveProperty("scope");
     expect(meta).not.toHaveProperty("path");
     expect(meta).not.toHaveProperty("script");
@@ -494,12 +501,12 @@ describe("amendWorkflowRunSettings — 成功路径", () => {
       branchGeneration: number;
       rootTraceContext: unknown;
     };
-    // 制造「正在一轮里」：队列的 drain 被占着，新命令只能排队。
+    // Fake "inside a turn": the queue's drain is occupied, so new commands can only queue up.
     internal.runtimeCommandDrainActive = true;
 
     const result = await runtime.amendWorkflowRunSettings({ runId: PREVIOUS, maxConcurrency: 4 });
     expect(result.ok).toBe(true);
-    // 新 run 的通知在设置轮之后入队。
+    // The new run's notification is enqueued after the settings turn.
     internal.enqueueRuntimeCommand({
       branchGeneration: internal.branchGeneration,
       createdAt: new Date(),
@@ -517,7 +524,7 @@ describe("amendWorkflowRunSettings — 成功路径", () => {
       "control-only-turn",
       "task-notification",
     ]);
-    // 活动轮的吸收不越过设置轮：通知要留给外层队列，排在设置轮之后。
+    // The active turn's absorption does not cross the settings turn: notifications are left to the outer queue, ordered after the settings turn.
     const drained = await drainPendingRuntimeCommandsForActiveLoop.call(runtime as never);
     expect(drained.drained).toBe(0);
     expect(internal.runtimeCommandQueue.snapshot()).toHaveLength(2);
@@ -574,7 +581,8 @@ describe("amendWorkflowRunSettings — 新 run 的脚本文件", () => {
 });
 
 describe("amendWorkflowRunSettings — 无名 run", () => {
-  // 2026-09-18 实机：无名 run 的设置轮曾兜底成名字 `run <id>`，卡片与侧板标题成了一串 run id。
+  // 2026-09-18 live check: an unnamed run's settings turn used to fall back to the name `run <id>`,
+  // turning the card and side panel titles into a string of run ids.
   it("前驱没有名字：设置轮元数据与合成追踪都不带名字，规范句也不编一个", async () => {
     const { runtime, store, events } = makeRuntime({
       name: "unnamed",
@@ -600,9 +608,11 @@ describe("amendWorkflowRunSettings — 无名 run", () => {
   });
 });
 
-// 只改并发、run 还活着 ⇒ 就地生效（docs/dynamic-workflow/launch.md「On the agent」的分叉行）：
-// 同一个 runId、没有 supersededRunId、不登记第二个后台任务，设置轮的 amend 块不带
-// predecessorRunId（缺席即「就地生效」）。脚本读挪到分叉之后，所以没有存档脚本的 run 也能调。
+// Concurrency-only change while the run is still live => takes effect in place (the fork line of
+// docs/dynamic-workflow/launch.md "On the agent"): same runId, no supersededRunId, no second
+// background task registered, and the settings turn's amend block omits predecessorRunId (absent
+// means "takes effect in place"). The script read moved after the fork, so runs without an archived
+// script can still be retuned.
 describe("amendWorkflowRunSettings — 只改并发即就地生效", () => {
   it("同一个 runId、无 supersededRunId、不 amend、不读脚本，设置轮记下这一手", async () => {
     const { runtime, amends, retunes, getScriptCalls, store, events } = makeRuntime({
@@ -617,9 +627,9 @@ describe("amendWorkflowRunSettings — 只改并发即就地生效", () => {
     expect((result as { toolCallId: string }).toolCallId).toMatch(/^settings-/);
     expect(retunes).toEqual([{ runId: PREVIOUS, maxConcurrency: 4 }]);
     expect(amends).toHaveLength(0);
-    // 分叉在脚本读之前：这条路一份脚本都不需要。
+    // The fork comes before the script read: this path needs no script at all.
     expect(getScriptCalls).toHaveLength(0);
-    // run 本来就在追踪器里，不再登记第二个后台任务。
+    // The run is already in the tracker; no second background task is registered.
     expect(events.find((event) => event.type === SessionEventType.BackgroundTaskStarted)).toBe(
       undefined,
     );
@@ -632,7 +642,7 @@ describe("amendWorkflowRunSettings — 只改并发即就地生效", () => {
       name: "triage",
       amend: { maxConcurrency: { from: 8, to: 4 }, ceiling: 13 },
     });
-    // 缺席即「就地生效」；这条路不编译，所以也没有 display。
+    // Absent means "takes effect in place"; this path does not compile, so there is no display either.
     expect(meta?.amend).not.toHaveProperty("predecessorRunId");
     expect(meta).not.toHaveProperty("display");
     const part = store.savedParts.find(
@@ -660,7 +670,7 @@ describe("amendWorkflowRunSettings — 只改并发即就地生效", () => {
     });
 
     expect(result).toMatchObject({ ok: true, runId: PREVIOUS });
-    // 弹层的 `null` 原样走到端口：默认并发那个数只有端口知道。
+    // The popover's `null` reaches the port as-is: only the port knows the default concurrency value.
     expect(retunes).toEqual([{ runId: PREVIOUS, maxConcurrency: null }]);
     await settleQueue(events);
     const message = store.savedMessages.find((m) => m.source === "workflow_launch");
@@ -772,7 +782,7 @@ describe("buildSettingsMessageText", () => {
     expect(text).toContain("do not amend, resume or restart it");
   });
 
-  // 缺席的 predecessorRunId 即「就地生效」：上面那句会让模型去找一个不存在的 run B。
+  // An absent predecessorRunId means "takes effect in place": the sentence above would send the model looking for a nonexistent run B.
   it("就地生效：只点名一个 run，说它继续在跑、没有新 run", () => {
     const text = buildSettingsMessageText({
       name: "triage",

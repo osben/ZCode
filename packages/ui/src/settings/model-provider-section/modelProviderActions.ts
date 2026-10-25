@@ -59,8 +59,8 @@ export async function refreshModelProviderSection({
   refresh: () => Promise<void>;
   refreshTeamPlanProducts?: () => Promise<void>;
 }) {
-  // Model Provider 顶部刷新是账号权益刷新入口。
-  // Team Plan 连接方式来自企业 pricing/customerInfo，不会被普通 provider list refresh 更新。
+  // The Model Provider top-bar refresh is the account-entitlement refresh entry point.
+  // Team Plan connection details come from enterprise pricing/customerInfo and are not updated by a regular provider-list refresh.
   await Promise.all([refresh(), refreshTeamPlanProducts?.()]);
 }
 
@@ -87,8 +87,8 @@ export async function refreshProviderPanelAfterAuthChange({
       refreshTeamPlanProducts({ force: true }),
     ]);
   } else {
-    // 切换连接方式只是保存本地连接选择和刷新目标 provider key。
-    // 不能顺手刷新今日余额/套餐快照，否则 Start Plan balance 与 entitlement 查询会并发放大。
+    // Switching connection mode only saves the local connection choice and refreshes the target provider key.
+    // Do not also refresh today's balance/plan snapshot, which would multiply concurrent Start Plan balance and entitlement queries.
     await refreshModelProviders();
   }
   refreshCodingPlanProducts();

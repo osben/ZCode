@@ -28,7 +28,7 @@ describe("artifact-backed Markdown images", () => {
     const rendered = render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(MarkdownImage, {
           alt: "shot",
           src,
@@ -49,20 +49,20 @@ describe("artifact-backed Markdown images", () => {
 });
 
 describe("sanitizeImageSourceForLog", () => {
-  it("清除远程图片 URL 的身份、签名参数和 fragment", () => {
+  it("strips identity, signature parameters, and fragments from remote image URLs", () => {
     const sanitized = sanitizeImageSourceForLog(
       "https://user:pass@example.com/a.png?token=secret#fragment",
     );
     expect(sanitized).toBe("https://example.com/a.png");
   });
 
-  it("不把 Base64 图片内容写入日志", () => {
+  it("does not write Base64 image contents to logs", () => {
     expect(sanitizeImageSourceForLog("data:image/png;base64,SECRET")).toBe("data-url");
   });
 });
 
 describe("normalizeConsecutiveMarkdownImageBlocks", () => {
-  it("只移除连续纯图片块之间的空行", () => {
+  it("only removes blank lines between consecutive pure image blocks", () => {
     expect(
       normalizeConsecutiveMarkdownImageBlocks(
         "intro\n\n![one](one.png)\n\n![two](two.png)\n\ncaption",
@@ -70,23 +70,29 @@ describe("normalizeConsecutiveMarkdownImageBlocks", () => {
     ).toBe("intro\n\n![one](one.png)\n![two](two.png)\n\ncaption");
   });
 
-  it("不改写代码围栏中的图片语法", () => {
+  it("does not rewrite image syntax inside code fences", () => {
     const markdown = "```md\n![one](one.png)\n\n![two](two.png)\n```";
     expect(normalizeConsecutiveMarkdownImageBlocks(markdown)).toBe(markdown);
   });
 
   it.each([
-    ["四反引号不会被三个反引号关闭", "````md\n```\n![one](one.png)\n\n![two](two.png)\n````"],
-    ["四波浪号不会被三个波浪号关闭", "~~~~md\n~~~\n![one](one.png)\n\n![two](two.png)\n~~~~"],
-    ["未闭合围栏保持到文末", "```md\n![one](one.png)\n\n![two](two.png)"],
-    ["带 info string 的 opening fence", "````markdown\n![one](one.png)\n\n![two](two.png)\n````"],
+    [
+      "four backticks are not closed by three backticks",
+      "````md\n```\n![one](one.png)\n\n![two](two.png)\n````",
+    ],
+    [
+      "four tildes are not closed by three tildes",
+      "~~~~md\n~~~\n![one](one.png)\n\n![two](two.png)\n~~~~",
+    ],
+    ["an unclosed fence extends to the end of input", "```md\n![one](one.png)\n\n![two](two.png)"],
+    ["opening fence with info string", "````markdown\n![one](one.png)\n\n![two](two.png)\n````"],
   ])("%s", (_name, markdown) => {
     expect(normalizeConsecutiveMarkdownImageBlocks(markdown)).toBe(markdown);
   });
 });
 
 describe("clampMarkdownImagePreviewOffset", () => {
-  it("图片未超出画布时保持居中", () => {
+  it("keeps the image centered when it fits the canvas", () => {
     expect(
       clampMarkdownImagePreviewOffset(
         { x: 80, y: -60 },
@@ -97,7 +103,7 @@ describe("clampMarkdownImagePreviewOffset", () => {
     ).toEqual({ x: 0, y: 0 });
   });
 
-  it("图片放大后限制拖拽边界", () => {
+  it("clamps the drag bounds once the image is zoomed in", () => {
     expect(
       clampMarkdownImagePreviewOffset(
         { x: 500, y: -500 },

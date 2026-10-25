@@ -23,6 +23,7 @@ import { DEFAULT_CLI_CLEANUP_TIMEOUT_MS, runCliCleanupWithTimeout } from "./shut
 import {
   configureApiKeyForTui,
   loginBigmodelForTui,
+  loginChatGptForTui,
   loginForTui,
   logoutForTui,
 } from "./tui-auth.js";
@@ -143,6 +144,7 @@ export function createTuiSubmitPrompt(
       configuredDefaultModelSelection,
       createAppFactory,
       providerRegistryRuntime,
+      resumeIncognito,
       sessionId,
       workingDirectory,
     } = await prepareTuiAppRuntime(deps, version, request, processRuntime);
@@ -169,8 +171,11 @@ export function createTuiSubmitPrompt(
           ...(toolDisallowlist ? { toolDisallowlist } : {}),
           toolSearch: { mode: toolsearchMode },
           ...(forceMcs ? { midConversationSystem: { mode: "force" as const } } : {}),
-          // 首个 app 与 /new、/resume、fork 都经这里创建，mode 因此在进程内一致。
+          // The first app and apps created by /new, /resume, and fork all pass through here, keeping mode consistent within the process.
           ...resolveWorkflowModeRuntimeConfig(workflowMode),
+          // Incognito resume (root specs/incognito-session.md): capabilities are composed inside
+          // createZCodeApp, so the persisted profile must enter here — not at core resume time.
+          ...(resumeIncognito ? { incognito: resumeIncognito } : {}),
           modelStreaming: "on",
           titleGeneration: TUI_TITLE_GENERATION_CONFIG,
           workingDirectory,
@@ -278,6 +283,7 @@ export function createTuiSubmitPrompt(
     configureApiKey: (options) => configureApiKeyForTui(deps, options),
     login: (options) => loginForTui(deps, options),
     loginBigmodel: (options) => loginBigmodelForTui(deps, options),
+    loginChatGpt: (options) => loginChatGptForTui(deps, options),
     loadCustomCommand: (name) => loadCustomCommandForTui(deps, name),
     newApp,
     recordInputHistory: async (input, kind) => {

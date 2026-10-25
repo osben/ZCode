@@ -32,7 +32,7 @@ export function createGroupInputReactionUpdater(
     }
     entry.desired = state;
     const current = entry;
-    // 接收确认可能晚于开始/结束事件；单消息串行并禁止状态回退，避免覆盖终态。
+    // Receipts may arrive after start/end events; serialize per message and forbid status regression so terminal states are never overwritten.
     current.pending = current.pending
       .catch(() => {})
       .then(async () => {

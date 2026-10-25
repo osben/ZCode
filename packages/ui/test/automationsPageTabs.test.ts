@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-// 自动化页顶级标签「自动化 / 工作流」（docs/dynamic-workflow/launch.md「Where it lives」「标签记忆」）。
+// Top-level tabs of the automations page: "Automations / Workflows"
+// (docs/dynamic-workflow/launch.md "Where it lives" / "label memory").
 import { createElement, useState } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,12 +15,13 @@ import {
   readAutomationsPageTab,
   writeAutomationsPageTab,
 } from "@/settings/saved-workflows/automationsPageTabMemory.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 function Harness({ initial = "automation" }: { initial?: AutomationsPageTab }) {
   const [tab, setTab] = useState<AutomationsPageTab>(initial);
   return createElement(
     ZCodeIntlProvider,
-    { initialLocale: "zh-CN" },
+    { initialLocale: "en-US" },
     createElement(AutomationsPageTitleSwitch, { value: tab, onValueChange: setTab }),
   );
 }
@@ -30,13 +32,16 @@ describe("AutomationsPageTitleSwitch", () => {
     sessionStorage.clear();
   });
 
-  it("两个标题词是 tablist 里的 tab，选中态跟随 value", () => {
+  it("both title words are tabs in the tablist and the selected state follows value", () => {
     render(createElement(Harness));
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.map((tab) => tab.textContent)).toEqual(["自动化", "工作流"]);
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      expectedCopy("automations.pageTab.automation"),
+      expectedCopy("automations.pageTab.workflow"),
+    ]);
     expect(tabs[0]?.getAttribute("aria-selected")).toBe("true");
     expect(tabs[1]?.getAttribute("aria-selected")).toBe("false");
-    // 只有选中项进 Tab 序；未选中项靠方向键。
+    // Only the selected item joins the Tab order; unselected items rely on arrow keys.
     expect(tabs[0]?.getAttribute("tabindex")).toBe("0");
     expect(tabs[1]?.getAttribute("tabindex")).toBe("-1");
     fireEvent.click(screen.getByTestId(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow")));
@@ -47,7 +52,7 @@ describe("AutomationsPageTitleSwitch", () => {
     ).toBe("true");
   });
 
-  it("方向键在两个标签间循环切换", () => {
+  it("arrow keys cycle between the two tabs", () => {
     render(createElement(Harness));
     const tablist = screen.getByRole("tablist");
     fireEvent.keyDown(tablist, { key: "ArrowRight" });
@@ -76,11 +81,11 @@ describe("automationsPageTabMemory", () => {
     sessionStorage.clear();
   });
 
-  it("app 级单 key 记在 sessionStorage，不再按项目分桶；未知值回默认", () => {
+  it("app-level single key stored in sessionStorage, no longer bucketed per project; unknown values fall back to default", () => {
     expect(readAutomationsPageTab()).toBe("automation");
     writeAutomationsPageTab("workflow");
     expect(readAutomationsPageTab()).toBe("workflow");
-    // 只用一个 key，与活动项目无关。
+    // A single key, independent of the active project.
     expect(sessionStorage.length).toBe(1);
     expect(sessionStorage.getItem("zcode-automations-page-tab")).toBe("workflow");
     sessionStorage.setItem("zcode-automations-page-tab", "bogus");

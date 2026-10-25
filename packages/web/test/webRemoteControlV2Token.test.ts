@@ -3,7 +3,7 @@ import { createWebRemoteControlV2TokenClient } from "#src/web-remote-control/ind
 
 describe("terminal token HTTP", () => {
   it.each([undefined, "request-1"])(
-    "使用 JWT 申请一次性 terminal token（logid=%s）",
+    "requests a one-time terminal token using the JWT (logid=%s)",
     async (logid) => {
       const fetcher = vi.fn(
         async () =>
@@ -37,21 +37,24 @@ describe("terminal token HTTP", () => {
     [403, "relay-unavailable", false],
     [500, "relay-unavailable", true],
     [503, "relay-unavailable", true],
-  ] as const)("HTTP %s 只暴露可操作的错误分类", async (status, reason, retryable) => {
-    const fetcher = vi.fn(async () => new Response("secret response", { status }));
-    await expect(
-      createWebRemoteControlV2TokenClient("https://relay.example", fetcher)(
-        "jwt",
-        new AbortController().signal,
-      ),
-    ).rejects.toMatchObject({ reason, retryable, message: reason });
-  });
+  ] as const)(
+    "HTTP %s only exposes actionable error classifications",
+    async (status, reason, retryable) => {
+      const fetcher = vi.fn(async () => new Response("secret response", { status }));
+      await expect(
+        createWebRemoteControlV2TokenClient("https://relay.example", fetcher)(
+          "jwt",
+          new AbortController().signal,
+        ),
+      ).rejects.toMatchObject({ reason, retryable, message: reason });
+    },
+  );
   it.each([
     "not-json",
     JSON.stringify({ code: 1006, msg: "no permission" }),
     JSON.stringify({ code: 1006, msg: "no permission", logid: "request-1", retry_after: 5 }),
     JSON.stringify({ code: 0, msg: "", data: { token: "bad", expires_in: 60 } }),
-  ])("拒绝畸形与业务错误信封", async (body) => {
+  ])("rejects malformed and business-error envelopes", async (body) => {
     await expect(
       createWebRemoteControlV2TokenClient("https://relay.example", async () => new Response(body))(
         "jwt",
@@ -59,7 +62,7 @@ describe("terminal token HTTP", () => {
       ),
     ).rejects.toMatchObject({ reason: "relay-unavailable", retryable: false });
   });
-  it("网络失败可以退避重试", async () => {
+  it("network failures can be retried with backoff", async () => {
     await expect(
       createWebRemoteControlV2TokenClient("https://relay.example", async () => {
         throw new Error("network secret");
@@ -69,25 +72,28 @@ describe("terminal token HTTP", () => {
   it.each([
     new TypeError("response body connection interrupted"),
     new DOMException("response body timed out", "TimeoutError"),
-  ])("收到响应头后读取正文失败仍可重试：%s", async (error) => {
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode('{"code":0,"data":'));
-        controller.error(error);
-      },
-    });
-    const token = createWebRemoteControlV2TokenClient(
-      "https://relay.example",
-      async () => new Response(body),
-    );
-    await expect(token("jwt", new AbortController().signal)).rejects.toMatchObject({
-      reason: "relay-unavailable",
-      retryable: true,
-      message: "relay-unavailable",
-    });
-  });
+  ])(
+    "a body read failure after the response headers are received is still retryable: %s",
+    async (error) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"code":0,"data":'));
+          controller.error(error);
+        },
+      });
+      const token = createWebRemoteControlV2TokenClient(
+        "https://relay.example",
+        async () => new Response(body),
+      );
+      await expect(token("jwt", new AbortController().signal)).rejects.toMatchObject({
+        reason: "relay-unavailable",
+        retryable: true,
+        message: "relay-unavailable",
+      });
+    },
+  );
 
-  it("读取正文时取消请求，不返回 token 或泄漏原始错误", async () => {
+  it("cancels the request while reading the body, returning no token and not leaking the original error", async () => {
     const controller = new AbortController();
     const token = createWebRemoteControlV2TokenClient(
       "https://relay.example",

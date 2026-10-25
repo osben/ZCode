@@ -1,8 +1,10 @@
 /* eslint-disable max-lines */
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
+  GitBranchMergeStatus,
+  GitBranchMergeState,
   GitBranchMutationAction,
   GitBranchMutationIssue,
   GitBranchMutationResult,
@@ -13,7 +15,15 @@ import type {
   GitIdentity,
   GitLocalBranch,
   GitLocalBranchListResult,
+  GitRepositoryRemotesResult,
   GitWorkspaceRepositoryInfo,
+  GitWorktreeCreateResult,
+  GitWorktreeExcludeResult,
+  GitWorktreeListResult,
+  GitWorktreeMutationIssue,
+  GitWorktreePruneResult,
+  GitWorktreeRemoveResult,
+  GitWorktreeVerifyResult,
   GitPushResult,
 } from "@zcode/shared";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
@@ -30,6 +40,7 @@ import {
 } from "../config.js";
 import {
   createGitCommandProvider,
+  type GitCommandExecutionResult,
   type GitCommandProvider,
 } from "../providers/gitCommandProvider.js";
 import {
@@ -44,9 +55,12 @@ import {
   normalizeInputPath,
   parseGitBranchMutationIssues,
   parseGitConfigValue,
+  parseGitWorktreeIssues,
   parseNumstat,
   parseStatusPorcelain,
+  parseWorktreeListPorcelain,
   toInvalidBranchNameIssue,
+  toInvalidWorktreeBranchNameIssue,
   toDiffResult,
 } from "./gitCliHelpers.js";
 import {
@@ -89,8 +103,8 @@ function toCompleteDiffContents(
   beforeContent: string | null,
   afterContent: string | null,
 ): GitDiffContents | null {
-  // 完整 diff 的任一侧读取失败后若被补成空字符串，UI 会把“不可读”误判成
-  // “文件为空”，进而把整个文件渲染成新增或删除。完整内容对必须一起成功或一起降级。
+  // If either side of a full diff fails to load and is replaced with an empty string, the UI mistakes “unreadable” for
+  // “empty file” and renders the whole file as added or deleted. The pair of full contents must either both succeed or both fall back.
   if (beforeContent === null || afterContent === null) {
     return null;
   }
@@ -113,6 +127,19 @@ const MAX_GIT_GRAPH_MAX_COUNT = 200;
 const GIT_GRAPH_RECORD_SEPARATOR = "\x1e";
 const GIT_GRAPH_FIELD_SEPARATOR = "\x00";
 const log = createServiceLogger("git-repo");
+// branch-merge-status routinely lands on unknown (no origin/HEAD, ref missing
+// locally); a warn about a real command failure must fire once per cause, not
+// on every sidebar refresh.
+const branchMergeStatusWarnedKeys = new Set<string>();
+
+function warnBranchMergeStatusOnce(workspacePath: string, cause: string, detail: unknown): void {
+  const key = `${workspacePath}:${cause}`;
+  if (branchMergeStatusWarnedKeys.has(key)) {
+    return;
+  }
+  branchMergeStatusWarnedKeys.add(key);
+  log.warn(undefined, "branch-merge-status git probe failed", { workspacePath, cause, detail });
+}
 
 function normalizeWatchPath(path: string): string {
   const trimmed = path.trim();
@@ -120,7 +147,11 @@ function normalizeWatchPath(path: string): string {
     return trimmed;
   }
 
-  return trimmed.replace(/[\\/]+$/, "");
+  let end = trimmed.length;
+  while (end > 0 && (trimmed[end - 1] === "/" || trimmed[end - 1] === "\\")) {
+    end -= 1;
+  }
+  return trimmed.slice(0, end);
 }
 
 function addAutoRefreshWatchPath(
@@ -145,18 +176,18 @@ function buildAutoRefreshWatchPaths(params: {
   gitCommonDir: string;
 }): GitResolvedRepository["autoRefreshWatchPaths"] {
   const paths: GitResolvedRepository["autoRefreshWatchPaths"] = [];
-  // Linux 上对 workspacePath 做 recursive fs.watch 会为整棵 workspace
-  // 分配 watcher；慢挂载或大型生成目录会阻塞 workspace Host。workspace 内容 watcher
-  // 由 UI 按 workspace Host 平台决定，这里只输出 Git 元数据边界。
+  // Recursive fs.watch on workspacePath allocates a watcher for the entire workspace on Linux;
+  // slow mounts or large generated directories can block the workspace Host. The UI chooses workspace-content watchers based on the Host platform;
+  // this service exposes only the Git metadata boundary.
 
-  // Git 元数据可能在 linked worktree 或 separate git-dir 中位于 repoRoot 之外。
-  // UI 只知道工作区路径，不能猜 `.git` 布局；这里用 Git 自身解析出的目录作为刷新边界。
+  // Git metadata may be outside repoRoot in a linked worktree or separate git-dir.
+  // The UI knows only the workspace path and cannot infer the `.git` layout; use the directory resolved by Git itself as the refresh boundary.
   addAutoRefreshWatchPath(paths, params.absoluteGitDir, true);
   const resolvedCommonDir = params.gitCommonDir
     ? isAbsolute(params.gitCommonDir)
       ? params.gitCommonDir
-      : // `git rev-parse --git-common-dir` 的相对结果以命令 cwd 为基准，
-        // 子目录 workspace 若误用 repoRoot 会把 `/root` + `../.git` 解析成 `/.git`。
+      : // A relative result from `git rev-parse --git-common-dir` is resolved against the command cwd,
+        // For a subdirectory workspace, using repoRoot here could resolve `/root` + `../.git` to `/.git`.
         resolve(params.workspacePath, params.gitCommonDir)
     : params.absoluteGitDir;
   addAutoRefreshWatchPath(paths, resolvedCommonDir, true);
@@ -178,7 +209,7 @@ async function readWorkingTreePreviewContent(absolutePath: string): Promise<stri
     const content = await readFile(absolutePath, "utf-8");
     return isPreviewableText(content) ? content : null;
   } catch {
-    // 文件删除和原子保存窗口都会让 stat/readFile 失败；这里不能猜成合法空文件。
+    // File deletion and atomic-save windows can both make stat/readFile fail; do not infer a valid empty file.
     return null;
   }
 }
@@ -300,7 +331,7 @@ function withDiffContents(diff: GitDiffResult, contents: GitDiffContents | null)
   }
 
   if (!contents) {
-    // Git patch 已经成功生成时，全文预览失败只应关闭 MultiFileDiff，不能把正确 patch 一并丢弃。
+    // Once the Git patch has been generated successfully, a full-text preview failure should only disable MultiFileDiff, not discard the valid patch.
     return diff;
   }
 
@@ -345,6 +376,145 @@ function toBranchMutationSuccess(params: {
     summary: params.summary,
     issues: [],
   };
+}
+
+function toWorktreeMutationFailure(issues: GitWorktreeMutationIssue[]): GitWorktreeCreateResult {
+  return {
+    ok: false,
+    worktreePath: null,
+    branchName: null,
+    issues,
+  };
+}
+
+function toGitUnavailableWorktreeIssue(): GitWorktreeMutationIssue {
+  return {
+    code: "git-unavailable",
+    message: "Git binary is not available in the current environment.",
+  };
+}
+
+function toNotARepositoryWorktreeIssue(): GitWorktreeMutationIssue {
+  return {
+    code: "not-a-repository",
+    message: "Workspace is not inside a Git repository.",
+  };
+}
+
+function parseWorktreeRemoveIssues(result: GitCommandExecutionResult): GitWorktreeMutationIssue[] {
+  const detail = result.stderr.trim() || result.stdout.trim() || null;
+  const normalizedDetail = detail?.toLowerCase() ?? "";
+
+  // Decide by Git's actual stderr wording, same principle as parseGitWorktreeIssues.
+  if (normalizedDetail.includes("contains modified or untracked files")) {
+    return [
+      {
+        code: "worktree-dirty",
+        message: "Worktree contains modified or untracked files.",
+        detail,
+      },
+    ];
+  }
+  if (normalizedDetail.includes("locked working tree") || normalizedDetail.includes("is locked")) {
+    return [
+      {
+        code: "worktree-locked",
+        message: "Worktree is locked.",
+        detail,
+      },
+    ];
+  }
+  return parseGitWorktreeIssues(result);
+}
+
+function countNonEmptyLines(output: string): number {
+  return output
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .filter((line) => line.trim().length > 0).length;
+}
+
+function toComparableWorktreePath(path: string): string {
+  const normalized = normalizeGitPath(path);
+  let end = normalized.length;
+  while (end > 0 && normalized[end - 1] === "/") {
+    end -= 1;
+  }
+  const comparable = end > 0 ? normalized.slice(0, end) : "/";
+  return process.platform === "win32" ? comparable.toLocaleLowerCase("en-US") : comparable;
+}
+
+async function resolveComparableWorktreePath(path: string): Promise<string> {
+  if (!isAbsolute(path)) {
+    throw new Error("Worktree path identity requires an absolute path");
+  }
+  const absolutePath = resolve(path);
+  try {
+    return toComparableWorktreePath(await realpath(absolutePath));
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error.code === "ENOENT" || error.code === "ENOTDIR")
+    ) {
+      return toComparableWorktreePath(absolutePath);
+    }
+    throw error;
+  }
+}
+
+const WORKTREES_DIRECTORY_NAME = ".worktrees";
+const WORKTREES_EXCLUDE_PATTERN = `${WORKTREES_DIRECTORY_NAME}/`;
+// Writes to one exclude file are chained: two creations in the same repository must not both
+// observe the line as missing and append it twice.
+const worktreeExcludeWriteChains = new Map<string, Promise<unknown>>();
+
+async function isInsideWorktreesDirectory(repoRoot: string, targetPath: string): Promise<boolean> {
+  const worktreesDirectory = join(
+    await resolveComparableWorktreePath(repoRoot),
+    WORKTREES_DIRECTORY_NAME,
+  );
+  const targetIdentity = await resolveComparableWorktreePath(targetPath);
+  const relativePath = relative(worktreesDirectory, targetIdentity);
+  // The `.worktrees` directory itself is not a worktree inside it.
+  return (
+    relativePath.length > 0 &&
+    !isAbsolute(relativePath) &&
+    relativePath !== ".." &&
+    !relativePath.startsWith(`..${sep}`)
+  );
+}
+
+async function appendWorktreeExcludeLine(excludePath: string): Promise<void> {
+  const previous = worktreeExcludeWriteChains.get(excludePath) ?? Promise.resolve();
+  const current = previous.then(async () => {
+    await mkdir(dirname(excludePath), { recursive: true });
+    let existing = "";
+    try {
+      existing = await readFile(excludePath, "utf-8");
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        throw error;
+      }
+    }
+    if (existing.split("\n").some((line) => line.trim() === WORKTREES_EXCLUDE_PATTERN)) {
+      return;
+    }
+    // Append only: existing bytes are never rewritten. A file without a trailing newline gets
+    // one first, otherwise the new pattern would be glued onto its last line.
+    const eol = existing.includes("\r\n") ? "\r\n" : "\n";
+    const prefix = existing.length > 0 && !existing.endsWith("\n") ? eol : "";
+    await appendFile(excludePath, `${prefix}${WORKTREES_EXCLUDE_PATTERN}${eol}`, "utf-8");
+  });
+  const settled = current.catch(() => undefined);
+  worktreeExcludeWriteChains.set(excludePath, settled);
+  // Drop the entry once nothing newer is queued behind it, so the map does not grow per repository.
+  void settled.then(() => {
+    if (worktreeExcludeWriteChains.get(excludePath) === settled) {
+      worktreeExcludeWriteChains.delete(excludePath);
+    }
+  });
+  await current;
 }
 
 function parseBranchRefRecords(stdout: string, currentBranchName: string | null): GitLocalBranch[] {
@@ -509,6 +679,29 @@ function parseRemoteList(stdout: string): string[] {
     .filter((line) => line.length > 0);
 }
 
+interface GitRepositoryRemoteEntry {
+  name: string;
+  url: string;
+}
+
+function parseRemoteVerboseList(stdout: string): GitRepositoryRemoteEntry[] {
+  const urlByName = new Map<string, string>();
+  for (const line of stdout.replace(/\r\n/g, "\n").split("\n")) {
+    const match = line.trim().match(/^(\S+)\t(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]\r\n]*\])?$/);
+    if (!match) continue;
+    const [, name, url, direction] = match;
+    if (name === undefined || url === undefined || direction === undefined) continue;
+    if (direction === "fetch" || !urlByName.has(name)) urlByName.set(name, url);
+  }
+  return [...urlByName.entries()]
+    .map(([name, url]) => ({ name, url }))
+    .sort((a, b) => {
+      if (a.name === "origin") return -1;
+      if (b.name === "origin") return 1;
+      return a.name.localeCompare(b.name);
+    });
+}
+
 interface GitIndexEntry {
   mode: string;
   objectHash: string;
@@ -559,9 +752,9 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       return result;
     }
 
-    // 大仓库的逐文件未跟踪状态可能超过输出上限；直接放大上限会让后续行数统计
-    // 并发读取上万个文件。首次超限后按 repoRoot 记住目录折叠模式，既保留可用的 Git
-    // 摘要和变更入口，也避免每次自动刷新都重复执行一次必然失败的详细命令。
+    // Per-file untracked status in large repositories may exceed the output limit; raising the limit directly would make later line-count aggregation
+    // read tens of thousands of files concurrently. After the first overflow, remember directory-collapsed mode by repoRoot to preserve useful Git
+    // summaries and change entry points, while avoiding a detailed command that is certain to fail on every automatic refresh.
     collapsedUntrackedRepoRoots.add(resolution.repoRoot);
     log.warn(
       undefined,
@@ -613,9 +806,104 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     return result.exitCode === 0 ? null : toInvalidBranchNameIssue(result.stderr);
   }
 
+  async function localBranchExists(
+    resolution: GitResolvedRepository,
+    branchName: string,
+  ): Promise<boolean> {
+    const result = await commandProvider.run({
+      cwd: resolution.repoRoot,
+      args: ["show-ref", "--verify", "--quiet", `refs/heads/${branchName}`],
+      timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+    });
+    if (result.timedOut || result.outputTruncated) {
+      ensureGitCommandSucceeded("git show-ref --verify", result);
+    }
+
+    // Exit code 1 means the ref is missing; any other unexpected failure falls through to
+    // "does not exist" so the subsequent `worktree add` surfaces the real Git error.
+    return result.exitCode === 0;
+  }
+
+  async function resolveInfoExcludePath(resolution: GitResolvedRepository): Promise<string> {
+    // `--git-path` maps into the common Git dir, so linked worktrees and separate git-dirs share
+    // the main checkout's exclude file. Do not assume `<repoRoot>/.git` is a directory.
+    const result = await commandProvider.run({
+      cwd: resolution.repoRoot,
+      args: ["rev-parse", "--git-path", "info/exclude"],
+      timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+    });
+    ensureGitCommandSucceeded("git rev-parse --git-path", result);
+    const excludePath = result.stdout.replace(/\r\n/g, "\n").split("\n")[0]?.trim() ?? "";
+    if (excludePath.length === 0) {
+      throw new Error("Git did not report an exclude path");
+    }
+    return isAbsolute(excludePath) ? excludePath : resolve(resolution.repoRoot, excludePath);
+  }
+
+  /**
+   * Git creates the branch ref before it creates the worktree directory, so a failed
+   * `worktree add -b` (e.g. EACCES on the target parent) leaves a half-created branch behind.
+   * Ownership is inferred from the ref itself: a branch this call created still points at the
+   * start point, so a ref that moved (another creator already committed on it) is left alone,
+   * and the delete is a compare-and-delete on the observed tip. Unlike `branch -d` this does not
+   * require the branch to be merged. Rollback is best-effort: it logs and never replaces the
+   * original worktree failure.
+   */
+  async function rollbackCreatedWorktreeBranch(
+    resolution: GitResolvedRepository,
+    branchName: string,
+    startPoint: string,
+  ): Promise<void> {
+    try {
+      const branchRef = `refs/heads/${branchName}`;
+      const resolveCommit = async (ref: string): Promise<string | null> => {
+        const probe = await commandProvider.run({
+          cwd: resolution.repoRoot,
+          args: ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`],
+          timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        });
+        return probe.exitCode === 0 ? probe.stdout.trim() || null : null;
+      };
+      const branchTip = await resolveCommit(branchRef);
+      if (!branchTip) {
+        return;
+      }
+      if (branchTip !== (await resolveCommit(startPoint))) {
+        log.warn(
+          undefined,
+          "worktree branch rollback skipped: branch no longer at its start point",
+          {
+            workspacePath: resolution.workspacePath,
+            branchName,
+          },
+        );
+        return;
+      }
+      const result = await commandProvider.run({
+        cwd: resolution.repoRoot,
+        args: ["update-ref", "-d", branchRef, branchTip],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+      });
+      if (result.timedOut || result.outputTruncated || result.exitCode !== 0) {
+        log.warn(undefined, "worktree branch rollback did not complete", {
+          workspacePath: resolution.workspacePath,
+          branchName,
+          exitCode: result.exitCode,
+          stderr: result.stderr.trim(),
+        });
+      }
+    } catch (error) {
+      log.warn(undefined, "worktree branch rollback threw", {
+        workspacePath: resolution.workspacePath,
+        branchName,
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   async function hasOperationInProgress(resolution: GitResolvedRepository): Promise<boolean> {
-    // 进行中的 merge / rebase / cherry-pick 在不同 Git 版本上的报错并不完全稳定，
-    // 这里先通过 git-dir 标记位做一次轻量探测，让上层能拿到更稳定的阻塞原因。
+    // Error messages for in-progress merge/rebase/cherry-pick operations vary across Git versions;
+    // use a lightweight git-dir marker probe first so the caller gets a more stable blocking reason.
     const gitPathResult = await commandProvider.run({
       cwd: resolution.repoRoot,
       args: ["rev-parse", ...GIT_OPERATION_MARKERS.flatMap((marker) => ["--git-path", marker])],
@@ -671,6 +959,19 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     return parseRemoteList(result.stdout);
   }
 
+  async function listRepositoryRemoteEntries(
+    resolution: GitResolvedRepository,
+  ): Promise<GitRepositoryRemoteEntry[]> {
+    const result = await commandProvider.run({
+      cwd: resolution.repoRoot,
+      args: ["remote", "-v"],
+      timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+      maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+    });
+    ensureGitCommandSucceeded("git remote -v", result);
+    return parseRemoteVerboseList(result.stdout);
+  }
+
   async function resolvePushRemote(status: GitStatusSnapshot): Promise<string> {
     const resolution = ensureRepositoryAvailable(status.resolution, "push changes");
     const branchName = status.summary.branchName?.trim() ?? "";
@@ -710,8 +1011,8 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
     invalidate,
 
     async resolveRepository(workspacePath: string): Promise<GitResolvedRepository> {
-      // 启动阶段 summary / changes / branch / identity 会并发读取同一个 workspace，
-      // 这里复用进行中的仓库解析，避免一轮刷新里重复执行多次 `git rev-parse`。
+      // During startup, summary/changes/branch/identity are read concurrently for the same workspace;
+      // reuse the in-flight repository resolution to avoid running `git rev-parse` multiple times in one refresh.
       return await reuseInFlightRequest(repositoryResolutionRequests, workspacePath, async () => {
         const gitBinary = await commandProvider.resolveGitBinary();
         if (!gitBinary) {
@@ -737,9 +1038,9 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
         });
         if (result.exitCode !== 0) {
-          // 测试/窗口切换时 workspace 目录可能在并发请求过程中被删除（例如临时目录清理）。
-          // 之前这里会直接抛错，若调用方是 fire-and-forget 链路就会形成 unhandled rejection，
-          // 进而把 Vitest 跑挂成超时。目录缺失不属于“Git 协议失败”，应按“当前非可用仓库”降级返回。
+          // During tests/window switches, the workspace directory may be removed while requests are in flight (for example, temporary directory cleanup).
+          // Previously this threw directly; if the caller was fire-and-forget, it produced an unhandled rejection
+          // and could make Vitest time out. A missing directory is not a “Git protocol failure”; degrade to “repository currently unavailable.”
           if (isMissingWorkingDirectoryResult(result)) {
             return {
               workspacePath,
@@ -824,10 +1125,10 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
                   : "";
                 const normalizedGitDir = resolvedGitDir ? resolvedGitDir.replace(/\\/g, "/") : "";
 
-                // 关键业务逻辑：linked worktree 的 `.git` 文件会指向
-                // `<main-tree>/.git/worktrees/<name>`；这里只要命中这个结构就判为 worktree。
-                // 其它 `.git` 文件形态（如 submodule / separate-git-dir）一律按 main-tree 放行，
-                // 因为迁移过滤不是强依赖，宁可少过滤也不要误杀正常记录。
+                // Important logic: a linked worktree's `.git` file points to
+                // `<main-tree>/.git/worktrees/<name>`; classify it as a worktree only when this structure matches.
+                // Allow other `.git` file forms (such as submodule/separate-git-dir) as main-tree,
+                // because migration filtering is not a hard requirement and should avoid excluding valid records.
                 if (normalizedGitDir.includes("/.git/worktrees/")) {
                   return {
                     workspacePath,
@@ -838,9 +1139,9 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
               }
             }
           } catch {
-            // 这里的 worktree 识别只用于迁移候选过滤，不是 Git 主功能的强一致前置。
-            // 因此遇到 `.git` 缺失、权限异常或非常规布局时，选择 fail-open 当成 main-tree，
-            // 避免把本来可迁移的记录误过滤掉。
+            // Worktree detection here is used only to filter migration candidates and is not a strong consistency prerequisite for core Git features.
+            // If `.git` is missing, inaccessible, or uses an unusual layout, fail open and treat it as main-tree
+            // to avoid incorrectly filtering out records that could otherwise be migrated.
           }
 
           return {
@@ -852,9 +1153,27 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       );
     },
 
+    async getRepositoryRemotes(workspacePath: string): Promise<GitRepositoryRemotesResult> {
+      const resolution = await this.resolveRepository(workspacePath);
+      if (!resolution.isGitAvailable || !resolution.isRepository) {
+        return {
+          workspacePath,
+          isGitAvailable: resolution.isGitAvailable,
+          isRepository: resolution.isRepository,
+          remotes: [],
+        };
+      }
+      return {
+        workspacePath,
+        isGitAvailable: true,
+        isRepository: true,
+        remotes: await listRepositoryRemoteEntries(resolution),
+      };
+    },
+
     async getStatus(workspacePath: string): Promise<GitStatusSnapshot> {
-      // staged / unstaged / summary / branch 比较都依赖同一份状态快照，
-      // 并发复用可以把一次渲染里的重复 `status + diff --numstat` 合并成一轮 Git CLI 调用。
+      // Staged/unstaged/summary/branch comparisons all depend on the same status snapshot;
+      // concurrent reuse combines duplicate `status + diff --numstat` calls during one render into a single Git CLI invocation.
       return await reuseInFlightRequest(statusRequests, workspacePath, async () => {
         const resolution = await this.resolveRepository(workspacePath);
         if (!resolution.isGitAvailable || !resolution.isRepository) {
@@ -869,7 +1188,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         }
 
         const [statusResult, stagedStatsResult, unstagedStatsResult] = await Promise.all([
-          // 默认保留逐文件未跟踪状态；只有确认当前 repoRoot 超限后，runGitStatus 才降级为目录折叠。
+          // Keep per-file untracked status by default; runGitStatus falls back to directory collapsing only after confirming the current repoRoot exceeds the limit.
           runGitStatus(resolution),
           commandProvider.run({
             cwd: resolution.repoRoot,
@@ -962,8 +1281,8 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
 
       const ignoredRepoRelativePaths = new Set(
         ignoredResult.stdout
-          // 修复：`git check-ignore -z` 只能和 `--stdin` 一起使用；这里通过 argv 传路径，
-          // 所以必须解析普通换行输出，否则命令会直接失败，文件树永远拿不到 ignored 状态。
+          // Fix: `git check-ignore -z` can be used only with `--stdin`; paths are passed through argv here,
+          // so parse the normal newline output, or the command fails and the file tree never gets ignored status.
           .split(/\r?\n/)
           .filter(Boolean)
           .map((path) => path.replace(/\\/g, "/")),
@@ -1006,6 +1325,322 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       };
     },
 
+    async listWorktrees(workspacePath: string): Promise<GitWorktreeListResult> {
+      const resolution = await this.resolveRepository(workspacePath);
+      if (!resolution.isGitAvailable || !resolution.isRepository) {
+        // Mirror listLocalBranches: a non-repository / Git-less workspace is a structured
+        // empty result, not an exception, so the UI can render its dedicated empty state.
+        return {
+          isGitAvailable: resolution.isGitAvailable,
+          isRepository: false,
+          worktrees: [],
+        };
+      }
+
+      const result = await commandProvider.run({
+        cwd: resolution.repoRoot,
+        args: ["worktree", "list", "--porcelain", "-z"],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      ensureGitCommandSucceeded("git worktree list --porcelain -z", result);
+
+      const currentWorktreePath = toComparableWorktreePath(resolution.repoRoot);
+      return {
+        isGitAvailable: true,
+        isRepository: true,
+        worktrees: parseWorktreeListPorcelain(result.stdout).map((entry, index) => ({
+          ...entry,
+          // Git documents the main worktree as always being the first porcelain entry.
+          isMain: index === 0,
+          // Both paths come from Git's own output (rev-parse / worktree list), so they
+          // share one normalization and can be compared without an extra realpath probe.
+          isCurrent: toComparableWorktreePath(entry.path) === currentWorktreePath,
+        })),
+      };
+    },
+
+    async resolveWorktreePathIdentities(paths: string[]): Promise<string[]> {
+      return await Promise.all(paths.map(resolveComparableWorktreePath));
+    },
+
+    async verifyWorktreeUsable(
+      _workspacePath: string,
+      targetPath: string,
+    ): Promise<GitWorktreeVerifyResult> {
+      // A stale `git worktree list` registration can outlive a directory removed by hand. Verify
+      // the real directory and its Git link before any reuse; read-only (never prunes).
+      const normalizedTargetPath = resolve(targetPath);
+      const isMissingPathError = (error: unknown) =>
+        error instanceof Error &&
+        "code" in error &&
+        (error.code === "ENOENT" || error.code === "ENOTDIR");
+      try {
+        const directory = await stat(normalizedTargetPath);
+        if (!directory.isDirectory()) {
+          return { ok: false, reason: "missing-directory" };
+        }
+      } catch (error) {
+        if (isMissingPathError(error)) return { ok: false, reason: "missing-directory" };
+        throw error;
+      }
+      try {
+        // A linked worktree has a `.git` file pointing at the main repository's worktrees
+        // directory; a full checkout has a `.git` directory. Either proves the Git binding.
+        await stat(join(normalizedTargetPath, ".git"));
+      } catch (error) {
+        if (isMissingPathError(error)) return { ok: false, reason: "missing-git-link" };
+        throw error;
+      }
+      return { ok: true };
+    },
+
+    async ensureWorktreeExclusion(
+      workspacePath: string,
+      targetPath: string,
+    ): Promise<GitWorktreeExcludeResult> {
+      // Best-effort: an inside-placement worktree is still usable when its status exclusion cannot
+      // be written, so every failure is logged and reported as `{ ok: false }` without throwing.
+      try {
+        const resolution = await this.resolveRepository(workspacePath);
+        if (!resolution.isGitAvailable || !resolution.isRepository) {
+          log.warn(undefined, "worktree exclusion skipped: workspace is not a Git repository", {
+            workspacePath,
+          });
+          return { ok: false };
+        }
+        if (!(await isInsideWorktreesDirectory(resolution.repoRoot, targetPath))) {
+          return { ok: true };
+        }
+        await appendWorktreeExcludeLine(await resolveInfoExcludePath(resolution));
+        return { ok: true };
+      } catch (error) {
+        log.warn(undefined, "worktree exclusion failed; .worktrees/ may show as untracked", {
+          workspacePath,
+          targetPath,
+          cause: error instanceof Error ? error.message : String(error),
+        });
+        return { ok: false };
+      }
+    },
+
+    async createWorktree(
+      workspacePath: string,
+      branchName: string,
+      targetPath: string,
+      baseBranch?: string,
+    ): Promise<GitWorktreeCreateResult> {
+      const resolution = await this.resolveRepository(workspacePath);
+      if (!resolution.isGitAvailable) {
+        return toWorktreeMutationFailure([
+          {
+            code: "git-unavailable",
+            message: "Git binary is not available in the current environment.",
+          },
+        ]);
+      }
+
+      if (!resolution.isRepository) {
+        return toWorktreeMutationFailure([
+          {
+            code: "not-a-repository",
+            message: "Workspace is not inside a Git repository.",
+          },
+        ]);
+      }
+
+      const normalizedBranchName = branchName.trim();
+      if (normalizedBranchName.length === 0) {
+        return toWorktreeMutationFailure([toInvalidWorktreeBranchNameIssue()]);
+      }
+
+      const normalizedTargetPath = targetPath.trim();
+      if (normalizedTargetPath.length === 0 || !isAbsolute(normalizedTargetPath)) {
+        return toWorktreeMutationFailure([
+          {
+            code: "target-path-invalid",
+            message: "Target path must be a non-empty absolute path.",
+          },
+        ]);
+      }
+
+      const invalidBranchIssue = await validateBranchName(resolution, normalizedBranchName);
+      if (invalidBranchIssue) {
+        return toWorktreeMutationFailure([
+          toInvalidWorktreeBranchNameIssue(invalidBranchIssue.detail),
+        ]);
+      }
+
+      // Git accepts an already-existing empty directory as a worktree target; the composer
+      // flow needs a deterministic failure instead, so reject any existing path up front.
+      if (await fileExists(normalizedTargetPath)) {
+        return toWorktreeMutationFailure([
+          {
+            code: "target-path-exists",
+            message: "Target path already exists.",
+          },
+        ]);
+      }
+
+      const normalizedBaseBranch = baseBranch?.trim();
+      // An existing branch is checked out as-is (baseBranch only applies to a new branch);
+      // this path also lets Git report "is already used by worktree at" for occupied branches.
+      const branchAlreadyExists = await localBranchExists(resolution, normalizedBranchName);
+      const result = await commandProvider.run({
+        cwd: resolution.repoRoot,
+        // `--` ends option parsing before the positionals: the target path and the
+        // external baseBranch/branchName cannot be consumed as worktree options.
+        args: branchAlreadyExists
+          ? ["worktree", "add", "--", normalizedTargetPath, normalizedBranchName]
+          : normalizedBaseBranch
+            ? [
+                "worktree",
+                "add",
+                "-b",
+                normalizedBranchName,
+                "--",
+                normalizedTargetPath,
+                normalizedBaseBranch,
+              ]
+            : ["worktree", "add", "-b", normalizedBranchName, "--", normalizedTargetPath],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      if (result.timedOut || result.outputTruncated) {
+        ensureGitCommandSucceeded("git worktree add", result);
+      }
+
+      if (result.exitCode !== 0) {
+        const issues = parseGitWorktreeIssues(result);
+        // Only roll back a branch this call created. `branch-already-exists` means a concurrent
+        // creator owns the ref, so it must not be deleted here.
+        if (
+          !branchAlreadyExists &&
+          !issues.some((issue) => issue.code === "branch-already-exists")
+        ) {
+          await rollbackCreatedWorktreeBranch(
+            resolution,
+            normalizedBranchName,
+            normalizedBaseBranch || "HEAD",
+          );
+        }
+        return toWorktreeMutationFailure(issues);
+      }
+
+      return {
+        ok: true,
+        worktreePath: normalizedTargetPath,
+        branchName: normalizedBranchName,
+        issues: [],
+      };
+    },
+
+    async removeWorktree(
+      workspacePath: string,
+      targetPath: string,
+      force?: boolean,
+    ): Promise<GitWorktreeRemoveResult> {
+      const resolution = await this.resolveRepository(workspacePath);
+      if (!resolution.isGitAvailable) {
+        return { ok: false, issues: [toGitUnavailableWorktreeIssue()] };
+      }
+      if (!resolution.isRepository) {
+        return { ok: false, issues: [toNotARepositoryWorktreeIssue()] };
+      }
+
+      const normalizedTargetPath = targetPath.trim();
+      if (normalizedTargetPath.length === 0 || !isAbsolute(normalizedTargetPath)) {
+        return {
+          ok: false,
+          issues: [
+            {
+              code: "target-path-invalid",
+              message: "Target path must be a non-empty absolute path.",
+            },
+          ],
+        };
+      }
+
+      // The service guards Git semantics only (linked non-main worktree); whether the entry is
+      // the current workspace or has open tabs is a UI-layer concern and stays there.
+      // Porcelain lists realpath'd entries (e.g. /var -> /private/var on macOS), so compare
+      // against the resolved target; fall back to the raw path when it does not exist yet.
+      const worktrees = await this.listWorktrees(workspacePath);
+      let comparableTargetPath = toComparableWorktreePath(resolve(normalizedTargetPath));
+      try {
+        comparableTargetPath = toComparableWorktreePath(await realpath(normalizedTargetPath));
+      } catch {
+        // Path already gone or unreadable: the resolved guess above is the best comparator.
+      }
+      const target = worktrees.worktrees.find(
+        (entry) => toComparableWorktreePath(entry.path) === comparableTargetPath,
+      );
+      if (!target || target.isMain) {
+        return {
+          ok: false,
+          issues: [
+            {
+              code: "worktree-not-found",
+              message: "The path is not a removable linked worktree of this repository.",
+            },
+          ],
+        };
+      }
+
+      const result = await commandProvider.run({
+        cwd: resolution.repoRoot,
+        // `--` ends option parsing before the external target path.
+        args: force
+          ? ["worktree", "remove", "-f", "-f", "--", normalizedTargetPath]
+          : ["worktree", "remove", "--", normalizedTargetPath],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      if (result.timedOut || result.outputTruncated) {
+        ensureGitCommandSucceeded("git worktree remove", result);
+      }
+
+      if (result.exitCode !== 0) {
+        return { ok: false, issues: parseWorktreeRemoveIssues(result) };
+      }
+
+      return { ok: true, issues: [] };
+    },
+
+    async pruneWorktrees(workspacePath: string): Promise<GitWorktreePruneResult> {
+      const resolution = await this.resolveRepository(workspacePath);
+      if (!resolution.isGitAvailable) {
+        return { ok: false, prunedCount: 0, issues: [toGitUnavailableWorktreeIssue()] };
+      }
+      if (!resolution.isRepository) {
+        return { ok: false, prunedCount: 0, issues: [toNotARepositoryWorktreeIssue()] };
+      }
+
+      const result = await commandProvider.run({
+        cwd: resolution.repoRoot,
+        // --expire now makes the outcome deterministic (nothing stays back "not yet expired");
+        // --verbose prints one line per removed stale record, used only for the count.
+        args: ["worktree", "prune", "--verbose", "--expire", "now"],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      if (result.timedOut || result.outputTruncated) {
+        ensureGitCommandSucceeded("git worktree prune", result);
+      }
+
+      if (result.exitCode !== 0) {
+        return { ok: false, prunedCount: 0, issues: parseGitWorktreeIssues(result) };
+      }
+
+      // git worktree prune --verbose reports removed records on stderr (verified against the
+      // git CLI); older builds may print to stdout, so fall back when stderr has no lines.
+      const prunedCount =
+        countNonEmptyLines(result.stderr) > 0
+          ? countNonEmptyLines(result.stderr)
+          : countNonEmptyLines(result.stdout);
+      return { ok: true, prunedCount, issues: [] };
+    },
+
     async getCommitGraph(
       workspacePath: string,
       maxCount?: number,
@@ -1026,8 +1661,8 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         cwd: resolution.repoRoot,
         args: [
           "log",
-          // --all 会把 refs/zcode/checkpoints 等内部 hidden refs 拉进 Git Graph。
-          // Graph 只展示用户可见历史，因此限定到 HEAD、分支、标签和远端分支。
+          // --all includes internal hidden refs such as refs/zcode/checkpoints in Git Graph.
+          // Graph shows only user-visible history, so limit it to HEAD, branches, tags, and remote branches.
           "HEAD",
           "--branches",
           "--tags",
@@ -1097,7 +1732,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         });
       }
 
-      // 这里优先返回当前仓库已知的阻塞状态，避免 UI 只能看到一条模糊的 Git 原生错误。
+      // Prefer the known blocking state for the current repository so the UI does not show only a vague native Git error.
       if (status.entries.some((entry) => entry.isConflicted)) {
         return toBranchMutationFailure({
           action: "switch",
@@ -1218,9 +1853,9 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       }
 
       const normalizedStartPoint = startPoint?.trim();
-      // startPoint 可能来自外部输入；如果值本身以 `-` 开头，
-      // Git 会把它继续当成 switch 的选项解析，而不是起始引用。
-      // 这里显式插入 `--` 终止选项解析，确保后面的值始终按位置参数处理。
+      // startPoint may come from external input; if its value begins with `-`,
+      // Git continues parsing it as a switch option instead of a starting ref.
+      // Insert `--` explicitly to end option parsing and ensure subsequent values are treated as positional arguments.
       const result = await commandProvider.run({
         cwd: resolution.repoRoot,
         args: normalizedStartPoint
@@ -1333,8 +1968,8 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         return withDiffContents(parsedDiff, contents);
       }
 
-      // 未跟踪文件不会出现在 `git diff` 里，所以这里先生成一份稳定的单文件 patch。
-      // 如果文件无法按文本预览，再退回 `--no-index`，继续兼容二进制等特殊场景。
+      // Untracked files do not appear in `git diff`, so generate a stable single-file patch first.
+      // If the file cannot be previewed as text, fall back to `--no-index` to support binary and other special cases.
       if (!(await fileExists(absolutePath))) {
         return parsedDiff;
       }
@@ -1418,6 +2053,139 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           : `HEAD -> ${status.summary.trackingBranchName}`,
         changes,
       };
+    },
+
+    async getBranchMergeStatus(workspacePath: string): Promise<GitBranchMergeStatus> {
+      // Bugfix: контракт метода — «unknown без throw», но getStatus() внутри
+      // ensureGitCommandSucceeded бросает на таймауте/ошибке git status.
+      // Ошибка пробы наблюдения не должна рваться в UI — возвращаем полный unknown.
+      let status: GitStatusSnapshot;
+      try {
+        status = await this.getStatus(workspacePath);
+      } catch (error) {
+        warnBranchMergeStatusOnce(workspacePath, "status-failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return {
+          state: "unknown" satisfies GitBranchMergeState,
+          baseRef: null,
+          headRef: null,
+          lastCommitAt: null,
+        };
+      }
+      const toUnknown = (): GitBranchMergeStatus => ({
+        state: "unknown" satisfies GitBranchMergeState,
+        baseRef: null,
+        headRef: status.summary.branchName,
+        lastCommitAt: null,
+      });
+      if (
+        !status.resolution.isGitAvailable ||
+        !status.resolution.isRepository ||
+        status.summary.headRefType !== "branch" ||
+        !status.summary.branchName
+      ) {
+        return toUnknown();
+      }
+
+      // origin/HEAD is a local remote-tracking ref; its freshness depends on the
+      // user's last fetch (this probe never touches the network).
+      const baseRefResult = await commandProvider.run({
+        cwd: status.resolution.repoRoot,
+        args: ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      log.debug(undefined, "branch-merge-status origin/HEAD", {
+        workspacePath,
+        exitCode: baseRefResult.exitCode,
+        stdout: baseRefResult.stdout,
+      });
+      if (baseRefResult.timedOut) {
+        warnBranchMergeStatusOnce(workspacePath, "origin-HEAD-timeout", {
+          durationMs: baseRefResult.durationMs,
+        });
+      }
+      if (baseRefResult.timedOut || baseRefResult.exitCode !== 0) {
+        return toUnknown();
+      }
+      const baseRef = baseRefResult.stdout.trim();
+      if (!baseRef) {
+        return toUnknown();
+      }
+
+      // %cI emits strict ISO-8601; empty output means the branch has no commits.
+      const logResult = await commandProvider.run({
+        cwd: status.resolution.repoRoot,
+        args: ["log", "-1", "--format=%cI", "HEAD"],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      const lastCommitAt =
+        logResult.exitCode === 0 && !logResult.timedOut ? logResult.stdout.trim() || null : null;
+
+      // The default branch is trivially an ancestor of origin/HEAD, but it is
+      // not a feature branch that has been merged into the default branch.
+      const baseBranchName = baseRef.replace(/^origin\//, "");
+      if (status.summary.branchName === baseBranchName) {
+        return {
+          state: "not_merged" satisfies GitBranchMergeState,
+          baseRef,
+          headRef: status.summary.branchName,
+          lastCommitAt,
+        };
+      }
+
+      // The exit code itself carries the state: 0 = ancestor, 1 = not an
+      // ancestor, anything else (128: ref missing locally, timeout, …) = unknown
+      // surfaced without throwing.
+      const mergeBaseResult = await commandProvider.run({
+        cwd: status.resolution.repoRoot,
+        args: ["merge-base", "--is-ancestor", "HEAD", baseRef],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      log.debug(undefined, "branch-merge-status merge-base", {
+        workspacePath,
+        baseRef,
+        exitCode: mergeBaseResult.exitCode,
+        stderr: mergeBaseResult.stderr,
+      });
+      if (mergeBaseResult.timedOut) {
+        warnBranchMergeStatusOnce(workspacePath, "merge-base-timeout", {
+          durationMs: mergeBaseResult.durationMs,
+        });
+      }
+      let state: GitBranchMergeState;
+      if (mergeBaseResult.exitCode === 0 && !mergeBaseResult.timedOut) {
+        state = "merged";
+      } else if (mergeBaseResult.exitCode === 1 && !mergeBaseResult.timedOut) {
+        state = "not_merged";
+      } else {
+        state = "unknown";
+      }
+
+      return { state, baseRef, headRef: status.summary.branchName, lastCommitAt };
+    },
+
+    async readHeadBranch(workspacePath: string): Promise<string | null> {
+      // Один symbolic-ref без полного статуса: валидация попаданий кэша
+      // merge-статуса не должна стоить как сама проба. detached HEAD и любые
+      // неуспехи читаются как null — попадание при этом принимается.
+      const resolution = await this.resolveRepository(workspacePath);
+      if (!resolution.isGitAvailable || !resolution.isRepository) {
+        return null;
+      }
+      const result = await commandProvider.run({
+        cwd: resolution.repoRoot,
+        args: ["symbolic-ref", "--short", "HEAD"],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      if (result.exitCode !== 0 || result.timedOut) {
+        return null;
+      }
+      return result.stdout.trim() || null;
     },
 
     async stage(workspacePath: string, paths: string[]): Promise<void> {
@@ -1599,8 +2367,8 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           ensureGitCommandSucceeded("git rev-parse selected commit HEAD", hashResult);
           const commitHash = hashResult.stdout.trim();
 
-          // 提交当前会话文件时不能把真实 index 整体替换成临时 index。
-          // 这里只把已提交的路径同步到新 HEAD，保留其它已暂存文件继续等待用户手动提交。
+          // Do not replace the real index with the temporary index when committing current-session files.
+          // Sync only committed paths to the new HEAD and leave other staged files for the user to commit manually.
           const resetSelectedResult = await commandProvider.run({
             cwd: resolution.repoRoot,
             args: ["reset", "--quiet", "HEAD", "--", ...cleanupRepoPaths],
@@ -1652,11 +2420,11 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
         args: hasTrackingBranch
           ? ["push"]
           : ["push", "--set-upstream", remoteName ?? "origin", branchName],
-        // 关键业务逻辑：push 是显式用户动作，而且可能被 pre-push hook 拉长。
-        // 这里单独使用更长超时，避免测试/校验脚本尚未跑完就被前端误判成 push 失败。
+        // Important logic: push is an explicit user action and may take longer because of pre-push hooks.
+        // Use a longer timeout so the frontend does not report push failure before tests/check scripts finish.
         timeoutMs: DEFAULT_GIT_PUSH_TIMEOUT_MS,
-        // 关键业务逻辑：pre-push hook 可能输出完整测试日志。
-        // 这里单独放宽输出上限，避免在 push 真正完成前因为 hook 输出过多被截断。
+        // Important logic: pre-push hooks may output full test logs.
+        // Raise the output limit here so excessive hook output does not truncate the result before push actually completes.
         maxOutputBytes: DEFAULT_GIT_PUSH_OUTPUT_BYTES,
       });
       ensureGitCommandSucceeded("git push", pushResult);

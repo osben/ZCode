@@ -2,6 +2,7 @@
 
 import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BUILTIN_MODEL_PROVIDER_IDS } from "@zcode/shared";
@@ -17,6 +18,7 @@ import {
 import {
   ChatContextUsage,
   buildContextUsageBreakdownSegments,
+  buildContextUsageProgressSegments,
   formatContextCacheHitRateLabel,
   formatContextUsageSummary,
   formatContextUsageTokenCount,
@@ -32,6 +34,7 @@ import {
   resolveSidebarCodingPlanUpgradeFallbackProviderId,
   resolveSidebarCodingPlanUpgradeProviderId,
 } from "../src/lib/sidebarCodingPlanUpgrade.js";
+
 import { TooltipProvider } from "../src/components/ui/tooltip.js";
 
 const activeSubscription = {
@@ -148,7 +151,8 @@ function renderFiveHourResetPanel() {
     createCodingPlanProvider(BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan),
   ];
 
-  // 完成态会用 nextResetAt 兜底展示重置时间（带 Tooltip）；真实应用中面板总在 TooltipProvider 下。
+  // The completed state falls back to nextResetAt for the reset time display (with Tooltip); in
+  // the real app the panel always renders under a TooltipProvider.
   render(
     createElement(
       TooltipProvider,
@@ -251,7 +255,7 @@ describe("ChatCodingPlanUsageRemainingPanel reset action", () => {
 });
 
 describe("ChatCodingPlanUsageRemainingPanel MCP 额度", () => {
-  it("从三类主额度与 MCP 混合快照展示真实剩余额度和桶日期", () => {
+  it("三张主额度占满首行时，官方 Server MCP 在下一行横跨三列", () => {
     codingPlanQuotaResetUiMock.current = codingPlanQuotaResetUiMock.createValue();
     const html = renderToStaticMarkup(
       createElement(ChatCodingPlanUsageRemainingPanel, {
@@ -310,9 +314,23 @@ describe("ChatCodingPlanUsageRemainingPanel MCP 额度", () => {
     expect(html).toContain("sidebar.usage.plan.zcodeMcp");
     expect(html).toContain('data-context-mcp-info="true"');
     expect(html).toContain('aria-label="sidebar.usage.plan.zcodeMcpDescription"');
-    // percentage 是已使用占比，展示时反转成剩余。
+    expect(html).toContain(
+      '<span class="min-w-0 truncate text-foreground-subtle">sidebar.usage.plan.zcodeMcp</span>',
+    );
+    expect(html).not.toContain(
+      '<span class="font-medium text-foreground">sidebar.usage.plan.zcodeMcp</span>',
+    );
+    expect(html).not.toContain("zcode-mcp-gradient-text");
+    expect(html).toContain("background-color:var(--color-usage-chart-5)");
+    // percentage is the used share; the display inverts it into remaining.
     expect(html).toContain("75%");
-    expect(html).toMatch(/>75%<\/span><span[^>]*> · Aug 21<\/span>/);
+    // The reset date renders in the local timezone (the formatter does not pin timeZone); the
+    // expected value is generated with the same rule to avoid timezone drift.
+    const expectedResetDay = new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+    }).format(new Date(Date.UTC(2025, 7, 21)));
+    expect(html).toMatch(new RegExp(`>75%<\\/span><span[^>]*> · ${expectedResetDay}<\\/span>`));
     expect(html).toContain("width:75%");
   });
 
@@ -593,25 +611,84 @@ describe("ChatCodingPlanUsageRemainingPanel refresh action", () => {
 describe("buildContextUsageBreakdownSegments", () => {
   it("aggregates valid chars by source and sorts largest first", () => {
     expect(
-      buildContextUsageBreakdownSegments([
-        { source: "messages", chars: 700 },
-        { source: "system_tool_schemas", chars: 200 },
-        { source: "messages", chars: 100 },
-        { source: "skills", chars: 0 },
-      ]),
+      buildContextUsageBreakdownSegments(
+        [
+          { source: "messages", chars: 700 },
+          { source: "system_tool_schemas", chars: 200 },
+          { source: "messages", chars: 100 },
+          { source: "skills", chars: 0 },
+        ],
+        10_000,
+      ),
     ).toEqual([
-      { source: "messages", chars: 800, percent: 0.8 },
-      { source: "system_tool_schemas", chars: 200, percent: 0.2 },
+      { source: "messages", chars: 800, percent: 0.8, tokens: 8_000 },
+      { source: "system_tool_schemas", chars: 200, percent: 0.2, tokens: 2_000 },
     ]);
   });
 
   it("returns an empty list when no positive chars are available", () => {
     expect(
-      buildContextUsageBreakdownSegments([
-        { source: "messages", chars: 0 },
-        { source: "skills", chars: -1 },
-      ]),
+      buildContextUsageBreakdownSegments(
+        [
+          { source: "messages", chars: 0 },
+          { source: "skills", chars: -1 },
+        ],
+        10_000,
+      ),
     ).toEqual([]);
+  });
+
+  it("assigns the Coding Plan blue tone to the largest segment", () => {
+    const segments = buildContextUsageBreakdownSegments(
+      [
+        { source: "messages", chars: 100 },
+        { source: "mcp_tool_schemas", chars: 900 },
+        { source: "system_prompt", chars: 300 },
+      ],
+      0,
+    );
+
+    expect(buildContextUsageProgressSegments(segments)).toEqual([
+      {
+        id: "mcp_tool_schemas",
+        percent: 0.6923076923076923,
+        style: { backgroundColor: "var(--color-usage-chart-1)" },
+      },
+      {
+        id: "system_prompt",
+        percent: 0.23076923076923078,
+        style: {
+          backgroundColor:
+            "color-mix(in oklab, var(--color-usage-chart-1) 78%, var(--color-surface))",
+        },
+      },
+      {
+        id: "messages",
+        percent: 0.07692307692307693,
+        style: {
+          backgroundColor:
+            "color-mix(in oklab, var(--color-usage-chart-1) 58%, var(--color-surface))",
+        },
+      },
+    ]);
+  });
+
+  it("keeps later Coding Plan blue tones readable on the popover background", () => {
+    const segments = buildContextUsageBreakdownSegments(
+      [
+        { source: "messages", chars: 600 },
+        { source: "system_prompt", chars: 500 },
+        { source: "meta_user_context", chars: 400 },
+        { source: "skills", chars: 300 },
+        { source: "tool_prompt", chars: 200 },
+        { source: "system_tool_schemas", chars: 100 },
+      ],
+      0,
+    );
+
+    expect(buildContextUsageProgressSegments(segments).at(-1)?.style).toEqual({
+      backgroundColor: "color-mix(in oklab, var(--color-usage-chart-1) 28%, var(--color-surface))",
+    });
   });
 });
 
@@ -758,6 +835,59 @@ describe("ChatContextUsage", () => {
     expect(html).not.toContain("0/1M (0%)");
   });
 
+  it("renders authoritative context compaction boundaries and trigger tones", () => {
+    const warningHtml = renderToStaticMarkup(
+      createElement(ChatContextUsage, {
+        intl: { formatMessage: ({ id }: { id: string }) => id },
+        locale: "en-US",
+        selectedProvider: "glm",
+        taskUsage: {
+          used: 149_400,
+          size: 200_000,
+          autoCompactThresholdTokens: 166_000,
+          autoCompactThresholdAuthoritative: true,
+          microcompactThresholdTokens: 149_400,
+        },
+      }),
+    );
+    expect(warningHtml).toContain('data-usage-tone="warning"');
+    expect(warningHtml).toContain("text-warning");
+    expect(warningHtml).toContain("≈166K (83%)");
+
+    const criticalHtml = renderToStaticMarkup(
+      createElement(ChatContextUsage, {
+        intl: { formatMessage: ({ id }: { id: string }) => id },
+        locale: "en-US",
+        selectedProvider: "glm",
+        taskUsage: {
+          used: 166_000,
+          size: 200_000,
+          autoCompactThresholdTokens: 166_000,
+          autoCompactThresholdAuthoritative: true,
+          microcompactThresholdTokens: null,
+        },
+      }),
+    );
+    expect(criticalHtml).toContain('data-usage-tone="critical"');
+    expect(criticalHtml).toContain("text-destructive");
+
+    const disabledHtml = renderToStaticMarkup(
+      createElement(ChatContextUsage, {
+        intl: { formatMessage: ({ id }: { id: string }) => id },
+        locale: "en-US",
+        selectedProvider: "glm",
+        taskUsage: {
+          used: 166_000,
+          size: 200_000,
+          autoCompactThresholdTokens: null,
+          autoCompactThresholdAuthoritative: true,
+          microcompactThresholdTokens: null,
+        },
+      }),
+    );
+    expect(disabledHtml).toContain('data-usage-tone="normal"');
+  });
+
   it("renders cache hit rate when the context usage reaches the display threshold", () => {
     const html = renderToStaticMarkup(
       createElement(ChatContextUsage, {
@@ -851,7 +981,7 @@ describe("ChatContextUsage", () => {
     expect(html).toContain("sidebar.usage.plan.fiveHour");
   });
 
-  it("does not render per-source token counts in the breakdown rows", () => {
+  it("renders per-source tokens as shares of the used total, not raw chars", () => {
     const html = renderToStaticMarkup(
       createElement(ChatContextUsage, {
         intl: {
@@ -874,6 +1004,8 @@ describe("ChatContextUsage", () => {
     expect(html).toContain("chat.contextUsage.breakdown.messages");
     expect(html).toContain("57.8%");
     expect(html).toContain("42.2%");
+    expect(html).toContain("9.8K");
+    expect(html).toContain("7.2K");
     expect(html).not.toContain("52K");
     expect(html).not.toContain("38K");
   });
@@ -1409,8 +1541,9 @@ describe("Start Plan context balance panel", () => {
     expect(html).not.toContain("settings.modelProvider.codingPlan.expiresAt");
     expect(html).toContain("GLM-5.2");
     expect(html).toContain("75%");
-    // 桶刷新时间只来自本桶 expires_at（nextResetTime），不再采用套餐级 renewTime；
-    // 非当日与 Coding Plan 对齐只展示日期，不携带时间。
+    // The bucket refresh time comes only from this bucket's expires_at (nextResetTime); the
+    // plan-level renewTime is no longer used. Non-same-day buckets align with Coding Plan and
+    // show only the date without a time.
     expect(html).toContain("Jun 14");
     expect(html).not.toContain("Jun 14 23:02");
     expect(html).not.toContain("Jun 13 10:00");
@@ -1419,6 +1552,19 @@ describe("Start Plan context balance panel", () => {
     expect(html).not.toContain("settings.modelProvider.startPlan.balance.used");
     expect(html).toContain("chat.quota.action.upgrade");
     expect(html).toContain("billing-discount-info");
+    expect(html).toContain("grid-cols-1");
+    expect(html).toContain("space-y-0.5");
+    expect(html).toContain("h-1.5");
+    expect(html).toContain("bg-success");
+    // Fix rationale: after the hover's silent refresh returned, the today-balance progress bar
+    // used to jump instantly, inconsistent with the Coding Plan quota bar's 500ms width
+    // transition, making the refresh completely imperceptible; assert the transition and
+    // accessibility fallback stay aligned.
+    expect(html).toContain("transition-[width]");
+    expect(html).toContain("duration-500");
+    expect(html).toContain("motion-reduce:transition-none");
+    expect(html).not.toContain("background-color");
+    expect(html).toContain("lucide-rocket");
   });
 
   it("omits the date for today's Start Plan balance renew time", () => {
@@ -1505,7 +1651,8 @@ describe("Start Plan context balance panel", () => {
               remaining: {
                 count: 1_750_000,
                 isShow: true,
-                // 全局聚合时间（最早桶时间）不得复制到每个桶。
+                // The global aggregate time (earliest bucket time) must not be copied to every
+                // bucket.
                 nextResetTime: new Date(2026, 5, 15, 20, 0).getTime(),
               },
               subscription: {
@@ -1565,12 +1712,14 @@ describe("Start Plan context balance panel", () => {
         }),
       );
 
-      // 每个 meter 只展示本桶的 expires_at：当日仅 HH:mm（对齐 Coding Plan 五小时窗口），
-      // 非当日仅日期（对齐 Coding Plan 周/月重置），互不串用。
+      // Each meter shows only its own bucket's expires_at: same-day shows HH:mm only (aligned
+      // with the Coding Plan five-hour window), non-same-day shows only the date (aligned with
+      // Coding Plan weekly/monthly resets); they must not be mixed.
       expect(html).toContain("18:45");
       expect(html).toContain("Jun 16");
       expect(html).not.toContain("Jun 16 09:30");
-      // 全局 remaining 聚合时间与套餐级 renewTime 不得串入任何桶。
+      // The global remaining aggregate time and plan-level renewTime must not leak into any
+      // bucket.
       expect(html).not.toContain("20:00");
       expect(html).not.toContain("Jun 13 10:00");
     } finally {

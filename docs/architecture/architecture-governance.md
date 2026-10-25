@@ -1,55 +1,51 @@
-# 公共架构门禁与 AI Governance
+# Shared Architecture Governance and AI Governance
 
-## 目标
+## Goals
 
-架构规则是全仓公共能力，不属于任何单一业务重构。所有代码变更经过同一条链路：
-
-```text
-代码变更 → 策略解析 → 依赖图与变更闭包 → 规则检查与 ratchet → 阅读包与报告
-```
-
-规则只对 `managed: true` 的模块生效（`managedOnly`）；存量模块保持 unmanaged，不受结构规则约束。对"新代码必须走这套约束"的保证来自 `unmanaged-new-file`：相对比较基线新增、且首次入库晚于 `global.newFilesEnforcedSince` 的源码文件必须落在 managed 模块内，否则阻断；未跟踪文件永远视为新增。生效日期让长期分支不被追溯，也避免各分支往共享 baseline 写存量条目产生冲突。存量违规进入确定性的 baseline；新违规阻断，baseline 只能通过显式命令和 PR 审核更新。
-
-### 指定上游的存量准入
-
-`build:desktop:app` 在 job 级设置 `GIT_DEPTH: "0"`，让 Runner 在架构检查前拉取完整历史。浅克隆会截断祖先链，使已合入的准入提交被误判为未合入。该设置仅作用于此 job，不改变其他 job 的拉取深度；检查器仍严格验证提交祖先关系。
-
-合并包含较新源码、但尚未启用新增文件治理的上游时，策略可在 `global.acceptedUpstreamCommits` 登记上游 `commit`、合并前 `previousHead` 的完整 SHA 和接纳理由 `reason`。两个提交必须在本地存在且已是 HEAD 的祖先；提交前校验也允许 Git 当前 `MERGE_HEAD` 的祖先，使 `--no-commit` 合并可以先验证再提交。分支名、缩写 SHA、缺失对象或不属于当前合并的提交均使检查失败，不自动 fetch 或更新策略。准入只覆盖上游存在、合并前不存在的路径，不把原有文件的修改扩成豁免。
-
-只对 `unmanaged-new-file` 做以下分类：候选文件必须已经跟踪，在指定提交中以同一路径存在，且暂存区与工作区的 Git 内容和文件模式都与该提交一致，才能作为上游存量接纳。改动、重命名、新增、未跟踪文件继续要求 managed 模块。合并冲突后的编辑也属于改动，不以作者、提交信息、路径前缀或日期代替内容核对。
+Architecture rules are a repository-wide capability, not part of any single business refactor. All code changes follow the same path:
 
 ```text
-真实 push / CI 变更范围 → 新增文件候选
-  → 校验固定上游提交确已合入
-  → 同路径、暂存区及工作区均与上游一致：仅免新增模块登记
-  → 其余候选：执行新增模块登记规则
-完整变更范围 → 原有结构、依赖、环、类型与测试检查
+Code change → policy parsing → dependency graph and change closure → rule checks and ratchet → reading package and report
 ```
 
-接纳不会更换 push/CI 比较基线，不改 changed closure，不向 `.architecture-baseline.json` 写违规，也不豁免 managed 模块中的其他规则；原有生效日期不变。再次合并已登记的固定上游时，过去由某个准入提交引入的路径可与任一已登记上游的原样内容匹配；它仍必须满足暂存区、工作区和模式全部一致。本地后续编辑即使已不是相对 push base 的新路径，也重新要求模块登记。验收覆盖原样合并、重复合并更新、冲突修改、暂存与工作区不一致、重命名、未跟踪文件、后续修改、无效提交以及其他规则仍阻断。
+Rules apply only to modules with `managed: true` (`managedOnly`); existing modules remain unmanaged and are not subject to structural rules. The guarantee that new code follows these constraints comes from `unmanaged-new-file`: source files that are newly added relative to the comparison baseline and first entered the repository after `global.newFilesEnforcedSince` must sit inside a managed module, otherwise they are blocked. Untracked files are always treated as new. The effective date keeps long-lived branches from being retroactively affected and avoids branches writing existing-violation entries into the shared baseline, which would cause conflicts. Existing violations are recorded in a deterministic baseline; new violations block changes, and the baseline can only be updated through an explicit command and PR review.
 
-本轮合并后的自有适配按职责收口：项目菜单、拖动预览和项目连接展示归 `project-sidebar`；工作流保存与项目归属绑定归 `project-workflow`；设备连接向导归 `remote-connection-flow`，保留单个 hook 控制器及其闭包，不按行数拆散状态，保留 requestId/entry epoch 与迟到结果丢弃规则。存储启动适配归 Host Worker 和 `project-storage`，子会话事实修复归 `task-facts`，CLI 子代理配置解析归独立纯配置模块。只调整实现边界与导入位置，不改产品流程、迁移 SQL 或 attachment 语义；已有行为用例继续验证这些公开入口。
+### Admitting Existing Code from a Pinned Upstream
 
-## 规范来源
+`build:desktop:app` sets `GIT_DEPTH: "0"` at job level so the Runner fetches full history before the architecture check. A shallow clone truncates the ancestor chain and would make an already-merged admission commit look unmerged. This setting applies only to that job and does not change the fetch depth of other jobs; the checker still strictly verifies commit ancestry.
 
-- 根目录 `architecture-policy.yaml` 是组织级政策：模块路径、层级、允许边、全局阈值和例外。
-- 模块 `module.ts` 是局部依赖声明：`id`、`requires`、`provides` 和公开入口。
-- 实际 import graph 从源码生成，不能手工维护。
-- feature graph 只描述产品能力和影响面，不承担架构门禁职责。
+When merging an upstream that contains newer source but has not yet enabled new-file governance, the policy may register the upstream `commit`, the full SHA of `previousHead` before the merge, and the admission reason `reason` in `global.acceptedUpstreamCommits`. Both commits must exist locally, and each must be an ancestor of HEAD. Pre-commit validation also accepts ancestors of the current Git `MERGE_HEAD`, so a `--no-commit` merge can be verified before it is committed. Branch names, abbreviated SHAs, missing objects, or commits that are not part of the current merge make the check fail; the checker does not fetch or update the policy automatically. Admission covers only paths that exist in the upstream and did not exist before the merge; it does not extend to modifications of pre-existing files.
 
-策略文件和模块声明必须互相校验（规则 `manifest-policy-mismatch`），禁止出现未被策略覆盖的模块或模块声明中的未知依赖。
+Only the `unmanaged-new-file` classification uses the following. A candidate file must already be tracked, exist at the same path in the pinned commit, and have Git content and file mode in both the index and the working tree that match that commit before it can be admitted as existing upstream code. Modifications, renames, additions, and untracked files still require a managed module. Edits made after a merge conflict count as modifications; authorship, commit messages, path prefixes, or dates are never used in place of content verification.
 
-import 边按 Node 与 TypeScript 的真实解析建立：相对路径、`package.json` 的 `imports`（`#src/*`）、`tsconfig.json` 的 `paths`（`@/*`）、workspace 包名加 `exports`（条件导出与 `dist/` 目标回映到 `src/`）。2026-09 review 发现首版只解析相对路径，跨包依赖全部不建边，module-dependency / deep-import / cycle / layer-direction 对 `@zcode/*` 导入失明；已修复并有回归测试。
+```text
+Real push / CI change scope -> new-file candidates
+  -> verify the pinned upstream commit is merged
+  -> same path, with index and working tree both matching upstream: exempt only from new-module registration
+  -> other candidates: apply the new-module registration rule
+Full change scope -> existing structure, dependency, cycle, type, and test checks
+```
 
-配置读取使用 TypeScript 的 JSONC 解析器，支持块注释、行尾注释与尾逗号，并保留字符串中的 glob。
-不能用正则删除注释：`@/*`、`#src/*` 与后续 `src/**/*.ts` 或脚本参数 `cache-*/**`
-会被误判为注释，导致整个包或路径映射消失。回归要求两种别名都能触发真实的层方向违规。
+Admission does not change the push/CI comparison base, does not change the changed closure, does not write violations into `.architecture-baseline.json`, and does not exempt other rules in managed modules; the original effective date is unchanged. When a registered pinned upstream is merged again, paths that were introduced by an earlier admission commit may match the verbatim content of any registered upstream, but they must still match the index, working tree, and mode. Later local edits that are no longer new relative to the push base require module registration again. Acceptance covers verbatim merges, repeated merge updates, conflicting modifications, index/working-tree mismatches, renames, untracked files, later modifications, invalid commits, and continued blocking by other rules.
 
-## 规则
+## Sources of Rules
 
-规则引擎检查层级方向、模块依赖声明、公开入口、循环依赖、UI/Domain 的实现边界、模块必需文件、文件和契约大小、公开方法数以及 lint disable。owner 字段随报告输出，状态写入授权需要在具体状态模块完成 manifest 声明后接入同一规则接口。规则编号和修复建议集中维护在 `scripts/architecture`，AGENTS.md 只提供入口。
+- The root `architecture-policy.yaml` is the organization-level policy: module paths, layers, allowed edges, global thresholds, and exceptions.
+- A module's `module.ts` declares its local dependencies: `id`, `requires`, `provides`, and public entry points.
+- The actual import graph is generated from source code and must not be maintained manually.
+- The feature graph describes product capabilities and their impact surface only; it does not enforce architecture rules.
 
-## 命令与执行
+The policy file and module declarations must validate one another (rule `manifest-policy-mismatch`). Modules not covered by the policy and unknown dependencies in module declarations are prohibited.
+
+Import edges follow the real resolution behavior of Node and TypeScript: relative paths, `imports` in `package.json` (`#src/*`), `paths` in `tsconfig.json` (`@/*`), and workspace package names with `exports` (conditional exports and `dist/` targets map back to `src/`). Cross-package `@zcode/*` imports create edges, so the module-dependency, deep-import, cycle, and layer-direction rules cover them (regression-tested).
+
+Configuration is read with TypeScript's JSONC parser, which supports block comments, end-of-line comments, and trailing commas, and preserves globs inside strings. Comments must not be removed with regular expressions: `@/*`, `#src/*`, and later patterns such as `src/**/*.ts` or script arguments like `cache-*/**` would be misread as comments, causing a whole package or path mapping to disappear. Regression tests require both alias styles to trigger real layer-direction violations.
+
+## Rules
+
+The rules engine checks layer direction, module dependency declarations, public entry points, circular dependencies, UI/Domain implementation boundaries, required module files, file and contract sizes, public method counts, and lint disables. The owner field is included in reports. Write authorization for state must use the same rule interface after the relevant state module declares it in its manifest. Rule IDs and repair guidance are maintained under `scripts/architecture`; `AGENTS.md` only provides the entry point.
+
+## Commands and Execution
 
 ```text
 pnpm architecture:check
@@ -60,58 +56,58 @@ pnpm architecture:context <module-id>
 pnpm architecture:adopt <module-id> --root <dir> [--layer domain|app|adapters|ui] [--owner <group>]
 ```
 
-`--changed` 的比较基线按顺序选择：`--base <sha>` 或 `ZCODE_PRE_PUSH_BASE` > CI 合并请求变量（`CI_MERGE_REQUEST_DIFF_BASE_SHA` 等）> pre-push stdin 的远端 sha > `@{upstream}` > 默认分支 merge-base（顺序与 `run-affected-unit-tests` 一致，`origin/staging` 优先）> `HEAD`。报告第二行打印实际使用的基线。2026-09 review 发现首版只用 `git diff HEAD`，CI 干净 checkout 与 pre-push 时差异为空，门禁实际只检查环；已修复。
+The comparison base for `--changed` is chosen in this order: `--base <sha>` or `ZCODE_PRE_PUSH_BASE` > CI merge-request variables (such as `CI_MERGE_REQUEST_DIFF_BASE_SHA`) > the remote sha from pre-push stdin > `@{upstream}` > the default-branch merge-base (same order as `run-affected-unit-tests`, with `origin/staging` preferred) > `HEAD`. The second line of the report prints the base actually used. The base is never just `git diff HEAD`: in a clean CI checkout and during pre-push that diff is empty and the gate would check only cycles.
 
-`architecture:adopt` 把一个目录登记为 managed 模块：从真实 import 反推 `requires`、生成缺失的五件套骨架、在策略文件登记并保留注释。它存在的理由是让"登记模块"比"绕过规则"更便宜。
+`architecture:adopt` registers a directory as a managed module: it infers `requires` from real imports, generates the missing five-file skeleton, and registers the module in the policy file while preserving comments. It exists so that registering a module is cheaper than bypassing the rules.
 
-本地与 CI 使用同一检查器。`--changed` 解析完整依赖图，但只对本次变更及其必要影响闭包阻断；全局策略、循环依赖和 baseline 增长始终检查。CI 不得自动刷新 baseline；`baseline:update -- --changed` 只替换变更闭包内的条目，不会丢弃闭包之外的记录。违规与 baseline 中的文件路径都是相对仓库根的 posix 路径，跨机器稳定。检查器自身的回归测试是 `pnpm test:architecture`，已接入 `verify:pre-push` 与 CI 的 lint 任务。
+Local development and CI use the same checker. `--changed` resolves the complete dependency graph but blocks only on this change and its required impact closure; global policy, circular dependencies, and baseline growth are always checked. CI must not refresh the baseline automatically. `baseline:update -- --changed` replaces only entries within the changed closure and does not drop records outside it. File paths in violations and in the baseline are repository-root-relative POSIX paths, so they are stable across machines. The checker's own regression tests run with `pnpm test:architecture`, which is wired into `verify:pre-push` and the CI lint job.
 
-### Git 文件枚举与 CI 缓存
+### Git File Enumeration and CI Cache
 
-2026-09-10 的 macOS 打包任务在文件枚举阶段失败：Runner 保留的 `.electron-builder-cache` 未被 Git 忽略，`git ls-files --others --exclude-standard` 输出超过 `execFile` 默认缓冲区。修复由 `scripts/architecture/index.mjs` 的现有变更收集入口负责，不改业务模块、策略或 baseline。
+File enumeration must survive large untracked caches (the macOS packaging job once overflowed `execFile`'s default buffer on the Runner's retained `.electron-builder-cache`). The behavior lives in the change-collection entry point in `scripts/architecture/index.mjs`; it does not change business modules, policy, or the baseline.
 
-- 根目录的 `.electron-builder-cache/`、`.electron-cache/`、`.pnpm-store/`、`.npm-cache/` 是 CI 持久缓存，加入 `.gitignore`；保留 CI 的缓存路径及清理排除设置，不靠每次删缓存解决问题。
-- 已跟踪文件仍比较 `HEAD`，未跟踪文件仍遵守 Git ignore。两个命令使用 NUL 分隔的流式输出，避免固定 `maxBuffer` 上限，也不裁剪路径空白或破坏非 ASCII 文件名。
-- 收集入口合并、去重文件名；Git 进程失败时拒绝检查，不把失败或部分输出当成空变更通过。不新增缓存、版本或后台进程，不修改 CI 比较基线语义。
+- Root-level `.electron-builder-cache/`, `.electron-cache/`, `.pnpm-store/`, and `.npm-cache/` are persistent CI caches and are added to `.gitignore`. Keep the CI cache paths and cleanup exclusions; do not solve the problem by deleting caches on every run.
+- Tracked files are still compared with `HEAD`, and untracked files still follow Git ignore rules. Both commands use NUL-delimited streaming output to avoid a fixed `maxBuffer` limit, without trimming path whitespace or corrupting non-ASCII filenames.
+- The collection entry point merges and deduplicates filenames. If a Git process fails, the check fails; failed or partial output must not be treated as an empty change set. Do not add caches, versioning, or background processes, and do not change CI baseline comparison semantics.
 
 ```text
-Git diff / 未跟踪文件枚举
-  -> 流式解析 NUL 分隔路径
-  -> 两个进程均成功后合并去重
-  -> 既有架构检查
-任一 Git 失败 -> 检查失败
+Git diff / untracked-file enumeration
+  -> stream-parse NUL-delimited paths
+  -> merge and deduplicate after both processes succeed
+  -> existing architecture check
+Either Git process fails -> check fails
 ```
 
-验证使用临时 Git 仓库覆盖超过 1 MiB 的未跟踪及已跟踪变化、缓存忽略、特殊路径及 Git 失败传播。只影响开发 / CI 检查，不涉及产品 UI、运行时或持久化数据迁移。
+Verification uses a temporary Git repository covering more than 1 MiB of tracked and untracked changes, cache ignores, special paths, and propagation of Git failures. This affects only development/CI checks.
 
-## Agent 工作流
+## Agent Workflow
 
-[architecture-governance skill](../../.agents/skills/architecture-governance/SKILL.md) 对代码变更适用，纯文档任务跳过。代码修改前识别预期模块并检查当前基线，修改后重新检查；跨模块、状态归属变化或契约不明确时生成 `architecture:context` 阅读包，局部且契约明确的改动只读相关契约、spec 与测试。Spec、验证范围及完成条件统一遵循[根 AGENTS.md](../../AGENTS.md)，不在本文件重复定义。
+[architecture-governance skill](../../.agents/skills/architecture-governance/SKILL.md) applies to code changes; skip it for documentation-only tasks. Before changing code, identify the expected module and check the current baseline; check again after the change. For cross-module changes, changes to state ownership, or unclear contracts, generate an `architecture:context` reading package. For local changes with clear contracts, read only the relevant contracts, specs, and tests. Specs, verification scope, and completion criteria follow the [root AGENTS.md](../../AGENTS.md); they are not defined again here.
 
-阅读包由代码和策略生成，包含目标模块的 `module.ts`、`contract.ts`、示例、契约测试、短 CONTRACT.md、直接依赖契约、owner、允许边和受影响测试，不复制完整实现。
+The reading package is generated from code and policy. It includes the target module's `module.ts`, `contract.ts`, examples, contract tests, a short `CONTRACT.md`, direct dependency contracts, owner, allowed edges, and affected tests; it does not copy the full implementation.
 
-## 推进顺序
+## Rollout Order
 
-先建立策略、依赖图、baseline 和报告模式；再启用高置信度结构规则；随后以 Project/Session 为完整样板验证 contract、module manifest 和阅读包；最后扩展到 workspace identity、identity、model、automation、plugins/MCP 等领域。不得为单个领域复制一套门禁。
+First establish the policy, dependency graph, baseline, and report format. Then enable high-confidence structural rules. Next, use Project/Session as complete examples to validate contracts, module manifests, and reading packages. Finally, expand to areas such as workspace identity, identity, model, automation, and plugins/MCP. Do not create a separate governance gate for an individual area.
 
-## 明确边界
+## Explicit Boundaries
 
-不引入未经验证的通用 IoC/Event Center，不维护第二套手工 OWNERS 依赖图，不让 feature graph 兼任政策，不进行全仓一次性迁移。层级代码量不需要均衡，验收关注决定点、边界、竞态和阅读范围是否收敛。
+Do not introduce an unvalidated general-purpose IoC/Event Center, maintain a second manually curated OWNERS dependency graph, use the feature graph as policy, or perform a one-time repository-wide migration. Code volume does not need to be balanced across layers; acceptance focuses on whether decision points, boundaries, races, and reading scope are well-contained.
 
-## Todo103 整合边界
+## Todo103 Integration Boundaries
 
-策略模块目录须包含当前重构拆出的 `packages/provider/src` 与 `packages/provider-node/src`，供检查器发现源码并生成对应阅读包。保持与本轮其他存量模块相同的 unmanaged 登记，不把合并扩大为 contract/manifest 的全仓迁移，也不自动刷新 baseline。当前 `managedOnly: true` 下的零违规仅表示已启用规则没有报错，不证明所有存量跨域依赖已通过机械检查；Provider/Selection 交集仍执行人工双向复审。
+The policy's module directory must include `packages/provider/src` and `packages/provider-node/src`, which were extracted by the current refactor, so the checker can discover their source and generate the corresponding reading packages. Keep them registered as unmanaged, like the other existing modules in this round. Do not expand the integration into a repository-wide contract/manifest migration or refresh the baseline automatically. Zero violations under the current `managedOnly: true` setting means only that the enabled rules reported no errors; it does not prove that all existing cross-domain dependencies passed mechanical checks. Continue manual review in both directions for the Provider/Selection intersection.
 
-CLI 独立 lint 同样按指定上游的原样文件处理存量 `max-lines`：运行各包原有 oxlint 参数后，只接纳固定提交中路径、内容及模式均与暂存区和工作区一致的该项诊断。其他 lint 规则仍阻断；有本分支修改的文件、新文件以及缺失/未合入的上游提交均不享受准入。准入名单每次从 Git 生成，不维护逐文件行数 baseline，不向源码写 disable。
+The CLI's independent lint also admits existing `max-lines` violations in pinned upstream files verbatim. After running each package's original oxlint arguments, only that diagnostic is admitted, and only for files whose path, content, and mode match the pinned commit and both the index and the working tree. Other lint rules still block. Files with local changes on this branch, new files, and missing or unmerged upstream commits receive no admission. The admission list is generated from Git on every run; no per-file line-count baseline is maintained and no disable comments are written into source.
 
-CLI 的 `lint` 入口枚举 packages/tools 中声明的 oxlint 命令，保留各包 cwd、参数与配置。非 oxlint 命令或不可解析输出显式失败，不能默默漏掉新包。结果同时报告接纳的存量行数诊断和仍阻断的错误。
+The CLI `lint` entry enumerates the oxlint commands declared in `packages/tools` and preserves each package's cwd, arguments, and configuration. Non-oxlint commands or unparseable output fail explicitly, so a new package is never silently skipped. The result reports both the admitted existing line-count diagnostics and the errors that still block.
 
-超长的 CLI 会话存储、迁移、网关与启动装配保留原实现，不拆成共享全部内部状态的方法片段。协议无关的模型上下文和驻留 lease 放到 session-execution 公开入口，消除 V4 对旧协议目录的反向依赖；原 runtime 和记录仍是状态 owner。
+Oversized CLI session storage, migration, gateway, and startup assembly code keeps its original implementation rather than being split into method fragments that share all internal state. Protocol-independent model context and residency lease move to the session-execution public entry point, removing V4's reverse dependency on the old protocol directory. The original runtime and records remain the state owners.
 
-### 行数规则（2026-10-10 裁决）
+### Line Count Rule (ruling of 2026-10-10)
 
-普通源码的默认上限由 400 调整到 800 行。模块登记、依赖方向、公开入口、循环依赖和契约检查保持严格；不能把文件拆成共享全部内部状态的片段来满足行数指标。
+The default limit for ordinary source files is raised from 400 to 800 lines. Module registration, dependency direction, public entry points, circular-dependency, and contract checks remain strict; do not split files into fragments that share all internal state just to satisfy the line-count metric.
 
-本次整合中已存在且超过 800 行的 CLI 文件及移入模块的既有远程连接 hook，在根 `.oxlintrc.json` 按精确路径登记为行数 warning，保留诊断但允许提交。其余文件超过 800 行仍报错，其他 lint 规则不降级。指定上游原样文件的行数存量仍通过固定提交内容校验接纳，不接受目录级豁免。
+Existing CLI files over 800 lines in this integration, and an existing remote-connection hook moved into a module, are registered by exact path as line-count warnings in the root `.oxlintrc.json`. They keep the diagnostic but allow the commit. Other files over 800 lines still error, and other lint rules are not downgraded. Verbatim line-count admissions from a pinned upstream still go through fixed-commit content verification, not a directory-level exemption.
 
-远程连接 hook 的原行数 disable 改为精确路径 warning；架构门禁仅登记该文件的行数例外，模块依赖和其他规则仍执行。
+The original line-count disable in the remote-connection hook is replaced by a warning on its exact path. The architecture gate registers only the line-count exception for that file; module dependencies and other rules still apply.

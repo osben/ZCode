@@ -116,6 +116,7 @@ describe("AnimatedSidePanePanel layout", () => {
     expect(
       resolveOpenTabLauncherItemIds({
         developerToolsEnabled: false,
+        hasActiveTask: false,
         hasReviewTab: false,
         supportsEmbeddedBrowser: false,
       }),
@@ -124,6 +125,7 @@ describe("AnimatedSidePanePanel layout", () => {
     expect(
       resolveOpenTabLauncherItemIds({
         developerToolsEnabled: false,
+        hasActiveTask: false,
         hasReviewTab: false,
         supportsEmbeddedBrowser: true,
       }),
@@ -135,6 +137,7 @@ describe("AnimatedSidePanePanel layout", () => {
       resolveOpenTabLauncherItemIds({
         canOpenSelectionSideConversation: true,
         developerToolsEnabled: false,
+        hasActiveTask: false,
         hasReviewTab: false,
       }),
     ).toEqual(["files", "browser", "terminal", "review", "selection-side-conversation"]);
@@ -142,9 +145,42 @@ describe("AnimatedSidePanePanel layout", () => {
       resolveOpenTabLauncherItemIds({
         canOpenSelectionSideConversation: false,
         developerToolsEnabled: false,
+        hasActiveTask: false,
         hasReviewTab: false,
       }),
     ).toEqual(["files", "browser", "terminal", "review"]);
+  });
+
+  it("offers the v2 trajectory launcher directly after v1 and only with an active task", () => {
+    expect(
+      resolveOpenTabLauncherItemIds({
+        developerToolsEnabled: false,
+        hasActiveTask: true,
+        hasReviewTab: false,
+      }),
+    ).toEqual([
+      "files",
+      "browser",
+      "terminal",
+      "review",
+      "model-trajectory",
+      "model-trajectory-v2",
+    ]);
+    expect(
+      resolveOpenTabLauncherItemIds({
+        developerToolsEnabled: false,
+        hasActiveTask: false,
+        hasReviewTab: false,
+      }),
+    ).toEqual(["files", "browser", "terminal", "review"]);
+    expect(
+      resolveOpenTabLauncherItemIds({
+        developerToolsEnabled: true,
+        hasActiveTask: true,
+        hasReviewTab: true,
+        supportsEmbeddedBrowser: false,
+      }),
+    ).toEqual(["files", "terminal", "model-trajectory", "model-trajectory-v2", "developer-tools"]);
   });
 
   it("hides the side conversation entry without an active task and on mobile", () => {

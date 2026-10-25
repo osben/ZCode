@@ -25,6 +25,7 @@ import type {
 } from "@zcode/shared/zcode-protocol-v4";
 import type { ZCodeApp } from "../../app/types.js";
 import type { V4InteractionRegistry } from "../interaction-registry.js";
+import type { V4ExternalAgentConfigStore } from "./external-agent-config-store.js";
 import type {
   ConversationEditTarget,
   ConversationRowTargetAction,
@@ -39,8 +40,26 @@ export interface V4CommandLogger {
 
 export type V4QueueItemCommand = QueueItem;
 
-/** 单轮执行材料的协议原形。 */
+/** Protocol shape of one turn's execution material. */
 export type V4TurnExecution = NonNullable<CommandPayloadMap["sendText"]["modelExecution"]>;
+
+/**
+ * Prepared-worktree activation outcome reported by host.createSessionRecord:
+ * - "materialized": this call created the runtime; the handler applies startup config and admits
+ *   the frozen first input.
+ * - "input-pending": the runtime already exists and no durable admitted input receipt exists (the
+ *   earlier attempt failed before admission), so the handler may admit the input exactly once.
+ * - "input-admitted": the frozen input's own durable admitted receipt exists (for a reserved
+ *   submission: the row of expectedFirstInputCommandId); the handler must not re-send the input under
+ *   a new command id and only completes the activation receipt.
+ * - "already-active": the durable active receipt exists; nothing is applied or admitted by the
+ *   handler. It does not prove the frozen input was admitted; the sender decides from its own id.
+ */
+export type PreparedWorktreeActivationOutcome =
+  | "materialized"
+  | "input-pending"
+  | "input-admitted"
+  | "already-active";
 
 /**
  * Highspeed 队列项的临时执行包。QueueItem.modelSelection 只保存普通提交模型；
@@ -90,6 +109,7 @@ export interface V4SessionRecordView {
 }
 
 export interface V4CommandCoreHost {
+  hasPreparedSession?(sessionId: string): boolean;
   /** 会话查找（同一注册表对象引用；不存在返回 undefined → handler 拒绝）。 */
   getRecord(sessionId: string): V4SessionRecordView | undefined;
   logger?: V4CommandLogger;
@@ -102,6 +122,7 @@ export interface V4CommandCoreHost {
   /** guide eligibility：只阻止已有 ordinary queue；已有 guide 仍允许继续按 FIFO admission。 */
   hasQueuedDelivery?(sessionId: string, delivery: "guide" | "queue"): boolean;
   getQueueLength?(sessionId: string): number;
+  getQueueAutoDrain?(sessionId: string): boolean | null;
   /** Highspeed queue 的执行材料含凭据，只允许驻留内存，禁止进入 queue event/snapshot。 */
   retainQueuedTurnExecution?(
     sessionId: string,
@@ -129,6 +150,8 @@ export interface V4CommandCoreHost {
   ): Promise<ConversationInputIntent | null>;
   cancelInputCommand?(sessionId: string, queueItemId: string, reason: string): Promise<void>;
   discardSharedContext?(sessionId: string, contextId: string): Promise<boolean>;
+  /** ACP agent selects of a session (S6); absent outside the protocol worker. */
+  externalAgentConfig?: V4ExternalAgentConfigStore;
   /**
    * 当前输入路由模式（数据源 = v4 投影 inputRouting.mode）。
    * sendText/sendGoalCommand 的 held choice 裁决（heldQueueInputRequiresChoice）依赖它判定是否必须携带 heldQueueDisposition。
@@ -212,7 +235,16 @@ export interface V4CommandCoreHost {
       feedback: "like" | "dislike" | null;
     },
   ): Promise<void>;
-  /** Highspeed 完成态统计先更新 user transcript metadata，再发布同一 entity 的投影事件。 */
+  /** Persist a display-only pin as transcript metadata first, then publish the projection event for the same entity. */
+  setRowPinned?(
+    sessionId: string,
+    input: {
+      entityId: string;
+      messageId: string;
+      pinned: boolean;
+    },
+  ): Promise<void>;
+  /** Highspeed completion metrics update user transcript metadata first, then publish the projection event for the same entity. */
   setHighspeedMetrics?(
     sessionId: string,
     input: {
@@ -276,19 +308,76 @@ export interface V4CommandCoreHost {
     sessionId?: string;
     additionalDirectories?: string[];
     workspaceId: string;
+    /** Host-reserved identity to materialize; the Host must validate the preparation marker. */
+    preparedSessionId?: string;
+    expectedAttemptId?: string;
+    expectedSubmissionId?: string;
+    /** Command id of the frozen first input of a reserved submission; admission is checked by this id. */
+    expectedFirstInputCommandId?: string;
     permissionScope?: "session";
     mcpServers?: CommandPayloadMap["createSession"]["mcpServers"];
-    /** host 判定的 Off-Peak 工具面门禁；缺省不注册工具。 */
+    /**
+     * Execution worktree for "start in a new worktree without leaving this project": the record
+     * runs with this directory as execution cwd while staying listed under workspaceId.
+     */
+    executionWorktree?: CommandPayloadMap["createSession"]["executionWorktree"];
+    incognito?: CommandPayloadMap["createSession"]["incognito"];
+    /** Host-determined Off-Peak tool-surface gate; tools are not registered by default. */
     offPeakToolEnabled?: boolean;
     /**
-     * host 判定的动态工作流灰度门；
-     * 缺省回落到进程级 workspace 结论，仍是 fail-closed。
+     * Host-determined dynamic-workflow rollout gate;
+     * defaults to the process-level workspace decision, which remains fail-closed.
      */
     dynamicWorkflowEnabled?: boolean;
-    /** 与布尔同行的灰度 mode（launch.md「On demand: activation」）；缺省按 alwaysOn。 */
+    /** Gradual-rollout mode accompanying the boolean (launch.md, "On demand: activation"); defaults to alwaysOn. */
     dynamicWorkflowMode?: DynamicWorkflowMode;
+  }): Promise<{ sessionId: string; preparedActivation?: PreparedWorktreeActivationOutcome }>;
+  /** Reserve a durable session identity without creating a runtime. */
+  prepareSubmissionSession?(params: {
+    workspaceId: string;
+    sessionId?: string;
+    submissionId: string;
+    incognito?: CommandPayloadMap["createSession"]["incognito"];
   }): Promise<{ sessionId: string }>;
-  /** 从父会话稳定落盘边界创建隐藏 selection_side_chat child。 */
+  /** Reserve a durable worktree session identity without creating a runtime. */
+  prepareWorktreeSession?(params: {
+    workspaceId: string;
+    branchName: string;
+    targetPath: string;
+    baseBranch?: string;
+    attemptId?: string;
+  }): Promise<{ sessionId: string }>;
+  updateWorktreePreparation?(
+    sessionId: string,
+    input: {
+      expectedAttemptId?: string;
+      status: "preparing" | "failed" | "cancelled";
+      failureMessage?: string;
+      worktreePreparation?: {
+        branchName: string;
+        targetPath: string;
+        baseBranch?: string;
+        attemptId?: string;
+      };
+    },
+  ): Promise<void>;
+  /**
+   * Serialize an entire prepared-session activation (record materialization, startup config,
+   * first-input admission, completion) against other preparation mutations for that session.
+   * Re-entrant with createSessionRecord and completePreparedWorktreeActivation on the same
+   * session, so a concurrent retry cannot observe a half-activated session between those steps.
+   */
+  withPreparedWorktreeActivation?<T>(sessionId: string, body: () => Promise<T>): Promise<T>;
+  /**
+   * Complete a prepared-session activation at the first input's admission boundary: persist the
+   * durable `active` receipt, evict the in-memory preparation, and republish the conversation
+   * snapshot and sessions-index. Idempotent: a missing entry or a non-preparing status is a no-op.
+   * With frozenSubmissionId only that submission's own preparation completes (a sendText naming it).
+   * Without one (a sendText from a renderer that predates the field) the legacy rule completes the
+   * preparation the session is holding.
+   */
+  completePreparedWorktreeActivation?(sessionId: string, frozenSubmissionId?: string): Promise<void>;
+  /** Create a hidden selection_side_chat child from a stable persisted boundary in the parent session. */
   createSelectionSideSession?(
     sessionId: string,
     options: {

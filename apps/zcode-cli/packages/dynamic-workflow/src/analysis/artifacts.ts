@@ -1,26 +1,26 @@
 /**
- * 产物（artifact）的编译期收集与诊断。
+ * Compile-time collection and diagnostics for artifacts.
  *
- * ⚠ 术语：本模块的 artifact 是**用户面产物**——脚本经 `artifact.*` 发布给用户看的文件 /
- * markdown / 预置看板。同目录下的 `artifact-types.ts` 说的是**另一个** artifact：站点的
- * 类型化输出值（给模型看的）。两者不相干。
+ * ⚠ Terminology: artifact in this module means a **user-facing artifact**—a file / markdown / prebuilt dashboard
+ * published by the script through `artifact.*`. `artifact-types.ts` in the same directory refers to a **different** artifact:
+ * a typed site output value (shown to the model). The two are unrelated.
  *
- * 产物两件：
+ * Two artifact outputs:
  *
- * 1. `declaredArtifacts`（编译产物，照 `collectWorldRunCommands` 的 `commands`）：脚本声明的
- *    产物清单 `[{id, kind}]`，去重、按 id 排序。中枢与检视器据它在**运行前**就能说出这个
- *    工作流会产出什么。
- * 2. 定位诊断（facade-misuse 同族）：id 必须是编译期字面量，标签必须指向一个已声明的预置，
- *    同一个 id 不能横跨两个成员种类，预置声明不该长在循环体 / 回调 / 条件分支里。
+ * 1. `declaredArtifacts` (a compile result, analogous to `commands` from `collectWorldRunCommands`): the script's
+ *    artifact manifest `[{id, kind}]`, deduplicated and sorted by ID. The hub and inspector use it to describe **before execution**
+ *    what the workflow will produce.
+ * 2. Site diagnostics (same family as facade-misuse): IDs must be compile-time literals, labels must reference a declared dashboard,
+ *    an ID cannot be reused across member kinds, and dashboard declarations must not appear inside loops / callbacks / conditional branches.
  *
- * 为什么 id 必须是编译期字面量（与 `world.run` 的 cmd、`phase` 的 name 同一姿态）：一个运行期
- * 才成形的 id 没有可展示的对象——它既进不了「将产出」清单，也让「同 id 两种种类」这类规则
- * 只剩运行期一条路。教改写发生在便宜的那一侧。
+ * Why IDs must be compile-time literals (same rule as `world.run` cmd and `phase` name): an ID formed only at runtime has no displayable
+ * value—it cannot appear in the "will produce" manifest, and rules such as "same ID used for two kinds" could only be checked at runtime.
+ * Teach the rewrite at the cheaper stage.
  *
- * 与运行期的分工：这一趟只做**字面量能看穿的那一半**。真正的门在引擎——`ArtifactKindMismatch`
- * /`ArtifactRedeclared`/`ArtifactUndeclared`/`ArtifactCapExceeded` 都在运行期兜底，因为
- * 声明的**执行顺序**（哪个先跑到）静态看不出来。所以本模块**只会漏报、不会误报**，
- * 唯一的例外是提升诊断（见 {@link ARTIFACT_HOISTING_CODE}）。
+ * Runtime division of responsibility: this pass handles only the half that can be determined from **literals**. The engine is the real guard—
+ * `ArtifactKindMismatch` / `ArtifactRedeclared` / `ArtifactUndeclared` / `ArtifactCapExceeded` are enforced at runtime because static analysis
+ * cannot know the **execution order** of declarations. This module therefore **may miss an issue but cannot report a false positive**,
+ * except for the hoisting diagnostic (see {@link ARTIFACT_HOISTING_CODE}).
  */
 
 import ts from "typescript";
@@ -30,45 +30,45 @@ import { isArtifactPresetOp, type ArtifactOp } from "../facade/registry.js";
 import { findWorkflowBody, type ArtifactSite, type SiteTable } from "./sites.js";
 
 /**
- * 产物的编译期诊断码（9001 = facade-siting、9002 = schema、9003 = world-run、9004 = phase、
- * 9005/9006 = actor 名，顺延）。覆盖：非字面量 / 空 / 超长 / 非法字符的 id、同 id 跨种类复用、
- * `report` 标签的三种错法。全部是**静态确定**的错误——没有一条会误伤一份合法脚本。
+ * Compile-time diagnostic codes for artifacts (9001 = facade-siting, 9002 = schema, 9003 = world-run, 9004 = phase,
+ * 9005/9006 = actor name, continuing the sequence). Covers non-literal / empty / overlong / invalid-character IDs, reuse of one ID across kinds,
+ * and three errors in `report` labels. These are all **statically certain** errors; none can reject a valid script.
  */
 export const ARTIFACT_DECLARATION_CODE = 9007;
 
 /**
- * 预置声明长在循环体 / 回调 / 条件分支里（「声明提到顶层，一次即可」），单独一个码而不是
- * 复用 9007，理由与 9005/9006 的分家完全相同：**确定性不同**。
+ * A prebuilt declaration appears inside a loop / callback / conditional branch ("hoist declarations to the top level; declare once"). Give it a separate code
+ * instead of reusing 9007 for the same reason 9005/9006 are separate: **the certainty differs**.
  *
- * 循环里以**相同 spec** 重复声明在运行期其实是幂等 no-op，所以这条子句理论上会误报。接受它
- * 的理由是代价不对称——修复是免费的（把声明挪到脚本顶部），而不报的代价是一个看板声明藏在
- * 第三层回调里，读者要跑一遍才知道它到底声明了没有。读端（fixture 语料、未来的宽松档）
- * 因此需要能把它与 9007 区分开，而按错误文本分流是本仓库处处禁止的。
+ * Repeating the **same spec** declaration in a loop is an idempotent no-op at runtime, so this clause could theoretically report a false positive.
+ * We accept it because the costs are asymmetric: fixing it is free (move the declaration to the top of the script), while without the diagnostic a dashboard
+ * declaration could be hidden in a deeply nested callback and readers would have to run the script to find out whether it was declared.
+ * Readers (fixture corpus, future permissive modes) therefore need to distinguish it from 9007; routing by error text is prohibited throughout this repository.
  */
 export const ARTIFACT_HOISTING_CODE = 9008;
 
 /**
- * 两个**不同的** id 都写了字面量 `primary: true`。
- * 与 9008 同一种确定性：互斥分支里各标一个在运行期跑得通，但卡与侧板只会带头一个交付物，
- * 说不清哪个是的脚本没写完。只认字面量 `true`；算出来的旗子留给引擎的 `ArtifactPrimaryConflict`。
+ * Two **different** IDs both contain the literal `primary: true`.
+ * Same certainty as 9008: separate mutually exclusive branches may each mark an artifact, and execution may work, but cards and sidebars can show only one
+ * primary deliverable, so the script is ambiguous. Recognize only literal `true`; computed flags are handled by the engine's `ArtifactPrimaryConflict`.
  */
 export const ARTIFACT_PRIMARY_CONFLICT_CODE = 9009;
 
-/** 脚本声明的一个产物：id 与它的成员种类。 */
+/** One artifact declared by the script: its ID and member kind. */
 export interface DeclaredArtifact {
   id: string;
-  /** 成员种类（`file` / `markdown` / `chart` / `table` / `metrics` / `board`）。 */
+/** Member kind (`file` / `markdown` / `chart` / `table` / `metrics` / `board`). */
   kind: ArtifactOp;
 }
 
 export interface ArtifactDeclarations {
-  /** 脚本声明的产物清单：去重、按 id 字典序（`declaredCommands` 的同形产物）。 */
+/** Script-declared artifact manifest: deduplicated and sorted lexically by ID (parallel to `declaredCommands`). */
   declaredArtifacts: DeclaredArtifact[];
-  /** 定位诊断；非空即脚本不可提交。 */
+/** Site diagnostics; a non-empty result means the script cannot be submitted. */
   diagnostics: CompileDiagnostic[];
 }
 
-/** 预置声明所处的、不该待的词法位置。 */
+/** Lexical locations where a prebuilt declaration must not appear. */
 type HoistingContext = "loop" | "callback" | "conditional";
 
 const HOISTING_MESSAGE: Record<HoistingContext, string> = {
@@ -101,8 +101,8 @@ const EMPTY_ID_MESSAGE =
   'report tag all key off. Give it a short stable name ("book", "perf", "coverage").';
 
 /**
- * 收集产物清单与诊断。非空诊断即脚本不可提交（`analyzeWorkflowScript` 与 world.run / phase /
- * actor 名的编译期规则同席）。
+ * Collect the artifact manifest and diagnostics. Any diagnostics mean the script cannot be submitted (alongside the compile-time rules for
+ * `analyzeWorkflowScript`, world.run / phase / actor names).
  */
 export function collectArtifactDeclarations(
   workflow: WorkflowProgram,
@@ -116,17 +116,17 @@ export function collectArtifactDeclarations(
     workflow.toScriptLoc(node.getStart(workflow.scriptFile));
 
   const body = findWorkflowBody(workflow.scriptFile);
-  /** 已补全留白的函数体：不是回调，提升诊断看穿它们（见 {@link hoistingContextOf}）。 */
+  /** Body of a filled hole; it is not a callback, so hoisting diagnostics look through it (see {@link hoistingContextOf}). */
   const holeBodies = new Set<ts.Node>(table.holes.flatMap((hole) => hole.body ?? []));
-  /** id → 第一个用它的站点（种类冲突时用来指认前一处）。 */
+/** id → first site that used it (used to identify the earlier site on a kind conflict). */
   const claimed = new Map<string, ArtifactSite>();
-  /** 第一个写了字面量 `primary: true` 的站点；第二个不同 id 再写就是 9009。 */
+/** First site with literal `primary: true`; a second occurrence with a different ID is diagnostic 9009. */
   let primaryClaim: { id: string; site: ArtifactSite } | undefined;
   const declared: DeclaredArtifact[] = [];
 
   for (const site of table.artifacts) {
-    // id 的诊断落在**出问题的那个表达式**上（缺席时退回站点位置，同 world-run 的处理：
-    // 元数错误由类型检查先拦，但诊断收集不该依赖那条推断）。
+    // Place ID diagnostics on the **offending expression** (fall back to the site when absent, as for world-run:
+    // type checking catches arity errors first, but diagnostic collection should not depend on that inference).
     const idLoc = site.artifactIdExpr === undefined ? site.loc : locOf(site.artifactIdExpr);
     if (site.artifactId === undefined) {
       push(ARTIFACT_DECLARATION_CODE, idLoc, NON_LITERAL_ID_MESSAGE);
@@ -157,7 +157,7 @@ export function collectArtifactDeclarations(
       continue;
     }
 
-    // 跨成员种类复用（诊断 4）：诊断落在**后一处**——先出现的那个种类是既有事实。
+    // Reuse across member kinds (diagnostic 4): place the diagnostic on the **later occurrence**; the first kind encountered is the established fact.
     const first = claimed.get(id);
     if (first === undefined) {
       claimed.set(id, site);
@@ -173,7 +173,7 @@ export function collectArtifactDeclarations(
       );
     }
 
-    // 交付物唯一（9009）：诊断落在**后一处**的 `primary` 属性上——先标的那个是既有事实。
+    // Artifact uniqueness (9009): report on the **later** `primary` property; the earlier one is established fact.
     const primaryNode = primaryLiteralOf(site);
     if (primaryNode !== undefined) {
       if (primaryClaim === undefined) primaryClaim = { id, site };
@@ -189,8 +189,9 @@ export function collectArtifactDeclarations(
       }
     }
 
-    // 提升诊断（预置族专属）：内容成员反而**常常**该出现在循环 / 条件里（每轮发布一版、
-    // 失败时补一版），所以这条子句绝不能扩到那一族。
+    // Hoisting diagnostic (preset family only): content members **often should** appear inside loops
+    // or conditions (publish one version per iteration, or publish a replacement after failure), so
+    // this clause must never apply to that family.
     if (isArtifactPresetOp(site.op)) {
       const context = hoistingContextOf(site.call, body, holeBodies);
       if (context !== undefined) {
@@ -199,15 +200,16 @@ export function collectArtifactDeclarations(
     }
   }
 
-  // 已声明的**预置** id（标签的合法目标集）与内容 id，两张表分开：标签指向内容 id 有专门
-  // 的一条文案（它不是「没这个东西」，而是「这个东西没有数据面」）。
+  // Keep declared **preset** IDs (the valid target set for tags) separate from content IDs: a tag
+  // pointing to a content ID has its own diagnostic (“this exists but has no data surface,” rather
+  // than “this does not exist”).
   const presetIds = declared.filter((entry) => isArtifactPresetOp(entry.kind)).map((e) => e.id);
   const contentIds = new Set(
     declared.filter((entry) => !isArtifactPresetOp(entry.kind)).map((e) => e.id),
   );
 
   for (const site of table.reports) {
-    if (site.artifactIdExpr === undefined) continue; // 无标签的 report 照旧
+    if (site.artifactIdExpr === undefined) continue; // unlabeled reports keep the previous behavior
     const tagLoc = locOf(site.artifactIdExpr);
     if (site.artifactId === undefined) {
       push(
@@ -246,8 +248,8 @@ export function collectArtifactDeclarations(
 }
 
 /**
- * 站点 opts / spec 实参里字面量写着 `primary: true` 的那个属性；没有、不是对象字面量、不是
- * 字面量 `true`（算出来的、展开进来的）都算没有——那一半留给引擎。
+ * Property in site opts / spec arguments written literally as `primary: true`. Missing, non-object literal, or non-literal `true`
+ * (computed or spread in) all count as absent; the engine handles those cases.
  */
 function primaryLiteralOf(site: ArtifactSite): ts.Node | undefined {
   const arg = site.call.arguments[isArtifactPresetOp(site.op) ? 1 : 2];
@@ -262,13 +264,13 @@ function primaryLiteralOf(site: ArtifactSite): ts.Node | undefined {
   return undefined;
 }
 
-/** 「已声明的预置有：…」的尾巴；一个都没有时说得更直白。 */
+/** Suffix for "declared dashboards: …"; more direct wording is used when none exist. */
 function describePresets(presetIds: readonly string[]): string {
   if (presetIds.length === 0) return " (this script declares no preset artifacts at all)";
   return ` (declared presets: ${[...presetIds].sort().map((id) => `"${id}"`).join(", ")})`;
 }
 
-/** 去重（同 id 同种类只留一条）、按 id 字典序。 */
+/** Deduplicate (keep one entry per ID and kind) and sort lexically by ID. */
 function sortDeclared(declared: readonly DeclaredArtifact[]): DeclaredArtifact[] {
   const seen = new Set<string>();
   const unique: DeclaredArtifact[] = [];
@@ -282,19 +284,23 @@ function sortDeclared(declared: readonly DeclaredArtifact[]): DeclaredArtifact[]
 }
 
 /**
- * 该调用**词法上**待在哪种不该待的位置里，从调用向外走到脚本体为止；都不是则 undefined。
- * 报最内层的那一个：它离作者要改的那一行最近，文案也最具体。
+ * Find which disallowed position lexically contains this call by walking outward to the script body;
+ * return `undefined` if none applies. Report the innermost one because it is closest to the line the
+ * author needs to change and has the most specific message.
  *
- * 刻意**不**把普通函数声明算作回调：`function setup() { artifact.chart(...) }` 后跟一次
- * `setup()` 是一份合法的顶层声明，只是换了个写法。箭头函数与函数表达式则几乎总是回调
- * （`.map(...)`、`.then(...)`），所以它们算。代价是「在具名 helper 里声明、而 helper 被
- * 循环调用」这一形状漏报——那是漏报方向，与本模块的保守取向一致（引擎的
- * `ArtifactRedeclared` 仍然兜底）。
+ * Deliberately **do not** classify ordinary function declarations as callbacks: a top-level
+ * `function setup() { artifact.chart(...) }` followed by `setup()` is a valid declaration written in
+ * another form. Arrow functions and function expressions are almost always callbacks (`.map(...)`,
+ * `.then(...)`), so they count. The trade-off is a missed diagnostic for a declaration inside a named
+ * helper that is called in a loop. This errs toward false negatives, consistent with this module's
+ * conservative approach; the engine's `ArtifactRedeclared` check remains a backstop.
  *
- * 已补全留白的函数体（`holeBodies`）**不算**回调：它被拼在留白所在的位置、每次到达跑一遍，与
- * 周围的语句同级，所以这里看穿它，继续往外找——留白自己待在循环 / 分支里时照样报。
- * 修复原因（2026-09-29 testfield 实测）：此前一切箭头都算回调，补全体恰好是箭头，于是没有一次
- * 补全能为它写下的那一段声明看板，主代理只能放弃。
+ * A filled hole body (`holeBodies`) **is not** a callback: it is spliced at the hole's position and
+ * runs once whenever that position is reached, at the same level as surrounding statements. Look
+ * through it and continue outward; still report when the hole itself is inside a loop or branch.
+ * Fix rationale (observed in testfield on 2026-09-29): previously every arrow function counted as a
+ * callback, and a filled body is an arrow function. As a result, no completion could declare an
+ * artifact for its board, leaving the main agent unable to proceed.
  */
 function hoistingContextOf(
   call: ts.CallExpression,
@@ -320,8 +326,9 @@ function hoistingContextOf(
     ) {
       return "loop";
     }
-    // if / ternary：只有**分支**算条件位置，条件表达式本身不算——`if (artifact.chart(...))`
-    // 无条件求值，它的问题是别的（一个 void 当条件用），不该借这条文案说。
+    // For if / ternary expressions, only the **branches** count as conditional positions, not the
+    // condition itself. `if (artifact.chart(...))` is evaluated unconditionally; its issue is using a
+    // void value as a condition, which this diagnostic should not describe.
     if (ts.isIfStatement(node) && (node.thenStatement === child || node.elseStatement === child)) {
       return "conditional";
     }

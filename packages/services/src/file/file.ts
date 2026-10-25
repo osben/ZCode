@@ -14,12 +14,12 @@ export interface WorkspaceFileSearchParams {
   workspaceIdentity?: string;
   query: string;
   limit?: number;
-  /** 无命中补扫：绕过尚未过期的文件索引。 */
+  /** Rescan on a miss, bypassing a file index that has not yet expired. */
   refresh?: boolean;
 }
 
 export interface IFileService {
-  /** Host 匹配并返回有界候选，避免 Renderer 下载完整文件索引。 */
+  /** Match and return bounded candidates in the Host to avoid downloading the full file index to the Renderer. */
   searchWorkspaceFiles(params: WorkspaceFileSearchParams): Promise<WorkspaceFileEntry[]>;
   readdir(params: { path: string; includeHidden?: boolean }): Promise<FileEntry[]>;
   stat(params: { path: string }): Promise<FileStat>;
@@ -35,25 +35,25 @@ export interface IFileService {
   readTextFile(params: { path: string; offset?: number; length?: number }): Promise<FileTextSlice>;
   readMediaPreview(params: { path: string; maxBytes?: number }): Promise<FileMediaPreview>;
   /**
-   * 按偏移读取文件的一段原始字节，供大二进制文件（如 PDF）按需分段加载。
-   * 返回值必须保持顶层 Uint8Array：RPC 序列化只对顶层二进制走原始字节通道，
-   * 嵌套在对象字段里会退化成 JSON+base64。EOF 时返回短数组。
+   * Read a range of raw file bytes by offset for on-demand loading of large binary files such as PDFs.
+   * The return value must remain a top-level Uint8Array: RPC serialization uses the raw byte path only for top-level binary data;
+   * nesting it in an object field degrades to JSON+base64. Return a shorter array at EOF.
    */
   readFileRange(params: { path: string; offset: number; length: number }): Promise<Uint8Array>;
   readBinaryPreview(params: { path: string; maxBytes?: number }): Promise<FileBinaryPreview>;
   /**
-   * workspace 文件索引的列式打包长度（字符数）。与 listWorkspaceFilesRange 配对，
-   * 调用方按长度分块拉取（见 fetchWorkspaceFileEntriesPacked）。
-   * 返回 number：RPC Int 快速路径。
+   * Length (in characters) of the column-packed workspace file index. Used with listWorkspaceFilesRange;
+   * callers fetch it in chunks by length (see fetchWorkspaceFileEntriesPacked).
+   * Returns a number: RPC Int fast path.
    */
   listWorkspaceFilesLength(params: { rootPath: string }): Promise<number>;
   /**
-   * 分块返回列式打包字符串（workspaceFileEntriesCodec 格式，[offset, offset+length)）。
-   * 必须是裸 string 顶层返回：RPC String 快速路径（长度前缀+原始字节）；Object 会
-   * JSON 转义大字符串（实测 6-9s 主线程长任务）。单块不超过 ~4MB：大消息在
-   * renderer 接收端的分帧重组是秒级长任务（实测 4.6-6.3s），分块 + 块间让出后
-   * 主线程每次只处理一小块（~50ms），输入永不冻结。
-   * Host 侧有 60s TTL + .zcodeignore 指纹签名的整包缓存，分块只是切片。
+   * Return a chunk of the column-packed string (workspaceFileEntriesCodec format, [offset, offset+length)).
+   * It must be returned as a bare top-level string: the RPC String fast path uses a length prefix and raw bytes; an Object would
+   * JSON-escape the large string (measured 6–9 s of main-thread work). Keep each chunk under ~4 MB: reassembling large messages in the
+   * renderer takes several seconds (measured 4.6–6.3 s), while chunking and yielding between chunks lets the main thread process each small piece (~50 ms),
+   * keeping input responsive.
+   * The Host caches the complete pack for 60 s with a .zcodeignore fingerprint; chunking only slices that cached pack.
    */
   listWorkspaceFilesRange(params: {
     rootPath: string;
@@ -61,16 +61,16 @@ export interface IFileService {
     length: number;
   }): Promise<string>;
   /**
-   * workspace 搜索忽略规则（.zcodeignore）的读写，供设置页编辑使用。
-   * source: "file" 已存在文件内容；"template" 尚未创建时的初始内容预览（保存时才落盘）。
+   * Read/write workspace search ignore rules (.zcodeignore) for editing in Settings.
+   * source: "file" means existing file contents; "template" means an initial preview before the file is created (written only on save).
    */
   readWorkspaceFileSearchIgnore(params: {
     rootPath: string;
   }): Promise<{ content: string; source: "file" | "template" }>;
   /**
-   * 设置页分区操作（返回新内容填充编辑框，保存才落盘）：
-   * "sync-gitignore" 只重写 gitignore 同步区（保留默认段与自定义区）；
-   * "reset-defaults" 只重置默认排除段（保留 gitignore 区与自定义区）。
+   * Section actions in Settings (return new content to fill the editor; write to disk only on save):
+   * "sync-gitignore" rewrites only the gitignore sync section (preserving the default and custom sections);
+   * "reset-defaults" resets only the default exclusion section (preserving the gitignore and custom sections).
    */
   applyWorkspaceFileSearchIgnoreTransform(params: {
     rootPath: string;

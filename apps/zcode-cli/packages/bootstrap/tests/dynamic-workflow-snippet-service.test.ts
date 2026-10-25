@@ -1,10 +1,11 @@
 /**
- * dwf snippet service（EvalWorkflowSnippet 的执行面）。见 docs/dynamic-workflow/authoring.md。
+ * dwf snippet service (the execution surface of EvalWorkflowSnippet). See docs/dynamic-workflow/authoring.md.
  *
- * 这些用例走**真沙箱**（runWorkflowScript spawn 一个 node 子进程，runtime 包的 e2e 先例），
- * 但 world read 落在内存 fs 桩上——被测对象是 service 这一层的编排：scratch facade 编译、
- * 诊断路径、结算映射、logs 捕获、超时、产物上限。与真文件系统的对接由
- * workflow-driver-world-read-args.test.ts 与 runtime e2e 覆盖。
+ * These cases run in a **real sandbox** (runWorkflowScript spawns a node child process, following
+ * the e2e precedent in the runtime package), but world reads land on an in-memory fs stub — the
+ * thing under test is the orchestration at the service layer: scratch facade compilation,
+ * diagnostics paths, settlement mapping, logs capture, timeouts, and artifact caps. Integration
+ * with the real filesystem is covered by workflow-driver-world-read-args.test.ts and runtime e2e.
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -16,20 +17,22 @@ import { NodeExecutionAdapter } from "@zcode/adapters/exec";
 import { WORLD_RUN_LITERAL_CODE } from "@zcode/dynamic-workflow";
 import { createDynamicWorkflowSnippetService } from "../src/app/dynamic-workflow-snippet-service.js";
 /**
- * 独立的 run cwd：harness 把入口文件写到 `<cwd>/.zcode/workflow-runs/<runId>.mjs` 且保留，
- * 用 process.cwd() 会把存档留在包目录里，并让并行测试文件互相覆写同名入口文件。
+ * Dedicated run cwd: the harness writes the entry file to `<cwd>/.zcode/workflow-runs/<runId>.mjs`
+ * and keeps it. Using process.cwd() would leave archives in the package directory and let parallel
+ * test files overwrite each other's entry files of the same name.
  */
 const TEST_CWD: string = mkdtempSync(join(tmpdir(), "dwf-bootstrap-test-cwd-"));
 
-/** 极简内存 fs 端口（照 workflow-driver-world-read-args.test.ts 的桩形状）。 */
+/** Minimal in-memory fs port (shaped after the stub in workflow-driver-world-read-args.test.ts). */
 function stubFileSystemPort(glob: string[], read: string, globHangs: boolean): FileSystemPort {
   const unsupported = (name: string) => () => {
     throw new Error(`stubFileSystemPort.${name} 不应被触及`);
   };
   return {
     async searchFiles(request: { path: string; pattern: string }) {
-      // 永不应答的 world read：让 snippet「活着却无事可做」的唯一合法形态是一条在飞的 host 请求
-      // （runtime 包 tests/failures.test.ts 的 HANG 同理）；裸的永不兑现 promise 会被 cell 当场判停滞。
+      // A world read that never answers: the only legitimate way to keep the snippet "alive with
+      // nothing to do" is one in-flight host request (same as the HANG case in the runtime
+      // package's tests/failures.test.ts); a bare never-resolving promise is judged stalled on the spot by the cell.
       if (globHangs) await new Promise<never>(() => {});
       return {
         path: request.path,
@@ -111,7 +114,8 @@ describe("dynamic workflow snippet service", () => {
     );
     expect(result.kind).toBe("completed");
     if (result.kind !== "completed") return;
-    // facade 归一：工作区相对 + 字典序（glob 事故的钉子在 driver 侧，这里断言端到端形状）。
+    // facade normalization: workspace-relative + lexicographic order (the nail in the glob-incident
+    // coffin lives on the driver side; here we assert the end-to-end shape).
     expect(result.artifact).toEqual(["a.test.ts"]);
     expect(result.logs).toEqual(["saw 3"]);
     expect(result.logsTruncated).toBe(false);
@@ -136,20 +140,23 @@ describe("dynamic workflow snippet service", () => {
   });
 
   it("kills the sandbox on wall-clock timeout and fails structurally", async () => {
-    // 挂在一条永不应答的 world read 上：请求在飞，cell 不会判停滞，只剩墙钟能结束它。
+    // Hang on a world read that never answers: the request stays in flight, the cell will not judge
+    // it stalled, and only the wall clock can end it.
     const service = makeService({ globHangs: true });
     const result = await service.evalSnippet(request(`await files.glob("**");`, 1_000));
     expect(result.kind).toBe("failed");
     if (result.kind !== "failed") return;
-    // 墙钟超时是宿主侧故障：引擎结算 stopped(interrupted)（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md
-    // 决策 12）；snippet 没有 resume 语义，对调用方仍是结构化失败，code 透出 Interrupted。
+    // A wall-clock timeout is a host-side failure: the engine settles stopped(interrupted)
+    // (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md decision 12); the snippet has
+    // no resume semantics, so for the caller it is still a structured failure with code Interrupted.
     expect(result.error.code).toBe("Interrupted");
     expect(result.error.message).toContain("1000ms");
   }, 20_000);
 
   it("fails a stalled snippet at once instead of waiting for the wall clock", async () => {
-    // 没有在飞请求的永不兑现 promise 是停滞（execution-engine.md「The vm cell」停滞检测）：
-    // cell 以 ScriptStalled 结束 run，snippet 立刻拿到结构化失败，而不是挂到 30s 超时。
+    // A never-resolving promise with no in-flight request is a stall (execution-engine.md "The vm cell"
+    // stall detection): the cell ends the run with ScriptStalled and the snippet immediately gets a
+    // structured failure instead of hanging until the 30s timeout.
     const service = makeService();
     const result = await service.evalSnippet(request(`await new Promise(() => {});`, 30_000));
     expect(result.kind).toBe("failed");
@@ -161,7 +168,7 @@ describe("dynamic workflow snippet service", () => {
   it("rejects an oversized return value with ArtifactTooLarge", async () => {
     const service = makeService();
     const result = await service.evalSnippet(
-      // 300KB 的字符串产物：超过 256KB 序列化上限。
+      // A 300KB string artifact: exceeds the 256KB serialization cap.
       request(`return "x".repeat(300 * 1024);`),
     );
     expect(result.kind).toBe("failed");
@@ -182,7 +189,7 @@ describe("dynamic workflow snippet service", () => {
   });
 
   it("surfaces world-read cap rejections as catchable inside the snippet", async () => {
-    // 2001 个文件超过 files.glob 的 2000 上限：service 不截断，脚本 catch 到结构化拒绝。
+    // 2001 files exceed the 2000 cap of files.glob: the service does not truncate, the script catches the structured rejection.
     const service = makeService({ glob: Array.from({ length: 2001 }, (_, i) => `f${i}.ts`) });
     const result = await service.evalSnippet(
       request(
@@ -203,7 +210,7 @@ describe("dynamic workflow snippet service — world.run", () => {
   function makeWorldRunService() {
     return createDynamicWorkflowSnippetService({
       fileSystemPort: stubFileSystemPort([], ""),
-      // 真执行端口：world.run 的 e2e 意义正在于「同一个 driver 面对真命令」。
+      // Real execution port: the e2e point of world.run is precisely "the same driver facing a real command".
       executionPort: new NodeExecutionAdapter({
         outputRootDir: outputRoot,
         processEnv: process.env as Record<string, string>,
@@ -223,7 +230,7 @@ describe("dynamic workflow snippet service — world.run", () => {
     );
     expect(result.kind).toBe("completed");
     if (result.kind !== "completed") return;
-    // 非零退出是值：门控逻辑在脚本内分支，不经异常控制流。
+    // A nonzero exit is a value: gating logic branches inside the script, not via exception control flow.
     expect(result.artifact).toEqual({ code: 3, out: "hi" });
   }, 30_000);
 

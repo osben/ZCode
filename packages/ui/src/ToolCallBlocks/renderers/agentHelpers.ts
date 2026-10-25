@@ -1,3 +1,4 @@
+import { createElement, Fragment, type ReactNode } from "react";
 import type { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
 import { isSubagentColor } from "@/lib/subagentColors.js";
@@ -6,10 +7,26 @@ type AgentIntl = ReturnType<typeof useZCodeIntl>["intl"];
 type AgentToolCall = ToolCallBlockRenderContext["toolCallNode"]["toolCall"];
 const DEFAULT_AGENT_TYPE_LABEL = "general-purpose";
 
+export function combineAgentSecondarySummary(
+  childSummary: ReactNode,
+  usageSummary: ReactNode,
+): ReactNode | undefined {
+  if (!childSummary) return usageSummary || undefined;
+  if (!usageSummary) return childSummary;
+  return createElement(
+    Fragment,
+    null,
+    childSummary,
+    createElement("span", { className: "shrink-0" }, "·"),
+    usageSummary,
+  );
+}
+
 export function formatAgentMessage(intl: AgentIntl, id: string, fallback: string) {
   const message = intl.formatMessage({ id });
-  // agent 工具块的语言包一旦漏配，SSR/静态渲染会把内部 i18n key 原样打到 UI 上，
-  // 不但测试断言会失败，真实界面也会直接暴露实现细节。这里统一回退到稳定术语。
+  // If a localization is missing for an agent tool block, SSR/static rendering would show the
+  // internal i18n key in the UI, failing tests and exposing implementation details to users.
+  // Fall back to stable terminology here.
   return message === id ? fallback : message;
 }
 
@@ -157,9 +174,10 @@ export function getAgentKindLabel(
     readStringFromNestedRecord(toolCall.raw, ["_meta", "zcode", "agent_type"]) ??
     readStringFromNestedRecord(toolCall.raw, ["_meta", "zcode", "subagent_type"]);
 
-  // 流式 input 的半截 JSON 暂时读不到 subagent_type，若一读不到就按“模型省略字段”
-  // 回退 general-purpose，首帧会误报、之后再跳成真实类型。只有 inputPreviewComplete 明确为 true
-  // 才能确认字段确实省略；已投影的 subagentRow 类型则作为 runtime 权威结果优先展示。
+  // Partial JSON in streaming input may not yet contain subagent_type. Falling back to
+  // general-purpose whenever it is not found would show the wrong type in the first frame and then
+  // switch to the real type. Confirm omission only when inputPreviewComplete is true; prefer the
+  // projected subagentRow type as the runtime authority.
   const explicitName =
     (authoritativeAgentType?.trim() || undefined) ??
     readAgentNameFromRecord(outputRecord) ??
@@ -217,8 +235,9 @@ export function getAgentActivityContent(toolCall: AgentToolCall) {
     readStringFromNestedRecord(toolCall.raw, ["_meta", "zcode", "taskNotification", "result"]) ??
     readStringFromNestedRecord(toolCall.raw, ["_meta", "zcode", "taskNotification", "summary"]);
   if (taskNotificationResult) {
-    // background Agent 的 output_file 是完整 sidechain transcript，
-    // task-notification result 才是适合用户阅读的完成摘要。优先展示摘要，避免展开后被 JSONL 淹没。
+    // output_file for a background Agent is the full sidechain transcript; the task-notification
+    // result is the completion summary intended for users. Prefer the summary so expansion is not
+    // overwhelmed by JSONL.
     return taskNotificationResult;
   }
 

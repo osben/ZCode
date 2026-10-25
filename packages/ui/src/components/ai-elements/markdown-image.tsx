@@ -40,8 +40,8 @@ const markdownImageOnlyLinePattern = /^\s*!\[[^\]]*]\([^\n]+\)\s*$/;
 const markdownFenceLinePattern = /^( {0,3})(`{3,}|~{3,})(.*)$/;
 
 /**
- * Streamdown 会在 rehype 前按空行拆块。仅移除连续纯图片行之间的空行，让同组图片进入
- * 同一个 Markdown 块；代码围栏里的相似文本必须保持原样。
+ * Streamdown splits blocks at blank lines before rehype. Remove blank lines only between consecutive image-only lines so images in a group
+ * stay in one Markdown block; preserve similar text inside code fences.
  */
 export function normalizeConsecutiveMarkdownImageBlocks(markdown: string): string {
   const lines = markdown.split("\n");
@@ -94,8 +94,8 @@ export function normalizeConsecutiveMarkdownImageBlocks(markdown: string): strin
 }
 
 /**
- * Streamdown 的 harden 会过滤 rehype 自定义属性，因此在 React component mapping
- * 层识别纯图片段落，确保画廊标记和响应式 class 不会被安全层剥离。
+ * Streamdown's harden filter removes custom rehype attributes, so identify image-only paragraphs at the React component mapping
+ * layer to ensure gallery markers and responsive classes are not stripped by the security layer.
  */
 export function MarkdownImageParagraph({
   children,
@@ -202,8 +202,8 @@ export function MarkdownImage({
 
   useEffect(
     () => () => {
-      // 关闭预览后的异步焦点恢复可能晚于消息节点卸载，
-      // 必须取消旧任务，避免焦点落到已脱离文档的图片按钮。
+      // Asynchronous focus restoration after closing the preview may run after the message node unmounts.
+      // Cancel the old task so focus is not sent to an image button detached from the document.
       if (focusTimerRef.current !== null) {
         window.clearTimeout(focusTimerRef.current);
       }
@@ -309,8 +309,8 @@ export function MarkdownImage({
   const handlePreviewOpenChange = (open: boolean) => {
     setPreviewOpen(open);
     if (!open) {
-      // Dialog 关闭后手动将焦点归还图片触发按钮，避免焦点落到 body，
-      // 让键盘用户能够从原图继续浏览消息。
+      // After closing the Dialog, manually return focus to the image trigger instead of body,
+      // so keyboard users can continue browsing the message from the original image.
       if (focusTimerRef.current !== null) {
         window.clearTimeout(focusTimerRef.current);
       }
@@ -330,8 +330,8 @@ export function MarkdownImage({
         className={cn(
           imageThumbnailTriggerClassName,
           effectiveImageStatus === "loading" &&
-            // 画廊父级的响应式 w-auto/h-44 选择器优先级高于普通尺寸类，
-            // 加载态内部又是绝对定位，导致按钮宽度塌缩；仅在加载期间强制固定方形。
+            // The gallery parent's responsive w-auto/h-44 selector has higher priority than regular sizing classes,
+            // and the loading state is absolutely positioned, collapsing button width. Force a square size only while loading.
             "relative !h-44 !w-44 !max-w-full cursor-default",
         )}
         data-image-thumbnail-trigger=""
@@ -350,8 +350,8 @@ export function MarkdownImage({
           </span>
         ) : null}
         <img
-          // React 复用同一 img 时，旧资源的异步事件可能命中新 src 的处理器。
-          // 按资源重建节点，确保 load/error 只更新触发该事件的图片状态。
+          // When React reuses the same img, an async event from the old resource may hit the new src handler.
+          // Recreate the node by resource so load/error updates only the image state that triggered the event.
           key={displaySrc}
           alt={imageAlt}
           className={cn(
@@ -364,8 +364,8 @@ export function MarkdownImage({
           draggable={false}
           loading="lazy"
           onError={(event) => {
-            // 远程 Markdown 图片不能直接交给浏览器渲染：加载失败时既没有状态，
-            // 也没有运行时轨迹，用户只能看到空白区域。
+            // Do not render remote Markdown images directly in the browser: on failure there is no state
+            // or runtime trace, and the user sees only a blank area.
             setBrowserImageState({ source: displaySrc ?? "", status: "error" });
             logger.warn("[MarkdownImage] markdown 图片加载失败", {
               source: sanitizeImageSourceForLog(displaySrc ?? ""),

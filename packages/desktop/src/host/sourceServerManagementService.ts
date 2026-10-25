@@ -69,6 +69,7 @@ interface SourceServerManagementManager {
   }): Promise<ManagedSourceServerConnection>;
   disconnect(sourceServerId: string): void;
   removeProfile(profileId: string): void;
+  trustHostKey(profileId: string, fingerprint: string): Promise<void>;
 }
 
 export interface SourceServerManagementService extends ISourceServerManagementService {
@@ -147,7 +148,11 @@ export function createSourceServerManagementService(options: {
   function migrationService(sourceServerId: string) {
     const connection = options.manager.getOnlineConnection(sourceServerId);
     if (!connection) throw new Error(`Source Server must be connected: ${sourceServerId}`);
-    return connection.services.sourceServerWorkspaceService;
+    // The fork's service accessor exposes the workspace service as optional; a Source without it cannot migrate.
+    const service = connection.services.sourceServerWorkspaceService;
+    if (!service)
+      throw new Error(`Source Server workspace migration unsupported: ${sourceServerId}`);
+    return service;
   }
 
   return {
@@ -196,6 +201,11 @@ export function createSourceServerManagementService(options: {
         confirmIdentityChange: true,
         ...(options.onConnectionLog ? { context: { onLog: options.onConnectionLog } } : {}),
       });
+      return await getSnapshot();
+    },
+    async trustHostKey(profileId, fingerprint) {
+      await readProfile(profileId);
+      await options.manager.trustHostKey(profileId, fingerprint);
       return await getSnapshot();
     },
     async disconnectSource(sourceServerId) {

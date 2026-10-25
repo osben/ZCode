@@ -3,6 +3,7 @@ import type { IPlatformService } from "@zcode/shared";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import {
   buildChangeSummaryDiffViewerSource,
   buildChangeSummaryFilePreviewSource,
@@ -135,7 +136,7 @@ function renderPanel(overrides: Partial<PanelProps> = {}) {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(
         PlatformProvider,
         { platform: mockPlatform },
@@ -157,24 +158,25 @@ describe("MessageChangeSummaryPanel", () => {
     localStorageState.clear();
   });
 
-  it("默认闭合变更文件列表，并且先隐藏撤销按钮", () => {
+  it("keeps the changed-file list collapsed by default and hides the rewind button first", () => {
     const html = renderPanel();
 
-    expect(html).toContain("1 个文件已更改");
+    expect(html).toContain(expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }));
     expect(html).toContain("+1");
     expect(html).toContain("-1");
-    expect(html).toContain('aria-label="展开已更改文件"');
+    expect(html).toContain(`aria-label="${expectedCopy("chat.changeSummary.expand")}"`);
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain('data-state="closed"');
     expect(html).toContain('data-slot="collapsible-content"');
     expect(html).toContain('hidden=""');
-    // Bugfix: 摘要默认闭合时不挂载文件行，避免多文件变更把最新消息顶走。
+    // Bugfix: when the summary is collapsed, file rows stay unmounted so a
+    // multi-file change cannot push the latest message out of view.
     expect(html).not.toContain("src/MessageChangeSummaryPanel.tsx");
-    expect(html).not.toContain("打开");
-    expect(html).not.toContain("选择打开方式");
+    expect(html).not.toContain(expectedCopy("chat.changeSummary.openInEditor"));
+    expect(html).not.toContain(expectedCopy("appHeader.selectOpenApp"));
   });
 
-  it("优先显示当前轮次的摘要，不把整个 session 的汇总混进来", () => {
+  it("prefers the current turn's summary and does not mix in the whole session's totals", () => {
     const html = renderPanel({
       summary: {
         fileCount: 2,
@@ -210,14 +212,14 @@ describe("MessageChangeSummaryPanel", () => {
       },
     });
 
-    expect(html).toContain("1 个文件已更改");
+    expect(html).toContain(expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }));
     expect(html).toContain("+1");
-    expect(html).not.toContain("2 个文件已更改");
+    expect(html).not.toContain(expectedCopy("chat.changeSummary.filesChanged.other", { count: 2 }));
     expect(html).not.toContain("src/App.tsx");
     expect(html).not.toContain("+8");
   });
 
-  it("为打开按钮构建 MultiFileDiff code-viewer source", () => {
+  it("builds a MultiFileDiff code-viewer source for the open button", () => {
     expect(
       buildChangeSummaryDiffViewerSource({
         relativePath: "src/App.tsx",
@@ -237,7 +239,7 @@ describe("MessageChangeSummaryPanel", () => {
     });
   });
 
-  it("为打开按钮构建普通文件 preview source", () => {
+  it("builds a plain file preview source for the open button", () => {
     expect(
       buildChangeSummaryFilePreviewSource({
         path: "/workspace/src/App.tsx",
@@ -256,7 +258,7 @@ describe("MessageChangeSummaryPanel", () => {
     });
   });
 
-  it("为工具聚合的 readonly patch 构建 patch preview source", () => {
+  it("builds a patch preview source for tool-aggregated readonly patches", () => {
     expect(
       buildChangeSummaryDiffViewerSource({
         relativePath: "src/App.tsx",
@@ -272,7 +274,7 @@ describe("MessageChangeSummaryPanel", () => {
     });
   });
 
-  it("有 source 和打开回调时委托一次，缺少任一时不调用", () => {
+  it("delegates once when a source and open callback exist, and not when either is missing", () => {
     const source = buildChangeSummaryDiffViewerSource({
       relativePath: "src/App.tsx",
       path: "/workspace/src/App.tsx",
@@ -290,7 +292,7 @@ describe("MessageChangeSummaryPanel", () => {
     expect(onOpenCodeViewer).not.toHaveBeenCalled();
   });
 
-  it("工具聚合摘要没有真实 checkpoint 时不展示撤销入口", () => {
+  it("shows no rewind entry when a tool-aggregated summary has no real checkpoint", () => {
     const html = renderPanel({
       changeDetails: null,
       onToggleFiles: vi.fn(),
@@ -302,7 +304,7 @@ describe("MessageChangeSummaryPanel", () => {
       ]),
     });
 
-    expect(html).toContain("1 个文件已更改");
-    expect(html).not.toContain("撤销");
+    expect(html).toContain(expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }));
+    expect(html).not.toContain(expectedCopy("chat.changeSummary.rewind"));
   });
 });

@@ -146,7 +146,7 @@ export function buildContextUsageSnapshot(
   const messageBreakdown = this.buildMessageRoleBreakdown(options.messages);
   const conversationMessageBreakdown = this.buildMessageRoleBreakdown(
     options.messages.filter(
-      // 根因：新轮通知带 wrapper，但并未计入 ContextBuilder sections；按可信来源计回 Messages，避免漏算。
+      // Cause: new-turn notifications include a wrapper but are not included in ContextBuilder sections; count them under Messages as a trusted source to avoid undercounting.
       (message, index) =>
         message.role !== "system" &&
         (!isMetaUserContextMessage(message) ||

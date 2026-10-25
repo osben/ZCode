@@ -30,6 +30,7 @@ export * from "./interfaces/automation.port.js";
 export * from "./interfaces/off-peak.port.js";
 export * from "./interfaces/topic-resource.port.js";
 export * from "./interfaces/mcp.port.js";
+export * from "./interfaces/language-server.port.js";
 
 export * from "./interfaces/runtime-input-presentation.js";
 
@@ -72,6 +73,9 @@ export * from "./commands/index.js";
 // Plugins
 export * from "./plugins/index.js";
 
+// Language servers
+export * from "./lsp/index.js";
+
 // Workflow
 export * from "./workflow/index.js";
 
@@ -94,7 +98,7 @@ export * from "./network/public-egress-ip.js";
 export * from "./tools/index.js";
 export * from "./tools/websearch.js";
 
-// 媒体预算上限由 App/Agent 共用策略定义；Contracts 统一转出，避免 Core 各处跨层取值。
+// Media budget limits are defined by a policy shared by App/Agent; re-export them from Contracts so Core does not read across layers.
 export {
   MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE_ERROR_CODE,
   MEDIA_BUDGET_CURRENT_IMAGE_TOO_LARGE_ERROR_CODE,

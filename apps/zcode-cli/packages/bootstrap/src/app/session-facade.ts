@@ -75,6 +75,7 @@ type SessionFacade = Pick<
   | "getDefaultThoughtLevel"
   | "getThoughtLevel"
   | "getTheme"
+  | "getPalette"
   | "listCheckpoints"
   | "listMcpServers"
   | "getMcpToolVisibility"
@@ -288,14 +289,30 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
   return {
     close: async () => {
       closePromise ??= (async () => {
-        // 关闭入口先阻止新调度并取消在飞 Memory Extraction，再等待取消链路收口。
+        // SessionEnd hooks run first, while every session resource is still alive. A hook
+        // failure must never block the close chain: log it and continue releasing resources.
+        try {
+          await deps.runtime.runSessionEndHooks(deps.traceContext);
+        } catch (error: unknown) {
+          deps.logger.warn?.("SessionEnd hook dispatch failed; continuing to close", {
+            errorMessage: error instanceof Error ? error.message : String(error),
+            event: "session.hooks.session_end_failed",
+            module: "bootstrap.app",
+          });
+        }
+        // The close entry point first blocks new scheduling and cancels in-flight Memory Extraction,
+        // then waits for cancellation to settle.
         deps.runtime.beginShutdown();
-        await deps.runtime.drainMemoryExtractions(60_000);
-        // 引擎归本 App 所有，所以关闭要主动停下它。
-        // 位置是两个约束夹出来的：在 beginShutdown **之后**，结算带出的终态通知才会被丢掉
-        // （background-notifications.ts 在 shuttingDown 时不入队），不会把正在关闭的会话的模型
-        // 叫醒；在 closeSessionResources **之前**，子代理还有 execution / MCP / session store
-        // 可以干净地中止，引擎也还有 journal 可以写自己那一笔 stopped(interrupted)。
+        await Promise.all([
+          deps.runtime.drainMemoryExtractions(60_000),
+          deps.runtime.drainBackgroundDreams(60_000),
+        ]);
+        // This App owns the engine, so closing must stop it explicitly.
+        // The placement satisfies two constraints: **after** beginShutdown, terminal notifications
+        // emitted during settlement are dropped (background-notifications.ts does not enqueue while
+        // shutting down), so they cannot wake a model in a closing session; **before**
+        // closeSessionResources, subagents still have execution, MCP, and session-store resources to
+        // abort cleanly, and the engine can write its stopped(interrupted) journal entry.
         if (deps.closeDynamicWorkflowRuns !== undefined) {
           try {
             await deps.closeDynamicWorkflowRuns();
@@ -335,6 +352,7 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
     getModel: () => formatLegacyRuntimeModelValue(readUserModelSelection(deps)),
     getLocale: () => currentLocale,
     getTheme: () => deps.configResult.config.ui.theme as UiThemePreference,
+    getPalette: () => deps.configResult.config.ui.palette,
     getDefaultThoughtLevel: () => {
       const registryState = currentRegistrySelection();
       return registryState.owned

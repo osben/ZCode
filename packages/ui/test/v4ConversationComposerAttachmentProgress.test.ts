@@ -9,6 +9,7 @@ import {
 } from "@zcode/shared/test-ids";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ConversationComposer } from "@/v4/ConversationComposer.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const attachmentState = vi.hoisted(() => ({
   attachments: [] as Array<Record<string, unknown>>,
@@ -131,7 +132,7 @@ function renderComposer(overrides: Record<string, unknown> = {}) {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(AnyConversationComposer, {
         draftMode: true,
         onSelectModel: vi.fn(),
@@ -149,7 +150,7 @@ function renderComposer(overrides: Record<string, unknown> = {}) {
 }
 
 describe("ConversationComposer attachment upload progress", () => {
-  it("只让聚焦且未禁用的 composer 监听 add-to-chat，并保留 CUA 常驻入口", () => {
+  it("only lets a focused, enabled composer listen to add-to-chat and keeps the persistent CUA entry", () => {
     const html = renderComposer({
       disabled: true,
       isWebRemoteControl: true,
@@ -169,7 +170,7 @@ describe("ConversationComposer attachment upload progress", () => {
     });
   });
 
-  it("图片显示上传圆环与百分比，未 ready 时发送按钮 disabled", () => {
+  it("images show the upload ring and percentage, and the send button is disabled while not ready", () => {
     attachmentState.attachments = [
       {
         adopted: false,
@@ -200,7 +201,7 @@ describe("ConversationComposer attachment upload progress", () => {
     expect(html).toContain(`disabled="" data-testid="${TID_V4_COMPOSER_SEND}"`);
   });
 
-  it("输入框附件按媒体（图片/视频）优先于文件排序，媒体组内保持添加顺序", () => {
+  it("composer attachments sort media (image/video) before files and keep insertion order inside the media group", () => {
     attachmentState.attachments = [
       {
         adopted: false,
@@ -259,7 +260,7 @@ describe("ConversationComposer attachment upload progress", () => {
     expect(html.indexOf('data-composer-attachment-kind="video"')).toBeLessThan(
       html.indexOf('data-composer-attachment-kind="file"'),
     );
-    // 媒体组内按添加顺序混排：后加的图片仍在先加的视频之前。
+    // Inside the media group insertion order holds: the image added later still precedes the video added earlier.
     expect(html.indexOf('data-composer-attachment-kind="image"')).toBeLessThan(
       html.indexOf('data-composer-attachment-kind="video"'),
     );
@@ -267,7 +268,7 @@ describe("ConversationComposer attachment upload progress", () => {
     expect(html).toContain('data-composer-attachment-kind="image"');
     expect(html).toContain('data-composer-attachment-kind="video"');
     expect(html).toContain('data-composer-attachment-kind="file"');
-    // 视频与图片共享预览列表；保留原始 objectUrl。
+    // Video and image share the preview list; the original objectUrl is kept.
     expect(html).toContain('data-composer-attachment-url="blob:video-third"');
     expect(html).toContain('data-composer-image-preview="avatar.png,demo.mov"');
     expect(html).toContain("SNAKE-ARENA.md");
@@ -280,7 +281,7 @@ describe("ConversationComposer attachment upload progress", () => {
     expect(html).toContain("[@media(hover:none)]:opacity-100");
   });
 
-  it("视频附件显示上传进度环与原始预览地址", () => {
+  it("video attachments show the upload progress ring and the raw preview URL", () => {
     attachmentState.attachments = [
       {
         adopted: false,
@@ -310,7 +311,7 @@ describe("ConversationComposer attachment upload progress", () => {
     expect(html).toContain('data-composer-attachment-url="blob:video-1"');
   });
 
-  it("非图片失败态提供 alert、错误提示和可访问重试入口", () => {
+  it("failed non-image attachments expose an alert, an error hint and an accessible retry entry", () => {
     attachmentState.attachments = [
       {
         adopted: false,
@@ -335,7 +336,7 @@ describe("ConversationComposer attachment upload progress", () => {
     expect(html).toContain('role="alert"');
     expect(html).toContain("network unavailable");
     expect(html).toContain(`data-testid="${testId(TID_V4_ATTACHMENT_UPLOAD_RETRY, "file-1")}"`);
-    expect(html).toContain('aria-label="重试上传"');
+    expect(html).toContain(`aria-label="${expectedCopy("chat.attachments.upload.retry")}"`);
     expect(html).toContain("text-destructive");
   });
 });

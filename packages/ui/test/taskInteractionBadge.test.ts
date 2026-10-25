@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ZCodeTaskPendingInteraction } from "@zcode/shared";
 import { ZCodeIntlProvider } from "../src/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import {
   TaskInteractionBadge,
   getTaskInteractionBadgePresentation,
@@ -54,7 +55,11 @@ describe("TaskInteractionBadge", () => {
           interactionId: "ask-1",
           kind: "userInput",
           toolName: "AskUserQuestion",
-          autoResolution: { state: "snoozed", startedAt: 0, snoozedAt: 299_000 },
+          autoResolution: {
+            state: "snoozed",
+            startedAt: 0,
+            snoozedAt: 299_000,
+          },
         },
         false,
         300_000,
@@ -69,7 +74,11 @@ describe("TaskInteractionBadge", () => {
     ).toEqual({ kind: "permission", canSnooze: false });
     expect(
       getTaskInteractionBadgePresentation(
-        { interactionId: "exit-plan-1", kind: "userInput", toolName: "ExitPlanMode" },
+        {
+          interactionId: "exit-plan-1",
+          kind: "userInput",
+          toolName: "ExitPlanMode",
+        },
         false,
         300_000,
       ),
@@ -79,7 +88,11 @@ describe("TaskInteractionBadge", () => {
   it("uses toolName for Ask identity and autoResolution as the old-summary fallback", () => {
     expect(
       getTaskInteractionBadgePresentation(
-        { interactionId: "ask-new", kind: "userInput", toolName: "AskUserQuestion" },
+        {
+          interactionId: "ask-new",
+          kind: "userInput",
+          toolName: "AskUserQuestion",
+        },
         false,
         0,
       ),
@@ -102,9 +115,13 @@ describe("TaskInteractionBadge", () => {
     ).toEqual({ kind: "userInput", canSnooze: true });
   });
 
-  it("renders waiting and stop labels with countdown state in both locales", () => {
-    const render = (locale: "zh-CN" | "en-US") =>
-      renderToStaticMarkup(
+  it.each([
+    ["zh-CN", "等待确认", "停止计时"],
+    ["en-US", expectedCopy("taskList.userInputTag"), expectedCopy("taskList.stopCountdown")],
+  ] as const)(
+    "renders waiting and stop labels with countdown state in %s",
+    (locale, waiting, stop) => {
+      const html = renderToStaticMarkup(
         createElement(
           ZCodeIntlProvider,
           { initialLocale: locale },
@@ -114,10 +131,10 @@ describe("TaskInteractionBadge", () => {
             onSnoozeCountdown: () => true,
             formatMessage: (id: string) => {
               if (id === "taskList.permissionTag" || id === "taskList.userInputTag") {
-                return locale === "zh-CN" ? "等待确认" : "Awaiting approval";
+                return waiting;
               }
               if (id === "taskList.stopCountdown") {
-                return locale === "zh-CN" ? "停止计时" : "Stop timer";
+                return stop;
               }
               return id;
             },
@@ -125,16 +142,14 @@ describe("TaskInteractionBadge", () => {
         ),
       );
 
-    const zh = render("zh-CN");
-    expect(zh).toContain("等待确认");
-    expect(zh).toContain("停止计时");
-    expect(zh).toContain('aria-label="停止计时"');
-    expect(zh).toContain('data-countdown-snoozable="true"');
-    expect(zh).toContain('data-countdown-progress="0.500"');
-    expect(zh).toContain("bg-interaction-ask-fill");
-    expect(render("en-US")).toContain("Awaiting approval");
-    expect(render("en-US")).toContain("Stop timer");
-  });
+      expect(html).toContain(waiting);
+      expect(html).toContain(stop);
+      expect(html).toContain(`aria-label="${stop}"`);
+      expect(html).toContain('data-countdown-snoozable="true"');
+      expect(html).toContain('data-countdown-progress="0.500"');
+      expect(html).toContain("bg-interaction-ask-fill");
+    },
+  );
 
   it("keeps permissions static even when a snooze callback is present", () => {
     const html = renderToStaticMarkup(
@@ -142,12 +157,15 @@ describe("TaskInteractionBadge", () => {
         interaction: { interactionId: "permission-1", kind: "permission" },
         now: 180_000,
         onSnoozeCountdown: () => true,
-        formatMessage: (id: string) => (id === "taskList.permissionTag" ? "等待确认" : "停止计时"),
+        formatMessage: (id: string) =>
+          id === "taskList.permissionTag"
+            ? expectedCopy("taskList.permissionTag")
+            : expectedCopy("taskList.stopCountdown"),
       }),
     );
 
-    expect(html).toContain("等待确认");
-    expect(html).not.toContain("停止计时");
+    expect(html).toContain(expectedCopy("taskList.permissionTag"));
+    expect(html).not.toContain(expectedCopy("taskList.stopCountdown"));
     expect(html).not.toContain("data-countdown-snoozable");
   });
 
@@ -158,16 +176,23 @@ describe("TaskInteractionBadge", () => {
           interactionId: "ask-1",
           kind: "userInput",
           toolName: "AskUserQuestion",
-          autoResolution: { state: "snoozed", startedAt: 0, snoozedAt: 299_000 },
+          autoResolution: {
+            state: "snoozed",
+            startedAt: 0,
+            snoozedAt: 299_000,
+          },
         },
         now: 300_000,
         onSnoozeCountdown: () => true,
-        formatMessage: (id: string) => (id === "taskList.userInputTag" ? "等待确认" : "停止计时"),
+        formatMessage: (id: string) =>
+          id === "taskList.userInputTag"
+            ? expectedCopy("taskList.userInputTag")
+            : expectedCopy("taskList.stopCountdown"),
       }),
     );
 
-    expect(html).toContain("等待确认");
-    expect(html).not.toContain("停止计时");
+    expect(html).toContain(expectedCopy("taskList.userInputTag"));
+    expect(html).not.toContain(expectedCopy("taskList.stopCountdown"));
     expect(html).not.toContain("data-countdown-snoozable");
   });
 });

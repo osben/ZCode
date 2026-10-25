@@ -10,7 +10,7 @@ type WriteState =
   | { status: "idle" }
   | { status: "pending" | "failed" | "succeeded"; operation: WriteOperation };
 
-/** main 站点权限 store 是唯一授权状态源；hook 只持有读取投影和用户操作的进度。 */
+/** The main site-permission store is the single source of authorization state; the hook only holds a read projection and user-operation progress. */
 export function useBrowserSitePermissions(origin: string, enabled: boolean) {
   const platform = usePlatform();
   const [states, setStates] = useState<Record<string, "allow" | "deny"> | null>(null);
@@ -25,7 +25,8 @@ export function useBrowserSitePermissions(origin: string, enabled: boolean) {
 
   useEffect(() => {
     setWrite({ status: "idle" });
-    // 隐藏标签不取消已提交写入；只有目标站点/平台更换或卸载才让旧操作失去 UI 归属。
+    // Hiding the tab does not cancel an already-submitted write; only switching the target
+    // site/platform or unmounting detaches the old operation from the UI.
     return () => {
       pendingWrite.current = null;
     };
@@ -57,7 +58,8 @@ export function useBrowserSitePermissions(origin: string, enabled: boolean) {
 
   async function run(operation: WriteOperation) {
     if (!enabled || !supported || pendingWrite.current) return;
-    // React 状态尚未渲染时也只接受一次点击；该引用同时标识异步完成所属的操作。
+    // Accept only one click even before the React state has rendered; the reference also
+    // identifies which operation the async completion belongs to.
     pendingWrite.current = operation;
     setWrite({ status: "pending", operation });
     try {
@@ -79,7 +81,8 @@ export function useBrowserSitePermissions(origin: string, enabled: boolean) {
       return;
     }
     if (pendingWrite.current !== operation) return;
-    // 写入和重读的失败属于不同操作。已成功写入不能因读取失败被再次提交。
+    // Write and re-read failures belong to different operations. An already-successful write must
+    // not be resubmitted because the read failed.
     await refresh();
     if (pendingWrite.current !== operation) return;
     pendingWrite.current = null;

@@ -162,7 +162,7 @@ describe("发布模型规则的前后缀与覆盖顺序", () => {
             expect(get(alias), alias).toEqual(expected);
           }
         }
-        // 先族基线、后具体变体：不能把匹配范围扩大后让族规则重新盖掉具体配置。
+        // Family baseline first, then specific variants: widening the match scope must not let the family rule overwrite the specific config again.
         expect(get("gateway/GLM-5.3-Flash-20250901").properties?.inputFormat?.supportsImage).toBe(
           true,
         );

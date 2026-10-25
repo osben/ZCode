@@ -1,365 +1,471 @@
-# Web 远程控制概览与外部 Relay 架构
+# Web Remote Control Overview and External Relay Architecture
 
-本文描述当前有效实现。旧的仓库内 relay、窗口 control socket、bridge token、HTTP bootstrap API 已移除，不再作为兼容路径。
+This document describes the current implementation. Old in-repo relays, window control sockets, bridge tokens
+and HTTP bootstrap APIs are removed and are not compatibility paths.
 
-## 产品概览
+Full history: `git show b8876e8b:docs/web-remote-control/web-remote-control-architecture.md`
 
-手机 Web 远控让用户在浏览器中访问目标桌面窗口已经打开的工作区和任务。桌面应用承载
-实际服务与 Agent runtime，手机通过外部 relay 接入同一 Host 的 workspace scope；手机页面
-不启动独立 Host 或 Agent，relay 只负责鉴权、配对、心跳和消息透传。
+## Product overview
 
-### 使用流程与页面
+Mobile Web remote control lets a user reach the workspaces and tasks already open in the target desktop
+window through a browser. The desktop application hosts the real services and Agent runtime; the mobile
+client connects to the same Host workspace scope through an external relay; the mobile page starts no Host or
+Agent of its own; the relay only handles authentication, pairing, heartbeat and message passthrough.
 
-1. 在桌面打开 Web 远控对话框，启动远控并取得二维码或连接链接；手机浏览器打开链接后完成配对。
-2. 窄屏首次扫码默认进入任务首页：首页与桌面共用项目侧栏，可按项目或跨项目时间线浏览任务；
-   Relay V2 连接时侧栏最顶部（“新建任务”之上）显示当前电脑行，整行点击即“切换设备”。二维码携带的初始任务用于选中和定位，不直接跳进聊天页。
-3. 点击任务进入聊天；项目或全局的新建任务入口进入对应草稿页。跨工作区操作先切换 bridge，
-   再访问目标工作区服务。返回首页保留任务选中态；聊天页刷新可以根据浏览器 history state 恢复聊天页。
-4. 手机选中的工作区和任务独立于桌面选中态，不会使桌面切换 tab/task。
-5. 网络恢复或页面回到前台时恢复连接，并按 replayable 协议重新同步任务状态；
-   断开的远程工作区可从首页触发桌面已有重连流程，连接成功前不能打开或新建其中的任务。
+### Usage flow and pages
 
-窄屏使用独立的首页/聊天两页 shell，聊天内容复用现有 V4 会话组件。宽屏远控使用侧栏布局，
-任务列表同样来自桌面同步的跨工作区索引。手机主题使用浏览器本地偏好，与桌面主题独立；
-无本地偏好时默认使用 `zai-dark`。
+1. On the desktop, open the Web remote control dialog, start remote control and get a QR code or link; the
+   mobile browser opens the link to pair.
+2. A narrow-screen QR first enters the task home page; tasks can be browsed by workspace or across the
+   workspace timeline. The initial task carried by the QR is for selection and positioning, not a direct jump to chat.
+3. Clicking a task enters chat; a workspace's "new task" entry enters that workspace's draft page.
+   Cross-workspace operations switch the bridge first, then reach the target workspace service. Returning home
+   keeps the task selection; the chat page can be restored from the browser history state.
+4. The workspace and task selected on mobile are independent of the desktop selection and do not make the desktop switch tabs/tasks.
+5. When the network recovers or the page returns to the foreground, the connection is restored and task state
+   re-syncs by the replayable protocol; a disconnected remote workspace can trigger the desktop's existing
+   reconnect flow from the home page, and its tasks cannot be opened or created before the connection succeeds.
 
-### 能力与边界
+The narrow screen uses an independent two-page shell (home / chat) whose chat content reuses the existing V4
+session component. The wide-screen remote control uses the sidebar layout with its task list also from the
+desktop-synced cross-workspace index. The mobile theme uses the browser's local preference, independent of the
+desktop theme, defaulting to `zai-dark` without a local preference.
 
-- 可浏览目标窗口已有的工作区与任务、打开会话、发送输入、新建任务，并处理会话中的权限和交互请求。
-- 远程工作区复用桌面已有连接与服务 scope；首页重连恢复已有工作区，不提供手机新建
-  SSH/WSL/Docker 连接或管理其他桌面窗口工作区的入口。
-- 同一 task 仍由既有 runtime owner 执行。桌面使用 `desktop-continuous`，手机使用
-  `web-remote-replayable`；手机恢复不会改变桌面的 continuous 主链路。
-- 手机服务和工具能力受 attachment/capability 约束，不因复用桌面 UI 而自动获得全部桌面能力。
-  终端暴露边界见下文“启动调用边界与 Office XSS 关系”。
+### Capabilities and boundaries
+
+- Browse the workspaces and tasks in the target window, open sessions, send inputs, create new tasks, and
+  handle session permissions and interaction requests.
+- Remote workspaces reuse the desktop's existing connections and service scopes; the home page reconnects
+  existing workspaces and offers no mobile entry to create new SSH/WSL/Docker connections or manage
+  workspaces of other desktop windows.
+- A task is still executed by the existing runtime owner. The desktop is `desktop-continuous`; mobile is
+  `web-remote-replayable`; mobile recovery does not change the desktop continuous main path.
+- Mobile client and tool capabilities are limited by attachment/capability and do not automatically gain all
+  desktop capabilities by reusing the desktop UI (terminal exposure boundary: "Startup call boundary and
+  Office XSS" below).
 
 ```text
-手机浏览器（独立选中态、replayable）
-  -> 外部 relay（透传）
-  -> Desktop main（attachment 调度与 RPC 桥接）
-  -> 目标窗口共享 Host 的 workspace scope -> 同一 task runtime owner
+Mobile browser (independent selection state, replayable)
+  -> external relay (passthrough)
+  -> Desktop main (attachment scheduling and RPC bridging)
+  -> Target window's shared Host workspace scope -> same task runtime owner
                           ^
-桌面 renderer（continuous）─┘
+Desktop renderer (continuous) ─┘
 ```
 
-### 专题导航
+### Topic navigation
 
-| 内容                               | 文档                                                                 |
-| ---------------------------------- | -------------------------------------------------------------------- |
-| 手机首页、聊天、新建任务与页面状态 | [手机任务首页](./mobile-task-home-design.md)                         |
-| 手机任务时间线与排序               | [移动端任务时间线](../ui/web-remote-control-mobile-task-timeline.md) |
-| 宽屏任务列表、搜索与归档           | [宽屏任务列表](./wide-screen-task-list.md)                           |
-| 手机主题与浏览器表面               | [主题控制](./mobile-theme-control.md)                                |
-| 远程工作区断开与重连               | [工作区重连](./mobile-remote-workspace-reconnect.md)                 |
-| 实时同步、snapshot 与 gap 恢复     | [任务实时同步](./task-realtime-sync.md)                              |
-| 输入 admission、队列与跨端命令路由 | [任务命令队列](../web-remote-control-task-command-queue.md)          |
-| V4 静态资源发布                    | [V4 部署](./remote-v4-static-deployment.md)                          |
-| 独立 OAuth 登录入口                | [Web Remote Login](./web-remote-login.md)                            |
+- Mobile home page, chat, new tasks and page state: [Mobile Task Home](./mobile-task-home-design.md)
+- Mobile task timeline and sorting: [Mobile Task Timeline](../ui/web-remote-control-mobile-task-timeline.md)
+- Wide-screen task list, search and archive: [Wide-Screen Task List](./wide-screen-task-list.md)
+- Mobile theme and browser surface: [Theme Control](./mobile-theme-control.md)
+- Remote workspace disconnect and reconnect: [Workspace Reconnect](./mobile-remote-workspace-reconnect.md)
+- Realtime sync, snapshot and gap recovery: [Task Realtime Sync](./task-realtime-sync.md)
+- Input admission, queues and cross-end command routing: [Task Command Queue](../web-remote-control-task-command-queue.md)
+- V4 static resource publishing: [V4 Deployment](./remote-v4-static-deployment.md)
+- Independent OAuth login entry: [Web Remote Login](./web-remote-login.md)
+- Self-hosted relay (server implemented; Desktop integration pending): [Self-hosted Remote Relay](./self-hosted-remote-relay.md)
 
-下文描述当前技术实现；[最小跑通规划](./web-remote-control-minimal-plan.md)仅作为历史记录，
-其中的仓库内 relay、专用 mobile host 和旧联调命令不适用于当前链路。
+The [Minimal Run Plan](./web-remote-control-minimal-plan.md) is a historical record only; its in-repo relay,
+dedicated mobile host and old debug commands do not apply to the current path.
 
-## 入口
+## Entry points
 
-Desktop 和 mobile web 使用当前 endpoint origin 的 Relay V2 入口；HTTPS 对应 WSS，HTTP 对应 WS：
+The desktop and mobile web switch to the test relay only at the standard test endpoint; production and other
+custom endpoints keep the production relay:
 
 ```bash
-production/default: wss://zcode.z.ai/api/v1/remote/ws2
-test endpoint:       wss://zcode.z.ai/api/v1/remote/ws2
-local/custom:        ws://localhost:3030/api/v1/remote/ws2
+production/default: wss://zcode.z.ai/ws
+test endpoint:       wss://zcode.z.ai/ws
 ```
 
-`ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` 仍是桌面 relay 的最高优先级显式调试覆盖，必须指向 V2
-入口。没有覆盖时，localhost/custom endpoint 同样从各自 origin 推导 relay。当前桌面版本生成
-`/remote/v4` 二维码；`ZCODE_WEB_REMOTE_CONTROL_URL` 用于显式调试覆盖。
-
-开发时可以把手机页指向本地 web：
+`ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` stays the highest-priority explicit debug override. When not
+overridden, the test relay is used only when the normalized endpoint origin is `https://zcode.z.ai`;
+production and localhost/custom endpoints keep the production relay, so the semantics of custom endpoints are
+not widened. The QR page URL is still derived by App version between `/remote/v3` and `/remote/v4`;
+`ZCODE_WEB_REMOTE_CONTROL_URL` is only an explicit debug override. During development the mobile page can
+point to the local web:
 
 ```bash
-ZCODE_WEB_REMOTE_CONTROL_URL=http://localhost:5173/remote/v4 \
-pnpm dev:web-remote-control
+ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL=wss://zcode.z.ai/ws \
+ZCODE_WEB_REMOTE_CONTROL_URL=http://localhost:5173/remote \
+pnpm dev:desktop
 ```
 
-## 静态部署
+## Static deployment
 
-手机 V2 页面只通过 OSS 多版本流水线发布，无需入口变量。在主流水线手动运行 `upload:remote:test`、`upload:remote:prod`，或各自的 `:latest` job；环境、版本选源与生产限制见 [OSS 多版本部署](./remote-v4-static-deployment.md#gitlab-ci-测试与生产-oss-多版本产物)。
+The mobile remote control page is a Vite SPA from `packages/web`, with no Next.js static export and no
+`remote.html`-style page files. Production deployment hands `packages/web/dist` to nginx and maps the entry
+path back to `index.html`. Four static deployment chains are kept, each with its own Dockerfile, nginx
+config, image name and k8s deployment file, so a new resource release never overwrites resources still used
+by older Apps:
 
 ```text
-选定 commit/tag → 按 app 版本构建 /remote/v4/<version>/ 资源
-              → prepare 校验环境与清单 → OSS 版本目录
-              → 网关按 app_version 选择 index、按目录选择静态资源
+v2:   pnpm run build:web-remote-control      -> Dockerfile.web-remote-control      -> zcode-remote-mobile-v2   -> deployment-remote.yaml      -> /remote
+v3:   pnpm run build:web-remote-control:v3   -> Dockerfile.web-remote-control-v3   -> zcode-remote-mobile-v3   -> deployment-remote-v3.yaml   -> /remote/v3
+v4:   pnpm run build:web-remote-control:v4   -> Dockerfile.web-remote-control-v4   -> zcode-remote-mobile-v4   -> deployment-remote-v4.yaml   -> /remote/v4
+test: pnpm run build:web-remote-control:test -> Dockerfile.web-remote-control-test -> zcode-remote-mobile-test -> deployment-remote-test.yaml -> /remote/__test__
+(each builds packages/web/dist; images under uhub.service.ucloud.cn/tianqi/; deployment files under zcode/frontend/)
 ```
 
-页面路由固定为 `/remote/v4`。旧 `/remote`、`/remote/v3`、`/remote/v4` Docker 单版本部署冻结在最后一次 V1 镜像；仓库已删除相应构建、推送、验证入口，不得覆盖旧部署。`/remote/__test__` 的独立测试链继续保留，使用方式见[静态部署文档](./remote-v4-static-deployment.md)。
+- `/remote`: old resource entry. `/remote/v3`: resource entry for old-version Apps. `/remote/v4`: resource
+  entry for official App `3.4.0` and above (its deployment file is in external infrastructure). `/remote/__test__`:
+  test resource entry, an independent static-resource verification entry that does not replace the standard
+  test environment's `/remote/v4`. The release script updates only the matching deployment file.
+- v4 test and production online deployments share the Dockerfile and the `/remote/v4` resource base but are
+  isolated by independent Jenkins Jobs, images and Deployments. The two jobs must pass `ZCODE_ENV=test` and
+  `ZCODE_ENV=production` explicitly; the Dockerfile validates in the builder stage and hands the endpoint to
+  Vite injection. The domain itself does not rewrite the product environment at browser runtime:
+  `test: zcode.z.ai/remote/v4 -> wss://zcode.z.ai/ws`, `production: zcode.z.ai/remote/v4 -> wss://zcode.z.ai/ws`.
+- All four nginx configs must explicitly map `assets/`, `material-icons/` and `pdfjs/cmaps/` under their
+  build bases to the artifacts in `/usr/share/nginx/html`. PDF.js CMap actually lives in
+  `/usr/share/nginx/html/pdfjs/cmaps/`; requests with `/remote`, `/remote/v3`, `/remote/v4` or
+  `/remote/__test__` prefixes must not enter the SPA fallback (otherwise nginx answers 200 with `index.html`
+  as if it were a static resource). The Docker smoke must compare the real response body of representative
+  `.bcmap` files, not just assert HTTP 200.
+- All four `Dockerfile.web-remote-control*` use a Node builder to run a filtered install and the Vite build
+  in the container: `pnpm install --frozen-lockfile --filter @zcode/web... --ignore-scripts`. The runtime
+  stage keeps only `nginx:alpine` and static `dist`, no Node runtime. The release script does not rebuild on
+  the host, so the final image resources come only from the Docker builder.
+- nginx only serves static resources and SPA fallback and does not proxy the relay; the browser connects to the
+  corresponding relay directly by the build-time endpoint. For Desktop App official versions >= `3.4.0` the QR
+  URL is `https://zcode.z.ai/remote/v4?...`; for versions below `3.4.0`, pre-releases of `3.4.0`, or
+  unresolvable versions it stays `https://zcode.z.ai/remote/v3?...`. Pre-releases above the threshold (for
+  example `3.5.0-beta.1`) use v4; an explicit `ZCODE_WEB_REMOTE_CONTROL_URL` is not rewritten by the version logic.
+- The desktop default QR URL does not point to `/remote/__test__`; to verify test resources override via
+  `ZCODE_WEB_REMOTE_CONTROL_URL=https://zcode.z.ai/remote/__test__ pnpm dev:desktop`.
 
-OSS 的版本选择、环境隔离、latest 规则、网关路由及验收见[多版本部署](./remote-v4-static-deployment.md)。发布前必须完成 [Relay V2 外部依赖与真机验收](./relay-v2-pairing.md#外部依赖与发布顺序07)。
+Local verification (per chain): `pnpm run typecheck`, `pnpm run lint`, `pnpm run build:web-remote-control[:v3|:v4|:test]`
+and `bash scripts/test-web-remote-control[-v3|-v4|-test]-docker-build.sh`. Build and push:
+`export DOCKER_REGISTRY_PASSWORD='***'` then `bash scripts/docker-build-and-push-web-remote-control[-v3|-v4|-test].sh --tag <tag>`.
+`zcode/frontend/deployment-remote-v4.yaml` and `zcode/frontend/deployment-remote-test.yaml` are convention
+paths in the external infrastructure repository, not in this repository and not created by this feature. The
+release script defaults to `K8S_REPO_DIR=~/workspace/cgx-dev-k8s` to update the matching deployment file and
+create an MR; with `--skip-mr` it only builds and pushes the image.
 
 ## Transport
 
-桌面 device 使用 [Relay V2 配对与状态机](./relay-v2-pairing.md#桌面-device-生命周期03)：main 用当前账号 JWT 懒注册设备，每次建连前申请一次性 role=device token，再连接当前 endpoint 的 `/api/v1/remote/ws2?token&mid`。不发送 X-Device-ID；`auth_init` 只携带 SID、meta 和秒级 client_ts。
+The external relay only handles the transport layer:
 
-V2 心跳为每轮重新抽样的4~6秒 pair_status_query（不带 SID），独立15秒 ACK watchdog 判定失联。网络/5xx 指数退避，401 停止并报 auth-required，KICKED 在60秒内仅允许一次2~5秒延迟恢复。二维码为 `/remote/v4?app_version=<ver>&sid=<sid>&mid=<mid>&name=<hostname>`，不含 hash/t 或 JWT/token。手机 terminal 同样使用 V2 token/auth_init，共享层只导出 V2 relay 契约。
+> Current timing (Relay V2, `packages/shared/src/web-remote-relay/domain/heartbeatTiming.ts`): 5 s heartbeat with ±1 s jitter and a 15 s ACK watchdog, shared by desktop and web clients. The 10 s / 30 s figures below are the V1 values.
 
-Relay 只负责认证、配对、心跳和 data.payload 透传，不解析 task、session、workspace 或 rpc-frame 内部业务。main 按 workspaceKey 把手机 bridge attachment 挂到已有 Window Host，桌面 continuous 与手机 replayable 的 owner 和恢复边界保持不变。
+1. The desktop connects to the external relay at the current endpoint as a `device`, passing `device_mid` via `X-Device-ID`.
+2. The mobile web connects to the same endpoint as a `terminal`; the browser passes the routing hint via the query `mid=<device_mid>`.
+3. The relay completes `device_register_init`, `auth_init`, `auth_challenge`, `auth_response`, `auth_ack`.
+4. Both ends heartbeat with `pair_status_query` / `pair_status_ack` at about 10 s average, jittered within 8-12
+   s; if the latest ACK is not updated for over 30 s, a local watchdog triggers reconnection (with a small
+   random delay to avoid reconnect spikes).
+5. All ZCode business messages go in the relay `data.payload`; the relay does not parse the payload.
 
-## App Payload
+Task realtime sync follows the same boundary: the relay only forwards `rpc-frame` between mobile and desktop
+main and does not parse tasks, sessions, workspaces or ZCode realtime events. The mobile page owns no Host and
+starts no Agent runtime. After receiving `workspace-bridge-open`, desktop main creates a new `MessagePort`
+attachment for the mobile bridge and attaches it to the service/CLI scope of the matching local/remote
+workspaceKey in the target desktop window's single Window Host.
 
-`data.payload` 使用 `zcode_type` 区分业务消息：
+### Heartbeat scheduling and disconnection recovery
 
-- `bootstrap-request` / `bootstrap-response`
-- `workspace-list-request` / `workspace-list-response` / `workspace-list-updated`
-- `workspace-bridge-open` / `workspace-bridge-ready` / `workspace-bridge-error`
-- `platform-request` / `platform-response`
-- `mobile-view-state-update`
-- `rpc-frame` / `rpc-frame-ack`（transport-only；relay 不解析）
-- `app-error`
-
-04D-3 已让 desktop main/mobile web 同时使用 shared acknowledged adapter；全局 app parser 正式接受
-新 strict fragment/ACK，并删除 legacy 单片 branch。raw Channel message 不能直接做一次 base64 后塞入
-单个 `rpc-frame`，而要切成带 `messageSeq/fragmentIndex/fragmentCount/messageBytes/CRC32` 的物理片；每片连最终
-`{type:"data",payload,client_ts,server_ts}` 未压缩 JSON 必须不超过 1 MiB。单 logical raw
-message 上限 16 MiB / 64 片，接收侧只 staging 一个 message 并在完整校验后原子交付一次。
-`rpc-frame-ack` 是 raw transport 的 cumulative ACK，不是 command ACK，也不携带 conversation
-业务事实。
-
-production adapter 的 transport 状态是对称且 bridge-scoped 的：TX 在首片发送前保留整批 immutable
-fragment，并按最终 outer JSON bytes 维护 `1 MiB / 256 KiB` flow edge、`8 MiB / 45s` replay
-边界；RX 在完整 assembly 和同步 Channel delivery 成功后才排队 cumulative ACK。ACK 优先 flush。
-同一 bridge 每次重新 send-ready 时都重放未 ACK batch，包括本地 WebSocket 未换代、但心跳重新确认
-`matched` 的 `same-socket` 场景；对端 peer 可能已经换代，不能把本地 socket identity 当成交付证明。
-重放复用原 immutable batch 且不刷新其 queued age；new bridge、terminal fault 或 dispose 清空旧
-transport 状态。首个 queued ACK 也受 45s deadline 约束，后续更高 cumulative ACK 只替换值而不刷新 age。
-这些状态不包含 task/session/topic/command 事实。desktop/web transport 为 payload 创建唯一 immutable
-final outer JSON，adapter 的 meter 与实际 send 共用同一 serializer/cache；同 bridge replay 复用相同
-bytes。raw frame/ACK 不进入 desktop main 的普通 50 项 app payload buffer。两端在 `JSON.parse` 前按
-未压缩 UTF-8 `<=1 MiB` 硬闸，compression 开关不影响 admission；永久 oversize 与临时 unavailable
-分流，raw fault 只触发一次 hard bridge recovery。跨端只传通用
-`bridge-degraded: rpc-transport-fault`，具体 typed reasonCode 留在 owning 端安全日志。
-
-`mobile-view-state-update` 除了 `activeWorkspaceKey`、`activeTaskId`、`updatedAt`，还可以携带
-`deviceInfo`。该字段由手机浏览器端采集，只包含浏览器可稳定获得的受控信息：`platform/version/name`、
-`userAgent`、语言、`navigator.platform`、viewport、screen、timezone、online 和采集时间。Desktop main
-只把它保存在当前 window runtime，并通过 `getWebRemoteControlStatus()` 暴露给桌面端；它不参与
-workspace identity、session 绑定、缓存 key 或 relay 配对判定。
-
-Desktop 和 mobile 收到 relay `data.payload` 后必须先走 `parseWebRemoteControlAppPayload()`。无效 payload 只记录安全元数据，不记录原始 JSON。
-
-`workspace-list-updated` 只用于 desktop renderer 已经通过 `syncWebRemoteControlTasks` /
-`syncWebRemoteControlWorkspaces` 同步新快照后，把同一份 `WebRemoteControlWorkspaceListResult`
-推给已连接的手机端。它不改变 relay 和 desktop main 的职责：relay 仍只透传 `data.payload`，desktop main
-仍只组合并转发 renderer 已同步的 workspace/task 索引，不持有 ZCode task、stream、queue 或 snapshot 业务状态。
-
-`bridge-degraded` 不属于普通可丢 app response。Desktop main 为当前 bridge generation 保留一个不含业务
-snapshot 的 invalidation latch：Source logical session 换代或 raw transport fault 后立即释放旧手机
-attachment，并在 relay 再次 paired/send-ready 时补发，直到新 `workspace-bridge-ready` 成功后清除。
-这只是连接级可靠通知，不把 task/session/queue/snapshot 事实下沉到 main。Mobile 收到后用新
-`bridgeSessionId + bridgeGeneration + recoveryId` 重建；首次重建失败后只允许按 1s/2s/5s 有界退避继续
-尝试，同一 recovery flight 保持 `recoveryId`、每次使用新的 bridge generation。任一次成功后清空预算；
-预算耗尽后必须先销毁旧 bridge protocol 与 service registration，再进入明确的
-`connection-recovery-timeout` 非 active 终态，并提供由用户触发的整页重试。不能继续把已 degraded 的旧
-bridge 显示为 active，也不能由 relay/main 保存业务状态来掩盖恢复失败。
-
-## Desktop Main
-
-`packages/desktop/src/main/webRemoteControlManager.ts` 负责：
-
-1. 通过独立 `WebRemoteControlDeviceTransport` 连接 V2 relay，握手、重连与心跳见 [桌面生命周期](./relay-v2-pairing.md#桌面-device-生命周期03)
-2. main 直接用 Node fetch 调用注册/token 接口；`webRemoteControlRelayV2Device` 保存非敏感 `{deviceSid, userId, endpointOrigin}`，V1 sid/passHash 首次迁移时清除，不写新 credential
-3. 根据 `workspaceKey = workspaceIdentity?.trim() || workspacePath` 匹配 workspace
-4. 为当前 mobile bridge 创建新的 `MessagePort` attachment
-5. 用 shared acknowledged adapter 把 host `MessagePortProtocol` 的 RPC message 编码成有界
-   `rpc-frame` fragments，并消费 cumulative ACK
-6. 不解析 ZCode task 业务语义，不参与 task stream、permission 或 workspace task list 的同步逻辑
-
-### 桌面应用重启后的启用状态恢复
-
-桌面端把“上次是否开启 Web 远控”解释为用户的启用意图：一次远控启动成功后记录最后目标；
-用户明确点击停止后清除该记录。窗口销毁和应用退出会释放本次运行的 transport / attachment，
-renderer reload 可以继续复用窗口级 runtime；这些生命周期事件都不得把启用意图改写成关闭。
-这样应用正常退出或意外退出后都能恢复，而用户主动关闭后不会在下次启动时重新打开。
-endpoint 切换等配置变化可以暂停当前 runtime，但同样不代表用户关闭了远控功能。
-
-持久化目标只保存 `workspacePath`、可选 `workspaceIdentity` 和可选 `initialTaskId`。
-`remoteSessionId` 属于本次进程内的远程连接身份，禁止跨应用重启持久化。新进程必须等待
-renderer 把当前窗口已恢复的 workspace 上下文同步到 main，再按
-`workspaceKey = workspaceIdentity?.trim() || workspacePath` 匹配最后目标，并使用当前进程的
-`remoteSessionId` 启动 device relay；启动前还必须读取有效登录 JWT。无 JWT 时保持
-`auth-required`，保留启用目标，等待 renderer 登录通知后重读凭据并重试。登出立即停止
-所有远控 runtime，但不清除启用目标。JWT 已就绪而目标尚未恢复到任一窗口时保持 `idle`，不得为自动恢复
-另起 local host、远程 session 或 Agent runtime。
+Heartbeats belong only to the local transport state of the desktop device transport and mobile terminal
+transport; the relay does not save or broadcast the clients' scheduling times:
 
 ```text
-上次启动成功 ──> 保存 enabled target ──┐
-                                         v
-新 desktop main -> 等待窗口 workspace sync -> workspaceKey 匹配 -> 等待 JWT -> 启动 device relay
-                                         |
-                                         +-> 不匹配：保持 idle，继续等待后续窗口同步
-
-登录通知 ──> 重读 JWT + 已同步 workspace ──> 重试恢复
-登出通知 ──> abort 启动 / 停止 runtime ──> auth-required（保留 enabled target）
-用户明确停止 ──> 清除 enabled target ──> 下次启动保持 idle
+auth_ack / matched
+        │
+        ▼
+Local random wait 8~12 seconds
+        │
+        ▼
+Send pair_status_query ─────────────┐
+        │                           │
+        └─ wait another 8~12 seconds  │
+                                    ▼
+                         Receive pair_status_ack
+                                    │
+                         Reset 30s ACK watchdog
+                                    │
+                         30s no ACK -> local reconnection
 ```
 
-自动恢复只重建 desktop device relay。手机仍通过 `web-remote-replayable` attachment 进入现有
-shared host；桌面 renderer 仍保持 `desktop-continuous`，不得把 replayable snapshot / gap 恢复
-语义扩散到桌面主链路。
+The heartbeat uses recursive `setTimeout`, resampling each round (average cycle still 10 s); heartbeats
+missed while the page was in the background or the system slept are not resent. 30 s is a time-based ACK
+deadline, not inferred from a fixed failure count; a watchdog-triggered reconnect adds a small random delay,
+while explicit errors, user stops and foreground recovery keep immediate recovery. The heartbeat payload and
+relay protocol schema are unchanged.
 
-外部 relay 不再提供 `bridgeToken` 或 `wsUrl`。`WebRemoteControlExternalWorkspaceBridge` 只描述 workspace 身份和 `bridgeSessionId`。
+The pairing identity is `device_sid`. The QR URL is:
 
-手机远控页面不拥有独立 host process，也不会启动独立 Agent runtime。desktop main 在收到
-`workspace-bridge-open` 后，为手机 bridge 创建一个新的 `MessagePort` attachment，
-并把该 attachment 挂到目标桌面窗口唯一 Window Host 的 local/remote workspace scope。
-relay 只透传 `rpc-frame`，不解析 ZCode task、stream 或 workspace 业务语义。
+```text
+/remote/v4?sid=<device_sid>&hash=<pass_hash>&t=<timestamp>&mid=<device_mid>&name=<device_name>&app_version=<app_version>
+```
 
-Desktop renderer 和 mobile Web remote control 通过不同 RPC client 连接同一个 host/service/runtime。每个 attachment 由 host 分配独立 `connectionId` 和可信 `clientMode`：本地及 SSH/WSL/Docker 桌面窗口都是 `desktop-continuous`，手机 `/remote` 是 `web-remote-replayable`。host 为每个 attachment 建立 owned-subscription registry；下行帧只能写给拥有该 `subscriptionId` 的 MessagePort，禁止 workspace 广播后让手机丢弃桌面帧。
+`hash` is the HMAC key material, appears only in the QR URL and credential storage, and is never written to
+logs, OAuth state or setting.json.
 
-手机 raw adapter 的 high/low 边沿只通过 owning attachment 的 MessagePort sideband 上行；control object
-在 Channel parser 前消费，不会成为 RPC request/event：
+## App payload
+
+`data.payload` distinguishes business messages by `zcode_type`: `bootstrap-request` / `bootstrap-response`;
+`workspace-list-request` / `workspace-list-response` / `workspace-list-updated`; `workspace-bridge-open` /
+`workspace-bridge-ready` / `workspace-bridge-error`; `platform-request` / `platform-response`;
+`mobile-view-state-update`; `rpc-frame` / `rpc-frame-ack` (transport-only; the relay does not parse);
+`app-error`.
+
+04D-3 made desktop main and mobile web use the shared acknowledged adapter; the global app parser formally
+accepts the new strict fragment/ACK and deleted the legacy single branch. A raw Channel message cannot be
+base64-inserted into a single `rpc-frame`; it must be split into physical fragments with
+`messageSeq/fragmentIndex/fragmentCount/messageBytes/CRC32`; each fragment's final
+`{type:"data",payload,client_ts,server_ts}` uncompressed JSON must be at most 1 MiB. One logical raw message
+is at most 16 MiB / 64 fragments; the receiver stages one message and delivers it atomically after full
+validation. `rpc-frame-ack` is the cumulative ACK of raw transport, not a command ACK, and carries no
+conversation business facts.
+
+The production adapter's transport state is symmetric and bridge-scoped: TX keeps the whole immutable
+fragment batch before sending the first fragment and maintains `1 MiB / 256 KiB` flow edges and `8 MiB / 45s`
+replay bounds by final outer JSON bytes; RX queues the cumulative ACK only after complete assembly and
+successful synchronous Channel delivery, and ACKs are flushed first. The same bridge replays unACKed batches
+each time it re-sends ready, including the `same-socket` case where the local WebSocket was not replaced but
+the heartbeat re-confirms `matched` (the peer may already have been replaced, so local socket identity is not
+delivery proof). Replay reuses the original immutable batch and does not refresh its queued age; new bridges,
+terminal faults and dispose clear the old transport state. The first queued ACK is also bound by the 45s
+deadline; later higher cumulative ACKs only replace the value without refreshing the age. These states hold
+no task/session/topic/command facts. The desktop/web transport builds one immutable final outer JSON per
+payload; the adapter's meter and the actual send share the same serializer/cache, and replay on the same
+bridge reuses the same bytes. Raw frames/ACKs do not enter desktop main's ordinary 50-item app payload
+buffer. Both ends hard-gate `<=1 MiB` uncompressed UTF-8 before `JSON.parse`; the compression switch does not
+affect admission; permanent oversize and temporary unavailability are separated; a raw fault triggers one
+hard bridge recovery. Across ends only the common `bridge-degraded: rpc-transport-fault` is passed; typed
+reasonCodes stay in the owning end's secure logs.
+
+`mobile-view-state-update` carries, besides `activeWorkspaceKey`, `activeTaskId` and `updatedAt`, a
+`deviceInfo` field collected by the mobile browser, containing only controlled information the browser can
+stably obtain: `platform/version/name`, `userAgent`, language, `navigator.platform`, viewport, screen,
+timezone, online status and collection time. Desktop main keeps it only in the current window runtime and
+exposes it to the desktop through `getWebRemoteControlStatus()`; it takes no part in workspace identity,
+session binding, cache keys or relay pairing decisions.
+
+After receiving relay `data.payload`, both desktop and mobile first run `parseWebRemoteControlAppPayload()`;
+an invalid payload logs only secure metadata, never the raw JSON.
+
+`workspace-list-updated` is used only after the desktop renderer synced a new snapshot through
+`syncWebRemoteControlTasks` / `syncWebRemoteControlWorkspaces`, to push the same
+`WebRemoteControlWorkspaceListResult` to the connected mobile client. It does not change responsibilities:
+the relay only forwards `data.payload`; desktop main only composes and forwards the workspace/task index the
+renderer already synced and holds no ZCode task, stream, queue or snapshot business state.
+
+## Desktop main
+
+`packages/desktop/src/main/webRemoteControlManager.ts` is responsible for:
+
+1. Connecting to the external relay through `WebRemoteControlDeviceTransport`.
+2. Storing the non-sensitive `deviceSid` in AppSettings through `WebRemoteControlRelayAuthStorageProvider`, and `passHash` in the credentialService.
+3. Matching workspaces by `workspaceKey = workspaceIdentity?.trim() || workspacePath`.
+4. Creating a new `MessagePort` attachment for the current mobile bridge.
+5. Encoding the host's `MessagePortProtocol` RPC messages into bounded `rpc-frame` fragments with the shared acknowledged adapter, and consuming the cumulative ACK.
+6. Not parsing ZCode task business semantics and not taking part in task streams, permissions or workspace task list sync logic.
+
+### Enablement recovery after a desktop App restart
+
+"Whether Web remote control was enabled last time" is the user's enable intent: after a successful start the
+last target is recorded; an explicit stop by the user clears the record. Window destruction and app exit
+release the transport/attachments of that run; a renderer reload can keep reusing the window-level runtime;
+none of these lifecycle events may rewrite the enable intent to off. So recovery works after normal or
+unexpected app exit but not after the user actively closed it. Configuration changes such as endpoint
+switching may pause the current runtime but likewise do not mean the user disabled remote control.
+
+The persisted target stores only `workspacePath`, optional `workspaceIdentity` and optional `initialTaskId`.
+`remoteSessionId` is the remote connection identity within this process and must not be persisted across app
+restarts. A new process waits for the renderer to sync the restored workspace context of the current window
+to main, matches the last target by `workspaceKey = workspaceIdentity?.trim() || workspacePath` and starts the
+device relay with the current process's `remoteSessionId`. The target stays `idle` until it is restored in
+some window; automatic recovery does not start a new local host, remote session or Agent runtime.
+
+```text
+Last startup success --> save enabled target ──┐
+                                               v
+New desktop main -> wait for window workspace sync -> workspaceKey match -> start device relay
+                                               |
+                                               +-> No match: remain idle, continue waiting for subsequent window sync
+
+User explicitly stops --> clear enabled target --> remain idle on next startup
+```
+
+Automatic recovery rebuilds only the desktop device relay. The mobile client still enters the existing
+shared host through the `web-remote-replayable` attachment; the desktop renderer stays `desktop-continuous`,
+and replayable snapshot / gap recovery semantics must not spread into the desktop main path.
+
+The external relay no longer provides `bridgeToken` or `wsUrl`. `WebRemoteControlExternalWorkspaceBridge`
+only describes workspace identity and `bridgeSessionId`.
+
+The desktop renderer and the mobile Web remote control connect to the same host/service/runtime through
+different RPC clients. The host assigns each attachment an independent `connectionId` and a trusted
+`clientMode`: local and SSH/WSL/Docker desktop windows are both `desktop-continuous`; mobile `/remote` is
+`web-remote-replayable`. The host keeps an owned-subscription registry per attachment; downlink frames can
+only be written to the MessagePort owning that `subscriptionId`; workspace broadcasts with the mobile then
+dropping desktop frames are forbidden.
+
+The mobile raw adapter's high/low edges flow up only through the owning attachment's MessagePort sideband; the
+control object is consumed before the Channel parser and never becomes an RPC request/event:
 
 ```text
 mobile adapter high/low
-  -> desktop main（无 topic/session state）
+  -> desktop main (no topic/session state)
   -> owning host attachment only
-  -> trusted connection scope（serial + dedupe）
+  -> trusted connection scope (serial + dedupe)
   -> existing workspace CLI: v4/connection/flow
   -> pause/resume only mobile connection B
 
-desktop connection A ───────────────────────────────> continues draining
+desktop connection A ----------------------------------> continues draining
 ```
 
-main/relay 不能指定任意 connectionId；host scope 从 owned subscription 生成 workspace/connection route。
-remote host relay 对下游 id 做长度前缀 namespace。port close 串行发送 `closed` 后再 dispose owned
-subscriptions，旧 SAT/DRN/timer 不得复活。
+Main/relay cannot specify arbitrary connectionIds; the host scope generates workspace/connection routes from
+owned subscriptions. The remote host relay prefixes and namespaces downstream IDs by length. A port close
+serially sends `closed` before disposing owned subscriptions; old SAT/DRN/timers must not revive.
 
-`zcode-server /ws` 对所有普通连接固定为 replayable；旧的
-`x-zcode-rpc-client-mode` header 会被忽略，不能把浏览器或普通 WebSocket 升格为
-continuous。desktop server-remote 的 Node host 先通过受现有 server auth middleware
-保护的 `POST /api/rpc-host-capability` 获取短期、一次性随机 capability，再在 Node-only
-header 中携带它连接专用 `/ws/host`。服务端消费成功后才创建 continuous trusted relay
-attachment，最终 `connectionId` 仍由 server 逐连接生成。open/no-token server 也保留同一
-“显式申请 ticket → 一次消费”的边界；无 ticket、无效 ticket、过期或重放均拒绝。
+`zcode-server /ws` fixes all normal connections as replayable; the old `x-zcode-rpc-client-mode` header is
+ignored and cannot promote browsers or ordinary WebSockets to continuous. The desktop server-remote Node host
+first obtains a short-lived one-time random capability through `POST /api/rpc-host-capability` (protected by
+the existing server auth middleware), then connects to the dedicated `/ws/host` carrying it in a Node-only
+header. The server creates a continuous trusted relay attachment only after consuming it; the final
+`connectionId` is still generated per connection by the server. The open/no-token server also keeps the same
+"explicitly apply for a ticket -> consume once" boundary; missing, invalid, expired or replayed tickets are rejected.
 
 ```text
 Desktop Node host
-  │ POST /api/rpc-host-capability（沿用现有 auth）
+  │ POST /api/rpc-host-capability (using existing auth)
   v
-短期 capability ── 首次消费 ──> GET /ws/host ──> continuous trusted relay
+Short-lived capability -- first consumption --> GET /ws/host --> continuous trusted relay
        │                              │
-       └─ 过期 / 重放：拒绝          └─ server 生成 connectionId
+       └─ Expired / replayed: rejected  └─ server generates connectionId
 
-Browser / 任意普通 client
-  └─ GET /ws（旧 mode header 被忽略）──────────> replayable terminal
+Browser / arbitrary ordinary client
+  └─ GET /ws (old mode header ignored) -------------> replayable terminal
 ```
 
-每个 attachment 的 subscribe 在调用 CLI 前先建立 pending ownership。CLI server 用 request-scoped
-post-response outbox 固定按 `ACK response -> initial notification` 写出；即便两行在同一 read 中到达，
-ACK 前早到的 physical wire 仍只进入有界 staging，ACK 绑定 `subscriptionId`
-后才按原序释放给唯一 owner 的 incremental assembler。ownership 过滤先于 assembly；
-foreign subId 不占内存。staging 上限为 1,024 wires / 32 MiB，溢出清空整批并显式
-标记 `fault.subscription.initialFrameStagingOverflow`，禁止 shift 单片。attachment close /
-stale generation / unsubscribe 清空 staging 与 assembly。unsubscribe 则由 owned
-registry 生成完整 `{ topic, subscriptionId, connectionId }` route，CLI 只删除三者完全匹配的
-publisher entry，避免相同裸 `subscriptionId` 跨 topic 或连接误删。
+Each attachment's subscribe establishes pending ownership before calling the CLI. The CLI server uses a
+request-scoped post-response outbox that always writes in `ACK response -> initial notification` order; even
+when two lines arrive in one read, a physical wire arriving before the ACK enters only bounded staging; the
+ACK binds `subscriptionId` and releases to the unique owner's incremental assembler in the original order.
+Ownership filtering precedes assembly, so foreign subIds occupy no memory. The staging limit is 1,024 wires /
+32 MiB; overflow clears the whole batch and explicitly marks `fault.subscription.initialFrameStagingOverflow`,
+shifting single fragments is forbidden. Attachment close / stale generation / unsubscribe clears staging and
+assembly. Unsubscribe is generated by the owned registry as a complete `{ topic, subscriptionId, connectionId }`
+route; the CLI deletes only publisher entries matching all three exactly, so the same bare `subscriptionId`
+is not deleted by mistake across topics or connections.
 
-CLI publisher 的 initial/online 帧均使用 non-destructive reservation：全部 physical
-notification 在当前 transport 被接受后才推进水位；中途失败重试相同
-logical id/content。topic encoder 按 CLI NDJSON、Channel binary 与旧 mobile outer 的保守上界
-切片；production mobile Channel message 随后还会经过 raw adapter 的独立精确 final-envelope
-meter/fragment，因此实际 relay JSON 同样不超过 1 MiB。附件另走
-`begin -> <=512KiB decoded chunk -> commit/abort` 业务事务；renderer→host Channel 与 host→CLI
-NDJSON 分别实测 envelope，禁止 full-data `attachment/put` fallback。relay/main 仍只看 opaque
-`rpc-frame`，不保存 upload staging、checksum 或 artifact ref。
-每个 subscription 同时持有单调 `logicalFrameOrdinal`；host/renderer assembler 用它
-阻断迟到 replay 与反向 supersede，完成/fault/timeout 的 tombstone 只在
-unsubscribe/换代时清除。
+The CLI publisher's initial/online frames all use non-destructive reservations: all physical notifications
+advance the water level only after the current transport accepts them; a mid-stream failure retries the same
+logical id/content. The topic encoder slices by the conservative bounds of CLI NDJSON, Channel binaries and
+old mobile outer JSON; the production mobile Channel message is then subject to the raw adapter's independent
+precise final-envelope metering/fragmentation, so actual relay JSON never exceeds 1 MiB. Attachments go
+through a separate `begin -> <=512KiB decoded chunk -> commit/abort` business transaction; renderer-to-host
+Channel and host-to-CLI NDJSON envelopes are metered independently; a full-data `attachment/put` fallback is
+forbidden. Relay/main see only opaque `rpc-frame` and keep no upload staging, checksums or artifact refs.
+Each subscription holds a monotonically increasing `logicalFrameOrdinal`; the host/renderer assembler uses it
+to block late replays and reverse supersede; completed/fault/timeout tombstones are cleared only on
+unsubscribe/replacement.
 
-task messages、assistant stream、tool call、permission、plan、runtime status 和 task list 的真实元数据都来自同一个 CLI/runtime。composer draft、scroll/focus/panel 等未提交状态保持 renderer-local；一旦输入被提交，无论来自桌面还是手机，都直接进入同一个 CLI `CommandInbox`/runtime FIFO。手机 V4 不再经过 `enqueueTaskCommand` 的 host runtime command queue，桌面也不保留 renderer-local accepted queue；UI 只保留 pending optimistic overlay 并用 projection/`commands/query` 对账。
+Real metadata of task messages, assistant streams, tool calls, permissions, plans, runtime status and task
+lists all comes from the same CLI/runtime. Composer drafts, scroll/focus/panels and other uncommitted state
+stay renderer-local; once input is submitted, whether from desktop or mobile, it enters the same CLI
+`CommandInbox`/runtime FIFO directly. Mobile V4 no longer goes through the `enqueueTaskCommand` host runtime
+command queue, the desktop keeps no renderer-local accepted queue, and the UI keeps only the pending
+optimistic overlay and reconciles through projections/`commands/query`.
 
-远程 workspace bridge 只允许 attach 到桌面窗口已经存在且未关闭的 `remoteSessionId`。`remoteSessionId`
-由 Window Host 内的 registry 分配，仍是 workspace 级 logical session；main 只持请求关联并转发 scope，
-最终由 Host 校验 session 已绑定的 `workspacePath + workspaceIdentity` 后创建独立 attachment。手机端不能创建新的 SSH / WSL /
-Docker remote session，也不能借 session A 访问同 Host 下的 workspace B；身份隔离继续使用
-`workspaceIdentity?.trim() || workspacePath`。
+The remote workspace bridge may only attach to a `remoteSessionId` that already exists and is not closed in
+the desktop window. `remoteSessionId` is allocated by the registry inside the Window Host and stays a
+workspace-level logical session; main holds only request correlation and forwarding scope; the Host finally
+validates the `workspacePath + workspaceIdentity` the session was bound to before creating independent
+attachments. The mobile client cannot create new SSH / WSL / Docker remote sessions or reach workspace B under
+the same Host by borrowing session A; identity isolation keeps using `workspaceIdentity?.trim() || workspacePath`.
 
-桌面 renderer 在远程目录选择或重连确定 canonical path 与 identity 后，必须通过
-`BindRemoteWorkspaceSessionContext` 把同一组 `workspacePath + workspaceIdentity` 绑定回 main/Host 的
-logical session。tab、远程历史与手机可见 workspace 列表使用的值若与 main descriptor 不一致，bridge 会以
-`REMOTE_WORKSPACE_IDENTITY_MISMATCH` 拒绝（3.12.0 曾因新建连接后缺少这次 bind 导致手机端连不上远程项目）。
+After determining the canonical path and identity in remote directory selection or reconnect, the desktop
+renderer must `BindRemoteWorkspaceSessionContext` to bind the same `workspacePath + workspaceIdentity` back to
+the main/Host logical session. If the values used by tabs, remote history and the mobile-visible workspace
+list disagree with the main descriptor, the bridge rejects with `REMOTE_WORKSPACE_IDENTITY_MISMATCH` (in
+3.12.0 new connections lacked this bind, so mobile could not connect to remote projects).
 
-进程回收仍由桌面生命周期触发：真实关窗、app quit、update install 会关闭 attachment 后回收对应或全部
-Window Host；手机 bridge/relay 断连、页面刷新和 replayable 重连只释放短生命周期 attachment，不能销毁
-Window Host 或仍被其他 owner 使用的 remote connection。该边界不改变 `workspaceIdentity + remoteSessionId`
-路由，也不把 replayable 状态下沉到 main。
+Process recycling is still triggered by desktop lifecycle events: real window close, app quit and update
+installation close the attachments before recycling the corresponding or all Window Hosts; mobile
+bridge/relay disconnect, page refresh and replayable reconnect only release short-lived attachments and must
+not destroy a Window Host or remote connection still used by other owners. This boundary does not change the
+`workspaceIdentity + remoteSessionId` routing and does not sink replayable state to main.
 
-## Task Message Streams
+## Task message streams
 
-桌面端和手机端连接的是同一个 service/runtime，但 delivery profile 由可信 attachment 决定，不是 UI 参数：
+Desktop and mobile connect to the same service/runtime, but the delivery profile is decided by the trusted
+attachment, not UI parameters: the desktop (including remote workspace desktop windows) is fixed as
+`continuous`, keeping the complete real-time stream; mobile Web remote control is fixed as `replayable`, for
+disconnect reconnect, page refresh, late subscription and gap recovery.
 
-- 桌面端（包括远程 workspace 桌面窗口）固定 `continuous`，保持完整实时数据流。
-- 手机 Web 远控固定 `replayable`，用于断线重连、页面刷新、晚订阅和 gap 恢复。
+Replayable is not relay-level replay. The relay still only forwards `rpc-frame`; connection-level
+saturated/drained is passed to the host/CLI by desktop main through the owning MessagePort sideband. Topic
+sequences, subscriber buffers, fragment assemblies, gap/resync and snapshots are maintained by the host facade
+and the CLI publisher/client apply; relay/main hold no conversation business state.
 
-replayable 不是 relay 级别的重放。relay 仍只透传 `rpc-frame`；connection-level
-saturated/drained 由 desktop main 通过 owning MessagePort sideband 传给 host/CLI。topic seq、subscriber
-buffer、fragment assembly、gap/resync 和 snapshot 都由 host facade 与 CLI publisher/client apply 维护，
-relay/main 不持有 conversation 业务状态。
+Recovery sequence on a mobile gap or after attachment rebuild:
 
-手机端 gap 或 attachment 重建后的恢复顺序是：
+1. Re-attach the bridge, complete the V4 `hello/clientHello` and obtain a new trusted connection context.
+2. Re-subscribe automatically by active topics; try resume when there is a valid `{logEpoch, seq}`, otherwise snapshot.
+3. Replace the whole snapshot after complete fragment assembly; silently drop `toSeq <= localSeq`.
+4. A gap triggers only one `v4/conversation/resync`; resuming a gap again forces a snapshot.
+5. Restore permissions/elicitation, queue/guided rows and pending command summaries from projections; reconcile with `commands/query` when the ACK is unclear.
 
-1. 重新 attach bridge，完成 V4 `hello/clientHello`，获得新的可信 connection context。
-2. 自动按活跃 topic 重订阅；有合法 `{logEpoch, seq}` 时尝试 resume，否则 snapshot。
-3. snapshot 完整分片 assembly 后整体替换；`toSeq <= localSeq` 静默丢弃。
-4. gap 只触发一次 `v4/conversation/resync`；resume 再断档强制 snapshot。
-5. 从 projection 恢复 permission/elicitation、queue/guided row 与 pending command summary；ACK 不明时用 `commands/query` 对账。
+A CLI runtime restart changes `logEpoch` and triggers snapshots. Inputs admitted by the previous process but
+not in the transcript explicitly return `fault.command.inputDiscardedOnRestart` and the persisted `delivery`;
+the old runtime's `queue/guide` settles silently; only `startNow` or `unknown` not in the transcript prompts the
+user to confirm resending; automatic replay is not attempted. When the mobile network disconnects but the
+runtime was not replaced, the authoritative queue is still recovered from the replayable snapshot and does not
+depend on renderer localStorage.
 
-CLI runtime restart 会改变 `logEpoch` 并触发 snapshot。上一进程已 admitted 但未进入 transcript 的输入明确返回 `fault.command.inputDiscardedOnRestart` 及持久 `delivery`；旧 runtime 的 `queue/guide` 静默结算，只有未进入 transcript 的 `startNow` 或 `unknown` 提示用户确认重发，不能自动重放。手机网络断线但 runtime 未换代时，仍由 replayable snapshot 恢复权威 queue，不依赖 renderer localStorage。
-
-阻塞类事件不能按普通 owner-only 内容流过滤。`permission_request`、`elicitation_request`、对应 response、terminal 和 snapshot invalidation 必须对同 task 的在线客户端可见，或至少触发 snapshot 对齐。
+Blocking events cannot be filtered as ordinary owner-only content streams. `permission_request`,
+`elicitation_request`, their responses, terminal and snapshot invalidation must be visible to online clients
+of the same task, or at least trigger snapshot alignment.
 
 ## Web
 
-`/remote/v4` 是 V2 登录与 QR 直连入口，回调模式先于登录门禁。开发/构建别名沿用路由配置，全部使用 V2。
+`/remote`, `/remote/v3` and `/remote/v4` are QR direct-connect entries, handled before the `/web-remote` OAuth logic.
 
-Mobile web 连接流程：
+Mobile web connection flow:
 
-1. 识别 code/state 回调并保存登录态回跳；否则先过 JWT 登录门禁，再解析 sid/mid/name/app_version。无 SID 时读取当前账号设备列表，最近设备仍在线则直连，否则展示可刷新的设备列表；选择在线设备后回写 URL。
-2. 通过 `WebRemoteControlTerminalTransport` 申请 role=terminal token，连接 ws2?token&mid，再发送 V2 auth_init(device_sid)；401 回登录，AUTH_FAILED 显示账号归属失败与切换账号动作。
-3. paired 后发送 `bootstrap-request`；v4 使用响应中的可选 `desktopAppVersion` 校验 URL。
-   首次不一致时校正并导航，已进入页面时保留页面并提示确认后重新加载；旧桌面缺字段时保持原行为。
-   重连/回前台时即使 bridge 健康也重新校验，具体边界见 [v4 版本同步](./remote-v4-static-deployment.md#v4-url-与桌面实际版本同步)。
-4. 按 `mobileViewState -> initialViewState -> first workspace` 选择初始 workspace
-5. 若目标远程工作区尚不具备 bridge 条件，渲染 home-only `Root`，保留工作区列表与重连入口；
-   此时不创建 workspace bridge，也不开放依赖工作区服务的任务操作。没有可选工作区时显示错误页。
-   工作区列表由 ProjectSidebar 在没有 projectService 时从 `listWorkspaces` 与推送读取，行为见
-   [虚拟项目 §6.0.3](../superpowers/specs/2026-09-09-virtual-project-design.md#603-手机项目新目录的-shared-host-admission)。
-   home-only 空服务沿用 `ProxyChannel` 命名契约：`onXxx` 是永不触发的 Event，`onDynamicXxx(arg)` 同步返回该 Event，
-   其他未显式实现的方法异步返回 `undefined`。home-only `Root` 挂载后与 bridge `Root` 一样标记 ready，
-   之后的配对状态变化只更新横幅，不再替换为加载页或重挂首页。
-   已打开的同一远程会话随后断线时则注销失效 services、保留当前 Root 的只读内容与草稿，并显示断线横幅；详见[工作区重连](./mobile-remote-workspace-reconnect.md)。
-6. 目标可建立 bridge 时发送 `workspace-bridge-open`，用 `createAcknowledgedWebRemoteControlRelayProtocol()`
-   将 `rpc-frame` / `rpc-frame-ack` app payload 适配为 `IMessagePassingProtocol`，维护分片、ACK 与传输恢复。
-7. `connectViaProtocol()` 后渲染 `Root`；窄屏由 `WebRemoteControlMobileShell` 管理首页/聊天页，
-   宽屏使用远控侧栏。初始 workspace 的选择与页面落点是两种状态，不能把选中 task 等同于自动进入聊天。
+1. Parse `sid/hash/t/mid/name/app_version`.
+2. Authenticate as `terminal` through `WebRemoteControlTerminalTransport`.
+3. After pairing, send `bootstrap-request`; v4 uses the optional `desktopAppVersion` of the response to
+   validate the URL. On first inconsistency correct and navigate; if already on the page keep the page and
+   prompt confirmation before reloading; when an old desktop lacks the field, keep the original behavior.
+   Reconnect/foreground recovery re-validates even when the bridge is healthy; details in
+   [v4 version sync](./remote-v4-static-deployment.md#v4-url-synchronization-with-desktop-actual-version).
+4. Select the initial workspace by `mobileViewState -> initialViewState -> first workspace`.
+5. If the target remote workspace does not yet meet the bridge conditions, render the home-only `Root`,
+   keeping the workspace list and reconnect entry; no workspace bridge is created and task operations that
+   depend on workspace services are not opened. With no selectable workspace an error page is shown.
+6. When the target can establish a bridge, send `workspace-bridge-open`, using
+   `createAcknowledgedWebRemoteControlRelayProtocol()` to adapt `rpc-frame` / `rpc-frame-ack` app payloads to
+   `IMessagePassingProtocol`, keeping fragmentation, ACK and transport recovery.
+7. After `connectViaProtocol()` render `Root`; the narrow screen is managed by `WebRemoteControlMobileShell`
+   for the home/chat pages and the wide screen uses the remote control sidebar. Selection of the initial
+   workspace and page landing are two states; a selected task does not mean auto-entering chat.
 
-手机 V1/HMAC、`/web-remote` 路由、已登录等待页和 `remoteControlToken` / `relayOrigin` 的旧 HTTP bootstrap 均移除。认证/连接 owner、错误恢复与时序见 [Relay V2](./relay-v2-pairing.md#手机首次进入与恢复05)。
+`/web-remote` remains the ZAI OAuth login and waiting-page entry; `remoteControlToken` / `relayOrigin` belong
+only to the old `/web-remote` behavior and do not apply to the new `/remote`, `/remote/v3` or `/remote/v4` QR routes.
 
-## Feature Exposure
+## Feature exposure
 
-当前 Desktop main 使用 `createWebRemoteControlFeatureGate()`，其默认值为 `true`，
-不按 production/development 环境自动禁用远控。生产环境可以通过既有远控入口启动并获取连接信息；
-不能再把“生产构建”视为启动 IPC 被拒绝或 status 隐藏二维码的保证。
+Desktop main uses `createWebRemoteControlFeatureGate()`, default `true`, without automatically disabling
+remote control by production/development environment. Production can start through the existing remote
+control entry and get connection information; "production build" can no longer be assumed to reject the IPC
+or hide the QR. `WebRemoteControlFeatureGate` keeps an explicit disable capability: when `false` is injected
+the manager refuses to start and the status returns no valid connection information. This gate is a feature
+switch and does not replace the caller-source verification and internal ticket boundary below. Wiring is in
+`packages/desktop/src/main/index.ts`; the switch implementation in `packages/desktop/src/main/webRemoteControlFeatureGate.ts`.
 
-`WebRemoteControlFeatureGate` 仍保留显式禁用能力：注入 `false` 时 manager 拒绝启动，
-status 不返回有效远控连接信息。该 gate 是功能开关，不替代下文的调用来源校验与内部票据边界。
-当前接线见 `packages/desktop/src/main/index.ts`，开关实现见
-`packages/desktop/src/main/webRemoteControlFeatureGate.ts`。
+## Startup call boundary and Office XSS
 
-## 启动调用边界与 Office XSS 关系
-
-打开 `WebRemoteControlDialog` 是用户进入 Web 远控的既有入口。当前目标没有可复用 runtime 时，
-renderer 通过登录门禁后发送启动 IPC；二维码不再提供刷新配对操作。Desktop main 不叠加原生二次确认。
+Opening `WebRemoteControlDialog` is the existing user entry to Web remote control. When the current target
+has no reusable runtime the renderer sends a start IPC at once; refreshing the QR keeps the confirmation
+dialog already in the renderer. To keep the existing experience, Desktop main adds no native second
+confirmation for start or refresh.
 
 ```text
-WebRemoteControlDialog open (signed in)
+WebRemoteControlDialog open / confirmed QR refresh
         │
         ▼
 Desktop main: window/source check
@@ -370,37 +476,40 @@ Manager: issue internal one-time ticket (short TTL)
 Manager: consume ticket exactly once -> start relay
 ```
 
-manager 仍生成绑定 `windowId + workspaceKey + remoteSessionId` 的短 TTL、一次性内部票据，其中
-`workspaceKey = workspaceIdentity?.trim() || workspacePath`；
-票据不得进入 renderer 可写的共享协议，也不得写入日志、遥测或普通设置。它用于约束
-`startAuthorized` 的调用和目标一致性，但因为同一个 IPC 请求会立即签发
-票据，所以它不是用户授权，也不能阻止已被攻陷的 renderer 调用启动 IPC。
+The manager still generates a short-lived one-time internal ticket bound to
+`windowId + workspaceKey + remoteSessionId` (`workspaceKey = workspaceIdentity?.trim() || workspacePath`); the
+ticket must not enter the renderer-writable shared protocol nor be written to logs, telemetry or ordinary
+settings. It constrains the targets of `startAuthorized` / `resetPairingAuthorized` and consistency, but
+because the same IPC request issues the ticket immediately, it is not user authorization and cannot stop a
+compromised renderer from calling the start IPC.
 
-IPC handler 的 manager 依赖类型只暴露 `authorizeStart`、`startAuthorized`、
-`notifyAuthStateChanged`、`stop` 和 `getStatus`。直接 `start` 属于 manager 内部生命周期实现，
-不能进入 renderer 可达的 IPC 依赖接口；刷新配对 IPC 已删除。认证通知只包含状态，main 重新读取凭据。公共返回类型保留 `cancelled` 兼容分支，当前 Desktop 启动不会产生该终态。
+The manager dependency type exposed to the IPC handler allows only `authorizeStart`, `startAuthorized`,
+`resetPairingAuthorized`, `stop` and `getStatus`. Direct `start` / `resetPairing` belong only to the
+manager's internal lifecycle and cannot enter IPC dependency interfaces reachable by the renderer. Public
+return types keep the `cancelled` compatibility branch, but the current Desktop start and refresh paths never
+produce that terminal state. Start, refresh pairing, window close, user stop and ticket expiry all invalidate
+unconsumed tickets. Restoring "last enabled" at app startup remains an internal lifecycle operation and must
+not bypass workspace/session binding.
 
-启动、窗口关闭、用户停止和票据超时都必须使未消费票据失效。应用启动时恢复
-“上次已启用”仍是内部生命周期操作，不得绕过 workspace/session 绑定。
+The root-cause boundary of Office document XSS is defined by `docs/ui/office-file-preview.md`: untrusted links
+must pass the protocol allowlist, DOM sanitization, click interception and controlled external link opening.
+Removing the native remote control confirmation does not change these root-cause fixes; the cost is that if a
+new renderer XSS appears or the boundary is bypassed, the internal ticket gives no evidence of user presence.
+Security assessments must not treat the ticket as a compensating control for Office XSS.
 
-Office 文档 XSS 的根因边界由 `docs/ui/office-file-preview.md` 定义：不可信链接必须经过协议白名单、
-DOM 净化、点击拦截和受控外链打开。移除原生远控确认不改变这些根因修复；代价是如果未来出现新的
-renderer XSS 或上述边界被绕过，攻击代码可以再次直接调用远控启动 IPC，内部票据不会提供用户在场
-证明。安全评估不得把该票据当作 Office XSS 的补偿控制。
+`web-remote-replayable` should not get terminal capabilities by default. If the product still needs mobile
+terminals they must be exposed through independent workspace/session/device binding capabilities, short TTL,
+owner/lease and disconnect recycling; the generic `services.exposeOnChannelServer()` cannot be treated as authorization.
 
-`web-remote-replayable` 默认不应获得终端能力。若产品仍需手机终端，必须通过独立的
-workspace/session/device 绑定 capability、短 TTL、owner/lease 和断线回收来暴露，不能把通用
-`services.exposeOnChannelServer()` 视为授权。
+## Workspace Hook Trust review
 
-## Workspace Hook Trust Review
-
-Workspace Hook Trust 不在 relay、desktop main 或 renderer 中复制业务状态。Desktop continuous 与 Mobile/Web
-replayable attachment 共享同一个 CLI Runtime review registry：
+Workspace Hook Trust replicates no business state in the relay, desktop main or renderer. The Desktop
+continuous and Mobile/Web replayable attachments share one CLI Runtime review registry:
 
 ```text
 project Hook discovery
   -> CLI Runtime immutable snapshot
-  -> Runtime review registry (唯一权威)
+  -> Runtime review registry (sole authority)
        ├─ continuous delta -> Desktop Settings
        └─ replayable snapshot/delta -> Mobile/Web Settings
 
@@ -412,20 +521,10 @@ Settings decision
   -> Trust mutation or fail-closed reason
 ```
 
-约束：
-
-- Host capability `workspaceHookReview` 和 Client UI capability `workspaceHookReviewUi` 必须分别声明；缺失等价于 false。
-- review request 作为 `pendingInteractions[kind=workspaceHookReview]` 投影，手机 refresh、gap/resync 或 attachment 重建只恢复 presentation，不 settle Runtime request。
-- command target 绑定 `taskId + runId + remoteSessionId? + workspaceIdentity + bundleDigest + reviewFlowId + generation + interactionId`；任一不匹配都在 store mutation 前拒绝。
-- renderer pending-command registry 只保存 sensitive command digest/ACK 状态。ACK 不明时可以 `commands/query`，不得持久化或自动重放原始 Trust decision。
-- Runtime restart 产生新的 run epoch；旧 interaction、Allow once 和 pending sensitive command 不能跨 epoch 复用。
-- `workspaceHookTrustEnabled=false` 时 Runtime 不读取 Trust store、不创建 review；Protocol Host 可在 trusted bootstrap 边界关闭该字段回滚到 hard block。
-- managed deny 始终高于 UI/CLI 建立的 Trust；relay/main 只路由 opaque command 和 projection，不持有 policy、Trust store 或 lease 的副本。
-
-### 2026-09 虚拟项目目录导航
-
-手机 home 复用 ProjectSidebar，经当前 base attachment 读取 Host 项目行集合；手机 shell 仅拥有 home/chat 与浏览器返回状态。`workspace-bridge-open.project` 是严格的 projectId/hostId 意图，由 main 转交窗口 Host 的 ProjectService 准备执行目录。它允许在已在线物理 Source 上创建或复用目录 logical scope，不允许隐式新建物理连接、Host 或 Agent。准备前后检查连接成员代际、项目入口与物理连接对象；main 只保留当前导航的 RPC promise，同一 bridge identity 的重试不重复分配目录，取消/关窗/后续导航使迟到结果失效。
-
-Host 返回可信 workspaceIdentity、remoteSessionId、cwd 后沿原 shared-host attachment 建立手机 replayable bridge。项目/provider/初始输入只在 Web 的 Root 交接中传递，main 不存草稿或任务业务状态。桌面 direct continuous、手机 snapshot/gap 恢复、owner/lease 和 CLI CommandInbox 的单队列规则保持不变。
-
-手机未提交项目草稿复用 Renderer 既有 composer 持久化：按 workspaceKey 的 `__draft__` scope 保存可选 projectId，与正文/模型一起恢复。Root 重建或页面 reload 在 prewarm 前恢复该选择；显式新建未归类草稿写 NULL，明确 taskId 的历史打开优先。提升为持久任务后不把 projectId 复制到 session composer scope；已提交任务的归属仍只由 Host app 库拥有。main、relay 和 shared-host transport 均不持有这份草稿。
+- The Host capability `workspaceHookReview` and the Client UI capability `workspaceHookReviewUi` are declared separately; missing equals false.
+- The review request is projected as `pendingInteractions[kind=workspaceHookReview]`; mobile refresh, gap/resync or attachment rebuild only restores presentation and never settles Runtime requests.
+- The command target is bound to `taskId + runId + remoteSessionId? + workspaceIdentity + bundleDigest + reviewFlowId + generation + interactionId`; any mismatch is rejected before the store mutation.
+- The renderer pending-command registry saves only the sensitive command digest/ACK status. When the ACK is unclear `commands/query` can be used; the original Trust decision is not persisted or auto-replayed.
+- A Runtime restart produces a new run epoch; old interactions, Allow once and pending sensitive commands cannot be reused across epochs.
+- With `workspaceHookTrustEnabled=false` the Runtime does not read the Trust store or create reviews; the Protocol Host can roll the field back to a hard block at the trusted bootstrap boundary.
+- Managed denials always outrank Trust established by UI/CLI; relay/main only route opaque commands and projections and hold no copy of policy, Trust stores or leases.

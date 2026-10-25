@@ -4,6 +4,7 @@
  * 不引入第三方库，用 React portal 渲染到 body，3 秒自动消失。
  * 调用方式：`import { toast } from "@/components/ui/toast.js"; toast("message");`
  */
+import { TID_TOAST } from "@zcode/shared";
 import { createRoot } from "react-dom/client";
 import { useEffect, useState } from "react";
 import { Info, TriangleAlert, X } from "lucide-react";
@@ -69,12 +70,16 @@ const pendingToastUpdates = new Map<number, ToastUpdate>();
 const dismissedBeforeMountToastIds = new Set<number>();
 const DEFAULT_TOAST_DURATION_MS = 3000;
 const TOAST_TRANSITION_DURATION_MS = 200;
+// addToast is only assigned once the container's effect runs, so toasts fired before that commit
+// each created another host and React root that were never unmounted.
+let hostMountPending = false;
 
 function ensureHost() {
-  if (addToast) {
+  if (addToast || hostMountPending) {
     return;
   }
 
+  hostMountPending = true;
   const host = document.createElement("div");
   host.id = "zcode-toast-host";
   document.body.appendChild(host);
@@ -86,6 +91,7 @@ function ToastContainer() {
   const [items, setItems] = useState<ToastItem[]>([]);
 
   useEffect(() => {
+    hostMountPending = false;
     addToast = (item: ToastItem) => {
       pendingToastIds.delete(item.id);
       const pendingUpdate = pendingToastUpdates.get(item.id);
@@ -311,6 +317,7 @@ export function ToastMessageView({
 
   return (
     <div
+      data-testid={TID_TOAST}
       className={cn(
         "rounded-2xl border bg-toast/60 text-ui-base shadow-lg backdrop-blur-xl transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.77,0,0.175,1)] motion-reduce:transform-none motion-reduce:transition-opacity",
         isSourceServerUpdate
@@ -402,7 +409,7 @@ export function ToastMessageView({
           ) : (
             <Info className="size-4 shrink-0 text-foreground-subtle" aria-hidden="true" />
           )}
-          <div className="flex min-w-0 flex-[1_0_0] items-start gap-4 py-3 text-sm">
+          <div className="flex min-w-0 flex-[1_0_0] items-start gap-4 py-3 text-ui-base">
             <div className="min-w-0 flex-1 leading-5">
               <div className="text-foreground">{displayTitle}</div>
               {displayBody ? (

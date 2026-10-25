@@ -34,26 +34,21 @@ import type {
 } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { createMcpToolDisplay } from "../../tool/executor/result-display.js";
+import { resolveToolSchedulingFlags } from "../../tool/executor/permission-capability.js";
+import { resolveRuntimeToolCapabilityContext } from "../helpers/runtime-tools.js";
 
 export async function scheduleTools(
   this: AgentRuntimeInternal,
   toolCalls: ToolCall[],
 ): Promise<ToolSchedule> {
+  const capabilityContext = resolveRuntimeToolCapabilityContext(this);
   const dependencies: ToolDependency[] = toolCalls.map((tc) => {
     const entry = this.registry.get(tc.name);
-    const metadata = entry?.metadata;
-    const sideEffectScope = entry?.permission?.sideEffectScope ?? metadata?.sideEffectScope;
     return {
       toolCallId: tc.id as ToolCallId,
       toolName: tc.name,
       dependsOn: [],
-      readOnly:
-        metadata?.readOnly === undefined
-          ? undefined
-          : metadata.readOnly && sideEffectScope === "none",
-      destructive: metadata?.destructive,
-      concurrentSafe: metadata?.concurrentSafe,
-      sideEffectScope,
+      ...(entry ? resolveToolSchedulingFlags(entry, tc.input, capabilityContext) : {}),
     };
   });
 
@@ -91,6 +86,9 @@ export async function executeTools(
   });
   let results: ToolExecutionResult[] = [];
 
+  // Nested AGENTS.md reservations are not cleared here. Streamed calls run one executeTools per tool while the model is
+  // still responding, and their results only enter history at settleToolResults, so clearing at this call's end would
+  // let a later streamed call in the same step deliver the same file again (context/nested-instructions/tracker.ts).
   while (true) {
     const next = await generator.next();
     if (next.done) {
@@ -137,8 +135,8 @@ export async function emitToolScheduledEvents(
     const toolCall = toolCallById.get(item.toolCallId as string);
     if (!toolCall) continue;
     if (toolCall.name.trim().length === 0) {
-      // 把空名投影成普通字符串再发 scheduled 事件，会与合法同名工具发生身份碰撞。
-      // 空名只需要 registry-miss result 完成模型恢复，不建立产品工具生命周期。
+      // Projecting an empty name to a regular string and emitting a scheduled event could collide with a valid tool of the same name.
+      // An empty name needs only a registry-miss result for model recovery; it must not create a product tool lifecycle.
       continue;
     }
     const event = this.createEvent(
@@ -151,8 +149,8 @@ export async function emitToolScheduledEvents(
         dependencies: item.dependencies,
         parallelGroupIndex: findParallelGroupIndex(schedule, item.toolCallId),
         canRunParallel: item.canRunParallel,
-        // MCP 名称来自 registry discovery，而不是合成的 provider tool name。
-        // 在 scheduled 阶段携带，保证 pending/permission/running/stop 全生命周期可展示。
+        // MCP names come from registry discovery, not synthesized provider tool names.
+        // Include them at the scheduled stage so they can be displayed through the pending/permission/running/stop lifecycle.
         display: createMcpToolDisplay(this.registry.getMetadata(toolCall.name)?.mcpPresentation),
         schedule: {
           parallelGroups: schedule.parallelGroups,

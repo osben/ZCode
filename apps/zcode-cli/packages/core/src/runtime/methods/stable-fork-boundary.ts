@@ -14,9 +14,9 @@ interface VerificationEntryPayload {
 }
 
 /**
- * 在 TurnComplete 对订阅者可见前，把 fork 所需的历史事实固定到最终 assistant。
- * productTurnId 属于 bootstrap 投影域，这里只固定 core 权威的 raw message segment；
- * resolver 会用 projection candidate 补 productTurnId，禁止 core 复制 `~qN` 算法。
+ * Fixes the history facts needed for a fork onto the final assistant before TurnComplete becomes visible to subscribers.
+ * productTurnId belongs to the bootstrap projection domain, so this records only the core-authoritative raw message segment;
+ * the resolver adds productTurnId using a projection candidate. Core must not duplicate the `~qN` algorithm.
  */
 export async function persistStableForkCompletionBoundary(
   runtime: AgentRuntimeInternal,
@@ -50,9 +50,9 @@ export async function persistStableForkCompletionBoundary(
     boundary.info.error ||
     boundary.info.time.completed === undefined
   ) {
-    // 兼容只实现部分 SessionStorePort 的旧 adapter/test double，以及 turn 收口前被
-    // edit/rewind 改写的 transcript。没有 exact segment 就不写伪 anchor，resolver
-    // 仍按 legacy 无歧义规则裁决。
+      // Support older adapters/test doubles that implement only part of SessionStorePort, and transcripts
+      // rewritten by edit/rewind before turn finalization. Without an exact segment, do not write a fake anchor; the resolver
+      // will apply the unambiguous legacy rule.
     return;
   }
 
@@ -92,8 +92,8 @@ export async function persistStableForkCompletionBoundary(
 }
 
 function stableGoalSnapshot(target: SessionGoal): SessionGoal {
-  // active run 字段属于 parent 的瞬时执行权，不是 child 可继承状态。生产 adapter 的
-  // cloneTargetForFork 也会清空；anchor 同样先清空，避免查询/诊断误读为历史运行中。
+  // Active-run fields represent the parent's transient execution rights, not state a child can inherit. The production adapter's
+  // cloneTargetForFork clears them too; clear the anchor as well so queries/diagnostics do not misread the child as historically running.
   return {
     ...target,
     activeInputId: null,
@@ -110,8 +110,8 @@ async function verificationEntryIdsAtBoundary(
 ): Promise<string[]> {
   const store = runtime.sessionStore;
   if (!store?.sessionEntries) {
-    // 有 goal 却无法读取 verifier ledger 时不能伪造空边界，否则 child 可能静默丢失
-    // fork 点前 verifier。显式失败会阻止 TurnComplete/canFork 先于权威 anchor 发布。
+    // If a goal exists but its verifier ledger cannot be read, do not fabricate an empty boundary; the child might silently lose
+    // verifier state from before the fork point. Fail explicitly so TurnComplete/canFork cannot publish before the authoritative anchor.
     return [];
   }
   const entries = await store.sessionEntries({

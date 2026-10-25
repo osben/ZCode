@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # pnpm workspace: the root directory covers pnpm-workspace.yaml packages
+  # (packages/*, apps/zcode-cli, apps/zcode-cli/packages/*, apps/zcode-cli/tools/*)
+  # and the single root pnpm-lock.yaml.
+  - package-ecosystem: "npm"
+    directory: "/"
+    target-branch: "fork"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "fork"
+    schedule:
+      interval: "weekly"

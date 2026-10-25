@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- Provider/Model 的原子配置生命周期共享一次 Repository 更新边界，拆开会重复顺序与规范化逻辑。 */
+/* oxlint-disable eslint(max-lines) -- Provider/Model atomic configuration lifecycle shares one Repository update boundary; splitting it would duplicate ordering and normalization logic. */
 import type {
   ModelConfigRules,
   ModelId,
@@ -54,17 +54,19 @@ export interface PersonalProviderCreation {
 
 export interface CreatePersonalProviderInput {
   readonly templateId?: ProviderTemplateId;
+  /** Explicit id for domain-managed providers (e.g. `acp:opencode`); defaults to a generated id. */
+  readonly providerId?: ProviderId;
   readonly providerName?: string;
   readonly locale?: ProviderTemplateLocale;
   readonly initialConfig?: ProviderConfig;
 }
 
-/** Facade 提供的 Host 内部成员事实；不得接受 Renderer 自报的模型名单。 */
+/** Host-internal member facts supplied by the Facade; do not accept a model list reported by the Renderer. */
 export interface ProviderModelMembership {
   readonly providerId: ProviderId;
   readonly inheritedModelIds: readonly ModelId[];
   readonly personalRevision: string;
-  /** 在 Personal 事务内检查发布快照未过期，不触发网络请求。 */
+  /** Check that the published snapshot is still current inside the Personal transaction; do not make a network request. */
   readonly assertCurrent: () => void;
 }
 
@@ -80,7 +82,7 @@ function assertMembershipCurrent(
   }
 }
 
-/** Personal 根记录只是覆盖层，不是 Provider 存在性的依据；仅继承 Provider 可按需创建覆盖。 */
+/** A Personal root record is only an overlay, not proof that a Provider exists; create an overlay on demand only for an inherited Provider. */
 function writableProviderOverlay(
   builtin: ProviderConfigLayerSnapshot,
   current: ProviderConfigLayerSnapshot,
@@ -89,7 +91,7 @@ function writableProviderOverlay(
   const provider = current.providers.get(providerId);
   if (provider) return provider;
   if (builtin.providers.has(providerId)) return new ProviderConfigValue({});
-  // 已删除的自定义/模板实例没有继承 Provider 身份，迟到操作不能把它复活。
+  // Deleted custom/template instances have no inherited Provider identity; a late operation must not revive them.
   throw new Error(`Provider 不存在: ${providerId}`);
 }
 
@@ -134,10 +136,10 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
     return () => this.#listeners.delete(listener);
   }
 
-  /** 仅供版本迁移或事实源 cutover 原子替换完整 Personal Overlay。 */
+  /** Atomically replace a complete Personal Overlay only for version migration or source-of-truth cutover. */
   replacePersonalConfig(config: ProviderConfigLayerUpdate): Promise<ProviderConfigLayerSnapshot> {
     this.#assertNotDisposed();
-    // 全量导入/分发与字段编辑不同；新信封未带默认选择时必须清除，不能继承接收端旧值。
+    // Full import/distribution differs from field editing; if the new envelope omits the default selection, clear it instead of inheriting the receiver's old value.
     return this.#personalRepository.update(() => config);
   }
 
@@ -154,19 +156,27 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
       const builtin = zcodeBuiltin.providers.get(providerId);
       const currentPersonal = current.providers.get(providerId);
       const currentEffectiveProviders = zcodeBuiltin.providers.overlay(current.providers);
-      // 账号总禁用已撤销；在公共写入边界拒绝新操作，避免隐藏 UI 后仍能写出无效状态。
-      if (builtin?.access?.type === "zhipu-account" && metadata?.enabled === false) {
+      // Account-wide disable has been revoked; reject new operations at the public write boundary so invalid state cannot be written after hiding the UI.
+      if (
+        (builtin?.access?.type === "zhipu-account" ||
+          builtin?.access?.type === "chatgpt-account") &&
+        metadata?.enabled === false
+      ) {
         throw new Error(`Account Provider 不允许禁用: ${providerId}`);
       }
-      if (builtin?.access?.type === "zhipu-account" && config.access !== undefined) {
-        // 通用保存入口只解析 ProviderConfig，曾绕过 Personal Source Schema，
-        // 允许固定 Account Provider 的 access 被写盘，直到下次读取才整份拒绝。
+      if (
+        (builtin?.access?.type === "zhipu-account" ||
+          builtin?.access?.type === "chatgpt-account") &&
+        config.access !== undefined
+      ) {
+        // The generic save entry point parsed only ProviderConfig and previously bypassed the Personal Source Schema,
+        // allowing access for a fixed Account Provider to be written to disk and rejected only on the next read.
         throw new Error(
           `固定 Account Provider 的 Access 只能由 ZCode Built-in Config 声明: ${providerId}`,
         );
       }
-      // 普通保存曾同时承担创建语义，删除后的迟到保存可以凭空复活 Overlay。
-      // 创建已经是明确的领域操作，普通保存只更新现有配置，不存在即拒绝。
+      // Ordinary save previously also handled creation, allowing a late save after deletion to revive an Overlay.
+      // Creation is now an explicit domain operation; ordinary save updates existing config and rejects if it does not exist.
       if (!currentPersonal && !builtin) {
         throw new Error(`Personal Provider 尚未创建: ${providerId}`);
       }
@@ -186,7 +196,7 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
       const membershipBaseline =
         builtin ?? resolveTemplateBaseline(zcodeBuiltin, current.providers, providerId);
       const next = normalized.withModelMembershipFrom(
-        // 普通 Provider 保存也保留动态成员顺序；不能改名称时又按静态名单删掉已保存的调序。
+        // Ordinary Provider saves preserve dynamic member order; do not discard a saved reorder using a static list when the name cannot be changed.
         normalizePersonalProviderMembership(
           currentPersonal,
           membershipBaseline,
@@ -205,8 +215,8 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
         config: next,
       });
       const nextEffectiveProviders = zcodeBuiltin.providers.overlay(providers);
-      // 旧版本可能已经留下重名 Provider。全量校验会让这些历史问题阻断
-      // 任意无关 Provider 的保存；这里仅禁止本次名称变更新引入重名。
+      // Older versions may already have left duplicate Provider names. Full validation would let these historical issues block
+      // saves to unrelated Providers; here, only reject duplicates introduced by this name change.
       assertProviderLabelMutationIsUnique(
         providerId,
         currentEffectiveProviders,
@@ -236,7 +246,25 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
     let createdProviderId: ProviderId | undefined;
     await this.#updatePersonal((current) => {
       const occupied = new Set([...zcodeBuiltin.providers.keys(), ...current.providers.keys()]);
-      const providerId = nextPersonalProviderId(occupied, templateId);
+      const requestedProviderId =
+        input.providerId === undefined ? undefined : input.providerId.trim();
+      if (requestedProviderId !== undefined) {
+        // An explicitly supplied id must be valid — never fall back to a
+        // generated id for callers that asked for a specific one.
+        if (requestedProviderId.length === 0) {
+          throw new Error(`Provider ID must not be empty: ${JSON.stringify(input.providerId)}`);
+        }
+        if (occupied.has(requestedProviderId)) {
+          throw new Error(`Provider ID is already in use: ${requestedProviderId}`);
+        }
+        if (/\s/.test(requestedProviderId)) {
+          throw new Error(`Provider ID must not contain whitespace: ${input.providerId}`);
+        }
+      }
+      const providerId =
+        requestedProviderId !== undefined
+          ? requestedProviderId
+          : nextPersonalProviderId(occupied, templateId);
       createdProviderId = providerId;
       const effectiveProviders = resolvePersonalProviderBaselines(zcodeBuiltin, current.providers);
       const label = nextPersonalProviderLabel(
@@ -346,7 +374,7 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
         providers: current.providers.set(
           normalizedProviderId,
           provider.withPersonalModelIds([...currentModelIds, normalizedModelId]).withModelOrder(
-            // 添加不能重新按成员名单排序，否则会丢掉用户已经保存的顺序。
+            // Adding a member must not reorder the full member list, or the user's saved order would be lost.
             normalizeModelOrder(
               builtinModelIds,
               [...currentModelIds, normalizedModelId],
@@ -382,7 +410,7 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
       const builtinModelIds =
         membership?.inheritedModelIds ??
         resolveProviderBuiltinModelIds(zcodeBuiltin, current.providers, normalizedProviderId);
-      // 继承归属保护适用于 Facade 和底层直接调用，不能只在有动态上下文时检查。
+      // Inherited-ownership protection applies to both Facade and direct lower-level calls; do not check it only when dynamic context exists.
       if (builtinModelIds.includes(currentId))
         throw new Error(`Built-in Model 不能重命名: ${normalizedProviderId}/${currentId}`);
       if (!provider?.personalModelIds?.includes(currentId)) {
@@ -432,8 +460,8 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
       if (!inherited.includes(model) && !provider?.personalModelIds?.includes(model)) {
         throw new Error(`Model 不存在: ${id}/${model}`);
       }
-      // 启停曾复用完整草稿保存，可能覆盖其他编辑或被固定配置完整性阻挡。
-      // 在事务内只修改最新 enabled；不改变模式、成员和其他模型字段。
+      // Enable/disable previously reused full-draft save, which could overwrite other edits or be blocked by fixed-config completeness checks.
+      // Change only the latest enabled value inside the transaction; do not alter mode, members, or other model fields.
       const config = (current.models.getExact(id, model) ?? new ModelConfig({})).overlay(
         new ModelConfig({ enabled }),
       );
@@ -445,7 +473,7 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
     });
   }
 
-  /** Model 编辑弹窗的唯一写入边界：成员、顺序、精确 Rule 在同一次 Repository update 中提交。 */
+  /** The sole write boundary for the Model editor: members, order, and exact Rule are submitted in one Repository update. */
   async savePersonalModelDraft(
     providerId: ProviderId,
     originalModelId: ModelId,
@@ -570,7 +598,7 @@ export class ProviderConfigService implements ProviderSource<ProviderConfigSnaps
   ): Promise<ProviderConfigLayerSnapshot> {
     this.#assertNotDisposed();
     return this.#personalRepository.update((current) => ({
-      // Provider/Model/排序只修改自己的成员，不能因共用文件清掉默认选择。
+      // Provider/Model/order operations modify only their own members; do not clear the default selection just because the file is shared.
       defaultModelSelection: current.defaultModelSelection,
       ...transform(current),
     }));

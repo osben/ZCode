@@ -2,7 +2,7 @@ import { GenUiMessageResponse } from "@/gen-ui/index.js";
 import { ConversationUserInputBubble } from "@/v4/ConversationUserInputBubble.js";
 import { expandTopicInputMessages } from "@/v4/topicInputMessages.js";
 import { ConnectedBotGroupDeliveryAction } from "@/v4/BotGroupDeliveryAction.js";
-/* oxlint-disable eslint(max-lines) -- v4 逐行 row 渲染分发集中收口（每种 row 一个 memo 叶子 + timelineMarker 分隔线），拆分会打散行类型对照。 */
+/* oxlint-disable eslint(max-lines) -- v4 row rendering is dispatched centrally (one memo leaf per row kind plus timelineMarker dividers); splitting it would scatter the row-type mapping. */
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 import {
   type ComponentProps,
@@ -24,6 +24,7 @@ import {
   GitBranchIcon,
   GoalIcon,
   PencilIcon,
+  PinIcon,
   ThumbsDownIcon,
   ThumbsUpIcon,
   TrendingUpDownIcon,
@@ -40,6 +41,7 @@ import {
   TID_V4_FEEDBACK_DISLIKE,
   TID_V4_FEEDBACK_LIKE,
   TID_V4_FORK,
+  TID_V4_PIN,
   TID_V4_ROW,
   TID_V4_ROW_ATTACHMENTS,
   testId,
@@ -177,8 +179,8 @@ const ArtifactRowView = memo(function ArtifactRowView({ row }: { row: ArtifactRo
   );
 });
 
-/** 复制行文本：图标 ghost 按钮 + 1200ms 打勾态（对齐旧版 message copy）。
- *  label/tooltip 必须由调用方传入 i18n 文案，禁止硬编码语言。 */
+/** Copy row text: icon ghost button + 1200ms checkmark state (matches the old message copy behavior).
+ * The caller must provide the label/tooltip as i18n text; do not hardcode a language. */
 const CopyRowAction = memo(function CopyRowAction({
   text,
   rowId,
@@ -242,9 +244,65 @@ export type AssistantFeedbackHandler = (
 ) => Promise<boolean | void> | boolean | void;
 
 export function readAssistantFeedback(row: AssistantTextRow): AssistantMessageFeedback | null {
-  // feedback 是 additive V4 row 字段；兼容旧 CLI 的 row 时缺省为 null。
+  // feedback is an additive V4 row field; default to null for rows from older CLI versions.
   const feedback = row.feedback;
   return feedback === "like" || feedback === "dislike" ? feedback : null;
+}
+
+export type RowPinChangeHandler = (
+  target: ConversationRowTarget,
+  pinned: boolean,
+) => Promise<boolean | void> | boolean | void;
+
+// Pin toggle with optimistic state and rollback, shared by the user and assistant toolbars; mirrors the
+// localFeedback pattern so a rejected command never leaves a stale pinned marker.
+function useRowPinToggle(options: {
+  rowId: number;
+  entityId?: string;
+  pinnedAt?: number;
+  sessionId?: string | null;
+  onPinChange?: RowPinChangeHandler;
+}) {
+  const platform = useOptionalPlatform();
+  const [localPinnedAt, setLocalPinnedAt] = useState<number | null>(options.pinnedAt ?? null);
+  useEffect(() => {
+    setLocalPinnedAt(options.pinnedAt ?? null);
+  }, [options.pinnedAt]);
+  const togglePin = useCallback(() => {
+    const previousPinnedAt = localPinnedAt;
+    const pinned = previousPinnedAt === null;
+    // Optimistic timestamp is display-only; the authoritative pinnedAt (CLI clock) arrives with the row.upserted delta.
+    setLocalPinnedAt(pinned ? Date.now() : null);
+    const { entityId, onPinChange, rowId, sessionId } = options;
+    if (!entityId) return;
+    void Promise.resolve(onPinChange?.({ rowId, entityId }, pinned)).then(
+      (result) => {
+        if (result === false) setLocalPinnedAt(previousPinnedAt);
+      },
+      (error: unknown) => {
+        setLocalPinnedAt(previousPinnedAt);
+        logger.warn("[ConversationRowView] 固定消息持久化失败", {
+          error: error instanceof Error ? error.message : String(error),
+          messageId: entityId,
+        });
+      },
+    );
+    if (platform) {
+      void reportAppTelemetryEvent(
+        platform,
+        {
+          elementName: "message_pin",
+          eventRegion: "chat",
+          eventType: "ck",
+          eventExtraDetail: { pinned: pinned ? "pinned" : "unpinned" },
+          ...(sessionId ? { talkId: sessionId } : {}),
+          messageId: entityId,
+        },
+        "ConversationRowView",
+      );
+    }
+  }, [localPinnedAt, options, platform]);
+  return { pinned: localPinnedAt !== null, togglePin };
 }
 
 export interface EditWorkspaceRewindAvailability {
@@ -254,47 +312,48 @@ export interface EditWorkspaceRewindAvailability {
 
 export interface ConversationRowViewProps {
   row: ConversationRow;
-  /** 渲染上下文（theme/codePreviewSettings/workspacePath）；宿主保证引用稳定。 */
+  /** Rendering context (theme/codePreviewSettings/workspacePath); the host guarantees a stable reference. */
   context: ConversationRowRenderContext;
-  /** 完成态 assistant 行的 fork 入口（forkAssistant command）。 */
+  /** Fork entry point for a completed assistant row (forkAssistant command). */
   onFork?: (target: ConversationRowTarget) => void;
-  /** assistant entity 反馈 CAS；UI 先乐观更新，命令失败时回滚。 */
+  /** Assistant-entity feedback CAS; UI updates optimistically and rolls back if the command fails. */
   onFeedbackChange?: AssistantFeedbackHandler;
-  /** 协议兼容：上层仍可提供 retryTurn capability，但产品 UI 不渲染普通重试入口。 */
+  /** Display-only pin bookmark CAS (setRowPinned); optimistic with rollback, same contract as feedback. */
+  onPinChange?: RowPinChangeHandler;
+  /** Protocol compatibility: callers may still provide retryTurn capability, but product UI does not render the standard retry entry. */
   onRetry?: (target: ConversationRowTarget) => void;
-  /** user 行的 edit 入口（editUserQuery command，用行内编辑文本替换该轮）。 */
+  /** Edit entry for a user row (editUserQuery command, replacing this turn's text with inline editing). */
   onEdit?: UserInputEditHandler;
   editWorkspaceRewindAvailability?: EditWorkspaceRewindAvailability;
-  /** 嵌套在工具 Group 内时去掉 Reasoning 内容的重复左导线与缩进。 */
+  /** Remove the duplicate left guide and indentation from Reasoning nested inside a tool Group. */
   reasoningContentVariant?: "default" | "nested";
-  /** renderer-only 提交状态；不写入协议 row，也不冒充已 drain 的历史事实。 */
+  /** Renderer-only submission state; not written to protocol rows or presented as drained history. */
   userInputStatus?: string;
   /**
-   * 一轮对用户是一个回复：非最后一段 text 不显示任何
-   * action（复制/fork 都没有），入口只在轮尾段。
+   * A turn is one reply to the user: non-final text segments show no actions
+   * (neither copy nor fork); actions appear only on the final segment.
    */
   hideAssistantActions?: boolean;
-  /** TurnGroup 需要把轮级 action 延后到文件 summary 后渲染。 */
+  /** TurnGroup must render turn-level actions after the file summary. */
   deferAssistantActions?: boolean;
-  /** 轮尾段的复制内容 = 整轮全部 text 段合并（不是只复制最后一段）。 */
+  /** Copy content for the final segment = all text segments in the turn concatenated (not only the last segment). */
   assistantCopyText?: string;
-  /** Assistant Preview Cards 只由 TurnGroup 为轮尾 terminal assistant text 计算后下发。 */
+  /** Assistant Preview Cards are computed by TurnGroup and passed only to the final terminal assistant text row. */
   assistantPreviewCards?: AssistantPreviewCard[];
-  /** 仅当前 renderer 观察到 running -> complete 时下发的一次性自动打开身份。 */
+  /** One-time auto-open identity, passed only when this renderer observes running → complete. */
   assistantPreviewCardsAutoOpenKey?: string;
-  /** Assistant code-comment cards 只由 TurnGroup 为轮尾终态 assistant text 计算后下发。 */
+  /** Assistant code-comment cards are computed by TurnGroup and passed only to the final terminal assistant text row. */
   assistantCodeCommentCards?: AssistantCodeCommentCard[];
-  /** 由 TurnGroup 统一裁决整轮正文是否隐藏 code-comment 协议原文。 */
+  /** TurnGroup decides whether to hide code-comment protocol text for the entire turn. */
   assistantCodeCommentProjectionEnabled?: boolean;
 }
 
-// ── 每种行拆成独立 memo 叶子：虚拟列表下父级重渲染时，只有 props 真变的行重渲染；
-// 需要 hook 的行类型（assistantText/toolCall）hook 调用留在各自组件内，避免
-// switch 分发组件里出现条件 hook。──
+// ── Each row type is a separate memoized leaf: in the virtual list, a parent render only rerenders rows whose props changed.
+// Row types that need hooks (assistantText/toolCall) keep those calls in their own components to avoid conditional hooks in the switch dispatcher. ──
 
 /**
- * 附件渲染：row 仍只保存 AttachmentRef；图片挂载时按 session/ref 分块读取缩略图，点击后复用已加载 URL 进入共享预览。
- * 非图片与失败后的图片保持纯展示，避免无动作的假手型。
+ * Attachment rendering: rows still store only AttachmentRef. On image mount, read its thumbnail in chunks by session/ref;
+ * on click, reuse the loaded URL in the shared preview. Non-images and failed images remain display-only to avoid a misleading pointer cursor.
  */
 const UserInputAttachmentList = memo(function UserInputAttachmentList({
   attachments,
@@ -309,7 +368,7 @@ const UserInputAttachmentList = memo(function UserInputAttachmentList({
   readAttachmentRange,
 }: {
   attachments: readonly AttachmentRef[] | undefined;
-  /** 编辑态删除附件后仍保留其在持久 FilePart 列表中的原序号。 */
+  /** Preserve the original index in the persisted FilePart list after deleting an attachment while editing. */
   attachmentIndices?: readonly number[];
   entityId?: string;
   attachmentKind?: "all" | "media" | "file";
@@ -325,8 +384,8 @@ const UserInputAttachmentList = memo(function UserInputAttachmentList({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [failedRefs, setFailedRefs] = useState<ReadonlySet<string>>(() => new Set());
   const [thumbnailUrls, setThumbnailUrls] = useState<ReadonlyMap<string, string>>(() => new Map());
-  // 可见消息行预取 image/video Blob：图片直接显示，视频由无控件播放器展示首帧；
-  // video URL 同时供 gallery 复用，避免用户点击后再次读取大文件。
+  // Prefetch image/video Blobs for visible message rows: show images directly and use a control-free video player for the first frame.
+  // Reuse the video URL in the gallery to avoid reading a large file again after the user clicks it.
   const [videoPreview, setVideoPreview] = useState<ChatMediaAttachmentPreviewTarget | null>(null);
   const [videoPreviewRef, setVideoPreviewRef] = useState<string | null>(null);
   const [videoPreviewLoading, setVideoPreviewLoading] = useState(false);
@@ -403,8 +462,8 @@ const UserInputAttachmentList = memo(function UserInputAttachmentList({
       return;
     }
     let cancelled = false;
-    // 只丢弃读取结果不会停止底层分块传输，消息行卸载后仍可能拉取完整视频。
-    // 预取生命周期必须通过 AbortSignal 贯穿 transport，及时释放文件 IO 与 IPC 资源。
+    // Discarding only the read result does not stop the underlying chunked transfer; it may continue loading the full video after the row unmounts.
+    // Propagate AbortSignal through the transport for the prefetch lifecycle to release file I/O and IPC resources promptly.
     const controller = new AbortController();
     const mediaAttachments = attachments.flatMap((attachment, index) =>
       attachment.mime.startsWith("image/") || attachment.mime.startsWith("video/")
@@ -412,8 +471,8 @@ const UserInputAttachmentList = memo(function UserInputAttachmentList({
         : [],
     );
 
-    // V4 虚拟列表只挂载可见行，避免扫描整段历史。视频仍使用稳定 row target，
-    // 保证同一路径多次发送时缩略图来自当前消息的 durable artifact。
+    // The V4 virtual list mounts only visible rows instead of scanning all history. Videos still use a stable row target,
+    // ensuring that repeated sends of the same path use the durable artifact for the current message's thumbnail.
     void Promise.all(
       mediaAttachments.map(async ({ attachment, index }) => {
         const ref = attachment.previewRef ?? attachment.ref;
@@ -464,15 +523,15 @@ const UserInputAttachmentList = memo(function UserInputAttachmentList({
     return () => {
       controller.abort();
       cancelled = true;
-      // Desktop local video 返回自定义协议 URL，不是 renderer 创建的 Blob；
-      // 只释放本 effect 创建的 object URL，避免把本地媒体 URL 当成 Blob 生命周期管理。
+      // Desktop local video returns a custom-protocol URL, not a renderer-created Blob.
+      // Release only object URLs created by this effect; do not manage local media URLs as Blob lifetimes.
       for (const url of thumbnailObjectUrlsRef.current) URL.revokeObjectURL(url);
       thumbnailObjectUrlsRef.current.clear();
       thumbnailUrlsRef.current.clear();
     };
   }, [attachmentIndices, attachmentKind, attachments, entityId, readAttachment, rowId, sessionId]);
 
-  // ── sent video 预览读取：staging 语义原样保留 ──
+  // ── Read sent-video previews while preserving staging semantics ──
   const releaseVideoPreviewUrl = useCallback(() => {
     if (!videoPreviewUrlRef.current) return;
     URL.revokeObjectURL(videoPreviewUrlRef.current);
@@ -559,7 +618,7 @@ const UserInputAttachmentList = memo(function UserInputAttachmentList({
           sessionId,
           ref,
           mediaType: attachment.mime,
-          // 有 entityId 时按稳定 row target 精确读取；否则退回按 ref 匹配。
+          // When entityId exists, read by the stable row target; otherwise, fall back to matching by ref.
           ...(entityId ? { target: { rowId, entityId }, attachmentIndex } : {}),
           signal: abortController.signal,
         });
@@ -582,8 +641,8 @@ const UserInputAttachmentList = memo(function UserInputAttachmentList({
         });
       } catch (error) {
         if (videoPreviewRequestRef.current !== requestId) return;
-        // 一次 read 失败曾永久禁用附件入口，把可否打开 Dialog 错绑到读取结果。
-        // 失败只属于本次预览；保留入口，让每次打开都重新读取并在 Dialog 内展示错误。
+        // A single read failure used to permanently disable the attachment entry, incorrectly tying whether the Dialog could open to the read result.
+        // Failure applies only to this preview; keep the entry available, retry on each open, and show errors inside the Dialog.
         setVideoPreviewError(true);
         logger.warn("[v4-attachment-preview] failed to read sent media", error);
       } finally {
@@ -687,9 +746,9 @@ const UserInputAttachmentList = memo(function UserInputAttachmentList({
       return attachmentKind === "media" ? isMedia : !isMedia;
     });
   if (attachmentKind === "all") {
-    // 行内编辑器过去直接沿用只读消息的通用附件列表，既没有按输入框的
-    // “媒体 → 文件”视觉顺序排列，也误用了已发送消息的 pill。排序只改变渲染顺序，
-    // index 仍指向原数组，避免删除后提交错误的附件。
+    // The inline editor used to reuse the generic attachment list for read-only messages. It did not follow the input's
+    // media → file visual order and used pills intended for sent messages. Sorting changes only render order;
+    // index still refers to the original array so deleting an item does not submit the wrong attachment.
     visibleAttachments.sort(
       ({ attachment: left }, { attachment: right }) =>
         Number(right.mime.startsWith("image/") || right.mime.startsWith("video/")) -
@@ -754,7 +813,7 @@ const UserInputAttachmentList = memo(function UserInputAttachmentList({
     const isUnavailable = failedRefs.has(ref);
     const thumbnailUrl = thumbnailUrls.get(ref) ?? "";
     const previewItemIndex = previewEntries.findIndex((entry) => entry.index === index);
-    // 图片与视频共用当前消息的媒体 gallery；video 首次成为 active item 时再读取。
+    // Images and videos share the current message's media gallery; read a video only when it first becomes the active item.
     const canOpen =
       (isTextMaterial && Boolean(sessionId && readAttachment)) ||
       (isImage && !isUnavailable && previewItemIndex >= 0) ||
@@ -929,18 +988,30 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
   row,
   context,
   onEdit,
+  onPinChange,
   editWorkspaceRewindAvailability,
   status,
 }: {
   row: UserInputRow;
   context: ConversationRowRenderContext;
   onEdit?: UserInputEditHandler;
+  onPinChange?: RowPinChangeHandler;
   editWorkspaceRewindAvailability?: EditWorkspaceRewindAvailability;
   status?: string;
 }) {
   const { intl } = useZCodeIntl();
-  // 引擎尾注折叠：正文只到 epilogueStart，
-  // 之后的引擎文本折进气泡底部的披露。提示词上下文解析也只看正文——尾注里没有用户引用。
+  const { pinned: rowPinned, togglePin } = useRowPinToggle({
+    rowId: row.rowId,
+    entityId: row.entityId,
+    pinnedAt: row.pinnedAt,
+    sessionId: context.sessionId,
+    onPinChange,
+  });
+  const pinLabel = intl.formatMessage({
+    id: rowPinned ? "chat.message.unpin" : "chat.message.pin",
+  });
+  // Collapse engine epilogues: body ends at epilogueStart, with later engine text folded into a disclosure at the bottom of the bubble.
+  // Prompt-context parsing also reads only the body; epilogues contain no user references.
   const { body: bodyText, epilogue } = splitUserInputEpilogue(row.text, row.epilogueStart);
   const parsedPrompt = useMemo(
     () => ({
@@ -952,9 +1023,9 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
     }),
     [context.workspaceIdentity, context.workspacePath, bodyText, row.conversationQuotes],
   );
-  // 只用于把历史消息里的 share URL 尾块从可见正文里剥掉。
-  // 该块已不再产出（见 ConversationComposer 的 promptText 注释）；这里保留解析，是为了让
-  // 接线修复到本次删除之间发出的消息不至于把裸 markup 当正文显示出来。
+  // Used only to strip the share URL trailing block from visible historical message bodies.
+  // The block is no longer produced (see ConversationComposer's promptText comment); keep parsing it so messages sent
+  // between the wiring fix and this removal do not display raw markup as body text.
   const parsedShareContext = useMemo(
     () => parseConversationShareContext(parsedPrompt.visibleContent),
     [parsedPrompt.visibleContent],
@@ -965,8 +1036,8 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
   const [editAttachments, setEditAttachments] = useState<AttachmentRef[]>(() => [
     ...(row.attachments ?? []),
   ]);
-  // 编辑态删除附件后，持久 FilePart 列表仍保留全部附件；序号数组把可见列表
-  // 映射回原 index，避免 video 预览等按 attachmentIndex 的读取指错分块。
+  // After deleting an attachment during editing, the persisted FilePart list still contains all attachments.
+  // This index array maps the visible list back to original indexes so reads by attachmentIndex (such as video previews) use the right chunk.
   const [editAttachmentIndices, setEditAttachmentIndices] = useState<number[]>(() =>
     (row.attachments ?? []).map((_, index) => index),
   );
@@ -1008,7 +1079,7 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
     ) ?? false;
   const hasVisibleText = visibleText.trim().length > 0;
   const pluginUiContexts = parsedPrompt.pluginUiContexts;
-  // nudge 轮整条都是引擎文本：正文为空但气泡仍要画，里面只有那一枚披露。
+  // A nudge turn contains only engine text: the body is empty, but render a bubble with only the disclosure.
   const hasBubble = hasVisibleText || epilogue !== undefined;
   const hasContextReferences =
     codeCommentContexts.length > 0 ||
@@ -1023,8 +1094,9 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
     webElementContexts.length > 0 ||
     pptxElementReferences.length > 0 ||
     (!row.botGroupSource && conversationSelections.length > 0);
-  // Bug 根因：旧逻辑只接受 schedule runId，导致用户点击「立即运行」产生的 manual run
-  // 没有来源标识。两种合法 automation runId 都应展示；普通会话输入仍因解析失败而不展示。
+  // Root cause: the old logic accepted only schedule runIds, leaving manual runs from “Run now”
+  // without a source marker. Show both valid automation runId forms; ordinary conversation input
+  // still stays hidden because parsing fails.
   const isScheduledAutomationPrompt = parseAutomationRunId(row.sourceCommandId ?? "") !== null;
   const openPptxElementReference = useOpenPptxElementReference({
     workspacePath: context.workspacePath,
@@ -1034,13 +1106,9 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
   });
 
   useEffect(() => {
-    if (!editing) {
-      setDraft(parsedShareContext.visibleContent);
-      setEditAttachments([...(row.attachments ?? [])]);
-      setEditAttachmentIndices((row.attachments ?? []).map((_, index) => index));
-      setEditPromptContexts(parsedPrompt);
-      return;
-    }
+    // Edit state is only read while editing, and handleOpenEdit/handleCancelEdit already reset it.
+    // Resetting here with fresh arrays forced a second commit on every user row mount.
+    if (!editing) return;
     const focusEditor = () => inputApiRef.current?.focus();
     if (typeof requestAnimationFrame === "function") {
       requestAnimationFrame(focusEditor);
@@ -1057,8 +1125,8 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
   }, [onEdit]);
 
   const handleOpenEdit = useCallback(() => {
-    // v4 迁移时把 user query 编辑误接成“直接读取主 composer 提交”，
-    // 主 composer 为空时点击只会 warn。这里恢复旧行内编辑态。
+    // During v4 migration, editing a user query was mistakenly wired to "read and submit the main Composer";
+    // when the main Composer was empty, clicking only produced a warning. Restore the old inline-editing behavior here.
     setDraft(parsedShareContext.visibleContent);
     setEditAttachments([...(row.attachments ?? [])]);
     setEditAttachmentIndices((row.attachments ?? []).map((_, index) => index));
@@ -1091,8 +1159,8 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
             ...editPromptContexts,
             conversationSelections: [],
           }),
-          // 省略空数组会让 CLI 按 attachments 缺省语义恢复 canonical 原附件，
-          // 因此 edit 必须始终提交当前完整列表，显式 [] 才能表达“删除全部”。
+          // Omitting an empty array makes the CLI restore canonical original attachments by default,
+          // so edit must always submit the full current list; only explicit [] means "remove all".
           editAttachments,
           workspaceMode,
           ...(parsedPrompt.conversationSelections.length || row.conversationQuotes
@@ -1259,8 +1327,8 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
               description={rewindWorkspaceTooltipDescription}
             >
               {rewindWorkspaceDisabled ? (
-                // Button disabled 会应用 pointer-events-none，TooltipTrigger 直接落在
-                // 按钮上时收不到 hover。禁用态用外层 span 承接 hover，实际按钮仍保持 disabled。
+                // Button disabled applies pointer-events-none, so TooltipTrigger placed directly on the button cannot receive hover.
+                // Use a wrapper span to receive hover in the disabled state while keeping the actual button disabled.
                 <span className="inline-flex" data-disabled-tooltip-trigger="true">
                   {rewindWorkspaceButton}
                 </span>
@@ -1274,6 +1342,9 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
           onChange={setDraft}
           onSubmit={(nextText) => {
             void handleSubmitEdit(nextText, "preserve");
+            // The edit is async and may fail or hit a rewind conflict; returning false stops Lexical
+            // from clearing the editor (and the draft the conflict dialog resubmits). Success closes it.
+            return false;
           }}
           onCancel={handleCancelEdit}
         />
@@ -1306,7 +1377,7 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
         </div>
       ) : null}
       {row.botGroupSource ? (
-        // 群来源原先插在材料与正文之间，割裂同一输入；统一放在材料之前。
+        // Group attribution used to appear between attachments and message text, splitting one input; place it before attachments.
         <div data-v4-user-input-source="true" className="mb-2 flex min-w-0 max-w-full">
           <BotGroupSourceLabel source={row.botGroupSource} />
         </div>
@@ -1346,8 +1417,8 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
           {hasAttachmentPills ? (
             <div
               data-v4-user-input-attachment-pills="true"
-              // 非媒体文件与上下文引用必须共享这一层，才能在换行时
-              // 保持“文件→评论→网页→PPT→对话引用”的顺序和统一右对齐。
+              // Non-media files and context references must share this layer to preserve the order
+              // file → comments → web → PPT → conversation references and right-align them consistently when wrapping.
               className="flex max-w-full flex-wrap justify-end gap-2"
             >
               {hasFileAttachments ? (
@@ -1381,9 +1452,9 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
         </div>
       ) : null}
       {hasBubble ? (
-        // 附件和上下文引用只属于消息行，不属于气泡；否则仅附件消息会留下空气泡。
-        // 同一 row 会渲染在主会话和 Subagent 侧栏，固定宽度会忽略实际宿主宽度。
-        // 气泡保留 flex item 的自动宽度；宿主至少 624px 时再以 36rem 封顶并保留 48px 余量。
+        // Attachments and context references belong to the message row, not the bubble; otherwise attachment-only messages leave an empty bubble.
+        // The same row renders in the main conversation and Subagent sidebar, so a fixed width would ignore the actual host width.
+        // Keep the bubble's automatic flex-item width; cap it at 36rem with 48px of remaining space only when the host is at least 624px wide.
         <ConversationUserInputBubble
           text={visibleText}
           contentParts={row.botGroupSource?.contentParts}
@@ -1402,7 +1473,7 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
         </div>
       )}
       {row.source?.kind === "pluginUi" ? (
-        // 插件 UI 代发：来源标记来自 CLI 持久化的 intent.source，不由 renderer 推断。
+        // Sent on behalf of plugin UI: the source marker comes from the CLI-persisted intent.source; do not infer it in the renderer.
         <div
           data-v4-user-input-source={row.source.pluginId}
           className="mt-1 text-right text-ui-sm text-foreground-subtlest"
@@ -1422,12 +1493,14 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
           {status}
         </div>
       ) : null}
-      {/* Bugfix：手机远控没有 hover，v4 迁移时漏掉了旧 UserMessage 的常显分支，
-          导致复制和编辑入口不可发现；远控直接显示，桌面端继续通过 hover/focus 降噪。 */}
+      {/* Bugfix: Mobile remote control has no hover. The v4 migration omitted the old UserMessage always-
+          visible branch, making Copy and Edit hard to discover. Show them directly for remote
+          control; desktop continues to reduce visual noise with hover/focus. A pinned row keeps the
+          toolbar visible so the pin state stays discoverable and unpin stays reachable. */}
       <MessageActions
         className={cn(
           "mt-1",
-          context.compactForRemoteControl
+          context.compactForRemoteControl || rowPinned
             ? "opacity-100"
             : "opacity-0 transition-opacity group-hover/user-row:opacity-100 focus-within:opacity-100",
         )}
@@ -1437,6 +1510,19 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
           rowId={row.rowId}
           label={intl.formatMessage({ id: "chat.message.copy" })}
         />
+        {onPinChange && row.entityId && row.origin === "realUser" ? (
+          <MessageAction
+            aria-label={pinLabel}
+            aria-pressed={rowPinned}
+            label={pinLabel}
+            tooltip={pinLabel}
+            data-testid={testId(TID_V4_PIN, String(row.rowId))}
+            className={rowPinned ? "!bg-success/10" : undefined}
+            onClick={togglePin}
+          >
+            <PinIcon className="size-3.5" />
+          </MessageAction>
+        ) : null}
         {onEdit && row.entityId ? (
           <MessageAction
             label={intl.formatMessage({ id: "chat.message.edit" })}
@@ -1464,7 +1550,7 @@ const UserInputRowView = memo(function UserInputRowView(
           key={row.botGroupSource!.messageId}
           data-topic-message-id={row.botGroupSource!.messageId}
         >
-          {/* 多条原文共用一个已接收输入，不能把局部编辑误当作替换整批。 */}
+          {/* Multiple source rows share one accepted input; do not mistake a local edit for replacing the whole batch. */}
           <SingleUserInputRowView {...props} row={row} onEdit={undefined} />
         </div>
       ))}
@@ -1472,7 +1558,7 @@ const UserInputRowView = memo(function UserInputRowView(
   );
 });
 
-// memo 组件的数组默认值必须是模块级常量：内联 [] 每次渲染都是新引用，会让 memo 比较失效。
+// Array defaults for memoized components must be module-level constants; an inline [] is a new reference on every render and defeats memo comparison.
 const EMPTY_SOURCE_COMMAND_IDS: readonly string[] = [];
 
 export const ConversationAssistantTextActions = memo(function ConversationAssistantTextActions({
@@ -1482,12 +1568,14 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
   createdAt,
   compactForRemoteControl = false,
   feedback = null,
+  pinnedAt,
   hookInvocations,
   sessionId,
   turnId,
   sourceCommandIds = EMPTY_SOURCE_COMMAND_IDS,
   onFork,
   onFeedbackChange,
+  onPinChange,
   className,
 }: {
   rowId: number;
@@ -1496,6 +1584,7 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
   createdAt: number;
   compactForRemoteControl?: boolean;
   feedback?: AssistantMessageFeedback | null;
+  pinnedAt?: number;
   hookInvocations?: readonly HookInvocationRow[];
   sessionId?: string | null;
   turnId?: string;
@@ -1503,10 +1592,21 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onFeedbackChange?: AssistantFeedbackHandler;
+  onPinChange?: RowPinChangeHandler;
   className?: string;
 }) {
   const { intl, locale } = useZCodeIntl();
   const platform = useOptionalPlatform();
+  const { pinned: rowPinned, togglePin } = useRowPinToggle({
+    rowId,
+    entityId,
+    pinnedAt,
+    sessionId,
+    onPinChange,
+  });
+  const pinLabel = intl.formatMessage({
+    id: rowPinned ? "chat.message.unpin" : "chat.message.pin",
+  });
   const [localFeedback, setLocalFeedback] = useState<AssistantMessageFeedback | null>(feedback);
   const copyLabel = intl.formatMessage({ id: "chat.message.copy" });
   const likeLabel = intl.formatMessage({
@@ -1540,8 +1640,8 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
           },
           (error: unknown) => {
             setLocalFeedback(previousFeedback);
-            // V4 初版只改 renderer local state，command 失败后会显示并不存在的反馈。
-            // 失败必须回滚到点击前投影值，等待后续权威 row 再校正。
+            // The initial V4 implementation updated only renderer-local state, showing feedback that did not exist after command failure.
+            // Roll back on failure to the projected value from before the click, then let a later authoritative row correct it.
             logger.warn("[ConversationRowView] 持久化 assistant 反馈失败", {
               error: error instanceof Error ? error.message : String(error),
               messageId: entityId,
@@ -1635,11 +1735,25 @@ export const ConversationAssistantTextActions = memo(function ConversationAssist
           <TrendingUpDownIcon className="size-3.5" />
         </MessageAction>
       ) : null}
+      {onPinChange && entityId ? (
+        <MessageAction
+          aria-label={pinLabel}
+          aria-pressed={rowPinned}
+          label={pinLabel}
+          tooltip={resolveTooltip(pinLabel)}
+          data-testid={testId(TID_V4_PIN, String(rowId))}
+          className={rowPinned ? "!bg-success/10" : undefined}
+          onClick={togglePin}
+        >
+          <PinIcon className="size-3.5" />
+        </MessageAction>
+      ) : null}
       {turnId && hookInvocations ? (
         <ConversationHookDetailsAction rows={hookInvocations} turnId={turnId} />
       ) : null}
-      {/* Bugfix: 旧 conversation surface 删除后，V4 动作栏漏掉了消息创建时间；
-          时间是 row.createdAt 的只读派生展示，不新增 renderer 状态。 */}
+      {/* Bugfix: Removing the old conversation surface also dropped the message creation time from the
+              V4 action bar. This is a read-only display derived from row.createdAt; do not add
+              renderer state. */}
       {timeLabel ? (
         <span className="select-none text-ui-sm text-foreground-subtlest">{timeLabel}</span>
       ) : null}
@@ -1656,6 +1770,7 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
   onFork,
   onRetry,
   onFeedbackChange,
+  onPinChange,
   hideActions,
   deferActions,
   copyText,
@@ -1669,6 +1784,7 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onFeedbackChange?: AssistantFeedbackHandler;
+  onPinChange?: RowPinChangeHandler;
   hideActions?: boolean;
   deferActions?: boolean;
   copyText?: string;
@@ -1691,11 +1807,12 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
   const visiblePreviewCards = previewCards && previewCards.length > 0 ? previewCards : null;
   return (
     <RowShell rowId={row.rowId} className="group/assistant-row">
-      {/* M5④ 阶段2：assistant 文本走 streamdown（MessageResponse），
-          markdown/代码块正式渲染；streaming 模式对未闭合 markdown 容错。 */}
-      {/* Bugfix：MessageResponse 只消费自身声明的 props，不会把 data-* 透传到真实 DOM，
-          导致 assistant 正文虽然在 JSX 上标了 selectable，框选逻辑却永远找不到该区域。
-          selectable 语义必须放在稳定的 DOM 包装层上，完成态和 streaming 共用同一路径。 */}
+      {/* M5④ phase 2: Assistant text uses streamdown (MessageResponse) for Markdown and code block rendering;
+          streaming mode tolerates incomplete Markdown. */}
+      {/* Bugfix: MessageResponse consumes only its declared props and does not forward data-* attributes to
+          the real DOM. Although the assistant body was marked selectable in JSX, the selection
+          logic could never find it. Put selectable on a stable DOM wrapper and use the same path
+          for completed and streaming messages. */}
       <div data-conversation-selectable="true" className="w-full text-ui-base">
         <GenUiMessageResponse
           completed={row.state === "complete"}
@@ -1744,9 +1861,10 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
           />
         </div>
       ) : null}
-      {/* 完成态动作行悬停显现（对齐旧 MessageActions）：复制 + fork（图标 ghost）。
-          一轮对用户是一个回复：action 只在轮尾段（hideActions 由 TurnGroup 裁决），
-          复制内容 = 整轮全部 text 段合并（copyText 覆盖）。 */}
+      {/* Show completed-message actions on hover, matching the old MessageActions: Copy and Fork
+          use ghost icons. A turn is one reply to the user, so actions appear only on its final
+          segment (TurnGroup controls hideActions). Copy merges all text segments in the turn;
+          copyText overrides that value. */}
       {row.state === "complete" && !hideActions && !deferActions ? (
         <ConversationAssistantTextActions
           rowId={row.rowId}
@@ -1755,13 +1873,15 @@ const AssistantTextRowView = memo(function AssistantTextRowView({
           createdAt={row.createdAt}
           compactForRemoteControl={context.compactForRemoteControl}
           feedback={readAssistantFeedback(row)}
+          pinnedAt={row.pinnedAt}
           sessionId={context.sessionId}
           onFork={onFork}
           onRetry={onRetry}
           onFeedbackChange={onFeedbackChange}
+          onPinChange={onPinChange}
           className={cn(
             "mt-1",
-            context.compactForRemoteControl
+            context.compactForRemoteControl || row.pinnedAt !== undefined
               ? "opacity-100"
               : "opacity-0 transition-opacity group-hover/assistant-row:opacity-100 focus-within:opacity-100",
           )}
@@ -1779,10 +1899,10 @@ const ReasoningRowView = memo(function ReasoningRowView({
   contentVariant?: "default" | "nested";
 }) {
   const streaming = row.state === "streaming";
-  // 外观对齐旧 ThoughtBlock（旧版 chatMessageParts）：ai-elements Reasoning
-  // 折叠组件。交互调整原因：流式 reasoning 默认展开会持续挤压工具和正文空间；
-  // 现在 streaming/complete 都默认收起，只保留运行态文案，用户可手动展开。
-  // autoCollapseKey 仍保证状态边界不会覆盖已经发生过的用户交互。
+  // Match the old ThoughtBlock in chatMessageParts with the ai-elements Reasoning disclosure.
+  // Interaction change: expanded streaming reasoning continually pushes tools and body content out of view.
+  // Collapse it by default during both streaming and completion, show only the running label, and let users expand it manually.
+  // autoCollapseKey still ensures state-boundary changes do not override user interaction.
   const durationSeconds =
     row.durationMs !== undefined ? Math.max(1, Math.ceil(row.durationMs / 1000)) : undefined;
   if (streaming && row.text.length === 0) {
@@ -1796,7 +1916,8 @@ const ReasoningRowView = memo(function ReasoningRowView({
         autoCollapseKey={streaming ? null : row.state}
         {...(durationSeconds !== undefined ? { duration: durationSeconds } : {})}
       >
-        {/* Bug 原因：附件重构合并时误丢了 streamingText 接线，导致摘要组件仍在但永远收到空文本。 */}
+        {/* Bug cause: The attachment refactor accidentally dropped the streamingText wiring, leaving the summary
+            component in place but always passing it empty text. */}
         <ReasoningTrigger streamingText={row.text} />
         <div data-conversation-selectable="true">
           <ReasoningContent variant={contentVariant}>{row.text}</ReasoningContent>
@@ -1817,7 +1938,7 @@ const TurnHeaderRowView = memo(function TurnHeaderRowView({ row }: { row: TurnHe
   );
 });
 
-/** 分隔线图标（对齐旧版 synthetic-timeline dividers：size-3.5 subtle）。 */
+/** Divider icon (matching old synthetic-timeline dividers: size-3.5 subtle). */
 const MARKER_ARCHIVE_ICON = (
   <ArchiveIcon
     aria-hidden="true"
@@ -1844,9 +1965,9 @@ const MARKER_MODEL_ICON = (
 );
 
 /**
- * 系统标记分隔线壳：两侧细横线 + 居中「图标 + 文案」pill，视觉对齐旧版
- * ChatMessage synthetic-timeline dividers（fork / compaction / goal 同款）。
- * running（压缩/校验进行中）隐藏图标、文案走 animated-gradient-text 流光（同旧版）。
+ * System-marker divider shell: thin lines on both sides and a centered icon + text pill, matching the old
+ * ChatMessage synthetic-timeline dividers (same style for fork/compaction/goal).
+ * While running (compaction/verification in progress), hide the icon and animate the text with animated-gradient-text as before.
  */
 function MarkerDividerRow({
   rowId,
@@ -1867,7 +1988,7 @@ function MarkerDividerRow({
   icon: React.ReactNode;
   label: React.ReactNode;
   running?: boolean;
-  /** 传入即整行可点（fork→跳父会话）；不传为静态分隔线。 */
+  /** When provided, the whole row is clickable (fork → parent session); otherwise, it is a static divider. */
   onClick?: () => void;
 }) {
   const clickable = Boolean(onClick);
@@ -1888,7 +2009,7 @@ function MarkerDividerRow({
     </>
   );
   if (onClick) {
-    // 整行 <button>（对齐旧版 fork divider）：hover 变亮 + 文案下划线示意可点。
+    // Use a full-row <button> (matching the old fork divider): brighten on hover and underline text to indicate clickability.
     return (
       <button
         type="button"
@@ -1923,10 +2044,10 @@ function MarkerDividerRow({
 }
 
 /**
- * timelineMarker 行渲染：compact / forkNotice / goalVerify / modelChange 画成分隔线。
- * modelChange 可见化 = 裁决（切换后实际发送出去的轮才落分隔，含
- * model-only 续跑轮）；goalSet/forkCreated 已在投影层停产（隐形行清零），
- * retryNotice·checkpointRestored 无 UI，default 分支兜底不渲染。
+ * Render timelineMarker rows: compact / forkNotice / goalVerify / modelChange become dividers.
+ * modelChange visibility follows the actual decision (only turns sent after a switch get a divider, including
+ * model-only continuation turns). goalSet/forkCreated are no longer emitted by the projection (invisible rows removed);
+ * retryNotice/checkpointRestored have no UI, and the default branch renders nothing.
  */
 const TimelineMarkerRowView = memo(function TimelineMarkerRowView({
   row,
@@ -1967,6 +2088,13 @@ const TimelineMarkerRowView = memo(function TimelineMarkerRowView({
           running,
         };
       }
+      case "agentContextReset":
+        return {
+          // Context was reset by the agent process, not by a model switch, so no icon marks a direction.
+          icon: null,
+          label: intl.formatMessage({ id: "chat.agentContextReset" }, { agent: marker.agentId }),
+          running: false,
+        };
       case "forkNotice":
         return {
           icon: MARKER_FORK_ICON,
@@ -1974,15 +2102,15 @@ const TimelineMarkerRowView = memo(function TimelineMarkerRowView({
           running: false,
         };
       case "modelChange": {
-        // marker 已携带完整 provider/model 元组，旧渲染却只读取 model，
-        // 且没有订阅 provider snapshot，导致同名模型无差异、目录水合后名称不刷新。
-        // 这里保留 provider ID fallback，并让现有 marker 随目录更新。
+        // The marker already carries the full provider/model tuple, but the old renderer read only model
+        // and did not subscribe to provider snapshots. Same-named models appeared identical and names did not refresh after catalog hydration.
+        // Keep the provider ID fallback and let existing markers update with the catalog.
         const fromProvider = resolveProviderLabel(marker.fromProvider, modelSelectionView);
         const toProvider = resolveProviderLabel(marker.toProvider, modelSelectionView);
         const to = formatModelChangeLabel(marker.toProvider, toProvider, marker.toModel, intl);
         if (marker.fromProvider === undefined || marker.fromModel === undefined) {
           return {
-            // source-less 表示首次使用的模型事实，不是模型切换，因此不显示切换箭头。
+            // source-less means this is the first model-use fact, not a model switch, so do not show a switch arrow.
             icon: null,
             label: intl.formatMessage({ id: "chat.modelChange.using" }, { model: to }),
             running: false,
@@ -2007,7 +2135,7 @@ const TimelineMarkerRowView = memo(function TimelineMarkerRowView({
       }
       case "goalVerify": {
         const running = marker.outcome === "running";
-        // pass→完成；notSatisfied/failed→未完成（沿用旧版 failed_closed 归「未完成」的处理）。
+        // pass → complete; notSatisfied/failed → incomplete (preserving the old handling of failed_closed as incomplete).
         const statusId =
           marker.outcome === "running"
             ? "chat.goalVerification.checking"
@@ -2017,7 +2145,7 @@ const TimelineMarkerRowView = memo(function TimelineMarkerRowView({
         return {
           icon: MARKER_GOAL_ICON,
           running,
-          // innerText 形如「第 1 次迭代 · 目标校验中」，对齐 goal-timeline 待命 e2e 断言。
+          // innerText is like "Iteration 1 · Verifying goal", matching the goal-timeline pending E2E assertion.
           label: (
             <>
               <span>
@@ -2037,8 +2165,8 @@ const TimelineMarkerRowView = memo(function TimelineMarkerRowView({
     }
   }, [intl, isOfficeMode, marker, modelSelectionView]);
 
-  // fork 跳父会话（Tier 1）：仅 forkNotice 且宿主提供 onNavigateToRow 时可点，
-  // 切到 marker.parentSessionId（rowId 预留 Tier 2 精确滚动，当前恒 0 占位）。
+  // Fork to parent session (Tier 1): clickable only for forkNotice when the host provides onNavigateToRow.
+  // Switch to marker.parentSessionId; rowId is reserved for Tier 2 precise scrolling and is currently always a 0 placeholder.
   const onNavigate = context.onNavigateToRow;
   const handleClick = useMemo(() => {
     if (marker.type !== "forkNotice" || !onNavigate) {
@@ -2080,25 +2208,26 @@ const ToolCallRowView = memo(function ToolCallRowView({
   row: ToolCallRow;
   context: ConversationRowRenderContext;
 }) {
-  // toolCall 行回接 ToolCallBlocks（execute/read/edit/... renderer 按
-  // tool identity 分流）。适配 memo 按 row 引用：row.delta/upserted 换新对象才重建。
+  // Connect toolCall rows back to ToolCallBlocks (execute/read/edit/... renderers dispatch by tool identity).
+  // Memoize by row reference: rebuild only when row.delta/upserted replaces the object.
   const toolCallNode = useMemo(() => toolCallRowToLegacyNode(row), [row]);
-  // workflow run 详情入口的门控：run 身份走 workflowRuns 投影（schema 里 toolCallId 就是
-  // 「工具卡 → 详情页的关联键」），不从工具输出里读——v4 行的 output 只剩一句散文。
-  // 命中的摘要同时决定卡片形态：有 run 就是紧凑可点卡，没有就是可展开卡。
+  // Gate for the workflow-run details entry: get run identity from the workflowRuns projection (the schema defines
+  // toolCallId as the key from tool card to details page), not from tool output, which is only a sentence in v4 rows.
+  // The matched summary also selects the card shape: a run gets a compact clickable card; otherwise, use an expandable card.
   const workflowRun =
     context.workflowRunByToolCallId?.get(row.toolCallId) ??
-    // ResumeWorkflowRun 行按 runId 联接：display 载荷带 runId（≡ backgroundTaskId），而投影
-    // 的 run.toolCallId 跨 resume 沿用原始 CreateWorkflow 行——resume 行按 toolCallId 永远
-    // 查不到。命中后 onOpenWorkflowRun 的收窄走同一条路径，tab 身份 runId 键、幂等。
+    // Join ResumeWorkflowRun rows by runId: the display payload includes runId (same as backgroundTaskId), while the projected
+    // run.toolCallId remains the original CreateWorkflow row across resume, so a resume row is never found by toolCallId.
+    // After a match, narrow onOpenWorkflowRun through the same path; runId-keyed tab identity is idempotent.
     (row.display?.kind === "resume_workflow_run"
       ? context.workflowRunByRunId?.get(row.display.runId)
       : undefined);
-  // 已接进 run 的补全行（docs/dynamic-workflow/presentation.md「The fill row」）：「留白已补全 · {name} ·
-  // {k} 个阶段 · {m} 个子代理 ↗」。按入参的 `run_id` 联接投影（补全行的 toolCallId 不是发起行的），只认成功
-  // 且编过的行——编不过的补全走下面的编译反馈行，什么都没接进 run。卡下方随之长出新的站（轮尾摘要
-  // 取的是这一行的图）。
-  // 名字来自 display 的 `fill` 块（行的入参没有名字——transcript 只存模型自己的入参）。
+  // A fill row joined to a run (docs/dynamic-workflow/presentation.md, “The fill row”) displays
+  // “Hole filled · {name} · {k} phases · {m} subagents ↗”. Join the projection by input `run_id`
+  // (the fill row's toolCallId differs from the launch row's) and accept only successful, compiled
+  // rows. Failed fills appear as compilation feedback below and do not join the run. A new station
+  // appears beneath the card (the turn-tail summary uses this row's graph).
+  // The name comes from the display's `fill` block; the row input has no name because the transcript stores only the model's input.
   const fillTarget = isFillWorkflowHoleToolCall(row)
     ? readWorkflowHoleTarget(
         row.input,
@@ -2140,8 +2269,8 @@ const ToolCallRowView = memo(function ToolCallRowView({
       </RowShell>
     );
   }
-  // 原因：已启动的工具卡与轮尾摘要重复画同一条实时进度；上方改为普通摘要入口。
-  // 只替换成功关联的发起行，编译诊断及 Resume 等其他工具仍走原有渲染。
+  // Reason: the started tool card and end-of-turn summary duplicated the same live progress; the summary above is now a regular entry point.
+  // Replace only the successfully matched initiating row; compiler diagnostics, Resume, and other tools keep their existing rendering.
   if (
     workflowRun &&
     context.workflowRunByToolCallId?.has(row.toolCallId) &&
@@ -2170,12 +2299,11 @@ const ToolCallRowView = memo(function ToolCallRowView({
       </RowShell>
     );
   }
-  // 就地生效的修订（docs/dynamic-workflow/concurrency.md）：只改并发上限、run 又在飞时这次调用
-  // 不编译、不铸新 run，结果只有一句话。判据全在已经上线的字段上——入参的形状、**没有** display、
-  // 成功且非错误；工具的结构化输出不过 v4，而三处 create_workflow display schema 都是冻结字段集
-  // 的 `.strict()`，多一个键会让旧端把整条工具结果丢掉，所以这条路不新增任何协议字段。
-  // 退回真修订的那一条（run 已结算）两条判据都不成立：它有 display，也铸出一条按 toolCallId
-  // 联接得上的 run，上面那个分支先接走它。
+  // In-place update: when only the concurrency limit changes while a run is active, this call does not compile or create a new run;
+  // its result is a single sentence. Identify it using existing fields: the input shape, **no** display, and success without an error.
+  // Tool structured output does not pass through v4, and all three create_workflow display schemas use a frozen `.strict()` field set.
+  // Adding a key would make older clients discard the entire tool result, so do not add protocol fields for this path.
+  // A real update after the run settles fails both checks: it has display and creates a run joinable by toolCallId, handled by the branch above.
   const retune = isAmendWorkflowToolCall(row) ? readWorkflowRetuneCall(row.input) : undefined;
   if (
     retune !== undefined &&
@@ -2184,9 +2312,10 @@ const ToolCallRowView = memo(function ToolCallRowView({
     !context.workflowRunByToolCallId?.has(row.toolCallId)
   ) {
     const sessionId = context.sessionId;
-    // 被调整那条 run 的投影：只为两件事——默认并发（措辞据它把「等于默认」念成「恢复为默认」）与
-    // 打开请求里那条 run 的发起行 id。它不进上面的 `workflowRun`：那个变量回答的是「这一行是不是
-    // 某条 run 的发起行」，而这一行不是。
+    // Projection of the run being retuned, used only for two things: default concurrency (so
+    // wording can describe “equal to default” as “restore default”) and the launch-row id for the
+    // run in the open request. It does not go into `workflowRun` above, which answers whether this
+    // row launched a run; this row did not.
     const retuned = context.workflowRunByRunId?.get(retune.runId);
     const defaultConcurrency =
       retuned?.run === undefined ? undefined : workflowRunDefaultConcurrency(retuned.run);
@@ -2210,8 +2339,8 @@ const ToolCallRowView = memo(function ToolCallRowView({
       </RowShell>
     );
   }
-  // 工具行去掉纵向内边距（对齐 z-code-2 无 per-tool padding）；连续工具间距由
-  // ConversationAssistantWorkItems 的 gap-4 组容器统一给。
+  // Remove vertical padding from tool rows (matching z-code-2, which has no per-tool padding); ConversationAssistantWorkItems supplies
+  // consistent gap-4 spacing between consecutive tools.
   return (
     <RowShell rowId={row.rowId} className="py-0">
       <div data-conversation-selectable="true">
@@ -2240,8 +2369,8 @@ const ToolCallRowView = memo(function ToolCallRowView({
                   context.onOpenWorkflowRun?.({
                     ...request,
                     parentSessionId: context.sessionId!,
-                    // 打开请求的关联键是发起行（CreateWorkflow）id，不是点中行的 id——
-                    // resume 行点开时两者不同，详情页拿它找 causalityGraph/脚本。
+                    // The open request's join key is the initiating CreateWorkflow row ID, not the clicked row ID.
+                    // They differ when opening from a resume row; the details page uses it to find the causalityGraph/script.
                     toolCallId: resolveWorkflowRunOpenToolCallId(row.toolCallId, workflowRun),
                     runId: workflowRun.runId,
                   })
@@ -2253,7 +2382,7 @@ const ToolCallRowView = memo(function ToolCallRowView({
                   context.onOpenWorkflowActor?.({ ...request, parentSessionId: context.sessionId! })
               : undefined
           }
-          // 脚本药丸 → 脚本 transcript：关联键同 onOpenWorkflowRun（发起行 id + runId）。
+          // Script pill to script transcript: same join keys as onOpenWorkflowRun (initiating row ID + runId).
           onOpenWorkflowWorkspace={
             context.onOpenWorkflowWorkspace && context.sessionId && workflowRun
               ? (request) =>
@@ -2270,12 +2399,12 @@ const ToolCallRowView = memo(function ToolCallRowView({
               ? (request) => context.onResumeWorkflowRun?.(workflowRun.runId, request.workflowName)
               : undefined
           }
-          // 产物药丸 → 产物 tab：与通知行的 chips 同一条打开路径（不带版本号，打开即最新版）。
+          // Artifact pill to artifact tab: same open path as notification-row chips (no version, so opening shows the latest).
           onOpenWorkflowArtifact={
             context.onOpenWorkflowArtifact && context.sessionId && workflowRun
               ? (artifactId) => {
-                  // 活投影的产物摘要带最新版的 `contentType`（宿主据它把 html 产物直接开成
-                  // 浏览器 tab）；`sourcePath` 那份摘要刻意不带，缺席时宿主自己查 journal。
+                  // The live projection's artifact summary includes the latest `contentType` (the host uses it to open HTML artifacts
+                  // directly in a browser tab). The `sourcePath` summary deliberately omits it; when absent, the host reads the journal.
                   const artifact = workflowRun.run?.artifacts?.find(
                     (candidate) => candidate.id === artifactId,
                   );
@@ -2300,8 +2429,8 @@ const ToolCallRowView = memo(function ToolCallRowView({
 });
 
 const SubagentRowView = memo(function SubagentRowView({ row }: { row: SubagentRow }) {
-  // subagent 行已经和 Agent/Task 工具行配对渲染；裸行只保留异常兜底摘要，
-  // 避免再生成一个“子会话”卡片或第二套下钻入口。
+  // Subagent rows are already rendered alongside Agent/Task tool rows. Keep a bare row only as an error fallback summary
+  // to avoid creating another "child session" card or a second drill-down entry.
   const summary = (
     <>
       {row.subagentType} · {row.status}
@@ -2316,8 +2445,8 @@ const SubagentRowView = memo(function SubagentRowView({ row }: { row: SubagentRo
 });
 
 /**
- * v4 row 渲染分发。memo：虚拟列表逐行渲染，父投影变化时只有 props 真正变化的行才重渲染
- * （前提是 onFork/onRetry/onEdit 为稳定引用 + context 引用稳定，见 SessionPane 的
+ * v4 row rendering dispatcher. Memoization: the virtual list renders each row separately, so a parent projection update rerenders only rows whose props changed
+ * (provided onFork/onRetry/onEdit and context references are stable; see SessionPane's
  * useCallback/useMemo）。
  */
 function ConversationRowViewImpl({
@@ -2326,6 +2455,7 @@ function ConversationRowViewImpl({
   onFork,
   onRetry,
   onFeedbackChange,
+  onPinChange,
   onEdit,
   editWorkspaceRewindAvailability,
   hideAssistantActions,
@@ -2345,6 +2475,7 @@ function ConversationRowViewImpl({
           row={row}
           context={context}
           onEdit={onEdit}
+          onPinChange={onPinChange}
           editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
           status={userInputStatus}
         />
@@ -2357,6 +2488,7 @@ function ConversationRowViewImpl({
           onFork={onFork}
           onRetry={onRetry}
           onFeedbackChange={onFeedbackChange}
+          onPinChange={onPinChange}
           hideActions={hideAssistantActions}
           deferActions={deferAssistantActions}
           copyText={assistantCopyText}
@@ -2367,8 +2499,8 @@ function ConversationRowViewImpl({
         />
       );
     case "reasoning":
-      // 关闭“显示思考过程”只隐藏每轮后续 reasoning；首条 reasoning
-      // 是该轮最小必要思考提示，必须由 turn 全序派生的 rowId 保留下来。
+      // Turning off "Show thinking process" hides only later reasoning in each turn. The first reasoning row
+      // is the minimum necessary thinking indicator for that turn and must be retained using its ID derived from total turn order.
       return isConversationReasoningRowVisible(row.rowId, context) ? (
         <ReasoningRowView row={row} contentVariant={reasoningContentVariant} />
       ) : null;
@@ -2377,8 +2509,8 @@ function ConversationRowViewImpl({
     case "timelineMarker":
       return <TimelineMarkerRowView row={row} context={context} />;
     case "toolCall":
-      // 只在 ToolCallBlock 内返回 null 会留下空 RowShell 和多余间距；
-      // 在行分发处按同一工具身份规则裁剪，设置关闭时不产生任何 Todo DOM。
+      // Returning null inside ToolCallBlock would leave an empty RowShell and extra spacing.
+      // Apply the same tool-identity rule in the row dispatcher so disabling the setting produces no Todo DOM.
       if (
         context.messageStreamShowTodos !== true &&
         resolveToolCallIdentity({ toolName: row.toolName, kind: row.toolName }).family === "todo"

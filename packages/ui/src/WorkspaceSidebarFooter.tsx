@@ -7,6 +7,7 @@ import {
   TID_LOGIN_MENU_ITEM,
   TID_LOGIN_TRIGGER,
   TID_LOGOUT_BUTTON,
+  TID_SIDEBAR_INTERFACE_ZOOM_TRIGGER,
   TID_TASK_SETTINGS_BUTTON,
 } from "@zcode/shared/test-ids";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar.js";
@@ -342,6 +343,11 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
                       id: "sidebar.settings.locale.zh-CN",
                     })}
                   </DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="uk-UA">
+                    {intl.formatMessage({
+                      id: "sidebar.settings.locale.uk-UA",
+                    })}
+                  </DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
               </DropdownMenuSubContent>
             </DropdownMenuSub>
@@ -397,7 +403,7 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
                 合并时保留本版本，不要再补第二份缩放子菜单。 */}
             {isDesktop ? (
               <DropdownMenuSub>
-                <DropdownMenuSubTrigger>
+                <DropdownMenuSubTrigger data-testid={TID_SIDEBAR_INTERFACE_ZOOM_TRIGGER}>
                   <ZoomIn className="size-4" />
                   {intl.formatMessage({ id: "sidebar.settings.interfaceZoom" })}
                 </DropdownMenuSubTrigger>

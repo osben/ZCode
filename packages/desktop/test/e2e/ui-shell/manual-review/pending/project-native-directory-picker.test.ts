@@ -15,11 +15,11 @@ type ThemeWindow = typeof window & {
     getTheme(): string;
     setTheme(theme: string): void;
     getLocale(): "zh-CN" | "en-US";
-    setLocale(locale: "zh-CN" | "en-US"): void;
+    setLocale(locale: "en-US" | "uk-UA" | "zh-CN"): void;
   };
 };
 
-describe("本地项目原生多目录选择", () => {
+describe("Local project native multi-folder selection", () => {
   const root = join(DEFAULT_WORKSPACE, ".zcode-e2e", "native-project-picker");
   const paths = ["one", "two", "three"].map((name) => join(root, name));
   const project = '[data-project-name="E2E_NATIVE_PROJECT_PICKER"]';
@@ -36,7 +36,7 @@ describe("本地项目原生多目录选择", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("NDP01/NDP02/PRO01: 多目录新项目排首位，刷新与重开后保留", async () => {
+  it("NDP01/NDP02/PRO01: a new multi-folder project ranks first and persists across refresh and reopen", async () => {
     const readProjectOrder = () =>
       browser.execute(() =>
         [...document.querySelectorAll('[data-testid="project-section"] [data-project-name]')].map(
@@ -154,7 +154,7 @@ describe("本地项目原生多目录选择", () => {
           });
           expect(geometry).toEqual({ visible: true, hit: true });
           expect(await $('[data-testid="project-folder-trust-dialog"]').getText()).toContain(
-            width === 1200 ? "This computer" : "此电脑",
+            width === 1200 ? "This computer" : "This computer",
           );
           await browser.saveScreenshot(
             join(process.env.ZCODE_E2E_ARTIFACT_DIR!, `PCFT-trust-${width}-${theme}.png`),
@@ -185,7 +185,7 @@ describe("本地项目原生多目录选择", () => {
     ).toEqual(paths);
     // 窄屏布局会自动收起侧栏；还原尺寸后通过真实入口展开，再检查项目顺序。
     if (!(await $('[data-testid="project-section"]').isDisplayed())) {
-      await $('button[aria-label="Toggle sidebar"], button[aria-label="切换侧边栏"]').click();
+      await $('button[aria-label="Toggle sidebar"], button[aria-label="Toggle sidebar"]').click();
     }
     await $(project).waitForDisplayed();
     expect(await readProjectOrder()).toEqual(["E2E_NATIVE_PROJECT_PICKER", ...previousOrder]);
@@ -232,6 +232,9 @@ describe("本地项目原生多目录选择", () => {
     await $('[data-testid="virtual-project-name"]').waitForExist({ reverse: true });
     await $(project).$('[data-testid="virtual-project-menu"]').click();
     await $('[data-testid="virtual-project-delete"]').click();
+    // Project deletion is confirmed first (ISSUE-028).
+    await $('[data-testid="confirm-dialog-confirm"]').waitForDisplayed();
+    await $('[data-testid="confirm-dialog-confirm"]').click();
     await $(project).waitForExist({ reverse: true });
   });
 });

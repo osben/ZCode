@@ -7,7 +7,7 @@ import {
   type RemoteWorkspaceSession,
 } from "@/store/remoteWorkspaceSessionStore.js";
 import { useResolvedRemoteWorkspaceSessionId } from "@/hooks/useResolvedRemoteWorkspaceSessionId.js";
-import { useTabStore } from "@/store/TabStoreProvider.js";
+import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab } from "@/store/tabStore.js";
 import { REMOTE_WORKSPACE_DISCONNECTED_ERROR_CODE } from "@/lib/remoteWorkspaceServiceError.js";
 
@@ -155,21 +155,46 @@ export interface WorkspaceServicesResolution {
   rpcReady: boolean;
 }
 
-export function useWorkspaceServicesResolution(
+/**
+ * Like useWorkspaceServicesResolution, but returns null when no ServiceProvider is mounted
+ * (for example a composer rendered before the workspace shell). Callers must handle null
+ * instead of receiving a throwing hook.
+ */
+export function useOptionalWorkspaceServicesResolution(
   workspacePath: string | null | undefined,
   preferredRemoteSessionId?: string | null,
   workspaceIdentity?: string | null,
   remoteTarget?: unknown,
   options?: { unscopedServices?: IServiceAccessor; forceUnscoped?: boolean },
-): WorkspaceServicesResolution {
-  const currentContextServices = useServices();
+): WorkspaceServicesResolution | null {
+  const currentContextServices = useOptionalServices();
+  return useWorkspaceServicesResolutionFromContext(
+    currentContextServices,
+    workspacePath,
+    preferredRemoteSessionId,
+    workspaceIdentity,
+    remoteTarget,
+    options,
+  );
+}
+
+// Shared body for the required and optional hooks. The context read stays in each caller so the
+// required hook keeps useServices() semantics (it reads the same context provider as the rest of the app).
+function useWorkspaceServicesResolutionFromContext(
+  currentContextServices: IServiceAccessor | null,
+  workspacePath: string | null | undefined,
+  preferredRemoteSessionId: string | null | undefined,
+  workspaceIdentity: string | null | undefined,
+  remoteTarget: unknown,
+  options: { unscopedServices?: IServiceAccessor; forceUnscoped?: boolean } | undefined,
+): WorkspaceServicesResolution | null {
   const resolvedRemoteSessionId = useResolvedRemoteWorkspaceSessionId(
     workspacePath,
     preferredRemoteSessionId,
     workspaceIdentity,
     remoteTarget,
   );
-  const inferredRemoteTarget = useTabStore((state) =>
+  const inferredRemoteTarget = useOptionalTabStore((state) =>
     resolveWorkspaceServiceIsRemoteTarget({
       workspacePath,
       workspaceIdentity,
@@ -188,14 +213,16 @@ export function useWorkspaceServicesResolution(
   const isRemoteTarget = options?.forceUnscoped ? false : inferredRemoteTarget;
   const effectiveRemoteSessionId = options?.forceUnscoped ? null : resolvedRemoteSessionId;
   const resolvedServices = useRemoteWorkspaceSessionStore((state) =>
-    resolveWorkspaceServicesForTarget({
-      currentContextServices,
-      resolvedRemoteSessionId: effectiveRemoteSessionId,
-      baseServices: state.baseServices,
-      sessionsById: state.sessionsById,
-      isRemoteTarget,
-      unscopedServices: options?.unscopedServices,
-    }),
+    currentContextServices
+      ? resolveWorkspaceServicesForTarget({
+          currentContextServices,
+          resolvedRemoteSessionId: effectiveRemoteSessionId,
+          baseServices: state.baseServices,
+          sessionsById: state.sessionsById,
+          isRemoteTarget,
+          unscopedServices: options?.unscopedServices,
+        })
+      : null,
   );
   const connectionKind = isRemoteTarget
     ? effectiveRemoteSessionId
@@ -209,15 +236,40 @@ export function useWorkspaceServicesResolution(
   // 启动重连期仅有 tab 元数据、真实 remote services 尚未注册时属于 remote-waiting；
   // 调用方必须暂停 workspace RPC，断连代理只保留为最终越界保护，不能把预期等待态当失败重试。
   return useMemo(
-    () => ({
-      services: resolvedServices,
-      remoteSessionId: effectiveRemoteSessionId,
-      isRemoteTarget,
-      connectionKind,
-      rpcReady: connectionKind !== "remote-waiting",
-    }),
+    () =>
+      resolvedServices
+        ? {
+            services: resolvedServices,
+            remoteSessionId: effectiveRemoteSessionId,
+            isRemoteTarget,
+            connectionKind,
+            rpcReady: connectionKind !== "remote-waiting",
+          }
+        : null,
     [connectionKind, effectiveRemoteSessionId, isRemoteTarget, resolvedServices],
   );
+}
+
+export function useWorkspaceServicesResolution(
+  workspacePath: string | null | undefined,
+  preferredRemoteSessionId?: string | null,
+  workspaceIdentity?: string | null,
+  remoteTarget?: unknown,
+  options?: { unscopedServices?: IServiceAccessor; forceUnscoped?: boolean },
+): WorkspaceServicesResolution {
+  // Upstream contract: the required hook reads the context through useServices(), which throws
+  // when no ServiceProvider is mounted.
+  const currentContextServices = useServices();
+  const resolution = useWorkspaceServicesResolutionFromContext(
+    currentContextServices,
+    workspacePath,
+    preferredRemoteSessionId,
+    workspaceIdentity,
+    remoteTarget,
+    options,
+  );
+  if (!resolution) throw new Error("Workspace services are unavailable");
+  return resolution;
 }
 
 export function useWorkspaceServices(

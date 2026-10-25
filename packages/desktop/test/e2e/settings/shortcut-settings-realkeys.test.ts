@@ -26,15 +26,15 @@ interface ShortcutSettingsShape {
 }
 
 /**
- * 快捷键设置真实按键 E2E：browser.keys() 走 CDP 真实输入管线（与合成 KeyboardEvent 不同，
- * 含修饰键按下顺序、按键释放等真实序列），覆盖用户报告的三个场景：
- * 1. 纯 Shift 组合（无 Ctrl/Cmd/Alt）能否录制并生效（SC-04）；
- * 2. 录制冲突后不按 Escape，直接按第二组组合是否可用（SC-05）；
- * 3. 录制态收到 IME 组合噪声事件时按 event.code 反查物理键录制（SC-06，合成事件模拟）。
+ * Real-key E2E for shortcut settings: browser.keys() goes through CDP's real input pipeline (unlike synthetic
+ * KeyboardEvents, it includes real sequences such as modifier press order and key release), covering the three scenarios reported by users:
+ * 1. whether a pure Shift combination (no Ctrl/Cmd/Alt) can be recorded and take effect (SC-04);
+ * 2. after a recording conflict, whether pressing a second combination directly without Escape works (SC-05);
+ * 3. when the recording state receives IME composition noise events, recording the physical key by looking up event.code (SC-06, simulated with synthetic events).
  */
 describe("快捷键设置真实按键 E2E", () => {
   before(async () => {
-    // 干净基线：清掉上一轮可能残留的 shortcutBindings 覆盖（SC-05/SC-08 依赖默认绑定制造冲突）
+    // Clean baseline: clear any shortcutBindings overrides left over from the previous round (SC-05/SC-08 rely on default bindings to create conflicts)
     await quitElectronAppGracefully();
     await writeSettings({
       lastWorkspaceSession: [
@@ -71,7 +71,7 @@ describe("快捷键设置真实按键 E2E", () => {
       { timeout: 15_000, timeoutMsg: "纯 Shift 组合没有写入 setting.json（录制失败或被拒绝）" },
     );
 
-    // 主界面真实按键：Shift+F 应切换侧栏
+    // Real keys on the main UI: Shift+F should toggle the sidebar
     await backToWorkspace();
     await realKeys(["Shift", "F"]);
     await $(sel(TID_SIDEBAR)).waitForDisplayed({ reverse: true, timeout: 10_000 });
@@ -88,11 +88,11 @@ describe("快捷键设置真实按键 E2E", () => {
       timeoutMsg: "快捷键列表没有出现 findInTask 行",
     });
 
-    // 第一组：Ctrl+J 被 toggleTerminal 默认占用 → 标红提示
+    // First combination: Ctrl+J is taken by toggleTerminal's default → red conflict hint
     await realKeys(["Control", "j"]);
     await $(sel("settings-shortcut-error-findInTask")).waitForDisplayed({ timeout: 10_000 });
 
-    // 第二组：不按 Escape 直接输入 Ctrl+E → 应直接录制成功并退出录制态
+    // Second combination: press Ctrl+E directly without Escape → recording should succeed immediately and exit recording state
     await realKeys(["Control", "e"]);
     await browser.waitUntil(
       async () => {
@@ -119,8 +119,8 @@ describe("快捷键设置真实按键 E2E", () => {
       timeoutMsg: "快捷键列表没有出现 toggleSidePane 行",
     });
 
-    // 中文 IME 焦点落在可编辑元素时，Shift+G 会被吞成组合输入，事件只剩 isComposing 标记；
-    // 录制是显式意图，内核应按 event.code 反查物理键录出 Shift+g
+    // When a Chinese IME has focus on an editable element, Shift+G gets swallowed into composition input and the event only carries the isComposing flag;
+    // recording is an explicit intent, so the kernel should look up the physical key by event.code and record Shift+g
     await dispatchKey("Process", "KeyG", { shiftKey: true, isComposing: true });
     await browser.waitUntil(
       async () => {
@@ -149,8 +149,8 @@ describe("快捷键设置真实按键 E2E", () => {
     );
 
     await backToWorkspace();
-    // 焦点进聊天输入框（contenteditable）：按 Shift+G 应输入大写 G，
-    // 且不得触发 toggleSidePane（侧面板保持收起）——否则用户打不出大写字母
+    // Focus into the chat input (contenteditable): pressing Shift+G should type an uppercase G,
+    // and must not trigger toggleSidePane (the side pane stays collapsed) — otherwise the user cannot type uppercase letters
     await clickTestIdByDom(TID_V4_COMPOSER_INPUT, {
       timeout: 15_000,
       timeoutMsg: "没有找到聊天输入框",
@@ -176,7 +176,7 @@ describe("快捷键设置真实按键 E2E", () => {
       timeoutMsg: "快捷键列表没有出现 findInTask 行",
     });
 
-    // Ctrl+N 被 newTask（menu 通道）默认占用 → 标红 + 「仍要绑定」抢绑
+    // Ctrl+N is taken by newTask (menu channel) default → red conflict + "bind anyway" to steal the binding
     await realKeys(["Control", "n"]);
     await $(sel("settings-shortcut-error-findInTask")).waitForDisplayed({ timeout: 10_000 });
     await clickTestIdByDom("settings-shortcut-steal-findInTask");
@@ -201,8 +201,8 @@ describe("快捷键设置真实按键 E2E", () => {
       );
     const before = await countWorkspaceItems();
 
-    // 修复前：main 侧 ?? fallback 让 newTask 默认 accelerator 复活，Ctrl+N 同时触发
-    // 菜单 newTask（新建任务）与 renderer findInTask（查找弹窗）；修复后只触发后者
+    // Before the fix: the main-side ?? fallback resurrected newTask's default accelerator, so Ctrl+N triggered both
+    // the menu newTask (new task) and the renderer findInTask (find popup); after the fix only the latter fires
     await realKeys(["Control", "n"]);
     await browser.waitUntil(async () => await $('[role="dialog"]').isExisting(), {
       timeout: 10_000,
@@ -215,7 +215,7 @@ describe("快捷键设置真实按键 E2E", () => {
   it("SC-09: composer 作用域改绑——裸 Enter 换行不发送，CmdOrCtrl+Enter 发送（spec §12）", async function () {
     this.timeout(180_000);
 
-    // 设置页把 composerSend 录制为 CmdOrCtrl+Enter（真实按键走录制器）
+    // The settings page records composerSend as CmdOrCtrl+Enter (real keys go through the recorder)
     await openShortcutSettings();
     await clickTestIdByDom("settings-shortcut-bind-composerSend-0", {
       timeout: 15_000,

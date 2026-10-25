@@ -14,11 +14,7 @@
   {
     "package": "unsafe-pointer@0.2.0",
     "repo": "justjake/node-unsafe-pointer",
-    "refs": [
-      "v0.2.0",
-      "unsafe-pointer@0.2.0",
-      "0.2.0"
-    ],
+    "refs": ["v0.2.0", "unsafe-pointer@0.2.0", "0.2.0"],
     "file": "third-party/upstream/0ab717053f3e24736cd404a0801407fb305db75d1b58f7e6487d14feee30d28a.txt",
     "sha256": "0ab717053f3e24736cd404a0801407fb305db75d1b58f7e6487d14feee30d28a",
     "source": "https://registry.npmjs.org/unsafe-pointer/0.2.0",
@@ -36,9 +32,7 @@
   {
     "package": "react-remove-scroll-bar@2.3.8",
     "repo": "theKashey/react-remove-scroll-bar",
-    "refs": [
-      "b3b1287aad81def2e2ae707274b74531b61ddbaf"
-    ],
+    "refs": ["b3b1287aad81def2e2ae707274b74531b61ddbaf"],
     "file": "third-party/upstream/f158b3bd10b867740fdbf81447216f1f8685473acf61e6a105ef91ba9fe8ebc3.txt",
     "sha256": "f158b3bd10b867740fdbf81447216f1f8685473acf61e6a105ef91ba9fe8ebc3",
     "source": "https://registry.npmjs.org/react-remove-scroll-bar/2.3.8",
@@ -53,11 +47,7 @@
   {
     "package": "quickjs-wasi@2.2.0",
     "repo": "vercel-labs/quickjs-wasi",
-    "refs": [
-      "v2.2.0",
-      "quickjs-wasi@2.2.0",
-      "2.2.0"
-    ],
+    "refs": ["v2.2.0", "quickjs-wasi@2.2.0", "2.2.0"],
     "file": "third-party/upstream/f29b60ea39a2132e3baa98927c2d473b349a54143da44a0c6762b243e6459452.txt",
     "sha256": "f29b60ea39a2132e3baa98927c2d473b349a54143da44a0c6762b243e6459452",
     "source": "https://registry.npmjs.org/quickjs-wasi/2.2.0",
@@ -88,24 +78,6 @@
     "source": "https://raw.githubusercontent.com/vercel/ai/@ai-sdk/provider-utils@4.0.39/LICENSE"
   },
   {
-    "package": "data-uri-to-buffer@4.0.1",
-    "file": "third-party/upstream/9b7a157a0079ef346f3215b964071fa460d0dd251ca93cbf581bcc91595066ca.txt",
-    "sha256": "9b7a157a0079ef346f3215b964071fa460d0dd251ca93cbf581bcc91595066ca",
-    "source": "node_modules/node-fetch/node_modules/data-uri-to-buffer/README.md"
-  },
-  {
-    "package": "@rive-app/react-webgl2@4.28.0",
-    "file": "third-party/upstream/cf81859d85e99ff2fad83d51d9dfd85ca5189b23c4442aacf1890c54665d92f4.txt",
-    "sha256": "cf81859d85e99ff2fad83d51d9dfd85ca5189b23c4442aacf1890c54665d92f4",
-    "source": "https://raw.githubusercontent.com/rive-app/rive-react/4161dedae00abdda48353dfc2698abfec242f465/LICENSE"
-  },
-  {
-    "package": "@rive-app/webgl2@2.37.1",
-    "file": "third-party/upstream/8a1efa755d19446b51a18e1c15f6308728da0b36283c4d38050698ad6954b69a.txt",
-    "sha256": "8a1efa755d19446b51a18e1c15f6308728da0b36283c4d38050698ad6954b69a",
-    "source": "https://raw.githubusercontent.com/rive-app/rive-wasm/f6a20c7a5cbdd00257cd147ab5be73f87c2388ac/LICENSE"
-  },
-  {
     "package": "embla-carousel@8.6.0",
     "file": "third-party/upstream/992490064b90ec94c302fe5f29dcc14cb44145857064e46f9ffe6c8f511c1093.txt",
     "sha256": "992490064b90ec94c302fe5f29dcc14cb44145857064e46f9ffe6c8f511c1093",
@@ -122,48 +94,6 @@
     "file": "third-party/upstream/fc7d762e0ebf8720d0a03cf00058aaa3a198347e9651be2f50a25e3b3ec13985.txt",
     "sha256": "fc7d762e0ebf8720d0a03cf00058aaa3a198347e9651be2f50a25e3b3ec13985",
     "source": "node_modules/omggif/README"
-  },
-  {
-    "package": "@hono/node-ws@1.3.0",
-    "repo": "honojs/middleware",
-    "refs": [
-      "2c026b9d5bfff006dc9abdc1b33c53856d2d784f"
-    ],
-    "file": "third-party/upstream/c681d64256e752c1435814cf045f4467720a8473e425ea54103a0f5128bfc817.txt",
-    "sha256": "c681d64256e752c1435814cf045f4467720a8473e425ea54103a0f5128bfc817",
-    "source": "https://registry.npmjs.org/@hono%2fnode-ws/1.3.0",
-    "evidenceKind": "publisher-license-identifier-and-standard-terms",
-    "license": "MIT",
-    "reviewEvidence": {
-      "checkedOn": "2026-09-21",
-      "result": "The versioned npm archive contains no standalone complete LICENSE; existing publisher declaration and original README license sections remain preserved. Upstream authorization/copyright material is still required to close this review.",
-      "npmArchiveSha256": "48b94f87b85ca84428491d7275f0fad16450254bd49d9b2b4f621539fda8a2af",
-      "sourceRevision": "2c026b9d5bfff006dc9abdc1b33c53856d2d784f",
-      "sourceTreeUrl": "https://api.github.com/repos/honojs/middleware/git/trees/2c026b9d5bfff006dc9abdc1b33c53856d2d784f?recursive=1",
-      "upstreamLicenseFiles": []
-    }
-  },
-  {
-    "package": "strict-event-emitter@0.5.1",
-    "repo": "open-draft/strict-event-emitter",
-    "refs": [
-      "v0.5.1",
-      "strict-event-emitter@0.5.1",
-      "0.5.1"
-    ],
-    "file": "third-party/upstream/93f24a47f95aea2be1b0dad78de98dc6d3de01ce22c0b72dc73e453c7917b955.txt",
-    "sha256": "93f24a47f95aea2be1b0dad78de98dc6d3de01ce22c0b72dc73e453c7917b955",
-    "source": "https://registry.npmjs.org/strict-event-emitter/0.5.1",
-    "evidenceKind": "publisher-license-identifier-and-standard-terms",
-    "license": "MIT",
-    "reviewEvidence": {
-      "checkedOn": "2026-09-21",
-      "result": "The versioned npm archive contains no standalone complete LICENSE; existing publisher declaration and original README license sections remain preserved. Upstream authorization/copyright material is still required to close this review.",
-      "npmArchiveSha256": "43c456f72612074a13e8399c29ffd59c8c277274924b633f6e4fa07342f63cab",
-      "sourceRevision": "56e004cf2793053ea9ece4330fd52cace96acbff",
-      "sourceTreeUrl": "https://api.github.com/repos/open-draft/strict-event-emitter/git/trees/56e004cf2793053ea9ece4330fd52cace96acbff?recursive=1",
-      "upstreamLicenseFiles": []
-    }
   },
   {
     "package": "lru_map@0.4.1",
@@ -240,9 +170,7 @@
   {
     "package": "lazy-val@1.0.5",
     "repo": "develar/lazy-val",
-    "refs": [
-      "b69ad4119f1b19bdab13c61ee2fcc88d46b89071"
-    ],
+    "refs": ["b69ad4119f1b19bdab13c61ee2fcc88d46b89071"],
     "file": "third-party/upstream/f18c12b8e7daf98d572518b7db133b2dc66a713921dac4825410dd656e0c1a1a.txt",
     "sha256": "f18c12b8e7daf98d572518b7db133b2dc66a713921dac4825410dd656e0c1a1a",
     "source": "https://registry.npmjs.org/lazy-val/1.0.5",
@@ -260,9 +188,7 @@
   {
     "package": "semaphore@1.1.0",
     "repo": "abrkn/semaphore.js",
-    "refs": [
-      "88a33875b168cc7b5943d7fe987c36d08321d252"
-    ],
+    "refs": ["88a33875b168cc7b5943d7fe987c36d08321d252"],
     "file": "third-party/upstream/1b8910ad1a22011c632f7ff544708be6cf08818ef80e8d4b45b6808ee8b05c17.txt",
     "sha256": "1b8910ad1a22011c632f7ff544708be6cf08818ef80e8d4b45b6808ee8b05c17",
     "source": "https://registry.npmjs.org/semaphore/1.1.0",
@@ -286,11 +212,7 @@
   {
     "package": "boolbase@1.0.0",
     "repo": "fb55/boolbase",
-    "refs": [
-      "v1.0.0",
-      "boolbase@1.0.0",
-      "1.0.0"
-    ],
+    "refs": ["v1.0.0", "boolbase@1.0.0", "1.0.0"],
     "file": "third-party/upstream/2d2349188616c4b64ceeae33e1386bb546b0658864b4f7f8c9785757cb065b5d.txt",
     "sha256": "2d2349188616c4b64ceeae33e1386bb546b0658864b4f7f8c9785757cb065b5d",
     "source": "https://registry.npmjs.org/boolbase/1.0.0",
@@ -300,26 +222,6 @@
       "checkedOn": "2026-09-21",
       "result": "The versioned npm archive contains no standalone complete LICENSE; existing publisher declaration and original README license sections remain preserved. Upstream authorization/copyright material is still required to close this review.",
       "npmArchiveSha256": "69628ff8092c5ff940ea4a0f29da98d520615bae138755c9e059033606c6caa8"
-    }
-  },
-  {
-    "package": "@open-draft/deferred-promise@2.2.0",
-    "repo": "open-draft/deferred-promise",
-    "refs": [
-      "b30f1b683311030e92fcdd08d2bd6574d652b77f"
-    ],
-    "file": "third-party/upstream/b1688598c3e32605b3973902a546225e0159349c05a0f74db67f76e08e116e65.txt",
-    "sha256": "b1688598c3e32605b3973902a546225e0159349c05a0f74db67f76e08e116e65",
-    "source": "https://registry.npmjs.org/@open-draft%2fdeferred-promise/2.2.0",
-    "evidenceKind": "publisher-license-identifier-and-standard-terms",
-    "license": "MIT",
-    "reviewEvidence": {
-      "checkedOn": "2026-09-21",
-      "result": "The versioned npm archive contains no standalone complete LICENSE; existing publisher declaration and original README license sections remain preserved. Upstream authorization/copyright material is still required to close this review.",
-      "npmArchiveSha256": "57f8d0cf303951c66dcdab2a10c2fe57194ad4cbb851880c604d4c3e521def2b",
-      "sourceRevision": "b30f1b683311030e92fcdd08d2bd6574d652b77f",
-      "sourceTreeUrl": "https://api.github.com/repos/open-draft/deferred-promise/git/trees/b30f1b683311030e92fcdd08d2bd6574d652b77f?recursive=1",
-      "upstreamLicenseFiles": []
     }
   },
   {
@@ -413,28 +315,6 @@
     "source": "node_modules/isarray/README.md"
   },
   {
-    "package": "is-node-process@1.2.0",
-    "repo": "mswjs/is-node-process",
-    "refs": [
-      "v1.2.0",
-      "is-node-process@1.2.0",
-      "1.2.0"
-    ],
-    "file": "third-party/upstream/000ffa2d773c511f4459fb31d89f841806f93bf5caf2050468ab2097c081b443.txt",
-    "sha256": "000ffa2d773c511f4459fb31d89f841806f93bf5caf2050468ab2097c081b443",
-    "source": "https://registry.npmjs.org/is-node-process/1.2.0",
-    "evidenceKind": "publisher-license-identifier-and-standard-terms",
-    "license": "MIT",
-    "reviewEvidence": {
-      "checkedOn": "2026-09-21",
-      "result": "The versioned npm archive contains no standalone complete LICENSE; existing publisher declaration and original README license sections remain preserved. Upstream authorization/copyright material is still required to close this review.",
-      "npmArchiveSha256": "810d5c86ac247ffbfab3dcdee3cef95fb830e1f5eea9674858e8dcd6de4accba",
-      "sourceRevision": "8a6152c795d8705be97166bd5167e70ac6efc67c",
-      "sourceTreeUrl": "https://api.github.com/repos/mswjs/is-node-process/git/trees/8a6152c795d8705be97166bd5167e70ac6efc67c?recursive=1",
-      "upstreamLicenseFiles": []
-    }
-  },
-  {
     "package": "@dukelib/sheets-wasm@0.1.21",
     "file": "third-party/upstream/ebb2e920800c6353474e3e23d84f714ee8aaecd8f5a71851aa03594a4129d855.txt",
     "sha256": "ebb2e920800c6353474e3e23d84f714ee8aaecd8f5a71851aa03594a4129d855",
@@ -445,9 +325,7 @@
   {
     "package": "ansi-to-react@6.2.6",
     "repo": "nteract/ansi-to-react",
-    "refs": [
-      "145140971e9d83ccac32265f24b1c55dea437896"
-    ],
+    "refs": ["145140971e9d83ccac32265f24b1c55dea437896"],
     "file": "third-party/upstream/2c88816684a40c718113a10062a8335b665cec00d3c7b32e2b3fe9c620a3e03e.txt",
     "sha256": "2c88816684a40c718113a10062a8335b665cec00d3c7b32e2b3fe9c620a3e03e",
     "source": "https://registry.npmjs.org/ansi-to-react/6.2.6",
@@ -539,5 +417,71 @@
     "file": "third-party/upstream/e49e62397b603438476e0d6b5ca3b6e6d4f23a80594e596aff29ac04fa3e1b1c.txt",
     "sha256": "e49e62397b603438476e0d6b5ca3b6e6d4f23a80594e596aff29ac04fa3e1b1c",
     "source": "https://raw.githubusercontent.com/rrweb-io/rrweb/%40rrweb%2Futils%402.0.0/LICENSE"
+  },
+  {
+    "package": "@rive-app/react-webgl2@4.37.0",
+    "file": "third-party/upstream/cf81859d85e99ff2fad83d51d9dfd85ca5189b23c4442aacf1890c54665d92f4.txt",
+    "sha256": "cf81859d85e99ff2fad83d51d9dfd85ca5189b23c4442aacf1890c54665d92f4",
+    "source": "https://raw.githubusercontent.com/rive-app/rive-react/v4.37.0/LICENSE"
+  },
+  {
+    "package": "@rive-app/webgl2@2.45.0",
+    "file": "third-party/upstream/8a1efa755d19446b51a18e1c15f6308728da0b36283c4d38050698ad6954b69a.txt",
+    "sha256": "8a1efa755d19446b51a18e1c15f6308728da0b36283c4d38050698ad6954b69a",
+    "source": "https://raw.githubusercontent.com/rive-app/rive-wasm/2.45.0/LICENSE"
+  },
+  {
+    "package": "agent-base@6.0.2",
+    "file": "third-party/upstream/8d8c55319c7729d57be811c747452636688d54f19701ee0752b6b15ad3771d9a.txt",
+    "sha256": "8d8c55319c7729d57be811c747452636688d54f19701ee0752b6b15ad3771d9a",
+    "source": "https://raw.githubusercontent.com/TooTallNate/proxy-agents/4813885d3f4e2ff837878ceffdba656a71dc31f0/packages/agent-base/LICENSE"
+  },
+  {
+    "package": "https-proxy-agent@5.0.1",
+    "file": "third-party/upstream/8d8c55319c7729d57be811c747452636688d54f19701ee0752b6b15ad3771d9a.txt",
+    "sha256": "8d8c55319c7729d57be811c747452636688d54f19701ee0752b6b15ad3771d9a",
+    "source": "https://raw.githubusercontent.com/TooTallNate/proxy-agents/4813885d3f4e2ff837878ceffdba656a71dc31f0/packages/https-proxy-agent/LICENSE"
+  },
+  {
+    "package": "proxy-agent-negotiate@1.1.0",
+    "repo": "TooTallNate/proxy-agents",
+    "refs": ["proxy-agent-negotiate@1.1.0", "v1.1.0", "1.1.0"],
+    "file": "third-party/upstream/047e0ed7ec6e4b95c3d0e2d1532655a387699c741901ae35039fef2487f79590.txt",
+    "sha256": "047e0ed7ec6e4b95c3d0e2d1532655a387699c741901ae35039fef2487f79590",
+    "source": "https://registry.npmjs.org/proxy-agent-negotiate/1.1.0",
+    "evidenceKind": "publisher-license-identifier-and-standard-terms",
+    "license": "MIT",
+    "reviewEvidence": {
+      "checkedOn": "2026-10-16",
+      "result": "The versioned npm archive contains no standalone complete LICENSE; existing publisher declaration and original README license sections remain preserved. Upstream authorization/copyright material is still required to close this review.",
+      "npmArchiveSha256": "6eec23d5d381a8b0ffafe91c19876d3a052e463618695981a7529f3a8bca1997",
+      "sourceRevision": "b7e5f7ccce1a3ac5b339cc4c587974e8989cbc16",
+      "sourceTreeUrl": "https://api.github.com/repos/TooTallNate/proxy-agents/git/trees/b7e5f7ccce1a3ac5b339cc4c587974e8989cbc16?recursive=1",
+      "upstreamLicenseFiles": []
+    }
+  },
+  {
+    "package": "@hono/node-ws@1.3.1",
+    "repo": "honojs/middleware",
+    "refs": ["@hono/node-ws@1.3.1", "node-ws@1.3.1", "v1.3.1"],
+    "file": "third-party/upstream/cb666043f5dfbe01f82130889956de3ec3bc527e8e335783a59bd647a25f32a0.txt",
+    "sha256": "cb666043f5dfbe01f82130889956de3ec3bc527e8e335783a59bd647a25f32a0",
+    "source": "https://registry.npmjs.org/%40hono%2Fnode-ws/1.3.1",
+    "evidenceKind": "publisher-license-identifier-and-standard-terms",
+    "license": "MIT",
+    "reviewEvidence": {
+      "checkedOn": "2026-10-16",
+      "result": "The versioned npm archive contains no standalone complete LICENSE; existing publisher declaration and original README license sections remain preserved. Upstream authorization/copyright material is still required to close this review.",
+      "npmArchiveSha256": "f742a98d56449a2730ac76c85ddb507aa25929be7e28dd13df7522018cc71813",
+      "sourceRevision": "d0e7b8ee0b8552defc580f30b2a55ad6fbbdfa7a",
+      "sourceTreeUrl": "https://api.github.com/repos/honojs/middleware/git/trees/d0e7b8ee0b8552defc580f30b2a55ad6fbbdfa7a?recursive=1",
+      "upstreamLicenseFiles": []
+    }
+  },
+  {
+    "package": "data-uri-to-buffer@8.0.0",
+    "file": "third-party/upstream/29308c08926e2139ce2c6dc389fc7d6ac801927df4941c19fa92de4a8b18da12.txt",
+    "sha256": "29308c08926e2139ce2c6dc389fc7d6ac801927df4941c19fa92de4a8b18da12",
+    "source": "https://raw.githubusercontent.com/TooTallNate/proxy-agents/4813885d3f4e2ff837878ceffdba656a71dc31f0/packages/data-uri-to-buffer/LICENSE"
   }
 ]

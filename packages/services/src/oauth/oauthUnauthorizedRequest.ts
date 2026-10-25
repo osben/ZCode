@@ -36,7 +36,7 @@ async function isCurrentBusinessOAuthCredentialRequest(options: {
   )?.trim();
   if (!accessToken || (authorization !== accessToken && authorization !== `Bearer ${accessToken}`))
     return false;
-  // 读取磁盘期间可能切换平台，不能拿上一平台残留 token 的 401 清理当前登录。
+  // The platform may change while reading from disk; do not use a 401 from a token left by the previous platform to clear the current login.
   return (await options.credentialService.load("oauth:active_provider")) === provider;
 }
 
@@ -121,7 +121,7 @@ export async function isCurrentOAuthBusinessCredentialRequest(options: {
   return isCurrentBusinessOAuthCredentialRequest(options);
 }
 
-// 这里只判定候选请求；实际退出须由 OAuthService 在会话变更队列内复核，不能依赖异步旧快照。
+// This only identifies candidate requests; OAuthService must recheck them inside the session-change queue before signing out, rather than relying on a stale async snapshot.
 export async function isCurrentOAuthCredentialRequest(options: {
   input: string | URL;
   headers: Headers;

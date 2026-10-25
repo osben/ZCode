@@ -1,10 +1,28 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { createElement, type ComponentProps } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProjectSidebarNode } from "@/project-sidebar/ProjectSidebarNode.js";
 
-const probes = vi.hoisted(() => ({ node: vi.fn() }));
+const probes = vi.hoisted(() => ({
+  node: vi.fn(),
+  getRepositoryRemotes: vi.fn(),
+  openExternal: vi.fn(),
+  openSettingsTab: vi.fn(),
+  setIntent: vi.fn(),
+  confirm: vi.fn(async (_request: unknown) => true),
+}));
+vi.mock("@/hooks/useWorkspaceServices.js", () => ({
+  useWorkspaceServices: () => ({
+    gitService: { getRepositoryRemotes: probes.getRepositoryRemotes },
+  }),
+}));
+vi.mock("@/hooks/usePlatform.js", () => ({
+  useOptionalPlatform: () => ({ openExternal: probes.openExternal }),
+}));
+vi.mock("@/lib/settingsNavigation.js", () => ({
+  setPendingSettingsSectionIntent: probes.setIntent,
+}));
 vi.mock("@/project-sidebar/ProjectNode.js", () => ({
   ProjectNode: (props: { onCreate(): void }) => {
     probes.node(props);
@@ -14,8 +32,10 @@ vi.mock("@/project-sidebar/ProjectNode.js", () => ({
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({ intl: { formatMessage: ({ id }: { id: string }) => id } }),
 }));
-vi.mock("@/store/TabStoreProvider.js", () => ({ useTabStoreApi: () => ({}) }));
-vi.mock("@/hooks/useConfirmDialog.js", () => ({ useConfirmDialog: () => async () => true }));
+vi.mock("@/store/TabStoreProvider.js", () => ({
+  useTabStoreApi: () => ({ getState: () => ({ openSettingsTab: probes.openSettingsTab }) }),
+}));
+vi.mock("@/hooks/useConfirmDialog.js", () => ({ useConfirmDialog: () => probes.confirm }));
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -96,4 +116,81 @@ it("回调与项目身份变化不能被 memo 忽略，新建始终使用当前�
     hostId: "remote:server:example",
     taskGroupId: null,
   });
+});
+
+const rootedProject = () => ({
+  ...fixture().project,
+  roots: [{ rootPath: "/repo", position: 0, isPrimary: true }],
+});
+
+it("Manage sessions opens the sessions section scoped to the project's primary root", () => {
+  render(createElement(ProjectSidebarNode, { ...fixture(), project: rootedProject() }));
+  probes.node.mock.lastCall![0].onManageSessions();
+  expect(probes.setIntent).toHaveBeenCalledWith("sessions", {
+    sessionsScope: { workspacePath: "/repo" },
+  });
+  expect(probes.openSettingsTab).toHaveBeenCalledOnce();
+});
+
+it("hides Manage sessions for a project without roots", () => {
+  render(createElement(ProjectSidebarNode, fixture()));
+  expect(probes.node.mock.lastCall![0].onManageSessions).toBeUndefined();
+});
+
+it("reads the GitHub remote only when a menu opens and opens it externally", async () => {
+  probes.getRepositoryRemotes.mockResolvedValue({
+    remotes: [
+      { name: "gl", url: "git@gitlab.com:o/r.git" },
+      { name: "origin", url: "git@github.com:o/r.git" },
+    ],
+  });
+  render(createElement(ProjectSidebarNode, { ...fixture(), project: rootedProject() }));
+  expect(probes.getRepositoryRemotes).not.toHaveBeenCalled();
+  expect(probes.node.mock.lastCall![0].onOpenGitHub).toBeUndefined();
+  act(() => probes.node.mock.lastCall![0].onMenuOpen());
+  await waitFor(() => expect(probes.node.mock.lastCall![0].onOpenGitHub).toBeDefined());
+  probes.node.mock.lastCall![0].onOpenGitHub();
+  expect(probes.openExternal).toHaveBeenCalledWith("https://github.com/o/r");
+});
+
+// Menu entry: "Delete project" must confirm first; the service is only called after an explicit Delete.
+it("row menu delete asks first and deletes the project once after confirmation", async () => {
+  const deleteProject = vi.fn(async () => {});
+  const props = { ...fixture(), service: { deleteProject } as never };
+  render(createElement(ProjectSidebarNode, props));
+  probes.node.mock.lastCall![0].onDelete();
+  await waitFor(() => expect(deleteProject).toHaveBeenCalledOnce());
+  expect(probes.confirm).toHaveBeenCalledOnce();
+  expect(probes.confirm.mock.calls[0]![0]).toMatchObject({
+    title: "project.deleteConfirmTitle",
+    description: "project.deleteConfirmDescription",
+    confirmVariant: "destructive",
+  });
+  expect(probes.confirm.mock.invocationCallOrder[0]).toBeLessThan(
+    deleteProject.mock.invocationCallOrder[0]!,
+  );
+  expect(deleteProject).toHaveBeenCalledWith("p", "local");
+  expect(props.refresh).toHaveBeenCalledOnce();
+});
+
+it("row menu delete leaves the project untouched when cancelled", async () => {
+  probes.confirm.mockResolvedValueOnce(false);
+  const deleteProject = vi.fn(async () => {});
+  const props = { ...fixture(), service: { deleteProject } as never };
+  render(createElement(ProjectSidebarNode, props));
+  probes.node.mock.lastCall![0].onDelete();
+  await waitFor(() => expect(probes.confirm).toHaveBeenCalledOnce());
+  await act(async () => {});
+  expect(deleteProject).not.toHaveBeenCalled();
+  expect(props.refresh).not.toHaveBeenCalled();
+});
+
+it("shows no GitHub item when the remote is not on GitHub", async () => {
+  probes.getRepositoryRemotes.mockResolvedValue({
+    remotes: [{ name: "origin", url: "git@gitlab.com:o/r.git" }],
+  });
+  render(createElement(ProjectSidebarNode, { ...fixture(), project: rootedProject() }));
+  act(() => probes.node.mock.lastCall![0].onMenuOpen());
+  await waitFor(() => expect(probes.getRepositoryRemotes).toHaveBeenCalled());
+  expect(probes.node.mock.lastCall![0].onOpenGitHub).toBeUndefined();
 });

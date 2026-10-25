@@ -1,39 +1,35 @@
-# Monitoring 文档入口
+# Monitoring Documentation Index
 
-本目录保留 App/RUM、Conversation 业务事件、资源监控、产品专项埋点和测试监控。
-CLI Agent 的 OpenTelemetry 执行链路已独立到
-[`docs/trace/`](../trace/README.md)，不再与其他监控文档混放。
+This directory retains App/RUM, Conversation business events, resource monitoring, product-specific telemetry, and test monitoring.
 
-## App、Renderer 与进程
+The CLI Agent OpenTelemetry execution chain has been independently moved to
+[`docs/trace/`](../trace/README.md), no longer mixed with other monitoring documentation.
 
-- [性能监控](./performance-monitoring.md)
-- [性能埋点事件字典](./performance-telemetry-catalog.md)
-- [ARMS Electron 监控](./arms-browser-monitoring.md)
-- [Agent 进程崩溃 ARMS 上报](./agent-process-crash-arms.md)
-- [全进程 CPU / 内存监控埋点](./process-resource-telemetry.md)
-- [全进程资源仪表盘与查询](./dashboards/process-resource-dashboard.md)
-- [MCP 进程生命周期 ARMS 上报](./mcp-process-arms-telemetry.md)
-- [进程内存本地诊断日志](./memory-diagnostics-log.md)
+## App, Renderer & Process
 
-## Conversation 与业务事件
+- [Performance Monitoring](./performance-monitoring.md)
+- [Performance Telemetry Event Dictionary](./performance-telemetry-catalog.md)
+- [ARMS Electron Monitoring](./arms-browser-monitoring.md)
+- [Agent Process Crash ARMS Reporting](./agent-process-crash-arms.md)
+- [Full-Process CPU / Memory Telemetry](./process-resource-telemetry.md)
+- [Full-Process Resource Dashboard & Queries](./dashboards/process-resource-dashboard.md)
+- [MCP Process Lifecycle ARMS Reporting](./mcp-process-arms-telemetry.md)
+- [Process Memory Local Diagnostic Log](./memory-diagnostics-log.md)
 
-- [V4 对话埋点兼容规范](./conversation-telemetry-v4.md)
-- [业务质量监控](./business-monitoring.md)
-- [Agent Step 真实模型与 Token 归属](./agent-step-model-token-attribution.md)
+## Conversation & Business Events
 
-## 产品专项
+- [V4 Conversation Telemetry Compatibility Spec](./conversation-telemetry-v4.md)
+- [Business Quality Monitoring](./business-monitoring.md)
+- [Agent Step Real Model & Token Attribution](./agent-step-model-token-attribution.md)
 
-- [Plan Usage ARMS 自定义事件](./plan-usage-arms-telemetry.md)
-- [远程场景使用量埋点 V1](./remote-usage-telemetry-v1.md)
-- [远程工作区连接 ARMS 自定义事件](./remote-usage-arms-telemetry.md)
-- [Off-Peak Task telemetry V1](./off-peak-task-telemetry-v1.md)
-- [Session 首次打开 ARMS 埋点](./session-open-telemetry.md)
-- [定时任务 / 闲时任务消息埋点](./automation-message-telemetry.md)
+## Product Specials
 
-## 工程质量
+- [Plan Usage ARMS Custom Event](./plan-usage-arms-telemetry.md)
+- [Remote Usage Telemetry V1](./remote-usage-telemetry-v1.md)
+- [Remote Workspace Connection ARMS Custom Event](./remote-usage-arms-telemetry.md)
+- [Off-Peak Task Telemetry V1](./off-peak-task-telemetry-v1.md)
+- [Session First Open ARMS Telemetry](./session-open-telemetry.md)
+- [Automated Task / Off-Peak Task Message Telemetry](./automation-message-telemetry.md)
 
-- [E2E Metrics Bitable Dashboard](./e2e-metrics-bitable-dashboard.md)
-
-本目录中的文档只负责各自监控通道或产品功能，不得重新定义 CLI Agent Trace 的 Span、
-Attribute、Event、Metric、隐私和统计口径。相关变更统一更新
-[`docs/trace/cli-agent-telemetry.md`](../trace/cli-agent-telemetry.md)。
+All documentation in this directory is responsible for its own monitoring channel or product feature, and must not redefine the CLI Agent Trace Span, Attribute, Event, Metric, privacy, or statistical scope. Related changes must be uniformly updated
+[`docs/trace/cli-agent-telemetry.md`](../trace/cli-agent-telemetry.md).

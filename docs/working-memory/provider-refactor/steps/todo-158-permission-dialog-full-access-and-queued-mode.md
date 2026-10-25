@@ -1,209 +1,233 @@
-# Todo158：权限审批框完全访问与待执行队列权限同步
+# Todo158: Full access in the permission dialog and queued-mode sync
 
-> 状态：2026-09-17 实现与桌面验收已完成；整体验收未全部关闭。原有工作区改动保留，CLI lint/基线测试失败及手机整链路缺口见第 9 节。
+> Status (2026-09-17): implementation and desktop acceptance done; overall acceptance not fully closed.
+> Existing workspace changes were preserved; the CLI lint / baseline test failures and the phone
+> end-to-end gap are in section 9.
 
-## 1. 目标与最新裁决
+## 1. Goal and latest decision
 
-减少工具执行期间的重复审批，在权限审批框内提供“完全访问”，一次明确操作使当前任务、当前任务的 Composer 和全部待执行队列消息使用 `mode=yolo`。
+Reduce repeated approvals during tool execution: the permission dialog offers "Full access", and one
+explicit action makes the current task, that task's Composer and all pending queued messages use `mode=yolo`.
 
-- **仅审批框的“完全访问”触发批量同步**；普通 Composer 权限菜单继续只编辑下一次 Submission 的草稿。
-- Runtime、Composer 和每个队列项分别保留自己的 `planEnabled`，不能统一套用 Runtime 的 Plan，也不能因切换权限退出 Plan。
-- 本次操作针对当前任务，不把项目默认权限、其他任务或新任务默认值设为 yolo；不新增一次用户消息，不停止或重启当前轮。
-- 队列只修改权限字段。正文、附件、模型、思考等级、Plan、身份、顺序和投递方式保持原值。
-- 批量更新完成后再放行当前工具审批；失败不能显示全量成功，重复点击和跨端重复应答不能重复产生副作用。
+- **Only the dialog's "Full access" triggers the batch sync**; the ordinary Composer permission menu still edits only the draft of the next Submission.
+- Runtime, Composer and each queue item keep their own `planEnabled`; it is not overwritten with the Runtime's Plan and switching permission never leaves Plan.
+- The action targets the current task: not the project default permission, other tasks or the new-task default; no extra user message, no stopping or restarting the current turn.
+- The queue changes only the permission field; body, attachments, model, thinking level, Plan, identity, order and delivery mode keep their values.
+- The current tool approval is released only after the batch update completes; failure must not show full success, and repeated clicks or cross-end duplicate answers must not repeat side effects.
 
-本条承接 [Todo71：Composer 持久草稿](./todo-71-persistent-composer-draft-and-submission-state.md) 和 [Todo151：Plan 独立状态](./todo-151-independent-plan-state-draft.md)。只为审批框完全访问增加队列权限修改的明确例外，不重新打开模型选择或普通队列语义。历史冲突见 [C26](../design-v2/evidence-and-contradictions.md#c26-审批框完全访问是否可以修改已接纳队列的权限)。
+This continues [Todo71](./todo-71-persistent-composer-draft-and-submission-state.md) and
+[Todo151](./todo-151-independent-plan-state-draft.md); it adds only the explicit exception that the
+dialog's full access changes queued permissions, and does not reopen model selection or ordinary queue
+semantics. Historical conflict: [C26](../design-v2/evidence-and-contradictions.md#c26-can-approval-dialog-full-access-modify-permissions-of-an-accepted-queue).
 
-## 2. 审批选项与展示
+## 2. Dialog options and display
 
-普通命令审批按以下顺序展示；默认仍选第 1 项：
+Ordinary command approval lists, default still the 1st item:
 
-| 序号 | 选项                      | 说明与效果                                                               |
-| ---- | ------------------------- | ------------------------------------------------------------------------ |
-| 1    | 允许                      | 仅允许这一次，保留既有 allow_once 语义                                   |
-| 2    | 始终允许此命令            | 项目范围内，后续相同命令不再询问；保留既有 allow_project 规则生成与匹配  |
-| 3    | 完全访问                  | 授予 Agent 完全访问权限，不再确认。执行本 Todo 定义的当前任务、Composer 和队列同步 |
-| 4    | 拒绝                      | 拒绝本次操作，保留既有 Deny 行为                                         |
-| 5    | 告诉模型接下来应该怎么做… | 保留拒绝附带反馈的独立输入行及提交方式                                   |
+| No. | Option                            | Meaning and effect                                                                                                |
+| --- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 1   | Allow                             | allow this once; existing allow_once semantics                                                                    |
+| 2   | Always allow this command         | project scope, same command not asked again; existing allow_project rule generation/matching kept                 |
+| 3   | Full access                       | grant the Agent full access with no more confirmation; performs this Todo's current-task, Composer and queue sync |
+| 4   | Deny                              | deny this operation; existing Deny behavior                                                                       |
+| 5   | Tell the model what to do next... | the separate input row for feedback with denial and its submit method kept                                        |
 
-- 数字快捷键、上下键、Tab、Enter、焦点和确认按钮随实际选项排列更新。`5` 聚焦反馈而不提交，输入法行为和手机输入兼容保持。
-- 反馈行仍以请求声明支持反馈为前提；不能为没有该能力的入口伪造反馈响应。
-- 第 2 项继续展示 Agent 给出的真实 prefix/exact scope，不能仅因标题改为“此命令”就改变匹配或扩大授权。
-- 文件、网络、MCP、官方 CUA 等共享审批面保留现有工具范围文案与可信能力组语义，不能全部改称命令。
-- 完全访问不关闭 Plan；`yolo + planEnabled=true` 仍受现有规划工具规则约束。AskUserQuestion、ExitPlanMode 等用户问答不因新增选项被自动回答。
-- 桌面和手机共享组件、语义及国际化；不凭选项序号推导协议响应。
+- Number shortcuts, arrows, Tab, Enter, focus and the confirm button follow the actual option layout; `5` focuses feedback without submitting; IME behavior and phone input compat kept. The feedback row still requires the request to declare feedback support (no fake feedback response for entries lacking it).
+- Item 2 keeps showing the Agent's real prefix/exact scope (a title wording change must not change matching or widen authorization). File, network, MCP and official CUA approvals sharing the surface keep their tool-scope wording and trusted capability-group semantics (not renamed "command").
+- Full access does not turn off Plan: `yolo + planEnabled=true` still obeys the planning-tool rules. AskUserQuestion, ExitPlanMode and other user Q&A are never auto-answered by the new option. Desktop and phone share components, semantics and i18n; protocol responses are never derived from option position.
 
-## 3. 当前代码事实与问题
+## 3. Code facts and problems
 
-| 事实                                                      | 实施含义                                                     | 入口                                                                                                                                                                                                      |
-| --------------------------------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Composer 菜单只修改当前 scope 草稿                        | 直接复用菜单回调不能解除当前审批                             | [SessionPane](../../../../packages/ui/src/v4/SessionPane.tsx)、[useDraftConfigControl](../../../../packages/ui/src/v4/composer/useDraftConfigControl.ts)                                                  |
-| 即时切换命令仍被 Bot、自动化、CLI/TUI 和兼容路径使用      | 不能视为死代码删除，也不能把审批批量同步推广到所有调用方     | [task adapter](../../../../packages/services/src/zcode-agent/zcodeTaskServiceAdapter.ts)、[session facade](../../../../apps/zcode-cli/packages/bootstrap/src/app/session-facade.ts)                       |
-| `app.setMode()` 更新 Runtime 后还写项目 `permission/mode` | 本次任务级授权不能直接继承项目偏好副作用                     | [session facade](../../../../apps/zcode-cli/packages/bootstrap/src/app/session-facade.ts)、[runtime config](../../../../apps/zcode-cli/packages/bootstrap/src/app/runtime-config.ts)                      |
-| 仅传 `mode=yolo` 会归一为 `planEnabled=false`             | 审批专用更新必须显式保留 Plan，不能盲改共享兼容解码规则      | [execution-state](../../../../packages/shared/src/execution-state.ts)                                                                                                                                     |
-| 每个工具调用开始时读取 Runtime mode，已有审批等待 broker  | 运行中可切，但不自动解除 pending，不重做已经读取旧模式的调用 | [call-runner](../../../../apps/zcode-cli/packages/core/src/tool/executor/call-runner.ts)、[permission-flow](../../../../apps/zcode-cli/packages/core/src/tool/executor/permission-flow.ts)                |
-| 队列项携带独立 mode/Plan，消费时重新应用                  | 只改 Runtime 或 UI，下一条出队可能切回旧权限                 | [product projection](../../../../apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts)、[turn-model](../../../../apps/zcode-cli/packages/core/src/runtime/methods/turn-model.ts) |
+| Fact                                                                                       | Implication                                                                                                                    | Entry                                                            |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| The Composer menu only edits the current scope's draft                                     | reusing the menu callback cannot resolve the pending approval                                                                  | `packages/ui/src/v4/SessionPane.tsx`, `useDraftConfigControl.ts` |
+| The instant mode-switch command is still used by Bot, automation, CLI/TUI and compat paths | not dead code, and approval batch sync must not spread to all callers                                                          | `zcodeTaskServiceAdapter.ts`, `session-facade.ts`                |
+| `app.setMode()` updates Runtime and also writes project `permission/mode`                  | the task-level grant must not inherit the project-preference side effect                                                       | `session-facade.ts`, `runtime-config.ts`                         |
+| Passing only `mode=yolo` normalizes to `planEnabled=false`                                 | the approval-specific update must keep Plan explicitly; the shared compat decode rule is not changed blindly                   | `packages/shared/src/execution-state.ts`                         |
+| Each tool call reads Runtime mode at start; an approval waits in a broker                  | a running task can switch, but pending approvals are not auto-resolved and calls that already read the old mode are not redone | `call-runner.ts`, `permission-flow.ts`                           |
+| Queue items carry their own mode/Plan and re-apply on consume                              | changing only Runtime or UI lets the next dequeue switch back                                                                  | `product-projection.ts`, `turn-model.ts`                         |
 
-`permission/mode` 是创建 Agent 时的项目模式 fallback；`permission/ruleset` 是“始终允许此命令”的规则集合；Session execution state 和 Composer Recent 又是不同事实源。本 Todo 不把它们合并，不写项目默认或新增权限规则。
+`permission/mode` is the project-mode fallback when creating an Agent; `permission/ruleset` is the rule set
+of "always allow this command"; Session execution state and Composer Recent are separate fact sources. This
+Todo merges none of them and writes no project default or new permission rule. With the existing
+`resolveExecutionState()`: `build + Plan=true` with only `mode=yolo` becomes `yolo + Plan=false`; explicitly
+carrying the original Plan keeps it true.
 
-本轮用现有 `resolveExecutionState()` 实际执行确认：`build + Plan=true` 仅传 `mode=yolo` 后变成 `yolo + Plan=false`；显式携带原 Plan 才保持 true。本次实现已补充 Runtime、SQLite、broker/race、V4 投影和 UI 回归，实际验证结果见第 9 节。
-
-## 4. 状态归属、队列边界与顺序
+## 4. State ownership, queue boundary and order
 
 ```text
 Desktop continuous / Mobile replayable
-  → 审批框选择“完全访问”（session + interaction + command identity）
-  → 同一 Agent owner 校验请求仍有效，并协调应答胜者与队列出队顺序
-  → 更新当前 Runtime.mode=yolo，保留 Runtime.planEnabled
-  → 更新此时已接纳、尚未执行的全部队列项 mode=yolo
-      每项保留原 planEnabled / modelSelection / content / order / delivery
-  → 权威结果与队列投影同步给客户端
-      对应 Session Composer 定向更新 mode=yolo，保留其余草稿
-  → 放行当前审批请求，继续原 Turn
+  -> dialog picks "Full access" (session + interaction + command identity)
+  -> the same Agent owner validates the request is still valid and coordinates the answer winner and queue dequeue order
+  -> update current Runtime.mode=yolo, keep Runtime.planEnabled
+  -> update all accepted-but-unexecuted queue items to mode=yolo (each keeps its planEnabled / modelSelection / content / order / delivery)
+  -> publish the authoritative result and queue projection; the matching Session Composer is updated in a targeted way to mode=yolo, keeping the rest of the draft
+  -> release the current approval request; the original Turn continues
 ```
 
-### 队列修改边界
+Queue boundary:
 
-- 以 Agent 接纳这次审批动作时的串行顺序确定受影响队列，覆盖运行期间的待执行输入、暂停/held 队列以及队列中尚未消费的 Guide。
-- 与 reserve/promote/drain 协调，不能在批量更新期间让目标项拿旧配置启动；已开始执行的消息不倒退为队列项，也不重写历史提交记录。
-- 修改真正用于执行的权威数据，并同步必要的输入记录与事件/投影，避免内存、查询或撤回编辑取到旧值。不能只改 renderer 展示或只改 snapshot。
-- 更新后，自动出队、“立即发送”、撤回编辑使用更新后的 mode；队列 ID、顺序、暂停状态和其他配置保持。
-- 这是一次明确更新，不建立永久覆盖层；后续新提交仍按自己的明确 Submission 和服务端接纳顺序处理。当前 Composer 同步后正常发送使用 yolo。
+- The affected queue is determined by the Agent's serial order when it accepts the approval action: pending inputs during the run, paused/held queues and not-yet-consumed Guide.
+- It coordinates with reserve/promote/drain; during the batch update the target item may not start with old config; already-started messages are not turned back into queue items and history is not rewritten.
+- The authoritative execution data is changed and the needed input records and events/projections are synced so memory, queries and edit-back never read the old value (not only the renderer display or snapshot).
+- After the update, auto-dequeue, "send now" and edit-back use the new mode; queue IDs, order, pause state and other config are kept. It is a one-time explicit update, with no permanent override layer; later new submissions follow their own explicit Submission and server admission order. The current Composer sends with yolo after sync.
 
 ```text
-Runtime：build + Plan=true  → yolo + Plan=true
-Composer：edit + Plan=false → yolo + Plan=false
-队列 A：build + Plan=true   → yolo + Plan=true
-队列 B：edit + Plan=false   → yolo + Plan=false
+Runtime build + Plan=true -> yolo + Plan=true     Composer edit + Plan=false -> yolo + Plan=false
+queue A build + Plan=true -> yolo + Plan=true     queue B edit + Plan=false -> yolo + Plan=false
 ```
 
-### 审批、失败与跨端
+Approval, failure and cross-end:
 
-- 以一次明确的审批动作收口切权限、改队列和当前应答，不由 UI 独立发送两个无关联命令并假定原子成功。
-- 复用现有 Runtime 状态更新、interaction broker 和命令幂等机制。Agent 是队列与权限 owner；不在 Renderer、Host 或 Relay 新建第二份 accepted queue。
-- 校验 interaction 与 task/session 归属。请求已拒绝、取消或被另一端处理时，迟到动作不能继续扩大权限；Hook 与用户应答竞争仍需保证唯一胜者。
-- 状态保存、队列更新、事件提交任一步失败，要有可对账的结果与幂等重试路径；不能批准工具后才发现队列未完成更新。实施时明确提交点、失败恢复和故障注入证据，不用多个 `await` 冒充事务。
-- Composer 由现有草稿 owner 定向处理这次明确结果，同任务跨端与重连避免重复应用；普通 snapshot 仍不得持续覆盖草稿。迟到结果不能修改其他 scope 或覆盖已经明确处理过的更新。
-- 本次动作不写 Composer Recent；后续真实 Submission 被 accepted 时仍沿用既有 Recent 规则。
-- 父任务承接子 Agent 审批时核对 origin、broker 与实际执行 Runtime 的归属，不能只改展示所在 Runtime 就声称 child 生效；其他任务及独立 child 的授权范围不凭静态调用关系扩大。需要改变既有继承契约时先记录具体影响。
+- One explicit approval action folds the permission switch, queue change and current answer together; the UI does not send two unrelated commands and assume atomic success. It reuses the existing Runtime state update, interaction broker and command idempotency; the Agent is the owner of queue and permission (no second accepted queue in Renderer, Host or Relay).
+- Interaction and task/session ownership are validated; a late action cannot expand permission after the request was denied, cancelled or handled by another end; a Hook racing a user answer still has a unique winner.
+- Any failure of state save, queue update or event commit gives a reconcilable result and an idempotent retry path (no approving the tool before discovering the queue did not finish); the commit point, failure recovery and fault-injection evidence are explicit (several `await`s are not a transaction).
+- The Composer is handled by the existing draft owner in a targeted way for this explicit result; same-task cross-end and reconnect avoid duplicate application; ordinary snapshots still never keep overwriting the draft; a late result never changes another scope. The action writes no Composer Recent; a later accepted real Submission follows the existing Recent rule.
+- For sub-agent approvals taken over by the parent, origin, broker and the actual executing Runtime are checked; changing only the display Runtime does not claim the child takes effect; other tasks and independent children do not gain authorization from static call relations. Changing the inheritance contract needs a recorded impact first.
 
-## 5. 实施切片与兼容约束
+## 5. Slices and compatibility
 
-- [x] 按最新基线读取目录规则、architecture-governance、runtime 边界及 tool change chain，确认协议、owner 和实际消费者；本轮调查不能代替实施前核对。
-- [x] 在本 Working Memory 补齐审批动作的 schema、提交/恢复契约和最小状态矩阵，先补能证明预期的回归，再实现。复用现有契约的部分不创建重复接口。
-- [x] Agent 实现保留 Plan 的任务级权限更新、待执行输入批量更新及审批应答编排；现有普通 mode API 的必要修复单独说明影响，不能顺带重写 Bot、自动化、CLI 默认行为。
-- [x] UI 接入新增选项和对应 Composer 定向同步，更新快捷键、反馈行序号、i18n 及错误/重试显示。
-- [x] 旧客户端/旧 Agent 的能力差异明确处理：未支持完整动作时不能显示可用入口或把未知选项误映射成普通允许；不让 legacy TUI/Bot 静默获得新批量语义。
-- [ ] 关闭全部必要验证门槛后标记整体完成；当前实现、长期文档和已取得证据已更新，剩余基线失败/手机整链路见第 9 节。
+- [x] Rules read for directories, architecture-governance, runtime boundaries and tool change chain; protocol, owner and consumers confirmed.
+- [x] Schema, commit/recovery contract and minimal state matrix written in this Working Memory; regression tests that prove the expectations first, then implementation (existing contracts reused, no duplicate interface).
+- [x] Agent implementation: Plan-keeping task-level permission update, batch update of pending inputs and approval-answer orchestration; necessary fixes of the ordinary mode API are stated separately and Bot, automation and CLI defaults are not rewritten in passing.
+- [x] UI: new option, Composer targeted sync, shortcuts, feedback-row numbering, i18n and error/retry display.
+- [x] Old client / old Agent differences handled explicitly: unsupported full action shows no usable entry and unknown options are not mapped to plain allow; legacy TUI/Bot silently get no new batch semantics.
+- [ ] Mark overall completion once all necessary verification gates close (remaining baseline failures / phone end-to-end in section 9).
 
-仅批准当前请求是已确认范围；其他已经挂起的独立权限请求不能因为新权限自动消失而被假定已处理。本 Todo 不扩展为任务级授权选项、规则管理/撤销界面、Bash 匹配优化或项目默认模式清理。
+Only approving the current request is in scope; other already-pending independent permission requests are not assumed handled. Not extended to task-level grant options, rule management/revocation UI, Bash matching optimization or project default-mode cleanup.
 
-## 6. 验收与证据计划
+## 6. Acceptance cases
 
-以下为已接受的验收边界；实际覆盖与未验证项见第 9 节，不能以用例存在代替实跑。交互用例按 e2e-case-lifecycle 维护，实施时与现行 case catalog/coverage matrix 协调，不覆盖工作区已有改动。
+| Case     | Scenario                                                             | Must prove                                                                                                                                              |
+| -------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PA158-01 | Ordinary command approval                                            | five rows in order, default allow-once, 1-4 and row-5 feedback navigation; no fake input when feedback is not declared                                  |
+| PA158-02 | Running build/edit task awaiting approval, pick full access          | no turn stop, no new message; Runtime becomes yolo, the current tool runs, later tools judged by the new permission                                     |
+| PA158-03 | Runtime, Composer and queue with different Plan                      | all targets become yolo, each keeping true/false; yolo+Plan still obeys planning constraints                                                            |
+| PA158-04 | Several ordinary queue items, held queue and unconsumed Guide        | all targets updated; config/attachments/order/pause state unchanged; auto-consume and "send now" never write back the old mode                          |
+| PA158-05 | Edit-back of an updated queue item                                   | Composer gets the item's updated permission and original Plan/model/body; other items unchanged                                                         |
+| PA158-06 | Batch update interleaved with new submissions, reserve/promote/drain | boundary decided by owner order; no missed target, no double execution, no override of a later-accepted independent user choice                         |
+| PA158-07 | Multi-end clicks, Hook answer, deny/cancel, lost ACK                 | a unique answer winner, expired action gives no privilege, retry reconciles without duplicate side effects                                              |
+| PA158-08 | Faults in save / queue update / event commit                         | no false full success and no early tool release; facts consistent after recovery or retry                                                               |
+| PA158-09 | Ordinary menu, allow once, project always-allow, deny/feedback       | original behavior; the ordinary menu does not batch-update the queue; project rule scope not widened                                                    |
+| PA158-10 | Desktop, phone reconnect and scope switch                            | continuous/replayable verified separately; same-task results consistent, drafts not overwritten by ordinary snapshots, no workspaceIdentity/session mix |
+| PA158-11 | Task/project preferences and shared callers                          | the action writes no project mode/ruleset or Recent and changes no other task; Bot/automation/CLI regress-free                                          |
+| PA158-12 | Sub-agent-origin approval and old-version combinations               | origin routing matches actual execution permission; unsupported full action neither wrongly grants nor extends to unrelated tasks                       |
 
-| Case     | 场景                                          | 必须证明                                                                                             |
-| -------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| PA158-01 | 普通命令审批                                  | 五行顺序、默认允许一次、1–4 选项与第 5 行反馈导航正确；未声明反馈时不伪造输入                        |
-| PA158-02 | build/edit 的运行中任务等待审批，选择完全访问 | 不停轮、不新增消息；Runtime 变 yolo，当前工具执行，后续新工具按新权限判断                            |
-| PA158-03 | Runtime、Composer、队列各有不同 Plan          | 所有目标 mode 为 yolo，分别保留 true/false；yolo+Plan 仍遵守规划约束                                 |
-| PA158-04 | 多条普通队列、held 队列与未消费 Guide         | 全部目标项更新，配置/附件/顺序/暂停状态不变；自动消费和“立即发送”无旧 mode 回写                      |
-| PA158-05 | 更新后的队列项撤回编辑                        | Composer 得到该项更新后的权限及原 Plan/模型/正文；其他队列项不变化                                   |
-| PA158-06 | 批量更新与新提交、reserve/promote/drain 交错  | 按 owner 顺序确定边界；不漏目标项、不重复执行、不覆盖后接纳的独立用户选择                            |
-| PA158-07 | 多端点击、Hook 应答、拒绝/取消、ACK 丢失      | 唯一应答胜者，过期动作无提权，重试可对账且无重复副作用                                               |
-| PA158-08 | 保存/队列更新/事件提交故障                    | 不展示虚假全量成功、不提前放行当前工具，恢复或重试后事实一致                                         |
-| PA158-09 | 普通菜单、允许一次、项目始终允许、拒绝/反馈   | 保持原行为；普通菜单不批量更新队列，项目规则 scope 不扩大                                            |
-| PA158-10 | 桌面、手机重连及 scope 切换                   | continuous/replayable 分开验证；同任务结果一致、草稿不被普通快照覆盖、不串 workspaceIdentity/session |
-| PA158-11 | 任务/项目偏好与共享调用方                     | 此动作不写项目 mode/ruleset 或 Recent，不改变其他任务；Bot/自动化/CLI 既有调用回归                   |
-| PA158-12 | 子 Agent 来源审批与旧版本组合                 | origin 路由与实际执行权限一致，未支持的完整动作不误放行、不扩大到无关任务                            |
+Required verification: root `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`, affected
+tests; CLI per its child rules. UI covers desktop/phone, light/dark and zh/en; interaction needs matching
+E2E; browser-local verification does not stand in for native or phone remote-control chains; cases that
+fail admission are not auto-promoted. After checks pass, self-review the diff and commit only this change;
+Push/MR is triggered separately by the user.
 
-必要验证：根 `pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed`、受影响测试；CLI 按其子级规则执行独立检查。UI 覆盖桌面/手机、深浅主题与中英文，交互必须有对应 E2E；浏览器局部验证不冒充原生或手机远控整链路通过，未通过准入的用例不自动转正。必要检查通过后 diff 自检并仅提交本次改动，Push/MR 由用户另行触发。
+## 7. Delivery and open items
 
-## 7. 本轮交付与剩余问题
+- Full access runs through the original `resolveInteraction`, registry, Runtime owner and SQLite transaction; the tool is released after the V4 projection confirms. The ordinary mode API keeps its project-preference behavior and this action does not call it.
+- UI: full capability entry, five-row keyboard navigation, error retry and one-time Composer sync; edit-back keeps the grant-handled marker. Old UI/Agent stay compatible via the separate `fullAccessOption` field; child-origin and independent Q&A/confirmations do not declare the incomplete capability.
+- The formal contract is distilled into the [permission approval doc](../../../permission-project-approval.md); test layers and gaps stay in the coverage matrix; pending is not auto-promoted.
 
-- 完全访问经原 `resolveInteraction`、registry、Runtime owner 和 SQLite 事务完成；工具在 V4 投影确认后放行。普通 mode API 保留项目偏好行为，本动作不调用它。
-- UI 新增完整能力入口、五行键盘导航、错误重试及 Composer 一次性同步；撤回编辑保留授权处理标记。
-- 旧 UI/旧 Agent 通过独立 `fullAccessOption` 字段保持兼容；child-origin 与独立问答/确认不声明不完整能力。
-- 正式契约已提炼至 [权限审批文档](../../../permission-project-approval.md)；测试层级与缺口保留在覆盖矩阵，不将 pending 自动转正。
-- 必要验证未全部通过前保留工作区，不自动 commit；原有不相关变更不包含在本 Todo 交付范围内。
+## 8. Implementation contract (2026-09-17)
 
-## 8. 实施契约（2026-09-17）
+Impact: presentation, validation, commit-effect, persistence, recovery.
 
-### 影响摘要与入口
+| Scenario / entry                | Shared implementation                   | Draft / default         | Validation and commit                                                     | Authority / save                                               | Boundary and isolation                           |
+| ------------------------------- | --------------------------------------- | ----------------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------ |
+| Desktop/phone ordinary approval | PermissionDialog / V4InteractionDialogs | default allow once      | Agent declares the fullAccess option; original-command resolveInteraction | interaction registry -> Runtime -> session store atomic commit | continuous/replayable keep their original chains |
+| Ordinary Composer menu          | useDraftConfigControl                   | independent scope draft | original draft callback                                                   | Renderer draft                                                 | no queue batch change                            |
+| Project always-allow            | existing option builder                 | Agent prefix/exact      | original permissionUpdates                                                | project ruleset                                                | no rule widening                                 |
+| Sub-agent / legacy              | original approval surface               | original options        | does not declare the full fullAccess capability                           | actual child broker                                            | no wrong parent switch, no fake child success    |
 
-本次属于 presentation、validation、commit-effect、persistence、recovery；planning 后直接实施。
+Must check: the registry/broker's unique answer, Core pendingInputs/held projection, SQLite `session_input`
+and execution entry, V4 mode/queue patch, Composer targeted sync. Regressions: Plan, Guide, reserve/promote,
+edit-back, Hook, command retry. Bot/TUI/ordinary mode API are isolation invariants. No code-graph tool in
+this environment (direct reference checks along entry -> owner -> save/projection); the feature graph lacked
+the approval-full-access semantic edge and was supplemented; the old queue-domain mapping claiming renderer/host
+hold the accepted queue conflicts with the current CommandInbox owner and was not used.
 
-| 场景/入口          | 共享实现                                | 草稿/默认          | 校验与提交                                            | 权威/保存                                               | 边界与隔离                       |
-| ------------------ | --------------------------------------- | ------------------ | ----------------------------------------------------- | ------------------------------------------------------- | -------------------------------- |
-| 桌面/手机普通审批  | PermissionDialog / V4InteractionDialogs | 默认允许一次       | Agent 声明 fullAccess 选项；resolveInteraction 原命令 | interaction registry → Runtime → session store 原子提交 | continuous/replayable 各走原链路 |
-| 普通 Composer 菜单 | useDraftConfigControl                   | 独立 scope 草稿    | 原草稿回调                                            | Renderer 草稿                                           | 不批量改队列                     |
-| 项目始终允许       | 既有 option builder                     | Agent prefix/exact | 原 permissionUpdates                                  | 项目 ruleset                                            | 不扩大规则                       |
-| 子 Agent / legacy  | 原审批面                                | 原选项             | 暂不声明完整 fullAccess 能力                          | 实际 child broker                                       | 不误切父任务，不伪造 child 成功  |
+Commit, race and recovery:
 
-必须检查：registry/broker 的唯一应答、Core 的 pendingInputs/held 投影、SQLite session_input 与 execution entry、V4 mode/queue patch、Composer 定向同步。需回归：Plan、Guide、reserve/promote、撤回编辑、Hook、命令重试。Bot/TUI/普通 mode API 为隔离不变量；相关单测是证据而非另一 owner。
-
-代码图工具在本环境未提供，使用明确入口的直接引用检查代替；扫描深度限于入口→owner→保存/投影，不声称完成 codegraph 索引验证。现有功能图缺少普通审批完全访问的语义边，实施时补充；队列域映射中 renderer/host 持有 accepted queue 的旧描述与当前 CommandInbox owner 不符，不作为实施依据。
-
-### 提交、竞争与恢复
-
-- 复用 `resolveInteraction`，选项稳定 ID 为 `fullAccess`，不根据序号推导授权。只有具备原子保存能力的 Agent 为普通主任务权限请求声明；子 Agent、问答、Plan 审批以及要求独立工具确认的 workflow 不宣称支持。
-- Registry 校验 session、请求类型和选项能力，取得应答权。Core permission responder race 提供 broker claim：Hook 已胜出则不能 claim；claim 后 Hook 退赛。失败仍保留审批，可显式重试/拒绝，不自动放行。
-- Runtime 在同一任务内锁住目标队列的消费/提升，已有 Guide 消费或 reserve 时返回可重试失败，取已接纳且未消费的固定 ID 集合；CommandInbox 串行 admission 约束后来提交。保留每项原 Plan 和其他字段。
-- SessionStore 的原子提交同时写当前 execution state、目标 session_input 权限及按 interactionId 去重的 receipt；使用现有表，不新增数据库结构。事务提交前失败不改变内存；提交后发布失败保留 receipt，重试只补内存/事件，不重新抓取队列或覆盖后来输入。后续模式修改和队列消费先补齐未发布的提交；投影失败重试从原日志重建，保留事件顺序。
-- 单一 SessionModeChanged 事件携带明确 permission grant 标记和队列 ID，Core/V4 投影同步改变权限，原始历史提交不重写。ACK 之前等待权威投影；当前工具在全部更新成功后才得到 allow。
-- Composer 只消费明确 grant ID，持久化已处理标记；每个 scope 只应用一次，保留自身 Plan，后续手动改选不被普通快照反复覆盖。重连读取同一 grant 标记；进程重启保留当前 execution state，队列仍遵守现有重启丢弃契约。
+- Reuse `resolveInteraction`; the stable option ID is `fullAccess` (never derived from position). Only an Agent with atomic-save capability declares it, for ordinary main-task permission requests; sub-agents, Q&A, Plan approval and workflows requiring independent tool confirmation do not claim support.
+- The Registry validates session, request type and option capability and takes the answer right. Core's permission responder race provides a broker claim: a Hook that already won blocks the claim; after a claim the Hook withdraws. On failure the approval is kept and may be explicitly retried/denied, never auto-released.
+- Runtime locks the target queue's consume/promote within the task; an existing Guide consumption or reserve returns a retryable failure; the fixed ID set of accepted, unconsumed items is taken; CommandInbox's serial admission bounds later submissions. Each item's own Plan and other fields are kept.
+- SessionStore's atomic commit writes the current execution state, target `session_input` permissions and a receipt deduped by interactionId, in existing tables (no new schema). A failure before commit leaves memory unchanged; a post-commit publish failure keeps the receipt and a retry only completes memory/events without re-fetching the queue or overwriting later inputs. Later mode changes and queue consumption first complete unpublished commits; a projection failure is retried by rebuilding from the original log, keeping event order.
+- A single SessionModeChanged event carries an explicit permission-grant marker and the queue IDs; Core/V4 projection syncs the permission and the original history is not rewritten. Before ACK, the authoritative projection is awaited; the current tool gets allow only after all updates succeed.
+- The Composer consumes only the explicit grant ID and persists the handled marker; each scope applies once, keeps its own Plan, and later manual changes are not repeatedly overwritten by ordinary snapshots. Reconnect reads the same grant marker; a process restart keeps the current execution state and the queue still follows the existing restart-discard contract.
 
 ```text
-resolveInteraction(fullAccess) → session FIFO → registry claim（Hook 退赛）
- → Runtime 队列消费屏障 → SQLite 原子 execution + inputs + receipt
- → Runtime 内存 + 单事件 → V4 config/queue → Composer 按 grant ID 应用一次
- → 当前 broker allow → 当前工具继续 → ACK/query 对账
-失败（提交前）→ 保留原状态及审批；失败（提交后）→ receipt 重试补齐发布
+resolveInteraction(fullAccess) -> session FIFO -> registry claim (Hook withdraws)
+ -> Runtime queue consume barrier -> SQLite atomic execution + inputs + receipt
+ -> Runtime memory + single event -> V4 config/queue -> Composer applies once by grant ID
+ -> current broker allow -> tool continues -> ACK/query reconciliation
+failure before commit -> keep original state and approval; failure after commit -> receipt retry completes publication
 ```
 
-### 维度、剪枝与验收交接
+Dimensions follow PA158-01..12 (answer winner, transaction stage, queue lifecycle, per-item Plan, scope,
+delivery; no tool x model permutations). Sub-agents without the full action drop fullAccess, keep the
+original approval and verify no parent mis-privilege. Regression layers: SQLite atomic fault tests,
+Core/runtime/race, V4 schema/projection/handler, UI draft/navigation; the desktop pending E2E uses a
+controlled tool approval and queue window; phone replayable is verified separately. Unobtained evidence
+stays pending (not auto-promoted). No open product question.
 
-沿用 PA158-01…12：主维度为审批胜者、事务阶段、队列生命周期、各自 Plan、scope 与 delivery；不展开工具×模型全排列。用户已确认权限批量同步与 Plan 保留，不重复询问。子 Agent 未支持完整动作时剪掉 fullAccess，保留原审批并验证无父任务误提权；普通菜单/问答不进入本动作。
+## 9. Evidence and completion gates
 
-回归分层：SQLite 原子故障测试、Core/runtime/race、V4 schema/projection/handler、UI 草稿/导航；桌面 pending E2E 使用受控工具审批与排队窗口，手机 replayable 单独验证。未取得的运行证据仍标 pending，不自动转正。当前没有待用户决定的产品问题。
+Temporary logs are in `/tmp/zcode-todo158/`.
 
-## 9. 实跑证据与完成门槛
+| Verification                                                            | Result                                                                                                            |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Root `pnpm typecheck`, CLI `pnpm --dir apps/zcode-cli typecheck`        | pass; CLI 28 tasks succeed                                                                                        |
+| Root `pnpm lint`, `pnpm architecture:check --changed`                   | pass; lint has pre-existing warnings, architecture 0 violations                                                   |
+| SQLite transaction / fixed targets / rollback / cancel / task isolation | 3 pass (`adapters/tests/permission-full-access.test.ts`)                                                          |
+| Core permission / Hook claim / Plan                                     | 24 pass (`permission-full-access`, `permission-responder-race`, `independent-plan-state`)                         |
+| Contracts event reducer                                                 | 27 pass                                                                                                           |
+| Bootstrap broker / registry / projection / original approval chain      | 120 pass                                                                                                          |
+| Bootstrap queue reserve/promote/edit-back                               | 34 pass (`v4-native-queue.test.ts`)                                                                               |
+| V4 continuous / replayable post-commit recovery                         | 2 new pass; 1 old-revision baseline failure in the same file                                                      |
+| UI approval / shortcuts / compat capability / Composer                  | 67 pass; 1 SHARE32 baseline failure reproduced separately and not in the targeted result                          |
+| UI queue edit-back / Plan transition                                    | 22 pass; the new regression failed first (restores queue item mode/Plan/model/reasoning)                          |
+| Desktop E2E types and fixture check                                     | pass; the fixture's queued text is only for enqueue/edit-back with no model request, so the matcher warning stays |
+| CLI lint                                                                | fails: baseline max-lines errors (telemetry/debug/bootstrap etc.), not refactored in passing                      |
 
-本轮所有临时日志位于 `/tmp/zcode-todo158/`；测试文件与实际断言为可重放证据。
+Baseline isolation: at `/tmp/zcode-todo158/baseline` (same HEAD plus the saved pre-existing patch) the
+SHARE32 failure, the gateway old-revision assertion, the background-notification timing assertion and the
+CLI lint failure reproduce; the feature's own cases are listed separately; no claim that the whole repo is green.
 
-| 验证                                                           | 结果                                                                                       |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| 根 `pnpm typecheck`、CLI `pnpm --dir apps/zcode-cli typecheck` | 通过；CLI 28 个任务成功                                                                    |
-| 根 `pnpm lint`、`pnpm architecture:check --changed`            | 通过；lint 有原有警告，架构 0 违规                                                         |
-| SQLite 事务 / 固定目标 / 回滚 / 取消 / task 隔离               | 3 项通过，`adapters/tests/permission-full-access.test.ts`                                  |
-| Core 权限 / Hook claim / Plan                                  | 24 项通过，`permission-full-access`、`permission-responder-race`、`independent-plan-state` |
-| Contracts event reducer                                        | 27 项通过                                                                                  |
-| Bootstrap broker / registry / projection / 原审批链            | 120 项通过                                                                                 |
-| Bootstrap 队列 reserve/promote/撤回                            | 34 项通过，`v4-native-queue.test.ts`                                                       |
-| V4 continuous / replayable 提交后恢复                          | 新增 2 项通过；同文件另有 1 项旧 revision 基线失败                                         |
-| UI 审批/快捷键/兼容能力/Composer                               | 67 项通过；1 项 SHARE32 基线失败已单独复现，定向结果不包含它                               |
-| UI 队列撤回/Plan transition                                    | 22 项通过；新增回归先失败后通过，恢复队列项 mode/Plan/模型与 reasoning                     |
-| Desktop E2E 类型与 fixture 检查                                | 通过；fixture 的队列文本只用于入队/撤回，不执行模型请求，因此 matcher 警告保留             |
-| CLI lint                                                       | 未通过；基线同样存在 max-lines 错误（含 telemetry/debug/bootstrap 等），未顺带重构         |
+Not obtained: a real phone shared-host reconnect / cross-device repeated-click E2E, Windows/macOS runs.
+continuous/replayable evidence is real-protocol subscription and fault-recovery unit tests on the same
+Gateway, not the phone chain. Sub-agents not offering full access is tested; their inheritance contract is not extended.
 
-基线隔离：在同 HEAD 的 `/tmp/zcode-todo158/baseline` 应用任务开始时保存的原有 patch 后实跑，复现 SHARE32、gateway 的旧 revision 断言、background notification 时序断言与 CLI lint 失败。本功能用例均另列；不能宣称整个仓库测试全绿。
+Desktop run: Linux Electron 1/1 passed, run `desktop-e2e-20260917101937381-p869276-572a8de9c7ed2705`,
+exit 0: the original Write tool wrote the file, same-turn output continued, two queue items kept order and
+body, and after edit-back they were `yolo + Plan=true/false`. The E2E exposed and fixed a gap in the
+existing edit-back path that restored only body/attachments: it now restores the item's recorded mode, Plan
+and modelSelection (including reasoning); old items without recorded fields keep the existing draft. The
+test goes through the real UI (first-run guide), waits on a controlled SSE window and fabricates no
+business snapshot; it stays in manual-review/pending.
 
-尚未取得：手机 shared-host 的真实重连/跨设备重复点击 E2E、Windows/macOS 实跑。continuous/replayable 当前证据为同一 Gateway 的真实协议订阅与故障恢复单测，不冒充手机整链路。子 Agent 不投放完全访问已测试，未扩展其继承契约。
+Shared-component browser run: `permission-full-access.test.mjs` **4/4** (390/1200 x light/dark; 390 uses
+Chinese and `isWebRemoteControl=true`, 1200 English) verifies five-row copy, number `5` focusing feedback
+without submit, number `3` + Enter returning the stable fullAccess ID, no horizontal overflow; screenshots
+in `packages/desktop/.e2e-artifacts/permission-full-access-browser/` — shared-component/mobile-width
+evidence only, not a real phone relay E2E.
 
-桌面实跑：Linux Electron `1/1` 通过，run `desktop-e2e-20260917101937381-p869276-572a8de9c7ed2705`，exit 0。原 Write 工具执行落文件、同轮输出继续、两条队列顺序和正文保留，撤回后分别为 `yolo + Plan=true/false`。E2E 揭示并修复既有撤回路径只恢复正文/附件的缺口：现在恢复项中已记录的 mode、Plan、modelSelection（含 reasoning），旧项未记录字段沿用现有草稿。测试通过真实 UI 完成首跑引导，等待受控 SSE 窗口，不伪造业务 snapshot；用例仍在 manual-review/pending。
+Pre-existing uncommitted changes were kept separately; the overlapping catalog/matrix only append PA158 and
+Composer draft storage only adds the grant-handled marker. On 2026-09-17 the user explicitly asked to merge
+the latest staging, commit, push and open an MR; delivered as asked while keeping the baseline failures and
+the phone-chain gap, without marking overall acceptance passed.
 
-共享组件浏览器实跑：`permission-full-access.test.mjs` **4/4** 通过，390/1200 × light/dark；390 使用中文及 `isWebRemoteControl=true`，1200 使用英文。验证五行文案、数字 5 聚焦反馈不提交、数字 3 + Enter 回传稳定 fullAccess ID、无横向溢出。截图在 `packages/desktop/.e2e-artifacts/permission-full-access-browser/`，只是共享组件/移动宽度证据，不替代真实手机 relay E2E。
+After merging the latest `origin/staging` (2026-09-17), the delivered version excluding pre-existing
+changes passed root/CLI typecheck, root lint, architecture; UI 79, Core 24, SQLite 3, Contracts 27,
+Bootstrap approval/queue 154, Gateway PA158 2, and the four browser combinations. Linux Electron re-ran 1/1,
+run `desktop-e2e-20260917120736651-p895163-873605a2d4994754`. The first build was blocked by a stale local
+Zod caught by staging's version check; aligning the local install to the repo's 4.6.5 made build and E2E
+succeed (no manifest or lockfile change). CLI lint is still the baseline max-lines failure. Feature graph
+new nodes/seeds/edges raise no new issues; two missing endpoints (`capability.mcp-oauth-authorization`,
+`persistence.desktop-user-data-root`) are recorded as baseline gaps. Pre-push `ZCODE_PRE_PUSH_BASE=origin/staging pnpm verify:pre-push`
+passed (lint, architecture, changed and related tests); Zod 4.6.5 exposed a newly added compat test missing
+`detail`, which was fixed with no product-logic change.
 
-原有未提交改动单独保留；重叠的 catalog/matrix 仅追加 PA158，Composer 草稿存储仅补授权处理标记。2026-09-17 用户明确要求合并最新 staging、提交、推送并创建 MR；按此要求交付，同时保留上述基线失败与手机整链路缺口，不将整体验收标为通过。
+### CR-01 / CR-02 fix recheck (2026-09-17)
 
-合并最新 `origin/staging` 后复验（2026-09-17）：排除原有未提交改动的实际交付版本，根/CLI typecheck、根 lint、architecture 通过；UI 79、Core 24、SQLite 3、Contracts 27、Bootstrap 审批/队列 154、Gateway PA158 2 项通过，浏览器四组合通过。Linux Electron 再跑 1/1 通过，run `desktop-e2e-20260917120736651-p895163-873605a2d4994754`。首次构建因本机 Zod 旧依赖被 staging 的版本校验拦截，对齐本地安装至仓库要求的 4.6.5 后构建及 E2E 成功；未改依赖清单或锁文件。CLI lint 仍为原有 max-lines 失败。功能图新增节点/seed/边校验无新增问题，已有两个缺失 endpoint（`capability.mcp-oauth-authorization`、`persistence.desktop-user-data-root`）另记为基线缺口。
-
-发布前 `ZCODE_PRE_PUSH_BASE=origin/staging pnpm verify:pre-push` 通过（lint、architecture、变更测试及 related 受影响测试）。Zod 4.6.5 校验暴露的新增兼容测试缺少 `detail` 已补齐并复验；产品逻辑未因此变更。
-
-### CR-01 / CR-02 修复复验（2026-09-17）
-
-- CR-01：每次 fullAccess 尝试有独立失败通知，提交/投影失败会解除已进入等待的 legacy 应答或超时；重试建立新屏障，成功仍等待 V4 answer。新增失败前/后到达、resolve/reject、重试及取消回归；原实现先复现 8 项失败，修复后 broker/registry/原审批链 128 项通过。
-- CR-02：恢复时清空旧授权标记，损坏、未来字段及跨 session receipt 记录诊断后跳过，历史和已保存 execution state 继续恢复；授权幂等重试仍严格拒绝损坏 receipt。恢复、授权、Hook race、独立 Plan 共 30 项通过。额外运行的 `runtime-unbound-resume` 有 1 项既有错误文案断言失败，已在未修改实现的隔离基线复现。
-- CLI typecheck 28 个任务、根 lint、architecture 均通过。CLI lint 仍是基线 max-lines 错误。根 typecheck 本轮因 Node 堆内存耗尽未完成；扩大至 8 GB 及拆为逐项目检查后，仍在未修改的 services 阶段 OOM，不将其标为通过。
-- Linux Electron 审批 E2E 1/1 通过，run `desktop-e2e-20260917130117737-p944581-034f7d67ab10c80c`，exit 0。原工具、队列、各项 Plan 与撤回编辑链路通过；手机 shared-host、跨设备 ACK 及 Windows/macOS 仍沿用上述未验证边界。
-- 本轮日志为 `/tmp/zcode-todo158/cr-*.log`。用户明确要求修复并 push，按该指令提交本轮修改并保留以上验证限制；原 MR !2718 已合并，本轮修复属于原分支上的后续提交。
+- CR-01: each fullAccess attempt has an independent failure notification; commit/projection failure releases a legacy answer or timeout already waiting; a retry builds a new barrier and success still awaits the V4 answer. New regressions: failure arriving before/after, resolve/reject, retry and cancel; the old implementation reproduced 8 failures, after the fix broker/registry/original approval chain 128 pass.
+- CR-02: on restore, old grant markers are cleared; corrupt, future-field and cross-session receipts are logged and skipped, while history and saved execution state still restore; idempotent grant retry still rejects a corrupt receipt strictly. Restore, grant, Hook race and independent Plan: 30 pass. The extra `runtime-unbound-resume` has 1 pre-existing error-text assertion failure, reproduced in an unmodified isolated baseline.
+- CLI typecheck 28 tasks, root lint and architecture pass. CLI lint stays the baseline max-lines failure. Root typecheck did not finish this round (Node heap out of memory; even at 8 GB and per-project it OOMs in the unmodified services stage) and is not marked passed.
+- Linux Electron approval E2E 1/1 passed, run `desktop-e2e-20260917130117737-p944581-034f7d67ab10c80c`, exit 0 (original tool, queue, per-item Plan and edit-back chain); phone shared-host, cross-device ACK and Windows/macOS keep the unverified boundary above.
+- Logs: `/tmp/zcode-todo158/cr-*.log`. The user explicitly asked to fix and push, so this round's changes were committed with the verification limits kept; the original MR !2718 was already merged and these fixes are follow-up commits on the same branch.

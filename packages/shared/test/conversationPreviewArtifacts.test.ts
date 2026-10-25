@@ -17,8 +17,8 @@ function fileChange(path: string, overrides: Partial<ConversationPreviewFileChan
 
 describe("conversation preview artifact candidates", () => {
   it("把 .md 标成 md 类型而不是 html", () => {
-    // 之前 .md 被标成 artifactType html + mime text/markdown，报错文案因此出现
-    // 「HTML（.md / text/markdown）」这种组合，也对不上服务端的 md 白名单条目。
+    // Previously .md was tagged artifactType html + mime text/markdown, which produced error copy like
+    // "HTML (.md / text/markdown)" and did not match the server's md allowlist entry either.
     const candidates = buildConversationPreviewArtifactCandidates({
       productTurnId: "turn-1",
       assistantText: "已生成 报告.md",

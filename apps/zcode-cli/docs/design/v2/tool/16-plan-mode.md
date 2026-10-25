@@ -1,68 +1,68 @@
 # EnterPlanMode / ExitPlanMode
 
-## 目标
+## Goal
 
-提供 plan mode provider tools，让模型能主动请求进入计划模式、完成只读探索后向用户提交计划，并在用户批准后退出计划模式开始实现。
+Provide plan mode provider tools so the model can actively request plan mode, submit a plan to the user after read-only exploration, and leave plan mode to start implementing after the user approves.
 
-ZCode 第一版不引入 plan file、auto mode gate、teammate mailbox、专用 plan model 等当前运行时没有的一体化功能。计划正文通过 `ExitPlanMode.plan` 直接传入，后续如要引入 plan artifact/file，需要单独扩展本 spec。
+The ZCode first version does not introduce an integrated plan file, auto mode gate, teammate mailbox or dedicated plan model, which the current runtime does not have. The plan body is passed directly through `ExitPlanMode.plan`; if a plan artifact/file is introduced later, this spec must be extended separately.
 
-## 工具
+## Tools
 
 ### EnterPlanMode
 
-- 名称：`EnterPlanMode`
-- 输入：空对象 `{}`
-- 输出：`{ message, previousMode, mode: "plan" }`
-- 能力：直接进入 plan mode，用于复杂实现任务开始前的探索和方案设计。
-- 权限：`EnterPlanMode` 不弹用户审批，调用成功即切换到 plan mode。
-- 副作用：`sideEffectScope: "session"`，不是 read-only。
-- 并发：不安全，必须串行。mode 变更不能和其它 session mutation 并行。
-- 失败：
-  - 工具执行失败：返回 tool error，mode 不变。
-  - runtime 未注入 session mode port：configuration error。
+- Name: `EnterPlanMode`
+- Input: empty object `{}`
+- Output: `{ message, previousMode, mode: "plan" }`
+- Capability: enter plan mode directly, for exploration and solution design before a complex implementation task starts.
+- Permission: `EnterPlanMode` shows no user approval; a successful call switches to plan mode.
+- Side effect: `sideEffectScope: "session"`, not read-only.
+- Concurrency: unsafe, must be serial. A mode change cannot run in parallel with other session mutations.
+- Failure:
+  - Tool execution failure: return a tool error, mode unchanged.
+  - Runtime has no session mode port injected: configuration error.
 
-模型可见说明需覆盖：
+The model-visible description must cover:
 
-- 非平凡实现任务应主动使用该工具，先拿到用户对方案方向的同意，避免直接写代码后返工。
-- 除简单任务外，以下场景优先进入 plan mode：新功能实现、多种可行方案、修改既有行为或结构、架构决策、多文件变更、不明确需求、实现方式明显受用户偏好影响。
-- 进入后只能用 `Glob`、`Grep`、`Read` 等只读工具探索，识别既有模式和架构，设计实现方案。
-- 需要澄清方案时用 `AskUserQuestion`；计划审批必须用 `ExitPlanMode`。
-- 单行/少量显然修复、明确的小函数、用户已经给出详细实现步骤、纯研究/探索任务不要滥用；纯研究/探索提示使用 `Agent`，不在该句绑定具体 agent type。
-- 模型提示需包含正反例：认证、数据库优化、暗色模式、删除按钮、API 错误处理应进入 plan mode；README typo、简单 debug log、询问路由文件不应进入 plan mode。
+- Non-trivial implementation tasks should proactively use this tool, to get the user's agreement on the solution direction first and avoid rework after writing code directly.
+- Besides simple tasks, prefer plan mode in these scenarios: new feature implementation, several viable approaches, changing existing behavior or structure, architecture decisions, multi-file changes, unclear requirements, implementation clearly influenced by user preference.
+- After entering, only read-only tools such as `Glob`, `Grep`, `Read` may be used to explore, identify existing patterns and architecture, and design the implementation plan.
+- Use `AskUserQuestion` to clarify the approach; plan approval must use `ExitPlanMode`.
+- Do not overuse for single-line/small obvious fixes, clear small functions, tasks where the user already gave detailed implementation steps, or pure research/exploration; for pure research/exploration hint at `Agent`, without binding a concrete agent type in that sentence.
+- The model prompt must include positive and negative examples: authentication, database optimization, dark mode, a delete button, API error handling should enter plan mode; a README typo, a simple debug log, asking where the route file is should not.
 
 ### ExitPlanMode
 
-- 名称：`ExitPlanMode`
-- 输入：
-  - `plan: string`：展示给用户审批的计划正文。
-  - `allowedPrompts?: { tool: "Bash"; prompt: string }[]`：第一版仅保留到输入/输出和 UI/permission projection，不自动写 permission rules。
-- 输出：`{ plan, previousMode, mode, approved: true, allowedPrompts? }`
-- 能力：在 plan mode 下提交最终计划，并请求用户同意退出 plan mode。
-- 权限：默认必须走用户审批。审批通过后恢复进入 plan mode 前的 mode；没有记录时恢复 `build`。如果进入前是 `yolo`（bypass permissions），`ExitPlanMode` 直接恢复 `yolo`，不再弹审批。
-- 副作用：`sideEffectScope: "session"`，不是 read-only。
-- 并发：不安全，必须串行。
-- 失败：
-  - 当前不是 plan mode：稳定失败，不弹无意义审批。
-  - `plan` 为空：schema 校验失败。
-  - 用户拒绝：返回 permission denied tool error，保持 plan mode。
+- Name: `ExitPlanMode`
+- Input:
+  - `plan: string`: the plan body shown to the user for approval.
+  - `allowedPrompts?: { tool: "Bash"; prompt: string }[]`: in the first version kept only in input/output and the UI/permission projection; it does not automatically write permission rules.
+- Output: `{ plan, previousMode, mode, approved: true, allowedPrompts? }`
+- Capability: in plan mode, submit the final plan and ask the user to agree to leave plan mode.
+- Permission: user approval is required by default. After approval, restore the mode before entering plan mode; when none was recorded, restore `build`. If the mode before entering was `yolo` (bypass permissions), `ExitPlanMode` restores `yolo` directly without an approval prompt.
+- Side effect: `sideEffectScope: "session"`, not read-only.
+- Concurrency: unsafe, must be serial.
+- Failure:
+  - Not currently in plan mode: stable failure, no pointless approval prompt.
+  - Empty `plan`: schema validation failure.
+  - User rejects: return a permission denied tool error and stay in plan mode.
 
-模型可见说明需覆盖：
+The model-visible description must cover:
 
-- 只在 plan mode 中、已经完成实现计划、准备交给用户审批时调用。
-- 工具必须通过 `plan` 参数传入完整计划；模型不要假设存在 plan file，也不要只发空输入。
-- `plan` 参数就是用户审批时看到的内容，必须完整、明确、可执行。
-- 正常模式下调用本工具会请求用户审批；从 `yolo` 进入 plan 时，本工具直接退出回 `yolo`，不会请求审批。
-- 只用于需要写代码的实现任务；纯研究、搜索文件、阅读文件、理解代码库时不要调用。
-- 若需求或方案仍有未解问题，先用 `AskUserQuestion` 澄清。
-- 不要用 `AskUserQuestion` 问“计划是否可以”或“是否继续”；审批就是本工具职责。
-- 工具结果批准后，模型可以开始实现，并优先更新 todo（如果适用）。
-- 模型提示需包含正反例：理解 vim mode 实现不应调用；实现 yank mode 应在规划完成后调用；认证功能若认证方式未定，应先 `AskUserQuestion`，再 `ExitPlanMode`。
+- Call only in plan mode, once the implementation plan is complete and ready for user approval.
+- The tool must receive the full plan through the `plan` parameter; the model must not assume a plan file exists, nor send empty input.
+- The `plan` parameter is what the user sees at approval; it must be complete, explicit and executable.
+- In normal mode calling this tool requests user approval; when plan mode was entered from `yolo`, this tool exits directly back to `yolo` without requesting approval.
+- Only for implementation tasks that require writing code; do not call it for pure research, searching files, reading files or understanding the codebase.
+- If the requirement or approach still has open questions, clarify with `AskUserQuestion` first.
+- Do not use `AskUserQuestion` to ask "is the plan OK" or "continue?"; approval is the responsibility of this tool.
+- After the tool result is approved, the model may start implementing and should update the todo first (if applicable).
+- The model prompt must include positive and negative examples: understanding the vim mode implementation should not call it; implementing yank mode should call it after planning is done; for an authentication feature whose auth method is undecided, `AskUserQuestion` first, then `ExitPlanMode`.
 
-### 审批后 plan file 连续性
+### Plan file continuity after approval
 
-当前过渡实现仍保留 `ExitPlanMode({ plan, allowedPrompts? })` 的 provider-visible 输入形态。审批通过后，runtime 会把最终批准的 plan 原始字符串写入 workspace root 下的 `.zcode/plans/plan-${sanitizedSessionId}.md`；写入失败不阻断已批准的退出 plan mode，只会让后续 compact continuity 降级为没有 plan file reference。
+The current transitional implementation keeps the provider-visible input shape `ExitPlanMode({ plan, allowedPrompts? })`. After approval, the runtime writes the raw string of the finally approved plan to `.zcode/plans/plan-${sanitizedSessionId}.md` under the workspace root; a write failure does not block the already approved exit from plan mode and only makes later compact continuity degrade to having no plan file reference.
 
-这个文件不是新的 provider-visible input，也不是完整的 plan-file schema；它只用于 compact/resume continuity。compact 成功时，如果该 plan file 存在且非空，runtime 会在 compact 后历史中持久化 `plan_file_reference` model-only reminder：
+This file is not a new provider-visible input and not a full plan-file schema; it is used only for compact/resume continuity. When compact succeeds and this plan file exists and is non-empty, the runtime persists a `plan_file_reference` model-only reminder into the post-compact history:
 
 ```text
 A plan file exists from plan mode at: ${planFilePath}
@@ -74,32 +74,32 @@ ${planContent}
 If this plan is relevant to the current work and not already complete, continue working on it.
 ```
 
-这样即使 `ExitPlanMode` 后立即 compact，恢复后的下一轮 provider context 仍能拿到完整批准计划。
+So even if compact happens right after `ExitPlanMode`, the next provider context after recovery still carries the full approved plan.
 
-当前过渡实现没有新增 plan file retention cleanup。如需按保留天数清理 plans 目录中过期的 `.md`，应作为独立 retention cleanup 改造接入，而不是在 compact/session 时即时删除。
+The current transitional implementation adds no plan file retention cleanup. If expired `.md` files in the plans directory should be cleaned by retention days, it must be added as a separate retention cleanup change, not deleted on the fly during compact/session.
 
-## Runtime 和事件
+## Runtime and events
 
-工具 handler 不直接 import bootstrap 或 UI 状态。core 通过 `SessionModePort` 注入 mode 操作：
+Tool handlers do not import bootstrap or UI state directly. Core injects mode operations through `SessionModePort`:
 
 - `getMode()`
 - `getPrePlanMode()`
 - `enterPlanMode({ toolCallId, traceContext })`
 - `exitPlanMode({ toolCallId, traceContext })`
 
-runtime 实现负责保存 `prePlanMode`、更新 `config.mode`、写入 `SessionModeChanged` event，并在退出后设置一次性 `plan_mode_exit` reminder。事件 reducer 必须用该事件更新 `SessionProjection.mode`，使 snapshot、resume、debug 和 ZCode app-server 看到同一事实。
+The runtime implementation saves `prePlanMode`, updates `config.mode`, writes a `SessionModeChanged` event, and after exit sets a one-shot `plan_mode_exit` reminder. The event reducer must update `SessionProjection.mode` from this event, so snapshot, resume, debug and ZCode app-server see the same fact.
 
 ## UI / ZCode app-server
 
-- permission request 仍复用现有 `PermissionRequested` / `PermissionResolved` 协议。
-- `ExitPlanMode` 的 `plan` 留在 tool input / result payload 中，现有 plan mode tool panel 可解析展示。
-- desktop continuous 和 web remote replayable 都只消费 session event / snapshot；relay 与 main 不保存 plan mode 业务状态。
+- The permission request still reuses the existing `PermissionRequested` / `PermissionResolved` protocol.
+- The `plan` of `ExitPlanMode` stays in the tool input / result payload, and the existing plan mode tool panel can parse and show it.
+- Desktop continuous and web remote replayable both consume only session events / snapshots; the relay and main do not store plan mode business state.
 
-## 测试
+## Tests
 
-- contracts：输入输出 schema 成功/失败，JSON Schema 投影。
-- core：registry 暴露两个工具；metadata/permission 不伪装 read-only。
-- permission：`EnterPlanMode` 直接 allow；`ExitPlanMode` 在非 yolo 进入的 plan mode 下请求审批，在从 yolo 进入的 plan mode 下直接 allow；两者都不会被 read-only 禁令误挡。
-- runtime：`EnterPlanMode` 调用成功后 mode=plan；`ExitPlanMode` 审批通过后恢复 previous mode；拒绝后 mode 不变。
-- events：`SessionModeChanged` 能更新 projection，snapshot 使用 projection mode。
-- reminder：退出后下一轮注入 `plan_mode_exit`，且只注入一次。
+- contracts: input/output schema success/failure, JSON Schema projection.
+- core: the registry exposes both tools; metadata/permission do not pretend to be read-only.
+- permission: `EnterPlanMode` is allowed directly; `ExitPlanMode` requests approval in a plan mode entered from non-yolo and is allowed directly in a plan mode entered from yolo; neither is wrongly blocked by the read-only prohibition.
+- runtime: after a successful `EnterPlanMode` call mode=plan; after `ExitPlanMode` approval the previous mode is restored; after rejection the mode is unchanged.
+- events: `SessionModeChanged` updates the projection, and the snapshot uses the projection mode.
+- reminder: after exit the next turn injects `plan_mode_exit`, and only once.

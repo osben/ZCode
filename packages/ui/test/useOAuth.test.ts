@@ -51,7 +51,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
     intl: {
       formatMessage: (descriptor: { id: string }) => descriptor.id,
     },
-    locale: "zh-CN",
+    locale: "en-US",
   }),
 }));
 
@@ -280,6 +280,79 @@ describe("useOAuth", () => {
       expect.objectContaining({ eventExtraDetail: { login_url: "chat.z.ai" } }),
       "useOAuth",
     );
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("exposes the authorization URL while waiting and clears it when the wait is cancelled", async () => {
+    const root: Root = createRoot(installMinimalDom());
+    let latest: ReturnType<typeof useOAuth> | undefined;
+    function OAuthAuthorizeUrlProbe() {
+      latest = useOAuth();
+      return createElement("span");
+    }
+    const authorizeUrl = "https://chat.z.ai/api/oauth/authorize?state=flow-state";
+    mocks.oauthService.getProviders.mockResolvedValue([]);
+    mocks.oauthService.getActiveProvider.mockResolvedValue(null);
+    mocks.oauthService.startOAuthWithPolling.mockResolvedValue({
+      authorizeUrl,
+      provider: "zai",
+      state: "flow-state",
+    });
+
+    await act(async () => {
+      root.render(createElement(OAuthAuthorizeUrlProbe));
+    });
+    expect(latest?.authorizeUrl).toBeNull();
+    await act(async () => {
+      await latest?.startLogin("zai");
+    });
+    expect(latest?.authorizeUrl).toBe(authorizeUrl);
+    await act(async () => {
+      await latest?.cancel("zai");
+    });
+    expect(latest?.authorizeUrl).toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("clears the authorization URL on reset and when starting the login fails", async () => {
+    const root: Root = createRoot(installMinimalDom());
+    let latest: ReturnType<typeof useOAuth> | undefined;
+    function OAuthResetProbe() {
+      latest = useOAuth();
+      return createElement("span");
+    }
+    mocks.oauthService.getProviders.mockResolvedValue([]);
+    mocks.oauthService.getActiveProvider.mockResolvedValue(null);
+    mocks.oauthService.startOAuthWithPolling.mockResolvedValueOnce({
+      authorizeUrl: "https://chat.z.ai/api/oauth/authorize?state=flow-state",
+      provider: "zai",
+      state: "flow-state",
+    });
+    mocks.oauthService.startOAuthWithPolling.mockRejectedValueOnce(new Error("start failed"));
+
+    await act(async () => {
+      root.render(createElement(OAuthResetProbe));
+    });
+    await act(async () => {
+      await latest?.startLogin("zai");
+    });
+    expect(latest?.authorizeUrl).not.toBeNull();
+    act(() => {
+      latest?.reset();
+    });
+    expect(latest?.authorizeUrl).toBeNull();
+
+    await act(async () => {
+      await latest?.startLogin("zai");
+    });
+    expect(latest?.status).toBe("error");
+    expect(latest?.authorizeUrl).toBeNull();
 
     act(() => {
       root.unmount();

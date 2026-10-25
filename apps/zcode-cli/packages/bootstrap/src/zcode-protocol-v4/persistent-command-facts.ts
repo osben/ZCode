@@ -20,7 +20,11 @@ function commandAck(value: unknown): CommandAck | null {
   return ack as CommandAck;
 }
 
-function discardedSourceCommandId(record: SessionInputRecord): string | undefined {
+/**
+ * The command id that admitted a session_input row (its intent sourceCommandId). Rows written by the
+ * admission path carry it under `intent` or `conversationInputIntent`; identity checks read only this.
+ */
+export function sessionInputSourceCommandId(record: SessionInputRecord): string | undefined {
   for (const candidate of [record.payload.conversationInputIntent, record.payload.intent]) {
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
     const sourceCommandId = (candidate as Record<string, unknown>).sourceCommandId;
@@ -43,8 +47,8 @@ export async function loadPersistentCommandFacts(
       ? (store.listSessionInputs?.({ sessionID: sessionId }) ?? [])
       : Promise.all([
           store.listSessionInputs?.({ sessionID: sessionId, status: "discarded" }) ?? [],
-          // cancelled 也是 durable terminal input fact：若这里只读 discarded，用户主动删除
-          // 的 queue item 在 512 LRU 淘汰后会退成 unknown，并可能以同 commandId 再执行。
+          // cancelled is also a durable terminal input fact. If this reads only discarded, a queue item
+          // explicitly deleted by the user could become unknown after 512-entry LRU eviction and run again with the same commandId.
           store.listSessionInputs?.({ sessionID: sessionId, status: "cancelled" }) ?? [],
         ]).then(([discarded, cancelled]) => [...discarded, ...cancelled]),
   ]);
@@ -101,7 +105,7 @@ export async function loadPersistentCommandFacts(
     if (terminalStatus !== "discarded" && terminalStatus !== "cancelled") {
       continue;
     }
-    const sourceCommandId = discardedSourceCommandId(record);
+    const sourceCommandId = sessionInputSourceCommandId(record);
     if (!sourceCommandId) continue;
     const discardedOnRestart =
       terminalStatus === "discarded" && terminalReason === "session_resumed";
@@ -123,8 +127,8 @@ export async function loadPersistentCommandFacts(
       revisionAtDecision: 0,
       ...(discardedOnRestart
         ? {
-            // 旧 query 丢掉了 session_input.delivery，renderer 只能把所有
-            // restart discard 当成可重发丢失；queue/guide 实际只属于旧 runtime。
+            // The old query dropped session_input.delivery, so the renderer treated every restart discard as
+            // lost and resendable. queue/guide actually belong only to the old runtime.
             result: { type: "inputDisposition" as const, delivery: record.delivery },
           }
         : {}),

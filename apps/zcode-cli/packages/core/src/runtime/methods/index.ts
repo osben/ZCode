@@ -9,7 +9,7 @@ import {
 import { getMode, getPlanEnabled } from "./config.js";
 import { getSessionModelSelection, setSessionModelSelection } from "./config.js";
 import { getProjectId } from "./config.js";
-import { setWorkingDirectory } from "./config.js";
+import { getExecutionWorktree, isIncognito, setWorkingDirectory } from "./config.js";
 import { ensureSessionPersistedForExternalActivity } from "./config.js";
 import { getActiveTurnInfo } from "./config.js";
 import { getTools } from "./config.js";
@@ -26,6 +26,7 @@ import { recordUserInputAutoResolutionUpdate } from "./interaction-auto-resoluti
 import { recordDynamicWorkflowRunProgress } from "./dynamic-workflow-run-progress.js";
 import { trackResumedDynamicWorkflowRun } from "./dynamic-workflow-run-track.js";
 import { activateDynamicWorkflowTools } from "./dynamic-workflow-activation.js";
+import { applyLspPreferences, collectLspEditDiagnosticsBody } from "./lsp.js";
 import { startSavedWorkflowRun } from "./dynamic-workflow-run-start.js";
 import { amendWorkflowRunSettings } from "./dynamic-workflow-run-settings.js";
 import { getProjection } from "./config.js";
@@ -122,6 +123,9 @@ import { pauseActiveTargetForCancellation } from "./target.js";
 import { activatePausedTargetAfterResume } from "./target.js";
 import {
   injectHookAdditionalContextIntoMessageHistory,
+  runPostCompactHooks,
+  runPreCompactHooks,
+  runSessionEndHooks,
   runSessionStartHooks,
   runStopHooks,
   runUserPromptSubmitHooks,
@@ -130,6 +134,8 @@ import {
 import { executeTurn, executeTurnCommand } from "./turn.js";
 import { admitPrompt } from "./prompt-admission.js";
 import { executeManualCompact } from "./compact.js";
+import { drainBackgroundDreams } from "../helpers/project-memory-dream.js";
+import { executeManualDream } from "./dream.js";
 import { autoCompactIfNeeded } from "./compact.js";
 import { microcompactIfNeeded } from "./microcompact.js";
 import { reactiveCompactAfterContextExceeded } from "./compact.js";
@@ -211,6 +217,8 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.setSessionModelSelection = setSessionModelSelection;
   proto.getProjectId = getProjectId;
   proto.setWorkingDirectory = setWorkingDirectory;
+  proto.getExecutionWorktree = getExecutionWorktree;
+  proto.isIncognito = isIncognito;
   proto.ensureSessionPersistedForExternalActivity = ensureSessionPersistedForExternalActivity;
   proto.maybeStartSessionTitleGenerationFromExternalInput =
     maybeStartSessionTitleGenerationFromExternalInput;
@@ -221,6 +229,8 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.getActiveTurnInfo = getActiveTurnInfo;
   proto.getTools = getTools;
   proto.invalidateToolCache = invalidateToolCache;
+  proto.applyLspPreferences = applyLspPreferences;
+  proto.collectLspEditDiagnosticsBody = collectLspEditDiagnosticsBody;
   proto.getToolRegistry = getToolRegistry;
   proto.getToolExecutor = getToolExecutor;
   proto.subscribeEvents = subscribeEvents;
@@ -327,6 +337,9 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.runSessionStartHooks = runSessionStartHooks;
   proto.runUserPromptSubmitHooks = runUserPromptSubmitHooks;
   proto.runStopHooks = runStopHooks;
+  proto.runPreCompactHooks = runPreCompactHooks;
+  proto.runPostCompactHooks = runPostCompactHooks;
+  proto.runSessionEndHooks = runSessionEndHooks;
   proto.injectHookAdditionalContextIntoMessageHistory =
     injectHookAdditionalContextIntoMessageHistory;
   proto.shouldContinueAfterStopHooks = shouldContinueAfterStopHooks;
@@ -334,6 +347,7 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.admitPrompt = admitPrompt;
   proto.executeTurnCommand = executeTurnCommand;
   proto.executeManualCompact = executeManualCompact;
+  proto.executeManualDream = executeManualDream;
   proto.autoCompactIfNeeded = autoCompactIfNeeded;
   proto.microcompactIfNeeded = microcompactIfNeeded;
   proto.reactiveCompactAfterContextExceeded = reactiveCompactAfterContextExceeded;
@@ -391,5 +405,6 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.generateWorkspaceText = generateWorkspaceText;
   proto.sampleModel = sampleModel;
   proto.drainMemoryExtractions = drainMemoryExtractions;
+  proto.drainBackgroundDreams = drainBackgroundDreams;
   proto.isProjectMemoryEnabled = isProjectMemoryEnabled;
 }

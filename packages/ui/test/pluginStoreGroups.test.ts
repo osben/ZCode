@@ -6,7 +6,7 @@ import { ZCODE_OFFICIAL_PLUGIN_MARKETPLACE_ID } from "@zcode/shared";
 import type { PluginStoreActions } from "../src/settings/PluginStoreCard.js";
 import type { StorePluginItem } from "../src/settings/pluginStoreListing.js";
 
-const state = vi.hoisted(() => ({ locale: "zh-CN" }));
+const state = vi.hoisted(() => ({ locale: "en-US" }));
 vi.mock("@/hooks/useInterfaceMode.js", () => ({ useIsOfficeMode: () => false }));
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({

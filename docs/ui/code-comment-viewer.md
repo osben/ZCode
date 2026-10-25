@@ -1,27 +1,27 @@
 # Code Comment Viewer
 
-代码查看面板支持在行级范围上添加本地 comment，用作后续对话上下文能力的交互入口。
+The code viewer panel supports adding local comments on line ranges, as the interaction entry for later conversation-context capabilities.
 
-## 交互范围
+## Interaction scope
 
-- hover 行号栏时显示添加 comment 按钮。
-- 桌面端 hover / focus 添加 comment 按钮时在按钮右侧显示轻量 tooltip，提示支持点击或拖拽；手机端不依赖 hover，点击仍直接进入评论输入。
-- 点击按钮为单行添加 comment；按住并拖过其他行可选择连续行范围。
-- 松开拖拽后，在范围末行下方打开 comment 输入框；comment 文本可不填，直接提交时只把代码范围作为会话上下文。
-- 提交后，comment 预览显示在对应范围末行下方；删除预览不会修改源文件。
-- 提交后的 comment 会作为聚合 chip 显示在聊天输入框顶部，形态和普通附件一致。
-- 移除聊天输入框里的 comment chip 时，会同步清理 code viewer 中的本地预览。
-- 可以从其他项目的 code viewer 把 comment 添加到当前对话框；附件会保留来源 `workspacePath` / `workspaceIdentity` 和完整文件路径。
-- 关闭文件 tab 后，再打开同一 workspace + 文件路径时，会从 renderer 内的 preview store 恢复尚未提交/移除的 comment 预览。
+- Hovering the line-number gutter shows an add-comment button.
+- On desktop, hovering / focusing the add-comment button shows a light tooltip to the right of the button, hinting that click or drag is supported; mobile does not depend on hover and a click enters comment input directly.
+- Clicking the button adds a comment for a single line; pressing and dragging across other lines selects a contiguous line range.
+- After the drag is released, a comment input opens below the last line of the range; the comment text may be empty, and submitting directly passes only the code range as conversation context.
+- After submit, the comment preview shows below the last line of the range; deleting the preview does not modify the source file.
+- A submitted comment appears as an aggregated chip at the top of the chat input, in the same form as an ordinary attachment.
+- Removing the comment chip in the chat input also clears the local preview in the code viewer.
+- A comment can be added to the current conversation box from the code viewer of another project; the attachment keeps the source `workspacePath` / `workspaceIdentity` and the full file path.
+- After closing a file tab, reopening the same workspace + file path restores comment previews not yet submitted/removed from the preview store in the renderer.
 
-## 实现边界
+## Implementation boundary
 
-- 当前阶段完成 code viewer 内的交互、本地预览，以及 composer 顶部和用户消息里的 comment 附件展示。
-- comment 不写入源文件。
-- comment preview 只在当前 renderer 生命周期内保存；刷新窗口或重启应用后不会恢复。
-- 发送 prompt 时，复用 `codeCommentContext` 中的结构化 prompt 工具拼接上下文；跨项目 comment 使用来源 workspace 信息做 preview 清理，不使用当前 composer 的 workspace 过滤添加事件。
-- 添加 comment 按钮继续使用 `@pierre/diffs` 内建 gutter utility 与 `onGutterUtilityClick`，tooltip 仅通过 Shadow DOM 内 unsafeCSS 和 `title` / `aria-label` 增强，不切换到自定义 `renderGutterUtility`，避免破坏拖拽选择多行范围。
+- The current stage delivers the interaction inside the code viewer, the local preview, and the comment attachment display at the top of the composer and in user messages.
+- Comments are not written to the source file.
+- Comment previews are kept only for the current renderer lifetime; they are not restored after a window refresh or app restart.
+- When sending a prompt, the structured prompt tool in `codeCommentContext` is reused to assemble the context; a cross-project comment uses the source workspace information for preview cleanup and does not filter the add event by the current composer's workspace.
+- The add-comment button keeps using the built-in gutter utility and `onGutterUtilityClick` of `@pierre/diffs`; the tooltip is enhanced only through unsafeCSS inside the Shadow DOM and `title` / `aria-label`, without switching to a custom `renderGutterUtility`, which would break drag selection of multi-line ranges.
 
-## 布局说明
+## Layout notes
 
-普通代码行使用父级 grid 的行号列和代码列。comment 输入框/预览需要在横向滚动时固定在可视区域内，因此使用 sticky 的内部 grid；内部 grid 的内容列起点通过读取父 grid 中真实 code cell 的左边界对齐，避免行号位数变化导致错位。
+Ordinary code lines use the line-number column and code column of the parent grid. The comment input/preview must stay fixed inside the visible area during horizontal scrolling, so it uses a sticky inner grid; the inner grid's content column start is aligned by reading the left edge of the real code cell in the parent grid, avoiding misalignment when the digit count of line numbers changes.

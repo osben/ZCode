@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// 请求与 WebSocket 消息严格校验 V2，HTTP 响应允许新增字段。
+// V2 requests and WebSocket messages are validated strictly; HTTP responses may add fields.
 const unixSeconds = z.number().int().min(0).max(253_402_300_799);
 const identifier = z
   .string()
@@ -108,7 +108,7 @@ const httpRequests = {
   delete: z.strictObject({ device_sid: identifier }),
   token: z.strictObject({ role }),
 };
-// 服务端新增响应字段应向后兼容；z.object 校验已声明字段并剥离未知字段，嵌套对象同理。
+// New server response fields must stay backward compatible: z.object validates declared fields and strips unknown ones, nested objects included.
 const device = z.object({
   device_sid: deviceSid,
   device_mid: identifier,
@@ -117,7 +117,7 @@ const device = z.object({
   meta: z.object(meta.shape),
 });
 const token = z.object({
-  // 16 字节无填充 Base64URL 的末字符只能使用高两位。
+  // The last character of 16 bytes unpadded Base64URL can only use the top two bits.
   token: z.string().regex(/^[A-Za-z0-9_-]{21}[AQgw]$/),
   expires_in: z.number().int().positive(),
 });
@@ -135,7 +135,7 @@ function response<T extends z.ZodType>(data: T) {
 const httpResponses = {
   register: response(device),
   list: response(z.array(device)),
-  // Go Response.Data 带 omitempty：删除成功/失败可能省略 data。
+  // Go Response.Data has omitempty: a delete success or failure may omit data.
   delete: response(z.null().optional()),
   token: response(token),
 };
@@ -170,7 +170,7 @@ export function parseWebRemoteControlRelayV2HttpResponse<
   return result.success ? result.data : null;
 }
 
-/** HTTP 错误只保留分类，避免 JWT、token URL 或服务端正文进入日志与 renderer。 */
+/** HTTP errors keep only their category so JWTs, token URLs or server bodies never reach logs or the renderer. */
 export class WebRemoteControlV2ConnectionError extends Error {
   constructor(
     readonly reason: "auth-required" | "relay-unavailable",

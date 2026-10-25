@@ -102,12 +102,12 @@ test("PCD: newly created projects select only the active draft", { timeout: 120_
     // 只清理本用例创建的项目容器；不删除文件或已有任务。
     for (const name of names) {
       const row = page.locator(`[data-project-name="${name}"]`).first();
-      await row.getByRole("button", { name: /更多|More/ }).focus();
+      await row.getByRole("button", { name: /More/ }).focus();
       await page.keyboard.press("Enter");
-      await page.getByRole("menuitem", { name: /删除项目|Delete project/ }).click();
+      await page.getByRole("menuitem", { name: /Delete project/ }).click();
       const confirm = page.getByRole("alertdialog");
       if (await confirm.count())
-        await confirm.getByRole("button", { name: /删除|Delete|确认|Confirm/ }).click();
+        await confirm.getByRole("button", { name: /Delete|Confirm/ }).click();
       await row.waitFor({ state: "hidden" });
     }
     await browser.close();

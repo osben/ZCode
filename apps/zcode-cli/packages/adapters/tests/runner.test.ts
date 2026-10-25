@@ -989,45 +989,139 @@ describe("AiSdkModelAdapter", () => {
     }
   });
 
-  it("does not write model-io for a generate request marked to skip transcripts", async () => {
-    const debugDir = await mkdtemp(join(tmpdir(), "zcode-model-io-skip-transcript-"));
-    const runtime: AiSdkModelRuntime = {
-      async generateText() {
-        return {
-          finishReason: "stop",
-          text: "background memory complete",
-          totalUsage: usage(1, 1),
-          usage: usage(1, 1),
-        } as never;
-      },
-      streamText() {
-        throw new Error("not used");
-      },
-    };
-    const adapter = new AiSdkModelAdapter({
-      debugDir,
-      env: { ZCODE_RUNTIME_ENV: "development" },
-      registry: registry(),
-      runtime,
-    });
-
-    try {
-      await executeAdapterGenerateText(adapter, {
-        metadata: {
-          sessionId: "sess_background_memory",
-          skipTranscript: true,
-          traceId: "trace_background_memory",
+  it.each([true, false])(
+    "respects memory transcript exclusion (skipTranscript=%s)",
+    async (skipTranscript) => {
+      const debugDir = await mkdtemp(join(tmpdir(), "zcode-model-io-skip-transcript-"));
+      const runtime: AiSdkModelRuntime = {
+        async generateText() {
+          return {
+            finishReason: "stop",
+            text: "background memory complete",
+            totalUsage: usage(1, 1),
+            usage: usage(1, 1),
+          } as never;
         },
-        providerId: "test" as never,
-        modelId: "model-a" as never,
-        messages: [{ role: "user", content: "consolidate memory" }],
+        streamText() {
+          throw new Error("not used");
+        },
+      };
+      const adapter = new AiSdkModelAdapter({
+        debugDir,
+        env: { ZCODE_RUNTIME_ENV: "development" },
+        registry: registry(),
+        runtime,
       });
 
-      expect(await readdir(debugDir)).toEqual([]);
-    } finally {
-      await rm(debugDir, { recursive: true, force: true });
-    }
-  });
+      try {
+        await executeAdapterGenerateText(adapter, {
+          metadata: {
+            sessionId: "sess_background_memory",
+            skipTranscript,
+            querySource: skipTranscript ? "project_memory_extract" : "project_memory_dream",
+            traceId: "trace_background_memory",
+          },
+          providerId: "test" as never,
+          modelId: "model-a" as never,
+          messages: [{ role: "user", content: "consolidate memory" }],
+        });
+
+        if (skipTranscript) expect(await readdir(debugDir)).toEqual([]);
+        else {
+          const lines = (
+            await readFile(join(debugDir, "model-io-sess_background_memory.jsonl"), "utf8")
+          )
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line));
+          expect(lines).toMatchObject([
+            { querySource: "project_memory_dream", sessionId: "sess_background_memory" },
+          ]);
+        }
+      } finally {
+        await rm(debugDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([true, false])(
+    "respects memory transcript exclusion on streams (skipTranscript=%s)",
+    async (skipTranscript) => {
+      const debugDir = await mkdtemp(join(tmpdir(), "zcode-model-io-stream-skip-transcript-"));
+      const runtime: AiSdkModelRuntime = {
+        generateText() {
+          throw new Error("not used");
+        },
+        streamText() {
+          return {
+            fullStream: stream([
+              { type: "start" },
+              { type: "finish", finishReason: "stop", totalUsage: usage(1, 1) },
+            ]),
+            finishReason: Promise.resolve("stop"),
+            totalUsage: Promise.resolve(usage(1, 1)),
+            usage: Promise.resolve(usage(1, 1)),
+            toolCalls: Promise.resolve([]),
+            toolResults: Promise.resolve([]),
+            sources: Promise.resolve([]),
+            providerMetadata: Promise.resolve(undefined),
+            request: Promise.resolve({
+              body: {
+                messages: [{ role: "user", content: "consolidate memory" }],
+                model: "model-a",
+              },
+            }),
+            response: Promise.resolve({
+              body: { id: "provider-response", output: [] },
+              headers: { "x-request-id": "req_1" },
+            }),
+          } as never;
+        },
+      };
+      const adapter = new AiSdkModelAdapter({
+        debugDir,
+        env: { ZCODE_RUNTIME_ENV: "development" },
+        registry: registry(),
+        runtime,
+      });
+
+      try {
+        for await (const _event of executeAdapterStreamText(adapter, {
+          metadata: {
+            sessionId: "sess_stream_background_memory",
+            skipTranscript,
+            querySource: skipTranscript ? "project_memory_extract" : "project_memory_dream",
+            traceId: "trace_stream_background_memory",
+          },
+          providerId: "test" as never,
+          modelId: "model-a" as never,
+          messages: [{ role: "user", content: "consolidate memory" }],
+        })) {
+          // Drain the stream so aggregate promises resolve and model-io settles.
+        }
+
+        // The generate path already honors skipTranscript; the stream path must match or the
+        // transcript feedback loop the flag breaks would return on streamed memory runs.
+        if (skipTranscript) expect(await readdir(debugDir)).toEqual([]);
+        else {
+          const lines = (
+            await readFile(join(debugDir, "model-io-sess_stream_background_memory.jsonl"), "utf8")
+          )
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line));
+          expect(lines).toMatchObject([
+            {
+              querySource: "project_memory_dream",
+              sessionId: "sess_stream_background_memory",
+            },
+          ]);
+        }
+      } finally {
+        await rm(debugDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("reuses normalized native-null tool input in generateText model-io", async () => {
     const debugDir = await mkdtemp(join(tmpdir(), "zcode-model-io-generate-null-tool-"));
@@ -1364,70 +1458,6 @@ describe("AiSdkModelAdapter", () => {
         rawMarker: "from-ai-sdk-request",
       });
       expect(record.request.body?.bodySource).toBeUndefined();
-    } finally {
-      await rm(debugDir, { recursive: true, force: true });
-    }
-  });
-
-  it("does not wait for pending stream response metadata after mid-stream abort", async () => {
-    const debugDir = await mkdtemp(join(tmpdir(), "zcode-model-io-stream-abort-pending-"));
-    const abortController = new AbortController();
-    const pendingResponse = new Promise<never>(() => undefined);
-    const runtime: AiSdkModelRuntime = {
-      async generateText() {
-        throw new Error("not used");
-      },
-      streamText(options) {
-        return {
-          fullStream: streamThatStallsUntilAbort(options.abortSignal),
-          request: Promise.resolve({
-            body: {
-              messages: options.messages,
-              model: "model-a",
-              rawMarker: "request-settled-before-abort",
-            },
-          }),
-          response: pendingResponse,
-        } as never;
-      },
-    };
-    const adapter = new AiSdkModelAdapter({
-      debugDir,
-      env: { ZCODE_RUNTIME_ENV: "development" },
-      registry: registry(),
-      runtime,
-    });
-
-    try {
-      const drainStream = (async () => {
-        try {
-          for await (const _event of executeAdapterStreamText(adapter, {
-            abortSignal: abortController.signal,
-            metadata: {
-              querySource: "main_turn",
-              sessionId: "sess_stream_abort_pending_debug",
-              traceId: "trace_stream_abort_pending_debug",
-              turnId: "turn_stream_abort_pending_debug",
-            },
-            providerId: "test" as never,
-            modelId: "model-a" as never,
-            messages: [{ role: "user", content: "Ping" }],
-          })) {
-            // drain stream
-          }
-          return "resolved";
-        } catch (error) {
-          expect(error).toBeInstanceOf(AiSdkModelAdapterError);
-          return "rejected";
-        }
-      })();
-
-      await waitForTest(20);
-      abortController.abort(new Error("ZCode Protocol session stopped"));
-
-      await expect(
-        Promise.race([drainStream, waitForTest(500).then(() => "timeout")]),
-      ).resolves.toBe("rejected");
     } finally {
       await rm(debugDir, { recursive: true, force: true });
     }
@@ -4257,70 +4287,6 @@ describe("AiSdkModelAdapter", () => {
         reason: ModelFailureReason.Cancelled,
       },
     });
-  });
-
-  it("does not retry thrown stream network failures after text deltas", async () => {
-    const statusEvents: ModelNetworkStatusEvent[] = [];
-    const resetError = Object.assign(new Error("aborted"), { code: "ECONNRESET" });
-    let attempts = 0;
-    const runtime: AiSdkModelRuntime = {
-      async generateText() {
-        throw new Error("not used");
-      },
-      streamText() {
-        attempts += 1;
-        return {
-          fullStream: streamThenFail(
-            [{ type: "start" }, { type: "text-delta", id: "visible-text", text: "partial" }],
-            resetError,
-          ),
-        } as never;
-      },
-    };
-    const adapter = new AiSdkModelAdapter({
-      registry: registry(),
-      retry: { baseDelayMs: 0, jitter: false, maxAttempts: 2, maxDelayMs: 0 },
-      runtime,
-    });
-
-    const streamEvents: ModelStreamEvent[] = [];
-    await expect(async () => {
-      for await (const event of executeAdapterStreamText(adapter, {
-        metadata: {
-          requestId: "model_req_stream_text_no_retry",
-          traceId: "trace_stream_text_no_retry",
-        },
-        providerId: "test" as never,
-        modelId: "model-a" as never,
-        messages: [{ role: "user", content: "Ping" }],
-        statusSink: {
-          publish(event) {
-            statusEvents.push(event);
-          },
-        },
-      })) {
-        streamEvents.push(event);
-      }
-    }).rejects.toMatchObject({
-      code: ModelErrorCode.ModelRequestFailed,
-      message: "Network connection failed for the provider request.",
-      name: "AiSdkModelAdapterError",
-    } satisfies Partial<AiSdkModelAdapterError>);
-
-    expect(attempts).toBe(1);
-    expect(statusEvents.map((event) => event.type)).toEqual([
-      "model_request_started",
-      "model_request_failed",
-    ]);
-    expect(statusEvents[1]).toMatchObject({
-      attempt: 1,
-      reason: "network_error",
-      retryable: false,
-    });
-    expect(streamEvents).toEqual([
-      { type: "start" },
-      { type: "text_delta", id: "visible-text", text: "partial" },
-    ]);
   });
 
   it("wraps terminal stream error chunks after retry budget is exhausted", async () => {

@@ -53,7 +53,12 @@ function areResolvedTaskMetasEqual(left: ZCodeTaskMeta | null, right: ZCodeTaskM
     areTaskMetaJsonFieldsEqual(left.lastError, right.lastError) &&
     areTaskMetaJsonFieldsEqual(left.repairState, right.repairState) &&
     areTaskMetaJsonFieldsEqual(left.changeSummary, right.changeSummary) &&
-    areTaskMetaJsonFieldsEqual(left.target, right.target)
+    areTaskMetaJsonFieldsEqual(left.target, right.target) &&
+    // Fork: worktree markers and the missing-directory state read these fields
+    // (specs/execution-worktree-missing-handling.md, specs/incognito-session.md).
+    areTaskMetaJsonFieldsEqual(left.executionWorktree, right.executionWorktree) &&
+    (left.executionWorktreeMissing ?? false) === (right.executionWorktreeMissing ?? false) &&
+    (left.incognito ?? false) === (right.incognito ?? false)
   );
 }
 

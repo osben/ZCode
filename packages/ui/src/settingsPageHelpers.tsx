@@ -135,11 +135,13 @@ export function GeneralSectionContent({
   notificationSoundEnabled,
   closeToTrayOnWindows,
   keepAwakeWhileRunning = false,
+  resourceTelemetryEnabled = false,
   desktopChromiumHardwareAccelerationEnabled = true,
   receivePreviewUpdates,
   autoDownloadAndInstallUpdates,
   dataBaseDir,
   terminalInheritSystemProfile = true,
+  terminalWebglEnabled = false,
   terminalFontFamily = "",
   integratedTerminalShell = { mode: "auto" },
   integratedTerminalShellOptions = [],
@@ -165,11 +167,14 @@ export function GeneralSectionContent({
   toolGroupingChangesEnabled,
   zcodeInteractionBehavior,
   askUserQuestionAutoResolutionEnabled = true,
+  codingPlanLimitAutoContinueDefaultEnabled = true,
   modelIoFullRetentionEnabled = false,
   onDataBaseDirChange,
   onSelectDataBaseDir,
   onTerminalInheritSystemProfileChange = async () => {},
   onTerminalFontFamilyChange = async () => {},
+  onTerminalWebglEnabledChange = () => {},
+  onCodingPlanLimitAutoContinueDefaultEnabledChange = async () => {},
   onIntegratedTerminalShellChange = async () => {},
   onNativeSearchEnhancementsEnabledChange,
   onHttpProxyChange = async () => {},
@@ -177,6 +182,7 @@ export function GeneralSectionContent({
   onHttpProxyCaCertPathChange = async () => {},
   onCloseToTrayOnWindowsChange,
   onKeepAwakeWhileRunningChange = async () => {},
+  onResourceTelemetryEnabledChange = async () => {},
   onDesktopChromiumHardwareAccelerationChange = async () => {},
   onReceivePreviewUpdatesChange,
   onAutoDownloadAndInstallUpdatesChange,
@@ -197,6 +203,7 @@ export function GeneralSectionContent({
   notificationSoundEnabled: boolean;
   closeToTrayOnWindows: boolean;
   keepAwakeWhileRunning?: boolean;
+  resourceTelemetryEnabled?: boolean;
   desktopChromiumHardwareAccelerationEnabled?: boolean;
   receivePreviewUpdates: boolean;
   autoDownloadAndInstallUpdates: boolean;
@@ -237,11 +244,14 @@ export function GeneralSectionContent({
   toolGroupingChangesEnabled: boolean;
   zcodeInteractionBehavior: ZCodeInteractionBehavior;
   askUserQuestionAutoResolutionEnabled?: boolean;
+  codingPlanLimitAutoContinueDefaultEnabled?: boolean;
   modelIoFullRetentionEnabled?: boolean;
   onDataBaseDirChange: (dir: string) => Promise<void>;
   onSelectDataBaseDir: () => Promise<string | null>;
   onTerminalInheritSystemProfileChange: (enabled: boolean) => Promise<void>;
+  terminalWebglEnabled: boolean;
   onTerminalFontFamilyChange: (fontFamily: string) => Promise<void>;
+  onTerminalWebglEnabledChange: (enabled: boolean) => void;
   onIntegratedTerminalShellChange?: (selection: IntegratedTerminalShellSelection) => Promise<void>;
   onNativeSearchEnhancementsEnabledChange: (enabled: boolean) => Promise<void>;
   onHttpProxyChange?: (httpProxy: string) => Promise<void>;
@@ -249,6 +259,7 @@ export function GeneralSectionContent({
   onHttpProxyCaCertPathChange?: (caCertPath: string) => Promise<void>;
   onCloseToTrayOnWindowsChange: (enabled: boolean) => Promise<void>;
   onKeepAwakeWhileRunningChange?: (enabled: boolean) => Promise<void>;
+  onResourceTelemetryEnabledChange?: (enabled: boolean) => Promise<void>;
   onDesktopChromiumHardwareAccelerationChange?: (enabled: boolean) => Promise<void>;
   onReceivePreviewUpdatesChange: (enabled: boolean) => Promise<void>;
   onAutoDownloadAndInstallUpdatesChange: (enabled: boolean) => Promise<void>;
@@ -259,6 +270,7 @@ export function GeneralSectionContent({
   onToolGroupingChangesEnabledChange: (enabled: boolean) => Promise<void>;
   onZCodeInteractionBehaviorChange: (behavior: ZCodeInteractionBehavior) => Promise<void>;
   onAskUserQuestionAutoResolutionEnabledChange?: (enabled: boolean) => Promise<void>;
+  onCodingPlanLimitAutoContinueDefaultEnabledChange?: (enabled: boolean) => Promise<void>;
   onModelIoFullRetentionEnabledChange?: (enabled: boolean) => Promise<void>;
   onOpenOnboardingDialog: () => void;
 }) {
@@ -404,6 +416,12 @@ export function GeneralSectionContent({
                 >
                   {intl.formatMessage({ id: "settings.locale.en-US" })}
                 </SelectItem>
+                <SelectItem
+                  value="uk-UA"
+                  data-testid={testId(TID_SETTINGS_LOCALE_SELECT_ITEM, "uk-UA")}
+                >
+                  {intl.formatMessage({ id: "settings.locale.uk-UA" })}
+                </SelectItem>
               </SelectContent>
             </Select>
           }
@@ -489,6 +507,18 @@ export function GeneralSectionContent({
       </SettingsGroupCard>
 
       <SettingsGroupCard>
+        <SettingsRow
+          label={intl.formatMessage({ id: "settings.terminalWebgl" })}
+          description={intl.formatMessage({ id: "settings.terminalWebglDescription" })}
+          control={
+            <Switch
+              checked={terminalWebglEnabled}
+              onCheckedChange={(checked) => {
+                onTerminalWebglEnabledChange(checked);
+              }}
+            />
+          }
+        />
         {showIntegratedTerminalShell ? (
           <SettingsRow
             label={intl.formatMessage({ id: "settings.integratedTerminalShell" })}
@@ -806,6 +836,25 @@ export function GeneralSectionContent({
             }
           />
         ) : null}
+        {isDesktop ? (
+          <SettingsRow
+            label={intl.formatMessage({ id: "settings.resourceTelemetryEnabled" })}
+            description={intl.formatMessage({
+              id: "settings.resourceTelemetryEnabledDescription",
+            })}
+            control={
+              <Switch
+                aria-label={intl.formatMessage({
+                  id: "settings.resourceTelemetryEnabled",
+                })}
+                checked={resourceTelemetryEnabled}
+                onCheckedChange={(checked) => {
+                  void onResourceTelemetryEnabledChange(checked);
+                }}
+              />
+            }
+          />
+        ) : null}
       </SettingsGroupCard>
 
       <SettingsGroupCard>
@@ -858,6 +907,23 @@ export function GeneralSectionContent({
         />
         {/* docs/dynamic-workflow/launch.md「The user's choice」：服务端未提供时整行不渲染。 */}
         {hasServices ? <DynamicWorkflowModeSetting /> : null}
+        <SettingsRow
+          label={intl.formatMessage({ id: "settings.codingPlanLimitAutoContinueDefault" })}
+          description={intl.formatMessage({
+            id: "settings.codingPlanLimitAutoContinueDefaultDescription",
+          })}
+          control={
+            <Switch
+              aria-label={intl.formatMessage({
+                id: "settings.codingPlanLimitAutoContinueDefault",
+              })}
+              checked={codingPlanLimitAutoContinueDefaultEnabled}
+              onCheckedChange={(checked) => {
+                void onCodingPlanLimitAutoContinueDefaultEnabledChange(checked);
+              }}
+            />
+          }
+        />
         <SettingsRow
           label={intl.formatMessage({ id: "settings.modelIoFullRetention" })}
           description={intl.formatMessage({

@@ -24,7 +24,7 @@ export interface WindowsCuaChild {
 }
 
 export interface WindowsCuaChildProcessAdapter {
-  /** command 是运行时 Node/Electron，argv[0] 是 Helper entry。 */
+  /** command is the runtime Node/Electron executable; argv[0] is the Helper entry point. */
   fork(command: string, argv: string[], options: ForkOptions): WindowsCuaChild;
 }
 
@@ -37,7 +37,7 @@ export interface WindowsCuaHelperHostOptions {
   startupTimeoutMs?: number;
   shutdownTimeoutMs?: number;
   logger?: ServiceLogger;
-  /** Ready Helper 意外退出后通知生命周期 owner，仅触发 Helper recovery。 */
+  /** Notify the lifecycle owner when a ready Helper exits unexpectedly; triggers Helper recovery only. */
   onUnexpectedExit?: (info: { generation: number; pid: number | undefined }) => void;
 }
 
@@ -61,10 +61,8 @@ export const defaultChildProcess: WindowsCuaChildProcessAdapter = {
 };
 
 export const defaultSocketPathFactory = mintBrokerSocketPath;
-export const defaultHealthProbe = (
-  socketPath: string,
-  timeoutMs: number,
-): Promise<HelperHealth> => probeHelperHealth(socketPath, { timeoutMs });
+export const defaultHealthProbe = (socketPath: string, timeoutMs: number): Promise<HelperHealth> =>
+  probeHelperHealth(socketPath, { timeoutMs });
 
 export class WindowsCuaChildLifecycle {
   constructor(private readonly logger: ServiceLogger) {}
@@ -74,7 +72,7 @@ export class WindowsCuaChildLifecycle {
       generation.removeMainListeners();
       return;
     }
-    // 先挂 wait listener 再发送 shutdown/kill，避免进程在 signal 的同一同步轮次退出而漏观测。
+    // Attach the wait listener before sending shutdown/kill so an exit in the same synchronous turn as the signal is not missed.
     const firstExit = this.waitForExit(generation, "first-wait", timeoutMs);
     this.sendShutdown(generation, context);
     if (await firstExit) {
@@ -177,8 +175,8 @@ export class WindowsCuaChildLifecycle {
       timer.unref?.();
       if (!this.on(generation.child, "exit", onExit, generation.id, `${errorClass}-on`))
         finish(false);
-      // send() 后、临时 listener 注册前 child 可能已经触发主 exit listener；再次读取
-      // generation 事实，避免把已退出 H1 错当成超时并留下不存在的 termination blocker。
+      // The child may trigger the main exit listener after send() but before this temporary listener is registered. Read
+      // generation state again to avoid mistaking an exited H1 for a timeout and leaving a termination blocker for a process that no longer exists.
       else if (generation.exitObserved) finish(true);
     });
   }

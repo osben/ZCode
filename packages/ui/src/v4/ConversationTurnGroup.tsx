@@ -11,6 +11,7 @@ import {
   useMemo,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import { ChevronRightIcon, EyeIcon } from "lucide-react";
 import { type HighspeedMessageMeta, type ZCodeApiRetryStatus } from "@zcode/shared";
@@ -27,6 +28,7 @@ import type {
   AttachmentRef,
   CommandAck,
   ConversationRowTarget,
+  ExternalAgentStallState,
 } from "@zcode/shared/zcode-protocol-v4";
 import { ChatLoading } from "@/components/ai-elements/chat-loading.js";
 import { ChatApiRetryStatus } from "@/chat-input-toolbar/display.js";
@@ -95,6 +97,7 @@ import { readAssistantFeedback } from "@/v4/ConversationRowView.js";
 import type {
   AssistantFeedbackHandler,
   EditWorkspaceRewindAvailability,
+  RowPinChangeHandler,
 } from "@/v4/ConversationRowView.js";
 import {
   isConversationReasoningRowVisible,
@@ -107,6 +110,12 @@ import type {
   ConversationTurnWorkSegment,
 } from "@/v4/conversationTurnRenderUnits.js";
 import { formatConversationWorkDuration } from "@/v4/conversationWorkDuration.js";
+import {
+  resolveSegmentStreamingContent,
+  useStreamingThroughput,
+} from "@/v4/conversationStreamingThroughput.js";
+import { formatTokensPerSecond, useSessionThroughput } from "@/hooks/useSessionThroughput.js";
+import { formatCompactTokenNumber } from "@/lib/tokenNumberFormat.js";
 import { ConversationTurnRow, resolveAssistantCopyText } from "@/v4/ConversationTurnRow.js";
 import { ConversationHookDetailsAction } from "@/v4/ConversationHookDetailsAction.js";
 import { toolCallRowToLegacyNode } from "@/v4/toolCallRowAdapter.js";
@@ -117,10 +126,13 @@ interface ConversationTurnGroupProps {
   nowMs?: number;
   /** 仅由 Timeline 注入给当前 live turn；历史 turn 永远不携带运行时 retry。 */
   apiRetry?: ApiRetryState | null;
+  /** S6: injected only into the live turn like apiRetry; history turns never carry a stall. */
+  externalAgentStall?: ExternalAgentStallState | null;
   context: ConversationRowRenderContext;
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onFeedbackChange?: AssistantFeedbackHandler;
+  onPinChange?: RowPinChangeHandler;
   onEdit?: (
     target: ConversationRowTarget,
     newText: string,
@@ -208,11 +220,30 @@ function toRetryStatus(apiRetry: ApiRetryState): ZCodeApiRetryStatus {
   };
 }
 
+function ExternalAgentStallStatus() {
+  const { intl } = useZCodeIntl();
+  const label = intl.formatMessage({ id: "chat.externalAgent.stalled" });
+  return (
+    <span
+      data-external-agent-stall="true"
+      role="status"
+      className="inline-flex h-7 items-center whitespace-nowrap px-1 text-ui-base"
+      title={label}
+    >
+      <span className="animated-gradient-text animated-gradient-text-subtle font-medium">
+        {label}
+      </span>
+    </span>
+  );
+}
+
 function TurnChatLoadingSlot({
   apiRetry,
+  externalAgentStall,
   eligible,
 }: {
   apiRetry: ApiRetryState | null;
+  externalAgentStall: ExternalAgentStallState | null;
   eligible: boolean;
 }) {
   const { intl, locale } = useZCodeIntl();
@@ -222,6 +253,15 @@ function TurnChatLoadingSlot({
   // 而不是回退到 ChatLoading。
   const visibleRetryStatus =
     retryStatus && retryStatus.attempt >= MIN_VISIBLE_API_RETRY_ATTEMPT ? retryStatus : null;
+  // Same gate as loading: while an interaction (for example a permission card) owns the turn's
+  // progress, the agent is waiting on the user and a stall status would be misleading.
+  if (externalAgentStall && eligible) {
+    return (
+      <div data-zcode-chat-loading-slot="true" className="min-h-5">
+        <ExternalAgentStallStatus />
+      </div>
+    );
+  }
   if (!visibleRetryStatus && !eligible) return null;
   return (
     <div data-zcode-chat-loading-slot="true" className="min-h-5">
@@ -634,12 +674,14 @@ function OffPeakTurnCards({
 function AssistantHistoryStatus({
   segment,
   open,
+  context,
   highspeed,
   highspeedMeta,
   sourceCommandIds,
 }: {
   segment: ConversationTurnWorkSegment;
   open: boolean;
+  context: ConversationRowRenderContext;
   highspeed: boolean;
   highspeedMeta?: HighspeedMessageMeta;
   sourceCommandIds: readonly string[];
@@ -651,6 +693,21 @@ function AssistantHistoryStatus({
     intl,
     locale,
   );
+  const isRunning = segment.workStatus?.state === "running";
+  const { tokensPerSecond } = useSessionThroughput({
+    enabled: isRunning,
+    sessionId: context.sessionId,
+    workspaceIdentity: context.workspaceIdentity,
+    workspacePath: context.workspacePath,
+  });
+  const segmentStreamingContent = resolveSegmentStreamingContent(segment.assistantWorkRows);
+  const streamingTokensPerSecond = useStreamingThroughput({
+    enabled: isRunning,
+    contentKey: segmentStreamingContent.key,
+    text: segmentStreamingContent.text,
+  });
+  const isEstimate = streamingTokensPerSecond !== null;
+  const throughputTokensPerSecond = isEstimate ? streamingTokensPerSecond : tokensPerSecond;
   const savedDurationLabel =
     segment.workStatus?.state === "completed" &&
     highspeedMeta?.savedDurationMs !== undefined &&
@@ -716,6 +773,31 @@ function AssistantHistoryStatus({
             {intl.formatMessage({ id: "chat.highspeed.statusTag" })}
           </span>
         </div>
+      ) : isRunning && throughputTokensPerSecond !== null ? (
+        <span
+          data-testid="chat-working-throughput"
+          data-throughput-estimated={isEstimate ? "true" : undefined}
+          title={intl.formatMessage({
+            id: isEstimate
+              ? "chat.history.workingThroughputEstimateTitle"
+              : "chat.history.workingThroughputTitle",
+          })}
+          className="ml-auto shrink-0 pl-2 text-ui-base tabular-nums text-foreground-subtle"
+        >
+          {isEstimate ? "~" : ""}
+          {formatTokensPerSecond(locale, throughputTokensPerSecond)} tok/s
+        </span>
+      ) : !isRunning && segment.workStatus?.outputTokens !== undefined ? (
+        <span
+          data-testid="chat-worked-output-tokens"
+          title={intl.formatMessage({ id: "chat.history.outputTokensTitle" })}
+          className="ml-auto shrink-0 pl-2 text-ui-base tabular-nums text-foreground-subtle"
+        >
+          {intl.formatMessage(
+            { id: "chat.history.outputTokens" },
+            { count: formatCompactTokenNumber(locale, segment.workStatus.outputTokens) },
+          )}
+        </span>
       ) : null}
     </div>
   );
@@ -728,6 +810,7 @@ function ConversationWorkSegmentFlow({
   onFork,
   onRetry,
   onEdit,
+  onPinChange,
   editWorkspaceRewindAvailability,
   assistantCopyText,
   assistantPreviewCards,
@@ -738,6 +821,7 @@ function ConversationWorkSegmentFlow({
   canRetryLatestAssistant,
   highspeed,
   highspeedMeta,
+  afterUserInputs,
 }: {
   segment: ConversationTurnWorkSegment;
   sourceCommandIds: readonly string[];
@@ -745,6 +829,7 @@ function ConversationWorkSegmentFlow({
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onEdit?: ConversationTurnGroupProps["onEdit"];
+  onPinChange?: RowPinChangeHandler;
   editWorkspaceRewindAvailability: EditWorkspaceRewindAvailability;
   assistantCopyText?: string;
   assistantPreviewCards: AssistantPreviewCard[];
@@ -755,6 +840,8 @@ function ConversationWorkSegmentFlow({
   canRetryLatestAssistant: boolean;
   highspeed: boolean;
   highspeedMeta?: HighspeedMessageMeta;
+  /** Session-level context row (worktree) after the segment's user inputs; first segment only. */
+  afterUserInputs?: ReactNode;
 }) {
   const [historyOpen, setHistoryOpen] = useState(segment.assistantHistoryDefaultOpen);
   useEffect(() => {
@@ -765,6 +852,14 @@ function ConversationWorkSegmentFlow({
   const firstAssistantFlowItemIndex = segment.flowItems.findIndex(
     (item) => item.kind !== "userInput",
   );
+  // Worktree context row: after the segment's last user input, before any assistant content,
+  // so the first message stays above it (specs/composer-worktree-setup-steps.md).
+  const afterUserInputsIndex = afterUserInputs
+    ? segment.flowItems.reduce(
+        (last, item, index) => (item.kind === "userInput" ? index : last),
+        -1,
+      )
+    : -2;
   let historyChunkIndex = 0;
   const open = segment.assistantHistoryDefaultOpen ? true : historyOpen;
 
@@ -790,11 +885,28 @@ function ConversationWorkSegmentFlow({
         let content: React.ReactNode;
 
         if (item.kind === "userInput") {
-          const userRow = (
+          // The optimistic first-submission row (negative rowId) names no Host row: pin, edit and
+          // attachment reads would target nothing, so only those actions are withheld — the text
+          // stays readable to assistive tech (specs/first-submission-instant-ux.md).
+          const optimistic = item.row.rowId < 0;
+          const userRow = optimistic ? (
+            <div data-optimistic-first-input="true" className="contents">
+              <ConversationTurnRow
+                row={item.row}
+                context={{
+                  ...context,
+                  readAttachment: undefined,
+                  readAttachmentRange: undefined,
+                  onOpenCodeViewer: undefined,
+                }}
+              />
+            </div>
+          ) : (
             <ConversationTurnRow
               row={item.row}
               context={context}
               onEdit={item.row.actions?.canEdit === true ? onEdit : undefined}
+              onPinChange={onPinChange}
               editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
             />
           );
@@ -864,12 +976,14 @@ function ConversationWorkSegmentFlow({
               <AssistantHistoryStatus
                 segment={segment}
                 open={open}
+                context={context}
                 highspeed={highspeed}
                 highspeedMeta={highspeedMeta}
                 sourceCommandIds={sourceCommandIds}
               />
             ) : null}
             {content}
+            {index === afterUserInputsIndex ? afterUserInputs : null}
           </Fragment>
         );
       })}
@@ -878,6 +992,7 @@ function ConversationWorkSegmentFlow({
           segment={segment}
           sourceCommandIds={sourceCommandIds}
           open={open}
+          context={context}
           highspeed={highspeed}
           highspeedMeta={highspeedMeta}
         />
@@ -889,10 +1004,12 @@ function ConversationWorkSegmentFlow({
 function ConversationTurnFlow({
   unit,
   apiRetry,
+  externalAgentStall,
   context,
   onFork,
   onRetry,
   onEdit,
+  onPinChange,
   editWorkspaceRewindAvailability,
   assistantCopyText,
   assistantCodeCommentCards,
@@ -903,10 +1020,12 @@ function ConversationTurnFlow({
 }: {
   unit: ConversationTurnRenderUnit;
   apiRetry: ApiRetryState | null;
+  externalAgentStall: ExternalAgentStallState | null;
   context: ConversationRowRenderContext;
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onEdit?: ConversationTurnGroupProps["onEdit"];
+  onPinChange?: RowPinChangeHandler;
   editWorkspaceRewindAvailability: EditWorkspaceRewindAvailability;
   assistantCopyText?: string;
   assistantCodeCommentCards: AssistantCodeCommentCard[];
@@ -941,13 +1060,19 @@ function ConversationTurnFlow({
   if (unit.timelineOnly) {
     return (
       <div className="flex flex-col gap-2">
+        {/* 会话级上下文行（worktree）：没有 transcript 行时自成单元，仍在冻结预览之下。 */}
+        {unit.afterFirstUserInputSlot}
         <ConversationAssistantWorkItems
           rows={unit.assistantWorkRows}
           context={context}
           stageTailIsRunning={unit.isRunning}
           assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
         />
-        <TurnChatLoadingSlot apiRetry={apiRetry} eligible={showLoading} />
+        <TurnChatLoadingSlot
+          apiRetry={apiRetry}
+          externalAgentStall={externalAgentStall}
+          eligible={showLoading}
+        />
       </div>
     );
   }
@@ -1010,6 +1135,7 @@ function ConversationTurnFlow({
           onFork={onFork}
           onRetry={onRetry}
           onEdit={onEdit}
+          onPinChange={onPinChange}
           editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
           assistantCopyText={assistantCopyText}
           assistantPreviewCards={assistantPreviewCards}
@@ -1020,9 +1146,14 @@ function ConversationTurnFlow({
           canRetryLatestAssistant={canRetryLatestAssistant}
           highspeed={highspeed}
           highspeedMeta={highspeedMeta}
+          afterUserInputs={segment === workSegments[0] ? unit.afterFirstUserInputSlot : undefined}
         />
       ))}
-      <TurnChatLoadingSlot apiRetry={apiRetry} eligible={showLoading} />
+      <TurnChatLoadingSlot
+        apiRetry={apiRetry}
+        externalAgentStall={externalAgentStall}
+        eligible={showLoading}
+      />
     </div>
   );
 }
@@ -1073,6 +1204,7 @@ function resolveWorkflowNotification(
 function ConversationBackgroundResultWork({
   unit,
   apiRetry,
+  externalAgentStall,
   context,
   onFork,
   onRetry,
@@ -1084,6 +1216,7 @@ function ConversationBackgroundResultWork({
 }: {
   unit: ConversationTurnRenderUnit;
   apiRetry: ApiRetryState | null;
+  externalAgentStall: ExternalAgentStallState | null;
   context: ConversationRowRenderContext;
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
@@ -1229,7 +1362,11 @@ function ConversationBackgroundResultWork({
           assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
         />
       ) : null}
-      <TurnChatLoadingSlot apiRetry={apiRetry} eligible={showLoading} />
+      <TurnChatLoadingSlot
+        apiRetry={apiRetry}
+        externalAgentStall={externalAgentStall}
+        eligible={showLoading}
+      />
     </div>
   );
 }
@@ -1238,11 +1375,13 @@ function ConversationTurnGroupImpl({
   unit,
   nowMs = Date.now(),
   apiRetry = null,
+  externalAgentStall = null,
   context,
   onFork,
   onRetry,
   onFeedbackChange,
   onEdit,
+  onPinChange,
 }: ConversationTurnGroupProps) {
   const isOfficeMode = useIsOfficeMode();
   const { intl } = useZCodeIntl();
@@ -1493,12 +1632,15 @@ function ConversationTurnGroupImpl({
                   row={row}
                   context={context}
                   onEdit={row.actions?.canEdit === true ? onEdit : undefined}
+                  onPinChange={onPinChange}
                   editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
                 />
               ))}
+              {unit.afterFirstUserInputSlot}
               <ConversationBackgroundResultWork
                 unit={unit}
                 apiRetry={apiRetry}
+                externalAgentStall={externalAgentStall}
                 context={assistantRowContext}
                 onFork={canForkLatestAssistant ? onFork : undefined}
                 onRetry={onRetry}
@@ -1517,10 +1659,12 @@ function ConversationTurnGroupImpl({
             <ConversationTurnFlow
               unit={unit}
               apiRetry={apiRetry}
+              externalAgentStall={externalAgentStall}
               context={assistantRowContext}
               onFork={canForkLatestAssistant ? onFork : undefined}
               onRetry={onRetry}
               onEdit={onEdit}
+              onPinChange={onPinChange}
               editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
               assistantCopyText={assistantCopyText}
               assistantCodeCommentCards={assistantCodeCommentCards}
@@ -1578,16 +1722,18 @@ function ConversationTurnGroupImpl({
               createdAt={latestAssistantTextRow.createdAt}
               compactForRemoteControl={context.compactForRemoteControl}
               feedback={readAssistantFeedback(latestAssistantTextRow)}
+              pinnedAt={latestAssistantTextRow.pinnedAt}
               sessionId={context.sessionId}
               onFork={canForkLatestAssistant ? onFork : undefined}
               onRetry={canRetryLatestAssistant ? onRetry : undefined}
               onFeedbackChange={onFeedbackChange}
+              onPinChange={onPinChange}
               hookInvocations={unit.hookInvocations}
               turnId={unit.turnId}
               sourceCommandIds={deliverySourceCommandIds}
               className={cn(
                 "flex items-center gap-1",
-                context.compactForRemoteControl
+                context.compactForRemoteControl || latestAssistantTextRow.pinnedAt !== undefined
                   ? "opacity-100"
                   : "opacity-0 transition-opacity group-hover/assistant-turn:opacity-100 focus-within:opacity-100 has-[[data-bot-group-delivery]]:opacity-100",
               )}
@@ -1643,8 +1789,10 @@ function ConversationTurnGroupImpl({
         <ConversationTurnFlow
           unit={unit}
           apiRetry={apiRetry}
+          externalAgentStall={externalAgentStall}
           context={assistantRowContext}
           onEdit={onEdit}
+          onPinChange={onPinChange}
           editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
           assistantCopyText={assistantCopyText}
           assistantCodeCommentCards={assistantCodeCommentCards}

@@ -1,11 +1,11 @@
-/* eslint-disable max-lines -- release plan 同时持有内网下载地址与仓库归档路径两类来源及其固定摘要，集中在同一所有者，避免拆分后 plan 漂移。 */
+/* eslint-disable max-lines -- The release plan owns both intranet download URLs and repository archive paths, along with their pinned digests. Keep them together to prevent plan drift. */
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { resolveIntranetDepsBaseUrl } from "./intranetDefaults.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-// 仓库内置的预编译归档与内网镜像同名、同 SHA-256；只在未配置内网依赖源时作为离线来源。
+// The repository’s prebuilt archives match the intranet mirrors by name and SHA-256; use them as an offline source only when no intranet dependency source is configured.
 export const NATIVE_SEARCH_DEPENDENCIES_DIR = join(
   repoRoot,
   "apps/zcode-cli/dependencies/native-search",
@@ -17,8 +17,8 @@ export const LINUX_NATIVE_SEARCH_GLIBC_BASELINE = "2.28";
 export const LEGACY_REMOTE_RIPGREP_VERSION = "v13.0.0-10";
 export const NATIVE_SEARCH_RIPGREP_REVISION = "4649aa9700";
 
-// Darwin remote 仍使用 legacy ripgrep release；下载器与新的预编译工具链共用同一份
-// “下载前必须具备可信摘要”的合同，不能因为该 release 较旧就跳过归档验真。
+// Darwin remote still uses the legacy ripgrep release; the downloader and the new prebuilt toolchain share the same
+// “trusted digest required before download” contract; do not skip archive verification just because this release is older.
 export const LEGACY_REMOTE_RIPGREP_ARCHIVE_SHA256_BY_TARGET = Object.freeze({
   "darwin-arm64": "de44338ca53677968bdd7403ddc1cf9c735e708f7b63e3b34367f9411010a7db",
   "darwin-x64": "3b501c05ff9b1d24ae8897dd1c6b5bf842fd12a6f7114264407ac42bc222b25b",
@@ -204,7 +204,7 @@ function resolveNativeSearchArchiveTarget(platform, arch) {
   }
 }
 
-// 只有完成对应构建与发布校验的 platform key 才能进入 desktop 发行链路。
+// Only platform keys that have passed the corresponding build and release checks may enter the desktop distribution pipeline.
 const ENABLED_NATIVE_SEARCH_PLATFORM_KEYS = Object.freeze([
   "darwin-arm64",
   "darwin-x64",
@@ -382,10 +382,10 @@ export function resolveNativeSearchRipgrepDownloadBaseUrl(env = process.env) {
 }
 
 /**
- * native search 预编译归档来源的唯一判定，desktop / SEA / server-cli / remote 准备共用：
- * - 显式配置 NATIVE_SEARCH_TOOLS_DOWNLOAD_BASE_URL，或内网依赖源可解析：`intranet`，沿用原有下载链路；
- * - 内网依赖源未配置（resolveIntranetDepsBaseUrl 抛错或返回空）：`repository`，解包仓库内置归档。
- * 两种来源使用同一份 release plan 与固定 SHA-256，只是字节来源不同。
+ * The single source-selection rule for native search prebuilt archives, shared by desktop / SEA / server-cli / remote preparation:
+ * - If `NATIVE_SEARCH_TOOLS_DOWNLOAD_BASE_URL` is explicitly set or the intranet dependency source resolves: `intranet`, using the existing download path;
+ * - If no intranet dependency source is configured (`resolveIntranetDepsBaseUrl` throws or returns empty): `repository`, unpack the built-in repository archives.
+ * Both sources use the same release plan and pinned SHA-256; only the source of the bytes differs.
  */
 export function resolveNativeSearchArtifactSource(env = process.env) {
   if (env.NATIVE_SEARCH_TOOLS_DOWNLOAD_BASE_URL?.trim()) return "intranet";
@@ -405,7 +405,7 @@ export function resolveNativeSearchPrebuiltPlan({
 } = {}) {
   const buildPlan = resolveNativeSearchBuildPlan({ platform, arch, outputDir });
   const archiveTarget = resolveNativeSearchArchiveTarget(buildPlan.platform, buildPlan.arch);
-  // 未配置内网依赖源时不能解析下载地址；此时计划只携带仓库归档路径，下载地址留空。
+  // Without an intranet dependency source, no download URL can be resolved; the plan carries only the repository archive path and leaves the download URL empty.
   const downloadBaseUrls =
     resolveNativeSearchArtifactSource(env) === "intranet"
       ? {

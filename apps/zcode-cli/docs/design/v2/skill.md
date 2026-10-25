@@ -1,106 +1,127 @@
 # Skill Integration Plan
 
-## 文档定位
+## Document Scope
 
-本文是 ZCode v2 接入 skill 的实现级规划。它遵循当前 v2 架构原则：
+Implementation-level plan for integrating skills into ZCode v2. It follows the v2 architecture
+principles:
 
-- spec 先行，再进入 contracts 和实现。
-- core 不直接读文件、扫目录、访问网络或读取环境变量。
-- skill 和 MCP、plugin、subagent 一样，必须通过 capability、schema、权限和 trace 边界进入 agent runtime。
-- skill 首先服务 NL -> Code 的专业知识按需加载，不在第一版承担远程市场、插件安装和子代理编排。
+- Spec first, then contracts and implementation.
+- Core never reads files, scans directories, accesses the network or reads environment variables.
+- Like MCP, plugins and subagents, skills enter the agent runtime only through capability, schema,
+  permission and trace boundaries.
+- Skills first serve on-demand loading of professional knowledge for NL -> Code. The first version has no
+  remote marketplace, plugin installation or subagent orchestration.
 
-## 设计要点
+## Design Points
 
-模型入口与上下文：
+Model entry and context:
 
-- skill 入口是 `Skill` tool。启动时只给模型可用 skill 列表，不把完整正文塞进 system prompt；模型必须先调用 tool 才能获得完整指令。
-- skill 列表有预算控制，并对单个描述做硬截断；超过预算时截断描述、降级或发 warning。
-- `Skill` tool 输入是 skill name 和可选 args；输出完整内容和 base directory，帮助模型按需读取 references/scripts。
-- 已加载 skill 会被记录，便于 compaction 后恢复 skill 内容。
+- The entry is the `Skill` tool. At startup the model sees only the list of available skills, not full
+  bodies; it must call the tool to get the full instructions.
+- The skill list has a budget, and each description is hard-truncated; over budget, descriptions are
+  truncated, the list degrades, or a warning is emitted.
+- `Skill` input is a skill name and optional args; output is the full content and the base directory, so
+  the model can read references/scripts on demand.
+- Loaded skills are recorded so that skill content can be restored after compaction.
 
-能力域与权限：
+Capability domain and permissions:
 
-- skill 作为独立能力域，有 `SkillMetadata`、`SkillLoadOutcome`、`SkillRoot`、`SkillPolicy`、`SkillDependencies` 等明确模型。
-- root 有 scope：repo、user、system、admin；配置规则可按 name 或 path enable/disable。
-- 发现路径覆盖自有目录和兼容目录，project-local discovery 从当前目录向上扫到 worktree root。
-- skill frontmatter 可携带 `allowed-tools`、`model`、`effort`、`disable-model-invocation`、`when_to_use` 等运行时影响项。
-- 权限不是只看 “读取 SKILL.md 是否安全”，而是看 skill 是否会改变工具白名单、模型、hook、fork 执行等行为：只有安全属性的简单 skill 自动放行，其它情况走 permission；规则可以按 skill name pattern 表达 allow/deny/ask。
-- loader 用 filesystem abstraction，不把本地 I/O 暴露给 core。
+- Skills are an independent capability domain with explicit models: `SkillMetadata`, `SkillLoadOutcome`,
+  `SkillRoot`, `SkillPolicy`, `SkillDependencies`.
+- Roots have a scope (repo, user, system, admin); config rules can enable/disable by name or path.
+- Discovery paths cover native and compatible directories; project-local discovery scans from the
+  current directory up to the worktree root.
+- Frontmatter may carry runtime-affecting items: `allowed-tools`, `model`, `effort`,
+  `disable-model-invocation`, `when_to_use`.
+- Permission does not only ask whether reading `SKILL.md` is safe; it asks whether the skill changes the
+  tool allowlist, model, hooks or fork execution. Only simple skills with safe attributes are
+  auto-allowed; everything else goes through permission. Rules can express allow/deny/ask by skill name
+  pattern.
+- The loader uses a filesystem abstraction; local I/O is not exposed to core.
 
-第一版不做：
+Not in the first version:
 
-- 不把 skill 和 slash command 合流，只做 `SKILL.md` 指令包。
-- forked skill（`context: fork`）依赖成熟 subagent runtime，第一版只预留 schema。
-- remote / URL skill discovery 需要网络、缓存、签名/校验和审计，不进第一阶段。
-- 不长期保留大正文，优先 metadata snapshot + 按需读取正文。
-- product gating、env dependency prompt、root alias 渲染作为 Phase 2+；第一版只保留字段和诊断，不实现完整依赖补全。
+- Skills and slash commands are not merged; only `SKILL.md` instruction packs.
+- Forked skills (`context: fork`) depend on a mature subagent runtime; only the schema is reserved.
+- Remote / URL skill discovery needs network, cache, signing/verification and audit; not in phase one.
+- Large bodies are not retained long-term; prefer a metadata snapshot plus on-demand body reads.
+- Product gating, env dependency prompts and root alias rendering are Phase 2+; the first version keeps
+  only fields and diagnostics, without full dependency completion.
 
-## ZCode 设计选择
+## ZCode Design Choices
 
-## 当前实现核对（2026-05-08）
+### Current implementation status
 
-本轮核对确认 skill P0 主线已经落地，本文后续条目仍作为契约基准，但不应再把以下能力当作未实现缺口：
+The skill P0 mainline has landed (last checked 2026-05-08). The rest of this document is the contract baseline.
 
-- Contracts：`packages/contracts/src/skills/index.ts` 已定义 `SkillRoot`、`SkillScope`、`SkillMetadata`、`SkillDiagnostic`、`SkillContent`、`SkillLoadOutcome`、`SkillPort` 和 `SkillConfig`；`packages/contracts/src/tools/skill.ts` 已提供 `Skill` tool 的运行时 schema 与 provider JSON schema。
-- Adapter loader：`packages/adapters/src/skills/index.ts` 已通过 Node adapter 发现从 cwd 向上到 worktree root 的 `.zcode/skills`、`.agents/skills`、`.claude/skills` 及对应 user roots，支持 config extra roots、flat YAML frontmatter、未知字段 diagnostics、同名优先级去重、正文按需读取和 100KB 截断。
-- Core runtime：`packages/core/src/context/sections/skills.ts` 已把 skill metadata 渲染为 `meta_user` section，不把正文放进 system prompt；`packages/core/src/tool/handlers/skill.ts` 已通过 `SkillPort` 加载正文，并声明只读、session side effect、runtime input/output schema、result budget、timeout、取消和 trace 传播。
-- Bootstrap / CLI / ZCode app-server：`packages/bootstrap/src/index.ts` 已按 feature gate 和 `skills.*` config 注入 `SkillPort`；`listZCodeSkills()` 复用同一 adapter；`zcode skills` / `zcode skills list` 支持 human、`--json` 和 `--verbose` diagnostics；TUI/command-center 的裸 `/skill` 只读列举 skills，`/skill <name> [task]` 会改写为必须先调用 `Skill` tool 的 prompt；ZCode app-server 暴露 `/skill <skill-name> [task]`，裸 `/skill` 在 ZCode app-server 中返回 usage，不启动模型 turn。
-- Tests：`packages/adapters/tests/skills.test.ts` 覆盖 discovery、正文加载和重复名优先级；`packages/core/tests/skill-tool.test.ts` 与 `packages/core/tests/context-builder.test.ts` 覆盖 metadata 注入和 `Skill` tool；`packages/cli/tests/cli.unit.test.ts` 覆盖 CLI/TUI `/skill`；`packages/bootstrap/tests/zcode-protocol.test.ts` 覆盖 ZCode app-server command 暴露、禁用和 prompt rewrite。
+Landed:
 
-当前仍未落地，继续作为后续范围：
+- Contracts: `packages/contracts/src/skills/index.ts` defines `SkillRoot`, `SkillScope`,
+  `SkillMetadata`, `SkillDiagnostic`, `SkillContent`, `SkillLoadOutcome`, `SkillPort`, `SkillConfig`;
+  `packages/contracts/src/tools/skill.ts` provides the `Skill` tool runtime schema and provider JSON
+  schema.
+- Adapter loader: `packages/adapters/src/skills/index.ts` discovers, through the Node adapter,
+  `.zcode/skills`, `.agents/skills`, `.claude/skills` from cwd up to the worktree root and the matching
+  user roots; supports config extra roots, flat YAML frontmatter, unknown-field diagnostics, same-name
+  priority dedup, on-demand body reads and 100KB truncation.
+- Core runtime: `packages/core/src/context/sections/skills.ts` renders skill metadata as a `meta_user`
+  section (no body in the system prompt); `packages/core/src/tool/handlers/skill.ts` loads the body
+  through `SkillPort` and declares read-only, session side effect, runtime input/output schema, result
+  budget, timeout, cancellation and trace propagation.
+- Bootstrap / CLI / ZCode app-server: `packages/bootstrap/src/index.ts` injects `SkillPort` by feature
+  gate and `skills.*` config; `listZCodeSkills()` reuses the same adapter; `zcode skills` /
+  `zcode skills list` support human, `--json` and `--verbose` diagnostics; bare `/skill` in
+  TUI/command-center is a read-only listing and `/skill <name> [task]` is rewritten into a prompt that
+  must call the `Skill` tool first; ZCode app-server exposes `/skill <skill-name> [task]`, and bare
+  `/skill` there returns usage without starting a model turn.
+- Tests: `packages/adapters/tests/skills.test.ts` (discovery, body load, duplicate-name priority);
+  `packages/core/tests/skill-tool.test.ts` and `packages/core/tests/context-builder.test.ts` (metadata
+  injection, `Skill` tool); `packages/cli/tests/cli.unit.test.ts` (CLI/TUI `/skill`);
+  `packages/bootstrap/tests/zcode-protocol.test.ts` (ZCode app-server command exposure, disabling,
+  prompt rewrite).
 
-- TUI/debug projection 的 skill diagnostics 页面，以及显式 `$skill-name` / `skill://...` mention。
-- 按具体 skill name 或 wildcard 的 allow/deny/ask 规则；当前 `Skill` tool 的权限声明仍是 tool-level low-risk 自动允许，没有根据 unsafe frontmatter、remote/plugin source 或 runtime modifier 字段动态升级为 ask。
-- skill lifecycle 事件（`SkillRootsResolved` / `SkillLoaded` 等）、loaded-skill session snapshot、compact 后恢复完整 skill body，以及 diagnostics 的结构化观测面。
-- bundled/system/plugin/admin/remote roots、dependency/env prompt、`context: fork`、`model` / `effort` runtime modifier、`allowed-tools` scoped suggestion 等 P1/P2 能力。
+Not yet landed (remaining scope):
 
-### 核心原则
+- A TUI/debug projection page for skill diagnostics, and explicit `$skill-name` / `skill://...`
+  mentions.
+- Allow/deny/ask rules by concrete skill name or wildcard. The `Skill` tool's permission declaration is
+  still a tool-level low-risk auto-allow; it does not escalate to ask for unsafe frontmatter,
+  remote/plugin sources or runtime-modifier fields.
+- Skill lifecycle events (`SkillRootsResolved` / `SkillLoaded`, ...), a loaded-skill session snapshot,
+  restoring the full skill body after compact, and a structured observability surface for diagnostics.
+- bundled/system/plugin/admin/remote roots, dependency/env prompts, `context: fork`, `model` / `effort`
+  runtime modifiers, `allowed-tools` scoped suggestions (P1/P2).
 
-ZCode skill 采用“两层加载”：
+### Core principle
 
-1. **metadata discovery**：启动/turn 初始化时扫描 skill roots，只把 name、description、source、scope、path、policy 等轻量信息进入 context。
-2. **content load**：模型显式调用 `Skill` tool 后，才读取对应 `SKILL.md` 正文并注入当前会话。
+ZCode skills use two-layer loading:
 
-这能同时满足 token 控制、权限可见、trace 可追踪和跨平台 I/O 收口。
+1. **metadata discovery**: at startup/turn init, scan skill roots and put only lightweight information
+   (name, description, source, scope, path, policy) into context.
+2. **content load**: only after the model explicitly calls the `Skill` tool is the matching `SKILL.md`
+   body read and injected into the session.
 
-### 分层边界
+This gives token control, permission visibility, trace and a single cross-platform I/O boundary.
 
-`contracts` 增加 skill contract：
+### Layer boundaries
 
-- `SkillRoot`
-- `SkillScope`
-- `SkillMetadata`
-- `SkillPolicy`
-- `SkillLoadOutcome`
-- `SkillDiagnostic`
-- `SkillContent`
-- `SkillPort`
-- `SkillConfig`
+`contracts` adds the skill contract: `SkillRoot`, `SkillScope`, `SkillMetadata`, `SkillPolicy`,
+`SkillLoadOutcome`, `SkillDiagnostic`, `SkillContent`, `SkillPort`, `SkillConfig`.
 
-`adapters` 实现 Node skill loader：
+`adapters` implements the Node skill loader: scan directories, parse YAML frontmatter, read bodies,
+handle symlinks, permission errors, path normalization, case differences and max bytes, and return
+structured diagnostics.
 
-- 扫描目录。
-- 解析 YAML frontmatter。
-- 读取正文。
-- 处理 symlink、权限错误、路径规范化、大小写差异和 max bytes。
-- 返回结构化 diagnostics。
+`core` adds a skill registry / manager: holds the session's skill metadata snapshot, lets the context
+builder render the available-skills section, registers the `Skill` tool contract. The `Skill` tool loads
+bodies only through `SkillPort`, never by reading files.
 
-`core` 增加 skill registry / manager：
+`bootstrap` assembles: generates skill roots from config, injects `SkillPort` into the runtime/tool
+executor, and passes the skill feature gate, permission config and context budget to core.
 
-- 保存当前 session 的 skill metadata snapshot。
-- 供 context builder 渲染 available skills section。
-- 注册 `Skill` tool contract。
-- `Skill` tool 只通过 `SkillPort` 加载正文，不直接读文件。
+## File Format
 
-`bootstrap` 负责组装：
-
-- 根据 config 生成 skill roots。
-- 注入 `SkillPort` 到 runtime/tool executor。
-- 把 skill feature gate、权限配置和 context budget 传给 core。
-
-## 文件格式
-
-P0 只要求每个 skill 目录包含 `SKILL.md`：
+P0 requires only that each skill directory contains `SKILL.md`:
 
 ```text
 my-skill/
@@ -110,7 +131,7 @@ my-skill/
   assets/
 ```
 
-`SKILL.md` 必须有 YAML frontmatter：
+`SKILL.md` must have YAML frontmatter:
 
 ```markdown
 ---
@@ -123,84 +144,79 @@ description: When this skill should be used
 Workflow instructions.
 ```
 
-P0 frontmatter：
+P0 frontmatter:
 
-- `name`：必填。建议 `^[a-z0-9]+(-[a-z0-9]+)*$`，长度 1-64。
-- `description`：必填，长度 1-1024。
-- `when_to_use`：可选，追加到描述预算中。
-- `license`：可选，仅 metadata。
-- `metadata`：可选，string map。
+- `name`: required. Recommended `^[a-z0-9]+(-[a-z0-9]+)*$`, length 1-64.
+- `description`: required, length 1-1024.
+- `when_to_use`: optional, appended to the description budget.
+- `license`: optional, metadata only.
+- `metadata`: optional string map.
 
-P1/P2 预留字段：
+Reserved for P1/P2: `allowed-tools`, `model`, `effort`, `context: inline | fork`,
+`disable-model-invocation`, `policy.allow_implicit_invocation`, `dependencies.tools`, `interface`.
 
-- `allowed-tools`
-- `model`
-- `effort`
-- `context: inline | fork`
-- `disable-model-invocation`
-- `policy.allow_implicit_invocation`
-- `dependencies.tools`
-- `interface`
-
-P0 对未知字段不报错，但写入 diagnostics，避免未来字段被静默误用。
+P0 does not error on unknown fields but records them in diagnostics, so future fields are not silently
+misused.
 
 ## Discovery Roots
 
-P0 默认 roots：
+P0 default roots:
 
-1. configured extra roots：`skills.roots[]`，按配置顺序优先。
-2. project native：从 cwd 开始逐级向上到 worktree root 的 `<dir>/.zcode/skills/*/SKILL.md`。
-3. project agent-compatible：从 cwd 开始逐级向上到 worktree root 的 `<dir>/.agents/skills/*/SKILL.md`。
-4. project Claude-compatible：从 cwd 开始逐级向上到 worktree root 的 `<dir>/.claude/skills/*/SKILL.md`。
-5. user native：`~/.zcode/skills/*/SKILL.md`
-6. user agent-compatible：`~/.agents/skills/*/SKILL.md`
-7. user Claude-compatible：`~/.claude/skills/*/SKILL.md`
+1. configured extra roots: `skills.roots[]`, in config order.
+2. project native: `<dir>/.zcode/skills/*/SKILL.md` from cwd up to the worktree root.
+3. project agent-compatible: `<dir>/.agents/skills/*/SKILL.md`, same walk.
+4. project Claude-compatible: `<dir>/.claude/skills/*/SKILL.md`, same walk.
+5. user native: `~/.zcode/skills/*/SKILL.md`
+6. user agent-compatible: `~/.agents/skills/*/SKILL.md`
+7. user Claude-compatible: `~/.claude/skills/*/SKILL.md`
 
-Project discovery 使用 nearest-first 语义：先检查当前 working directory 的 native / agent-compatible / Claude-compatible roots，再检查父目录，直到包含 `.git` marker 的 worktree root；如果找不到 worktree root，则只使用传入 working directory 的 project roots，避免意外扫描到用户目录或文件系统根。
+Project discovery is nearest-first: check the working directory's native / agent-compatible /
+Claude-compatible roots, then the parent, up to the worktree root (the directory containing a `.git`
+marker). If no worktree root is found, only the passed working directory's project roots are used, to
+avoid scanning the user directory or filesystem root by accident.
 
-已实现的额外 roots：
+Additional implemented roots:
 
-- **bundled skill pack**（`bootstrap/src/app/bundled-skills.ts`）：随 CLI 内置的技能包
-  `apps/zcode-cli/packages/bundled-skills/skills/`，以 `source: "bundled"`、`scope: "system"`
-  进入发现，与 plugin roots 并列注入 runtime、`zcode skills list` 与协议 skill catalog。它不是
-  插件：不进市场目录、没有启停开关、不能卸载、不出现在 Settings 与 `$` 引用面板
-  （`skills/referenceCatalog` 过滤 `bundled`）。开发态/桌面态/ZCode Server 发行包沿官方插件同款
-  候选目录在入口旁原地读取（Server 发行包 stage 在 `runtime/packages/bundled-skills`）；SEA
-  按内容 hash 一次性解压到 `~/.zcode/cli/bundled-skills/<hash>/`。包内每个
-  文件都是必需资产，缺一拒绝整包并告警。首个成员是 `dynamic-workflows`
-  （`docs/dynamic-workflow/authoring.md`）。
-- plugin-provided skill roots。
+- **bundled skill pack** (`bootstrap/src/app/bundled-skills.ts`): the skill pack shipped with the CLI at
+  `apps/zcode-cli/packages/bundled-skills/skills/`, discovered as `source: "bundled"`,
+  `scope: "system"`, injected into the runtime, `zcode skills list` and the protocol skill catalog
+  alongside plugin roots. It is not a plugin: not in the marketplace catalog, no enable/disable switch,
+  cannot be uninstalled, and does not appear in Settings or the `$` reference panel
+  (`skills/referenceCatalog` filters `bundled`). Dev/desktop/ZCode Server distributions read it in place
+  next to the entry, using the same candidate directories as the official plugin (the Server
+  distribution stages it at `runtime/packages/bundled-skills`); the SEA build extracts it once by
+  content hash to `~/.zcode/cli/bundled-skills/<hash>/`. Every file in the pack is a required asset;
+  one missing file rejects the whole pack with a warning. The first member is `dynamic-workflows`
+  (`docs/dynamic-workflow/authoring.md`).
+- plugin-provided skill roots.
 
-Plugin-provided skill roots are defined by
-[`plugin-compat.md`](plugin-compat.md). They use the same `SKILL.md` file
-format and enter discovery as `source: "plugin"` roots. Plugin loading does not
-inline skill bodies; the existing `Skill` tool remains the only P0 path for
-loading full plugin skill content into the model context.
+Plugin-provided skill roots are defined by [`plugin-compat.md`](plugin-compat.md). They use the same
+`SKILL.md` format and enter discovery as `source: "plugin"` roots. Plugin loading does not inline skill
+bodies; the `Skill` tool remains the only P0 path for loading full plugin skill content into the model
+context.
 
-P2 增加：
+P2 adds remote URL discovery/cache and admin/managed policy roots.
 
-- remote URL discovery/cache。
-- admin/managed policy roots。
-
-优先级：
+**Priority** (highest first):
 
 1. session override / configured extra roots
 2. nearest project native
 3. nearest project compatible
-4. ancestor project native / compatible，按目录从近到远
+4. ancestor project native / compatible, nearest directory first
 5. user native
 6. user compatible
 7. bundled/system
 8. admin/managed
 
-同名 skill 默认取高优先级项，重复项进入 diagnostics。后续如果引入 plugin namespace，可支持 `plugin:skill-name`。
+On a same-name collision the higher-priority entry wins and duplicates go to diagnostics. If a plugin
+namespace is introduced later, `plugin:skill-name` can be supported.
 
-## Context 注入
+## Context Injection
 
-ContextBuilder 增加 `Skills` section，位于 user/project context 之后。工具说明不再作为
-ContextBuilder section 注入 system prompt，而是随 model request 的 `tools` 数组提供。
+ContextBuilder adds a `Skills` section after the user/project context. Tool descriptions are not a
+ContextBuilder section; they come with the model request's `tools` array.
 
-内容只包含 metadata，不包含正文。初始格式：
+The section contains metadata only, no bodies. Initial format:
 
 ```text
 ## Skills
@@ -217,18 +233,18 @@ A skill is a set of local instructions stored in SKILL.md. Use the Skill tool to
 - Resolve relative references from the skill base directory.
 ```
 
-预算策略：
+Budget policy:
 
-- P0：默认 1% context window 或 8k chars fallback。
-- 单条 description 最大 250 chars。
-- 超预算时先截断 description，再降级到 names-only，并记录 diagnostic/log。
-- P1：引入 root alias（用短别名代替 skill root 绝对路径），减少长绝对路径成本。
+- P0: default 1% of the context window, or an 8k chars fallback.
+- A single description is at most 250 chars.
+- Over budget: truncate descriptions first, then degrade to names-only, and record a diagnostic/log.
+- P1: root aliases (short aliases instead of absolute skill root paths) to cut long-path cost.
 
 ## `Skill` Tool
 
-工具名采用 `Skill`，保持与现有 `Read` / `Write` / `Edit` / `Bash` 命名风格一致。
+Named `Skill`, matching the `Read` / `Write` / `Edit` / `Bash` style.
 
-输入：
+Input:
 
 ```json
 {
@@ -237,7 +253,7 @@ A skill is a set of local instructions stored in SKILL.md. Use the Skill tool to
 }
 ```
 
-P0 输出：
+P0 output:
 
 ```text
 <skill_content name="my-skill">
@@ -250,83 +266,107 @@ Relative paths in this skill are relative to this base directory.
 </skill_content>
 ```
 
-工具 metadata：
+Tool metadata:
 
 - `readOnly: true`
 - `destructive: false`
 - `concurrentSafe: true`
-- `sideEffectScope: "session"`，因为它会改变当前会话上下文。
-- `riskLevel: "low"` for safe inline skills。
-- `maxOutputBytes` 默认 100k。
-- `timeoutMs` 默认 30s。
+- `sideEffectScope: "session"`, because it changes the current session context.
+- `riskLevel: "low"` for safe inline skills.
+- `maxOutputBytes` default 100k.
+- `timeoutMs` default 30s.
 
-权限策略：
+Permission policy:
 
-- P0 只实现 inline load。
-- safe skill 自动允许：只含 P0 safe frontmatter 字段，且 source 是 project/user/native/compatible。
-- 出现 `allowed-tools`、`model`、`effort`、`context: fork`、`hooks`、`dependencies`、remote/plugin source 时，默认 ask。
-- 明确 deny 的 skill 不出现在 available skills，也不能通过 tool load。
-- 权限规则应支持 `Skill(my-skill)` 和 wildcard，例如 `Skill(internal-*)`。
+- P0 implements inline load only.
+- A safe skill is auto-allowed: only P0 safe frontmatter fields, and source is project/user/native/
+  compatible.
+- `allowed-tools`, `model`, `effort`, `context: fork`, `hooks`, `dependencies`, or a remote/plugin
+  source default to ask.
+- An explicitly denied skill does not appear in available skills and cannot be loaded through the tool.
+- Permission rules should support `Skill(my-skill)` and wildcards such as `Skill(internal-*)`.
 
-P1 行为：
+P1 behavior:
 
-- `allowed-tools` 不直接绕过权限，只作为 permission suggestion 或 scoped allow rule。
-- `model` / `effort` 通过 runtime context modifier 生效，并记录 event。
-- `context: fork` 等 subagent runtime 稳定后再实现。
+- `allowed-tools` does not bypass permission directly; it is only a permission suggestion or scoped
+  allow rule.
+- `model` / `effort` take effect through a runtime context modifier and record an event.
+- `context: fork` waits until the subagent runtime is stable.
 
 ## Manual Command
 
-P0 增加 slash command：
+P0 adds a slash command:
 
 ```text
 /skill [<skill-name> [task...]]
 ```
 
-语义：
+Semantics:
 
-- 不带参数的 `/skill` 是只读 discovery，列举当前工作目录可发现的 skills；它不创建 app/session、不加载模型、不提交 prompt，也不调用 `Skill` tool。
-- `<skill-name>` 对应 `SKILL.md` frontmatter 的 `name`。
-- `[task...]` 可选。存在时，表示“使用该 skill 执行这个任务”；不存在时，表示“先加载该 skill 并基于 skill 指令响应当前 turn”。
-- 带 `<skill-name>` 的 command 不直接读取 skill 文件，不绕过 `Skill` tool、permission、trace 和 session persistence。
-- command-center 只把用户输入改写成显式模型指令：先调用 `Skill` tool 加载 `<skill-name>`，再继续原任务。
-- `--prompt "/skill"` 和 TUI 输入 `/skill` 都返回 skill 列表；`--prompt "/skill <name> ..."` 和 TUI 输入 `/skill <name> ...` 都改写成显式 Skill tool 调用要求。
+- Bare `/skill` is read-only discovery listing the skills discoverable from the working directory. It
+  creates no app/session, loads no model, submits no prompt and does not call the `Skill` tool.
+- `<skill-name>` matches the `SKILL.md` frontmatter `name`.
+- `[task...]` is optional. With it: "use this skill for this task"; without it: "load the skill first and
+  answer the current turn based on its instructions".
+- A command with `<skill-name>` does not read skill files directly and does not bypass the `Skill` tool,
+  permission, trace or session persistence.
+- command-center only rewrites the user input into an explicit model instruction: call the `Skill` tool
+  to load `<skill-name>`, then continue the original task.
+- `--prompt "/skill"` and TUI `/skill` both return the skill list; `--prompt "/skill <name> ..."` and TUI
+  `/skill <name> ...` both rewrite into an explicit `Skill` tool call requirement.
 
-P1 可增加 `$skill-name` explicit mention，但 P0 先用 slash command，避免和普通自然语言混淆。
+P1 may add `$skill-name` explicit mention; P0 uses the slash command to avoid confusion with ordinary
+natural language.
 
 ## CLI Discovery Commands
 
-当前已实现只读 CLI 命令：
+Implemented read-only CLI commands:
 
 ```text
 zcode skills list
 zcode skills inspect <name>
 ```
 
-语义：
+`skills list`:
 
-- `skills list` 只做本地 skill discovery，不创建 session，不加载模型，不提交 prompt，也不调用 `Skill` tool。
-- 发现逻辑必须复用 bootstrap 注入的 `SkillPort`/Node skill adapter 契约；CLI 只负责解析子命令、格式化输出和退出码，不直接遍历 skill 目录。
-- 不带子命令的 `zcode skills` 等价于 `zcode skills list`。
-- 普通输出展示 skill name、scope/source、description 和 path，便于用户复制 `<skill-name>` 给 `/skill <name>` 使用。
-- `--json` 输出 `{ skills, diagnostics, totalDiscovered, cwd }`，其中 `skills` 保留 name、description、whenToUse、scope、source、path、directory、rootPath。
-- `--verbose` 在普通输出后追加 discovery diagnostics；默认普通输出不打印 warning，避免正常使用时被可恢复诊断刷屏。
-- `skills inspect <name>` 只做本地 discovery 加单个 skill body 读取，不创建 session、不加载模型、不提交 prompt，也不调用 `Skill` tool。
-- `skills inspect <name>` 必须复用 bootstrap 注入的 `SkillPort`/Node skill adapter 契约；CLI 只负责解析子命令、格式化输出和退出码，不直接读取 `SKILL.md`。
-- `skills inspect <name>` 普通输出展示 name、scope/source、path、directory、description、whenToUse、safe-to-auto-load、size/truncation 和去掉 frontmatter 后的正文。
-- `skills inspect <name> --json` 输出 `{ cwd, skill, diagnostics }`，其中 `skill` 保留 metadata、baseDirectory、content、bytesRead、sizeBytes 和 truncated。
-- `skills inspect <name> --verbose` 在普通输出后追加 discovery diagnostics；默认普通输出不打印 warning。
-- 未知 `skills` 子命令或参数数量错误返回非 0，并打印 `Usage: zcode skills [list|inspect <name>]`。
+- Local skill discovery only: no session, no model, no prompt, no `Skill` tool call.
+- Discovery reuses the `SkillPort`/Node skill adapter contract injected by bootstrap; the CLI only parses
+  subcommands, formats output and sets exit codes, and never walks skill directories itself.
+- `zcode skills` without a subcommand equals `zcode skills list`.
+- Normal output shows skill name, scope/source, description and path, so users can copy `<skill-name>`
+  into `/skill <name>`.
+- `--json` outputs `{ skills, diagnostics, totalDiscovered, cwd }`; `skills` keeps name, description,
+  whenToUse, scope, source, path, directory, rootPath.
+- `--verbose` appends discovery diagnostics after normal output; normal output prints no warnings so
+  recoverable diagnostics do not flood regular use.
 
-错误行为：
+`skills inspect <name>`:
 
-- discovery adapter 抛错时向 CLI 边界冒泡，由 CLI 输出 `Error: <message>`；`--verbose` 可追加 stack。
-- `skills inspect <name>` 找不到 skill 时返回非 0，并输出稳定的 `Skill not found: <name>` 错误；如果 skill 功能被配置禁用，返回非 0，并输出 `Skills are disabled.`。
-- 单个 skill 的 frontmatter/read 诊断不导致命令失败，按 diagnostics 返回。
-- 没有发现 skill 时返回 0，并输出 `No skills found.`；JSON 中 `skills` 为空数组。
+- Local discovery plus a single skill body read; no session, no model, no prompt, no `Skill` tool call.
+- Reuses the injected `SkillPort`/Node skill adapter contract; the CLI never reads `SKILL.md` directly.
+- Normal output shows name, scope/source, path, directory, description, whenToUse, safe-to-auto-load,
+  size/truncation and the body without frontmatter.
+- `--json` outputs `{ cwd, skill, diagnostics }`; `skill` keeps metadata, baseDirectory, content,
+  bytesRead, sizeBytes and truncated.
+- `--verbose` appends discovery diagnostics; normal output prints no warnings.
+
+An unknown `skills` subcommand or wrong argument count returns non-zero and prints
+`Usage: zcode skills [list|inspect <name>]`.
+
+Error behavior:
+
+- A discovery adapter error bubbles to the CLI boundary, which prints `Error: <message>`; `--verbose` may
+  append the stack.
+- `skills inspect <name>` with an unknown skill returns non-zero with the stable error
+  `Skill not found: <name>`; if the skill feature is disabled by config it returns non-zero with
+  `Skills are disabled.`.
+- Frontmatter/read diagnostics of a single skill do not fail the command; they are returned as
+  diagnostics.
+- No skills found returns 0 and prints `No skills found.`; in JSON `skills` is an empty array.
 
 ## Config
 
-`RuntimeConfig` 增加候选字段：
+Candidate `RuntimeConfig` fields:
 
 ```text
 features.skill
@@ -339,153 +379,99 @@ skills.compatibility.agents
 skills.rules
 ```
 
-Skill 配置不声明环境变量入口。需要调整 skill 开关、兼容目录或 metadata budget 时，走 config file、CLI/session override 或更高层的运行时配置契约。
+Skill config declares no environment variable entry. Changing the skill switch, compatible directories or
+metadata budget goes through the config file, CLI/session override or a higher-level runtime config
+contract.
 
-新增 `ZCODE_` 环境变量必须先补齐 spec，明确用途、优先级、错误行为和测试覆盖，避免把临时实现细节扩散成长期配置面。
+A new `ZCODE_` environment variable needs a spec first, stating purpose, priority, error behavior and
+test coverage, so temporary implementation details do not become a long-lived config surface.
 
-Config 合并仍走 system/user/project/session/env/cli 优先级，core 不读取环境变量。
+Config merging keeps the system/user/project/session/env/cli priority; core does not read environment
+variables.
 
-## Events 与 Observability
+## Events and Observability
 
-新增或复用事件语义：
+New or reused event semantics: `SkillRootsResolved`, `SkillDiscovered`, `SkillDiscoveryWarning`,
+`SkillLoadRequested`, `SkillLoaded`, `SkillLoadFailed`.
 
-- `SkillRootsResolved`
-- `SkillDiscovered`
-- `SkillDiscoveryWarning`
-- `SkillLoadRequested`
-- `SkillLoaded`
-- `SkillLoadFailed`
+Every event carries traceId/sessionId/turnId. Logs do not record the full skill body by default, only
+name, scope, source, path hash, size, truncated, durationMs.
 
-每个事件必须携带 traceId/sessionId/turnId。日志默认不记录完整 skill 正文，只记录 name、scope、source、path hash、size、truncated、durationMs。
+Context diagnostics expose: total skill count, included count, omitted count, truncated description
+count, duplicate names, parse/read errors, disabled skills.
 
-需要在 context diagnostics 中暴露：
+## Security and Cross-Platform Constraints
 
-- total skill count
-- included skill count
-- omitted skill count
-- truncated description count
-- duplicate names
-- parse/read errors
-- disabled skills
+- All path handling uses the `path` / `url` / `fs` adapters; no hand-written separators.
+- `SkillPort` accepts only adapter-normalized absolute paths or stable skill ids.
+- The `Skill` tool must not read files outside the skill directory.
+- references/scripts are never auto-executed. Running a script must explicitly go through
+  `Bash`/`ExecutionPort` and permission.
+- Symlinks need canonical-identity dedup; the displayed path may stay user-readable.
+- On Windows handle case, backslashes, path length and permission errors.
+- A body over `maxOutputBytes` returns a truncated summary plus a diagnostic; artifact/storage comes
+  later.
 
-## 安全与跨平台约束
+## Phased Plan
 
-- 所有路径解析使用 `path` / `url` / `fs` adapter，不手写分隔符。
-- `SkillPort` 只接受 adapter 已规范化的 absolute path 或 stable skill id。
-- 禁止 `Skill` tool 读取 skill directory 之外的文件。
-- references/scripts 不自动执行。模型若要运行脚本，必须显式走 `Bash`/`ExecutionPort` 和权限。
-- symlink 需要 canonical identity 去重；路径显示可保留用户可读路径。
-- Windows 上要处理大小写、反斜杠、路径长度和权限错误。
-- 大正文超出 `maxOutputBytes` 时返回截断摘要和 diagnostic，后续进入 artifact/storage。
+Status of each phase is as in "Current implementation status" above.
 
-## 分阶段计划
+### Phase 0: Spec and test skeleton (completed)
 
-### Phase 0：Spec 与测试骨架
+Acceptance: this document covers the design points and trade-offs; later tasks can be split by contract.
 
-Status: completed. 本文档、contract 边界和 CLI/core/adapter 测试骨架已经存在。
+### Phase 1: Contracts (completed for P0)
 
-- 新增本文档。
-- 为 skill contract 设计测试样例 fixture。
-- 明确 P0/P1/P2 字段边界。
+Skill schema/type in `packages/contracts/src/skills`, a minimal skills config in `RuntimeConfig`, skill
+diagnostics/error codes. Finer policy / dependency fields stay as later extensions.
 
-验收：
+Acceptance: `contracts` types are importable alone by core/adapters/bootstrap; the schema covers invalid
+frontmatter, duplicate, disabled, too large.
 
-- 文档覆盖设计要点与取舍结论。
-- 后续实现任务可以按 contract 拆分。
+### Phase 2: Adapter loader (completed for P0)
 
-### Phase 1：Contracts
+Node loader in `packages/adapters/src/skills` with P0 roots and frontmatter, max bytes, canonical path,
+diagnostics, pre-cancel checks. Not implemented: symlink canonical dedup, remote/cache, plugin roots.
 
-Status: completed for P0. `packages/contracts/src/skills/index.ts` 和 `packages/contracts/src/tools/skill.ts` 已提供共享类型、运行时 schema、provider JSON schema 和 diagnostics/error code；更细粒度 policy / dependency 字段仍保留为后续扩展。
+Acceptance: adapter unit tests cover project/user/compat roots, duplicate name, no permission, symlink,
+invalid YAML; no core dependency.
 
-- 在 `packages/contracts/src/skills` 增加 skill schema/type。
-- 给 `RuntimeConfig` 增加最小 skills 配置。
-- 增加 skill diagnostics/error code。
+### Phase 3: Core context and registry (completed for P0)
 
-验收：
+`SkillRegistry` / `SkillManager` in core, ContextBuilder renders the Skills section as an independent
+`meta_user` section, context diagnostics record budget and truncation; the registry omits the `Skill` tool when
+there is no `SkillPort`. Not implemented: session-level loaded-skill snapshot and compact restore.
 
-- `contracts` 类型可被 core/adapters/bootstrap 单独引用。
-- schema 覆盖 invalid frontmatter、duplicate、disabled、too large。
+Acceptance: a fake skill snapshot renders into the system prompt; over budget does not drop all skill names;
+core still imports no Node I/O.
 
-### Phase 2：Adapter Loader
+### Phase 4: `Skill` tool (completed for P0 inline load)
 
-Status: completed for P0. Node loader 已支持 native/compatible project 与 user roots、extra roots、从 cwd 向上到 worktree root 的 project discovery、frontmatter diagnostics、重复名优先级、正文截断和取消前检查；symlink canonical 去重、remote/cache 和 plugin roots 尚未实现。
+The handler reads the body through `SkillPort` and returns `<skill_content>`, declaring output schema, result
+budget, timeout, cancellation and trace propagation. Not implemented: dynamic approval by skill name/policy,
+unsafe-frontmatter ask, runtime modifiers, fork context.
 
-- 在 `packages/adapters/src/skills` 实现 Node loader。
-- 支持 P0 roots 和 frontmatter。
-- 支持 max bytes、canonical path、diagnostics。
+Acceptance: after a fake model calls `Skill`, the next model turn sees the body; under a deny rule the skill
+is absent from available skills and a direct call fails; unsafe frontmatter goes to ask and a safe inline
+skill is auto-allowed.
 
-验收：
+### Phase 5: CLI/TUI (partially completed)
 
-- adapter 单测覆盖 project/user/compat roots、重复 name、无权限、symlink、invalid YAML。
-- 不引入 core 依赖。
+Implemented: `zcode skills list` and `zcode skills inspect <name>` (read-only, no model/session), `--json`,
+`--verbose`, TUI/command-center `/skill` list and `/skill <name> [task]` rewrite, ZCode app-server
+`/skill <name> [task]`. Not implemented: TUI/debug diagnostics projection.
 
-### Phase 3：Core Context 与 Registry
+Acceptance: CLI output supports `--json`; errors carry a traceId or diagnostic code.
 
-Status: completed for P0. ContextBuilder 已把 available skills 渲染为独立 `meta_user` section，内置 registry 已注册 `Skill` tool，并允许在没有 `SkillPort` 时省略该 tool；session 级 loaded-skill snapshot 和 compact 恢复仍未实现。
+### Phase 6: Advanced
 
-- core 增加 `SkillRegistry` / `SkillManager`。
-- `ContextBuilder` 渲染 Skills section。
-- context diagnostics 记录预算与截断。
+Root alias rendering; explicit mention `$skill-name` and `skill://.../SKILL.md`; bundled/system skills; plugin
+skill roots; skill dependency/env prompt; forked skill; remote URL discovery/cache.
 
-验收：
+## Out of Scope for P0
 
-- fake skill snapshot 能渲染到 system prompt。
-- 超预算不会丢失所有 skill name。
-- core 仍不 import Node I/O。
-
-### Phase 4：`Skill` Tool
-
-Status: completed for P0 inline load. Tool handler 已通过 `SkillPort` 读取正文并返回 `<skill_content>`，声明 output schema、result budget、timeout、取消和 trace 传播；按 skill name/policy 动态审批、unsafe frontmatter ask、runtime modifier 和 fork context 尚未实现。
-
-- 注册 `Skill` tool。
-- tool 通过 `SkillPort` 加载正文。
-- tool result 注入 message history。
-- permission service 支持 skill pattern。
-
-验收：
-
-- fake model 调用 `Skill` 后，下一轮 model 能看到 skill body。
-- deny rule 下 skill 不出现在 available skills，直接调用也失败。
-- unsafe frontmatter 走 ask，safe inline skill 自动 allow。
-
-### Phase 5：CLI/TUI
-
-Status: partially completed. `zcode skills` / `zcode skills list`、`zcode skills inspect <name>`、`--json`、`--verbose` diagnostics、TUI/command-center 裸 `/skill` list、`/skill <name> [task]` prompt rewrite、ZCode app-server `/skill <name> [task]` 已实现。TUI/debug diagnostics projection 尚未实现。
-
-- `zcode skills list`：已实现，只读 discovery，不启动模型/session。
-- `zcode skills inspect <name>`：已实现，只读 discovery 加正文读取，不启动模型/session，CLI 不直接读取 `SKILL.md`。
-- TUI/debug projection 显示 skill discovery diagnostics。
-
-验收：
-
-- CLI 输出支持 `--json`。
-- 错误包含 traceId 或 diagnostic code。
-
-### Phase 6：Advanced
-
-- root alias 渲染。
-- explicit mention：`$skill-name` 和 `skill://.../SKILL.md`。
-- bundled/system skills。
-- plugin skill roots。
-- skill dependency/env prompt。
-- forked skill。
-- remote URL discovery/cache。
-
-## 推荐提交拆分
-
-1. `docs: add skill integration plan`
-2. `refactor(contracts): add skill contracts`
-3. `feat(adapters): add node skill loader`
-4. `feat(core): render available skills in context`
-5. `feat(tool): add Skill tool`
-6. `feat(permission): support skill permission rules`
-7. `feat(cli): add skills commands`
-8. `test: add skill boundary coverage`
-
-## 暂不做
-
-- 不在 P0 实现远程 skill 下载。
-- 不在 P0 执行 skill scripts。
-- 不在 P0 自动修改 tool allowlist。
-- 不在 P0 实现 forked skill。
-- 不在 P0 把 skill 和 slash command 合流。
+- Remote skill download.
+- Executing skill scripts.
+- Automatically modifying the tool allowlist.
+- Forked skills.
+- Merging skills with slash commands.

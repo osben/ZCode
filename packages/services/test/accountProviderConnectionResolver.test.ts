@@ -237,7 +237,7 @@ describe("createAccountProviderConnectionResolver", () => {
         configuredProviders: configuredProviders({ bigmodelTeam: true }),
       };
       await resolve(input);
-      // 未发布的 B 查询不能把成功作用域 A 推进成 B。
+      // A query for unpublished B must not advance the successfully resolved scope A to B.
       identity = "account-b";
       wait = true;
       const pending = resolve(input);
@@ -353,7 +353,8 @@ describe("createAccountProviderConnectionResolver", () => {
       configuredProviders: configuredProviders(),
     });
 
-    // 修复原因：个人套餐"服务端明确无订阅"的原因曾在此丢失，UI 只能统一显示"未连接"。
+    // Fix rationale: the personal plan's "server explicitly has no subscription" reason used to be lost
+    // here, so the UI could only show a uniform "not connected".
     expect(result).toContainEqual({
       providerId: BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
       status: "unavailable",

@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import { basename as posixBasename } from "node:path/posix";
 import { basename as win32Basename } from "node:path/win32";
 import {
@@ -137,6 +138,60 @@ export async function waitForRestoredProjects(
   );
 }
 
+/**
+ * Project sidebar shell readiness: the project section is rendered and the occupation onboarding
+ * (which replaces the whole main UI while it is shown) is gone. Both are DOM facts, not a delay.
+ */
+async function projectSidebarShellReady(): Promise<boolean> {
+  try {
+    return await browser.execute(
+      () =>
+        !document.querySelector('[data-testid="onboarding-page"]') &&
+        Boolean(document.querySelector('[data-testid="project-section"]')),
+    );
+  } catch {
+    // renderer reload 期间 WebDriver 会短暂失去执行上下文，按未就绪处理。
+    return false;
+  }
+}
+
+/**
+ * Ensures the local project row exists, creating it through the real project form when missing.
+ *
+ * Root cause (ISSUE-024): the fork's Host deliberately does not seed projects from
+ * lastWorkspaceSession (commit 46c33e9d), so the E2E index's projects table stays empty and waiting
+ * for the row only times out. Nothing registers the row once the sidebar shell is up, so the
+ * existence check runs once at that point and only then is the project created through the UI.
+ * Rule: wait for a readiness signal, never for a fixed delay; the check stays idempotent so an
+ * existing project is never duplicated. If a restore path ever registers projects after the shell
+ * renders, this check must be tied to that path's completion signal instead.
+ */
+export async function ensureLocalProjectRow(
+  workspacePath: string,
+  { timeout = 30_000 }: { timeout?: number } = {},
+): Promise<void> {
+  await browser.waitUntil(projectSidebarShellReady, {
+    timeout,
+    interval: 100,
+    timeoutMsg: "项目侧栏外壳没有就绪（项目区未渲染或职业引导仍在）",
+  });
+  if (await projectRowExists(workspacePath)) return;
+  await mkdir(workspacePath, { recursive: true });
+  await $('[data-testid="project-section"]').moveTo();
+  await $('[data-testid="virtual-project-add"]').click();
+  await $('[data-testid="virtual-project-name"]').waitForDisplayed({ timeout });
+  await selectNativeProjectDirectories([workspacePath]);
+  await $('[data-testid="virtual-project-name"]').setValue(projectNameForWorkspace(workspacePath));
+  await $('[data-testid="virtual-project-save"]').click();
+  const trustConfirm = $('[data-testid="project-folder-trust-confirm"]');
+  const needsTrust = await trustConfirm.waitForDisplayed({ timeout: 5_000 }).then(
+    () => true,
+    () => false,
+  );
+  if (needsTrust) await trustConfirm.click();
+  await waitForProjectRow(workspacePath, { timeout });
+}
+
 async function readProjectExpanded(workspacePath: string): Promise<boolean> {
   return browser.execute(
     (selector, toggleTestId) =>
@@ -257,7 +312,9 @@ export async function startDraftFromProject(
     () =>
       browser.execute(
         (inputId, panePrefix, workspaceTriggerId, projectName, identity, key, previousVersion) => {
-          const inputs = document.querySelectorAll(`[data-testid="${panePrefix}-workspace-main"] [data-testid="${inputId}"]`);
+          const inputs = document.querySelectorAll(
+            `[data-testid="${panePrefix}-workspace-main"] [data-testid="${inputId}"]`,
+          );
           const pane = inputs[0]?.closest<HTMLElement>(`[data-testid^="${panePrefix}-"]`);
           const trigger = document.querySelector<HTMLElement>(
             `[data-testid="${workspaceTriggerId}"]`,

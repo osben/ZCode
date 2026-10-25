@@ -1,11 +1,11 @@
-// 脚本文件的模型面写法（docs/dynamic-workflow/launch.md「Script files」）。
+// Model-facing path rendering for script files (docs/dynamic-workflow/launch.md "Script files").
 //
-// 一个纯函数被单独钉住，是因为三个模型面（终态通知、GetWorkflowRun、工具响应）都要说出
-// **同一个**路径：模型读到什么，下一次 `Edit` 和 `AmendWorkflow` 的 `path` 就是什么。相对化
-// 的判据一旦飘了，模型就会去编辑一个不存在的文件，或者收到一个它读不懂的绝对路径。
+// This pure function is pinned separately because the three model-facing surfaces (terminal notification, GetWorkflowRun, tool response) must all state
+// **the same** path: whatever the model reads is what the next `Edit` and `AmendWorkflow`'s `path` will be. Once the relativization
+// criterion drifts, the model edits a nonexistent file or receives an absolute path it cannot understand.
 //
-// 全部路径都用 `path.join` / `path.resolve` 拼，所以这组用例在 POSIX 与 Windows 上钉的是
-// 同一条规则（分隔符与盘符由 node:path 自己给出）。
+// All paths are built with `path.join` / `path.resolve`, so this set of cases pins the same rule on POSIX and Windows
+// (separators and drive letters come from node:path itself).
 
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -47,14 +47,14 @@ describe("describeWorkflowScriptPath", () => {
     expect(describeWorkflowScriptPath(absolute, nested)).toBe(
       path.join(".zcode", "workflow-drafts", "audit.dwf.ts"),
     );
-    // 同一个文件、更靠外的工作目录：相对写法随之变长，绝对路径不变——journal 存的是后者。
+    // Same file, an outer working directory: the relative rendering grows accordingly while the absolute path stays unchanged — the journal stores the latter.
     expect(describeWorkflowScriptPath(absolute, CWD)).toBe(
       path.join("apps", "cli", ".zcode", "workflow-drafts", "audit.dwf.ts"),
     );
   });
 
-  // Windows 的跨盘符：`path.relative` 给回的是绝对路径，本函数的第二道判据据此退回原值。
-  // 只有在 Windows 上跑才有意义（POSIX 的 `path.relative` 不认盘符）。
+  // Windows cross-drive: `path.relative` returns an absolute path, and the function's second criterion falls back to the original value on that basis.
+  // Meaningful only when run on Windows (POSIX `path.relative` does not know drive letters).
   it.runIf(process.platform === "win32")("Windows 跨盘符：退回绝对路径", () => {
     expect(describeWorkflowScriptPath("D:\\\\drafts\\\\audit.dwf.ts", "C:\\\\repo")).toBe(
       "D:\\\\drafts\\\\audit.dwf.ts",

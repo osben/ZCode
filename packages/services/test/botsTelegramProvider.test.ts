@@ -267,6 +267,7 @@ describe("telegram bot provider", () => {
             { command: "model", description: "Select model" },
             { command: "mode", description: "Select mode" },
             { command: "think", description: "Select thinking level" },
+            { command: "remote", description: "Get a web remote control link" },
             { command: "reply", description: "Select reply detail" },
             { command: "bind", description: "Bind this chat" },
           ],

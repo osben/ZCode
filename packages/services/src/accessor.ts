@@ -1,8 +1,5 @@
-import type { IRemoteProjectService } from "#src/remote-projects/contract.js";
-import type { ITaskGroupService } from "#src/task-groups/contract.js";
-import type { WindowProjectDirectoryServices } from "#src/window-project-directory/contract.js";
-import type { IProjectService } from "#src/project/contract.js";
 import type { IGenUiService } from "./gen-ui/contract.js";
+import type { IDefinitionPreviewService } from "./definition-preview/contract.js";
 import { IOffPeakTaskService } from "./session/offPeakTask.js";
 import type { IHighspeedCardService } from "./highspeed/highspeedCard.js";
 import type { IPluginUiBridgeService } from "./plugin-ui-bridge/contract.js";
@@ -44,22 +41,38 @@ import type { ISubagentsService } from "./subagents/subagents.js";
 import type { ICommandsService } from "./commands/commands.js";
 import type { IHooksService } from "./hooks/hooks.js";
 import type { IMemoryService } from "./memory/memory.js";
+import type { IUserInstructionsService } from "./user-instructions/userInstructions.js";
 import type { IOutputStyleService } from "./output-style/outputStyle.js";
+import type { ISystemPromptService } from "./system-prompt/systemPrompt.js";
 import type { ISettingsSyncService } from "./settings-sync/settingsSync.js";
 import type { IFeedbackService } from "./feedback/feedback.js";
 import type { IPromptAttachmentTransferService } from "./prompt-attachment-transfer/promptAttachmentTransfer.js";
 import type { IWindowControllerService } from "./window-controller/windowController.js";
-import type { ISourceServerWorkspaceService } from "./source-server-workspace/sourceServerWorkspace.js";
-import type { ISourceServerManagementService } from "./source-server-management/sourceServerManagement.js";
 import type { IOnboardingRecordService } from "./onboarding/onboardingRecord.js";
 import type { IConversationShareService } from "./conversation-share/conversationShare.js";
+import type { IVoiceDictationService } from "./voice-dictation/voiceDictation.js";
+// API members used by packages/ui (upstream 3.16.1). Optional so existing hosts and test doubles still compile.
+import type { ITaskGroupService } from "#src/task-groups/contract.js";
+import type { IQuickPromptService } from "#src/quick-prompts/contract.js";
+import type { IProjectService } from "#src/project/contract.js";
+import type { IRemoteProjectService } from "#src/remote-projects/contract.js";
+import type { WindowProjectDirectoryServices } from "#src/window-project-directory/contract.js";
+import type { ISourceServerWorkspaceService } from "./source-server-workspace/sourceServerWorkspace.js";
+import type { ISourceServerManagementService } from "./source-server-management/sourceServerManagement.js";
 
-/** UI 层消费的统一服务接口 */
+/** Unified service interface consumed by the UI layer */
 export interface IServiceAccessor {
+  /** Task-group owner. Exported only; no writer is wired (the UI grouped-view PR switches to it). */
   readonly taskGroupService?: ITaskGroupService;
+  /** Fork: composer quick prompts, owned by the controller Host (specs/composer-quick-prompts.md). */
+  readonly quickPromptService?: IQuickPromptService;
   readonly projectService?: IProjectService;
   readonly remoteProjectService?: IRemoteProjectService;
   readonly windowProjectDirectory?: WindowProjectDirectoryServices;
+  /** Source Server workspace identity resolution; optional until every host registers it. */
+  readonly sourceServerWorkspaceService?: ISourceServerWorkspaceService;
+  /** Desktop window Host base attachment only; remote and Web hosts do not provide it. */
+  readonly sourceServerManagementService?: ISourceServerManagementService;
   readonly fileService: IFileService;
   readonly mediaPreviewService?: IMediaPreviewService;
   readonly cloudContentService?: ICloudContentService;
@@ -69,55 +82,57 @@ export interface IServiceAccessor {
   readonly systemService: ISystemService;
   readonly terminalService: ITerminalService;
   readonly settingService: ISettingService;
-  /** Onboarding 完成记录（本地持久化）；旧测试 double / 不支持的 host 可不提供。 */
+  /** Onboarding completion record (persisted locally); older test doubles or unsupported hosts may omit it. */
   readonly onboardingRecordService?: IOnboardingRecordService;
   readonly credentialService: ICredentialService;
   readonly broadcastService: IBroadcastService;
   readonly zcodeTaskService: IZCodeTaskService;
-  /** 窗口 Host 聚合面；旧 server wire 或测试 double 可暂不提供。 */
+  /** Window Host aggregation surface; older server wires or test doubles may omit it for now. */
   readonly windowControllerService?: IWindowControllerService;
   readonly zcodeAgentService: IZCodeAgentService;
   readonly zcodeSessionService: IZCodeSessionService;
-  // CUA 是 opt-in 内测特性：local macOS host 提供，远端 等 host 没有。可选避免连锁必填。
+  // CUA is an opt-in beta feature provided by local macOS hosts but not other hosts. Keep it optional to avoid making it transitively required.
   readonly cuaPermissionService?: ICuaPermissionService;
+  /** Local voice input (model downloads and offline transcription); remote hosts do not provide it. */
+  readonly voiceDictationService?: IVoiceDictationService;
   readonly conversationShareService: IConversationShareService;
   readonly botsService: IBotsService;
   readonly fileWatcherService: IFileWatcherService;
   readonly oauthService: IOAuthService;
-  /** 当前 Environment 的 Provider 配置与设置视图。 */
+  /** Provider configuration and settings view for the current Environment. */
   readonly providerSettingsService: IProviderSettingsService;
-  /** 当前 Environment Registry 发布的唯一模型选择 View。 */
+  /** The sole model-selection View published by the current Environment Registry. */
   readonly modelSelectionService: IModelSelectionService;
-  /** Source Server 端 workspace 身份解析；本地 Host 也注册一份以保持合同一致。 */
-  readonly sourceServerWorkspaceService: ISourceServerWorkspaceService;
-  /** 仅桌面窗口 Host 的 base attachment 注册；远端 / Web 不提供。 */
-  readonly sourceServerManagementService?: ISourceServerManagementService;
   readonly usageStatsService: IUsageStatsService;
   readonly codingPlanSubscriptionService: ICodingPlanSubscriptionService;
   readonly clientConfigService: IClientConfigService;
   readonly clientScenesService: IClientScenesService;
-  /** 闲时任务管理（独立服务面）。 */
+  /** Off-peak task management (a separate service surface). */
   readonly offPeakTaskService: IOffPeakTaskService;
   readonly highspeedCardService: IHighspeedCardService;
   readonly skillsService: ISkillsService;
   readonly skillSyncService: ISkillSyncService;
   readonly mcpSyncService: IMcpSyncService;
-  /** 插件 UI 桥；web 或旧 host 可不提供，UI 据此回退普通 MCP 卡片。 */
+  /** Plugin UI bridge; web or older hosts may omit it, and the UI falls back to plain MCP cards. */
   readonly genUiService?: IGenUiService;
+  /** Confined preview of skills, commands and subagents; older or upstream hosts may omit it. */
+  readonly definitionPreviewService?: IDefinitionPreviewService;
   readonly pluginUiBridgeService?: IPluginUiBridgeService;
-  /** 页面 sampling；只有桌面本地任务开放。 */
+  /** Page sampling; available only for desktop local tasks. */
   readonly pluginUiSamplingService?: IPluginUiSamplingService;
-  /** App-Provided Tools；只有桌面本地 agent 时存在。 */
+  /** App-Provided Tools; present only for the desktop local agent. */
   readonly pluginUiAppToolsService?: IPluginUiAppToolsService;
   readonly pluginSyncService: IPluginSyncService;
   readonly pluginsService: IPluginsService;
-  /** 设置页插件管理（UI 不再直触 zcodeAgentService 的 plugins/* 面） */
+  /** Settings-page plugin management (the UI no longer calls the plugins/* surface of zcodeAgentService directly) */
   readonly pluginManagementService: IPluginManagementService;
   readonly subagentsService: ISubagentsService;
   readonly commandsService: ICommandsService;
   readonly hooksService: IHooksService;
   readonly memoryService: IMemoryService;
+  readonly userInstructionsService: IUserInstructionsService;
   readonly outputStyleService: IOutputStyleService;
+  readonly systemPromptService: ISystemPromptService;
   readonly settingsSyncService: ISettingsSyncService;
   readonly feedbackService: IFeedbackService;
   readonly promptAttachmentTransferService: IPromptAttachmentTransferService;

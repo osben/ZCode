@@ -82,7 +82,7 @@ async function createStaleReadFileStateHint(
           changedPaths.add(entry.path);
         }
       } catch {
-        // 无法 stat 的已读文件不阻断 Bash result。
+        // A previously read file that cannot be stat'ed does not block the Bash result.
       }
     }),
   );
@@ -94,8 +94,8 @@ async function createStaleReadFileStateHint(
 
 async function backfillReadFileStateFromBash(input: BashReadFileStateEffectsInput): Promise<void> {
   if (shouldSkipBashReadFileStateEffects(input.output)) return;
-  // Bash cat/head/tail/sed 的 read-state 只能代表模型已经看到的内容；
-  // stdout 被截断时回读完整文件会绕过 Edit/Write 的 read-before-write 语义。
+  // Read-state for Bash cat/head/tail/sed can represent only content the model has already seen.
+  // Rereading the full file after stdout truncation would bypass Edit/Write read-before-write semantics.
   if (input.output.stdoutTruncated === true) return;
   const fileSystemPort = input.context.fileSystemPort;
   const readFileState = input.context.readFileState;
@@ -142,8 +142,8 @@ async function backfillReadFileStateFromBash(input: BashReadFileStateEffectsInpu
           path: resolvedPath,
           content: selected.content,
 
-          // (offset ?? 1) <= 1 && limit === undefined；grep/cat 这类整文件
-          // Bash 回填保持 offset undefined，但显式 offset=1 的 Read 也仍算整文件读。
+          // (offset ?? 1) <= 1 && limit === undefined; Bash backfills for whole-file grep/cat keep offset undefined,
+          // but Read with an explicit offset=1 still counts as a whole-file read.
           offset: selected.offset,
           limit: selected.limit,
           isPartialView: false,
@@ -159,14 +159,14 @@ async function backfillReadFileStateFromBash(input: BashReadFileStateEffectsInpu
           entry,
         );
       } catch {
-        // Bash 已经返回，read-state 回填失败不能改变 Bash 结果。
+        // Bash has already returned; a read-state backfill failure must not change its result.
       }
     }),
   );
 }
 
 function shouldSkipBashReadFileStateEffects(output: BashOutput): boolean {
-  // provider 错误应在 stale/backfill 前返回，避免失败结果污染 read-state。
+  // Return provider errors before stale/backfill handling so a failed result does not pollute read-state.
   return (
     output.backgroundTaskId !== undefined ||
     output.isImage === true ||

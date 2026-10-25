@@ -1,3 +1,4 @@
+import type { ChildSessionSelectOptions } from "@/components/TaskChildSessionRows.js";
 import type { ProjectTask as ZCodeTaskMeta } from "@/project-sidebar/contract.js";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -49,7 +50,6 @@ export function VirtualizedGroupedTaskList({
   activeTaskId,
   mobileActiveTaskKey,
   getTaskRemoteSessionId,
-  getTaskWorkspaceLabel,
   onSelectTask,
   onCloseTask,
   onOpenFileTree,
@@ -69,8 +69,12 @@ export function VirtualizedGroupedTaskList({
   activeTaskId: string | null;
   mobileActiveTaskKey?: string | null;
   getTaskRemoteSessionId: (task: ZCodeTaskMeta) => string | undefined;
-  getTaskWorkspaceLabel: (task: ZCodeTaskMeta) => string;
-  onSelectTask: (workspacePath: string, taskId: string, workspaceIdentity?: string) => void;
+  onSelectTask: (
+    workspacePath: string,
+    taskId: string,
+    workspaceIdentity?: string,
+    options?: ChildSessionSelectOptions,
+  ) => void;
   onCloseTask: (task: ZCodeTaskMeta) => void;
   onOpenFileTree?: (task: ZCodeTaskMeta) => void;
   onMoveTaskToGroup: (task: ZCodeTaskMeta, groupId: string | null) => void;
@@ -159,7 +163,6 @@ export function VirtualizedGroupedTaskList({
         groupId={groupId}
         groups={groups}
         remoteSessionId={getTaskRemoteSessionId(task)}
-        workspaceLabel={getTaskWorkspaceLabel(task)}
         activeWorkspacePath={activeWorkspacePath}
         activeWorkspaceIdentity={activeWorkspaceIdentity}
         activeTaskId={activeTaskId}
@@ -182,7 +185,6 @@ export function VirtualizedGroupedTaskList({
       activeWorkspaceIdentity,
       activeWorkspacePath,
       getTaskRemoteSessionId,
-      getTaskWorkspaceLabel,
       groupId,
       groups,
       mobileActiveTaskKey,

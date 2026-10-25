@@ -41,6 +41,8 @@ describe("bots command parser", () => {
     });
     expect(parseBotCommand("/回答 完成")).toEqual({ type: "elicitation.submit" });
     expect(parseBotCommand("/bind ABC123")).toEqual({ type: "bind", code: "ABC123" });
+    expect(parseBotCommand("/remote")).toEqual({ type: "remote" });
+    expect(parseBotCommand("/远程")).toEqual({ type: "remote" });
   });
 
   it("parses Chinese aliases for top-level commands", () => {
@@ -62,6 +64,11 @@ describe("bots command parser", () => {
     expect(parseBotCommand("hello")).toEqual({ type: "message", text: "hello" });
     expect(parseBotCommand("0")).toEqual({ type: "selection.cancel" });
     expect(parseBotCommand("/bind")).toEqual({ type: "unknown", name: "bind", raw: "/bind" });
+    expect(parseBotCommand("/remote now")).toEqual({
+      type: "unknown",
+      name: "remote",
+      raw: "/remote now",
+    });
     expect(parseBotCommand("/wat")).toEqual({ type: "unknown", name: "wat", raw: "/wat" });
     expect(parseBotCommand("/approval on-request")).toEqual({
       type: "unknown",

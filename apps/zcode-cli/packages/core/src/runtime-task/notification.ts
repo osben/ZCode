@@ -23,54 +23,53 @@ export interface TaskNotificationInput {
   error?: string;
   outputFile?: string;
   /**
-   * workflow run 的渐进产物（`report(item)`），completed / failed / cancelled 一律携带。
-   * `count` 是**真实总条数**，`shown` 是预览里的条数——两者不等即预览是局部的，全量经 run id 可取。
-   * 缺席即整节 `<reports>` 不出现（零条时不发空节）。
+   * Incremental workflow run artifacts (`report(item)`), included for completed / failed / cancelled states.
+   * `count` is the **actual total count**; `shown` is the count in the preview. If they differ, the preview is partial and the full set can be fetched by run ID.
+   * If absent, omit the entire `<reports>` section (do not emit an empty section when there are no reports).
    */
   reports?: { count: number; preview: string; shown: number };
   /**
-   * workflow run 的**用户面产物**，completed / failed / cancelled
-   * 一律携带。字段语义与 `reports` 同规：`count` 是真实总件数，`shown` 是清单里的行数。
-   * 缺席即整节 `<artifacts>` 不出现（零件时不发空节）。
+   * **User-facing artifacts** for a workflow run, included for completed / failed / cancelled states.
+   * Field semantics match `reports`: `count` is the actual total and `shown` is the number of listed rows.
+   * If absent, omit the entire `<artifacts>` section (do not emit an empty section when there are none).
    *
-   * ⚠ 术语：这里的 artifact 是脚本发布给用户看的产出，与本结构的 `result`（脚本顶层返回值，
-   * 引擎内部也叫 artifact）无关——两者在同一条通知里并列出现。
+   * ⚠ Terminology: artifact here means output published by a script for the user. It is unrelated to this structure's `result` (the script's top-level return value,
+   * also called an artifact internally by the engine); both appear side by side in the same notification.
    */
   artifacts?: { count: number; preview: string; shown: number };
   /**
-   * workflow run 专属：在 XML 之后追加交付物呈现指引。
-   * legacy `Workflow` 与 dwf 共用 `local_workflow` 通知形状，但它的通知逐字节不变，所以由调用方
-   * 按分派名显式打开，而不是按 taskType 推断。
+   * Workflow-run-specific: append artifact presentation guidance after the XML.
+   * Legacy `Workflow` and DWF share the `local_workflow` notification shape, but its notification must remain byte-for-byte unchanged, so the caller
+   * enables this explicitly by dispatch name instead of inferring it from taskType.
    */
   deliveryGuidance?: boolean;
   result?: string;
   status: string;
   /**
-   * dwf run 的真实终态词：`status` 是后台任务追踪器
-   * 的通用词汇（stopped 折成 killed、errored 折成 failed），`<status>` 行与呈现指引要说真话
-   * 就读这个；缺席即 legacy `Workflow` / 非终态，照旧走 `status`。
+   * Actual terminal status for a DWF run. `status` uses the background task tracker's
+   * generic vocabulary (stopped becomes killed, errored becomes failed); read this field for truthful `<status>` and presentation guidance.
+   * If absent, this is a legacy `Workflow` or non-terminal state, so keep using `status`.
    */
   runStatus?: Extract<DynamicWorkflowRunLifecycleStatus, "completed" | "errored" | "stopped">;
   /**
-   * workflow run 为什么停下（只在 `runStatus === "stopped"` 时在场）。`user` 让呈现指引明说
-   * 「这是用户的决定，不要自行恢复」；`model` 是模型自己 TaskStop 的；`provider` 是确定性
-   * 模型侧错误（`failure.providerStop` 带明细）；`interrupted` 是持有进程亡故。
+   * Why a workflow run stopped (present only when `runStatus === "stopped"`). `user` tells presentation guidance to say
+   * "this was the user's decision; do not resume it on your own"; `model` means the model called TaskStop; `provider` means a deterministic
+   * model-side error (`failure.providerStop` has details); `interrupted` means the owning process died.
    */
   stopReason?: DynamicWorkflowRunStopReason;
   /**
-   * workflow run 的脚本文件，**已经写成模型面该看到的样子**（工作区相对或绝对，
-   * `describeWorkflowScriptPath`）。在场时
-   * `errored` 与 `stopped(model)` 的呈现指引把下一步从「改好脚本再内联提交」换成「就地编辑
-   * 那个文件、再用 `path` 修订」——一份两万 token 的脚本不该为了改一行再流一遍。
+   * Script file for the workflow run, **already formatted as it should appear to the model** (workspace-relative or absolute,
+   * by `describeWorkflowScriptPath`). When present, presentation guidance for `errored` and `stopped(model)` changes the next step from "fix the script and resubmit it inline"
+   * to "edit that file in place and amend using `path`"—a 20K-token script should not be streamed again just to change one line.
    *
-   * 缺席即这个 run 没有可编辑的文件（草稿写不下去的项目、本特性之前发起的 run），指引逐字节
-   * 退回旧话。相对化在调用方做一次：本模块是纯格式器，不认识工作目录。
+   * If absent, this run has no editable file (the project could not write drafts, or the run predates this feature), so guidance
+   * falls back byte-for-byte to the old wording. The caller performs path relativization once; this module is a pure formatter and does not know the working directory.
    */
   scriptPath?: string;
   /**
-   * workflow run 的结构化失败（errored 恒在场；stopped 只对 provider / interrupted 在场）。带
-   * `providerStop` 时 `<error>` 块由文案表铸造（原因 → 动作 → 事实行 → 原文行），而不是
-   * 只贴一句 provider 原文——主代理读完必须知道该做什么。
+   * Structured failure for a workflow run (always present for errored; present for stopped only for provider / interrupted). When it contains
+   * `providerStop`, build the `<error>` block from the copy table (cause → action → fact line → original text line), rather than
+   * showing only the provider's text; the main agent must know what to do next.
    */
   failure?: DynamicWorkflowRunError;
   stderrFile?: string;
@@ -161,7 +160,7 @@ function formatLocalWorkflowTaskNotification(input: TaskNotificationInput): stri
   const lines = ["<task-notification>", `<task-id>${escapeXml(input.taskId)}</task-id>`];
   if (input.toolUseId) lines.push(`<tool-use-id>${escapeXml(input.toolUseId)}</tool-use-id>`);
   if (input.outputFile) lines.push(`<output-file>${escapeXml(input.outputFile)}</output-file>`);
-  // dwf 的三个终态词优先于追踪器的通用词（legacy `Workflow` 不带 runStatus，逐字节不变）。
+  // The three DWF terminal statuses take precedence over the tracker's generic statuses (legacy `Workflow` has no runStatus and remains byte-for-byte unchanged).
   lines.push(`<status>${escapeXml(input.runStatus ?? input.status)}</status>`);
   if (input.stopReason !== undefined) {
     lines.push(`<stop-reason>${escapeXml(input.stopReason)}</stop-reason>`);
@@ -171,19 +170,19 @@ function formatLocalWorkflowTaskNotification(input: TaskNotificationInput): stri
   }
   lines.push(`<summary>${escapeXml(input.summary)}</summary>`);
   if (input.result !== undefined) lines.push(`<result>${escapeXml(input.result)}</result>`);
-  // provider 停下：`<error>` 是一整块表驱动文案（多行）；其余终态照旧一句 message。
+  // Provider stop: `<error>` is a multi-line block driven by the copy table; other terminal states keep the single-message format.
   const providerStopError =
     input.failure?.providerStop === undefined
       ? undefined
       : formatWorkflowProviderStopError(input.failure, input.taskId);
   if (providerStopError !== undefined) {
-    // 块里有要让模型照抄的 `run_id="…"`：只转义 <>&，引号原样（与 bash 通知同一策略）。
+    // The block contains a `run_id="…"` for the model to copy: escape only <>& and keep quotes unchanged (same policy as Bash notifications).
     lines.push(`<error>\n${escapeLocalBashXml(providerStopError)}\n</error>`);
   } else if (input.error !== undefined) {
     lines.push(`<error>${escapeXml(input.error)}</error>`);
   }
-  // 渐进产物排在 result / error **之后**：run 的收场是模型首先要读的，产物是补充材料。
-  // 顺序也决定了 120k 总截断先斩谁——被斩掉的应该是这一节，而不是 run 的结果。
+  // Incremental artifacts follow result / error **afterwards**: the run's outcome is the first thing the model should read, while artifacts are supplementary.
+  // This order also determines what the 120K overall truncation removes first: this section should be cut before the run result.
   if (input.reports !== undefined) {
     const shown = input.reports.shown < input.reports.count ? ` shown="${input.reports.shown}"` : "";
     lines.push(
@@ -192,9 +191,9 @@ function formatLocalWorkflowTaskNotification(input: TaskNotificationInput): stri
       "</reports>",
     );
   }
-  // 产物排在 `<reports>` **之后**：
-  // 过程产物是正文，交付物清单是索引——用户已经在屏幕上看到卡片了，模型只需要知道有哪些、
-  // 叫什么。这个顺序也决定了 120k 总截断先斩谁：先斩这一节。
+  // Artifacts follow `<reports>` **afterwards**:
+  // reports are the content and the artifact list is an index—the user can already see the cards on screen, and the model only needs to know what exists
+  // and what it is called. This order also means the 120K overall truncation removes this section first.
   if (input.artifacts !== undefined) {
     const shown =
       input.artifacts.shown < input.artifacts.count ? ` shown="${input.artifacts.shown}"` : "";
@@ -205,8 +204,8 @@ function formatLocalWorkflowTaskNotification(input: TaskNotificationInput): stri
     );
   }
   lines.push("</task-notification>");
-  // 呈现指引排在最后：120k 总截断先斩指引再斩
-  // 产物——指引是补充材料，产物是正文。
+  // Presentation guidance goes last: the 120K overall truncation removes guidance before
+  // artifacts—guidance is supplementary, while artifacts are the content.
   if (input.deliveryGuidance) {
     lines.push(
       "",
@@ -224,13 +223,13 @@ function formatLocalWorkflowTaskNotification(input: TaskNotificationInput): stri
 }
 
 /**
- * 终态通知末尾的呈现指引：告诉主代理把 run 的结果当交付物呈现，而不是转述 JSON。completed 走
- * 「结论 → 发现与证据 → 已验证 / 仅判断 → 未覆盖」的顺序；其余终态先呈现抢救出的 reports，再讲
- * 失败与下一步。顺序是对呈现的要求，不是对 result 结构的要求——脚本返回别的形态时指引仍成立。
+ * Presentation guidance at the end of terminal notifications: tell the main agent to present the run result as a deliverable instead of paraphrasing JSON. Completed runs follow
+ * "conclusion → findings and evidence → verified / inferred only → not covered"; other terminal states present any recovered reports first, then explain
+ * the failure and next step. This ordering governs presentation, not result structure, so the guidance still applies when a script returns another shape.
  *
- * 三终态 × stopped 的五个 reason 各一支：
- * 下一步动作在每一支里都写死——`stopped` 里 `user` 是「不要动」、`superseded` 是「等后继」，
- * 其余三支都指向 `ResumeWorkflowRun`；`errored` 指向 `AmendWorkflow`。
+ * A branch for each of the three terminal states and five stopped reasons:
+ * each next action is fixed—`user` under `stopped` means "do nothing", `superseded` means "wait for the successor",
+ * the other three point to `ResumeWorkflowRun`, and `errored` points to `AmendWorkflow`.
  */
 function workflowDeliveryGuidance(input: {
   status: string;
@@ -240,8 +239,8 @@ function workflowDeliveryGuidance(input: {
   scriptPath: string | undefined;
 }): string {
   const { status, stopReason, hasArtifacts, scriptPath } = input;
-  // 产物那一句只在 `<artifacts>` 节真的在场时追加：文案说的是「上面列出的产物」，一个没有
-  // 产物的 run 收到它，等于被告知去引用一份不存在的清单。
+  // Append the artifact sentence only when the `<artifacts>` section is present: it refers to "the artifacts listed above",
+  // which would tell a run with no artifacts to reference a nonexistent list.
   const artifactsSentence = hasArtifacts
     ? [
         "Artifacts listed above are already in front of the user as cards; refer to them by title and do not paste their contents. The one marked primary is the deliverable: point the user to it first.",
@@ -258,9 +257,8 @@ function workflowDeliveryGuidance(input: {
       "Do not restate the phase graph or the script.",
     ].join("\n");
   }
-  // 用户停的 run：这是一个决定，不是一次
-  // 意外。对所有未完成态一律说「resumable as-is」会让模型把用户刚停的 run
-  // 又续上了。
+  // A run stopped by the user reflects a decision, not an accident.
+  // Saying "resumable as-is" for every incomplete state would cause the model to resume a run the user just stopped.
   if (stopReason === "user") {
     return [
       "The user stopped this workflow on purpose. Do not resume it with ResumeWorkflowRun and do not amend or rebuild it unless the user asks you to.",
@@ -270,10 +268,10 @@ function workflowDeliveryGuidance(input: {
   }
   if (stopReason === "model") {
     return [
-      // 为改脚本而停的 run 要当场修订续跑：这句话不能只说
-      // 「等用户开口再续」，模型把自己为修而停的 run 也搁下了——而缓存关门规则下，停得越早重付越少。
-      // 有文件时多一句「编辑它、传 `path`」：这一支的整个论证就是「你是为改脚本才停的」，
-      // 而改脚本最便宜的做法是 Edit 那个文件，不是把整份脚本再贴一遍。
+      // A run stopped to edit its script should be amended and resumed immediately; saying only
+      // "wait for the user to ask before resuming" would make the model abandon a run it stopped for repair—and under cache closure, stopping earlier reduces repeated costs.
+      // When a file is available, add "edit it and pass `path`": this branch exists because the run was stopped to change the script,
+      // and the cheapest way is to Edit that file instead of pasting the entire script again.
       `You stopped this workflow with TaskStop. If you stopped it to fix the script, do that now: call AmendWorkflow with this run's ID and the corrected script — everything that settled before the stop is imported as cache, and the sooner the fix runs the less it re-pays. (Next time, amend the running run directly: AmendWorkflow stops it for you.)${
         scriptPath === undefined ? "" : ` Its script is at ${scriptPath}: edit that file and pass \`path\`.`
       }`,
@@ -296,15 +294,15 @@ function workflowDeliveryGuidance(input: {
     ].join("\n");
   }
   if (stopReason === "superseded") {
-    // 正常情况下到不了：superseded 的终态通知在 coordinator 处被压下。留这一支是为了老端口 /
-    // stub 万一送达时不说错话——尤其不能说「resume it」。
+    // Normally unreachable: the coordinator suppresses terminal notifications for superseded runs. Keep this branch so older ports
+    // or stubs do not say the wrong thing if one arrives—especially do not say "resume it."
     return [
       "This run was stopped because you amended it: a newer run supersedes it and is already running. Do not resume this run and do not amend it again; wait for the successor's notification.",
       ...artifactsShort,
     ].join("\n");
   }
   if (status === "stopped") {
-    // reason 缺席（老端口 / stub）：只说「停了、可续」，不猜是谁停的。
+    // If reason is absent (older port / stub), say only that it stopped and can resume; do not guess who stopped it.
     return [
       "This workflow was stopped before it finished. Present what it salvaged first: the reported items above are finished findings — show them individually with their evidence.",
       `It can be continued with ResumeWorkflowRun (run_id="${input.runId}"); ask the user before resuming a run you did not stop yourself.`,
@@ -315,14 +313,14 @@ function workflowDeliveryGuidance(input: {
     return [
       "The workflow script failed. Present what it salvaged first: the reported items above are finished findings — show them individually with their evidence. Then explain the failure and what it means for the user's request.",
       ...artifactsShort,
-      // 有文件就直接把那次编辑说清楚（路径 + `path` 参数 + 不要内联），没有文件才退回旧话。
-      // 两句共用同一条 ResumeWorkflowRun 拒绝的交代——那与有没有文件无关。
+      // If a file exists, state how to edit it (path + `path` argument + do not inline); otherwise fall back to the old wording.
+      // Both sentences share the same explanation for why ResumeWorkflowRun was rejected, regardless of whether a file exists.
       scriptPath === undefined
         ? `Fix the script and submit it with AmendWorkflow (run_id="${input.runId}") so finished work is reused. ResumeWorkflowRun will refuse this run: replaying the same script would fail the same way.`
         : `The run's script is at ${scriptPath}. Edit that file in place, then call AmendWorkflow (run_id="${input.runId}", path="${scriptPath}") so finished work is reused — do not paste the script inline. ResumeWorkflowRun will refuse this run: replaying the same script would fail the same way.`,
     ].join("\n");
   }
-  // 兜底（legacy `Workflow` 工具的 failed / killed，或未知词）：沿用旧的通用指引。
+  // Fallback (failed / killed for the legacy `Workflow` tool, or an unknown status): keep the old general guidance.
   return [
     "The workflow did not complete. Present what it salvaged first: the reported items above are finished findings — show them individually with their evidence. Then explain the failure and what it means for the user's request.",
     ...artifactsShort,

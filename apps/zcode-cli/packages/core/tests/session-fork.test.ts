@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { INCOGNITO_LOCKDOWN_PROFILE } from "@zcode/shared";
 import type {
   SessionGoal,
   MessageId,
@@ -1209,6 +1210,40 @@ describe("session fork history", () => {
       title: "Fork of 执行下 pwd",
       titleSource: "generated",
     });
+  });
+
+  it.each([
+    { label: "incognito parent", incognito: { ...INCOGNITO_LOCKDOWN_PROFILE, hooks: true } },
+    { label: "normal parent", incognito: undefined },
+  ])("fork child of an $label copies the parent profile", async ({ incognito }) => {
+    const createdSessions: Array<{ incognito?: unknown }> = [];
+    const runtime = {
+      rootTraceContext: { traceId: "trace_fork_incognito" },
+      sessionId: SESSION_ID,
+      sessionStore: {
+        createSession: async (input: { incognito?: unknown }) => {
+          createdSessions.push(input);
+        },
+      },
+    };
+    const parentSession = {
+      directory: "/workspace",
+      id: SESSION_ID,
+      projectID: "project_fork_incognito",
+      slug: "parent-incognito",
+      taskType: "interactive",
+      time: { created: 1, updated: 1 },
+      title: "incognito parent",
+      version: "test",
+      ...(incognito ? { incognito } : {}),
+    } as SessionInfo;
+
+    await createForkedSession(runtime as never, {
+      forkedSessionId: "sess_child_incognito" as SessionId,
+      parentSession,
+    });
+
+    expect(createdSessions[0]?.incognito).toEqual(incognito);
   });
 
   it("stable fork child 与 sourceCommandId/target metadata 通过原子 store 能力一起创建", async () => {

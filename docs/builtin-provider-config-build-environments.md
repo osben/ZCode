@@ -1,102 +1,137 @@
-# Built-in Provider 配置双环境打包
+# Built-in provider config two-environment packaging
 
-模板与模型的日常维护见[维护入口](./builtin-provider-maintenance/README.md)；本文继续维护构建与环境转换合同。
+Day-to-day template and model maintenance lives in the
+[maintenance entry](./builtin-provider-maintenance/README.md); this document keeps the
+build and environment-selection contract.
 
-## 所有权与边界
+## Ownership and boundaries
 
-构建工具单独拥有配置选择职责，读取现有 `ZCODE_ENV=test|production`。
-显式环境变量优先；未设置时读取仓库现有 .env 环境文件，再默认 test。
-`NODE_ENV` 只影响读取哪组 .env 文件，不直接决定产品环境。非法非空 ZCODE_ENV 报错。
+The build tooling alone owns config selection and reads the existing
+`ZCODE_ENV=test|production`. An explicit environment variable wins; when unset, the
+repository's existing .env files are read, then default to test. `NODE_ENV` only
+selects which set of .env files is read; it does not decide the product environment.
+An invalid non-empty ZCODE_ENV is an error.
 
-| 产品环境   | 仓库源文件                              |
-| ---------- | --------------------------------------- |
-| production | config/provider/zcode-builtin.json      |
-| test       | config/provider/zcode-builtin.test.json |
+| Product environment | Repository source file                  |
+| ------------------- | --------------------------------------- |
+| production          | config/provider/zcode-builtin.json      |
+| test                | config/provider/zcode-builtin.test.json |
 
-两份都是完整 Release。生产文件是唯一编辑源，测试文件由
-`pnpm provider:config:sync-test` 生成并提交，revision 跟随生产文件。
-`pnpm provider:config:check-test` 只检查生成结果是否过期，不写文件；纳入单测。
-不更改 Release Schema、个人 Overlay、Registry 或账号／模型选择。
+Both are complete Releases. The production file is the only editing source; the test
+file is generated and committed by `pnpm provider:config:sync-test`, and its revision
+follows the production file. `pnpm provider:config:check-test` only checks whether the
+generated result is stale and writes nothing; it is covered by unit tests. The
+Release Schema, personal Overlay, Registry, and account/model selection are
+unchanged.
 
-## 测试配置的生成规则（Todo147）
+## Test config generation rules (Todo147)
 
-对照 `staging_backup@790884b1ce`，仅转换 `zhipu-account` Provider 的以下模型地址：
+Against `staging_backup@790884b1ce`, only these `zhipu-account` provider model URLs
+are rewritten:
 
-| 生产 Base URL                                  | 测试 Base URL                                          |
-| ---------------------------------------------- | ------------------------------------------------------ |
+| Production Base URL                            | Test Base URL                                  |
+| ---------------------------------------------- | ---------------------------------------------- |
 | https://api.z.ai/api/anthropic                 | https://api.z.ai/api/anthropic                 |
-| https://open.bigmodel.cn/api/anthropic         | https://open.bigmodel.cn/api/anthropic                  |
+| https://open.bigmodel.cn/api/anthropic         | https://open.bigmodel.cn/api/anthropic         |
 | https://zcode.z.ai/api/v1/zcode-plan/anthropic | https://zcode.z.ai/api/v1/zcode-plan/anthropic |
 | https://zcode.z.ai/api/v1/off-peak/anthropic   | https://zcode.z.ai/api/v1/off-peak/anthropic   |
 | https://zcode.z.ai/api/v1/highspeed/anthropic  | https://zcode.z.ai/api/v1/highspeed/anthropic  |
 
-- 每次从完整生产配置重新生成，不增量修改旧测试配置，不维护第二份模型能力。
-- 手动模板、第三方地址、Key 管理链接等字段原样保留；新增未知账号地址时明确失败，要求补充映射，不偷偷请求生产。
-- 对命中上述生产地址的站点规则，保留原规则并在其后生成测试 URL 对应规则。
-  一条规则只描述一个站点，模型匹配、API 类型、能力、Map 和相对顺序全部继承。
-  保留生产规则是因为测试包里的手动 API 模板仍指向生产官方入口。
-- 完整 Release 校验后才写生成文件；无网络、无用户数据迁移、无在线发布。
-- 构建仍只读取选定文件，不在并行构建时隐式重写源文件；先同步再构建，沿用 Todo146 缓存输入。
+- Regenerate from the full production config every time; never patch the old test
+  config incrementally and never maintain a second copy of model capabilities.
+- Manual templates, third-party URLs, key-management links, and other fields are
+  preserved as-is; an unknown account URL fails loudly and requires adding a mapping
+  — never silently request production.
+- For site rules that hit the production URLs above, keep the original rule and
+  generate the test-URL rule after it. One rule describes one site; model matching,
+  API type, capabilities, Map, and relative order are all inherited. Production rules
+  are kept because the manual API templates in the test package still point at the
+  production official entry.
+- Write the generated file only after full Release validation; no network, no
+  user-data migration, no online publishing.
+- Builds read only the selected file and never implicitly rewrite source files
+  during parallel builds; sync before build, reusing the Todo146 cache inputs.
 
 ```text
-编辑生产 JSON → 同步脚本（账号 URL 映射 + 派生站点规则）→ 测试 JSON
-                       ↓ 校验生成结果
-                  原双环境打包流程
+edit production JSON -> sync script (account URL mapping + derived site rules) -> test JSON
+                                | validate the generated result
+                                v
+                   existing two-environment packaging flow
 ```
 
-签名准入另外在现有 Adapter 增加 `api.z.ai`、`zcode.z.ai` 精确 hostname，
-`bigmodel.cn` 已由既有 `*.bigmodel.cn` 覆盖。不扩大到整个 `*.z.ai`，
-也不改变公共 Family 分类工具的其他消费者。与产品环境开关无关，仅依实际 URL 判断。
-账号 Start／Off-Peak 的不签名例外优先于域名；个人／团队及显式套餐 Key 继续走原入口。
+Signing admission additionally adds the exact hostnames `api.z.ai` and `zcode.z.ai`
+to the existing adapter; `bigmodel.cn` is already covered by `*.bigmodel.cn`. Do not
+widen to all of `*.z.ai`, and do not change other consumers of the shared Family
+classification utility. This is independent of the product environment switch and
+judges only by actual URL. The account Start/Off-Peak signing exception takes
+precedence over the domain; personal/team and explicit plan keys keep their existing
+entry.
 
 ```text
-ZCODE_ENV + 对应完整 JSON
+ZCODE_ENV + the matching complete JSON
              |
              v
-共同构建入口：选文件、完整 Release 解码校验
+shared build entry: select file, full Release decode validation
              |
        +-----+--------------------+
        |                          |
        v                          v
-Desktop / CLI / SEA 资源     HTTP / Remote / Server CLI 嵌入常量
+Desktop / CLI / SEA assets   HTTP / Remote / Server CLI embedded constants
        |                          |
        +------------+-------------+
                     v
-          原有 Built-in Source / Registry
+        existing Built-in Source / Registry
 ```
 
-Desktop 资源仍为 `resources/config/provider/zcode-builtin.json`；CLI 为
-`dist/provider/zcode-builtin.json`；SEA key 仍为 `zcode-provider/zcode-builtin.json`。
-Server 保持原有 JSON 编译常量。开发态 Desktop 根据同一个编译环境定位仓库源文件。
-显式配置路径注入优先级不变。
+Desktop resources remain `resources/config/provider/zcode-builtin.json`; the CLI uses
+`dist/provider/zcode-builtin.json`; the SEA key remains
+`zcode-provider/zcode-builtin.json`. Server keeps compiling the JSON into constants.
+Dev-mode Desktop locates the repository source file through the same compiled
+environment. Explicit config path injection keeps its priority.
 
-读取／解析失败直接终止构建，禁止跨环境 fallback。复用现有 Release 解码器，
-不维护第二份 Schema。构建工具只做本地文件读取，不联网下载配置。
+Read/parse failure terminates the build; cross-environment fallback is forbidden.
+Reuse the existing Release decoder; maintain no second schema. Build tooling only
+reads local files and never downloads config over the network.
 
-跨平台加载 Release 解码器时，必须将文件系统路径转换为 `file:` URL 后交给
-`tsImport`，避免 Windows 盘符被 ESM loader 识别为协议。两种环境共用这一入口，
-不改变配置选择、校验和禁止跨环境 fallback 的策略。
+When loading the Release decoder cross-platform, convert the filesystem path to a
+`file:` URL before handing it to `tsImport`, so a Windows drive letter is not parsed
+as a protocol by the ESM loader. Both environments share this entry point; config
+selection, validation, and the no-cross-environment-fallback policy are unchanged.
 
-## 缓存与时序
+## Cache and timing
 
-- 普通 CLI、Desktop、Server 构建仍按原流程执行，不新增缓存层。
-- bootstrap 每次重新构建 Agent JS，并由同次 CLI 构建验证和刷新旁边的配置资源，避免 Source Server archive 带入旧 Agent。
-- Turbo 的 CLI build 与 build:desktop-agent 包含 ZCODE_ENV、相关 .env、两份配置及公共构建工具。
-- Desktop E2E 构建指纹包含公共工具与配置输入；已有环境指纹继续复用。
-- 远程 Server 已将配置嵌入 JS；现有 source hash / artifact hash 自然使配置变化触发重新打包。
-- 不通过覆写仓库源文件选择环境；不同环境并行构建须使用各自 worktree／输出目录，
-  不新增对同一个 dist 的并发写入保证。
+- Regular CLI, Desktop, and Server builds keep the existing flow; no new cache layer.
+- bootstrap rebuilds the Agent JS every time, and the same CLI build validates and
+  refreshes the config resources beside it, so a Source Server archive cannot carry
+  a stale Agent.
+- Turbo's CLI build and build:desktop-agent include ZCODE_ENV, the relevant .env
+  files, both configs, and the shared build tooling.
+- Desktop E2E build fingerprints include the shared tooling and config inputs;
+  existing environment fingerprints keep being reused.
+- Remote servers already embed the config in JS; the existing source hash / artifact
+  hash naturally triggers repackaging when the config changes.
+- Never select the environment by overwriting repository source files; parallel
+  builds in different environments must use separate worktrees/output directories —
+  no new concurrency guarantee is added for writes to the same dist.
 
-线上配置发布、revision/LKG 选择和 endpoint 隔离不变：本次只决定包内初始配置。
-桌面 continuous 和手机 shared-host/replayable 链路无状态、协议或执行权变更。
+Online config publishing, revision/LKG selection, and endpoint isolation are
+unchanged: this contract only decides the initial in-package config. The desktop
+continuous and mobile shared-host/replayable links have no state, protocol, or
+execution-authority changes.
 
-## 验证
+## Verification
 
-用内容不同的临时 Release 区分环境，覆盖缺失／坏 JSON／坏 Schema、环境优先级、
-已有 JS 时重新构建并刷新配置、同环境内容更新、SEA 资源及最终嵌入产物。真实两份配置分别解码。
-不以“当前两份相同所以测试通过”代替环境选择断言，不要求真实模型请求。
+Use temporary Releases with different content to distinguish environments, covering
+missing/bad JSON/bad schema, environment precedence, rebuilding and refreshing the
+config when JS already exists, same-environment content updates, SEA resources, and
+the final embedded artifacts. Decode both real configs separately. "The two current
+files are identical, so tests pass" does not replace environment-selection
+assertions; real model requests are not required.
 
-公共构建入口测试与测试环境配置同步测试分文件维护：`builtin-provider-build.test.ts`
-只运行公共构建契约；`builtin-provider-test-config-sync.test.ts` 运行内部同步脚本的 Node 测试。
-后者与同步脚本及其脚本测试一起按文件排除，公共构建测试在开源导出时原样保留，
-不通过补丁删除参数化用例，也不以缺文件时跳过代替闭源侧验证。
+The shared build entry tests and the test-environment config sync tests are
+maintained in separate files: `builtin-provider-build.test.ts` runs only the shared
+build contract; `builtin-provider-test-config-sync.test.ts` runs Node tests of the
+internal sync script. The latter is excluded together with the sync script and its
+script tests; the shared build test is kept as-is in the open-source export — no
+patching away parameterized cases, and no skip-on-missing-file in place of
+closed-source verification.

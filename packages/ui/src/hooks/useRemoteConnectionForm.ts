@@ -21,19 +21,20 @@ export function buildAvailableKinds(options: {
   isLocalDevelopmentRuntime: boolean;
 }): RemoteKind[] {
   const kinds: RemoteKind[] = ["ssh"];
-  // Bugfix: Server remote 目前只是本地开发能力。之前无条件放入可选列表，
-  // 导致 production-mode 打包也会露出未对外开放的入口。
+  // Bugfix: Server remote is currently available only in local development. It used to appear in
+  // the selectable list unconditionally, exposing an unavailable entry in production builds.
   if (options.isLocalDevelopmentRuntime) {
     kinds.push("server");
   }
-  // Bugfix: 远程连接入口里 WSL 和 SSH 同属主机类连接。
-  // Windows 下先放 WSL 再放 Docker，避免 WSL 被 Docker 隔开后在选择页显得离 SSH 很远。
+  // Bugfix: WSL and SSH are both host connections in the remote-connection entry point.
+  // On Windows, place WSL before Docker so Docker does not separate WSL from SSH in the picker.
   if (options.isWindowsDesktop) {
     kinds.push("wsl");
   }
-  // Docker入口之前完全依赖预探测结果决定是否展示。
-  // 当探测能力暂时不可用、或用户还没切到 Docker 时，入口会直接消失，
-  // 用户甚至不知道这里支持 Docker 连接。改为始终展示入口，切换后再懒加载探测结果。
+  // The Docker entry previously depended entirely on preflight results being available.
+  // If preflight was temporarily unavailable or the user had not selected Docker,
+  // the entry disappeared and users could not discover Docker connections. Always show it,
+  // then load preflight results lazily after selection.
   kinds.push("docker");
   return kinds;
 }
@@ -173,8 +174,9 @@ export function useRemoteConnectionForm({
 
         if (!result.error) {
           setDockerContainers(result.dockerContainers);
-          // 下拉刷新后旧容器可能已经停止。之前只更新列表不清空选中值，
-          // 触发器仍会显示已不存在的容器；成功刷新后必须让选中值受最新运行中列表约束。
+          // A previously selected container may have stopped by the time the list is refreshed.
+          // Updating only the list left the trigger showing a missing container; after a successful
+          // refresh, constrain the selection to the latest running container list.
           setDockerContainer((currentContainer) =>
             resolveDockerContainerSelectionAfterRefresh({
               currentContainer,
@@ -367,8 +369,9 @@ export function useRemoteConnectionForm({
       const nextUsername = aliasOption.username?.trim() ?? "";
       const nextPrivateKeyPath = aliasOption.privateKeyPath?.trim() ?? "";
 
-      // 切换 alias 时之前只覆盖“有值字段”，缺失字段会残留上一个 alias/手动输入值。
-      // 这里改为全量覆盖：所有 SSH 字段都按当前 alias 重建，缺失值统一置空，避免状态串用。
+      // Switching aliases previously updated only fields with values, leaving missing fields
+      // populated with values from the previous alias or manual input. Rebuild every SSH field
+      // from the current alias and clear missing values to prevent state from leaking across aliases.
       setHostState(nextHost);
       setPortState(nextPort);
       setUsernameState(nextUsername);
@@ -452,8 +455,8 @@ export function useRemoteConnectionForm({
     setServerName,
     setServerToken,
     setServerWorkspacePath,
-    // Bugfix: Docker 容器列表是运行态数据，之前只在进入 Docker 页时拉一次。
-    // 下拉每次打开都通过这个回调按需刷新，避免用户看到已过期的容器列表。
+    // Bugfix: the Docker container list is runtime data and was previously fetched only when entering the Docker page.
+    // Refresh it on demand each time the dropdown opens so users do not see stale containers.
     refreshDockerContainers: () => refreshDockerContainers({ clearContainersOnError: false }),
     applySshConfigAlias,
     clearSelectedSshConfigAlias,

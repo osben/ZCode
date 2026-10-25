@@ -49,6 +49,9 @@ describe("MCS published capability boundaries", () => {
       }
     }
     for (const provider of release.config.providerConfigRules.providerRules) {
+      // The GLM mid-conversation-system guarantee covers the zhipu system providers; the
+      // ChatGPT plan provider (openai-responses, gpt models) is a separate account domain.
+      if (provider.config.access.type !== "zhipu-account") continue;
       const { api } = provider.config;
       const config = rules.resolve({
         providerId: provider.providerId,
@@ -57,7 +60,7 @@ describe("MCS published capability boundaries", () => {
         baseUrl: api.baseUrl,
       });
       expect(config.properties?.supportsMidConversationSystem, provider.providerId).toBe(true);
-      // 闲时保留 MCS，但按 Todo140 关闭内置搜索；普通套餐不能随之回退。
+      // MCS is retained during off-peak, but built-in search is disabled per Todo140; standard plans must not regress with it.
       expect(config.properties?.supportsNativeWebSearch, provider.providerId).toBe(
         provider.config.access.mode !== "off-peak",
       );

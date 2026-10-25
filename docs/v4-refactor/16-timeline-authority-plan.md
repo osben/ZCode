@@ -1,465 +1,477 @@
-# Timeline Authority 实施计划
+# Timeline Authority Implementation Plan
 
-> 依据：[`15-timeline-resolver-design.md`](./15-timeline-resolver-design.md)（方案）、
-> [`15-timeline-resolver-design-review.md`](./15-timeline-resolver-design-review.md)（前审 F1–F10）、
-> 第二轮代码级评审（R1–R13，2026-07-07）。
-> 出发点：彻底解决 v4 重构后仍存在的「消息/timeline 顺序错位」与「消息莫名不渲染」，
-> 并最大限度兼容用户已有历史数据（`~/.zcode/cli/db/db.sqlite`：2,989 sessions / 26,942 messages / 96,112 parts）。
+> Based on [`15-timeline-resolver-design.md`](./15-timeline-resolver-design.md) (design),
+> [`15-timeline-resolver-design-review.md`](./15-timeline-resolver-design-review.md) (first review, F1-F10)
+> and a second code-level review (R1-R13, 2026-07-07).
+> Goal: fix the "message/timeline order misplacement" and "message silently not rendered" problems that
+> survive the v4 refactor, while staying compatible with existing user history
+> (`~/.zcode/cli/db/db.sqlite`: 2,989 sessions / 26,942 messages / 96,112 parts at planning time).
 
-## 实施状态（2026-07-08）
+Full history: `git show b8876e8b:docs/v4-refactor/16-timeline-authority-plan.md`
 
-P0–P4 全部实现并提交（feature/v4-vertical-slice）：
+## Implementation status
 
-| 阶段                                                                               | 提交        | 状态                   |
-| ---------------------------------------------------------------------------------- | ----------- | ---------------------- |
-| P0 止血（on-conflict 漂移修复 + 0015 backfill/触发器）                             | `eef7ed7a9` | ✅                     |
-| P1 读取端归一（goal/model part 消费、session_entry 合并、head-skip、守恒扩项）     | `5d08dfbb5` | ✅                     |
-| P2 顺序权威（drain 切轮、工时拆分、GV 身份/落位、隐形行清零、S2 平铺、S11 冷路径） | `d35fa2123` | ✅                     |
-| P3 session_input 账本（0016，原子 promote，wake 记账，resume 清扫留痕）            | `fb13f9940` | ✅                     |
-| P4 收尾（fork provenance/remap、三路径归一、轮尾闸、守恒 resync、影子重放）        | `f57146467` | ✅                     |
-| P5 持久 session_event journal                                                      | —           | 冻结（§6-5，本轮不做） |
+P0-P4 are implemented and committed (feature/v4-vertical-slice). P5 is frozen.
 
-影子重放验收（`apps/zcode-cli/scripts/shadow-replay.mjs`，2026-07-08 本机全量）：
-3,014 会话 → 0 重放崩溃、0 assistant 正文丢失、0 goalVerify marker 丢失；
-21 个 userInput flag 均为 legacy 文本嗅探消息（无结构标记的 goal-continuation
-reminder / fork notice）的启发式误报，分类器行为正确。
+| Phase                                                                                                                          | Commit      | Status        |
+| ------------------------------------------------------------------------------------------------------------------------------ | ----------- | ------------- |
+| P0 stop the bleeding (on-conflict drift fix + 0015 backfill/trigger)                                                           | `eef7ed7a9` | done          |
+| P1 read-side normalization (goal/model part consumption, session_entry merge, head-skip, conservation)                         | `5d08dfbb5` | done          |
+| P2 order authority (drain turn split, worked-time split, GV identity/placement, hidden-row cleanup, S2 flatten, S11 cold path) | `d35fa2123` | done          |
+| P3 session_input ledger (0016, atomic promote, wake accounting, resume sweep trace)                                            | `fb13f9940` | done          |
+| P4 wrap-up (fork provenance/remap, three-path normalization, turn-tail gate, conservation resync, shadow replay)               | `f57146467` | done          |
+| P5 durable session_event journal                                                                                               | -           | frozen (§6-5) |
 
-P1 已知余量：守恒判据仍是顺序不敏感的 `>=`（顺序敏感节点级等价随 P2 的单一
-normalizer 后续升级）；文档回写清单（§7 表）尚未执行。
+Shadow replay acceptance (`apps/zcode-cli/scripts/shadow-replay.mjs`, local full history, 2026-07-08):
+3,014 sessions, 0 replay crashes, 0 lost assistant bodies, 0 lost goalVerify markers. The 21 userInput
+flags are heuristic false positives on legacy text-sniffed messages (goal-continuation reminders and
+fork notices without a structural marker); the classifier behaves correctly.
 
-2026-07-10 补充裁决：P1 原提交虽然补了 goal/model 冷恢复，但
-`v4-bridge.loadPersistedEvents` 仍然是「内存 eventStore XOR transcript 合成」，不符合
-本节已冻结的三源合并语义。读取端必须收敛为一个可单测的 cold merge：
+Known leftovers from P1: the conservation criterion is still the order-insensitive `>=` (order-sensitive
+node-level equivalence follows with the single normalizer in P2); the doc write-back list (§7 table) is
+not yet executed.
+
+### Cold merge ruling (2026-07-10)
+
+P1 added goal/model cold recovery, but `v4-bridge.loadPersistedEvents` was still "in-memory eventStore XOR
+transcript synthesis", which violates the three-source merge frozen here. The read side must converge on
+one unit-testable cold merge:
 
 ```text
 message / part durable transcript  ----\
                                         +--> cold merge --> canonical SessionEvent stream
 session_entry goal legacy source  -----/
-in-memory eventStore ------------------/     只补 in-flight / ephemeral
+in-memory eventStore ------------------/     only fills in-flight / ephemeral
 ```
 
-- 已持久 user/assistant/reasoning/tool/timeline 正文一律以 message/part 为权威；
-  同一 `assistantMessageId` / `partId` / `toolCallId` 的内存正文事件不得再投影一次。
-- 未终态 turn 是例外：为了保留未持久流式尾部，该 turn 由内存事件整体补齐，
-  不再同时合成该 turn 已落盘的半截 parts。
-- queue / permission / control / background 等无 transcript 持久形态的状态从
-  eventStore 补入；未识别或无法对齐的老事实必须保留并输出 diagnostics，不得静默丢弃。
-- 内存 goal / compact / fork boundary 若带 `anchorMessageId` / `targetMessageId`，必须仅按
-  该持久实体解析到 synthesized product turn，并插入该轮 tail；禁止用文本或时间猜测。
-  无锚点或锚点不可解析的 legacy boundary 放到最后一个已知宿主之后，并输出 diagnostic。
-- `SessionInputPromoted` 是 queue 的已知终态：cold merge 计算 pending 集合时必须摘除对应
-  `pendingInputId`，不得把它当未知事件保留或产生 unclassified 告警。
-- `timeline/goal_verification` 与 session_entry 继续按 `targetId+goalIteration`
-  去重；`timeline/model_change` 必须显式消费 `fromModel/toModel`，不能仅依赖
-  下一条 user message 的 model 快照碰巧重建。
+- Persisted user/assistant/reasoning/tool/timeline bodies are authoritative from message/part. In-memory
+  body events with the same `assistantMessageId` / `partId` / `toolCallId` are not projected again.
+- Exception: a non-terminal turn is filled wholesale from in-memory events (to keep the unpersisted
+  streaming tail) and its already-persisted half-parts are not synthesized in addition.
+- State with no transcript form (queue / permission / control / background) comes from the eventStore.
+  Unrecognized or unalignable old facts are kept and reported as diagnostics, never silently dropped.
+- In-memory goal / compact / fork boundaries carrying `anchorMessageId` / `targetMessageId` resolve only
+  against that persisted entity, to the synthesized product turn, and insert at that turn's tail; never
+  guess by text or time. A legacy boundary without a resolvable anchor goes after the last known host
+  with a diagnostic.
+- `SessionInputPromoted` is a known terminal queue state: the cold merge removes the matching
+  `pendingInputId` from the pending set and raises no unclassified warning.
+- `timeline/goal_verification` and session_entry keep deduplicating by `targetId+goalIteration`.
+  `timeline/model_change` must consume `fromModel/toModel` explicitly rather than rely on the next user
+  message's model snapshot.
 
-2026-07-11 projection closure 裁决补充：message、part、session metadata 与 goal 是
-持久权威；live/cold 统一先生成 canonical facts。`rowId` 降为 display-only，所有可操作
-row 用 `entityId/productTurnId` 寻址。latest real-user input（text/goal）的统一 edit 走 rewind；若已被
-稳定 compact 覆盖则原子 fork child 并导航。primary/continuation/verifier running edit 先过
-stop barrier，active compact 统一锁定 fork/edit/retry/send-now。用户 goal input 必须生成
-canonical visible real-user row、与 text query 共用 `editUserQuery` target 且重发保留
-`sendGoalCommand` intent；`goalSet` lifecycle 本身不产 marker。background model-only wake
-总是独立 product turn；retry 恢复完整 intent；
-stable fork 只有在所有 child-local 引用原子 remap 后才发布。以上只补足既有 P1/P2/P4
-闭环，不引入新的 client-mode 产品分支。
+### Projection closure ruling (2026-07-11)
 
-## 0. 根因裁决（为什么 v4 重构没解决原始问题）
+message, part, session metadata and goal are the durable authority; live and cold both first produce
+canonical facts. `rowId` is display-only; every actionable row is addressed by `entityId/productTurnId`.
+This only completes the existing P1/P2/P4 loop and adds no client-mode product branch.
 
-v4 把状态收敛到 CLI 投影、UI 无脑渲染——这一步是对的，协议层（delta 封闭枚举、
-apply、profile 收口不变量、snapshot+afterSeq 恢复）也已验证正确，本计划**不动协议 delta 形态**。
+1. Edit of the latest real-user input (text or goal) goes through rewind; if a stable compact already
+   covers it, atomically fork a child and navigate.
+2. Running primary/continuation/verifier edit passes the stop barrier first; an active compact locks
+   fork/edit/retry/send-now uniformly.
+3. A user goal input produces a canonical visible real-user row, shares the `editUserQuery` target with a
+   text query, and the resend keeps the `sendGoalCommand` intent. The `goalSet` lifecycle itself produces
+   no marker.
+4. A background model-only wake is always an independent product turn. Retry restores the full intent.
+5. A stable fork is published only after all child-local references are remapped atomically.
 
-真正没被考虑的是投影层的四个系统性缺口，它们逐一对应用户可见故障：
+## 0. Root-cause ruling (why the v4 refactor did not fix the original problem)
 
-| #   | 缺口                                                                                                  | 代码事实                                                                                                                                                                                                                                              | 用户可见故障                                                |
-| --- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| G1  | 无权威排序：marker 靠 append 到达位置落位，事件 payload 里的 anchor 被无视                            | `product-projection.ts:1391-1408`（goalVerify）、`:1225-1226`（compact 注释「落在事件到达时的行尾」）；`TimelineMarkerRow` schema 无 anchor（`rows.ts:224-231`）；`turnIdOf` 回落 `"turn-unknown"`（`:1621-1623`）                                    | goal verify / compact / fork marker 漂到错误轮次            |
-| G2  | 无实体身份：rowId 是进程内自增，user 输入无稳定 id，goalVerify 以易失 verificationId 为身份           | `rowBase` `nextRowId++`（`product-projection.ts:1612-1619`）；`buildUserInputRow` 无 messageId/sourceCommandId；`verificationId = spanId ?? traceId`（`target-completion-verification.ts:108`）                                                       | 同一 verify 出两个 marker；守恒无法判定；fork/edit 反查失败 |
-| G3  | live/cold 双路径语义相反：drain/model-only wake 在 live 落同 runtimeTurn，cold 按 real-user 切轮/并轮 | live：`turn-loop.ts:33-55` + `onTurnSteerDrained` 同 turnId；cold：`transcript-hydration.ts:708-771`；UI 按 turnId + latestAssistantText 折叠（`conversationTurnRenderUnits.ts:77-174`）                                                              | 上一轮 assistant 被折进「已工作」（Case A）；刷新后结构变样 |
-| G4  | 输入生命周期不 durable：事件日志纯内存、队列纯内存、唤醒命令纯内存                                    | `InMemorySessionEventStore`（`adapters/storage/index.ts:21-55`，`create-app.ts:342`）；`runtimeCommandQueue` 内存数组（`command-queue.ts:98-99`）；resume 丢弃 pending steer（`steering.ts:825-869`）；drain 跨 store 非原子（`steering.ts:726-760`） | queue 消失且不进 transcript（Case B）；重启丢队列/丢唤醒    |
+v4 moved state into the CLI projection with a dumb UI; that is right, and the protocol layer (closed delta
+enum, apply, profile-closure invariants, snapshot+afterSeq recovery) is verified. This plan does not change
+the protocol delta shape. Four systemic projection-layer gaps remain, each tied to a user-visible failure:
 
-两个修正后的关键事实（决定修复成本比 15 号设计估计的低）：
+| #   | Gap                                                                                                                        | Code fact                                                                                                                                                                                                                                                   | User-visible failure                                                                  |
+| --- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| G1  | No authoritative ordering: markers land where they arrive; payload anchors are ignored                                     | `product-projection.ts:1391-1408` (goalVerify), `:1225-1226` (compact comment "lands at row tail on arrival"); `TimelineMarkerRow` schema has no anchor (`rows.ts:224-231`); `turnIdOf` falls back to `"turn-unknown"` (`:1621-1623`)                       | goal verify / compact / fork markers drift to the wrong turn                          |
+| G2  | No entity identity: rowId is an in-process counter, user input has no stable id, goalVerify uses a volatile verificationId | `rowBase` `nextRowId++` (`product-projection.ts:1612-1619`); `buildUserInputRow` has no messageId/sourceCommandId; `verificationId = spanId ?? traceId` (`target-completion-verification.ts:108`)                                                           | duplicate verify markers; conservation undecidable; fork/edit lookup fails            |
+| G3  | Live and cold semantics differ: drain/model-only wake share one runtimeTurn live, cold splits/merges by real-user          | live: `turn-loop.ts:33-55` + `onTurnSteerDrained` same turnId; cold: `transcript-hydration.ts:708-771`; UI folds by turnId + latestAssistantText (`conversationTurnRenderUnits.ts:77-174`)                                                                  | previous assistant folded into "worked" (Case A); structure changes after refresh     |
+| G4  | Input lifecycle not durable: event log, queue and wake commands are in memory only                                         | `InMemorySessionEventStore` (`adapters/storage/index.ts:21-55`, `create-app.ts:342`); `runtimeCommandQueue` array (`command-queue.ts:98-99`); resume drops pending steer (`steering.ts:825-869`); drain is non-atomic across stores (`steering.ts:726-760`) | queue disappears and never reaches the transcript (Case B); restart loses queue/wakes |
 
-1. **goal verify / model change 的持久事实已经完整**：verification 每次都写 timeline part
-   （身份 `targetId_goalIteration`、`anchorMessageId/anchorTurnId`，`events.ts:217-291`）+ session_entry；
-   model change 也有持久 timeline part（`timeline-persistence.ts:44-87`）。丢失发生在**读取端**：
-   hydration 只消费 `context_compaction`（`transcript-hydration.ts:165-198,641-643`），
-   守恒判据不数这两类（`:807-862`）。
-2. **冷恢复是「事件日志 XOR 全量合成」二选一**（`v4-bridge.ts:320-338`），而事件日志是内存的
-   ——真正的跨进程冷启动 100% 走有损合成路径。
+Two corrected facts make the fix cheaper than 15's estimate:
 
-## 1. 故障 → 修复阶段映射（验收对照总表）
+1. The durable facts for goal verify / model change are complete: verification writes a timeline part every
+   time (identity `targetId_goalIteration`, `anchorMessageId/anchorTurnId`, `events.ts:217-291`) plus a
+   session_entry; model change also has a durable timeline part (`timeline-persistence.ts:44-87`). The loss
+   is on the read side: hydration only consumes `context_compaction` (`transcript-hydration.ts:165-198,641-643`)
+   and the conservation criterion does not count the other two (`:807-862`).
+2. Cold recovery is "event log XOR full synthesis" (`v4-bridge.ts:320-338`) and the event log is in
+   memory, so a real cross-process cold start always takes the lossy synthesis path.
 
-| 用户可见故障                                                    | 根因                                                                                                                                                                                                                                                    | 修复阶段                      |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| **assistant 回复整段消失**（用户原始痛点，非折叠）              | live：投影仅 phase=running 接收流式文本，「迟到终态不复活」闸静默拒收整段（`product-projection.ts:527`）；cold：首条真实用户消息之前的 assistant/合成消息整段跳过（`transcript-hydration.ts:708-711`，会话头部是 rewind notice/compact summary 时触发） | P1 + P2（assistant 守恒）     |
-| 上一轮 assistant 观感消失（drain 后早段 text 被折进「已工作」） | G3 + UI latestAssistantText 推断                                                                                                                                                                                                                        | P2                            |
-| queue 消息消失且不进 transcript                                 | G4（drain 非原子/投影内存态承接）                                                                                                                                                                                                                       | P3（durable）+ P2（投影承接） |
-| goal verify 冷恢复后消失                                        | G4→读取端不消费                                                                                                                                                                                                                                         | P1                            |
-| goal verify 位置错 / 重复 marker                                | G1 + G2                                                                                                                                                                                                                                                 | P2                            |
-| compact / fork marker 错位                                      | G1；fork anchor 近似行尾                                                                                                                                                                                                                                | P2 + P4                       |
-| model change 冷恢复消失 / 幽灵折叠区                            | 读取端不消费 + 隐形 row 进 window                                                                                                                                                                                                                       | P1 + P2                       |
-| background wake 归属错 / 出现用户气泡                           | G3                                                                                                                                                                                                                                                      | P2                            |
-| 刷新/重启后顺序与 live 不一致                                   | G3 + 二选一 hydration                                                                                                                                                                                                                                   | P1 + P2                       |
-| marker 状态不更新（停在 running）                               | 窗口外 upsert 静默 no-op（`apply.ts:64-65`）                                                                                                                                                                                                            | P4                            |
-| 重启后队列/待唤醒静默丢失                                       | G4                                                                                                                                                                                                                                                      | P3                            |
+## 1. Failure to fix-phase map (acceptance table)
 
-## 2. 总体方案（对 15 号设计的采纳与修正）
+| User-visible failure                                                        | Root cause                                                                                                                                                                                                                                                                                                                                                             | Phase                            |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| assistant reply disappears entirely (original pain point, not folding)      | live: projection only accepts streaming text in phase=running, the "late terminal does not resurrect" gate silently rejects the whole segment (`product-projection.ts:527`); cold: assistant/synthetic messages before the first real user message are skipped (`transcript-hydration.ts:708-711`, triggered when the session head is a rewind notice/compact summary) | P1 + P2 (assistant conservation) |
+| previous assistant looks gone (early text folded into "worked" after drain) | G3 + UI latestAssistantText inference                                                                                                                                                                                                                                                                                                                                  | P2                               |
+| queue message disappears, never in transcript                               | G4 (non-atomic drain / projection holds in-memory state)                                                                                                                                                                                                                                                                                                               | P3 (durable) + P2 (projection)   |
+| goal verify gone after cold recovery                                        | G4 -> read side does not consume it                                                                                                                                                                                                                                                                                                                                    | P1                               |
+| goal verify mispositioned / duplicate marker                                | G1 + G2                                                                                                                                                                                                                                                                                                                                                                | P2                               |
+| compact / fork marker mispositioned                                         | G1; fork anchor approximated to row tail                                                                                                                                                                                                                                                                                                                               | P2 + P4                          |
+| model change gone after cold recovery / phantom fold region                 | read side does not consume + invisible rows in the window                                                                                                                                                                                                                                                                                                              | P1 + P2                          |
+| background wake mis-attributed / user bubble appears                        | G3                                                                                                                                                                                                                                                                                                                                                                     | P2                               |
+| order differs between refresh/restart and live                              | G3 + XOR hydration                                                                                                                                                                                                                                                                                                                                                     | P1 + P2                          |
+| marker state stuck at running                                               | out-of-window upsert is a silent no-op (`apply.ts:64-65`)                                                                                                                                                                                                                                                                                                              | P4                               |
+| queue / pending wakes silently lost on restart                              | G4                                                                                                                                                                                                                                                                                                                                                                     | P3                               |
 
-采纳 15 号设计的分层，按评审修正三处：
+## 2. Overall design (adopting 15's layering with three corrections)
 
 ```text
-Persisted Facts（权威）：message / part / session metadata / goal（+ 内存事件日志仅作 live 加速）
+Persisted Facts (authority): message / part / session metadata / goal (+ in-memory event log only as live accelerator)
         |
         v
-Event Normalizer（唯一入口，P1 重心）
-  live 事件与 cold 事实都归一为 typed semantic events
-  三源合并 + 去重，废除 XOR 二选一
+Event Normalizer (single entry, P1 focus)
+  live events and cold facts both normalize into typed semantic events
+  three-source merge + dedup; the XOR choice is abolished
         |
         v
-Semantic Ledger（P2）
-  typed entities，entityId 全部由持久事实派生
+Semantic Ledger (P2)
+  typed entities, entityId always derived from persisted facts
         |
         v
-Timeline Resolver（P2，弱化版）
-  主序 = normalizedOrderKey 近乎全序（定义见下）
-  + 有界 anchor 局部重挂（boundary 挂到目标 productTurn 尾，不做通用拓扑求解）
+Timeline Resolver (P2, weakened)
+  primary order = normalizedOrderKey, near-total order (below)
+  + bounded anchor re-hang (boundary attaches to the target productTurn tail; no general topological solving)
         |
         v
-Materializer：兼容期继续输出 rows.window（带 entityId/productTurnId/visibility）
+Materializer: during the compatibility period keeps emitting rows.window (with entityId/productTurnId/visibility)
         |
         v
-UI：按 resolver 结果渲染，删除 turnId+latestAssistantText 推断
+UI: renders the resolver result; the turnId+latestAssistantText inference is deleted
 ```
 
-**normalizedOrderKey 定义**（现状四套序号互不可比：message.sequence 是 session 内序、
-part.sequence 是 message 内序、session_entry 无序号、event 序独立——必须先归一，
-否则实现会退回 timestamp/append 猜测）：
+**normalizedOrderKey.** Today's four sequences are incomparable (message.sequence is session-wide,
+part.sequence is per message, session_entry has none, event order is independent), so they must be
+normalized first or the implementation falls back to timestamp/append guessing:
 
 ```text
 normalizedOrderKey = (
-  branchEpoch,        # rewind/fork 换代，最外层
-  hostMessageSeq,     # 事实所在或锚定的 message 的 session 内 sequence
-  hostPartSeq,        # message 内 part sequence；message 级事实取 -1
-  boundaryRank,       # 同宿主位置的 lane 序：trigger < assistantWork < turnTailBoundary
-  lifecycleOrdinal,   # 同一实体生命周期内第 N 次状态变化
+  branchEpoch,        # rewind/fork generation, outermost
+  hostMessageSeq,     # session-wide sequence of the message the fact lives in or is anchored to
+  hostPartSeq,        # part sequence within the message; message-level facts use -1
+  boundaryRank,       # lane order at the same host position: trigger < assistantWork < turnTailBoundary
+  lifecycleOrdinal,   # Nth state change of the same entity
 )
 ```
 
-- 非 message 宿主的事实（session_entry goal verify、live 事件）先经 anchor 解析到
-  宿主 message（`anchorMessageId` → 其 messageSeq）；解析失败 → 落到已知最后宿主
-  之后 + diagnostics，不猜 timestamp。
-- live 尚未持久化的 in-flight 输出排在全部已持久事实之后、按事件序内部排序；
-  持久化落地后由 hostMessageSeq 接管（entityId 不变，仅权威源切换，位置不跳变）。
+- Facts without a message host (session_entry goal verify, live events) resolve through the anchor to the
+  host message (`anchorMessageId` -> its messageSeq). On failure they land after the last known host plus a
+  diagnostic; timestamps are never guessed.
+- In-flight live output not yet persisted sorts after all persisted facts, by event order. Once persisted,
+  hostMessageSeq takes over (entityId unchanged, only the authority source switches; no position jump).
 
-三处修正：
+Corrections to 15:
 
-1. **重心从 constraint graph 移到 normalizer**（前审裁决）：排序骨架近乎全序，
-   难点是把每条事实归一成「带稳定身份、带 anchor、带 visibility」的 typed entity。
-2. **resolver 输出不落库**：`productTurnId/orderKey/lane/placement` 只可缓存（15 号设计已裁决，维持）。
-3. **durable/ephemeral 切分**：streaming delta 永不进入持久事实层；
-   若未来建持久 session_event journal（P5，独立裁决），只收 durable 事件。
+1. The focus moves from a constraint graph to the normalizer (first-review ruling): the ordering skeleton is
+   near-total; the hard part is normalizing each fact into a typed entity with stable identity, anchor and
+   visibility.
+2. Resolver output is not persisted: `productTurnId/orderKey/lane/placement` may only be cached.
+3. Durable/ephemeral split: streaming deltas never enter the durable fact layer; a future durable
+   session_event journal (P5, separate ruling) would store durable events only.
 
-## 3. 历史数据兼容原则（贯穿全部阶段的硬约束）
+## 3. Historical data compatibility (hard constraints for all phases)
 
-1. **历史行只读**：message/part/session_entry 的历史行一律不改写；禁止任何「重保存修复」
-   ——在 P0 修好 on-conflict 之前，重保存 NULL-sequence 行会把它漂到队尾（`messages.ts:41-44`）。
-2. **顺序确定性**：历史行沿用现读序 `sequence is null, sequence, time_created, rowid/id`，
-   用 golden 钉死「同一 session 多次 hydrate 得到同一顺序」（含 NULL 混排、同毫秒时间戳 case）。
-3. **缺字段由读取期推导**：缺 semantics/anchor 的老数据由 normalizer 推导 + 显式 fallback placement
-   （按事实序落位 + diagnostics 标记），不得静默丢、不得崩。
-4. **双源去重**：goal verify 跨 `session_entry`（legacy 主体，1,402 行）与
-   `timeline/goal_verification` part（新写入）按 `targetId+iteration` 合并；
-   fork 三条路径的产物差异（有/无 timeline part）都要能恢复。
-5. **NULL sequence 增量 backfill 只做一次**：先封死写入源（P0），再幂等复跑 0014 的窗口函数
-   backfill（仅 `where sequence is null`），留审计日志。
-6. **老 fork child**：part 内嵌 anchor 指向父 id 的引用（`clonePartForFork` 未 remap，
-   `steering.ts:60-65`）在 resolver 中降级为 originRef/diagnostics，不参与 placement。
-7. **可见性不回归**：normalizer 以 semantics 为权威后，靠文本嗅探分类的老消息
-   （compact summary、goal continuation、task notification、rewind notice、fork notice）
-   可见性不得变化——用全类别分类 golden 锁定。
-8. **协议兼容**：rows.window 形态保留，desktop/web 客户端不需要 lockstep 升级。
-9. **影子重放验收**：提供 dev 命令对本机全量历史 session 过新管线，
-   输出守恒失败清单与新旧投影 diff；上线门槛 = 守恒失败清单人工审查完毕、无静默丢弃。
+1. **Historical rows are read-only**: message/part/session_entry history is never rewritten, and no
+   "re-save to repair" is allowed. Before the P0 on-conflict fix, re-saving a NULL-sequence row drifts it
+   to the queue tail (`messages.ts:41-44`).
+2. **Deterministic order**: historical rows keep the current read order `sequence is null, sequence,
+time_created, rowid/id`; a golden pins "hydrating the same session repeatedly yields the same order"
+   (including NULL mixing and same-millisecond timestamps).
+3. **Missing fields are derived at read time**: old data without semantics/anchor is derived by the
+   normalizer with an explicit fallback placement (by fact order + diagnostics); never dropped silently,
+   never crash.
+4. **Dual-source dedup**: goal verify across `session_entry` (legacy primary, 1,402 rows) and
+   `timeline/goal_verification` parts (new writes) merges by `targetId+iteration`; the differing products
+   of the three fork paths (with/without timeline part) must all be recoverable.
+5. **NULL-sequence incremental backfill runs once**: close the write source first (P0), then idempotently
+   re-run the 0014 window-function backfill (only `where sequence is null`) with an audit log.
+6. **Old fork children**: part-embedded anchors pointing at parent ids (`clonePartForFork` does not remap,
+   `steering.ts:60-65`) degrade to originRef/diagnostics in the resolver and do not participate in placement.
+7. **No visibility regression**: once the normalizer treats semantics as authority, old messages classified
+   by text sniffing (compact summary, goal continuation, task notification, rewind notice, fork notice)
+   keep their visibility; locked by an all-category classification golden.
+8. **Protocol compatibility**: the rows.window shape stays; desktop/web clients need no lockstep upgrade.
+9. **Shadow-replay acceptance**: a dev command runs all local historical sessions through the new pipeline
+   and outputs the conservation-failure list and old-vs-new projection diff. Release gate = failure list
+   reviewed by a human, no silent drops.
 
-## 4. 分阶段计划
+## 4. Phased plan
 
-### P0 止血：封死坏数据来源（不改任何行为语义）
+### P0 Stop the bleeding: close the bad-data source (no behavior change)
 
-改动面：
+- Fix both on-conflict branches in `messages.ts`: re-saving a NULL row must not drift it to the tail; make
+  the cross-session rebind (import upsert) branch explicit or forbid it.
+- Add a DB trigger/constraint: new message/part writes must not have NULL sequence (the trigger may fill
+  `max+1` for old-binary writes to stop version skew from producing NULLs).
+- Locate the NULL source: the 1,690 NULLs added after migration are primarily suspected to be version skew
+  (an old binary writing the same DB); verify through trigger auditing, not by grepping for side paths.
+- After closing, idempotently re-run the backfill (principle 5).
 
-- 修 `messages.ts` on-conflict 两个分支：NULL 行再保存不得漂队尾；
-  跨 session 改绑（导入 upsert）分支显式化或禁止。
-- 加 DB 触发器/约束：新写入 message/part 的 sequence 不得为 NULL
-  （触发器可对旧二进制的写入自动补 `max+1`，防版本偏斜继续产 NULL）。
-- 定位 NULL 来源：迁移后仍新增 1,690 条 NULL 的首要嫌疑是**版本偏斜**
-  （旧二进制并存写同一 DB），用触发器审计验证，不再 grep 代码找旁路。
-- 封死后幂等复跑 backfill（兼容原则 5）。
+Not done: no projection, hydration or UI change.
+Acceptance: `null-seq-determinism` golden (L1); new NULLs drop to zero after the trigger ships (DB audit).
 
-不做：不改投影、不改 hydration、不改 UI。
+### P1 Read-side normalization: Event Normalizer + three-source merge (read-time only)
 
-验收：`null-seq-determinism` golden（L1）；触发器上线后 NULL 新增归零（DB 审计）。
+Goal: cold recovery stops losing facts (goal verify / model change disappearing after refresh; fork child
+recovery losing facts).
 
-### P1 读取端归一：Event Normalizer + 三源合并（纯读取期，历史兼容性最好）
+- New Event Normalizer module (bootstrap/zcode-protocol-v4); live events and cold facts share one
+  classification entry. `getConversationMessageProjectionPolicy` becomes an internal detail: semantics
+  first; text sniffing only for legacy data without semantics, counted in diagnostics.
+- `v4-bridge.loadPersistedEvents` changes from "event log XOR synthesis" to a **three-source merge** with
+  two layers:
+  - **Authority priority (body facts)**: message/part is the durable transcript authority. The in-memory
+    event log may only add (1) in-flight streaming state not yet persisted and (2) ephemeral state with no
+    durable form (queue display, permission interaction, control phase). When both sources hold the same
+    `assistantMessageId`/`partId`, the persisted source wins (events only supply streaming intermediate
+    frames); a body is never projected twice.
+  - **Boundary dedup keys**: compact=`operationId`, goal=`targetId+iteration`,
+    fork=`parentSessionId+targetMessageId`, model=`anchorMessageId+from/to`. session_entry is only the
+    legacy source for goal verify and merges across sources with the timeline part.
+- Hydration additionally consumes `timelineType=goal_verification / model_change` parts and session_entry
+  (`SESSION_ENTRY_TARGET_COMPLETION_VERIFICATION`).
+- **Fix the hydration head skip** (`transcript-hydration.ts:708-711` currently skips; the cold vector of
+  "assistant reply disappears"). If a recoverable parent/anchor resolves (the matching model-only input
+  message, rewind/compact context), build a **preface productTurn** (model-only trigger, no visible bubble,
+  visible assistant content); otherwise emit a **visible diagnostics row**. Both go into the live=cold
+  golden; silent drop is forbidden.
+- Upgrade the conservation criterion: the `eventsCoverTranscript` footprint-subset check becomes an
+  order-sensitive node-level equivalence that counts goal/model (P2 upgrades it to node-level golden).
 
-目标：**冷恢复不再丢事实**。修复「goal verify / model change 刷新后消失」「fork child 恢复丢事实」。
+Not done: no ordering-rule change, no UI change, no new DB fields.
+Acceptance (L1/L2): `GV-cold` / `MC-cold` / `GV-cold-session_entry` / `classifier-golden` / three-source
+merge golden (same terminal state for any subset present) / `assistant-head-skip` (a session whose head is a
+rewind notice / compact summary still shows the assistant reply after cold recovery).
 
-改动面：
+### P2 Order authority: entity identity + productTurn split + anchor placement
 
-- 新建 Event Normalizer 模块（bootstrap/zcode-protocol-v4），live 事件与 cold 事实共用同一分类入口；
-  `getConversationMessageProjectionPolicy` 收敛为 normalizer 内部实现细节：
-  semantics 优先，文本嗅探仅对无 semantics 的 legacy 数据启用并计 diagnostics。
-- `v4-bridge.loadPersistedEvents` 从「事件日志 XOR 合成」改为**三源合并**，
-  合并规则分两层：
-  - **权威优先级（正文事实）**：message/part 是 durable transcript authority——
-    user/assistant text/reasoning/tool/timeline 正文一律取自 message/part；
-    内存事件日志只允许补两类：① 尚未持久化的 in-flight 流式状态；
-    ② 无持久形态的 ephemeral 状态（queue 展示、permission 交互、control 相位）。
-    同一 `assistantMessageId`/`partId` 两源同现时以持久源为准（事件源仅供流式中间帧），
-    杜绝同一段正文被投两遍。
-  - **boundary 去重键**：compact=`operationId`、goal=`targetId+iteration`、
-    fork=`parentSessionId+targetMessageId`、model=`anchorMessageId+from/to`；
-    session_entry 只作为 goal verify 的 legacy 源，与 timeline part 跨源合并。
-- hydration 补消费：`timelineType=goal_verification / model_change` part、session_entry
-  （`SESSION_ENTRY_TARGET_COMPLETION_VERIFICATION`）。
-- **修 hydration 头部跳过**（「assistant 回复整段消失」的冷路径向量，
-  `transcript-hydration.ts:708-711` 现状直接 skip）。产物形态固定为：
-  能解析出可恢复 parent/anchor（对应的 model-only 输入消息、rewind/compact 上下文）
-  → 建 **preface productTurn**（model-only trigger，无可见气泡，assistant 内容可见）；
-  解析不出 → **diagnostics 可见行**。两种都进 live≡cold golden，禁止静默丢。
-- 守恒判据升级：`eventsCoverTranscript` 的 footprint 子集判据替换为**顺序敏感、含 goal/model 计数**
-  的节点级等价（后续 P2 升级为节点级 golden）。
+Goal: live = cold in one structure; A1/A2 both visible; markers placed by anchor.
 
-不做：不改排序规则、不改 UI、不写任何新库字段。
-
-验收（L1/L2）：`GV-cold` / `MC-cold` / `GV-cold-session_entry` / `classifier-golden` /
-三源合并 golden（任意子集在场终态相同）/ `assistant-head-skip`
-（头部为 rewind notice / compact summary 的会话冷恢复后 assistant 回复仍可见——整段消失冷路径向量）。
-
-### P2 顺序权威：实体身份 + productTurn 切分 + anchor 落位（修「错位」与「折叠吞消息」的核心）
-
-目标：live ≡ cold 单一结构；A1/A2 都可见；marker 按 anchor 落位。
-
-改动面：
-
-- **CanonicalFact 同时承载可见性与命令寻址**。live `SessionEvent` 与 cold
-  message/part 不能分别拼一套“看起来相同”的 payload；进入 ProductProjection 前必须
-  归一出同一组持久实体字段：`entityId/productTurnId/runtimeTurnId/transcriptMessageId/
-visibility/origin/placement`。cold hydration 手里已有的 `message.info.id` 必须作为
-  `transcriptMessageId` 传入，禁止重新用 `hydrate-turn-N` 去匹配持久 runtime anchor。
-- **row、command target 与 row.actions 原子 materialize**。`rowId` 只属于展示/虚拟滚动，
-  不能进入服务端业务寻址。`entityId/productTurnId -> transcript message/turn boundary` 的
-  映射属于 ProductProjection 的命令投影，不是可选缓存；生成或更新一条可操作 row 时，
-  必须在同一次归约中同时生成稳定 command target 和
-  `actions.canEdit/canRetry/canFork`。必须满足：
+- **CanonicalFact carries both visibility and command addressing.** Live `SessionEvent` and cold
+  message/part must not each build a look-alike payload; before ProductProjection they normalize to the same
+  persisted-entity fields: `entityId/productTurnId/runtimeTurnId/transcriptMessageId/visibility/origin/placement`.
+  Cold hydration passes the existing `message.info.id` as `transcriptMessageId`; it must not re-match a
+  persisted runtime anchor via `hydrate-turn-N`.
+- **row, command target and row.actions are materialized atomically.** `rowId` is display/virtual-scroll
+  only and never enters server business addressing. The `entityId/productTurnId -> transcript message/turn
+boundary` mapping is part of ProductProjection's command projection, not an optional cache. Producing or
+  updating an actionable row must generate the stable command target and `actions.canEdit/canRetry/canFork`
+  in the same reduction:
 
   ```text
   row.actions.canEdit
-    <=> resolveEditTarget(entityId, productTurnId) 成功
-    <=> target 是最后一条 real user transcript message
+    <=> resolveEditTarget(entityId, productTurnId) succeeds
+    <=> target is the last real user transcript message
 
   row.actions.canRetry
-    <=> resolveRetryTarget(entityId, productTurnId) 成功
-    <=> target 是全时间线最后一条稳定 assistant transcript message
+    <=> resolveRetryTarget(entityId, productTurnId) succeeds
+    <=> target is the last stable assistant transcript message in the whole timeline
   ```
 
-  UI 只能渲染 CLI 下发的 row.actions，禁止再按 rows 数组位置、phase 或 raw message
-  自行推导 edit/retry/fork。command handler 仍做最终 guard，但不能出现“入口可见、同一
-  revision 下 target 必然解析失败”的半投影状态。
+  The UI renders only the CLI-provided row.actions and never derives edit/retry/fork from array position,
+  phase or raw messages. The command handler still guards, but a half-projected state ("entry visible, target
+  must fail on the same revision") must not occur.
 
-- **live/cold 等价升级为可寻址性等价**。shadow replay/golden 除可见 row、正文和 marker
-  外，还必须逐 row 对比 `entityId/transcriptMessageId` 对应的 command target 与 actions；
-  至少覆盖 provider 首字前失败、tool-only、empty assistant、cold resume 后 latest query
-  edit，以及普通 completed assistant。`0` 丢消息不再等价于投影闭环完成。
-- **entityId 派生规则**（冻结为契约）——queue item 与 promoted user message 是**两个实体**，
-  不得共用身份：
-  - `QueueItem.entityId = pendingInputId/inputId`（P3 账本落地后 = session_input.id）；
-  - `Promoted UserIntent.entityId = persisted user messageId`（drain 事件的
-    `injectedMessageIds` 与 `pendingInputIds` 一一对应，runtime 先 `persistUserPrompt`
-    再发 drain 事件，`steering.ts:741-756`）；
-  - 两者以 cause ref 关联：`UserIntent.cause = { pendingInputId, sourceCommandId }`；
-  - 输入守恒据此改写：每个 pendingInputId **要么**仍在 QueueItem，**要么**存在
-    cause 指向它的 promoted UserIntent，二选一；
-  - assistant=assistantMessageId；compact=operationId；
-    goalVerify=`targetId+iteration`（verificationId 仅 attempt alias）；
-    fork=`parentSessionId+targetMessageId`。禁 `nextRowId++` 作身份、禁 DB 字典序。
-- **productTurn 切分规则**（一等 invariant，2026-07-07/11 已裁决，见 §7）：同一 runtimeTurnId 内，
-  边界由 trigger 类 UserIntent（**queue drain / model-only continuation / background wake**）
-  的事实序划定；background model-only wake 无条件新建独立 productTurn，且不生成可见 user
-  trigger row。**steer（guide 模式注入）不是边界**——内联在当前轮，需要 delivery=steer/queue
-  两种语义（session_input 账本天然承载）。live 路径在边界处产出 productTurn 边界，
-  cold 路径经同一 normalizer 得到相同结构。
-- **drain 粒度配套调整**：runtime 改为每次只 drain 一条队列项，每条队列项 1:1 对应
-  一个 productTurn 与一段回复（§7 裁决）。
-- **工时归属**：productTurn 按边界拆分工时，各轮显示 trigger→下一边界的时长，加和等于总工时（§7）。
-- **assistant 守恒（live 拒收向量）**：「迟到终态不复活」闸（`product-projection.ts:527`）
-  不得静默丢弃流式文本——拒收时记 diagnostics 并从持久事实触发 resync 补齐，
-  保证每条持久化 assistant message 对应一个可见 segment 或 diagnostics 行。
-- **多段正文显示**：同一 productTurn 内所有 assistant text 段全平铺可见，
-  只有 tool/reasoning/subagent 活动折叠进「已工作」（§7 裁决，消除折叠吞正文观感）。
-- **不产 marker row 的 lifecycle facts**（§7 裁决）：`retryNotice`、`goalSet`、父侧
-  `forkCreated` 不再产生 timeline marker row（当前三者都是「进 window 渲染 null」的隐形行）；
-  `goalSet` state fact 归 goal 面板，但触发它的每条用户 `sendGoalCommand` input 仍必须
-  materialize 为 canonical visible real-user row，并与 text query 共用 `editUserQuery` target；
-  fork 关系归 sessions 树，retry 不留痕。background 唤醒轮无触发行（S14）。
-- **残缺轮形态**（协议 PB-AUTO-COMP-STOP-G12 + S15）：resolver/UI 必须支持
-  「只有 trigger（+ 可选 cancelled compact marker）、没有 assistant segment」的
-  interrupted 轮——auto-compact 被 stop 的 pendingAction、已注入 steer 被 stop
-  都会产出这种形态，不得被守恒检查误判为丢失，也不得被折叠规则吞掉。
-- **goal verify boundary**：身份 `targetId+iteration`，**upsert-by-lifecycleKey**
-  （started/terminal 任一先到都能创建实体，废除「无 started marker 则终态丢弃」
-  与 `if (!goal) return []` 的静默丢）；placement 走
-  `anchorAssistantMessageId || anchorTurnId || 显式 fallback`，废除 `"turn-unknown"` 黑洞。
-- **多段 assistant**：一个 productTurn 多 segment 全保留；fork 只挂所属 turn 最后完成段；
-  retry 只挂全时间线最后一条 assistantText row（resolver 出口保证，UI 不再自行推断）。
-- **edit/retry 意图闭环**：统一 `editUserQuery` 只解析 active branch 的 latest real-user
-  canonical intent（text 或 goal）；未被 compact 覆盖时 rewind，已被 stable compact 覆盖时
-  conversation-only 原子 fork child 并在投影可用后导航。用户 goal input 是普通 real-user row，
-  共用稳定 `entityId/productTurnId` action target；重发必须保持 `sendGoalCommand` intent，禁止
-  退化成 `sendText`。retry 从 canonical cause 恢复 text/goal kind、attachments、delivery/
-  fallback 与来源 cause，禁止从 row 文本重建。primary/goal continuation/goal verifier running
-  edit（包括 latest goal input）统一先过 stop barrier；barrier 失败不得 rewind、不得启动新
-  text/goal，保留旧 active work、原输入和 branch。active compact 对 fork/edit/retry/send-now
-  保持统一操作锁。
-- **stateOnly 通道**：modelChange 等不渲染 marker 不进 rows.window
-  （或产品裁决为可见 row，二选一，不允许「进 window 渲染 null」的隐形行）；
-  materializer 出口硬校验：stateOnly/hidden 不进 rows、hidden trigger 不影响 turn count。
-- **UI**：`conversationTurnRenderUnits` 改为消费 resolver 结果
-  （rows 带 `entityId/productTurnId/visibility`），删除 turnId+latestAssistantText 推断。
-- 守恒检查按 15 号设计 §守恒不变量全量落地，失败不发坏 snapshot、记 diagnostics。
+- **live/cold equivalence is upgraded to addressability equivalence.** Shadow replay/golden must also compare,
+  per row, the command target and actions for `entityId/transcriptMessageId`, covering at least: provider
+  failure before first token, tool-only, empty assistant, latest-query edit after cold resume, and a normal
+  completed assistant. "0 lost messages" no longer means the projection loop is closed.
+- **entityId derivation (frozen contract)**: a queue item and a promoted user message are two entities and
+  never share identity.
+  - `QueueItem.entityId = pendingInputId/inputId` (= session_input.id once the P3 ledger lands).
+  - `Promoted UserIntent.entityId = persisted user messageId` (the drain event's `injectedMessageIds` and
+    `pendingInputIds` correspond one-to-one; the runtime calls `persistUserPrompt` before emitting the drain
+    event, `steering.ts:741-756`).
+  - They link by cause ref: `UserIntent.cause = { pendingInputId, sourceCommandId }`.
+  - Input conservation: every pendingInputId is either still a QueueItem or has a promoted UserIntent whose
+    cause points at it (exactly one).
+  - assistant=assistantMessageId; compact=operationId; goalVerify=`targetId+iteration` (verificationId is
+    only an attempt alias); fork=`parentSessionId+targetMessageId`. `nextRowId++` and DB lexical order are
+    forbidden as identity.
+- **productTurn split rule** (first-class invariant, ruled 2026-07-07/11, see §7): within one runtimeTurnId,
+  boundaries are drawn by the fact order of trigger-type UserIntents (**queue drain / model-only
+  continuation / background wake**). A background model-only wake always creates an independent productTurn
+  and no visible user trigger row. **A steer (guide-mode injection) is not a boundary**; it is inline in the
+  current turn, which needs both delivery=steer/queue semantics (carried by the session_input ledger). The
+  live path emits productTurn boundaries at the boundary; the cold path gets the same structure through the
+  same normalizer.
+- **Drain granularity**: the runtime drains one queue item at a time; each item maps 1:1 to one productTurn
+  and one reply (§7).
+- **Worked time**: a productTurn splits worked time by boundary; each turn shows trigger -> next boundary,
+  and the sum equals total worked time (§7).
+- **Assistant conservation (live rejection vector)**: the "late terminal does not resurrect" gate
+  (`product-projection.ts:527`) must not silently drop streaming text; on rejection it records diagnostics
+  and triggers a resync from persisted facts. Every persisted assistant message maps to a visible segment or
+  a diagnostics row.
+- **Multi-segment text**: all assistant text segments in one productTurn are shown flat; only
+  tool/reasoning/subagent activity folds into "worked" (§7).
+- **Lifecycle facts that produce no marker row** (§7): `retryNotice`, `goalSet` and parent-side
+  `forkCreated` no longer produce timeline marker rows (today all three are "in the window, render null"
+  invisible rows). The `goalSet` state fact belongs to the goal panel, but each user `sendGoalCommand` input
+  that triggered it must still materialize as a canonical visible real-user row sharing the `editUserQuery`
+  target with a text query. Fork relationship lives in the sessions tree; retry leaves no trace. A background
+  wake turn has no trigger row (S14).
+- **Partial turn shapes** (protocol PB-AUTO-COMP-STOP-G12 + S15): resolver/UI must support an interrupted
+  turn with only a trigger (plus optionally a cancelled compact marker) and no assistant segment (an
+  auto-compact pendingAction stopped, or an injected steer stopped). Conservation must not flag it as lost
+  and folding must not swallow it.
+- **goal verify boundary**: identity `targetId+iteration`, **upsert-by-lifecycleKey** (either started or
+  terminal can create the entity; the "terminal dropped without started marker" and `if (!goal) return []`
+  silent drops are removed); placement uses `anchorAssistantMessageId || anchorTurnId || explicit fallback`;
+  the `"turn-unknown"` black hole is removed.
+- **Multi-segment assistant**: one productTurn keeps all segments; fork attaches only to the last completed
+  segment of its turn; retry attaches only to the last assistantText row of the whole timeline (guaranteed at
+  the resolver output; the UI no longer infers).
+- **edit/retry intent loop**: unified `editUserQuery` resolves only the active branch's latest real-user
+  canonical intent (text or goal). Not covered by a compact: rewind. Covered by a stable compact:
+  conversation-only atomic fork child, then navigate once the projection is available. A user goal input is
+  an ordinary real-user row sharing the stable `entityId/productTurnId` action target; the resend keeps the
+  `sendGoalCommand` intent and never degrades to `sendText`. Retry restores text/goal kind, attachments,
+  delivery/fallback and source cause from the canonical cause, never rebuilt from row text. Running edit of
+  primary / goal continuation / goal verifier (including the latest goal input) passes the stop barrier
+  first; if the barrier fails, no rewind and no new text/goal starts, keeping the old active work, input and
+  branch. An active compact applies one operation lock to fork/edit/retry/send-now.
+- **stateOnly channel**: modelChange and similar do not render a marker and do not enter rows.window (or are
+  ruled a visible row; never an invisible "in the window, render null" row). The materializer exit hard-checks:
+  stateOnly/hidden never enter rows, and a hidden trigger does not affect the turn count.
+- **UI**: `conversationTurnRenderUnits` consumes the resolver result (rows carry
+  `entityId/productTurnId/visibility`); the turnId+latestAssistantText inference is deleted.
+- The conservation check lands fully per 15's conservation invariants; failure does not publish a bad
+  snapshot and records diagnostics.
 
-验收（L1/L2/L4）：`QD-node`（A1∈T1、A2∈T2 都可见，live≡cold）；`GV-identity` /
-`GV-terminal-only` / `GV-late-anchor`；`BG-wake-cold`（独立 model-only 轮、无用户气泡）；
-live≡cold 节点级 golden；`assistant-conservation-live`
-（流式文本在非 running 相位到达 → 不静默丢，diagnostics+resync——整段消失 live 向量）；
-`steer-inline`（S1：steer 不切轮、一段工时、编辑回退整轮）；`drain-per-item`（S3）；
-`worked-time-split`（S5）；multi-segment text 全平铺 + fork 只挂最后段（S2）；
-retryNotice/goalSet/forkCreated 不再产生 lifecycle marker row（S7/S9/S10，隐形行清零）；
-用户 `sendGoalCommand` input 的 canonical real-user row 必须保留。
+Acceptance (L1/L2/L4): `QD-node` (A1 in T1, A2 in T2, both visible, live = cold); `GV-identity` /
+`GV-terminal-only` / `GV-late-anchor`; `BG-wake-cold` (independent model-only turn, no user bubble);
+live = cold node-level golden; `assistant-conservation-live` (streaming text arriving in a non-running
+phase is not dropped silently: diagnostics + resync; the live vector of "reply disappears"); `steer-inline`
+(S1: steer does not split the turn, one worked span, edit rewinds the whole turn); `drain-per-item` (S3);
+`worked-time-split` (S5); multi-segment text flat + fork only on the last segment (S2);
+retryNotice/goalSet/forkCreated no longer produce lifecycle marker rows (S7/S9/S10, invisible rows cleared);
+the canonical real-user row of a user `sendGoalCommand` input is retained.
 
-### P3 写入端 durable：session_input 账本 + promoted 原子性（修「吞消息」的根）
+### P3 Durable write side: session_input ledger + atomic promote (the root of "swallowed messages")
 
-目标：队列/唤醒的存在性不再依赖任何进程内存。
+Goal: queue/wake existence no longer depends on any process memory.
 
-改动面：
+- New table `session_input` (migration 0015): `id` (= **input/command id**, exists at admission),
+  `session_id`, `kind`, `delivery` (steer/queue), `payload_json`, `admitted_sequence`, `promoted_sequence`,
+  `promoted_message_id` (**nullable**, written in the same transaction as the user message when promoted),
+  `status` (admitted/promoted/**cancelled/discarded**; cancelled/discarded carry TurnSteerDiscarded and
+  stop-held semantics), `time_created/updated`.
+  Status transitions cover the protocol's existing rulings: `discarded(session_resumed)` (§6-1, restart keeps
+  nothing); `discarded(user_cleared)` (heldQueueInputRequiresChoice clearQueueAndSend); a steer in
+  submitting that is stopped goes back to `admitted` (back to the held queue); an already-drained one that
+  is stopped becomes `promoted` (message stays in the turn as interrupted, S15). The ledger also gives
+  input-type commands durable idempotency (the command-inbox idempotency table is an in-memory LRU and dies
+  on restart).
+  Note: ZCode's messageId is created by `createMessageId()` at drain time, so no pre-allocated message id
+  exists at admission to reuse as the input id; a nullable foreign key disturbs the existing id flow least
+  and lets the ledger express "accepted but not consumed".
+- **Atomic promote**: drain/promote and user message persistence share one transaction. The drained row text
+  comes from the ledger; the projection no longer depends on in-memory `queue.items` (the
+  `if (!item) continue` silent drop in `onTurnSteerDrained` is removed).
+- Background wake: a `task-notification` command enters the ledger (admitted) and is promoted after the wake
+  runs; a pending wake is recoverable after a crash.
+- **Crash/restart semantics (ruled)**: the queue is not kept after restart; the ledger records unconsumed
+  items as `discarded(session_resumed)` as a trace. No silent disappearance without a ledger entry.
+- New message/part writes additionally carry `semantics/anchor/sourceCommandId/cause/visibility` JSON fields
+  (old data untouched, derived by the P1 normalizer).
 
-- 新表 `session_input`（migration 0015）：
-  `id`（= **input/command id**，admission 时即存在）、`session_id`、`kind`、
-  `delivery`（steer/queue）、`payload_json`、`admitted_sequence`、`promoted_sequence`、
-  `promoted_message_id`（**nullable**，promoted 时与 user message 持久化同事务写入）、
-  `status`（admitted/promoted/**cancelled/discarded**——cancelled/discarded 承载 TurnSteerDiscarded 与
-  stop-held 语义）、`time_created/updated`。
-  status 迁移需覆盖协议既有裁决：`discarded(session_resumed)`（§6-1 重启不保留）、
-  `discarded(user_cleared)`（heldQueueInputRequiresChoice 的 clearQueueAndSend）、
-  steer 的 submitting 被 stop → 退回 `admitted`（回 held queue），已 drained 被 stop →
-  `promoted`（消息留轮内 interrupted，S15）。账本同时为输入类 command 提供 durable
-  幂等（当前 command-inbox 幂等表是内存 LRU，进程重启即失效）。
-  注：ZCode 的 messageId 在 drain 时才 `createMessageId()`，admission 时没有预分配的
-  message id 可复用为 input id；选 nullable 外键对现有 id 流侵入最小，且账本能表达「已接受但未消费」态。
-- **promoted 原子性**：drain/promote 与 user message 持久化同事务；
-  drained row 文本从账本取，投影不再依赖内存 `queue.items`
-  （废除 `onTurnSteerDrained` 的 `if (!item) continue` 静默丢）。
-- background wake：`task-notification` 命令入账本（admitted），唤醒执行后 promoted；
-  崩溃后 pending wake 可恢复。
-- **崩溃/重启语义（已裁决）**：重启后**不保留队列**；账本将未消费项记为
-  `discarded(session_resumed)` 留痕，不允许无账本的静默消失。
-- 新写入 message/part 增量补 `semantics/anchor/sourceCommandId/cause/visibility` JSON 字段
-  （老数据不动，由 P1 normalizer 推导）。
+Acceptance (L2/L4): crash-window replay: admitted-not-promoted items recover as `discarded(session_resumed)`
+after cold recovery and do **not** enter the queue (consistent with §6-1); crash after promote -> the
+transcript has exactly one matching user message (no orphan, no double write); queue behavior after restart
+L4 (empty queue + discarded trace in the ledger).
 
-验收（L2/L4）：崩溃窗口重放——admitted 未 promoted 的项冷恢复后恢复为
-`discarded(session_resumed)`、**不进 queue**（与 §6 裁决 1 一致）；
-promoted 后崩溃 → transcript 必有对应 user message 且不重复（无孤儿、无双写）；
-重启后 queue 行为 L4（空队列 + 账本可查 discarded 痕迹）。
+### P4 Transport and fork wrap-up
 
-### P4 传输与 fork 收尾
+- **Late-change delivery (ruled, §7)**: the CLI resolver does not know the user's visual region and
+  maintains only the complete timeline authority. A late change with an out-of-window anchor is not rendered
+  immediately, not appended to the tail, and not dropped: the publisher records a dirty range / revision and
+  the client gets the latest structure when it materializes that productTurn. The same rule covers "upsert
+  target not in the delivered window" (today `apply.ts:64-65` no-ops silently).
+- **Fork fixes** (new forks only; old data follows principle 6): newly copied message/part write `origin*`
+  provenance. Child session metadata, message/part, goal snapshot, fork provenance and projection anchor are
+  written in one atomic transaction. All child-local message/part/tool/timeline/compact/goal references
+  (including anchorMessageId, compaction tail_start_id/summaryMessageId) are remapped through one mapping
+  table; only an explicit originRef may keep pointing at the parent. If any child-local reference cannot be
+  remapped, the whole fork fails and the child is not published; no half-finished degradation. The persisted
+  products of the three fork paths are unified (`forkWorkspaceAtMessage` adds the timeline part). The parent
+  side no longer produces a forkCreated row (§7: fork relationship only in the sessions tree; child's leading
+  forkNotice is kept), which removes the "exact anchor vs row-tail approximation" problem. The core fork
+  entry validates: only the last completed assistant segment at a turn's end (§7 ruling 3).
 
-改动面：
+  Fork atomicity/remap does not change workspace policy: a running stable fork is conversation-only and does
+  not rewind the shared workspace; compact-covered edit is an append-only branch cut in the original session
+  and no longer reuses the fork bundle; existing checkpoint behavior of completed/idle forks is neither
+  widened nor narrowed.
 
-- **迟到变更送达（已裁决，§7）**：CLI resolver 不感知用户视觉区域，只维护完整 timeline
-  authority；窗口外 anchor 的迟到变更**不立即渲染、不 append 到尾部、不丢弃**——
-  publisher 记录 dirty range / revision，客户端 materialize 到对应 productTurn 时返回最新结构。
-  同规则覆盖「upsert 目标不在已送达窗口」（现状 apply no-op 静默丢，`apply.ts:64-65`）。
-- **fork 修补**（只影响新 fork，老数据走兼容原则 6）：
-  新复制的 message/part 写 `origin*` provenance；child session metadata、message/part、goal
-  snapshot、fork provenance 与 projection anchor 在同一原子事务中写入。所有 child-local
-  message/part/tool/timeline/compact/goal 引用（包括 anchorMessageId、compaction
-  tail_start_id/summaryMessageId）经同一映射表 remap；只允许显式 originRef 继续指向 parent。
-  任一 child-local 引用不可 remap 时整次 fork 失败且不发布 child，不能降级成半成品；
-  三条 fork 路径持久产物归一（`forkWorkspaceAtMessage` 补 timeline part）；
-  **父侧不再产 forkCreated row**（§7 裁决：fork 关系只在 sessions 树体现，
-  child 首部 forkNotice 保留）——原「精确 anchor 替代行尾近似」问题随之消解；
-  fork 入口 core 层强校验：只允许每轮结尾最后一段完成态 assistant（§7 裁决 3）。
+Acceptance: out-of-window upsert L2; `fork-remap` golden (every child-local reference checked, failure rolls
+back); `resync-scope`; fork graph cut L4 (regression guard).
 
-  fork 原子/remap 要求不改变 workspace 策略：running stable fork 是 conversation-only，
-  不 rewind 共享 workspace；compact-covered edit 已改为原 session append-only branch cut，
-  不再复用 fork bundle；completed/idle fork 的既有 checkpoint 行为不扩大也不收窄。
+### P5 (separate ruling, does not block P0-P4): durable session_event journal
 
-验收：窗口外 upsert L2；`fork-remap` golden（逐项检查 child-local 引用且失败回滚）；
-`resync-scope`；fork graph cut L4（防回归）。
+There is no durable event log today (R1). P0-P4 rely on "message/part/session metadata/goal as authority +
+in-memory event log as live accelerator" and do not depend on this item. If built:
 
-### P5（独立裁决项，不阻塞 P0–P4）：持久 session_event journal
+- table `session_event(id, session_id, sequence, kind, data_json)` + per-session allocator;
+- durable/ephemeral split required (streaming deltas not stored);
+- gains: session-wide total order, ledger can degrade to `command.*` events, web remote replay needs no
+  synthesis;
+- cost: write amplification, retention policy, double-write consistency with existing message/part.
 
-现状没有持久事件日志（R1）。P0–P4 全部基于「message/part/session metadata/goal 为权威 + 内存事件日志为
-live 加速」的现实，不依赖本项。若裁决要建：
+## 5. Test and acceptance infrastructure
 
-- 表形态 `session_event(id, session_id, sequence, kind, data_json)` + per-session allocator；
-- 必须 durable/ephemeral 切分（streaming delta 不入库）；
-- 收益：session 内全序、账本可退化为 `command.*` 事件、web remote replay 免合成。
-- 代价：写放大、retention 策略、与既有 message/part 双写一致性。
+- L1/L2/L4 cases are listed in each phase's acceptance (one-to-one with the review list); accepted semantics
+  are written back to the case catalog and coverage matrix.
+- **Shadow-replay tool** (delivered in P1, reused by P2/P3/P4): a dev command walks local historical
+  sessions, hydrates through the new pipeline, and outputs the conservation-failure list, diagnostics
+  fallback counts and a structural diff against the old projection. Gate per phase = full replay with no
+  crash, no silent drop, and failure list reviewed.
+- Conservation failures expose diagnostics in dev and log in the service layer (15 §migration advice 12,
+  maintained).
 
-## 5. 测试与验收基建
+## 6. Rulings (user-decided 2026-07-07, all final)
 
-- L1/L2/L4 用例清单见各阶段验收项（与评审列表一一对应），accepted 语义回写
-  case catalog 与 coverage matrix。
-- **影子重放工具**（P1 交付，P2/P3/P4 复用）：dev 命令遍历本机历史 session，
-  经新管线 hydrate，输出：守恒失败清单、diagnostics fallback 计数、与旧投影的结构 diff。
-  每阶段上线门槛 = 全量重放无崩溃、无静默丢弃、失败清单审查完毕。
-- 守恒失败在开发态暴露诊断、服务层记日志（15 号设计 §迁移建议 12，维持）。
+1. **No queue retention after restart**: the ledger records `discarded(session_resumed)` as a trace (P3).
+2. **modelChange visibility**: switching the model in the input box does not enter the timeline; only the
+   turn actually sent after the switch gets the "model switched" divider (same as R-17, frozen).
+3. **Fork only at turn ends**: the UI does not expose fork on intermediate assistant segments; the core layer
+   validates that only the last completed assistant segment at a turn's end is allowed (P2/P4).
+4. **Late change = dirty range / lazy materialize**: see P4.
+5. **P0-P4 do not build a durable session_event journal**: message/part/session_entry remain the durable
+   authority and the in-memory event log is only a live accelerator. If unified event sourcing is still
+   wanted after normalizer/resolver/session_input land, session_event goes to a separate P5 review.
 
-## 6. 裁决结果（2026-07-07 用户拍板，全部落定）
+## 7. Order and business-semantics rulings (aligned item by item with the user 2026-07-07, normative source for L1 goldens)
 
-1. **重启后不保留队列**：账本记 `discarded(session_resumed)` 留痕（P3）。
-2. **modelChange 可见时机**：输入框切模型不进 timeline；只有切换后实际发送出去的轮
-   才落「模型已切换」分隔（与现 R-17 语义一致，冻结）。
-3. **fork 只在每轮结尾**：UI 不暴露中间 assistant 段的 fork；core 层强校验只允许
-   轮尾最后一段完成态 assistant（P2/P4）。
-4. **迟到变更 = dirty range / 懒 materialize**：resolver 不感知视觉区域，只维护完整
-   timeline authority；窗口外 anchor 的迟到变更不立即渲染、不 append 尾部、不丢弃，
-   publisher 记 dirty range / revision，客户端 materialize 对应 productTurn 时取最新结构（P4）。
-5. **本轮 P0–P4 不建持久 session_event journal**：message/part/session_entry 继续是
-   durable authority，内存 event log 只做 live 加速；normalizer/resolver/session_input
-   修完后如仍需统一事件溯源，再把 session_event 作为 P5 独立方案评审。
+Diagnosis correction (user confirmed): the main "previous reply gone" symptom is the **whole assistant
+reply disappearing** (live rejection gate + cold head skip, §1 first row); folding is only a secondary
+impression. Both are fixed: assistant conservation and flat multi-segment text.
 
-## 7. 顺序与业务语义裁决表（2026-07-07 与用户逐项对齐，L1 golden 的规范来源）
+| #   | Scenario                                                                                 | Ruling                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Scope                                                      |
+| --- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| S1  | steer (guide-mode injection while running)                                               | **Inline, no turn split, independent visual work segments (corrected 2026-07-19)**: the bubble is inline at the injection point; assistant segments before and after belong to one productTurn. Each accepted guide closes the previous visual work segment and opens a new one, each with its own worked time/fold. Still one fork entry (the turn-tail segment). Editing a steer message = rewind and rerun the whole turn. Needs delivery=steer/queue semantics                                                                                                                                                                                                                                                                                                   | split rule, ledger delivery field, turnHeader.workSegments |
+| S2  | multiple assistant text segments in one turn (text->tool->text)                          | **Row total order first**: the renderer must follow the CLI row total order; earlier text, tool/reasoning/subagent/compact in one visual work segment must not be re-bucketed or re-sorted. A normal segment has one fold control; a guide boundary opens a new segment/control per S1. The turn-tail last assistantText is externalized as the final body; fork attaches only to the turn's last segment, retry only to the last assistantText row of the whole timeline; copy on the tail segment = all text segments of the turn merged                                                                                                                                                                                                                           | UI render units                                            |
+| S3  | consumption granularity of multiple queued items                                         | **One turn each**: the runtime drains one item at a time; queue item : reply : productTurn = 1:1:1                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | runtime turn-loop, ledger conservation                     |
+| S4  | goal verify x queue order                                                                | **Queue first (bounded window)**: items admitted before the verify scheduling point (when the previous turn settles) are consumed first, then verify; items admitted after the point go to the next scheduling window (after this verify/continuation), so continuous appends cannot starve verify. A notSatisfied continuation goes after this window's user input. **Addendum (catalog BG03, accepted)**: while any background task is running the verifier defers its request; the post-command goal loop re-verifies only after background notifications are consumed. Full order = drain queue -> wait for background notifications -> verify -> continuation                                                                                                   | continuation loop scheduling                               |
+| S5  | "worked xx s" after drain splits turns                                                   | **Split by boundary**: each turn shows trigger -> next boundary; sum = total worked time                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | turnHeader computation                                     |
+| S6  | inter-turn auto compact (new input triggers over-threshold compaction)                   | **Belongs to the next turn's first activity**: narrative is "user sends -> compress -> start working" (in-turn compact stays an assistant-work activity)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | compact placement                                          |
+| S7  | parent timeline after fork                                                               | **No forkCreated**: fork relationship only in the sessions tree/list; child's leading forkNotice is kept                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | projection emits no row; rewind x fork problem disappears  |
+| S8  | rewind/edit truncation of a turn containing a fork point                                 | **Disappears with the branch**: the timeline reflects only the current branch; the child stays reachable in the sessions list                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | branchEpoch semantics                                      |
+| S9  | retry trace                                                                              | **No trace**: the old turn is replaced wholesale; retryNotice removed from the projection (clears the invisible row); use fork to keep the old branch                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | projection emits no row                                    |
+| S10 | goalSet boundary                                                                         | **stateOnly lifecycle + visible user intent**: the `goalSet` fact shows no timeline marker (carried by the goal panel); each user `sendGoalCommand` still yields a canonical visible real-user row sharing the `editUserQuery` target with a text query; resend keeps the goal intent                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | stateOnly vs user-input layering                           |
+| S11 | several background completions (idle)                                                    | **One turn per notification**: symmetric with S3, 1:1, serial model-only turns (current behavior, frozen)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | wake scheduling                                            |
+| S12 | actions while goal is verifying (refined 2026-07-08/11, updated 2026-07-13)              | **goalVerifier is no longer an independent operation lock**: messages (sendText / `/goal`) and typed `/compact` are queued; fork is **allowed** (stable history suffices, aligned with catalog H06); sendQueuedNow is **allowed** = stop the verifier first (counts failed(cancelled), goal becomes paused) then drain (aligned with catalog line 238); edit of the latest real-user input (text or goal) is **allowed** = stop the verifier, then rewind/fork by the unified `editUserQuery` target and resend with the original intent kind; a barrier failure keeps old work/input/branch and starts no new goal. Edit of a non-latest real-user input is still rejected; stop can interrupt the verifier. Only active/queued compact hits `compactOperationLock` | guard/availability                                         |
+| S13 | model switch before a model-only continuation turn                                       | **Show the divider as usual**: whenever a turn actually uses a different model from the previous turn, drop a divider, whether triggered by user, goal continuation or BG wake                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | modelChange placement                                      |
+| S14 | visible trigger form of a background wake turn (2026-07-08, settles 15's open ruling #1) | **No trigger row**: a wake turn shows only assistant content + its own "worked"; background info lives in the background drawer/status area; the `turn:t2/input:background-result` row in the protocol doc's rows example must be corrected                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | rows contract                                              |
+| S15 | user stops after a steer was submitted but drain unconfirmed (2026-07-08)                | **Distinguished by whether injected**: runtime confirmed drained -> the steer bubble stays in place inside the turn (turn marked interrupted, edit/retry available after stop, aligned with G12); still submitting -> back to queue (held, autoDrain=false), ledger returns to admitted                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | stop closure, ledger state transitions                     |
 
-诊断纠偏（用户确认）：「上一轮回复不见」的主体是 **assistant 回复整段消失**
-（live 拒收闸 + cold 头部跳过，见 §1 表首行），折叠只是次要观感问题。两者都修，
-分别对应 assistant 守恒与多段正文平铺。
+### Doc write-back list (existing docs to sync after S1-S15)
 
-| #   | 场景                                                                   | 裁决                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | 影响面                                 |
-| --- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
-| S1  | steer（guide 模式运行中注入）                                          | **内联不切轮，视觉工作段独立（2026-07-19 纠偏）**：气泡内联在注入点，前后 assistant 段同属一个 productTurn；每条 accepted guide 关闭前一 visual work segment 并开启新 segment，各自显示/折叠工时；仍只有一个 fork 入口（轮尾段）；编辑 steer 消息 = 回退整轮重跑。需要 delivery=steer/queue 双语义                                                                                                                                                                                                                                                                    | 切分规则、账本 delivery 字段、turnHeader.workSegments |
-| S2  | 同轮多段 assistant 正文（text→tool→text）                              | **row 全序优先**：renderer 必须按 CLI 下发的 row 全序渲染，同一 visual work segment 的早段 text、tool/reasoning/subagent/compact 不能被重新分桶排序；普通 segment 只有一个折叠控件，guide 边界按 S1 开新 segment/控件。轮尾最后一段 assistantText 作为最终正文外置，fork 只挂该 turn 最后一段，retry 只挂全时间线最后一条 assistantText row；轮尾段的复制 = 整轮全部 text 段合并                                                                                                                                                                              | UI render units                        |
-| S3  | 队列多条的消费粒度                                                     | **每条一轮**：runtime 改为一次只 drain 一条，队列项:回复:productTurn = 1:1:1                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | runtime turn-loop、账本守恒            |
-| S4  | goal verify × 队列顺序                                                 | **队列优先（有界窗口）**：verify 调度点（上一轮 settle 时）之前已 admitted 的队列项先消费完再 verify；调度点之后新 admitted 的项进入下一个调度窗口（排在本次 verify/continuation 之后），防止持续追加导致 verify 无限饥饿。notSatisfied 的 continuation 排在本窗口用户输入之后。**补充（catalog BG03，accepted）**：任何 background 任务 running 时 verifier 推迟发请求，background 通知消费后 post-command goal loop 才重新验证——完整调度序 = drain 队列 → 等 background 通知消费 → verify → continuation                                                               | continuation loop 调度                 |
-| S5  | drain 拆轮后的「已工作 xx 秒」                                         | **按边界拆分**：各轮显示 trigger→下一边界时长，加和 = 总工时                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | turnHeader 计算                        |
-| S6  | 轮间自动 compact（新输入触发超阈值压缩）                               | **归下一轮首个活动**：叙事为「用户发送 → 压缩 → 开始干活」（轮内 compact 维持 assistant work 内活动裁决）                                                                                                                                                                                                                                                                                                                                                                                                                                                                | compact placement                      |
-| S7  | fork 后父时间线                                                        | **不显示 forkCreated**：fork 关系只在 sessions 树/列表体现；child 首部 forkNotice 保留                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | 投影不产 row；rewind×fork 问题随之消解 |
-| S8  | rewind/edit 截断含 fork 点的轮                                         | **随分支消失**：timeline 只反映当前分支；child 仍在 sessions 列表可达                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | branchEpoch 语义                       |
-| S9  | retry 痕迹                                                             | **不留痕**：旧轮整段替换；retryNotice 从投影移除（消除隐形行）；要留旧分支用 fork                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | 投影不产 row                           |
-| S10 | goalSet 边界                                                           | **stateOnly lifecycle + visible user intent**：`goalSet` fact 本身不显示 timeline marker、由 goal 面板承载；每条用户 `sendGoalCommand` 仍生成 canonical visible real-user row，与 text query 共用 `editUserQuery` target，重发保持 goal intent                                                                                                                                                                                                                                                                                                                                 | stateOnly 与 user input 分层           |
-| S11 | 多个 background 完成（idle）                                           | **每个通知一轮**：与 S3 对称，1:1 对应，串行 model-only 轮（当前行为，冻结）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | wake 调度                              |
-| S12 | goal verifying 期间的动作裁决（2026-07-08/11 细化，2026-07-13 更新）    | **goalVerifier 不再是独立操作锁**：消息类（sendText//goal）与 typed `/compact` 均入队；fork **允许**（目标是稳定历史即可，对齐 catalog H06）；sendQueuedNow **允许** = 先 stop verifier（计 failed(cancelled)、goal 转 paused）再 drain（对齐 catalog 238 行）；latest real-user input edit（text 或 goal）**允许** = 先 stop verifier，再按统一 `editUserQuery` target rewind/fork 并按原 intent kind 重发；barrier 失败保留旧 work/input/branch、不启动新 goal。非 latest real-user input edit 仍拒；stop 可中断 verifier。只有 active/queued compact 命中 `compactOperationLock`。 | guard/availability                     |
-| S13 | model-only 续跑轮前的模型切换                                          | **照常显示分隔**：只要某轮实际使用了与上一轮不同的模型就落分隔，不论触发者是用户还是 goal 续跑/BG 唤醒                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | modelChange placement                  |
-| S14 | background 唤醒轮的可见触发形态（2026-07-08，落定 15 号设计待裁决 #1） | **无触发行**：唤醒轮只显示 assistant 内容 + 自己的「已工作」；后台任务信息由 background 抽屉/状态区承载；协议文档 rows 示例中的 `turn:t2/input:background-result` 行需订正                                                                                                                                                                                                                                                                                                                                                                                               | rows contract                          |
-| S15 | steer 已提交未确认 drain 时用户 stop（2026-07-08）                     | **按是否已注入区分**：runtime 已确认 drained → steer 气泡保留在轮内原位（轮标 interrupted，stop 后可 edit/retry，对齐 G12 先例）；仍在 submitting → 回退 queue（held，autoDrain=false），账本退回 admitted                                                                                                                                                                                                                                                                                                                                                               | stop 收口、账本状态迁移                |
-
-### 文档回写清单（S1–S15 落定后需同步的既有文档）
-
-| 文档                                                       | 需改动                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `docs/conversation-product-protocol.md`                    | ① `goalVerifierActiveWorkOperationLock` invariant 与 stable guard 两处按 S12 改写（消息和 typed compact 入队、fork 允许、sendQueuedNow=stop-barrier、latest text/goal edit=stop-barrier）；② Fork 表 `activeWork.kind=goalVerifier → reject` 行改为 allow；③ Projection Shape 的 rows 示例删去 `turn:t2/input:background-result` 行（S14 无触发行）；④ 区分不产 marker 的 `goalSet` lifecycle 与必须可见可编辑的用户 goal input；⑤ `compactActiveWorkOperationLock` 只覆盖 active/queued duplicate compact |
-| `docs/conversation-session-case-catalog.md`                | 回写 S1–S15（尤其 S1 steer 内联、S3 每条一轮、S4 有界窗口、S14/S15），H06 与 238 行语义保持为准                                                                                                                                                                                                                                                                                                                                                                             |
-| `packages/formal-proof`                                    | 移除 goalVerifier 旧锁语义，对齐 S12                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `docs/testing/conversation-session-e2e-coverage-matrix.md` | 按 §4/§5 各阶段验收用例扩条目                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `docs/v4-refactor/15-timeline-resolver-design.md`          | 待裁决 #1 → S14、#2 → §6-2、#3 → S12、#4 → §6-4，标注已裁决                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Document                                                   | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docs/conversation-product-protocol.md`                    | (1) rewrite the `goalVerifierActiveWorkOperationLock` invariant and stable guard per S12 (messages and typed compact queue, fork allowed, sendQueuedNow = stop barrier, latest text/goal edit = stop barrier); (2) Fork table row `activeWork.kind=goalVerifier -> reject` becomes allow; (3) drop the `turn:t2/input:background-result` row from the Projection Shape rows example (S14); (4) distinguish the marker-less `goalSet` lifecycle from the visible editable user goal input; (5) `compactActiveWorkOperationLock` covers only active/queued duplicate compact |
+| `docs/conversation-session-case-catalog.md`                | write back S1-S15 (especially S1 steer inline, S3 one turn each, S4 bounded window, S14/S15); H06 and line-238 semantics stay authoritative                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `packages/formal-proof`                                    | remove the old goalVerifier lock semantics, align with S12                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `docs/testing/conversation-session-e2e-coverage-matrix.md` | add entries for the §4/§5 acceptance cases                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `docs/v4-refactor/15-timeline-resolver-design.md`          | open ruling #1 -> S14, #2 -> §6-2, #3 -> S12, #4 -> §6-4, mark as ruled                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createConfig } from "@zcode/adapters/config";
-import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS } from "@zcode/shared";
+import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS, INCOGNITO_LOCKDOWN_PROFILE } from "@zcode/shared";
 import { ZCODE_PLUGIN_HOST_COMMAND } from "@zcode/contracts";
 import type { Logger } from "@zcode/contracts";
 import { describe, expect, it, vi } from "vitest";
@@ -126,15 +126,13 @@ describe("ZCode plugins", () => {
         }),
       );
       let resolveFetch!: (response: Response) => void;
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(
-          () =>
-            new Promise<Response>((resolve) => {
-              resolveFetch = resolve;
-            }),
-        ),
+      const fetchMock = vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveFetch = resolve;
+          }),
       );
+      vi.stubGlobal("fetch", fetchMock);
 
       expect(
         enrichCachedClaudeMarketplaceIconsForOverview({
@@ -145,6 +143,9 @@ describe("ZCode plugins", () => {
         }),
       ).toBeUndefined();
 
+      // The fork loads TLS CA certificates asynchronously before the request, so fetch starts after
+      // a tick rather than synchronously; wait for it before resolving the mocked response.
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
       resolveFetch(
         new Response(
           JSON.stringify([{ name: "figma", icon: "figma/icon.png", mimeType: "image/png" }]),
@@ -221,6 +222,44 @@ describe("ZCode plugins", () => {
         ...OFFICIAL_BROWSER_USE_REQUIRED_SEED_PATHS.slice(0, -1).map((path) => ({ path })),
       ]),
     ).toEqual([OFFICIAL_BROWSER_USE_REQUIRED_SEED_PATHS.at(-1)]);
+  });
+
+  it("bundled typescript-lsp declares the typescript server, enabled by default with the lsp component", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-typescript-lsp-"));
+    try {
+      const outcome = resolveZCodePlugins({
+        env: {},
+        pluginStorageRoot: join(root, "plugins"),
+        userConfigPath: join(root, "config.json"),
+        workingDirectory: root,
+      });
+      const plugin = outcome.plugins.find((entry) => entry.name === "typescript-lsp");
+      expect(plugin).toMatchObject({
+        enabled: true,
+        lspServerNames: ["typescript"],
+      });
+      expect(plugin?.components).toContainEqual(
+        expect.objectContaining({
+          kind: "lsp",
+          items: [expect.objectContaining({ name: "typescript" })],
+        }),
+      );
+      const server = outcome.lspServers.find((entry) => entry.pluginId === plugin?.id);
+      expect(server).toMatchObject({
+        id: "typescript-lsp@zcode-plugins-official/typescript",
+        command: "typescript-language-server",
+        args: ["--stdio"],
+      });
+      expect(server?.extensionToLanguage).toMatchObject({
+        ".ts": "typescript",
+        ".tsx": "typescriptreact",
+      });
+      expect(
+        outcome.diagnostics.filter((entry) => entry.code === "plugin_unsupported_component"),
+      ).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("can disable one document plugin without disabling the other formats or search", async () => {
@@ -614,7 +653,7 @@ describe("ZCode plugins", () => {
             id: "zcode-plugins-official",
             isOfficial: true,
             name: "zcode-plugins-official",
-            pluginCount: 14,
+            pluginCount: 15,
             source: {
               source: "url",
               url: "https://cdn-zcode.z.ai/zcode/official-plugin/marketplace.json",
@@ -2395,7 +2434,7 @@ describe("ZCode plugins", () => {
       expect(
         overview.marketplaces.find((marketplace) => marketplace.id === "zcode-plugins-official"),
       ).toMatchObject({
-        pluginCount: 14,
+        pluginCount: 15,
         source: {
           source: "url",
           url: "https://cdn-zcode.z.ai/zcode/official-plugin/marketplace.json",
@@ -2562,6 +2601,38 @@ describe("ZCode plugins", () => {
   // content-only official plugins (skill-creator) the same way the CLI subcommand
   // path does. Without forwarding the default-enabled set, `/skill skill-creator`
   // failed with "Skill not found" inside a session even though it was bundled.
+  // docs/design/v2/incognito-session.md: plugins off → the empty plugin outcome.
+  it.each([
+    { label: "normal session", incognito: undefined, discovered: true },
+    { label: "lockdown profile", incognito: INCOGNITO_LOCKDOWN_PROFILE, discovered: false },
+    {
+      label: "plugins opted back in",
+      incognito: { ...INCOGNITO_LOCKDOWN_PROFILE, plugins: true },
+      discovered: true,
+    },
+  ])("startup plugin discovery for $label: $discovered", async ({ incognito, discovered }) => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-incognito-plugins-"));
+    try {
+      const outcome = resolveStartupPlugins({
+        cliStorageRoot: join(root, "cli"),
+        configResult: createConfig({ env: {}, skipUserConfig: true, workingDirectory: root }),
+        env: {},
+        incognito,
+        options: { pluginStorageRoot: join(root, "plugins") } as ZCodeAppOptions,
+        startupTimer: createNoopStartupTimer(),
+        workingDirectory: root,
+      });
+      expect(outcome.plugins.length > 0).toBe(discovered);
+      expect(outcome.skillRoots.length > 0).toBe(discovered);
+      if (!discovered) {
+        expect(outcome.mcpServers).toEqual({});
+        expect(outcome.hooks).toEqual({});
+      }
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   it("default-enables skill-creator through the app-startup plugin discovery path", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-bootstrap-startup-plugins-"));
     const pluginStorageRoot = join(root, "plugins");

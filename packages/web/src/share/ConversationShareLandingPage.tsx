@@ -13,7 +13,7 @@ import { BIGMODEL_PROVIDER_ID, ZAI_PROVIDER_ID } from "@zcode/shared";
 import type { ConversationSharePreview } from "@zcode/shared";
 import { ConversationShareReadonlyTimeline } from "@zcode/ui/conversation-share-readonly";
 import { renderOAuthProviderIcon } from "@zcode/ui/oauth-provider-icon";
-import { applyTheme, resolveTheme, type Theme } from "@zcode/ui/useTheme";
+import { applyTheme, readStoredThemeSelection, resolveTheme, type Theme } from "@zcode/ui/useTheme";
 import "./conversationShareLandingPage.css";
 import type { WebOAuthProviderId } from "../auth/browserOAuthCredentialRepo.js";
 import {
@@ -236,7 +236,7 @@ function ShareThemeToggle({
   onThemeChange?: (theme: Theme) => void;
 }) {
   const resolvedTheme = resolveTheme(theme);
-  const nextTheme = resolvedTheme === "dark" ? "zai-light" : "zai-dark";
+  const nextTheme = resolvedTheme === "dark" ? "light" : "dark";
   const label = resolvedTheme === "dark" ? copy.switchToLightTheme : copy.switchToDarkTheme;
   const Icon = resolvedTheme === "dark" ? SunIcon : MoonIcon;
 
@@ -306,7 +306,7 @@ export function ConversationShareLandingPage({
 }) {
   const resolvedLocale = localeOf(locale);
   const copy = COPY[resolvedLocale];
-  const activeTheme = theme ?? "zai-light";
+  const activeTheme = theme ?? "light";
   // preview 到手后把会话标题写进浏览器标签；main.tsx 只能先给一个语言正确的兜底标题。
   const shareTitle = preview.share.title;
   useEffect(() => {
@@ -556,7 +556,7 @@ export function ConversationShareLandingPage({
             {artifactCount ? (
               // 这里原本硬编码英文 artifact/artifacts 且手写复数，中文页会渲染成
               // 「2026年9月3日 11:55 · 1 artifact」这种中英混排。
-              <span aria-label={artifactCountLabel}>· {artifactCountLabel}</span>
+              <span data-share-artifact-count={artifactCount}>· {artifactCountLabel}</span>
             ) : null}
           </div>
         </ShareContentInset>
@@ -675,7 +675,12 @@ export function ConversationShareLandingStatus({
     );
   return (
     <main className="flex h-full min-h-0 items-center justify-center overflow-y-auto bg-background px-4 py-8 text-foreground">
-      <section className="w-full max-w-md rounded-lg border border-card-border bg-card p-6 shadow-sm">
+      <section
+        data-share-status={state.kind}
+        data-share-error={state.kind === "error" ? state.error : undefined}
+        data-share-locale={localeOf(locale)}
+        className="w-full max-w-md rounded-lg border border-card-border bg-card p-6 shadow-sm"
+      >
         <div className="mb-4 text-ui-sm font-medium text-brand">{copy.brand}</div>
         <h1 className="text-ui-xl font-semibold">{content.title}</h1>
         <p className="mt-3 text-ui-base leading-6 text-foreground-subtle">{content.description}</p>
@@ -772,16 +777,18 @@ export function ConversationShareLandingLoader({
   theme?: Theme;
 }) {
   const [state, setState] = useState<ConversationShareLandingState>({ kind: "loading" });
-  const [activeTheme, setActiveTheme] = useState<Theme>(theme ?? "zai-light");
+  const [activeTheme, setActiveTheme] = useState<Theme>(theme ?? "light");
   const handleThemeChange = useCallback((nextTheme: Theme) => {
     localStorage.setItem("zcode-theme", nextTheme);
     setActiveTheme(nextTheme);
-    applyTheme(nextTheme);
+    // The share page changes only light/dark mode; keep the palette selected in Settings instead of silently resetting it to the default.
+    applyTheme(nextTheme, readStoredThemeSelection("light").palette);
   }, []);
   useEffect(() => {
     if (activeTheme !== "system") return;
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleSystemThemeChange = () => applyTheme("system");
+    const handleSystemThemeChange = () =>
+      applyTheme("system", readStoredThemeSelection("light").palette);
     mediaQuery.addEventListener("change", handleSystemThemeChange);
     return () => mediaQuery.removeEventListener("change", handleSystemThemeChange);
   }, [activeTheme]);

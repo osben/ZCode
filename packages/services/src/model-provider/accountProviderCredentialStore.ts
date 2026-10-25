@@ -11,9 +11,9 @@ export interface AccountProviderCredentialStoreOptions {
 }
 
 /**
- * 保存 Account Provider 的请求期凭据。
+ * Store request-time credentials for Account Providers.
  *
- * 只读取账号 Credential Store；旧 Provider Store 不再作为凭据来源。
+ * Read only from the account Credential Store; the legacy Provider Store is no longer a credential source.
  */
 export function createAccountProviderCredentialStore(
   options: AccountProviderCredentialStoreOptions,

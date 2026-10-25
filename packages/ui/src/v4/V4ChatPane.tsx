@@ -37,6 +37,9 @@ import type {
 export interface V4ChatPaneProps {
   workspacePath: string;
   workspaceIdentity?: string;
+  remoteSessionId?: string;
+  /** Side conversation (selection chat) embeds the composer without the main-pane chrome. */
+  selectionSideChat?: boolean;
   /** Prompt 模板埋点当前仅覆盖 Desktop。 */
   isDesktop?: boolean;
   readOnly?: boolean;
@@ -61,6 +64,11 @@ export interface V4ChatPaneProps {
   onSummaryPanelVariantOverrideChange?: (variant: ChatViewSummaryPanelVariant | null) => void;
   onRefreshGit?: () => void;
   onOpenGitReview?: (sourceId?: GitChangeSourceId) => void;
+  /** Opens a created worktree through the shared workspace + draft flow. */
+  onCreateTaskInWorkspace?: (
+    workspacePath: string,
+    workspaceIdentity?: string,
+  ) => void | Promise<void>;
   onOpenBrowserUrl?: (url: string) => void;
   onOpenAutomationsMain?: OpenAutomationsMain;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
@@ -91,6 +99,8 @@ export interface V4ChatPaneProps {
 export function V4ChatPane({
   workspacePath,
   workspaceIdentity,
+  remoteSessionId,
+  selectionSideChat = false,
   isDesktop = false,
   readOnly = false,
   allowEscapeStopOutsidePane = false,
@@ -110,6 +120,7 @@ export function V4ChatPane({
   onSummaryPanelVariantOverrideChange,
   onRefreshGit,
   onOpenGitReview,
+  onCreateTaskInWorkspace,
   onOpenBrowserUrl,
   onOpenAutomationsMain,
   onOpenCodeViewer,
@@ -155,11 +166,13 @@ export function V4ChatPane({
       <SessionPane
         paneId="workspace-main"
         readOnly={readOnly}
+        selectionSideChat={selectionSideChat}
         allowEscapeStopOutsidePane={allowEscapeStopOutsidePane}
         sessionId={sessionId}
         openTrigger={openTrigger}
         workspacePath={workspacePath}
         workspaceIdentity={workspaceIdentity}
+        remoteSessionId={remoteSessionId}
         isDesktop={isDesktop}
         compactForRemoteControl={compactForRemoteControl}
         provider={provider}
@@ -175,6 +188,7 @@ export function V4ChatPane({
         onSummaryPanelVariantOverrideChange={onSummaryPanelVariantOverrideChange}
         onRefreshGit={onRefreshGit}
         onOpenGitReview={onOpenGitReview}
+        onCreateTaskInWorkspace={onCreateTaskInWorkspace}
         onOpenBrowserUrl={onOpenBrowserUrl}
         onOpenAutomationsMain={onOpenAutomationsMain}
         onOpenCodeViewer={onOpenCodeViewer}

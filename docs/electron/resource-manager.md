@@ -1,199 +1,196 @@
-# Resource Manager — 资源管理器
+# Resource Manager
 
-> 取代旧的 “Process Monitor / 进程监视器”。本文是当前事实文档；旧的进程树视图与 `GetProcessMetrics` 通道已删除。
+> Replaces the old "Process Monitor". The old process-tree view and `GetProcessMetrics` channel are removed.
 
-## 功能概述
+## Overview
 
-桌面端提供两处 **资源管理器** 入口，都打开同一个独立单例窗口：macOS 原生菜单栏的 Help 菜单，以及所有桌面平台右上角的问号帮助菜单（`WorkspaceHelpMenuButton`，2026-09-11 补入——Windows/Linux 没有原生菜单栏，Windows 自绘标题栏箭头菜单又已下线，此前 Windows 上没有任何入口）。Web 端不渲染该菜单项（`isDesktop` 由挂载处注入，见 `docs/windows-caption-help-menu.md`）。窗口顶部有四个 tab：**CPU**、**内存**、**存储**、**网络**（2026-09-10 裁决：存储管理从设置页整体迁入这里）。
+Two entry points open the same standalone singleton window: the Help menu in the native macOS menu bar, and the question-mark help menu at the top right on all desktop platforms (`WorkspaceHelpMenuButton`; Windows/Linux have no native menu bar). The Web app does not render this menu item (`isDesktop` is injected at the mount point; see `docs/windows-caption-help-menu.md`). The window has four tabs: **CPU**, **Memory**, **Storage**, **Network**. All storage management lives here, not in Settings.
 
-- **CPU / 内存 tab**：实时展示 ZCode 的 CPU 或内存占用，布局相同，只是指标卡与列表指标列换成当前 tab 的指标。切到「存储」或「网络」tab 时停止 CPU/内存的 1s 轮询。
-- **存储 tab**：本机 `.zcode` 数据目录的磁盘占用，按卷汇总、按类别拆分、可下钻与清理。产品与实现细节见 `docs/settings-storage-management.md`；下面「存储 tab 数据通路」只写与本窗口相关的接线。
+- **CPU / Memory tabs**: ZCode CPU or memory usage in real time. Same layout; the metric cards and list columns follow the selected tab. 1-second polling stops when switching to **Storage** or **Network**.
+- **Storage tab**: disk usage of the local `.zcode` data directory, by volume and category, with drill-down and cleanup. Product and implementation details are in `docs/settings-storage-management.md`; the data flow below covers only this window's wiring.
+- **Network tab**: observes HTTP(S) requests and WebSocket connections of local Main, Host, App Renderer and CLI only while the window is open; no bodies are collected. Closing the window cancels listeners and releases records. See [Network Request Observability](resource-manager-network.md).
 
-CPU / 内存 tab 的内容：
+The CPU / Memory tabs contain:
 
-- 左侧两块指标卡：**CPU**、**内存**。每块都有一根双层进度条——**灰色**表示整机总占用，**彩色（brand）**表示 ZCode 自身占用；数字显示 ZCode 占用与整机占用。
-- 右侧按三类分组列出进程，每组显示小计，可展开看到每个进程的名称、PID、CPU、内存：
-  - **基础服务**：Electron main、GPU、所有 renderer（含 DevTools / WebContentsView）、window-scoped Host（utility）、Host 派生的非 Agent 子进程（终端 shell 等）、Agent CLI 进程及其非插件子进程（工具/命令子进程）、其它 Electron utility（network service 等）。
-  - **内置插件**：官方市场（`zcode-plugins-official`）插件的 MCP 子进程树——当前即 `browser-use`（`node_repl` + plugin host）与 `computer-use`。
-  - **社区插件**：其余全部 MCP 子进程树——第三方市场插件与用户自定义 MCP（`custom`）。
+- Two metric cards on the left: **CPU** and **Memory**. Each has a dual-layer progress bar: **gray** = total machine usage, **color (brand)** = ZCode usage; values show ZCode and total machine usage.
+- Processes on the right in three groups. Each group shows a subtotal and expands to per-process name, PID, CPU and memory:
+  - **Core services**: Electron main, GPU, all renderers (including DevTools / WebContentsView), window-scoped Host (utility), non-Agent child processes spawned by Host (such as terminal shells), Agent CLI processes and their non-plugin child processes, and other Electron utilities (such as network service).
+  - **Built-in plugins**: MCP child-process trees for plugins from the official marketplace (`zcode-plugins-official`), currently `browser-use` (`node_repl` + plugin host) and `computer-use`.
+  - **Community plugins**: all other MCP child-process trees (third-party marketplace plugins and user-defined MCP, `custom`).
 
-**网络 tab**：只在资源管理器窗口存活期间观测本机 Main、Host、App Renderer、CLI 的 HTTP(S) 请求与 WebSocket 建连，不采集正文。窗口关闭即取消监听并释放记录；具体边界、代理兼容和验收见 [网络请求观测](resource-manager-network.md)。磁盘占用即「存储」tab。
+## Storage Tab Data Flow
 
-## 存储 tab 数据通路
-
-该窗口按设计不接 RPC / MessagePort（见 `preload/resourceManager.ts`），因此存储服务不走 Window Host，而是由 **main 进程持有唯一的 `StorageService` 实例**（`@zcode/services` 的 storage 模块），遍历放在 `worker_threads` 里（entry `main/storageScanWorker`），不阻塞 main 事件循环；这与「main 禁止起外部进程采样」不冲突，扫盘只是 fs 遍历。
+This window does not connect through RPC / MessagePort (see `preload/resourceManager.ts`), so storage does not go through Window Host. The **main process owns the sole `StorageService` instance** (the storage module in `@zcode/services`), and scanning runs in `worker_threads` (entry `main/storageScanWorker`) without blocking the main event loop. This does not conflict with "main must not launch external processes for sampling"; disk scanning is only filesystem traversal.
 
 ```
 Resource Manager Renderer            preload (window.resourceManager.storage)        Main
-  │ 切到存储 tab → startScan() ──────► ipc invoke StorageStartScan ─────────────────► resourceManagerStorage.ts
-  │                                                                                   │ 懒创建 StorageService(Worker runner)
+  │ Switch to Storage tab → startScan() ─► ipc invoke StorageStartScan ──────────────► resourceManagerStorage.ts
+  │                                                                                   │ Lazily create StorageService (Worker runner)
   │◄─ subscribeScanProgress ◄──────── ipc on StorageScanProgress ◄────────────────── │ onScanProgress → webContents.send
-  │ 切走 / 关窗 → cancelScan(jobId) ─► ipc invoke StorageCancelScan ────────────────► │ 窗口 closed 也会取消最近 job
+  │ Switch away / close window → cancelScan(jobId) ─► ipc invoke StorageCancelScan ─► │ Closing window also cancels the latest job
   │ clean({rootId,categoryId}) ─────► ipc invoke StorageClean ─────────────────────► │
-  │ revealPath(abs) ────────────────► ipc invoke StorageRevealPath ────────────────► │ 校验路径在数据根内 → shell.showItemInFolder
+  │ revealPath(abs) ────────────────► ipc invoke StorageRevealPath ────────────────► │ Validate path is inside data root → shell.showItemInFolder
 ```
 
-- 通道：`PlatformChannels.StorageStartScan / StorageCancelScan / StorageGetSnapshot / StorageClean / StorageRevealPath`（invoke），`StorageScanProgress`（main → renderer 推送）。
-- 类型：`packages/shared/src/storage.ts`（`StorageUsageSnapshot`、`StorageManagementBridge` 等），services / main / UI 共用。
-- UI：`packages/ui/src/resource-manager/storage/*`，`useStorageUsage({ bridge, enabled: tab === "storage" })`。
+- Channels: `PlatformChannels.StorageStartScan / StorageCancelScan / StorageGetSnapshot / StorageClean / StorageRevealPath` (invoke), `StorageScanProgress` (main → renderer push).
+- Types: `packages/shared/src/storage.ts` (`StorageUsageSnapshot`, `StorageManagementBridge`, etc.), shared by services / main / UI.
+- UI: `packages/ui/src/resource-manager/storage/*`, `useStorageUsage({ bridge, enabled: tab === "storage" })`.
 
-## 口径
+## Measurement Definitions
 
-- **CPU 统一为整机归一化百分比**：`100%` = 整机所有逻辑核心全部占满。左侧灰色条即 `os.cpus()` 两次采样间 busy/total；ZCode 占用 = 所有进程行 CPU 之和；各进程行也用同一口径，因此分组小计与总计可以直接相加。旧版进程监视器在 macOS 上按 Activity Monitor（单核 = 100%）展示，本版不再沿用。
-  - Electron 自身进程来自 `app.getAppMetrics().cpu.percentCPUUsage`：darwin / win32 已是整机口径；linux 上 Chromium 返回单核口径，进入快照前除以逻辑核心数（`normalizeElectronCpuToMachinePercent`）。
-  - 外部进程（Agent / MCP / 终端）由 Host 侧采样器按 `Δcputime / Δwall / 逻辑核心数` 计算，首个样本没有差分基线，CPU 记 0。
-- **内存**：Electron 进程用 `workingSetSize`；外部进程用 RSS（macOS/Linux）或 WorkingSet（Windows）。整机总量 `os.totalmem()`，整机已用 `total - os.freemem()`（macOS 上与 `top` 的 PhysMem used 同口径，包含文件缓存）。
-- Chromium 进程之间的共享内存会被重复计数，与 Task Manager / Activity Monitor 的进程列表一致，不做去重。
-- 远程 workspace（SSH/WSL/Docker/Server）的 Agent 运行在远端，不在本机可观测范围内，不展示。
+- **CPU is a machine-normalized percentage everywhere**: `100%` = all logical cores fully occupied. The gray bar is busy/total between two `os.cpus()` samples; ZCode usage is the sum of CPU across all process rows; each process row uses the same basis, so group subtotals and totals add directly. (The old Process Monitor used the macOS Activity Monitor convention, one core = 100%; this window does not.)
+  - Electron processes use `app.getAppMetrics().cpu.percentCPUUsage`: darwin / win32 already report machine-wide percentages; on linux Chromium returns a per-core percentage, so divide by the logical core count (`normalizeElectronCpuToMachinePercent`).
+  - External processes (Agent / MCP / terminal) are computed by the Host sampler as `Δcputime / Δwall / logical core count`. The first sample has no baseline, so CPU is 0.
+- **Memory**: Electron processes use `workingSetSize`; external processes use RSS (macOS/Linux) or WorkingSet (Windows). Total machine memory is `os.totalmem()`; used is `total - os.freemem()` (same basis as PhysMem used in macOS `top`, including file cache).
+- Shared memory between Chromium processes is counted repeatedly, matching Task Manager / Activity Monitor; it is not deduplicated.
+- Agents for remote workspaces (SSH/WSL/Docker/Server) run remotely, outside local observability scope, and are not shown.
 
-## 架构
+## Architecture
 
 ```
 Resource Manager Renderer         Main (Electron)                 Window Host (utility)                 Agent CLI
-   │ 1s 轮询                          │                                 │                                    │
+   │ 1s polling                       │                                 │                                    │
    │─ invoke GetResourceUsageSnapshot ►│                                 │                                    │
-   │                                  │─ ResourceUsageSnapshotRequest ─►│  (fan-out 到每个存活 Host,          │
-   │                                  │   {requestId}                   │   900ms 超时, 超时用上次结果)        │
-   │                                  │                                 │─ 异步 ps / /proc / CIM ────┐        │
+   │                                  │─ ResourceUsageSnapshotRequest ─►│  (fan-out to each live Host,        │
+   │                                  │   {requestId}                   │   900ms timeout; use previous result)│
+   │                                  │                                 │─ Async ps / /proc / CIM ────┐        │
    │                                  │                                 │◄───────────────────────────┘        │
    │                                  │                                 │─ request process/childProcesses ───►│
    │                                  │                                 │◄─ {processes:[{pid,serverName,     │
    │                                  │                                 │     mcpSource,pluginName?}]}        │
-   │                                  │                                 │  按 Host 子树归属: agent / mcp 根   │
+   │                                  │                                 │  Attribute Host subtree: agent / mcp root │
    │                                  │◄─ ResourceUsageSnapshotResult ──│                                    │
    │                                  │   {requestId, processes[]}      │                                    │
    │                                  │ + app.getAppMetrics()           │                                    │
-   │                                  │ + os cpu/mem 总量               │                                    │
-   │                                  │ + Agent 注册表兜底 (未采到=0)    │                                    │
+   │                                  │ + os CPU/memory totals          │                                    │
+   │                                  │ + Agent registry fallback (unsampled=0)        │
    │◄──────── ResourceUsageSnapshot ──│                                 │                                    │
 ```
 
-### 只读采样生命周期与回归约束
+### Read-Only Sampling Lifecycle and Regression Constraints
 
-- Main 的资源管理器窗口是采样启停的唯一 owner：CPU/内存页挂载后启用；切到存储页、窗口关闭或 renderer 退出时停用。未启用或非该窗口发来的查询不得向 Host 发请求。
-- 每个 Host 最多一轮在途采样。Main 的 900ms 展示等待超时只返回缓存，不追加采样；完成后才允许下一轮。停用时按 requestId 取消在途请求，迟到结果不得写回缓存或投影。Host 不保存采样队列。
-- `process/childProcesses` 是 observation 请求：只查询已经存在且存储已就绪的 runtime，不等待迁移、不启动进程；失败、超时和取消只影响该次查询，不发布 runtime 故障、不回收进程，也不刷新业务空闲计时。普通业务 RPC 的 watchdog 保持原有语义。
-- Host 将取消传到进程表读取和 CLI 查询；取消只终止本次采样创建的辅助命令，不能终止被观察的 Agent/MCP。Linux 文件读取完成后的迟到结果也必须丢弃。
-- 采样只覆盖本地进程，不创建远端连接，不改变桌面 continuous / 手机 replayable 的业务消息恢复边界。
+- The Main Resource Manager window is the sole owner of sampling start/stop: enable after the CPU/Memory page mounts; disable when switching to Storage, when the window closes, or when the renderer exits. Send nothing to Host when sampling is disabled or the query did not come from this window.
+- Each Host has at most one sample in flight. Main's 900ms display-wait timeout returns the cache only and does not queue another sample; the next sample starts only after the current one completes. On disable, in-flight requests are cancelled by requestId; late results must not update the cache or projection. Host keeps no sampling queue.
+- `process/childProcesses` is an observation request: query only existing runtimes whose storage is ready; do not wait for migration or start a process. Failure, timeout and cancellation affect only that query; they do not publish a runtime failure, reclaim a process, or refresh the business idle timer. The regular business RPC watchdog keeps its existing semantics.
+- Host propagates cancellation to process-table reads and CLI queries; cancellation terminates only helper commands created for this sample, never the Agent/MCP being observed. Late results after Linux file reads complete are discarded.
+- Sampling covers local processes only, creates no remote connections, and does not change business-message recovery boundaries for Desktop continuous / mobile replayable.
 
 ```text
-CPU/内存页 → Main 启用 → 单轮 Host 采样 → OS 进程表 + CLI observation
-切页/关窗 → Main 停用 → cancel(requestId) → 取消 IO/查询，丢弃迟到结果
-CLI observation 超时 → 本轮无映射；Agent 生命周期与业务 idle 计时不变
+CPU/Memory page → Main enables → One Host sampling round → OS process table + CLI observation
+Switch tab/close window → Main disables → cancel(requestId) → Cancel I/O/query and discard late results
+CLI observation timeout → No mapping for this round; Agent lifecycle and business idle timer remain unchanged
 ```
 
-验收：未打开零查询；慢采样不积压；切页/关窗取消在途且不再查询；重新打开不接收旧结果；观测超时后业务请求仍可执行；观测成功或挂起均不延长 mcp-status 的空闲寿命。
+Acceptance: no queries when unopened; slow sampling does not build a backlog; switching tabs/closing the window cancels in-flight work and prevents further queries; reopening does not accept old results; business requests remain executable after an observation timeout; successful or pending observation does not extend the idle lifetime of mcp-status.
 
-### 为什么这样分层
+### Why the Layers Are Structured This Way
 
-- **main 进程禁止起外部进程采样**（历史 bug：同步 `ps` / PowerShell 曾把整个 App 卡死；异步 `execFile` 的 CreateProcess 阶段同样会阻塞 main）。所以外部进程的 CPU/内存一律在 **Window Host（utility 进程）** 内异步采样，且只在资源管理器窗口发起请求时才采样；窗口关闭后 Host 不再有任何周期性开销。
-- **插件归属只有 CLI 知道**：MCP 子进程由 Agent CLI 拉起，`ZCODE_PLUGIN_ID` / server name / `source.kind` 都在 CLI 内存里；现有 `process/mcpTelemetry` 通道为了遥测脱敏刻意不带 pid。因此新增一个纯内存、无 I/O 的协议请求 `process/childProcesses`，Host 用它把 pid 映射到插件。
-- **Host 做进程树归属**：Host 是 Agent 的父进程，一次 `ps -axo pid=,ppid=,rss=,cputime=,comm=`（darwin）/ 扫描 `/proc/*/stat` + `/proc/<pid>/status`（linux）/ `Get-CimInstance Win32_Process`（win32）就能覆盖 Host 全部后代。每个后代按“最近的已知祖先”归属：MCP 根 pid → 对应插件；Agent pid → 基础服务 `cli`；无归属 → 基础服务 `host` 子进程。
-- **main 只合并**：`app.getAppMetrics()`（Electron 进程）+ 系统总量 + Host 回报；Agent 注册表里已知但 Host 尚未回报的 Agent 仍会出现在列表中（`sampled=false`，指标为 0），保证拓扑始终可见，E2E 也依赖这一点。
+- **Main must not launch external processes for sampling** (synchronous `ps` / PowerShell blocked the whole app; the CreateProcess stage of asynchronous `execFile` also blocks main). External-process CPU/memory is sampled asynchronously inside **Window Host (utility process)**, only when the Resource Manager window requests it; Host has no periodic overhead after the window closes.
+- **Only the CLI knows plugin ownership**: MCP child processes are started by the Agent CLI, and `ZCODE_PLUGIN_ID` / server name / `source.kind` are in CLI memory; the existing `process/mcpTelemetry` channel deliberately omits pid for telemetry redaction. A pure-memory, no-I/O protocol request `process/childProcesses` lets Host map pids to plugins.
+- **Host attributes process trees**: Host is the Agent's parent process. One `ps -axo pid=,ppid=,rss=,cputime=,comm=` (darwin) / scan of `/proc/*/stat` + `/proc/<pid>/status` (linux) / `Get-CimInstance Win32_Process` (win32) covers all Host descendants. Each descendant is attributed to its nearest known ancestor: MCP root pid → corresponding plugin; Agent pid → core-service `cli`; no owner → core-service `host` child process.
+- **Main only merges**: `app.getAppMetrics()` (Electron processes) + system totals + Host reports. Agents known to the Agent registry but not yet reported by Host still appear in the list (`sampled=false`, metrics 0), keeping the topology visible; E2E depends on this.
 
-### 数据类型（`packages/shared/src/protocol.ts`）
+### Data Types (`packages/shared/src/protocol.ts`)
 
 ```ts
 type ResourceUsageCategory = "base" | "builtin-plugin" | "community-plugin";
 
 interface ResourceUsageProcess {
   pid: number;
-  name: string; // zcode-main / zcode-renderer-main / zcode-agent-<provider>-<ws> / MCP server name / 命令名
+  name: string; // zcode-main / zcode-renderer-main / zcode-agent-<provider>-<ws> / MCP server name / command name
   category: ResourceUsageCategory;
-  groupKey: string; // base: main|gpu|renderer|host|cli|utility；插件: 插件名或 MCP server name
-  groupLabel: string; // 分组展示名（插件名 / server name）
-  cpuPercent: number; // 整机归一化
+  groupKey: string; // base: main|gpu|renderer|host|cli|utility; plugin: plugin name or MCP server name
+  groupLabel: string; // Group display name (plugin name / server name)
+  cpuPercent: number; // Machine-normalized
   memoryBytes: number;
-  sampled: boolean; // false = 仅拓扑已知，指标尚未采到
+  sampled: boolean; // false = topology is known, but metrics have not been sampled yet
 }
 
 interface ResourceUsageSnapshot {
   sampledAt: number;
   logicalCpuCount: number;
   system: { cpuPercent: number; memoryTotalBytes: number; memoryUsedBytes: number };
-  app: { cpuPercent: number; memoryBytes: number }; // = processes 之和
+  app: { cpuPercent: number; memoryBytes: number }; // = sum of processes
   processes: ResourceUsageProcess[];
 }
 ```
 
-### 协议新增（`packages/shared/src/zcode-protocol/index.ts`）
+### Protocol Addition (`packages/shared/src/zcode-protocol/index.ts`)
 
-- `zcodeProtocolMethods.processChildProcesses = "process/childProcesses"`，params `{}`。
-- 结果 `zcodeProcessChildProcessesResultSchema`：`{ processes: Array<{ pid, serverName, mcpSource: "builtin"|"plugin"|"custom", pluginName?: string }> }`。
-- CLI 实现：`McpTelemetryTracker.listProcesses()` 直接读取已注册连接的 `process.pid`、`serverName`、`mcpSource`；`pluginName` 由 `plugin:<name>:<key>` 命名空间或官方插件 `hostMcpServerNames`（`node_repl` → `browser-use`）解析。不做任何 I/O。
+- `zcodeProtocolMethods.processChildProcesses = "process/childProcesses"`, params `{}`.
+- Result `zcodeProcessChildProcessesResultSchema`: `{ processes: Array<{ pid, serverName, mcpSource: "builtin"|"plugin"|"custom", pluginName?: string }> }`.
+- CLI implementation: `McpTelemetryTracker.listProcesses()` reads `process.pid`, `serverName` and `mcpSource` from registered connections; `pluginName` is resolved from the `plugin:<name>:<key>` namespace or official-plugin `hostMcpServerNames` (`node_repl` → `browser-use`). No I/O.
 
-### main ↔ host 消息
+### Main ↔ Host Messages
 
-- main → host `HostMessageTypes.ResourceUsageSnapshotRequest { requestId }`。
-- host → main `HostResponseTypes.ResourceUsageSnapshotResult { requestId, sampledAt, processes: HostResourceUsageProcess[] }`，其中 `HostResourceUsageProcess = { pid, name, category, groupKey, groupLabel, cpuPercent, memoryBytes }`。
-- 校验在 `packages/shared/src/validation.ts` 的 `hostIncomingMessageSchema` / `hostResponseMessageSchema` 中。
+- main → host `HostMessageTypes.ResourceUsageSnapshotRequest { requestId }`.
+- host → main `HostResponseTypes.ResourceUsageSnapshotResult { requestId, sampledAt, processes: HostResourceUsageProcess[] }`, where `HostResourceUsageProcess = { pid, name, category, groupKey, groupLabel, cpuPercent, memoryBytes }`.
+- Validation: `hostIncomingMessageSchema` / `hostResponseMessageSchema` in `packages/shared/src/validation.ts`.
 
-### Host 侧采样（`packages/services/src/process/processResourceSampler.ts`）
+### Host-Side Sampling (`packages/services/src/process/processResourceSampler.ts`)
 
-- `readProcessResourceTable()`：按平台异步读取整机进程表 `{ pid, ppid, rssKb, cpuTimeMs, command }`，超时 3s（win32 5s），失败返回 `undefined`（本轮跳过，不抛错）。
-- `createProcessResourceSampler()`：保存上一轮各 pid 的 `cpuTimeMs` 与时间戳，输出整机口径 `cpuPercent`；pid 消失后基线自动淘汰。
-- `attributeHostProcessTree()`（纯函数）：输入进程表、Host pid、Agent 列表（pid/workspacePath/provider）、各 Agent 的 MCP 子进程映射，输出 `HostResourceUsageProcess[]`。
+- `readProcessResourceTable()`: asynchronously reads the machine-wide process table `{ pid, ppid, rssKb, cpuTimeMs, command }` per platform, 3s timeout (5s on win32); returns `undefined` on failure (skip the round without throwing).
+- `createProcessResourceSampler()`: stores each pid's `cpuTimeMs` and timestamp from the previous round and outputs machine-normalized `cpuPercent`; drops the baseline when a pid disappears.
+- `attributeHostProcessTree()` (pure): takes the process table, Host pid, Agent list (pid/workspacePath/provider) and each Agent's MCP child-process mappings, and outputs `HostResourceUsageProcess[]`.
 
-Host 入口 `packages/desktop/src/host/hostResourceUsage.ts` 把上述三者与 `IZCodeAgentService.collectLocalRuntimeChildProcesses()` 串起来，收到请求后回帖结果。
+The Host entry point `packages/desktop/src/host/hostResourceUsage.ts` connects these with `IZCodeAgentService.collectLocalRuntimeChildProcesses()` and replies when requested.
 
-## 架构治理决策记录
-
-按 `.agents/skills/architecture-governance` 的要求补记（本条在实现后补写，属于流程补课）：
+## Architecture Governance Decision Record
 
 ```text
-owner:            main 进程 resourceManagerWindow（Host / Agent pid 注册表 + 快照合并）；
-                  外部进程指标的瞬时事实由 Window Host 采样器持有（cputime 差分基线）；
-                  MCP 子进程 ↔ 插件映射只由 CLI McpTelemetryTracker 持有
+owner:            main-process resourceManagerWindow (Host / Agent pid registry + snapshot merge);
+                  transient external-process metrics are owned by the Window Host sampler (cputime delta baseline);
+                  MCP child-process ↔ plugin mapping is owned only by CLI McpTelemetryTracker
 command path:     renderer invoke GetResourceUsageSnapshot → main buildResourceUsageSnapshot
                   → HostMessageTypes.ResourceUsageSnapshotRequest → host createHostResourceUsageResponder
-                  → CLI process/childProcesses（纯内存）
-derived views:    ResourceUsageSnapshot（main 合并 Electron 指标 + 系统总量 + Host 回报）；
-                  UI 的 groupResourceUsage 只做分组/排序/格式化，不持有任何指标状态；
-                  main 的 lastHostResults 是超时兜底缓存，不是第二份事实源
-ordering:         每个 Host 最多一轮在途采样；Main 超时返回缓存但复用原 requestId，Host 不排队；
-                  活跃请求迟到回帖可更新缓存，取消后的回帖丢弃；pid 复用靠 command 变化 / cputime 倒退重建基线
-idempotency:      请求无副作用，可任意重放；Host 不维护定时器，窗口关闭后零开销
-delivery:         desktop-only（独立 BrowserWindow + 专用 preload）；不接 conversation continuous / replayable 链路
-reuse decision:   未复用 services/process/processTreeSnapshot.ts（同步 spawnSync，为 app quit 设计，列不同）
-                  与 CLI mcp/process-memory.ts（5 分钟内存遥测，Windows 只有 tasklist）——采样需要异步、cputime、
-                  在 Host 内执行，三者职责不同；PowerShell CIM 命令格式与 processTreeSnapshot 相近，属已知重复
-contracts/spec:   packages/shared protocol.ts / channels.ts / validation.ts / zcode-protocol；本文；
-                  desktop、services、ui、CLI 四组单测 + e2e resource-manager.test.ts
+                  → CLI process/childProcesses (in memory only)
+derived views:    ResourceUsageSnapshot (main merges Electron metrics + system totals + Host reports);
+                  UI groupResourceUsage only groups/sorts/formats and owns no metric state;
+                  main lastHostResults is a timeout fallback cache, not a second source of truth
+ordering:         At most one sample in flight per Host; on timeout Main returns the cache using the original requestId, and Host does not queue;
+                  late replies from active requests may update the cache; replies after cancellation are discarded; pid reuse rebuilds the baseline when command changes / cputime goes backward
+idempotency:      Requests have no side effects and may be replayed freely; Host maintains no timer and has zero overhead after the window closes
+delivery:         desktop-only (standalone BrowserWindow + dedicated preload); not connected to conversation continuous / replayable paths
+reuse decision:   Did not reuse services/process/processTreeSnapshot.ts (synchronous spawnSync, designed for app quit, different process list)
+                  or CLI mcp/process-memory.ts (5-minute memory telemetry, tasklist only on Windows)—sampling must be asynchronous, use cputime,
+                  and run inside Host, so the responsibilities differ; PowerShell CIM command format is similar to processTreeSnapshot, a known duplication
+contracts/spec:   packages/shared protocol.ts / channels.ts / validation.ts / zcode-protocol; this document;
+                  unit tests across desktop, services, ui, CLI + e2e resource-manager.test.ts
 ```
 
-## 文件清单
+## File Inventory
 
-| 文件                                                                                                    | 职责                                                                                                       |
-| ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `desktop/src/main/resourceManagerWindow.ts`                                                             | 单例窗口、Host / Agent 进程注册表、`buildResourceUsageSnapshot()`、系统 CPU 差分                           |
-| `desktop/src/main/resourceManagerHostSampling.ts`                                                       | main → Host 采样 fan-out：requestId 关联、900ms 超时、上一轮结果兜底                                       |
-| `desktop/src/main/resourceManagerProcessNames.ts`                                                       | 非 BrowserWindow renderer（WebContentsView / DevTools / webview）的显示名                                  |
-| `desktop/src/main/desktopHostProcess.ts`                                                                | 转发 `ResourceUsageSnapshotResult`；`requestHostResourceUsage()` fan-out                                   |
-| `desktop/src/host/hostResourceUsage.ts`                                                                 | Host 侧采样 + 归属 + 回帖                                                                                  |
-| `desktop/src/preload/resourceManager.ts`                                                                | 暴露 `window.resourceManager.getSnapshot()` 与 `window.resourceManager.storage`（StorageManagementBridge） |
-| `desktop/src/main/resourceManagerStorage.ts`                                                            | 存储 tab 的 ipc 面：持有 StorageService、进度推送、关窗取消、定位路径校验                                  |
-| `desktop/src/main/storageScanWorker.ts` / `storageScanWorkerClient.ts` / `storageScanWorkerProtocol.ts` | 扫描 Worker 入口与 ScanRunnerPort 实现                                                                     |
-| `ui/src/resource-manager/storage/*`                                                                     | 存储 tab UI（磁盘卡片、类别列表、明细、清理确认）与 `useStorageUsage`                                      |
-| `desktop/src/renderer/resource-manager.html` / `src/resource-manager.tsx`                               | 独立 renderer 入口，挂载 `@zcode/ui` 的 `ResourceManagerApp`                                               |
-| `ui/src/resource-manager/ResourceManagerApp.tsx`                                                        | 窗口 UI（指标卡 + 分组列表），组件放在 `packages/ui` 内以纳入 Tailwind 扫描                                |
-| `ui/src/resource-manager/resourceUsageView.ts`                                                          | 分组聚合与格式化纯函数                                                                                     |
-| `services/src/process/processResourceSampler.ts`                                                        | 跨平台进程表读取、CPU 差分、进程树归属                                                                     |
-| `services/src/zcode-agent/zcodeAgentService.ts`                                                         | `collectLocalRuntimeChildProcesses()`                                                                      |
-| `shared/src/protocol.ts` / `channels.ts` / `validation.ts` / `zcode-protocol/index.ts`                  | 类型、IPC 通道、host 消息 schema、CLI 协议                                                                 |
-| `apps/zcode-cli/.../mcp/telemetry.ts` / `zcode-protocol/server.ts`                                      | `listProcesses()` 与 `process/childProcesses` 处理                                                         |
+| File                                                                                                    | Responsibility                                                                                                 |
+| ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `desktop/src/main/resourceManagerWindow.ts`                                                             | Singleton window, Host / Agent process registry, `buildResourceUsageSnapshot()`, system CPU delta              |
+| `desktop/src/main/resourceManagerHostSampling.ts`                                                       | main → Host sampling fan-out: requestId correlation, 900ms timeout, previous-result fallback                   |
+| `desktop/src/main/resourceManagerProcessNames.ts`                                                       | Display names for non-BrowserWindow renderers (WebContentsView / DevTools / webview)                           |
+| `desktop/src/main/desktopHostProcess.ts`                                                                | Forwards `ResourceUsageSnapshotResult`; `requestHostResourceUsage()` fan-out                                   |
+| `desktop/src/host/hostResourceUsage.ts`                                                                 | Host-side sampling + attribution + reply                                                                       |
+| `desktop/src/preload/resourceManager.ts`                                                                | Exposes `window.resourceManager.getSnapshot()` and `window.resourceManager.storage` (StorageManagementBridge)  |
+| `desktop/src/main/resourceManagerStorage.ts`                                                            | Storage-tab IPC: owns StorageService, progress push, cancel on close, validate reveal path                     |
+| `desktop/src/main/storageScanWorker.ts` / `storageScanWorkerClient.ts` / `storageScanWorkerProtocol.ts` | Scan Worker entry point and ScanRunnerPort implementation                                                      |
+| `ui/src/resource-manager/storage/*`                                                                     | Storage-tab UI (disk cards, category list, details, cleanup confirmation) and `useStorageUsage`                |
+| `desktop/src/renderer/resource-manager.html` / `src/resource-manager.tsx`                               | Standalone renderer entry point mounting `ResourceManagerApp` from `@zcode/ui`                                 |
+| `ui/src/resource-manager/ResourceManagerApp.tsx`                                                        | Window UI (metric cards + grouped list); components live in `packages/ui` for Tailwind scanning                |
+| `ui/src/resource-manager/resourceUsageView.ts`                                                          | Pure function for group aggregation and formatting                                                             |
+| `services/src/process/processResourceSampler.ts`                                                        | Cross-platform process-table reading, CPU delta, process-tree attribution                                      |
+| `services/src/zcode-agent/zcodeAgentService.ts`                                                         | `collectLocalRuntimeChildProcesses()`                                                                          |
+| `shared/src/protocol.ts` / `channels.ts` / `validation.ts` / `zcode-protocol/index.ts`                  | Types, IPC channels, host-message schemas, CLI protocol                                                        |
+| `apps/zcode-cli/.../mcp/telemetry.ts` / `zcode-protocol/server.ts`                                      | `listProcesses()` and `process/childProcesses` handling                                                        |
 
-## UI 细节
+## UI Details
 
-- 顶部 tab 用 `Tabs variant="line"`（与设置页插件 tab 同款胶囊触发器），test id `resource-manager-tab-{cpu|memory|storage}`；默认 CPU。
-- 窗口 900×600，系统默认标题栏；主题与字号沿用主窗口的 `localStorage`（`zcode-theme` / UI font size），语言用 `ZCodeIntlProvider` 的本地偏好。
-- 指标卡：`bg-card border-card-border rounded-xl`；进度条底色 `bg-surface-hover`、整机段 `bg-foreground-subtlest/40`（灰）、ZCode 段 `bg-brand`（彩）。
-- 分组：三组固定顺序（基础服务 / 内置插件 / 社区插件），组头显示进程数、CPU 小计、内存小计；空组显示“暂无进程”。默认展开基础服务，其余按需展开；展开状态只存组件内。
-- 列表行：名称（`font-medium`，`title` 为完整名）、PID（`font-mono`）、CPU、内存；未采样行 CPU/内存显示 `—`。
-- 刷新频率 1s；请求串行（上一轮未返回不叠加）。
-- 无 `window.resourceManager` 桥时展示“资源管理器接口不可用”。
+- Top tabs use `Tabs variant="line"` (same pill trigger as the Settings plugin tabs); test id `resource-manager-tab-{cpu|memory|storage}`; default CPU.
+- Window size 900×600 with the system default title bar; theme and font size reuse the main window's `localStorage` (`zcode-theme` / UI font size); language uses the local preference in `ZCodeIntlProvider`.
+- Metric cards: `bg-card border-card-border rounded-xl`; progress-bar background `bg-surface-hover`, machine-wide segment `bg-foreground-subtlest/40` (gray), ZCode segment `bg-brand` (color).
+- Groups: fixed order Core services / Built-in plugins / Community plugins. Headers show process count and CPU/memory subtotals; empty groups show "No processes". Core services is expanded by default; others expand on demand. Expanded state is component-local.
+- List rows: name (`font-medium`, full name in `title`), PID (`font-mono`), CPU, memory; unsampled rows show `—` for CPU/memory.
+- Refresh interval 1s; requests are serialized (no new request while one is pending).
+- If the `window.resourceManager` bridge is unavailable, show "Resource Manager interface unavailable".
 
-## 测试
+## Tests
 
-- 单测：`desktop/test/resourceManagerWindow.test.ts`（快照合并、Agent 兜底、linux CPU 归一化、系统 CPU 差分）、`services/test/processResourceSampler.test.ts`（三平台解析、CPU 差分、树归属）、`ui/test/resourceUsageView.test.ts`（分组聚合/格式化）、CLI `mcp-telemetry.test.ts`（`listProcesses`）。
-- E2E：`desktop/test/e2e/resource-manager-storage.test.ts`——存储 tab 扫描 / 下钻 / safe 与 confirm 清理 / 日志保留当天（SM-01~05）。
-- E2E：`desktop/test/e2e/resource-manager.test.ts`——菜单打开窗口、默认 CPU tab 三组分区可见、切内存 tab 换指标卡、`zcode-main` 与 `zcode-agent-*` 行出现、Agent 行在 Host 采样后 `memoryBytes > 0`。既有依赖进程监视器的 E2E helper 改读 `window.resourceManager.getSnapshot().processes`。
+- Unit: `desktop/test/resourceManagerWindow.test.ts` (snapshot merge, Agent fallback, linux CPU normalization, system CPU delta), `services/test/processResourceSampler.test.ts` (three-platform parsing, CPU delta, tree attribution), `ui/test/resourceUsageView.test.ts` (group aggregation/formatting), CLI `mcp-telemetry.test.ts` (`listProcesses`).
+- E2E `desktop/test/e2e/resource-manager-storage.test.ts`: Storage-tab scan / drill-down / safe and confirmed cleanup / retain logs from the current day (SM-01~05).
+- E2E `desktop/test/e2e/resource-manager.test.ts`: open the window from the menu, verify three groups are visible on the default CPU tab, switch to Memory and verify metric cards change, verify `zcode-main` and `zcode-agent-*` rows appear, and verify Agent-row `memoryBytes > 0` after Host sampling. E2E helpers read `window.resourceManager.getSnapshot().processes`.

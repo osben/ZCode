@@ -6,7 +6,7 @@ import {
 } from "@zcode/shared/web-remote-relay";
 import { withWebRemoteControlHttpSignal } from "#src/web-remote-control/adapters/webRemoteControlHttpSignal.js";
 
-/** 列表只是当前账号的在线快照；不缓存 JWT、设备元数据或失败响应正文。 */
+/** The list is only an online snapshot of the current account; it does not cache the JWT, device metadata, or failed response bodies. */
 export function createWebRemoteControlDeviceClient(origin: string, fetcher = fetch) {
   return async (jwt: string, signal: AbortSignal): Promise<WebRemoteControlRelayV2Device[]> => {
     try {

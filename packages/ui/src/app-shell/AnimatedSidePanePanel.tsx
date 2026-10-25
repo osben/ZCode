@@ -35,10 +35,12 @@ import { BrowserSitePermissionsPage } from "@/browser-use/BrowserSitePermissions
 import { findScreenshotSurfaceTabForRender } from "@/browser-use/useBrowserScreenshotSurfaceRequest.js";
 import { HumanBrowserView } from "@/browser-use/HumanBrowserView.js";
 import { ScopedErrorBoundary } from "@/ErrorBoundary.js";
-import { GitPane } from "@/GitPane.js";
+import { GitPaneWithLastTurn } from "@/review-last-turn/index.js";
+import type { PaneWorkspaceScope } from "@/v4/paneLayoutStore.js";
 import { TreemappingPane } from "@/TreemappingPane.js";
 import { WhiteboardPane } from "@/WhiteboardPane.js";
 import { ModelTrajectoryPane } from "@/ModelTrajectoryPane.js";
+import { ModelTrajectoryV2Pane } from "@/model-trajectory-v2/index.js";
 import { PluginStorePage } from "@/settings/PluginStorePage.js";
 import { DeveloperToolsPane } from "@/DeveloperToolsPane.js";
 import { cn } from "@/components/lib/utils.js";
@@ -96,6 +98,9 @@ import {
   type BrowserUseSidePaneTab,
   type BrowserSidePaneMetadata,
   type OpenScopedSubagentSideTabRequest,
+  type OpenScopedSubagentDirectorySideTabRequest,
+  type OpenScopedPlanDetailSideTabRequest,
+  type SyncSubagentSessionTabsRequest,
   type OpenScopedWorkflowActorSessionSideTabRequest,
   type OpenScopedWorkflowWorkspaceSideTabRequest,
   type OpenScopedWorkflowArtifactSideTabRequest,
@@ -109,6 +114,8 @@ import { getVisibleSidePaneTabs } from "@/lib/workspaceSidePane.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   BugIcon,
+  ChartNoAxesGanttIcon,
+  ChartLineIcon,
   ChevronRightIcon,
   FileDiffIcon,
   FolderOpenIcon,
@@ -313,6 +320,7 @@ export function AnimatedSidePanePanel({
   activeTaskId,
   sidePaneOwnerId,
   gitState,
+  gitRepositoryWorkspacePath,
   activeGitSourceId,
   panelRef,
   panelElementRef,
@@ -342,12 +350,17 @@ export function AnimatedSidePanePanel({
   onCreateTask,
   onOpenTerminalTab,
   onOpenReviewTab,
+  onOpenModelTrajectory,
+  onOpenModelTrajectoryV2,
   onOpenSelectionSideConversation,
+  onOpenPlanDetail,
   onRevealGitFileInTree,
   onOpenBrowserUrl,
   onOpenCodeViewer,
   onOpenFileLink,
   onOpenSubagentSession,
+  onOpenSubagentDirectory,
+  onSyncSubagentSessionTabs,
   onOpenWorkflowActorSession,
   onOpenWorkflowWorkspace,
   onOpenWorkflowArtifact,
@@ -401,6 +414,7 @@ export function AnimatedSidePanePanel({
   activeTaskId: string | null;
   sidePaneOwnerId: string | null;
   gitState: ReturnType<typeof import("@/hooks/useGitRepository.js").useGitRepository>;
+  gitRepositoryWorkspacePath: string;
   activeGitSourceId: GitChangeSourceId;
   panelRef: RefObject<PanelImperativeHandle | null>;
   panelElementRef: RefObject<HTMLDivElement | null>;
@@ -432,13 +446,20 @@ export function AnimatedSidePanePanel({
   onCreateTask?: (request?: CreateTaskRequest) => void;
   onOpenTerminalTab: () => void;
   onOpenReviewTab: () => void;
+  /** Opens the model trajectory tab for the active task; launcher entry is hidden without one. */
+  onOpenModelTrajectory: () => void;
+  /** Opens the model trajectory v2 tab for the active task; launcher entry is hidden without one. */
+  onOpenModelTrajectoryV2: () => void;
   onOpenSelectionSideConversation: () => void;
+  onOpenPlanDetail: (request: OpenScopedPlanDetailSideTabRequest) => void;
   onRevealGitFileInTree?: (path: string) => void;
   onOpenBrowserUrl: (url: string) => void;
   onOpenCodeViewer: (source: CodeViewerSource) => void;
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
   onOpenBackgroundBash?: (request: OpenBackgroundBashSideTabRequest) => void;
   onOpenSubagentSession: (request: OpenScopedSubagentSideTabRequest) => void;
+  onOpenSubagentDirectory: (request: OpenScopedSubagentDirectorySideTabRequest) => void;
+  onSyncSubagentSessionTabs: (request: SyncSubagentSessionTabsRequest) => void;
   /** run 详情页里点 ask 节点 → 打开那个 actor 实例的 transcript tab。 */
   onOpenWorkflowActorSession?: (request: OpenScopedWorkflowActorSessionSideTabRequest) => void;
   /** run 详情页里点脚本行 → 打开该 run 的脚本 transcript tab，落到那一站。 */
@@ -463,6 +484,14 @@ export function AnimatedSidePanePanel({
   const isDragCollapsible = !isVisible;
   const isResizeDisabled = !isVisible;
   const workspaceKey = workspaceIdentity?.trim() || workspaceAbsPath;
+  const gitConversationScope = useMemo<PaneWorkspaceScope>(
+    () => ({
+      workspacePath: workspaceAbsPath,
+      ...(workspaceIdentity ? { workspaceIdentity } : {}),
+      ...(workspaceRemoteSessionId ? { remoteSessionId: workspaceRemoteSessionId } : {}),
+    }),
+    [workspaceAbsPath, workspaceIdentity, workspaceRemoteSessionId],
+  );
   const composerClientNamespace = useComposerClientNamespace();
   const draftProjectId = useZCodeSessionStore(
     (state) => state.workspaces[workspaceKey]?.draftProjectId,
@@ -814,6 +843,20 @@ export function AnimatedSidePanePanel({
       icon: GlobeIcon,
       onOpen: onOpenBrowserTab,
     },
+    "model-trajectory": {
+      id: "model-trajectory",
+      label: intl.formatMessage({ id: "modelTrajectory.title" }),
+      description: intl.formatMessage({ id: "sidePane.launcher.model-trajectory" }),
+      icon: ChartLineIcon,
+      onOpen: onOpenModelTrajectory,
+    },
+    "model-trajectory-v2": {
+      id: "model-trajectory-v2",
+      label: intl.formatMessage({ id: "modelTrajectoryV2.title" }),
+      description: intl.formatMessage({ id: "sidePane.launcher.model-trajectory-v2" }),
+      icon: ChartNoAxesGanttIcon,
+      onOpen: onOpenModelTrajectoryV2,
+    },
     "developer-tools": {
       id: "developer-tools",
       label: intl.formatMessage({ id: "developerTools.title" }),
@@ -825,6 +868,7 @@ export function AnimatedSidePanePanel({
   const openTabLauncherItems: OpenTabLauncherItem[] = resolveOpenTabLauncherItemIds({
     canOpenSelectionSideConversation,
     developerToolsEnabled,
+    hasActiveTask: activeTaskId !== null,
     hasReviewTab,
     supportsEmbeddedBrowser,
   })
@@ -940,6 +984,9 @@ export function AnimatedSidePanePanel({
         whiteboardTitle: intl.formatMessage({ id: "whiteboard.title" }),
         modelTrajectoryTitle: intl.formatMessage({
           id: "modelTrajectory.title",
+        }),
+        modelTrajectoryV2Title: intl.formatMessage({
+          id: "modelTrajectoryV2.title",
         }),
         newTabTitle: intl.formatMessage({ id: "sidePane.newTab" }),
         pluginMarketTitle: intl.formatMessage({ id: "workspace.openPluginsSettings" }),
@@ -1227,6 +1274,11 @@ export function AnimatedSidePanePanel({
                             onOpenBrowserUrl={onOpenBrowserUrl}
                             onOpenCodeViewer={onOpenCodeViewer}
                             onOpenFileLink={onOpenFileLink}
+                            onOpenPlanDetail={onOpenPlanDetail}
+                            onOpenSubagentSession={onOpenSubagentSession}
+                            onOpenSubagentDirectory={onOpenSubagentDirectory}
+                            onSyncSubagentSessionTabs={onSyncSubagentSessionTabs}
+                            onOpenBackgroundBash={onOpenBackgroundBash}
                             onUnavailable={onCloseTab}
                           />
                         ) : tab.type === "plugin-ui" ? (
@@ -1336,8 +1388,10 @@ export function AnimatedSidePanePanel({
                             })}
                           />
                         ) : tab.type === "git" ? (
-                          <GitPane
-                            workspacePath={workspaceAbsPath}
+                          <GitPaneWithLastTurn
+                            sessionId={activeTaskId}
+                            conversationScope={gitConversationScope}
+                            workspacePath={gitRepositoryWorkspacePath}
                             workspaceIdentity={workspaceIdentity}
                             workspaceRemoteSessionId={workspaceRemoteSessionId}
                             gitState={gitState}
@@ -1367,6 +1421,14 @@ export function AnimatedSidePanePanel({
                           />
                         ) : tab.type === "model-trajectory" ? (
                           <ModelTrajectoryPane
+                            taskId={tab.taskId}
+                            title={tab.title}
+                            workspacePath={workspaceAbsPath}
+                            workspaceIdentity={workspaceIdentity}
+                            onClose={() => onCloseTab(tab.id)}
+                          />
+                        ) : tab.type === "model-trajectory-v2" ? (
+                          <ModelTrajectoryV2Pane
                             taskId={tab.taskId}
                             title={tab.title}
                             workspacePath={workspaceAbsPath}

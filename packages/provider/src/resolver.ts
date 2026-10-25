@@ -1,21 +1,27 @@
-/* oxlint-disable eslint(max-lines) -- Resolver 同时产出 Settings 分层结果与唯一 Registry 完整类型证明。 */
+/* oxlint-disable eslint(max-lines) -- Resolver produces both layered Settings results and the sole proof of a complete Registry type. */
 import type { z } from "zod";
 import type { completeModelConfigDataSchema } from "@zcode/shared/model-config";
 import type {
   completeApiKeyAccessDataSchema,
   completeZhipuAccountAccessDataSchema,
+  completeChatgptAccountAccessDataSchema,
   completeProviderConfigDataSchema,
 } from "./config/provider-data-schema.js";
 import type { ConfigValidationIssue } from "./config-overlay.js";
+import { completeAcpProviderConfigDataSchema } from "./config/provider-data-schema.js";
+import { validateConfigSchema } from "./config/schema-validation.js";
 import {
   type ApiKeyAccessConfig,
   ModelConfig,
   ModelConfigRules,
+  isAcpAgentAccess,
   type ZhipuAccountAccessConfig,
+  type ChatgptAccountAccessConfig,
   type ModelId,
   type ProviderConfig,
   type ProviderConfigRule,
   ProviderConfigMap,
+  type ProviderConfigObject,
   type ProviderTemplateMap,
   type ProviderId,
 } from "./config/index.js";
@@ -25,9 +31,13 @@ import type { AccountProviderStates } from "./account-provider-state.js";
 export type RegistryZhipuAccountAccessConfig = ZhipuAccountAccessConfig &
   z.infer<typeof completeZhipuAccountAccessDataSchema>;
 
+export type RegistryChatgptAccountAccessConfig = ChatgptAccountAccessConfig &
+  z.infer<typeof completeChatgptAccountAccessDataSchema>;
+
 export type RegistryProviderAccessConfig =
   | (ApiKeyAccessConfig & z.infer<typeof completeApiKeyAccessDataSchema>)
-  | RegistryZhipuAccountAccessConfig;
+  | RegistryZhipuAccountAccessConfig
+  | RegistryChatgptAccountAccessConfig;
 
 export type RegistryProviderConfig = ProviderConfig &
   z.infer<typeof completeProviderConfigDataSchema> & {
@@ -38,25 +48,34 @@ export type RegistryProviderConfigObject = z.infer<typeof completeProviderConfig
 
 export function serializeRegistryProviderConfig(
   config: RegistryProviderConfig,
-): RegistryProviderConfigObject {
+): ProviderConfigObject {
+  // ACP agents are validated by the ACP schema, not the API-key union. Only composer-facing facts are
+  // projected: `env` is left out because it may carry credentials.
+  if (isRegistryAcpAgentProvider(config)) {
+    const access = config.access as unknown as {
+      readonly agentId: string;
+      readonly command: string;
+      readonly args: readonly string[];
+    };
+    return {
+      group: config.group,
+      access: {
+        type: "acp-agent",
+        agentId: access.agentId,
+        command: access.command,
+        args: [...access.args],
+      },
+      ...(config.personalModelIds == null
+        ? {}
+        : { personalModelIds: [...config.personalModelIds] }),
+      ...(config.modelOrder == null ? {} : { modelOrder: [...config.modelOrder] }),
+      ...(config.visibility === undefined ? {} : { visibility: config.visibility }),
+    };
+  }
   return {
     group: config.group,
     ...(config.logo === undefined ? {} : { logo: config.logo }),
-    access:
-      config.access.type !== "zhipu-account"
-        ? {
-            type: config.access.type,
-            apiKey: config.access.apiKey,
-            ...(config.access.apiKeyManagementUrl === undefined
-              ? {}
-              : { apiKeyManagementUrl: config.access.apiKeyManagementUrl }),
-          }
-        : {
-            type: config.access.type,
-            accountType: config.access.accountType,
-            mode: config.access.mode,
-            entitled: config.access.entitled,
-          },
+    access: serializeRegistryProviderAccess(config),
     api: {
       type: config.api.type,
       baseUrl: config.api.baseUrl,
@@ -67,6 +86,38 @@ export function serializeRegistryProviderConfig(
     ...(config.modelOrder == null ? {} : { modelOrder: [...config.modelOrder] }),
     ...(config.visibility === undefined ? {} : { visibility: config.visibility }),
   };
+}
+
+function isRegistryAcpAgentProvider(config: RegistryProviderConfig): boolean {
+  // The registry access union omits `acp-agent` on purpose (see provider-data-schema.ts).
+  return (config.access as { readonly type?: unknown }).type === "acp-agent";
+}
+
+function serializeRegistryProviderAccess(
+  config: RegistryProviderConfig,
+): RegistryProviderConfigObject["access"] {
+  switch (config.access.type) {
+    case "zhipu-account":
+      return {
+        type: config.access.type,
+        accountType: config.access.accountType,
+        mode: config.access.mode,
+        entitled: config.access.entitled,
+      };
+    case "chatgpt-account":
+      return {
+        type: config.access.type,
+        entitled: config.access.entitled,
+      };
+    default:
+      return {
+        type: config.access.type,
+        apiKey: config.access.apiKey,
+        ...(config.access.apiKeyManagementUrl === undefined
+          ? {}
+          : { apiKeyManagementUrl: config.access.apiKeyManagementUrl }),
+      };
+  }
 }
 
 export type RegistryModelConfig = ModelConfig & z.infer<typeof completeModelConfigDataSchema>;
@@ -134,6 +185,11 @@ export interface ProviderConfigResolverInput {
   readonly accountProviders: ProviderConfigMap;
   readonly accountStates?: AccountProviderStates;
   readonly personalProviderOrder?: readonly ProviderId[];
+  /**
+   * Availability gate for ACP agent models (specs/acp-agent-runtime.md "Availability (platform rule)").
+   * False keeps `acp:<agentId>` models non-executable: they never reach the chat registry.
+   */
+  readonly acpExecutable?: boolean;
 }
 
 export interface ResolvedProviderModelCandidate {
@@ -217,13 +273,39 @@ export class ProviderConfigResolver {
     for (const providerId of resolveProviderOrder(input, effectiveProviders)) {
       const rule = effectiveProviders.getRule(providerId)!;
       const { config, providerName } = rule;
-      // 账号不再支持总禁用；旧覆盖值不能让无开关的账号永久失效，其他资格仍正常校验。
-      const enabled = config.access?.type === "zhipu-account" || (rule.enabled ?? true);
+      // Accounts no longer support global disable; an old overlay must not permanently disable an account with no toggle, while other eligibility checks still apply.
+      const enabled =
+        config.access?.type === "zhipu-account" ||
+        config.access?.type === "chatgpt-account" ||
+        (rule.enabled ?? true);
       const providerPath = ["providers", providerId];
-      const registryProviderResult = createRegistryProviderConfig(config, providerPath);
-      const providerIssues: ConfigValidationIssue[] = registryProviderResult.ok
-        ? []
-        : [...registryProviderResult.issues];
+      // ACP providers have no HTTP endpoint; validate them against the same
+      // complete schema minus `api` (provider-level fields such as `group` are
+      // checked too) and keep them out of the execution Registry until the
+      // agent execution path lands — a registered-but-unroutable provider would
+      // be selectable in chat and fail on send.
+      const acpAccess = isAcpAgentAccess(config.access) ? config.access : null;
+      // An ACP provider enters the execution Registry only when ACP is available; its complete
+      // validity is the ACP schema (providerIssues below), so a valid config is admitted as-is.
+      const registryProviderResult = acpAccess
+        ? input.acpExecutable === true
+          ? {
+              ok: true as const,
+              config: config as unknown as RegistryProviderConfig,
+            }
+          : null
+        : createRegistryProviderConfig(config, providerPath);
+      const providerIssues: ConfigValidationIssue[] = acpAccess
+        ? [
+            ...validateConfigSchema(
+              completeAcpProviderConfigDataSchema,
+              config.toJSON(),
+              providerPath,
+            ),
+          ]
+        : registryProviderResult!.ok
+          ? []
+          : [...registryProviderResult!.issues];
       const templateId = rule.templateId ?? undefined;
       const templateConfig = templateId ? providerTemplates?.get(templateId)?.config : undefined;
       if (templateId && !templateConfig) {
@@ -247,9 +329,10 @@ export class ProviderConfigResolver {
         config.modelOrder ?? [],
       );
       const accessEntitled =
-        config.access?.type !== "zhipu-account" || config.access.entitled === true;
-      // 账号权益与当前连接是两件事。非当前账号仍保留设置展示，不向普通 Registry 发布模型。
-      // Off-Peak 不定义 current，沿用其独立调度、隐藏和鉴权规则。
+        (config.access?.type !== "zhipu-account" && config.access?.type !== "chatgpt-account") ||
+        config.access.entitled === true;
+      // Account entitlement and the current connection are separate facts. Keep non-current accounts visible in Settings, but do not publish their models to the regular Registry.
+      // Off-Peak does not define current and keeps its independent scheduling, visibility, and authentication rules.
       const accountCurrent = input.accountStates?.[providerId]?.current !== false;
       const providerExecutable =
         enabled && accessEntitled && accountCurrent && providerIssues.length === 0;
@@ -276,7 +359,13 @@ export class ProviderConfigResolver {
         const modelIssues = registryModelResult.ok ? [] : registryModelResult.issues;
         issues.push(...modelIssues);
         const modelEnabled = modelConfig.enabled === true;
-        const executable = providerExecutable && modelEnabled && modelIssues.length === 0;
+        // ACP models stay non-executable when ACP is unavailable (acpExecutable); Settings must not
+        // advertise a selectable model that cannot run in a packaged build.
+        const executable =
+          providerExecutable &&
+          modelEnabled &&
+          modelIssues.length === 0 &&
+          (acpAccess === null || input.acpExecutable === true);
         const selectable = executable && config.visibility !== "hidden";
         return Object.freeze({
           kind: "candidate",
@@ -306,7 +395,7 @@ export class ProviderConfigResolver {
       });
       resolvedProviders.push(resolvedProvider);
 
-      if (!registryProviderResult.ok || providerIssues.length > 0) {
+      if (!registryProviderResult || !registryProviderResult.ok || providerIssues.length > 0) {
         continue;
       }
       const validModels = models

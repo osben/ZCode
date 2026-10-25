@@ -14,7 +14,7 @@ describe("web remote control bridge recovery", () => {
     ]);
   });
 
-  it("重连成功等待旧离线 bootstrap 完成后补一次恢复，并合并同时到达的成功通知", async () => {
+  it("after a successful reconnect, waits for the old offline bootstrap to finish, then runs one more recovery and merges success notifications that arrive together", async () => {
     let release!: () => void;
     const oldBootstrap = new Promise<void>((resolve) => {
       release = resolve;
@@ -36,7 +36,7 @@ describe("web remote control bridge recovery", () => {
     ]);
   });
 
-  it("等待恢复期间切换 workspace 后丢弃旧项目的重连通知", async () => {
+  it("discards the old project's reconnect notification when the workspace is switched during recovery", async () => {
     let release!: () => void;
     const oldBootstrap = new Promise<void>((resolve) => {
       release = resolve;
@@ -52,7 +52,7 @@ describe("web remote control bridge recovery", () => {
     expect(recover).toHaveBeenCalledTimes(1);
   });
 
-  it("生命周期重复唤醒共享当前恢复，失败后仍可显式重试", async () => {
+  it("repeated lifecycle wake-ups share the current recovery, and an explicit retry is still possible after a failure", async () => {
     const recover = vi
       .fn()
       .mockRejectedValueOnce(new Error("bootstrap failed"))

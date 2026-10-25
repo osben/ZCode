@@ -10,8 +10,9 @@ import type { HighspeedServiceTransport } from "./highspeedCardService.js";
 const DIAGNOSTIC_HEADER_NAMES = ["x-request-id", "x-trace-id", "x-span-id"] as const;
 const MAX_LOG_TEXT_CHARS = 1_000;
 /**
- * 后台请求生命期上限。必须明确大于 1s 发送等待预算：慢但合法的 draw 仍能在后台落地供下一轮使用；
- * 同时保证永不返回的连接有界结束并释放 in-flight draw（spec §3 规则 6）。
+ * Upper bound on a background request's lifetime. Must be clearly larger than the 1s send-wait budget: a slow but
+ * legitimate draw can still land in the background for the next turn; meanwhile connections that never return are
+ * bounded and release the in-flight draw (spec §3 rule 6).
  */
 export const HIGHSPEED_REQUEST_TIMEOUT_MS = 20_000;
 
@@ -32,7 +33,7 @@ export function createHighspeedHttpTransport(options: {
   healthyHeaders: () => Promise<Record<string, string>>;
   fetchImpl?: typeof fetch;
   logger: Pick<ServiceLogger, "warn">;
-  /** 单次 draw/healthy 请求的生命期上限；缺省 HIGHSPEED_REQUEST_TIMEOUT_MS。 */
+  /** Lifetime cap for a single draw/healthy request; defaults to HIGHSPEED_REQUEST_TIMEOUT_MS. */
   requestTimeoutMs?: number;
 }): HighspeedServiceTransport {
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -67,11 +68,12 @@ export function createHighspeedHttpTransport(options: {
     }
 
     const requestId = headers.get("x-request-id") ?? undefined;
-    // Bug 根因：fetch 过去没有任何 deadline。代理/服务端接受连接后永不返回时 Promise 永久 pending，
-    // 而 HighspeedCardService.inFlightDraw 只在该 Promise settle 的 finally 里释放——后续所有发送都
-    // 复用这个死 Promise、各等 1s 再降级，整个应用生命周期内不再发起新 draw、next_draw_at 也无法更新。
-    // 这里给请求一个有界生命期，超时后 abort → reject 让 finally 得以执行；deadline 同时覆盖响应体
-    // 读取，服务端在 headers 之后停滞同样会被终止（与 bots/providers/providerRequest.ts 同一做法）。
+    // Bug root cause: fetch previously had no deadline at all. When a proxy/server accepted the connection but never responded, the
+    // Promise stayed pending forever, and HighspeedCardService.inFlightDraw was only released in that Promise's finally on settle —
+    // every subsequent send reused this dead Promise, each waiting 1s before downgrading, so no new draw ever started for the rest of
+    // the app's lifetime and next_draw_at could never refresh.
+    // Give the request a bounded lifetime; on timeout abort → reject lets the finally run. The deadline also covers response-body
+    // reads, so a server that stalls after headers is terminated too (same approach as bots/providers/providerRequest.ts).
     const controller = new AbortController();
     const deadline = setTimeout(() => {
       controller.abort(
@@ -88,8 +90,8 @@ export function createHighspeedHttpTransport(options: {
           ...(params.body ? { body: JSON.stringify(params.body) } : {}),
         });
       } catch (error) {
-        // Bug 原因：Highspeed 过去只把 fetch 异常透传到 RPC，无法区分失败的接口与请求链路。
-        // 这里只记录脱敏路由和 request id，不记录请求头/body，避免 JWT 与任务数据落盘。
+        // Bug cause: Highspeed used to pass fetch exceptions straight to RPC, with no way to tell which API or request path failed.
+        // Log only the sanitized route and request id, never request headers or the body, so JWTs and task data never reach disk.
         logger.warn(undefined, "Highspeed 接口网络请求失败", {
           operation: params.operation,
           method: params.method,
@@ -213,8 +215,8 @@ async function readHighspeedResponse<T>(params: {
       responseHeaders,
       response: responseSummary,
     });
-    // Bug 根因：旧实现只记录非零业务码却继续返回 data，会让调用方缓存
-    // 被后端拒绝的卡或把 share/healthy 误判为成功。业务失败必须在 I/O 边界向上传播。
+    // Bug root cause: the old implementation logged the non-zero business code but still returned data, letting callers cache
+    // cards the backend rejected or mistake share/healthy failures for success. Business failures must propagate from the I/O boundary.
     throw new HighspeedBusinessResponseError(params.operation, businessCode);
   }
   return parsed.data;

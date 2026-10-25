@@ -1,248 +1,116 @@
-# 04 Core Model Connection Port 退役
+# 04 Core Model Connection Port Retirement
 
-> 状态：已完成
+> Status: Completed
 >
-> 日期：2026-08-24
+> Date: 2026-08-24
 >
-> 总路线图：[`todo-00-model-abstraction-unification-roadmap.md`](./todo-00-model-abstraction-unification-roadmap.md)
+> Overall roadmap: [`todo-00-model-abstraction-unification-roadmap.md`](./todo-00-model-abstraction-unification-roadmap.md)
 >
-> 前置任务：[`todo-02-ai-sdk-execution-registry-retirement.md`](./todo-02-ai-sdk-execution-registry-retirement.md)、
+> Prerequisites: [`todo-02-ai-sdk-execution-registry-retirement.md`](./todo-02-ai-sdk-execution-registry-retirement.md),
 > [`todo-03-provider-model-ownership-and-property-totality.md`](./todo-03-provider-model-ownership-and-property-totality.md)
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/todo-04-core-model-connection-port-retirement.md`
 
-## 1. 任务目标
+## 1. Objective
 
-从 Core 和公共业务 Contract 删除 `ModelConnectionPort` / `ModelConnectionInfo`。Core 的能力判断统一读取当前
-Active Model 的 `properties`；API Key、Header、baseURL、Provider SDK kind 和 providerOptions 等物理连接
-事实只存在于 Adapter 的请求执行实现。
+Delete `ModelConnectionPort` / `ModelConnectionInfo` from Core and public business Contracts. Core capability judgments
+read only the current Active Model's `properties`; physical connection facts (API Key, Header, baseURL, Provider SDK
+kind, providerOptions) exist only in the Adapter's request execution implementation. Before: Core Runtime / Tool read
+Active Model.properties and also `ModelConnectionPort.resolveConnection(ModelRef)` (apiKey / headers, baseURL /
+providerKind, providerOptions) to infer WebSearch / MCS / diagnostics again. Target: Core reads
+`supportsNativeWebSearch` and `supportsMidConversationSystem` from Active Model.properties; the Adapter privately holds
+baseURL / SDK kind / credentials / headers / providerOptions.
 
-```text
-当前
+## 2. Principles
 
-Core Runtime / Tool
-  |- Active Model.properties
-  `- ModelConnectionPort.resolveConnection(ModelRef)
-       |- apiKey / headers
-       |- baseURL / providerKind
-       `- providerOptions
-             |
-             `--> Core 再次推断 WebSearch / MCS / diagnostics
+1. Model capabilities are static facts of Effective Model Config, readable only from Active Model.properties.
+2. Model Config Rules producing capability facts may match on model, Provider, API type and other resolution context;
+   Core never re-infers by Endpoint, Provider type or specific modelId.
+3. Connection is an Adapter request implementation detail, not a query service for Tool/Runtime; API Key and Header
+   never enter Core for capability judgment.
+4. No Telemetry refactor; no masked Connection, Observation or Context DTOs. Adapter-internal connection parameters use
+   private types not exported from `@zcode/contracts`.
 
-目标
+## 3. Consumers and Target Handling
 
-Core Runtime / Tool
-  `- Active Model.properties
-       |- supportsNativeWebSearch
-       `- supportsMidConversationSystem
+**3.1 Mid-conversation System (MCS).** `mid-conversation-system.ts` previously inferred MCS through
+`providerKind + baseURL + modelId hardcode` and built a masked Connection Context. Now:
+`useMidConversationSystem = mode === "force" || model.properties.supportsMidConversationSystem`. `auto` reads the
+property; `force` is this invocation's override and neither modifies Model properties nor enters Model Config; the
+judgment occurs where this round's Provider messages are generated and `midConversationSystemMode` does not enter
+ModelFactory. Fast model ID / baseURL allowlist / provider kind / Connection resolve fallback are deleted; the decision
+keeps only a business-needed boolean/reason; Model Config Rules declare facts per model and connection combination.
 
-Adapter private execution
-  `- baseURL / SDK kind / credentials / headers / providerOptions
-```
+**3.2 Native WebSearch.** The Tool reads `properties.supportsNativeWebSearch` from the current Model: false returns the
+existing recoverable configuration error; true continues with Adapter Provider-native tool encoding. The Adapter selects
+encoding only by the complete Provider Config's `api.type` (no baseURL allowlist); if it cannot encode for that API
+type it throws typed `InvalidModelRequest` before the network request (never returns `undefined` and silently deletes
+the Tool, never bypassed via Config); generate and stream share the same encoding and fail-closed path. Deleted:
+`resolveWebSearchModelConnection()`, `supportsProviderNativeWebSearch(connection)` and Connection diagnostic fields.
 
-## 2. 核心原则
+**3.2.1 Model Config capability rules.** `supportsNativeWebSearch` and `supportsMidConversationSystem` live in ZCode
+Built-in / Personal Model Config Rules and become Effective Model Config.properties; rules resolve with context
+`providerId`, `modelId`, `provider.api.type`. Capabilities universal to models use `modelMatch`; Provider-specific ones
+combine `modelMatch + providerMatch`; protocol-dependent ones combine `modelMatch + apiMatch`. If deployment
+distinctions by Endpoint are truly needed, extend the Model Rule's declarative resolution context (never put URL
+judgment back into Runtime, Core, Importer or Adapter). Built-in general Rules supply complete conservative defaults,
+precise Rules override real differences based on actual model/service support materials (not mechanical translation of
+the old hostname allowlist). The legacy importer migrates only facts explicitly expressed by old configs; missing facts
+are not inferred from Provider kind, baseURL or modelId.
 
-1. 模型能力是 Effective Model Config 的静态事实，只能从 Active Model.properties 读取；
-2. 产生能力事实的 Model Config Rule 可以按模型、Provider、API 类型等解析上下文组合匹配，但 Core
-   不根据 Endpoint、Provider 类型或具体 modelId 再次推断能力；
-3. Connection 是 Adapter 请求实现细节，不是 Tool/Runtime 的查询服务；
-4. API Key 和 Header 不应为了能力判断进入 Core；
-5. 本 Todo 不重构 Telemetry，不新增脱敏 Connection、Observation 或 Context DTO；
-6. 若 Adapter 内部仍需连接参数，使用私有类型，不能从 `@zcode/contracts` 导出。
+**3.3 Embedded Search.** The final gate depends only on the global flag and Bash availability
+(`embeddedSearchBranchEnabled + bashAvailable -> decision`); the Connection/ModelRef diagnostic context is deleted.
 
-## 3. 当前消费者与目标处理
+**3.4 Tool/Runtime context.** Delete `AgentRuntimeDeps.modelConnectionPort`, `AgentRuntime` /
+`AgentRuntimeInternal.modelConnectionPort`, `ToolExecutionContext.modelConnectionPort`, Port passthroughs in the Tool
+executor, Child Runtime and Workflow, and `modelRef + modelConnectionPort` parameter pairs created only for capability
+judgment. Call sites needing capabilities receive/access the current `Model` (no extracted `ModelCapabilities` or
+Connection-aware context). Tool acquisition has two semantics: non-execution inventory (persistent compatibility
+fields, Context guidance, Plugin inventory) reads the Tool Registry directly without a Model; this request's tool set
+(main requests, Compact, Memory, Child Agent) must use that execution's own Active Model and filter by `properties`.
+Child Agent models may differ: the parent passes only the registered Tool inventory and the Child Runtime filters by its
+own Active Model. No fallback / default / fake Model built from Session Selection or Connection.
 
-### 3.1 Mid-conversation System
+**3.5 Contracts and Adapter.** Delete public `model-connection.port.ts`, `ModelConnectionProviderKind`,
+`ModelConnectionInfo`, `ModelConnectionPort`, barrel exports, `AiSdkModelAdapter.resolveConnection()` and
+`AiSdkResolvedModelConnection`. Adapter execution functions needing `baseURL/providerKind/apiKey/headers/providerOptions`
+use local or Adapter-private types that Core, Bootstrap business layer and Tools cannot import.
 
-当前 `mid-conversation-system.ts` 通过 `providerKind + baseURL + modelId hardcode` 推断 MCS，并构造一份脱敏
-Connection Context。目标改为：
+## 4. Telemetry Boundary
 
-```text
-Active Model.properties.supportsMidConversationSystem
-        +
-execution override.mode = force
-        |
-        v
-useMidConversationSystem
-```
+Network Status/Telemetry already holds providerId, model, baseURL, providerKind. This Todo neither judges nor refactors
+that. Allowed: after Port deletion the Adapter fills the existing fields at the existing network event production points
+from its own execution facts. Forbidden: a new `TelemetryContext`, `ModelTelemetryObservation`, passing a complete
+Connection as event payload, Core retaining Connection for Telemetry, splitting Product Status and Telemetry.
 
-- 最终公式固定为 `mode === "force" || model.properties.supportsMidConversationSystem`；
-- `auto` 直接读取 property；`force` 是本次调用覆盖，不修改 Model properties，也不进入 Model Config；
-- 判断发生在生成本次 Provider messages 的调用位置；`midConversationSystemMode` 不进入 ModelFactory；
-- 删除 fast model ID、baseURL allowlist、provider kind 和 Connection resolve fallback；
-- 决策结果只保留业务需要的 boolean/reason，不携带 Connection；
-- Model Config Rule 承担不同模型和接入组合的事实声明。
+## 5. Tests and Mechanical Zero
 
-### 3.2 Native WebSearch
+- Capability facts: `supportsMidConversationSystem=true/false` enable/close MCS; MCS `force` keeps override semantics;
+  different modelId/baseURL with the same property yield the same Core behavior; `supportsNativeWebSearch=true/false`
+  allow/deny WebSearch; Adapter-unsupported API types fail closed before the network even with property=true (generate
+  and stream consistent); Embedded Search depends only on the feature flag and Bash availability.
+- Data boundary: Core/Tool context exposes no apiKey, headers, baseURL, providerKind, providerOptions; Active
+  Model.properties is the sole capability input; Main, Compact and Subagent use their own Active Model's properties;
+  Config updates do not change capabilities of started loops; non-execution Tool inventory creates no Model while
+  execution Tool filtering holds the current Active Model; network Status/Telemetry is still emitted by the Adapter
+  with unchanged event count and timing.
+- Mechanical zero: `rg 'ModelConnectionPort|ModelConnectionInfo' apps/zcode-cli/packages/core`; public Contracts export
+  no Connection types; `resolveConnection` not an Adapter public capability; Core MCS/WebSearch helpers judging by
+  baseURL/providerKind/modelId; legacy importer logic inferring MCS/WebSearch by those; provider-native Tool encoding
+  using `undefined` for "not supported, silently delete"; new `*Capabilities`, `*ConnectionContext`, `*Observation`
+  substitute DTOs: all zero.
 
-当前 WebSearch 先解析 Connection，再按 Anthropic/provider endpoint 判断支持。目标改为：
+## 6. Implementation Order and Completion
 
-- Tool 从当前 Model 读取 `properties.supportsNativeWebSearch`；
-- false 时返回现有可恢复配置错误；
-- true 时继续由 Adapter 编码 Provider native tool；
-- Adapter 只根据完整 Provider Config 的 `api.type` 选择编码实现，不根据 baseURL allowlist 推断能力；
-- Adapter 若该 API 类型无法编码，必须在网络请求前抛出类型化 `InvalidModelRequest`，不能返回
-  `undefined` 后静默删除 Tool，也不能因 Config 绕过实现限制；
-- generate 与 stream 共用同一编码和 fail-closed 路径；
-- 删除 Core `resolveWebSearchModelConnection()`、`supportsProviderNativeWebSearch(connection)` 和 Connection
-  诊断字段。
+Steps: A pass Active Model to capability consumers (failing property-based tests for MCS, WebSearch, Embedded Search;
+trace the current Model source for Tool context; pass only Model, not Connection or derived snapshots); B migrate
+capability judgment (MCS, WebSearch, Embedded Search; delete old Endpoint/model hardcode and fallback reason); C delete
+the Port (Runtime/Tool/Workflow fields and passthroughs, Contracts files and barrel export, Adapter public
+`resolveConnection()`; keep Adapter private execution facts); D verify (Core WebSearch, MCS, Embedded Search, Compact,
+Subagent unit tests; Adapter encoding and network event regression; `pnpm typecheck`, `pnpm lint`, `pnpm fmt:check`;
+independent Conventional Commit).
 
-### 3.2.1 Model Config 能力规则
-
-`supportsNativeWebSearch` 和 `supportsMidConversationSystem` 统一写入 ZCode Built-in / Personal Model
-Config Rules，最终成为 Effective Model Config.properties。配置归属在 Model Config，不等于规则只能按
-modelId 匹配：
-
-```text
-Model Config Rule resolve context
-|- providerId
-|- modelId
-`- provider.api.type
-          |
-          v
-Effective Model Config.properties
-|- supportsNativeWebSearch
-`- supportsMidConversationSystem
-```
-
-- 能力对模型普遍成立时，只使用 `modelMatch`；
-- 能力仅在特定产品 Provider 中成立时，组合 `modelMatch + providerMatch`；
-- 能力取决于协议接入形态时，组合 `modelMatch + apiMatch`；
-- 如果未来确需按 Endpoint 部署区分，应扩展 Model Rule 的声明式解析上下文，不能把 URL 判断重新放回
-  Runtime、Core、Importer 或 Adapter；
-- Built-in 通用 Rule 提供完整保守默认值，后续精确 Rule 覆盖真实差异；
-- 具体能力值以模型和服务的真实支持资料为依据，不从旧 hostname allowlist 机械翻译；
-- Legacy importer 只迁移旧配置明确表达的事实；没有明确事实时不按 Provider kind、baseURL 或 modelId
-  猜测并固化能力。
-
-### 3.3 Embedded Search
-
-当前 Embedded Search 的最终开关只依赖 global flag 与 Bash availability，Connection 只用于构造诊断
-context。目标是直接删除 Connection/ModelRef 上下文：
-
-```text
-embeddedSearchBranchEnabled + bashAvailable -> decision
-```
-
-不为保留诊断对象继续传递 baseURL/providerKind/modelId。
-
-### 3.4 Tool/Runtime Context
-
-删除以下公共字段和透传：
-
-- `AgentRuntimeDeps.modelConnectionPort`；
-- `AgentRuntime` / `AgentRuntimeInternal.modelConnectionPort`；
-- `ToolExecutionContext.modelConnectionPort`；
-- Tool executor、Child Runtime、Workflow 对 Port 的复制；
-- `modelRef + modelConnectionPort` 只为能力判断而存在的组合参数。
-
-需要当前模型能力的调用点接收或访问当前 `Model`。不要拆出另一份 `ModelCapabilities` 或 Connection-aware
-context。
-
-Tool 获取分成两种明确语义：
-
-```text
-Tool Registry
-|- 非执行 inventory -> 返回已注册 Tool，不需要 Model
-`- 本次请求工具集 -> 必须接收当前 Active Model，再按 properties 过滤
-```
-
-- 持久化兼容字段、Context guidance、Plugin inventory 等非执行用途直接读取 Tool Registry；
-- 真正进入主请求、Compact、Memory 或 Child Agent 执行时，必须使用该执行自己的 Active Model；
-- Child Agent 的模型可能不同，父级只传注册 Tool inventory，Child Runtime 再按自己的 Active Model 过滤；
-- 不允许从 Session Selection 或 Connection 构造兜底 Model、默认 Model或假 Model。
-
-### 3.5 Contracts 与 Adapter
-
-删除公共：
-
-- `model-connection.port.ts`；
-- `ModelConnectionProviderKind`；
-- `ModelConnectionInfo`；
-- `ModelConnectionPort`；
-- barrel exports；
-- `AiSdkModelAdapter.resolveConnection()`；
-- `AiSdkResolvedModelConnection`。
-
-Adapter 内部执行函数如果需要 `baseURL/providerKind/apiKey/headers/providerOptions`，定义为局部或 Adapter
-私有类型。它不能被 Core、Bootstrap 业务层或 Tool 导入。
-
-## 4. Telemetry 边界
-
-当前网络 Status/Telemetry 自己已经持有 providerId、model、baseURL、providerKind 等字段。本 Todo 不判断
-这套设计是否合理，也不通过 Connection Port 重构它。
-
-允许：删除 Port 后，Adapter 在现有网络事件产生位置继续用自己已知的执行事实填充现有字段。
-
-禁止：
-
-- 新增 `TelemetryContext`；
-- 新增 `ModelTelemetryObservation`；
-- 把完整 Connection 作为 event payload；
-- 为 Telemetry 让 Core 继续持有 Connection；
-- 顺手拆分 Product Status 与 Telemetry。
-
-Telemetry 的长期设计另行讨论。
-
-## 5. 测试先行
-
-### 5.1 能力事实
-
-1. `supportsMidConversationSystem=true/false` 分别启用/关闭 MCS；
-2. MCS `force` 保持既有覆盖语义；
-3. 不同 modelId/baseURL 但相同 property 得到相同 Core 行为；
-4. `supportsNativeWebSearch=true/false` 分别允许/拒绝 WebSearch；
-5. Adapter 不支持的 API 类型即使 property=true 仍在网络请求前 fail-closed，generate/stream 行为一致；
-6. Embedded Search 只由 feature flag 与 Bash availability 决定。
-
-### 5.2 数据边界
-
-1. Core/Tool context 不出现 apiKey、headers、baseURL、providerKind、providerOptions；
-2. Active Model.properties 是能力判断的唯一输入；
-3. Main、Compact、Subagent 使用各自当前 Active Model 的 properties；
-4. Config 更新不改变已开始 Loop 的能力；
-5. 非执行 Tool inventory 不创建 Model；执行 Tool 过滤必须持有当前 Active Model；
-6. 现有网络 Status/Telemetry 仍由 Adapter 发出，不改变事件数量和时机。
-
-### 5.3 机械归零
-
-- `rg 'ModelConnectionPort|ModelConnectionInfo' apps/zcode-cli/packages/core` 为零；
-- 公共 Contracts 不再导出 Connection 类型；
-- `resolveConnection` 不再是 Adapter 公共能力；
-- Core 中按 baseURL/providerKind/modelId 判断 MCS/WebSearch 的 helper 为零；
-- Legacy importer 中按 baseURL/providerKind/modelId 猜测 MCS/WebSearch 的逻辑为零；
-- Provider-native Tool 编码不再用 `undefined` 表示“不支持并静默删除”；
-- 不新增 `*Capabilities`、`*ConnectionContext` 或 `*Observation` 替代 DTO。
-
-## 6. 实施顺序
-
-### Step A：给 capability consumer 传递 Active Model
-
-- 为 MCS、WebSearch、Embedded Search 增加 property-based 失败测试；
-- 梳理 Tool context 当前 Model 的来源；
-- 只传 Model，不传 Connection 或派生 capability snapshot。
-
-### Step B：迁移能力判断
-
-- MCS 改读 `supportsMidConversationSystem`；
-- WebSearch 改读 `supportsNativeWebSearch`；
-- Embedded Search 删除无作用的 Connection context；
-- 删除旧 Endpoint/model hardcode 和 fallback reason。
-
-### Step C：删除 Port
-
-- 删除 Runtime/Tool/Workflow 字段和透传；
-- 删除 Contracts 文件和 barrel export；
-- 删除 Adapter 公共 `resolveConnection()`；
-- 保留 Adapter 私有执行事实。
-
-### Step D：验证与提交
-
-- 运行 Core WebSearch、MCS、Embedded Search、Compact、Subagent 单测；
-- 运行 Adapter 编码和网络事件回归；
-- 运行 `pnpm typecheck`、`pnpm lint`、`pnpm fmt:check`；
-- 独立 Conventional Commit。
-
-## 7. 完成定义
-
-Core 无法取得物理 Provider Connection，也不再通过 Connection 推断模型能力。业务能力来自当前 Active
-Model.properties；连接、鉴权和 Provider SDK 细节只在 Adapter 执行请求时使用。Telemetry 保持现有设计，
-没有为了本次删除产生新的 Context 或 Observation 抽象。
+Completion: Core cannot obtain physical Provider Connection nor infer model capabilities through it; business
+capabilities come from the current Active Model.properties; connection, authentication and Provider SDK details are used
+only when the Adapter executes requests; Telemetry keeps its existing design with no new Context or Observation
+abstraction.

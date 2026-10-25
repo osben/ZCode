@@ -2,10 +2,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import type { Locale } from "@zcode/shared";
 import type { IFeedbackService } from "@zcode/services";
 import type { FeedbackTicketSummary } from "@zcode/shared";
 import { FeedbackTicketList, TicketsView } from "@/feedback/TicketsView.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { TEST_LOCALE } from "./helpers/uiCopy.js";
 
 function createFeedbackService(): IFeedbackService {
   return {
@@ -25,7 +27,7 @@ function createFeedbackService(): IFeedbackService {
   } as unknown as IFeedbackService;
 }
 
-function renderTicketsView(locale: "zh-CN" | "en-US") {
+function renderTicketsView(locale: Locale = TEST_LOCALE) {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
@@ -40,7 +42,7 @@ function renderTicketsView(locale: "zh-CN" | "en-US") {
 
 describe("TicketsView", () => {
   it("uses English copy for the initial feedback list loading state without a detail placeholder", () => {
-    const html = renderTicketsView("en-US");
+    const html = renderTicketsView();
 
     expect(html).toContain("Loading...");
     expect(html).not.toContain("Select feedback to view details");
@@ -59,7 +61,7 @@ describe("TicketsView", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: TEST_LOCALE },
         createElement(FeedbackTicketList, {
           items: [ticket],
           selectedTicketId: null,

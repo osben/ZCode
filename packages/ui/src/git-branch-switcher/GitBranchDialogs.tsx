@@ -195,10 +195,11 @@ export function GitBranchSwitchAssistDialog({
                   })}
                 </div>
                 <div className="text-ui-base text-foreground-subtle">
-                  {intl.formatMessage(
+                  {intl.formatPlural(
                     {
                       id: "git.branchSwitcher.commitDialog.changesValue",
                     },
+                    state.fileCount,
                     {
                       count: numberFormatter.format(state.fileCount),
                     },
@@ -305,10 +306,11 @@ export function GitBranchSwitchAssistDialog({
                 </div>
                 <div className="flex gap-2">
                   <span className="text-foreground-subtle">
-                    {intl.formatMessage(
+                    {intl.formatPlural(
                       {
                         id: "git.branchSwitcher.commitDialog.changesValue",
                       },
+                      state.fileCount,
                       {
                         count: numberFormatter.format(state.fileCount),
                       },

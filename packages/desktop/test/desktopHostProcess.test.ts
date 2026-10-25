@@ -1,6 +1,11 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HostMessageTypes, HostResponseTypes } from "@zcode/shared";
+import {
+  HostMessageTypes,
+  HostResponseTypes,
+  hostIncomingMessageSchema,
+  hostResponseMessageSchema,
+} from "@zcode/shared";
 import {
   disposeHostProcess,
   disposeHostProcessAndWait,
@@ -8,6 +13,10 @@ import {
   loadWindow,
   spawnHostProcess,
 } from "../src/main/desktopHostProcess.js";
+import {
+  createLocalHostStartupGate,
+  type LocalHostStartupGate,
+} from "../src/main/storage-sweep-gate/contract.js";
 
 vi.mock("../src/main/databaseStartupRelay.js", () => ({
   bindDatabaseStartupRelay: (_win: unknown, _child: unknown, startupId: string) => ({
@@ -210,6 +219,66 @@ describe("desktopHostProcess local media preview authorization", () => {
   });
 });
 
+describe("desktopHostProcess open workspace inventory", () => {
+  it("accepts only the strict Host request and Main response contracts", () => {
+    expect(
+      hostResponseMessageSchema.safeParse({
+        type: HostResponseTypes.OpenWorkspaceInventoryRequest,
+        requestId: "inventory-1",
+      }).success,
+    ).toBe(true);
+    expect(
+      hostResponseMessageSchema.safeParse({
+        type: HostResponseTypes.OpenWorkspaceInventoryRequest,
+        requestId: "inventory-1",
+        paths: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      hostIncomingMessageSchema.safeParse({
+        type: HostMessageTypes.OpenWorkspaceInventoryResult,
+        requestId: "inventory-1",
+        available: false,
+        paths: [],
+        extra: true,
+      }).success,
+    ).toBe(false);
+  });
+
+  it.each([
+    [{ available: true, paths: ["/repo", "/repo/.worktrees/task"] }],
+    [{ available: false, paths: [] }],
+  ])("returns Main's authoritative inventory unchanged", (inventory) => {
+    const child = new MockUtilityProcess();
+    electronMock.fork.mockReturnValue(child);
+    spawnHostProcess(
+      { id: 7, webContents: { id: 11, postMessage: vi.fn() } } as never,
+      "local-window",
+      { type: HostMessageTypes.InitLocal, workspacePath: "/repo" },
+      {
+        hostProcessLocalEnv: {},
+        logger: { info: vi.fn(), warn: vi.fn() },
+        broadcastHub: { register: vi.fn(), unregister: vi.fn() } as never,
+        windowHostProcessMap: new Map(),
+        hostRunningTaskCountMap: new Map(),
+        getOpenWorkspaceInventory: () => inventory,
+      },
+    );
+    child.emit("message", {
+      type: HostResponseTypes.OpenWorkspaceInventoryRequest,
+      requestId: "inventory-1",
+    });
+    const response = child.postMessage.mock.calls.at(-1)![0];
+    expect(response).toEqual({
+      type: HostMessageTypes.OpenWorkspaceInventoryResult,
+      requestId: "inventory-1",
+      ...inventory,
+    });
+    expect(hostIncomingMessageSchema.safeParse(response).success).toBe(true);
+    child.emit("exit", 0);
+  });
+});
+
 describe("desktopHostProcess host 自采资源样本", () => {
   it("把 Host 自采样本交给资源遥测来源，非法样本在 main 入口丢弃", async () => {
     const { selfHeapProcessResourceSampleSource } =
@@ -403,6 +472,11 @@ it("PRT-010: main 的真实 Host 消息分发即时报告 Bash 完成事实，�
     armsEnv: "prod",
     platform: "darwin",
   });
+  // Telemetry is off by default (resourceTelemetryEnabled); ingest only reports while sampling is running.
+  const { setDesktopResourceTelemetryEnabled } =
+    await import("../src/main/desktopResourceTelemetryToggle.js");
+  const telemetryLogger = { info: vi.fn(), warn: vi.fn() };
+  setDesktopResourceTelemetryEnabled(true, telemetryLogger);
   const child = new MockUtilityProcess();
   electronMock.fork.mockReturnValue(child);
   const win = { id: 7, webContents: { id: 11, postMessage: vi.fn() } };
@@ -448,6 +522,240 @@ it("PRT-010: main 的真实 Host 消息分发即时报告 Bash 完成事实，�
     );
   } finally {
     child.emit("exit", 0);
+    setDesktopResourceTelemetryEnabled(false, telemetryLogger);
     sendCustom.mockRestore();
   }
+});
+
+describe("desktopHostProcess local startup gate", () => {
+  const windowFor = (id: number) => ({
+    id,
+    isDestroyed: () => false,
+    webContents: { id: id + 10, postMessage: vi.fn(), send: vi.fn(), isDestroyed: () => false },
+  });
+  const gateDependencies = (gate?: LocalHostStartupGate) => ({
+    hostProcessLocalEnv: {},
+    logger: { info: vi.fn(), warn: vi.fn() },
+    broadcastHub: { register: vi.fn(), unregister: vi.fn() } as never,
+    windowHostProcessMap: new Map(),
+    hostRunningTaskCountMap: new Map(),
+    localHostStartupGate: gate,
+  });
+  const initLocal = {
+    type: HostMessageTypes.InitLocal as const,
+    zcodeBuiltinProviderConfigFilePath: "/config.json",
+  };
+  const startupState = (
+    startupId: string,
+    phase: "preparing_host_storage" | "preparing_session_storage" | "ready" | "failed",
+  ) => ({
+    type: HostResponseTypes.DatabaseStartupState,
+    state: {
+      schemaVersion: 1,
+      startupId,
+      attemptId: "attempt-1",
+      sequence: 1,
+      startedAt: 1,
+      updatedAt: 1,
+      phase,
+      disk: [],
+    },
+  });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+  it("sends the sweep flag only on the first local InitLocal and holds the second until the first is ready", async () => {
+    const gate = createLocalHostStartupGate();
+    const first = new MockUtilityProcess();
+    const second = new MockUtilityProcess();
+    electronMock.fork.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const firstWindow = windowFor(1);
+    const secondWindow = windowFor(2);
+    spawnHostProcess(firstWindow as never, "gate-window-1", initLocal, gateDependencies(gate));
+    spawnHostProcess(secondWindow as never, "gate-window-2", initLocal, gateDependencies(gate));
+    await flush();
+
+    expect(first.postMessage).toHaveBeenCalledTimes(1);
+    const firstInit = first.postMessage.mock.calls[0]![0];
+    expect(firstInit).toMatchObject({
+      type: HostMessageTypes.InitLocal,
+      sweepAbandonedReservations: true,
+    });
+    expect(second.postMessage).not.toHaveBeenCalled();
+    // The held window is shown its Host's sequence-0 "starting" state at once, so its renderer does not time out.
+    expect(firstWindow.webContents.send).not.toHaveBeenCalled();
+    expect(secondWindow.webContents.send).toHaveBeenCalledTimes(1);
+    expect(secondWindow.webContents.send.mock.calls[0]![1]).toMatchObject({
+      sequence: 0,
+      phase: "starting",
+    });
+
+    first.emit("message", startupState(firstInit.databaseStartupId, "ready"));
+    await flush();
+    expect(second.postMessage).toHaveBeenCalledTimes(1);
+    expect(second.postMessage.mock.calls[0]![0]).toMatchObject({
+      type: HostMessageTypes.InitLocal,
+      sweepAbandonedReservations: false,
+    });
+  });
+
+  it("releases the held InitLocal once the claimed Host is past the tasks index, without waiting for ready", async () => {
+    const gate = createLocalHostStartupGate();
+    const first = new MockUtilityProcess();
+    const second = new MockUtilityProcess();
+    electronMock.fork.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    spawnHostProcess(windowFor(11) as never, "gate-window-11", initLocal, gateDependencies(gate));
+    spawnHostProcess(windowFor(12) as never, "gate-window-12", initLocal, gateDependencies(gate));
+    await flush();
+    const firstInit = first.postMessage.mock.calls[0]![0];
+
+    first.emit("message", startupState(firstInit.databaseStartupId, "preparing_host_storage"));
+    await flush();
+    expect(second.postMessage).not.toHaveBeenCalled();
+
+    first.emit("message", startupState(firstInit.databaseStartupId, "preparing_session_storage"));
+    await flush();
+    expect(second.postMessage).toHaveBeenCalledTimes(1);
+    first.emit("exit", 0);
+    second.emit("exit", 0);
+  });
+
+  it("leaves the gate unclaimed when a spawn throws before posting InitLocal, so the next Host sweeps at once", async () => {
+    const gate = createLocalHostStartupGate();
+    const first = new MockUtilityProcess();
+    const second = new MockUtilityProcess();
+    electronMock.fork.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const on = first.on.bind(first);
+    vi.spyOn(first, "on").mockImplementation((event: string | symbol, listener) => {
+      if (event === "message") throw new Error("listener wiring failed");
+      return on(event, listener);
+    });
+    expect(() =>
+      spawnHostProcess(windowFor(13) as never, "gate-window-13", initLocal, gateDependencies(gate)),
+    ).toThrow("listener wiring failed");
+    expect(first.postMessage).not.toHaveBeenCalled();
+
+    spawnHostProcess(windowFor(14) as never, "gate-window-14", initLocal, gateDependencies(gate));
+    await flush();
+    expect(second.postMessage).toHaveBeenCalledTimes(1);
+    expect(second.postMessage.mock.calls[0]![0]).toMatchObject({
+      type: HostMessageTypes.InitLocal,
+      sweepAbandonedReservations: true,
+    });
+    first.emit("exit", 1);
+    second.emit("exit", 0);
+  });
+
+  it("settles the gate when posting the claimed Host's InitLocal fails", async () => {
+    const gate = createLocalHostStartupGate();
+    const first = new MockUtilityProcess();
+    const second = new MockUtilityProcess();
+    first.postMessage.mockImplementation(() => {
+      throw new Error("post failed");
+    });
+    electronMock.fork.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const dependencies = gateDependencies(gate);
+    spawnHostProcess(windowFor(15) as never, "gate-window-15", initLocal, dependencies);
+    spawnHostProcess(windowFor(16) as never, "gate-window-16", initLocal, gateDependencies(gate));
+    await flush();
+
+    expect(second.postMessage).toHaveBeenCalledTimes(1);
+    expect(second.postMessage.mock.calls[0]![0].sweepAbandonedReservations).toBe(false);
+    expect(dependencies.logger.warn).toHaveBeenCalled();
+    first.emit("exit", 1);
+    second.emit("exit", 0);
+  });
+
+  it("releases the held InitLocal when the claimed Host reports failed or exits", async () => {
+    const gate = createLocalHostStartupGate();
+    const first = new MockUtilityProcess();
+    const second = new MockUtilityProcess();
+    const third = new MockUtilityProcess();
+    electronMock.fork
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second)
+      .mockReturnValueOnce(third);
+    spawnHostProcess(windowFor(3) as never, "gate-window-3", initLocal, gateDependencies(gate));
+    spawnHostProcess(windowFor(4) as never, "gate-window-4", initLocal, gateDependencies(gate));
+    spawnHostProcess(windowFor(5) as never, "gate-window-5", initLocal, gateDependencies(gate));
+    await flush();
+    const firstInit = first.postMessage.mock.calls[0]![0];
+
+    first.emit("message", startupState(firstInit.databaseStartupId, "failed"));
+    await flush();
+    expect(second.postMessage).toHaveBeenCalledTimes(1);
+    expect(third.postMessage).toHaveBeenCalledTimes(1);
+    expect(third.postMessage.mock.calls[0]![0].sweepAbandonedReservations).toBe(false);
+  });
+
+  it("releases the held InitLocal when the claimed Host exits without reporting", async () => {
+    const gate = createLocalHostStartupGate();
+    const first = new MockUtilityProcess();
+    const second = new MockUtilityProcess();
+    electronMock.fork.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    spawnHostProcess(windowFor(6) as never, "gate-window-6", initLocal, gateDependencies(gate));
+    spawnHostProcess(windowFor(7) as never, "gate-window-7", initLocal, gateDependencies(gate));
+    await flush();
+    expect(second.postMessage).not.toHaveBeenCalled();
+
+    first.emit("exit", 1);
+    await flush();
+    expect(second.postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not post a held InitLocal to a Host that exited while waiting", async () => {
+    const gate = createLocalHostStartupGate();
+    const first = new MockUtilityProcess();
+    const second = new MockUtilityProcess();
+    electronMock.fork.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    spawnHostProcess(windowFor(8) as never, "gate-window-8", initLocal, gateDependencies(gate));
+    spawnHostProcess(windowFor(9) as never, "gate-window-9", initLocal, gateDependencies(gate));
+    await flush();
+
+    second.emit("exit", 1);
+    first.emit("exit", 0);
+    await flush();
+    expect(second.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("posts InitLocal at once and without the flag when no gate is passed", async () => {
+    const child = new MockUtilityProcess();
+    electronMock.fork.mockReturnValueOnce(child);
+    spawnHostProcess(windowFor(10) as never, "gate-window-10", initLocal, gateDependencies());
+
+    expect(child.postMessage).toHaveBeenCalledTimes(1);
+    expect(child.postMessage.mock.calls[0]![0]).not.toHaveProperty("sweepAbandonedReservations");
+    child.emit("exit", 0);
+  });
+});
+
+describe("createLocalHostStartupGate", () => {
+  it("claims the sweep only once and keeps later tickets waiting on the first settle", async () => {
+    const gate = createLocalHostStartupGate();
+    const first = gate.claim();
+    const second = gate.claim();
+    expect(first.sweepAbandonedReservations).toBe(true);
+    expect(second.sweepAbandonedReservations).toBe(false);
+
+    let opened = false;
+    void second.open.then(() => {
+      opened = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(opened).toBe(false);
+
+    first.settle();
+    first.settle();
+    await second.open;
+    expect(opened).toBe(true);
+  });
+
+  it("keeps the sweep flag through the Host InitLocal schema", () => {
+    expect(
+      hostIncomingMessageSchema.parse({
+        type: "init-local",
+        zcodeBuiltinProviderConfigFilePath: "/config.json",
+        sweepAbandonedReservations: true,
+      }),
+    ).toMatchObject({ sweepAbandonedReservations: true });
+  });
 });

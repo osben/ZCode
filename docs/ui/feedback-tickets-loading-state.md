@@ -1,17 +1,17 @@
-# 我的反馈列表加载态
+# My Feedback List Loading State
 
-## 背景
+## Background
 
-点击反馈窗口里的“我的反馈”会切到工单列表页，并立即调用反馈服务加载当前用户的工单。列表首刷期间如果内容区为空，原界面会保持空白，用户无法判断是正在请求还是没有记录。
+Selecting “My Feedback” in the feedback window opens the ticket list and immediately calls the feedback service to load the current user's tickets. During the initial list request, an empty content area previously remained blank, leaving users unable to tell whether the request was in progress or there were no records.
 
-## 行为
+## Behavior
 
-- 进入“我的反馈”后，只要列表首次请求还未返回且当前没有已缓存工单，内容区中央显示加载状态。
-- 加载状态使用已有 `common.loading` 国际化文案和旋转图标，居中显示在列表内容区，不影响窗口标题、返回按钮、关闭按钮和底部操作按钮。
-- 如果列表已有内容后用户刷新，继续沿用现有列表底部加载提示，避免遮挡已有工单。
-- 请求完成后按现有逻辑显示空态、列表或错误提示。
+- After opening “My Feedback,” show a loading state centered in the content area while the first list request is pending and there are no cached tickets.
+- Use the existing `common.loading` localized text and spinner, centered in the list content area. Do not affect the window title, back button, close button, or footer actions.
+- If the list already contains content when the user refreshes, keep using the existing loading indicator at the bottom of the list so it does not cover existing tickets.
+- When the request completes, show the existing empty state, list, or error message as appropriate.
 
-## 非目标
+## Non-goals
 
-- 不修改反馈提交、截图/日志上传、后台上传提示和工单详情行为。
-- 不新增反馈接口或缓存策略。
+- Do not change feedback submission, screenshot/log uploads, background-upload notices, or ticket-detail behavior.
+- Do not add feedback APIs or caching policies.

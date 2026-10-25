@@ -10,7 +10,7 @@ node apps/zcode-cli/packages/cli/dist/zcode.cjs doctor --json
 
 The default artifact is a Node.js bundle with adjacent runtime resources. SEA packaging is optional. The Agent CLI differs from the root distribution launcher, which also supports Web startup.
 
-See the [CLI usage guide (中文)](docs/usage/README.md) for setup, model configuration, permissions, sessions, MCP, skills, hooks, plugins, and reproducible batch tasks. The guide distinguishes current source behavior from older binaries and documents its verification limits.
+See the [CLI usage guide](docs/usage/README.md) for setup, model configuration, permissions, sessions, MCP, skills, hooks, plugins, and reproducible batch tasks. The guide distinguishes current source behavior from older binaries and documents its verification limits.
 
 Useful entry points:
 

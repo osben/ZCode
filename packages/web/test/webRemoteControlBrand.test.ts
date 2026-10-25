@@ -3,8 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { WebRemoteControlBrand } from "#src/web-remote-control/views.js";
 
-describe("远控页头品牌", () => {
-  it("品牌图标为装饰性，整体不可交互", () => {
+describe("remote-control page header brand", () => {
+  it("the brand icon is decorative, and the whole header is not interactive", () => {
     const html = renderToStaticMarkup(createElement(WebRemoteControlBrand));
     expect(html).toMatch(/<img[^>]*data-app-logo="zcode"/);
     expect(html).toMatch(/<img[^>]*alt=""/);

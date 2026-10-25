@@ -1,62 +1,50 @@
-# R1 窗口级单 Host 进程重构规格
+# R1 Single Window-Scoped Host Process Refactor Specification
 
-## 1. 状态与范围
+## 1. Status and Scope
 
-- 状态：实施中
-- 阶段：远程架构重构 R1
-- 发布方式：单版本原子切换，不保留新旧双架构
-- 核心目标：每个 `BrowserWindow` 只有一个 window-scoped Local Host，由该 Host 统一承载本地服务、远程连接、窗口级任务投影和各类客户端 attachment
-- 明确排除：独立 Server CLI、`sourceServerId`、Connection Profile、Transport Adapter、新的远端 wire contract、跨远程 Grouped 能力，分别留待 R2/R3/R4
+- Status: In progress
+- Phase: Remote architecture refactor R1
+- Release approach: atomic switch in a single version; do not retain both old and new architectures
+- Core goal: each `BrowserWindow` has exactly one window-scoped Local Host, which centrally hosts local services, remote connections, window-level task projections, and client attachments
+- Explicitly excluded: standalone Server CLI, `sourceServerId`, Connection Profile, Transport Adapter, a new remote wire contract, and cross-remote Grouped capabilities; these are deferred to R2/R3/R4 respectively
 
-本文是 R1 的实现规格。当前 Web 远控事实仍以 `docs/web-remote-control/` 下的架构、实时同步和任务命令队列文档为准；本规格完成后同步更新这些事实文档。
+This is the implementation specification for R1. Web remote-control facts remain defined by the architecture, realtime-sync, and task-command-queue documents under `docs/web-remote-control/`; update them when this specification is complete.
 
-## 2. 决策
+## 2. Decisions
 
-| 决策 | R1 结论 |
-| --- | --- |
-| Host 聚合边界 | Host 持有 workspace/task membership、在线/运行/等待事实和列表写路由；Renderer 只持有展示偏好 |
-| 进程边界 | 每窗口唯一 Local Host；UI、手机和 Bot 不再创建独立 Remote Host |
-| 端口拓扑 | 同一 Local Host 同时暴露 base port 和多个 remote-scoped port |
-| 连接入口 | 保留 `IPlatformService -> Main`；Main 只做请求、状态事件和 MessagePort 薄转发 |
-| Remote Host 合并 | 合并 UI、手机、Bot 创建的全部 Desktop Remote Host |
-| 投影持久化 | `ControllerProjection` 仅驻内存并可从 source 重建，不增加数据库 |
-| 远端协议 | 不修改现有 SSH/WSL/Docker/Server 的 zcode-server service channel |
-| 列表写路由 | 跨 workspace 列表操作由 Controller 路由；进入 workspace/conversation 后继续使用 scoped facade |
-| Realtime Host 身份 | 每窗口一个 `hostId`，内部按 `workspaceKey + taskId` 路由 |
-| `remoteSessionId` | 由 Local Host 分配和管理；Main 只保存异步请求关联信息 |
-| 断连列表 | 保留最后可信 task 投影并标记离线；禁止写和本地回落；重连后原子替换 |
-| 上线与回滚 | Desktop 版本灰度；回滚旧 Desktop 版本，不做数据库或远端协议迁移 |
+| Decision                  | R1 conclusion                                                                                                                           |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Host aggregation boundary | Host owns workspace/task membership, online/running/waiting facts, and list-write routing; Renderer owns display preferences only       |
+| Process boundary          | One Local Host per window; UI, mobile, and Bot no longer create separate Remote Hosts                                                   |
+| Port topology             | The same Local Host exposes the base port and multiple remote-scoped ports                                                              |
+| Connection entry point    | Keep `IPlatformService -> Main`; Main only forwards requests, status events, and MessagePorts                                           |
+| Remote Host consolidation | Consolidate all Desktop Remote Hosts created by UI, mobile, and Bot                                                                     |
+| Projection persistence    | `ControllerProjection` stays in memory and can be rebuilt from a source; add no database                                                |
+| Remote protocol           | Do not modify existing zcode-server service channels for SSH/WSL/Docker/Server                                                          |
+| List-write routing        | Controller routes cross-workspace list operations; after entering a workspace/conversation, continue using the scoped facade            |
+| Realtime Host identity    | One `hostId` per window, routed internally by `workspaceKey + taskId`                                                                   |
+| `remoteSessionId`         | Allocated and managed by Local Host; Main stores only async request-correlation data                                                    |
+| Disconnected lists        | Retain the last trusted task projection and mark it offline; prohibit writes and local fallback; replace atomically after reconnect     |
+| Rollout and rollback      | Gradually roll out the Desktop version; rollback by reverting to the old Desktop version, without database or remote-protocol migration |
 
-既有不变量：
+Existing invariants:
 
-- SSH online window cache、WSL TTL/task protection、Docker/Server dedicated session 的生命周期不变；
-  只有 SSH 最后一个 pending waiter 主动取消时，允许退休尚未 ready 的 connecting entry 并中止其独占初始化。
-- 身份隔离统一使用 `workspaceKey = workspaceIdentity?.trim() || workspacePath`；路径 IO 继续使用 `workspacePath`。
-- Desktop `continuous` 与手机 Web `replayable` 的队列、seq、gap 和恢复边界相互隔离。
-- Main 和 relay 不持有 session/task、stream、queue、snapshot 等业务状态。
-- passive task-list observer 不得启动或重连远程 runtime。
-- Grouped 只覆盖本地 workspace，R1 不把远程 task 加入本地 group。
+- The lifecycle of the SSH online-window cache, WSL TTL/task protection, and Docker/Server dedicated sessions remains unchanged;
+  only when the last SSH pending waiter explicitly cancels may the connecting entry that is not yet ready be retired and its exclusive initialization aborted.
+- Identity isolation consistently uses `workspaceKey = workspaceIdentity?.trim() || workspacePath`; path IO continues to use `workspacePath`.
+- Desktop `continuous` and mobile Web `replayable` queues, `seq`, gap handling, and recovery boundaries remain isolated.
+- Main and Relay do not own business state such as sessions/tasks, streams, queues, or snapshots.
+- A passive task-list observer must not start or reconnect a remote runtime.
+- Grouped covers local workspaces only; R1 does not add remote tasks to local groups.
 
-## 3. 进程与职责模型
+## 3. Process and Responsibility Model
 
-改造前：
-
-```text
-Renderer ─┬─ base port ────> Local Host ─────────> Local CLI
-          ├─ remote port ──> SSH Remote Host ────> zcode-server
-          ├─ remote port ──> WSL Remote Host ────> zcode-server
-          └─ remote port ──> Docker/Server Host ─> remote service
-
-Mobile -> relay/Main -> Local Host 或独立 Remote Host
-Bot ---------------------> 临时 Remote Host
-```
-
-R1：
+R1 replaces the former per-target Remote Host processes (SSH/WSL/Docker/Server, mobile, Bot) with one Local Host per window:
 
 ```text
 Renderer ───────────────────┐
-Mobile -> relay/Main ───────┼─> WindowHostRuntime（每窗口唯一 Local Host PID）
-Bot/后台入口 ────────────────┘       │
+Mobile -> relay/Main ───────┼─> WindowHostRuntime (one Local Host PID per window)
+Bot/background entry ────────────────┘       │
                                     ├─ LocalSource -> Local CLI
                                     ├─ RemoteConnectionRegistry
                                     │    ├─ SSH pooled connection
@@ -68,16 +56,16 @@ Bot/后台入口 ────────────────┘       │
                                          └─ web-remote-replayable
 ```
 
-Main 仍负责窗口和 Host 进程的创建/销毁、native API、MessageChannel 建立及消息转发，但不再拥有远程连接池、logical session、任务投影或运行任务状态。窗口关闭和 App 退出只等待唯一 Local Host；远程资源由 Host 在有界时间内释放。
+Main remains responsible for creating/destroying windows and Host processes, native APIs, creating MessageChannels, and forwarding messages, but no longer owns remote connection pools, logical sessions, task projections, or running-task state. Window close and App quit wait only for the sole Local Host; the Host releases remote resources within a bounded time.
 
-## 4. Host 状态层级
+## 4. Host State Hierarchy
 
 ```text
 WindowHostRuntime
 ├─ LocalSource
 ├─ RemoteConnectionRegistry
 │  ├─ ConnectionEntry
-│  │  ├─ 脱敏 target
+│  │  ├─ redacted target
 │  │  ├─ connection / service collection
 │  │  ├─ readiness / lifecycle / generation
 │  │  └─ logical remote sessions
@@ -91,10 +79,10 @@ WindowHostRuntime
    ├─ attachmentId
    ├─ trusted clientMode
    ├─ local / remote scope
-   └─ 独立 subscription / seq / backpressure / dispose
+   └─ independent subscription / seq / backpressure / disposal
 ```
 
-连接状态：
+Connection states:
 
 ```text
 absent -> connecting -> online -> closing -> absent
@@ -106,29 +94,26 @@ absent -> connecting -> online -> closing -> absent
                          reconnecting
 ```
 
-`reconnecting` 仅表示既有历史恢复或用户显式重连，R1 不新增后台自动重试策略。连接取消、late completion、重复 dispose 必须幂等；旧 generation 的异步结果不得覆盖新连接。
+`reconnecting` indicates only recovery of an existing connection or an explicit user reconnect; R1 adds no background auto-retry policy. Connection cancellation, late completion, and repeated disposal must be idempotent; async results from an old generation must not overwrite a new connection.
 
-SSH pending cancel 固定使用以下边界：
+SSH pending cancellation follows these fixed boundaries:
 
 ```text
 SSH connecting entry
         |
-        +-- 仍有其他 waiter ------> 保留 entry / backend，不中断共享连接
+        +-- other waiters remain ------> retain entry / backend; do not interrupt the shared connection
         |
-        +-- 最后 waiter 取消 ------> 按对象身份退休 entry -> abort 独占 backend/deploy
+        +-- last waiter cancels ------> retire entry by object identity -> abort exclusive backend/deploy
                                               |
-                                              +-> 同 target 新请求创建新 entry / 使用新凭据
+                                              +-> a new request for the same target creates a new entry / uses new credentials
 
-WSL / Docker / Server pending cancel --------> 保持既有 transport 生命周期，不触发底层 abort
-SSH online cache cancel ----------------------> 保持 window cache，不销毁在线连接
+WSL / Docker / Server pending cancel --------> retain the existing transport lifecycle; do not trigger a lower-level abort
+SSH online cache cancel ----------------------> retain the window cache; do not destroy the online connection
 ```
 
-取消期间可能已经创建 SSH 远端 owner staging。旧 backend 一旦进入 dispose barrier 不得为 cleanup
-重新连接；下一次使用新 backend 的 SSH 部署会在写入前执行 best-effort janitor，只删除 ZCode 自己的
-UUID staging 命名且已超过 24 小时的项。当前 owner、正式路径、WSL/Docker/Server staging 均不在本次
-清理边界内。
+An SSH remote owner staging area may already exist when cancellation occurs. Once the old backend enters the disposal barrier, it must not reconnect for cleanup. The next SSH deployment using a new backend runs a best-effort janitor before writing, deleting only ZCode-owned UUID-named staging entries older than 24 hours. The current owner, canonical paths, and WSL/Docker/Server staging are outside this cleanup boundary.
 
-远程断连时：
+On remote disconnection:
 
 ```text
 online snapshot
@@ -140,14 +125,14 @@ offline frozen snapshot --x mutation / local fallback
 atomic replacement -> online snapshot
 ```
 
-- logical session 最近一次可信 task 投影保留并标记 `sourceAvailability=offline`。
-- conversation/file/git/terminal 和所有写操作立即失败，不回落本地服务。
-- 用户关闭对应 tab/history scope 后清理内存投影。
-- App 重启不恢复该内存快照，继续遵循远程历史等待用户重连的现有语义。
+- Retain the logical session's most recent trusted task projection and mark it `sourceAvailability=offline`.
+- Fail conversation/file/git/terminal operations and all writes immediately; do not fall back to local services.
+- Clear the in-memory projection after the user closes the corresponding tab/history scope.
+- Do not restore this in-memory snapshot after an App restart; keep the existing behavior where remote history waits for the user to reconnect.
 
-## 5. Main 与 Host 控制协议
+## 5. Main and Host Control Protocol
 
-控制消息使用严格运行时 schema；所有异步请求都带 `requestId`：
+Control messages use strict runtime schemas; every asynchronous request carries a `requestId`:
 
 - `ConnectRemoteWorkspace`
 - `CancelRemoteWorkspaceConnect`
@@ -159,11 +144,11 @@ atomic replacement -> online snapshot
 - `RemoteWorkspaceConnectFailed`
 - `RemoteWorkspaceClosed`
 
-Local Host 在连接流程中分配 `remoteSessionId` 并返回 descriptor。Main 仅以 `windowId + requestId` 关联调用方，收到完成/失败/关闭事件后转发，不用 `remoteSessionId` 建立连接池或业务生命周期。
+Local Host allocates `remoteSessionId` during connection setup and returns a descriptor. Main correlates the caller only by `windowId + requestId` and forwards completion/failure/close events when received. It does not use `remoteSessionId` to create a connection pool or business lifecycle.
 
-远程连接进度由 Local Host 通过 `RemoteWorkspaceConnectionLog` 结构化上报，至少包含 `requestId`、`level` 和 `message`。Main 只把日志转发给该 `windowId + requestId` 对应的 renderer；不得再根据 Host 进程 label 或未带请求上下文的 stdout 猜测归属。这样同一个窗口 Host 并发连接多个远端目标时，日志也不会串到其他连接对话框。
+Local Host reports remote-connection progress as structured `RemoteWorkspaceConnectionLog` entries containing at least `requestId`, `level`, and `message`. Main forwards logs only to the Renderer associated with that `windowId + requestId`; it must not infer ownership from a Host process label or stdout without request context. This prevents logs from being misrouted to another connection dialog when one window Host connects to multiple remote targets concurrently.
 
-Attachment scope：
+Attachment scope:
 
 ```ts
 type WindowHostAttachmentScope =
@@ -176,75 +161,75 @@ type WindowHostAttachmentScope =
     };
 ```
 
-Host 必须校验 scope 中的 session、identity、path 和当前 registry generation。远程 scope 缺少 identity、引用已释放/旧 generation 或跨 logical session 时 fail-closed。
+The Host must validate the session, identity, path, and current registry generation in the scope. Fail closed if a remote scope lacks identity, references a released/old generation, or crosses logical sessions.
 
-R1 完成后删除旧初始化协议及职责：
+After R1 is complete, remove the old initialization protocol and responsibilities:
 
 - `InitRemote`
 - `InitRemoteWorkspace`
 - `InitRemoteSshHost`
 - `InitRemoteWslHost`
-- Main 驱动的 WSL acquire/release
-- Remote Host process map、pool 和独立 shutdown barrier
+- Main-driven WSL acquire/release
+- Remote Host process map, pool, and separate shutdown barrier
 
-## 6. Scoped attachment 与可信客户端模式
+## 6. Scoped Attachments and Trusted Client Modes
 
 ```text
 Desktop renderer port
   attachment context = desktop-continuous
        |
-       +--> local scope 或 remote scope --> scoped facade
+       +--> local or remote scope --> scoped facade
 
 Mobile relay port
   attachment context = web-remote-replayable
        |
-       +--> local scope 或 remote scope --> scoped facade
+       +--> local or remote scope --> scoped facade
 ```
 
-- 调用方 payload 内的 `clientMode`/`deliveryKind` 一律清除，由 Host 根据可信 attachment context 注入。
-- 每个 port 独立维护订阅、seq、背压和 dispose；手机慢消费不得阻塞桌面实时链路。
-- attachment 断开只释放 attachment 自身；仍有 workspace tab、手机 owner、Bot 或其他 attachment 使用时不得销毁连接。
-- Renderer reload 只重建 attachment，复用原 Local Host、registry 和 logical sessions。
-- `remoteSessionId` 只用于窗口内 source 路由，不替代 `workspaceIdentity`。
+- Always remove `clientMode`/`deliveryKind` from caller payloads; the Host injects them from trusted attachment context.
+- Each port independently maintains subscriptions, `seq`, backpressure, and disposal; slow mobile consumption must not block the desktop realtime path.
+- Disconnecting an attachment releases only that attachment; do not destroy the connection while a workspace tab, mobile owner, Bot, or another attachment still uses it.
+- A Renderer reload rebuilds only the attachment and reuses the existing Local Host, registry, and logical sessions.
+- `remoteSessionId` is used only for source routing within the window; it does not replace `workspaceIdentity`.
 
-远程目录从连接根目录绑定到 canonical workspace 时，desktop attachment 必须采用两阶段切换：
+When a remote directory is bound from the connection root to a canonical workspace, the desktop attachment must switch in two phases:
 
 ```text
-旧 attachment A（renderer 已注册）
+old attachment A (registered by the Renderer)
         |
         v
-Host 绑定 canonical context，按新 generation 失效 A
+Host binds the canonical context and invalidates A under the new generation
         |
         v
-Main 创建候选 attachment B，并把 port 投递给 renderer
+Main creates candidate attachment B and delivers its port to the Renderer
         |
         v
-renderer 注册 B 的 services，并回传 attachment-ready(B)
+Renderer registers B's services and returns attachment-ready(B)
         |
         v
-Main 提升 B 为当前 renderer attachment
+Main promotes B to the current Renderer attachment
         |
         v
-BindRemoteWorkspaceContext IPC 返回；调用方重新读取 B 的 services
+BindRemoteWorkspaceContext IPC returns; the caller reads B's services again
 ```
 
-- `BindRemoteWorkspaceContext` 的 renderer 可见完成语义不是“Main 已投递 port”，而是“renderer 已注册新 port”。
-- Host generation 换代继续 fail-closed，允许 A 到 B 之间存在有界不可用窗口；调用方不得在 bind 返回前继续向 A 发起 RPC。
-- B 投递失败、ready 超时或收到过期 ACK 时不得把 B 提升为当前 attachment；失败流程回收候选 B，再由连接、绑定或 reload 调用方按既有策略释放或重试该 logical session。
-- ready 后调用方不得继续使用 bind 前捕获的 A services，必须按相同 `remoteSessionId` 从 renderer session store 重新读取 B。
-- attachment 换代只改变 desktop `desktop-continuous` port，不创建新 Host、远程连接或 Agent，也不触碰手机/Bot 的 `web-remote-replayable` attachment。
+- `BindRemoteWorkspaceContext` completion semantics visible to the Renderer means “the Renderer has registered the new port,” not “Main has delivered the port.”
+- Host generation changes remain fail-closed and allow a bounded unavailable window between A and B; the caller must not continue RPCs to A before bind returns.
+- Do not promote B to the current attachment if delivery fails, readiness times out, or an expired ACK arrives. Reclaim candidate B on failure; the connection, binding, or reload caller then releases or retries the logical session according to existing policy.
+- After readiness, the caller must not continue using services from A captured before binding; it must reread B from the Renderer session store using the same `remoteSessionId`.
+- Attachment replacement changes only the desktop `desktop-continuous` port. It does not create a Host, remote connection, or Agent, and does not touch mobile/Bot `web-remote-replayable` attachments.
 
-## 7. Controller 投影协议
+## 7. Controller Projection Protocol
 
-窗口级 V4 topic：
+Window-level V4 topics:
 
 - `controller/workspaces`
 - `controller/tasks-index`
 
-两个 topic 均提供 `subscribe` / `unsubscribe`、`snapshot` / `delta`、`seq + logEpoch` 和 gap 检测后的 resync。
+Both topics provide `subscribe` / `unsubscribe`, `snapshot` / `delta`, `seq + logEpoch`, and resync after gap detection.
 
 ```text
-task-index（membership 左表）
+task-index (membership left table)
              |
              +-- sessions-index live overlay
              |
@@ -253,48 +238,48 @@ task-index（membership 左表）
         controller task row
 ```
 
-`ControllerProjection` 只保存 workspace/connection facts、task membership/meta、live overlay 和离线摘要；不保存 conversation rows、stream、permission payload、tool payload 或 runtime snapshot。
+`ControllerProjection` stores only workspace/connection facts, task membership/metadata, live overlays, and offline summaries; it does not store conversation rows, streams, permission payloads, tool payloads, or runtime snapshots.
 
-Host Controller 为每个 source 维护一个 `runtimePolicy: existing-only` 的被动
-`sessions-index` 订阅，把 title、phase、pending-interaction 和 activity 摘要作为内存 live overlay
-合并到 task-index membership；live 状态不写回 SQLite，避免进程退出后遗留伪 running 状态。
-订阅只观察已经存在的 runtime，不能因打开列表启动本地 Agent、创建远程 runtime 或触发远程重连。
-runtime 不可用或换代时清理该 source 的 live overlay，重新收到 snapshot 后原子替换。
+Host Controller maintains a passive `runtimePolicy: existing-only`
+`sessions-index` subscription for each source, combining title, phase, pending-interaction, and activity summaries as an in-memory live overlay
+with task-index membership. Live state is not written back to SQLite, preventing a false running state from remaining after process exit.
+The subscription observes only existing runtimes; opening a list must not start a local Agent, create a remote runtime, or trigger remote reconnection.
+When a runtime becomes unavailable or is replaced, clear that source's live overlay and atomically replace it when a new snapshot arrives.
 
-Renderer 对 `controller/workspaces` 与 `controller/tasks-index` 各只保持一个窗口级共享订阅。
-同一投影 revision、同一查询参数的 `listTaskList` 请求必须 single-flight 并复用结果，禁止每个
-`useGlobalTaskList` 调用点独立订阅并在同一 frame 上重复全量读取。
+Renderer maintains only one window-level shared subscription each for `controller/workspaces` and `controller/tasks-index`.
+Requests to `listTaskList` with the same projection revision and query parameters must be single-flight and reuse results. Do not let each
+`useGlobalTaskList` call site subscribe independently and repeat a full read on the same frame.
 
-共享订阅的失效粒度必须落到 query，而不是任意 Controller frame 到达后清空全部列表缓存：
+Shared-subscription invalidation must be scoped to queries, rather than clearing all list caches whenever any Controller frame arrives:
 
-- `controller/tasks-index` snapshot、gap resync 或无法识别旧 row 的 delta 可以保守失效相关 scope；
-- 已知旧/新 row 的 upsert/remove 只失效 workspace scope 命中，且 `kind` 与变更前后 membership
-  相交的查询；例如 timeline task 的 live/activity 变化不得连带刷新 pinned/archived；
-- `controller/workspaces` 只维护 workspace facts/cursor，不直接失效 task list。source 上下线、移除、
-  重连对列表可见 row 的影响必须同步发布 `controller/tasks-index` delta；
-- 手动 refresh 与兼容期的 legacy task-list version 仍可强制绕过 query cache；
-- 同一个 renderer 调度周期内连续到达的相关 delta 可以有界合并，但不得用无上限 debounce 延迟
-  desktop continuous 列表状态。
+- `controller/tasks-index` snapshot, gap resync, or a delta whose old row cannot be identified may conservatively invalidate the relevant scope;
+- An upsert/remove with known old/new rows invalidates only matching workspace scopes and queries whose `kind` intersects membership before or after the change;
+  for example, a live/activity change in a timeline task must not also refresh pinned/archived;
+- `controller/workspaces` maintains only workspace facts/cursors and does not directly invalidate the task list. Source online/offline changes, removals,
+  and reconnects that affect visible list rows must also publish a `controller/tasks-index` delta;
+- Manual refresh and legacy task-list versions during the compatibility period may still force a query-cache bypass;
+- Related deltas arriving in the same Renderer scheduling cycle may be coalesced with a bound, but unbounded debounce must not delay
+  desktop continuous list state.
 
 ```text
 controller/tasks-index delta
           |
           v
-  命中 workspace scope? -- 否 --> 保留该 query cache
+  matches workspace scope? -- no --> retain this query cache
           |
-         是
+         yes
           v
-     已知旧 row? -- 否 --> 保守失效该 scope 的全部 kind
+     known old row? -- no --> conservatively invalidate all kinds for this scope
           |
-         是
+         yes
           v
-旧 membership kind ∪ 新 membership kind
+old membership kind ∪ new membership kind
           |
           v
-只失效相交的 query cache --> 同一调度周期合并一次 renderer revision
+invalidate only intersecting query caches --> coalesce into one Renderer revision per scheduling cycle
 ```
 
-任务地址：
+Task address:
 
 ```ts
 interface WindowHostTaskAddress {
@@ -305,78 +290,78 @@ interface WindowHostTaskAddress {
 }
 ```
 
-读取范围：
+Read scope:
 
-- Timeline、Pinned、Archived、Active、Search 聚合当前本地和已连接/暂时离线的远程 scope。
-- Search 只向在线 source 发起查询；离线 source 只能展示已有摘要，不伪造新搜索结果。
-- Grouped 继续使用本地 task index 的 membership/order，只消费 Controller 提供的本地 task facts。
-- WSL 连接仍按 distro/user 在窗口内复用；logical session 关闭只释放对应 workspace runtime。
-  有运行中 task 时 release 延迟到计数归零，快速重开通过 workspace generation 使未开始的旧
-  release 失效，已经在途的 release 完成前新 attachment 在 Host 内等待。
+- Timeline, Pinned, Archived, Active, and Search aggregate current local and connected/temporarily offline remote scopes.
+- Search queries online sources only; offline sources may show existing summaries but must not fabricate new search results.
+- Grouped continues to use membership/order from the local task index and consumes only local task facts provided by Controller.
+- WSL connections continue to be reused per distro/user within a window; closing a logical session releases only the corresponding workspace runtime.
+  If tasks are running, release is delayed until the count reaches zero. A quick reopen uses the workspace generation to invalidate an old release that has not started;
+  a new attachment waits inside the Host until an in-flight release completes.
 
-列表来源写操作由 Controller 解析唯一 source 后执行：pin/unpin、archive/unarchive、delete/restore、mark read/unread、本地 grouped membership/order，以及从列表打开/恢复任务。离线、identity 不匹配或地址不唯一时明确失败，不尝试本地 fallback。
+For list-source writes, Controller resolves the unique source before executing: pin/unpin, archive/unarchive, delete/restore, mark read/unread, local grouped membership/order, and opening/restoring a task from a list. Fail explicitly when offline, when identity does not match, or when the address is ambiguous; do not try local fallback.
 
-跨 workspace 的列表操作不得复用发起组件渲染时捕获的 ambient scoped facade。目标是本地 workspace
-时从窗口 base attachment 发起，由 Controller 解析唯一 local source；目标是 remote workspace 时必须
-使用目标 tab 的精确 `remoteSessionId` attachment。目标 remote 已断开时失败并回滚乐观状态，禁止按
-相同 `workspacePath` 回退到 base/local 或其他 remote attachment。
+Cross-workspace list operations must not reuse the ambient scoped facade captured when the initiating component rendered. If the target is a local workspace,
+start from the window base attachment and let Controller resolve the unique local source. If the target is a remote workspace,
+use the exact `remoteSessionId` attachment for the target tab. If the target remote is disconnected, fail and roll back optimistic state; do not fall back based on
+the same `workspacePath` to the base/local or another remote attachment.
 
 ```text
-Renderer（可能仍捕获旧 remote ambient facade）
+Renderer (may still hold an old remote ambient facade)
           |
           v
-先激活目标 tab，读取 workspaceIdentity + remoteSessionId
+activate the target tab first, then read workspaceIdentity + remoteSessionId
           |
-          +-- local target  --> window base attachment --> Controller 唯一 local source
+          +-- local target  --> window base attachment --> Controller's unique local source
           |
-          +-- remote target --> exact remoteSessionId attachment --> 对应 remote source
+          +-- remote target --> exact remoteSessionId attachment --> corresponding remote source
                                   |
-                                  +-- session 已断开 --> 回滚，不 fallback
+                                  +-- session disconnected --> roll back; do not fall back
 ```
 
-进入 workspace/conversation 后，文件、Git、终端、Agent/session 等仍通过已验证的 scoped facade 访问，不扩展为显式 Controller 路由。
+After entering a workspace/conversation, files, Git, terminals, Agent/sessions, and similar capabilities are still accessed through the validated scoped facade; do not expand them into explicit Controller routing.
 
-## 8. Realtime 边界
+## 8. Realtime Boundaries
 
-- 一个 WindowHostRuntime 只注册一个 realtime `hostId`。
-- owner/lease/stale-run/session route 继续按 `workspaceKey + taskId` 隔离；不能因为 shared-host 合并而删除 owner 判定。
-- Desktop 保持 direct continuous；不拼接 replayable 运行态恢复消息。
-- 手机 Web 必须经过 replayable gap/snapshot 恢复边界，不能绕过恢复直接消费 desktop continuous。
-- 远程 workspace 的 bridge、snapshot、queue、owner command、缓存和去重 key 必须携带 `workspaceIdentity` 与 `remoteSessionId`。
-- 桌面与手机已提交的 busy/running 输入统一进入 CLI/runtime `CommandInbox`；FIFO 以 CLI 串行
-  admission 顺序为准。Renderer 只保留未提交草稿和 pending optimistic overlay，Host 的
-  owner/lease 只负责路由，不保存第二份 accepted input queue。
+- One WindowHostRuntime registers only one realtime `hostId`.
+- Continue isolating owner/lease/stale-run/session routing by `workspaceKey + taskId`; do not remove owner checks because of shared-Host consolidation.
+- Desktop remains direct continuous; do not append replayable runtime-recovery messages.
+- Mobile Web must use the replayable gap/snapshot recovery boundary; it must not bypass recovery and consume desktop continuous directly.
+- Bridges, snapshots, queues, owner commands, caches, and deduplication keys for remote workspaces must carry `workspaceIdentity` and `remoteSessionId`.
+- Submitted busy/running input from desktop and mobile enters the CLI/runtime `CommandInbox`; FIFO follows the CLI serial
+  admission order. Renderer retains only unsubmitted drafts and the pending optimistic overlay; the Host's
+  owner/lease handles routing only and does not store a second accepted-input queue.
 
-## 9. 远端 RPC 兼容层
+## 9. Remote RPC Compatibility Layer
 
-R1 以 `LegacyRemoteWorkspaceRpcContract` 对现有远端 service channel 做类型封装和 channel 完整性校验，但不增加握手、版本协商、远端部署要求或持久化字段。
+R1 wraps existing remote service channels with `LegacyRemoteWorkspaceRpcContract` for typing and channel-integrity validation, but adds no handshake, version negotiation, remote deployment requirement, or persistent field.
 
-- file、Git、terminal、Agent/session 由远端权威提供。
-- Desktop app-global service 由本地权威提供。
-- SSH window cache、WSL TTL/running-task protection、Docker/Server dedicated logical session 的生命周期语义不变；
-  SSH pending connect 的最后 waiter 取消是唯一新增的底层 abort 边界。
+- Files, Git, terminals, and Agent/sessions are provided by the remote authority.
+- Desktop app-global services are provided by the local authority.
+- Lifecycle semantics for SSH window cache, WSL TTL/running-task protection, and Docker/Server dedicated logical sessions remain unchanged;
+  Cancellation by the last waiter on an SSH pending connection is the only new lower-level abort boundary.
 
-## 10. 实施切片
+## 10. Implementation Slices
 
-1. 规格、feature graph、conversation case catalog 和 coverage matrix 先行，并采集 PID、连接复用、reload、手机 attachment、task-list 基线。
-2. 先写控制协议、registry、scoped attachment、投影、断连/恢复契约测试。
-3. 把远程连接、logical session 和 generation 生命周期迁入 WindowHostRuntime。
-4. Main 收敛为请求、事件和 MessagePort 薄转发。
-5. base、remote、手机和 Bot 统一为同一 Host 的 scoped attachment。
-6. Host 聚合任务事实和列表写路由；Renderer 改为窗口投影消费者。
-7. 删除旧 Remote Host 架构，补齐日志、事实文档、全量门禁和代表链路 E2E。
+1. Start with the specification, feature graph, conversation case catalog, and coverage matrix; capture baselines for PID, connection reuse, reload, mobile attachments, and task lists.
+2. First write contract tests for the control protocol, registry, scoped attachments, projections, and disconnect/recovery.
+3. Move remote connections and logical-session/generation lifecycles into WindowHostRuntime.
+4. Reduce Main to thin forwarding of requests, events, and MessagePorts.
+5. Unify base, remote, mobile, and Bot as scoped attachments to the same Host.
+6. Have Host aggregate task facts and list-write routing; make Renderer a consumer of the window projection.
+7. Remove the old Remote Host architecture and complete logging, fact documents, all gates, and representative-path E2E coverage.
 
-## 11. 接受用例与剪枝
+## 11. Acceptance Cases and Pruning
 
-接受用例登记在 `docs/conversation-session-case-catalog.md` 的 R1H 组，覆盖矩阵登记在 `docs/testing/conversation-session-e2e-coverage-matrix.md`。
+Acceptance cases are registered in group R1H of `docs/conversation-session-case-catalog.md`; the coverage matrix is in `docs/testing/conversation-session-e2e-coverage-matrix.md`.
 
-已确认的 E2E 剪枝：SSH 覆盖完整代表链路；双窗口和 Renderer reload 单独覆盖；WSL、Docker、Server 的 transport 差异主要由契约/集成测试覆盖并做平台 smoke。手机 attachment 和 Bot 复用必须覆盖“不会创建额外 Host/Agent”的断言。Grouped 只验证本地-only 语义未扩张。
+Confirmed E2E pruning: SSH covers the complete representative path; dual windows and Renderer reload are covered separately; WSL, Docker, and Server transport differences are covered mainly by contract/integration tests plus platform smoke tests. Mobile-attachment and Bot reuse must assert that no extra Host/Agent is created. Grouped verifies only that local-only semantics have not expanded.
 
-门禁顺序：定向测试、`pnpm test:unit`、conversation coverage audit、Desktop E2E typecheck、`pnpm typecheck`、`pnpm lint`、Electron 代表 E2E、container conversation E2E、平台 smoke，以及改造前后 PID/连接数/任务列表/路由/退出残留对比。
+Gate order: focused tests, `pnpm test:unit`, conversation coverage audit, Desktop E2E typecheck, `pnpm typecheck`, `pnpm lint`, representative Electron E2E, container conversation E2E, platform smoke tests, and before/after comparisons of PID, connection count, task lists, routing, and shutdown residue.
 
-## 12. 可观测性与退出
+## 12. Observability and Shutdown
 
-- Process Monitor 和生命周期日志展示窗口 Host PID、connection、logical session、attachment 数量。
-- 进程、session、连接、端口的启动/关闭使用生产 `info`；可恢复异常使用 `warn`；不可恢复握手/进程错误使用 `error`。
-- V4 frame、stream delta、tool update 等与消息流同数量级的逐条信息只能使用 `debug`。
-- 窗口关闭/App 退出必须有界释放连接、端口和 Agent；一个 remote connection 失败或关闭不能影响 local 或其他 remote。
+- Process Monitor and lifecycle logs show the window Host PID and counts of connections, logical sessions, and attachments.
+- Use production `info` for process, session, connection, and port startup/shutdown; `warn` for recoverable exceptions; and `error` for unrecoverable handshake/process errors.
+- Per-item details at message-stream frequency, such as V4 frames, stream deltas, and tool updates, must use `debug` only.
+- Window close/App quit must release connections, ports, and Agents within bounded time; failure or shutdown of one remote connection must not affect local or other remote connections.

@@ -10,7 +10,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
     intl: {
       formatMessage: ({ id }: { id: string }) => id,
     },
-    locale: "zh-CN",
+    locale: "en-US",
   }),
 }));
 
@@ -34,6 +34,7 @@ const captured = vi.hoisted(() => ({
     labelValues: undefined,
   },
   executeDesktopCommand: vi.fn(async () => undefined),
+  getDeviceId: vi.fn(() => "device-mid-123"),
 }));
 
 vi.mock("@/components/ui/dropdown-menu.js", () => ({
@@ -96,13 +97,17 @@ vi.mock("@/hooks/usePlatform.js", () => ({
     captureWindowScreenshot: vi.fn(async () => null),
     executeDesktopCommand: captured.executeDesktopCommand,
     exportLogs: captured.exportLogs,
+    getDeviceId: captured.getDeviceId,
     openCommunity: vi.fn(async () => undefined),
     openExternal: captured.openExternal,
   }),
 }));
 
 vi.mock("@/hooks/useVulnerabilityReportUrl.js", () => ({
-  useVulnerabilityReportUrl: () => ({ url: captured.zsrcUrl, loading: captured.loading }),
+  useVulnerabilityReportUrl: () => ({
+    url: captured.zsrcUrl,
+    loading: captured.loading,
+  }),
 }));
 
 describe("WorkspaceHelpMenuButton", () => {
@@ -116,7 +121,7 @@ describe("WorkspaceHelpMenuButton", () => {
     return renderToStaticMarkup(createElement(WorkspaceHelpMenuButton, { isDesktop }));
   }
 
-  it("桌面和 Web 的漏洞入口紧跟问题上报，打开配置地址；缺失时隐藏", async () => {
+  it("desktop and Web show the vulnerability entry right after issue report, opening the configured URL; hidden when absent", async () => {
     for (const desktop of [true, false]) {
       captured.zsrcUrl = "https://security.example.test/report";
       captured.openExternal.mockClear();
@@ -136,7 +141,7 @@ describe("WorkspaceHelpMenuButton", () => {
     }
   });
 
-  it("冷缓存加载项不可触发外链，有效配置到达时保留原位置与文案", async () => {
+  it("a cold-cache loading entry cannot trigger the external link and keeps its position and copy once a valid config arrives", async () => {
     captured.loading = true;
     captured.openExternal.mockClear();
     try {
@@ -161,8 +166,8 @@ describe("WorkspaceHelpMenuButton", () => {
     }
   });
 
-  it("桌面端渲染资源管理器项，点击走 OpenResourceManager 命令", async () => {
-    // 原因：Windows/Linux 没有原生菜单栏，自绘箭头菜单也已下线，问号菜单是资源管理器唯一入口。
+  it("desktop renders the resource manager entry and clicking it runs the OpenResourceManager command", async () => {
+    // Reason: Windows/Linux have no native menu bar and the custom arrow menu is gone; the help menu is the only resource manager entry.
     const html = await render(true);
 
     expect(html).toContain("titleBar.menu.help.resourceManager");
@@ -176,7 +181,7 @@ describe("WorkspaceHelpMenuButton", () => {
     );
   });
 
-  it("Web 端（isDesktop 缺省 / false）不渲染资源管理器项", async () => {
+  it("Web (isDesktop undefined / false) does not render the resource manager entry", async () => {
     for (const isDesktop of [undefined, false]) {
       const html = await render(isDesktop);
       expect(html).not.toContain("titleBar.menu.help.resourceManager");
@@ -188,7 +193,7 @@ describe("WorkspaceHelpMenuButton", () => {
     }
   });
 
-  it("桌面端关于项位于最后，点击复用 ShowAbout", async () => {
+  it("desktop puts About last and clicking it reuses ShowAbout", async () => {
     await render(true);
     const index = captured.menuItems.findIndex(
       (entry) => entry.label === "titleBar.menu.help.about",
@@ -201,13 +206,13 @@ describe("WorkspaceHelpMenuButton", () => {
     );
   });
 
-  it("Web 和手机远控不显示桌面关于入口", async () => {
+  it("Web and mobile remote control hide the desktop About entry", async () => {
     for (const isDesktop of [undefined, false]) {
       expect(await render(isDesktop)).not.toContain("titleBar.menu.help.about");
     }
   });
 
-  it("资源管理器之后显示检查更新，点击执行已有命令", async () => {
+  it("Check for updates follows the resource manager and clicking it runs the existing command", async () => {
     await render(true);
     const index = captured.menuItems.findIndex(
       (entry) => entry.label === "titleBar.menu.help.checkForUpdates",
@@ -220,7 +225,7 @@ describe("WorkspaceHelpMenuButton", () => {
     );
   });
 
-  it("Web 与 Preview 不显示检查更新", async () => {
+  it("Web and Preview hide Check for updates", async () => {
     expect(await render(false)).not.toContain("titleBar.menu.help.checkForUpdates");
     captured.updateMenu.visible = false;
     try {
@@ -230,7 +235,7 @@ describe("WorkspaceHelpMenuButton", () => {
     }
   });
 
-  it("桌面导出日志复用平台导出及共享提示", async () => {
+  it("desktop export logs reuses the platform export and the shared toast", async () => {
     await render(true);
     const item = captured.menuItems.find(
       (entry) => entry.label === "titleBar.menu.help.exportLogs",
@@ -244,14 +249,68 @@ describe("WorkspaceHelpMenuButton", () => {
     expect(captured.dismissToast).toHaveBeenCalledWith(7);
   });
 
-  it("Web 和手机远控不显示本地导出日志入口", async () => {
+  it("desktop copy device MID writes the platform device id to the clipboard and shows the success toast", async () => {
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    try {
+      await render(true);
+      const item = captured.menuItems.find(
+        (entry) => entry.label === "workspaceHeader.help.copyDeviceMid",
+      );
+      expect(item).toBeDefined();
+      await item!.onSelect?.();
+      expect(writeText).toHaveBeenCalledExactlyOnceWith("device-mid-123");
+      expect(captured.toast).toHaveBeenCalledWith("workspaceHeader.help.deviceMidCopied");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("copy device MID shows the failure toast when the clipboard rejects or is unavailable", async () => {
+    const writeText = vi.fn(async () => {
+      throw new Error("denied");
+    });
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    try {
+      await render(true);
+      const item = captured.menuItems.find(
+        (entry) => entry.label === "workspaceHeader.help.copyDeviceMid",
+      );
+      await item!.onSelect?.();
+      expect(captured.toast).toHaveBeenCalledWith("workspaceHeader.help.deviceMidCopyFailed");
+      expect(captured.toast).not.toHaveBeenCalledWith("workspaceHeader.help.deviceMidCopied");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    vi.stubGlobal("navigator", {});
+    try {
+      captured.toast.mockClear();
+      await render(true);
+      const item = captured.menuItems.find(
+        (entry) => entry.label === "workspaceHeader.help.copyDeviceMid",
+      );
+      await item!.onSelect?.();
+      expect(captured.getDeviceId).toHaveBeenCalled();
+      expect(captured.toast).toHaveBeenCalledWith("workspaceHeader.help.deviceMidCopyFailed");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("Web hides copy device MID", async () => {
+    for (const isDesktop of [undefined, false]) {
+      expect(await render(isDesktop)).not.toContain("workspaceHeader.help.copyDeviceMid");
+    }
+  });
+
+  it("Web and mobile remote control hide the local export-logs entry", async () => {
     for (const isDesktop of [undefined, false]) {
       expect(await render(isDesktop)).not.toContain("titleBar.menu.help.exportLogs");
       expect(captured.exportLogs).not.toHaveBeenCalled();
     }
   });
 
-  it("桌面两组一条分隔线，导出日志位于桌面组首项，Web 仅帮助组", async () => {
+  it("desktop gets one separator between the two groups with export logs first in the desktop group; Web keeps only the help group", async () => {
     for (const desktop of [true, false]) {
       const html = await render(desktop);
       expect(captured.menuItems.map((item) => item.label)).toEqual([
@@ -262,6 +321,7 @@ describe("WorkspaceHelpMenuButton", () => {
         ...(desktop
           ? [
               "titleBar.menu.help.exportLogs",
+              "workspaceHeader.help.copyDeviceMid",
               "titleBar.menu.help.resourceManager",
               "titleBar.menu.help.checkForUpdates",
               "titleBar.menu.help.about",
@@ -272,7 +332,7 @@ describe("WorkspaceHelpMenuButton", () => {
     }
   });
 
-  it("桌面端与 Web 端都保留原有帮助项", async () => {
+  it("desktop and Web keep the existing help entries", async () => {
     for (const isDesktop of [true, false]) {
       const html = await render(isDesktop);
       for (const id of [

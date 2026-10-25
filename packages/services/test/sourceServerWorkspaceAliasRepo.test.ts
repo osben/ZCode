@@ -10,7 +10,7 @@ import { SourceServerWorkspaceAliasRepo } from "#src/session/sourceServerWorkspa
 
 async function createTaskDb(path: string): Promise<DatabaseSync> {
   // 使用正式索引 schema，避免精简夹具漏掉搜索、未读与模型等持久化投影列。
-  const index = new TaskIndexRepo(undefined, undefined, path);
+  const index = new TaskIndexRepo(path);
   try {
     await index.ensureReady();
   } finally {

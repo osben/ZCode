@@ -131,7 +131,8 @@ const compactTimelinePayloadInputSchema = z
     reason: z.string().min(1).optional(),
     boundaryId: z.string().min(1).optional(),
     summaryMessageId: z.string().min(1).optional(),
-    // compact 覆盖前缀的最后一条 transcript message；live/cold edit 判定必须同源。
+    // Compact replaces the last transcript message in the prefix; live and cold edit checks
+    // must use the same source.
     tailStartMessageId: z.string().min(1).optional(),
     sourceCommandId: z.string().min(1).optional(),
     preCompactTokenCount: z.number().int().nonnegative().optional(),

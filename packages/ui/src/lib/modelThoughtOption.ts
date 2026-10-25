@@ -1,7 +1,7 @@
 import type { ZCodeConfigOption } from "@zcode/shared";
 import type { ModelSelectionView } from "@zcode/services";
 
-/** 从 Registry 的 ModelConfig Option Specs 读取思考档位。 */
+/** Read reasoning levels from the Registry's ModelConfig Option Specs. */
 export function resolveModelThoughtOption(params: {
   modelSelectionView: ModelSelectionView;
   providerId: string;
@@ -21,7 +21,7 @@ export function resolveModelThoughtOption(params: {
     name: "Thought Level",
     category: "thought_level",
     type: "select",
-    // Reasoning 没有默认档位；空字符串表示模型已选但用户尚未选择 reasoning。
+    // Reasoning has no default level; an empty string means the model is selected but the user has not chosen a reasoning level.
     currentValue:
       params.currentValue && reasoning.values.includes(params.currentValue)
         ? params.currentValue

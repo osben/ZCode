@@ -1,139 +1,142 @@
-# Windows 路径 markdown 链接转义还原设计
+# Windows Path Markdown Link Escape Recovery Design
 
-日期：2026-08-18
-状态：设计 → 实施
-影响面：`packages/ui/src/lib/windowsFileLinkEscapeRemarkPlugin.ts`（新增）、
-`packages/ui/src/components/ai-elements/message.tsx`（挂载 remark 插件）。
-不改文件打开链路、不改 rehype 改写、不改 citation 插件。
+Date: 2026-08-18
+Status: design -> implementation
+Impact: `packages/ui/src/lib/windowsFileLinkEscapeRemarkPlugin.ts` (new),
+`packages/ui/src/components/ai-elements/message.tsx` (mounts the remark plugin). The file-open path, the rehype
+rewrite and the citation plugin are unchanged.
 
-## 背景
+## Background
 
-同一份「截图失败」现场日志里，除了 Helper DPI 网关拦截（已在 producer 侧修复），
-还有第二个用户可见故障：模型走 PowerShell 兜底截图成功落盘
+The same "screenshot failed" field log showed, besides the Helper DPI gateway interception (fixed on the
+producer side), a second user-visible fault: the model's PowerShell fallback screenshot was saved
 
 ```text
 C:\Users\dev\.zcode\workspace\default\screenshot.png   518252 bytes
 ```
 
-但会话区里的预览打不开，`file.stat` / `file.readMediaPreview` 报 ENOENT，
-实际请求的是
+but the preview in the conversation would not open; `file.stat` / `file.readMediaPreview` returned ENOENT for
 
 ```text
 C:/Users/dev.zcode/workspace/default/screenshot.png
 ```
 
-`\.zcode` 变成了 `.zcode` —— 少了一个反斜杠。
+`\.zcode` became `.zcode`: one backslash was lost.
 
-## 根因
+## Root cause
 
-CommonMark 规定链接目标里的反斜杠转义**只对 ASCII 标点生效**：`\X` 中 X 是标点
-时产出 X 本身，否则反斜杠原样保留。Windows 路径恰好横跨这两类：
+CommonMark says backslash escapes in a link destination apply **only to ASCII punctuation**: in `\X`, if X is
+punctuation the result is X itself, otherwise the backslash is kept. Windows paths span both classes:
 
 ```text
-源码   [screenshot.png](C:\Users\dev\.zcode\workspace\default\screenshot.png)
+source [screenshot.png](C:\Users\dev\.zcode\workspace\default\screenshot.png)
                           ↑U    ↑z   ↑.      ↑w        ↑d       ↑s
-                          留    留   吃掉    留        留       留
+                          kept  kept eaten    kept      kept     kept
 mdast  url = C:\Users\dev.zcode\workspace\default\screenshot.png
 ```
 
-实测（`remark-parse`）确认：只有 `\.` 这一处塌掉，其余反斜杠全部存活。
+A `remark-parse` experiment confirmed that only `\.` collapses; all other backslashes survive.
 
-丢失发生在 **mdast 解析阶段**。现有的 `rewriteLocalFileMarkdownTargetsRehypePlugin`
-跑在 rehype 阶段，拿到的 `node.properties.href` 已经是丢失后的字符串，它把
-`\` 换成 `/` 只是把错误路径换了个写法，无从还原。
+The loss happens in the **mdast parse phase**. The existing `rewriteLocalFileMarkdownTargetsRehypePlugin` runs
+in the rehype phase and sees an `href` already corrupted; turning `\` into `/` only rewrites the wrong path.
 
-这是**设计层面的阶段错配**，不是那个 rehype 插件的实现 bug：任何 rehype 插件都
-无法看到原始 destination 文本。修复必须提前到 remark 阶段，那里 `node.position`
-仍然指向 VFile 原文。
+This is a **phase mismatch in the design**, not an implementation bug in that rehype plugin: no rehype plugin
+can see the original destination text. The fix must move to the remark phase, where `node.position` still
+points into the VFile source.
 
-## 目标
+## Goals
 
-1. 模型输出的 Windows 绝对路径（盘符与 UNC）链接/图片，`node.url` 还原为原文写法。
-2. 还原必须**可验证**：只有「把原文按 CommonMark 规则反转义后恰好等于 `node.url`」
-   才替换，否则保持现状。宁可不修，不可修错。
-3. 不影响非 Windows 路径、不影响 `http(s)`、不影响相对路径与 citation。
+1. For Windows absolute paths (drive letter and UNC) in model-produced links/images, restore `node.url` to the
+   source spelling.
+2. Restoration must be **verifiable**: replace only if unescaping the source per CommonMark rules yields
+   exactly `node.url`; otherwise leave it. Better not to fix than to fix wrongly.
+3. Do not affect non-Windows paths, `http(s)`, relative paths or citations.
 
-## 非目标
+## Non-goals
 
-- 不改模型侧输出（让模型自己转义反斜杠不可控，且历史消息已经落库）。
-- 不改 rehype 阶段那条链路，它对已正确的 URL 继续照常工作。
-- 不处理 `<...>` 尖括号形式与带 title 的链接：这两种在本场景不出现，
-  统一按「不还原」处理，保持 fail closed。
+- Do not change model output (making the model escape backslashes is uncontrollable, and history is already
+  persisted).
+- Do not change the rehype chain; it keeps working for already-correct URLs.
+- Do not handle the `<...>` angle-bracket form or links with a title: neither occurs in this scenario, and both
+  are "not restored", failing closed.
 
-## 设计
+## Design
 
-### 阶段
+### Phases
 
 ```text
-markdown 源文本
+markdown source
     │
-    ├─ remark-parse ──────────► mdast（此时 destination 已被反转义，位置信息尚在）
+    ├─ remark-parse ──────────► mdast (destination already unescaped, position info still present)
     │
-    ├─ ✦ windowsFileLinkEscapeRemarkPlugin  ← 新增，在此还原 node.url
+    ├─ * windowsFileLinkEscapeRemarkPlugin  <- new, restores node.url here
     │
-    ├─ 其余 remark 插件（GFM / citation）
+    ├─ other remark plugins (GFM / citation)
     │
     ├─ mdast → hast
     │
-    ├─ rewriteLocalFileMarkdownTargetsRehypePlugin（既有，规整成 /C:/… 供安全层放行）
+    ├─ rewriteLocalFileMarkdownTargetsRehypePlugin (existing, normalizes to /C:/… for the safety layer)
     │
-    └─ rehype-harden → 渲染
+    └─ rehype-harden → render
 ```
 
-### 还原算法
+### Restoration algorithm
 
-对每个 `link` / `image` / `definition` 节点：
+For each `link` / `image` / `definition` node:
 
-1. 门禁：`node.url` 必须形如 `X:\…` / `X:/…`（盘符）或以单个 `\` 开头（UNC）。
-   其余一律跳过，普通 URL 不进入本插件的改写面。
+1. Gate: `node.url` must look like `X:\…` / `X:/…` (drive letter) or start with a single `\` (UNC). Everything
+   else is skipped, so ordinary URLs never enter this plugin's rewrite surface.
 
-   UNC 只要求**单个**前导反斜杠：源码里的 `\\host` 中 `\\` 自身就是一次标点转义，
-   解析后只剩一个反斜杠（实测 `[log](\\build01\share\.logs\run.txt)` →
-   `\build01\share.logs\run.txt`）。要求两个反而会把真正需要还原的 UNC 全部漏掉。
-2. `node.title` 非空则跳过（不解析 title 语法）。
-3. 用 `node.position` 的 start/end offset 从 VFile 原文切出整段，按节点形态取
-   destination：
-   - `link` / `image`：`[label](dest)` / `![alt](dest)`，要求以 `)` 结尾，取最后一个
-     `](` 之后到收尾 `)` 之前的片段。Windows 路径不含 `](`，所以在门禁之内「取最后
-     一个」是安全的，label/alt 内部的方括号也不会把切片带偏。
-   - `definition`：`[ref]: dest`，取 `]:` 之后的片段。引用式链接的 URL 由 definition
-     提供，同一处丢失在这条路径上同样成立。
-4. 尖括号形式（`<…>`）跳过。
-5. **验证**：`unescapeCommonMarkPunctuation(raw) === node.url` 才认为切片正确
-   且还原无歧义，此时 `node.url = raw`；否则保持不变。
+   UNC requires only **one** leading backslash: in the source `\\host`, `\\` is itself one punctuation escape
+   and parses to a single backslash (verified: `[log](\\build01\share\.logs\run.txt)` →
+   `\build01\share.logs\run.txt`). Requiring two would miss every UNC that needs restoring.
 
-其中反转义规则与 CommonMark 一致：
+2. Skip if `node.title` is non-empty (title syntax is not parsed).
+3. Slice the whole segment from the VFile source using the `node.position` start/end offsets and take the
+   destination by node shape:
+   - `link` / `image`: `[label](dest)` / `![alt](dest)`; require a trailing `)` and take the part after the
+     last `](` up to the closing `)`. A Windows path contains no `](`, so "the last one" is safe inside the gate
+     and brackets inside label/alt cannot skew the slice.
+   - `definition`: `[ref]: dest`; take the part after `]:`. A reference link's URL comes from the definition,
+     and the same loss occurs on that path.
+4. Skip the angle-bracket form (`<…>`).
+5. **Verify**: only when `unescapeCommonMarkPunctuation(raw) === node.url` is the slice taken as correct and
+   the restoration unambiguous; then set `node.url = raw`, otherwise leave it unchanged.
+
+The unescape rule matches CommonMark:
 
 ```text
-\ 后跟 ASCII 标点（! " # $ % & ' ( ) * + , - . / : ; < = > ? @ [ \ ] ^ _ ` { | } ~）
-  → 去掉反斜杠
-其他情况 → 原样保留
+\ followed by ASCII punctuation (! " # $ % & ' ( ) * + , - . / : ; < = > ? @ [ \ ] ^ _ ` { | } ~)
+  → drop the backslash
+otherwise → keep as is
 ```
 
-第 5 步是整个设计的安全阀：切片切错、原文含实体引用（`&amp;`）、
-或任何我们没预料到的语法，都会导致等式不成立，从而放弃还原而不是写入错误路径。
+Step 5 is the safety valve of the design: a wrong slice, source containing entity references (`&amp;`), or any
+unforeseen syntax makes the equality fail, so restoration is abandoned instead of writing a wrong path.
 
-### 挂载
+### Mounting
 
-`message.tsx` 里 `messageRemarkPlugins` 目前只在
-`renderZCodeFileCitations && workspacePath` 时才显式提供，否则传 `undefined`
-（走 Streamdown 默认）。本插件必须**无条件**生效，因此改为始终显式提供
-`defaultRemarkPlugins + windowsFileLinkEscapeRemarkPlugin`，citation 插件仍按原
-条件追加。显式传入默认插件是既有约定（见该处既有注释：不带默认插件会让表格退化）。
+In `message.tsx`, `messageRemarkPlugins` was provided explicitly only when
+`renderZCodeFileCitations && workspacePath`, otherwise `undefined` (Streamdown default). This plugin must take
+effect **unconditionally**, so it now always provides `defaultRemarkPlugins +
+windowsFileLinkEscapeRemarkPlugin`, with the citation plugin still appended under the original condition.
+Passing the default plugins explicitly is an existing convention (see the existing comment there: omitting them
+degrades tables).
 
-## 影响与风险
+## Impact and risk
 
-- **多平台**：门禁只认盘符/UNC 形态，macOS/Linux 上模型不会产出这种 URL，
-  插件对它们是一次正则判断。
-- **性能**：只在命中门禁时才切片原文，正常会话里命中率极低。
-- **误伤**：由第 5 步等式验证兜底；不成立即放弃。
-- **历史消息**：还原发生在渲染期，历史消息重新渲染即生效，无需数据迁移。
+- **Multi-platform**: the gate recognizes only drive-letter/UNC shapes; macOS/Linux models do not produce such
+  URLs, so the plugin costs one regex check for them.
+- **Performance**: the source is sliced only when the gate matches, which is very rare in normal sessions.
+- **False positives**: guarded by the step 5 equality; if it fails, give up.
+- **History**: restoration happens at render time, so re-rendering history takes effect with no data
+  migration.
 
-## 验收
+## Acceptance
 
-1. 新增单测覆盖：`\.zcode` 还原、image 节点、UNC 前导反斜杠塌陷、引用式 definition、
-   无需还原时不动、非 Windows URL 不动、带 title 跳过、尖括号跳过、
-   验证不通过（实体引用）时保持原值。
-2. `pnpm exec vitest run packages/ui/test/windowsFileLinkEscapeRemarkPlugin.test.ts` 通过，
-   且 message.tsx 依赖的 11 个既有测试文件全绿。
-3. 端到端：会话里 `[x](C:\Users\dev\.zcode\...\screenshot.png)` 预览可打开。
+1. New unit tests cover: `\.zcode` restoration, image nodes, UNC leading-backslash collapse, reference-style
+   definition, no-op when nothing needs restoring, non-Windows URLs untouched, titled links skipped, angle
+   brackets skipped, and unchanged value when verification fails (entity reference).
+2. `pnpm exec vitest run packages/ui/test/windowsFileLinkEscapeRemarkPlugin.test.ts` passes, and the 11
+   existing test files that message.tsx depends on are all green.
+3. End-to-end: the preview of `[x](C:\Users\dev\.zcode\...\screenshot.png)` opens in a conversation.

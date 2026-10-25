@@ -13,6 +13,8 @@ import type {
   TraceContext,
 } from "../deps.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { resolveToolSchedulingFlags } from "../../tool/executor/permission-capability.js";
+import { resolveRuntimeToolCapabilityContext } from "./runtime-tools.js";
 
 const END_OF_STREAM_ATTEMPT_SUFFIX = "end-of-stream";
 const TOOL_RESULT_ANCHOR_SUFFIX = "tool-result";
@@ -65,7 +67,7 @@ export async function emitStreamingToolLedgerUpdate(
   options: EmitLedgerUpdateOptions,
 ): Promise<SessionEvent> {
   const payload: StreamingToolLedgerPayload = {
-    ...getLedgerToolMetadata(runtime, options.toolCall.name),
+    ...getLedgerToolMetadata(runtime, options.toolCall),
     attemptId: createStreamingToolAttemptId(options.assistantMessageId),
     assistantMessageId: options.assistantMessageId,
     toolCallId: options.toolCall.id as ToolCallId,
@@ -119,18 +121,14 @@ export async function emitStreamRecoveryAnchor(
 
 function getLedgerToolMetadata(
   runtime: AgentRuntimeInternal,
-  toolName: string,
+  toolCall: ToolCall,
 ): LedgerToolMetadata {
-  const entry = runtime.registry.get(toolName);
-  const metadata = entry?.metadata;
-  const sideEffectScope = entry?.permission?.sideEffectScope ?? metadata?.sideEffectScope;
-  return {
-    readOnly:
-      metadata?.readOnly === undefined
-        ? undefined
-        : metadata.readOnly && sideEffectScope === "none",
-    destructive: metadata?.destructive,
-    concurrentSafe: metadata?.concurrentSafe,
-    sideEffectScope,
-  };
+  const entry = runtime.registry.get(toolCall.name);
+  if (!entry) return {};
+  // Record the input-aware flags the call was scheduled with (for example read-only Bash).
+  return resolveToolSchedulingFlags(
+    entry,
+    toolCall.input,
+    resolveRuntimeToolCapabilityContext(runtime),
+  );
 }

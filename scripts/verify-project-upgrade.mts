@@ -19,9 +19,7 @@ const { SqliteSessionStore } = await load(
 );
 const cliPath = join(testHome, "cli.sqlite");
 await mkdir(testHome, { recursive: true });
-const cli = phase.startsWith("old")
-  ? new SqliteSessionStore({ dbPath: cliPath })
-  : await SqliteSessionStore.open({ dbPath: cliPath });
+const cli = await SqliteSessionStore.open({ dbPath: cliPath });
 const repo = new TaskIndexRepo();
 await repo.ensureReady();
 const cwd = join(testHome, "repo");

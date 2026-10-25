@@ -1,6 +1,6 @@
 import { ZCodeAppLogo } from "@zcode/ui/app-logo";
 
-/** 连接前各页的页头品牌：桌面端同款 logo 图标 + “ZCode”文字，纯静态标识，不可点击。 */
+/** Header brand for pages before connecting: the same logo icon as the desktop app plus the "ZCode" text; a purely static mark that is not clickable. */
 export function WebRemoteControlBrand({ className }: { className?: string }) {
   return (
     <span className={["inline-flex items-center gap-2", className].filter(Boolean).join(" ")}>

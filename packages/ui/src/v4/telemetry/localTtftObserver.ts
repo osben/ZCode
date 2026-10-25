@@ -20,7 +20,7 @@ import type {
   TopicFrameDeliveryKind,
 } from "@zcode/shared/zcode-protocol-v4";
 
-/** Renderer 独占点击总时钟；不使用 ACK 或旁路 telemetry 判定首输出。 */
+/** Renderer-owned click clock; do not use ACK or side-channel telemetry to determine first output. */
 export class LocalTtftObserver {
   enabled = false;
   private readonly pending = new Map<string, Pending>();
@@ -37,7 +37,7 @@ export class LocalTtftObserver {
     try {
       this.onRecord(record);
     } catch {
-      /* 观测失败不能阻断提交、内容投影或清理。 */
+      /* Observation failure must not block submission, content projection, or cleanup. */
     }
   }
   start(workspace: string, busy: boolean, unsupported = false): LocalTtftContext | undefined {
@@ -139,14 +139,14 @@ export class LocalTtftObserver {
     frame: ConversationTopicFrame,
     delivery: TopicFrameDeliveryKind,
   ): void {
-    // 首次订阅快照可能晚于准备检查点；它不是 gap recovery，也绝不是首输出。
+    // The initial subscription snapshot may arrive after the preparation checkpoint; it is neither gap recovery nor first output.
     if (delivery === "initial") return;
     for (const facts of frame.ttftRelated ?? [])
       this.receive(workspace, { ...frame, ttft: facts, ttftRelated: undefined }, delivery);
     if (delivery === "recovery" || frame.payload.kind === "snapshot") {
-      // Bug 原因：桌面 continuous 在订阅缓冲溢出或投影重建后会用 online snapshot 代替 deltas，
-      // 之前一律记为 recovery，把手机恢复语义贴到桌面样本上。snapshot 内无法唯一归因首输出，
-      // 仍需排除，但按 resync 单独标记；recovery 只保留给真正的 recovery 投递。
+      // Bug cause: desktop continuous uses an online snapshot instead of deltas after subscription-buffer overflow or projection rebuild;
+      // these were previously all recorded as recovery, applying mobile recovery semantics to desktop samples. A snapshot cannot attribute first output uniquely,
+      // so still exclude it, but mark it separately as resync; reserve recovery for actual recovery deliveries.
       const outcome = delivery === "recovery" ? "recovery" : "resync";
       for (const pending of this.pending.values()) {
         if (
@@ -260,7 +260,7 @@ export class LocalTtftObserver {
   confirmationRetry(context: LocalTtftContext): void {
     const pending = this.pending.get(context.observationId);
     if (!pending || pending.closed) return;
-    // stale 确认拒绝没有 accepted input；下一次命令仍沿首次点击，但不能绑定已拒绝命令。
+    // A stale confirmation rejection has no accepted input; the next command still belongs to the first click but cannot be bound to the rejected command.
     pending.commandId = undefined;
     pending.facts = undefined;
   }

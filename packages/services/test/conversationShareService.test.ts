@@ -114,7 +114,7 @@ function completedRows(): ConversationRow[] {
   ];
 }
 
-/** 只含一条带 txt 附件的用户输入轮，用于附件预检分类用例。 */
+/** A single user-input turn with a txt attachment, used by attachment preflight classification tests. */
 function attachmentPreflightRows(): ConversationRow[] {
   const rows = completedRows().slice(0, 2);
   rows[0] = { ...rows[0]!, entityId: "header-entity" };
@@ -507,7 +507,7 @@ describe("ConversationShareService", () => {
       max_artifact_bytes: 100,
       allowed_artifacts: [{ type: "text", extensions: ["txt"], mime_types: ["text/plain"] }],
     });
-    // 真实文件大小远超协议旧上限（30MiB）；stat 必须能表达它，预检才能确定阻断。
+    // The real file size far exceeds the protocol's old cap (30MiB); stat must be able to express it so preflight can definitively block.
     conversationAttachmentStatV4.mockResolvedValueOnce({
       mediaType: "text/plain",
       totalBytes: 64 * 1024 * 1024,
@@ -574,7 +574,7 @@ describe("ConversationShareService", () => {
       selection: { kind: "all" },
     });
 
-    // 不支持的类型根本不会上传，体积与分享无关：不能升级成阻断。
+    // Unsupported types are never uploaded and their size is irrelevant to sharing: must not escalate to a blocking issue.
     expect(result.blockingIssues).toEqual([]);
     expect(result.skippableWarnings).toEqual([
       expect.objectContaining({
@@ -811,8 +811,8 @@ describe("ConversationShareService", () => {
   });
 
   it("把 artifact 读失败消息归类到 artifact_read_failed 而不是兜底", () => {
-    // 旧正则只覆盖 ended|source|chunk|readable，本地/远端兜底消息因此落到 invalid_conversation，
-    // UI 于是显示了无关的「结构不支持」文案。
+    // The old regex only covered ended|source|chunk|readable, so local/remote fallback messages landed in
+    // invalid_conversation and the UI showed the unrelated "structure unsupported" message.
     expect(
       new ConversationShareServiceError(
         "invalid_conversation",
@@ -980,7 +980,7 @@ describe("ConversationShareService", () => {
         },
       ],
     });
-    // PDF 是正文里已不存在的路径（例如 SKILL.md 的模板占位符），PPTX 真实存在。
+    // The PDF is a path that no longer exists in the body (e.g. a SKILL.md template placeholder); the PPTX really exists.
     artifactSource.read.mockImplementation(async ({ ref }) => {
       if (ref.endsWith(".pdf")) {
         throw new ConversationShareServiceError(
@@ -1359,8 +1359,10 @@ describe("ConversationShareService", () => {
       shareRecord,
     );
 
-    // compact 的 lane 是 assistantWork，留在 flow 尾部会顶掉折叠锚点，让整轮过程在分享页默认展开。
-    // goalVerify 等在分享页本就不渲染。三者都属纯运行时记账，静默剥掉、不打扰分享者。
+    // compact's lane is assistantWork; leaving it at the end of the flow would displace the collapse
+    // anchor and make the whole turn default-expanded on the share page.
+    // goalVerify and similar are not rendered on the share page anyway. All three are pure runtime
+    // bookkeeping: strip them silently without bothering the sharer.
     expect(confirmRequests.at(-1)?.projection.rows.map((row) => row.rowId)).toEqual([1, 2]);
     expect(firstWarnings(progress)).toBeUndefined();
   });
@@ -1386,7 +1388,7 @@ describe("ConversationShareService", () => {
       shareRecord,
     );
 
-    // 渲染层 isVisibleAssistantWorkRow 本来就过滤它，进 payload 只是白吃 max_rows 配额。
+    // The render layer's isVisibleAssistantWorkRow already filters it; putting it in the payload just wastes max_rows quota.
     expect(confirmRequests.at(-1)?.projection.rows.map((row) => row.rowId)).toEqual([1, 2]);
   });
 
@@ -1403,7 +1405,7 @@ describe("ConversationShareService", () => {
     });
     const { service } = createDependencies(rows);
 
-    // 内容尚未定稿，跳过等于分享半成品；这类必须让用户等完成或取消该轮。
+    // The content is not finalized yet; skipping would share a half-finished product — the user must wait for completion or cancel the turn.
     await expect(service.publish(publishInput(), "publish-op-running")).rejects.toMatchObject({
       issues: [expect.objectContaining({ code: "unsupported_timeline" })],
     });
@@ -1456,7 +1458,7 @@ describe("ConversationShareService", () => {
   it("发布链接跟随界面语言：英文界面改写到裸 /share，中文界面保持 /cn/share", async () => {
     const { service } = createDependencies();
 
-    // 服务端固定下发 /cn/share/...（见 shareRecord），客户端按界面语言改写站点前缀。
+    // The server always delivers /cn/share/... (see shareRecord); the client rewrites the site prefix per UI language.
     await expect(
       service.publish({ ...publishInput(), locale: "en-US" }, "publish-op-locale-en"),
     ).resolves.toMatchObject({ share_url: "https://zcode.z.ai/share/share-1" });

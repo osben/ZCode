@@ -321,7 +321,7 @@ describe("ProviderConfigResolver", () => {
           providerId: "provider-a",
           modelId: "model-a",
           config: new ModelConfig({
-            // Personal 已只支持精确覆盖；不能用已裁决删除的全局 match 构造测试。
+            // Personal now only supports exact overrides; the test must not be built with the global match that was decided for removal.
             properties: new ModelPropertiesConfig({
               contextWindow: 999_999,
               supportsToolCall: false,

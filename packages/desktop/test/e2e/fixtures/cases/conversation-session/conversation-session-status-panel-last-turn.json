@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-status-panel-last-turn",
+  "spec": "./test/e2e/conversation-session/conversation-session-status-panel-last-turn.test.ts",
+  "providerFixtures": [
+    "./test/e2e/fixtures/upstream/common.json",
+    "./test/e2e/fixtures/upstream/conversation-session/conversation-session-status-panel-last-turn.json"
+  ],
+  "fileFixtures": [
+    {
+      "path": "status-panel-last-turn-e2e/notes.txt",
+      "source": "created-by-provider-tool",
+      "description": "A fixture-driven single Write creates a two-line file that the status panel lists as the last turn."
+    }
+  ],
+  "requests": [
+    {
+      "id": "status-panel-last-turn-title",
+      "kind": "common",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "The title does not affect the status panel; the marker only isolates the title request."
+    },
+    {
+      "id": "status-panel-last-turn-todo",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "The E2E workspace is not a Git repository; a todo is the deterministic content that mounts the panel."
+    },
+    {
+      "id": "status-panel-last-turn-write",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "A real provider does not reliably choose a single Write; fixed content makes +2/-0 exact."
+    },
+    {
+      "id": "status-panel-last-turn-final",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "A fixed final marker keeps model text from affecting the panel assertions."
+    }
+  ]
+}

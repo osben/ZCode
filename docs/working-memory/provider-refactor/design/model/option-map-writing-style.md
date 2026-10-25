@@ -1,16 +1,19 @@
-# Option Map 写作风格
+# Option Map Writing Style
 
-> 状态：已裁决；2026-09-09。适用于 Built-in 专用与兜底 Option Map 的编写和评审。
-> 本文只规定表达式的写法与展示排版，不规定迁移、历史兼容或功能改造策略。
+> Status: Decided 2026-09-09. Applies to the writing and review of Built-in specific and fallback Option
+> Maps. This document stipulates only expression writing and display layout — not migration, historical
+> compatibility, or feature transformation strategies.
 
-## 1. 总原则
+## 1. General Principles
 
-简化表达式逻辑，但不压缩结构。以设置页文本框中的可读性为准，不以 JSON 配置文件的物理行数为准。
+Simplify expression logic, but do not compress structure. The standard is readability in the settings page
+text box, not the physical line count of JSON config files.
 
-- 嵌套对象按层级展开，统一两空格缩进；兄弟字段分行。
-- 简单、非嵌套的三目表达式保持同行，不机械拆成三行。
-- 复杂或嵌套条件按分支换行，缩进体现归属；过长时按语义拆分，不依赖文本框软换行体现结构。
-- 简单单层对象可以同行，不要求所有 Map 都展开。
+- Nested objects are expanded by level with uniform two-space indentation; sibling fields on separate lines.
+- Simple, non-nested ternary expressions stay on one line; do not mechanically split them into three.
+- Complex or nested conditions are line-broken by branch; indentation shows ownership; split by semantics
+  when too long — do not rely on text box soft line-breaks to show structure.
+- Simple single-layer objects can be on one line; not all Maps need expansion.
 
 ```js
 {
@@ -20,54 +23,65 @@
 }
 ```
 
-简单单层对象：
+Simple single-layer objects:
 
 ```js
 {"max_tokens": maxOutputTokens}
 ```
 
-## 2. 条件放在差异处
+## 2. Conditions Where They Differ
 
-- 仅字段值不同时，共用对象结构，把条件下沉到对应字段。
-- 分支改变字段是否存在或对象结构时，保留对象级分支，不为了少写分支而塞入无关字段。
-- 不重复展开几乎相同的完整对象。
+- When only field values differ, share the object structure and sink conditions to the corresponding field.
+- When branches change whether a field exists or the object structure, keep object-level branches; do not
+  cram unrelated fields in to write fewer branches.
+- Do not redundantly expand nearly identical complete objects.
 
-需要对象分支时，例如：
+When object branches are needed, for example:
 
 ```js
 reasoningLevel == "disabled"
   ? {
-      "thinking": {
-        "type": "disabled"
-      }
+      thinking: {
+        type: "disabled",
+      },
     }
   : {
-      "thinking": {
-        "type": "adaptive"
+      thinking: {
+        type: "adaptive",
       },
-      "output_config": {
-        "effort": reasoningLevel
-      }
-    }
+      output_config: {
+        effort: reasoningLevel,
+      },
+    };
 ```
 
-示例只说明结构写法，不要求所有模型使用这些字段或档位。
+Examples illustrate structure writing only; they do not require all models to use these fields or levels.
 
-## 3. 能透传就透传
+## 3. Pass Through When Possible
 
-当目标字段接受的值与所属 Option 值相同时，直接使用变量，不罗列 `low → low / high → high / max → max` 的同义条件链。关闭状态或接口值不同才做必要转换。
+When the target field accepts the same values as the owning Option, use the variable directly; do not
+enumerate `low → low / high → high / max → max` synonymous condition chains. Transform only closing states
+or different interface values.
 
-变量使用所属 Option 的正式名称，例如 `reasoningLevel`、`maxOutputTokens`；不引入含混的通用 `value`。
+Variable names use the owning Option's formal name, such as `reasoningLevel`, `maxOutputTokens`; do not
+introduce the ambiguous generic `value`.
 
-## 4. 排版的归属
+## 4. Layout Ownership
 
-- 换行和缩进保存在 Built-in Map 源字符串中；JSON 文件中可以表现为 `\n` 转义。
-- GUI 原样展示源字符串，不增加第二套展示格式、Formatter Service 或运行时重排。
-- 不自动格式化用户的 Personal Map；打开、查看或取消编辑不能因排版产生个人覆盖或写盘。
-- 本规范同时适用于专用 Map 和兜底 Map，与供应商、主题、语言及窗口宽度无关。
+- Line breaks and indentation are preserved in the Built-in Map source string; JSON files may show `\n`
+  escapes.
+- The GUI displays the source string as-is; no second display format, Formatter Service, or runtime
+  rearrangement is added.
+- Do not auto-format users' Personal Maps; opening, viewing, or canceling edits must not generate personal
+  overrides or write to disk due to layout.
+- This standard applies uniformly to specific and fallback Maps, regardless of vendor, theme, language, or
+  window width.
 
-## 5. 与改造原则分开
+## 5. Separate from Transformation Principles
 
-“修改已有规则要保持请求行为等价”“是否迁移旧档位”“是否兼容旧配置”属于对应改造 Todo 的边界，不是写作风格规则。不得把这些内容混成本文的样式要求。
+"Modifying existing rules must maintain request behavior equivalence," "whether to migrate old levels," and
+"whether to be compatible with old configs" belong to their corresponding transformation Todos; they are not
+writing style rules and must not be mixed into this document's style requirements.
 
-相关：原排版约定见 [Todo66](../../steps/todo-66-option-map-variable-naming-and-display-formatting.md)；本次回归修复见 [Todo98](../../steps/todo-98-builtin-option-map-formatting-regression.md)。
+Related: the original layout convention is in [Todo66](../../steps/todo-66-option-map-variable-naming-and-display-formatting.md);
+this regression fix is in [Todo98](../../steps/todo-98-builtin-option-map-formatting-regression.md).

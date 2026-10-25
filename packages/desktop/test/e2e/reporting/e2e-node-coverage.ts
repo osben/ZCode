@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Node coverage reporter 需在同一文件保持 V8 归一化、源码基线与 Istanbul 输出合同。 */
+/* eslint-disable max-lines -- The Node coverage reporter needs to keep V8 normalization, the source baseline, and the Istanbul output contract in one file. */
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -11,10 +11,7 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import {
-  createCoverageMap,
-  type CoverageMapData,
-} from "istanbul-lib-coverage";
+import { createCoverageMap, type CoverageMapData } from "istanbul-lib-coverage";
 import { createInstrumenter } from "istanbul-lib-instrument";
 import { createContext } from "istanbul-lib-report";
 import { create as createIstanbulReport } from "istanbul-reports";
@@ -98,9 +95,7 @@ const SOURCE_EXTENSIONS = [".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts",
 const SOURCE_MAP_CACHE_INDEX_MARKER = ".zcode-source-map-cache-index-v2.marker";
 const COMPACTED_FILE_INDEX_MARKER = ".zcode-compacted-coverage-files-v1.marker";
 
-export function createE2ENodeCoverageCollector(
-  options: E2ENodeCoverageCollectorOptions,
-) {
+export function createE2ENodeCoverageCollector(options: E2ENodeCoverageCollectorOptions) {
   const enabled = process.env.ZCODE_E2E_COVERAGE === COVERAGE_ENABLED_VALUE;
   const coverageDir = resolve(options.artifactDir, "coverage");
   const rawRoot = resolve(coverageDir, "raw");
@@ -124,8 +119,8 @@ export function createE2ENodeCoverageCollector(
   function beforeSession() {
     if (!enabled) return;
     prepare();
-    // Electron main 必须从进程启动时就继承 NODE_V8_COVERAGE；host 与 CLI
-    // 会在各自 spawn 边界覆盖到独立目录，避免运行域数据混写。
+    // Electron main must inherit NODE_V8_COVERAGE from process startup; host and CLI
+    // override it to separate directories at their own spawn boundaries, avoiding cross-domain data mixing.
     process.env.NODE_V8_COVERAGE = rawDir("main");
   }
 
@@ -168,10 +163,7 @@ export function createE2ENodeCoverageCollector(
   return { beforeSession, compactRawCoverage, enabled, finalize, prepare };
 }
 
-export function compactV8CoverageDirectory(params: {
-  rawDir: string;
-  sourceMapRoot: string;
-}) {
+export function compactV8CoverageDirectory(params: { rawDir: string; sourceMapRoot: string }) {
   mkdirSync(params.rawDir, { recursive: true });
   const normalizedSourceMapRoot = normalizePath(resolve(params.sourceMapRoot));
   const sourceMapCacheMarker = resolve(params.rawDir, SOURCE_MAP_CACHE_INDEX_MARKER);
@@ -183,9 +175,9 @@ export function compactV8CoverageDirectory(params: {
 
   for (const rawPath of listFiles(params.rawDir, (path) => path.endsWith(".json"))) {
     const rawFileName = basename(rawPath);
-    // Bug 根因：仅在 JSON payload 内记录 normalized 标记时，后续每个 worker 仍会重新
-    // 读取并 parse 此前数千个大文件，全量 after-session 因此额外耗时约一小时。
-    // V8 raw 文件名在同一 domain 内唯一且落盘后不可变，sidecar 可在文件 IO 前安全跳过。
+    // Bug root cause: when the normalized marker was only recorded inside the JSON payload, every later worker still re-read
+    // and re-parsed thousands of previously processed large files, adding about an hour to the full after-session.
+    // V8 raw file names are unique within a domain and immutable once written, so the sidecar can safely skip before file IO.
     if (compactedFileNames.has(rawFileName)) continue;
 
     let payload: V8CoveragePayload;
@@ -205,10 +197,10 @@ export function compactV8CoverageDirectory(params: {
     });
     payload["zcode-e2e-normalized-source-map-root"] = normalizedSourceMapRoot;
     const retainedByThisFile = Object.keys(payload["source-map-cache"] ?? {});
-    // Bug 根因：V8 会为每个短生命周期 Electron/Host/CLI 进程重复落整份 bundle
-    // source map，全量（含 manual-review）在 finalize 前即可超过百 GB。进程退出后立即
-    // 原地剪到当前运行域，并用原子替换避免中断时留下半份 JSON；每个 bundle 的 map
-    // 只保留一份，后续首次出现的动态 chunk 仍会进入索引，避免覆盖率映射缺口。
+    // Bug root cause: V8 rewrites the full bundle source map for every short-lived Electron/Host/CLI process; a full run
+    // (including manual-review) can exceed 100 GB before finalize. Prune in place to the current run domain right after the
+    // process exits, and use atomic replacement so an interruption leaves no half-written JSON; keep only one copy of each
+    // bundle's map; dynamic chunks appearing later still enter the index, avoiding coverage mapping gaps.
     const temporaryPath = `${rawPath}.normalized-${process.pid}.tmp`;
     writeFileSync(temporaryPath, JSON.stringify(payload), "utf-8");
     renameSync(temporaryPath, rawPath);
@@ -266,10 +258,7 @@ function writeDomainReport(params: {
   const rawFileCount = listFiles(params.rawDir, (path) => path.endsWith(".json")).length;
   const rawProcessPids = collectRawProcessPids(params.rawDir);
   const readyProcessPids = collectReadyProcessPids(params.rawDir);
-  const expectedProcessPids = collectExpectedProcessPids(
-    params.artifactDir,
-    params.domain,
-  );
+  const expectedProcessPids = collectExpectedProcessPids(params.artifactDir, params.domain);
   const missingRawProcessCount = expectedProcessPids
     ? [...expectedProcessPids].filter(
         (pid) => readyProcessPids.has(pid) && !rawProcessPids.has(pid),
@@ -356,10 +345,7 @@ function collectReadyProcessPids(rawDir: string) {
   return pids;
 }
 
-function collectExpectedProcessPids(
-  artifactDir: string,
-  domain: E2ENodeCoverageDomain,
-) {
+function collectExpectedProcessPids(artifactDir: string, domain: E2ENodeCoverageDomain) {
   if (domain !== "cli") return undefined;
   const pids = new Set<number>();
   const runtimeLogsDir = resolve(artifactDir, "runtime-logs");
@@ -374,11 +360,7 @@ function collectExpectedProcessPids(
   return pids.size > 0 ? pids : undefined;
 }
 
-function runC8Conversion(params: {
-  rawDir: string;
-  reportDir: string;
-  repoRoot: string;
-}) {
+function runC8Conversion(params: { rawDir: string; reportDir: string; repoRoot: string }) {
   const convertedDir = resolve(params.reportDir, "converted");
   const configPath = resolve(params.reportDir, "c8-convert-config.json");
   writeFileSync(
@@ -387,8 +369,8 @@ function runC8Conversion(params: {
     "utf-8",
   );
   const reportEnv = { ...process.env };
-  // 修复原因：reporter 自身若继续继承 NODE_V8_COVERAGE，会把 c8 进程的
-  // coverage 写回待消费目录，既污染运行域数据，也可能让汇总时间持续增长。
+  // Reason for the fix: if the reporter itself kept inheriting NODE_V8_COVERAGE, it would write the c8 process's
+  // coverage back into the to-be-consumed directory, polluting run-domain data and potentially growing summary time without bound.
   delete reportEnv.NODE_V8_COVERAGE;
   execFileSync(
     process.execPath,
@@ -407,8 +389,8 @@ export function createC8ConversionConfig(rawDir: string, convertedDir: string) {
     all: false,
     clean: false,
     "exclude-after-remap": false,
-    // Bug 根因：c8 默认先把每个 Node 进程的 coverage 全部载入数组；全量 E2E 会在
-    // 合并开始前耗尽堆。增量模式逐文件读取并合并，覆盖率计数语义保持一致。
+    // Bug root cause: c8 by default loads every Node process's coverage into arrays first; the full E2E run would
+    // exhaust the heap before merging starts. Incremental mode reads and merges file by file, keeping coverage counting semantics identical.
     "merge-async": true,
     reporter: ["json"],
     "reports-dir": convertedDir,
@@ -429,9 +411,7 @@ function writeNodeIstanbulReports(params: {
   const coverageMap = createCoverageMap(converted);
   coverageMap.filter((path) => sourceSet.has(normalizePath(resolve(path))));
 
-  const loadedPaths = new Set(
-    coverageMap.files().map((path) => normalizePath(resolve(path))),
-  );
+  const loadedPaths = new Set(coverageMap.files().map((path) => normalizePath(resolve(path))));
   let baselineFailureCount = 0;
   for (const sourceFile of params.sourceFiles) {
     if (loadedPaths.has(normalizePath(resolve(sourceFile)))) continue;
@@ -505,11 +485,7 @@ function resolveSourceMapSource(mapPath: string, sourceRoot: string | undefined,
   }
 }
 
-function isFirstPartyRuntimeSource(
-  domain: E2ENodeCoverageDomain,
-  path: string,
-  repoRoot: string,
-) {
+function isFirstPartyRuntimeSource(domain: E2ENodeCoverageDomain, path: string, repoRoot: string) {
   const normalized = normalizePath(resolve(path));
   const root = `${normalizePath(resolve(repoRoot))}/`;
   if (!normalized.startsWith(root) || normalized.includes("/node_modules/")) return false;
@@ -563,9 +539,9 @@ export function normalizeV8CoveragePayload(
     includeSourceMapCache?: boolean;
   } = {},
 ) {
-  // Bug 根因：V8 文件还包含 Node 内置模块和整个三方依赖图。全量 E2E 的 CLI 原始
-  // coverage 可达数十 GB；若把无关条目原样复制给 c8，会在 JSON.parse 阶段耗尽堆。
-  // 报告最终只消费能映射回当前运行域 source map 的 bundle，因此在归一化边界提前剪枝。
+  // Bug root cause: V8 files also include Node built-in modules and the entire third-party dependency graph. The CLI raw
+  // coverage of a full E2E run can reach tens of GB; copying irrelevant entries to c8 as-is would exhaust the heap at JSON.parse time.
+  // The report ultimately only consumes bundles that map back to the current run domain's source maps, so prune early at the normalization boundary.
   payload.result = (payload.result ?? []).filter((entry) => {
     const canonicalUrl = resolveCanonicalGeneratedUrl(entry.url, sourceMapRoot);
     if (!canonicalUrl) return false;
@@ -576,8 +552,8 @@ export function normalizeV8CoveragePayload(
   const sourceMapCache = payload["source-map-cache"];
   if (!sourceMapCache) return;
   if (options.includeSourceMapCache === false) {
-    // 同一运行域的每份 V8 文件都内嵌同一份 bundle source map（CLI 单份约 38MB）。
-    // c8 增量合并会在整个目录处理期间复用缓存，只需保留一份，不能重复上千次落盘。
+    // Every V8 file in the same run domain embeds the same bundle source map (about 38 MB each for the CLI).
+    // c8's incremental merge reuses the cache for the whole directory pass, so keep one copy — it must not be written thousands of times.
     delete payload["source-map-cache"];
     return;
   }
@@ -616,8 +592,8 @@ function resolveCanonicalGeneratedUrl(url: string | undefined, sourceMapRoot: st
     const generatedName = generatedPath.split(/[\\/]/u).at(-1);
     if (!generatedName) return undefined;
     const canonicalRoot = resolve(sourceMapRoot);
-    // 同名的 dependency/index.js 不能映射成 out/main/index.js。桌面 staging 目录会变化，
-    // 但运行域末级目录仍稳定为 main/host；CLI 则直接从 canonical dist 启动。
+    // A same-named dependency/index.js must not map to out/main/index.js. The desktop staging directory changes,
+    // but the run domain's last directory segment stays stable as main/host; the CLI starts straight from the canonical dist.
     if (
       dirname(resolve(generatedPath)) !== canonicalRoot &&
       basename(dirname(generatedPath)) !== basename(canonicalRoot)

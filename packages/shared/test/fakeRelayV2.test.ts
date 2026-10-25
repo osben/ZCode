@@ -122,7 +122,7 @@ it("pairs both roles, reports online meta and forwards opaque payloads with serv
   const onlineDelete = await request(relay, "device/delete", { device_sid: sid });
   expect(onlineDelete.status).toBe(400);
   expect(await onlineDelete.json()).toEqual({ code: 3005, msg: "wrong status" });
-  const payload = { user_id: "bob", device_sid: "not-the-route", arbitrary: [1, null, "中文"] };
+  const payload = { user_id: "bob", device_sid: "not-the-route", arbitrary: [1, null, "text"] };
   terminal.send({ type: "data", payload, client_ts: 1 });
   await expect
     .poll(() => device.messages)
@@ -246,7 +246,7 @@ it("orchestrates ACK state and suppresses replies without creating a phantom pee
   const before = client.messages.length;
   client.send({ type: "pair_status_query" });
   await expect.poll(() => relay.messages).toHaveLength(3);
-  // 后续 Ping/Pong 是同一 WS 的有序屏障，证明被丢弃查询之后没有隐藏 ACK。
+  // The following Ping/Pong is an ordered barrier on the same WS, proving no hidden ACK arrives after the dropped query.
   const pong = once(client.ws, "pong");
   client.ws.ping();
   await pong;

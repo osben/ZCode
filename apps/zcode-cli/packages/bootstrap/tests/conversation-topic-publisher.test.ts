@@ -124,8 +124,8 @@ function clientApply(
     store.seq = frame.toSeq;
     return;
   }
-  if (frame.toSeq <= store.seq) return; // 迟到/重复帧
-  expect(frame.fromSeq).toBe(store.seq); // 断档即测试失败（本套件不该出现断档）
+  if (frame.toSeq <= store.seq) return; // late/duplicate frame
+  expect(frame.fromSeq).toBe(store.seq); // a gap fails the test (this suite should never have gaps)
   expect(store.snapshot).not.toBeNull();
   // seq 语义 = 「所在帧 toSeq」（10 §4.2 R-03），不经 delta 传播，客户端 apply 后自行对齐。
   store.snapshot = {
@@ -147,6 +147,120 @@ describe("分享导入来源种子", () => {
     expect(snapshot.revision).toBe(before.revision);
     expect(snapshot.seq).toBe(before.seq);
     expect(snapshot.rows.window).toEqual([]);
+  });
+});
+
+describe("worktree preparation subscriber refresh", () => {
+  it("keeps an outstanding reservation and follows it with the newer metadata snapshot", () => {
+    const publisher = new ConversationTopicPublisher("session-1", "epoch-1");
+    const subscribed = publisher.subscribeReserved({ connectionId: "conn-1" });
+    const initialReservation = subscribed.reservation;
+    expect(initialReservation).not.toBeNull();
+
+    publisher.seedWorktreePreparation({
+      status: "preparing",
+      branchName: "zcode/fresh-otter",
+      targetPath: "/tmp/fresh-otter",
+    });
+    publisher.requestSnapshotForSubscribers();
+
+    expect(publisher.reserveFlush(subscribed.ack.subscriptionId)).toBe(initialReservation);
+    expect(initialReservation?.commit()).toBe(true);
+    const updated = publisher.reserveFlush(subscribed.ack.subscriptionId);
+    expect(updated?.frame.payload.kind).toBe("snapshot");
+    if (updated?.frame.payload.kind === "snapshot") {
+      expect(updated.frame.payload.snapshot.meta.worktreePreparation).toMatchObject({
+        status: "preparing",
+        branchName: "zcode/fresh-otter",
+        targetPath: "/tmp/fresh-otter",
+      });
+    }
+  });
+
+  it("sends a refreshed snapshot after host-owned preparation changes", () => {
+    const publisher = new ConversationTopicPublisher("session-1", "epoch-1");
+    const { ack } = publisher.subscribe({ connectionId: "conn-1" });
+    publisher.seedWorktreePreparation({
+      status: "preparing",
+      branchName: "zcode/fresh-otter",
+      targetPath: "/tmp/fresh-otter",
+    });
+    publisher.requestSnapshotForSubscribers();
+
+    const frame = publisher.flush(ack.subscriptionId);
+    expect(frame?.payload.kind).toBe("snapshot");
+    if (frame?.payload.kind === "snapshot") {
+      expect(frame.payload.snapshot.meta.worktreePreparation).toMatchObject({
+        status: "preparing",
+        branchName: "zcode/fresh-otter",
+        targetPath: "/tmp/fresh-otter",
+      });
+    }
+  });
+
+  it("sends a fresh snapshot when a reconnecting subscriber resumes from an older transcript sequence", () => {
+    const publisher = new ConversationTopicPublisher("session-1", "epoch-1");
+    const first = publisher.subscribe({ connectionId: "conn-1" });
+    expect(first.frame?.payload.kind).toBe("snapshot");
+    const base = { logEpoch: first.ack.logEpoch, seq: first.ack.seq };
+
+    publisher.seedWorktreePreparation({
+      status: "preparing",
+      branchName: "zcode/fresh-otter",
+      targetPath: "/tmp/fresh-otter",
+    });
+
+    const resumed = publisher.subscribe({ connectionId: "conn-2", base });
+    expect(resumed.ack.mode).toBe("snapshot");
+    expect(resumed.frame?.payload.kind).toBe("snapshot");
+    if (resumed.frame?.payload.kind === "snapshot") {
+      expect(resumed.frame.payload.snapshot.meta.worktreePreparation).toMatchObject({
+        status: "preparing",
+        branchName: "zcode/fresh-otter",
+        targetPath: "/tmp/fresh-otter",
+      });
+    }
+  });
+
+  it("sends a fresh snapshot when preparation metadata was cleared after the client disconnected", () => {
+    const publisher = new ConversationTopicPublisher("session-1", "epoch-1");
+    const first = publisher.subscribe({ connectionId: "conn-1" });
+    const base = { logEpoch: first.ack.logEpoch, seq: first.ack.seq };
+
+    publisher.seedWorktreePreparation({
+      status: "preparing",
+      branchName: "zcode/fresh-otter",
+      targetPath: "/tmp/fresh-otter",
+    });
+    publisher.seedWorktreePreparation(null);
+
+    const resumed = publisher.subscribe({ connectionId: "conn-2", base });
+    expect(resumed.ack.mode).toBe("snapshot");
+    expect(resumed.frame?.payload.kind).toBe("snapshot");
+    if (resumed.frame?.payload.kind === "snapshot") {
+      expect(resumed.frame.payload.snapshot.meta.worktreePreparation).toBeUndefined();
+    }
+  });
+
+  it("same-sub resync sends a fresh snapshot after preparation metadata was cleared", () => {
+    const publisher = new ConversationTopicPublisher("session-1", "epoch-1");
+    const first = publisher.subscribe({ connectionId: "conn-1" });
+    publisher.seedWorktreePreparation({
+      status: "preparing",
+      branchName: "zcode/fresh-otter",
+      targetPath: "/tmp/fresh-otter",
+    });
+    publisher.seedWorktreePreparation(null);
+
+    const resynced = publisher.resyncReserved(first.ack.subscriptionId, {
+      base: { logEpoch: first.ack.logEpoch, seq: first.ack.seq },
+    });
+
+    expect(resynced?.ack.mode).toBe("snapshot");
+    expect(resynced?.reservation?.frame.payload.kind).toBe("snapshot");
+    if (resynced?.reservation?.frame.payload.kind === "snapshot") {
+      expect(resynced.reservation.frame.payload.snapshot.meta.worktreePreparation).toBeUndefined();
+    }
   });
 });
 
@@ -241,7 +355,7 @@ describe("恢复协议黄金路径：snapshot/resume + 续流 ≡ 全量重放",
       connectionId: "conn-1",
       base: { logEpoch: "epoch-1", seq: store.seq },
       deliveryProfile: "continuous",
-    }); // 重订阅走 resume（水位对齐 → 无初始帧），拿到活跃 subId
+    }); // resubscribe goes through resume (watermark aligned → no initial frame), yielding the active subId
     expect(subId.ack.mode).toBe("resume");
 
     // 续流：每个事件后 flush（最细粒度帧）。

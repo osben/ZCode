@@ -126,11 +126,8 @@ describe("Todo121：只补 0020 回填后未动过的会话档位", () => {
     store = await createSqliteSessionStore({ dbPath: path });
     expect(readEntry().modelSelection.options).toEqual({ reasoningLevel: "max" });
     expect(db.prepare("SELECT * FROM message").all()).toEqual(messages);
-    expect(db.prepare("SELECT * FROM session").get()).toEqual({
-      ...session,
-      time_deleted: null,
-      last_outcome: null,
-    });
+    // Later migrations add session columns (soft delete, fork execution, incognito); the pre-existing values must not change.
+    expect(db.prepare("SELECT * FROM session").get()).toMatchObject(session);
     expect(db.prepare("SELECT * FROM session_entry").get()).toEqual({
       ...entry,
       data: JSON.stringify(readEntry()),

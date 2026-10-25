@@ -1,5 +1,5 @@
 import type { RequestVerificationProof } from "./request-security-edition/verification-policy.js";
-/* eslint-disable max-lines -- Coding Plan 订阅协议类型需要集中导出给 UI、services 和 RPC 共享，拆散会增加跨包类型入口复杂度。 */
+/* eslint-disable max-lines -- Keep Coding Plan subscription protocol types together for shared exports to UI, services, and RPC; splitting them would complicate cross-package type entry points. */
 import type { Locale } from "./protocol.js";
 import type { ProviderFamilyDomain } from "./model-provider-family.js";
 import type { BUILTIN_MODEL_PROVIDER_IDS } from "./model-provider-types.js";
@@ -150,7 +150,7 @@ export interface ManualClaimPlanPreview {
 }
 
 export interface ManualClaimPlanPreviewSnapshot {
-  /** 本次响应的服务端时间（毫秒）；生效时间 effectiveAt 仍为 Unix 秒。 */
+  /** Server time of this response in milliseconds; effectiveAt remains Unix seconds. */
   serverTime?: number;
   plans: ManualClaimPlanPreview[];
 }
@@ -162,7 +162,7 @@ export interface ManualClaimPlanClaimRequest extends RequestVerificationProof {
 export interface ManualClaimPlanClaimEntitlement {
   entitlementId: string;
   showName: string;
-  /** Claim 返回的权益生效时间，Unix 秒；0 表示立即生效。 */
+  /** Effective time of the entitlement returned by claim, Unix seconds; 0 means immediate. */
   effectiveAt?: number;
 }
 
@@ -170,9 +170,9 @@ export interface ManualClaimPlanClaimResult {
   success: boolean;
   code: number;
   message: string;
-  /** 失败响应中的活动结束时间，用于额度耗尽提示；不得当作已领取权益期限。 */
+  /** Campaign end time from a failure response, used for quota-exhausted messaging; must not be treated as the claimed entitlement's expiry. */
   failureEndsAt?: number;
-  /** 领取接口返回的服务端时间（毫秒），不与其他响应的时间混用。 */
+  /** Server time returned by the claim endpoint in milliseconds; do not mix with other responses' timestamps. */
   serverTime?: number;
   plan?: {
     userPlanId: string;
@@ -189,10 +189,10 @@ export interface ForceUpdateConfig {
 }
 
 /**
- * 闲时任务客户端配置：client/configs 只下发入口曝光开关；模型展示来自 Built-in
- * offpeak Provider。准入/低峰判断仍以服务端为准（3006 兜底）。
- * 有效开启判据 = enable_offpeak_task===true 且 Built-in 模型成员非空。
- * 额度不再经 client/configs 下发；改由专用 availability 接口提供服务端即时快照。
+ * Off-peak task client configuration: client/configs only sends the entry-point visibility switch; models are provided by the built-in
+ * off-peak Provider. The server remains authoritative for admission and off-peak checks (with 3006 as a fallback).
+ * The feature is enabled only when enable_offpeak_task===true and the built-in model list is nonempty.
+ * Quotas are no longer sent through client/configs; a dedicated availability endpoint provides the server's current snapshot.
  */
 export interface CodingPlanProductInfoRequest {
   providerId?: CodingPlanSubscriptionProviderId;
@@ -484,9 +484,9 @@ export interface EnterpriseCodingPlanPricingResponse {
 export interface EnterpriseCodingPlanPricingRequest {
   authenticated?: boolean;
   /**
-   * 指定按哪个 family 读取企业定价。
-   * 缺省时按 bigmodel 处理，向后兼容既有调用点。
-   * service 层据此路由到对应 family 的 subscription provider。
+   * Specifies which family to use for enterprise pricing.
+   * Defaults to bigmodel for backward compatibility with existing call sites.
+   * The service layer uses this to route to the subscription provider for that family.
    */
   family?: ProviderFamilyDomain;
 }

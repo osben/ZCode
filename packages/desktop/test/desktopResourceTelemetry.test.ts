@@ -132,7 +132,9 @@ function fakeWebContents(id: number, pid: number, type: string): unknown {
 }
 
 async function loadTelemetry() {
-  return import("../src/main/desktopResourceTelemetry.js");
+  const telemetry = await import("../src/main/desktopResourceTelemetry.js");
+  const toggle = await import("../src/main/desktopResourceTelemetryToggle.js");
+  return { ...telemetry, ...toggle };
 }
 
 async function registerAllChromiumRoles(): Promise<() => void> {
@@ -1204,13 +1206,19 @@ it.each(["linux", "win32"] as const)(
       await import("@zcode/shared");
     const { registerHostToolExecResourceTelemetry } =
       await import("../src/host/hostToolExecResourceTelemetry.js");
-    const { configureDesktopResourceTelemetry, ingestToolExecResource } = await loadTelemetry();
+    const {
+      configureDesktopResourceTelemetry,
+      ingestToolExecResource,
+      setDesktopResourceTelemetryEnabled,
+      stopDesktopResourceTelemetry,
+    } = await loadTelemetry();
     configureDesktopResourceTelemetry({
       deviceMid: "device",
       appVersion: "1.0",
       armsEnv: "prod",
       platform: "darwin",
     });
+    setDesktopResourceTelemetryEnabled(true, { info: vi.fn(), warn: vi.fn() });
     sendCustomMock.mockClear();
     const emitter = new Emitter<import("@zcode/shared").ZCodeToolExecResource>();
     const registration = registerHostToolExecResourceTelemetry({
@@ -1235,6 +1243,7 @@ it.each(["linux", "win32"] as const)(
     emitter.fire(sample);
     registration.dispose();
     emitter.fire(sample);
+    stopDesktopResourceTelemetry();
     expect(sendCustomMock).toHaveBeenCalledExactlyOnceWith({
       name: "perf_tool_exec_resource",
       type: "custom",
@@ -1270,13 +1279,19 @@ it("PRT-032 多个 Host 转发同一完成事实只上报一次，同指标不�
   const { registerHostToolExecResourceTelemetry } =
     await import("../src/host/hostToolExecResourceTelemetry.js");
   const { hostResponseMessageSchema } = await import("@zcode/shared");
-  const { configureDesktopResourceTelemetry, ingestToolExecResource } = await loadTelemetry();
+  const {
+    configureDesktopResourceTelemetry,
+    ingestToolExecResource,
+    setDesktopResourceTelemetryEnabled,
+    stopDesktopResourceTelemetry,
+  } = await loadTelemetry();
   configureDesktopResourceTelemetry({
     deviceMid: "test",
     appVersion: "test",
     armsEnv: "test",
     platform: "darwin",
   });
+  setDesktopResourceTelemetryEnabled(true, { info: vi.fn(), warn: vi.fn() });
   sendCustomMock.mockClear();
   const emitter = new Emitter<import("@zcode/shared").ZCodeToolExecResource>();
   const registrations = Array.from({ length: 2 }, () =>
@@ -1319,11 +1334,17 @@ it("PRT-032 多个 Host 转发同一完成事实只上报一次，同指标不�
   } finally {
     registrations.forEach((registration) => registration.dispose());
     emitter.dispose();
+    stopDesktopResourceTelemetry();
   }
 });
 
 it("PRT-032 完成标识有界保存且重新配置清空，旧 CLI 无标识仍可上报", async () => {
-  const { configureDesktopResourceTelemetry, ingestToolExecResource } = await loadTelemetry();
+  const {
+    configureDesktopResourceTelemetry,
+    ingestToolExecResource,
+    setDesktopResourceTelemetryEnabled,
+    stopDesktopResourceTelemetry,
+  } = await loadTelemetry();
   const context = {
     deviceMid: "test",
     appVersion: "test",
@@ -1331,6 +1352,7 @@ it("PRT-032 完成标识有界保存且重新配置清空，旧 CLI 无标识仍
     platform: "darwin" as const,
   };
   configureDesktopResourceTelemetry(context);
+  setDesktopResourceTelemetryEnabled(true, { info: vi.fn(), warn: vi.fn() });
   sendCustomMock.mockClear();
   const sample = {
     platform: "linux",
@@ -1355,4 +1377,83 @@ it("PRT-032 完成标识有界保存且重新配置清空，旧 CLI 无标识仍
   ingestToolExecResource(sample, "remote");
   ingestToolExecResource(sample, "remote");
   expect(sendCustomMock).toHaveBeenCalledTimes(1029);
+  stopDesktopResourceTelemetry();
+});
+
+describe("resource telemetry toggle (specs/resource-telemetry-toggle.md)", () => {
+  const context = {
+    deviceMid: "toggle-device",
+    appVersion: "test",
+    armsEnv: "test" as const,
+    platform: "darwin" as const,
+  };
+  const toolExecSample = {
+    platform: "linux",
+    toolName: "bash",
+    durationMs: 1_000,
+    exitKind: "completed",
+    sampleCount: 0,
+    cliRssKb: 1000,
+    systemFreeMemoryKb: 2000,
+  };
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    getAppMetricsMock.mockReset().mockReturnValue([metric(MAIN_PID, "Browser", 4, 100_000)]);
+    getAllWebContentsMock.mockReset().mockReturnValue([]);
+    getAllWindowsMock.mockReset().mockReturnValue([]);
+    sendCustomMock.mockReset();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("while disabled: no timers, no sampling, tool-exec dropped, shutdown flush sends nothing", async () => {
+    vi.useFakeTimers();
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const {
+      configureDesktopResourceTelemetry,
+      ingestToolExecResource,
+      stopDesktopResourceTelemetry,
+    } = await loadTelemetry();
+    configureDesktopResourceTelemetry(context);
+
+    expect(vi.getTimerCount()).toBe(0);
+    ingestToolExecResource(toolExecSample, "local");
+    await vi.advanceTimersByTimeAsync(REPORT_INTERVAL_MS * 2);
+    stopDesktopResourceTelemetry({ flushPendingWindows: true });
+
+    expect(getAppMetricsMock).not.toHaveBeenCalled();
+    expect(sendCustomMock).not.toHaveBeenCalled();
+    expect(logger.info).not.toHaveBeenCalled();
+  });
+
+  it("enabling at runtime starts sampling; disabling drops the partial window without reporting", async () => {
+    vi.useFakeTimers();
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const {
+      configureDesktopResourceTelemetry,
+      ingestToolExecResource,
+      setDesktopResourceTelemetryEnabled,
+    } = await loadTelemetry();
+    configureDesktopResourceTelemetry(context);
+
+    setDesktopResourceTelemetryEnabled(true, logger);
+    // A repeated enable restarts the timers instead of stacking a second pair.
+    setDesktopResourceTelemetryEnabled(true, logger);
+    expect(vi.getTimerCount()).toBe(2);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(getAppMetricsMock).toHaveBeenCalled();
+
+    setDesktopResourceTelemetryEnabled(false, logger);
+    expect(vi.getTimerCount()).toBe(0);
+    ingestToolExecResource(toolExecSample, "local");
+    await vi.advanceTimersByTimeAsync(REPORT_INTERVAL_MS * 2);
+
+    expect(sendCustomMock).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith("[resource] sampling stopped by setting");
+  });
 });

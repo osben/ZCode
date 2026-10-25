@@ -1,7 +1,10 @@
-// ConversationTopicPublisher × workflowRuns 键级增量（DESIGN §5/§6）。
-// 这一套钉的是**每订阅者编码**这条分界线：同一份保留日志，认得增量的连接收 `workflowRun.*`，
-// 不认得的那一代收整键 patch + 旧界裁剪。走错一边的后果不是"慢一点"——旧客户端遇到未知 op
-// 会整帧解析失败，遇到 257 个节点会整帧解析失败，两种都让那条订阅从此静默。
+// ConversationTopicPublisher × workflowRuns key-level deltas (DESIGN §5/§6).
+// What this suite pins is the **per-subscriber encoding** boundary: connections that
+// understand deltas receive `workflowRun.*` from the same retention log, while the
+// generation that does not receives whole-key patches + old-boundary truncation. Getting
+// on the wrong side is not merely "a bit slower" — an old client fails to parse the whole
+// frame on an unknown op, and fails to parse the whole frame on 257 nodes; either way that
+// subscription goes silent from then on.
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type {
@@ -38,10 +41,12 @@ import {
 const RUN_ID = "dwfrun-1";
 
 /**
- * 旧消费者二进制里的那份 schema：actors / nodes 的界是 256。
+ * The schema from the legacy consumer binary: the bounds for actors / nodes are 256.
  *
- * 从当前 schema `.extend` 出来而不是手抄——手抄一份 run 字段表正是 2026-09-04 事故的形状。
- * 它在这里的职责只有一个：证明裁剪不是"看起来短一点"，而是**旧解析器真的收得下**。
+ * Derived via `.extend` from the current schema rather than hand-copied — hand-copying a
+ * run field table is exactly the shape of the 2026-09-04 incident. Its single
+ * responsibility here: to prove that truncation is not "looks a bit shorter" but that the
+ * **legacy parser really accepts it**.
  */
 const legacyWorkflowRunsStateSchema = workflowRunsStateSchema.extend({
   runs: z
@@ -90,7 +95,7 @@ class EventLog {
     return this.progress("run-started", { runId: RUN_ID, caps: { maxConcurrency: 4 } });
   }
 
-  /** `count` 个不同实例各排队一次——宽 fan-out 的最小形态。 */
+  /** `count` distinct instances each queued once — the minimal form of a wide fan-out. */
   fanOut(count: number): void {
     for (let ordinal = 1; ordinal <= count; ordinal += 1) {
       this.progress("node-queued", { instance: { siteId: "ask#1", ordinal }, kind: "ask" });
@@ -202,9 +207,11 @@ describe("每订阅者编码：增量 vs 旧消费者", () => {
 
 describe("扇出宽度与订阅者 op 上界", () => {
   /**
-   * 改造前这里是 600 条整键 patch（相邻的会并掉，但每条都带整张表）；改造后是 600 条键级增量，
-   * 经 coalesce 规则 6 并成个位数。600 > 500 的 op 硬上界，所以"每个实例一条 op"的天真编码
-   * 会在这里翻成 overflow → 全量快照，比改造前更差。这一条就是防那个。
+   * Before the rework this was 600 whole-key patches (adjacent ones coalesce, but each
+   * carries the whole table); after the rework it is 600 key-level deltas, coalesced by
+   * rule 6 into single digits. 600 exceeds the hard cap of 500 ops, so a naive "one op per
+   * instance" encoding would tip over here into overflow -> full snapshot, worse than
+   * before the rework. This is exactly what this case guards against.
    */
   it("一个 flush 窗口内 600 路 fan-out：增量订阅者的 op 数远低于 500 硬上界", () => {
     const log = new EventLog();
@@ -221,13 +228,13 @@ describe("扇出宽度与订阅者 op 上界", () => {
     expect(deltas.length).toBeLessThan(10);
     expect(deltas.length).toBeLessThan(PROTOCOL_V4_LIMITS.subscriberBufferMaxOps);
     expect(() => conversationTopicFrameSchema.parse(frame)).not.toThrow();
-    // 600 个实例一个不少地进了表（界是 1024）。
+    // All 600 instances made it into the table without omission (the bound is 1024).
     expect(publisher.getSnapshot().workflowRuns?.runs[0]?.nodes).toHaveLength(600);
   });
 });
 
 describe("ingest 快路径", () => {
-  /** 保守上界是私有字段；这一组断言的是它的**方向**与**自纠**，没有别的观察面。 */
+  /** The conservative upper bound is a private field; these assertions only cover its **direction** and **self-correction** — there is no other observation surface. */
   function upperBoundOf(publisher: ConversationTopicPublisher): number {
     return (publisher as unknown as { wireSnapshotBytesUpperBound: number })
       .wireSnapshotBytesUpperBound;
@@ -238,7 +245,7 @@ describe("ingest 快路径", () => {
       value;
   }
 
-  /** 私有测量入口：这一条断言的就是"整份快照没有被再序列化一遍"，没有别的观察面。 */
+  /** Private measurement entry point: this assertion is precisely "the whole snapshot was not serialized again" — there is no other observation surface. */
   function spyOnExactMeasurement(publisher: ConversationTopicPublisher) {
     return vi.spyOn(
       publisher as unknown as {
@@ -264,8 +271,9 @@ describe("ingest 快路径", () => {
   });
 
   /**
-   * 一条 delta 都不产的事件（归约判了同一条事件重放）对快照的全部改动就是 `seq` 那个数字。
-   * 让它落回精确路径等于为"什么都没发生"付一次整份序列化。
+   * For an event that produces zero deltas (the reducer judged it a replay of the same
+   * event), the entire change to the snapshot is the `seq` number. Routing it back to the
+   * exact path would pay one full serialization for "nothing happened".
    */
   it("幂等重放一条都不产 delta，同样不量整份快照", () => {
     const log = new EventLog();
@@ -282,19 +290,23 @@ describe("ingest 快路径", () => {
   });
 
   /**
-   * 判据是「每一条都是键级增量」，空批次**空过**这个判据——所以这条快路径按类型说是 dwf 之外
-   * 也适用的：任何归约出零条 delta 的事件都只改了 `seq`。刻意不缩到 DynamicWorkflowRunProgress：
-   * 那会是一条为了看起来保守而加的限制，论证却与 dwf 无关（论证靠的是「零条 delta」，不是事件类型）。
+   * The criterion is "every one is a key-level delta", and an empty batch **passes empty**
+   * through this criterion — so this fast path is, by type, applicable outside dwf too:
+   * any event that reduces to zero deltas only changed `seq`. Deliberately not narrowed to
+   * DynamicWorkflowRunProgress: that would be a restriction added to look conservative,
+   * while the argument has nothing to do with dwf (the argument rests on "zero deltas",
+   * not on the event type).
    *
-   * 安全性不靠这条判据独撑：快接受还要过 `上界 + 增长 <= 闸门`，所以真的贴着 16MiB 时它照样
-   * 落回精确路径并照常抛 ProjectionPayloadTooLargeError。
+   * Safety does not rest on this criterion alone: the fast accept still has to pass
+   * `upper bound + growth <= gate`, so when genuinely hugging 16MiB it still falls back to
+   * the exact path and throws ProjectionPayloadTooLargeError as usual.
    */
   it("非 dwf 的零 delta 事件同样不量整份快照", () => {
     const publisher = new ConversationTopicPublisher("session-1", "epoch-1", { now: () => 0 });
     const log = new EventLog();
     const measure = spyOnExactMeasurement(publisher);
 
-    // draft 语义：SessionCreated 刻意不产可见 delta。
+    // draft semantics: SessionCreated deliberately produces no visible delta.
     const created = log.push(SessionEventType.SessionCreated, {
       mode: "default",
       contextWindow: 200_000,
@@ -323,8 +335,9 @@ describe("ingest 快路径", () => {
   });
 
   /**
-   * 快路径只加不减，所以它**必然**向上漂移：一条 op 的字节数远大于它让快照长的那几个字。
-   * 这一条钉的是漂移的方向永远安全（上界 ≥ 精确值，16MiB 闸门不会被算松）。
+   * The fast path only adds, never subtracts, so it **inevitably** drifts upward: one op's
+   * bytes far exceed the few words it adds to the snapshot. This pins the direction of the
+   * drift as always safe (upper bound >= exact value; the 16MiB gate is never loosened).
    */
   it("一串快路径事件之后，保守上界仍不低于精确字节数", () => {
     const log = new EventLog();
@@ -344,9 +357,12 @@ describe("ingest 快路径", () => {
   });
 
   /**
-   * 漂移的另一半：它必须**收得回来**。把上界推到闸门边上（真实快照仍然很小），下一条事件的
-   * 快路径判据就不再成立，于是精确测量一次并把上界重置回真值——而不是把一个还小得很的 run
-   * 判成超限。没有这条自纠，上界只涨不落，久跑的会话早晚会被自己的保守估计噎死。
+   * The other half of drift: it must **be recoverable**. Push the upper bound to the edge
+   * of the gate (the real snapshot is still small), and the fast-path criterion no longer
+   * holds for the next event, so it measures exactly once and resets the upper bound to
+   * the true value — instead of judging a still-quite-small run as over the limit. Without
+   * this self-correction, the bound only rises and a long-running session would eventually
+   * choke on its own conservative estimate.
    */
   it("上界漂到闸门边上时下一条事件精确重测并收回，不误判超限", () => {
     const log = new EventLog();
@@ -371,16 +387,18 @@ describe("ingest 快路径", () => {
     measure.mockRestore();
     const corrected = upperBoundOf(publisher);
     expect(corrected).toBe(publisher.getWireSnapshotLogicalBytes());
-    // 收回的是**真值**，不是刚才那个贴着闸门的数字。
+    // What gets recovered is the **true value**, not the earlier number hugging the gate.
     expect(corrected).toBeLessThan(exact + 4096);
   });
 });
 
 describe("冷重物化", () => {
   /**
-   * `tryBatchHydration` 按 op 逐类记账 wire 字节；键级增量是 `state.updated` 之外第二个不属于
-   * 60 行 wire tail 的 op 类别，漏掉分支就会按 row op 去查 rowId（根本没有）。这一条钉的是
-   * 批量路径**走得通**且终态与逐事件 live 逐字节一致。
+   * `tryBatchHydration` accounts wire bytes per op class; key-level deltas are the second
+   * op class outside `state.updated` that does not belong to the 60-row wire tail. Missing
+   * the branch would look up a rowId by row op (which does not exist). This pins that the
+   * batch path **works** and that the final state is byte-for-byte identical to per-event
+   * live ingestion.
    */
   it("批量重放一串 dwf 事件：走批量路径，终态与逐事件 live 一致", () => {
     const log = new EventLog();
@@ -397,8 +415,9 @@ describe("冷重物化", () => {
     expect(JSON.stringify(rehydrated.getSnapshot().workflowRuns)).toBe(
       JSON.stringify(live.getSnapshot().workflowRuns),
     );
-    // 批量路径在当前 seq 立了 snapshot recovery boundary（保留日志被清空），所以窗内的 base
-    // 也只能拿到 snapshot——这正是"走了批量路径"的可观察面。
+    // The batch path plants a snapshot recovery boundary at the current seq (the retention
+    // log is cleared), so a base inside the window can only get a snapshot too — exactly
+    // the observable surface of "the batch path was taken".
     const ack = rehydrated.subscribe({
       connectionId: "after-batch",
       base: { logEpoch: "epoch-1", seq: 2 },
@@ -447,7 +466,7 @@ describe("snapshot(W) + 续流 ≡ 全量重放（带键级增量）", () => {
 
     const replayed = authoritative(log.events).workflowRuns;
     expect(JSON.stringify(modernStore.snapshot.workflowRuns)).toBe(JSON.stringify(replayed));
-    // 旧订阅者的终态只在"旧界裁剪"这一处上有差（30 < 256，所以这里应当也逐字节一致）。
+    // The legacy subscriber's final state differs only in "old-boundary truncation" (30 < 256, so here it should also be byte-for-byte identical).
     expect(JSON.stringify(legacyStore.snapshot.workflowRuns)).toBe(JSON.stringify(replayed));
   });
 });

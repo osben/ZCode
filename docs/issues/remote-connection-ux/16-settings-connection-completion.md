@@ -1,61 +1,61 @@
-# 16: 设置内连接独立完成
+# 16: Connection Completes Independently in Settings
 
 Status: done
 
-**Parent:** [#15 — 项目创建与远程连接管理分离](15-project-device-selection-and-connection-management.md)
+**Parent:** [#15 — Separating project creation from remote connection management](15-project-device-selection-and-connection-management.md)
 
-**What to build:** 用户从设置添加或连接设备时，认证、必要的安装确认和连接成功之后，留在远程设备页并定位该设备，不再被要求选择目录或创建项目。明确打开已有项目的操作仍回到原项目。先完成这条可运行、可验收的路径，为后续分类添加和项目入口复用同一连接流程。
+**What to build:** When a user adds or connects a device from Settings, after authentication, the required install confirmation and a successful connection, the user stays on the remote devices page with the device located, and is no longer asked to choose a directory or create a project. An explicit open-existing-project action still returns to the original project. Complete this runnable, acceptable path first, so that the typed add and project entries later reuse the same connection flow.
 
 **Blocked by:** None (can start immediately).
 
-**Spec coverage:** Q1、Q8、Q12；RDUX15-10、RDUX15-18、RDUX15-21、RDUX15-22，以及 RDUX15-20 的连接流程失效保护。RDUX15-23／24／25 覆盖本票涉及的设置交互、视觉和能力边界。
+**Spec coverage:** Q1, Q8, Q12; RDUX15-10, RDUX15-18, RDUX15-21, RDUX15-22, and the connection-flow invalidation protection of RDUX15-20. RDUX15-23/24/25 cover the Settings interaction, visuals and capability boundary involved here.
 
 ```mermaid
 flowchart TD
-    A[设置：添加或连接设备] --> B[认证 / 必要确认 / 连接]
-    B --> C[设备连接完成]
-    C --> D[留在设置，定位设备]
-    E[明确打开已有项目] --> F[同一连接流程，保留项目意图]
-    F --> G[继续原项目]
-    B --> H[失败：保留配置和原因，可重试]
-    B --> I[取消：撤销本次请求，保持原页面]
+    A[Settings: add or connect device] --> B[Authenticate / required confirmation / connect]
+    B --> C[Device connection complete]
+    C --> D[Stay in Settings, locate device]
+    E[Explicitly open existing project] --> F[Same connection flow, keep project intent]
+    F --> G[Continue original project]
+    B --> H[Failure: keep configuration and reason, retryable]
+    B --> I[Cancel: revoke this request, keep the original page]
 ```
 
 ## Acceptance criteria
 
-- [x] 先整理现有连接完成接缝，区分设备管理、继续目录选择、继续已有项目选择和恢复原项目等完成意图。保留现有认证、安装、升级和连接能力，不另建物理连接链或任务 owner；旧调用方在迁移前仍能按原意图完成。
-- [x] 从设置的新增和已有设备普通连接入口操作，成功后留在远程设备页并定位设备；目录选择器、项目编辑器均不被自动打开，项目和聊天数量不增加。
-- [x] 设置设备卡的明确项目操作、侧栏原项目重连和启动恢复仍使用原项目与目录；补凭据、安装、升级和重试不会把它们改成设备管理完成或新建项目。
-- [x] 失败保留当前配置及可理解的错误，允许修改重试；关闭、取消或连接交互层的 Esc 只取消本次尚未完成的流程。下拉和确认层仍先消费自身的 Esc，不一次关闭多层。
-- [x] 取消不删除已保存连接记录、不关闭其他项目共享的设备连接；连接成功后关闭界面保持设备在线。本次独占的临时 attachment 按既有生命周期释放。
-- [x] 取消或发起意图失效后，迟到的凭据、安装确认和连接结果不能重新打开界面、切换项目或提交旧导航；通过请求归属判定，不用超时补偿。
-- [x] 失败、取消或复用在线连接不无条件保存本次密码或覆盖已有凭据；同一 Source 的复用不产生重复设备。
-- [x] 设置的成功、失败、需要处理状态与设备事实一致；键盘焦点、状态文字、中英文和当前深浅主题可用。Web／手机的设备管理能力门禁不被放开。
-- [x] 先补测试再改代码，完成下述验证并记录实际证据；相关规格和测试断言随本票完成行为更新，不将仍由后续票负责的目标写成已实现。
+- [x] First tidy the existing connection-completion seam, distinguishing completion intents such as device management, continue to directory selection, continue to existing-project selection and restore the original project. Keep the existing authentication, install, upgrade and connection capabilities, and build no separate physical connection chain or task owner; old callers still complete by their original intent before migration.
+- [x] From the Settings add entry and the ordinary connect entry of an existing device, on success stay on the remote devices page and locate the device; neither the directory picker nor the project editor opens automatically, and project and chat counts do not increase.
+- [x] Explicit project actions on a Settings device card, sidebar original-project reconnect and startup recovery still use the original project and directory; credential supply, install, upgrade and retry do not turn them into device-management completion or a new project.
+- [x] Failure keeps the current configuration and an understandable error and allows editing and retrying; close, cancel or Esc on the connection interaction layer cancels only the unfinished flow. Dropdown and confirmation layers still consume their own Esc first and do not close several layers at once.
+- [x] Cancel deletes no saved connection record and does not close the device connection shared by other projects; closing the UI after a successful connection keeps the device online. The exclusive temporary attachment of this attempt is released per the existing lifecycle.
+- [x] After cancel or intent invalidation, late credential, install confirmation and connection results cannot reopen the UI, switch projects or commit old navigation; decided through request ownership, not timeout compensation.
+- [x] Failure, cancel or reuse of an online connection does not unconditionally save this attempt's password or overwrite existing credentials; reuse of the same Source produces no duplicate device.
+- [x] Settings success, failure and needs-action states agree with device facts; keyboard focus, status text, Chinese/English and the current dark/light themes work. The Web/mobile device management capability gate is not opened.
+- [x] Tests were added before code changes, the verification below was completed and actual evidence recorded; related specs and test assertions are updated with this ticket's behavior, and goals still owned by later tickets are not written as implemented.
 
 ## Verification
 
-- 从真实设置入口执行新增、已有 Profile 连接和明确打开原项目，断言最终页面、设备状态及项目／任务数量。用现有真实远程测试链证明连接成功、补凭据、安装确认和原项目恢复。
-- 在现有 UI／服务接缝控制取消及迟到结果，断言可观察导航和项目副作用；复用凭据与共享连接合同，验证未使用的凭据不覆盖已有值。
-- 覆盖当前浅色／深色、中英文和窄窗口，记录实际执行的 SSH、WSL、Docker 及操作系统范围。组件替身或旧运行结果不能替代真实链路证据。
-- 实施需通过类型检查、lint、架构门禁、任务范围内受影响单测和对应 Desktop E2E。共享模块触及 Web／手机时完成适用回归；环境阻塞时列出未验证项，不标记 done。
+- From the real Settings entry perform add, existing-Profile connect and explicitly opening the original project, asserting the final page, device state and project/task counts. Use the existing real remote test chain to prove connection success, credential supply, install confirmation and original-project recovery.
+- Control cancellation and late results at the existing UI/service seams, asserting observable navigation and project side effects; reuse the credential and shared-connection contracts to verify that unused credentials do not overwrite existing values.
+- Cover current light/dark, Chinese/English and narrow windows, and record the SSH, WSL, Docker and operating-system scope actually run. Component stand-ins or old run results cannot replace real-chain evidence.
+- Implementation passes typecheck, lint, the architecture gate, affected unit tests within the task scope and the corresponding Desktop E2E. When shared modules touch Web/mobile, complete the applicable regression; on environment blockers list the unverified items and do not mark done.
 
 ## Scope and handoff
 
-- 必要的完成意图整理在本票先做，并由设置连接的完整路径验收；不单独交付一套没有实际调用者的新抽象，不新增「仅保存 Profile」API、数据库迁移或工作区身份格式。
-- 分类添加界面由 [#17](17-typed-remote-device-addition.md) 交付，直接创建项目由 [#18](18-direct-project-creation-and-device-selection.md) 交付。迁移期间保留既有入口可用，不一次删除后续票仍依赖的流程。
-- 后台进度位置和显式继续交互由 [#22](22-background-connection-and-explicit-resume.md) 交付；本票的前台取消、凭据保护及迟到结果隔离必须独立完成，不能推迟到该票。
+- The needed completion-intent tidying is done first in this ticket and accepted through the complete Settings connection path; no new abstraction without actual callers is delivered separately, and no "save Profile only" API, database migration or workspace identity format is added.
+- The typed add UI is delivered by [#17](17-typed-remote-device-addition.md), direct project creation by [#18](18-direct-project-creation-and-device-selection.md). Existing entries stay usable during migration; flows that later tickets still depend on are not deleted at once.
+- Background progress position and the explicit continue interaction are delivered by [#22](22-background-connection-and-explicit-resume.md); this ticket's foreground cancel, credential protection and late-result isolation must be completed independently and cannot be deferred to that ticket.
 
-## 实施边界与待办
+## Implementation boundary and TODO
 
-- 设置设备卡当前的目录历史只含 Source 与路径，不是带原项目 ID 的已有项目列表。本票保持其兼容目录路径；明确原项目重连继续使用已有 `preferredProjectEntryId` / `preferredWorkspaceTabId`。不按相同目录推断项目；正式已有项目选择由 #19 交付。
-- TODO：按用户本轮授权，WSL 与手机真实链路暂不验证。保留能力门禁回归；不将其报告为真实链路通过。
+- The directory history on a Settings device card contains only Source and path, not an existing-project list with original project IDs. This ticket keeps its compatible directory path; an explicit original-project reconnect keeps using the existing `preferredProjectEntryId` / `preferredWorkspaceTabId`. Projects are not inferred from the same directory; the formal existing-project selection is delivered by #19.
+- TODO: by the user's authorization this round, real WSL and mobile chains are not verified yet. Capability-gate regressions are kept; this is not reported as a real-chain pass.
 
-## 验证记录（2026-10-12）
+## Verification record (2026-10-12)
 
-- macOS 原生 Desktop E2E：`conversation-session-settings-connection-completion.test.ts` 2/2 通过。SSH 新增、普通 Profile 重连、在线复用错误新密码、Docker 独立用户环境、Esc 取消、设备定位与原项目 identity 恢复均通过真实连接。Host 公共读取接口确认各设备操作前后仍为 1 个本地项目、0 个任务。
-- 设备与取消证据：`packages/desktop/.e2e-artifacts/desktop-e2e-20261012101254815-p39412-0d279d20ad5c072b/`。含中英文 × 深浅主题 × 1440/480px 的 8 张截图，已检查代表截图。最终运行使用已逐文件与源码映射核对一致的构建产物；没有替换连接、安装或 Host。
-- 既有凭据回归：`conversation-session-ssh-remote-wizard-credentials.test.ts` 1/1 通过，覆盖冷重载后的缺凭据回填和已在线连接复用。证据：`packages/desktop/.e2e-artifacts/desktop-e2e-20261012101356498-p39966-214ee0d1c7e9b02c/`。
-- 单测：按基线 `e98b230336` 选择的 659 个测试文件、6358 项通过，附带 34 项 Node 脚本检查通过；随后新增的无账号启动配置按文件执行受影响验证通过。连接流程 32 项、启动凭据 24 项定向回归通过。
-- `pnpm typecheck`、Desktop E2E 类型检查、`pnpm lint`、架构门禁、fixture check、改动代码格式和 diff 检查通过。lint 保留 208 项基线 warning，没有新增 error。
-- 本轮真实执行范围为 macOS Desktop + Linux 容器中的 SSH/Docker。WSL 与手机按用户授权暂缓；Windows/Linux 桌面未执行真实 E2E，不计入通过范围。
+- macOS native Desktop E2E `conversation-session-settings-connection-completion.test.ts` passes 2/2: SSH add, ordinary Profile reconnect, online reuse with a wrong new password, Docker in an independent user environment, Esc cancel, device location and original-project identity recovery, all through real connections. The Host public read interface confirmed 1 local project and 0 tasks before and after each device operation.
+- Device and cancel evidence: `packages/desktop/.e2e-artifacts/desktop-e2e-20261012101254815-p39412-0d279d20ad5c072b/` with 8 screenshots of Chinese/English × dark/light × 1440/480px, representative ones checked. The final run used build output checked file by file against the source mapping; no connection, install or Host was substituted.
+- Existing credential regression `conversation-session-ssh-remote-wizard-credentials.test.ts` passes 1/1: missing-credential refill after a cold reload and reuse of an already-online connection. Evidence: `packages/desktop/.e2e-artifacts/desktop-e2e-20261012101356498-p39966-214ee0d1c7e9b02c/`.
+- Unit tests: 659 test files / 6358 tests selected against baseline `e98b230336` pass, with 34 Node script checks; the later account-less startup configuration was verified per file; connection flow 32 and startup credentials 24 targeted regressions pass.
+- `pnpm typecheck`, Desktop E2E type check, `pnpm lint`, architecture gate, fixture check, changed-code formatting and diff check pass. Lint keeps 208 baseline warnings with no new error.
+- Real execution scope this round: SSH/Docker on macOS Desktop + a Linux container. WSL and mobile are deferred by user authorization; Windows/Linux desktop real E2E was not run and is not counted as passing.

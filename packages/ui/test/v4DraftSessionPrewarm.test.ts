@@ -133,6 +133,7 @@ function PrewarmHarness(props: {
   transportIdentity: unknown;
   dispatchCommand: ReturnType<typeof createDispatchRecorder>["dispatch"];
   resolveInitialConfig?: () => Partial<SessionConfigState>;
+  creationProjectId?: string | null;
   onRender: (binding: ReturnType<typeof useDraftSessionPrewarm>["binding"]) => void;
   onOwner?: (owner: ReturnType<typeof useDraftSessionPrewarm>) => void;
 }) {
@@ -144,6 +145,7 @@ function PrewarmHarness(props: {
     transportIdentity: props.transportIdentity,
     dispatchCommand: props.dispatchCommand as never,
     resolveInitialConfig: props.resolveInitialConfig,
+    creationProjectId: props.creationProjectId ?? null,
   });
   props.onRender(result.binding);
   props.onOwner?.(result);
@@ -872,6 +874,56 @@ describe("useDraftSessionPrewarm workspace owner", () => {
     expect(dispatchB.calls).toContainEqual({ type: "deleteSession", sessionId: "draft-b" });
   });
 
+  it("promote 消费 binding：摘除后同草稿的下一次首发预留新会话", async () => {
+    // specs/first-submission-lifecycle.md "Owners and event order": a promoted prewarm is
+    // consumed. Keeping it exposed made the next submission in the same draft pane reserve
+    // the already-used session, which the CLI rejects with executionFailed.
+    let attempt = 0;
+    const { calls, dispatch } = createDispatchRecorder({
+      onCreate: () => {
+        attempt += 1;
+        return acceptedCreateAck(`draft-${attempt}`);
+      },
+    });
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    let owner!: ReturnType<typeof useDraftSessionPrewarm>;
+    const observed: Array<string | null> = [];
+    await act(async () => {
+      root.render(
+        createElement(PrewarmHarness, {
+          workspaceKey: "/workspace",
+          transportIdentity: {},
+          dispatchCommand: dispatch,
+          onRender: (binding) => observed.push(binding?.sessionId ?? null),
+          onOwner: (value) => {
+            owner = value;
+          },
+        }),
+      );
+      await flushMicrotasks();
+    });
+    expect(observed.at(-1)).toBe("draft-1");
+    expect(owner.binding?.sessionId).toBe("draft-1");
+
+    act(() => {
+      owner.binding?.promote();
+    });
+    expect(observed.at(-1)).toBe(null);
+    expect(owner.binding).toBe(null);
+
+    const next = owner.waitForSession().then(
+      (binding) => binding.sessionId,
+      (error) => String(error),
+    );
+    await act(async () => {
+      await flushMicrotasks();
+    });
+    expect(await next).toBe("draft-2");
+    expect(calls.filter((call) => call.type === "createSession")).toHaveLength(2);
+    expect(calls).not.toContainEqual({ type: "deleteSession", sessionId: "draft-1" });
+  });
+
   it("同 owner 同步重挂复用在途 createSession，不产生 create/delete churn", async () => {
     let resolveCreate!: (ack: CommandAck) => void;
     const recorder = createDispatchRecorder({
@@ -1206,5 +1258,82 @@ describe("useDraftSessionPrewarm workspace owner", () => {
     // 首发 + 3 次退避重试 = 4 次，之后不再尝试。
     expect(calls.filter((call) => call.type === "createSession")).toHaveLength(4);
     vi.useRealTimers();
+  });
+});
+
+describe("useDraftSessionPrewarm creation project scope", () => {
+  it("createSession 携带预热代捕获的项目范围：全局草稿的 null 不回落到 store 读取", async () => {
+    const { dispatch } = createDispatchRecorder();
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    await act(async () => {
+      root.render(
+        createElement(PrewarmHarness, {
+          workspaceKey: "/global-draft",
+          transportIdentity: {},
+          creationProjectId: null,
+          dispatchCommand: dispatch,
+          onRender: () => {},
+        }),
+      );
+      await flushMicrotasks();
+    });
+    const creates = dispatch.mock.calls.filter(([type]) => type === "createSession");
+    expect(creates).toHaveLength(1);
+    expect(creates[0]?.[3]).toBeNull();
+  });
+
+  it("失败重试不把旧范围交给切换后的项目：范围切换退休旧代并以新范围创建", async () => {
+    try {
+      vi.useFakeTimers();
+      let createCount = 0;
+      const dispatch = vi.fn(
+        async (
+          type: string,
+          _payload: Record<string, unknown>,
+          _sessionId: string | null,
+          _creationProjectId?: string | null,
+        ): Promise<CommandAck> => {
+          if (type !== "createSession") return NOOP_ACK;
+          createCount += 1;
+          if (createCount === 1) throw new Error("ZCode Protocol client disposed");
+          return acceptedCreateAck(`draft-${createCount}`);
+        },
+      );
+      const root = createRoot(installMinimalDom());
+      mountedRoots.push(root);
+      const render = (creationProjectId: string | null, invalidationVersion: number) =>
+        root.render(
+          createElement(PrewarmHarness, {
+            workspaceKey: "/shared-workspace",
+            transportIdentity: "transport-a",
+            invalidationVersion,
+            creationProjectId,
+            dispatchCommand: dispatch,
+            onRender: () => {},
+          }),
+        );
+      await act(async () => {
+        await render(null, 1);
+        await flushMicrotasks();
+      });
+      // The first attempt failed; before its 500ms retry the pane moves to project "p".
+      await act(async () => {
+        await render("p", 2);
+        await flushMicrotasks();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+        await flushMicrotasks();
+      });
+      const scopes = dispatch.mock.calls
+        .filter(([type]) => type === "createSession")
+        .map(([, , , scope]) => scope);
+      expect(scopes[0]).toBeNull();
+      expect(scopes.slice(1).every((scope) => scope === "p")).toBe(true);
+      expect(scopes.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

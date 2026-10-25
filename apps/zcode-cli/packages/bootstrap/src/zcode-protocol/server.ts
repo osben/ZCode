@@ -55,6 +55,7 @@ import {
   stopSession,
   subscribeSession,
 } from "./server-operations.js";
+import { countSessionTrees, eraseSessionTrees } from "./session-tree.js";
 import { listChildProcesses } from "./process-child-processes.js";
 import { ProtocolRuntimeResources } from "./runtime-resources.js";
 import {
@@ -110,6 +111,7 @@ import {
   unsubscribeMcpUiResource,
 } from "./mcp-ui/index.js";
 import { listPluginUiSurfaces } from "./plugin-ui-surfaces.js";
+import { getLspPreferences, getLspStatus, setLspPreferences } from "./lsp.js";
 import { updateInteractionPreferences } from "./interaction-preferences.js";
 import { refreshProviderRegistry, updateAccountProviderConfig } from "./account-provider-config.js";
 import { updateModelIoPreferences } from "./model-io-preferences.js";
@@ -294,6 +296,7 @@ export class ZCodeProtocolAgentServer {
     this.context = {
       assertServing: () => this.runtimeResources.assertServing(),
       deps: resolvedDeps,
+      ...(deps.lsp ? { lsp: deps.lsp } : {}),
       logger: this.logger,
       appRuntimePreferences: {
         askUserQuestionAutoResolutionEnabled: true,
@@ -307,7 +310,9 @@ export class ZCodeProtocolAgentServer {
       requestClient: (method, params, resultSchema, options) =>
         this.requestClient(method, params, resultSchema, options),
       sessions: new Map<string, ZCodeProtocolSessionRecord>(),
-      // 交互应答登记表（broker 反向请求 × v4 resolveInteraction 命令的汇合点）。
+      preparedWorktreeSessions: new Map(),
+      // Interaction response registry (the join point for broker reverse requests and v4
+      // resolveInteraction commands).
       v4Interactions: new V4InteractionRegistry(
         resolveV4InteractionRegistryOptionsFromEnv(deps.env ?? process.env),
       ),
@@ -692,6 +697,10 @@ export class ZCodeProtocolAgentServer {
         return await setMode(this.context, request.params);
       case zcodeProtocolMethods.sessionClose:
         return await closeSession(this.context, request.params);
+      case zcodeProtocolMethods.sessionTreeCounts:
+        return await countSessionTrees(this.context, request.params);
+      case zcodeProtocolMethods.sessionEraseTree:
+        return await eraseSessionTrees(this.context, request.params);
       case zcodeProtocolMethods.workspaceReadPresentation:
         return await readWorkspacePresentation(this.context, request.params);
       case zcodeProtocolMethods.workspaceHookTrustGrant: {
@@ -808,7 +817,14 @@ export class ZCodeProtocolAgentServer {
       case zcodeProtocolMethods.processChildProcesses:
         return listChildProcesses(this.context.deps.mcpTelemetry?.listProcesses() ?? []);
       case zcodeProtocolMethods.runtimeCapabilities:
-        return { independentPlanState: true, historyFirst: true };
+        // incognitoSession: see docs/design/v2/incognito-session.md.
+        return {
+          independentPlanState: true,
+          historyFirst: true,
+          durableFirstSubmission: true,
+          incognitoSession: true,
+          incognitoPromptToggles: true,
+        };
       case zcodeProtocolMethods.pluginsMarketplaceAdd:
         return await this.withPluginOperationSignal(request, (signal) =>
           addPluginMarketplace(this.context, request.params, signal),
@@ -839,6 +855,12 @@ export class ZCodeProtocolAgentServer {
         return await validatePlugin(this.context, request.params);
       case zcodeProtocolMethods.pluginsDescribe:
         return await describePlugin(this.context, request.params);
+      case zcodeProtocolMethods.lspPreferencesGet:
+        return await getLspPreferences(this.context, request.params);
+      case zcodeProtocolMethods.lspPreferencesSet:
+        return await setLspPreferences(this.context, request.params);
+      case zcodeProtocolMethods.lspStatus:
+        return await getLspStatus(this.context, request.params);
       case zcodeProtocolMethods.usageStats:
         return await getUsageStats(this.context, request.params);
       case zcodeProtocolMethods.sessionDebug:
@@ -985,7 +1007,7 @@ export class ZCodeProtocolAgentServer {
               PROTOCOL_CLIENT_REQUEST_ERROR_CODES.timedOut,
               `Client request timed out: ${method}`,
               {
-              timeoutMs: options.timeoutMs,
+                timeoutMs: options.timeoutMs,
               },
             ),
           );

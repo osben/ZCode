@@ -1,4 +1,5 @@
 import type { AiSdkModelAdapter } from "@zcode/adapters/model";
+import type { ExternalAgentTurnHost } from "../acp-agent/acp-external-agent-host.js";
 import type {
   AgentTelemetryRuntimeOwner,
   AutomationPort,
@@ -63,6 +64,7 @@ import type {
   TurnInputIntentMetadata,
   TurnSteerResult,
   UiLocale,
+  UiThemePalette,
   UiThemePreference,
   WorkflowEvent,
   WorkflowRunListItem,
@@ -107,6 +109,7 @@ import type { ModelProviderSourceTitle } from "../model-config.js";
 import type { ZCodeInstalledPluginData } from "../plugins.js";
 import type { SessionTranscriptMessage } from "../session-transcript.js";
 import type { NodeReplBrowserBroker } from "./node-repl-browser-broker.js";
+import type { LspRuntimeHub } from "./lsp-runtime-hub.js";
 import type { ProviderRegistryModelSource } from "./provider-registry-model-runtime.js";
 import type { WorkspaceHookReviewCommandResult } from "./workspace-hook-review-controller.js";
 export type { ZCodeModelOption } from "@zcode/shared";
@@ -135,11 +138,21 @@ export type RevokeWorkspaceHookTrustInput =
 export type ZCodeAppRuntimeConfigInput = AgentRuntimeConfig;
 
 export interface ZCodeAppOptions {
+  /**
+   * Turn drivers of ACP agent providers and the release of their resident processes on session close
+   * (specs/acp-agent-runtime.md "Chat delegation (phase 4)"). Absent outside the protocol worker.
+   */
+  externalAgents?: ExternalAgentTurnHost;
   /** 独立 CLI 的配置菜单编辑输入默认值；其他装配保留显式 Session 配置语义。 */
   modelSelectionMode?: "cli-default";
   /** Host 在运行实例创建时传入，运行中不刷新。 */
   additionalDirectories?: readonly string[];
   sessionId?: SessionId;
+  /**
+   * Process-wide language server pool and preferences (protocol mode). Plain CLI runs omit it and
+   * the app creates and owns a private hub for its own lifetime.
+   */
+  lspRuntimeHub?: LspRuntimeHub;
   resume?: boolean;
   version?: string;
   traceContext?: TraceContext;
@@ -352,6 +365,7 @@ export interface ZCodeApp {
   getModelOption?(selection: ModelSelection): ZCodeModelOption | undefined;
   getLocale(): SupportedLocale;
   getTheme(): UiThemePreference;
+  getPalette(): UiThemePalette;
   getDefaultThoughtLevel(): string | undefined;
   getThoughtLevel(): string | undefined;
   loadSessionTranscript(): Promise<SessionTranscriptMessage[]>;

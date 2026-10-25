@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- SSH backend 集中维护连接、exec、SFTP 上传和 fallback 进度链路；集中维护以避免拆分引入远端连接回归。 */
+/* eslint-disable max-lines -- The SSH backend keeps connection, exec, SFTP upload, and fallback-progress flows together to avoid remote-connection regressions from splitting them. */
 import { Client as SSHClient } from "ssh2";
 import type { ConnectConfig } from "ssh2";
 import { createReadStream } from "node:fs";
@@ -31,6 +31,14 @@ import {
   normalizeSSHConnectError,
 } from "@zcode/server/remote/sshAuth.js";
 import {
+  defaultKnownHostsFiles,
+  orderServerHostKeyAlgorithms,
+  readKnownHostKeyTypes,
+  verifyHostKey,
+  type KnownHostsFiles,
+  type SSHHostKeyFailure,
+} from "@zcode/server/remote/sshAuth.js";
+import {
   createSSHUploadProgressReporter,
   formatSSHUploadError,
   formatSSHUploadLabel,
@@ -46,6 +54,8 @@ export interface SSHBackendOptions {
   privateKeyPassphrase?: string;
   password?: string;
   agent?: string;
+  /** known_hosts files used for host key verification; defaults to the user's OpenSSH files. */
+  knownHosts?: KnownHostsFiles;
 }
 
 type SSHUploadFailureKind = "sftp-session" | "sftp-write" | "local-read" | "aborted";
@@ -99,19 +109,31 @@ export class SSHBackend implements IRemoteBackend {
   private disposed = false;
   private hasEverConnected = false;
   private disconnectReported = false;
+  // Set by the keyboard-interactive responder when the server asks a second-factor prompt. It is reset before every
+  // connect attempt so one attempt's prompt cannot change the classification of a later, unrelated failure.
+  private additionalVerificationPrompted = false;
+  // Set by the host key verifier when it refuses the server key; reset before every connect attempt like the flag above.
+  private hostKeyFailure: SSHHostKeyFailure | undefined;
+  private readonly knownHosts: KnownHostsFiles;
   private readonly disconnectEmitter = new Emitter<RemoteDisconnectEvent>();
   readonly onDidDisconnect = this.disconnectEmitter.event;
 
   private readonly onClientError = (error: unknown): void => {
     if (this.disposed) {
-      // ssh2 在 ready timeout 后销毁 socket 时，close/end 阶段可能再次发出 error。
-      // dispose 期间保留监听器只为吸收这类迟到事件，不能再向上层重复报告或触发未捕获异常。
+      // When ssh2 destroys a socket after a ready timeout, it may emit another error during close/end.
+      // Keep the listener during dispose only to absorb these late events; do not report them to upper
+      // layers again or trigger an uncaught exception.
       return;
     }
-    const normalizedError = normalizeSSHConnectError(error);
-    // ready 之后如果底层连接抖动，ssh2 仍会发出 "error" 事件。
-    // 若没有常驻监听，Node 会把它当成未捕获异常直接抛出，可能导致 host 进程崩溃。
-    // 这里先记录错误详情再上报断连；上层收到断连后会退出 host，反过来会丢掉真实 error 文案。
+    const normalizedError = normalizeSSHConnectError(error, {
+      established: this.connected,
+      additionalVerificationPrompted: this.additionalVerificationPrompted,
+      hostKeyFailure: this.hostKeyFailure,
+    });
+    // ssh2 may emit an "error" event if the underlying connection becomes unstable after ready. Without
+    // a persistent listener, Node treats it as an uncaught exception and may crash the host process.
+    // Record the error details before reporting disconnection; upper layers exit the host after receiving
+    // the disconnect, which would otherwise lose the original error message.
     console.error("[ssh] client error:", normalizedError);
     this.reportDisconnect("error", normalizedError);
   };
@@ -138,11 +160,18 @@ export class SSHBackend implements IRemoteBackend {
       password: options.password,
       agent: options.agent,
     });
+    this.knownHosts = options.knownHosts ?? defaultKnownHostsFiles();
+    // Without a verifier ssh2 accepts any host key (ISSUE-055). Every handshake, including automatic reconnects of this
+    // cached backend, re-reads known_hosts so an edit or a trust decision takes effect without a restart.
+    this.config.hostVerifier = (key: Buffer, verify: (valid: boolean) => void) => {
+      void this.verifyServerHostKey(key).then(verify, () => verify(false));
+    };
     if (resolveZCodeRuntimeEnv(process.env) === "development") {
       this.config.debug = (message: string) => {
-        // SSH ready 超时只暴露 client-timeout 时无法判断卡在 TCP、协商还是认证。
-        // 仅开发环境输出 ssh2 握手细节；CHANNEL_DATA / EXTENDED_DATA 是命令 stdout/stderr 数据包，
-        // 下载阶段会按 chunk 高频刷屏，过滤掉它们，避免连接窗口和 electron 日志被底层传输事件淹没。
+        // A generic client-timeout on SSH ready does not reveal whether the stall is in TCP, negotiation,
+        // or authentication. Log ssh2 handshake details only in development. CHANNEL_DATA and
+        // EXTENDED_DATA are command stdout/stderr packets that arrive for every download chunk; filter
+        // them to keep low-level transport events from flooding the connection panel and Electron logs.
         if (!shouldLogSSHDebugMessage(message)) {
           return;
         }
@@ -150,17 +179,17 @@ export class SSHBackend implements IRemoteBackend {
       };
     }
     if (typeof options.password === "string" && options.password.length > 0) {
-      // `ssh2` 类型定义遗漏了 keyboard-interactive 事件，但运行时确实支持。
-      // 这里局部转成 EventEmitter 接口，避免为了一个事件把整段代码降级到 any。
+      // ssh2's type definitions omit the keyboard-interactive event, though it is supported at runtime.
+      // Cast locally to the EventEmitter interface instead of weakening the whole section to any for one event.
       (
         this.client as unknown as {
           on(event: string, listener: (...args: unknown[]) => void): void;
         }
       ).on(
         "keyboard-interactive",
-        createKeyboardInteractiveResponder(options.password) as unknown as (
-          ...args: unknown[]
-        ) => void,
+        createKeyboardInteractiveResponder(options.password, () => {
+          this.additionalVerificationPrompted = true;
+        }) as unknown as (...args: unknown[]) => void,
       );
     }
   }
@@ -171,17 +200,51 @@ export class SSHBackend implements IRemoteBackend {
     }
   }
 
+  private async verifyServerHostKey(blob: Buffer): Promise<boolean> {
+    const host = this.config.host ?? "";
+    const port = this.config.port ?? 22;
+    const { key, lookup } = await verifyHostKey(this.knownHosts, host, port, blob);
+    if (lookup.kind === "match") return true;
+    this.hostKeyFailure = {
+      kind: lookup.kind === "unknown" ? "unknown" : "changed",
+      host,
+      port,
+      ...key,
+    };
+    return false;
+  }
+
+  private async prepareHostKeyAlgorithms(): Promise<void> {
+    const knownKeyTypes = await readKnownHostKeyTypes(
+      this.knownHosts,
+      this.config.host ?? "",
+      this.config.port ?? 22,
+    );
+    const serverHostKey = orderServerHostKeyAlgorithms(knownKeyTypes);
+    if (serverHostKey) {
+      this.config.algorithms = { ...this.config.algorithms, serverHostKey };
+    } else if (this.config.algorithms?.serverHostKey) {
+      const { serverHostKey: _previous, ...rest } = this.config.algorithms;
+      this.config.algorithms = rest;
+    }
+  }
+
   private async ensureConnected(): Promise<void> {
-    // 连接取消会先释放 backend，但迟到的 deploy/cleanup continuation 仍可能
-    // 调用 ensureConnected。ssh2 Client 支持 end 后再次 connect，必须在 backend 边界阻止旧凭据复活。
+    // Connection cancellation releases the backend first, but a late deploy/cleanup continuation may
+    // still call ensureConnected. ssh2 Client allows connect after end, so block old credentials from
+    // being revived at the backend boundary.
+    this.assertNotDisposed();
+    if (this.connected) return;
+    await this.prepareHostKeyAlgorithms();
     this.assertNotDisposed();
     if (this.connected) return;
     return new Promise((resolve, reject) => {
       const handleReady = () => {
         this.client.off("error", handleConnectError);
         if (this.disposed) {
-          // dispose 与 ssh2 ready 可能交错；迟到的 ready 若重新标记 connected，
-          // 后续 detect 会继续使用已取消连接的旧凭据。再次关闭 socket，并让原调用失败。
+          // dispose can race with ssh2 ready. If a late ready marks the client connected again, later
+          // detection will keep using credentials from the cancelled connection. Close the socket again
+          // and fail the original call.
           this.client.end();
           reject(new Error("SSH backend 已释放，无法重新建立连接"));
           return;
@@ -193,10 +256,17 @@ export class SSHBackend implements IRemoteBackend {
       };
       const handleConnectError = (error: unknown) => {
         this.client.off("ready", handleReady);
-        reject(normalizeSSHConnectError(error));
+        reject(
+          normalizeSSHConnectError(error, {
+            additionalVerificationPrompted: this.additionalVerificationPrompted,
+            hostKeyFailure: this.hostKeyFailure,
+          }),
+        );
       };
       this.client.once("ready", handleReady);
       this.client.once("error", handleConnectError);
+      this.additionalVerificationPrompted = false;
+      this.hostKeyFailure = undefined;
       this.client.connect(this.config);
     });
   }
@@ -261,8 +331,9 @@ export class SSHBackend implements IRemoteBackend {
     await this.execSimple(`mkdir -p ${quotePosixShellArg(dir)}`);
 
     if (this.execUploadOnly) {
-      // exec-only 只缓存传输能力，不能丢掉每次上传独立的取消信号与进度回调；
-      // 否则首次 SFTP 降级后的后续资源会脱离连接取消流程，并让 UI 停止更新进度。
+      // exec-only caches only the transport capability; do not drop the cancellation signal and progress
+      // callback that belong to each upload. Otherwise later assets after the first SFTP fallback would
+      // escape connection cancellation and stop updating UI progress.
       await this.uploadViaExec(localPath, resolved, options);
       return;
     }
@@ -274,11 +345,12 @@ export class SSHBackend implements IRemoteBackend {
         throw error;
       }
 
-      // 某些网关 / 跳板 SSH 会把 exec 与 SFTP 落到不同的文件系统视图。
-      // 这类场景下，前面的 `mkdir -p` 已经证明 shell 视图可写，但 SFTP 往同一路径写文件仍会报 NO_SUCH_FILE。
-      // 这里回退到 `cat > file`，强制复用已验证可用的 shell 通道，避免把“网关不支持 SFTP 直写”误判成连接失败。
-      // 同一个 backend 后续继续试 SFTP 只会重复失败并刷日志，因此在首次能力失败后记住 exec-only 状态；
-      // 新连接会创建新的 backend，自然会重新探测 SFTP 能力。
+      // Some SSH gateways/jump hosts expose different filesystem views to exec and SFTP. In these cases,
+      // the earlier `mkdir -p` proves the shell view is writable, but SFTP writes to the same path still
+      // return NO_SUCH_FILE. Fall back to `cat > file` to reuse the verified shell channel instead of
+      // misclassifying "gateway does not support direct SFTP writes" as a connection failure. Retrying
+      // SFTP on this backend would repeat the failure and flood logs, so remember exec-only after the
+      // first capability failure. A new connection gets a new backend and probes SFTP again.
       this.execUploadOnly = true;
       console.warn(
         `[ssh] upload: switching ${uploadLabel} from sftp to exec pipe after ${this.describeUploadFailure(error)}`,
@@ -289,11 +361,13 @@ export class SSHBackend implements IRemoteBackend {
 
   async exec(command: string): Promise<StdioStream> {
     await this.ensureConnected();
-    // ensureConnected 的 await 与真正创建 channel 之间允许取消屏障插入，必须再次校验。
+    // Cancellation can occur after ensureConnected resolves and before the channel is created, so check
+    // the barrier again.
     this.assertNotDisposed();
     return new Promise((resolve, reject) => {
-      // SSH exec 会先交给远端用户的默认 shell；fish 会把部署脚本里的 `download=` 等 POSIX 语法当成错误。
-      // 在 SSH 边界统一进入 /bin/sh，保证 remote deploy、preflight 和 server 启动脚本都按项目声明的 POSIX shell 语义执行。
+      // SSH exec first uses the remote user's default shell; fish treats POSIX syntax such as `download=`
+      // in deployment scripts as an error. Enter /bin/sh at the SSH boundary so remote deploy, preflight,
+      // and server startup scripts all use the POSIX shell semantics declared by the project.
       this.client.exec(buildPosixShellExecCommand(command), (err, channel) => {
         if (err) return reject(err);
 
@@ -302,8 +376,9 @@ export class SSHBackend implements IRemoteBackend {
         const fireOnce = (code: number) => {
           if (fired) return;
           fired = true;
-          // remote deploy 会执行大量短命令，成功退出的 code=0 日志没有排查价值且会刷屏。
-          // 这里只保留失败退出码，正常流程由上层的阶段日志和进度日志表达。
+          // Remote deployment runs many short commands. Logging successful code=0 exits adds no
+          // diagnostic value and floods the logs. Keep only failure exit codes here; upper layers report
+          // normal progress through stage and progress logs.
           if (code !== 0) {
             console.warn(`[ssh] exec channel failed: code=${code}`);
           }
@@ -363,8 +438,8 @@ export class SSHBackend implements IRemoteBackend {
   private execSimple(command: string): Promise<string> {
     this.assertNotDisposed();
     return new Promise((resolve, reject) => {
-      // execSimple 同样会执行 POSIX 片段（例如 `[ -r ... ]`、变量展开）。
-      // 这里和 exec 保持同一层 shell 策略，避免 detect/exists/readFile 在 fish 默认 shell 下先于部署失败。
+      // execSimple also runs POSIX fragments (such as `[ -r ... ]` and variable expansion). Use the same
+      // shell policy as exec so detect/exists/readFile do not fail under fish before deployment starts.
       this.client.exec(buildPosixShellExecCommand(command), (err, channel) => {
         if (err) return reject(err);
         let stdout = "";
@@ -389,9 +464,10 @@ export class SSHBackend implements IRemoteBackend {
           }
         };
 
-        // ssh2 在短命令场景下可能先发 exit，再异步派发 stdout data。
-        // 不能在 exit 事件直接 finish：会把后续 data 丢掉，导致 platform/arch 偶发识别为空。
-        // 这里改为只在 close 统一收尾，并优先使用 exit 记录的真实退出码，避免误判成功。
+        // For short commands, ssh2 may emit exit before asynchronously dispatching stdout data. Do not
+        // finish in the exit handler or later data may be lost, occasionally leaving platform/arch
+        // detection empty. Finish only on close, preferring the actual exit code recorded by exit to
+        // avoid misclassifying the command as successful.
         channel.on("exit", (code: number | null) => {
           exitCode = code ?? 0;
         });
@@ -441,8 +517,9 @@ export class SSHBackend implements IRemoteBackend {
     return new Promise((resolve, reject) => {
       this.client.sftp((err, sftp) => {
         if (err) {
-          // session/write 失败会由 upload() 统一降级并记录一次 warn；这里若先记 error，
-          // 同一个可恢复事件会同时出现 error + warn，误导为部署失败。
+          // upload() handles session/write failures by falling back and recording one warning. Logging
+          // an error here first would emit both error and warning for the same recoverable event, making
+          // it look like deployment failed.
           reject(markSSHUploadFailure(err, "sftp-session", "Failed to open SFTP session"));
           return;
         }
@@ -475,10 +552,10 @@ export class SSHBackend implements IRemoteBackend {
           settled = true;
           options?.signal?.removeEventListener("abort", abortOnce);
           suppressFollowupStreamErrors = true;
-          // SFTP 失败后如果不立刻停掉本地 read stream，它仍会继续把文件读到 100%，
-          // UI 就会在已经切到 exec pipe 之后还刷出一串虚假的 `[sftp] upload progress`。
-          // 这里在失败瞬间主动停掉两端 stream，保证第一种上传方式的进度日志立即停止。
-          // 注意不要把原始 error 再次喂给 destroy，否则清理路径本身会再冒出一轮重复 error 日志。
+          // If the local read stream is not stopped immediately after SFTP fails, it keeps reading to
+          // 100%, and the UI shows fake `[sftp] upload progress` after switching to the exec pipe. Stop
+          // both streams on failure so progress logs for the first upload method stop immediately. Do
+          // not pass the original error to destroy again, or cleanup will emit another duplicate error.
           readStream.unpipe(writeStream);
           readStream.destroy();
           const destroyableWriteStream = writeStream as NodeJS.WritableStream & {
@@ -614,10 +691,11 @@ export class SSHBackend implements IRemoteBackend {
       return;
     }
     this.disposed = true;
-    // 首次握手失败后，ssh2 可能在 socket end/close 之后继续发出 error。
-    // dispose 后保留 onClientError 作为 no-op sink，不能按 end/close 事件时序提前移除，
-    // 否则迟到事件会逃逸为 uncaughtException，让共享 Window Host 连带退出其它 workspace。
-    // client 只由当前 backend 持有，监听器会随 client 一起回收；此处优先保证退役阶段不崩溃。
+    // After an initial handshake failure, ssh2 may emit error after the socket's end/close events.
+    // Keep onClientError as a no-op sink after dispose; removing it based on end/close ordering could let
+    // a late event escape as an uncaughtException and take down other workspaces in the shared Window
+    // Host. This backend is the only owner of the client, so the listener is reclaimed with it; first
+    // ensure the retired backend cannot crash the process.
     this.client.off("close", this.onClientClose);
     this.client.off("end", this.onClientEnd);
     this.client.end();

@@ -36,7 +36,7 @@ export interface ExecutionOutputPaths {
 export interface InternalExecutionRunOptions extends ExecutionRunOptions {
   preparedBashOutput?: PreparedBashOutput;
   onOutputEncodingResolved?: (encoding: string | null) => void;
-  /** Bash 移交时停止前台预览并重启文件 watchdog；不复制进程或输出。 */
+  /** Stop foreground previews and restart the file watchdog when Bash is handed off; do not copy the process or output. */
   bashLifecycle?: {
     isBackgrounded: () => boolean;
     onBackgrounded?: () => void;

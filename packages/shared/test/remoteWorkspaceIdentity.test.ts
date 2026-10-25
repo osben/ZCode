@@ -1,9 +1,11 @@
-// 远程 workspace identity 解析（与 UI buildRemoteWorkspaceIdentity 的格式契约对偶）。
-// 消费方：CLI v4 createSession 的 workspaceId（分屏二期远程 pane 传 identity）。
+// Remote workspace identity parsing (duality contract with the UI's buildRemoteWorkspaceIdentity format).
+// Consumer: the workspaceId of CLI v4 createSession (remote panes pass identity in split view phase 2).
 import { describe, expect, it } from "vitest";
 import {
   buildRemoteWorkspaceIdentity,
+  isRemoteWorkspaceIdentity,
   parseRemoteWorkspaceIdentity,
+  rebaseRemoteWorkspaceIdentity,
 } from "../src/remote-workspace-identity.js";
 
 describe("parseRemoteWorkspaceIdentity", () => {
@@ -43,7 +45,7 @@ describe("parseRemoteWorkspaceIdentity", () => {
       kind: "ssh",
       workspacePath: "/srv/app",
     });
-    // path 含 ":"（posix 合法）不截断
+    // A path containing ":" (legal in posix) is not truncated
     expect(parseRemoteWorkspaceIdentity("remote:ssh:host:2222:dev:/data/a:b")).toEqual({
       kind: "ssh",
       workspacePath: "/data/a:b",
@@ -82,20 +84,56 @@ describe("parseRemoteWorkspaceIdentity", () => {
   });
 
   it("非远程/非法输入返回 null（调用方回落本地 workspacePath 语义）", () => {
-    // 本地绝对路径
+    // Local absolute paths
     expect(parseRemoteWorkspaceIdentity("/Users/dev/ws")).toBeNull();
     expect(parseRemoteWorkspaceIdentity("C:\\ws\\a")).toBeNull();
-    // 前缀相同但 kind 未知
+    // Same prefix but unknown kind
     expect(parseRemoteWorkspaceIdentity("remote:ftp:host:/x")).toBeNull();
-    // authority 段不足
+    // Not enough authority segments
     expect(parseRemoteWorkspaceIdentity("remote:ssh:host:22:/x")).toBeNull();
     expect(parseRemoteWorkspaceIdentity("remote:wsl:/x")).toBeNull();
     expect(parseRemoteWorkspaceIdentity("remote:wsl:Ubuntu-24.04:user:relative/x")).toBeNull();
-    // path 不以 / 开头（非归一形态）
+    // Path does not start with "/" (non-canonical form)
     expect(parseRemoteWorkspaceIdentity("remote:docker:c:relative/x")).toBeNull();
-    // 空段
+    // Empty segments
     expect(parseRemoteWorkspaceIdentity("remote::host:22:u:/x")).toBeNull();
     expect(parseRemoteWorkspaceIdentity("remote:")).toBeNull();
     expect(parseRemoteWorkspaceIdentity("")).toBeNull();
+  });
+
+  it("isRemoteWorkspaceIdentity 与 parse 判定一致", () => {
+    expect(isRemoteWorkspaceIdentity("remote:ssh:host:22:root:/srv/app")).toBe(true);
+    expect(isRemoteWorkspaceIdentity("/Users/dev/ws")).toBe(false);
+  });
+});
+
+describe("rebaseRemoteWorkspaceIdentity", () => {
+  it("keeps the authority and re-points the path at a worktree of the same remote", () => {
+    const parent = buildRemoteWorkspaceIdentity("/home/dev/repo", {
+      kind: "ssh",
+      host: "devbox",
+      port: 22,
+      username: "dev",
+    });
+    const rebased = rebaseRemoteWorkspaceIdentity(parent, "/home/dev/repo/.worktrees/feature-a/");
+    expect(rebased).toBe("remote:ssh:devbox:22:dev:/home/dev/repo/.worktrees/feature-a");
+    expect(parseRemoteWorkspaceIdentity(rebased!)).toEqual({
+      kind: "ssh",
+      workspacePath: "/home/dev/repo/.worktrees/feature-a",
+    });
+  });
+
+  it("handles WSL identities with an explicit user and server identities", () => {
+    expect(rebaseRemoteWorkspaceIdentity("remote:wsl:Ubuntu:dev:/work/demo", "/work/demo-wt")).toBe(
+      "remote:wsl:Ubuntu:dev:/work/demo-wt",
+    );
+    expect(rebaseRemoteWorkspaceIdentity("remote:server:lab:/work/demo", "/work/demo/wt")).toBe(
+      "remote:server:lab:/work/demo/wt",
+    );
+  });
+
+  it("returns null for non-remote identities so callers open by path alone", () => {
+    expect(rebaseRemoteWorkspaceIdentity("", "/Users/dev/repo-wt")).toBeNull();
+    expect(rebaseRemoteWorkspaceIdentity("/Users/dev/repo", "/Users/dev/repo-wt")).toBeNull();
   });
 });

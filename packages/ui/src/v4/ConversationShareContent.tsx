@@ -142,7 +142,8 @@ function WorkflowContent({
   );
   const { intl } = useZCodeIntl();
   const format = intl.formatMessage.bind(intl);
-  const detail = workflowCardDetail(format, model, payload.graph, run);
+  // workflowCardDetail takes the intl instance (formatMessage + formatPlural), not a bare formatter.
+  const detail = workflowCardDetail(intl, model, payload.graph, run);
   const selectedArtifact = payload.artifacts.find((artifact) => artifact.id === selected);
   const figures = {
     ...(payload.duration_ms === undefined ? {} : { durationMs: payload.duration_ms }),

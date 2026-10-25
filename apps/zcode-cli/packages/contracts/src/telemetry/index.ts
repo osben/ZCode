@@ -80,7 +80,7 @@ export type ModelReasoningControlType =
   | "provider_default"
   | "unknown";
 
-/** 调用点只声明用户/业务请求的 reasoning 意图，Provider Adapter 决定最终事实。 */
+/** Call sites declare the user's/business request's reasoning intent; the Provider Adapter determines the final fact. */
 export interface ModelReasoningCallHint {
   requestedLevel?: string;
   explicit?: {
@@ -91,7 +91,7 @@ export interface ModelReasoningCallHint {
   };
 }
 
-/** 一次最终 Provider 请求的 canonical reasoning 事实。 */
+/** Canonical reasoning facts for one final Provider request. */
 export interface ModelReasoningObservation {
   capability: ModelReasoningCapabilityStatus;
   requestedState: ModelReasoningState;
@@ -105,7 +105,7 @@ export interface ModelReasoningObservation {
 }
 
 /**
- * 受控调用专属事实。禁止 prompt、message、header、body、原始 URL、命令和工具 I/O。
+ * Facts specific to controlled calls. Do not include prompts, messages, headers, bodies, raw URLs, commands, or tool I/O.
  */
 export interface ModelApiCustomAttributes {
   compactionOuterAttempt?: number;
@@ -263,7 +263,7 @@ export type ModelAttemptFailureStage =
   | "validation"
   | "unhandled";
 
-/** Provider/SDK 实际返回的有界结束原因，不在领域层折叠成 other。 */
+/** Bounded end reason actually returned by the Provider/SDK; do not collapse it to other in the domain layer. */
 export type ModelFinishReason = string;
 
 export interface ResolvedModelTelemetryDescriptor {
@@ -351,7 +351,7 @@ export interface ModelAttemptSpanWriter extends AgentTelemetryScope {
   markFirstContent(): void;
   markFirstText(): void;
   markStreamStalled(idleMs: number): void;
-  /** 请求观测交由发行实现映射到 Attribute 与 Event。 */
+  /** Request observations are mapped to Attributes and Events by the distribution implementation. */
   recordRequestObservation(observation: ModelRequestObservation): void;
   finishCompleted(): void;
   finishFailed(
@@ -368,7 +368,7 @@ export interface ModelExecutionTelemetryPort {
 }
 
 /**
- * App 注入和 Standalone 初始化共用的进程级 Owner。一个 CLI 进程只能创建一个 Owner。
+ * Process-level Owner shared by App injection and Standalone initialization. A CLI process may create only one Owner.
  */
 export interface AgentTelemetryRuntimeOwner {
   readonly agentExecution: AgentExecutionTelemetryPort;

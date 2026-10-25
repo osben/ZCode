@@ -33,10 +33,13 @@ try {
   } else forwarded = args.length ? ["--files", ...args] : [];
   if (forwarded.length) {
     const entry = fileURLToPath(new URL("./run-affected-unit-tests.mjs", import.meta.url));
+    const env = await cleanGitEnv(process.cwd());
+    // Node 26's experimental Web Storage global shadows jsdom's localStorage in Vitest.
+    env.NODE_OPTIONS = [env.NODE_OPTIONS, "--no-experimental-webstorage"].filter(Boolean).join(" ");
     process.exitCode = (
       await run(process.execPath, [entry, ...forwarded], {
         cwd: process.cwd(),
-        env: await cleanGitEnv(process.cwd()),
+        env,
         inherit: true,
         allowFailure: true,
       })

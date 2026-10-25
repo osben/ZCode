@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 //
-// 观察类工作流工具卡的渲染与分流测试（spec: docs/dynamic-workflow/launch.md
-// 「工具卡 display」、docs/dynamic-workflow/authoring.md「EvalWorkflowSnippet」、docs/dynamic-workflow/launch.md「`SaveWorkflow`」「结果卡 display
-// 增补」）。三个工具此前没有登记进已知工具表，全部掉进 raw JSON 兜底卡——本文件钉住
-// 「按名分流 + display 驱动 + 无 display 时文本兜底（绝不是 JSON dump）」三件事。
+// Rendering and routing tests for the observation-type workflow tool cards (spec: docs/dynamic-workflow/launch.md
+// "Tool card display", docs/dynamic-workflow/authoring.md "EvalWorkflowSnippet", docs/dynamic-workflow/launch.md
+// "`SaveWorkflow`", "Result card display addendum"). These three tools were previously not registered in the
+// known-tools table and all fell into the raw JSON fallback card — this file pins three things:
+// "route by name + display-driven + text fallback when there is no display (never a JSON dump)".
 
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
@@ -65,10 +66,11 @@ const GET_RUN_DISPLAY = {
   ],
 };
 
-// ── 情势截面（spec: docs/dynamic-workflow/launch.md「`GetWorkflowRun`」「Their cards」）──
+// ── Situation snapshot (spec: docs/dynamic-workflow/launch.md "`GetWorkflowRun`", "Their cards") ──
 //
-// 所有年龄都对快照时刻 `generatedAt` 算，所以这些常量写成「相对 G 的偏移」而不是绝对时刻：
-// 测试不需要 fake timers，卡上的读数也不该随运行时刻变化。
+// All ages are computed relative to the snapshot instant `generatedAt`, so these constants are written as
+// "offsets relative to G" rather than absolute instants: the tests need no fake timers, and the readings
+// on the card must not change with the time of the run.
 const G = 1_800_000_000_000;
 
 const GET_RUN_SITUATION_DISPLAY = {
@@ -255,7 +257,7 @@ const GET_RUN_INTERRUPTED_SITUATION_DISPLAY = {
   truncated: true,
 };
 
-/** 这个会话不持有的活 run：停驻的问题只活在提问进程里，卡必须把「看不见」说出口。 */
+/** A live run this session does not own: a parked question lives only in the asking process, so the card must say "cannot see" out loud. */
 const GET_RUN_UNKNOWN_QUESTIONS_DISPLAY = {
   kind: "get_workflow_run",
   runId: "wf_foreign",
@@ -418,17 +420,17 @@ describe("GetWorkflowRunToolCallBlock", () => {
     );
     renderCard(GetWorkflowRunToolCallBlock, context);
 
-    // 折叠行：kindLabel + label + 步数（settled 5 = completed 4 + failed 1，observed 7）+ 状态词。
+    // Collapsed row: kindLabel + label + step count (settled 5 = completed 4 + failed 1, observed 7) + status word.
     expect(screen.getAllByText("Workflow status").length).toBeGreaterThan(0);
     expect(screen.getAllByText("nightly-sync").length).toBeGreaterThan(0);
     expect(screen.getAllByText("5/7 steps").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
-    // 展开卡体：用量（只有已花 token，没有上限）/ Actors / 日志。
+    // Expanded card body: usage (only spent tokens, no cap) / Actors / log.
     expect(screen.queryByText("Usage")).toBeNull();
     expect(screen.getByText("12.3k tokens")).toBeTruthy();
     expect(screen.getByText("2 running nodes")).toBeTruthy();
     expect(screen.queryByText("scout")).toBeNull();
-    // 日志面板把多条 join 成一个 <pre>，用子串匹配。
+    // The log panel joins multiple entries into one <pre>, so match by substring.
     expect(screen.getByText(/fan-out complete/)).toBeTruthy();
   });
 
@@ -500,7 +502,7 @@ describe("GetWorkflowRunToolCallBlock", () => {
     renderCard(GetWorkflowRunToolCallBlock, buildContext(toolCall));
 
     expect(screen.getAllByText(/wf_demo/).length).toBeGreaterThan(0);
-    // raw JSON dump 兜底卡会把整个 toolCall stringify 进 DOM——这里必须不存在。
+    // The raw JSON dump fallback card would stringify the whole toolCall into the DOM — it must not exist here.
     expect(screen.queryByText(/"toolId"/)).toBeNull();
   });
 
@@ -528,8 +530,8 @@ describe("GetWorkflowRunToolCallBlock", () => {
   });
 });
 
-// 情势截面上卡（spec: docs/dynamic-workflow/launch.md「`GetWorkflowRun`」「Their cards」）：
-// 摘要句 / 阶段轨 / 花名册 / 健康行 / 日志年龄，以及两处「把不知道说出口」。
+// Situation-snapshot card (spec: docs/dynamic-workflow/launch.md "`GetWorkflowRun`", "Their cards"):
+// summary sentence / phase track / roster / health row / log ages, plus the two places that "say unknown out loud".
 describe("GetWorkflowRunToolCallBlock situation report", () => {
   function renderRun(display: Record<string, unknown>, locale: "en-US" | "zh-CN" = "en-US") {
     renderCard(
@@ -555,7 +557,7 @@ describe("GetWorkflowRunToolCallBlock situation report", () => {
     expect(screen.getByTestId("workflow-run-summary").textContent).toBe(
       GET_RUN_SITUATION_DISPLAY.summary,
     );
-    // 有摘要就让它占住折叠行，步数让位（步数仍在展开的用量行里）。
+    // If there is a summary, let it own the collapsed row and let the step count step aside (steps still appear in the expanded usage row).
     expect(screen.getAllByText("5/7 steps").length).toBe(1);
   });
 
@@ -565,13 +567,13 @@ describe("GetWorkflowRunToolCallBlock situation report", () => {
     expect(phases.textContent).toContain("1.collectdone");
     expect(phases.textContent).toContain("1 round");
     expect(phases.textContent).toContain("3 settled");
-    // 已离开的阶段写实际时长；当前阶段写「到现在为止」，两者都对 generatedAt 算。
+    // Left phases show the actual duration; the current phase shows "so far" — both computed against generatedAt.
     expect(phases.textContent).toContain("5m 00s");
     expect(phases.textContent).toContain("2.judgecurrent");
     expect(phases.textContent).toContain("2 rounds");
     expect(phases.textContent).toContain("2 running");
     expect(phases.textContent).toContain("10m 00s so far");
-    // `ahead` 的行只有序号、名字和状态词：它还没发生过，没有 0 可写。
+    // An `ahead` row carries only the ordinal, name, and status word: it has not happened yet, so there is no 0 to write.
     expect(phases.textContent).toContain("3.reportahead");
     expect(phases.textContent).not.toContain("0 settled");
   });
@@ -579,7 +581,7 @@ describe("GetWorkflowRunToolCallBlock situation report", () => {
   it("running: roster rows mirror the model text per state", () => {
     renderRun(GET_RUN_SITUATION_DISPLAY);
     const roster = screen.getByTestId("workflow-run-subagents");
-    // 在跑的行：地址、相位词、阶段、这一步的年龄、轮次、工具调用数、最后一个工具及其年龄、token。
+    // Running row: address, phase word, phase, age of the current step, turn, tool call count, last tool and its age, tokens.
     expect(roster.textContent).toContain("scout");
     expect(roster.textContent).toContain("agent#1@1");
     expect(roster.textContent).toContain("executing");
@@ -589,18 +591,18 @@ describe("GetWorkflowRunToolCallBlock situation report", () => {
     expect(roster.textContent).toContain("7 tool calls");
     expect(roster.textContent).toContain("last Bash pnpm test 20s ago");
     expect(roster.textContent).toContain("4.2k tokens");
-    // 缩进的任务行：作者自己写的指令头。
+    // Indented task row: the instruction head written by the author.
     expect(screen.getByText("task: Check the release notes for regressions")).toBeTruthy();
-    // 停驻的行：只有问题 id，没有等待时长（卡面载荷不带提问时刻，绝不编一个）。
+    // Parked row: only the question id, no wait duration (the card payload does not carry the asked instant, never invent one).
     expect(roster.textContent).toContain("agent#2@2");
     expect(roster.textContent).toContain("parked");
     expect(roster.textContent).toContain("on question q_7");
-    // 退避的行：等了多久贴着原因，还要等多久收尾。
+    // Backoff row: how long it has waited sits next to the reason, and how much longer closes the line.
     expect(roster.textContent).toContain("drafter");
     expect(roster.textContent).toContain("in backoff");
     expect(roster.textContent).toContain("for 1m 05s");
     expect(roster.textContent).toContain("retry in 45s");
-    // token 为 0 的行不写「0 tokens」（前置的 \D 是为了不把 "900 tokens" 误当命中）。
+    // A row with 0 tokens does not say "0 tokens" (the leading \D keeps "900 tokens" from being a false hit).
     expect(roster.textContent).not.toMatch(/(?:^|\D)0 tokens/u);
   });
 
@@ -615,7 +617,7 @@ describe("GetWorkflowRunToolCallBlock situation report", () => {
     expect(health.textContent).toContain("2 consecutive failures");
     expect(health.textContent).toContain("3 cached steps");
     expect(screen.queryByTestId("workflow-run-leftover")).toBeNull();
-    // 日志行按 journal 时刻前缀年龄（同一把尺，同一个基准）。
+    // Log lines prefix their age by journal instant (same ruler, same baseline).
     expect(screen.getByText(/1m 35s ago\s+fan-out complete/u)).toBeTruthy();
   });
 
@@ -623,8 +625,12 @@ describe("GetWorkflowRunToolCallBlock situation report", () => {
     renderRun(GET_RUN_SITUATION_DISPLAY, "zh-CN");
     const roster = screen.getByTestId("workflow-run-subagents");
     expect(roster.textContent).toContain("执行中");
-    expect(roster.textContent).toContain("停驻");
-    expect(roster.textContent).toContain("退避中");
+    expect(roster.textContent).toContain(
+      zhCN["chat.toolCall.workflow.getRun.subagent.state.parked"],
+    );
+    expect(roster.textContent).toContain(
+      zhCN["chat.toolCall.workflow.getRun.subagent.waitingBackoff"],
+    );
     expect(roster.textContent).toContain("已等 1m 05s");
     expect(roster.textContent).toContain("45s 后重试");
     expect(screen.getByTestId("workflow-run-health").textContent).toContain("最近进展 40s 前");
@@ -634,14 +640,14 @@ describe("GetWorkflowRunToolCallBlock situation report", () => {
   it("completed: result stays first, phases and roster still render", () => {
     renderRun(GET_RUN_COMPLETED_SITUATION_DISPLAY);
     const body = screen.getByTestId("workflow-status-body");
-    // 摘要是导语，结果紧跟其后（终态卡先给结果，这是原有行为）。
+    // The summary is the lead, the result follows right after (terminal cards lead with the result — existing behavior).
     expect(body.textContent?.startsWith(GET_RUN_COMPLETED_SITUATION_DISPLAY.summary)).toBe(true);
     expect(screen.getByText("all checks passed")).toBeTruthy();
     expect(screen.getByTestId("workflow-run-phases").textContent).toContain("2.judgedone");
     const roster = screen.getByTestId("workflow-run-subagents");
     expect(roster.textContent).toContain("6 steps");
     expect(roster.textContent).toContain("1 failed");
-    // 终态 run 不说 stalled，健康行也不写为 0 的读数。
+    // A terminal run does not say stalled, and the health row omits readings that would be 0.
     const health = screen.getByTestId("workflow-run-health");
     expect(health.textContent).not.toContain("stalled");
     expect(health.textContent).not.toContain("0 cached steps");
@@ -653,7 +659,7 @@ describe("GetWorkflowRunToolCallBlock situation report", () => {
       "The step below marked running is a leftover of the exited process, not live work.",
     );
     const phases = screen.getByTestId("workflow-run-phases");
-    // 终态 run 里的「还在跑」是没结算，不是在动；也不写「到现在为止」的时长。
+    // "Still running" inside a terminal run means unsettled, not moving; no "so far" duration either.
     expect(phases.textContent).toContain("1 unfinished");
     expect(phases.textContent).not.toContain("so far");
     const roster = screen.getByTestId("workflow-run-subagents");
@@ -667,21 +673,21 @@ describe("GetWorkflowRunToolCallBlock situation report", () => {
     expect(screen.getByTestId("workflow-run-questions-unknown").textContent).toContain(
       "cannot see this run's pending questions",
     );
-    // 空花名册什么也不画；没有阶段就没有阶段轨。
+    // An empty roster draws nothing; no phases means no phase track.
     expect(screen.queryByTestId("workflow-run-subagents")).toBeNull();
     expect(screen.queryByTestId("workflow-run-phases")).toBeNull();
   });
 
   it("renders a pre-situation payload exactly as before", () => {
     renderRun(GET_RUN_DISPLAY);
-    // 情势五件缺席 → 折叠行回到步数，卡体没有摘要 / 阶段轨 / 花名册 / 健康行。
+    // With the five situation pieces absent → the collapsed row falls back to step count and the card body has no summary / phase track / roster / health row.
     expect(screen.getAllByText("5/7 steps").length).toBeGreaterThan(0);
     expect(screen.queryByTestId("workflow-run-summary-line")).toBeNull();
     expect(screen.queryByTestId("workflow-run-summary")).toBeNull();
     expect(screen.queryByTestId("workflow-run-phases")).toBeNull();
     expect(screen.queryByTestId("workflow-run-subagents")).toBeNull();
     expect(screen.queryByTestId("workflow-run-health")).toBeNull();
-    // 没有 journal 时刻的日志行不带年龄前缀：日志面板逐字还是那两行。
+    // Log lines without a journal instant carry no age prefix: the log panel is still exactly those two lines.
     expect(screen.getByTestId("workflow-status-body").querySelector("pre")?.textContent).toBe(
       "started\nfan-out complete",
     );
@@ -777,8 +783,9 @@ describe("EvalWorkflowSnippetToolCallBlock", () => {
           isRunning: true,
         }),
       );
-      // 进行中按整秒走、每秒一格（修订 2026-09-12：与面板里其他计时同一粒度，毫秒尾数肉眼读不了，
-      // 而 100ms 一次 setState 是聊天区里最频繁的待处理更新——嵌套更新计数的种子）。
+      // While running, ticks in whole seconds, one tick per second (revision 2026-09-12: same granularity as the other
+      // timers in the panel — millisecond tails are unreadable by eye, and a setState every 100ms is the most frequent
+      // pending update in the chat area, the seed of nested update count warnings).
       expect(screen.getByText("0s")).toBeTruthy();
       act(() => vi.advanceTimersByTime(300));
       expect(screen.getByText("0s")).toBeTruthy();
@@ -808,7 +815,7 @@ describe("EvalWorkflowSnippetToolCallBlock", () => {
           }),
         ),
       );
-      // 终态定格在工具结果的精确毫秒。
+      // The terminal state freezes at the exact milliseconds of the tool result.
       act(() => vi.advanceTimersByTime(1000));
       expect(screen.getByText("427ms")).toBeTruthy();
       expect(screen.queryByText("1427ms")).toBeNull();
@@ -831,16 +838,16 @@ describe("EvalWorkflowSnippetToolCallBlock", () => {
     );
     renderCard(EvalWorkflowSnippetToolCallBlock, context);
 
-    // 诊断走共享的编译反馈卡（与 CreateWorkflow 同一形状，docs/dynamic-workflow/presentation.md「Compiler feedback」）。
+    // Diagnostics use the shared compiler-feedback card (same shape as CreateWorkflow, docs/dynamic-workflow/presentation.md "Compiler feedback").
     expect(screen.getByText("Compiler feedback")).toBeTruthy();
     expect(screen.getByText("L3:C10")).toBeTruthy();
     expect(screen.getByText(/Type 'string' is not assignable/)).toBeTruthy();
-    // 代码 / 日志 / 返回值分区。
+    // Code / logs / return value sections.
     fireEvent.click(screen.getByText("Code"));
     expect(screen.getAllByText(/files\.glob/).length).toBeGreaterThan(0);
     expect(screen.getByText("glob matched 3 files")).toBeTruthy();
     expect(screen.queryByText("Return value")).toBeNull();
-    // 折叠行：时长（1_250ms → "1.3s"，toFixed(1) 四舍五入）与 response 预览。
+    // Collapsed row: duration (1_250ms → "1.3s", toFixed(1) rounding) and the response preview.
     expect(screen.queryByText("1250ms")).toBeNull();
   });
 
@@ -900,8 +907,8 @@ describe("observation card i18n key parity", () => {
   });
 });
 
-// spec：docs/dynamic-workflow/presentation.md「The run card」。
-// 恢复卡三件事：display 驱动（runId + 状态点词 + 本地化说明）、双语、无 display 文本兜底。
+// spec: docs/dynamic-workflow/presentation.md "The run card".
+// Three things about the resume card: display-driven (runId + status word + localized note), bilingual, text fallback without display.
 const RESUME_DISPLAY = {
   kind: "resume_workflow_run",
   runId: "dwfrun_resumed",
@@ -922,15 +929,15 @@ describe("ResumeWorkflowRunToolCallBlock", () => {
     expect(screen.getByText("Workflow run resumed")).toBeTruthy();
     expect(screen.getByText("dwfrun_resumed")).toBeTruthy();
     expect(screen.getByText("Running in background")).toBeTruthy();
-    // 展开说明在场（replay / 重新派发 / 完成通知）。
+    // The expanded note is present (replay / re-dispatch / completion notice).
     expect(screen.getByText(/replayed from the journal/u)).toBeTruthy();
   });
 
   it("renders the zh-CN card", () => {
     renderCard(ResumeWorkflowRunToolCallBlock, buildContext(buildResumeToolCall()), "zh-CN");
-    expect(screen.getByText("工作流实例已恢复")).toBeTruthy();
-    expect(screen.getByText("后台运行中")).toBeTruthy();
-    expect(screen.getByText(/从 journal 重放/u)).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.resumeRun.label"])).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.resumeRun.inBackground"])).toBeTruthy();
+    expect(document.body.textContent).toContain(zhCN["chat.toolCall.workflow.resumeRun.hint"]);
   });
 
   it("falls back to bounded text output when display is absent", () => {
@@ -944,13 +951,13 @@ describe("ResumeWorkflowRunToolCallBlock", () => {
       ),
     );
     expect(screen.getByText(/has been resumed/u)).toBeTruthy();
-    // 文本兜底不是 JSON dump。
+    // The text fallback is not a JSON dump.
     expect(screen.queryByText(/\{"/u)).toBeNull();
   });
 });
 
-// run 态紧凑可点卡（spec「ResumeWorkflowRun 工具卡 display」二轮）：联接命中后复用
-// CreateWorkflow 的紧凑卡（WorkflowRunCompactCard），标签换「已恢复」，整卡点击打开侧栏。
+// Run-state compact clickable card (spec "ResumeWorkflowRun tool card display", second round): after a join hit it reuses
+// CreateWorkflow's compact card (WorkflowRunCompactCard) with the label changed to "resumed"; clicking the whole card opens the side panel.
 describe("ResumeWorkflowRunToolCallBlock run-state compact card", () => {
   const RESUME_RUN_SUMMARY = {
     runId: "dwfrun_resumed",
@@ -972,7 +979,7 @@ describe("ResumeWorkflowRunToolCallBlock run-state compact card", () => {
     const card = screen.getByTestId("workflow-run-card");
     expect(card).toBeTruthy();
     expect(card.getAttribute("data-workflow-run-id")).toBe("dwfrun_resumed");
-    // 标签是「已恢复」而不是 create 卡的「已启动」；runId 与实时状态/步数在场。
+    // The label is "resumed" rather than the create card's "launched"; runId and live status/step count are present.
     expect(screen.getByText("Workflow run resumed")).toBeTruthy();
     expect(screen.getByText("dwfrun_resumed")).toBeTruthy();
     expect(screen.getByText("Running")).toBeTruthy();
@@ -999,8 +1006,11 @@ describe("ResumeWorkflowRunToolCallBlock run-state compact card", () => {
       buildContext(buildResumeToolCall(), { workflowRun: RESUME_RUN_SUMMARY }),
       "zh-CN",
     );
-    expect(screen.getByText("工作流实例已恢复")).toBeTruthy();
-    expect(screen.getByText("运行中")).toBeTruthy();
-    expect(screen.getByText("2/5 步")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.resumeRun.label"])).toBeTruthy();
+    const card = screen.getByTestId("workflow-run-card");
+    expect(card.textContent).toContain(zhCN["chat.toolCall.workflow.run.status.running"]);
+    expect(card.textContent).toContain(
+      zhCN["chat.toolCall.workflow.card.steps"].replace("{done}", "2").replace("{total}", "5"),
+    );
   });
 });

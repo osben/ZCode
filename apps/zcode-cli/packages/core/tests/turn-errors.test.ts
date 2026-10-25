@@ -4,7 +4,9 @@ import { appendEvent } from "../src/runtime/methods/events.js";
 import {
   appendTurnOutcomeEvent,
   createExternalTurnFaultError,
+  createTurnCancelReason,
   createTurnFailureError,
+  hasPreserveQueueAutoDrainCancelIntent,
   projectExecutionErrorPayload,
 } from "../src/runtime/helpers/turn-errors.js";
 
@@ -365,5 +367,18 @@ describe("projectExecutionErrorPayload", () => {
 
     expect(projection.code).toBe("3007");
     expect(projection.message).toContain("verify token was rejected");
+  });
+});
+
+describe("turn cancel reason intent (ISSUE-039)", () => {
+  it("marks only a preserve reason, non-enumerable so it does not leak into JSON or key listings", () => {
+    const steer = createTurnCancelReason("steer", { preserveQueueAutoDrainOnCancel: true });
+    const stop = createTurnCancelReason("stop", { preserveQueueAutoDrainOnCancel: false });
+
+    expect(hasPreserveQueueAutoDrainCancelIntent(steer)).toBe(true);
+    expect(hasPreserveQueueAutoDrainCancelIntent(stop)).toBe(false);
+    expect(hasPreserveQueueAutoDrainCancelIntent(new Error("plain"))).toBe(false);
+    expect(Object.keys(steer)).toEqual([]);
+    expect(JSON.stringify(steer)).toBe("{}");
   });
 });

@@ -6,10 +6,10 @@
 // docs/analysis.md, "The control-flow graph".
 
 // ============================================================
-//  中国象棋 (Xiangqi) 双 Agent 对弈 Workflow
-//  红方「赤霄」(攻击型) vs 黑方「玄弈」(稳健型)
-//  完整规则内嵌: 蹩马腿/塞象眼/九宫/炮打隔子/将帅照面/绝杀/困毙/判和
-//  坐标: 行 r 0(黑底线/顶)~9(红底线/底), 列 c 0~8 (左->右)
+//  Chinese chess (Xiangqi) two-Agent match Workflow
+//  Red "Chi Xiao" (aggressive) vs Black "Xuan Yi" (steady)
+//  Full rules inlined: horse-leg block / elephant-eye block / palace / cannon screen capture / kings facing / checkmate / stalemate / draw adjudication
+//  Coordinates: row r 0 (black back rank / top) ~ 9 (red back rank / bottom), column c 0~8 (left -> right)
 // ============================================================
 
 type Side = 'red' | 'black';
@@ -29,9 +29,9 @@ interface GameResult {
 
 const RED: Side = 'red';
 const BLACK: Side = 'black';
-const PLY_CAP = 60;          // 手数上限, 超出按物质判定
-const NO_CAPTURE_DRAW = 40;  // 连续无吃子手数判和
-const ADJUDICATE_MARGIN = 4; // 物质判定阈值
+const PLY_CAP = 60;          // move-count cap; adjudicate by material beyond it
+const NO_CAPTURE_DRAW = 40;  // consecutive no-capture plies that draw
+const ADJUDICATE_MARGIN = 4; // material adjudication threshold
 const VAL: Record<string, number> = { K: 0, A: 2, E: 2, H: 4, R: 9, C: 4.5, P: 1 };
 const CN: Record<string, string> = {
   K: '帅', A: '仕', E: '相', H: '马', R: '车', C: '炮', P: '兵',
@@ -44,11 +44,11 @@ const sideOf = (p: string): Side | null => (p === '.' ? null : p === p.toUpperCa
 const typeOf = (p: string): string => p.toUpperCase();
 const inSquare = (r: number, c: number): boolean => r >= 0 && r <= 9 && c >= 0 && c <= 8;
 const inPalace = (r: number, c: number, s: Side): boolean => c >= 3 && c <= 5 && (s === RED ? r >= 7 : r <= 2);
-// 盘面读写助手
+// Board read/write helpers
 const at = (b: string[][], r: number, c: number): string => b[r]![c]!;
 const put = (b: string[][], r: number, c: number, p: string): void => { b[r]![c] = p; };
 
-// ---------------- 盘面 ----------------
+// ---------------- Board ----------------
 function initialBoard(): string[][] {
   const b: string[][] = Array.from({ length: 10 }, () => Array<string>(9).fill('.'));
   const back = ['r', 'h', 'e', 'a', 'k', 'a', 'e', 'h', 'r'];
@@ -70,17 +70,17 @@ function pseudoMoves(b: string[][], side: Side): Move[] {
     const p = at(b, r, c);
     if (p === '.' || sideOf(p) !== side) continue;
     switch (typeOf(p)) {
-      case 'K': { // 帅/将: 九宫内横直一步
+      case 'K': { // King: one orthogonal step inside the palace
         const dirs: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
         for (const [dr, dc] of dirs) if (inPalace(r + dr, c + dc, side)) push(r, c, r + dr, c + dc);
         break;
       }
-      case 'A': { // 仕/士: 九宫内斜一步
+      case 'A': { // Advisor: one diagonal step inside the palace
         const dirs: [number, number][] = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
         for (const [dr, dc] of dirs) if (inPalace(r + dr, c + dc, side)) push(r, c, r + dr, c + dc);
         break;
       }
-      case 'E': { // 相/象: 田字, 不过河, 塞象眼不可走
+      case 'E': { // Elephant: two-step diagonal, cannot cross the river, blocked by an elephant eye
         const dirs: [number, number][] = [[2, 2], [2, -2], [-2, 2], [-2, -2]];
         for (const [dr, dc] of dirs) {
           const nr = r + dr, nc = c + dc;
@@ -92,7 +92,7 @@ function pseudoMoves(b: string[][], side: Side): Move[] {
         }
         break;
       }
-      case 'H': { // 马: 日字, 蹩马腿不可走
+      case 'H': { // Horse: knight move, blocked by a horse leg
         const legs: [number, number, number, number][] = [
           [-2, -1, -1, 0], [-2, 1, -1, 0], [2, -1, 1, 0], [2, 1, 1, 0],
           [-1, -2, 0, -1], [1, -2, 0, -1], [-1, 2, 0, 1], [1, 2, 0, 1],
@@ -103,7 +103,7 @@ function pseudoMoves(b: string[][], side: Side): Move[] {
         }
         break;
       }
-      case 'R': { // 车: 直线任意
+      case 'R': { // Chariot: any distance along straight lines
         const dirs: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
         for (const [dr, dc] of dirs) {
           let nr = r + dr, nc = c + dc;
@@ -116,7 +116,7 @@ function pseudoMoves(b: string[][], side: Side): Move[] {
         }
         break;
       }
-      case 'C': { // 炮: 行走如车, 吃子须隔一个炮架
+      case 'C': { // Cannon: moves like a chariot, captures must jump exactly one screen
         const dirs: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
         for (const [dr, dc] of dirs) {
           let nr = r + dr, nc = c + dc, jumped = false;
@@ -134,7 +134,7 @@ function pseudoMoves(b: string[][], side: Side): Move[] {
         }
         break;
       }
-      case 'P': { // 兵/卒: 过河前只前进, 过河后可横走, 不能后退
+      case 'P': { // Pawn: forward only before crossing the river, may move sideways after, never backward
         const dir = side === RED ? -1 : 1;
         push(r, c, r + dir, c);
         const crossed = side === RED ? r <= 4 : r >= 5;
@@ -159,7 +159,7 @@ function kingPos(b: string[][], side: Side): [number, number] | null {
   return null;
 }
 
-// 将帅照面: 同列且中间无子
+// Kings facing: same column with no piece between them
 function kingsFace(b: string[][]): boolean {
   const K = kingPos(b, RED), Q = kingPos(b, BLACK);
   if (!K || !Q || K[1] !== Q[1]) return false;
@@ -175,7 +175,7 @@ function inCheck(b: string[][], side: Side): boolean {
   return !!kp && isAttacked(b, kp[0], kp[1], opp(side));
 }
 
-// 合法着法 = 伪合法中, 走完后己方不被将军且将帅不照面
+// Legal moves = pseudo-legal moves after which one's own king is not in check and the kings do not face each other
 function legalMoves(b: string[][], side: Side): Move[] {
   const out: Move[] = [];
   for (const m of pseudoMoves(b, side)) {
@@ -198,7 +198,7 @@ function material(b: string[][], side: Side): number {
   return s;
 }
 
-// ---------------- 渲染 ----------------
+// ---------------- Rendering ----------------
 function renderBoard(b: string[][]): string {
   const lines: string[] = ['    ' + Array.from({ length: 9 }, (_, c) => 'c' + c).join('  ')];
   for (let r = 0; r < 10; r++) {
@@ -226,7 +226,7 @@ function parseMove(s: string): Move | null {
   return m ? { fr: +m[1]!, fc: +m[2]!, tr: +m[3]!, tc: +m[4]! } : null;
 }
 
-// ---------------- 对弈 Agent ----------------
+// ---------------- Match agents ----------------
 const RED_SYSTEM = [
   '你是中国象棋对弈 AI「赤霄」, 执红方(大写棋子 K/A/E/H/R/C/P), 棋风积极进取、擅抢攻夺中路。',
   '你只做纯局面思考: 综合出子速度、子力安全、控制要点、将军与攻杀威胁, 从裁判给出的合法着法列表中选出最优一步。',
@@ -259,7 +259,7 @@ function buildPrompt(b: string[][], side: Side, ply: number, noCap: number, lm: 
   ].join('\n');
 }
 
-// ---------------- 主对弈循环 ----------------
+// ---------------- Main match loop ----------------
 log('中国象棋双 Agent 对弈开始: 红方「赤霄」(攻击型) vs 黑方「玄弈」(稳健型)');
 
 const red = agent('赤霄', { system: RED_SYSTEM });
@@ -294,7 +294,7 @@ while (status === 'playing' && ply < PLY_CAP) {
       if (m && lm.some(x => x.fr === m.fr && x.fc === m.fc && x.tr === m.tr && x.tc === m.tc)) chosen = m;
     }
   } catch { chosen = null; }
-  if (!chosen && decision) { // 非法输出 -> 重问一次
+  if (!chosen && decision) { // invalid output -> ask once more
     try {
       decision = await actor.ask<MoveDecision>(prompt + `\n\n你上次的回答 "${decision.move}" 不是合法着法! 必须原样复制列表中的一个着法。`);
       if (decision && decision.move) {
@@ -304,7 +304,7 @@ while (status === 'playing' && ply < PLY_CAP) {
     } catch { chosen = null; }
   }
   let fallback = false;
-  if (chosen === null) { chosen = lm[Math.floor(Math.random() * lm.length)]!; fallback = true; } // 最终兜底: 随机合法着法
+  if (chosen === null) { chosen = lm[Math.floor(Math.random() * lm.length)]!; fallback = true; } // final fallback: a random legal move
 
   const piece = at(board, chosen.fr, chosen.fc);
   const captured = applyMove(board, chosen);
@@ -331,7 +331,7 @@ while (status === 'playing' && ply < PLY_CAP) {
   }
 }
 
-if (status === 'playing') { // 达到手数上限, 按物质判定
+if (status === 'playing') { // reached the move cap, adjudicate by material
   const d = material(board, RED) - material(board, BLACK);
   winner = Math.abs(d) >= ADJUDICATE_MARGIN ? (d > 0 ? RED : BLACK) : 'draw';
   reason = 'adjudicated 达手数上限, 按物质判定';

@@ -13,24 +13,18 @@ import {
   resolveBotTaskBroadcastRuntimeStatus,
 } from "@/root/botsTaskBroadcast.js";
 import { resolveBotTaskStreamBroadcast } from "@/root/botsTaskStreamBroadcast.js";
-import {
-  insertTaskIntoTaskCaches,
-  syncTaskMetaToTaskCaches,
-} from "@/lib/taskListMetaSync.js";
+import { insertTaskIntoTaskCaches, syncTaskMetaToTaskCaches } from "@/lib/taskListMetaSync.js";
 
 export function syncBotTaskConfigOptionsToStore(params: {
-  zcodeSessionStore: Pick<
-    ReturnType<typeof useZCodeSessionStore.getState>,
-    "setTaskConfigOptions"
-  >;
+  zcodeSessionStore: Pick<ReturnType<typeof useZCodeSessionStore.getState>, "setTaskConfigOptions">;
   workspacePath: string;
   workspaceIdentity?: string;
   taskId: string;
   configOptions: ZCodeConfigOption[];
 }) {
-  // Bugfix: Bot /mode 不经过 ChatInputToolbar/useTaskStreamEvents。
-  // setTaskConfigOptions 会按 activeTaskId 决定是否同步到 workspace configOptions，
-  // 当前 mode 再由 configOptions 派生，避免 UI 维护第二份模式状态。
+  // Bugfix: Bot /mode does not go through ChatInputToolbar/useTaskStreamEvents.
+  // setTaskConfigOptions decides whether to sync to workspace configOptions based on activeTaskId,
+  // and the current mode is derived from configOptions, avoiding a second mode state in the UI.
   params.zcodeSessionStore.setTaskConfigOptions(
     params.workspacePath,
     params.taskId,
@@ -39,13 +33,10 @@ export function syncBotTaskConfigOptionsToStore(params: {
   );
 }
 
-export function shouldRefreshBotTaskList(
-  event: string,
-  hasTaskMeta: boolean,
-): boolean {
-  // Bugfix: Bot 新建任务时会随 created 广播携带 task meta，当前实现因此跳过整表刷新。
-  // 但如果对应 workspace 的 task query cache 还没建立，增量写入没有落点，侧栏列表就不会主动拉到这个新任务。
-  // created 事件频率低，保留一次版本 bump 作为兜底；其它高频事件仍优先走增量缓存更新，避免列表闪烁回归。
+export function shouldRefreshBotTaskList(event: string, hasTaskMeta: boolean): boolean {
+  // Bugfix: When Bot creates a task, the created broadcast includes task metadata, so the current implementation skips a full table refresh.
+  // But if the task query cache for that workspace has not been created, the incremental write has nowhere to go and the sidebar does not fetch the new task.
+  // created events are infrequent, so retain one version bump as a fallback; other high-frequency events still prefer incremental cache updates to prevent list flicker.
   if (event === "created") {
     return true;
   }
@@ -64,8 +55,8 @@ export function shouldMirrorBotTaskStreamToStore(params: {
     return true;
   }
 
-  // Bugfix: 远端 Bot task 的 stream 来自 bot runtime host，不一定会被当前 ChatView 的 ZCode Agent stream 订阅收到。
-  // 之前 active task 直接跳过 bot broadcast，导致消息内容要切换任务重新拉 snapshot 后才显示。
+  // Bugfix: A remote Bot task stream comes from the Bot runtime host and may not be received by the current ChatView’s ZCode Agent stream subscription.
+  // Previously, active Bot tasks skipped the broadcast, so their messages appeared only after switching tasks and fetching a new snapshot.
   return Boolean(params.workspaceIdentity?.trim());
 }
 
@@ -75,10 +66,7 @@ export function useBotBroadcastEffects(
 ) {
   useEffect(() => {
     const disposable = services.broadcastService.onMessage((message) => {
-      const stream = resolveBotTaskStreamBroadcast(
-        message,
-        tabStoreApi.getState().tabs,
-      );
+      const stream = resolveBotTaskStreamBroadcast(message, tabStoreApi.getState().tabs);
       if (stream) {
         const zcodeSessionStore = useZCodeSessionStore.getState();
         const workspaceState = zcodeSessionStore.getWorkspaceState(
@@ -95,10 +83,10 @@ export function useBotBroadcastEffects(
           return;
         }
 
-        // Bot task 在后台运行或远端 runtime 中运行时，本窗口不一定订阅到同一条流。
-        // 消息正文不再回放进 renderer 本地 store——bot 发的 prompt
-        // 走 v4 命令后，消息由 conversation 投影（订阅该 session 的 pane）自然呈现；
-        // 这里只同步运行态/权限/用量等 A 区状态，供侧栏与弹窗消费。
+        // When a Bot task runs in the background or on a remote runtime, this window may not subscribe to the same stream.
+        // Message bodies are no longer replayed into the renderer’s local store. After a Bot prompt
+        // enters through a v4 command, the conversation projection (for panes subscribed to the session) renders it naturally;
+        // this only synchronizes runtime state, permissions, and usage for the sidebar and dialogs.
         const event = stream.event;
         switch (event.type) {
           case "agent_message_chunk":
@@ -113,7 +101,12 @@ export function useBotBroadcastEffects(
             );
             break;
           case "permission_request":
-            zcodeSessionStore.setTaskPermissionRequest(stream.workspacePath, stream.taskId, event, stream.workspaceIdentity);
+            zcodeSessionStore.setTaskPermissionRequest(
+              stream.workspacePath,
+              stream.taskId,
+              event,
+              stream.workspaceIdentity,
+            );
             zcodeSessionStore.setTaskRuntimeState(
               stream.workspacePath,
               stream.taskId,
@@ -130,8 +123,18 @@ export function useBotBroadcastEffects(
               undefined,
               stream.workspaceIdentity,
             );
-            zcodeSessionStore.setTaskPermissionRequest(stream.workspacePath, stream.taskId, null, stream.workspaceIdentity);
-            zcodeSessionStore.setTaskError(stream.workspacePath, stream.taskId, null, stream.workspaceIdentity);
+            zcodeSessionStore.setTaskPermissionRequest(
+              stream.workspacePath,
+              stream.taskId,
+              null,
+              stream.workspaceIdentity,
+            );
+            zcodeSessionStore.setTaskError(
+              stream.workspacePath,
+              stream.taskId,
+              null,
+              stream.workspaceIdentity,
+            );
             break;
           case "task_error": {
             const normalizedError = normalizeZCodeUiError(
@@ -153,8 +156,18 @@ export function useBotBroadcastEffects(
               normalizedError.message,
               stream.workspaceIdentity,
             );
-            zcodeSessionStore.setTaskPermissionRequest(stream.workspacePath, stream.taskId, null, stream.workspaceIdentity);
-            zcodeSessionStore.setTaskError(stream.workspacePath, stream.taskId, normalizedError, stream.workspaceIdentity);
+            zcodeSessionStore.setTaskPermissionRequest(
+              stream.workspacePath,
+              stream.taskId,
+              null,
+              stream.workspaceIdentity,
+            );
+            zcodeSessionStore.setTaskError(
+              stream.workspacePath,
+              stream.taskId,
+              normalizedError,
+              stream.workspaceIdentity,
+            );
             break;
           }
           case "task_warning":
@@ -184,8 +197,8 @@ export function useBotBroadcastEffects(
               );
               const previousUsage =
                 workspaceState.taskRuntimeByTaskId[stream.taskId]?.usage ?? null;
-              // taskMessagesByTaskId 已随消息回放一并退役，估算用不到最近一条
-              // 用户输入时走 fallback 估算（该分支只影响 usage 弹窗的比例展示兜底）。
+              // taskMessagesByTaskId was retired along with message replay; usage estimates do not need the latest message.
+              // For user input, use the fallback estimate (this branch only affects the usage dialog’s proportional display fallback).
               const incomingUsage = {
                 size: event.size,
                 used: event.used,
@@ -232,15 +245,12 @@ export function useBotBroadcastEffects(
         return;
       }
 
-      const refresh = resolveBotTaskBroadcastRefresh(
-        message,
-        tabStoreApi.getState().tabs,
-      );
+      const refresh = resolveBotTaskBroadcastRefresh(message, tabStoreApi.getState().tabs);
       if (!refresh) {
         return;
       }
-      // Bots 在 host 侧创建/推进 task，不会挂载聊天视图里的 stream 订阅。
-      // 因此除了刷新列表，还要同步 task 运行态；否则 sidebar 能看到新 task，却不会显示进行中状态。
+      // Bots create and advance tasks on the host, without mounting the chat view’s stream subscription.
+      // Therefore, in addition to refreshing the list, synchronize task runtime state; otherwise the sidebar shows the new task without its in-progress status.
       const zcodeSessionStore = useZCodeSessionStore.getState();
       const workspaceState = zcodeSessionStore.getWorkspaceState(
         refresh.workspacePath,
@@ -249,9 +259,9 @@ export function useBotBroadcastEffects(
       const provider = refresh.task?.provider ?? refresh.provider;
       const shouldSyncVisibleTaskConfig = workspaceState.activeTaskId === refresh.taskId;
       if (provider && shouldSyncVisibleTaskConfig) {
-        // Bugfix: /model、/mode 可以从第三方 Bot 修改当前 task 的真实 ZCode Agent 状态。
-        // 这些操作不经过 ChatInputToolbar，本地 store 以前不会同步 provider/configOptions，
-        // 导致 Bot 回复已切换但 UI 下拉仍显示旧状态。
+        // Bugfix: /model and /mode can change the current task’s real ZCode Agent state through a third-party Bot.
+        // These operations do not go through ChatInputToolbar, so the local store previously did not synchronize provider/configOptions,
+        // leaving the UI dropdown showing the old state after the Bot confirmed the change.
         zcodeSessionStore.bindRuntimeProvider(
           refresh.workspacePath,
           provider,
@@ -275,9 +285,9 @@ export function useBotBroadcastEffects(
         refresh.workspaceIdentity,
       );
       if (refresh.task) {
-        // Bugfix: Bot 状态变化以前靠 bumpTaskListVersion 整表重查。
-        // prompt_sent / completed 等连续事件会让 sidebar queryKey 反复换新，旧缓存短暂失效导致任务列表闪烁。
-        // 这里有 task meta 时直接增量写入 task/query cache，只在缺少 meta 的旧广播上保留整表刷新兜底。
+        // Bugfix: Bot state changes previously triggered a full refetch through bumpTaskListVersion.
+        // Consecutive prompt_sent / completed events repeatedly changed the sidebar queryKey, briefly invalidating the old cache and causing list flicker.
+        // When task metadata is available, write incrementally to the task/query cache; keep full-table refresh only as a fallback for older broadcasts without metadata.
         const membership = { pinned: false, archived: false };
         if (refresh.event === "created") {
           insertTaskIntoTaskCaches({
@@ -296,9 +306,9 @@ export function useBotBroadcastEffects(
           });
         }
       }
-      // prompt_sent 不再向 renderer 本地补写 user message——bot 发的
-      // prompt 经 v4 命令进入 session 事件日志，订阅该 session 的 conversation 投影
-      // 会自然出现该消息；本地拼装面（zcodeChatMessages）随旧 ChatView 退役。
+      // prompt_sent no longer writes a user message into the renderer’s local store: Bot messages
+      // enter the session event log through v4 commands, so the conversation projection subscribed to that session
+      // displays them naturally; local message assembly (zcodeChatMessages) was retired with the old ChatView.
       if (refresh.event === "permission_request" && refresh.permissionRequest) {
         zcodeSessionStore.setTaskPermissionRequest(
           refresh.workspacePath,
@@ -314,8 +324,8 @@ export function useBotBroadcastEffects(
           refresh.workspaceIdentity,
         );
       } else if (refresh.event === "elicitation_request" && refresh.elicitationRequest) {
-        // Bugfix: Bot channel 消费 AskUserQuestion 后，下一题只会先到 Bot runtime。
-        // 当前 UI 窗口不一定有同一条 ZCode Agent stream 订阅，必须把新的 elicitation_request 显式写回 store。
+        // Bugfix: After the Bot channel consumes AskUserQuestion, the next question first arrives only at the Bot runtime.
+        // The current UI window may not subscribe to the same ZCode Agent stream, so explicitly write the new elicitation_request back to the store.
         zcodeSessionStore.setTaskElicitationRequest(
           refresh.workspacePath,
           refresh.taskId,
@@ -323,8 +333,8 @@ export function useBotBroadcastEffects(
           refresh.workspaceIdentity,
         );
       } else if (refresh.event === "elicitation_resolved" && refresh.requestId) {
-        // Bugfix: Bot 代用户提交 AskUserQuestion 时，当前 UI 窗口不一定能收到 ZCode Agent stream 的
-        // elicitation_response。通过 bots:task 明确同步 requestId 出队，避免问答弹窗一直挂着。
+        // Bugfix: When a Bot submits an AskUserQuestion response for the user, the current UI window may not receive the ZCode Agent stream’s
+        // elicitation_response. Explicitly synchronize requestId dequeue through bots:task so the Q&A dialog does not remain open indefinitely.
         zcodeSessionStore.removeTaskElicitationRequest(
           refresh.workspacePath,
           refresh.taskId,

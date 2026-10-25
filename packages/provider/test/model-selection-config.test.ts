@@ -105,6 +105,38 @@ describe("normalizeModelSelection", () => {
       options: { reasoningLevel: "high" },
     });
   });
+  it("uses the catalog reasoning default instead of the highest value when present", () => {
+    expect(
+      completeNewModelSelection(
+        registryView({
+          values: ["low", "medium", "high"],
+          default: "medium",
+          map: "{'reasoning': {'effort': reasoningLevel}}",
+        }),
+        { providerId: "provider-a", modelId: "model-a", options: { reasoningLevel: "low" } },
+      ),
+    ).toEqual({
+      providerId: "provider-a",
+      modelId: "model-a",
+      options: { reasoningLevel: "medium" },
+    });
+  });
+  it("falls back to the highest reasoning level when the catalog default is cleared", () => {
+    expect(
+      completeNewModelSelection(
+        registryView({
+          values: ["low", "medium", "high"],
+          default: null,
+          map: "{'reasoning': {'effort': reasoningLevel}}",
+        }),
+        { providerId: "provider-a", modelId: "model-a" },
+      ),
+    ).toEqual({
+      providerId: "provider-a",
+      modelId: "model-a",
+      options: { reasoningLevel: "high" },
+    });
+  });
   it("新选择缺少 reasoning 时保留模型并清空 reasoning", () => {
     expect(
       normalizeModelSelection(registryView(), {
@@ -131,7 +163,12 @@ describe("normalizeModelSelection", () => {
   });
 });
 
-function registryView(): ProviderRegistryView {
+function registryView(
+  reasoning: { values: string[]; default?: string | null; map: string } = {
+    values: ["low", "high"],
+    map: "{'reasoning': {'effort': reasoningLevel}}",
+  },
+): ProviderRegistryView {
   return {
     revision: 1,
     providers: ["provider-a", "provider-b"].map((providerId) => ({
@@ -164,8 +201,9 @@ function registryView(): ProviderRegistryView {
             }),
             optionSpecs: new ModelOptionSpecsConfig({
               reasoningLevel: {
-                values: ["low", "high"],
-                map: "{'reasoning': {'effort': reasoningLevel}}",
+                values: reasoning.values,
+                ...(reasoning.default === undefined ? {} : { default: reasoning.default }),
+                map: reasoning.map,
               },
               maxOutputTokens: {
                 max: 8_000,

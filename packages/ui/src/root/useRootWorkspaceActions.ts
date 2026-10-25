@@ -48,7 +48,87 @@ import {
   persistV4ComposerDraft,
   readV4ComposerDraft,
   V4_DRAFT_SCOPE_ROOT,
+  type ComposerScope,
 } from "@/v4/composer/composerDraftStore.js";
+
+/** 目录快照只取恢复判定需要的字段，避免 Root 依赖完整侧栏投影。 */
+export interface ProjectDirectorySnapshot {
+  loading: boolean;
+  error: string | null;
+  projects: readonly { id: string }[];
+}
+
+/**
+ * 返回一个等待目录首次落定的 awaitable。
+ * 目录已加载时立即 resolve；否则等待 loading 变为 false 的那次提交，不设超时。
+ */
+export function useSettledProjectDirectory(
+  directory: ProjectDirectorySnapshot | null,
+): () => Promise<ProjectDirectorySnapshot | null> {
+  const latestRef = useRef(directory);
+  const waitersRef = useRef(new Set<(snapshot: ProjectDirectorySnapshot | null) => void>());
+  useLayoutEffect(() => {
+    latestRef.current = directory;
+    if (!directory || directory.loading) return;
+    const waiters = [...waitersRef.current];
+    waitersRef.current.clear();
+    for (const resolve of waiters) resolve(directory);
+  }, [directory]);
+  return useCallback(
+    () =>
+      new Promise<ProjectDirectorySnapshot | null>((resolve) => {
+        const current = latestRef.current;
+        if (!current || !current.loading) {
+          resolve(current);
+          return;
+        }
+        waitersRef.current.add(resolve);
+      }),
+    [],
+  );
+}
+
+/**
+ * 持久化草稿的项目意图必须对照当前目录确认。
+ * 项目已删除或不在目录中时，回退到 null scope，并把未提交正文搬到 null scope，避免正文随旧 scope 消失。
+ * 只有 null scope 尚无草稿时才搬运，已有的全局草稿不被覆盖。
+ */
+export function restoreDraftProjectScope(input: {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  clientNamespace: string;
+  scope: ComposerScope;
+  projectIds: ReadonlySet<string>;
+}): ComposerScope {
+  const { workspacePath, workspaceIdentity, clientNamespace, scope, projectIds } = input;
+  if (scope.projectId === null || projectIds.has(scope.projectId)) return scope;
+  const globalScope = resolveComposerScope(null, workspaceIdentity, clientNamespace);
+  const staleDraft = readV4ComposerDraft(
+    workspacePath,
+    workspaceIdentity,
+    V4_DRAFT_SCOPE_ROOT,
+    scope,
+  );
+  if (
+    staleDraft &&
+    !readV4ComposerDraft(workspacePath, workspaceIdentity, V4_DRAFT_SCOPE_ROOT, globalScope)
+  ) {
+    persistV4ComposerDraft(
+      workspacePath,
+      workspaceIdentity,
+      V4_DRAFT_SCOPE_ROOT,
+      { ...staleDraft, projectId: null },
+      globalScope,
+    );
+  }
+  rememberComposerWorkspaceScope(workspacePath, workspaceIdentity, globalScope);
+  logger.info("[Root] 恢复草稿的项目已不在目录中，回退到未归类范围", {
+    workspacePath,
+    workspaceIdentity,
+    projectId: scope.projectId,
+  });
+  return globalScope;
+}
 
 /** 新任务落点：identity 缺省一律归一化为 null，供只读校验、focus/addTab 统一消费。 */
 export interface NewTaskTargetResolution {
@@ -104,6 +184,7 @@ export function useRootWorkspaceActions({
   openRemoteProjectWorkspace,
   openMobileProjectDraft,
   workbenchGroupClientMode = "desktop-continuous",
+  isDesktop = false,
 }: {
   intl: ReturnType<typeof import("@/i18n/IntlProvider.js").useZCodeIntl>["intl"];
   platform: IPlatformService;
@@ -133,6 +214,8 @@ export function useRootWorkspaceActions({
   }) => Promise<void>;
   openMobileProjectDraft?: (request: CreateTaskOptions) => Promise<void>;
   workbenchGroupClientMode?: ZCodeTaskClientMode;
+  /** Desktop opens a folder through the project service so the draft binds to its project id. */
+  isDesktop?: boolean;
 }) {
   const navigationSequence = useRef(0);
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
@@ -536,6 +619,16 @@ export function useRootWorkspaceActions({
           }
         }
 
+        // Desktop: resolve the folder's project first. reuseExistingRoot makes this idempotent per root, so opening
+        // the same folder again reuses the project and the draft binds to the same project id.
+        let projectId: string | undefined;
+        if (isDesktop) {
+          if (!services.projectService) throw new Error("project.service-unavailable");
+          projectId = (
+            await services.projectService.saveProject({ roots: [path], reuseExistingRoot: true })
+          ).id;
+        }
+
         // 桌面端：检查是否已有其他窗口打开了该目录，如果是则激活该窗口对应 tab
         const result = await platform.activateOrSetWorkspace(path);
         if (result.activated) {
@@ -547,18 +640,21 @@ export function useRootWorkspaceActions({
         addTab(path);
         // 打开 workspace 是 workspace-only 意图，不是“继续上次会话”。
         // 即使命中已存在 tab，也必须清掉该 workspace 的 activeTaskId 并回到单 pane 草稿。
-        startDraftInWorkspace(path);
+        startDraftInWorkspace(path, undefined, projectId ? { projectId } : undefined);
         setWorkspaceActionError(null);
       } catch (err) {
         logger.error("[Root] handleSelectProject error:", err);
+        setWorkspaceActionError(err instanceof Error ? err.message : String(err));
       }
     },
     [
       addTab,
       intl,
+      isDesktop,
       onOpenRemoteConnection,
       platform,
       requestConfirmation,
+      services.projectService,
       services.settingService,
       startDraftInWorkspace,
       supportsSettings,

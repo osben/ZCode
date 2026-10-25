@@ -3,14 +3,15 @@ import { BUILTIN_ZCODE_SLASH_COMMAND_HELP_ENTRIES } from "@zcode/shared";
 import { DYNAMIC_WORKFLOW_SKILL_NAME } from "./app/bundled-skills.js";
 
 /**
- * 内置 `/workflow` 命令（docs/dynamic-workflow/authoring.md「The `/workflow` command and the skill」）。
+ * Built-in `/workflow` command (see "The `/workflow` command and the skill" in docs/dynamic-workflow/authoring.md).
  *
- * 它曾是 zcode-guide 内置插件的 `commands/workflow.md`：插件一被卸载/停用，命令与加号菜单入口一起消失，
- * 而十个工作流工具仍在（2026-09-19 事故）。现在命令正文随 CLI 编译，与 `/init` 同为代码定义的
- * prompt 型内置命令；名字进入保留字表，用户或插件同名命令不再被展开。
+ * It used to be `commands/workflow.md` in the zcode-guide built-in plugin: the moment that plugin was uninstalled or disabled,
+ * the command and its plus-menu entry disappeared while the ten workflow tools remained (2026-09-19 incident). The command body is now compiled
+ * with the CLI; like `/init`, it is a prompt-style built-in command defined in code, and its name is on the reserved list so same-named
+ * user or plugin commands are no longer expanded.
  *
- * 正文刻意复用 contracts 的 custom command 展开（$ARGUMENTS 替换 + `skills:` 前言），
- * 让模型看到的提示词与插件时代逐字同形，不重新调教。
+ * The body deliberately reuses contracts' custom-command expansion ($ARGUMENTS replacement + `skills:` preamble),
+ * keeping the prompt the model sees byte-identical to the plugin era, with no re-tuning.
  */
 export const BUILTIN_WORKFLOW_COMMAND_NAME = "workflow";
 
@@ -18,7 +19,7 @@ const helpEntry = BUILTIN_ZCODE_SLASH_COMMAND_HELP_ENTRIES.find(
   (entry) => entry.name === BUILTIN_WORKFLOW_COMMAND_NAME,
 );
 if (!helpEntry) {
-  // 共享 help 表是保留字、TUI 候选与 App 目录的唯一来源；条目缺席时命令根本不可寻址。
+  // The shared help table is the sole source for reserved names, TUI candidates, and the App catalog; without an entry, the command is not addressable.
   throw new Error(`Missing builtin slash command help entry: ${BUILTIN_WORKFLOW_COMMAND_NAME}`);
 }
 
@@ -28,7 +29,7 @@ export const BUILTIN_WORKFLOW_COMMAND_ARGUMENT_HINT = helpEntry.usage.startsWith
   ? helpEntry.usage.slice(USAGE_PREFIX.length)
   : "";
 
-/** `$ARGUMENTS` 必须在场：否则展开会把参数追加成位置不受控的 "User arguments:" 尾块。 */
+/** `$ARGUMENTS` must be present; otherwise expansion appends arguments as an uncontrolled "User arguments:" tail block. */
 const BUILTIN_WORKFLOW_COMMAND_BODY = [
   `Use the \`${DYNAMIC_WORKFLOW_SKILL_NAME}\` skill to design and launch a dynamic workflow for this request:`,
   "",

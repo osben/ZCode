@@ -1,253 +1,256 @@
-# 远程设备连接入口与状态展示规格
+# Remote device connection entry and status presentation spec
 
-当前交互合同，覆盖 SSH / WSL / Docker 与开发 Server 入口。三屏向导与五态表是唯一展示规则；
-原五步向导、设备分组及 connect-and-chat UI 不再适用。
+Current interaction contract for SSH / WSL / Docker and the dev Server entry. The three-screen wizard and the five-state table are the only presentation rules; the old five-step wizard, device grouping and connect-and-chat UI no longer apply.
 
-2026-10-12 已确认下一轮目标：[项目创建与远程连接管理分离](../issues/remote-connection-ux/15-project-device-selection-and-connection-management.md)
-（ready-for-agent，尚未实施）。实施该票时，通用三屏入口、混合发现列表、连接成功必进目录、侧栏收起进度位置及关闭清空所有草稿的相关规则由目标规格替代；
-五态、错误分类、日志、凭据保存和安装确认仍沿用本文。以下现状与历史验证记录不代表新目标已完成。
+Next-round target confirmed 2026-10-12: [separate project creation from remote connection management](../issues/remote-connection-ux/15-project-device-selection-and-connection-management.md) (ready-for-agent, not implemented). When that ticket is implemented, its target spec replaces the rules on the generic three-screen entry, mixed discovery list, "connect success always enters the directory screen", sidebar minimize progress location, and "close clears all drafts"; the five states, error classification, logs, credential saving and install confirmation stay as in this document. The current-state text below does not mean the new target is done.
 
-- 项目入口、原地重连、断线与重启恢复见[项目导航规格](../remote/project-first-remote-navigation-spec.md)。
-- 身份、安装与版本门禁见 [R3 主规格](r3-source-server-remote-architecture.md)；Provider 自动下发见[专项规格](../remote/provider-provisioning.md)。
-- 设备管理不提供模型编辑/手动同步入口；模型设置始终绑定本地 Environment。技能/MCP/插件同步维持各自范围。
-- 不改变 workspace identity、Host/task owner、桌面 continuous 或手机 replayable 边界。
-- 验收与证据见[case 目录](../conversation-session-case-catalog.md)及[覆盖矩阵](../testing/conversation-session-e2e-coverage-matrix.md)；实跑不等于人工转正。
+- Project entry, in-place reconnect, disconnect and restart recovery: [project navigation spec](../remote/project-first-remote-navigation-spec.md).
+- Identity, install and version gate: [R3 main spec](r3-source-server-remote-architecture.md). Provider auto push: [dedicated spec](../remote/provider-provisioning.md).
+- Device management offers no model editing / manual sync entry; model settings always bind to the local Environment. Skills/MCP/plugin sync keep their own scope.
+- No change to workspace identity, Host/task owner, desktop continuous or phone replayable boundaries.
+- Acceptance and evidence: [case catalog](../conversation-session-case-catalog.md) and [coverage matrix](../testing/conversation-session-e2e-coverage-matrix.md); an actual run is not a manual promotion.
 
-## 三屏向导与统一选择（2026-09-28，RDUX-10）
+<a id="三屏向导与统一选择2026-09-28rdux-10"></a>
 
-本节替代旧五步侧栏向导、离线最近目录不可点和收起失败自动弹窗的描述。项目/聊天入口顶部只显示“选择设备 → 连接 → 选择目录”；设置入口不显示步骤条（见 RDUX-27）。新建表单属于第一屏，首次进入不标记任何步骤完成。弹窗上边缘固定在视口顶部 10% 处，高度随内容向下伸缩，长列表在内部滚动。
+## Three-screen wizard and unified selection (2026-09-28, RDUX-10)
 
-- 首屏始终是可搜索的统一列表，按已保存设备（含状态、最近目录 chip）、SSH config Host、WSL 发行版（仅 Windows）、运行中的 Docker 容器（仅 Docker 可用）分组。点击条目立即连接；离线最近目录同样可点，保留目录意图直到连接并打开。发现加载和失败不阻塞其他来源或手动入口。
-- 底部提供新建 SSH、手动 WSL（仅 Windows）和 Docker；开发 Server 入口及提示只在开发运行时出现。表单排布见 RDUX-27：主机与端口并排，认证分段切换，密码可显示/隐藏，高级选项折叠，页脚左返回列表、右连接。
-- 表单使用真实 form；回车提交、端口校验为 1–65535 的十进制整数，主机和用户名去除首尾空格。切屏将焦点移到首个可操作控件，表单屏为主机字段；选中别名后显示关联标签。Docker 下拉和手动输入互斥、标签关联；区分 Docker 不可用与没有运行中的容器。
-- config Host 缺密码时在连接屏补充；不要求重新填写 Host 信息。用户名缺失时返回已填充的表单。已有 Profile 缺凭据继续沿用补充凭据流程。
-- 收起只改变可见性，保留全部草稿、别名、目标和请求。项目区顶部展示两行卡片：设备名与阶段百分比、当前阶段，下方进度条；百分比是既有阶段的完成比例。失败后保持收起，卡片呈危险色并显示原因，直到点击恢复查看。成功进入目录屏（已有目录则直接打开），卡片消失。
-- 恢复收起卡片只恢复同一流程；新的显式连接入口有独立意图标识，失败、取消、表单或待补凭据的空闲流程让位于该意图。即使 Profile、WSL 发行版或目标值相同也须重新消费，使用最新参数；接受前撤销旧 epoch、清理等待确认和旧目录意图，迟到凭据/结果不得复活旧流程。实际建链/更新中或已连接待选目录时保留当前流程，不抢占资源。
-- 关闭取消当前连接、撤销请求归属并清空所有表单草稿；持久化的输入历史保留。关闭后的迟到发现/凭据/连接结果不得重新打开旧流程。
-- 选择、配置、目录屏主动收起时也提供对应恢复卡片；非连接态不伪造进度。目录导航路径由向导保留，浏览器实例卸载撤销旧请求，恢复后旧响应不能覆盖新目录。连接成功收尾移除卡片，换目标清除目录路径。
+Replaces the old five-step sidebar wizard, "offline recent directory not clickable" and "auto popup on minimized failure". The project/chat entry shows only "select device -> connect -> select directory" at the top; the settings entry shows no step bar (RDUX-27). The new-connection form belongs to the first screen; first entry marks no step done. The dialog's top edge is fixed at 10% of the viewport and its height grows downward with content; long lists scroll inside.
+
+- The first screen is always a searchable unified list grouped into saved devices (with state and recent-directory chips), SSH config Hosts, WSL distros (Windows only), and running Docker containers (only when Docker is available). Clicking an item connects immediately; an offline recent directory is also clickable and keeps the directory intent until connected and opened. Discovery loading and failure do not block other sources or the manual entries.
+- At the bottom: new SSH, manual WSL (Windows only) and Docker; the dev Server entry and its hint appear only in a dev runtime. Form layout is RDUX-27: host and port side by side, segmented auth switch, show/hide password, collapsed advanced options, footer with back-to-list left and connect right.
+- The form is a real form: Enter submits, port validated as a decimal integer 1-65535, host and username trimmed. Switching screens moves focus to the first actionable control (the host field on the form screen); selecting an alias shows an association tag. Docker dropdown and manual input are mutually exclusive and label-associated; Docker unavailable and no running container are distinguished.
+- A config Host missing a password asks for it on the connect screen without re-entering Host info. A missing username returns to the pre-filled form. A saved Profile missing credentials keeps the supplement-credentials flow.
+- Minimizing only changes visibility and keeps all drafts, aliases, targets and requests. The top of the project area shows a two-line card: device name with phase percentage, current phase, and a progress bar below; the percentage is the completion ratio of existing phases. After failure it stays minimized, the card turns danger-colored with the reason until clicked to restore. On success the directory screen opens (or the existing directory opens directly) and the card disappears.
+- Restoring a minimized card restores only the same flow. A new explicit connect entry has its own intent id; idle flows (failed, cancelled, form, or awaiting credentials) yield to it. Even with the same Profile, WSL distro or target values it must be consumed again with the latest parameters; before acceptance revoke the old epoch and clear pending confirmation and the old directory intent; late credentials/results must not revive the old flow. A flow that is actually connecting/updating or connected-awaiting-directory is kept and not preempted.
+- Close cancels the current connection, revokes request ownership and clears all form drafts; persisted input history is kept. Late discovery/credential/connect results after close must not reopen the old flow.
+- Minimizing from the select, configure or directory screens also gets a matching restore card; non-connecting states fake no progress. The directory navigation path is kept by the wizard; unmounting the browser instance revokes the old request, and after restore an old response cannot overwrite the new directory. Connect-success finishing removes the card; changing target clears the directory path.
 
 ```text
-列表 / 表单 → useRemoteConnectionFlow（唯一向导会话 owner）→ 既有连接命令
-                   ├─ 当前 requestId / epoch → 结果、等待点、目录意图
-                   ├─ 收起 → 同一会话直接渲染侧栏卡片（portal 只登记 DOM 容器）
-                   └─ 关闭 → 撤销 epoch / 取消请求 / 清空草稿
-桌面 continuous 与手机 replayable 的 Host、attachment、snapshot 和恢复边界保持既有合同。
+list / form -> useRemoteConnectionFlow (the single wizard session owner) -> existing connect commands
+                   ├─ current requestId / epoch -> result, wait points, directory intent
+                   ├─ minimize -> the same session renders the sidebar card directly (portal only registers a DOM container)
+                   └─ close -> revoke epoch / cancel request / clear drafts
+Host, attachment, snapshot and recovery boundaries of desktop continuous and phone replayable keep the existing contract.
 ```
 
-验收接缝沿用父规格：向导 DOM + 服务端口，以及真实 SSH 桌面 E2E（config 首连操作量、离线最近目录、收起失败和关闭草稿）。连接中与目录屏的完整布局见 RDUX-11。
+Acceptance interfaces follow the parent spec: wizard DOM + service ports, and real SSH desktop E2E (config first-connect effort, offline recent directory, minimized failure, close-clears-drafts). The full layout of the connecting and directory screens is RDUX-11.
 
-## 新建连接表单（RDUX-27，2026-10-14）
+<a id="新建连接表单rdux-272026-10-14"></a>
 
-本节定义设置入口「新建连接」与项目/聊天入口「新建 SSH 连接」共用的表单。只改展示与前端交互，不改连接流程、协议与表单状态语义。实施票见 [#27](../issues/remote-connection-ux/27-new-connection-form-polish.md)。
+## New-connection form (RDUX-27, 2026-10-14)
+
+Defines the form shared by the settings entry "新建连接" and the project/chat entry "新建 SSH 连接". It changes only presentation and front-end interaction, not connect flow, protocol or form-state semantics. Ticket: [#27](../issues/remote-connection-ux/27-new-connection-form-polish.md).
 
 ```text
-设置入口                                   项目/聊天入口
-┌ 新建连接                     — × ┐      ┌ ① 选择设备 ─ ② 连接 ─ ③ 选择目录  — × ┐
-│ root@10.0.0.5:2222（实时预览）   │      │ 新建连接 [SSH]                         │
-│ [▣SSH|▣WSL|▣Docker]  从 SSH config 导入 ▾ │ user@host:22                           │
-│ (🔗已关联 Host dev-box ×)        │      │ 主机 + 端口 / 用户名 / 认证 / 高级选项 │
-│ 主机 + 端口 / 用户名 / 认证 / 高级│      ├────────────────────────────────────────┤
-├──────────────────────────────────┤      │ ← 返回列表                      [连接] │
-│                 [取消] [添加并连接]│      └────────────────────────────────────────┘
+settings entry                              project/chat entry
+┌ New connection              — × ┐      ┌ 1 select device - 2 connect - 3 select directory  — × ┐
+│ root@10.0.0.5:2222 (live preview)│      │ New connection [SSH]                         │
+│ [SSH|WSL|Docker]  Import from SSH config v │ user@host:22                              │
+│ (linked Host dev-box x)          │      │ host + port / username / auth / advanced     │
+│ host + port / username / auth / advanced │ ├────────────────────────────────────────────┤
+├──────────────────────────────────┤      │ <- Back to list                     [Connect] │
+│              [Cancel] [Add and connect]│ └────────────────────────────────────────────┘
 └──────────────────────────────────┘
 ```
 
-- **头部**：两个入口标题均为「新建连接 / New connection」，不显示说明句。标题下用等宽字体实时预览连接目标（SSH `user@host:port`，Docker 容器名，WSL 发行版）；未填写时显示浅色占位。项目/聊天入口在标题旁显示类型标签；设置入口不显示，因为类型切换已表达类型。设置入口不显示步骤条。
-- **类型切换**：SSH / WSL（仅 Windows）/ Docker 使用分段控件，每项带类型图标；选中项使用对应类型色的浅底、描边与前景（与 `RemoteConnectionKindTag` 同源）。类型切换的每项就是连接类型标签，属于 DESIGN.md「类型 token 只用于类型标签」的允许范围；其他 tab 仍保持中性选中态。
-- **SSH config 导入**：仅设置入口在类型切换同行右侧提供「从 SSH config 导入 ▾」，打开现有可搜索弹层；没有 Host 时按钮禁用并显示原因，读取失败时在下方给出警告且不阻断手填。选中 Host 后在主机上方显示 SSH 类型色关联标签「已关联 Host xxx ×」与“修改任一字段会自动解除关联”。× 只解除关联，保留已填值。项目/聊天入口不提供别名入口（上一屏列表已提供 config Host）；从列表回到表单时仍显示关联标签。编辑连接弹窗的别名选择保持在高级选项内。
-- **字段排布**：主机与端口同一行（端口约 6rem，窄屏同样并排），用户名独占一行；「认证方式」标签与分段控件同行，凭据输入紧随其后。高级选项为紧凑文字触发，无分隔虚线。字段标签使用 `text-ui-sm`。
-- **粘贴拆分**：在主机框粘贴 `user@host`、`user@host:port`、`ssh user@host -p N`（含 `[IPv6]:port`）时拆分填入主机、用户名、端口，并在主机下方显示成功提示「已识别 …」；其他内容按原样粘贴。粘贴视为手动修改，解除别名关联。只在粘贴时触发。
-- **焦点**：打开表单时焦点在主机。导入 Host 后焦点移到第一个为空的必填字段；全部已填时移到主操作。
-- **校验**：提交时校验，错误显示在对应字段下方（`aria-invalid` + `aria-describedby`），焦点移到第一个出错字段；此后字段改为有效即消除错误。页脚不再显示校验文字，主操作不禁用。真实连接失败仍用顶部错误条。校验规则唯一来源为 `collectRemoteFormFieldErrors`，`buildRemoteTarget` 与编辑连接弹窗复用它。
-- **Docker / WSL**：删除顶部说明段。Docker 输入方式（选择运行中的容器 / 手动输入）使用中性分段控件；Docker 不可用时在选择器下方显示警告卡片，没有运行中的容器时显示中性提示。容器候选行左侧显示 Docker 类型色图标块。WSL 以 root 运行的提醒保持警告卡片。
-- **配色**：只复用既有 token。类型色用于类型切换、关联标签、候选行图标块与项目入口类型标签；警告卡片用 `warning-surface`，粘贴识别用 `success`，字段错误用 `destructive`；主操作与认证方式切换保持中性。
-- **页脚**：设置入口「取消」「添加并连接」右对齐；项目/聊天入口左侧「← 返回列表」，右侧「连接」。页脚只有一条分隔线。
+- **Header**: both entries are titled "新建连接 / New connection", with no description sentence. Under the title a monospace live preview of the connection target (SSH `user@host:port`, Docker container name, WSL distro); light placeholder when empty. The project/chat entry shows a type tag next to the title; the settings entry does not, since the type switch already shows it. The settings entry shows no step bar.
+- **Type switch**: SSH / WSL (Windows only) / Docker as a segmented control, each with a type icon; the selected item uses the type color's light background, border and foreground (same source as `RemoteConnectionKindTag`). Each type-switch item is a connection type tag, within the DESIGN.md allowance "type tokens only for type tags"; other tabs keep the neutral selected state.
+- **SSH config import**: only the settings entry offers "从 SSH config 导入 ▾" (import from SSH config) at the right of the type-switch row, opening the existing searchable popover; with no Host the button is disabled with a reason, a read failure shows a warning below without blocking manual entry. After selecting a Host, an SSH-colored association tag "已关联 Host xxx ×" (linked Host xxx) with the hint "修改任一字段会自动解除关联" (editing any field unlinks automatically) appears above the host field. The x only unlinks and keeps filled values. The project/chat entry has no alias entry (the previous list screen already offers config Hosts); returning from the list to the form still shows the association tag. The edit-connection dialog keeps alias selection inside advanced options.
+- **Field layout**: host and port on one row (port about 6rem, also side by side on narrow screens), username on its own row; the "认证方式" (auth method) label and segmented control on one row with the credential input right after. Advanced options are a compact text trigger without dashed dividers. Field labels use `text-ui-sm`.
+- **Paste split**: pasting `user@host`, `user@host:port`, `ssh user@host -p N` (including `[IPv6]:port`) into the host field splits into host, username and port and shows a success hint "已识别 ..." (recognized ...) under the host; other content pastes as is. A paste counts as a manual edit and unlinks the alias. Triggered on paste only.
+- **Focus**: on open, focus is on host. After importing a Host, focus moves to the first empty required field, or to the primary action if all are filled.
+- **Validation**: on submit; errors show under the field (`aria-invalid` + `aria-describedby`) and focus moves to the first erroneous field; afterwards a field that becomes valid clears its error. The footer shows no validation text and the primary action is not disabled. Real connection failures still use the top error bar. The only source of validation rules is `collectRemoteFormFieldErrors`, reused by `buildRemoteTarget` and the edit-connection dialog.
+- **Docker / WSL**: the top description paragraph is removed. Docker input mode (choose a running container / manual input) uses a neutral segmented control; when Docker is unavailable a warning card shows under the selector, with no running container a neutral hint. Container candidate rows show a Docker-colored icon block at the left. The warning that WSL runs as root stays a warning card.
+- **Colors**: existing tokens only. Type colors for the type switch, association tag, candidate icon blocks and the project entry type tag; warning cards use `warning-surface`, paste recognition uses `success`, field errors use `destructive`; primary action and auth switch stay neutral.
+- **Footer**: settings entry "取消" / "添加并连接" right-aligned; project/chat entry "← 返回列表" at left and "连接" at right. The footer has a single divider.
 
-## 向导 P0 与流程归属（2026-09-27，RDUX-04）
+## Wizard P0 and flow ownership (2026-09-27, RDUX-04)
 
-手动新建连接直接复用已在线连接时，显示“这台设备已通过 `<连接描述>` 连接，已直接使用现有连接”。描述来自 Host 实际复用的连接目标，不使用本次表单值；本次未参与认证的密码或私钥口令不保存、不覆盖已有凭据。提示在进入目录或原项目后仍可见，连接描述复用统一展示模型（如 `SSH · dev@host:22`）。是否提示归属原始新建意图，补凭据、安装确认、更新重试继续沿用；选择已保存设备、设置页连接、在线设备选目录及后台重连不提示。Host 的连接结果携带可选 `reusedConnectionTarget`（脱敏目标），经 Main 按 requestId 透传；不能用 UI 快照猜测是否复用。窗口 registry 可投影已有 entry 的复用，缺少 entry 时必须继续消费 Manager 的物理连接复用结果。Host 建连前只登记无新凭据的 profile，实际连接完成且未复用才提交本次凭据；失败、取消、同设备归并或并发 join 不覆盖已保存值；唯一等待点例外是已实际认证后发现需要升级：只有执行认证的请求能在该等待点保存凭据，加入同一请求的调用不能提交另一份密码；管理服务可按原 profile 继续更新。
+When a manually created connection directly reuses an online connection, show "这台设备已通过 `<connection description>` 连接，已直接使用现有连接" (this device is already connected via ..., the existing connection is used directly). The description comes from the connection target the Host actually reused, not from this form's values; a password or key passphrase that did not take part in authentication this time is not saved and does not overwrite saved credentials. The hint stays visible after entering the directory or the original project; the description reuses the unified presentation model (for example `SSH · dev@host:22`). Whether to hint belongs to the original new-connection intent; supplement-credentials, install confirmation and update retry keep their behavior; choosing a saved device, connecting from settings, choosing a directory on an online device and background reconnect do not hint. The Host's connect result carries an optional `reusedConnectionTarget` (redacted target) passed through Main by requestId; the UI must not guess reuse from its own snapshot. The window registry may project reuse of an existing entry; when there is no entry it must keep consuming the Manager's physical-connection reuse result. Before connecting, the Host registers only a Profile without new credentials, and commits this time's credentials only after the connection actually completes without reuse; failure, cancel, same-device merge or concurrent join must not overwrite saved values. The only exception wait point is "already authenticated, then upgrade needed": only the request that performed the authentication may save credentials at that wait point, a call that joined the same request cannot commit another password, and the management service may continue the update with the original Profile.
 
-向导的入口意图、安装等待、取消、收起/关闭及结果去向由 `useRemoteConnectionFlow` 单独持有；表单草稿沿用 `useRemoteConnectionForm`，真实连接及凭据仍归 Host。缺凭据停在连接步，主操作“补充密码”返回配置并聚焦密码或私钥口令；补齐后保留原目录与下载方式。连接中主操作“取消连接”立即撤销该请求的 UI 归属；主动取消显示“已取消”，保留重试入口，不进入错误面板。
+The wizard's entry intent, install wait, cancel, minimize/close and result destination are owned by `useRemoteConnectionFlow`; form drafts stay in `useRemoteConnectionForm`; the real connection and credentials still belong to the Host. Missing credentials stop at the connect step, with the primary action "补充密码" (supply password) returning to configuration and focusing the password or key passphrase; after filling, the original directory and download mode are kept. While connecting the primary action "取消连接" (cancel connection) immediately revokes UI ownership of that request; an active cancel shows "已取消" (cancelled), keeps a retry entry and does not enter the error panel.
 
 ```mermaid
 stateDiagram-v2
-  配置 --> 连接中: 提交 / 创建 requestId
-  连接中 --> 等待凭据: 缺少已保存凭据
-  等待凭据 --> 配置: 补充密码 / 聚焦
-  连接中 --> 等待安装: 需要确认
-  等待安装 --> 连接中: 同意安装 / 保留结果意图
-  等待安装 --> 已取消: 取消
-  连接中 --> 已取消: 取消 / 撤销 requestId
-  连接中 --> 目录或原项目: 当前请求成功
-  连接中 --> 错误: 当前请求失败
-  已取消 --> 连接中: 重试 / 新 requestId
+  Configure --> Connecting: submit / create requestId
+  Connecting --> AwaitCredentials: no saved credentials
+  AwaitCredentials --> Configure: supply password / focus
+  Connecting --> AwaitInstall: confirmation needed
+  AwaitInstall --> Connecting: agree install / keep result intent
+  AwaitInstall --> Cancelled: cancel
+  Connecting --> Cancelled: cancel / revoke requestId
+  Connecting --> DirectoryOrProject: current request succeeds
+  Connecting --> Error: current request fails
+  Cancelled --> Connecting: retry / new requestId
 ```
 
-收起只隐藏当前流程，成功进入目录、失败保留侧栏结果（以 RDUX-10 为准）；关闭撤销当前请求并释放未确认 session。被撤销请求的迟到结果不能覆盖后续流程，迟到临时 session 只回收。此抽取不更改 Host、workspace identity、桌面 continuous 或手机 replayable 恢复边界。
+Minimize only hides the current flow; success enters the directory, failure keeps the sidebar result (RDUX-10 governs); close revokes the current request and releases unconfirmed sessions. Late results of a revoked request must not overwrite later flows, and late temporary sessions are only reclaimed. This extraction changes no Host, workspace identity, desktop continuous or phone replayable recovery boundary.
 
-## 统一展示合同（2026-09-27，RDUX-03）
+<a id="统一展示合同2026-09-27rdux-03"></a>
 
-本节替代下文和旧设计规格中的四态映射、pending→离线、状态借用连接类型色及工程术语；旧连接流程由[项目导航合同](../remote/project-first-remote-navigation-spec.md)约束。布局合同见本文 RDUX-10/11/13 与项目导航规格。
+## Unified presentation contract (2026-09-27, RDUX-03)
 
-### 远程连接展示模型（UI 统一展示）
+Replaces the four-state mapping, pending->offline, status borrowing connection-type colors, and engineering terms in this document and the old design spec; the old connect flow is governed by the [project navigation contract](../remote/project-first-remote-navigation-spec.md). Layout contracts: RDUX-10/11/13 here and the project navigation spec.
 
-一个纯函数模块，把"设备和项目的连接事实"映射成"用户看到的展示结果"。以下界面**只能**从这里取状态展示，不得自行计算：
+### Remote connection presentation model (unified UI presentation)
 
-- 侧栏项目行、详情卡、会话头部、会话横幅
-- 设置页设备卡、向导、任务行设备标签
-- 设置导航的状态点、"打开远程项目"菜单
-- 创建项目弹窗的设备选择（布局见[创建项目弹窗布局](../specs/project-editor-dialog-ui.md)）
+A pure function module mapping "connection facts of devices and projects" to "what the user sees". The following surfaces **must** take status presentation only from it and never compute it themselves:
 
-远控 Header 按现有 workspaceIdentity 会话解析器读取 attachment，不要求 tab 携带 remoteSessionId。设备名称从同一身份对应的共享窗口项目目录 Host 获取，桌面设备管理名称优先；禁止按路径借用其他设备。连接移除后显示未连接，重新登记后更新；不新增连接或重试。
+- sidebar project rows, detail cards, conversation header, conversation banner
+- settings device cards, wizard, task-row device tags
+- status dot of settings navigation, "open remote project" menu
+- device selection of the create-project dialog (layout in [create project dialog layout](../specs/project-editor-dialog-ui.md))
 
-现有三套映射删除，合并进这个模块：设备聚合状态映射、侧栏项目连接状态映射、设置页状态标签和展示辅助。
+The remote-control Header reads the attachment via the existing workspaceIdentity session resolver and does not require a tab to carry `remoteSessionId`. The device name comes from the shared window project directory Host for the same identity, with the desktop device-management name taking precedence; borrowing another device by path is forbidden. After a connection is removed it shows not connected and updates after re-registration; no connection or retry is added.
 
-输入：
+The existing three mappings (device aggregate status mapping, sidebar project connection status mapping, settings status label and display helpers) are removed and merged into this module.
 
-| 输入                 | 含义                                              |
-| -------------------- | ------------------------------------------------- |
-| 设备聚合状态         | 来自 Source 权威投影的设备级状态                  |
-| 项目 attachment 状态 | 项目挂载是否就绪；设备在线不等于项目就绪          |
-| 安装与身份           | 未安装 / 已安装 / 身份待确认（连接目标已变化）    |
-| 升级需求             | 无 / 可选更新 / 远端必须更新 / 本机桌面端必须更新 |
-| 断开来源             | 用户主动断开 / 异常断开 / 启动时尚未连接          |
-| 自动恢复进度         | 当前是第 n 次，共 3 次                            |
-| 最近错误             | 分类后的连接错误码及阶段                          |
-| 凭据完整性           | 是否缺少已保存的密码或私钥口令                    |
-| 连接方式与地址       | SSH / WSL / Docker，以及地址、发行版或容器名      |
-| 设备显示名           | 用户改过的名称优先，默认用 SSH alias              |
+Inputs:
 
-输出：
+| Input                         | Meaning                                                                       |
+| ----------------------------- | ----------------------------------------------------------------------------- |
+| Device aggregate status       | Device-level state from the Source authority projection                       |
+| Project attachment status     | Whether the project mount is ready; device online does not mean project ready |
+| Install and identity          | Not installed / installed / identity to confirm (connection target changed)   |
+| Upgrade need                  | None / optional update / remote must update / local desktop must update       |
+| Disconnect origin             | User disconnect / abnormal disconnect / not yet connected at startup          |
+| Auto recovery progress        | Currently attempt n of 3                                                      |
+| Latest error                  | Classified connection error code and phase                                    |
+| Credential completeness       | Whether a saved password or key passphrase is missing                         |
+| Connection method and address | SSH / WSL / Docker, plus address, distro or container name                    |
+| Device display name           | A user-changed name wins; default is the SSH alias                            |
 
-| 输出                 | 说明                                                                                            |
-| -------------------- | ----------------------------------------------------------------------------------------------- |
-| 可见状态             | 5 种之一                                                                                        |
-| 状态文案与短状态文字 | 短文字用于替换项目行里的设备名                                                                  |
-| 语义色               | 成功 / 进行中（新增）/ 中性 / 警告 / 危险                                                       |
-| 图标                 | 项目行只有一个图标位                                                                            |
-| 主操作               | 连接 / 断开 / 取消连接 / 更新远端 / 更新桌面端 / 安装并连接 / 确认新设备 / 补充密码 / 重试 / 无 |
-| 原因与修复操作       | 来自错误分类                                                                                    |
-| 恢复进度文案         | 如"自动恢复 2/3"                                                                                |
-| 连接描述             | 如 `SSH · dev@localhost:2222`，按连接方式生成                                                   |
+Outputs:
 
-5 种可见状态：
+| Output                          | Description                                                                                                                                           |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Visible state                   | One of 5                                                                                                                                              |
+| State copy and short state text | Short text replaces the device name in the project row                                                                                                |
+| Semantic color                  | success / in-progress (new) / neutral / warning / danger                                                                                              |
+| Icon                            | The project row has a single icon slot                                                                                                                |
+| Primary action                  | Connect / Disconnect / Cancel connection / Update remote / Update desktop / Install and connect / Confirm new device / Supply password / Retry / none |
+| Reason and fix action           | From error classification                                                                                                                             |
+| Recovery progress text          | Such as "自动恢复 2/3" (auto recovery 2/3)                                                                                                            |
+| Connection description          | Such as `SSH · dev@localhost:2222`, generated per connection method                                                                                   |
 
-| 可见状态 | 触发事实                                                           | 语义色                         | 项目行图标       | 主操作                           |
-| -------- | ------------------------------------------------------------------ | ------------------------------ | ---------------- | -------------------------------- |
-| 已连接   | 设备在线，且项目 attachment 就绪                                   | 成功（只在详情卡、设置页显示） | 中性云，不加标记 | 断开                             |
-| 连接中   | 显式连接、原地重连或自动恢复进行中；或设备在线但 attachment 未就绪 | 进行中                         | 单个转圈         | 向导内为"取消连接"，其他位置无   |
-| 未连接   | 用户主动断开、启动时尚未连接、自动恢复前的离线                     | 中性                           | 划掉的云         | 连接                             |
-| 需要处理 | 需安装、远端必须更新、本机必须更新、身份待确认、缺凭据             | 警告                           | 云 + `!`         | 按原因取对应操作                 |
-| 连接失败 | 最近一次显式连接失败或自动恢复用尽，且原因不属于"需要处理"         | 危险                           | 云 + `✕`         | 按错误分类的修复操作，默认"重试" |
+The 5 visible states:
 
-判定规则：
+| Visible state                | Trigger facts                                                                                                | Semantic color                                   | Project row icon       | Primary action                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------ | ---------------------- | ----------------------------------------------------------- |
+| Connected (已连接)           | Device online and project attachment ready                                                                   | success (shown only in detail card and settings) | neutral cloud, no mark | Disconnect                                                  |
+| Connecting (连接中)          | Explicit connect, in-place reconnect or auto recovery in progress; or device online but attachment not ready | in-progress                                      | single spinner         | "Cancel connection" inside the wizard, none elsewhere       |
+| Not connected (未连接)       | User disconnect, not yet connected at startup, offline before auto recovery                                  | neutral                                          | crossed-out cloud      | Connect                                                     |
+| Needs action (需要处理)      | Install needed, remote must update, local must update, identity to confirm, credentials missing              | warning                                          | cloud + `!`            | The action matching the reason                              |
+| Connection failed (连接失败) | Latest explicit connect failed or auto recovery exhausted, and the reason is not "needs action"              | danger                                           | cloud + `✕`            | The fix action of the error classification, default "Retry" |
 
-- **"需要处理"优先于"连接失败"。** 只要存在可执行的修复动作，就显示为"需要处理"。
-- **用户主动断开永远映射为"未连接"。**
-- **"更新中"覆盖旧文案**，不再显示之前的"需要更新"或错误文案。
-- **可选更新不改变可见状态**，只影响设置导航的小圆点和设备卡横幅。
-- **非在线状态必须有文字**（短状态文字或详情卡文字），不能只靠颜色表达。
+Decision rules:
 
-### 连接错误分类
+- **"Needs action" beats "connection failed".** Whenever an executable fix exists, show "needs action".
+- **A user disconnect always maps to "not connected".**
+- **"Updating" overrides old copy**; the earlier "needs update" or error text is no longer shown.
+- **An optional update does not change the visible state**; it only affects the settings navigation dot and the device card banner.
+- **Non-online states must have text** (short state text or detail-card text), never color alone.
 
-- **错误码契约。**
-  - 主进程和 host 对每一次传输或部署失败，都产出错误码集合中的一个错误码，外加一条非空消息。
-  - 适配器已经确认的领域错误码优先于 `cause` 的文本推断；未明确分类的 `AggregateError` 和阶段包装继续查找内层错误码。
-  - 消息为空或无法识别时，归入"未知"类，绝不因为 schema 校验失败而丢弃错误响应。这正是"拒绝连接时永远停在正在连接"的根因。
-  - 探测（probe）只把远端环境检查本身的失败归入"预检失败"：探测脚本非零退出、远端平台不受支持、Linux 远端 glibc 低于 Source Server 运行下限（2.28）。建立连接或执行探测命令时的传输失败（如握手超时、握手前连接断开）不做阶段兜底，识别不了时归入"未知"；断线自动恢复耗尽预算时据此显示"自动恢复已停止"，不提示安装环境问题。
-  - 共享类型和运行时 schema 同步扩展。UI 遇到不认识的错误码时退回"未知"类的通用文案，保持向后兼容。
-- **分类与展示：**
+### Connection error classification
 
-| 分类                       | 典型来源                               | 标题                        | 修复操作                                                                                                                               |
-| -------------------------- | -------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| 认证失败                   | 密码或私钥错误                         | SSH 认证失败                | 修改密码或私钥：在连接中屏就地重新输入密码或私钥口令（与“需要密码”同一交互）；需要更换用户名或私钥文件时回到表单，聚焦该字段并标出错误 |
-| 缺少凭据                   | 没有已保存的密码或口令                 | 需要密码                    | 补充密码（属于"需要处理"）                                                                                                             |
-| 拒绝连接或不可达           | ECONNREFUSED、EHOSTUNREACH、ECONNRESET | 无法连接到主机              | 检查地址和端口；重试                                                                                                                   |
-| 超时                       | ETIMEDOUT                              | 连接超时                    | 重试                                                                                                                                   |
-| 找不到主机                 | ENOTFOUND                              | 找不到主机                  | 修改主机                                                                                                                               |
-| 主机密钥变化               | host key 不匹配                        | 主机身份已变化              | 查看安全说明，不提供一键忽略                                                                                                           |
-| 下载、上传、预检、安装失败 | 部署各阶段；预检只含远端环境检查失败   | 分别写明是哪个阶段失败      | 重试；只有在 SSH 且使用本地下载时，才额外提供"改用设备直接下载"                                                                        |
-| 远端空间或权限不足         | 部署或启动阶段                         | 远端空间不足 / 没有写入权限 | 查看详情                                                                                                                               |
-| 版本不兼容                 | 握手阶段                               | 需要更新                    | 更新远端或更新桌面端（属于"需要处理"）                                                                                                 |
-| 用户取消                   | 取消安装或取消连接                     | 已取消                      | 重新连接，并且不以错误样式展示                                                                                                         |
-| 未知                       | 兜底                                   | 连接失败                    | 重试 + 详细信息                                                                                                                        |
+- **Error code contract.**
+  - For every transport or deploy failure, main and host produce exactly one error code from the code set, plus a non-empty message.
+  - A domain error code already confirmed by the adapter takes precedence over text inference from `cause`; an unclassified `AggregateError` and phase wrappers keep looking for the inner error code.
+  - An empty or unrecognized message falls into the "unknown" class and an error response is never dropped because of schema validation failure (the root cause of "connection refused stays at connecting forever").
+  - Probe classifies only failures of the remote environment check itself as "pre-check failed": probe script non-zero exit, unsupported remote platform, Linux remote glibc below the Source Server floor (2.28). Transport failures while establishing the connection or running the probe command (handshake timeout, disconnect before handshake) get no phase fallback and fall into "unknown" when unrecognizable; when disconnect auto recovery exhausts its budget this shows "自动恢复已停止" (auto recovery stopped) and does not hint at install environment problems.
+  - Shared types and runtime schema extend together. When the UI meets an unknown error code it falls back to the generic "unknown" copy for backward compatibility.
+- **Classification and display:**
 
-- **原始报错**折叠在"详细信息"里，可以复制。
-- **文案**按连接方式区分，给出 WSL 和 Docker 的变体。所有文案都有中英文。
-- **展示位置**：错误就地显示在向导面板、设备卡、会话横幅或项目行。toast 只用于后台事件，并且必须带"查看详情"，能跳到对应设备。
-- **能力不足时的兜底**：主机密钥变化如果当前传输层无法可靠识别，归入"未知"，不要猜测。
+| Class                                        | Typical source                                                           | Title                       | Fix action                                                                                                                                                                                                                                    |
+| -------------------------------------------- | ------------------------------------------------------------------------ | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authentication failed                        | Wrong password or key                                                    | SSH 认证失败                | Change password or key: re-enter the password or key passphrase in place on the connecting screen (same interaction as "password needed"); when the username or key file must change, return to the form, focus that field and mark the error |
+| Missing credentials                          | No saved password or passphrase                                          | 需要密码                    | Supply password (belongs to "needs action")                                                                                                                                                                                                   |
+| Connection refused or unreachable            | ECONNREFUSED, EHOSTUNREACH, ECONNRESET                                   | 无法连接到主机              | Check address and port; retry                                                                                                                                                                                                                 |
+| Timeout                                      | ETIMEDOUT                                                                | 连接超时                    | Retry                                                                                                                                                                                                                                         |
+| Host not found                               | ENOTFOUND                                                                | 找不到主机                  | Edit the host                                                                                                                                                                                                                                 |
+| Host key changed                             | host key mismatch                                                        | 主机身份已变化              | See the security note; no one-click ignore                                                                                                                                                                                                    |
+| Download, upload, pre-check, install failure | Deploy phases; pre-check contains only remote environment check failures | Names the failed phase      | Retry; "改用设备直接下载" (use direct download on the device) additionally only for SSH with local download                                                                                                                                   |
+| Remote space or permission insufficient      | Deploy or start phase                                                    | 远端空间不足 / 没有写入权限 | View details                                                                                                                                                                                                                                  |
+| Version incompatible                         | Handshake phase                                                          | 需要更新                    | Update remote or update desktop (belongs to "needs action")                                                                                                                                                                                   |
+| User cancelled                               | Cancel install or cancel connect                                         | 已取消                      | Reconnect; not shown in error style                                                                                                                                                                                                           |
+| Unknown                                      | Fallback                                                                 | 连接失败                    | Retry + details                                                                                                                                                                                                                               |
 
-### 术语与文案
+- **Raw error** is folded into "详细信息" (details) and can be copied.
+- **Copy** differs per connection method, with WSL and Docker variants. All copy exists in Chinese and English.
+- **Where shown**: errors display in place in the wizard panel, device card, conversation banner or project row. A toast is only for background events and must carry "查看详情" (view details) that jumps to the device.
+- **Capability fallback**: if the current transport cannot reliably recognize a host key change, classify as "unknown"; do not guess.
 
-| 用户看到的词  | 含义与用法                                                   |
-| ------------- | ------------------------------------------------------------ |
-| 远程设备      | 一台远端机器；一个 WSL 发行版或一个 Docker 容器也各算一台    |
-| 连接          | 访问一台设备的一种方式，用连接描述展示；有多条时称"其他连接" |
-| 项目 / 任务   | 不变                                                         |
-| ZCode Server  | 只在安装和更新的场景出现                                     |
-| 发行版 / 容器 | 分别替代 distro，以及 docker exec、docker cp 等命令名        |
+### Terms and copy
 
-- **禁止出现在界面上的词**：链路、线路、Source Server、换代、正史、canonical、direct-tcpip、远端组件、设备短 ID。设备 ID 只能在"更多 → 设备信息"里复制。
-- **身份换代改写为用户语言**：比如"连接目标的身份已变化" + "作为新设备使用"。
-- **"连接中"阶段文案**按 SSH、WSL、Docker 分别生成。
-- **新增和改写的文案**都要有中英文，英文文案同样要验证项目行宽度。
+| Word the user sees       | Meaning and usage                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| 远程设备 (remote device) | One remote machine; a WSL distro or a Docker container each counts as one device                                         |
+| 连接 (connection)        | One way to reach a device, shown by the connection description; with several it is called "其他连接" (other connections) |
+| 项目 / 任务              | Unchanged                                                                                                                |
+| ZCode Server             | Appears only in install and update scenarios                                                                             |
+| 发行版 / 容器            | Replace distro, and command names like docker exec / docker cp                                                           |
 
-### 设计系统
+- **Words forbidden in the UI**: 链路, 线路, Source Server, 换代, 正史, canonical, direct-tcpip, 远端组件, short device ID. The device ID may only be copied from "更多 -> 设备信息" (More -> Device info).
+- **Identity generation change is rewritten in user language**, e.g. "连接目标的身份已变化" + "作为新设备使用".
+- **"Connecting" phase copy** is generated per SSH, WSL and Docker.
+- **New and rewritten copy** needs Chinese and English, and English copy must also be checked for project-row width.
 
-- **新增"进行中"语义色**，包括 surface 和 foreground 两个 token，写入设计规范和 token 文档。"连接中"不再借用 SSH 类型色或琥珀色。
-- **SSH、WSL、Docker 的类型 token** 只用在类型标签上；新建连接表单的类型切换、关联标签和候选图标块属于类型标签（RDUX-27）。
-- **清理不符合规范的写法**：字阶之外的字号、硬编码颜色、任意值颜色、不在规范内的图标尺寸和圆角。
-- **深色主题**：复核状态标签、侧栏和设置导航的对比度。
+### Design system
 
-### 展示归属与验收
+- **Add an "in-progress" semantic color** with surface and foreground tokens, written into the design spec and token docs. "Connecting" no longer borrows the SSH type color or amber.
+- **SSH, WSL and Docker type tokens** are used only on type tags; the new-connection form's type switch, association tag and candidate icon blocks count as type tags (RDUX-27).
+- **Clean up non-conforming usages**: font sizes outside the scale, hard-coded colors, arbitrary-value colors, icon sizes and radii not in the spec.
+- **Dark theme**: re-check contrast of status labels, sidebar and settings navigation.
+
+### Ownership and acceptance
 
 ```text
-Host 连接状态 / Directory 安装身份 → 现有 management snapshot
-项目 attachment / 自动恢复事实 → UI 纯函数展示模型 → 各处状态、主操作、颜色
-用户操作 → 既有连接向导 / 更新命令 → Host owner → 下一次快照
-desktop continuous 与 mobile replayable 的 attachment 恢复路径保持原有边界
+Host connection state / Directory install identity -> existing management snapshot
+project attachment / auto recovery facts -> UI pure-function presentation model -> status, primary action, color everywhere
+user action -> existing connection wizard / update command -> Host owner -> next snapshot
+attachment recovery paths of desktop continuous and mobile replayable keep their existing boundaries
 ```
 
-- 设备错误码/原文与项目错误分别输入：项目错误可已本地化，不能覆盖设备错误用于认证分类的原文。Root 通过只读 Context 向头部/任务行转发既有项目恢复事实；展示结果保留产生状态的 profileId，以便修复正确的连接。
-- 两个公开接缝：`resolveRemoteConnectionPresentation` 状态投影、`classifyRemoteConnectionError` 错误分类；不持有可变业务状态。
-- 表驱动覆盖父规格状态组合、02 全部公开错误码与未知兜底、SSH/WSL/Docker 文案和本地下载门禁。
-- 各组件用 DOM 断言模型输出；先复现本机更新方向、pending 状态、双转圈、恢复进度不可见问题。
-- 主动断开后侧栏与设置均为中性未连接；真实 SSH E2E 验证并同步用例目录。
-- token 对比度、禁用词、中英文键一致性检查；桌面深浅主题/窄屏及现有手机恢复回归。
+- Device error code/raw text and project errors are separate inputs: a project error may already be localized and must not override the device error raw text used for authentication classification. Root forwards existing project recovery facts to header/task rows through a read-only Context; the presentation result keeps the profileId that produced the state so the right connection is repaired.
+- Two public seams: `resolveRemoteConnectionPresentation` (state projection) and `classifyRemoteConnectionError` (error classification); neither holds mutable business state.
+- Table-driven coverage of the parent spec's state combinations, all 02 public error codes and the unknown fallback, SSH/WSL/Docker copy and the local-download gate.
+- Components assert model output via DOM; first reproduce the local update direction, pending state, double spinner and invisible recovery progress problems.
+- After an active disconnect, sidebar and settings are both neutral "not connected"; real SSH E2E verifies and syncs the case catalog.
+- Token contrast, forbidden-word and zh/en key-consistency checks; desktop light/dark theme and narrow-screen checks plus existing phone recovery regression.
 
-## 设备名称与兼容
+## Device names and compatibility
 
-### 设备默认名称
+### Default device name
 
-- 新 Source 首次握手时，若当前 SSH Profile 的 `target.sshConfigAlias` 非空，则默认 `displayName` 为 trim 后的 alias。
-- 没有 alias 时继续使用 `hostname · osUser`，两者均缺失时回退 `sourceServerId`。
-- 已存在 Source 的 `displayName` 始终优先，避免覆盖用户改名。
-- identity change 确认后发现的新 Source 同样采用上述规则。
-- alias 仍不参与 `workspaceIdentity`、Profile 去重或设备身份判断。
+- On the first handshake of a new Source, if the current SSH Profile's `target.sshConfigAlias` is non-empty, the default `displayName` is the trimmed alias.
+- Without an alias keep using `hostname · osUser`; if both are missing fall back to `sourceServerId`.
+- An existing Source's `displayName` always wins, so user renames are not overwritten.
+- A new Source discovered after an identity-change confirmation follows the same rules.
+- The alias still takes no part in `workspaceIdentity`, Profile dedupe or device identity decisions.
 
-### SSH 凭据降级兼容与自愈
+### SSH credential downgrade compatibility and self-healing
 
-- Source Profile 仍是当前版本的 SSH 凭据权威；为旧 Desktop 写入 `lastWorkspaceSession` 时，每个 workspace 使用独立的 `remote-workspace:<legacyIdentity>:*` mirror，避免旧版本关闭一个 workspace 时删除共享 Profile secret。
-- rollback 快照必须先通过 `credentialService` 把 Profile secret 写入 legacy mirror，再写入对应 credential key；mirror 写入失败时禁止提交 settings 引用。
-- 同一精确 SSH route 有多个 legacy workspace 时，非敏感 target 元数据仍取 `lastOpenedAt` 最新条目，密码/私钥口令分别取最新的“实际有值”条目。
-- Profile 迁移只有在 secret 复制成功后才写 `connection-profile:<profileId>:*` 引用；空引用不再传播成新的悬空引用。
-- `SourceServerDirectory.initialize()` 对已完成 migrationVersion=1 的 SSH Profile 执行幂等审计：canonical secret 缺失时，仅从同一 `routeKey` 的 legacy siblings 恢复；找不到任何真实 secret 时保留“需要交互凭据”语义，不做模糊匹配。
-- 弹窗在密码和私钥认证链都不完整时不得调用 SSH；连接屏显示需要补充凭据并允许返回配置。该门禁是 defense in depth，不替代 mirror 与迁移修复。
-- 不修改 workspace identity、Profile schema、credential 加密格式或 Mobile attachment 语义。
+- The Source Profile remains the SSH credential authority of the current version. When writing `lastWorkspaceSession` for an old Desktop, each workspace uses its own `remote-workspace:<legacyIdentity>:*` mirror, so an old version closing one workspace does not delete the shared Profile secret.
+- The rollback snapshot must first write the Profile secret into the legacy mirror through `credentialService` and only then the matching credential key; if the mirror write fails the settings reference must not be committed.
+- When one exact SSH route has several legacy workspaces, non-sensitive target metadata still comes from the entry with the latest `lastOpenedAt`, and password/passphrase each from the latest entry that "actually has a value".
+- Profile migration writes the `connection-profile:<profileId>:*` reference only after the secret copy succeeded; empty references no longer propagate as new dangling references.
+- `SourceServerDirectory.initialize()` runs an idempotent audit over SSH Profiles with migrationVersion=1: when the canonical secret is missing, restore it only from legacy siblings of the same `routeKey`; if no real secret is found keep the "interactive credentials needed" semantics, without fuzzy matching.
+- The dialog must not call SSH when neither the password nor the key authentication chain is complete; the connect screen shows that credentials are needed and allows returning to configuration. This gate is defense in depth and does not replace mirror and migration repair.
+- No change to workspace identity, Profile schema, credential encryption format or Mobile attachment semantics.
 
-### 菜单和收起
+### Menu and minimize
 
-- 设备更多菜单使用稳定最小宽度，动作行使用不换行布局；仍由内容和 viewport 约束最大可用宽度。
-- 设备更多菜单在所有已安装状态（在线、离线、失败、重试中、需升级、更新中等）都提供「移除设备」；移除只删除本机记录与凭据，不依赖远端连接，Host `removeSourceServer` 会先幂等断开再删记录。「在侧边栏中显示」仅在设备有已打开项目时提供，定位现有项目不依赖在线状态；菜单不得出现空内容。
-- 收起按钮不再由 `loading || connectedSessionId` 门禁；任一步都可见。
-- 收起不是关闭，不清理状态；关闭语义保持原合同。
+- The device "more" menu has a stable minimum width and non-wrapping action rows; the maximum usable width is still bounded by content and viewport.
+- In every installed state (online, offline, failed, retrying, needs upgrade, updating, etc.) the device "more" menu offers "移除设备" (remove device); removal deletes only the local record and credentials, does not depend on the remote connection, and Host `removeSourceServer` first idempotently disconnects and then deletes the record. "在侧边栏中显示" (show in sidebar) is offered only when the device has open projects, locating the existing project without depending on online state; the menu must never be empty.
+- The minimize button is no longer gated by `loading || connectedSessionId`; it is visible at every step.
+- Minimize is not close and cleans no state; close semantics keep the original contract.
 
-## 安装与更新进度
+## Install and update progress
 
-- 自动或手动更新进行中，副题显示“正在更新远端服务”，优先于上次连接的需升级错误；失败或取消后仍保留可重试的错误现场。
-- 上传百分比只表示 archive 传输，不能代表安装完成。传输后立即进入解压阶段；远端 CLI 通过可选的 `--progress` 输出逐行 JSON 事件 `{type:"source-server-install-progress", phase}`，phase 为 `verify-archive`、`extract`、`verify` 或 `restart`。默认 CLI 输出和最后一行结果 JSON 不变。
-- Adapter 在命令运行期间校验并转发进度，复用 Host 操作日志；未知/非进度输出不作为阶段或成功依据。失败仍使用退出码和最终结果，保留 staging 清理、运行任务守卫和回滚语义。
-- 连接屏安装阶段显示上传、解压、校验安装包或校验服务文件的本地化子说明；仅当前上传阶段显示百分比。其他阶段保留进行中指示，不模拟百分比。`restart` 进入已有“启动服务并握手”步骤，直到真实握手和连接就绪才完成。
+- While an automatic or manual update is running, the subtitle shows "正在更新远端服务" (updating the remote service), taking precedence over the last connect's needs-upgrade error; after failure or cancel the retryable error scene is kept.
+- The upload percentage represents archive transfer only, not install completion. After transfer it enters the extract phase immediately; the remote CLI emits optional `--progress` output as line-by-line JSON events `{type:"source-server-install-progress", phase}` with phase `verify-archive`, `extract`, `verify` or `restart`. Default CLI output and the last-line result JSON are unchanged.
+- During command execution the Adapter validates and forwards progress, reusing the Host operation log; unknown/non-progress output is not a basis for phase or success. Failure still uses the exit code and final result, keeping staging cleanup, the running-task guard and rollback semantics.
+- The connect screen's install phase shows localized sub-captions for upload, extract, verifying the package or verifying service files; only the current upload phase shows a percentage. Other phases keep an in-progress indicator and simulate no percentage. `restart` enters the existing "启动服务并握手" (start service and handshake) step and completes only on a real handshake and connection ready.
 
 ```text
 before: upload 100% -> [extract / verify / restart, no events] -> result
@@ -255,105 +258,105 @@ after:  Adapter upload/extract -> CLI verify-archive/extract/verify/restart
         -> Host operation log -> UI phase projection -> handshake -> ready
 ```
 
-进度事实属于远端安装器，连接状态仍属于 Host manager；UI 只投影已有事件。不新增持久化状态或重试，不改变桌面 continuous 与手机 replayable 的会话恢复边界。SSH/WSL/Docker 共用 Adapter 进度解析。
+Progress facts belong to the remote installer; connection state still belongs to the Host manager; the UI only projects existing events. No persisted state or retry is added and the session recovery boundaries of desktop continuous and phone replayable are unchanged. SSH/WSL/Docker share the Adapter progress parser.
 
-验收：延迟校验期间已显示校验且没有上传百分比；命令未结束时阶段已可见；分片输出与非 JSON 日志不影响结果；校验/重启失败不能显示就绪；自动更新期间无旧失败副题，取消/失败后错误仍可见。
+Acceptance: during a delayed verify the verify phase is shown with no upload percentage; phases are visible while the command has not finished; chunked output and non-JSON logs do not affect the result; a verify/restart failure cannot show ready; during auto update there is no stale failure subtitle, and after cancel/failure the error remains visible.
 
-## 连接日志与失败契约
+## Connection logs and failure contract
 
-- Host 仅转发连接流水线 `onLog` 主动上报的进度，console 与其他服务的诊断输出不进入用户可见日志。统一过滤绝对路径、凭据、token、连接档案及设备标识；含空格路径按引号或明确路径字段边界过滤，保留路径之后的非路径失败原因；未加引号且无法消歧的路径尾部保持保守遮蔽，仅保留退出码等明确诊断；向导、最近日志与反馈使用相同过滤结果。密码、私钥口令等已知秘密只按完整 token 遮蔽（秘密两端为字母、数字或下划线时，相邻字符不能也是这类字符）；不能按子串替换，否则短密码会把 `device` 这类固定文案改成 `[redacted]ice`，反推出密码。
-- 等待安装确认记为 info。失败响应始终包含非空消息和 shared 登记的错误码；已确认领域码优先于 cause 文本推断，未明确分类的 AggregateError 和阶段包装使用可识别的内层错误。SSH 认证及已知私钥解密失败由 SSH 适配边界赋予 `remote-authentication-failed`，阶段 fallback 不覆盖该分类；UI 中英文分类同步，旧无 code 文本保留兼容兜底。拒绝连接/不可达、超时、DNS、可信 host-key 错误、下载、上传、预检、安装、空间、权限、取消和未知分别分类，中英文映射同步。
-- Host 连接管理服务是最近操作日志的唯一 owner；每台设备保留最近一次连接或更新最多 100 行，仅存在运行时内存。尚未握手的连接按 profile 隔离；握手后归到 sourceServerId，同设备不同线路共享最近操作。新操作替换旧日志，旧操作迟到输出不能覆盖新操作。更新后的内部重连属于同一次更新。
-- `getRecentOperationLogs(profileId)` 查询所属设备的最新日志，关闭/重开向导或设置页后仍可读取；删除设备/线路及 Host 退出时清理。设置页设备卡和未完成连接均提供“查看最近日志”；侧栏/聊天项目菜单的远程身份详情在连接中读同一份日志，只展示阶段、进度与耗时，不展示原始日志（见[连接进度详情](../remote/project-first-remote-navigation-spec.md#连接进度详情2026-10-15)）。查询结果是展示投影，UI 不维护独立日志历史。
-
-```text
-连接/更新 → SourceServerConnectionManager 接受操作 → 显式进度 → 统一过滤 → 有界内存日志
-                                                └→ 事件通知 → UI 查询最新日志
-失败 → shared 错误分类 + 非空消息 → Host schema → Main → 中英文文案
-```
-
-本合同只涉及设备连接管理 RPC 与连接日志，不改变 task stream 的 desktop continuous / mobile replayable 恢复边界。
-
-## 连接中与目录屏（RDUX-11，2026-09-29）
-
-按 06 已通过原型：连接屏以设备名、连接方式和完整地址为标题；竖向阶段为建立通道（SSH / WSL / Docker 分别命名）、识别设备、安装组件、启动连接。没有“连接就绪”阶段，成功直接进入目录或恢复指定项目。当前阶段加粗、显示已用时间，完成项保留耗时；安装子步骤展示上传/下载进度、大小、速度和预计剩余时间；速度未知时明确显示正在估算。等待密码/私钥口令、安装、设备重新安装确认、强制更新确认与分类错误均嵌入对应阶段。日志默认收起、失败展开，复制日志仅在展开后出现。运行中或等待用户处理时，页脚左“在后台继续”、右“取消连接”；失败终态改为左“返回列表”、右“关闭”，不得把既有失败改写为主动取消。取消后允许重试。安装完成标记显示安装完成并等待启动，不倒退成正在校验文件。
-
-安装信息来自 Host 的远端探测与同一发布描述：版本、绝对安装路径、安装包实际字节数（明确标为安装包占用空间，不将压缩包大小冒充解压后占用）；未知信息显示“暂无法获取”，不填假值。只读安装预览不上传或安装；确认后复用既有安装命令。运行中任务清单来自远端 task owner 的活动投影，强制更新仍先经过 force=false guard。老远端未提供清单时明确显示清单不可用，不伪造任务。安装预览、发布元数据或运行任务清单的附加读取失败，仍保留已确认的安装/强制更新等待点并显示信息不可用；实际安装所需发布解析及校验继续严格失败，不能绕过 force=false 守卫或替用户确认强制更新。
+- The Host forwards only progress that the connect pipeline reports actively via `onLog`; console and other services' diagnostics never enter the user-visible log. Absolute paths, credentials, tokens, connection profiles and device identifiers are filtered uniformly; paths containing spaces are filtered by quotes or an explicit path-field boundary, keeping the non-path failure reason after the path; unquoted, non-disambiguable path tails stay conservatively masked, keeping only explicit diagnostics such as exit codes; the wizard, recent log and feedback use the same filtered result. Known secrets such as passwords and key passphrases are masked only as whole tokens (when the secret is bordered by letters, digits or underscores, the adjacent characters must not be of that kind either); substring replacement is forbidden, because a short password would turn fixed copy like `device` into `[redacted]ice` and leak the password.
+- Waiting for install confirmation is logged as info. A failure response always contains a non-empty message and a shared-registered error code; a confirmed domain code beats cause-text inference, and unclassified AggregateError and phase wrappers use the recognizable inner error. SSH authentication and known private-key decryption failures get `remote-authentication-failed` at the SSH adapter boundary and the phase fallback does not override that classification; the UI's zh/en classification is synced, and old codeless text keeps a compatible fallback. Connection refused/unreachable, timeout, DNS, trusted host-key error, download, upload, pre-check, install, space, permission, cancel and unknown are classified separately with zh/en mapping synced.
+- The Host connection management service is the only owner of recent operation logs; each device keeps the latest connection or update, up to 100 lines, in runtime memory only. Connections not yet handshaken are isolated by profile; after the handshake they belong to sourceServerId and different routes of one device share the latest operation. A new operation replaces the old log; late output from an old operation cannot overwrite the new one. The internal reconnect after an update belongs to the same update.
+- `getRecentOperationLogs(profileId)` queries the latest log of the owning device and remains readable after closing/reopening the wizard or settings page; it is cleared when the device/route is deleted and on Host exit. The settings device card and unfinished connections both offer "查看最近日志" (view recent log); the remote identity details in the sidebar/chat project menu read the same log while connecting and show only phase, progress and elapsed time, never the raw log (see [connection progress details](../remote/project-first-remote-navigation-spec.md#连接进度详情2026-10-15)). The query result is a display projection; the UI keeps no independent log history.
 
 ```text
-用户选择/重试 → 向导流程 owner（requestId / epoch）→ Host 连接 owner
-                   ↑ 只读状态、安装预览、日志、任务活动投影 ↓
-              内联确认 → 既有安装/身份确认/更新命令
-取消/关闭 → 立即结算取消遥测 → 撤销 epoch → 丢弃迟到结果；收起只改变可见性
-显式新入口 → flow owner 清理旧等待点/意图 → 新 epoch 消费；卡片恢复保留原 epoch
-目录 chip → 浏览器最新导航请求 → 成功路径 → 打开项目
+connect/update -> SourceServerConnectionManager accepts the operation -> explicit progress -> uniform filter -> bounded in-memory log
+                                                └-> event notification -> UI queries the latest log
+failure -> shared error classification + non-empty message -> Host schema -> Main -> zh/en copy
 ```
 
-目录屏显示完整路径，最近和远端记录分行；chip 导航必须更新目录内容，较早请求不能覆盖新导航。读取失败显示友好原因，失败或加载期间不能打开未经确认的目录；页脚保留“稍后选择”。设备名可就地保存，成功显示“已保存”，失败保留草稿并显示反馈；状态条只显示连接状态、连接方式/线路与已知版本，不重复设备名、不填占位符。
+This contract concerns only the device connection-management RPC and connection logs; the desktop continuous / mobile replayable recovery boundary of task streams is unchanged.
 
-首次使用说明恢复原版「本地离线，任务照常运行」介绍页，移除目录页的一行提示。主动连接成功后、继续设备完成/目录/原项目之前展示；已连接设备的首次显式远端目录浏览也复用同一确认入口。后台完成和启动静默恢复不弹窗；后台结果由用户显式继续时才展示。已有确认框占用时，连接 flow 保留完成动作，在其释放后继续；确认关闭或更换入口则撤销。读取已读状态或保存期间收起，也必须保留完成结果，等待用户显式继续，不能自动弹介绍或交付原完成回调。只有点击「知道了」才写入 `remoteBoundaryIntroAcknowledgedVersion: 1`；展示、取消、卸载、读取失败与过期响应均不能记已读。版本 2 同时包含旧弹窗确认和一行提示自动已读，无法可靠区分，因此新标记未设置的用户（含旧字段版本 2）统一补看一次，新标记为 1 不再重复。旧字段保持 `remoteBoundaryOnboardingVersion?: 2`，仅供回滚兼容，不能作为新版已确认的依据。已落盘的旧字段版本 3 在完整 schema 校验前迁移为旧字段 2 和新标记 1；SettingService 读取时通过现有写锁重读、迁移、原子保存，迁移不能覆盖并发偏好更新。旧客户端剥离新标记后仍能读取和保存原设置，回滚不依赖额外发布兼容版本；回滚再升级允许重新显示一次介绍。读取/保存失败保留未读，不把说明故障转为连接失败；后续主动使用可再次确认。介绍页外观与文案复用原组件，Escape/遮罩不算确认；操作所属 entryEpoch/表单 epoch 失效后不继续旧导航。桌面 continuous 与手机 replayable 的任务 owner、身份隔离及恢复链不变。
+## Connecting and directory screens (RDUX-11, 2026-09-29)
 
-介绍页正文的中文文案为「关闭 ZCode 或休眠本机，\n远程任务继续运行。」，在逗号后显式断行；英文为「Remote tasks keep running, even when you close ZCode or put your computer to sleep.」，使用均衡换行，不固定断行位置。正文保留换行符并允许窄窗口继续折行，避免末行只剩一两个汉字。沿用现有弹窗宽度、字号和主题；默认 14px 字号下中英文均为两行，16px 下中文仍为两行，英文允许三行。视觉验证直接挂载真实弹窗，覆盖桌面与 390px 窄窗口、深浅主题和 14/16px 字号，无需连接远程服务器。
+As in the approved prototype 06: the connect screen is titled by device name, connection method and full address; the vertical phases are establish channel (named per SSH / WSL / Docker), identify device, install components, start connection. There is no "connection ready" phase; success goes directly to the directory or restores the specified project. The current phase is bold and shows elapsed time, completed items keep their duration; install sub-steps show upload/download progress, size, speed and estimated remaining time; when speed is unknown it explicitly shows estimating. Waiting for password/key passphrase, install, device reinstall confirmation, forced-update confirmation and classified errors are embedded in the respective phase. The log is collapsed by default and expanded on failure, and copy-log appears only after expansion. While running or waiting for the user, the footer has "在后台继续" (continue in background) at left and "取消连接" at right; a failed terminal state switches to "返回列表" (back to list) at left and "关闭" (close) at right, and an existing failure must not be rewritten as an active cancel. Retry is allowed after cancel. The install-complete marker shows install done and waiting for start, and does not regress to verifying files.
+
+Install info comes from the Host's remote probe and the same release descriptor: version, absolute install path, and the package's actual byte size (explicitly labeled package footprint; the archive size is not passed off as post-extraction footprint); unknown info shows "暂无法获取" (currently unavailable), no fake values. The read-only install preview neither uploads nor installs; after confirmation it reuses the existing install command. The running-task list comes from the remote task owner's activity projection, and forced update still passes the force=false guard first. When an old remote provides no list, explicitly show that the list is unavailable and do not fabricate tasks. If extra reads of the install preview, release metadata or running-task list fail, the confirmed install/forced-update wait point is kept and information-unavailable is shown; the release resolution and verification needed by the actual install keep failing strictly and cannot bypass the force=false guard or confirm a forced update on the user's behalf.
 
 ```text
-原行为：目录提示显示 → 自动记旧标记 2
-存量旧标记 3 → schema 迁移 → SettingService 写锁内保存旧标记 2 + 新标记 1
-新行为：主动连接成功 / 显式使用已连接设备 → 介绍页 → 知道了 → 新标记 1 → 原流程
-后台完成 → 等待用户继续 ────────────────────────────┘
-取消/换入口 → 撤销原 epoch → 丢弃迟到结果
+user select/retry -> wizard flow owner (requestId / epoch) -> Host connection owner
+                   ^ read-only state, install preview, log, task activity projection v
+              inline confirmation -> existing install/identity-confirm/update commands
+cancel/close -> settle cancel telemetry immediately -> revoke epoch -> drop late results; minimize only changes visibility
+explicit new entry -> flow owner clears old wait points/intent -> new epoch consumes; card restore keeps the original epoch
+directory chip -> browser's latest navigation request -> success path -> open project
 ```
 
-验收：向导 DOM 覆盖内联等待、认证重试、取消与迟到响应、真实安装信息、阶段和传输、目录导航/错误/重命名；真实 SSH 覆盖认证失败/拒绝连接/首装信息/非阻断说明，截图覆盖深浅主题和 900px。
+The directory screen shows the full path, with recent and remote records on separate rows; chip navigation must update directory content and an earlier request cannot overwrite a newer navigation. A read failure shows a friendly reason; during failure or loading an unconfirmed directory cannot be opened; the footer keeps "稍后选择" (choose later). The device name can be saved in place: success shows "已保存" (saved), failure keeps the draft with feedback; the status bar shows only connection state, connection method/route and known version, without repeating the device name or filling placeholders.
 
-运行任务清单合同：Core 继续从 `turn.started/turn.terminal` 的 owner 事实推导活动集合，以 `workspaceIdentity || workspacePath` + sessionId 隔离；向 Supervisor 的 heartbeat/task-activity 增加可选清单。`running-tasks --json` 只读返回该清单（未知为 null），Host 在强制更新 guard 拒绝后读取并通过管理快照展示。该扩展不修改持久化 `status.json`、版本回滚格式、App ↔ Agent 消息、桌面 continuous 或手机 replayable 投递。
+First-use notice: restore the original "本地离线，任务照常运行" intro page and remove the one-line hint on the directory page. It shows after a successful active connect, before continuing device completion / directory / original project; the first explicit remote directory browse of an already-connected device reuses the same confirmation entry. Background completion and silent startup recovery do not pop it; a background result shows it only when the user explicitly continues. When another confirmation dialog is occupying, the connect flow keeps the completion action and continues after release; closing the confirmation or changing entry revokes it. While reading the read state or saving, minimizing must also keep the completion result and wait for the user to continue explicitly: no automatic intro, no handing over the original completion callback. Only clicking "知道了" (got it) writes `remoteBoundaryIntroAcknowledgedVersion: 1`; showing, cancel, unmount, read failure and stale responses never record read. Version 2 covered both the old dialog confirmation and automatic read from the one-line hint and the two cannot be told apart reliably, so users whose new marker is unset (including old-field version 2) see it once more, and with the new marker 1 it does not repeat. The old field stays `remoteBoundaryOnboardingVersion?: 2`, for rollback compatibility only, and is not evidence of confirmation by the new version. A persisted old-field version 3 is migrated to old-field 2 and new marker 1 before full schema validation; SettingService reads via the existing write lock, re-reads, migrates and saves atomically, and the migration cannot overwrite concurrent preference updates. An old client strips the new marker and can still read and save the original settings, so rollback needs no extra compatibility release; rolling back then upgrading again may show the intro once more. A read/save failure keeps it unread and does not turn an intro failure into a connect failure; later active use can confirm again. The intro page's look and copy reuse the original component; Escape/backdrop do not count as confirmation; once the operation's entryEpoch/form epoch is invalid the old navigation does not continue. Task owner, identity isolation and recovery chain of desktop continuous and phone replayable are unchanged.
 
-## 设置防护、编辑连接与机器标注（RDUX-05）
-
-- 连接编辑弹窗复用已有连接字段；设备名与连接名称分别校验和保存，设备名错误不得显示连接名称错误。确认危险操作默认聚焦取消，不能以回车默认执行危险操作；断开前以内联说明提示影响。
-- 设置页统一不显示“正在编辑：本机 / <设备名>（远程）”提示行及其图标，覆盖常规、插件、MCP、技能、命令、钩子、子智能体的列表与编辑表单；桌面与手机、深浅主题、中英文一致。作用域菜单保留设备名，设置读写归属沿用现有服务作用域。
-- 设备操作按同一 sourceServerId（未识别时 profileId）防重与互斥；无关设备操作和只读详情、日志查看保持可用，不能因一台设备长时间更新而锁住整个面板。
-- “在设置中管理”与开始更新只定位对应设备卡；只有显式“查看详情”意图才打开失败详情。设备当前失败不意味着所有定位动作都要弹模态。
-- 同设备不同连接的失败原因与更新信息独立展示；只有相同 Profile 的同一原因才能去重，不能用另一个连接的更新横幅遮蔽失败。
-
-## 设置设备卡与更新提示（RDUX-13）
-
-设备卡（2026-10-15 布局收口）：
-
-- **标题行**：中性连接方式图标、名称、五态状态与主操作/编辑/更多。主操作由展示模型决定；已连接时主操作“断开”降为 ghost 按钮，“断开后远端任务继续运行”只作为该按钮的提示（title），不再常驻成一行说明。
-- **连接行**：连接描述使用类型 token，优先展示实际在线连接；后接远端版本，离线时再接“最近在线”。设备只有一条连接时不显示“当前 / 默认”；有多条连接时用同一种中性小标签标记“当前”“默认”。
-- **最近项目**：小标题“最近项目”下按 `lastOpenedAt` 倒序列出已知项目，每行为文件夹图标、显示名、完整远端路径（等宽、截断、title 给出全文）、相对打开时间；该项目已在本窗口打开时加“已打开”标签。默认显示 3 行，超出时提供“显示全部 (N)”在卡内展开，不能出现无法打开的 +N。点击先从共享项目目录按 Source 与目录解析唯一已有入口，传递 preferredProjectEntryId、preferredProfileId 与 preferredDirectoryPath，连接后直接打开原项目，不进入创建器；无法确定原入口时保留当前页面并提示从侧栏选择。入口与连接完成校验见[项目导航](../remote/project-first-remote-navigation-spec.md#2-入口与连接顺序)。没有项目时显示“0 个项目”。
-- **页脚**：卡片底部一条分隔线下放“其他连接 (N)”与“最近日志”两个折叠入口，展开内容依次显示在页脚下方。最近日志默认收起；设备展示状态为失败时默认展开，用户手动切换后以用户选择为准。日志框使用 `bg-surface`，不再加边框，避免卡中卡。其余连接展开后操作常驻、可换行，无第二层卡片边框。
-- 设备信息（主机名、系统用户、设备 ID）与复制 ID 留在更多菜单；版本已在连接行展示。
-- **页面顺序**：说明文案与“新建连接” → “设备 (N)”小标题与设备卡（保持快照顺序，不按状态重排，避免用户操作后卡片跳动） → 无 sourceServerId 的“未完成的连接”（默认折叠，支持重试、删除和确认后清理） → 已归档连接 → 连接偏好。已识别设备即使离线或需重装仍保留设备卡。
-
-可选更新仅展示导航点与中性横幅（稍后/更新），不弹 toast；必须更新采用警告横幅说明版本和影响，操作只放标题行。自动提示去重键为 sourceServerId + availableVersion，持久保存在版本化 UI 本地偏好；断线、换连接、重启不清除。稍后隐藏同设备同版本的可选横幅，本次 renderer 运行内有效，设置面板重挂不清除，应用重启后重新可见。持久去重不隐藏设备的可操作更新状态。主动更新展示既有阶段/进度；成功 toast，失败 toast 可打开该连接的详情与最近日志。
+Intro body copy: Chinese is 「关闭 ZCode 或休眠本机，\n远程任务继续运行。」 with an explicit line break after the comma; English is "Remote tasks keep running, even when you close ZCode or put your computer to sleep." with balanced wrapping and no fixed break position. The body keeps the newline and still wraps on narrow windows, so the last line never holds just one or two Chinese characters. Existing dialog width, font size and theme are kept; at the default 14px both languages take two lines, at 16px Chinese still takes two lines and English may take three. Visual verification mounts the real dialog directly, covering desktop and a 390px narrow window, light/dark themes and 14/16px font sizes, with no remote server needed.
 
 ```text
-Host 状态事件 → 管理快照 → 五态展示模型 → 设备卡/导航点
-                        → 通知控制器 → UI 持久去重（设备 + 目标版本）
-用户更新 → updateSource(force=false) → 运行任务 guard
-         → 读取同一 Host 快照任务清单 → 用户确认 → force=true
+old behavior: directory hint shown -> automatically record old marker 2
+stored old marker 3 -> schema migration -> SettingService saves old marker 2 + new marker 1 under the write lock
+new behavior: active connect success / explicit use of a connected device -> intro page -> "知道了" -> new marker 1 -> original flow
+background completion -> wait for user to continue -----------┘
+cancel/change entry -> revoke the original epoch -> drop late results
 ```
 
-任务清单只读来自既有 owner；旧远端无清单时明确显示不可用。项目身份、桌面 continuous 与手机 replayable 均沿用原合同。验收覆盖失败连接归类、最近项目排序与展开全部、其他连接当前/默认、重启与重连去重、稍后生命周期、强制更新清单、主题和窄屏。
+Acceptance: wizard DOM covers inline waits, auth retry, cancel and late responses, real install info, phases and transfer, directory navigation/errors/rename; real SSH covers auth failure / connection refused / first-install info / non-blocking notice, with screenshots covering light/dark themes and 900px.
 
-## 视觉与无障碍收尾（RDUX-A11Y，2026-09-29）
+Running-task list contract: Core keeps deriving the active set from the owner facts of `turn.started/turn.terminal`, isolated by `workspaceIdentity || workspacePath` + sessionId; the Supervisor heartbeat/task-activity gains an optional list. `running-tasks --json` returns that list read-only (null when unknown), and the Host reads it after the forced-update guard refuses and shows it via the management snapshot. This extension changes neither the persisted `status.json`, the version rollback format, App <-> Agent messages, desktop continuous nor phone replayable delivery.
 
-- 远程 UI、侧栏设备标签与设置导航的辅助文字使用 `remote-foreground-muted`，在四个内置主题的实际表面上达到 4.5:1；类型标签与五态标签分别验证，不通过降低字号规避对比度。
-- 认证和资源下载分段按钮提供本地化组名与 `aria-pressed`；输入标签关联唯一 id。连接状态提供可读语义，动态状态标签使用 polite live region。
-- 远程输入占位符统一 sans，路径值保留 mono。说明文字使用自然换行与 `text-pretty`，步骤序号与目录按钮遵守圆角规范。
-- 对话框关闭名称随语言切换；项目拖拽预览保留与项目行一致的设备名（同一 Source 名称投影）。
-- 侧栏项目行与聊天框项目列表中，项目名保留 `text-ui-base`，设备名保留 `text-ui-sm`；两段文字在同一容器内按文字基线对齐，云图标和选中标记仍在外层垂直居中。长名称保持单行省略，不挤出行尾操作；桌面与窄屏、深浅主题、14/16px 界面字号均遵守此规则。
-- 键盘覆盖向导表单、密码显隐、下载选择、目录确认、侧栏详情/更多和设置卡操作；深浅 × 中英 × 1400/900px 截图均固定侧栏 264px。
+## Settings guards, edit connection and machine labels (RDUX-05)
 
-历史候选的展开、活动项与密码显隐均由字段组件持有；输入值继续经原表单的 `onChange` 交还 owner。
+- The edit-connection dialog reuses existing connection fields; device name and connection name are validated and saved separately, and a device-name error must not show a connection-name error. Confirmation of dangerous operations focuses Cancel by default and Enter must not run a dangerous operation by default; before disconnecting an inline note explains the impact.
+- The settings page never shows the "正在编辑：本机 / <设备名>（远程）" (editing: local / <device> (remote)) hint row and its icon, covering general, plugins, MCP, skills, commands, hooks and subagent lists and edit forms; desktop and phone, light/dark and zh/en are consistent. The scope menu keeps the device name; settings read/write ownership follows the existing service scope.
+- Device operations are de-duplicated and mutually excluded by the same sourceServerId (profileId when unrecognized); unrelated device operations, read-only details and log viewing stay available, and one device's long update cannot lock the whole panel.
+- "在设置中管理" (manage in settings) and starting an update only locate the matching device card; only an explicit "查看详情" (view details) intent opens the failure details. A device's current failure does not mean every locate action pops a modal.
+- Failure reasons and update info of different connections of one device display independently; only the same reason of the same Profile can be de-duplicated, and another connection's update banner must not mask a failure.
+
+## Settings device card and update prompts (RDUX-13)
+
+Device card (layout settled 2026-10-15):
+
+- **Title row**: neutral connection-method icon, name, five-state status and primary action/edit/more. The primary action comes from the presentation model; when connected, the primary action "断开" is a ghost button, and "断开后远端任务继续运行" (remote tasks keep running after disconnect) is only that button's hint (title), no longer a permanent line of text.
+- **Connection row**: the connection description uses type tokens and prefers the actually online connection; followed by the remote version, and when offline by "最近在线" (last online). With only one connection the card shows no "当前 / 默认" (current / default); with several, the same neutral small tags mark "当前" and "默认".
+- **Recent projects**: under the small title "最近项目", known projects ordered by `lastOpenedAt` descending, each row a folder icon, display name, full remote path (monospace, truncated, full text in title) and relative open time; a project already open in this window gets an "已打开" (opened) tag. 3 rows by default; beyond that "显示全部 (N)" (show all) expands within the card, never an unopenable +N. Clicking first resolves the unique existing entry from the shared project directory by Source and directory, passes preferredProjectEntryId, preferredProfileId and preferredDirectoryPath, and after connecting opens the original project directly without entering the creator; when the original entry cannot be determined, stay on the current page and prompt to choose from the sidebar. Entry and connect-completion validation: [project navigation](../remote/project-first-remote-navigation-spec.md#2-入口与连接顺序). With no projects it shows "0 个项目".
+- **Footer**: below one divider at the card bottom are two collapsible entries "其他连接 (N)" (other connections) and "最近日志" (recent log), expanded content showing below the footer in order. The recent log is collapsed by default and expanded by default when the device presentation state is failed; once the user toggles it, the user's choice wins. The log box uses `bg-surface` without border to avoid a card within a card. Other connections, once expanded, keep actions always visible and wrappable, without a second card border.
+- Device info (hostname, system user, device ID) and copy-ID stay in the more menu; the version is already in the connection row.
+- **Page order**: description text and "新建连接" -> small title "设备 (N)" and device cards (snapshot order kept, not reordered by state so cards do not jump after user actions) -> "未完成的连接" (unfinished connections) without sourceServerId (collapsed by default, supporting retry, delete and cleanup after confirmation) -> archived connections -> connection preferences. A recognized device keeps its card even when offline or needing reinstall.
+
+An optional update shows only a navigation dot and a neutral banner (later / update), no toast; a mandatory update uses a warning banner stating version and impact with actions only in the title row. The automatic-prompt dedupe key is sourceServerId + availableVersion, persisted in a versioned UI local preference; disconnect, connection change and restart do not clear it. "Later" hides the optional banner of the same device and version for this renderer run, and re-mounting the settings panel does not clear it; after app restart it is visible again. Persistent dedupe does not hide a device's actionable update state. An active update shows the existing phase/progress; success toast; failure toast can open that connection's details and recent log.
+
+```text
+Host state event -> management snapshot -> five-state presentation model -> device card/navigation dot
+                        -> notification controller -> UI persistent dedupe (device + target version)
+user update -> updateSource(force=false) -> running-task guard
+         -> read the task list from the same Host snapshot -> user confirms -> force=true
+```
+
+The task list is read-only from the existing owner; an old remote without a list explicitly shows unavailable. Project identity, desktop continuous and phone replayable keep their original contracts. Acceptance covers failed-connection classification, recent project ordering and show-all, other connections current/default, dedupe across restart and reconnect, "later" lifecycle, forced-update list, themes and narrow screen.
+
+## Visual and accessibility finish (RDUX-A11Y, 2026-09-29)
+
+- Auxiliary text in remote UI, sidebar device tags and settings navigation uses `remote-foreground-muted` and reaches 4.5:1 on the actual surfaces of the four built-in themes; type tags and five-state tags are verified separately, and contrast is not met by lowering font size.
+- Auth and resource-download segmented buttons provide a localized group name and `aria-pressed`; input labels associate with unique ids. Connection status offers readable semantics and dynamic status labels use a polite live region.
+- Remote input placeholders are uniformly sans, path values keep mono. Description text uses natural wrapping and `text-pretty`; step numbers and directory buttons follow the radius spec.
+- The dialog's close name follows language switching; the project drag preview keeps the same device name as the project row (same Source name projection).
+- In sidebar project rows and the chat project list, the project name keeps `text-ui-base` and the device name `text-ui-sm`; both texts align on the text baseline in one container, with the cloud icon and selection mark centered vertically in the outer layer. Long names stay single-line with ellipsis and do not push out trailing row actions; desktop and narrow screens, light/dark themes and 14/16px UI font sizes all follow this rule.
+- Keyboard covers wizard form, password show/hide, download choice, directory confirmation, sidebar details/more and settings card actions; light/dark x zh/en x 1400/900px screenshots all fix the sidebar at 264px.
+
+Expansion, active item and password show/hide of history candidates are owned by the field component; input values still go back to the owner through the original form's `onChange`.
 
 ```mermaid
 stateDiagram-v2
-    Closed --> Open: focus / 点击输入框
-    Open --> Open: 输入过滤 / 方向键改变活动项
-    Open --> Closed: Enter 回填选中值
-    Open --> Closed: Escape / Tab / 外部交互
+    Closed --> Open: focus / click the input
+    Open --> Open: input filters / arrow keys change active item
+    Open --> Closed: Enter fills the selected value
+    Open --> Closed: Escape / Tab / outside interaction
 ```
 
-打开历史时焦点保留在输入框，`aria-activedescendant` 指向活动候选；Escape 只关闭候选，Tab 继续原生焦点移动。密码显隐按钮不提交表单。
+When history opens, focus stays in the input and `aria-activedescendant` points to the active candidate; Escape only closes the candidates and Tab continues native focus movement. The password show/hide button does not submit the form.

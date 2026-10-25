@@ -1,5 +1,9 @@
 import type { AiSdkModelAdapter } from "@zcode/adapters/model";
-import type { Model } from "@zcode/contracts";
+import {
+  createExternalAgentModel,
+  type ExternalAgentTurnDriver,
+  type Model,
+} from "@zcode/contracts";
 import type { AgentRuntimeDeps } from "@zcode/core";
 import {
   type ModelSelection,
@@ -22,22 +26,30 @@ export interface ProviderRegistryModelSource {
 
 type ApiProviderModelAdapter = Pick<AiSdkModelAdapter, "createModel">;
 
+/** Turn drivers of `acp-agent` providers, bound by the composition root (specs/acp-agent-runtime.md). */
+export interface ExternalAgentDriverSource {
+  driverFor(agentId: string): ExternalAgentTurnDriver;
+}
+
 interface ApiProviderModelRuntimeOptions {
   readonly registry: ProviderRegistryModelSource;
   readonly modelAdapter: ApiProviderModelAdapter;
+  readonly externalAgents?: ExternalAgentDriverSource;
 }
 
 /**
- * 从业务 Registry 精确查找一次完整事实，并直接创建冻结静态配置的 Model。
+ * Look up a complete fact from the business Registry and directly create a Model with frozen static configuration.
  */
 export class ApiProviderModelRuntime {
   readonly #registry: ProviderRegistryModelSource;
   readonly #modelAdapter: ApiProviderModelAdapter;
+  readonly #externalAgents: ExternalAgentDriverSource | undefined;
   #started = false;
 
   constructor(options: ApiProviderModelRuntimeOptions) {
     this.#registry = options.registry;
     this.#modelAdapter = options.modelAdapter;
+    this.#externalAgents = options.externalAgents;
   }
 
   readonly modelFactory: RuntimeModelFactory = (target): Model => {
@@ -68,18 +80,38 @@ export class ApiProviderModelRuntime {
     target: Parameters<RuntimeModelFactory>[0],
   ): Model {
     const config = registryModel.config;
-    // 输出预算属于单次请求，由 Agent 执行链显式决定，不能在 ModelFactory 中静默绑定。
-    // Selection 已在上面的 Registry 边界完成校验，Factory 不再承担任何缺省修复。
+    // ACP agents are external processes, not model APIs: the marker Model carries the turn driver and
+    // never reaches the AI SDK adapter (specs/acp-agent-runtime.md "Chat delegation (phase 4)").
+    // The registry access union does not name `acp-agent`, so the check is structural on the stored shape.
+    const access = provider.config.access as { readonly type?: unknown; readonly agentId?: unknown };
+    if (access.type === "acp-agent" && typeof access.agentId === "string") {
+      const driver = this.#externalAgents?.driverFor(access.agentId);
+      if (!driver) throw new Error("ACP agent runtime is not available in this process");
+      const reasoningLevel = target.selection.options?.reasoningLevel;
+      return createExternalAgentModel({
+        driver,
+        providerId: provider.providerId,
+        modelId: registryModel.modelId,
+        properties: config.properties,
+        optionSpecs: config.optionSpecs,
+        options: reasoningLevel === undefined ? {} : { reasoningLevel },
+      });
+    }
+    // Output budget belongs to an individual request and must be explicitly determined by the Agent
+    // execution chain, not silently bound in ModelFactory. Selection was validated at the Registry
+    // boundary above, so Factory must not repair missing defaults.
     const normalReasoningLevel = target.selection.options!.reasoningLevel!;
     return this.#modelAdapter.createModel({
       providerId: provider.providerId,
       modelId: registryModel.modelId,
       providerConfig: provider.config,
       modelConfig: config,
-      // Off-Peak 与 Highspeed 都靠执行作用域的动态 requestAuth（JWT / 计划 Key / 卡 ID header）
-      // 发送，必须把承载它的 source 透传给 adapter。此门禁与 runner.ts 的 requestAuthRequired
-      // 门禁一一对应：漏掉 highspeed 会在这里丢掉 source，导致 runner 端 requestAuth 缺失、
-      // 本轮在发送前抛 model_request_auth_missing。
+      // Off-Peak and Highspeed both rely on execution-scoped dynamic requestAuth (JWT /
+      // plan key / card ID header) when sending, so the source carrying it must be passed
+      // through to the adapter. This gate corresponds one-to-one with the
+      // requestAuthRequired gate in runner.ts: omitting highspeed drops the source here,
+      // leaving runner-side requestAuth missing so the turn throws
+      // model_request_auth_missing before sending.
       ...(provider.config.access.type === "zhipu-account" &&
       (provider.config.access.mode === "off-peak" ||
         provider.config.access.mode === "highspeed")

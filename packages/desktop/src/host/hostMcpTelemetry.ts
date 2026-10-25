@@ -18,7 +18,7 @@ export function registerHostMcpTelemetry(options: RegisterHostMcpTelemetryOption
         event,
       });
     } catch {
-      // main 已退出或 IPC 不可用时只丢当前遥测，不影响 MCP 生命周期。
+      // If Main has exited or IPC is unavailable, drop only the current telemetry; do not affect the MCP lifecycle.
     }
   });
 }

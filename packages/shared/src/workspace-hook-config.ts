@@ -14,6 +14,9 @@ export const WORKSPACE_HOOK_EVENT_NAMES = [
   "PostToolUse",
   "PostToolUseFailure",
   "Stop",
+  "PreCompact",
+  "PostCompact",
+  "SessionEnd",
 ] as const;
 
 export type WorkspaceHookEventName = (typeof WORKSPACE_HOOK_EVENT_NAMES)[number];
@@ -73,6 +76,9 @@ export const workspaceHooksConfigSchema = z
         PostToolUse: z.array(workspaceHookMatcherConfigSchema).optional(),
         PostToolUseFailure: z.array(workspaceHookMatcherConfigSchema).optional(),
         Stop: z.array(workspaceHookMatcherConfigSchema).optional(),
+        PreCompact: z.array(workspaceHookMatcherConfigSchema).optional(),
+        PostCompact: z.array(workspaceHookMatcherConfigSchema).optional(),
+        SessionEnd: z.array(workspaceHookMatcherConfigSchema).optional(),
       })
       .strict()
       .optional(),
@@ -167,9 +173,9 @@ export function resolveWorkspaceHookConfiguredGates(input: {
 }
 
 /**
- * 从已发现的配置目录列表生成 workspace hook 候选文件路径。
- * 纯函数，sync/async discovery 共享，确保候选文件名与顺序规则只在此处维护一次
- * （sync/async 共享同一份 flatMap，避免候选路径的生成规则出现分歧）。
+ * Generates candidate workspace hook file paths from discovered config directories.
+ * Pure function shared by sync/async discovery, keeping candidate filenames and ordering rules defined in one place
+ * (sync/async share the same flatMap to prevent candidate-path generation from diverging).
  */
 function buildWorkspaceHookCandidatePaths(directories: readonly string[]): string[] {
   return directories.flatMap((directory) => [
@@ -179,16 +185,16 @@ function buildWorkspaceHookCandidatePaths(directories: readonly string[]): strin
 }
 
 /**
- * 对已发现的 config refs 按规范化路径去重，保留首次出现的条目。
+ * Deduplicates discovered config refs by normalized path, keeping the first occurrence.
  *
- * 当 explicit projectConfigPath 恰好指向 auto-discovery 已发现的文件时，
- * 同一文件会以不同 explicitProjectConfig 标记出现两次，进入 snapshot 后产生重复
- * sourceFile 与重复 declaration，导致 bundleDigest 分叉。
+ * When explicit projectConfigPath points to a file already found by auto-discovery,
+ * the same file appears twice with different explicitProjectConfig flags. This creates duplicate
+ * sourceFile entries and declarations in the snapshot, causing bundleDigest to diverge.
  *
- * 去重策略：保留首次出现者（auto-discovered 条目在前、explicit 在后），丢弃后续重复。
- * 不得改变剩余条目的相对顺序——discoveryOrder 和 explicitProjectConfig 均为 digest 输入，
- * 任何重排都会使既有 trust 记录失效（用户被重新提示全部 Hook）。对于无 explicit path
- * 的 workspace，auto-discovery 本身不会产生重复，此函数为 no-op，bundleDigest 不变。
+ * Deduplication policy: keep the first occurrence (auto-discovered entries come before explicit ones) and discard later duplicates.
+ * Do not change the relative order of the remaining entries — discoveryOrder and explicitProjectConfig are both digest inputs,
+ * and any reordering invalidates existing trust records (prompting the user again for every Hook). For workspaces without an explicit path,
+ * auto-discovery itself creates no duplicates, so this function is a no-op and bundleDigest remains unchanged.
  */
 function deduplicateWorkspaceHookConfigRefs(
   refs: readonly WorkspaceHookConfigPathRef[],

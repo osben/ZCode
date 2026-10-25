@@ -1,31 +1,31 @@
-# 12 · 排障
+# 12 · Troubleshooting
 
-## 先收集最小证据
+## Collect minimal evidence first
 
-保存 `--version`、`doctor --json`、构建提交或产物 SHA-256、完整参数数组、有效工作目录、退出码、signal、stdout、stderr，以及脱敏的配置。先用隔离环境复现，避免改动日常开发的配置和会话。
+Save `--version`, `doctor --json`, the build commit or artifact SHA-256, the complete argument array, the effective working directory, the exit code, the signal, stdout, stderr, and the sanitized configuration. Reproduce in an isolated environment first, to avoid changing everyday development configuration and sessions.
 
-## 启动或配置失败
+## Startup or configuration failures
 
-- `Unknown option`：参数不属于该构建。确认是否把其他 CLI 的 `--model`、`--settings`、`--max-turns` 等参数带进来了；新源码的参数也可能尚未进入旧产物。
-- 模型缺失或改配置无效：检查个人 provider 文件、默认模型选择、API 类型和 Key；已迁移的源码构建不会每次重读旧 `model/provider` 设置。见[配置](03-config.md)。
-- 配置部分被忽略：检查 JSON 语法和字段诊断。MCP、Hook 等字段有独立校验，不要将所有问题归为凭据错误。
-- 构建能启动但资源缺失：保留 bundle 相邻资源，确认依赖和准备步骤完整；`doctor` 不会验证全部插件、模型或外部程序。
-- 平台或执行失败：核对 CPU 架构、系统版本和执行权限。Windows 使用 `.exe`；外部 Hook/MCP 依赖另行安装。
+- `Unknown option`: the flag does not belong to this build. Check whether flags of other CLIs such as `--model`, `--settings`, `--max-turns` were brought in; flags of newer source may also not yet be in an older artifact.
+- Model missing, or config changes have no effect: check the personal provider file, the default model selection, the API type and the key; a migrated source build does not re-read the old `model/provider` settings each time. See [Configuration](03-config.md).
+- Configuration partly ignored: check JSON syntax and field diagnostics. MCP, Hook and other fields have separate validation; do not attribute every problem to a credential error.
+- The build starts but assets are missing: keep the assets adjacent to the bundle and confirm the dependencies and preparation steps are complete; `doctor` does not verify all plugins, models or external programs.
+- Platform or execution failure: check the CPU architecture, OS version and execute permission. Windows uses `.exe`; external Hook/MCP dependencies are installed separately.
 
-## 工具没有产生结果
+## Tools produced no result
 
-- `No permission client configured`：本次调用需要审批，但 prompt 没有交互客户端。检查模式、工具及 Hook 决策。
-- 只输出计划：检查是否触发了计划模式；无人值守任务按[工具配置](04-tools.md)移除不需要的计划和提问工具。
-- 项目 Hook 不执行：检查 enabled、matcher、信任状态和事件是否自然发生；信任后不会补跑已跳过的 SessionStart。
-- 插件清单为空：检查插件总开关、资源准备与诊断。当前版本可直接 list，不要求先发模型请求。
-- MCP 注册后调用失败：分别检查服务鉴权、协议、外部依赖、权限和超时；模型列出的工具名不构成执行证据。
+- `No permission client configured`: this call needs approval but the prompt has no interactive client. Check the mode, the tool and the Hook decision.
+- Only a plan is output: check whether plan mode was triggered; for unattended tasks remove the unneeded plan and question tools per the [tool configuration](04-tools.md).
+- A project Hook does not run: check enabled, the matcher, the trust state and whether the event naturally occurred; after trusting, a skipped SessionStart is not replayed.
+- The plugin list is empty: check the global plugin switch, asset preparation and diagnostics. The current version can list directly and does not require a model request first.
+- An MCP call fails after registration: check service authorization, protocol, external dependencies, permissions and timeouts separately; a tool name the model lists is not evidence of execution.
 
-## 输出与运行记录
+## Output and run records
 
-`/help` 等本地命令可能返回文本，不能用它验证普通 prompt 的 JSON 结构。`stream-json` 应逐行解析并检查最终 result 行。异常退出、被取消或输出被截断时，不要拼出一个虚假的成功结果。
+Local commands such as `/help` may return text and cannot be used to verify the JSON structure of an ordinary prompt. `stream-json` should be parsed line by line and the final result line checked. When the process exits abnormally, is cancelled or its output is truncated, do not assemble a false success result.
 
-调试日志可能包含任务文本、路径、工具输出和模型请求。默认 model-io 日志存在压缩、裁剪和保留上限；缺失历史不能从摘要中恢复。见[运行记录与训练轨迹](13-automation.md)。
+Debug logs may contain task text, paths, tool output and model requests. The default model-io log has compression, trimming and retention limits; missing history cannot be recovered from summaries. See [Run records and training trajectories](13-automation.md).
 
-轨迹转换出现 `model-io request.body must contain a messages array.` 时，检查原始记录是否保留了 `request.body.messages`。本次对当前默认日志已复现该错误；不能把转换失败的文件作为完整训练样本，也不能用另一层的消息结构强行补齐。需要完整数据时，在采集端保留实际 provider 请求和响应。
+When trajectory conversion fails with `model-io request.body must contain a messages array.`, check whether the original record kept `request.body.messages`. This error was reproduced against the current default log in this check; a file that failed conversion must not be used as a complete training sample, and the message structure of another layer must not be used to patch it. When complete data is needed, keep the actual provider request and response at the collection end.
 
-提交问题时提供最小可复现任务和脱敏证据。删除 API Key、登录 token、Cookie 和私人内容；保留字段结构、错误码和必要的工具结果。
+When filing an issue, provide a minimal reproducible task and sanitized evidence. Remove API keys, login tokens, cookies and private content; keep field structure, error codes and the necessary tool results.

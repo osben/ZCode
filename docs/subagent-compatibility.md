@@ -1,98 +1,96 @@
-# Subagent Claude Code 兼容规范
+# Subagent Claude Code compatibility
 
-## 2026-09-14 Agent 目录承载更新
+## 2026-09-14 Agent listing update
 
-当前目录承载合同见 [Agent listing attachment](subagent-listing-attachment.md)：目录
-从工具 description 迁移到 `agent_listing_delta` attachment（按能力和位置投影为 MCS 或 user reminder），compact 后按保留历史补齐。
-通过只读 definitions 入口预留未来增删；现有加载、覆盖优先级和执行快照保持原合同。
+The current listing contract lives in [Agent listing attachment](subagent-listing-attachment.md): the directory moved from tool description to the `agent_listing_delta` attachment (projected as MCS or user reminder by capability and position), backfilled from retained history after compact. Read-only definitions entries reserve future additions/removals; loading, override precedence, and execution snapshots keep their original contract.
 
-> **当前状态**：runtime alias 规则仍有效；UI 历史兼容已迁移到 V4 tool row 适配与统一 ToolCall renderer。
+> **Current state:** the runtime alias rules below still apply; UI history compatibility has moved to V4 tool row adaptation and the unified ToolCall renderer.
 
-## 背景
+## Background
 
-ZCode 的子智能体调度工具名是 `Agent`，Claude Code 插件生态里的子智能体调度工具名是 `Task`。Superpowers 等 `.claude-plugin` 的 skill 文档会直接要求模型调用 `Task`；如果只在 `SessionStart` 追加一段提示词映射，模型、hook matcher、后台任务恢复和 UI 投影仍会各自有一套不一致的解释。
+ZCode's subagent dispatch tool is `Agent`; the Claude Code plugin ecosystem calls it `Task`. Skills in `.claude-plugin` packages such as Superpowers directly instruct the model to call `Task`. A `SessionStart` prompt mapping alone would leave the model, hook matchers, background task recovery, and UI projection with inconsistent interpretations.
 
-因此 ZCode 的兼容目标是把 `Task` 作为结构化 runtime 别名接入，而不是对单个插件做文本补丁。面向 first-party 模型的 provider-visible `tools[]` 仍只暴露 canonical `Agent`；`Task` 只用于历史调用、hook matcher 和内部兼容。
+The compatibility goal is therefore a structured runtime alias for `Task`, not a per-plugin text patch. The provider-visible `tools[]` for first-party models still exposes only the canonical `Agent`; `Task` exists for historical calls, hook matchers, and internal compatibility.
 
-## 兼容原则
+## Compatibility principles
 
-- `Agent` 是 ZCode canonical subagent 工具。
-- `Task` 是 Claude Code 兼容 runtime alias，底层委托 `Agent` 的 handler，但默认不进入 provider-visible `tools[]`。
-- 两者共享输入/输出 schema、权限能力、结果预算、timeout、cancellation 和 trace 策略。
-- 兼容层不能改变实际工具调用轨迹：模型调用 `Agent` 时 hook input 仍是 `Agent`，模型调用 `Task` 时 hook input 仍是 `Task`。
-- 不通过 Superpowers 专用 additional context 注入工具映射；所有 Claude Code 插件复用同一套 runtime 兼容。
+- `Agent` is the ZCode canonical subagent tool.
+- `Task` is a Claude Code-compatible runtime alias delegating to the `Agent` handler; it is not in the provider-visible `tools[]` by default.
+- Both share the input/output schema, permission capability, result budget, timeout, cancellation, and trace policy.
+- The compatibility layer must not alter the actual tool-call trace: a model call to `Agent` keeps hook input `Agent`; a call to `Task` keeps `Task`.
+- No Superpowers-specific additional context injects the tool mapping; all Claude Code plugins share the same runtime compatibility.
 
-## 工具注册
+## Tool registration
 
-`Task` 作为独立 `ToolEntry` 注册，但复用 `agentToolEntry` 的 handler 和运行时声明；`ToolRegistry.toContracts()` 会过滤 `providerVisible: false` 的 alias。注册边界与 `Agent` 完全一致：
+`Task` registers as its own `ToolEntry` reusing the `agentToolEntry` handler and runtime declarations; `ToolRegistry.toContracts()` filters aliases with `providerVisible: false`. Registration boundaries match `Agent` exactly:
 
-- 父 runtime 只有在存在 `subagentPort` 时才注册 `Agent` / `Task` runtime entry。
-- 没有 subagent 能力时两个 runtime entry 都不注册，避免历史/内部调用走到不可执行工具。
-- provider-visible `tools[]` 只包含 `Agent`，不包含 `Task`。
-- allowlist 仍按实际工具名过滤；显式 allowlist 未包含 `Task` 时不会额外放行 `Task`。
+- The parent runtime registers the `Agent` / `Task` runtime entries only when a `subagentPort` exists.
+- Without subagent capability neither runtime entry registers, so historical/internal calls cannot reach an unexecutable tool.
+- The provider-visible `tools[]` contains `Agent` only, never `Task`.
+- Allowlists still filter by actual tool name; an explicit allowlist without `Task` does not admit `Task`.
 
-核心实现位置：
+Core implementation:
 
 - `apps/zcode-cli/packages/core/src/tool/handlers/agent.ts`
 - `apps/zcode-cli/packages/core/src/tool/handlers/index.ts`
 - `apps/zcode-cli/packages/core/src/tool/compat.ts`
 
-## 子 Runtime 防递归
+## Sub-runtime recursion guard
 
-子 agent runtime 当前禁止继续递归创建 subagent。过去只过滤 `Agent`，加入 `Task` 后必须把二者视为同一类 subagent dispatch 工具。
+Child agent runtimes must not recursively create subagents. Previously only `Agent` was filtered; with `Task` added, both count as the same subagent dispatch tool.
 
-规则：
+Rules:
 
-- `allowedTools: ["*"]` 时，从父工具列表继承可用工具，但过滤 `Agent` / `Task`。
-- `disallowedTools` 存在时，仍先过滤 subagent dispatch 工具，再应用 disallow。
-- 显式 `allowedTools` 不额外扩展 alias；子 runtime 本身不会注册 `Agent` / `Task`，所以即使 profile 误写也不会可用。
-- 子 runtime 不暴露 `EnterPlanMode` / `ExitPlanMode`。原因是 subagent 没有可靠的用户审批恢复面；一旦子模型进入 plan mode，`ExitPlanMode` 会请求用户确认并可能让父 turn 永久等待。该限制必须在 child provider-visible tool list 层统一执行，覆盖内置 `general-purpose`、`Explore`、自定义 profile 的 `tools: ["*"]` 和显式 `tools`。
+- With `allowedTools: ["*"]`, inherit the parent tool list but filter `Agent` / `Task`.
+- With `disallowedTools` present, filter the subagent dispatch tools first, then apply the disallow list.
+- An explicit `allowedTools` does not extend the alias; the child runtime itself never registers `Agent` / `Task`, so a miswritten profile stays inert.
+- The child runtime does not expose `EnterPlanMode` / `ExitPlanMode`: a subagent has no reliable user-approval surface, and a child entering plan mode would make `ExitPlanMode` wait on user confirmation and could hang the parent turn forever. This restriction is enforced uniformly at the child provider-visible tool list level, covering built-in `general-purpose`, `Explore`, custom profiles with `tools: ["*"]`, and explicit `tools`.
 
-核心实现位置：
+Core implementation:
 
 - `apps/zcode-cli/packages/core/src/runtime/methods/subagent.ts`
 - `apps/zcode-cli/packages/core/src/tool/compat.ts`
 
-## Hook Matcher 兼容
+## Hook matcher compatibility
 
-Claude Code 插件 hook 可能写 `matcher: "Task"`，而 ZCode 原生调用可能仍是 `Agent`。ZCode hook runner 支持一个实际 `matchValue` 加一组兼容 `matchValues`：
+A Claude Code plugin hook may write `matcher: "Task"` while a native ZCode call still uses `Agent`. The hook runner supports one actual `matchValue` plus a set of compatible `matchValues`:
 
-- `Agent` 调用匹配 `Agent` 和 `Task` matcher。
-- `Task` 调用匹配 `Task` 和 `Agent` matcher。
-- hook stdin 中的 `toolName` 始终保留实际发生的工具名。
-- 其它 hook event 不受影响；没有 alias 时仍按单个 matcher 匹配。
+- An `Agent` call matches `Agent` and `Task` matchers.
+- A `Task` call matches `Task` and `Agent` matchers.
+- The `toolName` in hook stdin always keeps the tool name that actually ran.
+- Other hook events are unaffected; without an alias, single-matcher matching applies.
 
-核心实现位置：
+Core implementation:
 
 - `apps/zcode-cli/packages/core/src/hooks/types.ts`
 - `apps/zcode-cli/packages/core/src/hooks/runner.ts`
 - `apps/zcode-cli/packages/core/src/tool/executor/hook-flow.ts`
 - `apps/zcode-cli/packages/core/src/tool/compat.ts`
 
-## 后台任务与权限
+## Background tasks and permissions
 
-`Agent` 的 `run_in_background` 会返回 `async_launched`，后台任务跟踪需要把 `Task` 视为同一类 subagent task：
+`Agent` with `run_in_background` returns `async_launched`; background task tracking treats `Task` as the same subagent task:
 
-- `Task` 的 async launch 通过 `subagentPort.getTask` 恢复 snapshot。
-- `Task` 不走普通 execution background cancel；和 `Agent` 一样由 subagent 生命周期管理。
-- permission service / scheduler 将 `Task` 归为 read-only、low-risk session-scope subagent 工具，权限声明仍来自共享的 `agentToolEntry.permission`。
-- `run_in_background` 是 `Agent` / `Task` 的固定能力：请求后台执行时直接返回 `async_launched` 并进入 background snapshot 生命周期；前台执行可通过 `subagents.autoBackgroundMs` 在超时后自动切入同一套后台路径。
+- `Task` async launches restore their snapshot via `subagentPort.getTask`.
+- `Task` does not go through normal execution background cancel; like `Agent`, its lifecycle is managed by the subagent lifecycle.
+- The permission service / scheduler class `Task` as a read-only, low-risk session-scope subagent tool; the permission declaration still comes from the shared `agentToolEntry.permission`.
+- `run_in_background` is a fixed capability of `Agent` / `Task`: requesting background execution returns `async_launched` directly and enters the background snapshot lifecycle; foreground execution can auto-switch into the same background path after `subagents.autoBackgroundMs` times out.
 
-核心实现位置：
+Core implementation:
 
 - `apps/zcode-cli/packages/core/src/tool/executor/background-tasks.ts`
 - `apps/zcode-cli/packages/core/src/permission/service.ts`
 - `apps/zcode-cli/packages/core/src/tool/scheduler.ts`
 
-## UI 与历史数据
+## UI and historical data
 
-App/UI 层需要同时识别现役 `Task` 和历史 ZCode Agent 投影：
+The app/UI layer must recognize both the live `Task` and historical ZCode Agent projections:
 
-- `packages/shared/src/tool-identity.ts` 将 `Task` 归为 `agent` family。
-- 服务层和 UI 消息归一在解析 agent activity result 时接受 `Task`。
-- `packages/ui/src/lib/toolIdentity.ts` 保留 legacy fallback：历史数据里 `kind: "think"` + `title: "Task"` 仍是 legacy agent identity，不能因为 `Task` 成为现役工具名就误升级为非 legacy。
+- `packages/shared/src/tool-identity.ts` classifies `Task` into the `agent` family.
+- Service and UI message normalization accept `Task` when parsing agent activity results.
+- `packages/ui/src/lib/toolIdentity.ts` keeps the legacy fallback: historical `kind: "think"` + `title: "Task"` remains a legacy agent identity and must not be mis-upgraded to non-legacy just because `Task` is now a live tool name.
 
-核心实现位置：
+Core implementation:
 
 - `packages/shared/src/tool-identity.ts`
 - `packages/services/src/zcode-agent/zcodeTaskServiceAdapter.ts`
@@ -100,24 +98,24 @@ App/UI 层需要同时识别现役 `Task` 和历史 ZCode Agent 投影：
 - `packages/ui/src/ToolCallBlocks.tsx`
 - `packages/ui/src/lib/toolIdentity.ts`
 
-## 测试矩阵
+## Test matrix
 
-关键回归覆盖：
+Key regression coverage:
 
-- `apps/zcode-cli/packages/core/tests/tool-contracts.test.ts`：`Agent` / `Task` 只在 subagent port 可用时注册，且共享 handler/schema/permission；provider-visible contracts 只包含 `Agent`。
-- `apps/zcode-cli/packages/core/tests/tool-hook-context.test.ts`：`Agent` / `Task` hook matcher alias 双向匹配，hook input 不被改写。
-- `apps/zcode-cli/packages/core/tests/main-tool-pool.test.ts`：父 runtime 具备 `Agent` runtime 能力，`Task` 仅作为非 provider-visible alias 保留。
-- `apps/zcode-cli/packages/core/tests/subagent-explore.test.ts`：子 runtime 不暴露 `Agent` / `Task`。
-- `apps/zcode-cli/packages/core/tests/tool-executor-trace.test.ts`：Superpowers `SessionStart` 不再追加专用工具映射。
-- `packages/ui/test/toolIdentity.test.ts`：现役 `Task` 与历史 `title: "Task"` legacy 投影边界不串。
+- `apps/zcode-cli/packages/core/tests/tool-contracts.test.ts`: `Agent` / `Task` register only when the subagent port exists and share handler/schema/permission; provider-visible contracts contain only `Agent`.
+- `apps/zcode-cli/packages/core/tests/tool-hook-context.test.ts`: `Agent` / `Task` hook matcher aliases match both ways; hook input is not rewritten.
+- `apps/zcode-cli/packages/core/tests/main-tool-pool.test.ts`: the parent runtime has the `Agent` runtime capability; `Task` remains a non-provider-visible alias.
+- `apps/zcode-cli/packages/core/tests/subagent-explore.test.ts`: the child runtime exposes neither `Agent` nor `Task`.
+- `apps/zcode-cli/packages/core/tests/tool-executor-trace.test.ts`: Superpowers `SessionStart` no longer appends a dedicated tool mapping.
+- `packages/ui/test/toolIdentity.test.ts`: live `Task` and historical `title: "Task"` legacy projections do not bleed into each other.
 
-## 扩展规则
+## Extension rules
 
-新增 Claude Code 工具兼容 alias 时必须同时检查：
+Adding a new Claude Code tool-compatibility alias must check all of:
 
-- 工具注册是否应该暴露为真实 provider-visible tool，还是仅作为 runtime alias。
-- hook matcher 是否需要 alias，但 hook input 是否仍应保持实际工具名。
-- 子 runtime allowlist / disallowlist 是否需要过滤递归或危险能力。
-- 后台任务、permission、scheduler 是否按同一工具 family 处理。
-- shared/UI identity 是否会误伤历史投影数据。
-- 是否需要更新 `docs/plugin-hooks-compat.md` 和具体插件 spec。
+- Whether the tool should register as a real provider-visible tool or only a runtime alias.
+- Whether the hook matcher needs the alias while hook input keeps the actual tool name.
+- Whether child allowlist / disallowlist should filter recursion or dangerous capabilities.
+- Whether background tasks, permission, and scheduler treat it as the same tool family.
+- Whether shared/UI identity could damage historical projection data.
+- Whether `docs/plugin-hooks-compat.md` and specific plugin specs need updates.

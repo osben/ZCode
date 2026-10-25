@@ -9,29 +9,17 @@ function makeHome() {
   return mkdtempSync(join(tmpdir(), "zcode-mcp-sync-home-"));
 }
 
-async function writeZcodeUserMcp(
-  home: string,
-  servers: Record<string, Record<string, unknown>>,
-) {
+async function writeZcodeUserMcp(home: string, servers: Record<string, Record<string, unknown>>) {
   const configPath = join(home, ".zcode", "cli", "config.json");
   await mkdir(join(home, ".zcode", "cli"), { recursive: true });
-  await writeFile(
-    configPath,
-    `${JSON.stringify({ mcp: { servers } }, null, 2)}\n`,
-  );
+  await writeFile(configPath, `${JSON.stringify({ mcp: { servers } }, null, 2)}\n`);
   return configPath;
 }
 
-async function writeAgentsUserMcp(
-  home: string,
-  servers: Record<string, Record<string, unknown>>,
-) {
+async function writeAgentsUserMcp(home: string, servers: Record<string, Record<string, unknown>>) {
   const configPath = join(home, ".agents", "mcp.json");
   await mkdir(join(home, ".agents"), { recursive: true });
-  await writeFile(
-    configPath,
-    `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`,
-  );
+  await writeFile(configPath, `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`);
   return configPath;
 }
 
@@ -86,7 +74,7 @@ describe("mcp sync service", () => {
   it("marks a candidate disabled when only enabled:false is present", async () => {
     const home = makeHome();
     process.env.HOME = home;
-    // 外部工具/手工编辑写的是 enabled:false；同步侧不能把它当成启用状态。
+    // External tools / manual edits write enabled:false; the sync side must not treat it as an enabled state.
     await writeZcodeUserMcp(home, {
       context7: {
         type: "stdio",
@@ -105,7 +93,7 @@ describe("mcp sync service", () => {
   it("clears a stale enabled flag when toggling a server", async () => {
     const home = makeHome();
     process.env.HOME = home;
-    // 线上配置里 enable 与 enabled 并存，切换开关后不能再留下自相矛盾的字段。
+    // Production configs have both enable and enabled; toggling must not leave contradictory fields behind.
     await writeZcodeUserMcp(home, {
       context7: {
         command: "npx",
@@ -144,7 +132,7 @@ describe("mcp sync service", () => {
   it("migrates a legacy enable flag to enabled when listing candidates", async () => {
     const home = makeHome();
     process.env.HOME = home;
-    // 存量配置只有桌面端历史写入的 enable；同步侧读取时应就地迁移成契约字段 enabled。
+    // Legacy configs only have enable written historically by the desktop app; the sync side should migrate it in place to the contract field enabled when reading.
     await writeZcodeUserMcp(home, {
       context7: {
         command: "npx",
@@ -167,7 +155,7 @@ describe("mcp sync service", () => {
   it("keeps a candidate disabled when legacy enable:false collides with enabled:true", async () => {
     const home = makeHome();
     process.env.HOME = home;
-    // 线上事故配置：停用写了 enable:false，但外部导入残留 enabled:true。迁移必须保住停用语义。
+    // Real incident config: disable wrote enable:false, but an external import left enabled:true behind. The migration must preserve the disabled semantics.
     await writeZcodeUserMcp(home, {
       context7: {
         command: "npx",
@@ -191,8 +179,8 @@ describe("mcp sync service", () => {
   it("leaves the config file untouched when no legacy enable flag exists", async () => {
     const home = makeHome();
     process.env.HOME = home;
-    // 迁移必须幂等：没有残留字段时不能重写文件，否则每次列举候选都会动用户的配置。
-    // 故意用非规范化的紧凑 JSON 落盘，任何重写都会改变字节内容。
+    // The migration must be idempotent: with no leftover fields the file must not be rewritten, otherwise every candidate listing would touch the user's config.
+    // Deliberately persisted as non-canonical compact JSON, so any rewrite changes the byte content.
     const configPath = join(home, ".zcode", "cli", "config.json");
     await mkdir(join(home, ".zcode", "cli"), { recursive: true });
     const raw = JSON.stringify({
@@ -341,8 +329,7 @@ describe("mcp sync service", () => {
         overwrite: false,
       });
 
-      const configMode = (await stat(join(remoteHome, ".zcode", "cli", "config.json")))
-        .mode;
+      const configMode = (await stat(join(remoteHome, ".zcode", "cli", "config.json"))).mode;
       expect(configMode & 0o777).toBe(0o600);
     } finally {
       process.umask(previousUmask);
@@ -411,9 +398,7 @@ describe("mcp sync service", () => {
         },
       },
     ]);
-    expect(result.servers[0]?.file?.filePath).toBe(
-      join(home, ".zcode", "cli", "config.json"),
-    );
+    expect(result.servers[0]?.file?.filePath).toBe(join(home, ".zcode", "cli", "config.json"));
   });
 
   it("loads workspace MCP before user MCP using the same directory precedence", async () => {

@@ -305,7 +305,7 @@ describe("Provider Facades", () => {
       "personal",
     ]);
     expect(view.providers[1]?.models.map((model) => model.modelId)).toEqual(["custom"]);
-    // 不能只在 UI mock 中补名称：真实 Registry → View 也必须投影规则层名称。
+    // Names must not be patched in only through UI mocks: the real Registry → View projection must surface rule-level names too.
     expect(view.providers[1]?.providerName).toBe("Personal API");
     expect(view.providers[1]?.config).not.toHaveProperty("label");
   });
@@ -357,7 +357,7 @@ describe("Provider Facades", () => {
       { providerName: "New Provider" },
     );
     await facade.reorderPersonalProviders(["personal", "new-provider"]);
-    // Mutation 是只记录调用的 stub；成员操作使用真实快照中已有的 Provider。
+    // The mutations are call-recording stubs; member operations use providers that already exist in the real snapshot.
     await facade.reorderPersonalModels("personal", ["custom"]);
     await facade.addPersonalModel("personal", "model.2", {
       properties: { contextWindow: 128_000 },

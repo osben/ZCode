@@ -1,32 +1,32 @@
-# Desktop 进程命名
+# Desktop Process Naming
 
-## 目标
+## Goal
 
-为了让开发态和运行态都能更快检索桌面端相关进程，应用内统一引入 `zcode-*` 命名约定。
+Desktop processes use a unified `zcode-*` naming convention so they are easy to find in development and at runtime.
 
-## 命名规则
+## Naming Rules
 
-- main 进程：`zcode-main`
-- renderer 进程：
-  - 主窗口：`zcode-renderer-main`
-  - 远程窗口：`zcode-renderer-remote-<host>`
-  - Resource Manager（资源管理器）：`zcode-renderer-resource-manager`
-- host utility process：`zcode-host-<label>`
-- Agent 子进程：`zcode-agent-<provider>-<workspace>`
+- main process: `zcode-main`
+- renderer processes:
+  - Main window: `zcode-renderer-main`
+  - Remote window: `zcode-renderer-remote-<host>`
+  - Resource Manager: `zcode-renderer-resource-manager`
+- host utility process: `zcode-host-<label>`
+- Agent child process: `zcode-agent-<provider>-<workspace>`
 
-统一的字符串拼装逻辑集中在 `packages/shared/src/process-names.ts`，避免 main / host / preload / services 各自散落硬编码。
+The shared string-construction logic is centralized in `packages/shared/src/process-names.ts`, avoiding scattered hard-coded names across main / host / preload / services.
 
-## 实现入口
+## Implementation Entry Points
 
 - `process.title`
-  - main / host / renderer preload 都会设置，提升 `ps` / `pgrep` 检索体验
+- Set by main / host / renderer preload to improve discoverability with `ps` / `pgrep`
 - `utilityProcess.fork({ serviceName })`
-  - 让 `app.getAppMetrics()` 和资源管理器里能拿到稳定的 host 名称
+- Makes a stable host name available to `app.getAppMetrics()` and Resource Manager
 - `spawn({ argv0 })`
-  - 给 Agent 子进程补统一的可检索入口
+- Gives Agent child processes a consistent, searchable name
 
-## 边界说明
+## Boundaries
 
-- 开发态下，macOS Activity Monitor 或系统进程管理器的“外壳可执行名”仍可能显示为 `Electron` / `Electron Helper`
-- `process.title` 更适合 `ps` / `pgrep` / 应用内资源管理器这种检索场景，不保证所有系统 GUI 都完全按这个名字展示
-- GPU / Network Service 这类 Electron 内建子进程，应用内资源管理器会统一映射成 `zcode-*`，但系统级展示仍受 Electron / Chromium 控制
+- In development, the “wrapper executable name” in macOS Activity Monitor or another system process manager may still appear as `Electron` / `Electron Helper`.
+- `process.title` is better suited to search contexts such as `ps` / `pgrep` / the in-app Resource Manager; it does not guarantee that every system GUI displays the name exactly this way.
+- Electron built-in child processes such as GPU / Network Service are consistently mapped to `zcode-*` in the in-app Resource Manager, but system-level display remains controlled by Electron / Chromium.

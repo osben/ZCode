@@ -22,7 +22,7 @@ interface CacheEntry {
   pending?: Promise<ClientConfigSnapshot>;
 }
 
-/** 首期仅公开配置；账户灰度不得通过此实例或缓存复用。 */
+/** Only public configuration is exposed in the first release; account-level rollouts must not reuse this instance or cache. */
 export function createClientConfigService(dependencies: {
   apiClient: ApiClient;
   resolveRequestContext: () => RequestContext | Promise<RequestContext>;
@@ -49,7 +49,7 @@ export function createClientConfigService(dependencies: {
             signal: controller.signal,
           });
           if (!response.ok) throw new Error(`Public client config HTTP ${response.status}`);
-          // 设置中的 endpoint 可能在两次 await 之间变化；不能把新地址的响应缓存到旧地址。
+          // The endpoint in settings may change between the two awaits; do not cache a response from the new address under the old address.
           if (response.url && response.url !== url.toString()) {
             throw new Error("Public client config request context changed");
           }

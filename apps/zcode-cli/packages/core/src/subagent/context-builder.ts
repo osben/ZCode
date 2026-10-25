@@ -1,4 +1,5 @@
 import type { Model, ModelInputMessage } from "@zcode/contracts";
+import { DEFAULT_CONFIRMATION_PARAGRAPH, type IncognitoProfile } from "@zcode/shared";
 import { ContextBuilder } from "../context/builder.js";
 import {
   buildContextMetaUserBody,
@@ -9,8 +10,10 @@ import {
   type EnvInfo,
 } from "../context/index.js";
 import { buildCliPrefixSection } from "../context/sections/cli-prefix.js";
+import { resolveIncognitoPromptToggles } from "../context/sections/prompt-toggles.js";
 import { buildCurrentDateSection } from "../context/sections/current-date.js";
 import { buildRequestUserContextSection } from "../context/sections/request-user-context.js";
+import type { ExecutionWorktreeEnvFact } from "../context/sections/env-info.js";
 import { buildSkillsSection } from "../context/sections/skills.js";
 import { estimateTokens } from "../context/utils.js";
 import { buildSubagentCommonNotes, buildSubagentEnvironmentContext } from "./system-prompt.js";
@@ -20,9 +23,13 @@ export interface SubagentContextBuilderConfig {
   currentDate?: string;
   envInfo: EnvInfo;
   model?: Model;
+  /** Worktree isolation notice projected from the parent runtime config; absent for plain sessions. */
+  executionWorktree?: ExecutionWorktreeEnvFact;
   skillMetadataBudget?: number;
   skills?: ContextBuilderConfig["skills"];
   userInstructions?: ContextBuilderConfig["userInstructions"];
+  /** Frozen incognito profile inherited from the parent; absent for a normal session. */
+  incognito?: IncognitoProfile;
 }
 
 const EPHEMERAL_CACHE_CONTROL = { type: "ephemeral" as const };
@@ -51,7 +58,7 @@ export class SubagentContextBuilder extends ContextBuilder {
     const systemSections = orderedSections.filter(
       (section) => section.injectionTarget === "system",
     );
-    // 逐段标记会耗尽缓存断点额度，导致对话末尾标记被丢弃；正文合并时保留各段自带的换行。
+    // Marking each segment separately exhausts the cache-breakpoint budget and drops the marker at the end of the conversation; preserve each segment's newlines when joining the text.
     const systemMessages = [
       systemSections.filter((section) => section.source === "cli_prefix"),
       systemSections.filter((section) => section.source !== "cli_prefix"),
@@ -109,7 +116,10 @@ export function createSubagentContextBuilder(
 }
 
 function buildSubagentContextSections(config: SubagentContextBuilderConfig): ContextSection[] {
-  const sections: ContextSection[] = [buildCliPrefixSection()];
+  const { identityOff, harnessOff, environmentOff } = resolveIncognitoPromptToggles(
+    config.incognito,
+  );
+  const sections: ContextSection[] = identityOff ? [] : [buildCliPrefixSection()];
   const agentPrompt = config.agentPrompt.trimEnd();
   if (agentPrompt) {
     sections.push(
@@ -117,32 +127,42 @@ function buildSubagentContextSections(config: SubagentContextBuilderConfig): Con
         name: "Subagent Agent Prompt",
         source: "subagent_agent_prompt",
         cacheHint: "stable",
-        // 空 prompt 不是语义段，不能让左边界单独成为 system block。
-        // ZCode by design：Subagent agent prompt 自带相对 CLI prefix 的单换行左边界。
+        // An empty prompt is not a semantic section; do not let its leading boundary become a system block by itself.
+        // By design, the subagent agent prompt carries a single-newline boundary relative to the CLI prefix.
         content: `\n${agentPrompt}`,
       }),
     );
   }
 
+  // harness off: the notes are behavior text; the confirmation paragraph stays as the safety floor.
   sections.push(
     createSubagentSection({
       name: "Subagent Notes",
       source: "subagent_notes",
       cacheHint: "stable",
-      // ZCode by design：后续 Subagent system block 统一自带双换行左边界。
-      content: `\n\n${buildSubagentCommonNotes()}`,
-    }),
-    createSubagentSection({
-      name: "Subagent Environment",
-      source: "subagent_environment",
-      cacheHint: "dynamic",
-      content: `\n\n${buildSubagentEnvironmentContext({
-        agentPrompt: config.agentPrompt,
-        envInfo: config.envInfo,
-        model: config.model,
-      })}`,
+      // By design, each subsequent subagent system block carries a double-newline leading boundary.
+      content: harnessOff
+        ? `\n\n${DEFAULT_CONFIRMATION_PARAGRAPH}`
+        : `\n\n${buildSubagentCommonNotes()}`,
     }),
   );
+  const environmentContext = buildSubagentEnvironmentContext({
+    agentPrompt: config.agentPrompt,
+    envInfo: config.envInfo,
+    model: config.model,
+    executionWorktree: config.executionWorktree,
+    worktreeOnly: environmentOff,
+  });
+  if (environmentContext) {
+    sections.push(
+      createSubagentSection({
+        name: "Subagent Environment",
+        source: "subagent_environment",
+        cacheHint: "dynamic",
+        content: `\n\n${environmentContext}`,
+      }),
+    );
+  }
 
   const requestUserContextSection = buildRequestUserContextSection({
     userInstructions: config.userInstructions,

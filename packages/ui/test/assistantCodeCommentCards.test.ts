@@ -5,12 +5,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AssistantCodeCommentCards } from "@/AssistantCodeCommentCards.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import type { AssistantCodeCommentCard } from "@/lib/assistantCodeComment.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 
 function card(index: number): AssistantCodeCommentCard {
   return {
     id: `comment-${index}`,
-    title: `[P1] 风险 ${index}`,
-    body: `需要修复 ${index}`,
+    title: `[P1] Risk ${index}`,
+    body: `Fix needed ${index}`,
     file: `src/file-${index}.ts`,
     path: `/workspace/src/file-${index}.ts`,
     displayPath: `src/file-${index}.ts`,
@@ -27,12 +28,12 @@ describe("AssistantCodeCommentCards", () => {
     window.getSelection()?.removeAllRanges();
   });
 
-  it("默认折叠；每条只占一行，正文不展示 body，文字可选择且整行打开只读 Code Review", () => {
+  it("is collapsed by default; each comment occupies one row without the body; text is selectable and a plain-row click opens the readonly code review", () => {
     const onOpenCodeViewer = vi.fn();
     render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: TEST_LOCALE },
         createElement(AssistantCodeCommentCards, {
           cards: Array.from({ length: 7 }, (_, index) => card(index + 1)),
           workspacePath: "/workspace",
@@ -43,20 +44,20 @@ describe("AssistantCodeCommentCards", () => {
       ),
     );
 
-    expect(screen.getByText("7 条评论")).toBeTruthy();
-    expect(screen.queryByText("风险 1")).toBeNull();
+    expect(screen.getByText(expectedCopy("chat.codeComments.other", { count: 7 }))).toBeTruthy();
+    expect(screen.queryByText("Risk 1")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: /展开 7 条评论/ }));
-    expect(screen.getByText("风险 1")).toBeTruthy();
-    expect(screen.getByText("风险 6")).toBeTruthy();
-    expect(screen.queryByText("需要修复 1")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Show 7 comments/ }));
+    expect(screen.getByText("Risk 1")).toBeTruthy();
+    expect(screen.getByText("Risk 6")).toBeTruthy();
+    expect(screen.queryByText("Fix needed 1")).toBeNull();
 
-    const firstCard = screen.getByRole("button", { name: /风险 1/ });
+    const firstCard = screen.getByRole("button", { name: /Risk 1/ });
     expect(screen.getByText("src/file-1.ts:1–2")).toBeTruthy();
 
     const selection = window.getSelection();
     const range = document.createRange();
-    range.selectNodeContents(screen.getByText("风险 1"));
+    range.selectNodeContents(screen.getByText("Risk 1"));
     selection?.removeAllRanges();
     selection?.addRange(range);
     fireEvent.click(firstCard);
@@ -74,8 +75,8 @@ describe("AssistantCodeCommentCards", () => {
         workspaceRemoteSessionId: "remote-1",
         review: {
           requestId: expect.stringContaining("comment-1:"),
-          title: "风险 1",
-          body: "需要修复 1",
+          title: "Risk 1",
+          body: "Fix needed 1",
           priority: 1,
           startLine: 1,
           endLine: 2,

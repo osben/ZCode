@@ -227,6 +227,8 @@ vi.mock("@/ControlHintTooltip.js", () => ({
 
 vi.mock("@/store/TabStoreProvider.js", () => ({
   useTabStore: (selector: (state: { tabs: unknown[] }) => unknown) => selector(mockTabs),
+  // Modules reached through the settings tree read the optional store hook (useWorkspaceServices et al.).
+  useOptionalTabStore: (selector: (state: { tabs: unknown[] }) => unknown) => selector(mockTabs),
 }));
 
 vi.mock("@/store/pluginManagementStore.js", () => ({

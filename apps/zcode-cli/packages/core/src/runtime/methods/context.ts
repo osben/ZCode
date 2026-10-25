@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { incognitoExcludes } from "@zcode/shared";
 
 import {
   traceContextToLogContext,
@@ -14,6 +15,7 @@ import type {
   ContextBuilder,
   ContextBuilderConfig,
 } from "../deps.js";
+import type { AgentRuntimeConfig } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { ensureMemoryDirectoryExists } from "../../memory/directory.js";
 import { formatProjectMemoryIndexContent } from "../../memory/index-content.js";
@@ -51,13 +53,16 @@ export async function ensureContextInitialized(
           currentDate: this.config.currentDate,
           effectiveShellDisplayName: shellDisplayName,
           envInfo: this.config.envInfo,
-          userInstructions: this.config.userInstructions
-            ? {
-                ...this.config.userInstructions,
-                workingDirectory:
-                  this.config.userInstructions.workingDirectory ?? this.workingDirectory,
-              }
-            : undefined,
+          // Incognito without project instructions resolves no user or project AGENTS.md.
+          userInstructions:
+            this.config.userInstructions &&
+            !incognitoExcludes(this.config.incognito, "projectInstructions")
+              ? {
+                  ...this.config.userInstructions,
+                  workingDirectory:
+                    this.config.userInstructions.workingDirectory ?? this.workingDirectory,
+                }
+              : undefined,
           projectContext: this.config.projectContext,
           trace: traceContext,
         },
@@ -66,7 +71,7 @@ export async function ensureContextInitialized(
     : this.createConfigOnlyContextSnapshot(this.workingDirectory);
 
   this.workingDirectory = snapshot.workingDirectory;
-  // Bash cd 之后 workingDirectory 会变化，但 workspaceRoot 仍表示会话初始工作区边界。
+  // workingDirectory changes after Bash cd, but workspaceRoot continues to represent the session's initial workspace boundary.
   this.workspaceRoot = snapshot.workingDirectory;
   this.contextSourceSnapshot = snapshot;
   this.startMcpStartup(traceContext);
@@ -94,9 +99,9 @@ export async function getSkillCatalog(
   this: AgentRuntimeInternal,
   traceContext: TraceContext,
 ): Promise<SkillLoadOutcome> {
-  // Composer 曾独立扫描磁盘，所以运行中的 Session 会看到 AgentRuntime
-  // 尚未加载的新 Skill。先经过 runtime 唯一的 context 初始化门，再返回防御性副本，
-  // 让 UI 与本 Session 实际可用的 Skill 保持同一快照；新 runtime 会自然重新发现。
+  // Composer previously scanned disk independently, so a running Session could see new Skills not yet loaded by AgentRuntime.
+  // Pass through the runtime's sole context-initialization gate first, then return a defensive copy,
+  // keeping the UI's Skills in the same snapshot as those actually available to this Session; a new runtime naturally rediscovers them.
   await this.ensureContextInitialized(traceContext);
   const outcome = this.skillLoadOutcome ?? {
     skills: [],
@@ -110,6 +115,26 @@ export async function getSkillCatalog(
   };
 }
 
+/**
+ * Main-agent-only boundary for system-prompt overrides: workflow and subagent child runtimes
+ * (legacy script-workflow children spread the parent AgentRuntimeConfig without setting
+ * workflowActor, so the builder's workflow-actor gate never sees them) must keep the code
+ * defaults for the shared prompt fragments regardless of what the parent carries.
+ */
+export function resolveMainAgentSystemPromptOverrides(
+  config: Pick<AgentRuntimeConfig, "taskType" | "systemPromptOverrides">,
+): AgentRuntimeConfig["systemPromptOverrides"] {
+  const taskType = config.taskType;
+  if (
+    taskType === "workflow_child" ||
+    taskType === "nested_workflow_child" ||
+    taskType === "subagent_child"
+  ) {
+    return undefined;
+  }
+  return config.systemPromptOverrides;
+}
+
 export function createContextBuilderFromSnapshot(
   this: AgentRuntimeInternal,
   snapshot: ContextSourceSnapshot,
@@ -117,22 +142,29 @@ export function createContextBuilderFromSnapshot(
   options: { memoryIndexContent?: string; model?: Model; persistEnvInfo?: boolean } = {},
 ): ContextBuilder {
   const envInfo = snapshot.envInfo;
-  // 同步 preview / config-only fallback 会构造 unknown envInfo。
-  // 这类临时值不能写回 config，否则首轮真实 context source 会把它当作显式 envInfo，
-  // 从而跳过 Node env/git 探测。
+  // Synchronous preview/config-only fallback constructs unknown envInfo.
+  // Do not write this temporary value back to config, or the first real context source will treat it as explicit envInfo
+  // and skip Node environment/git detection.
   if (options.persistEnvInfo !== false) {
-    // 执行模型属于 model step，不写回可复用的 Context Source。
+    // The execution model belongs to the model step; do not write it back to the reusable Context Source.
     this.config.envInfo = envInfo;
   }
+  // Incognito without skills drops only the listing; discovery, the catalog and the Skill tool stay.
+  const skillListing = incognitoExcludes(this.config.incognito, "skills")
+    ? undefined
+    : this.skillLoadOutcome;
   if (this.config.subagentContext) {
     return createSubagentContextBuilder({
       agentPrompt: this.config.subagentContext.agentPrompt,
       currentDate: snapshot.currentDate,
       envInfo,
       model: options.model,
+      // Subagents run in the same (worktree) cwd and must carry the same isolation notice.
+      executionWorktree: this.config.executionWorktree,
       skillMetadataBudget: this.config.skillMetadataBudget,
-      skills: this.skillLoadOutcome,
+      skills: skillListing,
       userInstructions: this.config.subagentContext.userInstructions,
+      incognito: this.config.incognito,
     });
   }
 
@@ -141,6 +173,7 @@ export function createContextBuilderFromSnapshot(
     additionalDirectories: this.config.additionalDirectories,
     envInfo,
     model: options.model,
+    executionWorktree: this.config.executionWorktree,
     presentationSurface: this.config.presentationSurface,
     genUiOutputDirectory: resolveGenUiOutputDirectory(this),
     currentDate: snapshot.currentDate,
@@ -148,7 +181,8 @@ export function createContextBuilderFromSnapshot(
     projectContext: snapshot.projectContext,
     memoryIndexContent: options.memoryIndexContent,
     memoryRoot,
-    skills: this.skillLoadOutcome,
+    memoryIndexAsContext: this.config.memory?.indexAsContext === true,
+    skills: skillListing,
     agentProfiles: this.config.subagents?.profiles,
     embeddedSearchEnabled: resolveRuntimeEmbeddedSearchEnabled(this),
     skillMetadataBudget: this.config.skillMetadataBudget,
@@ -156,8 +190,10 @@ export function createContextBuilderFromSnapshot(
     workflowActor: this.config.workflowActor,
     language: this.config.language,
     outputStyle: this.config.outputStyle,
+    systemPromptOverrides: resolveMainAgentSystemPromptOverrides(this.config),
     compact: this.config.compact,
     guidanceToolNames: this.getTools(options.model).map((tool) => tool.name),
+    incognito: this.config.incognito,
   };
 
   return createContextBuilder(contextConfig).setToolRegistry(this.registry);
@@ -210,7 +246,7 @@ export async function loadProjectMemoryIndexContent(
     });
     return read.content;
   } catch {
-    // 默认 Memory 分支将缺失或不可读的 index 视为没有该 context source。
+    // The default Memory branch treats a missing or unreadable index as absence of this context source.
     return undefined;
   }
 }

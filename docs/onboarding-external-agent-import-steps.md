@@ -1,30 +1,29 @@
-# 引导迁移向导外部 Agent 导入步骤
+# Onboarding Migration Wizard: External Agent Import Steps
 
-## 背景
+## Goals
 
-设置页已经具备从外部 Agent 导入 Skills、MCP 服务器、插件、命令的基础能力。插件导入当前仍需要 Agent 侧支持，入口暂时隐藏；首启引导的数据迁移向导需要先覆盖可用的 Skills、MCP 服务器、命令导入。
+- Before the formal migration step, the onboarding migration wizard offers three available
+  external-import steps: Skills, MCP servers, Commands. Plugin import still needs Agent-side
+  support, so its step stays hidden.
+- Hide the proxy-settings step; Agent proxy configuration is not migrated by the onboarding wizard.
+- Reuse the Settings import dialog interactions per step: scanning, scope switching, refresh,
+  expanding sources, per-item selection, select/deselect all, import target, import method.
+- The MCP-server step reuses the Settings MCP import logic; configuration merge only, no
+  symlink/copy modes.
+- Selected items from all three steps import together when the user enters the final migration
+  step.
 
-## 目标
+## Behavior
 
-- 在引导迁移向导的正式迁移前加入三个可用外部导入步骤：
-  - Skills
-  - MCP 服务器
-  - 命令
-- 插件导入步骤暂时隐藏，原因是需要 Agent 侧支持完成后再开放。
-- 代理设置步骤暂时隐藏，不在引导的数据迁移向导里迁移 Agent 代理配置。
-- 每个步骤复用设置页导入弹窗的扫描、scope 切换、刷新、来源展开、逐项选择、全选/取消全选、导入目标、导入方式交互。
-- MCP 服务器步骤复用设置页 MCP 导入逻辑，仅合并配置，不显示软链/复制模式。
-- 进入最终迁移步骤时，将三个可用导入步骤中已选内容统一导入。
+- Each step scans on demand when the user enters it, not all external directories on the first
+  screen.
+- Users may select no external items and continue.
+- "Start migration" enables when at least one session or one external import item is selected.
+- Keep the settings-sync result counts; the completion page shows successful, skipped and failed
+  import counts together.
 
-## 行为
+## Compatibility
 
-- 三个可用导入步骤按需扫描：用户进入对应步骤时扫描当前类别，避免首屏一次性触发所有外部目录读取。
-- 用户可以不选择任何外部导入项并继续下一步。
-- “开始迁移”在至少选中会话或任一外部导入项时可用。
-- 外部导入结果继续复用 settings-sync 结果统计，进入完成页统一展示导入成功、跳过、失败数量。
-
-## 兼容性
-
-- 桌面端与 Web 端共用 UI 状态；实际可扫描内容由 settings-sync service 决定。
-- Project 目标仍依赖当前 workspacePath；无 workspace 时 Project 目标禁用。
-- 不引入 Gemini 相关来源。
+- Desktop and web share UI state; the settings-sync service decides what can actually be scanned.
+- The Project target depends on the current `workspacePath`; disable it when there is no workspace.
+- No Gemini-related sources.

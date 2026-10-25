@@ -47,8 +47,9 @@ export interface CreateOwnedAgentTelemetryRuntimeOptions {
 }
 
 /**
- * 该模块只由异步 Bootstrap 在 Telemetry 确认启用后动态加载。不要从公共入口静态导入，
- * 否则 `--help`、版本查询和 disabled 模式仍会承担 OTel SDK 初始化成本。
+ * This module is dynamically loaded only by the asynchronous Bootstrap after Telemetry is
+ * confirmed enabled. Do not statically import it from the public entry point, or `--help`, version
+ * queries, and disabled mode will still pay the OTel SDK initialization cost.
  */
 export function createOwnedAgentTelemetryRuntime(
   options: CreateOwnedAgentTelemetryRuntimeOptions,
@@ -77,8 +78,8 @@ export function createOwnedAgentTelemetryRuntime(
   const metricExporter = new OTLPMetricExporter({
     compression: CompressionAlgorithm.GZIP,
     headers: options.metricHeaders ?? options.headers,
-    // CLI Metric 不携带每进程实例 ID，必须用 DELTA 避免多个短生命周期生产者的累计
-    // Counter/Histogram 在后端发生重置冲突。
+    // CLI Metrics omit per-process instance IDs, so use DELTA to avoid reset conflicts in
+    // cumulative Counters/Histograms from multiple short-lived producers on the backend.
     temporalityPreference: AggregationTemporality.DELTA,
     timeoutMillis: timeoutMs,
     url: options.metricEndpoint ?? options.endpoint,
@@ -96,8 +97,8 @@ export function createOwnedAgentTelemetryRuntime(
   const contextManager = new AsyncLocalStorageContextManager();
   const registered = context.setGlobalContextManager(contextManager.enable());
   if (!registered) {
-    // 同进程宿主已注册 Context Manager 时复用宿主实例；未注册成功的本实例必须关闭，
-    // 避免留下第二套 AsyncLocalStorage。
+    // Reuse the host instance if the same-process host has already registered a Context Manager;
+    // close this instance if registration failed to avoid leaving a second AsyncLocalStorage.
     contextManager.disable();
   }
 
@@ -237,8 +238,9 @@ function telemetryResourceAttributes(
     "os.type": process.platform,
     "process.runtime.name": "nodejs",
     "process.runtime.version": process.version.replace(/^v/u, ""),
-    // Metric Resource 也参与时序 Series 身份。CLI 每次启动生成的实例 ID 和安装 ID 只能
-    // 属于 Trace；若进入 Metric，会在所有用户进程间制造无界基数。
+    // Metric Resources also contribute to time-series identity. The instance ID generated at each
+    // CLI startup and the install ID belong only in Traces; including them in Metrics would create
+    // unbounded cardinality across all user processes.
     "service.instance.id": options.includeServiceInstanceId
       ? resource.serviceInstanceId
       : undefined,

@@ -1,9 +1,11 @@
 /**
- * Workspace 导航历史 —— 浏览器式前进/后退栈
+ * Workspace navigation history — a browser-style back/forward stack.
  *
- * 纯数据结构 + 不可变更新函数，不含 React 依赖。
- * 由 zcodeSessionStore 持有实例并驱动 UI 状态。
+ * Pure data structures + immutable update functions, with no React dependency.
+ * zcodeSessionStore owns the instance and drives UI state.
  */
+
+import { getWorkspaceKey } from "@/lib/workspaceKey.js";
 
 interface WorkspaceNavEntryBase {
   workspacePath: string;
@@ -15,8 +17,8 @@ export interface TaskNavEntry extends WorkspaceNavEntryBase {
   taskId: string;
 }
 
-// "workflow" 是自动化页的顶级「工作流」标签；
-// scheduled / idle 仍是「自动化」标签内部的胶囊。
+// "workflow" is the top-level “Workflows” tab on the Automations page;
+// scheduled / idle remain pills within the “Automations” tab.
 export type AutomationsNavigationTab = "scheduled" | "idle" | "workflow";
 
 export type OpenAutomationsMain = (
@@ -38,7 +40,7 @@ export type WorkspaceNavEntry = TaskNavEntry | AutomationsNavEntry | PluginStore
 
 export interface TaskNavigationHistory {
   entries: WorkspaceNavEntry[];
-  /** 当前指针，指向 entries 中的索引；-1 表示空 */
+  /** Current pointer to an index in entries; -1 means empty. */
   cursor: number;
 }
 
@@ -48,15 +50,23 @@ export function createTaskNavigationHistory(): TaskNavigationHistory {
   return { entries: [], cursor: -1 };
 }
 
-export function isTaskNavEntry(
-  entry: WorkspaceNavEntry,
-): entry is TaskNavEntry {
+export function isTaskNavEntry(entry: WorkspaceNavEntry): entry is TaskNavEntry {
   return entry.kind === "task";
 }
 
-export function isAutomationsNavEntry(
-  entry: WorkspaceNavEntry,
-): entry is AutomationsNavEntry {
+/** Identity of a task across workspaces: the same taskId in two workspaces is two different tasks. */
+export interface TaskIdentityRef {
+  taskId: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+}
+
+/** Full identity key, using the workspace identity rule: `workspaceIdentity?.trim() || workspacePath`. */
+export function taskRefKey(ref: TaskIdentityRef): string {
+  return `${getWorkspaceKey(ref.workspacePath, ref.workspaceIdentity)}::${ref.taskId}`;
+}
+
+export function isAutomationsNavEntry(entry: WorkspaceNavEntry): entry is AutomationsNavEntry {
   return entry.kind === "automations";
 }
 
@@ -64,10 +74,7 @@ export function isPluginStoreNavEntry(entry: WorkspaceNavEntry): entry is Plugin
   return entry.kind === "plugin-store";
 }
 
-function isSameNavEntry(
-  left: WorkspaceNavEntry,
-  right: WorkspaceNavEntry,
-): boolean {
+function isSameNavEntry(left: WorkspaceNavEntry, right: WorkspaceNavEntry): boolean {
   if (
     left.kind !== right.kind ||
     left.workspacePath !== right.workspacePath ||
@@ -93,12 +100,12 @@ function pushEntry(
 ): TaskNavigationHistory {
   const current = history.cursor >= 0 ? history.entries[history.cursor] : null;
 
-  // 相邻去重：历史回放或连续打开同一目标时不重复入栈。
+  // Deduplicate adjacent entries: replaying history or repeatedly opening the same target should not add duplicates.
   if (current && isSameNavEntry(current, entry)) {
     return history;
   }
 
-  // 截断 cursor 之后的前进历史，保持浏览器式导航语义。
+  // Truncate forward history after the cursor to preserve browser-style navigation semantics.
   const next = [...history.entries.slice(0, history.cursor + 1), entry];
   if (next.length > MAX_HISTORY) {
     const overflow = next.length - MAX_HISTORY;
@@ -111,15 +118,15 @@ function pushEntry(
   return { entries: next, cursor: next.length - 1 };
 }
 
-/** 用户主动选择/创建 task 时调用。 */
+/** Called when the user selects or creates a task. */
 export function pushNavEntry(
   history: TaskNavigationHistory,
   workspacePath: string,
   taskId: string,
   workspaceIdentity?: string,
 ): TaskNavigationHistory {
-  // 远程 workspace 的导航不能只记路径。
-  // 同一路径在本地/远端或多台远端机器上可能同时存在，必须把身份隔离键一起入栈。
+  // Navigation for a remote workspace cannot be keyed by path alone.
+  // The same path may exist locally, remotely, or on multiple remote machines, so include the identity isolation key in the history entry.
   return pushEntry(history, {
     kind: "task",
     workspacePath,
@@ -128,7 +135,7 @@ export function pushNavEntry(
   });
 }
 
-/** 用户主动打开 Automations 主视图或指定详情时调用。 */
+/** Called when the user opens the Automations main view or a specific detail. */
 export function pushAutomationsNavEntry(
   history: TaskNavigationHistory,
   workspacePath: string,
@@ -165,7 +172,7 @@ export function canGoForward(history: TaskNavigationHistory): boolean {
   return history.cursor < history.entries.length - 1;
 }
 
-/** 后退一步，返回新的 history 和目标 entry。 */
+/** Move back one step and return the new history and target entry. */
 export function goBack(
   history: TaskNavigationHistory,
 ): { history: TaskNavigationHistory; entry: WorkspaceNavEntry } | null {
@@ -185,7 +192,7 @@ export function goBack(
   };
 }
 
-/** 前进一步，返回新的 history 和目标 entry。 */
+/** Move forward one step and return the new history and target entry. */
 export function goForward(
   history: TaskNavigationHistory,
 ): { history: TaskNavigationHistory; entry: WorkspaceNavEntry } | null {
@@ -206,33 +213,117 @@ export function goForward(
 }
 
 /**
- * 从历史中移除指定 taskId 的所有 task 条目（task 被删除时调用）。
- * Automations 条目不属于 task 生命周期，必须原样保留。
+ * Keeps the cursor on the same surviving entry. When the current entry was removed, it moves to the
+ * first survivor after the removed position, counting only survivors before the old cursor so earlier removals cannot overshoot.
+ */
+function cursorAfterRemoval(
+  entries: readonly WorkspaceNavEntry[],
+  kept: readonly WorkspaceNavEntry[],
+  cursor: number,
+): number {
+  if (kept.length === 0) {
+    return -1;
+  }
+
+  const current = cursor >= 0 ? entries[cursor] : undefined;
+  const keptIndex = current ? kept.indexOf(current) : -1;
+  if (keptIndex >= 0) {
+    return keptIndex;
+  }
+
+  const survivorsBeforeCursor = entries
+    .slice(0, Math.max(cursor, 0))
+    .filter((entry) => kept.includes(entry)).length;
+  return Math.min(survivorsBeforeCursor, kept.length - 1);
+}
+
+/**
+ * Remove all task entries with the given taskId from history (called when a task is deleted).
+ * Automations entries are not part of the task lifecycle and must be preserved as-is.
  */
 export function removeTaskFromHistory(
   history: TaskNavigationHistory,
-  taskId: string,
+  task: TaskIdentityRef,
 ): TaskNavigationHistory {
-  const currentEntry =
-    history.cursor >= 0 ? history.entries[history.cursor] : null;
-  const filtered = history.entries.filter(
-    (entry) => !isTaskNavEntry(entry) || entry.taskId !== taskId,
+  const taskKey = taskRefKey(task);
+  const kept = history.entries.filter(
+    (entry) => !isTaskNavEntry(entry) || taskRefKey(entry) !== taskKey,
   );
 
-  if (filtered.length === history.entries.length) {
+  if (kept.length === history.entries.length) {
     return history;
   }
 
-  if (filtered.length === 0) {
+  if (kept.length === 0) {
     return createTaskNavigationHistory();
   }
 
-  // 当前条目未被删除时保持指向它；被删时沿用旧位置选择最近目标。
-  const currentEntryIndex = currentEntry ? filtered.indexOf(currentEntry) : -1;
-  const cursor =
-    currentEntryIndex >= 0
-      ? currentEntryIndex
-      : Math.min(history.cursor, filtered.length - 1);
+  return { entries: kept, cursor: cursorAfterRemoval(history.entries, kept, history.cursor) };
+}
 
-  return { entries: filtered, cursor };
+export type TaskNavigationDirection = "back" | "forward";
+
+export interface TaskNavigationStep {
+  history: TaskNavigationHistory;
+  /** Entry to open, or null when nothing reachable remains in that direction. */
+  entry: WorkspaceNavEntry | null;
+}
+
+/**
+ * Moves one step in `direction`, purging task entries whose target `isAvailable` rejects.
+ *
+ * The walk and the purge are computed from one snapshot, so a purged entry never shifts the cursor that
+ * the next step reads. Replaying back or forward therefore visits surviving entries in their recorded order.
+ * When nothing reachable remains, only the purge is kept and the cursor stays on the current entry.
+ */
+export function stepTaskNavigationHistory(
+  history: TaskNavigationHistory,
+  direction: TaskNavigationDirection,
+  isAvailable: (entry: TaskNavEntry) => boolean,
+): TaskNavigationStep {
+  const stride = direction === "back" ? -1 : 1;
+  const unavailableTaskKeys = new Set<string>();
+  let target: WorkspaceNavEntry | undefined;
+
+  for (
+    let index = history.cursor + stride;
+    index >= 0 && index < history.entries.length;
+    index += stride
+  ) {
+    const entry = history.entries[index];
+    if (!entry) {
+      break;
+    }
+    if (isTaskNavEntry(entry)) {
+      const key = taskRefKey(entry);
+      if (unavailableTaskKeys.has(key)) {
+        continue;
+      }
+      if (!isAvailable(entry)) {
+        unavailableTaskKeys.add(key);
+        continue;
+      }
+    }
+    target = entry;
+    break;
+  }
+
+  const kept =
+    unavailableTaskKeys.size === 0
+      ? history.entries
+      : history.entries.filter(
+          (entry) => !(isTaskNavEntry(entry) && unavailableTaskKeys.has(taskRefKey(entry))),
+        );
+
+  if (target) {
+    return { history: { entries: kept, cursor: kept.indexOf(target) }, entry: target };
+  }
+
+  if (kept.length === history.entries.length) {
+    return { history, entry: null };
+  }
+  return {
+    history: { entries: kept, cursor: cursorAfterRemoval(history.entries, kept, history.cursor) },
+    entry: null,
+  };
 }

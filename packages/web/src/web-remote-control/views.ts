@@ -4,6 +4,7 @@ export * from "#src/web-remote-control/ui/webRemoteControlConnectingScreen.js";
 export * from "#src/web-remote-control/ui/webRemoteControlConnectionSheet.js";
 export * from "#src/web-remote-control/ui/webRemoteControlDeviceListPage.js";
 export * from "#src/web-remote-control/ui/webRemoteControlFailureScreen.js";
+export * from "#src/web-remote-control/ui/webRemoteControlRepairNoticeScreen.js";
 export * from "#src/web-remote-control/ui/webRemoteControlScanPage.js";
 export * from "#src/web-remote-control/ui/webRemoteControlSwitchAccountDialog.js";
 export * from "#src/web-remote-control/ui/webRemoteControlVersionNotice.js";

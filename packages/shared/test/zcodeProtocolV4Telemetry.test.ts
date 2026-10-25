@@ -273,7 +273,7 @@ describe("ConversationTelemetryFact schema", () => {
       errorMessage: "Workflow run stopped (user)",
     });
     expect(settled).toMatchObject({ status: "stopped", stopReason: "user" });
-    // actor-spawned 缺子会话 id 不成立；run-settled 缺状态不成立；正文字段一律拒绝。
+    // actor-spawned without the child session id is invalid; run-settled without a status is invalid; body fields are always rejected.
     expect(() =>
       conversationTelemetryFactSchema.parse({
         ...base,

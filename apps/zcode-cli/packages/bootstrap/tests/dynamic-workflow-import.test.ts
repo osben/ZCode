@@ -1,10 +1,11 @@
 /**
- * amend-resume 导入构建器的单元测试（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Amend-resume」与
- * 「转录源解析」两行）。
+ * Unit tests for the amend-resume import builder (the "Amend-resume" and "transcript source
+ * resolution" rows of apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md).
  *
- * 被测对象是纯函数 `buildImportedCache`：喂一份真实的 InMemoryJournalStore（journal 契约的
- * 两个实现之一，语义由 journal-contract.ts 钉住），断言门与表。端到端的「命中真的短路了模型」
- * 在 run-service 测试里，这里只管**表构建得对不对**。
+ * The subject is the pure function `buildImportedCache`: feed it a real InMemoryJournalStore (one
+ * of the journal contract's two implementations, semantics pinned by journal-contract.ts) and
+ * assert the gates and the table. The end-to-end "a hit really short-circuits the model" lives in
+ * the run-service tests; here we only care that **the table is built correctly**.
  */
 
 import { describe, expect, it } from "vitest";
@@ -15,7 +16,7 @@ import type { ActorTranscriptStore } from "../src/app/workflow-actor-transcript.
 
 const PERSONA: PersonaSpec = { name: "worker", system: "you are a worker" };
 
-/** 一份预置的前驱 journal：一个 run + 若干 actor 行 + 若干 node 行。 */
+/** A fresh predecessor journal: one run + some actor rows + some node rows. */
 function makeJournal(): InMemoryJournalStore {
   return new InMemoryJournalStore();
 }
@@ -117,7 +118,7 @@ function putWorld(
   });
 }
 
-/** 转录读面替身：每个会话 id 一个消息条数（本模块只数长度，不看内容）。 */
+/** Transcript read-side stand-in: one message count per session id (this module only counts lengths, never looks at content). */
 function transcriptsWith(lengths: Record<string, number>): ActorTranscriptStore {
   return {
     async messages({ sessionID }: { sessionID: SessionId }): Promise<MessageWithParts[]> {
@@ -134,7 +135,7 @@ function transcriptsWith(lengths: Record<string, number>): ActorTranscriptStore 
   };
 }
 
-/** 一个「两条完结 ask + 有会话」的最小可导入前驱。 */
+/** A minimally importable predecessor: two completed asks + a session. */
 function seedSimplePredecessor(journal: InMemoryJournalStore, runId = "runA"): void {
   putRun(journal, { runId });
   const actor = putActor(journal, { runId, name: "worker", sessionId: "sess-A" });
@@ -148,7 +149,8 @@ describe("buildImportedCache — 三道门", () => {
     expect(result).toEqual({ ok: false, reason: "run_not_found" });
   });
 
-  // 构建仍要求终态：amend 路径先停下在飞前驱并等它结算，再来构建；到这里还非终态是接线故障。
+  // Building still demands a terminal state: the amend path halts the in-flight predecessor and
+  // waits for it to settle before building; reaching here non-terminal is a wiring fault.
   it("前驱非终态 → not_amendable（构建的内部不变式）", async () => {
     const journal = makeJournal();
     putRun(journal, { runId: "runA", status: "running" });
@@ -156,8 +158,9 @@ describe("buildImportedCache — 三道门", () => {
     expect(result).toEqual({ ok: false, reason: "not_amendable" });
   });
 
-  // 可修订集 = **任意**终态，含 completed（用户裁决：温启动扩展分析是本特性的主用例之一）。
-  // 刻意与 plain resume 的可恢复集（stopped）不同。
+  // The amendable set is **any** terminal state, including completed (user ruling: warm-started
+  // extension analysis is one of this feature's primary use cases).
+  // Deliberately different from plain resume's resumable set (stopped).
   it.each(["completed", "errored", "stopped"] as const)("终态 %s 都可修订", async (status) => {
     const journal = makeJournal();
     putRun(journal, { runId: "runA", status });
@@ -176,7 +179,8 @@ describe("buildImportedCache — 三道门", () => {
     expect(result).toEqual({ ok: false, reason: "missing_boundaries" });
   });
 
-  // 未完结的 ask 从不进导入前缀，所以它们没有边界是正常的——门只看 completed 行。
+  // Unfinished asks never enter the imported prefix, so it is normal for them to lack boundaries —
+  // the gate only looks at completed rows.
   it("failed / running 的 ask 无边界不触发门", async () => {
     const journal = makeJournal();
     putRun(journal, { runId: "runA" });
@@ -190,9 +194,10 @@ describe("buildImportedCache — 三道门", () => {
   });
 });
 
-// amend 的预检（docs/execution-engine.md「Amend-resume」）：在停止前驱**之前**判定，所以不看状态——
-// 在飞的前驱通过预检，随后被停下；被拒的 amend 因此永远不会留下一个白白停掉的 run。
-describe("preflightAmendImport — 停止之前的两道门", () => {
+// amend's preflight (docs/execution-engine.md "Amend-resume"): it decides **before** halting the
+// predecessor, so it ignores status — an in-flight predecessor passes preflight and is halted
+// afterwards; a rejected amend therefore never leaves behind a run that was halted for nothing.
+describe("preflightAmendImport — two gates before the halt", () => {
   it("前驱不存在 → run_not_found", () => {
     expect(preflightAmendImport(makeJournal(), "missing")).toEqual({
       ok: false,
@@ -257,8 +262,9 @@ describe("buildImportedCache — actor 前缀", () => {
     });
   });
 
-  // failed ask 终结可导前缀：它自己不导入（失败对新 run 无约束力），其后的更不导入——
-  // 跳过它去导入后续条目会走私上下文（那一轮的问答仍在源会话转录里）。
+  // A failed ask terminates the importable prefix: it is not imported itself (a failure binds
+  // nothing on the new run), and nothing after it is either — skipping it to import later entries
+  // would smuggle in context (that round's Q&A still sits in the source session's transcript).
   it("前缀停在 failed 处", async () => {
     const journal = makeJournal();
     putRun(journal, { runId: "runA" });
@@ -323,9 +329,10 @@ describe("buildImportedCache — actor 前缀", () => {
     expect(result.cache.actors.size).toBe(0);
   });
 
-  // 重名两个都不收：按名取候选在重名前驱上是掷骰子，错挑的代价是把另一个 actor 的会话前缀
-  // 当成本 actor 的上文。引擎的 DuplicateActorName 是新加的运行期不变式，早于它的 journal
-  // 里可以真的存在重名行。
+  // Neither duplicate is taken: picking a candidate by name on a duplicate-name predecessor is a
+  // dice roll, and a wrong pick means using another actor's session prefix as this actor's
+  // context. The engine's DuplicateActorName is a newly added runtime invariant; journals written
+  // before it can genuinely contain duplicate-name rows.
   it("前驱内重名 actor 全部跳过", async () => {
     const journal = makeJournal();
     putRun(journal, { runId: "runA" });
@@ -375,7 +382,8 @@ describe("buildImportedCache — actor 前缀", () => {
 });
 
 describe("buildImportedCache — 转录源解析", () => {
-  // 链式修订：B 里该 actor 全程命中 ⇒ B 没给它建会话；C 从 B 修订时，转录源在 A。
+  // Chained amends: in B this actor hit throughout => B never created a session for it; when C is
+  // amended from B, the transcript source is in A.
   it("沿 resumed_from 走两跳找到会话与 pin", async () => {
     const journal = makeJournal();
     putRun(journal, { runId: "runA" });
@@ -398,7 +406,7 @@ describe("buildImportedCache — 转录源解析", () => {
     if (!result.ok) return;
     const candidate = result.cache.actors.get("worker");
     expect(candidate?.transcriptSourceSessionId).toBe("sess-A");
-    // pin 与会话取自同一行：承诺的是「接续**这段**转录时别换模型」。
+    // The pin and the session come from the same row: the promise is "do not switch models when continuing **this** transcript".
     expect(candidate?.resolvedModel).toBe("anthropic/claude-a");
   });
 
@@ -441,7 +449,8 @@ describe("buildImportedCache — 转录源解析", () => {
     expect(result.cache.actors.size).toBe(0);
   });
 
-  // 纯防御：supersede 只指向已终结的更早 run，构造不出环；但损坏数据不该变成死循环。
+  // Pure defense: supersede only points at already-terminated earlier runs, so a cycle cannot be
+  // constructed; but corrupted data must not turn into an infinite loop.
   it("resumed_from 成环时终止而不是死循环", async () => {
     const journal = makeJournal();
     putRun(journal, { runId: "runA", resumedFrom: "runB" });
@@ -456,8 +465,9 @@ describe("buildImportedCache — 转录源解析", () => {
     expect(result.cache.actors.size).toBe(0);
   });
 
-  // 源诚实性检查：会话被清理 / 被截断到边界以下时在构建期就弃候选，driver 侧的
-  // DriverError 因此退化成 corruption 级兜底而不是一条可达的用户路径。
+  // Source honesty check: when the session was cleaned up / truncated below the boundary, the
+  // candidate is dropped at build time, so the driver-side DriverError degrades to a
+  // corruption-level backstop instead of a reachable user path.
   it("源会话短于边界 → 弃候选（转录面在场时）", async () => {
     const journal = makeJournal();
     seedSimplePredecessor(journal);
@@ -491,7 +501,8 @@ describe("buildImportedCache — 转录源解析", () => {
     expect(result.cache.actors.size).toBe(0);
   });
 
-  // 转录面缺席的装配（无会话存储）：候选照收，兑现由 driver 把关。
+  // Assemblies without a transcript surface (no session store): candidates are taken as-is; the
+  // driver enforces the honesty at兑现 time.
   it("无转录面时不做诚实性检查", async () => {
     const journal = makeJournal();
     seedSimplePredecessor(journal);

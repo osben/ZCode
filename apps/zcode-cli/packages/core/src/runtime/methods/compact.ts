@@ -4,6 +4,8 @@ import {
   CompactTrigger,
   CoreErrorType,
   DEFAULT_COMPACT_CONTEXT_WINDOW,
+  buildDefaultMicrocompactThreshold,
+  getAutoCompactThreshold,
   SessionEventType,
   createModelUsageSummaryFromEvents,
   runWithContextAsync,
@@ -72,8 +74,8 @@ export async function executeManualCompact(
         turnNumber: this.turnNumber,
         input,
         inputId,
-        // 手动 /compact 是维护命令，不是用户真实 query。
-        // 事件仍保留 raw input 便于恢复/排查，但 v4 投影不能把它渲染成 user bubble。
+        // Manual /compact is a maintenance command, not a real user query.
+        // Keep raw input in events for recovery/diagnostics, but the v4 projection must not render it as a user bubble.
         inputVisibility: "model-only",
       },
       turnTraceContext,
@@ -148,7 +150,7 @@ export async function executeManualCompact(
         coreError.type === CoreErrorType.TurnCancelled &&
         this.activeForegroundExecution?.preserveQueueAutoDrainOnCancel === true;
       if (coreError.type === CoreErrorType.TurnCancelled && !preserveQueueAutoDrainOnCancel) {
-        // Stop compact 与普通 Stop 语义一致：队列重新暂停，外层 FIFO 恢复窗口同时关闭。
+        // Stopping compaction follows ordinary Stop semantics: pause the queue again and close the outer FIFO resume window too.
         this.queueAutoDrain = false;
         this.queueExternalDrainActive = false;
       }
@@ -244,7 +246,7 @@ export async function autoCompactIfNeeded(
     return "rapid_refill_blocked";
   }
 
-  // 跳过压缩时无需构建 listing 工具合同；读取失败仍向上抛出，不计入压缩失败。
+  // When compaction is skipped, there is no need to build listing tool contracts; read failures still propagate and do not count as compaction failures.
   const agentListingTools = context.getAgentListingTools?.();
   this.logger?.info("Auto compact started", {
     ...traceContextToLogContext(turnTraceContext),
@@ -314,6 +316,46 @@ export async function autoCompactIfNeeded(
   }
 }
 
+/**
+ * Effective compaction thresholds for the executing model, using the same config assembly as
+ * `autoCompactIfNeeded`; null marks a disabled policy. A missing model window keeps the runtime's
+ * default window. Emitted on main-turn completions so the UI meter uses the authoritative triggers.
+ */
+export function resolveExecutionContextBudgetThresholds(params: {
+  compactConfig?: AutoCompactPolicyConfig;
+  modelContextBudgetStrategy?: "legacy" | "preflight-v1";
+  modelContextWindow: number | undefined;
+  modelMaxOutputTokens: number | undefined;
+}): {
+  autoCompactThresholdTokens: number | null;
+  microcompactThresholdTokens: number | null;
+} {
+  const { compactConfig, modelContextBudgetStrategy, modelContextWindow, modelMaxOutputTokens } =
+    params;
+  if (compactConfig?.enabled === false) {
+    return { autoCompactThresholdTokens: null, microcompactThresholdTokens: null };
+  }
+  const config: AutoCompactPolicyConfig = {
+    contextWindow: modelContextWindow,
+    ...compactConfig,
+    maxOutputTokens: resolveNormalRequestMaxOutputTokens({ modelMaxOutputTokens }),
+    modelContextBudgetStrategy,
+  };
+  const autoCompactThresholdTokens = getAutoCompactThreshold(config);
+  const configuredMicroThreshold = config.microcompact?.thresholdTokens;
+  const microcompactThresholdTokens =
+    config.microcompact?.enabled === true
+      ? typeof configuredMicroThreshold === "number" &&
+        Number.isFinite(configuredMicroThreshold) &&
+        configuredMicroThreshold >= 0
+        ? Math.floor(configuredMicroThreshold)
+        : configuredMicroThreshold === undefined
+          ? buildDefaultMicrocompactThreshold(autoCompactThresholdTokens)
+          : null
+      : null;
+  return { autoCompactThresholdTokens, microcompactThresholdTokens };
+}
+
 function buildProviderUsageTokenOverride(
   messages: RunModelTextRequestOptions["messages"],
   sourceEntries: readonly (RuntimeMessageEntry | undefined)[],
@@ -327,9 +369,9 @@ function buildProviderUsageTokenOverride(
   const incrementalStartIndex =
     baseline.contextUsageTokens === undefined ? messageIndex : messageIndex + 1;
   const incrementalTokenCount = estimateMessageTokens(messages.slice(incrementalStartIndex));
-  // usage 归属于已提交 assistant，反向扫描可随 history replacement 自然移动，
-  // 不再依赖可能失效的绝对 message cursor。若 output 是否存在已被历史归一化抹平，
-  // 则 provider input 只覆盖 assistant 之前的请求，assistant 本身仍进入本地增量。
+  // Usage belongs to the committed assistant, so a reverse scan naturally follows history replacement
+  // instead of relying on a potentially stale absolute message cursor. If history normalization erased whether output exists,
+  // provider input covers only the request before the assistant, while the assistant itself remains in local increments.
   const providerBaseTokenCount = baseline.contextUsageTokens ?? baseline.inputTokens;
   return {
     baseTokenCount: providerBaseTokenCount,

@@ -7,7 +7,7 @@ import {
 describe("desktop relay public boundary", () => {
   it("shares legacy cleanup and permits retry after failed persistence", async () => {
     const patchSettings = vi.fn().mockRejectedValueOnce(new Error("disk"));
-    const deleteLegacyCredential = vi.fn(async () => {});
+    const deleteLegacyCredential = vi.fn(async () => false);
     const storage = createWebRemoteControlDeviceStorage({
       loadSettings: vi.fn(),
       patchSettings,

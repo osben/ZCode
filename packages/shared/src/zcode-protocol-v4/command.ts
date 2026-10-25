@@ -1,10 +1,11 @@
-import { createSessionRequestedConfigSchema } from "./create-session-config.js";
+import { createSessionPayloadSchema } from "./create-session-command.js";
 import { localTtftContextSchema, localTtftClockSchema } from "../localTtft.js";
 import { conversationQuotesSchema } from "../conversationSelection.js";
-// Command 层：信封 / ACK / 命令全集 payload。
-// conversation rewind 无独立命令（裁决：= editUserQuery 的 UI 入口）；
-// workspace-only 文件撤销走 applyFileRewind，不截断聊天历史。
+// Command layer: envelope / ACK / complete command payload set.
+// Conversation rewind has no separate command (decision: it is the UI entry point for editUserQuery);
+// workspace-only file rollback uses applyFileRewind and does not truncate chat history.
 import { z } from "zod";
+import * as worktreePreparationCommand from "./worktree-preparation-command.js";
 import { conversationRowTargetSchema, timestampSchema } from "./core.js";
 import { attachmentRefSchema } from "./attachment-ref.js";
 import { v4ConversationFileRewindPreviewResultSchema } from "./transport.js";
@@ -12,7 +13,6 @@ import { modelSelectionSchema } from "../model-selection.js";
 import { modelExecutionSchema } from "../model-execution.js";
 import { submissionModeSchema } from "./submission.js";
 import { botGroupInputSourceSchema, zcodeAutomationBotDeliveryTargetSchema } from "../bots.js";
-import { DYNAMIC_WORKFLOW_MODES } from "../dynamic-workflow-feature.js";
 import {
   amendWorkflowRunSettingsPayloadSchema,
   amendWorkflowRunSettingsResultSchema,
@@ -23,18 +23,15 @@ import {
   workspaceHookTrustRevokeTargetSchema,
   requestWorkspaceHookReviewTargetSchema,
 } from "./workspace-hook-review.js";
-import {
-  zcodeBrowserAmbientContextSchema,
-  zcodeProtocolMcpServerSchema,
-} from "../zcode-protocol/index.js";
+import { zcodeBrowserAmbientContextSchema } from "../zcode-protocol/index.js";
 import { highspeedMessageMetaSchema } from "../highspeed.js";
 import { sharedContextRefSchema } from "./shared-context-ref.js";
 import { conversationInputSourceSchema } from "./input-intent.js";
 export type { SharedContextRef } from "./shared-context-ref.js";
 export * from "./workflow-command-rejections.js";
 
-// sendText / editUserQuery / sendQueuedNow 共用的执行材料不变量：modelExecution 只能依附
-// 本次 modelSelection，禁止在缺 Selection 时单独补供凭据（历史消息 rewind 后不复用旧凭据）。
+// Execution-material invariant shared by sendText / editUserQuery / sendQueuedNow: modelExecution may only accompany
+// this request’s modelSelection; never provide credentials without a Selection (do not reuse credentials after rewinding a historical message).
 function requireModelSelectionForExecution(
   payload: { modelSelection?: unknown; modelExecution?: unknown },
   context: z.RefinementCtx,
@@ -48,90 +45,69 @@ function requireModelSelectionForExecution(
   }
 }
 
-// ── §6.4 命令 payload 全集 ──
+// ── §6.4 Complete command payload set ──
 export const commandPayloadSchemas = {
-  // firstInput 缺省 → phase=draft 空会话；携带 → 直接 turnHeader+userInput rows。
-  createSession: z.object({
-    // Host 预留归属使用稳定 ID；CLI 仍负责拒绝覆盖既有会话。
-    sessionId: z.string().min(1).optional(),
-    additionalDirectories: z.array(z.string().min(1)).max(256).optional(),
-    workspaceId: z.string(),
-    permissionScope: z.literal("session").optional(),
-    firstInput: z
-      .object({
-        text: z.string(),
-        attachments: z.array(attachmentRefSchema).optional(),
-        modelSelection: modelSelectionSchema.optional(),
-        mode: submissionModeSchema.optional(),
-        planEnabled: z.boolean().optional(),
-      })
-      .optional(),
-    config: createSessionRequestedConfigSchema.optional(),
-    // MCP 是 runtime 启动期配置，必须随 create 一次性进入 record，不能在首发后补写。
-    mcpServers: z.array(zcodeProtocolMcpServerSchema).optional(),
-    // Off-Peak 工具面 flag，与 legacy session/create 等价——V4 createSession 是桌面
-    // 新会话的实际创建路径，不透传则 OffPeakCreate/OffPeakList 永不注册。additive，
-    // 旧 CLI 的 z.object 会静默丢弃该键（fail-closed）。
-    offPeakToolEnabled: z.boolean().optional(),
-    // 动态工作流灰度 flag，与 offPeakToolEnabled 同一模式。
-    dynamicWorkflowEnabled: z.boolean().optional(),
-    // 灰度 mode 与布尔同行（launch.md「On demand: activation」）；旧 CLI 的 z.object 静默丢弃。
-    dynamicWorkflowMode: z.enum(DYNAMIC_WORKFLOW_MODES).optional(),
-  }),
-  // 父会话由 envelope.sessionId 指定；服务端从父 record 派生完整运行配置。
-  // firstInput 存在时，child 创建完成后立即启动首条普通输入；缺省则保持空副屏。
+  // Without firstInput → empty session at phase=draft; with it → create turnHeader + userInput rows directly.
+  createSession: createSessionPayloadSchema,
+  updateWorktreePreparation: worktreePreparationCommand.updateWorktreePreparationPayloadSchema,
+  // Parent session is specified by envelope.sessionId; the server derives the full runtime config from the parent record.
+  // If firstInput exists, start the first normal input as soon as the child is created; otherwise leave an empty side panel.
   createSelectionSideSession: z.object({
     firstInput: z
       .object({
         text: z.string().trim().min(1),
-        // 提交推荐只覆盖新 child 的完整选择，缺省保留父 runtime 继承。
+        // Applying a recommendation overrides only the new child's full selection; when absent, retain the parent's runtime selection.
         modelSelection: modelSelectionSchema.optional(),
       })
       .optional(),
   }),
-  // 按 inputRouting 裁决：startNow / enqueue / guide / choice。
-  // heldQueueDisposition：held 状态（inputRouting.mode=choice）下必带；
-  // clear→清空 queue 后 startNow，keep→保留 queue 立即 startNow。
+  // Decision follows inputRouting: startNow / enqueue / guide / choice.
+  // heldQueueDisposition is required in held state (inputRouting.mode=choice):
+  // clear → clear the queue then startNow; keep → retain the queue and startNow immediately.
   sendText: z
     .object({
       text: z.string(),
       attachments: z.array(attachmentRefSchema).optional(),
-      // Desktop Cmd/Ctrl+Enter 只覆盖本次 busy input，不改 session followupMode。
-      // startNow 由 CLI 原子抢占当前 turn，不经过 queue admission。
+      // Desktop Cmd/Ctrl+Enter overrides only this busy input and does not change session followupMode.
+      // CLI atomically takes over the current turn for startNow without queue admission.
       requestedDelivery: z.enum(["startNow", "queue", "guide"]).optional(),
       browserAmbientContext: zcodeBrowserAmbientContextSchema.optional(),
-      // Share handover 只允许当前 session 的一个已导入上下文；完整正文由 runtime 从
-      // 持久化 provenance 解析，不能随 command 从 renderer 传入。
+      // Share handover allows only one imported context for the current session; runtime resolves the full body from
+      // persisted provenance, which must not be passed by the renderer in the command.
       context_refs: z.array(sharedContextRefSchema).max(1).optional(),
-      // 插件 UI 代发（ui/message）时的来源标记；随 intent 持久化并投影到 userInput row。
+      // Source marker for messages relayed by the plugin UI (ui/message); persisted with the intent and projected onto the userInput row.
       source: conversationInputSourceSchema.optional(),
       heldQueueDisposition: z.enum(["clearQueueAndSend", "keepQueueAndSend"]).optional(),
-      // 暂停队列确认框打开时看到的 queueItemId 集合。CLI 在执行 clear/keep 前校验，
-      // 防止桌面/手机并发增删后把用户没确认过的新队列一并处置。
+      // Set of queueItemIds shown when the pause-queue confirmation dialog opened. CLI validates before applying clear/keep
+      // to prevent concurrent additions/removals on Desktop/mobile from causing an unconfirmed queue item to be discarded.
       expectedHeldQueueItemIds: z.array(z.string().min(1)).optional(),
-      // 迁移期允许旧发送端缺省；CLI admission 会把当前 Session Selection 固定进
-      // canonical intent。Renderer 切换完成后，第一方用户提交始终显式携带这两项。
+      // Older senders may omit these during migration; CLI admission fixes the current Session Selection into
+      // the canonical intent. After the renderer migration, first-party user submissions always include both explicitly.
       modelSelection: modelSelectionSchema.optional(),
       mode: submissionModeSchema.optional(),
       planEnabled: z.boolean().optional(),
-      // 本次执行仍使用上面的标准 Selection；这里只携带不持久化语义、动态鉴权和 child 策略。
-      // 仅 idle startNow 接受，防止 Secret/Ticket 进入普通 CommandInbox。
+      // This execution still uses the standard Selection above; this carries only non-persistent semantics, dynamic auth, and child policy.
+      // Accepted only for idle startNow, preventing Secret/Ticket from entering the ordinary CommandInbox.
       modelExecution: modelExecutionSchema.optional(),
-      // Highspeed 卡快照随输入事实进入 message.data；不包含 runtime 凭据或 header。
-      // 加速本轮的模型与凭据走上面的 modelSelection + modelExecution，见
+      // The Highspeed card snapshot is stored in message.data with the input facts; runtime credentials and headers are excluded.
+      // The model and credentials used to accelerate this turn go through modelSelection + modelExecution above; see
       // docs/highspeed/highspeed-access-mode-migration.md。
       highspeedMeta: highspeedMessageMetaSchema.optional(),
       automationId: z.string().min(1).optional(),
       offPeakTaskId: z.string().min(1).optional(),
       offPeakRunType: z.enum(["init", "resume"]).optional(),
-      // Bot 来源只由 Host 注入，用于 CronCreate 在当前 turn 内读取并持久化回推地址。
+      // Bot source is injected only by Host, so CronCreate can read and persist the reply address during this turn.
       botDeliveryTarget: zcodeAutomationBotDeliveryTargetSchema.optional(),
       inputOrigin: z.enum(["desktop", "mobile"]).optional(),
       botGroupSource: botGroupInputSourceSchema.optional(),
       conversationQuotes: conversationQuotesSchema.optional(),
-      // 定时任务会话的后续用户输入也必须保持 turn-scoped 工具面隔离；不能借用
-      // automationId，否则会把普通用户输入误标成一次 automation 派发。
+      // Later user inputs in a scheduled-task session must also retain turn-scoped tool-surface isolation; do not reuse
+      // automationId, which would incorrectly mark ordinary user input as an automation dispatch.
       toolDisallowlist: z.array(z.string().min(1)).optional(),
+      // Submission id of the frozen first sendText of a reserved plain submission (set by the renderer on
+      // the first attempt and every retry). Only this sendText may complete its durable preparation; a
+      // sendText without it, or with another id, never does (specs/first-submission-instant-ux.md).
+      firstSubmissionId: z.string().min(1).optional(),
     })
     .superRefine((payload, context) => {
       if (payload.automationId && payload.offPeakTaskId) {
@@ -159,36 +135,42 @@ export const commandPayloadSchemas = {
     expectedHeldQueueItemIds: z.array(z.string().min(1)).optional(),
   }),
   stop: z.object({
-    // 来自 activeWorks；CLI 用它拒绝会误杀后续无关执行的迟到 Stop。
+    // From activeWorks; CLI uses it to reject a late Stop that could otherwise kill an unrelated later execution.
     expectedForegroundExecutionId: z.string().min(1).optional(),
   }),
-  // compact 是输入型维护命令：idle 时立即执行，busy/held 时进入 FIFO。
-  // 因为 admission 与当前 revision 无关，不走 CAS；sourceCommandId 提供幂等边界。
+  // compact is an input-style maintenance command: execute immediately when idle, enqueue FIFO when busy/held.
+  // Admission is unrelated to the current revision, so it does not use CAS; sourceCommandId provides the idempotency boundary.
   compact: z.object({}),
-  // running 时对稳定 assistant row 可用。
+  // Available for the stable assistant row while running.
   forkAssistant: z.object({ target: conversationRowTargetSchema }),
   applyFileRewind: z.object({ target: conversationRowTargetSchema }),
   editUserQuery: z
     .object({
-    target: conversationRowTargetSchema,
-    newText: z.string(),
+      target: conversationRowTargetSchema,
+      newText: z.string(),
       conversationQuotes: conversationQuotesSchema.optional(),
-    attachments: z.array(attachmentRefSchema).optional(),
+      attachments: z.array(attachmentRefSchema).optional(),
       // 编辑重发按新的主动发送处理：只接受本次重新 prepare 得到的卡与执行材料，
       // 不从被 rewind 的历史消息复用旧凭据。
       modelSelection: modelSelectionSchema.optional(),
       modelExecution: modelExecutionSchema.optional(),
       highspeedMeta: highspeedMessageMetaSchema.optional(),
-    // 缺省 preserve：仅切 conversation branch；rewind 会先安全恢复该轮文件。
-    workspaceMode: z.enum(["preserve", "rewind"]).optional(),
+      // 缺省 preserve：仅切 conversation branch；rewind 会先安全恢复该轮文件。
+      workspaceMode: z.enum(["preserve", "rewind"]).optional(),
     })
     .superRefine(requireModelSelectionForExecution),
   retryTurn: z.object({ target: conversationRowTargetSchema }),
-  // （2026-09-12）：原 setToolWidgetState / setSessionPluginUiState 已删除——插件 UI widgetState
-  // 回退为宿主 renderer 内存保存，不再写 CLI 会话存储；模型可见信息改走 ui/update-model-context。
+  // (2026-09-12): the former setToolWidgetState / setSessionPluginUiState commands were removed—plugin UI widgetState
+  // is now kept in host renderer memory and no longer written to CLI session storage; model-visible information uses ui/update-model-context.
   setAssistantFeedback: z.object({
     target: conversationRowTargetSchema,
     feedback: z.enum(["like", "dislike"]).nullable(),
+  }),
+  // Display-only pin bookmark on the final assistant text segment or a real user input; persisted in the
+  // session transcript, never injected into agent context. Toggle semantics: pinned=false unpins.
+  setRowPinned: z.object({
+    target: conversationRowTargetSchema,
+    pinned: z.boolean(),
   }),
   setHighspeedMetrics: z.object({
     target: conversationRowTargetSchema,
@@ -204,30 +186,29 @@ export const commandPayloadSchemas = {
   sendQueuedNow: z
     .object({
       queueItemId: z.string(),
-      // 手动提升允许 Renderer 为原队列项补充同卡执行材料；凭据不入队列持久化面。
+      // Manual promotion lets the Renderer add execution materials for the same card to the original queued item; credentials are not persisted in the queue.
       modelSelection: modelSelectionSchema.optional(),
       modelExecution: modelExecutionSchema.optional(),
       highspeedMeta: highspeedMessageMetaSchema.optional(),
     })
     .superRefine(requireModelSelectionForExecution),
   editQueueItem: z.object({ queueItemId: z.string(), newText: z.string() }),
-  // beforeQueueItemId = null → 移到队尾。
+  // beforeQueueItemId = null → move to the end of the queue.
   reorderQueueItem: z.object({
     queueItemId: z.string(),
     beforeQueueItemId: z.string().nullable(),
   }),
   deleteQueueItem: z.object({ queueItemId: z.string() }),
   setAutoDrain: z.object({ autoDrain: z.boolean() }),
-  // 先到先得，晚到 noop（reasonCode=proto.alreadyResolved）。
+  // First to arrive wins; later requests are no-ops (reasonCode=proto.alreadyResolved).
   resolveInteraction: z.object({
     interactionId: z.string(),
     answer: z.object({
       optionId: z.string().optional(),
       freeText: z.string().optional(),
-      // （elicitation 回执收敛）：AskUserQuestion/plan-approval 的
-      // 多题答案与注解无损承载。action 存在时 CLI broker 按 accept/decline/cancel
-      // 精确映射（content 直传旧 userInput response 语义）；缺省沿用
-      // optionId/freeText 兼容路径，旧客户端行为不变。
+      // Elicitation response convergence: carry AskUserQuestion/plan-approval multi-question answers and annotations without loss.
+      // When action is present, CLI broker maps accept/decline/cancel precisely (content passes through with legacy userInput response semantics); when absent, use the
+      // compatible optionId/freeText path and preserve old-client behavior.
       action: z.enum(["accept", "decline", "cancel"]).optional(),
       content: z.record(z.string(), z.unknown()).optional(),
     }),
@@ -245,9 +226,9 @@ export const commandPayloadSchemas = {
     }),
     workspaceHookTrustRevokeTargetSchema,
   ]),
-  // 软门禁：按需开审核 flow,克隆 revoke non-flow target 但不带 hookDeclarationDigests。
+  // Soft gate: open the review flow when needed; clone revokes the non-flow target but does not include hookDeclarationDigests.
   requestWorkspaceHookReview: requestWorkspaceHookReviewTargetSchema,
-  // AskUserQuestion 首次有效操作永久暂停本次自动结束；重复/迟到调用为幂等 noop。
+  // First valid AskUserQuestion action permanently pauses this auto-finish; duplicate/late calls are idempotent no-ops.
   snoozeInteractionAutoResolution: z.object({
     interactionId: z.string(),
   }),
@@ -256,36 +237,46 @@ export const commandPayloadSchemas = {
     model: z.string(),
     thought: z.string(),
   }),
-  // additive（冻结面按黄金测试背书演进）：agent 协作模式切换。
-  // 值域 = core CollaborationMode 的可切换子集（auto 非用户可切，不进 UI 命令面）。
+  // Additive (evolution of the frozen surface is backed by golden tests): switch agent collaboration mode.
+  // Values = the switchable subset of core CollaborationMode (auto is not user-switchable and is excluded from the UI command surface).
   switchCollaborationMode: z.object({
     mode: z.enum(["build", "edit", "plan", "yolo", "guarded"]),
   }),
+  // Additive (specs/acp-agent-runtime.md "S6"): the user's choice for one select of the session's
+  // ACP agent. The worker stores it and applies it before the next prompt; a running turn is never
+  // touched. `sessionId` repeats the envelope's session and must equal it. No baseRevision: the choice
+  // does not depend on the conversation revision, and a same value is a no-op (config.unchanged).
+  setExternalAgentConfigOption: z
+    .object({
+      sessionId: z.string().min(1),
+      configId: z.string().min(1),
+      value: z.string().min(1),
+    })
+    .strict(),
   setFollowupMode: z.object({ mode: z.enum(["queue", "guide"]) }),
   pauseGoal: z.object({}),
   resumeGoal: z.object({}),
   cancelBackgroundWork: z.object({ workId: z.string() }),
-  // cancel & resume：恢复一个已取消 / 被进程死亡
-  // 打断的 dwf run。workId ≡ runId（与 cancelBackgroundWork 同一个身份等式）；`name` 可选，
-  // 喂恢复后完成通知的主题（重启后原 CreateWorkflow 工具 input 不可得）。刻意不携
-  // baseRevision：与 cancelBackgroundWork 同类（workflowRuns 面免 revision，假 CAS 失败
-  // 只会误伤）。门在 CLI 侧（可恢复集 = cancelled ∪ failed+Interrupted），拒绝以
-  // fault.command.workflowRunResumeRejected.<reason> 回 ACK。
+  // Cancel & resume: resume a dwf run cancelled by the user or interrupted by process death. workId ≡ runId
+  // (same identity as cancelBackgroundWork); optional `name` supplies the completion-notification subject after resume (the original CreateWorkflow tool input is unavailable after restart).
+  // Intentionally omits baseRevision, like cancelBackgroundWork (workflowRuns is revision-free; false CAS failures would only hurt).
+  // The CLI gates it (resumable set = cancelled ∪ failed+Interrupted); rejection returns ACK with
+  // fault.command.workflowRunResumeRejected.<reason>.
   resumeWorkflowRun: z.object({ workId: z.string(), name: z.string().optional() }),
-  // startSavedWorkflow：中枢「运行」不再合成
-  // 对话文案，直接请 agent 在新会话里启动已保存工作流。与 cancelBackgroundWork / resumeWorkflowRun
-  // 同类：不携 baseRevision（workflowRuns 面免 revision，假 CAS 失败只会误伤）。name 由 agent 从
-  // 解析结果填（不变式 6），命令不收 name 覆盖。
-  // 拒绝以 fault.command.savedWorkflowStartRejected.<reason> 回 ACK（词表见下方
-  // workflow-command-rejections.ts 的 savedWorkflowStartRejectionReasonSchema）；能力缺席（无 dwf 端口）→ V4CapabilityUnsupportedError
-  // （与 resumeWorkflowRun 同一条错误）。
+  // startSavedWorkflow: the hub’s “Run” action no longer synthesizes
+  // dialogue text; it directly asks the agent to start the saved workflow in a new session. Like cancelBackgroundWork / resumeWorkflowRun,
+  // it does not carry baseRevision (workflowRuns are revision-free, and a false CAS failure would be harmful). The agent fills in name from the
+  // parsed result (invariant 6); the command does not accept a name override.
+  // Rejections return an ACK with fault.command.savedWorkflowStartRejected.<reason> (the allowed values are defined below in
+  // workflow-command-rejections.ts in savedWorkflowStartRejectionReasonSchema); missing capability (no DWF port) → V4CapabilityUnsupportedError
+  // (the same error used by resumeWorkflowRun).
   startSavedWorkflow: z.object({
     name: z.string().min(1),
     scope: z.enum(["project", "global"]).optional(),
     args: z.record(z.string(), z.unknown()).optional(),
   }),
-  // amendWorkflowRunSettings：run 卡 / 详情页的「配置」直接请 agent 以新设置修订 run，不经模型轮。载荷、结果与拒绝
-  // 词表见 workflow-run-settings-command.ts；能力缺席 → V4CapabilityUnsupportedError。
+  // amendWorkflowRunSettings: “Configure” on a run card/details page asks the agent to revise the run with new settings directly, without a model turn. Payload, result, and rejection
+  // vocabulary are in workflow-run-settings-command.ts; missing capability → V4CapabilityUnsupportedError.
   amendWorkflowRunSettings: amendWorkflowRunSettingsPayloadSchema,
   renameSession: z.object({ title: z.string() }),
   deleteSession: z.object({}),
@@ -304,20 +295,20 @@ export const commandTypeSchema = z.enum(
   Object.keys(commandPayloadSchemas) as [CommandType, ...CommandType[]],
 );
 
-// cancelBackgroundWork 的拒绝：core 明确回「没有取消任何东西」时（任务不存在 / 已终结 / 类型不支持）
-// 以前缀 + reason 上行，而不是一个假装成功的 accepted——详情页据此告诉用户这个 run 并不在跑。
-// reason 即 core 的 stopBackgroundTask reason 去掉 `background_task_` 前缀：not_found /
-// not_running / cancel_not_supported。
+// cancelBackgroundWork rejection: when core explicitly reports “nothing was cancelled” (task missing / already terminal / unsupported type),
+// return prefix + reason instead of a falsely successful accepted response — the details page can tell users the run is not running.
+// reason is core's stopBackgroundTask reason with `background_task_` removed: not_found / not_running / cancel_not_supported.
 export const BACKGROUND_WORK_CANCEL_REJECTED_FAULT_PREFIX =
   "fault.command.backgroundWorkCancelRejected." as const;
 
-// CAS ✓ 的命令：信封必带 baseRevision。
+// Commands with CAS: envelope must include baseRevision.
 export const COMMANDS_REQUIRING_BASE_REVISION: ReadonlySet<CommandType> = new Set([
   "applyFileRewind",
   "forkAssistant",
   "editUserQuery",
   "retryTurn",
   "setAssistantFeedback",
+  "setRowPinned",
   "sendQueuedNow",
   "editQueueItem",
   "reorderQueueItem",
@@ -336,27 +327,28 @@ export const ROW_TARGETING_COMMANDS: ReadonlySet<CommandType> = new Set([
   "editUserQuery",
   "retryTurn",
   "setAssistantFeedback",
+  "setRowPinned",
   "setHighspeedMetrics",
 ]);
 
-// ── 信封 ──
+// ── Envelope ──
 export const commandEnvelopeSchema = z.object({
   ttft: localTtftContextSchema.optional(),
-  // uuid v7，客户端生成，重试不变。
+  // UUID v7, generated by the client and stable across retries.
   commandId: z.string(),
   clientId: z.string(),
-  // createSession 时为 null。
+  // Null for createSession.
   sessionId: z.string().nullable(),
   baseRevision: z.number().optional(),
   baseLogEpoch: z.string().trim().min(1).optional(),
   type: commandTypeSchema,
   payload: z.unknown(),
-  // 客户端时钟，仅遥测；服务端不用于任何裁决。
+  // Client clock for telemetry only; server does not use it for decisions.
   issuedAt: timestampSchema,
 });
 export type CommandEnvelope = z.infer<typeof commandEnvelopeSchema>;
 
-/** 校验信封并按 type 校验 payload（信封 schema 无法静态关联 payload，收口在这里）。 */
+/** Validate the envelope and payload by type (the envelope schema cannot statically associate payload, so validation is centralized here). */
 export function parseCommandEnvelope(
   value: unknown,
 ): { ok: true; envelope: CommandEnvelope } | { ok: false; error: z.ZodError } {
@@ -391,11 +383,21 @@ export const commandResultSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.enum(["createSession", "createSelectionSideSession", "forkAssistant"]),
     sessionId: z.string(),
+    // Prepared-worktree activation outcome (createSession with preparedSessionId only). Closed
+    // enum: an unknown value fails the ACK parse instead of being stripped into a guess.
+    //  - materialized / input-pending: the frozen input is not admitted yet; the sender dispatches it.
+    //  - input-admitted: the frozen input is durably admitted under the command id the sender named
+    //    (expectedFirstInputCommandId); the sender must not resend it.
+    //  - already-active: the preparation is active, which another input can cause. It does not prove the
+    //    frozen input was admitted; the sender dispatches it unless input-admitted was returned.
+    preparedActivation: z
+      .enum(["materialized", "input-pending", "input-admitted", "already-active"])
+      .optional(),
     input: z
       .object({
         delivery: z.enum(["startNow", "queue", "guide"]),
         inputId: z.string(),
-        // Core admission ACK 不等待 TurnStarted；messageId 可能由后续事件补齐。
+        // Core admission ACK does not wait for TurnStarted; messageId may be filled in by a later event.
         messageId: z.string().optional(),
       })
       .optional(),
@@ -407,6 +409,7 @@ export const commandResultSchema = z.discriminatedUnion("type", [
       optionId: z.string().optional(),
     }),
   }),
+  worktreePreparationCommand.worktreePreparationUpdatedResultSchema,
   z.object({
     type: z.literal("applyFileRewind"),
     applied: z.boolean(),
@@ -415,7 +418,7 @@ export const commandResultSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("editUserQuery"),
-    // fork 仅保留旧 ACK 解码兼容；新 editUserQuery 不再生成 child session。
+    // Retain fork only for legacy ACK decoding compatibility; new editUserQuery no longer creates a child session.
     disposition: z.enum(["rewind", "fork", "blocked"]),
     sessionId: z.string().min(1),
     reasonCode: z.string().min(1).optional(),
@@ -423,24 +426,24 @@ export const commandResultSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     // startSavedWorkflow accepted ACK：
-    // runId 联接启动轮 run 卡状态 / 通知 / 侧板；toolCallId = launch-<uuid>，联接合成 CreateWorkflow 轮。
+    // runId joins the launch turn's run-card state / notification / sidebar; toolCallId = launch-<uuid>, joining the synthetic CreateWorkflow turn.
     type: z.literal("startSavedWorkflow"),
     runId: z.string().min(1),
     toolCallId: z.string().min(1),
   }),
   amendWorkflowRunSettingsResultSchema,
   z.object({
-    // messageId 只在 TurnStarted 后作为旁路归因补齐；Core admission ACK 不等待
-    // projection commit，不能把 messageId 作为输入 accepted 的必要条件。
+    // messageId is filled as side-channel attribution only after TurnStarted; Core admission ACK does not wait for
+    // projection commit, so messageId cannot be required for input acceptance.
     type: z.literal("inputAccepted"),
     delivery: z.enum(["startNow", "queue", "guide"]),
     inputId: z.string(),
     messageId: z.string().optional(),
   }),
   z.object({
-    // restart discarded 过去只返回一个无差别 fault，renderer 无法区分
-    // runtime-local queue 与仍需人工确认的 startNow。delivery 来自 session_input
-    // 持久事实，不能由客户端按当前 UI phase 猜测。
+    // Previously, restart discarded returned an undifferentiated fault, so the renderer could not distinguish
+    // a runtime-local queue from a startNow that still needed user confirmation. Delivery comes from the persisted session_input
+    // fact and cannot be guessed by the client from the current UI phase.
     type: z.literal("inputDisposition"),
     delivery: z.enum(["startNow", "queue", "guide"]),
   }),
@@ -448,17 +451,17 @@ export const commandResultSchema = z.discriminatedUnion("type", [
 export type CommandResult = z.infer<typeof commandResultSchema>;
 
 export const commandAckSchema = z.object({
-  /** 会话创建期采用的 App Memory 开关；旧发送端缺省表示未知。 */
+  /** App Memory setting used when creating the session; absent from older senders means unknown. */
   memoryEnabled: z.boolean().optional(),
   ttftExcluded: z.literal("capacity").optional(),
   commandId: z.string(),
-  // accepted 不承诺跨 CLI 进程存活；最终收口以权威数据（sourceCommandId）为准。
+  // accepted does not promise survival across CLI processes; final reconciliation uses the authoritative sourceCommandId.
   status: z.enum(["accepted", "rejected", "stale", "duplicate", "noop", "failed"]),
-  // rejected/stale/noop/failed 必带；= guard id 或 fault code（命名空间）。
+  // Required for rejected/stale/noop/failed; guard ID or fault code (namespace).
   reasonCode: z.string().optional(),
   message: z.string().optional(),
   revisionAtDecision: z.number(),
-  // duplicate 回放缓存结果；accepted 亦可即时带（fork）。
+  // Cached result for duplicate replay; accepted may also be returned immediately (fork).
   result: commandResultSchema.optional(),
 });
 export type CommandAck = z.infer<typeof commandAckSchema>;
@@ -466,7 +469,7 @@ export type CommandAck = z.infer<typeof commandAckSchema>;
 // ── commands/query ──
 export const commandKeySchema = z
   .object({
-    // null 只属于全局/createSession 幂等桶；session 命令必须携带 sessionId。
+    // null belongs only to the global/createSession idempotency bucket; session commands must include sessionId.
     sessionId: z.string().nullable(),
     commandId: z.string().min(1),
   })

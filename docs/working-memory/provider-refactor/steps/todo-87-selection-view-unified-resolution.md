@@ -1,220 +1,175 @@
-# Todo 87：Selection View 驱动的统一模型选择解析
+# Todo 87: Unified Model-Selection Resolution Driven by the Selection View
 
-> 验证归属更新（2026-09-09）：本文残余欠测/失败/人工晋级统一转交 [Todo102](todo-102-verification-debt-closeout.md)，关闭在本文中的独立验证排期；历史证据保留，转交不代表测试通过。 显式 Subagent 的旧暂缓条款已由 Todo99 实现取代；Off-Peak Ticket 例外和不增加发送前同步的边界不变。
+> Verification ownership (2026-09-09): residual untested/failing/manual-promotion items moved to [Todo102](todo-102-verification-debt-closeout.md). Historical evidence stays; the hand-off does not mean the tests pass. The old deferral for explicit Subagent was superseded by the Todo99 implementation; the Off-Peak Ticket exception and the rule of adding no pre-send sync are unchanged.
 
-> 状态：已实现并分组验证/提交，2026-09-07；新 E2E 保留 pending 等待人工转正。原意图与当前有效结果分离，具体证据见 Todo85 恢复审计表；显式 Subagent 和闲时跨账号/Ticket 迁移已明确排除。
-> 来源：Todo 85 的 D02。不是恢复旧 Family 自动切模 helper，而是在当前选择架构中实现同等体验。
+> Status: implemented and verified/committed in groups, 2026-09-07; new E2E stays pending for manual promotion. Original intent is separated from the current effective result; evidence is in the Todo85 restoration audit table. Explicit Subagent and off-peak cross-account/Ticket migration are explicitly excluded.
+> Source: D02 of Todo 85. This is not a restoration of the old Family auto-switch helper but the equivalent experience in the current selection architecture.
 >
-> 2026-09-08 后续：[Todo96](todo-96-selection-offline-migration-and-resolution-consolidation.md) 将普通旧 Selection 迁移改为离线确定性转换，并核对所有原意图到 View 的入口；显式 Subagent 的 Host 执行解析另行请求协议裁决，未完成前仍不得宣称后台已统一。闲时 Ticket 的排除保持不变。用户 Markdown 格式与迁移范围由 Todo97 接续裁决。
+> 2026-09-08 follow-up: [Todo96](todo-96-selection-offline-migration-and-resolution-consolidation.md) turns ordinary legacy Selection migration into offline deterministic conversion and audits all original-intent-to-View entries; the Host execution resolution of explicit Subagent is a separate protocol ruling and the backend must not be claimed unified until then. The off-peak Ticket exclusion is unchanged. User Markdown format and migration scope continue in Todo97.
 
-## 1. 目标与裁决
+## 1. Goal and ruling
 
-账号连接、Personal Config、Built-in Config 更新，都经过现有刷新链形成新的选择事实。调用方传入自己保存的原 ModelSelection（编辑中则为用户最新意图），从统一入口取得带 effectiveSelection 的 View。自动重算不覆盖原意图；Composer、定时任务、Bot、闲时任务等不能各写一套账号替换或失效处理。
-
-```text
-Account / Personal / Built-in 更新
-               |
-               v
-目标 Host 发布一致的选择事实
-（模型候选、档位、账号连接，同一 revision）
-               |
-原 ModelSelection -> 统一读取/解析入口 -> 带 effectiveSelection 的 View
-                                             |
-                         +-------------------+------------------+
-                         v                                      v
-                  临时展示/准备执行                   明确保存/提交成功边界
-                         |                                      |
-                         v                                      v
-              固定本次执行 -> ModelFactory                  才允许写回原选择
-```
-
-- 普通 Provider：只检查原 Provider/Model；模型失效置空，档位失效只清档位，不找别的供应商。
-- 普通账号套餐 Provider：按目标 Host 当前账号连接对应到目标 Provider，优先保留完全相同的 modelId 和 reasoningLevel；没有同档位则档位置空，没有同模型则模型选择置空。
-- 档位按值匹配，不按中文显示名、数组位置或“感觉相近”转换；模型按正式 ID 匹配，不用大小写归一、显示名或模型名唯一匹配跨供应商猜测。
-- 缺失值不补成最高/最低档；原意图为空时 effectiveSelection 为空，不用 preferredSelection 填充。真正全新草稿的初始化规则不改。原意图非空但临时结果为空时，原意图仍保留；配置恢复后应可重新解析出有效结果。
-- 不要求观察到一次账号切换事件；冷启动、旧任务再次使用也按当前 View 解析。原账号 Provider 尚在候选中时，也不能因此跳过应有的当前账号对应规则。
-- Off-Peak 本轮不做跨账号自动替换；已有选择只检查原 Provider/Model/档位，不对应到当前账号的另一个 Off-Peak。普通账号选择也不能落到 Off-Peak。闲时仅收口只读解析与原意图保护，Ticket 生命周期沿用固定 staging 的既有机制。模板实例、自定义 Provider 不引入 current。
-- 发送前不新增远端配置同步或等待。使用目标 Host 当时可读的 View，最终执行仍由目标 Registry 校验。
-
-## 2. 实现位置与接口边界
-
-### 2.1 对外只用一个入口
-
-接口名暂定 `getSelectionView({ selection })`；在现有 `IModelSelectionService` 上演进，不另建跨业务状态服务。目标 Host 由现有服务绑定确定。返回 revision、候选模型/档位、preferredSelection，以及本次输入对应的 effectiveSelection 和最小不完整原因。
-
-- UI 通过公共 `useModelSelectionView({ target, selection })` 完成首次读取、订阅、输入变化重算、读取恢复与旧回包隔离。页面不先读 View 再自己调用解析函数。
-- 定时任务/Bot 后台需要时直接调用同一服务入口，取得当前有效结果后派发；不要求长期订阅、不手动拼账号上下文。
-- preferredSelection 仍只用于既有的新选择初始化；不能在 effectiveSelection 为空时自动顶上。
-- 公共候选快照可共享；带 effectiveSelection 的返回值属于某次输入，不能缓存成 Host 全局唯一选择。缓存/回包关联必须包含目标服务与输入代次，不能只看 View revision；同 revision 下用户可以改变选择。
-- 普通菜单继续不展示 hidden Provider。Off-Peak 产品入口复用已有受限隐藏投影供选择，不通过给普通 View 加全量隐藏模型来凑匹配；其有效选择由服务内部相同权威事实解析。
-
-### 2.2 内部只有一份纯解析算法
-
-`packages/provider` 负责纯算法：一致快照 + 原 Selection -> 当前有效 Selection。读取服务/RPC 包住它；纯算法不做 IO、不写库、不修改输入、不通知用户。公共 hook 如利用已到达快照本地重算，也只能复用这一算法，不能再实现另一套规则。
-
-身份分类集中在一个内部入口。服务装配层复用 `isBuiltinModelProviderId` 与 `OFF_PEAK_PROVIDER_IDS` 向 Provider Facade 注入 `ordinary / account-plan / account-offpeak` 分类，不复制 ID 表，也不让 Provider 纯模块导入 shared 整包。普通 Provider 和 Off-Peak 均保留原身份，但后者允许解析受限 hidden 候选，普通 hidden Provider 不能因此混入通用选择。不按前缀/URL/名称猜测，未知 ID 找不到即不完整。
+Account connection, Personal Config and Built-in Config updates all flow through the existing refresh chain into new selection facts. The caller passes its own saved original ModelSelection (while editing, the user's latest intent) and gets from one entry a View carrying `effectiveSelection`. Automatic recomputation never overwrites the original intent; Composer, scheduled tasks, Bot, off-peak tasks and others must not each write their own account replacement or invalidation handling.
 
 ```text
-原 providerId -> 集中分类
-  ordinary        -> 原 Provider
-  account-plan    -> 当前账号连接的普通套餐 Provider
-  account-offpeak -> 原 Off-Peak Provider（本轮不跨账号替换）
-                         |
-                         v
-             精确匹配 modelId -> 检查原 reasoningLevel
+Account / Personal / Built-in update
+  -> target Host publishes consistent selection facts (model candidates, levels, account connection, one revision)
+original ModelSelection -> unified read/resolve entry -> View with effectiveSelection
+     transient display / prepare execution           explicit save / submit-success boundary
+        -> fix this execution -> ModelFactory           -> only then may the original selection be written back
 ```
 
-识别用途不能依赖当前可选列表：正式旧账号 Provider 可能已不在候选内。这里只识别现行正式 ID，不做 legacy 别名或运行时迁移。普通账号套餐的当前目标由同快照账号事实确定，支持 Z.AI/BigModel 当前域变化，不能按列表第一项或模型名猜目标；Off-Peak 保留原身份，与普通套餐边界不交叉。
+- **Ordinary Provider**: only check the original Provider/Model; an invalid model is emptied, an invalid level clears only the level; no other vendor is looked for.
+- **Ordinary account-plan Provider**: map to the target Provider by the target Host's current account connection, preferring the identical modelId and reasoningLevel; no same level empties the level, no same model empties the model selection.
+- Levels match by value, never by Chinese display name, array position or "looks similar"; models match by formal ID, no case normalization, display name or unique-model-name guess across vendors.
+- Missing values are not filled with highest/lowest; when the original intent is empty, effectiveSelection is empty and preferredSelection does not fill it. Genuinely new draft initialization is unchanged. A non-empty original intent with an empty transient result keeps the original; once config recovers it should resolve valid again.
+- No observed account-switch event is required: cold start and reuse of an old task also resolve against the current View. Even if the original account Provider is still among candidates, the current-account mapping rule is not skipped.
+- **Off-Peak**: no cross-account automatic replacement this round; an existing selection only checks the original Provider/Model/level, never mapping to another Off-Peak of the current account; an ordinary account selection never lands on Off-Peak. Off-peak gets only read-only resolution and original-intent protection; Ticket lifecycle follows fixed staging's mechanism. Template instances and custom Providers introduce no `current`.
+- No remote config sync or wait is added before send. The View readable on the target Host at that time is used and the final execution is still validated by the target Registry.
 
-### 2.3 快照与最终执行边界
+## 2. Implementation location and interface
 
-`ModelSelectionView` 当前只有 revision、providers、preferredSelection。需让解析层取得 Host 权威账号上下文；普通调用方不得另读 Settings/凭据拼接。新增数据为运行时事实，不含凭据、不写用户文件。
+### 2.1 One external entry
 
-候选和账号事实来自同一次已应用的 Account/Registry 快照；不能给旧列表配新连接。账号事实变了但候选未变，也要能驱动必要的重新解析。未知状态由既有源生命周期处理，不能造出“已确认无模型”的伪快照。
+`getSelectionView({ selection })` (provisional), evolved on the existing `IModelSelectionService` with no new cross-business state service; the target Host is determined by the existing service binding. Returns revision, candidate models/levels, preferredSelection, plus the effectiveSelection for this input and the minimal incomplete reason.
 
-ModelFactory 继续只校验明确 Selection；解析成功不承诺未来执行一定成功，也不允许执行层偷偷再换模型/档位。Decoder 的旧结构迁移不进入正常解析路径。
+- UI uses the public `useModelSelectionView({ target, selection })` for first read, subscription, recomputation on input change, read recovery and stale-response isolation; pages must not read a View and call the resolver themselves.
+- Background scheduled tasks / Bot call the same service entry for the current effective result before dispatching; no long-lived subscription and no hand-assembled account context.
+- preferredSelection is still used only for existing new-selection initialization and never fills an empty effectiveSelection.
+- Shared candidate snapshots may be shared; the return value carrying effectiveSelection belongs to one input and cannot be cached as a Host-global selection. Cache/response correlation includes target service and input generation, not View revision alone (users can change the selection under the same revision).
+- Ordinary menus still hide hidden Providers. The Off-Peak product entry reuses the existing restricted hidden projection for selection; the ordinary View does not get all hidden models to force matches, and the off-peak effective selection is resolved inside the service from the same authoritative facts.
 
-## 3. 状态、保存与执行时机
+### 2.2 One pure resolution algorithm
 
-### 3.1 原意图和有效结果不能混存
+`packages/provider` owns the pure algorithm: consistent snapshot + original Selection -> current effective Selection. The read service/RPC wraps it; the algorithm does no IO, no writes, no input mutation and no user notification; a hook recomputing locally from an arrived snapshot must reuse the same algorithm.
 
-- 原选择仍只有现有持久字段；编辑中使用用户最新意图。effectiveSelection 临时持有，每次自动重算都从原意图开始，不以上一次自动置空/换账号后的结果作为输入。
-- 普通配置或账号变化只改变有效结果，不能通过 Composer 的现有 Draft 自动保存把原选择清空或替换；文本/附件编辑导致保存时也必须继续保存原选择意图。
-- 用户主动选模型/档位、主动清空，按原编辑/保存语义形成新意图；清空后不从 Recent/Session 重新补回。选模时不能把“目标 Provider + 旧模型/档位”混成不存在的组合。
-- 原意图非空 -> 当前结果为空 -> 配置恢复 -> 当前结果重新有效，是预期行为，不叫从旧字段恢复。没有新增持久化影子或额外兼容字段。
-- 全新草稿的初始化和已有选择解析分开。正常模式选择、文本编辑、Snapshot 到达不能偷偷触发默认模型回退。
-
-### 3.2 首次读取失败如何恢复
-
-沿用读取层 loading/unavailable/error/ready，不给纯解析结果增加笼统的“暂时无法解析”。正常结果只有完整或不完整的有效选择（模型或档位可为空，带最小原因）；读取错误不能伪装成模型失效。
+Identity classification is centralized in one internal entry. The service assembly reuses `isBuiltinModelProviderId` and `OFF_PEAK_PROVIDER_IDS` to inject the `ordinary / account-plan / account-offpeak` classification into the Provider Facade, without copying ID tables or importing the whole shared package into the Provider pure module. Ordinary Providers and Off-Peak both keep the original identity; Off-Peak may resolve restricted hidden candidates while ordinary hidden Providers cannot mix into general selection. No guessing by prefix/URL/name; an unknown ID not found is incomplete.
 
 ```text
-公共 hook：先订阅，再首次读取
-  配置/账号变化 -> 新事实到达 -> 重算
-  用户意图变化 -> 用当前事实重算
-  目标重连     -> 重新绑定/订阅/读取
-  初次读取临时失败且没有新事件
-               -> 公共读取层有限重试 -> 仍失败显示错误，可手动 reload
+original providerId -> central classification
+  ordinary -> original Provider
+  account-plan -> ordinary plan Provider of the current account connection
+  account-offpeak -> original Off-Peak Provider (no cross-account replacement this round)
+ -> exact modelId match -> check original reasoningLevel
 ```
 
-已有 hook 首读失败后仍保留订阅，但没有后续事件就不会自动恢复；服务初始化失败会清除 startPromise，可再次读取。因此不能仅声称“等 onDidChange 就够了”。公共读取层允许一份有上限、可取消的自动读取重试；实施时选用现有 retry 工具并记录统一次数/间隔，不让页面各建定时器，不重试普通不完整结果、配置写入、领取或派发。
+Identification cannot depend on the current selectable list (a formal old account Provider may no longer be a candidate); only current formal IDs are recognized, with no legacy alias or runtime migration. The ordinary plan's current target is determined from same-snapshot account facts, supports Z.AI/BigModel domain change, and is never the first list item or a model-name guess; Off-Peak keeps its original identity and does not cross the ordinary-plan boundary.
 
-重试只针对可恢复读取失败；没有目标、已销毁、鉴权/明确配置错误不做盲目重试。新 View 成功、目标/输入换代、卸载后取消旧回包与计时器；首次失败后即使恢复快照 revision 未变，也应退出错误状态。重连成功可以开始新的读取周期，不能把一次耗尽永远缓存成失败。
+### 2.3 Snapshot and final execution boundary
 
-后台一次性读取失败交回现有调度/任务准备错误流程，不另起长期订阅或任务重试。源查询 unknown 与断连不能误授权；同账号 last-known-good 沿用既有来源规则，切身份后不沿用旧权益。明确 pending/无权益/Ready 空候选则可以产生不完整结果，原意图仍保留。
+`ModelSelectionView` had only revision, providers, preferredSelection. The resolution layer needs the Host's authoritative account context; ordinary callers must not read Settings/credentials themselves. The added data are runtime facts with no credentials and no user-file writes. Candidates and account facts come from one applied Account/Registry snapshot (never an old list with a new connection); an account fact change with unchanged candidates must still drive necessary re-resolution; unknown states follow existing source lifecycles and never fabricate a "confirmed no model" snapshot. ModelFactory still only validates an explicit Selection; successful resolution does not promise future execution, and the execution layer never swaps model/level secretly. The Decoder's legacy-structure migration is not part of the normal resolution path.
 
-### 3.3 明确写回与固定时机
+## 3. State, saving and execution timing
 
-- 自动解析绝不直接写回。编辑页用户保存、一次提交被权威接纳等既有成功边界才允许采用有效值；准备失败/发送失败/取消编辑不据此覆盖原意图。
-- 实施前逐入口列出确切成功事件，不能把 RPC 发起/乐观显示当成功，也不能笼统写“发送成功”。优先沿用已存在的接纳/保存边界，不额外等待整轮生成完成。若原契约没有明确边界，记录后讨论。
-- 写回必须关联该次输入与目标；提交成功期间用户又修改意图，不能把该次较旧有效值覆盖新意图。Recent、Draft、Session 分别沿用各自权威边界，不因 View 更新一起写。
-- 定时任务的长期配置与本次 run 是两份不同记录。后台首次解析结果用于固定本次 run；不因此顺便改长期配置。正常编辑保存才能改任务配置。
-- run、Submission、Active Model 已固定后不重新解析；同 run 重试不换账号，下一次独立运行才重新解析。历史显示真实执行选择，不根据当前账号重解释。
-- 闲时创建当前即取 Ticket（`offPeakTaskService.createTask`），所以 queued 不等于尚未固定身份。本轮不做闲时选择跨账号自动替换，不新增账号切换后的取消、换票、任务重建或凭据快照持久化。保留现有执行前模型/账号检查及票据请求；既有过期/3102 换票续跑照常，不承诺跨账号续跑或原票据可跨账号复用。只读有效选择不能覆盖已绑定执行事实。
-- Composer 不弹留空错误；仍可能执行的任务保留不完整提示/阻断，已结束闲时任务不新增错误。控件可显示当前有效结果，本次运行记录保存实际采用值；不新增全局逐条通知。
+### 3.1 Original intent vs effective result
 
-## 4. 影响面与接入清单
+- The original selection stays the existing persisted field (while editing, the user's latest intent). effectiveSelection is held transiently and every automatic recomputation starts from the original intent, never from the previous auto-emptied/replaced result.
+- Ordinary config or account changes alter only the effective result; they must not clear or replace the original selection through the Composer's existing Draft auto-save, and text/attachment edits must keep saving the original selection intent.
+- A user's explicit model/level pick or explicit clear forms a new intent per the original edit/save semantics; after clearing, Recent/Session do not refill it. A pick must not produce a nonexistent "target Provider + old model/level" combination.
+- Original intent non-empty -> result empty -> config recovers -> result valid again is expected (not "restore from old field"). No persisted shadow or extra compatibility field is added.
+- Initialization of a new draft is separate from resolving an existing selection; mode selection, text edits and Snapshot arrival never trigger a default-model fallback.
 
-这是 option-source、validation、draft-default 和 commit-effect 的改动；不改存储 schema，不新增迁移或后台批量重写。
+### 3.2 First-read failure recovery
 
-| 入口/级别 | 当前事实与代码起点 | 接入和保存边界 |
-| --- | --- | --- |
-| 公共层，must-inspect | `packages/provider/src/facades.ts`；`packages/services/src/model-provider/providerFacadeServices.ts`；`packages/ui/src/hooks/useModelSelectionView.ts` | 输入原选择，返回带临时 effectiveSelection 的 View；公共订阅/有限读取重试，保持只读与输入隔离，Host/RPC 类型一致 |
-| Composer，must-inspect | `packages/ui/src/v4/composer/useDraftConfigControl.ts`；`packages/ui/src/lib/composerRecent.ts` | 当前 revision 检查直接清 draft.modelSelection 并自动持久化，必须改成临时派生；文本编辑不顺手写入有效结果，成功写回防旧提交覆盖新意图 |
-| 定时任务编辑，must-inspect | `packages/ui/src/settings/AutomationEditView.tsx` | 已通过 useModelSelectionView 读取目标 Host；表单解析、提示、保存使用同一个结果，取消不写 |
-| 定时任务后台，must-inspect | `packages/desktop/src/scheduler/index.ts`；`packages/desktop/src/host/index.ts`；`packages/services/src/session/automationRepo.ts` | 当前先把 automation.modelSelection 固定到 run 再派发。必须在首次固定前完成目标 Host 解析，或调整这条现有链的固定位置；不能只在页面修，也不能把账号规则塞给 scheduler/Main |
-| Bot，must-inspect | `packages/services/src/bots/botsService.ts` | 草稿候选已读目标 ModelSelectionService；显示与首次提交前统一解析，保留 Bot 自己的上下文/保存边界 |
-| Wiki，should-inspect | `packages/ui/src/repo-wiki/RepoWikiPane.tsx`；`packages/services/src/repo-wiki` | 显式生成选择复用规则；后台启动点查漏。生成配置与当前聊天选择不互改 |
-| Subagent，conditional | `packages/ui/src/settings/SubagentsSection.tsx`；目标执行层 | 显式 override 的选择入口核对接入；没有 override 时继续继承 Parent Active Model，不改为当前账号默认模型。若执行侧拿不到同一选择事实，先报告边界，不下沉临时别名 |
-| Off-Peak，must-inspect | `packages/services/src/model-provider/offPeakModelSelectionView.ts`；`packages/services/src/session/offPeakTaskService.ts` | 不跨账号自动换模型或迁移 Ticket；原 Provider 暂不可用只形成临时不完整结果，执行保护保留。现有 list/get/sync 的 repairLegacyModelSelections 对已有新 Selection 不匹配会写库 invalidate，需切断这种自动破坏原意图的路径；真正旧结构迁移独立保留，历史/Ticket 不重解释 |
-
-Desktop 和 Web 复用解析算法，但不改变 continuous/replayable 投递。远端 View 不就绪时不退回 Local Host；隔离沿用 workspaceIdentity、remoteSessionId 和现有 service owner。不能把账号切换变成第二套远端同步。
-
-## 5. 与其他 Todo 的关系
-
-### 2026-09-07 执行中裁决：显式 Subagent 后续单独接入
-
-用户明确同意：本轮保留显式 Subagent 原模型校验，不只在设置页自动对应。Agent `runtime/methods/subagent.ts` 从 profile.modelSelection 或父 Runtime 选择固定子任务模型；当前不具备 Host Account State，完整对应需要另行设计协议接入。继承 Parent Active Model 的路径不变，不读取账号默认，不新增运行时别名。这是明确排除项，不计为已实现统一对应。
-
-- Todo 85：D01 已裁决不恢复发送前同步；D02 的体验由本 Todo 承接，不原样恢复旧 SessionPane 切模命令。85 的其他恢复可以独立 review/提交，不能把 87 未实施写成 D02 已交付。
-- Todo 83/85：提供正确 Account State、Overlay 和当前账号身份，是本 Todo 的输入基础。
-- Todo 86：负责源刷新如何可靠推动 View；本 Todo 负责 View 到达后如何解析选择。两者衔接，不要求先执行尚未裁决的 86，也不在 87 中另建刷新框架。
-- Todo 70/71/72/81/84：失效时控件留空、缺档位不补、已提交执行事实不变等继续保留。本 Todo 明确取代“自动清空并覆盖原保存 Selection”：改为临时有效结果为空，原意图不丢。跨账号对应仅包含普通套餐，Off-Peak 本轮排除；不修改旧结构迁移和回滚文件策略。
-
-## 6. 实施顺序与完成条件
-
-1. 先补正式 `design/interaction/selection-state.md` 和相关用例目录/矩阵，注明“当前行为”与本 Todo 新语义的差异；冻结只读输入/结果接口、账号上下文、各入口成功写回事件及 run 固定位置。保留 shared Off-Peak 不跨 Family 静默迁移的约束，不因统一解析更改 Ticket 机制。
-2. 先写原意图保护、公共解析、View 一致性及首读恢复测试，再实现算法、读取接口和公共 hook。证明普通配置/账号更新复用同一入口，不新增默认回退、不让输入相关结果进入全局共享快照。
-3. 接 Composer 与定时任务编辑；删除重复解析，分离意图与派生结果。再接后台定时任务、Bot、Off-Peak，核对 Wiki/显式 Subagent，重点检查已有自动写盘路径和冻结身份边界。
-4. 每步完成都 review 调用链和测试；最后反向检查是否还有只在 UI 生效、后台直接消费未解析选择的遗漏。
-5. 运行 typecheck、lint、相关单测；交互 E2E 在 MacBook Air 隔离目录运行，覆盖 Composer、不打开编辑页的定时任务后台及 Off-Peak 选择/票据边界。提供实际请求身份/档位、文件不变或无请求证据，不能只断言菜单变化。
-6. 独立提交，实施报告写明接入点、未覆盖入口、测试结果和任何待裁决项。禁止仅声明“公共 helper 已完成”。
-
-## 7. 验收用例与剪枝（合同；实际覆盖级别见 coverage matrix）
-
-| ID | 前置和动作 | 必须证明 | 证据 |
-| --- | --- | --- | --- |
-| SR87-01 | 个人/Team 切换，新 Provider 有相同模型/档位 | 只改 Provider，模型/档位保留；普通 DeepSeek 不动 | 公共单测 + Composer E2E 请求 |
-| SR87-02 | 目标只缺档位或缺模型 | 仅有效结果分层置空；原意图及文件不变，不选默认、不按档位索引映射 | 单测 + 控件/提交阻断 + 文件 |
-| SR87-03 | Personal/Built-in 更新档位、模型 enabled 或模型成员 | 与账号更新使用同一解析入口；有效选择不变，无效部分置空 | 配置/View 集成 + UI |
-| SR87-04 | View 迟到、未知、Host 切换，期间用户又改选择 | 不误清空、不串 Host、不覆盖最新用户选择；Ready 权威空候选才判失效 | 状态/服务测试 |
-| SR87-05 | 重启后读取旧账号选择，未观察切换事件 | 仅凭当前 View 完成账号对应；旧 legacy 结构仍归 Decoder | 公共/恢复集成测试 |
-| SR87-06 | 定时任务已保存旧账号模型，切换后不打开编辑页直接触发 | 首次 run 固定正确选择；实际请求一致；同 run 重试不重新换模型 | Air E2E + run 记录/请求 |
-| SR87-07 | Bot 旧草稿、Wiki 显式设置再次使用 | 复用解析；各自记录不污染 Composer/Recent | 业务集成；交互按已接受用例补 E2E |
-| SR87-08 | 继承型 Subagent、已运行/已完成记录 | 不跟随当前账号替换，不重写历史/执行对象 | 定向不变量测试 |
-| SR87-09 | 配置同步未完成时立刻发远端请求 | 不新增发送前同步屏障；目标 Host 自己校验 | 既有同步测试 + 调用边界检查 |
-| SR87-10 | 原选择临时无效，编辑文字，再恢复配置 | 文字保存不清原选择；有效结果恢复，用户明确清空则不恢复 | Draft/文件测试 + Composer E2E |
-| SR87-11 | 首读临时失败，随后恢复且 revision 不变；没有变化事件 | 公共层有限读取重试可恢复；耗尽可 reload；换目标/销毁取消，解析不完整不重试 | Hook/服务测试，受控故障 |
-| SR87-12 | 两个消费者传不同选择；同 revision 下改输入或提交后再编辑 | effectiveSelection 不串用，旧回包/旧提交成功不覆盖新意图；失败不写回 | 公共读取与提交测试 |
-| SR87-13 | Z.AI/BigModel 域切换，已保存 Off-Peak 选择与当前账号不匹配 | 不自动换 Provider；只读结果不完整、原意图不改，执行前检查继续阻断；不因账号切换自动换票 | 公共/服务测试 + Air mock 交互与无派发证据 |
-| SR87-14 | 已有闲时 Ticket/queued/续跑；list/get/sync；切回原账号 | 读取/轮询不清新 Selection 或从旧修复字段重绑另一账号；切回可重算模型有效结果（不保证 Ticket 有效）；历史不变，既有过期/3102 处理保留 | 服务/存储/Ticket 集成测试 |
-
-组合剪枝：不为颜色、每个供应商品牌或每档 reasoning 做全排列；个人/Team 取连接变化代表，Start 取 pending/空模型代表，Off-Peak 取 Z.AI/BigModel 切域不改原意图及执行阻断代表，普通 Provider 取配置变化代表。远端取身份隔离与读取恢复代表；继承型 Subagent 只做不变量。没有同模型挑首模型、按中文/强度位置猜档位、自动批量写盘、闲时跨账号自动替换或票据迁移均明确排除。
-
-E2E 交接：在 case catalog/coverage matrix 登记 SR87 映射后，按 e2e-case-lifecycle 准备 case-local 账号/Provider fixture；不领取真实额度，不发送真实 Bot 消息，不改 Air 日常配置。按 View revision/运行记录条件等待，不靠固定 sleep 猜同步结束；不要求每个公共函数组合都跑桌面 E2E。
-
-## 8. 可行性、风险和调查记录
-
-总体为中等偏大的跨入口改动，不是加一个 helper 就结束；未发现需要推翻架构或迁移存储 schema 的硬障碍。公共算法小，已有服务/订阅可复用。难点集中在：Composer 原意图与有效结果拆开、防其他编辑自动写盘；后台定时任务当前先固定 run 的时序；闲时创建即取号且 list/get 会写入失效状态；以及无后续事件时的首读恢复。
-
-实施依据 live code 做直接调用链核对，约两跳；codegraph 工具不可用，未伪称图查询结果。Feature Graph 已更新实现与精确代码种子。新增 SR87 证据与旧回归分开，不把旧通过结果当新功能覆盖。
-
-当前没有阻止落盘的产品问题。实施时若账号目标无法唯一确定、需要不同正式 modelId 才能对应、后台固定点无法在现有 Host 边界内接入，或希望已绑定 Ticket 的任务跨域继续执行，先记录事实讨论。不为扩大匹配率新增模糊别名、数据扫描、自动重取票或请求层兜底。
-
-立项时尚未改代码；现已完成实现。公共层 `cd6c4ff87c`，Composer `ac00daec9c`，Wiki `a3517b732f`，Automation/Off-Peak `e401dbcbb4`，Bot `f0047c4430`。实施期间保留并行 Todo86 和其他命名/迁移改动，没有推送。
-
-### 2026-09-07 追加裁决：闲时跨账号续跑暂不扩展
-
-对照当时合入的固定 staging `16d999f6a48b180b691a4d909479c063580d2ad0`，不是后续 staging：
-
-- staging 已经在创建任务时取 Ticket，后续请求重新解析当前账号凭据；并未持久保存每个 Ticket 的原账号凭据。`offPeakServerClient.ts` 与该基线无差异。
-- staging 的任务只保存旧 model/thought，派发时构造本轮模型；没有当前新增的“读取任务时比较新 Selection 的 Provider 并清库”行为。不能把这一破坏性读取归为 staging 原行为，也不能为恢复旧行为重新引入旧 runtimeModel。
-- staging 已有过期重取号、模型请求 3102 后换票续跑；票据查询的 not_found 分支没有完整的跨账号恢复流程。现有客户端证据不能证明切 Z.AI/BigModel 后票据必然失效，也不能证明可复用；本轮没有调用真实票据接口验证。
-- 当前 `offPeakTaskService.repairLegacyModelSelections()` 在 list/get/sync 中处理已有新 Selection，不匹配时调用 `offPeakTaskRepo.invalidateModelSelection()`，写入 `model_selection=NULL, schedulable=0`。已有新字段不得再走这种清空后依赖旧修复字段重绑的路径；真正旧数据迁移仍独立保留。
+The read layer keeps loading/unavailable/error/ready; the pure result gets no generic "temporarily cannot resolve". Normal results are only complete or incomplete valid selections (model or level may be empty, with a minimal reason); a read error never masquerades as model invalidation.
 
 ```text
-已有闲时原选择 + 当前账号/配置
-               |
-               v
-只检查原 Provider 的当前有效性，不跨账号换 Provider
-       |                         |
-     可用                       不可用
-       |                         |
-  保留执行前检查            临时不完整、阻止执行
-       +------------+------------+
-                    |
-             原持久选择不因读取改写
+public hook: subscribe first, then first read
+  config/account change -> new facts arrive -> recompute
+  user intent change -> recompute with current facts
+  target reconnect -> rebind/subscribe/read
+  first read fails temporarily with no new event -> bounded retry in the public read layer
+     -> still failing: show the error, manual reload possible
 ```
 
-本次确定：跨账号续跑先不扩展，已有选择别破坏。Ticket 既有机制不改，不新增长期票据身份存储，不取消/重建用户任务。普通账号套餐的最大努力同模型/同档位解析不受此收缩影响。
+A hook that keeps its subscription after a failed first read would not recover without later events; a service init failure clears startPromise so it can be read again, so "wait for onDidChange" alone is not enough. The public read layer allows one bounded, cancellable automatic read retry using the existing retry utility with unified count/interval, with no per-page timers; it does not retry ordinary incomplete results, config writes, claims or dispatches. It retries only recoverable read failures (no target, disposed, auth/explicit config errors are not retried). A new successful View, target/input generation change or unmount cancels old responses and timers; after a first failure, a recovered snapshot with unchanged revision exits the error state; a reconnect may start a new read cycle and an exhausted retry is not cached as permanent failure. A one-shot background read failure returns to the existing scheduling/task-prepare error flow with no separate long-lived subscription or task retry. Source-query unknown and disconnect must not authorize wrongly; same-account last-known-good follows existing source rules and a changed identity does not reuse old entitlement. Explicit pending / no entitlement / Ready empty candidates may yield an incomplete result with the original intent kept.
 
-### 当前裁决状态（不等于开发完成）
+### 3.3 Explicit write-back and fixing time
 
-| 项目 | 结论 | 后续 |
-| --- | --- | --- |
-| Todo 85 D01：发送前远端配置同步 | 明确不恢复 | 不再列为待裁决 |
-| Todo 85 D02：账号切换后的模型选择 | 按本 Todo 统一解析，不恢复旧事件驱动批量改写 | 待实施与验证 |
-| 闲时任务跨账号与 Ticket | 本轮不做跨账号自动替换/票据迁移；修正读取破坏原意图 | 按上述收缩范围实施 |
-| Todo 86：刷新职责 | 独立草案，仍待讨论 | 不阻塞 Todo 85 收尾，不自动扩大本 Todo |
+- Automatic resolution never writes back. Only existing success boundaries (user save on an edit page, a submit authoritatively accepted) may adopt the effective value; prepare failure/send failure/cancelled edit never overwrites the original intent.
+- Before implementation, list the exact success event per entry (an RPC dispatch or optimistic display is not success; not generically "send success"); prefer existing accept/save boundaries, do not wait for the whole generation to finish; if the original contract has no clear boundary, record and discuss.
+- Write-back is tied to that input and target; if the user edits the intent while a submit succeeds, the older effective value must not overwrite the new intent. Recent, Draft and Session keep their own authority boundaries and are not written together by View updates.
+- A scheduled task's long-term config and this run are two records: the first background resolution result fixes this run only, not the long-term config; only a normal edit-save changes task config.
+- Once the run, Submission and Active Model are fixed, there is no re-resolution; retries of the same run do not switch account; the next independent run resolves again. History shows the real executed selection and is not reinterpreted by the current account.
+- Off-peak creation fetches a Ticket immediately (`offPeakTaskService.createTask`), so queued does not mean identity is unfixed. No cross-account automatic replacement of off-peak selection this round, and no task cancel/ticket exchange/rebuild or credential-snapshot persistence after an account switch. The existing pre-execution model/account checks and ticket requests stay; the existing expiry/3102 ticket-exchange resume works as before, with no promise of cross-account resume or cross-account reuse of the original ticket. A read-only effective selection cannot overwrite bound execution facts.
+- Composer shows no empty-state error; tasks that may still execute keep the incomplete notice/block, finished off-peak tasks get no new error. Controls may show the current effective result, the run record stores the actually adopted value; no global per-item notification is added.
 
-截至本轮，固定 staging 恢复记录中已列出的产品裁决没有新增悬而未决项；最终 review、未提交恢复组的提交及 Todo 87 实施仍未完成，不能据此宣称事故已全部收口。实施中若遇到本文件第 8 节列出的真实边界冲突，再带具体事实讨论。
+## 4. Impact and entry wiring
+
+This is an option-source, validation, draft-default and commit-effect change; no storage schema change, no migration, no background bulk rewrite.
+
+| Entry / level                           | Current fact and code seed                                                                                                                             | Wiring and write-back boundary                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Public layer, must-inspect              | `packages/provider/src/facades.ts`; `packages/services/src/model-provider/providerFacadeServices.ts`; `packages/ui/src/hooks/useModelSelectionView.ts` | input original selection, return a View with transient effectiveSelection; public subscription + bounded read retry; read-only and input-isolated; Host/RPC types consistent                                                                                                                                                                                                                                                                                        |
+| Composer, must-inspect                  | `packages/ui/src/v4/composer/useDraftConfigControl.ts`; `packages/ui/src/lib/composerRecent.ts`                                                        | the current revision check cleared `draft.modelSelection` and auto-persisted; must become transient derivation; text edits do not write the effective result; success write-back guards against stale submits overwriting new intent                                                                                                                                                                                                                                |
+| Scheduled task edit, must-inspect       | `packages/ui/src/settings/AutomationEditView.tsx`                                                                                                      | already reads the target Host via useModelSelectionView; form resolution, prompts and save use one result; cancel writes nothing                                                                                                                                                                                                                                                                                                                                    |
+| Scheduled task background, must-inspect | `packages/desktop/src/scheduler/index.ts`; `packages/desktop/src/host/index.ts`; `packages/services/src/session/automationRepo.ts`                     | currently fixes `automation.modelSelection` into the run before dispatch; resolution on the target Host must complete before the first fix (or adjust where the existing chain fixes it); not only in the page, and account rules do not move into scheduler/Main                                                                                                                                                                                                   |
+| Bot, must-inspect                       | `packages/services/src/bots/botsService.ts`                                                                                                            | draft candidates already read the target ModelSelectionService; unify resolution for display and first submit, keeping Bot's own context/save boundary                                                                                                                                                                                                                                                                                                              |
+| Wiki, should-inspect                    | `packages/ui/src/repo-wiki/RepoWikiPane.tsx`; `packages/services/src/repo-wiki`                                                                        | explicit generation selection reuses the rules; check background start points; generation config and current chat selection do not modify each other                                                                                                                                                                                                                                                                                                                |
+| Subagent, conditional                   | `packages/ui/src/settings/SubagentsSection.tsx`; target execution layer                                                                                | check explicit-override selection entries; with no override keep inheriting the Parent Active Model, never the current account default; if execution cannot get the same selection fact, report the boundary without pushing a temporary alias down                                                                                                                                                                                                                 |
+| Off-Peak, must-inspect                  | `packages/services/src/model-provider/offPeakModelSelectionView.ts`; `packages/services/src/session/offPeakTaskService.ts`                             | no cross-account auto replacement or Ticket migration; an unavailable original Provider yields only a transient incomplete result with execution protection kept; the existing list/get/sync `repairLegacyModelSelections` invalidates (writes to the database) an existing new Selection that does not match, and that path automatically destroying original intent must be cut; true legacy-structure migration stays separate; history/Ticket not reinterpreted |
+
+Desktop and Web reuse the resolution algorithm without changing continuous/replayable delivery. An unready remote View does not fall back to the Local Host; isolation follows `workspaceIdentity`, `remoteSessionId` and the existing service owner; account switching does not become a second remote sync.
+
+## 5. Relation to other Todos
+
+- **Explicit Subagent ruling (2026-09-07, later superseded by Todo99)**: this round keeps explicit Subagent original-model validation and does not map automatically from the settings page. Agent `runtime/methods/subagent.ts` fixes the child model from `profile.modelSelection` or the parent Runtime selection; it had no Host Account State, so full mapping needed a separate protocol design. The inherit-Parent-Active-Model path is unchanged (no account default, no runtime alias). It was an explicit exclusion, not counted as implemented unified mapping.
+- Todo 85: D01 ruled no pre-send sync; D02's experience is carried here and the old SessionPane switch command is not restored. Other Todo 85 restorations can be reviewed/committed independently; 87 not implemented must not be written as D02 delivered.
+- Todo 83/85 provide the correct Account State, Overlay and current account identity as input.
+- Todo 86 owns how source refresh drives the View reliably; this Todo owns how a selection resolves once the View arrives; they connect, 87 builds no refresh framework and does not wait for the unruled 86.
+- Todo 70/71/72/81/84 keep empty controls on invalidation, no level fill, unchanged committed execution facts, etc. This Todo explicitly replaces "auto-clear and overwrite the original saved Selection" with a transient empty effective result without losing the original intent. Cross-account mapping covers ordinary plans only (Off-Peak excluded this round); legacy structure migration and rollback file strategy are unchanged.
+
+## 6. Order and completion
+
+Update the formal `design/interaction/selection-state.md` and the case catalog/matrix first (noting current behavior vs this Todo's semantics; freeze the read-only input/result interface, account context, per-entry success write-back event and run-fixing location; keep the shared Off-Peak "no silent cross-Family migration" constraint, Ticket mechanism untouched). Write original-intent protection, public resolution, View consistency and first-read recovery tests before the algorithm, read interface and public hook; then wire Composer and scheduled-task editing (separating intent from derived result), then background scheduled tasks, Bot and Off-Peak, then check Wiki and explicit Subagent, especially existing auto-write paths and frozen identity boundaries. Review each step's call chain, reverse-check for UI-only effects or background consumers of unresolved selections, run typecheck, lint, unit tests and isolated MacBook Air interaction E2E (Composer, background scheduled tasks without opening the edit page, Off-Peak selection/ticket boundaries) with evidence of the real request identity/level and file-unchanged or no-request, and commit independently with an implementation report listing wiring points and uncovered entries.
+
+## 7. Acceptance cases (contract; actual coverage per the coverage matrix)
+
+| ID      | Setup and action                                                                               | Must prove                                                                                                                                                                                                                           | Evidence                                                             |
+| ------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| SR87-01 | personal/Team switch, new Provider has the same model/level                                    | only Provider changes; model/level kept; ordinary DeepSeek untouched                                                                                                                                                                 | public unit test + Composer E2E request                              |
+| SR87-02 | target lacks only the level or the model                                                       | only the effective result is emptied per layer; original intent and file unchanged; no default pick, no level-index mapping                                                                                                          | unit + control/submit block + file                                   |
+| SR87-03 | Personal/Built-in updates level, model enabled or members                                      | same resolution entry as account updates; valid selection unchanged, invalid parts emptied                                                                                                                                           | config/View integration + UI                                         |
+| SR87-04 | View late, unknown, Host switch while the user edits the selection                             | no false clearing, no Host mixing, no overwrite of the user's latest selection; only a Ready authoritative empty candidate set is invalid                                                                                            | state/service tests                                                  |
+| SR87-05 | restart reads an old account selection with no switch event                                    | account mapping from the current View alone; legacy structures still belong to the Decoder                                                                                                                                           | public/restore integration                                           |
+| SR87-06 | scheduled task saved with an old-account model, switch, trigger without opening the edit page  | first run fixes the right selection; real request matches; same-run retry does not re-switch                                                                                                                                         | Air E2E + run record/request                                         |
+| SR87-07 | Bot old draft, Wiki explicit setting reused                                                    | reuse resolution; each record does not pollute Composer/Recent                                                                                                                                                                       | business integration; E2E per accepted cases                         |
+| SR87-08 | inheriting Subagent, running/finished records                                                  | not replaced by the current account, no history/executing object rewrite                                                                                                                                                             | targeted invariant tests                                             |
+| SR87-09 | send a remote request right after config sync is incomplete                                    | no pre-send sync barrier added; the target Host validates itself                                                                                                                                                                     | existing sync tests + call-boundary check                            |
+| SR87-10 | original selection temporarily invalid, edit text, config recovers                             | text save does not clear the original; effective result recovers; an explicit user clear is not restored                                                                                                                             | Draft/file tests + Composer E2E                                      |
+| SR87-11 | first read fails temporarily then recovers with unchanged revision, no change event            | bounded read retry recovers; exhaustion allows reload; target change/disposal cancels; incomplete resolution is not retried                                                                                                          | Hook/service tests with controlled faults                            |
+| SR87-12 | two consumers pass different selections; same revision with changed input or edit after submit | effectiveSelection not shared; stale responses/old submit success do not overwrite new intent; failure does not write back                                                                                                           | public read and submit tests                                         |
+| SR87-13 | Z.AI/BigModel domain switch, saved Off-Peak selection mismatches the current account           | no auto Provider change; read-only incomplete result, original intent unchanged, pre-execution checks keep blocking; no auto ticket exchange on account switch                                                                       | public/service tests + Air mock interaction and no-dispatch evidence |
+| SR87-14 | existing off-peak Ticket/queued/resume; list/get/sync; switching back to the original account  | reads/polling do not clear a new Selection or rebind another account from old repair fields; switching back can recompute a valid model result (Ticket validity not promised); history unchanged; existing expiry/3102 handling kept | service/storage/Ticket integration tests                             |
+
+Combination pruning: no full permutation by color, vendor brand or reasoning tier; personal/Team gets connection-change representatives, Start gets pending/empty-model representatives, Off-Peak gets Z.AI/BigModel domain switch + original-intent + execution-block representatives, ordinary Providers get config-change representatives; remote gets identity isolation + read recovery; inheriting Subagent gets invariants only. Excluded explicitly: picking the first model of the same model, guessing levels by Chinese name/position, automatic bulk disk writes, off-peak cross-account auto replacement or ticket migration.
+
+E2E handoff: after registering the SR87 mapping in the case catalog/coverage matrix, prepare case-local account/Provider fixtures per e2e-case-lifecycle; no real quota claims, no real Bot messages, no change to the Air's daily config; wait on View revision / run-record conditions, not fixed sleeps; not every public function combination needs a desktop E2E.
+
+## 8. Risks, commits and the off-peak ruling
+
+A medium-to-large cross-entry change, not a single helper; no hard obstacle requiring architecture change or schema migration. Difficulty clusters in: splitting Composer original intent from the effective result and preventing other edits from auto-writing; the background scheduled task fixing the run first; off-peak creation taking a ticket at once with list/get writing invalid state; first-read recovery with no later event. Open situations to discuss with concrete facts (no fuzzy aliases, data scans, auto re-ticketing or request-layer fallbacks): the account target cannot be determined uniquely; a different formal modelId is needed for correspondence; the background fixing point cannot be wired within the existing Host boundary; a task with a bound Ticket should resume across domains. Commits: public layer `cd6c4ff87c`, Composer `ac00daec9c`, Wiki `a3517b732f`, Automation/Off-Peak `e401dbcbb4`, Bot `f0047c4430`; not pushed.
+
+### 2026-09-07 ruling: off-peak cross-account resume is not extended
+
+Against the then-merged fixed staging `16d999f6a48b180b691a4d909479c063580d2ad0`: staging already takes a Ticket at task creation and later requests re-resolve the current account credentials (no per-Ticket original credentials are persisted; `offPeakServerClient.ts` has no diff from that baseline); tasks saved only the old model/thought and built the model at dispatch, with no "compare a new Selection's Provider when reading a task and clear the database" behavior; staging has expiry re-ticketing and model-request 3102 ticket-exchange resume, but the ticket-query not_found branch lacks a complete cross-account recovery flow, and existing client evidence proves neither that a ticket is invalid after a Z.AI/BigModel switch nor that it can be reused (no real ticket API was called). The current `offPeakTaskService.repairLegacyModelSelections()` in list/get/sync invalidates (`offPeakTaskRepo.invalidateModelSelection()` writes `model_selection=NULL, schedulable=0`) an existing new Selection that mismatches; an existing new field must no longer take this clear-then-rebind path, while true legacy-data migration stays separate.
+
+```text
+saved off-peak selection + current account/config
+ -> only check the original Provider's current validity, no cross-account Provider change
+    usable -> keep pre-execution checks | unusable -> transient incomplete, block execution
+ -> the persisted original selection is not rewritten by reading
+```
+
+Decision: cross-account resume is not extended and the existing selection is not destroyed; the Ticket mechanism is unchanged, no long-term ticket identity storage, no cancel/rebuild of user tasks; best-effort same-model/same-level resolution for ordinary account plans is unaffected.
+
+### Ruling status (not equal to development done)
+
+| Item                                        | Conclusion                                                                                   |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Todo 85 D01: pre-send remote config sync    | explicitly not restored                                                                      |
+| Todo 85 D02: selection after account switch | unified resolution per this Todo; no old event-driven bulk rewrite                           |
+| off-peak cross-account and Ticket           | no cross-account auto replacement / ticket migration; fix reads that destroy original intent |
+| Todo 86: refresh responsibilities           | independent draft, still to be discussed; does not block Todo 85 wrap-up                     |
+
+At the time of writing the final review, commits of the uncommitted restoration group and Todo 87 implementation were still pending, so the incident could not be declared closed; a real boundary conflict from the open situations above is discussed with concrete facts.

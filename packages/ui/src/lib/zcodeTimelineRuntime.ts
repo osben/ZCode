@@ -10,9 +10,10 @@ export function isRunningGoalVerificationTimeline(
   return (
     timeline?.type === "goal_verification" &&
     RUNNING_GOAL_VERIFICATION_STATUSES.has(timeline.status) &&
-    // 修复原因：CI/快照恢复里可能出现 status 仍是 started、但 verification 已经带
-    // passed/reason 的不一致横条。verification 结果是 verifier 已结束的权威信号，
-    // 不能继续把会话判成 running，否则 completed 目标下新的 `/goal` 会被误排队。
+    // Fix reason: CI/snapshot restore can produce an inconsistent banner whose status is still
+    // started while verification already carries passed/reason. The verification result is the
+    // authoritative signal that the verifier has finished; the session must not stay judged
+    // running, or a new `/goal` under a completed goal would be wrongly queued.
     timeline.verification === undefined
   );
 }
@@ -34,9 +35,7 @@ export function hasRunningZCodeTimeline(messages: readonly TaskChatMessage[]): b
   return messages.some((message) => isRunningZCodeTimeline(message.syntheticTimeline));
 }
 
-export function hasRunningContextCompactionTimeline(
-  messages: readonly TaskChatMessage[],
-): boolean {
+export function hasRunningContextCompactionTimeline(messages: readonly TaskChatMessage[]): boolean {
   return messages.some((message) => {
     const timeline = message.syntheticTimeline;
     return (
@@ -46,18 +45,15 @@ export function hasRunningContextCompactionTimeline(
   });
 }
 
-export function hasRunningGoalVerificationTimeline(
-  messages: readonly TaskChatMessage[],
-): boolean {
-  return messages.some((message) =>
-    isRunningGoalVerificationTimeline(message.syntheticTimeline),
-  );
+export function hasRunningGoalVerificationTimeline(messages: readonly TaskChatMessage[]): boolean {
+  return messages.some((message) => isRunningGoalVerificationTimeline(message.syntheticTimeline));
 }
 
 export function hasRunningGoalContinuationMessage(messages: readonly TaskChatMessage[]): boolean {
-  // Bugfix: goal 正常续跑的 model-only 输入不会生成可见 user 气泡，也不会推进 goalIteration；
-  // UI 只会留下带 streamGroupId 的 streaming assistant。队列“立即发送”拦截必须识别这个运行态，
-  // 否则 target 元信息短暂缺失时会误允许抢占 active goal。
+  // Bugfix: the model-only input of a goal's normal continuation produces no visible user bubble
+  // and does not advance goalIteration; the UI only keeps a streaming assistant with a
+  // streamGroupId. The queue's "send now" interception must recognize this running state, or a
+  // briefly missing target's meta would wrongly allow preempting the active goal.
   return messages.some(
     (message) =>
       message.role === "assistant" &&
@@ -71,7 +67,6 @@ export function hasRunningGoalContinuationMessage(messages: readonly TaskChatMes
 
 export function hasRunningGoalRuntimeSignal(messages: readonly TaskChatMessage[]): boolean {
   return (
-    hasRunningGoalVerificationTimeline(messages) ||
-    hasRunningGoalContinuationMessage(messages)
+    hasRunningGoalVerificationTimeline(messages) || hasRunningGoalContinuationMessage(messages)
   );
 }

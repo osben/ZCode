@@ -1,29 +1,59 @@
-# System Zoom Shortcuts
+# System zoom shortcuts
 
-## 背景
+## Background
 
-桌面端之前移除了 ZCode 自定义界面缩放设置，避免历史 `localStorage` 缩放倍率继续影响首屏。移除后，应用菜单也不再包含 Electron 原生页面缩放 role，导致系统常用的 `Cmd/Ctrl + +/-/0` 快捷键无法缩放当前窗口内容。
+The desktop previously removed ZCode's custom interface zoom setting so that historical `localStorage` zoom
+ratios no longer affect the first screen. After that, the app menu no longer contained Electron's native page
+zoom role, so the common system shortcuts `Cmd/Ctrl + +/-/0` could not zoom the current window content.
 
-## 目标
+## Goals
 
-- 恢复桌面端系统级页面缩放快捷键。
-- 使用桌面命令承接 `Cmd/Ctrl + 0/+/-`，并限制当前窗口页面缩放等级在缩小 `-3` 档、放大 `+5` 档之间。
-- macOS 每次缩放后同步调整左上角红黄绿原生按钮纵向位置，并通知 renderer 反向调整顶部浮层左侧安全区；红绿灯宽度本身不随页面缩放变化，横向位置暂时保持系统初始值。
-- 仅作用于桌面端当前窗口的页面缩放，不重新引入 UI 设置页、账户菜单入口、持久化缩放等级或专用 platform API。
+- Restore the desktop's system-level page zoom shortcuts.
+- Use desktop commands to carry `Cmd/Ctrl + 0/+/-` and limit the current window's page zoom level to between
+  `-3` (zoom out) and `+5` (zoom in).
+- On macOS, after each zoom, adjust the vertical position of the top-left traffic-light native buttons and
+  notify the renderer to adjust the left safe area of the top overlay in step; the traffic-light width itself
+  does not change with page zoom, and the horizontal position temporarily keeps the system initial value.
+- It acts only on the desktop current window's page zoom, without reintroducing a UI settings page, an account
+  menu entry, a persisted zoom level or a dedicated platform API.
 
-## 非目标
+## Non-goals
 
-- 不恢复旧的三档界面缩放偏好。
-- 不读写历史 `zcode-zoom-level`。
-- 不改变 Web / 手机远控链路；手机端仍使用浏览器自身缩放能力和现有 replayable 恢复边界。
+- The old three-level interface zoom preference is not restored.
+- The historical `zcode-zoom-level` is not read or written.
+- The Web / mobile remote link is unchanged; mobile keeps using the browser's own zoom and the existing
+  replayable recovery boundary.
 
-## 实现
+## Implementation
 
-- `packages/shared/src/desktopMenu.ts` 增加 View 菜单的 Actual Size、Zoom In、Zoom Out 桌面菜单文案。
-- `packages/desktop/src/main/desktopApplicationMenu.ts` 在 View 菜单中添加 `CmdOrCtrl+0`、`CmdOrCtrl+Plus`、`CmdOrCtrl+-` accelerator，并保留隐藏的 `CmdOrCtrl+=` zoom-in 兜底以兼容不同键盘布局。
-- View 菜单的 Actual Size、Zoom In、Zoom Out 按当前聚焦窗口 zoom 档位设置禁用态：默认大小时禁用 Actual Size，最大 `+5` 档禁用 Zoom In，最小 `-3` 档禁用 Zoom Out；隐藏的 `CmdOrCtrl+=` 兜底项和 Zoom In 使用同一禁用态。
-- `packages/desktop/src/main/desktopCommandHandlers.ts` 统一处理 `ResetZoom`、`ZoomIn`、`ZoomOut`，读取当前 `zoomFactor` 换算为内部档位，调用 `webContents.setZoomFactor(1.1 ^ level)` 并把缩放等级夹在 `[-3, 5]`。
-- 每次执行缩放命令后刷新应用菜单；主窗口重新聚焦时也刷新菜单，避免系统菜单保留旧禁用状态。
-- `packages/desktop/src/main/desktopWindowButtonPosition.ts` 复用 macOS 初始红绿灯位置 `{ x: 24, y: 25 }`，横向 `x` 暂时保持 `24`，纵向 `y` 按统一 zoom factor `1.1 ^ level` 计算位移并乘以 `1.5` 的视觉跟随增益，再设置 `setWindowButtonPosition`；顶部浮层按 `96 / zoomFactor` 接收 `leftPaddingPx`。Windows 不调整原生按钮坐标，但会把 `titleBarOverlay.height` 按 `48 * zoomFactor` 同步到当前缩放档位，让右上角最小化/最大化/关闭按钮继续跟随缩放；renderer 以 Window Controls Overlay 的 `titlebar-area-*` CSS 几何作为右侧安全区事实源，并保留 `136 / zoomFactor` 作为环境变量不可用时的 fallback。自绘 caption 按钮宽度由真实安全区除以三个原生按钮派生，避免缩放或 DPI 差异让下拉按钮进入最小化按钮区域。Linux 暂不补偿原生按钮区。
-- `packages/desktop/src/main/desktopWindowChrome.ts` 在窗口创建后立即读取当前 `zoomFactor` 并同步 macOS 红绿灯位置；`packages/desktop/src/preload/index.ts` 在 React 接管 root 前同步读取 `webFrame.getZoomFactor()`，一边缓存顶部浮层安全区给 `RootStartupLoading` 首次渲染使用，一边通过 `WindowControlsOverlayReady` 通知 main 提前重置红绿灯位置，避免等进入 App 页面后才调整。
-- 通过 `packages/desktop/test/desktopApplicationMenu.test.ts` 验证 View 菜单把快捷键转发到受控桌面命令，通过 `packages/desktop/test/desktopCommandHandlers.test.ts` 验证缩放上下界。
+- `packages/shared/src/desktopMenu.ts` adds the desktop menu copy for View-menu Actual Size, Zoom In and Zoom
+  Out.
+- `packages/desktop/src/main/desktopApplicationMenu.ts` adds the accelerators `CmdOrCtrl+0`, `CmdOrCtrl+Plus`
+  and `CmdOrCtrl+-` to the View menu, and keeps a hidden `CmdOrCtrl+=` zoom-in fallback for different keyboard
+  layouts.
+- View-menu Actual Size, Zoom In and Zoom Out are disabled by the focused window's zoom level: Actual Size
+  disabled at the default size, Zoom In at the maximum `+5` level, Zoom Out at the minimum `-3` level; the
+  hidden `CmdOrCtrl+=` fallback and Zoom In share the same disabled state.
+- `packages/desktop/src/main/desktopCommandHandlers.ts` handles `ResetZoom`, `ZoomIn` and `ZoomOut` uniformly:
+  it reads the current `zoomFactor`, converts it to an internal level, calls
+  `webContents.setZoomFactor(1.1 ^ level)` and clamps the level to `[-3, 5]`.
+- The app menu is refreshed after each zoom command; it is also refreshed when the main window regains focus,
+  so the system menu does not keep a stale disabled state.
+- `packages/desktop/src/main/desktopWindowButtonPosition.ts` reuses the macOS initial traffic-light position
+  `{ x: 24, y: 25 }`; horizontal `x` temporarily stays `24`, vertical `y` is displaced by the uniform zoom factor
+  `1.1 ^ level` times a visual-follow gain of `1.5`, then `setWindowButtonPosition` is called; the top overlay
+  receives `leftPaddingPx` as `96 / zoomFactor`. Windows does not adjust native button coordinates but syncs
+  `titleBarOverlay.height` as `48 * zoomFactor` to the current zoom level so the top-right
+  minimize/maximize/close buttons keep following the zoom; the renderer uses the Window Controls Overlay
+  `titlebar-area-*` CSS geometry as the source of truth for the right safe area and keeps `136 / zoomFactor` as
+  the fallback when the environment variables are unavailable. The custom caption button width is derived from
+  the real safe area divided by the three native buttons, so zoom or DPI differences cannot let the dropdown
+  button enter the minimize button area. Linux does not yet compensate the native button area.
+- `packages/desktop/src/main/desktopWindowChrome.ts` reads the current `zoomFactor` right after the window is
+  created and syncs the macOS traffic-light position; `packages/desktop/src/preload/index.ts` synchronously reads
+  `webFrame.getZoomFactor()` before React takes over the root, caching the top overlay safe area for the first
+  render of `RootStartupLoading` and notifying main through `WindowControlsOverlayReady` to reset the
+  traffic-light position early, rather than adjusting only after entering the App page.
+- `packages/desktop/test/desktopApplicationMenu.test.ts` verifies the View menu forwards the shortcuts to
+  controlled desktop commands, and `packages/desktop/test/desktopCommandHandlers.test.ts` verifies the zoom
+  bounds.

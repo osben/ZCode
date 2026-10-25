@@ -84,9 +84,10 @@ export async function buildViewportScreenshotParams(
   if (!view.normalizeScreenshotToCssPixels) return params;
   const cssViewport = resolveScreenshotCssViewport(await readScreenshotLayoutMetrics(view));
   if (!cssViewport) return params;
-  // legacy layout metrics 在 Retina guest 中可以是 CSS viewport 的 2 倍，
-  // 但 capture raster 已经是 CSS 1x。首帧预先套用 0.5 会产生 640×360，并可能让重挂载的
-  // guest compositor 停留在左上角。首帧固定使用 CSS 1x，实际 PNG 异常再由共用执行器校正。
+  // Legacy layout metrics in a Retina guest may be twice the CSS viewport, while the captured raster
+  // is already CSS 1x. Applying 0.5 preemptively to the first frame would produce 640×360 and may
+  // leave a remounted guest compositor stuck at the top-left. Use CSS 1x for the first frame and let
+  // the shared executor correct actual PNG anomalies.
   params.clip = { ...cssViewport, scale: 1 };
   return params;
 }
@@ -158,7 +159,7 @@ async function confirmAbortedNavigationCommitted(
         return true;
       }
     } catch {
-      // guest 正在切换 document 时 executeJavaScript 可能短暂失败；在有界窗口内继续复核。
+      // executeJavaScript may fail briefly while the guest switches documents; keep checking within a bounded window.
     }
     await new Promise<void>((resolve) => setTimeout(resolve, ABORTED_NAVIGATION_POLL_INTERVAL_MS));
   }
@@ -186,9 +187,10 @@ export async function handleNavigate(
     );
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") throw error;
-    // 站点的 www→m 重定向或 SPA 路由接管会让 Electron loadURL 以
-    // ERR_ABORTED reject，但新 document 已经提交。只在 URL 等价且 document ready 时认定成功；
-    // 不能把已成功导航的页面回报成硬失败，诱导模型继续猜 URL/资源 ID。
+    // A site's www→m redirect or SPA route takeover can make Electron loadURL reject with
+    // ERR_ABORTED even though the new document has committed. Treat it as success only when the
+    // URLs are equivalent and the document is ready; do not report a successful navigation as a
+    // hard failure and prompt the model to keep guessing URLs/resource IDs.
     if (
       isElectronNavigationAborted(error) &&
       (await confirmAbortedNavigationCommitted(view, command.url, previousUrl, opts?.signal))
@@ -212,7 +214,7 @@ export async function handleGetState(
   done: BrowserCommandDone,
 ): Promise<BrowserCommandResult> {
   const state = readState(view.webContents);
-  // 补 scrollX/scrollY/viewportWidth/viewportHeight（读取失败不致命，返回基础 state）。
+  // Add scrollX/scrollY/viewportWidth/viewportHeight (failure is non-fatal; return the base state).
   try {
     const raw = (await view.webContents.executeJavaScript(VIEWPORT_SCRIPT)) as {
       scrollX?: unknown;
@@ -227,7 +229,7 @@ export async function handleGetState(
       if (typeof raw.innerHeight === "number") state.viewportHeight = raw.innerHeight;
     }
   } catch {
-    /* 读取视口信息失败时保留基础 state。 */
+    /* Keep the base state if viewport information cannot be read. */
   }
   return done({ ok: true, state });
 }
@@ -252,7 +254,7 @@ export async function handleScreenshot(
     });
   }
 
-  // 走 CDP Page.captureScreenshot（规避 renderer webContents.capturePage 的 V8 FATAL，且拿全页）。
+  // Use CDP Page.captureScreenshot (avoids the V8 FATAL in renderer webContents.capturePage and supports full-page capture).
   const metrics =
     command.fullPage === true || view.normalizeScreenshotToCssPixels
       ? await readScreenshotLayoutMetrics(view)
@@ -261,11 +263,11 @@ export async function handleScreenshot(
     view.normalizeScreenshotToCssPixels && metrics ? resolveScreenshotCssViewport(metrics) : null;
   const params: Record<string, unknown> = {
     format: "png",
-    // 普通 viewport 截图不应走 viewport 外的 compositor surface；clip/fullPage 才显式允许。
+    // Ordinary viewport screenshots must not use compositor surfaces outside the viewport; clip/fullPage explicitly allow them.
     captureBeyondViewport: command.clip !== undefined || command.fullPage === true,
   };
   if (command.clip) {
-    // 区域截图：clip 用视口 CSS px，scale:1 保证与坐标同系。
+    // Region screenshot: clip uses viewport CSS px; scale:1 keeps it in the same coordinate system.
     params.clip = {
       x: command.clip.x,
       y: command.clip.y,
@@ -274,7 +276,7 @@ export async function handleScreenshot(
       scale: 1,
     };
   } else if (command.fullPage === true) {
-    // 全页截图：取 contentSize（优先 CSS 尺寸），用 clip 覆盖整页。
+    // Full-page screenshot: use contentSize (prefer CSS dimensions) and clip to the full page.
     const cs = metrics?.cssContentSize ?? metrics?.contentSize;
     if (cs && typeof cs.width === "number" && typeof cs.height === "number") {
       params.clip = {
@@ -308,12 +310,13 @@ export async function handleSnapshot(
   command: Extract<BrowserCommand, { method: "snapshot" }>,
   done: BrowserCommandDone,
 ): Promise<BrowserCommandResult> {
-  // 注入脚本遍历可见 DOM，产出带 ref 的结构化快照（严格对齐 browserSnapshotSchema）。
+  // The injected script traverses the visible DOM and produces a structured snapshot with refs (strictly matching browserSnapshotSchema).
   const raw = await view.webContents.executeJavaScript(
     SNAPSHOT_SCRIPT(command.maxElements, command.includeHidden),
   );
-  // 防御式校验：脚本受控但异形页面可能覆写 getter/返回残缺结构。safeParse 失败时
-  // 转成明确的 execution_error（而非把畸形对象透传到下游让 strict zod 报笼统失败）。
+  // Defensive validation: although the script is controlled, unusual pages may override getters or
+  // return incomplete structures. Convert safeParse failures into a clear execution_error rather
+  // than passing malformed objects downstream and getting a generic strict-zod failure.
   const parsed = browserSnapshotSchema.safeParse(raw);
   if (!parsed.success) {
     return done({
@@ -332,7 +335,7 @@ export async function handleEvaluate(
   command: Extract<BrowserCommand, { method: "evaluate" }>,
   done: BrowserCommandDone,
 ): Promise<BrowserCommandResult> {
-  // 执行页面表达式并 JSON 安全序列化；异常 → execution_error。
+  // Execute the page expression and JSON-safe serialize the result; exceptions become execution_error.
   const raw = (await view.webContents.executeJavaScript(EVALUATE_SCRIPT(command.expression))) as {
     ok?: boolean;
     kind?: string;
@@ -348,7 +351,7 @@ export async function handleEvaluate(
     try {
       value = JSON.parse(raw.data);
     } catch {
-      // 理论不达（页面侧已 JSON.stringify 成功）；兜底透传原字符串。
+      // Should be unreachable because the page already serialized successfully; pass through the original string as a fallback.
       value = raw.data;
     }
   } else {

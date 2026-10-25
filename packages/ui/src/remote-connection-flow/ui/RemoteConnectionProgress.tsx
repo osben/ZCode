@@ -36,6 +36,7 @@ export function RemoteConnectionMinimizedProgress({
   cancelled,
   target,
   name,
+  workspacePath,
   logs,
   error,
   reason,
@@ -45,7 +46,9 @@ export function RemoteConnectionMinimizedProgress({
   ready,
 }: RemoteConnectionProgress) {
   const { intl } = useZCodeIntl();
-  const phases = resolveRemoteConnectionPhases(logs);
+  const phases = resolveRemoteConnectionPhases(logs, {
+    includeWorkspace: workspacePath !== undefined,
+  });
   const active =
     phases.find((phase) => phase.status === "active" || phase.status === "failed") ?? phases[0]!;
   const percent = Math.round(

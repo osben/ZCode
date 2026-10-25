@@ -15,6 +15,7 @@ import {
   testId,
 } from "@zcode/shared/test-ids";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import {
   InlineEditableProviderCard,
   PROVIDER_TEXT_INPUT_IDLE_SAVE_MS,
@@ -39,21 +40,21 @@ import {
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
-    locale: "zh-CN",
+    locale: "en-US",
     intl: {
       formatMessage: ({ id }: { id: string }, values?: Record<string, string>) => {
         const messages: Record<string, string> = {
-          "settings.modelProvider.addModel": "添加模型",
-          "model.capability.vision": "视觉",
-          "settings.modelProvider.contextWindow": "上下文窗口",
-          "settings.modelProvider.contextWindowBadgeLabel": "上下文窗口：{value}",
-          "settings.modelProvider.delete": "删除",
-          "settings.modelProvider.disableAction": "停用",
-          "settings.modelProvider.enableAction": "启用",
-          "settings.modelProvider.restoreDefaultAction": "恢复默认",
-          "settings.modelProvider.followRecommendedConfig": "跟随推荐配置",
-          "settings.modelProvider.editModel": "编辑模型配置",
-          "settings.modelProvider.apiFormat": "API 格式",
+          "settings.modelProvider.addModel": "Add model",
+          "model.capability.vision": "Vision",
+          "settings.modelProvider.contextWindow": "Context window",
+          "settings.modelProvider.contextWindowBadgeLabel": "Context window: {value}",
+          "settings.modelProvider.delete": "Delete",
+          "settings.modelProvider.disableAction": "Disable",
+          "settings.modelProvider.enableAction": "Enable",
+          "settings.modelProvider.restoreDefaultAction": "Restore default",
+          "settings.modelProvider.followRecommendedConfig": "Smart configuration",
+          "settings.modelProvider.editModel": "Edit model settings",
+          "settings.modelProvider.apiFormat": "API format",
           "settings.modelProvider.apiFormat.anthropicMessages": "Anthropic Messages (/v1/messages)",
           "settings.modelProvider.apiFormat.chatCompletions":
             "Chat Completions (/chat/completions)",
@@ -64,33 +65,33 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
           "settings.modelProvider.apiFormat.title.anthropicMessages": "Anthropic Messages",
           "settings.modelProvider.baseUrl": "Base URL",
           "settings.modelProvider.baseUrlPlaceholder": "https://api.example.com",
-          "settings.modelProvider.readOnlyField": "{field}（只读）",
-          "settings.modelProvider.maxOutputTokens": "最大输出 Token",
-          "settings.modelProvider.inputModalities": "输入类型",
-          "settings.modelProvider.outputModalities": "输出类型",
-          "settings.modelProvider.modelDisplayName": "显示名称",
-          "settings.modelProvider.modelId": "模型 ID",
+          "settings.modelProvider.readOnlyField": "{field} (read only)",
+          "settings.modelProvider.maxOutputTokens": "Max output tokens",
+          "settings.modelProvider.inputModalities": "Input types",
+          "settings.modelProvider.outputModalities": "Output types",
+          "settings.modelProvider.modelDisplayName": "Display name",
+          "settings.modelProvider.modelId": "Model ID",
           "settings.modelProvider.modelApiFormat.anthropic": "Anthropic Messages",
           "settings.modelProvider.modelApiFormat.openaiCompatible": "OpenAI Compatible",
           "settings.modelProvider.modelApiFormat.openaiResponses": "OpenAI Responses",
-          "settings.modelProvider.models": "模型列表",
-          "settings.modelProvider.modelsEmpty": "当前没有配置模型，添加模型后可在聊天中使用。",
-          "settings.modelProvider.testModel": "测试模型",
-          "settings.modelProvider.testModel.connectingWithIdentity":
-            "{provider} / {model} 正在连接",
-          "settings.modelProvider.testModel.successWithIdentity": "{provider} / {model} 连接成功",
+          "settings.modelProvider.models": "Model list",
+          "settings.modelProvider.modelsEmpty":
+            "No models are configured. Add a model to use it in chat.",
+          "settings.modelProvider.testModel": "Test model",
+          "settings.modelProvider.testModel.connectingWithIdentity": "Testing {provider} / {model}",
+          "settings.modelProvider.testModel.successWithIdentity": "{provider} / {model} connected",
           "settings.modelProvider.testModel.failedWithIdentity":
-            "{provider} / {model} 连接失败：{reason}",
-          "settings.modelProvider.providerSaving": "{provider} 正在保存",
-          "settings.modelProvider.providerSaveSuccess": "{provider} 保存成功",
-          "settings.modelProvider.providerSaveFailure": "{provider} 保存失败：{error}",
-          "settings.modelProvider.modelSaving": "{provider} / {model} 正在保存",
-          "settings.modelProvider.modelSaveSuccess": "{provider} / {model} 保存成功",
-          "settings.modelProvider.modelSaveFailure": "{provider} / {model} 保存失败：{error}",
-          "common.retry": "重试",
-          "common.close": "关闭",
-          "common.save": "保存",
-          "common.cancel": "取消",
+            "Failed to connect {provider} / {model}: {reason}",
+          "settings.modelProvider.providerSaving": "Saving {provider}",
+          "settings.modelProvider.providerSaveSuccess": "{provider} saved",
+          "settings.modelProvider.providerSaveFailure": "Failed to save {provider}: {error}",
+          "settings.modelProvider.modelSaving": "Saving {provider} / {model}",
+          "settings.modelProvider.modelSaveSuccess": "{provider} / {model} saved",
+          "settings.modelProvider.modelSaveFailure": "Failed to save {provider} / {model}: {error}",
+          "common.retry": "Retry",
+          "common.close": "Close",
+          "common.save": "Save",
+          "common.cancel": "Cancel",
         };
         return (messages[id] ?? id).replace(
           /\{(\w+)\}/g,
@@ -205,7 +206,7 @@ function createProvider(
 
 describe("ProviderModelsSection compact model rows", () => {
   it.each(["individual-coding-plan", "team-coding-plan", "start-plan", "manual", "standard"])(
-    "设置页共享视觉标判断，连接=%s",
+    "settings page shares the vision-badge decision, connection=%s",
     (mode) => {
       const provider = createProvider();
       provider.config.access =
@@ -226,17 +227,31 @@ describe("ProviderModelsSection compact model rows", () => {
         };
         return model;
       });
-      render(createElement(InlineEditableProviderCard, { provider, onSave: vi.fn() }));
-      expect(screen.getAllByText("视觉")).toHaveLength(mode === "standard" ? 2 : 1);
+      render(
+        createElement(InlineEditableProviderCard, {
+          provider,
+          onSave: vi.fn(),
+        }),
+      );
+      expect(screen.getAllByText(expectedCopy("model.capability.vision"))).toHaveLength(
+        mode === "standard" ? 2 : 1,
+      );
       expect(provider.models[0]!.config.properties?.inputFormat?.supportsImage).toBe(true);
     },
   );
-  it("切换 Provider 时相同模型 ID 也不能复用上一个 Provider 的编辑事务", async () => {
+  it("switching providers must not reuse the previous provider's edit session even for the same model ID", async () => {
     const initial = createProvider();
     const view = render(
-      createElement(InlineEditableProviderCard, { provider: initial, onSave: vi.fn() }),
+      createElement(InlineEditableProviderCard, {
+        provider: initial,
+        onSave: vi.fn(),
+      }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "编辑模型配置" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: expectedCopy("settings.modelProvider.editModel"),
+      }),
+    );
     fireEvent.change(document.querySelector('input[inputmode="numeric"]')!, {
       target: { value: "123456" },
     });
@@ -247,12 +262,16 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
     expect(screen.queryByRole("dialog")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "编辑模型配置" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: expectedCopy("settings.modelProvider.editModel"),
+      }),
+    );
     expect(
       (document.querySelector('input[inputmode="numeric"]') as HTMLInputElement).value,
     ).not.toBe("123456");
   });
-  it("Todo138：新增空 ID 无档位，解析后显示推荐，清空 ID 恢复空草稿", async () => {
+  it("Todo138: a new empty ID has no tier chips; after resolution the recommended chips appear, and clearing the ID restores the empty draft", async () => {
     const config = createModelProviderModelConfig({ id: "new-model" }).config;
     settingsService.resolveModelConfig.mockResolvedValue({
       inheritedConfig: config,
@@ -282,7 +301,7 @@ describe("ProviderModelsSection compact model rows", () => {
     await waitFor(() => expect(chips()).toHaveLength(0));
     expect(settingsService.resolveModelConfig).toHaveBeenCalledTimes(calls);
   });
-  it("添加等待真实保存，失败保留草稿并允许重试", async () => {
+  it("adding waits for the real save; a failure keeps the draft and allows retry", async () => {
     const config = createModelProviderModelConfig({ id: "new-model" }).config;
     settingsService.resolveModelConfig.mockResolvedValue({
       inheritedConfig: config,
@@ -310,30 +329,45 @@ describe("ProviderModelsSection compact model rows", () => {
     });
     fireEvent.blur(document.querySelector('[data-model-identity-row="true"] input')!);
     await waitFor(() => expect(settingsService.resolveModelConfig).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: "保存", exact: true }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: expectedCopy("common.save"),
+        exact: true,
+      }),
+    );
     await waitFor(() => expect(onAddModel).toHaveBeenCalledTimes(1));
     expect(document.querySelector('[data-model-identity-row="true"] input')).not.toBeNull();
     await act(async () => {
       rejectSave(new Error("disk write failed"));
     });
     expect(screen.getByText("disk write failed")).not.toBeNull();
-    expect(screen.queryByRole("button", { name: "重试", exact: true })).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: expectedCopy("common.retry"),
+        exact: true,
+      }),
+    ).toBeNull();
     expect(
       (document.querySelector('[data-model-identity-row="true"] input') as HTMLInputElement).value,
     ).toBe("new-model");
     onAddModel.mockResolvedValueOnce();
-    fireEvent.click(screen.getByRole("button", { name: "保存", exact: true }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: expectedCopy("common.save"),
+        exact: true,
+      }),
+    );
     await waitFor(() =>
       expect(document.querySelector('[data-model-identity-row="true"] input')).toBeNull(),
     );
     expect(onAddModel).toHaveBeenCalledTimes(2);
   });
-  it("Todo89：View 刷新不丢编辑草稿，冲突保留输入，重新打开才读取新基线", async () => {
+  it("Todo89: a View refresh must not drop the edit draft; a conflict keeps the input, and only reopening reads the new baseline", async () => {
     const model = createModelProviderModelConfig({ id: "draft-model" });
     const onCommit = vi.fn().mockRejectedValue(new Error("revision conflict"));
     const props = { model, providerId: "test", onCommit, settingsRevision: 7 };
     const rendered = renderWithProviderFeedback(createElement(ModelRowInput, props));
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
     fireEvent.change(document.querySelector<HTMLInputElement>('input[inputmode="numeric"]')!, {
       target: { value: "123456" },
     });
@@ -352,7 +386,7 @@ describe("ProviderModelsSection compact model rows", () => {
       (document.querySelector<HTMLInputElement>('input[inputmode="numeric"]')! as HTMLInputElement)
         .value,
     ).toBe("123456");
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.save") }));
     await waitFor(() => expect(onCommit).toHaveBeenCalled());
     expect(onCommit.mock.calls[0]?.[1]).toBe(7);
     expect(await screen.findByText("revision conflict")).toBeTruthy();
@@ -360,15 +394,15 @@ describe("ProviderModelsSection compact model rows", () => {
       (document.querySelector<HTMLInputElement>('input[inputmode="numeric"]')! as HTMLInputElement)
         .value,
     ).toBe("123456");
-    fireEvent.click(screen.getByRole("button", { name: "取消" }));
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.cancel") }));
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
     expect(
       (document.querySelector<HTMLInputElement>('input[inputmode="numeric"]')! as HTMLInputElement)
         .value,
     ).toBe("200000");
   });
 
-  it("Todo89：不完整模型保留修复、启停与个人成员删除入口", () => {
+  it("Todo89: an incomplete model keeps the repair, enable/disable, and personal-member delete entries", () => {
     const model = createModelProviderModelConfig({ id: "broken" });
     model.config = {};
     model.personalConfig = {};
@@ -382,17 +416,17 @@ describe("ProviderModelsSection compact model rows", () => {
         onAddModel: vi.fn(),
       }),
     );
-    expect(screen.getByLabelText("编辑模型配置")).toBeTruthy();
+    expect(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel"))).toBeTruthy();
     expect(screen.getByRole("switch")).toBeTruthy();
     expect(screen.getByTestId(testId(TID_MODEL_PROVIDER_MODEL_DELETE_BUTTON, "0"))).toBeTruthy();
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
     expect(
       (document.querySelector<HTMLInputElement>('input[inputmode="numeric"]')! as HTMLInputElement)
         .value,
     ).toBe("");
   });
 
-  it("未触碰 Model Draft 时保留原稀疏 Overlay，且不凭空写入默认 false", () => {
+  it("keeps the original sparse overlay for an untouched Model Draft and never fabricates default false values", () => {
     const inherited = createModelProviderModelConfig({ id: "draft-model" });
     inherited.config.optionSpecs = {
       reasoningLevel: {
@@ -420,7 +454,10 @@ describe("ProviderModelsSection compact model rows", () => {
         },
         optionSpecs: {
           ...inherited.config.optionSpecs,
-          reasoningLevel: { ...inherited.config.optionSpecs?.reasoningLevel, map: null },
+          reasoningLevel: {
+            ...inherited.config.optionSpecs?.reasoningLevel,
+            map: null,
+          },
         },
       },
     };
@@ -440,12 +477,12 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(result.model.personalConfig.properties?.inputFormat?.supportsPdf).toBe(true);
   });
 
-  it("只允许当前 Draft revision 的保存响应更新反馈", () => {
+  it("only the save response of the current Draft revision may update the feedback", () => {
     expect(shouldApplyProviderSaveCompletion(3, 3)).toBe(true);
     expect(shouldApplyProviderSaveCompletion(4, 3)).toBe(false);
   });
 
-  it("模型连接成功在 Provider 详情栏底部横幅显示完整身份", async () => {
+  it("a successful model connection shows the full identity in the provider detail bottom banner", async () => {
     const model = createModelProviderModelConfig({ id: "deepseek-v4-flash" });
     renderWithProviderFeedback(
       createElement(ModelRowInput, {
@@ -456,19 +493,31 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
 
-    fireEvent.click(screen.getByTitle("测试模型"));
+    fireEvent.click(screen.getByTitle(expectedCopy("settings.modelProvider.testModel")));
 
-    expect(screen.getByText("deepseek / deepseek-v4-flash 正在连接")).toBeTruthy();
-    await screen.findByText("deepseek / deepseek-v4-flash 连接成功");
+    expect(
+      screen.getByText(
+        expectedCopy("settings.modelProvider.testModel.connectingWithIdentity", {
+          provider: "deepseek",
+          model: "deepseek-v4-flash",
+        }),
+      ),
+    ).toBeTruthy();
+    await screen.findByText(
+      expectedCopy("settings.modelProvider.testModel.successWithIdentity", {
+        provider: "deepseek",
+        model: "deepseek-v4-flash",
+      }),
+    );
     expect(screen.getByTestId("provider-detail-feedback-viewport")).toBeTruthy();
-    expect(screen.queryByText("连接成功！")).toBeNull();
+    expect(screen.queryByText("Connected!")).toBeNull();
     expect(screen.getByRole("status").className).toContain("bg-success/10");
     expect(screen.getByRole("status").className).toContain("text-success");
     expect(screen.getByRole("status").querySelector("button")).not.toBeNull();
   });
 
   it.each(["success", "failure", "throw"])(
-    "连接测试 %s 使用显示名称，身份参数不变",
+    "connection test %s uses the display name and keeps the identity arguments",
     async (outcome) => {
       const provider = createProvider();
       const onTestModel = vi.fn(async () => {
@@ -478,25 +527,35 @@ describe("ProviderModelsSection compact model rows", () => {
           : { success: false as const, error: { message: "auth-error" } };
       });
       renderWithProviderFeedback(
-        createElement(InlineEditableProviderCard, { provider, onSave: vi.fn(), onTestModel }),
+        createElement(InlineEditableProviderCard, {
+          provider,
+          onSave: vi.fn(),
+          onTestModel,
+        }),
       );
-      fireEvent.click(screen.getAllByTitle("测试模型")[0]!);
-      expect(screen.getByText(/DeepSeek .*正在连接/)).toBeTruthy();
+      fireEvent.click(screen.getAllByTitle(expectedCopy("settings.modelProvider.testModel"))[0]!);
+      expect(screen.getByText(/Testing DeepSeek/)).toBeTruthy();
       await waitFor(() =>
         expect(
-          screen.getByText(outcome === "success" ? /DeepSeek .*连接成功/ : /DeepSeek .*连接失败/),
+          screen.getByText(
+            outcome === "success" ? /DeepSeek .* connected/ : /Failed to connect DeepSeek/,
+          ),
         ).toBeTruthy(),
       );
       expect(onTestModel).toHaveBeenCalledWith(provider.providerId, provider.models[0]!.modelId);
     },
   );
 
-  it("禁用 Provider 时测试不可触发，重新启用保留测试能力", async () => {
+  it("testing stays unavailable while the provider is disabled; re-enabling keeps the test affordance", async () => {
     const provider = createProvider({ enabled: false });
     const onTestModel = vi.fn(async () => ({ success: true as const }));
     const onSave = vi.fn();
     const mounted = renderWithProviderFeedback(
-      createElement(InlineEditableProviderCard, { provider, onSave, onTestModel }),
+      createElement(InlineEditableProviderCard, {
+        provider,
+        onSave,
+        onTestModel,
+      }),
     );
     const testButton = screen.getAllByTitle(
       "settings.modelProvider.testModel.enableProviderFirst",
@@ -515,16 +574,20 @@ describe("ProviderModelsSection compact model rows", () => {
         }),
       ),
     );
-    fireEvent.click(screen.getAllByTitle("测试模型")[0]!);
+    fireEvent.click(screen.getAllByTitle(expectedCopy("settings.modelProvider.testModel"))[0]!);
     await waitFor(() => expect(onTestModel).toHaveBeenCalledTimes(1));
   });
 
-  it("Provider 改名后的新测试使用新名称，无名称回退身份", async () => {
+  it("a test after a provider rename uses the new name and falls back to the identity without one", async () => {
     const onTestModel = vi.fn(async () => ({ success: true as const }));
     const onSave = vi.fn();
     const provider = createProvider();
     const mounted = renderWithProviderFeedback(
-      createElement(InlineEditableProviderCard, { provider, onSave, onTestModel }),
+      createElement(InlineEditableProviderCard, {
+        provider,
+        onSave,
+        onTestModel,
+      }),
     );
     for (const name of ["Account Plan", "Renamed", ""]) {
       mounted.rerender(
@@ -538,10 +601,13 @@ describe("ProviderModelsSection compact model rows", () => {
           }),
         ),
       );
-      fireEvent.click(screen.getAllByTitle("测试模型")[0]!);
+      fireEvent.click(screen.getAllByTitle(expectedCopy("settings.modelProvider.testModel"))[0]!);
       expect(
         await screen.findByText(
-          `${name || provider.providerId} / ${provider.models[0]!.modelId} 连接成功`,
+          expectedCopy("settings.modelProvider.testModel.successWithIdentity", {
+            provider: name || provider.providerId,
+            model: provider.models[0]!.modelId,
+          }),
         ),
       ).toBeTruthy();
     }
@@ -551,7 +617,7 @@ describe("ProviderModelsSection compact model rows", () => {
   });
 
   it.each(["provider-unavailable", "model-unavailable"] as const)(
-    "资格错误 %s 使用本地化提示",
+    "eligibility error %s uses the localized notice",
     async (code) => {
       renderWithProviderFeedback(
         createElement(ModelRowInput, {
@@ -564,16 +630,22 @@ describe("ProviderModelsSection compact model rows", () => {
           })),
         }),
       );
-      fireEvent.click(screen.getByTitle("测试模型"));
+      fireEvent.click(screen.getByTitle(expectedCopy("settings.modelProvider.testModel")));
       expect(
         await screen.findByText(
-          `p / m 连接失败：settings.modelProvider.testModel.${code === "provider-unavailable" ? "providerUnavailable" : "modelUnavailable"}`,
+          expectedCopy("settings.modelProvider.testModel.failedWithIdentity", {
+            provider: "p",
+            model: "m",
+            reason: `settings.modelProvider.testModel.${
+              code === "provider-unavailable" ? "providerUnavailable" : "modelUnavailable"
+            }`,
+          }),
         ),
       ).toBeTruthy();
     },
   );
 
-  it("不显示 dirty，saving 与 success 在 Provider 详情栏按同一 key 替换", async () => {
+  it("no dirty state is shown; saving and success replace each other by the same key in the provider detail column", async () => {
     let resolveSave: (() => void) | undefined;
     const onSave = vi.fn(
       () =>
@@ -582,31 +654,59 @@ describe("ProviderModelsSection compact model rows", () => {
         }),
     );
     renderWithProviderFeedback(
-      createElement(InlineEditableProviderCard, { provider: createProvider(), onSave }),
+      createElement(InlineEditableProviderCard, {
+        provider: createProvider(),
+        onSave,
+      }),
     );
     const baseUrl = screen.getByPlaceholderText("https://api.example.com");
 
     expect(baseUrl.getAttribute("data-testid")).toBe(TID_MODEL_PROVIDER_BASE_URL_INPUT);
     expect(screen.getByTestId(TID_MODEL_PROVIDER_API_FORMAT_TRIGGER)).toBeTruthy();
 
-    fireEvent.change(baseUrl, { target: { value: "https://next.example.com" } });
+    fireEvent.change(baseUrl, {
+      target: { value: "https://next.example.com" },
+    });
     expect(screen.queryByTestId("model-provider-save-status")).toBeNull();
     fireEvent.blur(baseUrl);
     expect(screen.queryByTestId("model-provider-save-status")).toBeNull();
-    expect(screen.getByText("DeepSeek 正在保存")).toBeTruthy();
+    expect(
+      screen.getByText(
+        expectedCopy("settings.modelProvider.providerSaving", {
+          provider: "DeepSeek",
+        }),
+      ),
+    ).toBeTruthy();
     resolveSave?.();
 
-    await screen.findByText("DeepSeek 保存成功");
-    expect(screen.queryByText("DeepSeek 正在保存")).toBeNull();
+    await screen.findByText(
+      expectedCopy("settings.modelProvider.providerSaveSuccess", {
+        provider: "DeepSeek",
+      }),
+    );
+    expect(
+      screen.queryByText(
+        expectedCopy("settings.modelProvider.providerSaving", {
+          provider: "DeepSeek",
+        }),
+      ),
+    ).toBeNull();
   });
 
-  it("Provider 文本输入停顿后自动保存，失焦会 flush 且不重复提交", async () => {
+  it("provider text inputs auto-save after an idle pause; blur flushes and does not double-submit", async () => {
     vi.useFakeTimers();
     const onSave = vi.fn(async () => undefined);
-    render(createElement(InlineEditableProviderCard, { provider: createProvider(), onSave }));
+    render(
+      createElement(InlineEditableProviderCard, {
+        provider: createProvider(),
+        onSave,
+      }),
+    );
     const baseUrl = screen.getByPlaceholderText("https://api.example.com");
 
-    fireEvent.change(baseUrl, { target: { value: "https://idle.example.com" } });
+    fireEvent.change(baseUrl, {
+      target: { value: "https://idle.example.com" },
+    });
     await act(async () => {
       vi.advanceTimersByTime(PROVIDER_TEXT_INPUT_IDLE_SAVE_MS - 1);
     });
@@ -624,7 +724,7 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(onSave).toHaveBeenCalledTimes(1);
   });
 
-  it("API Key 闲时保存，名称必须确认且 IME 结束不自动保存", async () => {
+  it("API key saves when idle; the name requires explicit confirmation and IME completion does not auto-save", async () => {
     vi.useFakeTimers();
     const apiKeySave = vi.fn(async () => undefined);
     const apiKeyView = render(
@@ -639,7 +739,9 @@ describe("ProviderModelsSection compact model rows", () => {
     await act(async () => {
       vi.advanceTimersByTime(PROVIDER_TEXT_INPUT_IDLE_SAVE_MS);
     });
-    expect(apiKeySave.mock.calls[0]?.[0].config.access).toMatchObject({ apiKey: "sk-idle" });
+    expect(apiKeySave.mock.calls[0]?.[0].config.access).toMatchObject({
+      apiKey: "sk-idle",
+    });
     apiKeyView.unmount();
 
     const nameSave = vi.fn(async () => undefined);
@@ -650,7 +752,9 @@ describe("ProviderModelsSection compact model rows", () => {
         nameEditable: true,
       }),
     );
-    fireEvent.keyDown(screen.getByTestId("model-provider-actions-button"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByTestId("model-provider-actions-button"), {
+      key: "Enter",
+    });
     fireEvent.click(screen.getByTestId(TID_MODEL_PROVIDER_NAME_EDIT_BUTTON));
     const nameInput = screen.getByTestId(TID_MODEL_PROVIDER_NAME_INPUT);
     fireEvent.compositionStart(nameInput);
@@ -671,13 +775,18 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(nameSave.mock.calls[0]?.[0].providerNameUpdate).toBe("DeepSeek Idle");
   });
 
-  it("名称 Esc 取消后 blur、闲时和卸载均不保存；Key 自动保存不夹带名称", async () => {
+  it("after Esc cancels the name, neither blur, idle, nor unmount saves; key auto-save must not carry the name", async () => {
     vi.useFakeTimers();
     const onSave = vi.fn(async () => undefined);
     const view = render(
-      createElement(InlineEditableProviderCard, { provider: createProvider(), onSave }),
+      createElement(InlineEditableProviderCard, {
+        provider: createProvider(),
+        onSave,
+      }),
     );
-    fireEvent.keyDown(screen.getByTestId("model-provider-actions-button"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByTestId("model-provider-actions-button"), {
+      key: "Enter",
+    });
     fireEvent.click(screen.getByTestId(TID_MODEL_PROVIDER_NAME_EDIT_BUTTON));
     const input = screen.getByTestId(TID_MODEL_PROVIDER_NAME_INPUT);
     fireEvent.change(input, { target: { value: "Cancelled" } });
@@ -699,13 +808,20 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(onSave).toHaveBeenCalledTimes(1);
   });
 
-  it("名称正式 Enter 只确认一次，标题空白和更多菜单不切换启停", async () => {
+  it("a committed Enter confirms the name exactly once; a blank title and the more menu do not toggle enablement", async () => {
     const onSave = vi.fn(async () => undefined);
-    render(createElement(InlineEditableProviderCard, { provider: createProvider(), onSave }));
+    render(
+      createElement(InlineEditableProviderCard, {
+        provider: createProvider(),
+        onSave,
+      }),
+    );
     const toggle = screen.getByTestId("model-provider-enabled-switch");
     expect(toggle.closest("label")).toBeNull();
     fireEvent.click(screen.getByTestId("model-provider-header"));
-    fireEvent.keyDown(screen.getByTestId("model-provider-actions-button"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByTestId("model-provider-actions-button"), {
+      key: "Enter",
+    });
     expect(onSave).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId(TID_MODEL_PROVIDER_NAME_EDIT_BUTTON));
     const input = screen.getByTestId(TID_MODEL_PROVIDER_NAME_INPUT);
@@ -725,31 +841,41 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(onSave.mock.calls[0]?.[0]).not.toHaveProperty("enabledUpdate");
   });
 
-  it.each([false, true])("菜单删除仍走既有确认，confirmed=%s", async (confirmed) => {
-    const provider = createProvider();
-    const confirmDialog = vi.fn(async () => confirmed);
-    const deleteProvider = vi.fn(async () => undefined);
-    const intl = { formatMessage: ({ id }: { id: string }) => id } as Parameters<
-      typeof confirmAndDeleteModelProvider
-    >[0]["intl"];
-    const onSave = vi.fn(async () => undefined);
-    render(
-      createElement(InlineEditableProviderCard, {
-        provider,
-        onSave,
-        onDelete: () =>
-          confirmAndDeleteModelProvider({ provider, confirmDialog, deleteProvider, intl }),
-      }),
-    );
-    fireEvent.keyDown(screen.getByTestId("model-provider-actions-button"), { key: "Enter" });
-    fireEvent.click(screen.getByRole("menuitem", { name: "common.delete" }));
-    await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
-    expect(deleteProvider).toHaveBeenCalledTimes(confirmed ? 1 : 0);
-    if (confirmed) expect(deleteProvider).toHaveBeenCalledWith(provider.providerId);
-    expect(onSave).not.toHaveBeenCalled();
-  });
+  it.each([false, true])(
+    "menu delete still goes through the existing confirmation, confirmed=%s",
+    async (confirmed) => {
+      const provider = createProvider();
+      const confirmDialog = vi.fn(async () => confirmed);
+      const deleteProvider = vi.fn(async () => undefined);
+      const intl = {
+        formatMessage: ({ id }: { id: string }) => id,
+      } as Parameters<typeof confirmAndDeleteModelProvider>[0]["intl"];
+      const onSave = vi.fn(async () => undefined);
+      render(
+        createElement(InlineEditableProviderCard, {
+          provider,
+          onSave,
+          onDelete: () =>
+            confirmAndDeleteModelProvider({
+              provider,
+              confirmDialog,
+              deleteProvider,
+              intl,
+            }),
+        }),
+      );
+      fireEvent.keyDown(screen.getByTestId("model-provider-actions-button"), {
+        key: "Enter",
+      });
+      fireEvent.click(screen.getByRole("menuitem", { name: "common.delete" }));
+      await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
+      expect(deleteProvider).toHaveBeenCalledTimes(confirmed ? 1 : 0);
+      if (confirmed) expect(deleteProvider).toHaveBeenCalledWith(provider.providerId);
+      expect(onSave).not.toHaveBeenCalled();
+    },
+  );
 
-  it("名称保存失败可重试同一次确认，切换供应商后不补发未确认名称", async () => {
+  it("a failed name save can retry the same confirmation; switching providers does not resend the unconfirmed name", async () => {
     const onSave = vi
       .fn<() => Promise<void>>()
       .mockRejectedValueOnce(new Error("disk full"))
@@ -758,16 +884,25 @@ describe("ProviderModelsSection compact model rows", () => {
     const view = renderWithProviderFeedback(
       createElement(InlineEditableProviderCard, { provider, onSave }),
     );
-    fireEvent.keyDown(screen.getByTestId("model-provider-actions-button"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByTestId("model-provider-actions-button"), {
+      key: "Enter",
+    });
     fireEvent.click(screen.getByTestId(TID_MODEL_PROVIDER_NAME_EDIT_BUTTON));
     const input = screen.getByTestId(TID_MODEL_PROVIDER_NAME_INPUT);
     fireEvent.change(input, { target: { value: "Retry name" } });
     fireEvent.blur(input);
-    await screen.findByText("DeepSeek 保存失败：disk full");
-    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await screen.findByText(
+      expectedCopy("settings.modelProvider.providerSaveFailure", {
+        provider: "DeepSeek",
+        error: "disk full",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.retry") }));
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
     expect(onSave.mock.calls[0]?.[0]).toEqual(onSave.mock.calls[1]?.[0]);
-    fireEvent.keyDown(screen.getByTestId("model-provider-actions-button"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByTestId("model-provider-actions-button"), {
+      key: "Enter",
+    });
     fireEvent.click(screen.getByTestId(TID_MODEL_PROVIDER_NAME_EDIT_BUTTON));
     fireEvent.change(screen.getByTestId(TID_MODEL_PROVIDER_NAME_INPUT), {
       target: { value: "Discard on switch" },
@@ -777,7 +912,10 @@ describe("ProviderModelsSection compact model rows", () => {
         ProviderDetailFeedbackBoundary,
         null,
         createElement(InlineEditableProviderCard, {
-          provider: createProvider({ providerId: "other", providerName: "Other" }),
+          provider: createProvider({
+            providerId: "other",
+            providerName: "Other",
+          }),
           onSave,
         }),
       ),
@@ -787,26 +925,37 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(onSave).toHaveBeenCalledTimes(2);
   });
 
-  it("外部 View 更新时保留 dirty 字段，并更新未编辑字段", () => {
+  it("an external View update keeps dirty fields and refreshes untouched ones", () => {
     const initial = createProvider();
     const view = render(
-      createElement(InlineEditableProviderCard, { provider: initial, onSave: vi.fn() }),
+      createElement(InlineEditableProviderCard, {
+        provider: initial,
+        onSave: vi.fn(),
+      }),
     );
     const baseUrl = screen.getByPlaceholderText("https://api.example.com") as HTMLInputElement;
 
-    fireEvent.change(baseUrl, { target: { value: "https://draft.example.com" } });
+    fireEvent.change(baseUrl, {
+      target: { value: "https://draft.example.com" },
+    });
     view.rerender(
       createElement(InlineEditableProviderCard, {
         provider: createProvider({
           personalConfig: {
             ...initial.personalConfig,
             access: { type: "api-key", apiKey: "sk-external" },
-            api: { type: "anthropic-messages", baseUrl: "https://external.example.com" },
+            api: {
+              type: "anthropic-messages",
+              baseUrl: "https://external.example.com",
+            },
           },
           config: {
             ...initial.config,
             access: { type: "api-key", apiKey: "sk-external" },
-            api: { type: "anthropic-messages", baseUrl: "https://external.example.com" },
+            api: {
+              type: "anthropic-messages",
+              baseUrl: "https://external.example.com",
+            },
           },
         }),
         onSave: vi.fn(),
@@ -819,26 +968,40 @@ describe("ProviderModelsSection compact model rows", () => {
     );
   });
 
-  it("Base URL 按 Enter 会结束编辑并提交完整草稿", async () => {
+  it("pressing Enter on Base URL ends editing and submits the full draft", async () => {
     const onSave = vi.fn(async () => {});
-    render(createElement(InlineEditableProviderCard, { provider: createProvider(), onSave }));
+    render(
+      createElement(InlineEditableProviderCard, {
+        provider: createProvider(),
+        onSave,
+      }),
+    );
     const baseUrl = screen.getByPlaceholderText("https://api.example.com");
 
     baseUrl.focus();
-    fireEvent.change(baseUrl, { target: { value: "https://enter.example.com" } });
+    fireEvent.change(baseUrl, {
+      target: { value: "https://enter.example.com" },
+    });
     fireEvent.keyDown(baseUrl, { key: "Enter" });
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     expect(onSave.mock.calls[0]?.[0].config.api?.baseUrl).toBe("https://enter.example.com");
   });
 
-  it("中文输入法用 Enter 确认 Base URL 候选时不会提交", async () => {
+  it("Enter confirming a candidate in an IME must not submit Base URL", async () => {
     const onSave = vi.fn(async () => {});
-    render(createElement(InlineEditableProviderCard, { provider: createProvider(), onSave }));
+    render(
+      createElement(InlineEditableProviderCard, {
+        provider: createProvider(),
+        onSave,
+      }),
+    );
     const baseUrl = screen.getByPlaceholderText("https://api.example.com");
 
     baseUrl.focus();
-    fireEvent.change(baseUrl, { target: { value: "https://中文.example.com" } });
+    fireEvent.change(baseUrl, {
+      target: { value: "https://中文.example.com" },
+    });
     fireEvent.compositionStart(baseUrl);
     fireEvent.keyDown(baseUrl, { key: "Enter" });
 
@@ -851,7 +1014,7 @@ describe("ProviderModelsSection compact model rows", () => {
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
   });
 
-  it("Template 实例展示冻结的 Endpoint、Schema，并保留 API Key 与模型配置", () => {
+  it("a Template instance shows the frozen endpoint and schema while keeping the API key and model config", () => {
     const provider = createProvider({
       config: {
         ...createProvider().config,
@@ -872,33 +1035,55 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(screen.queryByTestId(TID_MODEL_PROVIDER_API_FORMAT_TRIGGER)).toBeNull();
     expect(screen.getByText("https://api.deepseek.com")).toBeTruthy();
     expect(screen.getByText("Anthropic Messages (/v1/messages)")).toBeTruthy();
-    expect(screen.getByRole("img", { name: "Base URL（只读）" })).toBeTruthy();
-    expect(screen.getByRole("img", { name: "API 格式（只读）" })).toBeTruthy();
+    expect(
+      screen.getByRole("img", {
+        name: expectedCopy("settings.modelProvider.readOnlyField", {
+          field: expectedCopy("settings.modelProvider.baseUrl"),
+        }),
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("img", {
+        name: expectedCopy("settings.modelProvider.readOnlyField", {
+          field: expectedCopy("settings.modelProvider.apiFormat"),
+        }),
+      }),
+    ).toBeTruthy();
     expect(screen.queryByTestId("model-provider-name-edit-button")).toBeNull();
     expect(screen.queryByTestId("model-provider-actions-button")).toBeNull();
     expect(screen.getByTestId(TID_MODEL_PROVIDER_API_KEY_INPUT)).toBeTruthy();
     expect(screen.getByText("deepseek-v4-flash")).toBeTruthy();
   });
 
-  it("保存失败替换底部 saving、延长停留并提供重试", async () => {
+  it("a save failure replaces the bottom saving banner, extends its stay, and offers retry", async () => {
     const onSave = vi
       .fn<() => Promise<void>>()
       .mockRejectedValueOnce(new Error("disk full"))
       .mockResolvedValueOnce();
     renderWithProviderFeedback(
-      createElement(InlineEditableProviderCard, { provider: createProvider(), onSave }),
+      createElement(InlineEditableProviderCard, {
+        provider: createProvider(),
+        onSave,
+      }),
     );
     const baseUrl = screen.getByPlaceholderText("https://api.example.com");
 
-    fireEvent.change(baseUrl, { target: { value: "https://next.example.com" } });
+    fireEvent.change(baseUrl, {
+      target: { value: "https://next.example.com" },
+    });
     fireEvent.blur(baseUrl);
-    await screen.findByText("DeepSeek 保存失败：disk full");
-    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await screen.findByText(
+      expectedCopy("settings.modelProvider.providerSaveFailure", {
+        provider: "DeepSeek",
+        error: "disk full",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.retry") }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
   });
 
-  it("按拖动的模型 ID 生成新顺序", () => {
+  it("derives the new order from the dragged model IDs", () => {
     expect(
       resolveReorderedModelIds({
         activeModelId: "model-b",
@@ -908,7 +1093,7 @@ describe("ProviderModelsSection compact model rows", () => {
     ).toEqual(["model-b", "model-a", "model-c"]);
   });
 
-  it("模型名称可启动整行拖动，真实交互控件不会误触拖动", () => {
+  it("the model name can start a whole-row drag; real interactive controls must not trigger it", () => {
     const row = document.createElement("div");
     row.setAttribute("role", "button");
     const name = document.createElement("span");
@@ -919,7 +1104,7 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(isInteractiveModelDragTarget(action)).toBe(true);
   });
 
-  it("模型弹窗和遮罩通过 Portal 冒泡到模型行时也不会启动背景拖动", () => {
+  it("a model dialog or overlay bubbling through a Portal to the model row must not start a background drag", () => {
     const dialog = document.createElement("section");
     dialog.setAttribute("data-slot", "dialog-content");
     const dialogBlankArea = document.createElement("div");
@@ -932,7 +1117,7 @@ describe("ProviderModelsSection compact model rows", () => {
   });
 
   it.each(["input", "textarea", "select", "button", "a", "editable", "portal"])(
-    "键盘空格在 %s 中不启动背景模型拖拽",
+    "Space inside %s must not start a background model drag",
     (kind) => {
       const target =
         kind === "portal"
@@ -966,7 +1151,7 @@ describe("ProviderModelsSection compact model rows", () => {
     },
   );
 
-  it("模型行自身的空格仍启动键盘拖拽", () => {
+  it("Space on the model row itself still starts the keyboard drag", () => {
     const onReorder = vi.fn();
     render(
       createElement(SortableProviderModelList, {
@@ -981,13 +1166,19 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(onReorder).not.toHaveBeenCalled();
   });
 
-  it("模型行按图片能力显示视觉标记，而非按型号猜测", () => {
-    const model = createModelProviderModelConfig({ id: "unknown-vision-model" });
+  it("model rows show the vision marker by image capability, not by guessing from the model id", () => {
+    const model = createModelProviderModelConfig({
+      id: "unknown-vision-model",
+    });
     model.config.properties!.inputFormat!.supportsImage = true;
     const { rerender } = render(
-      createElement(ModelRowInput, { providerId: "provider-demo", model, onCommit: vi.fn() }),
+      createElement(ModelRowInput, {
+        providerId: "provider-demo",
+        model,
+        onCommit: vi.fn(),
+      }),
     );
-    expect(screen.getByLabelText("视觉")).toBeTruthy();
+    expect(screen.getByLabelText(expectedCopy("model.capability.vision"))).toBeTruthy();
     const textOnly = createModelProviderModelConfig({ id: "GLM-5.3" });
     rerender(
       createElement(ModelRowInput, {
@@ -996,10 +1187,10 @@ describe("ProviderModelsSection compact model rows", () => {
         onCommit: vi.fn(),
       }),
     );
-    expect(screen.queryByLabelText("视觉")).toBeNull();
+    expect(screen.queryByLabelText(expectedCopy("model.capability.vision"))).toBeNull();
   });
 
-  it("Model Draft 等待 Host 原子保存成功后才关闭弹窗", async () => {
+  it("the Model Draft dialog closes only after the Host atomic save succeeds", async () => {
     let resolveSave!: () => void;
     const onCommit = vi.fn(
       () =>
@@ -1016,14 +1207,20 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
 
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.save") }));
 
     await waitFor(() =>
       expect(onCommit).toHaveBeenCalledWith(expect.objectContaining({ modelId: "draft-model" }), 9),
     );
     expect(screen.getByRole("dialog")).toBeTruthy();
-    expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: expectedCopy("common.save"),
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
 
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(screen.getByRole("dialog")).toBeTruthy();
@@ -1032,7 +1229,7 @@ describe("ProviderModelsSection compact model rows", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("中文输入法用 Enter 确认 Model ID 候选时不会保存", async () => {
+  it("Enter confirming a candidate in an IME must not save the Model ID", async () => {
     const onCommit = vi.fn(async () => undefined);
     render(
       createElement(ModelRowInput, {
@@ -1042,7 +1239,7 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
 
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
     const modelIdInput = screen.getByDisplayValue("draft-model");
     fireEvent.compositionStart(modelIdInput);
     fireEvent.keyDown(modelIdInput, { key: "Enter" });
@@ -1056,7 +1253,7 @@ describe("ProviderModelsSection compact model rows", () => {
     await waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1));
   });
 
-  it("Model Draft 保存失败时保留弹窗、草稿和明确错误", async () => {
+  it("a failed Model Draft save keeps the dialog, the draft, and an explicit error", async () => {
     const onCommit = vi.fn(async () => {
       throw new Error("revision conflict");
     });
@@ -1069,18 +1266,18 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
 
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
     fireEvent.change(screen.getByDisplayValue("draft-model"), {
       target: { value: "renamed-model" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.save") }));
 
     await waitFor(() => expect(screen.getByText("revision conflict")).toBeTruthy());
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(screen.getByDisplayValue("renamed-model")).toBeTruthy();
   });
 
-  it("Model ID Resolution 丢弃晚到的旧响应", async () => {
+  it("Model ID Resolution discards late stale responses", async () => {
     const baseModel = createModelProviderModelConfig({ id: "draft-model" });
     const model = {
       ...baseModel,
@@ -1113,7 +1310,7 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
 
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
     const modelIdInput = screen.getByDisplayValue("draft-model");
     fireEvent.change(modelIdInput, { target: { value: "first-model" } });
     fireEvent.blur(modelIdInput);
@@ -1144,20 +1341,37 @@ describe("ProviderModelsSection compact model rows", () => {
     await waitFor(() => expect(contextWindowInput?.placeholder).toBe("222000"));
   });
 
-  it("关闭跟随时物化当前草稿，不丢失尚未保存的编辑", () => {
+  it("turning off follow materializes the current draft without losing unsaved edits", () => {
     const base = createModelProviderModelConfig({ id: "draft-model" });
-    const model = { ...base, inheritedConfig: structuredClone(base.config), personalConfig: {} };
-    render(createElement(ModelRowInput, { providerId: "provider-demo", model, onCommit: vi.fn() }));
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
+    const model = {
+      ...base,
+      inheritedConfig: structuredClone(base.config),
+      personalConfig: {},
+    };
+    render(
+      createElement(ModelRowInput, {
+        providerId: "provider-demo",
+        model,
+        onCommit: vi.fn(),
+      }),
+    );
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
     const context = document.querySelector<HTMLInputElement>('input[inputmode="numeric"]')!;
     fireEvent.change(context, { target: { value: "345000" } });
-    fireEvent.click(screen.getByRole("switch", { name: "跟随推荐配置" }));
+    fireEvent.click(
+      screen.getByRole("switch", {
+        name: expectedCopy("settings.modelProvider.followRecommendedConfig"),
+      }),
+    );
     expect(context.value).toBe("345000");
     expect(context.placeholder).toBe("");
   });
 
-  it("重命名解析后关闭跟随使用新 Model ID 的继承事实", async () => {
-    const original = createModelProviderModelConfig({ id: "draft-model", supportsTools: true });
+  it("after a rename resolves, turning off follow uses the inherited facts of the new Model ID", async () => {
+    const original = createModelProviderModelConfig({
+      id: "draft-model",
+      supportsTools: true,
+    });
     const model = {
       ...original,
       personalConfig: { properties: { contextWindow: 300_000 } },
@@ -1190,7 +1404,7 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
 
-    fireEvent.click(screen.getByLabelText("编辑模型配置"));
+    fireEvent.click(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel")));
     fireEvent.change(screen.getByDisplayValue("draft-model"), {
       target: { value: "renamed-model" },
     });
@@ -1201,11 +1415,19 @@ describe("ProviderModelsSection compact model rows", () => {
     );
     await waitFor(() => expect(contextWindowInput?.placeholder).toBe("100000"));
 
-    fireEvent.click(screen.getByRole("switch", { name: "跟随推荐配置" }));
-
-    expect(screen.getByRole("switch", { name: "跟随推荐配置" }).getAttribute("aria-checked")).toBe(
-      "false",
+    fireEvent.click(
+      screen.getByRole("switch", {
+        name: expectedCopy("settings.modelProvider.followRecommendedConfig"),
+      }),
     );
+
+    expect(
+      screen
+        .getByRole("switch", {
+          name: expectedCopy("settings.modelProvider.followRecommendedConfig"),
+        })
+        .getAttribute("aria-checked"),
+    ).toBe("false");
     await waitFor(() =>
       expect(document.querySelector<HTMLInputElement>('input[inputmode="numeric"]')?.value).toBe(
         "300000",
@@ -1216,7 +1438,7 @@ describe("ProviderModelsSection compact model rows", () => {
     ).toBe("");
   });
 
-  it("上下文窗口展示为紧凑 token 容量", () => {
+  it("renders the context window as a compact token capacity", () => {
     expect(formatModelContextWindowLabel(999)).toBe("999");
     expect(formatModelContextWindowLabel(128000)).toBe("128K");
     expect(formatModelContextWindowLabel(1500000)).toBe("1.5M");
@@ -1225,7 +1447,7 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(formatModelContextWindowLabel(1000000, "zh-CN")).toBe("1M");
   });
 
-  it("默认只展示紧凑模型行，metadata 编辑入口收进弹窗", () => {
+  it("shows only compact model rows by default; the metadata edit entry folds into the dialog", () => {
     const html = renderToStaticMarkup(
       createElement(ProviderModelsSection, {
         providerId: "test-provider",
@@ -1248,13 +1470,15 @@ describe("ProviderModelsSection compact model rows", () => {
 
     expect(html).toContain("deepseek-v3.2");
     expect(html).toContain(">128K<");
-    expect(html).toContain('aria-label="上下文窗口：128K"');
-    expect(html).toContain('aria-label="编辑模型配置"');
-    expect(html).not.toContain("显示名称");
-    expect(html).not.toContain("最大输出 Token");
+    expect(html).toContain(
+      `aria-label="${expectedCopy("settings.modelProvider.contextWindowBadgeLabel", { value: "128K" })}"`,
+    );
+    expect(html).toContain(`aria-label="${expectedCopy("settings.modelProvider.editModel")}"`);
+    expect(html).not.toContain(expectedCopy("settings.modelProvider.modelDisplayName"));
+    expect(html).not.toContain(expectedCopy("settings.modelProvider.maxOutputTokens"));
   });
 
-  it("只在提供 Personal Model 调序入口时渲染拖动 handle", () => {
+  it("renders the drag handle only when a personal-model reorder entry is provided", () => {
     const common = {
       providerId: "test-provider",
       models: [
@@ -1285,7 +1509,7 @@ describe("ProviderModelsSection compact model rows", () => {
     );
   });
 
-  it("Built-in 模型不可删除但可调序、编辑覆盖和写入稀疏 enabled Overlay", () => {
+  it("a Built-in model cannot be deleted but can be reordered, edited into overrides, and given a sparse enabled overlay", () => {
     const model = {
       ...createModelProviderModelConfig({ id: "builtin-model" }),
       builtin: true,
@@ -1310,14 +1534,18 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(screen.getByText("builtin-model")).toBeTruthy();
     expect(screen.queryByTestId(testId(TID_MODEL_PROVIDER_MODEL_DELETE_BUTTON, "0"))).toBeNull();
     expect(screen.getByLabelText("settings.modelProvider.reorderModel")).toBeTruthy();
-    expect(screen.getByLabelText("编辑模型配置")).toBeTruthy();
+    expect(screen.getByLabelText(expectedCopy("settings.modelProvider.editModel"))).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("switch", { name: "停用" }));
+    fireEvent.click(
+      screen.getByRole("switch", {
+        name: expectedCopy("settings.modelProvider.disableAction"),
+      }),
+    );
     expect(onModelEnabledChange).toHaveBeenCalledWith("builtin-model", false);
     expect(onModelCommit).not.toHaveBeenCalled();
   });
 
-  it("Provider 卡片的 Model enabled 只提交启停叶子，不回传模型草稿", async () => {
+  it("a Provider card's Model enabled submits only the enable leaf, not the model draft", async () => {
     const model = {
       ...createModelProviderModelConfig({ id: "builtin-model" }),
       builtin: true,
@@ -1337,7 +1565,11 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
 
-    fireEvent.click(screen.getByRole("switch", { name: "停用" }));
+    fireEvent.click(
+      screen.getByRole("switch", {
+        name: expectedCopy("settings.modelProvider.disableAction"),
+      }),
+    );
 
     await waitFor(() => expect(onSetPersonalModelEnabled).toHaveBeenCalledTimes(1));
     expect(onSetPersonalModelEnabled).toHaveBeenCalledWith(
@@ -1349,7 +1581,7 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
-  it("Built-in/Personal 重名时保留 Built-in 成员且模型开关不展示恢复默认", () => {
+  it("with a Built-in/Personal name collision, the Built-in member is kept and the model switch shows no restore-default", () => {
     const model = {
       ...createModelProviderModelConfig({ id: "same-id" }),
       builtin: true,
@@ -1370,13 +1602,13 @@ describe("ProviderModelsSection compact model rows", () => {
 
     expect(html).toContain(">same-id</span>");
     expect(html).not.toContain('<input type="text"');
-    expect(html).not.toContain('aria-label="删除"');
-    expect(html).not.toContain("恢复默认");
-    expect(html).toContain('aria-label="编辑模型配置"');
+    expect(html).not.toContain(`aria-label="${expectedCopy("settings.modelProvider.delete")}"`);
+    expect(html).not.toContain(expectedCopy("settings.modelProvider.restoreDefaultAction"));
+    expect(html).toContain(`aria-label="${expectedCopy("settings.modelProvider.editModel")}"`);
     expect(html).toContain('aria-label="settings.modelProvider.reorderModel"');
   });
 
-  it("模型行展示配置中的上下文窗口，不按模型后缀改写", () => {
+  it("model rows show the context window from the config, not rewritten by model-id suffix", () => {
     const html = renderToStaticMarkup(
       createElement(ProviderModelsSection, {
         providerId: "test-provider",
@@ -1397,10 +1629,12 @@ describe("ProviderModelsSection compact model rows", () => {
 
     expect(html).toContain("deepseek-v4-pro[1m]");
     expect(html).toContain(">128K<");
-    expect(html).toContain('aria-label="上下文窗口：128K"');
+    expect(html).toContain(
+      `aria-label="${expectedCopy("settings.modelProvider.contextWindowBadgeLabel", { value: "128K" })}"`,
+    );
   });
 
-  it("模型行保留两个模型的可用测试入口", () => {
+  it("model rows keep a usable test entry for both models", () => {
     const html = renderToStaticMarkup(
       createElement(ProviderModelsSection, {
         providerId: "test-provider",
@@ -1424,11 +1658,13 @@ describe("ProviderModelsSection compact model rows", () => {
 
     expect(html).toContain("anthropic-model");
     expect(html).toContain("openai-compatible-model");
-    expect(html.match(/title="测试模型"/g)).toHaveLength(2);
+    expect(
+      html.match(new RegExp(`title="${expectedCopy("settings.modelProvider.testModel")}"`, "g")),
+    ).toHaveLength(2);
     expect(html).not.toContain('disabled=""');
   });
 
-  it("删除收到权威 View 后才移除模型，不靠本地行消失冒充成功", async () => {
+  it("a model is removed only after the authoritative View arrives, not by locally hiding the row", async () => {
     const onSave = vi.fn();
     const onDeletePersonalModel = vi.fn(async () => undefined);
     const provider = createProvider({
@@ -1462,12 +1698,12 @@ describe("ProviderModelsSection compact model rows", () => {
       }),
     );
     expect(screen.queryByText("user-added-model")).toBeNull();
-    expect(screen.getByText("当前没有配置模型，添加模型后可在聊天中使用。")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("settings.modelProvider.modelsEmpty"))).toBeTruthy();
     expect(onSave).not.toHaveBeenCalled();
     expect(onDeletePersonalModel).toHaveBeenCalledWith("provider-deepseek", "user-added-model");
   });
 
-  it("删除按钮的 mouse down 不触发模型行拖动", () => {
+  it("mouse down on the delete button must not trigger the model-row drag", () => {
     render(
       createElement(InlineEditableProviderCard, {
         provider: createProvider({
@@ -1487,7 +1723,7 @@ describe("ProviderModelsSection compact model rows", () => {
     expect(fireEvent.mouseDown(deleteButton)).toBe(false);
   });
 
-  it("删除失败不回滚成旧列表，也不覆盖等待期间到达的 View", async () => {
+  it("a failed delete must not roll back to the old list nor overwrite a View that arrived meanwhile", async () => {
     let rejectDelete!: (error: Error) => void;
     const onDeletePersonalModel = vi.fn(
       () =>

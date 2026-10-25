@@ -27,13 +27,13 @@ interface Transfer {
   data?: Buffer;
 }
 
-/** 只缓存有界附件字节；过载直接拒绝，不构成第二份执行队列。每条远程连接独立持有。 */
+/** Caches only bounded attachment bytes; rejects on overload and never forms a second execution queue. Held independently per remote connection. */
 export function createTopicResourceRelay(deps: TopicResourceRelayDependencies) {
   const transfers = new Map<string, Transfer>();
   let disposed = false;
   const release = (id: string, expected?: Transfer) => {
     const entry = transfers.get(id);
-    // 取消后同 ID 可重新开始；旧读取的迟到异常不能删除新的传输。
+    // After cancellation the same ID may restart; a late exception from an old read must not delete the new transfer.
     if (!entry || (expected && entry !== expected)) return;
     transfers.delete(id);
     clearTimeout(entry.timer);

@@ -39,13 +39,11 @@ const draft = `${marker} keep text, attachment and project`;
 const directory = () =>
   callHandoffHost<RemoteProjectDirectory>(ServiceChannels.RemoteProjects, "readDirectory");
 
-async function openFromChat(locale = "zh-CN", evidence?: string) {
+async function openFromChat(locale = "en-US", evidence?: string) {
   await $(`[data-testid="${TID_COMPOSER_WORKSPACE_TRIGGER}"]`).click();
   const entry = $(`[data-testid="${TID_COMPOSER_REMOTE_CONNECTION}"]`);
   await entry.waitForDisplayed();
-  expect(await entry.getText()).toBe(
-    locale === "zh-CN" ? "新建远程连接…" : "New remote connection…",
-  );
+  expect(await entry.getText()).toBe("New remote connection…");
   if (evidence) {
     await settlePresentation();
     await browser.saveScreenshot(join(process.env.ZCODE_E2E_ARTIFACT_DIR!, `menu-${evidence}.png`));

@@ -1,94 +1,81 @@
 # Read Tool
 
-## 定位
+## Purpose
 
-`Read` 读取本地文件系统中的文件，覆盖文本、图片、视频和 PDF；Jupyter Notebook 是后续实现项。
+`Read` reads files from the local filesystem: text, images, video and PDF. Jupyter Notebook support is a follow-up item.
 
-## 输入契约
+## Input contract
 
-`Read` 输入是严格对象：
+`Read` input is a strict object:
 
-| 字段        | 类型     | 必填 | 说明                                                                                  |
-| ----------- | -------- | ---- | ------------------------------------------------------------------------------------- |
-| `file_path` | `string` | 是   | 要读取的路径；相对路径按 session cwd 解析，绝对路径会规范化后直接交给文件系统 adapter |
-| `offset`    | `number` | 否   | 从第几行开始读取，非负整数。默认从 `1` 开始                                            |
-| `limit`     | `number` | 否   | 读取多少行，正整数                                                                    |
-| `pages`     | `string` | 否   | PDF 页码范围，例如 `1-5`、`3`、`10-20`；单次最多 20 页                                |
+| Field       | Type     | Required | Description                                                                                                                 |
+| ----------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `file_path` | `string` | yes      | Path to read. Relative paths resolve against the session cwd; absolute paths are normalized and handed to the filesystem adapter |
+| `offset`    | `number` | no       | Line to start from, non-negative integer. Defaults to `1`                                                                    |
+| `limit`     | `number` | no       | Number of lines to read, positive integer                                                                                    |
+| `pages`     | `string` | no       | PDF page range, for example `1-5`, `3`, `10-20`; at most 20 pages per call                                                  |
 
-设计要求：
+Design requirements:
 
-- 对模型提示必须明确 `file_path` 可使用绝对路径或相对 session cwd 的路径；运行时统一规范化为绝对路径。模型侧应优先使用用户提供的绝对路径或已经解析出来的绝对路径，避免路径歧义。
-- `offset`、`limit` 只用于大文件或已知目标范围。`offset` 采用模型可见行号语义：`0` 和 `1` 都表示从第 1 行开始；adapter 内部再转换为零基行偏移。
-- 未显式传 `limit` 时，默认最多读取前 `2000` 行；显式传 `limit` 时读取 `limit` 行。
-- 只有当前 turn 的模型明确 `supportsPdf=true` 时，provider-visible schema 和 executor schema 才同时包含 `pages`；`false` / `undefined` 保持既有 Read shape，不接受该字段。
-- PDF `pages` 支持单页 `N`、闭区间 `N-M` 和开放尾区间语法 `N-`。页码从 1 开始；单次最多 20 页，因此开放尾区间会按“超过 20 页”拒绝，而不是在本地扩成任意上限。
-- 模型提示必须明确：当用户提供图片、截图或支持的图片路径时，必须优先使用 `Read`，不要用 `Bash` 读 base64、调用 `file`/`identify` 或写临时脚本来代替视觉读取。`Bash` 只用于列目录、查找路径或处理当前 `Read` 不支持的文件类型。
-- 当前实现支持文本、常见图片（`.png`、`.jpg`、`.jpeg`、`.gif`、`.webp`）、视频（`.mp4`、`.m4v`、`.mov`、`.webm`、`.mkv`、`.avi`）和按模型能力条件开放的 PDF。Jupyter Notebook、SVG 和 device path 仍是后续实现项；未实现的能力不得写入 provider-visible prompt。
+- The model prompt must say `file_path` may be absolute or relative to the session cwd; the runtime always normalizes it to an absolute path. The model should prefer user-provided or already-resolved absolute paths to avoid ambiguity.
+- `offset` and `limit` are for large files or known target ranges. `offset` uses model-visible line numbers: `0` and `1` both mean line 1; the adapter converts to a zero-based line offset internally.
+- Without an explicit `limit`, at most the first `2000` lines are read; with an explicit `limit`, `limit` lines are read.
+- `pages` appears in both the provider-visible schema and the executor schema only when the current turn's model has `supportsPdf=true`. For `false` / `undefined` the existing Read shape is kept and the field is rejected.
+- PDF `pages` supports a single page `N`, a closed range `N-M` and an open tail range `N-`. Pages are 1-based; at most 20 pages per call, so an open tail range is rejected as "more than 20 pages" instead of being expanded locally to an arbitrary limit.
+- The model prompt must say: when the user provides an image, screenshot or supported image path, use `Read` first; do not use `Bash` to read base64, call `file`/`identify` or write temporary scripts instead of visual reading. `Bash` is only for listing directories, finding paths, or handling file types `Read` does not support.
+- Supported today: text, common images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`), video (`.mp4`, `.m4v`, `.mov`, `.webm`, `.mkv`, `.avi`) and PDF (opened by model capability). Jupyter Notebook, SVG and device paths are follow-up items; unimplemented capabilities must not appear in the provider-visible prompt.
 
-## 输出契约
+## Output contract
 
-输出是按 `type` 区分的 union（`notebook` 为后续实现项）：
+The output is a union discriminated by `type` (`notebook` is a follow-up item):
 
-| `type`           | 内容                                                         |
-| ---------------- | ------------------------------------------------------------ |
-| `text`           | `filePath`、`content`、`numLines`、`startLine`、`totalLines` |
-| `image`          | base64 图片、MIME type、原始大小、可选尺寸信息               |
-| `video`          | base64 视频、MIME type、原始大小                             |
-| `notebook`       | notebook 路径和 cells                                        |
-| `pdf`            | PDF 路径、base64、原始大小                                   |
-| `parts`          | PDF 页面提取结果、输出目录、页数、原始大小                   |
-| `file_unchanged` | 文件路径。表示同一范围此前已读且未变化                       |
+| `type`           | Content                                                           |
+| ---------------- | ----------------------------------------------------------------- |
+| `text`           | `filePath`, `content`, `numLines`, `startLine`, `totalLines`      |
+| `image`          | base64 image, MIME type, original size, optional dimension info   |
+| `video`          | base64 video, MIME type, original size                            |
+| `notebook`       | notebook path and cells                                           |
+| `pdf`            | PDF path, base64, original size                                   |
+| `parts`          | extracted PDF pages, output directory, page count, original size  |
+| `file_unchanged` | File path. The same range was read before and is unchanged        |
 
-模型可见结果不是简单 JSON：
+The model-visible result is not plain JSON:
 
-- 文本内容必须通过专用模型可见序列化输出，不能走通用 `JSON.stringify(output)`。
-- 文本内容会加行号，格式类似 `cat -n`，当前 provider-visible 格式为 `<lineNumber>\t<fileContentLine>`。
-- 行号和第一个 tab 是 Read 视图前缀，不属于文件内容；第一个 tab 之后的所有字符，包括额外 tab 和空格缩进，才是后续 `Edit.old_string` 应复制的真实内容。
-- 文本读取结果是 filesystem adapter 解码后的 Unicode 逻辑文本。adapter 必须自动识别 UTF-8、UTF-16LE 以及常见中文 legacy 编码（GB2312 / GBK / GB18030），并把原始编码保存在 metadata 中供后续 mutation tool 保真写回；模型不需要也不应该通过 shell 或脚本转码后再编辑。
-- 为兼容历史 session、日志回放和模型缓存，`Edit` 行号前缀剥离必须同时接受 `<lineNumber>\t<fileContentLine>` 和 `<lineNumber>: <fileContentLine>`；当前 `Read` 输出使用前者以保持 provider-visible 基线一致。
-- 成功读取非空文本后，provider-visible tool result 只包含按条件生成的 freshness / truncation reminder 和带行号正文，不追加 malware reminder 之类的历史后缀。
-- 用户提交的文本文件附件会合成 `Called the Read tool...` 与 `Result of calling the Read tool...` reminder。同一附件的 reminder body 使用单换行连接；不同附件在同一个 mid-conversation system turn 中仍使用双换行。附件超过默认行数上限时，提示必须明确截断到前 `2000` 行，并提示按需继续读取该文件。
-- 空文件返回 system reminder。
-- 文本结构化输出应携带原始文件大小、实际读取字节数、是否截断等 metadata，供 UI/ZCode app-server/debug 展示；模型可见文本仍只展示行号内容或可操作错误。
-- 图片转成 provider-visible image content block。对 Anthropic wire format，
-  `Read` 图片结果必须落到对应 tool result 的 `content` 数组里，例如
-  `{ type: "image", source: { type: "base64", data, media_type } }`，而不是
-  把 `{ type: "image", base64, mimeType }` JSON 字符串塞进 `tool_result.content`。
-  在 AI SDK 边界，等价内部形态是
-  `output: { type: "content", value: [{ type: "image-data", data, mediaType }] }`。
-- 图片 tool result 的 provider-visible `content` 只包含媒体 block。即使图片经过缩放，原始尺寸、展示尺寸和坐标换算比例也只保留在结构化 output，不额外插入 text block，避免图片结果形态随 resize 与否漂移。
-- 对 OpenAI-like chat providers（`openai`、`openai-compatible`、`gateway`），
-  AI SDK 会把 tool result 的 structured `content` JSON 序列化成文本；因此
-  `Read` 图片结果在 provider adapter 边界必须拆成短文本 tool result 占位符
-  和随后一条合成 user media message。合成 user message 必须出现在连续
-  tool-result 消息之后，避免打断 OpenAI tool call / tool result 配对。
-- 图片 payload 是模型请求期的结构化媒体内容；session event、DB tool output、
-  TUI/debug 展示只应保存短文本摘要或 artifact 引用，不应持久化 base64 图片文本。
-- 视频结果不转码、不压缩，以 provider-neutral video block 投影；provider adapter 再按 endpoint 转成 `video_url` 或 video source。tool result 无原生 video part 时，保持短文本 tool result，并在连续 tool-result 块后追加合成 user media message。
-- Read 的成功结果如果全部由 data-backed image/video/file block 组成，完整媒体 snapshot 必须写入
-  artifact store，并按原顺序记录在对应 `ToolStateCompleted.attachments`；`completed.output` 仍只保留
-  短文本摘要。冷恢复和会话内模型切换都从 attachment artifact 重建 provider-neutral block，
-  再由当前 provider 投影为 base64 wire，不能把单次请求 payload 当成 DB 事实源。
-- notebook 转成 notebook cell tool result。
-- PDF 未传 `pages` 时作为原生 `application/pdf` file block 注入；传 `pages` 时返回固定摘要和按页码升序排列的 JPEG 页面图片。
-- 重复读取未变化文件时返回固定 stub，让模型引用上下文里此前的读取结果。
+- Text content goes through a dedicated model-visible serialization, never generic `JSON.stringify(output)`.
+- Text content is line-numbered like `cat -n`; the current provider-visible format is `<lineNumber>\t<fileContentLine>`.
+- The line number and the first tab are a Read view prefix, not file content. Everything after the first tab, including extra tabs and indentation spaces, is the real content that a later `Edit.old_string` must copy.
+- Text read results are Unicode logical text decoded by the filesystem adapter. The adapter must auto-detect UTF-8, UTF-16LE and common Chinese legacy encodings (GB2312 / GBK / GB18030) and keep the original encoding in metadata so mutation tools can write back faithfully; the model neither needs nor should transcode through shell or scripts before editing.
+- For compatibility with historical sessions, log replay and model caches, `Edit` line-number prefix stripping must accept both `<lineNumber>\t<fileContentLine>` and `<lineNumber>: <fileContentLine>`; current `Read` output uses the former to keep the provider-visible baseline stable.
+- After a successful non-empty text read, the provider-visible tool result contains only the conditional freshness / truncation reminder and the numbered body; no malware-reminder-style legacy suffix.
+- User-submitted text attachments synthesize `Called the Read tool...` and `Result of calling the Read tool...` reminders. Reminder bodies of one attachment are joined with a single newline; different attachments in the same mid-conversation system turn are still joined with a blank line. When an attachment exceeds the default line limit, the prompt must say it is truncated to the first `2000` lines and tell the model to continue reading that file as needed.
+- An empty file returns a system reminder.
+- Structured text output carries the original file size, bytes actually read, a truncation flag and similar metadata for UI / ZCode app-server / debug display; the model-visible text shows only numbered content or an actionable error.
+- Images become provider-visible image content blocks. For the Anthropic wire format, the `Read` image result must land in the matching tool result's `content` array, for example `{ type: "image", source: { type: "base64", data, media_type } }`, not as a `{ type: "image", base64, mimeType }` JSON string inside `tool_result.content`. At the AI SDK boundary the equivalent internal shape is `output: { type: "content", value: [{ type: "image-data", data, mediaType }] }`.
+- The provider-visible `content` of an image tool result contains only media blocks. Even when the image was resized, the original size, display size and coordinate scale stay in the structured output only, with no extra text block, so the result shape does not drift with resizing.
+- For OpenAI-like chat providers (`openai`, `openai-compatible`, `gateway`), the AI SDK serializes structured tool-result `content` JSON to text, so at the provider adapter boundary an image result must be split into a short-text tool-result placeholder plus a following synthetic user media message. The synthetic user message must come after the consecutive tool-result messages so it does not break OpenAI tool call / tool result pairing.
+- The image payload is request-time structured media; session events, DB tool output and TUI/debug display store only a short text summary or an artifact reference, never base64 image text.
+- Video is not transcoded or compressed. It is projected as a provider-neutral video block; the provider adapter converts it to `video_url` or a video source per endpoint. When the tool result has no native video part, it stays a short-text tool result and a synthetic user media message is appended after the consecutive tool-result blocks.
+- When a successful Read result consists entirely of data-backed image/video/file blocks, the full media snapshot is written to the artifact store and recorded in original order in the matching `ToolStateCompleted.attachments`; `completed.output` keeps only a short text summary. Cold resume and in-session model switching rebuild provider-neutral blocks from the attachment artifacts, then project them to base64 wire for the current provider. A single request payload is never the DB source of truth.
+- A notebook becomes a notebook-cell tool result.
+- A PDF without `pages` is injected as a native `application/pdf` file block; with `pages` it returns a fixed summary and JPEG page images in ascending page order.
+- Re-reading an unchanged file returns a fixed stub so the model refers to the earlier read in context.
 
-ZCode 需要把内部结构化输出和模型可见序列化分开，避免 UI、SDK、provider 三者耦合。
+ZCode keeps internal structured output separate from model-visible serialization so UI, SDK and provider stay decoupled.
 
-## PDF 执行与结果契约
+## PDF execution and result contract
 
-PDF 执行不内置 Poppler，也不引入 Python、PDFium、Pillow、PDF.js 或额外 fallback。provider-visible 文案以本节列出的固定文案为逐字基线。`PdfDocumentPort` 只负责外部命令 I/O；core 负责能力判断、页码语义、文件预算和模型结果组装。
+PDF execution does not bundle Poppler and does not introduce Python, PDFium, Pillow, PDF.js or any fallback. Provider-visible strings listed in this section are the verbatim baseline. `PdfDocumentPort` only owns external-command I/O; core owns capability checks, page semantics, file budgets and model result assembly.
 
 ```text
 Read(file_path=.pdf)
         |
-        +-- current turn supportsPdf !== true --> 原 Read schema / 原文本分支
+        +-- current turn supportsPdf !== true --> original Read schema / original text branch
         |
         +-- supportsPdf === true
               |
               +-- pages omitted
               |     +-- pdfinfo best effort (10s)
-              |     +-- known pages > 10 --> 要求 pages
+              |     +-- known pages > 10 --> require pages
               |     +-- <= 20MiB + %PDF- magic --> native PDF block
               |
               +-- pages present
@@ -99,172 +86,146 @@ Read(file_path=.pdf)
                     +-- summary text + ordered page images
 ```
 
-### 依赖与进程边界
+### Dependencies and process boundary
 
-- `pdfinfo` 和 `pdftoppm` 直接通过 `ExecutionPort` 以 executable + argv 启动，禁止拼接 shell 字符串。
-- Poppler 只从运行环境 `PATH` 解析。ZCode 不下载、不编译、不随 Desktop / SEA / remote runtime 打包 Poppler。
-- `pdfinfo` 只在未传 `pages` 时尽力探测总页数，超时 10 秒；普通执行或解析失败不阻止后续原生 PDF 读取，但 runtime shutdown 或用户取消产生的 `cancelled` 必须沿 tool executor 取消路径向上冒泡。
-- `pdftoppm` 先用 `-v` 做 5 秒可用性检查，再以 `-jpeg -r 100` 渲染；探测结果为 `exitCode=0`，或 `exitCode!=127` 且 stderr 非空时视为可用。缺少命令时逐字返回 `pdftoppm is not installed. Install poppler-utils (e.g. \`brew install poppler\` or \`apt-get install poppler-utils\`) to enable PDF page rendering.`。子进程渲染超时为 120 秒。只有 PDF `pages` 分支使用 150 秒的 Read executor 外层预算，为可用性检查、页面图片规范化和临时目录清理留出空间；其他 Read 调用仍为 30 秒。只缓存成功的可用性检查，避免安装 Poppler 后必须重启进程。
-- 页面渲染使用唯一临时目录，并在成功、失败、取消和超时后统一清理。临时目录的创建、枚举和页面读取失败统一映射为 `io_error`；清理失败不得覆盖已有的 Poppler 主错误。单次最多 20 页，因此可以在渲染完成后并行读取页面文件，不引入 600 页流式协议。
+- `pdfinfo` and `pdftoppm` are started through `ExecutionPort` as executable + argv; shell string concatenation is forbidden.
+- Poppler is resolved only from the runtime `PATH`. ZCode does not download, compile or bundle Poppler with Desktop / SEA / remote runtime.
+- `pdfinfo` is a best-effort total-page probe, only when `pages` is omitted, with a 10 s timeout. Ordinary execution or parse failures do not block the later native PDF read, but `cancelled` caused by runtime shutdown or user cancellation must bubble up the tool executor cancellation path.
+- `pdftoppm` first gets a 5 s availability check with `-v`, then renders with `-jpeg -r 100`. The probe counts as available when `exitCode=0`, or `exitCode!=127` with non-empty stderr. A missing command returns verbatim `pdftoppm is not installed. Install poppler-utils (e.g. \`brew install poppler\` or \`apt-get install poppler-utils\`) to enable PDF page rendering.`. The subprocess render timeout is 120 s. Only the PDF `pages` branch uses a 150 s outer Read executor budget, leaving room for the availability check, page image normalization and temp-dir cleanup; other Read calls stay at 30 s. Only successful availability checks are cached, so installing Poppler does not require a process restart.
+- Page rendering uses a unique temp directory, cleaned up after success, failure, cancellation and timeout. Temp-dir creation, enumeration and page-read failures all map to `io_error`; a cleanup failure must not override an existing primary Poppler error. With at most 20 pages per call, page files can be read in parallel after rendering; no 600-page streaming protocol is introduced.
 
-### 文件和页码边界
+### File and page boundaries
 
-- 未传 `pages` 的原生 PDF 最大 `20MiB`；先验证普通文件、非空和 `%PDF-` magic。
-- 传 `pages` 的页面提取输入最大 `100MiB`；`offset` / `limit` 对 PDF 不生效。
-- 已知总页数超过 10 且未传 `pages` 时返回明确错误，提示使用 `pages`；一次请求最多 20 页。
-- PDF `pages` 的语法与 20 页上限必须在 Read `validateInput` 阶段、PreToolUse Hook 和权限检查之前完成。非法语法使用 `errorCode=7` 和固定文案；超过 20 页使用 `errorCode=8` 和固定文案；executor 统一投影为 `<tool_use_error>`，handler 不自行拼接错误 envelope。
-- 以下文件错误使用固定文案并逐字保持：非普通文件使用 `Path is not a regular file: <path>`；原生 PDF 超过 20MiB 使用 `PDF file exceeds maximum allowed size of 20MB.`；分页提取输入超过 100MiB 使用 `PDF file exceeds maximum allowed size for text extraction (100MB).`；缺失 `%PDF-` magic 使用 `File is not a valid PDF (missing %PDF- header): <path>`。能力组合、依赖注入、取消和临时目录 I/O 使用本地稳定错误。
-- `pdftoppm` 的 `Wrong page range given` 必须映射成包含文档总页数和合法范围的明确错误；其中 `last page (0)` 映射为 `corrupted` 并返回空 page tree 的明确文案。输入侧只识别 Poppler 明确的 `I/O Error:` / `Permission Error:`；密码保护只按 stderr 中的 `password` 诊断识别；损坏只按 `damaged` / `corrupt` / `invalid` 或已知的 trailer/xref 结构错误识别。进程成功但没有生成页面图片也映射为明确的 `corrupted`；未识别的 stderr 使用 `process_failed`，缺少 Poppler、取消和超时使用各自的稳定错误。
-- `PdfDocumentPortError` 到 Read tool error code 的映射由 core 单点维护：`unavailable -> PDF_CONFIGURATION_ERROR`、`corrupted -> PDF_INVALID`，超时、密码保护、页码越界、权限、通用 I/O 和未知进程失败分别使用独立的 `PDF_*` error code；取消继续走 executor 的取消路径，不能降级成业务错误。
-- `pages` 只对 `.pdf` 生效；兼容调用把 `pages` 传给非 PDF 时，不得改变普通 Read 的既有行为。
+- A native PDF without `pages` is at most `20MiB`; it must first pass regular-file, non-empty and `%PDF-` magic checks.
+- Page-extraction input with `pages` is at most `100MiB`; `offset` / `limit` have no effect on PDF.
+- When the known page count exceeds 10 and `pages` is omitted, a clear error tells the model to use `pages`; one request reads at most 20 pages.
+- PDF `pages` syntax and the 20-page limit must be checked in Read `validateInput`, before the PreToolUse Hook and permission checks. Invalid syntax uses `errorCode=7` and a fixed message; more than 20 pages uses `errorCode=8` and a fixed message; the executor projects both to `<tool_use_error>`, and the handler does not build the error envelope itself.
+- These file errors use fixed messages kept verbatim: not a regular file `Path is not a regular file: <path>`; native PDF over 20MiB `PDF file exceeds maximum allowed size of 20MB.`; page-extraction input over 100MiB `PDF file exceeds maximum allowed size for text extraction (100MB).`; missing `%PDF-` magic `File is not a valid PDF (missing %PDF- header): <path>`. Capability combination, dependency injection, cancellation and temp-dir I/O use local stable errors.
+- `pdftoppm` `Wrong page range given` must map to a clear error with the document's total pages and the legal range; `last page (0)` maps to `corrupted` with a clear empty-page-tree message. On the input side only Poppler's explicit `I/O Error:` / `Permission Error:` are recognized; password protection is recognized only by a `password` diagnostic in stderr; corruption only by `damaged` / `corrupt` / `invalid` or known trailer/xref structure errors. A process that succeeds but yields no page images also maps to a clear `corrupted`; unrecognized stderr uses `process_failed`; missing Poppler, cancellation and timeout each have their own stable error.
+- The mapping from `PdfDocumentPortError` to Read tool error codes is maintained in one place in core: `unavailable -> PDF_CONFIGURATION_ERROR`, `corrupted -> PDF_INVALID`; timeout, password protection, page out of range, permission, generic I/O and unknown process failure each use their own `PDF_*` code. Cancellation keeps the executor cancellation path and must not degrade to a business error.
+- `pages` applies only to `.pdf`; a compatibility call that passes `pages` for a non-PDF must not change ordinary Read behavior.
 
 ### Provider-visible tool result
 
-- 未传 `pages`：`PDF file read: <filePath> (<size>)`，并携带原生 PDF file block。
-- 传 `pages`：`PDF pages extracted: <count> page(s) from <filePath> (<size>)`，随后是按原始页码升序排列的页面图片。
-- 文件大小使用一位小数、去除尾随 `.0` 的格式，例如 `1536 bytes -> 1.5KB`、`2048 bytes -> 2KB`。
-- 不生成 `<Page_N_image>`、`<Page_N_parse_result>`、文本层、PNG 或 120 DPI，也不保留旧的 600 页语义。
-- Anthropic Messages 和 OpenAI Responses 保留结构化 text/media tool result。OpenAI Chat Completions 沿用 ZCode 既有通用投影：`role: tool` 包含上述摘要和逐页图片文本占位符，实际页面图片按原顺序进入紧随连续 tool-result 消息之后的一条 synthetic user message；PDF 不增加专属占位符抑制规则。
-- live、resume、fork 和冷启动通过现有 tool media artifact + `modelContentLayout` 恢复同一顺序，不新增 PDF 专属 manifest 或持久化协议。
-- E2E 必须从真实 runtime 发起 `Read` tool call，并由本地 provider capture endpoint 断言最终 OpenAI Chat Completions HTTP body；测试不得直接调用消息转换 helper。首次 tool-result 请求与重新创建 runtime 后的 cold-resume 请求必须包含相同的摘要和同序页面图片 data URL，以覆盖 executor、artifact 持久化、历史恢复及 provider serialization 的完整链路。
-- `supportsPdf` 与 `supportsImages` 独立：无 `pages` 的原生 PDF 只依赖 `supportsPdf`；有 `pages` 且模型明确不支持图片时，在任何 Poppler I/O 前返回统一 tool error。
-- Read 图片、PDF 页面图片、原生 PDF 和视频共用 `40MiB` 请求媒体聚合预算，按完整
-  data URL 字节数计量；单个视频仍须满足 `30MiB` 原始文件上限。不增加
-  PDF 专属预算或豁免。预算只作用于当前 provider request 副本，并继续使用既有的
-  最新用户媒体优先、历史媒体按新近程度保留和稳定 placeholder 语义。
+- Without `pages`: `PDF file read: <filePath> (<size>)` carrying the native PDF file block.
+- With `pages`: `PDF pages extracted: <count> page(s) from <filePath> (<size>)`, followed by page images in ascending original page order.
+- File size uses one decimal with a trailing `.0` stripped, for example `1536 bytes -> 1.5KB`, `2048 bytes -> 2KB`.
+- No `<Page_N_image>`, `<Page_N_parse_result>`, text layer, PNG or 120 DPI, and the old 600-page semantics are not kept.
+- Anthropic Messages and OpenAI Responses keep structured text/media tool results. OpenAI Chat Completions uses ZCode's existing generic projection: the `role: tool` message holds the summary and per-page image text placeholders, and the real page images go in original order into one synthetic user message right after the consecutive tool-result messages; PDF adds no dedicated placeholder suppression rule.
+- Live, resume, fork and cold start restore the same order through the existing tool media artifact + `modelContentLayout`; no PDF-specific manifest or persistence protocol is added.
+- E2E must issue a `Read` tool call from the real runtime and assert, at a local provider capture endpoint, the final OpenAI Chat Completions HTTP body; tests must not call message conversion helpers directly. The first tool-result request and the cold-resume request after recreating the runtime must contain the same summary and same-order page image data URLs, covering executor, artifact persistence, history recovery and provider serialization end to end.
+- `supportsPdf` and `supportsImages` are independent: a native PDF without `pages` depends only on `supportsPdf`; with `pages` and a model that explicitly lacks image support, a unified tool error is returned before any Poppler I/O.
+- Read images, PDF page images, native PDF and video share a `40MiB` aggregate request-media budget, measured in full data URL bytes; a single video must still satisfy the `30MiB` raw file limit. There is no PDF-specific budget or exemption. The budget applies only to the current provider request copy and keeps the existing semantics: latest user media first, history media kept by recency, stable placeholders.
 
-## 行为语义
+## Behavior semantics
 
-核心流程：
+Core flow:
 
-1. 按 session cwd 展开相对路径并规范化为绝对路径。
-2. 当前版本不硬拒绝 workspace 外路径，只保留绝对路径规范化；后续由 filesystem permission adapter 接管工作区外读写的 ask/deny 策略。
-3. 校验 PDF 页码范围。
-4. 进行权限 deny 规则和特殊路径校验。
-5. 按类型选择读取策略。
-6. 对文本和 notebook 进行 token/size 限制。
-7. 文本文件由 `FileSystemPort` 统一完成 bytes 到 Unicode 的解码、LF 规范化、原始 `encoding` 和 `lineEndings` 记录；无法可靠判定为文本或包含混合/不支持编码时返回稳定 `unsupported` 错误，不向模型展示乱码。
-8. 记录 `readFileState`，用于后续 `Edit` 和 `Write` 的读前写入保护。
-9. 对同一文件同一范围重复读取做 dedup，如果 mtime 未变，返回 `file_unchanged`。
-10. 对图片和 PDF 提取页复用现有尺寸、API byte budget 和 token budget 压缩。
-11. 对视频做格式识别和 `30MiB` 输入上限校验，不做转码或压缩。
-12. 对大 PDF 要求分页读取或走页面提取。
+1. Expand a relative path against the session cwd and normalize to an absolute path.
+2. The current version does not hard-reject paths outside the workspace and only normalizes absolute paths; the filesystem permission adapter will later own ask/deny for outside-workspace reads and writes.
+3. Validate the PDF page range.
+4. Apply permission deny rules and special-path checks.
+5. Pick a read strategy by type.
+6. Apply token/size limits to text and notebooks.
+7. For text files, `FileSystemPort` does bytes-to-Unicode decoding, LF normalization and records the original `encoding` and `lineEndings`; content that cannot be reliably judged as text, or has mixed/unsupported encodings, returns a stable `unsupported` error and never shows garbled text to the model.
+8. Record `readFileState` for the later read-before-write protection of `Edit` and `Write`.
+9. Dedup repeated reads of the same file and range: if mtime is unchanged, return `file_unchanged`.
+10. Images and PDF extracted pages reuse the existing dimension, API byte budget and token budget compression.
+11. Video gets format detection and the `30MiB` input limit check, with no transcoding or compression.
+12. Large PDFs require paged reads or page extraction.
 
-### 视频预算
+### Video budget
 
-- `READ_VIDEO_MAX_INPUT_BYTES = 30 * 1024 * 1024`，按原始字节校验。
-- 支持 MP4、M4V、MOV、WEBM、MKV 和 AVI；扩展名到 MIME 的映射与 prompt 附件解析共用同一事实源。
-- 超限文件返回稳定错误；model-I/O 记录必须脱敏 video base64 正文。
+- `READ_VIDEO_MAX_INPUT_BYTES = 30 * 1024 * 1024`, checked on raw bytes.
+- MP4, M4V, MOV, WEBM, MKV and AVI are supported; the extension-to-MIME mapping shares one source of truth with prompt attachment parsing.
+- An oversized file returns a stable error; model-I/O records must redact the video base64 body.
 
-### 图片预算与压缩
+### Image budget and compression
 
-ZCode 的图片 `Read` 采用多阶段保护策略，最长边使用
-`2000px` 上限：
+ZCode's image `Read` uses a multi-stage protection strategy with a `2000px` longest-edge cap:
 
-- `READ_IMAGE_MAX_BASE64_BYTES = 5 * 1024 * 1024`。这是 provider/API 侧
-  base64 payload 硬上限，校验对象是 base64 字符串长度，不是原始 bytes。
-- `READ_IMAGE_TARGET_BYTES = READ_IMAGE_MAX_BASE64_BYTES * 3 / 4`。这是默认 raw
-  bytes target，约 `3.75MiB`，用于在 base64 膨胀前留出安全空间。
-- `READ_IMAGE_MAX_DIMENSION = 2000`。图片最长边超过该值时按比例缩小，不放大
-  小图。
-- `READ_IMAGE_MAX_INPUT_BYTES = 20 * 1024 * 1024`。超过该输入大小的图片在读取
-  bytes 前返回稳定错误，避免把超大媒体读入内存。
-- 空图片必须返回稳定错误，不允许发送空 base64 给 provider。
-- 图片 MIME 以 magic bytes 检测为准，扩展名只作为进入图片路径和未知格式时的
-  fallback。
-- 如果原图 raw bytes、base64 bytes 和尺寸均在预算内，保留原始 bytes。
-- 如果只超大小但未超尺寸，优先尝试保留格式压缩；PNG 优先优化/减色，JPEG/WebP
-  逐步降低质量；仍失败时再转 JPEG。
-- 如果超尺寸，先限制到 `2000px` 内，再重复格式保留、PNG 优化、JPEG 质量阶梯和
-  更小尺寸兜底压缩。
-- Read 还要用 `ceil(base64.length * 0.125)` 估算图片对模型输出预算的消耗；超过
-  `READ_MAX_OUTPUT_TOKENS` 时，按 `maxBytes = floor((maxTokens / 0.125) * 0.75)`
-  继续压缩。
-- 图片输出携带原始尺寸、展示尺寸、原始 bytes、转换后 bytes、是否压缩、是否缩放
-  和压缩策略。这些信息只属于结构化 output；模型可见内容始终只包含图片媒体 block，
-  不因是否发生缩放而追加文字。
+- `READ_IMAGE_MAX_BASE64_BYTES = 5 * 1024 * 1024`. A hard provider/API base64 payload cap, checked against the base64 string length, not raw bytes.
+- `READ_IMAGE_TARGET_BYTES = READ_IMAGE_MAX_BASE64_BYTES * 3 / 4`. The default raw-byte target, about `3.75MiB`, leaving headroom before base64 inflation.
+- `READ_IMAGE_MAX_DIMENSION = 2000`. A longest edge above this is scaled down proportionally; small images are never enlarged.
+- `READ_IMAGE_MAX_INPUT_BYTES = 20 * 1024 * 1024`. Images above this input size return a stable error before the bytes are read, to avoid loading oversized media into memory.
+- An empty image must return a stable error; empty base64 is never sent to a provider.
+- Image MIME is determined by magic bytes; the extension is only a fallback for entering the image path and for unknown formats.
+- If raw bytes, base64 bytes and dimensions are all within budget, the original bytes are kept.
+- If only the size is over budget, format-preserving compression is tried first: PNG optimization/palette reduction, JPEG/WebP progressive quality reduction; only if that fails, convert to JPEG.
+- If the dimensions are over, first limit to within `2000px`, then repeat format preservation, PNG optimization, the JPEG quality ladder and smaller-size fallback compression.
+- Read also estimates the image's cost against the model output budget with `ceil(base64.length * 0.125)`; above `READ_MAX_OUTPUT_TOKENS`, compression continues with `maxBytes = floor((maxTokens / 0.125) * 0.75)`.
+- Image output carries original dimensions, display dimensions, original bytes, converted bytes, compressed flag, resized flag and compression strategy. These belong to structured output only; model-visible content is always just the image media block, with no appended text whether or not resizing happened.
 
-当前 Node/SEA 默认 adapter 仍使用纯 JS Jimp，以保持跨平台打包路径稳定。Jimp
-无法重新编码 WebP；WebP 在预算内保持原样，超过预算时返回稳定可恢复错误。后续若
-引入 optional sharp/native 或 WASM WebP 处理，需要先更新本 spec 的打包、降级和
-测试策略。
+The current Node/SEA default adapter still uses pure-JS Jimp to keep the cross-platform packaging path stable. Jimp cannot re-encode WebP: a WebP within budget is kept as is, one over budget returns a stable recoverable error. If optional sharp/native or WASM WebP handling is introduced later, this spec's packaging, degradation and test strategy must be updated first.
 
-### 文本大文件预算
+<a id="文本大文件预算"></a>
 
-超过 `10MiB` 的文本范围读取使用前 `4096` 字节探测编码。样本边界不是文件结束：
-若末尾是未完成的 UTF-8 候选序列，根据首字节与已收到的字节数计算缺少数量，只补读该序列
-所缺的 `1–3` 字节，再严格校验整个样本；不能因流式解码暂未报错就接受 UTF-8。
-补读遇到非法续字节时进入既有 legacy 检测，短读继续读取，EOF 后仍未完整的序列不能通过
-UTF-8 校验。完整字符边界不额外扩样，不丢弃末尾字节，也不固定把样本延长到另一个截断点。
-采样仍是启发式判断：补齐 UTF-8 候选不保证真实编码是 UTF-8，也不验证后续整个文件。
-BOM 与中文 legacy 编码识别顺序不变。正文从头读取，复用同一个流式 decoder 拼接跨块字符，
-不改变行范围和输出预算。附件合成 Read 共用此行为。
+### Large text budget
 
-ZCode 文本 `Read` 使用两层预算：
+A text range read of a file over `10MiB` probes the encoding with the first `4096` bytes. The sample boundary is not the end of file: if the sample ends with an incomplete UTF-8 candidate sequence, the missing count is computed from the lead byte and the bytes received, only the missing `1–3` bytes of that sequence are read, and then the whole sample is strictly validated; UTF-8 must not be accepted just because streaming decode has not yet errored. An invalid continuation byte on the supplementary read enters the existing legacy detection; a short read keeps reading; a sequence still incomplete at EOF cannot pass UTF-8 validation. On a complete character boundary there is no extra sampling, no dropped trailing bytes and no fixed extension to another truncation point. Sampling stays heuristic: completing a UTF-8 candidate does not guarantee the real encoding is UTF-8 and does not validate the rest of the file. BOM and Chinese legacy encoding detection order is unchanged. The body is read from the start, reusing the same streaming decoder to join characters across chunks, without changing line ranges or output budget. Synthesized attachment Read shares this behavior.
 
-- `READ_MAX_FILE_SIZE_BYTES = 256 * 1024`。未显式传 `limit` 时，adapter 先按文件总大小检查；超过上限时返回 `too_large` / `read_file_too_large` 类错误，提示使用 `offset` 和 `limit`。
-- 显式传 `limit` 时，不用文件总大小拦截，而是按完整文件的真实行区间读取。实现不能先读文件头部再在 core 中切片，否则会导致大文件后半段永远不可读。
-- `READ_MAX_OUTPUT_TOKENS = 25_000`。范围读取后的选中内容仍要做模型输出预算校验；超过上限时返回 `read_output_too_many_tokens`，提示缩小范围。
-- `READ_DEFAULT_MAX_LINES = 2000`。未显式传 `limit` 且文件大小通过检查时，最多返回前 `2000` 行。
-- `resultBudget` 是最后兜底，不是正常路径。正常情况下 `Read` 自己应返回可操作错误或真实范围内容，不依赖 executor 截断巨大输出。
+ZCode text `Read` uses two budget layers:
 
-## 权限模型
+- `READ_MAX_FILE_SIZE_BYTES = 256 * 1024`. Without an explicit `limit`, the adapter checks total file size first; above the limit it returns a `too_large` / `read_file_too_large` style error telling the model to use `offset` and `limit`.
+- With an explicit `limit`, total file size does not block; the read uses the real line range of the full file. The implementation must not read the file head and slice in core, or the back half of a large file would never be readable.
+- `READ_MAX_OUTPUT_TOKENS = 25_000`. The selected content of a range read is still checked against the model output budget; above the limit it returns `read_output_too_many_tokens` telling the model to narrow the range.
+- `READ_DEFAULT_MAX_LINES = 2000`. Without an explicit `limit` and with the file size check passed, at most the first `2000` lines are returned.
+- `resultBudget` is the last-resort fallback, not the normal path. Normally `Read` itself returns an actionable error or real range content and does not rely on executor truncation of huge output.
 
-`Read` 是只读且并发安全，但仍需要路径权限：
+## Permission model
 
-- explicit read deny 最高优先级。
-- explicit read ask 先于隐式 allow。
-- edit 权限可以隐式允许 read，但不能绕过 read deny/ask。
-- 工作区内读取默认允许。
-- session memory、plan、tool results 等内部可读路径可以允许。
-- 工作区外读取当前版本不在 core path-policy 层拦截；后续默认 ask，并建议增加 session read rule。
+`Read` is read-only and concurrency-safe but still needs path permission:
 
-ZCode 应将路径权限做成统一 filesystem permission adapter，`Read` 只声明 `getPath` 和操作类型 `read`。
+- An explicit read deny has the highest priority.
+- An explicit read ask comes before implicit allow.
+- Edit permission may implicitly allow read but cannot bypass read deny/ask.
+- Reads inside the workspace are allowed by default.
+- Internal readable paths such as session memory, plan and tool results may be allowed.
+- Reads outside the workspace are not intercepted at the core path-policy layer in the current version; later the default will be ask, with a suggested session read rule.
 
-## 校验与错误
+ZCode builds path permission as a unified filesystem permission adapter; `Read` only declares `getPath` and operation type `read`.
 
-失败路径包括（部分待补齐，见实现状态）：
+## Validation and errors
 
-- 无效 PDF 页码范围。
-- PDF 页码范围超过单次最大页数。
-- 路径命中 deny 规则。
-- UNC 路径需要权限确认，避免 Windows NTLM 泄露。
-- 二进制文件且不是 PDF、图片或 SVG。
-- 会阻塞或无限输出的 device path，例如 `/dev/zero`、`/dev/stdin`。
-- 文件不存在时附带 cwd 和相似文件建议。
-- 文本或 notebook 超过 size/token budget。
-- 视频超过 `30MiB` 输入上限。
-- 大 PDF 未指定 pages。
-- 文本编码不支持、疑似二进制或检测到混合编码时返回稳定 `unsupported` 错误，避免把乱码交给后续 `Edit.old_string` 匹配。
+Failure paths (some still to be completed, see implementation status):
 
-这些错误应保留稳定错误码和结构化原因，CLI 入口层再格式化成人类提示。
+- Invalid PDF page range.
+- PDF page range above the per-call maximum.
+- Path hits a deny rule.
+- A UNC path needs permission confirmation to avoid Windows NTLM leaks.
+- A binary file that is not PDF, image or SVG.
+- Device paths that block or output endlessly, for example `/dev/zero`, `/dev/stdin`.
+- File not found, with cwd and similar-file suggestions.
+- Text or notebook over the size/token budget.
+- Video over the `30MiB` input limit.
+- A large PDF without `pages`.
+- Unsupported text encoding, suspected binary or mixed encoding returns a stable `unsupported` error so garbled text never reaches later `Edit.old_string` matching.
 
-## ZCode 设计结论
+These errors keep stable error codes and structured reasons; the CLI entry layer formats them into human-readable hints.
 
-## 实现状态（2026-05-08）
+## Implementation status (2026-05-08)
 
-| 能力                               | 状态        | 说明                                                                                                                                                                       |
-| ---------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 基本文本读取                       | implemented | 当前 `Read` 已通过 `FileSystemPort.readTextFile` 读取文本并支持 `offset` / `limit`。                                                                                       |
-| 相对路径按 session cwd 解析        | implemented | 当前路径解析不依赖宿主进程 cwd。                                                                                                                                           |
-| workspace 外路径硬拦截             | disabled    | 当前版本只规范化路径，不在 core path-policy 拒绝工作区外读取；原因是 subagent 需要读取用户指定的外部仓库或文件，细粒度 ask/deny 后续收敛到 filesystem permission adapter。 |
-| 图片读取                           | implemented | 已支持常见图片格式和 resize adapter。                                                                                                                                      |
-| PDF 原生读取与分页提取             | implemented | `supportsPdf` 条件 shape；原生 PDF 或 PATH Poppler JPEG 页面提取，单次最多 20 页；与图片、视频共用 `40MiB` 编码后请求媒体预算。                                       |
-| 视频读取                           | implemented | 支持 MP4、M4V、MOV、WEBM、MKV、AVI；最多 `30MiB`，无转码/压缩，结果按 provider-neutral video block 投影。                                                                  |
-| 模型可见行号格式                   | implemented | 当前文本输出通过 `formatModelContent` 转成 cat-n 风格 `<lineNumber>: <content>`，避免 JSON 转义污染 `Edit.old_string`；`Edit` 仍兼容旧的 `<lineNumber>\t<content>` 输入。  |
-| readFileState                      | missing     | 当前 `Read` 尚未记录完整 read cache，后续 `Edit` / `Write` 不能判断未读、partial read 或 stale mutation。                                                                  |
-| 重复读取 dedup                     | missing     | 尚未返回 `file_unchanged` stub。                                                                                                                                           |
-| 文件类型、device path 和大文件保护 | partial     | 当前已实现文本大文件 `256KB` 总大小保护、真实范围读取和 `25_000` token 输出保护；二进制和 device path 失败路径仍待补齐。                                                     |
+| Capability                          | Status      | Notes                                                                                                                                                                                                                                      |
+| ----------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Basic text read                     | implemented | `Read` reads text through `FileSystemPort.readTextFile` and supports `offset` / `limit`.                                                                                                                                                    |
+| Relative path resolved against cwd  | implemented | Path resolution does not depend on the host process cwd.                                                                                                                                                                                    |
+| Hard block of outside-workspace paths | disabled  | The current version only normalizes paths and does not reject outside-workspace reads in core path-policy, because a subagent needs to read user-specified external repos or files; fine-grained ask/deny will converge in the filesystem permission adapter. |
+| Image read                          | implemented | Common image formats and a resize adapter are supported.                                                                                                                                                                                    |
+| Native PDF read and page extraction | implemented | `supportsPdf` conditional shape; native PDF or PATH Poppler JPEG page extraction, at most 20 pages per call; shares the `40MiB` encoded request-media budget with images and video.                                                           |
+| Video read                          | implemented | MP4, M4V, MOV, WEBM, MKV, AVI; up to `30MiB`, no transcoding/compression, projected as a provider-neutral video block.                                                                                                                      |
+| Model-visible line-number format    | implemented | Text output goes through `formatReadModelContent` → `addReadLineNumbers` into cat-n style `<lineNumber>\t<content>` (pinned by `tool-contracts.test.ts`) to avoid JSON escaping polluting `Edit.old_string`; `Edit` accepts both `<lineNumber>\t` and `<lineNumber>: ` prefixes on input.                                    |
+| readFileState                       | missing     | `Read` does not yet record a full read cache, so later `Edit` / `Write` cannot detect unread, partial-read or stale mutations.                                                                                                              |
+| Repeat-read dedup                   | missing     | The `file_unchanged` stub is not returned yet.                                                                                                                                                                                              |
+| File type, device path and large-file protection | partial | Text large-file `256KB` total-size protection, real range read and `25_000` token output protection are done; binary and device-path failure paths are still to be completed.                                                      |
 
-后续优先级：保留文本大文件与 read cache 既有语义；PDF 不在 Read handler 内叠加媒体
-预算特殊兜底，共享请求媒体策略继续由 runtime provider-request 投影边界统一维护。
+Follow-up priority: keep the large-text and read-cache semantics; PDF must not add a media-budget special fallback inside the Read handler, and the shared request-media policy stays owned by the runtime provider-request projection boundary.
 
-`Read` 是文件工具链的状态基础。ZCode 应把它建成 `FileReadService` 加 `ReadTool` 两层：
+`Read` is the state foundation of the file tool chain. ZCode builds it as a `FileReadService` plus `ReadTool` two-layer design:
 
-- `ReadTool` 负责 schema、权限、tool result 序列化。
-- `FileReadService` 负责类型识别、范围读取、内容预算、read cache 更新。
-- 文件系统 I/O 必须通过 `FileSystemPort`。
-- `FileSystemPort` 可由本地 Node adapter 或远程/ZCode protocol client adapter 实现；Read tool 不得直接 import `fs/promises`。
-- PDF、图片、notebook 处理应是可替换 adapter，避免核心 tool 直接依赖具体库。
-- `readFileState` 必须记录 `path`、`mtime`、`content`、`offset`、`limit`、是否 partial view。
-- 所有读取和 cache 命中都要带 `traceId`，便于回放和审计。
+- `ReadTool` owns schema, permission and tool result serialization.
+- `FileReadService` owns type detection, range read, content budget and read cache updates.
+- All file system I/O goes through `FileSystemPort`.
+- `FileSystemPort` may be implemented by a local Node adapter or a remote/ZCode protocol client adapter; the Read tool must not import `fs/promises` directly.
+- PDF, image and notebook handling are replaceable adapters, so the core tool does not depend on concrete libraries.
+- `readFileState` records `path`, `mtime`, `content`, `offset`, `limit` and whether the view is partial.
+- Every read and cache hit carries a `traceId` for replay and audit.

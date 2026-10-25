@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
-// 已保存工作流中枢「页」层（docs/dynamic-workflow/launch.md「The hub page」 + docs/dynamic-workflow/launch.md「Names and scopes」）：顶部固定「全局」组，
-// 其下按已打开项目分组。两个组都换成桩——桩把 props.onStateChange 回报由可控 map 驱动、暴露按钮，
-// 只看页层的组顺序、当前标记、总数（含全局）、空态（只看项目组）、spinner、刷新广播、详情态与深链。
+// The saved-workflows hub "page" layer (docs/dynamic-workflow/launch.md "The hub page" +
+// "Names and scopes"): a pinned "global" group on top, then groups per open project. Both groups
+// are stubbed — the stubs drive props.onStateChange reports from a controllable map and expose
+// buttons — so only the page layer is under test: group order, current marker, total count
+// (including global), empty state (project groups only), spinner, refresh broadcast, detail
+// state, and deep links.
 import { createElement, useEffect, useMemo, type ReactNode } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,6 +21,7 @@ import {
 } from "@zcode/shared";
 import { testId } from "@zcode/shared/test-ids";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import {
   resetDynamicWorkflowAvailabilityStoreForTests,
   useDynamicWorkflowAvailabilityStore,
@@ -58,7 +62,7 @@ vi.mock("@/lib/settingsNavigation.js", async (importOriginal) => ({
 vi.mock("@/store/TabStoreProvider.js", () => ({
   useTabStore: (selector: (state: typeof tabStoreState) => unknown) => selector(tabStoreState),
 }));
-// 页层只消费项目目录；单独 hook 测试覆盖 Host 身份和离线过滤。
+// The page layer only consumes the project catalog; a dedicated hook test covers Host identity and offline filtering.
 vi.mock("@/project-sidebar/useSavedWorkflowProjectOptions.js", () => ({
   useSavedWorkflowProjectOptions: () =>
     useMemo(
@@ -86,7 +90,7 @@ vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({ children }: { children: ReactNode }) => children,
 }));
 
-// 每个组的加载态由键（项目 workspacePath 或 "global"）索引，测试直接改这张表。
+// Each group's readiness is keyed (project workspacePath or "global"); tests edit this map directly.
 const groupReadiness: Record<string, SavedWorkflowGroupState> = {};
 
 vi.mock("@/settings/saved-workflows/SavedWorkflowProjectGroup.js", () => ({
@@ -166,7 +170,7 @@ vi.mock("@/settings/saved-workflows/SavedWorkflowProjectGroup.js", () => ({
   },
 }));
 
-// 全局组桩：始终渲染（空也显示）；用 "global" 键回报状态；暴露 open / moved / back。
+// Global group stub: always rendered (even when empty); reports state under the "global" key; exposes open / moved / back.
 vi.mock("@/settings/saved-workflows/SavedWorkflowGlobalGroup.js", () => ({
   SavedWorkflowGlobalGroup: ({
     refreshSeq,
@@ -235,7 +239,7 @@ function mount(props: Partial<Parameters<typeof SavedWorkflowsSection>[0]> = {})
   const utils = render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(SavedWorkflowsSection, {
         workspacePath: tabStoreState.activeWorkspacePath,
         onNavigateToLaunchedRun,
@@ -252,7 +256,7 @@ function keyOf(path: string): string {
   return resolveWorkspaceKey({ workspacePath: path });
 }
 
-describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
+describe("SavedWorkflowsSection (global + multi-project page)", () => {
   beforeEach(() => {
     tabStoreState.tabs = [];
     tabStoreState.activeWorkspacePath = null;
@@ -266,7 +270,7 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     resetDynamicWorkflowAvailabilityStoreForTests();
   });
 
-  it("全局组恒置顶，位于所有项目组之上；总数=全局+各项目组条数之和", async () => {
+  it("the global group is always pinned above all project groups; total = global + each project group count", async () => {
     tabStoreState.tabs = [workspaceTab("/a", "Alpha"), workspaceTab("/b", "Beta")];
     groupReadiness.global = { loaded: true, empty: false, count: 2 };
     groupReadiness["/a"] = { loaded: true, empty: false, count: 3 };
@@ -283,10 +287,10 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     expect(groups[2]?.getAttribute("data-testid")).toBe(
       testId(TID_WORKFLOW_PROJECT_GROUP, keyOf("/b")),
     );
-    expect(screen.getByText("已保存的工作流").textContent).toContain("9");
+    expect(screen.getByText(expectedCopy("workflows.hub.sectionTitle")).textContent).toContain("9");
   });
 
-  it("全局组接收本机项目候选（过滤远程）与活动项目 key", async () => {
+  it("the global group receives local project candidates (remote filtered out) and the active project key", async () => {
     tabStoreState.tabs = [
       workspaceTab("/a", "Alpha"),
       workspaceTab("/remote", "Remote", { remoteSessionId: "sess-1" }),
@@ -300,22 +304,22 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     expect(globalGroup.getAttribute("data-active")).toBe(keyOf("/a"));
   });
 
-  it("全局空态卡只看项目组：项目全空 + 全局有货，空态卡照出（在全局组之下）", async () => {
+  it("the global empty-state card only looks at project groups: all projects empty + global stocked, the empty card shows (below the global group)", async () => {
     tabStoreState.tabs = [workspaceTab("/a", "Alpha")];
     tabStoreState.activeWorkspacePath = "/a";
     groupReadiness.global = { loaded: true, empty: false, count: 3 };
     groupReadiness["/a"] = { loaded: true, empty: true, count: 0 };
     mount({ workspacePath: "/a" });
     await screen.findByTestId(TID_WORKFLOWS_EMPTY);
-    // 全局组仍在空态卡之上
+    // The global group is still above the empty-state card
     const global = screen.getByTestId(TID_WORKFLOW_GLOBAL_GROUP);
     const empty = screen.getByTestId(TID_WORKFLOWS_EMPTY);
     expect(global.compareDocumentPosition(empty) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // 总数含全局
-    expect(screen.getByText("已保存的工作流").textContent).toContain("3");
+    // The total includes global
+    expect(screen.getByText(expectedCopy("workflows.hub.sectionTitle")).textContent).toContain("3");
   });
 
-  it("项目全空且全局也空：空态卡照旧出现在全局组之下", async () => {
+  it("all projects empty and global empty too: the empty-state card still appears below the global group", async () => {
     tabStoreState.tabs = [workspaceTab("/a", "Alpha")];
     tabStoreState.activeWorkspacePath = "/a";
     groupReadiness.global = { loaded: true, empty: true, count: 0 };
@@ -328,10 +332,12 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
       hostId: "local",
       workspacePath: "/a",
     });
-    expect(onCreateViaChat.mock.calls[0]?.[0]).toEqual(expect.stringContaining("保存到本项目"));
+    expect(onCreateViaChat.mock.calls[0]?.[0]).toEqual(
+      expect.stringContaining("save it to this project"),
+    );
   });
 
-  it("spinner：全局与所有项目组都未就绪时显示，不显示空态卡", async () => {
+  it("spinner: shows while global and all project groups are unready; no empty-state card", async () => {
     tabStoreState.tabs = [workspaceTab("/a", "Alpha")];
     groupReadiness.global = { loaded: false, empty: false, count: 0 };
     groupReadiness["/a"] = { loaded: false, empty: false, count: 0 };
@@ -340,7 +346,7 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     expect(screen.queryByTestId(TID_WORKFLOWS_EMPTY)).toBeNull();
   });
 
-  it("只要全局组就绪，即使项目组未就绪也不再转圈", async () => {
+  it("once the global group is ready the spinner stops even if project groups are not", async () => {
     tabStoreState.tabs = [workspaceTab("/a", "Alpha")];
     groupReadiness.global = { loaded: true, empty: true, count: 0 };
     groupReadiness["/a"] = { loaded: false, empty: false, count: 0 };
@@ -349,19 +355,20 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
   });
 
-  it("没有候选项目时仍渲染全局组与刷新按钮，并给「打开一个项目」提示", async () => {
+  it("with no candidate projects it still renders the global group and refresh button, plus the open-a-project hint", async () => {
     tabStoreState.tabs = [{ id: "s", kind: "settings", workspacePath: "", label: "settings" }];
     groupReadiness.global = { loaded: true, empty: true, count: 0 };
     mount();
     await screen.findByTestId(TID_WORKFLOW_GLOBAL_GROUP);
-    expect(screen.getByText("打开一个项目以查看它的工作流。")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("workflows.hub.noWorkspace"))).toBeTruthy();
     expect(screen.getByTestId(TID_WORKFLOWS_REFRESH)).toBeTruthy();
-    // 无候选时空态卡不出（那是「项目全空」，此处根本没有项目组）
+    // With no candidates the empty-state card does not show (that is "all projects empty"; here there are no project groups at all)
     expect(screen.queryByTestId(TID_WORKFLOWS_EMPTY)).toBeNull();
   });
 
-  // launch.md「The hub page」「The user's choice」：标题行带「工作流设置」和当前生效模式，点击直达设置 › 常规。
-  it("「工作流设置」显示当前生效模式，点击打开设置并定位到常规", async () => {
+  // launch.md "The hub page" / "The user's choice": the header row carries "Workflow settings"
+  // and the currently effective mode; clicking opens Settings › General directly.
+  it("the Workflow settings row shows the effective mode and opens Settings on General", async () => {
     useDynamicWorkflowAvailabilityStore.setState({
       status: "ready",
       enabled: true,
@@ -373,14 +380,14 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     groupReadiness.global = { loaded: true, empty: true, count: 0 };
     mount();
     const button = await screen.findByTestId(TID_WORKFLOWS_OPEN_SETTINGS);
-    expect(button.textContent).toContain("工作流设置");
-    expect(button.textContent).toContain("通过命令启用");
+    expect(button.textContent).toContain(expectedCopy("workflows.hub.openSettings"));
+    expect(button.textContent).toContain(expectedCopy("settings.dynamicWorkflow.option.onDemand"));
     fireEvent.click(button);
     expect(settingsNavigation.setPendingSettingsSectionIntent).toHaveBeenCalledWith("general");
     expect(tabStoreState.openSettingsTab).toHaveBeenCalledTimes(1);
   });
 
-  it("服务端默认 disabled、用户选了始终开启：中枢在，「工作流设置」也在", async () => {
+  it("server default is disabled and the user chose always on: the hub and the Workflow settings link both appear", async () => {
     useDynamicWorkflowAvailabilityStore.setState({
       status: "ready",
       enabled: true,
@@ -392,10 +399,10 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     groupReadiness.global = { loaded: true, empty: true, count: 0 };
     mount();
     const button = await screen.findByTestId(TID_WORKFLOWS_OPEN_SETTINGS);
-    expect(button.textContent).toContain("始终开启");
+    expect(button.textContent).toContain("Always on");
   });
 
-  it("旧 Host 的快照没有 offeredMode：不出「工作流设置」链接（它要打开的设置行不存在）", async () => {
+  it("a legacy Host snapshot without offeredMode: no Workflow settings link (the settings row it opens does not exist)", async () => {
     useDynamicWorkflowAvailabilityStore.setState({
       status: "ready",
       enabled: true,
@@ -409,7 +416,7 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     expect(screen.queryByTestId(TID_WORKFLOWS_OPEN_SETTINGS)).toBeNull();
   });
 
-  it("刷新按钮把 refreshSeq 递增并广播到全局组与所有项目组", async () => {
+  it("the refresh button increments refreshSeq and broadcasts to the global group and all project groups", async () => {
     tabStoreState.tabs = [workspaceTab("/a", "Alpha")];
     groupReadiness.global = { loaded: true, empty: false, count: 1 };
     groupReadiness["/a"] = { loaded: true, empty: false, count: 1 };
@@ -427,9 +434,10 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     ).toBe("1");
   });
 
-  // 项目组不再有 onMoved（「提升为全局」只开会话、不改两组内容，docs/dynamic-workflow/launch.md
-  // 「追记（2026-09-04）」）；只有全局组「移到项目…」会广播。
-  it("全局组 onMoved 让两组 refreshSeq 递增", async () => {
+  // Project groups no longer have onMoved ("promote to global" only opens a session and changes
+  // neither group's contents, docs/dynamic-workflow/launch.md addendum 2026-09-04); only the
+  // global group's "move to project…" broadcasts.
+  it("the global group's onMoved increments refreshSeq for both groups", async () => {
     tabStoreState.tabs = [workspaceTab("/a", "Alpha")];
     groupReadiness.global = { loaded: true, empty: false, count: 1 };
     groupReadiness["/a"] = { loaded: true, empty: false, count: 1 };
@@ -446,7 +454,7 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     ).toBe("1");
   });
 
-  it("点全局组「打开」进全局详情：只渲染全局组（detail），项目组不在", async () => {
+  it("clicking the global group's open enters global detail: only the global group renders (detail), no project groups", async () => {
     tabStoreState.tabs = [workspaceTab("/a", "Alpha")];
     groupReadiness.global = { loaded: true, empty: false, count: 1 };
     groupReadiness["/a"] = { loaded: true, empty: false, count: 1 };
@@ -467,7 +475,7 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     );
   });
 
-  it("点项目组「打开」进项目详情：只渲染该项目组，全局组不在", async () => {
+  it("clicking a project group's open enters project detail: only that project group renders, no global group", async () => {
     tabStoreState.tabs = [workspaceTab("/a", "Alpha"), workspaceTab("/b", "Beta")];
     groupReadiness.global = { loaded: true, empty: false, count: 1 };
     groupReadiness["/a"] = { loaded: true, empty: false, count: 1 };
@@ -486,7 +494,7 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     expect(screen.queryByTestId(testId(TID_WORKFLOW_PROJECT_GROUP, keyOf("/b")))).toBeNull();
   });
 
-  it("活动项目的组带「当前」标记", async () => {
+  it("the active project's group carries the current marker", async () => {
     tabStoreState.tabs = [workspaceTab("/a", "Alpha"), workspaceTab("/b", "Beta")];
     tabStoreState.activeWorkspacePath = "/b";
     groupReadiness.global = { loaded: true, empty: true, count: 0 };
@@ -506,7 +514,7 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     ).toBe("true");
   });
 
-  it("深链 openWorkflow 项目变体直达项目详情并被消费", async () => {
+  it("the openWorkflow deep link, project variant, lands on project detail and is consumed", async () => {
     tabStoreState.tabs = [workspaceTab("/a", "Alpha"), workspaceTab("/b", "Beta")];
     groupReadiness.global = { loaded: true, empty: true, count: 0 };
     groupReadiness["/a"] = { loaded: true, empty: false, count: 1 };
@@ -527,7 +535,7 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     expect(onOpenWorkflowConsumed).toHaveBeenCalledTimes(1);
   });
 
-  it("深链 openWorkflow 全局变体直达全局详情并被消费", async () => {
+  it("the openWorkflow deep link, global variant, lands on global detail and is consumed", async () => {
     tabStoreState.tabs = [workspaceTab("/a", "Alpha")];
     groupReadiness.global = { loaded: true, empty: false, count: 1 };
     groupReadiness["/a"] = { loaded: true, empty: false, count: 1 };

@@ -102,8 +102,8 @@ function makeSnapshot(): ConversationSnapshot {
       resumeGoal: { allowed: false, reasonCode: "guard.stopPausesActiveGoalTarget" },
     },
     inputRouting: { mode: "enqueue" },
-    // meta 是 freeze-m2 后 additive 新增（带 schema default）；夹具写归一化形态，
-    // round-trip 断言 parse 前后 deep-equal 才成立。
+    // meta is additive after freeze-m2 (with a schema default); the fixture writes the normalized shape,
+    // so the round-trip assertion holds as deep-equal before and after parse.
     meta: { title: "", titleSource: "default" },
     config: {
       provider: "glm",
@@ -122,7 +122,7 @@ function makeSnapshot(): ConversationSnapshot {
     pendingInteractions: [],
     pendingCommands: [],
     backgroundWorks: [],
-    // 软门禁 additive 字段:带 default(null),round-trip 归一化形态
+    // Soft gate additive field: has default(null); round-trip normalized shape
     workspaceHookAdmission: null,
     goal: null,
     plan: null,
@@ -130,18 +130,18 @@ function makeSnapshot(): ConversationSnapshot {
   };
 }
 
-/** 语义保持裁判：coalesce 后 apply 的终态必须与逐条 apply 逐字节一致。 */
+/** Semantics-preservation referee: the final state after coalesce-then-apply must be byte-identical to applying one by one. */
 function expectSemanticsPreserved(deltas: ConversationDelta[]) {
   const base = makeSnapshot();
   const direct = applyConversationDeltas(base, deltas);
   const coalesced = applyConversationDeltas(base, coalesceConversationDeltas(deltas));
   expect(coalesced).toEqual(direct);
-  // 规则 6 允许把靠后的 op 合并到靠前的位置上，键序因此不再是"两条路径天然相同"——
-  // 这条定律要的是**逐字节**一致，而不只是深相等。
+  // Rule 6 allows merging a later op into an earlier position, so key order is no longer "naturally identical on both
+  // paths" — this law requires **byte-for-byte** equality, not just deep equality.
   expect(JSON.stringify(coalesced.workflowRuns)).toBe(JSON.stringify(direct.workflowRuns));
 }
 
-/** run 出生增量：一条完整 header，客户端据它才建得起表。 */
+/** Run birth delta: one complete header; the client needs it to build the table. */
 function makeRunBirth(runId: string, revision: number): ConversationDelta {
   return {
     op: "workflowRun.updated",
@@ -156,7 +156,7 @@ function makeRunBirth(runId: string, revision: number): ConversationDelta {
   };
 }
 
-/** 一条节点相位推进的增量（引擎事件在线上的常态形状）。 */
+/** One node phase-advance delta (the routine shape of engine events on the wire). */
 function makeNodePhase(
   runId: string,
   revision: number,
@@ -250,7 +250,7 @@ describe("zcode-protocol-v4 coalesce", () => {
       { op: "row.delta", rowId: 1, path: "text", append: "b" },
     ];
     const result = coalesceConversationDeltas(deltas);
-    // 不相邻不合并（保序优先于压缩率）
+    // Non-adjacent ops do not merge (order preservation beats compression)
     expect(result.filter((d) => d.op === "row.delta")).toHaveLength(3);
     expectSemanticsPreserved(deltas);
   });
@@ -299,8 +299,8 @@ describe("zcode-protocol-v4 coalesce", () => {
   });
 
   it("row.upserted does not swallow deltas beyond the row's own appended (previous generation)", () => {
-    // row 1 流了一段 → row 1 被整行替换 → 又流一段 → 再替换：
-    // 第二次 upserted 只能吞第二段 delta，不能越过第一次 upserted。
+    // row 1 streams a bit → row 1 is replaced whole → streams again → replaced again:
+    // the second upserted may only swallow the second delta segment, never crossing the first upserted.
     const gen1: AssistantTextRow = { ...makeAssistantRow(1, "第一代"), state: "streaming" };
     const gen2: AssistantTextRow = { ...makeAssistantRow(1, "第二代"), state: "complete" };
     const deltas: ConversationDelta[] = [
@@ -323,7 +323,7 @@ describe("zcode-protocol-v4 coalesce", () => {
       { op: "row.upserted", row: { ...makeAssistantRow(2, "新"), state: "complete" } },
     ];
     const result = coalesceConversationDeltas(deltas);
-    // 屏障保留；屏障前的 delta 不被屏障后的 upserted 吞掉
+    // The barrier is preserved; deltas before it are not swallowed by the upserted after it
     expect(result.some((d) => d.op === "row.removed")).toBe(true);
     expect(result.findIndex((d) => d.op === "row.delta" && d.rowId === 1)).toBeGreaterThanOrEqual(
       0,
@@ -347,9 +347,9 @@ describe("zcode-protocol-v4 coalesce", () => {
     expectSemanticsPreserved(deltas);
   });
 
-  // ── 规则 6：workflowRun.updated 向窗口内最早的同 runId 增量合并 ──────────────
-  // 宽 fan-out 的 run 每条引擎事件产一条增量，窗口里它们被别的 run 与行操作隔开；只合并相邻的
-  // 等于一条都合不掉，而 500 条/订阅者的帧界正是被这些增量顶满的。
+  // ── Rule 6: workflowRun.updated merges into the earliest same-runId delta within the window ──────────────
+  // Wide fan-out runs emit one delta per engine event, and within the window they get separated by other runs and row
+  // operations; merging only adjacent ones would merge none, and these deltas are exactly what fills the 500-frames-per-subscriber bound.
   it("规则 6：同 runId 的增量合并到最早那条，op 数从 N 塌成 1", () => {
     const deltas: ConversationDelta[] = [
       makeRunBirth("dwfrun-1", 1),
@@ -379,7 +379,7 @@ describe("zcode-protocol-v4 coalesce", () => {
     const result = coalesceConversationDeltas(deltas);
     const perRun = result.filter((delta) => delta.op === "workflowRun.updated");
     expect(perRun).toHaveLength(2);
-    // 出生序保住了：合并落在**最早**那条上，所以 runs[] 的顺序与逐条投递一致。
+    // Birth order is preserved: merging lands on the **earliest** delta, so runs[] order matches one-by-one delivery.
     expect(perRun.map((delta) => (delta.op === "workflowRun.updated" ? delta.runId : ""))).toEqual([
       "dwfrun-1",
       "dwfrun-2",
@@ -396,7 +396,7 @@ describe("zcode-protocol-v4 coalesce", () => {
         revision: 2,
         run: { pendingQuestions: [{ qid: "q-1", question: "门坏了吗？" }], resultPreview: "草稿" },
       },
-      // 后一条把 pendingQuestions 清成缺席、又给 resultPreview 一个新值。
+      // The later entry clears pendingQuestions to absent and gives resultPreview a new value.
       {
         op: "workflowRun.updated",
         runId: "dwfrun-1",
@@ -414,7 +414,7 @@ describe("zcode-protocol-v4 coalesce", () => {
     expect(merged.cleared).toEqual(["pendingQuestions"]);
     expectSemanticsPreserved(deltas);
 
-    // 反向：先清后设，键回到 run 里、不再留在 cleared。
+    // Reverse: clear first, set later — the key returns into run and no longer stays in cleared.
     const reversed: ConversationDelta[] = [
       makeRunBirth("dwfrun-1", 1),
       { op: "workflowRun.updated", runId: "dwfrun-1", revision: 2, cleared: ["pendingQuestions"] },
@@ -436,7 +436,7 @@ describe("zcode-protocol-v4 coalesce", () => {
     const deltas: ConversationDelta[] = [
       makeRunBirth("dwfrun-1", 1),
       makeNodePhase("dwfrun-1", 2, 1, "queued"),
-      // 整键重发（diff 的退路）：它之后的增量作用在一张全新的表上。
+      // Whole-key resend (the diff fallback): deltas after it apply to a brand-new table.
       {
         op: "state.updated",
         patch: {
@@ -459,7 +459,7 @@ describe("zcode-protocol-v4 coalesce", () => {
       makeNodePhase("dwfrun-1", 5, 9, "dispatched"),
     ];
     const result = coalesceConversationDeltas(deltas);
-    // 屏障两侧各自塌缩成一条，屏障本身留在中间。
+    // Each side of the barrier collapses into one delta; the barrier itself stays in the middle.
     expect(result.map((delta) => delta.op)).toEqual([
       "workflowRun.updated",
       "state.updated",
@@ -482,7 +482,7 @@ describe("zcode-protocol-v4 coalesce", () => {
     expect(result[0]).toMatchObject({ runId: "dwfrun-2", revision: 6 });
     expectSemanticsPreserved(deltas);
 
-    // 淘汰后这条 run 又回来（迟到事件）：新增量不被吞、也不与屏障前的合并。
+    // The run comes back after eviction (late event): the new delta is not swallowed and does not merge across the barrier.
     const revived: ConversationDelta[] = [...deltas, makeRunBirth("dwfrun-1", 7)];
     expect(coalesceConversationDeltas(revived).map((delta) => delta.op)).toEqual([
       "workflowRun.updated",
@@ -496,7 +496,7 @@ describe("zcode-protocol-v4 coalesce", () => {
     const deltas: ConversationDelta[] = [
       makeRunBirth("dwfrun-1", 1),
       makeRunBirth("dwfrun-2", 2),
-      // 最后一条属于 dwfrun-1，合并后会被搬到第一条的位置上——靠 apply 的 max 收口。
+      // The last delta belongs to dwfrun-1 and will be moved to the first position after merging — settled by apply's max.
       makeNodePhase("dwfrun-1", 9, 1, "settled"),
     ];
     const coalesced = applyConversationDeltas(makeSnapshot(), coalesceConversationDeltas(deltas));
@@ -545,7 +545,7 @@ describe("zcode-protocol-v4 apply", () => {
       { op: "state.updated", patch: { revision: 3, inputRouting: { mode: "startNow" } } },
       { op: "row.removed", fromRowId: 2 },
       { op: "row.appended", row: makeAssistantRow(5, "rerun") },
-      // 缺失 row 与不适用 path 都必须保持 no-op。
+      // A missing row and an inapplicable path must both stay no-ops.
       { op: "row.upserted", row: makeAssistantRow(99, "ghost") },
       { op: "row.delta", rowId: 5, path: "inputText", append: "ghost" },
     ];
@@ -574,8 +574,8 @@ describe("zcode-protocol-v4 apply", () => {
     expect(truncated.rows.totalCount).toBe(1);
     expect(truncated.rows.firstRowId).toBe(1);
 
-    // Bugfix 回归：从 active branch 首行裁剪后 rowId 分配仍继续递增，分页锚点必须
-    // 先清空再由新分支首行建立，不能把 1..4 的空洞当成未加载历史。
+    // Bugfix regression: after truncating from the active branch's first row, rowId allocation keeps incrementing; the
+    // pagination anchor must be cleared first and re-established by the new branch's first row, not treating the 1..4 hole as unloaded history.
     const removedFromHead = applyConversationDeltas(afterAppend, [
       { op: "row.removed", fromRowId: 1 },
     ]);
@@ -586,7 +586,7 @@ describe("zcode-protocol-v4 apply", () => {
     expect(rerun.rows).toMatchObject({ totalCount: 1, firstRowId: 5 });
     expect(rerun.rows.window.map((row) => row.rowId)).toEqual([5]);
 
-    // §4.3：patch 命中未加载 rowId = no-op
+    // §4.3: a patch hitting an unloaded rowId = no-op
     const noop = applyConversationDeltas(truncated, [
       { op: "row.upserted", row: makeAssistantRow(99, "ghost") },
       { op: "row.delta", rowId: 42, path: "text", append: "ghost" },
@@ -611,7 +611,7 @@ describe("zcode-protocol-v4 apply", () => {
       },
     ]);
     expect(next.control.phase).toBe("completedInterrupted");
-    // 其他 A 区键不受影响
+    // Other section-A keys are unaffected
     expect(next.config).toEqual(base.config);
   });
 });

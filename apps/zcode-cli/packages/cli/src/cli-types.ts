@@ -1,5 +1,5 @@
 import type { TuiReadClipboardImage, TuiWriteClipboardText } from "@zcode/tui";
-import type { UiLocale } from "@zcode/i18n";
+import type { SupportedLocale, UiLocale } from "@zcode/i18n";
 import type { Logger } from "@zcode/contracts";
 import type {
   createManagedCdpBrowserRuntime,
@@ -22,7 +22,10 @@ import type {
   InspectZCodeSkillOptions,
   loginZCodeCli,
   loginBigmodelCodingPlan,
+  loginChatGptPlan,
+  logoutChatGptPlan,
   LoginBigmodelCodingPlanOptions,
+  LoginChatGptPlanOptions,
   LoginZCodeCliOptions,
   listZCodeCustomCommands,
   ListZCodeCustomCommandsOptions,
@@ -32,6 +35,9 @@ import type {
   ListZCodeSessionsOptions,
   ListZCodeSkillsOptions,
   logoutZCodeCli,
+  readPersistedIncognitoProfile,
+  ReadPersistedIncognitoProfileOptions,
+  LogoutChatGptPlanOptions,
   LogoutZCodeCliOptions,
   resolveLatestSession,
   ResolveLatestSessionOptions,
@@ -84,6 +90,7 @@ export interface RunDependencies extends PluginsCommandOverrides {
   loginBigmodelCodingPlan?: (
     options?: LoginBigmodelCodingPlanOptions,
   ) => ReturnType<typeof loginBigmodelCodingPlan>;
+  loginChatGptPlan?: (options?: LoginChatGptPlanOptions) => ReturnType<typeof loginChatGptPlan>;
   configureCodingPlanApiKey?: (
     options: ConfigureCodingPlanApiKeyOptions,
   ) => ReturnType<typeof configureCodingPlanApiKey>;
@@ -107,7 +114,14 @@ export interface RunDependencies extends PluginsCommandOverrides {
   resolveLatestSession?: (
     options: ResolveLatestSessionOptions,
   ) => ReturnType<typeof resolveLatestSession>;
+  // Injectable so resume unit tests avoid loading the bootstrap module (same pattern as resolveLatestSession).
+  readPersistedIncognitoProfile?: (
+    options: ReadPersistedIncognitoProfileOptions,
+  ) => ReturnType<typeof readPersistedIncognitoProfile>;
   resolveWorkspaceGitBranch?: typeof resolveWorkspaceGitBranch;
+  logoutChatGptPlan?: (
+    options?: LogoutChatGptPlanOptions,
+  ) => ReturnType<typeof logoutChatGptPlan>;
   logoutZCodeCli?: (options?: LogoutZCodeCliOptions) => ReturnType<typeof logoutZCodeCli>;
   runZCodeProtocolAgent?: (options?: RunZCodeProtocolAgentOptions) => Promise<void>;
   runTui?: typeof import("@zcode/tui").runTui;
@@ -135,7 +149,7 @@ export interface CliTargetRequest {
 
 export type ModeCapableApp = Awaited<ReturnType<typeof createZCodeApp>> & {
   getMode?: () => CliRuntimeMode;
-  setLocale?: (locale: UiLocale) => Promise<{ locale: "en-US" | "zh-CN" }>;
+  setLocale?: (locale: UiLocale) => Promise<{ locale: SupportedLocale }>;
   setMode?: (mode: CliRuntimeMode) => Promise<{ mode: CliRuntimeMode }>;
 };
 

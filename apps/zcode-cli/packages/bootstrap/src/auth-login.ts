@@ -46,9 +46,10 @@ import { pollUntilReady } from "./auth-login-polling.js";
 const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60 * 1_000;
 
 /**
- * Z.ai 与 BigModel 共用服务端轮询登录：init 拿授权地址，浏览器授权后轮询到 ready，
- * 再解析项目访问材料并写入凭据与默认模型。OAuth 登录不落盘派生 API Key，
- * 运行时按 `authSource: "oauth"` 用访问令牌换取请求凭据。
+ * Z.ai and BigModel share the server-side polling login: init fetches the authorization URL,
+ * the browser grants it, polling waits for ready, then project access materials are resolved and
+ * written into credentials and the default model. OAuth login does not persist a derived API key;
+ * the runtime exchanges the access token for request credentials under `authSource: "oauth"`.
  */
 export async function loginZCodeCli(
   options: LoginZCodeCliOptions = {},
@@ -109,10 +110,11 @@ export async function loginZCodeCli(
       }),
       signal,
     );
-    // 已取消或已超时的登录不能把迟到的 ready 响应写入凭据。
+    // A login already canceled or timed out must not write a late ready response into credentials.
     throwIfAborted(signal);
-    // Z.ai 以账号用户 ID 作为连接身份；BigModel 的项目令牌按组织与项目签发，
-    // 连接身份沿用组织与项目的稳定摘要，与运行时的令牌缓存范围一致。
+    // Z.ai uses the account user ID as the connection identity; BigModel issues project tokens per
+    // organization and project, so the connection identity reuses a stable digest of the
+    // organization and project, matching the runtime's token-cache scope.
     const accountIdentity =
       providerId === "zai"
         ? readyData.user.user_id

@@ -52,9 +52,10 @@ export function resolveWorkspaceProviderConfigZCodeService(params: {
     return params.baseZCodeService;
   }
 
-  // Bugfix: 远程 workspace 下如果误回退到 workspaceZCodeService，
-  // “前往配置”会读到远端绝对路径（如 /root/...），本机无法正确打开。
-  // 这里在远程会话里严格要求 baseZCodeService，就绪前先等待，不再冒险走错误 fallback。
+  // Bugfix: under a remote workspace, wrongly falling back to workspaceZCodeService makes "Go to
+  // config" read a remote absolute path (e.g. /root/...) that the local machine cannot open
+  // correctly. A remote session strictly requires baseZCodeService here; wait until it is ready
+  // instead of risking the wrong fallback.
   if (params.remoteSessionId) {
     return null;
   }
@@ -63,9 +64,10 @@ export function resolveWorkspaceProviderConfigZCodeService(params: {
 }
 
 /**
- * 读取当前 workspace + provider 的主配置文件路径。
+ * Reads the primary config file path for the current workspace + provider.
  *
- * 统一通过 zcodeTaskService 获取路径规则，避免 UI 层拼接 provider 配置路径。
+ * Path rules are always obtained via zcodeTaskService, keeping provider config path assembly out
+ * of the UI layer.
  */
 export function useWorkspaceProviderConfigFile(
   workspacePath: string,
@@ -108,8 +110,7 @@ export function useWorkspaceProviderConfigFile(
       : remoteSessionId && workspaceZCodeService !== baseZCodeService
         ? "remote"
         : "base";
-  const [state, setState] =
-    useState<WorkspaceProviderConfigFileState>(INITIAL_STATE);
+  const [state, setState] = useState<WorkspaceProviderConfigFileState>(INITIAL_STATE);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const requestVersionRef = useRef(0);
 
@@ -122,8 +123,9 @@ export function useWorkspaceProviderConfigFile(
 
     if (!workspacePath || !enabled || !workspaceRpcEnabled) {
       requestVersionRef.current += 1;
-      // Bugfix: 恢复断连远端 workspace 时，provider 配置路径读取不能抢在 remote session
-      // 绑定前访问断连代理，否则会把 ZCODE_REMOTE_WORKSPACE_DISCONNECTED 记录成配置读取失败。
+      // Bugfix: when restoring a disconnected remote workspace, the provider config path read
+      // must not hit the disconnected proxy before the remote session binds, otherwise
+      // ZCODE_REMOTE_WORKSPACE_DISCONNECTED gets logged as a config read failure.
       setState({
         path: null,
         exists: false,
@@ -151,8 +153,10 @@ export function useWorkspaceProviderConfigFile(
     const requestVersion = requestVersionRef.current + 1;
     requestVersionRef.current = requestVersion;
 
-    // Bugfix: provider 切换时如果保留旧 path，用户会在新请求返回前误点到上一个 provider 的配置文件。
-    // 这里在发起请求时立即清空 path/exists，配合 requestVersion 仅接受最新响应，避免旧结果回写。
+    // Bugfix: keeping the old path across a provider switch lets users click into the previous
+    // provider's config file before the new request returns. Clear path/exists immediately when
+    // issuing the request and accept only the latest response via requestVersion, preventing old
+    // results from writing back.
     setState({
       path: null,
       exists: false,
@@ -222,8 +226,9 @@ export function useWorkspaceProviderConfigFile(
     workspaceRpcEnabled,
   ]);
 
-  // Bugfix: provider 配置状态会继续作为 Shell/Header/Menu props 透传。
-  // 字段未变时复用返回对象，避免父级无关重渲让下游 memo 组件误判配置状态变化。
+  // Bugfix: provider config state continues to pass through as Shell/Header/Menu props. Reuse the
+  // returned object while fields are unchanged so unrelated parent rerenders do not make
+  // downstream memo components misjudge config state changes.
   return useMemo(
     () => ({
       ...state,

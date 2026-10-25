@@ -308,8 +308,9 @@ describe("ZCodeAgent connection-scoped service facade", () => {
       capabilities: { workspaceHookReview: true },
     });
   });
-  // 增量能力是一条**单向**握手（shared transport.ts）：Host 先在 hello 里宣告，客户端才敢在
-  // `.strict()` 的 clientHello capabilities 里回声明；host 再把这条连接的声明当可信位注入订阅。
+  // Incremental capability is a **one-way** handshake (shared transport.ts): the Host announces it in hello first, only then
+  // does the client dare declare it in the `.strict()` clientHello capabilities; the host then injects this connection's
+  // declaration into subscriptions as a trusted bit.
   it("hello 宣告 workflowRunDeltas，clientHello 声明后才成为订阅上的可信位", async () => {
     const { base } = setupBase();
     const declared = createZCodeAgentConnectionScope(base, {
@@ -342,7 +343,7 @@ describe("ZCodeAgent connection-scoped service facade", () => {
     await declared.service.subscribeConversationV4({
       workspacePath: "/repo",
       sessionId: "session-1",
-      // UI 面自报的同名字段：facade 先清后写，伪造不了能力。
+      // A UI-side self-report of the same-named field: the facade clears before writing, so capability cannot be forged.
       workflowRunDeltas: false,
       historyFirst: false,
     } as never);
@@ -394,7 +395,7 @@ describe("ZCodeAgent connection-scoped service facade", () => {
       sessionId: "session-1",
     });
 
-    // relay 自己没有 clientHello（它不消费帧）：这个位只能是下游那一端的事实。
+    // The relay itself has no clientHello (it does not consume frames): this bit can only be a fact of the downstream end.
     const forwarded = readTrustedZCodeAgentV4Connection(
       vi.mocked(base.subscribeConversationV4).mock.calls[0]?.[0],
     );
@@ -579,7 +580,7 @@ describe("ZCodeAgent connection-scoped service facade", () => {
     });
     const desktopSeen: ConversationTelemetryFact[] = [];
     const mobileSeen: ConversationTelemetryFact[] = [];
-    // Root supervisor 在协议握手前挂载；可信 desktop 的只读 emitter 订阅必须可提前建立。
+    // The root supervisor mounts before the protocol handshake; the trusted desktop's read-only emitter subscription must be establishable early.
     desktop.service.onDynamicConversationTelemetryFact({ workspacePath: "/repo" })((fact) =>
       desktopSeen.push(fact),
     );
@@ -1758,7 +1759,7 @@ describe("ZCodeAgent connection-scoped service facade", () => {
       workspacePath: "/remote/work",
       workspaceIdentity: "ssh://host/remote/work",
       remoteSessionId: "remote-runtime-1",
-      // renderer/mobile 传入的 mode 不可信；facade 必须用 host 绑定的 replayable 真值覆盖。
+      // A renderer/mobile-supplied mode is untrusted; the facade must override it with the host-bound replayable truth.
       clientMode: "desktop-continuous" as const,
       envelope: {
         commandId: "cmd-plugin-reference",

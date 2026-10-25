@@ -5,6 +5,9 @@ import type {
   OAuthProviderMeta,
   OAuthSessionState,
   OAuthStartResponse,
+  SiwcLoginCompletionResult,
+  SiwcLoginStart,
+  SiwcPlanAccountsStatus,
   UserInfo,
 } from "@zcode/shared";
 import { ServiceChannels } from "@zcode/shared";
@@ -12,69 +15,101 @@ import type { Event } from "@zcode/rpc";
 import { createServiceDescriptor } from "../descriptors.js";
 
 /**
- * OAuth 认证服务
+ * OAuth authentication service.
  *
- * 在 host process 中运行，负责 OAuth 流程的全部业务逻辑：
- * provider 管理、state 生命周期、token 交换、凭据存储。
+ * Runs in the host process and owns all OAuth flow business logic:
+ * provider management, state lifecycle, token exchange, and credential storage.
  */
 export interface IOAuthService {
-  /** 凭据变更完成后发布，早于 provider 清理及调用方的 UI/设置后处理。 */
+  /** Published after a credential change completes, before provider cleanup and caller UI/settings follow-up. */
   readonly onDidChangeSession: Event<OAuthSessionState>;
 
-  /** 获取可用 provider 列表（仅返回 enabled=true） */
+  /** Get the available providers (only those with enabled=true). */
   getProviders(): Promise<OAuthProviderMeta[]>;
 
-  /** 获取当前 active provider */
+  /** Get the current active provider. */
   getActiveProvider(): Promise<OAuthProviderId | null>;
 
-  /** 启动时从本地缓存恢复会话展示态：成功返回用户信息，不做远端 token 校验 */
+  /** Restore the session display state from the local cache at startup: return user information on success without validating the token remotely. */
   restoreCachedSession(): Promise<UserInfo | null>;
 
-  /** 恢复本地展示态，并区分从未登录与 JWT 过期后需要重新认证。 */
+  /** Restore the local display state and distinguish never logged in from requiring reauthentication after JWT expiration. */
   restoreCachedSessionState(): Promise<OAuthCachedSessionRestoreResult>;
 
-  /** 显式校验当前 provider 会话：成功返回用户信息，失败或过期返回 null */
+  /** Explicitly validate the current provider session: return user information on success, or null on failure or expiration. */
   restoreSession(): Promise<UserInfo | null>;
 
   /**
-   * 发起 OAuth：指定 provider，生成 state，返回 authorize URL
-   * state 由 renderer 上报给 main process 用于 deep link 路由
+   * Start OAuth: select a provider, generate state, and return the authorize URL.
+   * The renderer sends the state to the main process for deep-link routing.
    */
   startOAuth(provider: OAuthProviderId): Promise<OAuthStartResponse>;
 
-  /** 使用后端短期 flow 发起 OAuth；当前仅 Z.AI 支持，其他 provider 保持原流程。 */
+  /** Start OAuth using a short-lived backend flow; currently supported only by Z.AI, while other providers keep the existing flow. */
   startOAuthWithPolling(provider: OAuthProviderId): Promise<OAuthStartResponse>;
 
-  /** 查询当前后端 OAuth flow；未到查询时间、仍 pending 或没有 flow 时返回 null。 */
+  /** Query the current backend OAuth flow; return null if it is not time to poll, is still pending, or no flow exists. */
   pollPendingOAuth(): Promise<OAuthCallbackResult | null>;
 
   /**
-   * 处理 OAuth 回调：校验 state；带 code 时换 token 并存凭据，只带归因参数时持久化归因信息
-   * 已接收回调因取消或新 flow 失效时返回 null，由调用方静默忽略。
-   * @param url - 完整 deep link URL
+   * Handle an OAuth callback: validate state; exchange the token and store credentials when a code is present, or persist attribution when only attribution parameters are present.
+   * Return null when an accepted callback is invalidated by cancellation or a newer flow, so the caller can ignore it silently.
+   * @param url - Full deep-link URL.
    */
   handleCallback(url: string): Promise<OAuthCallbackResult | null>;
 
   /**
-   * 刷新 token
-   * @param provider - 可选；不传时使用 active provider
+   * Refresh the token.
+   * @param provider - Optional; uses the active provider when omitted.
    */
   refreshToken(provider?: OAuthProviderId): Promise<void>;
 
   /**
-   * 登出 provider
-   * @param provider - 可选；不传时登出 active provider
+   * Sign out of a provider.
+   * @param provider - Optional; signs out of the active provider when omitted.
    */
   logout(provider?: OAuthProviderId): Promise<void>;
 
-  /** 登出所有 provider */
+  /** Sign out of all providers. */
   logoutAll(): Promise<void>;
 
   /**
-   * 取消 pending OAuth
-   * @param provider - 可选；不传时取消当前 pending
+   * Cancel pending OAuth.
+   * @param provider - Optional; cancels the current pending flow when omitted.
    */
   cancelPending(provider?: OAuthProviderId): Promise<void>;
+
+  /**
+   * ChatGPT plan (official OpenAI SIWC): start the loopback+PKCE login. Default adds an
+   * account (no hints — OpenAI shows the account chooser); `reauthAccountKey` re-authorizes
+   * that account. Independent of the zai/bigmodel flow; the UI opens authorizeUrl externally
+   * and polls pollChatGptPlanLogin.
+   */
+  startChatGptPlanLogin(options?: { reauthAccountKey?: string }): Promise<SiwcLoginStart>;
+
+  /** ChatGPT plan login poll; null while the browser redirect has not arrived yet. */
+  pollChatGptPlanLogin(): Promise<SiwcLoginCompletionResult | null>;
+
+  /** ChatGPT plan connection status per signed-in account (signed-in state and consent). */
+  getChatGptPlanStatus(): Promise<SiwcPlanAccountsStatus>;
+
+  /**
+   * Revoke one account's ChatGPT plan refresh token and clear its local tokens (retains its
+   * client id; other accounts untouched). Omitting the key signs out every account.
+   */
+  logoutChatGptPlan(
+    accountKey?: string,
+  ): Promise<{ accountCount: number; revoked: boolean; signedOut: boolean }>;
+
+  /**
+   * Start the per-account "Link usage" codex-flavor grant (read-only usage probe; tokens never
+   * reach the inference path). The UI opens authorizeUrl externally and polls
+   * pollChatGptUsageLink. Fails when the account is not signed in.
+   */
+  startChatGptUsageLink(accountKey: string): Promise<SiwcLoginStart>;
+
+  /** Usage-link poll; null while the browser redirect has not arrived yet. */
+  pollChatGptUsageLink(): Promise<{ accountKey: string } | null>;
 }
 
 export const IOAuthService = createServiceDescriptor<IOAuthService>(ServiceChannels.OAuth);

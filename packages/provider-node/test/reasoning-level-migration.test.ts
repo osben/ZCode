@@ -62,7 +62,7 @@ function view(
       },
     },
   };
-  // 真实 Built-in 规则和 Resolver；补入模型成员用于独立覆盖 GLM 的不同代际。
+  // Real Built-in rules and Resolver; model members are added to cover different GLM generations independently.
   const resolution = new ProviderConfigResolver().resolve({
     ...config,
     accountProviders: account.providers,
@@ -126,9 +126,9 @@ describe("Todo95C 来源限定的只读关闭档位改名", () => {
               rule.modelMatch === entry.simplifiedModelMatch),
         );
       expect(rule?.config.optionSpecs?.reasoningLevel?.values).not.toContain(entry.oldLevel);
-      // 仅测试生成代表型号；实际迁移从不从正则反推名字。
+      // Only tests generated representative model IDs; the actual migration never derives names from regexes.
       const modelId = entry.modelMatch.slice(2).split("(?:")[0]!.replaceAll("\\.", ".");
-      // Todo113 核实 K2.7 Code 不支持关闭；旧改名表不能越过当前值域重新启用关闭档。
+      // Todo113 confirmed K2.7 Code does not support the disabled level; the legacy rename table must not re-enable it beyond the current value range.
       if (modelId === "kimi-k2.7-code") {
         expect(rule?.config.optionSpecs?.reasoningLevel?.values).toEqual(["enabled"]);
         expect(view(modelId, entry.oldLevel).result.selectionIssue).toBe(

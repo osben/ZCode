@@ -14,9 +14,9 @@ export interface ConfigValidationIssue {
 }
 
 /**
- * 稀疏配置层和覆盖完成后的配置使用同一类型。
+ * The sparse config layer and the config after merging use the same type.
  *
- * 子类显式列出字段；本基类只统一“缺省继承、Config 递归覆盖、其他值整体替换”的语义。
+ * Subclasses explicitly list fields; this base class only standardizes the semantics of "inherit when absent, recursively merge Config, replace all other values."
  */
 export abstract class ConfigOverlay<TSelf extends ConfigOverlay<TSelf>> {
   abstract overlay(next: TSelf): TSelf;

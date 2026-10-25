@@ -1,7 +1,7 @@
 /**
- * CreateWorkflow 的结果卡 display 构造。从 result-display.ts 拆出（400 行纪律）：
- * 与 workflow-observation-display.ts 同族——按工具名分派、safeParse 输出 schema、
- * display 侧独立限长。
+ * Build the CreateWorkflow result-card display. Split from result-display.ts to keep it
+ * within the 400-line limit. Like workflow-observation-display.ts, this dispatches by
+ * tool name, safe-parses the output schema, and applies a separate display-side limit.
  */
 
 import {
@@ -15,9 +15,9 @@ import {
 } from "@zcode/contracts";
 
 /**
- * 共用 `create_workflow` display 的三个工具：两个启动工具，加上留白补全——它的输出就是
- * CreateWorkflowOutput，图是有效脚本的图，UI 的同一份行渲染器按工具名认出「这是补全」
- * （docs/dynamic-workflow/presentation.md「Holes on the timeline」的「The fill row」）。
+ * Three tools share the `create_workflow` display: the two start tools and hole completion—its output is
+ * CreateWorkflowOutput, the graph represents the effective script, and the UI's shared row renderer recognizes completion by tool name
+ * (docs/dynamic-workflow/presentation.md, “The fill row” in “Holes on the timeline”).
  */
 const CREATE_WORKFLOW_DISPLAY_TOOL_NAMES: ReadonlySet<string> = new Set([
   CREATE_WORKFLOW_TOOL_NAME,
@@ -26,28 +26,30 @@ const CREATE_WORKFLOW_DISPLAY_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * ⚠ 这个投影的字段集合是**冻结**的（contracts 的 schema 注释说明了为什么）。gate 专属的
- * 事实——比如 saved run 的来源与解析出的脚本——一律走**工具入参**通道，不上 display。
+ * ⚠ The field set in this projection is **frozen** (see the schema comment in
+ * contracts for the reason). Gate-specific facts—such as the saved-run source and the
+ * resolved script—must travel through **tool input**, never through display.
  */
 export function createCreateWorkflowDisplay(
   toolName: string,
   output: unknown,
 ): ToolResultDisplayPayload | undefined {
-  // 两个启动工具共用同一个 display kind：图、草稿笔与诊断卡在 UI 侧只有一份实现
+  // Both launch tools share one display kind, so the UI needs only one implementation of the graph, draft pen, and diagnostics card.
   if (!CREATE_WORKFLOW_DISPLAY_TOOL_NAMES.has(toolName)) return undefined;
   const parsed = CreateWorkflowOutputSchema.safeParse(output);
   if (!parsed.success) return undefined;
-  // 就地调并发没有 display（docs/dynamic-workflow/launch.md「Changing only the parallelism of a
-  // live run」）：这条路一行脚本都没编译，而 `create_workflow` 这块载荷的 `ok` 在 UI 上读作
-  // 「已编译」。判据是**显式的 `retuned` 块**而不是形状——「ok 且没有 status」在本工具上还有
-  // 「没有 run 端口、只 typecheck」这条来路。工具卡因此退回响应正文那一段。
+  // In-place concurrency updates have no display (docs/dynamic-workflow/launch.md, “Changing only the parallelism of a
+  // live run”): this route does not compile any script, while `ok` in this `create_workflow` payload means “compiled” in the UI.
+  // Check for the **explicit `retuned` block**, not the shape—“ok with no status” also means “no run port, typecheck only” for this tool.
+  // The tool card therefore falls back to the response body.
   if (parsed.data.retuned !== undefined) return undefined;
 
   const { causalityGraph, diagnostics, fill, ok } = parsed.data;
-  // display 不经过 tool result budget：诊断条数与单条 message 长度都必须在进入实时事件和
-  // 持久化 metadata 前独立限长，避免类型错误把 continuous/replayable 消息扩成无界载荷。
-  // causalityGraph 已在工具输出边界限长（handler 的 boundCausalityGraph + 输出 schema），
-  // 直接透传。
+  // Display bypasses the tool-result budget, so both diagnostic count and individual
+  // message length need independent limits before entering live events and persisted
+  // metadata. This prevents type errors from expanding continuous/replayable messages
+  // without bound. causalityGraph is already limited at the tool-output boundary
+  // (handler's boundCausalityGraph plus the output schema), so pass it through directly.
   const errorCount = diagnostics.length;
   const bounded = diagnostics
     .slice(0, CREATE_WORKFLOW_DISPLAY_MAX_DIAGNOSTICS)
@@ -66,7 +68,7 @@ export function createCreateWorkflowDisplay(
     diagnostics: bounded,
     ...(causalityGraph === undefined ? {} : { causalityGraph }),
     ...(truncated ? { truncated: true } : {}),
-    // 补全行给自己起名的那一块（contracts 的 CreateWorkflowOutputSchema.fill 说明了为什么走 display）。
+    // The field that gives the completion row its name (see contracts' CreateWorkflowOutputSchema.fill for why it is part of display).
     ...(fill === undefined ? {} : { fill }),
   };
 }

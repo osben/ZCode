@@ -17,6 +17,22 @@ rules:
     - "evidence-only"
 
 nodes:
+  - id: "capability.first-submission-lifecycle"
+    kind: "capability"
+    label: "Immediate first message and durable failed session preparation"
+    aliases: ["first send", "message-first preparation", "failed startup session"]
+    docs: ["specs/first-submission-lifecycle.md", "docs/task-first-submit-visibility.md"]
+    codeSeeds:
+      - file: "packages/ui/src/v4/SessionPane.tsx"
+        symbol: "SessionPane"
+      - file: "packages/ui/src/v4/composer/composerDraftStore.ts"
+        symbol: "updateV4FirstSubmission"
+      - file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts"
+        symbol: "createConversationV4Gateway"
+    invariants:
+      - "Renderer previews unaccepted frozen intent before preparation; only CLI admission owns the authoritative transcript."
+      - "Submitted durable identities survive preparation failure; unknown input outcomes retain the original command identity."
+      - "Worktree cwd and incognito profile are fixed before runtime startup; restoring saved intent never auto-sends."
   - id: "capability.tool-search"
     kind: "capability"
     label: "Provider-aware deferred ToolSearch"
@@ -52,7 +68,6 @@ nodes:
       - file: "packages/desktop/test/e2e/conversation-session/conversation-session-toolsearch-cli.test.ts"
       - file: "packages/desktop/test/e2e/conversation-session/conversation-session-toolsearch-tui.test.ts"
       - file: "packages/desktop/test/e2e/conversation-session/conversation-session-toolsearch-catalog.test.ts"
-
   - id: "capability.preview-pane-image-actions"
     kind: "capability"
     label: "Preview Pane image copy, download and draft file reference"
@@ -340,8 +355,8 @@ nodes:
     codeSeeds:
       - file: "packages/ui/src/WorkspaceSidebar.tsx"
         symbol: "WorkspaceSidebar"
-      - file: "packages/ui/src/DeleteAllArchivedTasksButton.tsx"
-        symbol: "DeleteAllArchivedTasksButton"
+      - file: "packages/ui/src/hooks/useTaskDeleteDialog.tsx"
+        symbol: "useTaskDeleteDialog"
       - file: "packages/ui/src/WorkspaceArchivedTasksFlatSection.tsx"
         symbol: "WorkspaceArchivedTasksFlatSection"
   - id: "surface.web-archived-tasks"
@@ -350,8 +365,8 @@ nodes:
     codeSeeds:
       - file: "packages/ui/src/WorkspaceSidebar.tsx"
         symbol: "WorkspaceSidebar"
-      - file: "packages/ui/src/DeleteAllArchivedTasksButton.tsx"
-        symbol: "DeleteAllArchivedTasksButton"
+      - file: "packages/ui/src/hooks/useTaskDeleteDialog.tsx"
+        symbol: "useTaskDeleteDialog"
       - file: "packages/ui/src/WebRemoteControlTaskIndex.tsx"
         symbol: "WebRemoteControlTaskIndex"
   - id: "capability.help-client-config"
@@ -388,7 +403,6 @@ nodes:
     invariants:
       - "Only authority-verified official CUA is restricted; third-party MCP/Skill is unchanged."
       - "Main CUA and desktop/web delivery boundaries are unchanged."
-
   - id: "capability.model-io-full-retention"
     kind: "capability"
     label: "ModelIO full retention diagnostics"
@@ -405,7 +419,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/model/runner-debug.ts"
       - symbol: "AiSdkModelAdapter"
         file: "apps/zcode-cli/packages/adapters/src/model/runner.ts"
-
   - id: "capability.agent-core-runtime"
     kind: "capability"
     label: "ZCode CLI agent core runtime"
@@ -418,7 +431,6 @@ nodes:
       - "docs/product-capability-map.md"
       - "apps/zcode-cli/docs/design/v2/runtime-refactor.md"
       - "apps/zcode-cli/docs/design/v2/loop/architecture.md"
-
   - id: "capability.read-pdf"
     kind: "capability"
     label: "Read PDF native input and page extraction"
@@ -443,7 +455,6 @@ nodes:
       - "Native PDF and extracted page images keep supportsPdf and supportsImages as independent capabilities."
       - "Live and cold-resumed page images keep the same page order through the existing tool media artifact layout."
       - "Images, extracted PDF pages, native PDFs, binary files, and videos share one 40MiB provider-request budget measured as full data URL bytes; per-file video input validation remains separate."
-
   - id: "capability.browser-use-agent-guidance"
     kind: "capability"
     label: "Browser Use agent navigation, locator planning and popup recovery guidance"
@@ -473,7 +484,6 @@ nodes:
       - file: "apps/zcode-cli/packages/browser-use-plugin/docs/playwright.md"
       - file: "apps/zcode-cli/packages/browser-use-plugin/docs/workflow.md"
       - file: "apps/zcode-cli/packages/browser-use-plugin/skills/control-browser/SKILL.md"
-
   - id: "capability.browser-use-plugin-distribution"
     kind: "capability"
     label: "Browser Use official plugin versioning and distribution"
@@ -485,8 +495,6 @@ nodes:
       - "浏览器插件发布"
     docs:
       - "docs/browser-use/2026-08-14-browser-use-plugin-version-0-3-0-spec.md"
-      - "docs/browser-use/2026-08-06-browser-use-plugin-version-0-2-1-spec.md"
-      - "docs/browser-use/2026-08-02-browser-use-plugin-version-0-1-3-spec.md"
       - "apps/zcode-cli/docs/design/v2/plugin-compat.md"
       - "docs/browser-use/2026-07-13-node-repl-mcp-runtime-spec.md"
     codeSeeds:
@@ -506,7 +514,6 @@ nodes:
         file: "packages/server/src/remote/zcodeAgentOfficialPluginAssets.ts"
       - file: "packages/desktop/scripts/prepare-agent-node-bundle.mjs"
       - file: "scripts/prepare-prebuilds.mjs"
-
   - id: "capability.model-capabilities"
     kind: "capability"
     label: "Model capabilities"
@@ -538,7 +545,6 @@ nodes:
       - "docs/working-memory/provider-refactor/steps/todo-03-provider-model-ownership-and-property-totality.md"
       - "docs/working-memory/provider-refactor/steps/todo-14-post-refactor-mechanical-zero.md"
       - "docs/working-memory/provider-refactor/steps/todo-55-provider-template-inheritance-cutover.md"
-      - "docs/model-provider-opencode-config.md"
       - "docs/model-request-output-tokens.md"
       - "docs/superpowers/specs/2026-07-10-glm-52-suffixed-variant-media-fallback-design.md"
       - "docs/superpowers/specs/2026-07-17-kimi-k3-model-adapter-design.md"
@@ -569,7 +575,6 @@ nodes:
         file: "packages/shared/src/zcode-agent-model-state.ts"
     invariants:
       - "Each complete Model Option Spec owns a restricted CEL map from its effective value to an RFC 7396 raw request-body patch. Config validation and runtime execution share @zcode/model-option-map; the adapter applies reasoningLevel then maxOutputTokens after AI SDK serialization and schema compatibility but before body-dependent signing, so reasoningMapping, AI SDK reasoning namespaces, and duplicate max-output authorities are not model facts."
-
   - id: "capability.model-selection"
     kind: "capability"
     label: "Model selection"
@@ -617,7 +622,6 @@ nodes:
       - "ModelSelection stores provider/model identity and selected options. ModelFactory validates and freezes complete execution selections; it never fills missing reasoning. New default completion and an explicit user model-menu choice use the highest public level (Todo 88). Auxiliary low-cost calls explicitly use values[0], while invalid saved Session/Composer effective selections remain empty without fallback or empty-selection notifications."
       - "ModelSelection is future Model-creation intent, not a current execution fact. Each model step creates one immutable Active Model and uses that same object for Context current-model identity, model-aware tool projection, request options, and the Adapter request. Guide creates a new model step; execution-scoped Off-Peak and inherited Subagents must not mix their Active Model with Session Selection."
       - "Implemented (Todo 87/99): A target-host selection read accepts original intent and returns a caller-specific effectiveSelection. Account and Personal/Built-in updates recompute temporary results without overwriting intent; UI reads share subscriptions and bounded cancellable read recovery. Composer, Automation, and Bot consume this result at their own commit boundaries. Bound Bot reads the Session original selection, never a second Bot preference; explicit /model commits the complete Session selection immediately. Managed Worker explicit Subagents use the same local facade through dependency injection, including Workflow children; implicit Subagents inherit Parent and execution overrides take priority. Ordinary providers keep identity and account plans follow the current plan. Off-Peak keeps its original provider and Ticket; cross-account remapping is excluded. Frozen runs and history do not remap. No new send-time synchronization barrier or storage migration is introduced. Worker account receivedRevision acknowledges receipt, not Registry application."
-
   - id: "capability.provider-templates"
     kind: "capability"
     label: "Built-in Provider Templates and Personal Provider inheritance"
@@ -649,7 +653,6 @@ nodes:
       - "Account Providers remain concrete Built-in Provider roots and are constrained by Account Config; ordinary API services are Templates that create Personal Provider instances."
       - "ProviderTemplate is a domain shell containing localized name metadata and a Provider Config Overlay; Model Config Rules remain centralized so their precedence stays explicit."
       - "Provider branding is declared once by Provider Config.logo; the UI logo resource table maps open built-in keys to packaged theme assets and unknown keys fall back without affecting executability."
-
   - id: "capability.plan-entitlements"
     kind: "capability"
     label: "Plan identity, entitlements, quota, and billing"
@@ -662,8 +665,6 @@ nodes:
     docs:
       - "docs/usage-stats-app-coding-plan-split.md"
       - "docs/zai-start-plan-provider.md"
-      - "docs/model-provider-family-merge.md"
-      - "docs/input-model-provider-team-plan-linkage.md"
       - "docs/working-memory/provider-refactor/steps/todo-32-team-plan-settings-effective-provider-boundary.md"
       - "docs/working-memory/provider-refactor/steps/todo-51-provider-access-consumer-and-offpeak-auth-closeout.md"
     codeSeeds:
@@ -675,6 +676,12 @@ nodes:
         file: "packages/ui/src/settings/model-provider-section/providerFamilyConnectionVisibility.ts"
       - symbol: "useCodingPlanEntitlements"
         file: "packages/ui/src/settings/model-provider-section/useCodingPlanEntitlements.ts"
+      - symbol: "ConversationQuotaBanner"
+        file: "packages/ui/src/v4/ConversationQuotaBanner.tsx"
+      - symbol: "GeneralSectionContent"
+        file: "packages/ui/src/settingsPageHelpers.tsx"
+      - symbol: "buildSessionQuotaBannerState"
+        file: "packages/ui/src/v4/sessionQuotaBannerState.ts"
       - symbol: "buildVisibleFamilyConnectionItems"
         file: "packages/ui/src/settings/model-provider-section/providerFamilyConnectionVisibility.ts"
       - symbol: "resolveLatestModelProviderFamilyConnectionSelection"
@@ -683,7 +690,6 @@ nodes:
       - "Team Plan entitlement, quota, credential, and error state controls only the plan status card and related actions. Provider Settings renders Provider and Model facts from ProviderSettingsView effectiveConfig; entitlement status never hides an existing Effective Provider or causes Renderer to reapply Account Overlay."
       - "An active Start Plan remains independently queryable and selectable alongside personal or Team Coding Plan."
       - "Start remains visible in settings regardless of entitlement; executable models follow Registry availability. No inactive Start silently falls back to paid quota. Recommendation shares quota identity and requires a successful sample within 60 seconds, including side first-input submission."
-
   - id: "capability.app-usage"
     kind: "capability"
     label: "App Usage analytics from ZCode CLI usage facts"
@@ -696,7 +702,6 @@ nodes:
       - "docs/product-capability-map.md"
       - "docs/usage-stats-app-coding-plan-split.md"
       - "apps/zcode-cli/docs/design/v2/usage-observability.md"
-
   - id: "capability.data-observability"
     kind: "capability"
     label: "Product telemetry, runtime observability, and monitoring"
@@ -712,7 +717,6 @@ nodes:
       - "docs/monitoring/performance-telemetry-catalog.md"
       - "docs/monitoring/business-monitoring.md"
       - "docs/monitoring/event-report-delivery-reliability.md"
-      - "docs/monitoring/zcode-cli-resource-telemetry.md"
       - "docs/monitoring/process-resource-telemetry.md"
       - "docs/monitoring/process-resource-telemetry-fixes.md"
       - "docs/monitoring/zcode-data-size-arms-telemetry.md"
@@ -741,7 +745,6 @@ nodes:
       - "Host runtime environment identity isolates equal-hardware remote samples; identity is never an ARMS property."
       - "Only a Server advertising processResourceTelemetry receives resource subscriptions; old Server connections remain usable."
       - "Bash completion tokens are deduplicated at the main resource outlet across Host processes and omitted from ARMS."
-
   - id: "capability.renderer-user-action-trace"
     kind: "capability"
     label: "Desktop Renderer semantic user action trace"
@@ -762,7 +765,6 @@ nodes:
       - "Only Electron Desktop Renderer creates ui_action spans; Web/mobile remain no-op."
       - "Host, CLI, RPC and ZCode Protocol receive no trace changes."
       - "Product /event/report remains unchanged and separate."
-
   - id: "capability.zcode-data-size-telemetry"
     kind: "capability"
     label: "ZCode local data directory size telemetry"
@@ -789,7 +791,6 @@ nodes:
       - "Measure only the local getZCodeDataRootDir logical byte size; never report paths, file names, workspace ids or remote targets."
       - "Directory traversal runs in a Worker and stays outside conversation continuous/replayable delivery."
       - "A running ZCode task always blocks collection; successful reports are limited to one per device per 24 hours."
-
   - id: "capability.resource-manager"
     kind: "capability"
     label: "Resource Manager window (CPU / memory by base services, built-in plugins, community plugins)"
@@ -840,7 +841,6 @@ nodes:
       - "CPU is machine-normalized (100% = all logical cores) for every row so group subtotals and the app total are additive."
       - "The window is desktop-only and outside conversation continuous/replayable delivery; it must not change the 60s CLI resource telemetry cadence or MCP memory telemetry."
       - "Network capture runs only for the resource-manager window lifetime, records bounded metadata from local Main/Host/App Renderer/CLI, and excludes MCP, subprocesses, remote CLI and external browser sessions without changing proxy routing."
-
   - id: "capability.engineering-infrastructure"
     kind: "capability"
     label: "Engineering infrastructure outside the product runtime"
@@ -851,8 +851,6 @@ nodes:
       - "研发效能"
     docs:
       - "docs/product-capability-map.md"
-      - "docs/product-capability-map-engineering-infrastructure.md"
-
   - id: "capability.build-release-engineering"
     kind: "capability"
     label: "Build and release engineering"
@@ -863,12 +861,9 @@ nodes:
       - "构建发布"
       - "发版"
     docs:
-      - "docs/product-capability-map-engineering-infrastructure.md"
-      - "docs/desktop/zcode-preview-packaging.md"
     codeSeeds:
       - symbol: "runDesktopProductionBuild"
         file: "packages/desktop/scripts/run-production-build.mjs"
-
   - id: "capability.development-storage-isolation"
     kind: "capability"
     label: "Local development user-data isolation"
@@ -888,7 +883,6 @@ nodes:
         file: "packages/desktop/src/main/desktopDataBaseDirBootstrap.ts"
       - symbol: "resolveZCodeStorageRoot"
         file: "apps/zcode-cli/packages/adapters/src/storage/zcode-storage-root.ts"
-
   - id: "capability.embedded-native-search"
     kind: "capability"
     label: "Embedded native search runtime"
@@ -908,7 +902,6 @@ nodes:
         file: "packages/services/src/runtime-tools/runtimeToolResolver.ts"
       - symbol: "buildEmbeddedSearchPreludeContent"
         file: "apps/zcode-cli/packages/adapters/src/exec/embedded-search-prelude.ts"
-
   - id: "capability.test-automation-platform"
     kind: "capability"
     label: "Shared E2E and replay test automation platform"
@@ -919,7 +912,6 @@ nodes:
       - "测试自动化"
       - "回放测试"
     docs:
-      - "docs/product-capability-map-engineering-infrastructure.md"
       - "docs/testing/conversation-session-e2e-development-workflow.md"
       - "docs/testing/desktop-e2e-container.md"
     codeSeeds:
@@ -927,7 +919,6 @@ nodes:
         file: "packages/desktop/wdio.conf.ts"
       - symbol: "startConversationModelProviderReplayServer"
         file: "packages/desktop/test/e2e/helpers/model-provider-replay.ts"
-
   - id: "capability.quality-intelligence"
     kind: "capability"
     label: "Quality intelligence and engineering governance"
@@ -938,15 +929,12 @@ nodes:
       - "质量数据"
       - "覆盖率治理"
     docs:
-      - "docs/product-capability-map-engineering-infrastructure.md"
       - "docs/testing/desktop-e2e-reporting.md"
-      - "docs/testing/e2e-failure-artifact-report-upload.md"
     codeSeeds:
       - symbol: "createE2EReporter"
         file: "packages/desktop/test/e2e/reporting/e2e-reporting.ts"
       - symbol: "createE2EReportViewerUrl"
         file: "packages/e2e-report/src/node/index.ts"
-
   - id: "capability.office-computer-use-incubation"
     kind: "capability"
     label: "Office Suite and Computer Use incubation"
@@ -961,7 +949,6 @@ nodes:
     docs:
       - "docs/product-capability-map.md"
       - "docs/product-capability-map-office-computer-use.md"
-
   - id: "capability.office-suite"
     kind: "capability"
     label: "Office document preview, editing, and Agent production"
@@ -976,7 +963,6 @@ nodes:
     docs:
       - "docs/product-capability-map-office-computer-use.md"
       - "docs/document-skills-plugin.md"
-
   - id: "capability.pptx-element-reference"
     kind: "capability"
     label: "PPTX preview element reference and verified OOXML update"
@@ -994,7 +980,6 @@ nodes:
         file: "packages/ui/src/presentation/types.ts"
       - symbol: "serializeComposerPromptContexts"
         file: "packages/ui/src/v4/composer/composerPromptContexts.ts"
-
   - id: "capability.computer-use"
     kind: "capability"
     label: "Computer Use observation, input, task UX, and takeover"
@@ -1027,7 +1012,6 @@ nodes:
       - symbol: "OFFICIAL_PLUGIN_DEFINITIONS"
         file: "apps/zcode-cli/packages/bootstrap/src/app/official-plugin-definitions.ts"
       - file: "apps/zcode-cli/packages/zcode-cua-plugin/skills/computer-use/SKILL.md"
-
   - id: "capability.conversation-runtime"
     kind: "capability"
     label: "Conversation and session runtime"
@@ -1060,7 +1044,6 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/runtime/methods/steering.ts"
     invariants:
       - "3.12.2: all new and cold-resumed runtimes normalize compatibility budget inputs to preflight-v1; runtime preferences never await client/configs for budgeting."
-
   - id: "capability.selection-side-chat"
     kind: "capability"
     label: "Selection side conversation and App slash shortcuts"
@@ -1077,7 +1060,6 @@ nodes:
         file: "packages/ui/src/v4/SessionPane.tsx"
       - symbol: "createSelectionSideConversation"
         file: "apps/zcode-cli/packages/core/src/runtime/methods/session-fork.ts"
-
   - id: "capability.provider-retry-live-tail"
     kind: "capability"
     label: "Conversation provider retry live-tail presentation"
@@ -1100,7 +1082,6 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts"
       - symbol: "zcodeApiRetryFromStreamRecoveryPayload"
         file: "packages/shared/src/zcode-api-retry-status.ts"
-
   - id: "capability.model-stream-recovery"
     kind: "capability"
     label: "Model SSE recovery from a provider-safe anchor"
@@ -1119,7 +1100,6 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/runtime/methods/streaming-recovery.ts"
       - symbol: "createStreamingToolCoordinator"
         file: "apps/zcode-cli/packages/core/src/runtime/methods/streaming-tool-coordinator.ts"
-
   - id: "capability.model-empty-completion-retry"
     kind: "capability"
     label: "Model zero-output completion retry"
@@ -1139,7 +1119,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/model/runner-generate.ts"
       - symbol: "runStreamText"
         file: "apps/zcode-cli/packages/adapters/src/model/runner-stream.ts"
-
   - id: "capability.assistant-file-preview-links"
     kind: "capability"
     label: "Assistant file preview cards"
@@ -1184,7 +1163,6 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/session-residency.ts"
       - symbol: "clearSession"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/command-inbox.ts"
-
   - id: "capability.ask-user-question-auto-resolution"
     kind: "capability"
     label: "AskUserQuestion auto-resolution preference"
@@ -1196,7 +1174,6 @@ nodes:
     docs:
       - "docs/ask-user-question-auto-resolution.md"
       - "docs/conversation-session-case-catalog.md"
-
   - id: "capability.project-memory"
     kind: "capability"
     label: "CLI project Memory"
@@ -1212,7 +1189,6 @@ nodes:
         file: "packages/ui/src/settings/MemorySettingsSection.tsx"
       - symbol: "IMemoryService"
         file: "packages/services/src/memory/memory.ts"
-
   - id: "capability.conversation-query-navigation"
     kind: "capability"
     label: "Complete conversation query navigation"
@@ -1224,7 +1200,6 @@ nodes:
       - "问题目录"
     docs:
       - "docs/ui/conversation-turn-navigator.md"
-
   - id: "capability.markdown-image-gallery"
     kind: "capability"
     label: "Responsive Markdown image gallery and preview"
@@ -1240,7 +1215,6 @@ nodes:
         file: "packages/ui/src/components/ai-elements/markdown-image.tsx"
       - symbol: "normalizeConsecutiveMarkdownImageBlocks"
         file: "packages/ui/src/components/ai-elements/markdown-image.tsx"
-
   - id: "capability.shared-image-preview"
     kind: "capability"
     label: "Shared conversation image gallery"
@@ -1260,7 +1234,6 @@ nodes:
         file: "packages/ui/src/components/ai-elements/image-thumbnail-gallery.tsx"
       - symbol: "NodeReplImageGrid"
         file: "packages/ui/src/ToolCallBlocks/renderers/nodeReplImageGrid.tsx"
-
   - id: "capability.browser-screenshot-surface"
     kind: "capability"
     label: "Browser Use background screenshot surface"
@@ -1279,7 +1252,6 @@ nodes:
         file: "packages/desktop/src/main/browserView/browserGuestManager.ts"
       - symbol: "DesktopBrowserScreenshotSurfaceCoordinator"
         file: "packages/desktop/src/main/browserView/browserScreenshotSurfaceCoordinator.ts"
-
   - id: "capability.browser-webview-video-recording"
     kind: "capability"
     label: "Browser Use embedded WebView scenario video recording"
@@ -1304,7 +1276,6 @@ nodes:
         file: "packages/desktop/src/host/browserRecordingArtifactMaterializer.ts"
       - symbol: "recordBrowserVideo"
         file: "packages/desktop/src/main/browserView/browserVideoRecorder.ts"
-
   - id: "capability.embedded-browser-network-policy"
     kind: "capability"
     label: "Desktop renderer and embedded Browser explicit proxy and custom CA policy"
@@ -1324,7 +1295,6 @@ nodes:
         file: "packages/desktop/src/main/browserDataManager.ts"
       - symbol: "BrowserViewportSurface"
         file: "packages/ui/src/browser-use/BrowserViewportSurface.tsx"
-
   - id: "capability.host-api-network-policy"
     kind: "capability"
     label: "Window Host app-managed API explicit proxy, No Proxy, and custom CA policy"
@@ -1343,14 +1313,13 @@ nodes:
         file: "packages/services/src/providers/api/nodeApiClient.ts"
       - symbol: "createLocalServices"
         file: "packages/services/src/node.ts"
-      - symbol: "createRemoteWorkspaceServiceCollection"
+      - symbol: "createServerRemoteWorkspaceServiceCollection"
         file: "packages/desktop/src/host/remoteWorkspaceServiceCollection.ts"
     invariants:
       - "AppSettings is the only Host app-managed proxy, No Proxy, and custom CA authority; ambient shell proxy and CA variables remain sanitized."
       - "The first phase injects a request-scoped transport into NodeApiClient and never installs a process-global dispatcher."
-      - "Desktop-attached remote app-global services use the desktop Host policy; server remote services retain server authority."
+      - "Remote app-global services are forwarded from the Source server; the desktop local-global collection was removed."
       - "Conversation delivery, workspace identity, Agent/CLI, Electron Session, Bot, telemetry, object-upload, WebSocket, SSH, and RPC behavior remain unchanged."
-
   - id: "capability.embedded-browser-responsive-viewport"
     kind: "capability"
     label: "Embedded browser free-size responsive viewport"
@@ -1371,7 +1340,6 @@ nodes:
         file: "packages/ui/src/browser-use/ResponsiveBrowserResizeHandles.tsx"
       - symbol: "useResponsiveBrowserViewportControl"
         file: "packages/ui/src/browser-use/useResponsiveBrowserViewportControl.ts"
-
   - id: "capability.browser-tab-residency"
     kind: "capability"
     label: "Desktop embedded Browser 32-tab hard limit and process-local lifetime"
@@ -1398,7 +1366,6 @@ nodes:
         file: "packages/ui/src/app-shell/AnimatedSidePanePanel.tsx"
       - symbol: "WorkspaceShellLayout"
         file: "packages/ui/src/app-shell/WorkspaceShellLayout.tsx"
-
   - id: "capability.office-file-preview"
     kind: "capability"
     label: "Office file preview"
@@ -1419,7 +1386,6 @@ nodes:
         file: "packages/ui/src/previewPaneOfficeContent.tsx"
       - symbol: "PdfViewer"
         file: "packages/ui/src/components/ui/pdf-viewer.tsx"
-
   - id: "capability.mcp-async-tool-catalog"
     kind: "capability"
     label: "MCP asynchronous tool catalog advertisement"
@@ -1438,7 +1404,6 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/runtime/methods/mcp.ts"
       - symbol: "registerMcpTools"
         file: "apps/zcode-cli/packages/core/src/mcp/index.ts"
-
   - id: "capability.mcp-dual-era-version-negotiation"
     kind: "capability"
     label: "MCP dual-era client version negotiation"
@@ -1458,7 +1423,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/mcp/index.ts"
       - symbol: "ProcessTreeStdioClientTransport"
         file: "apps/zcode-cli/packages/adapters/src/mcp/stdio-transport.ts"
-
   - id: "capability.stateless-browser-use-mcp"
     kind: "capability"
     label: "MCP 2026-07-28 stateless node_repl Browser Use"
@@ -1470,7 +1434,6 @@ nodes:
       - "MCP 2026-07-28"
     docs:
       - "docs/mcp-stateless-node-repl.md"
-      - "docs/browser-use/2026-07-28-stateless-browser-use-mcp-spec.md"
       - "docs/browser-use/browser-use-plugin-runtime-boundary.md"
     codeSeeds:
       - symbol: "createNodeReplMcpRuntime"
@@ -1480,7 +1443,6 @@ nodes:
       - file: "apps/zcode-cli/packages/node-repl-host/src/tool-contract.ts"
       - file: "apps/zcode-cli/packages/browser-use-plugin/skills/control-browser/SKILL.md"
       - file: "apps/zcode-cli/packages/contracts/src/tools/node-repl.ts"
-
   - id: "capability.automations"
     kind: "capability"
     label: "Scheduled automations"
@@ -1494,7 +1456,6 @@ nodes:
       - "docs/ui/scheduled-tasks-main-view.md"
       - "docs/automation-edit-status.md"
       - "docs/testing/automation-workspace-selection-boundary.md"
-
   - id: "capability.off-peak-telemetry"
     kind: "capability"
     label: "Off-Peak creation, upgrade, and automatic-turn telemetry"
@@ -1508,8 +1469,6 @@ nodes:
     docs:
       - "docs/monitoring/off-peak-task-telemetry-v1.md"
       - "docs/off-peak-task/spec.md"
-      - "docs/coding-plan-purchase-funnel-telemetry.md"
-
   - id: "capability.off-peak-model-execution"
     kind: "capability"
     label: "Off-Peak model execution"
@@ -1553,7 +1512,6 @@ nodes:
       - "Todo104 storage refinement: editing migrated Off-Peak tasks updates model_selection without clearing or back-writing the published model/thought_level columns; those columns remain rollback snapshots, not a second execution selection. New records need not synthesize legacy values."
       - "Permission approval or denial continues the same automatic turn on the idle model; no provider handoff occurs."
       - "Foreground and background children create their own Model and retain a ticket lease. Default session titles freeze execution ownership before asynchronous reads, carry request auth and independently retain the ticket until settlement; explicit title models remain independent."
-
   - id: "capability.official-server-mcp"
     kind: "capability"
     label: "Official Server MCP authentication, quota, and unavailable banner"
@@ -1569,7 +1527,6 @@ nodes:
     codeSeeds:
       - symbol: "resolveOfficialMcpCredentials"
         file: "packages/services/src/official-mcp/officialMcpCredentials.ts"
-
   - id: "capability.mcp-settings-diagnostics"
     kind: "capability"
     label: "MCP Settings localized diagnostics and Plugin ownership grouping"
@@ -1593,7 +1550,6 @@ nodes:
         file: "packages/services/src/usage-stats/providers/zcodeMcpQuotaProvider.ts"
       - symbol: "useV4SessionQuotaBanner"
         file: "packages/ui/src/v4/useV4SessionQuotaBanner.ts"
-
   - id: "capability.subagents"
     kind: "capability"
     label: "Subagents"
@@ -1622,7 +1578,6 @@ nodes:
         file: "packages/shared/src/subagent-markdown-selection.ts"
     invariants:
       - "Host and standalone Agent await offline migration of user-directory Markdown and builtin state before formal reads. Markdown keeps model/thoughtLevel; intermediate modelSelection is not consumed. Only user Markdown provider values are rewritten, preserving unrelated bytes; project/plugin files and symlinks are excluded. JSON uses builtInModelSelectionOverrides after one-way import. Ordinary readers do not remap legacy identities or fall back to old fields. Explicit execution still validates its concrete selection; Host effective-selection protocol remains a separate Todo96 decision."
-
   - id: "capability.provider-registry"
     kind: "capability"
     label: "Model provider registry"
@@ -1664,8 +1619,6 @@ nodes:
       - "docs/working-memory/provider-refactor/steps/todo-51-provider-access-consumer-and-offpeak-auth-closeout.md"
       - "docs/working-memory/provider-refactor/steps/todo-55-provider-template-inheritance-cutover.md"
       - "docs/model-provider-presets.md"
-      - "docs/model-provider-config-overrides.md"
-      - "docs/model-provider-catalog-metadata.md"
     codeSeeds:
       - file: "packages/provider/src/index.ts"
       - symbol: "ProviderConfigResolver"
@@ -1724,7 +1677,6 @@ nodes:
       - "The business Provider Registry is the only Provider/Model fact registry; Adapter execution projections and caches are one-way private implementation details."
       - "Model identity does not carry reasoning options; do not introduce a general ModelIdentity while ModelSelection, Model, or local event fields already express the required semantics."
       - "reasoningLevel.values is ordered from the lowest to the highest public level; default remains the ordinary request default, while explicitly low-cost auxiliary calls, including Provider connectivity, uniformly select values[0] without guessing disabled aliases."
-
   - id: "capability.provider-endpoint-routing"
     kind: "capability"
     label: "ZCode CLI provider endpoint routing"
@@ -1738,7 +1690,6 @@ nodes:
     docs:
       - "apps/zcode-cli/docs/design/v2/model/provider-endpoint-routing.md"
       - "apps/zcode-cli/docs/design/v2/model/http-proxy.md"
-
   - id: "capability.model-request-session-type-attribution"
     kind: "capability"
     label: "Model request session type attribution header"
@@ -1757,7 +1708,6 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/runtime/methods/model-request-session-type.ts"
       - symbol: "createModelRequestAttributionHeaders"
         file: "apps/zcode-cli/packages/adapters/src/model/runner-status.ts"
-
   - id: "capability.anthropic-request-metadata"
     kind: "capability"
     label: "Anthropic request attribution metadata"
@@ -1769,7 +1719,6 @@ nodes:
       - "模型请求设备 ID"
     docs:
       - "docs/anthropic-request-metadata.md"
-
   - id: "capability.anthropic-reasoning-history-replay"
     kind: "capability"
     label: "Anthropic reasoning history replay and signature repair"
@@ -1781,7 +1730,6 @@ nodes:
       - "thinking 签名修复"
     docs:
       - "apps/zcode-cli/docs/design/v2/model/anthropic-reasoning-history-replay.md"
-
   - id: "capability.model-reasoning-request-projection"
     kind: "capability"
     label: "Provider-visible reasoning history projection"
@@ -1793,7 +1741,6 @@ nodes:
     docs:
       - "apps/zcode-cli/docs/design/v2/model/README.md"
       - "apps/zcode-cli/docs/design/v2/model/anthropic-reasoning-history-replay.md"
-
   - id: "capability.oauth-login-attribution"
     kind: "capability"
     label: "OAuth login marketing attribution"
@@ -1804,7 +1751,6 @@ nodes:
       - "登录归因"
     docs:
       - "docs/oauth/app-marketing-attribution.md"
-
   - id: "capability.remote-delivery"
     kind: "capability"
     label: "Web remote realtime delivery"
@@ -1818,7 +1764,7 @@ nodes:
       - "docs/web-remote-control/web-remote-control-architecture.md"
       - "docs/web-remote-control/task-realtime-sync.md"
       - "docs/web-remote-control-task-command-queue.md"
-
+      - "docs/web-remote-control/self-hosted-remote-relay.md"
   - id: "capability.workspace-identity"
     kind: "capability"
     label: "Workspace identity and remote runtime isolation"
@@ -1833,7 +1779,6 @@ nodes:
       - "docs/remote-workspace-session-unified-settings.md"
       - "docs/ssh-remote-app-global-state-authority.md"
       - "docs/v4-refactor/14-sessions-index.md"
-
   - id: "capability.remote-provider-provisioning"
     kind: "capability"
     label: "Remote Environment Provider Provisioning v0"
@@ -1863,7 +1808,6 @@ nodes:
       - "R3 Environment keys remain transport-target-derived rather than sourceServerId-derived; different routes to one Source may provision separately."
       - "Initial provisioning success gates workspace ready; reconnect registers the new remoteSessionId, and subsequent provisioning failure warns without tearing down the recovered workspace."
       - "Static config is frozen in each created Model, not the entire Session; a subsequent ordinary turn creates a Model from the refreshed target Registry."
-
   - id: "capability.remote-file-actions"
     kind: "capability"
     label: "Remote workspace file actions in local applications"
@@ -1874,7 +1818,6 @@ nodes:
       - "在资源管理器中打开"
     docs:
       - "docs/wsl-open-in-editor.md"
-
   - id: "capability.workspace-file-tree"
     kind: "capability"
     label: "Workspace file tree navigation"
@@ -1887,7 +1830,6 @@ nodes:
     docs:
       - "docs/ui/workspace-file-tree.md"
       - "docs/testing/workspace-file-tree-e2e-coverage.md"
-
   - id: "surface.workspace-file-tree-panel"
     kind: "ui-surface"
     label: "Workspace file tree panel"
@@ -1898,7 +1840,6 @@ nodes:
         file: "packages/ui/src/workspace-file-tree/WorkspaceFileTreeRowView.tsx"
       - symbol: "WorkspaceFileTreeStickyFolders"
         file: "packages/ui/src/workspace-file-tree/WorkspaceFileTreeStickyFolders.tsx"
-
   - id: "state.workspace-file-tree-projection"
     kind: "state-owner"
     label: "Workspace file tree lazy-load and flattened row projection"
@@ -1907,13 +1848,11 @@ nodes:
         file: "packages/ui/src/workspace-file-tree/useWorkspaceFileTreeData.ts"
       - symbol: "flattenWorkspaceFileTreeRows"
         file: "packages/ui/src/workspace-file-tree/model.ts"
-
   - id: "evidence.workspace-file-tree-e2e"
     kind: "evidence"
     label: "Workspace file tree E2E coverage"
     docs:
       - "docs/testing/workspace-file-tree-e2e-coverage.md"
-
   - id: "capability.prompt-attachment-materialization"
     kind: "capability"
     label: "Prompt attachment materialization"
@@ -1935,7 +1874,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/storage/index.ts"
       - symbol: "projectMessagesWithMediaAttachmentPaths"
         file: "apps/zcode-cli/packages/core/src/runtime/helpers/media-attachment-path.ts"
-
   - id: "capability.video-input"
     kind: "capability"
     label: "Video input"
@@ -1957,7 +1895,6 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/tool/handlers/read-video.ts"
       - symbol: "toAiSdkMessages"
         file: "apps/zcode-cli/packages/adapters/src/model/transform.ts"
-
   - id: "capability.task-persistence"
     kind: "capability"
     label: "Task persistence, index, and snapshots"
@@ -1972,7 +1909,6 @@ nodes:
       - "docs/task/task-snapshot-on-demand.md"
       - "docs/working-memory/provider-refactor/steps/todo-109-database-migration-consolidation-and-rollback-readability.md"
       - "docs/desktop/database-migration-startup-gate-plan.md"
-
   - id: "capability.desktop-app-shutdown"
     kind: "capability"
     label: "Desktop app shutdown and update-install handoff"
@@ -1985,7 +1921,6 @@ nodes:
     docs:
       - "docs/desktop/agent-shutdown-latency.md"
       - "docs/desktop/windows-update-install-handoff.md"
-
   - id: "capability.desktop-startup-critical-path"
     kind: "capability"
     label: "Desktop Local Host and active-workspace startup critical path"
@@ -2003,7 +1938,6 @@ nodes:
     docs:
       - "docs/desktop/startup-critical-path.md"
       - "docs/desktop/database-migration-startup-gate-plan.md"
-      - "docs/desktop/database-startup-plan-review.md"
       - "docs/working-memory/provider-refactor/steps/todo-145-global-database-startup-loading.md"
     codeSeeds:
       - symbol: "prepareRuntimeProcessEnvPatch"
@@ -2027,7 +1961,6 @@ nodes:
     invariants:
       - "Todo145 planned: global database preparation precedes business Root and background admission; includes Host tasks-index initialization and session storage, preserves frozen migration SQL/checksums and SQLite authority. Current workspace-driven loading does not satisfy the planned contract."
       - "Todo145 planned: structured storage-full errors drive UI and telemetry; periodic statfs aggregates observed available-space decline, never claims exclusive migration disk usage. Telemetry failure must not gate application readiness."
-
   - id: "state.desktop-runtime-process-env"
     kind: "state-owner"
     label: "Per-window bounded runtime process environment patch"
@@ -2036,7 +1969,6 @@ nodes:
         file: "packages/services/src/runtime-tools/runtimeCommandEnv.ts"
       - symbol: "initializeRuntimeProcessEnv"
         file: "packages/services/src/runtime-tools/runtimeCommandEnv.ts"
-
   - id: "state.desktop-tab-restore-projection"
     kind: "state-owner"
     label: "Renderer-local pending, active-ready, and complete tab restore projection"
@@ -2045,7 +1977,6 @@ nodes:
         file: "packages/ui/src/hooks/useTabPersistence.ts"
       - symbol: "completeTabRestore"
         file: "packages/ui/src/store/tabStore.ts"
-
   - id: "service.desktop-local-host-startup"
     kind: "service"
     label: "Desktop per-window Local Host startup gate"
@@ -2054,7 +1985,6 @@ nodes:
         file: "packages/desktop/src/main/desktopWindowLifecycle.ts"
       - symbol: "spawnHostProcess"
         file: "packages/desktop/src/main/desktopHostProcess.ts"
-
   - id: "evidence.desktop-startup-critical-path-tests"
     kind: "evidence"
     label: "Desktop runtime env, Host deadline, and tab restore tests"
@@ -2063,7 +1993,6 @@ nodes:
       - file: "packages/desktop/test/desktopWindowLifecycle.test.ts"
       - file: "packages/ui/test/useTabPersistence.test.ts"
       - file: "packages/ui/test/remoteWorkspaceSessionPersistence.test.ts"
-
   - id: "surface.app-usage-dashboard"
     kind: "ui-surface"
     label: "Settings App Usage dashboard"
@@ -2072,7 +2001,6 @@ nodes:
         file: "packages/ui/src/settings/usage-stats/AppUsagePanel.tsx"
       - symbol: "UsageStatsSection"
         file: "packages/ui/src/settings/UsageStatsSection.tsx"
-
   - id: "surface.resource-manager-window"
     kind: "ui-surface"
     label: "Help menu Resource Manager window"
@@ -2087,14 +2015,12 @@ nodes:
         file: "packages/desktop/src/main/resourceManagerWindow.ts"
       - symbol: "WindowsCaptionMenuButton"
         file: "packages/ui/src/WindowsCaptionMenuButton.tsx"
-
   - id: "surface.plan-usage"
     kind: "ui-surface"
     label: "Coding Plan and Team Plan usage surfaces"
     codeSeeds:
       - symbol: "CodingPlanUsagePanel"
         file: "packages/ui/src/settings/usage-stats/CodingPlanUsagePanel.tsx"
-
   - id: "surface.start-plan-manual-claim"
     kind: "ui-surface"
     label: "Marketing Touch claim banner and result dialog (formerly manual claim)"
@@ -2108,7 +2034,6 @@ nodes:
         file: "packages/ui/src/components/marketing-touch/MarketingBanner.tsx"
       - symbol: "MarketingDialogs"
         file: "packages/ui/src/components/marketing-touch/MarketingDialogs.tsx"
-
   - id: "capability.cloud-content-dialog"
     kind: "capability"
     label: "Cloud-driven content dialog and Hero resources"
@@ -2126,14 +2051,12 @@ nodes:
         file: "packages/shared/src/cloudContent.ts"
       - symbol: "CloudDialogHero"
         file: "packages/ui/src/components/cloud-content-dialog/CloudDialogHero.tsx"
-
   - id: "surface.cloud-content-preview"
     kind: "ui-surface"
     label: "Retired Desktop dev HTTP content preview; no production entry"
     docs:
       - "docs/cloud-content-dialog.md"
     codeSeeds: []
-
   - id: "service.cloud-content-assets"
     kind: "state-owner"
     label: "Host-exclusive content ZIP cache and resource leases"
@@ -2142,7 +2065,6 @@ nodes:
         file: "packages/services/src/cloud-content/cloudContentService.ts"
       - symbol: "createContentBundleCache"
         file: "packages/services/src/cloud-content/contentBundleCache.ts"
-
   - id: "shared.cloud-dialog-hero"
     kind: "shared-ui"
     label: "Sandboxed cloud dialog Hero renderer"
@@ -2152,12 +2074,10 @@ nodes:
       - symbol: "CloudDialogHero"
         file: "packages/ui/src/components/cloud-content-dialog/CloudDialogHero.tsx"
       - file: "packages/ui/src/assets/cloud-content/weekend-plan-hero.html"
-
   - id: "state.start-plan-model-guide-request"
     kind: "state-owner"
     label: "Retired claim-triggered model guide; Marketing Touch does not select models"
     codeSeeds: []
-
   - id: "evidence.start-plan-manual-claim-tests"
     kind: "evidence"
     label: "Start Plan manual claim focused and Desktop E2E coverage"
@@ -2169,7 +2089,6 @@ nodes:
       - file: "packages/desktop/test/e2e/ui-shell/manual-review/pending/marketing-touch-delivery.test.ts"
       - file: "packages/desktop/test/e2e/ui-shell/manual-review/pending/marketing-touch-entitlement.test.ts"
       - file: "packages/ui/test/aliyunCaptchaRuntime.test.ts"
-
   - id: "surface.office-document-workbench"
     kind: "ui-surface"
     label: "Office preview and editing workbench"
@@ -2178,7 +2097,6 @@ nodes:
         file: "packages/ui/src/PreviewPane.tsx"
       - symbol: "PdfViewer"
         file: "packages/ui/src/components/ui/pdf-viewer.tsx"
-
   - id: "surface.pptx-element-selection"
     kind: "ui-surface"
     label: "Preview Pane explicit PPTX element selection"
@@ -2187,7 +2105,6 @@ nodes:
         file: "packages/ui/src/components/ui/pptx-preview-viewer.tsx"
       - symbol: "PptxRendererPreviewDocument"
         file: "packages/ui/src/presentation/pptxRendererPreviewEngine.ts"
-
   - id: "surface.composer-presentation-reference"
     kind: "ui-surface"
     label: "Conversation Composer PPTX element reference chip"
@@ -2198,7 +2115,6 @@ nodes:
         file: "packages/ui/src/v4/composer/PptxElementReferenceChip.tsx"
       - symbol: "serializeComposerPromptContexts"
         file: "packages/ui/src/v4/composer/composerPromptContexts.ts"
-
   - id: "surface.computer-use-task-experience"
     kind: "ui-surface"
     label: "Computer Use task, permission, and takeover experience"
@@ -2213,7 +2129,6 @@ nodes:
         file: "packages/desktop/src/main/windowsCuaOperationIndicator.ts"
       - symbol: "createCuaOperationTurnTracker"
         file: "packages/services/src/zcode-agent/cuaOperationTurnTracker.ts"
-
   - id: "surface.browser-use-side-pane-guest"
     kind: "ui-surface"
     label: "Browser Use side pane guest and background capture layer"
@@ -2222,7 +2137,6 @@ nodes:
         file: "packages/ui/src/browser-use/BrowserUseSidePaneContent.tsx"
       - symbol: "UnifiedBrowserView"
         file: "packages/ui/src/browser-use/UnifiedBrowserView.tsx"
-
   - id: "surface.human-browser-side-pane-guest"
     kind: "ui-surface"
     label: "Human-opened Browser side pane guest"
@@ -2233,7 +2147,6 @@ nodes:
         file: "packages/ui/src/browser-use/UnifiedBrowserView.tsx"
       - symbol: "useAppPanels"
         file: "packages/ui/src/app-shell/useAppPanels.ts"
-
   - id: "surface.desktop-network-policy-setting"
     kind: "ui-surface"
     label: "Desktop HTTP proxy, No Proxy, and custom certificate settings"
@@ -2242,7 +2155,6 @@ nodes:
         file: "packages/ui/src/settingsPageHelpers.tsx"
       - symbol: "SettingsPage"
         file: "packages/ui/src/SettingsPage.tsx"
-
   - id: "surface.browser-tab-shell"
     kind: "ui-surface"
     label: "Desktop Browser and Browser Use logical tab shell"
@@ -2253,7 +2165,6 @@ nodes:
         file: "packages/ui/src/browser-use/BrowserUseSidePaneContent.tsx"
       - symbol: "UnifiedBrowserView"
         file: "packages/ui/src/browser-use/UnifiedBrowserView.tsx"
-
   - id: "surface.project-task-list"
     kind: "ui-surface"
     label: "Project workspace task list"
@@ -2268,7 +2179,6 @@ nodes:
         file: "packages/ui/src/project-sidebar/ProjectSections.tsx"
       - symbol: "ProjectTaskRows"
         file: "packages/ui/src/project-sidebar/ProjectTaskRows.tsx"
-
   - id: "capability.task-title-overflow-marquee"
     kind: "capability"
     label: "Task title overflow fade and row-hover marquee"
@@ -2282,14 +2192,12 @@ nodes:
     codeSeeds:
       - symbol: "TaskTitleOverflowText"
         file: "packages/ui/src/components/TaskTitleOverflowText.tsx"
-
   - id: "shared-ui.task-title-overflow-text"
     kind: "shared-ui"
     label: "Shared task title overflow and marquee renderer"
     codeSeeds:
       - symbol: "TaskTitleOverflowText"
         file: "packages/ui/src/components/TaskTitleOverflowText.tsx"
-
   - id: "surface.preview-pane-office-file"
     kind: "ui-surface"
     label: "Preview Pane Office file surface"
@@ -2298,7 +2206,6 @@ nodes:
         file: "packages/ui/src/PreviewPane.tsx"
       - symbol: "PreviewPaneOfficeContent"
         file: "packages/ui/src/previewPaneOfficeContent.tsx"
-
   - id: "surface.conversation-assistant-file-preview"
     kind: "ui-surface"
     label: "Conversation assistant file preview cards"
@@ -2307,7 +2214,6 @@ nodes:
         file: "packages/ui/src/AssistantPreviewCards.tsx"
       - symbol: "AssistantTextRowView"
         file: "packages/ui/src/v4/ConversationRowView.tsx"
-
   - id: "surface.git-review-file-actions"
     kind: "ui-surface"
     label: "Git review file context actions"
@@ -2319,7 +2225,6 @@ nodes:
         file: "packages/ui/src/GitPane.tsx"
       - symbol: "GitPaneChangeCard"
         file: "packages/ui/src/GitPaneChangeCard.tsx"
-
   - id: "shared-ui.remote-file-context-actions"
     kind: "shared-ui"
     label: "Workspace-scoped remote file context actions"
@@ -2330,7 +2235,6 @@ nodes:
         file: "packages/ui/src/useTaskListItemContextActions.ts"
       - symbol: "useWorkspaceOpenInEditorTarget"
         file: "packages/ui/src/hooks/useWorkspaceOpenInEditorTarget.ts"
-
   - id: "surface.grouped-task-list"
     kind: "ui-surface"
     label: "Controller-owned cross-host grouped task view"
@@ -2348,7 +2252,6 @@ nodes:
         file: "packages/ui/src/project-sidebar/useTaskGroups.ts"
       - symbol: "TaskGroupRepository"
         file: "packages/services/src/task-groups/repository.ts"
-
   - id: "surface.sidebar-search-view"
     kind: "ui-surface"
     label: "Sidebar capsule search and project/group/recent view switcher with option icons"
@@ -2374,7 +2277,6 @@ nodes:
         file: "packages/ui/src/project-sidebar/view.ts"
       - symbol: "ProjectTaskRows"
         file: "packages/ui/src/project-sidebar/ProjectTaskRows.tsx"
-
   - id: "surface.pinned-task-list"
     kind: "ui-surface"
     label: "Global pinned task list"
@@ -2385,7 +2287,6 @@ nodes:
     codeSeeds:
       - symbol: "ProjectTaskRows"
         file: "packages/ui/src/project-sidebar/ProjectTaskRows.tsx"
-
   - id: "surface.mobile-remote-task-home"
     kind: "ui-surface"
     label: "Mobile remote task home"
@@ -2399,9 +2300,6 @@ nodes:
     codeSeeds:
       - symbol: "WebRemoteControlMobileTaskHome"
         file: "packages/ui/src/WebRemoteControlMobileTaskHome.tsx"
-      - symbol: "buildWebRemoteControlTaskTargets"
-        file: "packages/ui/src/lib/webRemoteControlTaskIndex.ts"
-
   - id: "surface.desktop-web-remote-control-dialog"
     kind: "ui-surface"
     label: "Desktop Web Remote Control dialog"
@@ -2413,7 +2311,6 @@ nodes:
     codeSeeds:
       - symbol: "WebRemoteControlDialog"
         file: "packages/ui/src/web-remote-control/WebRemoteControlDialog.tsx"
-
   - id: "state.task-list-row-projection"
     kind: "state-owner"
     label: "Task list row and membership projection"
@@ -2422,21 +2319,18 @@ nodes:
         file: "packages/ui/src/project-sidebar/useProjectTree.ts"
       - symbol: "applyProjectTaskActivities"
         file: "packages/ui/src/project-sidebar/view.ts"
-
   - id: "state.preview-pane-office-render"
     kind: "state-owner"
     label: "Preview Pane local Office render lifecycle"
     codeSeeds:
       - symbol: "PreviewPaneOfficeDocxContent"
         file: "packages/ui/src/previewPaneOfficeDocxContent.tsx"
-
   - id: "state.pptx-preview-element-selection"
     kind: "state-owner"
     label: "PPTX viewer generation-scoped element selection"
     codeSeeds:
       - symbol: "PptxPreviewViewer"
         file: "packages/ui/src/components/ui/pptx-preview-viewer.tsx"
-
   - id: "state.pptx-preview-ai-edit-draft"
     kind: "state-owner"
     label: "PPTX viewer-local AI edit comment draft"
@@ -2445,14 +2339,12 @@ nodes:
         file: "packages/ui/src/components/ui/pptx-selection-action-bar.tsx"
       - symbol: "PptxPreviewViewer"
         file: "packages/ui/src/components/ui/pptx-preview-viewer.tsx"
-
   - id: "state.composer-presentation-reference-draft"
     kind: "state-owner"
     label: "Renderer-local scoped Composer PPTX references"
     codeSeeds:
       - symbol: "ConversationComposer"
         file: "packages/ui/src/v4/ConversationComposer.tsx"
-
   - id: "state.pptx-reference-preview-navigation"
     kind: "state-owner"
     label: "Renderer-local PPTX reference file and page navigation request"
@@ -2461,35 +2353,27 @@ nodes:
         file: "packages/ui/src/components/ui/pptx-preview-viewer.tsx"
       - symbol: "openCodeViewerSidePane"
         file: "packages/ui/src/lib/workspaceSidePane.ts"
-
   - id: "state.web-remote-task-target-projection"
     kind: "state-owner"
     label: "Web remote task target projection"
-    codeSeeds:
-      - symbol: "buildWebRemoteControlTaskTargets"
-        file: "packages/ui/src/lib/webRemoteControlTaskIndex.ts"
-
   - id: "service.zcode-task-list"
     kind: "service"
     label: "ZCode task list service"
     codeSeeds:
       - symbol: "IZCodeTaskService"
         file: "packages/services/src/session/zcodeTaskService.ts"
-
   - id: "service.workspace-file-binary-preview"
     kind: "service"
     label: "Workspace-scoped bounded binary preview read"
     codeSeeds:
       - symbol: "readBinaryPreview"
         file: "packages/services/src/file/fileService.ts"
-
   - id: "service.zcode-task-index-syncer"
     kind: "service"
     label: "Sessions-index to task-index synchronizer"
     codeSeeds:
       - symbol: "createZCodeTaskIndexSyncer"
         file: "packages/services/src/zcode-agent/zcodeTaskIndexSyncer.ts"
-
   - id: "state.composer-text-draft"
     kind: "state"
     label: "Text-only Composer draft persistence"
@@ -2523,14 +2407,12 @@ nodes:
       - "Only non-whitespace text creates a durable draft. Empty controls stay in the active Composer; New Task initializes from client-local host/project Recent; unclassified tasks have their own scope. Session restoration keeps draft text/model but takes permission and Plan from the current snapshot."
       - "Historical grant/Plan records establish an observation baseline on entry; only newly observed changes update the mounted Composer. Observation IDs are never persisted in drafts. Reads are side-effect free."
       - "Project/group creation intent accompanies durable text. Project ID isolates Root drafts even when primary roots match; formal session drafts retain workspace/session identity. Accepted user Submission updates frozen project Recent through the pending command registry. A pending task draft ID reuses its directory until accepted and protects later drafts from late acknowledgements."
-
   - id: "surface.conversation-model-control"
     kind: "ui-surface"
     label: "Conversation composer model control"
     codeSeeds:
       - symbol: "V4ComposerModelControlsImpl"
         file: "packages/ui/src/v4/composer/V4ComposerToolbar.tsx"
-
   - id: "surface.subagent-session-detail"
     kind: "ui-surface"
     label: "Read-only Subagent session conversation detail"
@@ -2551,7 +2433,6 @@ nodes:
         file: "packages/ui/src/v4/ConversationTimeline.tsx"
       - symbol: "ConversationTurnGroup"
         file: "packages/ui/src/v4/ConversationTurnGroup.tsx"
-
   - id: "surface.conversation-query-edit"
     kind: "ui-surface"
     label: "Conversation real-user query inline edit"
@@ -2564,7 +2445,6 @@ nodes:
         file: "packages/ui/src/v4/ConversationRowView.tsx"
       - symbol: "SessionPane"
         file: "packages/ui/src/v4/SessionPane.tsx"
-
   - id: "surface.parent-task-blocking-interaction"
     kind: "ui-surface"
     label: "Parent task permission and user-input dialogs"
@@ -2578,7 +2458,6 @@ nodes:
         file: "packages/ui/src/v4/V4InteractionDialogs.tsx"
       - symbol: "onPermissionRequested"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts"
-
   - id: "surface.conversation-tool-call"
     kind: "ui-surface"
     label: "Conversation tool call cards"
@@ -2602,7 +2481,6 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts"
       - symbol: "prepareCuaGroupFlowItems"
         file: "packages/ui/src/v4/conversationCuaGroups.ts"
-
   - id: "surface.ask-user-question-auto-resolution-setting"
     kind: "ui-surface"
     label: "Settings interaction auto-resolution switch"
@@ -2611,7 +2489,6 @@ nodes:
         file: "packages/ui/src/settingsPageHelpers.tsx"
       - symbol: "SettingsPage"
         file: "packages/ui/src/SettingsPage.tsx"
-
   - id: "surface.message-stream-reasoning-setting"
     kind: "ui-surface"
     label: "Settings message stream reasoning visibility switch"
@@ -2620,7 +2497,6 @@ nodes:
         file: "packages/ui/src/settingsPageHelpers.tsx"
       - symbol: "SettingsPage"
         file: "packages/ui/src/SettingsPage.tsx"
-
   - id: "state.conversation-reasoning-visibility"
     kind: "state-owner"
     label: "Renderer-resolved conversation reasoning visibility"
@@ -2629,7 +2505,6 @@ nodes:
         file: "packages/ui/src/v4/SessionPane.tsx"
       - symbol: "isConversationReasoningRowVisible"
         file: "packages/ui/src/v4/conversationRowContext.ts"
-
   - id: "surface.data-directory-setting"
     kind: "ui-surface"
     label: "Settings data storage directory"
@@ -2638,7 +2513,6 @@ nodes:
         file: "packages/ui/src/settingsPageHelpers.tsx"
       - symbol: "SettingsPage"
         file: "packages/ui/src/SettingsPage.tsx"
-
   - id: "surface.model-io-full-retention-setting"
     kind: "ui-surface"
     label: "Settings ModelIO full retention switch"
@@ -2647,7 +2521,6 @@ nodes:
         file: "packages/ui/src/settingsPageHelpers.tsx"
       - symbol: "SettingsPage"
         file: "packages/ui/src/SettingsPage.tsx"
-
   - id: "surface.conversation-query-navigator"
     kind: "ui-surface"
     label: "Conversation complete query navigator rail"
@@ -2656,14 +2529,12 @@ nodes:
         file: "packages/ui/src/v4/ConversationTurnNavigator.tsx"
       - symbol: "ConversationTimeline"
         file: "packages/ui/src/v4/ConversationTimeline.tsx"
-
   - id: "surface.conversation-composer-attachments"
     kind: "ui-surface"
     label: "Conversation composer attachments"
     codeSeeds:
       - symbol: "useComposerAttachments"
         file: "packages/ui/src/v4/composer/useComposerAttachments.ts"
-
   - id: "surface.conversation-sent-media-preview"
     kind: "ui-surface"
     label: "Sent conversation image and video preview"
@@ -2685,14 +2556,12 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts"
       - symbol: "installLocalMediaPreviewProtocol"
         file: "packages/desktop/src/main/localMediaPreviewProtocol.ts"
-
   - id: "surface.automation-edit"
     kind: "ui-surface"
     label: "Automation edit model control"
     codeSeeds:
       - symbol: "AutomationEditView"
         file: "packages/ui/src/settings/AutomationEditView.tsx"
-
   - id: "surface.automation-template-gallery"
     kind: "ui-surface"
     label: "Scheduled and Off-Peak template gallery"
@@ -2705,14 +2574,12 @@ nodes:
         file: "packages/ui/src/settings/AutomationsSection.tsx"
       - symbol: "AutomationTemplateSkeletonGrid"
         file: "packages/ui/src/settings/AutomationTemplateSkeletonGrid.tsx"
-
   - id: "surface.off-peak-home-template-carousel"
     kind: "ui-surface"
     label: "New Task Off-Peak template carousel"
     codeSeeds:
       - symbol: "OffPeakNewTaskEntry"
         file: "packages/ui/src/v4/OffPeakNewTaskEntry.tsx"
-
   - id: "surface.off-peak-creation"
     kind: "ui-surface"
     label: "Off-Peak creation entries and result reporting"
@@ -2721,7 +2588,6 @@ nodes:
         file: "packages/ui/src/v4/OffPeakNewTaskEntry.tsx"
       - symbol: "handleOffPeakSubmit"
         file: "packages/ui/src/settings/AutomationsSection.tsx"
-
   - id: "surface.off-peak-upgrade"
     kind: "ui-surface"
     label: "Off-Peak Coding Plan upgrade entries"
@@ -2730,7 +2596,6 @@ nodes:
         file: "packages/ui/src/v4/OffPeakNewTaskEntry.tsx"
       - symbol: "handleOpenCodingPlanUpgrade"
         file: "packages/ui/src/settings/AutomationsSection.tsx"
-
   - id: "surface.conversation-automation-tools"
     kind: "ui-surface"
     label: "Conversation automation management tools"
@@ -2747,21 +2612,18 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/automation-port.ts"
       - symbol: "resolveCronAutomationTurnCards"
         file: "packages/ui/src/v4/ConversationTurnGroup.tsx"
-
   - id: "surface.user-subagent-form"
     kind: "ui-surface"
     label: "User Subagent form model control"
     codeSeeds:
       - symbol: "SubagentForm"
         file: "packages/ui/src/settings/SubagentsSection.tsx"
-
   - id: "surface.builtin-subagent-model"
     kind: "ui-surface"
     label: "Built-in and plugin Subagent model override"
     codeSeeds:
       - symbol: "SubagentModelOverrideControl"
         file: "packages/ui/src/settings/SubagentsSection.tsx"
-
   - id: "surface.provider-settings"
     kind: "ui-surface"
     label: "Model provider settings and model capability editor"
@@ -2805,7 +2667,6 @@ nodes:
         file: "packages/ui/src/settings/model-provider-section/ProviderDetailFeedback.tsx"
       - symbol: "resolveProviderModelDraftCommit"
         file: "packages/ui/src/settings/model-provider-section/ProviderModelMetadata.ts"
-
   - id: "capability.customize-capability-search"
     kind: "capability"
     label: "Scope-aware Plugin capability search"
@@ -2818,7 +2679,6 @@ nodes:
     codeSeeds:
       - symbol: "PluginsSection"
         file: "packages/ui/src/settings/PluginsSection.tsx"
-
   - id: "surface.customize-capability-settings"
     kind: "ui-surface"
     label: "Plugin, MCPs and Skills settings"
@@ -2829,14 +2689,12 @@ nodes:
         file: "packages/ui/src/settings/McpSettingsSection.tsx"
       - symbol: "SkillsSection"
         file: "packages/ui/src/settings/SkillsSection.tsx"
-
   - id: "state.customize-tab-search-query"
     kind: "state-owner"
     label: "Plugin tab-local search query state"
     codeSeeds:
       - symbol: "PluginsSection"
         file: "packages/ui/src/settings/PluginsSection.tsx"
-
   - id: "evidence.customize-capability-settings-tests"
     kind: "evidence"
     label: "Plugin scope projection and search tests"
@@ -2845,7 +2703,6 @@ nodes:
     codeSeeds:
       - file: "packages/ui/test/pluginSettingsSection.test.ts"
       - file: "packages/ui/test/pluginCapabilityProjection.test.ts"
-
   - id: "capability.skill-catalog-discovery"
     kind: "capability"
     label: "Workspace and user Skill catalog discovery"
@@ -2864,7 +2721,6 @@ nodes:
         file: "packages/services/src/skills/skillsService.ts"
       - symbol: "filterSkillsForProvider"
         file: "packages/ui/src/lib/skillSourceFilter.ts"
-
   - id: "surface.composer-skill-compatibility-picker"
     kind: "ui-surface"
     label: "Composer compatible Skill picker ($ and Yen aliases)"
@@ -2877,7 +2733,6 @@ nodes:
         file: "packages/ui/src/mentions/MentionPlugin.tsx"
       - symbol: "useSkillsMentionProvider"
         file: "packages/ui/src/mentions/providers/skillsMentionProvider.ts"
-
   - id: "service.workspace-skills-catalog"
     kind: "service"
     label: "Host workspace and user Skills catalog service"
@@ -2886,7 +2741,6 @@ nodes:
         file: "packages/services/src/skills/skillsService.ts"
       - symbol: "discoverSkills"
         file: "packages/services/src/skills/skillsService.ts"
-
   - id: "persistence.skill-roots"
     kind: "persistence"
     label: "Workspace and user .zcode/skills and .agents/skills roots"
@@ -2897,7 +2751,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/skills/roots.ts"
       - symbol: "resolveAncestorWorkspaceRoots"
         file: "packages/services/src/skills/skillsService.ts"
-
   - id: "evidence.skill-catalog-discovery-tests"
     kind: "evidence"
     label: "Skill root discovery and composer source filtering tests"
@@ -2907,7 +2760,6 @@ nodes:
       - file: "apps/zcode-cli/packages/adapters/tests/skills.test.ts"
       - file: "packages/services/test/skillsService.test.ts"
       - file: "packages/ui/test/skillSourceFilter.test.ts"
-
   - id: "capability.command-workspace-scope"
     kind: "capability"
     label: "Concrete Workspace scope selection for Commands"
@@ -2922,7 +2774,6 @@ nodes:
         file: "packages/ui/src/settings/CommandsSection.tsx"
       - symbol: "CommandForm"
         file: "packages/ui/src/settings/CommandForm.tsx"
-
   - id: "surface.command-settings-editor"
     kind: "ui-surface"
     label: "Command settings create and edit form"
@@ -2931,21 +2782,18 @@ nodes:
         file: "packages/ui/src/settings/CommandsSection.tsx"
       - symbol: "CommandForm"
         file: "packages/ui/src/settings/CommandForm.tsx"
-
   - id: "state.command-form-scope-key"
     kind: "state-owner"
     label: "Command form concrete User or Workspace scope key"
     codeSeeds:
       - symbol: "CommandsSection"
         file: "packages/ui/src/settings/CommandsSection.tsx"
-
   - id: "shared-ui.customize-scope-menu"
     kind: "shared-ui"
     label: "User and concrete Workspace scope menu"
     codeSeeds:
       - symbol: "PluginScopeMenu"
         file: "packages/ui/src/settings/PluginScopeMenu.tsx"
-
   - id: "service.workspace-commands"
     kind: "service"
     label: "Workspace-resolved Commands Host service"
@@ -2954,7 +2802,6 @@ nodes:
         file: "packages/ui/src/hooks/useWorkspaceServices.tsx"
       - symbol: "createCommandsService"
         file: "packages/services/src/commands/commandsService.ts"
-
   - id: "persistence.command-settings-directories"
     kind: "persistence"
     label: "User and Workspace command directories"
@@ -2963,7 +2810,6 @@ nodes:
     codeSeeds:
       - symbol: "getCommandsRootForStorage"
         file: "packages/services/src/commands/commandsService.ts"
-
   - id: "evidence.command-workspace-scope-tests"
     kind: "evidence"
     label: "Command Workspace scope selection tests"
@@ -2971,7 +2817,6 @@ nodes:
       - "docs/settings-command-list.md"
     codeSeeds:
       - file: "packages/ui/test/settingsCommandWorkspaceScope.test.ts"
-
   - id: "surface.project-memory-settings"
     kind: "ui-surface"
     label: "Project Memory toggle and local-only project-first read-only viewer"
@@ -2980,28 +2825,24 @@ nodes:
         file: "packages/ui/src/settings/MemorySettingsSection.tsx"
       - symbol: "MemorySettingsViewer"
         file: "packages/ui/src/settings/MemorySettingsViewer.tsx"
-
   - id: "shared-ui.model-config-select"
     kind: "shared-ui"
     label: "ModelConfigSelect"
     codeSeeds:
       - symbol: "ModelConfigSelect"
         file: "packages/ui/src/ModelConfigSelect.tsx"
-
   - id: "shared-ui.model-select-groups"
     kind: "shared-ui"
     label: "Model selection option builder"
     codeSeeds:
       - symbol: "buildRegistryModelSelectGroups"
         file: "packages/ui/src/lib/modelSelectionGroups.ts"
-
   - id: "shared-ui.model-providers-hook"
     kind: "shared-ui"
     label: "Model provider registry hook"
     codeSeeds:
       - symbol: "useModelProviders"
         file: "packages/ui/src/hooks/useModelProviders.ts"
-
   - id: "state.conversation-projection"
     kind: "state-owner"
     label: "Conversation UI projection and current runtime config"
@@ -3019,7 +2860,6 @@ nodes:
     invariants:
       - "An accepted sendText waits for the same sourceCommandId queue item or real-user userInput row; complete silence triggers one same-sub recovery without synthesizing a row, creating a renderer queue, or replaying the command."
       - "The watchdog reuses the trusted attachment's desktop-continuous or web-remote-replayable delivery boundary; it does not move conversation state into host, relay, or renderer-local queue."
-
   - id: "state.cua-action-state-authority"
     kind: "state-owner"
     label: "CUA element action mutation epoch and authoritative post-state"
@@ -3033,7 +2873,6 @@ nodes:
     invariants:
       - "Only zcode-cua owns pre/post state ids and mutation epochs; ZCode preserves or safely rejects their atomic projection."
       - "A synced outcome and its post-state reach the model together; over-budget or malformed pairs become refresh_required."
-
   - id: "state.message-history-model-provenance"
     kind: "state-owner"
     label: "Assistant model provenance in canonical model history"
@@ -3042,7 +2881,6 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/agent/message-history.ts"
       - symbol: "hydrateMessageHistoryFromSession"
         file: "apps/zcode-cli/packages/core/src/agent/session-history-hydrator.ts"
-
   - id: "state.subagent-child-runtime"
     kind: "state-owner"
     label: "Subagent child runtime events and tool execution"
@@ -3051,13 +2889,11 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/runtime/methods/subagent.ts"
       - symbol: "mirrorSubagentToolEvent"
         file: "apps/zcode-cli/packages/core/src/subagent/tool-event-mirror.ts"
-
   - id: "state.mcp-tool-catalog-cache"
     kind: "state-owner"
     label: "Process-scoped sanitized MCP tool catalog cache"
     docs:
       - "docs/mcp-async-tool-catalog-cache.md"
-
   - id: "state.assistant-file-preview-projection"
     kind: "state-owner"
     label: "Turn-local assistant file preview projection"
@@ -3070,19 +2906,16 @@ nodes:
         file: "packages/ui/src/lib/markdownFileLink.ts"
       - symbol: "SessionPane"
         file: "packages/ui/src/v4/SessionPane.tsx"
-
   - id: "state.browser-context-handle-registry"
     kind: "state-owner"
     label: "Agent-owned BrowserControl session and tab authority"
     docs:
       - "docs/mcp-stateless-node-repl.md"
-      - "docs/browser-use/2026-07-28-stateless-browser-use-mcp-spec.md"
     codeSeeds:
       - symbol: "createProtocolBrowserControlBroker"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/browser-control-broker.ts"
       - symbol: "requireSession"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-types.ts"
-
   - id: "state.browser-screenshot-surface-coordination"
     kind: "state-owner"
     label: "Desktop main transient browser screenshot surface groups"
@@ -3091,7 +2924,6 @@ nodes:
         file: "packages/desktop/src/main/browserView/browserScreenshotSurfaceCoordinator.ts"
       - symbol: "BrowserScreenshotSurfaceCoordinator"
         file: "packages/desktop/src/main/browserView/browserScreenshotSurfaceContracts.ts"
-
   - id: "state.browser-recording-job-registry"
     kind: "state-owner"
     label: "Desktop main transient Browser Use recording jobs"
@@ -3101,14 +2933,12 @@ nodes:
       - symbol: "BrowserGuestManager"
         file: "packages/desktop/src/main/browserView/browserGuestManager.ts"
       - file: "packages/desktop/src/main/browserView/browserVideoRecorder.ts"
-
   - id: "state.embedded-browser-resize-gesture"
     kind: "state-owner"
     label: "Renderer-local responsive viewport pointer gesture"
     codeSeeds:
       - symbol: "ResponsiveBrowserViewport"
         file: "packages/ui/src/browser-use/ResponsiveBrowserViewport.tsx"
-
   - id: "state.embedded-browser-fit-presentation"
     kind: "state-owner"
     label: "Renderer-local responsive Fit canvas presentation"
@@ -3119,7 +2949,6 @@ nodes:
         file: "packages/ui/src/browser-use/ResponsiveBrowserViewport.tsx"
       - symbol: "resolveBrowserViewportScale"
         file: "packages/ui/src/browser-use/browserViewportZoom.ts"
-
   - id: "state.embedded-browser-human-viewport-preference"
     kind: "state-owner"
     label: "App-global human Browser viewport presentation preference"
@@ -3130,7 +2959,6 @@ nodes:
         file: "packages/ui/src/browser-use/useResponsiveBrowserViewportControl.ts"
       - symbol: "useSettings"
         file: "packages/ui/src/hooks/useSettingService.ts"
-
   - id: "state.browser-tab-residency"
     kind: "state-owner"
     label: "Process-local logical Browser tab catalog and LRU activity"
@@ -3141,14 +2969,12 @@ nodes:
         file: "packages/ui/src/lib/workspaceSidePane.ts"
       - symbol: "BrowserGuestManager"
         file: "packages/desktop/src/main/browserView/browserGuestManager.ts"
-
   - id: "state.automation-form-draft"
     kind: "state-owner"
     label: "Automation edit React draft"
     codeSeeds:
       - symbol: "AutomationEditView"
         file: "packages/ui/src/settings/AutomationEditView.tsx"
-
   - id: "state.off-peak-turn-attribution"
     kind: "state-owner"
     label: "Turn-scoped Off-Peak telemetry attribution"
@@ -3157,7 +2983,6 @@ nodes:
         file: "packages/ui/src/v4/telemetry/conversationTelemetrySupervisor.ts"
       - symbol: "turnStartedFactSchema"
         file: "packages/shared/src/zcode-protocol-v4/telemetry.ts"
-
   - id: "state.coding-plan-purchase-funnel"
     kind: "state-owner"
     label: "Coding Plan purchase funnel context"
@@ -3171,14 +2996,12 @@ nodes:
     invariants:
       - "Individual and Team entitled account Providers are Coding Plan; Start remains separate. Enabled/model readiness does not imply subscription ownership."
       - "Provider ID compatibility is confined to event builders; actual Registry, selection, auth, and telemetry source facts remain unchanged."
-
   - id: "state.subagent-form-draft"
     kind: "state-owner"
     label: "Subagent form draft"
     codeSeeds:
       - symbol: "SubagentForm"
         file: "packages/ui/src/settings/SubagentsSection.tsx"
-
   - id: "state.renderer-model-selection-read"
     kind: "state-owner"
     label: "Renderer target-host model selection read lifecycle"
@@ -3187,28 +3010,24 @@ nodes:
         file: "packages/ui/src/hooks/useModelSelectionView.ts"
       - symbol: "useModelSelectionView"
         file: "packages/ui/src/hooks/useModelSelectionView.ts"
-
   - id: "state.oauth-pending-callback"
     kind: "state-owner"
     label: "OAuth pending callback lifecycle"
     codeSeeds:
       - symbol: "OAuthService"
         file: "packages/services/src/oauth/oauthService.ts"
-
   - id: "state.provider-endpoint-routing-snapshot"
     kind: "state-owner"
     label: "Process-local routing registry; dynamic implementations own their snapshot"
     codeSeeds:
       - symbol: "resolveProcessProviderEndpointRoutingPort"
         file: "apps/zcode-cli/packages/bootstrap/src/provider-endpoint-routing.ts"
-
   - id: "service.model-provider"
     kind: "service"
     label: "Model provider service and registry"
     codeSeeds:
       - symbol: "IModelProviderService"
         file: "packages/services/src/model-provider/modelProvider.ts"
-
   - id: "service.provider-settings"
     kind: "service"
     label: "Target Environment provider settings service"
@@ -3221,7 +3040,6 @@ nodes:
         file: "packages/services/src/model-provider/providerFacadeServices.ts"
       - symbol: "useProviderSettingsServiceView"
         file: "packages/ui/src/hooks/useProviderSettingsView.ts"
-
   - id: "persistence.model-provider-config"
     kind: "persistence"
     label: "Sparse Personal provider membership, order and exact model configuration"
@@ -3230,7 +3048,6 @@ nodes:
     codeSeeds:
       - symbol: "NodePersonalProviderConfigRepository"
         file: "packages/provider-node/src/personal-provider-config-repository.ts"
-
   - id: "service.workspace-file-existence-check"
     kind: "service"
     label: "Workspace Host cached file existence check"
@@ -3239,7 +3056,6 @@ nodes:
     codeSeeds:
       - symbol: "createFileService"
         file: "packages/services/src/file/fileService.ts"
-
   - id: "service.provider-endpoint-routing"
     kind: "service"
     label: "ZCode CLI provider endpoint routing service"
@@ -3248,7 +3064,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/model/endpoint-routing-edition/index.ts"
       - symbol: "createProviderEndpointRoutingFetch"
         file: "apps/zcode-cli/packages/adapters/src/model/provider-endpoint-routing-fetch.ts"
-
   - id: "service.active-session-model-limits"
     kind: "service"
     label: "Active session model limit synchronization"
@@ -3257,14 +3072,12 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/active-session-model-limits.ts"
       - symbol: "emitModelSelected"
         file: "apps/zcode-cli/packages/core/src/runtime/methods/steering.ts"
-
   - id: "service.automation"
     kind: "service"
     label: "Automation service"
     codeSeeds:
       - symbol: "AutomationService"
         file: "packages/services/src/session/automationService.ts"
-
   - id: "service.host-model-selection"
     kind: "service"
     label: "Target Workspace Host model selection service"
@@ -3279,14 +3092,12 @@ nodes:
       - symbol: "useModelSelectionServiceView"
         file: "packages/ui/src/hooks/useModelSelectionView.ts"
       - file: "packages/desktop/src/host/remoteWorkspaceServiceCollection.ts"
-
   - id: "service.subagents"
     kind: "service"
     label: "Subagents service"
     codeSeeds:
       - symbol: "ISubagentsService"
         file: "packages/services/src/subagents/subagents.ts"
-
   - id: "service.conversation-row-actions"
     kind: "service"
     label: "Conversation row action command authority"
@@ -3295,7 +3106,6 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts"
       - symbol: "editUserQuery"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/handlers/fork-edit-retry.ts"
-
   - id: "service.selection-side-session-creation"
     kind: "service"
     label: "Selection side session command and atomic conversation fork"
@@ -3304,7 +3114,6 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/handlers/selection-side-session.ts"
       - symbol: "createSelectionSideConversation"
         file: "apps/zcode-cli/packages/core/src/runtime/methods/session-fork.ts"
-
   - id: "service.project-memory-extraction-lifecycle"
     kind: "service"
     label: "Project Memory Extraction scheduler lifecycle"
@@ -3315,7 +3124,6 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/runtime/helpers/project-memory-extraction.ts"
       - symbol: "createSessionFacade"
         file: "apps/zcode-cli/packages/bootstrap/src/app/session-facade.ts"
-
   - id: "service.headless-cli-prompt-runtime"
     kind: "service"
     label: "Headless CLI prompt and target runtime"
@@ -3324,7 +3132,6 @@ nodes:
         file: "apps/zcode-cli/packages/cli/src/prompt-command.ts"
       - symbol: "run"
         file: "apps/zcode-cli/packages/cli/src/run.ts"
-
   - id: "service.project-memory-catalog"
     kind: "service"
     label: "Local Project Memory read-only catalog"
@@ -3333,7 +3140,6 @@ nodes:
         file: "packages/services/src/memory/memory.ts"
       - symbol: "createMemoryService"
         file: "packages/services/src/memory/memoryService.ts"
-
   - id: "service.subagent-interaction-broker"
     kind: "service"
     label: "Subagent parent-routed blocking interaction broker"
@@ -3342,7 +3148,6 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/runtime/helpers/subagent-interaction-broker.ts"
       - symbol: "createProtocolInteractionBroker"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/interaction-broker.ts"
-
   - id: "service.interaction-auto-resolution-runtime"
     kind: "service"
     label: "CLI interaction auto-resolution registry"
@@ -3357,7 +3162,6 @@ nodes:
         file: "packages/services/src/bots/botRemoteWorkspaceBridge.ts"
       - symbol: "syncAppRuntimePreferences"
         file: "packages/services/src/bots/botsService.ts"
-
   - id: "service.conversation-rows-range"
     kind: "service"
     label: "Conversation read-only rows range query"
@@ -3366,7 +3170,6 @@ nodes:
         file: "packages/ui/src/v4/conversationProjectionStore.ts"
       - symbol: "getRowsRange"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/conversation-topic-publisher.ts"
-
   - id: "service.session-runtime-activation"
     kind: "service"
     label: "Persisted session history-first and runtime activation"
@@ -3379,7 +3182,6 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/cold-session-resume.ts"
       - symbol: "createConversationV4Gateway"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts"
-
   - id: "service.persisted-remote-session-repair"
     kind: "service"
     label: "Persisted remote session identity and path repair"
@@ -3392,7 +3194,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/sessions.ts"
       - symbol: "activateSessionForResume"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-operations.ts"
-
   - id: "service.mcp-session-runtime"
     kind: "service"
     label: "Session-scoped live MCP runtime"
@@ -3401,33 +3202,28 @@ nodes:
         file: "apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts"
       - symbol: "createMcpConnectionPool"
         file: "apps/zcode-cli/packages/adapters/src/mcp/pool.ts"
-
   - id: "service.shared-browser-use-mcp-runtime"
     kind: "service"
     label: "Workspace-scoped shared stateless node_repl MCP runtime"
     docs:
       - "docs/mcp-stateless-node-repl.md"
-      - "docs/browser-use/2026-07-28-stateless-browser-use-mcp-spec.md"
     codeSeeds:
       - symbol: "NodeMcpAdapter"
         file: "apps/zcode-cli/packages/adapters/src/mcp/index.ts"
       - symbol: "createMcpConnectionPool"
         file: "apps/zcode-cli/packages/adapters/src/mcp/pool.ts"
-
   - id: "service.oauth"
     kind: "service"
     label: "OAuth service"
     codeSeeds:
       - symbol: "OAuthService"
         file: "packages/services/src/oauth/oauthService.ts"
-
   - id: "service.telemetry-core"
     kind: "service"
     label: "Telemetry core report pipeline"
     codeSeeds:
       - symbol: "createTelemetryCore"
         file: "packages/services/src/telemetry/telemetryCore.ts"
-
   - id: "service.cli-agent-telemetry"
     kind: "service"
     label: "ZCode CLI agent OTLP telemetry"
@@ -3436,7 +3232,6 @@ nodes:
         file: "apps/zcode-cli/packages/telemetry/src/agent-trace-runtime.ts"
       - symbol: "RuntimeTelemetryFacade"
         file: "apps/zcode-cli/packages/core/src/telemetry/runtime-telemetry.ts"
-
   - id: "service.off-peak-task"
     kind: "service"
     label: "Off-Peak ticket and local task creation boundary"
@@ -3448,14 +3243,12 @@ nodes:
     invariants:
       - "Provider start only waits for readiness; off-peak credentials explicitly read the latest completed Registry snapshot."
       - "Initialization, connection changes, completed Registry notifications and manual refresh share serialized eligibility checks; support and availability publish together only for the latest generation."
-
   - id: "service.cli-device-mid"
     kind: "service"
     label: "ZCode CLI deviceMid ensure"
     codeSeeds:
       - symbol: "ensureCliDeviceMid"
         file: "apps/zcode-cli/packages/adapters/src/device/cli-device-mid.ts"
-
   - id: "service.anthropic-request-options"
     kind: "service"
     label: "Anthropic model request metadata options"
@@ -3466,7 +3259,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/model/runner-options.ts"
       - symbol: "createStreamTextOptions"
         file: "apps/zcode-cli/packages/adapters/src/model/runner-options.ts"
-
   - id: "service.model-request-session-type-attribution"
     kind: "service"
     label: "Runtime model request session type attribution"
@@ -3477,7 +3269,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/model/runner-status.ts"
       - symbol: "createModelRequestAttributionHeaders"
         file: "apps/zcode-cli/packages/adapters/src/model/runner-status.ts"
-
   - id: "service.anthropic-reasoning-history-projection"
     kind: "service"
     label: "Anthropic request-local reasoning history projection"
@@ -3492,7 +3283,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/model/runner-generate.ts"
       - symbol: "runStreamText"
         file: "apps/zcode-cli/packages/adapters/src/model/runner-stream.ts"
-
   - id: "service.model-reasoning-request-projection"
     kind: "service"
     label: "Model request-local reasoning content projection"
@@ -3503,7 +3293,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/model/reasoning-content-compat.ts"
       - symbol: "withDeepSeekV4AnthropicThinkingReplay"
         file: "apps/zcode-cli/packages/adapters/src/model/anthropic-reasoning-metadata.ts"
-
   - id: "service.usage-stats-bridge"
     kind: "service"
     label: "Host App Usage protocol bridge"
@@ -3512,7 +3301,6 @@ nodes:
         file: "packages/services/src/usage-stats/usageStatsService.ts"
       - symbol: "getAppUsageStats"
         file: "packages/services/src/zcode-agent/zcodeAgentService.ts"
-
   - id: "service.plan-entitlements"
     kind: "service"
     label: "Plan identity, subscription, quota, and monitor services"
@@ -3521,11 +3309,9 @@ nodes:
         file: "packages/services/src/usage-stats/providers/bigmodelUsageQuotaProvider.ts"
       - symbol: "createCodingPlanSubscriptionService"
         file: "packages/services/src/coding-plan-subscription/codingPlanSubscriptionService.ts"
-
   - id: "service.office-document-platform"
     kind: "service"
     label: "Planned workspace-scoped Office parsing, conversion, and save service"
-
   - id: "service.document-skills"
     kind: "service"
     label: "Official DOCX, PDF, PPTX, and XLSX document skills with judge subagent"
@@ -3544,13 +3330,11 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/subagents.ts"
     invariants:
       - "Every official packaging and seed whitelist preserves agents/, and document-skills completeness requires agents/judge.md before a cache is reusable."
-
   - id: "service.pptx-reference-resolver"
     kind: "service"
     label: "Official marketplace-aligned PPTX production skill"
     codeSeeds:
       - file: "apps/zcode-cli/packages/document-skills-plugin/agents/judge.md"
-
   - id: "service.cua-platform"
     kind: "service"
     label: "Desktop-local Computer Use Helper, trust broker, observation, and native input"
@@ -3575,7 +3359,6 @@ nodes:
     invariants:
       - "Default services assembly never schedules periodic Helper health probes or automatic recovery; health checks and recovery run only at explicit CUA demand boundaries."
       - "Helper readiness, health failure, and recovery never dispose or restart Agent runtime."
-
   - id: "state.windows-cua-operation-indicator"
     kind: "state-owner"
     label: "Windows CUA tool-triggered operation indicator projection"
@@ -3587,7 +3370,6 @@ nodes:
         file: "packages/desktop/src/main/windowsCuaOperationIndicator.ts"
       - symbol: "createCuaOperationTurnTracker"
         file: "packages/services/src/zcode-agent/cuaOperationTurnTracker.ts"
-
   - id: "service.cua-helper-build-release"
     kind: "service"
     label: "Canonical ZCode Computer Use Helper build and release"
@@ -3602,7 +3384,6 @@ nodes:
       - file: "scripts/package-cua-helper-release.mjs"
       - file: "packages/desktop/electron-builder.config.js"
       - file: "packages/desktop/src/main/desktopCuaHelperInstaller.ts"
-
   - id: "state.cua-frame-pixel-authority"
     kind: "state-owner"
     label: "CUA immutable raster, WindowServer provenance, and native pixel dispatch authority"
@@ -3616,7 +3397,6 @@ nodes:
       - "Official CUA raster bytes and adjacent image_ref reach the model unchanged."
       - "Coordinate strategy=event uses WindowServer provenance and never requires AX hit-test."
       - "Window, full-display, and nested Zoom pixels share one final native stale/occlusion gate."
-
   - id: "service.cua-plugin-dev-runtime-assets"
     kind: "service"
     label: "CUA SDK/skill Dev build, validation, and filesystem seed assets"
@@ -3627,7 +3407,6 @@ nodes:
       - file: "apps/zcode-cli/packages/zcode-cua-plugin/scripts/computer-use-client.mjs"
       - symbol: "resolveOfficialPluginRoots"
         file: "apps/zcode-cli/packages/bootstrap/src/app/bundled-plugins.ts"
-
   - id: "service.cua-node-repl-bridge"
     kind: "service"
     label: "Shared node_repl Computer Use bridge"
@@ -3643,7 +3422,6 @@ nodes:
     invariants:
       - "Only node_repl js/js_add_node_module_dir/js_reset are model-visible; CUA is SDK-only."
       - "Subagent requests are rejected and remote callers attach to an existing shared host."
-
   - id: "state.cua-shared-host-runtime"
     kind: "state-owner"
     label: "Shared-host CUA runtime session, frame, and safety state"
@@ -3658,7 +3436,6 @@ nodes:
       - "Session keys use workspaceKey + remoteSessionId + sessionId."
       - "AccessibilitySession, frame freshness, kill switch, input holds, and possibly-sent remain runtime-owned."
       - "Runtime state never enters relay/main, conversation snapshots, or replay queues."
-
   - id: "service.cua-tool-contract-projection"
     kind: "service"
     status: "removed"
@@ -3670,14 +3447,12 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/mcp/index.ts"
       - symbol: "CuaToolCallBlock"
         file: "packages/ui/src/ToolCallBlocks/renderers/cua.tsx"
-
   - id: "service.shared-host-attachment"
     kind: "service"
     label: "Web remote shared-host attachment"
     codeSeeds:
       - symbol: "createWebRemoteControlSharedHostAttachments"
         file: "packages/desktop/src/main/webRemoteControlSharedHostAttachments.ts"
-
   - id: "service.desktop-web-remote-control-authorization"
     kind: "service"
     label: "Desktop Web Remote Control start dispatch boundary"
@@ -3690,7 +3465,6 @@ nodes:
       - "Start and reset-pairing do not add Desktop native confirmation; QR refresh keeps its renderer confirmation."
       - "The internal one-time ticket binds window and workspace targets but is not proof of user authorization and is not an XSS mitigation."
       - "Renderer-reachable IPC dependencies expose only target-bound start/reset methods."
-
   - id: "service.desktop-app-shutdown-policy"
     kind: "service"
     label: "Desktop app shutdown policy"
@@ -3699,7 +3473,6 @@ nodes:
         file: "packages/desktop/src/main/appShutdownPolicy.ts"
       - symbol: "prepareAppQuit"
         file: "packages/desktop/src/main/index.ts"
-
   - id: "service.data-directory-setting"
     kind: "service"
     label: "Data directory validation, copy, and bootstrap pointer service"
@@ -3708,7 +3481,6 @@ nodes:
         file: "packages/services/src/setting/settingService.ts"
       - symbol: "getZCodeDataRootDir"
         file: "packages/services/src/paths.ts"
-
   - id: "service.model-io-runtime-preference-sync"
     kind: "service"
     label: "App-to-CLI ModelIO retention preference sync"
@@ -3717,14 +3489,12 @@ nodes:
         file: "packages/services/src/zcode-agent/zcodeAgentService.ts"
       - symbol: "updateModelIoPreferences"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/model-io-preferences.ts"
-
   - id: "service.desktop-browser-screenshot-activity"
     kind: "service"
     label: "Desktop owner-renderer and target-guest bounded screenshot activity lease"
     codeSeeds:
       - symbol: "DesktopBrowserScreenshotActivityController"
         file: "packages/desktop/src/main/browserView/browserScreenshotActivityController.ts"
-
   - id: "service.desktop-chromium-network-policy"
     kind: "service"
     label: "Desktop main Chromium Session proxy and certificate policy"
@@ -3735,7 +3505,6 @@ nodes:
         file: "packages/desktop/src/main/desktopNetworkPolicy.ts"
       - symbol: "applyDesktopSessionNetworkPolicy"
         file: "packages/desktop/src/main/desktopNetworkPolicy.ts"
-
   - id: "service.host-api-network-policy"
     kind: "service"
     label: "Window Host lifecycle-scoped app-managed API network transport"
@@ -3746,9 +3515,8 @@ nodes:
         file: "packages/services/src/providers/api/nodeApiClient.ts"
       - symbol: "createLocalServices"
         file: "packages/services/src/node.ts"
-      - symbol: "createRemoteWorkspaceServiceCollection"
+      - symbol: "createServerRemoteWorkspaceServiceCollection"
         file: "packages/desktop/src/host/remoteWorkspaceServiceCollection.ts"
-
   - id: "service.desktop-browser-tab-residency"
     kind: "service"
     label: "Per-BrowserWindow logical Browser tab limit scheduler"
@@ -3757,14 +3525,12 @@ nodes:
     codeSeeds:
       - symbol: "BrowserGuestManager"
         file: "packages/desktop/src/main/browserView/browserGuestManager.ts"
-
   - id: "service.workspace-identity-builder"
     kind: "service"
     label: "Remote workspace identity builder"
     codeSeeds:
       - symbol: "buildRemoteWorkspaceIdentity"
         file: "packages/ui/src/lib/remoteWorkspaceHistory.ts"
-
   - id: "service.native-search-release-plan"
     kind: "service"
     label: "Native search platform release and ABI contract"
@@ -3773,7 +3539,6 @@ nodes:
         file: "scripts/native-search-tools-config.mjs"
       - symbol: "verifyBuiltNativeSearchTools"
         file: "scripts/native-search-tools-verify.mjs"
-
   - id: "service.prompt-attachment-transfer"
     kind: "service"
     label: "Prompt attachment transfer service"
@@ -3782,14 +3547,12 @@ nodes:
         file: "packages/services/src/prompt-attachment-transfer/promptAttachmentTransfer.ts"
       - symbol: "createRemotePromptAttachmentTransferService"
         file: "packages/desktop/src/host/promptAttachmentTransferService.ts"
-
   - id: "persistence.automation-record"
     kind: "persistence"
     label: "Persisted automation record"
     codeSeeds:
       - symbol: "AutomationService"
         file: "packages/services/src/session/automationService.ts"
-
   - id: "persistence.usage-observability-db"
     kind: "persistence"
     label: "ZCode CLI model, turn, and tool usage facts"
@@ -3798,14 +3561,12 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/usage.ts"
       - symbol: "buildAppUsageSnapshot"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/usage-stats-builder.ts"
-
   - id: "persistence.subagent-markdown"
     kind: "persistence"
     label: "User agent Markdown, built-in and plugin agent overrides"
     codeSeeds:
       - symbol: "ISubagentsService"
         file: "packages/services/src/subagents/subagents.ts"
-
   - id: "persistence.session-model-timeline"
     kind: "persistence"
     label: "Session model change timeline parts"
@@ -3814,7 +3575,6 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/runtime/methods/timeline-persistence.ts"
       - symbol: "synthesizeEventsFromMessages"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/transcript-hydration.ts"
-
   - id: "persistence.session-media-artifacts"
     kind: "persistence"
     label: "Provider-neutral session media artifacts"
@@ -3829,7 +3589,6 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/agent/session-history-hydrator.ts"
       - symbol: "NodeToolArtifactStore"
         file: "apps/zcode-cli/packages/adapters/src/storage/index.ts"
-
   - id: "persistence.assistant-message-model-provenance"
     kind: "persistence"
     label: "Persisted assistant provider and model provenance"
@@ -3838,14 +3597,12 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/runtime/methods/message-persistence.ts"
       - symbol: "hydrateMessageHistoryFromSession"
         file: "apps/zcode-cli/packages/core/src/agent/session-history-hydrator.ts"
-
   - id: "persistence.task-index"
     kind: "persistence"
     label: "Task sqlite index"
     codeSeeds:
       - symbol: "TaskIndexRepo"
         file: "packages/services/src/session/taskIndexRepo.ts"
-
   - id: "persistence.app-settings"
     kind: "persistence"
     label: "Application settings file"
@@ -3854,7 +3611,6 @@ nodes:
         file: "packages/shared/src/validationAppSettings.ts"
       - symbol: "createSettingService"
         file: "packages/services/src/setting/settingService.ts"
-
   - id: "persistence.model-io-jsonl"
     kind: "persistence"
     label: "Per-session ModelIO JSONL diagnostics"
@@ -3863,7 +3619,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/model/runner-debug.ts"
       - symbol: "readModelTrajectory"
         file: "packages/services/src/zcode-agent/modelTrajectory.ts"
-
   - id: "persistence.project-memory-files"
     kind: "persistence"
     label: "Local Project Memory Markdown files"
@@ -3872,14 +3627,12 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/memory/project-root.ts"
       - symbol: "createMemoryService"
         file: "packages/services/src/memory/memoryService.ts"
-
   - id: "persistence.oauth-login-attribution"
     kind: "persistence"
     label: "OAuth login attribution credential"
     codeSeeds:
       - symbol: "OAuthCredentialRepo"
         file: "packages/services/src/oauth/repo/oauthCredentialRepo.ts"
-
   - id: "persistence.telemetry-device-mid"
     kind: "persistence"
     label: "Host telemetry state deviceMid"
@@ -3890,13 +3643,11 @@ nodes:
         file: "packages/services/src/telemetry/telemetryCore.ts"
       - symbol: "ensureCliDeviceMid"
         file: "apps/zcode-cli/packages/adapters/src/device/cli-device-mid.ts"
-
   - id: "persistence.native-search-shared-deps"
     kind: "persistence"
     label: "Immutable native search prebuilt archives"
     docs:
       - "docs/runtime-tools/embedded-search-native-build.md"
-
   - id: "persistence.browser-tab-recovery-store"
     kind: "persistence"
     label: "Legacy disabled Browser tab recovery catalog"
@@ -3905,19 +3656,15 @@ nodes:
       - "retired browser tab pageState repository"
     docs:
       - "docs/browser-use/2026-07-31-browser-tab-residency-budget-spec.md"
-
   - id: "boundary.desktop-continuous"
     kind: "delivery-boundary"
     label: "Desktop continuous delivery"
-
   - id: "boundary.web-remote-replayable"
     kind: "delivery-boundary"
     label: "Web remote replayable delivery"
-
   - id: "boundary.workspace-key"
     kind: "delivery-boundary"
     label: "workspaceIdentity fallback isolation key"
-
   - id: "capability.composer-trigger-routing"
     kind: "capability"
     label: "Composer primary and compatibility trigger routing"
@@ -3934,7 +3681,6 @@ nodes:
         file: "packages/ui/src/lib/promptInputTriggers.ts"
       - symbol: "ChatPromptActionMenu"
         file: "packages/ui/src/prompt-editor/ChatPromptActionMenu.tsx"
-
   - id: "capability.plan-slash-shortcut"
     kind: "capability"
     label: "App Composer /plan mode shortcut"
@@ -3952,7 +3698,6 @@ nodes:
         file: "packages/ui/src/v4/SessionPane.tsx"
       - symbol: "listProtocolSlashCommands"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/slash-commands.ts"
-
   - id: "surface.composer-at-context-picker"
     kind: "ui-surface"
     label: "Composer @ context picker (Plugins, files, sessions, Whiteboards)"
@@ -3968,7 +3713,6 @@ nodes:
         file: "packages/ui/src/mentions/providers/sessionsMentionProvider.ts"
       - symbol: "useWhiteboardMentionProvider"
         file: "packages/ui/src/mentions/providers/whiteboardMentionProvider.ts"
-
   - id: "service.composer-host-file-search"
     kind: "service"
     label: "Host-owned bounded Composer file search"
@@ -3977,7 +3721,6 @@ nodes:
     codeSeeds:
       - symbol: "createFileService"
         file: "packages/services/src/file/fileService.ts"
-
   - id: "surface.composer-slash-capability-picker"
     kind: "ui-surface"
     label: "Composer slash picker (commands, Skills, Subagents)"
@@ -3991,7 +3734,6 @@ nodes:
         file: "packages/ui/src/slashCommandPanelSections.tsx"
       - symbol: "buildSlashApplyMentionPayload"
         file: "packages/ui/src/lib/slashApplyMentionPayload.ts"
-
   - id: "surface.conversation-selection-side-slash"
     kind: "ui-surface"
     label: "Composer /side and /btw shortcuts with optional text input"
@@ -4007,7 +3749,6 @@ nodes:
         file: "packages/ui/src/v4/slashCommands.ts"
       - symbol: "SlashCommandPlugin"
         file: "packages/ui/src/SlashCommandPlugin.tsx"
-
   - id: "capability.session-skill-catalog"
     kind: "capability"
     label: "Composer workspace/session Skill catalog lifecycle"
@@ -4023,7 +3764,6 @@ nodes:
         file: "packages/ui/src/hooks/useSkills.ts"
       - symbol: "getSkillReferenceCatalog"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/skill-reference-catalog.ts"
-
   - id: "capability.plugin-source-acquisition"
     kind: "capability"
     label: "Plugin marketplace and install source acquisition"
@@ -4044,7 +3784,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/plugins/marketplace.ts"
       - symbol: "resolveZipPluginSource"
         file: "apps/zcode-cli/packages/adapters/src/plugins/zip-source.ts"
-
   - id: "service.plugin-source-materializer"
     kind: "service"
     label: "GitHub Archive or system Git plugin source materializer"
@@ -4055,7 +3794,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/plugins/marketplace.ts"
       - symbol: "execGitCommand"
         file: "apps/zcode-cli/packages/adapters/src/plugins/marketplace.ts"
-
   - id: "persistence.plugin-marketplace-installed-cache"
     kind: "persistence"
     label: "Known marketplace snapshots and installed plugin cache"
@@ -4066,7 +3804,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/plugins/marketplace.ts"
       - symbol: "cacheMarketplacePlugin"
         file: "apps/zcode-cli/packages/adapters/src/plugins/marketplace.ts"
-
   - id: "boundary.plugin-agent-host"
     kind: "delivery-boundary"
     label: "Plugin operations execute in the authoritative local or remote Agent Host"
@@ -4075,7 +3812,6 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/plugins.ts"
       - symbol: "PluginSyncService"
         file: "packages/services/src/plugin-sync/pluginSyncService.ts"
-
   - id: "capability.workspace-project-plugin-scope"
     kind: "capability"
     label: "Claude-shaped User and Workspace Plugin scope with open ZCode config"
@@ -4087,7 +3823,6 @@ nodes:
       - "工作区插件"
     docs:
       - "docs/plugins/workspace-level-plugin-architecture.md"
-      - "docs/plugins/workspace-level-plugin-proposal-comparison.md"
       - "docs/plugin-management-lifecycle-case-catalog.md"
     codeSeeds:
       - symbol: "createConfig"
@@ -4096,7 +3831,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/config/config-merger.ts"
       - symbol: "resolveStartupPlugins"
         file: "apps/zcode-cli/packages/bootstrap/src/app/startup-marks.ts"
-
   - id: "surface.workspace-plugin-scope-controls"
     kind: "ui-surface"
     label: "Plugin User and Workspace configuration views"
@@ -4117,7 +3851,6 @@ nodes:
         file: "packages/ui/src/lib/settingsNavigation.ts"
       - symbol: "PluginStorePage"
         file: "packages/ui/src/settings/PluginStorePage.tsx"
-
   - id: "state.workspace-plugin-effective-config"
     kind: "state-owner"
     label: "User and Workspace effective Plugin configuration"
@@ -4132,7 +3865,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/config/config-merger.ts"
       - symbol: "resolveEnabled"
         file: "apps/zcode-cli/packages/adapters/src/plugins/index.ts"
-
   - id: "persistence.workspace-plugin-project-config"
     kind: "persistence"
     label: "Tracked workspace .zcode/config.json Plugin declaration and sensitive options"
@@ -4144,7 +3876,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/config/project-config.adapter.ts"
       - symbol: "resolvePluginConfigPathForScope"
         file: "packages/services/src/settings-sync/settingsSyncService.ts"
-
   - id: "boundary.workspace-plugin-trust"
     kind: "delivery-boundary"
     label: "Workspace Plugin trust and MCP approval gates intentionally disabled"
@@ -4157,7 +3888,6 @@ nodes:
     docs:
       - "docs/plugins/workspace-level-plugin-architecture.md"
       - "docs/security/deep-link-project-trust-boundary.md"
-
   - id: "boundary.workspace-plugin-sensitive-config"
     kind: "delivery-boundary"
     label: "Plaintext Workspace Plugin credentials and secrets with output redaction"
@@ -4174,14 +3904,12 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/plugins/mcp.ts"
       - symbol: "PluginConfigControls"
         file: "packages/ui/src/settings/PluginConfigControls.tsx"
-
   - id: "evidence.workspace-project-plugin-cases"
     kind: "evidence"
     label: "Workspace Plugin lifecycle cases and coverage"
     docs:
       - "docs/plugin-management-lifecycle-case-catalog.md"
       - "docs/testing/plugin-management-lifecycle-e2e-coverage-matrix.md"
-
   - id: "evidence.plugin-source-acquisition-tests"
     kind: "evidence"
     label: "No-Git GitHub Archive, refresh isolation and atomic cache tests"
@@ -4190,7 +3918,6 @@ nodes:
     codeSeeds:
       - file: "apps/zcode-cli/packages/adapters/tests/plugins.test.ts"
       - file: "apps/zcode-cli/packages/bootstrap/tests/marketplace-import-e2e.test.ts"
-
   - id: "capability.plugin-catalog-runtime-separation"
     kind: "capability"
     label: "Plugin Catalog and Runtime separation for builtin uninstall/detail"
@@ -4218,7 +3945,6 @@ nodes:
         file: "packages/ui/src/settings/pluginStoreListing.ts"
       - symbol: "PluginStoreDetailView"
         file: "packages/ui/src/settings/PluginStoreDetailView.tsx"
-
   - id: "state.plugin-runtime-suppression"
     kind: "state-owner"
     label: "User-owned suppressed builtin runtime filter"
@@ -4231,7 +3957,6 @@ nodes:
         file: "apps/zcode-cli/packages/adapters/src/config/file-config.adapter.ts"
       - symbol: "removeSuppressedBuiltinInFileConfig"
         file: "apps/zcode-cli/packages/adapters/src/config/file-config.adapter.ts"
-
   - id: "service.plugin-catalog-detail"
     kind: "service"
     label: "Read-only Marketplace plugin detail and component enumeration"
@@ -4245,7 +3970,6 @@ nodes:
         file: "packages/ui/src/store/pluginManagementStore.ts"
       - symbol: "PluginStoreDetailView"
         file: "packages/ui/src/settings/PluginStoreDetailView.tsx"
-
   - id: "evidence.plugin-catalog-runtime-tests"
     kind: "evidence"
     label: "Builtin uninstall/detail parity and Catalog/Runtime separation tests"
@@ -4256,7 +3980,6 @@ nodes:
       - file: "apps/zcode-cli/packages/bootstrap/tests/plugins.test.ts"
       - file: "apps/zcode-cli/packages/adapters/tests/plugins.test.ts"
       - file: "packages/ui/test/pluginStoreListing.test.ts"
-
   - id: "capability.plugin-reference"
     kind: "capability"
     label: "Plugin conversation reference (@ Plugin capability hint)"
@@ -4269,7 +3992,6 @@ nodes:
       - "引用插件"
     docs:
       - "docs/plugin-reference-mention.md"
-
   - id: "surface.composer-mention-plugins"
     kind: "ui-surface"
     label: "Plugin group and chip inside the Composer @ context picker"
@@ -4284,7 +4006,6 @@ nodes:
         file: "packages/ui/src/mentions/MentionPlugin.tsx"
       - symbol: "buildPluginMentionMarkdown"
         file: "packages/ui/src/mentions/mentionMarkdown.ts"
-
   - id: "surface.plugin-store-example-prompt-try"
     kind: "ui-surface"
     label: "Plugin Store Try now and example prompt entries"
@@ -4302,7 +4023,6 @@ nodes:
         file: "packages/ui/src/settings/PluginsSection.tsx"
       - symbol: "buildPluginMentionMarkdown"
         file: "packages/ui/src/mentions/mentionMarkdown.ts"
-
   - id: "surface.new-task-suggested-prompts"
     kind: "ui-surface"
     label: "New Task draft suggested prompt prefill"
@@ -4328,7 +4048,6 @@ nodes:
         file: "packages/ui/src/v4/draftSuggestedPromptItems.ts"
       - symbol: "SessionPane"
         file: "packages/ui/src/v4/SessionPane.tsx"
-
   - id: "service.client-scenes"
     kind: "service"
     label: "ZCode Client Scenes option source"
@@ -4345,7 +4064,6 @@ nodes:
         file: "packages/services/src/client-scenes/clientScenes.ts"
       - symbol: "createClientScenesService"
         file: "packages/services/src/client-scenes/clientScenesService.ts"
-
   - id: "shared-ui.automation-template-catalog"
     kind: "shared-ui"
     label: "Client Scenes automation template mapper and loader"
@@ -4354,7 +4072,6 @@ nodes:
         file: "packages/ui/src/settings/automationTemplateCatalog.ts"
       - symbol: "useAutomationTemplates"
         file: "packages/ui/src/settings/useAutomationTemplates.ts"
-
   - id: "state.plugin-reference-session-catalog"
     kind: "state-owner"
     label: "Session-frozen plugin identity catalog"
@@ -4367,7 +4084,6 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/plugin-reference/catalog.ts"
       - symbol: "resolveStartupPlugins"
         file: "apps/zcode-cli/packages/bootstrap/src/app/startup-marks.ts"
-
   - id: "state.session-skill-catalog"
     kind: "state-owner"
     label: "Agent runtime-frozen Session Skill catalog"
@@ -4379,7 +4095,6 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/runtime/methods/context.ts"
       - symbol: "ensureContextInitialized"
         file: "apps/zcode-cli/packages/core/src/runtime/methods/context.ts"
-
   - id: "service.skill-reference-catalog"
     kind: "service"
     label: "skills/referenceCatalog protocol query (session vs workspace authority)"
@@ -4388,7 +4103,6 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/skill-reference-catalog.ts"
       - symbol: "getSkillReferenceCatalog"
         file: "packages/services/src/zcode-agent/zcodeAgentService.ts"
-
   - id: "service.plugin-reference-catalog"
     kind: "service"
     label: "plugins/referenceCatalog protocol query (session vs workspace authority)"
@@ -4397,7 +4111,6 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/plugins.ts"
       - symbol: "getPluginReferenceCatalog"
         file: "packages/services/src/zcode-agent/zcodeAgentService.ts"
-
   - id: "service.suggested-plugin-reference-resolution"
     kind: "service"
     label: "Trusted suggested-prompt Plugin refresh, install candidate resolution, and cancellation"
@@ -4415,7 +4128,6 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server.ts"
       - symbol: "resolveSuggestedPluginReference"
         file: "packages/services/src/zcode-agent/zcodeAgentService.ts"
-
   - id: "service.plugin-reference-reminder"
     kind: "service"
     label: "Turn plugin_reference reminder injection (live capability intersection)"
@@ -4424,7 +4136,6 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/plugin-reference/reminder.ts"
       - symbol: "injectPluginReferenceReminderFromTurn"
         file: "apps/zcode-cli/packages/core/src/runtime/methods/plugin-reference.ts"
-
   - id: "persistence.plugin-reference-reminder-history"
     kind: "persistence"
     label: "Append-only model-only plugin_reference notices in session history"
@@ -4433,30 +4144,24 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/runtime/methods/message-persistence.ts"
       - symbol: "hydrateMessageHistoryFromSession"
         file: "apps/zcode-cli/packages/core/src/agent/session-history-hydrator.ts"
-
   - id: "boundary.local-development-runtime"
     kind: "delivery-boundary"
     label: "Local source development runtime"
-
   - id: "boundary.packaged-desktop-runtime"
     kind: "delivery-boundary"
     label: "Packaged Stable or Preview desktop runtime"
-
   - id: "boundary.zcode-cli-provider-transport"
     kind: "delivery-boundary"
     label: "ZCode CLI default AI SDK provider transport"
-
   - id: "boundary.cua-desktop-local"
     kind: "delivery-boundary"
     label: "macOS and Windows desktop-local CUA authorization boundary"
-
   - id: "evidence.conversation-catalog"
     kind: "evidence"
     label: "Conversation case catalog and E2E matrix"
     docs:
       - "docs/conversation-session-case-catalog.md"
       - "docs/testing/conversation-session-e2e-coverage-matrix.md"
-
   - id: "evidence.conversation-fault-catalog"
     kind: "evidence"
     label: "Conversation environment fault catalog and coverage matrix"
@@ -4467,7 +4172,6 @@ nodes:
     codeSeeds:
       - file: "apps/zcode-cli/packages/core/tests/runtime-stream-recovery.test.ts"
       - file: "apps/zcode-cli/packages/bootstrap/tests/product-projection.test.ts"
-
   - id: "evidence.development-storage-isolation"
     kind: "evidence"
     label: "Development storage Docker E2E and path tests"
@@ -4475,7 +4179,6 @@ nodes:
       - file: "packages/desktop/test/e2e/conversation-session/conversation-session-development-storage-isolation.test.ts"
       - file: "packages/shared/test/storageProfile.test.ts"
       - file: "packages/desktop/test/desktopStorageProfile.test.ts"
-
   - id: "evidence.model-io-full-retention-tests"
     kind: "evidence"
     label: "ModelIO full retention schema, UI, protocol, and writer tests"
@@ -4486,7 +4189,6 @@ nodes:
       - file: "packages/services/test/zcodeAgentService.test.ts"
       - file: "apps/zcode-cli/packages/bootstrap/tests/zcode-protocol.test.ts"
       - file: "apps/zcode-cli/packages/adapters/tests/runner.test.ts"
-
   - id: "evidence.model-request-session-type-tests"
     kind: "evidence"
     label: "Model request session type classification and transport tests"
@@ -4494,7 +4196,6 @@ nodes:
       - file: "apps/zcode-cli/packages/core/tests/model-request-session-type.test.ts"
       - file: "apps/zcode-cli/packages/adapters/tests/runner-options.test.ts"
       - file: "apps/zcode-cli/packages/adapters/tests/runner.test.ts"
-
   - id: "evidence.mcp-runtime-tests"
     kind: "evidence"
     label: "MCP runtime, tool bridge, and lifecycle tests"
@@ -4507,7 +4208,6 @@ nodes:
       - file: "packages/desktop/test/upstreamReplayServer.test.ts"
       - file: "packages/desktop/test/e2e/settings/mcp-dual-era-version-negotiation.test.ts"
       - file: "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-browser-use-iab-multisession.test.ts"
-
   - id: "capability.window-single-host-controller-r1"
     kind: "capability"
     label: "R1 window-scoped single Host controller"
@@ -4526,7 +4226,6 @@ nodes:
         file: "packages/ui/src/hooks/useGlobalTaskList.ts"
       - symbol: "createWebRemoteControlSharedHostAttachments"
         file: "packages/desktop/src/main/webRemoteControlSharedHostAttachments.ts"
-
   - id: "evidence.r3-remote-automation-plan"
     kind: "evidence"
     label: "Planned R3 post-merge real remote automation cases and readiness inventory"
@@ -4534,7 +4233,6 @@ nodes:
       - "docs/testing/r3-remote-automation-plan.md"
       - "docs/testing/r3-remote-automation-case-matrix.md"
       - "docs/archive/remote-r3/r3-remote-automation-readiness-2026-09-07.md"
-
   - id: "state.window-host-controller-projection"
     kind: "state-owner"
     label: "Window Host workspace and task projection"
@@ -4545,7 +4243,6 @@ nodes:
       - symbol: "useGlobalTaskList"
         file: "packages/ui/src/hooks/useGlobalTaskList.ts"
       - file: "packages/services/src/task-index"
-
   - id: "service.window-host-remote-connection-registry"
     kind: "service"
     label: "Window Host remote connection and logical session registry"
@@ -4556,7 +4253,6 @@ nodes:
         file: "packages/desktop/src/host/windowRemoteConnectionRegistry.ts"
       - symbol: "createRemoteWorkspaceSessionManager"
         file: "packages/desktop/src/main/desktopRemoteSessions.ts"
-
   - id: "boundary.window-host-scoped-service-attachment"
     kind: "boundary"
     label: "Window Host local and remote scoped MessagePort attachment"
@@ -4568,7 +4264,6 @@ nodes:
       - symbol: "createWebRemoteControlSharedHostAttachments"
         file: "packages/desktop/src/main/webRemoteControlSharedHostAttachments.ts"
       - file: "packages/desktop/src/renderer/src/main.tsx"
-
   - id: "evidence.ssh-remote-p0-e2e"
     kind: "evidence"
     label: "Real SSH connection lifecycle and multi-workspace P0 Electron E2E"
@@ -4579,7 +4274,6 @@ nodes:
     codeSeeds:
       - file: "packages/desktop/test/e2e/conversation-session/conversation-session-ssh-remote-p0.test.ts"
       - file: "packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-ssh-remote-cancel-retry.test.ts"
-
   - id: "capability.unified-zcode-lite-server"
     kind: "capability"
     label: "Unified ZCode Lite and multi-server control"
@@ -4594,7 +4288,6 @@ nodes:
       - "docs/archive/remote-r3/r3-source-server-remote-impact-brief.md"
       - "docs/architecture/unified-zcode-lite-server-multi-server-plan.md"
       - "docs/architecture/zcode-code-architecture-overview.md"
-
   - id: "capability.remote-environment-compatibility"
     kind: "capability"
     label: "Remote Source Server environment compatibility"
@@ -4620,7 +4313,6 @@ nodes:
         file: "packages/zcode-server-cli/src/runtime/stableLauncher.ts"
       - symbol: "stageRelease"
         file: "packages/zcode-server-cli/src/packaging/stage.ts"
-
   - id: "surface.multi-server-controller-ui"
     kind: "ui-surface"
     label: "Desktop, Browser, and attached Mobile multi-server view"
@@ -4631,7 +4323,6 @@ nodes:
         file: "packages/ui/src/Root.tsx"
       - file: "packages/web/src/main.tsx"
       - file: "packages/desktop/src/renderer/src/main.tsx"
-
   - id: "capability.remote-conversation-workspace"
     kind: "capability"
     label: "Source-scoped legacy conversation data (UI retired)"
@@ -4650,7 +4341,6 @@ nodes:
         file: "packages/ui/src/root/useRemoteWorkspaceHistory.ts"
       - symbol: "RemoteConnectionDeviceStep"
         file: "packages/ui/src/RemoteConnectionDialogContent.tsx"
-
   - id: "capability.remote-device-connection-ux"
     kind: "capability"
     label: "Remote device connection naming, status presentation, and entry routing"
@@ -4675,7 +4365,6 @@ nodes:
         file: "packages/ui/src/settings/SourceServerManagementPanel.tsx"
       - symbol: "RemoteProjectConnectionDetails"
         file: "packages/ui/src/WorkspaceSidebar/RemoteProjectConnectionDetails.tsx"
-
   - id: "surface.remote-device-settings"
     kind: "ui-surface"
     label: "Settings remote device and connection profile management"
@@ -4684,7 +4373,6 @@ nodes:
         file: "packages/ui/src/settings/SourceServerManagementPanel.tsx"
       - symbol: "useSourceServerManagementSnapshot"
         file: "packages/ui/src/hooks/useSourceServerManagementSnapshot.ts"
-
   - id: "surface.remote-connection-device-picker"
     kind: "ui-surface"
     label: "Remote connection device picker and project selection flow"
@@ -4693,7 +4381,6 @@ nodes:
         file: "packages/ui/src/RemoteConnectionDialogContent.tsx"
       - symbol: "SSHDialog"
         file: "packages/ui/src/SSHDialog.tsx"
-
   - id: "surface.remote-source-task-sidebar"
     kind: "ui-surface"
     label: "Flat project sidebar and local projectless tasks"
@@ -4702,7 +4389,6 @@ nodes:
         file: "packages/ui/src/WorkspaceSidebar.tsx"
       - symbol: "partitionWorkspaceTabsByPurpose"
         file: "packages/ui/src/lib/workspacePurpose.ts"
-
   - id: "shared.source-server-update-action"
     kind: "shared-ui"
     label: "Source Server guarded update action"
@@ -4715,7 +4401,6 @@ nodes:
         file: "packages/ui/src/root/sourceServerUpdateNotifications.ts"
       - symbol: "ToastMessageView"
         file: "packages/ui/src/components/ui/toast.tsx"
-
   - id: "state.source-server-update-operation-progress"
     kind: "state-owner"
     label: "Host-owned Source Server update operation progress"
@@ -4728,7 +4413,6 @@ nodes:
         file: "packages/ui/src/hooks/useSourceServerOperationLogs.ts"
       - symbol: "SourceServerUpdateActivity"
         file: "packages/ui/src/settings/SourceServerUpdateActivity.tsx"
-
   - id: "state.remote-workspace-ui-projection"
     kind: "state-owner"
     label: "Unified remote device, open workspace, attachment, and purpose projection"
@@ -4739,7 +4423,6 @@ nodes:
         file: "packages/ui/src/lib/workspacePurpose.ts"
       - symbol: "useRemoteWorkspaceHistory"
         file: "packages/ui/src/root/useRemoteWorkspaceHistory.ts"
-
   - id: "service.remote-workspace-intent-controller"
     kind: "service"
     label: "Remote device/workspace intent controller"
@@ -4752,7 +4435,6 @@ nodes:
         file: "packages/desktop/src/host/sourceServerConnectionManager.ts"
       - symbol: "createWindowRemoteConnectionRegistry"
         file: "packages/desktop/src/host/windowRemoteConnectionRegistry.ts"
-
   - id: "persistence.remote-open-workspace-set"
     kind: "persistence"
     label: "Remote open workspace set with project/conversation purpose"
@@ -4764,7 +4446,6 @@ nodes:
         file: "packages/ui/src/root/remoteWorkspaceSessionPersistence.ts"
       - symbol: "readPersistedWorkspaceSessionEntries"
         file: "packages/ui/src/lib/remoteWorkspaceHistory.ts"
-
   - id: "surface.source-settings-scope"
     kind: "ui-surface"
     label: "Non-Provider Settings Source user/server and project scope routing"
@@ -4775,7 +4456,6 @@ nodes:
         file: "packages/ui/src/SettingsPage.tsx"
       - symbol: "useWorkspaceServicesResolution"
         file: "packages/ui/src/hooks/useWorkspaceServices.tsx"
-
   - id: "service.source-settings-attachment"
     kind: "service"
     label: "Desktop-only Source user/server settings attachment"
@@ -4784,14 +4464,12 @@ nodes:
         file: "packages/desktop/src/host/sourceSettingsServiceCollection.ts"
       - symbol: "createWindowHostAttachmentRegistry"
         file: "packages/desktop/src/host/windowHostAttachmentRegistry.ts"
-
   - id: "persistence.source-workspace-migration-ledger"
     kind: "persistence"
     label: "Source workspace canonical alias, phase ledger and conflict report"
     codeSeeds:
       - symbol: "SourceServerWorkspaceAliasRepo"
         file: "packages/services/src/session/sourceServerWorkspaceAliasRepo.ts"
-
   - id: "state.controller-server-directory"
     kind: "state-owner"
     label: "Controller-local server connections and aggregate projection"
@@ -4800,7 +4478,6 @@ nodes:
     codeSeeds:
       - symbol: "SourceServerDirectory"
         file: "packages/desktop/src/host/sourceServerDirectory.ts"
-
   - id: "service.zcode-stable-launcher"
     kind: "service"
     label: "Stable launcher, bootstrap, and version runtime manager"
@@ -4811,7 +4488,6 @@ nodes:
         file: "packages/zcode-server-cli/src/runtime/releaseManager.ts"
       - symbol: "resolveCoreServerId"
         file: "packages/zcode-server-cli/src/server-core/serverIdentity.ts"
-
   - id: "service.multi-server-controller"
     kind: "service"
     label: "Desktop Source Server connection and logical session controller"
@@ -4824,7 +4500,6 @@ nodes:
         file: "packages/desktop/src/host/windowRemoteConnectionRegistry.ts"
       - symbol: "createRemoteWorkspaceSessionManager"
         file: "packages/desktop/src/main/desktopRemoteSessions.ts"
-
   - id: "service.source-server-workspace-mapper"
     kind: "service"
     label: "Source Server Core canonical workspace identity mapper"
@@ -4834,20 +4509,17 @@ nodes:
       - symbol: "createSourceServerWorkspaceService"
         file: "packages/services/src/source-server-workspace/sourceServerWorkspaceService.ts"
       - file: "packages/zcode-server-cli/src/server-core/http.ts"
-
   - id: "persistence.zcode-server-identity"
     kind: "persistence"
     label: "Persistent Source Server installation identity"
     docs:
       - "docs/architecture/unified-zcode-lite-server-multi-server-plan.md"
-
   - id: "persistence.zcode-resource-store"
     kind: "persistence"
     label: "Planned source-server prompt resource store"
     docs:
       - "docs/architecture/unified-zcode-lite-server-multi-server-plan.md"
       - "docs/remote-prompt-attachment-materialization.md"
-
   - id: "boundary.unified-server-transport"
     kind: "delivery-boundary"
     label: "Transport-independent Server RPC over local, WebSocket, and SSH tunnel"
@@ -4859,7 +4531,6 @@ nodes:
         file: "packages/server/src/source-server/transportAdapter.ts"
       - symbol: "connectServerRemoteOverDuplex"
         file: "packages/desktop/src/host/serverRemoteConnection.ts"
-
   - id: "evidence.browser-screenshot-surface-tests"
     kind: "evidence"
     label: "Browser screenshot surface and bounded activity coverage"
@@ -4869,7 +4540,6 @@ nodes:
       - file: "packages/desktop/test/browserScreenshotActivityController.test.ts"
       - file: "packages/desktop/test/browserGuestManager.test.ts"
       - file: "packages/desktop/scripts/browser-background-activity-smoke.mjs"
-
   - id: "evidence.browser-webview-video-recording-tests"
     kind: "evidence"
     label: "Browser WebView recording schema, SDK, main, artifact and runtime coverage"
@@ -4880,7 +4550,6 @@ nodes:
       - file: "packages/desktop/test/browserControlMainBridge.test.ts"
       - file: "packages/desktop/test/browserRecordingArtifactMaterializer.test.ts"
       - file: "packages/desktop/test/browserVideoRecorder.test.ts"
-
   - id: "evidence.embedded-browser-network-policy-tests"
     kind: "evidence"
     label: "Desktop Chromium Session network policy target and certificate tests"
@@ -4888,7 +4557,6 @@ nodes:
       - "docs/testing/browser-use-codex-parity-coverage-matrix.md"
     codeSeeds:
       - file: "packages/desktop/test/desktopNetworkPolicy.test.ts"
-
   - id: "evidence.host-api-network-policy-tests"
     kind: "evidence"
     label: "Host API proxy, No Proxy, custom CA, lifecycle, and remote-authority tests"
@@ -4898,7 +4566,6 @@ nodes:
       - file: "packages/services/test/nodeApiClient.test.ts"
       - file: "packages/services/test/nodeApiClientEndpoint.test.ts"
       - file: "packages/desktop/src/host/remoteWorkspaceServiceCollection.ts"
-
   - id: "evidence.embedded-browser-responsive-viewport-tests"
     kind: "evidence"
     label: "Responsive browser viewport interaction coverage"
@@ -4906,13 +4573,11 @@ nodes:
       - file: "packages/ui/test/UnifiedBrowserView.test.ts"
       - file: "packages/shared/test/appSettings.test.ts"
       - file: "packages/desktop/test/e2e/browser-human-viewport-preference.test.ts"
-
   - id: "evidence.browser-use-agent-guidance-tests"
     kind: "evidence"
     label: "Browser Use bundled and fallback agent guidance coverage"
     codeSeeds:
       - file: "apps/zcode-cli/packages/core/tests/browser-manifest.test.ts"
-
   - id: "evidence.browser-use-plugin-distribution-tests"
     kind: "evidence"
     label: "Browser Use package, manifest, seed, SEA, and cache version alignment coverage"
@@ -4942,14 +4607,12 @@ nodes:
         file: "packages/ui/src/app-shell/SidePaneTabTrigger.tsx"
       - symbol: "SidePaneTabTitleTooltip"
         file: "packages/ui/src/app-shell/SidePaneTabTitleTooltip.tsx"
-
   - id: "surface.workspace-side-pane-tab-strip"
     kind: "ui-surface"
     label: "Workspace Side Pane tab strip"
     codeSeeds:
       - symbol: "AnimatedSidePanePanel"
         file: "packages/ui/src/app-shell/AnimatedSidePanePanel.tsx"
-
   - id: "capability.windows-window-chrome"
     kind: "capability"
     label: "Windows version-aware workspace window chrome"
@@ -4962,7 +4625,6 @@ nodes:
     codeSeeds:
       - symbol: "useAppChromeState"
         file: "packages/ui/src/app-shell/useAppChromeState.ts"
-
   - id: "surface.workspace-shell-window-edge"
     kind: "ui-surface"
     label: "Workspace shell outer window edge"
@@ -4971,14 +4633,12 @@ nodes:
     codeSeeds:
       - symbol: "WorkspaceShellLayout"
         file: "packages/ui/src/app-shell/WorkspaceShellLayout.tsx"
-
   - id: "state.desktop-window-chrome"
     kind: "state-owner"
     label: "Electron BrowserWindow maximize and Windows build state"
     codeSeeds:
       - symbol: "createBrowserWindow"
         file: "packages/desktop/src/main/desktopWindowChrome.ts"
-
   - id: "evidence.browser-tab-residency-tests"
     kind: "evidence"
     label: "Browser tab residency policy, persistence, lifecycle, and Electron resource evidence"
@@ -4989,7 +4649,6 @@ nodes:
     codeSeeds:
       - file: "packages/desktop/test/browserGuestManager.test.ts"
       - file: "packages/ui/test/UnifiedBrowserView.test.ts"
-
   - id: "capability.project-creation-folder-confirmation"
     kind: "capability"
     label: "Project creation folder confirmation"
@@ -5000,7 +4659,6 @@ nodes:
         file: "packages/ui/src/project-sidebar/ProjectFolderTrustDialog.tsx"
       - symbol: "ProjectEditor"
         file: "packages/ui/src/project-sidebar/ProjectEditor.tsx"
-
   - id: "surface.project-creation-form"
     kind: "ui-surface"
     label: "Project creation form and selected folder draft"
@@ -5010,7 +4668,6 @@ nodes:
         file: "packages/ui/src/project-sidebar/ProjectCreation.tsx"
       - symbol: "ProjectEditor"
         file: "packages/ui/src/project-sidebar/ProjectEditor.tsx"
-
   - id: "capability.workspace-hook-persistent-trust"
     kind: "capability"
     label: "Workspace Hook persistent trust and runtime admission"
@@ -5027,7 +4684,6 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/app/workspace-hook-review-controller.ts"
       - symbol: "useWorkspaceHookInlineTrust"
         file: "packages/ui/src/settings/useWorkspaceHookInlineTrust.ts"
-
   - id: "capability.conversation-hook-turn-summary"
     kind: "capability"
     label: "Conversation turn Hook execution summary"
@@ -5046,7 +4702,6 @@ nodes:
         file: "packages/ui/src/v4/ConversationHookDetailsAction.tsx"
       - symbol: "ConversationTurnGroup"
         file: "packages/ui/src/v4/ConversationTurnGroup.tsx"
-
   - id: "surface.conversation-turn-hook-summary"
     kind: "ui-surface"
     label: "Conversation terminal turn Hook action and details Popover"
@@ -5059,7 +4714,6 @@ nodes:
         file: "packages/ui/src/v4/ConversationRowView.tsx"
       - symbol: "ConversationTurnGroup"
         file: "packages/ui/src/v4/ConversationTurnGroup.tsx"
-
   - id: "surface.workspace-hook-settings-trust-row"
     kind: "ui-surface"
     label: "Settings Workspace Hook trust row"
@@ -5070,7 +4724,6 @@ nodes:
         file: "packages/ui/src/settings/HooksSection.tsx"
       - symbol: "HooksList"
         file: "packages/ui/src/settings/HooksList.tsx"
-
   - id: "capability.hooks-settings"
     kind: "capability"
     label: "Scoped Hooks settings and plugin Hook projection"
@@ -5088,41 +4741,35 @@ nodes:
         file: "packages/ui/src/settings/HooksList.tsx"
       - symbol: "HookForm"
         file: "packages/ui/src/settings/HookForm.tsx"
-
   - id: "surface.hooks-settings"
     kind: "ui-surface"
     label: "Independent Hooks settings page"
     codeSeeds:
       - symbol: "HooksSection"
         file: "packages/ui/src/settings/HooksSection.tsx"
-
   - id: "state.hooks-settings-store"
     kind: "state-owner"
     label: "Workspace-isolated Hooks settings store"
     codeSeeds:
       - symbol: "useHooksStore"
         file: "packages/ui/src/store/hooksStore.ts"
-
   - id: "persistence.hooks-config-files"
     kind: "persistence"
     label: "User and workspace .zcode Hook configuration files"
     docs:
       - "docs/hooks-runtime-contract.md"
-
   - id: "state.workspace-hook-review-renderer-binding"
     kind: "state-owner"
     label: "Renderer Workspace Hook command and immutable review bindings"
     codeSeeds:
       - symbol: "useWorkspaceHookReviewStore"
         file: "packages/ui/src/store/workspaceHookReviewStore.ts"
-
   - id: "service.workspace-hook-runtime-review-controller"
     kind: "service"
     label: "Runtime Workspace Hook review and Trust mutation controller"
     codeSeeds:
       - symbol: "WorkspaceHookReviewController"
         file: "apps/zcode-cli/packages/bootstrap/src/app/workspace-hook-review-controller.ts"
-
   - id: "service.workspace-hook-settings-pretrust"
     kind: "service"
     label: "Workspace-scoped Settings pretrust authority without a task"
@@ -5133,7 +4780,6 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/workspace-hook-trust.ts"
       - symbol: "createHooksService"
         file: "packages/services/src/hooks/hooksService.ts"
-
   - id: "state.workspace-hook-managed-policy"
     kind: "state-owner"
     label: "Trusted Host-owned Workspace Hook managed policy provider"
@@ -5142,14 +4788,12 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/hooks/workspace-hook-policy.ts"
       - symbol: "ZCodeProtocolAgentDependencies"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-types.ts"
-
   - id: "persistence.workspace-hook-trust-store"
     kind: "persistence"
     label: "User-owned Workspace Hook persistent Trust store"
     codeSeeds:
       - symbol: "FileWorkspaceHookTrustStore"
         file: "apps/zcode-cli/packages/adapters/src/storage/workspace-hook-trust-store.ts"
-
   - id: "evidence.workspace-hook-persistent-trust-tests"
     kind: "evidence"
     label: "Workspace Hook Settings, controller, identity, and Trust store coverage"
@@ -5180,7 +4824,6 @@ nodes:
         file: "apps/zcode-cli/packages/bootstrap/src/permission-options.ts"
       - symbol: "onPermissionRequested"
         file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts"
-
   - id: "surface.workflow-run-confirmation-dialog"
     kind: "ui-surface"
     label: "Workflow run confirmation permission block (graph primary, folded script)"
@@ -5194,7 +4837,6 @@ nodes:
         file: "packages/ui/src/PermissionDialog.tsx"
       - symbol: "pendingPermissionToLegacyRequest"
         file: "packages/ui/src/v4/pendingInteractionAdapter.ts"
-
   - id: "capability.workflow-live-run"
     kind: "capability"
     label: "Dynamic workflow live run: engine submit, background lifecycle and live progress"
@@ -5227,7 +4869,6 @@ nodes:
         file: "packages/shared/src/zcode-protocol-v4/delta.ts"
       - symbol: "createDwfJournalStore"
         file: "apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/dwf-journal.ts"
-
   - id: "surface.workflow-run-detail-pane"
     kind: "ui-surface"
     label: "Workflow run side-pane tab (live causality graph, budget, cancel, event log)"
@@ -5246,7 +4887,6 @@ nodes:
         file: "packages/ui/src/components/workflow-graph/step-node.tsx"
       - symbol: "WorkspaceSidePaneTab"
         file: "packages/ui/src/lib/workspaceSidePane.ts"
-
   - id: "surface.workflow-actor-transcript"
     kind: "ui-surface"
     label: "Workflow actor transcript drill-down (read-only nested SessionPane)"
@@ -5263,7 +4903,6 @@ nodes:
         file: "packages/ui/src/app-shell/SubagentSessionSidePane.tsx"
       - symbol: "SessionPane"
         file: "packages/ui/src/v4/SessionPane.tsx"
-
   - id: "surface.workflow-tool-card-run-state"
     kind: "ui-surface"
     label: "CreateWorkflow tool card run state (compact clickable card once a run is joined)"
@@ -5279,7 +4918,6 @@ nodes:
         file: "packages/ui/src/ToolCallBlocks/renderers/create-workflow.tsx"
       - symbol: "workflowRunByToolCallId"
         file: "packages/ui/src/v4/SessionPane.tsx"
-
   - id: "surface.workflow-task-island"
     kind: "ui-surface"
     label: "Workflows section in the conversation status capsule (Task Island) showing running workflow runs"
@@ -5299,7 +4937,6 @@ nodes:
         file: "packages/ui/src/v4/conversationStatusPanelModel.ts"
       - symbol: "getComposerBackgroundWorkCounts"
         file: "packages/ui/src/v4/composer/ConversationBackgroundWorkTrigger.tsx"
-
   - id: "capability.workflow-run-introspection"
     kind: "capability"
     label: "Workflow run introspection tools: ListWorkflowRuns / GetWorkflowRun read-only model tools over the dwf journal"
@@ -5320,7 +4957,6 @@ nodes:
         file: "apps/zcode-cli/packages/core/src/tool/handlers/get-workflow-run.ts"
       - symbol: "createDwfJournalStore"
         file: "apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/dwf-journal.ts"
-
   - id: "surface.submit-result-tool-card"
     kind: "ui-surface"
     label: "submit_result tool card (已提交结果): dedicated renderer for workflow actors' structured result submissions"
@@ -5338,7 +4974,6 @@ nodes:
         file: "packages/shared/src/tool-identity.ts"
       - symbol: "SUBMIT_RESULT_TOOL_NAME"
         file: "apps/zcode-cli/packages/contracts/src/tools/submit-result.ts"
-
   - id: "state.workflow-run-journal"
     kind: "state-owner"
     label: "Dynamic workflow run journal and cancel registry (engine-owned run truth)"
@@ -5349,7 +4984,6 @@ nodes:
         file: "apps/zcode-cli/packages/dynamic-workflow/src/engine/types.ts"
       - symbol: "SqliteDwfJournalStore"
         file: "apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/dwf-journal.ts"
-
   - id: "capability.conversation-sharing"
     kind: "capability"
     label: "Conversation sharing and shared-context continuation"
@@ -5367,7 +5001,6 @@ nodes:
         file: "packages/ui/src/ConversationShareMenu.tsx"
       - symbol: "formatSharedContextV1"
         file: "packages/services/src/conversation-share/sharedContextFormatter.ts"
-
   - id: "surface.conversation-share-publish"
     kind: "ui-surface"
     label: "Desktop conversation share selection and publish"
@@ -5376,7 +5009,6 @@ nodes:
         file: "packages/ui/src/ConversationShareMenu.tsx"
       - symbol: "ConversationShareConfirmationDock"
         file: "packages/ui/src/v4/ConversationShareConfirmationDock.tsx"
-
   - id: "service.conversation-share"
     kind: "service"
     label: "Conversation share API, remote artifact staging, and local import"
@@ -5385,7 +5017,6 @@ nodes:
         file: "packages/services/src/conversation-share/conversationShare.ts"
       - symbol: "ConversationShareHttpClient"
         file: "packages/services/src/conversation-share/conversationShareHttpClient.ts"
-
   - id: "surface.conversation-share-handover"
     kind: "ui-surface"
     label: "Desktop Share URL handover task"
@@ -5404,7 +5035,6 @@ nodes:
         file: "packages/ui/src/root/useRootPlatformEffects.ts"
       - symbol: "ConversationShareImportNotice"
         file: "packages/ui/src/v4/ConversationShareImportNotice.tsx"
-
   - id: "shared-ui.conversation-share-context-chip"
     kind: "shared-ui"
     label: "Share URL context chip and parser"
@@ -5413,21 +5043,18 @@ nodes:
         file: "packages/ui/src/lib/conversationShareContext.ts"
       - symbol: "parseConversationShareContext"
         file: "packages/ui/src/lib/conversationShareContext.ts"
-
   - id: "persistence.conversation-share-context"
     kind: "persistence"
     label: "Shared context import status and provenance"
     codeSeeds:
       - symbol: "transitionSharedContextImport"
         file: "apps/zcode-cli/packages/adapters/src/storage/session-store/sqlite-session-store.ts"
-
   - id: "service.zcode-agent-connection-scope"
     kind: "service"
     label: "Host-trusted ZCode Agent attachment connection scope"
     codeSeeds:
       - symbol: "createZCodeAgentConnectionScope"
         file: "packages/services/src/zcode-agent/zcodeAgentConnectionScope.ts"
-
   - id: "capability.plugin-creator-entry"
     kind: "capability"
     label: "Localized plugin management and bundled Plugin Creator draft entry"
@@ -5435,8 +5062,8 @@ nodes:
       ["plugin-creator", "创建插件", "插件本地化", "添加插件市场", "拼音搜索", "插件默认展开"]
     docs: ["docs/plugin-creator.md", "docs/plugin-capabilities-settings.md"]
     codeSeeds:
-      - file: "packages/ui/src/settings/PluginAddMenu.tsx"
-      - file: "packages/ui/src/hooks/usePluginCreator.ts"
+      - file: "packages/ui/src/conversation-workspace-target/PluginAddMenu.tsx"
+      - file: "packages/ui/src/conversation-workspace-target/usePluginCreator.ts"
       - file: "packages/ui/src/settings/pluginStoreListing.ts"
       - file: "packages/ui/src/settings/pluginSearch.ts"
       - file: "packages/ui/src/settings/PluginStoreListView.tsx"
@@ -5447,7 +5074,6 @@ nodes:
       - "Market and User management share the two-item menu; Workspace config adds no marketplace mutations."
       - "Localization joins by complete pluginId; identity and runtime payloads do not change."
       - "Market groups show all cards by default; manual collapse stays local to the current page."
-
   - id: "capability.bot-group-collaboration"
     kind: "capability"
     label: "Bot group and topic collaboration"
@@ -5479,7 +5105,6 @@ nodes:
         symbol: "ChannelMentionContent"
       - file: "packages/ui/src/v4/BotTopicPreparation.tsx"
         symbol: "BotTopicPreparationList"
-
   - id: "shared-ui.tool-presentation"
     kind: "shared-ui"
     label: "Common App and share readonly tool presentation"
@@ -5490,15 +5115,103 @@ nodes:
         file: "packages/ui/src/ToolCallBlocks/ToolPresentation.tsx"
       - symbol: "resolveToolCallRenderer"
         file: "packages/ui/src/ToolCallBlocks/resolveRenderer.ts"
-
   - id: "surface.conversation-share-tool-timeline"
     kind: "ui-surface"
     label: "Public and imported readonly tool timeline"
     codeSeeds:
       - symbol: "ConversationShareReadonlyTimeline"
         file: "packages/ui/src/v4/ConversationShareReadonlyTimeline.tsx"
+  - id: "capability.voice-dictation"
+    kind: "capability"
+    label: "Local desktop voice dictation"
+    aliases: ["voice dictation", "speech-to-text", "语音输入"]
+    docs: ["specs/voice-dictation.md"]
+    codeSeeds:
+      - file: "packages/ui/src/settings/VoiceDictationSection.tsx"
+        symbol: "VoiceDictationSection"
+      - file: "packages/ui/src/hooks/useVoiceDictation.ts"
+        symbol: "useVoiceDictation"
+      - file: "packages/ui/src/v4/composer/V4ComposerVoiceButton.tsx"
+        symbol: "V4ComposerVoiceButton"
+      - file: "packages/services/src/voice-dictation/voiceDictationService.ts"
+        symbol: "VoiceDictationService"
+    invariants:
+      - "Desktop captures local microphone audio and the local Host owns transcription; Web only explains the unsupported boundary and never routes audio to a cloud fallback."
+      - "The selector lists OS-exposed audioinput devices, including virtual inputs; it does not guess physical or currently active devices."
+      - "VoiceModelStore owns model state and only removes ZCode-managed files; verified Handy models are read-only external sources."
+      - "The voice shortcut remains a normal editable SHORTCUT_COMMANDS entry."
+      - "Composer owns the microphone level and tentative transcript preview; only a finalized transcript is inserted into the editable draft. Streaming is enabled only when the loaded runtime confirms stream support and accepts the Parakeet stream extension."
+  - id: "surface.voice-dictation-composer"
+    kind: "ui-surface"
+    label: "Desktop composer voice capture, level meter, and transcript preview"
+    codeSeeds:
+      - file: "packages/ui/src/v4/ConversationComposer.tsx"
+        symbol: "ConversationComposerImpl"
+      - file: "packages/ui/src/v4/composer/V4ComposerVoiceButton.tsx"
+        symbol: "V4ComposerVoiceButton"
+      - file: "packages/ui/src/hooks/useVoiceDictation.ts"
+        symbol: "useVoiceDictation"
+      - file: "packages/ui/src/lib/voiceDictationRecorder.ts"
+        symbol: "VoiceDictationRecorder"
+  - id: "surface.voice-dictation-settings"
+    kind: "ui-surface"
+    label: "Desktop controls and Web availability explanation for voice dictation"
+    codeSeeds:
+      - file: "packages/ui/src/settings/VoiceDictationSection.tsx"
+        symbol: "VoiceDictationSection"
+      - file: "packages/ui/src/settings/VoiceDictationModelRow.tsx"
+        symbol: "VoiceModelRow"
+      - file: "packages/ui/src/settings/settingsPageConfig.ts"
+        symbol: "createSettingsPageConfig"
+  - id: "service.voice-dictation"
+    kind: "service"
+    label: "Local voice model discovery, download, one-shot and streaming transcription"
+    codeSeeds:
+      - file: "packages/services/src/voice-dictation/voiceModelStore.ts"
+        symbol: "VoiceModelStore"
+      - file: "packages/services/src/voice-dictation/voiceTranscriber.ts"
+        symbol: "VoiceTranscriber"
+      - file: "packages/services/src/voice-dictation/voiceDictationService.ts"
+        symbol: "createVoiceDictationService"
+  - id: "persistence.voice-model-files"
+    kind: "persistence"
+    label: "ZCode-owned and read-only Handy model files"
+    codeSeeds:
+      - file: "packages/services/src/voice-dictation/voiceModelStore.ts"
+        symbol: "VoiceModelStore"
+  - id: "evidence.voice-dictation-regression-tests"
+    kind: "evidence"
+    label: "Voice dictation model, shortcut and settings regressions"
+    codeSeeds:
+      - file: "packages/services/test/voiceDictation.test.ts"
+      - file: "packages/ui/test/voiceDictation.test.ts"
+      - file: "packages/services/test/voiceDictationRpc.test.ts"
+      - file: "packages/ui/test/V4ComposerVoiceButton.test.ts"
+      - file: "packages/ui/test/settingsPageConfig.test.ts"
+  - id: "surface.chat-coding-plan-limit-auto-continue"
+    kind: "ui-surface"
+    label: "Coding Plan 5-hour limit quota banner and auto-continue"
+    docs:
+      - "docs/chat/coding-plan-limit-auto-continue.md"
+    codeSeeds:
+      - symbol: "ConversationQuotaBanner"
+        file: "packages/ui/src/v4/ConversationQuotaBanner.tsx"
+      - symbol: "useV4SessionQuotaBanner"
+        file: "packages/ui/src/v4/useV4SessionQuotaBanner.ts"
+      - symbol: "handleResumeError"
+        file: "packages/ui/src/v4/SessionPane.tsx"
 
 edges:
+  - from: "capability.first-submission-lifecycle"
+    to: "state.composer-text-draft"
+    type: "recovers-via"
+    rank: "must-inspect"
+    condition: "Frozen first inputs use the existing draft recovery owner across reservation and pane binding."
+  - from: "capability.first-submission-lifecycle"
+    to: "service.zcode-task-index-syncer"
+    type: "projects-to"
+    rank: "must-inspect"
+    condition: "Only real CLI preparation summaries seed Host task rows; renderer never invents sidebar membership."
   - from: "capability.tool-search"
     to: "surface.tool-search-settings"
     type: "renders-in"
@@ -5508,7 +5221,6 @@ edges:
     to: "evidence.tool-search-lifecycle"
     type: "verified-by"
     rank: "evidence-only"
-
   - from: "surface.conversation-model-control"
     to: "state.composer-text-draft"
     type: "commits-to"
@@ -5556,6 +5268,39 @@ edges:
     type: "shares-component"
     rank: "must-inspect"
     condition: "Public snapshots and product default grouping; no runtime authority or interactive plugin UI."
+  - from: "capability.plan-entitlements"
+    to: "surface.chat-coding-plan-limit-auto-continue"
+    type: "renders-in"
+    rank: "must-inspect"
+    condition: "Only Coding Plan business code 1308 with a parseable five-hour reset time can auto-continue; Start Plan and other provider errors remain unchanged."
+  - from: "capability.voice-dictation"
+    to: "surface.voice-dictation-settings"
+    type: "renders-in"
+    rank: "must-inspect"
+    condition: "Desktop exposes microphone/model controls; Web exposes only the Desktop-only explanation."
+  - from: "capability.voice-dictation"
+    to: "service.voice-dictation"
+    type: "implemented-by"
+    rank: "must-inspect"
+  - from: "surface.voice-dictation-composer"
+    to: "service.voice-dictation"
+    type: "sends-stream-commands-to"
+    rank: "must-inspect"
+    condition: "Local Desktop composer sends ordered PCM chunks to the single Host stream lease; the preview stays renderer-local and only finalize commits text into the composer draft."
+  - from: "capability.voice-dictation"
+    to: "surface.voice-dictation-composer"
+    type: "renders-in"
+    rank: "must-inspect"
+    condition: "Desktop-only local microphone capture; model-gated stream preview, otherwise one-shot transcription; Web remains unsupported."
+  - from: "service.voice-dictation"
+    to: "persistence.voice-model-files"
+    type: "manages"
+    rank: "must-inspect"
+    condition: "ZCode owns files under its voice-model directory; Handy files are verified read-only inputs and are never deleted by ZCode."
+  - from: "capability.voice-dictation"
+    to: "evidence.voice-dictation-regression-tests"
+    type: "covered-by"
+    rank: "evidence-only"
   - from: "capability.permission-full-access"
     to: "surface.permission-full-access"
     type: "renders-in"
@@ -5699,7 +5444,6 @@ edges:
     type: "must-preserve-runtime-contract"
     rank: "invariant-only"
     condition: "Workspace hooks remain editable but are excluded from runtime; enabled plugin hooks remain runtime-owned snapshots."
-
   - from: "capability.customize-capability-search"
     to: "surface.customize-capability-settings"
     type: "renders-in"
@@ -5713,7 +5457,6 @@ edges:
     to: "evidence.customize-capability-settings-tests"
     type: "covered-by"
     rank: "evidence-only"
-
   - from: "capability.command-workspace-scope"
     to: "surface.command-settings-editor"
     type: "renders-in"
@@ -5750,7 +5493,6 @@ edges:
     to: "evidence.command-workspace-scope-tests"
     type: "covered-by"
     rank: "evidence-only"
-
   - from: "capability.browser-use-plugin-distribution"
     to: "capability.build-release-engineering"
     type: "packaged-and-versioned-by"
@@ -5771,7 +5513,6 @@ edges:
     to: "boundary.web-remote-replayable"
     type: "must-not-change-delivery"
     rank: "invariant-only"
-
   - from: "capability.browser-use-agent-guidance"
     to: "capability.agent-core-runtime"
     type: "guides-tool-planning-in"
@@ -5788,7 +5529,6 @@ edges:
     to: "boundary.web-remote-replayable"
     type: "must-not-change-delivery"
     rank: "invariant-only"
-
   - from: "capability.windows-window-chrome"
     to: "surface.workspace-shell-window-edge"
     type: "renders-in"
@@ -5844,7 +5584,6 @@ edges:
     to: "evidence.workspace-file-tree-e2e"
     type: "covered-by"
     rank: "evidence-only"
-
   - from: "capability.office-file-preview"
     to: "surface.preview-pane-office-file"
     type: "renders-in"
@@ -5883,7 +5622,6 @@ edges:
     to: "boundary.web-remote-replayable"
     type: "must-not-change-recovery"
     rank: "invariant-only"
-
   - from: "capability.markdown-image-gallery"
     to: "capability.shared-image-preview"
     type: "shares-component"
@@ -5914,7 +5652,6 @@ edges:
     to: "boundary.web-remote-replayable"
     type: "must-not-change-delivery"
     rank: "invariant-only"
-
   - from: "capability.embedded-browser-network-policy"
     to: "surface.desktop-network-policy-setting"
     type: "configured-in"
@@ -5945,7 +5682,6 @@ edges:
     to: "evidence.embedded-browser-network-policy-tests"
     type: "covered-by"
     rank: "evidence-only"
-
   - from: "capability.host-api-network-policy"
     to: "surface.desktop-network-policy-setting"
     type: "configured-in"
@@ -5992,7 +5728,6 @@ edges:
     to: "evidence.host-api-network-policy-tests"
     type: "covered-by"
     rank: "evidence-only"
-
   - from: "capability.browser-screenshot-surface"
     to: "surface.browser-use-side-pane-guest"
     type: "composes-guest-in"
@@ -6027,7 +5762,6 @@ edges:
     to: "evidence.browser-screenshot-surface-tests"
     type: "covered-by"
     rank: "evidence-only"
-
   - from: "capability.browser-webview-video-recording"
     to: "surface.browser-use-side-pane-guest"
     type: "records-guest-from"
@@ -6066,7 +5800,6 @@ edges:
     to: "evidence.browser-webview-video-recording-tests"
     type: "covered-by"
     rank: "evidence-only"
-
   - from: "capability.embedded-browser-responsive-viewport"
     to: "surface.browser-use-side-pane-guest"
     type: "renders-in"
@@ -6136,7 +5869,6 @@ edges:
     to: "evidence.embedded-browser-responsive-viewport-tests"
     type: "covered-by"
     rank: "evidence-only"
-
   - from: "capability.browser-tab-residency"
     to: "surface.browser-tab-shell"
     type: "renders-logical-tabs-in"
@@ -6196,7 +5928,6 @@ edges:
     to: "boundary.packaged-desktop-runtime"
     type: "clears-on-process-restart-in"
     rank: "must-inspect"
-
   - from: "capability.provider-endpoint-routing"
     to: "service.provider-endpoint-routing"
     type: "implemented-by"
@@ -6228,7 +5959,6 @@ edges:
     to: "boundary.web-remote-replayable"
     type: "must-not-change-recovery-semantics"
     rank: "invariant-only"
-
   - from: "capability.agent-core-runtime"
     to: "capability.conversation-runtime"
     type: "executes-authoritative-turns-for"
@@ -6238,7 +5968,6 @@ edges:
     to: "capability.model-capabilities"
     type: "consumes-runtime-capabilities-from"
     rank: "must-inspect"
-
   - from: "capability.read-pdf"
     to: "capability.model-capabilities"
     type: "conditions-tool-shape-and-media-branch-on"
@@ -6262,7 +5991,6 @@ edges:
     to: "boundary.web-remote-replayable"
     type: "must-not-change-recovery-semantics"
     rank: "invariant-only"
-
   - from: "capability.plan-entitlements"
     to: "service.plan-entitlements"
     type: "implemented-by"
@@ -6282,7 +6010,6 @@ edges:
     type: "renders-status-card-without-owning-provider-configuration"
     rank: "must-inspect"
     condition: "Team Plan selection scopes entitlement and quota requests, while ProviderSettingsView independently supplies the Effective Provider and Model editor. Loading, request failure, credential unavailability, or explicit non-allocation never hides an existing Provider configuration."
-
   - from: "capability.plan-entitlements"
     to: "surface.start-plan-manual-claim"
     type: "renders-claimable-preview-in"
@@ -6300,7 +6027,6 @@ edges:
     to: "evidence.start-plan-manual-claim-tests"
     type: "covered-by"
     rank: "evidence-only"
-
   - from: "capability.cloud-content-dialog"
     to: "shared.cloud-dialog-hero"
     type: "implemented-by"
@@ -6328,7 +6054,6 @@ edges:
     to: "boundary.web-remote-replayable"
     type: "must-not-create-recovery-state-in"
     rank: "invariant-only"
-
   - from: "capability.app-usage"
     to: "persistence.usage-observability-db"
     type: "reads-authoritative-facts-from"
@@ -6346,7 +6071,6 @@ edges:
     to: "capability.plan-entitlements"
     type: "must-remain-separate-from"
     rank: "invariant-only"
-
   - from: "capability.resource-manager"
     to: "surface.resource-manager-window"
     type: "projects-snapshot-to"
@@ -6362,7 +6086,6 @@ edges:
     type: "conditional-attribution-of"
     rank: "conditional"
     condition: "Official computer-use MCP subtree is attributed to built-in plugins; the macOS CUA Helper launched via LaunchServices is not a Host descendant and is not attributed yet."
-
   - from: "capability.data-observability"
     to: "service.telemetry-core"
     type: "reports-product-events-through"
@@ -6421,7 +6144,6 @@ edges:
     type: "reports-adoption-lifecycle-through"
     rank: "must-inspect"
     condition: "Desktop reports entry/start/pair/bridge lifecycle events best effort; Web and relay add no reporter or rpc-frame inspection, and desktop-continuous remains isolated from web-remote-replayable."
-
   - from: "capability.engineering-infrastructure"
     to: "capability.build-release-engineering"
     type: "contains"
@@ -6535,7 +6257,6 @@ edges:
     type: "must-remain-separate-from"
     rank: "invariant-only"
     condition: "Test results, coverage, failure artifacts, and engineering trends must not be reported as product telemetry, ARMS/RUM, Conversation telemetry, or App Usage."
-
   - from: "capability.office-computer-use-incubation"
     to: "capability.office-suite"
     type: "contains"
@@ -6780,7 +6501,6 @@ edges:
     type: "must-not-create-independent-runtime-for"
     rank: "invariant-only"
     condition: "Mobile remote may attach to an existing local Host but must not install or launch a separate Computer Use Helper."
-
   - from: "capability.desktop-app-shutdown"
     to: "service.desktop-app-shutdown-policy"
     type: "selects-budget-through"
@@ -6794,7 +6514,6 @@ edges:
     to: "boundary.web-remote-replayable"
     type: "must-not-change-recovery-semantics"
     rank: "invariant-only"
-
   - from: "capability.desktop-startup-critical-path"
     to: "service.desktop-local-host-startup"
     type: "starts-local-host-through"
@@ -6834,7 +6553,6 @@ edges:
     to: "evidence.desktop-startup-critical-path-tests"
     type: "covered-by"
     rank: "evidence-only"
-
   - from: "capability.project-memory"
     to: "service.project-memory-extraction-lifecycle"
     type: "runs-background-through"
@@ -6894,7 +6612,6 @@ edges:
     to: "boundary.web-remote-replayable"
     type: "must-not-change-recovery-semantics"
     rank: "invariant-only"
-
   - from: "capability.provider-templates"
     to: "capability.provider-registry"
     type: "supplies-inheritance-baseline-to"
@@ -6923,7 +6640,6 @@ edges:
     to: "boundary.web-remote-replayable"
     type: "must-not-change-recovery-semantics"
     rank: "invariant-only"
-
   - from: "capability.model-capabilities"
     to: "capability.model-selection"
     type: "owns-capability-boundary-for"
@@ -6956,7 +6672,6 @@ edges:
     type: "options-from"
     rank: "must-inspect"
     condition: "A matching workspace-config modelThoughtLevels declaration wins; a missing target model or capability field falls back to App provider metadata without waiting for configOptionsStatus, while catalog reconciliation continues independently in the background."
-
   - from: "capability.model-selection"
     to: "surface.conversation-model-control"
     type: "renders-in"
@@ -7024,7 +6739,6 @@ edges:
     type: "supplies-local-environment-options-to"
     rank: "must-inspect"
     condition: "Built-in Subagent overrides edited in Settings belong to Local Environment only; remote overrides remain owned by the Remote Environment."
-
   - from: "capability.anthropic-request-metadata"
     to: "service.anthropic-request-options"
     type: "implemented-by"
@@ -7055,7 +6769,6 @@ edges:
     to: "boundary.web-remote-replayable"
     type: "must-not-change-recovery-semantics"
     rank: "invariant-only"
-
   - from: "capability.model-request-session-type-attribution"
     to: "service.model-request-session-type-attribution"
     type: "implemented-by"
@@ -7077,7 +6790,6 @@ edges:
     to: "evidence.model-request-session-type-tests"
     type: "covered-by"
     rank: "evidence-only"
-
   - from: "capability.anthropic-reasoning-history-replay"
     to: "service.anthropic-reasoning-history-projection"
     type: "implemented-by"
@@ -7116,7 +6828,6 @@ edges:
     type: "counts-physical-retry-through"
     rank: "should-inspect"
     condition: "Usage counts the existing model_retry_scheduled event; no separate repair counter or persistence path is introduced."
-
   - from: "surface.conversation-model-control"
     to: "shared-ui.model-config-select"
     type: "shares-component"
@@ -7133,7 +6844,6 @@ edges:
     to: "shared-ui.model-config-select"
     type: "shares-component"
     rank: "must-inspect"
-
   - from: "surface.conversation-model-control"
     to: "shared-ui.model-select-groups"
     type: "options-from"
@@ -7150,7 +6860,6 @@ edges:
     to: "shared-ui.model-select-groups"
     type: "options-from"
     rank: "should-inspect"
-
   - from: "shared-ui.model-select-groups"
     to: "service.host-model-selection"
     type: "projects-ready-view-from"
@@ -7221,7 +6930,6 @@ edges:
     type: "projects-capacity-to"
     rank: "must-inspect"
     condition: "A same-model ModelSelected replaces maxTokens, preserves usedTokens, and uses null for unknown capacity."
-
   - from: "surface.conversation-model-control"
     to: "state.conversation-projection"
     type: "commits-to"
@@ -7439,7 +7147,6 @@ edges:
     to: "boundary.desktop-continuous"
     type: "must-not-change-delivery-semantics"
     rank: "invariant-only"
-
   - from: "capability.task-persistence"
     to: "service.session-runtime-activation"
     type: "restores-through"
@@ -7615,13 +7322,11 @@ edges:
     type: "reads-best-effort"
     rank: "should-inspect"
     condition: "Attribution credential failures must not block telemetry delivery."
-
   - from: "surface.automation-edit"
     to: "state.conversation-projection"
     type: "must-not-mutate"
     rank: "invariant-only"
     condition: "Opening, editing, or cancelling an automation must not change the current workspace or conversation model."
-
   - from: "capability.off-peak-telemetry"
     to: "surface.off-peak-creation"
     type: "renders-in"
@@ -7711,7 +7416,6 @@ edges:
     to: "state.conversation-projection"
     type: "must-remain-isolated-from"
     rank: "invariant-only"
-
   - from: "capability.conversation-runtime"
     to: "boundary.desktop-continuous"
     type: "delivered-by"
@@ -7771,7 +7475,6 @@ edges:
     to: "boundary.desktop-continuous"
     type: "must-remain-isolated-from"
     rank: "invariant-only"
-
   - from: "capability.workspace-identity"
     to: "service.workspace-identity-builder"
     type: "implemented-by"
@@ -7797,7 +7500,6 @@ edges:
     type: "resolves-target-with"
     rank: "must-inspect"
     condition: "Remote file actions must match workspaceIdentity and remoteSessionId before passing a sanitized WSL or SSH target to the platform boundary."
-
   - from: "capability.prompt-attachment-materialization"
     to: "surface.conversation-composer-attachments"
     type: "renders-in"
@@ -7952,7 +7654,6 @@ edges:
     type: "must-not-authorize"
     rank: "invariant-only"
     condition: "Task index metadata is not the authority for session content or current runtime settings."
-
   - from: "capability.mcp-async-tool-catalog"
     to: "state.mcp-tool-catalog-cache"
     type: "cached-by"
@@ -8181,7 +7882,6 @@ edges:
     type: "constrained-by"
     rank: "invariant-only"
     condition: "Remote workspace authority continues to use workspaceIdentity and remoteSessionId; source acquisition does not introduce path-only identity keys."
-
   - from: "capability.plugin-catalog-runtime-separation"
     to: "persistence.plugin-marketplace-installed-cache"
     type: "separates-catalog-from-runtime"
@@ -8211,7 +7911,6 @@ edges:
     to: "evidence.plugin-catalog-runtime-tests"
     type: "covered-by"
     rank: "evidence-only"
-
   - from: "capability.workspace-project-plugin-scope"
     to: "surface.workspace-plugin-scope-controls"
     type: "renders-in"
@@ -8281,7 +7980,6 @@ edges:
     to: "evidence.workspace-project-plugin-cases"
     type: "covered-by"
     rank: "evidence-only"
-
   - from: "capability.plugin-reference"
     to: "surface.composer-mention-plugins"
     type: "renders-in"
@@ -8398,7 +8096,6 @@ edges:
     to: "evidence.conversation-catalog"
     type: "covered-by"
     rank: "evidence-only"
-
   - from: "capability.stateless-browser-use-mcp"
     to: "service.shared-browser-use-mcp-runtime"
     type: "executes-through"
@@ -8431,7 +8128,6 @@ edges:
     to: "evidence.mcp-runtime-tests"
     type: "covered-by"
     rank: "evidence-only"
-
   - from: "capability.mcp-dual-era-version-negotiation"
     to: "service.mcp-session-runtime"
     type: "selects-wire-era-for"
@@ -8454,7 +8150,6 @@ edges:
     to: "evidence.mcp-runtime-tests"
     type: "covered-by"
     rank: "evidence-only"
-
   - from: "capability.mcp-oauth-authorization"
     to: "surface.customize-capability-settings"
     type: "renders-authorization-in"
@@ -8504,7 +8199,6 @@ edges:
     type: "covered-by"
     rank: "evidence-only"
     condition: "Formal real Ubuntu SSH flows cover failure/retry and two-workspace task isolation while keeping one Host PID; pending SSH-P0-CONN-03 plans same-target pending cancel with new-credential retry; renderer reload remains covered by the independent R1-RELOAD-01 case."
-
   - from: "capability.unified-zcode-lite-server"
     to: "surface.multi-server-controller-ui"
     type: "renders-in"
@@ -8776,7 +8470,6 @@ edges:
     to: "boundary.web-remote-replayable"
     type: "must-not-change-recovery"
     rank: "invariant-only"
-
   - from: "capability.project-creation-folder-confirmation"
     to: "surface.project-creation-form"
     type: "renders-in"
@@ -8787,7 +8480,6 @@ edges:
     type: "must-not-mutate"
     rank: "invariant-only"
     condition: "Confirmed boundary: project folder confirmation only acknowledges access for this creation; Hook declarations retain their existing independent trust and admission rules."
-
   - from: "capability.workspace-hook-persistent-trust"
     to: "surface.workspace-hook-settings-trust-row"
     type: "renders-in"
@@ -8901,7 +8593,6 @@ edges:
     type: "must-match-tool-identity-split-of"
     rank: "invariant-only"
     condition: "Both surfaces dispatch on resolveToolCallIdentity family workflow so pre- and post-approval semantics never drift."
-
   - from: "capability.workflow-live-run"
     to: "capability.workflow-run-confirmation"
     type: "starts-only-after-allow-from"
@@ -8957,7 +8648,6 @@ edges:
     type: "keeps-bounded-display-on"
     rank: "invariant-only"
     condition: "The tool card keeps the bounded display channel and gains only the run entry point; the full view lives in the side pane and reads the workflowRuns projection instead of re-deriving from display."
-
   - from: "capability.workflow-run-introspection"
     to: "state.workflow-run-journal"
     type: "reads-run-truth-from"
@@ -8973,7 +8663,6 @@ edges:
     type: "renders-in"
     rank: "must-inspect"
     condition: 'The actor transcript is a nested read-only SessionPane, so submit_result renders through the SAME ToolCallBlocks registry as the main conversation — one renderer fixes both surfaces; there is nothing pane-specific to special-case. Routing requires the literal snake_case name "submit_result" in ZCODE_KNOWN_TOOL_NAMES (family workflow) plus a toolName dispatch inside resolveRenderer''s workflow case (RespondToCoordinator precedent). Pure read-time projection: the payload lives entirely in input.result (output is only {status:"accepted"}), real models often submit it as a JSON-string (engine scheduler leniency mirrored read-side, one lenient JSON.parse max), and no display-union member is added — that union requires four-file lockstep and a missing member degrades silently.'
-
   - from: "capability.official-server-mcp"
     to: "capability.plan-entitlements"
     type: "authenticates-and-reads-quota-with"
@@ -9070,7 +8759,6 @@ edges:
     to: "boundary.web-remote-replayable"
     type: "projects-banner-without-changing"
     rank: "invariant-only"
-
   - from: "surface.archive-management"
     to: "state.virtual-project-directory"
     type: "reads-projection-from"
@@ -9098,7 +8786,6 @@ edges:
     to: "boundary.web-remote-replayable"
     type: "preserves"
     rank: "invariant-only"
-
   - from: "surface.sidebar-search-view"
     to: "state.sidebar-view-preference"
     type: "commits-display-preference-to"
@@ -9127,7 +8814,6 @@ edges:
     to: "service.composer-host-file-search"
     type: "options-from"
     condition: "Only file mentions use bounded Host search; other file pickers retain the packed listing API and canonical mention insertion remains unchanged."
-
   - from: "capability.bot-group-collaboration"
     to: "surface.bot-bound-groups"
     type: "renders-in"

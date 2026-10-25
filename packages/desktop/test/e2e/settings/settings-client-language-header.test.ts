@@ -22,14 +22,14 @@ import {
 import { startHelpConfigFixture } from "../helpers/help-client-config-fixture.js";
 import { openFaultInjectedHostWindow } from "../helpers/subagent-host-window.js";
 
-type Locale = "zh-CN" | "en-US";
+type Locale = "en-US" | "uk-UA";
 type HelpServer = Awaited<ReturnType<typeof startHelpConfigFixture>>;
 type Request = HelpServer["requests"][number];
 
 const HELP_MENU_TRIGGER = 'button[data-testid="workspace-help-menu-trigger"]';
 // 与 Main 启动默认语言（DEFAULT_LOCALE = zh-CN）不同，预热请求带它就说明拿到的是持久化语言。
 const PERSISTED: Locale = "en-US";
-const SWITCHED: Locale = "zh-CN";
+const SWITCHED: Locale = "uk-UA";
 const HOST_PRELOAD = fileURLToPath(new URL("../helpers/subagent-host-faults.cjs", import.meta.url));
 
 // spec：docs/zcode-endpoint-client-language-header.md。

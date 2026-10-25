@@ -41,26 +41,29 @@ import {
 import { waitForUpstreamNetworkCapture } from "../../../helpers/upstream-capture.js";
 import { loginWithApiKey, prepareV4ConversationE2E } from "../../../helpers/v4-conversation.js";
 
-describe("虚拟项目", () => {
+describe("Virtual project", () => {
   before(async () => {
     await prepareV4ConversationE2E({ skipProvider: true });
     // 本文件保留中文文案断言，显式设置语言，避免跟随测试机系统语言产生假失败。
     await browser.execute(() => {
-      const actions = (window as Window & { __testActions?: { setLocale(locale: "zh-CN"): void } })
-        .__testActions;
+      const actions = (
+        window as Window & {
+          __testActions?: { setLocale(locale: "en-US" | "uk-UA" | "zh-CN"): void };
+        }
+      ).__testActions;
       if (!actions) throw new Error("missing E2E locale bridge");
-      actions.setLocale("zh-CN");
+      actions.setLocale("en-US");
     });
   });
-  it("VP19/20：直接创建表单、源文件夹布局、旧分区折叠与 hover 入口", async function () {
+  it("VP19/20: direct create form, source-folder layout, legacy section collapse and hover entry", async function () {
     this.timeout(60_000);
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
     const projects = $('[data-testid="project-section"]');
     const tasks = $('[data-testid="conversation-section"]');
     await projects.waitForDisplayed();
-    expect(await $('button[aria-label="时间线"]').isExisting()).toBe(false);
+    expect(await $('button[aria-label="Timeline"]').isExisting()).toBe(false);
     expect(await $('[data-testid="virtual-project-menu"]').isExisting()).toBe(true);
-    expect(await $("aside").$("button=添加连接").isExisting()).toBe(false);
+    expect(await $("aside").$("button=Add connection").isExisting()).toBe(false);
     for (const section of [projects, tasks]) {
       const toggle = section.$('button[data-slot="collapsible-trigger"]');
       await toggle.click();
@@ -77,12 +80,12 @@ describe("虚拟项目", () => {
     ).toBe(true);
     await $('[data-testid="virtual-project-add"]').click();
     await $('[data-testid="virtual-project-name"]').waitForDisplayed();
-    expect(await $('[data-testid="virtual-project-device"]').getText()).toContain("此电脑");
+    expect(await $('[data-testid="virtual-project-device"]').getText()).toContain("This computer");
     expect(await $('[data-testid="virtual-project-type-next"]').isExisting()).toBe(false);
     await captureProjectDialogLayouts("form");
     expect(await $('[data-testid="virtual-project-root"]').isExisting()).toBe(false);
     expect(await $('[data-testid="virtual-project-browse"]').getText()).toMatch(
-      /可读取和编辑|can read and edit/,
+      /can read and edit/,
     );
     await browser.saveScreenshot(
       join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "virtual-project-editor.png"),
@@ -102,7 +105,7 @@ describe("虚拟项目", () => {
       });
     if (!(await sidebarExpanded())) {
       const sidebarToggle = $(
-        'button[aria-label="Toggle sidebar"], button[aria-label="切换侧边栏"]',
+        'button[aria-label="Toggle sidebar"], button[aria-label="Toggle sidebar"]',
       );
       await sidebarToggle.waitForClickable();
       await sidebarToggle.click();
@@ -116,7 +119,7 @@ describe("虚拟项目", () => {
     ).toBe("false");
     await tasks.$('button[data-slot="collapsible-trigger"]').click();
   });
-  it("VP20：项目图标、hover 三入口和右键操作保持一致", async function () {
+  it("VP20: project icon, hover entries and context menu actions stay consistent", async function () {
     this.timeout(90_000);
     const root = join(DEFAULT_WORKSPACE, ".zcode-e2e", "project-row-actions");
     const paths = [join(root, "one"), join(root, "two")] as const;
@@ -174,7 +177,7 @@ describe("虚拟项目", () => {
     await browser.waitUntil(async () => (await panel.getText()).includes("E2E_PROJECT_ROW_1.txt"));
     expect(await panel.getText()).not.toContain("E2E_PROJECT_ROW_0.txt");
     await panel
-      .$('.//button[normalize-space(.)="返回任务" or normalize-space(.)="Back to tasks"]')
+      .$('.//button[normalize-space(.)="Back to tasks" or normalize-space(.)="Back to tasks"]')
       .click();
     await panel.waitForExist({ reverse: true });
     await row.click({ button: "right" });
@@ -184,7 +187,7 @@ describe("虚拟项目", () => {
     await panel.waitForDisplayed();
     await browser.waitUntil(async () => (await panel.getText()).includes("E2E_PROJECT_ROW_0.txt"));
     await panel
-      .$('.//button[normalize-space(.)="返回任务" or normalize-space(.)="Back to tasks"]')
+      .$('.//button[normalize-space(.)="Back to tasks" or normalize-space(.)="Back to tasks"]')
       .click();
     await row.moveTo();
     await row.$('[data-testid="virtual-project-create-task"]').click();
@@ -195,11 +198,11 @@ describe("虚拟项目", () => {
     await original.$('[data-testid="virtual-project-create-task"]').click();
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 30_000);
   });
-  it("VP22：已有目录列表、设为主要与编辑器删除", async function () {
+  it("VP22: existing folder list, set as primary and editor delete", async function () {
     this.timeout(90_000);
     const testHome = process.env.ZCODE_E2E_HOME_DIR!;
     if (!basename(testHome).startsWith("zcode-virtual-project-e2e-"))
-      throw new Error("隔离 HOME required");
+      throw new Error("isolated HOME required");
     const paths = ["test-aaa", "test-bbb"].map((name) =>
       join(DEFAULT_WORKSPACE, ".zcode-e2e", "project-editor", name),
     );
@@ -217,7 +220,7 @@ describe("虚拟项目", () => {
       await $(
         '[data-testid="virtual-project-roots"] [data-testid="virtual-project-browse"]',
       ).getText(),
-    ).toMatch(/添加文件夹|Add folder/);
+    ).toMatch(/Add folder/);
     expect(await $('[role="dialog"] input[type="radio"]').isExisting()).toBe(false);
     await $('[data-testid="virtual-project-save"]').click();
     await $('[data-testid="project-folder-trust-confirm"]').waitForDisplayed();
@@ -258,7 +261,7 @@ describe("虚拟项目", () => {
           () => (document.querySelector("aside")?.getBoundingClientRect().width ?? 0) < 200,
         )
       ) {
-        await $('button[aria-label="Toggle sidebar"], button[aria-label="切换侧边栏"]').click();
+        await $('button[aria-label="Toggle sidebar"], button[aria-label="Toggle sidebar"]').click();
         await browser.waitUntil(() =>
           browser.execute(
             () => (document.querySelector("aside")?.getBoundingClientRect().width ?? 0) > 200,
@@ -271,7 +274,7 @@ describe("虚拟项目", () => {
       await reopened[1]!.$('[data-testid="virtual-project-remove-folder"]').click();
       await reopened[0]!.$('[data-testid="virtual-project-primary"]').waitForDisplayed();
       await $('[role="dialog"]')
-        .$('.//button[normalize-space(.)="取消" or normalize-space(.)="Cancel"]')
+        .$('.//button[normalize-space(.)="Cancel" or normalize-space(.)="Cancel"]')
         .click();
       await $('[role="dialog"]').waitForExist({ reverse: true });
       expect(primary()).toBe(paths[1]);
@@ -280,6 +283,9 @@ describe("虚拟项目", () => {
       await waitForWorkspaceApp(paths[1]!, 30_000);
       await edit();
       await $('[data-testid="virtual-project-editor-delete"]').click();
+      // Deleting from the editor confirms first (ISSUE-028).
+      await $('[data-testid="confirm-dialog-confirm"]').waitForDisplayed();
+      await $('[data-testid="confirm-dialog-confirm"]').click();
       await $('[role="dialog"]').waitForExist({ reverse: true });
       await project.waitForExist({ reverse: true });
       expect(db.prepare("SELECT deleted FROM projects WHERE project_id=?").get(id)?.deleted).toBe(
@@ -299,12 +305,12 @@ describe("虚拟项目", () => {
       await waitForWorkspaceApp(DEFAULT_WORKSPACE, 30_000);
     }
   });
-  it("VP12：Bot 访问范围选择项目 ID，同 cwd 的项目分别保存", async function () {
+  it("VP12: bot access scope selects project IDs; projects sharing a cwd are saved separately", async function () {
     this.timeout(90_000);
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
     const testHome = process.env.ZCODE_E2E_HOME_DIR!;
     if (!testHome || !basename(testHome).startsWith("zcode-virtual-project-e2e-"))
-      throw new Error("隔离 HOME required");
+      throw new Error("isolated HOME required");
     const cwd = join(testHome, "E2E_VP12_SHARED_ROOT");
     await mkdir(cwd, { recursive: true });
     const names = ["E2E_VP12_A", "E2E_VP12_B"];
@@ -319,7 +325,7 @@ describe("虚拟项目", () => {
       const project = $(`[data-project-name="${name}"]`);
       await project.waitForDisplayed();
       const projectId = await project.getAttribute("data-project-id");
-      if (!projectId) throw new Error("项目 ID 缺失");
+      if (!projectId) throw new Error("project ID missing");
       ids.push(projectId);
     }
     const configPath = join(testHome, ".zcode/v2/bot-config.v3.json");
@@ -349,7 +355,7 @@ describe("虚拟项目", () => {
       }),
     );
     const remoteControl = $(
-      'button[aria-label="移动端远程控制"], button[aria-label="Mobile remote control"]',
+      'button[aria-label="Mobile remote control"], button[aria-label="Mobile remote control"]',
     );
     await remoteControl.waitForClickable();
     await remoteControl.click();
@@ -363,9 +369,9 @@ describe("虚拟项目", () => {
       await browser.waitUntil(async () => (await $$('[role="option"]').length) > 0);
       await browser.execute(() => {
         const item = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(
-          (node) => /指定项目|Selected projects/.test(node.textContent ?? ""),
+          (node) => /Selected projects/.test(node.textContent ?? ""),
         );
-        if (!item) throw new Error("指定项目选项缺失");
+        if (!item) throw new Error("specified project option missing");
         item.click();
       });
       for (let index = 0; index < names.length; index++) {
@@ -396,7 +402,7 @@ describe("虚拟项目", () => {
       await browser.keys("Escape");
     }
   });
-  it("VP01：首个窗口可用时 app 与 CLI 两库的版本化迁移已经完成", async function () {
+  it("VP01: once the first window is usable, versioned migrations for the app and CLI databases are complete", async function () {
     this.timeout(60_000);
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
     const testHome = process.env.ZCODE_E2E_HOME_DIR;
@@ -416,7 +422,7 @@ describe("虚拟项目", () => {
       }
     }
   });
-  it("VP08：离线远端项目只显示缓存，移除入口后重载不复活", async function () {
+  it("VP08: offline remote project shows only the cache; after removing the entry, reload does not revive it", async function () {
     this.timeout(90_000);
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
     const testHome = process.env.ZCODE_E2E_HOME_DIR;
@@ -523,7 +529,7 @@ describe("虚拟项目", () => {
       check.close();
     }
   });
-  it("VP08/VP17/VP18 URL：元数据无 tab，远端任务执行、重开与 CLI 冷恢复", async function () {
+  it("VP08/VP17/VP18 URL: metadata without tab; remote task execution, reopen and CLI cold recovery", async function () {
     this.timeout(120_000);
     const testHome = process.env.ZCODE_E2E_HOME_DIR;
     if (!testHome || !basename(testHome).startsWith("zcode-virtual-project-e2e-"))
@@ -720,7 +726,7 @@ describe("虚拟项目", () => {
         (await remoteFiles.getText()).includes("E2E_PROJECT_REMOTE_FILE.txt"),
       );
       await remoteFiles
-        .$('.//button[normalize-space(.)="返回任务" or normalize-space(.)="Back to tasks"]')
+        .$('.//button[normalize-space(.)="Back to tasks" or normalize-space(.)="Back to tasks"]')
         .click();
       await renamed.moveTo();
       await renamed.$('[data-testid="virtual-project-create-task"]').click();
@@ -963,7 +969,7 @@ describe("虚拟项目", () => {
     await browser.electron.restoreAllMocks();
     await clearAppData();
   });
-  it("VP05：连续全局新建分配不同目录，草稿保持未归类", async function () {
+  it("VP05: consecutive global new sessions get different folders; drafts stay unassigned", async function () {
     this.timeout(60_000);
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
     const readDraft = () =>
@@ -1015,7 +1021,7 @@ describe("虚拟项目", () => {
     });
     expect((await readDraft()).projectId).toBeNull();
   });
-  it("新建空项目、修改名称、软删除后从同 roots 新建恢复", async function () {
+  it("create an empty project, rename it, soft-delete it, then recreate from the same roots to restore", async function () {
     this.timeout(120_000);
     await $('[data-testid="project-section"]').waitForDisplayed();
     await openLocalProjectEditor();
@@ -1041,6 +1047,9 @@ describe("虚拟项目", () => {
       button: "right",
     });
     await $('[data-testid="virtual-project-delete"]').click();
+    // Project deletion is confirmed first (ISSUE-028).
+    await $('[data-testid="confirm-dialog-confirm"]').waitForDisplayed();
+    await $('[data-testid="confirm-dialog-confirm"]').click();
     await $('[data-project-name="E2E_VP04_Renamed"]').waitForDisplayed({ reverse: true });
     await openLocalProjectEditor();
     await $('[data-testid="virtual-project-name"]').setValue("E2E_VP04_Restored");
@@ -1050,11 +1059,11 @@ describe("虚拟项目", () => {
     await restored.waitForDisplayed();
     expect(await restored.getAttribute("data-project-id")).toBe(projectId);
   });
-  it("VP11：设置目录来自去重 roots，未打开的目录可以选择", async function () {
+  it("VP11: settings folders come from deduplicated roots; unopened folders can be selected", async function () {
     this.timeout(90_000);
     const testHome = process.env.ZCODE_E2E_HOME_DIR!;
     if (!basename(testHome).startsWith("zcode-virtual-project-e2e-"))
-      throw new Error("隔离 HOME required");
+      throw new Error("isolated HOME required");
     const roots = [join(testHome, "E2E_VP11_A"), join(testHome, "E2E_VP11_B")];
     await Promise.all(roots.map((path) => mkdir(path, { recursive: true })));
     for (const [name, paths] of [
@@ -1114,7 +1123,7 @@ describe("虚拟项目", () => {
             labels.some((label) => label.includes(root)),
           );
         },
-        { timeout: 10_000, timeoutMsg: "Hooks 目录菜单尚未显示 root 选项" },
+        { timeout: 10_000, timeoutMsg: "Hooks folder menu does not show the root option yet" },
       );
       expect(labels.filter((label) => label.includes("E2E_VP11_A"))).toHaveLength(1);
       expect(labels.filter((label) => label.includes("E2E_VP11_B"))).toHaveLength(1);
@@ -1123,7 +1132,7 @@ describe("虚拟项目", () => {
       await clickTestIdByDom(TID_SETTINGS_BACK_BUTTON);
     }
   });
-  it("VP10：定时表单选择空 roots 虚拟项目，选项不依赖打开目录", async function () {
+  it("VP10: scheduled form selects a virtual project with empty roots; options do not depend on opened folders", async function () {
     this.timeout(90_000);
     for (const name of ["E2E_VP10_A", "E2E_VP10_B"]) {
       await openLocalProjectEditor();
@@ -1218,7 +1227,7 @@ async function captureProjectDialogLayouts(stage: string) {
   const original = await browser.execute(() => {
     const actions = (window as typeof window & { __testActions?: { getTheme(): string } })
       .__testActions;
-    if (!actions) throw new Error("缺少主题测试入口");
+    if (!actions) throw new Error("theme test entry missing");
     return { width: innerWidth, theme: actions.getTheme() };
   });
   const setTheme = async (theme: string) => {
@@ -1226,7 +1235,7 @@ async function captureProjectDialogLayouts(stage: string) {
       const actions = (
         window as typeof window & { __testActions?: { setTheme(value: string): void } }
       ).__testActions;
-      if (!actions) throw new Error("缺少主题测试入口");
+      if (!actions) throw new Error("theme test entry missing");
       actions.setTheme(value);
     }, theme);
     await browser.waitUntil(() =>

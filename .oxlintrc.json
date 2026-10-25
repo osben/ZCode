@@ -7,11 +7,11 @@
   },
   "overrides": [
     {
-      // 本次上游整合保留既有职责完整的实现；这些文件超 800 行只告警，不机械拆分。
+      // Existing large implementations kept as warnings only; they are not split mechanically in this sync.
       "files": [
-        // 插件市场沿用上游存量大文件，只补充目录字段投影；不为行数机械拆分安装流程。
+        // Marketplace keeps the upstream large-file shape and only adds directory field projection.
         "**/apps/zcode-cli/packages/adapters/src/plugins/marketplace.ts",
-        // MCP 连接入口沿用上游存量实现；连接屏障修复不为行数重排整个 adapter。
+        // MCP connection entry keeps the upstream implementation; the connection barrier fix does not reflow the adapter.
         "**/apps/zcode-cli/packages/adapters/src/mcp/index.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/plugins.ts",
         "**/apps/zcode-cli/packages/adapters/src/storage/session-store/migrations.ts",
@@ -19,17 +19,35 @@
         "**/apps/zcode-cli/packages/bootstrap/src/app/create-app.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/app/session-facade.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts",
+        "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts",
+        "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/transcript-hydration.ts",
+        "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/conversation-topic-publisher.ts",
+        "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/cold-event-merge.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol/session-mapper.ts",
         "**/apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts",
         "**/apps/zcode-cli/packages/contracts/src/interfaces/session-store.port.ts",
+        // Already over the limit at origin/integration; the 3.16.1 sync keeps these shapes and only warns.
+        "**/apps/zcode-cli/packages/adapters/src/fs/index.ts",
+        "**/apps/zcode-cli/packages/adapters/src/model/runner-stream.ts",
+        "**/apps/zcode-cli/packages/adapters/src/plugins/index.ts",
+        "**/apps/zcode-cli/packages/contracts/src/model/index.ts",
+        "**/apps/zcode-cli/packages/core/src/runtime/methods/session-fork.ts",
+        "**/apps/zcode-cli/packages/core/src/tool/executor/background-tasks.ts",
+        "**/apps/zcode-cli/packages/debug/server/analyzer.ts",
+        "**/apps/zcode-cli/packages/debug/src/App.tsx",
+        "**/apps/zcode-cli/packages/telemetry/src/agent-trace-runtime.ts",
+        // Telemetry lints with --no-ignore from its package directory, so it matches the cwd-relative path.
+        "src/agent-trace-runtime.ts",
         "**/apps/zcode-cli/packages/core/src/runtime/methods/steering.ts",
         "**/apps/zcode-cli/packages/core/src/runtime/methods/turn.ts",
         "**/apps/zcode-cli/packages/core/src/runtime/methods/turn-model-step.ts",
-        // core 包内以 --no-ignore 运行时，oxlint 按 cwd 相对路径匹配同一组存量文件。
+        // Inside the core package, oxlint runs with --no-ignore and matches the same files by cwd-relative paths.
         "src/runtime/methods/steering.ts",
         "src/runtime/methods/turn.ts",
         "src/runtime/methods/turn-model-step.ts",
+        "src/runtime/methods/session-fork.ts",
+        "src/tool/executor/background-tasks.ts",
         "**/packages/ui/src/remote-connection-flow/index.ts"
       ],
       "rules": {
@@ -37,8 +55,8 @@
       }
     },
     {
-      // 测试文件天然会堆叠大量场景与断言，继续复用生产代码的行数上限会造成误报，
-      // 因此只对 test/spec 文件关闭 max-lines，避免放宽业务代码约束。
+      // Test files naturally accumulate scenarios and assertions, so the production line limit would create false positives.
+      // Disable max-lines only for test/spec files to avoid relaxing the business-code constraint.
       "files": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx"],
       "rules": {
         "max-lines": "off"

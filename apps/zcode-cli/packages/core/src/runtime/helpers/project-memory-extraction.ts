@@ -8,10 +8,12 @@ import {
 import { runMemoryAgentLoop } from "../../memory/memory-agent-loop.js";
 import { scanMemoryManifest } from "../../memory/recall/index.js";
 import type { AgentRuntimeInternal } from "../internal.js";
+import { resolveMainAgentSystemPromptOverrides } from "../methods/context.js";
 import {
   prepareProjectMemoryAgentRequest,
   captureProjectMemoryAgentContext,
   createProjectMemoryAgentToolExecutor,
+  recordProjectMemoryAgentModelUsageFact,
   type ProjectMemoryAgentContext,
 } from "./project-memory-agent.js";
 import { resolveEnabledProjectMemoryRoot } from "./project-memory.js";
@@ -34,9 +36,9 @@ export function scheduleProjectMemoryExtraction(
   input: { model: ProjectMemoryAgentContext["model"]; traceContext: TraceContext },
 ): void {
   if (runtime.shuttingDown) return;
-  // 原因：headless 只关闭自动 Extraction，必须在读取快照或访问文件前返回，避免后台副作用。
+  // Headless mode disables only automatic Extraction; return before reading snapshots or accessing files to avoid background side effects.
   if (runtime.config.memory?.extractionEnabled === false) return;
-  // Bash cd 只改变执行 cwd，project Memory 身份必须继续使用会话 workspace root。
+  // Bash cd changes only the execution cwd; project Memory identity must continue to use the session workspace root.
   const memoryRoot = resolveEnabledProjectMemoryRoot(runtime.config, runtime.workspaceRoot);
   if (!memoryRoot) return;
   if (runtime.isRemoteWorkspace()) return;
@@ -86,7 +88,7 @@ export async function drainMemoryExtractions(
 ): Promise<void> {
   const scheduler = this.memoryExtractionScheduler;
   if (!scheduler) return;
-  // benchmark 显式等待自然结束；普通 session close 仍保留原有有界取消清理。
+  // Benchmarks explicitly wait for natural completion; ordinary session close retains its existing bounded cancellation cleanup.
   if (timeoutMs === null) {
     await scheduler.drain();
     return;
@@ -137,6 +139,7 @@ async function executeProjectMemoryExtraction(
       const prompt = buildMemoryExtractionPrompt({
         manifest,
         messageCount: input.messageCount,
+        override: resolveMainAgentSystemPromptOverrides(runtime.config)?.["memory-extraction"],
       });
       const request = prepareProjectMemoryAgentRequest(input.snapshot, prompt);
       const executor = createProjectMemoryAgentToolExecutor(runtime, input.snapshot);
@@ -149,6 +152,13 @@ async function executeProjectMemoryExtraction(
             traceContext: input.snapshot.traceContext,
           }),
         maxTurns: EXTRACTION_MAX_TURNS,
+        onRequestSettled: (request) =>
+          recordProjectMemoryAgentModelUsageFact(
+            runtime,
+            input.snapshot,
+            request,
+            "project_memory_extract",
+          ),
         request,
         model: input.snapshot.model,
         rootDir: input.snapshot.memoryRoot,

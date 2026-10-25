@@ -84,7 +84,7 @@ afterEach(() => {
 });
 
 describe("SourceServerManagementPanel", () => {
-  it("当前连接在第二行，默认连接留在其他连接；最近项目按打开时间倒序且可展开全部", async () => {
+  it("the current connection sits on the second line with the default connection under other connections; recent projects sort by open time and expand to all", async () => {
     const snapshot = identityPendingSnapshot("installed", "other");
     snapshot.states[0]!.state = "offline";
     snapshot.states[1]!.state = "online";
@@ -134,7 +134,8 @@ describe("SourceServerManagementPanel", () => {
       [...container.querySelectorAll("[data-device-project]")].map((row) =>
         row.getAttribute("aria-label"),
       );
-    // 最近打开的排前面，默认只露出三行；不能再出现无法点击的 +N。
+    // Most recently opened first, only three rows shown by default; the
+    // unclickable +N must not reappear.
     expect(projectNames()).toEqual(["beta", "gamma", "delta"]);
     expect(screen.queryByText("+1")).toBeNull();
     const betaRow = container.querySelector('[data-device-project][aria-label="beta"]')!;
@@ -154,7 +155,7 @@ describe("SourceServerManagementPanel", () => {
     expect(screen.getByText("settings.source.defaultProfile")).toBeTruthy();
   });
 
-  it("单条连接不显示当前/默认标签，连接行展示远端版本", async () => {
+  it("a single connection shows no current/default badges and the line shows the remote version", async () => {
     const snapshot = identityPendingSnapshot("installed", "preferred");
     snapshot.states[0]!.state = "online";
     snapshot.servers[0]!.lastSeenVersion = "v1.4.2";
@@ -177,7 +178,7 @@ describe("SourceServerManagementPanel", () => {
     );
   });
 
-  it("可选更新稍后在面板重挂和重连后保持隐藏，新版本重新显示", async () => {
+  it("an optional update deferred with Later stays hidden across panel remounts and reconnects; a new version shows again", async () => {
     const snapshot = identityPendingSnapshot("installed", "preferred");
     snapshot.states[0] = {
       ...snapshot.states[0]!,
@@ -203,7 +204,7 @@ describe("SourceServerManagementPanel", () => {
     expect(await screen.findByRole("button", { name: "updateDialog.later" })).toBeTruthy();
   });
 
-  it("强制更新确认列出 Host 返回的运行任务，取消不发送 force=true", async () => {
+  it("the forced-update confirmation lists running tasks returned by the Host; cancelling does not send force=true", async () => {
     const snapshot = identityPendingSnapshot("installed", "preferred");
     snapshot.states[0] = {
       ...snapshot.states[0]!,
@@ -238,7 +239,7 @@ describe("SourceServerManagementPanel", () => {
     expect(updateSource.mock.calls).toEqual([[{ profileId: "preferred", force: false }]]);
   });
 
-  it("离开设置后更新失败，toast 详情通过稳定导航重新打开设备", async () => {
+  it("an update failing after leaving settings shows a toast whose details reopen the device via stable navigation", async () => {
     const snapshot = identityPendingSnapshot("installed", "preferred");
     snapshot.states[0] = {
       ...snapshot.states[0]!,
@@ -273,7 +274,7 @@ describe("SourceServerManagementPanel", () => {
     expect(onShowUpdateDetails).toHaveBeenCalledWith("old-source");
   });
 
-  it("未完成连接展开后可读取最近日志，清理时跳过刚识别的设备", async () => {
+  it("unfinished connections expose recent logs when expanded; cleanup skips the just-recognized device", async () => {
     const snapshot = identityPendingSnapshot("installed", "preferred");
     snapshot.servers = [];
     snapshot.profiles[0]!.profileId = "17ef20b3-622d-4a53-98c1-0cdff29f3e6d";
@@ -314,7 +315,7 @@ describe("SourceServerManagementPanel", () => {
     expect(removeProfile).not.toHaveBeenCalled();
   });
 
-  it("更新中覆盖连接记录保留的旧错误", async () => {
+  it("updating overrides the stale error retained on the connection record", async () => {
     const snapshot = identityPendingSnapshot("installed", "preferred");
     snapshot.states[0]!.state = "updating";
     snapshot.profiles[0]!.lastConnectError = "OLD_INSTALL_FAILURE";
@@ -328,7 +329,7 @@ describe("SourceServerManagementPanel", () => {
     expect(screen.queryByText("settings.source.lastConnectError")).toBeNull();
   });
 
-  it("设备卡修复产生错误的连接，而不是离线的首选连接", async () => {
+  it("the device card repairs the connection that errored, not the offline preferred connection", async () => {
     const snapshot = identityPendingSnapshot("installed", "other");
     snapshot.states[1] = {
       profileId: "other",
@@ -349,7 +350,7 @@ describe("SourceServerManagementPanel", () => {
   });
 
   it.each(["remote-permission-denied", "remote-host-not-found"] as const)(
-    "%s 的主操作查看详情或编辑主机，不会盲目重连",
+    "%s primary action opens details or edits the host instead of blindly reconnecting",
     async (errorCode) => {
       const snapshot = identityPendingSnapshot("installed", "preferred");
       snapshot.states[0] = {
@@ -386,7 +387,7 @@ describe("SourceServerManagementPanel", () => {
     },
   );
 
-  it("本机过旧时显示更新桌面端，仍可打开连接配置", async () => {
+  it("when the local app is too old it shows update desktop while the connection config still opens", async () => {
     const snapshot = identityPendingSnapshot("installed", "preferred");
     snapshot.states[0] = {
       profileId: "preferred",
@@ -414,7 +415,7 @@ describe("SourceServerManagementPanel", () => {
     expect(screen.queryByRole("button", { name: "remote.action.update-server" })).toBeNull();
   });
 
-  it("更新桌面提示旁的备用连接也防重，并接住异步失败", async () => {
+  it("the fallback connection next to the update-desktop hint also guards against double submits and catches async failures", async () => {
     const snapshot = identityPendingSnapshot("installed", "preferred");
     snapshot.states[0] = {
       profileId: "preferred",
@@ -449,7 +450,7 @@ describe("SourceServerManagementPanel", () => {
     expect(screen.getByRole("alert").textContent).toContain("settings.source.operationFailed");
   });
 
-  it("关闭再打开设置仍可查询设备最近一次失败日志", async () => {
+  it("closing and reopening settings still queries the device's last failure log", async () => {
     const snapshot = identityPendingSnapshot("installed", "preferred");
     snapshot.states[0]!.state = "failed";
     const stateEmitter = new Emitter();
@@ -468,7 +469,8 @@ describe("SourceServerManagementPanel", () => {
       getRecentOperationLogs,
       onDidChangeState: stateEmitter.event,
     } as never;
-    // 失败设备的最近日志默认展开；用户手动收起后以用户选择为准。
+    // A failed device's recent log expands by default; after the user collapses
+    // it, the user's choice wins.
     const first = render(createElement(SourceServerManagementPanel, { management }));
     await waitFor(() => expect(screen.getByText("Connection refused")).toBeTruthy());
     fireEvent.click(screen.getByText("settings.source.recentLog"));
@@ -485,7 +487,7 @@ describe("SourceServerManagementPanel", () => {
     ["installed", "alternative"],
     ["uninstalled", "alternative"],
   ] as const)(
-    "%s 设备的 %s 线路换代确认始终可达；取消无副作用，确认使用原服务",
+    "identity-change confirmation for the %s route of a %s device is always reachable; cancel has no side effects and confirm uses the original service",
     async (installState, pendingProfileId) => {
       const snapshot = identityPendingSnapshot(installState, pendingProfileId);
       let complete!: (value: SourceServerManagementSnapshot) => void;
@@ -532,7 +534,7 @@ describe("SourceServerManagementPanel", () => {
     },
   );
 
-  it("已卸载设备的多条待确认线路无需展开即可分别操作，首选线路优先", async () => {
+  it("multiple pending identity-change routes on an uninstalled device are individually actionable without expanding; the preferred route comes first", async () => {
     const snapshot = identityPendingSnapshot("uninstalled", "alternative");
     snapshot.states = snapshot.states.map((state) => ({
       ...state,
@@ -560,7 +562,7 @@ describe("SourceServerManagementPanel", () => {
     await waitFor(() => expect(confirmIdentityChange).toHaveBeenLastCalledWith("alternative"));
   });
 
-  it("身份确认失败显示错误并保留入口，不自动重试或伪装已恢复", async () => {
+  it("identity confirmation failure shows an error and keeps the entry; no auto-retry or faked recovery", async () => {
     const snapshot = identityPendingSnapshot("uninstalled", "preferred");
     const confirmIdentityChange = vi.fn(async () => {
       throw new Error("connection lost");
@@ -624,7 +626,7 @@ describe("SourceServerManagementPanel", () => {
     );
   });
 
-  it("加载完成前只有加载态，完成后空态可新建连接", async () => {
+  it("only the loading state before loading completes; the empty state after completion allows creating a connection", async () => {
     let complete!: (snapshot: SourceServerManagementSnapshot) => void;
     const create = vi.fn();
     render(
@@ -648,7 +650,7 @@ describe("SourceServerManagementPanel", () => {
     expect(create).toHaveBeenCalledOnce();
   });
 
-  it("开关等待保存时禁止重复提交，失败回滚并提示", async () => {
+  it("the switch blocks duplicate submits while saving, rolls back and toasts on failure", async () => {
     let reject!: (cause: Error) => void;
     const save = vi.fn(
       () =>
@@ -677,7 +679,7 @@ describe("SourceServerManagementPanel", () => {
     expect(screen.getByRole("alert").textContent).toContain("settings.source.operationFailed");
   });
 
-  it("断开无确认并显示任务继续提示，等待期间拒绝第二次断开", async () => {
+  it("disconnect needs no confirmation and shows the tasks-continue hint; a second disconnect is rejected while pending", async () => {
     const snapshot = identityPendingSnapshot("installed", "preferred");
     snapshot.states[0]!.state = "online";
     let complete!: () => void;
@@ -697,7 +699,8 @@ describe("SourceServerManagementPanel", () => {
       }),
     );
     const button = await screen.findByRole("button", { name: "remote.action.disconnect" });
-    // 任务继续提示只在断开按钮上说明，不再常驻占一行。
+    // The tasks-continue hint lives on the disconnect button only, no longer
+    // occupying a standing line.
     expect(button.getAttribute("title")).toBe("settings.source.disconnectHint");
     expect(screen.queryByText("settings.source.disconnectHint")).toBeNull();
     fireEvent.click(button);
@@ -708,7 +711,7 @@ describe("SourceServerManagementPanel", () => {
     await act(async () => complete());
   });
 
-  it("移除设备只列出该 Source 的已打开项目，定位回调携带 Source 身份", async () => {
+  it("removing a device lists only that Source's open projects; the locate callback carries the Source identity", async () => {
     const snapshot = identityPendingSnapshot("installed", "preferred");
     snapshot.states[0]!.state = "offline";
     const reveal = vi.fn();
@@ -754,7 +757,7 @@ describe("SourceServerManagementPanel", () => {
     expect(request.description).not.toContain("Project B");
   });
 
-  it("重新安装沿用此设备的连接档案，不打开空白新建表单", async () => {
+  it("reinstalling reuses this device's connection profile instead of opening a blank create form", async () => {
     const snapshot = identityPendingSnapshot("uninstalled", "preferred");
     snapshot.states = [];
     const connect = vi.fn();
@@ -776,7 +779,7 @@ describe("SourceServerManagementPanel", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("更新失败只出现一次错误说明", async () => {
+  it("an update failure shows the error explanation only once", async () => {
     const snapshot = identityPendingSnapshot("installed", "preferred");
     snapshot.states[0] = {
       profileId: "preferred",
@@ -799,7 +802,7 @@ describe("SourceServerManagementPanel", () => {
     expect(screen.getAllByText("remote.error.hostUnreachable")).toHaveLength(1);
   });
 
-  it("项目数量过滤 Source 级 conversation backing workspace", () => {
+  it("the project count filters out the Source-level conversation backing workspace", () => {
     expect(
       getProjectCount(
         {
@@ -1048,7 +1051,7 @@ describe("SourceServerManagementPanel", () => {
     screen.getByRole("button", { name: "common.more" });
   });
 
-  it("更新中覆盖旧的必须更新文案并展示明确进度", async () => {
+  it("updating overrides the stale update-required copy and shows explicit progress", async () => {
     const operationLogEmitter = new Emitter<{
       profileId: string;
       operation: "update";
@@ -1175,7 +1178,7 @@ describe("SourceServerManagementPanel", () => {
     expect(screen.getByDisplayValue("Dev")).toBeTruthy();
   });
 
-  it("启动尚未连接时，不把历史失败重新显示为当前故障", async () => {
+  it("before startup connects, historical failures are not re-shown as the current fault", async () => {
     const stateEmitter = new Emitter<SourceServerConnectionStateSnapshot>();
     const snapshot: SourceServerManagementSnapshot = {
       generation: 1,
@@ -1277,7 +1280,7 @@ describe("SourceServerManagementPanel", () => {
     expect(screen.getByRole("button", { name: "settings.source.setDefault" })).toBeTruthy();
   });
 
-  it("未识别连接只出现在默认折叠的未完成区域", async () => {
+  it("unrecognized connections appear only in the collapsed-by-default unfinished area", async () => {
     const snapshot: SourceServerManagementSnapshot = {
       generation: 1,
       profiles: [
@@ -1332,7 +1335,7 @@ describe("SourceServerManagementPanel", () => {
     expect(
       unfinished!.compareDocumentPosition(preferences) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    // 没有已识别设备时不显示设备列表标题。
+    // Without recognized devices, the device-list heading is not shown.
     expect(screen.queryByText("settings.source.devicesHeading")).toBeNull();
   });
 
@@ -1454,7 +1457,7 @@ describe("SourceServerManagementPanel", () => {
     );
 
     expect(await screen.findByText("settings.source.connectionHistoryNeedsAttention")).toBeTruthy();
-    expect(screen.queryByText(/产品边界/u)).toBeNull();
+    expect(screen.queryByText(/product boundary/iu)).toBeNull();
     expect(screen.queryByText("settings.source.migrationReport")).toBeNull();
     expect(screen.queryByText("settings.source.exportMigrationJson")).toBeNull();
 
@@ -1575,7 +1578,7 @@ describe("SourceServerManagementPanel", () => {
     await waitFor(() => expect(onDisconnectSource).toHaveBeenCalledWith("source-a"));
   });
 
-  it("离线设备的更多菜单仍提供「移除全部连接」并调用 Host 移除", async () => {
+  it("the offline device's more menu still offers removal and calls the Host removal", async () => {
     const snapshot: SourceServerManagementSnapshot = {
       generation: 1,
       profiles: [
@@ -1630,7 +1633,8 @@ describe("SourceServerManagementPanel", () => {
 
     expect(await screen.findByText("Build server")).toBeTruthy();
     fireEvent.pointerDown(screen.getByRole("button", { name: "common.more" }));
-    // 离线设备不在侧边栏展示，但移除只删本机记录，不依赖连接。
+    // The offline device is not shown in the sidebar, but removal only deletes
+    // local records and does not depend on the connection.
     expect(await screen.findByText("settings.source.removeSourceServer")).toBeTruthy();
     expect(screen.queryByText("settings.source.showInSidebar")).toBeNull();
     const menu = document.querySelector<HTMLElement>('[data-slot="dropdown-menu-content"]');
@@ -1642,7 +1646,7 @@ describe("SourceServerManagementPanel", () => {
   });
 });
 
-it("管理入口在快照到达后定位设备卡并消费一次意图，普通重挂不抢焦点", async () => {
+it("the management entry focuses the device card once the snapshot arrives and consumes the intent once; a plain remount does not steal focus", async () => {
   const snapshot = identityPendingSnapshot("installed", "preferred");
   const pending = Promise.withResolvers<typeof snapshot>();
   const management = {
@@ -1676,7 +1680,7 @@ it("管理入口在快照到达后定位设备卡并消费一次意图，普通�
   expect(document.activeElement?.getAttribute("data-source-server-card")).toBeNull();
 });
 
-it("设备操作按 Source 防重，无关设备与只读展开可继续，反序快照不回滚", async () => {
+it("device actions dedupe per Source; unrelated devices and read-only expansion continue; out-of-order snapshots do not roll back", async () => {
   const snapshot = identityPendingSnapshot("installed", "other");
   snapshot.states.forEach((state) => {
     state.state = "online";
@@ -1769,7 +1773,7 @@ it("设备操作按 Source 防重，无关设备与只读展开可继续，反�
   expect(screen.getByText("Second latest")).toBeTruthy();
 });
 
-it("管理失败设备只定位，显式详情意图才打开对话框且同设备可再次消费", async () => {
+it("managing a failed device only focuses it; an explicit details intent opens the dialog and the same device can consume it again", async () => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
     value: vi.fn(),
@@ -1801,34 +1805,38 @@ it("管理失败设备只定位，显式详情意图才打开对话框且同设�
   expect(await screen.findByRole("dialog")).toBeTruthy();
 });
 
-it.each([false, true])("可选更新不吞同设备连接失败原因（同 Profile：%s）", async (sameProfile) => {
-  const snapshot = identityPendingSnapshot("installed", "other");
-  snapshot.states[0] = {
-    ...snapshot.states[0]!,
-    state: "failed",
-    errorCode: "remote-host-unreachable",
-    error: "connect ECONNREFUSED",
-    updatedAt: 2,
-  };
-  snapshot.states[1] = { ...snapshot.states[1]!, state: "offline" };
-  Object.assign(snapshot.states[sameProfile ? 0 : 1]!, {
-    updateAvailability: "available",
-    availableVersion: "2.0.0",
-  });
-  render(
-    createElement(SourceServerManagementPanel, {
-      management: {
-        getSnapshot: async () => snapshot,
-        onDidChangeState: new Emitter().event,
-      } as never,
-    }),
-  );
-  await screen.findByText("Reinstalled server");
-  expect(screen.getByText("remote.error.hostUnreachable")).toBeTruthy();
-  if (!sameProfile) expect(screen.getByText("settings.source.updateAvailableVersion")).toBeTruthy();
-});
+it.each([false, true])(
+  "an optional update does not swallow the same device's connection failure reason (same profile: %s)",
+  async (sameProfile) => {
+    const snapshot = identityPendingSnapshot("installed", "other");
+    snapshot.states[0] = {
+      ...snapshot.states[0]!,
+      state: "failed",
+      errorCode: "remote-host-unreachable",
+      error: "connect ECONNREFUSED",
+      updatedAt: 2,
+    };
+    snapshot.states[1] = { ...snapshot.states[1]!, state: "offline" };
+    Object.assign(snapshot.states[sameProfile ? 0 : 1]!, {
+      updateAvailability: "available",
+      availableVersion: "2.0.0",
+    });
+    render(
+      createElement(SourceServerManagementPanel, {
+        management: {
+          getSnapshot: async () => snapshot,
+          onDidChangeState: new Emitter().event,
+        } as never,
+      }),
+    );
+    await screen.findByText("Reinstalled server");
+    expect(screen.getByText("remote.error.hostUnreachable")).toBeTruthy();
+    if (!sameProfile)
+      expect(screen.getByText("settings.source.updateAvailableVersion")).toBeTruthy();
+  },
+);
 
-it("同连接的可选更新稍后隐藏后仍展示连接失败原因", async () => {
+it("after the same connection's optional update is deferred, the connection failure reason still shows", async () => {
   const snapshot = identityPendingSnapshot("installed", "preferred");
   snapshot.states[0] = {
     ...snapshot.states[0]!,

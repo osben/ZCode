@@ -53,6 +53,7 @@ import type {
   ExecuteTurnOptions,
   PromptAdmissionOptions,
   PromptAdmissionReceipt,
+  ParsedDreamCommand,
   ParsedRewindCommand,
   PermissionDecisionResult,
   ResolvedTurnAttachment,
@@ -99,6 +100,15 @@ export interface AgentRuntimeTurnMethods {
   executeManualCompact(
     input: string,
     customInstructions: string | undefined,
+    turnId: TurnId,
+    turnTraceContext: TraceContext,
+    abortSignal?: AbortSignal,
+    inputId?: string,
+    model?: Model,
+  ): Promise<TurnResult>;
+  executeManualDream(
+    input: string,
+    command: ParsedDreamCommand,
     turnId: TurnId,
     turnTraceContext: TraceContext,
     abortSignal?: AbortSignal,

@@ -9,10 +9,12 @@ import { agentToolEntry } from "../src/tool/handlers/agent.js";
 import { amendWorkflowToolEntry } from "../src/tool/handlers/amend-workflow.js";
 import { createToolRegistry } from "../src/tool/registry.js";
 
-// 2026-09-21（docs/dynamic-workflow/authoring.md「The authoring surface」）：四个创作工具的描述
-// 收短到几百 token，facade 与写作规则搬进 dynamic-workflows 技能，由 resolveInput 上的技能门
-// 保证读过。描述只剩三件常驻的事——它是什么、何时（不）用、先读技能。这里的断言按关键词
-// 而非逐字：文案可以润色，路由信号不能丢，体量不能长回去。
+// 2026-09-21 (docs/dynamic-workflow/authoring.md "The authoring surface"): the four authoring tools'
+// descriptions were shortened to a few hundred tokens, and the facade and writing rules moved into the
+// dynamic-workflows skill, guaranteed to have been read by the skill gate on resolveInput. The descriptions
+// keep only three standing things — what it is, when (not) to use it, and to read the skill first. The
+// assertions here are keyword-based, not verbatim: the wording may be polished, the routing signals must not
+// be lost, and the size must not grow back.
 const DESCRIPTIONS = {
   AmendWorkflow: AMEND_WORKFLOW_TOOL_DESCRIPTION,
   CreateWorkflow: CREATE_WORKFLOW_TOOL_DESCRIPTION,
@@ -20,18 +22,18 @@ const DESCRIPTIONS = {
   SaveWorkflow: SAVE_WORKFLOW_TOOL_DESCRIPTION,
 } as const;
 
-/** 常驻描述的体量上限（字符）。此前 CreateWorkflow 一家就是 3.4 万字符；现在四家合计要在这之内。 */
+/** Size cap for the standing descriptions (characters). CreateWorkflow alone used to be 34k characters; the four together must now stay within this. */
 const MAX_DESCRIPTION_CHARS = 2_200;
 
 describe("authoring tool descriptions stay short and point at the skill", () => {
   for (const [name, description] of Object.entries(DESCRIPTIONS)) {
     it(`${name}: no facade, no rule book, a skill pointer, under budget`, () => {
       expect(description.length).toBeLessThan(MAX_DESCRIPTION_CHARS);
-      // facade 的 ambient 声明与写作规则清单都不再随每次请求重发。
+      // The facade's ambient declarations and the writing-rules list are no longer resent with every request.
       expect(description).not.toContain("declare ");
       expect(description).not.toContain("Authoring rules");
       expect(description).not.toContain("noUncheckedIndexedAccess");
-      // 每一家都点名技能与 Skill 工具，并说明门会拒绝。
+      // Each one names the skill and the Skill tool, and states that the gate refuses.
       expect(description).toContain(`\`${DYNAMIC_WORKFLOW_SKILL_NAME}\` skill`);
       expect(description).toContain("Skill tool");
       expect(description).toContain("refused until");
@@ -39,9 +41,10 @@ describe("authoring tool descriptions stay short and point at the skill", () => 
   }
 });
 
-// 桌面实测：用户明说「工作流」，模型仍然去调 Agent。根因是描述性谎言的组合——
-// CreateWorkflow 自述「placeholder / does NOT run anything」（引擎接线后从未更新），
-// 而 Agent 自荐「complex, multi-step tasks」，模型的理性选择就是 Agent。
+// Desktop observation: even when the user explicitly said "workflow", the model still called Agent. The root
+// cause was a combination of descriptive lies — CreateWorkflow described itself as
+// "placeholder / does NOT run anything" (never updated after the engine was wired up), while Agent advertised
+// itself for "complex, multi-step tasks", so the model's rational choice was Agent.
 describe("CreateWorkflow tool description", () => {
   it("不再自称 placeholder / 不执行", () => {
     const lowered = CREATE_WORKFLOW_TOOL_DESCRIPTION.toLowerCase();
@@ -59,22 +62,23 @@ describe("CreateWorkflow tool description", () => {
 
   it("给出 when-to-use，并把「点名即绑定」写进去", () => {
     expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("When to use");
-    expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("工作流");
-    // 简单委派仍归 Agent——形状助推的另一半，防止过度触发。
+    expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("in any language");
+    // Simple delegation still belongs to Agent — the other half of the shape nudge, preventing over-triggering.
     expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("Agent");
   });
 
-  it("点名即绑定是强制的：列出「use a workflow / 使用 workflow」这类措辞，并禁止以「太小」为由改道", () => {
-    // docs/dynamic-workflow/launch.md「Run introspection tools」的追记（2026-09-07）：原句只说
-    // 「use this tool」，模型仍会把小任务判成不值得开工作流而改走 Agent 或直接做。这里钉三个
-    // 信号：强制语气、用户会真正说出口的措辞、以及「大小只决定规模不决定是否」。
+  it("点名即绑定是强制的：列出「use a workflow / in any language」这类措辞，并禁止以「太小」为由改道", () => {
+    // Addendum in docs/dynamic-workflow/launch.md "Run introspection tools" (2026-09-07): the original wording
+    // only said "use this tool", and the model would still judge a small task as not worth a workflow and
+    // switch to Agent or do it directly. Three signals are pinned here: mandatory tone, wording users would
+    // actually say, and "size only decides the scale, not whether".
     expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("mandatory");
     expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("use a workflow");
-    expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("使用 workflow");
+    expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("in any language");
     expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("too small");
   });
 
-  // 用户裁决 2026-09-16：工作流只能由 `/workflow` 或明确请求发起，模型不得自行决定开一条。
+  // User ruling of 2026-09-16: workflows may only be started by `/workflow` or an explicit request; the model must not decide on its own to start one.
   it("只按点名路由：没有编排场景那一条，有明确的否定规则和替代动作", () => {
     expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).not.toContain("Multi-subagent orchestration");
     expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).not.toContain("deterministic control flow");
@@ -86,9 +90,10 @@ describe("CreateWorkflow tool description", () => {
     );
   });
 
-  // 路由规则留在描述里、不进技能：它决定的是「要不要调这个工具」，在技能加载之前就得被读到。
-  // 三条来源与「改文件再 path 回传」的回路也留一句——那是这个特性要消灭的重贴脚本代价
-  // （docs/dynamic-workflow/launch.md「Script files」），不能等到技能加载之后才知道。
+  // The routing rules stay in the description, not in the skill: they decide "whether to call this tool at
+  // all" and must be readable before the skill loads. The three sources and the "edit the file and pass back
+  // the path" loop also get a sentence — that is the repasted-script cost this feature exists to eliminate
+  // (docs/dynamic-workflow/launch.md "Script files"), which cannot wait until after the skill loads.
   it("留下三条来源、path 回路与 AmendWorkflow 的指路，说明 saved 免技能", () => {
     expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("exactly one source");
     expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("`saved`");
@@ -102,8 +107,9 @@ describe("CreateWorkflow tool description", () => {
   });
 });
 
-// docs/dynamic-workflow/launch.md「What the model is told」：修订的路由（修、扩、跑到一半就改、只改
-// 设定、恢复归 Resume）留在描述里；缓存、三态字段、script_unchanged 与确认规则在技能里。
+// docs/dynamic-workflow/launch.md "What the model is told": the amendment routing (fix, extend, change
+// mid-run, settings-only, and recovery goes to Resume) stays in the description; caching, tri-state fields,
+// script_unchanged, and confirmation rules live in the skill.
 describe("AmendWorkflow tool description", () => {
   it("说清何时修订而不是重建、不要先停不要等、只改设定不带脚本、恢复归 ResumeWorkflowRun", () => {
     expect(AMEND_WORKFLOW_TOOL_DESCRIPTION).toContain("supersedes the old one");
@@ -113,13 +119,13 @@ describe("AmendWorkflow tool description", () => {
     expect(AMEND_WORKFLOW_TOOL_DESCRIPTION).toContain("Do not TaskStop it first");
     expect(AMEND_WORKFLOW_TOOL_DESCRIPTION).toContain("neither `path` nor `script`");
     expect(AMEND_WORKFLOW_TOOL_DESCRIPTION).toContain("ResumeWorkflowRun");
-    // 门的边界写在描述里：只有带脚本的修订才需要技能。
+    // The gate's boundary is written in the description: only script-carrying amendments need the skill.
     expect(AMEND_WORKFLOW_TOOL_DESCRIPTION).toContain("a settings-only call is not");
     expect(AMEND_WORKFLOW_TOOL_DESCRIPTION).not.toContain("in flight starts again");
   });
 
-  // 第 4 环（docs/design/v2/tool/00-tool-change-chain.md）：provider-visible 的那一份必须真的
-  // 经 ToolRegistry.toContracts() 投影出去，否则改了描述模型也看不见。
+  // Ring 4 (docs/design/v2/tool/00-tool-change-chain.md): the provider-visible copy must really be projected
+  // through ToolRegistry.toContracts(), otherwise the model never sees a changed description.
   it("经 ToolRegistry.toContracts() 投影给模型", () => {
     const registry = createToolRegistry();
     registry.register(amendWorkflowToolEntry);
@@ -129,8 +135,8 @@ describe("AmendWorkflow tool description", () => {
   });
 });
 
-// docs/dynamic-workflow/launch.md「`SaveWorkflow`」：唯一一条必须在决定调不调之前就看见的规则——
-// 绝不主动保存——留在描述里。
+// docs/dynamic-workflow/launch.md "`SaveWorkflow`": the one rule that must be seen before deciding whether to
+// call it — never save unsolicited — stays in the description.
 describe("SaveWorkflow tool description", () => {
   it("常驻「绝不主动保存」，并点名 script_path 是不重吐脚本的那条路", () => {
     expect(SAVE_WORKFLOW_TOOL_DESCRIPTION).toContain("NEVER call this tool unsolicited");
@@ -141,20 +147,22 @@ describe("SaveWorkflow tool description", () => {
 
 describe("facade prose", () => {
   it("不再把 declare 措辞写成作者指引", () => {
-    // facade 散文曾写「an interface declared in this script」，和上方那些 ambient
-    // `declare` 一起构成比旧 RULES 措辞更强的诱导。散文可改，关键字不可改。
+    // The facade prose once said "an interface declared in this script", which together with the ambient
+    // `declare` items above formed an even stronger pull than the old RULES wording. The prose may change; the
+    // keywords must not.
     expect(FACADE_DTS).not.toContain("declared in");
     expect(FACADE_DTS).toContain("an interface you define in");
     expect(FACADE_DTS).toContain('no "declare" modifier');
   });
 
   it("ambient declare 关键字仍然完整（编译器要的真 d.ts）", () => {
-    // 散文改写不得动关键字：这些是 facade 作为 .d.ts 被 createWorkflowProgram
-    // 喂进虚拟 host 的前提，少一个就是编译期 API 缺失。
+    // The prose rewrite must not touch keywords: they are the precondition for the facade to be fed into the
+    // virtual host as a .d.ts by createWorkflowProgram; missing one is a compile-time API gap.
     //
-    // 期望数量由下面这份清单**推导**，不是一个魔法数字。原先写死的 8 会在每次新增原语时
-    // 变成一处必须同步的编辑，而它要防的其实是「散文改写把某个 declare 弄丢了」——
-    // 推导出来的数量照样防得住，还多防一条：清单里漏登记一个新声明也会被抓到。
+    // The expected count is **derived** from the list below, not a magic number. The previously hard-coded 8
+    // would become a mandatory synchronized edit every time a new primitive was added, while what it actually
+    // guards against is "the prose rewrite losing some declare" — the derived count guards against that just
+    // as well, plus one more thing: a new declaration missing from the list is also caught.
     const declarations = [
       "declare interface Node<T>",
       "declare interface AgentPersona",
@@ -163,7 +171,7 @@ describe("facade prose", () => {
       "declare const args",
       "declare function log(",
       "declare function report(",
-      // docs/dynamic-workflow/authoring.md「Declaring a dashboard」：内容成员 + 四种预置看板的 spec。
+      // docs/dynamic-workflow/authoring.md "Declaring a dashboard": content members + the specs of the four preset boards.
       "declare interface ArtifactRef",
       "declare interface ArtifactOptions",
       "declare interface ArtifactFileOptions",
@@ -181,14 +189,14 @@ describe("facade prose", () => {
       "declare const git",
       "declare interface WorldRunResult",
       "declare const world",
-      // docs/dynamic-workflow/authoring.md「Streams: `channel` and `future`」：facade/dts-stream.ts 段。
+      // docs/dynamic-workflow/authoring.md "Streams: `channel` and `future`": the facade/dts-stream.ts section.
       "declare interface Channel<T>",
       "declare function channel<T>(",
       "declare function future<T>(",
-      // docs/dynamic-workflow/authoring.md「Choosing a model per subagent」：facade/dts-model.ts 段。
+      // docs/dynamic-workflow/authoring.md "Choosing a model per subagent": the facade/dts-model.ts section.
       "declare class ModelRef",
       "declare function model(",
-      // docs/dynamic-workflow/authoring.md「Holes: `hole<T>()`」：三个重载（提示 / 函数体 / 两者）。
+      // docs/dynamic-workflow/authoring.md "Holes: `hole<T>()`": the three overloads (prompt / body / both).
       "declare function hole<T>(name: string, prompt?: string): Promise<T>;",
       "declare function hole<T>(name: string, body: () => Promise<T>): Promise<T>;",
       "declare function hole<T>(name: string, prompt: string, body: () => Promise<T>): Promise<T>;",
@@ -205,16 +213,17 @@ describe("Agent tool description", () => {
   it("在 When to use 里交叉指向 CreateWorkflow", () => {
     const description = agentToolEntry.metadata.description ?? "";
     expect(description).toContain("When to use");
-    expect(description).toContain("工作流");
+    expect(description).toContain("in any language");
     expect(description).toContain("CreateWorkflow");
-    // 反向指路同样是强制语气：Agent 不能以任务小为由接下点名工作流的请求。
+    // The reverse pointer is mandatory in tone too: Agent must not accept a request naming a workflow on the grounds that the task is small.
     expect(description).toContain("mandatory");
     expect(description).toContain("use a workflow");
   });
 });
 
-// 原先这里还断言 task-behavior 系统提示段里同样带路由规则。上游 4eea9c1d00
-// （align provider-visible prompt content）整段删掉了本地自撰的 task-behavior /
-// communication-style / risk-actions 等 section，并在 context-builder.test.ts 里反向断言
-// `not.toContain("# Task Behavior")`——那个落点已经不存在，也不允许重建。路由信号现在只
-// 由上面两个工具描述承载（CreateWorkflow 自述 + Agent 的反向指路），两处都在本文件里断言。
+// This file previously also asserted that the task-behavior system-prompt section carried the same routing
+// rules. Upstream 4eea9c1d00 (align provider-visible prompt content) deleted the locally authored
+// task-behavior / communication-style / risk-actions sections wholesale and asserts the reverse in
+// context-builder.test.ts with `not.toContain("# Task Behavior")` — that destination no longer exists and
+// rebuilding it is not allowed. The routing signals are now carried only by the two tool descriptions above
+// (CreateWorkflow's own description + Agent's reverse pointer), both asserted in this file.

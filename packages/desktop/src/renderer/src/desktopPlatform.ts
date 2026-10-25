@@ -1,5 +1,11 @@
 import { recordArmsCustomEventForE2E } from "@zcode/ui";
-import { DesktopCommandIds, buildLocalMediaPreviewUrl, type IPlatformService } from "@zcode/shared";
+import {
+  DesktopCommandIds,
+  FALLBACK_UI_LOCALE,
+  buildLocalMediaPreviewUrl,
+  resolveSystemLocale,
+  type IPlatformService,
+} from "@zcode/shared";
 
 import { desktopBrowserPlatformBridge } from "./desktopBrowserPlatformBridge.js";
 import { createDesktopPluginSandboxPlatform } from "./plugin-sandbox/desktopPluginSandboxPlatform.js";
@@ -18,6 +24,14 @@ export function createDesktopPlatform(options: {
     selectFile: () => window.zcode.selectFile(),
     selectFiles: () => window.zcode.selectFiles?.() ?? Promise.resolve([]),
     createTempTextAttachment: (payload) => window.zcode.createTempTextAttachment(payload),
+    ...(window.zcode.getAppWorktreesDir
+      ? { getAppWorktreesDir: () => window.zcode.getAppWorktreesDir() }
+      : {}),
+    ...(window.zcode.setDictationSystemMute
+      ? {
+          setDictationSystemMute: (active: boolean) => window.zcode.setDictationSystemMute!(active),
+        }
+      : {}),
     materializeWorkflowArtifactFile: (payload) =>
       window.zcode.materializeWorkflowArtifactFile(payload),
     onRemoteConnectionLog: (handler) => window.zcode.onRemoteConnectionLog(handler),
@@ -133,6 +147,7 @@ export function createDesktopPlatform(options: {
       window.zcode.browserViewScreenshotSurfaceReady?.(payload),
     ...desktopBrowserPlatformBridge,
     onNewTask: (handler) => window.zcode.onNewTask(handler),
+    onOpenTaskDraft: (handler) => window.zcode.onOpenTaskDraft?.(handler) ?? (() => {}),
     onOpenWorkspace: (handler) => {
       // 开发态或升级后的旧窗口可能仍运行未暴露 onOpenWorkspace 的 preload，
       // renderer 直接调用会在启动时崩溃。这里和 activateOrSetWorkspace 一样做兼容兜底，
@@ -196,7 +211,7 @@ export function createDesktopPlatform(options: {
     setApplicationLocale: (locale) => window.zcode.setApplicationLocale(locale),
     getSystemLocale: () =>
       window.zcode.getSystemLocale?.() ??
-      Promise.resolve(navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US"),
+      Promise.resolve(resolveSystemLocale(navigator.language, FALLBACK_UI_LOCALE)),
     setTitleBarTheme: (theme) => window.zcode.setTitleBarTheme(theme),
     getDeviceId: () =>
       (window as Window & { __ZCODE_DEVICE_ID__?: string }).__ZCODE_DEVICE_ID__ ?? "",

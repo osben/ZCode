@@ -24,9 +24,10 @@ import {
   type StrandRecord,
 } from "./causality-order-strands.js";
 
-// causality-order.ts 顶到 oxlint max-lines 上限（400 行），把调用这一组（调用表达式
-// 的访问器、通用调用规则 applyAt、函数体内联 inlineBody）拆到本文件；公开面仍从
-// causality-order.ts 导出。递归回 walk 一律经 `state.walk`，本文件不 import walk 模块。
+// causality-order.ts reached oxlint's max-lines limit (400), so the call-related group (call
+// expression visitor, general call rule applyAt, and function-body inlining inlineBody) was moved
+// here; the public surface is still exported from causality-order.ts. All recursive calls to walk
+// go through `state.walk`; this file does not import the walk module.
 
 export function walkCall(
   state: TraceState,
@@ -186,25 +187,28 @@ export function applyAt(
 }
 
 /**
- * 留白在时序走查里的样子（docs/analysis.md「Sites」的 Hole sites 段）。
+ * How holes appear in the causal-order walk (docs/analysis.md, “Sites”, “Hole sites”).
  *
- * **开放的留白是一步，也是一个阶段。** 一步：`issue` 一次，落在它**所站的**阶段里（当前阶段），
- * 于是 await 屏障、settle、控制依赖对它与对 ask 一视同仁。一个阶段：id 就是站点 id、名字是
- * 字面量，**没有成员**——它只是一个站，轨道要在 run 之前就画出来。为了让它出现在控制流投影
- * 的阶段表上并接上前后的边，走查在 issue 之后发一条 `mark`：先 issue 再 mark，于是商图里
- * 是「所站阶段 → 留白 → 下一阶段」而不是一次回到所站阶段的往返。
+ * **An open hole is both a step and a phase.** As a step, it issues once in the phase where it
+ * stands (the current phase), so await barriers, settling, and control dependencies treat it like an ask.
+ * As a phase, its ID is the site ID and its name is the literal, but it has **no members**: it is only
+ * a station whose track must be laid before the run. To include it in the control-flow projection's
+ * phase table and connect the surrounding edges, the walk emits `mark` after `issue`. The quotient
+ * graph is therefore “standing phase → hole → next phase,” rather than a round trip to the same phase.
  *
- * **已补全的留白不是一步，只是一个阶段。** 它的阶段认领函数体里第一个标记之前的站点；体内
- * 的标记是站在它之后的阶段，各自带 `fill` 指回这个留白；留白自己的阶段带的 `fill` 是**包着
- * 它的**留白（顶层没有）——嵌套关系只记在这里，id 里没有（hole-id.ts）。
+ * **A filled hole is a phase, not a step.** Its phase owns the sites in its body before the first
+ * marker. Markers in the body denote phases after it and each carries `fill` pointing to this hole;
+ * the hole's own phase carries `fill` for the hole that contains it (none at top level). Nesting is
+ * recorded only here, not in the ID (hole-id.ts).
  *
- * 它的阶段还有一个 mark 节点，与开放的留白一样。修复原因：2026-09-28 之前已补全的留白没有
- * mark，函数体以 `phase()` 开头时留白自己的阶段没有成员，控制流投影就把它丢了——接龙的每一步
- * 名字因此从阶段表、侧栏与 run 的 `phaseNames` 里消失，只剩时间轴的头还叫得出它。
+ * Its phase also has a mark node, just like an open hole. Fix rationale: before 2026-09-28, filled
+ * holes had no mark. If a body began with `phase()`, the hole's own phase had no members and the
+ * control-flow projection dropped it. Its name then disappeared from the phase table, sidebar, and
+ * run's `phaseNames`; only the timeline header still showed it.
  *
- * 函数体像 `future` 的一样是一个进入过的、once 的、不延迟的回调——taint 解释器把它记成调用点
- * 上的 `argument` 应用，这里照神谕内联；它是 async 的，所以是一条 strand，外面的 `await` 在
- * 屏障处 join 它。
+ * Like a `future` body, this callback is entered, runs once, and is not deferred. The taint interpreter
+ * records it as an `argument` application at the call site, so it is inlined here as directed by the
+ * oracle. Because it is async, it forms a strand that the outer `await` joins at the barrier.
  */
 function walkHole(
   state: TraceState,
@@ -232,7 +236,7 @@ function walkHole(
   state.currentPhase = outer;
 }
 
-/** 留白的阶段按首次到达铸一次（helper 里的留白每次调用都到达，阶段只有一个）。 */
+/** Emit a hole's phase on first arrival (a hole in a helper is reached on every call, but has one phase). */
 function mintHolePhase(
   state: TraceState,
   site: HoleSite,

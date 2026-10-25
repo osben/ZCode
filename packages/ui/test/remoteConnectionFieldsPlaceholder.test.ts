@@ -6,6 +6,7 @@ import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { RemoteConnectionFields } from "@/RemoteConnectionFields.js";
 import type { IPlatformService } from "@zcode/shared";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const platform: IPlatformService = {
   activateOrSetWorkspace: vi.fn(),
@@ -37,7 +38,7 @@ function renderRemoteConnectionFields() {
       { platform },
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(RemoteConnectionFields, {
           kind: "docker",
           host: "",
@@ -87,11 +88,11 @@ function renderRemoteConnectionFields() {
 }
 
 describe("RemoteConnectionFields placeholder", () => {
-  it("Docker 手动模式保留切换列表入口与空输入提示", () => {
+  it("Docker manual mode keeps the switch-to-list entry and the empty-input hint", () => {
     const html = renderRemoteConnectionFields();
 
-    expect(html).toContain("选择运行中的容器");
+    expect(html).toContain(expectedCopy("docker.inputMode.select"));
     expect(html).not.toContain('data-testid="docker-container-select"');
-    expect(html).toContain("如果运行中的容器列表不完整，可以手动输入容器名或 ID 连接。");
+    expect(html).toContain(expectedCopy("docker.manualContainerHint"));
   });
 });

@@ -7,9 +7,9 @@ import {
 import type { OffPeakClientConfig } from "../src/coding-plan-subscription/codingPlanSubscription.js";
 import { offPeakSelectionView } from "./fixtures/offPeakSelection.js";
 
-// D49：Off-Peak 本地支持能力作为 workspace 策略在客户端就绪时同步给 CLI。
-// 不支持的 workspace 不发策略请求；支持时发送 enabled:true，绝不读取远端灰度。
-// 旧 CLI method-not-found 降级忽略，不阻塞客户端就绪。
+// D49: Off-Peak local support capability is synced to the CLI as a workspace policy when the client is ready.
+// Unsupported workspaces send no policy request; supported ones send enabled:true and never read the remote gray release.
+// Legacy CLI method-not-found is ignored as a downgrade and does not block client readiness.
 
 class MockProcessManagerBase {
   onRuntimeLifecycle() {

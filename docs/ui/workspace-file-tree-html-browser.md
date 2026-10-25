@@ -1,17 +1,23 @@
-# 文件树 HTML 内置浏览器打开
+# File Tree: Open HTML in the Built-in Browser
 
-## 目标
+## Goal
 
-文件树右键菜单对本地 `.html` / `.htm` 文件提供“用内置浏览器打开”动作。动作使用文件的绝对路径生成 `file://` URL，并交给现有右侧 Browser side pane 打开。
+The file tree context menu offers an "open in built-in browser" action for local `.html` / `.htm` files. It
+builds a `file://` URL from the file's absolute path and hands it to the existing right Browser side pane.
 
-## 行为边界
+## Boundary
 
-- 仅本地 desktop 文件树显示该动作；远程 workspace 不显示，避免把远端路径误当成本机 `file://` 文件。
-- 仅文件类型为 `file` 且扩展名为 `.html` / `.htm` 时显示；目录、Git deleted 虚拟文件不显示。
-- URL 生成复用 UI 层路径工具 `toFileUrl()`，保证 macOS/Linux `file:///...` 与 Windows `file:///C:/...` 都能被内置浏览器接收。
-- 打开浏览器仍走 `handleOpenBrowserUrl()`，由现有 Browser side pane 负责创建 tab、校验 URL 和导航，不让文件树直接操作 webview。
+- Shown only in the local desktop file tree; not shown for remote workspaces, so a remote path is not
+  mistaken for a local `file://` file.
+- Shown only when the entry type is `file` and the extension is `.html` / `.htm`; not for directories or Git
+  deleted virtual files.
+- URL generation reuses the UI-layer path utility `toFileUrl()`, so macOS/Linux `file:///...` and Windows
+  `file:///C:/...` are both accepted by the built-in browser.
+- Opening still goes through `handleOpenBrowserUrl()`; the existing Browser side pane creates the tab,
+  validates the URL and navigates, and the file tree never operates the webview directly.
 
-## 验证
+## Verification
 
-- `packages/ui/test/workspaceFileTree.test.ts` 覆盖 HTML 扩展名识别和 `file://` URL 生成。
-- 该变更不修改 ZCode session/task realtime、snapshot、queue、replayable/continuous 语义。
+`packages/ui/test/workspaceFileTree.test.ts` covers HTML extension recognition and `file://` URL
+generation. The change does not touch ZCode session/task realtime, snapshot, queue or
+replayable/continuous semantics.

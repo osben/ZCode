@@ -76,13 +76,15 @@ estimation reuses that value instead of introducing a second `providerUsage` fie
 - if no such assistant exists, estimation falls back to the full local message estimate;
 - old sessions without token data remain compatible and use the full local estimate.
 
-Compact 替换 provider-visible 的旧前缀后，preserved assistant 的原始 usage 不再代表当前上下文。
-运行时和冷启动 projection 只在 preserved 消息的副本上将 usage 归零，Compact 之后新增的 assistant
-仍保留自身 tokens；持久化 transcript 不被改写。
+After Compact replaces the provider-visible old prefix, the original usage of a preserved assistant no
+longer represents the current context. Runtime and cold-start projection zero the usage only on copies
+of preserved messages; assistants added after Compact keep their own tokens, and the persisted
+transcript is not rewritten.
 
-Microcompact 只改写旧 tool result，不清理最近 assistant 的 usage。估算继续使用该 provider
-baseline，并只对 assistant 之后的消息做本地估算；这是有意保留的近似，不额外增加
-usage invalidation 或重算分支。
+Microcompact rewrites only old tool results and does not clear the usage of the latest assistant.
+Estimation keeps using that provider baseline and estimates locally only for messages after the
+assistant. This approximation is intentional; no extra usage invalidation or recomputation branch is
+added.
 
 This is an in-memory ownership link for estimation, not a new protocol or persistence
 schema. `tokens` is response metadata and must never be added to `ModelInputMessage`.

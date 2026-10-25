@@ -35,7 +35,7 @@ const CASE_NAME = "conversation-session-tool-discovery-card";
 const MODEL_ID = "e2e-tool-discovery-card-model";
 let replay: Awaited<ReturnType<typeof startConversationModelProviderReplayServer>>;
 
-describe("ToolSearch 不可展开卡片", () => {
+describe("ToolSearch non-expandable card", () => {
   before(async function () {
     this.timeout(240_000);
     replay = await startConversationModelProviderReplayServer(CASE_NAME);
@@ -62,7 +62,7 @@ describe("ToolSearch 不可展开卡片", () => {
     await clickTestIdByDom(testId(TID_SETTINGS_TOOL_SEARCH_OPTION, "local"));
     await browser.waitUntil(async () => (await readSettings()).toolSearchMode === "local", {
       timeout: 15_000,
-      timeoutMsg: "Local 模式未保存",
+      timeoutMsg: "Local mode was not saved",
     });
     await clickTestIdByDom(TID_SETTINGS_BACK_BUTTON);
     await prepareV4ConversationE2E({ skipProvider: true, skipShellReady: true });
@@ -82,17 +82,19 @@ describe("ToolSearch 不可展开卡片", () => {
     await replay?.stop();
   });
 
-  it("TS14-SUMMARY：空输入、单选、多选、关键词、无匹配及失败只显示摘要", async function () {
+  it("TS14-SUMMARY: empty input, single select, multi select, keyword, no match and failure show only the summary", async function () {
     this.timeout(180_000);
-    await sendV4Prompt("E2E_TOOL_DISCOVERY_CARD_SUMMARY 搜索工具并检查卡片，不执行目标工具。");
+    await sendV4Prompt(
+      "E2E_TOOL_DISCOVERY_CARD_SUMMARY searches tools and checks the card without running the target tool.",
+    );
     // fixture 先提交正文，越过原有可重试前奏缓冲，再观察真实工具占位并释放参数。
     try {
-      await expectCard("card_single", /^(搜索工具|Search tools)$/u, "pending");
+      await expectCard("card_single", /^Search tools$/u, "pending");
     } finally {
       await releaseControlledReplay("tool-discovery-card-summary");
     }
     await waitForV4AssistantMessageContaining("E2E_TOOL_DISCOVERY_CARD_DONE");
-    await waitForV4Pane((pane) => !pane.canStop, "搜索轮次未结束", 30_000);
+    await waitForV4Pane((pane) => !pane.canStop, "search turn did not finish", 30_000);
 
     for (const [id, query] of [
       ["card_single", "TodoWrite"],
@@ -103,7 +105,7 @@ describe("ToolSearch 不可展开卡片", () => {
     ] as const) {
       await expectCard(
         id,
-        new RegExp(`(?:搜索工具：|Search tools: )${query}`),
+        new RegExp(`(?:Search tools: )${query}`),
         id === "card_invalid" ? "failed" : "completed",
       );
       const result = await getLatestUpstreamToolResultByToolCallId(id);
@@ -118,7 +120,7 @@ describe("ToolSearch 不可展开卡片", () => {
     for (const locale of ["zh-CN", "en-US"] as const) {
       for (const theme of ["zai-light", "zai-dark"] as const) {
         await setPresentation(locale, theme);
-        const label = locale === "zh-CN" ? "搜索工具：" : "Search tools: ";
+        const label = "Search tools: ";
         await expectCard(
           "card_multi",
           new RegExp(`${label}Read, TodoWrite, WebFetch`),
@@ -129,13 +131,15 @@ describe("ToolSearch 不可展开卡片", () => {
     }
   });
 
-  it("TS14-STOP：参数流式生成时停止，卡片不展示部分 JSON 或结果", async function () {
+  it("TS14-STOP: stop while arguments stream; the card shows no partial JSON or result", async function () {
     this.timeout(90_000);
-    await sendV4Prompt("E2E_TOOL_DISCOVERY_CARD_STOP 搜索工具，在参数未完成时停止。");
-    await expectCard("card_stopped", /搜索工具|Search tools/u, "pending");
+    await sendV4Prompt(
+      "E2E_TOOL_DISCOVERY_CARD_STOP searches tools and stops before the arguments finish.",
+    );
+    await expectCard("card_stopped", /Search tools/u, "pending");
     await clickV4Stop();
-    await waitForV4Pane((pane) => !pane.canStop, "停止后会话仍在运行", 30_000);
-    await expectCard("card_stopped", /搜索工具|Search tools/u, "stopped");
+    await waitForV4Pane((pane) => !pane.canStop, "session still running after stop", 30_000);
+    await expectCard("card_stopped", /Search tools/u, "stopped");
     expect(await getLatestUpstreamToolResultByToolCallId("card_stopped")).toBeNull();
     // 用户停止会关闭 HTTP 连接并取消测试 gate，无需再释放已取消的流。
   });
@@ -146,7 +150,7 @@ async function expectCard(callId: string, label: RegExp, status: string) {
   const block = await browser.$(`[data-testid="${snapshot.testId}"]`);
   await browser.waitUntil(async () => (await block.getAttribute("data-status")) === status, {
     timeout: 15_000,
-    timeoutMsg: `${callId} 未变为 ${status}`,
+    timeoutMsg: `${callId} did not change to ${status}`,
   });
   const summary = await block.$(`[data-testid="${testId(TID_TOOL_SUMMARY_TRIGGER, callId)}"]`);
   await expect(summary).toHaveText(label);
@@ -161,7 +165,7 @@ async function expectCard(callId: string, label: RegExp, status: string) {
   );
 }
 
-async function setPresentation(locale: "zh-CN" | "en-US", theme: "zai-light" | "zai-dark") {
+async function setPresentation(locale: "en-US" | "zh-CN", theme: "zai-light" | "zai-dark") {
   const changed = await browser.execute(
     (nextLocale, nextTheme) => {
       const actions = (window as typeof window & { __testActions?: Record<string, unknown> })
@@ -181,7 +185,7 @@ async function setPresentation(locale: "zh-CN" | "en-US", theme: "zai-light" | "
       (await browser.$("html").getAttribute("class"))?.split(" ").includes(`theme-${theme}`),
     {
       timeout: 10_000,
-      timeoutMsg: "主题未更新",
+      timeoutMsg: "theme not updated",
     },
   );
 }

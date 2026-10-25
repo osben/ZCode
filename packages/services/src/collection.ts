@@ -6,9 +6,9 @@ export interface ServiceExposurePolicy {
 }
 
 /**
- * ServiceCollection — 服务注册中心
+ * ServiceCollection — service registry
  *
- * 服务端用来注册服务实例，并自动暴露到 ChannelServer。
+ * Used by the server to register service instances and expose them through ChannelServer.
  */
 export class ServiceCollection {
   private readonly _services = new Map<string, unknown>();
@@ -30,7 +30,7 @@ export class ServiceCollection {
     return this._services.get(descriptor.channelName) as T | undefined;
   }
 
-  /** 将所有已注册的服务自动暴露为 channel */
+  /** Expose all registered services as channels. */
   exposeOnChannelServer(
     server: IChannelServer,
     overrides: ReadonlyMap<string, unknown> = new Map(),

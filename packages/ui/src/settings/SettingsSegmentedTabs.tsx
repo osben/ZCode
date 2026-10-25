@@ -5,7 +5,7 @@ export interface SettingsSegmentedTabItem<TValue extends string> {
   value: TValue;
 }
 
-/** 设置详情页共用的紧凑分段切换，避免相同层级出现多套 Tabs 视觉。 */
+/** Shared compact segmented switch for Settings detail pages, preventing multiple Tabs styles at the same hierarchy level. */
 export function SettingsSegmentedTabs<TValue extends string>({
   items,
   value,

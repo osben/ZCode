@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import type { ConversationStoreState } from "@/v4/conversationProjectionStore.js";
 import type { SessionLease } from "@/v4/sessionDataLayer.js";
 
@@ -15,11 +15,16 @@ const CLOSED_STATE: ConversationStoreState = {
   turnNavigatorDirectoryRevision: 0,
 };
 
-/** 订阅 per-session projection store（useSyncExternalStore，row 级 selector 在组件内再做）。 */
+/** Subscribe to the per-session projection store (useSyncExternalStore; row-level selectors are applied in the component). */
 export function useConversationProjection(lease: SessionLease | null): ConversationStoreState {
   const store = lease?.store ?? null;
+  // An inline subscribe function made React unsubscribe and resubscribe on every render of the pane.
+  const subscribe = useCallback(
+    (listener: () => void) => store?.subscribe(listener) ?? (() => {}),
+    [store],
+  );
   return useSyncExternalStore(
-    (listener) => store?.subscribe(listener) ?? (() => {}),
+    subscribe,
     () => store?.getState() ?? CLOSED_STATE,
     () => CLOSED_STATE,
   );
