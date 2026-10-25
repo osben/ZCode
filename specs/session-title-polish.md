@@ -1,7 +1,7 @@
 # Session title polish
 
-Status: proposed (iteration 1 of 2). Iteration 2 (a bounded retry after a failed generation, and titles for
-selection side chats) is out of scope here and gets its own spec after this one ships.
+Status: iteration 1 (sections 1-5) shipped in osben/ZCode#355. Iteration 2 (section 6: a bounded retry after a
+failed or skipped generation, and titles for selection side chats) is specified below and not implemented yet.
 
 Related: `docs/ui/task-title-authority.md` (priority and ownership), `apps/zcode-cli/docs/design/v2/session-title-generation.md`
 (upstream design), `specs/upstream-sync-cli-divergences.md` (every CLI change below is listed there).
@@ -109,3 +109,71 @@ There is one write path per layer; no state is added.
   and `test` as well, and `pnpm architecture:check --changed`.
 - Rename dialogs: reuse an existing rename E2E if one exists; otherwise the guard is covered by a component/unit
   test and the report says no E2E was added.
+
+## 6. Iteration 2: bounded retry and side chat titles
+
+### 6.1 Problem
+
+- Generation runs once per runtime (`sessionTitleGenerationAttempted`, in memory). A timeout, an empty model reply, an
+  input under 10 characters (`hi`) or an empty/attachment-only first message leaves the first-input title
+  (`Untitled session`, `hi`, a truncated sentence) for the whole session.
+- Selection side chats are created with the fixed title `Selection side chat` (source `generated`) and are never
+  generated: the gates `parentSessionId`, `taskType !== "interactive"`, the stored `parentID` check and
+  `turnNumber !== 0` (a side chat resumes with the copied parent history, so its turn counter is not 0) all reject them.
+  The sidebar lists side chats under their parent with the stored title.
+
+### 6.2 Product rules
+
+- A runtime makes at most **2** title generation attempts (`MAX_SESSION_TITLE_GENERATION_ATTEMPTS`). Only attempts that
+  reach the model count; the cheap "title is already resolved" check does not.
+- The first attempt keeps today's rules (new interactive session, first turn, input of at least 10 code points after
+  the title seed sanitizer, `/goal` bypasses the length guard).
+- A later user message starts a **retry** when all hold: attempts < 2, none in flight, the runtime is not
+  _settled_, the message seed has at least 10 code points, and the persisted title is still auto-pending:
+  `titleSource` is `default` or `first_input`, or the session is a selection side chat whose title is still
+  `Selection side chat`.
+- The retry seed is the first seed this runtime saw (first user input of this runtime, with its message id) when it has
+  at least 10 code points, otherwise the current message. After a cold resume the first seed is simply the first
+  message sent in the new runtime.
+- _Settled_ (no more attempts, in memory): a generated title was persisted, or the persisted source is `custom` or
+  already generated, or a retry found the title not pending. A user rename therefore stops retries for good.
+- Writes keep the existing guards: `expectedTitleSources` CAS, the `custom` short circuit and the first-query-edit
+  suppression with the seed's message id. A retry never replaces a generated or custom title.
+- Selection side chats are eligible for generation (store `taskType === "selection_side_chat"` with a parent).
+  Their first user question after the boundary is the seed (the selected text arrives as a model-boundary quote
+  and is not part of the seed). Forks (`Fork of ...`), subagents, workflow children and automations stay excluded.
+- No retry for `/goal` input (that path is unchanged), external-agent turns or model-only inputs.
+- The post-turn deferred start (provider runtime-header refresh) stays a first-turn-only mechanism.
+
+### 6.3 Owners and interfaces
+
+| Concern                                              | Owner                                                             | Change                                               |
+| ---------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------- |
+| Attempt counter, in-flight, settled, remembered seed | `AgentRuntime` private fields (`internal.ts`, `agent-runtime.ts`) | replace the boolean attempt flag; no persisted state |
+| Mode decision (`first` / `retry` / none)             | `core/src/runtime/methods/session-title.ts`                       | `resolveSessionTitleGenerationMode`                  |
+| Pending-title check and session eligibility          | same file (`isTitleEligibleSession`, `isAutoTitlePending`)        | used by generation and by the persist re-read        |
+| Side chat placeholder constant                       | `session-title.ts`, used by `session-fork.ts`                     | one literal, two users                               |
+
+Event order: user message persisted -> mode decision (sync, in memory) -> attempt starts (in flight) -> store re-read
+(eligibility, pending) -> model call -> CAS write of `generated` -> `SessionTitleUpdated` -> settled. A child side chat
+session's event already refreshes the parent sidebar summary (`onChildSessionActivity`).
+No schema, protocol or `settings.json` change; titles stay in `title`, `title_source`, `title_message_id`.
+
+### 6.4 Acceptance scenarios
+
+1. Attempt 1 returns an empty reply; the next message (12+ characters) retries with the first message as the seed and
+   the title becomes generated. A third message makes no model call.
+2. First message `hi`: no attempt. The second message `please add dark mode` generates a title from it.
+3. A user renames the session after a failed attempt; the next message makes no model call and the title stays.
+4. A generated title already exists after a cold resume: the next message does a store read, no model call.
+5. A first attempt is still in flight when message 2 arrives: no second attempt.
+6. A side chat's first question (12+ characters) generates a title that replaces `Selection side chat`; a second
+   question does not. A fork keeps `Fork of ...`; a subagent child gets no title call.
+7. `/goal` and external-agent turns behave as before.
+8. Editing the first message while a retry is in flight: the generated title is not written (first-query-edit rule).
+
+### 6.5 Verification
+
+- Unit tests drive `maybeStartSessionTitleGeneration` through a fake runtime (attempt counter, in flight, settled, seed
+  choice, side chat vs fork vs subagent gating) and the persisted-title branches with a fake session store.
+- Same baselines and package checks as section 5. Not covered: manual UI run of a side chat.
