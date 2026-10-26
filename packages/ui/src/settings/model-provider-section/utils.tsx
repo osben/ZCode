@@ -38,7 +38,8 @@ export function resolveModelProviderNavLogo(item: ModelProviderNavItem) {
 }
 
 export function renderModelProviderNavIcon(item: ModelProviderNavItem): ReactNode {
-  if ("provider" in item && item.provider) {
+  // A preset row keeps its brand logo even before a runtime provider exists (signed-out plans).
+  if (("provider" in item && item.provider) || (item.type === "preset" && item.logo)) {
     return <ProviderLogo logo={resolveModelProviderNavLogo(item)} className="size-4" />;
   }
   if (item.type === "acpAgent") {

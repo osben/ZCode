@@ -419,7 +419,18 @@ windowMinutes?, resetsAt?}, secondary?}`). The CLI emits a typed host notificati
 - Usage-limit state: **"Manage usage"** primary (no "Buy app credits" — we do not sell credits).
 - Copy distinguishes ChatGPT plan usage from app-level subscriptions.
 - Provider icon: reuse the OpenAI entries in
-  `packages/ui/src/assets/provider-icons/model-provider-logo-sources.json`.
+  `packages/ui/src/assets/provider-icons/model-provider-logo-sources.json`. The one logo reference
+  is `CHATGPT_PLAN_PROVIDER_LOGO` (`{ type: "builtin", key: "openai" }`,
+  `packages/ui/src/lib/chatgptPlanProvider.ts`), matching the catalog template's `config.logo`.
+  Every surface that shows the ChatGPT plan shows this icon, never the generic fallback glyph:
+  - Settings → Model providers navigation entry, including with zero signed-in accounts (no
+    runtime provider exists yet, so the entry falls back to the constant), and the plan detail.
+  - Model pickers (composer menu, Subagents, automations, workflow settings): config-driven; the
+    per-account derivation copies the template `config`, so `logo` survives on
+    `account:chatgpt-plan:<accountKey>` entries.
+  - Task sidebar hover card (`providerBrandIconSrc`): resolves both the base id and per-account
+    ids through `isChatGptPlanProviderId`, never by exact id.
+  - OAuth icon slots (`renderOAuthProviderIcon("chatgpt")`): the OpenAI mark, not the log-in glyph.
 
 ### Host-side (Desktop) decisions (Phase 2)
 

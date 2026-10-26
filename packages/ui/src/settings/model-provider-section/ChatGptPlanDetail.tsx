@@ -12,6 +12,7 @@ import type {
 } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { Badge } from "@/components/ui/badge.js";
+import { CHATGPT_PLAN_PROVIDER_LOGO } from "@/lib/chatgptPlanProvider.js";
 import { ProviderLogo } from "./ProviderLogo.js";
 
 const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage";
@@ -208,7 +209,7 @@ export function ChatGptPlanDetail() {
   return (
     <div className="flex flex-col gap-4">
       <header className="flex items-center gap-3">
-        <ProviderLogo logo={{ type: "builtin", key: "openai" }} className="size-8" />
+        <ProviderLogo logo={CHATGPT_PLAN_PROVIDER_LOGO} className="size-8" />
         <div className="flex flex-col">
           <div className="flex items-center gap-2">
             <h2 className="text-ui-lg font-medium">ChatGPT Plan</h2>
@@ -262,7 +263,7 @@ export function ChatGptPlanDetail() {
             {loginPending ? (
               <Loader2Icon className="size-3.5 animate-spin" />
             ) : (
-              <ProviderLogo logo={{ type: "builtin", key: "openai" }} className="size-4" />
+              <ProviderLogo logo={CHATGPT_PLAN_PROVIDER_LOGO} className="size-4" />
             )}
             {loginPending
               ? intl.formatMessage({ id: "settings.modelProvider.chatgpt.waiting" })
@@ -280,7 +281,7 @@ export function ChatGptPlanDetail() {
         >
           <div className="w-full max-w-sm rounded-lg border border-border bg-card p-6 text-card-foreground shadow-lg">
             <div className="mb-4 flex justify-center">
-              <ProviderLogo logo={{ type: "builtin", key: "openai" }} className="size-10" />
+              <ProviderLogo logo={CHATGPT_PLAN_PROVIDER_LOGO} className="size-10" />
             </div>
             <h3
               id="chatgpt-plan-first-run-title"

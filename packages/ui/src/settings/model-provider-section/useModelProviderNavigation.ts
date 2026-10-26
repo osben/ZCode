@@ -14,7 +14,10 @@ import {
   resolveProviderFamilyDomainFromOAuthProvider,
   type OAuthProviderId,
 } from "@zcode/shared";
-import { isChatGptPlanSubscriptionProviderId } from "@/lib/chatgptPlanProvider.js";
+import {
+  CHATGPT_PLAN_PROVIDER_LOGO,
+  isChatGptPlanSubscriptionProviderId,
+} from "@/lib/chatgptPlanProvider.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   CODING_PLAN_PROVIDER_SPECS,
@@ -248,7 +251,7 @@ export function useModelProviderNavigation({
               type: "preset" as const,
               presetId: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
               label: intl.formatMessage({ id: "settings.modelProvider.chatgpt.navigationPlan" }),
-              logo: provider?.config.logo ?? null,
+              logo: provider?.config.logo ?? CHATGPT_PLAN_PROVIDER_LOGO,
               provider: provider ?? null,
               displayName: intl.formatMessage({
                 id: "settings.modelProvider.chatgpt.navigationPlan",
