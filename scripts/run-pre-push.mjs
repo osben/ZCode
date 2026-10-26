@@ -77,6 +77,7 @@ async function main() {
     ["architecture:check", ["--", "--changed"]],
     ["test-copy:check"],
     ["instruction-commands:check"],
+    ["db:migrations:check"],
   ];
   if (!docsOnly) stages.push(["test:unit:affected", ["--", "--scope", "push"]], ["test:node"]);
   for (const [task, args] of stages) {

@@ -4,7 +4,8 @@
 
 `pnpm verify:pre-push` (`scripts/run-pre-push.mjs`) owns the sequential local
 gate: lint, `architecture:check --changed`, `test-copy:check`,
-`instruction-commands:check` (specs/instruction-command-contract.md), affected Vitest
+`instruction-commands:check` (specs/instruction-command-contract.md),
+`db:migrations:check` (specs/upstream-migration-freeze.md), affected Vitest
 (`test:unit:affected -- --scope push`), then the complete `test:node` suite. A
 failed stage stops the gate and preserves its nonzero exit status. Every executed
 stage reports its start, result and elapsed time; the gate also reports total
@@ -44,6 +45,7 @@ an executed check.
 Git refs -> pre-push diff target resolver -> documentation classification
                                           -> lint -> architecture:check --changed
                                               -> test-copy:check -> instruction-commands:check
+                                              -> db:migrations:check
                                               -> documentation only: skip tests
                                               -> otherwise: affected (--scope push) -> node tests
                                           -> result + elapsed time

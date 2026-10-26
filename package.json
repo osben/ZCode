@@ -85,6 +85,8 @@
     "architecture:context": "node scripts/architecture/architecture-check.mjs context",
     "test:architecture": "node --test scripts/test/architecture-governance.test.mjs scripts/test/architecture-governance-review.test.mjs scripts/test/architecture-upstream-admission.test.mjs scripts/test/source-size-policy.test.mjs",
     "architecture:adopt": "node scripts/architecture/architecture-check.mjs adopt",
+    "db:migrations:check": "node --test scripts/test/upstream-migration-baseline.test.mjs && tsx --test scripts/test/check-upstream-migrations.test.ts && tsx scripts/check-upstream-migrations.ts",
+    "db:migrations:baseline:update": "tsx scripts/check-upstream-migrations.ts --update",
     "db:schema:check": "node --test scripts/test/sqlite-schema-contract.test.mjs && pnpm --dir apps/zcode-cli exec tsx ../../scripts/check-sqlite-schema.ts",
     "db:schema:update": "pnpm --dir apps/zcode-cli exec tsx ../../scripts/check-sqlite-schema.ts --update"
   },
