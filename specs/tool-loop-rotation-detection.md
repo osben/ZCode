@@ -24,8 +24,9 @@ window) when any of the following holds:
 1. Tool name is `TaskOutput` or `GetWorkflowRun`.
 2. The call is a `TaskOutput` whose result output carries `retrieval_status` `not_ready` or
    `timeout`.
-3. `durationMs >= 30_000` (`POLLING_MIN_DURATION_MS`). This covers intentional waits such as
-   `sleep 60 && …`.
+3. A **successful** call with `durationMs >= 30_000` (`POLLING_MIN_DURATION_MS`). This covers
+   intentional waits such as `sleep 60 && …`. A failed slow call is not exempt: re-running the same
+   45 s failing `pnpm test` with no edits in between must still trip the exact-repeat warning.
 4. The call is a **successful** Bash command whose command string consists solely of
    log-tail segments, optionally chained with `;` or `&&`:
    - POSIX: `tail [-n N|-N] <literal .log path>` (the count flag is optional).

@@ -1,7 +1,10 @@
 import type { ToolExecutionResult } from "../../tool/types.js";
 import { buildRepeatedToolCallSignature } from "./model-anomaly.js";
 
-/** Calls at least this long are treated as intentional waiting (covers `sleep 60 && …`). */
+/**
+ * Successful calls at least this long are treated as intentional waiting (covers `sleep 60 && …`).
+ * Failed long calls still count: re-running the same slow failing build is the loop to catch.
+ */
 export const POLLING_MIN_DURATION_MS = 30_000;
 
 const POLLING_TOOL_NAMES = new Set(["TaskOutput", "GetWorkflowRun"]);
@@ -62,7 +65,7 @@ export function isPollingToolCall(
 ): boolean {
   if (POLLING_TOOL_NAMES.has(toolName)) return true;
   if (result === undefined) return false;
-  if (result.durationMs >= POLLING_MIN_DURATION_MS) return true;
+  if (result.success && result.durationMs >= POLLING_MIN_DURATION_MS) return true;
   if (toolName === "TaskOutput" && isTaskOutputPendingResult(result.output)) return true;
   return toolName === "Bash" && result.success && isLogTailBashCommand(input);
 }

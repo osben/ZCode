@@ -17,7 +17,13 @@ describe("isPollingToolCall", () => {
     expect(isPollingToolCall("GetWorkflowRun", { run_id: "r1" }, result())).toBe(true);
   });
 
-  it("exempts any call that ran at least POLLING_MIN_DURATION_MS", () => {
+  it("does not exempt a slow call that failed, so a re-run failing build still counts", () => {
+    expect(
+      isPollingToolCall("Bash", { command: "pnpm test" }, result({ durationMs: 45_000, success: false })),
+    ).toBe(false);
+  });
+
+  it("exempts any successful call that ran at least POLLING_MIN_DURATION_MS", () => {
     expect(isPollingToolCall("Bash", { command: "sleep 60 && echo done" }, result({ durationMs: POLLING_MIN_DURATION_MS }))).toBe(true);
     expect(
       isPollingToolCall("Bash", { command: "sleep 60 && echo done" }, result({ durationMs: POLLING_MIN_DURATION_MS - 1 })),
