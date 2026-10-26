@@ -3864,6 +3864,10 @@ const ukUA: Record<string, string> = {
     "Відповідні AI-запити в цьому застосунку використовують ваш план ChatGPT. Використання спільне для всіх застосунків плану та керується в налаштуваннях ChatGPT.",
   "settings.modelProvider.chatgpt.firstRun.gotIt": "Зрозуміло",
   "settings.modelProvider.chatgpt.pickerBadge": "Підписка",
+  "settings.modelProvider.chatgpt.reconnectRequired":
+    "Вхід у ChatGPT закінчився або був відкликаний. Увійдіть знову, щоб і далі користуватися планом.",
+  "settings.modelProvider.chatgpt.signInAgain": "Увійти знову",
+  "settings.modelProvider.chatgpt.removeAccount": "Видалити",
   "settings.modelProvider.chatgpt.usage.window.fiveHour": "5 годин",
   "settings.modelProvider.chatgpt.usage.window.weekly": "Тиждень",
   "settings.modelProvider.chatgpt.usage.window.hours": "{n} год",
@@ -6405,6 +6409,9 @@ const ukUA: Record<string, string> = {
     "Немає квоти для ZCode MCP «{server}». Увійдіть або оформіть Coding Plan, щоб користуватися ним.",
   "chat.quota.providerLimited":
     "Досягнуто ліміту квоти або плану поточного облікового запису. Оновіть або змініть план, щоб продовжити.",
+  "chat.quota.chatgptPlanLimited": "Ліміт використання плану ChatGPT вичерпано.",
+  "chat.quota.chatgptPlanLimited.resetAt":
+    "Ліміт використання плану ChatGPT вичерпано. Скидання о {time}.",
   "chat.quota.providerLimited.resetAt": "П'ятигодинний ліміт буде скинуто о {time}.",
   "chat.quota.providerLimited.autoContinue": "Продовжувати автоматично",
   "chat.quota.action.upgrade": "Оновити",
@@ -6576,6 +6583,10 @@ const ukUA: Record<string, string> = {
   "zcode.error.modelSuspiciousEmpty":
     "Модель не повернула вмісту (часто через прострочений токен або проблеми з планом). Надішліть ще раз.",
   "zcode.error.providerBusiness.2007": "Зовнішній сервіс тимчасово недоступний. Спробуйте пізніше.",
+  "zcode.error.chatgptPlan.signInAgain":
+    "Вхід у ChatGPT більше не дійсний. Увійдіть знову в «Налаштування моделей → ChatGPT Plan».",
+  "zcode.error.chatgptPlan.notEligible":
+    "План цього акаунта ChatGPT тут недоступний. Увійдіть з акаунтом ChatGPT Plus або Pro в «Налаштування моделей → ChatGPT Plan».",
   "zcode.error.providerBusiness.429": "Ви надсилаєте запити надто часто. Спробуйте пізніше.",
   "debugInfo.taskId": "ID завдання",
   "debugInfo.traceId": "ID трасування",

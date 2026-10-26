@@ -542,6 +542,60 @@ Tests: host event emission in `siwcAuthService.test.ts`/`oauthService.test.ts`; 
 (S2, S4, S6, S8) and the pure tightest-window rule in UI unit tests; the chip and hints in jsdom
 tests; desktop E2E extends `chatgpt-plan-usage.test.ts` with the composer chip (S1).
 
+### Limits and recovery in Desktop
+
+Reason: the plan-limit error and the sign-in errors reached the chat as CLI text ("Sign in again
+with zcode login chatgpt"), a revoked account vanished from Settings, and the first-run overlay
+could only be closed with "Got it".
+
+Facts used (traced): a live failure's session error has `code` and
+`attribution.providerErrorCode` equal to the OpenAI code (`subscription_sharing_usage_limit_exceeded`,
+`subscription_sharing_invalid_user`, `chatpass_v2_scope_not_authorized`,
+`chatpass_v2_invalid_authorization_context`) and `attribution.providerId` =
+`account:chatgpt-plan:<accountKey>`; after cold hydration `code` is the adapter class name, so the UI
+reads `attribution.providerErrorCode` first. The error carries no reset time.
+
+Plan limit reached (conversation quota banner, kind `chatgpt-plan-limited`):
+
+- Shown when the session error's provider code is `subscription_sharing_usage_limit_exceeded` and
+  the session provider is a ChatGPT plan account; it takes over the generic error banner, like the
+  Coding Plan provider-limited banner, and is dismissible.
+- Text: "ChatGPT plan usage limit reached." plus, when the renderer usage store has a snapshot for
+  the account, "Resets at {time}" for the latest reset among windows at 100% used whose reset has
+  not passed (all of them must reset before requests succeed). No usage → no time.
+- Actions: "Manage usage" (opens `https://chatgpt.com/settings/usage` through the platform
+  service) and, when a reset time is known, the existing "Continue automatically" switch: the
+  conversation resumes at that time through the same path as the Coding Plan banner
+  (`handleResumeError`). It never upgrades or switches plans.
+
+Sign-in errors (`subscription_sharing_invalid_user`, `chatpass_v2_*`): the chat error banner shows a
+localized "Your ChatGPT sign-in is no longer valid. Sign in again in Model settings → ChatGPT
+Plan." and the "Model settings" action. The CLI's own text stays for the CLI.
+`subscription_sharing_user_not_eligible` gets a localized eligibility text with the same action.
+The provider-code lookup of the chat error banner falls back to
+`attribution.providerErrorCode` when `code` is not a known code.
+
+Reconnect required (Settings): an account that is still in the index but has no tokens (terminal
+refresh failure) is listed in `SiwcPlanAccountsStatus.reconnectRequired`, never in `accounts`, so
+the registry derivation and entitlement keep ignoring it. Its row says the sign-in expired or was
+revoked and offers "Sign in again" (re-authorization of that account) and "Remove" (the existing
+per-account sign-out, which drops the index record).
+
+First-run modal: rendered with the shared `Dialog` (Escape, backdrop click, focus trap); still
+shown once.
+
+Acceptance:
+
+| #   | Given                                                  | When           | Then                                                           |
+| --- | ------------------------------------------------------ | -------------- | -------------------------------------------------------------- |
+| L1  | Session on account K fails with the usage-limit code   | Banner renders | ChatGPT limit banner instead of the error banner; Manage usage |
+| L2  | L1 and K's primary window is at 100%, resets in 40 min | Banner renders | "Resets at {time}" and "Continue automatically"                |
+| L3  | L1 without usage                                       | Banner renders | No time, no auto-continue                                      |
+| L4  | Cold-hydrated error (`code` = adapter class name)      | Banner renders | Same as L1 (provider code read from attribution)               |
+| L5  | Session fails with `subscription_sharing_invalid_user` | Error banner   | Localized sign-in text and "Model settings", no CLI command    |
+| L6  | Indexed account without tokens                         | Settings opens | Reconnect row with Sign in again / Remove; not in `accounts`   |
+| L7  | First-run dialog open                                  | Escape         | Dialog closes                                                  |
+
 ### Branding (Phase 2, Desktop UI)
 
 - Sign-in button: exactly **"Continue with ChatGPT"**, black, ChatGPT logo, equal prominence with

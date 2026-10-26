@@ -7084,6 +7084,10 @@ const enUS: Record<string, string> = {
     "This run exceeded the maximum single-run time. Create a new off-peak task to continue.",
   "zcode.error.providerBusiness.2007":
     "The upstream service is temporarily unavailable. Please try again later.",
+  "zcode.error.chatgptPlan.signInAgain":
+    "Your ChatGPT sign-in is no longer valid. Sign in again in Model settings → ChatGPT Plan.",
+  "zcode.error.chatgptPlan.notEligible":
+    "This ChatGPT account's plan can't be used here. Sign in with an eligible ChatGPT Plus or Pro account in Model settings → ChatGPT Plan.",
   "zcode.error.providerBusiness.429":
     "You're sending requests too quickly. Please try again later.",
 
@@ -8249,6 +8253,10 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.chatgpt.firstRun.body":
     "Eligible AI requests in this app use your ChatGPT plan. Usage is shared across all apps on the plan and managed in ChatGPT settings.",
   "settings.modelProvider.chatgpt.firstRun.gotIt": "Got it",
+  "settings.modelProvider.chatgpt.reconnectRequired":
+    "Your ChatGPT sign-in expired or was revoked. Sign in again to keep using this plan.",
+  "settings.modelProvider.chatgpt.signInAgain": "Sign in again",
+  "settings.modelProvider.chatgpt.removeAccount": "Remove",
   "settings.modelProvider.chatgpt.usage.window.fiveHour": "5-hour",
   "settings.modelProvider.chatgpt.usage.window.weekly": "Weekly",
   "settings.modelProvider.chatgpt.usage.window.hours": "{n}h",
@@ -8369,6 +8377,8 @@ const enUS: Record<string, string> = {
   "chat.contextUsage.tone.critical": "Critical: auto-compact threshold reached.",
   "chat.statusPanel.dream": "Dream",
   "chat.error.resume": "Resume",
+  "chat.quota.chatgptPlanLimited": "ChatGPT plan usage limit reached.",
+  "chat.quota.chatgptPlanLimited.resetAt": "ChatGPT plan usage limit reached. It resets at {time}.",
   "chat.quota.providerLimited.resetAt": "The 5-hour usage limit resets at {time}.",
   "chat.quota.providerLimited.autoContinue": "Continue automatically",
   "taskList.worktreeTaskLabel": "Worktree session · {branch} · {directory}",

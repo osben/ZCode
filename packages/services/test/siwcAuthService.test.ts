@@ -509,6 +509,30 @@ describe("SiwcAuthService (host side, multi-account)", () => {
     ]);
   });
 
+  // specs/chatgpt-plan-signin.md "Reconnect required": an indexed account without tokens stays visible apart from `accounts`.
+  it("lists an indexed account without tokens as reconnect-required until it is removed", async () => {
+    const fixture = await createFixture();
+    fixture.credentials.save(
+      SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
+      JSON.stringify([
+        { accountKey: ACCOUNT_KEY, sub: SUB, email: "a@example.com", name: null, addedAt: "" },
+      ]),
+    );
+
+    expect(await fixture.service.getStatus()).toEqual({
+      accounts: [],
+      reconnectRequired: [
+        {
+          accountKey: ACCOUNT_KEY,
+          user: { displayName: "a@example.com", email: "a@example.com", subject: SUB },
+        },
+      ],
+    });
+
+    await fixture.service.logout(ACCOUNT_KEY);
+    expect(await fixture.service.getStatus()).toEqual({ accounts: [] });
+  });
+
   it("replaces the previous registration's bundle instead of merging it", async () => {
     const fixture = await createFixture();
     await runFullLogin(fixture);

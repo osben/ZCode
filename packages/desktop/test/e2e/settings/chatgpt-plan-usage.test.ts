@@ -27,6 +27,10 @@ const USAGE_PORT = 45455;
 const SUB = "e2e-chatgpt-usage-sub";
 const ACCOUNT_KEY = createHash("sha256").update(SUB).digest("hex").slice(0, 16);
 const EMAIL = "e2e-plan@example.test";
+// A second indexed account without tokens: its sign-in was revoked (specs/chatgpt-plan-signin.md L6).
+const REVOKED_SUB = "e2e-chatgpt-revoked-sub";
+const REVOKED_KEY = createHash("sha256").update(REVOKED_SUB).digest("hex").slice(0, 16);
+const REVOKED_EMAIL = "e2e-revoked@example.test";
 const SETTINGS_FILE = join(getE2EAppDataPaths().appDataDir, "setting.json");
 const CREDENTIALS_FILE = join(getE2EAppDataPaths().appDataDir, "credentials.json");
 const NAV_CHATGPT = "preset:account:chatgpt-plan";
@@ -81,6 +85,13 @@ async function seedSignedInAccount() {
         sub: SUB,
         email: EMAIL,
         name: "E2E Plan",
+        addedAt: "2026-10-25T00:00:00Z",
+      },
+      {
+        accountKey: REVOKED_KEY,
+        sub: REVOKED_SUB,
+        email: REVOKED_EMAIL,
+        name: null,
         addedAt: "2026-10-25T00:00:00Z",
       },
     ]),
@@ -159,6 +170,11 @@ describe("ChatGPT plan usage in Settings", () => {
     assert.match(text, /24% left/);
     assert.match(text, /Resets in 3d 5h|Resets in 3d 4h/);
     await expect($('[data-testid="chatgpt-plan-type"]')).toHaveText("Plus");
+    const reconnect = await $('[data-testid="chatgpt-plan-reconnect-row"]');
+    await reconnect.waitForDisplayed({ timeout: 10000 });
+    const reconnectText = await reconnect.getText();
+    assert.ok(reconnectText.includes(REVOKED_EMAIL), reconnectText);
+    assert.ok(reconnectText.includes("Sign in again"), reconnectText);
 
     const screenshotDir = process.env.ZCODE_E2E_SCREENSHOT_DIR?.trim();
     if (screenshotDir) await browser.saveScreenshot(join(screenshotDir, "chatgpt-plan-usage.png"));

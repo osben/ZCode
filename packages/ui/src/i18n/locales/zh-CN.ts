@@ -6743,6 +6743,10 @@ const zhCN: Record<string, string> = {
   "zcode.error.providerBusiness.3102": "已超过单次最长运行时间，请创建新的闲时任务继续。",
   "zcode.error.modelSuspiciousEmpty": "模型未返回任何内容。",
   "zcode.error.providerBusiness.2007": "上游服务暂时不可用，请稍后重试。",
+  "zcode.error.chatgptPlan.signInAgain":
+    "ChatGPT 登录已失效。请在“模型设置 → ChatGPT Plan”中重新登录。",
+  "zcode.error.chatgptPlan.notEligible":
+    "此 ChatGPT 账号的套餐无法在此使用。请在“模型设置 → ChatGPT Plan”中使用符合条件的 ChatGPT Plus 或 Pro 账号登录。",
   "zcode.error.providerBusiness.429": "请求过于频繁，请稍后重试。",
 
   // 调试信息栏
@@ -7827,6 +7831,10 @@ const zhCN: Record<string, string> = {
   "settings.modelProvider.chatgpt.firstRun.body":
     "本应用中符合条件的 AI 请求将使用你的 ChatGPT 套餐。用量在所有使用该套餐的应用间共享，并在 ChatGPT 设置中管理。",
   "settings.modelProvider.chatgpt.firstRun.gotIt": "知道了",
+  "settings.modelProvider.chatgpt.reconnectRequired":
+    "ChatGPT 登录已过期或被撤销。请重新登录以继续使用此套餐。",
+  "settings.modelProvider.chatgpt.signInAgain": "重新登录",
+  "settings.modelProvider.chatgpt.removeAccount": "移除",
   "settings.modelProvider.chatgpt.usage.window.fiveHour": "5 小时",
   "settings.modelProvider.chatgpt.usage.window.weekly": "每周",
   "settings.modelProvider.chatgpt.usage.window.hours": "{n} 小时",
@@ -7945,6 +7953,8 @@ const zhCN: Record<string, string> = {
   "chat.contextUsage.tone.critical": "严重：已达到自动压缩阈值。",
   "chat.statusPanel.dream": "记忆整理",
   "chat.error.resume": "继续",
+  "chat.quota.chatgptPlanLimited": "已达到 ChatGPT 套餐用量上限。",
+  "chat.quota.chatgptPlanLimited.resetAt": "已达到 ChatGPT 套餐用量上限，将于 {time} 重置。",
   "chat.quota.providerLimited.resetAt": "五小时用量限额将在 {time} 重置。",
   "chat.quota.providerLimited.autoContinue": "重置后自动继续",
   "taskList.worktreeTaskLabel": "Worktree 会话 · {branch} · {directory}",

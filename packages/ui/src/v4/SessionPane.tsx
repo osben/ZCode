@@ -410,6 +410,9 @@ import {
   type ConversationSelectionReference,
 } from "@/lib/conversationSelectionReference.js";
 
+/** The ChatGPT plan is managed on chatgpt.com (specs/chatgpt-plan-signin.md "Limits and recovery in Desktop"). */
+const CHATGPT_PLAN_USAGE_URL = "https://chatgpt.com/settings/usage";
+
 export interface SessionPaneProps {
   paneId: string;
   sessionId: string | null;
@@ -6677,6 +6680,11 @@ export function SessionPane({
           autoContinueReady={sharedSettings !== null}
           onAutoContinue={
             quotaBanner.state.providerLimitedResetAt !== null ? handleResumeError : undefined
+          }
+          onManageUsage={
+            quotaBanner.state.kind === "chatgpt-plan-limited" && platform
+              ? () => void platform.openExternal(CHATGPT_PLAN_USAGE_URL)
+              : undefined
           }
         />
       ) : null}

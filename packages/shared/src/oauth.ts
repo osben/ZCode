@@ -367,7 +367,19 @@ export interface SiwcPlanUsageChange {
   usage: SiwcPlanUsageSnapshot | null;
 }
 
+/** An indexed ChatGPT plan account whose tokens were revoked or expired; it needs a fresh sign-in. */
+export interface SiwcPlanReconnectAccount {
+  accountKey: string;
+  user: SiwcPlanUserSummary;
+}
+
 /** Aggregate status across all signed-in ChatGPT plan accounts. */
 export interface SiwcPlanAccountsStatus {
   accounts: readonly SiwcPlanAccountStatus[];
+  /**
+   * Accounts still in the index without tokens (terminal refresh failure). Kept apart from
+   * `accounts`, which feeds the provider registry and entitlement, so they never become
+   * selectable models (specs/chatgpt-plan-signin.md "Reconnect required").
+   */
+  reconnectRequired?: readonly SiwcPlanReconnectAccount[];
 }

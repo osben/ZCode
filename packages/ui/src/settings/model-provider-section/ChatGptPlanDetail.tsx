@@ -7,6 +7,13 @@ import { logger } from "@/logger.js";
 import type { SiwcPlanAccountStatus, SiwcPlanAccountsStatus } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { Badge } from "@/components/ui/badge.js";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog.js";
 import { CHATGPT_PLAN_PROVIDER_LOGO } from "@/lib/chatgptPlanProvider.js";
 import { ChatGptPlanUsageBlock } from "./ChatGptPlanUsageBlock.js";
 import { usagePlanLabel } from "./chatgptPlanUsage.js";
@@ -230,6 +237,7 @@ export function ChatGptPlanDetail() {
   );
 
   const accounts = status?.accounts ?? [];
+  const reconnectAccounts = status?.reconnectRequired ?? [];
   const addAccountLabelId = accounts.length
     ? "settings.modelProvider.chatgpt.addAccount"
     : "settings.modelProvider.chatgpt.continueWithChatgpt";
@@ -274,7 +282,41 @@ export function ChatGptPlanDetail() {
             onManageUsage={() => void platform.openExternal(CHATGPT_USAGE_URL)}
           />
         ))}
-        {accounts.length === 0 ? (
+        {reconnectAccounts.map((account) => (
+          // specs/chatgpt-plan-signin.md "Reconnect required": the sign-in expired or was revoked.
+          <div
+            key={account.accountKey}
+            data-testid="chatgpt-plan-reconnect-row"
+            className="rounded-lg border border-warning/40 bg-warning-surface p-4"
+          >
+            <div className="flex flex-col gap-3">
+              <p className="text-ui-sm font-medium">
+                {account.user.email ?? account.user.displayName ?? account.accountKey}
+              </p>
+              <p role="status" className="text-ui-sm text-foreground">
+                {intl.formatMessage({ id: "settings.modelProvider.chatgpt.reconnectRequired" })}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  disabled={loginPending}
+                  onClick={() => void startLogin({ reauthAccountKey: account.accountKey })}
+                >
+                  {intl.formatMessage({ id: "settings.modelProvider.chatgpt.signInAgain" })}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={signOutPending === account.accountKey}
+                  onClick={() => void signOut(account.accountKey)}
+                >
+                  {intl.formatMessage({ id: "settings.modelProvider.chatgpt.removeAccount" })}
+                </Button>
+              </div>
+            </div>
+          </div>
+        ))}
+        {accounts.length === 0 && reconnectAccounts.length === 0 ? (
           <div className="rounded-lg border border-border bg-card p-4">
             <p className="text-ui-sm text-muted-foreground">
               {intl.formatMessage({ id: "settings.modelProvider.chatgpt.notSignedIn" })}
@@ -300,34 +342,27 @@ export function ChatGptPlanDetail() {
         </div>
       </div>
 
-      {showFirstRunModal ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="chatgpt-plan-first-run-title"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-        >
-          <div className="w-full max-w-sm rounded-lg border border-border bg-card p-6 text-card-foreground shadow-lg">
-            <div className="mb-4 flex justify-center">
-              <ProviderLogo logo={CHATGPT_PLAN_PROVIDER_LOGO} className="size-10" />
-            </div>
-            <h3
-              id="chatgpt-plan-first-run-title"
-              className="mb-2 text-center text-ui-lg font-medium"
-            >
-              {intl.formatMessage({ id: "settings.modelProvider.chatgpt.firstRun.title" })}
-            </h3>
-            <p className="mb-5 text-ui-sm text-muted-foreground">
-              {intl.formatMessage({ id: "settings.modelProvider.chatgpt.firstRun.body" })}
-            </p>
-            <div className="flex justify-center">
-              <Button type="button" onClick={() => setShowFirstRunModal(false)}>
-                {intl.formatMessage({ id: "settings.modelProvider.chatgpt.firstRun.gotIt" })}
-              </Button>
-            </div>
+      {/* Shared Dialog: Escape, backdrop click and focus trapping come with it (shown once). */}
+      <Dialog open={showFirstRunModal} onOpenChange={setShowFirstRunModal}>
+        <DialogContent className="max-w-sm">
+          <div className="flex justify-center">
+            <ProviderLogo logo={CHATGPT_PLAN_PROVIDER_LOGO} className="size-10" />
           </div>
-        </div>
-      ) : null}
+          <DialogHeader>
+            <DialogTitle className="text-center">
+              {intl.formatMessage({ id: "settings.modelProvider.chatgpt.firstRun.title" })}
+            </DialogTitle>
+            <DialogDescription>
+              {intl.formatMessage({ id: "settings.modelProvider.chatgpt.firstRun.body" })}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-center">
+            <Button type="button" onClick={() => setShowFirstRunModal(false)}>
+              {intl.formatMessage({ id: "settings.modelProvider.chatgpt.firstRun.gotIt" })}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

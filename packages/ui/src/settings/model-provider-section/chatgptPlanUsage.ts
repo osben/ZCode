@@ -159,3 +159,18 @@ export function usageHeadline(snapshot: SiwcPlanUsageSnapshot, nowMs: number): U
     severity: usageSeverity(window.usedPercent),
   };
 }
+
+/**
+ * When a reached plan limit lifts: the latest reset among windows at 100% used whose reset has not passed (every
+ * exhausted window must reset before requests succeed). Null when no exhausted window reports a future reset.
+ */
+export function usageLimitResetAt(snapshot: SiwcPlanUsageSnapshot, nowMs: number): number | null {
+  let latest: number | null = null;
+  for (const window of [snapshot.primary, snapshot.secondary]) {
+    if (!window || window.usedPercent < 100) continue;
+    const resetMs = Date.parse(window.resetsAt ?? "");
+    if (!Number.isFinite(resetMs) || resetMs <= nowMs) continue;
+    latest = latest === null ? resetMs : Math.max(latest, resetMs);
+  }
+  return latest;
+}

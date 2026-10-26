@@ -27,6 +27,7 @@ import {
   SIWC_LEGACY_CREDENTIAL_KEYS,
   type SiwcPlanAccountStatus,
   type SiwcPlanAccountsStatus,
+  type SiwcPlanReconnectAccount,
   type SiwcPlanUsageChange,
   type SiwcPlanUsageSnapshot,
   type SiwcPlanUserSummary,
@@ -65,6 +66,14 @@ export function createSiwcAccountKey(sub: string): string {
     .update(normalized, "utf-8")
     .digest("hex")
     .slice(0, 16);
+}
+
+function accountUser(record: SiwcStoredAccountRecord): SiwcPlanUserSummary {
+  return {
+    displayName: record.name ?? record.email ?? record.sub,
+    email: record.email,
+    subject: record.sub,
+  };
 }
 
 /** Stable per-host agent id (shared with the CLI: same file, plain text, not a secret). */
@@ -321,11 +330,13 @@ export class SiwcAuthService {
     // Cached snapshots only: a slow usage probe must not delay the account list
     // (specs/chatgpt-plan-signin.md "Usage display (Settings)"); `refreshUsage` probes.
     const accounts: SiwcPlanAccountStatus[] = [];
+    const reconnectRequired: SiwcPlanReconnectAccount[] = [];
     for (const record of records) {
       const status = await this.readAccountStatus(record);
       if (status) accounts.push(status);
+      else reconnectRequired.push({ accountKey: record.accountKey, user: accountUser(record) });
     }
-    return { accounts };
+    return { accounts, ...(reconnectRequired.length > 0 ? { reconnectRequired } : {}) };
   }
 
   /**
@@ -731,11 +742,7 @@ export class SiwcAuthService {
       accountKey: record.accountKey,
       signedIn: true,
       planUsageEntitled: isSiwcPlanUsageEntitled(parseSiwcScopes(stored[keys.scopes])),
-      user: {
-        displayName: record.name ?? record.email ?? record.sub,
-        email: record.email,
-        subject: record.sub,
-      },
+      user: accountUser(record),
       ...(usage ? { usage } : {}),
       ...(usageLinked ? { usageLinked: true } : {}),
     };

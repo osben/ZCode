@@ -275,6 +275,33 @@ describe("ChatGptPlanDetail", () => {
     expect(screen.getByTestId("chatgpt-plan-usage")).toBeTruthy();
   });
 
+  // specs/chatgpt-plan-signin.md "Reconnect required".
+  it("shows a reconnect row for an account whose sign-in expired", async () => {
+    mocks.oauthService.getChatGptPlanStatus.mockResolvedValue({
+      accounts: [],
+      reconnectRequired: [
+        {
+          accountKey: "a1b2c3d4e5f60718",
+          user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
+        },
+      ],
+    });
+    render(createElement(ChatGptPlanDetail));
+    await flush();
+
+    expect(screen.getByTestId("chatgpt-plan-reconnect-row")).toBeTruthy();
+    expect(screen.queryByText("settings.modelProvider.chatgpt.notSignedIn")).toBeNull();
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "settings.modelProvider.chatgpt.signInAgain" }),
+      );
+      await Promise.resolve();
+    });
+    expect(mocks.oauthService.startChatGptPlanLogin).toHaveBeenCalledWith({
+      reauthAccountKey: "a1b2c3d4e5f60718",
+    });
+  });
+
   it("gives the first-run dialog an accessible name", async () => {
     mocks.oauthService.pollChatGptPlanLogin.mockResolvedValue({
       signedIn: true,
@@ -296,9 +323,16 @@ describe("ChatGptPlanDetail", () => {
       await vi.advanceTimersByTimeAsync(1_500);
     });
 
-    expect(
-      screen.getByRole("dialog", { name: "settings.modelProvider.chatgpt.firstRun.title" }),
-    ).toBeTruthy();
+    const dialog = screen.getByRole("dialog", {
+      name: "settings.modelProvider.chatgpt.firstRun.title",
+    });
+    expect(dialog).toBeTruthy();
+
+    // The shared Dialog closes on Escape (the old overlay could only be closed with "Got it").
+    await act(async () => {
+      fireEvent.keyDown(dialog, { key: "Escape" });
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("links usage for an entitled account without a linked grant and refreshes status", async () => {
