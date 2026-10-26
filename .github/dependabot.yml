@@ -9,8 +9,14 @@ updates:
     schedule:
       interval: "weekly"
 
+  # Workflows pin actions to full commit SHAs with a `# vX.Y.Z` comment; Dependabot bumps the SHA
+  # and the comment together. One grouped PR per week instead of one per action.
   - package-ecosystem: "github-actions"
     directory: "/"
     target-branch: "fork"
     schedule:
       interval: "weekly"
+    groups:
+      actions:
+        patterns:
+          - "*"
