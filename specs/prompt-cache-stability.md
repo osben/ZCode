@@ -1,9 +1,7 @@
 # Prompt-cache prefix stability
 
-Status: implemented, test-guarded. One rule (R5 for the LSP availability probe) is currently
-violated; the reproduction is kept as `it.fails` in
-`apps/zcode-cli/packages/core/tests/lsp-tool-registration-race.test.ts` (fix pending, see
-"Known violation").
+Status: implemented, test-guarded. The one known violation (R5, LSP late registration) is fixed;
+see "Fixed violation".
 
 ## Problem
 
@@ -106,25 +104,33 @@ index of the first message containing `turn-one`:
 - **S3 — model switch (negative control):** Session Selection changes before turn 2. System
   messages `[0]` and `[1]` stay equal; only the dynamic block `[2]` differs.
 
-## Known violation: LSP late registration (R5)
+## Fixed violation: LSP late registration (R5)
 
-`agent-runtime.ts:373` fires `void runtime.applyLspPreferences()` without awaiting it; the
-availability check (`LspService.isAvailable` → `port.isInstalled`, `core/src/runtime/methods/lsp.ts:23-42`)
-is async, so when it resolves slowly the LSP tool joins the registry after the first request was
-already sent:
+`agent-runtime.ts` fires `void runtime.applyLspPreferences()` at construction; the availability
+check (`LspService.isAvailable` → `port.isInstalled`) is async, so the LSP tool used to join the
+registry after the first request when the check was slow:
 
 ```
 runtime constructed ──► void applyLspPreferences()  (isInstalled pending …)
 turn 1 ────────────► request 1: tools WITHOUT LSP
-isInstalled settles ─► LSP registered, cache invalidated
+isInstalled settles ─► LSP registered
 turn 2 ────────────► request 2: tools WITH LSP   ← prefix broken, cache invalidated
 ```
 
-Reproduced by `apps/zcode-cli/packages/core/tests/lsp-tool-registration-race.test.ts`, marked
-`it.fails` ("reproduces LSP late-registration race; fix pending") so the suite stays green. When
-the fix lands (settle LSP availability before the first request, or expose the tool only from the
-next turn boundary as an allowed change), the marker must be removed and the test must pass as a
-plain `it`.
+Fix: the turn loop's `tools` preparation step awaits `settleLspPreferences()` (the per-runtime
+preference queue in `core/src/runtime/methods/lsp.ts`) before reading the tool set. Order now:
+
+```
+runtime constructed ──► applyLspPreferences queued
+turn 1: mcp step ──► tools step: await queue settled ──► request 1: tools WITH LSP
+turn 2 ────────────► request 2: identical tools
+```
+
+No timeout is added: `isInstalled` only probes PATH candidates with file checks, and the queue
+never rejects (failures are logged inside it). A preference change made by the user mid-session
+still goes through the same queue and takes effect at the next turn boundary, which is an allowed
+change. Regression test: `apps/zcode-cli/packages/core/tests/lsp-tool-registration-race.test.ts`
+(the first request is held until the check settles and already carries `LSP`).
 
 ## Credit
 

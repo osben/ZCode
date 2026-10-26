@@ -81,19 +81,21 @@ describe("LSP tool registration race", () => {
     expect(runtime.getToolRegistry().has("LSP")).toBe(true);
   });
 
-  // reproduces LSP late-registration race; fix pending
-  it.fails("sends an equal tool list when LSP availability settles after turn 1 starts", async () => {
+  it("holds the first request until the initial LSP availability check settles", async () => {
     const port = new HeldBackLspPort();
     const { runtime, requests } = createRaceRuntime(port);
 
-    await runtime.executeTurn("turn-one");
-    expect(requests).toHaveLength(1);
-    // The held check settles after turn 1's request went out; the LSP tool registers afterwards.
+    const turnOne = runtime.executeTurn("turn-one");
+    // Let turn preparation run up to the tools step; no request may go out while the check is held.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(requests).toHaveLength(0);
+
     port.releaseInstalled(true);
-    await runtime.applyLspPreferences();
+    await turnOne;
     await runtime.executeTurn("turn-two");
 
     expect(requests).toHaveLength(2);
+    expect(JSON.parse(requests[0] ?? "[]")).toContain("LSP");
     expect(requests[1]).toBe(requests[0]);
   });
 });

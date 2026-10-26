@@ -29,6 +29,7 @@ import type { AgentRuntimeInternal } from "../internal.js";
 import { runModelBackedTurnStep } from "./turn-model-step.js";
 import { persistRuntimeReminderMessage } from "./runtime-reminder-persistence.js";
 import { buildProjectionAnchor } from "./projection-anchor.js";
+import { settleLspPreferences } from "./lsp.js";
 import {
   evaluateRapidRefill,
   MAX_CONSECUTIVE_RAPID_REFILLS,
@@ -128,6 +129,9 @@ export async function runRegularTurnLoop(
     finishMcp();
     throwIfTurnAborted(state.turnAbortSignal);
     const finishTools = beginLocalTurnPreparation(state.turnTraceContext, "tools");
+    // The initial LSP availability check runs unawaited at construction. Settle it so the LSP tool
+    // cannot join the tool list (the head of the cached prompt prefix) after the first request.
+    await settleLspPreferences.call(this);
     const tools = getTurnTools(this, state);
     finishTools();
     if (!outputTokenRecoveryActive) {
