@@ -23,7 +23,12 @@ function put(root, path, contents) {
 
 function fixtureContext(root, existingFiles) {
   return buildContext(root, {
-    packagePaths: ["package.json", "nested/package.json", "packages/ui/package.json"],
+    packagePaths: [
+      "package.json",
+      "nested/package.json",
+      "nested/packages/core/package.json",
+      "packages/ui/package.json",
+    ],
     workspacePaths: ["nested/pnpm-workspace.yaml"],
     fileExists: (absolutePath) => existingFiles.has(absolutePath),
   });
@@ -49,6 +54,11 @@ function fixtureTree(t) {
     JSON.stringify({ name: "nested-cli", scripts: { check: "echo check" } }),
   );
   put(root, "nested/pnpm-workspace.yaml", "packages:\n  - packages/*\n");
+  put(
+    root,
+    "nested/packages/core/package.json",
+    JSON.stringify({ name: "@nested/core", scripts: { test: "vitest" } }),
+  );
   put(
     root,
     "packages/ui/package.json",
@@ -126,6 +136,23 @@ test("resolveCommand rejects --dir into a nested workspace and suggests --filter
   assert.equal(result.ok, false);
   assert.match(result.reason, /nested pnpm workspace nested/u);
   assert.match(result.suggestion, /--filter nested-cli/u);
+});
+
+test("resolveCommand rejects --dir into a package inside a nested workspace, exec included", (t) => {
+  const ctx = fixtureContext(fixtureTree(t), new Set());
+  for (const command of [
+    "pnpm --dir nested/packages/core test",
+    "pnpm --dir nested/packages/core exec vitest run tests/x.test.ts",
+    "pnpm --dir nested exec tsx ../scripts/x.ts",
+  ]) {
+    const result = resolveCommand(command, ctx, "");
+    assert.equal(result.ok, false, command);
+    assert.match(result.reason, /inside the nested pnpm workspace nested/u, command);
+  }
+  assert.match(
+    resolveCommand("pnpm --dir nested/packages/core test", ctx, "").suggestion,
+    /--filter @nested\/core/u,
+  );
 });
 
 test("resolveCommand accepts --dir into a plain package directory", (t) => {

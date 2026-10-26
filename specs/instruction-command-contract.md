@@ -52,10 +52,12 @@ approve-builds`) and `-v`/`--version`/`--help` are not verified in v1.
   it is a script of a resolved package or a binary declared in the `dependencies`/`devDependencies`
   of the resolved or root package. `node <path>` passes when the file exists relative to the
   repository root or to the doc's owning package directory.
-- **Nested-workspace rule**: `--dir`/`-C` may not target a directory that contains its own
-  `pnpm-workspace.yaml` (`apps/zcode-cli` does). Such a citation fails with a message suggesting
-  `--filter <name>`, the `name` from that directory's `package.json` (for `apps/zcode-cli`:
-  `--filter zcode-cli`). Reason: inside the nested workspace, pnpm cannot resolve root-level
+- **Nested-workspace rule**: `--dir`/`-C` may not target a directory whose nearest
+  `pnpm-workspace.yaml` is not the repository root's: the nested workspace root itself
+  (`apps/zcode-cli`) or any directory inside it (`apps/zcode-cli/packages/adapters`), because pnpm
+  walks up from `--dir` to that file. The rule applies before any command is skipped, so `exec`
+  citations are covered too. Such a citation fails with a message suggesting `--filter <name>`,
+  the `name` from the target's `package.json` (for `apps/zcode-cli`: `--filter zcode-cli`). Reason: inside the nested workspace, pnpm cannot resolve root-level
   dependencies, and root script forwarding silently misbehaves — `--filter` from the repository
   root is the supported form.
 - **Allowlist**: entries are keyed `"<file>::<command>"` with an inline reason comment per entry

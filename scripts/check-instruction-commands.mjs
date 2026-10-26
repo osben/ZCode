@@ -265,6 +265,17 @@ function normalizeFilterSelector(selector) {
   return { kind: "name", name: cleaned };
 }
 
+function nearestNestedWorkspace(dir, workspaceDirs) {
+  for (
+    let current = dir;
+    current !== "";
+    current = dirname(current) === "." ? "" : dirname(current)
+  ) {
+    if (workspaceDirs.has(current)) return current;
+  }
+  return null;
+}
+
 function resolvePnpm(tokens, ctx, ownerDir) {
   const filters = [];
   let dir = null;
@@ -304,13 +315,16 @@ function resolvePnpm(tokens, ctx, ownerDir) {
   if (dir !== null) {
     const normalizedDir = normalize(dir).replaceAll("\\", "/");
     if (isAbsolute(normalizedDir) || normalizedDir.startsWith("..")) return { ok: true };
-    if (ctx.workspaceDirs.has(normalizedDir)) {
-      const nested = ctx.packagesByDir.get(normalizedDir);
+    // pnpm walks up from --dir to the nearest pnpm-workspace.yaml, so any directory inside a
+    // nested workspace (not only its root) runs with that workspace's binaries and lockfile.
+    const nestedRoot = nearestNestedWorkspace(normalizedDir, ctx.workspaceDirs);
+    if (nestedRoot !== null) {
+      const target = ctx.packagesByDir.get(normalizedDir);
       return {
         ok: false,
-        reason: `--dir targets the nested pnpm workspace ${normalizedDir || "."}`,
-        suggestion: nested?.name
-          ? `use --filter ${nested.name} from the repository root instead`
+        reason: `--dir targets ${normalizedDir}, inside the nested pnpm workspace ${nestedRoot}`,
+        suggestion: target?.name
+          ? `use --filter ${target.name} from the repository root instead`
           : "use a --filter selector from the repository root instead",
       };
     }
