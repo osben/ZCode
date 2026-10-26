@@ -68,6 +68,7 @@ export async function runRegularTurnLoop(
       if (drainedRuntimeCommands.drained > 0) {
         state.repeatedToolCallSignature = undefined;
         state.repeatedToolCallStreakCount = 0;
+        state.toolLoopHistory = undefined;
       }
     }
 

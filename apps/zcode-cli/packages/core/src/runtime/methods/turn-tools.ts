@@ -281,6 +281,7 @@ export async function executeToolCallsForModelStep(
 
   await handleToolCallAnomalyWarnings(this, state, {
     modelTraceContext: options.modelTraceContext,
+    results,
     toolCalls: options.toolCalls,
   });
   await persistToolModelStepFinish(this, state, options);

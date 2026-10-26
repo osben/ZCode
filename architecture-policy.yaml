@@ -916,6 +916,11 @@ exceptions:
     paths:
       - apps/zcode-cli/packages/core/src/runtime/methods/subagent-skill-grants.ts
     reason: Fork-owned subagent skill grant resolver (specs/subagent-skill-identity.md), kept out of the upstream-owned subagent.ts to limit sync conflicts. The zcode-cli tree has no managed module yet; adopting it needs a separate module boundary refactor.
+  - id: tool-loop-patterns-unmanaged-file
+    rule: unmanaged-new-file
+    paths:
+      - apps/zcode-cli/packages/core/src/runtime/helpers/tool-loop-patterns.ts
+    reason: Fork-owned tool-loop rotation and polling helper (specs/tool-loop-rotation-detection.md), kept out of the upstream-owned model-anomaly.ts and turn-tool-warnings.ts to limit sync conflicts. The zcode-cli tree has no managed module yet.
   - id: port-3163-remote-ssh-unmanaged-edit
     rule: unmanaged-new-file
     paths:

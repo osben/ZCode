@@ -811,6 +811,7 @@ export type ModelNetworkStatusPayload = ModelNetworkStatusEvent;
 export type ModelAnomalyWarningCategory =
   | "tool_call_budget"
   | "repeated_tool_call"
+  | "tool_call_rotation"
   | "provider_finish_mismatch"
   | "malformed_tool_call";
 

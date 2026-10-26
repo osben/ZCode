@@ -62,5 +62,6 @@ export async function drainInlineGuideForNextRequest(
   }
   state.repeatedToolCallSignature = undefined;
   state.repeatedToolCallStreakCount = 0;
+  state.toolLoopHistory = undefined;
   return true;
 }
