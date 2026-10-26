@@ -1817,6 +1817,9 @@ export function createZCodeAgentService(
             client,
             reason: `startup_ready:${event.reason}`,
             workspace,
+            // The ready event comes from the provisioning write, and the reused read-only Worker may still
+            // hold the registry it read before that write (specs/provider-registry-refresh-barrier.md).
+            refreshRegistry: true,
           });
           logger.info(undefined, "provider/model 就绪后已启动等待中的 ZCode agent", {
             providerCount: event.snapshot.providerCount,
@@ -4134,6 +4137,7 @@ export function createZCodeAgentService(
         client,
         reason: "session_create",
         workspace: params,
+        refreshRegistry: true,
       });
       const sessionTraceId = params.sessionTraceId;
       logger.info(sessionTraceId, "开始请求 ZCode Protocol session/create", {
@@ -5458,6 +5462,7 @@ export function createZCodeAgentService(
         client,
         reason: "workspace_generate_text",
         workspace: params,
+        refreshRegistry: true,
       });
       const operationId = params.signal ? randomUUID() : undefined;
       const cancel = () => {
@@ -5532,6 +5537,7 @@ export function createZCodeAgentService(
         client,
         reason: "session_send",
         workspace: params,
+        refreshRegistry: true,
       });
       const sessionTraceId = params.sessionTraceId?.trim() || getSessionTraceId(params);
       const logTraceId = sessionTraceId ?? params.inputId;
