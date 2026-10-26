@@ -361,6 +361,12 @@ export interface SiwcPlanAccountStatus extends Omit<SiwcPlanStatus, "user"> {
   usageLinked?: boolean;
 }
 
+/** One account's usage change pushed by the host; `usage: null` when the account's usage was dropped (logout). */
+export interface SiwcPlanUsageChange {
+  accountKey: string;
+  usage: SiwcPlanUsageSnapshot | null;
+}
+
 /** Aggregate status across all signed-in ChatGPT plan accounts. */
 export interface SiwcPlanAccountsStatus {
   accounts: readonly SiwcPlanAccountStatus[];

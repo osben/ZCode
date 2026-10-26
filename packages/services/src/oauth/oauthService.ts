@@ -19,6 +19,7 @@ import {
   type SiwcLoginCompletionResult,
   type SiwcLoginStart,
   type SiwcPlanAccountsStatus,
+  type SiwcPlanUsageChange,
   type UserInfo,
   resolveJwtExpiration,
   isCredentialDecryptError,
@@ -129,6 +130,8 @@ function resolveInactiveOAuthProvider(provider: OAuthProviderId): OAuthProviderI
 export class OAuthService implements IOAuthService {
   private readonly sessionChanges = new Emitter<OAuthSessionState>();
   readonly onDidChangeSession = this.sessionChanges.event;
+  private readonly chatGptPlanUsageChanges = new Emitter<SiwcPlanUsageChange>();
+  readonly onDidChangeChatGptPlanUsage = this.chatGptPlanUsageChanges.event;
   private readonly credentialService: ICredentialService;
   private readonly repo: OAuthCredentialRepo;
   private readonly adapters = new Map<OAuthProviderId, OAuthProviderAdapter>();
@@ -188,6 +191,7 @@ export class OAuthService implements IOAuthService {
         env: this.env,
         ...(dependencies.now ? { now: dependencies.now } : {}),
       });
+    this.siwcAuth.onUsageChange((change) => this.chatGptPlanUsageChanges.fire(change));
   }
 
   async getProviders(): Promise<OAuthProviderMeta[]> {

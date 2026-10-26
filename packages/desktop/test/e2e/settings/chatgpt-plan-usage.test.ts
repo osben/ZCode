@@ -6,13 +6,16 @@ import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { buildSiwcAccountCredentialKeys, SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY } from "@zcode/shared";
 import {
+  TID_CHAT_MODEL_SELECT_TRIGGER,
   TID_MODEL_PROVIDER_NAV_ITEM,
+  TID_SETTINGS_BACK_BUTTON,
   TID_SETTINGS_PAGE,
   TID_SETTINGS_SECTION_NAV,
   TID_TASK_SETTINGS_BUTTON,
   testId,
 } from "@zcode/shared/test-ids";
 import { clearAppData, clickTestIdByDom, getE2EAppDataPaths } from "../helpers/desktop-app.js";
+import { selectRegistryProviderModelById } from "../helpers/upstream-provider.js";
 import { reloadElectronSessionSafely } from "../helpers/e2e-electron-reload.js";
 import { skipOccupationOnboardingIfPresent } from "../helpers/occupation-onboarding.js";
 
@@ -159,5 +162,58 @@ describe("ChatGPT plan usage in Settings", () => {
 
     const screenshotDir = process.env.ZCODE_E2E_SCREENSHOT_DIR?.trim();
     if (screenshotDir) await browser.saveScreenshot(join(screenshotDir, "chatgpt-plan-usage.png"));
+  });
+
+  // specs/chatgpt-plan-signin.md "Usage across the app" (S1, S5).
+  it("CHATGPT-USAGE-E2E-02: the composer shows the plan chip and the picker row shows the tightest window", async function () {
+    this.timeout(120000);
+    await clickTestIdByDom(TID_SETTINGS_BACK_BUTTON);
+    await selectRegistryProviderModelById("gpt-6.1-sol", {
+      providerId: `account:chatgpt-plan:${ACCOUNT_KEY}`,
+      providerName: EMAIL,
+      includePlainModelFallback: false,
+    });
+
+    const chip = await $('[data-testid="chatgpt-plan-usage-chip"]');
+    await chip.waitForDisplayed({ timeout: 30000 });
+    assert.equal(await chip.getText(), "Plus · 24% left");
+    assert.equal(await chip.getAttribute("data-severity"), "warning");
+
+    const screenshotDir = process.env.ZCODE_E2E_SCREENSHOT_DIR?.trim();
+    if (screenshotDir) {
+      await chip.moveTo();
+      await $('[data-testid="chatgpt-plan-usage"]').waitForDisplayed({ timeout: 10000 });
+      await browser.saveScreenshot(join(screenshotDir, "chatgpt-composer-chip-hover.png"));
+    }
+
+    // Close the chip's hover card before opening the picker.
+    await browser.keys("Escape");
+    await (await $("body")).moveTo({ xOffset: 5, yOffset: 5 });
+    await $('[data-testid="chatgpt-plan-usage"]').waitForDisplayed({
+      reverse: true,
+      timeout: 5000,
+    });
+
+    // The picker's provider row carries the tightest window after the Subscription badge.
+    await (await $(`[data-testid="${TID_CHAT_MODEL_SELECT_TRIGGER}"]`)).click();
+    const hint = await $("[data-model-group-hint]");
+    await hint.waitForDisplayed({ timeout: 15000 });
+    assert.equal(await hint.getText(), "24% left");
+    assert.match(
+      (await hint.getAttribute("title")) ?? "",
+      /^Resets in 3d [45]h · 5-hour: 58% left · Weekly: 24% left$/,
+    );
+    assert.equal(await hint.getAttribute("data-tone"), "warning");
+    // The chip's card does not stay open behind the picker.
+    assert.equal(
+      await browser.execute(
+        () => document.querySelector("[data-slot=hover-card-content][data-state=open]") !== null,
+      ),
+      false,
+    );
+    if (screenshotDir) {
+      await browser.saveScreenshot(join(screenshotDir, "chatgpt-picker-hint.png"));
+    }
+    await browser.keys("Escape");
   });
 });

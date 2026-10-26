@@ -478,6 +478,37 @@ describe("SiwcAuthService (host side, multi-account)", () => {
     expect(afterLogout.accounts).toHaveLength(0);
   });
 
+  // specs/chatgpt-plan-signin.md "Usage across the app": the host pushes every stored snapshot and every drop.
+  it("notifies usage changes on store and on logout", async () => {
+    const fixture = await createFixture();
+    fixture.credentials.save(
+      SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY,
+      JSON.stringify([{ accountKey: ACCOUNT_KEY, sub: SUB, email: null, name: null, addedAt: "" }]),
+    );
+    fixture.credentials.save(ACCOUNT_KEYS.accessToken, "host-access-1");
+    fixture.credentials.save(ACCOUNT_KEYS.scopes, FULL_SCOPE);
+    const changes: unknown[] = [];
+    const unsubscribe = fixture.service.onUsageChange((change) => changes.push(change));
+
+    fixture.service.recordUsage(ACCOUNT_KEY, { primary: { usedPercent: 12 } });
+    fixture.credentials.save(ACCOUNT_KEYS.clientId, ISSUED_CLIENT_ID);
+    fixture.credentials.save(ACCOUNT_KEYS.refreshToken, "host-refresh-1");
+    await fixture.service.logout(ACCOUNT_KEY);
+    unsubscribe();
+    fixture.service.recordUsage(ACCOUNT_KEY, { primary: { usedPercent: 50 } });
+
+    expect(changes).toEqual([
+      {
+        accountKey: ACCOUNT_KEY,
+        usage: {
+          primary: { usedPercent: 12 },
+          capturedAt: new Date(NOW_SECONDS * 1000).toISOString(),
+        },
+      },
+      { accountKey: ACCOUNT_KEY, usage: null },
+    ]);
+  });
+
   it("replaces the previous registration's bundle instead of merging it", async () => {
     const fixture = await createFixture();
     await runFullLogin(fixture);

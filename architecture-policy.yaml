@@ -1078,7 +1078,11 @@ exceptions:
     paths:
       - packages/ui/src/settings/model-provider-section/ChatGptPlanUsageBlock.tsx
       - packages/ui/src/settings/model-provider-section/chatgptPlanUsage.ts
-    reason: The ChatGPT plan usage display (specs/chatgpt-plan-signin.md "Usage display (Settings)") splits its meter block and pure countdown and severity rules out of ChatGptPlanDetail in the unmanaged packages/ui settings model-provider-section tree; the host stays the single owner of the snapshot. Adopting packages/ui/src/settings needs a separate module boundary refactor.
+      - packages/ui/src/chat-input-toolbar/ChatGptPlanUsageChip.tsx
+      - packages/ui/src/hooks/useChatGptPlanUsage.ts
+      - packages/ui/src/lib/chatGptPlanUsageHints.ts
+      - packages/ui/src/lib/chatGptPlanUsageStore.ts
+    reason: The ChatGPT plan usage display (specs/chatgpt-plan-signin.md "Usage display (Settings)" and "Usage across the app") adds the composer chip, the renderer usage cache with its hook, and the picker hints beside the existing composer and settings files, and splits its meter block and pure countdown and severity rules out of ChatGptPlanDetail in the unmanaged packages/ui settings model-provider-section tree; the host stays the single owner of the snapshot. Adopting packages/ui/src/settings needs a separate module boundary refactor.
   - id: ollama-local-provider-unmanaged-files
     rule: unmanaged-new-file
     paths:

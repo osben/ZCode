@@ -8,6 +8,7 @@ import type {
   SiwcLoginCompletionResult,
   SiwcLoginStart,
   SiwcPlanAccountsStatus,
+  SiwcPlanUsageChange,
   UserInfo,
 } from "@zcode/shared";
 import { ServiceChannels } from "@zcode/shared";
@@ -23,6 +24,9 @@ import { createServiceDescriptor } from "../descriptors.js";
 export interface IOAuthService {
   /** Published after a credential change completes, before provider cleanup and caller UI/settings follow-up. */
   readonly onDidChangeSession: Event<OAuthSessionState>;
+
+  /** One ChatGPT plan account's usage changed on the host (stored snapshot, or null when dropped). */
+  readonly onDidChangeChatGptPlanUsage: Event<SiwcPlanUsageChange>;
 
   /** Get the available providers (only those with enabled=true). */
   getProviders(): Promise<OAuthProviderMeta[]>;

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ChevronLeftIcon, ChevronRightIcon, Loader2Icon } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import type { ModelSelectGroup } from "@/ModelConfigSelect.js";
+import { ModelSelectGroupHintText, type ModelSelectGroup } from "@/ModelConfigSelect.js";
 import { ProviderLogo } from "@/settings/model-provider-section/ProviderLogo.js";
 import {
   DropdownMenuItem,
@@ -113,6 +113,7 @@ export function ComposerProviderMenu({
               {/* 名称不占满剩余空间，避免把接入标签推到行尾。 */}
               <span className="min-w-0 whitespace-normal break-words">{candidate.label}</span>
               <ProviderAccessBadge group={candidate} />
+              <ModelSelectGroupHintText hint={candidate.labelHint} />
             </DropdownMenuRadioItem>
           </Fragment>
         ))}
@@ -130,6 +131,7 @@ export function ComposerProviderMenu({
       {group ? <ProviderLogo logo={group.logo} className="size-4" /> : null}
       <span className="truncate">{group?.label ?? "—"}</span>
       {group ? <ProviderAccessBadge group={group} /> : null}
+      {group ? <ModelSelectGroupHintText hint={group.labelHint} /> : null}
     </span>
   );
   const loadingIndicator = loading ? (

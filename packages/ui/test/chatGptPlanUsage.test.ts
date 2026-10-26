@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  usageHeadline,
   usagePlanLabel,
   usageRemainingPercent,
   usageResetCountdown,
@@ -58,5 +59,41 @@ describe("chatgptPlanUsage", () => {
     expect(usagePlanLabel("PRO")).toBe("Pro");
     expect(usagePlanLabel("prolite")).toBe("prolite");
     expect(usagePlanLabel(undefined)).toBeNull();
+  });
+});
+
+// specs/chatgpt-plan-signin.md "Usage across the app": the tightest window drives the chip and picker hints.
+describe("usageHeadline", () => {
+  it("picks the lowest share left among windows that have not reset", () => {
+    expect(
+      usageHeadline(
+        {
+          primary: { usedPercent: 42, resetsAt: at(60 * MIN) },
+          secondary: { usedPercent: 76, resetsAt: at(3 * 1440 * MIN) },
+        },
+        NOW,
+      ),
+    ).toMatchObject({ kind: "window", role: "secondary", remaining: 24, severity: "warning" });
+  });
+
+  it("skips a window past its reset and reports pending when none is left", () => {
+    expect(
+      usageHeadline(
+        {
+          primary: { usedPercent: 99, resetsAt: at(-MIN) },
+          secondary: { usedPercent: 10, resetsAt: at(MIN * 90) },
+        },
+        NOW,
+      ),
+    ).toMatchObject({ kind: "window", role: "secondary", remaining: 90 });
+    expect(usageHeadline({ primary: { usedPercent: 99, resetsAt: at(-MIN) } }, NOW)).toEqual({
+      kind: "pending",
+    });
+  });
+
+  it("reports the limit when the plan says so", () => {
+    expect(usageHeadline({ limitReached: true, primary: { usedPercent: 100 } }, NOW)).toEqual({
+      kind: "limit",
+    });
   });
 });

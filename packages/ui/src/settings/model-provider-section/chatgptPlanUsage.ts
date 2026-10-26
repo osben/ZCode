@@ -113,3 +113,49 @@ export function usagePlanLabel(planType: string | undefined): string | null {
   if (!trimmed) return null;
   return KNOWN_PLAN_LABELS[trimmed.toLowerCase()] ?? trimmed;
 }
+
+/** What the composer chip and picker rows show for one account (specs/chatgpt-plan-signin.md "Usage across the app"). */
+export type UsageHeadline =
+  | { readonly kind: "limit" }
+  | { readonly kind: "pending" }
+  | {
+      readonly kind: "window";
+      readonly role: UsageWindowRole;
+      readonly window: SiwcPlanUsageWindow;
+      readonly remaining: number;
+      readonly severity: UsageSeverity;
+    };
+
+/**
+ * The tightest window: the lowest share left among windows whose reset has not passed (ties: the earlier reset).
+ * `limit` when the plan reports the limit reached; `pending` when every window is past its reset.
+ */
+export function usageHeadline(snapshot: SiwcPlanUsageSnapshot, nowMs: number): UsageHeadline {
+  if (snapshot.limitReached) return { kind: "limit" };
+  const candidates = (
+    [
+      ["primary", snapshot.primary],
+      ["secondary", snapshot.secondary],
+    ] as const
+  ).flatMap(([role, window]) =>
+    window && usageResetCountdown(window.resetsAt, nowMs) !== "pending" ? [{ role, window }] : [],
+  );
+  if (candidates.length === 0) return { kind: "pending" };
+  const resetMs = (window: SiwcPlanUsageWindow) => {
+    const value = Date.parse(window.resetsAt ?? "");
+    return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY;
+  };
+  const [tightest] = candidates.sort(
+    (a, b) =>
+      usageRemainingPercent(a.window.usedPercent) - usageRemainingPercent(b.window.usedPercent) ||
+      resetMs(a.window) - resetMs(b.window),
+  );
+  const { role, window } = tightest!;
+  return {
+    kind: "window",
+    role,
+    window,
+    remaining: usageRemainingPercent(window.usedPercent),
+    severity: usageSeverity(window.usedPercent),
+  };
+}

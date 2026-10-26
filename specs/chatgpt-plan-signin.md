@@ -395,10 +395,7 @@ windowMinutes?, resetsAt?}, secondary?}`). The CLI emits a typed host notificati
   Map (never persisted, never logged; snapshots contain no tokens and no PII). OAuth status/logout
   and usage recording share the same service instance, so Settings reads recorded usage and logout
   clears that account's cached snapshot.
-- **Display**: see "Usage display (Settings)" below. The model picker badge still does NOT show
-  usage: the in-memory host state has no change-notification channel to the renderer, so a picker
-  badge would render stale percentages in a high-visibility surface. Revisit only with a
-  usage-updated event (stage 2).
+- **Display**: see "Usage display (Settings)" and "Usage across the app" below.
 
 ### Usage display (Settings)
 
@@ -472,6 +469,78 @@ Tests: wire mapping and capture stamping in `packages/services/test/siwcCodexUsa
 `packages/ui/test/chatGptPlanUsage.test.ts` (U2–U6); the detail in
 `packages/ui/test/chatGptPlanDetail.test.ts` (U1, U8, U10). Desktop E2E is stage 2 (it needs a
 seam for the `chatgpt.com` usage host).
+
+### Usage across the app
+
+Reason: usage was visible only in Settings, so a user picked a ChatGPT plan model without seeing
+how much of the plan was left, and the composer had no "Using ChatGPT plan" indicator (Branding).
+
+Owners and event order:
+
+| Fact                                  | Owner                                         | Read by                          |
+| ------------------------------------- | --------------------------------------------- | -------------------------------- |
+| Snapshot per account                  | host `SiwcAuthService` (`storeUsage`, logout) | everything below                 |
+| Change notification                   | `IOAuthService.onDidChangeChatGptPlanUsage`   | renderer usage store             |
+| Renderer copy (accountKey → snapshot) | `chatGptPlanUsageStore` (one per renderer)    | composer chip, model picker rows |
+| Refresh cadence while shown           | the renderer usage store                      | —                                |
+
+```
+host storeUsage(K, snap) ──► onDidChangeChatGptPlanUsage {accountKey: K, usage: snap}
+host logout(K)          ──► onDidChangeChatGptPlanUsage {accountKey: K, usage: null}
+renderer store: first subscriber ─► getChatGptPlanStatus (seed) ─► refreshChatGptPlanUsage
+                every 60 s and on window focus while subscribed ─► refreshChatGptPlanUsage
+                event ─► replace / delete that account's entry (newest event wins)
+last subscriber leaves ─► timers and the event subscription stop
+```
+
+- The event carries one account (`{ accountKey, usage | null }`), never tokens or e-mail. The host
+  emits it for every stored snapshot (probe or passive capture) and when an account's usage is
+  dropped (logout). Settings keeps its own reads (stage 1) and is unaffected.
+- A status read or refresh replaces the whole map; an event that arrives after it replaces only
+  its account. Reads use a sequence: an older read never overwrites a newer read.
+- The store is a renderer cache, never a source of truth; it holds nothing across a reload.
+- Remote/web: when the oauth service has no `onDidChangeChatGptPlanUsage` or the call fails, the
+  store stays empty and the surfaces render nothing (usage stays a Desktop host feature).
+
+Composer chip (`ChatGptPlanUsageChip`, next to the context usage ring):
+
+- Shown when the composer's model provider is a ChatGPT plan account
+  (`account:chatgpt-plan:<accountKey>`) and that account has a snapshot. It is the "Using ChatGPT
+  plan" indicator.
+- Text: "{plan} · {n}% left", where plan is the `planType` label ("Plus", "Pro") or "ChatGPT",
+  and n is the tightest window: the lowest share left among windows whose reset has not passed
+  (ties: the earlier reset). Colour follows that window's severity (stage 1 thresholds).
+  `limitReached` shows "{plan} · limit reached" in critical colour. When every window is past its
+  reset the chip shows "{plan} · updating".
+- Hover or focus opens a card with the stage 1 usage block for that account and "Manage usage"
+  (`https://chatgpt.com/settings/usage`, opened through the platform service).
+- Accessible name: the chip text plus the severity word.
+
+Model picker rows:
+
+- Each ChatGPT plan account group (composer provider menu and the model select) gets a hint after
+  its badge: "{n}% left" for the tightest window, coloured by severity; "limit reached" in critical
+  colour when `limitReached`. No hint without a snapshot or when every window is past its reset.
+  The menus are narrow, so the hint's tooltip carries "Resets in {duration}" for that window and
+  every window's share left.
+- Hints are presentation only: they never disable a group or a model.
+
+Acceptance:
+
+| #   | Given                                         | When                       | Then                                                       |
+| --- | --------------------------------------------- | -------------------------- | ---------------------------------------------------------- |
+| S1  | Composer model on account K, K used 42 / 76   | Composer renders           | Chip "Plus · 24% left", warning colour                     |
+| S2  | Chip shown                                    | Host stores a new snapshot | Chip updates without reopening anything                    |
+| S3  | Model on a non-ChatGPT provider               | Composer renders           | No chip                                                    |
+| S4  | K logs out                                    | Event with usage null      | Chip and picker hint disappear                             |
+| S5  | Picker open, K has usage                      | Group row renders          | Hint "24% left" after "Subscription", reset in its tooltip |
+| S6  | Older status read settles after a newer event | Both settle                | The event's snapshot stays                                 |
+| S7  | `limitReached`                                | Chip and row render        | "limit reached" in critical colour                         |
+| S8  | Last chip unmounts                            | —                          | Refresh timer and event subscription stop                  |
+
+Tests: host event emission in `siwcAuthService.test.ts`/`oauthService.test.ts`; the store
+(S2, S4, S6, S8) and the pure tightest-window rule in UI unit tests; the chip and hints in jsdom
+tests; desktop E2E extends `chatgpt-plan-usage.test.ts` with the composer chip (S1).
 
 ### Branding (Phase 2, Desktop UI)
 

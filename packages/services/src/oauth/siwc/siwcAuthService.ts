@@ -27,6 +27,7 @@ import {
   SIWC_LEGACY_CREDENTIAL_KEYS,
   type SiwcPlanAccountStatus,
   type SiwcPlanAccountsStatus,
+  type SiwcPlanUsageChange,
   type SiwcPlanUsageSnapshot,
   type SiwcPlanUserSummary,
   type SiwcStoredAccountRecord,
@@ -126,6 +127,7 @@ export class SiwcAuthService {
   private readonly inFlightToken = new RefreshSingleflight<{ accessToken: string }>();
   /** Latest passively captured plan usage per account; in-memory only, never persisted. */
   private readonly usageByAccount = new Map<string, SiwcPlanUsageSnapshot>();
+  private readonly usageListeners = new Set<(change: SiwcPlanUsageChange) => void>();
 
   constructor(
     private readonly credentialService: ICredentialService,
@@ -349,12 +351,34 @@ export class SiwcAuthService {
     return this.getStatus();
   }
 
+  /**
+   * Subscribe to per-account usage changes (specs/chatgpt-plan-signin.md "Usage across the app").
+   * Returns the unsubscribe function.
+   */
+  onUsageChange(listener: (change: SiwcPlanUsageChange) => void): () => void {
+    this.usageListeners.add(listener);
+    return () => this.usageListeners.delete(listener);
+  }
+
   /** The single writer of the usage map: stamps the host capture time over any payload value. */
   private storeUsage(accountKey: string, snapshot: SiwcPlanUsageSnapshot): void {
-    this.usageByAccount.set(accountKey, {
-      ...snapshot,
-      capturedAt: new Date(this.now()).toISOString(),
-    });
+    const stored = { ...snapshot, capturedAt: new Date(this.now()).toISOString() };
+    this.usageByAccount.set(accountKey, stored);
+    this.emitUsage({ accountKey, usage: stored });
+  }
+
+  private dropUsage(accountKey: string): void {
+    if (this.usageByAccount.delete(accountKey)) this.emitUsage({ accountKey, usage: null });
+  }
+
+  private emitUsage(change: SiwcPlanUsageChange): void {
+    for (const listener of this.usageListeners) {
+      try {
+        listener(change);
+      } catch {
+        // A failing observer must not break the usage owner.
+      }
+    }
   }
 
   /**
@@ -396,7 +420,7 @@ export class SiwcAuthService {
             allRevoked = false;
             await this.clearTokenCredentials(record.accountKey);
             await this.removeAccountRecord(record.accountKey);
-            this.usageByAccount.delete(record.accountKey);
+            this.dropUsage(record.accountKey);
             await this.codexUsage.clearAccount(record.accountKey);
             return;
           }
@@ -421,7 +445,7 @@ export class SiwcAuthService {
           if (!revoked) allRevoked = false;
           await this.clearTokenCredentials(record.accountKey);
           await this.removeAccountRecord(record.accountKey);
-          this.usageByAccount.delete(record.accountKey);
+          this.dropUsage(record.accountKey);
           await this.codexUsage.clearAccount(record.accountKey);
         },
         { lockMaxWaitMs: SIWC_REFRESH_LOCK_MAX_WAIT_MS },
