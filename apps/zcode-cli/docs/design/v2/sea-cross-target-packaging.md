@@ -48,11 +48,11 @@ User interface:
   entry.
 - `pnpm run sea -- <target args>`: only wraps the existing `dist/zcode.cjs` and runtime assets; it does
   not recompile the workspace.
-- `node scripts/build-sea.mjs`: builds the current host target.
-- `node scripts/build-sea.mjs --target linux-x64 --target win-x64`: builds the given targets.
-- `node scripts/build-sea.mjs --targets linux-x64,win-x64`: builds comma-separated targets.
-- `node scripts/build-sea.mjs --all`: builds all first targets.
-- `node scripts/build-sea.mjs --node-binary linux-x64=/abs/path/node`: uses a user-provided target Node
+- `node packages/cli/scripts/build-sea.mjs` (from `apps/zcode-cli`): builds the current host target.
+- `node packages/cli/scripts/build-sea.mjs --target linux-x64 --target win-x64`: builds the given targets.
+- `node packages/cli/scripts/build-sea.mjs --targets linux-x64,win-x64`: builds comma-separated targets.
+- `node packages/cli/scripts/build-sea.mjs --all`: builds all first targets.
+- `node packages/cli/scripts/build-sea.mjs --node-binary linux-x64=/abs/path/node`: uses a user-provided target Node
   binary and skips download resolution for that target.
 
 Target parameters use the platform names of release naming; Windows input is `win-x64` / `win-arm64`.

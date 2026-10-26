@@ -72,7 +72,12 @@ async function main() {
     throw new Error("Run this gate with pnpm run verify:pre-push.");
   }
   const docsOnly = await isDocumentationOnly();
-  const stages = [["lint"], ["architecture:check", ["--", "--changed"]], ["test-copy:check"]];
+  const stages = [
+    ["lint"],
+    ["architecture:check", ["--", "--changed"]],
+    ["test-copy:check"],
+    ["instruction-commands:check"],
+  ];
   if (!docsOnly) stages.push(["test:unit:affected", ["--", "--scope", "push"]], ["test:node"]);
   for (const [task, args] of stages) {
     // The affected stage receives the base resolved here, so upstream's first-push fallback (origin/staging) is never used.

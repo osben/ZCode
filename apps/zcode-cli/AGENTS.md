@@ -97,6 +97,6 @@ This is a TypeScript Node.js coding-agent CLI that supports mainstream models an
 
 ## Verification
 
-- Before completing code changes, run `pnpm typecheck` and `pnpm lint` from the repository root. For CLI changes, also run `pnpm --dir apps/zcode-cli typecheck` and `pnpm --dir apps/zcode-cli lint`.
+- Before completing code changes, run `pnpm typecheck` and `pnpm lint` from the repository root. For CLI changes, also run `pnpm --filter zcode-cli typecheck` and `pnpm --filter zcode-cli lint` (not `--dir`: `apps/zcode-cli` has its own `pnpm-workspace.yaml`).
 - Determine test entry points from the target package's current `package.json` and actual test files; do not assume a unified test command exists. Run the relevant tests for behavior changes and cover E2E scenarios for interaction changes.
 - Accurately report commands run, results, and unverified areas. Do not claim checks passed when test entry points are missing, existing failures remain, or the environment prevented verification.

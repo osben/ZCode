@@ -88,11 +88,12 @@ const allStages = [
   "lint",
   "architecture:check",
   "test-copy:check",
+  "instruction-commands:check",
   "test:unit:affected",
   "test:node",
 ];
 // Documentation-only pushes run the static stages and skip both test stages.
-const staticStages = allStages.slice(0, 3);
+const staticStages = allStages.slice(0, 4);
 
 test("supports executable package managers as well as JS entry points", async (t) => {
   const f = await fixture(t);

@@ -70,6 +70,9 @@ jobs:
       - name: Architecture check
         run: pnpm architecture:check
 
+      - name: Instruction command contract
+        run: pnpm instruction-commands:check
+
       - name: Pre-push runner regression tests
         run: pnpm test:pre-push
 
