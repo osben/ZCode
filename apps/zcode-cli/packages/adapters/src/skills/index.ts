@@ -233,6 +233,7 @@ export class NodeSkillAdapter implements SkillPort {
       ...pluginAlias,
       ...(root.namespace ? { qualifiedName: `${root.namespace}/${name}` } : {}),
       path,
+      identity: await canonicalSkillIdentity(path),
       directory: dirname(path),
       rootPath: root.path,
       scope: root.scope,
@@ -434,15 +435,15 @@ async function findSkillByIdentity(
 ): Promise<SkillMetadata | undefined> {
   const identity = await canonicalSkillIdentity(path);
   for (const skill of skills) {
-    if ((await canonicalSkillIdentity(skill.path)) === identity) {
+    if ((skill.identity ?? (await canonicalSkillIdentity(skill.path))) === identity) {
       return skill;
     }
   }
   return undefined;
 }
 
-// Mirrored word for word in core (subagent skill grants); core may not import adapters, so keep
-// both copies in sync when this rule changes. Exported for the identity unit tests.
+// The single owner of the skill identity rule (specs/subagent-skill-identity.md); core only
+// compares the `identity` this sets. Exported for the identity unit tests.
 export async function canonicalSkillIdentity(
   path: string,
   platform: NodeJS.Platform = process.platform,

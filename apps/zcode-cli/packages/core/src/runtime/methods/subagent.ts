@@ -891,7 +891,7 @@ async function resolveSubagentSkillPort(
   if (discovery.status === "failed") {
     return new FilteredSkillPort(this.skillPort, new Set(), entries, cuaPolicy);
   }
-  const grants = await resolveSubagentSkillGrants(entries, discovery.outcome.skills);
+  const grants = resolveSubagentSkillGrants(entries, discovery.outcome.skills);
   if (grants.unresolvedEntries.length > 0) {
     this.logger?.warn("Subagent skill entries matched no discovered skill", {
       agentType: request.agentType,
@@ -919,7 +919,7 @@ class FilteredSkillPort implements SkillPort {
     const outcome = await this.parent.discoverSkills(request, options);
     const nonCuaSkills = outcome.skills.filter((skill) => !this.cuaPolicy.isOfficialSkill(skill));
     const skills = this.grants
-      ? await filterSkillsByGrants(nonCuaSkills, this.grants)
+      ? filterSkillsByGrants(nonCuaSkills, this.grants)
       : nonCuaSkills;
     return {
       ...outcome,

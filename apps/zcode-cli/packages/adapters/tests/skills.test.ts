@@ -254,6 +254,35 @@ describe("NodeSkillAdapter", () => {
     }
   });
 
+  it("sets one physical identity on symlinked copies at discovery", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "zcode-skills-"));
+    const sourceSkill = join(dir, "cloud-skills", "foo");
+    const userLink = join(dir, "home", ".zcode", "skills", "foo");
+    const projectLink = join(dir, ".zcode", "skills", "foo");
+    const linkType = process.platform === "win32" ? "junction" : "dir";
+
+    try {
+      await mkdir(sourceSkill, { recursive: true });
+      await mkdir(join(dir, "home", ".zcode", "skills"), { recursive: true });
+      await mkdir(join(dir, ".zcode", "skills"), { recursive: true });
+      await writeSkill(sourceSkill, "foo", "Shared copy");
+      await symlink(sourceSkill, userLink, linkType);
+      await symlink(sourceSkill, projectLink, linkType);
+
+      const adapter = createNodeSkillAdapter({ homeDirectory: join(dir, "home") });
+      const outcome = await adapter.discoverSkills({ workingDirectory: dir });
+      const copies = outcome.skills.filter((skill) => skill.name === "foo");
+
+      expect(copies.map((skill) => skill.path).sort()).toEqual(
+        [join(projectLink, "SKILL.md"), join(userLink, "SKILL.md")].sort(),
+      );
+      const expected = await canonicalSkillIdentity(join(sourceSkill, "SKILL.md"));
+      expect(copies.map((skill) => skill.identity)).toEqual([expected, expected]);
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
   it("rejects a path that matches no discovered skill", async () => {
     const dir = await mkdtemp(join(tmpdir(), "zcode-skills-"));
     const disabledSkill = join(dir, ".zcode", "skills", "foo");

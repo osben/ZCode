@@ -32,10 +32,12 @@ Verified against the current source:
 ## Product rules
 
 - **Identity.** A skill's identity is the real path of its `SKILL.md`: `path.resolve`, then
-  `realpath` (keep the resolved path if `realpath` fails), lower-cased on Windows. `core` may not
-  import `adapters`, so the rule is implemented twice, word for word: once in `core` (grants and
-  the child's deduplication) and once in `adapters` (the load-by-path check). Each side has its own
-  test, including the symlink case.
+  `realpath` (keep the resolved path if `realpath` fails), lower-cased on Windows. Only the skill
+  adapter touches the filesystem to compute it: `NodeSkillAdapter` sets `SkillMetadata.identity` on
+  every discovered skill and uses the same rule for the load-by-path check. `core` never calls
+  `realpath`; it compares `identity`, falling back to `path` for a `SkillPort` that does not set it
+  (apps/zcode-cli/AGENTS.md, "Converge External I/O at Boundaries"). The adapter tests cover the
+  symlink case.
 - **Grants are resolved once.** When a subagent with a non-empty `skills:` list starts, the runtime
   runs exactly one parent discovery with the same request the child uses for its own listing
   (`{ workingDirectory: <child cwd>, trace }`, no explicit `roots`, as in `discoverSkillsForContext`)
@@ -75,7 +77,9 @@ Verified against the current source:
 
 ## Interfaces
 
-- `SkillLoadRequest` (`apps/zcode-cli/packages/contracts/src/skills/index.ts`) gains optional
+- `SkillMetadata` (`apps/zcode-cli/packages/contracts/src/skills/index.ts`) gains optional
+  `identity?: string`, the physical identity above, set by the adapter at discovery.
+- `SkillLoadRequest` (same file) gains optional
   `path?: string`. `NodeSkillAdapter.loadSkill` (`apps/zcode-cli/packages/adapters/src/skills/index.ts`)
   declares its own inline request type, so it must be widened to `SkillLoadRequest` (or gain `path`)
   as well. When `path` is set the adapter selects the discovered skill whose identity equals the
@@ -85,8 +89,8 @@ Verified against the current source:
   `workflow-facade.ts`, `script-workflow-child-runtime.ts`); none rebuilds the load request field
   by field, so `path` reaches the adapter. Only `FilteredSkillPort` sets it.
 - A new fork-owned module `apps/zcode-cli/packages/core/src/runtime/methods/subagent-skill-grants.ts`
-  holds `canonicalSkillIdentity(path)`, `resolveSubagentSkillGrants(entries, skills)` and the
-  identity-based filter. `FilteredSkillPort` in `subagent.ts` (upstream-owned) changes only enough
+  holds `resolveSubagentSkillGrants(entries, skills)` and the identity-based filter. Both are pure
+  functions over discovered metadata and do no I/O. `FilteredSkillPort` in `subagent.ts` (upstream-owned) changes only enough
   to take a frozen grant set and to pass `path` to the parent. This keeps the upstream diff small for
   later syncs.
 - `resolveSubagentSkillPort` becomes async: it resolves grants before the child runtime is created.
@@ -141,10 +145,11 @@ only the frozen identity set and never writes skill state.
 ## Tests
 
 - Unit (`apps/zcode-cli/packages/core/tests/`): `resolveSubagentSkillGrants` for scenarios 1–5a,
-  9 and 9a with in-memory metadata; identity helper with a real temp-dir symlink (scenario 3).
+  9 and 9a with in-memory metadata, including two entries that share one `identity` (scenario 3).
 - Runtime (`apps/zcode-cli/packages/core/tests/subagent-skill-grants-runtime.test.ts`, kept apart
   from the already very large `subagent-explore.test.ts`): scenarios 1, 6, 7, 8 and 9a through a
   fake `SkillPort` that records `loadSkill` requests and asserts `path` is passed. The existing
   filtered-skills test in `subagent-explore.test.ts` still covers scenario 4.
-- Adapter (`apps/zcode-cli/packages/adapters` tests): scenario 10 with a real temp-dir layout.
+- Adapter (`apps/zcode-cli/packages/adapters` tests): scenario 10 with a real temp-dir layout, and
+  discovery setting the same `identity` on two symlinked copies (scenario 3).
 - No UI or E2E change: the behaviour is internal to the agent runtime.
