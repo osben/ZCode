@@ -470,6 +470,21 @@ Tests: wire mapping and capture stamping in `packages/services/test/siwcCodexUsa
 `packages/ui/test/chatGptPlanDetail.test.ts` (U1, U8, U10). Desktop E2E is stage 2 (it needs a
 seam for the `chatgpt.com` usage host).
 
+### Usage pace forecast
+
+Reason: a share left ("24% left") does not say whether the window lasts until its reset.
+
+- Per window, in the stage 1 usage block (Settings and the composer chip's card), when the window
+  reports `windowMinutes` and a future `resetsAt`, at least 3% of the window has elapsed, and some
+  usage exists: the average rate so far (used ÷ elapsed) projects when the window runs out.
+- If that time is before the reset: "At this pace it runs out in {duration}" (warning colour).
+  Otherwise: "At this pace it lasts until the reset". No line when the inputs are missing, the
+  window is at 100% or past its reset, or the limit is reached.
+- It is a rough estimate on the average pace; nothing acts on it.
+
+Acceptance: P1 5-hour window, 2 h elapsed, 60% used → runs out in 1h 20m; P2 same window, 20%
+used → lasts until the reset; P3 1% elapsed → no line. Tests: `chatGptPlanUsage.test.ts`.
+
 ### Usage across the app
 
 Reason: usage was visible only in Settings, so a user picked a ChatGPT plan model without seeing

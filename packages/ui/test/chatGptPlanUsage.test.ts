@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   usageHeadline,
+  usagePace,
   usagePlanLabel,
   usageRemainingPercent,
   usageResetCountdown,
@@ -95,5 +96,26 @@ describe("usageHeadline", () => {
     expect(usageHeadline({ limitReached: true, primary: { usedPercent: 100 } }, NOW)).toEqual({
       kind: "limit",
     });
+  });
+});
+
+// specs/chatgpt-plan-signin.md "Usage pace forecast" (P1–P3).
+describe("usagePace", () => {
+  const fiveHour = (usedPercent: number, elapsedMinutes: number) => ({
+    usedPercent,
+    windowMinutes: 300,
+    resetsAt: at((300 - elapsedMinutes) * MIN),
+  });
+
+  it("projects the run-out time from the average pace", () => {
+    expect(usagePace(fiveHour(60, 120), NOW)).toEqual({ kind: "runsOut", inMs: 80 * MIN });
+    expect(usagePace(fiveHour(20, 120), NOW)).toEqual({ kind: "lasts" });
+  });
+
+  it("stays silent without enough history or inputs", () => {
+    expect(usagePace(fiveHour(5, 3), NOW)).toBeNull();
+    expect(usagePace({ usedPercent: 50, resetsAt: at(60 * MIN) }, NOW)).toBeNull();
+    expect(usagePace(fiveHour(100, 120), NOW)).toBeNull();
+    expect(usagePace(fiveHour(0, 120), NOW)).toBeNull();
   });
 });

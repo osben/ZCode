@@ -7844,6 +7844,8 @@ const zhCN: Record<string, string> = {
   "chat.toolbar.chatgptUsage.limitReached": "已达上限",
   "chat.toolbar.chatgptUsage.updating": "更新中",
   "chat.toolbar.chatgptUsage.title": "ChatGPT {plan} 用量",
+  "settings.modelProvider.chatgpt.usage.pace.runsOut": "按当前速度将在 {duration}后用尽",
+  "settings.modelProvider.chatgpt.usage.pace.lasts": "按当前速度可坚持到重置",
   "settings.modelProvider.chatgpt.usage.resetsIn": "{duration}后重置",
   "settings.modelProvider.chatgpt.usage.duration.dh": "{d} 天 {h} 小时",
   "settings.modelProvider.chatgpt.usage.duration.d": "{d} 天",

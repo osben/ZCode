@@ -8266,6 +8266,8 @@ const enUS: Record<string, string> = {
   "chat.toolbar.chatgptUsage.limitReached": "limit reached",
   "chat.toolbar.chatgptUsage.updating": "updating",
   "chat.toolbar.chatgptUsage.title": "ChatGPT {plan} usage",
+  "settings.modelProvider.chatgpt.usage.pace.runsOut": "At this pace it runs out in {duration}",
+  "settings.modelProvider.chatgpt.usage.pace.lasts": "At this pace it lasts until the reset",
   "settings.modelProvider.chatgpt.usage.resetsIn": "Resets in {duration}",
   "settings.modelProvider.chatgpt.usage.duration.dh": "{d}d {h}h",
   "settings.modelProvider.chatgpt.usage.duration.d": "{d}d",

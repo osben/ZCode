@@ -11,6 +11,8 @@ import {
   usageSeverity,
   usageStaleMinutes,
   usageWindowLabel,
+  usageDuration,
+  usagePace,
   type UsageMessage,
   type UsageSeverity,
   type UsageWindowRole,
@@ -63,6 +65,8 @@ function UsageWindowRow({
     id: `settings.modelProvider.chatgpt.usage.severity.${severity}`,
   });
   const absolute = window.resetsAt ? usageResetAbsolute(window.resetsAt, nowMs, locale) : null;
+  // A reached limit already says everything; the forecast is for windows still in use.
+  const pace = role === "primary" && limitReached ? null : usagePace(window, nowMs);
   return (
     <div
       className="flex min-w-0 flex-col gap-1"
@@ -93,6 +97,20 @@ function UsageWindowRow({
             { id: "settings.modelProvider.chatgpt.usage.resetsIn" },
             { duration: format(countdown) },
           )}
+        </span>
+      ) : null}
+      {pace ? (
+        <span
+          data-testid="chatgpt-plan-usage-pace"
+          data-pace={pace.kind}
+          className={`text-ui-sm ${pace.kind === "runsOut" ? "text-warning" : "text-foreground-subtle"}`}
+        >
+          {pace.kind === "runsOut"
+            ? intl.formatMessage(
+                { id: "settings.modelProvider.chatgpt.usage.pace.runsOut" },
+                { duration: format(usageDuration(pace.inMs)) },
+              )
+            : intl.formatMessage({ id: "settings.modelProvider.chatgpt.usage.pace.lasts" })}
         </span>
       ) : null}
     </div>

@@ -169,6 +169,15 @@ describe("ChatGPT plan usage in Settings", () => {
     assert.match(text, /Weekly/);
     assert.match(text, /24% left/);
     assert.match(text, /Resets in 3d 5h|Resets in 3d 4h/);
+    // Pace forecast (spec "Usage pace forecast"): the 5-hour window lasts, the weekly one runs out first.
+    assert.deepEqual(
+      await browser.execute(() =>
+        Array.from(document.querySelectorAll("[data-testid=chatgpt-plan-usage-pace]")).map(
+          (element) => element.getAttribute("data-pace"),
+        ),
+      ),
+      ["lasts", "runsOut"],
+    );
     await expect($('[data-testid="chatgpt-plan-type"]')).toHaveText("Plus");
     const reconnect = await $('[data-testid="chatgpt-plan-reconnect-row"]');
     await reconnect.waitForDisplayed({ timeout: 10000 });

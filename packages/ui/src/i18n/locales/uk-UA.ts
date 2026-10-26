@@ -3877,6 +3877,9 @@ const ukUA: Record<string, string> = {
   "chat.toolbar.chatgptUsage.limitReached": "ліміт вичерпано",
   "chat.toolbar.chatgptUsage.updating": "оновлюється",
   "chat.toolbar.chatgptUsage.title": "Використання ChatGPT {plan}",
+  "settings.modelProvider.chatgpt.usage.pace.runsOut":
+    "За такого темпу закінчиться через {duration}",
+  "settings.modelProvider.chatgpt.usage.pace.lasts": "За такого темпу вистачить до скидання",
   "settings.modelProvider.chatgpt.usage.resetsIn": "Скидання через {duration}",
   "settings.modelProvider.chatgpt.usage.duration.dh": "{d} дн {h} год",
   "settings.modelProvider.chatgpt.usage.duration.d": "{d} дн",

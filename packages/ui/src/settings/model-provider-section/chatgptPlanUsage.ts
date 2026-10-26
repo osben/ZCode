@@ -174,3 +174,30 @@ export function usageLimitResetAt(snapshot: SiwcPlanUsageSnapshot, nowMs: number
   }
   return latest;
 }
+
+/** Average-pace projection of one window (specs/chatgpt-plan-signin.md "Usage pace forecast"). */
+export type UsagePace =
+  | { readonly kind: "runsOut"; readonly inMs: number }
+  | { readonly kind: "lasts" };
+
+const PACE_MIN_ELAPSED_FRACTION = 0.03;
+
+export function usagePace(window: SiwcPlanUsageWindow, nowMs: number): UsagePace | null {
+  const resetMs = Date.parse(window.resetsAt ?? "");
+  const windowMs = (window.windowMinutes ?? 0) * 60_000;
+  if (!Number.isFinite(resetMs) || resetMs <= nowMs || windowMs <= 0) return null;
+  if (window.usedPercent <= 0 || window.usedPercent >= 100) return null;
+  const elapsedMs = windowMs - (resetMs - nowMs);
+  if (elapsedMs < windowMs * PACE_MIN_ELAPSED_FRACTION) return null;
+  const msPerPercent = elapsedMs / window.usedPercent;
+  const runsOutInMs = (100 - window.usedPercent) * msPerPercent;
+  return nowMs + runsOutInMs < resetMs ? { kind: "runsOut", inMs: runsOutInMs } : { kind: "lasts" };
+}
+
+/** A duration as a countdown message (rounded up to minutes, at most two units). */
+export function usageDuration(ms: number): UsageMessage {
+  const countdown = usageResetCountdown(new Date(ms).toISOString(), 0);
+  return countdown && countdown !== "pending"
+    ? countdown
+    : { id: `${PREFIX}.duration.underMinute` };
+}
