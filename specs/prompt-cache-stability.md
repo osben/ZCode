@@ -128,8 +128,9 @@ turn 2 ────────────► request 2: identical tools
 
 No timeout is added: `isInstalled` only probes PATH candidates with file checks, and the queue
 never rejects (failures are logged inside it). A preference change made by the user mid-session
-still goes through the same queue and takes effect at the next turn boundary, which is an allowed
-change. Regression test: `apps/zcode-cli/packages/core/tests/lsp-tool-registration-race.test.ts`
+still goes through the same queue and takes effect at the next model step (the tools step runs
+before every model request); turning LSP off makes that step wait for server shutdown, which is
+bounded by each server's `shutdownTimeoutMs`. It is an allowed change. Regression test: `apps/zcode-cli/packages/core/tests/lsp-tool-registration-race.test.ts`
 (the first request is held until the check settles and already carries `LSP`).
 
 ## Credit
