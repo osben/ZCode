@@ -42,8 +42,14 @@ vi.mock("@/components/ui/alert-dialog.js", () => ({
   AlertDialogTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
+// Echo message ids so assertions can match copy by catalog key; formatPlural backs the task count.
 vi.mock("@/i18n/IntlProvider.js", () => ({
-  useZCodeIntl: () => ({ intl: { formatMessage: () => "" } }),
+  useZCodeIntl: () => ({
+    intl: {
+      formatMessage: ({ id }: { id: string }) => id,
+      formatPlural: ({ id }: { id: string }) => id,
+    },
+  }),
 }));
 
 import { useBranchSwitchGuardShell } from "@/v4/composer/branchSwitchGuard.js";
