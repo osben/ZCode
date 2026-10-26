@@ -75,7 +75,10 @@ export class BroadcastHub {
   }
 
   /** Unregister a Host process (called when its window closes). */
-  unregister(windowId: number): void {
+  unregister(windowId: number, child: ElectronUtilityProcess): void {
+    // After a reload respawn the old Host exits later under the same windowId; it must not remove the new Host.
+    // Its uncommitted reservations expire by TTL.
+    if (this.processes.get(windowId) !== child) return;
     this.processes.delete(windowId);
     // If the window closes before reservation is returned, it cannot release it explicitly. Reclaim
     // only this window's uncommitted reservations; retain committed claims so a later window does

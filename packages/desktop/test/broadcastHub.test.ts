@@ -137,11 +137,31 @@ describe("BroadcastHub claim", () => {
     hub.register(2, asUtilityProcess(second));
 
     first.emitMessage(claimRequest("req-a", "quota-reset:same"));
-    hub.unregister(1);
+    hub.unregister(1, asUtilityProcess(first));
     second.emitMessage(claimRequest("req-b", "quota-reset:same"));
 
     expect(second.postedMessages).toEqual([
       expect.objectContaining({ requestId: "req-b", status: "acquired" }),
+    ]);
+  });
+
+  it("ignores a late unregister from a Host already replaced on the same window", () => {
+    const replaced = new FakeHostProcess();
+    const current = new FakeHostProcess();
+    const other = new FakeHostProcess();
+    const hub = new BroadcastHub();
+    hub.register(1, asUtilityProcess(replaced));
+    hub.register(1, asUtilityProcess(current));
+    hub.register(2, asUtilityProcess(other));
+
+    current.emitMessage(claimRequest("req-a", "quota-reset:same"));
+    hub.unregister(1, asUtilityProcess(replaced));
+    other.emitMessage(claimRequest("req-b", "quota-reset:same"));
+
+    expect(hub.collectMemoryDiagnostics().processes).toBe(2);
+    // The current Host's reservation survives, so the other window is still told to wait.
+    expect(other.postedMessages).toEqual([
+      expect.objectContaining({ requestId: "req-b", status: "busy" }),
     ]);
   });
 

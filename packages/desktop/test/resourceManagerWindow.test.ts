@@ -112,7 +112,8 @@ describe("resourceManagerWindow", () => {
     fromWebContents.mockReturnValue(null);
 
     const module = await loadModule();
-    module.registerHostProcess("local-1", { pid: hostPid } as never);
+    const host = { pid: hostPid } as never;
+    module.registerHostProcess("local-1", host);
     module.setBrowserUseGuestWebContentsIdsProvider(() => [77]);
 
     try {
@@ -153,7 +154,7 @@ describe("resourceManagerWindow", () => {
       expect(snapshot.system.memoryTotalBytes).toBe(16 * 1024 ** 3);
       expect(snapshot.system.memoryUsedBytes).toBe(10 * 1024 ** 3);
     } finally {
-      module.unregisterHostProcess("local-1");
+      module.unregisterHostProcess("local-1", host);
       module.setBrowserUseGuestWebContentsIdsProvider(() => []);
     }
   });
@@ -242,7 +243,7 @@ describe("resourceManagerWindow", () => {
       });
       expect(snapshot.app.cpuPercent).toBe(4);
     } finally {
-      module.unregisterHostProcess("local-1");
+      module.unregisterHostProcess("local-1", child as never);
     }
   });
 
@@ -287,15 +288,14 @@ describe("resourceManagerWindow", () => {
       const second = await pending;
       expect(second.processes.some((row) => row.pid === 4242)).toBe(true);
     } finally {
-      module.unregisterHostProcess("local-1");
+      module.unregisterHostProcess("local-1", child as never);
     }
   });
 
   it("linux 上 Electron 单核口径的 CPU 会除以逻辑核数；其它平台原样", async () => {
     // 归一化函数已提升为资源管理器 UI 与 ARMS 资源遥测共用，断言跟随实现搬到共用模块。
-    const { normalizeElectronCpuToMachinePercent } = await import(
-      "../src/main/electronCpuNormalization.js"
-    );
+    const { normalizeElectronCpuToMachinePercent } =
+      await import("../src/main/electronCpuNormalization.js");
     expect(
       normalizeElectronCpuToMachinePercent(40, { platform: "linux", logicalCpuCount: 8 }),
     ).toBe(5);
