@@ -3075,7 +3075,17 @@ const ukUA: Record<string, string> = {
   "settings.modelProvider.acp.unsupported": "Агенти ACP не підтримуються в цьому середовищі.",
   "settings.modelProvider.acp.sectionLaunch": "Конфігурація запуску",
   "settings.modelProvider.acp.sectionLogin": "Вхід",
-  "settings.modelProvider.acp.sectionTest": "Перевірка",
+  "settings.modelProvider.acp.sectionModels": "Моделі",
+  "settings.modelProvider.acp.sectionDiagnostics": "Діагностика останньої перевірки",
+  "settings.modelProvider.acp.detectedPath": "Знайдено: {path}",
+  "settings.modelProvider.acp.modelsNotOffered": "Цей агент не пропонує вибору моделі.",
+  "settings.modelProvider.acp.modelsEmpty":
+    "Запустіть перевірку, щоб завантажити моделі цього агента.",
+  "settings.modelProvider.acp.modelsHint":
+    "Позначені моделі з'являються в меню моделей агента в полі введення ({visible} з {total}).",
+  "settings.modelProvider.acp.modelsSearch": "Фільтр моделей",
+  "settings.modelProvider.acp.modelsCurrent": "Поточна",
+  "settings.modelProvider.acp.modelsSaveFailed": "Не вдалося зберегти вибір моделей: {message}",
   "settings.modelProvider.acp.enableAgentLabel": "Увімкнути {name} в ZCode",
   "settings.modelProvider.acp.disableAgentLabel": "Вимкнути {name} в ZCode",
   "settings.modelProvider.acp.title": "Агенти ACP",

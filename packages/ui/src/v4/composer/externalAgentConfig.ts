@@ -75,6 +75,25 @@ export function selectExternalAgentComposerOptions(
   return result;
 }
 
+/**
+ * The model option without the values the user hid in Settings (specs/acp-agent-runtime.md "Settings: models and
+ * Advanced"). The current value is never hidden, so the select always shows it.
+ */
+export function hideExternalAgentModels(
+  selected: ExternalAgentComposerOptions,
+  hiddenModels: readonly string[] | undefined,
+): ExternalAgentComposerOptions {
+  const model = selected.model;
+  if (!model || !hiddenModels?.length) return selected;
+  const hidden = new Set(hiddenModels);
+  const options = model.options.filter(
+    (value) => value.value === model.currentValue || !hidden.has(value.value),
+  );
+  return options.length === model.options.length
+    ? selected
+    : { ...selected, model: { ...model, options } };
+}
+
 export interface ExternalAgentComposerState {
   agentId: string;
   /**
@@ -105,6 +124,8 @@ export function resolveExternalAgentComposerState(params: {
   projection: ExternalAgentConfigState | null | undefined;
   catalog?: readonly ExternalAgentConfigOption[] | null;
   draftChoices?: ExternalAgentDraftChoices;
+  /** Model values hidden in Settings; they are left out of the model select, except its current value. */
+  hiddenModels?: readonly string[];
 }): ExternalAgentComposerState | null {
   const agentId = resolveExternalAgentId(params.draftProviderId);
   if (!agentId) return null;
@@ -118,7 +139,9 @@ export function resolveExternalAgentComposerState(params: {
     : null;
   return {
     agentId,
-    options: overlaid ? selectExternalAgentComposerOptions(overlaid) : null,
+    options: overlaid
+      ? hideExternalAgentModels(selectExternalAgentComposerOptions(overlaid), params.hiddenModels)
+      : null,
     draft,
     enabled: draft
       ? overlaid !== null

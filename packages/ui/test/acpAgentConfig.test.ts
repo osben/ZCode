@@ -4,10 +4,12 @@ import {
   acpProviderId,
   buildAcpAgentSaveInput,
   formatAcpEnvLines,
+  groupAcpModelValues,
   isAcpProviderId,
   joinAcpArgs,
   parseAcpEnvLines,
   splitAcpArgs,
+  toggleAcpHiddenModel,
 } from "@/settings/model-provider-section/acpAgentConfig.js";
 
 const AGENT: AcpAgentSummary = {
@@ -95,5 +97,29 @@ describe("acpAgentConfig", () => {
       env: { TOKEN: "1" },
       enabled: false,
     });
+  });
+});
+
+// specs/acp-agent-runtime.md "Settings: models and Advanced".
+describe("ACP agent model visibility helpers", () => {
+  it("groups values by group in the agent's order", () => {
+    const values = [
+      { value: "a", group: "Free" },
+      { value: "b", group: null },
+      { value: "c", group: "Free" },
+    ];
+    expect(groupAcpModelValues(values)).toEqual([
+      { group: "Free", values: [values[0], values[2]] },
+      { group: null, values: [values[1]] },
+    ]);
+  });
+
+  it("hides and shows a value, keeping values the agent no longer offers", () => {
+    expect(toggleAcpHiddenModel(["gone"], ["a", "b"], "b", false)).toEqual(["b", "gone"]);
+    expect(toggleAcpHiddenModel(["b", "gone"], ["a", "b"], "b", true)).toEqual(["gone"]);
+  });
+
+  it("never hides the last visible value", () => {
+    expect(toggleAcpHiddenModel(["b"], ["a", "b"], "a", false)).toEqual(["b"]);
   });
 });

@@ -12,6 +12,8 @@ export {
 export type {
   AcpAgentDetectionResult,
   AcpAgentEnabledInput,
+  AcpAgentHiddenModelsInput,
+  AcpAgentHiddenModelsResult,
   AcpAgentSaveInput,
   AcpAgentLoginResult,
   AcpAgentStatusReport,

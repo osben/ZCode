@@ -1,9 +1,10 @@
 /**
- * Detail pane of one ACP agent in Model Settings: enable switch and status,
- * launch configuration, login helpers, and a roundtrip test. Raw ACP frames
- * stay behind the collapsed disclosure of AcpAgentFrames.
+ * Detail pane of one ACP agent in Model Settings: enable switch and status, the agent's models (with the
+ * roundtrip Test that loads them), login helpers, and a collapsed Advanced section with the launch
+ * configuration and the last Test's diagnostics. Raw ACP frames stay behind the collapsed disclosure of
+ * AcpAgentFrames (specs/acp-agent-runtime.md "Settings: models and Advanced").
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AcpAgentLoginResult,
   AcpAgentStatusReport,
@@ -15,9 +16,11 @@ import { Input } from "@/components/ui/input.js";
 import { Spinner } from "@/components/ui/spinner.js";
 import { Switch } from "@/components/ui/switch.js";
 import { Textarea } from "@/components/ui/textarea.js";
+import { useAcpAgentCatalog } from "@/hooks/useAcpAgentCatalog.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
+import { AcpAgentAdvanced, AcpAgentModelsList, DetailSection } from "./AcpAgentDetailSections.js";
 import { AcpAgentFrames } from "./AcpAgentFrames.js";
 import { AcpAgentMark } from "./AcpAgentMark.js";
 import { ProviderStatusIndicator, type ProviderStatusKind } from "./ProviderStatusIndicator.js";
@@ -39,16 +42,6 @@ interface AcpAgentStatusState {
   readonly loading: boolean;
   readonly report?: AcpAgentStatusReport;
   readonly error?: string;
-}
-
-/** Same rhythm as the Model settings detail: a separator, then a text-ui-base section title. */
-function DetailSection({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="mt-4 flex min-w-0 flex-col gap-3 border-t border-border pt-4">
-      <h3 className="text-ui-base font-medium text-foreground">{title}</h3>
-      {children}
-    </section>
-  );
 }
 
 export function AcpAgentDetail({
@@ -125,6 +118,8 @@ export function AcpAgentDetail({
   const [loginResult, setLoginResult] = useState<AcpAgentLoginResult | null>(null);
   const [loginBusy, setLoginBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const catalog = useAcpAgentCatalog(agent.agentId);
+  const reloadCatalog = catalog.reload;
 
   const envParse = parseAcpEnvLines(envText);
   const currentForm = useCallback(
@@ -189,13 +184,15 @@ export function AcpAgentDetail({
         env: form.env,
       });
       setTestResult(result);
+      // A successful roundtrip records the agent's offered options, so the Models list rereads them.
+      if (result.ok) reloadCatalog();
     } catch (error) {
       logger.warn("[AcpAgentCard] test failed", error);
       setActionError(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(null);
     }
-  }, [providerSettingsService, agent.agentId, currentForm]);
+  }, [providerSettingsService, agent.agentId, currentForm, reloadCatalog]);
 
   const startLogin = useCallback(async () => {
     setLoginBusy(true);
@@ -267,12 +264,9 @@ export function AcpAgentDetail({
             <div className="truncate text-ui-lg font-semibold text-foreground">
               {agent.displayName}
             </div>
-            <div className="flex min-w-0 items-center gap-2 text-ui-sm text-foreground-subtle">
-              {agent.version ? <span className="shrink-0">{agent.version}</span> : null}
-              <span className="min-w-0 truncate" title={agent.commandPath ?? ""}>
-                {agent.commandPath}
-              </span>
-            </div>
+            {agent.version ? (
+              <div className="text-ui-sm text-foreground-subtle">{agent.version}</div>
+            ) : null}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-3">
@@ -321,77 +315,36 @@ export function AcpAgentDetail({
         </div>
       ) : null}
 
-      <DetailSection title={t("sectionLaunch")}>
-        <div className="flex flex-col gap-3">
-          <div>
-            <label
-              htmlFor={`acp-command-${agent.agentId}`}
-              className="mb-1 block text-ui-base text-foreground-subtle"
-            >
-              {t("command")}
-            </label>
-            <Input
-              id={`acp-command-${agent.agentId}`}
-              size="lg"
-              value={command}
-              spellCheck={false}
-              onChange={(event) => editCommand(event.target.value)}
-            />
-          </div>
-          <div>
-            <label
-              htmlFor={`acp-args-${agent.agentId}`}
-              className="mb-1 block text-ui-base text-foreground-subtle"
-            >
-              {t("arguments")}
-            </label>
-            <Input
-              id={`acp-args-${agent.agentId}`}
-              size="lg"
-              value={argsText}
-              spellCheck={false}
-              onChange={(event) => editArgsText(event.target.value)}
-            />
-          </div>
-          <div>
-            <label
-              htmlFor={`acp-env-${agent.agentId}`}
-              className="mb-1 block text-ui-base text-foreground-subtle"
-            >
-              {t("environment")}
-            </label>
-            <Textarea
-              id={`acp-env-${agent.agentId}`}
-              rows={3}
-              value={envText}
-              spellCheck={false}
-              placeholder="KEY=value"
-              className="rounded-lg border-input-border bg-input font-mono text-ui-base placeholder:text-foreground-subtlest hover:border-input-border-hover focus-visible:border-input-border-focused focus-visible:bg-input-focused focus-visible:ring-0"
-              onChange={(event) => editEnvText(event.target.value)}
-            />
-            {envParse.invalidLines.length > 0 ? (
-              <p role="alert" className="mt-1 text-ui-sm text-destructive">
-                {t("envInvalid", { lines: envParse.invalidLines.join(", ") })}
-              </p>
-            ) : null}
-          </div>
-        </div>
-        {enabled ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={busy !== null}
-              onClick={() => void runAction("save", () => onUpdate(currentForm()))}
-            >
-              {busy === "save" ? <Spinner className="me-1 size-3" /> : null}
-              {t("saveChanges")}
-            </Button>
-          </div>
+      <DetailSection
+        title={t("sectionModels")}
+        action={
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            data-testid="acp-agent-test-button"
+            disabled={busy !== null}
+            onClick={() => void runTest()}
+          >
+            {busy === "test" ? <Spinner className="me-1 size-3" /> : null}
+            {busy === "test" ? t("testing") : t("test")}
+          </Button>
+        }
+      >
+        {testResult ? (
+          <p
+            role={testResult.ok ? undefined : "alert"}
+            className={`text-ui-sm ${testResult.ok ? "text-foreground" : "text-destructive"}`}
+          >
+            {testResult.ok
+              ? t("testOk", { duration: testResult.durationMs })
+              : t("testFailed", {
+                  message: testResult.error?.message ?? t("unknownError"),
+                })}
+          </p>
         ) : null}
+        <AcpAgentModelsList key={agent.agentId} agentId={agent.agentId} catalog={catalog} t={t} />
       </DetailSection>
-
       <DetailSection title={t("sectionLogin")}>
         <p className="flex min-w-0 flex-wrap items-center gap-2 text-ui-sm text-foreground-subtle">
           <span className="shrink-0">{t("loginStatus")}:</span>
@@ -454,29 +407,95 @@ export function AcpAgentDetail({
         ) : null}
       </DetailSection>
 
-      <DetailSection title={t("sectionTest")}>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={busy !== null}
-            onClick={() => void runTest()}
-          >
-            {busy === "test" ? <Spinner className="me-1 size-3" /> : null}
-            {busy === "test" ? t("testing") : t("test")}
-          </Button>
-        </div>
-        {testResult ? (
-          <div className="flex flex-col gap-2">
+      <AcpAgentAdvanced
+        label={intl.formatMessage({
+          id: "settings.modelProvider.advancedConfig",
+        })}
+        forceExpanded={envParse.invalidLines.length > 0}
+      >
+        <div className="flex min-w-0 flex-col gap-3">
+          <h3 className="text-ui-base font-medium text-foreground">{t("sectionLaunch")}</h3>
+          {agent.commandPath ? (
             <p
-              role={testResult.ok ? undefined : "alert"}
-              className={`text-ui-sm ${testResult.ok ? "text-foreground" : "text-destructive"}`}
+              className="min-w-0 truncate text-ui-sm text-foreground-subtle"
+              title={agent.commandPath}
             >
-              {testResult.ok
-                ? t("testOk", { duration: testResult.durationMs })
-                : t("testFailed", { message: testResult.error?.message ?? t("unknownError") })}
+              {t("detectedPath", { path: agent.commandPath })}
             </p>
+          ) : null}
+          <div className="flex flex-col gap-3">
+            <div>
+              <label
+                htmlFor={`acp-command-${agent.agentId}`}
+                className="mb-1 block text-ui-base text-foreground-subtle"
+              >
+                {t("command")}
+              </label>
+              <Input
+                id={`acp-command-${agent.agentId}`}
+                size="lg"
+                value={command}
+                spellCheck={false}
+                onChange={(event) => editCommand(event.target.value)}
+              />
+            </div>
+            <div>
+              <label
+                htmlFor={`acp-args-${agent.agentId}`}
+                className="mb-1 block text-ui-base text-foreground-subtle"
+              >
+                {t("arguments")}
+              </label>
+              <Input
+                id={`acp-args-${agent.agentId}`}
+                size="lg"
+                value={argsText}
+                spellCheck={false}
+                onChange={(event) => editArgsText(event.target.value)}
+              />
+            </div>
+            <div>
+              <label
+                htmlFor={`acp-env-${agent.agentId}`}
+                className="mb-1 block text-ui-base text-foreground-subtle"
+              >
+                {t("environment")}
+              </label>
+              <Textarea
+                id={`acp-env-${agent.agentId}`}
+                rows={3}
+                value={envText}
+                spellCheck={false}
+                placeholder="KEY=value"
+                className="rounded-lg border-input-border bg-input font-mono text-ui-base placeholder:text-foreground-subtlest hover:border-input-border-hover focus-visible:border-input-border-focused focus-visible:bg-input-focused focus-visible:ring-0"
+                onChange={(event) => editEnvText(event.target.value)}
+              />
+              {envParse.invalidLines.length > 0 ? (
+                <p role="alert" className="mt-1 text-ui-sm text-destructive">
+                  {t("envInvalid", { lines: envParse.invalidLines.join(", ") })}
+                </p>
+              ) : null}
+            </div>
+          </div>
+          {enabled ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={busy !== null}
+                onClick={() => void runAction("save", () => onUpdate(currentForm()))}
+              >
+                {busy === "save" ? <Spinner className="me-1 size-3" /> : null}
+                {t("saveChanges")}
+              </Button>
+            </div>
+          ) : null}
+        </div>
+
+        {testResult ? (
+          <div className="flex min-w-0 flex-col gap-2">
+            <h3 className="text-ui-base font-medium text-foreground">{t("sectionDiagnostics")}</h3>
             {testResult.stderrTail ? (
               <pre className="max-h-24 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-border bg-surface px-3 py-2 font-mono text-ui-sm">
                 {testResult.stderrTail}
@@ -486,11 +505,13 @@ export function AcpAgentDetail({
               frames={testResult.frames}
               dropped={testResult.framesDropped}
               title={t("frames", { count: testResult.frames.length })}
-              droppedLabel={t("framesDropped", { count: testResult.framesDropped })}
+              droppedLabel={t("framesDropped", {
+                count: testResult.framesDropped,
+              })}
             />
           </div>
         ) : null}
-      </DetailSection>
+      </AcpAgentAdvanced>
 
       {actionError ? (
         <p role="alert" className="mt-4 text-ui-sm text-destructive">

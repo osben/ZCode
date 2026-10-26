@@ -36,6 +36,8 @@ import type {
   AcpAgentCatalogOption,
   AcpAgentCatalogResult,
   AcpAgentDetectionResult,
+  AcpAgentHiddenModelsInput,
+  AcpAgentHiddenModelsResult,
   AcpAgentLoginResult,
   AcpAgentStatusReport,
   AcpAgentSummary,
@@ -88,6 +90,13 @@ export interface AcpAgentsBridgeDependencies {
   readonly platform?: NodeJS.Platform;
   /** Reads the agent catalog written by Test and by the turn reconcile (S6 readiness). */
   readonly readCatalog?: (agentId: string) => Promise<readonly AcpAgentCatalogOption[] | undefined>;
+  /** Reads the model values hidden from the composer (specs/acp-agent-runtime.md "Settings: models and Advanced"). */
+  readonly readHiddenModels?: (agentId: string) => Promise<readonly string[]>;
+  /** Replaces the agent's hidden model values. */
+  readonly writeHiddenModels?: (
+    agentId: string,
+    hiddenModels: readonly string[],
+  ) => Promise<unknown>;
   /**
    * Stores the options a successful handshake offered for a known agent (specs/acp-agent-runtime.md,
    * "S6 readiness"). A failure is reported and never fails the test.
@@ -202,8 +211,21 @@ export function createAcpAgentsBridge(
 
     async catalog(input: AcpAgentCatalogInput): Promise<AcpAgentCatalogResult> {
       if (!supported) return { supported: false };
-      const options = await dependencies.readCatalog?.(input.agentId);
-      return options === undefined ? { supported: true } : { supported: true, options };
+      const [options, hiddenModels] = await Promise.all([
+        dependencies.readCatalog?.(input.agentId),
+        dependencies.readHiddenModels?.(input.agentId),
+      ]);
+      return {
+        supported: true,
+        ...(options === undefined ? {} : { options }),
+        ...(hiddenModels && hiddenModels.length > 0 ? { hiddenModels } : {}),
+      };
+    },
+
+    async setHiddenModels(input: AcpAgentHiddenModelsInput): Promise<AcpAgentHiddenModelsResult> {
+      if (!supported || !dependencies.writeHiddenModels) return { supported: false };
+      await dependencies.writeHiddenModels(input.agentId, input.hiddenModels);
+      return { supported: true };
     },
 
     async test(input) {

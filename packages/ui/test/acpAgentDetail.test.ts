@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { createElement } from "react";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { AcpAgentSummary } from "@zcode/services";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
@@ -12,6 +12,8 @@ const { providerSettingsService } = vi.hoisted(() => ({
     getAcpAgentStatus: vi.fn(async () => ({ supported: true, exitCode: 0, output: "ok" })),
     testAcpAgent: vi.fn(),
     startAcpAgentLogin: vi.fn(),
+    getAcpAgentCatalog: vi.fn(async (): Promise<Record<string, unknown>> => ({ supported: true })),
+    setAcpAgentHiddenModels: vi.fn(async () => ({ supported: true })),
   },
 }));
 
@@ -86,5 +88,134 @@ describe("AcpAgentDetail", () => {
   it("announces a scan failure as an alert", () => {
     render(detail({ agent: agent(null), scanError: "boom" }));
     expect(screen.getByRole("alert").textContent).toContain("boom");
+  });
+
+  // specs/acp-agent-runtime.md "Settings: models and Advanced" (SM1, SM2, SM4–SM7).
+  const MODEL_OPTION = {
+    id: "model",
+    name: "Model",
+    description: null,
+    category: "model",
+    currentValue: "a",
+    options: ["a", "b", "c"].map((value) => ({
+      value,
+      name: `Model ${value}`,
+      description: null,
+      group: null,
+    })),
+  };
+
+  function modelCheckbox(value: string): HTMLElement {
+    const found = screen
+      .getAllByTestId("acp-agent-model-checkbox")
+      .find((element) => element.getAttribute("data-model-value") === value);
+    if (!found) throw new Error(`no checkbox for ${value}`);
+    return found;
+  }
+
+  it("lists the agent's models checked and keeps Advanced collapsed", async () => {
+    providerSettingsService.getAcpAgentCatalog.mockResolvedValueOnce({
+      supported: true,
+      options: [MODEL_OPTION],
+    });
+    render(detail({ agent: agent(null) }));
+
+    await waitFor(() => expect(screen.getAllByTestId("acp-agent-model-checkbox")).toHaveLength(3));
+    expect(modelCheckbox("b").getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByTestId("acp-agent-advanced-trigger").getAttribute("aria-expanded")).toBe(
+      "false",
+    );
+  });
+
+  it("stores an unchecked model as hidden and disables the last visible one", async () => {
+    providerSettingsService.setAcpAgentHiddenModels.mockClear();
+    providerSettingsService.getAcpAgentCatalog.mockResolvedValueOnce({
+      supported: true,
+      options: [MODEL_OPTION],
+      hiddenModels: ["c"],
+    });
+    render(detail({ agent: agent(null) }));
+    await waitFor(() => expect(modelCheckbox("c").getAttribute("aria-checked")).toBe("false"));
+
+    await act(async () => {
+      fireEvent.click(modelCheckbox("b"));
+    });
+
+    expect(providerSettingsService.setAcpAgentHiddenModels).toHaveBeenCalledWith({
+      agentId: "opencode",
+      hiddenModels: ["b", "c"],
+    });
+    expect(modelCheckbox("a").hasAttribute("disabled")).toBe(true);
+  });
+
+  it("reverts the checkbox and alerts when the write fails", async () => {
+    providerSettingsService.getAcpAgentCatalog.mockResolvedValueOnce({
+      supported: true,
+      options: [MODEL_OPTION],
+    });
+    providerSettingsService.setAcpAgentHiddenModels.mockRejectedValueOnce(new Error("disk full"));
+    render(detail({ agent: agent(null) }));
+    await waitFor(() => expect(screen.getAllByTestId("acp-agent-model-checkbox")).toHaveLength(3));
+
+    await act(async () => {
+      fireEvent.click(modelCheckbox("b"));
+    });
+
+    await waitFor(() => expect(modelCheckbox("b").getAttribute("aria-checked")).toBe("true"));
+    expect(screen.getByRole("alert").textContent).toContain("disk full");
+  });
+
+  it("shows the empty state until a successful Test loads the models", async () => {
+    providerSettingsService.getAcpAgentCatalog
+      .mockResolvedValueOnce({ supported: true })
+      .mockResolvedValueOnce({ supported: true, options: [MODEL_OPTION] });
+    providerSettingsService.testAcpAgent.mockResolvedValueOnce({
+      ok: true,
+      frames: [],
+      framesDropped: 0,
+      durationMs: 5,
+    });
+    render(detail({ agent: agent(null) }));
+    await waitFor(() => expect(screen.getByTestId("acp-agent-models-empty")).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("acp-agent-test-button"));
+    });
+
+    await waitFor(() => expect(screen.getAllByTestId("acp-agent-model-checkbox")).toHaveLength(3));
+  });
+
+  it("says so when the agent offers no model select", async () => {
+    providerSettingsService.getAcpAgentCatalog.mockResolvedValueOnce({
+      supported: true,
+      options: [{ ...MODEL_OPTION, id: "mode", category: "mode" }],
+    });
+    render(detail({ agent: agent(null) }));
+    await waitFor(() =>
+      expect(screen.getByTestId("acp-agent-models-empty").textContent).toBe(
+        "settings.modelProvider.acp.modelsNotOffered",
+      ),
+    );
+  });
+
+  it("expands Advanced while the env text has an invalid line", async () => {
+    render(
+      detail({
+        agent: agent(null),
+        savedAccess: { command: "/bin/opencode", args: [], env: {} },
+      }),
+    );
+    fireEvent.click(screen.getByTestId("acp-agent-advanced-trigger"));
+    const env = screen.getByLabelText("settings.modelProvider.acp.environment");
+    fireEvent.click(screen.getByTestId("acp-agent-advanced-trigger"));
+    expect(screen.getByTestId("acp-agent-advanced-trigger").getAttribute("aria-expanded")).toBe(
+      "false",
+    );
+
+    fireEvent.change(env, { target: { value: "not an env line" } });
+
+    expect(screen.getByTestId("acp-agent-advanced-trigger").getAttribute("aria-expanded")).toBe(
+      "true",
+    );
   });
 });

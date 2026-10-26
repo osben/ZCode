@@ -9,6 +9,7 @@ import {
   setDraftExternalAgentChoice,
   takeDraftExternalAgentChoices,
   filterExternalAgentConfigValues,
+  hideExternalAgentModels,
   nextExternalAgentConfigValue,
   resolveExternalAgentComposerState,
   resolveExternalAgentId,
@@ -355,5 +356,46 @@ describe("draft choice lifecycle", () => {
     });
     expect(outcome.refusedMessageId).toBe("chat.toolbar.externalAgent.error.invalid");
     expect(claim?.delivered).toBe(false);
+  });
+});
+
+// specs/acp-agent-runtime.md "Settings: models and Advanced" (SM2, SM3).
+describe("hidden agent models", () => {
+  const offered = [
+    option("mode", "mode", ["build", "plan"]),
+    option("model", "model", ["a", "b", "c"], "a"),
+  ];
+
+  it("leaves hidden values out of the model select only", () => {
+    const state = resolveExternalAgentComposerState({
+      draftProviderId: "acp:opencode",
+      sessionId: null,
+      sessionProviderId: null,
+      projection: null,
+      catalog: offered,
+      hiddenModels: ["b", "build"],
+    });
+    expect(state?.options?.model?.options.map((value) => value.value)).toEqual(["a", "c"]);
+    expect(state?.options?.mode?.options.map((value) => value.value)).toEqual(["build", "plan"]);
+  });
+
+  it("never hides the current value", () => {
+    const state = resolveExternalAgentComposerState({
+      draftProviderId: "acp:opencode",
+      sessionId: null,
+      sessionProviderId: null,
+      projection: null,
+      catalog: offered,
+      draftChoices: { model: "b" },
+      hiddenModels: ["b", "c"],
+    });
+    expect(state?.options?.model?.currentValue).toBe("b");
+    expect(state?.options?.model?.options.map((value) => value.value)).toEqual(["a", "b"]);
+  });
+
+  it("returns the selection unchanged when nothing is hidden", () => {
+    const selected = selectExternalAgentComposerOptions(offered);
+    expect(hideExternalAgentModels(selected, [])).toBe(selected);
+    expect(hideExternalAgentModels(selected, ["unknown"])).toBe(selected);
   });
 });
