@@ -86,5 +86,45 @@ describe("Clear All Data restart", () => {
     expect(h.restore).not.toHaveBeenCalled();
     expect(h.relaunch).not.toHaveBeenCalled();
     expect(h.exit).not.toHaveBeenCalled();
+    // Cancel must not sign the user out of the Coding Plan webview or delete any data.
+    expect(h.fromPartition.clearStorageData).not.toHaveBeenCalled();
+    expect(h.clearBrowserData).not.toHaveBeenCalled();
+    expect(h.rm).not.toHaveBeenCalled();
+  });
+
+  it("clears the webview partitions only after the user confirms", async () => {
+    await executeDesktopCommand(clearAllCommand("en-US"));
+
+    expect(h.fromPartition.clearStorageData).toHaveBeenCalled();
+    expect(h.showMessageBox.mock.invocationCallOrder[0]).toBeLessThan(
+      h.fromPartition.clearStorageData.mock.invocationCallOrder[0],
+    );
+    expect(h.rm).toHaveBeenCalledWith("/tmp/zcode-test-v2", { recursive: true, force: true });
+  });
+
+  it.each([
+    ["en-US", "Clear all data?", ["Cancel", "Clear All"]],
+    ["uk-UA", "Очистити всі дані?", ["Скасувати", "Очистити все"]],
+    ["zh-CN", "确定要清除所有数据吗？", ["取消", "全部清除"]],
+  ] as const)("shows the confirmation in the %s locale", async (locale, message, buttons) => {
+    h.showMessageBox.mockResolvedValueOnce({ response: 0 });
+
+    await executeDesktopCommand(clearAllCommand(locale));
+
+    expect(h.showMessageBox).toHaveBeenCalledWith(
+      expect.objectContaining({ message, buttons: [...buttons] }),
+    );
   });
 });
+
+function clearAllCommand(currentApplicationLocale: "en-US" | "uk-UA" | "zh-CN") {
+  return {
+    command: DesktopCommandIds.ClearAllData,
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    updateZCodeStdioTapDevMenuState: vi.fn(),
+    onRelaunchApp: vi.fn(async () => {}),
+    settingService: { get: vi.fn(async () => ({})), update: vi.fn(async () => {}) },
+    credentialsDir: "/tmp/zcode-test-v2",
+    currentApplicationLocale,
+  };
+}

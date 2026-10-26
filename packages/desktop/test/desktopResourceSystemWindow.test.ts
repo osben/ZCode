@@ -138,7 +138,8 @@ async function registerAllChromiumRoles(): Promise<() => void> {
   } = await import("../src/main/resourceManagerWindow.js");
 
   const scheduler = { pid: SCHEDULER_PID } as never;
-  registerHostProcess("local-1", { pid: HOST_PID } as never);
+  const host = { pid: HOST_PID } as never;
+  registerHostProcess("local-1", host);
   registerSchedulerProcess(scheduler);
   registerMainApplicationWindow(MAIN_WINDOW_WC_ID);
   getAllWebContentsMock.mockReturnValue([
@@ -147,7 +148,7 @@ async function registerAllChromiumRoles(): Promise<() => void> {
   ]);
 
   return () => {
-    unregisterHostProcess("local-1");
+    unregisterHostProcess("local-1", host);
     unregisterSchedulerProcess(scheduler);
     unregisterMainApplicationWindow(MAIN_WINDOW_WC_ID);
   };

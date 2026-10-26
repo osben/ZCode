@@ -319,6 +319,7 @@ export function spawnHostProcess(
   options?: SpawnHostProcessOptions,
 ): ElectronUtilityProcess {
   const hostId = randomUUID();
+  const reportedAgentPids = new Set<number>();
   const glmBinaryPath = resolveBundledGlmBinaryPath();
   const execArgv = [
     ...(RUNTIME_ZCODE_DEBUG ? [`--inspect-brk=${RUNTIME_ZCODE_DEBUG}`] : []),
@@ -602,6 +603,7 @@ export function spawnHostProcess(
     }
 
     if (result.data.type === HostResponseTypes.AgentProcessSpawned) {
+      reportedAgentPids.add(result.data.pid);
       registerHostAgentProcess(label, {
         pid: result.data.pid,
         provider: result.data.provider,
@@ -620,6 +622,7 @@ export function spawnHostProcess(
     }
 
     if (result.data.type === HostResponseTypes.AgentProcessExited) {
+      reportedAgentPids.delete(result.data.pid);
       unregisterHostAgentProcess(label, result.data.pid);
       dependencies.onAgentProcessExited?.(result.data);
       return;
@@ -950,9 +953,12 @@ export function spawnHostProcess(
     dependencies.logger.info(`[spawnHostProcess] host process (${label}) exited with code ${code}`);
     dependencies.hostRunningTaskCountMap.delete(child);
     if (shouldRegisterBroadcast) {
-      dependencies.broadcastHub.unregister(windowId);
+      dependencies.broadcastHub.unregister(windowId, child);
     }
-    unregisterHostProcess(label);
+    // Remove only this Host's agents: a reload respawn reuses the label for the new Host.
+    for (const pid of reportedAgentPids) unregisterHostAgentProcess(label, pid);
+    reportedAgentPids.clear();
+    unregisterHostProcess(label, child);
     for (const [wcId, process] of dependencies.windowHostProcessMap) {
       if (process === child) {
         dependencies.windowHostProcessMap.delete(wcId);
