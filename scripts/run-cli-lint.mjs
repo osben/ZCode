@@ -1,14 +1,12 @@
 #!/usr/bin/env node
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadPolicy } from "./architecture/policy.mjs";
 import { pristineUpstreamFiles } from "./architecture/upstream-admission.mjs";
 import { classifyLintDiagnostics, parseLintCommand } from "./cli-lint-admission.mjs";
+import { runOxlint } from "./cli-oxlint.mjs";
 
-const exec = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cli = resolve(root, "apps/zcode-cli");
 
@@ -37,18 +35,7 @@ async function main() {
       if (!manifest.scripts?.lint) continue;
       const args = [...parseLintCommand(manifest.scripts.lint), "--format", "json"];
       // 沿用各包解析出的 oxlint 版本、cwd 和原参数；包级配置仍由 oxlint 自己读取。
-      const pnpm = process.env.npm_execpath;
-      if (!pnpm) throw new Error("请通过 pnpm lint 运行 CLI lint");
-      let result;
-      try {
-        result = await exec(process.execPath, [pnpm, "exec", "oxlint", ...args], {
-          cwd,
-          maxBuffer: 16 * 1024 * 1024,
-        });
-      } catch (error) {
-        if (error.code !== 1 || !error.stdout) throw error;
-        result = error;
-      }
+      const result = await runOxlint(cwd, args);
       const report = JSON.parse(result.stdout);
       if (!Array.isArray(report.diagnostics))
         throw new Error(`${manifest.name}: 无法解析 oxlint 结果`);
