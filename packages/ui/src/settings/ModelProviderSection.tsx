@@ -56,6 +56,8 @@ import {
 } from "./model-provider-section/acpAgentConfig.js";
 import type { AcpAgentSummary } from "@zcode/services";
 import { ProviderTemplatePicker } from "./model-provider-section/ProviderTemplatePicker.js";
+import { OllamaDetail } from "./model-provider-section/OllamaDetail.js";
+import { OLLAMA_PROVIDER_ID } from "./model-provider-section/ollamaSync.js";
 import type { CodingPlanLoginOptions } from "./model-provider-section/codingPlanPricingCards.js";
 import { useModelProviderNavigation } from "./model-provider-section/useModelProviderNavigation.js";
 import { reportPresetSubscriptionSuccess } from "./model-provider-section/oauthActions.js";
@@ -1297,6 +1299,17 @@ export function ModelProviderSection({
             onEnable={(form) => handleAcpEnableAgent(selectedNavItem.agent, form)}
             onUpdate={(form) => handleAcpUpdateAgent(selectedNavItem.agent, form)}
             onDisable={() => handleAcpDisableAgent(selectedNavItem.agent)}
+          />
+        ) : selectedNavItem?.type === "ollama" ? (
+          <OllamaDetail
+            key={selectedNavItem.key}
+            provider={selectedNavItem.provider}
+            onCreateProvider={createPersonalProvider}
+            onAddModel={addPersonalModel}
+            onDeleteModel={deletePersonalModel}
+            onOpenProvider={() =>
+              setSelectedNodeKey(createCustomProviderNodeKey(OLLAMA_PROVIDER_ID))
+            }
           />
         ) : selectedNavItem?.type === "acpDetect" ? (
           <AcpAgentCatalogDetail

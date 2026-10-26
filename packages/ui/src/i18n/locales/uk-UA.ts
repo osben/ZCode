@@ -3075,6 +3075,32 @@ const ukUA: Record<string, string> = {
   "settings.modelProvider.acp.unsupported": "Агенти ACP не підтримуються в цьому середовищі.",
   "settings.modelProvider.acp.sectionLaunch": "Конфігурація запуску",
   "settings.modelProvider.acp.sectionLogin": "Вхід",
+  "settings.modelProvider.ollama.groupTitle": "Локальні моделі",
+  "settings.modelProvider.ollama.subtitle": "Локальні моделі через Ollama",
+  "settings.modelProvider.ollama.openProvider": "Відкрити налаштування провайдера",
+  "settings.modelProvider.ollama.sectionServer": "Сервер",
+  "settings.modelProvider.ollama.address": "Адреса сервера",
+  "settings.modelProvider.ollama.detect": "Знайти",
+  "settings.modelProvider.ollama.rescan": "Пересканувати",
+  "settings.modelProvider.ollama.addressFromProvider":
+    "Адреса береться з провайдера Ollama; змініть її в налаштуваннях провайдера.",
+  "settings.modelProvider.ollama.connected": "Підключено · Ollama {version} · моделей: {count}",
+  "settings.modelProvider.ollama.unreachable": "Недоступний: {reason}",
+  "settings.modelProvider.ollama.unreachableHint":
+    "Запустіть Ollama (ollama serve) або перевірте адресу. З HTTP-проксі додайте 127.0.0.1 до NO_PROXY.",
+  "settings.modelProvider.ollama.sectionModels": "Моделі",
+  "settings.modelProvider.ollama.updateModels": "Оновити моделі",
+  "settings.modelProvider.ollama.addToZCode": "Додати в ZCode",
+  "settings.modelProvider.ollama.noModels":
+    "На цьому сервері немає моделей. Завантажте модель через ollama pull.",
+  "settings.modelProvider.ollama.context": "контекст {size}",
+  "settings.modelProvider.ollama.eligibility.unknown": "Можливості невідомі",
+  "settings.modelProvider.ollama.eligibility.noTools": "Без підтримки інструментів",
+  "settings.modelProvider.ollama.eligibility.notChat": "Не чат-модель",
+  "settings.modelProvider.ollama.contextHint":
+    "Ollama використовує довжину контексту сервера (OLLAMA_CONTEXT_LENGTH), яка може бути меншою за максимум моделі, показаний тут.",
+  "settings.modelProvider.ollama.syncFailed":
+    "Не вдалося оновити провайдер Ollama: {message}. Збережіть ще раз, щоб завершити.",
   "settings.modelProvider.acp.sectionModels": "Моделі",
   "settings.modelProvider.acp.sectionDiagnostics": "Діагностика останньої перевірки",
   "settings.modelProvider.acp.detectedPath": "Знайдено: {path}",

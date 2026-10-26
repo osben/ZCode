@@ -248,9 +248,17 @@ export type ModelProviderNavItem =
       key: string;
       type: "acpLoading";
       label: string;
+    }
+  | {
+      /** The Ollama detector and model sync (specs/ollama-local-provider.md); the provider itself is a custom one. */
+      key: string;
+      type: "ollama";
+      label: string;
+      provider: ProviderSettingsFormProvider | null;
+      statusActive: boolean;
     };
 
-export type ModelProviderNavGroupId = "preset" | "chatgpt" | "custom" | "acp";
+export type ModelProviderNavGroupId = "preset" | "chatgpt" | "custom" | "local" | "acp";
 
 /** Nav rows that display status but cannot be selected (loading placeholders). */
 export type ModelProviderSelectableNavItem = Exclude<

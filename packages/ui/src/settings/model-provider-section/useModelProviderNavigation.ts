@@ -15,6 +15,11 @@ import {
   type OAuthProviderId,
 } from "@zcode/shared";
 import {
+  OLLAMA_NAV_KEY,
+  OLLAMA_PROVIDER_ID,
+  OLLAMA_PROVIDER_NAME,
+} from "@/settings/model-provider-section/ollamaSync.js";
+import {
   CHATGPT_PLAN_PROVIDER_LOGO,
   isChatGptPlanSubscriptionProviderId,
 } from "@/lib/chatgptPlanProvider.js";
@@ -272,6 +277,25 @@ export function useModelProviderNavigation({
           provider,
           statusActive: provider.executable === true,
         })),
+      },
+      {
+        // Always listed: the entry is the detector; the synced provider also stays under Custom providers.
+        id: "local",
+        title: intl.formatMessage({ id: "settings.modelProvider.ollama.groupTitle" }),
+        items: [
+          (() => {
+            const provider =
+              modelProviders.find((candidate) => candidate.providerId === OLLAMA_PROVIDER_ID) ??
+              null;
+            return {
+              key: OLLAMA_NAV_KEY,
+              type: "ollama" as const,
+              label: OLLAMA_PROVIDER_NAME,
+              provider,
+              statusActive: provider?.enabled === true && provider.models.length > 0,
+            };
+          })(),
+        ],
       },
       ...(acpGroup ? [acpGroup] : []),
     ];
