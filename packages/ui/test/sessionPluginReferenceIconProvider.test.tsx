@@ -4,11 +4,14 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionPluginReferenceIconBoundary } from "@/v4/SessionPluginReferenceIconProvider.js";
 
-const usePluginReferenceCatalog = vi.fn(() => ({
-  authority: "session" as const,
-  entries: [],
-  error: null,
-  loading: false,
+// vi.mock is hoisted above top-level declarations, so the mock must come from vi.hoisted.
+const { usePluginReferenceCatalog } = vi.hoisted(() => ({
+  usePluginReferenceCatalog: vi.fn(() => ({
+    authority: "session" as const,
+    entries: [],
+    error: null,
+    loading: false,
+  })),
 }));
 
 vi.mock("@/hooks/usePluginReferenceCatalog.js", () => ({

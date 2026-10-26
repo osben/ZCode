@@ -612,7 +612,8 @@ package.json` has no `stage:remote-assets` script; `scripts/bootstrap.mjs` runs 
   not read. `scripts/check-test-copy.mjs` was not edited. These specs run only with
   `ZCODE_E2E_MANUAL_REVIEW=1` and were not executed against a live run.
 - `refreshRegistry` in `zcodeAgentService.ts` is still a parameter, but no source caller sets it to
-  `true`; the path is dead code, kept.
+  `true`; the path is dead code, kept. Since superseded: V4 commands set it again, see
+  `specs/provider-registry-refresh-barrier.md`.
 - CAS rule (`Account connection CAS required`): every production writer of
   `providerFamilyConnectionSelections` passes `expectedAccountSettings.providerFamilyDomainUpdatedAt`
   (`?? 0` where the version is optional): `ui/lib/providerFamilyDomainSettings.ts`,

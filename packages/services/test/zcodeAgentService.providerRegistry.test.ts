@@ -1101,9 +1101,111 @@ describe("createZCodeAgentService provider registry", () => {
     service.disposeAll();
   });
 
-  it.each(["refreshed", "failed"] as const)(
-    "switches a model with unchanged account config without a worker registry barrier (refresh outcome: %s)",
-    async (refreshResult) => {
+  it("refreshes the worker registry before a V4 createSession but not before a submission reservation", async () => {
+    const accountSource = createAccountProviderConfigChangeSource({
+      revision: "account-1",
+      basedOnZCodeBuiltinRevision: "zcode-builtin:1",
+      providers: new ProviderConfigMap([]),
+    });
+    const calls: string[] = [];
+    const request = vi.fn(async (method: string, params?: unknown) => {
+      calls.push(
+        method === V4_METHODS.command ? `${method}:${(params as { type: string }).type}` : method,
+      );
+      if (method === zcodeProtocolMethods.runtimeCapabilities) {
+        return { durableFirstSubmission: true, providerRegistryRefresh: true };
+      }
+      if (method === zcodeProtocolMethods.providerUpdateAccountConfig) {
+        return { receivedRevision: "account-1", status: "received", providerCount: 0 };
+      }
+      if (method === zcodeProtocolMethods.providerRefreshRegistry) {
+        return { refreshed: true };
+      }
+      if (method === V4_METHODS.command) {
+        return {
+          commandId: (params as { commandId: string }).commandId,
+          status: "accepted" as const,
+          revisionAtDecision: 1,
+          result: { type: "createSession" as const, sessionId: "sess_v4" },
+        };
+      }
+      throw new Error(`Unexpected method ${method}`);
+    });
+    vi.resetModules();
+    vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
+      ZCodeAgentProcessManager: class extends MockProcessManagerBase {
+        async getClient() {
+          return {
+            request,
+            transportKind: "stdio",
+            onNotification: () => ({ dispose() {} }),
+            onRequest: () => ({ dispose() {} }),
+            onClose: () => ({ dispose() {} }),
+          };
+        }
+        disposeAll() {}
+      },
+    }));
+    const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
+    const service = createZCodeAgentService({
+      modelSelectionReadinessSource: createReadyModelSelectionSource(),
+      accountProviderConfigSource: accountSource.source,
+    });
+    try {
+      await service.sendConversationCommandV4({
+        workspacePath: "/workspace/app",
+        envelope: {
+          commandId: "cmd-reserve",
+          clientId: "client-v4",
+          sessionId: null,
+          type: "createSession",
+          payload: {
+            workspaceId: "/workspace/app",
+            sessionId: "sess_v4",
+            submissionPreparation: { submissionId: "submission-1" },
+          },
+          issuedAt: 1,
+        },
+      });
+      // The reservation touches no provider: no Account Config delivery and no registry refresh.
+      expect(calls).toEqual([
+        zcodeProtocolMethods.runtimeCapabilities,
+        `${V4_METHODS.command}:createSession`,
+      ]);
+      calls.length = 0;
+      await service.sendConversationCommandV4({
+        workspacePath: "/workspace/app",
+        envelope: {
+          commandId: "cmd-create",
+          clientId: "client-v4",
+          sessionId: null,
+          type: "createSession",
+          payload: {
+            workspaceId: "/workspace/app",
+            config: { provider: "custom:glm", model: "glm-5.2", thought: "max" },
+          },
+          issuedAt: 2,
+        },
+      });
+      expect(calls).toEqual([
+        zcodeProtocolMethods.providerUpdateAccountConfig,
+        zcodeProtocolMethods.providerRefreshRegistry,
+        `${V4_METHODS.command}:createSession`,
+      ]);
+    } finally {
+      service.disposeAll();
+    }
+  });
+
+  // specs/provider-registry-refresh-barrier.md: provisioning can change the Worker's Personal config
+  // without a new Account Config revision, so a model switch waits for the Worker registry refresh.
+  it.each([
+    { refreshResult: "refreshed", capability: true },
+    { refreshResult: "failed", capability: true },
+    { refreshResult: "refreshed", capability: false },
+  ] as const)(
+    "switches a model with unchanged account config after the worker registry refresh: %o",
+    async ({ refreshResult, capability }) => {
       const accountSource = createAccountProviderConfigChangeSource({
         revision: "account-1",
         basedOnZCodeBuiltinRevision: "zcode-builtin:1",
@@ -1117,6 +1219,9 @@ describe("createZCodeAgentService provider registry", () => {
       const request = vi.fn(async (method: string, params?: unknown) => {
         if (method === zcodeProtocolMethods.providerUpdateAccountConfig) {
           return { receivedRevision: "account-1", status: "received", providerCount: 0 };
+        }
+        if (method === zcodeProtocolMethods.runtimeCapabilities) {
+          return capability ? { providerRegistryRefresh: true } : {};
         }
         if (method === zcodeProtocolMethods.providerRefreshRegistry) {
           if (waitingForRefresh) {
@@ -1181,17 +1286,38 @@ describe("createZCodeAgentService provider registry", () => {
             issuedAt: 2,
           },
         });
-        // Fork adaptation (specs/services-upstream-sync-part4.md, 8c): the fork takes no
-        // refreshRegistry barrier before a model switch. The switch command is sent directly over
-        // v4/command, so neither the refresh result nor its gate can delay or fail it.
-        await expect(switching).resolves.toMatchObject({ status: "accepted" });
-        expect(
+        const outcome = switching.then(
+          (ack) => ({ ack }),
+          (error: unknown) => ({ error }),
+        );
+        const sentMethods = () =>
           request.mock.calls.map(([method, params]) =>
             method === V4_METHODS.command
               ? `${method}:${(params as { type: string }).type}`
               : method,
-          ),
-        ).toEqual([`${V4_METHODS.command}:switchModelConfig`]);
+          );
+        if (!capability) {
+          // A CLI without the capability keeps delivery-only semantics: the switch is sent directly.
+          await expect(outcome).resolves.toMatchObject({ ack: { status: "accepted" } });
+          expect(sentMethods()).toEqual([`${V4_METHODS.command}:switchModelConfig`]);
+          return;
+        }
+        await vi.waitFor(() => expect(request).toHaveBeenCalled());
+        expect(sentMethods()).toEqual([zcodeProtocolMethods.providerRefreshRegistry]);
+        finishRefresh();
+        await expect(outcome).resolves.toMatchObject(
+          refreshResult === "failed"
+            ? { error: new Error("registry refresh failed") }
+            : { ack: { status: "accepted" } },
+        );
+        expect(sentMethods()).toEqual(
+          refreshResult === "failed"
+            ? [zcodeProtocolMethods.providerRefreshRegistry]
+            : [
+                zcodeProtocolMethods.providerRefreshRegistry,
+                `${V4_METHODS.command}:switchModelConfig`,
+              ],
+        );
       } finally {
         finishRefresh();
         service.disposeAll();

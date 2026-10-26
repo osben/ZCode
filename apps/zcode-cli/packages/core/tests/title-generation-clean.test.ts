@@ -9,6 +9,17 @@ describe("cleanGeneratedTitle", () => {
     expect(cleanGeneratedTitle("Cache design.")).toBe("Cache design");
   });
 
+  // specs/session-title-polish.md 2.2: a lead-in before the JSON must not become the title.
+  it("reads title JSON after a lead-in line or on the same line as a lead-in", () => {
+    expect(cleanGeneratedTitle('Here is the title:\n```json\n{"title": "Bug fix"}\n```')).toBe(
+      "Bug fix",
+    );
+    expect(cleanGeneratedTitle('```json\n{"title": "Bug fix"}\n```')).toBe("Bug fix");
+    expect(cleanGeneratedTitle('Title: {"title":"Bug fix"}')).toBe("Bug fix");
+    expect(cleanGeneratedTitle("<think>plan</think>\n```\n{\"title\":\"Кеш\"}\n```")).toBe("Кеш");
+    expect(cleanGeneratedTitle("Fix login {redirect} loop")).toBe("Fix login {redirect} loop");
+  });
+
   it("rejects titles without a letter or number", () => {
     expect(cleanGeneratedTitle('{"title":"..."}')).toBeNull();
     expect(cleanGeneratedTitle('{"title":"!!!"}')).toBeNull();

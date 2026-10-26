@@ -271,8 +271,6 @@ function renderWebRemoteControlFailure(failure: WebRemoteControlFailure): void {
 }
 
 function isWebOAuthCallback(params: URLSearchParams): boolean {
-  // Tolerate a trailing slash: the fork redirect URI is /web-remote/callback and hosts may append "/".
-  const pathname = window.location.pathname.replace(/\/+$/, "");
   return (
     isWebRemoteControlOAuthCallback(new URL(window.location.href)) ||
     (["/cn/share/callback", "/share/callback"].includes(window.location.pathname) &&

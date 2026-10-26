@@ -30,7 +30,8 @@ describe("PreviewPaneMediaContent", () => {
 
     expect(html).toContain("<video");
     expect(html).toContain("controls");
-    expect(html).toContain("playsinline");
+    // React server rendering keeps the camelCase attribute name; HTML attributes are case-insensitive.
+    expect(html).toMatch(/\splaysinline=""/i);
     expect(html).toContain('preload="metadata"');
     expect(html).not.toContain("autoplay");
   });

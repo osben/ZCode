@@ -63,6 +63,18 @@ export async function supportsHistoryFirst(client: CapabilityClient): Promise<bo
   }
 }
 
+/**
+ * specs/provider-registry-refresh-barrier.md: a remote CLI can predate provider/refreshRegistry, so the
+ * V4 command barrier refreshes only when the endpoint advertises it. A failed read answers false.
+ */
+export async function supportsProviderRegistryRefresh(client: CapabilityClient): Promise<boolean> {
+  try {
+    return (await readRuntimeCapabilities(client)).providerRegistryRefresh === true;
+  } catch {
+    return false;
+  }
+}
+
 /** specs/incognito-session.md: an incognito create must never run as a normal session. */
 export async function ensureIncognitoSupport(client: CapabilityClient): Promise<void> {
   let capabilities: ZCodeRuntimeCapabilities;

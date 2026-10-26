@@ -40,6 +40,7 @@ import {
   ensureDurableFirstSubmissionSupport,
   ensureIndependentPlanSupport,
   supportsHistoryFirst,
+  supportsProviderRegistryRefresh,
 } from "./runtimeCapabilitySupport.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createTopicResourceBridge } from "./topicResourceBridge.js";
@@ -1692,7 +1693,8 @@ export function createZCodeAgentService(
             status: result.status,
           });
         }
-        if (params.refreshRegistry) {
+        // A remote CLI can predate provider/refreshRegistry; it keeps delivery-only semantics.
+        if (params.refreshRegistry && (await supportsProviderRegistryRefresh(params.client))) {
           await params.client.request(
             zcodeProtocolMethods.providerRefreshRegistry,
             { reason: params.reason },
@@ -6406,15 +6408,20 @@ export function createZCodeAgentService(
         params.clientMode ??
         "desktop-continuous";
       if (
-        params.envelope.type === "createSession" &&
-        !(params.envelope.payload as { submissionPreparation?: unknown }).submissionPreparation
+        requiresProviderRegistryRefresh(params.envelope.type) &&
+        !(
+          params.envelope.type === "createSession" &&
+          (params.envelope.payload as { submissionPreparation?: unknown }).submissionPreparation
+        )
       ) {
-        // V4 draft warmup forwards commands directly; before creating a new session, wait only for Account Config,
-        // since the Worker process assembles ZCode Built-in / Personal in its own Registry.
+        // Provisioning writes the Worker's Personal config without a new Account Config revision, so
+        // delivery alone leaves the Worker validating the new provider against its old Registry until
+        // its next poll. A submissionPreparation reservation touches no provider and stays instant.
         await ensureAccountProviderConfigSynced({
           client,
           reason: "v4_command",
           workspace: params,
+          refreshRegistry: true,
         });
       }
       let envelope = await buildConversationCommandEnvelope(params);

@@ -9,6 +9,7 @@ import {
   ensureDurableFirstSubmissionSupport,
   ensureIndependentPlanSupport,
   supportsHistoryFirst,
+  supportsProviderRegistryRefresh,
 } from "../src/zcode-agent/runtimeCapabilitySupport.js";
 
 describe("durable first-submission execution-endpoint capability", () => {
@@ -48,6 +49,19 @@ describe("historyFirst execution-endpoint capability", () => {
     // A failed read is not cached: the next check asks the CLI again.
     broken.request.mockResolvedValueOnce({ historyFirst: true });
     await expect(supportsHistoryFirst(broken as never)).resolves.toBe(true);
+  });
+});
+
+describe("provider registry refresh execution-endpoint capability", () => {
+  it("answers true only when the CLI advertises it, and false for an older or unreachable CLI", async () => {
+    const current = { request: vi.fn().mockResolvedValue({ providerRegistryRefresh: true }) };
+    await expect(supportsProviderRegistryRefresh(current as never)).resolves.toBe(true);
+    await expect(supportsProviderRegistryRefresh(current as never)).resolves.toBe(true);
+    expect(current.request).toHaveBeenCalledTimes(1);
+    const stale = { request: vi.fn().mockResolvedValue({ historyFirst: true }) };
+    await expect(supportsProviderRegistryRefresh(stale as never)).resolves.toBe(false);
+    const broken = { request: vi.fn().mockRejectedValue(new Error("Method not found")) };
+    await expect(supportsProviderRegistryRefresh(broken as never)).resolves.toBe(false);
   });
 });
 

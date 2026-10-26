@@ -280,7 +280,7 @@ export function cleanGeneratedTitle(raw: string): string | null {
 }
 
 function parseTitleJson(text: string): string | null {
-  const candidates = [text, extractFencedJson(text)].filter(
+  const candidates = [text, extractFencedJson(text), extractInlineJsonObject(text)].filter(
     (candidate): candidate is string => typeof candidate === "string" && candidate.length > 0,
   );
   for (const candidate of candidates) {
@@ -304,8 +304,16 @@ function parseTitleJsonCandidate(text: string): string | null {
 function extractFencedJson(text: string): string | null {
   // Some models wrap title JSON in a Markdown fenced code block.
   // JSON.parse would fail, and the later first-line fallback could incorrectly sanitize ```json as the title.
-  const match = text.trim().match(/^```[ \t]*(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```$/i);
+  // The block may follow a lead-in line ("Here is the title:"), which would otherwise become the title.
+  const match = text.match(/(?:^|\n)[ \t]*```[ \t]*(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?[ \t]*```/i);
   return match?.[1]?.trim() ?? null;
+}
+
+function extractInlineJsonObject(text: string): string | null {
+  // A lead-in on the same line ("Title: {...}") hides the object from JSON.parse and the fence match.
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  return start >= 0 && end > start ? text.slice(start, end + 1) : null;
 }
 
 function firstNonEmptyLine(text: string): string | null {

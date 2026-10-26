@@ -824,6 +824,7 @@ export class ZCodeProtocolAgentServer {
           durableFirstSubmission: true,
           incognitoSession: true,
           incognitoPromptToggles: true,
+          providerRegistryRefresh: true,
         };
       case zcodeProtocolMethods.pluginsMarketplaceAdd:
         return await this.withPluginOperationSignal(request, (signal) =>
