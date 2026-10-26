@@ -38,15 +38,16 @@ export function resolveModelProviderNavLogo(item: ModelProviderNavItem) {
 }
 
 export function renderModelProviderNavIcon(item: ModelProviderNavItem): ReactNode {
+  // Before the provider branch: the Ollama entry carries its synced provider, whose config has no logo.
+  if (item.type === "ollama") {
+    return <ServerIcon className="size-4 shrink-0" />;
+  }
   // A preset row keeps its brand logo even before a runtime provider exists (signed-out plans).
   if (("provider" in item && item.provider) || (item.type === "preset" && item.logo)) {
     return <ProviderLogo logo={resolveModelProviderNavLogo(item)} className="size-4" />;
   }
   if (item.type === "acpAgent") {
     return <AcpAgentMark agentId={item.agentId} name={item.label} />;
-  }
-  if (item.type === "ollama") {
-    return <ServerIcon className="size-4 shrink-0" />;
   }
   return <PackageIcon className="size-4 shrink-0" />;
 }

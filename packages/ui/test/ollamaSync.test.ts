@@ -1,3 +1,5 @@
+import { isValidElement, type ReactElement } from "react";
+import { ServerIcon } from "lucide-react";
 import { describe, expect, it } from "vitest";
 import type { ProviderSettingsFormProvider } from "@/lib/providerSettingsFormTypes.js";
 import {
@@ -6,6 +8,7 @@ import {
   ollamaRootFromProvider,
   planOllamaSync,
 } from "@/settings/model-provider-section/ollamaSync.js";
+import { renderModelProviderNavIcon } from "@/settings/model-provider-section/utils.js";
 
 // specs/ollama-local-provider.md "Sync" (OL4–OL6, OL8).
 const ROOT = "http://127.0.0.1:11434";
@@ -99,5 +102,16 @@ describe("ollamaSync", () => {
   it("reads the server root from the provider endpoint", () => {
     expect(ollamaRootFromProvider(provider([]))).toBe(ROOT);
     expect(ollamaRootFromProvider(null)).toBeNull();
+  });
+
+  it("keeps the Ollama nav icon once the provider exists", () => {
+    const icon = renderModelProviderNavIcon({
+      key: "local:ollama",
+      type: "ollama",
+      label: "Ollama",
+      provider: provider(["qwen3"]),
+      statusActive: true,
+    });
+    expect(isValidElement(icon) && (icon as ReactElement).type).toBe(ServerIcon);
   });
 });
