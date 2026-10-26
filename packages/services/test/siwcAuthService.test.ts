@@ -454,15 +454,17 @@ describe("SiwcAuthService (host side, multi-account)", () => {
       primary: { usedPercent: 42.5, windowMinutes: 300, resetsAt: "2026-10-15T18:00:00Z" },
       secondary: { usedPercent: 7 },
     };
-    fixture.service.recordUsage(ACCOUNT_KEY, snapshot);
-    expect((await fixture.service.getStatus()).accounts[0]?.usage).toEqual(snapshot);
+    fixture.service.recordUsage(ACCOUNT_KEY, { ...snapshot, capturedAt: "1999-01-01T00:00:00Z" });
+    // The host stamps its own capture time over any payload value.
+    const stored = { ...snapshot, capturedAt: new Date(NOW_SECONDS * 1000).toISOString() };
+    expect((await fixture.service.getStatus()).accounts[0]?.usage).toEqual(stored);
 
     // Unknown or malformed account keys are ignored, never stored.
     fixture.service.recordUsage("not-an-account-key", snapshot);
     fixture.service.recordUsage("", snapshot);
     const status = await fixture.service.getStatus();
     expect(status.accounts).toHaveLength(1);
-    expect(status.accounts[0]?.usage).toEqual(snapshot);
+    expect(status.accounts[0]?.usage).toEqual(stored);
 
     // Logout drops the account's in-memory usage with it.
     fixture.credentials.save(ACCOUNT_KEYS.clientId, ISSUED_CLIENT_ID);

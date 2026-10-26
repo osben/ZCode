@@ -183,6 +183,8 @@ describe("Ollama local provider", () => {
     );
     // The synced provider is an ordinary custom provider.
     await visibleNav("custom:ollama");
+    const screenshotDir = process.env.ZCODE_E2E_SCREENSHOT_DIR?.trim();
+    if (screenshotDir) await browser.saveScreenshot(join(screenshotDir, "ollama-detail.png"));
   });
 
   it("OLLAMA-E2E-03: unchecking a detected model and saving removes it from the provider", async function () {

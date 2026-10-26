@@ -4,21 +4,22 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useServices } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
-import type {
-  Locale,
-  SiwcPlanAccountStatus,
-  SiwcPlanAccountsStatus,
-  SiwcPlanUsageSnapshot,
-} from "@zcode/shared";
+import type { SiwcPlanAccountStatus, SiwcPlanAccountsStatus } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { Badge } from "@/components/ui/badge.js";
 import { CHATGPT_PLAN_PROVIDER_LOGO } from "@/lib/chatgptPlanProvider.js";
+import { ChatGptPlanUsageBlock } from "./ChatGptPlanUsageBlock.js";
+import { usagePlanLabel } from "./chatgptPlanUsage.js";
 import { ProviderLogo } from "./ProviderLogo.js";
 
 const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage";
 const LOGIN_POLL_INTERVAL_MS = 1_500;
 const LOGIN_TIMEOUT_MS = 5 * 60_000;
 const FIRST_RUN_MODAL_STORAGE_KEY = "zcode.chatgptPlan.firstRunModalShown";
+/** Usage refresh while the detail is open; the host throttles probes to one per account per minute. */
+const USAGE_REFRESH_INTERVAL_MS = 60_000;
+/** Countdown re-render cadence (display only, never a probe). */
+const USAGE_CLOCK_TICK_MS = 30_000;
 
 /**
  * ChatGPT plan detail page (official OpenAI SIWC token sharing).
@@ -30,7 +31,7 @@ const FIRST_RUN_MODAL_STORAGE_KEY = "zcode.chatgptPlan.firstRunModalShown";
  * so login/status/logout ride the dedicated IOAuthService SIWC methods.
  */
 export function ChatGptPlanDetail() {
-  const { intl, locale } = useZCodeIntl();
+  const { intl } = useZCodeIntl();
   const platform = usePlatform();
   const { oauthService } = useServices();
   const [status, setStatus] = useState<SiwcPlanAccountsStatus | null>(null);
@@ -48,17 +49,44 @@ export function ChatGptPlanDetail() {
   const flowGenerationRef = useRef(0);
   const disposedRef = useRef(false);
 
-  const refreshStatus = useCallback(async () => {
-    const next = await oauthService.getChatGptPlanStatus();
-    if (!disposedRef.current) setStatus(next);
-  }, [oauthService]);
+  // Status reads (cached) and usage refreshes (probe) share one sequence: only the newest
+  // response writes, so a slow probe never overwrites a later sign-in or sign-out
+  // (specs/chatgpt-plan-signin.md U8).
+  const statusSequenceRef = useRef(0);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const readStatus = useCallback(async (read: () => Promise<SiwcPlanAccountsStatus>) => {
+    const sequence = ++statusSequenceRef.current;
+    const next = await read();
+    if (!disposedRef.current && sequence === statusSequenceRef.current) {
+      setStatus(next);
+      setNowMs(Date.now());
+    }
+  }, []);
+  const refreshStatus = useCallback(
+    () => readStatus(() => oauthService.getChatGptPlanStatus()),
+    [oauthService, readStatus],
+  );
+  const refreshUsage = useCallback(() => {
+    // A failed refresh keeps the usage already shown (U10).
+    void readStatus(() => oauthService.refreshChatGptPlanUsage()).catch((caught: unknown) => {
+      logger.warn("[ChatGptPlanDetail] usage refresh failed", { error: caught });
+    });
+  }, [oauthService, readStatus]);
 
   useEffect(() => {
     disposedRef.current = false;
-    void refreshStatus().catch((caught: unknown) => {
-      logger.error("[ChatGptPlanDetail] status load failed", { error: caught });
-    });
+    void refreshStatus()
+      .then(refreshUsage)
+      .catch((caught: unknown) => {
+        logger.error("[ChatGptPlanDetail] status load failed", { error: caught });
+      });
+    const usageTimer = setInterval(refreshUsage, USAGE_REFRESH_INTERVAL_MS);
+    const clockTimer = setInterval(() => setNowMs(Date.now()), USAGE_CLOCK_TICK_MS);
+    window.addEventListener("focus", refreshUsage);
     return () => {
+      clearInterval(usageTimer);
+      clearInterval(clockTimer);
+      window.removeEventListener("focus", refreshUsage);
       disposedRef.current = true;
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
       pollTimerRef.current = null;
@@ -236,7 +264,7 @@ export function ChatGptPlanDetail() {
             key={account.accountKey}
             account={account}
             intl={intl}
-            locale={locale}
+            nowMs={nowMs}
             loginPending={loginPending}
             signOutPending={signOutPending === account.accountKey}
             usageLinkPending={usageLinkPending === account.accountKey}
@@ -307,7 +335,7 @@ export function ChatGptPlanDetail() {
 interface AccountRowProps {
   readonly account: SiwcPlanAccountStatus;
   readonly intl: ReturnType<typeof useZCodeIntl>["intl"];
-  readonly locale: Locale;
+  readonly nowMs: number;
   /** Any login (add or reconnect) is in flight; only one pending login is allowed. */
   readonly loginPending: boolean;
   readonly signOutPending: boolean;
@@ -321,7 +349,7 @@ interface AccountRowProps {
 function AccountRow({
   account,
   intl,
-  locale,
+  nowMs,
   loginPending,
   signOutPending,
   usageLinkPending,
@@ -331,14 +359,22 @@ function AccountRow({
   onManageUsage,
 }: AccountRowProps) {
   const displayName = account.user?.email ?? account.user?.displayName ?? account.accountKey;
+  const planLabel = usagePlanLabel(account.usage?.planType);
   return (
     <div className="rounded-lg border border-border bg-card p-4">
       <div className="flex flex-col gap-3">
-        <p className="text-ui-sm">
-          {intl.formatMessage(
-            { id: "settings.modelProvider.chatgpt.signedInAs" },
-            { name: displayName },
-          )}
+        <p className="flex min-w-0 flex-wrap items-center gap-2 text-ui-sm">
+          <span className="min-w-0 truncate">
+            {intl.formatMessage(
+              { id: "settings.modelProvider.chatgpt.signedInAs" },
+              { name: displayName },
+            )}
+          </span>
+          {planLabel ? (
+            <Badge variant="secondary" data-testid="chatgpt-plan-type">
+              {planLabel}
+            </Badge>
+          ) : null}
         </p>
         {account.planUsageEntitled ? (
           <p className="text-ui-sm text-muted-foreground">
@@ -349,11 +385,7 @@ function AccountRow({
             {intl.formatMessage({ id: "settings.modelProvider.chatgpt.notEntitled" })}
           </p>
         )}
-        {account.usage ? (
-          <p className="text-ui-sm text-muted-foreground" data-testid="chatgpt-plan-usage">
-            {formatPlanUsageLine(account.usage, intl, locale)}
-          </p>
-        ) : null}
+        {account.usage ? <ChatGptPlanUsageBlock usage={account.usage} nowMs={nowMs} /> : null}
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" disabled={signOutPending} onClick={onSignOut}>
             {signOutPending ? <Loader2Icon className="size-3.5 animate-spin" /> : null}
@@ -383,42 +415,4 @@ function AccountRow({
       </div>
     </div>
   );
-}
-
-/**
- * Plan usage line: "5h window: {percent}% · resets {time} · Weekly: {percent}%" — every segment
- * beyond the primary percentage is shown only when the captured snapshot reports it, so accounts
- * without usage headers (SIWC preview tokens) render no line at all.
- */
-function formatPlanUsageLine(
-  usage: SiwcPlanUsageSnapshot,
-  intl: ReturnType<typeof useZCodeIntl>["intl"],
-  locale: Locale,
-): string {
-  const parts = [
-    intl.formatMessage(
-      { id: "settings.modelProvider.chatgpt.usage.primary" },
-      { percent: usage.primary.usedPercent },
-    ),
-  ];
-  const resetsAtMs = Date.parse(usage.primary.resetsAt ?? "");
-  if (Number.isFinite(resetsAtMs)) {
-    const time = new Intl.DateTimeFormat(locale, {
-      hour: "2-digit",
-      hourCycle: "h23",
-      minute: "2-digit",
-    }).format(resetsAtMs);
-    parts.push(
-      intl.formatMessage({ id: "settings.modelProvider.chatgpt.usage.primaryReset" }, { time }),
-    );
-  }
-  if (usage.secondary) {
-    parts.push(
-      intl.formatMessage(
-        { id: "settings.modelProvider.chatgpt.usage.weekly" },
-        { percent: usage.secondary.usedPercent },
-      ),
-    );
-  }
-  return parts.join(" · ");
 }

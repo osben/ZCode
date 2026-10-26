@@ -227,15 +227,23 @@ export function readCodexAccountId(idToken: string): string | null {
   return null;
 }
 
-/** Parse one wham/usage window; mirrors the header-capture tolerance rules. */
-function readUsageWindow(value: unknown): SiwcPlanUsageWindow | undefined {
+/**
+ * Parse one wham/usage window; mirrors the header-capture tolerance rules. `reset_after_seconds`
+ * stands in for a missing `reset_at`, counted from the capture time.
+ */
+function readUsageWindow(value: unknown, capturedAtMs: number): SiwcPlanUsageWindow | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const window = value as Record<string, unknown>;
   const usedPercent = window["used_percent"];
   if (typeof usedPercent !== "number" || !Number.isFinite(usedPercent)) return undefined;
   if (usedPercent < 0 || usedPercent > 100) return undefined;
   const windowSeconds = readPositiveInt(window["limit_window_seconds"]);
-  const resetAtSeconds = readPositiveInt(window["reset_at"]);
+  const resetAfterSeconds = readPositiveInt(window["reset_after_seconds"]);
+  const resetAtSeconds =
+    readPositiveInt(window["reset_at"]) ??
+    (resetAfterSeconds !== undefined
+      ? Math.round(capturedAtMs / 1000) + resetAfterSeconds
+      : undefined);
   return {
     usedPercent,
     ...(windowSeconds !== undefined ? { windowMinutes: Math.round(windowSeconds / 60) } : {}),
@@ -251,15 +259,25 @@ function readPositiveInt(value: unknown): number | undefined {
 }
 
 /** Map a wham/usage payload to the shared snapshot; the primary (5h) window is required. */
-export function readUsageSnapshotFromWhamPayload(payload: unknown): SiwcPlanUsageSnapshot | null {
+export function readUsageSnapshotFromWhamPayload(
+  payload: unknown,
+  capturedAtMs: number = Date.now(),
+): SiwcPlanUsageSnapshot | null {
   if (typeof payload !== "object" || payload === null) return null;
   const rateLimit = (payload as Record<string, unknown>)["rate_limit"];
   if (typeof rateLimit !== "object" || rateLimit === null) return null;
   const windows = rateLimit as Record<string, unknown>;
-  const primary = readUsageWindow(windows["primary_window"]);
+  const primary = readUsageWindow(windows["primary_window"], capturedAtMs);
   if (!primary) return null;
-  const secondary = readUsageWindow(windows["secondary_window"]);
-  return { primary, ...(secondary ? { secondary } : {}) };
+  const secondary = readUsageWindow(windows["secondary_window"], capturedAtMs);
+  const planType = (payload as Record<string, unknown>)["plan_type"];
+  const limitReached = windows["limit_reached"];
+  return {
+    primary,
+    ...(secondary ? { secondary } : {}),
+    ...(typeof planType === "string" && planType.trim() ? { planType: planType.trim() } : {}),
+    ...(typeof limitReached === "boolean" ? { limitReached } : {}),
+  };
 }
 
 export function readUserJsonEmail(rawUserInfo: string): string | null {

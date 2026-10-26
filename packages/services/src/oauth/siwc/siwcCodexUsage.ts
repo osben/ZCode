@@ -1,3 +1,4 @@
+import { isEffectiveDevelopmentNodeEnv } from "../../runtime-tools/nodeEnv.js";
 import {
   refreshSiwcCodexAccessToken,
   SIWC_CODEX_REFRESH_LOCK_MAX_WAIT_MS,
@@ -34,6 +35,16 @@ import {
   readUsageSnapshotFromWhamPayload,
 } from "./siwcCodexWire.js";
 import { closeCodexLoopbackServer, listenForCodexCallback } from "./siwcCodexLoopback.js";
+
+/** Desktop E2E seam for the usage host; honoured only by a development build with ZCODE_ENV=test. */
+export const SIWC_CODEX_USAGE_E2E_URL_ENV = "ZCODE_E2E_CHATGPT_USAGE_URL";
+
+export function resolveSiwcCodexUsageUrl(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  if (!isEffectiveDevelopmentNodeEnv(env) || env.ZCODE_ENV !== "test") return SIWC_CODEX_USAGE_URL;
+  return env[SIWC_CODEX_USAGE_E2E_URL_ENV]?.trim() || SIWC_CODEX_USAGE_URL;
+}
 
 const log = createServiceLogger("siwcCodexUsage");
 
@@ -83,6 +94,7 @@ export class SiwcCodexUsageService {
   private pending: PendingUsageLink | null = null;
   private exchanging: PendingUsageLink | null = null;
   private readonly lastProbeAt = new Map<string, number>();
+  private readonly inFlightProbes = new Map<string, Promise<void>>();
 
   constructor(
     private readonly credentialService: ICredentialService,
@@ -286,10 +298,18 @@ export class SiwcCodexUsageService {
     const now = this.now();
     await Promise.allSettled(
       accountKeys.flatMap((accountKey) => {
+        // A probe already running for the account is awaited, so a caller never returns before
+        // the snapshot it is waiting for lands (specs/chatgpt-plan-signin.md U9).
+        const running = this.inFlightProbes.get(accountKey);
+        if (running) return [running];
         const last = this.lastProbeAt.get(accountKey);
         if (last !== undefined && now - last < USAGE_PROBE_THROTTLE_MS) return [];
         this.lastProbeAt.set(accountKey, now);
-        return [this.probeAccount(accountKey)];
+        const probe = this.probeAccount(accountKey).finally(() => {
+          if (this.inFlightProbes.get(accountKey) === probe) this.inFlightProbes.delete(accountKey);
+        });
+        this.inFlightProbes.set(accountKey, probe);
+        return [probe];
       }),
     );
   }
@@ -343,7 +363,7 @@ export class SiwcCodexUsageService {
         if (payload === "unauthorized") return;
       }
       if (payload === null) return;
-      const snapshot = readUsageSnapshotFromWhamPayload(payload);
+      const snapshot = readUsageSnapshotFromWhamPayload(payload, this.now());
       if (!snapshot) {
         log.debug("ChatGPT plan usage probe returned no usable windows", { accountKey });
         return;
@@ -369,7 +389,7 @@ export class SiwcCodexUsageService {
     const stored = await this.readCredentialStrings(keys.accountId);
     // Codex routes the probe by account/workspace id when known (personal accounts work without).
     const accountId = stored[keys.accountId];
-    const response = await this.fetchFn(SIWC_CODEX_USAGE_URL, {
+    const response = await this.fetchFn(resolveSiwcCodexUsageUrl(), {
       headers: {
         authorization: `Bearer ${accessToken}`,
         "user-agent": SIWC_CODEX_USER_AGENT,

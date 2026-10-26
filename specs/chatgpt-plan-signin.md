@@ -395,11 +395,83 @@ windowMinutes?, resetsAt?}, secondary?}`). The CLI emits a typed host notificati
   Map (never persisted, never logged; snapshots contain no tokens and no PII). OAuth status/logout
   and usage recording share the same service instance, so Settings reads recorded usage and logout
   clears that account's cached snapshot.
-- **Display**: the Settings → ChatGPT Plan account row shows, when a snapshot exists, `5h window:
-{percent}%` (+ ` · resets {time}` when `resetsAt` is present and parseable) and `Weekly:
-{percent}%` for the secondary window. The model picker badge deliberately does NOT show usage: the
-  in-memory host state has no change-notification channel to the renderer, so a picker badge would
-  render stale percentages in a high-visibility surface. Revisit only with a usage-updated event.
+- **Display**: see "Usage display (Settings)" below. The model picker badge still does NOT show
+  usage: the in-memory host state has no change-notification channel to the renderer, so a picker
+  badge would render stale percentages in a high-visibility surface. Revisit only with a
+  usage-updated event (stage 2).
+
+### Usage display (Settings)
+
+Reason: the account row showed one line ("5h window: N% · resets HH:mm · Weekly: N%") with a
+hard-coded "5h" label, no date on the reset, no weekly reset, and old numbers looked fresh. Settings
+also waited for the usage probe (up to its 10 s timeout) before it showed any account.
+
+Snapshot (additive; `SiwcPlanUsageSnapshot`, all new fields optional so the passive header capture
+and old payloads keep validating):
+
+- `capturedAt` (ISO): host clock when the host stored the snapshot. The host is its only writer
+  (`onSnapshot` for the probe, `recordUsage` for the passive capture); a payload's own value is
+  ignored.
+- `planType` (string, verbatim `plan_type`), `limitReached` (boolean, `rate_limit.limit_reached`).
+- Window `resetsAt`: from `reset_at`; when `reset_at` is missing, from `reset_after_seconds` added
+  to the capture time. `windowMinutes` stays from `limit_window_seconds`.
+
+Status read and refresh (one owner per fact):
+
+| Fact                          | Owner                                                           | Read by                      |
+| ----------------------------- | --------------------------------------------------------------- | ---------------------------- |
+| Accounts and cached snapshots | `SiwcAuthService` (`getStatus`)                                 | Settings detail, immediately |
+| Fresh snapshot                | `SiwcCodexUsageService` probe (60 s throttle, in-flight shared) | `refreshUsage`               |
+| Countdown text                | Settings detail render (clock tick)                             | the account row              |
+
+- `getChatGptPlanStatus()` no longer probes: it returns the accounts with the cached snapshots at
+  once. The new `refreshChatGptPlanUsage()` probes linked accounts (throttled; a probe already in
+  flight for an account is awaited, not skipped) and then returns the same status shape.
+- The Settings detail calls `getChatGptPlanStatus()` then `refreshChatGptPlanUsage()` on open, and
+  `refreshChatGptPlanUsage()` again every 60 s while it stays open and when the window regains focus.
+  A refresh result never overwrites a newer status (request sequence; the newest response wins);
+  the login, link and sign-out flows keep reading `getChatGptPlanStatus()` as before.
+- A failed refresh keeps the shown snapshot (no reset to "no usage").
+
+Presentation (per account, per window — primary then secondary):
+
+- Label from `windowMinutes`: 300 → "5-hour", 10080 → "Weekly", other values → "{n}h" / "{n}d";
+  missing → "5-hour" for the primary and "Weekly" for the secondary window.
+- A bar and "{n}% left" (100 − used, rounded). Severity from used: below 70 normal, 70 up to 90
+  warning, 90 and above (or `limitReached` on the primary window) critical. The bar has
+  `role="meter"` with the remaining value and the severity in its accessible text.
+- "Resets in {duration}": rounded **up** to whole minutes, at most two units ("2d 4h", "3h 12m",
+  "45m"); under one minute "less than a minute". The absolute time is the element's tooltip, with
+  the weekday when the reset is not today. The countdown text re-renders every 30 s while the
+  detail is open (display only; it never triggers a probe).
+- When the window's `resetsAt` has passed: the percent is not shown as current; the row reads
+  "Waiting for the reset to be reported" until a newer snapshot arrives.
+- Stale: when `capturedAt` is older than 5 min the row adds "Updated {n} min ago".
+- `limitReached`: a critical line "Usage limit reached" next to the primary window, beside the
+  existing "Manage usage" action.
+- `planType`: a badge after the account label, the known values capitalised ("plus" → "Plus",
+  "pro" → "Pro", "team" → "Team"), unknown values shown verbatim.
+
+Acceptance:
+
+| #   | Given                                           | When                    | Then                                                           |
+| --- | ----------------------------------------------- | ----------------------- | -------------------------------------------------------------- |
+| U1  | Linked account, probe slow                      | Settings opens          | The account row renders before the probe settles               |
+| U2  | Primary used 42, resets in 2 h 3 min 10 s       | Row renders             | "5-hour", "58% left", "Resets in 2h 4m", tooltip absolute time |
+| U3  | Secondary 10080 min, used 75                    | Row renders             | "Weekly", warning severity, its own reset countdown            |
+| U4  | Primary `resetsAt` in the past                  | Row renders             | "Waiting for the reset to be reported", no percent             |
+| U5  | `capturedAt` 7 min ago                          | Row renders             | "Updated 7 min ago"                                            |
+| U6  | `limit_reached: true`                           | Row renders             | Critical bar and "Usage limit reached"                         |
+| U7  | Wire window with `reset_after_seconds` only     | Probe maps it           | `resetsAt` = capture time + seconds                            |
+| U8  | Two refreshes in flight, the older settles last | Both settle             | The newer status stays                                         |
+| U9  | Probe in flight for an account                  | `refreshUsage` called   | It awaits that probe instead of returning stale data           |
+| U10 | Refresh fails                                   | Row already shows usage | The previous usage stays                                       |
+
+Tests: wire mapping and capture stamping in `packages/services/test/siwcCodexUsage.test.ts` and
+`siwcAuthService.test.ts` (U7, U9, getStatus does not probe); pure formatting in
+`packages/ui/test/chatGptPlanUsage.test.ts` (U2–U6); the detail in
+`packages/ui/test/chatGptPlanDetail.test.ts` (U1, U8, U10). Desktop E2E is stage 2 (it needs a
+seam for the `chatgpt.com` usage host).
 
 ### Branding (Phase 2, Desktop UI)
 

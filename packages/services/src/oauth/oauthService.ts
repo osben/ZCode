@@ -1163,6 +1163,10 @@ export class OAuthService implements IOAuthService {
     return this.siwcAuth.getStatus();
   }
 
+  async refreshChatGptPlanUsage(): Promise<SiwcPlanAccountsStatus> {
+    return this.siwcAuth.refreshUsage();
+  }
+
   async logoutChatGptPlan(
     accountKey?: string,
   ): Promise<{ accountCount: number; revoked: boolean; signedOut: boolean }> {

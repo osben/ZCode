@@ -90,8 +90,14 @@ export interface IOAuthService {
   /** ChatGPT plan login poll; null while the browser redirect has not arrived yet. */
   pollChatGptPlanLogin(): Promise<SiwcLoginCompletionResult | null>;
 
-  /** ChatGPT plan connection status per signed-in account (signed-in state and consent). */
+  /**
+   * ChatGPT plan connection status per signed-in account (signed-in state and consent), with
+   * the cached usage snapshots; it never waits for a usage probe.
+   */
   getChatGptPlanStatus(): Promise<SiwcPlanAccountsStatus>;
+
+  /** Probe plan usage of the linked accounts (throttled), then return the same status shape. */
+  refreshChatGptPlanUsage(): Promise<SiwcPlanAccountsStatus>;
 
   /**
    * Revoke one account's ChatGPT plan refresh token and clear its local tokens (retains its

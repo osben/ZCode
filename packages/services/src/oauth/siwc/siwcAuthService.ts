@@ -141,7 +141,7 @@ export class SiwcAuthService {
         : {}),
       ...(dependencies.fetchFn ? { fetchFn: dependencies.fetchFn } : {}),
       ...(dependencies.now ? { now: dependencies.now } : {}),
-      onSnapshot: (accountKey, snapshot) => this.usageByAccount.set(accountKey, snapshot),
+      onSnapshot: (accountKey, snapshot) => this.storeUsage(accountKey, snapshot),
     });
   }
 
@@ -316,9 +316,8 @@ export class SiwcAuthService {
   async getStatus(): Promise<SiwcPlanAccountsStatus> {
     await this.migrateLegacyCredentials();
     const records = await this.readAccountIndex();
-    // Probe linked accounts before assembling statuses so the payload carries fresh usage
-    // (throttled per account; failures silent — usage is best-effort display state).
-    await this.codexUsage.probeAccounts(records.map((record) => record.accountKey));
+    // Cached snapshots only: a slow usage probe must not delay the account list
+    // (specs/chatgpt-plan-signin.md "Usage display (Settings)"); `refreshUsage` probes.
     const accounts: SiwcPlanAccountStatus[] = [];
     for (const record of records) {
       const status = await this.readAccountStatus(record);
@@ -337,7 +336,25 @@ export class SiwcAuthService {
   recordUsage(accountKey: string, snapshot: SiwcPlanUsageSnapshot): void {
     const normalized = accountKey.trim();
     if (!isChatGptPlanAccountKey(normalized) || !snapshot?.primary) return;
-    this.usageByAccount.set(normalized, snapshot);
+    this.storeUsage(normalized, snapshot);
+  }
+
+  /**
+   * Probe the linked accounts (throttled per account; a running probe is awaited), then return
+   * the status with the stored snapshots. Failures are silent: usage is best-effort display state.
+   */
+  async refreshUsage(): Promise<SiwcPlanAccountsStatus> {
+    const records = await this.readAccountIndex();
+    await this.codexUsage.probeAccounts(records.map((record) => record.accountKey));
+    return this.getStatus();
+  }
+
+  /** The single writer of the usage map: stamps the host capture time over any payload value. */
+  private storeUsage(accountKey: string, snapshot: SiwcPlanUsageSnapshot): void {
+    this.usageByAccount.set(accountKey, {
+      ...snapshot,
+      capturedAt: new Date(this.now()).toISOString(),
+    });
   }
 
   /**

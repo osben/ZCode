@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   oauthService: {
     getChatGptPlanStatus: vi.fn(),
+    refreshChatGptPlanUsage: vi.fn(),
     startChatGptPlanLogin: vi.fn(),
     pollChatGptPlanLogin: vi.fn(),
     logoutChatGptPlan: vi.fn(),
@@ -34,6 +35,11 @@ beforeEach(() => {
   vi.useFakeTimers();
   localStorage.clear();
   mocks.oauthService.getChatGptPlanStatus.mockResolvedValue(signedOut);
+  // By default the usage refresh returns whatever the status read currently returns.
+  mocks.oauthService.refreshChatGptPlanUsage.mockReset();
+  mocks.oauthService.refreshChatGptPlanUsage.mockImplementation(() =>
+    mocks.oauthService.getChatGptPlanStatus(),
+  );
   mocks.oauthService.startChatGptPlanLogin.mockResolvedValue({ authorizeUrl: "https://auth.test" });
   mocks.oauthService.pollChatGptPlanLogin.mockReset();
   mocks.oauthService.logoutChatGptPlan.mockResolvedValue(undefined);
@@ -156,69 +162,117 @@ describe("ChatGptPlanDetail", () => {
     expect(mocks.oauthService.logoutChatGptPlan).toHaveBeenCalledWith("a1b2c3d4e5f60718");
   });
 
-  it("renders the passively captured usage line only for accounts that reported one", async () => {
+  // specs/chatgpt-plan-signin.md "Usage display (Settings)".
+  const NOW = Date.parse("2026-10-15T15:56:50Z");
+  const account = (usage?: Record<string, unknown>) => ({
+    accountKey: "a1b2c3d4e5f60718",
+    signedIn: true,
+    planUsageEntitled: true,
+    usageLinked: true,
+    user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
+    ...(usage ? { usage } : {}),
+  });
+  const flush = async () => {
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  };
+
+  it("renders each window with its label, share left, severity and reset countdown (U2, U3)", async () => {
+    vi.setSystemTime(NOW);
     mocks.oauthService.getChatGptPlanStatus.mockResolvedValue({
       accounts: [
-        {
-          accountKey: "a1b2c3d4e5f60718",
-          signedIn: true,
-          planUsageEntitled: true,
-          user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
-          usage: {
-            primary: {
-              usedPercent: 42.5,
-              windowMinutes: 300,
-              resetsAt: "2026-10-15T18:00:00Z",
-            },
-            secondary: { usedPercent: 7 },
-          },
-        },
-        {
-          accountKey: "b1b2c3d4e5f60718",
-          signedIn: true,
-          planUsageEntitled: true,
-          user: { displayName: "Personal", email: "home@example.com", subject: "sub-home" },
-        },
+        account({
+          planType: "plus",
+          capturedAt: new Date(NOW).toISOString(),
+          primary: { usedPercent: 42, windowMinutes: 300, resetsAt: "2026-10-15T18:00:00Z" },
+          secondary: { usedPercent: 75, windowMinutes: 10080, resetsAt: "2026-10-18T16:00:00Z" },
+        }),
+        { ...account(), accountKey: "b1b2c3d4e5f60718", usageLinked: false },
       ],
     });
     render(createElement(ChatGptPlanDetail));
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await flush();
 
-    const usageLines = screen.getAllByTestId("chatgpt-plan-usage");
-    expect(usageLines).toHaveLength(1);
-    // The intl mock returns raw ids, so the segments prove which parts rendered: primary,
-    // the reset time, and the weekly window — in that order.
-    expect(usageLines[0]?.textContent).toBe(
-      [
-        "settings.modelProvider.chatgpt.usage.primary",
-        "settings.modelProvider.chatgpt.usage.primaryReset",
-        "settings.modelProvider.chatgpt.usage.weekly",
-      ].join(" · "),
+    expect(screen.getAllByTestId("chatgpt-plan-usage")).toHaveLength(1);
+    const [primary, secondary] = screen.getAllByTestId("chatgpt-plan-usage-window");
+    expect(primary?.getAttribute("data-severity")).toBe("normal");
+    expect(primary?.textContent).toContain("settings.modelProvider.chatgpt.usage.window.fiveHour");
+    expect(primary?.querySelector("[role=meter]")?.getAttribute("aria-valuenow")).toBe("58");
+    expect(primary?.textContent).toContain("settings.modelProvider.chatgpt.usage.resetsIn");
+    expect(secondary?.getAttribute("data-severity")).toBe("warning");
+    expect(secondary?.textContent).toContain("settings.modelProvider.chatgpt.usage.window.weekly");
+    expect(screen.getByTestId("chatgpt-plan-type").textContent).toBe("Plus");
+    expect(screen.queryByTestId("chatgpt-plan-usage-stale")).toBeNull();
+  });
+
+  it("shows reset-pending, stale and limit-reached states (U4, U5, U6)", async () => {
+    vi.setSystemTime(NOW);
+    mocks.oauthService.getChatGptPlanStatus.mockResolvedValue({
+      accounts: [
+        account({
+          limitReached: true,
+          capturedAt: new Date(NOW - 7 * 60_000).toISOString(),
+          primary: { usedPercent: 100, resetsAt: "2026-10-15T15:00:00Z" },
+          secondary: { usedPercent: 95 },
+        }),
+      ],
+    });
+    render(createElement(ChatGptPlanDetail));
+    await flush();
+
+    const [primary, secondary] = screen.getAllByTestId("chatgpt-plan-usage-window");
+    expect(primary?.textContent).toContain("settings.modelProvider.chatgpt.usage.resetPending");
+    expect(primary?.querySelector("[role=meter]")).toBeNull();
+    expect(secondary?.getAttribute("data-severity")).toBe("critical");
+    expect(screen.getByTestId("chatgpt-plan-usage-stale")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toBe(
+      "settings.modelProvider.chatgpt.usage.limitReached",
     );
   });
 
-  it("omits the reset segment when resetsAt is absent or unparseable", async () => {
-    mocks.oauthService.getChatGptPlanStatus.mockResolvedValue({
-      accounts: [
-        {
-          accountKey: "a1b2c3d4e5f60718",
-          signedIn: true,
-          planUsageEntitled: true,
-          user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
-          usage: { primary: { usedPercent: 13 } },
-        },
-      ],
-    });
+  it("lists accounts before the usage probe settles, then shows the refreshed usage (U1)", async () => {
+    let resolveRefresh!: (value: unknown) => void;
+    mocks.oauthService.getChatGptPlanStatus.mockResolvedValue({ accounts: [account()] });
+    mocks.oauthService.refreshChatGptPlanUsage.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveRefresh = resolve)),
+    );
     render(createElement(ChatGptPlanDetail));
+    await flush();
+
+    expect(screen.getByText("settings.modelProvider.chatgpt.signedInAs")).toBeTruthy();
+    expect(screen.queryByTestId("chatgpt-plan-usage")).toBeNull();
+
     await act(async () => {
+      resolveRefresh({ accounts: [account({ primary: { usedPercent: 10 } })] });
+    });
+    expect(screen.getByTestId("chatgpt-plan-usage")).toBeTruthy();
+  });
+
+  it("keeps the newer status when an older refresh settles last, and keeps usage on failure (U8, U10)", async () => {
+    let resolveStale!: (value: unknown) => void;
+    mocks.oauthService.getChatGptPlanStatus.mockResolvedValue({
+      accounts: [account({ primary: { usedPercent: 10 } })],
+    });
+    mocks.oauthService.refreshChatGptPlanUsage
+      .mockImplementationOnce(() => new Promise((resolve) => (resolveStale = resolve)))
+      .mockRejectedValueOnce(new Error("probe failed"));
+    render(createElement(ChatGptPlanDetail));
+    await flush();
+
+    // A newer read (window focus refresh) fails: the shown usage stays.
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
       await Promise.resolve();
     });
+    expect(screen.getByTestId("chatgpt-plan-usage")).toBeTruthy();
 
-    expect(screen.getByTestId("chatgpt-plan-usage")?.textContent).toBe(
-      "settings.modelProvider.chatgpt.usage.primary",
-    );
+    // The older refresh settles last with no usage: it must not overwrite the newer read.
+    await act(async () => {
+      resolveStale({ accounts: [account()] });
+    });
+    expect(screen.getByTestId("chatgpt-plan-usage")).toBeTruthy();
   });
 
   it("gives the first-run dialog an accessible name", async () => {
@@ -273,6 +327,17 @@ describe("ChatGptPlanDetail", () => {
           },
         ],
       });
+    // The open-time usage refresh still sees the unlinked account.
+    mocks.oauthService.refreshChatGptPlanUsage.mockResolvedValueOnce({
+      accounts: [
+        {
+          accountKey: "a1b2c3d4e5f60718",
+          signedIn: true,
+          planUsageEntitled: true,
+          user: { displayName: "Work", email: "work@example.com", subject: "sub-work" },
+        },
+      ],
+    });
     mocks.oauthService.startChatGptUsageLink.mockResolvedValue({
       authorizeUrl: "https://auth.test/oauth/authorize",
       displayAuthorizeUrl: "https://auth.test/oauth/authorize",

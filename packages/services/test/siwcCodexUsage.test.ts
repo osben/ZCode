@@ -6,12 +6,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildSiwcAccountCredentialKeys, SIWC_ACCOUNT_INDEX_CREDENTIAL_KEY } from "@zcode/shared";
 import type { ICredentialService } from "../src/credential/credential.js";
 import {
+  SIWC_CODEX_USAGE_URL,
   SIWC_CODEX_CLIENT_ID,
   buildSiwcCodexCredentialKeys,
   readUsageSnapshotFromWhamPayload,
 } from "../src/oauth/siwc/siwcCodexWire.js";
 import { SiwcAuthService, createSiwcAccountKey } from "../src/oauth/siwc/siwcAuthService.js";
 import { SIWC_ISSUER } from "../src/oauth/siwc/siwcOAuth.js";
+import { resolveSiwcCodexUsageUrl } from "../src/oauth/siwc/siwcCodexUsage.js";
 
 const NOW_SECONDS = Math.floor(Date.now() / 1000);
 const SUB = "codex-usage-sub-1";
@@ -276,7 +278,7 @@ describe("SiwcCodexUsageService", () => {
     expect(credentials.dump()[CODEX_KEYS.accessToken]).toBeUndefined();
     expect(credentials.dump()[CODEX_KEYS.refreshToken]).toBeUndefined();
     expect(backend.state.revokedTokens).toContain("codex-refresh-1");
-    expect((await service.getStatus()).accounts).toHaveLength(0);
+    expect((await service.refreshUsage()).accounts).toHaveLength(0);
   });
 
   it("closes the loopback listener when cancelling cannot update the lifecycle epoch", async () => {
@@ -307,7 +309,7 @@ describe("SiwcCodexUsageService", () => {
     await credentials.save(CODEX_KEYS.accessToken, "codex-access-1");
     await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-1");
     await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
-    const oldStatus = service.getStatus();
+    const oldStatus = service.refreshUsage();
     await whamStarted;
     await service.logout(ACCOUNT_KEY);
     const slotKeys = buildSiwcAccountCredentialKeys(ACCOUNT_KEY);
@@ -319,7 +321,7 @@ describe("SiwcCodexUsageService", () => {
     );
     release();
     await oldStatus;
-    const current = await service.getStatus();
+    const current = await service.refreshUsage();
     expect(current.accounts).toHaveLength(1);
     expect(current.accounts[0]?.usage).toBeUndefined();
     expect(credentials.dump()[CODEX_KEYS.accessToken]).toBeUndefined();
@@ -365,7 +367,7 @@ describe("SiwcCodexUsageService", () => {
     expect(credentials.dump()[CODEX_KEYS.accountId]).toBe("acct_test_routing");
     expect(Number(credentials.dump()[CODEX_KEYS.accessExpiresAt])).toBeGreaterThan(NOW_SECONDS);
 
-    const status = await service.getStatus();
+    const status = await service.refreshUsage();
     expect(status.accounts).toHaveLength(1);
     expect(status.accounts[0]?.usageLinked).toBe(true);
     expect(status.accounts[0]?.usage?.primary).toEqual({
@@ -408,7 +410,7 @@ describe("SiwcCodexUsageService", () => {
     await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-stale");
     await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
 
-    const status = await service.getStatus();
+    const status = await service.refreshUsage();
     expect(status.accounts[0]?.usage?.primary.usedPercent).toBe(17);
     expect(backend.state.refreshCalls).toEqual(["codex-refresh-stale"]);
     expect(credentials.dump()[CODEX_KEYS.refreshToken]).toBe("codex-refresh-2");
@@ -416,7 +418,38 @@ describe("SiwcCodexUsageService", () => {
     expect(backend.state.whamCalls).toBe(1);
 
     // Second immediate status read: throttled, no extra probe or refresh.
-    await service.getStatus();
+    await service.refreshUsage();
+    expect(backend.state.whamCalls).toBe(1);
+  });
+
+  // specs/chatgpt-plan-signin.md "Usage display (Settings)": the status read never waits for a probe.
+  it("returns cached usage from getStatus without probing", async () => {
+    const { backend, credentials, service } = await createService();
+    await credentials.save(CODEX_KEYS.accessToken, "codex-access-live");
+    await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-live");
+    await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 5 * 24 * 60 * 60));
+
+    expect((await service.getStatus()).accounts[0]?.usage).toBeUndefined();
+    expect(backend.state.whamCalls).toBe(0);
+
+    await service.refreshUsage();
+    const cached = await service.getStatus();
+    expect(cached.accounts[0]?.usage?.primary.usedPercent).toBe(17);
+    expect(cached.accounts[0]?.usage?.capturedAt).toBe(new Date(NOW_SECONDS * 1000).toISOString());
+    expect(backend.state.whamCalls).toBe(1);
+  });
+
+  // U9: a second caller awaits the running probe instead of returning before its snapshot lands.
+  it("shares a running probe between concurrent usage refreshes", async () => {
+    const { backend, credentials, service } = await createService();
+    await credentials.save(CODEX_KEYS.accessToken, "codex-access-live");
+    await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-live");
+    await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 5 * 24 * 60 * 60));
+
+    const [first, second] = await Promise.all([service.refreshUsage(), service.refreshUsage()]);
+
+    expect(first.accounts[0]?.usage?.primary.usedPercent).toBe(17);
+    expect(second.accounts[0]?.usage?.primary.usedPercent).toBe(17);
     expect(backend.state.whamCalls).toBe(1);
   });
 
@@ -429,7 +462,7 @@ describe("SiwcCodexUsageService", () => {
     // Fresh expiry: no proactive refresh — the 401 must drive the single refresh+retry.
     await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 5 * 24 * 60 * 60));
 
-    const status = await service.getStatus();
+    const status = await service.refreshUsage();
     expect(backend.state.refreshCalls).toEqual(["codex-refresh-live"]);
     expect(backend.state.whamCalls).toBe(2);
     expect(status.accounts[0]?.usage?.primary.usedPercent).toBe(17);
@@ -441,7 +474,7 @@ describe("SiwcCodexUsageService", () => {
     await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-stale");
     await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
 
-    const status = await service.getStatus();
+    const status = await service.refreshUsage();
     expect(backend.state.refreshCalls).toEqual(["codex-refresh-stale"]);
     const dump = credentials.dump();
     expect(dump[CODEX_KEYS.accessToken]).toBeUndefined();
@@ -460,7 +493,7 @@ describe("SiwcCodexUsageService", () => {
     await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-stale");
     await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
 
-    const status = await service.getStatus();
+    const status = await service.refreshUsage();
     expect(backend.state.refreshCalls).toEqual(["codex-refresh-stale"]);
     expect(credentials.dump()[CODEX_KEYS.refreshToken]).toBe("codex-refresh-stale");
     expect(status.accounts[0]?.usageLinked).toBe(true);
@@ -478,7 +511,7 @@ describe("SiwcCodexUsageService", () => {
     // Terminality follows the OAuth error code, not the HTTP status: invalid_request is a client
     // bug, not a revoked grant. The probe swallows the failure at debug level and the slot
     // survives for the next refresh.
-    const status = await service.getStatus();
+    const status = await service.refreshUsage();
     expect(credentials.dump()[CODEX_KEYS.refreshToken]).toBe("codex-refresh-stale");
     expect(status.accounts[0]?.usageLinked).toBe(true);
   });
@@ -494,7 +527,7 @@ describe("SiwcCodexUsageService", () => {
 
     // Pins the code-based terminality rule: the revoked-grant code decides, even over a 5xx
     // status that would normally read as transient.
-    const status = await service.getStatus();
+    const status = await service.refreshUsage();
     expect(credentials.dump()[CODEX_KEYS.refreshToken]).toBeUndefined();
     expect(status.accounts[0]?.usageLinked).toBeUndefined();
   });
@@ -510,7 +543,7 @@ describe("SiwcCodexUsageService", () => {
 
     // No OAuth error code can be parsed from an empty body, so terminality cannot be decided;
     // the probe swallows the failure and the slot survives for the next attempt.
-    const status = await service.getStatus();
+    const status = await service.refreshUsage();
     expect(credentials.dump()[CODEX_KEYS.refreshToken]).toBe("codex-refresh-stale");
     expect(status.accounts[0]?.usageLinked).toBe(true);
     expect(status.accounts[0]?.usage).toBeUndefined();
@@ -524,7 +557,7 @@ describe("SiwcCodexUsageService", () => {
     await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-live");
     await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 5 * 24 * 60 * 60));
 
-    const status = await service.getStatus();
+    const status = await service.refreshUsage();
     expect(backend.state.whamCalls).toBe(1);
     // A non-401 probe failure must not trigger a refresh nor surface an error.
     expect(backend.state.refreshCalls).toEqual([]);
@@ -540,7 +573,7 @@ describe("SiwcCodexUsageService", () => {
 
     // Documented contract: usage data is best-effort display state — a network failure resolves
     // the status read with the slot intact and no usage, never rejects.
-    const status = await service.getStatus();
+    const status = await service.refreshUsage();
     expect(backend.state.whamCalls).toBe(0);
     expect(status.accounts[0]?.usageLinked).toBe(true);
     expect(status.accounts[0]?.usage).toBeUndefined();
@@ -554,7 +587,7 @@ describe("SiwcCodexUsageService", () => {
     await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-live");
     await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 5 * 24 * 60 * 60));
 
-    const status = await service.getStatus();
+    const status = await service.refreshUsage();
     // Exactly one refresh+retry: a second 401 must not loop further refreshes.
     expect(backend.state.refreshCalls).toEqual(["codex-refresh-live"]);
     expect(backend.state.whamCalls).toBe(2);
@@ -587,7 +620,7 @@ describe("SiwcCodexUsageService", () => {
     await credentials.save(CODEX_KEYS.refreshToken, "codex-refresh-stale");
     await credentials.save(CODEX_KEYS.accessExpiresAt, String(NOW_SECONDS + 3600));
 
-    await service.getStatus();
+    await service.refreshUsage();
     expect(Number(credentials.dump()[CODEX_KEYS.accessExpiresAt])).toBe(NOW_SECONDS + 7200);
   });
 
@@ -604,7 +637,7 @@ describe("SiwcCodexUsageService", () => {
     expect(dump[CODEX_KEYS.refreshToken]).toBeUndefined();
     expect(dump[CODEX_KEYS.idToken]).toBeUndefined();
     expect(backend.state.revokeCalls).toBe(1);
-    const status = await service.getStatus();
+    const status = await service.refreshUsage();
     expect(status.accounts).toHaveLength(0);
   });
 });
@@ -612,6 +645,8 @@ describe("SiwcCodexUsageService", () => {
 describe("readUsageSnapshotFromWhamPayload", () => {
   it("maps both windows and skips a secondary-only reading", () => {
     expect(readUsageSnapshotFromWhamPayload(WHAM_PAYLOAD)).toEqual({
+      planType: "plus",
+      limitReached: false,
       primary: {
         usedPercent: 17,
         windowMinutes: 300,
@@ -630,6 +665,25 @@ describe("readUsageSnapshotFromWhamPayload", () => {
     ).toBeNull();
   });
 
+  // specs/chatgpt-plan-signin.md U7.
+  it("derives a missing reset_at from reset_after_seconds and the capture time", () => {
+    const capturedAtMs = 1_800_000_000_000;
+    expect(
+      readUsageSnapshotFromWhamPayload(
+        {
+          rate_limit: {
+            limit_reached: true,
+            primary_window: { used_percent: 100, reset_after_seconds: 600 },
+          },
+        },
+        capturedAtMs,
+      ),
+    ).toEqual({
+      primary: { usedPercent: 100, resetsAt: new Date(capturedAtMs + 600_000).toISOString() },
+      limitReached: true,
+    });
+  });
+
   it("returns null for malformed payloads and out-of-range percentages", () => {
     expect(readUsageSnapshotFromWhamPayload(null)).toBeNull();
     expect(readUsageSnapshotFromWhamPayload({})).toBeNull();
@@ -639,5 +693,31 @@ describe("readUsageSnapshotFromWhamPayload", () => {
     expect(
       readUsageSnapshotFromWhamPayload({ rate_limit: { primary_window: { used_percent: "17" } } }),
     ).toBeNull();
+  });
+});
+
+describe("resolveSiwcCodexUsageUrl", () => {
+  it("honours the E2E override only in a development build under ZCODE_ENV=test", () => {
+    const url = "http://127.0.0.1:45455/backend-api/wham/usage";
+    expect(
+      resolveSiwcCodexUsageUrl({
+        ZCODE_RUNTIME_ENV: "development",
+        ZCODE_ENV: "test",
+        ZCODE_E2E_CHATGPT_USAGE_URL: url,
+      }),
+    ).toBe(url);
+    expect(
+      resolveSiwcCodexUsageUrl({
+        ZCODE_RUNTIME_ENV: "production",
+        ZCODE_ENV: "test",
+        ZCODE_E2E_CHATGPT_USAGE_URL: url,
+      }),
+    ).toBe(SIWC_CODEX_USAGE_URL);
+    expect(
+      resolveSiwcCodexUsageUrl({
+        ZCODE_RUNTIME_ENV: "development",
+        ZCODE_E2E_CHATGPT_USAGE_URL: url,
+      }),
+    ).toBe(SIWC_CODEX_USAGE_URL);
   });
 });

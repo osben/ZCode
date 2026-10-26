@@ -406,5 +406,7 @@ describe("ACP agents settings", () => {
     // The last visible model cannot be unchecked; the shared config still holds no ACP provider.
     assert.equal(await (await checkbox("m1")).isEnabled(), false);
     await readSavedAcpAccess();
+    const screenshotDir = process.env.ZCODE_E2E_SCREENSHOT_DIR?.trim();
+    if (screenshotDir) await browser.saveScreenshot(join(screenshotDir, "acp-agent-detail.png"));
   });
 });

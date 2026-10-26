@@ -343,6 +343,12 @@ export interface SiwcPlanUsageWindow {
 export interface SiwcPlanUsageSnapshot {
   primary: SiwcPlanUsageWindow;
   secondary?: SiwcPlanUsageWindow;
+  /** Host clock when the host stored the snapshot (ISO); stamped only by the host. */
+  capturedAt?: string;
+  /** `plan_type` from the usage probe, verbatim (for example "plus", "pro"). */
+  planType?: string;
+  /** `rate_limit.limit_reached` from the usage probe. */
+  limitReached?: boolean;
 }
 
 /** Connection status of one signed-in ChatGPT plan account (user is always present). */
