@@ -1,8 +1,8 @@
 import { chmod, mkdtemp, rm, mkdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createNodeSkillAdapter } from "../src/skills/index.js";
+import { canonicalSkillIdentity, createNodeSkillAdapter } from "../src/skills/index.js";
 
 describe("NodeSkillAdapter", () => {
   it("discovers project skills from SKILL.md metadata", async () => {
@@ -192,6 +192,96 @@ describe("NodeSkillAdapter", () => {
       expect(outcome.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
         "skill_duplicate_name",
       );
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("loads the project copy by path when the same name exists in two roots", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "zcode-skills-"));
+    const projectSkill = join(dir, ".zcode", "skills", "foo");
+    const userSkill = join(dir, "home", ".zcode", "skills", "foo");
+
+    try {
+      await mkdir(projectSkill, { recursive: true });
+      await mkdir(userSkill, { recursive: true });
+      await writeSkillFile(userSkill, "foo", "User copy", "# User Body");
+      await writeSkillFile(projectSkill, "foo", "Project copy", "# Project Body");
+
+      const adapter = createNodeSkillAdapter({ homeDirectory: join(dir, "home") });
+      const byPath = await adapter.loadSkill({
+        name: "foo",
+        workingDirectory: dir,
+        path: join(projectSkill, "SKILL.md"),
+      });
+      const byName = await adapter.loadSkill({ name: "foo", workingDirectory: dir });
+
+      expect(byPath.metadata.path).toBe(join(projectSkill, "SKILL.md"));
+      expect(byPath.metadata.description).toBe("Project copy");
+      expect(byPath.content).toContain("# Project Body");
+      // Without a path the bare name keeps resolving to the first root-order match (user copy).
+      expect(byName.metadata.path).toBe(join(userSkill, "SKILL.md"));
+      expect(byName.metadata.description).toBe("User copy");
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("selects a skill by identity through a symlinked skill directory", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "zcode-skills-"));
+    const sourceSkill = join(dir, "cloud-skills", "foo");
+    const userSkillRoot = join(dir, "home", ".zcode", "skills");
+    const linkedSkill = join(userSkillRoot, "foo");
+
+    try {
+      await mkdir(sourceSkill, { recursive: true });
+      await mkdir(userSkillRoot, { recursive: true });
+      await writeSkill(sourceSkill, "foo", "Imported via symlink");
+      await symlink(sourceSkill, linkedSkill, process.platform === "win32" ? "junction" : "dir");
+
+      const adapter = createNodeSkillAdapter({ homeDirectory: join(dir, "home") });
+      // Pass the path through the symlinked directory; the identity resolves it via realpath.
+      const loaded = await adapter.loadSkill({
+        name: "foo",
+        workingDirectory: dir,
+        path: join(linkedSkill, "SKILL.md"),
+      });
+
+      expect(loaded.metadata.path).toBe(join(linkedSkill, "SKILL.md"));
+      expect(loaded.content).toContain("# Body");
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects a path that matches no discovered skill", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "zcode-skills-"));
+    const disabledSkill = join(dir, ".zcode", "skills", "foo");
+
+    try {
+      await mkdir(disabledSkill, { recursive: true });
+      await writeSkill(disabledSkill, "foo", "Disabled by config");
+
+      const adapter = createNodeSkillAdapter({
+        homeDirectory: join(dir, "home"),
+        disabledPaths: [join(disabledSkill, "SKILL.md")],
+      });
+
+      await expect(
+        adapter.loadSkill({
+          name: "foo",
+          workingDirectory: dir,
+          path: join(dir, ".zcode", "skills", "missing", "SKILL.md"),
+        }),
+      ).rejects.toThrow("Skill not found: foo");
+      // A disabled skill is absent from discovery, so its identity no longer matches either.
+      await expect(
+        adapter.loadSkill({
+          name: "foo",
+          workingDirectory: dir,
+          path: join(disabledSkill, "SKILL.md"),
+        }),
+      ).rejects.toThrow("Skill not found: foo");
     } finally {
       await rm(dir, { force: true, recursive: true });
     }
@@ -522,9 +612,18 @@ describe("NodeSkillAdapter", () => {
 });
 
 async function writeSkill(dir: string, name: string, description: string): Promise<void> {
+  await writeSkillFile(dir, name, description, "# Body");
+}
+
+async function writeSkillFile(
+  dir: string,
+  name: string,
+  description: string,
+  body: string,
+): Promise<void> {
   await writeFile(
     join(dir, "SKILL.md"),
-    ["---", `name: ${name}`, `description: ${description}`, "---", "", "# Body"].join("\n"),
+    ["---", `name: ${name}`, `description: ${description}`, "---", "", body].join("\n"),
   );
 }
 
@@ -554,5 +653,14 @@ describe("附加目录技能", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("canonicalSkillIdentity", () => {
+  // The paths do not exist on disk, which also exercises the realpath fallback branch.
+  it("lower-cases on win32 and keeps the path elsewhere", async () => {
+    const skillPath = resolve(join("skills", "Demo", "SKILL.md"));
+    expect(await canonicalSkillIdentity(skillPath, "win32")).toBe(skillPath.toLowerCase());
+    expect(await canonicalSkillIdentity(skillPath, "linux")).toBe(skillPath);
   });
 });

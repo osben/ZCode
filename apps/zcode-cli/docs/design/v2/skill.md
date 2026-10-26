@@ -293,6 +293,11 @@ P1 behavior:
 - `model` / `effort` take effect through a runtime context modifier and record an event.
 - `context: fork` waits until the subagent runtime is stable.
 
+Subagent grants (fork): a profile's `skills:` list is resolved once at child start to physical
+skill identities (real path of `SKILL.md`); the child sees and loads only those files, and
+`loadSkill` receives the exact `path`. On a bare-name collision the grant follows the parent's root
+order (user before project). See `specs/subagent-skill-identity.md` at the repository root.
+
 ## Manual Command
 
 P0 adds a slash command:

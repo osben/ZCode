@@ -98,6 +98,11 @@ export interface SkillDiscoverRequest {
 
 export interface SkillLoadRequest {
   name: string;
+  /**
+   * Exact SKILL.md to load; when set, the skill is selected by physical identity and `name` is
+   * used only for errors.
+   */
+  path?: string;
   workingDirectory: string;
   roots?: SkillRoot[];
   maxBytes?: number;

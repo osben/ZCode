@@ -911,6 +911,11 @@ exceptions:
       - apps/zcode-cli/packages/core/src/tool/search/local-projection.ts
       - apps/zcode-cli/tools/prompt-trajectory/src/tool-search-comparison.ts
     reason: Pre-port of the upstream 3.16.3 LocalToolSearch name (specs/port-3.16.3-local-tool-search.md) edits existing upstream tool-search files in place. The zcode-cli tree has no managed module yet; adopting it needs a separate module boundary refactor. Remove this entry when the real 3.16.3 source replaces the port.
+  - id: subagent-skill-grants-unmanaged-file
+    rule: unmanaged-new-file
+    paths:
+      - apps/zcode-cli/packages/core/src/runtime/methods/subagent-skill-grants.ts
+    reason: Fork-owned subagent skill grant resolver (specs/subagent-skill-identity.md), kept out of the upstream-owned subagent.ts to limit sync conflicts. The zcode-cli tree has no managed module yet; adopting it needs a separate module boundary refactor.
   - id: port-3163-remote-ssh-unmanaged-edit
     rule: unmanaged-new-file
     paths:
