@@ -2,6 +2,7 @@ import { basename, relative, sep } from "node:path";
 import type { FileSystemPort } from "@zcode/contracts";
 import { parse as parseYaml } from "yaml";
 
+import { DREAM_JOURNAL_DIRECTORY_NAME } from "../dream-journal/index.js";
 import {
   MEMORY_RECALL_TYPES,
   type MemoryManifestEntry,
@@ -85,6 +86,8 @@ async function collectMemoryPaths(
 
   for (const entry of listed.entries) {
     if (entry.kind === "directory") {
+      // Dream run journal snapshots are not memory entries and may hold superseded file bodies.
+      if (basename(entry.path).toLowerCase() === DREAM_JOURNAL_DIRECTORY_NAME) continue;
       paths.push(...(await collectMemoryPaths(fileSystem, entry.path, signal)));
       continue;
     }

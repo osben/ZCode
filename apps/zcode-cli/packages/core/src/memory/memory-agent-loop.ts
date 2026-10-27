@@ -21,7 +21,12 @@ import {
 } from "../tool/handlers/bash-command-parser.js";
 import { isRuntimeReadOnlyBashCommand } from "../tool/handlers/bash-semantics.js";
 import type { ExecutableToolCall, ToolExecutionResult } from "../tool/types.js";
-import { resolveContainedMemoryFilePath, resolveSafeMemoryFilePath } from "./memory-file-path.js";
+import {
+  isDreamJournalRelativePath,
+  memoryFileRelativePath,
+  resolveContainedMemoryFilePath,
+  resolveSafeMemoryFilePath,
+} from "./memory-file-path.js";
 import { auxiliaryModelOptions } from "../model/auxiliary-model-options.js";
 
 export type MemoryAgentModelRequest = ModelRequest;
@@ -258,7 +263,11 @@ function isContainedMarkdownBashRemoval(
     }
     if (/[*?[]/u.test(argument)) return false;
     if (!isAbsolute(argument) || !argument.endsWith(".md")) return false;
-    if (resolveContainedPath(argument, input) === undefined) return false;
+    const resolved = resolveContainedPath(argument, input);
+    if (resolved === undefined) return false;
+    // Dream snapshots are runtime-owned; removing one would leave the journal pointing at nothing.
+    const relativePath = memoryFileRelativePath(input.rootDir, resolved);
+    if (relativePath === undefined || isDreamJournalRelativePath(relativePath)) return false;
     pathCount += 1;
   }
   return pathCount > 0;

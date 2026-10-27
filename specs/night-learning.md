@@ -119,6 +119,24 @@ Each skip, including those from manual `/dream`, gets a journal row plus the `ru
 - Known limitation: the Dream agent has file tools in the memory root and could in principle read or edit the journal. Accepted for V1; the journal is a diagnostic record, and undo checks `after` equality before restoring.
 - V1 scope: journal write and read API in core, lifecycle logs for every run and skip, no undo UI, no scheduler.
 
+## V1 implementation notes
+
+- Module: `apps/zcode-cli/packages/core/src/memory/dream-journal/` (adopted as architecture module `dream-journal`; public entry `index.ts`, contract in `contract.ts`). The runtime wires it from `runtime/helpers/project-memory-dream.ts`.
+- Skips for `remote` and `disabled` are logged (`memory.dream.run.skipped`) but get no journal row: there is no local memory root to own a journal. Every other skip reason is journaled.
+- A touched file whose content is unchanged at finalize is dropped from the journal instead of recorded as an empty update.
+- A run left `running` by a crashed process is settled on the next begin as `failed` with `reasonCode: "interrupted"`.
+- Not implemented in V1: `memory.dream.scheduled.tick`, `turnsRead`, the `rejected` count, item `reason` / `mergedInto` / `undone`.
+
+- Retention: at most 10 skip rows, and at most 30 runs in total. Once the total is reached, skip rows are evicted first (oldest first); a learned, nothing or failed run is never evicted to make room for a skip. Consequence: when the journal holds 30 non-skipped runs, a newly recorded skip row is evicted at once, so "why didn't it run" is answered only while there is room.
+- A finalize that fails is logged as `memory.dream.journal.failed` (operation `finalize`) and the run still stamps its lock. The journal never fails a Dream run.
+- A commit failure after a succeeded finalize re-finalizes the run as `failed` with `reasonCode: "commit_failed"`, and `memory.dream.failed` carries `phase: "commit"`.
+- The Dream agent cannot write or remove files in `.fork_dream-journal` (case-insensitive): Write and Edit are refused by the memory policy, and a Bash `rm` of a journal path is not auto-allowed.
+
+### Known limitations
+
+- No fsync: run files are written with an atomic rename but not flushed to disk. After a power loss the newest run file may be missing or stale. The journal is a diagnostic record, not a durability guarantee.
+- Symlinked memory files: a snapshot records the body the file port returns, so for a symlink it records the target's content. The link itself is not recorded, and an undo would write a regular file in its place.
+
 ## Open questions
 
 - Scheduler form: app-start/idle check in Host versus a CLI-side timer. Desktop may be off at night, so a fixed 03:30 slot is not assumed.
