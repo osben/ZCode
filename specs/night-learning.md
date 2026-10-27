@@ -111,9 +111,16 @@ Each skip, including those from manual `/dream`, gets a journal row plus the `ru
 8. Master switch off: scheduler never ticks into the model; manual `/dream` still works and still journals.
 9. Journal pruning removes runs beyond the cap together with their snapshots.
 
+## Decisions (2026-10-27, from reading the Dream code)
+
+- Dream is an agent loop with file tools (`runMemoryAgentLoop`, `project-memory-dream.ts`), not a JSON proposal: it writes memory files directly and the runtime only learns the touched paths via `collectDreamTouchedPaths`. The "validate each proposed change before apply" rules below therefore need a redesign (structured proposal or write-time hook) and are **not part of V1**. V1 is journal and logging only.
+- Journal location: a sidecar directory `.fork_dream-journal/` in the memory root. Precedent: `.consolidate-lock` and `.consolidated-at` already live there as dot entries. Catalog listing, Extraction and the index must ignore it (verify in implementation; add a test).
+- Capture point: before the first tool call that touches a path in a run, the runtime snapshots that file (content or absence) and writes the journal item; after the loop it records `after`. This is done in the runtime wrapper around `executor.execute`, not by the model.
+- Known limitation: the Dream agent has file tools in the memory root and could in principle read or edit the journal. Accepted for V1; the journal is a diagnostic record, and undo checks `after` equality before restoring.
+- V1 scope: journal write and read API in core, lifecycle logs for every run and skip, no undo UI, no scheduler.
+
 ## Open questions
 
-- Journal location: sidecar inside the memory root (hidden `fork_` directory, must be ignored by the viewer, Extraction and the index) versus a fork table in the CLI db. Needs a check against the memory file protocol §4 before choosing.
 - Scheduler form: app-start/idle check in Host versus a CLI-side timer. Desktop may be off at night, so a fixed 03:30 slot is not assumed.
 - Transcript isolation of the project model-io (spec §7.1 blocker) must be resolved before rule 1 allows the trigger.
 - Which model runs the nightly pass, and its cost ceiling per run.
