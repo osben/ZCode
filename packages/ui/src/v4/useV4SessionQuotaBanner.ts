@@ -6,8 +6,6 @@ import {
   isStartPlanModelProviderId,
   parseChatGptPlanAccountProviderId,
 } from "@zcode/shared";
-import { useChatGptPlanUsage } from "@/hooks/useChatGptPlanUsage.js";
-import { usageLimitResetAt } from "@/settings/model-provider-section/chatgptPlanUsage.js";
 import type { IUsageStatsService } from "@zcode/services";
 import type { SessionErrorInfo, SessionPhase } from "@zcode/shared/zcode-protocol-v4";
 import { useUsageEntitlementWithService } from "@/hooks/useUsageEntitlement.js";
@@ -87,20 +85,13 @@ export function useV4SessionQuotaBanner(params: {
   const serverProviderLimited = Boolean(
     providerLimitedCode && isGlmQuotaBannerProviderId(activeProviderId),
   );
-  // ChatGPT plan limit (specs/chatgpt-plan-signin.md "Limits and recovery in Desktop"): the reset time comes from
-  // the renderer usage store, because the error carries none.
+  // ChatGPT plan limit (specs/chatgpt-plan-signin.md "Limits and recovery in Desktop"): the error carries no reset
+  // time and there is no official usage source, so the banner never shows one.
   const chatGptPlanAccountKey = activeProviderId
     ? parseChatGptPlanAccountProviderId(activeProviderId)
     : null;
   const serverChatGptPlanLimited =
     businessCode === CHATGPT_PLAN_USAGE_LIMIT_CODE && chatGptPlanAccountKey !== null;
-  const chatGptPlanUsage = useChatGptPlanUsage(serverChatGptPlanLimited);
-  const chatGptPlanSnapshot = chatGptPlanAccountKey
-    ? chatGptPlanUsage.usage.get(chatGptPlanAccountKey)
-    : undefined;
-  const chatGptPlanResetAt = chatGptPlanSnapshot
-    ? usageLimitResetAt(chatGptPlanSnapshot, chatGptPlanUsage.nowMs)
-    : null;
   const takesOverError =
     serverQuotaExhausted ||
     serverConcurrentLimited ||
@@ -149,11 +140,10 @@ export function useV4SessionQuotaBanner(params: {
         ...(params.mcpUnavailableNotice
           ? { mcpUnavailableNotice: params.mcpUnavailableNotice }
           : {}),
-        ...(serverChatGptPlanLimited ? { serverChatGptPlanLimited, chatGptPlanResetAt } : {}),
+        ...(serverChatGptPlanLimited ? { serverChatGptPlanLimited } : {}),
       }),
     [
       activeProviderId,
-      chatGptPlanResetAt,
       serverChatGptPlanLimited,
       reminderOwner,
       reminderVersion,

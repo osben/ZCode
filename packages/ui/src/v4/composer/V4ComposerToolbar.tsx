@@ -21,8 +21,6 @@ import { cn } from "@/components/lib/utils.js";
 import {
   BUILTIN_MODEL_PROVIDER_IDS,
   getModelProviderFamilySpec,
-  isChatGptPlanAccountProviderId,
-  parseChatGptPlanAccountProviderId,
   resolveModelProviderFamilySpecByProviderId,
   ZCODE_AGENT_PROVIDER,
   type ProviderFamilyConnectionSelection,
@@ -47,9 +45,6 @@ import { Button } from "@/components/ui/button.js";
 import { HighspeedModelIndicator } from "@/highspeed/HighspeedModelIndicator.js";
 import { formatHighspeedRemainingTime } from "@/highspeed/highspeedTime.js";
 import { ChatContextUsage } from "@/chat-input-toolbar/display.js";
-import { ChatGptPlanUsageChip } from "@/chat-input-toolbar/ChatGptPlanUsageChip.js";
-import { useChatGptPlanUsage } from "@/hooks/useChatGptPlanUsage.js";
-import { withChatGptPlanUsageHints } from "@/lib/chatGptPlanUsageHints.js";
 import {
   hasChatCodingPlanUsageRemaining,
   type ChatCodingPlanUsageRemainingConfig,
@@ -880,33 +875,10 @@ function V4ComposerModelControlsImpl({
     }),
     [intl],
   );
-  // ChatGPT plan usage is subscribed only while a ChatGPT plan account is offered
-  // (specs/chatgpt-plan-signin.md "Usage across the app").
-  const chatGptPlanOffered = useMemo(
-    () =>
-      modelSelectionView?.providers.some((candidate) =>
-        isChatGptPlanAccountProviderId(candidate.providerId),
-      ) === true,
-    [modelSelectionView],
-  );
-  const { usage: chatGptPlanUsage, nowMs: chatGptPlanUsageNowMs } =
-    useChatGptPlanUsage(chatGptPlanOffered);
   const modelSelectGroups = useMemo<ModelSelectGroup[]>(() => {
     if (!modelSelectionView) return [];
-    return withChatGptPlanUsageHints(
-      buildRegistryModelSelectGroups(displayProvider, modelSelectionView, modelGroupLabels),
-      chatGptPlanUsage,
-      chatGptPlanUsageNowMs,
-      (message) => intl.formatMessage({ id: message.id }, message.values),
-    );
-  }, [
-    chatGptPlanUsage,
-    chatGptPlanUsageNowMs,
-    displayProvider,
-    intl,
-    modelGroupLabels,
-    modelSelectionView,
-  ]);
+    return buildRegistryModelSelectGroups(displayProvider, modelSelectionView, modelGroupLabels);
+  }, [displayProvider, modelGroupLabels, modelSelectionView]);
 
   // Restore the “Manage models” entry (the old onManageModels opened settings and focused the model-provider section).
   const handleOpenModelProviderSettings = useCallback(() => {
@@ -1078,12 +1050,6 @@ function V4ComposerModelControlsImpl({
         : undefined,
   });
   const selectedProviderId = decodeCustomModelValue(normalizedModelValue)?.providerId;
-  const selectedChatGptPlanAccountKey = selectedProviderId
-    ? parseChatGptPlanAccountProviderId(selectedProviderId)
-    : null;
-  const selectedChatGptPlanUsage = selectedChatGptPlanAccountKey
-    ? chatGptPlanUsage.get(selectedChatGptPlanAccountKey)
-    : undefined;
   const selectedPlanGroup = planGroups.find((group) => {
     const connection = group.connection;
     if (!connection || connection.providerId !== selectedProviderId) return false;
@@ -1335,9 +1301,6 @@ function V4ComposerModelControlsImpl({
           onSendCompressionCommand={onSendCompressionCommand}
           compressionDisabled={disabled || recoveryPending}
         />
-      ) : null}
-      {!modelLocked && selectedChatGptPlanUsage ? (
-        <ChatGptPlanUsageChip usage={selectedChatGptPlanUsage} nowMs={chatGptPlanUsageNowMs} />
       ) : null}
       {/* The speed-wheel model is decided by the current card and the model picker is unavailable then, so the indicator takes precedence over the picker loading state. */}
       {highspeedPresented && highspeedModel ? (

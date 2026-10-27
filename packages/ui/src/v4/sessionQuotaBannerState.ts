@@ -108,8 +108,6 @@ export function buildSessionQuotaBannerState(params: {
   serverProviderLimitedMessage?: string | null;
   /** The ChatGPT plan usage limit was reached (specs/chatgpt-plan-signin.md "Limits and recovery in Desktop"). */
   serverChatGptPlanLimited?: boolean;
-  /** When every exhausted ChatGPT plan window resets, from the renderer usage store; null when unknown. */
-  chatGptPlanResetAt?: number | null;
   /** Fact that an official Server MCP was determined unavailable during this session (from the tool row's structured marker). */
   mcpUnavailableNotice?: McpUnavailableNotice | null;
 }): SessionQuotaBannerState {
@@ -169,7 +167,8 @@ export function buildSessionQuotaBannerState(params: {
       concurrentLimitReason: null,
       providerLimitedBusinessCode: null,
       providerLimitedMessage: null,
-      providerLimitedResetAt: params.chatGptPlanResetAt ?? null,
+      // No reset time: the error carries none and there is no official usage source.
+      providerLimitedResetAt: null,
       modelName: params.modelId,
       mcpServerName: null,
       mcpNoticeRowId: null,

@@ -343,28 +343,12 @@ export interface SiwcPlanUsageWindow {
 export interface SiwcPlanUsageSnapshot {
   primary: SiwcPlanUsageWindow;
   secondary?: SiwcPlanUsageWindow;
-  /** Host clock when the host stored the snapshot (ISO); stamped only by the host. */
-  capturedAt?: string;
-  /** `plan_type` from the usage probe, verbatim (for example "plus", "pro"). */
-  planType?: string;
-  /** `rate_limit.limit_reached` from the usage probe. */
-  limitReached?: boolean;
 }
 
 /** Connection status of one signed-in ChatGPT plan account (user is always present). */
 export interface SiwcPlanAccountStatus extends Omit<SiwcPlanStatus, "user"> {
   accountKey: string;
   user: SiwcPlanUserSummary;
-  /** Latest plan usage snapshot (usage probe or passive capture); absent until one exists. */
-  usage?: SiwcPlanUsageSnapshot;
-  /** A codex-flavor usage grant is linked for this account (probe runs on status reads). */
-  usageLinked?: boolean;
-}
-
-/** One account's usage change pushed by the host; `usage: null` when the account's usage was dropped (logout). */
-export interface SiwcPlanUsageChange {
-  accountKey: string;
-  usage: SiwcPlanUsageSnapshot | null;
 }
 
 /** An indexed ChatGPT plan account whose tokens were revoked or expired; it needs a fresh sign-in. */

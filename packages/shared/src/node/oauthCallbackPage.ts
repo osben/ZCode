@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { ServerResponse } from "node:http";
 
 export type OAuthCallbackOutcome = "success" | "denied" | "invalid" | "failed";
-export type OAuthCallbackFlow = "sign-in" | "usage-link";
+export type OAuthCallbackFlow = "sign-in";
 export type OAuthCallbackSurface = "app" | "cli";
 
 export const DEFAULT_OAUTH_CALLBACK_APP_URL = "zcode://";
@@ -118,7 +118,6 @@ var c=document.getElementById("close");if(c)c.addEventListener("click",function(
 
 const FLOW_COPY: Record<OAuthCallbackFlow, { subject: string; success: string }> = {
   "sign-in": { subject: "Sign-in", success: "You're signed in" },
-  "usage-link": { subject: "Usage linking", success: "Usage linked" },
 };
 
 export function buildOAuthCallbackPage(

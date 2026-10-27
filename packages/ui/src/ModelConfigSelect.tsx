@@ -74,40 +74,10 @@ export interface ModelSelectConnectionOption {
   disabled?: boolean;
 }
 
-export interface ModelSelectGroupHint {
-  text: string;
-  tone: "normal" | "warning" | "critical";
-  title?: string;
-}
-
-export const MODEL_SELECT_GROUP_HINT_TONE_CLASS: Record<ModelSelectGroupHint["tone"], string> = {
-  normal: "text-foreground-subtle",
-  warning: "text-warning",
-  critical: "text-destructive",
-};
-
-export function ModelSelectGroupHintText({ hint }: { hint: ModelSelectGroupHint | undefined }) {
-  return hint ? (
-    <span
-      data-model-group-hint
-      data-tone={hint.tone}
-      title={hint.title ?? hint.text}
-      className={cn(
-        "shrink-0 whitespace-nowrap text-ui-xs tabular-nums",
-        MODEL_SELECT_GROUP_HINT_TONE_CLASS[hint.tone],
-      )}
-    >
-      {hint.text}
-    </span>
-  ) : null;
-}
-
 export interface ModelSelectGroup {
   key: string;
   label: string;
   labelBadge?: string;
-  /** Short status after the badge (ChatGPT plan usage); presentation only. */
-  labelHint?: ModelSelectGroupHint;
   logo?: ProviderConfigObject["logo"];
   directItems?: boolean;
   selectedOptionKey?: string;
@@ -478,7 +448,6 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
         {group.labelBadge ? (
           <span className={MODEL_CONFIG_SELECT_BADGE_CLASS_NAME}>{group.labelBadge}</span>
         ) : null}
-        <ModelSelectGroupHintText hint={group.labelHint} />
       </span>
     ),
     [],

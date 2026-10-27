@@ -4688,10 +4688,6 @@ export const config: WebdriverIO.Config = {
     // directory, so a real opencode/cursor-agent on the machine is never detected or spawned. The
     // ACP settings spec writes its mock agent here; for other specs the directory stays absent.
     ZCODE_E2E_ACP_AGENT_PATH: resolve(E2E_HOME_DIR, "acp-agent-bin"),
-    // ChatGPT plan usage seam (specs/chatgpt-plan-signin.md "Usage display (Settings)"): the usage
-    // probe asks this loopback mock instead of chatgpt.com. Only the ChatGPT plan settings spec
-    // listens on it; with nothing listening the probe fails silently, as with no network.
-    ZCODE_E2E_CHATGPT_USAGE_URL: "http://127.0.0.1:45455/backend-api/wham/usage",
     VITE_ZCODE_E2E_STORE_BRIDGE: "1",
     ZCODE_AGENT_SERVER_ARGS_JSON: "",
     ZCODE_AGENT_SERVER_COMMAND: "",

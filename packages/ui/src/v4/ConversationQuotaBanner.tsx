@@ -150,8 +150,7 @@ export function ConversationQuotaBanner({
   if (!state.visible || !state.kind) return null;
 
   const resetTime =
-    (state.kind === "provider-limited" || state.kind === "chatgpt-plan-limited") &&
-    state.providerLimitedResetAt !== null
+    state.kind === "provider-limited" && state.providerLimitedResetAt !== null
       ? new Intl.DateTimeFormat(locale, {
           year: "numeric",
           month: "short",
@@ -162,12 +161,6 @@ export function ConversationQuotaBanner({
         }).format(state.providerLimitedResetAt)
       : null;
   const message = (() => {
-    if (resetTime && state.kind === "chatgpt-plan-limited") {
-      return intl.formatMessage(
-        { id: "chat.quota.chatgptPlanLimited.resetAt" },
-        { time: resetTime },
-      );
-    }
     if (resetTime) {
       return intl.formatMessage({ id: "chat.quota.providerLimited.resetAt" }, { time: resetTime });
     }

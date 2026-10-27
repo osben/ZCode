@@ -5,10 +5,9 @@ token-sharing program and run agent LLM calls under that user's ChatGPT plan aga
 OpenAI Responses API.
 
 This is an official OpenAI program (preview, launched ~2026-09-28). Inference NEVER touches
-`chatgpt.com/backend-api` or Codex's client id. The ONE deliberate exception is the read-only
-**usage probe** (see "Usage limits → Usage probe"): plan usage windows are only exposed on ChatGPT's
-own backend and require a separate codex-flavor OAuth grant per account; that grant's tokens are
-never used for model calls.
+`chatgpt.com/backend-api` or Codex's client id, and neither does anything else: the former
+codex-flavor usage probe was removed (see "Usage limits"); the only Codex client request left is the
+one-time revoke of grants stored by older builds.
 
 ## Existing plumbing
 
@@ -297,265 +296,28 @@ false`); native `/responses/compact` is unavailable — summary-style compaction
 - Plus plans have a 5-hour usage window shared across ALL apps using the plan (including ChatGPT
   itself). On plan-limit errors the UI shows "Manage usage" linking
   `https://chatgpt.com/settings/usage`.
-- **Passive usage-window capture** (DORMANT, verified): the capture of model RESPONSE headers
-  (`x-codex-primary-*` / `x-codex-secondary-*`) on `chatgpt-account` providers stays in place as a
-  zero-cost observer, but live verification (2026-10-17, real Plus account, `POST /v1/responses` 200
-  with gpt-6-luna, full header dump) proved the SIWC surface does NOT send them — and the official
-  SIWC docs document no usage headers or usage endpoints (re-verified 2026-10-17). The only official
-  usage signal remains the `subscription_sharing_usage_limit_exceeded` (429) error. The capture is
-  dormant code: harmless to keep (OpenAI may enable headers later), never the primary source.
-- **Usage probe (codex-flavor grant, per account)** — the primary source. Plan usage windows are
-  only exposed on ChatGPT's own backend: `GET https://chatgpt.com/backend-api/wham/usage` answers
-  200 with `{plan_type, rate_limit: {allowed, limit_reached, primary_window: {used_percent,
-limit_window_seconds, reset_at, reset_after_seconds}, secondary_window: {...}}, model_usage:
-{...}}` — but ONLY for codex-flavor tokens (client `app_EMoamEEZ73f0CkXaXp7hrann`). SIWC access
-  tokens get `401 rejected_by_access_enforcement / no_matching_rule` (verified live 2026-10-17).
-  Rules:
-  - **Inference isolation**: the codex-flavor grant is a SEPARATE OAuth grant used ONLY for the
-    usage probe. Its tokens never reach the model fetch chain, `applyModelRequestAuth`, provider
-    runtime headers, or the resolver. SIWC remains the only inference credential.
-  - **Wire** (pinned from the public Codex CLI client; verified against OmniRoute and codex-rs
-    source — the Codex client constructs exactly this route): authorize
-    `https://auth.openai.com/oauth/authorize` with `response_type=code`,
-    `client_id=app_EMoamEEZ73f0CkXaXp7hrann` (public client, no registration step, no secret),
-    `redirect_uri=http://localhost:1455/auth/callback` (byte-identical to codex CLI — the redirect
-    shape is registered for this client; deviations are unverified, the listener must accept this
-    exact URI), `scope=openid profile email offline_access`, PKCE `S256` (fresh verifier/state per
-    attempt), `id_token_add_organizations=true`, `codex_cli_simplified_flow=true`,
-    `originator=codex_cli_rs`, and **`prompt=login`**. The Auth0 backend keys sessions per browser
-    login: without `prompt=login` a second grant can invalidate the previous account's
-    refresh-token family ("session takeover"), so per-account grants MUST force a fresh login.
-  - **Probe request headers**: `Authorization: Bearer <codex access token>`, the codex `user-agent:
-codex_cli_rs` (the route sits behind Cloudflare — bare clients were challenged on adjacent
-    backend paths during live probing), and `chatgpt-account-id: <stored account id>` when the codex
-    id token carried `chatgpt_account_id` (account/workspace routing; personal Plus answers 200
-    without it).
-  - **Stability**: `/wham/usage` is a first-party internal surface — actively used by codex-rs but
-    undocumented in the public API reference and NOT covered by OpenAI's API compatibility promise.
-    Treat path, fields, and auth as versioned: strict-tolerant parsing (unknown fields ignored,
-    malformed windows skipped), failures degrade to "no usage line", never to errors. Rejected
-    alternative: spawning `codex app-server` + `account/rateLimits/read` (the documented surface) —
-    it depends on an installed, single-login Codex CLI and cannot serve our per-account model.
-  - **Token exchange/refresh**: form-encoded POST to `https://auth.openai.com/oauth/token`,
-    `grant_type=authorization_code` / `refresh_token`, `client_id`, code/code_verifier or
-    refresh_token, the same redirect_uri on exchange. No client secret. Codex access tokens live
-    ~10 days (`exp` observed 231 h) and refreshes rotate the refresh token — store the replacement
-    atomically before dropping the old one. The token response may not carry `earliest_refresh_at`;
-    store it only when present.
-  - **Account binding by email**: codex `sub` (real auth.openai.com subject) is NOT comparable with
-    the SIWC slot sub (per-registration pseudonymous). The grant is bound to a slot by email: the
-    codex id_token's `https://api.openai.com/profile.email` must equal the slot's stored account
-    email; on mismatch the just-exchanged grant is revoked best-effort (nothing was persisted, so any
-    existing link in the slot survives) and the UI surfaces "wrong account signed in". Send
-    `login_hint=<slot email>` to prefill the right account.
-  - **Storage** (same credential store, per accountKey `<K>`): `oauth:chatgpt-codex:<K>:access_token`,
-    `:refresh_token`, `:id_token`, `:account_id`, `:access_expires_at`, optional
-    `:earliest_refresh_at`. No client_id key (fixed public id). Refresh single-flight per account via
-    file lock `siwc-chatgpt-codex.<K>.refresh`. Unknown to upstream builds and never stripped (the
-    credential store is a generic encrypted KV). Logging out of the SIWC account clears its codex
-    slot; best-effort revoke first (`POST https://auth.openai.com/oauth/revoke`, `client_id`,
-    `token`, `token_type_hint=refresh_token`); revocation failure still clears locally.
-  - **Probe execution**: fired host-side when Settings reads `getChatGptPlanStatus` for accounts that
-    have a codex slot (throttled to at most one probe per account per 60 s), and lazily refreshed
-    when the access token is inside 24 h of `exp` (or on probe 401, once). A terminal refresh
-    failure — the token endpoint's OAuth `error` code is in `SIWC_TERMINAL_REFRESH_ERROR_CODES`
-    (revoked, expired, or reused refresh token; the same set the SIWC refresh path uses) — clears
-    that account's codex slot under the held refresh lock, so `usageLinked` returns false and the
-    user can link usage again; non-terminal codes (for example `invalid_request`, `invalid_client`)
-    and transport errors leave the slot untouched. The mapped snapshot replaces the in-memory
-    `usageByAccount` entry for that account.
-  - **Mapping** → `SiwcPlanUsageSnapshot`: `used_percent` → `usedPercent` (finite 0–100 required per
-    window), `limit_window_seconds / 60` → `windowMinutes`, `reset_at` (unix seconds) → `resetsAt`
-    (ISO string). Malformed members skip that window; a snapshot still requires the primary window —
-    same tolerance rules as the header capture. Response body is never logged (it carries the
-    account email).
-  - **Linking UX**: explicit per-account action in Settings ("Link usage"), NOT an automatic second
-    auth popup after SIWC login. Without a codex slot (or on any probe failure) the account row
-    simply shows no usage line. Login cancellation or a loopback-port conflict (1455 busy — another
-    codex/CLI flow) keeps the account usable for inference and only reports the link failure.
-  - **Scope**: Desktop host only (`SiwcAuthService`). The CLI login flow and remote/web environments
-    do not gain the probe in this phase; usage is display-only host state, exactly like the captured
-    snapshots.
-- **Capture rules**: `used-percent` is required per window (tolerant numeric parse; missing,
-  whitespace-only, or garbage skips that window; the explicit string `0` remains valid);
-  `window-minutes` and `reset-at` are optional (`reset-at` is an RFC3339 string kept verbatim, never
-  parsed into local clock math on the agent side). A snapshot requires the primary (5h) window; a
-  secondary-only reading is ignored. The SIWC surface does not send these headers in practice, so
-  the UI shows nothing from this path.
-- **Transport** (additive; old payloads must keep validating): the adapter fetch chain stores the
-  latest snapshot and the bound provider id in a per-bound-model mutable capture (same threading
-  pattern as `RawRequestBodyCapture`); the runner attaches them to the turn-completion usage payload
-  as `providerRateLimits` and `providerRateLimitProviderId` (shape: `{primary: {usedPercent,
-windowMinutes?, resetsAt?}, secondary?}`). The CLI emits a typed host notification from the durable
-  completion event, independent of legacy `session/event` delivery subscriptions, so V4-only
-  conversations also record usage. The host attributes the snapshot only from the carried provider
-  id, never by reading the session's current model after completion. The `workspace/generateText`
-  result usage schema gained the same strict optional fields.
-- **Host state**: the host `SiwcAuthService` keeps the LATEST snapshot per accountKey in an in-memory
-  Map (never persisted, never logged; snapshots contain no tokens and no PII). OAuth status/logout
-  and usage recording share the same service instance, so Settings reads recorded usage and logout
-  clears that account's cached snapshot.
-- **Display**: see "Usage display (Settings)" and "Usage across the app" below.
-
-### Usage display (Settings)
-
-Reason: the account row showed one line ("5h window: N% · resets HH:mm · Weekly: N%") with a
-hard-coded "5h" label, no date on the reset, no weekly reset, and old numbers looked fresh. Settings
-also waited for the usage probe (up to its 10 s timeout) before it showed any account.
-
-Snapshot (additive; `SiwcPlanUsageSnapshot`, all new fields optional so the passive header capture
-and old payloads keep validating):
-
-- `capturedAt` (ISO): host clock when the host stored the snapshot. The host is its only writer
-  (`onSnapshot` for the probe, `recordUsage` for the passive capture); a payload's own value is
-  ignored.
-- `planType` (string, verbatim `plan_type`), `limitReached` (boolean, `rate_limit.limit_reached`).
-- Window `resetsAt`: from `reset_at`; when `reset_at` is missing, from `reset_after_seconds` added
-  to the capture time. `windowMinutes` stays from `limit_window_seconds`.
-
-Status read and refresh (one owner per fact):
-
-| Fact                          | Owner                                                           | Read by                      |
-| ----------------------------- | --------------------------------------------------------------- | ---------------------------- |
-| Accounts and cached snapshots | `SiwcAuthService` (`getStatus`)                                 | Settings detail, immediately |
-| Fresh snapshot                | `SiwcCodexUsageService` probe (60 s throttle, in-flight shared) | `refreshUsage`               |
-| Countdown text                | Settings detail render (clock tick)                             | the account row              |
-
-- `getChatGptPlanStatus()` no longer probes: it returns the accounts with the cached snapshots at
-  once. The new `refreshChatGptPlanUsage()` probes linked accounts (throttled; a probe already in
-  flight for an account is awaited, not skipped) and then returns the same status shape.
-- The Settings detail calls `getChatGptPlanStatus()` then `refreshChatGptPlanUsage()` on open, and
-  `refreshChatGptPlanUsage()` again every 60 s while it stays open and when the window regains focus.
-  A refresh result never overwrites a newer status (request sequence; the newest response wins);
-  the login, link and sign-out flows keep reading `getChatGptPlanStatus()` as before.
-- A failed refresh keeps the shown snapshot (no reset to "no usage").
-
-Presentation (per account, per window — primary then secondary):
-
-- Label from `windowMinutes`: 300 → "5-hour", 10080 → "Weekly", other values → "{n}h" / "{n}d";
-  missing → "5-hour" for the primary and "Weekly" for the secondary window.
-- A bar and "{n}% left" (100 − used, rounded). Severity from used: below 70 normal, 70 up to 90
-  warning, 90 and above (or `limitReached` on the primary window) critical. The bar has
-  `role="meter"` with the remaining value and the severity in its accessible text.
-- "Resets in {duration}": rounded **up** to whole minutes, at most two units ("2d 4h", "3h 12m",
-  "45m"); under one minute "less than a minute". The absolute time is the element's tooltip, with
-  the weekday when the reset is not today. The countdown text re-renders every 30 s while the
-  detail is open (display only; it never triggers a probe).
-- When the window's `resetsAt` has passed: the percent is not shown as current; the row reads
-  "Waiting for the reset to be reported" until a newer snapshot arrives.
-- Stale: when `capturedAt` is older than 5 min the row adds "Updated {n} min ago".
-- `limitReached`: a critical line "Usage limit reached" next to the primary window, beside the
-  existing "Manage usage" action.
-- `planType`: a badge after the account label, the known values capitalised ("plus" → "Plus",
-  "pro" → "Pro", "team" → "Team"), unknown values shown verbatim.
-
-Acceptance:
-
-| #   | Given                                           | When                    | Then                                                           |
-| --- | ----------------------------------------------- | ----------------------- | -------------------------------------------------------------- |
-| U1  | Linked account, probe slow                      | Settings opens          | The account row renders before the probe settles               |
-| U2  | Primary used 42, resets in 2 h 3 min 10 s       | Row renders             | "5-hour", "58% left", "Resets in 2h 4m", tooltip absolute time |
-| U3  | Secondary 10080 min, used 75                    | Row renders             | "Weekly", warning severity, its own reset countdown            |
-| U4  | Primary `resetsAt` in the past                  | Row renders             | "Waiting for the reset to be reported", no percent             |
-| U5  | `capturedAt` 7 min ago                          | Row renders             | "Updated 7 min ago"                                            |
-| U6  | `limit_reached: true`                           | Row renders             | Critical bar and "Usage limit reached"                         |
-| U7  | Wire window with `reset_after_seconds` only     | Probe maps it           | `resetsAt` = capture time + seconds                            |
-| U8  | Two refreshes in flight, the older settles last | Both settle             | The newer status stays                                         |
-| U9  | Probe in flight for an account                  | `refreshUsage` called   | It awaits that probe instead of returning stale data           |
-| U10 | Refresh fails                                   | Row already shows usage | The previous usage stays                                       |
-
-Tests: wire mapping and capture stamping in `packages/services/test/siwcCodexUsage.test.ts` and
-`siwcAuthService.test.ts` (U7, U9, getStatus does not probe); pure formatting in
-`packages/ui/test/chatGptPlanUsage.test.ts` (U2–U6); the detail in
-`packages/ui/test/chatGptPlanDetail.test.ts` (U1, U8, U10). Desktop E2E is stage 2 (it needs a
-seam for the `chatgpt.com` usage host).
-
-### Usage pace forecast
-
-Reason: a share left ("24% left") does not say whether the window lasts until its reset.
-
-- Per window, in the stage 1 usage block (Settings and the composer chip's card), when the window
-  reports `windowMinutes` and a future `resetsAt`, at least 3% of the window has elapsed, and some
-  usage exists: the average rate so far (used ÷ elapsed) projects when the window runs out.
-- If that time is before the reset: "At this pace it runs out in {duration}" (warning colour).
-  Otherwise: "At this pace it lasts until the reset". No line when the inputs are missing, the
-  window is at 100% or past its reset, or the limit is reached.
-- It is a rough estimate on the average pace; nothing acts on it.
-
-Acceptance: P1 5-hour window, 2 h elapsed, 60% used → runs out in 1h 20m; P2 same window, 20%
-used → lasts until the reset; P3 1% elapsed → no line. Tests: `chatGptPlanUsage.test.ts`.
-
-### Usage across the app
-
-Reason: usage was visible only in Settings, so a user picked a ChatGPT plan model without seeing
-how much of the plan was left, and the composer had no "Using ChatGPT plan" indicator (Branding).
-
-Owners and event order:
-
-| Fact                                  | Owner                                         | Read by                          |
-| ------------------------------------- | --------------------------------------------- | -------------------------------- |
-| Snapshot per account                  | host `SiwcAuthService` (`storeUsage`, logout) | everything below                 |
-| Change notification                   | `IOAuthService.onDidChangeChatGptPlanUsage`   | renderer usage store             |
-| Renderer copy (accountKey → snapshot) | `chatGptPlanUsageStore` (one per renderer)    | composer chip, model picker rows |
-| Refresh cadence while shown           | the renderer usage store                      | —                                |
-
-```
-host storeUsage(K, snap) ──► onDidChangeChatGptPlanUsage {accountKey: K, usage: snap}
-host logout(K)          ──► onDidChangeChatGptPlanUsage {accountKey: K, usage: null}
-renderer store: first subscriber ─► getChatGptPlanStatus (seed) ─► refreshChatGptPlanUsage
-                every 60 s and on window focus while subscribed ─► refreshChatGptPlanUsage
-                event ─► replace / delete that account's entry (newest event wins)
-last subscriber leaves ─► timers and the event subscription stop
-```
-
-- The event carries one account (`{ accountKey, usage | null }`), never tokens or e-mail. The host
-  emits it for every stored snapshot (probe or passive capture) and when an account's usage is
-  dropped (logout). Settings keeps its own reads (stage 1) and is unaffected.
-- A status read or refresh replaces the whole map; an event that arrives after it replaces only
-  its account. Reads use a sequence: an older read never overwrites a newer read.
-- The store is a renderer cache, never a source of truth; it holds nothing across a reload.
-- Remote/web: when the oauth service has no `onDidChangeChatGptPlanUsage` or the call fails, the
-  store stays empty and the surfaces render nothing (usage stays a Desktop host feature).
-
-Composer chip (`ChatGptPlanUsageChip`, next to the context usage ring):
-
-- Shown when the composer's model provider is a ChatGPT plan account
-  (`account:chatgpt-plan:<accountKey>`) and that account has a snapshot. It is the "Using ChatGPT
-  plan" indicator.
-- Text: "{plan} · {n}% left", where plan is the `planType` label ("Plus", "Pro") or "ChatGPT",
-  and n is the tightest window: the lowest share left among windows whose reset has not passed
-  (ties: the earlier reset). Colour follows that window's severity (stage 1 thresholds).
-  `limitReached` shows "{plan} · limit reached" in critical colour. When every window is past its
-  reset the chip shows "{plan} · updating".
-- Hover or focus opens a card with the stage 1 usage block for that account and "Manage usage"
-  (`https://chatgpt.com/settings/usage`, opened through the platform service).
-- Accessible name: the chip text plus the severity word.
-
-Model picker rows:
-
-- Each ChatGPT plan account group (composer provider menu and the model select) gets a hint after
-  its badge: "{n}% left" for the tightest window, coloured by severity; "limit reached" in critical
-  colour when `limitReached`. No hint without a snapshot or when every window is past its reset.
-  The menus are narrow, so the hint's tooltip carries "Resets in {duration}" for that window and
-  every window's share left.
-- Hints are presentation only: they never disable a group or a model.
-
-Acceptance:
-
-| #   | Given                                         | When                       | Then                                                       |
-| --- | --------------------------------------------- | -------------------------- | ---------------------------------------------------------- |
-| S1  | Composer model on account K, K used 42 / 76   | Composer renders           | Chip "Plus · 24% left", warning colour                     |
-| S2  | Chip shown                                    | Host stores a new snapshot | Chip updates without reopening anything                    |
-| S3  | Model on a non-ChatGPT provider               | Composer renders           | No chip                                                    |
-| S4  | K logs out                                    | Event with usage null      | Chip and picker hint disappear                             |
-| S5  | Picker open, K has usage                      | Group row renders          | Hint "24% left" after "Subscription", reset in its tooltip |
-| S6  | Older status read settles after a newer event | Both settle                | The event's snapshot stays                                 |
-| S7  | `limitReached`                                | Chip and row render        | "limit reached" in critical colour                         |
-| S8  | Last chip unmounts                            | —                          | Refresh timer and event subscription stop                  |
-
-Tests: host event emission in `siwcAuthService.test.ts`/`oauthService.test.ts`; the store
-(S2, S4, S6, S8) and the pure tightest-window rule in UI unit tests; the chip and hints in jsdom
-tests; desktop E2E extends `chatgpt-plan-usage.test.ts` with the composer chip (S1).
+- The ONLY usage signal is the official `subscription_sharing_usage_limit_exceeded` (429) error. The
+  SIWC docs document no usage headers or usage endpoints (re-verified 2026-10-17), so the app shows
+  no usage percentages, reset countdowns, plan badge, pace forecast, composer chip, or picker hint.
+- **Removed 2026-10-26: codex-flavor usage probe and "Link usage".** Plan windows are only exposed on
+  `chatgpt.com/backend-api/wham/usage`, which accepts only tokens of the Codex CLI client
+  (`app_EMoamEEZ73f0CkXaXp7hrann`); SIWC tokens get 401. Reading it meant a second OAuth grant under
+  the Codex client id with the `codex_cli_rs` user agent, i.e. presenting ZCode as the Codex CLI to
+  an undocumented backend outside the official program. Product decision: official surface only.
+  Rejected alternative: signing in through the Codex client for everything (cindy's approach) — same
+  impersonation, now on the inference path.
+- **Leftover grant purge**: builds that shipped "Link usage" stored `oauth:chatgpt-codex:<K>:*` tokens
+  and `fork:oauth:chatgpt:<K>:usage-epoch`. The host purges them once per start for every indexed
+  account: under the per-account lock file `siwc-chatgpt-codex.<K>.refresh`, best-effort revoke of
+  the stored refresh token (`POST https://auth.openai.com/oauth/revoke`, `client_id`, `token`,
+  `token_type_hint=refresh_token`), then delete every key; a revoke failure still deletes locally.
+  Sign-out of an account runs the same purge for that account. No other request uses the Codex
+  client id. Never logs tokens or emails.
+- **Passive header capture (CLI, dormant)**: the CLI keeps its zero-cost observer of
+  `x-codex-primary-*` / `x-codex-secondary-*` response headers on official `POST /v1/responses`
+  calls and its `chatGptPlanUsageUpdated` notification (protocol unchanged). Live verification
+  (2026-10-17) showed the SIWC surface does not send these headers. The Desktop host ignores the
+  notification; if OpenAI ever sends official usage, display is a new spec.
 
 ### Limits and recovery in Desktop
 
@@ -575,13 +337,10 @@ Plan limit reached (conversation quota banner, kind `chatgpt-plan-limited`):
 - Shown when the session error's provider code is `subscription_sharing_usage_limit_exceeded` and
   the session provider is a ChatGPT plan account; it takes over the generic error banner, like the
   Coding Plan provider-limited banner, and is dismissible.
-- Text: "ChatGPT plan usage limit reached." plus, when the renderer usage store has a snapshot for
-  the account, "Resets at {time}" for the latest reset among windows at 100% used whose reset has
-  not passed (all of them must reset before requests succeed). No usage → no time.
-- Actions: "Manage usage" (opens `https://chatgpt.com/settings/usage` through the platform
-  service) and, when a reset time is known, the existing "Continue automatically" switch: the
-  conversation resumes at that time through the same path as the Coding Plan banner
-  (`handleResumeError`). It never upgrades or switches plans.
+- Text: "ChatGPT plan usage limit reached." The error carries no reset time and there is no usage
+  source, so no reset time, countdown, or "Continue automatically" switch is shown.
+- Action: "Manage usage" (opens `https://chatgpt.com/settings/usage` through the platform service).
+  It never upgrades or switches plans.
 
 Sign-in errors (`subscription_sharing_invalid_user`, `chatpass_v2_*`): the chat error banner shows a
 localized "Your ChatGPT sign-in is no longer valid. Sign in again in Model settings → ChatGPT
@@ -604,8 +363,8 @@ Acceptance:
 | #   | Given                                                  | When           | Then                                                           |
 | --- | ------------------------------------------------------ | -------------- | -------------------------------------------------------------- |
 | L1  | Session on account K fails with the usage-limit code   | Banner renders | ChatGPT limit banner instead of the error banner; Manage usage |
-| L2  | L1 and K's primary window is at 100%, resets in 40 min | Banner renders | "Resets at {time}" and "Continue automatically"                |
-| L3  | L1 without usage                                       | Banner renders | No time, no auto-continue                                      |
+| L2  | L1                                                     | Banner renders | No reset time, no "Continue automatically"                     |
+| L3  | Settings → ChatGPT Plan, signed-in account             | Opens          | No usage block, no plan badge, no "Link usage"                 |
 | L4  | Cold-hydrated error (`code` = adapter class name)      | Banner renders | Same as L1 (provider code read from attribution)               |
 | L5  | Session fails with `subscription_sharing_invalid_user` | Error banner   | Localized sign-in text and "Model settings", no CLI command    |
 | L6  | Indexed account without tokens                         | Settings opens | Reconnect row with Sign in again / Remove; not in `accounts`   |
@@ -620,7 +379,7 @@ Acceptance:
   plan and usage is managed in ChatGPT settings; dismissible; shown ONCE.
 - Login status polling is serialized: schedule the next poll only after the current poll settles,
   and ignore completions after the settings view unmounts.
-- Starting a new grant flow (login or per-account usage link) supersedes any in-flight one. A
+- Starting a new login flow supersedes any in-flight one. A
   superseded flow must never touch the shared poll timer, pending flag, or error banner again — on
   BOTH its resolve and reject paths: a late `openExternal`/`start`/`poll` settlement (success or
   failure) is dropped at a generation check instead of cancelling the newer flow's timer or surfacing
@@ -724,13 +483,9 @@ sequenceDiagram
   resolution without legacy trigger keys; account entitlement map; prefix predicates
   (`isChatGptPlanAccountProviderId`) at all former exact-equality sites; picker renders per-account
   groups (email label).
-- Usage-probe units (no network, fixture responses): codex authorize-URL shaping (exact params incl.
-  `prompt=login` and the pinned redirect URI); token exchange/refresh form bodies (public client,
-  rotated refresh stored before the old one is dropped); wham/usage JSON → `SiwcPlanUsageSnapshot`
-  mapping (happy path, malformed windows skipped, secondary-only ignored); email binding (match
-  binds, mismatch rejects and clears partial state); per-account codex refresh single-flight; logout
-  clears the codex slot; probe throttle (≤1 per account per 60 s) and 401 → single refresh retry →
-  silent absence; codex tokens never returned to the model-request resolver.
+- Leftover grant purge units (no network): revoke then delete every `oauth:chatgpt-codex:<K>:*` key
+  and the usage epoch; revoke failure still deletes; accounts without codex keys make no request;
+  sign-out purges that account.
 - Commands (repo root): `pnpm --dir apps/zcode-cli/packages/adapters exec vitest run tests/<file>`
   (per-package vitest), `pnpm --dir apps/zcode-cli check`, `pnpm typecheck`, `pnpm lint`,
   `pnpm architecture:check --changed`.

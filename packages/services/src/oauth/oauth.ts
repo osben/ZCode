@@ -8,7 +8,6 @@ import type {
   SiwcLoginCompletionResult,
   SiwcLoginStart,
   SiwcPlanAccountsStatus,
-  SiwcPlanUsageChange,
   UserInfo,
 } from "@zcode/shared";
 import { ServiceChannels } from "@zcode/shared";
@@ -24,9 +23,6 @@ import { createServiceDescriptor } from "../descriptors.js";
 export interface IOAuthService {
   /** Published after a credential change completes, before provider cleanup and caller UI/settings follow-up. */
   readonly onDidChangeSession: Event<OAuthSessionState>;
-
-  /** One ChatGPT plan account's usage changed on the host (stored snapshot, or null when dropped). */
-  readonly onDidChangeChatGptPlanUsage: Event<SiwcPlanUsageChange>;
 
   /** Get the available providers (only those with enabled=true). */
   getProviders(): Promise<OAuthProviderMeta[]>;
@@ -94,14 +90,8 @@ export interface IOAuthService {
   /** ChatGPT plan login poll; null while the browser redirect has not arrived yet. */
   pollChatGptPlanLogin(): Promise<SiwcLoginCompletionResult | null>;
 
-  /**
-   * ChatGPT plan connection status per signed-in account (signed-in state and consent), with
-   * the cached usage snapshots; it never waits for a usage probe.
-   */
+  /** ChatGPT plan connection status per signed-in account (signed-in state and consent). */
   getChatGptPlanStatus(): Promise<SiwcPlanAccountsStatus>;
-
-  /** Probe plan usage of the linked accounts (throttled), then return the same status shape. */
-  refreshChatGptPlanUsage(): Promise<SiwcPlanAccountsStatus>;
 
   /**
    * Revoke one account's ChatGPT plan refresh token and clear its local tokens (retains its
@@ -110,16 +100,6 @@ export interface IOAuthService {
   logoutChatGptPlan(
     accountKey?: string,
   ): Promise<{ accountCount: number; revoked: boolean; signedOut: boolean }>;
-
-  /**
-   * Start the per-account "Link usage" codex-flavor grant (read-only usage probe; tokens never
-   * reach the inference path). The UI opens authorizeUrl externally and polls
-   * pollChatGptUsageLink. Fails when the account is not signed in.
-   */
-  startChatGptUsageLink(accountKey: string): Promise<SiwcLoginStart>;
-
-  /** Usage-link poll; null while the browser redirect has not arrived yet. */
-  pollChatGptUsageLink(): Promise<{ accountKey: string } | null>;
 }
 
 export const IOAuthService = createServiceDescriptor<IOAuthService>(ServiceChannels.OAuth);

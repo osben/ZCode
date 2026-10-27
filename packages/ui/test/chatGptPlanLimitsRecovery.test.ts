@@ -6,7 +6,6 @@ import { resolveChatErrorBannerDisplayMessage } from "@/ChatErrorBanner.js";
 import type { IntlInstance } from "@/i18n/IntlProvider.js";
 import enUS from "@/i18n/locales/en-US.js";
 import { isChatGptPlanSettingsRecoveryCode } from "@/lib/providerBusinessError.js";
-import { usageLimitResetAt } from "@/settings/model-provider-section/chatgptPlanUsage.js";
 import {
   buildSessionQuotaBannerState,
   shouldOfferQuotaBannerUpgrade,
@@ -33,8 +32,6 @@ const intl: IntlInstance = {
     );
   },
 };
-const NOW = Date.parse("2026-10-15T12:00:00Z");
-
 afterEach(cleanup);
 
 describe("ChatGPT plan error texts", () => {
@@ -71,45 +68,23 @@ describe("ChatGPT plan error texts", () => {
 });
 
 describe("ChatGPT plan limit banner", () => {
-  it("resets when every exhausted window resets (L2, L3)", () => {
-    const at = (minutes: number) => new Date(NOW + minutes * 60_000).toISOString();
-    expect(
-      usageLimitResetAt(
-        {
-          primary: { usedPercent: 100, resetsAt: at(40) },
-          secondary: { usedPercent: 100, resetsAt: at(3000) },
-        },
-        NOW,
-      ),
-    ).toBe(NOW + 3000 * 60_000);
-    expect(
-      usageLimitResetAt(
-        { primary: { usedPercent: 100, resetsAt: at(40) }, secondary: { usedPercent: 60 } },
-        NOW,
-      ),
-    ).toBe(NOW + 40 * 60_000);
-    expect(usageLimitResetAt({ primary: { usedPercent: 80, resetsAt: at(40) } }, NOW)).toBeNull();
-    expect(usageLimitResetAt({ primary: { usedPercent: 100, resetsAt: at(-1) } }, NOW)).toBeNull();
-  });
-
   it("builds a dismissible limit state without an upgrade (L1)", () => {
     const state = buildSessionQuotaBannerState({
       activeProviderId: "account:chatgpt-plan:a1b2c3d4e5f60718",
       snapshot: null,
       modelId: "gpt-6.1-sol",
       serverChatGptPlanLimited: true,
-      chatGptPlanResetAt: NOW + 40 * 60_000,
     });
     expect(state).toMatchObject({
       visible: true,
       kind: "chatgpt-plan-limited",
-      providerLimitedResetAt: NOW + 40 * 60_000,
+      providerLimitedResetAt: null,
       dismissible: true,
     });
     expect(shouldOfferQuotaBannerUpgrade(state.kind)).toBe(false);
   });
 
-  it("renders the reset time and Manage usage", () => {
+  it("renders Manage usage without a reset time or auto-continue (L2)", () => {
     const onManageUsage = vi.fn();
     render(
       createElement(ConversationQuotaBanner, {
@@ -118,13 +93,13 @@ describe("ChatGPT plan limit banner", () => {
           snapshot: null,
           modelId: "gpt-6.1-sol",
           serverChatGptPlanLimited: true,
-          chatGptPlanResetAt: null,
         }),
         onDismiss: vi.fn(),
         onManageUsage,
       }),
     );
     expect(screen.getByText(/^chat\.quota\.chatgptPlanLimited\b/)).toBeTruthy();
+    expect(screen.queryByText(/resetAt/)).toBeNull();
     expect(screen.queryByRole("checkbox")).toBeNull();
     fireEvent.click(screen.getByTestId("quota-banner-manage-usage"));
     expect(onManageUsage).toHaveBeenCalledTimes(1);
