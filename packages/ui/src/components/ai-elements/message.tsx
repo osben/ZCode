@@ -15,7 +15,13 @@ import { createMathPlugin } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
 import type { EditorInfo, FileStat, OpenInEditorOptions } from "@zcode/shared";
 import type { UIMessage } from "ai";
-import { ChevronLeftIcon, ChevronRightIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CopyIcon,
+  ExternalLinkIcon,
+  PanelRightIcon,
+} from "lucide-react";
 import remarkCjkFriendlyGfmStrikethrough from "remark-cjk-friendly-gfm-strikethrough";
 import type {
   ComponentProps,
@@ -1037,6 +1043,18 @@ function MessageExternalLink({
     },
     [handleOpen, onClick],
   );
+  const handleCopyLink = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("clipboard-unavailable");
+      }
+      await navigator.clipboard.writeText(href);
+    } catch (error) {
+      logger.warn("[MessageExternalLink] 复制链接失败", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
 
   return (
     <ContextMenu>
@@ -1057,14 +1075,21 @@ function MessageExternalLink({
           {children}
         </button>
       </ContextMenuTrigger>
-      <ContextMenuContent className="w-44">
+      <ContextMenuContent className="w-52">
+        {/* A generic "Open" item does not communicate the target; both open actions share one
+            group and use labels and icons to distinguish the built-in and external browsers. */}
         <ContextMenuItem onSelect={() => handleOpen({ forceInApp: true })}>
-          {intl.formatMessage({ id: "common.open" })}
+          <PanelRightIcon className="size-4" />
+          <span>{intl.formatMessage({ id: "chat.message.link.openInZCode" })}</span>
         </ContextMenuItem>
-        <ContextMenuSeparator />
         <ContextMenuItem onSelect={() => handleOpen({ forceExternal: true })}>
           <ExternalLinkIcon className="size-4" />
           <span>{intl.formatMessage({ id: "chat.previewCards.openExternal" })}</span>
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => void handleCopyLink()}>
+          <CopyIcon className="size-4" />
+          <span>{intl.formatMessage({ id: "chat.previewCards.copyLink" })}</span>
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>

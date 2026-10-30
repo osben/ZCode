@@ -2227,6 +2227,7 @@ const ukUA: Record<string, string> = {
   "chat.previewCards.video": "Відео",
   "chat.previewCards.audio": "Аудіо",
   "chat.previewCards.openExternal": "Відкрити в браузері",
+  "chat.message.link.openInZCode": "Відкрити в ZCode",
   "chat.previewCards.noOpenApps": "Застосунків не знайдено",
   "chat.turnNavigator.label": "Навігація за запитами розмови",
   "chat.turnNavigator.jumpToQuery": "Перейти до запиту {index}",
@@ -8220,6 +8221,23 @@ const ukUA: Record<string, string> = {
   "mode.label.glm.default": "Типово",
   "mode.label.glm.guarded": "Автономний режим",
   "mode.description.glm.guarded": "Запитувати при ризику",
+  "mode.yoloConfirmation.title": "Увімкнути повний доступ?",
+  "mode.yoloConfirmation.description":
+    "Завдання зможуть виконувати наведені нижче дії, не запитуючи вашого підтвердження щоразу.",
+  "mode.yoloConfirmation.files": "Файли й папки",
+  "mode.yoloConfirmation.files.description":
+    "Читати, створювати, змінювати та видаляти доступні файли.",
+  "mode.yoloConfirmation.commands": "Команди термінала",
+  "mode.yoloConfirmation.commands.description":
+    "Запускати команди, встановлювати програми або змінювати системні налаштування.",
+  "mode.yoloConfirmation.network": "Мережа та застосунки",
+  "mode.yoloConfirmation.network.description":
+    "Отримувати доступ до мережі, надсилати дані та використовувати підключені застосунки.",
+  "mode.yoloConfirmation.risk":
+    "Ці дії можуть призвести до втрати або витоку даних. Увімкайте лише для завдань, яким довіряєте. Ви будь-коли можете перейти в інший режим дозволів.",
+  "mode.yoloConfirmation.acknowledgement":
+    "Я розумію ризики та беру відповідальність за безпеку своїх даних.",
+  "mode.yoloConfirmation.confirm": "Підтвердити",
   "mode.description.glm.default": "Використовувати типові підтвердження.",
   "zcode.error.CLAUDE_UNKNOWN_COMMAND":
     "Claude Code не розпізнає {command}. Перевірте назву команди або перейдіть на Агента/навичку, яка її підтримує, і спробуйте ще раз.",

@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ZCodePermissionRequest } from "@zcode/shared";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { PermissionDialog } from "@/PermissionDialog.js";
+import { ConfirmDialogHost } from "@/ConfirmDialog.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { V4InteractionDialogs } from "@/v4/V4InteractionDialogs.js";
 import { expectedCopy } from "./helpers/uiCopy.js";
@@ -117,6 +118,8 @@ describe("PermissionDialog focus", () => {
       createElement(
         ZCodeIntlProvider,
         { initialLocale: "en-US" },
+        // The fullAccess response goes through the shared YOLO confirmation, so its host must be mounted.
+        createElement(ConfirmDialogHost),
         createElement(PermissionDialog, {
           request: {
             ...request,
@@ -158,7 +161,7 @@ describe("PermissionDialog focus", () => {
     };
   }
 
-  it("places full access third, digit 5 focuses only feedback, and the third option submits with its original optionId", () => {
+  it("places full access third, digit 5 focuses only feedback, and the third option submits with its original optionId", async () => {
     const { input, options, flush, onRespond, confirm } = renderPermission(true, true);
     expect(options).toHaveLength(4);
     expect(options[2]!.textContent).toContain(expectedCopy("chat.permission.fullAccess"));
@@ -174,6 +177,16 @@ describe("PermissionDialog focus", () => {
     flush();
     expect(document.activeElement).toBe(options[2]);
     fireEvent.click(confirm);
+    // Full access now routes through the YOLO confirmation; the approval must not respond before it.
+    expect(onRespond).not.toHaveBeenCalled();
+    const yoloConfirm = (await screen.findByTestId(
+      "yolo-confirmation-confirm",
+    )) as HTMLButtonElement;
+    expect(yoloConfirm.disabled).toBe(true);
+    fireEvent.click(screen.getByTestId("yolo-confirmation-risk"));
+    await act(async () => {
+      fireEvent.click(yoloConfirm);
+    });
     expect(onRespond).toHaveBeenCalledWith(
       "request-focus",
       expect.objectContaining({ optionId: "fullAccess" }),
