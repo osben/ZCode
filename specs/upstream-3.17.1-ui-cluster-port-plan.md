@@ -9,6 +9,8 @@ Status: ready-for-implementation. Уточняет каталог `upstream-3.17
 
 ## К порту: A3 → A2 (один PR), затем C (отдельный PR)
 
+Статус: A3+A2 — в #370; C — сделан в ветке `port/3.17.1-reinstall-button` (спека RDRI-01 добавлена в `docs/architecture/remote-device-connection-ux-spec.md`; lifecycle/downgrade-части апстрим-диффа не портированы).
+
 ### A3: контекстное меню ссылок (S)
 
 - `packages/ui/src/components/ai-elements/message.tsx` — только `MessageExternalLink`-хунки (~40 строк: `handleCopyLink`, перекомпоновка меню, `PanelRightIcon`); дивергенция региона — только переводы комментариев. НЕ брать из того же диффа file-menu фичу (`FileApplicationChoices`, `ScopedMessageFileLink`, `useWorkspaceServices`).
@@ -25,7 +27,7 @@ Status: ready-for-implementation. Уточняет каталог `upstream-3.17
 - i18n `mode.yoloConfirmation.*` — 11 ключей × en/zh/uk.
 - Зависимости в базе есть (AlertDialog variant, Checkbox, confirmDialogStore). Финальное состояние включает все 5+ раундов ревью из дока.
 
-### C: G-UI кнопка «Переустановить удалённый сервис» (#51 UI, M) — следующий PR
+### C: G-UI кнопка «Переустановить удалённый сервис» (#51 UI, M) — выполнено
 
 - `sourceServerUpdateAction.ts` (дивергенция 0): взять `resolveSourceServerReinstallAvailability`, `getSourceServerReinstallConfirmation`, `isSourceServerCredentialsRequiredError`; ПРОПУСТИТЬ lifecycle (`resolveSourceServerLifecycleActionAvailability`, `SOURCE_SERVER_LIFECYCLE_CONTROL_MIN_VERSION`) и `allowDowngrade` (reinstall не нужен — кнопка прячется при remote>local).
 - `remote-connection-flow/index.ts` (+93, hand рядом с host-key хунками 1097–1234): `reinstallProfile`, `reinstallDeviceBusy`, `handleReinstallServer`, проп `onReinstall`; зависимости в форке есть (`updateRequiredServer`:603, `getRemoteDevicePresentationInput`, `ZCODE_VERSION`).

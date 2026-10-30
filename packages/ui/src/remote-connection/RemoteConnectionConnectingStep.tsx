@@ -265,6 +265,7 @@ export function RemoteConnectionConnectingStep({
   upgradeRequired = false,
   upgradeLoading = false,
   onUpgrade,
+  onReinstall,
   connectionReady = false,
   workspacePath,
   cancelled = false,
@@ -318,6 +319,8 @@ export function RemoteConnectionConnectingStep({
   upgradeRequired?: boolean;
   upgradeLoading?: boolean;
   onUpgrade?: () => void;
+  /** "Reinstall remote service" (RDRI-01); shown only on connection failure, availability decided by the wizard through the same helper. */
+  onReinstall?: () => void;
   connectionReady?: boolean;
   /** The project folder being opened; when set, the connecting progress shows the "Open project folder" step. */
   workspacePath?: string;
@@ -671,6 +674,18 @@ export function RemoteConnectionConnectingStep({
               {intl.formatMessage({
                 id: presentation.actionMessageId,
               })}
+            </Button>
+          ) : null}
+          {failed && !credentials && onReinstall ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              data-source-server-reinstall
+              onClick={onReinstall}
+              disabled={loading || upgradeLoading}
+            >
+              {intl.formatMessage({ id: "settings.source.reinstallRemoteService" })}
             </Button>
           ) : null}
           {onUseRemoteDownload && errorPresentation.allowRemoteDownload ? (

@@ -52,8 +52,14 @@ import { logger } from "@/logger.js";
 import {
   classifyRemoteConnectionError,
   formatRemoteConnectionError,
+  getRemoteDevicePresentationInput,
+  resolveRemoteConnectionPresentation,
 } from "@/lib/remoteConnectionPresentation.js";
-import { runSourceServerUpdate } from "@/lib/sourceServerUpdateAction.js";
+import {
+  getSourceServerReinstallConfirmation,
+  resolveSourceServerReinstallAvailability,
+  runSourceServerUpdate,
+} from "@/lib/sourceServerUpdateAction.js";
 import { startUserAction, type UserActionHandle } from "@/lib/userActionTelemetry.js";
 import {
   useRemoteBoundaryAcknowledgement,
@@ -303,9 +309,30 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
   // 不再各自手写订阅（§8.1.4 全部消费方收敛为统一 hook）。
   const { snapshot: sourceManagementSnapshot, applySnapshot: applySourceManagementSnapshot } =
     useSourceServerManagementSnapshot(sourceManagement, { enabled: open || minimizedRef.current });
+  // RDRI-01: reinstall locates the profile with the same rules as "retry". Operation logs are merged
+  // only while the Host reports that profile updating, so no extra wizard state needs clearing.
+  const reinstallProfile = useMemo(() => {
+    if (!pendingRemoteTarget || pendingRemoteTarget.kind === "server") return undefined;
+    const profiles = (sourceManagementSnapshot?.profiles ?? []).filter(
+      (profile) => profile.lifecycleState !== "retired",
+    );
+    return (
+      profiles.find((profile) => profile.profileId === preferredProfileId) ??
+      profiles.find((profile) => profileMatchesRemoteTarget(profile, pendingRemoteTarget))
+    );
+  }, [pendingRemoteTarget, preferredProfileId, sourceManagementSnapshot]);
+  const reinstallUpdating = Boolean(
+    reinstallProfile &&
+    sourceManagementSnapshot?.states.some(
+      (state) => state.profileId === reinstallProfile.profileId && state.state === "updating",
+    ),
+  );
+  // Upgrade and reinstall both go through the Host update chain; the wizard shows that profile's operation logs.
+  const updateProfileId =
+    upgradeProfileId ?? (reinstallUpdating ? (reinstallProfile?.profileId ?? null) : null);
   const { logsByProfileId: sourceOperationLogs } = useSourceServerOperationLogs(
     sourceManagement,
-    upgradeProfileId ? [upgradeProfileId] : [],
+    updateProfileId ? [updateProfileId] : [],
   );
   useEffect(() => {
     if (
@@ -360,7 +387,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     [recognizedSourceServerId, sourceManagementSnapshot],
   );
   const visibleConnectionLogs = useMemo(() => {
-    const updateLogs = upgradeProfileId ? (sourceOperationLogs[upgradeProfileId] ?? []) : [];
+    const updateLogs = updateProfileId ? (sourceOperationLogs[updateProfileId] ?? []) : [];
     return [
       ...(connectingRequestId
         ? connectionLogs
@@ -390,7 +417,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     rawError,
     locale,
     sourceOperationLogs,
-    upgradeProfileId,
+    updateProfileId,
   ]);
   const quickOpenDirectoryData = useMemo(() => {
     if (!recognizedSourceServerId || !sourceManagementSnapshot) {
@@ -1288,6 +1315,71 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     updateRequiredServer,
   ]);
 
+  const reinstallServer = reinstallProfile?.sourceServerId
+    ? sourceManagementSnapshot?.servers.find(
+        (server) => server.sourceServerId === reinstallProfile.sourceServerId,
+      )
+    : undefined;
+  // Bug reason (CR-01): this used to hard-code deviceBusy=false and only look at visibility. While
+  // the device card or another window is updating/restarting the same device, a stale failure page
+  // could still send updateSource; the Host allows concurrent updates and would really run a second
+  // install. Whether the device is busy now reads the Host management snapshot, the same projection
+  // as the device card (updating, restarting, or connecting from another entry all count as
+  // "connecting"); per RDRI-01 the failure page offers no entry then. The entry renders only inside
+  // the failure panel, so the status itself is judged as "failed".
+  const reinstallDeviceBusy =
+    Boolean(reinstallProfile) &&
+    resolveRemoteConnectionPresentation(
+      reinstallProfile?.sourceServerId
+        ? getRemoteDevicePresentationInput(
+            sourceManagementSnapshot,
+            reinstallProfile.sourceServerId,
+          )
+        : (sourceManagementSnapshot?.states.find(
+            (state) => state.profileId === reinstallProfile?.profileId,
+          ) ?? {}),
+    ).status === "connecting";
+  const reinstallAvailability = resolveSourceServerReinstallAvailability({
+    status: "failed",
+    deviceBusy: reinstallDeviceBusy,
+    installState: reinstallServer?.installState,
+    lastSeenVersion: reinstallServer?.lastSeenVersion,
+    localVersion: ZCODE_VERSION,
+  });
+  const reinstallAvailable =
+    Boolean(reinstallProfile) && reinstallAvailability.visible && reinstallAvailability.enabled;
+
+  const handleReinstallServer = useCallback(async () => {
+    if (!reinstallProfile || !pendingRemoteTarget || pendingRemoteTarget.kind === "server") return;
+    const epoch = entryEpochRef.current;
+    const confirmed = await confirmDialog(
+      getSourceServerReinstallConfirmation({
+        source:
+          recognizedDeviceName ??
+          activeProfileName ??
+          formatRemoteLinkRailTarget(pendingRemoteTarget),
+        version: ZCODE_VERSION,
+        formatMessage: intl.formatMessage,
+      }),
+    );
+    // The user may have cancelled or changed the target while the confirmation was open; a stale confirmation must not start a reinstall.
+    if (!confirmed || entryEpochRef.current !== epoch) return;
+    // Reuse the update chain: the running-task guard and force confirmation follow the update; after
+    // success the original connection intent continues under the post-update rules (no auto-update loop).
+    if (await updateRequiredServer(reinstallProfile.profileId, pendingRemoteTarget)) {
+      handleStartPendingRemoteConnection(true);
+    }
+  }, [
+    activeProfileName,
+    confirmDialog,
+    handleStartPendingRemoteConnection,
+    intl,
+    pendingRemoteTarget,
+    recognizedDeviceName,
+    reinstallProfile,
+    updateRequiredServer,
+  ]);
+
   const handleBackToConnection = useCallback(async () => {
     if (!connectedSessionId) {
       return;
@@ -2154,6 +2246,11 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       onUpgrade: () => {
         void handleUpgradeRequiredServer();
       },
+      onReinstall: reinstallAvailable
+        ? () => {
+            void handleReinstallServer();
+          }
+        : undefined,
       // The folder step is still pending after the connection, so the step is not complete yet.
       connectionReady: Boolean(connectedSessionId) && !error && !connectingWorkspacePath,
       onContinueToDirectory: () => setCurrentStep("directory"),

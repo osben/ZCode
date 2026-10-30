@@ -29,8 +29,9 @@ import {
   TerminalSquare,
   Copy,
   Trash2,
+  Wrench,
 } from "lucide-react";
-import { resolveWorkspaceKey } from "@zcode/shared";
+import { resolveWorkspaceKey, ZCODE_VERSION } from "@zcode/shared";
 import type {
   ConnectionProfile,
   AppSettings,
@@ -69,6 +70,9 @@ import {
 } from "@/lib/sourceServerUpdatePreferences.js";
 import {
   getSourceServerForceUpdateDescription,
+  getSourceServerReinstallConfirmation,
+  isSourceServerCredentialsRequiredError,
+  resolveSourceServerReinstallAvailability,
   runSourceServerUpdate,
 } from "@/lib/sourceServerUpdateAction.js";
 import {
@@ -432,7 +436,12 @@ export function SourceServerManagementPanel({
   );
 
   const updateProfile = useCallback(
-    async (profile: ConnectionProfile) => {
+    async (
+      profile: ConnectionProfile,
+      // RDRI-01: reinstall reuses the same update chain, only swapping feedback copy and device name.
+      feedback: { source?: string; completedToast?: string; failedToast?: string } = {},
+    ) => {
+      const source = feedback.source ?? profile.displayName ?? profile.transport;
       await run(
         `update:${profile.profileId}`,
         async () => {
@@ -458,10 +467,18 @@ export function SourceServerManagementPanel({
                 }),
             });
           } catch (cause) {
+            // Device operation failure toast; when credentials cannot be obtained silently, share the
+            // supplemental-credentials message and offer no details entry without content.
+            if (isSourceServerCredentialsRequiredError(cause)) {
+              toast(getSourceServerManagementErrorMessage(cause, intl.formatMessage), {
+                variant: "warning",
+              });
+              throw cause;
+            }
             toast(
               intl.formatMessage(
-                { id: "sourceServer.updateFailedToast" },
-                { source: profile.displayName ?? profile.transport },
+                { id: feedback.failedToast ?? "sourceServer.updateFailedToast" },
+                { source },
               ),
               {
                 variant: "warning",
@@ -478,8 +495,8 @@ export function SourceServerManagementPanel({
           if (next)
             toast(
               intl.formatMessage(
-                { id: "sourceServer.updateCompletedToast" },
-                { source: profile.displayName ?? profile.transport },
+                { id: feedback.completedToast ?? "sourceServer.updateCompletedToast" },
+                { source },
               ),
               { variant: "source-server-update" },
             );
@@ -489,6 +506,31 @@ export function SourceServerManagementPanel({
       );
     },
     [confirmDialog, intl, management, onShowUpdateDetails, run],
+  );
+
+  /**
+   * Reinstall remote service (RDRI-01): a plain confirmation, then the update chain reinstalls the
+   * local-version archive on the remote; a damaged same-version release is replaced wholesale by the
+   * remote installer. The running-task guard and force confirmation follow the update chain; no
+   * separate Host operation is added.
+   */
+  const reinstallRemoteService = useCallback(
+    async (server: SourceServerRecord, profile: ConnectionProfile) => {
+      const confirmed = await confirmDialog(
+        getSourceServerReinstallConfirmation({
+          source: server.displayName,
+          version: ZCODE_VERSION,
+          formatMessage: intl.formatMessage,
+        }),
+      );
+      if (!confirmed) return;
+      await updateProfile(profile, {
+        source: server.displayName,
+        completedToast: "sourceServer.reinstallCompletedToast",
+        failedToast: "sourceServer.reinstallFailedToast",
+      });
+    },
+    [confirmDialog, intl, updateProfile],
   );
 
   const servers = snapshot?.servers ?? [];
@@ -832,6 +874,15 @@ export function SourceServerManagementPanel({
             serverProfiles.find((profile) => profile.profileId === presentation.profileId) ??
             preferredProfile;
           const deviceBusy = busyScopes.has(`source:${server.sourceServerId}`);
+          const reinstallAvailability = actionProfile
+            ? resolveSourceServerReinstallAvailability({
+                status: presentation.status,
+                deviceBusy,
+                installState: server.installState,
+                lastSeenVersion: server.lastSeenVersion,
+                localVersion: ZCODE_VERSION,
+              })
+            : ({ visible: false } as const);
           const actionBusy =
             busyOperations.has(`disconnect:${server.sourceServerId}`) ||
             busyOperations.has(`connect:${actionProfile?.profileId}`) ||
@@ -1239,6 +1290,30 @@ export function SourceServerManagementPanel({
                           <Copy className="size-3.5" />
                           {intl.formatMessage({ id: "settings.source.copyDeviceId" })}
                         </DropdownMenuItem>
+                        {/* RDRI-01: reinstall sits between restart and stop in the upstream menu; the
+                            fork has no lifecycle actions yet, so it directly follows the device info. */}
+                        {reinstallAvailability.visible && actionProfile ? (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              data-source-server-lifecycle-action="reinstall"
+                              disabled={!reinstallAvailability.enabled || actionBusy}
+                              onSelect={() => void reinstallRemoteService(server, actionProfile)}
+                            >
+                              <Wrench className="size-3.5" />
+                              <span className="flex min-w-0 flex-col">
+                                {intl.formatMessage({
+                                  id: "settings.source.reinstallRemoteService",
+                                })}
+                                <span className="text-ui-sm text-remote-foreground-muted">
+                                  {intl.formatMessage({
+                                    id: "settings.source.reinstallRemoteServiceHint",
+                                  })}
+                                </span>
+                              </span>
+                            </DropdownMenuItem>
+                          </>
+                        ) : null}
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           variant="destructive"
@@ -1257,8 +1332,23 @@ export function SourceServerManagementPanel({
               </div>
               {/* 更新失败只替代同一连接的相同原因，其他连接和可选更新不能吞掉连接错误。 */}
               {preferredConnectionErrorText && !updateExplainsConnectionError ? (
-                <div className="mx-4 mb-3 rounded-md bg-destructive-surface px-3 py-2 text-ui-sm text-destructive-surface-foreground">
-                  {preferredConnectionErrorText}
+                <div className="mx-4 mb-3 flex flex-wrap items-center gap-2 rounded-md bg-destructive-surface px-3 py-2 text-ui-sm text-destructive-surface-foreground">
+                  <span className="min-w-0 flex-1">{preferredConnectionErrorText}</span>
+                  {/* RDRI-01: offer reinstall inline when the connection failed; same availability rules and confirmation as the "More" menu. */}
+                  {presentation.status === "failed" &&
+                  reinstallAvailability.visible &&
+                  actionProfile ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      data-source-server-reinstall
+                      disabled={!reinstallAvailability.enabled || actionBusy}
+                      onClick={() => void reinstallRemoteService(server, actionProfile)}
+                    >
+                      {intl.formatMessage({ id: "settings.source.reinstallRemoteService" })}
+                    </Button>
+                  ) : null}
                 </div>
               ) : null}
               {showUpdate && serverState ? (

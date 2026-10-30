@@ -340,6 +340,40 @@ user update -> updateSource(force=false) -> running-task guard
 
 The task list is read-only from the existing owner; an old remote without a list explicitly shows unavailable. Project identity, desktop continuous and phone replayable keep their original contracts. Acceptance covers failed-connection classification, recent project ordering and show-all, other connections current/default, dedupe across restart and reconnect, "later" lifecycle, forced-update list, themes and narrow screen.
 
+## Reinstall remote service (RDRI-01, 2026-10-30)
+
+Ported from upstream 3.17.1 (fix #51 UI half; upstream issue 03-corrupted-release-recovery). After a remote release's files are damaged, `serve --daemon` fails during Node's loading stage and the UI only shows "connection failed"; a same-version reinstall used to be rejected by the immutable conflict. The CLI-side damaged-release replacement is already in the fork (PR #365); this section defines the user entry.
+
+- **Semantics**: reinstall the remote service from the same-version archive carried by this Desktop, then connect. Damaged program files are replaced wholesale; projects, tasks, settings, sign-in information, and the device identity are unchanged. Without damage the installer reuses the release as-is, equivalent to a restart within the update chain.
+- **Execution chain**: reuse the update chain `runSourceServerUpdate` -> management `updateSource` -> Host `updateServer`; no new Host interface, state, or error code. The running-task guard, force-update confirmation, `updating` state, operation log, and progress presentation all follow the update.
+- **Entries (three, sharing one availability rule and one confirmation)**:
+  1. Device row "More" menu: a normal item with a one-line muted hint "Uses this computer's version. Projects and tasks are kept." The fork has no restart/stop lifecycle items yet, so the item sits after copy-device-id, right before "Remove device".
+  2. Device row error bar: when the device is "connection failed", a button to the right of the error text.
+  3. Connection wizard failure page: when the device is "connection failed", a secondary button after "Retry" in the error panel's button row. The sidebar "Connect", the session banner "Reconnect", and the input error bar "Reconnect" all open that page for a failed device, so they add no button of their own. Mobile / web remote control does not show remote device failures and offers no entry.
+
+| Device state                                                                          | "More" menu | Error bar / wizard failure page |
+| ------------------------------------------------------------------------------------- | ----------- | ------------------------------- |
+| Connected / disconnected                                                              | available   | —                               |
+| Connection failed                                                                     | available   | shown                           |
+| Connecting / updating / another operation in progress on this device                  | disabled    | —                               |
+| Needs attention (needs-install, needs-upgrade, identity pending, missing credentials) | hidden      | hidden                          |
+| Uninstalled (primary action is already "Reinstall and connect")                       | hidden      | hidden                          |
+| Last seen remote version newer than the local version                                 | hidden      | hidden                          |
+
+- **Availability rule details**: computed once by `resolveSourceServerReinstallAvailability` (`packages/ui/src/lib/sourceServerUpdateAction.ts`). No minimum remote version gate: the install is executed by the local-version CLI bundled in the archive and does not depend on remote control commands. When the remote version is newer than local, the same entry would actually be a downgrade; downgrades keep their own confirmation upstream and are not ported to the fork, so the entry hides instead. The wizard shows no entry without a saved profile.
+- **Wizard device-state source**: the wizard's own failure only decides whether the failure panel appears; whether the device is "connecting / updating" reads the Host management snapshot, the same projection as the device card. While the device card or another window is updating the same device, the wizard failure page hides the entry; it comes back after the operation ends and the device returns to connection failed. The Host allows concurrent updates of the same device, so the UI must not leave this check to the Host.
+- **Confirmation**: a normal (non-destructive) confirmation with `data-confirm-intent="source-server-reinstall"`, title "Reinstall the remote service?", description "ZCode Server {version} will be reinstalled on {source}. Damaged program files are replaced. Projects, tasks, settings, and sign-in information are kept.", confirm button "Reinstall". When the remote has running tasks, the update chain's `force=false` is rejected by the guard and the existing "Force-update this device?" confirmation follows.
+- **Feedback**: the device card keeps the update toast channel with reinstall copy ("{source} was reinstalled and reconnected." / "{source} could not be reinstalled…"); the failure toast can open that connection's failure details. A wizard failure shows in the existing error panel; after success the original connection intent continues under the post-update rules (no automatic update loop).
+- **Copy**: uniformly "remote service"; zh and en stay in sync, English "Reinstall remote service"; uk reuses the existing "віддалений компонент" term.
+
+```text
+Device row "More" / device row error bar / wizard failure page
+  -> confirmation (source-server-reinstall) -> runSourceServerUpdate (force=false -> force confirmation when the guard rejects)
+  -> Host updateServer -> transport uploads the same-version archive -> remote bootstrap CLI `update --from-archive`
+  -> immutable promote: reuse / repair the damaged copy / fail on conflict -> current.json -> connectForSource
+  -> management snapshot -> device card / wizard continues the original connection intent
+```
+
 ## Visual and accessibility finish (RDUX-A11Y, 2026-09-29)
 
 - Auxiliary text in remote UI, sidebar device tags and settings navigation uses `remote-foreground-muted` and reaches 4.5:1 on the actual surfaces of the four built-in themes; type tags and five-state tags are verified separately, and contrast is not met by lowering font size.

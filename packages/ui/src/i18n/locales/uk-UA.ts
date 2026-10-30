@@ -9118,6 +9118,13 @@ const ukUA: Record<string, string> = {
     "Зміни підключення набудуть чинності під час наступного підключення. Наявні проєкти та завдання не змінюються.",
   "settings.source.deviceName": "Назва пристрою",
   "settings.source.removeSourceServer": "Вилучити пристрій",
+  "settings.source.reinstallRemoteService": "Перевстановити віддалений компонент",
+  "settings.source.reinstallRemoteServiceHint":
+    "Використовує версію цього комп'ютера. Проєкти та завдання зберігаються.",
+  "settings.source.reinstallRemoteServiceTitle": "Перевстановити віддалений компонент?",
+  "settings.source.reinstallRemoteServiceDescription":
+    "ZCode Server {version} буде перевстановлено на {source}. Пошкоджені файли програм буде замінено. Проєкти, завдання, налаштування та дані входу зберігаються.",
+  "settings.source.reinstallRemoteServiceConfirm": "Перевстановити",
   "settings.source.removeOpenProjects": "Ці відкриті проєкти буде відключено:\n{projects}",
   "settings.source.noOpenProjects": "У цього пристрою немає відкритих проєктів.",
   "settings.source.disconnectHint":
@@ -9216,6 +9223,9 @@ const ukUA: Record<string, string> = {
   "sourceServer.updateCompletedToast": "{source} оновлено й підключено знову.",
   "sourceServer.updateFailedToast":
     "Не вдалося оновити {source}. Перегляньте журнал у розділі «Віддалені пристрої» і повторіть спробу.",
+  "sourceServer.reinstallCompletedToast": "{source} перевстановлено й підключено знову.",
+  "sourceServer.reinstallFailedToast":
+    "Не вдалося перевстановити {source}. Перегляньте журнал у розділі «Віддалені пристрої» і повторіть спробу.",
   "sourceServer.controllerUpdateAvailableToast":
     "Для {source} є оновлення ZCode\nНастільна програма {current} → {available}; оновіть ZCode, щоб відповідати версії цього пристрою.",
   "settings.source.forceUpdate": "Примусово оновити",
