@@ -2,6 +2,10 @@ import { isAbsolute, relative } from "node:path";
 
 import { resolveWorkspacePath } from "../tool/path-policy.js";
 
+// Dream run journal directory. Lowercase because segments are compared case-insensitively. The
+// journal module owns the public name; a test pins this literal to it.
+const DREAM_JOURNAL_SEGMENT = ".fork_dream-journal";
+
 const SENSITIVE_MEMORY_PATH_SEGMENTS = new Set([
   ".git",
   "hooks",
@@ -23,6 +27,9 @@ const SENSITIVE_MEMORY_PATH_SEGMENTS = new Set([
   ".devcontainer",
   ".yarn",
   ".mvn",
+  // Dream run journal: snapshots are written by the runtime only. Lowercase because segments are
+  // compared case-insensitively; a test pins this entry to DREAM_JOURNAL_DIRECTORY_NAME.
+  DREAM_JOURNAL_SEGMENT,
 ]);
 
 export function resolveContainedMemoryFilePath(input: {
@@ -58,6 +65,11 @@ export function resolveSafeMemoryFilePath(input: {
 export function memoryFileRelativePath(rootDir: string, filePath: string): string | undefined {
   const relativePath = relative(rootDir, filePath);
   return isContainedRelativePath(relativePath) ? relativePath : undefined;
+}
+
+/** True when the path is inside the Dream journal directory, in any letter case. */
+export function isDreamJournalRelativePath(relativePath: string): boolean {
+  return relativePath.split(/[\\/]+/u)[0]?.toLowerCase() === DREAM_JOURNAL_SEGMENT;
 }
 
 export function containsSensitiveMemoryPathSegment(relativePath: string): boolean {

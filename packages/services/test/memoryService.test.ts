@@ -135,6 +135,27 @@ describe("memoryService Project Memory catalog", () => {
     expect(workspaces[0]?.updatedAt).toBe(newer.getTime());
   });
 
+  it("只列出 Memory 根目录的顶层文件，不递归进入子目录或 Dream journal 目录", async () => {
+    // Guards against a regression to recursive listing: nested Markdown and journal snapshots would
+    // then show up as catalog entries. The manifest scanner recurses, so the catalog must not.
+    const workspaceId = "journaled-project-4444444444444444";
+    const journalDirectory = join(workspaceMemoryRoot(workspaceId), ".fork_dream-journal");
+    await writeMemoryFile(workspaceId, "MEMORY.md", "index");
+    await writeMemoryFile(workspaceId, "fact.md", "fact");
+    await mkdir(join(workspaceMemoryRoot(workspaceId), "nested"), { recursive: true });
+    await writeFile(join(workspaceMemoryRoot(workspaceId), "nested", "inner.md"), "inner", "utf-8");
+    await mkdir(journalDirectory, { recursive: true });
+    await writeFile(join(journalDirectory, "run.json"), "{}", "utf-8");
+    await writeFile(join(journalDirectory, "superseded.md"), "old body", "utf-8");
+
+    const workspaces = await createMemoryService().listProjectMemories();
+
+    expect(workspaces.find((workspace) => workspace.id === workspaceId)?.files).toEqual([
+      expect.objectContaining({ name: "MEMORY.md", kind: "index" }),
+      expect.objectContaining({ name: "fact.md", kind: "item" }),
+    ]);
+  });
+
   it("扫描期间 Memory 目录消失时跳过该 workspace", async () => {
     const workspaceId = "removed-memory-root-3333333333333333";
     await writeMemoryFile(workspaceId, "MEMORY.md", "temporary index");
