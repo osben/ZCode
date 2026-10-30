@@ -58,7 +58,9 @@ describe("MiMo API 与 Token Plan 官方模板", () => {
               baseUrl,
             });
             expect(model.validateComplete()).toEqual([]);
-            expect(model.enabled).toBe(true);
+            // The v2.5 members stay listed for legacy installs but ship default disabled;
+            // only the v2.6 members are default enabled.
+            expect(model.enabled).toBe(currentModelIds.includes(modelId));
             expect(model.properties?.contextWindow).toBe(1000000);
             expect(model.properties?.inputFormat.toJSON()).toMatchObject({
               supportsImage: modelId !== "mimo-v2.5-pro",
@@ -134,9 +136,8 @@ describe("MiMo API 与 Token Plan 官方模板", () => {
             (p) => p.providerId === `new-${templateId}`,
           );
           expect(provider?.config.api?.baseUrl).toBe(baseUrl);
-          expect(provider?.models.map((m) => m.modelId)).toEqual(
-            templateId === "xiaomi-mimo" ? apiModelIds : currentModelIds,
-          );
+          // Registry admission is enabled-only; the v2.5 members ship default disabled.
+          expect(provider?.models.map((m) => m.modelId)).toEqual(currentModelIds);
           expect(provider?.config.access?.toJSON()).toMatchObject({
             apiKey: `test-${templateId}`,
           });
