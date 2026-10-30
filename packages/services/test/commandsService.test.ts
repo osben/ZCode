@@ -520,4 +520,51 @@ describe("commandsService", () => {
     expect(enabled.userCommands[0]).toEqual(expect.objectContaining({ enabled: true }));
     expect(reenabledConfig.command?.[created.command.filePath]).toBeUndefined();
   });
+
+  it("rejects command config writes and keeps bytes untouched when config.json is corrupt", async () => {
+    const home = makeTempRoot();
+    const configPath = join(home, ".zcode", "cli", "config.json");
+    mkdirSync(join(home, ".zcode", "cli"), { recursive: true });
+    const corrupt = "{ not json";
+    writeFileSync(configPath, corrupt, "utf-8");
+    const service = await createCommandsServiceInEnv(home);
+
+    await expect(
+      service.setCommandEnabled({
+        commandId: "zcodeAgent:zcode:global:/broken",
+        filePath: join(home, ".zcode", "commands", "broken.md"),
+        enabled: false,
+      }),
+    ).rejects.toMatchObject({ name: "JsonObjectFileUnreadableError" });
+
+    expect(readFileSync(configPath, "utf-8")).toBe(corrupt);
+  });
+
+  it("preserves unrelated config.json fields and writes 0600 when toggling commands", async () => {
+    const home = makeTempRoot();
+    writeCliConfig(home, {
+      mcp: { servers: { fetch: { command: "node" } } },
+      plugins: { dirs: ["/opt/plugins"] },
+    });
+    const service = await createCommandsServiceInEnv(home);
+    const created = await service.writeCommandFile({
+      config: {
+        name: "review",
+        prompt: "Review code",
+      },
+    });
+
+    await service.setCommandEnabled({
+      commandId: created.command.id,
+      filePath: created.command.filePath,
+      enabled: false,
+    });
+
+    const configPath = join(home, ".zcode", "cli", "config.json");
+    const saved = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(saved.mcp).toEqual({ servers: { fetch: { command: "node" } } });
+    expect(saved.plugins).toEqual({ dirs: ["/opt/plugins"] });
+    expect(saved.command).toEqual({ [created.command.filePath]: { enable: false } });
+    expect(statSync(configPath).mode & 0o777).toBe(0o600);
+  });
 });

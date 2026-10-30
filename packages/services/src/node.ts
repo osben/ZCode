@@ -103,6 +103,12 @@ export type {
   FsFaultRuleConfig,
   InjectedFsFaultError,
 } from "./fs/fsFaultInjection.js";
+// Strict read + re-read before write + atomic replace (0600), shared by config.json writers (also used by the main-process MCP settings page).
+export {
+  JsonObjectFileUnreadableError,
+  readJsonObjectFileForUpdate,
+  updateJsonObjectFile,
+} from "./fs/atomicFileUtils.js";
 export {
   setDataBaseDir,
   getDataBaseDir,

@@ -21,7 +21,7 @@ import {
 import { parseWorkspaceHookTrustStoreContent } from "@zcode/shared/workspace-hook-trust-store-file";
 import { createServiceLogger, type ServiceLogger } from "#src/logger/serviceLogger.js";
 import type { IHooksService } from "./hooks.js";
-import { atomicWriteWorkspaceHookConfig } from "./workspaceHookConfigMutation.js";
+import { updateJsonObjectFile } from "#src/fs/atomicFileUtils.js";
 import {
   fromLegacyHooksConfig,
   fromProjectSnapshot,
@@ -282,20 +282,28 @@ async function loadHooksImpl(
   };
 }
 
+/**
+ * Root cause: the old implementation read through readJsonFile before writing, which returned null on read
+ * failures or corrupt JSON and wrote the file back as an empty object — wiping other config.json entries
+ * such as MCP and plugins.
+ * Fix: switch to updateJsonObjectFile — a corrupt file rejects the write, the content is re-read before
+ * writing, only the hooks field is changed, and the replacement is atomic.
+ */
 async function writeZCodeHooksConfig(
   workspacePath: string | undefined,
   hooks: Hook[],
 ): Promise<void> {
-  const configPath = getConfigPath("zcode", workspacePath);
-  const existingConfig = (await readJsonFile<ZCodeConfigFile>(configPath)) ?? {};
-  const enabled = resolveNextRootEnabled(existingConfig.hooks?.enabled, hooks);
-  await atomicWriteWorkspaceHookConfig(configPath, {
-    ...existingConfig,
-    hooks: {
-      ...existingConfig.hooks,
-      ...(enabled !== undefined ? { enabled } : {}),
-      events: toZCodeHooksEvents(hooks),
-    },
+  await updateJsonObjectFile(getConfigPath("zcode", workspacePath), (current) => {
+    const existingConfig = current as ZCodeConfigFile;
+    const enabled = resolveNextRootEnabled(existingConfig.hooks?.enabled, hooks);
+    return {
+      ...existingConfig,
+      hooks: {
+        ...existingConfig.hooks,
+        ...(enabled !== undefined ? { enabled } : {}),
+        events: toZCodeHooksEvents(hooks),
+      },
+    };
   });
 }
 

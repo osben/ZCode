@@ -1,15 +1,5 @@
 /* eslint-disable max-lines -- Skill discovery, validation, state, and generic directory management are grouped in one service; splitting the layers would make navigation harder. */
-import {
-  access,
-  appendFile,
-  cp,
-  mkdir,
-  realpath,
-  rm,
-  readFile,
-  readdir,
-  writeFile,
-} from "node:fs/promises";
+import { access, appendFile, cp, mkdir, realpath, rm, readFile, readdir } from "node:fs/promises";
 import { existsSync, type Dirent } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
@@ -29,6 +19,7 @@ import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS } from "@zcode/shared";
 import type { ISkillsService } from "./skills.js";
 import { SKILL_FILE_NAME, walkSkillMarkdownPaths } from "./skillDiscoveryWalk.js";
 import { readInstalledPluginRoots } from "#src/plugins/installedPluginRoots.js";
+import { updateJsonObjectFile } from "#src/fs/atomicFileUtils.js";
 
 interface DiscoverResult {
   skills: SkillSummary[];
@@ -529,6 +520,7 @@ function normalizeSkillConfigPath(path: string): string {
   return path.replaceAll("\\", "/");
 }
 
+// Display-only: when config.json is corrupt, skills are listed as if the config were empty so browsing still works. Writes go through writeSkillEnabledMap.
 async function readCliConfigFile(): Promise<Record<string, unknown>> {
   try {
     const raw = await readFile(SKILL_CLI_CONFIG_FILE, "utf-8");
@@ -558,29 +550,37 @@ async function readSkillEnabledMap(): Promise<Record<string, boolean>> {
   return readSkillEnabledMapFromConfig(await readCliConfigFile());
 }
 
+/**
+ * Root cause: the old implementation read through readCliConfigFile before writing, which returned an empty
+ * object on read failures or corrupt JSON, and then wrote the whole file back with writeFile — wiping other
+ * config.json entries such as MCP and plugins; writeFile is not atomic either.
+ * Fix: switch to updateJsonObjectFile — a corrupt file rejects the write, the content is re-read before
+ * writing, only the skills field is changed, and the replacement is atomic.
+ */
 async function writeSkillEnabledMap(next: Record<string, boolean>): Promise<void> {
-  const config = await readCliConfigFile();
-  const skillsConfig = isObjectRecord(config.skills) ? config.skills : {};
-  for (const [path, enable] of Object.entries(next).sort(([left], [right]) =>
-    left.localeCompare(right),
-  )) {
-    // Skill toggles were previously spread across workspace/provider/context state files, causing inconsistent behavior across entry points.
-    // Now write only the skills field in CLI config by SKILL.md path, avoiding extra migrations or side effects from old files.
-    const normalizedPath = normalizeSkillConfigPath(path);
-    if (enable) {
-      // Enabled is the default and should not be persisted as `{ enable: true }`; delete the override so plugin/default configuration changes take effect.
-      delete skillsConfig[normalizedPath];
-    } else {
-      skillsConfig[normalizedPath] = { enable };
+  await updateJsonObjectFile(SKILL_CLI_CONFIG_FILE, (current) => {
+    const config = { ...current };
+    const skillsConfig = isObjectRecord(config.skills) ? { ...config.skills } : {};
+    for (const [path, enable] of Object.entries(next).sort(([left], [right]) =>
+      left.localeCompare(right),
+    )) {
+      // Skill toggles were previously spread across workspace/provider/context state files, causing inconsistent behavior across entry points.
+      // Now write only the skills field in CLI config by SKILL.md path, avoiding extra migrations or side effects from old files.
+      const normalizedPath = normalizeSkillConfigPath(path);
+      if (enable) {
+        // Enabled is the default and should not be persisted as `{ enable: true }`; delete the override so plugin/default configuration changes take effect.
+        delete skillsConfig[normalizedPath];
+      } else {
+        skillsConfig[normalizedPath] = { enable };
+      }
     }
-  }
-  if (Object.keys(skillsConfig).length > 0) {
-    config.skills = skillsConfig;
-  } else {
-    delete config.skills;
-  }
-  await mkdir(SKILL_CLI_SETTINGS_DIR, { recursive: true });
-  await writeFile(SKILL_CLI_CONFIG_FILE, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+    if (Object.keys(skillsConfig).length > 0) {
+      config.skills = skillsConfig;
+    } else {
+      delete config.skills;
+    }
+    return config;
+  });
 }
 
 interface SkillRootDescriptor {
