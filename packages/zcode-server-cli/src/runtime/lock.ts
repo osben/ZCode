@@ -1,7 +1,11 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { link, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { dirname } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 // link(2) reports these when the filesystem cannot create hard links (for example FAT/exFAT volumes or some network mounts).
 const HARD_LINK_UNSUPPORTED_CODES = new Set(["ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EPERM"]);
@@ -9,6 +13,17 @@ const HARD_LINK_UNSUPPORTED_CODES = new Set(["ENOTSUP", "EOPNOTSUPP", "ENOSYS", 
 function errorCode(error: unknown): unknown {
   return error instanceof Error && "code" in error ? error.code : undefined;
 }
+
+interface LockOwnerRecord {
+  ownerToken?: string;
+  pid?: number;
+  processIdentity?: string;
+}
+
+// Locks and recovery-gate tokens currently held by this process. When the PID is our own, only a token
+// in this set proves the lock was written by this process.
+const heldOwnerTokens = new Set<string>();
+let ownProcessIdentity: Promise<string | null | undefined> | undefined;
 
 export type DataRootLockInspection =
   | { state: "missing" }
@@ -37,17 +52,10 @@ export class DataRootLock {
     } catch {
       return { state: "invalid" };
     }
-    const pid =
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "pid" in parsed &&
-      typeof parsed.pid === "number" &&
-      Number.isInteger(parsed.pid) &&
-      parsed.pid > 0
-        ? parsed.pid
-        : undefined;
+    const record = toOwnerRecord(parsed);
+    const pid = record.pid;
     if (pid === undefined) return { state: "invalid" };
-    return this.isHolderAlive(pid) ? { state: "active", pid } : { state: "stale", pid };
+    return (await isHolderAlive(record)) ? { state: "active", pid } : { state: "stale", pid };
   }
 
   public async acquire(): Promise<void> {
@@ -56,7 +64,7 @@ export class DataRootLock {
     const recoveryPath = `${this.path}.recovery`;
     for (let attempt = 0; attempt < 100; attempt++) {
       const observed = await this.readOwner(this.path);
-      if (observed && this.isHolderAlive(observed.record.pid)) {
+      if (observed && (await isHolderAlive(observed.record))) {
         throw new Error("Another ZCode Server instance is already running");
       }
       const recoveryToken = await this.tryAcquireRecoveryGate(recoveryPath);
@@ -66,7 +74,7 @@ export class DataRootLock {
       }
       try {
         const current = await this.readOwner(this.path);
-        if (current && this.isHolderAlive(current.record.pid)) {
+        if (current && (await isHolderAlive(current.record))) {
           throw new Error("Another ZCode Server instance is already running");
         }
         if (current) {
@@ -75,6 +83,7 @@ export class DataRootLock {
         if (await this.tryAcquireOnce()) return;
       } finally {
         await this.releaseOwnedPath(recoveryPath, recoveryToken);
+        heldOwnerTokens.delete(recoveryToken);
       }
       await new Promise<void>((resolve) => setTimeout(resolve, 5));
     }
@@ -84,7 +93,10 @@ export class DataRootLock {
   public async release(): Promise<void> {
     const token = this.ownerToken;
     this.ownerToken = undefined;
-    if (token) await this.releaseOwnedPath(this.path, token);
+    if (token) {
+      await this.releaseOwnedPath(this.path, token);
+      heldOwnerTokens.delete(token);
+    }
   }
 
   private async tryAcquireOnce(): Promise<boolean> {
@@ -100,7 +112,8 @@ export class DataRootLock {
    */
   private async publishRecord(path: string): Promise<string | null> {
     const ownerToken = randomUUID();
-    const content = `${JSON.stringify({ pid: process.pid, acquiredAt: Date.now(), ownerToken })}\n`;
+    const record = await createOwnerRecord(ownerToken);
+    const content = `${JSON.stringify(record)}\n`;
     // Creating `path` first and writing afterwards would expose an empty record that contenders read
     // as stale and take over while this owner still believes it holds the path. Publishing a fully
     // written temp file via link() makes the record appear complete or not at all.
@@ -115,12 +128,17 @@ export class DataRootLock {
       }
       try {
         await link(temp, path);
+        heldOwnerTokens.add(ownerToken);
         return ownerToken;
       } catch (error: unknown) {
         if (errorCode(error) === "EEXIST") return null;
         if (!HARD_LINK_UNSUPPORTED_CODES.has(String(errorCode(error)))) throw error;
       }
-      return (await this.publishRecordWithoutLink(path, content, ownerToken)) ? ownerToken : null;
+      if (await this.publishRecordWithoutLink(path, content, ownerToken)) {
+        heldOwnerTokens.add(ownerToken);
+        return ownerToken;
+      }
+      return null;
     } finally {
       // A leftover temp file never blocks acquisition, so cleanup failures must not fail the caller.
       await rm(temp, { force: true }).catch(() => undefined);
@@ -154,7 +172,7 @@ export class DataRootLock {
 
   private async readOwner(path: string): Promise<{
     raw: string;
-    record: { ownerToken?: string; pid?: number };
+    record: LockOwnerRecord;
   } | null> {
     let raw: string;
     try {
@@ -163,31 +181,9 @@ export class DataRootLock {
       return null;
     }
     try {
-      const parsed = JSON.parse(raw) as { ownerToken?: unknown; pid?: unknown };
-      return {
-        raw,
-        record: {
-          ownerToken: typeof parsed.ownerToken === "string" ? parsed.ownerToken : undefined,
-          pid:
-            typeof parsed.pid === "number" && Number.isInteger(parsed.pid) && parsed.pid > 0
-              ? parsed.pid
-              : undefined,
-        },
-      };
+      return { raw, record: toOwnerRecord(JSON.parse(raw)) };
     } catch {
       return { raw, record: {} };
-    }
-  }
-
-  public isHolderAlive(pid: number | undefined): boolean {
-    if (pid === undefined) return false;
-    if (pid === process.pid) return true;
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (error: unknown) {
-      // ESRCH means the process does not exist (stale); EPERM means it exists but access is denied, so conservatively treat it as alive.
-      return error instanceof Error && "code" in error && error.code === "EPERM";
     }
   }
 
@@ -195,7 +191,7 @@ export class DataRootLock {
     const ownerToken = await this.publishRecord(path);
     if (ownerToken) return ownerToken;
     const observed = await this.readOwner(path);
-    if (observed && !this.isHolderAlive(observed.record.pid)) {
+    if (observed && !(await isHolderAlive(observed.record))) {
       await this.claimStalePath(path, observed.raw);
     }
     return null;
@@ -234,4 +230,104 @@ export class DataRootLock {
     }
     await rename(quarantine, path).catch(() => undefined);
   }
+}
+
+function toOwnerRecord(parsed: unknown): LockOwnerRecord {
+  if (typeof parsed !== "object" || parsed === null) return {};
+  const value = parsed as { ownerToken?: unknown; pid?: unknown; processIdentity?: unknown };
+  return {
+    ownerToken: typeof value.ownerToken === "string" ? value.ownerToken : undefined,
+    pid:
+      typeof value.pid === "number" && Number.isInteger(value.pid) && value.pid > 0
+        ? value.pid
+        : undefined,
+    processIdentity: typeof value.processIdentity === "string" ? value.processIdentity : undefined,
+  };
+}
+
+async function createOwnerRecord(ownerToken: string): Promise<Record<string, unknown>> {
+  ownProcessIdentity ??= readProcessIdentity(process.pid);
+  const processIdentity = await ownProcessIdentity;
+  return {
+    pid: process.pid,
+    acquiredAt: Date.now(),
+    ownerToken,
+    ...(processIdentity ? { processIdentity } : {}),
+  };
+}
+
+// Liveness used to be decided by PID alone (own PID, kill(pid,0) success, or EPERM all counted as
+// alive). After a container or WSL distribution restart every process is gone while the lock file
+// survives, and the same boot sequence can hand the stale PID from the lock — or a recycled PID that
+// now belongs to an unrelated process — back to the new Supervisor, which then reports "already
+// running" and exits 1 on every start. Liveness now verifies the process identity: alive only when
+// the identity matches the process that wrote the lock.
+async function isHolderAlive(record: LockOwnerRecord): Promise<boolean> {
+  const pid = record.pid;
+  if (pid === undefined) return false;
+  if (pid === process.pid) {
+    return record.ownerToken !== undefined && heldOwnerTokens.has(record.ownerToken);
+  }
+  if (record.processIdentity !== undefined) {
+    const current = await readProcessIdentity(pid);
+    if (current !== undefined) return current === record.processIdentity;
+  }
+  // Locks written by older versions carry no identity field, and some platforms cannot read one;
+  // fall back to the PID check for those.
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    // ESRCH: the process does not exist. EPERM: the PID belongs to another user; the lock file is
+    // 0600 and only the current user can read it, so its writer cannot have been another user's
+    // process — the PID must have been reused.
+    return false;
+  }
+}
+
+/**
+ * Read the identity of a process. PIDs get reused; the process start time does not.
+ * - Linux: boot_id plus the starttime field of /proc/<pid>/stat. A container restart keeps the
+ *   kernel (and boot_id) but changes starttime; a full host restart changes boot_id, ruling out a
+ *   coincidentally equal starttime.
+ * - macOS: the launch time reported by ps, formatted with a fixed timezone.
+ * Returns null when the process does not exist and undefined when the identity cannot be read.
+ */
+async function readProcessIdentity(pid: number): Promise<string | null | undefined> {
+  if (process.platform === "linux") {
+    let stat: string;
+    try {
+      stat = await readFile(`/proc/${pid}/stat`, "utf8");
+    } catch (error: unknown) {
+      return error instanceof Error && "code" in error && error.code === "ENOENT"
+        ? null
+        : undefined;
+    }
+    // The comm field may contain spaces and parentheses; count from after the last ")". There state
+    // is field 3 and starttime is field 22, i.e. index 19 after the split.
+    const startTime = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+    if (!startTime) return undefined;
+    const bootId = await readFile("/proc/sys/kernel/random/boot_id", "utf8").catch(() => "");
+    return `${bootId.trim()}:${startTime}`;
+  }
+  if (process.platform === "darwin") {
+    try {
+      // ps formats lstart in the calling process's timezone. When the lock writer and the lock
+      // checker run with different TZ values (an SSH session with TZ set in the shell versus a
+      // Supervisor launched by launchd, or a system timezone change in between), the same living
+      // process would get different identities, be declared stale and taken over. Pin UTC so the
+      // identity depends only on the process start time.
+      const { stdout } = await execFileAsync("ps", ["-o", "lstart=", "-p", String(pid)], {
+        env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+      });
+      return stdout.trim() || null;
+    } catch (error: unknown) {
+      // ps exits with code 1 when it cannot find the PID; when ps itself is unavailable the code
+      // is a string.
+      return error instanceof Error && "code" in error && typeof error.code === "number"
+        ? null
+        : undefined;
+    }
+  }
+  return undefined;
 }

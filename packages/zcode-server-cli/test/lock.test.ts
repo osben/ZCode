@@ -65,14 +65,14 @@ describe("DataRootLock", () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-r2-lock-live-"));
     const lockFile = join(root, "run", "server.lock");
     await mkdir(join(root, "run"), { recursive: true });
-    await writeFile(
-      lockFile,
-      `${JSON.stringify({ pid: process.pid, acquiredAt: Date.now() })}\n`,
-      "utf8",
-    );
+    // A self-pid record without a held token is a leftover from a recycled PID, not a live holder;
+    // only a lock genuinely acquired by a live process must block contenders.
+    const holder = new DataRootLock(lockFile);
+    await holder.acquire();
 
-    const lock = new DataRootLock(lockFile);
-    await expect(lock.acquire()).rejects.toThrow(/already running/);
+    const contender = new DataRootLock(lockFile);
+    await expect(contender.acquire()).rejects.toThrow(/already running/);
+    await holder.release();
   });
 
   it("reports missing, stale, active and malformed lock owners without mutating the file", async () => {
@@ -84,8 +84,10 @@ describe("DataRootLock", () => {
     await mkdir(join(root, "run"), { recursive: true });
     await writeFile(lockFile, `${JSON.stringify({ pid: DEAD_PID })}\n`, "utf8");
     await expect(lock.inspect()).resolves.toMatchObject({ state: "stale", pid: DEAD_PID });
-    await writeFile(lockFile, `${JSON.stringify({ pid: process.pid })}\n`, "utf8");
+    const holder = new DataRootLock(lockFile);
+    await holder.acquire();
     await expect(lock.inspect()).resolves.toMatchObject({ state: "active", pid: process.pid });
+    await holder.release();
     await writeFile(lockFile, "not-json", "utf8");
     await expect(lock.inspect()).resolves.toMatchObject({ state: "invalid" });
     await expect(readFile(lockFile, "utf8")).resolves.toBe("not-json");
@@ -227,5 +229,162 @@ describe("DataRootLock", () => {
     expect(results.filter((result) => result.startsWith("locked "))).toHaveLength(
       contenderCount - 1,
     );
+  }, 30_000);
+
+  it("reports a self-pid lock written with a foreign token as stale", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-lock-selfpid-"));
+    const lockFile = join(root, "server.lock");
+    // After a reboot a recycled PID can equal ours while the token in the file was written by an
+    // earlier boot's process; the PID alone must not mark that holder alive.
+    await writeFile(
+      lockFile,
+      `${JSON.stringify({ pid: process.pid, acquiredAt: 0, ownerToken: "foreign-owner" })}\n`,
+      "utf8",
+    );
+
+    const inspection = await new DataRootLock(lockFile).inspect();
+
+    expect(inspection).toEqual({ state: "stale", pid: process.pid });
+  });
+
+  it("reports a lock acquired by this process as active to a second instance", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-lock-ownlive-"));
+    const lockFile = join(root, "server.lock");
+    const lock = new DataRootLock(lockFile);
+    await lock.acquire();
+
+    const inspection = await new DataRootLock(lockFile).inspect();
+
+    expect(inspection).toEqual({ state: "active", pid: process.pid });
+    await lock.release();
+  });
+
+  it("keeps the PID fallback alive for legacy locks without an identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-lock-legacy-"));
+    const lockFile = join(root, "server.lock");
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+    });
+    try {
+      expect(child.pid).toBeGreaterThan(0);
+      await new Promise<void>((resolve) => {
+        const ping = setInterval(() => {
+          try {
+            process.kill(child.pid!, 0);
+            clearInterval(ping);
+            resolve();
+          } catch {
+            // Retry until the child process exists.
+          }
+        }, 10);
+      });
+      await writeFile(lockFile, `${JSON.stringify({ pid: child.pid, acquiredAt: 0 })}\n`, "utf8");
+
+      const inspection = await new DataRootLock(lockFile).inspect();
+
+      expect(inspection).toEqual({ state: "active", pid: child.pid! });
+    } finally {
+      child.kill();
+    }
+  });
+
+  it("reports a live PID whose recorded identity does not match as stale", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-lock-mismatch-"));
+    const lockFile = join(root, "server.lock");
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+    });
+    try {
+      expect(child.pid).toBeGreaterThan(0);
+      await new Promise<void>((resolve) => {
+        const ping = setInterval(() => {
+          try {
+            process.kill(child.pid!, 0);
+            clearInterval(ping);
+            resolve();
+          } catch {
+            // Retry until the child process exists.
+          }
+        }, 10);
+      });
+      // A live PID from a previous boot: alive, but not the process that wrote the identity.
+      await writeFile(
+        lockFile,
+        `${JSON.stringify({
+          pid: child.pid,
+          acquiredAt: 0,
+          processIdentity: "00000000-0000-0000-0000-000000000000:12345",
+        })}\n`,
+        "utf8",
+      );
+
+      const inspection = await new DataRootLock(lockFile).inspect();
+
+      expect(inspection).toEqual({ state: "stale", pid: child.pid! });
+    } finally {
+      child.kill();
+    }
+  });
+
+  it("treats a lock holder that died as stale even when its PID was recorded with an identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-lock-died-"));
+    const lockFile = join(root, "server.lock");
+    const moduleUrl = new URL("../src/runtime/lock.ts", import.meta.url).href;
+    // The child acquires the real lock (so the identity is written by createOwnerRecord, not by the
+    // test) and holds it until it is killed.
+    const childProgram = `
+      import { writeFile } from "node:fs/promises";
+      const { DataRootLock } = await import(process.env.ZCODE_TEST_LOCK_MODULE);
+      const lock = new DataRootLock(process.env.ZCODE_TEST_LOCK_FILE);
+      await lock.acquire();
+      await writeFile(process.env.ZCODE_TEST_LOCK_READY, "ready\\n");
+      // A pending promise does not keep the Node event loop alive; hold the lock with a timer so
+      // the process survives until the test kills it.
+      setInterval(() => {}, 1000);
+    `;
+    const child = spawn(
+      process.execPath,
+      ["--import", "tsx", "--input-type=module", "--eval", childProgram],
+      {
+        env: {
+          ...process.env,
+          ZCODE_TEST_LOCK_MODULE: moduleUrl,
+          ZCODE_TEST_LOCK_FILE: lockFile,
+          ZCODE_TEST_LOCK_READY: join(root, "ready"),
+        },
+        stdio: ["ignore", "ignore", "pipe"],
+      },
+    );
+    child.stderr.on("data", (chunk) => {
+      process.stderr.write(`[lock child] ${chunk}`);
+    });
+    const exited = new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", () => resolve());
+    });
+    try {
+      const readyDeadline = Date.now() + 20_000;
+      while (Date.now() < readyDeadline) {
+        if (
+          await readFile(join(root, "ready"), "utf8").then(
+            () => true,
+            () => false,
+          )
+        )
+          break;
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      }
+      const liveInspection = await new DataRootLock(lockFile).inspect();
+      expect(liveInspection).toEqual({ state: "active", pid: child.pid });
+
+      child.kill("SIGKILL");
+      await exited;
+
+      const deadInspection = await new DataRootLock(lockFile).inspect();
+      expect(deadInspection).toEqual({ state: "stale", pid: child.pid! });
+    } finally {
+      child.kill("SIGKILL");
+      await exited.catch(() => undefined);
+    }
   }, 30_000);
 });
