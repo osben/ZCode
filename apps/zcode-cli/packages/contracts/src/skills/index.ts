@@ -49,6 +49,11 @@ export interface SkillMetadata {
   pluginId?: string;
   qualifiedName?: string;
   path: string;
+  /**
+   * Physical identity of `path` (resolved real path, lower-cased on Windows), set by the adapter
+   * at discovery. Symlinked copies of one SKILL.md share it. Consumers fall back to `path`.
+   */
+  identity?: string;
   directory: string;
   rootPath: string;
   scope: SkillScope;
@@ -98,6 +103,11 @@ export interface SkillDiscoverRequest {
 
 export interface SkillLoadRequest {
   name: string;
+  /**
+   * Exact SKILL.md to load; when set, the skill is selected by physical identity and `name` is
+   * used only for errors.
+   */
+  path?: string;
   workingDirectory: string;
   roots?: SkillRoot[];
   maxBytes?: number;

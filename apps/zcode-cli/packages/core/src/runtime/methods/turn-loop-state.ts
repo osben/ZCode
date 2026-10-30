@@ -13,6 +13,7 @@ import type {
   TurnId,
 } from "../deps.js";
 import type { ActiveTurnSteeringState } from "../types.js";
+import type { ToolLoopHistory } from "../helpers/tool-loop-patterns.js";
 import type { ModelToolContract, ModelUsage, SubagentRunOptions } from "@zcode/contracts";
 import type { DrainedPendingInputDiagnostics, ModelExecutionContext } from "../types.js";
 import type { TurnMachineImpl } from "../deps.js";
@@ -120,6 +121,8 @@ export interface RegularTurnLoopState {
   reactiveCompactAttemptedInCurrentModelStep: boolean;
   repeatedToolCallSignature?: string;
   repeatedToolCallStreakCount: number;
+  /** Non-polling loop history for rotation detection; reset with the repeated-call streak. */
+  toolLoopHistory?: ToolLoopHistory;
   pendingStreamRecoveryRequest?: PendingStreamRecoveryRequest;
   stopHookContinuationCount: number;
   /** 最终成功 product turn 的 raw transcript 起点；只有确认不再 continue 时才赋值。 */

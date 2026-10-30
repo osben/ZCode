@@ -151,6 +151,9 @@ The runtime keeps a repeated-tool-call streak scoped to one turn's lifecycle:
 - Any new user input entering the current turn resets the streak, so continued attempts after an
   explicit user correction are not misread as a doom loop.
 - A new turn resets the streak.
+- Polling-shaped calls (TaskOutput/GetWorkflowRun, long-running results, successful log tails)
+  are transparent to this streak, and a short 2–3 tool rotation fires a `tool_call_rotation`
+  warning through the same pipeline. See `specs/tool-loop-rotation-detection.md`.
 
 ### 4.2 Warning trigger semantics
 

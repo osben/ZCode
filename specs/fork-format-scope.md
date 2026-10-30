@@ -46,6 +46,7 @@ Part of every upstream sync PR, in the same PR as the merge:
 2. Set `upstreamCommit` in `fork-upstream-base.json` to the full `<sha>` that was merged, and `upstreamVersion` to its version (informational only).
 3. Run `pnpm fmt:check`. Files changed only by upstream are now out of scope; files both sides changed are in scope and must be formatted (`pnpm fmt`).
 4. Remove `pendingUpstreamCommit` from `fork-upstream-base.json` in the same PR, if it was set (the pin now covers that commit).
+5. Run `pnpm db:migrations:baseline:update` and commit the regenerated `fork-upstream-migrations.json` (`specs/upstream-migration-freeze.md`). It refuses if upstream rewrote a frozen migration; a baseline already regenerated for `pendingUpstreamCommit` needs no change.
 
 ## Acceptance scenarios
 

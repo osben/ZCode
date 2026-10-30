@@ -54,6 +54,7 @@ import { deriveChildClientPorts } from "../helpers/child-client-ports.js";
 import { createCoordinatorResponsePort } from "../../subagent/coordinator-response.js";
 import { isStaleBranchRuntimeTaskEvent } from "./runtime-command-generation.js";
 import { loadPersistentAgentMemory } from "../../subagent/persistent-memory.js";
+import { filterSkillsByGrants, resolveSubagentSkillGrants } from "./subagent-skill-grants.js";
 import {
   createOfficialCuaPolicy,
   SUBAGENT_COMPUTER_USE_UNAVAILABLE_CODE,
@@ -181,7 +182,13 @@ export function createDefaultSubagentPort(
           [],
           this.config.pluginReferenceCatalog,
         );
-        await validateSubagentComputerUseConfiguration(request, preflightCuaPolicy, this.skillPort);
+        // One discovery feeds both the CUA checks and the frozen skill grants (specs/subagent-skill-identity.md).
+        const profileSkillDiscovery = await discoverProfileSkills.call(this, request);
+        await validateSubagentComputerUseConfiguration(
+          request,
+          preflightCuaPolicy,
+          profileSkillDiscovery,
+        );
         const childMcpAccess = await resolveSubagentMcpAccess.call(
           this,
           request,
@@ -203,10 +210,15 @@ export function createDefaultSubagentPort(
           childMcpAccess.parentSnapshot?.tools ?? childMcpAccess.snapshot?.tools ?? [],
           this.config.pluginReferenceCatalog,
         );
-        await validateSubagentComputerUseConfiguration(request, childCuaPolicy, this.skillPort);
-        const childSkillPort = resolveSubagentSkillPort(
-          this.skillPort,
-          request.profile.skills,
+        await validateSubagentComputerUseConfiguration(
+          request,
+          childCuaPolicy,
+          profileSkillDiscovery,
+        );
+        const childSkillPort = await resolveSubagentSkillPort.call(
+          this,
+          request,
+          profileSkillDiscovery,
           childCuaPolicy,
         );
         const baseChildModelFactory = modelOverride
@@ -831,25 +843,72 @@ function createSubagentMcpUnavailableError(
   );
 }
 
-function resolveSubagentSkillPort(
-  parentSkillPort: SkillPort | undefined,
-  skillNames: readonly string[] | undefined,
-  cuaPolicy: OfficialCuaPolicy,
-): SkillPort | undefined {
-  if (!parentSkillPort) {
-    return parentSkillPort;
+/**
+ * Discovery result shared by the CUA checks and the frozen skill grants for one child start.
+ * `skipped` means the profile declares no skills (or there is no skill port); `failed` fails closed.
+ */
+type ProfileSkillDiscovery =
+  | { readonly status: "skipped" }
+  | { readonly status: "failed" }
+  | { readonly status: "ok"; readonly outcome: SkillLoadOutcome };
+
+async function discoverProfileSkills(
+  this: AgentRuntimeInternal,
+  request: ExploreSubagentRuntimeRequest,
+): Promise<ProfileSkillDiscovery> {
+  if (!this.skillPort || !request.profile.skills?.length) return { status: "skipped" };
+  try {
+    // Same request shape as the child's own listing (discoverSkillsForContext), so grants are
+    // resolved against the roots the child will list from.
+    const outcome = await this.skillPort.discoverSkills({
+      workingDirectory: request.workingDirectory,
+      trace: request.traceContext,
+    });
+    return { status: "ok", outcome };
+  } catch (error) {
+    this.logger?.warn("Subagent skill discovery failed; starting without granted skills", {
+      agentType: request.agentType,
+      error: error instanceof Error ? error.message : String(error),
+      event: "subagent.skill_grants.discovery_failed",
+    });
+    return { status: "failed" };
   }
-  return new FilteredSkillPort(
-    parentSkillPort,
-    skillNames && skillNames.length > 0 ? new Set(skillNames) : undefined,
-    cuaPolicy,
-  );
+}
+
+async function resolveSubagentSkillPort(
+  this: AgentRuntimeInternal,
+  request: ExploreSubagentRuntimeRequest,
+  discovery: ProfileSkillDiscovery,
+  cuaPolicy: OfficialCuaPolicy,
+): Promise<SkillPort | undefined> {
+  if (!this.skillPort) {
+    return this.skillPort;
+  }
+  const entries = request.profile.skills ?? [];
+  if (discovery.status === "skipped") {
+    return new FilteredSkillPort(this.skillPort, undefined, entries, cuaPolicy);
+  }
+  if (discovery.status === "failed") {
+    return new FilteredSkillPort(this.skillPort, new Set(), entries, cuaPolicy);
+  }
+  const grants = resolveSubagentSkillGrants(entries, discovery.outcome.skills);
+  if (grants.unresolvedEntries.length > 0) {
+    this.logger?.warn("Subagent skill entries matched no discovered skill", {
+      agentType: request.agentType,
+      event: "subagent.skill_grants.unresolved",
+      unresolvedSkills: [...grants.unresolvedEntries],
+    });
+  }
+  return new FilteredSkillPort(this.skillPort, grants.identities, entries, cuaPolicy);
 }
 
 class FilteredSkillPort implements SkillPort {
   constructor(
     private readonly parent: SkillPort,
-    private readonly allowedSkills: ReadonlySet<string> | undefined,
+    /** Frozen physical identities; undefined means the profile declares no skill list. */
+    private readonly grants: ReadonlySet<string> | undefined,
+    /** Profile entries, kept only for error context. */
+    private readonly declaredSkills: readonly string[],
     private readonly cuaPolicy: OfficialCuaPolicy,
   ) {}
 
@@ -858,7 +917,10 @@ class FilteredSkillPort implements SkillPort {
     options?: SkillOperationOptions,
   ): Promise<SkillLoadOutcome> {
     const outcome = await this.parent.discoverSkills(request, options);
-    const skills = outcome.skills.filter((skill) => this.isAllowedSkill(skill));
+    const nonCuaSkills = outcome.skills.filter((skill) => !this.cuaPolicy.isOfficialSkill(skill));
+    const skills = this.grants
+      ? filterSkillsByGrants(nonCuaSkills, this.grants)
+      : nonCuaSkills;
     return {
       ...outcome,
       skills,
@@ -876,14 +938,14 @@ class FilteredSkillPort implements SkillPort {
     ) {
       throw createSubagentComputerUseUnavailableError(request.name);
     }
-    const resolvedName = await this.resolveAllowedSkillRequestName(request, options);
-    if (!resolvedName) {
+    const resolved = await this.resolveAllowedSkill(request, options);
+    if (!resolved) {
       throw createCoreError(
         CoreErrorType.ToolExecutionFailed,
         "Skill is not allowed for subagent",
         {
           context: {
-            allowedSkills: this.allowedSkills ? [...this.allowedSkills] : [],
+            allowedSkills: [...this.declaredSkills],
             skill: request.name,
             toolName: "Skill",
           },
@@ -891,7 +953,11 @@ class FilteredSkillPort implements SkillPort {
         },
       );
     }
-    return this.parent.loadSkill({ ...request, name: resolvedName }, options);
+    // Load the exact file that passed the filter; the parent must not re-resolve by name.
+    return this.parent.loadSkill(
+      { ...request, name: resolved.qualifiedName ?? resolved.name, path: resolved.path },
+      options,
+    );
   }
 
   private async hasUniqueOfficialSkillMatch(
@@ -910,19 +976,10 @@ class FilteredSkillPort implements SkillPort {
     return isUniqueOfficialSkillRequest(outcome.skills, request.name, this.cuaPolicy);
   }
 
-  private isAllowedSkill(skill: SkillContent["metadata"]): boolean {
-    if (this.cuaPolicy.isOfficialSkill(skill)) return false;
-    return (
-      this.allowedSkills === undefined ||
-      this.allowedSkills.has(skill.name) ||
-      (skill.qualifiedName !== undefined && this.allowedSkills.has(skill.qualifiedName))
-    );
-  }
-
-  private async resolveAllowedSkillRequestName(
+  private async resolveAllowedSkill(
     request: Parameters<SkillPort["loadSkill"]>[0],
     options?: SkillOperationOptions,
-  ): Promise<string | undefined> {
+  ): Promise<SkillContent["metadata"] | undefined> {
     const outcome = await this.discoverSkills(
       {
         workingDirectory: request.workingDirectory,
@@ -941,7 +998,7 @@ class FilteredSkillPort implements SkillPort {
         "Skill name is ambiguous for subagent; use the fully qualified skill name",
         {
           context: {
-            allowedSkills: this.allowedSkills ? [...this.allowedSkills] : [],
+            allowedSkills: [...this.declaredSkills],
             matchingSkills: matches.map((skill) => skill.qualifiedName ?? skill.name),
             skill: request.name,
             toolName: "Skill",
@@ -950,16 +1007,14 @@ class FilteredSkillPort implements SkillPort {
         },
       );
     }
-    // 可见 skills 列表会把 plugin skill 展示为 qualified name，并声明 bare alias 也可加载。
-    // 子 agent 按 bare alias 调用时，先绑定回过滤后的 metadata，避免父端按全局同名 skill 误加载。
-    return matches[0]?.qualifiedName ?? matches[0]?.name;
+    return matches[0];
   }
 }
 
 async function validateSubagentComputerUseConfiguration(
   request: ExploreSubagentRuntimeRequest,
   cuaPolicy: OfficialCuaPolicy,
-  parentSkillPort: SkillPort | undefined,
+  discovery: ProfileSkillDiscovery,
 ): Promise<void> {
   const explicitServer = request.profile.mcpServers?.find((serverName) =>
     cuaPolicy.serverNames.has(serverName.trim()),
@@ -971,18 +1026,10 @@ async function validateSubagentComputerUseConfiguration(
   let explicitSkill = request.profile.skills?.find((skillName) =>
     cuaPolicy.isOfficialSkillRequest(skillName),
   );
-  if (!explicitSkill && parentSkillPort && request.profile.skills?.length) {
-    try {
-      const outcome = await parentSkillPort.discoverSkills({
-        workingDirectory: request.workingDirectory,
-        trace: request.traceContext,
-      });
-      explicitSkill = request.profile.skills.find((skillName) =>
-        isUniqueOfficialSkillRequest(outcome.skills, skillName, cuaPolicy),
-      );
-    } catch {
-      // Skill discovery remains lazy; a later Skill load will surface its own error.
-    }
+  if (!explicitSkill && discovery.status === "ok") {
+    explicitSkill = request.profile.skills?.find((skillName) =>
+      isUniqueOfficialSkillRequest(discovery.outcome.skills, skillName, cuaPolicy),
+    );
   }
   if (!explicitServer && !explicitTool && !explicitSkill) return;
 

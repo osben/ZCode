@@ -510,8 +510,8 @@ sequenceDiagram
   binds, mismatch rejects and clears partial state); per-account codex refresh single-flight; logout
   clears the codex slot; probe throttle (≤1 per account per 60 s) and 401 → single refresh retry →
   silent absence; codex tokens never returned to the model-request resolver.
-- Commands (repo root): `pnpm --dir apps/zcode-cli/packages/adapters exec vitest run tests/<file>`
-  (per-package vitest), `pnpm --dir apps/zcode-cli check`, `pnpm typecheck`, `pnpm lint`,
+- Commands (repo root): `pnpm --filter @zcode/adapters exec vitest run tests/<file>`
+  (per-package vitest), `pnpm --filter zcode-cli check`, `pnpm typecheck`, `pnpm lint`,
   `pnpm architecture:check --changed`.
 - Manual/live verification (user-assisted): `zcode login chatgpt` with a real Plus/Pro account, a
   `GET /v1/models` dump, and a real agent turn. No real tokens in code, logs, or reports.

@@ -73,6 +73,7 @@ Test entry points are defined by the target package's current `package.json` and
 - Never modify upstream migration definitions or anything feeding their checksums: migration ids and order, schema DDL strings, frozen column declarations, migration SQL — including comments inside those strings. A changed checksum makes the other build reject the shared database.
 - Fork-owned tables and columns must use a `fork_` name prefix so a future upstream table can never collide with them.
 - Fork migrations use non-colliding ids (`9001_fork_*`), are additive only, and never take numbers in the upstream `000N` sequence.
+- `pnpm db:migrations:check` enforces this: upstream ledger checksums are pinned in `fork-upstream-migrations.json` (`specs/upstream-migration-freeze.md`).
 - `pnpm fmt` / `pnpm fmt:check` cover only files changed since the upstream commit pinned in `fork-upstream-base.json`; never reformat upstream-identical files. Every upstream sync PR bumps that pin (`specs/fork-format-scope.md`).
 - `setting.json` is not fork-safe storage: settings writes re-parse through the app settings schema, which strips keys unknown to the writing build (an upstream release would delete fork keys, and an older fork build would delete newer upstream keys). Fork-only state lives in `fork_`-prefixed storage (a fork DB table or a sidecar file), never as new `setting.json` keys.
 
