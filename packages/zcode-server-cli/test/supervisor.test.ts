@@ -68,6 +68,46 @@ async function waitForState(supervisor: Supervisor, state: string): Promise<void
   );
 }
 
+// The ready snapshot is written asynchronously after the ready IPC message; wait for the file to
+// actually carry it before taking a baseline, or the baseline can race the rename under load.
+async function waitForFileContent(
+  path: string,
+  predicate: (raw: string) => boolean,
+): Promise<string> {
+  const deadline = Date.now() + 5_000;
+  let last = "";
+  while (Date.now() < deadline) {
+    last = await readFile(path, "utf8").catch((error: unknown) => {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
+      throw error;
+    });
+    if (predicate(last)) return last;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`Timed out waiting for file content at ${path}; last content: ${last}`);
+}
+
+// Every Core IPC message schedules a fire-and-forget snapshot write; a write that already passed
+// its canWrite check still completes its rename after the lock is swapped. Only take the baseline
+// once the file has stopped changing, so a queued-but-unlanded write cannot fire after the swap.
+async function waitForStableFileContent(path: string): Promise<string> {
+  const stable = await waitForFileContent(path, (raw) => raw.includes('"state": "ready"'));
+  const deadline = Date.now() + 5_000;
+  let content = stable;
+  let stableReads = 0;
+  while (stableReads < 3 && Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    const next = await readFile(path, "utf8");
+    if (next === content) stableReads++;
+    else {
+      content = next;
+      stableReads = 0;
+    }
+  }
+  if (stableReads < 3) throw new Error(`Timed out waiting for stable content at ${path}`);
+  return content;
+}
+
 describe("Supervisor lifecycle", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -1024,6 +1064,80 @@ describe("Supervisor lifecycle", () => {
       expect(supervisor.status()).toMatchObject({ state: "ready", generation: 2 });
     } finally {
       vi.useRealTimers();
+      await supervisor.stop().catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("stops writing snapshots and steps down when the data-root lock is taken by a new owner", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-r2-locktaken-"));
+    const core = new FakeCore();
+    const losses: string[] = [];
+    const supervisor = new Supervisor({
+      layout: resolveServerLayout(join(root, "server")),
+      launcher: {
+        launch: (generation) => {
+          core.reportReady(generation);
+          return core as unknown as ChildProcess;
+        },
+      },
+      version: "test",
+      onServerRootLost: (loss) => losses.push(loss),
+    });
+    try {
+      await supervisor.start();
+      await waitForState(supervisor, "ready");
+      const layout = resolveServerLayout(join(root, "server"));
+      const snapshotBeforeLoss = await waitForStableFileContent(layout.statusFile);
+
+      // The server root was replaced underneath the daemon: the lock path now holds another owner.
+      await writeFile(
+        resolveServerLayout(join(root, "server")).lockFile,
+        `${JSON.stringify({ pid: process.pid, acquiredAt: Date.now(), ownerToken: "new-owner" })}\n`,
+        "utf8",
+      );
+
+      // The next snapshot write must be skipped instead of publishing this instance's state as the
+      // new root's daemon, and the supervisor must stop the Core and report the takeover.
+      await supervisor.stop();
+      await vi.waitFor(() => expect(losses).toEqual(["taken"]));
+      expect(core.shutdownRequested).toBe(true);
+      await expect(
+        readFile(resolveServerLayout(join(root, "server")).statusFile, "utf8"),
+      ).resolves.toBe(snapshotBeforeLoss);
+    } finally {
+      await supervisor.stop().catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a missing data-root lock as lost without touching the snapshot", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-r2-lockmissing-"));
+    const core = new FakeCore();
+    const losses: string[] = [];
+    const supervisor = new Supervisor({
+      layout: resolveServerLayout(join(root, "server")),
+      launcher: {
+        launch: (generation) => {
+          core.reportReady(generation);
+          return core as unknown as ChildProcess;
+        },
+      },
+      version: "test",
+      onServerRootLost: (loss) => losses.push(loss),
+    });
+    try {
+      await supervisor.start();
+      await waitForState(supervisor, "ready");
+      await waitForStableFileContent(resolveServerLayout(join(root, "server")).statusFile);
+
+      // The whole server root was deleted while the daemon kept running.
+      await rm(join(root, "server", "run"), { recursive: true, force: true });
+
+      await supervisor.stop();
+      await vi.waitFor(() => expect(losses).toEqual(["missing"]));
+      expect(core.shutdownRequested).toBe(true);
+    } finally {
       await supervisor.stop().catch(() => undefined);
       await rm(root, { recursive: true, force: true });
     }

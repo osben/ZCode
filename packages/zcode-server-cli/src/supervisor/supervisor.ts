@@ -19,7 +19,7 @@ import {
 } from "../contracts.js";
 import { createControlServer, type ControlHandler } from "../ipc/controlServer.js";
 import { ControlRequestError } from "../ipc/controlError.js";
-import { DataRootLock } from "../runtime/lock.js";
+import { DataRootLock, type DataRootLockLoss } from "../runtime/lock.js";
 import { resolveServerLayout, type ServerLayout } from "../runtime/paths.js";
 import { ReleaseManager } from "../runtime/releaseManager.js";
 import { createStatusPersister } from "../runtime/statusSnapshot.js";
@@ -50,6 +50,12 @@ export interface SupervisorOptions {
   coreKillTimeoutMs?: number;
   now?: () => number;
   onStopped?: () => void;
+  /**
+   * The data-root lock on the path no longer belongs to this instance; the Core has been stopped
+   * and the caller ends the process according to the reason: exit non-zero on "missing" so the
+   * service manager starts a new owner, exit 0 on "taken" because a new owner already runs.
+   */
+  onServerRootLost?: (loss: DataRootLockLoss) => void;
 }
 
 type LifecycleOperationKind = "stop" | "restart" | "update" | "uninstall";
@@ -81,6 +87,7 @@ export class Supervisor {
    * cleared with the core scope and folded into lastExitReason when the Core exits.
    */
   private coreFatalMessage: string | undefined;
+  private serverRootLost = false;
 
   public constructor(private readonly options: SupervisorOptions) {
     this.layout = options.layout ?? resolveServerLayout();
@@ -91,7 +98,38 @@ export class Supervisor {
       this.layout.statusFile,
       () => this.status(),
       (error) => log.warn("failed to persist status snapshot", error),
+      () => this.ownsServerRoot(),
     );
+  }
+
+  private async ownsServerRoot(): Promise<boolean> {
+    // While the daemon runs, the server root can be deleted or replaced: this instance's lock,
+    // control socket and the ingress-token written by the Core vanish with the old directory, yet
+    // the Supervisor keeps writing ready snapshots with the old port into the new root's
+    // status.json. probe and serve --daemon then treat that snapshot as the new root's daemon and
+    // fail reading the token; the OS service unit stays active so start never spawns a real owner,
+    // and every reconnect repeats the failure. Confirm the lock on the path is still ours before
+    // each snapshot write; once it is not, stop writing, stop the Core and end the process so the
+    // service manager or the next serve --daemon starts the actual owner.
+    if (this.serverRootLost) return false;
+    const loss = await this.lock.readLoss();
+    if (!loss) return true;
+    this.serverRootLost = true;
+    void this.stepDownAfterServerRootLost(loss);
+    return false;
+  }
+
+  private async stepDownAfterServerRootLost(loss: DataRootLockLoss): Promise<void> {
+    log.error("data-root lock is gone or owned by another instance; stopping this supervisor", {
+      serverRoot: this.layout.serverRoot,
+      loss,
+    });
+    // Deliberately not stopInternal: control.close() and lock release clean up by path, and the
+    // socket and lock on that path may already belong to the new owner.
+    await this.stopCore("server root lost").catch((error: unknown) => {
+      log.error("failed to stop server core after server root was lost", error);
+    });
+    this.options.onServerRootLost?.(loss);
   }
 
   public async start(): Promise<ServerStatus> {
