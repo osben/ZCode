@@ -5,17 +5,13 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ServerIcon } from "lucide-react";
-import {
-  OLLAMA_DEFAULT_BASE_URL,
-  type OllamaDetectionResult,
-  type OllamaModelSummary,
-} from "@zcode/services";
+import { OLLAMA_DEFAULT_BASE_URL, type OllamaModelSummary } from "@zcode/services";
 import type { ModelConfigObject, ProviderConfigObject } from "@zcode/provider";
 import { Button } from "@/components/ui/button.js";
 import { Checkbox } from "@/components/ui/checkbox.js";
 import { Input } from "@/components/ui/input.js";
 import { Spinner } from "@/components/ui/spinner.js";
-import { useServices } from "@/hooks/useServices.js";
+import { useOllamaDetection } from "@/hooks/useOllamaDetection.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { ProviderSettingsFormProvider } from "@/lib/providerSettingsFormTypes.js";
 import { logger } from "@/logger.js";
@@ -31,49 +27,22 @@ import {
   planOllamaSync,
 } from "./ollamaSync.js";
 
-interface OllamaDetectionState {
-  readonly loading: boolean;
-  readonly result: OllamaDetectionResult | null;
-}
-
-/** One probe per call; only the newest response writes state (specs/ollama-local-provider.md OL9). */
-export function useOllamaDetection() {
-  const { providerSettingsService } = useServices();
-  const [state, setState] = useState<OllamaDetectionState>({ loading: false, result: null });
-  const sequenceRef = useRef(0);
-  const detect = useCallback(
-    async (baseUrl: string) => {
-      const sequence = ++sequenceRef.current;
-      setState((current) => ({ ...current, loading: true }));
-      let result: OllamaDetectionResult;
-      try {
-        result = await providerSettingsService.detectOllama({ baseUrl });
-      } catch (error) {
-        logger.warn("[OllamaDetail] detection failed", error);
-        result = {
-          reachable: false,
-          baseUrl,
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
-      if (sequence === sequenceRef.current) setState({ loading: false, result });
-    },
-    [providerSettingsService],
-  );
-  return { ...state, detect };
-}
-
 function formatContext(tokens: number): string {
   return tokens >= 1024 ? `${Math.round(tokens / 1024)}K` : String(tokens);
 }
 
 export function OllamaDetail({
+  workspacePath,
+  workspaceIdentity,
   provider,
   onCreateProvider,
   onAddModel,
   onDeleteModel,
   onOpenProvider,
 }: {
+  /** The active workspace: its host runs the detection probe (a remote workspace probes its own machine). */
+  workspacePath: string;
+  workspaceIdentity?: string;
   /** The `ollama` personal provider, or null before the first sync. */
   provider: ProviderSettingsFormProvider | null;
   onCreateProvider: (input: {
@@ -94,7 +63,8 @@ export function OllamaDetail({
   const providerRoot = ollamaRootFromProvider(provider);
   const [address, setAddress] = useState(providerRoot ?? OLLAMA_DEFAULT_BASE_URL);
   const effectiveAddress = providerRoot ?? address;
-  const detection = useOllamaDetection();
+  // The probe follows the workspace's host; the provider mutations above stay on the local Host.
+  const detection = useOllamaDetection(workspacePath, workspaceIdentity);
   const detect = detection.detect;
   const [checked, setChecked] = useState<ReadonlySet<string> | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -110,10 +80,12 @@ export function OllamaDetail({
   const result = detection.result;
   const models: readonly OllamaModelSummary[] = result?.reachable ? result.models : [];
   const providerModelKey = ollamaProviderModelIds(provider).join("\n");
-  // The checklist starts from the provider's models; a fresh detection or a change of those models resets it.
+  // A fresh detection resets the checklist to the provider's models. A provider view commit must
+  // not reset it: mid-sync that would drop the requested set, so a partial failure leaves no plan
+  // (OL8); a completed sync re-derives the checklist below instead.
   useEffect(() => {
     setChecked(null);
-  }, [providerModelKey, result]);
+  }, [result]);
   const checkedSet = useMemo(
     () => checked ?? new Set(providerModelKey ? providerModelKey.split("\n") : []),
     [checked, providerModelKey],
@@ -143,6 +115,8 @@ export function OllamaDetail({
       }
       for (const step of plan.add) await onAddModel(OLLAMA_PROVIDER_ID, step.modelId, step.config);
       for (const modelId of plan.remove) await onDeleteModel(OLLAMA_PROVIDER_ID, modelId);
+      // Completed: the provider now holds the requested set; re-derive the checklist from it.
+      setChecked(null);
     } catch (error) {
       logger.warn("[OllamaDetail] sync failed", error);
       setSyncError(error instanceof Error ? error.message : String(error));
@@ -202,7 +176,12 @@ export function OllamaDetail({
               value={effectiveAddress}
               readOnly={providerRoot !== null}
               spellCheck={false}
-              onChange={(event) => setAddress(event.target.value)}
+              onChange={(event) => {
+                // Any edit invalidates the previous result and drops an in-flight probe: Save must
+                // require a detection of the address that is currently shown (OL10).
+                detection.reset();
+                setAddress(event.target.value);
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter") void detect(effectiveAddress);
               }}

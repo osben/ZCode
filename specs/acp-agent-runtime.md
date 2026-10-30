@@ -260,8 +260,10 @@ Product rules:
 - A catalog without a model select says the agent offers no model choice (Test would not change it).
 - No catalog yet (never run or tested): the section shows "Run Test to load this agent's models"
   and the Test action. The Test action lives in the Models section (label "Test", the roundtrip of
-  "Settings UI placement"); a successful Test rereads the catalog, so the list fills without
-  leaving the page. The OK/failed line stays next to the action; stderr and frames live in Advanced.
+  "Settings UI placement"); a Test rereads the catalog when it returns, even when the prompt part
+  failed — the handshake records the agent's offered options before the prompt, so a failed prompt
+  does not hide a discovered catalog. The OK/failed line stays next to the action; stderr and
+  frames live in Advanced.
 - Advanced is collapsed on open and keeps its content mounted while collapsed (the launch form
   draft survives toggling). It expands by itself while the env text has invalid lines.
 
@@ -289,17 +291,18 @@ Owner and storage:
 
 Acceptance:
 
-| #   | Given                                       | When                                | Then                                                              |
-| --- | ------------------------------------------- | ----------------------------------- | ----------------------------------------------------------------- |
-| SM1 | Catalog with models A, B, C, nothing hidden | Settings opens the agent            | A, B, C are checked; Advanced is collapsed                        |
-| SM2 | SM1                                         | User unchecks B                     | `hiddenModels = [B]` is stored; the composer select lists A and C |
-| SM3 | Hidden = [B], agent's current value is B    | Composer renders the agent's select | B is listed (current value is never hidden)                       |
-| SM4 | Only A is checked                           | Settings renders                    | A's checkbox is disabled                                          |
-| SM5 | No catalog                                  | Settings opens the agent            | Empty state with Test; after a successful Test the list appears   |
-| SM6 | Env text has an invalid line                | Settings renders                    | Advanced is expanded and shows the env error                      |
-| SM7 | Write of hidden models fails                | User toggles a checkbox             | The checkbox reverts and an alert is shown                        |
+| #   | Given                                       | When                                | Then                                                                       |
+| --- | ------------------------------------------- | ----------------------------------- | -------------------------------------------------------------------------- |
+| SM1 | Catalog with models A, B, C, nothing hidden | Settings opens the agent            | A, B, C are checked; Advanced is collapsed                                 |
+| SM2 | SM1                                         | User unchecks B                     | `hiddenModels = [B]` is stored; the composer select lists A and C          |
+| SM3 | Hidden = [B], agent's current value is B    | Composer renders the agent's select | B is listed (current value is never hidden)                                |
+| SM4 | Only A is checked                           | Settings renders                    | A's checkbox is disabled                                                   |
+| SM5 | No catalog                                  | Settings opens the agent            | Empty state with Test; after a successful Test the list appears            |
+| SM6 | Env text has an invalid line                | Settings renders                    | Advanced is expanded and shows the env error                               |
+| SM7 | Write of hidden models fails                | User toggles a checkbox             | The checkbox reverts and an alert is shown                                 |
+| SM8 | Handshake succeeded, the prompt fails       | Test                                | The Models list shows the discovered catalog; the failed line is announced |
 
-Tests: `packages/ui/test/acpAgentDetail.test.ts` (SM1, SM2, SM4–SM7), `externalAgentConfig.test.ts`
+Tests: `packages/ui/test/acpAgentDetail.test.ts` (SM1, SM2, SM4–SM8), `externalAgentConfig.test.ts`
 (SM2, SM3), `packages/provider-node/test/fork-acp-agent-model-visibility-store.test.ts`, and desktop
 E2E `ACP-E2E-06` (Test loads the mock agent's models; an unchecked one lands in
 `fork_acp_agent_model_visibility.json`; the last visible one is disabled).

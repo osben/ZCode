@@ -185,6 +185,29 @@ describe("AcpAgentDetail", () => {
     await waitFor(() => expect(screen.getAllByTestId("acp-agent-model-checkbox")).toHaveLength(3));
   });
 
+  it("reloads the catalog even when the test prompt fails (SM8)", async () => {
+    providerSettingsService.getAcpAgentCatalog
+      .mockResolvedValueOnce({ supported: true })
+      .mockResolvedValueOnce({ supported: true, options: [MODEL_OPTION] });
+    providerSettingsService.testAcpAgent.mockResolvedValueOnce({
+      ok: false,
+      error: { message: "prompt timeout" },
+      frames: [],
+      framesDropped: 0,
+      durationMs: 5,
+    });
+    render(detail({ agent: agent(null) }));
+    await waitFor(() => expect(screen.getByTestId("acp-agent-models-empty")).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("acp-agent-test-button"));
+    });
+
+    // The handshake recorded the agent's options before the prompt failed, so the list still fills.
+    await waitFor(() => expect(screen.getAllByTestId("acp-agent-model-checkbox")).toHaveLength(3));
+    expect(screen.getByRole("alert").textContent).toContain("prompt timeout");
+  });
+
   it("says so when the agent offers no model select", async () => {
     providerSettingsService.getAcpAgentCatalog.mockResolvedValueOnce({
       supported: true,

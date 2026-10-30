@@ -1109,6 +1109,12 @@ exceptions:
       - packages/ui/src/settings/model-provider-section/acpAgentLogo.ts
       - packages/ui/src/settings/model-provider-section/AcpAgentDetailSections.tsx
     reason: The ACP agent brand mark (specs/acp-agent-runtime.md "Agent registry") and the detail pane's Models and Advanced sections sit next to their neighbours in the unmanaged packages/ui settings model-provider-section tree (AcpAgentCard, AcpAgentsPanel). Keeping it there avoids a boundary refactor of the settings tree; adopting packages/ui/src/settings needs a separate module boundary refactor.
+  - id: model-settings-review-hooks-unmanaged-files
+    rule: unmanaged-new-file
+    paths:
+      - packages/ui/src/hooks/useAcpAgentHiddenModels.ts
+      - packages/ui/src/hooks/useOllamaDetection.ts
+    reason: Review fixes extract the ACP hidden-models write queue and the workspace-routed Ollama detection probe into hooks under packages/ui/src/hooks, so the settings components access services through hooks per packages/ui/AGENTS.md and the probe resolves the workspace's host per specs/ollama-local-provider.md while provider mutations keep the Local Host. Same unmanaged packages/ui tree as acp-agent-brand-mark-unmanaged-files; adopting it needs a separate module boundary refactor.
   - id: legacy-snapshot-async-read-unmanaged-files
     rule: unmanaged-new-file
     paths:

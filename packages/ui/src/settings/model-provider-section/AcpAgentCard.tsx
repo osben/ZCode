@@ -184,8 +184,9 @@ export function AcpAgentDetail({
         env: form.env,
       });
       setTestResult(result);
-      // A successful roundtrip records the agent's offered options, so the Models list rereads them.
-      if (result.ok) reloadCatalog();
+      // The handshake records the agent's offered options before the prompt runs, so the Models
+      // list rereads them even when the prompt part of the test failed (SM8).
+      reloadCatalog();
     } catch (error) {
       logger.warn("[AcpAgentCard] test failed", error);
       setActionError(error instanceof Error ? error.message : String(error));

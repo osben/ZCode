@@ -247,17 +247,23 @@ export function resolveModelProviderSideSelectionKey(
 }
 
 /**
- * Model Provider settings receive the Local Host only from SettingsPage; this component does not accept workspaceIdentity,
- * preventing a remote workspace from routing Provider Settings reads and writes to the remote Environment.
+ * Model Provider settings receive the Local Host only from SettingsPage; provider settings reads and
+ * writes never route to a remote workspace's Environment. The one exception is the Ollama detection
+ * probe, which per specs/ollama-local-provider.md runs on the host that owns the workspace:
+ * `workspaceIdentity` exists only so the probe resolves the workspace's services, never for
+ * provider configuration.
  */
 export function ModelProviderSection({
   workspacePath = "",
+  workspaceIdentity,
   connectivityWorkspacePath,
   connectivityWorkspaceRequired = false,
   pendingModelProviderTarget,
   onConsumePendingModelProviderTarget,
 }: {
   workspacePath?: string;
+  /** Only routes the Ollama detection probe to the workspace's host; see the component comment. */
+  workspaceIdentity?: string;
   connectivityWorkspacePath?: string;
   connectivityWorkspaceRequired?: boolean;
   pendingModelProviderTarget?: SettingsModelProviderTarget;
@@ -1303,6 +1309,8 @@ export function ModelProviderSection({
         ) : selectedNavItem?.type === "ollama" ? (
           <OllamaDetail
             key={selectedNavItem.key}
+            workspacePath={workspacePath}
+            workspaceIdentity={workspaceIdentity}
             provider={selectedNavItem.provider}
             onCreateProvider={createPersonalProvider}
             onAddModel={addPersonalModel}

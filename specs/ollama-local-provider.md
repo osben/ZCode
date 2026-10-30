@@ -24,8 +24,13 @@ API (`/api/version`, `/api/tags`, `/api/show`).
     exists, the address is the provider's `api.baseUrl` root and is edited in the provider's own
     settings; the field is read-only here.
   - Detect / Rescan: probes the server on the **host that owns the workspace** (a remote
-    workspace probes the remote machine's own address). Detection runs once when the detail opens
-    and again on Rescan. Only the newest response writes state.
+    workspace probes the remote machine's own address). The Settings pane resolves the workspace's
+    services for the probe (`useWorkspaceServices`, so a remote workspace's call routes to its
+    host's services assembly); the provider mutations keep the local Host, because model
+    configuration is a local global fact. Detection runs once when the detail opens and again on
+    Rescan. Only the newest response writes state. Editing the address invalidates the previous
+    result (and drops an in-flight probe): Save stays disabled until the address that is currently
+    shown was detected, so a save never uses a root the input no longer shows.
   - Status: "Connected · Ollama <version> · <n> models" or "Not reachable: <reason>".
   - Model checklist: every model from `/api/tags`, labelled with its name, its parameter size and
     its context length. A checked model is in the provider. A model is selectable only when its
@@ -59,7 +64,9 @@ initialConfig: { access: { type: "api-key", apiKey: "ollama" }, api: { type:
 
 Writes run in that order, one at a time. A failure stops the sync, shows an alert and keeps the
 checklist; running Save again computes the same plan from the current provider and finishes it
-(every step is idempotent against the provider's current models).
+(every step is idempotent against the provider's current models). The checklist keeps the user's
+requested set while a sync runs and after a partial failure — a provider view commit mid-sync must
+not reset it — and re-derives from the provider only after a completed sync or a fresh detection.
 
 ## Detector (host RPC)
 
@@ -72,8 +79,9 @@ string[] }` (`capabilities` absent = unknown).
 - `GET <root>/api/version` (2 s timeout), `GET <root>/api/tags` (3 s), then
   `POST <root>/api/show` with `{ "model": name }` per model (3 s each, at most 4 in flight). A
   failed `/api/show` leaves that model's details unknown; it does not fail detection.
-- Uses the host's `fetch` (Node). It runs in the services assembly, so the generic remote service
-  proxy routes a remote workspace's call to that host.
+- Uses the host's `fetch` (Node). It runs in the services assembly; the Settings pane calls it
+  through the workspace's resolved services (`useWorkspaceServices`), so a remote workspace's
+  probe reaches its own host while the provider mutations stay on the local Host.
 - Logging: `info` once per detection with reachable/model count; never the address of a
   non-default server.
 
@@ -106,19 +114,20 @@ User checks models ─► Save ─► create? ─► add* ─► delete* ─► 
 
 ## Acceptance
 
-| #   | Given                                         | When                       | Then                                                                                         |
-| --- | --------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------- |
-| OL1 | No server on the address                      | Ollama detail opens        | "Not reachable" with the reason; Save disabled                                               |
-| OL2 | Server with `qwen3` (completion, tools)       | Detect                     | `qwen3` listed, selectable, unchecked                                                        |
-| OL3 | Server model with capabilities `["speech"]`   | Detect                     | Listed, unchecked, disabled, "Not a chat model"                                              |
-| OL4 | OL2, no provider                              | Check `qwen3`, Save        | `provider_config.json` has provider `ollama` (placeholder key, `/v1` URL) with model `qwen3` |
-| OL5 | Provider has `qwen3`, server still lists it   | Uncheck `qwen3`, Save      | `qwen3` is removed from the provider                                                         |
-| OL6 | Provider has `old`, server no longer lists it | Save                       | `old` is kept                                                                                |
-| OL7 | Address `http://127.0.0.1:11434/v1/`          | Detect                     | Probes `http://127.0.0.1:11434/api/*`                                                        |
-| OL8 | A write fails mid-sync                        | Save                       | Alert; a second Save completes the remaining steps                                           |
-| OL9 | Two detections in flight                      | The older one settles last | The newer result stays                                                                       |
+| #    | Given                                         | When                       | Then                                                                                                             |
+| ---- | --------------------------------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| OL1  | No server on the address                      | Ollama detail opens        | "Not reachable" with the reason; Save disabled                                                                   |
+| OL2  | Server with `qwen3` (completion, tools)       | Detect                     | `qwen3` listed, selectable, unchecked                                                                            |
+| OL3  | Server model with capabilities `["speech"]`   | Detect                     | Listed, unchecked, disabled, "Not a chat model"                                                                  |
+| OL4  | OL2, no provider                              | Check `qwen3`, Save        | `provider_config.json` has provider `ollama` (placeholder key, `/v1` URL) with model `qwen3`                     |
+| OL5  | Provider has `qwen3`, server still lists it   | Uncheck `qwen3`, Save      | `qwen3` is removed from the provider                                                                             |
+| OL6  | Provider has `old`, server no longer lists it | Save                       | `old` is kept                                                                                                    |
+| OL7  | Address `http://127.0.0.1:11434/v1/`          | Detect                     | Probes `http://127.0.0.1:11434/api/*`                                                                            |
+| OL8  | A write fails mid-sync                        | Save                       | Alert; a second Save completes the remaining steps                                                               |
+| OL9  | Two detections in flight                      | The older one settles last | The newer result stays                                                                                           |
+| OL10 | Server A detected, a model checked            | The address is edited      | The result is dropped: Save disables until the new address is detected, and a save then uses that address's root |
 
 Tests: detector unit tests with a fake fetch (normalization, unknown capabilities, `/api/show`
 failure, unreachable, timeout); pure sync-plan tests (OL4–OL6, OL8); jsdom tests for the detail
-(OL1–OL3, OL9); desktop E2E with a mock Ollama HTTP server on a random port (OL2, OL4, OL5).
+(OL1–OL3, OL8–OL10); desktop E2E with a mock Ollama HTTP server on a random port (OL2, OL4, OL5).
 Manual: a real round trip with a local tool-capable model.
