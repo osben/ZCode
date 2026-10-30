@@ -9,6 +9,7 @@ This is a TypeScript Node.js coding-agent CLI that supports mainstream models an
 - Tests are essential and should demonstrate whether the result meets expectations.
 - Update feature documentation to describe final behavior, reusing existing specs. For bug fixes, retain regression evidence and use English comments only when documenting non-obvious root causes and prevention constraints.
 - Make the project agent-friendly by providing logs or interfaces that let an agent take over the work.
+- Keep the model-visible prompt prefix (tools, system blocks, context attachments) byte-stable across turns; per-turn content goes in tail reminders. See `specs/prompt-cache-stability.md` at the repository root.
 - Prioritize long-running tasks: the core agent loop is designed by default for complex tasks that can run continuously and does not impose a hard stop based on tool-call count. Token/context limits with automatic compaction, user cancellation, permission denial, tool timeouts, output truncation, and provider retry limits provide explicit resource and safety boundaries.
 - A single source file should stay within 800 lines by default (blank lines and comments excluded). Existing over-limit files are registered as warnings in the root `.oxlintrc.json`; do not split a file only to satisfy the count. Split it into cohesive, loosely coupled modules when a real responsibility boundary calls for it, rather than continuing to accumulate responsibilities in a large file.
 - Extract string and numeric constants into named variables or constants rather than scattering literals through business logic, so they can be changed in one place and maintained consistently.
@@ -97,6 +98,6 @@ This is a TypeScript Node.js coding-agent CLI that supports mainstream models an
 
 ## Verification
 
-- Before completing code changes, run `pnpm typecheck` and `pnpm lint` from the repository root. For CLI changes, also run `pnpm --dir apps/zcode-cli typecheck` and `pnpm --dir apps/zcode-cli lint`.
+- Before completing code changes, run `pnpm typecheck` and `pnpm lint` from the repository root. For CLI changes, also run `pnpm --filter zcode-cli typecheck` and `pnpm --filter zcode-cli lint` (not `--dir`: `apps/zcode-cli` has its own `pnpm-workspace.yaml`).
 - Determine test entry points from the target package's current `package.json` and actual test files; do not assume a unified test command exists. Run the relevant tests for behavior changes and cover E2E scenarios for interaction changes.
 - Accurately report commands run, results, and unverified areas. Do not claim checks passed when test entry points are missing, existing failures remain, or the environment prevented verification.

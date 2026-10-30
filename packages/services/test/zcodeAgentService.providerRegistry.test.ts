@@ -822,6 +822,9 @@ describe("createZCodeAgentService provider registry", () => {
           providerCount: 1,
         };
       }
+      if (method === zcodeProtocolMethods.runtimeCapabilities) {
+        return { providerRegistryRefresh: true };
+      }
       if (method === zcodeProtocolMethods.providerRefreshRegistry) {
         return { refreshed: true as const };
       }
@@ -886,10 +889,11 @@ describe("createZCodeAgentService provider registry", () => {
       model: { providerId: "e2e-primary", modelId: "deepseek-v4-flash" },
     });
 
-    // Fork adaptation (specs/services-upstream-sync-part4.md, 8c): the fork sends no
-    // provider/refreshRegistry barrier before session/create; the worker assembles its own registry.
+    // specs/provider-registry-refresh-barrier.md: session/create waits for the worker registry refresh.
     expect(calls).toEqual([
       zcodeProtocolMethods.providerUpdateAccountConfig,
+      zcodeProtocolMethods.runtimeCapabilities,
+      zcodeProtocolMethods.providerRefreshRegistry,
       zcodeProtocolMethods.sessionCreate,
     ]);
     expect(request).toHaveBeenNthCalledWith(
@@ -1101,9 +1105,111 @@ describe("createZCodeAgentService provider registry", () => {
     service.disposeAll();
   });
 
-  it.each(["refreshed", "failed"] as const)(
-    "switches a model with unchanged account config without a worker registry barrier (refresh outcome: %s)",
-    async (refreshResult) => {
+  it("refreshes the worker registry before a V4 createSession but not before a submission reservation", async () => {
+    const accountSource = createAccountProviderConfigChangeSource({
+      revision: "account-1",
+      basedOnZCodeBuiltinRevision: "zcode-builtin:1",
+      providers: new ProviderConfigMap([]),
+    });
+    const calls: string[] = [];
+    const request = vi.fn(async (method: string, params?: unknown) => {
+      calls.push(
+        method === V4_METHODS.command ? `${method}:${(params as { type: string }).type}` : method,
+      );
+      if (method === zcodeProtocolMethods.runtimeCapabilities) {
+        return { durableFirstSubmission: true, providerRegistryRefresh: true };
+      }
+      if (method === zcodeProtocolMethods.providerUpdateAccountConfig) {
+        return { receivedRevision: "account-1", status: "received", providerCount: 0 };
+      }
+      if (method === zcodeProtocolMethods.providerRefreshRegistry) {
+        return { refreshed: true };
+      }
+      if (method === V4_METHODS.command) {
+        return {
+          commandId: (params as { commandId: string }).commandId,
+          status: "accepted" as const,
+          revisionAtDecision: 1,
+          result: { type: "createSession" as const, sessionId: "sess_v4" },
+        };
+      }
+      throw new Error(`Unexpected method ${method}`);
+    });
+    vi.resetModules();
+    vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
+      ZCodeAgentProcessManager: class extends MockProcessManagerBase {
+        async getClient() {
+          return {
+            request,
+            transportKind: "stdio",
+            onNotification: () => ({ dispose() {} }),
+            onRequest: () => ({ dispose() {} }),
+            onClose: () => ({ dispose() {} }),
+          };
+        }
+        disposeAll() {}
+      },
+    }));
+    const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
+    const service = createZCodeAgentService({
+      modelSelectionReadinessSource: createReadyModelSelectionSource(),
+      accountProviderConfigSource: accountSource.source,
+    });
+    try {
+      await service.sendConversationCommandV4({
+        workspacePath: "/workspace/app",
+        envelope: {
+          commandId: "cmd-reserve",
+          clientId: "client-v4",
+          sessionId: null,
+          type: "createSession",
+          payload: {
+            workspaceId: "/workspace/app",
+            sessionId: "sess_v4",
+            submissionPreparation: { submissionId: "submission-1" },
+          },
+          issuedAt: 1,
+        },
+      });
+      // The reservation touches no provider: no Account Config delivery and no registry refresh.
+      expect(calls).toEqual([
+        zcodeProtocolMethods.runtimeCapabilities,
+        `${V4_METHODS.command}:createSession`,
+      ]);
+      calls.length = 0;
+      await service.sendConversationCommandV4({
+        workspacePath: "/workspace/app",
+        envelope: {
+          commandId: "cmd-create",
+          clientId: "client-v4",
+          sessionId: null,
+          type: "createSession",
+          payload: {
+            workspaceId: "/workspace/app",
+            config: { provider: "custom:glm", model: "glm-5.2", thought: "max" },
+          },
+          issuedAt: 2,
+        },
+      });
+      expect(calls).toEqual([
+        zcodeProtocolMethods.providerUpdateAccountConfig,
+        zcodeProtocolMethods.providerRefreshRegistry,
+        `${V4_METHODS.command}:createSession`,
+      ]);
+    } finally {
+      service.disposeAll();
+    }
+  });
+
+  // specs/provider-registry-refresh-barrier.md: provisioning can change the Worker's Personal config
+  // without a new Account Config revision, so a model switch waits for the Worker registry refresh.
+  it.each([
+    { refreshResult: "refreshed", capability: true },
+    { refreshResult: "failed", capability: true },
+    { refreshResult: "refreshed", capability: false },
+  ] as const)(
+    "switches a model with unchanged account config after the worker registry refresh: %o",
+    async ({ refreshResult, capability }) => {
       const accountSource = createAccountProviderConfigChangeSource({
         revision: "account-1",
         basedOnZCodeBuiltinRevision: "zcode-builtin:1",
@@ -1117,6 +1223,9 @@ describe("createZCodeAgentService provider registry", () => {
       const request = vi.fn(async (method: string, params?: unknown) => {
         if (method === zcodeProtocolMethods.providerUpdateAccountConfig) {
           return { receivedRevision: "account-1", status: "received", providerCount: 0 };
+        }
+        if (method === zcodeProtocolMethods.runtimeCapabilities) {
+          return capability ? { providerRegistryRefresh: true } : {};
         }
         if (method === zcodeProtocolMethods.providerRefreshRegistry) {
           if (waitingForRefresh) {
@@ -1181,23 +1290,259 @@ describe("createZCodeAgentService provider registry", () => {
             issuedAt: 2,
           },
         });
-        // Fork adaptation (specs/services-upstream-sync-part4.md, 8c): the fork takes no
-        // refreshRegistry barrier before a model switch. The switch command is sent directly over
-        // v4/command, so neither the refresh result nor its gate can delay or fail it.
-        await expect(switching).resolves.toMatchObject({ status: "accepted" });
-        expect(
+        const outcome = switching.then(
+          (ack) => ({ ack }),
+          (error: unknown) => ({ error }),
+        );
+        const sentMethods = () =>
           request.mock.calls.map(([method, params]) =>
             method === V4_METHODS.command
               ? `${method}:${(params as { type: string }).type}`
               : method,
-          ),
-        ).toEqual([`${V4_METHODS.command}:switchModelConfig`]);
+          );
+        if (!capability) {
+          // A CLI without the capability keeps delivery-only semantics: the switch is sent directly.
+          await expect(outcome).resolves.toMatchObject({ ack: { status: "accepted" } });
+          expect(sentMethods()).toEqual([`${V4_METHODS.command}:switchModelConfig`]);
+          return;
+        }
+        await vi.waitFor(() => expect(request).toHaveBeenCalled());
+        expect(sentMethods()).toEqual([zcodeProtocolMethods.providerRefreshRegistry]);
+        finishRefresh();
+        await expect(outcome).resolves.toMatchObject(
+          refreshResult === "failed"
+            ? { error: new Error("registry refresh failed") }
+            : { ack: { status: "accepted" } },
+        );
+        expect(sentMethods()).toEqual(
+          refreshResult === "failed"
+            ? [zcodeProtocolMethods.providerRefreshRegistry]
+            : [
+                zcodeProtocolMethods.providerRefreshRegistry,
+                `${V4_METHODS.command}:switchModelConfig`,
+              ],
+        );
       } finally {
         finishRefresh();
         service.disposeAll();
       }
     },
   );
+
+  // specs/provider-registry-refresh-barrier.md "Per-site decisions": legacy entry points that resolve a
+  // provider in the Worker take the same capability-gated barrier as V4 commands.
+  describe("legacy entry points with the worker registry barrier", () => {
+    type LegacySite = "createSession" | "sendPrompt" | "generateWorkspaceText";
+    const siteMethods: Record<LegacySite, string> = {
+      createSession: zcodeProtocolMethods.sessionCreate,
+      sendPrompt: zcodeProtocolMethods.sessionSend,
+      generateWorkspaceText: zcodeProtocolMethods.workspaceGenerateText,
+    };
+    const selection = { providerId: "custom:glm", modelId: "glm-5.2" };
+
+    async function createLegacyHarness(options: { capability: boolean; refreshFails?: boolean }) {
+      const calls: string[] = [];
+      const request = vi.fn(async (method: string) => {
+        if (method !== zcodeProtocolMethods.runtimeCapabilities) calls.push(method);
+        if (method === zcodeProtocolMethods.runtimeCapabilities) {
+          return options.capability ? { providerRegistryRefresh: true } : {};
+        }
+        if (method === zcodeProtocolMethods.providerUpdateAccountConfig) {
+          return { receivedRevision: "account-1", status: "received", providerCount: 0 };
+        }
+        if (method === zcodeProtocolMethods.providerRefreshRegistry) {
+          if (options.refreshFails) throw new Error("registry refresh failed");
+          return { refreshed: true };
+        }
+        // The barrier order is the subject; the method's own result handling is covered elsewhere.
+        throw new Error(`reached ${method}`);
+      });
+      vi.resetModules();
+      vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
+        ZCodeAgentProcessManager: class extends MockProcessManagerBase {
+          async getClient() {
+            return {
+              request,
+              transportKind: "stdio",
+              onNotification: () => ({ dispose() {} }),
+              onRequest: () => ({ dispose() {} }),
+              onClose: () => ({ dispose() {} }),
+            };
+          }
+          disposeAll() {}
+        },
+      }));
+      const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
+      const service = createZCodeAgentService({
+        modelSelectionReadinessSource: createReadyModelSelectionSource(),
+        accountProviderConfigSource: createAccountProviderConfigChangeSource({
+          revision: "account-1",
+          basedOnZCodeBuiltinRevision: "zcode-builtin:1",
+          providers: new ProviderConfigMap([]),
+        }).source,
+      });
+      const target = { workspacePath: "/workspace/app" };
+      const call = (site: LegacySite | "resumeSession" | "testModelConnectivity") => {
+        switch (site) {
+          case "createSession":
+            return service.createSession({ ...target, model: selection });
+          case "sendPrompt":
+            return service.sendPrompt({ ...target, sessionId: "sess_1", content: "hi" });
+          case "generateWorkspaceText":
+            return service.generateWorkspaceText({
+              ...target,
+              selection,
+              prompt: "commit message",
+              querySource: "git_commit_message",
+            });
+          case "resumeSession":
+            return service.resumeSession({ ...target, sessionId: "sess_1" });
+          case "testModelConnectivity":
+            return service.testModelConnectivity({ ...target, selection });
+        }
+      };
+      return { calls, call, service };
+    }
+
+    it.each(["createSession", "sendPrompt", "generateWorkspaceText"] as const)(
+      "%s sends Account Config, then the registry refresh, then its method",
+      async (site) => {
+        const { calls, call, service } = await createLegacyHarness({ capability: true });
+        try {
+          await expect(call(site)).rejects.toThrow(`reached ${siteMethods[site]}`);
+          expect(calls).toEqual([
+            zcodeProtocolMethods.providerUpdateAccountConfig,
+            zcodeProtocolMethods.providerRefreshRegistry,
+            siteMethods[site],
+          ]);
+        } finally {
+          service.disposeAll();
+        }
+      },
+    );
+
+    it.each(["createSession", "sendPrompt", "generateWorkspaceText"] as const)(
+      "%s keeps delivery-only semantics for a CLI without the capability",
+      async (site) => {
+        const { calls, call, service } = await createLegacyHarness({ capability: false });
+        try {
+          await expect(call(site)).rejects.toThrow(`reached ${siteMethods[site]}`);
+          expect(calls).toEqual([
+            zcodeProtocolMethods.providerUpdateAccountConfig,
+            siteMethods[site],
+          ]);
+        } finally {
+          service.disposeAll();
+        }
+      },
+    );
+
+    it.each(["createSession", "sendPrompt", "generateWorkspaceText"] as const)(
+      "%s is rejected without sending its method when the refresh fails",
+      async (site) => {
+        const { calls, call, service } = await createLegacyHarness({
+          capability: true,
+          refreshFails: true,
+        });
+        try {
+          await expect(call(site)).rejects.toThrow("registry refresh failed");
+          expect(calls).toEqual([
+            zcodeProtocolMethods.providerUpdateAccountConfig,
+            zcodeProtocolMethods.providerRefreshRegistry,
+          ]);
+        } finally {
+          service.disposeAll();
+        }
+      },
+    );
+
+    // resumeSession only restores a saved intent, and the Worker refreshes before a connectivity test itself.
+    it.each([
+      { site: "resumeSession", method: zcodeProtocolMethods.sessionResume },
+      { site: "testModelConnectivity", method: zcodeProtocolMethods.providerTestModelConnectivity },
+    ] as const)("$site sends no registry refresh", async ({ site, method }) => {
+      const { calls, call, service } = await createLegacyHarness({ capability: true });
+      try {
+        await expect(call(site)).rejects.toThrow(`reached ${method}`);
+        expect(calls).toEqual([zcodeProtocolMethods.providerUpdateAccountConfig, method]);
+      } finally {
+        service.disposeAll();
+      }
+    });
+  });
+
+  it("refreshes a reused read-only worker registry when provider/model becomes ready", async () => {
+    const calls: Array<{ method: string; reason?: string }> = [];
+    const request = vi.fn(async (method: string, params?: unknown) => {
+      if (method === zcodeProtocolMethods.providerRefreshRegistry) {
+        calls.push({ method, reason: (params as { reason: string }).reason });
+        return { refreshed: true };
+      }
+      if (method === zcodeProtocolMethods.providerUpdateAccountConfig) {
+        calls.push({ method });
+        return { receivedRevision: "account-1", status: "received", providerCount: 0 };
+      }
+      if (method === zcodeProtocolMethods.runtimeCapabilities) {
+        return { providerRegistryRefresh: true };
+      }
+      if (method === "v4/conversation/subscribe") {
+        return {
+          ack: { subscriptionId: "sub-readonly", mode: "snapshot" as const, logEpoch: "epoch-1" },
+        };
+      }
+      return {};
+    });
+    const getClient = vi.fn(async () => ({
+      request,
+      transportKind: "stdio" as const,
+      onNotification: () => ({ dispose() {} }),
+      onRequest: () => ({ dispose() {} }),
+      onClose: () => ({ dispose() {} }),
+    }));
+    vi.resetModules();
+    vi.doMock("../src/zcode-agent/zcodeAgentProcessManager.js", () => ({
+      ZCodeAgentProcessManager: class extends MockProcessManagerBase {
+        getClient = getClient;
+        disposeAll() {}
+      },
+    }));
+    const selectionSource = createModelSelectionChangeSource({ revision: 1, providers: [] });
+    const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
+    const service = createZCodeAgentService({
+      modelSelectionReadinessSource: selectionSource.source,
+      accountProviderConfigSource: createAccountProviderConfigChangeSource({
+        revision: "account-1",
+        basedOnZCodeBuiltinRevision: "zcode-builtin:1",
+        providers: new ProviderConfigMap([]),
+      }).source,
+    });
+    const workspacePath = "/workspace/read-only-then-ready";
+    try {
+      // The read-only CLI starts before provisioning, so its registry predates the ready event.
+      await service.subscribeSessionsIndexV4({ workspacePath });
+      await expect(service.initialize({ workspacePath })).resolves.toMatchObject({
+        available: false,
+        reasonCode: "provider_not_ready",
+      });
+      calls.length = 0;
+
+      selectionSource.emit(
+        createModelSelectionViewFromRegistry(
+          createStartPlanRegistry({ revision: "sha256:ready-after-provisioning" }),
+        ),
+      );
+
+      await vi.waitFor(() =>
+        expect(calls).toContainEqual({
+          method: zcodeProtocolMethods.providerRefreshRegistry,
+          reason: expect.stringMatching(/^startup_ready:/),
+        }),
+      );
+      expect(getClient).toHaveBeenCalledTimes(1);
+    } finally {
+      service.disposeAll();
+    }
+  });
 
   it("workspace presentation does not attach Host-derived model facts", async () => {
     const request = vi.fn(async () => ({

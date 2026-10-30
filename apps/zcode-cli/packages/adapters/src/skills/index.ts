@@ -9,6 +9,7 @@ import type {
   SkillContent,
   SkillDiagnostic,
   SkillLoadOutcome,
+  SkillLoadRequest,
   SkillMetadata,
   SkillOperationOptions,
   SkillPort,
@@ -93,10 +94,7 @@ export class NodeSkillAdapter implements SkillPort {
     };
   }
 
-  async loadSkill(
-    request: { name: string; workingDirectory: string; roots?: SkillRoot[]; maxBytes?: number },
-    options?: SkillOperationOptions,
-  ): Promise<SkillContent> {
+  async loadSkill(request: SkillLoadRequest, options?: SkillOperationOptions): Promise<SkillContent> {
     throwIfAborted(options);
 
     const outcome = await this.discoverSkills(
@@ -106,7 +104,12 @@ export class NodeSkillAdapter implements SkillPort {
       },
       options,
     );
-    const metadata = outcome.skills.find((skill) => matchesSkillRequest(skill, request.name));
+    // A path grant names one physical file: select by identity so a same-named skill earlier in
+    // root order cannot shadow it. Without a path, keep the historical first name match.
+    const metadata =
+      request.path === undefined
+        ? outcome.skills.find((skill) => matchesSkillRequest(skill, request.name))
+        : await findSkillByIdentity(outcome.skills, request.path);
     if (!metadata) {
       throw new Error(`Skill not found: ${request.name}`);
     }
@@ -230,6 +233,7 @@ export class NodeSkillAdapter implements SkillPort {
       ...pluginAlias,
       ...(root.namespace ? { qualifiedName: `${root.namespace}/${name}` } : {}),
       path,
+      identity: await canonicalSkillIdentity(path),
       directory: dirname(path),
       rootPath: root.path,
       scope: root.scope,
@@ -423,6 +427,35 @@ function parseScalar(value: string | undefined): string | undefined {
 
 function matchesSkillRequest(skill: SkillMetadata, requestName: string): boolean {
   return skill.name === requestName || skill.qualifiedName === requestName;
+}
+
+async function findSkillByIdentity(
+  skills: SkillMetadata[],
+  path: string,
+): Promise<SkillMetadata | undefined> {
+  const identity = await canonicalSkillIdentity(path);
+  for (const skill of skills) {
+    if ((skill.identity ?? (await canonicalSkillIdentity(skill.path))) === identity) {
+      return skill;
+    }
+  }
+  return undefined;
+}
+
+// The single owner of the skill identity rule (specs/subagent-skill-identity.md); core only
+// compares the `identity` this sets. Exported for the identity unit tests.
+export async function canonicalSkillIdentity(
+  path: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<string> {
+  const resolvedPath = resolve(path);
+  let realPath: string;
+  try {
+    realPath = await realpath(resolvedPath);
+  } catch {
+    realPath = resolvedPath;
+  }
+  return platform === "win32" ? realPath.toLowerCase() : realPath;
 }
 
 async function readPluginNameForSkillRoot(skillRootPath: string): Promise<string | undefined> {

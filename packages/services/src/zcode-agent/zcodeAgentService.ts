@@ -35,6 +35,7 @@ import {
   ensureDurableFirstSubmissionSupport,
   ensureIndependentPlanSupport,
   supportsHistoryFirst,
+  supportsProviderRegistryRefresh,
 } from "./runtimeCapabilitySupport.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createTopicResourceBridge } from "./topicResourceBridge.js";
@@ -1678,7 +1679,8 @@ export function createZCodeAgentService(
             status: result.status,
           });
         }
-        if (params.refreshRegistry) {
+        // A remote CLI can predate provider/refreshRegistry; it keeps delivery-only semantics.
+        if (params.refreshRegistry && (await supportsProviderRegistryRefresh(params.client))) {
           await params.client.request(
             zcodeProtocolMethods.providerRefreshRegistry,
             { reason: params.reason },
@@ -1801,6 +1803,9 @@ export function createZCodeAgentService(
             client,
             reason: `startup_ready:${event.reason}`,
             workspace,
+            // The ready event comes from the provisioning write, and the reused read-only Worker may still
+            // hold the registry it read before that write (specs/provider-registry-refresh-barrier.md).
+            refreshRegistry: true,
           });
           logger.info(undefined, "provider/model 就绪后已启动等待中的 ZCode agent", {
             providerCount: event.snapshot.providerCount,
@@ -4103,6 +4108,7 @@ export function createZCodeAgentService(
         client,
         reason: "session_create",
         workspace: params,
+        refreshRegistry: true,
       });
       const sessionTraceId = params.sessionTraceId;
       logger.info(sessionTraceId, "开始请求 ZCode Protocol session/create", {
@@ -5427,6 +5433,7 @@ export function createZCodeAgentService(
         client,
         reason: "workspace_generate_text",
         workspace: params,
+        refreshRegistry: true,
       });
       const operationId = params.signal ? randomUUID() : undefined;
       const cancel = () => {
@@ -5501,6 +5508,7 @@ export function createZCodeAgentService(
         client,
         reason: "session_send",
         workspace: params,
+        refreshRegistry: true,
       });
       const sessionTraceId = params.sessionTraceId?.trim() || getSessionTraceId(params);
       const logTraceId = sessionTraceId ?? params.inputId;
@@ -6377,15 +6385,20 @@ export function createZCodeAgentService(
         params.clientMode ??
         "desktop-continuous";
       if (
-        params.envelope.type === "createSession" &&
-        !(params.envelope.payload as { submissionPreparation?: unknown }).submissionPreparation
+        requiresProviderRegistryRefresh(params.envelope.type) &&
+        !(
+          params.envelope.type === "createSession" &&
+          (params.envelope.payload as { submissionPreparation?: unknown }).submissionPreparation
+        )
       ) {
-        // V4 draft warmup forwards commands directly; before creating a new session, wait only for Account Config,
-        // since the Worker process assembles ZCode Built-in / Personal in its own Registry.
+        // Provisioning writes the Worker's Personal config without a new Account Config revision, so
+        // delivery alone leaves the Worker validating the new provider against its old Registry until
+        // its next poll. A submissionPreparation reservation touches no provider and stays instant.
         await ensureAccountProviderConfigSynced({
           client,
           reason: "v4_command",
           workspace: params,
+          refreshRegistry: true,
         });
       }
       let envelope = await buildConversationCommandEnvelope(params);

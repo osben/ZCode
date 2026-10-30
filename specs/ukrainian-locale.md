@@ -207,7 +207,7 @@ Executed in order in one branch, each with green `pnpm typecheck`, `pnpm lint` (
   `packages/services/test/botMessagesLocale.test.ts`.
 - I8 CLI/TUI `@zcode/i18n`: `SupportedLocale`, `GlobalLocale`, `normalizeLocale` `uk*` → `uk-UA`,
   `uiSchema.locale` enum (+ `.catch` from I0), catalog `i18n/src/locales/uk-UA.ts` (`ZCodeCopy`),
-  `/locale` command — `pnpm --dir apps/zcode-cli/packages/i18n typecheck`.
+  `/locale` command — `pnpm --filter @zcode/i18n typecheck`.
 
 Also updated: `packages/ui/test/updateReleaseNotes.test.ts` (release notes without zh for uk, D14).
 
@@ -231,7 +231,7 @@ cd packages/services && node --import tsx --test test/botMessagesLocale.test.ts
 ```
 
 Additional: `pnpm knip` (must show no new unused exports; the D11 ones remain),
-`pnpm --dir apps/zcode-cli/packages/i18n typecheck`.
+`pnpm --filter @zcode/i18n typecheck`.
 
 ## 7. Translation guide (uk-UA catalog)
 

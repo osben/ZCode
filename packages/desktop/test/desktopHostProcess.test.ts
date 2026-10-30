@@ -13,6 +13,11 @@ import {
   loadWindow,
   spawnHostProcess,
 } from "../src/main/desktopHostProcess.js";
+import { BroadcastHub } from "../src/main/broadcastHub.js";
+import {
+  collectChromiumProcessRolePids,
+  listRegisteredHostAgentProcessIds,
+} from "../src/main/resourceManagerWindow.js";
 import {
   createLocalHostStartupGate,
   type LocalHostStartupGate,
@@ -757,5 +762,68 @@ describe("createLocalHostStartupGate", () => {
         sweepAbandonedReservations: true,
       }),
     ).toMatchObject({ sweepAbandonedReservations: true });
+  });
+});
+
+describe("desktopHostProcess reload respawn", () => {
+  it("a late exit of the replaced Host keeps the new Host's registrations", () => {
+    const hub = new BroadcastHub();
+    const dependencies = {
+      hostProcessLocalEnv: {},
+      logger: { info: vi.fn(), warn: vi.fn() },
+      broadcastHub: hub,
+      windowHostProcessMap: new Map(),
+      hostRunningTaskCountMap: new Map(),
+    };
+    const reloadedWindow = { id: 31, webContents: { id: 41, postMessage: vi.fn() } };
+    const otherWindow = { id: 32, webContents: { id: 42, postMessage: vi.fn() } };
+    const oldHost = new MockUtilityProcess();
+    oldHost.pid = 7001;
+    const newHost = new MockUtilityProcess();
+    newHost.pid = 7002;
+    const otherHost = new MockUtilityProcess();
+    otherHost.pid = 7003;
+    electronMock.fork
+      .mockReturnValueOnce(oldHost)
+      .mockReturnValueOnce(newHost)
+      .mockReturnValueOnce(otherHost);
+    const initLocal = { type: HostMessageTypes.InitLocal as const, workspacePath: "/repo" };
+    const agentSpawned = (pid: number) => ({
+      type: HostResponseTypes.AgentProcessSpawned,
+      pid,
+      provider: "glm",
+      workspacePath: "/repo",
+      command: "zcode",
+      args: [],
+      startedAt: 1,
+    });
+
+    spawnHostProcess(reloadedWindow as never, "reload-window", initLocal, dependencies);
+    oldHost.emit("message", agentSpawned(8001));
+    // Reattach failed: the old Host is still exiting while the new one takes the same window and label.
+    spawnHostProcess(reloadedWindow as never, "reload-window", initLocal, dependencies);
+    newHost.emit("message", agentSpawned(8002));
+    spawnHostProcess(otherWindow as never, "other-window", initLocal, dependencies);
+
+    oldHost.emit("exit", 0);
+
+    const hostPids = () => [...collectChromiumProcessRolePids().hostPids];
+    expect(hostPids()).toContain(7002);
+    expect(hostPids()).not.toContain(7001);
+    expect(listRegisteredHostAgentProcessIds()).toContain(8002);
+    expect(listRegisteredHostAgentProcessIds()).not.toContain(8001);
+    newHost.postMessage.mockClear();
+    otherHost.emit("message", {
+      type: HostResponseTypes.Broadcast,
+      message: { channel: "theme-changed", payload: { theme: "dark" } },
+    });
+    expect(newHost.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: HostMessageTypes.Broadcast }),
+    );
+
+    newHost.emit("exit", 0);
+    otherHost.emit("exit", 0);
+    expect(hostPids()).not.toContain(7002);
+    expect(listRegisteredHostAgentProcessIds()).not.toContain(8002);
   });
 });

@@ -60,7 +60,7 @@ describe("resource manager window owns sampling", () => {
       expect(await pending).toMatchObject({ name: "AbortError" });
       await expect(window.getResourceUsageSnapshot(70)).rejects.toThrow("inactive");
     } finally {
-      window.unregisterHostProcess("lifecycle-host");
+      window.unregisterHostProcess("lifecycle-host", child as never);
     }
   });
 

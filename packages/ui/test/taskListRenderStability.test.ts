@@ -206,6 +206,74 @@ describe("TaskList render stability", () => {
     });
   });
 
+  // specs/session-title-polish.md 2.3: an empty or whitespace-only rename is ignored with no Host call.
+  it.each(["", "   "])(
+    "closes the rename dialog without renaming for the draft %j",
+    async (draft) => {
+      const { TaskList } = await import("@/TaskList.js");
+      const root: Root = createRoot(installMinimalDom());
+      const onRenameTask = vi.fn(async () => null);
+
+      act(() => {
+        root.render(
+          createElement(TaskList, {
+            activeTaskId: null,
+            isWorkspaceActive: true,
+            onArchiveTask: vi.fn(async () => null),
+            onRenameTask,
+            onSelectTask: vi.fn(),
+            onSetTaskPinned: vi.fn(async () => null),
+            onSetTaskUnread: vi.fn(async () => null),
+            showCreateButton: false,
+            showFooter: false,
+            tasks: [createTask()],
+            workspacePath: "/workspace",
+          }),
+        );
+      });
+      const latestDialog = () => {
+        const props = taskRenameDialogCalls.at(-1);
+        if (!props) throw new Error("rename dialog is not mounted");
+        return props as { onChange: (value: string) => void; onConfirm: () => void };
+      };
+      const startRename = memoTaskItemCalls.at(-1)?.onStartRenameTask as (
+        taskId: string,
+        currentTitle: string,
+      ) => void;
+      act(() => startRename("task-1", "Task 1"));
+      act(() => latestDialog().onChange(draft));
+      await act(async () => {
+        latestDialog().onConfirm();
+      });
+
+      expect(onRenameTask).not.toHaveBeenCalled();
+      const dialogRenders = taskRenameDialogCalls.length;
+      act(() => {
+        root.render(
+          createElement(TaskList, {
+            activeTaskId: null,
+            isWorkspaceActive: true,
+            onArchiveTask: vi.fn(async () => null),
+            onRenameTask,
+            onSelectTask: vi.fn(),
+            onSetTaskPinned: vi.fn(async () => null),
+            onSetTaskUnread: vi.fn(async () => null),
+            showCreateButton: false,
+            showFooter: false,
+            tasks: [createTask()],
+            workspacePath: "/workspace",
+          }),
+        );
+      });
+      // The dialog is closed: a rerender mounts no further rename dialog.
+      expect(taskRenameDialogCalls).toHaveLength(dialogRenders);
+
+      act(() => {
+        root.unmount();
+      });
+    },
+  );
+
   it("shows only the one-way show-more entry while another page exists", async () => {
     const { TaskList } = await import("@/TaskList.js");
     const html = renderToStaticMarkup(

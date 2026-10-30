@@ -147,6 +147,8 @@ export const zcodeRuntimeCapabilitiesSchema = z.object({
   incognitoSession: z.boolean().optional(),
   // This CLI parses and enforces the thirteen-key incognito profile (specs/incognito-session.md, Compatibility); a CLI without this flag would reject or misread it.
   incognitoPromptToggles: z.boolean().optional(),
+  // This CLI answers provider/refreshRegistry; the Host must not make a command wait on it otherwise.
+  providerRegistryRefresh: z.boolean().optional(),
 });
 export type ZCodeRuntimeCapabilities = z.infer<typeof zcodeRuntimeCapabilitiesSchema>;
 export const zcodeProtocolErrorCodes = {

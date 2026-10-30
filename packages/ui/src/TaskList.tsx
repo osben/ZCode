@@ -236,7 +236,8 @@ export const TaskList = memo(function TaskList({
       }
 
       const normalizedTitle = renameDraft.trim();
-      if (normalizedTitle === task.title.trim()) {
+      // An empty rename is a no-op (specs/session-title-polish.md 2.3), same as the grouped view.
+      if (normalizedTitle.length === 0 || normalizedTitle === task.title.trim()) {
         logger.info("[TaskList] rename submit unchanged", {
           taskId,
           workspacePath,

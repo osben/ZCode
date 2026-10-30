@@ -3,6 +3,7 @@ import { getPluginSandboxHost } from "./pluginSandbox/index.js";
 import { readZCodeStdioTapDevState, setZCodeStdioTapDevEnabled } from "@zcode/services/node";
 import {
   buildZCodeEndpointUrls,
+  DEFAULT_LOCALE,
   DEFAULT_ZCODE_ENDPOINT_ORIGIN,
   DesktopCommandIds,
   REWARDS_PARTITION,
@@ -80,27 +81,62 @@ function showMessageBoxWithOptionalParent(
     ? dialog.showMessageBox(parentWindow, options)
     : dialog.showMessageBox(options);
 }
-async function clearAllDataAndRelaunch(options: {
-  credentialsDir: string;
-  logger: {
-    info: (...args: unknown[]) => void;
-    error: (...args: unknown[]) => void;
-  };
-}) {
-  const { response } = await dialog.showMessageBox({
-    type: "warning",
-    buttons: ["Cancel", "Clear All"],
-    defaultId: 0,
-    cancelId: 0,
-    title: "Clear All Data",
+const CLEAR_ALL_DATA_MESSAGES: Record<
+  Locale,
+  { title: string; message: string; detail: string; cancelLabel: string; confirmLabel: string }
+> = {
+  "zh-CN": {
+    title: "清除所有数据",
     message: "确定要清除所有数据吗？",
     detail:
       "将删除 ~/.zcode/v2（配置、凭据、日志）和浏览器缓存（localStorage）。操作不可恢复，清除后应用将自动重启。",
+    cancelLabel: "取消",
+    confirmLabel: "全部清除",
+  },
+  "en-US": {
+    title: "Clear All Data",
+    message: "Clear all data?",
+    detail:
+      "This deletes ~/.zcode/v2 (settings, credentials, logs) and the browser cache (localStorage). It cannot be undone. The app restarts afterwards.",
+    cancelLabel: "Cancel",
+    confirmLabel: "Clear All",
+  },
+  "uk-UA": {
+    title: "Очистити всі дані",
+    message: "Очистити всі дані?",
+    detail:
+      "Буде видалено ~/.zcode/v2 (налаштування, облікові дані, журнали) і кеш браузера (localStorage). Цю дію не можна скасувати. Після очищення застосунок перезапуститься.",
+    cancelLabel: "Скасувати",
+    confirmLabel: "Очистити все",
+  },
+};
+
+async function clearAllDataAndRelaunch(options: {
+  credentialsDir: string;
+  locale: Locale;
+  logger: {
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+    error: (...args: unknown[]) => void;
+  };
+}) {
+  const messages =
+    CLEAR_ALL_DATA_MESSAGES[options.locale] ?? CLEAR_ALL_DATA_MESSAGES[DEFAULT_LOCALE];
+  const { response } = await dialog.showMessageBox({
+    type: "warning",
+    buttons: [messages.cancelLabel, messages.confirmLabel],
+    defaultId: 0,
+    cancelId: 0,
+    title: messages.title,
+    message: messages.message,
+    detail: messages.detail,
   });
   if (response !== 1) {
     return;
   }
 
+  // Cleared only after confirmation: clearing these partitions signs the user out of Coding Plan.
+  await clearCodingPlanWebviewStorage({ logger: options.logger });
   await getPluginSandboxHost()?.clearBrowserData();
   const { rm } = await import("node:fs/promises");
   try {
@@ -695,9 +731,9 @@ export async function executeDesktopCommand(options: {
       });
       return;
     case DesktopCommandIds.ClearAllData:
-      await clearCodingPlanWebviewStorage({ logger: options.logger });
       await clearAllDataAndRelaunch({
         credentialsDir: options.credentialsDir,
+        locale: options.currentApplicationLocale,
         logger: options.logger,
       });
       return;

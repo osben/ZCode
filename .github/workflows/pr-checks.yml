@@ -70,6 +70,12 @@ jobs:
       - name: Architecture check
         run: pnpm architecture:check
 
+      - name: Instruction command contract
+        run: pnpm instruction-commands:check
+
+      - name: Frozen upstream migrations
+        run: pnpm db:migrations:check
+
       - name: Pre-push runner regression tests
         run: pnpm test:pre-push
 

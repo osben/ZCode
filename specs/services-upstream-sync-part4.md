@@ -70,7 +70,7 @@ Open question: whether bot workspace binding moves to projects in this sync, or 
 
 Checked by symbol name only: `additionalDirectories` in create and resume params, `PendingSessionRuntimePreferencesRequest.workspace`, off-peak lifecycle and plugin UI tool result emitters with their parsing and disposal, `resolveSessionDirectories` in subscribe with the subagent lineage check, `historyFirst` subscribe, the `prepareSessionCreation` guard, `reconcileSessionsIndexV4`. A presence match does not prove the same behavior. The body differences are fork-changed code and have not been reviewed hunk by hunk.
 
-Fork-decided, not taken: the `refreshRegistry` barrier on `ensureAccountProviderConfigSynced` (the fork test pins that createSession sends no refresh), `includeArchived` removal in `sessionList` (since superseded: removed, see `specs/build-pipeline-entrypoints.md`), and `updateTaskPresentation` in the automation path (the fork owner is `syncTaskMeta`).
+Fork-decided, not taken: the `refreshRegistry` barrier on `ensureAccountProviderConfigSynced` (the fork test pins that createSession sends no refresh; since superseded for V4 commands and four more call sites, see `specs/provider-registry-refresh-barrier.md`), `includeArchived` removal in `sessionList` (since superseded: removed, see `specs/build-pipeline-entrypoints.md`), and `updateTaskPresentation` in the automation path (the fork owner is `syncTaskMeta`).
 
 ## 4. Grouped surface and fork writer
 

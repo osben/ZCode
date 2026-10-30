@@ -108,7 +108,7 @@ export function buildToolCallBudgetReminderBody(observedCount: number): string {
   ].join("\n");
 }
 
-function buildRepeatedToolCallSignature(toolName: string, input: unknown): string {
+export function buildRepeatedToolCallSignature(toolName: string, input: unknown): string {
   return `${JSON.stringify(toolName)}:${stableJson(input)}`;
 }
 

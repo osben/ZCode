@@ -20,6 +20,14 @@ export function applyLspPreferences(this: AgentRuntimeInternal): Promise<void> {
   return next;
 }
 
+/**
+ * Resolves once every queued preference application has settled; never rejects (failures are
+ * logged inside the queue). The turn loop awaits it before reading the tool set.
+ */
+export function settleLspPreferences(this: AgentRuntimeInternal): Promise<void> {
+  return lspPreferenceQueues.get(this) ?? Promise.resolve();
+}
+
 async function applyLspPreferencesNow(this: AgentRuntimeInternal): Promise<void> {
   const service = this.lspService;
   if (!service) return;

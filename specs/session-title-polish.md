@@ -60,6 +60,11 @@ Safety rules:
 A cleaned generated title is accepted if it contains at least one Unicode letter or number (`[\p{L}\p{N}]`, `u`
 flag). Length cap, quote stripping and punctuation trimming are unchanged.
 
+The reply is read as title JSON in this order: the whole reply, the first fenced code block anywhere in the reply
+(a lead-in line such as `Here is the title:` is allowed), then the span from the first `{` to the last `}` when it
+parses with a string `title`. Only when none of them yields a title does the first non-empty line become the candidate. This diverges
+from upstream, whose fenced match must span the whole reply.
+
 ### 2.3 Rename
 
 - An empty or whitespace-only title is ignored: no overlay write, no index write, no CLI command, no error toast.
@@ -93,10 +98,12 @@ There is one write path per layer; no state is added.
 5. A message that is only `#sess_abc123` keeps the original text as the title (empty-result fallback).
 6. `/review src/a.ts` (custom command) and `@explorer find X` keep their typed text.
 7. A model reply `{"title":"Налаштування кешу"}` is accepted; `{"title":"..."}` and `{"title":"!!!"}` are not.
-8. Renaming to `""` or `"   "` from the sidebar, the header and the session manager changes nothing on the Host or the
-   CLI and shows no error; a later first-turn auto title still happens.
+8. Renaming to `""` or `"   "` from the sidebar (flat and grouped lists), the header and the session manager changes
+   nothing on the Host or the CLI and shows no error; a later first-turn auto title still happens.
 9. The Host `renameTask("")` and a CLI `renameSession {title:""}` both leave the previous title and its source.
 10. `/goal` and `/workflow` first inputs title exactly as before.
+11. A model reply `Here is the title:` + a fenced `{"title":"Bug fix"}` block creates `Bug fix`, and so does
+    `Title: {"title":"Bug fix"}`; neither becomes `Here is the title` or the raw JSON line.
 
 ## 5. Verification
 

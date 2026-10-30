@@ -212,7 +212,9 @@ export function registerHostProcess(label: string, child: ElectronUtilityProcess
   configureNetworkCaptureHost(child);
 }
 
-export function unregisterHostProcess(label: string): void {
+export function unregisterHostProcess(label: string, child: ElectronUtilityProcess): void {
+  // A reload respawn registers the new Host under the same label before the old one exits.
+  if (hostProcesses.get(label) !== child) return;
   hostProcesses.delete(label);
   hostAgentProcesses.delete(label);
   forgetHostResourceUsage(label);
