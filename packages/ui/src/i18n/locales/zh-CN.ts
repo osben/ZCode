@@ -1,4 +1,3 @@
-import { requestSecurityMessagesZhCN } from "@/request-security-edition/messages.js";
 /** 中文翻译 */
 const zhCN: Record<string, string> = {
   "preview.image.copy": "复制图片",
@@ -2771,6 +2770,7 @@ const zhCN: Record<string, string> = {
   "chat.previewCards.video": "视频",
   "chat.previewCards.audio": "音频",
   "chat.previewCards.openExternal": "在浏览器中打开",
+  "chat.message.link.openInZCode": "在 ZCode 中打开",
   "chat.previewCards.previewInSidePane": "预览",
   "chat.previewCards.openDefaultApp": "打开",
   "chat.previewCards.openWith": "打开方式",
@@ -6685,6 +6685,18 @@ const zhCN: Record<string, string> = {
   "mode.label.glm.plan": "计划模式",
   "mode.label.glm.guarded": "自主模式",
   "mode.description.glm.guarded": "在有风险时询问",
+  "mode.yoloConfirmation.title": "要启用完全访问吗？",
+  "mode.yoloConfirmation.description": "启用后，任务可以直接执行以下操作，无需逐次请求你确认。",
+  "mode.yoloConfirmation.files": "文件和文件夹",
+  "mode.yoloConfirmation.files.description": "读取、创建、修改和删除可访问的文件。",
+  "mode.yoloConfirmation.commands": "终端命令",
+  "mode.yoloConfirmation.commands.description": "运行命令、安装软件或修改系统配置。",
+  "mode.yoloConfirmation.network": "网络和应用",
+  "mode.yoloConfirmation.network.description": "访问网络、发送数据，以及调用已连接的应用。",
+  "mode.yoloConfirmation.risk":
+    "这些操作可能造成数据丢失或泄露。请仅在信任任务内容时启用。你可以随时切回其他权限模式。",
+  "mode.yoloConfirmation.acknowledgement": "我已了解风险，并对自己的数据安全负责。",
+  "mode.yoloConfirmation.confirm": "确认启用",
   "mode.label.glm.yolo": "完全访问",
   "mode.description.glm.default": "使用默认确认策略。",
   "mode.description.glm.build": "改文件前先问我。",
@@ -7463,7 +7475,6 @@ const zhCN: Record<string, string> = {
     "我用 ZCode 高速卡节省了 {duration} 秒的时间，你也来试试吧。下载 ZCode https://zcode.z.ai",
   "globalNotice.highspeed.imageSummary": "{tokens} tokens · 节省 {duration} 秒",
   "globalNotice.highspeed.close": "关闭加速分享卡片",
-  ...requestSecurityMessagesZhCN,
   "worktreeFailure.title": "无法创建 worktree",
   "worktreeFailure.savedNotRestored":
     "当前草稿不为空，你的消息已保存在下方的“未发送的消息已保存”卡片中。",

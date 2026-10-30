@@ -20,6 +20,7 @@ import {
 } from "@/shortcuts/bindings.js";
 import { useEffectiveShortcutBindings } from "@/shortcuts/useShortcutBindings.js";
 import { logger } from "@/logger.js";
+import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 
 type ChatToolbarShortcutKey = "m" | "ctrlShiftM" | "t" | null;
 
@@ -189,7 +190,11 @@ export function useToolbarShortcutBindings(params: {
     function handleWindowKeydown(event: KeyboardEvent) {
       // During key recording, the recorder owns keyboard input exclusively. This listener registers before the recorder (same capture phase);
       // without this early return, key previews during recording would trigger toolbar actions.
-      if (isShortcutRecordingActive()) {
+      // While the YOLO confirmation is open, its dialog owns keyboard input: composer shortcuts must not leak through.
+      if (
+        isShortcutRecordingActive() ||
+        useConfirmDialogStore.getState().pendingRequest?.presentation === "yolo-confirmation"
+      ) {
         return;
       }
       // On Windows/Linux, useAppKeyboard already binds Cmd/Ctrl+P to "Search

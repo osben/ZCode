@@ -334,6 +334,7 @@ export function V4InteractionDialogs({
       <PermissionDialog
         key={pending.interactionId}
         request={request}
+        permissionMode={currentSnapshot?.config?.mode}
         workspacePath={workspacePath}
         {...(workspaceIdentity === undefined ? {} : { workspaceIdentity })}
         {...(remoteSessionId === undefined ? {} : { remoteSessionId })}

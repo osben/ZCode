@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Checkbox } from "@/components/ui/checkbox.js";
-import { XIcon } from "lucide-react";
+import { XIcon, TriangleAlertIcon, FolderIcon, SquareTerminalIcon, GlobeIcon } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "@/components/ui/alert-dialog.js";
 import { TID_CONFIRM_DIALOG_CONFIRM } from "@zcode/shared/test-ids";
 import { Button } from "@/components/ui/button.js";
 import {
@@ -46,6 +56,10 @@ export function ConfirmDialogHost() {
   const open = Boolean(pendingRequest);
   const isAutomationConfirmation = displayedRequest?.presentation === "automation-confirmation";
   const isSourceServerBoundary = displayedRequest?.presentation === "source-server-boundary";
+  const isYoloConfirmation = displayedRequest?.presentation === "yolo-confirmation";
+  // The checkbox state belongs to this request only; reopening the dialog later must not reuse the previous acknowledgement.
+  const checkboxChecked =
+    checkboxSelection.request === displayedRequest && checkboxSelection.checked;
   const confirmLabel =
     displayedRequest?.confirmLabel ?? intl.formatMessage({ id: "common.confirm" });
   const cancelLabel = displayedRequest?.cancelLabel ?? intl.formatMessage({ id: "common.cancel" });
@@ -70,7 +84,10 @@ export function ConfirmDialogHost() {
   }, [settleConfirmation]);
 
   useEffect(() => {
-    if (!open || destructive) {
+    // The YOLO presentation must not reuse the global Enter auto-confirm: Enter follows the focused button,
+    // and the confirm button stays disabled until the risk checkbox is checked (extends fork guard
+    // ui-accidental-action-guards #1 to this presentation).
+    if (!open || destructive || isYoloConfirmation) {
       return;
     }
 
@@ -97,7 +114,90 @@ export function ConfirmDialogHost() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [open, destructive, settleConfirmation, displayedRequest]);
+  }, [open, destructive, isYoloConfirmation, settleConfirmation, displayedRequest]);
+
+  if (isYoloConfirmation) {
+    return (
+      <AlertDialog open={open} onOpenChange={handleOpenChange}>
+        <AlertDialogContent
+          data-testid="yolo-confirmation-dialog"
+          className="max-h-[calc(100dvh-2rem)] gap-4 overflow-y-auto bg-popover p-4 shadow-md sm:p-5"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            cancelRef.current?.focus();
+          }}
+        >
+          <AlertDialogHeader className="gap-2">
+            <AlertDialogTitle className="flex items-center gap-3">
+              <TriangleAlertIcon className="size-5 shrink-0" aria-hidden="true" />
+              {displayedRequest?.title}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="leading-relaxed sm:leading-6">
+              {intl.formatMessage({ id: "mode.yoloConfirmation.description" })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <ul className="divide-y divide-border rounded-xl bg-surface px-3">
+            {(
+              [
+                ["files", FolderIcon, "text-icon-blue"],
+                ["commands", SquareTerminalIcon, "text-foreground-subtle"],
+                ["network", GlobeIcon, "text-icon-blue"],
+              ] as const
+            ).map(([category, Icon, iconColor]) => (
+              <li key={category} className="flex items-center gap-3 py-2">
+                <Icon className={cn("size-5 shrink-0", iconColor)} aria-hidden="true" />
+                <div className="min-w-0 space-y-0.5">
+                  <p className="text-ui-base font-semibold">
+                    {intl.formatMessage({ id: `mode.yoloConfirmation.${category}` })}
+                  </p>
+                  <p className="text-ui-base text-foreground-subtle sm:text-ui-sm">
+                    {intl.formatMessage({ id: `mode.yoloConfirmation.${category}.description` })}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <p className="text-ui-base leading-relaxed text-foreground-subtle sm:text-ui-sm sm:leading-5">
+            {intl.formatMessage({ id: "mode.yoloConfirmation.risk" })}
+          </p>
+          <label className="flex cursor-pointer items-start gap-2 text-ui-base leading-relaxed text-foreground">
+            <Checkbox
+              data-testid="yolo-confirmation-risk"
+              className="mt-1"
+              checked={checkboxChecked}
+              onCheckedChange={(value) =>
+                setCheckboxSelection({ request: displayedRequest, checked: value === true })
+              }
+            />
+            <span>{intl.formatMessage({ id: "mode.yoloConfirmation.acknowledgement" })}</span>
+          </label>
+          {/* Mobile reuses the equal-width touch buttons of the account-switching dialog; desktop keeps a compact, content-width action row. */}
+          <AlertDialogFooter className="grid grid-cols-2 gap-3 sm:flex sm:gap-2">
+            <AlertDialogCancel
+              ref={cancelRef}
+              variant="secondary"
+              size="lg"
+              className="h-auto min-h-11 whitespace-normal px-4 sm:h-9 sm:min-h-0 sm:whitespace-nowrap"
+              data-testid="yolo-confirmation-cancel"
+              onClick={() => settleConfirmation(false)}
+            >
+              {intl.formatMessage({ id: "common.cancel" })}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              size="lg"
+              className="h-auto min-h-11 whitespace-normal px-4 sm:h-9 sm:min-h-0 sm:whitespace-nowrap"
+              data-testid="yolo-confirmation-confirm"
+              disabled={!checkboxChecked}
+              onClick={handleConfirm}
+            >
+              {intl.formatMessage({ id: "mode.yoloConfirmation.confirm" })}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    );
+  }
 
   if (isSourceServerBoundary) {
     return (
@@ -170,9 +270,7 @@ export function ConfirmDialogHost() {
           {displayedRequest?.checkbox ? (
             <label className="mr-auto flex min-w-0 items-center gap-2 text-ui-base text-foreground-subtle">
               <Checkbox
-                checked={
-                  checkboxSelection.request === displayedRequest && checkboxSelection.checked
-                }
+                checked={checkboxChecked}
                 onCheckedChange={(value) => {
                   setCheckboxSelection({ request: displayedRequest, checked: value === true });
                   displayedRequest.checkbox?.onCheckedChange(value === true);
