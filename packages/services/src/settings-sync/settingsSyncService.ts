@@ -21,17 +21,7 @@ import type {
   SettingsSyncSourceRootSummary,
   SettingsSyncTaskImportResult,
 } from "@zcode/shared";
-import {
-  cp,
-  link,
-  lstat,
-  mkdir,
-  readFile,
-  readdir,
-  stat,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { cp, link, lstat, mkdir, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import {
   atomicWriteFile,
@@ -43,6 +33,7 @@ import {
 import { parse as parseYaml } from "yaml";
 import { parse as parseToml } from "smol-toml";
 import { CommandFileParser } from "../commands/commandFileParser.js";
+import { updateJsonObjectFile } from "#src/fs/atomicFileUtils.js";
 import type { ISettingService } from "../setting/setting.js";
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import { walkSkillMarkdownPaths } from "../skills/skillDiscoveryWalk.js";
@@ -1100,24 +1091,31 @@ async function collectExistingMcpServerNameKeys(
   return nameKeys;
 }
 
+/**
+ * Migration imports write to config.json (mcp.servers for MCP servers, plugins.dirs for plugins).
+ * Root cause: the old implementation read via readJsonFileOrEmpty before writing, so a read failure
+ * or corrupt JSON produced an empty object that was then written back over the whole file with
+ * writeFile, wiping unrelated config.json entries such as commands, skills, and hooks; writeFile is
+ * not an atomic write either. Fix: switch to updateJsonObjectFile — a corrupt file rejects the
+ * write, the content is re-read before writing, only this feature's fields are touched, and the
+ * file is replaced atomically. Errors propagate to importXxxForAgent's catch, which marks the item
+ * as failed in the migration result as before.
+ */
 async function addMcpServerToZcodeConfig(
   filePath: string,
   name: string,
   config: McpServerConfig,
 ): Promise<void> {
-  const parsed = await readJsonFileOrEmpty(filePath);
-  const currentMcp = isRecord(parsed.mcp) ? parsed.mcp : {};
-  const servers = readZcodeMcpServers(parsed);
-  await writeJsonFile(filePath, {
-    ...parsed,
+  await updateJsonObjectFile(filePath, (current) => ({
+    ...current,
     mcp: {
-      ...currentMcp,
+      ...(isRecord(current.mcp) ? current.mcp : {}),
       servers: {
-        ...servers,
+        ...readZcodeMcpServers(current),
         [name]: config,
       },
     },
-  });
+  }));
 }
 
 function readStringArray(value: unknown): string[] {
@@ -1126,25 +1124,21 @@ function readStringArray(value: unknown): string[] {
     : [];
 }
 
-async function writeJsonFile(filePath: string, value: Record<string, unknown>): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
-}
-
 async function addPluginDirToConfig(filePath: string, pluginPath: string): Promise<void> {
-  const parsed = await readJsonFileOrEmpty(filePath);
-  const plugins = isRecord(parsed.plugins) ? parsed.plugins : {};
-  const dirs = readStringArray(plugins.dirs);
   const resolvedPluginPath = resolve(pluginPath);
-  if (dirs.map((item) => resolve(item)).includes(resolvedPluginPath)) {
-    return;
-  }
-  await writeJsonFile(filePath, {
-    ...parsed,
-    plugins: {
-      ...plugins,
-      dirs: [...dirs, resolvedPluginPath],
-    },
+  await updateJsonObjectFile(filePath, (current) => {
+    const plugins = isRecord(current.plugins) ? current.plugins : {};
+    const dirs = readStringArray(plugins.dirs);
+    if (dirs.map((item) => resolve(item)).includes(resolvedPluginPath)) {
+      return current;
+    }
+    return {
+      ...current,
+      plugins: {
+        ...plugins,
+        dirs: [...dirs, resolvedPluginPath],
+      },
+    };
   });
 }
 
@@ -2048,7 +2042,16 @@ async function importPluginsForAgent(
     try {
       await mkdir(dirname(targetCandidate.targetPath), { recursive: true });
       await importPluginDirectory(candidate.sourcePath, targetCandidate.targetPath, importMode);
-      await addPluginDirToConfig(selectedConfigPath, targetCandidate.targetPath);
+      try {
+        await addPluginDirToConfig(selectedConfigPath, targetCandidate.targetPath);
+      } catch (error) {
+        // When config.json is corrupt the item is recorded as failed, but the plugin directory has
+        // already been placed. A leftover directory would make a later retry (after the user fixes
+        // the config) hit the targetExists skip reason and never register; the target was confirmed
+        // absent before the import, so only remove the directory or symlink this import created.
+        await rm(targetCandidate.targetPath, { recursive: true, force: true });
+        throw error;
+      }
       importedCount += 1;
       const existingPluginIds = existingPluginIdsByConfigPath.get(selectedConfigPath);
       if (existingPluginIds) {
@@ -2061,7 +2064,12 @@ async function importPluginsForAgent(
         status: "imported",
         ...(candidate.version ? { version: candidate.version } : {}),
       });
-    } catch {
+    } catch (error) {
+      log.warn(undefined, "[importPlugins] 插件导入失败", {
+        sourcePath: candidate.sourcePath,
+        configPath: selectedConfigPath,
+        errorMessage: (error as Error)?.message,
+      });
       failedCount += 1;
       pluginResults.push({
         name: candidate.name,
@@ -2148,7 +2156,12 @@ async function importMcpServersForAgent(
         sourceScope: candidate.sourceRootScope,
         status: "imported",
       });
-    } catch {
+    } catch (error) {
+      log.warn(undefined, "[importMcpServers] MCP 导入失败", {
+        name: candidate.name,
+        configPath: selectedConfigPath,
+        errorMessage: (error as Error)?.message,
+      });
       failedCount += 1;
       mcpServerResults.push({
         name: candidate.name,
