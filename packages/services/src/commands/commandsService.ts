@@ -23,6 +23,7 @@ import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS } from "@zcode/shared";
 import type { ICommandsService } from "./commands.js";
 import { CommandFileParser, type CommandFileFormat } from "./commandFileParser.js";
 import { readInstalledPluginRoots } from "#src/plugins/installedPluginRoots.js";
+import { updateJsonObjectFile } from "#src/fs/atomicFileUtils.js";
 
 function resolveUserHomeDir() {
   const envHome = process.env.HOME?.trim() || process.env.USERPROFILE?.trim();
@@ -93,6 +94,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// Display-only: when config.json is corrupt, commands are listed as if the config were empty so browsing still works. All writes go through updateUserCliConfig.
 async function readUserCliConfig(): Promise<Record<string, unknown>> {
   try {
     const content = await readFile(getUserCliConfigPath(), "utf-8");
@@ -103,10 +105,17 @@ async function readUserCliConfig(): Promise<Record<string, unknown>> {
   }
 }
 
-async function writeUserCliConfig(config: Record<string, unknown>): Promise<void> {
-  const filePath = getUserCliConfigPath();
-  await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+/**
+ * Root cause: the old implementation read through readUserCliConfig before writing, which returned an empty
+ * object on read failures or corrupt JSON, and then wrote the whole file back with writeFile — wiping other
+ * config.json entries such as MCP and plugins; writeFile is not atomic either.
+ * Fix: the write path uses updateJsonObjectFile — a corrupt file rejects the write, the content is re-read
+ * before writing, only the command field is changed, and the replacement is atomic.
+ */
+async function updateUserCliConfig(
+  update: (config: Record<string, unknown>) => Record<string, unknown>,
+): Promise<void> {
+  await updateJsonObjectFile(getUserCliConfigPath(), update);
 }
 
 function readCommandEnabledOverrides(config: Record<string, unknown>): Map<string, boolean> {
@@ -597,7 +606,7 @@ export function createCommandsService(_options?: CommandsServiceOptions): IComma
       descriptor.format,
     );
     await writeFile(filePath, content, "utf-8");
-    await writeUserCliConfig(setCommandEnabledOverride(await readUserCliConfig(), filePath, true));
+    await updateUserCliConfig((config) => setCommandEnabledOverride(config, filePath, true));
 
     const parsed = CommandFileParser.parseCommandFile(content, filePath, descriptor.format);
     if (!parsed) {
@@ -679,12 +688,14 @@ export function createCommandsService(_options?: CommandsServiceOptions): IComma
     ) {
       // Disabled state is stored by command file path. Renaming a command changes that path, so migrate its override;
       // otherwise a command the user just disabled would become enabled again after being renamed.
-      const migratedConfig = setCommandEnabledOverride(
-        setCommandEnabledOverride(await readUserCliConfig(), params.oldFilePath, true),
-        newFilePath,
-        enabledOverrides.get(params.oldFilePath) ?? true,
+      const oldFilePath = params.oldFilePath;
+      await updateUserCliConfig((config) =>
+        setCommandEnabledOverride(
+          setCommandEnabledOverride(config, oldFilePath, true),
+          newFilePath,
+          enabledOverrides.get(oldFilePath) ?? true,
+        ),
       );
-      await writeUserCliConfig(migratedConfig);
     }
 
     const parsed = CommandFileParser.parseCommandFile(content, newFilePath, descriptor.format);
@@ -725,18 +736,13 @@ export function createCommandsService(_options?: CommandsServiceOptions): IComma
         throw error;
       }
     }
-    await writeUserCliConfig(
-      setCommandEnabledOverride(await readUserCliConfig(), params.filePath, true),
-    );
+    await updateUserCliConfig((config) => setCommandEnabledOverride(config, params.filePath, true));
   }
 
   async function setCommandEnabled(params: CommandSetEnabledParams): Promise<void> {
-    const nextConfig = setCommandEnabledOverride(
-      await readUserCliConfig(),
-      params.filePath,
-      params.enabled,
+    await updateUserCliConfig((config) =>
+      setCommandEnabledOverride(config, params.filePath, params.enabled),
     );
-    await writeUserCliConfig(nextConfig);
   }
 
   async function getPrimaryUserCommandsDirectory(params?: {
