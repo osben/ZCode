@@ -601,6 +601,52 @@ describe("settingsSyncService plugins import", () => {
     expect(config.plugins?.dirs).toEqual([importedPath]);
   });
 
+  it("marks the plugin failed and rolls back the imported directory when config.json is corrupt", async () => {
+    const home = makeTempHome();
+    const workspacePath = join(home, "workspace");
+    process.env.HOME = home;
+    const pluginPath = writePlugin(join(home, ".claude", "plugins"), "review-plugin", {
+      name: "review-plugin",
+    });
+    const corrupt = "{ not json";
+    writeTextConfig(join(home, ".zcode", "cli", "config.json"), corrupt);
+    const { createSettingsSyncService } =
+      await import("../src/settings-sync/settingsSyncService.js");
+    const service = createSettingsSyncService({ settingService: createSettingService() });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const result = await service.importSelected({
+        workspacePath,
+        selections: [{ agent: "claudeCode", category: "plugins" }],
+      });
+
+      const importedPath = join(home, ".zcode", "plugins", "review-plugin");
+      expect(result.successCount).toBe(0);
+      expect(result.failedCount).toBe(1);
+      expect(result.taskResults[0]).toMatchObject({ status: "failed", failedCount: 1 });
+      expect(result.taskResults[0]?.pluginResults).toEqual([
+        {
+          name: "review-plugin",
+          path: pluginPath,
+          sourceScope: "global",
+          status: "failed",
+        },
+      ]);
+      // The placed plugin directory must be rolled back: a leftover directory would make a retry
+      // after the user fixes config.json hit the targetExists skip reason forever.
+      expect(existsSync(importedPath)).toBe(false);
+      expect(readFileSync(join(home, ".zcode", "cli", "config.json"), "utf-8")).toBe(corrupt);
+      expect(
+        warnSpy.mock.calls.some(
+          ([, message]) => typeof message === "string" && message.includes("[importPlugins]"),
+        ),
+      ).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("imports Claude-manifest plugins into the requested project target as copies", async () => {
     const home = makeTempHome();
     const workspacePath = join(home, "workspace");
@@ -805,6 +851,57 @@ describe("settingsSyncService MCP server import", () => {
       command: "npx",
       args: ["-y", "browser-mcp"],
     });
+  });
+
+  it("rejects MCP imports and keeps bytes untouched when the target config.json is corrupt", async () => {
+    const home = makeTempHome();
+    const workspacePath = join(home, "workspace");
+    process.env.HOME = home;
+    writeJsonConfig(join(home, ".claude", "settings.json"), {
+      mcpServers: {
+        browser: { command: "npx", args: ["-y", "browser-mcp"] },
+      },
+    });
+    const corrupt = "{ not json";
+    writeTextConfig(join(home, ".zcode", "cli", "config.json"), corrupt);
+    const { createSettingsSyncService } =
+      await import("../src/settings-sync/settingsSyncService.js");
+    const service = createSettingsSyncService({ settingService: createSettingService() });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const result = await service.importSelected({
+        workspacePath,
+        selections: [
+          {
+            agent: "claudeCode",
+            category: "mcpServers",
+            mcpServerPaths: [`${join(home, ".claude", "settings.json")}#browser`],
+          },
+        ],
+      });
+
+      expect(result.successCount).toBe(0);
+      expect(result.failedCount).toBe(1);
+      expect(result.taskResults[0]).toMatchObject({ status: "failed", failedCount: 1 });
+      expect(result.taskResults[0]?.mcpServerResults).toEqual([
+        {
+          name: "browser",
+          path: `${join(home, ".claude", "settings.json")}#browser`,
+          sourceScope: "global",
+          status: "failed",
+        },
+      ]);
+      // The corrupt bytes must survive: a loose read-and-overwrite would have wiped the whole file.
+      expect(readFileSync(join(home, ".zcode", "cli", "config.json"), "utf-8")).toBe(corrupt);
+      expect(
+        warnSpy.mock.calls.some(
+          ([, message]) => typeof message === "string" && message.includes("[importMcpServers]"),
+        ),
+      ).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("does not migrate external MCP timeout fields", async () => {
