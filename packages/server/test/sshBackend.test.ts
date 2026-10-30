@@ -386,6 +386,39 @@ describe("SSHBackend", () => {
     expect(fakeClient.exec).not.toHaveBeenCalled();
   });
 
+  it("在途连接既无 ready 也无 error 时释放须立即失败等待方", async () => {
+    const backend = new SSHBackend({
+      host: "example.com",
+      username: "root",
+      password: "old-password",
+      knownHosts: NO_KNOWN_HOSTS,
+    });
+    const fakeClient = Object.assign(new EventEmitter(), {
+      connect: vi.fn(),
+      end: vi.fn(),
+      exec: vi.fn(() => {
+        throw new Error("unexpected remote command");
+      }),
+    });
+    const mutableBackend = backend as unknown as {
+      client: typeof fakeClient;
+      connected: boolean;
+    };
+    mutableBackend.client = fakeClient;
+    mutableBackend.connected = false;
+
+    const detecting = backend.detect();
+    await vi.waitFor(() => expect(fakeClient.connect).toHaveBeenCalledTimes(1));
+    // Banner-then-close: after the server banner ssh2 may emit neither ready nor error when the socket
+    // is closed mid-handshake, and the readyTimeout is cleared. The pending attempt must fail at dispose
+    // instead of hanging until the OS connect timeout.
+    backend.dispose();
+
+    await expect(detecting).rejects.toThrow("SSH backend 已释放");
+    expect(fakeClient.end).toHaveBeenCalled();
+    expect(fakeClient.exec).not.toHaveBeenCalled();
+  });
+
   it("释放期间 end 之后的迟到 SSH error 不得逃逸为未捕获异常", () => {
     const backend = new SSHBackend({
       host: "example.com",

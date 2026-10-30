@@ -114,6 +114,8 @@ export class SSHBackend implements IRemoteBackend {
   private additionalVerificationPrompted = false;
   // Set by the host key verifier when it refuses the server key; reset before every connect attempt like the flag above.
   private hostKeyFailure: SSHHostKeyFailure | undefined;
+  // Failure exit for the in-flight connect attempt; dispose uses it to end a waiting ensureConnected immediately.
+  private failPendingConnect: ((error: Error) => void) | undefined;
   private readonly knownHosts: KnownHostsFiles;
   private readonly disconnectEmitter = new Emitter<RemoteDisconnectEvent>();
   readonly onDidDisconnect = this.disconnectEmitter.event;
@@ -239,29 +241,36 @@ export class SSHBackend implements IRemoteBackend {
     this.assertNotDisposed();
     if (this.connected) return;
     return new Promise((resolve, reject) => {
-      const handleReady = () => {
+      const settle = () => {
+        this.client.off("ready", handleReady);
         this.client.off("error", handleConnectError);
-        if (this.disposed) {
-          // dispose can race with ssh2 ready. If a late ready marks the client connected again, later
-          // detection will keep using credentials from the cancelled connection. Close the socket again
-          // and fail the original call.
-          this.client.end();
-          reject(new Error("SSH backend 已释放，无法重新建立连接"));
-          return;
-        }
+        this.failPendingConnect = undefined;
+      };
+      const handleReady = () => {
+        settle();
         this.connected = true;
         this.hasEverConnected = true;
         this.disconnectReported = false;
         resolve();
       };
       const handleConnectError = (error: unknown) => {
-        this.client.off("ready", handleReady);
+        settle();
         reject(
           normalizeSSHConnectError(error, {
             additionalVerificationPrompted: this.additionalVerificationPrompted,
             hostKeyFailure: this.hostKeyFailure,
           }),
         );
+      };
+      // After ssh2 receives the server banner, a dispose that closes the connection before authentication
+      // completes emits neither ready nor error and clears the 60s readyTimeout; the promise below would
+      // never settle, leaving the device stuck on "connecting" while every later manual connect joins the
+      // same dead attempt. dispose therefore fails the in-flight attempt through this exit immediately. A
+      // close event cannot be used instead: when the same ssh2 Client reconnects, the old connection's
+      // close may arrive late and cannot be told apart from this attempt.
+      this.failPendingConnect = (error) => {
+        settle();
+        reject(error);
       };
       this.client.once("ready", handleReady);
       this.client.once("error", handleConnectError);
@@ -691,6 +700,10 @@ export class SSHBackend implements IRemoteBackend {
       return;
     }
     this.disposed = true;
+    // Fail the in-flight connect first and remove its ready listener: a late ready can no longer mark
+    // the cancelled connection's old credentials as connected, and the caller does not have to wait for
+    // the socket to close (which may sit on the OS connect timeout when TCP was never established).
+    this.failPendingConnect?.(new Error("SSH backend 已释放，无法重新建立连接"));
     // After an initial handshake failure, ssh2 may emit error after the socket's end/close events.
     // Keep onClientError as a no-op sink after dispose; removing it based on end/close ordering could let
     // a late event escape as an uncaughtException and take down other workspaces in the shared Window

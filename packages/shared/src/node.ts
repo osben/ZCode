@@ -3,6 +3,35 @@
  *
  * This subpath must not be imported by renderer/browser bundles.
  */
+import { userInfo } from "node:os";
+
+/**
+ * Display name of the OS user running the server; a container's numeric UID
+ * has no passwd entry, and `userInfo()` would otherwise abort Core startup.
+ * This field is display-only: fall back to the effective UID to keep the
+ * "OS user" semantics; every other failure is still the caller's problem.
+ */
+export function resolveServerOsUser(): string {
+  try {
+    return userInfo().username;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "info" in error &&
+      typeof error.info === "object" &&
+      error.info !== null &&
+      "code" in error.info &&
+      error.info.code === "ENOENT" &&
+      "syscall" in error.info &&
+      error.info.syscall === "uv_os_get_passwd" &&
+      typeof process.geteuid === "function"
+    ) {
+      return `uid:${process.geteuid()}`;
+    }
+    throw error;
+  }
+}
+
 export { acquireFileLock } from "./node/atomicFileLock.js";
 export { createNodeNetworkCapture, withoutNetworkCapture } from "./node/networkCapture.js";
 export {

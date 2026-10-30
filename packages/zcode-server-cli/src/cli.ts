@@ -10,6 +10,7 @@ import {
   CORE_KILL_TIMEOUT_MS,
   CORE_READY_TIMEOUT_MS,
   CORE_STOP_GRACE_TIMEOUT_MS,
+  SERVER_READY_WAIT_TIMEOUT_MS,
   controlRequestSchema,
   createStoppedServerStatus,
   serverStatusSchema,
@@ -279,12 +280,14 @@ async function runServe(
     const existing = await readControlStatus(layout, 500);
     if (existing && (existing.state === "ready" || existing.state === "starting")) {
       if ((existing.serviceRegistered && !legacyIdentityMigration) || startupMode === "fallback") {
-        if (json) stdout(io, existing);
+        // Bug cause: reusing a Supervisor that is still "starting" used to return exit 0 with
+        // port:null immediately; the Desktop only accepts a success result that carries a port,
+        // so it reported "did not report a valid ingress port" while the daemon went ready
+        // normally right afterwards. Wait for control to report ready before returning.
+        const reused = existing.state === "ready" ? existing : await waitForControlReady(layout);
+        if (json) stdout(io, reused);
         else
-          stdout(
-            io,
-            `ZCode Server ${existing.state} at ${existing.host ?? ""}:${existing.port ?? ""}`,
-          );
+          stdout(io, `ZCode Server ${reused.state} at ${reused.host ?? ""}:${reused.port ?? ""}`);
         return 0;
       }
       if (existing.runningTaskCount > 0) {
@@ -306,10 +309,15 @@ async function runServe(
     }
     const baselineUpdatedAt = (await readPersistedStatus(layout))?.updatedAt ?? 0;
     let serviceStarted = false;
+    let serviceFallbackReason: string | undefined;
     let childEarlyExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
     if (startupMode === "service") {
-      const { createDaemonServiceDescriptor, registerService, serviceDescriptorPath } =
-        await import("./platform/serviceManager.js");
+      const {
+        createDaemonServiceDescriptor,
+        isServiceLoadFailure,
+        registerService,
+        serviceDescriptorPath,
+      } = await import("./platform/serviceManager.js");
       await writeStableLauncher(layout, platform, {
         command: process.execPath,
         entry: process.argv[1] ?? fileURLToPath(import.meta.url),
@@ -319,9 +327,23 @@ async function runServe(
       const descriptorPath = serviceDescriptorPath(layout, descriptor);
       await writeFile(descriptorPath, descriptor.content, "utf8");
       await unregisterLegacyServiceForRoot(layout);
-      // Registration failure must return the real error to the caller; detached fallback is allowed only with explicit opt-out.
-      await registerService(descriptor, descriptorPath);
-      serviceStarted = true;
+      // Bug cause: the capability probe only proves the user manager's bus is reachable. enable is
+      // run by the manager reading the unit with its own group list and mount view; groups joined
+      // after the manager started, or the manager's private /tmp, can hide the server root from
+      // it. The old rule returned this failure directly, so every SSH reconnect failed even though
+      // a detached fallback on the same root would run fine. On a load-stage failure no unit has
+      // been started in this run, so fall back detached and carry the reason; on a start-stage
+      // failure the unit is already enabled, and unmarked errors (launchd / Task Scheduler) cannot
+      // confirm the failure stage either, so they are still returned unchanged.
+      try {
+        await registerService(descriptor, descriptorPath);
+        serviceStarted = true;
+      } catch (error) {
+        if (!isServiceLoadFailure(error)) throw error;
+        serviceFallbackReason = (error as Error).message.trim();
+        if (!json)
+          stderr(io, `Starting ZCode Server in detached fallback mode: ${serviceFallbackReason}`);
+      }
     }
     if (!serviceStarted) {
       // Bug 原因：archive bootstrap 协调更新时 import.meta.url 指向临时解压目录；handoff
@@ -363,7 +385,8 @@ async function runServe(
       },
       serviceStarted,
     );
-    if (json) stdout(io, started);
+    // The fallback reason belongs to this startup result only; it is not written into status.json.
+    if (json) stdout(io, serviceFallbackReason ? { ...started, serviceFallbackReason } : started);
     else stdout(io, `ZCode Server ${started.state} at ${started.host ?? ""}:${started.port ?? ""}`);
     process.stdin.pause();
     process.stdin.destroy();
@@ -626,6 +649,27 @@ async function finishUninstall(
   }
 }
 
+// Bug cause: when the Core fails to start, the Supervisor has already written the reason into
+// status, but the CLI wait failure only reported "Timed out waiting for Server ready", so the
+// 3.16.2 remote timeout ticket could not tell why the Core never came up. On failure append the
+// state and lastExitReason written during this startup; a stale pre-start snapshot must not be
+// presented as this startup's cause.
+function describeStartupStatus(status: ServerStatus | null, minUpdatedAt: number): string {
+  if (!status || status.updatedAt <= minUpdatedAt) return "";
+  return ` (state=${status.state}${status.lastExitReason ? `, last exit: ${status.lastExitReason}` : ""})`;
+}
+
+// The appended Core reason may contain text such as permission denied, ECONNREFUSED or timeout;
+// when the Desktop guesses the category from that text it would switch UI titles because of it.
+// Carry the category of the original first sentence as an explicit code (matching what the Desktop
+// inferred before the appended detail existed); the detail is display-only.
+function startupWaitError(
+  message: string,
+  code: "remote-connection-timeout" | "remote-connection-unknown",
+): Error {
+  return Object.assign(new Error(message), { code });
+}
+
 async function waitForPersistedStatus(
   layout: ReturnType<typeof resolveServerLayout>,
   expectedState: "ready" | "stopped",
@@ -633,7 +677,8 @@ async function waitForPersistedStatus(
   assertStillWaiting?: () => void,
   expectedServiceRegistered?: boolean,
 ): Promise<ServerStatus> {
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + SERVER_READY_WAIT_TIMEOUT_MS;
+  let lastStatus: ServerStatus | null = null;
   while (Date.now() < deadline) {
     const status = await readPersistedStatus(layout);
     if (
@@ -643,10 +688,36 @@ async function waitForPersistedStatus(
         status.serviceRegistered === expectedServiceRegistered)
     )
       return status;
+    lastStatus = status ?? lastStatus;
     assertStillWaiting?.();
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`Timed out waiting for Server ${expectedState}`);
+  throw startupWaitError(
+    `Timed out waiting for Server ${expectedState}${describeStartupStatus(lastStatus, minUpdatedAt)}`,
+    "remote-connection-timeout",
+  );
+}
+
+// The reused Supervisor is already running and control is its live state; status.json may hold a
+// ready snapshot left by a previous Supervisor with a now-stale port, so it cannot serve as the
+// readiness basis when reusing.
+async function waitForControlReady(
+  layout: ReturnType<typeof resolveServerLayout>,
+): Promise<ServerStatus> {
+  const deadline = Date.now() + SERVER_READY_WAIT_TIMEOUT_MS;
+  let lastStatus: ServerStatus | null = null;
+  while (Date.now() < deadline) {
+    const status = await readControlStatus(layout, 500);
+    if (status?.state === "ready") return status;
+    lastStatus = status ?? lastStatus;
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  }
+  // The reuse target is a running Supervisor and control returns its current state, so no
+  // startup-baseline filtering is needed for the appended detail.
+  throw startupWaitError(
+    `Timed out waiting for Server ready${describeStartupStatus(lastStatus, 0)}`,
+    "remote-connection-timeout",
+  );
 }
 
 async function waitForSupervisorReady(supervisor: {

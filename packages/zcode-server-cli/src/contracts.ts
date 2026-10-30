@@ -17,6 +17,12 @@ export const CONTROL_CLOSE_TIMEOUT_MS = 2_000;
 // stop 等待方需要覆盖宽限 + 强杀等待 + control socket 关闭，另留状态落盘和锁释放余量。
 export const SERVER_STOP_WAIT_TIMEOUT_MS =
   CORE_STOP_GRACE_TIMEOUT_MS + CORE_KILL_TIMEOUT_MS + CONTROL_CLOSE_TIMEOUT_MS + 3_000;
+// serve --daemon waiters must cover Supervisor cold start (process spawn, module loading,
+// lock acquisition, startup recovery, control listen) plus the Core ready budget. Bug cause:
+// the old hard-coded 10s cap was shorter than the Supervisor's own 15s Core ready budget; on a
+// busy machine the Supervisor cold start measured 8-14s, so the CLI reported "Timed out waiting
+// for Server ready" first while the daemon went ready normally right afterwards.
+export const SERVER_READY_WAIT_TIMEOUT_MS = CORE_READY_TIMEOUT_MS + 10_000;
 
 export const lifecycleStateSchema = z.enum([
   "starting",
