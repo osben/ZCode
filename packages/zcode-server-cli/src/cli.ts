@@ -443,6 +443,11 @@ async function runServe(
       foregroundStopped?.();
       if (supervisorProcess) process.disconnect?.();
     },
+    // The server root was deleted or taken over while running: exit non-zero on "missing" so the
+    // service manager restarts a fresh owner; exit 0 on "taken" because the new owner already runs.
+    onServerRootLost: (loss) => {
+      process.exit(loss === "missing" ? 1 : 0);
+    },
   });
   await supervisor.start();
   let status: ServerStatus;

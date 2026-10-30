@@ -25,6 +25,9 @@ interface LockOwnerRecord {
 const heldOwnerTokens = new Set<string>();
 let ownProcessIdentity: Promise<string | null | undefined> | undefined;
 
+/** The lock this instance held is no longer on its path: "missing" when the file is gone, "taken" when the path holds another owner. */
+export type DataRootLockLoss = "missing" | "taken";
+
 export type DataRootLockInspection =
   | { state: "missing" }
   | { state: "active"; pid: number }
@@ -96,6 +99,32 @@ export class DataRootLock {
     if (token) {
       await this.releaseOwnedPath(this.path, token);
       heldOwnerTokens.delete(token);
+    }
+  }
+
+  /**
+   * Why the lock on the path is no longer the one this instance wrote: "missing" when the file does
+   * not exist, "taken" when it belongs to a different owner; null while this instance still holds
+   * it. Only these two definite evidences count; read errors (permission, I/O) cannot be judged and
+   * are treated as still held, so a transient error does not take the daemon down.
+   */
+  public async readLoss(): Promise<DataRootLockLoss | null> {
+    const ownerToken = this.ownerToken;
+    if (!ownerToken) return null;
+    let raw: string;
+    try {
+      raw = await readFile(this.path, "utf8");
+    } catch (error: unknown) {
+      return error instanceof Error && "code" in error && error.code === "ENOENT"
+        ? "missing"
+        : null;
+    }
+    try {
+      return toOwnerRecord(JSON.parse(raw)).ownerToken === ownerToken ? null : "taken";
+    } catch {
+      // A new owner creates the lock with wx; content read before it finished writing is
+      // incomplete, which equally means the path now belongs to someone else.
+      return "taken";
     }
   }
 
