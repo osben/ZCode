@@ -311,3 +311,5 @@ packages/services/src/skills/skillsService.ts
 packages/services/src/commands/commandsService.ts
 # Already over the cap at base 3.16.2 (76830 bytes); the 3.17.1 writer-hardening port only switches the two config writers and migration catches.
 packages/services/src/settings-sync/settingsSyncService.ts
+# Already over the cap at base 3.16.2 (79000+ bytes); the 3.17.1 reinstall port adds the menu item, availability and callback to the device card.
+packages/ui/src/settings/SourceServerManagementPanel.tsx

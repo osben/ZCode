@@ -2433,6 +2433,12 @@ const zhCN: Record<string, string> = {
     "连接信息将在下次连接时生效，不会改变已有项目和任务。",
   "settings.source.deviceName": "设备名",
   "settings.source.removeSourceServer": "移除设备",
+  "settings.source.reinstallRemoteService": "重新安装远端服务",
+  "settings.source.reinstallRemoteServiceHint": "用本机版本重新安装，保留项目和任务",
+  "settings.source.reinstallRemoteServiceTitle": "重新安装远端服务？",
+  "settings.source.reinstallRemoteServiceDescription":
+    "将在 {source} 上重新安装 ZCode Server {version}。损坏的程序文件会被替换，项目、任务、设置和登录信息都会保留。",
+  "settings.source.reinstallRemoteServiceConfirm": "重新安装",
   "settings.source.removeOpenProjects": "将断开以下已打开的项目：\n{projects}",
   "settings.source.noOpenProjects": "这台设备没有已打开的项目。",
   "settings.source.disconnectHint": "断开后，远端任务会继续运行。",
@@ -2527,6 +2533,8 @@ const zhCN: Record<string, string> = {
   "sourceServer.updateStartedToast": "正在更新 {source}…",
   "sourceServer.updateCompletedToast": "{source} 已更新并重新连接。",
   "sourceServer.updateFailedToast": "{source} 更新失败，请在远程设备中查看日志并重试。",
+  "sourceServer.reinstallCompletedToast": "{source} 已重新安装并重新连接。",
+  "sourceServer.reinstallFailedToast": "{source} 重新安装失败，请在远程设备中查看日志并重试。",
   "sourceServer.controllerUpdateAvailableToast":
     "{source} 需要更新 ZCode\nDesktop {current} → {available}，请更新 ZCode 后重新连接。",
   "settings.source.forceUpdate": "强制更新",
