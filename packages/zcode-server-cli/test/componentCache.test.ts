@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -222,11 +231,12 @@ describe("component cache", () => {
     expect((await stat(release)).ino).toBe(originalInode);
     await expect(readFile(join(release, "runtime", "server-core.js"), "utf8")).resolves.toBe("new");
 
+    // A release whose integrity record still matches but whose content drifted is a damaged copy of
+    // the same release: reassembling must repair it instead of reporting a conflict.
     await writeFile(join(release, "runtime", "server-core.js"), "tampered", "utf8");
-    await expect(cache.assemble(assembleOptions)).rejects.toThrow(/immutable release conflict/i);
-    await expect(readFile(join(release, "runtime", "server-core.js"), "utf8")).resolves.toBe(
-      "tampered",
-    );
+    await cache.assemble(assembleOptions);
+    await expect(readFile(join(release, "runtime", "server-core.js"), "utf8")).resolves.toBe("new");
+    expect((await readdir(root)).filter((entry) => entry.startsWith(".damaged-"))).toEqual([]);
   });
 
   it("ignores a cache entry whose archive bytes no longer match its marker", async () => {
