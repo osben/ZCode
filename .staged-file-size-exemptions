@@ -300,3 +300,8 @@ packages/ui/src/root/useRootWorkspaceActions.ts
 
 # Existing remote connection flow owner, already above the staged cap on integration (3.16.3 workspace step adds two lines).
 packages/ui/src/remote-connection-flow/index.ts
+
+# Already over the cap at base 3.16.2 (20914 bytes); the 3.17.1 stability port only adds the structured-code rethrow to ensureDaemon.
+packages/server/src/source-server/transportAdapter.ts
+# Already over the cap at base 3.16.2 (25315 bytes); the 3.17.1 stability port only adds the coreFatalMessage capture and compose.
+packages/zcode-server-cli/src/supervisor/supervisor.ts

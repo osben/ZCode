@@ -1,5 +1,5 @@
 import { access } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { stablePathId, type ServerLayout } from "../runtime/paths.js";
 
 export type ServicePlatform = "darwin" | "linux" | "win32";
@@ -194,11 +194,23 @@ export async function isServiceManagerAvailable(
   }
 }
 
+/**
+ * Stage of a failed systemd registration: "load" covers daemon-reload / enable, where no unit has
+ * been started yet; "start" covers start after the unit is already enabled. launchd and
+ * Task Scheduler registration errors carry no stage.
+ */
+type ServiceRegistrationStage = "load" | "start";
+
+export function isServiceLoadFailure(error: unknown): boolean {
+  return error instanceof Error && (error as { stage?: unknown }).stage === "load";
+}
+
 export async function registerService(
   descriptor: ServiceDescriptor,
   descriptorPath: string,
   executor: ServiceCommandExecutor = defaultServiceCommandExecutor,
 ): Promise<void> {
+  let stage: ServiceRegistrationStage | undefined;
   try {
     if (descriptor.kind === "launchd") {
       // The label is stable but plist contents may change; unload the old job first so a failed load cannot make start wake it with stale arguments.
@@ -210,8 +222,17 @@ export async function registerService(
       await executor.run("launchctl", ["load", "-w", descriptorPath]);
       await executor.run("launchctl", ["start", descriptor.name]);
     } else if (descriptor.kind === "systemd") {
+      // Bug cause: `enable --now` merged load and start into one call, so on failure there was no
+      // way to tell whether the unit had been started and the caller could only fail uniformly.
+      // Split it and decide by failure stage: a load-stage failure has started no unit and can
+      // safely fall back detached.
+      stage = "load";
       await executor.run("systemctl", ["--user", "daemon-reload"]);
-      await executor.run("systemctl", ["--user", "enable", "--now", descriptorPath]);
+      await executor.run("systemctl", ["--user", "enable", descriptorPath]);
+      stage = "start";
+      // enable creates the unit by file name; start with the full file name instead of relying on
+      // systemd to complete the suffix.
+      await executor.run("systemctl", ["--user", "start", basename(descriptorPath)]);
     } else {
       const parsed = JSON.parse(descriptor.content) as {
         taskName: string;
@@ -234,9 +255,11 @@ export async function registerService(
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Failed to register service ${descriptor.name} (${descriptorPath}): ${message}`,
-      { cause: error },
+    throw Object.assign(
+      new Error(`Failed to register service ${descriptor.name} (${descriptorPath}): ${message}`, {
+        cause: error,
+      }),
+      stage ? { stage } : {},
     );
   }
 }

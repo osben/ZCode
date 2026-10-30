@@ -111,17 +111,124 @@ describe("daemon service registration", () => {
     expect(serviceMocks.fork).toHaveBeenCalledOnce();
   });
 
-  it("returns registration failure without starting a disguised fallback", async () => {
+  it("falls back detached with the registration reason when the service load fails", async () => {
+    // Load-stage failures (daemon-reload/enable) start no unit in this run, so the CLI may fall
+    // back detached; the reason must travel to the caller instead of failing the whole serve.
+    const root = await mkdtemp(join(tmpdir(), "zcode-r2-daemon-load-fallback-"));
+    const layout = resolveServerLayout(join(root, "server"));
+    await mkdir(layout.runDir, { recursive: true });
+    const readyStatus = {
+      protocolVersion: 1 as const,
+      state: "ready" as const,
+      pid: 42,
+      port: 43123,
+      host: "127.0.0.1",
+      version: "test",
+      generation: 1,
+      startedAt: Date.now(),
+      lastExitReason: null,
+      serviceRegistered: false,
+      runningTaskCount: 0,
+      crashBudget: { crashCount: 0, nextRestartDelayMs: 0, exhausted: false },
+      updatedAt: Date.now(),
+    };
+    serviceMocks.registerService.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("systemctl --user enable failed: unit is not readable"), {
+        stage: "load",
+      });
+    });
+    serviceMocks.fork.mockImplementationOnce(() => {
+      setTimeout(() => void writeStatusSnapshot(layout.statusFile, readyStatus), 0);
+      return {
+        unref: vi.fn(),
+        disconnect: vi.fn(),
+        once: vi.fn(),
+      };
+    });
+    const output: string[] = [];
+    vi.stubEnv("ZCODE_SERVER_SKIP_SERVICE_REGISTRATION", "0");
+
+    const exit = await runServerCli(
+      ["serve", "--daemon", "--server-root", layout.serverRoot, "--json"],
+      { stdout: { write: (value) => output.push(value) } },
+    );
+
+    expect(exit, output.join("")).toBe(0);
+    expect(serviceMocks.registerService).toHaveBeenCalledOnce();
+    expect(serviceMocks.fork).toHaveBeenCalledOnce();
+    const result = JSON.parse(output.at(-1) ?? "{}");
+    expect(result).toMatchObject({ state: "ready", serviceRegistered: false });
+    expect(result.serviceFallbackReason).toBe(
+      "systemctl --user enable failed: unit is not readable",
+    );
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("warns on stderr when a load failure falls back detached in foreground mode", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-r2-daemon-load-warn-"));
+    const layout = resolveServerLayout(join(root, "server"));
+    await mkdir(layout.runDir, { recursive: true });
+    const readyStatus = {
+      protocolVersion: 1 as const,
+      state: "ready" as const,
+      pid: 42,
+      port: 43123,
+      host: "127.0.0.1",
+      version: "test",
+      generation: 1,
+      startedAt: Date.now(),
+      lastExitReason: null,
+      serviceRegistered: false,
+      runningTaskCount: 0,
+      crashBudget: { crashCount: 0, nextRestartDelayMs: 0, exhausted: false },
+      updatedAt: Date.now(),
+    };
+    serviceMocks.registerService.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("systemctl --user enable failed: unit is not readable"), {
+        stage: "load",
+      });
+    });
+    serviceMocks.fork.mockImplementationOnce(() => {
+      setTimeout(() => void writeStatusSnapshot(layout.statusFile, readyStatus), 0);
+      return {
+        unref: vi.fn(),
+        disconnect: vi.fn(),
+        once: vi.fn(),
+      };
+    });
+    const errors: string[] = [];
+    vi.stubEnv("ZCODE_SERVER_SKIP_SERVICE_REGISTRATION", "0");
+
+    const exit = await runServerCli(["serve", "--daemon", "--server-root", layout.serverRoot], {
+      stderr: { write: (value) => errors.push(value) },
+    });
+
+    expect(exit).toBe(0);
+    expect(errors.join("")).toContain(
+      "Starting ZCode Server in detached fallback mode: systemctl --user enable failed: unit is not readable",
+    );
+    expect(serviceMocks.fork).toHaveBeenCalledOnce();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("returns registration failure without starting a fallback when the failure is not a load failure", async () => {
+    // Start-stage failures mean the unit is already enabled; silently starting a detached
+    // daemon would race it, so the CLI must still fail with the registration error.
     const root = await mkdtemp(join(tmpdir(), "zcode-r2-daemon-registration-"));
     const errors: string[] = [];
     vi.stubEnv("ZCODE_SERVER_SKIP_SERVICE_REGISTRATION", "0");
+    serviceMocks.registerService.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("systemctl --user start failed: exit 1"), {
+        stage: "start",
+      });
+    });
 
     const exit = await runServerCli(["serve", "--daemon", "--server-root", join(root, "server")], {
       stderr: { write: (value) => errors.push(value) },
     });
 
     expect(exit).toBe(1);
-    expect(errors.join("")).toContain("service manager unavailable");
+    expect(errors.join("")).toContain("systemctl --user start failed: exit 1");
     expect(serviceMocks.registerService).toHaveBeenCalledOnce();
     expect(serviceMocks.fork).not.toHaveBeenCalled();
   });
@@ -286,6 +393,118 @@ describe("daemon service registration", () => {
       });
     } finally {
       await supervisor.stop().catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports the daemon startup timeout with the persisted state and last exit reason", async () => {
+    // The Supervisor writes the Core failure reason into status.json; the CLI timeout error must
+    // carry it instead of a bare "Timed out waiting for Server ready".
+    const root = await mkdtemp(join(tmpdir(), "zcode-r2-daemon-timeout-"));
+    const layout = resolveServerLayout(join(root, "server"));
+    await mkdir(layout.runDir, { recursive: true });
+    serviceMocks.fork.mockImplementationOnce(() => {
+      setTimeout(
+        () =>
+          void writeStatusSnapshot(layout.statusFile, {
+            protocolVersion: 1 as const,
+            state: "starting" as const,
+            pid: 42,
+            port: null,
+            host: null,
+            version: "test",
+            generation: 1,
+            startedAt: null,
+            lastExitReason: "cannot bind ingress port 43123: permission denied",
+            serviceRegistered: false,
+            runningTaskCount: 0,
+            crashBudget: { crashCount: 0, nextRestartDelayMs: 0, exhausted: false },
+            updatedAt: Date.now() + 1,
+          }),
+        0,
+      );
+      return {
+        unref: vi.fn(),
+        disconnect: vi.fn(),
+        once: vi.fn(),
+      };
+    });
+    const output: string[] = [];
+    vi.stubEnv("ZCODE_SERVER_SKIP_SERVICE_REGISTRATION", "1");
+    // Shift the clock past the ready-wait budget instead of waiting 25s in real time.
+    const realNow = Date.now.bind(Date);
+    let skewMs = 0;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => realNow() + skewMs);
+    try {
+      const pending = runServerCli(
+        ["serve", "--daemon", "--server-root", layout.serverRoot, "--json"],
+        { stdout: { write: (value) => output.push(value) } },
+      );
+      // Let the CLI fork the daemon and enter the ready wait before shifting the clock.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      skewMs = 30_000;
+      const exit = await pending;
+
+      expect(exit).toBe(1);
+      const failure = JSON.parse(output.at(-1) ?? "{}");
+      expect(failure.code).toBe("remote-connection-timeout");
+      expect(failure.error).toBe(
+        "Timed out waiting for Server ready (state=starting, last exit: cannot bind ingress port 43123: permission denied)",
+      );
+    } finally {
+      nowSpy.mockRestore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("waits for a reused starting Supervisor to report ready before returning", async () => {
+    // Reusing a Supervisor that is still starting must not return exit 0 with port:null;
+    // the caller needs the ready status with the real ingress port.
+    const root = await mkdtemp(join(tmpdir(), "zdr-ready-"));
+    const layout = resolveServerLayout(join(root, "server"));
+    const readyStatus = {
+      protocolVersion: 1 as const,
+      state: "ready" as const,
+      pid: 42,
+      port: 43123,
+      host: "127.0.0.1",
+      version: "test",
+      generation: 1,
+      startedAt: Date.now(),
+      lastExitReason: null,
+      serviceRegistered: false,
+      runningTaskCount: 0,
+      crashBudget: { crashCount: 0, nextRestartDelayMs: 0, exhausted: false },
+      updatedAt: Date.now(),
+    };
+    const startingStatus = {
+      ...readyStatus,
+      state: "starting" as const,
+      port: null,
+      host: null,
+      startedAt: null,
+    };
+    let statusRequests = 0;
+    const control = await createControlServer(layout.controlEndpoint, async (request) => {
+      if (request.command !== "status") throw new Error(`Unexpected command: ${request.command}`);
+      statusRequests += 1;
+      return statusRequests < 3 ? startingStatus : readyStatus;
+    });
+    const output: string[] = [];
+    vi.stubEnv("ZCODE_SERVER_SKIP_SERVICE_REGISTRATION", "1");
+    try {
+      const exit = await runServerCli(
+        ["serve", "--daemon", "--server-root", layout.serverRoot, "--json"],
+        { stdout: { write: (value) => output.push(value) } },
+      );
+
+      expect(exit, output.join("")).toBe(0);
+      expect(JSON.parse(output.at(-1) ?? "{}")).toMatchObject({ state: "ready", port: 43123 });
+      // The CLI polled control until ready instead of returning the portless starting snapshot.
+      expect(statusRequests).toBeGreaterThanOrEqual(3);
+      expect(serviceMocks.fork).not.toHaveBeenCalled();
+    } finally {
+      await control.close();
       await rm(root, { recursive: true, force: true });
     }
   });

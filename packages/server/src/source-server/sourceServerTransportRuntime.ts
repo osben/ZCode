@@ -1,5 +1,6 @@
 import { Duplex } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
+import { isPublicZCodeErrorCode, type PublicZCodeErrorCode } from "@zcode/shared";
 import type { StdioStream } from "@zcode/server/remote/backend.js";
 
 export interface RemoteExecResult {
@@ -48,6 +49,16 @@ export function readStructuredCommandError(value: string): string | null {
   }
 }
 
+/** Read the public error code from a Server CLI --json failure result; null when absent or not public. */
+export function readStructuredCommandCode(value: string): PublicZCodeErrorCode | null {
+  try {
+    const code = readLastJsonLine(value).code;
+    return isPublicZCodeErrorCode(code) ? code : null;
+  } catch {
+    return null;
+  }
+}
+
 export function readUniqueVersion(value: string): string | undefined {
   const semver = "(\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?)";
   const trimmed = value.trim();
@@ -79,7 +90,10 @@ function waitForClose(stream: StdioStream): Promise<number> {
   });
 }
 
-async function readText(stream: NodeJS.ReadableStream, onLine?: (line: string) => void): Promise<string> {
+async function readText(
+  stream: NodeJS.ReadableStream,
+  onLine?: (line: string) => void,
+): Promise<string> {
   const chunks: Buffer[] = [];
   const decoder = new StringDecoder("utf8");
   let pending = "";
@@ -99,7 +113,10 @@ async function readText(stream: NodeJS.ReadableStream, onLine?: (line: string) =
   return Buffer.concat(chunks).toString("utf8");
 }
 
-export async function collectCommand(stream: StdioStream, onStdoutLine?: (line: string) => void): Promise<RemoteExecResult> {
+export async function collectCommand(
+  stream: StdioStream,
+  onStdoutLine?: (line: string) => void,
+): Promise<RemoteExecResult> {
   const [stdout, stderr, exitCode] = await Promise.all([
     readText(stream.stdout, onStdoutLine),
     readText(stream.stderr),

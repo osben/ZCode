@@ -974,4 +974,58 @@ describe("Supervisor lifecycle", () => {
     vi.useRealTimers();
     await supervisor.stop();
   });
+
+  it("preserves the Core fatal reason in the terminal exit reason after a crash", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-r2-fatal-"));
+    vi.useFakeTimers();
+    const cores: FakeCore[] = [];
+    const supervisor = new Supervisor({
+      layout: resolveServerLayout(join(root, "server")),
+      launcher: {
+        launch: (generation) => {
+          const core = new FakeCore();
+          cores.push(core);
+          // Only the first generation reports ready; the crash-restart Core stays starting
+          // until the test reports it, so the terminal state after the crash is observable.
+          if (generation === 1) core.reportReady(generation);
+          return core as unknown as ChildProcess;
+        },
+      },
+      version: "test",
+    });
+    try {
+      await supervisor.start();
+      await vi.runAllTicks();
+      expect(supervisor.status().state).toBe("ready");
+
+      // Startup-failure shape: the Core reports fatal first and only then exits; the exit code
+      // must not overwrite the fatal reason in the terminal status.
+      cores[0]?.emit("message", {
+        type: "fatal",
+        message: "cannot bind ingress port 43123: permission denied",
+      });
+      cores[0]?.emit("exit", 1, null);
+      const expectedReason =
+        "core exited code=1 signal=none: cannot bind ingress port 43123: permission denied";
+      expect(supervisor.status()).toMatchObject({
+        state: "crashed",
+        lastExitReason: expectedReason,
+      });
+
+      // The crash-restart Core starts with a clean fatal reason (cleared with the core scope).
+      await vi.advanceTimersByTimeAsync(CRASH_BACKOFF_MS[0]);
+      expect(cores).toHaveLength(2);
+      expect(supervisor.status()).toMatchObject({
+        state: "starting",
+        lastExitReason: expectedReason,
+      });
+      cores[1]?.reportReady(2);
+      await vi.runAllTicks();
+      expect(supervisor.status()).toMatchObject({ state: "ready", generation: 2 });
+    } finally {
+      vi.useRealTimers();
+      await supervisor.stop().catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

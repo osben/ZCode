@@ -1,8 +1,10 @@
 import * as childProcess from "node:child_process";
+import { basename } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createServiceDescriptor,
+  isServiceLoadFailure,
   isServiceManagerAvailable,
   registerService,
   unregisterService,
@@ -190,11 +192,79 @@ describe("service manager adapters", () => {
       "systemctl",
       "systemctl",
       "systemctl",
+      "systemctl",
       "schtasks",
       "schtasks",
       "schtasks",
     ]);
     expect(calls.at(-2)?.args).toContain("/Run");
+  });
+
+  it("registers a systemd unit as daemon-reload, enable by path, then start by file name", async () => {
+    const descriptor = createServiceDescriptor({
+      platform: "linux",
+      command: "/opt/zcode/bin/zcode",
+      args: ["serve", "--daemon"],
+    });
+    const descriptorPath = "/home/user/.config/systemd/user/com.zhipu.zcode.server.abc.service";
+    const calls: string[][] = [];
+    await registerService(descriptor, descriptorPath, {
+      run: async (_command, args) => {
+        calls.push([...args]);
+      },
+    });
+    expect(calls).toEqual([
+      ["--user", "daemon-reload"],
+      ["--user", "enable", descriptorPath],
+      // start must address the unit by its file name instead of relying on systemd
+      // to complete the suffix from the path.
+      ["--user", "start", basename(descriptorPath)],
+    ]);
+  });
+
+  it("marks systemd registration failures with the failing stage", async () => {
+    const descriptor = createServiceDescriptor({
+      platform: "linux",
+      command: "/opt/zcode/bin/zcode",
+    });
+    const failingExecutor = (failingVerb: string) => ({
+      run: async (_command: string, args: readonly string[]) => {
+        // systemctl commands are ["--user", verb, ...]; match the verb after the flag.
+        const verb = args[0] === "--user" ? args[1] : args[0];
+        if (verb === failingVerb) throw new Error("systemctl failed");
+      },
+    });
+    // daemon-reload/enable failures mean no unit was started in this run; the CLI may
+    // fall back detached only for this stage.
+    const loadError = (await registerService(
+      descriptor,
+      "/tmp/unit.service",
+      failingExecutor("enable"),
+    ).catch((error: unknown) => error)) as Error & { stage?: string };
+    expect(loadError.stage).toBe("load");
+    expect(isServiceLoadFailure(loadError)).toBe(true);
+
+    // A start failure means the unit is already enabled; falling back would race it.
+    const startError = (await registerService(
+      descriptor,
+      "/tmp/unit.service",
+      failingExecutor("start"),
+    ).catch((error: unknown) => error)) as Error & { stage?: string };
+    expect(startError.stage).toBe("start");
+    expect(isServiceLoadFailure(startError)).toBe(false);
+
+    // launchd registration errors carry no stage and must never be treated as load failures.
+    const launchdDescriptor = createServiceDescriptor({
+      platform: "darwin",
+      command: "/opt/zcode/bin/zcode",
+    });
+    const launchdError = (await registerService(launchdDescriptor, "/tmp/zcode.plist", {
+      run: async (_command, args) => {
+        if (args[0] === "load") throw new Error("permission denied");
+      },
+    }).catch((error: unknown) => error)) as Error & { stage?: string };
+    expect(launchdError.stage).toBeUndefined();
+    expect(isServiceLoadFailure(launchdError)).toBe(false);
   });
 
   it("does not restart a launchd service after a normal stop", () => {

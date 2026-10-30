@@ -76,6 +76,11 @@ export class Supervisor {
   private activeRelease: ReleaseManifest | null = null;
   private coreVersion: string | undefined;
   private coreReleaseId: string | undefined;
+  /**
+   * Fatal reason summary for the current core as reported by the Core's fatal IPC message;
+   * cleared with the core scope and folded into lastExitReason when the Core exits.
+   */
+  private coreFatalMessage: string | undefined;
 
   public constructor(private readonly options: SupervisorOptions) {
     this.layout = options.layout ?? resolveServerLayout();
@@ -397,19 +402,26 @@ export class Supervisor {
       if (terminalObserved) return;
       terminalObserved = true;
       if (this.core !== child || this.state === "stopping" || this.state === "stopped") return;
+      // Bug cause: when the Core fails to start it sends fatal before exiting; the old logic
+      // overwrote the fatal with the exit code, leaving status with only "core exited code=1"
+      // so the CLI and remote clients could never see why the Core failed to come up.
+      // Keep the fatal appended after the exit code, bounded by the 500-char status schema cap.
+      const exitReason = this.coreFatalMessage
+        ? `${reason}: ${this.coreFatalMessage}`.slice(0, 500)
+        : reason;
       if (this.state === "stop-failed") {
         // stop 已失败时继续保留锁；迟到的终态只清除已死亡 child，不得计入 crash budget
         // 或启动替代 Core。用户重试 stop 后再释放 control socket 与 data-root lock。
         this.core = undefined;
         this.clearCoreScopedStatus();
-        this.lastExitReason = reason;
+        this.lastExitReason = exitReason;
         void this.persistStatusSnapshot();
         return;
       }
       this.core = undefined;
       this.clearCoreScopedStatus();
       this.state = "crashed";
-      this.lastExitReason = reason;
+      this.lastExitReason = exitReason;
       const decision = this.crashBudget.recordCrash();
       if (!decision.shouldRestart) {
         this.state = "crash-loop-stopped";
@@ -484,6 +496,7 @@ export class Supervisor {
         runningTaskCount: message.runningTaskCount,
       });
     } else if (message.type === "fatal") {
+      this.coreFatalMessage = message.message;
       this.lastExitReason = message.message;
       log.error("server core reported fatal error", { message: message.message });
     } else if (message.type === "exit") {
@@ -507,6 +520,7 @@ export class Supervisor {
     this.runningTasks = undefined;
     this.coreVersion = undefined;
     this.coreReleaseId = undefined;
+    this.coreFatalMessage = undefined;
   }
 
   private async handleControl(request: ControlRequest): Promise<unknown> {
