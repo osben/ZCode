@@ -279,13 +279,20 @@ Owner and storage:
   empty (reported once), an invalid entry is dropped alone. An agent with no hidden values has no
   entry.
 - One writer: `setAcpAgentHiddenModels({ agentId, hiddenModels })` on the provider settings service
-  (host RPC, so a remote workspace's host owns its own file). It replaces the agent's whole set under
+  (host RPC; each host owns its own file). It replaces the agent's whole set under
   the file lock with an atomic private write; equal sets are not rewritten. The Settings pane
   serializes its writes (one in flight, the latest set wins) and reverts the checkbox with an alert
   when a write fails.
 - `getAcpAgentCatalog` returns `hiddenModels` next to `options`, so the composer reads one result.
   The composer reads it when the agent's mode area mounts; a change in Settings applies to the next
   mount (no live push).
+- Host scope: like the rest of the ACP Settings group (detection, enable, launch config, Test,
+  catalog), the Models section reads and writes the **Local Host** that Settings is bound to (the
+  Model Providers pane runs on `localHostServices`). ACP launch config is host-local and not synced
+  (see "Storage and upstream compatibility"), so the hidden set is too: in a remote workspace the composer reads
+  the remote host's own `fork_acp_agent_model_visibility.json`, which this pane does not edit.
+  Configuring a remote host's ACP agents from Settings is a separate change that moves the whole
+  group to the workspace host, not just this section.
 - Hiding is presentation only: it never sends `set_config_option` and never changes a session's
   chosen value; the worker's validation of a choice is unchanged.
 

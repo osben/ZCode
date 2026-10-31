@@ -2,6 +2,8 @@
 // (specs/acp-agent-runtime.md "Settings: models and Advanced"). The host stores the hidden set in
 // the fork sidecar; this hook is its only writer and serializes writes (one in flight, the latest
 // set wins). A failed write reverts to the last stored set and is announced (SM7).
+// Like the rest of the ACP Settings group it writes the Local Host Settings is bound to ("Host
+// scope"): ACP config is host-local, so a remote host's composer keeps its own hidden set.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useServices } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
