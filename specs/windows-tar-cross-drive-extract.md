@@ -27,7 +27,9 @@ tar command line:
   MSYS accepts `C:/...`).
 - On other platforms the invocation is unchanged: archive and `-C` paths as given, caller's `cwd`.
 
-Zip extraction is not affected.
+`extractPrebuiltArchive` resolves `archivePath` and `extractDir` against the caller's `cwd`
+(default `process.cwd()`) once, before `mkdirSync`, so directory creation, PowerShell/`unzip` and tar
+all target the same directory.
 
 ## Acceptance
 
@@ -35,5 +37,7 @@ Zip extraction is not affected.
   archive name; tar `cwd` is the archive directory.
 - Win32, relative `archivePath` or `extractDir`: both resolve against the caller's `cwd`.
 - POSIX: arguments and `cwd` equal the previous behaviour.
+- A relative `extractDir` with a `cwd` other than `process.cwd()` is created and extracted under that
+  `cwd` (real tar), and nothing is created under `process.cwd()`.
 - Regression test: `packages/desktop/test/prebuiltBinaryTarInvocation.test.ts` (fork manifest).
 - The Windows x64 job of `fork-release.yml` passes `prepare:agent-bundle`.

@@ -9,7 +9,7 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, win32 } from "node:path";
+import { dirname, join, resolve, win32 } from "node:path";
 import process from "node:process";
 import { runCommand } from "./spawn-command.mjs";
 
@@ -43,7 +43,16 @@ export function resolveTarExtractInvocation({
   return { args: ["-xzf", archivePath, "-C", extractDir], cwd };
 }
 
-export function extractPrebuiltArchive({ archivePath, archiveExt, extractDir, cwd }) {
+export function extractPrebuiltArchive({
+  archivePath: requestedArchivePath,
+  archiveExt,
+  extractDir: requestedExtractDir,
+  cwd = process.cwd(),
+}) {
+  // Resolve once against the caller's cwd: mkdirSync, PowerShell and tar must target the same directory,
+  // otherwise a relative extractDir is created under process.cwd() while tar -C looks under cwd.
+  const archivePath = resolve(cwd, requestedArchivePath);
+  const extractDir = resolve(cwd, requestedExtractDir);
   mkdirSync(extractDir, { recursive: true });
   if (archiveExt === "zip") {
     if (process.platform === "win32") {
@@ -62,11 +71,7 @@ export function extractPrebuiltArchive({ archivePath, archiveExt, extractDir, cw
     return;
   }
 
-  const tarInvocation = resolveTarExtractInvocation({
-    archivePath,
-    extractDir,
-    cwd: cwd ?? process.cwd(),
-  });
+  const tarInvocation = resolveTarExtractInvocation({ archivePath, extractDir, cwd });
   runCommand("tar", tarInvocation.args, { cwd: tarInvocation.cwd });
 }
 

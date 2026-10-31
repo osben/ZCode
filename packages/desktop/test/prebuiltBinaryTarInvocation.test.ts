@@ -1,5 +1,13 @@
-import { describe, expect, it } from "vitest";
-import { resolveTarExtractInvocation } from "../../../scripts/prebuilt-binary-extract.mjs";
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  extractPrebuiltArchive,
+  resolveTarExtractInvocation,
+} from "../../../scripts/prebuilt-binary-extract.mjs";
 
 const driveSpecPattern = /^[A-Za-z]:/u;
 
@@ -70,5 +78,36 @@ describe("resolveTarExtractInvocation", () => {
       ],
       cwd: "/tmp/zcode-bundled-npm-abc",
     });
+  });
+});
+
+describe.skipIf(process.platform === "win32")("extractPrebuiltArchive", () => {
+  const tempRoots: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      tempRoots.splice(0).map((root) => rm(root, { force: true, recursive: true })),
+    );
+  });
+
+  it("creates and extracts a relative extract dir under the caller's cwd", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zcode-tar-invocation-"));
+    tempRoots.push(root);
+    const sourceDir = join(root, "source");
+    await mkdir(sourceDir);
+    await writeFile(join(sourceDir, "payload.txt"), "ok");
+    const archivePath = join(root, "archive.tgz");
+    execFileSync("tar", ["-czf", archivePath, "-C", sourceDir, "payload.txt"]);
+    const relativeExtractDir = `extract-${process.pid}`;
+
+    extractPrebuiltArchive({
+      archiveExt: "tgz",
+      archivePath,
+      cwd: root,
+      extractDir: relativeExtractDir,
+    });
+
+    expect(await readFile(join(root, relativeExtractDir, "payload.txt"), "utf8")).toBe("ok");
+    expect(existsSync(join(process.cwd(), relativeExtractDir))).toBe(false);
   });
 });
