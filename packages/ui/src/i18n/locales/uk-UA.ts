@@ -3076,7 +3076,43 @@ const ukUA: Record<string, string> = {
   "settings.modelProvider.acp.unsupported": "Агенти ACP не підтримуються в цьому середовищі.",
   "settings.modelProvider.acp.sectionLaunch": "Конфігурація запуску",
   "settings.modelProvider.acp.sectionLogin": "Вхід",
-  "settings.modelProvider.acp.sectionTest": "Перевірка",
+  "settings.modelProvider.ollama.groupTitle": "Локальні моделі",
+  "settings.modelProvider.ollama.subtitle": "Локальні моделі через Ollama",
+  "settings.modelProvider.ollama.openProvider": "Відкрити налаштування провайдера",
+  "settings.modelProvider.ollama.sectionServer": "Сервер",
+  "settings.modelProvider.ollama.address": "Адреса сервера",
+  "settings.modelProvider.ollama.detect": "Знайти",
+  "settings.modelProvider.ollama.rescan": "Пересканувати",
+  "settings.modelProvider.ollama.addressFromProvider":
+    "Адреса береться з провайдера Ollama; змініть її в налаштуваннях провайдера.",
+  "settings.modelProvider.ollama.connected": "Підключено · Ollama {version} · моделей: {count}",
+  "settings.modelProvider.ollama.unreachable": "Недоступний: {reason}",
+  "settings.modelProvider.ollama.unreachableHint":
+    "Запустіть Ollama (ollama serve) або перевірте адресу. З HTTP-проксі додайте 127.0.0.1 до NO_PROXY.",
+  "settings.modelProvider.ollama.sectionModels": "Моделі",
+  "settings.modelProvider.ollama.updateModels": "Оновити моделі",
+  "settings.modelProvider.ollama.addToZCode": "Додати в ZCode",
+  "settings.modelProvider.ollama.noModels":
+    "На цьому сервері немає моделей. Завантажте модель через ollama pull.",
+  "settings.modelProvider.ollama.context": "контекст {size}",
+  "settings.modelProvider.ollama.eligibility.unknown": "Можливості невідомі",
+  "settings.modelProvider.ollama.eligibility.noTools": "Без підтримки інструментів",
+  "settings.modelProvider.ollama.eligibility.notChat": "Не чат-модель",
+  "settings.modelProvider.ollama.contextHint":
+    "Ollama використовує довжину контексту сервера (OLLAMA_CONTEXT_LENGTH), яка може бути меншою за максимум моделі, показаний тут.",
+  "settings.modelProvider.ollama.syncFailed":
+    "Не вдалося оновити провайдер Ollama: {message}. Збережіть ще раз, щоб завершити.",
+  "settings.modelProvider.acp.sectionModels": "Моделі",
+  "settings.modelProvider.acp.sectionDiagnostics": "Діагностика останньої перевірки",
+  "settings.modelProvider.acp.detectedPath": "Знайдено: {path}",
+  "settings.modelProvider.acp.modelsNotOffered": "Цей агент не пропонує вибору моделі.",
+  "settings.modelProvider.acp.modelsEmpty":
+    "Запустіть перевірку, щоб завантажити моделі цього агента.",
+  "settings.modelProvider.acp.modelsHint":
+    "Позначені моделі з'являються в меню моделей агента в полі введення ({visible} з {total}).",
+  "settings.modelProvider.acp.modelsSearch": "Фільтр моделей",
+  "settings.modelProvider.acp.modelsCurrent": "Поточна",
+  "settings.modelProvider.acp.modelsSaveFailed": "Не вдалося зберегти вибір моделей: {message}",
   "settings.modelProvider.acp.enableAgentLabel": "Увімкнути {name} в ZCode",
   "settings.modelProvider.acp.disableAgentLabel": "Вимкнути {name} в ZCode",
   "settings.modelProvider.acp.title": "Агенти ACP",
@@ -3822,16 +3858,16 @@ const ukUA: Record<string, string> = {
   "settings.modelProvider.chatgpt.signOut": "Вийти",
   "settings.modelProvider.chatgpt.addAccount": "Додати ще один акаунт",
   "settings.modelProvider.chatgpt.reconnect": "Повторно підключити",
-  "settings.modelProvider.chatgpt.linkUsage": "Підключити ліміти",
   "settings.modelProvider.chatgpt.manageUsage": "Керувати використанням",
   "settings.modelProvider.chatgpt.firstRun.title": "Ви використовуєте свій план ChatGPT",
   "settings.modelProvider.chatgpt.firstRun.body":
     "Відповідні AI-запити в цьому застосунку використовують ваш план ChatGPT. Використання спільне для всіх застосунків плану та керується в налаштуваннях ChatGPT.",
   "settings.modelProvider.chatgpt.firstRun.gotIt": "Зрозуміло",
   "settings.modelProvider.chatgpt.pickerBadge": "Підписка",
-  "settings.modelProvider.chatgpt.usage.primary": "5-годинне вікно: {percent}%",
-  "settings.modelProvider.chatgpt.usage.primaryReset": "оновлюється о {time}",
-  "settings.modelProvider.chatgpt.usage.weekly": "Тижневе вікно: {percent}%",
+  "settings.modelProvider.chatgpt.reconnectRequired":
+    "Вхід у ChatGPT закінчився або був відкликаний. Увійдіть знову, щоб і далі користуватися планом.",
+  "settings.modelProvider.chatgpt.signInAgain": "Увійти знову",
+  "settings.modelProvider.chatgpt.removeAccount": "Видалити",
   "settings.modelProvider.presetTitle": "Провайдери",
   "settings.usage.sectionTitle": "Статистика використання",
   "settings.usage.sectionDescription": "На основі локальної історії сеансів застосунку.",
@@ -6351,6 +6387,7 @@ const ukUA: Record<string, string> = {
     "Немає квоти для ZCode MCP «{server}». Увійдіть або оформіть Coding Plan, щоб користуватися ним.",
   "chat.quota.providerLimited":
     "Досягнуто ліміту квоти або плану поточного облікового запису. Оновіть або змініть план, щоб продовжити.",
+  "chat.quota.chatgptPlanLimited": "Ліміт використання плану ChatGPT вичерпано.",
   "chat.quota.providerLimited.resetAt": "П'ятигодинний ліміт буде скинуто о {time}.",
   "chat.quota.providerLimited.autoContinue": "Продовжувати автоматично",
   "chat.quota.action.upgrade": "Оновити",
@@ -6522,6 +6559,10 @@ const ukUA: Record<string, string> = {
   "zcode.error.modelSuspiciousEmpty":
     "Модель не повернула вмісту (часто через прострочений токен або проблеми з планом). Надішліть ще раз.",
   "zcode.error.providerBusiness.2007": "Зовнішній сервіс тимчасово недоступний. Спробуйте пізніше.",
+  "zcode.error.chatgptPlan.signInAgain":
+    "Вхід у ChatGPT більше не дійсний. Увійдіть знову в «Налаштування моделей → ChatGPT Plan».",
+  "zcode.error.chatgptPlan.notEligible":
+    "План цього акаунта ChatGPT тут недоступний. Увійдіть з акаунтом ChatGPT Plus або Pro в «Налаштування моделей → ChatGPT Plan».",
   "zcode.error.providerBusiness.429": "Ви надсилаєте запити надто часто. Спробуйте пізніше.",
   "debugInfo.taskId": "ID завдання",
   "debugInfo.traceId": "ID трасування",

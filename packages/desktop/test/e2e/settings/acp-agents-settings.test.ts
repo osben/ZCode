@@ -89,6 +89,17 @@ async function waitForSwitch(checked: boolean) {
   }
 }
 
+/** Opens the detail's Advanced section (launch config and Test diagnostics); a no-op when already open. */
+async function expandAdvanced() {
+  const trigger = await (await card()).$('[data-testid="acp-agent-advanced-trigger"]');
+  await trigger.waitForClickable();
+  if ((await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
+  await browser.waitUntil(async () => (await trigger.getAttribute("aria-expanded")) === "true", {
+    timeout: 5000,
+    timeoutMsg: "Advanced section did not expand",
+  });
+}
+
 async function readLaunchForm() {
   return {
     command: await $("#acp-command-opencode").getValue(),
@@ -271,6 +282,9 @@ describe("ACP agents settings", () => {
 
     const detail = await card();
     await expect(detail).toHaveText(expect.stringContaining("0.0.0-e2e"));
+    // The detected binary path sits with the launch config in the collapsed Advanced section.
+    await expect(detail).not.toHaveText(expect.stringContaining(OPENCODE_SHIM));
+    await expandAdvanced();
     await expect(detail).toHaveText(expect.stringContaining(OPENCODE_SHIM));
     const form = await readLaunchForm();
     assert.equal(form.command, OPENCODE_SHIM);
@@ -281,7 +295,7 @@ describe("ACP agents settings", () => {
   it("ACP-E2E-03: Test shows a roundtrip OK with a collapsed frames disclosure", async function () {
     this.timeout(90000);
     const detail = await card();
-    const testButton = await detail.$("button=Test");
+    const testButton = await detail.$('[data-testid="acp-agent-test-button"]');
     await testButton.waitForClickable();
     await testButton.click();
 
@@ -289,6 +303,8 @@ describe("ACP agents settings", () => {
       timeout: 60000,
       timeoutMsg: "roundtrip OK was not reported",
     });
+    // Diagnostics (stderr, frames) live in the collapsed Advanced section.
+    await expandAdvanced();
     const frames = await detail.$("details");
     await frames.waitForExist();
     assert.equal(await frames.getAttribute("open"), null, "frames disclosure must start collapsed");
@@ -300,6 +316,7 @@ describe("ACP agents settings", () => {
 
   it("ACP-E2E-04: enable then disable keeps the saved command, args and env", async function () {
     this.timeout(90000);
+    await expandAdvanced();
     await replaceValue("#acp-args-opencode", SAVED_ARGS);
     await replaceValue("#acp-env-opencode", SAVED_ENV);
 
@@ -356,5 +373,40 @@ describe("ACP agents settings", () => {
       opencodeRows.every((id) => id.endsWith(NAV_OPENCODE)),
       `unexpected opencode nav rows: ${opencodeRows.join(", ")}`,
     );
+  });
+
+  // specs/acp-agent-runtime.md "Settings: models and Advanced" (SM2, SM4, SM5).
+  it("ACP-E2E-06: a Test loads the agent's models and an unchecked one is stored in the fork sidecar", async function () {
+    this.timeout(90000);
+    const detail = await card();
+    await expandAdvanced();
+    // The mock agent offers a "model" select (m1 current, m2) only with `--config options`.
+    await replaceValue("#acp-args-opencode", "acp --config options");
+    await (await detail.$('[data-testid="acp-agent-test-button"]')).click();
+
+    const checkbox = (value: string) =>
+      detail.$(`[data-testid="acp-agent-model-checkbox"][data-model-value="${value}"]`);
+    await (await checkbox("m2")).waitForDisplayed({ timeout: 60000 });
+    assert.equal(await (await checkbox("m2")).getAttribute("aria-checked"), "true");
+
+    await (await checkbox("m2")).click();
+    const visibility = join(
+      dirname(getE2EAppDataPaths().configFile),
+      "fork_acp_agent_model_visibility.json",
+    );
+    await browser.waitUntil(
+      async () => existsSync(visibility) && (await readFile(visibility, "utf8")).includes('"m2"'),
+      { timeout: 10000, timeoutMsg: "hidden model was not stored in the fork sidecar" },
+    );
+    const stored = JSON.parse(await readFile(visibility, "utf8")) as unknown;
+    assert.deepEqual(stored, {
+      schemaVersion: 1,
+      agents: [{ agentId: "opencode", hiddenModels: ["m2"] }],
+    });
+    // The last visible model cannot be unchecked; the shared config still holds no ACP provider.
+    assert.equal(await (await checkbox("m1")).isEnabled(), false);
+    await readSavedAcpAccess();
+    const screenshotDir = process.env.ZCODE_E2E_SCREENSHOT_DIR?.trim();
+    if (screenshotDir) await browser.saveScreenshot(join(screenshotDir, "acp-agent-detail.png"));
   });
 });

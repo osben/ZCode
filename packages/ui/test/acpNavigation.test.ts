@@ -189,12 +189,13 @@ describe("model provider navigation with the ACP group", () => {
     return captured;
   }
 
-  it("places the acp group directly after the custom group", () => {
+  it("places the acp group after the custom and local groups", () => {
     const groups = navigationGroupsOf({
       acp: acpGroup,
       providers: [customProvider("custom-a")],
     });
-    expect(groups.map((item) => item.id)).toEqual(["preset", "chatgpt", "custom", "acp"]);
+    // specs/ollama-local-provider.md: Local models sits between Custom providers and ACP agents.
+    expect(groups.map((item) => item.id)).toEqual(["preset", "chatgpt", "custom", "local", "acp"]);
   });
 
   it("does not list ACP-managed personal providers again under custom", () => {
@@ -220,7 +221,7 @@ describe("model provider navigation with the ACP group", () => {
 
   it("produces no acp group when the host reports ACP unavailable", () => {
     const groups = navigationGroupsOf({ acp: null, providers: [customProvider("custom-a")] });
-    expect(groups.map((item) => item.id)).toEqual(["preset", "chatgpt", "custom"]);
+    expect(groups.map((item) => item.id)).toEqual(["preset", "chatgpt", "custom", "local"]);
   });
 });
 

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { type BuiltinModelProviderId, type OAuthProviderId } from "@zcode/shared";
-import { PackageIcon } from "lucide-react";
+import { PackageIcon, ServerIcon } from "lucide-react";
 import { ProviderLogo } from "./ProviderLogo.js";
 import { AcpAgentMark } from "./AcpAgentMark.js";
 import {
@@ -38,7 +38,12 @@ export function resolveModelProviderNavLogo(item: ModelProviderNavItem) {
 }
 
 export function renderModelProviderNavIcon(item: ModelProviderNavItem): ReactNode {
-  if ("provider" in item && item.provider) {
+  // Before the provider branch: the Ollama entry carries its synced provider, whose config has no logo.
+  if (item.type === "ollama") {
+    return <ServerIcon className="size-4 shrink-0" />;
+  }
+  // A preset row keeps its brand logo even before a runtime provider exists (signed-out plans).
+  if (("provider" in item && item.provider) || (item.type === "preset" && item.logo)) {
     return <ProviderLogo logo={resolveModelProviderNavLogo(item)} className="size-4" />;
   }
   if (item.type === "acpAgent") {

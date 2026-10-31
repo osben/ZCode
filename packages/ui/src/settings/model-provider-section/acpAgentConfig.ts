@@ -349,3 +349,43 @@ export function withoutAcpManagedProviders(
 ): ProviderSettingsFormProvider[] {
   return providers.filter((provider) => !isAcpManagedProvider(provider));
 }
+
+/** One `group` of the agent's model values, in the agent's order (specs/acp-agent-runtime.md "Settings: models and Advanced"). */
+export interface AcpModelValueGroup<Value extends { readonly group: string | null }> {
+  readonly group: string | null;
+  readonly values: readonly Value[];
+}
+
+/** Groups the values by their `group`, keeping the agent's order of both groups and values. */
+export function groupAcpModelValues<Value extends { readonly group: string | null }>(
+  values: readonly Value[],
+): AcpModelValueGroup<Value>[] {
+  const groups: { group: string | null; values: Value[] }[] = [];
+  for (const value of values) {
+    const existing = groups.find((candidate) => candidate.group === value.group);
+    if (existing) existing.values.push(value);
+    else groups.push({ group: value.group, values: [value] });
+  }
+  return groups;
+}
+
+/**
+ * The hidden set after toggling one value. Showing removes it; hiding adds it, unless it is the last offered
+ * value still visible (at least one model stays visible). Values the agent no longer offers stay in the set.
+ */
+export function toggleAcpHiddenModel(
+  hidden: readonly string[],
+  offered: readonly string[],
+  value: string,
+  visible: boolean,
+): string[] {
+  const set = new Set(hidden);
+  if (visible) {
+    set.delete(value);
+  } else {
+    const remaining = offered.filter((candidate) => candidate !== value && !set.has(candidate));
+    if (remaining.length === 0) return [...hidden];
+    set.add(value);
+  }
+  return [...set].sort();
+}

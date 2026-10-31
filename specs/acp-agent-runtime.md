@@ -201,10 +201,12 @@ ACP agents live inside the Model Providers master/detail layout, not as a separa
   selectable text (never executed by ZCode). A failed scan shows the error and Retry in that same
   detail. The Cursor installer links both `agent` and `cursor-agent`; detection keeps probing only
   `cursor-agent`, because a bare `agent` on PATH can belong to another CLI.
-- Detail pane for an agent: header (initial mark, name, version, binary path, Rescan, enable switch
-  labelled with the agent name, status), then sections for launch config (command, args, env),
-  login/status helpers, and Test. Raw ACP frames are behind a collapsed disclosure. Unsaved form
-  edits are dropped on navigation, the same as other provider details.
+- Detail pane for an agent: header (initial mark, name, version, Rescan, enable switch labelled with
+  the agent name, status), then the Models section (see "Settings: models and Advanced"), the
+  login/status helpers, and a collapsed **Advanced** section that holds the launch config (command,
+  args, env, Save changes), the binary path, and the diagnostics of the last Test (stderr tail, raw
+  ACP frames behind their own collapsed disclosure). Unsaved form edits are dropped on navigation,
+  the same as other provider details.
 - Status (one rule for the navigation row and the detail header): `ready` when enabled, installed
   and not in conflict; `unavailable` when enabled but the CLI is not installed; otherwise
   `disabled`.
@@ -228,10 +230,89 @@ ACP agents live inside the Model Providers master/detail layout, not as a separa
 - Desktop E2E (`packages/desktop/test/e2e/settings/acp-agents-settings.test.ts`, mock agent via the
   detection seam): the group renders after Custom providers; the catalog empty state shows when
   nothing is detected, and Rescan moves to the detected agent; selecting an agent opens its detail;
-  Test shows a roundtrip OK with a collapsed frames disclosure; the enable switch turns on then off
+  Test (the Models section's load/refresh action) shows a roundtrip OK, and the Advanced section,
+  once expanded, holds a collapsed frames disclosure; the enable switch turns on then off
   and the saved command/args/env survive the off/on cycle in `fork_acp_agents.json` while the shared
   `provider_config.json` never holds an `acp:` provider; an enabled agent is not listed under Custom
   providers.
+
+## Settings: models and Advanced
+
+Reason: the detail pane led with rarely used launch fields, and the agent's own models (the `model`
+select of S6) could only be narrowed in the composer menu, never chosen ahead of time.
+
+Product rules:
+
+- Models section (top level, below the header). It lists the values of the agent's model option:
+  the catalog option the composer would show as its `model` control
+  (`selectExternalAgentComposerOptions(...).model`). Each value is a checkbox labelled with the
+  agent's own name (never translated, S6) and grouped by its `group`; more than
+  `EXTERNAL_AGENT_CONFIG_SEARCH_THRESHOLD` values get a filter input.
+- A checked value is shown in the composer's agent Model select; an unchecked one is hidden there.
+  The stored fact is the **hidden** set, so a model the agent adds later is visible by default and
+  an empty set means "all models".
+- The agent's current value (`currentValue` of the live projection, the catalog, or the draft
+  overlay) is never hidden, whatever the set says, so the select always shows its current value
+  (S6: a value the agent no longer offers is dropped). A hidden value the agent no longer offers is
+  kept in the set and ignored.
+- The last checked value cannot be unchecked: the checkbox is disabled, so at least one model stays
+  visible.
+- A catalog without a model select says the agent offers no model choice (Test would not change it).
+- No catalog yet (never run or tested): the section shows "Run Test to load this agent's models"
+  and the Test action. The Test action lives in the Models section (label "Test", the roundtrip of
+  "Settings UI placement"); a Test rereads the catalog when it returns, even when the prompt part
+  failed — the handshake records the agent's offered options before the prompt, so a failed prompt
+  does not hide a discovered catalog. The OK/failed line stays next to the action; stderr and
+  frames live in Advanced.
+- Advanced is collapsed on open and keeps its content mounted while collapsed (the launch form
+  draft survives toggling). It expands by itself while the env text has invalid lines.
+
+Owner and storage:
+
+| Fact                | Owner                                         | Stored in                              | Read by                                                        |
+| ------------------- | --------------------------------------------- | -------------------------------------- | -------------------------------------------------------------- |
+| Hidden model values | `NodeForkAcpAgentModelVisibilityStore` (host) | `fork_acp_agent_model_visibility.json` | Settings Models section and composer, via `getAcpAgentCatalog` |
+
+- A separate fork sidecar next to `provider_config.json`, for the same reason as the catalog: the
+  agent record is `.strict()`, and the catalog is a cache that its writers overwrite. Shape:
+  `{ schemaVersion: 1, agents: [{ agentId, hiddenModels: string[] }] }`; an invalid file reads as
+  empty (reported once), an invalid entry is dropped alone. An agent with no hidden values has no
+  entry.
+- One writer: `setAcpAgentHiddenModels({ agentId, hiddenModels })` on the provider settings service
+  (host RPC; each host owns its own file). It replaces the agent's whole set under
+  the file lock with an atomic private write; equal sets are not rewritten. The Settings pane
+  serializes its writes (one in flight, the latest set wins) and reverts the checkbox with an alert
+  when a write fails.
+- `getAcpAgentCatalog` returns `hiddenModels` next to `options`, so the composer reads one result.
+  The composer reads it when the agent's mode area mounts; a change in Settings applies to the next
+  mount (no live push).
+- Host scope: like the rest of the ACP Settings group (detection, enable, launch config, Test,
+  catalog), the Models section reads and writes the **Local Host** that Settings is bound to (the
+  Model Providers pane runs on `localHostServices`). ACP launch config is host-local and not synced
+  (see "Storage and upstream compatibility"), so the hidden set is too: in a remote workspace the composer reads
+  the remote host's own `fork_acp_agent_model_visibility.json`, which this pane does not edit.
+  Configuring a remote host's ACP agents from Settings is a separate change that moves the whole
+  group to the workspace host, not just this section.
+- Hiding is presentation only: it never sends `set_config_option` and never changes a session's
+  chosen value; the worker's validation of a choice is unchanged.
+
+Acceptance:
+
+| #   | Given                                       | When                                | Then                                                                       |
+| --- | ------------------------------------------- | ----------------------------------- | -------------------------------------------------------------------------- |
+| SM1 | Catalog with models A, B, C, nothing hidden | Settings opens the agent            | A, B, C are checked; Advanced is collapsed                                 |
+| SM2 | SM1                                         | User unchecks B                     | `hiddenModels = [B]` is stored; the composer select lists A and C          |
+| SM3 | Hidden = [B], agent's current value is B    | Composer renders the agent's select | B is listed (current value is never hidden)                                |
+| SM4 | Only A is checked                           | Settings renders                    | A's checkbox is disabled                                                   |
+| SM5 | No catalog                                  | Settings opens the agent            | Empty state with Test; after a successful Test the list appears            |
+| SM6 | Env text has an invalid line                | Settings renders                    | Advanced is expanded and shows the env error                               |
+| SM7 | Write of hidden models fails                | User toggles a checkbox             | The checkbox reverts and an alert is shown                                 |
+| SM8 | Handshake succeeded, the prompt fails       | Test                                | The Models list shows the discovered catalog; the failed line is announced |
+
+Tests: `packages/ui/test/acpAgentDetail.test.ts` (SM1, SM2, SM4–SM8), `externalAgentConfig.test.ts`
+(SM2, SM3), `packages/provider-node/test/fork-acp-agent-model-visibility-store.test.ts`, and desktop
+E2E `ACP-E2E-06` (Test loads the mock agent's models; an unchecked one lands in
+`fork_acp_agent_model_visibility.json`; the last visible one is disabled).
 
 ## Storage and upstream compatibility
 

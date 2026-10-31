@@ -22,6 +22,7 @@ const MESSAGE_IDS: Record<SessionQuotaBannerKind, string> = {
   "daily-exhausted": "chat.quota.startPlan.dailyExhausted",
   "concurrent-limit": "chat.quota.startPlan.concurrentLimit",
   "provider-limited": "chat.quota.providerLimited",
+  "chatgpt-plan-limited": "chat.quota.chatgptPlanLimited",
   "mcp-quota-exhausted": "chat.quota.mcp.quotaExhausted",
   "mcp-plan-required": "chat.quota.mcp.codingPlanRequired",
 };
@@ -63,6 +64,7 @@ export function ConversationQuotaBanner({
   autoContinueDefault = true,
   autoContinueReady = true,
   onAutoContinue,
+  onManageUsage,
 }: {
   state: SessionQuotaBannerState;
   billingDiscountActive?: boolean;
@@ -74,6 +76,8 @@ export function ConversationQuotaBanner({
   autoContinueDefault?: boolean;
   autoContinueReady?: boolean;
   onAutoContinue?: () => void;
+  /** ChatGPT plan limit: opens the plan's usage page (the plan is managed on chatgpt.com). */
+  onManageUsage?: () => void;
 }) {
   const { intl, locale } = useZCodeIntl();
   const bannerRef = useRef<HTMLDivElement>(null);
@@ -221,6 +225,18 @@ export function ConversationQuotaBanner({
               <CodingPlanBillingDiscountInfoDialog config={billingDiscountConfig} />
             ) : null}
           </div>
+        ) : null}
+        {onManageUsage ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-auto shrink-0 rounded-full"
+            data-testid="quota-banner-manage-usage"
+            onClick={onManageUsage}
+          >
+            {intl.formatMessage({ id: "settings.modelProvider.chatgpt.manageUsage" })}
+          </Button>
         ) : null}
         {state.providerLimitedResetAt !== null ? (
           <label className="inline-flex shrink-0 items-center gap-2 text-ui-sm text-foreground">

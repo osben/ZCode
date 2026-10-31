@@ -1,7 +1,7 @@
 # OAuth Loopback Callback Page
 
 The browser tab that the user lands on after an OAuth redirect to a local loopback
-listener (ChatGPT plan sign-in, ChatGPT usage link, MCP OAuth) shows a designed,
+listener (ChatGPT plan sign-in, MCP OAuth) shows a designed,
 self-contained page instead of plain text, with a primary **Open ZCode** button.
 
 ## Product rules
@@ -10,7 +10,7 @@ self-contained page instead of plain text, with a primary **Open ZCode** button.
   hand-write response bodies.
 - Outcomes: `success`, `denied` (provider `error=` on a matching state), `invalid`
   (missing code, state mismatch, unknown path), `failed` (internal error).
-- Flows: `sign-in` and `usage-link` change only the copy; the renderer takes the copy
+- Flows: `sign-in` (the only flow today) sets the copy; the renderer takes the copy
   as input so other OAuth flows (MCP, future providers) reuse it.
 - Surfaces:
   - `app` (desktop/server host): primary button **Open ZCode** links to the app deep link

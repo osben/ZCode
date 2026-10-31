@@ -1,5 +1,11 @@
 import type { OAuthProviderId } from "@zcode/shared";
-import { BIGMODEL_PROVIDER_ID, BUILTIN_MODEL_PROVIDER_IDS, ZAI_PROVIDER_ID } from "@zcode/shared";
+import {
+  BIGMODEL_PROVIDER_ID,
+  BUILTIN_MODEL_PROVIDER_IDS,
+  CHATGPT_OAUTH_PROVIDER_ID,
+  ZAI_PROVIDER_ID,
+  isChatGptPlanProviderId,
+} from "@zcode/shared";
 import { LogInIcon } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import bigModelIcon from "@/assets/provider-icons/logo-bigmodel.svg";
@@ -15,6 +21,7 @@ import openrouterIcon from "@/assets/provider-icons/model-provider-openrouter-li
 const OAUTH_PROVIDER_ICON_SRC: Partial<Record<OAuthProviderId, string>> = {
   [BIGMODEL_PROVIDER_ID]: bigModelIcon,
   [ZAI_PROVIDER_ID]: zaiIcon,
+  [CHATGPT_OAUTH_PROVIDER_ID]: openAiIcon,
 };
 
 export function renderOAuthProviderIcon(provider: OAuthProviderId, className?: string) {
@@ -60,5 +67,10 @@ const PROVIDER_ID_ICON_SRC: Readonly<Record<string, string>> = {
 
 /** Brand asset URL for a known providerId, or null when the caller should render its fallback glyph. */
 export function providerBrandIconSrc(providerId: string | undefined): string | null {
-  return (providerId ? PROVIDER_ID_ICON_SRC[providerId] : undefined) ?? null;
+  if (!providerId) return null;
+  // Runtime ChatGPT plan ids carry a per-account suffix (`account:chatgpt-plan:<accountKey>`).
+  const key = isChatGptPlanProviderId(providerId)
+    ? BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan
+    : providerId;
+  return PROVIDER_ID_ICON_SRC[key] ?? null;
 }

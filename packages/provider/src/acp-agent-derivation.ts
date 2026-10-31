@@ -398,3 +398,66 @@ export function normalizeForkAcpAgentCatalogOptions(
     }),
   );
 }
+
+// Per-agent model values the user hid from the composer's agent Model select (specs/acp-agent-runtime.md
+// "Settings: models and Advanced"). A separate sidecar from the catalog: the catalog is a cache its writers
+// overwrite, and the agent record is strict. Reads are tolerant like the catalog's.
+export const ACP_AGENT_MODEL_VISIBILITY_SCHEMA_VERSION = 1;
+
+export const forkAcpAgentModelVisibilityEntrySchema = z.object({
+  agentId: z.string().regex(/^\S+$/),
+  hiddenModels: z.array(z.string()),
+});
+
+export type ForkAcpAgentModelVisibilityEntry = z.infer<
+  typeof forkAcpAgentModelVisibilityEntrySchema
+>;
+
+export interface ForkAcpAgentModelVisibilitySnapshot {
+  readonly agents: readonly ForkAcpAgentModelVisibilityEntry[];
+}
+
+/** Sorted, de-duplicated values; the stored form, so equal sets compare equal. */
+export function normalizeAcpAgentHiddenModels(values: readonly string[]): string[] {
+  return [...new Set(values)].sort();
+}
+
+/**
+ * Parses the visibility file. Throws only when the file itself is not a visibility document; an invalid entry,
+ * a later duplicate of an agent id, and an entry with nothing hidden are dropped.
+ */
+export function parseForkAcpAgentModelVisibilityFile(
+  value: unknown,
+): ForkAcpAgentModelVisibilitySnapshot {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    (value as { schemaVersion?: unknown }).schemaVersion !==
+      ACP_AGENT_MODEL_VISIBILITY_SCHEMA_VERSION ||
+    !Array.isArray((value as { agents?: unknown }).agents)
+  ) {
+    throw new Error("ACP agent model visibility file is not a version 1 document");
+  }
+  const seen = new Set<string>();
+  const agents: ForkAcpAgentModelVisibilityEntry[] = [];
+  for (const raw of (value as { agents: unknown[] }).agents) {
+    const parsed = forkAcpAgentModelVisibilityEntrySchema.safeParse(raw);
+    if (!parsed.success || seen.has(parsed.data.agentId)) continue;
+    seen.add(parsed.data.agentId);
+    const hiddenModels = normalizeAcpAgentHiddenModels(parsed.data.hiddenModels);
+    if (hiddenModels.length > 0) agents.push({ agentId: parsed.data.agentId, hiddenModels });
+  }
+  return Object.freeze({ agents: Object.freeze(agents) });
+}
+
+export function encodeForkAcpAgentModelVisibilityFile(
+  agents: readonly ForkAcpAgentModelVisibilityEntry[],
+): {
+  schemaVersion: typeof ACP_AGENT_MODEL_VISIBILITY_SCHEMA_VERSION;
+  agents: ForkAcpAgentModelVisibilityEntry[];
+} {
+  return {
+    schemaVersion: ACP_AGENT_MODEL_VISIBILITY_SCHEMA_VERSION,
+    agents: agents.map((agent) => forkAcpAgentModelVisibilityEntrySchema.parse(agent)),
+  };
+}

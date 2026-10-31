@@ -74,4 +74,44 @@ describe("useV4SessionQuotaBanner business code source", () => {
 
     expect(result.current.takesOverError).toBe(false);
   });
+
+  // specs/chatgpt-plan-signin.md "Limits and recovery in Desktop" (L1, L4).
+  it("takes over a ChatGPT plan usage limit, live or hydrated", () => {
+    const chatGptProvider = "account:chatgpt-plan:a1b2c3d4e5f60718";
+    for (const code of ["subscription_sharing_usage_limit_exceeded", "AiSdkModelAdapterError"]) {
+      const { result } = renderBanner(
+        {
+          ...hydratedConcurrencyError,
+          code,
+          message: "ChatGPT plan usage limit reached.",
+          attribution: {
+            source: "provider",
+            providerId: chatGptProvider,
+            providerErrorCode: "subscription_sharing_usage_limit_exceeded",
+          },
+        },
+        chatGptProvider,
+      );
+      expect(result.current.takesOverError).toBe(true);
+      expect(result.current.state).toMatchObject({
+        kind: "chatgpt-plan-limited",
+        providerLimitedResetAt: null,
+      });
+      cleanup();
+    }
+  });
+
+  it("leaves the ChatGPT usage-limit code on another provider to the error banner", () => {
+    const { result } = renderBanner(
+      {
+        ...hydratedConcurrencyError,
+        attribution: {
+          source: "provider",
+          providerErrorCode: "subscription_sharing_usage_limit_exceeded",
+        },
+      },
+      "openai",
+    );
+    expect(result.current.takesOverError).toBe(false);
+  });
 });

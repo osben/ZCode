@@ -50,7 +50,7 @@ describe("OAuth callback page", () => {
     }
     const page = renderOAuthCallbackPage(
       buildOAuthCallbackPage("success", {
-        flow: "usage-link",
+        flow: "sign-in",
         surface: "app",
         appUrl: "javascript:alert(1)",
       }),
@@ -61,7 +61,7 @@ describe("OAuth callback page", () => {
   it("uses error styling for invalid and failed outcomes", () => {
     for (const outcome of ["invalid", "failed", "denied"] as const) {
       const page = renderOAuthCallbackPage(
-        buildOAuthCallbackPage(outcome, { flow: "usage-link", surface: "app" }),
+        buildOAuthCallbackPage(outcome, { flow: "sign-in", surface: "app" }),
       );
       expect(page.html).toContain('class="error"');
     }

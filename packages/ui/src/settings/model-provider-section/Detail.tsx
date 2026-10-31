@@ -848,9 +848,10 @@ export function ModelProviderSectionDetail({
   if (
     selectedNavItem.type === "acpAgent" ||
     selectedNavItem.type === "acpDetect" ||
-    selectedNavItem.type === "acpLoading"
+    selectedNavItem.type === "acpLoading" ||
+    selectedNavItem.type === "ollama"
   ) {
-    // ACP rows are rendered by ModelProviderSection with the detection and enable handlers it owns.
+    // ACP and Ollama rows are rendered by ModelProviderSection with the handlers it owns.
     return null;
   }
 

@@ -1,7 +1,11 @@
 import { useProviderSettingsView } from "@/hooks/useProviderSettingsView.js";
 import { buildStartPlanEntitlementOptions } from "@/lib/startPlanEntitlementOptions.js";
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { BUILTIN_MODEL_PROVIDER_IDS, isStartPlanModelProviderId } from "@zcode/shared";
+import {
+  BUILTIN_MODEL_PROVIDER_IDS,
+  isStartPlanModelProviderId,
+  parseChatGptPlanAccountProviderId,
+} from "@zcode/shared";
 import type { IUsageStatsService } from "@zcode/services";
 import type { SessionErrorInfo, SessionPhase } from "@zcode/shared/zcode-protocol-v4";
 import { useUsageEntitlementWithService } from "@/hooks/useUsageEntitlement.js";
@@ -25,6 +29,8 @@ import type { McpUnavailableNotice } from "@/v4/mcpUnavailableBannerNotice.js";
 import { logger } from "@/logger.js";
 import { sessionQuotaBannerDismissalStore } from "@/v4/sessionQuotaBannerDismissalStore.js";
 import { startPlanQuotaReminderStore } from "@/v4/startPlanQuotaReminderStore.js";
+
+const CHATGPT_PLAN_USAGE_LIMIT_CODE = "subscription_sharing_usage_limit_exceeded";
 
 function isGlmQuotaBannerProviderId(providerId: string | null): boolean {
   return (
@@ -79,7 +85,18 @@ export function useV4SessionQuotaBanner(params: {
   const serverProviderLimited = Boolean(
     providerLimitedCode && isGlmQuotaBannerProviderId(activeProviderId),
   );
-  const takesOverError = serverQuotaExhausted || serverConcurrentLimited || serverProviderLimited;
+  // ChatGPT plan limit (specs/chatgpt-plan-signin.md "Limits and recovery in Desktop"): the error carries no reset
+  // time and there is no official usage source, so the banner never shows one.
+  const chatGptPlanAccountKey = activeProviderId
+    ? parseChatGptPlanAccountProviderId(activeProviderId)
+    : null;
+  const serverChatGptPlanLimited =
+    businessCode === CHATGPT_PLAN_USAGE_LIMIT_CODE && chatGptPlanAccountKey !== null;
+  const takesOverError =
+    serverQuotaExhausted ||
+    serverConcurrentLimited ||
+    serverProviderLimited ||
+    serverChatGptPlanLimited;
 
   const settings = useProviderSettingsView();
   const entitlement = useUsageEntitlementWithService(params.usageStatsService, {
@@ -123,9 +140,11 @@ export function useV4SessionQuotaBanner(params: {
         ...(params.mcpUnavailableNotice
           ? { mcpUnavailableNotice: params.mcpUnavailableNotice }
           : {}),
+        ...(serverChatGptPlanLimited ? { serverChatGptPlanLimited } : {}),
       }),
     [
       activeProviderId,
+      serverChatGptPlanLimited,
       reminderOwner,
       reminderVersion,
       concurrentLimitCode,

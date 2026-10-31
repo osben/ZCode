@@ -14,10 +14,12 @@ import { acpAgentPlatformSupported } from "@zcode/acp-agent-runtime";
 import {
   createNodeProviderRuntimePathEnv,
   NodeForkAcpAgentCatalogStore,
+  NodeForkAcpAgentModelVisibilityStore,
   NodeForkAcpAgentStore,
   NodeModelSelectionConfigRepository,
   PERSONAL_PROVIDER_CONFIG_FILE_NAME,
   resolveForkAcpAgentCatalogFilePath,
+  resolveForkAcpAgentModelVisibilityFilePath,
   resolveForkAcpAgentsFilePath,
 } from "@zcode/provider-node";
 import { getAppConfigDir as resolveAppConfigDir } from "./paths.js";
@@ -1674,6 +1676,18 @@ export function createLocalServices(options: {
         error,
       }),
   });
+  // Model values hidden from the composer (specs/acp-agent-runtime.md "Settings: models and Advanced").
+  const acpAgentModelVisibilityStore = new NodeForkAcpAgentModelVisibilityStore({
+    filePath: resolveForkAcpAgentModelVisibilityFilePath(
+      join(resolveAppConfigDir(), PERSONAL_PROVIDER_CONFIG_FILE_NAME),
+    ),
+    onRecovery: (error) =>
+      createServiceLogger("acp-agent-store").warn(
+        undefined,
+        "ACP agent model visibility is invalid",
+        { error },
+      ),
+  });
   // One availability value for the host (specs/acp-agent-runtime.md "Availability (platform rule)"):
   // it gates the settings bridge and the provider runtime's `acpExecutable` alike.
   const acpAgentPlatform = process.platform;
@@ -1682,6 +1696,9 @@ export function createLocalServices(options: {
     platform: acpAgentPlatform,
     recordCatalog: (agentId, options) => acpAgentCatalogStore.write(agentId, options),
     readCatalog: (agentId) => acpAgentCatalogStore.readAgent(agentId),
+    readHiddenModels: (agentId) => acpAgentModelVisibilityStore.readAgent(agentId),
+    writeHiddenModels: (agentId, hiddenModels) =>
+      acpAgentModelVisibilityStore.write(agentId, hiddenModels),
   });
   const acpAgentStoreLog = createServiceLogger("acp-agent-store");
   // ACP agents live in a fork-owned sidecar: upstream builds reject provider_config.json
@@ -2274,7 +2291,6 @@ export function createLocalServices(options: {
       : {}),
     accountRequestAuthService,
     chatGptPlanRequestAuth,
-    chatGptPlanUsageRecorder: siwcAuthService,
     ...(modelSelectionReadinessSource ? { modelSelectionReadinessSource } : {}),
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
     ...offPeakToolWiring,

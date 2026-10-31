@@ -394,10 +394,12 @@ function V4ExternalAgentModeAreaImpl({
       projection: externalAgentConfig,
       catalog: catalog.options,
       draftChoices,
+      hiddenModels: catalog.hiddenModels,
     });
     return resolved && !canSend ? { ...resolved, options: null } : resolved;
   }, [
     canSend,
+    catalog.hiddenModels,
     catalog.options,
     draftChoices,
     draftProviderId,
