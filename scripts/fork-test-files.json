@@ -32,6 +32,7 @@
   "packages/desktop/test/hostDatabaseStartupSweepGate.test.ts",
   "packages/desktop/test/hostQuickPromptsWiring.test.ts",
   "packages/desktop/test/pluginSandboxPermissions.test.ts",
+  "packages/desktop/test/prebuiltBinaryTarInvocation.test.ts",
   "packages/desktop/test/preparePrebuildsReleaseReuse.test.ts",
   "packages/desktop/test/prepareRuntimeAssets.test.ts",
   "packages/desktop/test/remoteWorkspacePreparationTimeout.test.ts",
