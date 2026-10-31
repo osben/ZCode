@@ -1,3 +1,4 @@
+import { genUiModelContextSchema } from "../gen-ui/contract.js";
 import { conversationQuotesSchema } from "../conversationSelection.js";
 import { botGroupInputSourceSchema } from "../bots.js";
 // Self-contained input facts after CLI admission.
@@ -79,6 +80,7 @@ export const conversationInputIntentSchema = z
     modelSelection: modelSelectionSchema.optional(),
     mode: submissionModeSchema.optional(),
     planEnabled: z.boolean().optional(),
+    genUiContext: genUiModelContextSchema.optional(),
     sharedContextRefs: z.array(sharedContextRefSchema).max(1).optional(),
     delivery: conversationInputDeliverySchema,
     order: conversationInputOrderSchema,

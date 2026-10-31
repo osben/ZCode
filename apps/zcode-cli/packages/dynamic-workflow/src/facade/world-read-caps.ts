@@ -12,6 +12,16 @@
  * world, which it might then fan out—fan-out is the expensive step.
  */
 
+/**
+ * Journal budget per `world.run` output stream (16 MiB). It is not a model-context budget:
+ * `dwf_node.result_json` stores the result verbatim and resume replays it verbatim, so the
+ * value the script gets and the value in the journal must be byte-identical — over the limit
+ * the only option is to reject, never truncate. A script wanting bounded output declares it at
+ * the call site via `opts.output` (`"discard"` / `{ tail }`), and the two copies are then the
+ * same bounded thing. `{ tail: n }` takes its cap from this number too.
+ */
+const RUN_STREAM_MAX_BYTES = 16 * 1024 * 1024;
+
 /** Caps for grep / git.diff / git.log. These numbers are part of the contract (see this module's header). */
 export const WORLD_READ_CAPS = {
   /**
@@ -31,10 +41,10 @@ export const WORLD_READ_CAPS = {
   gitLogMaxCount: 100,
   /** Number of entries for `git.log` when count is unspecified. */
   gitLogDefaultCount: 20,
-  /** Maximum bytes for `world.run` stdout (reject without truncating, probe at cap+1). */
-  runStdoutMaxBytes: 256 * 1024,
-  /** Maximum bytes for `world.run` stderr (same behavior). */
-  runStderrMaxBytes: 256 * 1024,
+  /** Maximum stdout bytes for `world.run` `output: "full"` (reject, never truncate; probed at cap+1). */
+  runStdoutMaxBytes: RUN_STREAM_MAX_BYTES,
+  /** Maximum stderr bytes for `world.run` `output: "full"` (same as above). */
+  runStderrMaxBytes: RUN_STREAM_MAX_BYTES,
   /** Wall-clock timeout (ms) for `world.run` when timeoutMs is unspecified. **No upper clamp**: supports genuinely long-running tests. */
   runDefaultTimeoutMs: 300_000,
 } as const;

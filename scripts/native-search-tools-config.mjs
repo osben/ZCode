@@ -381,13 +381,30 @@ export function resolveNativeSearchRipgrepDownloadBaseUrl(env = process.env) {
   );
 }
 
+const NATIVE_SEARCH_ARTIFACT_SOURCES = Object.freeze(["intranet", "repository"]);
+
 /**
  * The single source-selection rule for native search prebuilt archives, shared by desktop / SEA / server-cli / remote preparation:
+ * - When NATIVE_SEARCH_TOOLS_ARTIFACT_SOURCE (`intranet` / `repository`) is set explicitly, it
+ *   is taken directly and wins over the inference below; lets build machines whose default
+ *   intranet address is unreachable (e.g. a desktop preview VM on an isolated network) force
+ *   the repository-built-in archives.
  * - If `NATIVE_SEARCH_TOOLS_DOWNLOAD_BASE_URL` is explicitly set or the intranet dependency source resolves: `intranet`, using the existing download path;
  * - If no intranet dependency source is configured (`resolveIntranetDepsBaseUrl` throws or returns empty): `repository`, unpack the built-in repository archives.
  * Both sources use the same release plan and pinned SHA-256; only the source of the bytes differs.
  */
 export function resolveNativeSearchArtifactSource(env = process.env) {
+  const explicitSource = env.NATIVE_SEARCH_TOOLS_ARTIFACT_SOURCE?.trim();
+  if (explicitSource) {
+    // A typo must not silently fall back to the inferred result, or builds on isolated
+    // networks would still hit the unreachable intranet address.
+    if (!NATIVE_SEARCH_ARTIFACT_SOURCES.includes(explicitSource)) {
+      throw new Error(
+        `Unsupported NATIVE_SEARCH_TOOLS_ARTIFACT_SOURCE: ${explicitSource} (expected ${NATIVE_SEARCH_ARTIFACT_SOURCES.join(" or ")})`,
+      );
+    }
+    return explicitSource;
+  }
   if (env.NATIVE_SEARCH_TOOLS_DOWNLOAD_BASE_URL?.trim()) return "intranet";
   try {
     return resolveIntranetDepsBaseUrl(env) ? "intranet" : "repository";

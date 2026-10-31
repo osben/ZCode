@@ -21,6 +21,10 @@ const browserUseRequiredRuntimePaths = [
   "skills/web-gui-tester/SKILL.md",
 ];
 
+// The viewer panels of the document plugins (documents / pdf / presentations / spreadsheets) are built
+// into each plugin's dist/ by the shared @zcode/office-runtime package; the plugin packages have no TypeScript source.
+const officeViewerRuntimePaths = ["dist/server.mjs", "dist/ui/assets.json", "dist/ui/panel.html"];
+
 export const officialPluginPackages = [
   {
     packageName: "@zcode/android-emulator-plugin",
@@ -33,8 +37,14 @@ export const officialPluginPackages = [
   {
     packageName: "@zcode/documents-plugin",
     relativePath: "apps/zcode-cli/packages/documents-plugin",
-    requiresRuntime: false,
-    requiredSeedPaths: ["agents/visual-judge.md", "skills/docx/SKILL.md"],
+    requiresRuntime: true,
+    requiredRuntimePaths: officeViewerRuntimePaths,
+    requiredSeedPaths: [
+      "agents/visual-judge.md",
+      "skills/docx/SKILL.md",
+      "skills/docx-viewer/SKILL.md",
+    ],
+    runtimeBuildScript: "../office-runtime/scripts/build.mjs",
     stagedPath: "packages/documents-plugin",
   },
   {
@@ -47,22 +57,40 @@ export const officialPluginPackages = [
   {
     packageName: "@zcode/pdf-plugin",
     relativePath: "apps/zcode-cli/packages/pdf-plugin",
-    requiresRuntime: false,
-    requiredSeedPaths: ["agents/visual-judge.md", "skills/pdf/SKILL.md"],
+    requiresRuntime: true,
+    requiredRuntimePaths: officeViewerRuntimePaths,
+    requiredSeedPaths: [
+      "agents/visual-judge.md",
+      "skills/pdf/SKILL.md",
+      "skills/pdf-viewer/SKILL.md",
+    ],
+    runtimeBuildScript: "../office-runtime/scripts/build.mjs",
     stagedPath: "packages/pdf-plugin",
   },
   {
     packageName: "@zcode/presentations-plugin",
     relativePath: "apps/zcode-cli/packages/presentations-plugin",
-    requiresRuntime: false,
-    requiredSeedPaths: ["agents/visual-judge.md", "skills/pptx/SKILL.md"],
+    requiresRuntime: true,
+    requiredRuntimePaths: officeViewerRuntimePaths,
+    requiredSeedPaths: [
+      "agents/visual-judge.md",
+      "skills/pptx/SKILL.md",
+      "skills/pptx-viewer/SKILL.md",
+    ],
+    runtimeBuildScript: "../office-runtime/scripts/build.mjs",
     stagedPath: "packages/presentations-plugin",
   },
   {
     packageName: "@zcode/spreadsheets-plugin",
     relativePath: "apps/zcode-cli/packages/spreadsheets-plugin",
-    requiresRuntime: false,
-    requiredSeedPaths: ["agents/visual-judge.md", "skills/xlsx/SKILL.md"],
+    requiresRuntime: true,
+    requiredRuntimePaths: officeViewerRuntimePaths,
+    requiredSeedPaths: [
+      "agents/visual-judge.md",
+      "skills/xlsx/SKILL.md",
+      "skills/xlsx-viewer/SKILL.md",
+    ],
+    runtimeBuildScript: "../office-runtime/scripts/build.mjs",
     stagedPath: "packages/spreadsheets-plugin",
   },
   {
@@ -176,4 +204,12 @@ export const officialPluginPackages = [
   },
   // superpowers has been retired from bundled plugins and is now installed on demand from the UI
   // recommendations section; its resources are no longer staged here.
+  {
+    packageName: "@zcode/zcode-site-plugin",
+    relativePath: "apps/zcode-cli/packages/zcode-site-plugin",
+    requiresRuntime: true,
+    requiredRuntimePaths: ["dist/server.mjs", "dist/ui/panel.html"],
+    runtimeBuildScript: "scripts/build.mjs",
+    stagedPath: "packages/zcode-site-plugin",
+  },
 ];

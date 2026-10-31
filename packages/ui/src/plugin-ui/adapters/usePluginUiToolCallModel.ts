@@ -1,4 +1,5 @@
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { usePluginReferenceIconProjection } from "@/v4/pluginReferenceIconContext.js";
 import {
   buildTaskSidePaneMemoryKey,
   claimPluginUiSidePaneAutoOpen,
@@ -57,7 +58,7 @@ export function usePluginUiToolCallModel(
   const onOpenSidePane = context.pluginUi?.onOpenSidePane;
   const toolCall = context.toolCallNode.toolCall;
   const [width, setWidth] = useState(0);
-  const [displayMode, setDisplayMode] = useState<McpAppsDisplayMode>("inline");
+  const pluginCatalog = usePluginReferenceIconProjection();
   // Resource-level showInline arrives only with the handle; read via ref so the host result is not pulled into render-time derivation.
   const hostHandleRef = useRef<PluginSandboxHandle | null>(null);
   const sessionId = scope?.sessionId ?? "";
@@ -143,8 +144,7 @@ export function usePluginUiToolCallModel(
         openInSidePane();
         return "fullscreen";
       }
-      setDisplayMode(mode);
-      return mode;
+      return "inline";
     },
     [onOpenSidePane, openInSidePane],
   );
@@ -160,10 +160,6 @@ export function usePluginUiToolCallModel(
     toolCall.status !== "failed" &&
     !isPluginUiToolCancelled(toolCall) &&
     presentation?.isError !== true;
-  // availableDisplayModes declared during the page handshake is a hard constraint (spec MUST NOT): when fullscreen is absent, provide no side pane entry and do not auto-open.
-  // Capabilities arrive only after initialized, so start assuming "all supported"; once they arrive, host-context-changed is pushed via the availableDisplayModes change.
-  const [appAllowsFullscreen, setAppAllowsFullscreen] = useState(true);
-  const canOpenSidePane = Boolean(onOpenSidePane) && appAllowsFullscreen;
   const interactions = useMemo(
     () =>
       scope?.sessionId && presentation
@@ -191,14 +187,14 @@ export function usePluginUiToolCallModel(
     },
     theme: resolveTheme(context.theme ?? "system"),
     locale,
-    displayMode,
+    displayMode: "inline",
     toolInput,
     toolResult,
     toolCallId: toolCall.toolId,
     toolCancelled: isPluginUiToolCancelled(toolCall),
     hostVersion: "zcode",
-    // Without a side pane entry (e.g. read-only / non-desktop shell) or when the page does not support fullscreen, declare inline only.
-    availableDisplayModes: canOpenSidePane ? INLINE_AND_FULLSCREEN : INLINE_ONLY,
+    // Declare the host entry here; the controller intersects it with page capabilities after the handshake.
+    availableDisplayModes: onOpenSidePane ? INLINE_AND_FULLSCREEN : INLINE_ONLY,
     onDisplayModeRequest: handleDisplayModeRequest,
     onOpenExternal: handleOpenExternal,
     width,
@@ -206,9 +202,17 @@ export function usePluginUiToolCallModel(
     ...(interactions ? { interactions } : {}),
   });
   hostHandleRef.current = host.handle;
-  useEffect(() => {
-    setAppAllowsFullscreen(appAllowsDisplayMode(host.appCapabilities, "fullscreen"));
-  }, [host.appCapabilities]);
+  // capabilities is the page owner's snapshot; closing the side pane or remounting the tool row keeps no extra copy and never re-enables forbidden inline.
+  const capabilitiesReady = host.appCapabilities !== undefined;
+  const inlineAllowed = appAllowsDisplayMode(
+    host.appCapabilities,
+    "inline",
+    presentation?.preferredDisplayMode,
+  );
+  const canOpenSidePane =
+    Boolean(onOpenSidePane) &&
+    capabilitiesReady &&
+    appAllowsDisplayMode(host.appCapabilities, "fullscreen");
   // Resource-level showInline (arrives with the handle): when there is no manual record, write a fixed pin; the collapse boundary is later recomputed from it.
   useEffect(() => {
     if (!supportedScope || host.handle?.resourceMeta?.showInline !== true || !sessionId) return;
@@ -218,13 +222,12 @@ export function usePluginUiToolCallModel(
   }, [host.handle, sessionId, supportedScope, toolCall.toolId]);
 
   useEffect(() => {
-    if (!inlineActive || !host.supported) return;
+    if (!inlineActive || !host.supported || !inlineAllowed || !capabilitiesReady) return;
     return claimPluginUiSurface(toolSurfaceKey, "inline");
-  }, [inlineActive, host.supported, toolSurfaceKey]);
+  }, [inlineActive, host.supported, inlineAllowed, capabilitiesReady, toolSurfaceKey]);
 
   // preferredDisplayMode: fullscreen → auto-open the side pane once as soon as the tool card appears.
-  // Do not wait for the result: under replay / very fast models, result arrival and turn collapse can land in the same commit batch, and waiting would leave the effect no chance to run.
-  // The result is later read by the side pane itself from the live projection by toolCallId / surfaceId.
+  // Must wait for the capability handshake; the default preference must not open an inline-only page into the side pane first.
   const autoOpenKey =
     presentation?.preferredDisplayMode === "fullscreen"
       ? buildPluginUiSurfaceKey(surfaceTarget, { kind: "toolCall", toolCallId: toolCall.toolId })
@@ -261,15 +264,27 @@ export function usePluginUiToolCallModel(
   ]);
 
   return {
-    supported: supportedScope && host.supported,
+    supported: supportedScope && host.supported && (inlineAllowed || canOpenSidePane),
     surface: presentation?.surface,
     preferredDisplayMode: presentation?.preferredDisplayMode ?? "inline",
     sidePaneActive,
+    inlineAllowed,
+    pluginId: presentation?.pluginId ?? "",
+    pluginName:
+      (pluginCatalog?.sessionId === sessionId
+        ? pluginCatalog.nameByPluginId?.get(presentation?.pluginId ?? "")
+        : undefined) ??
+      presentation?.pluginId.split("@")[0] ??
+      "",
+    pluginIcon:
+      pluginCatalog?.sessionId === sessionId
+        ? pluginCatalog.iconByPluginId.get(presentation?.pluginId ?? "")
+        : undefined,
     host,
     // Resource-level declaration wins, tool-level is the fallback, and neither means draw a border by default.
     prefersBorder: host.handle?.resourceMeta?.prefersBorder ?? presentation?.prefersBorder ?? true,
     superseded,
-    ...(supportedScope && !superseded ? { pinned, onTogglePin: togglePin } : {}),
+    ...(supportedScope && !superseded && inlineAllowed ? { pinned, onTogglePin: togglePin } : {}),
     pinLabel: intl.formatMessage({ id: "pluginUi.pin" }),
     unpinLabel: intl.formatMessage({ id: "pluginUi.unpin" }),
     loadingLabel: intl.formatMessage({ id: "pluginUi.loading" }),
@@ -277,6 +292,7 @@ export function usePluginUiToolCallModel(
     retryLabel: intl.formatMessage({ id: "pluginUi.retry" }),
     openedLabel: intl.formatMessage({ id: "pluginUi.openedInSidePane" }),
     openLabel: intl.formatMessage({ id: "pluginUi.openInSidePane" }),
+    openButtonLabel: intl.formatMessage({ id: "pluginUi.open" }),
     onWidthChange: setWidth,
     onOpenSidePane: canOpenSidePane ? openInSidePane : undefined,
   };

@@ -1,6 +1,10 @@
 // MCP Port - Model Context Protocol adapter boundary
 
-import type { McpServerFailureKind, OfficialMcpAuthPortFailureReason } from "@zcode/shared";
+import type {
+  McpServerFailureKind,
+  OfficialMcpAuthPortFailureReason,
+  WorkspaceMcpTrustReview,
+} from "@zcode/shared";
 import type { McpAppsToolVisibility, McpToolUiDescriptor } from "@zcode/shared/mcp-apps";
 import type { JsonSchema } from "../model/index.js";
 import type { TraceContext } from "../tracing/tracer.js";
@@ -11,7 +15,7 @@ export type McpServerIsolation = "session" | "workspace";
 
 /** Runtime provenance attached by the host after public MCP configuration validation. */
 export interface McpServerRuntimeSource {
-  kind: "builtin" | "plugin";
+  kind: "builtin" | "plugin" | "workspace" | "user";
 }
 
 export interface McpServerConfigBase {
@@ -114,6 +118,7 @@ export type McpServerStatusKind =
   | "untrusted";
 
 export interface McpServerStatus {
+  workspaceTrust?: WorkspaceMcpTrustReview;
   status: McpServerStatusKind;
   transport: McpServerTransportType;
   toolCount: number;
@@ -153,7 +158,27 @@ export const ZCODE_MCP_BROWSER_SCREENSHOT_CONTENT_INDICES_META_KEY =
  */
 export const ZCODE_MCP_NODE_REPL_CUA_APP_META_KEY = "zcode/nodeReplCuaApp";
 /**
- * `x-request-id` from the official Server MCP response header, attached to failed tool results (string value).
+ * `true` when this node_repl cell invoked the browser runtime (a list/execute request reached the
+ * main-thread browser proxy broker, success or not). The session feature tag `browser_use` derives from it
+ * (docs/design/v2/model/session-features-header.md).
+ *
+ * **Written only by node-repl-host**: only the main-thread broker records it in the call ledger; `toMcpRunResult`
+ * first deletes the same-named key the cell wrote via the sandbox API, then writes back strictly from ledger
+ * facts; the Worker's result messages are not trusted (MR !3207 review CR-01).
+ * Known gap: a cell can influence the main thread via `node:inspector` (docs/design/v2/tool/20-node-repl-call-ledger.md,
+ * "Trusted boundary"). `zcode/browserUse` is deliberately not reused: that key is also written on command failure
+ * and belongs to the Browser Use meta contract, whose meaning does not shift with counting criteria.
+ */
+export const ZCODE_MCP_NODE_REPL_BROWSER_USE_META_KEY = "zcode/nodeReplBrowserUse";
+/**
+ * `true` when this node_repl cell invoked the Computer Use runtime (a request for any CUA method reached the
+ * main-thread CUA broker, including failures and broker-side rejections). The session feature tag `computer_use`
+ * derives from it; the write rule is the same as
+ * `ZCODE_MCP_NODE_REPL_BROWSER_USE_META_KEY`.
+ */
+export const ZCODE_MCP_NODE_REPL_COMPUTER_USE_META_KEY = "zcode/nodeReplComputerUse";
+/**
+  * `x-request-id` from the official Server MCP response header, attached to failed tool results (string value).
  *
  * Uses the short `zcode/` prefix rather than `com.zcode/`: this is not a cross-language protocol—the
  * server provides the value in a header, and the client moves it into `_meta`; both production and
@@ -441,10 +466,12 @@ export interface McpElicitationPort {
 }
 
 export interface McpPort {
+  /** Read-only recompute of workspace admission that notifies the session projection; does not connect, authorize, or replay tools. */
+  refreshWorkspaceTrustAdmission?(reannounce?: boolean): Promise<void>;
   /** Stable source derived from trusted configuration and the existing connection generation. Do not issue new page credentials after disconnect. */
   onAppConnectionInvalidated?(serverName: string, listener: () => void): () => void;
   appConnectionSnapshot?(serverName: string): { identity: string; generation: number } | null;
-  /** 等待目标 server 已有连接任务；不重连、不等待其它 server，owner 失效后返回 null。 */
+  /** Wait for the target server's existing connection task; no reconnect, no waiting on other servers, returns null once the owner is stale. */
   waitForAppConnection?(
     serverName: string,
   ): Promise<{ identity: string; generation: number } | null>;
@@ -503,5 +530,11 @@ export interface McpPort {
   ): Promise<void>;
   /** Remove every registration whose subscriberKey begins with prefix (session close); return the number of URIs actually unsubscribed from the server. */
   unsubscribeResourcesBySubscriber?(subscriberKeyPrefix: string): Promise<number>;
+  /**
+   * Close this port's admission and owned resources. A pool lease only cancels this session's waits/calls and
+   * returns the reference; an exclusive connection waits for the adapter to release it, while shared connections
+   * stay held by the pool and the remaining leases.
+   * A child borrowing the port must not close the parent session's lease.
+   */
   close(): Promise<void>;
 }

@@ -166,42 +166,90 @@ export function productionPackages(projects, isInstallable = () => true) {
   return required;
 }
 
-export function assertProductionGraphs(lockedProjects, installedProjects, isInstallable) {
-  const locked = productionPackages(lockedProjects, isInstallable);
-  const installed = productionPackages(installedProjects, isInstallable);
-  const missing = [...locked].filter(([key]) => !installed.has(key));
-  const stale = [...installed.keys()].filter((key) => !locked.has(key));
-  if (missing.length || stale.length) {
+// Fork: pnpm 12 (packageManager pin) writes a leading env-lockfile YAML document (`---` +
+// packageManagerDependencies + `---`) into pnpm-lock.yaml, but never into node_modules/.pnpm/lock.yaml.
+// Drop it so the snapshot comparison sees only the dependency document.
+export function stripPnpmEnvLockfileDocument(lockfile) {
+  if (!lockfile.startsWith("---\n")) return lockfile;
+  const end = lockfile.indexOf("\n---\n", 4);
+  return end === -1 ? lockfile : lockfile.slice(end + 5);
+}
+
+export function assertInstalledLockfileSnapshot(rootLockfile, installedLockfile) {
+  // A Windows autocrlf working tree may hold a CRLF root lockfile while pnpm always writes LF snapshots.
+  // Line endings do not change the dependency graph, so compare normalized text (review CR-03: a raw string
+  // comparison reported a CRLF workspace with an identical graph as a stale snapshot, and reinstalling could not clear it).
+  const normalize = (value) => stripPnpmEnvLockfileDocument(value.replaceAll("\r\n", "\n"));
+  if (normalize(rootLockfile) !== normalize(installedLockfile)) {
     throw new Error(
-      `Installed production graph differs from pnpm-lock.yaml. Run pnpm install --frozen-lockfile.\nMissing: ${missing.map(([key]) => key).join(", ")}\nStale: ${stale.join(", ")}`,
+      "Installed dependency snapshot differs from pnpm-lock.yaml. Run pnpm install --frozen-lockfile.",
     );
   }
-  return locked;
+}
+
+async function readWorkspaceProjects(root) {
+  const { stdout } = await exec("pnpm", ["-r", "list", "--depth", "-1", "--json"], {
+    cwd: root,
+    maxBuffer: 64 * 1024 * 1024,
+    ...resolveSpawnRuntimeOptions("pnpm"),
+  });
+  return JSON.parse(stdout);
+}
+
+export function createPnpmLockfileOnlyEnv(env = process.env) {
+  return { ...env, NPM_CONFIG_LOCKFILE_ONLY: "true" };
+}
+
+async function readLockedWorkspaceProductionGraph(root, workspaceProjects) {
+  const projects = [];
+  // A recursive pnpm list opens the whole workspace at once on Windows and exceeds the handle limit.
+  // After pinning the root lockfile, list each unique workspace name separately to keep the full deduped subtree and cap peak handles.
+  // Do not pass --prod: pnpm 12 prunes repeated subtrees, so a production-only listing can drop edges that a dev root expanded.
+  // productionPackages indexes every edge and selects only production roots, so the extra dev rows are never installed or distributed.
+  for (const project of workspaceProjects) {
+    const { stdout } = await exec(
+      "pnpm",
+      ["--filter", project.name, "list", "--json", "--depth", "Infinity"],
+      {
+        cwd: root,
+        env: createPnpmLockfileOnlyEnv(),
+        maxBuffer: 64 * 1024 * 1024,
+        ...resolveSpawnRuntimeOptions("pnpm"),
+      },
+    );
+    const rows = JSON.parse(stdout);
+    if (rows.length !== 1) {
+      throw new Error(`Unexpected pnpm production graph rows for ${project.name}: ${rows.length}`);
+    }
+    projects.push(rows[0]);
+  }
+  return projects;
 }
 
 export async function readWorkspaceProductionGraph(root) {
   root = await realpath(root);
-  // Fix: pnpm ls reads the installed snapshot by default; do not combine an old graph with the current lockfile hash to produce a seemingly valid declaration.
-  const [locked, actual] = await Promise.all(
-    [true, false].map(async (lockfileOnly) => {
-      const { stdout } = await exec(
-        "pnpm",
-        ["-r", "ls", "--json", "--depth", "Infinity", ...(lockfileOnly ? ["--lockfile-only"] : [])],
-        {
-          cwd: root,
-          maxBuffer: 256 * 1024 * 1024,
-          ...resolveSpawnRuntimeOptions("pnpm"),
-        },
-      );
-      return JSON.parse(stdout);
-    }),
-  );
+  const rootLockfile = await readFile(join(root, "pnpm-lock.yaml"), "utf8");
+  let installedLockfile;
+  try {
+    installedLockfile = await readFile(join(root, "node_modules/.pnpm/lock.yaml"), "utf8");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    throw new Error(
+      "Installed dependency snapshot is missing. Run pnpm install --frozen-lockfile.",
+      { cause: error },
+    );
+  }
+  assertInstalledLockfileSnapshot(rootLockfile, installedLockfile);
+  const workspaceProjects = await readWorkspaceProjects(root);
+  const lockedProjects = await readLockedWorkspaceProductionGraph(root, workspaceProjects);
   const isInstallable = createInstallablePackageFilter(
-    readLockfilePlatformConstraints(await readFile(join(root, "pnpm-lock.yaml"), "utf8")),
+    readLockfilePlatformConstraints(
+      stripPnpmEnvLockfileDocument(rootLockfile.replaceAll("\r\n", "\n")),
+    ),
     await readInstallTargets(root),
   );
-  const required = assertProductionGraphs(locked, actual, isInstallable);
-  return { required, projects: actual };
+  const required = productionPackages(lockedProjects, isInstallable);
+  return { required, projects: workspaceProjects };
 }
 
 export async function scanInstalledPackages(root, projects) {

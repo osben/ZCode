@@ -13,6 +13,7 @@ export type SettingsSectionId =
   | "outputStyles"
   | "systemPrompt"
   | "remoteDevices"
+  | "dataSync"
   | "memory"
   | "incognito"
   | "quickPrompts"
@@ -20,6 +21,7 @@ export type SettingsSectionId =
   | "mcp"
   | "skill"
   | "plugins"
+  | "projects"
   | "archives"
   | "usage"
   | "sessions"
@@ -91,6 +93,7 @@ function isSettingsSectionId(value: string): value is SettingsSectionId {
     value === "outputStyles" ||
     value === "systemPrompt" ||
     value === "remoteDevices" ||
+    value === "dataSync" ||
     value === "memory" ||
     value === "incognito" ||
     value === "quickPrompts" ||
@@ -98,6 +101,7 @@ function isSettingsSectionId(value: string): value is SettingsSectionId {
     value === "mcp" ||
     value === "skill" ||
     value === "plugins" ||
+    value === "projects" ||
     value === "archives" ||
     value === "usage" ||
     value === "sessions" ||

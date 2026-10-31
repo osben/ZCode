@@ -20,7 +20,8 @@ import {
 } from "../src/agent/session-history-hydrator.js";
 import { MessageHistoryImpl } from "../src/agent/message-history.js";
 import { buildProviderRequestMessages } from "../src/runtime/helpers/provider-request-messages.js";
-import { cloneMessageForFork } from "../src/runtime/helpers/steering.js";
+import { cloneMessageForFork, clonePartForFork } from "../src/runtime/helpers/steering.js";
+import { buildRuntimeReminderMessage } from "../src/runtime/methods/runtime-reminder-persistence.js";
 import {
   activeForkTranscriptMessages,
   buildForkHistoryMessages,
@@ -319,7 +320,7 @@ describe("session fork history", () => {
     expect(committedBundle!.messages.at(-1)?.info.source).toBe("selection_side_chat");
     expect(JSON.stringify(committedBundle!.messages)).not.toContain("session_fork");
 
-    // 直接恢复 producer 的原子 bundle，避免手写 metadata fixture 掩盖 fork 漏写字段。
+    // Restore the producer's atomic bundle directly; a hand-written metadata fixture could hide fields fork forgot to write.
     const persisted = JSON.parse(JSON.stringify(committedBundle!.messages)) as MessageWithParts[];
     const boundary = persisted.at(-1)!;
     expect(boundary.parts[0]).toMatchObject({
@@ -551,7 +552,7 @@ describe("session fork history", () => {
     expect(notice.info.parentID).toBe(identities.notice.hiddenMessageId);
     expect(timeline.anchorMessageId).toBe(identities.messageIds.get(assistant.info.id));
     expect(timeline.anchorTurnId).toBe(identities.notice.turnId);
-    // parent target 只允许保留在 forkOrigin/session_fork 的来源事实；所有 child-local 引用必须闭合。
+    // The parent target may survive only in the forkOrigin/session_fork provenance fact; all child-local references must be closed.
     const childLocalRefs = {
       hiddenId: hidden.info.id,
       hiddenPartId: hidden.parts[0]?.id,
@@ -612,6 +613,104 @@ describe("session fork history", () => {
     ]) {
       expect(JSON.stringify(forkAgainLocalRefs)).not.toContain(parentLocalId);
     }
+  });
+
+  it("fork-before-input 的选型回退跳过停止后的中断标记", async () => {
+    const user = userMessage("msg_marker_user" as MessageId, "first", 1);
+    const assistant = assistantMessage(
+      "msg_marker_assistant" as MessageId,
+      user.info.id,
+      "stopped answer",
+      2,
+    );
+    if (assistant.info.role !== "assistant") return;
+    assistant.info.reasoningLevel = "max";
+    const target = userMessage("msg_marker_target" as MessageId, "edit me", 4);
+    const runtimeSelection = {
+      modelId: "glm-4-air",
+      providerId: "glm",
+      options: { reasoningLevel: "high" },
+    };
+    // Interrupt marker written after stop: records provider/model only, no options.
+    const marker = buildRuntimeReminderMessage(
+      {
+        config: { agentName: "zcode-agent" },
+        getSessionModelSelection: () => runtimeSelection,
+        sessionId: SESSION_ID,
+      } as never,
+      {
+        message: { role: "user", content: "[Request interrupted by user]" },
+        metadata: { source: "interrupt_marker" },
+      },
+      { created: 3 },
+    )!;
+    let committedBundle: Parameters<NonNullable<SessionStorePort["commitForkBundle"]>>[0] | null =
+      null;
+    const parentSession = {
+      directory: "/workspace",
+      id: SESSION_ID,
+      path: "/workspace",
+      projectID: "project-marker-fork",
+      slug: "parent-marker-fork",
+      taskType: "interactive",
+      time: { created: 1, updated: 1 },
+      title: "parent",
+      version: "test",
+    } as SessionInfo;
+    const runtime = {
+      appendEvent: async () => undefined,
+      config: { agentName: "zcode-agent", mode: "build" },
+      createEvent: (_type: unknown, payload: Record<string, unknown>) => ({ payload }),
+      getSessionModelSelection: () => runtimeSelection,
+      rootTraceContext: { traceId: "trace_marker_fork" },
+      sessionId: SESSION_ID,
+      sessionStore: {
+        async commitForkBundle(bundle) {
+          committedBundle = bundle;
+          return bundle.child as SessionInfo;
+        },
+        async getSession() {
+          return parentSession;
+        },
+        async messages() {
+          return [user, assistant, marker, target];
+        },
+      } satisfies Partial<SessionStorePort>,
+      workingDirectory: "/workspace",
+      workspaceRoot: "/workspace",
+    };
+
+    await forkConversationBeforeMessage.call(runtime as never, {
+      commandFact: {
+        parentSessionId: SESSION_ID,
+        sourceCommandId: "cmd-marker-fork",
+        ack: {
+          commandId: "cmd-marker-fork",
+          status: "accepted",
+          revisionAtDecision: 1,
+          result: { type: "editUserQuery", disposition: "fork", sessionId: "sess_marker_child" },
+        },
+        metadata: {},
+      },
+      forkedSessionId: "sess_marker_child" as SessionId,
+      goalBoundary: { kind: "none" },
+      initialInput: {
+        id: "queue_cmd-marker-fork",
+        sessionID: "sess_marker_child" as SessionId,
+        kind: "sendText",
+        delivery: "startNow",
+        payload: { text: "edited" },
+      },
+      sourceCommandId: "cmd-marker-fork",
+      targetMessageId: target.info.id,
+      targetProductTurnId: "turn-product",
+      targetTranscriptTurnId: "turn-runtime",
+    });
+
+    // Take the selection of the last conversation message (assistant) before the fork point, not the interrupt marker or the runtime's current value.
+    expect(
+      committedBundle!.entries.find((entry) => entry.type === SESSION_ENTRY_MODEL_SELECTION)?.data,
+    ).toEqual({ modelId: "glm-4-air", providerId: "glm", options: { reasoningLevel: "max" } });
   });
 
   it("V4 stable fork 只通过 commitForkBundle 一次发布完整 child", async () => {
@@ -722,7 +821,7 @@ describe("session fork history", () => {
       sessionId: "sess_atomic_stable_child",
     });
 
-    // 从真实 producer bundle 恢复，防止 notice 缺少 part metadata 后退化为普通 user 文本。
+    // Restore from the real producer bundle so a notice missing part metadata cannot degrade into plain user text unnoticed.
     const persisted = JSON.parse(JSON.stringify(committedBundle!.messages)) as MessageWithParts[];
     const boundary = persisted.at(-2)!;
     expect(boundary.info.semantics).toMatchObject({
@@ -773,7 +872,7 @@ describe("session fork history", () => {
       2,
     );
     if (user.info.role !== "user" || assistant.info.role !== "assistant") return;
-    // 加速轮的 user/assistant 按 highspeed-card-spec §5 记录本轮真实执行模型（单轮执行事实）。
+    // The accelerated round's user/assistant record the round's real execution model per highspeed-card-spec §5 (one-shot execution fact).
     user.info.modelSelection = {
       modelId: "glm-4.6" as never,
       providerId: HIGHSPEED_PROVIDER_IDS.zai as never,
@@ -798,7 +897,7 @@ describe("session fork history", () => {
       appendEvent: async () => undefined,
       config: { agentName: "zcode-agent", mode: "build" },
       createEvent: (_type: unknown, payload: Record<string, unknown>) => ({ payload }),
-      // 加速是 `selectionScope=execution`，从不改写常驻 Selection：它就是用户的原模型。
+      // Acceleration is `selectionScope=execution` and never rewrites the resident Selection: that is the user's original model.
       getSessionModelSelection: () => ({
         modelId: "glm-4-air",
         providerId: "glm",
@@ -822,7 +921,7 @@ describe("session fork history", () => {
       workspaceRoot: "/workspace",
     };
 
-    // 不带显式选型（回落历史/常驻）与调用方显式传入加速选型，child 结果必须一致。
+    // Without an explicit selection (falling back to history/resident) and with the caller explicitly passing the accelerated selection, the child result must be identical.
     const explicitCases: (ModelSelection | undefined)[] = [
       undefined,
       { modelId: "glm-4.6" as never, providerId: HIGHSPEED_PROVIDER_IDS.zai as never },
@@ -842,7 +941,7 @@ describe("session fork history", () => {
         },
       });
 
-      // child 常驻在加速 Provider 上会让用户看到「原模型没带过来」，首轮还会 ModelRequestAuthMissing。
+      // A child resident on the accelerated provider would show the user "the original model did not carry over", and the first round would also hit ModelRequestAuthMissing.
       expect(
         committedBundle!.entries.find((entry) => entry.type === SESSION_ENTRY_MODEL_SELECTION),
       ).toMatchObject({
@@ -906,6 +1005,36 @@ describe("session fork history", () => {
         boundaryMessageId: String(childAnchor.boundaryMessageId),
       }),
     ).not.toThrow();
+  });
+
+  it("remaps compact leading announcement ids and drops ids outside the child transcript", () => {
+    const summaryId = "msg_leading_summary" as MessageId;
+    const leadingId = "msg_leading_announcement" as MessageId;
+    const cloned = clonePartForFork(
+      {
+        id: partId("leading_compaction"),
+        sessionID: SESSION_ID,
+        messageID: summaryId,
+        type: "compaction",
+        auto: false,
+        metadata: {
+          compactLeadingMessageIds: [leadingId, "msg_parent_only" as MessageId],
+        },
+      } as MessagePart,
+      {
+        forkedSessionId: "ses_leading_child" as never,
+        nextMessageId: "msg_child_summary" as MessageId,
+        messageIdMap: new Map<MessageId, MessageId>([
+          [summaryId, "msg_child_summary" as MessageId],
+          [leadingId, "msg_child_announcement" as MessageId],
+        ]),
+        strictLocalReferences: true,
+      },
+    );
+    // Old forks copied metadata as-is; an unmappable declaration only shifts announcement position and must not block the fork.
+    expect(cloned).toMatchObject({
+      metadata: { compactLeadingMessageIds: ["msg_child_announcement"] },
+    });
   });
 
   it("stable fork golden remap 覆盖 message/part/turn/compact/goal/verifier 全部 child-local identity", async () => {
@@ -1270,7 +1399,7 @@ describe("session fork history", () => {
           metadata: StableConversationForkChildMetadata,
         ) {
           atomicCreates.push({ input, metadata });
-          // 原子 store 发现同 command fact 时会返回第一次创建的 child。
+          // When the atomic store sees the same command fact, it returns the child from the first creation.
           return { id: "sess_existing_child" as SessionId };
         },
       },
@@ -1846,7 +1975,7 @@ describe("session fork history", () => {
       goalVerificationEntry("entry_before", "msg_checkpoint_1", 1, true),
       goalVerificationEntry("entry_after", "msg_checkpoint_2", 2, false),
     ];
-    // helper 默认 target_goal_1；fork 点快照测试需要两个 entry 都属于显式 target。
+    // The helper defaults to target_goal_1; the fork-point snapshot test needs both entries under an explicit target.
     for (const entry of entries) {
       const data = entry.data as { payload: Record<string, unknown> };
       data.payload.targetId = "target_at_fork";

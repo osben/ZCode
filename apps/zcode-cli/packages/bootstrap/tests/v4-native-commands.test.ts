@@ -1,6 +1,7 @@
-// L2：v4 原生命令执行器（sendText / stop）——验证自旧 server-operations 搬运的
-// 决策语义在原生层保真：steer 分流、draft 提升、ready 边界、goal-pause barrier。
-// 08-phasing M4 完成定义的 L2 层（命令 → core 调用 → 状态推进，不经旧协议代码）。
+// L2: the v4 native command executor (sendText / stop) — verifies the decision semantics
+// carried over from the old server-operations stay faithful at the native layer: steer
+// routing, draft promotion, ready boundaries, goal-pause barrier.
+// The L2 layer of 08-phasing M4's definition of done (command → core call → state advance, no legacy protocol code).
 import { SessionEventType, type SessionEvent } from "@zcode/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { CommandEnvelope } from "@zcode/shared/zcode-protocol-v4";
@@ -97,7 +98,7 @@ function envelope(type: string, payload: unknown): CommandEnvelope {
 }
 
 async function settle() {
-  // 后台 turn 是 void 起跑的微任务链，flush 两轮保证 finally 执行完。
+  // A background turn is a void-started microtask chain; flush two rounds to guarantee finally completes.
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
 }
@@ -407,7 +408,7 @@ describe("v4 原生 sendText", () => {
         }),
       }),
     );
-    // Core completion 后再执行 legacy cleanup；Bootstrap controller 从不参与 busy 判定。
+    // Legacy cleanup runs after Core completion; the Bootstrap controller never participates in busy decisions.
     expect(record.activeAbortController).toBeUndefined();
     expect(host.legacyMutations).toEqual(["prompt_completed"]);
   });
@@ -484,12 +485,12 @@ describe("v4 原生 sendText", () => {
         requireQueue: true,
         intent: expect.objectContaining({
           highspeed: expect.objectContaining({ cardId: "card-1" }),
-          // 队列只持久化普通模型；临时 Selection 与凭据必须成包驻留内存。
+          // The queue persists only the ordinary model; the temporary Selection and credentials must stay resident in memory as one bundle.
           modelSelection: ORDINARY_MODEL_SELECTION,
         }),
       }),
     );
-    // 凭据不进队列事件，只按 (sessionId, sourceCommandId) 暂存在 CLI 进程内。
+    // Credentials do not enter queue events; they are staged in the CLI process keyed by (sessionId, sourceCommandId) only.
     expect(retainQueuedTurnExecution).toHaveBeenCalledWith("s1", "cmd-1", {
       modelSelection: {
         providerId: "account:bigmodel-highspeed-card",
@@ -680,8 +681,10 @@ describe("v4 原生 sendText", () => {
         }),
       }),
     );
-    // 入队只下发普通 Selection 与卡元数据，不下发 execution 与凭据，仍按普通轮做 Session 模型
-    // preflight：卡失效后提升使用 QueueItem 的普通 Selection，模型不可用必须在 admission 就暴露。
+    // Enqueueing sends only the ordinary Selection and card metadata — no execution or
+    // credentials — and still runs the Session model preflight like a normal round: after the
+    // card expires, promotion uses the QueueItem's ordinary Selection, and an unavailable model
+    // must surface at admission.
     expect(host.ensureModelReady).toHaveBeenCalledWith(record);
     expect(app.sendInput.mock.calls[0]?.[1]).not.toHaveProperty("modelExecution");
     expect(retainQueuedTurnExecution).toHaveBeenCalledWith("s1", "cmd-1", {
@@ -891,9 +894,11 @@ describe("v4 原生 sendText", () => {
       }),
     );
     expect(app.sendInput.mock.calls[0]?.[1]?.intent).not.toHaveProperty("highspeed");
-    // 定时执行身份优先：加速 Selection 与执行材料必须在 admission 前被整体丢弃。intent 仍会
-    // 固化本会话常驻 Selection（普通轮的通用行为），但绝不能是加速卡 Provider，否则本轮会
-    // 拿加速卡凭据发请求，或把普通输出持久化成 Highspeed 消息。
+    // Scheduled-execution identity wins: the accelerated Selection and execution material must
+    // be dropped wholesale before admission. The intent still freezes the session's resident
+    // Selection (generic behavior of a normal round), but never the accelerated-card provider —
+    // otherwise this round would send requests with accelerated-card credentials or persist
+    // ordinary output as Highspeed messages.
     expect(app.sendInput.mock.calls[0]?.[1]?.intent?.modelSelection).toEqual({
       providerId: "account:bigmodel-start-plan",
       modelId: "glm-5",
@@ -990,8 +995,8 @@ describe("v4 原生 sendText", () => {
         offPeakRunType: "resume",
       }),
     );
-    // 闲时支持 SendMessage；独立工作流无法继承票据，执行与修改入口继续限制。
-    // Host 的额外 denylist 另行合并。
+    // Off-peak supports SendMessage; standalone workflows cannot inherit the ticket, so their
+    // execution and modification entries stay restricted. The Host's extra denylist is merged separately.
     expect(app.sendInput.mock.calls[0]?.[1].toolDisallowlist).toEqual([
       "OffPeakCreate",
       "Workflow",
@@ -1005,22 +1010,19 @@ describe("v4 原生 sendText", () => {
     expect(app.sendInput.mock.calls[1]?.[1]).not.toHaveProperty("toolDisallowlist");
   });
 
-  it("automation runId inputId 漏传 automationId 时也隐藏全部写工具", async () => {
+  it("调用方伪造 automation inputId 时不恢复任务身份", async () => {
     const app = makeApp();
     const record = makeRecord({ app });
     const host = makeHost(record);
 
     await new V4CommandExecutor(host).execute({
-      ...envelope("sendText", { text: "automation prompt" }),
-      commandId: "automation-parent:manual:run-1",
+      ...envelope("sendText", { text: "ordinary prompt" }),
+      commandId: "automation-other-task:manual:forged-run",
     });
     await settle();
 
-    expect(app.sendInput.mock.calls[0]?.[1]).toEqual(
-      expect.objectContaining({
-        toolDisallowlist: ["CronCreate", "CronUpdate", "CronDelete"],
-      }),
-    );
+    expect(app.sendInput.mock.calls[0]?.[1]).not.toHaveProperty("automationId");
+    expect(app.sendInput.mock.calls[0]?.[1]).not.toHaveProperty("toolDisallowlist");
     expect(record.activeAutomationId).toBeUndefined();
   });
 
@@ -1087,14 +1089,14 @@ describe("v4 原生 sendText", () => {
     expect(app.steerTurn).not.toHaveBeenCalled();
   });
 
+  // Send-now is the user's new instruction: after actually preempting the old execution, the input is still a normal user message, same as sending while idle.
   it.each([
-    { stopKind: "stopped", attachmentMime: undefined, expected: "user_steer" },
-    { stopKind: "idle", attachmentMime: undefined, expected: undefined },
-    { stopKind: "stopped", attachmentMime: "text/plain", expected: undefined },
-    { stopKind: "stopped", attachmentMime: "image/png", expected: undefined },
+    { stopKind: "stopped", attachmentMime: undefined },
+    { stopKind: "idle", attachmentMime: undefined },
+    { stopKind: "stopped", attachmentMime: "text/plain" },
   ])(
-    "startNow human 提示：$stopKind / $attachmentMime",
-    async ({ stopKind, attachmentMime, expected }) => {
+    "startNow 抢占后仍是普通用户输入：$stopKind / $attachmentMime",
+    async ({ stopKind, attachmentMime }) => {
       const app = makeApp({
         runtime: {
           acquireForegroundPromotionLease: vi.fn().mockReturnValue({ kind: "acquired" }),
@@ -1109,7 +1111,7 @@ describe("v4 原生 sendText", () => {
             ),
         },
       });
-      // UI 即使仍显示 busy，Core 的 idle 回执也不能被猜成一次抢占。
+      // Even if the UI still shows busy, Core's idle receipt must not be guessed as a preemption.
       const host = makeHost(makeRecord({ app }), { getInputRoutingMode: () => "enqueue" });
       await new V4CommandExecutor(host).execute(
         envelope("sendText", {
@@ -1127,7 +1129,7 @@ describe("v4 原生 sendText", () => {
       expect(app.sendInput).toHaveBeenCalledTimes(1);
       const [input, options] = app.sendInput.mock.calls[0]!;
       expect(input.text).toBe("先处理这个短任务");
-      expect(options.inputPresentation).toBe(expected);
+      expect(options).not.toHaveProperty("inputPresentation");
       expect(options).toMatchObject({
         inputId: "cmd-1",
         requireIdle: true,
@@ -1136,7 +1138,7 @@ describe("v4 原生 sendText", () => {
     },
   );
 
-  it("startNow 的 human 标记经真实 input facade 进入新轮 Core admission", async () => {
+  it("抢占后的 startNow 经真实 input facade 以普通用户输入进入新轮 Core admission", async () => {
     const runtime = {
       acquireForegroundPromotionLease: vi.fn().mockReturnValue({ kind: "acquired" }),
       getActiveForegroundExecutionId: vi.fn().mockReturnValue(undefined),
@@ -1163,12 +1165,12 @@ describe("v4 原生 sendText", () => {
       "短任务",
       undefined,
       expect.objectContaining({
-        inputPresentation: "user_steer",
         inputId: "cmd-1",
         requireIdle: true,
         delivery: "start_turn",
       }),
     );
+    expect(runtime.admitPrompt.mock.calls[0]![2]).not.toHaveProperty("inputPresentation");
   });
 
   it("运行中 startNow：原子抢占后直接启动新 turn，不创建 queue item", async () => {
@@ -1212,11 +1214,11 @@ describe("v4 原生 sendText", () => {
     expect(releaseForegroundPromotionLease).toHaveBeenCalledWith("send-now:cmd-1");
   });
 
-  it("automation 运行中会话：Core queue 保留完整 automation denylist", async () => {
+  it("伪造 automation inputId 排队时仍保持普通用户轮", async () => {
     const app = makeApp({
       sendInput: vi.fn().mockResolvedValue({
         kind: "queued",
-        pendingInputId: "pending-automation-followup",
+        pendingInputId: "pending-ordinary-followup",
         queueLength: 1,
         turnId: "turn-1",
       }),
@@ -1225,18 +1227,19 @@ describe("v4 原生 sendText", () => {
     const host = makeHost(record);
 
     await new V4CommandExecutor(host).execute({
-      ...envelope("sendText", { text: "automation followup" }),
-      commandId: "automation-parent:manual:run-1",
+      ...envelope("sendText", { text: "ordinary followup" }),
+      commandId: "automation-other-task:manual:forged-run",
     });
 
     expect(app.sendInput).toHaveBeenCalledWith(
-      { text: "automation followup" },
+      { text: "ordinary followup" },
       expect.objectContaining({
         delivery: "start_turn",
-        inputId: "automation-parent:manual:run-1",
-        toolDisallowlist: ["CronCreate", "CronUpdate", "CronDelete"],
+        inputId: "automation-other-task:manual:forged-run",
       }),
     );
+    expect(app.sendInput.mock.calls[0]?.[1]).not.toHaveProperty("automationId");
+    expect(app.sendInput.mock.calls[0]?.[1]).not.toHaveProperty("toolDisallowlist");
     expect(app.steerTurn).not.toHaveBeenCalled();
   });
 
@@ -1415,6 +1418,7 @@ describe("v4 原生 sendText", () => {
     expect(app.sendInput).toHaveBeenCalledWith(
       { text: "automation busy prompt" },
       expect.objectContaining({
+        automationId: "automation-1",
         delivery: "start_turn",
         inputId: "cmd-1",
         queryId: "cmd-1",
@@ -1459,9 +1463,10 @@ describe("v4 原生 sendText", () => {
   });
 
   it("restoreWarning 时序自愈：进程 Registry 已有可用模型 → 清告警放行", async () => {
-    // 场景：app 重启后冷恢复跑在 provider registry 推送之前，record 挂上「模型
-    // 不可解析」告警；registry 随后到达（宿主探针判可用），发送不得再被这个
-    // 过期的一次性标志永久拒绝。
+    // Scenario: after an app restart, cold recovery runs before the provider registry push and
+    // the record carries a "model unresolvable" warning; the registry then arrives (host probe
+    // says available), and sending must no longer be permanently rejected by this stale
+    // one-shot flag.
     const app = makeApp();
     const record = makeRecord({
       app,
@@ -1704,7 +1709,7 @@ describe("v4 原生 sendText：软门禁（soft gate）", () => {
     await new V4CommandExecutor(host).execute(envelope("sendText", { text: "test" }));
     await settle();
 
-    // projection observer 已移除，Core admission ACK 不等待 TurnStarted。
+    // The projection observer was removed; Core admission ACK does not wait for TurnStarted.
     expect(capturedOptions!.onEvent).toBeUndefined();
     expect(capturedOptions!.onTurnStartedObserved).toBeUndefined();
   });
@@ -1731,7 +1736,7 @@ describe("v4 原生 sendText：软门禁（soft gate）", () => {
 
     await vi.waitFor(() => expect(app.sendInput).toHaveBeenCalled());
     await flushMicrotasks();
-    // projection commit 完全不参与 admission；故意不 resolve 它。
+    // The projection commit plays no part in admission; deliberately leave it unresolved.
     await executing;
     turnGate.resolve(undefined);
     await settle();
@@ -1740,7 +1745,7 @@ describe("v4 原生 sendText：软门禁（soft gate）", () => {
   it("回归：TurnStarted 后 projection 延迟时，第二条只产生一个 Core queue item", async () => {
     const admissions: Array<"started" | "queued"> = [];
     const runtime = {
-      // Bootstrap 不再查询 activeTurn；Core admission 自己持有 starting/active 状态。
+      // Bootstrap no longer queries activeTurn; Core admission holds the starting/active state itself.
       getActiveTurnInfo: vi.fn(),
     };
     const sendInput = vi.fn().mockImplementation(async () => {
@@ -2380,7 +2385,7 @@ describe("v4 原生 stop", () => {
 describe("supports 分流", () => {
   it("协议命令全部原生（回落面清零）；未知命令不 supports", () => {
     const executor = new V4CommandExecutor(makeHost(makeRecord()));
-    // 与 packages/shared/src/zcode-protocol-v4/command.ts 的 payload map 同步维护。
+    // Keep in sync with the payload map in packages/shared/src/zcode-protocol-v4/command.ts.
     const allCommands = [
       "createSession",
       "sendText",

@@ -61,6 +61,7 @@ export async function connectWebRemoteControlWorkspaceBridgeServices(params: {
   try {
     const services = connectViaProtocol(params.relayProtocol.protocol, {
       windowProjectDirectory: params.windowProjectDirectory,
+      signal: params.relayProtocol.signal,
     });
     // The event listener has no ready reply. If we wait for RPC before attaching the inbound-frame path, the reply lands on the old bridge and waits forever.
     // A new navigation or connection termination cancels the wait at the same time; a late reply must not revive the old service or fall back to the Source directory.

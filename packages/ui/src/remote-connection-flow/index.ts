@@ -16,6 +16,7 @@ import {
   getSourceServerUpdateTarget,
   isSameSourceServerUpdateTarget,
   DEFAULT_REMOTE_ASSET_INSTALL_MODE,
+  REMOTE_WORKSPACE_DIRECTORY_UNRESPONSIVE_ERROR_CODE,
   resolveWorkspaceKey,
   ZCODE_VERSION,
   type ConnectionProfile,
@@ -56,6 +57,7 @@ import {
   resolveRemoteConnectionPresentation,
 } from "@/lib/remoteConnectionPresentation.js";
 import {
+  getSourceServerDowngradeConfirmation,
   getSourceServerReinstallConfirmation,
   resolveSourceServerReinstallAvailability,
   runSourceServerUpdate,
@@ -175,9 +177,6 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
   const [validationAttempt, setValidationAttempt] = useState(0);
   const [focusCredentials, setFocusCredentials] = useState(false);
   const [directoryPath, setDirectoryPath] = useState("");
-  // The folder a connect attempt will open. directoryPath only belongs to the directory step and is cleared before
-  // connecting, so the connecting progress reads this snapshot of the attempt's preferred directory instead.
-  const [connectingWorkspacePath, setConnectingWorkspacePath] = useState<string>();
   const consumedKindPreferenceRef = useRef<string | null>(null);
   const [step, setCurrentStep] = useState<RemoteWizardStep>("device");
   // Root 常驻挂载，设置入口的首帧也直接展示分类表单，不等待 effect 隐藏旧选择屏。
@@ -202,6 +201,11 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     busy: boolean;
   } | null>(null);
   const [upgradeProfileId, setUpgradeProfileId] = useState<string | null>(null);
+  // The route an older Desktop can explicitly switch to; mutually exclusive with upgradeProfileId, located from the same Host snapshot.
+  // Bug cause: reset points such as closing the wizard or choosing another route used to clear only upgradeProfileId; a project entry with a non-upgrade failure
+  // would not relocate when opening another route, so the old route's switch entry and update logs carried over. Both belong to the current connection
+  // intent: wherever upgradeProfileId is cleared, this must be cleared too.
+  const [downgradeProfileId, setDowngradeProfileId] = useState<string | null>(null);
   const [upgradeLoading, setUpgradeLoading] = useState(false);
   const [pendingForceUpdate, setPendingForceUpdate] = useState<{
     tasks?: SourceServerRunningTask[];
@@ -232,14 +236,12 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
   const consumedPreferredProfileIdRef = useRef<string | null>(null);
   const consumedPreferredTargetRef = useRef<RemoteTarget | null>(null);
   const pendingCompletionIntentRef = useRef<RemoteConnectionCompletionIntent>({});
-  // Device management and an onConnectionReady owner never open the folder from this flow, so no folder step.
-  const resolveConnectingWorkspacePath = (path?: string) =>
-    completion !== "device-management" && !onConnectionReady && path?.trim()
-      ? path.trim()
-      : undefined;
   const [selectingDirectory, setSelectingDirectory] = useState(false);
   const selectingDirectoryRef = useRef(false);
-  const { connectionLogs, resetConnectionLogs } = useRemoteConnectionLogs(connectingRequestId);
+  const { connectionLogs, resetConnectionLogs, appendConnectionLog } =
+    useRemoteConnectionLogs(connectingRequestId);
+  // The project folder to open after the connection succeeds; when set, the connecting screen gains an "Open project folder" step.
+  const [workspaceStepPath, setWorkspaceStepPath] = useState<string>();
   const open = controlledOpen ?? uncontrolledOpen;
   const {
     kind,
@@ -309,8 +311,8 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
   // 不再各自手写订阅（§8.1.4 全部消费方收敛为统一 hook）。
   const { snapshot: sourceManagementSnapshot, applySnapshot: applySourceManagementSnapshot } =
     useSourceServerManagementSnapshot(sourceManagement, { enabled: open || minimizedRef.current });
-  // RDRI-01: reinstall locates the profile with the same rules as "retry". Operation logs are merged
-  // only while the Host reports that profile updating, so no extra wizard state needs clearing.
+  // RDRI-01: reinstall locates the route with the same rules as "retry". Update logs are merged only while the Host reports that route updating,
+  // so no new wizard state needs clearing at each reset point.
   const reinstallProfile = useMemo(() => {
     if (!pendingRemoteTarget || pendingRemoteTarget.kind === "server") return undefined;
     const profiles = (sourceManagementSnapshot?.profiles ?? []).filter(
@@ -327,9 +329,11 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       (state) => state.profileId === reinstallProfile.profileId && state.state === "updating",
     ),
   );
-  // Upgrade and reinstall both go through the Host update chain; the wizard shows that profile's operation logs.
+  // Upgrade and switching the remote are mutually exclusive; both go through the Host update chain, and the wizard shows that route's operation logs.
   const updateProfileId =
-    upgradeProfileId ?? (reinstallUpdating ? (reinstallProfile?.profileId ?? null) : null);
+    upgradeProfileId ??
+    downgradeProfileId ??
+    (reinstallUpdating ? (reinstallProfile?.profileId ?? null) : null);
   const { logsByProfileId: sourceOperationLogs } = useSourceServerOperationLogs(
     sourceManagement,
     updateProfileId ? [updateProfileId] : [],
@@ -496,6 +500,12 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     }
   };
 
+  /** The "Open project folder" step exists only when this flow opens the folder after a successful connection; device management and completions handed to the caller have none. */
+  const resolveWorkspaceStepPath = (path?: string) =>
+    completion !== "device-management" && !onConnectionReady && path?.trim()
+      ? path.trim()
+      : undefined;
+
   const resetFeedback = () => {
     setCancelled(false);
     setError("");
@@ -562,12 +572,14 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       setPendingInstallConfirmation(null);
       setPendingHostKeyTrust(null);
       setUpgradeProfileId(null);
+      setDowngradeProfileId(null);
       setUpgradeLoading(false);
       setRecognizedDeviceName(undefined);
       setRecognizedSourceServerId(undefined);
       setActiveProfileName(undefined);
       pendingCompletionIntentRef.current = {};
-      setConnectingWorkspacePath(undefined);
+      // Bug cause: SSHDialog stays mounted; without clearing on close, the next connection would reuse the previous "Open project folder" step.
+      setWorkspaceStepPath(undefined);
       updateConnectingRequestId(null);
       if (!options?.keepOpen) applyOpenState(false);
     },
@@ -631,6 +643,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     async (
       profileId: string,
       target: Exclude<RemoteTarget, { kind: "server" }>,
+      allowDowngrade = false,
     ): Promise<boolean> => {
       if (!sourceManagement || upgradeLoading) return false;
       const epoch = entryEpochRef.current;
@@ -641,6 +654,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
           management: sourceManagement,
           profileId,
           expectedTarget: getSourceServerUpdateTarget(target),
+          allowDowngrade,
           confirmForce: async () => {
             if (!isCurrent()) return false;
             // 清单只是确认的附加信息，读取失败不能绕过或替换 force=false 守卫。
@@ -670,6 +684,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
         };
         if (failure.code === "remote-target-changed") {
           setUpgradeProfileId(null);
+          setDowngradeProfileId(null);
           setErrorCode(undefined);
           setRawError(undefined);
           setError(intl.formatMessage({ id: "project.connectionUnavailable" }));
@@ -714,7 +729,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       preferredDirectoryPath,
       options,
     };
-    setConnectingWorkspacePath(resolveConnectingWorkspacePath(preferredDirectoryPath));
+    setWorkspaceStepPath(resolveWorkspaceStepPath(preferredDirectoryPath));
 
     updatePendingRemoteTarget(nextTarget);
     setLoading(true);
@@ -726,6 +741,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     resetFeedback();
     resetConnectionLogs();
     setUpgradeProfileId(null);
+    setDowngradeProfileId(null);
     setCurrentStep("connecting");
     const trace = startUserAction({
       featureId: "workspace.remote.lifecycle",
@@ -856,6 +872,11 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
           // 目录提交开始后由项目 owner 接管 attachment；取消 UI 不能回收可能已提交成功的会话。
           // 失败仍由下面的 catch 回收或恢复目录选择，介绍等待阶段的取消则由 flow 负责。
           setConnectedSessionId(null);
+          // bind carries no connection log; the flow records the "Open project folder" step so the connecting screen shows it in progress or failed.
+          appendConnectionLog(
+            "info",
+            `[source-server:workspace] Preparing ${preferredDirectoryPath}`,
+          );
           try {
             await onSelectProject(
               sessionId,
@@ -894,6 +915,32 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
               resetFeedback();
               setCancelled(true);
               finishTrace((action) => action.cancel());
+              return;
+            }
+            const selectionCode =
+              selectionError && typeof selectionError === "object" && "code" in selectionError
+                ? String(selectionError.code)
+                : undefined;
+            if (selectionCode === REMOTE_WORKSPACE_DIRECTORY_UNRESPONSIVE_ERROR_CODE) {
+              // Bug cause (R8): when the remote folder read hangs, the folder browser also reads folders on the same machine, so falling back to the browser only
+              // hangs somewhere else. Stay on the connecting screen, mark "Open project folder" as failed and offer a retry; the temporary
+              // attachment is handed back, and a retry reconnects and opens the same folder again.
+              appendConnectionLog(
+                "error",
+                `[source-server:workspace] ${getErrorMessage(selectionError)}`,
+              );
+              if (!sessionsAtStart.has(sessionId)) await handleCancelSession(sessionId);
+              if (entryEpochRef.current !== operationEpoch) return;
+              setErrorCode(selectionCode);
+              setRawError(getErrorMessage(selectionError));
+              setError(
+                formatRemoteConnectionError({
+                  fallback: getErrorMessage(selectionError),
+                  reasonCode: selectionCode,
+                  formatMessage: intl.formatMessage,
+                }),
+              );
+              finishTrace((action) => action.fail({ failureStage: "remote_connect" }));
               return;
             }
             // 历史目录可能已被删除或权限变化；保留连接并回退目录浏览器，不能把快速入口变成死路。
@@ -1065,21 +1112,19 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       const profileId = findSourceServerUpgradeProfileId(snapshot, target, failedProfileId);
       setUpgradeProfileId(profileId);
       if (!profileId) {
-        const controllerUpdate = snapshot.states.some(
-          (state) =>
-            state.state === "needs-upgrade" &&
-            state.upgradeTarget === "controller" &&
-            snapshot.profiles.some(
-              (profile) =>
-                profile.profileId === state.profileId &&
-                (!failedProfileId || profile.profileId === failedProfileId) &&
-                profileMatchesRemoteTarget(profile, target),
-            ),
+        const controllerProfileId = findSourceServerUpgradeProfileId(
+          snapshot,
+          target,
+          failedProfileId,
+          "controller",
         );
-        if (controllerUpdate) return;
+        setDowngradeProfileId(controllerProfileId);
+        if (controllerProfileId) return;
         throw new Error(intl.formatMessage({ id: "project.connectionUnavailable" }));
       }
       if (automaticServerUpdateAttempted) return;
+      // When an older Desktop explicitly switched the remote back, automatic upgrade would overturn that choice; the user confirms by clicking "Update remote" instead.
+      if (snapshot.states.find((state) => state.profileId === profileId)?.downgradedFrom) return;
       // 原项目交接曾只展示 initialFailure，绕过普通连接的自动更新。两种入口共用同一受保护
       // 更新链与意图 epoch：取消后不得恢复旧项目，更新后的连接也不得形成自动更新循环。
       if (!(await updateRequiredServer(profileId, target)) || !isCurrent()) return;
@@ -1096,6 +1141,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       // 快照失败后只清空 Profile 会留下无效的“更新远端”按钮；清除旧升级错误，
       // 展示真实失败并沿用显式重试，重新连接后再由 Host 快照确认是否需要更新。
       setUpgradeProfileId(null);
+      setDowngradeProfileId(null);
       setErrorCode(undefined);
       setRawError(getErrorMessage(cause));
       setError(getErrorMessage(cause));
@@ -1315,18 +1361,41 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     updateRequiredServer,
   ]);
 
+  const handleDowngradeServer = useCallback(async () => {
+    if (!downgradeProfileId || !pendingRemoteTarget || pendingRemoteTarget.kind === "server")
+      return;
+    const state = sourceManagementSnapshot?.states.find(
+      (candidate) => candidate.profileId === downgradeProfileId,
+    );
+    if (!state) return;
+    const epoch = entryEpochRef.current;
+    const confirmed = await confirmDialog(
+      getSourceServerDowngradeConfirmation(state, intl.formatMessage),
+    );
+    // The user may have cancelled or changed the target while the confirmation was open; a stale confirmation must not start a downgrade.
+    if (!confirmed || entryEpochRef.current !== epoch) return;
+    if (await updateRequiredServer(downgradeProfileId, pendingRemoteTarget, true)) {
+      handleStartPendingRemoteConnection(true);
+    }
+  }, [
+    confirmDialog,
+    downgradeProfileId,
+    handleStartPendingRemoteConnection,
+    intl,
+    pendingRemoteTarget,
+    sourceManagementSnapshot,
+    updateRequiredServer,
+  ]);
+
   const reinstallServer = reinstallProfile?.sourceServerId
     ? sourceManagementSnapshot?.servers.find(
         (server) => server.sourceServerId === reinstallProfile.sourceServerId,
       )
     : undefined;
-  // Bug reason (CR-01): this used to hard-code deviceBusy=false and only look at visibility. While
-  // the device card or another window is updating/restarting the same device, a stale failure page
-  // could still send updateSource; the Host allows concurrent updates and would really run a second
-  // install. Whether the device is busy now reads the Host management snapshot, the same projection
-  // as the device card (updating, restarting, or connecting from another entry all count as
-  // "connecting"); per RDRI-01 the failure page offers no entry then. The entry renders only inside
-  // the failure panel, so the status itself is judged as "failed".
+  // Bug cause (CR-01): this used to hard-code deviceBusy=false and only look at visible. While the device card or another window is updating/restarting the same device,
+  // a stale failure page could still send updateSource; the Host allows concurrent updates and would really run a second install.
+  // Whether the device is busy is now read from the Host management snapshot, the same projection as the device card (updating, restarting, or connecting from another entry all count as "connecting");
+  // per RDRI-01 the failure page offers no entry then. The entry renders only inside the failure panel, so the status itself is judged as "failed".
   const reinstallDeviceBusy =
     Boolean(reinstallProfile) &&
     resolveRemoteConnectionPresentation(
@@ -1364,8 +1433,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     );
     // The user may have cancelled or changed the target while the confirmation was open; a stale confirmation must not start a reinstall.
     if (!confirmed || entryEpochRef.current !== epoch) return;
-    // Reuse the update chain: the running-task guard and force confirmation follow the update; after
-    // success the original connection intent continues under the post-update rules (no auto-update loop).
+    // Reuse the update chain: the running-task guard and force confirmation follow the update; after success the original connection continues under the post-update rules, without triggering auto-update again.
     if (await updateRequiredServer(reinstallProfile.profileId, pendingRemoteTarget)) {
       handleStartPendingRemoteConnection(true);
     }
@@ -1488,8 +1556,8 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       setServerToken(target.token ?? "");
     }
     setCurrentStep("connecting");
-    setConnectingWorkspacePath(
-      resolveConnectingWorkspacePath(
+    setWorkspaceStepPath(
+      resolveWorkspaceStepPath(
         pendingCompletionIntentRef.current.preferredDirectoryPath ?? preferredDirectoryPath,
       ),
     );
@@ -1530,9 +1598,11 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     setPendingInstallConfirmation(null);
     setPendingHostKeyTrust(null);
     setUpgradeProfileId(null);
+    setDowngradeProfileId(null);
     // 凭据缺失时也保留目录意图，不能等真正拨号才记录。
     pendingCompletionIntentRef.current = { preferredDirectoryPath, options: selectOptions };
-    setConnectingWorkspacePath(resolveConnectingWorkspacePath(preferredDirectoryPath));
+    // Bug cause: the connecting screen is entered before dialing (reading or supplementing credentials), so the phase count must be computed from this attempt's folder intent at the same time.
+    setWorkspaceStepPath(resolveWorkspaceStepPath(preferredDirectoryPath));
     setDirectoryPath("");
     setActiveProfileName(profile.displayName);
     setRecognizedSourceServerId(profile.sourceServerId);
@@ -1961,8 +2031,8 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
             cancelled,
             target: displayTarget,
             name: recognizedDeviceName ?? activeProfileName,
-            workspacePath: connectingWorkspacePath,
             logs: visibleConnectionLogs,
+            ...(workspaceStepPath ? { workspacePath: workspaceStepPath } : {}),
             error: errorCode === "credentials-required" ? "" : error,
             reason: error
               ? intl.formatMessage({
@@ -2171,8 +2241,6 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       backToDevicesLabel: addingDevice
         ? intl.formatMessage({ id: "settings.source.newConnection" })
         : undefined,
-      // A chosen project folder means this connection also opens it, so the progress shows the folder step.
-      workspacePath: connectingWorkspacePath,
       onClose: () => {
         void handleCloseRequest();
       },
@@ -2246,13 +2314,25 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       onUpgrade: () => {
         void handleUpgradeRequiredServer();
       },
+      downgradedFrom: sourceManagementSnapshot?.states.find(
+        (state) => state.profileId === upgradeProfileId,
+      )?.downgradedFrom,
+      downgradeVersion: sourceManagementSnapshot?.states.find(
+        (state) => state.profileId === downgradeProfileId,
+      )?.currentVersion,
+      onDowngrade: downgradeProfileId
+        ? () => {
+            void handleDowngradeServer();
+          }
+        : undefined,
       onReinstall: reinstallAvailable
         ? () => {
             void handleReinstallServer();
           }
         : undefined,
-      // The folder step is still pending after the connection, so the step is not complete yet.
-      connectionReady: Boolean(connectedSessionId) && !error && !connectingWorkspacePath,
+      // With a project folder, the device being connected does not count as complete; after the folder opens successfully the wizard closes directly and the connecting screen never shows everything done.
+      connectionReady: Boolean(connectedSessionId) && !error && !workspaceStepPath,
+      workspacePath: workspaceStepPath,
       onContinueToDirectory: () => setCurrentStep("directory"),
       target: pendingRemoteTarget,
       recognizedDeviceName: recognizedDeviceName,
@@ -2360,14 +2440,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       },
       services: directoryBrowserServices,
       remoteTarget: pendingRemoteTarget,
-      localSkillSyncService: baseServices.skillSyncService,
-      remoteSkillSyncService: directoryBrowserServices?.skillSyncService ?? null,
-      localMcpSyncService: baseServices.mcpSyncService,
-      remoteMcpSyncService: directoryBrowserServices?.mcpSyncService ?? null,
-      localPluginSyncService: baseServices.pluginSyncService,
-      remotePluginSyncService: directoryBrowserServices?.pluginSyncService ?? null,
-      localZCodeAgentService: baseServices.zcodeAgentService,
-      remoteZCodeAgentService: directoryBrowserServices?.zcodeAgentService ?? null,
+      sourceServerId: recognizedSourceServerId,
       localWorkspacePath: localWorkspacePath,
       selecting: selectingDirectory,
       onSelect: (path) => {
@@ -2383,9 +2456,6 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
         // 只释放未绑定项目的临时 attachment；Host 的设备连接独立保留。
         if (!selectingDirectoryRef.current) closeDialog();
       },
-      onSkillsSynced: async () => undefined,
-      onMcpSynced: async () => undefined,
-      onPluginsSynced: async () => undefined,
       deviceName: recognizedDeviceName,
       profileName: activeProfileName,
       deviceVersion: recognizedServer?.lastSeenVersion,

@@ -65,8 +65,9 @@ function areResolvedTaskMetasEqual(left: ZCodeTaskMeta | null, right: ZCodeTaskM
 export function useStableResolvedActiveTaskMeta(taskMeta: ZCodeTaskMeta | null) {
   const stableTaskMetaRef = useRef<ZCodeTaskMeta | null>(null);
   const stableTaskMeta = stableTaskMetaRef.current;
-  // stream chunk 只更新消息流时，active task meta 经列表/乐观层重新合成后可能字段相同但引用变了。
-  // Header/Shell 依赖 memo props；这里复用等价 meta 的旧引用，避免连续流式更新拖动标题栏重渲。
+  // When a stream chunk only updates the message flow, the active task meta re-synthesized through
+  // the list/optimistic layers may have equal fields but a new reference.
+  // Header/Shell rely on memo props; reuse the old reference of an equivalent meta so continuous streaming updates do not drag the header into re-renders.
   if (!areResolvedTaskMetasEqual(stableTaskMeta, taskMeta)) {
     stableTaskMetaRef.current = taskMeta;
   }
@@ -113,8 +114,9 @@ export function useWorkspaceActiveTaskState({
     const refresh = async () => {
       const request = ++serial;
       try {
-        // Bugfix: 旧列表退场后，标题 fallback 的 readSession 早于 V4 冷恢复而报
-        // Session is not active。标题只读 Host 索引；正文恢复不再决定标题是否可用。
+        // Bugfix: after the legacy list retired, the title fallback's readSession ran before V4
+        // cold recovery and threw "Session is not active". The title reads the Host index only;
+        // body recovery no longer decides title availability.
         const meta = await service.getTaskMeta(target);
         if (!disposed && request === serial) setIndexed({ service, targetKey, meta });
       } catch (error) {
@@ -122,7 +124,7 @@ export function useWorkspaceActiveTaskState({
           logger.warn("[active-task-meta] 读取 Host 任务元数据失败", { ...target, error });
       }
     };
-    // 先订阅再查询，避免读取与订阅之间漏掉重命名/归档；同目标的迟到结果也不能覆盖新结果。
+    // Subscribe before querying so a rename/archive between read and subscribe is not missed; a late result for the same target must not overwrite a newer one.
     const events = service.onDynamicWorkspaceEvent(target)((event) => {
       if (event.type === "workspace_task_list_changed") void refresh();
     });
@@ -144,13 +146,14 @@ export function useWorkspaceActiveTaskState({
     targetKey,
     version,
   ]);
-  // 同 ID 可存在于不同远端；渲染时即拒绝旧目标，不能等 effect 才清标题。
+  // The same ID can exist on different remotes; reject a stale target at render time, not by waiting for an effect to clear the title.
   const indexedMeta =
     indexed?.service === service && indexed.targetKey === targetKey ? indexed.meta : null;
   const activeTaskMeta = indexedMeta ?? optimisticMeta;
   const resolvedActiveTaskMeta = useStableResolvedActiveTaskMeta(activeTaskMeta);
-  // M5② store 收尾：taskMessagesByTaskId 已无写入方（旧 ChatView/bot 消息回放均退役），
-  // 由消息流派生的实时改动摘要恒为空；摘要展示回落到 task meta.changeSummary（持久化侧）。
+  // M5② store wrap-up: taskMessagesByTaskId has no writers left (legacy ChatView/bot message
+  // replay are both retired), so the live change summary derived from the message flow is always
+  // empty; summary display falls back to task meta.changeSummary (persisted side).
   const activeTaskChangeSummary = null;
   const activeTraceId = resolvedActiveTaskMeta?.traceId ?? null;
   const activeSessionId = resolvedActiveTaskMeta?.taskId ?? null;
@@ -159,14 +162,14 @@ export function useWorkspaceActiveTaskState({
     activeTaskProvider,
     selectedProvider,
   );
-  const activeTaskBaseTitle = resolvedActiveTaskMeta?.title?.trim()
+  // After a task switch the Host meta arrives asynchronously; filling the empty title with "new
+  // task" would flash a placeholder before jumping to the real title.
+  // Keep the title empty while waiting — do not keep the previous task's title or add a second title cache.
+  const activeTaskTitle = resolvedActiveTaskMeta?.title?.trim()
     ? resolvedActiveTaskMeta.title
-    : intl.formatMessage({
-        id: resolvedActiveTaskMeta?.forkedFromTaskId
-          ? "taskList.forkedUntitled"
-          : "taskList.newThread",
-      });
-  const activeTaskTitle = activeTaskBaseTitle;
+    : resolvedActiveTaskMeta?.forkedFromTaskId
+      ? intl.formatMessage({ id: "taskList.forkedUntitled" })
+      : "";
   const taskNativeSessionLogFile = useTaskNativeSessionLogFile(
     workspaceAbsPath,
     activeTaskId,

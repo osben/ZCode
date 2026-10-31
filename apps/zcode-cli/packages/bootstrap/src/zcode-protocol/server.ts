@@ -1,3 +1,4 @@
+import { sessionLifecycleParamsSchema, sessionLifecycleSnapshotSchema } from "@zcode/shared";
 import { querySessionDebug } from "./session-debug.js";
 import { offPeakControlParamsSchema, offPeakControlResultSchema } from "@zcode/shared";
 import { createNodeNetworkCapture } from "@zcode/shared/node";
@@ -5,6 +6,7 @@ import { networkCaptureControlSchema, zcodeProtocolNotifications } from "@zcode/
 import {
   zcodePluginsCancelOperationParamsSchema,
   zcodeProtocolMethods,
+  zcodeRuntimeCapabilitiesParamsSchema,
   zcodeWorkspaceCancelGenerateTextParamsSchema,
   zcodeWorkspaceHookTrustGrantParamsSchema,
 } from "@zcode/shared";
@@ -59,6 +61,10 @@ import { countSessionTrees, eraseSessionTrees } from "./session-tree.js";
 import { listChildProcesses } from "./process-child-processes.js";
 import { ProtocolRuntimeResources } from "./runtime-resources.js";
 import {
+  ConversationInputPredictionHandler,
+  createInputPredictionSessionLoader,
+} from "./input-prediction-handler.js";
+import {
   readWorkspacePresentation,
   testProviderModelConnectivity,
 } from "./workspace-model-runtime.js";
@@ -92,7 +98,7 @@ import {
   updateSavedWorkflowMetaOp,
 } from "./saved-workflows.js";
 import { findSavedWorkflowForRunOp, saveSavedWorkflowFromRunOp } from "./saved-workflows-run.js";
-import { listMcpServers } from "./mcp.js";
+import { listMcpServers, setWorkspaceMcpTrust } from "./mcp.js";
 import {
   callMcpUiTool,
   sampleMcpUi,
@@ -123,7 +129,12 @@ import {
   resolveV4InteractionRegistryOptionsFromEnv,
 } from "../zcode-protocol-v4/interaction-registry.js";
 import { createConversationV4Gateway } from "./v4-bridge.js";
-import { createSessionResidentPoolHost } from "./session-residency.js";
+import {
+  createSessionResidentPoolHost,
+  getSessionLifecycle,
+  shutdownSessionRuntime,
+} from "./session-residency.js";
+import { measureSessionData, purgeSessionData } from "./session-data/index.js";
 import {
   DEFAULT_SESSION_RESIDENT_HIGH_WATER_COUNT,
   SessionResidentPool,
@@ -271,6 +282,7 @@ export class ZCodeProtocolAgentServer {
   private readonly pendingClientRequests = new Map<string, PendingClientRequest<unknown>>();
   private readonly pluginOperationControllers = new Map<string, AbortController>();
   private readonly workspaceGenerateTextControllers = new Map<string, AbortController>();
+  private readonly inputPrediction: ConversationInputPredictionHandler;
   /**
    * subscribe initial frame 按 JSON-RPC request id 隔离。connection 必须先 take，
    * 再写 response line，最后按数组顺序写 notification，不能靠 microtask 猜时序。
@@ -319,6 +331,13 @@ export class ZCodeProtocolAgentServer {
     };
     // v4 通道：gateway 闭包持有 context 做帧出口与命令副作用，构造完立即挂回。
     this.context.v4Gateway = createConversationV4Gateway(this.context);
+    this.inputPrediction = new ConversationInputPredictionHandler({
+      loadSession: createInputPredictionSessionLoader({
+        sessions: this.context.sessions,
+        sessionStore: resolvedDeps.sessionStore,
+      }),
+      logger: this.logger,
+    });
     this.browserControlPort = createProtocolBrowserControlBroker(this.context);
     const sessionResidentTargetCount =
       deps.sessionResidentPoolOptions?.targetCount ?? deps.sessionResidentTargetCount;
@@ -428,6 +447,7 @@ export class ZCodeProtocolAgentServer {
       controller.abort(error);
     }
     this.workspaceGenerateTextControllers.clear();
+    this.inputPrediction.dispose(error);
     for (const controller of this.pluginOperationControllers.values()) {
       controller.abort(error);
     }
@@ -437,7 +457,12 @@ export class ZCodeProtocolAgentServer {
   /** 进程资源关闭，不使用会删除产品会话/发布 session.removed 的 session/close。 */
   shutdown(): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise;
-    this.shutdownPromise = this.runtimeResources.close();
+    // An abort listener can re-enter synchronously; claim the shared close result before notifying
+    // any owner.
+    const shutdown = Promise.withResolvers<void>();
+    this.shutdownPromise = shutdown.promise;
+    const closingResources = this.runtimeResources.close();
+    const closingSessions: Promise<void>[] = [];
     const error = new Error("ZCode Protocol runtime stopping");
     this.disconnectClient(error);
     this.messageSink = undefined;
@@ -447,6 +472,10 @@ export class ZCodeProtocolAgentServer {
       controller.abort(error);
     for (const record of this.context.sessions.values()) {
       record.activeAbortController?.abort(error);
+      if (getSessionLifecycle(this.context).isReady(record.app.sessionId)) {
+        closingSessions.push(shutdownSessionRuntime(this.context, record.app.sessionId));
+        continue;
+      }
       try {
         record.unsubscribe?.();
       } catch {
@@ -455,6 +484,14 @@ export class ZCodeProtocolAgentServer {
         });
       }
     }
+    void Promise.allSettled([closingResources, ...closingSessions]).then((results) => {
+      const errors = results.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (errors.length)
+        shutdown.reject(new AggregateError(errors, "Protocol runtime shutdown failed"));
+      else shutdown.resolve();
+    });
     return this.shutdownPromise;
   }
 
@@ -526,9 +563,17 @@ export class ZCodeProtocolAgentServer {
       // subscribe hydration、workspace 配置与 resume 都可能跨 await。若只看
       // session 当前状态，sampler 会在 handler 持有旧 record 时把它关闭。进程级 lease
       // 覆盖整个 request；能识别的 sessionIds 额外用于冷恢复闸门与 LRU touch。
-      releaseResidencyOperation = await this.context.sessionResidentPool?.acquireOperation(
-        collectResidencySessionIds(request.params),
-      );
+      const lifecycleQuery = request.method === zcodeProtocolMethods.sessionLifecycleGetState;
+      const lifecycleMutation =
+        request.method === zcodeProtocolMethods.sessionLifecycleEnsureReady ||
+        request.method === zcodeProtocolMethods.sessionLifecycleStop ||
+        request.method === zcodeProtocolMethods.sessionLifecycleRestart;
+      // Queries must not renew or trigger reclamation. Lifecycle changes use the process lease; the
+      // owner manages per-session mutual exclusion.
+      if (!lifecycleQuery)
+        releaseResidencyOperation = await this.context.sessionResidentPool?.acquireOperation(
+          lifecycleMutation ? undefined : collectResidencySessionIds(request.params),
+        );
       const result = await this.dispatchRequest(request);
       return this.ok(request.id, result);
     } catch (error) {
@@ -595,6 +640,10 @@ export class ZCodeProtocolAgentServer {
       // ── 行分页 query（独立分支，便于与帧分派改动合并）──
       case V4_METHODS.conversationRowsRange:
         return await this.requireV4Gateway().rowsRange(request.params);
+      // Mobile input prediction: read-only and stateless; a new request for a session supersedes
+      // the old one.
+      case V4_METHODS.conversationInputPrediction:
+        return await this.inputPrediction.handle(request.params);
       case V4_METHODS.conversationPlans:
         return await this.requireV4Gateway().plans(request.params);
       case V4_METHODS.backgroundBashOutput:
@@ -655,6 +704,12 @@ export class ZCodeProtocolAgentServer {
         return await getUsageStats(this.context, request.params);
       case V4_METHODS.conversationUsage:
         return await getTaskTokenUsage(this.context, request.params);
+      // Hard delete of project data: bypasses the v4Gateway session projection and operates
+      // directly on this process's store and session registry.
+      case V4_METHODS.sessionDataMeasure:
+        return await measureSessionData(this.context, request.params);
+      case V4_METHODS.sessionDataPurge:
+        return await purgeSessionData(this.context, request.params);
       case V4_METHODS.command:
         return this.requireV4Gateway().handleCommand(request.params);
       case V4_METHODS.commandsQuery:
@@ -663,6 +718,24 @@ export class ZCodeProtocolAgentServer {
         return this.requireV4Gateway().reconcileSessions(request.params);
       case zcodeProtocolMethods.sessionCreate:
         return await createSession(this.context, request.params, request.trace);
+      case zcodeProtocolMethods.sessionLifecycleGetState: {
+        const { sessionId } = parseParams(sessionLifecycleParamsSchema, request.params);
+        return sessionLifecycleSnapshotSchema.parse(
+          await getSessionLifecycle(this.context).getState(sessionId),
+        );
+      }
+      case zcodeProtocolMethods.sessionLifecycleEnsureReady:
+      case zcodeProtocolMethods.sessionLifecycleStop:
+      case zcodeProtocolMethods.sessionLifecycleRestart: {
+        const { sessionId } = parseParams(sessionLifecycleParamsSchema, request.params);
+        const lifecycle = getSessionLifecycle(this.context);
+        if (request.method === zcodeProtocolMethods.sessionLifecycleEnsureReady)
+          await lifecycle.ensureReady(sessionId);
+        else if (request.method === zcodeProtocolMethods.sessionLifecycleStop)
+          await lifecycle.stop(sessionId);
+        else await lifecycle.restart(sessionId);
+        return { completed: true as const };
+      }
       case zcodeProtocolMethods.sessionResume:
         return await resumeSession(this.context, request.params);
       case zcodeProtocolMethods.sessionList:
@@ -742,6 +815,8 @@ export class ZCodeProtocolAgentServer {
         return this.cancelWorkspaceGenerateText(request.params);
       case zcodeProtocolMethods.providerTestModelConnectivity:
         return await testProviderModelConnectivity(this.context, request.params);
+      case zcodeProtocolMethods.workspaceMcpTrust:
+        return await setWorkspaceMcpTrust(this.context, request.params);
       case zcodeProtocolMethods.mcpList:
         return await listMcpServers(this.context, request.params);
       case zcodeProtocolMethods.mcpReadResource:
@@ -816,16 +891,28 @@ export class ZCodeProtocolAgentServer {
         return await getPluginsOverview(this.context, request.params);
       case zcodeProtocolMethods.processChildProcesses:
         return listChildProcesses(this.context.deps.mcpTelemetry?.listProcesses() ?? []);
-      case zcodeProtocolMethods.runtimeCapabilities:
+      case zcodeProtocolMethods.runtimeCapabilities: {
+        const params = zcodeRuntimeCapabilitiesParamsSchema.parse(request.params ?? {});
+        // An older Host's strict schema rejects new fields; negotiate first, then publish the
+        // directory source.
+        this.context.sessionDirectorySourceEnabled ||=
+          params.hostCapabilities?.sessionDirectorySource === true;
+        this.context.sessionWorkspaceRoutingEnabled ||=
+          params.hostCapabilities?.sessionWorkspaceRouting === true;
         // incognitoSession: see docs/design/v2/incognito-session.md.
         return {
+          sessionWorkspaceRouting: true,
           independentPlanState: true,
           historyFirst: true,
           durableFirstSubmission: true,
           incognitoSession: true,
           incognitoPromptToggles: true,
           providerRegistryRefresh: true,
+          sessionDirectorySource: true,
+          residentRowsRange: true,
+          genUiContext: true,
         };
+      }
       case zcodeProtocolMethods.pluginsMarketplaceAdd:
         return await this.withPluginOperationSignal(request, (signal) =>
           addPluginMarketplace(this.context, request.params, signal),

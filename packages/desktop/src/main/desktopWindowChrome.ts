@@ -3,6 +3,8 @@ import { app, BrowserWindow, Menu, nativeImage, nativeTheme, screen, shell } fro
 import { join } from "node:path";
 import type {
   ContextMenuParams,
+  DownloadItem,
+  Event,
   Input,
   MenuItemConstructorOptions,
   WebContents,
@@ -265,6 +267,19 @@ function attachWindowsWindowRepaint(targetWindow: BrowserWindow) {
     // resize without reloading the renderer or session.
     scheduleRepaint();
   });
+  targetWindow.on("focus", () => {
+    // Bug cause (ZCT-202610-E0C5B48D): after the window is fully covered by other programs,
+    // Chromium's Windows occlusion detection (native window occlusion) marks it occluded and
+    // stops committing frames and pauses timers; with some Intel integrated-GPU driver
+    // combinations, switching back to the foreground (Alt-Tab / clicking a notification /
+    // clicking the window) does not recompute the occlusion state, so the picture stays on the
+    // last frame like a screenshot. This path fires only focus, not show/resized, so the
+    // tray-restore and manual-resize patches do not cover it. Manually dragging the window or
+    // clicking the title bar recovers it, proving a forced one-frame repaint breaks the stale
+    // state; on focus, do the same bounded two-frame repaint — effectively automating the user's
+    // manual recovery.
+    scheduleRepaint();
+  });
 }
 
 function isAllowedEmbeddedBrowserUrl(url: string): boolean {
@@ -363,6 +378,20 @@ function attachEmbeddedBrowserWindowOpenHandler(options: {
     | undefined;
   logger: { warn: (...args: unknown[]) => void };
 }) {
+  // A download response makes loadURL reject with ERR_FAILED; use real download events to
+  // distinguish network failures.
+  const downloadSession = options.guestWebContents.session;
+  const onDownload = (_event: Event, item: DownloadItem, contents: WebContents) => {
+    if (contents !== options.guestWebContents || options.hostWebContents.isDestroyed()) return;
+    options.hostWebContents.send(PlatformChannels.BrowserViewDownloadStarted, {
+      webContentsId: contents.id,
+      urls: item.getURLChain(),
+    });
+  };
+  downloadSession.on("will-download", onDownload);
+  options.guestWebContents.once("destroyed", () => {
+    downloadSession.removeListener("will-download", onDownload);
+  });
   let externalBrowserModifierActive = false;
 
   options.guestWebContents.on("before-input-event", (_event, input) => {
@@ -614,6 +643,19 @@ export function createBrowserWindow(options: {
       // Pass deviceMid to preload so the renderer can read it synchronously before React renders.
       additionalArguments: buildAppRendererAdditionalArguments(options.deviceMid ?? ""),
     },
+  });
+
+  // A document-rendering library used to call window.open directly, bypassing the DOM link
+  // checks; the main window must not create uncontrolled native child windows. Legitimate
+  // external links reuse the existing Browser route; guests stay governed by their own
+  // policies.
+  win.webContents.setWindowOpenHandler(({ url, disposition }) => {
+    if (isAllowedEmbeddedBrowserNewWindowUrl(url)) {
+      win.webContents.send(PlatformChannels.OpenBrowserUrl, { url, disposition });
+    } else {
+      options.logger.warn("[desktop-window] blocked unsupported popup protocol");
+    }
+    return { action: "deny" };
   });
 
   // The zoom command originally changed only the current window and was not restored after restart.

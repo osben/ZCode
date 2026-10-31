@@ -78,7 +78,21 @@ function browserScreenshotIndexResult(
   images: readonly NodeReplImage[],
   browserScreenshots: readonly NodeReplImage[],
 ): Pick<NodeReplRunResult, "browserScreenshotImageIndices"> {
-  if (images.length === 0 || browserScreenshots.length === 0) return {};
+  const browserScreenshotImageIndices = matchBrowserScreenshotImageIndices(images, browserScreenshots);
+  return browserScreenshotImageIndices.length > 0 ? { browserScreenshotImageIndices } : {};
+}
+
+/**
+ * Which indexes in images are real browser screenshots: matched one by one by mimeType + bytes; the
+ * same screenshot can be claimed only once. The node-repl-host main thread uses it to map screenshots
+ * recorded in the ledger onto cell output images
+ * (apps/zcode-cli/docs/design/v2/tool/20-node-repl-call-ledger.md "Result assembly").
+ */
+export function matchBrowserScreenshotImageIndices(
+  images: readonly NodeReplImage[],
+  browserScreenshots: readonly NodeReplImage[],
+): number[] {
+  if (images.length === 0 || browserScreenshots.length === 0) return [];
 
   const remainingByPayload = new Map<string, number>();
   for (const screenshot of browserScreenshots) {
@@ -94,7 +108,7 @@ function browserScreenshotIndexResult(
     browserScreenshotImageIndices.push(index);
     remainingByPayload.set(key, remaining - 1);
   });
-  return browserScreenshotImageIndices.length > 0 ? { browserScreenshotImageIndices } : {};
+  return browserScreenshotImageIndices;
 }
 
 /**

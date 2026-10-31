@@ -136,4 +136,57 @@ describe("desktop native package policy", () => {
       rmSync(stagingNodeModulesDir, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    ["win32-x64", ["sharp-win32-x64"]],
+    ["win32-arm64", ["sharp-win32-arm64"]],
+    ["darwin-arm64", ["sharp-darwin-arm64", "sharp-libvips-darwin-arm64"]],
+    ["linux-x64", ["sharp-linux-x64", "sharp-libvips-linux-x64"]],
+  ])("应只保留目标平台的 @img/sharp 变体（%s）", (targetPlatformKey, keepVariants) => {
+    const patterns = createDesktopNativePackagePrunePatterns(targetPlatformKey);
+
+    for (const keep of keepVariants) {
+      expect(patterns).not.toContain(`!node_modules/@img/${keep}/**`);
+    }
+    // Every other known all-platform variant must be pruned (including cross-OS and same-OS cross-arch).
+    expect(patterns).toContain("!node_modules/@img/sharp-darwin-x64/**");
+    expect(patterns).toContain("!node_modules/@img/sharp-linuxmusl-arm64/**");
+    expect(patterns).toContain("!node_modules/@img/sharp-libvips-darwin-x64/**");
+    // Regression: the libvips-linux/linuxmusl family once leaked past the list, and only the violation check caught it during a local package.
+    expect(patterns).toContain("!node_modules/@img/sharp-libvips-linuxmusl-x64/**");
+    expect(patterns).toContain("!node_modules/@img/sharp-libvips-linux-arm64/**");
+    if (targetPlatformKey !== "win32-arm64") {
+      expect(patterns).toContain("!node_modules/@img/sharp-win32-arm64/**");
+    }
+    if (targetPlatformKey !== "win32-x64") {
+      expect(patterns).toContain("!node_modules/@img/sharp-win32-x64/**");
+    }
+  });
+
+  it("应把混入包内的非目标平台 sharp 变体判为违规", () => {
+    const entries = parseAsarListWithPackState(
+      [
+        "unpack : /node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64.node",
+        "unpack : /node_modules/@img/sharp-libvips-darwin-arm64/lib/libvips.42.dylib",
+        "unpack : /node_modules/@img/sharp-linux-x64/lib/libvips.so.42",
+      ].join("\n"),
+    );
+
+    expect(findDesktopNativePackageViolations(entries, "win32-x64")).toEqual([
+      expect.stringContaining("sharp-libvips-darwin-arm64"),
+      expect.stringContaining("sharp-linux-x64"),
+    ]);
+  });
+
+  it("目标平台的 sharp 变体不判违规且必须 unpack", () => {
+    const entries = parseAsarListWithPackState(
+      [
+        "unpack : /node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64.node",
+        "unpack : /node_modules/@img/sharp-win32-x64/lib/libvips-42.dll",
+        "pack   : /node_modules/@img/sharp-win32-x64/package.json",
+      ].join("\n"),
+    );
+
+    expect(findDesktopNativePackageViolations(entries, "win32-x64")).toEqual([]);
+  });
 });

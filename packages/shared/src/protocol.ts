@@ -181,9 +181,9 @@ export type RemoteTargetSnapshot =
 export interface RemoteWorkspaceSessionSnapshot {
   /** Actual absolute path of the remote workspace. */
   workspacePath: string;
-  /** 用户可见的 workspace 分类；旧远端快照缺失时按 project 兼容读取。 */
+  /** User-visible workspace purpose; older remote snapshots missing it are read as project for compatibility. */
   workspacePurpose?: WorkspacePurpose;
-  /** 发起远程连接时的本机 workspace 路径，仅用于 MCP filesystem 路径改写。 */
+  /** Local workspace path when the remote connection was initiated; used only for MCP filesystem path rewriting. */
   localWorkspacePath?: string;
   /** Stable identity key for the remote workspace (authority + canonicalPath). */
   workspaceIdentity?: string;
@@ -195,6 +195,8 @@ export interface RemoteWorkspaceSessionSnapshot {
   lastConnectionStatus: "connected" | "failed";
   /** Most recent failure reason; cleared on success. */
   lastConnectionError?: string;
+  /** Error code of the most recent failure, written and cleared together with lastConnectionError; wait points also report as failed, and the text alone cannot tell the two apart. */
+  lastConnectionErrorCode?: string;
 }
 
 export interface LocalWorkspaceSessionEntry {
@@ -329,11 +331,11 @@ export interface AppSettings {
    * Once hidden, the button is not rendered and is not restored by restart or upgrade; it can only be re-enabled in Settings.
    */
   computerUseComposerEntryHidden?: boolean;
-  /** 自动归档旧会话的总开关 */
+  /** Master switch for auto-archiving old sessions. */
   taskAutoArchiveEnabled?: boolean;
-  /** 自动归档修复后的一次性关闭标记；只用于设置迁移，不参与归档判断。 */
+  /** One-time off marker set after the auto-archive fix; used only for settings migration, not for archive decisions. */
   taskAutoArchiveResetVersion?: 1;
-  /** 自动归档阈值；当任务最后更新时间早于该天数时允许被归档 */
+  /** Auto-archive threshold; a task may be archived when its last update is older than this many days. */
   taskAutoArchiveOlderThanDays?: number;
   /** Hide the window to the tray on close on desktop (Windows/Linux; spec: docs/desktop/linux-close-to-tray.md). */
   closeToTrayOnWindows?: boolean;
@@ -398,9 +400,9 @@ export interface AppSettings {
   providerFamilyDomainMigrated?: boolean;
   /** Whether to inject bfs/ugrep enhancements for Bash in newly created or cold-restored Sessions; enabled by default. */
   nativeSearchEnhancementsEnabled?: boolean;
-  /** 新建或冷恢复时读取；已有 Runtime 保持原策略。 */
+  /** Read on creation or cold restore; existing runtimes keep their current policy. */
   toolSearchMode?: AppToolSearchMode;
-  /** 新建或冷恢复 Session 是否启用 Memory；默认关闭。 */
+  /** Whether Memory is enabled for newly created or cold-restored Sessions; off by default. */
   memoryEnabled?: boolean;
   /** Inject the project memory index as a standalone background-context block instead of inside
    *  the "# agentsMd" instruction banner. Fork-only: stored in fork-settings.json. Default false. */
@@ -428,11 +430,11 @@ export interface AppSettings {
     | "other"
     | null;
   proactiveSuggestionsEnabled?: boolean;
-  /** 新版只保存活动执行目录；不表达项目/连接成员，null 表示明确清空。 */
+  /** New versions store only the active execution directory; it does not express project/connection membership, and null means explicitly cleared. */
   lastActiveWorkspace?: PersistedWorkspaceSessionEntry | null;
-  /** Host 从项目/本机入口派生，供旧版降级读取；新版不作为入口真相。 */
+  /** Derived by the Host from project/local entries for older-version fallback reads; new versions do not treat it as entry truth. */
   lastWorkspaceSession?: PersistedWorkspaceSessionEntry[];
-  /** 每个 Source Server 已解析的 canonical conversation backing workspace。 */
+  /** Resolved canonical conversation backing workspace per Source Server. */
   remoteConversationWorkspaceBySourceServerId?: Record<
     string,
     {
@@ -440,20 +442,20 @@ export interface AppSettings {
       lastResolvedAt: number;
     }
   >;
-  /** R3 控制端已识别的 Source Server；运行态仍由远端 Server 权威提供。 */
+  /** Source Servers recognized by the R3 controller; runtime state is still authoritatively provided by the remote server. */
   sourceServers?: import("./source-server/contracts.js").SourceServerRecord[];
-  /** R3 到达 Source Server 的线路；只保存 credential key，不保存 secret。 */
+  /** Routes from R3 to Source Servers; stores only credential keys, never secrets. */
   connectionProfiles?: import("./source-server/contracts.js").ConnectionProfile[];
-  /** R3 workspace 打开历史；连接线路与 workspace 实体分离。 */
+  /** R3 workspace open history; connection routes and workspace entities are kept separate. */
   sourceServerWorkspaceHistory?: import("./source-server/contracts.js").SourceServerWorkspaceHistoryEntry[];
-  /** 桌面端启动时是否执行 Source Server 静默重连；缺失按 true 兼容旧设置。 */
+  /** Whether desktop performs silent Source Server reconnection on startup; a missing value reads as true for old settings. */
   remoteStartupAutoReconnectEnabled?: boolean;
   sourceServerDirectoryMigrationVersion?: 1;
-  /** 旧客户端只接受 2；保留回滚兼容，新介绍不使用该字段判断已读。 */
+  /** Old clients only accept 2; kept for rollback compatibility — the new intro does not use this field to decide read status. */
   remoteBoundaryOnboardingVersion?: 2;
-  /** 仅表示用户明确确认持续运行介绍。 */
+  /** Only indicates the user explicitly acknowledged the continuous-run intro. */
   remoteBoundaryIntroAcknowledgedVersion?: 1;
-  /** 上次关闭时激活的 tab 索引 */
+  /** Index of the tab active at last close. */
   lastActiveTabIndex?: number;
   /** Last active taskId for each workspace; restored automatically on next open. */
   lastActiveTaskByWorkspace?: Record<string, string>;

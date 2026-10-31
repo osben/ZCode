@@ -10,18 +10,18 @@ const PERSONAL_PROVIDER_ONLY_SPEC_NAMES = new Set([
   "conversation-session-draft-model-switch-first-send.test.ts",
   "conversation-session-unbound-resume.test.ts",
   "conversation-session-v4-composer-toolbar.test.ts",
-  // SSH 配置同步用例只需 Personal 配置；假 OAuth 的 401 会在连接前遮住向导入口。
+  // The SSH config sync cases only need the Personal config; the fake OAuth 401 would cover the wizard entry before connecting.
   "conversation-session-ssh-provisioning-failure.test.ts",
 ]);
 
-// 这些 fork/goal/tool 场景也只使用本地回放 Provider；假 OAuth 会触发真实控制面
-// 鉴权失败并遮挡被测交互，因此与 Personal-only 场景一样保持无账号启动。
+// These fork/goal/tool scenarios also use only the local replay Provider; fake OAuth triggers real
+// control-plane auth failures that cover the tested interaction, so like the Personal-only scenarios they start accountless.
 const ACCOUNTLESS_FORK_SPEC_NAMES = new Set([
   "conversation-session-automation-cron-create.test.ts",
   "conversation-session-worktree-chat-first.test.ts",
   "conversation-session-fork-merged-assistant.test.ts",
   "conversation-session-goal-run-cases.test.ts",
-  // 引导布局回归只依赖本地回放 Provider；假账号会弹出登录过期提示，遮住职业引导。
+  // The guide layout regression only depends on the local replay Provider; the fake account would show a login-expired prompt covering the career guide.
   "conversation-session-running-guide-steer.test.ts",
   "conversation-session-tool-cross-product.test.ts",
   "conversation-session-v4-fork-edit-branch.test.ts",
@@ -47,29 +47,31 @@ export function createE2EStartupCredentialSeed(
       );
     })
   ) {
-    // Bug 原因：这些 case 只验证 Personal Provider 的会话/Composer 行为；默认假 JWT
-    // 会访问真实账号控制面并触发 401 弹窗，遮挡真正待测交互。它们从无账号态进入，
-    // 再通过正式 API Key/Personal Provider UI 建立测试前置。
+    // Bug cause: these cases only verify the Personal Provider session/Composer behaviour; the default
+    // fake JWT would hit the real account control plane and trigger a 401 popup covering the interaction under test.
+    // They start from the accountless state and then set up preconditions through the formal API Key/Personal Provider UI.
     return {};
   }
   const restoredOAuthCredentials = { ...options.restoredOAuthCredentials };
   const requiresZCodeJwt = options.specs?.some((spec) => {
     const fileName = spec.replaceAll("\\", "/").split("/").at(-1);
     return (
-      // 营销投放 spec 按主题拆成 marketing-touch-delivery*.test.ts，领取用例都需要本地 JWT。
+      // The marketing delivery specs are split by topic into marketing-touch-delivery*.test.ts; the claim cases all need a local JWT.
       fileName?.startsWith("marketing-touch-delivery") ||
       fileName === "marketing-touch-entitlement.test.ts" ||
-      // Rewards 专项走本地控制面，需要同时验证 OAuth 与 JWT 注入。
+      // The Rewards suite goes through the local control plane and must verify both OAuth and JWT injection.
       fileName === "marketing-touch-rewards.test.ts" ||
       fileName === "jwt-401-auto-logout.test.ts" ||
       isRequestSecuritySpec(fileName) ||
       fileName === "coding-plan-upgrade-webview-refresh-provider.test.ts" ||
       fileName === "start-plan-manual-claim-experience.test.ts" ||
-      fileName === "provider-family-responsive.test.ts"
+      fileName === "provider-family-responsive.test.ts" ||
+      // The Team regression only replaces HTTP and still goes through real credential resolution; a missing JWT is rejected before creation.
+      fileName === "conversation-session-off-peak-team-plan.test.ts"
     );
   });
-  // 合并时遗漏了普通 E2E 的 JWT 隔离：假的 JWT 会访问真实套餐接口并弹出登录失效提示。
-  // 保留 OAuth 展示态；只有认证专项、本地 mock 的领取与响应式用例需要 JWT。
+  // The merge had dropped JWT isolation for regular E2E: a fake JWT would hit the real plan API and show a login-expired prompt.
+  // Keep the OAuth display state; only auth-specific suites, local-mock claim and responsive cases need a JWT.
   if (!requiresZCodeJwt) delete restoredOAuthCredentials.zcodejwttoken;
   // Zai restore without a zcodejwttoken is already signed-out, so the seeded fake zai OAuth adds
   // no visible state; it only sends "oauth:zai:access_token" to the real control plane

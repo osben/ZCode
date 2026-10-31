@@ -5,19 +5,21 @@ import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { ConversationComposer } from "@/v4/ConversationComposer.js";
 import {
   persistV4ComposerDraft,
   readV4ComposerDraft,
   V4_DRAFT_SCOPE_ROOT,
-  type V4ComposerDraft,
 } from "@/v4/composer/composerDraftStore.js";
 import { TEST_LOCALE } from "./helpers/uiCopy.js";
 import {
   clearV4ComposerDraftWorkspaceTransferRequest,
   requestV4ComposerDraftWorkspaceTransfer,
 } from "@/v4/composer/composerDraftWorkspaceTransfer.js";
-import { flushAsyncWork, installMinimalDom } from "./v4ConversationComposerLateAckHarness.js";
+import {
+  ComposerWithDraftOwner,
+  installMinimalDom,
+  ROOT_DRAFT_SCOPE,
+} from "./v4ConversationComposerLateAckHarness.js";
 
 const { editor } = vi.hoisted(() => ({
   editor: {
@@ -30,6 +32,14 @@ const { editor } = vi.hoisted(() => ({
   },
 }));
 
+// The draft owner (useDraftConfigControl) reads the session service and settings hooks; this suite
+// has no ServiceProvider, so both are stubbed. The owner's write paths are exercised unchanged.
+vi.mock("@/hooks/useZCodeSessionService.js", () => ({
+  useZCodeSessionService: () => ({}),
+}));
+vi.mock("@/hooks/useSettingService.js", () => ({
+  useSettings: () => ({ settings: {} }),
+}));
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
 
 vi.mock("@/components/ui/dialog.js", async () => {
@@ -131,24 +141,18 @@ function scopeOf(sessionId: string | null) {
 }
 
 function storedText(sessionId: string | null, workspacePath = "/workspace") {
-  return readV4ComposerDraft(workspacePath, undefined, scopeOf(sessionId))?.text ?? null;
+  return (
+    readV4ComposerDraft(workspacePath, undefined, scopeOf(sessionId), ROOT_DRAFT_SCOPE)?.text ??
+    null
+  );
 }
 
-// Emulates the SessionPane draft owner: each render gets the owner of the scope it shows.
+// Each render gets the real draft owner of the scope it shows, as SessionPane does.
 function composerFor(sessionId: string | null, workspacePath: string) {
-  const scopeId = scopeOf(sessionId);
-  let ownedDraft: V4ComposerDraft = readV4ComposerDraft(workspacePath, undefined, scopeId) ?? {
-    text: "",
-    updatedAt: 0,
-  };
-  const write = (next: V4ComposerDraft) => {
-    ownedDraft = next;
-    persistV4ComposerDraft(workspacePath, undefined, scopeId, ownedDraft);
-  };
   return createElement(
     ZCodeIntlProvider,
     { initialLocale: TEST_LOCALE },
-    createElement(ConversationComposer, {
+    createElement(ComposerWithDraftOwner, {
       draftMode: sessionId === null,
       onSelectModel: vi.fn(),
       onSelectThought: vi.fn(),
@@ -156,9 +160,6 @@ function composerFor(sessionId: string | null, workspacePath: string) {
       submissionReady: true,
       modelSelectionView: null,
       modelSelectionSettled: false,
-      composerDraft: ownedDraft,
-      updateComposerContent: (content) => write({ ...ownedDraft, ...content }),
-      replaceComposerDraft: (next) => write({ ...next, updatedAt: Date.now() }),
       onStop: vi.fn(),
       onSwitchMode: vi.fn(),
       provider: undefined,
@@ -193,6 +194,9 @@ function openSessionAWithDraft() {
 }
 
 beforeEach(() => {
+  // The input hot path commits the body after a 350ms silence window (docs/ui/task-scoped-composer-drafts.md),
+  // so the window timer is driven explicitly. Fake timers must exist before the minimal DOM captures setTimeout.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const container = installMinimalDom();
   // A hidden or occluded Electron window pauses animation frames; frames run only on demand here.
   const frameApi = {
@@ -220,6 +224,7 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount());
+  vi.useRealTimers();
   pendingFrames = [];
   delete (globalThis as { document?: unknown }).document;
   delete (globalThis as { window?: unknown }).window;
@@ -251,6 +256,11 @@ describe("ConversationComposer draft scope switch (ISSUE-060)", () => {
       editor.onChange?.(editor.text);
     });
     runFrames();
+    // Typing only stages the body; nothing is written until the 350ms silence window closes.
+    expect(storedText(null)).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(350);
+    });
 
     expect(storedText(null)).toBe("qa draft new");
     expect(storedText(SESSION_A)).toBe("qa draft A");
@@ -258,11 +268,17 @@ describe("ConversationComposer draft scope switch (ISSUE-060)", () => {
 
   it("DL03: while the editor is not ready, nothing is written and the new scope's draft is shown once it is", () => {
     openSessionAWithDraft();
-    persistV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT, {
-      text: "qa draft new",
-      mode: "build",
-      updatedAt: 2,
-    });
+    persistV4ComposerDraft(
+      "/workspace",
+      undefined,
+      V4_DRAFT_SCOPE_ROOT,
+      {
+        text: "qa draft new",
+        mode: "build",
+        updatedAt: 2,
+      },
+      ROOT_DRAFT_SCOPE,
+    );
 
     editor.attached = false;
     render(null);
@@ -282,11 +298,17 @@ describe("ConversationComposer draft scope switch (ISSUE-060)", () => {
 
   it("DL03b: a deferred restore waits frame by frame for the editor, then writes resume", () => {
     openSessionAWithDraft();
-    persistV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT, {
-      text: "qa draft new",
-      mode: "build",
-      updatedAt: 2,
-    });
+    persistV4ComposerDraft(
+      "/workspace",
+      undefined,
+      V4_DRAFT_SCOPE_ROOT,
+      {
+        text: "qa draft new",
+        mode: "build",
+        updatedAt: 2,
+      },
+      ROOT_DRAFT_SCOPE,
+    );
 
     editor.attached = false;
     render(null);
@@ -305,6 +327,9 @@ describe("ConversationComposer draft scope switch (ISSUE-060)", () => {
       editor.text = "qa draft new!";
       editor.onChange?.(editor.text);
     });
+    act(() => {
+      vi.advanceTimersByTime(350);
+    });
     expect(storedText(null)).toBe("qa draft new!");
     expect(storedText(SESSION_A)).toBe("qa draft A");
   });
@@ -316,7 +341,7 @@ describe("ConversationComposer draft scope switch (ISSUE-060)", () => {
     render(null);
     await act(async () => {
       editor.onSubmit?.("qa draft A");
-      await flushAsyncWork();
+      await vi.advanceTimersByTimeAsync(0);
     });
 
     expect(onSendText).not.toHaveBeenCalled();
@@ -325,11 +350,17 @@ describe("ConversationComposer draft scope switch (ISSUE-060)", () => {
 
   it("DL05: a workspace transfer during a pending restore carries the draft's own text, not the editor's", () => {
     openSessionAWithDraft();
-    persistV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT, {
-      text: "qa draft new",
-      mode: "build",
-      updatedAt: 2,
-    });
+    persistV4ComposerDraft(
+      "/workspace",
+      undefined,
+      V4_DRAFT_SCOPE_ROOT,
+      {
+        text: "qa draft new",
+        mode: "build",
+        updatedAt: 2,
+      },
+      ROOT_DRAFT_SCOPE,
+    );
 
     editor.attached = false;
     render(null);

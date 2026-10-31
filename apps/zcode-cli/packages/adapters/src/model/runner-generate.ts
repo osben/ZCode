@@ -54,7 +54,10 @@ import type {
 } from "./runner-runtime.js";
 import { AccountRequestRetry } from "./account-request-retry.js";
 import { resolveModelForAttempt, RuntimeHeadersRefreshError } from "./runner-runtime-headers.js";
-import { retryAllowedByFailurePolicy } from "./workflow-model-failure-policy.js";
+import {
+  nextUnrecognizedCodeStreak,
+  retryAllowedByFailurePolicy,
+} from "./workflow-model-failure-policy.js";
 import { modelFailureStatusFields, providerRequestIdFromHeaders } from "./runner-telemetry.js";
 import { repairReasoningHistoryAfterSignatureRejection } from "./reasoning-history-normalization.js";
 import { admitAttempt, type AttemptAdmission } from "./request-admission.js";
@@ -95,6 +98,8 @@ export async function runGenerateText(input: {
   let signatureRepairAttempted = false;
   const authRetry = new AccountRequestRetry(input.request, input.resolved, input.logger);
   let emptyCompletionRetryCount = 0;
+  // How many times an unrecognized business code appeared consecutively in this request; the workflow policy table stops based on it, see workflow-model-failure-policy.ts.
+  let unrecognizedCodeStreak = 0;
 
   for (
     let attempt = 1;
@@ -361,7 +366,7 @@ export async function runGenerateText(input: {
       const classified = classifyModelFailure(error, input.request.abortSignal);
       if (error instanceof RuntimeHeadersRefreshError) {
         classified.message = error.message;
-        classified.retryable = false;
+        classified.retryable = error.retryable;
       }
       // Off-peak special case (idle plan providers only; see offpeak-retry.ts): queued 429s are exempt
       // from the budget, while 3102 (compatible with legacy 3001) fails with a stable marker that
@@ -381,6 +386,12 @@ export async function runGenerateText(input: {
           : offPeak?.kind === "queued"
             ? { ...classified, retryable: true, retryReason: ModelRetryReason.OffpeakQueued }
             : classified;
+      const providerCode = inspectProviderFailure(error).providerErrorCode;
+      unrecognizedCodeStreak = nextUnrecognizedCodeStreak(
+        unrecognizedCodeStreak,
+        failure,
+        providerCode,
+      );
       const responseHeaders = sanitizeModelNetworkHeaders(
         getResponseHeaders(unwrapRetryError(error)),
       );
@@ -407,11 +418,7 @@ export async function runGenerateText(input: {
           : retryBudgetAllows(retryBudget, retryBudgetAttempt, input.retry.maxAttempts) &&
             // Workflow traffic (unbounded budget) uses the policy table instead of classifier
             // retryable; bounded budgets remain unchanged.
-            retryAllowedByFailurePolicy(
-              failure,
-              retryBudget,
-              inspectProviderFailure(error).providerErrorCode,
-            );
+            retryAllowedByFailurePolicy(failure, retryBudget, providerCode, unrecognizedCodeStreak);
       const retryWithAuth = authRetry.claim(error, options === undefined);
       if (retryWithAuth)
         statusContext = {
@@ -473,6 +480,7 @@ export async function runGenerateText(input: {
         });
         throw toAdapterError(error, failure, statusContext, attempt, {
           errorPhase: requestInvocationCompleted ? "response" : "prepare",
+          unrecognizedCodeStreak,
         });
       }
 

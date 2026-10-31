@@ -1,3 +1,7 @@
+import {
+  telemetryInputOrigin,
+  TELEMETRY_INPUT_ORIGIN_ATTRIBUTE,
+} from "./input-intent-persistence.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import type { ContinueActiveTargetLoopOptions, TurnResult } from "../types.js";
 import { createRuntimeCommandId } from "../command-queue.js";
@@ -46,7 +50,18 @@ export async function runActiveTargetContinuationLoop(
   this: AgentRuntimeInternal,
   options: RunActiveTargetContinuationLoopOptions,
 ): Promise<TurnResult | null> {
-  const traceContext = options.traceContext ?? this.rootTraceContext;
+  const originalTrace = options.traceContext ?? this.rootTraceContext;
+  const inputOrigin = telemetryInputOrigin(options.intent, originalTrace.attributes);
+  // continuationIntent is kept on the first turn only; its origin must propagate along the whole automatic continuation causal chain.
+  const traceContext = inputOrigin
+    ? {
+        ...originalTrace,
+        attributes: {
+          ...originalTrace.attributes,
+          [TELEMETRY_INPUT_ORIGIN_ATTRIBUTE]: inputOrigin,
+        },
+      }
+    : originalTrace;
   let verifyBeforeContinue = options.verifyBeforeFirstContinue === true;
   let lastResult: TurnResult | null = null;
   let yieldToPendingCommands = options.yieldBeforeFirstContinue !== false;

@@ -87,11 +87,16 @@ function collectMarkdownComponents(
     }
     for (const fileName of entries) {
       const baseName = fileName.slice(0, -".md".length);
-      const fm = readMarkdownFrontmatter(join(dir, fileName));
+      const path = join(dir, fileName);
+      const fm = readMarkdownFrontmatter(path);
       const name = fm.name ?? baseName;
       if (seen.has(name)) continue;
       seen.add(name);
-      items.push(fm.description ? { name, description: fm.description } : { name });
+      items.push({
+        name,
+        ...(fm.description ? { description: fm.description } : {}),
+        ...(defaultDir === "agents" ? { path } : {}),
+      });
     }
   }
   return items;
@@ -200,7 +205,11 @@ function collectInlineHookEvents(value: unknown): string[] {
 }
 
 /** Combine default directory conventions and manifest string/array path declarations into a deduplicated list of directories to scan. */
-function collectComponentDirs(rootPath: string, manifestField: unknown, defaultDir: string): string[] {
+function collectComponentDirs(
+  rootPath: string,
+  manifestField: unknown,
+  defaultDir: string,
+): string[] {
   const dirs: string[] = [];
   const seen = new Set<string>();
   const add = (raw: string): void => {

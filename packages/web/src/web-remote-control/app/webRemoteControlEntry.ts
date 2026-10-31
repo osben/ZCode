@@ -5,7 +5,7 @@ import type {
   WebRemoteControlDeviceGroup,
 } from "#src/web-remote-control/contract.js";
 import type { WebRemoteControlRelayV2Device } from "@zcode/shared/web-remote-relay";
-import { parseWebRemoteControlExternalQrParams } from "@zcode/shared";
+import { parseWebRemoteControlExternalQrParams, type WebRemoteControlFailure } from "@zcode/shared";
 import { WebRemoteControlV2ConnectionError } from "@zcode/shared/web-remote-relay";
 import type { WebOAuthProviderId } from "#src/auth/browserOAuthCredentialRepo.js";
 import { groupWebRemoteControlDevices } from "#src/web-remote-control/domain/webRemoteControlDeviceGroups.js";
@@ -47,6 +47,12 @@ function resolveAutoConnectSid(
   const connections = groups.find((group) => group.deviceMid === mid)?.onlineConnections ?? [];
   return connections.length === 1 ? connections[0]?.device_sid : undefined;
 }
+
+/** These two failures mean the current SID can no longer reach the desktop, so the session can resume by MID; other failures (including session-conflict) keep their existing behaviour. */
+const LOST_TARGET_FAILURES: ReadonlySet<WebRemoteControlFailure["reason"]> = new Set([
+  "device-not-owned",
+  "desktop-disconnected",
+]);
 
 /** Only handles admission before connecting; workspace/recovery after pairing still belongs to the existing bootstrap. */
 export class WebRemoteControlEntry {
@@ -221,7 +227,11 @@ export class WebRemoteControlEntry {
     const device = this.list.view.devices
       .flatMap((group) => group.onlineConnections)
       .find((item) => item.device_sid === sid);
-    if (!device) return;
+    if (device) this.admit(device, true);
+  }
+
+  /** Admission shared by manual selection, recent devices and old-SID resume: writes back the URL and recent device, then takes the existing connect path. */
+  private admit(device: WebRemoteControlRelayV2Device, canResolveLostTarget: boolean): void {
     const url = new URL(this.options.getHref());
     url.searchParams.set("sid", device.device_sid);
     url.searchParams.set("mid", device.device_mid);
@@ -230,12 +240,60 @@ export class WebRemoteControlEntry {
     else url.searchParams.delete("name");
     this.options.replaceHref(url.href);
     this.rememberDevice(device.device_sid, device.device_mid);
-    this.connect({
-      deviceSid: device.device_sid,
-      deviceMid: device.device_mid,
-      deviceName: name || undefined,
-      appVersion: url.searchParams.get("app_version") || undefined,
-    });
+    this.connect(
+      {
+        deviceSid: device.device_sid,
+        deviceMid: device.device_mid,
+        deviceName: name || undefined,
+        appVersion: url.searchParams.get("app_version") || undefined,
+      },
+      canResolveLostTarget,
+    );
+  }
+
+  /**
+   * Bugfix: after AUTH_FAILED the desktop re-registers, so the same computer (MID) gets a new SID. Old links or already-paired pages still carry the old SID,
+   * and the old code only showed the failure page, forcing the user to pick another device manually or re-scan the QR. This reuses the recent-device landing rule of the no-SID entry,
+   * with one lookup in the current account's device list: resume only when exactly one other online SID shares the MID; otherwise keep showing the original failure page.
+   */
+  private async resolveLostTarget(
+    params: WebRemoteControlEntryConnection["params"],
+    failure: WebRemoteControlFailure,
+  ): Promise<void> {
+    this.reset();
+    const { signal } = this.scope;
+    const jwt = this.options.auth.getZCodeJwtToken();
+    if (!jwt) return this.switchAccount();
+    try {
+      const devices = await this.options.devices(jwt, signal);
+      if (signal.aborted) return;
+      // Consistent with the list: a response from before an account change must not be used as the basis for resuming.
+      if (this.options.auth.getZCodeJwtToken() !== jwt) return this.start();
+      const groups = groupWebRemoteControlDevices(
+        devices,
+        this.options.locale,
+        readKnownDevices(this.options.storage),
+      );
+      const sid = resolveAutoConnectSid(
+        devices,
+        groups,
+        params.deviceSid,
+        params.deviceMid ?? null,
+      );
+      const device =
+        sid && sid !== params.deviceSid
+          ? groups
+              .flatMap((group) => group.onlineConnections)
+              .find((item) => item.device_sid === sid)
+          : undefined;
+      if (device) return this.admit(device, false);
+    } catch (error) {
+      if (signal.aborted) return;
+      if (this.options.auth.getZCodeJwtToken() !== jwt) return this.start();
+      if (error instanceof WebRemoteControlV2ConnectionError && error.reason === "auth-required")
+        return this.switchAccount();
+    }
+    this.options.onView({ kind: "failure", failure });
   }
 
   async chooseOtherDevice(): Promise<void> {
@@ -255,19 +313,41 @@ export class WebRemoteControlEntry {
     }
   }
 
-  private connect(params: WebRemoteControlEntryConnection["params"]): void {
+  private connect(
+    params: WebRemoteControlEntryConnection["params"],
+    canResolveLostTarget = true,
+  ): void {
     this.reset();
     const { signal } = this.scope;
+    // A connection resumed to a new target must not resume again before pairing, to avoid looping between SIDs when the new target fails immediately; resume is restored after pairing succeeds.
+    let resolveLostTarget = canResolveLostTarget;
     this.options.connect({
       params,
       signal,
-      getToken: (tokenSignal) => {
+      getToken: async (tokenSignal) => {
         const jwt = this.bearer();
-        if (!jwt) return Promise.reject(new WebRemoteControlV2ConnectionError("auth-required"));
-        return this.options.token(jwt, tokenSignal);
+        if (!jwt) throw new WebRemoteControlV2ConnectionError("auth-required");
+        try {
+          return await this.options.token(jwt, tokenSignal);
+        } catch (error) {
+          // A 401 only rejects the JWT used by this request. If another tab wrote a new JWT while the request was in
+          // flight, logging out would also clear the new login and return to the login page; mark it retryable instead, so
+          // the transport reads the new JWT on its next round and requests again.
+          const current = this.bearer();
+          if (
+            error instanceof WebRemoteControlV2ConnectionError &&
+            error.reason === "auth-required" &&
+            current &&
+            current !== jwt
+          )
+            throw new WebRemoteControlV2ConnectionError("relay-unavailable", true);
+          throw error;
+        }
       },
       onPaired: () => {
-        if (!signal.aborted) this.rememberDevice(params.deviceSid, params.deviceMid);
+        if (signal.aborted) return;
+        resolveLostTarget = true;
+        this.rememberDevice(params.deviceSid, params.deviceMid);
       },
       onFailure: (failure) => {
         if (signal.aborted) return;
@@ -280,6 +360,8 @@ export class WebRemoteControlEntry {
           this.pairedJwt = undefined;
           this.options.onView({ kind: "failure", failure: { reason: "session-expired" } });
         } else if (failure.reason === "auth-required") void this.switchAccount();
+        else if (resolveLostTarget && LOST_TARGET_FAILURES.has(failure.reason))
+          void this.resolveLostTarget(params, failure);
         else this.options.onView({ kind: "failure", failure });
       },
     });

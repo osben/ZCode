@@ -3,7 +3,7 @@ import {
   type PluginUiToolResultNotification,
 } from "@zcode/shared/mcp-apps";
 import { randomUUID } from "node:crypto";
-import { LocalTtftRecorder } from "./local-ttft.js";
+import { LocalTtftRecorder } from "./local-ttft/contract.js";
 import { localTtftNow, localTtftFactsSchema } from "@zcode/shared/zcode-protocol-v4";
 import {
   backgroundBashOutputResultSchema,
@@ -136,6 +136,7 @@ import {
 import { AttachmentUploadRegistry } from "./attachment-upload-registry.js";
 import {
   ColdSessionResumeCoordinator,
+  V4SessionNotResidentError,
   V4SubscribeSessionUnavailableError,
   type ColdSessionResumeOutcome,
 } from "./cold-session-resume.js";
@@ -242,6 +243,8 @@ interface SessionIndexMeta {
 }
 
 export interface V4GatewayHost {
+  /** While the old instance is being torn down, a subscribe must not rebuild the publisher first. */
+  isSessionStopping?(sessionId: string): boolean;
   cliVersion?: string;
   /** Whether the session is active in the host registry (basis for the inbox's sessionNotFound decision). */
   sessionExists(sessionId: string): boolean;
@@ -654,6 +657,8 @@ export class ConversationV4Gateway {
     string,
     {
       history: Promise<ConversationTopicPublisher>;
+      messages: Promise<MessageWithParts[]>;
+      finished: Promise<void>;
       start: () => void;
       cancel: () => void;
     }
@@ -758,6 +763,10 @@ export class ConversationV4Gateway {
     this.coldResume = new ColdSessionResumeCoordinator(host);
     this.inbox = new CommandInbox({
       prepareDecision: async (envelope) => {
+        // A restart is waiting for the old inbox to settle; a late command must not in turn wait on
+        // that same restart, which would deadlock both.
+        if (envelope.sessionId && this.host.isSessionStopping?.(envelope.sessionId))
+          throw new Error("fault.sessionLifecycle.stopping");
         if (
           envelope.sessionId &&
           (envelope.type === "renameSession" || envelope.type === "deleteSession") &&
@@ -1623,6 +1632,8 @@ export class ConversationV4Gateway {
     // A subscribe may race the createSession that reserved this id (the renderer subscribes as soon as it
     // reserves). Wait for that create, so "not found" is only answered for a session that does not exist.
     await this.inbox.whenSessionCreationSettles(sessionId);
+    if (this.host.isSessionStopping?.(sessionId))
+      throw new Error("fault.sessionLifecycle.stopping");
     await this.host.restorePreparedSession?.(sessionId);
     const isLiveConversation = this.hasLiveConversation(sessionId);
     this.host.onDebug?.(
@@ -1841,6 +1852,17 @@ export class ConversationV4Gateway {
   async rowsRange(rawParams: unknown): Promise<V4ConversationRowsRangeResult> {
     const params = v4ConversationRowsRangeParamsSchema.parse(rawParams);
     const existingReady = this.readyFlights.get(params.sessionId);
+    if (
+      params.residency === "resident-only" &&
+      !existingReady &&
+      !this.historyOpenings.has(params.sessionId) &&
+      !this.publishers.has(params.sessionId) &&
+      !this.hasLiveConversation(params.sessionId)
+    ) {
+      // Preload reads only warm sessions: a cold session is not resumed (resume reads and replays
+      // the store and may renew the runtime); the caller skips it.
+      throw new V4SessionNotResidentError(params.sessionId);
+    }
     const publisher = this.historyOpenings.has(params.sessionId)
       ? await this.historyOpenings.get(params.sessionId)!.history
       : this.publishers.get(params.sessionId)?.getSnapshot().runtimeInitialization?.status ===
@@ -2150,9 +2172,11 @@ export class ConversationV4Gateway {
    * 越队），于是「重启后打开历史会话」时它必然先于订阅被处理、必然拿到 sessionNotFound：
    * 工具卡的 join 回退整块消失，卡片退回编译态，被打断的 run 连入口都没有。
    *
-   * 只拉 record，**不**建 READY publisher：journal 与 conversation log 无关，读一页 run
-   * 不需要投影（同一判断见这两个 query 刻意不带 atSeq/atLogEpoch）。习语与 attachmentBegin
-   * 逐字相同；`ensureResumed` 自带按会话单飞，与并发订阅共享同一次 activation。
+   * Only pull the record, **without** building a READY publisher: the journal is unrelated to the
+   * conversation log, so reading a page of runs needs no projection (the same judgement is why
+   * these two queries deliberately omit atSeq/atLogEpoch). The idiom is identical to
+   * attachmentBegin; the host lifecycle owner single-flights per session and shares one activation
+   * with concurrent subscribes.
    *
    * 活性判定必须与 subscribe 同一条
    * `hasLiveConversation`，不能只看 `sessionExists`。dwf actor transcript 是 detached live
@@ -2985,6 +3009,41 @@ export class ConversationV4Gateway {
   }
 
   /**
+   * Before releasing, wait for the old hydration to really exit; cancelling the ready Promise does
+   * not mean the async rebuild has stopped.
+   */
+  async releaseSessionProjection(sessionId: string): Promise<void> {
+    const opening = this.historyOpenings.get(sessionId);
+    const hydration = this.hydrationInFlight.get(sessionId);
+    this.disposeSession(sessionId);
+    await Promise.allSettled([opening?.history, opening?.finished, hydration]);
+    this.disposeSession(sessionId);
+  }
+
+  /**
+   * The old runner's finally may have published a terminal state; clean up again after the release
+   * barrier so a new instance cannot inherit it.
+   */
+  async finishSessionRelease(sessionId: string): Promise<void> {
+    await this.inbox.resetReleasedSession(sessionId);
+    this.disposeSession(sessionId);
+  }
+
+  /**
+   * After a hard delete (project data deletion), remove the session from every sessions-index
+   * projection. An unloaded session has no registry record to look up its workspace, so walk all
+   * projections; session IDs are globally unique, so no other session is removed by mistake.
+   * Without removal, an existing projection would bring the session back in its next snapshot and
+   * the Host would register it again as newly discovered.
+   */
+  forgetIndexedSession(sessionId: string): void {
+    for (const workspaceId of this.indexPublishers.keys()) {
+      if (this.indexPublishers.get(workspaceId)?.removeSession(sessionId))
+        this.flushIndex(workspaceId);
+    }
+  }
+
+  /**
    * Resident 容量去激活：与 disposeSession 相同的内存运行态清理，但**不**从 sessions-index
    * 移除会话（不发 session.removed）——去激活是纯内存优化，侧边栏列表项必须原样
    * 保留，再次订阅经冷恢复透明重建。
@@ -3137,7 +3196,6 @@ export class ConversationV4Gateway {
     this.detachedChildrenByParent.clear();
     this.detachedTerminalAt.clear();
     this.projectionFaultedSessions.clear();
-    this.coldResume.clear();
     this.indexPublishers.dispose();
     this.configPublishers.clear();
     this.pausedConnections.clear();
@@ -3194,6 +3252,30 @@ export class ConversationV4Gateway {
     }
   }
 
+  /**
+   * The lifecycle owner only reuses the history result and runs instance activation directly; it
+   * must not wait for the projection's activation callback. The old implementation dropped the new
+   * callback when reusing an opening, so ensureReady never saw activated.
+   */
+  async prepareSessionHistory(sessionId: string): Promise<MessageWithParts[]> {
+    const history = this.ensureHistoryReadyPublisher(
+      sessionId,
+      undefined,
+      undefined,
+      undefined,
+      this.publishers.get(sessionId)?.getSnapshot().runtimeInitialization?.attemptId,
+    );
+    const opening = this.historyOpenings.get(sessionId)!;
+    await history;
+    // start only observes the same lifecycle result and is not awaited by the caller; the
+    // projection completes even without subscribers.
+    opening.start();
+    // Let the first history frame of registered subscriptions enter the outbox first; only then
+    // does the owner run activation, which may scan plugins synchronously.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    return opening.messages;
+  }
+
   /** 首帧先落 transport queue，再启动会同步扫描插件的 runtime；重连不重跑失败 hook。 */
   private ensureHistoryReadyPublisher(
     sessionId: string,
@@ -3228,14 +3310,21 @@ export class ConversationV4Gateway {
       if (this.readyFlights.get(sessionId) === ready) this.readyFlights.delete(sessionId);
       if (this.historyOpenings.get(sessionId) === opening) this.historyOpenings.delete(sessionId);
     };
+    const finished = Promise.withResolvers<void>();
+    const persistedMessages = Promise.resolve().then(() =>
+      this.host.loadPersistedMessages!(sessionId),
+    );
     const opening = {
+      messages: persistedMessages,
+      finished: finished.promise,
       cancel: () => {
+        if (!started) finished.resolve();
         rejectReady(new Error("cold opening disposed"));
         clear();
       },
-      history: Promise.resolve()
-        .then(async () => {
-          messages = await this.host.loadPersistedMessages!(sessionId);
+      history: persistedMessages
+        .then(async (loadedMessages) => {
+          messages = loadedMessages;
           if (this.disposed || this.historyOpenings.get(sessionId) !== opening)
             throw new Error("cold opening disposed");
           const result = await this.hydratePublisher(sessionId, messages, true);
@@ -3252,7 +3341,6 @@ export class ConversationV4Gateway {
         started = true;
         // post-response commit 已确认首帧入队；下一轮让 stdio I/O 有机会交付，不用定时猜测 UI。
         setImmediate(() => {
-          let disposeOnFailure: (() => Promise<void>) | undefined;
           let releaseRuntime: (() => void) | undefined;
           void (async () => {
             if (this.disposed || this.historyOpenings.get(sessionId) !== opening)
@@ -3266,9 +3354,6 @@ export class ConversationV4Gateway {
               workspace,
               additionalDirectories,
               messages,
-              (outcome) => {
-                disposeOnFailure = outcome.disposeOnFailure;
-              },
             );
             if (this.disposed || this.historyOpenings.get(sessionId) !== opening)
               throw new Error("cold opening disposed");
@@ -3280,8 +3365,8 @@ export class ConversationV4Gateway {
             resolveReady(result);
           })()
             .catch(async (error: unknown) => {
-              // activation 成功而最终物化失败时，也必须拆掉本次 app，下一次重试才会完整 resume。
-              await disposeOnFailure?.();
+              // Instance failures are cleaned up by the lifecycle owner; a pure projection failure
+              // must not tear down an execution environment that is already ready.
               if (!this.disposed && this.historyOpenings.get(sessionId) === opening) {
                 const result = this.publishers.get(sessionId);
                 if (result)
@@ -3298,6 +3383,7 @@ export class ConversationV4Gateway {
             .finally(() => {
               releaseRuntime?.();
               clear();
+              finished.resolve();
             });
         });
       },

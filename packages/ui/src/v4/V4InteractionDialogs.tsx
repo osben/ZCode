@@ -177,7 +177,7 @@ export function V4InteractionDialogs({
       onCommandSettled,
     });
     // Soft gate: do not force navigation to Settings/Hooks.
-    // Users open Hooks settings themselves through the WorkspaceHookPendingBanner “Review” button.
+    // The user actively opens Hooks settings via the WorkspaceHookPendingIndicator's review button.
   }, [
     clearWorkspaceHookReview,
     onCommandSettled,
@@ -355,7 +355,7 @@ export function V4InteractionDialogs({
           permissionResponseFlight.current = interactionId;
           setPermissionResponse({ interactionId, pending: true, failed: false });
           // content: Settings changed in the workflow confirmation dialog, included only in the approval response (docs/dynamic-workflow/launch.md
-          // 「Adjusting the settings in the window」）。
+          // "Adjusting the settings in the window").
           void resolveInteraction(interactionId, {
             optionId: option.optionId,
             ...(feedback ? { freeText: feedback } : {}),

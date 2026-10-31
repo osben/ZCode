@@ -110,6 +110,16 @@ first temporary read failure allows a limited, cancelable retry; incomplete sele
 not retried; after exhaustion, explicitly reload. Without a target, remote disconnection does not fall back
 to local. No config sync barrier exists before sending.
 
+## 手动压缩的模型选择（2026-10-20）
+
+手动 `/compact` 与上下文面板的压缩动作使用提交时 Composer 的 ModelSelection。
+命令携带 provider/model 及稀疏 options；不携带 mode、Plan 或执行凭据。
+CLI 接收时固定为 canonical intent，立即执行、FIFO 排队、恢复及提升均沿用该快照。
+旧客户端缺少选择时，CLI 在接收边界固定当前 Session Selection。
+已开始的请求不受后续菜单编辑影响；Session 续跑选择沿用现有 admissionSeq 防倒写规则。
+摘要请求的 reasoning/output 策略继续由 compact 实现决定；自动 compact 使用触发轮的 Active Model。
+验收与实施边界见 [compact 裁决](../../../../testing/conversation-session-compact-decision-worksheet.md)。
+
 ## App Recent
 
 App Recent saves the ModelSelection of the last successful submission by the App in a given Workspace:

@@ -81,7 +81,7 @@ export function CommandsSection({
     currentWorkspaceTab?.remoteSessionId,
     currentWorkspaceTab?.workspaceIdentity ?? workspaceIdentity,
     currentWorkspaceTab?.remoteTarget,
-    { unscopedServices, forceUnscoped: Boolean(cacheAuthorityKey) },
+    { unscopedServices, forceUnscoped: Boolean(cacheAuthorityKey || unscopedServices) },
   );
   const { commandsService, pluginManagementService, settingsSyncService } =
     listServiceResolution.services;
@@ -97,8 +97,13 @@ export function CommandsSection({
     deleteCommand,
     toggleCommand,
   } = useCommands({
-    workspacePath: workspacePath ?? undefined,
-    workspaceIdentity,
+    // The user view lists user-directory and plugin commands only; workspacePath is just a service anchor (remote: home, local: any project).
+    // Bug cause: when the anchor was queried as a project path, the same ~/.zcode/commands was
+    // first classified as project, then filtered out by the user view after name dedup — the
+    // remote user command list came up empty, and same-named anchor-project commands shadowed user commands.
+    workspacePath: scopeFilter === "user" ? undefined : (workspacePath ?? undefined),
+    workspaceIdentity: scopeFilter === "user" ? undefined : workspaceIdentity,
+    cacheAuthorityKey,
     commandsService,
     enabled: listServiceResolution.rpcReady,
   });
@@ -119,7 +124,7 @@ export function CommandsSection({
     formServiceTarget?.remoteTarget,
     {
       unscopedServices: formTargetWorkspace ? undefined : unscopedServices,
-      forceUnscoped: Boolean(cacheAuthorityKey && !formTargetWorkspace),
+      forceUnscoped: Boolean((cacheAuthorityKey || unscopedServices) && !formTargetWorkspace),
     },
   );
   const formServices = formServiceResolution.services;

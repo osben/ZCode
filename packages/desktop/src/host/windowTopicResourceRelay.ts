@@ -3,7 +3,8 @@ import { createTopicResourceRelayChannel } from "@zcode/services/node";
 import type { WindowHostAttachmentScope, ZCodeTopicResourceRelayRequest } from "@zcode/shared";
 
 /**
- * 反向请求必须属于发起它的物理连接，并仍绑定当前 logical session，不能只比较文件路径。
+ * A reverse request must belong to the physical connection that issued it and stay bound to the
+ * current logical session; file paths alone must not be compared.
  * Two pin modes: the fork pins the connection's ServiceCollection identity (getPeerServices); the Source
  * server connection, which only exposes its accessor, pins the agent service instead (getPeerAgentService).
  */
@@ -44,17 +45,18 @@ export function createWindowTopicResourceRelay(deps: {
     return bots;
   };
   return createTopicResourceRelayChannel({
-    reply: (request) => {
-      if (!request.remoteSessionId || !request.workspaceIdentity)
-        throw new Error("Remote channel reply scope missing");
-      const bots = resolve({
-        ...request,
-        remoteSessionId: request.remoteSessionId,
-        workspaceIdentity: request.workspaceIdentity,
-      });
-      if (!bots.replyToChannel) throw new Error("Bot channel reply unavailable");
-      return bots.replyToChannel(request);
-    },
+    // Channel tools await the plugin entry integration; only the default send wiring is disabled, the full implementation is kept.
+    // reply: (request) => {
+    //   if (!request.remoteSessionId || !request.workspaceIdentity)
+    //     throw new Error("Remote channel reply scope missing");
+    //   const bots = resolve({
+    //     ...request,
+    //     remoteSessionId: request.remoteSessionId,
+    //     workspaceIdentity: request.workspaceIdentity,
+    //   });
+    //   if (!bots.replyToChannel) throw new Error("Bot channel reply unavailable");
+    //   return bots.replyToChannel(request);
+    // },
     validate: (request, signal) => resolve(request).validateTopicResource!({ ...request, signal }),
     read: (request, signal) => resolve(request).readTopicResource!({ ...request, signal }),
   });

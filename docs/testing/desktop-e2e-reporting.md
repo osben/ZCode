@@ -80,7 +80,7 @@ Implemented: the report skeleton, case results, container-level resource samplin
 Renderer UI coverage is off by default and enabled only with `ZCODE_E2E_COVERAGE=1`:
 
 ```bash
-ZCODE_E2E_COVERAGE=1 pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/conversation-session/manual-review/pending/conversation-session-running-actions.test.ts
+ZCODE_E2E_COVERAGE=1 pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/conversation-session/conversation-session-running-actions.test.ts
 ```
 
 To run formal and `manual-review` cases in one go and produce the four-domain report, use the repo entry:

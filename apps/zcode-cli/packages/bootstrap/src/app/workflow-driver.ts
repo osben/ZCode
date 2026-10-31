@@ -109,10 +109,7 @@ import {
   schemaEpilogue,
   toWorkflowError,
 } from "./workflow-driver-helpers.js";
-import {
-  makeSessionSubmitPort,
-  type SubmitBridgeHost,
-} from "./workflow-driver-submit-bridge.js";
+import { makeSessionSubmitPort, type SubmitBridgeHost } from "./workflow-driver-submit-bridge.js";
 import {
   countSessionTranscript,
   journalAskMessageBoundary,
@@ -154,9 +151,8 @@ class AgentRuntimeWorkflowDriver implements WorkflowDriver {
   /** Run-level stall clock (decision 4): success/retry beats from all actors feed into this one table. */
   private readonly stallClock: RunStallClock;
   /**
-   * Session quiescence record (workflow-driver-quiescence.ts): whether each session still had a
-   * writing turn at dispose time. Amend is the only reader; before continuing an in-flight ask
-   * from a predecessor, it must confirm that session has finished writing.
+   * Session quiescence ledger (workflow-driver-quiescence.ts): whether each session still has in-flight turn writes at dispose time.
+   * amend queries turn quiescence; App.close waits for full actor release via drain.
    */
   private readonly quiescence: ActorSessionQuiescenceLedger;
 
@@ -221,7 +217,24 @@ class AgentRuntimeWorkflowDriver implements WorkflowDriver {
     }
   }
 
-  async createActorSession(
+  createActorSession(
+    actor: ActorRef,
+    persona: PersonaSpec,
+    seed?: ActorSessionSeed,
+  ): Promise<SessionRef> {
+    if (this.disposed) return Promise.reject(new Error("Workflow driver is closed"));
+    const creation = this.createOwnedActorSession(actor, persona, seed);
+    // dispose must still see it while the factory persists asynchronously, so the new actor never falls outside the close snapshot.
+    this.quiescence.trackRelease(
+      creation.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return creation;
+  }
+
+  private async createOwnedActorSession(
     actor: ActorRef,
     persona: PersonaSpec,
     seed?: ActorSessionSeed,
@@ -317,9 +330,6 @@ class AgentRuntimeWorkflowDriver implements WorkflowDriver {
         ? {}
         : { modelRequestAdmission: modelActivity.admission }),
     });
-    if (seed !== undefined) {
-      await seedActorSession(this.deps, { journaledSessionId: journaled, runtime, seed, sessionId });
-    }
     state = {
       ref,
       sessionId,
@@ -336,9 +346,24 @@ class AgentRuntimeWorkflowDriver implements WorkflowDriver {
       actorName: effectiveActorName(persona),
       transientAttempts: 0,
     };
-    modelActivity.observe(runtime, sessionId);
-    this.sessions.set(sessionId, state);
-    return ref;
+    try {
+      if (seed !== undefined) {
+        await seedActorSession(this.deps, {
+          journaledSessionId: journaled,
+          runtime,
+          seed,
+          sessionId,
+        });
+      }
+      if (this.disposed) throw new Error("Workflow driver closed during actor creation");
+      modelActivity.observe(runtime, sessionId);
+      this.sessions.set(sessionId, state);
+      return ref;
+    } catch (error) {
+      // Even before registration the creation belongs to this driver; if seed recovery fails or close arrives first, the created instance must still be released.
+      await releaseActorSessions(this.deps, [state], this.quiescence);
+      throw error;
+    }
   }
 
   startAsk(session: SessionRef, instance: InstanceRef, message: AskMessage): void {
@@ -502,7 +527,15 @@ class AgentRuntimeWorkflowDriver implements WorkflowDriver {
    * while op metadata, limit enforcement, and fixed git argv live together in one place.
    */
   async executeWorldRead(op: WorldReadOp, args: unknown[]): Promise<unknown> {
-    return await executeWorldRead(this.deps, op, args);
+    if (this.disposed) throw new Error("Workflow driver is closed");
+    const work = executeWorldRead(this.deps, op, args);
+    this.quiescence.trackRelease(
+      work.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return await work;
   }
 
   /**
@@ -518,7 +551,15 @@ class AgentRuntimeWorkflowDriver implements WorkflowDriver {
    * two failure modes.
    */
   async executeArtifactPublish(request: ArtifactPublishRequest): Promise<ArtifactVersionRecord> {
-    return await executeArtifactPublish(this.deps, request);
+    if (this.disposed) throw new Error("Workflow driver is closed");
+    const work = executeArtifactPublish(this.deps, request);
+    this.quiescence.trackRelease(
+      work.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return await work;
   }
 
   // ——————————————————————————————— Internal: turn orchestration ———————————————————————————————

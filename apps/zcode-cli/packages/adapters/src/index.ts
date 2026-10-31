@@ -19,3 +19,5 @@ export * from "./mcp/index.js";
 export * from "./lsp/index.js";
 export * from "./workflow/index.js";
 export * from "./tools/index.js";
+// The official command endpoint reuses MCP network config (proxy, CA) when forwarding to zcode-server.
+export { createMcpTransportFetch } from "./mcp/network.js";

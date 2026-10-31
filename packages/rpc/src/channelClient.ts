@@ -99,6 +99,7 @@ export class ChannelClient implements IChannelClient, IDisposable {
                 "taskId",
                 "traceId",
                 "retryable",
+                "profileId",
               ] as const;
               for (const key of passthroughKeys) {
                 const value = response.data[key];
@@ -170,7 +171,18 @@ export class ChannelClient implements IChannelClient, IDisposable {
     });
 
     this.handlers.set(id, (response) => {
-      emitter.fire((response as { data: any }).data);
+      if (response.type === ResponseType.EventFire) {
+        emitter.fire(response.data);
+      } else if (response.type === ResponseType.EventError) {
+        // A subscription failure must end its listener; do not write the error object into normal event streams like terminals, and do not keep the old request alive.
+        this.handlers.delete(id);
+        this.activeRequests.delete(emitter);
+        emitter.dispose();
+        const error = new Error(response.data.message);
+        error.name = response.data.name;
+        if (response.data.stack) error.stack = response.data.stack.join("\n");
+        console.error(`RPC event subscription failed: ${channelName}.${name}`, error);
+      }
     });
 
     return emitter.event;
@@ -208,9 +220,13 @@ export class ChannelClient implements IChannelClient, IDisposable {
   }
 
   private onBuffer(message: VSBuffer): void {
+    // Fix reason: a reverse ChannelServer sits on the same protocol (both host ↔ remote WebSocket ends),
+    // so the peer's incoming requests also arrive here. The old code decoded the message body before
+    // checking the type, fully decoding every request twice; large requests (e.g. data-sync archives)
+    // wasted double CPU. Fix: read the message header first and decode only response bodies addressed
+    // to this end.
     const reader = new BufferReader(message);
     const header = deserialize(reader);
-    const body = deserialize(reader);
     const type = header[0] as ResponseType;
 
     switch (type) {
@@ -220,11 +236,12 @@ export class ChannelClient implements IChannelClient, IDisposable {
       case ResponseType.PromiseSuccess:
       case ResponseType.PromiseError:
       case ResponseType.EventFire:
+      case ResponseType.EventError:
       case ResponseType.PromiseErrorObj:
         this.onResponse({
           type,
           id: header[1],
-          data: body,
+          data: deserialize(reader),
         } as IRawResponse);
         return;
     }

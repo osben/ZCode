@@ -1,5 +1,6 @@
 import { connect } from "node:net";
 import { randomUUID } from "node:crypto";
+import { SOURCE_SERVER_CONTROL_UNRESPONSIVE_ERROR_CODE } from "@zcode/shared";
 import { controlResponseSchema, type ControlRequest } from "../contracts.js";
 import { encodeJsonLine, JsonLineDecoder } from "./framing.js";
 import { ControlRequestError } from "./controlError.js";
@@ -20,7 +21,15 @@ export async function requestControl(
   return await new Promise<unknown>((resolve, reject) => {
     const timeout = setTimeout(() => {
       socket.destroy();
-      reject(new Error("Supervisor control request timed out"));
+      // A timeout means the Supervisor accepted the connection but stopped responding; the public
+      // code makes the desktop show "remote service unresponsive" instead of it being classified
+      // as a connection timeout by message text. The CLI does not force-kill the Supervisor here (R2 §8.1).
+      reject(
+        new ControlRequestError(
+          SOURCE_SERVER_CONTROL_UNRESPONSIVE_ERROR_CODE,
+          "Supervisor control request timed out",
+        ),
+      );
     }, timeoutMs);
     socket.setEncoding("utf8");
     socket.on("error", (error) => {
@@ -52,4 +61,14 @@ export async function requestControl(
     });
     socket.on("connect", () => socket.write(encodeJsonLine({ ...request, id })));
   });
+}
+
+/**
+ * Whether `requestControl` failed because the control endpoint does not exist or nobody is
+ * listening (missing socket file, connection refused, invalid Windows named pipe). Expresses only
+ * "no Supervisor answering", not the timeout of a connection that was accepted but unresponsive.
+ */
+export function isControlEndpointUnavailable(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  return error.code === "ENOENT" || error.code === "ECONNREFUSED" || error.code === "EINVAL";
 }

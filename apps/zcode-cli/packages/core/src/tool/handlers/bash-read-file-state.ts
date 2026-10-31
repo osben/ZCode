@@ -7,9 +7,9 @@ import type {
 import { relative } from "node:path";
 import { resolveWorkspacePath } from "../path-policy.js";
 import {
-  createReadFileStateKey,
   findLatestReadFileState,
   normalizeReadFileStateMtimeMs,
+  setReadFileStateEntry,
 } from "../read-file-state.js";
 import type { ReadFileStateEntry, ToolExecutionContext } from "../types.js";
 import { collectBashReadFileSources, selectReadContent } from "./bash-read-file-sources.js";
@@ -154,10 +154,7 @@ async function backfillReadFileStateFromBash(input: BashReadFileStateEffectsInpu
           ),
           sizeBytes: read.revision?.sizeBytes ?? stat.revision?.sizeBytes ?? stat.sizeBytes,
         };
-        readFileState.set(
-          createReadFileStateKey(resolvedPath, selected.offset ?? 1, selected.limit),
-          entry,
-        );
+        setReadFileStateEntry(readFileState, entry);
       } catch {
         // Bash has already returned; a read-state backfill failure must not change its result.
       }

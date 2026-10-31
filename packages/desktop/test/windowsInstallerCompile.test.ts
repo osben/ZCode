@@ -12,7 +12,7 @@ const desktopDir = resolve(import.meta.dirname, "..");
 const builderDir = dirname(require.resolve("app-builder-lib/package.json"));
 
 it("compiles real UAC calls when the plugin directory follows the custom include", async (context) => {
-  // NSIS 自带的 mac 编译器是 x86_64；Apple Silicon 缺少 Rosetta 时只跳过此环境不支持的编译测试。
+  // The NSIS-bundled mac compiler is x86_64; on Apple Silicon without Rosetta, skip only this unsupported compile test.
   if (process.platform === "darwin" && process.arch === "arm64") {
     try {
       await execFileAsync("/usr/bin/arch", ["-x86_64", "/usr/bin/true"]);
@@ -25,30 +25,34 @@ it("compiles real UAC calls when the plugin directory follows the custom include
       throw error;
     }
   }
-  const { NSIS_PATH, NSIS_RESOURCES_PATH, NsisTargetOptions } = require(
-    resolve(builderDir, "out/targets/nsis/nsisUtil.js"),
+  // electron-builder 26.17.0 moved NSIS download and path resolution into the toolset resolver; the old
+  // nsisUtil private exports were removed. The test must reuse the production build entry so a second
+  // compiler/include/plugin path set cannot hide compatibility problems.
+  const { getMakeNsisPath, getNsisPluginsPath } = require(
+    resolve(builderDir, "out/toolsets/windows.js"),
   );
-  NsisTargetOptions.resolve({});
-  const [nsisDir, resourcesDir] = await Promise.all([NSIS_PATH(), NSIS_RESOURCES_PATH()]);
-  const compiler = join(
-    nsisDir,
-    process.platform === "win32"
-      ? "Bin/makensis.exe"
-      : process.platform === "darwin"
-        ? "mac/makensis"
-        : "linux/makensis",
-  );
+  const [makeNsis, pluginsDir] = await Promise.all([
+    getMakeNsisPath(undefined),
+    getNsisPluginsPath(undefined),
+  ]);
+  const nsisDir = makeNsis.env?.NSISDIR;
+  if (!nsisDir) {
+    throw new Error("electron-builder NSIS toolset 缺少 NSISDIR");
+  }
+  const compiler = makeNsis.path;
   const temp = await mkdtemp(join(tmpdir(), "zcode-nsis-compile-"));
   try {
     for (const uninstaller of [false, true]) {
       const output = join(temp, uninstaller ? "uninstaller.exe" : "installer.exe");
-      // 只编译不执行：载荷复用当前文件，所有平台都能验证真实 NSIS 插件解析。
+      // Compile only, do not run: the payload reuses this file, so every platform can verify real NSIS plugin resolution.
       const args = [
         "-V2",
+        "-INPUTCHARSET",
+        "UTF8",
         ...(uninstaller ? ["-WX", "-DBUILD_UNINSTALLER"] : []),
         `-DNSIS_INCLUDE_DIR=${join(nsisDir, "Include")}`,
         `-DELECTRON_BUILDER_NSIS_INCLUDE_DIR=${join(builderDir, "templates/nsis/include")}`,
-        `-DNSIS_PLUGIN_DIR=${join(resourcesDir, "plugins/x86-unicode")}`,
+        `-DNSIS_PLUGIN_DIR=${join(pluginsDir, "x86-unicode")}`,
         `-DZCODE_INSTALLER_NSH=${join(desktopDir, "build/installer.nsh")}`,
         `-DFIXTURE_EXE=${import.meta.filename}`,
         `-DOUTPUT_FILE=${output}`,
@@ -59,7 +63,7 @@ it("compiles real UAC calls when the plugin directory follows the custom include
       // makensis Unicode builds abort with std::bad_alloc under the C locale; pin UTF-8 so the result
       // does not depend on the caller's LANG/LC_ALL (electron-builder pins it the same way in production).
       await execFileAsync(compiler, args, {
-        env: { ...process.env, NSISDIR: nsisDir, LC_ALL: "C.UTF-8" },
+        env: { ...process.env, ...makeNsis.env, LC_ALL: "C.UTF-8" },
       });
       expect((await stat(output)).size).toBeGreaterThan(0);
     }

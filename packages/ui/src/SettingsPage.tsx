@@ -1,10 +1,8 @@
 import type { OpenExistingSessionTarget } from "@/hooks/useOpenExistingSession.js";
-import { SettingsMachinesProvider } from "@/settings/SettingsMachine.js";
+import { DataSyncSection } from "@/data-sync/index.js";
 import { getWorkspaceSourceServerId } from "@/conversation-workspace-target/sourceIdentity.js";
-import { RemoteConnectionNavigationDot } from "@/remote-connection/RemoteConnectionNavigationDot.js";
-import { resolveRemoteConnectionNavigationPresentation } from "@/lib/remoteConnectionPresentation.js";
 /* oxlint-disable eslint(max-lines) */
-import { ArrowLeft, Rocket, type LucideIcon } from "lucide-react";
+import { ArrowLeft, type LucideIcon } from "lucide-react";
 import { useStore } from "zustand";
 import {
   marketingNavigation,
@@ -77,7 +75,11 @@ import {
   resolveEntitledAccountProviderAccessFingerprint,
 } from "@/lib/accountProviderAccess.js";
 import { buildUsageEntitlementCacheKey } from "@/lib/usageEntitlementCache.js";
-import { ArchiveManagement, useOptionalProjectDirectory } from "@/project-sidebar/index.js";
+import {
+  ArchiveManagement,
+  ProjectManagement,
+  useOptionalProjectDirectory,
+} from "@/project-sidebar/index.js";
 import { resolveRecentRemoteProjectPreference } from "@/project-sidebar/remote-project-connection.js";
 import { ModelProviderSection } from "@/settings/ModelProviderSection.js";
 import { useCodingPlanUpgradeDialog } from "@/settings/CodingPlanUpgradeDialogProvider.js";
@@ -451,6 +453,8 @@ export function SettingsPage({
   const setUiFontFamily = useZCodeStore((state) => state.setUiFontFamily);
   const monoFontFamily = useZCodeStore((state) => state.monoFontFamily);
   const setMonoFontFamily = useZCodeStore((state) => state.setMonoFontFamily);
+  const hideProjectDeviceNames = useZCodeStore((state) => state.hideProjectDeviceNames);
+  const setHideProjectDeviceNames = useZCodeStore((state) => state.setHideProjectDeviceNames);
   const notificationEnabled = useZCodeStore((state) => state.notificationEnabled);
   const setNotificationEnabled = useZCodeStore((state) => state.setNotificationEnabled);
   const notificationSoundEnabled = useZCodeStore((state) => state.notificationSoundEnabled);
@@ -702,7 +706,9 @@ export function SettingsPage({
     );
   }, [selectedUsageCodingPlanSource, usageActiveTab, usageCodingPlanSources]);
   const setNewUserOnboardingOpen = useZCodeStore((state) => state.setNewUserOnboardingOpen);
-  const requestOnboardingDialog = () => setNewUserOnboardingOpen(true);
+  // The "Open guide" action on the General page opens the onboarding guide; the migration wizard is entered only from "Migrate" on the data sync page.
+  const openOccupationOnboarding = () => setNewUserOnboardingOpen(true);
+  const requestMigrationDialog = useZCodeStore((state) => state.requestOnboardingDialog);
   const setActiveSettingsSection = useCallback(
     (section: SettingsSectionId, fallbackSection: SettingsSectionId = activeSection) => {
       const resolvedSection = resolveSettingsSection(section, fallbackSection);
@@ -712,7 +718,7 @@ export function SettingsPage({
     [activeSection],
   );
   useEffect(() => {
-    if (!isDesktop && activeSection === "remoteDevices") {
+    if (!isSettingsSectionAvailable(activeSection, Boolean(isDesktop))) {
       setActiveSettingsSection("general");
     }
   }, [activeSection, isDesktop, setActiveSettingsSection]);
@@ -876,10 +882,6 @@ export function SettingsPage({
         }),
     },
   );
-  const remoteDevicesPresentation = useMemo(
-    () => resolveRemoteConnectionNavigationPresentation(sourceManagementSnapshot),
-    [sourceManagementSnapshot],
-  );
   const memoryWorkspaceDisplayNames = useMemo(() => {
     const names = new Set<string>();
     // Memory Scope 的项目顺序以 settings.json recentProjects 为准；打开中的
@@ -982,6 +984,8 @@ export function SettingsPage({
           if (section === "usage" && detail?.usageTab) {
             setUsageActiveTab(detail.usageTab);
           }
+          // MCP is an independent section that also receives the workspace intent; otherwise an in-session review falls back to user config.
+          setPluginScopeKey(detail?.pluginScopeKey);
           if (section === "sessions") {
             // The event carries the scope directly (sessionStorage was cleared by the listener);
             // an unscoped intent clears a previously applied workspace chip.
@@ -990,7 +994,6 @@ export function SettingsPage({
           if (resolveSettingsSection(section) === "plugin" && detail?.pluginTab) {
             setPluginTab(detail.pluginTab);
             setPluginNavigationOrigin(detail.pluginOrigin);
-            setPluginScopeKey(detail.pluginScopeKey);
           } else if (resolveSettingsSection(section) !== "plugin") {
             setPluginNavigationOrigin(undefined);
           }
@@ -1843,11 +1846,6 @@ export function SettingsPage({
                                   <span className="truncate text-ui-base text-foreground">
                                     {label}
                                   </span>
-                                  {id === "remoteDevices" ? (
-                                    <RemoteConnectionNavigationDot
-                                      presentation={remoteDevicesPresentation}
-                                    />
-                                  ) : null}
                                 </span>
                               </SettingsSidebarButton>
                             );
@@ -1856,28 +1854,6 @@ export function SettingsPage({
                     );
                   })}
                 </div>
-
-                <SettingsSidebarButton
-                  icon={Rocket}
-                  label={intl.formatMessage({ id: "settings.onboarding" })}
-                  className="mt-4 border border-dashed border-border hover:border-border-hover"
-                  onClick={() => {
-                    runUserAction({
-                      input: {
-                        featureId: "settings.navigation",
-                        action: "open_onboarding",
-                        trigger: "button",
-                      },
-                      operation: requestOnboardingDialog,
-                      completed: { resultSource: "local_commit" },
-                      failureStage: "dialog_open",
-                    });
-                  }}
-                >
-                  <span className="text-ui-base text-foreground">
-                    {intl.formatMessage({ id: "settings.onboarding" })}
-                  </span>
-                </SettingsSidebarButton>
               </nav>
 
               <div className="max-lg:hidden">
@@ -1969,7 +1945,7 @@ export function SettingsPage({
                       />
                     </div>
                   </div>
-                  <SettingsMachinesProvider servers={sourceManagementSnapshot?.servers ?? []}>
+                  <>
                     <main className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
                       <div
                         className={cn(
@@ -1983,35 +1959,42 @@ export function SettingsPage({
                           // isWindowsDesktop && "pt-12",
                         )}
                       >
-                        {/* 归档设置迁入后也需要公共页头，不能再因列表自带标题而隐藏页面标题。 */}
-                        <div>
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div className="flex min-w-0 flex-wrap items-center gap-3">
-                              {showActiveSectionTitle ? (
-                                <h2 className="text-ui-settings-title font-semibold tracking-tight text-foreground lg:text-ui-settings-title-lg">
-                                  {activeSectionLabel}
-                                </h2>
-                              ) : null}
-                              {!hasVisibleSettingsBreadcrumb && activeSectionMeta.titleBadgeId ? (
-                                <span className="inline-flex h-6 items-center rounded-md border border-border px-2 text-ui-xs font-semibold tracking-normal text-foreground">
-                                  {intl.formatMessage({
-                                    id: activeSectionMeta.titleBadgeId,
-                                  })}
-                                </span>
-                              ) : null}
-                              {activeSection === "usage" ? (
-                                <SettingsUsageProviderTabs
-                                  activeTab={usageActiveTab}
-                                  codingPlanSources={usageCodingPlanSources}
-                                  onTabChange={handleUsageTabSelect}
-                                />
-                              ) : null}
+                        {/* Data sync renders its own title and migration entry, so the shared page header does not repeat the title and spacing. */}
+                        {activeSection !== "dataSync" ? (
+                          <div>
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div className="flex min-w-0 flex-wrap items-center gap-3">
+                                {showActiveSectionTitle ? (
+                                  <h2 className="text-ui-settings-title font-semibold tracking-tight text-foreground lg:text-ui-settings-title-lg">
+                                    {activeSectionLabel}
+                                  </h2>
+                                ) : null}
+                                {!hasVisibleSettingsBreadcrumb && activeSectionMeta.titleBadgeId ? (
+                                  <span className="inline-flex h-6 items-center rounded-md border border-border px-2 text-ui-xs font-semibold tracking-normal text-foreground">
+                                    {intl.formatMessage({
+                                      id: activeSectionMeta.titleBadgeId,
+                                    })}
+                                  </span>
+                                ) : null}
+                                {activeSection === "usage" ? (
+                                  <SettingsUsageProviderTabs
+                                    activeTab={usageActiveTab}
+                                    codingPlanSources={usageCodingPlanSources}
+                                    onTabChange={handleUsageTabSelect}
+                                  />
+                                ) : null}
+                              </div>
                             </div>
+                            {activeSection === "general" ? (
+                              <GeneralSectionHeader localePreference={localePreference} />
+                            ) : null}
+                            {activeSection === "projects" ? (
+                              <p className="mt-2 max-w-2xl text-ui-base text-foreground-subtle">
+                                {intl.formatMessage({ id: "projectManagement.intro" })}
+                              </p>
+                            ) : null}
                           </div>
-                          {activeSection === "general" ? (
-                            <GeneralSectionHeader localePreference={localePreference} />
-                          ) : null}
-                        </div>
+                        ) : null}
                         <div className="space-y-8">
                           {activeSection === "general" ? (
                             <GeneralSectionContent
@@ -2165,12 +2148,25 @@ export function SettingsPage({
                                     action: "open_onboarding",
                                     trigger: "button",
                                   },
-                                  operation: requestOnboardingDialog,
+                                  operation: openOccupationOnboarding,
                                   completed: { resultSource: "local_commit" },
                                   failureStage: "dialog_open",
                                 })
                               }
                             />
+                          ) : activeSection === "dataSync" ? (
+                            isDesktop ? (
+                              <DataSyncSection
+                                snapshot={sourceManagementSnapshot}
+                                sourceServices={localHostServices}
+                                deviceSyncStateService={localHostServices.deviceSyncStateService}
+                                requestSourceSettingsAttachment={
+                                  platform?.requestSourceSettingsAttachment
+                                }
+                                onOpenRemoteConnection={onOpenRemoteWorkspace}
+                                onOpenMigration={requestMigrationDialog}
+                              />
+                            ) : null
                           ) : activeSection === "remoteDevices" ? (
                             sharedSettings && isDesktop && sourceManagement ? (
                               <SourceServerManagementPanel
@@ -2278,6 +2274,8 @@ export function SettingsPage({
                                 }}
                                 settings={sharedSettings}
                                 onUpdateSettings={updateSharedSettings}
+                                hideProjectDeviceNames={hideProjectDeviceNames}
+                                onHideProjectDeviceNamesChange={setHideProjectDeviceNames}
                               />
                             ) : (
                               <p className="text-ui-sm text-remote-foreground-muted">
@@ -2395,6 +2393,7 @@ export function SettingsPage({
                             <PluginsSection
                               key={`mcp:${settingsSectionNavigationVersion}`}
                               mode="mcp"
+                              initialScopeKey={pluginScopeKey}
                               isWebRemoteControl={isWebRemoteControl}
                               workspacePath={activeWorkspacePath}
                               workspaceIdentity={activeWorkspaceIdentity}
@@ -2425,6 +2424,8 @@ export function SettingsPage({
                               workspaceIdentity={activeWorkspaceIdentity}
                               isDesktop={isDesktop}
                             />
+                          ) : activeSection === "projects" ? (
+                            <ProjectManagement />
                           ) : activeSection === "archives" ? (
                             <div className="min-w-0 space-y-6">
                               <TaskAutoArchiveSettings
@@ -2536,7 +2537,7 @@ export function SettingsPage({
                         </div>
                       </div>
                     </main>
-                  </SettingsMachinesProvider>
+                  </>
                 </div>
               </SettingsBreadcrumbProvider>
             </div>

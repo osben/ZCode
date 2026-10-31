@@ -155,6 +155,42 @@
       "sourceUrl": "https://cdn.jsdelivr.net/npm/simple-icons@16.35.0/icons/claude.svg",
       "sourceOwner": "Simple Icons (CC0-1.0); mark owned by Claude",
       "normalization": "Simple Icons 16.35.0 single-path 24x24 SVG, unchanged except a fill colour (#211E1E light, #F2F0ED dark). Retrieved 2026-10-22."
+    },
+    {
+      "brand": "Tencent Cloud",
+      "file": "model-provider-tencent-cloud.png",
+      "providerIds": ["tencent-tokenhub-cn", "tencent-tokenhub-intl"],
+      "sourceUrl": "https://github.com/TencentCloud.png?size=80",
+      "sourcePage": "https://github.com/TencentCloud",
+      "sourceOwner": "Tencent Cloud",
+      "normalization": "Official GitHub organization avatar, unchanged 80x80 RGBA PNG. Retrieved 2026-10-15. Shared by both regions and themes."
+    },
+    {
+      "brand": "Volcano Engine",
+      "file": "model-provider-volcengine.png",
+      "providerIds": ["volcengine-ark", "volcengine-coding-plan", "volcengine-agent-plan"],
+      "sourceUrl": "https://github.com/volcengine.png?size=80",
+      "sourcePage": "https://github.com/volcengine",
+      "sourceOwner": "volcengine",
+      "normalization": "Official 80x80 GitHub organization avatar. JPEG decoded to PNG; no resize or visual edits. Retrieved 2026-10-15; shared by both themes."
+    },
+    {
+      "brand": "StepFun",
+      "file": "model-provider-stepfun.png",
+      "providerIds": ["stepfun", "stepfun-step-plan"],
+      "sourceUrl": "https://github.com/stepfun-ai.png?size=80",
+      "sourcePage": "https://github.com/stepfun-ai",
+      "sourceOwner": "stepfun-ai",
+      "normalization": "Official 80x80 GitHub organization avatar. JPEG decoded to PNG; no resize or visual edits. Retrieved 2026-10-15; shared by both themes."
+    },
+    {
+      "brand": "SiliconFlow",
+      "file": "model-provider-siliconflow.png",
+      "providerIds": ["siliconflow-cn"],
+      "sourceUrl": "https://github.com/siliconflow.png?size=80",
+      "sourcePage": "https://github.com/siliconflow",
+      "sourceOwner": "siliconflow",
+      "normalization": "Official 80x80 GitHub organization avatar. PNG unchanged. Retrieved 2026-10-15; shared by both themes."
     }
   ]
 }

@@ -1,3 +1,5 @@
+import { SessionLifecycleError } from "../session-lifecycle/index.js";
+import { closeSessionRuntime, getSessionLifecycle } from "./session-residency.js";
 import { ACP_PROVIDER_ID_PREFIX } from "@zcode/provider";
 import { worktreePreparationStateSchema } from "@zcode/shared/zcode-protocol-v4";
 import {
@@ -28,7 +30,7 @@ import {
   type ZCodeSessionContextUsage,
   type ZCodeWorkspaceRef,
 } from "@zcode/shared";
-import { createExternalTurnFaultError } from "@zcode/core";
+import { createExternalTurnFaultError, normalizeGenUiInput } from "@zcode/core";
 import { projectIdFromDirectory } from "../app/paths.js";
 import {
   V4_NOTIFICATIONS,
@@ -118,7 +120,7 @@ import {
 } from "./workspace-model-runtime.js";
 import {
   afterStateMutation,
-  activateSessionForResume,
+  activateSessionRuntime,
   discardFailedSessionResume,
   createSessionRecordForV4,
   ensureSessionModelAvailableForNextTurn,
@@ -479,6 +481,7 @@ interface InputCommandForAdmission {
   kind: ConversationInputIntent["kind"];
   text: string;
   attachments: readonly AttachmentRef[];
+  genUiContext?: ConversationInputIntent["genUiContext"];
   sharedContextRefs?: ConversationInputIntent["sharedContextRefs"];
   requestedDelivery?: ConversationInputIntent["delivery"]["requested"];
   admittedDelivery?: ConversationInputIntent["delivery"]["admitted"];
@@ -574,6 +577,7 @@ export function resolveInputCommandForAdmission(
       text: string;
       attachments?: AttachmentRef[];
       context_refs?: ConversationInputIntent["sharedContextRefs"];
+      genUiContext?: ConversationInputIntent["genUiContext"];
       highspeedMeta?: ConversationInputIntent["highspeed"];
       inputOrigin?: "desktop" | "mobile";
       conversationQuotes?: import("@zcode/contracts").TurnInputIntentMetadata["conversationQuotes"];
@@ -581,7 +585,9 @@ export function resolveInputCommandForAdmission(
     };
     return {
       kind: envelope.type,
-      text: payload.text,
+      ...(envelope.type === "sendText"
+        ? normalizeGenUiInput(payload.text, payload.genUiContext)
+        : { text: payload.text }),
       attachments: payload.attachments ?? [],
       ...(payload.context_refs ? { sharedContextRefs: payload.context_refs } : {}),
       ...(payload.highspeedMeta ? { highspeed: payload.highspeedMeta } : {}),
@@ -610,6 +616,9 @@ export function resolveInputCommandForAdmission(
     canonical.intent.provenance?.sourceCommandId ?? canonical.intent.sourceCommandId;
   return {
     kind: canonical.intent.kind,
+    ...(canonical.intent.genUiContext !== undefined
+      ? { genUiContext: canonical.intent.genUiContext }
+      : {}),
     ...(canonical.intent.inputOrigin ? { inputOrigin: canonical.intent.inputOrigin } : {}),
     ...((payload.conversationQuotes ?? canonical.intent.conversationQuotes)
       ? { conversationQuotes: payload.conversationQuotes ?? canonical.intent.conversationQuotes }
@@ -674,6 +683,7 @@ function buildForkInitialInput(
     ...(input.conversationQuotes ? { conversationQuotes: input.conversationQuotes } : {}),
     ...(input.botGroupSource ? { botGroupSource: input.botGroupSource } : {}),
     text: input.text,
+    ...(input.genUiContext !== undefined ? { genUiContext: input.genUiContext } : {}),
     attachments: input.attachments,
     delivery: {
       requested,
@@ -1121,6 +1131,7 @@ export function createConversationV4Gateway(
         clientId: envelope.clientId || "cli",
         kind,
         text: input.text ?? "",
+        ...(input.genUiContext !== undefined ? { genUiContext: input.genUiContext } : {}),
         attachments: attachmentRefs,
         ...(input.sharedContextRefs ? { sharedContextRefs: input.sharedContextRefs } : {}),
         delivery: {
@@ -1157,6 +1168,9 @@ export function createConversationV4Gateway(
             admittedDelivery: conversationInputIntent.delivery.admitted,
             ...(fallbackReasonCode ? { fallbackReasonCode } : {}),
             attachmentRefs,
+            ...(conversationInputIntent.genUiContext !== undefined
+              ? { genUiContext: conversationInputIntent.genUiContext }
+              : {}),
             ...(conversationInputIntent.sharedContextRefs
               ? { sharedContextRefs: conversationInputIntent.sharedContextRefs }
               : {}),
@@ -1494,16 +1508,8 @@ export function createConversationV4Gateway(
         preparedWorktreeMap(context).delete(sessionId);
         return;
       }
-      record.unsubscribe?.();
-      await record.app.close?.();
-      // v4 通道：会话关闭同时清 publisher / 订阅调度；重开会话走 snapshot 冷启动。
-      // disposeSession 必须在注册表删除之前调用——
-      // gateway 靠 getSessionWorkspaceId（读 context.sessions）定位 workspace 才能把
-      // session.removed 推给 sessions-index 订阅者；先 delete 再 dispose 时 workspaceId
-      // 恒为 null，删除会话后侧栏列表项永不消失（e2e conversation-session-v4-sidebar 抓出）。
-      context.v4Gateway?.disposeSession(sessionId, { deleted: true });
+      await closeSessionRuntime(context, sessionId, true);
       queuedTurnExecutions.delete(sessionId);
-      context.sessions.delete(sessionId);
       preparedSubmissionMap(context).delete(sessionId);
       preparedWorktreeMap(context).delete(sessionId);
     },
@@ -2193,8 +2199,14 @@ export function createConversationV4Gateway(
   };
   return new ConversationV4Gateway({
     cliVersion: context.deps.version,
+    isSessionStopping: (sessionId) => context.sessionLifecycle?.isStopping(sessionId) ?? false,
+    // A live record is authoritative (gated by lifecycle readiness); prepared sessions without a
+    // record still exist for the inbox.
     sessionExists: (sessionId) =>
-      context.sessions.has(sessionId) || preparedWorktreeMap(context).has(sessionId) || preparedSubmissionMap(context).has(sessionId),
+      context.sessions.has(sessionId)
+        ? (context.sessionLifecycle?.isReady(sessionId) ?? true)
+        : preparedWorktreeMap(context).has(sessionId) ||
+          preparedSubmissionMap(context).has(sessionId),
     restorePreparedSession: async (sessionId) => {
       await restorePreparedWorktreeSession(context, sessionId);
       await loadPreparedSubmission(context, sessionId);
@@ -2264,8 +2276,32 @@ export function createConversationV4Gateway(
       additionalDirectories?: string[],
       persistedMessages?: MessageWithParts[],
     ) => {
-      const persisted = await context.deps.sessionStore?.getSession(sessionId as SessionId);
-      if (!persisted || persisted.time.deleted !== undefined) {
+      const existingRecord = context.sessions.get(sessionId);
+      let activated: Awaited<ReturnType<typeof activateSessionRuntime>> | undefined;
+      try {
+        // Register the lifecycle before reading startup info. Otherwise a restart waits for the old
+        // opening while the late old read joins the restart, and both wait forever.
+        await getSessionLifecycle(context).initialize(sessionId, async () => {
+          const persisted = await context.deps.sessionStore?.getSession(sessionId as SessionId);
+          if (!persisted || persisted.time.deleted !== undefined) {
+            throw new SessionLifecycleError("sessionNotFound", `Session not found: ${sessionId}`);
+          }
+          activated = await activateSessionRuntime(
+            context,
+            {
+              sessionId,
+              // The attachment's workspace identity and additional directories still come from the
+              // original resume entry point.
+              ...(workspace ? { workspace } : {}),
+              ...(additionalDirectories !== undefined ? { additionalDirectories } : {}),
+              ...(resumeThoughtLevel ? { thoughtLevel: resumeThoughtLevel } : {}),
+            },
+            { reusePersistedMessages: true, persistedMessages },
+          );
+        });
+      } catch (error) {
+        if (!(error instanceof SessionLifecycleError) || error.code !== "sessionNotFound")
+          throw error;
         context.logger?.warn("ZCode Protocol v4 cold resume has no persisted session", {
           activeSessionCount: context.sessions.size,
           event: "zcode_protocol.v4.resume_persisted_missing",
@@ -2274,27 +2310,13 @@ export function createConversationV4Gateway(
         });
         return { status: "notFound" };
       }
-      const existingRecord = context.sessions.get(sessionId);
-      const activated = await activateSessionForResume(
-        context,
-        {
-          sessionId,
-          // session.path 可能是规范化后的执行 cwd，不能覆盖当前 attachment
-          // 已知的 workspace 身份。旧 session 没有 attachment 上下文时仍走原有持久化回退。
-          ...(workspace ? { workspace } : {}),
-          ...(additionalDirectories !== undefined ? { additionalDirectories } : {}),
-          ...(resumeThoughtLevel ? { thoughtLevel: resumeThoughtLevel } : {}),
-        },
-        { reusePersistedMessages: true, persistedMessages },
-      );
+      const record = activated?.record ?? context.sessions.get(sessionId);
+      if (!record) throw new Error("Session runtime unavailable after initialization");
       return {
         status: "resumed",
-        persistedMessages: activated.persistedMessages,
+        persistedMessages: activated?.persistedMessages,
         ...(!existingRecord
-          ? {
-              disposeOnFailure: () =>
-                discardFailedSessionResume(context, sessionId, activated.record),
-            }
+          ? { disposeOnFailure: () => discardFailedSessionResume(context, sessionId, record) }
           : {}),
       };
     },

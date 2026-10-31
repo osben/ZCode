@@ -11,16 +11,19 @@ import { cn } from "@/components/lib/utils.js";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
-  buildConversationTurnNavigatorItems,
+  createConversationTurnNavigatorItemsSelector,
+  type ConversationTurnNavigatorItem,
   resolveConversationTurnNavigatorActiveUnitIndex,
   resolveConversationTurnNavigatorBarVisualState,
   resolveConversationTurnNavigatorVisualFocusItemIndex,
   type ConversationTurnNavigatorVirtualItem,
 } from "@/v4/conversationTurnNavigatorHelpers.js";
-import type { ConversationTurnRenderUnit } from "@/v4/conversationTurnRenderUnits.js";
+import type { ConversationTurnRenderUnitsPartition } from "@/v4/conversationTurnRenderUnits.js";
 
 export interface ConversationTurnNavigatorProps {
-  renderUnits: readonly ConversationTurnRenderUnit[];
+  enabled?: boolean;
+  /** Render units partitioned into "history + tail turn"; the history segment keeps its reference across stream frames. */
+  renderUnits: ConversationTurnRenderUnitsPartition;
   scrollOffsetPx: number;
   viewportHeightPx: number;
   virtualItems: readonly ConversationTurnNavigatorVirtualItem[];
@@ -47,6 +50,7 @@ function usePrefersReducedMotion() {
 }
 
 function ConversationTurnNavigatorImpl({
+  enabled = true,
   renderUnits,
   scrollOffsetPx,
   viewportHeightPx,
@@ -58,9 +62,10 @@ function ConversationTurnNavigatorImpl({
   const { intl } = useZCodeIntl();
   const prefersReducedMotion = usePrefersReducedMotion();
   const [interactionItemIndex, setInteractionItemIndex] = useState<number | undefined>(undefined);
+  const selectItems = useMemo(() => createConversationTurnNavigatorItemsSelector(), []);
   const items = useMemo(
     () =>
-      buildConversationTurnNavigatorItems(renderUnits, {
+      selectItems(renderUnits, {
         assistantEmptyPreview: intl.formatMessage({
           id: "chat.turnNavigator.emptyAssistant",
         }),
@@ -71,7 +76,7 @@ function ConversationTurnNavigatorImpl({
           id: "chat.turnNavigator.userFallback",
         }),
       }),
-    [intl, renderUnits],
+    [intl, renderUnits, selectItems],
   );
   const pinnedLabel = intl.formatMessage({ id: "chat.turnNavigator.pinnedLabel" });
 
@@ -110,6 +115,7 @@ function ConversationTurnNavigatorImpl({
   const getRailScrollElement = useCallback(() => railScrollRef.current, []);
   const getRailItemKey = useCallback((index: number) => items[index]?.key ?? index, [items]);
   const railVirtualizer = useVirtualizer({
+    enabled,
     count: items.length,
     estimateSize: () => 10,
     getItemKey: getRailItemKey,
@@ -119,7 +125,7 @@ function ConversationTurnNavigatorImpl({
   const virtualRows = railVirtualizer.getVirtualItems();
 
   useEffect(() => {
-    if (activeItemIndex < 0 || items.length < 2) return;
+    if (!enabled || activeItemIndex < 0 || items.length < 2) return;
     railVirtualizer.scrollToIndex(activeItemIndex, { align: "auto" });
     const element = railScrollRef.current;
     if (!element) return;
@@ -130,7 +136,7 @@ function ConversationTurnNavigatorImpl({
       // only to synchronize the rail observer so the visible window for the active item mounts immediately.
       element.dispatchEvent(new Event("scroll"));
     });
-  }, [activeItemIndex, items.length, railVirtualizer]);
+  }, [activeItemIndex, enabled, items.length, railVirtualizer]);
 
   if (items.length < 2) {
     return null;
@@ -158,110 +164,23 @@ function ConversationTurnNavigatorImpl({
             const itemIndex = virtualRow.index;
             const item = items[itemIndex];
             if (!item) return null;
-            const active = itemIndex === activeItemIndex;
-            const visualState = resolveConversationTurnNavigatorBarVisualState({
-              itemIndex,
-              visualFocusItemIndex,
-            });
-            const showScrollActiveColor = visualFocusItemIndex === undefined && active;
-            const jumpToQueryLabel = intl.formatMessage(
-              { id: "chat.turnNavigator.jumpToQuery" },
-              { index: String(itemIndex + 1) },
-            );
             return (
-              <div
+              <ConversationTurnNavigatorItemView
                 key={item.key}
-                className="absolute left-0 top-0 h-2.5 w-9"
-                style={{ transform: `translateY(${virtualRow.start}px)` }}
-              >
-                <HoverCard closeDelay={80} openDelay={120}>
-                  <HoverCardTrigger asChild>
-                    <button
-                      type="button"
-                      aria-current={active ? "location" : undefined}
-                      // The pinned state is color-only on the bar and the hover card is not part of the
-                      // accessible name, so pinned entries append the localized pin label here.
-                      aria-label={
-                        item.isPinned ? `${jumpToQueryLabel}, ${pinnedLabel}` : jumpToQueryLabel
-                      }
-                      aria-posinset={itemIndex + 1}
-                      aria-setsize={items.length}
-                      data-testid={testId(TID_V4_TURN_NAVIGATOR_ITEM, item.key)}
-                      data-item-index={itemIndex}
-                      data-unit-index={item.unitIndex}
-                      data-turn-id={item.turnId}
-                      data-query-row-id={item.rowId}
-                      data-active={active ? "true" : "false"}
-                      data-running={item.isRunning ? "true" : "false"}
-                      data-pinned={item.isPinned ? "true" : "false"}
-                      data-visual-color-tone={visualState.colorTone}
-                      data-visual-scale={String(visualState.scaleX)}
-                      data-visual-tone={visualState.tone}
-                      onBlur={() => setInteractionItemIndex(undefined)}
-                      onClick={() =>
-                        onJumpToQuery(
-                          { unitIndex: item.unitIndex, rowId: item.rowId },
-                          prefersReducedMotion ? "auto" : "smooth",
-                        )
-                      }
-                      onFocus={() => setInteractionItemIndex(itemIndex)}
-                      onPointerEnter={() => setInteractionItemIndex(itemIndex)}
-                      onPointerLeave={() => setInteractionItemIndex(undefined)}
-                      className="flex h-2.5 w-9 items-center justify-start rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                    >
-                      <span
-                        className={cn(
-                          "block h-0.5 w-3 origin-left rounded-full transition-[height,opacity,transform,background-color] duration-150 ease-out motion-reduce:transition-none",
-                          visualState.colorTone === "focus" && "bg-foreground",
-                          visualState.colorTone === "muted" &&
-                            (showScrollActiveColor ? "bg-foreground" : "bg-foreground-subtlest"),
-                          // Pinned color wins over focus/muted (tailwind-merge keeps the last bg utility);
-                          // proximity scale/opacity still apply on top, keeping pinned bars findable at a glance.
-                          item.isPinned && "bg-pinned-turn",
-                        )}
-                        style={{
-                          opacity: showScrollActiveColor
-                            ? 0.9
-                            : item.isRunning
-                              ? Math.max(visualState.opacity, 0.72)
-                              : visualState.opacity,
-                          transform: `scaleX(${visualState.scaleX})`,
-                        }}
-                      />
-                    </button>
-                  </HoverCardTrigger>
-                  <HoverCardContent
-                    align="start"
-                    side="right"
-                    sideOffset={8}
-                    data-testid={testId(TID_V4_TURN_NAVIGATOR_TOOLTIP, item.key)}
-                    className="w-80 max-w-[calc(100vw-2rem)] border border-popover-border bg-popover p-3 text-popover-foreground shadow-lg"
-                  >
-                    <div className="space-y-2">
-                      {item.isPinned ? (
-                        <p className="flex items-center gap-1 text-ui-sm text-foreground-subtle">
-                          {/* Decorative icon; the adjacent text is the accessible label. */}
-                          <PinIcon className="size-3 text-pinned-turn" aria-hidden />
-                          {pinnedLabel}
-                        </p>
-                      ) : null}
-                      <p className="line-clamp-2 whitespace-pre-line text-ui-base font-medium leading-5">
-                        {item.userPreview}
-                      </p>
-                      <p
-                        className={cn(
-                          "line-clamp-3 whitespace-pre-line text-ui-base leading-5",
-                          item.assistantPreviewKind === "text"
-                            ? "text-popover-foreground/80"
-                            : "text-foreground-subtle",
-                        )}
-                      >
-                        {item.assistantPreview}
-                      </p>
-                    </div>
-                  </HoverCardContent>
-                </HoverCard>
-              </div>
+                item={item}
+                itemIndex={itemIndex}
+                itemCount={items.length}
+                start={virtualRow.start}
+                active={itemIndex === activeItemIndex}
+                visualDistance={
+                  visualFocusItemIndex === undefined
+                    ? undefined
+                    : Math.min(3, Math.abs(itemIndex - visualFocusItemIndex))
+                }
+                prefersReducedMotion={prefersReducedMotion}
+                onInteractionChange={setInteractionItemIndex}
+                onJumpToQuery={onJumpToQuery}
+              />
             );
           })}
         </div>
@@ -270,4 +189,146 @@ function ConversationTurnNavigatorImpl({
   );
 }
 
-export const ConversationTurnNavigator = memo(ConversationTurnNavigatorImpl);
+// The parent runs every HoverCard on each hover/stream update; isolate each item by its actual visual inputs while keeping the neighboring peak changes.
+const ConversationTurnNavigatorItemView = memo(function ConversationTurnNavigatorItemView({
+  item,
+  itemIndex,
+  itemCount,
+  start,
+  active,
+  visualDistance,
+  prefersReducedMotion,
+  onInteractionChange,
+  onJumpToQuery,
+}: {
+  item: ConversationTurnNavigatorItem;
+  itemIndex: number;
+  itemCount: number;
+  start: number;
+  active: boolean;
+  visualDistance: number | undefined;
+  prefersReducedMotion: boolean;
+  onInteractionChange: (index: number | undefined) => void;
+  onJumpToQuery: ConversationTurnNavigatorProps["onJumpToQuery"];
+}) {
+  const { intl } = useZCodeIntl();
+  const visualState = resolveConversationTurnNavigatorBarVisualState({
+    itemIndex: 0,
+    visualFocusItemIndex: visualDistance,
+  });
+  const showScrollActiveColor = visualDistance === undefined && active;
+  const jumpToQueryLabel = intl.formatMessage(
+    { id: "chat.turnNavigator.jumpToQuery" },
+    { index: String(itemIndex + 1) },
+  );
+  const pinnedLabel = intl.formatMessage({ id: "chat.turnNavigator.pinnedLabel" });
+  return (
+    <div
+      className="absolute left-0 top-0 h-2.5 w-9"
+      style={{ transform: `translateY(${start}px)` }}
+    >
+      <HoverCard closeDelay={80} openDelay={120}>
+        <HoverCardTrigger asChild>
+          <button
+            type="button"
+            aria-current={active ? "location" : undefined}
+            // The pinned state is color-only on the bar and the hover card is not part of the
+            // accessible name, so pinned entries append the localized pin label here.
+            aria-label={item.isPinned ? `${jumpToQueryLabel}, ${pinnedLabel}` : jumpToQueryLabel}
+            aria-posinset={itemIndex + 1}
+            aria-setsize={itemCount}
+            data-testid={testId(TID_V4_TURN_NAVIGATOR_ITEM, item.key)}
+            data-item-index={itemIndex}
+            data-unit-index={item.unitIndex}
+            data-turn-id={item.turnId}
+            data-query-row-id={item.rowId}
+            data-active={active ? "true" : "false"}
+            data-running={item.isRunning ? "true" : "false"}
+            data-pinned={item.isPinned ? "true" : "false"}
+            data-visual-color-tone={visualState.colorTone}
+            data-visual-scale={String(visualState.scaleX)}
+            data-visual-tone={visualState.tone}
+            onBlur={() => onInteractionChange(undefined)}
+            onClick={() =>
+              onJumpToQuery(
+                { unitIndex: item.unitIndex, rowId: item.rowId },
+                prefersReducedMotion ? "auto" : "smooth",
+              )
+            }
+            onFocus={() => onInteractionChange(itemIndex)}
+            onPointerEnter={() => onInteractionChange(itemIndex)}
+            onPointerLeave={() => onInteractionChange(undefined)}
+            className="flex h-2.5 w-9 items-center justify-start rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          >
+            <span
+              className={cn(
+                "block h-0.5 w-3 origin-left rounded-full transition-[height,opacity,transform,background-color] duration-150 ease-out motion-reduce:transition-none",
+                visualState.colorTone === "focus" && "bg-foreground",
+                visualState.colorTone === "muted" &&
+                  (showScrollActiveColor ? "bg-foreground" : "bg-foreground-subtlest"),
+                // Pinned color wins over focus/muted (tailwind-merge keeps the last bg utility);
+                // proximity scale/opacity still apply on top, keeping pinned bars findable at a glance.
+                item.isPinned && "bg-pinned-turn",
+              )}
+              style={{
+                opacity: showScrollActiveColor
+                  ? 0.9
+                  : item.isRunning
+                    ? Math.max(visualState.opacity, 0.72)
+                    : visualState.opacity,
+                transform: `scaleX(${visualState.scaleX})`,
+              }}
+            />
+          </button>
+        </HoverCardTrigger>
+        <HoverCardContent
+          align="start"
+          side="right"
+          sideOffset={8}
+          data-testid={testId(TID_V4_TURN_NAVIGATOR_TOOLTIP, item.key)}
+          className="w-80 max-w-[calc(100vw-2rem)] border border-popover-border bg-popover p-3 text-popover-foreground shadow-lg"
+        >
+          <div className="space-y-2">
+            {item.isPinned ? (
+              <p className="flex items-center gap-1 text-ui-sm text-foreground-subtle">
+                {/* Decorative icon; the adjacent text is the accessible label. */}
+                <PinIcon className="size-3 text-pinned-turn" aria-hidden />
+                {pinnedLabel}
+              </p>
+            ) : null}
+            <p className="line-clamp-2 whitespace-pre-line text-ui-base font-medium leading-5">
+              {item.userPreview}
+            </p>
+            <p
+              className={cn(
+                "line-clamp-3 whitespace-pre-line text-ui-base leading-5",
+                item.assistantPreviewKind === "text"
+                  ? "text-popover-foreground/80"
+                  : "text-foreground-subtle",
+              )}
+            >
+              {item.assistantPreview}
+            </p>
+          </div>
+        </HoverCardContent>
+      </HoverCard>
+    </div>
+  );
+});
+
+export const ConversationTurnNavigator = memo(ConversationTurnNavigatorImpl, (previous, next) => {
+  if (previous.enabled !== next.enabled) return false;
+  // When hidden by CSS, keep the shell transition but do not propagate body updates; re-enabling reads the complete latest props.
+  if (next.enabled === false) return true;
+  return (
+    previous.renderUnits === next.renderUnits &&
+    previous.isHydratingDirectory === next.isHydratingDirectory &&
+    previous.onJumpToQuery === next.onJumpToQuery &&
+    previous.activeQueryRowId === next.activeQueryRowId &&
+    // When an exact query anchor exists, pixel offsets do not change the directory display. While the anchor is not yet mounted, the unit fallback is still updated.
+    (next.activeQueryRowId !== undefined ||
+      (previous.scrollOffsetPx === next.scrollOffsetPx &&
+        previous.viewportHeightPx === next.viewportHeightPx &&
+        previous.virtualItems === next.virtualItems))
+  );
+});

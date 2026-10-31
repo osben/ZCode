@@ -10,10 +10,11 @@ import { scanMemoryManifest } from "../../memory/recall/index.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { resolveMainAgentSystemPromptOverrides } from "../methods/context.js";
 import {
-  prepareProjectMemoryAgentRequest,
   captureProjectMemoryAgentContext,
-  createProjectMemoryAgentToolExecutor,
+  createProjectMemoryAgentToolRunner,
+  projectMemoryAgentEntries,
   recordProjectMemoryAgentModelUsageFact,
+  renderProjectMemoryAgentRequest,
   type ProjectMemoryAgentContext,
 } from "./project-memory-agent.js";
 import { resolveEnabledProjectMemoryRoot } from "./project-memory.js";
@@ -88,7 +89,7 @@ export async function drainMemoryExtractions(
 ): Promise<void> {
   const scheduler = this.memoryExtractionScheduler;
   if (!scheduler) return;
-  // Benchmarks explicitly wait for natural completion; ordinary session close retains its existing bounded cancellation cleanup.
+  // Runtime shutdown and benchmarks wait for the real finish; the external close deadline is owned by the App, so do not release early here.
   if (timeoutMs === null) {
     await scheduler.drain();
     return;
@@ -98,8 +99,12 @@ export async function drainMemoryExtractions(
   try {
     await Promise.race([
       scheduler.drain(),
-      new Promise<void>((resolve) => {
-        timeout = setTimeout(resolve, timeoutMs);
+      new Promise<void>((_resolve, reject) => {
+        // Expiry only stops waiting; it must not tell the session lifecycle the resources were released.
+        timeout = setTimeout(
+          () => reject(new Error("Memory extraction drain timed out")),
+          timeoutMs,
+        );
         timeout.unref?.();
       }),
     ]);
@@ -141,16 +146,10 @@ async function executeProjectMemoryExtraction(
         messageCount: input.messageCount,
         override: resolveMainAgentSystemPromptOverrides(runtime.config)?.["memory-extraction"],
       });
-      const request = prepareProjectMemoryAgentRequest(input.snapshot, prompt);
-      const executor = createProjectMemoryAgentToolExecutor(runtime, input.snapshot);
-
       await runMemoryAgentLoop({
         abortSignal: input.abortSignal,
-        executeTool: (toolCall, options) =>
-          executor.execute(toolCall, {
-            signal: options.abortSignal,
-            traceContext: input.snapshot.traceContext,
-          }),
+        entries: projectMemoryAgentEntries(input.snapshot, prompt),
+        executeToolCalls: createProjectMemoryAgentToolRunner(runtime, input.snapshot),
         maxTurns: EXTRACTION_MAX_TURNS,
         onRequestSettled: (request) =>
           recordProjectMemoryAgentModelUsageFact(
@@ -159,7 +158,8 @@ async function executeProjectMemoryExtraction(
             request,
             "project_memory_extract",
           ),
-        request,
+        registry: runtime.registry,
+        renderRequest: (entries) => renderProjectMemoryAgentRequest(input.snapshot, entries),
         model: input.snapshot.model,
         rootDir: input.snapshot.memoryRoot,
         workingDirectory: input.snapshot.workingDirectory,

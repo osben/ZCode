@@ -29,6 +29,8 @@ import {
   IProviderProvisioningTargetService,
   ISourceServerWorkspaceService,
   ISourceServerManagementService,
+  IDeviceSyncStateService,
+  IProviderProvisioningStatusService,
   IUsageStatsService,
   ICodingPlanSubscriptionService,
   IClientConfigService,
@@ -39,6 +41,7 @@ import {
   IHighspeedCardService,
   ISkillsService,
   ISkillSyncService,
+  IUserConfigSyncService,
   IMcpSyncService,
   IPluginUiAppToolsService,
   IPluginUiSamplingService,
@@ -103,8 +106,11 @@ export class RemoteServiceAccess implements IServiceAccessor {
   /** Host-only target proxy; it is not part of IServiceAccessor, so the Renderer does not receive the Secret write interface. */
   readonly providerProvisioningTargetService!: IProviderProvisioningTargetService;
   readonly sourceServerWorkspaceService: ISourceServerWorkspaceService;
-  /** 仅 desktop base attachment 注册；其他 scope 必须按可选能力消费。 */
+  /** Registered only on the desktop base attachment; other scopes must consume it as an optional capability. */
   readonly sourceServerManagementService?: ISourceServerManagementService;
+  /** Registered only on the desktop base attachment: device sync status for the data-sync page. */
+  readonly deviceSyncStateService?: IDeviceSyncStateService;
+  readonly providerProvisioningStatusService?: IProviderProvisioningStatusService;
   readonly usageStatsService: IUsageStatsService;
   readonly codingPlanSubscriptionService: ICodingPlanSubscriptionService;
   readonly clientConfigService: IClientConfigService;
@@ -122,6 +128,7 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly pluginUiSamplingService: IPluginUiSamplingService;
   readonly pluginUiAppToolsService: IPluginUiAppToolsService;
   readonly pluginSyncService: IPluginSyncService;
+  readonly userConfigSyncService: IUserConfigSyncService;
   readonly pluginsService: IPluginsService;
   readonly pluginManagementService: IPluginManagementService;
   readonly subagentsService: ISubagentsService;
@@ -137,9 +144,13 @@ export class RemoteServiceAccess implements IServiceAccessor {
 
   constructor(
     channelClient: IChannelClient,
-    options: { sourceServerManagementService?: boolean; windowProjectDirectory?: boolean } = {},
+    options: {
+      sourceServerManagementService?: boolean;
+      deviceSyncStateService?: boolean;
+      windowProjectDirectory?: boolean;
+    } = {},
   ) {
-    // 远端工作区的 project 必须保留 Source 语义；只有显式能力才创建完整窗口目录组。
+    // A remote workspace's project must keep Source semantics; only an explicit capability creates the full window directory group.
     if (options.windowProjectDirectory) {
       this.windowProjectDirectory = {
         projectService: ProxyChannel.toService(
@@ -242,11 +253,23 @@ export class RemoteServiceAccess implements IServiceAccessor {
     this.sourceServerWorkspaceService = ProxyChannel.toService<ISourceServerWorkspaceService>(
       channelClient.getChannel(ISourceServerWorkspaceService.channelName),
     );
-    // Bug 原因：ProxyChannel 是惰性的，无论服务端是否注册 channel 都能构造出“看似存在”
-    // 的对象，optional 合同因此在首次调用时才失败。scope 创建时必须显式声明能力。
+    // Bug cause: ProxyChannel is lazy and can construct a "seemingly existing" object whether or
+    // not the server registered the channel, so the optional contract only fails on first call.
+    // Capabilities must be declared explicitly at scope creation.
     this.sourceServerManagementService = options.sourceServerManagementService
       ? ProxyChannel.toService<ISourceServerManagementService>(
           channelClient.getChannel(ISourceServerManagementService.channelName),
+        )
+      : undefined;
+    this.deviceSyncStateService = options.deviceSyncStateService
+      ? ProxyChannel.toService<IDeviceSyncStateService>(
+          channelClient.getChannel(IDeviceSyncStateService.channelName),
+        )
+      : undefined;
+    // A local Host service on the same data-sync page as device sync status: same switch (enabled only on the desktop base connection).
+    this.providerProvisioningStatusService = options.deviceSyncStateService
+      ? ProxyChannel.toService<IProviderProvisioningStatusService>(
+          channelClient.getChannel(IProviderProvisioningStatusService.channelName),
         )
       : undefined;
     this.usageStatsService = ProxyChannel.toService<IUsageStatsService>(
@@ -299,6 +322,9 @@ export class RemoteServiceAccess implements IServiceAccessor {
     );
     this.pluginSyncService = ProxyChannel.toService<IPluginSyncService>(
       channelClient.getChannel(IPluginSyncService.channelName),
+    );
+    this.userConfigSyncService = ProxyChannel.toService<IUserConfigSyncService>(
+      channelClient.getChannel(IUserConfigSyncService.channelName),
     );
     this.pluginsService = ProxyChannel.toService<IPluginsService>(
       channelClient.getChannel(IPluginsService.channelName),

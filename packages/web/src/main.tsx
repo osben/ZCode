@@ -1,11 +1,10 @@
+import { createWebPlatform } from "#src/platform/index.js";
 import { mobilePluginDiscoveryTelemetrySchema } from "@zcode/shared";
 import {
   sessionCreateTelemetrySchema,
-  type RendererTelemetryEventPayload,
   WEB_REMOTE_CONTROL_WORKSPACE_RECONNECT_TIMEOUT_MS,
   createWebRemoteControlConnectionRecoveryTimeoutFailure,
   matchesWebRemoteControlRoutePath,
-  resolveWebRemoteControlInitialWorkspaceSelection,
   resolveWebRemoteControlWorkspaceKey,
 } from "@zcode/shared";
 /* eslint-disable max-lines -- Web remote-control startup, error pages, and web platform bridging are coordinated in the entry point for now. */
@@ -18,7 +17,6 @@ import {
   ZCodeIntlProvider,
   generateMobileDeviceFingerprint,
   installDocumentHiddenMotionPause,
-  playTaskNotificationSound,
   setStreamClientId,
   setWebRemoteControlTerminalTransportState,
   type WebRemoteControlTerminalTransportState as UiWebRemoteControlTerminalTransportState,
@@ -35,7 +33,6 @@ import { WebLoginPage } from "./auth/WebLoginPage.js";
 import { createWebAuthService } from "./auth/webAuthService.js";
 import { WEB_ZAI_OAUTH_CONFIG, resolveWebAuthDevReturnTo } from "./auth/webZaiOAuthConfig.js";
 import { parseOAuthState, resolveSafeAppReturnTo } from "./auth/oauthStateCodec.js";
-import { resolveWebCommunityUrl, resolveWebHelpConfig } from "./communityUrl.js";
 import {
   ConversationShareLandingLoader,
   ConversationShareLandingStatus,
@@ -52,7 +49,6 @@ import { applyTheme, readStoredThemeSelection } from "@zcode/ui/useTheme";
 
 // Apply the color mode and palette synchronously at startup to prevent a first-screen flash. Share pages default to light without local settings; other Web pages default to dark.
 import type {
-  IPlatformService,
   WebRemoteControlFailure,
   WebRemoteControlFailureReason,
   WebRemoteControlPlatformMethod,
@@ -66,10 +62,8 @@ import type {
   WebRemoteControlMobileNavigationIntent,
   WebRemoteControlTaskTarget,
   WebRemoteControlWorkspaceSwitchOptions,
-  WebRemoteControlStatus,
   WebRemoteControlAppPayload,
   WebRemoteControlExternalWorkspaceBridge,
-  RemoteTarget,
   ServerRemoteInfo,
 } from "@zcode/shared";
 
@@ -83,6 +77,8 @@ import {
   readKnownDevices,
   createWebRemoteControlDeviceClient,
   createWebRemoteControlBridgeRecoveryRunner,
+  acceptWebRemoteControlBridgeInvalidation,
+  resolveWebRemoteControlRecoveryTarget,
   getWebRemoteControlBridgeRecoveryRetryDelay,
   WebRemoteControlTerminalTransport,
   type WebRemoteControlTerminalTransportDiagnostic,
@@ -200,10 +196,6 @@ async function markOpenedWebRemoteControlBridgeTaskRead({
   applyTheme(selection.mode, selection.palette);
 }
 
-async function resolveFeedbackUrl(): Promise<string | undefined> {
-  return (await resolveWebHelpConfig()).feedback_url;
-}
-
 // Disable CSS animations when the browser tab is hidden or the phone app goes to the background, so DocumentTimeline does not retain an unmounted DOM subtree.
 installDocumentHiddenMotionPause();
 const root = createRoot(document.getElementById("root")!);
@@ -218,14 +210,6 @@ let isPageUnloading = false;
 window.addEventListener("beforeunload", () => {
   isPageUnloading = true;
 });
-
-interface WebRemoteControlPlatformProxy {
-  reportTelemetryEvent?: (event: RendererTelemetryEventPayload) => void;
-  requestPlatformMethod<K extends WebRemoteControlPlatformMethod>(
-    method: K,
-    args?: WebRemoteControlPlatformMethodArgsMap[K],
-  ): Promise<WebRemoteControlPlatformMethodResultMap[K]>;
-}
 
 interface WebBootstrapResult {
   wsUrl: string;
@@ -440,241 +424,6 @@ function toWebRemoteControlFailure(
   return { reason, message };
 }
 
-export function createWebPlatform(options?: {
-  externalWebRemoteControlProxy?: WebRemoteControlPlatformProxy;
-}): IPlatformService {
-  const platformProxy = options?.externalWebRemoteControlProxy;
-
-  return {
-    canSelectFilePath: false,
-    canOpenLocalFiles: false,
-    // The Web platform cannot open the system directory picker.
-    selectDirectory: () => Promise.resolve(null),
-    // The Web platform cannot open the system file picker.
-    selectFile: () => Promise.resolve(null),
-    selectFiles: () => Promise.resolve([]),
-    getPathForFile: () => null,
-    createTempTextAttachment: (payload) =>
-      platformProxy
-        ? platformProxy.requestPlatformMethod("createTempTextAttachment", payload)
-        : Promise.reject(new Error("Temporary text attachments require a desktop host")),
-    onRemoteConnectionLog: () => () => {},
-    onRemoteSessionClosed: () => () => {},
-    onBotRemoteWorkspaceReconnected: () => () => {},
-    // The Web platform does not manage multiple windows.
-    activateOrSetWorkspace: () => Promise.resolve({ activated: false }),
-    // Bug fix: Web remote-control mode reuses the Web UI, but is backed by Desktop.
-    // This previously used the regular Web `/api/connect-remote` route, which could not reach Desktop main
-    // or obtain the remote session MessagePort. It appeared supported, but always failed.
-    // Reject this path explicitly to avoid sending users down a broken troubleshooting path; supporting it later requires a separate remote-session injection protocol.
-    async connectRemote(
-      options: RemoteTarget,
-      _requestId?: string,
-      _context?: {
-        workspacePath: string;
-        workspaceIdentity?: string;
-        connectTrigger?: import("@zcode/shared").RemoteWorkspaceConnectTrigger;
-      },
-    ) {
-      if (platformProxy) {
-        return {
-          success: false,
-          error: `Remote connect is not supported in Web remote control mode yet: ${options.kind}`,
-        };
-      }
-
-      // TODO(web-remote-workspace): initially guarantee only server-local workspaces in regular Web mode.
-      // This could open a new ?remote=<id> tab, but the remote WebSocket exposed only some services,
-      // which did not match the complete accessor required by Root/RemoteServiceAccess, causing the project wizard or first screen to stall.
-      return {
-        success: false,
-        error: `Remote connect is not supported in Web mode yet: ${options.kind}`,
-      };
-    },
-    cancelPendingRemoteConnection: (_requestId?: string) => Promise.resolve(),
-    // The Web platform does not initiate Web remote control; keep a no-op implementation for the shared interface.
-    startWebRemoteControl: () =>
-      Promise.reject(new Error("Web remote control can only be started from desktop")),
-    refreshWebRemoteControlPairing: () =>
-      Promise.reject(new Error("Web remote control pairing can only be refreshed from desktop")),
-    stopWebRemoteControl: () => Promise.resolve(),
-    getWebRemoteControlStatus: () =>
-      Promise.resolve<WebRemoteControlStatus>({
-        status: "idle",
-      }),
-    disposeRemoteSession: () => Promise.resolve(),
-    isDockerAvailable: () =>
-      platformProxy
-        ? platformProxy.requestPlatformMethod("isDockerAvailable")
-        : Promise.resolve(false),
-    listWSLDistros: () =>
-      platformProxy ? platformProxy.requestPlatformMethod("listWSLDistros") : Promise.resolve([]),
-    listDockerContainers: () =>
-      platformProxy
-        ? platformProxy.requestPlatformMethod("listDockerContainers")
-        : Promise.resolve([]),
-    listSSHConfigAliases: () =>
-      platformProxy
-        ? platformProxy.requestPlatformMethod("listSSHConfigAliases")
-        : Promise.resolve([]),
-    loadMcpFromUserDirectory: (payload) =>
-      platformProxy
-        ? platformProxy.requestPlatformMethod("loadMcpFromUserDirectory", payload)
-        : Promise.resolve({ servers: [] }),
-    saveMcpToUserDirectory: (payload) =>
-      platformProxy
-        ? platformProxy.requestPlatformMethod("saveMcpToUserDirectory", payload)
-        : Promise.resolve({
-            success: false,
-            error: "MCP native directory management requires a desktop attachment",
-          }),
-    migrateLegacyCommonMcp: (payload) =>
-      platformProxy
-        ? platformProxy.requestPlatformMethod("migrateLegacyCommonMcp", payload)
-        : Promise.resolve({
-            servers: {},
-            totalCount: 0,
-            importedCount: 0,
-            skippedCount: 0,
-          }),
-    openExternal: (url) => {
-      window.open(url, "_blank", "noopener,noreferrer");
-    },
-    openFeedback: async () => {
-      const feedbackUrl = await resolveFeedbackUrl();
-      if (!feedbackUrl) {
-        return;
-      }
-      window.open(feedbackUrl, "_blank", "noopener,noreferrer");
-    },
-    openCommunity: async () => {
-      const locale = document.documentElement.lang === "en-US" ? "en-US" : "zh-CN";
-      const communityUrl = await resolveWebCommunityUrl(locale);
-      if (!communityUrl) {
-        return;
-      }
-      window.open(communityUrl, "_blank", "noopener,noreferrer");
-    },
-    canOpenCommunity: async (locale) => {
-      const communityUrl = await resolveWebCommunityUrl(locale);
-      return typeof communityUrl === "string" && communityUrl.length > 0;
-    },
-    openInFileManager: (path) =>
-      platformProxy
-        ? platformProxy.requestPlatformMethod("openInFileManager", path)
-        : Promise.resolve({ success: false, error: "Not supported in web mode" }),
-    openExternalFile: (path) =>
-      platformProxy
-        ? platformProxy.requestPlatformMethod("openExternalFile", path)
-        : Promise.resolve({ success: false, error: "Not supported in web mode" }),
-    registerOAuthState: (_payload) => {},
-    onOAuthCallback: () => () => {},
-    onPaymentCallback: () => () => {},
-    onShareImport: () => () => {},
-    notifyRendererReady: () => {},
-    reportTelemetryEvent: async (event) => {
-      // The phone only forwards session_create and plugin-discovery events; management results are reported only by the Desktop Host.
-      const parsed = sessionCreateTelemetrySchema
-        .or(mobilePluginDiscoveryTelemetrySchema)
-        .safeParse(event);
-      if (parsed.success) platformProxy?.reportTelemetryEvent?.(parsed.data);
-    },
-    reportArmsCustomEvent: () => Promise.resolve(),
-    showTaskNotification: (payload) => {
-      if (document.hasFocus()) {
-        return;
-      }
-
-      if (
-        typeof window.Notification === "undefined" ||
-        window.Notification.permission !== "granted"
-      ) {
-        return;
-      }
-
-      try {
-        new window.Notification(payload.title, {
-          body: payload.body,
-          silent: true,
-        });
-        void playTaskNotificationSound();
-      } catch {
-        // Silently ignore unavailable browser notifications to avoid interrupting the main flow.
-      }
-    },
-    // The Web platform does not need cross-window tab management.
-    syncWindowTabs: () => {},
-    // The Web platform has no host-level Dock / taskbar badge; keep this as a no-op for the shared platform interface.
-    syncWindowUnreadCount: () => {},
-    syncActiveTaskSession: () => {},
-    onFocusTab: () => () => {},
-    onNewTab: () => () => {},
-    onCloseActiveContextRequest: () => () => {},
-    onOpenBrowserUrl: () => () => {},
-    onNewTask: () => () => {},
-    onOpenWorkspace: () => () => {},
-    onWindowFullscreenChanged: () => () => {},
-    onTaskNotificationClick: () => () => {},
-    exportLogs: () => Promise.resolve({ success: false, error: "Not supported in web mode" }),
-    captureWindowScreenshot: () => Promise.resolve(null),
-    importChromeBrowserData: (_options) =>
-      Promise.resolve({
-        success: false,
-        cookies: { imported: 0, skipped: 0, failed: 0 },
-        localStorage: {
-          originsImported: 0,
-          entriesImported: 0,
-          originsSkipped: 0,
-          originsFailed: 0,
-        },
-        error: "chrome_import_not_supported" as const,
-      }),
-    clearEmbeddedBrowserData: () =>
-      Promise.resolve({ success: false, error: "Not supported in web mode" }),
-    // When IPlatformService gained update-notification support, the Web fallback did not add a matching no-op,
-    // so root typecheck failed even for changes unrelated to Desktop.
-    // Web currently has no desktop updater; explicitly use a no-op to keep the interface complete without changing behavior.
-    onUpdateReady: () => () => {},
-    onUpdateCheckResult: () => () => {},
-    onUpdateStateChanged: () => () => {},
-    getUpdateState: () => Promise.resolve({ kind: "idle", enabled: true }),
-    downloadUpdate: () => Promise.resolve(),
-    cancelUpdateDownload: () => Promise.resolve(),
-    getDesktopSessionActivity: () => Promise.resolve({ runningAgentSessionCount: 0 }),
-    getDesktopZoomLevel: () => Promise.resolve({ zoomLevel: 0 }),
-    onDesktopZoomLevelChanged: () => () => {},
-    onPostUpdateReleaseNotes: () => () => {},
-    acknowledgePostUpdateReleaseNotes: () => Promise.resolve(),
-    skipUpdateVersion: () => Promise.resolve(),
-    quitAndInstallUpdate: () => Promise.resolve(),
-    getInstalledEditors: () =>
-      platformProxy
-        ? platformProxy.requestPlatformMethod("getInstalledEditors")
-        : Promise.resolve([]),
-    openInEditor: (editorId, path, options) =>
-      platformProxy
-        ? platformProxy.requestPlatformMethod("openInEditor", { editorId, path, options })
-        : Promise.resolve({ success: false, error: "Not supported in web mode" }),
-    executeDesktopCommand: () => Promise.resolve(),
-    setApplicationLocale: (_locale) => Promise.resolve(),
-    setTitleBarTheme: () => Promise.resolve(),
-    getDeviceId: () => {
-      const nav = globalThis.navigator as Navigator & { platform?: string };
-      const platform = nav?.platform ?? "";
-      const screenWidth = globalThis.screen?.width;
-      const screenHeight = globalThis.screen?.height;
-      const colorDepth = globalThis.screen?.colorDepth;
-      const parts = [
-        platform,
-        screenWidth !== undefined ? String(screenWidth) : "",
-        screenHeight !== undefined ? String(screenHeight) : "",
-        colorDepth !== undefined ? String(colorDepth) : "",
-      ];
-      return parts.filter(Boolean).join("|");
-    },
-  };
-}
-
 function resolveDefaultWsOrigin(): string {
   return `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
 }
@@ -709,12 +458,6 @@ async function resolveWebBootstrap(): Promise<WebBootstrapResult> {
   } catch {
     return { wsUrl };
   }
-}
-
-function selectInitialWebRemoteControlWorkspace(
-  snapshot: WebRemoteControlWindowBootstrapResult,
-): ReturnType<typeof resolveWebRemoteControlInitialWorkspaceSelection> {
-  return resolveWebRemoteControlInitialWorkspaceSelection(snapshot);
 }
 
 function isWebRemoteControlRoute(): boolean {
@@ -1002,6 +745,10 @@ export function createHomeOnlyWebRemoteControlServices(): RootServices {
       createUnsupportedHomeOnlyService<RootServices["mcpSyncService"]>("mcpSyncService"),
     pluginSyncService:
       createUnsupportedHomeOnlyService<RootServices["pluginSyncService"]>("pluginSyncService"),
+    userConfigSyncService:
+      createUnsupportedHomeOnlyService<RootServices["userConfigSyncService"]>(
+        "userConfigSyncService",
+      ),
     pluginsService: createEmptyHomeOnlyService<RootServices["pluginsService"]>({
       list: async () => [],
     }),
@@ -1074,6 +821,7 @@ async function bootstrapExternalRelayWebRemoteControl(
 ): Promise<void> {
   if (connection.signal.aborted) return;
   const { params: relayParams, getToken } = connection;
+  const terminalClientSessionId = createWebRemoteControlRequestId("terminal-page");
   seedStableWebRemoteControlClientId(relayParams.deviceSid);
   // Platform info is display-only: use the record remembered locally for this MID; an unknown device connecting by QR shows the generic computer icon.
   const connectingDevice: WebRemoteControlConnectingDevice = {
@@ -1299,7 +1047,7 @@ async function bootstrapExternalRelayWebRemoteControl(
       // so a late response is still rejected at the recovery boundary.
       currentRecoveryId ??= createWebRemoteControlRequestId("recovery");
     }
-    const requiresBridgeRebuild =
+    let requiresBridgeRebuild =
       !isLifecycleRecoveryReason(reason) || activeRelayProtocol?.isDegraded() === true;
     if (requiresBridgeRebuild) {
       activeRelayProtocol?.markDegraded();
@@ -1335,6 +1083,8 @@ async function bootstrapExternalRelayWebRemoteControl(
           return;
         }
       }
+      // An invalidation notice may also arrive during validation; once the flow actually moves to rebuild, failures must retry against the original budget, not reuse the starting health judgment.
+      requiresBridgeRebuild = true;
       await bootstrapPairedSession?.({
         preferredWorkspaceKey,
         preferredTaskId,
@@ -1402,15 +1152,17 @@ async function bootstrapExternalRelayWebRemoteControl(
         return;
       }
       if (payload.zcode_type === "bridge-degraded") {
-        if (
-          pendingRelayProtocol &&
-          payload.bridgeSessionId === pendingRelayProtocol.getBridgeSessionId()
-        )
-          pendingRelayProtocol.markDegraded(payload.reason);
-        if (payload.bridgeSessionId === activeRelayProtocol?.getBridgeSessionId()) {
-          activeRelayProtocol?.markDegraded();
-          void recoverVisibleSession(payload.reason);
-        }
+        acceptWebRemoteControlBridgeInvalidation(
+          pendingRelayProtocol,
+          payload.bridgeSessionId,
+          payload.reason,
+        );
+        // Notices can be lost in the background and the desktop re-sends them; a duplicate notice must not reset an in-flight recovery or the bounded retry budget.
+        acceptWebRemoteControlBridgeInvalidation(
+          activeRelayProtocol,
+          payload.bridgeSessionId,
+          payload.reason,
+        );
         return;
       }
       if (payload.zcode_type === "workspace-bridge-error") {
@@ -1424,8 +1176,11 @@ async function bootstrapExternalRelayWebRemoteControl(
           // and keeps the draft, and old services are not treated as ready.
           activeBridgeServiceRegistration?.dispose();
           activeBridgeServiceRegistration = undefined;
-          activeRelayProtocol?.markDegraded();
-          void recoverVisibleSession(payload.reason);
+          acceptWebRemoteControlBridgeInvalidation(
+            activeRelayProtocol,
+            payload.bridgeSessionId,
+            payload.reason,
+          );
         }
         return;
       }
@@ -1511,7 +1266,7 @@ async function bootstrapExternalRelayWebRemoteControl(
   const requestBootstrap = async (): Promise<WebRemoteControlWindowBootstrapResult> => {
     const requestId = createWebRemoteControlRequestId("bootstrap");
     const response = await requestAppPayload(
-      { zcode_type: "bootstrap-request", requestId },
+      { zcode_type: "bootstrap-request", requestId, terminalClientSessionId },
       (
         payload,
       ): payload is Extract<WebRemoteControlAppPayload, { zcode_type: "bootstrap-response" }> =>
@@ -1698,6 +1453,7 @@ async function bootstrapExternalRelayWebRemoteControl(
       requestAppPayload(
         {
           zcode_type: "workspace-bridge-open",
+          terminalClientSessionId,
           requestId: createWebRemoteControlRequestId("workspace-bridge"),
           bridgeSessionId,
           bridgeGeneration,
@@ -1829,6 +1585,7 @@ async function bootstrapExternalRelayWebRemoteControl(
             initialTaskId={bridge.initialTaskId}
             initialTaskDraft={initialTaskDraft}
             composerClientNamespace={`mobile:${relayParams.deviceMid ?? relayParams.deviceSid}`}
+            terminalOwnerId={bridge.terminalOwnerId}
             initialSidebarFileTreeOpen={initialSidebarFileTreeOpen}
             initialWebRemoteControlMobileNavigationIntent={initialNavigationIntent}
             webRemoteControlTerminalTransportState={terminalTransportState}
@@ -2017,21 +1774,7 @@ async function bootstrapExternalRelayWebRemoteControl(
   }) => {
     const bootstrapResult = await checkDesktopVersion();
     if (!bootstrapResult || terminated || versionGuard.isBlocked()) return;
-    const preferredWorkspace = options?.preferredWorkspaceKey
-      ? bootstrapResult.workspaces.find(
-          (workspace) =>
-            resolveWebRemoteControlWorkspaceKey(workspace) === options.preferredWorkspaceKey,
-        )
-      : undefined;
-    const selectedWorkspace = preferredWorkspace
-      ? {
-          workspaceKey: resolveWebRemoteControlWorkspaceKey(preferredWorkspace),
-          taskId: options?.preferredTaskId,
-          canBridge:
-            preferredWorkspace.kind !== "remote" ||
-            Boolean(preferredWorkspace.workspaceIdentity && preferredWorkspace.remoteSessionId),
-        }
-      : selectInitialWebRemoteControlWorkspace(bootstrapResult);
+    const selectedWorkspace = resolveWebRemoteControlRecoveryTarget(bootstrapResult, options);
     if (!selectedWorkspace) {
       throw toWebRemoteControlFailure(
         "workspace-closed",
@@ -2055,6 +1798,7 @@ async function bootstrapExternalRelayWebRemoteControl(
 
     const result = await openWorkspaceBridge(selectedWorkspace.workspaceKey, {
       taskId: selectedWorkspace.taskId,
+      taskHostId: selectedWorkspace.taskHostId,
     });
     renderExternalRelayRoot(result.services, result.bridge);
   };

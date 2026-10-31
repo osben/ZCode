@@ -217,11 +217,19 @@ export function deserialize(reader: IReader): any {
   }
 }
 
-function encodeRpcJsonValue(_key: string, value: unknown): unknown {
-  if (value instanceof Uint8Array) {
+function encodeRpcJsonValue(this: unknown, key: string, value: unknown): unknown {
+  // Root cause: JSON.stringify calls toJSON before the replacer. Node Buffers (a Uint8Array
+  // subclass; skill / plugin archives are gzip-produced Buffers) have already been expanded to
+  // {type:"Buffer",data:[...]} by this point and miss the base64 marker: ~3.6x the size, each hop
+  // decodes an array of 15 million numbers (a 15MB archive takes tens of seconds per hop and freezes
+  // the renderer), plugins over ~28MB also exceed the remote WebSocket 100MiB per-message limit; and
+  // the receiver gets a plain object, so the archive size check cannot read byteLength.
+  // Fix: decide binary-ness from the original value on the holder.
+  const original = (this as Record<string, unknown>)[key];
+  if (original instanceof Uint8Array) {
     return {
       [RPC_NESTED_UINT8_ARRAY_MARKER]: true,
-      [RPC_NESTED_UINT8_ARRAY_BASE64_KEY]: bytesToBase64(value),
+      [RPC_NESTED_UINT8_ARRAY_BASE64_KEY]: bytesToBase64(original),
     };
   }
   return value;

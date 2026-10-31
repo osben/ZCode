@@ -21,9 +21,9 @@ import {
 export const AMEND_WORKFLOW_TOOL_NAME = "AmendWorkflow";
 
 /**
- * Validation message for "provide at most one amended script." It matches the placement and tone of
- * `CREATE_WORKFLOW_SOURCE_ERROR`; unlike that error, providing neither is **valid** here—it means
- * "reuse the predecessor's script."
+ * Violation text for "provide at most one revised script". Same position and tone as
+ * `CREATE_WORKFLOW_SOURCE_CONFLICT_ERROR`; unlike it, omitting both is **legal** here — that means
+ * "keep the predecessor's script".
  */
 export const AMEND_WORKFLOW_SOURCE_ERROR =
   "Provide at most one revised script: `path` for the script file you edited (the usual form), or `script` for the whole revised script inline. Passing both is ambiguous; omit both to keep the predecessor's script unchanged.";
@@ -128,10 +128,13 @@ export const AmendWorkflowPredecessorSchema = z
      */
     script_inherited: z.literal(true).optional(),
     /**
-     * 这次修订会让子代理用上的、前驱与会话都没用过的 provider（去重、按字母序），只在有新的时在场。
-     * 由 resolveInput 从会话模型、前驱 `run-launched` 上的模型与这次归一化后的模型算出，与整块一起
-     * 被无条件覆盖：模型既不能伪造它，也不能抹掉它。在场即退出本会话 run 的免确认
-     * （{@link isAmendWorkflowOwnedPredecessor}）：全称模型名只证明写法明确，不证明用户点过名。
+     * Providers this revision would make subagents use that neither the predecessor nor the session has used
+     * (deduplicated, alphabetically sorted); present only when there is something new.
+     * Computed by resolveInput from the session model, the predecessor `run-launched` model, and this revision's
+     * normalized model, and overwritten unconditionally along with the whole block: the model can neither forge it
+     * nor erase it. Its presence opts this session's run out of confirmation-free amending
+     * ({@link isAmendWorkflowOwnedPredecessor}): a fully qualified model name only proves the spelling was explicit,
+     * not that the user named it.
      */
     introduces_providers: z.array(z.string().min(1)).nonempty().optional(),
   })
@@ -156,9 +159,10 @@ export type AmendWorkflowPredecessor = z.infer<typeof AmendWorkflowPredecessorSc
 export function isAmendWorkflowOwnedPredecessor(predecessor: unknown): boolean {
   if (!predecessor || typeof predecessor !== "object") return false;
   const facts = predecessor as Record<string, unknown>;
-  // 引入新 provider 的修订不在免确认之内：键在场即照常 ask（docs/dynamic-workflow/launch.md
-  // 「Amending this session's runs」）。Bugfix：原先只看归属，主代理写一个别家 provider 的全称
-  // 模型名，就能不经用户把子代理换到另一张账单上。
+  // Revisions introducing a new provider are not confirmation-free: if the key is present, ask as usual
+  // (docs/dynamic-workflow/launch.md, "Amending this session's runs"). Bugfix: the old check looked only at
+  // ownership, so the main agent could write another provider's fully qualified model name and move subagents
+  // onto a different bill without the user.
   return (
     facts.owned_by_this_session === true &&
     facts.stop_reason !== "user" &&

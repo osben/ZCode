@@ -119,6 +119,17 @@ export class ReleaseManager {
     await rm(this.layout.pendingFile, { force: true });
   }
 
+  /**
+   * The mark is valid only while releaseId equals current.json: a later upgrade, or a failed
+   * upgrade rolling back to another release, invalidates it naturally, so readers need no extra cleanup ordering.
+   */
+  public async markDowngrade(target: ReleaseManifest, fromVersion: string): Promise<void> {
+    await atomicWriteJson(this.layout.downgradeMarkerFile, {
+      releaseId: target.releaseId,
+      fromVersion,
+    });
+  }
+
   public async writePending(manifest: ReleaseManifest): Promise<void> {
     const parsed = releaseManifestSchema.parse({
       ...manifest,

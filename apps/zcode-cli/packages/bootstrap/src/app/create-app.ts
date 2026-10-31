@@ -1,3 +1,4 @@
+import { createWorkspaceMcpTrust } from "../workspace-mcp-trust/index.js";
 import { subagentProfilesFromSnapshot } from "../runtime-subagents/index.js";
 import { CliDefaultSelection } from "./cli-default-selection.js";
 import { isAbsolute, join, resolve } from "node:path";
@@ -32,10 +33,12 @@ import {
 import { createModelTelemetry } from "@zcode/telemetry";
 import {
   createRootTraceContext,
+  ModelRequestSessionFeature,
   traceContextToLogContext,
   type TraceContext,
   createSessionId,
   createSessionEvent,
+  SessionEventType,
   type ExecutionShellSelection,
   type MessageId,
 } from "@zcode/contracts";
@@ -80,6 +83,7 @@ import { resolvePluginRuntimeFeatures } from "./plugin-runtime-features.js";
 import { createSessionFacade } from "./session-facade.js";
 import { resolveAppRuntimeConfig, runtimeConfigLogContext } from "./runtime-config.js";
 import { resolveBundledSkillRoots } from "./bundled-skills.js";
+import { resolveMcpNodeFallbackProvider } from "./mcp-node-fallback.js";
 import { collectDynamicWorkflowDisabledSkillPaths } from "./dynamic-workflow-gate.js";
 import { createWorkspaceHookRuntimeSecurity } from "./workspace-hook-trust.js";
 import { createScriptWorkflowBridge } from "./script-workflow-methods.js";
@@ -98,6 +102,7 @@ import {
   workflowActorInteractionDescription,
   workflowActorPermissionPolicy,
 } from "./workflow-actor-permission.js";
+import { startWorkflowQuotaAutoResume } from "./dynamic-workflow-quota-resume.js";
 import { workflowActorToolPolicy } from "./workflow-actor-tools.js";
 import {
   createNodeReplBrowserBroker,
@@ -117,6 +122,7 @@ import {
   loadZCodeAgentProfiles,
 } from "../subagents.js";
 import { createRuntimeAiSdkModelExecutionConfig } from "../model-config.js";
+import { withOfficialCommandEnv } from "../official-command-endpoint/index.js";
 import { ApiProviderModelRuntime } from "./provider-registry-model-runtime.js";
 import {
   completeAppStartup,
@@ -468,7 +474,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       startupTimer,
       storageRoot,
     });
-    const mcpPort =
+    const rawMcpPort =
       options.mcpPort ??
       (runtimeConfig.mcp?.enabled === false
         ? undefined
@@ -482,10 +488,33 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
               noProxy: configResult.config.network.noProxy,
               caCertFile: configResult.config.network.caCertFile,
             },
+            nodeFallback: resolveMcpNodeFallbackProvider({ cliStorageRoot, logger }),
             workingDirectory,
           })));
+    const mcpPort = rawMcpPort
+      ? createWorkspaceMcpTrust({
+          workingDirectory,
+          workspaceIdentity: options.runtimeConfig?.memory?.workspaceIdentity,
+          userConfigPath: options.userConfigPath,
+          projectConfigPath: options.projectConfigPath,
+          skipUserConfig: options.skipUserConfig,
+          env: options.env,
+          onAdmissionChanged: async (payload) => {
+            if (!runtime) return;
+            await runtime.appendEvent(
+              createSessionEvent(
+                SessionEventType.WorkspaceMcpAdmissionUpdated,
+                sessionId,
+                payload,
+                { traceId: traceContext.traceId },
+              ),
+              traceContext,
+            );
+          },
+        }).guard(rawMcpPort)
+      : undefined;
     const ownsMcpPort = options.mcpPort === undefined && mcpPort !== undefined;
-    const executionPort =
+    const baseExecutionPort =
       options.executionPort ??
       createNodeExecutionAdapter({
         onToolExecResource: options.onToolExecResource,
@@ -498,6 +527,21 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         bashOutputTempDir: tmpdir(),
         processEnv: options.env ?? process.env,
       });
+    // This app serves exactly one session: all of its child processes carry this session's official
+    // command endpoint env.
+    const officialCommandEnv = options.officialCommandEnv;
+    const officialCommandIdentity = options.runtimeConfig?.memory?.workspaceIdentity;
+    const officialCommandWorkspace = {
+      workspacePath: workingDirectory,
+      ...(officialCommandIdentity ? { workspaceIdentity: officialCommandIdentity } : {}),
+    };
+    const executionPort = officialCommandEnv
+      ? withOfficialCommandEnv(
+          baseExecutionPort,
+          () => officialCommandEnv(sessionId, officialCommandWorkspace),
+          logger,
+        )
+      : baseExecutionPort;
     const ownsExecutionPort = options.executionPort === undefined;
     const pdfDocumentPort =
       options.pdfDocumentPort ?? createPopplerPdfDocumentAdapter({ executionPort });
@@ -618,6 +662,17 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
           traceContext: resumeTraceContext,
         });
         await runtime.activatePausedTargetAfterResume(resumeTraceContext);
+        // SessionResumed cleared the old projection; republish the current admission even if the
+        // declaration is unchanged.
+        try {
+          await mcpPort?.refreshWorkspaceTrustAdmission?.(true);
+        } catch (error) {
+          logger.warn("MCP trust admission publication failed after resume", {
+            event: "mcp.trust.admission.failed",
+            sessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
         resumePrepared = true;
         return { ...result, modelSelection };
       } finally {
@@ -913,6 +968,10 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       agentTelemetry: modelTelemetry.agentExecution,
       // 主代理的模型请求过治理器的 observer：立即放行，但让治理器看见它的 429 / 成功。
       modelRequestAdmission: workflowConcurrencyGovernor.observer(),
+      // The main agent's subagents are not observers: like workflow runs they queue and honor
+      // cooldown; one queue per parent session.
+      subagentModelRequestAdmission: (parentSessionId) =>
+        workflowConcurrencyGovernor.sessionSubagents(parentSessionId),
       eventStore: options.eventStore ?? createInMemorySessionEventStore(),
       sessionStore,
       sessionMailboxPort,
@@ -1001,6 +1060,13 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
               source: "command",
               traceContext: resolverOptions?.traceContext ?? traceContext,
             });
+            // Tag the session feature at the same expansion point
+            // (docs/design/v2/model/session-features-header.md); when the rollout is off the
+            // command does not expand and never reaches this branch, so no tag.
+            runtime?.recordSessionFeature({
+              feature: ModelRequestSessionFeature.WorkflowCmd,
+              traceContext: resolverOptions?.traceContext ?? traceContext,
+            });
           }
           return builtin.prompt;
         }
@@ -1048,13 +1114,48 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       traceContext,
       workingDirectory,
     });
+    // Runs stopped by quota auto-resume when due (dynamic-workflow-quota-resume.ts). Resume takes
+    // the same path as the UI "Resume" (port.resume -> re-arm tracking: terminal notification,
+    // background task entry, resident guard), plus the unified execution boundary: on a cold-start
+    // catch-up the session may not have been restored from storage yet.
+    const quotaAutoResume =
+      dynamicWorkflowRunPort === undefined ||
+      dynamicWorkflowJournal === undefined ||
+      typeof dynamicWorkflowRunPort.resume !== "function"
+        ? undefined
+        : startWorkflowQuotaAutoResume({
+            journal: dynamicWorkflowJournal,
+            logger,
+            parentSessionId: sessionId,
+            resume: async (runId) => {
+              await prepareUserExecutionBoundary({ traceContext });
+              const result = await dynamicWorkflowRunPort.resume!(runId);
+              if (result.ok) {
+                await getRuntime().trackResumedDynamicWorkflowRun({
+                  runId: result.runId,
+                  ...(result.toolCallId === undefined ? {} : { toolCallId: result.toolCallId }),
+                  traceContext,
+                });
+              }
+              return result;
+            },
+            subscribeRunSettled: (listener) => dynamicWorkflowRunPort.subscribeRunSettled(listener),
+          });
     const sessionFacade = createSessionFacade({
+      closeScriptWorkflowRuns: () => scriptWorkflowFacade.closeScriptWorkflowRuns(),
       cliDefaultSelection,
       // App 关闭时停下本会话拥有的 dwf run：
       // 引擎活在本 App 的闭包里，关掉 App 而不停它，journal 行会停在 running 等下一次孤儿收敛。
       ...(dynamicWorkflowRunPort === undefined
         ? {}
-        : { closeDynamicWorkflowRuns: () => dynamicWorkflowRunPort.close() }),
+        : {
+            closeDynamicWorkflowRuns: () => {
+              // Stop auto-resume first: a closing service rejects resume, and a due timer must not
+              // hit it.
+              quotaAutoResume?.dispose();
+              return dynamicWorkflowRunPort.close();
+            },
+          }),
       configResult,
       configuredMcpServers,
       ...(options.configuredDefaultModelSelection
@@ -1202,6 +1303,8 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       // session 的 coordinator 并重发 admission 状态（详见 types.ts 注释）。
       reloadWorkspaceHookTrust: () =>
         workspaceHookRuntimeSecurity?.reloadTrust() ?? Promise.resolve(),
+      reloadWorkspaceMcpTrust: () =>
+        mcpPort?.refreshWorkspaceTrustAdmission?.() ?? Promise.resolve(),
       setModelIoFullRetentionEnabled: (enabled) =>
         modelAdapter.setModelIoFullRetentionEnabled(enabled),
       readToolResultArtifact: (uri) =>
@@ -1324,7 +1427,16 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
               // The resident ACP agent process belongs to this session (specs/acp-agent-runtime.md).
               await options.externalAgents?.stopSession(sessionId);
             } finally {
-              await modelTelemetry.shutdown();
+              try {
+                await modelTelemetry.shutdown();
+              } catch (error) {
+                // A telemetry failure does not mean the session still holds runtime resources, and
+                // must not mask the real close error.
+                logger.warn("Session telemetry shutdown failed", {
+                  event: "session.telemetry_shutdown.failed",
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              }
             }
           }
         }

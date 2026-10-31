@@ -12,7 +12,7 @@ import { BackgroundTaskTracker } from "./background-tasks.js";
 import { executeToolBatch, executeToolSchedule } from "./batch-runner.js";
 import { executeToolCall } from "./call-runner.js";
 import { runPreToolUseHooks } from "./hook-flow.js";
-import { resolveToolPermission } from "./permission-flow.js";
+import { areReadsDeniedWithoutPrompt, resolveToolPermission } from "./permission-flow.js";
 import type {
   ToolBatchExecuteOptions,
   ToolExecuteOptions,
@@ -28,6 +28,8 @@ export const DEFAULT_TOOL_MAX_CONCURRENCY = 10;
 export class ToolExecutorImpl implements ToolExecutor {
   private readonly deps: ToolExecutorDeps;
   private readonly backgroundTasks: BackgroundTaskTracker;
+  /** One executor per runtime; sequence numbers are comparable within one assistant, and deleting or clearing read state does not affect them. */
+  private readFileStateSnapshotCount = 0;
 
   constructor(options: ToolExecutorOptions) {
     this.deps = {
@@ -39,6 +41,7 @@ export class ToolExecutorImpl implements ToolExecutor {
       emitEvent: options.emitEvent,
       enqueueBackgroundTaskNotification: options.enqueueBackgroundTaskNotification,
       shouldEnqueueBackgroundTaskNotification: options.shouldEnqueueBackgroundTaskNotification,
+      registerResidencyBlockingWork: options.registerResidencyBlockingWork,
       sessionId: options.sessionId,
       turnId: options.turnId,
       defaultTimeoutMs: options.defaultTimeoutMs ?? 300000,
@@ -74,6 +77,7 @@ export class ToolExecutorImpl implements ToolExecutor {
       runtimeTaskRegistry: options.runtimeTaskRegistry,
       readFileState: options.readFileState ?? new Map(),
       nestedInstructions: options.nestedInstructions,
+      nextReadFileStateSnapshotIndex: () => this.readFileStateSnapshotCount++,
       hasLoadedSkill: options.hasLoadedSkill,
       subagentBackgroundBashMaxMs: options.subagentBackgroundBashMaxMs,
       bashShellSelection: options.bashShellSelection,
@@ -143,6 +147,13 @@ export class ToolExecutorImpl implements ToolExecutor {
     if (!decision.allowed)
       throw new Error(decision.result.error?.message ?? "Tool denied by host policy");
     return decision.executionInput;
+  }
+
+  areReadsDeniedWithoutPrompt(
+    filePaths: readonly string[],
+    traceContext: TraceContext,
+  ): Promise<boolean[]> {
+    return areReadsDeniedWithoutPrompt(this.deps, filePaths, traceContext);
   }
 
   execute(

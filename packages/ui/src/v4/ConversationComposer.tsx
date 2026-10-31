@@ -1,3 +1,10 @@
+import type { SessionLifecycleSnapshot } from "@zcode/shared";
+import {
+  WorkspaceHookPendingIndicator,
+  WorkspaceMcpPendingIndicator,
+} from "@/v4/WorkspaceHookPendingBanner.js";
+import { StoreContext } from "@/store/StoreProvider.js";
+import { toTelemetryUiMode } from "@/lib/appTelemetry.js";
 import { ComposerSubmissionPendingContext } from "@/project-sidebar/index.js";
 /* oxlint-disable eslint(max-lines) -- composer 集中收口输入区 wiring（附件/草稿/历史/mention），拆分会打散收口粒度。 */
 import { useRemoteProjectReconnect } from "@/hooks/RemoteProjectPresentationContext.js";
@@ -5,7 +12,7 @@ import { useOptionalRemoteWorkspaceController } from "@/remote/useRemoteWorkspac
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { useRemoteConversationAvailable } from "@/v4/RemoteConversationAvailability.js";
 import { restartPreparedWorktreeCreation } from "@/v4/composer/restartPreparedWorktreeCreation.js";
-import { getLocalTtftObserver } from "@/v4/telemetry/localTtftObserver.js";
+import { getLocalTtftObserver } from "@/v4/telemetry/local-ttft/contract.js";
 import { formatConversationWorkDuration } from "@/v4/conversationWorkDuration.js";
 /**
  * v4 会话 composer（composer parity）。
@@ -25,6 +32,7 @@ import { formatConversationWorkDuration } from "@/v4/conversationWorkDuration.js
 import {
   memo,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -219,6 +227,10 @@ import {
 import { useBranchSwitchGuard } from "@/v4/composer/branchSwitchGuard.js";
 import { toast } from "@/components/ui/toast.js";
 import { useOptionalWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
+import type {
+  ComposerDraftContent,
+  ComposerSubmissionDraftTransaction,
+} from "@/v4/composer/useDraftConfigControl.js";
 import {
   resolveOppositeFollowupDelivery,
   resolveFollowupModifierTooltip,
@@ -527,7 +539,10 @@ function arePromptHistoryEntriesEqual(left: readonly string[], right: readonly s
 
 export interface ConversationComposerProps {
   snapshot: ConversationSnapshot | null;
+  /** The real command has been sent but the authoritative input projection has not taken over yet; consume the projection store directly and do not keep separate display state. */
+  inputPending?: boolean;
   /** 草稿 scope（sessionId；draft 态 null → "__draft__" scope）。 */
+  lifecycle?: SessionLifecycleSnapshot;
   sessionId?: string | null;
   /** Skill catalog authority；草稿预热完成后为 prewarmSessionId，不改变 task/draft 身份。 */
   skillCatalogSessionId?: string | null;
@@ -538,6 +553,16 @@ export interface ConversationComposerProps {
   /** SessionPane 注入的完整 Draft owner；生产路径不再由编辑器直接覆盖持久记录。 */
   composerDraft: V4ComposerDraft;
   rootDraftScopeKey?: string;
+  /** Current draft scope incarnation; the token is not reused on A₁→B→A₂. */
+  composerDraftScopeToken: symbol;
+  /** The input hot path only stages the body of the current scope; it does not trigger a parent render or a synchronous disk write. */
+  stageComposerContent: (content: ComposerDraftContent) => void;
+  /** Captures a one-shot lifecycle commit for effect setup; after a switch it still writes back only to the corresponding old scope. */
+  captureComposerContentLifecycleCommit: () => (content: ComposerDraftContent) => void;
+  captureComposerSubmissionDraftTransaction: (
+    content: ComposerDraftContent,
+  ) => ComposerSubmissionDraftTransaction;
+  persistComposerContent: (content: ComposerDraftContent) => void;
   updateComposerContent: (
     content: Pick<V4ComposerDraft, "text" | "editorStateJson" | "mention" | "firstSubmission">,
   ) => void;
@@ -568,6 +593,7 @@ export interface ConversationComposerProps {
   blockingRequestId?: string | null;
   disabled?: boolean;
   onRetryInitialization?: () => void;
+  onRetryError?: () => void;
   /** 当前 Task 可用的 Highspeed 卡；只影响静态标识和模型锁定。 */
   highspeedCard?: HighspeedCardSnapshot | null;
   /**
@@ -723,13 +749,20 @@ function formatAttachmentLineCount(attachment: ChatComposerAttachment, locale: s
 
 function ConversationComposerImpl({
   snapshot,
+  inputPending = false,
+  lifecycle,
   sessionId = null,
   skillCatalogSessionId = sessionId,
   draftMode = false,
   draftConfig,
   composerDraft,
+  composerDraftScopeToken,
   rootDraftScopeKey,
+  stageComposerContent,
+  captureComposerContentLifecycleCommit,
+  captureComposerSubmissionDraftTransaction,
   updateComposerContent,
+  persistComposerContent,
   replaceComposerDraft,
   submissionReady = true,
   createSubmissionFromComposer,
@@ -741,6 +774,7 @@ function ConversationComposerImpl({
   blockingRequestId = null,
   disabled: disabledProp = false,
   onRetryInitialization,
+  onRetryError,
   highspeedCard = null,
   highspeedActivationCardId = null,
   onHighspeedActivationApplied,
@@ -867,7 +901,11 @@ function ConversationComposerImpl({
   // Empty-state "New worktree" first-send interception slot (stable object; value changes do not re-render).
   const worktreeIntentSlot = useComposerDraftWorktreeIntentSlot();
   const configPickerScopeKey = `${workspaceKey}\0${draftScopeId}`;
-  const [text, setText] = useState("");
+  const [reloadText, setReloadText] = useState(false);
+  const reloadTextRef = useRef(false);
+  const [textPresence, setTextPresence] = useState({ raw: false, trimmed: false });
+  const textPresenceRef = useRef(textPresence);
+  textPresenceRef.current = textPresence;
   const [pending, setPending] = useState(false);
   // Worktree setup queue (specs/composer-worktree-setup-steps.md): unlike `pending`, the queued
   // state never reports busy to the empty state and never blocks editing; it only shows the
@@ -977,14 +1015,15 @@ function ConversationComposerImpl({
   // submit 经 ref 读取最新文本/pending，避免回调随每次输入变更引用。
   const textRef = useRef("");
   const contentRevisionRef = useRef(0);
+  const pendingRef = useRef<string | null>(null);
+  const [pendingOwner, setPendingOwner] = useState<string | null>(null);
   // Repeat-submit owner token (specs/first-submission-instant-ux.md, flag lifetimes): the id of
   // the submission holding it. Only that owner releases it, so an earlier chain's `finally`
   // cannot clear a later send's guard; a first submission releases it at the P2 bind.
-  const pendingRef = useRef<string | null>(null);
-  const [pendingOwner, setPendingOwner] = useState<string | null>(null);
   // Repeat-click guard: the claim records the content revision it left behind. A submit at that
   // same revision is the same submission (a double click); any editor change makes a new draft.
   const claimedSubmissionRef = useRef<{ submissionId: string; revision: number } | null>(null);
+  const uiStore = useContext(StoreContext);
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
   // 这条线断过一次：composer 原本读一个平行的 sharedContextImport prop，而 SessionPane 从没
@@ -1046,16 +1085,31 @@ function ConversationComposerImpl({
   const updateText = useCallback(
     (next: string) => {
       textRef.current = next;
+      const reload = next.trim() === "/reload";
+      if (reloadTextRef.current !== reload) {
+        reloadTextRef.current = reload;
+        setReloadText(reload);
+      }
       contentRevisionRef.current += 1;
       advanceComposerDraftRevision(workspacePath, workspaceIdentity);
-      setText(next);
+      const nextPresence = { raw: next.length > 0, trimmed: next.trim().length > 0 };
+      const currentPresence = textPresenceRef.current;
+      if (
+        currentPresence.raw !== nextPresence.raw ||
+        currentPresence.trimmed !== nextPresence.trimmed
+      ) {
+        textPresenceRef.current = nextPresence;
+        setTextPresence(nextPresence);
+      }
       onTextChange?.(next);
     },
     [onTextChange, workspaceIdentity, workspacePath],
   );
 
   const initialization = snapshot?.runtimeInitialization;
-  const runtimeBlocked = initialization !== undefined && initialization.status !== "ready";
+  const runtimeBlocked =
+    (initialization !== undefined && initialization.status !== "ready") ||
+    (lifecycle !== undefined && lifecycle.state !== "ready");
 
   // ── 附件全链路（选择/粘贴/拖拽/画板/预传/门禁）──
   const attachmentsApi = useComposerAttachments({
@@ -1204,6 +1258,7 @@ function ConversationComposerImpl({
     workspacePath,
     workspaceIdentity,
     scopeId: draftScopeId,
+    scopeToken: composerDraftScopeToken,
   });
   const ownerDraftRef = useRef({
     draft: composerDraft,
@@ -1212,25 +1267,32 @@ function ConversationComposerImpl({
     scopeId: draftScopeId,
   });
   const draftPersistTimerRef = useRef<number | null>(null);
-  const suppressDraftPersistRef = useRef(false);
   // ISSUE-060: set while a scope switch waits for the editor to receive the new scope's draft. The
   // editor (and textRef) still hold the previous scope's text then, so no writer may persist it.
   const scopeRestorePendingRef = useRef(false);
   // Whether the restore for the previous target was still pending when the target changed again.
   const priorScopeRestorePendingRef = useRef(false);
-  const draftPersistClaimRef = useRef<string | null>(null);
   const updateComposerContentRef = useRef(updateComposerContent);
   updateComposerContentRef.current = updateComposerContent;
+  const activeSubmissionDraftTransactionRef = useRef<ComposerSubmissionDraftTransaction | null>(
+    null,
+  );
 
   const snapshotDraftOfEditor = useCallback((): {
     text: string;
     editorStateJson?: string;
   } => {
-    const currentText = textRef.current;
+    let currentText = textRef.current;
     let editorStateJson: string | undefined;
     try {
-      const editorState = inputApiRef.current?.getEditorState();
-      editorStateJson = editorState ? JSON.stringify(editorState.toJSON()) : undefined;
+      const inputApi = inputApiRef.current;
+      const editorState = inputApi?.getEditorState();
+      if (inputApi && editorState) {
+        // Root cause: during IME candidate composition the body is not published to React, so textRef temporarily lags behind Lexical.
+        // The lifecycle flush must read the editor's facts directly; otherwise switching tasks or closing the window before compositionend would lose the draft.
+        currentText = inputApi.getMarkdown();
+        editorStateJson = JSON.stringify(editorState.toJSON());
+      }
     } catch (error) {
       logger.warn(`[v4-composer] 草稿 editorState 序列化失败: ${String(error)}`);
     }
@@ -1252,18 +1314,22 @@ function ConversationComposerImpl({
 
   const persistDraftNow = useCallback(
     (scopeId: string) => {
-      if (suppressDraftPersistRef.current || scopeRestorePendingRef.current) return;
+      if (scopeRestorePendingRef.current) return;
+      if (activeSubmissionDraftTransactionRef.current?.matchesTarget(composerDraftScopeToken)) {
+        return;
+      }
       const content = snapshotDraftOfEditor();
       if (scopeId === draftScopeRef.current) {
-        updateComposerContent(content);
+        persistComposerContent(content);
         return;
       }
     },
-    [snapshotDraftOfEditor, updateComposerContent, workspaceIdentity, workspacePath],
+    [composerDraftScopeToken, snapshotDraftOfEditor, persistComposerContent],
   );
 
   const scheduleDraftPersist = useCallback(() => {
     if (typeof window === "undefined") return;
+    stageComposerContent({ text: textRef.current });
     if (draftPersistTimerRef.current !== null) {
       window.clearTimeout(draftPersistTimerRef.current);
     }
@@ -1271,7 +1337,7 @@ function ConversationComposerImpl({
       draftPersistTimerRef.current = null;
       persistDraftNow(draftScopeRef.current);
     }, 350);
-  }, [persistDraftNow]);
+  }, [persistDraftNow, stageComposerContent]);
 
   // ── 自动聚焦（新建任务 / 切会话 / 挂载后把光标交还输入框）──
   // 触发源：startDraft 递增的 draftFocusVersion（覆盖 Cmd/Ctrl+N 与所有「新建任务」入口）、
@@ -1430,7 +1496,10 @@ function ConversationComposerImpl({
       previousTarget.workspacePath !== workspacePath ||
       previousTarget.workspaceIdentity !== workspaceIdentity;
     let transferredDraft: ReturnType<typeof snapshotDraftOfEditor> | null = null;
-    if (targetChanged && !suppressDraftPersistRef.current) {
+    if (
+      targetChanged &&
+      !activeSubmissionDraftTransactionRef.current?.matchesTarget(previousTarget.scopeToken)
+    ) {
       if (draftPersistTimerRef.current !== null) {
         window.clearTimeout(draftPersistTimerRef.current);
         draftPersistTimerRef.current = null;
@@ -1460,6 +1529,7 @@ function ConversationComposerImpl({
       workspacePath,
       workspaceIdentity,
       scopeId: draftScopeId,
+      scopeToken: composerDraftScopeToken,
     };
 
     const draft = transferredDraft ?? composerDraft;
@@ -1545,6 +1615,7 @@ function ConversationComposerImpl({
     // 依赖收敛到 scope/workspace：draft 恢复只应发生在 scope 切换或 workspace 切换。
   }, [
     draftScopeId,
+    composerDraftScopeToken,
     persistDraftNow,
     requestComposerFocus,
     snapshotDraftOfEditor,
@@ -1612,11 +1683,14 @@ function ConversationComposerImpl({
   // 刷新/关窗前落盘当前草稿。
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const commitLifecycleContent = captureComposerContentLifecycleCommit();
     const flush = () => persistDraftNow(draftScopeRef.current);
     window.addEventListener("pagehide", flush);
     window.addEventListener("blur", flush);
     return () => {
-      flush();
+      if (!activeSubmissionDraftTransactionRef.current?.matchesTarget(composerDraftScopeToken)) {
+        commitLifecycleContent(snapshotDraftOfEditor());
+      }
       window.removeEventListener("pagehide", flush);
       window.removeEventListener("blur", flush);
       if (draftPersistTimerRef.current !== null) {
@@ -1626,7 +1700,12 @@ function ConversationComposerImpl({
       for (const cleanup of commandResolutionCleanupsRef.current) cleanup();
       commandResolutionCleanupsRef.current.clear();
     };
-  }, [persistDraftNow]);
+  }, [
+    captureComposerContentLifecycleCommit,
+    composerDraftScopeToken,
+    persistDraftNow,
+    snapshotDraftOfEditor,
+  ]);
 
   // ── prompt history（per-workspace localStorage，↑/↓ 导航由 PromptHistoryPlugin 消费）──
   const [promptHistory, setPromptHistory] = useState<readonly string[]>(() =>
@@ -1644,7 +1723,7 @@ function ConversationComposerImpl({
   });
   const canStop = Boolean(snapshot?.control.canStop);
   const modifiedEnterReversesDelivery = modifiedEnterSubmits && canStop;
-  const hasText = text.trim().length > 0;
+  const hasText = textPresence.trimmed;
   const hasDraftToSubmit =
     hasText ||
     hasAttachments ||
@@ -1655,7 +1734,7 @@ function ConversationComposerImpl({
     hasPluginUiContexts ||
     Boolean(activeShareContextId);
   const hasComposerDraftContent =
-    text.length > 0 ||
+    textPresence.raw ||
     hasAttachments ||
     hasCodeCommentContexts ||
     hasWebElementContexts ||
@@ -1681,15 +1760,27 @@ function ConversationComposerImpl({
       attachmentsApi.attachments.every(
         (item) => item.uploadStatus === "ready" || item.uploadStatus === "waitingSession",
       ));
+  const recoveryCommand = appSlashCommands?.find(
+    (command) => command.recovery && command.value === "reload",
+  );
+  // The panel selection is an AppSlashCommand action and the draft is not an argument; only a text submission requires a standalone command.
+  const recoveryAvailable = Boolean(recoveryCommand) && remoteAvailable;
+  const recoveryAllowed =
+    recoveryAvailable &&
+    !hasAttachments &&
+    !hasCodeCommentContexts &&
+    !hasWebElementContexts &&
+    !hasPptxElementReferences &&
+    !hasConversationSelectionReferences &&
+    !hasPluginUiContexts &&
+    !pendingShareContext;
+  const canReload = recoveryAllowed && reloadText && remoteAvailable;
   const canSend =
     !disabled &&
     !pending &&
     !worktreeQueued &&
     hasDraftToSubmit &&
-    routingAllowsSend &&
-    attachmentsReady &&
-    submissionReady &&
-    !runtimeBlocked;
+    (canReload || (routingAllowsSend && attachmentsReady && submissionReady && !runtimeBlocked));
   // Same predicate as submit() (composerSubmitBlockReason), from render state: the bound-session
   // barrier and an in-flight first submission disable Send visibly instead of dropping the click.
   const heldFirstSubmission = composerDraft?.firstSubmission;
@@ -1961,7 +2052,10 @@ function ConversationComposerImpl({
     ) => {
       // The editor does not hold this scope's draft yet (ISSUE-060); its text is not this scope's input.
       if (scopeRestorePendingRef.current) return;
-      const trimmed = textRef.current.trim();
+      const submittedAt = performance.timeOrigin + performance.now();
+      // The IME candidate text has not reached textRef yet; the submission must share the Lexical snapshot with claim/restore.
+      const submittedDraft = snapshotDraftOfEditor();
+      const trimmed = submittedDraft.text.trim();
       const submittedQueueItemIds =
         snapshotRef.current?.queue.items.map((item) => item.queueItemId) ?? [];
       const hasPendingAttachments = attachmentsApi.attachments.length > 0;
@@ -1976,10 +2070,44 @@ function ConversationComposerImpl({
       const currentConversationSelections = conversationSelectionReferences;
       const hasPendingConversationSelections = currentConversationSelections.length > 0;
       const submittedShareContextId = activeShareContextId;
+      // /reload is a local action: intercept it before model config, queue, and history handling; arguments and attachments are not sent to the model.
+      if (/^\/reload(?:\s|$)/.test(trimmed)) {
+        if (
+          trimmed !== "/reload" ||
+          !recoveryCommand ||
+          !recoveryAllowed ||
+          !remoteAvailable ||
+          pendingRef.current !== null
+        )
+          return;
+        const reloadOwner = `reload:${crypto.randomUUID()}`;
+        const revision = contentRevisionRef.current;
+        const scope = draftScopeRef.current;
+        pendingRef.current = reloadOwner;
+        setPending(true);
+        try {
+          const completed = await recoveryCommand.run();
+          if (
+            completed !== false &&
+            scope === draftScopeRef.current &&
+            revision === contentRevisionRef.current
+          ) {
+            inputApiRef.current?.clear();
+            updateText("");
+            persistDraftNow(scope);
+          }
+        } finally {
+          if (pendingRef.current === reloadOwner) {
+            pendingRef.current = null;
+            setPending(false);
+          }
+        }
+        return;
+      }
       // After first draft send is accepted, this Composer promotes in place from __draft__ to session scope.
       // If success cleanup reads the mutable ref later, it may clear the new scope by mistake and leave the first input in
       // __draft__, restoring it when the next task is created. Freeze the actual submitted scope at send start.
-      const submittedDraft = snapshotDraftOfEditor();
+      const submissionDraftTransaction = captureComposerSubmissionDraftTransaction(submittedDraft);
       // Recovery carries the contexts actually included in this submission, so Restore
       // re-establishes exactly this input after navigation or reload.
       const submittedRecoveryContexts: V4ComposerRecoveryContexts | undefined =
@@ -2076,14 +2204,15 @@ function ConversationComposerImpl({
         // First-send promotion may switch scope or remount Composer before onSendText returns.
         // If the old scope effect can still persist, the new Composer restores already-sent text as a draft.
         // Claim and hide the draft before submission; restore it on failure rather than masking the race with a delay.
-        suppressDraftPersistRef.current = true;
-        draftPersistClaimRef.current = submissionId;
+        const claimed = submissionDraftTransaction.claim();
+        activeSubmissionDraftTransactionRef.current = claimed ? submissionDraftTransaction : null;
         // The persisted draft must drop the submitted text even when the editor stays visible until
         // acceptance: the debounced persist may have already stored it, and the first-send promotion
         // re-applies that draft into the promoted session, so the input never clears. Failure
         // recovery does not read this store — restoreSubmittedDraft uses the frozen snapshot.
-        updateComposerContentRef.current({ text: "", firstSubmission: undefined });
-        if (clearEditor) {
+        // A failed claim means text changed while the send waited; that newer text is not this submission's to clear.
+        if (claimed) updateComposerContentRef.current({ text: "", firstSubmission: undefined });
+        if (clearEditor && claimed) {
           inputApiRef.current?.clear();
           updateText("");
           editorClearedOptimistically = true;
@@ -2143,6 +2272,8 @@ function ConversationComposerImpl({
           (frozenFirstSubmission &&
             (reservedSubmissionSessionId || frozenFirstSubmission.reservation));
         if (persistFrozenRecovery) {
+          // The recovery record now holds the body, so the editor draft stays released (no in-place restore).
+          submissionDraftTransaction.release();
           // Persist where the user is looking (specs/first-submission-lifecycle.md): the reserved
           // session only once the bind moved the record there; otherwise the scope it still lives
           // in, with the reservation kept inside the record so Retry reuses it.
@@ -2173,16 +2304,19 @@ function ConversationComposerImpl({
             });
           }
         } else if (isCurrentOwner()) {
+          // Only the same view restores the body in place; newer text typed meanwhile wins over the stale failure.
+          const bodyRestore = submissionDraftTransaction.restore();
           if (frozenFirstSubmission && !reservedSubmissionSessionId) {
             clearV4ComposerDraft(workspacePath, workspaceIdentity, pendingRecoveryScope);
           }
-          updateComposerContentRef.current({
-            ...submittedDraft,
-            ...(frozenFirstSubmission && !reservedSubmissionSessionId
-              ? { firstSubmission: undefined }
-              : {}),
-          });
-          if (editorClearedOptimistically) {
+          if (bodyRestore.applied)
+            updateComposerContentRef.current({
+              ...submittedDraft,
+              ...(frozenFirstSubmission && !reservedSubmissionSessionId
+                ? { firstSubmission: undefined }
+                : {}),
+            });
+          if (editorClearedOptimistically && bodyRestore.applied) {
             if (submittedDraft.editorStateJson)
               inputApiRef.current?.setEditorStateJson(submittedDraft.editorStateJson);
             else inputApiRef.current?.setText(submittedDraft.text);
@@ -2197,6 +2331,7 @@ function ConversationComposerImpl({
             });
           }
         } else {
+          submissionDraftTransaction.release();
           persistV4ComposerDraft(
             workspacePath,
             workspaceIdentity,
@@ -2210,10 +2345,8 @@ function ConversationComposerImpl({
             });
           }
         }
-        if (draftPersistClaimRef.current === submissionId) {
-          suppressDraftPersistRef.current = false;
-          draftPersistClaimRef.current = null;
-        }
+        if (activeSubmissionDraftTransactionRef.current === submissionDraftTransaction)
+          activeSubmissionDraftTransactionRef.current = null;
         releaseRepeatClickGuard();
         draftSubmissionClaimed = false;
       };
@@ -2233,7 +2366,10 @@ function ConversationComposerImpl({
             { ...submittedOwner, revision: 0 },
             { ...renderedOwnerRef.current, revision: 0 },
           );
-        if (sameView && textRef.current.trim().length === 0) {
+        const restoreInPlace = sameView && textRef.current.trim().length === 0;
+        if (restoreInPlace) submissionDraftTransaction.restore();
+        else submissionDraftTransaction.release();
+        if (restoreInPlace) {
           clearV4ComposerDraft(workspacePath, workspaceIdentity, pendingRecoveryScope);
           updateComposerContentRef.current({ ...submittedDraft, firstSubmission: undefined });
           if (editorClearedOptimistically) {
@@ -2254,10 +2390,8 @@ function ConversationComposerImpl({
             ),
           });
         }
-        if (draftPersistClaimRef.current === submissionId) {
-          suppressDraftPersistRef.current = false;
-          draftPersistClaimRef.current = null;
-        }
+        if (activeSubmissionDraftTransactionRef.current === submissionDraftTransaction)
+          activeSubmissionDraftTransactionRef.current = null;
         releaseRepeatClickGuard();
         draftSubmissionClaimed = false;
       };
@@ -2267,10 +2401,11 @@ function ConversationComposerImpl({
       };
       const finalizeSubmittedDraft = () => {
         if (!draftSubmissionClaimed) return;
-        if (draftPersistClaimRef.current === submissionId) {
-          suppressDraftPersistRef.current = false;
-          draftPersistClaimRef.current = null;
-        }
+        submissionDraftTransaction.finalize();
+        if (activeSubmissionDraftTransactionRef.current === submissionDraftTransaction)
+          activeSubmissionDraftTransactionRef.current = null;
+        if (activeSubmissionDraftTransactionRef.current === submissionDraftTransaction)
+          activeSubmissionDraftTransactionRef.current = null;
         draftSubmissionClaimed = false;
       };
       const submission = createSubmissionFromComposer?.() ?? null;
@@ -2349,9 +2484,6 @@ function ConversationComposerImpl({
         currentConversationSelections.forEach((reference) =>
           removeConversationSelectionReference(reference.id),
         );
-        // On success, clear the scope draft captured by this submission. Prompt history was synchronously persisted before the real send,
-        // avoiding loss during first-send promotion or clearing the new scope created by promotion.
-        finalizeSubmittedDraft();
       };
       const subscribeToCommandResolution = (commandId: string) => {
         let active = true;
@@ -2364,13 +2496,6 @@ function ConversationComposerImpl({
           });
         const unsubscribe = pendingCommandRegistry.subscribeResolution(commandId, (resolution) => {
           if (!active) return;
-          if (resolution === "unknown") {
-            if (frozenFirstSubmission)
-              updateV4FirstSubmission(workspacePath, workspaceIdentity, submissionId, {
-                status: "unknown",
-              });
-            return;
-          }
           submittedCommandResolved = true;
           cleanup();
           if (
@@ -2378,9 +2503,15 @@ function ConversationComposerImpl({
             resolution !== "duplicate" &&
             resolution !== "authoritative"
           ) {
+            // On a direct rejected/failed result the claim still holds the empty draft; restore the body first, then release the transaction.
+            restoreSubmittedDraft();
+            submissionDraftTransaction.release();
+            activeSubmissionDraftTransactionRef.current = null;
             return;
           }
-          void settleSubmittedContent();
+          void settleSubmittedContent().catch((error) => {
+            logger.warn("[v4-composer] 已接纳输入的附件交接失败", error);
+          });
         });
         cleanup = () => {
           if (!active) return;
@@ -2621,9 +2752,11 @@ function ConversationComposerImpl({
                     snapshotRef.current.inputRouting.mode !== "startNow") ||
                     false,
                   trimmed.startsWith("/"),
+                  submittedAt,
                 )
               : undefined,
             extraDetail: buildV4ConversationPromptTelemetryExtraDetail({
+              uiMode: toTelemetryUiMode(uiStore?.getState().interfaceMode),
               askMode: telemetryConfig?.mode,
               modelName: telemetryConfig?.model,
               configProvider: telemetryConfig?.provider,
@@ -3134,10 +3267,14 @@ function ConversationComposerImpl({
       );
     },
     [
+      recoveryCommand,
+      recoveryAllowed,
+      uiStore,
       attachmentsApi,
       attachmentsReady,
       baseWorkspaceServices,
       branchSwitchGuard,
+      captureComposerSubmissionDraftTransaction,
       conversationSelectionReferences,
       conversationTelemetry,
       draftConfig,
@@ -3160,6 +3297,8 @@ function ConversationComposerImpl({
       durableFirstSubmission,
       draftGeneration,
       activeShareContextId,
+      pendingShareContext,
+      persistDraftNow,
       provider,
       readPlanIdentitySnapshot,
       removeCodeCommentContext,
@@ -3460,17 +3599,13 @@ function ConversationComposerImpl({
   const composerDraftRef = useRef(composerDraft);
   composerDraftRef.current = composerDraft;
   const heldCommandId = heldOutcomeUnresolved ? heldFirstSubmission?.commandId : undefined;
-  const [heldResubscribe, setHeldResubscribe] = useState(0);
   useEffect(() => {
     if (!heldCommandId) return;
+    // An unknown query result produces no notification (pendingCommandRegistry.applyQuery), so the
+    // hold stays until an explicit decision arrives.
     return pendingCommandRegistry.subscribeResolution(heldCommandId, (resolution) => {
       const held = composerDraftRef.current?.firstSubmission;
       if (held?.commandId !== heldCommandId) return;
-      // The registry drops its listeners after a notification; an "unknown" keeps the hold.
-      if (resolution === "unknown") {
-        setHeldResubscribe((value) => value + 1);
-        return;
-      }
       const decided =
         resolution === "accepted" || resolution === "duplicate" || resolution === "authoritative"
           ? undefined
@@ -3478,7 +3613,7 @@ function ConversationComposerImpl({
       retryFirstSubmissionRef.current = decided;
       updateComposerContent({ text: textRef.current, firstSubmission: decided });
     });
-  }, [heldCommandId, heldResubscribe, updateComposerContent]);
+  }, [heldCommandId, updateComposerContent]);
   // Unlock (specs/first-submission-instant-ux.md, Remove): a held copy whose outcome may never be
   // decided must not leave the composer dead. Only an explicit, confirmed click turns it into an
   // ordinary Retry of the same submission; it never sends by itself, and the ledger still clears
@@ -3526,7 +3661,26 @@ function ConversationComposerImpl({
     void submit();
   }, [failureReturnSubmitRequest, sessionId, submit, workspaceKey]);
 
-  // Lexical onChange (the first character is also reported reliably; see LexicalChatInput.TextContentPlugin).
+  const handleUserInputClear = useCallback(() => {
+    conversationTelemetry?.resetComposerInputStart();
+  }, [conversationTelemetry]);
+
+  const handleUserInputPresenceChange = useCallback(
+    (presence: { raw: boolean; trimmed: boolean }) => {
+      const currentPresence = textPresenceRef.current;
+      if (currentPresence.raw === presence.raw && currentPresence.trimmed === presence.trimmed) {
+        return;
+      }
+      textPresenceRef.current = presence;
+      setTextPresence(presence);
+    },
+    [],
+  );
+
+  const handleUserInputStart = useCallback(() => {
+    conversationTelemetry?.recordComposerInputStart();
+  }, [conversationTelemetry]);
+
   // Lexical onChange（首字符也稳定回传，见 LexicalChatInput.TextContentPlugin）。
   // The only writer that drops the draft branch intent: the user emptying a non-empty draft
   // (spec §1). Programmatic editor updates (send claim, restore, replace) are reported with
@@ -3540,25 +3694,14 @@ function ConversationComposerImpl({
         textRef.current.trim().length > 0;
       // The editor has not received the current scope's draft yet; this change is not that scope's.
       if (scopeRestorePendingRef.current) return;
-      suppressDraftPersistRef.current = false;
       conversationTelemetry?.recordComposerTextChange(value);
       updateText(value);
       if (userEmptiedDraft && draftMode && sessionId === null) {
         useDraftBranchIntentStore.getState().clearDraftBranchIntent(workspaceKey);
       }
-      // 正文先进入与 mode/model 相同的内存 Draft；防抖只负责补充最新 Lexical JSON。
-      updateComposerContent({ text: value });
       scheduleDraftPersist();
     },
-    [
-      conversationTelemetry,
-      draftMode,
-      scheduleDraftPersist,
-      sessionId,
-      updateComposerContent,
-      updateText,
-      workspaceKey,
-    ],
+    [conversationTelemetry, draftMode, scheduleDraftPersist, sessionId, updateText, workspaceKey],
   );
 
   const handleEditorFocus = useCallback(() => {
@@ -3686,23 +3829,27 @@ function ConversationComposerImpl({
     };
   }, [listenAddToChatEvents, updateText, workspaceIdentity, workspacePath]);
 
-  // 动态 placeholder（旧 chatViewPlaceholder 语义）：无历史 → newTask；
-  // 有历史空闲 → followUpAsk；有历史处理中 → followUpQueue；
-  // 完整视图浮窗（单行）运行中 → 「工作中 {时长}」，与流式消息同值同格式。
+  // Clearing the body on ACK and the message projection do not happen at the same moment; the submission and the pending-projection command together cover the first-submission handoff window.
+  // The full-view floating window (single line) uses a whole-second summary while running; the bottom of the message stream shows tenths of a second separately.
   const workingDurationLabel =
     layout === "inline" && canStop
       ? formatConversationWorkDuration(workingDurationMs, intl, locale)
       : null;
-  const normalPlaceholder = workingDurationLabel
-    ? intl.formatMessage({ id: "chat.history.workingFor" }, { duration: workingDurationLabel })
-    : intl.formatMessage({
-        id: resolveChatPlaceholderKey({
-          hasHistoryMessages: (snapshot?.rows.totalCount ?? 0) > 0,
-          isTaskProcessing: canStop,
-          // 单行输入框放不下完整的新任务提示，沿用手机远控的短文案。
-          compactNewTask: compactMobilePlaceholder || layout === "inline",
-        }),
-      });
+  // When switching back to an existing session, the lease switches first and the snapshot arrives later; unknown history must not be treated as a new draft,
+  // otherwise the running input would flash a new-task hint. Only wait for the current snapshot; do not reuse the previous session's state.
+  const normalPlaceholder =
+    sessionId !== null && snapshot === null
+      ? ""
+      : workingDurationLabel
+        ? intl.formatMessage({ id: "chat.history.workingFor" }, { duration: workingDurationLabel })
+        : intl.formatMessage({
+            id: resolveChatPlaceholderKey({
+              hasHistoryMessages: (snapshot?.rows.totalCount ?? 0) > 0,
+              isTaskProcessing: pending || inputPending || canStop,
+              // 单行输入框放不下完整的新任务提示，沿用手机远控的短文案。
+              compactNewTask: compactMobilePlaceholder || layout === "inline",
+            }),
+          });
   const sendTooltipTitle = intl.formatMessage({
     id: mode === "enqueue" ? "chat.queue.enqueue" : "chat.send",
   });
@@ -4219,6 +4366,7 @@ function ConversationComposerImpl({
               size="icon-md"
               onClick={handleStopClick}
               data-testid={TID_V4_STOP}
+              className="rounded-full"
               aria-label={stopTooltipTitle}
             >
               <SquareIcon className="size-4 fill-current" />
@@ -4239,7 +4387,7 @@ function ConversationComposerImpl({
               onClick={handleSendButtonClick}
               data-testid={TID_V4_COMPOSER_SEND}
               aria-label={resolvedSendTooltipTitle}
-              className="cursor-pointer gap-1 rounded-lg bg-brand text-ui-base text-foreground-inverse hover:bg-brand/80"
+              className="cursor-pointer gap-1 rounded-full bg-brand text-ui-base text-foreground-inverse hover:bg-brand/80"
             >
               {pending || worktreeQueued ? (
                 <Spinner className="size-4" />
@@ -4322,6 +4470,29 @@ function ConversationComposerImpl({
           draftExternalAgentKey={draftExternalAgentKey}
           onSetDraftExternalAgentChoice={onSetDraftExternalAgentChoice}
         />
+        {sessionId && snapshot?.workspaceHookAdmission ? (
+          <WorkspaceHookPendingIndicator
+            key={JSON.stringify([sessionId, snapshot.workspaceHookAdmission.bundleDigest])}
+            sessionId={sessionId}
+            workspacePath={workspacePath}
+            workspaceIdentity={workspaceIdentity}
+            admission={snapshot.workspaceHookAdmission}
+          />
+        ) : null}
+        {sessionId && snapshot?.workspaceMcpAdmission ? (
+          <WorkspaceMcpPendingIndicator
+            key={JSON.stringify([
+              workspaceIdentity,
+              workspacePath,
+              sessionId,
+              snapshot.workspaceMcpAdmission.bundleDigest,
+            ])}
+            sessionId={sessionId}
+            workspacePath={workspacePath}
+            workspaceIdentity={workspaceIdentity}
+            admission={snapshot.workspaceMcpAdmission}
+          />
+        ) : null}
         {/* Bug 原因：附件画廊 rebase 曾整段覆盖 leadingActions，误删 staging 的 CUA 常驻入口。
             入口自身继续负责平台、远程与设置可见性，不在 composer 重复判定。 */}
         <V4ComposerCuaEntry
@@ -4360,6 +4531,9 @@ function ConversationComposerImpl({
       provider,
       remoteSessionId,
       runningSubagentCount,
+      sessionId,
+      snapshot?.workspaceHookAdmission,
+      snapshot?.workspaceMcpAdmission,
       snapshot?.backgroundWorks,
       workspaceIdentity,
       workspacePath,
@@ -4430,6 +4604,7 @@ function ConversationComposerImpl({
                   }
                 : undefined
             }
+            onRetry={onRetryError}
             onDismiss={onDismissError}
             onResume={onResumeError}
             onOpenModelSettings={onOpenModelSettings}
@@ -4527,16 +4702,14 @@ function ConversationComposerImpl({
               ? normalPlaceholder
               : intl.formatMessage({ id: "remote.conversation.sendUnavailable" })
           }
-          disabled={disabled || mode === "reject"}
+          disabled={disabled || (mode === "reject" && !recoveryAvailable)}
           submitting={pending}
           submitDisabled={
-            runtimeBlocked ||
             pending ||
             sendBarrierActive ||
             worktreeQueued ||
-            !routingAllowsSend ||
-            !attachmentsReady ||
-            !submissionReady
+            (!canReload &&
+              (runtimeBlocked || !routingAllowsSend || !attachmentsReady || !submissionReady))
           }
           allowSubmitWhenEmpty={
             // 发送按钮已把代码评论视为可发送上下文，但这里曾漏掉同一状态，
@@ -4583,6 +4756,9 @@ function ConversationComposerImpl({
             isComposerModelBlockReason(sendBlockReason) ? handleModelBlockedEnter : undefined
           }
           onChange={handleEditorChange}
+          onUserInputClear={handleUserInputClear}
+          onUserInputPresenceChange={handleUserInputPresenceChange}
+          onUserInputStart={handleUserInputStart}
           onFocus={handleEditorFocus}
           onSubmit={handleEditorSubmit}
           onWhiteboardMentionSelected={attachmentsApi.handleWhiteboardMentionSelected}

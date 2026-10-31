@@ -11,20 +11,22 @@ Before starting work, run `node scripts/check-workspace-freshness.mjs` to check 
 
 Run the following commands from the repository root:
 
-| Purpose                     | Command                                               |
-| --------------------------- | ----------------------------------------------------- |
-| Type check                  | `pnpm typecheck`                                      |
-| Lint                        | `pnpm lint` / `pnpm lint:fix`                         |
-| Format check                | `pnpm fmt:check` (fork-changed files only)            |
-| Desktop development         | `pnpm dev:desktop`                                    |
-| Web development             | `pnpm dev:web`                                        |
-| Pre-push check              | `pnpm verify:pre-push` (Lint, architecture and tests) |
-| Architecture check          | `pnpm architecture:check --changed`                   |
-| Module reading package      | `pnpm architecture:context <module-id>`               |
-| Unused dependencies/exports | `pnpm knip`                                           |
-| Export reference lookup     | `pnpm dep:refs --list-exports <file>`                 |
+| Purpose                     | Command                                                              |
+| --------------------------- | -------------------------------------------------------------------- |
+| Type check                  | `pnpm typecheck`                                                     |
+| Lint                        | `pnpm lint` / `pnpm lint:fix`                                        |
+| Format check                | `pnpm fmt:check` (fork-changed files only)                           |
+| Desktop development         | `pnpm dev:desktop`                                                   |
+| Web development             | `pnpm dev:web`                                                       |
+| Pre-push check              | `pnpm verify:pre-push` (worktree, Lint, schema, architecture, tests) |
+| Architecture check          | `pnpm architecture:check --changed`                                  |
+| Module reading package      | `pnpm architecture:context <module-id>`                              |
+| Unused dependencies/exports | `pnpm knip`                                                          |
+| Export reference lookup     | `pnpm dep:refs --list-exports <file>`                                |
 
 Git hooks use `lefthook.yml`; `pnpm prepare` installs the pinned Lefthook. Hook integration tests run with `pnpm test:git-hooks`.
+
+Upstream retired App business unit tests from its root suite; do not re-add upstream-retired tests or `contract.test.ts` to `scripts/engineering-test-files.json`. Fork-owned Vitest unit tests live in `scripts/fork-test-files.json` (`specs/fork-test-pipeline.md`); add new fork tests there. Engineering Vitest runs with `pnpm test:engineering <file>`, fork Vitest with `pnpm test:fork <file>`; push runs `pnpm test:engineering:affected --scope push` across both. CLI/CUA use their own package entry points; do not run full suites by default.
 
 Test entry points are defined by the target package's current `package.json` and actual test files; do not assume a unified unit test or E2E command exists.
 
@@ -41,8 +43,9 @@ Test entry points are defined by the target package's current `package.json` and
 
 - For code changes, use `.agents/skills/architecture-governance/SKILL.md`: run the architecture check first, then read the controlled context of the target module.
 - Avoid duplicated state and multiple write paths. Define a single owner, interface, dependency direction, event order, and idempotency boundary; do not use timeouts to mask synchronization problems.
-- When there are behavior changes, add the corresponding tests first; interaction changes require E2E scenarios. Check that tests are consistent with the implementation, and actually run the available verification. If not run or the environment is limited, state so truthfully.
+- When there are behavior changes, update the spec and add the corresponding tests first (fork unit tests go in the fork test manifest); interaction changes require E2E scenarios. Engineering tools and CLI/CUA get their regression tests first. Check that tests are consistent with the implementation, and actually run the available verification. If not run or the environment is limited, state so truthfully.
 - When fixing a bug, use English comments only, and add them only when they explain the cause or prevention constraints. When a design flaw is found, align with the user first instead of continually adding fallback branches.
+- PR descriptions state the background, design intent, and behavior before and after the change. For each bugfix, describe the trigger scenario, root-cause evidence, fix mechanism, and regression verification, and link existing tickets where possible. Mark unconfirmed root causes or introducing commits as such; do not attribute them by module or time proximity.
 - For solutions involving state, timing, remote, or asynchronous synchronization, use a diagram to show owners and event order.
 - You must run `pnpm typecheck` and `pnpm lint` and report the real results; do not report pre-existing failures as passing.
 - Use asynchronous file and network IO; cross-package imports use public entry points and follow existing path aliases.

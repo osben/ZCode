@@ -3,7 +3,7 @@
 // Mirrors the renderer's packages/ui/src/v4/commandFactory.ts: the renderer persists clientId in browser
 // localStorage; the host process uses a stable in-process clientId (a host restart is a new submitter,
 // while the idempotency table remains keyed by commandId). They are not combined because services must not depend on the UI package.
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   COMMANDS_REQUIRING_BASE_REVISION,
   ROW_TARGETING_COMMANDS,
@@ -69,6 +69,17 @@ export function createHostCommandEnvelope<T extends CommandType>(
   if (ROW_TARGETING_COMMANDS.has(input.type) && !input.baseLogEpoch) {
     throw new Error(`command ${input.type} 是 row target 命令，必须携带 baseLogEpoch`);
   }
+  // Session IDs are UUID v4 again; assigned when the envelope is first constructed so a retry
+  // does not regenerate it and reserve a second task.
+  const payload =
+    input.type === "createSession"
+      ? {
+          ...input.payload,
+          sessionId:
+            (input.payload as CommandPayloadMap["createSession"]).sessionId ??
+            `sess_${randomUUID()}`,
+        }
+      : input.payload;
   return {
     commandId: input.commandId ?? uuidv7(),
     clientId: input.clientId ?? hostV4ClientId,
@@ -76,7 +87,7 @@ export function createHostCommandEnvelope<T extends CommandType>(
     ...(input.baseRevision !== undefined ? { baseRevision: input.baseRevision } : {}),
     ...(input.baseLogEpoch ? { baseLogEpoch: input.baseLogEpoch } : {}),
     type: input.type,
-    payload: input.payload,
+    payload,
     issuedAt: Date.now(),
   };
 }

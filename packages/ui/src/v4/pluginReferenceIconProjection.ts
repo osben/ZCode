@@ -1,6 +1,7 @@
 import { resolvePluginIconSource } from "@/lib/pluginIconSource.js";
 import type { ZCodePluginReferenceCatalogEntry } from "@zcode/shared";
-import type { ConversationStoreStatus } from "@/v4/conversationProjectionStore.js";
+import type { ConversationRowsPartition } from "@zcode/shared/zcode-protocol-v4";
+import { memoizeByRows, type ConversationStoreStatus } from "@/v4/conversationProjectionStore.js";
 
 export function isSessionPluginCatalogReady(
   projectionStatus: ConversationStoreStatus,
@@ -10,10 +11,29 @@ export function isSessionPluginCatalogReady(
   return Boolean(projectionStatus === "live" && sessionId && snapshotSessionId === sessionId);
 }
 
-export function hasPluginReferenceUserRows(
-  rows: readonly { kind: string; text?: string }[],
+export function hasPluginReferenceRows(
+  rows: readonly {
+    kind: string;
+    text?: string;
+    display?: { ui?: { pluginId?: string }; kind?: string };
+  }[],
 ): boolean {
-  return rows.some((row) => row.kind === "userInput" && row.text?.includes("(plugin://"));
+  return rows.some(
+    (row) =>
+      (row.kind === "userInput" && row.text?.includes("(plugin://")) ||
+      (row.kind === "toolCall" && Boolean(row.display?.ui?.pluginId)),
+  );
+}
+
+const pluginReferenceRowsByRows = memoizeByRows(hasPluginReferenceRows);
+
+/**
+ * Same result as hasPluginReferenceRows(history ++ tail).
+ * Bug root cause: SessionPane scanned the entire history row by row on every render (every frame
+ * while streaming); with the history-segment check cached by reference, only the tail rounds are scanned.
+ */
+export function hasPluginReferenceRowsInPartition(partition: ConversationRowsPartition): boolean {
+  return pluginReferenceRowsByRows(partition.history) || pluginReferenceRowsByRows(partition.tail);
 }
 
 /**

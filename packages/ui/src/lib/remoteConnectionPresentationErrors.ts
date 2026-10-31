@@ -8,10 +8,13 @@ import {
   SOURCE_SERVER_INSTALL_REQUIRED_ERROR_CODE,
   SOURCE_SERVER_IDENTITY_CHANGE_PENDING_ERROR_CODE,
   SOURCE_SERVER_UPDATE_RUNNING_TASKS_ERROR_CODE,
+  SOURCE_SERVER_DOWNGRADE_UNCONFIRMED_ERROR_CODE,
   SOURCE_SERVER_UPGRADE_REQUIRED_ERROR_CODE,
   SOURCE_SERVER_REMOVE_CALLBACK_MISSING_ERROR_CODE,
   SOURCE_SERVER_REMOVE_CALLBACK_FAILED_ERROR_CODE,
   SOURCE_SERVER_REMOVE_PERSIST_FAILED_ERROR_CODE,
+  SOURCE_SERVER_STOP_FAILED_ERROR_CODE,
+  SOURCE_SERVER_CONTROL_UNRESPONSIVE_ERROR_CODE,
   WORKSPACE_CONFIG_FILE_CONFLICT_ERROR_CODE,
   WORKSPACE_MIGRATION_PLAN_DIVERGED_ERROR_CODE,
   WORKSPACE_SESSION_GENERATION_CHANGED_ERROR_CODE,
@@ -55,6 +58,7 @@ const messageIdByCode: Record<PublicZCodeErrorCode, string> = {
     "remote.error.sourceServerIdentityChangePending",
   [SOURCE_SERVER_UPGRADE_REQUIRED_ERROR_CODE]: "remote.error.sourceServerUpgradeRequired",
   [SOURCE_SERVER_UPDATE_RUNNING_TASKS_ERROR_CODE]: "remote.error.sourceServerRunningTasks",
+  [SOURCE_SERVER_DOWNGRADE_UNCONFIRMED_ERROR_CODE]: "remote.error.sourceServerDowngradeUnconfirmed",
   [WORKSPACE_TASK_IDENTITY_CONFLICT_ERROR_CODE]: "remote.error.workspaceTaskIdentityConflict",
   [WORKSPACE_CONFIG_FILE_CONFLICT_ERROR_CODE]: "remote.error.workspaceConfigConflict",
   [WORKSPACE_MIGRATION_PLAN_DIVERGED_ERROR_CODE]: "remote.error.workspaceMigrationPlanDiverged",
@@ -72,6 +76,8 @@ const messageIdByCode: Record<PublicZCodeErrorCode, string> = {
     "settings.source.error.source-server-remove-callback-failed",
   [SOURCE_SERVER_REMOVE_PERSIST_FAILED_ERROR_CODE]:
     "settings.source.error.source-server-remove-persist-failed",
+  [SOURCE_SERVER_STOP_FAILED_ERROR_CODE]: "remote.error.sourceServerStopFailed",
+  [SOURCE_SERVER_CONTROL_UNRESPONSIVE_ERROR_CODE]: "remote.error.sourceServerControlUnresponsive",
 };
 
 export function classifyRemoteConnectionError(input: {

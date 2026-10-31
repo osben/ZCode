@@ -34,7 +34,9 @@ export type ContextSource =
   | "cli_prefix" // CLI/product identity prefix
   | "identity" // Agent base description
   | "env_info" // Environment information (cwd, platform, git repo boolean)
-  | "system_context" // git snapshot context
+  | "session_context" // git snapshot context
+  | "model" // Identity of the currently executing model
+  | "execution_worktree" // Execution-worktree isolation notice (dynamic system section)
   | "skills" // Available skills
   | "tools" // Tool definitions
   | "request_user_context" // Combined provider-visible request-level user context
@@ -44,10 +46,8 @@ export type ContextSource =
   | "workflow_actor_identity" // Dynamic workflow subagent identity: contract plus persona
   | "subagent_agent_prompt" // Subagent-specific identity/task prompt
   | "subagent_notes" // General operating notes for subagents
-  | "subagent_environment" // Subagent environment and model context
   | "dynamic_behavior" // Dynamic behavior boundaries
   | "session_guidance" // Guidance for currently available built-in capabilities
-  | "output_style" // Output style
   | "context_management" // Long-context management guidance
   | "desktop_context"; // ZCode Desktop rendering and interaction protocol
 
@@ -72,7 +72,10 @@ export interface ContextSection {
   preview: string; // Preview of the first 100 characters
 }
 
-export type ContextMetaUserAttachmentSource = "skills_listing" | "context_prefix";
+export type ContextMetaUserAttachmentSource =
+  | "skills_listing"
+  | "context_prefix"
+  | "session_context";
 
 export interface ContextMetaUserAttachment {
   source: ContextMetaUserAttachmentSource;
@@ -112,6 +115,8 @@ export interface ContextBuilderConfig {
    * like `model`, it is a render-time projection and is not persisted into envInfo snapshots.
    */
   executionWorktree?: ExecutionWorktreeEnvFact;
+  /** Whether the execution model uses MCS; when false the Harness rewords the `<system-reminder>` channel. Defaults to MCS. */
+  midConversationSystem?: boolean;
   presentationSurface?: PresentationSurface;
   genUiOutputDirectory?: string;
   currentDate?: string;

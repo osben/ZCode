@@ -1,3 +1,4 @@
+import type { GenUiModelContext } from "@zcode/shared/gen-ui";
 import type { RuntimeInputPresentation } from "./runtime-input-presentation.js";
 // ============================================================
 // Session Ports - Core interfaces for session management
@@ -152,6 +153,8 @@ export interface PendingSteerInputInfo {
   commandKind?: TurnSteerCommandKind;
   source?: TurnSteerSource;
   inputPresentation?: RuntimeInputPresentation;
+  /** Trusted automation identity injected by Host admission; queue promotion must restore it verbatim. */
+  automationId?: string;
   /** Tool-deny list attached to the queued input; automation busy queueing must remain effective when the input is consumed. */
   toolDisallowlist?: readonly string[];
   queuedAt: Date;
@@ -259,9 +262,9 @@ export interface Session {
 }
 
 export interface TurnSteerInput {
-  /** 临时执行的选型不可成为普通 Session 续跑默认；不包含请求凭据。 */
+  /** An ad-hoc execution selection must not become the ordinary Session's resume default; carries no request credentials. */
   modelSelectionScope?: "execution";
-  /** 仅加速卡输入携带普通模型快照，不含凭据；用于接纳时更新 Session。 */
+  /** Ordinary-model snapshot carried only by highspeed-card input, without credentials; used to update the Session on admission. */
   highspeedFallbackSelection?: ModelSelection;
   input: string;
   inputId?: string;
@@ -275,6 +278,8 @@ export interface TurnSteerInput {
   attachments?: PendingTurnAttachment[];
   pendingInputId?: string;
   traceContext?: TraceContext;
+  /** Trusted automation identity injected by Host admission; must not be inferred from inputId/queryId. */
+  automationId?: string;
   /** Tool names not exposed to the provider while consuming the current input. */
   toolDisallowlist?: readonly string[];
 }
@@ -397,6 +402,8 @@ export interface TurnInputIntentMetadata {
     messageCount?: number;
   }>;
   highspeed?: HighspeedMessageMetadata;
+  /** Page state frozen at send time; must not mix in user text or be re-read at dequeue. */
+  genUiContext?: GenUiModelContext;
   sharedContextRefs?: Array<{
     kind: "shared_context_import";
     context_id: string;
@@ -435,6 +442,8 @@ export interface PendingTurnInput {
   delivery?: TurnSteerDeliveryMode;
   intent?: TurnInputIntentMetadata;
   attachments?: PendingTurnAttachment[];
+  /** Trusted automation identity injected by Host admission; queue edits and promotion must preserve it verbatim. */
+  automationId?: string;
   /** Tool names not exposed to the provider after draining the current pending input. */
   toolDisallowlist?: readonly string[];
   turnId: TurnId;

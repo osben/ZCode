@@ -59,7 +59,7 @@ export type WSLProfileTarget = z.infer<typeof wslProfileTargetSchema>;
 export type DockerProfileTarget = z.infer<typeof dockerProfileTargetSchema>;
 export type SourceServerProfileTarget = z.infer<typeof sourceServerProfileTargetSchema>;
 
-/** 升级授权只绑定执行身份，不携带凭据或可变 Profile 内容。 */
+/** An update grant binds only the execution identity; it carries no credentials or mutable profile content. */
 export const sourceServerUpdateTargetSchema = z.discriminatedUnion("kind", [
   z
     .object({
@@ -127,10 +127,18 @@ export const sourceServerUpdateRequestSchema = z
   .object({
     profileId: nonEmptyStringSchema,
     force: z.boolean().optional(),
+    /** The user confirmed switching a newer remote to the local Desktop version; the remote CLI decides the direction. */
+    allowDowngrade: z.boolean().optional(),
     expectedTarget: sourceServerUpdateTargetSchema.optional(),
   })
   .strict();
 export type SourceServerUpdateRequest = z.input<typeof sourceServerUpdateRequestSchema>;
+
+/**
+ * Device-level lifecycle operations (stop, restart remote service, RDLC-01) take only the device identity;
+ * the Host routes which connection to use; the Renderer does not pass profileId.
+ */
+export const sourceServerLifecycleSourceIdSchema = z.string().uuid();
 
 const connectionProfileBaseShape = {
   profileId: z.string().uuid(),
@@ -291,7 +299,7 @@ export const sourceServerConnectionStateSchema = z.enum([
 ]);
 export type SourceServerConnectionState = z.infer<typeof sourceServerConnectionStateSchema>;
 
-/** 远端任务 owner 的活动投影；身份用于隔离，实际路径仅用于展示。 */
+/** Active projection of the remote task owner; identity is for isolation, the real path is display-only. */
 export const sourceServerRunningTaskSchema = z
   .object({
     sessionId: nonEmptyStringSchema,
@@ -302,7 +310,18 @@ export const sourceServerRunningTaskSchema = z
 export type SourceServerRunningTask = z.infer<typeof sourceServerRunningTaskSchema>;
 export const sourceServerRunningTasksSchema = z.array(sourceServerRunningTaskSchema);
 
-/** 只读安装预览；sizeBytes 是安装包实际大小，不代表解压后的磁盘占用。 */
+/**
+ * Running tasks read per device before confirming stop / restart of the remote service (RDLC-01).
+ * `available: false` means the device did not provide a trusted list (remote output null, command failure,
+ * or output not matching the schema) and must not be treated as "no tasks"; only an empty array means no tasks.
+ */
+export const sourceServerRunningTasksResultSchema = z.discriminatedUnion("available", [
+  z.object({ available: z.literal(true), tasks: sourceServerRunningTasksSchema }).strict(),
+  z.object({ available: z.literal(false) }).strict(),
+]);
+export type SourceServerRunningTasksResult = z.infer<typeof sourceServerRunningTasksResultSchema>;
+
+/** Read-only install preview; sizeBytes is the installer's actual size, not the extracted on-disk footprint. */
 export const sourceServerInstallPreviewSchema = z
   .object({
     version: nonEmptyStringSchema,
@@ -332,6 +351,8 @@ export const sourceServerConnectionStateSnapshotSchema = z
     availableVersion: nonEmptyStringSchema.optional(),
     minimumVersion: nonEmptyStringSchema.optional(),
     upgradeTarget: z.enum(["controller", "server"]).optional(),
+    /** When the remote's current release was installed by an explicit downgrade, the version it replaced; the wizard skips auto-upgrade accordingly. */
+    downgradedFrom: nonEmptyStringSchema.optional(),
     errorCode: publicZCodeErrorCodeSchema.optional(),
     retryable: z.boolean().optional(),
     installPreview: sourceServerInstallPreviewSchema.optional(),
@@ -411,7 +432,7 @@ export type SourceServerManagementDirectoryDelta = z.infer<
   typeof sourceServerManagementDirectoryDeltaSchema
 >;
 
-/** Server CLI 的可选逐行进度；终态仍由退出码和最后一行结果决定。 */
+/** Optional line-by-line progress from the Server CLI; the final state is still decided by the exit code and the last result line. */
 export const sourceServerInstallProgressSchema = z
   .object({
     type: z.literal("source-server-install-progress"),
@@ -423,7 +444,7 @@ export type SourceServerInstallProgress = z.infer<typeof sourceServerInstallProg
 export const sourceServerOperationLogSchema = z
   .object({
     profileId: z.string().uuid(),
-    operation: z.enum(["connect", "update"]),
+    operation: z.enum(["connect", "update", "stop", "restart"]),
     phase: nonEmptyStringSchema,
     level: z.enum(["info", "warn", "error"]),
     message: z.string(),

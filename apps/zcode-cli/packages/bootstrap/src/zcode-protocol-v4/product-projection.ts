@@ -1,3 +1,4 @@
+import { normalizeGenUiInput } from "@zcode/core";
 import {
   PERMISSION_FULL_ACCESS_OPTION_ID,
   externalAgentConfigStateSchema,
@@ -57,6 +58,7 @@ import type {
   TurnSteerQueuedPayload,
   UserInputAutoResolutionUpdatedPayload,
   WorkspaceHookAdmissionUpdatedPayload,
+  WorkspaceMcpAdmissionUpdatedPayload,
   WorkspaceHookReviewRequestedPayload,
   WorkspaceHookReviewSettledPayload,
   WorkspaceHookReviewSupersededPayload,
@@ -66,6 +68,7 @@ import {
   AMEND_WORKFLOW_TOOL_NAME,
   CREATE_WORKFLOW_TOOL_NAME,
   CoreErrorType,
+  ModelErrorCode,
   SessionEventType,
   getModelUsageContextTokens,
 } from "@zcode/contracts";
@@ -87,9 +90,10 @@ import {
   isZCodeAskUserQuestionToolName as isAskUserQuestionToolName,
   isZCodeExitPlanModeToolName as isExitPlanModeToolName,
   isZCodeModelRetryRecoveryProgressPayload,
-  parseZCodeBackgroundTaskNotificationText,
+  parseZCodeBackgroundTaskNotifications,
   resolveZCodeBackgroundTaskControlKind,
   zcodeBackgroundTaskNotificationToolUpdateStatus,
+  type ZCodeParsedBackgroundTaskNotification,
 } from "@zcode/shared";
 import { verdictWorkspaceHookReviewRequest } from "@zcode/shared/workspace-hook-review-monotonicity";
 import type {
@@ -350,6 +354,7 @@ export interface ConversationEditTarget {
   coveredByStableCompact: boolean;
   intent: {
     inputOrigin?: "desktop" | "mobile";
+    genUiContext?: import("@zcode/contracts").TurnInputIntentMetadata["genUiContext"];
     conversationQuotes?: import("@zcode/contracts").TurnInputIntentMetadata["conversationQuotes"];
     botGroupSource?: CanonicalUserIntentFact["botGroupSource"];
     kind: "sendText" | "sendGoalCommand";
@@ -507,6 +512,9 @@ export class ProductProjection {
   // output-token Continue 是同一 product turn 内的请求级恢复，不应泄漏成新的正文行。
   // 这里只保留上一条满足 length/zero-tool/视觉紧邻条件的 text row，任何真实边界都会清空。
   private outputContinuationTextRowId: number | null = null;
+  // No main-model step has appeared since the last drained guide: later guides from the same drain
+  // join the work segment it opened.
+  private guideDrainOpen = false;
   private toolRowIdByCallId = new Map<string, number>();
   private latestListAppsSnapshot = new Map<number, CuaAppIdentity>();
   // snapshot 是权威状态；该 Set 只是 TurnComplete 缺终态兜底的派生索引，避免每轮扫描全表。
@@ -615,7 +623,14 @@ export class ProductProjection {
     return this.normalizationDiagnostics;
   }
 
-  /** 仅供 publisher 的有界增量估算；返回 null 表示必须走候选快照精确校验。 */
+  /**
+   * Whether this is an append to an already-open streaming row: if so, returns the appended text
+   * used to estimate the delta (an empty string while file tools are throttled); otherwise returns
+   * null. Two consumers: the publisher's bounded delta estimate (null falls back to exact
+   * validation against a candidate snapshot), and applyEventInternal's actions materialization gate
+   * (docs/v4-refactor/02-projection.md, "When command actions are materialized"). Any relaxation
+   * here must also satisfy the latter's constraints.
+   */
   establishedStreamingAppend(event: SessionEvent): string | null {
     if (event.type !== SessionEventType.ModelStreaming || !this.isRunning()) return null;
     const payload = event.payload as ModelStreamingPayload;
@@ -1200,6 +1215,9 @@ export class ProductProjection {
       event.type === SessionEventType.TurnStarted
         ? undefined
         : (this.productTurnIdByRuntimeTurnId.get(runtimeTurnId) ?? runtimeTurnId);
+    // Read before reducing, so it judges "append to an open streaming row" on the same state as the
+    // publisher fast path (ingest).
+    const streamingAppend = materializeActions && this.establishedStreamingAppend(event) !== null;
     const reduced =
       event.type === SessionEventType.AssistantFeedbackUpdated
         ? this.onAssistantFeedbackUpdated(event)
@@ -1224,9 +1242,11 @@ export class ProductProjection {
     // row、命令 target 与 actions 必须属于同一个 materialization transaction。
     // 旧实现只维护 side-map/最新行判断，UI action 由别处推断，cold/tool-only/failed
     // 轮会出现“入口可见但 target 不可解析”，新目标出现后旧入口也不会撤销。
-    const deltas = materializeActions
-      ? [...reducedWithSubagents, ...this.materializeCommandRowActions(reducedWithSubagents)]
-      : reducedWithSubagents;
+    const deltas =
+      materializeActions &&
+      this.shouldMaterializeCommandRowActions(streamingAppend, reducedWithSubagents)
+        ? [...reducedWithSubagents, ...this.materializeCommandRowActions(reducedWithSubagents)]
+        : reducedWithSubagents;
     const finalDeltas = this.attachRevision(clearSettledOutputPreviews(deltas));
     if (this.hydrationAccumulator) {
       applyConversationDeltasMutable(this.hydrationAccumulator, finalDeltas);
@@ -1276,6 +1296,7 @@ export class ProductProjection {
     clone.streamingTextRowId = this.streamingTextRowId;
     clone.streamingReasoningRowId = this.streamingReasoningRowId;
     clone.outputContinuationTextRowId = this.outputContinuationTextRowId;
+    clone.guideDrainOpen = this.guideDrainOpen;
     clone.toolRowIdByCallId = new Map(this.toolRowIdByCallId);
     // 实时发布逐事件走原子 clone；遗漏该侧表会让成功的 list_apps 快照在提交时丢失。
     clone.latestListAppsSnapshot = new Map(this.latestListAppsSnapshot);
@@ -1346,6 +1367,7 @@ export class ProductProjection {
     this.streamingTextRowId = candidate.streamingTextRowId;
     this.streamingReasoningRowId = candidate.streamingReasoningRowId;
     this.outputContinuationTextRowId = candidate.outputContinuationTextRowId;
+    this.guideDrainOpen = candidate.guideDrainOpen;
     this.toolRowIdByCallId = candidate.toolRowIdByCallId;
     this.latestListAppsSnapshot = candidate.latestListAppsSnapshot;
     this.openForegroundToolCallIds = candidate.openForegroundToolCallIds;
@@ -1381,6 +1403,37 @@ export class ProductProjection {
     this.configExternalAgentTouchedByEvent = candidate.configExternalAgentTouchedByEvent;
     this.droppedContentStreamEventCount = candidate.droppedContentStreamEventCount;
     this.normalizationDiagnostics = candidate.normalizationDiagnostics;
+  }
+
+  /**
+   * Actions materialization gate for live events (docs/v4-refactor/02-projection.md, "When command
+   * actions are materialized").
+   *
+   * Root cause of the performance problem: every token materialized actions over the whole window
+   * (building a full row Map, scanning backwards, comparing each row as JSON), so while a long
+   * session streams, the CLI's per-event cost grew linearly with history (over 1ms per event at
+   * 8000 rows).
+   *
+   * Materialization reads: prospective rows' kind, status, turn, userInput.origin, rowId order and
+   * existing actions; turnHeader fileChanges.state; control.activeWorks and the snapshot's
+   * top-level pendingInteractions; and the messageIdByRowId / entityIdByRowId /
+   * editTargetByEntityId / turnHeaderRowIdByTurnId side tables. It outputs row actions and writes
+   * currentEditableEntityId. row.delta only appends text fields and the streaming-append path never
+   * writes these side tables, so when this event reduces to nothing but row.delta (or nothing),
+   * materialization yields nothing and the editable target is unchanged. A streaming append may
+   * also carry other deltas (state.updated clearing apiRetry, subagent deltas); then materialize as
+   * usual.
+   *
+   * Precondition: actions already match the current state before the event arrives. Every other
+   * live event materializes, and a cold batch converges once at its end. A new reducer that emits
+   * only row.delta yet rewrites the inputs above, or a writer that rewrites them outside events,
+   * must materialize on its own.
+   */
+  private shouldMaterializeCommandRowActions(
+    streamingAppend: boolean,
+    reduced: readonly ConversationDelta[],
+  ): boolean {
+    return !streamingAppend || reduced.some((delta) => delta.op !== "row.delta");
   }
 
   /**
@@ -1548,6 +1601,7 @@ export class ProductProjection {
         ];
       case SessionEventType.ModelStreaming: {
         if (fact.semanticKind !== "assistantSegment") return [];
+        this.guideDrainOpen = false;
         const shouldClearApiRetry =
           this.acceptsActiveModelEvent(event) &&
           isZCodeModelRetryRecoveryProgressPayload(
@@ -1643,6 +1697,11 @@ export class ProductProjection {
         return this.onWorkspaceHookReviewSuperseded(event);
       case SessionEventType.WorkspaceHookAdmissionUpdated:
         return this.onWorkspaceHookAdmissionUpdated(event);
+      case SessionEventType.WorkspaceMcpAdmissionUpdated: {
+        const payload = event.payload as WorkspaceMcpAdmissionUpdatedPayload;
+        const workspaceMcpAdmission = payload.pendingCount > 0 ? payload : null;
+        return [{ op: "state.updated", patch: { workspaceMcpAdmission } }];
+      }
       case SessionEventType.HookRunStarted:
       case SessionEventType.HookRunProgress:
       case SessionEventType.HookRunCompleted:
@@ -1751,6 +1810,11 @@ export class ProductProjection {
     // epoch 清理时置 null,避免旧 Runtime 的提示条残留到新 Runtime 接管前。
     if (this.snapshot.workspaceHookAdmission !== null) {
       deltas.push({ op: "state.updated", patch: { workspaceHookAdmission: null } });
+    }
+    // A stale prompt from cold resume is not a current authorization fact; show it again only after
+    // the new gate rereads it.
+    if (this.snapshot.workspaceMcpAdmission) {
+      deltas.push({ op: "state.updated", patch: { workspaceMcpAdmission: null } });
     }
     return deltas;
   }
@@ -2188,6 +2252,7 @@ export class ProductProjection {
     this.streamingTextRowId = null;
     this.streamingReasoningRowId = null;
     this.outputContinuationTextRowId = null;
+    this.guideDrainOpen = false;
 
     // background Agent 的 ToolCallResult 只是 launch ACK，先把工具行收口成
     // success；子 Agent 的真实终态随后只作为 model-only task-notification 开新轮。
@@ -2329,6 +2394,7 @@ export class ProductProjection {
               intent: {
                 kind: fact.intentKind,
                 text: fact.intentText,
+                genUiContext: fact.genUiContext,
                 ...(fact.sourceCommandId ? { sourceCommandId: fact.sourceCommandId } : {}),
                 ...(fact.inputOrigin ? { inputOrigin: fact.inputOrigin } : {}),
                 ...(fact.conversationQuotes ? { conversationQuotes: fact.conversationQuotes } : {}),
@@ -2389,8 +2455,17 @@ export class ProductProjection {
   }
 
   private applyBackgroundTaskNotification(fact: CanonicalUserIntentFact): ConversationDelta[] {
-    const parsed = parseZCodeBackgroundTaskNotificationText(fact.input);
-    if (!parsed) return [];
+    // Terminal state and failure text come from this turn's structured originMeta first; never
+    // parse the summary text. In a merged turn each notification updates its own tool row.
+    return parseZCodeBackgroundTaskNotifications(fact.input, fact.originMeta).flatMap((parsed) =>
+      this.applyBackgroundTaskNotificationBlock(fact, parsed),
+    );
+  }
+
+  private applyBackgroundTaskNotificationBlock(
+    fact: CanonicalUserIntentFact,
+    parsed: ZCodeParsedBackgroundTaskNotification,
+  ): ConversationDelta[] {
     const row = this.findToolRow(parsed.toolUseId);
     if (!row) return [];
 
@@ -2655,7 +2730,10 @@ export class ProductProjection {
           attempt,
           maxAttempts,
           nextRetryAt: this.ms(event) + nonNegativeInteger(payload.delayMs, 0),
-          reasonCode: modelRetryReasonCode(payload.reason),
+          reasonCode:
+            payload.errorCode === ModelErrorCode.ModelRequestVerificationConfigNetwork
+              ? ModelErrorCode.ModelRequestVerificationConfigNetwork
+              : modelRetryReasonCode(payload.reason),
         });
       }
       case "model_request_started":
@@ -3869,7 +3947,7 @@ export class ProductProjection {
           : payload.intent?.kind === "sendGoalCommand" || payload.commandKind === "sendGoalCommand"
             ? ("sendGoalCommand" as const)
             : (existing?.kind ?? ("sendText" as const)),
-      text: payload.input,
+      ...normalizeGenUiInput(payload.input, payload.intent?.genUiContext ?? existing?.genUiContext),
       sourceCommandId:
         payload.intent?.sourceCommandId ??
         existing?.sourceCommandId ??
@@ -3920,13 +3998,14 @@ export class ProductProjection {
               : { state: "notRequested" },
       dispatch: { state: "queued" },
       ...(highspeed ? { highspeed } : {}),
+      automationId: payload.automationId ?? existing?.automationId,
       ...(payload.toolDisallowlist ? { toolDisallowlist: [...payload.toolDisallowlist] } : {}),
       admittedAt: payload.intent?.admittedAt ?? existing?.admittedAt ?? this.ms(event),
     };
     // 投递语义侧表：payload 未带（旧 runtime 事件）时按当前 followupMode 兜底。
     this.deliveryByPendingInputId.set(payload.pendingInputId, admittedDelivery);
-    // 同 id 重入 = editQueueItem 原地更新（保位）；新 id = 追加。旧逻辑 filter+append
-    // 会把编辑项移到队尾，破坏 queueContentIndependence 的位置语义。
+    // An edit with the same id keeps its position in place; filter+append would move it to the tail
+    // and break queueContentIndependence.
     const items =
       existingIndex >= 0
         ? this.snapshot.queue.items.map((item, index) =>
@@ -4038,6 +4117,7 @@ export class ProductProjection {
             ? { fallbackReasonCode: queueItem.delivery.fallbackReasonCode }
             : {}),
           attachmentRefs: queueItem.attachments,
+          genUiContext: queueItem.genUiContext,
         };
         return [
           {
@@ -4051,7 +4131,14 @@ export class ProductProjection {
       });
 
     const deltas: ConversationDelta[] = [];
+    // Several guides drained at once (no main-model step between them): only the first opens a work
+    // segment, the rest join it. Fix reason: previously every drained guide opened its own work
+    // segment. The runtime now drains all waiting guides FIFO at one boundary, so opening a segment
+    // per guide split one drain into several. Boundaries are now decided by model steps: live
+    // closes on main-model stream events and ModelComplete, cold closes on the start event
+    // synthesized for each assistant message, so both yield the same work segments.
     for (const item of items) {
+      const normalizedInput = normalizeGenUiInput(item.text, item.intent?.genUiContext);
       const delivery =
         item.delivery ?? this.deliveryByPendingInputId.get(item.pendingInputId) ?? "queue";
       // queue 消费 = product turn 边界（每条一轮：收口上一段
@@ -4075,8 +4162,8 @@ export class ProductProjection {
         kind: "userInput" as const,
         text:
           item.intent?.conversationQuotes || item.intent?.botGroupSource
-            ? (item.intent.text ?? item.text)
-            : item.text,
+            ? normalizeGenUiInput(item.intent.text ?? item.text, item.intent.genUiContext).text
+            : normalizedInput.text,
         origin: "realUser" as const,
         ...(delivery === "guide" ? { guided: true as const } : {}),
         ...(item.intent?.sourceCommandId ? { sourceCommandId: item.intent.sourceCommandId } : {}),
@@ -4104,7 +4191,9 @@ export class ProductProjection {
               coveredByStableCompact: false,
               intent: {
                 kind: item.intent?.kind === "sendGoalCommand" ? "sendGoalCommand" : "sendText",
-                text: item.intent?.text ?? item.text,
+                text: normalizeGenUiInput(item.intent?.text ?? item.text, item.intent?.genUiContext)
+                  .text,
+                genUiContext: normalizedInput.genUiContext,
                 ...(item.intent?.sourceCommandId
                   ? { sourceCommandId: item.intent.sourceCommandId }
                   : {}),
@@ -4145,10 +4234,11 @@ export class ProductProjection {
             }
           : undefined,
       );
-      if (delivery === "guide") {
+      if (delivery === "guide" && !this.guideDrainOpen) {
         deltas.push(...this.openGuidedWorkSegment(event, row.entityId ?? item.pendingInputId));
       }
       deltas.push({ op: "row.appended", row });
+      this.guideDrainOpen = delivery === "guide";
       this.deliveryByPendingInputId.delete(item.pendingInputId);
     }
     return [...deltas, ...this.removeQueueItems(payload.pendingInputIds)];
@@ -5080,7 +5170,10 @@ export class ProductProjection {
       payload.querySource !== undefined
         ? payload.querySource === "main_turn"
         : payload.stopReason !== "tool_internal";
-    if (isMainTurn) this.outputContinuationTextRowId = null;
+    if (isMainTurn) {
+      this.outputContinuationTextRowId = null;
+      this.guideDrainOpen = false;
+    }
     if (
       isMainTurn &&
       payload.stopReason?.trim().toLowerCase() === "length" &&

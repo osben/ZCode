@@ -1,3 +1,9 @@
+import {
+  zcodeProtocolMethods,
+  sessionLifecycleParamsSchema,
+  sessionLifecycleSnapshotSchema,
+  sessionLifecycleResultSchema,
+} from "@zcode/shared";
 import { ZCodeStorageStartupGate } from "#src/zcode-agent/zcodeStorageStartupGate.js";
 import { Emitter } from "@zcode/rpc";
 import type { IDisposable } from "@zcode/rpc";
@@ -40,6 +46,9 @@ interface PendingRequest<T> {
 }
 
 interface ZCodeProtocolClientRequestOptions {
+  /** A single session operation's timeout must not tear down the whole workspace on its own;
+   *   the backend still holds the operation and it can be queried again. */
+  invalidateConnectionOnTimeout?: boolean;
   /** Observations must not affect runtime health checks or extend business-idle timeouts; defaults to business request semantics. */
   lifecycle?: "operation" | "observation";
   signal?: AbortSignal;
@@ -72,6 +81,42 @@ export class ZCodeProtocolRequestTimeoutError extends Error {
 }
 
 export class ZCodeProtocolClient implements IDisposable {
+  /** Talks to the CLI lifecycle owner of a connected workspace; this entry point never
+   *   launches or restarts the whole process. */
+  readonly sessionLifecycle = {
+    getState: (sessionId: string) =>
+      this.request(
+        zcodeProtocolMethods.sessionLifecycleGetState,
+        sessionLifecycleParamsSchema.parse({ sessionId }),
+        sessionLifecycleSnapshotSchema,
+        { lifecycle: "observation" },
+      ),
+    ensureReady: async (sessionId: string): Promise<void> => {
+      await this.request(
+        zcodeProtocolMethods.sessionLifecycleEnsureReady,
+        sessionLifecycleParamsSchema.parse({ sessionId }),
+        sessionLifecycleResultSchema,
+        { invalidateConnectionOnTimeout: false },
+      );
+    },
+    stop: async (sessionId: string): Promise<void> => {
+      await this.request(
+        zcodeProtocolMethods.sessionLifecycleStop,
+        sessionLifecycleParamsSchema.parse({ sessionId }),
+        sessionLifecycleResultSchema,
+        { invalidateConnectionOnTimeout: false },
+      );
+    },
+    restart: async (sessionId: string): Promise<void> => {
+      await this.request(
+        zcodeProtocolMethods.sessionLifecycleRestart,
+        sessionLifecycleParamsSchema.parse({ sessionId }),
+        sessionLifecycleResultSchema,
+        { invalidateConnectionOnTimeout: false },
+      );
+    },
+  };
+
   readonly storageStartup: ZCodeStorageStartupGate;
   private readonly pending = new Map<string, PendingRequest<unknown>>();
   private readonly notificationEmitter = new Emitter<ZCodeProtocolNotification>();
@@ -178,7 +223,7 @@ export class ZCodeProtocolClient implements IDisposable {
         // process manager would keep reusing this stale client and later requests such as plugins/list would repeatedly time out.
         // Send the "connection is no longer trusted" fact to the owner through a timeout event; the owner is responsible for reclaiming the process.
         // A short timeout for resource queries means only that this round has no data; it must not be escalated to reclaiming the entire Agent.
-        if (!observation) {
+        if (!observation && options?.invalidateConnectionOnTimeout !== false) {
           this.requestTimeoutEmitter.fire({ method, requestId: id, timeoutMs: requestTimeoutMs });
         }
         reject(error);

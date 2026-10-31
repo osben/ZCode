@@ -118,7 +118,9 @@ it.each(["error", "unmatched", "unavailable"] as const)(
     const result = entries[2]!;
     if (result.kind === "attachment") throw new Error("unexpected attachment");
     if (state === "error") result.message.isError = true;
-    if (state === "unmatched") result.message.content = "No matching deferred tools found";
+    if (state === "unmatched")
+      result.message.content =
+        "No matching deferred tools found. Loaded tools are not searchable here and need no loading. Check your loaded tool list and query; try corrected spelling, alternative names, or broader keywords before concluding a tool is missing.";
     if (state === "unavailable") registry.unregister("WebFetch");
     for (const mode of ["native", "local"] as const) {
       const prepared = prepareRuntimeProviderRequest(

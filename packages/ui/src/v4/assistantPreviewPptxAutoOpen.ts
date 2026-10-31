@@ -37,21 +37,19 @@ export function createAssistantPreviewPptxAutoOpenGateState(): AssistantPreviewP
 export function resolveLatestCompletedAssistantPreviewTurn(
   rows: readonly ConversationRow[],
 ): AssistantPreviewPptxCompletedTurn | null {
-  const latestHeader = [...rows]
-    .reverse()
-    .find(
-      (row): row is Extract<ConversationRow, { kind: "turnHeader" }> => row.kind === "turnHeader",
-    );
+  // Bug root cause: the old [...rows].reverse().find copied and reversed the whole window on every streamed frame, with cost growing linearly with history.
+  // findLast yields the same result, and since the latest header and body are at the tail, the scan almost always touches only the last turn.
+  const latestHeader = rows.findLast(
+    (row): row is Extract<ConversationRow, { kind: "turnHeader" }> => row.kind === "turnHeader",
+  );
   if (!latestHeader || latestHeader.state !== "completedSuccess") {
     return null;
   }
 
-  const latestAssistant = [...rows]
-    .reverse()
-    .find(
-      (row): row is Extract<ConversationRow, { kind: "assistantText" }> =>
-        row.kind === "assistantText" && row.turnId === latestHeader.turnId,
-    );
+  const latestAssistant = rows.findLast(
+    (row): row is Extract<ConversationRow, { kind: "assistantText" }> =>
+      row.kind === "assistantText" && row.turnId === latestHeader.turnId,
+  );
   if (!latestAssistant || latestAssistant.state !== "complete") return null;
 
   return {

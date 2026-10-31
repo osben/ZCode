@@ -12,7 +12,7 @@ import {
   sanitizeSystemReminderBody,
   wrapSystemReminder,
 } from "../../system-reminder/source.js";
-import { isPresentedInput, type ProviderEntryOrigins } from "./provider-entry-origins.js";
+import { isMidTurnInput, type ProviderEntryOrigins } from "./provider-entry-origins.js";
 
 interface PendingMidSystemEntry {
   entry: RuntimeMessageEntry;
@@ -72,15 +72,21 @@ export function projectMidConversationSystemEntries(
       return;
     }
 
-    projected.push(...pendingItems.map((item) => item.entry));
+    // With no legal anchor, the whole group degrades to a single user reminder, wrapped once.
+    projected.push(
+      midSystemFallbackEntry(
+        body,
+        pendingItems.map((item) => item.entry),
+        origins,
+      ),
+    );
   };
 
+  // MCS text of the same user run lands only before an assistant/system entry or at the end,
+  // so it may pass over user inputs inside the run.
+  // Fix rationale: when splitting before every marked input, announcements preceding a
+  // notification stayed before it, putting the landing point in the wrong place.
   for (const entry of entries) {
-    // Mid-conversation input is a causal boundary: ordinary reminders cannot pass it, and it cannot pass a later user message.
-    const hasIncoming = pending.some((item) => isPresentedInput(item.entry));
-    const nextIsUser = !isRuntimeAttachmentEntry(entry) && entry.message.role === "user";
-    if (pending.length > 0 && (isPresentedInput(entry) || (hasIncoming && nextIsUser)))
-      flushPending();
     const projectedText = midConversationSystemText(entry);
     if (projectedText !== undefined) {
       pending.push({ entry, text: projectedText });
@@ -117,7 +123,8 @@ function shouldFlushMidConversationSystemBefore(entry: RuntimeMessageEntry): boo
 }
 
 function canAnchorMidConversationSystemAfter(entry: ProjectedRuntimeMessageEntry): boolean {
-  if (isRuntimeAttachmentEntry(entry)) return false;
+  // Attachments kept on the user side render as user messages and can serve as anchors.
+  if (isRuntimeAttachmentEntry(entry)) return true;
   const message = entry.message;
   // A valid mid-conversation system anchor follows the provider-visible role.
   // A model-only user (such as goal continuation) is still a user message and must not be incorrectly downgraded because of internal source metadata.
@@ -147,21 +154,30 @@ function validateMidConversationSystemPositions(
 
     // Keep a mid-conversation system message only at a provider-valid boundary;
     // elsewhere, downgrade it to the legacy user system-reminder to avoid an invalid role order in the request body.
-    const fallback: RuntimeMessageEntry = {
-      message: {
-        role: "user",
-        // The MCS body has not been wrapped as user content, so the downgrade must escape it itself rather than assuming the producer did so.
-        content: wrapSystemReminder(
-          sanitizeSystemReminderBody(entry.midSystemProjection.fallbackBody),
-        ),
-      },
-      metadata: { source: "legacy_synthetic" },
-    };
-    origins.set(fallback, [entry]);
-    projected.push(fallback);
+    projected.push(
+      midSystemFallbackEntry(entry.midSystemProjection.fallbackBody, [entry], origins),
+    );
   }
 
   return projected;
+}
+
+function midSystemFallbackEntry(
+  body: string,
+  inputs: readonly RuntimeMessageEntry[],
+  origins: ProviderEntryOrigins,
+): RuntimeMessageEntry {
+  const fallback: RuntimeMessageEntry = {
+    message: {
+      role: "user",
+      // MCS bodies are not user-wrapped; the downgrade must sanitize itself and cannot assume
+      // the producer already did.
+      content: wrapSystemReminder(sanitizeSystemReminderBody(body)),
+    },
+    metadata: { source: "legacy_synthetic" },
+  };
+  origins.set(fallback, inputs);
+  return fallback;
 }
 
 function canKeepMidConversationSystemBetween(
@@ -220,7 +236,10 @@ export function moveLegacySystemRemindersAfterToolResultRun(
 
 function isLegacySystemReminderEntry(entry: ProjectedRuntimeMessageEntry): boolean {
   if (isRuntimeAttachmentEntry(entry)) return true;
-  return entry.message.role === "user" && entry.metadata?.source === "legacy_synthetic";
+  if (entry.message.role !== "user") return false;
+  // Mid-turn messages carrying media are user messages; they likewise must not split the same
+  // group of tool results.
+  return entry.metadata?.source === "legacy_synthetic" || isMidTurnInput(entry);
 }
 
 function isToolResultEntry(entry: ProjectedRuntimeMessageEntry | undefined): boolean {

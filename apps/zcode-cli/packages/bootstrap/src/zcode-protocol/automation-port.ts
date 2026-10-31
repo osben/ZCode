@@ -11,6 +11,7 @@ import {
   zcodeAutomationCreateResultSchema,
   zcodeAutomationDeleteResultSchema,
   zcodeAutomationListResultSchema,
+  zcodeAutomationPauseResultSchema,
   zcodeAutomationUpdateResultSchema,
   zcodeProtocolMethods,
   type ZCodeAutomationProtocol,
@@ -39,6 +40,14 @@ export function createProtocolAutomationPort(
   // lose permission/reasoning level (only model creation survived due to its createContext fallback).
   resolveOwnSession?: () => ZCodeProtocolSessionRecord | undefined,
 ): AutomationPort {
+  // A shared connection must not borrow the first workspace; this includes list requests carrying only an automationId or empty params.
+  const requestClient: typeof context.requestClient = (...args) => {
+    if (!context.sessionWorkspaceRoutingEnabled) return context.requestClient(...args);
+    const workspace = resolveOwnSession?.()?.workspace;
+    if (!workspace) throw new Error("Session workspace is unavailable");
+    const [method, params, schema, ...options] = args;
+    return context.requestClient(method, { ...(params as object), workspace }, schema, ...options);
+  };
   return {
     async create(input, createContext) {
       // Prefer the owned session (the session where this tool is running); fall back to looking up
@@ -65,7 +74,7 @@ export function createProtocolAutomationPort(
         let bound: boolean;
         try {
           try {
-            const result = await context.requestClient(
+            const result = await requestClient(
               zcodeProtocolMethods.automationCheckTaskBinding,
               { targetTaskId: ownSessionId },
               zcodeAutomationCheckTaskBindingResultSchema,
@@ -80,7 +89,7 @@ export function createProtocolAutomationPort(
             // Only "method not found" proves a capability difference; fall back to filtering the old
             // list in that case. Database, transport, and protocol errors must remain fail-closed and
             // must not be mistaken for an unbound session.
-            const legacyResult = await context.requestClient(
+            const legacyResult = await requestClient(
               zcodeProtocolMethods.automationList,
               {},
               zcodeAutomationListResultSchema,
@@ -124,7 +133,7 @@ export function createProtocolAutomationPort(
       const hasIntervalCarrier = input.intervalUnit !== undefined && input.interval !== undefined;
       let result;
       try {
-        result = await context.requestClient(
+        result = await requestClient(
           zcodeProtocolMethods.automationCreate,
           {
             // Do not have the model convert relative time to an absolute instant; the compatibility
@@ -196,7 +205,7 @@ export function createProtocolAutomationPort(
     },
     async update(input) {
       const hasIntervalCarrier = input.intervalUnit !== undefined && input.interval !== undefined;
-      const result = await context.requestClient(
+      const result = await requestClient(
         zcodeProtocolMethods.automationUpdate,
         {
           automationId: input.id,
@@ -223,7 +232,7 @@ export function createProtocolAutomationPort(
       return toCronAutomation(result.automation);
     },
     async list() {
-      const result = await context.requestClient(
+      const result = await requestClient(
         zcodeProtocolMethods.automationList,
         {},
         zcodeAutomationListResultSchema,
@@ -231,12 +240,22 @@ export function createProtocolAutomationPort(
       return result.automations.map(toCronAutomation);
     },
     async delete(input) {
-      const result = await context.requestClient(
+      const result = await requestClient(
         zcodeProtocolMethods.automationDelete,
         { automationId: input.id },
         zcodeAutomationDeleteResultSchema,
       );
       return result.deleted;
+    },
+    async pause(input) {
+      // The target id is injected from the loop automationId by the core executor; here it is only passed through to the Host for conditional pause.
+      // Older Hosts that do not know automation/pause return -32601, which bubbles up as a tool error with no fallback.
+      const result = await requestClient(
+        zcodeProtocolMethods.automationPause,
+        { automationId: input.id },
+        zcodeAutomationPauseResultSchema,
+      );
+      return result.paused;
     },
   };
 }

@@ -79,6 +79,15 @@ jobs:
       - name: Pre-push runner regression tests
         run: pnpm test:pre-push
 
+      # Upstream 3.17.1 static gates (specs/fork-test-pipeline.md).
+      - name: E2E remote targets, stale doc phrases, architecture and engineering tooling tests
+        run: |
+          set -euo pipefail
+          pnpm check:e2e-remote-targets
+          pnpm docs:stale-phrases:check
+          pnpm test:architecture
+          pnpm test:engineering-tools
+
       # Pending upstream exemption (specs/fork-format-scope.md): when fork-upstream-base.json names
       # a pendingUpstreamCommit the checkout lacks, fetch it by URL. No-op when the field is absent.
       - name: Fetch pending upstream commit
@@ -177,8 +186,9 @@ jobs:
           # match the files themselves), so manifest changes fall back to the full unit suite.
           if git diff --name-only "$base" HEAD | grep -qxE 'pnpm-lock\.yaml|(.*/)?package\.json'; then
             echo "[tests] dependency manifest changed since $base: running full unit suite"
-            pnpm test:unit
+            pnpm test:engineering
+            pnpm test:fork
           else
-            pnpm test:unit:affected -- --base "$base" --on-full run
+            pnpm test:engineering:affected -- --base "$base" --on-full run
           fi
           pnpm test:node

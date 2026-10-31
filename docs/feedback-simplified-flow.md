@@ -1,124 +1,145 @@
-# Simplified Feedback Submission Flow
+# Feedback 简化提交流程
 
-## Background
+## 背景
 
-The old feedback flow required users to fill in fields such as title, type, module, and impact level. It felt more like an internal ticket form. In the AI era, users should only describe the issue; the client should automatically add troubleshooting context.
+旧反馈提交流程要求用户填写标题、类型、模块、影响程度等字段。这个流程更像内部工单表单，用户在 AI 时代只应该描述问题本身，客户端自动补齐排障上下文。
 
-## Goals
+## 目标
 
-- Rebuild the feedback submission dialog as one simplified flow; do not reuse the old multi-field dialog design.
-- Users only enter a problem description, optional screenshots, and optional contact details, then submit.
-- Log upload is enabled by default, and users can uncheck it before submitting.
-- The client continues to collect device, model, framework, and other context automatically for backend AI/engineering classification.
-- Rebuild “My Feedback” as a read-only list; it no longer contains details, a workflow timeline, or a supplemental-feedback entry point.
+- 反馈提交弹窗重构为单一简化流程，不复用旧的多字段提交弹窗方案。
+- 用户只需要填写问题描述、可选截图、可选联系方式，然后提交。
+- 日志上传默认开启，用户可在提交前取消勾选。
+- 客户端继续自动采集设备、模型、框架等上下文，提交给后端供 AI/研发归类。
+- “我的反馈”重构为只读列表，不再承载详情、流程时间线或补充反馈入口。
 
-## New Submission Form
+## 新提交表单
 
-The form has four user-visible areas:
+表单包含四个用户可见区域：
 
-Layout rules:
+布局规则：
 
-- Follow the Coding Plan purchase panel for the dialog shell: `rounded-2xl`, `p-0`, and separate header/body/footer areas, without heavy borders dividing them.
-- Set the desktop dialog maximum width to `34rem` so the feedback form does not feel like a wide configuration page.
-- Target a desktop dialog height of `38rem`, with automatic shrinking to `calc(100vh - 2rem)` in shorter windows. On mobile Web, continue using nearly the full screen height to provide sufficient vertical space for the description, screenshots, contact details, and log section.
-- The Header shows only the current-page title and close button. Render the title through i18n: `Submit feedback / My feedback` in English.
-- Keep only one scroll container in the dialog content; do not wrap each field in another card.
-- Show top/bottom fade masks in the content scroller based on scroll position: show the top fade when hidden content exists above and the bottom fade when hidden content exists below; show neither when there is no hidden content.
-- Use unframed groups for the problem description, screenshots, and contact details. Establish hierarchy through headings, spacing, and the input controls' own boundaries.
-- Use light borders or subtle surfaces only for repeated attachment items such as the Logs configuration area, screenshot upload area, and screenshot thumbnails.
-- Use `rounded-xl` consistently for the problem-description input, screenshot upload container, contact input, and Logs configuration area.
-- Use `p-3` and `gap-3` for the screenshot upload container so the thumbnail grid, action row, and outer padding are consistent.
-- Follow the Coding Plan purchase panel for the Footer, using natural whitespace for actions. On the submission page, show `Cancel` / `Submit` on the right; on the list page, show `New feedback` on the right.
-- Keep the “My feedback” entry on the left side of the submission-page Footer on the same row as `Cancel` / `Submit`; make it a fixed left-side action, use an outline button, and show a Lucide icon with text.
-- Let the primary submission button's width adapt to its label; do not set an extra fixed minimum width that makes short-label buttons feel too heavy.
-- Do not create nested visual hierarchy such as “a card inside a dialog, with another card inside it.”
+- 弹窗外壳参考 Coding Plan 购买面板：`rounded-2xl`、`p-0`，header/body/footer 分区，不使用厚重边框切割。
+- 弹窗桌面最大宽度为 `34rem`，避免反馈表单显得像宽屏配置页。
+- 弹窗桌面目标高度为 `38rem`，并通过 `calc(100vh - 2rem)` 在较矮窗口内自动收缩；手机 Web 继续使用近全屏高度，保证描述、截图、联系方式和日志区有足够纵向空间。
+- Header 只展示当前页标题和关闭按钮；标题必须通过 i18n 输出，中文为“提交反馈 / 我的反馈”，英文为 `Submit feedback / My feedback`。
+- 弹窗内容区只保留一层滚动容器，不为每个字段再包卡片。
+- 弹窗内容滚动区根据滚动位置显示上下淡出 mask：顶部存在隐藏内容时显示上淡出，底部存在隐藏内容时显示下淡出，无隐藏内容时不显示。
+- 问题描述、截图、联系方式使用无框分组，通过标题、间距和输入控件自身边界建立层级。
+- 只有 Logs 配置区、截图上传区和截图缩略图这类重复附件项使用轻量边框或浅表面。
+- 问题描述输入框、截图上传容器、联系方式输入框和 Logs 配置区统一使用 `rounded-xl`，保持弹窗内表单控件的圆角一致。
+- 截图上传容器使用 `p-3` 和 `gap-3`，确保缩略图网格、操作行和四边留白一致。
+- Footer 参考 Coding Plan 购买面板，作为自然留白动作区；提交页右侧展示 `Cancel` / `Submit`，列表页右侧展示 `New feedback`。
+- 提交页 Footer 左侧的“我的反馈 / My feedback”入口与 `Cancel` / `Submit` 保持同一行，固定为左侧动作，使用 outline 按钮样式，并展示 lucide 图标加文字。
+- 提交页 Footer 的主提交按钮按文案内容自适应宽度，不额外设置固定最小宽度，避免短文案按钮显得过重。
+- 禁止形成“弹窗里套卡片、卡片里再套卡片”的视觉层级。
 
-1. Problem description / Issue description
-   - One required multiline input.
-   - Show a red `*` required marker before the heading, reusing the same marker component as the product requirement dialog. The asterisk is hidden from screen readers; the input provides an accessible name in the current language plus required semantics.
-   - Empty or whitespace-only descriptions cannot be submitted. Once valid content is entered, submission is allowed; clearing it blocks submission again. Contact information remains optional.
-   - Show `current character count/4000` to the right of the heading.
-   - Limit the input to 4000 characters.
-   - Show at most 5 lines in the input; scroll within it beyond that.
-   - Do not ask users to enter a title.
-   - The client generates the title from the first line of the description.
-   - When users enter from a chat error banner's “Report a problem” action, prefill the description with an error troubleshooting template. Do not add a generic opening such as “I encountered an error while using the app; please help investigate.” Combine the error-summary label and error message directly on the first line, for example: `Error summary: Provider authentication failed.` Keep TraceID, error details, “What I was doing,” and “Expected result” as separate following paragraphs so the user can add context.
-   - If session subscription fails and the page enters a full-page “Reconnect” error state, show compact “Report a problem” and “Reconnect” buttons below the error. “Report a problem” reuses the chat error-banner submission flow. Prefill the first line of the description with the current subscription-error summary and include the session ID and redacted diagnostic summary (logs enabled by default; users must add screenshots). Users should not need to copy the error or reopen the feedback center from the global help menu.
+1. 问题描述 / Issue description
+   - 一个必填多行输入框。
+   - 标题前展示红色 `*` 必填标识，与产品需求弹窗复用同一标记组件；星号对读屏隐藏，输入框提供当前语言的可访问名称和 required 语义。
+   - 空描述或仅包含空白字符时禁止提交；填写有效内容后允许提交，清空后再次禁止。联系方式仍为选填。
+   - 标题右侧展示 `当前字数/4000`。
+   - 输入框限制最多 4000 字。
+   - 输入框最多显示 5 行文字，超过后在输入框内部滚动。
+   - 不再要求用户填写标题。
+   - 标题由客户端从描述首行自动生成。
+   - 从聊天错误横幅点击“反馈问题”进入时，描述框预填错误排障模板。
+     模板不再插入“我在使用过程中遇到了报错，请帮忙排查。”这类通用开场，
+     第一行直接合并错误摘要标签和错误消息，例如：`报错摘要：Provider authentication failed.`。
+     TraceID、报错详情、“我当时正在做什么”和“期望结果”继续作为后续独立段落保留，方便用户补充场景。
+   - session 订阅失败并进入整页“重新连接”错误态时，错误信息下方同时展示“反馈问题”和
+     “重新连接”两个紧凑按钮。“反馈问题”复用聊天错误横幅的提交流程，描述框第一行直接预填
+     当前订阅错误摘要，并附带 session ID 和脱敏后的诊断摘要（日志默认开启，截图需用户主动添加）；用户不需要先复制错误或从全局帮助菜单重新进入反馈中心。
 
-2. Screenshots
-   - Show `current image count/6` to the right of the heading, for example, `3/6`.
-   - Support pasting images from the clipboard. When focus is not in a `textarea` or `input`, the whole feedback dialog accepts image pastes.
-   - When focus is in the problem-description or contact input, do not intercept paste events; preserve native text-paste behavior.
-   - Support dragging images into the upload area.
-   - Support selecting images through the file picker.
-   - Show selected images inside the same screenshot-upload container, with thumbnails above the action guidance.
-   - Support multiple images, thumbnail preview, removal, and click-to-preview.
-   - Keep the six-image maximum to prevent feedback attachments from becoming unbounded.
+2. 截图 / Screenshots
+   - 标题右侧展示 `当前图片数/6`，例如 `3/6`。
+   - 支持剪贴板粘贴图片；当焦点不在 `textarea` 或 `input` 内时，整个反馈弹窗都可以接收图片粘贴。
+   - 当焦点位于问题描述或联系方式输入框时，不劫持粘贴事件，保留文本输入的原生粘贴行为。
+   - 支持拖拽图片到上传区。
+   - 支持文件选择器选择图片。
+   - 已选择图片展示在同一个截图上传容器内部，缩略图位于操作提示上方。
+   - 支持多图、缩略图预览、移除和点击预览。
+   - 保留最多 6 张图片限制，避免一次反馈附件失控。
 
-3. Contact
-   - Optional.
-   - Continue to support email, WeChat ID, and other social accounts.
-   - Fix the input height at `h-10` and horizontal padding at `px-3`.
-   - Continue reusing locally remembered contact details.
+3. 联系方式 / Contact
+   - 选填。
+   - 继续支持邮箱、微信号或其他社交账号。
+   - 输入框高度固定为 `h-10`，水平内边距固定为 `px-3`。
+   - 继续复用本地联系方式记忆。
 
-4. Logs
-   - Enabled by default; users can uncheck it, and submission uses the current choice. New feedback defaults to enabled again; restoring a background submission preserves its original choice.
-   - Show “Upload diagnostic logs.”
-   - Explain the scope of current-day diagnostic logs, the safe projection of CLI configuration, and the possibility that business information may remain. Logs for problem reports also include the non-sensitive projection of `~/.zcode/cli/config.json` and the current day's model-call traces from `~/.zcode/cli/rollout/`.
-   - Users may disable log upload, but do not restore other advanced fields from the old form.
+4. 日志 / Logs
+   - 默认开启；用户可取消勾选，提交时以当前选择为准。新建反馈重新默认开启，恢复后台提交保留原选择。
+   - 展示“上传诊断日志”。
+   - 展示当天诊断日志的范围、CLI 配置安全投影和可能残留业务信息的提示；问题上报日志还包含 `~/.zcode/cli/config.json` 的非敏感投影以及当天的 `~/.zcode/cli/rollout/` 模型调用轨迹。
+   - 用户可关闭日志上传，但不恢复旧表单里的其它高级字段。
 
-5. Submit button
-   - Disabled when the description is empty.
-   - During submission, show ticket creation and screenshot-upload progress. When logs are enabled, also show log export and upload progress.
+5. 提交按钮
+   - 描述为空时禁用。
+   - 提交中展示创建工单、上传截图；开启日志时继续展示导出日志和上传日志进度。
 
-## Submission Field Mapping
+## 提交字段映射
 
-- `title`: take up to 80 characters from the first line of the problem description; if the first line is empty, normalize and truncate the body instead.
-- `description`: retain the user's original problem description and append the context block collected automatically by the client.
-- `type`: defaults to `bug`. The backend AI later reclassifies from the original text, screenshots, and logs.
-- `severity`: defaults to `P2-Medium`.
-- `module`: defaults to `Other`. Backend AI/rules later reclassify it.
-- `framework`: fixed to `zcode-agent`.
-- `source`: remains `desktop-app`.
-- `contact`: submit when provided by the user; omit when empty.
-- `locale`: current UI language.
-- `device`: continue including automatic context such as version, operating system, model configuration, and necessary model information; do not upload the model-configuration list.
+- `title`：从问题描述首行截取，最长 80 字符；首行为空时从正文归一化截取。
+- `description`：保留用户原始问题描述，并附带客户端自动采集的上下文块。
+- `type`：默认 `bug`。后续由后端 AI 基于原文、截图和日志重新分类。
+- `severity`：默认 `P2-中`。
+- `module`：默认 `其它`。后续由后端 AI/规则重新归类。
+- `framework`：固定 `zcode-agent`。
+- `source`：保持 `desktop-app`。
+- `contact`：用户填写后提交；空值不传。
+- `locale`：当前界面语言。
+- `device`：继续包含版本、系统、模型配置、必要模型信息等自动上下文，不上传模型配置列表。
 
-## Log Semantics
+## 日志语义
 
-Logs are optional troubleshooting material, enabled by default for all entry points. When enabled at submission, upload only allowlisted diagnostic logs; see [Log Upload Boundaries](feedback-log-export-alignment.md). Opening the form does not take screenshots automatically; users add and preview images by pasting, dragging, or using the file picker.
+日志是可选排障材料，默认开启，所有入口一致。保持勾选并提交后，只上传白名单诊断日志，详见 [日志上传边界](feedback-log-export-alignment.md)。打开表单不自动截图；用户通过粘贴、拖拽或文件选择器添加并预览图片。
 
-If logs remain enabled but upload fails, this phase retains the existing background-submission state machine's failure semantics: show feedback submission as failed and append a system note to the ticket explaining that automatic full-log upload failed. Changing this later to “ticket succeeds first, logs can be retried” requires a new design for submission-task recovery and supplemental uploads.
+远程连接向导的 SSH、WSL、Docker 失败反馈也遵守此默认值：打开表单时预填错误摘要及最近 30 行脱敏连接日志，并默认勾选“上传诊断日志”。正文中的连接日志不替代诊断 ZIP。用户取消勾选后，不调用日志归档或上传；后台任务恢复保留该次提交的选择，新建反馈重新默认开启。
 
-Treat background-submission notices as lightweight toast overlays, not large dialogs with oversized corners; use `rounded-xl` for the shell. Arrange content in three columns: “status icon / two lines of text / action buttons on the right.” The first line shows “Submitting feedback”; the second shows a specific progress description and percentage. Show the status icon directly in its semantic color without a border or subtle-surface base. Keep expand and close buttons on the right compactly spaced so the action area does not dominate the content.
+```text
+连接失败 → 反馈入口预填草稿（日志开启）→ 表单持有用户选择 → 提交任务快照
+                                                     ├─ 开启 → 创建工单 → 归档并上传日志
+                                                     └─ 关闭 → 创建工单 → 完成
+```
 
-## My Feedback
+本次只恢复入口默认值，沿用表单与后台任务对选择的归属；不新增远端日志抓取、重试或状态同步路径。
 
-“My Feedback” shows only the feedback list as a lightweight place to confirm submission and copy an ID:
+如果用户保持日志开启但日志上传失败，当前阶段仍沿用现有后台提交状态机的失败语义：反馈提交显示失败，并在工单中追加系统提示，说明完整日志自动上传失败。后续如要改为“工单先成功、日志可重试”，需要新增提交任务恢复和补传设计。
 
-- Use a single table-like container; do not add hierarchy by grouping items by date.
-- Show each feedback item's status, title, submission time, and feedback ID.
-- Display the feedback ID in a monospaced font and provide a copy button.
-- Do not open a detail page on click; do not show processing timelines, detail replies, or a supplemental-feedback form.
-- All visible titles, table headings, buttons, ID prefixes, and descriptions must use i18n; do not hard-code English in components.
+后台提交提示作为轻量 toast 浮层处理，不使用大弹窗圆角；外壳固定 `rounded-xl`。内容按“状态图标 / 两行文字 / 右侧动作按钮”三列组织：第一行标题展示“正在提交反馈”，第二行展示具体进度描述和百分比。状态图标直接展示语义颜色，不额外包边框或浅表面底座；右侧展开和关闭按钮保持紧凑间距，避免动作区抢占正文层级。
 
-## Cross-platform Impact
+## 我的反馈
 
-- Desktop continues to create tickets and upload screenshots/logs through the existing host-process `feedbackService`.
-- The Web remote-control home currently uses an unsupported fallback for `feedbackService`. This change does not add remote-control business state or affect task realtime, snapshot, queue, or replayable/continuous semantics.
-- The session-subscription error entry point belongs to shared UI: retain the button and prefilled error summary on desktop and mobile Web. Degrade screenshot capability based on current host support; do not add a separate Agent runtime, subscription, or recovery path for mobile.
-- Use semantic tokens, a compact dialog layout, and i18n copy that support both wide desktop screens and narrow mobile Web screens.
+“我的反馈”只展示反馈列表，作为用户确认提交结果和复制编号的轻量入口：
 
-## Verification
+- 列表使用单层表格感容器，不再按日期分组制造额外层级。
+- 每条反馈展示状态、标题、提交时间和反馈 ID。
+- 反馈 ID 使用等宽字体展示，并提供复制按钮。
+- 不再点击进入详情，不再展示处理时间线、详情回复或补充反馈表单。
+- 所有可见标题、表头、按钮、ID 前缀和说明文案必须走 i18n，禁止在组件内硬编码英文。
 
-- The feedback-submission page no longer renders type, module, impact-level, or model-display fields.
-- Pasting/selecting multiple images, previewing, and deleting them remain available.
-- The log toggle is enabled by default; unchecking it sets `includeLogs` to `false`.
-- The session-subscription error page shows both “Report a problem” and “Reconnect.” After reporting, the draft includes the current error, session ID, and redacted diagnostic summary; logs are enabled by default and no window screenshot is captured automatically.
-- Run `pnpm typecheck`.
-- Run `pnpm lint`.
+## 多端影响
 
-| Case ID    | Scenario                                                                               | Assertion                                                                                                                                        | E2E location                                                                                                           |
-| ---------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| FB-DESC-01 | Problem reports in Chinese and English, narrow and wide windows, light and dark themes | The required marker is visible; the input has required semantics; empty values cannot be submitted                                               | `packages/desktop/test/e2e/feedback/manual-review/pending/feedback-upload-privacy.test.ts`, FB-PRIV-01/08 / FB-DESC-01 |
-| FB-DESC-02 | Real form and in-memory feedback service                                               | Empty, whitespace-only, and cleared values cannot be submitted and create no ticket, archive, or upload; a valid description can create a ticket | Same file; FB-DESC-02 isolated Chromium fixture                                                                        |
+- 桌面端仍通过现有 host process 的 `feedbackService` 创建工单、上传截图和日志。
+- Web 远控首页当前对 `feedbackService` 是 unsupported fallback；本次不新增远控业务状态，不触碰 task realtime、snapshot、queue 或 replayable/continuous 语义。
+- session 订阅错误入口属于共享 UI：桌面端与手机 Web 端都保留按钮和错误摘要预填；截图能力按
+  当前宿主可用性降级，不为手机端新增独立 Agent runtime、订阅或恢复链路。
+- UI 使用语义 token、紧凑弹窗布局和 i18n 文案，需兼容桌面宽屏与手机 Web 窄屏。
+
+## 验证
+
+| Case ID          | 场景                                 | 断言                                                                           | E2E 落点                                                                                           |
+| ---------------- | ------------------------------------ | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| FB-DESC-01       | 中英文、宽窄窗口、深浅主题的问题上报 | 必填标识可见、输入框具备 required 语义；空值禁止提交                           | `packages/desktop/test/e2e/feedback/feedback-upload-privacy.test.ts` 的 FB-PRIV-01/08 / FB-DESC-01 |
+| FB-DESC-02       | 真实表单与内存反馈服务               | 空值、纯空白及清空后禁止提交，不创建工单、不归档或上传；有效描述可创建工单     | 同上，FB-DESC-02 隔离 Chromium fixture                                                             |
+| FB-REMOTE-LOG-01 | SSH / WSL / Docker 失败反馈默认提交  | 点击实际连接反馈按钮后日志默认勾选；保留错误及连接日志正文，提交归档并上传日志 | 同上，隔离 Chromium fixture；保持 pending                                                          |
+| FB-REMOTE-LOG-02 | SSH / WSL / Docker 失败反馈取消日志  | 从默认勾选状态取消后提交成功，不归档或上传日志；再次新建反馈默认勾选           | 同上，隔离 Chromium fixture；保持 pending                                                          |
+
+2026-10-21 验证：macOS Electron 专项 13/13 通过，工件 `desktop-e2e-20261021094451739-p79154-411d96ef59b7751f`。新增六个场景从真实连接反馈按钮进入真实表单，使用内存反馈服务验证日志归档和上传调用；取消后在同一窗口再次新建反馈恢复默认勾选。既有用例覆盖中英文、宽窄窗口、深浅主题及后台提交选择恢复。候选保持 pending；未验证真实远端连接、线上附件上传或 Windows/Linux 实机。
+
+- 反馈提交页不再渲染类型、模块、影响程度和模型展示字段。
+- 粘贴/选择多图、预览、删除能力保持可用。
+- 日志开关默认开启，取消勾选时 `includeLogs` 为 `false`。
+- session 订阅错误页同时展示“反馈问题”和“重新连接”；点击反馈后，草稿包含当前错误、
+  session ID 和脱敏后的诊断摘要，日志默认开启，不自动采集窗口截图。
+- 运行 `pnpm typecheck`。
+- 运行 `pnpm lint`。

@@ -66,6 +66,15 @@ interface WorkflowConcurrencyGovernor extends WorkflowConcurrencyPort {
    * and feed its signals (its provider requests are visible too). Workflow traffic must never block the main agent's turn.
    */
   observer(): ModelRequestAdmission;
+  /**
+   * Admission for main-agent subagents (`Agent` tool, taskType `subagent_child`): queued,
+   * cooldown-checked and signal-fed like a workflow run. All subagents of one parent session
+   * share **one** queue (run identity `\0subagents:<parentSessionId>`), taking a single slot in
+   * the rotation; they register no bound, subscribe to nothing, never enter the bucket's `runs`,
+   * and leave no state when the session ends (docs/dynamic-workflow/concurrency.md, "Where the
+   * port is bound").
+   */
+  sessionSubagents(parentSessionId: string): ModelRequestAdmission;
   /** Read-only controller snapshot; undefined if there is no bucket for this key. */
   snapshot(key: string): ConcurrencyControllerSnapshot | undefined;
 }
@@ -109,8 +118,9 @@ interface Bucket {
   /** Rotation cursor: the last run granted a slot; the next search starts after it. */
   lastGrantedRun?: string;
   /**
-   * Runs that have requested admission on this key (except the observer). The growth limit considers only bounds they registered:
-   * a large run on a different model must not raise this key. A run is removed from this set when it clears its bound.
+   * Runs that have requested admission on this key (observer and subagent pools excluded). Cap
+   * growth only looks at the bounds they registered: a large run on a different model must not
+   * raise this key. A run is removed from this set when it clears its bound.
    */
   readonly runs: Set<string>;
   cancelCooldownWake?: () => void;
@@ -118,6 +128,10 @@ interface Bucket {
 
 /** Run identity for the observer (main agent): never queued or subscribed, and treated as "not a run" only during fanout filtering. */
 const OBSERVER_RUN_ID = "\0observer";
+/** Run identity prefix for the main-agent subagent pool; starts with `\0` so it can never collide with a workflow run id. */
+const SESSION_SUBAGENTS_RUN_PREFIX = "\0subagents:";
+/** Placeholder when the runner gives no signal: never aborts (user cancellation goes through the request's own signal). */
+const NEVER_ABORTED: AbortSignal = new AbortController().signal;
 
 const defaultSchedule = (callback: () => void, delayMs: number): (() => void) => {
   const timer = setTimeout(callback, delayMs);
@@ -352,18 +366,27 @@ export function createWorkflowConcurrencyGovernor(
     armCooldownWake(bucket);
   };
 
-  const tryAdmit: WorkflowConcurrencyPort["tryAdmit"] = (runId, key) => {
-    const bucket = bucketFor(key);
-    noteRunUsed(bucket, runId);
+  /** Fast-path implementation; when `trackRun` is false (subagent pool) the run is not recorded in the bucket's `runs`. */
+  const tryAdmitIn = (
+    bucket: Bucket,
+    runId: string,
+    trackRun: boolean,
+  ): ModelRequestAdmissionTicket | undefined => {
+    if (trackRun) noteRunUsed(bucket, runId);
     fanOut(bucket, bucket.controller.observe(now()));
     if (waiterCount(bucket) > 0 || !bucket.controller.canAdmit(now())) return undefined;
     return grant(bucket, runId);
   };
 
-  const admit: WorkflowConcurrencyPort["admit"] = (runId, key, signal) => {
-    const bucket = bucketFor(key);
+  /** Queued implementation; `trackRun` as above. */
+  const admitIn = (
+    bucket: Bucket,
+    runId: string,
+    signal: AbortSignal,
+    trackRun: boolean,
+  ): Promise<ModelRequestAdmissionTicket> => {
     if (signal.aborted) return Promise.reject(abortedError(signal));
-    noteRunUsed(bucket, runId);
+    if (trackRun) noteRunUsed(bucket, runId);
     return new Promise<ModelRequestAdmissionTicket>((resolve, reject) => {
       const waiter: Waiter = { runId, resolve, reject, signal, onAbort: () => {} };
       waiter.onAbort = () => {
@@ -384,6 +407,12 @@ export function createWorkflowConcurrencyGovernor(
       drain(bucket);
     });
   };
+
+  const tryAdmit: WorkflowConcurrencyPort["tryAdmit"] = (runId, key) =>
+    tryAdmitIn(bucketFor(key), runId, true);
+
+  const admit: WorkflowConcurrencyPort["admit"] = (runId, key, signal) =>
+    admitIn(bucketFor(key), runId, signal, true);
 
   const subscribe: WorkflowConcurrencyPort["subscribe"] = (runId, listener) => {
     const set = listeners.get(runId) ?? new Set();
@@ -417,6 +446,21 @@ export function createWorkflowConcurrencyGovernor(
       Promise.resolve(grant(bucketFor(workflowConcurrencyKey(model)), OBSERVER_RUN_ID)),
   };
 
+  // Fix rationale: subagents used to inherit the parent's observer, so one turn with ten
+  // parallel Agent calls meant ten request paths that neither queued nor honored Retry-After,
+  // each retrying on its own backoff — the largest source of production 1302s (46% of a
+  // 2026-10-20 sample), which also rejected workflow runs and the user's own turn along the
+  // way. A subagent is delegated work, the same kind as a workflow subagent, so it passes
+  // through the same gate; the user's own turn stays an observer.
+  const sessionSubagents = (parentSessionId: string): ModelRequestAdmission => {
+    const runId = `${SESSION_SUBAGENTS_RUN_PREFIX}${parentSessionId}`;
+    return {
+      tryAcquire: ({ model }) => tryAdmitIn(bucketFor(workflowConcurrencyKey(model)), runId, false),
+      acquire: ({ model, signal }) =>
+        admitIn(bucketFor(workflowConcurrencyKey(model)), runId, signal ?? NEVER_ABORTED, false),
+    };
+  };
+
   return {
     tryAdmit,
     admit,
@@ -424,6 +468,7 @@ export function createWorkflowConcurrencyGovernor(
     setRunBound,
     clearRunBound,
     observer: () => observerAdmission,
+    sessionSubagents,
     snapshot(key) {
       return buckets.get(key)?.controller.snapshot();
     },

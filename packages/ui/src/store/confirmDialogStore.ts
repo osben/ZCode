@@ -5,15 +5,27 @@ export interface ConfirmDialogRequest {
   title: string;
   testId?: string;
   description?: string;
-  /** E2E/可访问性使用的稳定业务语义，不依赖本地化标题文本。 */
+  /** Read-only code already redacted by the caller, shown in its own section beside the
+   *   description. */
+  codeBlock?: { code: string; language: string };
+  /**
+   * The description can be long (e.g. the running-task list before stopping a remote service):
+   * the description area scrolls within a height cap and wraps long paths, keeping the title
+   * and buttons visible. Applies only to the default confirm dialog; callers that do not
+   * declare it are unaffected.
+   */
+  scrollableDescription?: boolean;
+  /** Stable business semantics for E2E/accessibility; independent of localized title text. */
   intent?: string;
-  /** 特定业务弹框的稳定视觉规范；默认确认框不受影响。 */
+  /** Stable visual spec for specific business dialogs; the default confirm dialog is
+   *   unaffected. */
   presentation?: "automation-confirmation" | "source-server-boundary" | "yolo-confirmation";
   confirmLabel?: string;
   cancelLabel?: string;
   confirmVariant?: "default" | "destructive";
   showCloseButton?: boolean;
-  /** 需要用户显式确认的告知弹窗：隐藏取消，并忽略遮罩/Escape 关闭。 */
+  /** Notice dialog requiring explicit user confirmation: hides cancel and ignores mask/Escape
+   *   dismissal. */
   requiredAcknowledgement?: boolean;
   showKeyboardHints?: boolean;
   compact?: boolean;

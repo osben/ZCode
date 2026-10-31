@@ -191,7 +191,8 @@ describe("会话区 BG25/O18/O19 coordinator 与 TaskOutput 专属卡片 E2E", (
         marker: "E2E_SUBAGENT_COORDINATOR_QUESTION_PAYLOAD",
         role: mcs ? "system" : "user",
         evidenceLabel: label,
-        body: "E2E_SUBAGENT_COORDINATOR_QUESTION\n\nE2E_SUBAGENT_COORDINATOR_QUESTION_PAYLOAD",
+        // The summary is for UI preview only; the child receives just the message.
+        body: "E2E_SUBAGENT_COORDINATOR_QUESTION_PAYLOAD",
       });
       const peerEvidence = await getUpstreamRequestEvidence(
         { includes: ["<subagent-message>"] },
@@ -255,6 +256,13 @@ describe("会话区 BG25/O18/O19 coordinator 与 TaskOutput 专属卡片 E2E", (
   it("组合渲染 TaskOutput 未知 ID 与 child RespondToCoordinator 输入错误", async function () {
     this.timeout(E2E_TIMEOUT_MS);
 
+    // Bug cause: beforeEach's global new-task picks cwd from the current navigation. Run alone,
+    // it allocates an isolated directory; child Bash waits for a release file by relative path
+    // while the test writes under ZCodeProject, so the child waits forever. It only passed after
+    // O18 because the previous case left the fixture project active. Return to the fixture
+    // project's draft explicitly here.
+    await prepareV4ConversationE2E();
+    await selectCurrentV4FullAccessMode();
     const requestCountBefore = await getUpstreamRequestRecordCount();
     await sendV4Prompt(
       "E2E_TOOL_RENDERER_ERROR_CARDS: Launch the controlled background child and wait for E2E_ERROR_AGENT_COMPLETED.",

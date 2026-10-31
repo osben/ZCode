@@ -5,6 +5,7 @@ import { withConversationQuotes } from "../helpers/conversation-quotes.js";
 import type {
   EnvInfo,
   MessageId,
+  MessageInfo,
   MessagePart,
   MessageVisibility,
   Model,
@@ -16,7 +17,11 @@ import type {
   TurnInputIntentMetadata,
   TurnExecutionKind,
 } from "../deps.js";
-import { emptyTokenUsageInfo, toTokenUsageInfo } from "../helpers/index.js";
+import {
+  emptyTokenUsageInfo,
+  isHiddenReminderMessage,
+  toTokenUsageInfo,
+} from "../helpers/index.js";
 import type { ResolvedTurnAttachment } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import {
@@ -207,70 +212,77 @@ export async function persistSyntheticUserNoticeForSession(
     messageID: MessageId;
     sessionId: SessionId;
     source: SyntheticUserMessageSource;
-    text: string;
+    /** With multiple segments, one text part per segment, written in order into the same message. */
+    text: string | readonly string[];
     traceContext: TraceContext;
     /** Additional structured metadata merged with `{ source }` in part.metadata so the UI can identify the message type. */
     metadata?: Record<string, unknown>;
     visibility?: MessageVisibility;
   },
 ): Promise<void> {
-  if (options.sessionId === this.sessionId) {
+  const created = Date.now();
+  const visibility = options.visibility ?? "model-only";
+  const info: MessageInfo = {
+    id: options.messageID,
+    sessionID: options.sessionId,
+    role: "user",
+    time: {
+      created,
+    },
+    agent: this.config.agentName ?? "zcode-agent",
+    metadata: buildSyntheticUserNoticeMessageMetadata(options.source, visibility, options.metadata),
+    modelSelection: this.getSessionModelSelection(),
+    semantics: buildSyntheticUserNoticeSemantics(options.source, visibility),
+    anchor: buildProjectionAnchor(
+      options.traceContext,
+      mapSyntheticSourceToAnchorOrigin(options.source),
+    ),
+    source: options.source,
+    system: this.config.systemPrompt,
+    synthetic: true,
+    visibility,
+  };
+  const texts = typeof options.text === "string" ? [options.text] : options.text;
+  const parts: MessagePart[] = texts.map((text) => ({
+    id: createPartId(),
+    sessionID: options.sessionId,
+    messageID: options.messageID,
+    type: "text",
+    text,
+    synthetic: true,
+    time: {
+      start: created,
+      end: created,
+    },
+    metadata: buildSyntheticUserNoticePartMetadata(options.source, visibility, options.metadata),
+  }));
+  // Root cause: cold-recovery's getLatestActiveSessionMessageId skips hidden reminders (agent
+  // listing and other announcements), while this side always moved the pointer, so live and cold
+  // recovery disagreed on compaction coverage bounds and timeline anchors.
+  // Use the same check, passing the exact record about to be written (with parts), identical to what cold recovery reads.
+  if (options.sessionId === this.sessionId && !isHiddenReminderMessage({ info, parts })) {
     this.latestConversationMessageId = options.messageID;
   }
   if (!this.sessionStore) return;
 
-  const created = Date.now();
-  const visibility = options.visibility ?? "model-only";
-  const messageMetadata = buildSyntheticUserNoticeMessageMetadata(
-    options.source,
-    visibility,
-    options.metadata,
-  );
-  const partMetadata = buildSyntheticUserNoticePartMetadata(
-    options.source,
-    visibility,
-    options.metadata,
-  );
-  await this.persistMessage(
-    {
-      id: options.messageID,
+  // Multiple parts are written in one transaction: a mid-way failure cannot leave a message with only the first segments, so cold recovery reads the same segment count as live.
+  if (parts.length > 1 && this.sessionStore.commitMessageBundle) {
+    await this.sessionStore.commitMessageBundle({
       sessionID: options.sessionId,
-      role: "user",
-      time: {
-        created,
-      },
-      agent: this.config.agentName ?? "zcode-agent",
-      metadata: messageMetadata,
-      modelSelection: this.getSessionModelSelection(),
-      semantics: buildSyntheticUserNoticeSemantics(options.source, visibility),
-      anchor: buildProjectionAnchor(
-        options.traceContext,
-        mapSyntheticSourceToAnchorOrigin(options.source),
-      ),
-      source: options.source,
-      system: this.config.systemPrompt,
-      synthetic: true,
-      tools: Object.fromEntries(this.getTools().map((tool) => [tool.name, true])),
-      visibility,
-    },
-    options.traceContext,
-  );
-  await this.persistPart(
-    {
-      id: createPartId(),
-      sessionID: options.sessionId,
-      messageID: options.messageID,
-      type: "text",
-      text: options.text,
-      synthetic: true,
-      time: {
-        start: created,
-        end: created,
-      },
-      metadata: partMetadata,
-    },
-    options.traceContext,
-  );
+      messages: [{ info, parts }],
+    });
+    this.logger?.debug("Session message bundle persisted", {
+      ...traceContextToLogContext(options.traceContext),
+      event: "session.message_bundle.persisted",
+      messageId: options.messageID,
+      module: "core.runtime",
+      partCount: parts.length,
+      status: "completed",
+    });
+    return;
+  }
+  await this.persistMessage(info, options.traceContext);
+  for (const part of parts) await this.persistPart(part, options.traceContext);
 }
 
 export async function persistAssistantMessage(

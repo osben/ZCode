@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useServices } from "@/hooks/useServices.js";
-import { setMcpStoreDirectoryService, useMcpStore } from "@/store/mcpStore.js";
+import { useMcpStore } from "@/store/mcpStore.js";
 
 export function useEnsureWorkspaceMcpLoaded(
   workspaceAbsPath: string,
@@ -9,16 +9,10 @@ export function useEnsureWorkspaceMcpLoaded(
 ) {
   const services = useServices();
 
-  useEffect(() => {
-    if (!rpcReady) {
-      return;
-    }
-    setMcpStoreDirectoryService(services.mcpSyncService);
-    return () => {
-      setMcpStoreDirectoryService(null);
-    };
-  }, [rpcReady, services.mcpSyncService]);
-
+  // Fix note: this hook used to install the current tab's mcpSyncService as the store's global catalog
+  // service, so writes from the settings page landed on the current tab's device even when Scope
+  // selected another one. The catalog service is now bound per target via ensureLoadedForWorkspace;
+  // there is no global service anymore.
   useEffect(() => {
     if (!rpcReady) {
       // When restoring a remote tab, App first receives a disconnected proxy. Reading the MCP directory immediately would

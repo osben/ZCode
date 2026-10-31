@@ -81,8 +81,12 @@ export function applyConversationDelta(
         },
       };
     case "row.upserted": {
-      const index = snapshot.rows.window.findIndex((row) => row.rowId === delta.row.rowId);
-      // §4.3: an unloaded rowId is a no-op (evicted rows can only be retrieved through rows/range).
+      // rowId is unique within the window (rows.ts: monotonic per session, never reused), so
+      // searching from the tail returns the same result as from the head.
+      // The upsert/delta target is almost always a streaming row at the tail; a head-first
+      // findIndex would make every delta scan the entire history.
+      const index = snapshot.rows.window.findLastIndex((row) => row.rowId === delta.row.rowId);
+      // §4.3: an unloaded rowId = no-op (evicted rows come back only via rows/range).
       if (index === -1) return snapshot;
       const window = [...snapshot.rows.window];
       window[index] = delta.row;
@@ -109,7 +113,7 @@ export function applyConversationDelta(
       };
     }
     case "row.delta": {
-      const index = snapshot.rows.window.findIndex((row) => row.rowId === delta.rowId);
+      const index = snapshot.rows.window.findLastIndex((row) => row.rowId === delta.rowId);
       const target = snapshot.rows.window[index];
       if (index === -1 || target === undefined) return snapshot;
       const window = [...snapshot.rows.window];

@@ -42,8 +42,20 @@ export function withAfterFirstUserInputSlot(
   }
   const [first, ...rest] = units;
   if (!first) return units;
-  return [{ ...first, afterFirstUserInputSlot: slot }, ...rest];
+  // Root cause: the render units are recomputed on every clock tick while a turn runs, and a fresh
+  // copy of the first unit here re-rendered that historic turn group each time. Reuse the copy while
+  // the source unit and the slot are unchanged, so the turn group memo holds.
+  const cached = attachedFirstUnits.get(first);
+  if (cached && cached.slot === slot) return [cached.unit, ...rest];
+  const attached = { ...first, afterFirstUserInputSlot: slot };
+  attachedFirstUnits.set(first, { slot, unit: attached });
+  return [attached, ...rest];
 }
+
+const attachedFirstUnits = new WeakMap<
+  ConversationTurnRenderUnit,
+  { slot: ReactNode; unit: ConversationTurnRenderUnit }
+>();
 
 /**
  * Prepend the optimistic first-submission user turn as its own unit

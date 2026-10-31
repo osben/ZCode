@@ -24,6 +24,7 @@ import {
   flushAsyncWork,
   replaceComposerDraftSpy,
   renderLateAckComposer,
+  ROOT_DRAFT_SCOPE,
 } from "./v4ConversationComposerLateAckHarness.js";
 
 const { attachmentState, chatPromptEditorProps, editorApi } = vi.hoisted(() => ({
@@ -56,6 +57,14 @@ const branchIntentWiring = vi.hoisted(() => ({
     switchBranch: () => Promise<{ ok: true }>;
   },
   guard: null as null | (() => Promise<boolean>),
+}));
+// The draft owner (useDraftConfigControl) reads the session service and settings hooks; this suite
+// has no ServiceProvider, so both are stubbed. The owner's write paths are exercised unchanged.
+vi.mock("@/hooks/useZCodeSessionService.js", () => ({
+  useZCodeSessionService: () => ({}),
+}));
+vi.mock("@/hooks/useSettingService.js", () => ({
+  useSettings: () => ({ settings: {} }),
 }));
 vi.mock("@/hooks/useWorkspaceServices.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/hooks/useWorkspaceServices.js")>()),
@@ -239,7 +248,9 @@ describe("late worktree reservation ACK: dispatch and retry", () => {
         rawDetail: null,
         savedAt: Date.now(),
       });
-      harness.rerender(null, "new draft text");
+      // The user types into the new-task composer while the failure modal is open. The text goes
+      // through the editor, as in production; the draft owner reads storage only on a scope change.
+      (chatPromptEditorProps.at(-1)!.onChange as (text: string) => void)("new draft text");
     });
 
     await act(async () => {
@@ -818,7 +829,9 @@ it("keeps the composer free and the frozen record stable while the send chain is
     expect(harness.onSendText).toHaveBeenCalledTimes(1);
     // Claim-at-freeze: the editable draft is empty in the submit commit itself, so the
     // composer is free for the next draft while reservation/uploads/send are in flight.
-    expect(readV4ComposerDraft("/workspace", undefined, "__draft__")?.text ?? "").toBe("");
+    expect(
+      readV4ComposerDraft("/workspace", undefined, "__draft__", ROOT_DRAFT_SCOPE)?.text ?? "",
+    ).toBe("");
     const record = readV4WorktreeRecoveryDrafts("/workspace", undefined, "session-in-flight")[0];
     expect(record?.draft.text).toBe("first frozen message");
     expect(record?.draft.firstSubmission?.status).not.toBe("failed");
@@ -829,7 +842,9 @@ it("keeps the composer free and the frozen record stable while the send chain is
     });
     // Settlement cannot erase or restore over the frozen submission (FSL rule 7): the
     // record stays admitted-side and the editable draft stays free.
-    expect(readV4ComposerDraft("/workspace", undefined, "__draft__")?.text ?? "").toBe("");
+    expect(
+      readV4ComposerDraft("/workspace", undefined, "__draft__", ROOT_DRAFT_SCOPE)?.text ?? "",
+    ).toBe("");
     const settled = readV4WorktreeRecoveryDrafts("/workspace", undefined, "session-in-flight")[0];
     expect(settled?.draft.text).toBe("first frozen message");
     expect(settled?.draft.firstSubmission?.status).not.toBe("failed");

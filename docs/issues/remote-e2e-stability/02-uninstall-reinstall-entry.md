@@ -1,49 +1,94 @@
-# Missing Confirmation Entry for Identity Generation Change after Uninstall and Reinstall
+# 卸载重装后的身份换代缺少确认入口
 
 Status: done
 
-> Historical verification baseline: 2026-09-25. The entry fix documented here is still valuable, but its premise that "a data-preserving reinstall necessarily produces a new identity" was replaced by the user decision of 2026-10-10 in [Issue 08](08-reinstall-history-visible-in-new-device.md). Today a same-device reinstall keeps identity and history; only replacing the independent data environment exercises confirm/cancel/archive. The old batches below do not represent the new semantics passing.
+> 历史验证基线：2026-09-25。本文确认入口修复仍有价值，但“保留数据重装必然产生新身份”的前提
+> 已由 [Issue 08](08-reinstall-history-visible-in-new-device.md) 于 2026-10-10 的用户决策替代。
+> 当前同设备重装保持身份与历史；只有独立数据环境替换才验证确认/取消/归档。以下旧批次不代表新语义通过。
 
-## Evidence at the Time
+## 当前证据
 
-Business baseline `54ece08f23f79ae54aea1f51e0d941497d627392`, server batch `r3-server-20260924033117390-ff1bf4`: `uninstall` once reported PASS, but its run facts (`packages/desktop/.e2e-artifacts/remote-stability-20260924/uninstall-full05.json`) record a different path:
+业务基线 `54ece08f23f79ae54aea1f51e0d941497d627392`，服务器批次
+`r3-server-20260924033117390-ff1bf4` 的 `uninstall` 曾报告 PASS，但其
+[运行事实](../../../packages/desktop/.e2e-artifacts/remote-stability-20260924/uninstall-full05.json)记录了另一条路径：
 
-1. First install through the official wizard, then uninstall through the CLI with two DELETEs; run files are removed while config and the user data sentinel are kept.
-2. Connecting again prompts that identity generation change must be confirmed, matching the [Source installation identity boundary](../../architecture/r3-source-server-remote-architecture.md).
-3. "重新安装并连接" (reinstall and connect) in Settings was clicked. After 30 seconds the directory panel was still shown, the original project button was disabled, and there was no error text.
-4. The old test then deleted all connections, created a new SSH connection and got a new installationId before judging PASS.
+1. 经正式向导首装，再通过 CLI 双次 DELETE 卸载；运行文件删除，config 与用户数据哨兵保留。
+2. 再次连接提示需确认身份换代，符合[Source 安装身份边界](../../architecture/r3-source-server-remote-architecture.md)。
+3. 设置页“重新安装并连接”已点击。30 秒后目录面板仍存在，原项目按钮 disabled，没有错误说明。
+4. 旧测试随后删除全部连接，重新新建 SSH 连接，得到新 installationId，才判为 PASS。
 
-Step 4 proves a fresh install works but not that the recovery entry of step 3 works. The old case therefore masked the entry problem.
+第 4 步证明全新安装可用，但不能证明第 3 步的恢复入口可用。旧用例因此掩盖了该入口问题。
 
-## Test Correction
+## 测试修正与待验证
 
-`conversation-session-r3-uninstall.test.ts` now waits for that entry to complete the install, select the original directory and restore the session directly. On failure it keeps the directory panel and installation facts and FAILs directly; it no longer deletes the device to change the path and report a pass.
+已将 `conversation-session-r3-uninstall.test.ts` 改为直接等待该入口完成安装、选择原目录并恢复 session。
+失败保留目录面板与安装事实，直接 FAIL；不再删除设备换路径后报通过。
 
-Round 10 `r3-server-20260924063933344-38f7b4` waited at wizard step 1 until timeout while the remote already had a new installationId. Checking the code showed that Settings calls `onCreateConnection` without a Profile and only opens the wizard; what actually submits the connection is `onSelectProfile(preferred)` of the wizard device card. That round omitted selecting the saved route and its timeout cannot be directly characterized as a business defect; the action has been added. Round 11 `r3-server-20260924070140735-f6bd8f` run facts (`packages/desktop/.e2e-artifacts/remote-stability-20260924/uninstall-recheck11.json`) confirm the Settings entry and the saved route were both clicked, after which establishing the link again prompted "请在连接管理中确认身份换代" (confirm the identity generation change in connection management). The remote `current.json` and the new installationId existed, and config and the user data sentinel were kept; the failure point is restoring the connection, and it cannot be described as the install not running at all.
+第 10 轮 `r3-server-20260924063933344-38f7b4` 在向导第 1 步等待至超时，远端已有新的 installationId。
+进一步核对代码发现：设置页调用的是不带 Profile 的 `onCreateConnection`，只打开向导；真正提交连接的是
+向导设备卡的 `onSelectProfile(preferred)`。该轮遗漏了选择保存线路，不能把这次超时直接定性为业务缺陷。
+现已补齐该动作。第 11 轮 `r3-server-20260924070140735-f6bd8f` 的
+[运行事实](../../../packages/desktop/.e2e-artifacts/remote-stability-20260924/uninstall-recheck11.json)
+确认设置入口和保存线路均已点击，随后在建立链路阶段再次提示“请在连接管理中确认身份换代”。
+远端 `current.json` 与新 installationId 已存在，config 和用户数据哨兵仍保留；失败点是恢复连接，
+不能描述为完全没有执行安装。
 
-Supplementary batch `r3-server-20260924091134245-eb60d2`, after receiving the identity error again, actually closed the wizard and returned to connection management. Run facts (`packages/desktop/.e2e-artifacts/remote-stability-20260924/uninstall-coverage-next.json`) show the page still marked "远端已卸载" (remote uninstalled), the only visible actions being "重新安装并连接" and "移除全部连接", and no identity-generation-change confirmation entry. This agrees with the source, where the confirm button lives in the Profile route list, and when `installState === "uninstalled"` that list is hidden. The recovery flow requires confirming the identity but the designated page has no usable entry.
+补充取证批次 `r3-server-20260924091134245-eb60d2` 在再次收到身份错误后，实际关闭向导并返回连接管理。
+[运行事实](../../../packages/desktop/.e2e-artifacts/remote-stability-20260924/uninstall-coverage-next.json)
+显示页面仍标记“远端已卸载”，可见操作只有“重新安装并连接”和“移除全部连接”，没有身份换代确认入口。
+这与源码中确认按钮位于 Profile 线路列表、而 `installState === "uninstalled"` 时隐藏该列表一致。
+恢复流程要求确认身份，但指定页面没有可用入口；已获得运行证据，未修改产品实现。
 
-Acceptance keeps the allowlist, preservedPaths, new installationId and user-data reconciliation of [R3A-UPG-09](../../testing/r3-remote-automation-case-matrix.md), and verifies that the recovery action in Settings itself works.
+验收应同时保持 [R3A-UPG-09](../../testing/r3-remote-automation-case-matrix.md) 的 allowlist、preservedPaths、
+新 installationId 与用户数据对账，并验证设置页的恢复动作本身有效。未修改业务实现。
 
-## Root-Cause Fix and Verification (2026-09-25)
+## 根因修复与验证（2026-09-25）
 
-The user explicitly authorized fixing this problem.
+本节取代上文调查期间的“未修改业务实现”状态。用户已明确授权修复本问题。
 
-The root cause is in [SourceServerManagementPanel](../../../packages/ui/src/settings/SourceServerManagementPanel.tsx): the confirm button existed only on route rows, an uninstalled Source hides the routes, and the preferred route is not among the collapsed other routes, so when the Host already reported `identity-change-pending` there was still no confirmation entry. The Host's identity protection and atomic replacement contract did not need to change.
+根因位于 [SourceServerManagementPanel](../../../packages/ui/src/settings/SourceServerManagementPanel.tsx)：
+确认按钮只存在于线路行，已卸载 Source 隐藏线路，首选线路又不在折叠的其他线路中，导致 Host
+已报告 `identity-change-pending` 时仍没有确认入口。Host 的身份保护和原子替换契约本身不需要改变。
 
-Now the device card shows the confirm action of the route actually pending confirmation first, and several pending routes are directly visible. All entries reuse the original confirmation dialog and `management.confirmIdentityChange`; cancel does not rebind, a failure shows the error and keeps the entry, and a success consumes the snapshot returned by the Host. The security boundary is not bypassed by changing `installState`, deleting the old device, accepting the new identity automatically, or retrying.
+现在设备卡优先显示实际待确认线路的确认动作，多条待确认线路直接可见。所有入口复用原确认
+弹窗和 `management.confirmIdentityChange`；取消不改绑定，失败显示错误并保留入口，成功消费
+Host 返回的快照。没有通过改 `installState`、删除旧设备、自动接受新身份或重试来规避安全边界。
 
 ```text
-Before: new installationId → Host identity-change-pending → UI hides confirmation → cannot recover
-Now:    new installationId → device-card confirmation → user accepts → Host atomic replacement → choose directory from the new device
+之前：新 installationId → Host identity-change-pending → UI 隐藏确认 → 无法恢复
+现在：新 installationId → 设备卡确认 → 用户接受 → Host 原子替换 → 从新设备选择目录
 ```
 
-The regression test first showed 5 failures on the original component with the existing 18 passing; after the fix, with multi-route coverage added, the related UI, Host directory, connection management and services total 125 passing. Cancel, disabled while requesting, no automatic retry on failure, preferred and non-preferred routes, and installed/uninstalled all have behavior assertions. Type check, E2E type check and the architecture check pass; lint has 0 errors.
+回归测试在原组件上先证明 5 项失败、原有 18 项通过；修复后增加多线路覆盖，相关 UI、Host
+目录、连接管理与服务共 125 项通过。取消、请求中禁用、失败不自动重试、首选与非首选线路、
+installed/uninstalled 都有行为断言。类型检查、E2E 类型检查、架构检查通过；lint 为 0 错误。
 
-The real test used a dedicated test server and an independent Linux SSH container, business baseline `54ece08f23f79ae54aea1f51e0d941497d627392` plus this fix. In valid batch `r3-server-20260925030830182-0375bb`, `uninstall`, `devicerow` and `uipairwise` all PASS; the SHA-256 of the full input manifest is `55c831c21489c120f7a3e82ba8346c389892bade3121890c39d2b8e69263d596`. `uninstall` verified that cancel does not change the original route; after confirmation the old route is archived and old history kept, there is a new installationId, a new session, config/user data kept, and the original directory is selectable from the saved new route. An undeleted device goes through the first-connection path separately.
+真实测试使用专用测试服务器、独立 Linux SSH 容器，业务基线
+`54ece08f23f79ae54aea1f51e0d941497d627392` 加本修复。有效批次
+`r3-server-20260925030830182-0375bb` 的 `uninstall`、`devicerow`、`uipairwise` 均 PASS；
+完整输入清单 SHA-256 为 `55c831c21489c120f7a3e82ba8346c389892bade3121890c39d2b8e69263d596`。
+`uninstall` 已验证取消不改原线路、确认后旧线路归档与旧历史保留、新 installationId、
+新 session、配置/用户数据保留，以及从已保存的新线路选择原目录。未删除设备另走首连路径。
 
-The same input version passed once each in the fresh containers of `r3-server-20260925031220129-dab784` and `r3-server-20260925031504324-c14318`, for three complete PASS runs in total, taking about 203, 158 and 158 seconds respectively (the first concurrent with adjacent cases).
+同一输入版本又在 `r3-server-20260925031220129-dab784`、
+`r3-server-20260925031504324-c14318` 的全新容器中各通过一次，最终共三次完整 PASS，
+耗时分别约 203、158、158 秒（首轮与相邻用例并发）。
 
-The first candidate batch `r3-server-20260925030033171-139169` went past the identity confirmation, but the menu DOM click newly added in E2E did not trigger the Radix menu and the overall FAIL was kept. After switching to the WebDriver click used by the existing SSH helper, the full batches above passed; no business fallback was added for that test action error.
+首个候选批次 `r3-server-20260925030033171-139169` 已越过身份确认，但 E2E 新增的菜单
+DOM click 未触发 Radix 菜单，整体 FAIL 被保留。按已有 SSH helper 改用 WebDriver 点击后，
+上述完整批次通过；没有为该测试操作错误追加业务兜底。
 
-Scope is the desktop connection management UI only; the `isDesktop` gate of `SettingsPage` keeps the mobile replayable path from using this panel. The protocol, identity persistence, Host/CLI and data migration rules are unchanged. Rollback only needs reverting this UI fix; no data format change needs migrating back, but the missing confirmation entry would return.
+作用域仅为桌面连接管理 UI；`SettingsPage` 的 `isDesktop` 门禁使手机 replayable 路径不使用
+该面板。未改协议、身份持久化、Host/CLI 或数据迁移规则。回滚仅需撤销本次 UI 修复；不会产生
+需要回迁的数据格式变化，但会重新暴露原确认入口缺失问题。
+
+## 2026-10-20 新基线回放
+
+staging `52cd1bc1d3` 的 `r3-server-pending-52cd-a-isolated-identity-replacement` 已完成取消、
+新身份确认和旧线路归档，随后因测试进入空白“新建连接”表单、查找已退役的保存设备卡而失败。
+`uninstall.json` 保存了身份替换事实，失败录像显示空白连接表单。这次失败不是本文的确认入口缺陷复发。
+
+测试改为复用 `openSSHSourceDirectory`，从项目表单选择未归档线路对应的新设备，不重新填写连接、
+不删除旧设备。`r3-server-pending-52cd-b-{isolated,default}-{uninstall,identity-replacement}`
+四轮均 1/1 通过，无跳过或框架重试。新环境为空、旧历史保存在封存目录、新 session 与新安装身份一致，
+原保留数据重装分支也通过；业务实现保持基线不变。

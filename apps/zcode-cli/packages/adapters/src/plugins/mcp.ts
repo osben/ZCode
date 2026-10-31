@@ -157,13 +157,18 @@ function resolveMcpServerConfig(
   // not only by loader source.
   // Shared fields are resolved once here so every transport keeps alwaysLoad; a transport that rebuilt
   // its config without them silently deferred always-loaded plugin tools.
+  const official = context.loaded.marketplace === ZCODE_OFFICIAL_PLUGIN_MARKETPLACE;
   const baseConfig: McpServerConfigBase = {
     alwaysLoad: typeof server.alwaysLoad === "boolean" ? server.alwaysLoad : undefined,
     enabled: typeof server.enabled === "boolean" ? server.enabled : undefined,
+    // A workspace-shared server must partition its own state by _meta.session_id; only official plugins are trusted to do so
+    // (docs plugin viewer spec §8); other plugins' declarations are ignored to keep session isolation.
+    isolation:
+      official && (server.isolation === "workspace" || server.isolation === "session")
+        ? server.isolation
+        : undefined,
     timeoutMs: typeof server.timeoutMs === "number" ? server.timeoutMs : undefined,
-    source: {
-      kind: context.loaded.marketplace === ZCODE_OFFICIAL_PLUGIN_MARKETPLACE ? "builtin" : "plugin",
-    },
+    source: { kind: official ? "builtin" : "plugin" },
   };
 
   // zcode_official allows http and stdio. Disable this MCP when sse is configured rather than

@@ -6,7 +6,7 @@
 // journal and fully transient state.
 
 import { z } from "zod";
-import { CreateWorkflowDiagnosticSchema } from "./create-workflow.js";
+import { CreateWorkflowDiagnosticSchema, WORKFLOW_SOURCE_MISSING_HINT } from "./create-workflow.js";
 import { toToolJsonSchema } from "./json-schema.js";
 
 export const EVAL_WORKFLOW_SNIPPET_TOOL_NAME = "EvalWorkflowSnippet";
@@ -16,11 +16,14 @@ export const EVAL_WORKFLOW_SNIPPET_DEFAULT_TIMEOUT_MS = 60_000;
 export const EVAL_WORKFLOW_SNIPPET_MAX_TIMEOUT_MS = 600_000;
 export const EVAL_WORKFLOW_SNIPPET_MIN_TIMEOUT_MS = 1_000;
 
-/** Violation message for "provide exactly one snippet" (same tone as the other three tools). */
-export const EVAL_WORKFLOW_SNIPPET_SOURCE_ERROR =
-  "Provide exactly one snippet source: `code` for the snippet inline, or `path` for a file holding it. Passing both, or neither, is ambiguous.";
+/** Both sources were given (same tone as the other three tools). */
+export const EVAL_WORKFLOW_SNIPPET_SOURCE_CONFLICT_ERROR =
+  "Provide exactly one snippet source: `code` for the snippet inline, or `path` for a file holding it. Passing both is ambiguous.";
 
-export const EvalWorkflowSnippetInputSchema = z
+/** Neither source arrived: usually the arguments failed to parse; see {@link WORKFLOW_SOURCE_MISSING_HINT} for the reason. */
+export const EVAL_WORKFLOW_SNIPPET_SOURCE_MISSING_ERROR = `No snippet source arrived. Pass \`code\` for the snippet inline, or \`path\` for a file holding it. ${WORKFLOW_SOURCE_MISSING_HINT}`;
+
+const EvalWorkflowSnippetModelInputSchema = z
   .object({
     code: z
       .string()
@@ -47,9 +50,26 @@ export const EvalWorkflowSnippetInputSchema = z
   })
   .strict();
 
+/**
+ * Runtime input: the model-facing fields plus `script`, backfilled by `resolveInput`.
+ *
+ * `script` is always the normalized `code`. The other three script-submitting tools (CreateWorkflow /
+ * AmendWorkflow / FillWorkflowHole) all name the field `script`, so a PreToolUse hook reading only
+ * `tool_input.script` used to find nothing on snippets and silently pass them through (confirmed in the
+ * 2026-10 user regression). `code` is kept: UI rendering and existing hooks read it.
+ * Same posture as `CreateWorkflow.script_line_offset` — a parse result that the model's JSON schema omits;
+ * if the model forces it in anyway, normalization overwrites it unconditionally.
+ */
+export const EvalWorkflowSnippetInputSchema = EvalWorkflowSnippetModelInputSchema.extend({
+  script: z.string().min(1).optional(),
+}).strict();
+
 export type EvalWorkflowSnippetInput = z.infer<typeof EvalWorkflowSnippetInputSchema>;
 
-export const EvalWorkflowSnippetInputJsonSchema = toToolJsonSchema(EvalWorkflowSnippetInputSchema);
+/** JSON schema handed to the model: does not include `script`. */
+export const EvalWorkflowSnippetInputJsonSchema = toToolJsonSchema(
+  EvalWorkflowSnippetModelInputSchema,
+);
 
 // Log limits (all payloads at the protocol boundary are bounded): item count × item length;
 // the service truncates and marks excess items.

@@ -58,8 +58,18 @@ export async function prepareNativeSearchTools({
     throw new Error(`Unsupported native search artifact source: ${String(source)}`);
   }
 
+  // The source is already resolved as repository; plan generation must pin the same source: otherwise an
+  // environment where the default intranet address resolves would re-infer intranet and return a plan with
+  // a downloadUrl that disagrees with the actual byte source.
   const plan =
-    prebuiltPlan ?? resolveNativeSearchPrebuiltPlan({ platform, arch, outputDir, dependenciesDir });
+    prebuiltPlan ??
+    resolveNativeSearchPrebuiltPlan({
+      platform,
+      arch,
+      outputDir,
+      dependenciesDir,
+      env: { ...env, NATIVE_SEARCH_TOOLS_ARTIFACT_SOURCE: "repository" },
+    });
 
   console.log("==> Preparing native search tools from repository archives");
   console.log(`    platform: ${plan.platformKey}`);

@@ -118,9 +118,10 @@ describe("Desktop Memory continuous 链路 WDIO", () => {
     await seedCliConfig({ features: { memory: true }, memory: { use: true } });
     await prepareV4ConversationE2E();
     await ensureToolCrossProductFullAccessMode();
-    // Bug 根因：replay capture 文件跨 WDIO spec/run 复用；按 fixtureId 全文件查找会把
-    // 上一次同名 Memory 轨迹算进本次 proof。记录本 spec 的起始下标，只裁剪旧记录，
-    // 保留本次每条 Main/Extraction 请求必须恰好一条的原有断言。
+    // Bug root cause: the replay capture file is shared across WDIO specs/runs; searching the
+    // whole file by fixtureId counts the previous run's same-named Memory traces into this
+    // proof. Record this spec's start index and trim only old records, keeping the original
+    // assertion of exactly one Main/Extraction request each this time.
     providerCaptureStartIndex = (await readProviderCapture()).records.length;
   });
 
@@ -154,11 +155,12 @@ describe("Desktop Memory continuous 链路 WDIO", () => {
     await expectMemoryTelemetry(telemetryFetch, initiallyDisabledSessionId, "0");
     await setMemoryEnabled(true, initiallyDisabledSessionId);
     await verifyMemorySettingsViewer(initiallyDisabledSessionId);
-    // 修复原因：Settings 初始化会异步刷新内置 provider，并可能覆盖 case-local replay
-    // 偏好；Memory 轨迹必须在设置操作结束后重新固定测试 provider 再创建 session。
+    // Fix reason: Settings init asynchronously refreshes built-in providers and may override the
+    // case-local replay preference; the Memory trace must re-pin the test provider after the
+    // settings operations finish, before creating the session.
     await prepareV4ConversationE2E();
     await ensureToolCrossProductFullAccessMode();
-    // Memory 开关在 session 创建时冻结；完成默认关闭的初始 session 后新建启用 session。
+    // The Memory toggle freezes at session creation; after finishing the default-off initial session, create a new enabled session.
     await startNewV4Draft();
 
     await sendV4Prompt(DEFAULT_BRANCH_PROMPT);
@@ -210,7 +212,7 @@ describe("Desktop Memory continuous 链路 WDIO", () => {
 
     await startNewV4Draft();
     await ensureToolCrossProductFullAccessMode();
-    // 回归：新草稿模型检查曾回收在途预热，首发被误判为草稿切换；只点一次并确认 admission。
+    // Regression: the new-draft model check once recalled in-flight warmup and misjudged the first send as a draft switch; click once and confirm admission.
     await sendV4PromptAndWaitAccepted(
       CUSTOM_PROMPT,
       "E2E_MEMORY_WDIO_CUSTOM",
@@ -228,7 +230,7 @@ describe("Desktop Memory continuous 链路 WDIO", () => {
       "custom agent persistent Memory prompt 未进入 provider capture",
       60_000,
     );
-    // 回归：Host 动态 profile 曾绕过 Memory 工具补齐；直接检查 child 最终 wire，不能只看完成文本。
+    // Regression: the Host dynamic profile once bypassed Memory tool completion; check the child's final wire directly, not just the completion text.
     const customRequest = (await readProviderCapture()).records
       .slice(providerCaptureStartIndex)
       .find((record) => record.replay?.fixtureId === "memory-window-custom-child-write")
@@ -286,7 +288,8 @@ describe("Desktop Memory continuous 链路 WDIO", () => {
       expect(extractMainMemoryIndexContext(request.requestJson)).toBe(
         fixture.index === "initial" ? expectedMainMemoryIndex : expectedUpdatedMainMemoryIndex,
       );
-      expect(countCaptureOccurrences(request.requestJson, "# agentsMd")).toBe(1);
+      // The instructions section no longer carries the `# agentsMd` heading; it starts with the shared explanation, see meta-user-context.md.
+      expect(countCaptureOccurrences(request.requestJson, "# agentsMd")).toBe(0);
       expect(countCaptureOccurrences(request.requestJson, "# claudeMd")).toBe(0);
       expect(countCaptureOccurrences(request.requestJson, MAIN_MEMORY_INDEX_POINTER)).toBe(1);
     }
@@ -347,9 +350,10 @@ async function openMemorySettings(): Promise<void> {
 }
 
 async function verifyMemorySettingsViewer(expectedSessionId: string): Promise<void> {
-  // Bug 根因：首个 disabled turn 回到 idle 后，标题生成仍可能在后台排队；若此时
-  // 记录 provider 数量，异步 title request 会被错误归因到 Settings 页面。先等该
-  // case 自己的 title fixture 完成，再保留“打开 Settings 不发请求”的原断言。
+  // Bug root cause: after the first disabled turn returns to idle, title generation may still be
+  // queued in the background; recording the provider count at that moment would misattribute an
+  // async title request to the Settings page. Wait for this case's own title fixture to finish,
+  // then keep the original "opening Settings sends no request" assertion.
   await waitForMemoryTitleRequest();
   const requestCountBefore = (await readProviderCapture()).records.length;
   await openMemorySettings();
@@ -455,9 +459,10 @@ async function openMemoryScopeMenu(): Promise<void> {
         ) {
           return;
         }
-        // Bug 根因：普通 HTMLElement.click() 不会产生 Radix DropdownMenu 依赖的
-        // pointerdown，而 WebDriver clickable 在 Linux Electron 容器会误判坐标。
-        // 直接派发同语义 pointerdown，既绕开坐标又保留真实菜单打开边界。
+        // Bug root cause: plain HTMLElement.click() does not produce the pointerdown Radix
+        // DropdownMenu depends on, while WebDriver clickable misjudges coordinates in the Linux
+        // Electron container. Dispatch a semantically identical pointerdown directly — bypassing
+        // coordinates while keeping the real menu-open boundary.
         trigger.dispatchEvent(
           new PointerEvent("pointerdown", {
             bubbles: true,
@@ -562,8 +567,9 @@ async function setMemorySearch(value: string): Promise<void> {
       const search = document.querySelector<HTMLInputElement>(`[data-testid="${searchTestId}"]`);
       if (!search) return false;
 
-      // 修复原因：WebDriver setValue 在 React 受控 search input 重渲染时偶发丢键；
-      // 使用原生 value setter 并派发 input 事件，仍由产品 onChange 驱动筛选状态。
+      // Fix reason: WebDriver setValue occasionally drops keystrokes when the React controlled
+      // search input re-renders; use the native value setter and dispatch an input event, with
+      // the product's onChange still driving the filter state.
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       setter?.call(search, nextValue);
       search.dispatchEvent(new InputEvent("input", { bubbles: true, data: nextValue }));
@@ -801,8 +807,9 @@ async function readMainMemoryIndexFixture(): Promise<string> {
 }
 
 function normalizeTextFixtureLineEndings(content: string): string {
-  // 修复原因：Windows runner 会把 Markdown fixture checkout 为 CRLF，而 provider-visible
-  // Memory 由 join("\n") 生成 LF；逐字合同必须比较文本语义，不能把工作树行尾当成产品差异。
+  // Fix reason: Windows runners check out the Markdown fixture with CRLF, while provider-visible
+  // Memory is generated with join("\n") as LF; the verbatim contract must compare text semantics,
+  // not treat working-tree line endings as a product difference.
   return content.replace(/\r\n?/gu, "\n");
 }
 
@@ -815,8 +822,9 @@ function extractMainMemorySection(requestJson: unknown): string {
   if (!dynamicBlock) throw new Error("provider request is missing the Main Memory section");
 
   const start = dynamicBlock.indexOf("# Memory\n\n");
-  const end = dynamicBlock.indexOf("\n\n# Environment", start);
-  if (end < 0) throw new Error("provider request is missing the Environment boundary");
+  // The environment section moved to the user announcement; in system, Memory is directly followed by Context management.
+  const end = dynamicBlock.indexOf("\n\n# Context management", start);
+  if (end < 0) throw new Error("provider request is missing the Context management boundary");
   return dynamicBlock.slice(start, end);
 }
 
@@ -830,18 +838,20 @@ function extractMainMemoryIndexContext(requestJson: unknown): string {
   );
   if (!contextBlock) throw new Error("provider request is missing the Main MEMORY.md source");
 
-  const contextStart = contextBlock.indexOf("# agentsMd");
+  const contextStart = contextBlock.indexOf("Codebase and user instructions are shown below.");
   const firstSourceStart = contextBlock.indexOf("\n\nContents of ", contextStart);
   const memorySourceStart = contextBlock.indexOf(
     `Contents of ${PROJECT_MEMORY_INDEX} (${MAIN_MEMORY_INDEX_SOURCE}):`,
     firstSourceStart,
   );
-  const contextEnd = contextBlock.indexOf("\n\n# currentDate", memorySourceStart);
+  // The date is its own announcement block; the instructions section ends at this block's reminder close.
+  const contextEnd = contextBlock.indexOf("\n</system-reminder>", memorySourceStart);
   if (contextStart < 0 || firstSourceStart < 0 || memorySourceStart < 0 || contextEnd < 0) {
     throw new Error("provider request has an invalid Main MEMORY.md context boundary");
   }
-  // 修复原因：Request User Context 可同时承载 AGENTS.md 与 AutoMem；Memory fixture
-  // 保留聚合标题和共享说明，跳过可选的 AGENTS.md source，再逐字校验 AutoMem source。
+  // Fix reason: Request User Context can carry both AGENTS.md and AutoMem; the Memory fixture
+  // keeps the shared explanation, skips the optional AGENTS.md source, then verifies the AutoMem
+  // source verbatim.
   return `${contextBlock.slice(contextStart, firstSourceStart)}\n\n${contextBlock.slice(
     memorySourceStart,
     contextEnd,
@@ -874,7 +884,7 @@ function countCaptureOccurrences(value: unknown, marker: string): number {
   );
 }
 
-/** 真实网络上报验证开关维度；后台 Extraction 的结果不影响该值。 */
+/** Real-network reporting verifies the toggle dimension; background Extraction results do not affect it. */
 async function expectMemoryTelemetry(
   telemetryFetch: Awaited<ReturnType<typeof browser.electron.mock>>,
   sessionId: string,

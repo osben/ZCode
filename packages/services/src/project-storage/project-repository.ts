@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import {
@@ -20,6 +20,7 @@ import type {
   VirtualProject,
 } from "#src/project-storage/contract.js";
 import { ensureHost, OWNERSHIP_DECIDED } from "#src/project-storage/legacy-tasks.js";
+import type { ProjectDataRepositoryContract } from "#src/project-storage/purge/contract.js";
 import {
   assertRemoteProjectRoots,
   assertRemoteTaskDirectories,
@@ -62,8 +63,14 @@ function taskTreeColumns(db: DatabaseSync): string {
     .join(",");
 }
 
+function tableExists(db: DatabaseSync, name: string): boolean {
+  return (
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name) !== undefined
+  );
+}
+
 function readTasks(db: DatabaseSync): ProjectTask[] {
-  // 迁移后的旧后端行也有 CLI 时间；沿用列表的 provider 边界，避免展示 Controller 无法操作的会话。
+  // Migrated legacy backend rows also carry CLI timestamps; keep the list's provider boundary so sessions the Controller cannot operate are not shown.
   return db
     .prepare(
       `SELECT ${taskTreeColumns(db)} FROM tasks WHERE provider=? AND deleted=0 AND coalesce(cli_deleted,0)=0 AND cli_created_at IS NOT NULL ORDER BY cli_updated_at DESC,task_id`,
@@ -102,7 +109,7 @@ function readTasks(db: DatabaseSync): ProjectTask[] {
     });
 }
 
-export class ProjectRepository implements ProjectRepositoryContract {
+export class ProjectRepository implements ProjectRepositoryContract, ProjectDataRepositoryContract {
   constructor(
     private readonly db: DatabaseSync,
     private readonly ownerHostId?: string,
@@ -113,8 +120,8 @@ export class ProjectRepository implements ProjectRepositoryContract {
       const active = new Set(
         input.activeTasks.map((task) => JSON.stringify([resolveWorkspaceKey(task), task.taskId])),
       );
-      // 2026-09-15 裁决：纯按 CLI 最后活动时间归档，不再看 last_outcome 与未读；
-      // 只有置顶和 syncer 观察到的运行中会话除外。旧判据把 error / 无结果的老会话永远留在列表里。
+      // 2026-09-15 decision: archive purely by last CLI activity time, no longer looking at last_outcome or unread state;
+      // only pinned tasks and running sessions observed by the syncer are excluded. The old criterion kept old error or no-result sessions in the list forever.
       const candidates = this.db
         .prepare(`SELECT workspace_key,workspace_path,workspace_identity,task_id FROM tasks
         WHERE archived=0 AND pinned=0 AND deleted=0 AND coalesce(cli_deleted,0)=0
@@ -189,6 +196,9 @@ export class ProjectRepository implements ProjectRepositoryContract {
       assertRemoteProjectRoots(this.ownerHostId, roots, old);
       if (input.reuseExistingRoot) {
         // Open-directory intent is only defined for a single local root that does not target an existing project.
+        // Opening a directory used to create only a workspace, leaving the draft without a project. The lookup and the create
+        // must run in one write transaction so concurrent right-click opens from several windows cannot create duplicate projects.
+        // Reuse does not change the existing name, roots, or order.
         if (hostId !== "local" || old || roots.length !== 1)
           throw new Error("project.invalid-directory-open");
         const existing = this.db
@@ -232,7 +242,7 @@ export class ProjectRepository implements ProjectRepositoryContract {
       )
         name = `${baseName} (${suffix})`;
       const now = Date.now();
-      // 原先用 max(position)+1 导致新建项目落在末尾；同一 Host 写事务内取最小值减一，保留已有顺序。
+      // max(position)+1 used to put new projects at the end; within the same Host write transaction take the minimum minus one, keeping the existing order.
       this.db
         .prepare(`INSERT INTO projects(project_id,host_id,name,name_overridden,position,pinned,pinned_at,created_at,updated_at)
         VALUES(?,?,?,?,(SELECT coalesce(min(position),1)-1 FROM projects WHERE host_id=?),?,?,?,?)
@@ -288,6 +298,98 @@ export class ProjectRepository implements ProjectRepositoryContract {
       .run(Date.now(), Date.now(), id, this.ownerHostId ?? "local");
   }
 
+  readProjectTaskRefs(id: string): Array<ProjectTaskRef & { cwd: string }> {
+    return this.db
+      .prepare("SELECT * FROM tasks WHERE project_id=? AND host_id=? ORDER BY task_id")
+      .all(id, this.ownerHostId ?? "local")
+      .map((row) => ({
+        taskId: String(row.task_id),
+        workspacePath: String(row.workspace_path),
+        ...(row.workspace_identity == null
+          ? {}
+          : { workspaceIdentity: String(row.workspace_identity) }),
+        cwd: String(row.root_path ?? row.workspace_path),
+      }));
+  }
+
+  readTaskDirectories(): Array<{ projectId: string | null; cwd: string }> {
+    return this.db
+      .prepare(
+        "SELECT DISTINCT project_id, coalesce(root_path, workspace_path) AS cwd FROM tasks WHERE host_id=? AND deleted=0",
+      )
+      .all(this.ownerHostId ?? "local")
+      .map((row) => ({
+        projectId: row.project_id == null ? null : String(row.project_id),
+        cwd: String(row.cwd),
+      }));
+  }
+
+  purgeTasks(tasks: readonly ProjectTaskRef[]): void {
+    const host = this.ownerHostId ?? "local";
+    // The task-group admission table exists only in newer databases; on older or test databases without it there are no rows to delete.
+    const admissions = tableExists(this.db, "task_group_admissions");
+    transaction(this.db, () => {
+      for (const task of tasks) {
+        const key = resolveWorkspaceKey(task);
+        const row = readTask(this.db, task);
+        if (row && row.host_id !== host) continue;
+        this.db
+          .prepare("DELETE FROM tasks WHERE workspace_key=? AND task_id=?")
+          .run(key, task.taskId);
+        this.db
+          .prepare("DELETE FROM task_group_members WHERE workspace_key=? AND task_id=?")
+          .run(key, task.taskId);
+        if (admissions)
+          this.db
+            .prepare("DELETE FROM task_group_admissions WHERE workspace_key=? AND task_id=?")
+            .run(key, task.taskId);
+      }
+    });
+  }
+
+  markTasksDeleted(tasks: readonly ProjectTaskRef[]): void {
+    const host = this.ownerHostId ?? "local";
+    transaction(this.db, () => {
+      for (const task of tasks)
+        this.db
+          .prepare(
+            "UPDATE tasks SET deleted=1,cli_deleted=1,handoff_pending=handoff_pending & ~1 WHERE workspace_key=? AND task_id=? AND host_id=?",
+          )
+          .run(resolveWorkspaceKey(task), task.taskId, host);
+    });
+  }
+
+  purgeProjectIfUnreferenced(id: string): boolean {
+    return transaction(this.db, () => {
+      const project = readProjects(this.db).find((entry) => entry.id === id);
+      if (!project?.deleted || project.hostId !== (this.ownerHostId ?? "local")) return false;
+      // While retained running sessions and scheduled or off-peak definitions still point at it, keep the project soft-deleted:
+      // deleting it would leave them pointing at a missing project.
+      const referenced = ["tasks", "automations", "off_peak_tasks"].some(
+        (table) =>
+          this.db.prepare(`SELECT 1 FROM ${table} WHERE project_id=? LIMIT 1`).get(id) !==
+          undefined,
+      );
+      if (referenced) return false;
+      this.db.prepare("DELETE FROM project_roots WHERE project_id=?").run(id);
+      this.db.prepare("DELETE FROM projects WHERE project_id=?").run(id);
+      return true;
+    });
+  }
+
+  hasProjectWorkspace(workspace: { workspacePath: string; workspaceIdentity?: string }): boolean {
+    const host = this.ownerHostId ?? "local";
+    // The default-task migration clears task ownership but keeps the roots of soft-deleted projects; only an active root can prove ownership on its own.
+    // Tasks kept after the user deletes a project are still decided by the project_id check below and must not be moved back into the shared pool.
+    return Boolean(
+      this.db
+        .prepare(`SELECT 1 FROM project_roots r JOIN projects p ON p.project_id=r.project_id
+      WHERE p.host_id=? AND p.deleted=0 AND r.root_path=?
+      UNION ALL SELECT 1 FROM tasks WHERE host_id=? AND workspace_key=? AND project_id IS NOT NULL LIMIT 1`)
+        .get(host, workspace.workspacePath, host, resolveWorkspaceKey(workspace)),
+    );
+  }
+
   moveTask(input: { task: ProjectTaskRef; projectId: string; addMissingRoot?: boolean }): void {
     transaction(this.db, () => {
       const project = requireProject(this.db, input.projectId);
@@ -340,11 +442,35 @@ export class ProjectRepository implements ProjectRepositoryContract {
       if (host !== (this.ownerHostId ?? "local")) throw new Error("project.cross-host-move");
       if (input.forkOf)
         return claimForkedTask(this.db, this.ownerHostId, input.task, input.forkOf, key, host);
-      if (!readTask(this.db, input.task)) {
+      const command = input.creationCommand;
+      const receipt = command
+        ? this.db
+            .prepare(
+              "SELECT session_id FROM session_creation_commands WHERE workspace_key=? AND client_id=? AND command_id=?",
+            )
+            .get(key, command.clientId, command.commandId)
+        : undefined;
+      let taskId = input.task.taskId;
+      if (receipt) {
+        if (taskId !== undefined && taskId !== receipt.session_id)
+          throw new Error("project.creation-id-conflict");
+        taskId = String(receipt.session_id);
+        if (!readTask(this.db, { ...input.task, taskId }))
+          throw new Error("project.creation-task-missing");
+      } else if (taskId === undefined && command) {
+        // A command from 3.16 may already be persisted; the hash is used only to look up that exact legacy row and never allocates a new session_ ID.
+        const legacyId = `session_${createHash("sha256")
+          .update(JSON.stringify([key, command.clientId, command.commandId]))
+          .digest("hex")
+          .slice(0, 32)}`;
+        if (readTask(this.db, { ...input.task, taskId: legacyId })) taskId = legacyId;
+      }
+      const task = { ...input.task, taskId: taskId ?? `sess_${randomUUID()}` };
+      if (!readTask(this.db, task)) {
         assertRemoteTaskDirectories(
           this.ownerHostId,
           input.projectId ? requireProject(this.db, input.projectId) : null,
-          input.task.workspacePath,
+          task.workspacePath,
           input.additionalDirectories,
         );
         if (input.projectId) {
@@ -354,14 +480,14 @@ export class ProjectRepository implements ProjectRepositoryContract {
           if (project.hostId !== host) throw new Error("project.cross-host-move");
           if (
             input.additionalDirectories === undefined &&
-            !project.roots.some((root) => root.rootPath === input.task.workspacePath)
+            !project.roots.some((root) => root.rootPath === task.workspacePath)
           )
             throw new Error("project.cwd-not-in-roots");
         }
-        // 创建归属必须先于 CLI 首发；空事实不是假会话，列表只读取已有 CLI 事实的行。
+        // The creation owner must be recorded before the CLI's first dispatch. An empty-fact row is not a fake session; the list reads only rows that have CLI facts.
         insertReservationRow(this.db, {
           key,
-          task: input.task,
+          task,
           host,
           projectId: input.projectId,
           executionDirectories:
@@ -370,7 +496,16 @@ export class ProjectRepository implements ProjectRepositoryContract {
               : JSON.stringify(executionDirectoriesSchema.parse(input.additionalDirectories)),
         });
       }
-      return resolveDirectories(this.db, input.task, this.ownerHostId);
+      const directories = resolveDirectories(this.db, task, this.ownerHostId);
+      // Legacy client retries happen before CLI deduplication; record the first allocation in the same transaction so a retry does not create an extra reservation.
+      if (command && !receipt) {
+        this.db
+          .prepare(
+            "INSERT INTO session_creation_commands(workspace_key,client_id,command_id,session_id) VALUES(?,?,?,?)",
+          )
+          .run(key, command.clientId, command.commandId, task.taskId);
+      }
+      return { ...directories, taskId: task.taskId };
     }) as ReserveCreatedTaskResult<T>;
   }
 

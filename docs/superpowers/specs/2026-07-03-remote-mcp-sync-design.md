@@ -1,61 +1,93 @@
-# SSH Remote MCP Sync Design
+# SSH 远程 MCP 同步设计
 
-Local user-level skills already sync to SSH remote hosts. MCP runs similarly: the local settings page reads the local user directory's MCP config, and session create/resume passes enabled MCP configs explicitly to the agent, which starts stdio MCPs or connects HTTP/SSE MCPs in its own runtime. In an SSH remote workspace the MCP processes run on the remote zcode-server host; local configs passed via session parameters work transiently, but the remote user directory never persists them — reopening the workspace remotely, entering via mobile shared-host attachment, or the remote runtime reading its own config still lack the remote `~/.zcode/cli/config.json` user-level MCP entries. This design syncs them.
+> **被取代（2026-10，票 14）**：MCP 同步已并入[数据同步规格](../../remote/data-sync.md)。本文的「服务边界」「UI 设计」「错误处理」和同名一律跳过的冲突策略已被取代：旧的 MCP 同步弹窗与 `listLocalUserMcpCandidates` 等旧方法已删除；同名 server 在数据同步弹窗里按内容比较，用户手动勾选后才覆盖。「filesystem MCP 路径改写」的规则仍然有效（只改写 filesystem 类 stdio MCP 的 `args`）。入口差异：连接向导、Header、侧栏项目菜单入口带 workspace 映射，先做 workspace 改写再做 home 改写；技能 / MCP / 插件设置页入口只做 home 改写（MCP 设置页入口原来会做 workspace 改写，现已不做）。
 
-Goals:
+## 背景
 
-- Sync local user-level ZCode Agent MCP configs to the SSH host's remote `~/.zcode/cli/config.json`.
-- Candidates are user-level MCP only — no workspace-level, plugin, built-in, or external-Agent-source MCP.
-- Discovery matches local MCP settings: prefer `mcp.servers` in `~/.zcode/cli/config.json`; with no ZCode servers in that scope, fall back to `mcpServers` in `~/.agents/mcp.json`.
-- Import writes `mcp.servers` in the remote `~/.zcode/cli/config.json`, never `.agents`.
-- Same-name remote MCP is skipped by default, never overwritten.
-- Command-type MCPs (stdio, context7) copy config verbatim — no checks for installed commands, package managers, or dependencies remotely.
-- HTTP/SSE MCP copies URL, headers, and token secrets verbatim; secrets may land in the remote config file.
-- filesystem MCP rewrites local paths to remotely usable paths.
-- Remote workspace `workspaceIdentity` / `remoteSessionId` routing boundaries hold; imports never land in the local user directory.
+ZCode 当前已经支持把本地用户级 Skills 同步到 SSH 远端主机。MCP 的运行链路与 Skills 有相似处：本地设置页读取本机用户目录中的 MCP 配置，创建或恢复 ZCode Agent session 时把启用的 MCP 配置显式下发给 agent，agent 再在其所在运行时启动 stdio MCP 或连接 HTTP / SSE MCP。
 
-Non-goals (v1): no overwriting; no workspace-level MCP (project files belong to the repo, remote editing, or a separate workspace-config sync design); no plugin MCP (tied to plugin install state); no remote environment validation (missing context7/npx/uvx/custom commands surface through remote `mcp/list` or session startup); no migrating remote `.agents/mcp.json` into `.zcode/cli/config.json` (an existing effective same-name server shows as skipped); no generic remote file-write API.
+这意味着 SSH 远程 workspace 里，MCP 进程实际运行在远端 zcode-server 所在主机上。当前本地用户级 MCP 可以通过 session 参数临时传给远端 runtime，但远端用户目录并不会持久化这批 MCP 配置。用户在远端主机上重新打开 workspace、手机端通过 shared-host 进入同一远端 workspace、或远端 runtime 自行读取配置时，仍然缺少远端 `~/.zcode/cli/config.json` 中的用户级 MCP 配置。
 
-## Local MCP runtime chain
+## 目标
 
-1. `mcpStore.loadMcpFromUserDirectory()` reads the host user directory via `IPlatformService.loadMcpFromUserDirectory()`.
-2. The desktop platform reads workspace scope then user scope; each scope reads `.zcode` first, then `.agents` when no servers exist.
-3. The UI holds `ZCodeMcpServer[]` for enable/disable/edit/delete.
-4. Before task create/resume, `getEnabledMcpServersForZCode()` converts enabled `zcodeagentmcp` configs into the ZCode Protocol `mcpServers` parameter.
-5. The service adapter passes `mcpServers` to zcode-agent create/resume session.
-6. zcode-server/bootstrap converts protocol MCP to runtime config; the agent runtime invokes the MCP adapter.
-7. stdio MCP starts with the runtime machine's `command`/`args`; HTTP/SSE connects by URL and headers.
+- 允许用户在已连接 SSH 远程 workspace 中，把本机用户级 ZCode Agent MCP 配置同步到该 SSH 主机的远端用户级 `~/.zcode/cli/config.json`。
+- 本机候选只包含用户级 MCP，不包含 workspace 级 MCP、plugin MCP、系统内置 MCP 或外部 Agent 原始来源。
+- 候选发现语义与本地 MCP 设置保持一致：优先读取 `~/.zcode/cli/config.json` 的 `mcp.servers`；当该 scope 下没有 ZCode MCP server 时，兼容读取 `~/.agents/mcp.json` 的 `mcpServers`。
+- 远端导入写入 `~/.zcode/cli/config.json` 的 `mcp.servers`，不写 `.agents`。
+- 远端已存在同名 MCP 时默认跳过，不覆盖。
+- stdio / context7 这类命令型 MCP 可直接复制配置；不检查远端是否已经安装命令、包管理器或依赖。
+- HTTP / SSE MCP 直接复制 URL、headers、token 等 secret 字段，允许 secret 写入远端配置文件。
+- filesystem MCP 在同步时需要把本地路径改写成远端可用路径。
+- 保持 remote workspace 的 `workspaceIdentity` / `remoteSessionId` 路由边界，不把远端导入误落到本机用户目录。
 
-Hence MCP in an SSH remote runs on the remote zcode-server machine; passing local config is transient and does not persist the remote user directory.
+## 非目标
 
-## Service boundary
+- 首版不支持覆盖远端同名 MCP。
+- 首版不同步 workspace 级 MCP。workspace 配置属于项目文件，应该通过代码仓库、远端文件编辑或单独的 workspace 配置同步设计处理。
+- 首版不迁移 plugin MCP。plugin MCP 来源于插件安装状态，不能当作用户级配置复制。
+- 首版不验证远端环境可用性。context7、npx、uvx、自定义命令是否存在，由远端运行时在实际 mcp/list 或 session 启动时暴露状态。
+- 首版不把远端 `.agents/mcp.json` 迁移为 `.zcode/cli/config.json`；若远端已经有效存在同名 server，同步结果显示 skipped。
+- 不新增通用远端文件写入 API。
 
-A restricted MCP sync service, not an extension of platform directory I/O:
+## MCP 本地运行逻辑
 
-- `listLocalUserMcpCandidates()` — user-level candidates on the caller's machine (local user directory via base services; remote user directory via remote services).
-- `listRemoteUserMcpStatuses({ names })` — same-name existence on the remote.
-- `exportMcpServers({ serverIds })` — export MCP config DTOs by candidate id, carrying the local home path for rewriting.
-- `importMcpServers({ servers, localHomeDir, remoteWorkspacePath, localWorkspacePath?, overwrite: false })` — write into remote `~/.zcode/cli/config.json`, skip same names, rewrite filesystem MCP paths before writing.
+本地 MCP 读取发生在 renderer 的 MCP store：
 
-Like skill-sync, the service registers on both the local host and the remote zcode-server collection; the desktop renderer's remote workspace service merge must override `mcpSyncService` with the remote service, or imports write back to the local user directory.
+1. `mcpStore.loadMcpFromUserDirectory()` 通过 `IPlatformService.loadMcpFromUserDirectory()` 读取宿主用户目录。
+2. desktop platform 的实现读取 workspace scope，再读取 user scope；每个 scope 先读 `.zcode`，如果没有 server 再读 `.agents`。
+3. UI 内存里得到 `ZCodeMcpServer[]`，用户可启用、禁用、编辑或删除。
+4. 创建 / 恢复 task 前，`getEnabledMcpServersForZCode()` 把启用的 `zcodeagentmcp` 配置转成 ZCode Protocol 的 `mcpServers` 参数。
+5. service adapter 把 `mcpServers` 传给 zcode-agent create/resume session。
+6. zcode-server / bootstrap 把 protocol MCP 转成 runtime config，agent runtime 再调用 MCP adapter。
+7. stdio MCP 使用 agent runtime 所在机器的 `command` / `args` 启动；HTTP / SSE MCP 使用 URL 和 headers 连接远端服务。
 
-## Sync payload
+因此 SSH remote 下的 MCP 运行位置是远端 zcode-server 所在机器。本地配置直接传给远端 runtime 可以临时生效，但不能代表远端用户目录已经持久化。
 
-Minimal unit: one user-level MCP server config — `name`; `enabled` (disabled writes the compat field `enable: false`; enabled writes nothing extra); raw `config` fields: stdio `type`, `command`, `args`, `env`, `timeout`/`timeoutMs`; HTTP/SSE `type`, `url`, `headers`, `http_headers`, `timeout`/`timeoutMs`; provider-specific secrets like `apiKey`, `personalAccessToken`, `Authorization`. Never synced: file contents, binary packages, npm/uv/pip dependencies, host environments behind env-var references, or workspace `.zcode/config.json`.
+## 服务边界
 
-## filesystem MCP path rewriting
+新增受限的 MCP 同步服务，而不是扩展 platform 目录读写：
 
-Recognition: server name normalized equals `filesystem`, `file-system`, or `fs`; or stdio `args` contains `@modelcontextprotocol/server-filesystem`; or stdio `command`/`args` contains `mcp-server-filesystem`.
+- `IMcpSyncService.listLocalUserMcpCandidates()`：在调用方所在机器列出用户级 MCP 候选。renderer 通过 base services 调用时读取本机用户目录；通过 remote services 调用时读取远端用户目录。
+- `IMcpSyncService.listRemoteUserMcpStatuses({ names })`：在远端查询同名 server 是否已存在。
+- `IMcpSyncService.exportMcpServers({ serverIds })`：本机按候选 id 导出 MCP 配置 DTO，并带上本机 home 路径用于路径改写。
+- `IMcpSyncService.importMcpServers({ servers, localHomeDir, remoteWorkspacePath, localWorkspacePath?, overwrite: false })`：远端写入 `~/.zcode/cli/config.json`，同名存在时跳过；filesystem MCP 在写入前执行路径改写。
 
-Rewriting applies only to path arguments in stdio `args` — never command, env, HTTP URL, or headers:
+服务需要像 skill-sync 一样注册到本地 host 和远端 zcode-server service collection。桌面 renderer 合并 remote workspace services 时，`mcpSyncService` 必须覆盖为 remote service；否则导入会写回本机用户目录。
 
-1. A local workspace path (or subpath), with both `localWorkspacePath` and `remoteWorkspacePath` provided, maps to the remote workspace path keeping the relative suffix.
-2. A local home path (or subpath) maps to the remote home path keeping the relative suffix.
-3. Other absolute paths stay as-is (e.g. `/tmp/mcp-cache`); the remote runtime reports any nonexistence.
-4. Relative paths, package names, flags, URLs, and plain values stay as-is.
-5. Windows local home paths rewrite to POSIX or Windows remote homes; separators follow the remote `process.platform`.
+## 数据同步内容
 
-Example — local:
+同步的最小数据单元是单个用户级 MCP server 配置：
+
+- `name`
+- `enabled` 状态。禁用状态写为 server config 的 `enabled: false`；启用是默认态，不额外写字段。历史遗留的 `enable` 字段只在读取时兼容（`enable: false` 视为停用），写入时清除，不再产出。
+- `config` 原始字段，包括：
+  - stdio: `type`、`command`、`args`、`env`、`timeout` / `timeoutMs` 等字段。
+  - HTTP / SSE: `type`、`url`、`headers`、`http_headers`、`timeout` / `timeoutMs` 等字段。
+  - provider-specific secret 字段，例如 `apiKey`、`personalAccessToken`、`Authorization` header。
+
+不直接同步文件内容、二进制包、npm / uv / pip 依赖、环境变量引用所指向的宿主环境，也不复制 workspace `.zcode/config.json`。
+
+## filesystem MCP 路径改写
+
+filesystem MCP 识别规则：
+
+- server name 归一化后等于 `filesystem`、`file-system` 或 `fs`；或
+- stdio `args` 中包含 `@modelcontextprotocol/server-filesystem`；或
+- stdio `command` / `args` 中出现 `mcp-server-filesystem`。
+
+路径改写只处理 stdio args 中的路径参数，不改写 command、env、HTTP URL 或 headers。
+
+路径改写规则：
+
+1. 如果参数是本地 workspace 路径或其子路径，并且调用方提供了 `localWorkspacePath` 与 `remoteWorkspacePath`，改写为远端 workspace 路径并保留相对后缀。
+2. 如果参数是本地 home 路径或其子路径，改写为远端 home 路径并保留相对后缀。
+3. 其他绝对路径保持原样，例如 `/tmp/mcp-cache`。这些路径是否在远端存在由远端运行时负责暴露错误。
+4. 相对路径、包名、flag、URL、纯参数值保持原样。
+5. 支持把 Windows 本地 home 路径改写成 POSIX / Windows 远端 home 路径，远端路径分隔符以远端 `process.platform` 为准。
+
+示例：
+
+本机用户级配置：
 
 ```json
 {
@@ -69,8 +101,7 @@ Example — local:
           "@modelcontextprotocol/server-filesystem",
           "/Users/alice/workspace/z-code",
           "/Users/alice/Documents"
-        ],
-        "enable": true
+        ]
       },
       "context7": {
         "type": "stdio",
@@ -89,7 +120,7 @@ Example — local:
 }
 ```
 
-Synced to `dev@host:/home/dev/z-code` with remote home `/home/dev`:
+同步到远端 `dev@host:/home/dev/z-code`，远端 home 为 `/home/dev`，写入：
 
 ```json
 {
@@ -103,8 +134,7 @@ Synced to `dev@host:/home/dev/z-code` with remote home `/home/dev`:
           "@modelcontextprotocol/server-filesystem",
           "/home/dev/z-code",
           "/home/dev/Documents"
-        ],
-        "enable": true
+        ]
       },
       "context7": {
         "type": "stdio",
@@ -123,34 +153,68 @@ Synced to `dev@host:/home/dev/z-code` with remote home `/home/dev`:
 }
 ```
 
-## UI
+## UI 设计
 
-`Settings > MCP Servers` follows the current workspace services like Skills: local workspaces read/write local user and workspace directories; SSH remotes read/write the SSH host's; the page top shows the remote context to avoid confusing remote with local config; before creating/resuming/queue-draining a task, the MCP store refreshes via the current workspace services — an SSH remote task only passes remote MCP config to the remote agent runtime.
+在 `Settings > MCP Servers` 中，MCP 配置列表必须和 Skills 一样跟随当前 workspace services：
 
-In SSH remote context, an icon button `同步 MCP 到此 SSH 主机` opens `RemoteMcpSyncDialog`: target SSH host and remote workspace path on top; local user-level MCP list with name, type, source file path, status; remote-missing items pre-checked; existing ones unchecked and marked "远端已存在" (remotely existing); `显示远端已存在` filter and select-all-missing checkbox; synced/skipped/failed results after submit. Completion refreshes the MCP store's remote user-directory read and the remote MCP status list. Dialog "local candidates" keep using base services; the settings list outside uses current workspace services.
+- 本地 workspace 读写本机用户目录 / workspace 目录。
+- SSH remote workspace 读写 SSH 主机上的用户目录 / workspace 目录。
+- 页面顶部显示当前 remote context，避免把远端配置误认为本机配置。
+- 创建 / 恢复 / 队列续跑 ZCode task 前，MCP store 必须通过当前 workspace services 刷新；SSH remote task 只能把远端 MCP 配置传给远端 agent runtime。
 
-Skill and MCP sync entries must appear paired everywhere via one shared entry-component set: workspace header more menu, workspace sidebar more menu, the post-connection directory selection page, and the Settings Skills/MCP pages show sync entries only in SSH remote context; menus share the `同步 Skill` / `同步 MCP` items so no entry misses MCP; the directory selection page uses a single `同步` split button (upload-cloud icon + dropdown arrow) containing `同步 Skill` and `同步 MCP`, extensible later with `同步 Subagent` / `同步 Plugin`; the MCP item stays disabled until the current remote directory path is available (filesystem path rewriting depends on it); all entries open the same `RemoteSkillSyncDialog` / `RemoteMcpSyncDialog` with their own refresh callbacks.
+在 SSH remote context 顶部显示 `同步 MCP 到此 SSH 主机` 图标按钮。点击后打开 `RemoteMcpSyncDialog`：
 
-## Remote and multi-client compatibility
+- 顶部显示目标 SSH 主机与远端 workspace 路径。
+- 列表显示本机用户级 MCP server，包含名称、类型、来源文件路径和状态。
+- 远端缺失项默认勾选；远端已存在项默认不勾选并标记“远端已存在”。
+- 提供 `显示远端已存在` 过滤器和全选缺失项 checkbox。
+- 提交后展示 synced / skipped / failed 结果。
+- 同步完成后刷新 MCP store 的远端用户目录读取和远端 MCP status list。弹窗里的“本机候选”仍使用 base services，弹窗外的 MCP 设置列表使用当前 workspace services。
 
-- Local workspaces show no entry; SSH remotes show it; Docker/WSL remotes do not (v1), avoiding mixed path-rewrite semantics across transports.
-- Mobile web remote adds no runtime and does not bypass shared-host attachment — service calls route through the existing remote services.
-- Workspace-level state lookups use `workspaceIdentity?.trim() || workspacePath`; file I/O uses `workspacePath`.
+所有 SSH 远程工作区入口必须与 Skills 同步入口保持成对出现，并复用同一套入口组件：
 
-## Error handling
+- workspace header 更多菜单、workspace sidebar 更多菜单、SSH 连接成功后的目录选择页、Settings 中的 Skills / MCP 管理页都只能在 SSH remote context 显示同步入口。
+- 菜单入口使用同一组 `同步 Skill` / `同步 MCP` 菜单项，避免某个入口遗漏 MCP。
+- 连接成功后的目录选择页使用单个 `同步` 下拉按钮，按钮左侧是上传云图标，右侧是下拉箭头；下拉菜单包含 `同步 Skill` 与 `同步 MCP`，后续可追加 `同步 Subagent`、`同步 Plugin`。
+- 连接成功后的目录选择页中，MCP 菜单项需要等当前远程目录路径可用后才能点击，因为 filesystem MCP 的路径改写依赖远程 workspace 路径。
+- 所有入口最终打开同一个 `RemoteSkillSyncDialog` / `RemoteMcpSyncDialog`，并保留各自同步后的刷新回调。
 
-- Remote disconnect: dialog error, submit disabled. No local user MCP: empty state. Same-name remote: skipped, not overwritten.
-- Partial failure: successes kept, failures show errors. JSON write failure or insufficient permissions: explicit remote service error.
-- A filesystem path missing the home/workspace mapping stays as-is without blocking the sync.
+## 远程与多端兼容
 
-## Tests and verification
+- 本地 workspace 不显示远端 MCP 同步入口。
+- SSH remote workspace 显示入口。
+- Docker / WSL remote workspace 首版不显示入口，避免不同传输目标的路径改写语义混淆。
+- Web 手机远控不新增独立 runtime，不绕过 shared-host attachment。若用户在手机端进入同一 remote workspace host，服务调用仍通过已存在 remote services 路由。
+- 所有 workspace 级状态查找使用 `workspaceIdentity?.trim() || workspacePath`；实际文件读写使用 `workspacePath`。
 
-- Unit: candidate list reads local `~/.zcode/cli/config.json` user-level `mcp.servers`; falls back to `~/.agents/mcp.json` `mcpServers` when `.zcode` user scope is empty; HTTP import preserves URL/headers/secrets; context7/stdio import copies command/args/env verbatim; filesystem import rewrites local home to remote home; same-name remote MCP skipped, not overwritten.
-- UI: no entry on local workspaces; `Settings > MCP Servers` shows the entry under SSH remote context; dialog pre-selects missing items and shows results.
-- Repository: `pnpm typecheck`, `pnpm lint`.
+## 错误处理
 
-## Risks
+- 远端断连：弹窗显示错误并禁止提交。
+- 本机没有用户级 MCP：显示空状态。
+- 远端同名：跳过，不覆盖。
+- 部分失败：已同步结果保留，失败项显示错误。
+- JSON 写入失败或权限不足：远端 service 返回明确错误。
+- filesystem 路径未命中 home / workspace 映射：保持原样，不阻塞同步。
 
-- Copying secrets to the remote is an explicit product choice — no sanitization or filtering; the user must trust the SSH host.
-- context7/npx/custom stdio commands may be unavailable remotely; v1 does no environment probing and relies on remote MCP status and runtime logs.
-- filesystem rewriting covers only certain mappings; un-inferable absolute paths stay as-is and may fail to connect remotely.
+## 测试与验证
+
+- 单元测试：
+  - 候选列表读取本机 `~/.zcode/cli/config.json` 用户级 `mcp.servers`。
+  - `.zcode` 用户级没有 server 时读取 `~/.agents/mcp.json` 的 `mcpServers` fallback。
+  - 导入 HTTP MCP 时保留 URL、headers 和 secret。
+  - 导入 context7 / stdio MCP 时直接复制 command / args / env。
+  - 导入 filesystem MCP 时把本地 home 路径改写为远端 home 路径。
+  - 同名远端 MCP 跳过且不覆盖。
+- UI 测试：
+  - 本地 workspace 不显示 MCP 同步入口。
+  - SSH remote workspace 的 `Settings > MCP Servers` 显示同步入口。
+  - 弹窗默认选择远端缺失项，完成后展示结果。
+- 仓库必跑：
+  - `pnpm typecheck`
+  - `pnpm lint`
+
+## 风险
+
+- 复制 secret 到远端是明确产品选择，功能实现不做脱敏或过滤；用户需要信任 SSH 远端主机。
+- context7 / npx / 自定义 stdio 命令可能在远端不可用。首版不做环境探测，以远端 MCP status 和运行日志作为反馈。
+- filesystem 路径改写只能覆盖确定映射。无法推断的绝对路径保持原样，可能在远端连接失败。

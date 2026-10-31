@@ -1,0 +1,168 @@
+#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+import { relative, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { createVitest } from "vitest/node";
+import { git, cleanGitEnv } from "./engineering-tests/process.mjs";
+import { resolveScope } from "./engineering-tests/scope.mjs";
+
+// Node 26 enables Web Storage by default, and without --localstorage-file the global
+// `localStorage` is undefined in test workers. jsdom suites that call localStorage.clear()
+// in beforeEach then fail. scripts/run-vitest.mjs passes this flag through NODE_OPTIONS for
+// `pnpm test:engineering` / `pnpm test:fork`; this runner runs Vitest in-process, so a direct start must set it too.
+// It has to be in NODE_OPTIONS: a CLI-only flag does not reach Vitest's worker threads.
+const WEBSTORAGE_FLAG = "--no-experimental-webstorage";
+const hasWebstorageFlag = () =>
+  (process.env.NODE_OPTIONS ?? "").split(/\s+/u).includes(WEBSTORAGE_FLAG);
+
+export async function parseArgs(argv) {
+  const options = {};
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--") continue;
+    if (arg === "--dry-run") options.dryRun = true;
+    else if (arg === "--json") options.json = true;
+    else if (arg === "--help" || arg === "-h") options.help = true;
+    else if (arg === "--scope" || arg === "--base") {
+      const value = argv[++i];
+      if (!value || value.startsWith("--")) throw new Error(`${arg} 需要参数`);
+      options[arg.slice(2)] = value;
+    } else if (arg === "--files") {
+      options.files ??= [];
+      while (argv[i + 1] && !argv[i + 1].startsWith("--")) options.files.push(argv[++i]);
+      if (!options.files.length) throw new Error("--files 需要文件清单");
+    } else if (arg === "--on-full") {
+      const value = argv[++i];
+      if (!value || value.startsWith("--")) throw new Error("--on-full 需要参数");
+      if (value !== "run" && value !== "skip")
+        throw new Error(`--on-full 只接受 run 或 skip：${value}`);
+      options.onFull = value;
+    } else throw new Error(`未知参数：${arg}`);
+  }
+  return options;
+}
+
+const specKey = (spec) => JSON.stringify([spec.project.name, spec.pool, spec.moduleId]);
+
+export async function main(argv = process.argv.slice(2)) {
+  let vitest;
+  const restored = {};
+  try {
+    const options = await parseArgs(argv);
+    if (options.help) {
+      console.log(
+        "用法：pnpm test:engineering:affected [--scope worktree|push] [--base <commit>] [--files <files...>] [--on-full run|skip] [--dry-run] [--json]\n使用 Vitest 官方选择；全量选择默认跳过工程测试并成功退出（--on-full run 则执行全量），脏工作区 Push 和错误非零退出。0=通过/无选中测试/跳过全量，1=测试失败，2=阻止执行/脚本错误。",
+      );
+      return 0;
+    }
+    const root = (await git(process.cwd(), ["rev-parse", "--show-toplevel"])).toString().trim();
+    const env = await cleanGitEnv(root);
+    // A hook's temporary index must not leak into the official Git selection or into test temp repos.
+    for (const key of Object.keys(process.env)) {
+      if (!(key in env)) {
+        restored[key] = process.env[key];
+        delete process.env[key];
+      }
+    }
+    const scope = await resolveScope(root, options, env);
+    const selected = new Map();
+    const related = new Set();
+    let all = [];
+    if (!scope.deletedOnly) {
+      vitest = await createVitest(
+        "test",
+        {
+          root,
+          // Fork-owned unit tests share the affected selection (specs/fork-test-pipeline.md).
+          project: ["engineering", "fork-unit", "fork-isolated"],
+          watch: false,
+          run: true,
+          reporters: ["default"],
+          silent: "passed-only",
+        },
+        { server: { watch: null } },
+      );
+      all = await vitest.globTestSpecifications();
+      for (const base of scope.bases) {
+        vitest.config.changed = scope.files ? false : base;
+        vitest.config.related = scope.files;
+        for (const spec of await vitest.getRelevantTestSpecifications())
+          selected.set(specKey(spec), spec);
+        for (const file of vitest.config.related ?? []) related.add(file);
+      }
+    }
+    const specs = [...selected.values()].sort((a, b) => specKey(a).localeCompare(specKey(b)));
+    const tests = specs.map((spec) => ({
+      runner: "vitest",
+      project: spec.project.name,
+      pool: spec.pool,
+      path: relative(root, spec.moduleId).replaceAll("\\", "/"),
+    }));
+    if (options.json) console.log(JSON.stringify(tests, null, 2));
+    else {
+      console.log(
+        `[engineering:affected] base=${scope.files ? "related" : scope.bases.map((base) => (base === true ? "HEAD（未提交）" : base)).join(",")} 选中 ${specs.length}/${all.length}${specs.length ? "" : "：无选中测试"}`,
+      );
+      if (options.dryRun)
+        for (const test of tests) console.log(`  ${test.project}/${test.pool}: ${test.path}`);
+    }
+    // A full selection is not a test failure. pre-push skips it by default so it never blocks a push;
+    // CI passes --on-full run through the same entry point to run everything, so a PR never gets a
+    // green unit-test verdict with zero tests executed.
+    if (all.length && all.every((spec) => selected.has(specKey(spec)))) {
+      if ((options.onFull ?? "skip") === "skip") {
+        console.warn(
+          `[engineering:affected] Vitest 官方选择了整个工程套件（${all.length} 个规格），已跳过工程测试（未执行测试），不因此阻止 Push。改动文件：${[...related].map((file) => relative(root, file)).join(", ")}`,
+        );
+        return 0;
+      }
+      console.warn(
+        `[engineering:affected] Vitest 官方选择了整个工程套件（${all.length} 个规格），--on-full run：执行全量。`,
+      );
+    }
+    if (!specs.length || options.dryRun) return 0;
+    await vitest.standalone();
+    const result = await vitest.runTestSpecifications(specs, false);
+    return result.unhandledErrors.length ||
+      result.testModules.some((module) => module.state() === "failed")
+      ? 1
+      : 0;
+  } catch (error) {
+    console.error(
+      `[engineering:affected] ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return 2;
+  } finally {
+    try {
+      await vitest?.close();
+    } finally {
+      Object.assign(process.env, restored);
+    }
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  if (hasWebstorageFlag()) process.exitCode = await main();
+  else {
+    // Re-execute with the flag so direct `node scripts/run-affected-engineering-tests.mjs` matches
+    // the `pnpm test:engineering` path. Exit status mirrors scripts/run-vitest.mjs: a signal counts as failure.
+    const child = spawnSync(
+      process.execPath,
+      [fileURLToPath(import.meta.url), ...process.argv.slice(2)],
+      {
+        stdio: "inherit",
+        env: {
+          ...process.env,
+          NODE_OPTIONS: [process.env.NODE_OPTIONS, WEBSTORAGE_FLAG].filter(Boolean).join(" "),
+        },
+      },
+    );
+    if (child.error) {
+      console.error(`[engineering:affected] 无法启动子进程：${child.error.message}`);
+      process.exitCode = 2;
+    } else if (child.signal) {
+      console.error(`[engineering:affected] 子进程被信号 ${child.signal} 终止`);
+      process.exitCode = 1;
+    } else process.exitCode = child.status ?? 1;
+  }
+}

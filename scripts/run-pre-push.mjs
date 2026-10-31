@@ -73,18 +73,24 @@ async function main() {
   }
   const docsOnly = await isDocumentationOnly();
   const stages = [
+    ["check:push-worktree"],
+    ["check:e2e-remote-targets"],
     ["lint"],
+    ["docs:stale-phrases:check"],
+    ["db:schema:check"],
+    ["test:architecture"],
     ["architecture:check", ["--", "--changed"]],
     ["test-copy:check"],
     ["instruction-commands:check"],
     ["db:migrations:check"],
   ];
-  if (!docsOnly) stages.push(["test:unit:affected", ["--", "--scope", "push"]], ["test:node"]);
+  if (!docsOnly)
+    stages.push(["test:engineering:affected", ["--", "--scope", "push"]], ["test:node"]);
   for (const [task, args] of stages) {
     // The affected stage receives the base resolved here, so upstream's first-push fallback (origin/staging) is never used.
     // Node 26's experimental Web Storage shadows jsdom's localStorage; scripts/run-vitest.mjs sets the same flag for the full run.
     const extraEnv =
-      task === "test:unit:affected"
+      task === "test:engineering:affected"
         ? {
             ZCODE_AFFECTED_TEST_BASE: await affectedBase(),
             NODE_OPTIONS: [process.env.NODE_OPTIONS, "--no-experimental-webstorage"]
@@ -95,7 +101,7 @@ async function main() {
     const status = await runStage(task, args, extraEnv);
     if (status !== 0) return status;
   }
-  if (docsOnly) print("documentation-only changes: skip test:unit:affected and test:node");
+  if (docsOnly) print("documentation-only changes: skip test:engineering:affected and test:node");
   return 0;
 }
 

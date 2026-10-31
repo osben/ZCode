@@ -60,7 +60,7 @@ export const PLUGIN_TELEMETRY_EVENTS = [
   "plugin_runtime_error",
 ] as const;
 
-/** 只清洗上报副本；拒绝任意配置/URL/路径和自由错误文本。 */
+/** Sanitizes the reported copy only; rejects arbitrary config/URL/path and free-form error text. */
 export function sanitizePluginTelemetryDetail(
   detail: Readonly<Record<string, string>>,
 ): Record<string, string> {
@@ -78,7 +78,7 @@ export function sanitizePluginTelemetryDetail(
   );
 }
 
-/** 手机只转发发现行为；管理结果由同一个 Desktop Host 产生。 */
+/** Mobile only reports discovery behavior; management results come from the same Desktop Host. */
 export const mobilePluginDiscoveryTelemetrySchema = z
   .object({
     elementName: z.literal("plugin_discovery"),
@@ -112,7 +112,16 @@ export const mobilePluginDiscoveryTelemetrySchema = z
   .strict();
 export type MobilePluginDiscoveryTelemetry = z.infer<typeof mobilePluginDiscoveryTelemetrySchema>;
 
+export const telemetryUiModeSchema = z.enum(["work", "code", "unknown"]);
+export type TelemetryUiMode = z.infer<typeof telemetryUiModeSchema>;
+
+export function normalizeTelemetryUiMode(value: unknown): TelemetryUiMode {
+  return value === "work" || value === "code" ? value : "unknown";
+}
+
 export interface TelemetryRendererContext {
+  /** Current UI surface mode; the reporting boundary maps it to unknown when an older renderer omits it. */
+  uiMode?: TelemetryUiMode;
   clientTimezone: string;
   clientLanguage: string;
   screenResolution: string;
@@ -186,8 +195,8 @@ const MAX_TELEMETRY_SKILL_NAME_LENGTH = 64;
 const TELEMETRY_SKILL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 
 /**
- * 只用于已解析的 Skill 名称，不能据此信任模型请求参数。
- * 不 trim 或截断，以免把敏感文本残片变成看似合法的标识；出网时再次检查同一规则。
+ * Only for already-resolved skill names; do not trust model request parameters based on this.
+ * No trimming or truncation, so fragments of sensitive text cannot become seemingly valid identifiers; the same rule is checked again on egress.
  */
 export function sanitizeTelemetrySkillName(value: unknown): string {
   if (
@@ -220,7 +229,13 @@ export function sanitizeTelemetryEventDetail(
   if ((PLUGIN_TELEMETRY_EVENTS as readonly string[]).includes(elementName))
     return sanitizePluginTelemetryDetail(detail);
   return Object.fromEntries(
-    Object.entries(detail)
+    Object.entries(
+      ["app_launch", "app_daily_active", "send_btn", "message_completion", "agent_step"].includes(
+        elementName,
+      )
+        ? { ...detail, ui_mode: normalizeTelemetryUiMode(detail.ui_mode) }
+        : detail,
+    )
       .filter(
         ([key, value]) =>
           elementName !== "agent_step" ||

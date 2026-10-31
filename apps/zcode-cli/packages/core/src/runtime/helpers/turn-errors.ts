@@ -62,12 +62,17 @@ interface ExternalTurnFaultError extends Error {
   zcodeTurnFault: typeof EXTERNAL_TURN_FAULT_MARKER;
 }
 
-/** 宿主用此窄入口中止 turn，同时要求 core 持久化 TurnError 而不是用户取消。 */
+/** Narrow entry the host uses to abort a turn while requiring core to persist a TurnError rather than a user cancel. */
 export function createExternalTurnFaultError(code: string, message = code): Error {
   return Object.assign(new Error(message), {
     code,
     zcodeTurnFault: EXTERNAL_TURN_FAULT_MARKER as typeof EXTERNAL_TURN_FAULT_MARKER,
   }) satisfies ExternalTurnFaultError;
+}
+
+/** Whether the abort reason is a host-side external fault (e.g. projection limit exceeded). */
+export function isExternalTurnFault(reason: unknown): boolean {
+  return findExternalTurnFault(reason) !== null;
 }
 
 function findExternalTurnFault(error: unknown): ExternalTurnFaultError | null {
@@ -152,8 +157,8 @@ export function createTurnFailureError(
 
   return createCoreError(CoreErrorType.UnknownError, fallbackMessage, {
     cause: error instanceof Error ? error : undefined,
-    // turn 级 UnknownError 只是统一生命周期包装；UI/error payload
-    // 需要展示下层 provider/tool 给出的用户可读根因，不能让泛化文案抢占摘要。
+    // A turn-level UnknownError is only a uniform lifecycle wrapper; the UI / error payload
+    // must show the user-readable root cause from the underlying provider/tool, so generic text must not take over the summary.
     context: withErrorPayloadRole(undefined, ErrorPayloadRole.Wrapper),
   });
 }
@@ -169,10 +174,12 @@ export function createTurnCancelledError(error: unknown) {
   });
 }
 
-// 用户主动中断（TurnCancelled）属于正常结束，不应记为错误。turn/compact/rewind 三处 catch
-// 之前都无条件 emit TurnError，会被 reducer/UI/桌面统一映射成 turn.failed（status:error、追加错误消息）。
-// 这里统一收口：取消时改发 TurnComplete(resultType:"cancelled") 让状态干净回到 idle，真实错误才发 TurnError。
-// 调用方仍负责向上 throw coreError 与记录 usage。
+// A user-initiated interrupt (TurnCancelled) is a normal end and must not be recorded as an error.
+// The turn/compact/rewind catches all used to emit TurnError unconditionally, which reducers/UI/desktop
+// uniformly mapped to turn.failed (status:error plus an appended error message).
+// Unified here: on cancellation emit TurnComplete(resultType:"cancelled") instead so state returns
+// cleanly to idle; only real errors emit TurnError.
+// Callers remain responsible for rethrowing coreError upward and recording usage.
 export async function appendTurnOutcomeEvent(
   runtime: AgentRuntimeInternal,
   params: {
@@ -225,16 +232,17 @@ export async function appendTurnOutcomeEvent(
         {
           error: {
             type: externalFault?.code ?? coreError.type,
-            // coreError.message 常是泛化文案，真实 provider/network 原因藏在 cause 链里；
-            // 写入可读 payload fields 让桌面端和恢复链路都能展示根因。
+            // coreError.message is often generic; the real provider/network cause hides in the cause chain.
+            // Write readable payload fields so both the desktop and the recovery path can show the root cause.
             ...projectedError,
             attribution: {
               ...projectedError.attribution,
-              // Bug 根因：创建期尚无 userInput 行。每个新错误都发布 string/null，
-              // 让 Renderer 区分“普通轮”与“旧 Agent 没有该字段”。
+              // Bug root cause: no userInput row exists at creation time. Every new error publishes
+              // string/null so the renderer can tell a "normal turn" from an "older agent without this field".
               highspeedCardId: params.highspeedCardId ?? null,
-              // 无处可退时没有 fallback 事件，且请求期失败的 code 是 provider 错误码（如 3402），
-              // Renderer 不能按错误码推断退卡；由 Core 把“已归因且无处可退”作为结构化事实发布。
+              // With nowhere to fall back there is no fallback event, and a request-phase failure's code is a
+              // provider error code (e.g. 3402); the renderer cannot infer card fallback from error codes.
+              // Core publishes "attributed with no fallback available" as a structured fact.
               ...(params.highspeedFallbackUnavailable
                 ? { highspeedFallbackUnavailable: true }
                 : {}),

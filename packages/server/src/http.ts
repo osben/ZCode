@@ -1,9 +1,10 @@
 /* eslint-disable max-lines -- HTTP, WebSocket, and static-asset routes are registered together to preserve one authorization order. */
 import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
+import { hostname } from "node:os";
+import { resolveServerOsUser } from "@zcode/shared/node";
 import * as nodePath from "node:path";
 import { basename, extname, resolve } from "node:path";
-import { hostname, userInfo } from "node:os";
 import { Hono, type Context } from "hono";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
@@ -178,6 +179,8 @@ function setupChannelServer(
   const controller = needsStandaloneController
     ? createWindowHostControllerRuntime({
         createId: randomUUID,
+        // Host-scope history reads the persistence owner directly (see listTaskList).
+        readHostTaskList: (query) => taskService.listTaskList(query),
         maxSources: 64,
         maxConcurrentSourceRefreshes: 4,
         resolveSource: (scope) => ({
@@ -272,12 +275,13 @@ function createServerInfo(
     workspaces: resolveServerWorkspaces(options),
     compatibility: ZCODE_COMPATIBILITY_MANIFEST,
     migration: { failedPathCount: options.migrationFailedPathCount ?? 0 },
-    identity: { osUser: userInfo().username, hostname: hostname() },
+    identity: { osUser: resolveServerOsUser(), hostname: hostname() },
     capabilities: {
       desktopContinuous: true,
       websocketRpc: true,
       ...(options.virtualProjects ? { virtualProjects: true } : {}),
       processResourceTelemetry: true,
+      remoteConversationTelemetry: true,
     },
   });
 }

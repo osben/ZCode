@@ -241,7 +241,7 @@ describe("导入缓存 — 命中的结算重发出生事实（docs/execution-en
 
 describe("导入缓存 — 分歧", () => {
   it("中途分歧：命中前缀保留，分歧点起全 live，后缀即便哈希相符也不再查", async () => {
-    // entries[1]'s instructions differ from the new script ("旧指令" vs "s1") → seq 1 diverges;
+    // entries[1]'s instructions differ from the new script ("old instructions" vs "s1") → seq 1 diverges;
     // entries[2] **deliberately** hashes the same as the new script's seq 2 instructions, to prove the cache
     // is no longer consulted after a divergence.
     const cache = cacheOf([
@@ -436,6 +436,34 @@ describe("导入缓存 — world 节点", () => {
       status: "completed",
       inputHash: worldKey("run", ["deploy.sh"]),
       result: { exitCode: 0 },
+    });
+  });
+});
+
+describe("导入缓存 — world.run 的 opts 属于内容键", () => {
+  it("只改 opts.output 即新节点：不命中前驱的记录、live 执行，journal 的 input 带新 opts", async () => {
+    // The predecessor ran in full mode (the result holds the full text); if the discard revision still hit the cache, the script would get the full text while the journal row claims discard — one result, two shapes. Including opts in inputHash guarantees that changing the mode yields a new node.
+    const fullArgs = ["pnpm", ["test"]];
+    const discardArgs = ["pnpm", ["test"], { output: "discard" }];
+    const cache = cacheOf(
+      [],
+      [[worldKey("run", fullArgs), [worldEntry("run", fullArgs, { exitCode: 0, stdout: "全文" })]]],
+    );
+    const { engine, driver, journal } = setup({ importedCache: cache });
+
+    expect(worldKey("run", discardArgs)).not.toBe(worldKey("run", fullArgs));
+    expect(worldKey("run", ["pnpm", ["test"], { output: { tail: 64 } }])).not.toBe(
+      worldKey("run", ["pnpm", ["test"], { output: { tail: 65 } }]),
+    );
+
+    const run = engine.worldRead("world#1", "run", discardArgs);
+    expect(driver.worldReads).toHaveLength(1);
+    driver.worldReads[0]?.deferred.resolve({ exitCode: 0, stdout: "", stderr: "" });
+    await expect(run).resolves.toEqual({ exitCode: 0, stdout: "", stderr: "" });
+    expect(journal.getNode(RUN, "world#1", 1)).toMatchObject({
+      kind: "world-run",
+      inputHash: worldKey("run", discardArgs),
+      input: { op: "run", args: discardArgs },
     });
   });
 });

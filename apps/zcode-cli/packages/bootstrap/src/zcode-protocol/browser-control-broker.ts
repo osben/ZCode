@@ -26,10 +26,21 @@ import {
  * the actor runtime registered on the app instance while the actor's browser requests arrived via
  * the process-level instance.
  */
+type BrowserRoute = Omit<ReturnType<typeof buildBrowserRequestContext>, "requestId" | "turnId">;
+interface BrowserConnection {
+  browserId: string;
+  browserGeneration: number;
+  route: BrowserRoute;
+  controlScopeId?: string;
+  opening?: Promise<void>;
+  closing?: boolean;
+}
+
 interface ProtocolBrowserBrokerState {
-  connectionsBySession: Map<string, Map<string, { browserId: string; browserGeneration: number }>>;
+  scopedBackends: Set<string>;
+  connectionsBySession: Map<string, Map<string, BrowserConnection>>;
   /** Child sessions the client does not know about (dwf / core Agent subagents) → the client session that spawned them. Written only by forChildSession. */
-  childSessionParents: Map<string, string>;
+  childSessionParents: Map<string, { parentSessionId: string }>;
   /** Child sessions whose tabs are owned by the parent session (core Agent subagents, tabOwner: "parent"). */
   parentTabOwnerChildren: Set<string>;
 }
@@ -43,6 +54,7 @@ function brokerState(context: ZCodeProtocolAgentServerContext): ProtocolBrowserB
   let state = brokerStateByContext.get(context);
   if (!state) {
     state = {
+      scopedBackends: new Set(),
       connectionsBySession: new Map(),
       childSessionParents: new Map(),
       parentTabOwnerChildren: new Set(),
@@ -55,10 +67,10 @@ function brokerState(context: ZCodeProtocolAgentServerContext): ProtocolBrowserB
 /**
  * ProtocolBrowserControlBroker — agent-side BrowserControlPort implementation.
  *
- * Each browser-client `agent.browsers.*` call uses this to turn a BrowserCommand into a ZCode
- * Protocol interaction/browserExecute reverse request. The app executes it (host → main
- * WebContentsView/CDP) and returns the result. Injected alongside the permission broker through
- * server-operations' createWorkspaceZCodeApp options.
+ * Each browser-client agent.browsers.* call goes through here to turn a BrowserCommand into a
+ * ZCode Protocol interaction/browserExecute reverse request, executed by the app
+ * (host→main webview/CDP) with the result returned. Injected alongside the permission broker
+ * (createWorkspaceZCodeApp options in server-operations).
  */
 export function createProtocolBrowserControlBroker(
   context: ZCodeProtocolAgentServerContext,
@@ -66,10 +78,71 @@ export function createProtocolBrowserControlBroker(
   const state = brokerState(context);
   const { connectionsBySession, childSessionParents } = state;
 
-  const rememberConnection = (sessionId: string, browserId: string, browserGeneration: number) => {
-    const connections = connectionsBySession.get(sessionId) ?? new Map();
-    connections.set(`${browserId}\u0000${browserGeneration}`, { browserId, browserGeneration });
-    connectionsBySession.set(sessionId, connections);
+  const rememberConnection = (
+    {
+      requestId: _requestId,
+      turnId: _turnId,
+      ...route
+    }: ReturnType<typeof buildBrowserRequestContext>,
+    browserId: string,
+    browserGeneration: number,
+  ) => {
+    const connections = connectionsBySession.get(route.sessionId) ?? new Map();
+    const backendKey = `${browserId}\u0000${browserGeneration}`;
+    // Routing is part of the resource identity; mobile/desktop and remote scopes must not overwrite each other.
+    const key = JSON.stringify([
+      browserId,
+      browserGeneration,
+      route.workspaceKey,
+      route.workspaceIdentity,
+      route.remoteSessionId,
+      route.clientMode,
+    ]);
+    const existing = connections.get(key);
+    const connection: BrowserConnection = existing?.controlScopeId
+      ? existing
+      : { browserId, browserGeneration, route };
+    connections.set(key, connection);
+    connectionsBySession.set(route.sessionId, connections);
+    if (state.scopedBackends.has(backendKey)) connection.controlScopeId ??= randomUUID();
+    if (connection.controlScopeId && !connection.opening && !connection.closing) {
+      connection.opening = (async () => {
+        const result = await context.requestClient(
+          zcodeProtocolMethods.interactionBrowserExecute,
+          {
+            ...route,
+            requestId: randomUUID(),
+            browserId,
+            browserGeneration,
+            controlScopeId: connection.controlScopeId,
+            command: { method: "openScope" },
+          },
+          zcodeBrowserExecuteResultSchema,
+        );
+        if (
+          result.ok &&
+          result.scope?.id === connection.controlScopeId &&
+          result.scope?.state === "open"
+        )
+          return;
+        // Revoke the record only when establishment is explicitly rejected; a timeout or lost response does not prove Main failed to register.
+        if (
+          result.scope?.id === connection.controlScopeId &&
+          result.scope?.state === "rejected" &&
+          connections.get(key) === connection
+        ) {
+          connections.delete(key);
+          if (!connections.size && connectionsBySession.get(route.sessionId) === connections)
+            connectionsBySession.delete(route.sessionId);
+        }
+        throw new Error(result.error?.message ?? "Browser scope admission was not confirmed");
+      })().catch((error) => {
+        // An unknown outcome keeps the release duty on the original id; a failed flight is not a permanent failure and the next business call can retry idempotently.
+        connection.opening = undefined;
+        throw error;
+      });
+    }
+    return connection;
   };
 
   const sendLifecycle = async (
@@ -79,21 +152,54 @@ export function createProtocolBrowserControlBroker(
       | { method: "turnEnded"; turnId?: string }
       | { method: "closeSession"; closeTabs?: boolean },
   ): Promise<void> => {
-    const connections = [...(connectionsBySession.get(sessionId)?.values() ?? [])];
-    await Promise.allSettled(
-      connections.map(({ browserId, browserGeneration }) =>
-        context.requestClient(
+    const connections = connectionsBySession.get(sessionId);
+    if (!connections) return;
+    const results = await Promise.allSettled(
+      [...connections].map(async ([key, connection]) => {
+        const { browserId, browserGeneration, route, controlScopeId } = connection;
+        if (command.method === "closeSession") connection.closing = true;
+        // Wait for the establishment result first; a rejected establishment already deleted the record, an unknown outcome still leaves release confirmation to the owner.
+        if (connection.opening) await connection.opening.catch(() => undefined);
+        if (connections.get(key) !== connection) return;
+        const result = await context.requestClient(
           zcodeProtocolMethods.interactionBrowserExecute,
           {
-            ...buildBrowserRequestContext(context, state, { sessionId, turnId }),
+            ...route,
+            requestId: randomUUID(),
+            ...(turnId ? { turnId } : {}),
             browserId,
             browserGeneration,
-            command,
+            ...(controlScopeId ? { controlScopeId } : {}),
+            command:
+              controlScopeId && command.method === "closeSession"
+                ? { method: "releaseScope", closeTabs: command.closeTabs }
+                : command,
           },
           zcodeBrowserExecuteResultSchema,
-        ),
-      ),
+        );
+        if (!result.ok)
+          throw new Error(result.error?.message ?? "Browser lifecycle request failed");
+        if (
+          controlScopeId &&
+          command.method === "closeSession" &&
+          (result.scope?.id !== controlScopeId ||
+            !["released", "absent"].includes(result.scope.state))
+        ) {
+          throw new Error("Browser scope release was not confirmed by owner");
+        }
+        // allSettled must neither swallow failures nor let an old close callback delete a newer control resource registered afterwards.
+        if (command.method === "closeSession" && connections.get(key) === connection) {
+          connections.delete(key);
+        }
+      }),
     );
+    if (connections.size === 0 && connectionsBySession.get(sessionId) === connections) {
+      connectionsBySession.delete(sessionId);
+    }
+    const errors = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (errors.length) throw new AggregateError(errors, "Browser lifecycle cleanup failed");
   };
 
   const port: BrowserControlPort = {
@@ -104,6 +210,10 @@ export function createProtocolBrowserControlBroker(
         zcodeBrowserListResultSchema,
         buildRequestOptions(traceContext, signal),
       );
+      for (const browser of result.browsers) {
+        if (browser.metadata?.controlScopes === "1")
+          state.scopedBackends.add(`${browser.id}\u0000${browser.generation}`);
+      }
       return result.browsers;
     },
 
@@ -125,7 +235,13 @@ export function createProtocolBrowserControlBroker(
       // closed child sessions) must not leave entries in the shared state.
       // Record the connection under the tab owner actually sent: a subagent sharing the parent
       // session's tab has its connections cleaned up by the parent session's lifecycle.
-      rememberConnection(requestContext.sessionId, browserId, browserGeneration);
+      const connection = rememberConnection(requestContext, browserId, browserGeneration);
+      if (connection.closing) throw new Error("Browser control scope is closing");
+      if (connection.opening) await connection.opening;
+      if (connection.closing) throw new Error("Browser control scope is closing");
+      const scopeContext = connection.controlScopeId
+        ? { controlScopeId: connection.controlScopeId }
+        : {};
       const cancelBackendRequest = () => {
         // Cancelling only the agent-side requestClient would leave the host/main CDP action running.
         // Send an internal cancelRequest with the same backend/generation so main interrupts the
@@ -135,7 +251,10 @@ export function createProtocolBrowserControlBroker(
           .requestClient(
             zcodeProtocolMethods.interactionBrowserExecute,
             {
-              ...buildBrowserRequestContext(context, state, { sessionId, turnId, traceContext }),
+              // Cancellation belongs to admitted requests; even with the runtime already stopping, desktop-side actions must remain cancellable.
+              ...requestContext,
+              ...scopeContext,
+              requestId: randomUUID(),
               browserId,
               browserGeneration,
               command: { method: "cancelRequest", requestId: requestContext.requestId },
@@ -152,6 +271,7 @@ export function createProtocolBrowserControlBroker(
           zcodeProtocolMethods.interactionBrowserExecute,
           {
             ...requestContext,
+            ...scopeContext,
             browserId,
             browserGeneration,
             command,
@@ -170,18 +290,18 @@ export function createProtocolBrowserControlBroker(
 
     async closeSession({ sessionId, turnId }) {
       await sendLifecycle(sessionId, turnId, { method: "closeSession" });
-      connectionsBySession.delete(sessionId);
     },
 
     forChildSession({ childSessionId, parentSessionId, tabOwner = "child" }) {
-      childSessionParents.set(childSessionId, parentSessionId);
+      const binding = { parentSessionId };
+      childSessionParents.set(childSessionId, binding);
+      const release = () => {
+        if (childSessionParents.get(childSessionId) !== binding) return;
+        childSessionParents.delete(childSessionId);
+        state.parentTabOwnerChildren.delete(childSessionId);
+      };
       if (tabOwner === "parent") {
         state.parentTabOwnerChildren.add(childSessionId);
-        const release = () => {
-          if (childSessionParents.get(childSessionId) !== parentSessionId) return;
-          childSessionParents.delete(childSessionId);
-          state.parentTabOwnerChildren.delete(childSessionId);
-        };
         // The tab belongs to the current conversation: neither the subagent's turn end nor its run
         // end may end / close the tab on the parent session's behalf—that would release the tab
         // the user is watching. Cleanup is the parent session's own turnEnded / closeSession job.
@@ -194,21 +314,16 @@ export function createProtocolBrowserControlBroker(
           },
         };
       }
+      state.parentTabOwnerChildren.delete(childSessionId);
       return {
         list: port.list,
         execute: port.execute,
         turnEnded: port.turnEnded,
         async closeSession({ sessionId, turnId }) {
-          try {
-            // The child session will never come back as a conversation to claim the tab: a kept
-            // view is visible to no one and only holds a guest alive.
-            await sendLifecycle(sessionId, turnId, { method: "closeSession", closeTabs: true });
-          } finally {
-            connectionsBySession.delete(sessionId);
-            if (childSessionParents.get(childSessionId) === parentSessionId) {
-              childSessionParents.delete(childSessionId);
-            }
-          }
+          if (childSessionParents.get(childSessionId) !== binding) return;
+          // The standalone child session's temporary tab must be closed; on failure keep the resource and binding for the owner's final cleanup retry.
+          await sendLifecycle(sessionId, turnId, { method: "closeSession", closeTabs: true });
+          release();
         },
       };
     },
@@ -230,7 +345,7 @@ function buildBrowserRequestContext(
   // (docs/zcode-protocol-model-backed-control-requests.md contract 4): dwf subagents use the
   // child session's own, core Agent subagents use the parent session's. Without a registration,
   // look up by the original id and reject if not found.
-  const parentSessionId = state.childSessionParents.get(input.sessionId);
+  const parentSessionId = state.childSessionParents.get(input.sessionId)?.parentSessionId;
   const record = requireSession(context, parentSessionId ?? input.sessionId);
   const workspaceIdentity = record.workspace.workspaceIdentity?.trim() || undefined;
   const remoteSessionId = record.workspace.remoteSessionId?.trim() || undefined;

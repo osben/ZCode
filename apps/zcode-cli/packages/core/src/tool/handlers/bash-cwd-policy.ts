@@ -24,11 +24,14 @@ export interface BashCwdPolicyDecision {
   stderrSuffix?: string;
 }
 
-interface NormalizedCwdBoundary {
-  pathApi: ToolPathApi;
+interface CwdBoundaryPair {
   resolvedCwd: string;
   workspaceRoot: string;
-  equivalentPairs: Array<{ resolvedCwd: string; workspaceRoot: string }>;
+}
+
+interface NormalizedCwdBoundary {
+  pathApi: ToolPathApi;
+  equivalentPairs: CwdBoundaryPair[];
 }
 
 export function decideBashCwdPolicy(input: BashCwdPolicyInput): BashCwdPolicyDecision {
@@ -38,14 +41,27 @@ export function decideBashCwdPolicy(input: BashCwdPolicyInput): BashCwdPolicyDec
   if ((input.runtimeScope ?? "main") !== "main") return {};
 
   const boundary = normalizeCwdBoundaryInput(input);
-
-  if (isResolvedCwdInsideWorkspace(boundary)) {
-    return { nextWorkingDirectory: boundary.resolvedCwd };
+  // Root cause: writing back the normalized physical path let a symlink root, /private alias, or
+  // drive-letter case change how the same directory is spelled; the environment announcement
+  // compares strings, so it reported a phantom directory change and re-ran the repo check.
+  // Normalization is used for boundary detection only; writes always use the workspace root's spelling (plus the relative path).
+  const containing = findContainingPair(boundary);
+  if (containing) {
+    const relativePath = boundary.pathApi.relative(
+      containing.workspaceRoot,
+      containing.resolvedCwd,
+    );
+    return {
+      nextWorkingDirectory:
+        relativePath === ""
+          ? input.workspaceRoot
+          : boundary.pathApi.join(input.workspaceRoot, relativePath),
+    };
   }
 
   return {
-    nextWorkingDirectory: boundary.workspaceRoot,
-    stderrSuffix: `Shell cwd was reset to ${boundary.workspaceRoot}`,
+    nextWorkingDirectory: input.workspaceRoot,
+    stderrSuffix: `Shell cwd was reset to ${input.workspaceRoot}`,
   };
 }
 
@@ -107,16 +123,11 @@ function normalizeCwdBoundaryInput(input: BashCwdPolicyInput): NormalizedCwdBoun
     });
   }
 
-  return {
-    pathApi,
-    resolvedCwd,
-    workspaceRoot,
-    equivalentPairs,
-  };
+  return { pathApi, equivalentPairs };
 }
 
-function isResolvedCwdInsideWorkspace(boundary: NormalizedCwdBoundary): boolean {
-  return boundary.equivalentPairs.some(({ resolvedCwd, workspaceRoot }) =>
+function findContainingPair(boundary: NormalizedCwdBoundary): CwdBoundaryPair | undefined {
+  return boundary.equivalentPairs.find(({ resolvedCwd, workspaceRoot }) =>
     isInsideOrSamePath(resolvedCwd, workspaceRoot, boundary.pathApi),
   );
 }

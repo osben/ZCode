@@ -14,7 +14,12 @@ const clientConfigSchema = z
               .url()
               .refine((value) => {
                 const url = new URL(value);
-                return url.protocol === "https:" && !url.username && !url.password;
+                // Intranet and test deployments also serve HTTP config URLs; protocol admission does not depend on the product environment.
+                return (
+                  (url.protocol === "https:" || url.protocol === "http:") &&
+                  !url.username &&
+                  !url.password
+                );
               })
               .optional(),
           })

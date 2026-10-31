@@ -1,14 +1,13 @@
-# Session Resident Pool (in-process hybrid resident pool of the app-server)
+# Session Resident Pool（app-server 进程内混合常驻池）
 
-## Scope
+## 文档定位
 
-Defines the implementation contract of the session resident pool inside the ZCode Protocol app-server.
-Product boundary and renderer lifecycle: root `docs/session-idle-deactivation.md`.
+本文定义 ZCode Protocol app-server 内的 session 常驻池实现合同。产品边界和 renderer 生命周期见
+仓库根 `docs/session-idle-deactivation.md`。
 
-## Goals
+## 目标
 
-Each CLI process uses an idle TTL as the primary reclaim policy and bounds burst resident counts with
-high/low water marks:
+每个 CLI 进程用 idle TTL 作为主回收策略，并以高低水位限制突发 resident 数量：
 
 ```ts
 DEFAULT_SESSION_RESIDENT_TARGET_COUNT = 8;
@@ -16,34 +15,30 @@ DEFAULT_SESSION_RESIDENT_HIGH_WATER_COUNT = 16;
 DEFAULT_SESSION_RESIDENT_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 ```
 
-An eligible session idle beyond the TTL is deactivated regardless of the resident count. When
-`context.sessions.size > highWater`, reclaim does not wait for the TTL and proceeds by LRU down to
-target. If the number of protected sessions exceeds highWater, overshoot is allowed: no task is
-cancelled, no new session is rejected, and there is no hard RSS cap.
+eligible session 空闲超过 TTL 后无论 resident 数量多少都去激活；当
+`context.sessions.size > highWater` 时，不等待 TTL，按 LRU 回收到 target。若保护中的 session
+数量超过 highWater，允许超额，不取消任务、不拒绝新 session、不引入 RSS 硬上限。
 
-## Core invariant
+## 核心不变量
 
-`DEACTIVATED` must be equivalent to "the current CLI process never loaded this session":
+`DEACTIVATED` 必须等价于“当前 CLI 进程从未加载过该 session”：
 
-- `context.sessions` has no record;
-- the persisted session, messages, entries and task sqlite index remain;
-- the V4 publisher, hydration, attachment cache and in-memory event store are released (the record
-  release path explicitly calls `eventStore.deleteSession`; eviction of transient events while resident
-  is in `session-event-store-retention.md`);
-- no `session.removed` is sent;
-- when V4 uses the session again, the entry point explicitly decides whether activation is needed, then
-  goes through
-  `gateway readyFlights -> ColdSessionResumeCoordinator.ensureResumed -> activateSessionForResume -> projection hydration`;
-  `hydratePublisher` itself still only does projection hydration. Legacy resume keeps the original
-  activation/snapshot entry.
+- `context.sessions` 无 record；
+- 持久 session、messages、entries、task sqlite index 保留；
+- V4 publisher、hydration、attachment cache 和内存 event store 已释放（record 释放路径显式调用
+  `eventStore.deleteSession`；驻留期间的瞬态事件淘汰见 `session-event-store-retention.md`）；
+- 不发送 `session.removed`；
+- V4 再次使用时由入口显式判断是否需要 activation，再进入
+  `gateway readyFlights -> ColdSessionResumeCoordinator.ensureResumed -> activateSessionForResume -> projection hydration`；
+  `hydratePublisher` 本身仍只负责 projection hydration。legacy resume 保持原 activation/snapshot 入口。
 
-## Components
+## 组件
 
 ### `SessionResidentPool`
 
-Location: `bootstrap/src/zcode-protocol/session-resident-pool.ts`.
+位置：`bootstrap/src/zcode-protocol/session-resident-pool.ts`。
 
-Narrow host interface:
+宿主窄接口：
 
 ```ts
 interface SessionResidentPoolHost {
@@ -55,19 +50,19 @@ interface SessionResidentPoolHost {
 }
 ```
 
-Responsibilities:
+职责：
 
-- keep `sessionId -> lastTouchedAt`;
-- keep `sessionId -> eligibleSinceAt`;
-- keep the process-wide operation lease count and the per-session lease count;
-- keep `sessionId -> deactivation Promise` as the cold resume gate;
-- clear `eligibleSinceAt` when a protecting fact exists or the session is touched; start a new TTL from
-  the current time when it first becomes eligible again;
-- reclaim fresh eligible sessions whose TTL has expired first;
-- if the remaining resident count still exceeds highWater, pick LRU by ascending
-  `max(lastTouchedAt, record.updatedAt)` down to target;
-- re-read facts before each execution so new work appearing after candidate selection is caught;
-- report a single close failure only, without blocking other candidates.
+- 保存 `sessionId -> lastTouchedAt`；
+- 保存 `sessionId -> eligibleSinceAt`；
+- 保存全进程 operation lease 计数和按 session 的 lease 计数；
+- 保存 `sessionId -> deactivation Promise`，作为 cold resume 闸门；
+- 保护事实存在或 session 被 touch 时清除 `eligibleSinceAt`，首次重新 eligible 时从当前时间开始
+  新 TTL；
+- 先回收 TTL 已到期的 fresh eligible session；
+- 若剩余 resident 数量超过 highWater，再按
+  `max(lastTouchedAt, record.updatedAt)` 升序选择 LRU，回收到 target；
+- 每次执行前重读 facts，防止候选选出后出现新工作；
+- 单个 close 失败只上报，不阻断其他候选。
 
 ### `SessionResidencyFacts`
 
@@ -83,7 +78,7 @@ interface SessionResidencyFacts {
 }
 ```
 
-A session is eligible only if:
+eligible 必须满足：
 
 ```text
 persisted
@@ -95,45 +90,41 @@ persisted
 && pool.operationLeaseCount(sessionId) === 0
 ```
 
-`deliveryKind !== undefined` must not be a protection condition: it is not a subscription refcount, and
-reads may write it too. The legacy `session/subscribe` has no unsubscribe RPC, so
-`record.legacyStreamSubscribed` is set only on a real subscribe and conservatively protects the
-replayable/bot stream until the CLI process ends.
+不得使用 `deliveryKind !== undefined` 作为保护条件。它不是订阅引用计数，读操作也可能写入。
+旧 `session/subscribe` 没有 unsubscribe RPC，因此只在真正 subscribe 时设置
+`record.legacyStreamSubscribed`，以该字段保守保护 replayable/bot stream 到 CLI 进程结束。
 
-### Authoritative runtime facts
+### 权威运行事实
 
-`AgentRuntime` exposes a synchronous read-only interface:
+`AgentRuntime` 暴露同步、只读接口：
 
 ```ts
 hasResidencyBlockingWork(): boolean
 ```
 
-It aggregates:
+它统一聚合：
 
-- runtime command drain;
-- runtime command queue;
-- active turn;
-- active turn start reservation;
-- running background Bash, Agent, Workflow and MCP monitor in the runtime task registry;
-- runtime-owned detached work counts: session title, goal title (including fallback persistence), MCP
-  startup, background-notification ledger writes and goal heartbeat;
-- pending/running work of the project-memory extraction scheduler;
-- project-memory recall prefetch not yet settled.
+- runtime command drain；
+- runtime command queue；
+- active turn；
+- active turn start reservation。
+- runtime task registry 中 running 的 background Bash、Agent、Workflow、MCP monitor；
+- runtime-owned detached work 计数，包括 session title、goal title（含 fallback 持久化）和
+  MCP startup、background-notification ledger write 与 goal heartbeat；
+- project-memory extraction scheduler 的 pending/running work；
+- 尚未 settled 的 project-memory recall prefetch。
 
-Runtime-owned detached work must increment its count when the Promise starts synchronously and
-decrement in the `finally` of the same Promise. A new detached sidecar must use the same tracker; the
-pool adapter must not guess one by one.
+runtime-owned detached work 必须在同步启动 Promise 时加计数，并在同一 Promise 的 `finally`
+减计数。新增 detached sidecar 时必须使用同一 tracker，不能在 pool 适配层逐个猜测。
 
-Bootstrap ORs in:
+bootstrap 还要 OR：
 
-- `record.activeAbortController !== undefined`, the protocol-adapter active safeguard;
-- `record.residencyFinalizationCount > 0`, covering the command fact, ensure-model, snapshot and
-  broadcast finalization still running after background prompt, compact and goal continuation released
-  the active lock.
+- `record.activeAbortController !== undefined`，作为协议适配层的 active 防线；
+- `record.residencyFinalizationCount > 0`，覆盖 background prompt、compact、goal continuation
+  释放 active lock 后仍在执行的 command fact、ensure-model、snapshot 与广播收尾。
 
-A finalization lease is registered when the background runner starts and released in the `finally`
-after all state-mutation finalization is done. It cannot be replaced by delaying the clearing of
-`activeAbortController`, which is the ready lock of input admission.
+finalization lease 从后台 runner 启动时登记，在所有 state-mutation 收尾完成后的 `finally` 释放。
+它不能通过延迟清空 `activeAbortController` 代替，因为后者是输入 admission 的 ready lock。
 
 ```text
 runtime sidecar start ──sync +1──> blocking
@@ -144,49 +135,47 @@ protocol background start ─ +1 finalization
       mutation complete ──── -1 finalization
 ```
 
-Automation, scheduled/off-peak tasks, browser use, goal continuation and compact create no side
-criterion: they must land on the prompt/runtime/finalization owner chain above. SSH/WSL/Docker only
-changes where the pool's CLI process runs, not the source of facts.
+automation、定时/off-peak 任务、browser use、goal continuation 与 compact 不建立旁路判据：
+它们必须落到上述 prompt/runtime/finalization owner 链。SSH/WSL/Docker 只改变运行 pool 的 CLI
+进程位置，不改变事实来源。
 
 ## Operation lease
 
-`ZCodeProtocolAgentServer.handleRequest` acquires a lease before dispatch and releases it after the
-whole async dispatch completes:
+`ZCodeProtocolAgentServer.handleRequest` 在 dispatch 之前获取 lease，在整个 async dispatch 完成后释放：
 
 ```text
 handleRequest(request)
   -> pool.acquireOperation(sessionIdFromRequest)
-       -> process-wide operationCount++
-       -> wait for in-flight deactivation of the same session
+       -> 全进程 operationCount++
+       -> 等待同 session 的 in-flight deactivation
        -> session operationLeaseCount++
-  -> touch(sessionId) and reset idle TTL
+  -> touch(sessionId) 并重置 idle TTL
   -> dispatchRequest(request)
   -> release
-  -> touch(sessionId) and reset idle TTL
+  -> touch(sessionId) 并重置 idle TTL
        -> session operationLeaseCount--
-       -> process-wide operationCount--
+       -> 全进程 operationCount--
        -> rebalance()
 ```
 
-`sessionIdFromRequest` reads:
+`sessionIdFromRequest` 读取：
 
-- the top-level `sessionId` of normal params;
-- the `conversation/<sessionId>` topic of V4 conversation subscribe/resync/unsubscribe;
-- the `sessionId` of each command key in `v4/commands/query`;
-- workspace/global requests without a sessionId hold only the process-level lease.
+- 普通 params 的顶层 `sessionId`；
+- V4 conversation subscribe/resync/unsubscribe 的 `conversation/<sessionId>` topic；
+- `v4/commands/query` 中各 command key 的 `sessionId`；
+- 无 sessionId 的 workspace/global 请求只持有进程级 lease。
 
-The process-level lease keeps cross-session awaits such as the provider registry from racing with
-sampler reclaim; the per-session lease also enters the eligibility facts, for testability and to express
-ownership.
+进程级 lease 防止 provider registry 等跨 session await 操作与 sampler 回收并发；按 session lease
+同时进入 eligibility facts，便于测试并表达所有权。
 
 ## Rebalance
 
-Triggers:
+触发点：
 
-1. Every protocol request lease release.
-2. The existing process resource sampler `onSample` as a low-frequency fallback.
+1. 每个协议请求 lease 释放；
+2. 既有 process resource sampler 的 `onSample` 低频兜底。
 
-Algorithm:
+算法：
 
 ```text
 rebalance()
@@ -215,25 +204,23 @@ rebalance()
       executeDeactivation(candidate, reason=high_water_lru)
 ```
 
-Ordering uses sessionId as a stable tie-breaker for equal timestamps. The TTL is based only on the
-in-process `eligibleSinceAt`; a very old on-disk `record.updatedAt` is never the idle start of a
-just-cold-resumed session. `touch` and protection state transitions reset the TTL; LRU touch and
-`record.updatedAt` only decide the high-water candidate order.
+排序用 sessionId 作为同时间戳稳定 tie-breaker。TTL 只基于进程内 `eligibleSinceAt`，不会把磁盘
+中很旧的 `record.updatedAt` 当作刚冷恢复 session 的 idle 起点。`touch` 与保护状态转换会重置
+TTL；LRU touch 与 `record.updatedAt` 只决定高水位候选顺序。
 
-Both protocol request release and the existing 60-second process resource sampler call rebalance; no new
-timer is added. So the default TTL fires about 10 to 11 minutes after a session becomes eligible.
+协议 request release 与既有 60 秒 process resource sampler 都调用 rebalance，不新增定时器。
+因此默认 TTL 在成为 eligible 后约 10～11 分钟执行。
 
-The server assembly layer resolves compatible config by this contract:
+server 装配层按以下合同解析兼容配置：
 
-- legacy `sessionResidentTargetCount` expresses only low-water and does not override high-water;
-- when only `targetCount` is passed, assembly must resolve an effective high-water not below target, so a
-  smaller default high-water cannot make the whole Agent CLI throw at construction;
-- an explicitly passed invalid high/target combination is still rejected by the `SessionResidentPool`
-  constructor validation.
+- legacy `sessionResidentTargetCount` 只表达 low-water，不覆盖 high-water；
+- 只传 `targetCount` 时，装配层必须解析出不低于 target 的有效 high-water，不能因默认 high-water
+  较小而让整个 Agent CLI 在构造期抛错；
+- 显式传入的非法 high/target 组合仍交给 `SessionResidentPool` 构造校验拒绝。
 
-## Deactivation execution
+## 去激活执行面
 
-First synchronous slice of `deactivateSessionRecord(context, sessionId)`:
+`deactivateSessionRecord(context, sessionId)` 的首个同步执行片：
 
 ```text
 record = sessions.get(sessionId)
@@ -244,108 +231,95 @@ sessions.delete(sessionId)
 promise = record.app.close()
 ```
 
-`assertSessionRuntimeDeactivatable` is a pure check and must precede the first side effect. If the check
-rejects, the record, runtime event subscription and gateway runtime state all remain usable.
-`app.close()` is asynchronous cleanup after detaching; failures are isolated and recorded by the pool
-and are not part of the rollback-able synchronous pre-check transaction.
+`assertSessionRuntimeDeactivatable` 是纯校验，必须位于第一个副作用之前。若校验拒绝，record、
+runtime event subscription 与 gateway 运行态全部保持可用；`app.close()` 是摘除后的异步收尾，
+失败由 [session 生命周期 owner](session-runtime-lifecycle.md) 记录为 faulted，不纳入可回滚的同步预检事务。
 
-`deactivateSession` reuses the runtime cleanup of `disposeSession` with `notifyIndexRemoved=false`. It
-clears the publisher, hydration, flush state, projection waiter, attachment cache, raw sequence,
-telemetry normalization state, and the per-session settled LRU and admission sequence of
-`CommandInbox`, and does not call `indexPublisher.removeSession`. If `CommandInbox` still has an
-in-flight/live pin, fresh facts must block deactivation; the execution surface also rejects again
-before tearing down the publisher.
+`deactivateSession` 复用 `disposeSession` 的 runtime cleanup，但
+`notifyIndexRemoved=false`。清理 publisher、hydration、flush state、projection waiter、attachment
+cache、raw sequence、telemetry 归一化状态，以及 `CommandInbox` 的 per-session settled LRU 和
+admission 序号，不调用 `indexPublisher.removeSession`。`CommandInbox` 若仍有 in-flight/live pin，
+fresh facts 必须阻止去激活；执行面也会在拆 publisher 前再次拒绝。
 
-The Promise of `app.close()` is stored in the pool's in-flight map. Later requests for the same session
-wait for it to settle. A close failure is logged as warn through `onError`; the gate must be released
-and must not block cold resume forever.
+pool 的 in-flight map 只跟踪策略任务；真正的释放和恢复互斥归 session 生命周期 owner。
+close 失败经 `onError` 记录 warn，策略闸门结束后，生命周期仍保留 faulted；cold resume 明确返回
+recoveryRequired，不能因为池的日志处理已经完成就创建新实例。其他 session 的回收继续执行。
 
 ## Detached subagent child publisher
 
-A running subagent child reuses the parent runtime's external event sink and has no bootstrap record of
-its own, but its raw child events build an independent conversation publisher in the V4 gateway
-(`ingestDetachedLiveSession`). It is not in `context.sessions`, so neither the resident pool above nor
-the deactivation execution surface covers it.
+运行中的 subagent child 复用父 runtime 的外部 event sink，没有自己的 bootstrap record，但 raw child
+event 会在 V4 gateway 建出独立的 conversation publisher（`ingestDetachedLiveSession`）。它不在
+`context.sessions` 里，因此上文的 resident pool 与去激活执行面都管不到它。
 
-Bug root cause: the child is a one-shot session with a single turn; once the publisher is built it has
-neither a record release path nor a successor turn. On a real machine every subagent run left one more
-publisher (full projection plus up to 2000 log entries) resident until the CLI process exited (the
-`v4.detachedLive` counter only grew).
+Bug 根因：child 是一次性 session，只有一个 turn，publisher 建出后既没有 record 释放路径，也没有
+后继 turn；真机上每跑一次 subagent 就多一套 publisher（完整 projection + 最多 2000 条日志）驻留到
+CLI 进程退出（`v4.detachedLive` 计数器只增不减）。
 
-Lifecycle contract:
+生命周期合同：
 
-1. The gateway records the child → parent ownership in
-   `ingestDetachedLiveSession(childId, event, parentSessionId)`.
-2. When the parent record is released (`session/close`, creation failure, idle deactivation) via
-   `cleanupSessionRuntime(parent)`, all of its detached child publishers **without their own record**
-   are released too; a child that already has a record (explicitly resumed) follows its own record
-   lifecycle.
-3. Time fallback: the child's `turn_complete` / `turn_error` records the terminal time. The protocol
-   server calls `pruneDetachedChildPublishers()` on the existing 60s resource sampling tick; a child
-   whose terminal state exceeds `DETACHED_CHILD_PUBLISHER_GRACE_MS = 120_000`, which currently has no
-   conversation subscriber and no record, is released. A new `turn_started` of the child revokes the
-   terminal record.
-4. Subscribing again after release uses the existing cold resume: the child is persisted in the session
-   store as `subagent_child`, and `hasLiveConversation` returning false restores it as a historical
-   session; no second recovery chain is added.
-5. Release sends no `session.removed`: the detached child is not in the sessions-index.
+1. gateway 在 `ingestDetachedLiveSession(childId, event, parentSessionId)` 记录 child → parent 归属。
+2. 父 record 释放（`session/close`、创建失败、idle 去激活）走 `cleanupSessionRuntime(parent)` 时，
+   连带释放其全部**没有自己 record** 的 detached child publisher；child 若已有 record（被显式 resume），
+   交给 child 自己的 record 生命周期。
+3. 时间兜底：child 的 `turn_complete` / `turn_error` 记录终态时间；协议 server 借既有 60s 资源采样节拍
+   调用 `pruneDetachedChildPublishers()`，终态超过 `DETACHED_CHILD_PUBLISHER_GRACE_MS = 120_000`、
+   当前无 conversation 订阅者、且没有 record 的 child 一并释放。child 再次 `turn_started` 撤销终态记录。
+4. 释放后再被订阅走既有 cold resume：child 作为 `subagent_child` 持久化在 session store，
+   `hasLiveConversation` 返回 false 即按历史 session 恢复，不新增第二条恢复链路。
+5. 释放不发 `session.removed`：detached child 不在 sessions-index 中。
 
 ## Renderer
 
-This implementation changes no protocol schema and adds no notification. After the last pane lease is
-released, the renderer `SessionDataLayer` follows the existing keep-warm timer:
+本实现不修改协议 schema，不增加通知。renderer 的 `SessionDataLayer` 在最后一个 pane lease 释放后
+按既有 keep-warm timer 执行：
 
 ```text
 unsubscribe -> ConversationProjectionStore.close -> entries.delete(topic)
 ```
 
-That unsubscribe makes the CLI `hasSubscribers` false. The CLI pool and the renderer cache connect
-naturally through the existing subscription lease and hold no lifecycle state of each other.
+该 unsubscribe 让 CLI 的 `hasSubscribers` 变为 false。CLI pool 与 renderer cache 通过现有 subscription
+lease 自然衔接，互不持有对方的生命周期状态。
 
-## Test-first checklist
+## 测试先行清单
 
 ### Core
 
-- An idle runtime returns the unified protection fact false.
-- Any of active/queued/reserved/draining makes `hasActiveOrQueuedTurnWork` true.
-- Running background work in the runtime task registry makes the unified protection fact true, and
-  terminal states restore false.
-- Any unfinished detached tracker, MCP startup, title fallback, memory extraction/recall makes the
-  unified protection fact true.
+- idle runtime 返回统一保护事实 false；
+- active/queued/reserved/draining 任一存在时 `hasActiveOrQueuedTurnWork` 为 true；
+- runtime task registry 中 running background work 使统一保护事实为 true，终态恢复 false；
+- detached tracker、MCP startup、title fallback、memory extraction/recall 任一未完成时统一保护事实为 true。
 
 ### Bootstrap pool
 
-- Default idle TTL is 10 minutes, highWater 16, target 8.
-- After TTL expiry reclaim happens even with fewer residents than target; touch/protection state resets
-  the TTL.
-- highWater 4, target 2, resident 5: reclaim by LRU down to 2.
-- When protected sessions exceed highWater, overshoot is allowed.
-- Each of runtime owned work / protocol finalization / pending / queue / subscriber / draft / operation
-  lease protects alone.
-- Legacy stream subscribe protects, and `deliveryKind` of a normal `session/read` is not a lease.
-- After candidate ordering, changed fresh facts skip the candidate.
-- An operation lease blocks sampler rebalance and converges immediately after release.
-- An in-flight deactivation close blocks new operations of the same session.
-- After close rejects the gate is released and other candidates continue.
-- Deactivation clears `CommandInbox` settled/admission memory, and an in-flight/live pin rejects the
-  cleanup.
+- 默认 idle TTL 为 10 分钟、highWater 为 16、target 为 8；
+- TTL 到期后 resident 少于 target 也会回收，touch/保护状态会重置 TTL；
+- highWater 4、target 2、resident 5 时按 LRU 回收到 2；
+- protected session 超过 highWater 时允许超额；
+- runtime owned work / protocol finalization / pending / queue / subscriber / draft / operation lease
+  单项保护；
+- legacy stream subscribe 保护，且普通 `session/read` 的 `deliveryKind` 不作为 lease；
+- 候选排序后 fresh facts 变化会跳过；
+- operation lease 阻塞 sampler rebalance，释放后立即收敛；
+- deactivation close in-flight 阻塞同 session 新 operation；
+- close reject 后闸门释放，其他候选继续；
+- 去激活清 `CommandInbox` settled/admission 内存，in-flight/live pin 拒绝清理。
 
-### Integration
+### 集成
 
-- Real sqlite session: TTL starts after subscribe + unsubscribe and deactivation triggers on timeout.
-- sessions-index gets no `session.removed`.
-- Re-subscribing creates a new app, and snapshot rows contain both persisted user and assistant text.
-- Re-subscribing before the close gate is released does not materialize a new record.
-- An active runtime and a running background runtime stay registered under capacity overshoot.
-- Legacy and V4 background prompt/compact/goal continuation stay registered after clearing the active
-  lock until state mutation completes.
+- 真 sqlite session：subscribe + unsubscribe 后开始 TTL，超时触发去激活；
+- sessions-index 无 `session.removed`；
+- 重订阅创建新 app，snapshot rows 同时包含持久 user 与 assistant 文本；
+- close gate 未释放前重订阅不物化新 record；
+- active runtime 与 running background runtime 在容量超额时保持在册。
+- legacy 与 V4 background prompt/compact/goal continuation 清 active lock 后，在 state mutation
+  完成前仍保持在册。
 
-## Non-goals
+## 非目标
 
-- A global pool across CLIs/workspaces.
-- A hard RSS/heap byte cap.
-- Adaptive memory pressure.
-- User settings or new environment variables.
-- A renderer reclaim notification.
-- Changing desktop continuous or mobile replayable recovery semantics.
-- Pushing session/task business state down into the Host, Desktop main or relay.
+- 跨 CLI/workspace 全局池；
+- RSS/heap 字节硬上限；
+- 内存压力自适应；
+- 用户设置或新环境变量；
+- renderer 回收通知；
+- 改变 desktop continuous 或 mobile replayable 恢复语义；
+- 把 session/task 业务状态下沉到 Host、Desktop main 或 relay。

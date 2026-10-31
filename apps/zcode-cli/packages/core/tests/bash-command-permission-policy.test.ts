@@ -30,9 +30,12 @@ describe("Bash command permission rule policy", () => {
     for (const [name, node] of Object.entries(BASH_COMMAND_REGISTRY)) {
       visit([[name], node[1], node[2], node[3]], []);
     }
+    // Pin re-derived after the upstream 3.17.1 sed read-only rework (SED_SAFE_FLAGS narrowed and
+    // sedCommandIsDangerous added). The only 33 rows that differ from the fork-HEAD digest are
+    // `sed <alias> registry-parity-target`: the prefix rule became `sed <alias>:*`.
     expect(count).toBe(46_296);
     expect(hash.digest("hex")).toBe(
-      "7cc1d6d66044159faad23a5906cf7272790d7bdc6e8f95c7907394ff5c7a29dc",
+      "1784e24af981f8f3a208bd7248f92c2621b89942da9646d06c5354b301acb965",
     );
   });
 

@@ -36,6 +36,7 @@ export function buildPersistedConversationInputIntent(
     ...(intent.modelSelection ? { modelSelection: intent.modelSelection } : {}),
     ...(intent.mode ? { mode: intent.mode } : {}),
     ...(intent.planEnabled !== undefined ? { planEnabled: intent.planEnabled } : {}),
+    ...(intent.genUiContext !== undefined ? { genUiContext: intent.genUiContext } : {}),
     ...(intent.sharedContextRefs ? { sharedContextRefs: intent.sharedContextRefs } : {}),
     delivery: {
       requested: intent.requestedDelivery,
@@ -70,4 +71,30 @@ export async function ensureGroupTaskPermissionScope(
     id: sessionId,
     permission: { version: 1, scope: "session", mode: "build" },
   });
+}
+
+/** Propagates only along the current execution's causal trace; never inferred from the session's last consumer. */
+export const TELEMETRY_INPUT_ORIGIN_ATTRIBUTE = "telemetry.inputOrigin";
+export function telemetryInputOrigin(
+  intent: TurnInputIntentMetadata | undefined,
+  attributes?: Record<string, string | number | boolean>,
+): "desktop" | "mobile" | undefined {
+  const value = intent?.inputOrigin ?? attributes?.[TELEMETRY_INPUT_ORIGIN_ATTRIBUTE];
+  return value === "desktop" || value === "mobile" ? value : undefined;
+}
+export function backgroundBatchTelemetryAttributes(
+  traces: readonly { attributes?: Record<string, string | number | boolean> }[],
+): Record<string, string | number | boolean> {
+  const origins = traces.map((trace) => telemetryInputOrigin(undefined, trace.attributes));
+  const origin = origins[0];
+  return {
+    ...traces[0]?.attributes,
+    [TELEMETRY_INPUT_ORIGIN_ATTRIBUTE]:
+      // A batch produces only one background turn; keep mobile whenever any mobile trigger is included so batching cannot swallow remote-control stats.
+      origins.includes("mobile")
+        ? "mobile"
+        : origin && origins.every((value) => value === origin)
+          ? origin
+          : "unknown",
+  };
 }

@@ -2,6 +2,7 @@ import type { IPlatformService } from "@zcode/shared";
 
 type DesktopBrowserPlatformBridge = Pick<
   IPlatformService,
+  | "onBrowserViewDownloadStarted"
   | "onBrowserViewReady"
   | "onBrowserViewOperation"
   | "onBrowserViewViewportChanged"
@@ -34,6 +35,8 @@ export const desktopBrowserPlatformBridge = {
   // Define this conditionally instead of returning a fallback failure: the UI checks for capability by
   // method presence, so older preloads must keep this undefined.
   printPageToPdf: window.zcode.printPageToPdf ? () => window.zcode.printPageToPdf!() : undefined,
+  onBrowserViewDownloadStarted: (handler) =>
+    window.zcode.onBrowserViewDownloadStarted?.(handler) ?? (() => {}),
   onBrowserViewReady: (handler) => window.zcode.onBrowserViewReady?.(handler) ?? (() => {}),
   onBrowserViewOperation: (handler) => window.zcode.onBrowserViewOperation?.(handler) ?? (() => {}),
   onBrowserViewViewportChanged: (handler) =>

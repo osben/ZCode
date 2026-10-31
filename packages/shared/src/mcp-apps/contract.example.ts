@@ -35,6 +35,7 @@ export const exampleSandboxHandle: PluginSandboxHandle = {
     heightHint: 320,
     minFrameHeight: 120,
     showInline: false,
+    backgroundRetention: true,
     permissions: ["clipboardWrite"],
   },
 };

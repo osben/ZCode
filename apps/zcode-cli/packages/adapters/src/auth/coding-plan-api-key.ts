@@ -7,6 +7,8 @@ import {
 } from "@zcode/contracts";
 import {
   ProjectAccessTokenClient,
+  ProjectAccessTokenError,
+  ProjectAccessTokenHttpStatusError,
   ProjectAccessTokenTransientError,
   resolveBigModelApiOrigin,
   type ProjectAccessTokenMaterial,
@@ -50,7 +52,7 @@ export class CodingPlanApiKeyError extends Error {
   }
 }
 
-/** CLI 进程内唯一换证入口；保留旧导出名兼容调用方，返回值已是短期 Token。 */
+/** The single token-exchange entry point inside the CLI process; old export name kept for callers, the return value is already a short-term token. */
 export function createCodingPlanApiKeyResolver(
   options: CodingPlanApiKeyResolverOptions,
 ): CodingPlanApiKeyResolver {
@@ -81,11 +83,10 @@ export function createCodingPlanApiKeyResolver(
         { context: execution.getStore()?.context },
       )
       .catch((error: unknown) => {
-        if (
-          isHttpClientPortError(error) &&
-          (error.code === "network_error" || error.code === "timeout")
-        )
-          throw new ProjectAccessTokenTransientError();
+        if (isHttpClientPortError(error) && error.code === "network_error")
+          throw new ProjectAccessTokenTransientError({ kind: "network" });
+        if (isHttpClientPortError(error) && error.code === "timeout")
+          throw new ProjectAccessTokenTransientError({ kind: "timeout" });
         throw error;
       });
     if (response.status === 401 && new URL(url).pathname.startsWith("/api/biz/")) {
@@ -103,10 +104,17 @@ export function createCodingPlanApiKeyResolver(
     }
     if (response.status === 404) return { code: 404 };
     if (response.status === 429 || (response.status >= 500 && response.status < 600))
-      throw new ProjectAccessTokenTransientError();
+      throw new ProjectAccessTokenTransientError({ kind: "http", status: response.status });
+    // Bug cause (ZCT-2111046389485834240): non-transient statuses and 2xx non-JSON both used to
+    // land on project_token_request_failed, unable to distinguish auth rejection from a corrupted
+    // response. Keep only the status code / fixed code, never the response body.
     if (response.status < 200 || response.status >= 300)
-      throw new CodingPlanApiKeyError("project_token_request_failed");
-    return JSON.parse(new TextDecoder().decode(response.body)) as unknown;
+      throw new ProjectAccessTokenHttpStatusError(response.status);
+    try {
+      return JSON.parse(new TextDecoder().decode(response.body)) as unknown;
+    } catch {
+      throw new ProjectAccessTokenError("project_token_invalid_response");
+    }
   };
   const client = new ProjectAccessTokenClient({
     request,
@@ -161,7 +169,7 @@ export function createCodingPlanApiKeyResolver(
           throw new CodingPlanApiKeyError("project_token_scope_invalidated");
         return result;
       } catch (error) {
-        // 只恢复业务 JWT 的明确 HTTP 401；不把模型 401、403 或网络故障猜成过期。
+        // Refresh only on an explicit HTTP 401 for the business JWT; do not guess expiry from model 401s, 403s, or network failures.
         if (!business || !businessTokens.wasRejected(business)) throw error;
         businessTokens.invalidate(business);
         if (attempt + 1 === maxAttempts) throw error;
@@ -182,7 +190,7 @@ export function createCodingPlanApiKeyResolver(
       () =>
         execution.run(
           {
-            // 单飞属于鉴权 owner，不继承会话 signal 或 context.abortSignal；只保留观测上下文。
+            // The single-flight belongs to the auth owner and inherits no session signal or context.abortSignal; keep only observability context.
             context: runOptions?.context
               ? { trace: runOptions.context.trace, logger: runOptions.context.logger }
               : undefined,
@@ -206,7 +214,7 @@ export function createCodingPlanApiKeyResolver(
   };
 }
 
-/** 仅取消当前调用方的等待；底层 Promise 始终有拒绝处理器，不误伤共享换证。 */
+/** Cancels only the current caller's wait; the underlying Promise always has a rejection handler, so the shared exchange is not harmed. */
 async function waitForProjectToken<T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return run();
   signal.throwIfAborted();

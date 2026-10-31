@@ -1,86 +1,57 @@
-# Todo115: Consolidate Provider Header Actions and Fix Accidental Enable/Disable Clicks
+# Todo115：Provider 标题栏操作收拢与启停误触修复
 
-> Status: Implemented on 2026-09-11 and passed focused review, component and browser verification; final acceptance of the
-> full batch was pending at that time.
->
-> Later decision: Account-type Providers cannot be disabled and show no toggle; existing account disable values no longer
-> take effect ([Todo117](./todo-117-preserve-account-domain-on-provider-save.md)). The toggle here applies only to
-> manual-key Providers; do not restore an account enable/disable entry.
->
-> Follow-up verification (2026-09-12): the Pro full-page More menu delete -> confirmation -> navigation and Personal
-> removal passed; template creation, regular detail, reordering and editing regressions passed. An existing E2E that still
-> searched for a standalone trash icon was fixed; no product code change was needed. Full-batch type/lint/architecture
-> checks and real-browser checks at two sizes passed; mobile shared-host was not tested. See the
-> [final review of the batch](./provider-stabilization-20260911-final-review.md).
->
-> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/todo-115-provider-header-actions-and-toggle-hit-area.md`
+> 状态：2026-09-11 已实现并通过局部复审、组件和浏览器验证；整批最终验收待执行。
 
-## Background
+> 后续裁决：账号类 Provider 不允许总禁用且不展示开关，已有账号禁用值也不再生效，见 [Todo117](./todo-117-preserve-account-domain-on-provider-save.md)。本项布局调整中的开关仅适用于手动 Key 类，不恢复账号启停入口。
 
-The user reported that renaming a Provider made it disabled, then confirmed that clicking the blank space below the name
-to finish editing had triggered the toggle by mistake. `InlineEditableProviderCard` wrapped the enable/disable switch in a
-full-row `label`, so blank-space clicks toggled it. This was a hit-area issue, not a confirmed rename-persistence overwrite
-of `enabled`.
+> 2026-09-12 补验：Pro 整页更多菜单删除→确认→导航及 Personal 移除通过；模板创建、普通详情、调序及编辑回归通过。修复既有 E2E 仍查独立垃圾桶的漏接，未改产品。全批类型/lint/架构与实际双尺寸浏览器已通过，手机 shared-host 未测。当前结果以 [整批最终复审](./provider-stabilization-20260911-final-review.md) 为准，下方“待整批／Pro未测”保留为历史过程。
 
-## Confirmed Design
+## 背景
+
+用户反馈修改供应商名称后被禁用，随后确认是点击名称下方空白结束编辑时误触。
+当前 `InlineEditableProviderCard` 用整行 `label` 包裹启停开关，空白区域也会触发切换。
+这是点击范围问题，不是已经证实的改名保存覆盖 `enabled`。
+
+## 已确认方案
 
 ```text
-[icon] Kimi                              [switch]   ⋯
-                                                     Rename
-                                                     ──────────
-                                                     Delete provider
+[图标] Kimi                              [开关]   ⋯
+                                                 重命名
+                                                 ──────────
+                                                 删除供应商
 ```
 
-1. Provider icon and name stay on the left; the separate pencil and delete icons next to the name are removed.
-2. Enable/disable moves to the right of the detail header with the More menu to the switch's right, not on a separate row.
-   No persistent "Enable" / "Enable provider" text; the switch conveys its state.
-3. For manual-key Providers, hover or keyboard focus describes the next action ("Disable provider" when enabled, "Enable
-   provider" when disabled), in both locales. Account-type Providers have no switch. An explicit accessible name and switch
-   state are kept (a Tooltip does not replace the accessible name).
-4. The hit area is the switch itself plus a moderate touch target; the title, text and blank row area must not toggle it.
-   The full-row label activation is removed and the touch target must not cover the adjacent menu.
-5. Rename and Delete live in an always-available `⋯` dropdown (not hover-revealed), Delete separated from ordinary actions,
-   reusing the existing delete-confirmation flow. After the menu closes the existing name-editing flow is reused (no second
-   rename/save mechanism). Providers that cannot rename/delete do not offer them; the menu is hidden when no item is available.
+- 保留左侧供应商图标、名称；移除名称旁的独立铅笔和独立删除图标。
+- 启停移至详情标题栏右侧，更多菜单位于开关右边；不再单独占一行。
+- 不显示“启用”或“启用供应商”常驻文字，由开关表达当前启停状态。
+- 手动 Key 类开关悬停或键盘聚焦时按下一步动作提示：已启用时“禁用供应商”，已禁用时“启用供应商”。补齐中英文；账号类不展示开关。
+- 保留明确的无障碍名称和开关状态；Tooltip 不代替无障碍名称。
+- 点击范围只覆盖开关本身及适度触控热区；标题、文字和行内空白均不能切换。移除整行 label 激活范围，热区不能覆盖邻近菜单。
+- 重命名、删除收进始终可见的 `⋯` 下拉菜单，不依赖悬停才出现；删除与普通操作分隔，沿用已有删除确认流程。
+- 菜单关闭后复用现有名称编辑流程，不新增一套改名保存机制。不可改名／删除的 Provider 不提供对应动作；无可用菜单项时不显示空菜单。
+- 选择重命名时只记录编辑意图；在菜单完成关闭的 `onCloseAutoFocus` 中消费意图并开启编辑，输入框挂载时自动聚焦。关闭动画中的菜单仍可能因鼠标移动获取焦点，因此输入框不能提前挂载；不使用定时器或下一帧调度交接焦点。普通关闭仍将焦点归还菜单按钮，Enter／失焦确认及 Esc 取消语义不变。
 
-## Semantics and Scope
+## 语义与范围
 
-- This changes the **Provider detail header**, not model rows; connection-field layout, section spacing and the model list
-  are unchanged, and no previously rejected layout suggestion is added.
-- Account Providers show no master switch and no Account Family switch is introduced; the public constraints that prevent
-  disabling accounts and the plan-selection fix are Todo117.
-- Persistence stays sparse on the outer Provider `enabled` field and the shared status result; no extra state source. After
-  disabling, connection and model configuration stay editable; no unbinding or clearing keys, no change to per-model
-  enabled state, no Selection deletion, no interruption of pinned execution.
-- Desktop and mobile Web share interaction semantics; narrow screens, long names and long translations must not squeeze
-  out the switch or menu; sizing, typography, themes and focus follow `DESIGN.md`.
+- 本项调整的是 **Provider 详情标题栏**，不是模型行。连接字段排列、区块间距和模型列表保持原样，不加入前面未采纳的布局建议。
+- 账号 Provider 不展示总开关，不引入 Family 总开关；账号不可禁用的公共写入／解析约束及套餐选择修复由 Todo117 承接，本项不重复实现。
+- 沿用 Provider 外层 `enabled` 的稀疏保存与公共状态结果，不增加新的状态来源。关闭后仍允许编辑连接与模型配置；不解绑、清空 Key、修改模型自身启停或删除 Selection，不中断已固定的执行。
+- 桌面与手机 Web 共用交互语义；窄屏、长名称与长翻译不能挤掉开关或菜单。遵守 `DESIGN.md` 的尺寸、字体、主题和焦点规范。
 
-## Acceptance (planned)
+## 实施与验收
 
-Interaction regression first: after renaming, clicking blank space in the old toggle row to finish editing saves the name
-without changing `enabled`. Then: header actions consolidated and the old full-row layout and duplicate entries removed;
-switch click/keyboard activates once and blank space, title and menu actions do not toggle it; rename preserves enabled
-state; rename and delete confirmation/cancel from the menu with existing permission boundaries for account-type and
-non-deletable entries; regular Providers and account plans, enabled/disabled, Chinese/English, light/dark, desktop and
-narrow mobile with long names and non-overlapping hit areas; related E2E updated and focused regressions, typecheck and
-lint run as a batch with observed evidence and untested scope recorded (no claim from static code alone); scope,
-persistence and accessibility review recorded and committed.
+- [ ] 先补交互回归：改名后点击原启停行空白结束编辑，名称正常保存，Provider 的 `enabled` 不变。
+- [ ] 收拢标题栏操作，修复开关热区，清除旧整行启停布局和重复动作入口。
+- [ ] 验证开关点击／键盘操作只提交一次；空白、名称、更多菜单操作不切换启停；改名保存保留原启停状态。
+- [ ] 验证更多菜单重命名、删除确认与取消；账号类和不可删除项保持原有权限边界。
+- [ ] 验证普通 Provider 与账号套餐、启用与禁用、中英文、浅深主题、桌面与手机窄屏；含长名称及菜单与开关热区不重叠。
+- [ ] 更新相关 E2E，批量执行定向回归、类型检查、lint；记录实际运行证据和未测范围，不仅凭静态代码宣称交互通过。
+- [ ] 完成后复审范围、持久化语义与可访问性，回写本 Todo 的结果并提交。
 
-## Implementation and Review (2026-09-11)
+## 2026-09-11 实施与复审
 
-- The header's right side holds the manual-key switch and More menu; Delete/Rename reuse existing callbacks; the menu is
-  hidden when there are no actions; accounts have no switch. The full-row label and separate pencil/trash icons are gone;
-  connection and model sections are unchanged.
-- The switch has localized next-action aria labels and Tooltip copy. Screenshot review found that Tooltip `data-state`
-  overrode the Switch and the shared enlarged hit area reached the menu; the state attribute is isolated with a local
-  wrapper and the horizontal hit-area expansion reduced to 4px here only (shared controls unchanged).
-- With Todo132, 109 unit tests passed, including delete cancel/confirm through the existing
-  `confirmAndDeleteModelProvider` and rename persistence leaving `enabled` unchanged. Six real-browser component cases
-  passed (390px Chinese light / 1200px English dark, focus, long names, non-overlapping hit areas, menu, switch state, no
-  horizontal overflow).
-- Root typecheck and lint (0 errors / 41 warnings) passed. Existing Electron create/rename cases were updated for the menu
-  and explicit blur; Electron was not actually run here. Real mobile shared-host/Pro remained for full-batch verification.
-  Linux lacked Chinese glyphs, so Chinese copy was verified in DOM/interaction but not visually.
-- Screenshots and computed styles: `/tmp/zcode-provider-settings-batch/header-options-*.png` and `header-options-*.json`.
-  Review confirmed only action layout/name-commit boundaries changed; no new state source, permission, persistence field
-  or execution-eligibility check.
+- Header 右侧为手动 Key 开关与更多菜单；删除/重命名复用原回调。无动作不显示空菜单；账号无开关。整行 label、独立铅笔/垃圾桶已删除，连接和模型区布局未改。
+- Switch 有中英文下一步动作 aria-label 和 Tooltip。浏览器截图复审额外发现 Tooltip data-state 覆盖 Switch、共享扩展热区伸到菜单：已用局部包装隔离状态属性、仅此处横向热区缩为 4px，未改共享控件。
+- 与 Todo132 合跑：109 项单测通过（含取消/确认删除走现有 confirmAndDeleteModelProvider、名称保存不改 enabled）；6 项真实浏览器组件用例通过。390 中文浅色/1200 英文深色覆盖焦点、长名称、热区不相交、菜单、开关状态及无横向溢出。
+- 根 typecheck、lint（0 errors / 41 warnings）通过。Electron 既有创建/重命名用例已适配菜单和显式失焦，不冒充已实跑 Electron；真实手机 shared-host/Pro 待整批验证。Linux 本次中文字形缺失，中文文案 DOM/交互通过，不宣称中文字体视觉验收通过。
+- 截图与计算样式：`/tmp/zcode-provider-settings-batch/header-options-*.png`、`header-options-*.json`。复审确认只改操作布局/名称提交边界，不新增状态源、权限、持久化字段或执行资格判断。

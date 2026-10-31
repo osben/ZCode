@@ -68,7 +68,7 @@ export interface WindowControllerTaskListRegistry {
 export interface WindowControllerTaskListVersion {
   controllerRevision: number;
   taskListVersionSignature: string;
-  /** 只用于让连接前缓存随 remote session 换代失效，不参与 workspace identity。 */
+  /** Only used to invalidate pre-connection caches when the remote session generation changes; not part of workspace identity. */
   workspaceSourceGenerationSignature?: string;
   manualRefreshSerial?: number;
 }
@@ -76,8 +76,9 @@ export interface WindowControllerTaskListVersion {
 const registries = new WeakMap<object, WindowControllerTaskListRegistry>();
 
 function directoryFacts(row: WindowHostControllerTaskRow): string {
-  // 活动的时间、状态与阻塞摘要也会覆盖 meta，不能把这些变化误判为目录失效。
-  // 没有 live activity 时仍保留完整持久事实；首次接入或撤销 live 的边界也会刷新。
+  // Activity time, status, and blocking summary also overwrite meta; those changes must not be
+  // misread as directory invalidation.
+  // Without live activity the full persisted facts stay; the boundaries of first going live and dropping live also refresh.
   const facts = row.activity
     ? Object.fromEntries(
         Object.entries(row.meta).filter(
@@ -100,6 +101,7 @@ function queryContainsWorkspace(
   query: ZCodeTaskListQuery,
   address: WindowHostControllerTaskRow["address"],
 ): boolean {
+  if (query.workspaceScopes === "host") return !address.sourceServerId && !address.remoteSessionId;
   const workspaceKey = address.workspaceIdentity?.trim() || address.workspacePath;
   return query.workspaceScopes.some(
     (scope) => (scope.workspaceIdentity?.trim() || scope.workspacePath) === workspaceKey,
@@ -107,9 +109,11 @@ function queryContainsWorkspace(
 }
 
 function cacheVersionKey(version: WindowControllerTaskListVersion): string {
-  // Controller frame 只负责触发 hook 重读；具体 query 是否失效由 delta scope/membership 决定。
-  // 若把全局 controllerRevision 放进缓存 key，一个 timeline live delta 仍会让 pinned/archived
-  // 全部 miss，重新制造每个 frame 多轮 Host RPC。legacy/manual 版本继续保留强制刷新语义。
+  // A Controller frame only triggers the hook to re-read; whether a specific query invalidates is
+  // decided by delta scope/membership.
+  // Putting the global controllerRevision into the cache key would let one timeline live delta
+  // miss all pinned/archived queries and re-create multiple Host RPC rounds per frame. The
+  // legacy/manual versions keep their forced-refresh semantics.
   return JSON.stringify({
     taskListVersionSignature: version.taskListVersionSignature,
     workspaceSourceGenerationSignature: version.workspaceSourceGenerationSignature,
@@ -117,7 +121,7 @@ function cacheVersionKey(version: WindowControllerTaskListVersion): string {
   });
 }
 
-/** 一个 Controller proxy 对应一个共享观察器；所有列表 hook 只消费其 revision。 */
+/** One shared observer per Controller proxy; all list hooks consume only its revision. */
 export function getWindowControllerTaskListRegistry(
   controller: IWindowControllerService,
 ): WindowControllerTaskListRegistry {
@@ -201,7 +205,7 @@ export function getWindowControllerTaskListRegistry(
         seq: frame.toSeq,
       });
       if (frame.topic === CONTROLLER_WORKSPACES_TOPIC) {
-        // Source 换代需要重新建立观察，即使 scope 和可见任务集合没有变化。
+        // A source generation change requires re-establishing observation, even when scope and the visible task set are unchanged.
         sourceRevision += 1;
         directoryRevision += 1;
         notifyOnce();
@@ -234,11 +238,13 @@ export function getWindowControllerTaskListRegistry(
           for (const [queryKey, cached] of queryCache) {
             const touchesWorkspace = queryContainsWorkspace(cached.query, address);
             if (!touchesWorkspace) continue;
-            // 以前任意 task delta 都 clear 全部 query。只有明确掌握旧 row 时，
-            // 才按变更前后 membership 精确失效；缺少旧 row 时无法排除它曾属于其他 kind，
-            // 因此对当前 workspace 保守失效，避免 timeline/active 留下陈旧项。
+            // Previously any task delta cleared all queries. Only with the old row in hand can
+            // invalidation be precise by before/after membership; without the old row we cannot
+            // rule out that it belonged to another kind, so invalidate conservatively for the
+            // current workspace to avoid leaving stale items in timeline/active.
             if (
               !previous ||
+              cached.query.kind === "all" ||
               matchesTaskListMembershipKind(previous.membership, cached.query.kind) ||
               (next && matchesTaskListMembershipKind(next.membership, cached.query.kind))
             ) {
@@ -247,7 +253,7 @@ export function getWindowControllerTaskListRegistry(
           }
         }
       }
-      // 同一 JavaScript 调度周期内的连续 task frame 合并成一个 renderer revision。
+      // Consecutive task frames within the same JavaScript scheduling tick merge into one renderer revision.
       notifyOnce();
     });
     void Promise.all(
@@ -302,6 +308,10 @@ export function getWindowControllerTaskListRegistry(
       });
     },
     list(queryKey, version, query) {
+      // Unopened workspaces are not in the Controller's source subscription, so its deltas cannot
+      // vouch for the global cache.
+      // Search reads the Host every time; the hook only subscribes to directory changes — streaming activity does not trigger a full-library search.
+      if (query.workspaceScopes === "host") return controller.listTaskList(query);
       const versionKey = cacheVersionKey(version);
       const cached = queryCache.get(queryKey);
       if (cached?.versionKey === versionKey) return cached.promise;

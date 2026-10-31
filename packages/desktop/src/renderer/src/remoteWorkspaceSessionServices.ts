@@ -1,15 +1,44 @@
-import type { IServiceAccessor } from "@zcode/services";
+import type { IHighspeedCardService, IServiceAccessor } from "@zcode/services";
 import type { RemoteTarget } from "@zcode/shared";
+
+/**
+ * Highspeed cards and off-peak tasks take effect only locally (product decision 2026-10-21); remote workspaces must never route them to the remote side.
+ *
+ * Bug cause: since 3.16, remote workspaces of a recognized Source use the full remote service set, but the remote contract
+ * has no highspeed-card / off-peak-task channels. Awaiting prepareTurn before a send waited for the Host ChannelServer's
+ * 1000ms unknown-channel timeout; the off-peak notification poll also timed out every 30s.
+ * Fix: inject a highspeed-card implementation that never draws, so sends go straight to the normal model; off-peak tasks
+ * belong only to local projects and always use the local service.
+ */
+const remoteUnsupportedHighspeedCardService: IHighspeedCardService = {
+  prepareTurn: async () => ({ kind: "fallback", reason: "unavailable", nextDrawAt: null }),
+  getSnapshot: async () => ({ card: null, nextDrawAt: null, drawing: false }),
+  invalidateCard: async () => false,
+  healthy: async () => {
+    throw new Error("highspeed.remote-unsupported");
+  },
+};
+
+function withLocalOnlyAccountServices(
+  baseServices: IServiceAccessor,
+  services: IServiceAccessor,
+): IServiceAccessor {
+  return {
+    ...services,
+    highspeedCardService: remoteUnsupportedHighspeedCardService,
+    offPeakTaskService: baseServices.offPeakTaskService,
+  };
+}
 
 export function buildRemoteWorkspaceSessionServices(
   baseServices: IServiceAccessor,
   remoteServices: IServiceAccessor,
 ): IServiceAccessor {
-  return {
+  return withLocalOnlyAccountServices(baseServices, {
     ...baseServices,
     fileService: remoteServices.fileService,
-    // 根因：遗漏此覆盖会用本机输出根目录校验远端 HTML，合法文件也被判越界。
-    // 文件读取走执行端；useGenUi 的状态与沙箱仍取 desktop base services。
+    // Root cause: without this override, remote HTML would be validated against the local output root, so valid files were rejected as out of bounds.
+    // File reads go through the execution host; useGenUi state and sandbox still come from the desktop base services.
     genUiService: remoteServices.genUiService,
     mediaPreviewService: remoteServices.mediaPreviewService,
     gitService: remoteServices.gitService,
@@ -49,6 +78,8 @@ export function buildRemoteWorkspaceSessionServices(
     // Remote plugin synchronization writes to ~/.zcode/plugins and plugins.dirs on the SSH host.
     // Use the remote service as with skills/MCP instead of the local base service.
     pluginSyncService: remoteServices.pluginSyncService,
+    // Syncing subagents / commands / hooks writes to the remote user directory, so it likewise must not reuse the local base service.
+    userConfigSyncService: remoteServices.userConfigSyncService,
     pluginsService: remoteServices.pluginsService,
     // Plugin management in Settings must use the remote service as well; the plugin directory is on the remote filesystem.
     pluginManagementService: remoteServices.pluginManagementService,
@@ -67,17 +98,17 @@ export function buildRemoteWorkspaceSessionServices(
     // System-prompt overrides live in ~/.zcode/system-prompt on the target host; without this
     // override a remote workspace would silently edit the desktop machine's override files.
     systemPromptService: remoteServices.systemPromptService,
-  };
+  });
 }
 
 export function buildServerRemoteWorkspaceSessionServices(
-  _baseServices: IServiceAccessor,
+  baseServices: IServiceAccessor,
   remoteServices: IServiceAccessor,
 ): IServiceAccessor {
   // A server remote connects to a fully running ZCode server; state such as
   // workspace/runtime/model-provider is owned by the server, and the local renderer keeps only
   // window and UI shell state.
-  return remoteServices;
+  return withLocalOnlyAccountServices(baseServices, remoteServices);
 }
 
 export function buildRemoteWorkspaceSessionServicesForRegistration(params: {
@@ -86,9 +117,9 @@ export function buildRemoteWorkspaceSessionServicesForRegistration(params: {
   targetKind: RemoteTarget["kind"];
   sourceServerId?: string;
 }): IServiceAccessor {
-  // Bug 根因：Source Server 可以通过 SSH/WSL/Docker transport 到达，target.kind 仍描述
-  // 线路而不是服务权威。Host 注入 sourceServerId 后必须使用完整远端服务集合；只有尚未
-  // 识别为 Source 的 legacy attachment 才保留 desktop-attached mixed services。
+  // Bug cause: a Source Server can be reached through an SSH/WSL/Docker transport, while target.kind still describes
+  // the transport rather than service authority. After the Host injects sourceServerId, the full remote service set must
+  // be used; only a legacy attachment not yet recognized as a Source keeps the desktop-attached mixed services.
   return params.targetKind === "server" || params.sourceServerId?.trim()
     ? buildServerRemoteWorkspaceSessionServices(params.baseServices, params.remoteServices)
     : buildRemoteWorkspaceSessionServices(params.baseServices, params.remoteServices);

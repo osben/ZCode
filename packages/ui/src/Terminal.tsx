@@ -61,7 +61,7 @@ export function Terminal({
       },
     };
   });
-  const closePanelAfterExitWorkspaceRef = useRef<string | null>(null);
+  const closePanelAfterSessionRemovalWorkspaceRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!isVisible) {
@@ -81,13 +81,13 @@ export function Terminal({
   }, [cwd, isVisible, services, workspaceKey]);
 
   useEffect(() => {
-    const exitedWorkspaceKey = closePanelAfterExitWorkspaceRef.current;
-    if (!exitedWorkspaceKey) {
+    const removedWorkspaceKey = closePanelAfterSessionRemovalWorkspaceRef.current;
+    if (!removedWorkspaceKey) {
       return;
     }
 
-    closePanelAfterExitWorkspaceRef.current = null;
-    if (exitedWorkspaceKey === workspaceKey) {
+    closePanelAfterSessionRemovalWorkspaceRef.current = null;
+    if (removedWorkspaceKey === workspaceKey) {
       onClose();
     }
   }, [onClose, panelState, workspaceKey]);
@@ -186,40 +186,29 @@ export function Terminal({
     });
   }, [cwd, services, workspaceKey]);
 
-  const handleCloseSession = useCallback(
-    (sessionId: string) => {
-      const closeAction = getTerminalSessionCloseAction(panelState, sessionId);
+  const handleCloseSession = useCallback((sessionId: string) => {
+    setPanelState((current) => {
+      const session = current.sessions[sessionId];
+      const closeAction = getTerminalSessionCloseAction(current, sessionId);
+      const next = closeTerminalSession(current, sessionId);
+      if (!session || closeAction === "none" || next === current) {
+        return current;
+      }
+
+      // Bug cause: the single-tab close button used to only collapse the keep-alive panel without deleting the descriptor,
+      // so TerminalSession never unmounted and the Windows PTY was never disposed.
+      // Delete the session from the single source of truth first, commit, then collapse the panel — TerminalSession stays the single owner of resource cleanup.
       if (closeAction === "close-panel") {
-        // The old UI hid the close button when only one tab remained, so users could not close it from the tab.
-        // Closing the final tab collapses the panel and keeps the session alive, matching the close-panel button in the upper-right corner.
-        logger.info("[Terminal] close terminal panel from last tab", {
-          terminalTabId: sessionId,
-          workspaceKey,
-        });
-        onClose();
-        return;
+        closePanelAfterSessionRemovalWorkspaceRef.current = session.workspaceKey;
       }
-
-      if (closeAction !== "close-session") {
-        return;
-      }
-
-      setPanelState((current) => {
-        const session = current.sessions[sessionId];
-        const next = closeTerminalSession(current, sessionId);
-        if (!session || next === current) {
-          return current;
-        }
-
-        logger.info("[Terminal] close terminal tab", {
-          terminalTabId: sessionId,
-          workspaceKey: session.workspaceKey,
-        });
-        return next;
+      logger.info("[Terminal] close terminal tab", {
+        action: closeAction,
+        terminalTabId: sessionId,
+        workspaceKey: session.workspaceKey,
       });
-    },
-    [onClose, panelState, workspaceKey],
-  );
+      return next;
+    });
+  }, []);
 
   const handleSessionExit = useCallback(
     (sessionId: string, exitCode: number) => {
@@ -239,7 +228,7 @@ export function Terminal({
           workspaceKey: exitedWorkspaceKey,
         });
         if (result.action === "close-panel") {
-          closePanelAfterExitWorkspaceRef.current = exitedWorkspaceKey ?? null;
+          closePanelAfterSessionRemovalWorkspaceRef.current = exitedWorkspaceKey ?? null;
         }
         return result.state;
       });
@@ -283,8 +272,8 @@ export function Terminal({
     null;
   const allSessions = Object.values(panelState.sessions);
 
-  // Fix: Closing the panel only collapses the UI; it does not dispose tabs. The close button on a tab closes that terminal,
-  // so workspace/task switches and panel collapse do not interrupt running commands.
+  // Closing the panel only collapses the UI and does not dispose tabs; a tab's close button always deletes that session.
+  // The PTY stays owned by TerminalSession and is released on unmount.
   return (
     <section
       data-testid={TID_TERMINAL}

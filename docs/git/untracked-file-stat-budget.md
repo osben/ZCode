@@ -48,6 +48,6 @@ Command for the independent resource run:
 
 ```bash
 ZCODE_E2E_MANUAL_REVIEW=1 pnpm --filter @zcode/desktop exec wdio run wdio.conf.ts \
-  --spec ./test/e2e/conversation-session/manual-review/pending/conversation-session-git-review-entry.test.ts \
+  --spec ./test/e2e/conversation-session/conversation-session-git-review-entry.test.ts \
   --mochaOpts.grep 'Git 自动刷新'
 ```

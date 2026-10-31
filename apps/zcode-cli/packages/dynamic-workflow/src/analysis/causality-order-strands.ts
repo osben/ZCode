@@ -21,6 +21,8 @@ import type { TraceState } from "./causality-order-state.js";
 export interface Frame {
   readonly region: string;
   readonly settled: Set<string>;
+  /** The strand this frame belongs to; absent on the root frame. */
+  readonly strand?: StrandRecord;
 }
 
 /** One strand the walk spawned, in spawn order. */
@@ -61,13 +63,29 @@ export function isVisiblySettled(state: TraceState, step: string): boolean {
   return state.frames.some((frame) => frame.settled.has(step));
 }
 
+// Fix reason: the lookups below all used to linearly scan `state.strands` — find the innermost open
+// strand, find strands opened after a mark, find a summary by region, find a liftable strand — each
+// issue / await rescanned every strand ever opened, making the walk quadratic in trace length
+// (16s for a chain of 80 helpers with 800 call sites). Strands open and close strictly nested
+// (walk recursion), so the open strands are exactly the frame stack; the rest become indexes, with
+// results identical to the original scans item by item.
+
 /** The strand an `issue` belongs to: the innermost one still being walked. */
 export function innermostOpenStrand(state: TraceState): StrandRecord | undefined {
-  for (let i = state.strands.length - 1; i >= 0; i -= 1) {
-    const record = state.strands[i] as StrandRecord;
-    if (!record.closed) return record;
-  }
-  return undefined;
+  return currentFrame(state).strand;
+}
+
+/**
+ * Record that `step` was issued inside the innermost open strand, and index the strand
+ * under the step for the LIFT rule in {@link joinStrands}.
+ */
+export function noteIssuedInStrand(state: TraceState, step: string): void {
+  const record = innermostOpenStrand(state);
+  if (record === undefined) return;
+  record.issued.add(step);
+  const set = state.strandsByStep.get(step) ?? new Set<StrandRecord>();
+  set.add(record);
+  state.strandsByStep.set(step, set);
 }
 
 /** Spawn a strand on `region`: record it and push its frame. */
@@ -80,8 +98,14 @@ export function openStrand(state: TraceState, region: string): StrandRecord {
     summary: new Set<string>(),
   };
   state.strands.push(record);
-  state.frames.push({ region, settled: new Set<string>() });
+  if (!state.strandByRegion.has(region)) state.strandByRegion.set(region, record);
+  state.frames.push({ region, settled: new Set<string>(), strand: record });
   return record;
+}
+
+/** What the first strand spawned on `region` awaited (empty if none was). */
+export function strandSummary(state: TraceState, region: string): ReadonlySet<string> {
+  return state.strandByRegion.get(region)?.summary ?? new Set<string>();
 }
 
 /** Close a strand: pop its frame and keep what it awaited as the strand's summary. */
@@ -98,7 +122,8 @@ export function strandMark(state: TraceState): number {
 
 /** Strand regions spawned at or after `mark`, in spawn order. */
 export function strandsSince(state: TraceState, mark: number): string[] {
-  return state.strands.filter((record) => record.at >= mark).map((record) => record.region);
+  // `at` is the record's index, so the records at or after `mark` are a suffix.
+  return state.strands.slice(mark).map((record) => record.region);
 }
 
 /**
@@ -205,10 +230,29 @@ export function joinStrands(
       for (const region of bound ?? []) take(region, joins.certain);
     }
   }
-  for (const record of state.strands) {
-    if (!record.closed || state.joined.has(record.region)) continue;
-    if (certain.some((step) => record.issued.has(step))) take(record.region, joins.certain);
-    else if (maybe.some((step) => record.issued.has(step))) take(record.region, joins.maybe);
-  }
+  // The lift candidates are the strands that issued a claimed step, taken in spawn order;
+  // a strand reached through a certain step is lifted certainly even if a maybe step also
+  // names it. A joined strand never lifts again, so it leaves the index for good.
+  const viaCertain = new Set<StrandRecord>();
+  const candidates = new Set<StrandRecord>();
+  const collect = (steps: readonly string[], side: Set<StrandRecord> | undefined): void => {
+    for (const step of steps) {
+      const set = state.strandsByStep.get(step);
+      if (set === undefined) continue;
+      for (const record of set) {
+        if (state.joined.has(record.region)) {
+          set.delete(record);
+          continue;
+        }
+        if (!record.closed) continue;
+        candidates.add(record);
+        side?.add(record);
+      }
+    }
+  };
+  collect(certain, viaCertain);
+  collect(maybe, undefined);
+  const ordered = [...candidates].sort((a, b) => a.at - b.at);
+  for (const record of ordered) take(record.region, viaCertain.has(record) ? joins.certain : joins.maybe);
   return joins;
 }

@@ -71,6 +71,7 @@ import {
   createStatusContext,
   publishModelStatus,
   publishModelTelemetryMilestone,
+  logLocalModelMilestone,
 } from "./runner-status.js";
 import { StreamingToolCallAssembler } from "./streaming-tool-call-assembler.js";
 import type { ResolvedAiSdkModelRetryOptions } from "./retry-policy.js";
@@ -83,7 +84,10 @@ import type {
 import { isRequestVerificationRejection } from "./request-security-edition/recovery.js";
 import { AccountRequestRetry } from "./account-request-retry.js";
 import { resolveModelForAttempt, RuntimeHeadersRefreshError } from "./runner-runtime-headers.js";
-import { retryAllowedByFailurePolicy } from "./workflow-model-failure-policy.js";
+import {
+  nextUnrecognizedCodeStreak,
+  retryAllowedByFailurePolicy,
+} from "./workflow-model-failure-policy.js";
 import {
   modelFailureStatusFields,
   providerRequestIdFromHeaders,
@@ -131,6 +135,16 @@ export async function* runStreamText(input: {
   let signatureRepairAttempted = false;
   const authRetry = new AccountRequestRetry(input.request, input.resolved, input.logger);
   let emptyCompletionRetryCount = 0;
+  // How many times an unrecognized business code appeared consecutively in this request; the
+  // workflow policy table stops based on it, see workflow-model-failure-policy.ts.
+  // Every failure (both the outer catch and the in-stream error block paths) updates it once.
+  let unrecognizedCodeStreak = 0;
+  const countUnrecognizedCode = (failure: ClassifiedModelFailure, error: unknown): number =>
+    (unrecognizedCodeStreak = nextUnrecognizedCodeStreak(
+      unrecognizedCodeStreak,
+      failure,
+      inspectProviderFailure(error).providerErrorCode,
+    ));
 
   for (
     let attempt = 1;
@@ -143,6 +157,7 @@ export async function* runStreamText(input: {
   ) {
     const retryBudgetAttempt = attempt - Number(signatureRepairAttempted) - authRetry.extraAttempts;
     const startedAt = Date.now();
+    const localAttemptStartedAt = performance.now();
     // If retries after an SSE idle timeout keep the initial request window, the same provider
     // silence window can interrupt them repeatedly. Core recovery and adapter-internal retries both
     // increase the timeout by 30s per retry.
@@ -185,6 +200,8 @@ export async function* runStreamText(input: {
     let timeToFirstProviderEventMs: number | undefined;
     let timeToFirstContentMs: number | undefined;
     let timeToFirstTextMs: number | undefined;
+    let localFirstContent = false;
+    let localFirstText = false;
     let streamMaxIdleMs = 0;
     let streamStallCount = 0;
     let streamOutputCommitted = false;
@@ -215,17 +232,39 @@ export async function* runStreamText(input: {
       return true;
     };
     const publishVisibleMilestones = async (observation: {
-      contentMs?: number;
       textMs?: number;
+      outputKind?: "text" | "reasoning" | "tool";
     }): Promise<void> => {
-      if (timeToFirstContentMs === undefined && observation.contentMs !== undefined) {
-        timeToFirstContentMs = observation.contentMs;
+      if (
+        observation.outputKind &&
+        (statusContext.querySource === "main_turn" || statusContext.querySource === "compact")
+      ) {
+        if (!localFirstContent) {
+          localFirstContent = true;
+          logLocalModelMilestone(input.logger, statusContext, "first_content", {
+            attempt,
+            outputKind: observation.outputKind,
+            durationMs: performance.now() - localAttemptStartedAt,
+          });
+        }
+        if (observation.outputKind === "text" && !localFirstText) {
+          localFirstText = true;
+          logLocalModelMilestone(input.logger, statusContext, "first_text", {
+            attempt,
+            durationMs: performance.now() - localAttemptStartedAt,
+          });
+        }
+      }
+      // Interface receipt time is independent of business event release; without a wire-protocol observation it must not fall back to the post-buffer time.
+      const firstContentAt = resolved.streamTiming?.firstContentAt;
+      if (timeToFirstContentMs === undefined && firstContentAt !== undefined) {
+        timeToFirstContentMs = firstContentAt - startedAt;
         await publishModelTelemetryMilestone(
           {
             ...statusContext,
             attempt,
-            elapsedMs: observation.contentMs,
-            timestamp: new Date(startedAt + observation.contentMs).toISOString(),
+            elapsedMs: timeToFirstContentMs,
+            timestamp: new Date(firstContentAt).toISOString(),
             type: "model_first_content",
           },
           { logger: input.logger, statusSink: input.statusSink },
@@ -382,6 +421,7 @@ export async function* runStreamText(input: {
             requestHeaders,
             repairThinkingSignatureRejection,
             canRecoverProjectToken: (error) => authRetry.canRecoverProjectToken(error),
+            countUnrecognizedCode,
             retryBudgetAttempt,
             startedAt,
             statusContext,
@@ -413,7 +453,7 @@ export async function* runStreamText(input: {
             toolCallCount: toolCallAssembler.snapshotNormalizedToolCalls().length,
             usage: diagnostics.usage,
           });
-          // 先于 yield finish 进入既有 catch，每个请求只发布一个失败终态。
+          // Enter the existing catch before yield finish, so each request publishes exactly one failure terminal state.
           if (contextError) throw contextError;
         }
         const shouldHoldEmptyCompletionEvents =
@@ -533,6 +573,7 @@ export async function* runStreamText(input: {
                 "response_body",
               ),
               errorPhase: "stream",
+              unrecognizedCodeStreak: countUnrecognizedCode(failure, hiddenProviderBusinessError),
             }),
           );
         }
@@ -567,6 +608,10 @@ export async function* runStreamText(input: {
                   "response_body",
                 ),
                 errorPhase: "stream",
+                unrecognizedCodeStreak: countUnrecognizedCode(
+                  failure,
+                  streamEndedWithoutOutputError,
+                ),
               }),
             );
           }
@@ -636,6 +681,7 @@ export async function* runStreamText(input: {
       });
       if (!emittedError) {
         const completedAt = Date.now();
+        await publishVisibleMilestones({});
         const responseHeaders = await resolveStreamResponseHeaders(streamResult);
         await publishModelStatus(
           {
@@ -726,7 +772,7 @@ export async function* runStreamText(input: {
       const classified = classifyModelFailure(error, input.request.abortSignal);
       if (error instanceof RuntimeHeadersRefreshError) {
         classified.message = error.message;
-        classified.retryable = false;
+        classified.retryable = error.retryable;
       }
       // Off-Peak special case (idle-plan provider only): queued 429 responses are exempt from the
       // unlimited probe budget; marking 3102 as failed triggers continuation.
@@ -749,6 +795,7 @@ export async function* runStreamText(input: {
                 retryReason: ModelRetryReason.OffpeakQueued,
               }
             : classified;
+      countUnrecognizedCode(failure, error);
       const errorPhase =
         readModelFailureErrorPhase(error) ?? (streamIterator === undefined ? "prepare" : "stream");
       awaitIteratorClose = failure.reason !== ModelFailureReasonValue.Cancelled;
@@ -768,6 +815,7 @@ export async function* runStreamText(input: {
         streamErrorChunkObserved: Boolean(
           diagnostics.lastErrorChunk || diagnostics.lastFinishChunk,
         ),
+        unrecognizedCodeStreak,
       });
       const retryWithAuth = authRetry.claim(
         error,
@@ -874,6 +922,7 @@ export async function* runStreamText(input: {
         throw toAdapterError(error, failure, statusContext, attempt, {
           ...failureDecision.context,
           errorPhase,
+          unrecognizedCodeStreak,
         });
       }
 
@@ -1086,6 +1135,8 @@ async function handleStreamChunk(input: {
   pendingRetrySafeEvents: ModelStreamEvent[];
   repairThinkingSignatureRejection: (error: unknown) => boolean;
   canRecoverProjectToken: (error: unknown) => boolean;
+  /** Record one failure and return the current unrecognized-business-code streak (including this one). */
+  countUnrecognizedCode: (failure: ClassifiedModelFailure, error: unknown) => number;
   retryBudgetAttempt: number;
   requestHeaderCount: number;
   requestHeaders: Record<string, string>;
@@ -1313,6 +1364,7 @@ async function handleStreamErrorEvent(
             retryReason: ModelRetryReason.OffpeakQueued,
           }
         : classified;
+  const unrecognizedCodeStreak = input.countUnrecognizedCode(failure, error);
   const responseHeaders = sanitizeModelNetworkHeaders(getResponseHeaders(unwrapRetryError(error)));
   const failureDecision = resolveStreamFailureDecision({
     attempt: input.retryBudgetAttempt,
@@ -1324,6 +1376,7 @@ async function handleStreamErrorEvent(
     responseHeaders,
     retryBudget: input.input.request.modelRetryBudget,
     streamErrorChunkObserved: true,
+    unrecognizedCodeStreak,
   });
   // Off-Peak queued 429 is budget-exempt: it does not consume maxAttempts, while the SSE visible-output boundary still applies.
   if (offPeak?.kind === "queued" && !input.emittedRetryBoundaryEvent) {
@@ -1391,6 +1444,7 @@ async function handleStreamErrorEvent(
         toAdapterError(error, failure, statusContext, input.attempt, {
           ...failureDecision.context,
           errorPhase: "stream",
+          unrecognizedCodeStreak,
         }),
       ),
     });
@@ -1505,6 +1559,7 @@ function resolveStreamFailureDecision(input: {
   retryBudget?: ModelRetryBudget;
   streamErrorChunkObserved?: boolean;
   streamIteratorCreated?: boolean;
+  unrecognizedCodeStreak: number;
 }): { canRetry: boolean; context?: Record<string, unknown> } {
   const httpResponseStatus = input.preserveProviderStreamBoundaries
     ? resolveCompactHttpResponseStatus(input.error)
@@ -1530,6 +1585,7 @@ function resolveStreamFailureDecision(input: {
       preserveProviderStreamBoundaries: input.preserveProviderStreamBoundaries,
       retryBudget: input.retryBudget,
       streamFailurePhase,
+      unrecognizedCodeStreak: input.unrecognizedCodeStreak,
     }),
     context: compactStreamFailureContext(
       input.preserveProviderStreamBoundaries,
@@ -1549,6 +1605,7 @@ function canRetryStreamFailure(input: {
   preserveProviderStreamBoundaries?: boolean;
   retryBudget?: ModelRetryBudget;
   streamFailurePhase?: StreamFailurePhase;
+  unrecognizedCodeStreak: number;
 }): boolean {
   // Workflow traffic (unlimited budget) uses the policy table, not the classifier's retryable
   // flag: only deterministic model-side errors are not retried; concurrency limits such as
@@ -1575,7 +1632,14 @@ function canRetryStreamFailure(input: {
     return true;
   }
 
-  if (!retryAllowedByFailurePolicy(input.failure, input.retryBudget, providerCode)) {
+  if (
+    !retryAllowedByFailurePolicy(
+      input.failure,
+      input.retryBudget,
+      providerCode,
+      input.unrecognizedCodeStreak,
+    )
+  ) {
     return false;
   }
 
@@ -1706,25 +1770,41 @@ async function publishRetryScheduledStatus(
 function observeVisibleStreamEvent(
   event: ModelStreamEvent,
   elapsed: number,
-): { contentMs?: number; textMs?: number; outputCommitted: boolean } {
+): {
+  textMs?: number;
+  outputCommitted: boolean;
+  outputKind?: "text" | "reasoning" | "tool";
+} {
   switch (event.type) {
     case "text_delta":
       return {
-        contentMs: elapsed,
         textMs: event.text ? elapsed : undefined,
+        outputKind: event.text.trim() ? "text" : undefined,
         outputCommitted: true,
       };
     case "reasoning_delta":
+      return {
+        outputCommitted: true,
+        outputKind: event.text.trim() ? "reasoning" : undefined,
+      };
     case "tool_input_delta":
+      return {
+        outputCommitted: true,
+        outputKind: event.delta.trim() ? "tool" : undefined,
+      };
     case "tool_call":
-      return { contentMs: elapsed, outputCommitted: true };
+      return {
+        outputCommitted: true,
+        outputKind: event.toolCall.name.trim() ? "tool" : undefined,
+      };
+    case "provider_tool_result":
+      return { outputCommitted: true, outputKind: "tool" };
     case "text_start":
     case "reasoning_start":
     case "tool_input_start":
-      return { contentMs: elapsed, outputCommitted: false };
+      return { outputCommitted: false };
     case "compact_stream_boundary":
       return {
-        contentMs: event.boundary === "provider_content_block_start" ? elapsed : undefined,
         outputCommitted:
           event.boundary === "provider_content_block_stop" ||
           event.boundary === "inferred_content_block_stop",

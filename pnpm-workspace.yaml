@@ -37,6 +37,8 @@ nodeLinker: hoisted
 # Keep script execution free of implicit installs, as with the pnpm 10 toolchain.
 verifyDepsBeforeRun: false
 overrides:
+  "@electron/rebuild>node-abi": "4.37.0"
+  electron-to-chromium: "1.5.452"
   react: "19.3.0"
   react-dom: "19.3.0"
   koffi: "2.15.6"
@@ -49,3 +51,5 @@ patchedDependencies:
   "@arms/rum-electron@0.0.3": patches/@arms__rum-electron@0.0.3.patch
   "@ai-sdk/openai-compatible@2.0.60": patches/@ai-sdk__openai-compatible@2.0.60.patch
   "@ai-sdk/anthropic@3.0.81": patches/@ai-sdk__anthropic@3.0.81.patch
+  "@aiden0z/pptx-renderer@1.2.4": patches/@aiden0z__pptx-renderer@1.2.4.patch
+  "@extend-ai/react-xlsx@0.16.0": patches/@extend-ai__react-xlsx@0.16.0.patch

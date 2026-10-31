@@ -1,6 +1,8 @@
 import {
   ApiError,
   ProjectAccessTokenClient,
+  ProjectAccessTokenError,
+  ProjectAccessTokenHttpStatusError,
   ProjectAccessTokenTransientError,
   type ApiClient,
 } from "@zcode/shared";
@@ -28,16 +30,24 @@ export function createAccountProjectTokenClient(
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) return { code: 404 };
         // Admit only transport errors/internal timeouts and transient HTTP statuses; JSON parse errors and unknown exceptions must not restore an old PAT.
-        if (
-          error instanceof ApiError &&
-          (error.status === 429 ||
-            (error.status !== undefined && error.status >= 500 && error.status < 600) ||
-            (error.status === undefined &&
-              (error.cause instanceof TypeError ||
-                (error.cause instanceof DOMException &&
-                  ["AbortError", "TimeoutError"].includes(error.cause.name)))))
-        )
-          throw new ProjectAccessTokenTransientError();
+        if (error instanceof ApiError) {
+          const status = error.status;
+          if (status === 429 || (status !== undefined && status >= 500 && status < 600))
+            throw new ProjectAccessTokenTransientError({ kind: "http", status });
+          if (status === undefined && error.cause instanceof TypeError)
+            throw new ProjectAccessTokenTransientError({ kind: "network" });
+          if (
+            status === undefined &&
+            error.cause instanceof DOMException &&
+            ["AbortError", "TimeoutError"].includes(error.cause.name)
+          )
+            throw new ProjectAccessTokenTransientError({ kind: "timeout" });
+          // Bug cause (ZCT-2111046389485834240): non-transient statuses and 2xx non-JSON used to be rethrown as-is,
+          // so the token client could only log project_token_request_failed. Keep only the status code/fixed code, without the response body.
+          if (status !== undefined && status >= 200 && status < 300)
+            throw new ProjectAccessTokenError("project_token_invalid_response");
+          if (status !== undefined) throw new ProjectAccessTokenHttpStatusError(status);
+        }
         throw error;
       }
     },

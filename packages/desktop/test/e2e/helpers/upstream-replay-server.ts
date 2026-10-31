@@ -24,6 +24,7 @@ const LATEST_AGENT_ID_REPLAY_TOKEN = "{{latestAgentId}}";
 const LATEST_BASH_TASK_ID_REPLAY_TOKEN = "{{latestBashTaskId}}";
 const MEMORY_ROOT_REPLAY_TOKEN = "{{memoryRoot}}";
 const LATEST_AUTOMATION_ID_REPLAY_TOKEN = "{{latestAutomationId}}";
+const LATEST_WORKFLOW_RUN_ID_REPLAY_TOKEN = "{{latestWorkflowRunId}}";
 const BROWSER_FIXTURE_URL_REPLAY_TOKEN = "{{browserFixtureUrl}}";
 const LATEST_BROWSER_TAB_ID_REPLAY_TOKEN = "{{latestBrowserTabId}}";
 const LATEST_BROWSER_TAB_A_ID_REPLAY_TOKEN = "{{latestBrowserTabAId}}";
@@ -82,8 +83,9 @@ interface UpstreamReplayFixture {
     chunks?: UpstreamReplayResponseChunk[];
     closeMode?: UpstreamReplayCloseMode;
     delayMs?: number;
-    /** 仅 controlled-stream：写出 N 个 chunk 后等待测试完成关键操作再释放。 */
-    releaseAfterChunks?: number;
+    /** Controlled-stream only: each boundary waits for the test to finish the matching action
+     *     before releasing. */
+    releaseAfterChunks?: number | number[];
     events?: E2ENetworkCaptureResponseEvent[];
     headers?: Record<string, string>;
     statusCode: number;
@@ -103,6 +105,7 @@ interface ReplayVariables {
   latestBashTaskId?: string;
   memoryRoot?: string;
   latestAutomationId?: string;
+  latestWorkflowRunId?: string;
 }
 
 interface UpstreamReplayResponseChunk {
@@ -147,13 +150,19 @@ export async function startUpstreamReplayServer(
     loadFixtureFile(path, options.fixtureVariables),
   );
   for (const fixture of fixtures) {
-    const count = fixture.response.releaseAfterChunks;
-    if (count === undefined) continue;
+    const boundary = fixture.response.releaseAfterChunks;
+    if (boundary === undefined) continue;
+    const counts = Array.isArray(boundary) ? boundary : [boundary];
     if (
       fixture.metadata?.timingPolicy !== "controlled-stream" ||
-      !Number.isInteger(count) ||
-      count < 1 ||
-      count >= (fixture.response.chunks?.length ?? 0) ||
+      counts.length === 0 ||
+      counts.some(
+        (count, index) =>
+          !Number.isInteger(count) ||
+          count < 1 ||
+          count >= (fixture.response.chunks?.length ?? 0) ||
+          (index > 0 && count <= counts[index - 1]!),
+      ) ||
       fixture.response.events?.length
     ) {
       throw new Error(`无效受控流 fixture: ${fixture.id}；不得改变 recorded/fault stream 的时间轴`);
@@ -209,7 +218,8 @@ export async function startUpstreamReplayServer(
   };
 
   const server = createServer((request, response) => {
-    // 控制端不进入模型请求台账；每个独立 replay server 只释放自己的正在等待的 fixture。
+    // The control endpoints never enter the model-request ledger; each independent replay server
+    // releases only its own waiting fixtures.
     if (request.method === "GET" && request.url === "/__e2e__/gates") {
       response.setHeader("content-type", "application/json");
       response.end(JSON.stringify([...gates.keys()]));
@@ -360,15 +370,23 @@ async function handleReplayRequest(
     const resolvedBody = resolveFixtureResponseBody(
       fixture.response,
       extractReplayVariables(requestText, requestJson),
+      isStreamingRequest(requestJson),
     );
-    if (resolvedBody.body.includes(BROWSER_FIXTURE_URL_REPLAY_TOKEN)) {
+    if (
+      resolvedBody.body.includes(BROWSER_FIXTURE_URL_REPLAY_TOKEN) ||
+      resolvedBody.body.includes(LATEST_WORKFLOW_RUN_ID_REPLAY_TOKEN)
+    ) {
       // Fix reason: if the dynamic URL marker is missing or malformed, keeping the template
       // would make the Browser tool navigate to the literal `{{browserFixtureUrl}}`, which a
       // compact summary could later mask as success. Replay must fail closed so fixture/request
       // contract errors are directly visible.
       await writeResponse(response, record, {
         body: JSON.stringify({
-          error: { message: "Missing E2E_BROWSER_FIXTURE_URL replay variable" },
+          error: {
+            message: resolvedBody.body.includes(BROWSER_FIXTURE_URL_REPLAY_TOKEN)
+              ? "Missing E2E_BROWSER_FIXTURE_URL replay variable"
+              : "Missing workflow-hole run ID replay variable",
+          },
         }),
         headers: { "content-type": "application/json; charset=utf-8" },
         statusCode: 500,
@@ -430,6 +448,7 @@ function closeReplayResponseAfterHandlerError(response: ServerResponse, error: u
 function resolveFixtureResponseBody(
   response: UpstreamReplayFixture["response"],
   variables: ReplayVariables,
+  streaming: boolean,
 ): { body: string; headers: Record<string, string> } {
   if (response.body !== undefined) {
     return {
@@ -438,33 +457,38 @@ function resolveFixtureResponseBody(
     };
   }
 
+  // Fix rationale: the fixture's text/toolUse shorthand used to always render as SSE. Sidecar
+  // requests such as titles omit stream:true and the real protocol returns application/json;
+  // keeping SSE made the replay audit record titleResponseFormatErrors. The request's stream
+  // attribute decides the response format.
+  // chunks are the raw bytes of a recorded/controlled stream; when present they must stay
+  // streaming and not be rewritten by request attributes.
+  const streamBody = streaming || (response.chunks?.length ?? 0) > 0;
+  const responseHeaders = streamBody
+    ? withEventStreamHeaders(response.headers)
+    : withJsonHeaders(response.headers);
+
   if (response.toolUses?.length) {
+    const toolUses = response.toolUses.map((toolUse) => resolveReplayToolUse(toolUse, variables));
     return {
-      body: buildToolUsesSseBody(
-        response.toolUses.map((toolUse) => resolveReplayToolUse(toolUse, variables)),
-      ),
-      headers: withEventStreamHeaders(response.headers),
+      body: streamBody ? buildToolUsesSseBody(toolUses) : buildToolUsesMessageBody(toolUses),
+      headers: responseHeaders,
     };
   }
 
   if (response.toolUse) {
+    const toolUse = resolveReplayToolUse(response.toolUse, variables);
     return {
-      body: buildToolUseSseBody(resolveReplayToolUse(response.toolUse, variables)),
-      headers: withEventStreamHeaders(response.headers),
-    };
-  }
-
-  if (response.toolUses?.length) {
-    return {
-      body: buildToolUsesSseBody(response.toolUses),
-      headers: withEventStreamHeaders(response.headers),
+      body: streamBody ? buildToolUseSseBody(toolUse) : buildToolUsesMessageBody([toolUse]),
+      headers: responseHeaders,
     };
   }
 
   if (response.text !== undefined) {
+    const text = resolveReplayText(response.text, variables);
     return {
-      body: buildTextSseBody(resolveReplayText(response.text, variables)),
-      headers: withEventStreamHeaders(response.headers),
+      body: streamBody ? buildTextSseBody(text) : buildTextMessageBody(text),
+      headers: responseHeaders,
     };
   }
 
@@ -472,6 +496,14 @@ function resolveFixtureResponseBody(
     body: "",
     headers: response.headers ?? {},
   };
+}
+
+function isStreamingRequest(requestJson: unknown): boolean {
+  return (
+    typeof requestJson === "object" &&
+    requestJson !== null &&
+    (requestJson as { stream?: unknown }).stream === true
+  );
 }
 
 function extractReplayVariables(requestText: string, requestJson: unknown): ReplayVariables {
@@ -484,6 +516,11 @@ function extractReplayVariables(requestText: string, requestJson: unknown): Repl
     latestBashTaskId: readLatestBashTaskId(requestContent),
     memoryRoot: readMemoryRoot(requestContent),
     latestAutomationId: readLatestAutomationId(requestJson),
+    // The workflow run ID is generated by the real tool; take only the latest hole
+    // notification — the random ID cannot be hard-coded in the fixture.
+    latestWorkflowRunId: [
+      ...requestContent.matchAll(/<workflow-hole>[\s\S]*?<run-id>([^<]+)<\/run-id>/gu),
+    ].at(-1)?.[1],
   };
 }
 
@@ -681,6 +718,11 @@ function applyReplayVariablesToString(value: string, variables: ReplayVariables)
   if (variables.latestAutomationId !== undefined) {
     resolved = resolved.split(LATEST_AUTOMATION_ID_REPLAY_TOKEN).join(variables.latestAutomationId);
   }
+  if (variables.latestWorkflowRunId !== undefined) {
+    resolved = resolved
+      .split(LATEST_WORKFLOW_RUN_ID_REPLAY_TOKEN)
+      .join(variables.latestWorkflowRunId);
+  }
   if (variables.browserFixtureUrl !== undefined) {
     resolved = resolved.split(BROWSER_FIXTURE_URL_REPLAY_TOKEN).join(variables.browserFixtureUrl);
   }
@@ -694,6 +736,15 @@ function withEventStreamHeaders(
     "cache-control": "no-cache",
     "content-type": "text/event-stream; charset=utf-8",
     ...headers,
+  };
+}
+
+function withJsonHeaders(headers: Record<string, string> | undefined): Record<string, string> {
+  // A non-streaming response's content-type must be authoritative; the fixture's SSE headers
+  // must not leak into a JSON response.
+  return {
+    ...headers,
+    "content-type": "application/json; charset=utf-8",
   };
 }
 
@@ -824,6 +875,52 @@ function buildTextSseBody(textResponse: UpstreamReplayTextResponse | string): st
   ].join("");
 }
 
+function buildToolUsesMessageBody(toolUses: UpstreamReplayToolUseResponse[]): string {
+  const firstToolUse = toolUses[0];
+  const messageId = firstToolUse?.messageId ?? `msg_${sanitizeSseId(firstToolUse?.name ?? "tool")}`;
+  const inputTokens = firstToolUse?.inputTokens;
+  const outputTokens = toolUses.reduce((sum, toolUse) => sum + (toolUse.outputTokens ?? 16), 0);
+  return JSON.stringify({
+    id: messageId,
+    type: "message",
+    role: "assistant",
+    model: firstToolUse?.model ?? DEFAULT_REPLAY_MODEL,
+    content: toolUses.map((toolUse) => ({
+      type: "tool_use",
+      id: toolUse.id ?? `toolu_${sanitizeSseId(toolUse.name)}`,
+      name: toolUse.name,
+      input: toolUse.input,
+    })),
+    stop_reason: "tool_use",
+    stop_sequence: null,
+    usage: replayUsage(inputTokens, outputTokens),
+  });
+}
+
+function buildTextMessageBody(textResponse: UpstreamReplayTextResponse | string): string {
+  const text = typeof textResponse === "string" ? textResponse : textResponse.text;
+  const id =
+    typeof textResponse === "string"
+      ? "msg_upstream_e2e_text"
+      : (textResponse.id ?? "msg_upstream_e2e_text");
+  const model =
+    typeof textResponse === "string"
+      ? DEFAULT_REPLAY_MODEL
+      : (textResponse.model ?? DEFAULT_REPLAY_MODEL);
+  const inputTokens = typeof textResponse === "string" ? undefined : textResponse.inputTokens;
+  const outputTokens = typeof textResponse === "string" ? undefined : textResponse.outputTokens;
+  return JSON.stringify({
+    id,
+    type: "message",
+    role: "assistant",
+    model,
+    content: [{ type: "text", text }],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: replayUsage(inputTokens, outputTokens ?? 12),
+  });
+}
+
 function replayUsage(inputTokens = 128, outputTokens = 0) {
   return {
     input_tokens: inputTokens,
@@ -852,7 +949,7 @@ async function writeResponse(
     body: string;
     chunks?: UpstreamReplayResponseChunk[];
     closeMode?: UpstreamReplayCloseMode;
-    releaseAfterChunks?: number;
+    releaseAfterChunks?: number | number[];
     release?: () => Promise<void>;
     headers: Record<string, string>;
     statusCode: number;
@@ -861,7 +958,8 @@ async function writeResponse(
 ) {
   const responseChunks = normalizeReplayChunks(fixtureResponse.chunks);
   const destroyStream = fixtureResponse.closeMode === "destroy";
-  // 同时带 text/chunks 的 fixture 实际发送 chunks，证据也必须记录真正发出的字节。
+  // A fixture with both text and chunks actually sends the chunks; the evidence must record
+  // the bytes really sent.
   const responseBody =
     responseChunks.length > 0
       ? Buffer.concat(responseChunks.map((chunk) => chunk.body))
@@ -875,14 +973,8 @@ async function writeResponse(
   response.writeHead(fixtureResponse.statusCode, fixtureResponse.statusMessage, responseHeaders);
   let actualOffsets: number[] | undefined;
   if (responseChunks.length > 0) {
-    if (
-      fixtureResponse.release &&
-      (!Number.isInteger(fixtureResponse.releaseAfterChunks) ||
-        fixtureResponse.releaseAfterChunks! < 1 ||
-        fixtureResponse.releaseAfterChunks! >= responseChunks.length)
-    ) {
-      throw new Error("releaseAfterChunks 必须位于流内部");
-    }
+    // Boundaries were validated uniformly at load; gates are created per segment of the same
+    // response, and releasing an earlier segment never pre-releases a later one.
     actualOffsets = await writeReplayChunks(response, responseChunks, fixtureResponse);
     if (!destroyStream) response.end();
   } else if (destroyStream) {
@@ -907,8 +999,9 @@ async function writeResponse(
     }));
   }
   if (destroyStream) {
-    // chunks/body 与 events 必须执行相同的故障合同；只在 artifact 标 destroy
-    // 却正常 end 会把网络中断测试变成正常 EOF，并制造“产品假完成”的错误结论。
+    // chunks/body and events must honor the same fault contract; marking destroy only in the
+    // artifact while ending normally would turn a network-interruption test into a normal EOF
+    // and produce the false conclusion that the product faked completion.
     record.error = "Replay fixture destroyed SSE response stream";
     response.destroy();
   }
@@ -917,15 +1010,20 @@ async function writeResponse(
 async function writeReplayChunks(
   response: ServerResponse,
   chunks: NormalizedReplayChunk[],
-  control?: { releaseAfterChunks?: number; release?: () => Promise<void> },
+  control?: { releaseAfterChunks?: number | number[]; release?: () => Promise<void> },
 ) {
   let previousOffsetMs = 0;
   const startedAt = Date.now();
   const actualOffsets: number[] = [];
   for (const [index, chunk] of chunks.entries()) {
-    if (index === control?.releaseAfterChunks && control.release) {
+    const boundary = control?.releaseAfterChunks;
+    if (
+      (Array.isArray(boundary) ? boundary.includes(index) : index === boundary) &&
+      control?.release
+    ) {
       await control.release();
-      // 只移除被释放的那段人为慢窗口，后续 chunk 间距及内容原样保留。
+      // Remove only the released segment's artificial slow window; later chunk spacing and
+      // content stay untouched.
       previousOffsetMs = chunk.offsetMs;
     }
     const delayMs = Math.max(0, chunk.offsetMs - previousOffsetMs);
@@ -934,7 +1032,8 @@ async function writeReplayChunks(
     }
     previousOffsetMs = chunk.offsetMs;
     actualOffsets.push(Date.now() - startedAt);
-    // 等待写入完成后再进入下一帧/销毁连接，避免最后一帧只进用户态队列就被丢弃。
+    // Wait for the write to finish before the next frame or destroying the connection, so the
+    // last frame is not dropped after only entering the user-space queue.
     await writeResponseChunk(response, chunk.body);
   }
   return actualOffsets;

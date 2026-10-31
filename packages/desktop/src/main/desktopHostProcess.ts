@@ -1,3 +1,4 @@
+import type { HostRemoteConversationTelemetryResponse } from "@zcode/shared";
 import { ingestToolExecResource } from "./desktopResourceTelemetry.js";
 import { ingestMcpResourceSamples } from "./processResourceMcpTelemetrySource.js";
 /* eslint-disable max-lines -- The Host process coordinates main↔Host lifecycle, logs, and ZCode Agent; keep cross-process messages centralized until a safe split is defined. */
@@ -12,6 +13,7 @@ import {
   type HostPluginTelemetryResponse,
   type HostSessionCreateTelemetryResponse,
   type DatabaseStartupState,
+  type ProviderProvisioningLaneStatus,
   type RemoteTarget,
   type TaskRealtimeHostDeliveryKind,
   type WorkspacePurpose,
@@ -79,6 +81,7 @@ export interface WindowBootstrapOptions {
 }
 
 export interface HostInitMessage {
+  browserBackendIdentity?: { id: string; generation: number };
   type: typeof HostMessageTypes.InitLocal;
   hostId?: string;
   databaseStartupId?: string;
@@ -230,6 +233,7 @@ export function spawnHostProcess(
     onAgentProcessSpawned?: (event: HostAgentProcessSpawnedResponse) => void;
     onMcpTelemetry?: (event: HostMcpTelemetryResponse) => void;
     onPluginTelemetry?: (event: HostPluginTelemetryResponse) => void;
+    onRemoteConversationTelemetry?: (event: HostRemoteConversationTelemetryResponse) => void;
     onSessionCreateTelemetry?: (event: HostSessionCreateTelemetryResponse) => void;
     onCuaOperationStateChanged?: (
       source: ElectronUtilityProcess,
@@ -299,6 +303,7 @@ export function spawnHostProcess(
       requestId: string;
       browserId?: string;
       browserGeneration?: number;
+      controlScopeId?: string;
       sessionId: string;
       turnId?: string;
       workspaceKey?: string;
@@ -315,6 +320,14 @@ export function spawnHostProcess(
     registerPluginSandbox?: (
       input: PluginSandboxRegisterRequestPayload,
     ) => PluginSandboxHandle | Promise<PluginSandboxHandle>;
+    /** Provisioning lane through which the Data Sync page reads and retries the Main coordinator via the local Host (keyed by sourceServerId). */
+    providerProvisioningLanes?: {
+      getStatus(
+        sourceServerId: string,
+        options: { waitForIdle: boolean },
+      ): Promise<ProviderProvisioningLaneStatus>;
+      retry(sourceServerId: string): Promise<ProviderProvisioningLaneStatus>;
+    };
   },
   options?: SpawnHostProcessOptions,
 ): ElectronUtilityProcess {
@@ -447,6 +460,10 @@ export function spawnHostProcess(
       return;
     }
 
+    if (result.data.type === HostResponseTypes.RemoteConversationTelemetry) {
+      dependencies.onRemoteConversationTelemetry?.(result.data);
+      return;
+    }
     if (result.data.type === HostResponseTypes.SessionCreateTelemetry) {
       dependencies.onSessionCreateTelemetry?.(result.data);
       return;
@@ -516,6 +533,35 @@ export function spawnHostProcess(
       return;
     }
 
+    if (result.data.type === HostResponseTypes.ProviderProvisioningLaneRequest) {
+      const request = result.data;
+      const lanes = dependencies.providerProvisioningLanes;
+      const reply = (status: ProviderProvisioningLaneStatus) =>
+        child.postMessage({
+          type: HostMessageTypes.ProviderProvisioningLaneResult,
+          requestId: request.requestId,
+          status,
+        });
+      // Without a coordinator (for example a test Host that is not wired up), reply "no lane": every Host request gets a reply and does not rely on a timeout.
+      if (!lanes) {
+        reply({ lane: "none" });
+        return;
+      }
+      void (
+        request.action === "retry"
+          ? lanes.retry(request.sourceServerId)
+          : lanes.getStatus(request.sourceServerId, { waitForIdle: request.action === "wait" })
+      ).then(reply, (error: unknown) => {
+        // The coordinator's query and retry do not throw; if they ever do, still reply so the Renderer does not stay stuck on "syncing".
+        dependencies.logger.warn("[provider-provisioning] lane request failed", {
+          action: request.action,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        reply({ lane: "none" });
+      });
+      return;
+    }
+
     if (result.data.type === HostResponseTypes.FeedbackLogArchiveRequest) {
       const request = result.data;
       void createFeedbackLogArchiveFromExportLogs(request.sourceDir)
@@ -572,6 +618,7 @@ export function spawnHostProcess(
           ? handler({
               win,
               requestId,
+              controlScopeId: result.data.controlScopeId,
               browserId: result.data.browserId,
               browserGeneration: result.data.browserGeneration,
               sessionId: result.data.sessionId,

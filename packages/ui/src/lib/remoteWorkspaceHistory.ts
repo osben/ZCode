@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 远端 workspace 历史集中维护持久化、凭据和 MCP 路径映射元数据，拆分会扩大恢复链路回归面。 */
+/* eslint-disable max-lines -- Remote workspace history centrally maintains persistence, credentials, and MCP path-mapping metadata; splitting it would widen the recovery-path regression surface. */
 import type {
   AppSettings,
   PersistedWorkspaceSessionEntry,
@@ -40,8 +40,9 @@ function buildRemoteWorkspaceServerTokenCredentialKey(workspaceKey: string): str
 }
 
 function collectOwnedRemoteWorkspaceCredentialKeys(snapshot: RemoteTargetSnapshot): string[] {
-  // 历史快照可引用 Profile 凭据，但引用不转移所有权。此前重投影移除引用时
-  // 把 Profile 密码也加入删除列表，导致冷启动后失去认证；所有历史清理只收集自有 key。
+  // History snapshots may reference Profile credentials, but a reference transfers no ownership.
+  // Re-projection once added Profile passwords to the deletion list when removing the reference,
+  // losing authentication after a cold start; all history cleanup collects only owned keys.
   const isOwned = (key: string | undefined): key is string =>
     typeof key === "string" && key.startsWith("remote-workspace:");
   if (snapshot.kind === "ssh") {
@@ -142,15 +143,17 @@ export function formatRemoteWorkspaceDisplayLabel(
   label: string,
   target?: RemoteTarget | RemoteTargetSnapshot,
 ): string {
-  // 线路信息属于设备原子/悬浮详情，不能把硬编码 SSH alias 拼进项目名称；
-  // 这样既避免窄侧栏截断，也让标题可本地化。target 参数保留兼容旧调用方。
+  // Route info belongs to the device chip/hover details; a hard-coded SSH alias must not be
+  // appended to the project name. This avoids narrow-sidebar truncation and keeps the title
+  // localizable. The target parameter is kept for legacy callers.
   void target;
   return label;
 }
 
 function normalizeWorkspacePathForIdentity(path: string): string {
-  // 远程目录可能出现符号链接别名（例如 /dev 与 /home/dev）。
-  // 身份计算前统一做分隔符归一化与收尾斜杠清理，避免同一路径文本噪声导致身份漂移。
+  // Remote directories can have symlink aliases (e.g. /dev vs /home/dev).
+  // Normalize separators and strip trailing slashes before identity computation so textual noise
+  // on the same path does not drift the identity.
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
   return normalized.length > 0 ? normalized : "/";
 }
@@ -164,8 +167,9 @@ function getRemoteWorkspaceAuthorityKey(target: RemoteTarget | RemoteTargetSnaps
       return ["ssh", normalizedHost, normalizedPort, normalizedUsername].join(":");
     }
     case "wsl": {
-      // WSL 默认用户与 root/其他显式用户的文件权限边界不同，
-      // workspace identity 必须区分显式 user，避免 session、缓存和队列串用。
+      // The WSL default user and root/other explicit users have different file-permission
+      // boundaries; workspace identity must distinguish the explicit user so sessions, caches,
+      // and queues are never cross-used.
       const user = getWslRemoteTargetUser(target);
       const base = ["wsl", target.distro ?? "default"];
       return user ? [...base, user].join(":") : base.join(":");
@@ -405,6 +409,7 @@ export function buildRemoteWorkspaceSessionMutation(params: {
   workspacePurpose?: "project" | "conversation";
   lastConnectionStatus: RemoteWorkspaceSessionEntry["lastConnectionStatus"];
   lastConnectionError?: string;
+  lastConnectionErrorCode?: string;
   touchOpenedAt: boolean;
 }): RemoteWorkspaceSessionMutation {
   const currentEntry =
@@ -426,6 +431,13 @@ export function buildRemoteWorkspaceSessionMutation(params: {
   const localWorkspacePath = normalizeOptionalPath(
     params.localWorkspacePath ?? currentEntry?.localWorkspacePath,
   );
+  // Error code and message are written and cleared together: a new failure uses only its own code (possibly none); a status-only update keeps the original record.
+  const lastConnectionErrorCode =
+    params.lastConnectionStatus !== "failed"
+      ? undefined
+      : params.lastConnectionError !== undefined
+        ? params.lastConnectionErrorCode
+        : currentEntry?.lastConnectionErrorCode;
   const nextEntry: RemoteWorkspaceSessionEntry = {
     kind: "remote",
     workspacePath: params.workspacePath,
@@ -434,8 +446,9 @@ export function buildRemoteWorkspaceSessionMutation(params: {
           workspacePurpose: params.workspacePurpose ?? currentEntry?.workspacePurpose,
         }
       : {}),
-    // Bugfix: filesystem MCP 同步需要用“本机 workspace -> 远端 workspace”映射。
-    // 远端历史之前只保存远端路径，已连接后的 Settings/Header 入口无法再恢复本机基准路径。
+    // Bugfix: filesystem MCP sync needs the "local workspace -> remote workspace" mapping.
+    // Remote history previously stored only the remote path, so after connecting, the
+    // Settings/Header entries could no longer recover the local base path.
     ...(localWorkspacePath ? { localWorkspacePath } : {}),
     workspaceIdentity: resolvedWorkspaceIdentity,
     target: nextSnapshot,
@@ -445,10 +458,11 @@ export function buildRemoteWorkspaceSessionMutation(params: {
       params.lastConnectionStatus === "failed"
         ? (params.lastConnectionError ?? currentEntry?.lastConnectionError)
         : undefined,
+    ...(lastConnectionErrorCode ? { lastConnectionErrorCode } : {}),
   };
-  // Bug 原因：Host 绑定 stable identity 后，旧 route entry 与新 entry 的 key 不同，
-  // 通用 upsert 会把两条都保留。已经通过 target/alias 证明的 currentEntry 就是被换代对象，
-  // 必须先移除再按 stable key 插入。
+  // Bug cause: once the Host binds a stable identity, the old route entry and the new entry have
+  // different keys and a generic upsert keeps both. currentEntry, already proven by target/alias,
+  // is the entry being replaced: it must be removed first, then inserted under the stable key.
   const nextRemoteSessions = upsertRemoteWorkspaceSessionEntries(
     currentEntry
       ? params.remoteSessions.filter((entry) => entry !== currentEntry)
@@ -481,8 +495,8 @@ export function buildRemoteWorkspaceSessionMutation(params: {
 
   for (const removedEntry of params.remoteSessions) {
     if (removedEntry === currentEntry) {
-      // currentEntry 的凭据差异已在 previousCredentialKeys 分支处理；
-      // 无显式 identity 的旧 entry 不能再被当成「被容量裁剪」重复删除凭据。
+      // currentEntry's credential diff is handled in the previousCredentialKeys branch;
+      // an old entry without an explicit identity must not be treated as "evicted by capacity" and have credentials deleted again.
       continue;
     }
     if (nextRemoteWorkspaceKeys.has(buildWorkspaceSessionKey(removedEntry))) {
@@ -555,9 +569,10 @@ export function buildPersistedWorkspaceSessionEntries(
       const workspaceKey = buildWorkspaceSessionKey(tab);
       const remoteEntry = remoteSessionsByWorkspaceKey.get(workspaceKey);
 
-      // lastWorkspaceSession 现在是远端 workspace 的唯一持久化来源。
-      // 如果这里因为 tab 断连就把 remote 项漏掉，下次启动会直接丢失“手动重连”的入口。
-      // 因此只要当前 tab 具有远端身份，就必须写回完整 remote 条目。
+      // lastWorkspaceSession is now the sole persistence source for remote workspaces.
+      // Dropping the remote entry here because the tab is disconnected would lose the "manual
+      // reconnect" entry on the next launch. So whenever the current tab has a remote identity,
+      // the full remote entry must be written back.
       if (!remoteEntry) {
         return entries;
       }
@@ -585,7 +600,7 @@ export function readPersistedWorkspaceSessionEntries(
     | "remoteConversationWorkspaceBySourceServerId"
   >,
 ): PersistedWorkspaceSessionEntry[] {
-  // 新版只恢复活动执行目录；旧字段仅供首次导入或连接旧 Server 使用。
+  // The new version restores only the active execution directory; legacy fields are for first import or connecting to old Servers.
   if (settings.lastActiveWorkspace !== undefined) {
     return settings.lastActiveWorkspace ? [settings.lastActiveWorkspace] : [];
   }
@@ -609,8 +624,8 @@ export function readPersistedWorkspaceSessionEntries(
     const aliasKey = `${entry.workspacePath}\0${currentIdentity}`;
     const projectAlias = projectAliases.get(aliasKey);
     const conversationAlias = conversationAliases.get(aliasKey);
-    // project history 与 device conversation map 理论上不会声明同一路径；旧数据若冲突，
-    // 保持 legacy identity fail-closed，不能把 workspace 猜到任一 Source。
+    // Project history and the device conversation map should never claim the same path; if legacy
+    // data conflicts, keep the legacy identity fail-closed — do not guess the workspace into either Source.
     const stableAlias =
       projectAlias && conversationAlias && projectAlias !== conversationAlias
         ? undefined
@@ -670,9 +685,10 @@ function buildSourceConversationWorkspaceIdentityAliases(
       settings.remoteConversationWorkspaceBySourceServerId?.[sourceServerId]?.workspacePath;
     if (!workspacePath) continue;
 
-    // Bug 原因：rollback writer 必须为旧 Desktop 写 route identity，但 conversation
-    // 按合同不进入 project history，reader 过去没有逆映射来源，重启后只能恢复成 pending tab。
-    // 这里同时要求已绑定 Profile 的精确 authority 与设备级 canonical path，且只接受唯一 Source。
+    // Bug cause: the rollback writer must write route identity for old Desktop builds, but a
+    // conversation by contract never enters project history, so the reader had no inverse-mapping
+    // source and could only restore it as a pending tab after restart. Here we require both the
+    // exact authority of the bound Profile and the device-level canonical path, and accept a unique Source only.
     const legacyIdentity = buildRemoteWorkspaceIdentity(workspacePath, profile.target);
     const stableIdentity = buildServerRemoteWorkspaceIdentity({
       serverId: sourceServerId,

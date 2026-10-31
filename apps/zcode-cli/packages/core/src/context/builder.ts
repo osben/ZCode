@@ -17,9 +17,9 @@ import { resolveIncognitoPromptToggles } from "./sections/prompt-toggles.js";
 import { buildIdentitySection } from "./sections/identity.js";
 import { buildWorkflowActorIdentitySection } from "./sections/workflow-actor.js";
 import {
-  buildEnvInfoSection,
+  buildEnvironmentSections,
+  buildExecutionWorktreeSection,
   buildGitSystemContextSection,
-  buildWorktreeOnlyEnvSection,
 } from "./sections/env-info.js";
 import { buildSkillsSection } from "./sections/skills.js";
 import { buildRequestUserContextSection } from "./sections/request-user-context.js";
@@ -30,7 +30,6 @@ import { buildDesktopContextSection } from "./sections/desktop.js";
 import {
   buildContextManagementSection,
   buildDynamicBehaviorSection,
-  buildOutputStyleSection,
   buildSessionGuidanceSection,
 } from "./dynamic-sections.js";
 
@@ -90,8 +89,9 @@ export class ContextBuilder {
     const activeOutputStyle = this.config.outputStyle?.prompt.trim()
       ? this.config.outputStyle
       : undefined;
-    const customSystemPrompt = this.config.customSystemPrompt?.trim();
-    const hasCustomSystemPrompt = Boolean(customSystemPrompt);
+    // The custom system prompt is sent verbatim without trimming; only an all-whitespace value counts as unset.
+    const customSystemPrompt = this.config.customSystemPrompt;
+    const hasCustomSystemPrompt = Boolean(customSystemPrompt?.trim());
     // Workflow subagent identity: the third path. Mutually exclusive with
     // customSystemPrompt—if both are present, wiring is wrong (the persona should arrive through workflowActor,
     // not systemPrompt). Fail loudly instead of silently choosing one.
@@ -106,10 +106,10 @@ export class ContextBuilder {
     // Incognito toggles for prompt text (specs/incognito-session.md, "Prompt toggles"). Absent profile = all included.
     const incognito = this.config.incognito;
     const { identityOff, harnessOff, environmentOff } = resolveIncognitoPromptToggles(incognito);
+    const midConversationSystem = this.config.midConversationSystem !== false;
 
-    // 1. CLI / product prefix. Keep this as the short leading identity block.
-    // "You are ZCode, an interactive coding agent" is the wrong identity for a subagent that speaks only to a script
-    // and may not even have file-reading tools, and it would appear before the correct identity section.
+    // 1. CLI / product prefix. Workflow subagents return results only to a script, so they do not use
+    // the user-facing identity prefix and start directly with the workflow identity.
     if (!isWorkflowActor && !identityOff) {
       sections.push(buildCliPrefixSection(promptOverrides?.["cli-prefix"]));
     }
@@ -127,7 +127,10 @@ export class ContextBuilder {
       );
     } else if (workflowActor !== undefined) {
       sections.push(
-        buildWorkflowActorIdentitySection(workflowActor, { includeHarness: !harnessOff }),
+        buildWorkflowActorIdentitySection(workflowActor, {
+          includeHarness: !harnessOff,
+          midConversationSystem,
+        }),
       );
     } else {
       sections.push(
@@ -138,13 +141,28 @@ export class ContextBuilder {
             harness: promptOverrides?.harness,
           },
           { includeIntro: !identityOff, includeHarness: !harnessOff },
+          midConversationSystem,
         ),
       );
     }
 
+    // Environment and model are runtime announcements (meta_user), not system text; they are sent
+    // even with a custom prompt. The incognito `environment` toggle drops them (the presence of the
+    // `env_info` section is what turns the runtime announcement on). The execution-worktree notice
+    // is isolation context, not environment text, so it survives that toggle as its own section.
+    const environmentSections = environmentOff
+      ? []
+      : buildEnvironmentSections(
+          this.config.envInfo,
+          this.config.model,
+          this.config.additionalDirectories,
+        );
+    const executionWorktreeSection = buildExecutionWorktreeSection(this.config.executionWorktree);
+    if (executionWorktreeSection) environmentSections.push(executionWorktreeSection);
+
     // 3. Dynamic system context
-    // A custom prompt does not replace only the stable body; it skips the default system prompt structure and systemContext.
-    // Otherwise, dynamic system sections such as Session Guidance/output style would still be included after the user provides a custom prompt.
+    // A custom prompt does not replace only the stable body; it skips the default system prompt's dynamic sections.
+    // Otherwise, dynamic system sections such as Session Guidance would still be included after the user provides a custom prompt.
     // Workflow subagents skip the three sections aimed at "talking with the user" (desktop, Dynamic Behavior, and session
     // guidance—the contract already carries Report outcomes faithfully), while retaining memory and subsequent sections.
     if (!hasCustomSystemPrompt) {
@@ -180,26 +198,7 @@ export class ContextBuilder {
           sections.push(memorySection);
         }
       }
-      if (environmentOff) {
-        // The worktree bullet is isolation context, not environment text (specs/incognito-session.md).
-        const worktreeSection = buildWorktreeOnlyEnvSection(this.config.executionWorktree);
-        if (worktreeSection) sections.push(worktreeSection);
-      } else {
-        sections.push(
-          buildEnvInfoSection(
-            this.config.envInfo,
-            this.config.model,
-            this.config.executionWorktree,
-            this.config.additionalDirectories,
-          ),
-        );
-      }
-
-      // Output Style
-      const outputStyleSection = buildOutputStyleSection(activeOutputStyle);
-      if (outputStyleSection) {
-        sections.push(outputStyleSection);
-      }
+      sections.push(...environmentSections);
 
       // Context Management
       sections.push(buildContextManagementSection(promptOverrides?.["context-management"]));
@@ -210,6 +209,8 @@ export class ContextBuilder {
       if (gitSystemContextSection) {
         sections.push(gitSystemContextSection);
       }
+    } else {
+      sections.push(...environmentSections);
     }
 
     // 4. Skills appear as a meta user system-reminder, matching provider block layout.
@@ -226,7 +227,7 @@ export class ContextBuilder {
       }
     }
 
-    // 5. Meta user context: workspace instructions/project memory first, date second.
+    // 5. Meta user context (workspace instructions / project memory); the date is a separate announcement after it.
     const requestUserContextSection = buildRequestUserContextSection({
       userInstructions: this.config.userInstructions,
       memoryIndexContent: this.config.memoryIndexContent,
@@ -252,7 +253,7 @@ export class ContextBuilder {
     const totalTokens = orderedSections.reduce((sum, s) => sum + s.tokens, 0);
 
     const systemMessages = this.assembleSystemMessages(orderedSections);
-    const metaUserAttachments = this.assembleMetaUserAttachments(orderedSections);
+    const metaUserAttachments = buildMetaUserAttachments(orderedSections);
 
     return {
       sections: orderedSections,
@@ -315,36 +316,37 @@ export class ContextBuilder {
 
     return messages;
   }
+}
 
-  private assembleMetaUserAttachments(sections: ContextSection[]): ContextMetaUserAttachment[] {
-    const attachments: ContextMetaUserAttachment[] = [];
+// The runtime announces environment, model, and date from current facts; the builder keeps these
+// sections only as switches and for usage accounting.
+const RUNTIME_ANNOUNCED_SOURCES: ReadonlySet<ContextSection["source"]> = new Set([
+  "env_info",
+  "model",
+  "current_date",
+]);
 
-    const skillsContent = buildSkillsMetaUserBody(
+export function buildMetaUserAttachments(sections: ContextSection[]): ContextMetaUserAttachment[] {
+  // Route each source explicitly; date, environment, and Git are no longer folded into the instructions carrier.
+  const sourceMap: Partial<Record<ContextSection["source"], ContextMetaUserAttachment["source"]>> =
+    {
+      skills: "skills_listing",
+      request_user_context: "context_prefix",
+      session_context: "session_context",
+    };
+  const attachments: ContextMetaUserAttachment[] = [];
+  for (const attachmentSource of Object.values(sourceMap)) {
+    const content = buildSectionContent(
       sections.filter(
-        (section) => section.injectionTarget === "meta_user" && section.source === "skills",
+        (section) =>
+          section.injectionTarget === "meta_user" &&
+          !RUNTIME_ANNOUNCED_SOURCES.has(section.source) &&
+          (sourceMap[section.source] ?? "context_prefix") === attachmentSource,
       ),
     );
-    if (skillsContent) {
-      attachments.push({
-        source: "skills_listing",
-        content: skillsContent,
-      });
-    }
-
-    const contextContent = buildContextMetaUserBody(
-      sections.filter(
-        (section) => section.injectionTarget === "meta_user" && section.source !== "skills",
-      ),
-    );
-    if (contextContent) {
-      attachments.push({
-        source: "context_prefix",
-        content: contextContent,
-      });
-    }
-
-    return attachments;
+    if (content) attachments.push({ source: attachmentSource, content });
   }
+  return attachments;
 }
 
 function orderSectionsForInjection(sections: ContextSection[]): ContextSection[] {
@@ -362,26 +364,6 @@ function orderSectionsForInjection(sections: ContextSection[]): ContextSection[]
       (section) => section.injectionTarget === "meta_user" && section.cacheHint === "dynamic",
     ),
   ];
-}
-
-export function buildContextMetaUserBody(sections: ContextSection[]): string | null {
-  if (sections.length === 0) return null;
-
-  return [
-    "As you answer the user's questions, you can use the following context:",
-    buildSectionContent(sections),
-    "",
-    "      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.",
-  ].join("\n");
-}
-
-export function buildSkillsMetaUserBody(sections: ContextSection[]): string | null {
-  const content = buildSectionContent(sections);
-  if (!content) {
-    return null;
-  }
-
-  return content;
 }
 
 function buildSectionContent(sections: ContextSection[]): string {

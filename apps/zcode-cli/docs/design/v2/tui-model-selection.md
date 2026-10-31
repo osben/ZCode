@@ -39,6 +39,14 @@ The TUI does not own selection state; it only renders the per-session `cliDefaul
 
 A new CLI session initializes its default from `config.defaultModelSelection` of the Provider Config; a restored session reads the existing `runtime/model_selection` entry. Global saving keeps reusing the existing command path, introducing no new config file or migration. Background wake-up and Goal use the Session Selection directly and do not fill in a model from the CLI default. A temporary idle selection does not write an ordinary user entry.
 
+Draft（deferred）会话在首条输入前还没有 `session` 行。此时 `/model`、`/effort` 及 App 的选型/档位命令
+仍立即在内存生效，但写 `runtime/model_selection` entry 会因外键约束失败；这是已知时序，
+不是持久化故障：首条输入或外部活动持久化会话时，runtime 以当时的 Session Selection 统一写入同一稳定 entry。
+因此只有 `runtime.isSessionPersisted()` 仍为 false 时，这次写入失败记 debug
+（`session.model_selection.persist_deferred`）；会话已持久化后的写入失败仍记 warn
+（`session.model_selection.persist_failed`）。写入仍先尝试，不按“未持久化就跳过”处理，
+避免与进行中的首次持久化竞态而漏写较新的选择。
+
 The TUI sends `/model ...` through the same submit callback as other slash commands. The command center asks the app/server for current model state, available model options, and applies the selected model through an explicit app-level method. The TUI renders the returned command text and updates its session metadata projection from the returned `model` and `thoughtLevel` fields.
 
 For composer autocomplete, the CLI passes a read-only list of selectable models

@@ -372,11 +372,25 @@ export function projectCausalityGraph(core: AnalysisCore, site: SiteGraph): Caus
     id === SINK_ID ? Number.MAX_SAFE_INTEGER : (minIssue.get(id) ?? 0);
   const lastIssueOf = (id: string): number =>
     id === SINK_ID ? Number.MAX_SAFE_INTEGER : (maxIssue.get(id) ?? 0);
-  const iterationRegionsOf = (id: string): string[] =>
-    [...(regionsOf.get(id) ?? [])].filter((region) => {
-      const kind = regionById.get(region)?.kind;
-      return kind === "loop" || kind === "fanout";
-    });
+  // Fix reason: sharesIteration re-filtered all regions ever seen at a site on every call. The
+  // time-feasibility check for phase copies (admits in phase-graph.ts) asks once per copy pair,
+  // and a site for a helper shared by many phases has thousands of regions, so the cost is copy
+  // pairs × regions (33 seconds with 25 fan-outs and 250 call sites). regionsOf is already final
+  // after the event scan above, so computing it once per site suffices.
+  const iterationRegionCache = new Map<string, ReadonlySet<string>>();
+  const iterationRegionsOf = (id: string): ReadonlySet<string> => {
+    let regions = iterationRegionCache.get(id);
+    if (regions === undefined) {
+      regions = new Set(
+        [...(regionsOf.get(id) ?? [])].filter((region) => {
+          const kind = regionById.get(region)?.kind;
+          return kind === "loop" || kind === "fanout";
+        }),
+      );
+      iterationRegionCache.set(id, regions);
+    }
+    return regions;
+  };
   /**
    * Do two sites share an enclosing iteration region? That is the one thing repetition can
    * realize, and it is why "b's position precedes a's" does not mean "b cannot follow a":
@@ -388,8 +402,8 @@ export function projectCausalityGraph(core: AnalysisCore, site: SiteGraph): Caus
    * by another would put a contradiction in one picture.
    */
   const sharesIteration = (a: string, b: string): boolean => {
-    const enclosing = new Set(iterationRegionsOf(b));
-    return iterationRegionsOf(a).some((region) => enclosing.has(region));
+    const enclosing = iterationRegionsOf(b);
+    return [...iterationRegionsOf(a)].some((region) => enclosing.has(region));
   };
   /**
    * Can `to` really run again after `from`? A back edge in issue order is only
@@ -411,7 +425,7 @@ export function projectCausalityGraph(core: AnalysisCore, site: SiteGraph): Caus
    */
   const realizableCarry = (from: string, to: string): boolean => {
     if (from === to) {
-      return iterationRegionsOf(to).length > 0 || lastIssueOf(to) > positionOf(to);
+      return iterationRegionsOf(to).size > 0 || lastIssueOf(to) > positionOf(to);
     }
     return sharesIteration(from, to);
   };

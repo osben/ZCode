@@ -24,6 +24,7 @@ import {
   flushAsyncWork,
   replaceComposerDraftSpy,
   renderLateAckComposer,
+  ROOT_DRAFT_SCOPE,
 } from "./v4ConversationComposerLateAckHarness.js";
 
 const { attachmentState, chatPromptEditorProps, editorApi } = vi.hoisted(() => ({
@@ -40,6 +41,14 @@ const { attachmentState, chatPromptEditorProps, editorApi } = vi.hoisted(() => (
   },
 }));
 
+// The draft owner (useDraftConfigControl) reads the session service and settings hooks; this suite
+// has no ServiceProvider, so both are stubbed. The owner's write paths are exercised unchanged.
+vi.mock("@/hooks/useZCodeSessionService.js", () => ({
+  useZCodeSessionService: () => ({}),
+}));
+vi.mock("@/hooks/useSettingService.js", () => ({
+  useSettings: () => ({ settings: {} }),
+}));
 vi.mock("@/components/ui/dialog.js", async () => {
   const React = await import("react");
   const Passthrough = ({ children }: { children?: ReactNode }) =>
@@ -152,6 +161,7 @@ vi.mock("@/v4/composer/V4ComposerToolbar.js", async () => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   chatPromptEditorProps.length = 0;
   attachmentState.prepareForSend.mockClear();
   editorApi.clear.mockClear();
@@ -187,11 +197,17 @@ describe("late worktree reservation ACK after navigation", () => {
       },
     });
     // The current draft is in Plan mode; the frozen submission was not.
-    persistV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT, {
-      text: "",
-      mode: "build",
-      planEnabled: true,
-    });
+    persistV4ComposerDraft(
+      "/workspace",
+      undefined,
+      V4_DRAFT_SCOPE_ROOT,
+      {
+        text: "",
+        mode: "build",
+        planEnabled: true,
+      },
+      ROOT_DRAFT_SCOPE,
+    );
     replaceComposerDraftSpy.mockClear();
     await act(async () => {
       useWorktreeFailureReturnStore.getState().requestDraftRestore("/workspace", failedScope);
@@ -433,11 +449,12 @@ describe("late worktree reservation ACK after navigation", () => {
   });
 
   it("restores the frozen submission inline after a failed reservation when the editor is empty", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const harness = renderLateAckComposer();
     harness.controls.beginOutcome = { ok: false };
     await act(async () => {
       chatPromptEditorProps.at(-1)!.onSubmit!("frozen failed text");
-      await flushAsyncWork();
+      await vi.advanceTimersByTimeAsync(0);
     });
     // Validation failures before a session exists keep the draft in the editor, not on a card.
     const recoveries = [
@@ -448,23 +465,45 @@ describe("late worktree reservation ACK after navigation", () => {
     // Text typed after the restore is ordinary draft input.
     await act(async () => {
       (chatPromptEditorProps.at(-1)!.onChange as (value: string) => void)("newer text after claim");
-      await flushAsyncWork();
+      await vi.advanceTimersByTimeAsync(0);
     });
-    const draftScope = readV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT);
+    // Typed text is staged until the 350ms silence window closes (docs/ui/task-scoped-composer-drafts.md).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(350);
+    });
+    const draftScope = readV4ComposerDraft(
+      "/workspace",
+      undefined,
+      V4_DRAFT_SCOPE_ROOT,
+      ROOT_DRAFT_SCOPE,
+    );
     expect(draftScope?.text).toBe("newer text after claim");
     expect(harness.onSendText).not.toHaveBeenCalled();
   });
 
   it("keeps the frozen submission on the recovery card when text was typed during the reservation", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const harness = renderLateAckComposer();
     harness.controls.beginOutcome = { ok: false };
+    // Let the mount-time scope restore land before typing; otherwise its pending window drops the change.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     await act(async () => {
       chatPromptEditorProps.at(-1)!.onSubmit!("frozen failed text");
       // Typed while the reservation is still pending: the failure must not overwrite it.
       (chatPromptEditorProps.at(-1)!.onChange as (value: string) => void)("typed during wait");
-      await flushAsyncWork();
+      await vi.advanceTimersByTimeAsync(0);
     });
-    const draftScope = readV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(350);
+    });
+    const draftScope = readV4ComposerDraft(
+      "/workspace",
+      undefined,
+      V4_DRAFT_SCOPE_ROOT,
+      ROOT_DRAFT_SCOPE,
+    );
     expect(draftScope?.text).toBe("typed during wait");
     const recoveries = [
       ...readV4WorktreeRecoveryDrafts("/workspace", undefined, "prepared-session-a"),

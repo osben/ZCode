@@ -10,6 +10,8 @@ export const providerProvisioningTriggerSchema = z.enum([
   "configured-default",
   "account-settings",
   "credential",
+  // User-triggered retry after the latest failure of the "Model providers" category on the data-sync page; emitted only by the Main coordinator.
+  "user-retry",
 ]);
 export type ProviderProvisioningTrigger = z.infer<typeof providerProvisioningTriggerSchema>;
 
@@ -103,6 +105,37 @@ export const providerProvisioningErrorCodeSchema = z.enum([
   "host-execution-failed",
 ]);
 export type ProviderProvisioningErrorCode = z.infer<typeof providerProvisioningErrorCodeSchema>;
+
+/** Trigger sources by which the Host notifies Main after saving a local Source; first online and user retry are produced only by the Main coordinator itself. */
+export type ProviderProvisioningSourceTrigger = Exclude<
+  ProviderProvisioningTrigger,
+  "environment-online" | "user-retry"
+>;
+
+/**
+ * The Main coordinator's in-memory record of the latest execution result per lane (Environment key), queried by sourceServerId.
+ * It flows only between local Main → Host → Renderer; it is not persisted and does not enter remote workspace RPC contracts or the mobile whitelist.
+ * - `none`: no registered lane on that device (no project from that device open locally); nothing to push and nothing to retry.
+ * - `present`: a lane exists; `running` tells whether a drain is executing; `lastResult` contains only time, outcome, and a fixed stage code — never a Secret.
+ */
+export const providerProvisioningLaneStatusSchema = z.discriminatedUnion("lane", [
+  z.object({ lane: z.literal("none") }).strict(),
+  z
+    .object({
+      lane: z.literal("present"),
+      running: z.boolean(),
+      lastResult: z
+        .object({
+          at: z.number().int().nonnegative(),
+          outcome: z.enum(["success", "failed"]),
+          errorCode: providerProvisioningErrorCodeSchema.optional(),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict(),
+]);
+export type ProviderProvisioningLaneStatus = z.infer<typeof providerProvisioningLaneStatusSchema>;
 
 export const providerProvisioningResultSchema = z
   .object({

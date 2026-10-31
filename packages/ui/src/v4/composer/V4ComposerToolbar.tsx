@@ -443,6 +443,7 @@ function V4ComposerModelControlsImpl({
   modelSelectionState = MODEL_SELECTION_LOADING_STATE,
   modelSelectionReload,
   modelSelectionRefresh,
+  sessionId,
   provider,
   isWebRemoteControl = false,
   isMobileViewport = false,
@@ -476,7 +477,7 @@ function V4ComposerModelControlsImpl({
   const providerSettingsView =
     providerSettingsRead.state.status === "ready" ? providerSettingsRead.state.view : null;
   const providerSourcesLoading = providerSettingsRead.state.status !== "ready";
-  // 配置面存活服务读（过渡归宿 = 配置面 v4 化）：连接方式选中键喂 BigModel Team Plan 门控豁免。
+  // Live settings-panel service read (interim home until the settings panel moves to v4): the connection-kind selection key feeds the BigModel Team Plan gate exemption.
   const baseServices = useBaseWorkspaceServices();
   const { settings: sharedSettings } = useSettings({ services: baseServices });
   const {
@@ -616,7 +617,7 @@ function V4ComposerModelControlsImpl({
     ? contextStartPlanBalanceConfig
     : undefined;
 
-  // 按当前连接 family 拉取团队产品，避免 zai 团队误用 bigmodel 产品目录。
+  // Fetch team products by the current connection family so zai teams never pick up the bigmodel catalog.
   const connectionFamily =
     resolveModelProviderFamilySpecByProviderId(effectiveConfig?.provider ?? "")?.id ??
     sharedSettings?.providerFamilyDomain ??
@@ -659,7 +660,7 @@ function V4ComposerModelControlsImpl({
     scope: object;
     sources: CodingPlanUsageSource[];
   }>({ scope: teamUsageScope, sources: [] });
-  // 原因：独立来源缓存可复活已清空的目录；鉴权边界要在本次渲染就隔离，不能等待 Provider 刷新。
+  // Reason: a detached source cache can revive a cleared catalog; the auth boundary must be enforced in this render, not deferred to a Provider refresh.
   if (contextTeamUsageSourceCacheRef.current.scope !== teamUsageScope || !connectionAuthenticated)
     contextTeamUsageSourceCacheRef.current = { scope: teamUsageScope, sources: [] };
   const contextCodingPlanUsageProviderId =
@@ -672,8 +673,8 @@ function V4ComposerModelControlsImpl({
         ? resolveContextCodingPlanUsageSource({
             accountAccess: contextAccountProviderAccess?.access,
             cachedTeamSources: contextTeamUsageSourceCacheRef.current.sources,
-            // 原硬取 bigmodelCodingPlan 的 entitlement snapshot，
-            // zai team plan 查不到额度。改为按 connection.providerId 取对应 snapshot。
+            // Previously hard-coded to the bigmodelCodingPlan entitlement snapshot,
+            // so zai team plans found no quota. Now the snapshot is taken by connection.providerId.
             entitlementSnapshot: entitlements[contextPlanConnection.providerId]?.snapshot ?? null,
             providerId: contextPlanConnection.providerId,
             teamSelection: contextPlanConnection.selection,
@@ -696,8 +697,9 @@ function V4ComposerModelControlsImpl({
     const cache = contextTeamUsageSourceCacheRef.current.sources;
     const nextCache = cache.filter((source) => source.id !== contextCodingPlanUsageTeamSource.id);
     nextCache.unshift(contextCodingPlanUsageTeamSource);
-    // Team -> Personal(no_plan) -> Team 期间企业商品或个人 snapshot 可能短暂缺失。
-    // 保留最近解析过的团队 source，避免输入框 context 余额跟随水合顺序闪断。
+    // During Team -> Personal(no_plan) -> Team transitions, enterprise products or the personal snapshot may
+    // briefly disappear. Keep the most recently resolved team source so the composer context balance does not
+    // flicker with hydration order.
     contextTeamUsageSourceCacheRef.current = {
       scope: teamUsageScope,
       sources: nextCache.slice(0, 8),
@@ -1062,7 +1064,7 @@ function V4ComposerModelControlsImpl({
   const selectedPlanKey = connectionSwitch.pending
     ? connectionSwitch.previousKey
     : (selectedPlanGroup?.key ??
-      // 团队共用模型 value；当前过期行隐藏后，不能误选另一团队并阻止用户点击它。
+      // Team-shared model value; once the current expired row is hidden, it must not be mistaken for another team's and block the user from clicking it.
       planGroups.find(
         (group) =>
           group.connection?.selection?.kind !== "team-coding-plan" &&
@@ -1165,19 +1167,19 @@ function V4ComposerModelControlsImpl({
   const modelShortcutLabel = useShortcutCommandLabel("openModelMenu");
   const thoughtShortcutLabel = useShortcutCommandLabel("cycleThoughtLevel");
   const selectConnection = connectionSwitch.select;
-  // 原因：内联对象会在无关渲染时使 memo 选择器失效；按展示事实和回调缓存选项。
+  // Reason: inline objects invalidate memo selectors on unrelated renders; cache options by display facts and callbacks.
   const composerOptions = useMemo<ComposerModelOptions>(
     () => ({
       providerMenu: {
         groups: planGroups,
         selectedKey: selectedPlanKey,
         pending: connectionSwitch.pending,
-        // 团队目录查询不是用户的连接切换操作，不能把登录错误挂到 API 菜单。
+        // A team catalog query is not a user connection switch; login errors must not be attached to the API menu.
         error: connectionSwitch.error,
         // ISSUE-058: provider rows only browse; this runs when a model row is picked in a
         // browsed group, so the picked model (not the group's first one) is switched to.
         onSelectModel: (group, value) => {
-          // 原因：展示失败时设置可能已成功；已选连接仍须允许重试，不能被同 key 短路。
+          // Reason: when display shows failure the switch may already have succeeded; the selected connection must still allow retry, not be short-circuited by the same key.
           if (group.key === selectedPlanKey && !connectionSwitch.error) {
             handleModelValueChange(value);
             return;
@@ -1188,7 +1190,7 @@ function V4ComposerModelControlsImpl({
             return;
           }
           const providerId = decodeCustomModelValue(value)?.providerId;
-          // 原因：普通 API 原先绕过连接切换 owner，缺少 loading 且会暴露旧目录。
+          // Reason: ordinary API previously bypassed the connection-switch owner — no loading state, and it exposed a stale catalog.
           if (providerId)
             void selectConnection(
               {
@@ -1239,6 +1241,8 @@ function V4ComposerModelControlsImpl({
   // An empty model is a valid awaiting-selection state, including for existing conversations; do not hide the reselection entry.
   // Show it when selectable groups exist, and also when no groups exist but “Manage models” is available, so users always have a model entry point.
   const modelMenuVisible = modelSelectGroups.length > 0 || showManageModelsAction;
+  // Config restore is not a user reselection: while unknown, hide the "select model" label and skip the old/new label scroll animation on first restore.
+  const sessionConfigPending = sessionId !== null && draftConfig?.mode === undefined;
   // Root cause: the fixed-width mobile submenu ignored the available width Radix measured for the
   // current side, and the shared min-w-32 prevented further shrinking in very narrow spaces. Keep
   // the submenu interaction while treating the viewport edge as a hard limit.
@@ -1333,7 +1337,7 @@ function V4ComposerModelControlsImpl({
         !providerSourcesLoading &&
         planGroups.length === 0 &&
         !connectionSwitch.pending ? (
-        // 空配置是正常状态；直接复用 Provider 设置入口，不展开无名称、无模型的菜单。
+        // An empty config is a normal state; reuse the Provider settings entry directly instead of opening a menu with no names and no models.
         <Button
           type="button"
           variant="ghost"
@@ -1346,11 +1350,17 @@ function V4ComposerModelControlsImpl({
         </Button>
       ) : modelMenuVisible ? (
         <ModelConfigSelect
-          key={workspaceIdentity?.trim() || workspacePath}
+          key={JSON.stringify([
+            workspaceIdentity?.trim() || workspacePath,
+            sessionId,
+            sessionConfigPending,
+          ])}
           modelGroups={modelSelectGroups}
           contentAlign="center"
           normalizedValue={normalizedModelValue}
-          triggerLabel={modelTriggerDisplay.modelLabel}
+          triggerLabel={
+            sessionConfigPending && !effectiveConfig?.model ? "" : modelTriggerDisplay.modelLabel
+          }
           composerOptions={composerOptions}
           showManageModelsAction={showManageModelsAction}
           manageModelsLabel={manageModelsLabel}

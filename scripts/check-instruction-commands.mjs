@@ -432,6 +432,10 @@ export const allowlist = new Set([
   // the runner creates inside a throwaway workspace; they are not repo files.
   "apps/zcode-cli/docs/design/v2/compact/e2e.md::node scripts/emit-alpha.mjs",
   "apps/zcode-cli/docs/design/v2/compact/e2e.md::node scripts/emit-beta.mjs",
+  // Upstream-owned docs (3.17.1, kept verbatim): a past verification log that explains why the
+  // nested-workspace wrapper was NOT used, and a note about upstream's internal `build:lite` flow.
+  "apps/zcode-cli/docs/design/v2/tool/19-tool-search.md::pnpm --dir apps/zcode-cli",
+  "specs/zcode-unified-distribution.md::pnpm build:lite",
 ]);
 
 export function checkFiles(ctx, files, entries = allowlist) {

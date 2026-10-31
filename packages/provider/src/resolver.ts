@@ -18,7 +18,7 @@ import {
   type ZhipuAccountAccessConfig,
   type ChatgptAccountAccessConfig,
   type ModelId,
-  type ProviderConfig,
+  ProviderConfig,
   type ProviderConfigRule,
   ProviderConfigMap,
   type ProviderConfigObject,
@@ -261,7 +261,29 @@ export class ProviderConfigResolver {
         : undefined;
       return template ? template.overlay(personal) : personal;
     });
-    const effectiveProviders = effectiveBuiltinProviders.overlay(templatePersonalProviders);
+    // Legacy model-config migrations may keep only the API URL with no templateId.
+    // Fill in display material only, not the whole template, to avoid changing the
+    // user's model membership, auth, or request behavior.
+    const templateLogos = new Map<string, ProviderConfig["logo"]>();
+    for (const [, template] of providerTemplates?.entries() ?? []) {
+      const { api, logo } = template.config;
+      if (!api?.type || !api.baseUrl || !logo) continue;
+      const key = `${api.type}:${api.baseUrl.replace(/\/+$/, "")}`;
+      if (templateLogos.has(key) && templateLogos.get(key)?.key !== logo.key) {
+        templateLogos.set(key, undefined);
+      } else if (!templateLogos.has(key)) {
+        templateLogos.set(key, logo);
+      }
+    }
+    const effectiveProviders = effectiveBuiltinProviders
+      .overlay(templatePersonalProviders)
+      .mapConfigs((config) => {
+        if (config.logo !== undefined || !config.api?.type || !config.api.baseUrl) return config;
+        const logo = templateLogos.get(
+          `${config.api.type}:${config.api.baseUrl.replace(/\/+$/, "")}`,
+        );
+        return logo ? config.overlay(new ProviderConfig({ logo })) : config;
+      });
     const effectiveModelRules = ModelConfigRules.composeEffective(
       input.zcodeBuiltinModelRules,
       input.personalModels,

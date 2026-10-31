@@ -1,10 +1,10 @@
-# Subscription and Recovery: Connection-level Resync Is the Only Recovery Path
+# 订阅与恢复：连接级 resync 是唯一恢复路径
 
-> Current fact (V4 wire v3): refresh, gap, slow-subscriber overflow, relay reconnect, attachment rebuild and CLI runtime restart all converge to connection-scoped recovery. A gap/fault on an active subscription uses same-sub resync; only an attachment/runtime generation rebuild fresh-subscribes. Recovery does not change the desktop `continuous` / mobile `replayable` boundary.
+> 当前事实（V4 wire v3）：刷新、gap、慢订阅者溢出、relay 重连、attachment 重建和 CLI runtime restart 都收敛到 connection-scoped 恢复。活跃 subscription 的 gap/fault 走 same-sub resync；只有 attachment/runtime 代际重建才 fresh-subscribe。恢复不改变 desktop `continuous` / mobile `replayable` 边界。
 
-## 1. Subscription lifecycle
+## 1. 订阅生命周期
 
-The client cannot choose a profile. The host injects `connectionId/clientMode/profile` from the trusted attachment context and sends frames only to the port owning the subscription.
+客户端不能选择 profile。host 从可信 attachment 上下文注入 `connectionId/clientMode/profile`，并只把帧送回拥有 subscription 的端口。
 
 ```text
 client                  connection facade               CLI publisher
@@ -13,30 +13,44 @@ client                  connection facade               CLI publisher
   │ subscribe(topic, base?) ─►│                                │
   │                            │ inject connection/profile ───►│
   │◄─ SubscribeAck{subId,mode,logEpoch} ───────────────────────│
-  │   (after the ACK response is written)                      │
+  │   （ACK response 写出后）                                  │
   │◄════════ initial/online TopicWireFrame(subId) only ═══════│
   │                                                            │
   │ gap / fragment loss ── v4/conversation/resync{subId,base} ►│
-  │                         (single-flight per connection)      │
-  │◄──────────── resume; on another gap forceSnapshot ─────────│
+  │                         （同连接 single-flight）             │
+  │◄──────────── resume；若再次 gap 则 forceSnapshot ──────────│
   │                                                            │
   │ attachment close          │ unsubscribeAll(connectionId) ─►│
 ```
 
-Server ruling:
+服务端裁决：
 
-- `base.logEpoch` equals the current CLI epoch and `base.seq` is still within the retention window: `mode="resume"`, continue from `(base.seq, now]`.
-- No base, different epoch, base outside the retention window, or client requests `forceSnapshot`: `mode="snapshot"`.
-- Resubscribing the same `(connectionId, topic)` replaces only that connection's old subscription; another connection's same-topic subscription is unaffected.
-- `v4/conversation/resync` on an active subscription must exactly hit the `subscriptionId` in the current connection registry, keeping the same subId/profile/topic; the client cannot use resync to choose topic, connection or delivery profile. A valid base is re-ruled from that subscriber's client watermark, not replaced by the publisher's `sentSeq`.
+- `base.logEpoch` 与当前 CLI epoch 相同，且 `base.seq` 仍在保留窗内：`mode="resume"`，从 `(base.seq, now]` 续传。
+- 无 base、epoch 不同、base 超出保留窗或客户端要求 `forceSnapshot`：`mode="snapshot"`。
+- 同 `(connectionId, topic)` 重订阅只替换该连接的旧 subscription；另一连接的同 topic subscription 不受影响。
+- 活跃订阅的 `v4/conversation/resync` 必须精确命中当前 connection registry 中的
+  `subscriptionId`，保持同一 subId/profile/topic；客户端不能借 resync 选择 topic、connection
+  或 delivery profile。合法 base 从该订阅者的客户端水位重新裁决，不使用 publisher 的
+  `sentSeq` 代替。
 
-The subscribe response may carry only a small ACK: no embedded logical snapshot and no `frames[]` (the array as a whole could still exceed 1 MiB). After the ACK is written, the initial snapshot/resume is sent as ordinary owned-port wire notifications; until full assembly the client keeps the old store or loading state.
+subscribe response 只能携带小 ACK，不能内嵌 logical snapshot，也不能返回 `frames[]`（数组整体仍可能超过 1 MiB）。ACK 写出后，initial snapshot/resume 才以普通 owned-port wire notification 发送；客户端完整 assembly 前保持旧 store 或 loading 状态。
 
-`SubscribeAck.logEpoch` only proves this subscription admission and the server ruling; it **never creates a resume base out of thin air**. If the client really held a consistent projection before the request and ACK=`resume` confirms the same epoch, it may keep using that proven old base; ACK=`snapshot` invalidates the old base immediately until a complete owned snapshot applies atomically. Conversation, sessions-index and workspace-config with no existing base must wait until the logical snapshot is assembled, schema/checksum-validated and applied before establishing `{logEpoch,seq}`. If the initial faults/overflows before that, the client must recover with `base:null + forceSnapshot:true` (or fresh snapshot subscribe); building `{epoch,0}` from the ACK epoch is forbidden. In particular the sessions-index cold seed does not enter the delta log, so a forged seq=0 may get a legal empty resume and permanently miss the cold-session baseline. Without a valid base no delta is applied; a complete owned snapshot (including an online overflow snapshot) can still establish a base.
+`SubscribeAck.logEpoch` 只证明本次 subscription admission 与服务端裁决，**不会凭空创建 resume
+base**。客户端若在请求前确实持有一致 projection，且 ACK=`resume` 并确认同 epoch，可继续使用该
+已证明的旧 base；ACK=`snapshot` 则立即使旧 base 失效，直到一个完整 owned snapshot 原子 apply。
+无既有 base 的 conversation、sessions-index、workspace-config 必须等 logical snapshot 完成 assembly、
+schema/checksum 校验并 apply 后才能建立 `{logEpoch,seq}`。若 initial 在此之前 fault/overflow，客户端
+必须以 `base:null + forceSnapshot:true` 恢复（或 fresh snapshot subscribe）；禁止用 ACK epoch 拼出
+`{epoch,0}`。尤其 sessions-index 的 cold seed 不进入 delta log，伪造 seq=0 可能得到合法空 resume，
+却永久漏掉冷会话 baseline。无 valid base 时 delta 一律不 apply；完整 owned snapshot（包括 online
+overflow snapshot）仍可建立 base。
 
-### 1.1 Post-ACK physical batch and publisher reservation (04B)
+### 1.1 ACK 后 physical batch 与 publisher reservation（04B）
 
-The public result schema of all three subscribe kinds (conversation, sessions-index, workspace-config) is strict `{ ack }`. The CLI publisher first establishes a watermark-preserving reservation, the gateway encodes that logical frame into a complete physical notification batch, and the server stores `{messages, commit}` as a one-shot post-response outbox keyed by request id. The NDJSON connection mechanically executes per request:
+三类 subscribe（conversation、sessions-index、workspace-config）的公共 result schema
+都是 strict `{ ack }`。CLI publisher 先建立不破坏水位的 reservation，gateway 将该
+logical frame 编码为完整 physical notification batch，server 按 request id 保存
+`{messages, commit}` 一次性 post-response outbox。NDJSON connection 对每个请求机械执行：
 
 ```text
 publisher reserve R(frame, stable logicalFrameId, deliveryKind)
@@ -52,14 +66,34 @@ connection: take(requestId)
   -> commit R only after every line entered this connection-owned write queue
 ```
 
-1. On encode failure, a synchronous enqueue throw, or the connection closing mid-batch admission, do not commit; the next reserve must return the same `logicalFrameId` and the same logical content.
-2. A normal return of Node `Writable.write()` (including the `false` backpressure signal) means the line has been taken over by the current connection and commit is allowed; if an async EPIPE/close happens later, that connection epoch ends as a whole, the old subscription/outbox does not migrate to a new pipe, and the client must resubscribe on the new attachment.
-3. New events arriving while a reservation is in flight go to the next buffer and must not be eaten by the current commit. Unsubscribe/resubscribe invalidates the old reservation and a late commit returns false; but if the new initial encode fails before ACK admission, the replacement must roll back to the old subscription/mapping/flush state so the old client is not cut off.
-4. With no initial frame the outbox is empty and only the response is written. Online frames use the same reserve -> encode -> emit-all -> commit pipeline.
-5. Every reservation's `deliveryKind` is assigned authoritatively by the publisher and written unchanged by the encoder into every physical notification: subscribe admission yields `initial`, ordinary flush (including the publisher's own buffer-overflow snapshot) yields `online`, explicit `v4/conversation/resync` yields `recovery`. All fragments of one logical frame must carry the same value and the assembler fails closed on inconsistency. The UI must not guess the kind from "just called subscribe/resync", a Promise continuation or array position; a late online duplicate must not consume the recovery mark.
-6. What the host facade, UI transport and task-index syncer stage before the ACK takes effect is physical wire, at most 1,024 frames and 32 MiB transport bytes. Ownership must be decided before assembly; a foreign `subscriptionId` must not consume assembly memory. Staging overflow must clear the whole batch and explicitly fail/mark `fault.subscription.initialFrameStagingOverflow` (never just shift the oldest fragment). Stale generation, unsubscribe and close clear staging, assembly and timeout references together.
+编码失败、同步 enqueue 抛错或 connection 在 batch admission 中途关闭时不得
+commit；下次 reserve 必须返回相同 `logicalFrameId` 与相同 logical content。Node
+`Writable.write()` 正常返回（包括 `false` 背压信号）表示该 line 已被当前 connection
+接管，此时可以 commit；若稍后异步 EPIPE/close，该 connection epoch 整体终结，旧
+subscription/outbox 不会迁移到新管道，客户端必须在新 attachment 上重新订阅。
+reservation 在途时的新事件进入下一 buffer，不得被当前 commit 吃掉；退订/
+重订会作废旧 reservation，迟到 commit 返回 false；但新 initial encode 在 ACK admission
+前失败时，replacement 必须 rollback 到旧 subscription/mapping/flush state，旧客户端不能断流。
+没有 initial frame 时 outbox 为空，
+只写 response。online frame 使用同一 reserve → encode → emit-all → commit 管线。
 
-### 1.2 same-sub resync and reservation invalidation
+每个 reservation 必须由 publisher 权威赋值 `deliveryKind`，encoder 将它原样写入
+每个 physical notification：subscribe admission 产生 `initial`，普通 flush（包括
+publisher 自主 buffer-overflow snapshot）产生 `online`，显式
+`v4/conversation/resync` 产生 `recovery`。同一 logical frame 的所有 fragment 必须携带
+相同值，assembler 对不一致 fail closed。UI 禁止根据“刚调用过 subscribe/resync”、
+Promise continuation 或收到帧的数组位置猜测类型；迟到 online duplicate 也不能消耗
+recovery 标记。
+
+host facade、UI transport 与 task-index syncer 在 ACK 生效前暂存的是 physical
+wire，最多 1,024 帧、32 MiB transport bytes。ownership 判定必须在 assembly 之前；
+foreign `subscriptionId` 不得消耗 assembly 内存。暂存溢出必须清空整批并显式
+失败/标记 `fault.subscription.initialFrameStagingOverflow`，禁止只 shift 最旧分片。
+stale generation、unsubscribe 与 close 同时清除 staging、assembly 和超时引用。
+
+### 1.2 same-sub resync 与 reservation 作废
+
+`v4/conversation/resync` 的公共参数/结果固定为：
 
 ```ts
 interface ConversationResyncParams {
@@ -68,43 +102,53 @@ interface ConversationResyncParams {
   forceSnapshot?: boolean;
 }
 interface ConversationResyncResult {
-  ack: SubscribeAck; // subscriptionId unchanged
+  ack: SubscribeAck; // subscriptionId 保持不变
 }
 ```
 
-The server uses the same post-response outbox as subscribe: write the strict `{ack}` response, then the complete physical recovery batch in order, committing only after all enter the connection-owned queue. Resync admission immediately supersedes the sub's old reservation; a late commit of the old reservation must return `false`. Authoritative events entering after the old reservation are still covered by the new recovery snapshot/replay and are not lost through supersede.
+server 与 subscribe 使用同一 post-response outbox：先写 strict `{ack}` response，再按序写完整
+physical recovery batch，全部进入 connection-owned queue 后才 commit。resync admission 会立即
+supersede 该 sub 的旧 reservation；旧 reservation 的迟到 commit 必须返回 `false`。旧 reservation
+之后进入的权威事件仍由新 recovery snapshot/replay 覆盖，不能因 supersede 丢失。
 
-When `base` matches the epoch, is in the retention window and `forceSnapshot` is not requested, reply `mode="resume"` and regenerate replay from `(base.seq,currentSeq]`; otherwise `mode="snapshot"`. Another topic of the same connection, or the same topic on another connection, is unaffected.
+`base` 匹配 epoch、处于保留窗且未要求 `forceSnapshot` 时回 `mode="resume"`，从
+`(base.seq,currentSeq]` 重新生成 replay；其他情况回 `mode="snapshot"`。同一连接的另一个 topic、
+同 topic 的另一个 connection 均不受影响。
 
-## 2. Client canonical apply
+## 2. 客户端规范 apply
 
-The client first restores wire v3 physical fragments into one logical topic frame, keeping the envelope's authoritative `deliveryKind`; only when envelope, type, length, fragment total and checksum all pass does it apply atomically. A missing fragment, conflicting duplicate, checksum mismatch or assembly overflow never partially modifies the store.
+客户端先把 wire v3 的 physical fragment 还原为一个 logical topic frame，并保留信封中
+权威的 `deliveryKind`；只有 envelope、类型、长度、fragment 总数与 checksum 全部通过，
+才原子 apply。缺片、重复冲突、checksum 不符或 assembly 超限都不得部分修改 store。
 
-Before assembly, a per-subscription monotonic `logicalFrameOrdinal` gate runs: wire below the completed/fault/timed-out ordinal is silently dropped; at the same ordinal only duplicate fragments of the same `logicalFrameId` are allowed, a different id must raise `proto.frameAssemblyOrdinalConflict`; a higher ordinal may supersede the current fragments, but when the consumer aborts due to a same-batch fault it must keep an ordinal tombstone until unsubscribe cleans it.
+assembly 之前先执行每 subscription 的 `logicalFrameOrdinal` 单调闸门：小于已完成/
+fault/timed-out ordinal 的 wire 静默丢弃；同 ordinal 仅允许同 `logicalFrameId` 的重复片，
+换 id 必须产生 `proto.frameAssemblyOrdinalConflict`；更高 ordinal 可 supersede 当前残片，
+但 consumer 因同批 fault 执行 abort 时必须保留 ordinal tombstone，直到 unsubscribe 清理。
 
 ```ts
 function onLogicalFrame(store, frame, deliveryKind) {
-  if (frame.subscriptionId !== store.subscriptionId) return; // old generation
+  if (frame.subscriptionId !== store.subscriptionId) return; // 旧代际
 
   if (frame.payload.kind === "snapshot") {
-    store.replaceAll(frame.payload.snapshot); // replace wholesale
+    store.replaceAll(frame.payload.snapshot);                // 整体替换
     store.logEpoch = frame.payload.snapshot.logEpoch;
     store.seq = frame.toSeq;
     store.hasAppliedBase = true;
-    // An online overflow snapshot is authoritative and may establish a base, but cannot pose as recovery closing the flight.
+    // online overflow snapshot 是权威全量，可建立 base，但不能冒充 recovery 收口 flight。
     if (deliveryKind === "recovery") markRecoveryFrameSeen(store);
     return;
   }
 
   if (frame.toSeq <= store.seq) {
-    // aligned `(N,N]` or a recovery already covered by a newer snapshot is still a valid logical frame.
+    // aligned `(N,N]` 或已被更新 snapshot 覆盖的 recovery 仍是有效 logical frame。
     if (deliveryKind === "recovery") markRecoveryFrameSeen(store);
-    return; // late/duplicate, no projection change
+    return;                                                   // 迟到/重复，不改 projection
   }
 
   if (deliveryKind === "online" && store.recoveryFlight) {
-    // Residual online after recovery applied goes to the post-ACK successor; earlier online
-    // is covered by this recovery's authoritative range. Neither may consume the current recovery flight.
+    // recovery 已 apply 后的 residual online 交给 ACK 后 successor；此前的 online
+    // 已被本次 recovery 的权威区间覆盖。两者都不能消费当前 recovery flight。
     if (store.recoveryFlight.validFrameSeen) markSuccessorRecoveryNeeded(store);
     return;
   }
@@ -124,78 +168,110 @@ function onLogicalFrame(store, frame, deliveryKind) {
 }
 ```
 
-Closed rules:
+封闭规则：
 
-1. A snapshot always replaces wholesale, never merges.
-2. `toSeq <= localSeq` never re-modifies the projection and causes no extra resubscribe; if it is a complete, valid recovery logical frame it must still mark that flight as having received delivery.
-3. The first gap creates only one in-flight resync; until a `deliveryKind="recovery"` logical frame is fully validated and accepted, later gap/fault reuse the same flight (not cleared early when the RPC ACK arrives).
-4. Only a `deliveryKind="recovery"` `resume` frame having another hole upgrades the same flight and sends one more `forceSnapshot=true`; the state must survive across synchronous ACK activation; no infinite resume loop.
-5. While a snapshot/resume logical frame is fragmenting, the old store stays readable; the replace/apply happens once after assembly completes and validates.
-6. `base` lives and dies with the projection: after a refresh loses the in-memory projection you cannot keep just the seq; a subscribe ACK cannot establish a base alone. Only the epoch/seq after an initial/recovery/online logical frame applies atomically may resume.
-7. Once an initial assembly fault of the original subscribe enters same-sub recovery it must clear `awaitingInitial`; a later recovery gap upgrades by recovery rules, never wrongly fresh-subscribing.
-8. A resync ACK is not recovery completion. If within 30s after the ACK not even one complete recovery logical frame arrived (including zero wire / whole batch lost), a normal resume attempt upgrades once to force snapshot; a UI force attempt timing out again goes to an explicit ERROR; task-index fresh-subscribes only the faulted topic without affecting siblings.
-9. If, after a recovery logical frame was fully validated and accepted (mark seen) but before the ACK continuation, a non-duplicate online frame/gap shows up in the same batch, it must not be swallowed by the old flight; once the ACK closes the old flight, start an ordinary successor resync from the new applied base immediately.
-10. `markRecoveryFrameSeen` only marks that the authoritative recovery logical frame fully arrived; the flight closes only when both it and the ACK are satisfied. An aligned `(N,N]` or a recovery covered by a newer snapshot does not change the projection but must still be marked, so a zero-change recovery never dangles forever.
-11. **A deterministic content fault does not take the transient ladder.** Rules 3/4/8 assume a transient fault (lost fragments, timeout, checksum mismatch; a re-delivery may succeed). `proto.frameAssemblyInvalidPayload` is not: the bytes passed the length/checksum/UTF-8/JSON gates, and the rejection means the client cannot read the peer's **content**, while the `resume` tier would only deliver the same deltas again. So this fault sends one `forceSnapshot=true` directly (the only means that can yield different bytes, since a snapshot is regenerated and may no longer contain that content), **skipping the resume tier**; if the forced snapshot is still content-rejected, stop, and write the terminal state `fault.subscription.contentRejected` rather than `recoveryFailed`, and sessions-index does not schedule a backoff resubscribe (for a deterministic failure that loops forever: clear projection -> resubscribe -> rejected again). Self-healing paths remain: runtime generation change, fresh connect and user reconnect all resubscribe. The predicate and the two codes are in `packages/shared/src/zcode-protocol-v4/wire-fault.ts`; every other reason code is still treated as transient (misjudging a transient fault as deterministic leaves a self-healing gap stuck, worse than one useless retry).
+1. snapshot 永远整体替换，绝不 merge。
+2. `toSeq <= localSeq` 永远不重复修改 projection，也不产生额外 resubscribe；若它是完整、有效的
+   recovery logical frame，仍需标记该 flight 已收到交付。
+3. 第一个 gap 只创建一个在途 resync；在 `deliveryKind="recovery"` 的 logical frame 完整校验并被接受前，后续 gap/fault
+   复用同一 flight，而不是在 RPC ACK 到达时提前清除。
+4. 只有 `deliveryKind="recovery"` 的 `resume` frame 再次断档，才把同一 flight 升级并再发一次
+   `forceSnapshot=true`；状态必须跨过同步 ACK activation 存活，禁止无限 resume 循环。
+5. snapshot/resume logical frame 分片期间，旧 store 继续可读；assembly 完成并校验后一次性替换/apply。
+6. `base` 与投影同生共死：刷新丢失内存投影时不能只保留 seq；subscribe ACK 也不能单独
+   建立 base。只有 initial/recovery/online logical frame 原子 apply 后的 epoch/seq 才可续传。
+7. original subscribe 的 initial assembly fault 一旦进入 same-sub recovery，必须清除
+   `awaitingInitial`；随后的 recovery gap 优先按 recovery 规则升级，不能误走 fresh subscribe。
+8. resync ACK 不是恢复完成。ACK 后若 30s 内连一个完整 recovery logical frame 都未得到（零 wire/整批
+   丢失也包括在内），普通 resume 尝试升级一次 force snapshot；UI 的 force 尝试再超时进入明确
+   ERROR，task-index 则只对故障 topic fresh-subscribe，不影响 sibling。
+9. recovery logical frame 已完整校验并被接受（mark seen）后、ACK continuation 前若同批又出现非重复 online frame/gap，
+   不得被旧 flight 吞掉；ACK 收口旧 flight 后立即从新 applied base 启动普通 successor resync。
+10. `markRecoveryFrameSeen` 只标记权威 recovery logical frame 已完整到达；它与 ACK 两个条件都满足后才
+    收口 flight。aligned `(N,N]` 或已被更新 snapshot 覆盖的 recovery 虽不改 projection，也必须标记，
+    避免零变化恢复永久悬空。
+11. **确定性内容 fault 不走瞬态阶梯。** 规则 3/4/8 的升级默认 fault 是瞬态的（丢片、超时、校验和
+    不符，重投一次可能就好了）。`proto.frameAssemblyInvalidPayload` 不是：字节已过
+    length/checksum/UTF-8/JSON 四道关，被拒说明客户端读不懂对端发来的**内容**，而 `resume` 档只会把
+    同一批 delta 再投一遍。因此这类 fault 直接发一次 `forceSnapshot=true`（唯一可能产出不同字节的
+    手段——快照是重新生成的，可能已不含那份内容），**跳过 resume 档**；强制 snapshot 仍被内容拒绝时
+    停手，终态写 `fault.subscription.contentRejected` 而不是 `recoveryFailed`，且 sessions-index 不排
+    退避重订阅（那对确定性失败是永不收敛的循环：清空投影 → 重订阅 → 再被拒）。自愈路径仍在：
+    runtime 换代、fresh connect、用户重连都会重新订阅。判定函数与两个 code 见
+    `packages/shared/src/zcode-protocol-v4/wire-fault.ts`；其余 reason code 一律仍按瞬态处理——把瞬态
+    误判成确定性会让本该自愈的 gap 停在原地，那比多一次无用重试更坏。
 
-    Measured cost (2026-09-21, sess_4142de31): a tool card payload carrying two extra keys burned three frames on the ladder before failing closed; the user manually clicked "Reconnect" twice, each burning three more, and the session could never be opened. The decorative-payload fallback itself is in 10-protocol-spec §4.4.5 (display is not gated at the envelope layer); this rule is the backstop for required-field skew.
+    实测代价（2026-09-21，sess_4142de31）：一张工具卡载荷多带两个键，阶梯在同一份内容上烧掉三帧后
+    fail closed，用户手动「重新连接」两次、每次再烧三帧，会话再也打不开。装饰载荷本身的兜底见
+    10-protocol-spec §4.4.5（display 在信封层不设门），本规则是必填字段偏斜时的后备。
 
-## 3. Automatic recovery trigger matrix
+## 3. 自动恢复触发矩阵
 
-| Trigger                                       | Client/host action                                                                                                    | Authoritative recovery result                                            |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| Page refresh, new pane, new device            | subscribe without a valid base                                                                                        | snapshot                                                                 |
-| Short disconnect, in-memory projection intact | subscribe with `{logEpoch,seq}`                                                                                       | resume or snapshot                                                       |
-| delta gap                                     | single-flight `v4/conversation/resync`                                                                                | resume; another gap forces snapshot                                      |
-| `sendText` already `accepted                  | duplicate`, and after a short grace the queue item / real-user row with the same `sourceCommandId` is still invisible | single-flight `v4/conversation/resync` on the current owned subscription | resume or snapshot; recovers the projection only, does not replay the command |
-| fragment missing/checksum failure             | drop the whole assembly + resync                                                                                      | no half-applied state                                                    |
-| subscriber buffer over limit                  | publisher clears that sub's buffer, marks resync                                                                      | next send is only the latest snapshot                                    |
-| relay/attachment rebuild                      | after the v2 handshake automatically resubscribe all active topics                                                    | new subId; old frames dropped                                            |
-| CLI runtime restart                           | new `logEpoch`; client automatically resubscribes                                                                     | snapshot; old base not resumed                                           |
-| port close                                    | host `unsubscribeAll(connectionId)`                                                                                   | release buffer/assembly; other connections unaffected                    |
+| 触发 | 客户端/host 动作 | 权威恢复结果 |
+| --- | --- | --- |
+| 页面刷新、新 pane、新设备 | 无合法 base 时 subscribe | snapshot |
+| 短断，内存投影仍在 | 带 `{logEpoch,seq}` subscribe | resume 或 snapshot |
+| delta gap | single-flight `v4/conversation/resync` | resume；再 gap 强制 snapshot |
+| `sendText` 已 `accepted|duplicate`，短暂宽限期后同 `sourceCommandId` 的 queue item / real-user row 仍不可见 | 当前 owned subscription single-flight `v4/conversation/resync` | resume 或 snapshot；只恢复投影，不重放 command |
+| fragment 缺失/checksum 失败 | 丢弃整个 assembly + resync | 不产生半应用状态 |
+| subscriber buffer 超限 | publisher 清空该 sub buffer、标 resync | 下一次只发最新 snapshot |
+| relay/attachment 重建 | 完成 v2 握手后自动重订阅全部活跃 topic | 新 subId；旧帧丢弃 |
+| CLI runtime restart | 新 `logEpoch`；客户端自动重订阅 | snapshot；旧 base 不续传 |
+| port close | host `unsubscribeAll(connectionId)` | 释放 buffer/assembly，不影响其他连接 |
 
-Mobile relay/main only pass through payload and connection lifecycle. The raw adapter's `onSaturated/onDrained` is written by desktop main into the owning attachment's `connection-flow-v1` MessagePort sideband, and the host sends it into the CLI under the trusted connectionId. main/relay must not cache snapshots, fill gaps, maintain seq or choose a pause target themselves. The desktop MessagePort uses the same strict control/binary distinction; the continuous local link usually does not trigger network-level congestion.
+手机 relay/main 只透传 payload 与连接生命周期；raw adapter 的 `onSaturated/onDrained` 由 desktop main
+写入 owning attachment 的 `connection-flow-v1` MessagePort sideband，再由 host 以 trusted
+connectionId 送进 CLI。main/relay 不能缓存 snapshot、补 gap、维护 seq 或自行选择 pause target。
+桌面 MessagePort 使用同一严格 control/binary 区分，只是 continuous 本地链路通常不会触发网络级拥塞。
 
-conversation, sessions-index and workspace-config each hold an independent `{subscriptionId,appliedBase,recoveryFlight,recoveryFrameDeadline}`. A gap/assembly fault of one topic recovers only itself and must not clear a healthy sibling; task-index's pre-ACK overflow must leave the paused state and fresh-subscribe (never freeze permanently). A CLI runtime restart invalidates only the runtime and old subscriptions and does not destroy workspace-level persistent frame emitters; existing listeners receiving the restart signal make each active store full re-subscribe exactly once. Only a real workspace/service teardown disposes emitters and listeners.
+conversation、sessions-index 与 workspace-config 各自持有独立的
+`{subscriptionId,appliedBase,recoveryFlight,recoveryFrameDeadline}`。一个 topic 的 gap/assembly fault 只能恢复自己，
+不能清空健康 sibling；task-index 的 pre-ACK overflow 必须退出 paused 状态并 fresh-subscribe，不能
+永久 freeze。CLI runtime restart 只失效 runtime 与旧订阅，不销毁 workspace 级持久 frame emitters；
+现有 listener 收到 restart 信号后，各活跃 store 恰好 full re-subscribe 一次。真正 workspace/service
+teardown 才 dispose emitter 与 listener。
 
-## 4. Three kinds of volatile state, not an offline queue
+## 4. 三类易失状态，不是离线队列
 
 ```text
-1. subscriber flush buffer (per subscription, millisecond-level)
-   after filter + coalesce ≤500 ops and ≤max(1 MiB, snapshot upper bound); dropped on connection close
+1. subscriber flush buffer（每 subscription，毫秒级）
+   filter + coalesce 后 ≤500 ops 且 ≤max(1 MiB, snapshot 上界)；连接关闭即丢
 
-2. fragment assembly (per logical frame)
-   ≤16 MiB; atomic apply after full validation; dropped and resynced on failure
+2. fragment assembly（每 logical frame）
+   ≤16 MiB；完整校验后原子 apply；失败即丢并 resync
 
-3. session event log / projection (CLI authoritative)
-   event log bounded; the projection can always produce the latest snapshot
+3. session event log / projection（CLI 权威）
+   event log 有界；projection 始终能生成最新 snapshot
 ```
 
-The server accumulates no per-client persistent event queue for offline clients. After a long disconnect the client either replays the authoritative event log still in the window or takes a snapshot directly. A slow mobile subscription's flush-buffer overflow makes only itself resync and cannot block desktop or other panes of the same window.
+服务端不为离线客户端积压 per-client 持久事件队列。长断回来要么回放仍在窗口内的权威 event log，要么直接 snapshot。一个慢手机 subscription 的 flush buffer 溢出只能让它自己 resync，不能阻塞桌面或同窗口其他 pane。
 
-"No offline event queue" is not "no input queue": all committed busy/running input enters the CLI/runtime's single `CommandInbox` FIFO; that input queue is a conversation business fact, see [10-protocol-spec.md](./10-protocol-spec.md) §4.2.5/§6.
+这里的“无离线事件队列”不等于“无输入队列”：所有已经提交的 busy/running 输入都进入 CLI/runtime 的唯一 `CommandInbox` FIFO；该输入队列是 conversation 业务事实，见 [10-protocol-spec.md](./10-protocol-spec.md) §4.2.5/§6。
 
-## 5. Command and input recovery
+## 5. Command 与输入恢复
 
-The UI keeps a 24h pending-command registry for sent ordinary text/goal, containing a re-sendable payload; sensitive interactions keep only a digest. A record is deleted as soon as the QueueItem/guided projection appears; the registry only covers the authoritative-delivery-unknown window and is not a second queue.
+UI 为已发出的普通文本/goal 保存 24h pending-command registry，包含可重发 payload；敏感 interaction 只保存 digest。QueueItem/guided projection 出现即删除对应记录；registry 只覆盖权威投递未知窗口，不是第二份 queue。
 
 ```text
 send(commandId, payload)
         │
-        ├─ ACK / queue / row arrives ──> reconcile by sourceCommandId
+        ├─ ACK / queue / row 到达 ──> 用 sourceCommandId 对账
         │
-        └─ reconnect or ACK lost ───────> commands/query[{sessionId,commandId}]
+        └─ 重连或 ACK 丢失 ────────> commands/query[{sessionId,commandId}]
                                       │
-                                      ├─ duplicate/noop/failed -> close
-                                      ├─ discarded queue/guide -> silently settle
-                                      ├─ discarded startNow    -> resend with a new command only after user confirmation
-                                      └─ unknown               -> silently settle, no UI error
+                                      ├─ duplicate/noop/failed -> 收口
+                                      ├─ discarded queue/guide -> 静默清账
+                                      ├─ discarded startNow    -> 用户确认后才能用新 command 重发
+                                      └─ unknown               -> 保留待确认线索，不呈现 UI 错误
 ```
 
-The CLI queue is reliable only within the current process. On CLI restart an input that was admitted but not yet in the transcript is not auto-restored as an executable queue; a tombstone is written in the discarded-input ledger, and `commands/query` returns `failed` + `fault.command.inputDiscardedOnRestart` + a persisted `delivery`. The ledger only proves "this input was explicitly discarded" and carries no auto-execute semantics. The UI silently settles `queue/guide` and `unknown` with no authoritative conclusion without showing an error; only a `startNow` not in the transcript keeps its original text and attachment references and is resent with a **new commandId** after user confirmation.
+CLI queue 只保证当前进程内可靠。CLI restart 时，已 admitted 但尚未进入 transcript 的 input 不自动恢复为可执行 queue，而是在 discarded input ledger 写入 tombstone；`commands/query` 返回 `failed` + `fault.command.inputDiscardedOnRestart` + 持久 `delivery`。ledger 只用于证明“该输入已被明确丢弃”，不能携带自动执行语义。UI 对 `queue/guide` 静默清账；无权威结论的 `unknown` 保留待确认线索直到明确结果、权威投影或既有 TTL，不呈现错误；只有未进入 transcript 的 `startNow` 保留原文本和附件引用，待用户确认后以**新的 commandId** 重发。
 
-Server idempotency memory has three layers: `in-flight pinned / live queue-or-guide pinned / settled LRU`; the 512/session cap applies only to settled. query and execute share one key gate; persistence fallback builds one lazy index per session and updates it incrementally from new anchor/marker/child/discarded facts. Any persistence read failure must return `fault.command.queryUnavailable` and never pose as `unknown`; `unknown` itself is not cached.
+服务端幂等内存分层为 `in-flight pinned / live queue-or-guide pinned / settled LRU`；512/session
+上限只作用于 settled。query 与 execute 使用同一 key gate，持久化回源按 session 建一次惰性索引并由
+新 anchor/marker/child/discarded 事实增量更新。任一持久化读取失败必须返回
+`fault.command.queryUnavailable`，不能伪装成 `unknown`；`unknown` 本身不缓存。
 
-Final invariant: every committed input is in exactly one of `queue / guided row / transcript / explicit rejected|failed|discarded`. Lost ACK, gap, reconnect or restart must never cause "UI cleared but no authoritative record".
+最终不变量：每条已提交输入必须且只能处于 `queue / guided row / transcript / explicit rejected|failed|discarded` 之一。ACK 丢失、gap、重连或 restart 都不能造成“UI 已清空、权威层无记录”。
 
-Mirror invariant (renderer side): once an input is taken over authoritatively (ACK accepted/duplicate, or `sourceCommandId` reconciliation of a queue/row/marker), the composer text belonging to this submission must be cleared, and this obligation does not die with the composer component instance. A transport failure (such as a remote ChannelClient dispose) is only "ACK unknown", not "not admitted": the text may first be restored to the draft, but `{commandId, text}` must be registered in `composerSubmissionSettlement` (module-level, memory only), which holds the registry resolution subscription; after the pane is unmounted and rebuilt by a disconnect, the new composer claims settlement from it when backfilling the draft. If the user has kept editing the backfilled text, do not clear it; failed/unknown/discarded terminals delete the registration and keep the text.
+镜像不变量（renderer 侧）：一条输入一旦被权威接管（ACK accepted/duplicate，或 queue/row/marker 的 `sourceCommandId` 对账），composer 中属于这次提交的正文必须被清空，且这一义务不随 composer 组件实例消亡。传输层失败（如远端 ChannelClient dispose）只是“ACK 未知”，不是“未 admission”：正文可先恢复回草稿，但要把 `{commandId, text}` 登记到 `composerSubmissionSettlement`（模块级、仅内存），由它持有 registry resolution 订阅；pane 因断连卸载重建后，新 composer 回填草稿时向它认领结算。用户已在回填正文上继续编辑时不清空；failed/discarded 终态删除登记并保留正文；unknown 不是终态，保留登记与结算订阅。

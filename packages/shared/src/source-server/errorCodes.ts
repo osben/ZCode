@@ -4,6 +4,8 @@ export const SOURCE_SERVER_INSTALL_REQUIRED_ERROR_CODE = "source-server-install-
 export const SOURCE_SERVER_UPGRADE_REQUIRED_ERROR_CODE = "source-server-upgrade-required" as const;
 export const SOURCE_SERVER_UPDATE_RUNNING_TASKS_ERROR_CODE =
   "source-server-update-running-tasks" as const;
+export const SOURCE_SERVER_DOWNGRADE_UNCONFIRMED_ERROR_CODE =
+  "source-server-downgrade-unconfirmed" as const;
 export const WORKSPACE_TASK_IDENTITY_CONFLICT_ERROR_CODE =
   "workspace-task-identity-conflict" as const;
 export const WORKSPACE_CONFIG_FILE_CONFLICT_ERROR_CODE = "workspace-config-file-conflict" as const;
@@ -16,8 +18,14 @@ export const REMOTE_WORKSPACE_BIND_SESSION_MISSING_ERROR_CODE =
   "remote-workspace-bind-session-missing" as const;
 export const REMOTE_WORKSPACE_DIRECTORY_UNAVAILABLE_ERROR_CODE =
   "remote-workspace-directory-unavailable" as const;
+/** The remote project directory read did not return before its deadline; the directory itself is not necessarily unavailable, so a retry is allowed. */
 export const REMOTE_WORKSPACE_DIRECTORY_UNRESPONSIVE_ERROR_CODE =
   "remote-workspace-directory-unresponsive" as const;
+/**
+ * Deadline for opening a remote project directory (reading it and registering its identity).
+ * On timeout it reports REMOTE_WORKSPACE_DIRECTORY_UNRESPONSIVE_ERROR_CODE; Main's bind fallback must fire after it.
+ */
+export const REMOTE_WORKSPACE_PREPARATION_TIMEOUT_MS = 30_000;
 export const REMOTE_RECOVERY_BUDGET_EXHAUSTED_ERROR_CODE =
   "remote-recovery-budget-exhausted" as const;
 export const SOURCE_SERVER_IDENTITY_CHANGE_PENDING_ERROR_CODE =
@@ -28,6 +36,11 @@ export const SOURCE_SERVER_REMOVE_CALLBACK_FAILED_ERROR_CODE =
   "source-server-remove-callback-failed" as const;
 export const SOURCE_SERVER_REMOVE_PERSIST_FAILED_ERROR_CODE =
   "source-server-remove-persist-failed" as const;
+/** The remote Supervisor failed to stop Core and entered stop-failed, still holding the data-root lock (R2 §8.1). */
+export const SOURCE_SERVER_STOP_FAILED_ERROR_CODE = "source-server-stop-failed" as const;
+/** The remote Supervisor did not answer within the control timeout; the CLI does not force-kill it (R2 §8.1). */
+export const SOURCE_SERVER_CONTROL_UNRESPONSIVE_ERROR_CODE =
+  "source-server-control-unresponsive" as const;
 
 export const PUBLIC_ZCODE_ERROR_CODES = [
   "remote-authentication-failed",
@@ -49,6 +62,7 @@ export const PUBLIC_ZCODE_ERROR_CODES = [
   SOURCE_SERVER_INSTALL_REQUIRED_ERROR_CODE,
   SOURCE_SERVER_UPGRADE_REQUIRED_ERROR_CODE,
   SOURCE_SERVER_UPDATE_RUNNING_TASKS_ERROR_CODE,
+  SOURCE_SERVER_DOWNGRADE_UNCONFIRMED_ERROR_CODE,
   WORKSPACE_TASK_IDENTITY_CONFLICT_ERROR_CODE,
   WORKSPACE_CONFIG_FILE_CONFLICT_ERROR_CODE,
   WORKSPACE_MIGRATION_PLAN_DIVERGED_ERROR_CODE,
@@ -62,6 +76,8 @@ export const PUBLIC_ZCODE_ERROR_CODES = [
   SOURCE_SERVER_REMOVE_CALLBACK_MISSING_ERROR_CODE,
   SOURCE_SERVER_REMOVE_CALLBACK_FAILED_ERROR_CODE,
   SOURCE_SERVER_REMOVE_PERSIST_FAILED_ERROR_CODE,
+  SOURCE_SERVER_STOP_FAILED_ERROR_CODE,
+  SOURCE_SERVER_CONTROL_UNRESPONSIVE_ERROR_CODE,
 ] as const;
 
 export type PublicZCodeErrorCode = (typeof PUBLIC_ZCODE_ERROR_CODES)[number];

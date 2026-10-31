@@ -1043,9 +1043,10 @@ describe("ZCodeProtocolAgentServer", () => {
   });
 
   it("promotes a deferred record to immediate once the runtime reports the session persisted", () => {
-    // 2026-09-14 实机：中枢直接启动的会话由 runtime 落行（controlOnly 启动轮，没有首发），record 一直
-    // 是 deferred，sessions-index 视其为 draft 而跳过——侧栏永远不出现。record.persistence 是 runtime
-    // 事实的镜像，在事件入口对齐一次即覆盖所有持久化路径。
+    // 2026-09-14 live finding: hub-directly-started sessions are persisted by the runtime
+    // (controlOnly launch round, no first send), the record stayed deferred, and sessions-index
+    // treated it as a draft and skipped it — it never appeared in the sidebar. record.persistence
+    // mirrors runtime facts; aligning once at the event entry covers every persistence path.
     const ingest = vi.fn();
     let persisted = false;
     const record = {
@@ -1067,11 +1068,11 @@ describe("ZCodeProtocolAgentServer", () => {
       type: SessionEventType.SessionTitleUpdated,
     } satisfies SessionEvent;
 
-    // runtime 尚未持久化：仍是 draft。
+    // Runtime has not persisted yet: still a draft.
     onSessionEvent(context, record, event);
     expect(record.persistence).toBe("deferred");
 
-    // runtime 持久化之后的第一条事件：离开 draft，且对齐发生在 ingest 之前（同一条事件就能进列表）。
+    // First event after the runtime persists: leaves draft, and alignment happens before ingest (that same event can enter the list).
     persisted = true;
     ingest.mockImplementation(() => {
       expect(record.persistence).toBe("immediate");
@@ -1135,7 +1136,7 @@ describe("ZCodeProtocolAgentServer", () => {
 
     expect(record.updatedAt).toBe(1_700);
     expect(ingest).toHaveBeenCalledTimes(1);
-    // 保留 source detached child publisher 生命周期：路由 child 时同时登记 parent 归属。
+    // Preserve the source detached child publisher lifecycle: routing a child also registers the parent attribution.
     expect(ingest).toHaveBeenCalledWith("sess_child", event, "sess_parent");
   });
 
@@ -1234,8 +1235,9 @@ describe("ZCodeProtocolAgentServer", () => {
     });
   });
 
-  // M5 ③-3：usage query 的 v4 名字空间分派（L2）。数据访问层与旧 usage/stats、
-  // session/usage 共用（usage store 聚合），这里锁定 v4 方法名可达且结果过 v4 schema。
+  // M5 step ③-3: v4 namespace dispatch for usage queries (L2). The data access layer is shared
+  // with legacy usage/stats and session/usage (usage store aggregation); this locks in that the
+  // v4 method name is reachable and the result passes the v4 schema.
   it("serves v4/usage/stats through the usage data access layer", async () => {
     const server = new ZCodeProtocolAgentServer({
       createZCodeApp: (options) => createFakeApp(options),
@@ -1251,7 +1253,7 @@ describe("ZCodeProtocolAgentServer", () => {
       }),
     );
 
-    // 无 usage store 的兜底路径：返回空快照而非抛错（与旧 op 语义一致）。
+    // Fallback path without a usage store: returns an empty snapshot instead of throwing (matching the legacy op semantics).
     expect(result.range).toBe("7d");
     expect(result.timeZone).toBe("UTC");
     expect(result.source).toBe("agent-db");
@@ -1308,8 +1310,9 @@ describe("ZCodeProtocolAgentServer", () => {
           clientMode: "desktop-continuous",
         },
       });
-      // staging 已在 ACK 内加入可选 openTiming 诊断；这里守住 response 仍只承载 ACK，
-      // 初始 frame 仍必须进入 request-scoped outbox，不把诊断字段误判成 initial payload。
+      // staging already adds optional openTiming diagnostics inside the ACK; guard that the
+      // response still carries only the ACK and the initial frame still goes to the
+      // request-scoped outbox — the diagnostic field must not be misread as initial payload.
       expect(response).toMatchObject({
         id,
         result: {
@@ -1317,8 +1320,8 @@ describe("ZCodeProtocolAgentServer", () => {
             subscriptionId: expect.any(String),
             mode: "snapshot",
             logEpoch: expect.any(String),
-            // 会话主题的 ACK 额外携带 session open 计时遥测（staging 的 ARMS 面）；
-            // 列表/配置主题没有会话可计时，不带这个键。
+            // Session-topic ACKs additionally carry session-open timing telemetry (staging's ARMS side);
+            // list/config topics have no session to time and omit this key.
             ...(index === 0 ? { openTiming: expect.any(Object) } : {}),
           },
         },
@@ -1586,7 +1589,7 @@ describe("ZCodeProtocolAgentServer", () => {
       throw new Error("Expected subscribe response");
     }
     const subscribed = v4ConversationSubscribeResultSchema.parse(subscribedResponse.result);
-    // 初始 batch admission 后才开始 same-sub recovery。
+    // same-sub recovery starts only after the initial batch admission.
     expect(server.takePostResponseMessages("subscribe-before-resync").length).toBeGreaterThan(0);
 
     const input = new PassThrough();
@@ -1656,7 +1659,7 @@ describe("ZCodeProtocolAgentServer", () => {
     expect(createRecord?.context.rootTraceId).toBe("trace_from_app");
   });
 
-  it("refreshes MCP list statuses through the protocol process MCP port", async () => {
+  it("keeps project plugin roots and untrusted project MCP disconnected during refresh", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-protocol-mcp-list-"));
     const workspacePath = join(root, "workspace");
     const pluginRoot = join(root, "plugin");
@@ -1713,24 +1716,14 @@ describe("ZCodeProtocolAgentServer", () => {
       });
 
       expect(connectedConfigs).toHaveLength(1);
-      expect(connectedConfigs[0]?.["plugin:status-plugin:plugin-live"]).toMatchObject({
-        command: "plugin-server",
-        type: "stdio",
-      });
-      expect(connectedConfigs[0]?.["project-only"]).toMatchObject({
-        command: "project-server",
-        type: "stdio",
-      });
+    // Old fixtures still expected project config to auto-load plugins and start MCP; the current contract requires user install and workspace trust.
+      expect(connectedConfigs[0]?.["plugin:status-plugin:plugin-live"]).toBeUndefined();
+      expect(connectedConfigs[0]?.["project-only"]).toBeUndefined();
       expect(result).toMatchObject({
         statuses: {
-          "plugin:status-plugin:plugin-live": {
-            status: "connected",
-            toolCount: 3,
-            transport: "stdio",
-          },
           "project-only": {
-            status: "connected",
-            toolCount: 3,
+            status: "untrusted",
+            toolCount: 0,
             transport: "stdio",
           },
         },
@@ -1812,7 +1805,7 @@ describe("ZCodeProtocolAgentServer", () => {
     }
   });
 
-  it("reads MCP list statuses without replace disconnects in status mode", async () => {
+  it("does not read or disconnect another workspace MCP lease in status mode", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-protocol-mcp-list-status-"));
     const workspacePath = join(root, "workspace");
     const connectedConfigs: Record<string, McpServerConfig>[] = [];
@@ -1872,19 +1865,13 @@ describe("ZCodeProtocolAgentServer", () => {
       });
 
       expect(connectedConfigs).toHaveLength(0);
-      expect(disconnectedNames).not.toContain("everything");
+      expect(disconnectedNames).toHaveLength(0);
+      // Without a settings lease for this workspace, connection state of other owners from the raw port must not be projected over.
+      expect((result as { statuses: Record<string, unknown> }).statuses.everything).toBeUndefined();
       expect(result).toMatchObject({
         statuses: {
-          everything: {
-            status: "connected",
-            toolCount: 9,
-            transport: "stdio",
-          },
           "plugin:canva:canva": {
-            authorization: {
-              authorizationUrl: "https://auth.canva.example.test/authorize",
-            },
-            status: "connecting",
+            status: "disconnected",
             transport: "http",
           },
         },
@@ -3373,7 +3360,7 @@ describe("ZCodeProtocolAgentServer", () => {
         .flatMap((message) => message.parts)
         .find((part) => part.type === "tool");
       expect(indexTool).toMatchObject({ state: { status: "completed", input: {}, output: "" } });
-      // index 读取不能污染后续 full 读取（CLI 侧不得原地改写缓存消息）。
+      // An index read must not pollute a later full read (the CLI must not rewrite cached messages in place).
       const fullAgain = await readWith(4, { contentProfile: "full" });
       expect(JSON.stringify(fullAgain.messages)).toBe(JSON.stringify(full.messages));
     } finally {
@@ -3759,6 +3746,7 @@ describe("ZCodeProtocolAgentServer", () => {
         "CronList",
         "CronUpdate",
         "CronDelete",
+        "CronPauseSelf",
       ]);
     }
   });
@@ -3817,7 +3805,7 @@ describe("ZCodeProtocolAgentServer", () => {
     expect(createdAppOptions[0]?.runtimeConfig?.modelContextBudgetStrategy).toBe("preflight-v1");
     expect(createdAppOptions[1]?.runtimeConfig?.nativeSearchEnhancementsEnabled).toBe(true);
     expect(createdAppOptions[1]?.runtimeConfig?.modelContextBudgetStrategy).toBe("preflight-v1");
-    // 开启 Settings 只解除总开关，不覆盖底层 features.memory/use 配置。
+    // Opening Settings lifts only the master switch; it does not override the underlying features.memory/use config.
     expect(createdAppOptions[1]?.runtimeConfig?.memory?.enabled).toBeUndefined();
   });
 
@@ -3868,8 +3856,13 @@ describe("ZCodeProtocolAgentServer", () => {
     }
   });
 
-  it.each([undefined, "remote:ssh:example.test:22:dev:/workspace/app"])(
-    "injects pull access only into advertised local sessions (%s)",
+  // Remote Hosts also hold subagent snapshots: whether to wire in depends only on the Host-declared capability; remote is not excluded by workspace identity.
+  it.each([
+    undefined,
+    "remote:ssh:example.test:22:dev:/workspace/app",
+    "remote:server:example-server:/workspace/app",
+  ])(
+    "injects pull access into advertised local and remote sessions (%s)",
     async (workspaceIdentity) => {
       const options: ZCodeAppOptions[] = [];
       const reads: unknown[] = [];
@@ -3900,7 +3893,7 @@ describe("ZCodeProtocolAgentServer", () => {
             id: message.id,
             result: {
               kind: "ready",
-              // Host 返回已解析快照；磁盘文档及启停状态不再跨这个协议边界。
+              // The Host returns resolved snapshots; on-disk documents and enabled state no longer cross this protocol boundary.
               profiles: [
                 {
                   name: "reviewer",
@@ -3928,10 +3921,7 @@ describe("ZCodeProtocolAgentServer", () => {
       });
       expect(reads).toEqual([]);
       const reader = options[0]?.readSubagentRuntimeConfig;
-      if (workspaceIdentity) {
-        expect(reader).toBeUndefined();
-        return;
-      }
+      expect(reader).toBeTypeOf("function");
       const input = {
         signal: new AbortController().signal,
         traceContext: { traceId: createTraceId(), sessionId: options[0]!.sessionId! },
@@ -4047,7 +4037,7 @@ describe("ZCodeProtocolAgentServer", () => {
       version: "test-version",
     });
     server.setNotificationSink(() => {
-      // 保持 Host 连接但故意不响应，覆盖 transport 不断开时的生命周期收口。
+      // Keep the Host connected but deliberately unresponsive, covering lifecycle closure when the transport does not disconnect.
     });
 
     try {
@@ -4636,7 +4626,10 @@ describe("ZCodeProtocolAgentServer", () => {
 
     expect(updated.settings.model.current).toEqual({ providerId: "glm", modelId: "glm-4-air" });
     expect(updated.runtime.stateRevision).toBe(created.runtime.stateRevision + 1);
-    expect(notifications).toMatchObject([
+    // The new lifecycle contract publishes starting/ready at create; the model-state assertion reads only its own notification domain.
+    expect(
+      notifications.filter((notification) => notification.method === "state.updated"),
+    ).toMatchObject([
       {
         method: "state.updated",
         params: {
@@ -4741,9 +4734,9 @@ describe("ZCodeProtocolAgentServer", () => {
       );
 
       expect(appOptions[0]?.runtimeConfig).toMatchObject({ mode: "plan" });
-      // 当前结构只能来自 Session 当前选择 entry；Protocol 不再把历史消息伪装成当前选择。
+      // The current structure can only come from the Session's current selection entry; the Protocol no longer disguises history messages as the current selection.
       expect(appOptions[0]?.runtimeConfig?.modelSelection).toBeUndefined();
-      // Process Registry 在协议入口启动时已经就绪，冷恢复不再创建旧 deferred adapter。
+      // The Process Registry is already ready when the protocol entry starts; cold recovery no longer creates the old deferred adapter.
       expect(appOptions[0]?.modelAdapter).toBeUndefined();
       expect(resumed.settings).toMatchObject({
         mode: { current: "plan" },
@@ -4783,10 +4776,12 @@ describe("ZCodeProtocolAgentServer", () => {
   });
 
   it("resume 回填持久化 taskType：workflow_child 绝不落回缺省 interactive", async () => {
-    // Bug 根因（2026-08-24 实测）：resume 物化 record 时丢掉了持久化的 taskType（fork 路径
-    // 一直带着，resume 路径没带），createRecord 落回缺省 "interactive"。于是被 resume 的
-    // dwf actor 会话通过 isTaskListSessionType 的筛，经 getSessionWorkspaceId 漏进
-    // sessions-index，desktop 任务列表里长出 25 条「workflow actor actor#N@k」假任务。
+    // Bug root cause (found live 2026-08-24): resume dropped the persisted taskType when
+    // materializing the record (the fork path always carried it, resume did not), so
+    // createRecord fell back to the default "interactive". The resumed dwf actor sessions then
+    // passed the isTaskListSessionType filter, leaked into sessions-index via
+    // getSessionWorkspaceId, and the desktop task list grew 25 fake "workflow actor
+    // actor#N@k" tasks.
     const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     const sessionId = "sess_dwf_actor_tasktype" as SessionId;
     try {
@@ -5050,6 +5045,100 @@ describe("ZCodeProtocolAgentServer", () => {
     expect(sendInputSettled).toBe(false);
     resolveSendInput();
     await sendInputCompletion;
+  });
+
+  it("legacy session/send 在 busy 入队时把显式 automation 身份交给 Core admission", async () => {
+    let receivedAutomationId: string | undefined;
+    let receivedToolDisallowlist: readonly string[] | undefined;
+    let resolveSendInputStarted!: () => void;
+    const sendInputStarted = new Promise<void>((resolve) => {
+      resolveSendInputStarted = resolve;
+    });
+    const server = new ZCodeProtocolAgentServer({
+      createZCodeApp: (options) =>
+        createFakeApp(options, {
+          sendInput: async (_input, sendOptions) => {
+            receivedAutomationId = sendOptions?.automationId;
+            receivedToolDisallowlist = sendOptions?.toolDisallowlist;
+            resolveSendInputStarted();
+            return {
+              kind: "queued",
+              pendingInputId: "pending-automation-queued",
+              queueLength: 1,
+              turnId: "turn-busy" as never,
+            };
+          },
+        }),
+      cwd: workspace.workspacePath,
+    });
+
+    const created = zcodeSessionStateSnapshotSchema.parse(
+      await requestResult(server, {
+        id: 1,
+        method: zcodeProtocolMethods.sessionCreate,
+        params: { workspace },
+      }),
+    );
+
+    await requestResult(server, {
+      id: 2,
+      method: zcodeProtocolMethods.sessionSend,
+      params: {
+        sessionId: created.session.sessionId,
+        content: "automation busy prompt",
+        automationId: "automation-queued",
+        inputId: "automation-queued:scheduled:run-1",
+        expectedRevision: created.runtime.stateRevision,
+      },
+    });
+    await sendInputStarted;
+
+    expect(receivedAutomationId).toBe("automation-queued");
+    expect(receivedToolDisallowlist).toEqual(["CronCreate"]);
+  });
+
+  it("does not restore automation identity from a caller-controlled inputId", async () => {
+    let receivedAutomationId: string | undefined;
+    let receivedToolDisallowlist: readonly string[] | undefined;
+    let resolveSendInputStarted!: () => void;
+    const sendInputStarted = new Promise<void>((resolve) => {
+      resolveSendInputStarted = resolve;
+    });
+    const server = new ZCodeProtocolAgentServer({
+      createZCodeApp: (options) =>
+        createFakeApp(options, {
+          sendInput: async (_input, options) => {
+            receivedAutomationId = options?.automationId;
+            receivedToolDisallowlist = options?.toolDisallowlist;
+            resolveSendInputStarted();
+            return { kind: "rejected", reason: "no_active_turn" };
+          },
+        }),
+      cwd: workspace.workspacePath,
+    });
+
+    const created = zcodeSessionStateSnapshotSchema.parse(
+      await requestResult(server, {
+        id: 1,
+        method: zcodeProtocolMethods.sessionCreate,
+        params: { workspace },
+      }),
+    );
+
+    await requestResult(server, {
+      id: 2,
+      method: zcodeProtocolMethods.sessionSend,
+      params: {
+        sessionId: created.session.sessionId,
+        content: "ordinary prompt",
+        inputId: "automation-other-task:manual:forged-run",
+        expectedRevision: created.runtime.stateRevision,
+      },
+    });
+    await sendInputStarted;
+
+    expect(receivedAutomationId).toBeUndefined();
+    expect(receivedToolDisallowlist).toBeUndefined();
   });
 
   it("emits prompt_completed after the active prompt lock is released", async () => {
@@ -5699,9 +5788,10 @@ describe("ZCodeProtocolAgentServer", () => {
     }
   });
 
-  // M5 ③-4：session/rewind、session/rewindCascade 旧协议词已删除（v4 fork/edit/retry
-  // 经原生 handler 直发 `/rewind conversation <messageId>` slash command，见
-  // zcode-protocol-v4/commands/handlers/fork-edit-retry.ts）；本用例收敛为 compact 单验证。
+  // M5 step ③-4: the session/rewind and session/rewindCascade legacy protocol words were
+  // removed (v4 fork/edit/retry sends the `/rewind conversation <messageId>` slash command
+  // directly via a native handler, see
+  // zcode-protocol-v4/commands/handlers/fork-edit-retry.ts); this case narrows to compact-only verification.
   it("runs compact through the explicit session protocol method", async () => {
     const submittedPrompts: string[] = [];
     const server = new ZCodeProtocolAgentServer({
@@ -7597,9 +7687,11 @@ describe("ZCodeProtocolAgentServer", () => {
                 targetCheckpointId: target?.targetCheckpointId,
                 targetMessageId: target?.targetMessageId,
               });
-              const forkedSessionId = "sess_forked" as SessionId;
-              // fake 必须遵守 core fork 契约：返回前 child 已落 store。旧夹具只返回 id，
-              // registerForkedSession 按生产语义回读时必然报 Persisted child not found。
+              // The two forks must generate distinct identities like real core, or the second one hits the already-initialized instance.
+              const forkedSessionId = `sess_forked_${forkTargets.length}` as SessionId;
+              // The fake must honor core's fork contract: the child is in the store before
+              // returning. Old fixtures returned only the id, and registerForkedSession,
+              // reading back with production semantics, reliably reported Persisted child not found.
               if (!(await store.getSession(forkedSessionId))) {
                 await store.createSession({
                   id: forkedSessionId,

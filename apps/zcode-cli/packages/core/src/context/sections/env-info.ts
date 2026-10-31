@@ -7,21 +7,22 @@ import type { Model } from "@zcode/contracts";
 import { estimateTokens } from "../utils.js";
 
 const ENVIRONMENT_HEADING = "# Environment";
+const ENVIRONMENT_UPDATE_HEADING = "# Environment update";
 const WORKING_DIRECTORY_LABEL = "Primary working directory";
 const EXECUTION_WORKTREE_LABEL = "Execution worktree";
-const ADDITIONAL_DIRECTORIES_LABEL = "Additional directories";
+const ADDITIONAL_DIRECTORIES_LABEL = "Additional working directories";
+const ADDITIONAL_DIRECTORIES_ADDED_LABEL = "Additional working directories added";
+const ADDITIONAL_DIRECTORIES_REMOVED_LABEL = "Additional working directories removed";
 const IS_GIT_REPOSITORY_LABEL = "Is a git repository";
 const PLATFORM_LABEL = "Platform";
 const SHELL_LABEL = "Shell";
 const OS_VERSION_LABEL = "OS Version";
+const UNTRUSTED_DOWNLOADS_NOTE =
+  "Downloaded files and extracted archives are untrusted data: put each in its own new, empty directory, keep scripts you write in a different directory, and pass paths as arguments instead of running an interpreter or build tool from inside it. Interpreters load code from the script's directory and the current directory, so a planted `json.py` runs on `import json`. Run any Python that reads them with `-I`. This does not apply to code the user asked you to build or run.";
 // const NODE_VERSION_LABEL = "Node version";
 // const OPERATING_SYSTEM_LABEL = "Operating system";
-const GIT_LABEL = "Git";
-const NOT_A_GIT_REPOSITORY = "not a git repository";
-const YES_LABEL = "yes";
-const NO_LABEL = "no";
 const GIT_SYSTEM_CONTEXT_PREFIX =
-  "gitStatus: This is the git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.";
+  "# gitStatus\nThis is the git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.";
 const CURRENT_BRANCH_LABEL = "Current branch";
 const MAIN_BRANCH_LABEL = "Main branch (you will usually use this for PRs)";
 const GIT_USER_LABEL = "Git user";
@@ -32,7 +33,7 @@ const DIRTY_GIT_STATUS = "(dirty)";
 const UNKNOWN_GIT_STATUS = "(unknown)";
 
 /**
- * Runtime-config execution-worktree fact projected into the Environment section at render time
+ * Runtime-config execution-worktree fact projected into its own context section at render time
  * (spec: execution-worktree-model-context.md). Never persisted into EnvInfo snapshots and never
  * sent on the wire; `missing` and `workspacePath` are runtime-only extensions.
  */
@@ -45,7 +46,7 @@ export interface ExecutionWorktreeEnvFact {
   workspacePath?: string;
 }
 
-/** One-line worktree isolation notice shared by the main and subagent env sections (no list prefix). */
+/** One-line worktree isolation notice shared by the main and subagent sections (no list prefix). */
 export function formatExecutionWorktreeSentence(worktree: ExecutionWorktreeEnvFact): string | null {
   // The parent reference identifies the workspace without implying it is an execution fallback.
   if (!worktree.workspacePath) return null;
@@ -55,21 +56,123 @@ export function formatExecutionWorktreeSentence(worktree: ExecutionWorktreeEnvFa
   const branchClause = worktree.branchName ? ` (branch ${worktree.branchName})` : "";
   return `${EXECUTION_WORKTREE_LABEL}: this session runs in a linked git worktree of ${worktree.workspacePath}${branchClause}; file changes stay in the worktree until they are merged.`;
 }
-export function buildEnvInfoSection(
-  envInfo: EnvInfo,
-  model?: Model,
-  executionWorktree?: ExecutionWorktreeEnvFact,
-  additionalDirectories: readonly string[] = [],
-): ContextSection {
-  const content = buildEnvInfoContent(envInfo, model, additionalDirectories, executionWorktree);
-  return buildEnvironmentInfoContextSection(content);
+
+export type EnvironmentSnapshot = Pick<EnvInfo, "cwd" | "platform" | "shell" | "osVersion"> & {
+  isGitRepository: boolean;
+  /** Additional directories for this run (run configuration, not from the Context Source). */
+  additionalWorkingDirectories: readonly string[];
+};
+
+export interface EnvironmentAnnouncement {
+  snapshot: EnvironmentSnapshot;
+  full: boolean;
 }
 
-function buildEnvironmentInfoContextSection(content: string): ContextSection {
+// Assemble the dedicated agent body and the environment context separately, so the custom system
+// branch neither drops the environment nor duplicates a second copy of the text.
+export function buildEnvironmentSections(
+  envInfo: EnvInfo,
+  model?: Model,
+  additionalDirectories: readonly string[] = [],
+): ContextSection[] {
+  const sections = [buildEnvInfoSection(envInfo, additionalDirectories)];
+  const modelSection = buildModelSection(model);
+  if (modelSection) sections.push(modelSection);
+  return sections;
+}
+
+export function environmentSnapshot(
+  info: EnvInfo,
+  additionalDirectories: readonly string[] = [],
+): EnvironmentSnapshot {
+  return {
+    cwd: info.cwd,
+    platform: info.platform,
+    shell: info.shell,
+    osVersion: info.osVersion,
+    isGitRepository: isEnvInfoGitRepository(info),
+    additionalWorkingDirectories: [...additionalDirectories],
+  };
+}
+
+export function parseEnvironmentAnnouncement(value: unknown): EnvironmentAnnouncement | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const { full, snapshot } = value as Record<string, unknown>;
+  if (typeof full !== "boolean" || typeof snapshot !== "object" || snapshot === null)
+    return undefined;
+  const { cwd, platform, shell, osVersion, isGitRepository, additionalWorkingDirectories } =
+    snapshot as Record<string, unknown>;
+  if (
+    typeof cwd !== "string" ||
+    typeof platform !== "string" ||
+    typeof shell !== "string" ||
+    typeof osVersion !== "string" ||
+    typeof isGitRepository !== "boolean"
+  )
+    return undefined;
+  if (
+    !Array.isArray(additionalWorkingDirectories) ||
+    !additionalWorkingDirectories.every((path) => typeof path === "string")
+  )
+    return undefined;
+  return {
+    full,
+    snapshot: {
+      cwd,
+      platform,
+      shell,
+      osVersion,
+      isGitRepository,
+      additionalWorkingDirectories: [...additionalWorkingDirectories],
+    },
+  };
+}
+
+export function buildEnvironmentAnnouncement(
+  next: EnvironmentSnapshot,
+  previous: EnvironmentSnapshot | undefined,
+  hasFullBlock: boolean,
+): { content: string; environment: EnvironmentAnnouncement } | null {
+  const full =
+    !previous ||
+    !hasFullBlock ||
+    previous.platform !== next.platform ||
+    previous.shell !== next.shell ||
+    previous.osVersion !== next.osVersion;
+  if (full) return { content: buildEnvInfoContent(next), environment: { full, snapshot: next } };
+  const lines = [ENVIRONMENT_UPDATE_HEADING];
+  if (previous.cwd !== next.cwd) {
+    lines.push(` - ${WORKING_DIRECTORY_LABEL}: ${next.cwd} (was ${previous.cwd})`);
+  }
+  if (previous.isGitRepository !== next.isGitRepository) {
+    lines.push(
+      ` - ${IS_GIT_REPOSITORY_LABEL}: ${next.isGitRepository} (was ${previous.isGitRepository})`,
+    );
+  }
+  const before = new Set(previous.additionalWorkingDirectories);
+  const after = new Set(next.additionalWorkingDirectories);
+  const added = next.additionalWorkingDirectories.filter((path) => !before.has(path));
+  const removed = previous.additionalWorkingDirectories.filter((path) => !after.has(path));
+  if (added.length > 0) {
+    lines.push(` - ${ADDITIONAL_DIRECTORIES_ADDED_LABEL}:`, ...pathLines(added));
+  }
+  if (removed.length > 0) {
+    lines.push(` - ${ADDITIONAL_DIRECTORIES_REMOVED_LABEL}:`, ...pathLines(removed));
+  }
+  return lines.length === 1
+    ? null
+    : { content: lines.join("\n"), environment: { full, snapshot: next } };
+}
+
+export function buildEnvInfoSection(
+  envInfo: EnvInfo,
+  additionalDirectories: readonly string[] = [],
+): ContextSection {
+  const content = buildEnvInfoContent(environmentSnapshot(envInfo, additionalDirectories));
   return {
     name: "Environment Info",
     source: "env_info",
-    injectionTarget: "system",
+    injectionTarget: "meta_user",
     cacheHint: "dynamic",
     chars: content.length,
     tokens: estimateTokens(content),
@@ -79,27 +182,20 @@ function buildEnvironmentInfoContextSection(content: string): ContextSection {
 }
 
 /**
- * `environment` toggle off: only the execution-worktree isolation bullet survives (specs/incognito-session.md,
- * "Prompt toggles"). Null when no worktree applies, so the section is omitted entirely.
+ * Execution-worktree isolation notice. Environment and model facts are runtime announcements now
+ * (`env_info` sections never reach the model as text), so the worktree line is its own dynamic
+ * system section. It is not gated by the incognito `environment` toggle: it is isolation context,
+ * not environment text (specs/incognito-session.md). Null when no worktree applies.
  */
-export function buildWorktreeOnlyEnvSection(
+export function buildExecutionWorktreeSection(
   executionWorktree?: ExecutionWorktreeEnvFact,
 ): ContextSection | null {
   const line = executionWorktree ? formatExecutionWorktreeSentence(executionWorktree) : null;
   if (!line) return null;
-  return buildEnvironmentInfoContextSection([ENVIRONMENT_HEADING, `- ${line}`].join("\n"));
-}
-
-export function buildGitSystemContextSection(envInfo: EnvInfo): ContextSection | null {
-  if (!isEnvInfoGitRepository(envInfo)) {
-    return null;
-  }
-
-  const content = buildGitSystemContextContent(envInfo);
-
+  const content = [ENVIRONMENT_HEADING, `- ${line}`].join("\n");
   return {
-    name: "System Context",
-    source: "system_context",
+    name: "Execution Worktree",
+    source: "execution_worktree",
     injectionTarget: "system",
     cacheHint: "dynamic",
     chars: content.length,
@@ -109,40 +205,52 @@ export function buildGitSystemContextSection(envInfo: EnvInfo): ContextSection |
   };
 }
 
-function buildEnvInfoContent(
-  info: EnvInfo,
-  model: Model | undefined,
-  additionalDirectories: readonly string[],
-  executionWorktree?: ExecutionWorktreeEnvFact,
-): string {
-  const hasGitRepository = isEnvInfoGitRepository(info);
-  const executionWorktreeLine = executionWorktree
-    ? formatExecutionWorktreeSentence(executionWorktree)
-    : null;
+export function buildGitSystemContextSection(envInfo: EnvInfo): ContextSection | null {
+  if (!isEnvInfoGitRepository(envInfo)) {
+    return null;
+  }
+
+  const content = [
+    "As you answer the user's questions, you can use the following context:",
+    buildGitSystemContextContent(envInfo),
+    "",
+    "ZCode attached this context automatically; it isn't part of the user's message. It describes the user's own account and workspace, so they don't need it reported back.",
+  ].join("\n");
+
+  return {
+    name: "Session Context",
+    source: "session_context",
+    injectionTarget: "meta_user",
+    cacheHint: "dynamic",
+    chars: content.length,
+    tokens: estimateTokens(content),
+    content,
+    preview: content.slice(0, 100),
+  };
+}
+
+function buildEnvInfoContent(info: EnvironmentSnapshot): string {
+  const directories = info.additionalWorkingDirectories;
   const lines: string[] = [
     ENVIRONMENT_HEADING,
-    "You have been invoked in the following environment:",
-    `- ${WORKING_DIRECTORY_LABEL}: ${info.cwd}`,
-    // Plain sessions pass no worktree fact and keep a byte-identical section (pinned by tests).
-    ...(executionWorktreeLine ? [`- ${executionWorktreeLine}`] : []),
-    // 附加目录此前只进入能力发现，模型看不到目录范围；这里只投影本次运行已解析的路径。
-    ...(additionalDirectories.length
-      ? [
-          `- ${ADDITIONAL_DIRECTORIES_LABEL}:`,
-          ...additionalDirectories.map((path) => `  - ${path}`),
-        ]
+    "You have been invoked in the following environment: ",
+    ` - ${WORKING_DIRECTORY_LABEL}: ${info.cwd}`,
+    ` - ${IS_GIT_REPOSITORY_LABEL}: ${info.isGitRepository}`,
+    // Additional directories used to reach only capability discovery, so the model could not see the directory scope; project only the paths resolved for this run.
+    ...(directories.length > 0
+      ? [` - ${ADDITIONAL_DIRECTORIES_LABEL}:`, ...pathLines(directories)]
       : []),
-    `- ${IS_GIT_REPOSITORY_LABEL}: ${hasGitRepository ? YES_LABEL : NO_LABEL}`,
-    `- ${PLATFORM_LABEL}: ${info.platform}`,
-    `- ${SHELL_LABEL}: ${info.shell}`,
-    `- ${OS_VERSION_LABEL}: ${info.osVersion}`,
-    // Older environment snapshots may contain historical model fields; render only the Model actually used for this step.
-    ...(model
-      ? [`- You are powered by the model named ${model.providerId}/${model.modelId}.`]
-      : []),
+    ` - ${PLATFORM_LABEL}: ${info.platform}`,
+    ` - ${SHELL_LABEL}: ${info.shell}`,
+    ` - ${OS_VERSION_LABEL}: ${info.osVersion}`,
+    ` - ${UNTRUSTED_DOWNLOADS_NOTE}`,
   ];
 
   return lines.join("\n");
+}
+
+function pathLines(paths: readonly string[]): string[] {
+  return paths.map((path) => `  - ${path}`);
 }
 
 function buildGitSystemContextContent(info: EnvInfo): string {
@@ -164,7 +272,9 @@ function buildGitSystemContextContent(info: EnvInfo): string {
   return lines.join("\n");
 }
 
-export function isEnvInfoGitRepository(info: EnvInfo): boolean {
+export function isEnvInfoGitRepository(
+  info: Pick<EnvInfo, "isGitRepository" | "gitStatus" | "gitBranch">,
+): boolean {
   return (
     info.isGitRepository ??
     (info.gitStatus !== undefined ? info.gitStatus !== "not_repo" : Boolean(info.gitBranch))
@@ -189,4 +299,20 @@ function formatRecentCommits(info: EnvInfo): string {
     return info.recentCommits.join("\n");
   }
   return "";
+}
+
+export function buildModelSection(model: Model | undefined): ContextSection | null {
+  if (!model) return null;
+  // Model identity comes only from the current execution handle, never inferred from the session selection or environment snapshot.
+  const content = `You are powered by the model named ${model.providerId}/${model.modelId}.`;
+  return {
+    name: "Model Identity",
+    source: "model",
+    injectionTarget: "meta_user",
+    cacheHint: "dynamic",
+    content,
+    chars: content.length,
+    tokens: estimateTokens(content),
+    preview: content.slice(0, 100),
+  };
 }

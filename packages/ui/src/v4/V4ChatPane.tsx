@@ -43,6 +43,7 @@ export interface V4ChatPaneProps {
   /** Prompt 模板埋点当前仅覆盖 Desktop。 */
   isDesktop?: boolean;
   readOnly?: boolean;
+  readOnlyReason?: string;
   allowEscapeStopOutsidePane?: boolean;
   compactForRemoteControl?: boolean;
   /** CLI session id；null = draft 首发。 */
@@ -103,6 +104,7 @@ export function V4ChatPane({
   selectionSideChat = false,
   isDesktop = false,
   readOnly = false,
+  readOnlyReason,
   allowEscapeStopOutsidePane = false,
   compactForRemoteControl = false,
   sessionId,
@@ -167,6 +169,7 @@ export function V4ChatPane({
         paneId="workspace-main"
         readOnly={readOnly}
         selectionSideChat={selectionSideChat}
+        readOnlyReason={readOnlyReason}
         allowEscapeStopOutsidePane={allowEscapeStopOutsidePane}
         sessionId={sessionId}
         openTrigger={openTrigger}

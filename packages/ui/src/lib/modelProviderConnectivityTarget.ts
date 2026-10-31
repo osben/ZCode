@@ -15,6 +15,8 @@ function isRemoteWorkspaceTab(tab: ConnectivityWorkspaceTab | null | undefined):
 /**
  * Provider Settings belongs to the local Environment; when connectivity checks need a cwd, choose only a local workspace.
  * A remote tab's workspacePath belongs to a remote filesystem and cannot be passed directly to the Local Host.
+ * An empty return means there is no local tab; the caller falls back to the local Host's
+ * conversation directory.
  */
 export function resolveModelProviderConnectivityWorkspacePath(params: {
   activeWorkspacePath?: string | null;

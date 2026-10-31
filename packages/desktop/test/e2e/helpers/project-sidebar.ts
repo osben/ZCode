@@ -16,7 +16,7 @@ import {
   virtualProjectActionTestId,
 } from "@zcode/shared/test-ids";
 
-/** 开始真实项目拖拽；调用方继续验证并通过 Escape / releaseActions 取消。 */
+/** Start a real project drag; the caller continues verifying and cancels via Escape / releaseActions. */
 export async function startProjectPointerDrag(selector: string) {
   await browser.releaseActions();
   const position = await browser.execute((query) => {
@@ -39,7 +39,7 @@ export async function startProjectPointerDrag(selector: string) {
       ],
     },
   ]);
-  // 跨阈值的事件只负责激活 sensor；等待该 owner 的状态，再发第二次位移，避免事件合并造成零位移。
+  // The cross-threshold event only activates the sensor; wait for that owner's state, then send the second movement, so event coalescing cannot zero out the displacement.
   await browser.waitUntil(async () => (await $(selector).getAttribute("aria-pressed")) === "true", {
     timeout: 5000,
     timeoutMsg: "项目拖拽未激活",
@@ -56,13 +56,14 @@ export async function startProjectPointerDrag(selector: string) {
 }
 
 /**
- * 项目侧栏 E2E 定位 helper。
+ * Project-sidebar E2E locating helper.
  *
- * 2026-09 虚拟项目重构后侧栏不再渲染真实目录节点（旧 TID_WORKSPACE_ITEM），
- * 老 workspace 首次迁移成「同名单 root 项目」：项目名 = 目录 basename
- * （与 packages/services/src/project-storage/migrate-projects.ts 同规则），
- * 项目 `<section>` 带 data-project-id / data-project-name。这里统一按项目名定位，
- * E2E 夹具的 workspace basename 彼此唯一（ZCodeProject、PassiveWorkspace-01…）。
+ * After the 2026-09 virtual-project refactor the sidebar no longer renders real directory nodes
+ * (the old TID_WORKSPACE_ITEM); old workspaces migrate on first run into a "same-named root
+ * project": project name = directory basename (same rule as
+ * packages/services/src/project-storage/migrate-projects.ts), and the project `<section>`
+ * carries data-project-id / data-project-name. Locating is uniformly by project name here; the
+ * E2E fixtures' workspace basenames are mutually unique (ZCodeProject, PassiveWorkspace-01…).
  */
 export function projectNameForWorkspace(workspacePath: string): string {
   return (
@@ -91,7 +92,7 @@ async function projectRowExists(workspacePath: string): Promise<boolean> {
       projectRowSelector(workspacePath),
     );
   } catch {
-    // renderer reload 期间 WebDriver 会短暂失去执行上下文，按未就绪处理。
+    // During a renderer reload the WebDriver briefly loses its execution context; treat it as not ready.
     return false;
   }
 }
@@ -118,7 +119,7 @@ export async function waitForProjectRowGone(
   });
 }
 
-/** 等待一组 workspace 对应的项目行全部出现在侧栏（启动恢复 / 首次迁移完成）。 */
+/** Wait until all project rows for a set of workspaces appear in the sidebar (startup restore / first migration finished). */
 export async function waitForRestoredProjects(
   workspacePaths: string[],
   timeout = 30_000,
@@ -150,7 +151,7 @@ async function projectSidebarShellReady(): Promise<boolean> {
         Boolean(document.querySelector('[data-testid="project-section"]')),
     );
   } catch {
-    // renderer reload 期间 WebDriver 会短暂失去执行上下文，按未就绪处理。
+    // During a renderer reload the WebDriver briefly loses its execution context; treat it as not ready.
     return false;
   }
 }
@@ -204,7 +205,7 @@ async function readProjectExpanded(workspacePath: string): Promise<boolean> {
   );
 }
 
-/** 确保项目行已展开（任务列表可见）；对应旧 ensureWorkspaceItemExpanded。 */
+/** Ensure the project row is expanded (task list visible); replaces the old ensureWorkspaceItemExpanded. */
 export async function ensureProjectExpanded(
   workspacePath: string,
   timeout = 30_000,
@@ -216,22 +217,23 @@ export async function ensureProjectExpanded(
       timeoutMsg: `侧栏项目不可展开: ${workspacePath}`,
     });
   }
-  // Bug 根因：慢渲染环境下 DOM click 成功只代表事件已经派发，项目树的 React
-  // 展开提交仍可能在后续帧；统一等待 aria 终态，避免各 case 提前查找 task。
+  // Bug root cause: in slow-render environments a successful DOM click only proves the event
+  // was dispatched; the project tree's React expansion may still commit in a later frame.
+  // Uniformly wait for the aria end state so cases do not look for tasks too early.
   await browser.waitUntil(() => readProjectExpanded(workspacePath), {
     timeout: 15_000,
     timeoutMsg: `侧栏项目没有完成展开: ${workspacePath}`,
   });
 }
 
-/** 真实 hover 项目行；hover 操作区（文件树 / 新建任务 / 更多）按 hover 挂载透明度。 */
+/** Really hover a project row; the hover action area (file tree / new task / more) mounts with hover opacity. */
 export async function hoverProjectRow(workspacePath: string, timeout = 15_000): Promise<void> {
   const row = $(projectRowSelector(workspacePath));
   await row.waitForDisplayed({ timeout, timeoutMsg: `侧栏没有可悬停的项目行: ${workspacePath}` });
   await row.moveTo();
 }
 
-/** DOM 点击项目 section 内某个 data-testid（toggle / files / create-task / menu…）。 */
+/** DOM-click a data-testid inside the project section (toggle / files / create-task / menu…). */
 export async function clickProjectAction(
   workspacePath: string,
   actionTestId: string,
@@ -258,7 +260,7 @@ export async function clickProjectAction(
   );
 }
 
-/** 打开项目主要目录的文件树面板；对应旧「hover workspace 行 → 文件树按钮」。 */
+/** Open the project's primary-directory file-tree panel; replaces the old "hover workspace row → file-tree button". */
 export async function openProjectFileTree(
   workspacePath: string,
   { timeout = 15_000, timeoutMsg = "没有找到项目文件树入口" }: WaitOptions = {},
@@ -275,12 +277,20 @@ export async function openProjectFileTree(
   );
 }
 
-/** 从项目行发起新建任务草稿（cwd = 项目主要目录）。 */
+/** Start a new task draft from the project row (cwd = the project's primary directory). */
 export async function startDraftFromProject(
   workspacePath: string,
   options: { workspaceIdentity?: string } = {},
 ): Promise<void> {
-  const draftKey = options.workspaceIdentity?.trim() || workspacePath;
+  let workspaceIdentity = options.workspaceIdentity?.trim();
+  if (!workspaceIdentity) {
+    const project = $(projectSectionSelector(workspacePath));
+    await project.waitForDisplayed({ timeout: 30_000 });
+    workspaceIdentity =
+      (await project.getAttribute("data-project-workspace-identity")) || undefined;
+  }
+  // Remote drafts are stored by Source identity; with only a path given, read the identity from the target project too — never keep waiting for a path key that does not exist.
+  const draftKey = workspaceIdentity || workspacePath;
   const previousDraftVersion = await browser.execute((key) => {
     const bridge = (
       window as unknown as {
@@ -291,11 +301,9 @@ export async function startDraftFromProject(
     ).__zcodeSessionStoreE2E;
     return bridge?.getState().workspaces[key]?.draftFocusVersion ?? 0;
   }, draftKey);
-  if (options.workspaceIdentity) {
-    // 跨 Source 可以有同名同路径项目；显式 identity 时不能落到名称匹配的第一行。
-    const project = $(
-      `[data-project-workspace-identity=${JSON.stringify(options.workspaceIdentity)}]`,
-    );
+  if (workspaceIdentity) {
+    // Same-named same-path projects can exist across Sources; with an explicit identity, do not fall back to the first name match.
+    const project = $(`[data-project-workspace-identity=${JSON.stringify(workspaceIdentity)}]`);
     await project.waitForDisplayed({ timeout: 30_000 });
     await project.moveTo();
     await project.$(`[data-testid="${TID_VIRTUAL_PROJECT_CREATE_TASK}"]`).click();
@@ -305,9 +313,11 @@ export async function startDraftFromProject(
       timeoutMsg: `项目 ${workspacePath} 没有可用的新建任务入口`,
     });
   }
-  // 合并适配：切换项目时退场动画会短暂保留旧输入框；只等导航路径会向旧会话发送。
-  // 只统计主 pane；side chat 合法保留自己的输入框，不能要求整个页面只剩一个输入框。
-  // 等主 pane 旧输入框移除，再确认目标项目的空草稿，防止向退场会话发送。
+  // Merge adaptation: when switching projects the exit animation briefly keeps the old input
+  // box; waiting only on the navigation path would send into the old session. Count only the
+  // main pane; side chats legitimately keep their own input box, so the page must not be
+  // required to have exactly one input left. Wait for the old main-pane input to be removed,
+  // then confirm the target project's empty draft, preventing sends to the exiting session.
   await browser.waitUntil(
     () =>
       browser.execute(
@@ -329,7 +339,7 @@ export async function startDraftFromProject(
               ).__zcodeTabStoreE2E?.getState().activeWorkspaceIdentity
             : undefined;
           return (
-            // 目录准备是异步的；同项目已经显示草稿时，旧 DOM 不能证明本次新建已提交。
+            // Directory preparation is async; when the same project already shows a draft, old DOM cannot prove this new draft was committed.
             ((
               window as unknown as {
                 __zcodeSessionStoreE2E?: {
@@ -348,7 +358,7 @@ export async function startDraftFromProject(
         TID_V4_SESSION_PANE,
         TID_COMPOSER_WORKSPACE_TRIGGER,
         projectNameForWorkspace(workspacePath),
-        options.workspaceIdentity,
+        workspaceIdentity,
         draftKey,
         previousDraftVersion,
       ),
@@ -356,15 +366,15 @@ export async function startDraftFromProject(
   );
 }
 
-/** 打开项目行更多菜单并选择动作（edit / pin / delete / remove-entry）。 */
+/** Open the project row's "more" menu and pick an action (edit / pin / delete / remove-entry). */
 export async function openProjectMenuAction(
   workspacePath: string,
   actionId: string,
   { timeout = 30_000 }: WaitOptions = {},
 ): Promise<void> {
   await hoverProjectRow(workspacePath, timeout);
-  // Bug 根因：Radix DropdownMenu trigger 依赖 pointerdown 手势，element.click() 只派发
-  // click 时 portal 菜单不会打开；这里补齐指针链。
+  // Bug root cause: Radix DropdownMenu triggers rely on pointerdown gestures; element.click()
+  // dispatching only click does not open the portal menu. Complete the pointer chain here.
   await browser.waitUntil(
     () =>
       browser.execute(
@@ -414,7 +424,7 @@ export interface ProjectTaskRowState {
   running: boolean;
 }
 
-/** 读取任务行是否存在于目标项目 section 内及其展示状态。 */
+/** Read whether a task row exists inside the target project section and its display state. */
 export async function readProjectTaskRowState(
   taskId: string,
   workspacePath: string,
@@ -449,8 +459,9 @@ export async function waitForTaskRowInProject(
   await waitForProjectRow(workspacePath, { timeout });
   await browser.waitUntil(
     async () => {
-      // 远端项目在离线态下 toggle 被禁用、任务列表不渲染；这里只做尽力展开，
-      // 由 task 行本身的出现作为 host 恢复在线且任务归位的判据。
+      // For a remote project while offline, the toggle is disabled and the task list is not
+      // rendered; expand best-effort here and let the task row's own appearance be the evidence
+      // that the host is back online and the task is in place.
       if (!(await readProjectExpanded(workspacePath))) {
         await browser.execute(
           (selector, toggleTestId) => {
@@ -470,7 +481,7 @@ export async function waitForTaskRowInProject(
   );
 }
 
-/** 远端身份来自项目行，不再存在 Host 包装层。 */
+/** Remote identity comes from the project row; there is no Host wrapper layer anymore. */
 export async function readRemoteHostIdForProject(workspacePath: string): Promise<string | null> {
   return browser.execute(
     (selector) => document.querySelector(selector)?.getAttribute("data-project-host") ?? null,
@@ -478,7 +489,7 @@ export async function readRemoteHostIdForProject(workspacePath: string): Promise
   );
 }
 
-/** 设备连接操作位于项目行菜单，仍交给同一个 Host 连接端口。 */
+/** Device connection actions live in the project row menu and still go through the same Host connection port. */
 export async function clickRemoteHostConnect(
   workspacePath: string,
   options: WaitOptions = {},
@@ -486,7 +497,7 @@ export async function clickRemoteHostConnect(
   await openProjectMenuAction(workspacePath, "connect", options);
 }
 
-/** 仅替代系统弹窗的用户选择，保留 renderer → preload → main 的真实多目录链路。 */
+/** Only replaces the system dialog's user choice; the real renderer → preload → main multi-directory chain stays. */
 export async function selectNativeProjectDirectories(paths: string[]) {
   const picker = await browser.electron.mock("dialog", "showOpenDialog");
   try {
@@ -507,7 +518,7 @@ export async function selectNativeProjectDirectories(paths: string[]) {
   }
 }
 
-/** 远程目录由所属 Host 浏览，不借本机系统文件选择器。 */
+/** Remote directories are browsed by their owning Host, not via this machine's system file picker. */
 export async function selectRemoteProjectDirectory(path: string) {
   if (!(await $('[data-testid="virtual-project-directory-browser"]').isDisplayed()))
     await $('[data-testid="virtual-project-browse"]').click();

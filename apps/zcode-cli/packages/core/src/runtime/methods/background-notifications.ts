@@ -6,6 +6,7 @@ import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js"
 import type { AgentRuntimeInternal } from "../internal.js";
 import type { SealBackgroundTaskNotificationsInput } from "../types.js";
 import { shouldSuppressSealedSubagentBashNotification } from "../../runtime-task/notification-policy.js";
+import { joinTaskNotificationBatch } from "../../runtime-task/notification.js";
 
 export function enqueueBackgroundTaskNotification(
   this: AgentRuntimeInternal,
@@ -171,11 +172,22 @@ export async function persistBackgroundTaskNotificationBatch(
   const firstCommand = commands[0];
   const backgroundSource = resolveBackgroundTaskNotificationSource(commands);
   const originMeta = resolveBackgroundTaskNotificationOriginMeta(commands);
-  const text = commands.map((command) => command.text).join("\n\n");
+  const texts = commands.map((command) => command.text);
+  // This turn's input texts are still joined with "\n\n"; the App parses task cards from them one by one.
+  const text = joinTaskNotificationBatch(texts);
+  // Fix reason: the batch used to be stored as one joined string and projection guessed per-item boundaries
+  // by the <task-notification> prefix; mid-workflow notifications do not start with it and were folded into
+  // the previous notification's wrapper. Idle batches now store each notification as its own text block of
+  // the same message, so both what the model sees and what cold resume reads back are wrapped per block
+  // without guessing boundaries. Mid-turn notifications are enqueued individually, not batched.
+  const blocks = !midTurn && texts.length > 1 ? texts : undefined;
   await this.ensureContextInitialized(firstCommand.traceContext);
   const messageID = createMessageId();
   const inputPresentation = midTurn ? "task_notification_steer" : "task_notification";
-  this.messageHistory.addUser(text, runtimeInputMetadata(inputPresentation));
+  this.messageHistory.addUser(
+    blocks ? blocks.map((block) => ({ type: "text" as const, text: block })) : text,
+    runtimeInputMetadata(inputPresentation),
+  );
   await this.persistSyntheticUserNoticeForSession({
     messageID,
     metadata: {
@@ -185,7 +197,7 @@ export async function persistBackgroundTaskNotificationBatch(
     },
     sessionId: this.sessionId,
     source: "background_task",
-    text,
+    text: blocks ?? text,
     traceContext: firstCommand.traceContext,
     visibility: "model-only",
   });

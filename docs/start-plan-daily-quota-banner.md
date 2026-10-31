@@ -1,52 +1,53 @@
-# Start Plan Quota Bucket Reminder
+# Start Plan 额度桶提醒
 
-## Confirmed Behavior
+## 已确认行为
 
-- Remove the 50% / 20% reminders. Calculate `remaining_units / total_units` independently for each valid quota bucket for the current model; show a reminder when `0 < ratio <= 10%`.
-- Do not combine active and daily buckets when calculating percentages. Daily quota copy: “{model} daily quota remaining: {percent} ({remaining} tokens).” One-time promotion copy: “{model} promotional quota remaining: {percent} ({remaining} tokens).” Use neutral “plan quota” for other periods; do not guess the period type.
-- Show each `bucket_id + period_start + period_end` only once. The record does not include balance, model, task, or local date. Multiple models served by the same bucket do not trigger duplicates. A new bucket or period may show again; do not require the balance to recover above 10% first.
-- The 10% reminder can be dismissed, and the upgrade entry point remains. The visible reminder may update with the balance, but it must not reappear after dismissal, task/model switching, or remount. If the balance rises and then drops below the threshold again in the same period, do not show it again. Show multiple eligible buckets in server order; an already-shown bucket must not block other buckets without a reminder.
-- Store reminder records in this client's localStorage (one record per period key; do not store tokens or plaintext account data). Keep them across tasks and client restarts. Each client records independently; cross-device sync is not guaranteed. If storage is unavailable, deduplicate in the current Renderer memory only. Use the same `snapshot.serverTime` (or `generatedAt` when missing) for reading, recording, and expiring display records and for determining bucket validity. Do not use device `Date.now()` or advance a cached snapshot's clock separately. Dismissal ends the display owner's already-recorded reminder; it does not recalculate period expiration.
-- Show “{model} has no available quota. Switch to another model or upgrade your plan.” only when every valid bucket for the current model is exhausted. Do not report model exhaustion because a promotional bucket is exhausted while a daily bucket still has quota.
-- Show “Your trial plan has no available quota. Upgrade your plan or wait for the quota to reset.” when every valid bucket for every model is exhausted. Overall exhaustion takes precedence over model exhaustion. Server error 1005 continues to directly indicate overall exhaustion; existing concurrency/rate-limit/MCP branches remain unchanged. None of these notices blocks sending.
+- 删除 50% / 20% 提醒。按当前模型对应的每个有效额度桶独立计算 `remaining_units / total_units`；`0 < ratio <= 10%` 时可提醒。
+- 活动桶与每日桶不混算百分比。日额度文案为“{model} 今日额度剩余 {percent}（{remaining} tokens）。”，一次性活动为“{model} 活动额度剩余 {percent}（{remaining} tokens）。”；其他周期使用中性“套餐额度”，不猜测周期类型。
+- 同一个 `bucket_id + period_start + period_end` 只实际展示一次。记录不包含余额、模型、任务或本地日期；同桶服务多个模型也不重复。新 bucket 或新周期允许再次提醒，不要求余额先恢复到 10% 以上。
+- 10% 提醒允许关闭，保留升级入口。当前展示可随余额更新，但关闭、切换任务/模型或重新挂载后不再出现；同周期余额回升后再次降到阈值也不重复。多个符合条件的桶沿用服务端顺序依次展示，已展示的桶不能挡住其他未提醒桶。
+- 提醒记录保存在当前客户端的 localStorage（按周期键分别保存，不存 token 或账号明文）。跨任务及客户端重启保留；不同客户端独立记录，不承诺跨设备同步。存储不可用时降级为当前 Renderer 内存去重。展示记录的读取、登记及过期清理与桶有效性使用同一份 snapshot.serverTime（缺失时 generatedAt）；不使用设备 Date.now，也不对缓存快照额外推进时钟。关闭只结束已登记记录的展示 owner，不重新判定周期到期。
+- 当前模型的所有有效桶均耗尽，才显示“{model} 可用额度已用完，可更换其他模型或切换到 Coding Plan 订阅。”。不能因为活动桶耗尽而忽略仍有余额的每日桶。
+- 所有有效模型桶均耗尽，显示“体验套餐可用额度已用完，请切换到 Coding Plan 订阅或等待额度恢复。”。总耗尽优先于模型耗尽；服务端 1005 仍直接提示总耗尽，既有并发/限流/MCP 分支不变。全部提示不阻断发送。
+- 耗尽文案的引导动作是“切换到 Coding Plan 订阅”（含个人套餐或团队套餐），不使用“升级”表述：切换订阅不改变体验套餐（免费额度），也避免用户误以为升级付费套餐等级会增加免费额度。
 
-## Data and Boundaries
+## 数据与边界
 
-`GET /api/v1/zcode-plan/billing/balance` now returns real `bucket_id`, `user_plan_id`, `period_start`, `period_end`, and `expires_at` values in `balances[]`. The Service adds optional fields to the existing `UsageQuotaLimit`; convert all times consistently to milliseconds. Derive period-copy type from `plans[].entitlements[]`, matched by `user_plan_id` (or `plan_id` for legacy data) and `entitlement_id`.
+`GET /api/v1/zcode-plan/billing/balance` 的 `balances[]` 已真实返回 bucket_id、user_plan_id、period_start、period_end、expires_at。Service 在现有 UsageQuotaLimit 上增补可选字段；时间统一转换为毫秒。period 文案类型从所属 plans[].entitlements[] 按 user_plan_id（旧数据缺失时 plan_id）及 entitlement_id 关联。
 
-Read model-usage buckets only; exclude non-model quotas from reminder and exhaustion calculations. Exclude model-usage buckets known to be expired or not yet effective. Determine validity using `snapshot.serverTime` (or `generatedAt` when missing) to match the server snapshot; do not guess from the device date. Missing or non-finite values must not be misclassified as 0. If a legacy snapshot lacks `bucket_id` or a valid period, do not trigger a one-time low-quota reminder, but a clear remaining value may still be used to determine exhaustion. Period end and bucket expiration are separate concepts; do not use `expires_at` as a substitute for period identity.
+只读模型用量桶；已知到期或尚未生效的桶排除。有效性以 snapshot.serverTime（缺失时 generatedAt）为基准，与服务端快照一致，不猜测设备日期。字段缺失或非有限数字不得误判为 0；缺少 bucket_id/有效周期的旧快照不触发低额度一次提醒，但可依据明确的剩余值判断耗尽。周期结束和桶到期含义独立，不能再用 expires_at 替代周期身份。
 
-## State Ownership
+## 状态归属
 
-The old dismissal key included `remainingTokens` / `remainingPercent`, so every balance change could show the reminder again. The old model check also used only the first bucket, causing false model-exhaustion reports.
+旧关闭键包含 remainingTokens/remainingPercent，每次余额变化都会重新弹；旧模型判断只 find 第一个桶，也会误报模型耗尽。
 
-Pure evaluation remains owned by `sessionQuotaBannerState`; display-once records are owned by a separate Start Plan reminder store. The existing `sessionQuotaBannerDismissalStore` continues to handle only other session-scoped dismissals and does not own period persistence. Mark a reminder as shown only when the Banner is actually visible; hidden pages, overlays from other errors, and state-only evaluation do not consume the display.
-
-```text
-balance -> Service maps bucket/period/copy type -> single-bucket 10% candidate
-                                                    |
-                                           Banner actually visible -> persist period as shown
-                                                    | Same display instance: retain and update balance
-                                                    | New task / dismissal / restart: do not repeat
-                                                    | New bucket/period: reminder may appear
-Valid buckets for current model -> all exhausted? -> model/overall exhaustion (independent of reminder records)
-```
-
-Shared React UI covers desktop and mobile Web, Chinese and English, and light and dark themes. Only entitlement data and Renderer display state are added; do not change the Agent protocol, queue, owner, snapshot recovery, or host attachment.
+纯判断继续由 sessionQuotaBannerState 拥有；一次展示记录由独立的 Start Plan reminder store 拥有。原 sessionQuotaBannerDismissalStore 继续只负责其他错误的 session-scoped 关闭，不混入周期持久化。只有 Banner 实际可见才标记，隐藏页面、被其他错误遮挡或仅计算状态不消耗次数。
 
 ```text
-desktop continuous -> existing real-time path -> shared reminder UI
-mobile replayable -> existing recovery path -> shared reminder UI (client-local record)
+balance -> Service 映射 bucket/周期/文案类型 -> 单桶 10% 候选
+                                               |
+                                      实际可见 Banner -> 保存周期已展示
+                                               | 同展示实例：保留并更新余额
+                                               | 新任务/关闭/重启：不重复
+                                               | 新 bucket/周期：允许提醒
+有效模型桶集合 -> 全部耗尽？ -> 模型/总额度耗尽（不受已提醒记录影响）
 ```
 
-## Verification
+共享 React UI 覆盖桌面及手机 Web、中英文和明暗主题。只增补 entitlement 数据及 Renderer 展示状态，不变更 Agent 协议、队列、owner、snapshot 恢复或 host attachment。
 
-- A single bucket at 50/48/47/20/10.1 does not trigger a reminder; 10/9 does. Compare the calculated percentage before rounding.
-- A 300M promotional bucket and 5M daily bucket trigger reminders independently. Exhausting one bucket does not report model exhaustion while another bucket for that model has quota; retain separate model- and overall-exhaustion behavior.
-- Period deduplication is unaffected by balance, ordering, task, or model changes. New periods and buckets are independent. Verify actual display, dismissal, remount, restart recovery, and StrictMode.
-- Missing/invalid numbers, unknown periods, expired buckets, and not-yet-effective buckets must not produce false low-quota or exhaustion notices.
-- Cover Service mapping, pure state, and store with unit tests; use real browser hook/Banner interactions for desktop/mobile, light/dark themes, and Chinese/English. Use a test entitlement service in place of the backend and do not write real account data.
+```text
+desktop continuous -> 原实时链路 -> 共享提醒 UI
+mobile replayable -> 原恢复链路 -> 共享提醒 UI（本客户端记录）
+```
 
-### CR-01 Regression for Period-end Time Baseline
+## 验证
 
-When the device clock is ahead/behind, or the cached snapshot's period end has passed according to local time, if the current snapshot still considers the bucket valid, the reminder must be recordable. Dismissal takes effect immediately, and task switching or Renderer reload must not show it again. A new-period snapshot may show it again. Use a single snapshot time source; do not add a second dismissal state or timeout fallback.
+- 单桶 50/48/47/20/10.1 无提醒，10/9 提醒；百分比为计算值而非取整后判断。
+- 3 亿活动桶与 500 万日桶独立提醒；单桶耗尽但同模型另一个桶有余额不报模型耗尽；模型与总耗尽分别保留。
+- 周期去重不随余额、排列、任务或模型变化；新周期、新桶独立；实际展示/关闭/重新挂载/重启恢复及 StrictMode 验证。
+- 缺失/异常数字、未知周期、过期及未生效桶不产生虚假的低额度或耗尽提示。
+- 服务映射、纯状态、store 单测，浏览器真实 hook/Banner 交互覆盖桌面/手机、明暗及中英文；测试权益服务替代后端，不写真实账号数据。
+
+### CR-01 周期尾时间基准回归
+
+设备时钟超前/落后、或缓存快照的周期结束已被本机时间越过时，只要当前快照仍判桶有效，展示必须可登记、关闭立即生效、任务切换和 Renderer 重载不得重复。收到新周期快照后允许再次提醒。统一快照时间，不引入第二份关闭状态或超时兜底。

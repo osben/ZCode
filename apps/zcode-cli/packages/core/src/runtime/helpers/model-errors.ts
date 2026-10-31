@@ -24,6 +24,52 @@ export function isContextExceededFinishReason(
   );
 }
 
+// GLM (MaaS) output-side safety review ends the stream with a non-standard `sensitive` reason; the AI SDK only recognizes content-filter.
+const CONTENT_FILTER_FINISH_REASONS = new Set(["content-filter", "content_filter", "sensitive"]);
+
+function isContentFilterFinishReason(reason: string | undefined): boolean {
+  return reason !== undefined && CONTENT_FILTER_FINISH_REASONS.has(reason.trim().toLowerCase());
+}
+
+/** No body, no tool call, and the provider ended with a content filter; reasoning content and usage do not affect the verdict. */
+export function isContentFilteredEmptyModelResult(
+  finishReason: string | undefined,
+  rawFinishReason: string | undefined,
+  responseLength: number,
+  toolCallCount: number,
+): boolean {
+  return (
+    responseLength === 0 &&
+    toolCallCount === 0 &&
+    (isContentFilterFinishReason(finishReason) || isContentFilterFinishReason(rawFinishReason))
+  );
+}
+
+export function createContentFilteredModelResultError(input: {
+  finishReason: string | undefined;
+  model?: { modelId: string; providerId: string };
+  rawFinishReason: string | undefined;
+}) {
+  // Resending the same context gets blocked the same way; it must not fall into suspicious empty (retryable), or recovery retries run for nothing.
+  return createCoreError(
+    CoreErrorType.ModelError,
+    "Model output was blocked by the provider's content safety filter.",
+    {
+      context: {
+        finishReason: input.finishReason,
+        ...(input.model
+          ? { modelId: input.model.modelId, providerId: input.model.providerId }
+          : {}),
+        rawFinishReason: input.rawFinishReason,
+        reason: "content_filter",
+        source: "provider",
+      },
+      recoverable: true,
+      retryable: false,
+    },
+  );
+}
+
 export function createModelContextExceededFinishError(input: {
   finishReason: string | undefined;
   rawFinishReason: string | undefined;

@@ -133,6 +133,13 @@ export interface ExecutionOutputLimit {
    * foreground and background, regardless of this switch.
    */
   killProcessOnPersistedLimit?: boolean;
+  /**
+   * Generic collector execution: additionally keep the last tailBytes bytes of each stream and
+   * place them in {@link ExecutionStreamResult.tail} at settlement. Independent of the inline
+   * limit — inline truncation still counts, still reads to exit, and the tail is unaffected by
+   * total output volume. Bash merged file output does not use this field. Absent means no retention.
+   */
+  tailBytes?: number;
 }
 
 export interface ExecutionRequest {
@@ -180,6 +187,8 @@ export interface ExecutionStreamResult {
   artifactPath?: string;
   artifactBytes?: number;
   artifactTruncated?: boolean;
+  /** When {@link ExecutionOutputLimit.tailBytes} was requested, the last tailBytes bytes of that stream (cut on a byte boundary; the first decoded character may be U+FFFD). */
+  tail?: string;
 }
 
 export interface ExecutionResult {

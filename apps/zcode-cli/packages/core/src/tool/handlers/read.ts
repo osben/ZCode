@@ -21,6 +21,7 @@ import {
   ReadOutputSchema,
   createCoreError,
   getReadPdfPagesValidationFailure,
+  isCoreError,
   isFileSystemPortError,
   type ReadInput,
   type ReadImageOutput,
@@ -28,16 +29,28 @@ import {
   type ModelMessageContent,
   type ReadOutput,
   type ReadTextOutput,
+  type FileSystemPort,
   type FileSystemStatResult,
   type TraceContext,
 } from "@zcode/contracts";
 import { resolveWorkspacePath } from "../path-policy.js";
-import { createReadFileStateKey, normalizeReadFileStateMtimeMs } from "../read-file-state.js";
-import { FILE_UNCHANGED_STUB, createReadFileStateMetadata } from "../read-file-state-metadata.js";
+import {
+  findLatestReadFileState,
+  normalizeReadFileStateMtimeMs,
+  requestedPathField,
+  setReadFileStateEntry,
+} from "../read-file-state.js";
+import { createReadFileStateMetadata } from "../read-file-state-metadata.js";
 import { inferImageMimeFromPath, readImageFile } from "./read-image.js";
 import { inferVideoMimeFromPath } from "../../runtime/helpers/attachment-video.js";
 import { readVideoFile } from "./read-video.js";
-import { formatReadTextOutput, readTextFileForModel } from "./read-text.js";
+import {
+  READ_FILE_UNCHANGED_STUB,
+  READ_OUTPUT_TOO_MANY_TOKENS_CODE,
+  formatReadBatchNotice,
+  formatReadTextOutput,
+  readTextFileForModel,
+} from "./read-text.js";
 import {
   formatReadPdfOutput,
   formatReadPdfPagesOutput,
@@ -57,7 +70,7 @@ const READ_PROVIDER_DESCRIPTION = [
   "",
   "- `file_path` must be an absolute path.",
   `- Reads up to ${READ_DEFAULT_MAX_LINES} lines by default.`,
-  "- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters",
+  "- When you already know which part of the file you need, only read that part. This can be important for larger files.",
   "- Results are returned using cat -n format, with line numbers starting at 1",
   "- Reads images (PNG, JPG, …) and presents them visually.",
   "- Reads videos (MP4, MOV, WEBM, …) and presents them as video input (subject to ZCode's video input limit).",
@@ -79,9 +92,9 @@ function formatReadModelContent(output: unknown): ModelMessageContent {
 function formatReadOutput(output: ReadOutput): ModelMessageContent {
   switch (output.type) {
     case "text":
-      return formatReadTextOutput(output);
+      return formatReadTextToolResult(output);
     case "file_unchanged":
-      return FILE_UNCHANGED_STUB;
+      return READ_FILE_UNCHANGED_STUB;
     case "image":
       return formatReadImageOutput(output);
     case "video":
@@ -93,6 +106,13 @@ function formatReadOutput(output: ReadOutput): ModelMessageContent {
     case "notebook":
       return stringifyReadOutputFallback(output);
   }
+}
+
+/** Body of a text Read tool_result; files restored after compaction use the same format. */
+export function formatReadTextToolResult(output: ReadTextOutput): string {
+  // The partial-view notice is sent as an attachment after the tool batch; the tool_result holds only the numbered body.
+  const { partialViewNotice: _notice, ...textOutput } = output;
+  return formatReadTextOutput(textOutput);
 }
 
 function formatReadImageOutput(output: ReadImageOutput): ModelMessageContent {
@@ -183,16 +203,12 @@ export const readHandler: ToolHandler = async (input, context) => {
     );
     const readFileState = getReadFileState(context);
     const cacheOffset = normalizeCacheOffset(offset);
-    const cacheKey = createReadFileStateKey(filePath, cacheOffset, limit);
-    const cached = readFileState.get(cacheKey);
-    if (cached && isCachedReadFresh(cached, stat)) {
-      const output = { type: "file_unchanged", filePath } satisfies ReadOutput;
-      recordReadFileStateMetadata(context, {
-        output,
-        readFileState,
-        toolInput: input,
-      });
-      return output;
+    const cached = findLatestReadFileState(readFileState, filePath);
+    if (cached && isSameReadView(cached, cacheOffset, limit) && isCachedReadFresh(cached, stat)) {
+      // Fix reason: the snapshot here is only a copy of the latest record at that time, so a cold resume that replays
+      // it would restore a view that is no longer in active history (for example, the real read was already
+      // summarized by compaction). Do not write live state and do not record a snapshot.
+      return { type: "file_unchanged", filePath } satisfies ReadOutput;
     }
 
     let rangeReadRevision: FileSystemStatResult["revision"] | undefined;
@@ -209,9 +225,10 @@ export const readHandler: ToolHandler = async (input, context) => {
       offset,
       trace,
     });
-    updateReadFileState(readFileState, cacheKey, {
+    updateReadFileState(readFileState, {
       output,
       path: filePath,
+      requestedPath: file_path,
       stat,
       rangeReadRevision,
       offset,
@@ -332,6 +349,22 @@ function normalizeCacheOffset(offset: number | undefined): number {
   return offset === undefined ? 1 : offset;
 }
 
+// Deduplicate only against the file's most recent view, and that view must come from Read.
+// Fix reason: after Edit/Write the state was recorded under the full-view key, so a Read hitting that key returned the
+// Wasted call stub even though the model had not seen the written content; reading the full file after reading other
+// ranges in between would also hit an earlier full view.
+function isSameReadView(
+  entry: ReadFileStateEntry,
+  offset: number,
+  limit: number | undefined,
+): boolean {
+  return (
+    (entry.sourceTool === undefined || entry.sourceTool === "Read") &&
+    normalizeCacheOffset(entry.offset) === offset &&
+    entry.limit === limit
+  );
+}
+
 function isCachedReadFresh(entry: ReadFileStateEntry, stat: FileSystemStatResult): boolean {
   if (entry.isPartialView) return false;
 
@@ -350,21 +383,25 @@ function isCachedReadFresh(entry: ReadFileStateEntry, stat: FileSystemStatResult
   return entry.sizeBytes !== undefined && entry.sizeBytes === stat.sizeBytes;
 }
 
-function updateReadFileState(
-  state: ReadFileStateMap,
-  key: string,
-  input: {
-    output: ReadTextOutput;
-    path: string;
-    stat: FileSystemStatResult;
-    rangeReadRevision?: FileSystemStatResult["revision"];
-    offset?: number;
-    limit?: number;
-  },
-): void {
+interface ReadTextFileStateInput {
+  output: ReadTextOutput;
+  path: string;
+  requestedPath?: string;
+  stat: FileSystemStatResult;
+  rangeReadRevision?: FileSystemStatResult["revision"];
+  offset?: number;
+  limit?: number;
+}
+
+function updateReadFileState(state: ReadFileStateMap, input: ReadTextFileStateInput): void {
+  setReadFileStateEntry(state, createReadTextFileStateEntry(input));
+}
+
+function createReadTextFileStateEntry(input: ReadTextFileStateInput): ReadFileStateEntry {
   const revision = input.stat.revision ?? input.rangeReadRevision;
-  state.set(key, {
+  return {
     path: input.path,
+    ...requestedPathField(input.requestedPath, input.path),
     content: input.output.content,
     offset: input.offset,
     limit: input.limit,
@@ -376,13 +413,81 @@ function updateReadFileState(
     revisionId: revision?.id,
     mtimeMs: normalizeReadFileStateMtimeMs(revision?.mtimeMs ?? input.stat.mtimeMs),
     sizeBytes: input.stat.sizeBytes,
+  };
+}
+
+/** Result of one whole-file read when restoring files after compaction. */
+export type PostCompactFileRead =
+  | {
+      type: "text";
+      output: ReadTextOutput;
+      /** Read-state entry for this read; the caller writes it after compaction persists successfully. */
+      readFileStateEntry: ReadFileStateEntry;
+    }
+  /** Exceeds the Read file-size or token limit; only a reference notice can be placed. */
+  | { type: "too_large" }
+  /** Paths that are not restored: binaries and device files that fail the Read preflight, plus images, videos, and PDFs. */
+  | { type: "skipped" };
+
+/**
+ * Restore a file after compaction: read the current on-disk content with Read's whole-file semantics (no offset / limit).
+ * It bypasses the executor and does not write read state. The caller decides permissions; other read errors are thrown as-is.
+ */
+export async function readFileForCompactRestore(input: {
+  abortSignal?: AbortSignal;
+  filePath: string;
+  fileSystemPort: FileSystemPort;
+  trace?: TraceContext;
+  workingDirectory: string;
+  workspaceRoot: string;
+}): Promise<PostCompactFileRead> {
+  if (!ReadInputSchema.safeParse({ file_path: input.filePath }).success) return { type: "skipped" };
+  const filePath = resolveWorkspacePath({
+    inputPath: input.filePath,
+    operation: "read",
+    workingDirectory: input.workingDirectory,
+    workspaceRoot: input.workspaceRoot,
   });
+  if (inferImageMimeFromPath(filePath) || inferVideoMimeFromPath(filePath) || isPdfPath(filePath)) {
+    return { type: "skipped" };
+  }
+
+  const { abortSignal, fileSystemPort, trace } = input;
+  try {
+    const stat = await fileSystemPort.stat({ path: filePath, trace }, { signal: abortSignal });
+    let rangeReadRevision: FileSystemStatResult["revision"] | undefined;
+    const output = await readTextFileForModel({
+      abortSignal,
+      filePath,
+      fileSystemPort,
+      onRead: (read) => {
+        rangeReadRevision = read.revision;
+      },
+      trace,
+    });
+    return {
+      type: "text",
+      output,
+      readFileStateEntry: createReadTextFileStateEntry({
+        output,
+        path: filePath,
+        rangeReadRevision,
+        stat,
+      }),
+    };
+  } catch (error) {
+    if (isFileSystemPortError(error) && error.code === "too_large") return { type: "too_large" };
+    if (isCoreError(error) && error.context?.code === READ_OUTPUT_TOO_MANY_TOKENS_CODE) {
+      return { type: "too_large" };
+    }
+    throw error;
+  }
 }
 
 function recordReadFileStateMetadata(
   context: ToolExecutionContext,
   input: {
-    output: ReadOutput;
+    output: ReadTextOutput;
     readFileState: ReadFileStateMap;
     toolInput: unknown;
   },
@@ -484,6 +589,7 @@ export const readToolEntry: ToolEntry = {
   }),
   resolveTimeoutBudgetMs: resolveReadTimeoutBudgetMs,
   formatModelContent: formatReadModelContent,
+  formatBatchNotice: formatReadBatchNotice,
   inputSchema: ReadInputJsonSchema,
   outputSchema: ReadOutputJsonSchema,
   runtimeInputSchema: ReadInputSchema,

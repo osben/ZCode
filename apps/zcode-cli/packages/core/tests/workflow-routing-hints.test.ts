@@ -169,6 +169,8 @@ describe("facade prose", () => {
       "declare interface Agent",
       "declare function agent(",
       "declare const args",
+      // docs/dynamic-workflow/authoring.md "The run's identity": run identity, a facade value like args.
+      "declare const run",
       "declare function log(",
       "declare function report(",
       // docs/dynamic-workflow/authoring.md "Declaring a dashboard": content members + the specs of the four preset boards.

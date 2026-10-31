@@ -1,7 +1,8 @@
-# Comparison Baseline for Affected Unit Tests Before Push
+# 架构检查比较基线
 
-When a new branch is pushed for the first time, the remote ref has no comparable commit, so the affected unit-test runner falls back to a default baseline. The default baseline prefers `origin/staging`, then `origin/HEAD`, `origin/main`, `origin/master`, `main` and `master`.
+App affected 单测入口已退役，原先与架构检查共用的默认分支选择函数保留在
+`scripts/architecture/default-branch.mjs`。首次推送优先使用 `origin/staging`，随后是
+`origin/HEAD`、`origin/main`、`origin/master`、`main`、`master`。
 
-Full test runs are not forced by filenames such as lockfiles, package files, Vitest, TypeScript or gate scripts. Whenever a usable comparison baseline exists, run affected/related unit tests based on the actual changes.
-
-Run the full `pnpm test:unit` suite only when no usable baseline can be found, or when a deleted source file cannot be passed to Vitest related analysis.
+架构检查的实际基线选择和 push 门禁见 [pre-push 说明](../testing/pre-push-hook.md)。
+不再提供 App 单测选择或全量回退。

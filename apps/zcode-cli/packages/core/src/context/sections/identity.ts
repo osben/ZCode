@@ -15,6 +15,14 @@ import { estimateTokens } from "../utils.js";
 const SECURITY_NOTICE =
   "IMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes. Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.";
 
+/** Harness delivery-notice sentence for models that receive mid-conversation system (MCS) turns. */
+const MCS_DELIVERY_NOTICE =
+  "The system may send updates, reminders, or modifications to rules via mid-conversation system turns. These are system-controlled, unlike function results.";
+
+/** Replacement sentence when dynamic context is delivered in user `<system-reminder>` blocks instead. */
+const REMINDER_DELIVERY_NOTICE =
+  "`<system-reminder>` tags in messages and tool results are injected by the harness, not the user.";
+
 /** Security IMPORTANT line shared verbatim by interactive and workflow-subagent identities. */
 export function buildSecurityNotice(): string {
   return SECURITY_NOTICE;
@@ -26,8 +34,15 @@ export function buildSecurityNotice(): string {
  * A `harness` override (docs/system-prompt-overrides.md) replaces the main agent's block;
  * the workflow-subagent identity keeps the default constant.
  */
-export function buildHarnessBlock(override?: string): string {
-  return override?.trim() ? override.trim() : DEFAULT_HARNESS_PROMPT;
+export function buildHarnessBlock(override?: string, midConversationSystem = true): string {
+  const custom = override?.trim();
+  if (custom) return custom;
+  // The third bullet names the real delivery channel of dynamic context: without MCS that content
+  // is wrapped in user `<system-reminder>` blocks, so claiming "mid-conversation system turns"
+  // would contradict the request body.
+  return midConversationSystem
+    ? DEFAULT_HARNESS_PROMPT
+    : DEFAULT_HARNESS_PROMPT.replace(MCS_DELIVERY_NOTICE, REMINDER_DELIVERY_NOTICE);
 }
 
 /**
@@ -46,9 +61,10 @@ function buildIdentityPrompt(
   introOverride: string | undefined,
   harnessOverride: string | undefined,
   options: IdentitySectionOptions,
+  midConversationSystem: boolean,
 ): string {
-  // An explicit identity-intro override wins over the active Output Style intro; the style
-  // still appends its own `# Output Style` section.
+  // An explicit identity-intro override wins over the active Output Style intro; the style body
+  // itself is announced separately as an output-style runtime reminder.
   const intro = !options.includeIntro
     ? undefined
     : introOverride?.trim()
@@ -64,19 +80,21 @@ function buildIdentityPrompt(
     return [identityLines, "", DEFAULT_CONFIRMATION_PARAGRAPH].join("\n");
   }
 
-  return [identityLines, "", buildHarnessBlock(harnessOverride)].join("\n");
+  return [identityLines, "", buildHarnessBlock(harnessOverride, midConversationSystem)].join("\n");
 }
 
 export function buildIdentitySection(
   outputStyle?: OutputStylePromptConfig,
   overrides?: { "identity-intro"?: string; harness?: string },
   options: IdentitySectionOptions = { includeIntro: true, includeHarness: true },
+  midConversationSystem = true,
 ): ContextSection {
   const content = buildIdentityPrompt(
     outputStyle,
     overrides?.["identity-intro"],
     overrides?.harness,
     options,
+    midConversationSystem,
   );
 
   return {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createTestModelSelection } from "./test-model-selection.js";
 import {
   createModelId,
@@ -28,7 +28,20 @@ const WORKSPACE_AGENTS_INSTRUCTION = "Workspace AGENTS instruction sentinel.";
 const PROJECT_CONTEXT_SENTINEL = "subagent-project-context-leak-sentinel";
 
 function createParentContextSourcePort() {
+  const hostEnvInfo = (cwd: string) => ({
+    cwd,
+    platform: "darwin",
+    shell: "zsh",
+    osVersion: "Darwin 24.3.0",
+    nodeVersion: "24.14.0",
+  });
   return {
+    async resolveEnvironment(request: { workingDirectory: string }) {
+      return hostEnvInfo(request.workingDirectory);
+    },
+    async resolveGitContext() {
+      return { isGitRepository: false };
+    },
     async resolveContextSources(request: {
       currentDate?: string;
       envInfo?: {
@@ -45,13 +58,7 @@ function createParentContextSourcePort() {
         workingDirectory: request.workingDirectory,
         currentDate: request.currentDate,
         diagnostics: [],
-        envInfo: request.envInfo ?? {
-          cwd: request.workingDirectory,
-          platform: "darwin",
-          shell: "zsh",
-          osVersion: "Darwin 24.3.0",
-          nodeVersion: "24.14.0",
-        },
+        envInfo: request.envInfo ?? hostEnvInfo(request.workingDirectory),
         userInstructions: {
           filePath: "/repo/AGENTS.md",
           fileName: "AGENTS.md",
@@ -129,22 +136,19 @@ function expectInjectedAgentsMd(request: any, childTask: string): void {
 
   const contextText = modelMessageContentToText(messages[contextIndex]?.content);
   expect(contextText).toContain("<system-reminder>");
-  expect(contextText).toContain("# agentsMd");
   expect(contextText).toContain("Codebase and user instructions are shown below.");
   expect(contextText).toContain(USER_AGENTS_INSTRUCTION);
   expect(contextText).toContain(WORKSPACE_AGENTS_INSTRUCTION);
   expect(contextText.indexOf(USER_AGENTS_INSTRUCTION)).toBeLessThan(
     contextText.indexOf(WORKSPACE_AGENTS_INSTRUCTION),
   );
-  expect(contextText.indexOf("# agentsMd")).toBeLessThan(
+  expect(contextText.indexOf("Codebase and user instructions")).toBeLessThan(
     contextText.indexOf(USER_AGENTS_INSTRUCTION),
   );
-  expect(contextText.indexOf(WORKSPACE_AGENTS_INSTRUCTION)).toBeLessThan(
-    contextText.indexOf("# currentDate"),
-  );
+  expect(contextText).not.toContain("Today's date");
 
   const text = allMessageText(request);
-  expect(countOccurrences(text, "# agentsMd")).toBe(1);
+  expect(countOccurrences(text, "Codebase and user instructions are shown below")).toBe(1);
   expect(text).not.toContain("# claudeMd");
   expect(countOccurrences(text, USER_AGENTS_INSTRUCTION)).toBe(1);
   expect(countOccurrences(text, WORKSPACE_AGENTS_INSTRUCTION)).toBe(1);
@@ -167,6 +171,8 @@ function expectNoInjectedAgentsMd(request: any): void {
 describe("subagent provider-visible prompt assembly", () => {
   it("assembles Explore child system messages with ZCode prefix, agent prompt, notes, and environment context", async () => {
     const sessionId = createSessionId("subagent-prompt-explore");
+    const contextSourcePort = createParentContextSourcePort();
+    const resolveContext = vi.spyOn(contextSourcePort, "resolveContextSources");
     const eventStore = createTestSessionEventStore();
     const childRequests: any[] = [];
     let parentCallCount = 0;
@@ -194,7 +200,7 @@ describe("subagent provider-visible prompt assembly", () => {
         },
       },
       {
-        contextSourcePort: createParentContextSourcePort(),
+        contextSourcePort,
         eventStore,
         modelFactory: createTestModelFactory({
           properties: { supportsNativeWebSearch: true },
@@ -249,17 +255,34 @@ describe("subagent provider-visible prompt assembly", () => {
     expect(systems[1]).toContain("\n\nNotes:");
     expect(systems[1]).toContain("Agent threads always have their cwd reset between bash calls");
     expect(systems[1]).toContain("the parent agent reads your text output");
-    expect(systems[1]).toContain(
-      "\n\nHere is useful information about the environment you are running in:",
+    expect(systems[1]).not.toContain("<env>");
+    expect(systems[1]).not.toContain("You are powered by");
+    const childMessages = childRequests[0].messages;
+    const environmentMessage = childMessages.find((message: any) =>
+      modelMessageContentToText(message.content).includes("# Environment\n"),
     );
-    expect(systems[1]).toContain("Working directory: /Users/dev/Desktop/Z/z-code/apps/zcode-cli");
-    expect(systems[1]).toContain("Is directory a git repo: Yes");
-    expect(systems[1]).toContain("Platform: darwin");
-    expect(systems[1]).toContain("Shell: Git Bash");
-    expect(systems[1]).toContain("OS Version: Darwin 24.3.0");
-    expect(systems[1]).toContain(
-      "You are powered by the model named anthropic/claude-haiku-4-5-20251001-cc.",
+    const taskIndex = childMessages.findIndex(
+      (message: any) =>
+        modelMessageContentToText(message.content) ===
+        "Find where the runtime injects tool results.",
     );
+    // Without MCS support, the environment is a user reminder before the task.
+    expect(environmentMessage.role).toBe("user");
+    expect(childMessages.indexOf(environmentMessage)).toBeLessThan(taskIndex);
+    // Only the parent resolves context once; child initialization does not call it again.
+    expect(resolveContext).toHaveBeenCalledTimes(1);
+    const childText = allMessageText(childRequests[0]);
+    expect(childText).toContain(
+      " - Primary working directory: /Users/dev/Desktop/Z/z-code/apps/zcode-cli",
+    );
+    expect(childText).toContain(" - Is a git repository: true");
+    expect(childText).toContain(" - Shell: Git Bash");
+    expect(
+      countOccurrences(
+        childText,
+        "You are powered by the model named anthropic/claude-haiku-4-5-20251001-cc.",
+      ),
+    ).toBe(1);
 
     const text = allMessageText(childRequests[0]);
     expect(text).not.toContain(
@@ -349,8 +372,15 @@ describe("subagent provider-visible prompt assembly", () => {
     expect(systems[1]).not.toContain("fully--don't gold-plate");
     expect(systems[1]).not.toContain("key findings; the caller");
     expect(systems[1]).toContain("Agent threads always have their cwd reset between bash calls");
-    expect(systems[1]).toContain("Working directory: /repo/current");
-    expect(systems[1]).not.toContain("Working directory: /repo/initial");
+    expect(systems[1]).not.toContain("<env>");
+    expect(allMessageText(childRequests[0])).toContain(
+      " - Primary working directory: /repo/current",
+    );
+    expect(allMessageText(childRequests[0])).not.toContain(
+      " - Primary working directory: /repo/initial",
+    );
+    // The parent session already left its starting directory; the child must follow the current environment facts, not carry back the starting snapshot's true.
+    expect(allMessageText(childRequests[0])).toContain(" - Is a git repository: false");
     expectInjectedAgentsMd(childRequests[0], "Research how child runtimes are created.");
   });
 
@@ -446,9 +476,9 @@ describe("subagent provider-visible prompt assembly", () => {
       expect(systems).toHaveLength(2);
       expect(systems[0]).toBe("You are ZCode, an interactive coding agent");
       expect(systems[1]).toMatch(
-        /^\nYou are a focused code researcher\. Return concise findings\.\n\nNotes:/u,
+        /^\nYou are a focused code researcher\. Return concise findings\.\n\nMessages from the agent that launched you — .+\n\nNotes:/u,
       );
-      expect(systems[1]).toContain("Is directory a git repo: No");
+      expect(allMessageText(childRequests[0])).toContain(" - Is a git repository: false");
       if (expectedToInject) {
         expectInjectedAgentsMd(childRequests[0], "Research the custom profile path.");
       } else {
@@ -457,7 +487,27 @@ describe("subagent provider-visible prompt assembly", () => {
     },
   );
 
-  it("keeps Notes and environment in one body when a custom child prompt is empty", () => {
+  it("puts the launcher-messages paragraph between the trimmed agent prompt and Notes", () => {
+    const result = createSubagentContextBuilder({
+      agentPrompt: "\n  You are a reviewer.\n",
+      envInfo: {
+        cwd: "/repo",
+        platform: "darwin",
+        shell: "zsh",
+        osVersion: "Darwin 24.3.0",
+        nodeVersion: "24.14.0",
+        isGitRepository: false,
+      },
+    }).build();
+
+    const systems = systemContents({ messages: result.systemMessages });
+    // The agent body (trimmed at both ends) is followed by the launcher's message section, then Notes; verbatim text is locked by subagent-explore.
+    expect(systems[1]).toMatch(
+      /^\nYou are a reviewer\.\n\nMessages from the agent that launched you — .+\n\nNotes:\n/u,
+    );
+  });
+
+  it("keeps Notes in the body and environment separate when a custom child prompt is empty", () => {
     const result = createSubagentContextBuilder({
       agentPrompt: "",
       envInfo: {
@@ -474,9 +524,11 @@ describe("subagent provider-visible prompt assembly", () => {
     const systems = systemContents({ messages: result.systemMessages });
     expect(systems).toHaveLength(2);
     expect(systems[0]).toBe("You are ZCode, an interactive coding agent");
-    expect(systems[1]).toMatch(/^\n\nNotes:/u);
-    expect(systems[1]).toContain(
-      "\n\nHere is useful information about the environment you are running in:",
+    expect(systems[1]).toMatch(/^\n\nMessages from the agent that launched you — .+\n\nNotes:/u);
+    expect(systems[1]).not.toContain("<env>");
+    expect(result.metaUserAttachments).toEqual([]);
+    expect(result.sections.find((section) => section.source === "env_info")?.content).toContain(
+      "# Environment\n",
     );
     expect(systems.join("")).toBe(
       result.sections
@@ -604,9 +656,12 @@ describe("subagent provider-visible prompt assembly", () => {
         rootDir: memoryRoot,
         scope,
       });
-      expect(systemContents(childRequests[0])[1]?.split("\n\nNotes:")[0]).toBe(
-        `\n${expectedMemoryPrompt}`,
-      );
+      // After the memory section comes the launcher's message section, then Notes.
+      expect(
+        systemContents(childRequests[0])[1]?.split(
+          "\n\nMessages from the agent that launched you",
+        )[0],
+      ).toBe(`\n${expectedMemoryPrompt}`);
       const childToolNames = childRequests[0].tools.map((tool: any) => tool.name);
       expect(childToolNames).toContain("Grep");
       expect(childToolNames).toContain("Write");
@@ -674,11 +729,11 @@ describe("subagent provider-visible prompt assembly", () => {
       expect(systems).toHaveLength(2);
       expect(systems[0]).toBe("You are ZCode, an interactive coding agent");
       expect(systems[1]).toMatch(
-        /^\nYou are a focused child agent\. Keep the result concise\.\n\nNotes:/u,
+        /^\nYou are a focused child agent\. Keep the result concise\.\n\nMessages from the agent that launched you — .+\n\nNotes:/u,
       );
       expect(systems[1]).toContain("Agent threads always have their cwd reset between bash calls");
-      expect(systems[1]).toContain("Working directory: /repo/current");
-      expect(systems[1]).toContain(
+      expect(allMessageText(request)).toContain(" - Primary working directory: /repo/current");
+      expect(allMessageText(request)).toContain(
         "You are powered by the model named anthropic/claude-haiku-4-5-20251001-cc.",
       );
       expect(allMessageText(request)).not.toContain(

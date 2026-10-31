@@ -12,7 +12,40 @@ import type {
 } from "./index.js";
 
 /**
- * Per-call execution information shared between Runtime and Adapter.
+ * Capability tags the session has used; the adapter writes them into the attribution header
+ * `x-zcode-session-features` (docs/design/v2/model/session-features-header.md).
+ * The vocabulary is append-only with no renames; deprecated tags keep their constants and names are never reused. Values must be lowercase snake_case.
+ */
+export const ModelRequestSessionFeature = {
+  /** Model code invoked the browser runtime via node_repl, success or not; the legacy path (core's built-in js tool) does not set it. */
+  BrowserUse: "browser_use",
+  /** Model code invoked the Computer Use runtime via node_repl, or called the legacy computer-use MCP tool, success or not. */
+  ComputerUse: "computer_use",
+  /** The model called ToolSearch (named LocalToolSearch in local mode) and it executed successfully. */
+  ToolSearchCalled: "tool_search_called",
+  /** The ToolSearch requested by the main loop actually took effect in local mode. */
+  ToolSearchLocal: "tool_search_local",
+  /** The ToolSearch requested by the main loop actually took effect in native mode. */
+  ToolSearchNative: "tool_search_native",
+  /** The model called CreateWorkflow and successfully started a background run. */
+  WorkflowAuto: "workflow_auto",
+  /** The user's built-in `/workflow` command input was expanded into a workflow template. */
+  WorkflowCmd: "workflow_cmd",
+} as const;
+
+export type ModelRequestSessionFeature =
+  (typeof ModelRequestSessionFeature)[keyof typeof ModelRequestSessionFeature];
+
+const MODEL_REQUEST_SESSION_FEATURE_VALUES: ReadonlySet<string> = new Set(
+  Object.values(ModelRequestSessionFeature),
+);
+
+export function isModelRequestSessionFeature(value: unknown): value is ModelRequestSessionFeature {
+  return typeof value === "string" && MODEL_REQUEST_SESSION_FEATURE_VALUES.has(value);
+}
+
+/**
+  * Per-call execution information shared between Runtime and Adapter.
  *
  * This is not part of the business ModelRequest and does not let ordinary callers change the
  * Provider or model identity. Runtime sets it only at the unified model-call boundary, and the
@@ -22,6 +55,12 @@ export interface ModelInvocationContext {
   metadata?: Record<string, unknown>;
   modelCall?: ModelApiCallObservation;
   modelRequestSessionType?: ModelRequestSessionType;
+  /**
+   * Capability tags already used by this session; the runtime layer reads the owner's current set on every call. The
+   * adapter writes the controlled attribution header, which provider static headers must not override; omitted or
+   * empty sets are not sent.
+   */
+  modelRequestSessionFeatures?: readonly ModelRequestSessionFeature[];
   /** Retry-budget tier; runtime selects it by taskType, and the adapter uses it to adjust when to give up on transient failures. */
   modelRetryBudget?: ModelRetryBudget;
   /** Admission port; runtime passes it from deps, and the adapter acquires before each attempt. */

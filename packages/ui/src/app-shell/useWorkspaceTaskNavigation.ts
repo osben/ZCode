@@ -26,6 +26,7 @@ import { getRemoteWorkspaceSession } from "@/store/remoteWorkspaceSessionStore.j
 import { useTabStoreApi } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab } from "@/store/tabStore.js";
 import { bumpTaskListMembershipVersion } from "@/v4/taskListMembershipVersion.js";
+import { ensureTaskNavigationWorkspace } from "@/app-shell/taskNavigationWorkspace.js";
 
 // Replay purges a task entry only when the project directory owner reports it as deleted.
 // A query-cache or visible-list miss is not deletion: such a task stays navigable and handleSelectTask opens it.
@@ -99,12 +100,19 @@ export function useWorkspaceTaskNavigation({
       // If multiple remote tabs in the same window share a path, the path map may select an old session,
       // causing "open this task" to mark another remote connection as read.
       // Activate the target tab first, then read the more precise remoteSessionId from the active tab.
-      activateTabByPath(
-        targetWorkspacePath,
-        targetWorkspaceIdentityHint
-          ? { workspaceIdentity: targetWorkspaceIdentityHint }
-          : undefined,
-      );
+      // Global search can return a directory not yet opened; a bare activate would fail and leave the user on the original task.
+      const workspaceResult = ensureTaskNavigationWorkspace({
+        workspacePath: targetWorkspacePath,
+        workspaceIdentity: targetWorkspaceIdentityHint,
+        activateTabByPath,
+        addLocalWorkspaceTab: (path) => {
+          tabStoreApi.getState().addTab(path);
+        },
+      });
+      if (!workspaceResult.accepted) {
+        toast(intl.formatMessage({ id: "automations.runs.openSessionFailed" }));
+        return;
+      }
       const activeTab = tabStoreApi
         .getState()
         .tabs.find((tab) => tab.id === tabStoreApi.getState().activeTabId);

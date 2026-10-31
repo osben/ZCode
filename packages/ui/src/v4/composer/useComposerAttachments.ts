@@ -1,5 +1,6 @@
 /* oxlint-disable eslint(max-lines) -- Attachment collection, per-scope upload scheduling, and lifecycle must be coordinated atomically in one hook. */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { registerImageComposerTarget } from "@/image-preview-editor/index.js";
 import { toast } from "@/components/ui/toast.js";
 import { nanoid } from "nanoid";
 import {
@@ -729,6 +730,15 @@ export function useComposerAttachments(
     [addPreparedAttachments, platform],
   );
 
+  useLayoutEffect(() => {
+    if (!listenAddToChatEvents || disabled) return;
+    // PNG export is asynchronous; release the old receiver during the commit phase so
+    // callbacks firing before the passive effect do not write into the old draft.
+    return registerImageComposerTarget({
+      append: (file) => addAttachmentFiles([file]).length === 1,
+    });
+  }, [listenAddToChatEvents, disabled, addAttachmentFiles, scopeKey]);
+
   const addAttachmentLocalPaths = useCallback(
     (selectedPaths: string[]) => {
       addPreparedAttachments(selectedPaths.map(createChatComposerPathAttachment));
@@ -1030,7 +1040,8 @@ export function useComposerAttachments(
 
   const restoreDraftAttachments = useCallback(
     (source: readonly ChatComposerAttachment[]) => {
-      // 新项目可能使用另一 Host/session；保留原始 File/路径，重新生成预览和上传归属。
+      // A new project may use a different Host/session; keep the original File/path and
+      // regenerate the preview and upload ownership.
       const restored = source.map((item) => ({
         sourceKind: item.sourceKind,
         messageCount: item.messageCount,

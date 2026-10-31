@@ -20,12 +20,12 @@ export function useModelProviders(target: {
   workspaceIdentity?: string;
   /** Local cwd for connectivity tests in Provider Settings; do not reuse a remote activation path. */
   connectivityWorkspacePath?: string;
-  /** If no local cwd exists during remote activation, fail closed; do not fall back to remote workspacePath. */
+  /** Under remote activation, never fall back to the remote workspacePath; with no local cwd, use the local Host's conversation directory instead. */
   connectivityWorkspaceRequired?: boolean;
-  /** Localized error message shown when there is no local workspace. */
+  /** Localized error message shown to the user when even the local Host cannot provide a conversation directory. */
   connectivityUnavailableMessage?: string;
 }) {
-  const { providerSettingsService } = useServices();
+  const { providerSettingsService, fileService } = useServices();
   const providerSettingsRead = useProviderSettingsServiceView(providerSettingsService);
   // No ACP filter here: the host derives `acp:<agentId>` providers only on a supported platform
   // (specs/acp-agent-runtime.md "Availability (platform rule)"), and ACP-managed providers never
@@ -186,27 +186,40 @@ export function useModelProviders(target: {
 
   const testModelConnectivity = useCallback(
     async (providerId: string, modelId: string): Promise<ModelConnectivityResult> => {
-      const connectivityWorkspacePath = target.connectivityWorkspacePath?.trim();
-      if (
-        !connectivityWorkspacePath &&
-        (target.connectivityWorkspaceRequired || target.workspaceIdentity?.trim())
-      ) {
-        return {
-          success: false,
-          error: {
-            message:
-              target.connectivityUnavailableMessage ??
-              "A local workspace is unavailable for connectivity testing.",
-          },
-        };
+      // Under remote activation target.workspacePath is a remote path and cannot serve as the local Agent cwd.
+      const remoteActive = Boolean(
+        target.connectivityWorkspaceRequired || target.workspaceIdentity?.trim(),
+      );
+      let workspacePath =
+        target.connectivityWorkspacePath?.trim() || (remoteActive ? "" : target.workspacePath);
+      if (!workspacePath.trim()) {
+        // Bug root cause (ZCT-2112556538453495808): the old logic only recognized opened local tabs and
+        // reported "local workspace unavailable" when only remote projects were open. Provider config is a local
+        // global config and tests do not depend on the project; the local Host always has its own conversation
+        // directory (the Host also uses it to prepare the session store on remote-restore startup), so the Host
+        // resolves and creates it — the UI builds no path itself and never hands a remote path to the local machine.
+        try {
+          workspacePath = (await fileService.ensureConversationWorkspace()).path;
+        } catch (err) {
+          logger.warn("[useModelProviders] 解析本机对话目录失败，无法测试模型连通性", err);
+          return {
+            success: false,
+            error: {
+              message:
+                target.connectivityUnavailableMessage ??
+                "A local workspace is unavailable for connectivity testing.",
+            },
+          };
+        }
       }
       return providerSettingsService.testModelConnectivity({
-        workspacePath: connectivityWorkspacePath || target.workspacePath,
+        workspacePath,
         providerId,
         modelId,
       });
     },
     [
+      fileService,
       providerSettingsService,
       target.connectivityUnavailableMessage,
       target.connectivityWorkspacePath,

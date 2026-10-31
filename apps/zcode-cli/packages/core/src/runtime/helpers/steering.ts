@@ -254,6 +254,17 @@ export function clonePartForFork(
     if (cloned.tail_start_id) {
       cloned.tail_start_id = mapMessage(cloned.tail_start_id, "compaction tail_start_id");
     }
+    const leadingIds: unknown = cloned.metadata?.compactLeadingMessageIds;
+    if (Array.isArray(leadingIds)) {
+      // Older forks copied metadata verbatim and may leave parent session IDs; the declaration only affects announcement placement, so drop unmappable ones instead of blocking the fork.
+      cloned.metadata = {
+        ...cloned.metadata,
+        compactLeadingMessageIds: leadingIds.flatMap((id) => {
+          const mapped = messageIdMap.get(id);
+          return mapped ? [mapped] : [];
+        }),
+      };
+    }
     if (cloned.compactBoundary) {
       const boundary = cloned.compactBoundary;
       cloned.compactBoundary = {

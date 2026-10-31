@@ -1,4 +1,4 @@
-import ts from "typescript";
+import type ts from "typescript";
 import type { WorkflowProgram } from "../compiler/compile.js";
 import type { SiteTable } from "./sites.js";
 import { provisionalFanoutId, type TaintFacts, type TaintOcc } from "./domain.js";
@@ -6,7 +6,6 @@ import { computeArtifactTypes, type ArtifactTypes } from "./artifact-types.js";
 import { Evaluator } from "./taint.js";
 import { traceOrder, type OrderTrace } from "./causality-order.js";
 import { literalCardinality } from "./fanout-cardinality.js";
-import type { ApplicationVia } from "./state.js";
 import type {
   AnalysisCore,
   CoreActorSite,
@@ -45,8 +44,8 @@ export function interpret(workflow: WorkflowProgram, table: SiteTable): Analysis
   evaluator.converge();
   const facts = evaluator.s.emitFacts();
   const oracle = evaluator.s.emitOracle();
-  const trace = traceOrder(workflow, table, oracle);
-  return mintCore(workflow, table, facts, trace, oracle.applications);
+  const { iterationsBySite, trace } = traceOrder(workflow, table, oracle);
+  return mintCore(workflow, table, facts, trace, iterationsBySite);
 }
 
 /** Mint the core: the one place raw offsets and the checker are still consulted. */
@@ -55,9 +54,8 @@ function mintCore(
   table: SiteTable,
   facts: TaintFacts,
   trace: OrderTrace,
-  applications: ReadonlyMap<ts.Node, ReadonlyMap<ts.Node, ApplicationVia>>,
+  iterationsBySite: ReadonlyMap<ts.Node, number[][]>,
 ): AnalysisCore {
-  const { scriptFile } = workflow;
 
   // Fan-out ordinals over promoted candidates (already source-ordered), and the rename
   // from the taint pass's provisional ids. Moved here from graph assembly: the core
@@ -66,52 +64,28 @@ function mintCore(
   facts.promoted.forEach((fanout, index) => fanoutId.set(fanout.id, `fan-out#${index + 1}`));
   const rename = (site: string): string => fanoutId.get(site) ?? site;
 
-  // Fan-out containment: a site executes once per element when it sits in a promoted
-  // candidate's BODY — lexically, or in the body of a function the candidate's body invokes
-  // (a named callback `xs.map(review)`, a helper called from the inline callback, and so on
-  // transitively, per the call oracle). "Nearest" = the innermost containing span, i.e. the
-  // one with the greatest start offset.
-  const spanOf = (node: ts.Node): { start: number; end: number } => ({ end: node.getEnd(), start: node.getStart(scriptFile) });
-  const insideSpan = (pos: number, span: { start: number; end: number }): boolean => span.start <= pos && pos < span.end;
-  const promotedSpans: Array<{ id: string; start: number; end: number }> = [];
-  for (const cand of table.iterations) {
-    const id = fanoutId.get(provisionalFanoutId(cand.order));
-    if (id === undefined) continue;
-    const seedSpans = [spanOf(cand.body)];
-    if (cand.call !== undefined) {
-      // A non-literal callback's body is the argument expression: no steps live in it, but
-      // the functions applied AT the call do.
-      for (const [fn, via] of applications.get(cand.call) ?? []) {
-        if (via === "argument") seedSpans.push(spanOf(fn));
-      }
+  // Fan-out containment, read off the walk (docs/analysis.md "Sites"): each visit of a site's
+  // call noted the candidates enclosing it, innermost first. The site takes the first PROMOTED
+  // one of a visit, and across visits (a helper called from several fan-outs) the first in
+  // source order. A step inside a callback thereby belongs to the fan-out that passed the
+  // callback: the helper's activation inlined only that one.
+  //
+  // Fix reason: `within` used to be computed from lexical span closures — starting from the fan-out body,
+  // every function the oracle had applied at each call site inside it was folded into the span. A shared
+  // helper's `fn()` had applied all callers' callbacks, so other fan-outs and even the top-level ask were
+  // counted into the first fan-out (the graph drew the top-level step as one of its lanes), and that closure
+  // was cubic in the number of fan-outs. The walk already inlines the one correct callback per call site, so
+  // simply reading the regions it passes through is enough.
+  const within = (node: ts.Node): string | undefined => {
+    let best: number | undefined;
+    for (const orders of iterationsBySite.get(node) ?? []) {
+      const order = orders.find((candidate) => fanoutId.has(provisionalFanoutId(candidate)));
+      if (order !== undefined && (best === undefined || order < best)) best = order;
     }
-    // Closure: every function applied at a call site inside a span already in the set.
-    const spans = [...seedSpans];
-    const seen = new Set<ts.Node>();
-    for (let i = 0; i < spans.length; i += 1) {
-      const span = spans[i] as { start: number; end: number };
-      for (const [site, fns] of applications) {
-        if (!insideSpan(site.getStart(scriptFile), span)) continue;
-        for (const fn of fns.keys()) {
-          if (seen.has(fn)) continue;
-          seen.add(fn);
-          spans.push(spanOf(fn));
-        }
-      }
-    }
-    for (const span of spans) promotedSpans.push({ id, ...span });
-  }
-  const within = (pos: number): string | undefined => {
-    let best: { id: string; start: number } | undefined;
-    for (const span of promotedSpans) {
-      if (insideSpan(pos, span) && (best === undefined || span.start > best.start)) {
-        best = { id: span.id, start: span.start };
-      }
-    }
-    return best?.id;
+    return best === undefined ? undefined : fanoutId.get(provisionalFanoutId(best));
   };
   const withinOf = (node: ts.Node): { within?: string } => {
-    const enclosing = within(node.getStart(scriptFile));
+    const enclosing = within(node);
     return enclosing === undefined ? {} : { within: enclosing };
   };
 
@@ -152,7 +126,7 @@ function mintCore(
       label: fanout.label,
       loc: fanout.loc,
       order: fanout.order,
-      ...(cand === undefined ? {} : withinOf(cand.iterated)),
+      ...(cand === undefined ? {} : withinOf(cand.call ?? cand.body.parent)),
       ...(cardinality === undefined ? {} : { cardinality }),
     };
   });

@@ -1,19 +1,23 @@
-// Session 常驻池验收网（spec: apps/zcode-cli/docs/design/v2/session-idle-deactivation.md）：
-// 单个 app-server 以 idle TTL 主动回收长期空闲 runtime，并用 high/low water LRU
-// 限制突发 resident 数量；运行、后台 work、订阅和协议操作必须优先保活。
+// Session residency pool acceptance net (spec: apps/zcode-cli/docs/design/v2/session-idle-deactivation.md):
+// a single app-server proactively reclaims long-idle runtimes on an idle TTL and bounds burst
+// residency with a high/low-water LRU; running turns, background work, subscriptions, and
+// protocol operations must take keep-alive precedence.
 //
-// 三层覆盖：
-// - pool 单元（fake host）：TTL、high/low water LRU、保护条件、operation lease、
-//   fresh facts 二次校验、waitForDeactivation 闸门和失败隔离。
-// - 执行面单元（stub context）：内存摘除在同一同步片完成（unsubscribe → gateway 去激活 →
-//   sessions.delete），app.close 后置异步；重复调用幂等。
-// - 集成（真 sqlite + ZCodeProtocolAgentServer + binder）：subscribe → unsubscribe →
-//   容量 rebalance 去激活 → sessions-index 订阅者收不到 session.removed → 再订阅冷恢复出完整
-//   snapshot；再激活闸门在 app.close 收尾完成前挂住并发 subscribe。
+// Three layers of coverage:
+// - Pool unit (fake host): TTL, high/low-water LRU, protection conditions, operation leases,
+//   fresh-facts re-check, the waitForDeactivation gate, and failure isolation.
+// - Executor unit (stub context): in-memory removal completes in one synchronous slice
+//   (unsubscribe → gateway deactivation → sessions.delete), with app.close deferred async;
+//   repeated calls are idempotent.
+// - Integration (real sqlite + ZCodeProtocolAgentServer + binder): subscribe → unsubscribe →
+//   capacity-rebalance deactivation → sessions-index subscribers receive no session.removed →
+//   resubscribe cold-resumes into the full snapshot; the reactivation gate holds concurrent
+//   subscribes until app.close finishes its teardown.
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createProtocolBrowserControlBroker } from "../src/zcode-protocol/browser-control-broker.js";
 import { createSqliteSessionStore } from "@zcode/adapters/storage";
 import type {
   MessageId,
@@ -45,6 +49,7 @@ import {
 import {
   acquireSessionResidencyFinalization,
   deactivateSessionRecord,
+  getSessionLifecycle,
   runWithSessionResidencyFinalization,
 } from "../src/zcode-protocol/session-residency.js";
 import type {
@@ -56,7 +61,7 @@ import { ZCodeProtocolAgentServer } from "../src/zcode-protocol/server.js";
 import { createFakeApp } from "./helpers/fake-zcode-app.js";
 import type { ZCodeApp } from "../src/app/types.js";
 
-// ── 常驻池单元（fake host）──────────────────────────────────────────────────
+// ── Residency pool unit (fake host) ──────────────────────────────────────
 
 function idleFacts(overrides: Partial<SessionResidencyFacts> = {}): SessionResidencyFacts {
   return {
@@ -511,7 +516,7 @@ describe("SessionResidentPool", () => {
   });
 });
 
-// ── 执行面单元（stub context）───────────────────────────────────────────────
+// ── Executor unit (stub context) ─────────────────────────────────────────
 
 interface ExecutorHarness {
   context: ZCodeProtocolAgentServerContext;
@@ -534,7 +539,7 @@ function makeExecutorHarness(sessionId: string): ExecutorHarness {
         await closeGate;
       },
     },
-    // 去激活后内存 event store 必须与“从未加载”等价（session-event-store-retention.md）。
+    // After deactivation the in-memory event store must be equivalent to "never loaded" (session-event-store-retention.md).
     eventStore: {
       deleteSession: async (id: string) => {
         calls.push(`eventStore.deleteSession:${id}`);
@@ -547,6 +552,7 @@ function makeExecutorHarness(sessionId: string): ExecutorHarness {
     updatedAt: 0,
   } as unknown as ZCodeProtocolSessionRecord;
   const context = {
+    notify: () => {},
     sessions: new Map([[sessionId, record]]),
     v4Gateway: {
       assertSessionRuntimeDeactivatable: () => {},
@@ -559,11 +565,56 @@ function makeExecutorHarness(sessionId: string): ExecutorHarness {
 }
 
 describe("deactivateSessionRecord（执行面）", () => {
+  it.each([true, false])(
+    "自动回收摘除 record 后执行浏览器释放，结果 ok=%s 决定最终生命周期",
+    async (ok) => {
+      const sessionId = "sess-browser-idle";
+      const harness = makeExecutorHarness(sessionId);
+      harness.record.workspace = { workspacePath: "/repo", workspaceKey: "/repo" };
+      const requestClient = vi.fn(async () => ({ ok: true, elapsedMs: 0 }));
+      harness.context.requestClient = requestClient as typeof harness.context.requestClient;
+      harness.context.deps = {
+        sessionStore: { getSession: async () => ({ time: {} }) },
+      } as unknown as typeof harness.context.deps;
+      const broker = createProtocolBrowserControlBroker(harness.context);
+      await broker.execute({
+        sessionId,
+        browserId: "browser-idle",
+        browserGeneration: 1,
+        command: { method: "getState" },
+      });
+      requestClient.mockResolvedValue({ ok, elapsedMs: 0 });
+      harness.record.app.close = async () => {
+        expect(harness.context.sessions.has(sessionId)).toBe(false);
+        expect((await getSessionLifecycle(harness.context).getState(sessionId)).state).toBe(
+          "stopping",
+        );
+        await broker.closeSession!({ sessionId });
+      };
+      const deactivation = deactivateSessionRecord(harness.context, sessionId);
+      if (ok) await deactivation;
+      else await expect(deactivation).rejects.toThrow();
+      expect(requestClient).toHaveBeenLastCalledWith(
+        zcodeProtocolMethods.interactionBrowserExecute,
+        expect.objectContaining({
+          sessionId,
+          workspaceKey: "/repo",
+          command: { method: "closeSession" },
+        }),
+        expect.anything(),
+      );
+      expect((await getSessionLifecycle(harness.context).getState(sessionId)).state).toBe(
+        ok ? "unloaded" : "faulted",
+      );
+    },
+  );
+
   it("内存摘除在同一同步片完成，app.close 后置异步等待", async () => {
     const harness = makeExecutorHarness("sess-exec");
     const promise = deactivateSessionRecord(harness.context, "sess-exec");
-    // 调用返回瞬间（未 await）：unsubscribe、gateway 去激活、注册表删除必须已完成——
-    // JS 单线程下这保证 subscribe/命令不可能命中"校验通过但还没摘除"的窗口。
+    // The moment the call returns (not yet awaited): unsubscribe, gateway deactivation, and
+    // registry removal must all be done — under JS single-threading this guarantees no
+    // subscribe/command can hit the "validated but not yet removed" window.
     expect(harness.calls).toEqual([
       "unsubscribe",
       "gateway.deactivateSession:sess-exec",
@@ -580,7 +631,7 @@ describe("deactivateSessionRecord（执行面）", () => {
     harness.releaseClose();
     await promise;
     expect(settled).toBe(true);
-    // 内存 event store 在 app.close 之后释放，属于同一次去激活事务的收尾。
+    // The in-memory event store is released after app.close — part of the same deactivation transaction's teardown.
     expect(harness.calls.at(-1)).toBe("eventStore.deleteSession:sess-exec");
   });
 
@@ -593,8 +644,9 @@ describe("deactivateSessionRecord（执行面）", () => {
   });
 
   /**
-   * 真实 gateway 的 deactivate 与执行面 preflight 必须复用同一纯校验；这样当前实现会在
-   * unsubscribe 后由 deactivate 拒绝，而修复后会在第一个副作用前由 preflight 拒绝。
+   * The real gateway's deactivate and the executor preflight must share the same pure check; so
+   * the current implementation gets rejected by deactivate after unsubscribe, while the fixed one
+   * gets rejected by preflight before the first side effect.
    */
   function makeThrowingGatewayHarness(sessionId: string): ExecutorHarness {
     const harness = makeExecutorHarness(sessionId);
@@ -626,14 +678,15 @@ describe("deactivateSessionRecord（执行面）", () => {
       "Session command inbox is still pinned",
     );
 
-    // Bug 根因：可抛出的 gateway 校验曾位于 unsubscribe 之后，导致 resident record
-    // 仍在注册表里但 runtime event subscription 已拆除；预检失败必须完整保留可用状态。
+    // Bug root cause: the throwing gateway check used to run after unsubscribe, leaving the
+    // resident record in the registry while the runtime event subscription was already torn
+    // down; a preflight failure must preserve the usable state intact.
     expect(harness.context.sessions.has("sess-pinned")).toBe(true);
     expect(harness.calls).not.toContain("unsubscribe");
   });
 });
 
-// ── 集成（真 sqlite + server + binder）─────────────────────────────────────
+// ── Integration (real sqlite + server + binder) ──────────────────────────
 
 const WORKSPACE_PATH = "/workspace/idle-deactivation";
 const SESSION_ID = "sess_idle_deactivate" as SessionId;
@@ -729,6 +782,7 @@ async function bootServer(
   dbPath: string,
   options: {
     appOverrides?: Partial<ZCodeApp>;
+    onApp?: (app: ZCodeApp) => void;
     poolOptions?: SessionResidentPoolOptions;
   } = {},
 ): Promise<IntegrationHarness> {
@@ -738,6 +792,7 @@ async function bootServer(
     createZCodeApp: (appOptions) => {
       const app = createFakeApp(appOptions, options.appOverrides ?? {});
       createdApps.push(app);
+      options.onApp?.(app);
       return app;
     },
     cwd: WORKSPACE_PATH,
@@ -753,8 +808,9 @@ async function bootServer(
   return { server, store, createdApps, sessions };
 }
 
-// subscribe response 严格 ACK-only；initial snapshot 走 request-scoped post-response
-// outbox（response line 之后的 owned notification），此处解析出来一并返回。
+// The subscribe response is strictly ACK-only; the initial snapshot travels via the
+// request-scoped post-response outbox (an owned notification after the response line) and is
+// parsed out and returned here as well.
 async function subscribeConversation(
   server: ZCodeProtocolAgentServer,
   requestId: string,
@@ -805,7 +861,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
     });
     const indexFrames: unknown[] = [];
     server.setNotificationSink((message) => {
-      // 挂 sink 后冷恢复会真发 runtime preferences 反向请求并等待响应，自动应答避免超时。
+      // With the sink attached, cold resume really issues the runtime-preferences reverse request and awaits a reply; auto-answer to avoid a timeout.
       if (
         "id" in message &&
         "method" in message &&
@@ -825,7 +881,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
       }
     });
     try {
-      // 侧边栏列表订阅者：验证去激活不产生 session.removed 增量帧。
+      // Sidebar list subscriber: verifies that deactivation produces no session.removed delta frame.
       const indexResult = await requestResult(server, {
         id: "idx-sub",
         method: V4_METHODS.conversationSubscribe,
@@ -842,7 +898,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
       expect(sessions.has(SESSION_ID)).toBe(true);
       expect(createdApps).toHaveLength(1);
 
-      // conversation 订阅者在场时不得开始 idle TTL。
+      // The idle TTL must not start while a conversation subscriber is present.
       server.rebalanceResidentSessions();
       expect(sessions.has(SESSION_ID)).toBe(true);
 
@@ -856,7 +912,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
         },
       });
 
-      // 订阅者离开只开始新的 idle TTL，未超 highWater 时保留热 runtime。
+      // The subscriber leaving merely starts a new idle TTL; below highWater the hot runtime is kept.
       expect(sessions.has(SESSION_ID)).toBe(true);
       clock.advance(99);
       server.rebalanceResidentSessions();
@@ -870,7 +926,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
         }
       ).context.sessionResidentPool?.waitForDeactivation(SESSION_ID);
 
-      // 列表订阅者没有收到 session.removed（侧边栏项必须原样保留）。
+      // The list subscriber received no session.removed (the sidebar item must stay as is).
       const removedFrames = indexFrames
         .map((frame) => sessionsIndexTopicFrameSchema.parse(frame))
         .filter(
@@ -880,7 +936,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
         );
       expect(removedFrames).toEqual([]);
 
-      // 再订阅：走冷恢复重建 record（新建第二个 app），snapshot 含历史。
+      // Resubscribe: goes through cold resume to rebuild the record (a second app is created), snapshot includes history.
       const resubscribed = await subscribeConversation(server, "conv-resub", "conn-desktop-2");
       if (resubscribed.initialFrame.payload.kind !== "snapshot") {
         throw new Error("Expected cold-resume snapshot");
@@ -953,7 +1009,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
   });
 });
 
-// ── server 装配层配置回退 ──────────────────────────────────────────────────
+// ── Server assembly-layer config fallback ────────────────────────────────
 
 describe("SessionResidentPool 配置回退", () => {
   function makeServer(deps: Partial<ZCodeProtocolAgentDependencies>) {
@@ -987,13 +1043,175 @@ describe("SessionResidentPool 配置回退", () => {
 
     context.sessionResidentPool!.rebalance();
 
-    // Bug 根因：legacy low-water 曾同时覆盖 high-water，3 个 resident 会立即被砍到 2，
-    // 让默认 16/low-water 2 的迟滞窗口退化为零宽窗口。
+    // Bug root cause: the legacy low-water used to override the high-water too, immediately
+    // cutting 3 residents to 2 and collapsing the default 16/low-water-2 hysteresis window to
+    // zero width.
     expect(context.sessions.size).toBe(3);
   });
 
   it("只覆盖 targetCount 且高于默认 high-water 时不让 server 构造失败", () => {
-    // 装配层应解析出有效 high-water；测试只约束 CLI 可启动，不锁死具体推导策略。
+    // The assembly layer should resolve a valid high-water; the test only constrains that the CLI starts, not the exact derivation strategy.
     expect(() => makeServer({ sessionResidentPoolOptions: { targetCount: 20 } })).not.toThrow();
+  });
+});
+
+// The lifecycle protocol runs against a real store/server, verifying that queries and mutations are not just one isolated state machine.
+describe("session lifecycle protocol", () => {
+  let root: string;
+  let harness: IntegrationHarness;
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "session-lifecycle-"));
+    const dbPath = join(root, "sessions.sqlite");
+    await seedPersistedSession(dbPath);
+    harness = await bootServer(dbPath, { poolOptions: { highWaterCount: 16, targetCount: 8 } });
+  });
+  afterEach(async () => {
+    await Promise.allSettled((harness?.createdApps ?? []).map((app) => app.close?.()));
+    harness?.store.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  const call = (h: IntegrationHarness, method: string) =>
+    requestResult(h.server, {
+      id: Math.random().toString(),
+      method: method as never,
+      params: { sessionId: SESSION_ID },
+    });
+
+  it("queries unloaded without activation, then ensures/restarts/stops while preserving history", async () => {
+    expect(await call(harness, "session/lifecycle/getState")).toMatchObject({ state: "unloaded" });
+    expect(harness.createdApps).toHaveLength(0);
+    await Promise.all([
+      call(harness, "session/lifecycle/ensureReady"),
+      call(harness, "session/lifecycle/ensureReady"),
+    ]);
+    expect(harness.createdApps).toHaveLength(1);
+    expect(await call(harness, "session/lifecycle/getState")).toMatchObject({ state: "ready" });
+    await call(harness, "session/lifecycle/restart");
+    expect(harness.createdApps).toHaveLength(2);
+    await call(harness, "session/lifecycle/stop");
+    expect(await call(harness, "session/lifecycle/getState")).toMatchObject({ state: "unloaded" });
+    expect(await harness.store.getSession(SESSION_ID)).toBeTruthy();
+    expect(await harness.store.messages({ sessionID: SESSION_ID })).toHaveLength(2);
+  });
+
+  it("restarts an actively subscribed session and rebuilds its publisher", async () => {
+    await subscribeConversation(harness.server, "subscribe", "desktop");
+    const response = await harness.server.handleMessage({
+      id: "restart",
+      method: "session/lifecycle/restart" as never,
+      params: { sessionId: SESSION_ID },
+    });
+    expect(response).toMatchObject({ result: { completed: true } });
+    expect(harness.createdApps).toHaveLength(2);
+    await subscribeConversation(harness.server, "resubscribe", "desktop");
+    expect(harness.sessions.has(SESSION_ID)).toBe(true);
+    expect(await call(harness, "session/lifecycle/getState")).toMatchObject({ state: "ready" });
+  });
+  it("reports partial initialization and joins legacy resume with lifecycle activation", async () => {
+    harness.store.close();
+    const entered = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    harness = await bootServer(join(root, "sessions.sqlite"), {
+      poolOptions: { highWaterCount: 16, targetCount: 8 },
+      onApp: (app) => {
+        const resume = app.resume.bind(app);
+        app.resume = async (...args) => {
+          entered.resolve();
+          await gate.promise;
+          return resume(...args);
+        };
+      },
+    });
+    const first = call(harness, "session/lifecycle/ensureReady");
+    await entered.promise;
+    expect(await call(harness, "session/lifecycle/getState")).toMatchObject({ state: "starting" });
+    const legacy = call(harness, "session/resume");
+    const stop = await harness.server.handleMessage({
+      id: "conflict",
+      method: "session/lifecycle/stop",
+      params: { sessionId: SESSION_ID },
+    });
+    expect(stop).toMatchObject({ error: { data: { code: "conflict" } } });
+    gate.resolve();
+    await Promise.all([first, legacy]);
+    expect(harness.createdApps).toHaveLength(1);
+  });
+
+  it("does not recreate an instance after a close failure, including the legacy resume path", async () => {
+    harness.store.close();
+    harness = await bootServer(join(root, "sessions.sqlite"), {
+      poolOptions: { highWaterCount: 16, targetCount: 8 },
+      appOverrides: {
+        close: async () => {
+          throw new Error("resource still owned");
+        },
+      },
+    });
+    await call(harness, "session/lifecycle/ensureReady");
+    await expect(call(harness, "session/lifecycle/stop")).rejects.toThrow();
+    expect(await call(harness, "session/lifecycle/getState")).toMatchObject({ state: "faulted" });
+    for (const method of [
+      "session/resume",
+      "session/lifecycle/ensureReady",
+      "session/lifecycle/restart",
+      "session/lifecycle/stop",
+    ]) {
+      const response = await harness.server.handleMessage({
+        id: method,
+        method: method as never,
+        params: { sessionId: SESSION_ID },
+      });
+      expect(response).toMatchObject({ error: { data: { code: "recoveryRequired" } } });
+    }
+    expect(harness.createdApps).toHaveLength(1);
+  });
+
+  it("ignores callbacks queued by the previous instance after it is released", async () => {
+    harness.store.close();
+    let emit: ((event: never) => void) | undefined;
+    harness = await bootServer(join(root, "sessions.sqlite"), {
+      poolOptions: { highWaterCount: 16, targetCount: 8 },
+      onApp: (app) => {
+        app.runtime.subscribeEvents = (handlers) => {
+          emit = (event) => {
+            handlers.onSessionEvent?.(event);
+          };
+          return () => {};
+        };
+      },
+    });
+    await call(harness, "session/lifecycle/ensureReady");
+    const emitOld = emit!;
+    await call(harness, "session/lifecycle/restart");
+    // An unconsumed old callback must not resolve events, let alone write into the new publisher.
+    expect(() =>
+      emitOld({
+        get type() {
+          throw new Error("stale event consumed");
+        },
+      } as never),
+    ).not.toThrow();
+    expect(await call(harness, "session/lifecycle/getState")).toMatchObject({ state: "ready" });
+  });
+  it("owns a materialized app even when event subscription fails before initialization finishes", async () => {
+    harness.store.close();
+    let closed = 0;
+    harness = await bootServer(join(root, "sessions.sqlite"), {
+      poolOptions: { highWaterCount: 16, targetCount: 8 },
+      onApp: (app) => {
+        app.runtime.subscribeEvents = () => {
+          throw new Error("subscribe failed");
+        };
+      },
+      appOverrides: {
+        close: async () => {
+          closed += 1;
+          throw new Error("resource still owned");
+        },
+      },
+    });
+    await expect(call(harness, "session/lifecycle/ensureReady")).rejects.toThrow();
+    expect(closed).toBe(1);
+    expect(await call(harness, "session/lifecycle/getState")).toMatchObject({ state: "faulted" });
   });
 });

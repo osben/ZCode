@@ -283,11 +283,11 @@ async function loadHooksImpl(
 }
 
 /**
- * Root cause: the old implementation read through readJsonFile before writing, which returned null on read
- * failures or corrupt JSON and wrote the file back as an empty object — wiping other config.json entries
- * such as MCP and plugins.
- * Fix: switch to updateJsonObjectFile — a corrupt file rejects the write, the content is re-read before
- * writing, only the hooks field is changed, and the replacement is atomic.
+ * Root cause: the old implementation read with readJsonFile before writing; on read failure
+ * or corrupt JSON it returned null and wrote back an empty object, wiping other config.json
+ * entries such as MCP and plugins. Fix: use updateJsonObjectFile — error instead of writing
+ * when the file is corrupt, re-read before writing, touch only the hooks field, replace
+ * atomically.
  */
 async function writeZCodeHooksConfig(
   workspacePath: string | undefined,

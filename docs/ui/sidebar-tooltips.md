@@ -1,48 +1,31 @@
-# Left Sidebar Hover Tooltips
+# 左侧边栏悬停提示
 
-## Behavior
+## 行为
 
-Tooltips in the left project/task navigation, groups and timeline, the bottom account/settings/mobile
-remote entries, the file tree, and the top-left sidebar and task navigation tool area all appear after the
-mouse dwells continuously for **300ms**.
+左侧项目/任务导航、分组与时间线、底部账户/设置/移动远控入口，以及左上角侧栏与任务导航工具区的提示，统一在鼠标连续停留 **300ms** 后出现。
 
 ```text
-enter trigger -> Radix timer 300ms -> show tooltip
-       └─ leave early -> cancel
-switch trigger -> restart 300ms (delay not skipped)
+移入触发器 → Radix 计时 300ms → 显示提示
+       └─ 提前移出 → 取消
+切换触发器 → 重新计时 300ms（不跳过延迟）
 ```
 
-1. The shared sidebar Tooltip Provider configures the delay, `skipDelayDuration=0` and a strict delay
-   policy. Inside the strict scope each tooltip uses an independent Radix timer, so shared fast-open state
-   cannot bypass the delay within one pointer movement; no per-tooltip Provider is added outside the
-   sidebar. Timing, leave-to-cancel and keyboard focus stay Radix; no business timer is added.
-2. A plain tooltip only shows an explanation and closes when leaving the trigger; it enables no hover
-   corridor into the tooltip content and its popover does not intercept mouse events, so an old tooltip
-   does not block a neighbor button's new one. Interactive remote details keep using the original
-   HoverCard (already 300ms; close delay and in-detail copy interaction unchanged).
-3. Project row "more / show file tree / new task", section and group actions, task actions and status,
-   workflow info, bottom entries, file tree buttons and Git status all inherit the policy. A grouped task's
-   whole row must not override it with an independent zero-delay Provider.
-4. The new-project button of the "Projects" section and the new-task button of the "Tasks" section get
-   tooltips, reusing existing i18n copy and accessible names.
-5. Native sidebar `title` hints move to the shared Tooltip: group names, draft name/directory, old project
-   notes, home-only workspaces, file paths, file tree more / clear search, account info and menu disabled
-   reasons. Trigger size, drag, click and keyboard behavior are kept.
-6. A plain task title already has 1-second hover scrolling and gets no title Tooltip; open timing of click
-   menus, Popovers and Dialogs is unchanged. Tooltips outside the sidebar keep the original policy.
-7. The mouse-hover delay does not change keyboard focus tooltips or touch tap behavior. Desktop and mobile
-   share the component; zh/en and Zai Light / Dark apply.
+- 由侧栏共享 Tooltip Provider 配置延迟、`skipDelayDuration=0` 和严格延迟策略。严格范围内每条提示使用独立 Radix 计时，避免共享快速打开状态在同次指针移动中绕过延迟；侧栏外不增加逐提示 Provider。计时、移出取消和键盘 focus 沿用 Radix，不增加业务计时器。
+- 普通提示只展示说明，离开触发器即关闭，不启用跨入提示内容的悬停走廊，浮层不拦截鼠标事件，避免旧提示挡住相邻按钮的新提示；可交互的远程详情仍使用原 HoverCard。
+- 项目行“更多 / 显示文件树 / 新建任务”、分区和分组操作、任务操作和状态、工作流信息、底部入口、侧栏内的文件树按钮及 Git 状态均继承同一策略。分组任务整行不能用独立零延迟 Provider 覆盖它。
+- “项目”分区的新项目按钮与“任务”分区的新建任务按钮补齐提示，复用现有国际化文案与无障碍名称。
+- 侧栏原生 `title` 提示改用共享 Tooltip，包括分组名、草稿名/目录、旧项目说明、home-only 工作区、侧栏内文件路径、文件树更多/清空搜索、账户信息及菜单禁用原因。保留触发器尺寸、拖拽、点击和键盘行为。
+- 远程项目详情 HoverCard 已采用 300ms，继续保持；关闭延迟与详情内复制交互不变。
+- 普通任务标题已有 1 秒悬停滚动，不添加标题 Tooltip；点击菜单、Popover、Dialog 的打开时机不变。侧栏外的提示继续使用原有策略。
+- 鼠标 hover 的延迟不改变键盘 focus 提示或触屏点击行为。桌面和手机共享组件，中英文、Zai Light / Dark 均适用。
 
-## Verification
+## 验证
 
-- SBT01: a brief pass shows nothing; dwelling shows it; adjacent buttons each wait anew; leaving cancels.
-- SBT02: the three project row buttons, the project/task section new buttons, search/filter and bottom
-  entry copy are correct and click still performs the original action.
-- SBT03: whole group row/actions, native tooltip migration, file tree and remote details follow 300ms;
-  tooltips outside the sidebar keep the original policy.
-- SBT04: desktop/mobile layout, zh/en and light/dark; touch taps need not wait for the tooltip, keyboard
-  availability is kept.
+- SBT01：短暂划过不出现；停留后出现；相邻按钮每次重新等待；移出取消。
+- SBT02：项目行三个按钮、项目/任务分区新建按钮、搜索/筛选及底部入口文案正确，点击仍执行原操作。
+- SBT03（2026-10-18 用户确认）：左侧分组整行/操作及远程详情遵循 300ms；已迁移到右侧标签的文件树使用原生 title，验证提示内容及更多、刷新、清空搜索操作，不要求 Radix 延迟提示。
+- SBT04：桌面/手机布局、中英文与深浅主题；触屏点击无需等待 tooltip，保留键盘可用性。
 
-The browser candidate mounts the real production components with injected service data; the Desktop
-candidate verifies the full app entry. Candidates stay manual-review/pending and a browser fixture does not
-replace remote transport or native multi-platform verification.
+浏览器候选挂载真实生产组件并注入服务数据；Desktop 候选验证完整应用入口。候选用例保持 manual-review/pending，不以浏览器夹具代替远程传输或原生多平台验证。
+
+2026-10-18 SBT03 细化：右侧更多菜单、文件行与清除按钮保留原生 `title`；刷新按钮沿用 `ControlHintTooltip`，只验证提示内容和刷新操作，不施加左侧 300ms 下界。
