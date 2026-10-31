@@ -70,7 +70,11 @@ test("只改队列时 CLI 非零退出，独立于 affected 选测", async (t) =
 
 test("默认推送入口必经清单检查", async () => {
   const pkg = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8"));
-  assert.match(pkg.scripts["verify:pre-push"], /&& pnpm run check:e2e-remote-targets &&/);
+  // The fork's verify:pre-push delegates its stage list to scripts/run-pre-push.mjs
+  // (specs/pre-push-fast-path.md), so the stage is asserted there.
+  assert.equal(pkg.scripts["verify:pre-push"], "node scripts/run-pre-push.mjs");
+  const runner = await readFile(new URL("../run-pre-push.mjs", import.meta.url), "utf8");
+  assert.match(runner, /\["check:push-worktree"\],\s*\["check:e2e-remote-targets"\],/);
   assert.equal(
     pkg.scripts["check:e2e-remote-targets"],
     "node scripts/check-e2e-remote-targets.mjs",
