@@ -1,226 +1,231 @@
-# Office File Preview
+# Office 文件预览
 
 ## Feature Summary
 
-| Field            | Content                                                                                                                    |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Change           | Preview Pane has a read-only preview for Excel and Word (`.docx` / `.doc`)                                                 |
-| User entry       | Workspace file tree, file links and other file-preview entries that produce a `CodeViewerSource`                           |
-| Render libraries | `@extend-ai/react-xlsx@^0.16.0`, `docx-preview`; the legacy binary `.doc` compatibility path keeps `@extend-ai/react-docx` |
-| State owner      | File bytes are read by the workspace-scoped `fileService`; parse and preview state are owned by the current Preview Pane   |
-| Out of scope     | Office file editing, saving, export, password decryption, cross-device preview-state sync                                  |
+| 字段       | 内容                                                                                          |
+| ---------- | --------------------------------------------------------------------------------------------- |
+| 变更       | Preview Pane 新增 Excel 与 Word（`.docx` / `.doc`）只读预览                                   |
+| 用户入口   | 工作区文件树、文件链接和其他会生成 `CodeViewerSource` 的文件预览入口                          |
+| 渲染库     | `@extend-ai/react-xlsx@^0.16.0`、`docx-preview`；旧二进制 `.doc` 兼容路径保留 `@extend-ai/react-docx` |
+| 状态所有者 | 文件字节由 workspace-scoped `fileService` 读取；解析和预览状态由当前 Preview Pane 持有        |
+| 范围外     | Office 文件编辑、保存、导出、密码解密、跨端预览状态同步                                       |
 
-## Document Content Security Boundary
+## 文档内容安全边界
 
-Office files are untrusted content. No DOCX/XLSX/PPTX/legacy DOC/PDF renderer may hand a URL from the
-document unchanged to the main renderer's DOM navigation or script execution path.
+Office 文件属于不受信任内容。任何 DOCX/XLSX/PPTX/旧 DOC/PDF renderer 都不得把文档中的
+URL 原样交给主 renderer 的 DOM 导航或脚本执行路径。
 
-- External links allow only `http:` and `https:`; in-document links allow only validated `#anchor`.
-- `javascript:`, `data:`, `vbscript:`, `file:`, `blob:`, control-character obfuscation and protocol-encoding
-  variants must be rejected.
-- After DOM generation the renderer still defensively scans `a[href]` / `a[xlink:href]` and watches
-  asynchronously added nodes and attributes; the `href` of non-interactive resources such as images must
-  not be removed by mistake.
-- The DOM observer scans the whole preview root on first install; later mutations scan only the changed
-  attribute target or the `addedNodes` subtree, and must not rescan the whole document when a third-party
-  renderer mounts in batches or remounts due to virtualization.
-- PDF preview currently forces `renderAnnotationLayer={false}`, so link annotations never enter the main
-  renderer DOM; if the annotation layer is enabled in the future, the same link sanitization and
-  controlled external-link callback must first be wired at the PDF mount point rather than relying on
-  pdf.js default navigation.
-- The third-party Office renderers have no unified relationship-interception interface, so the DOM gate is
-  the mandatory choke point; if a parser later exposes a Target hook, it should reuse the same allowlist to
-  reject up front.
-- If a renderer later needs to keep in-document link interaction, it must live in a sandbox iframe with no
-  preload, no Node and navigation/popups forbidden; the main renderer must not host third-party document
-  scripts directly.
-- Opening an external link goes through a controlled callback; an untrusted `href` is never passed directly
-  to `window.zcode` or `shell.openExternal`.
+- 外部链接只允许 `http:`、`https:`；文档内部只允许经过校验的 `#anchor`。
+- `javascript:`、`data:`、`vbscript:`、`file:`、`blob:`、控制字符混淆和协议编码变体必须被拒绝。
+- renderer 仍需在生成 DOM 后对 `a[href]` / `a[xlink:href]` 做防御性扫描，并观察异步新增节点与属性；图片等非交互资源的 `href` 不得被误删。
+- DOM 观察器初次安装时扫描完整预览根节点；后续 mutation 只扫描变更属性的目标或 `addedNodes` 子树，不得因第三方 renderer 分批挂载或虚拟化重挂载而对整个文档重复全树扫描。
+- PDF 预览当前强制 `renderAnnotationLayer={false}`，因此链接注解不会进入主 renderer DOM；若未来启用 annotation layer，必须先在 PDF 挂载点接入同一链接净化与受控外链回调，不能仅依赖 pdf.js 默认导航行为。
+- 当前第三方 Office renderer 没有统一的 relationship 拦截接口，因此 DOM 门禁是强制收口；后续若 parser 暴露 Target hook，应复用同一白名单前置拒绝。
+- 未来若 renderer 需要保留文档内链接交互，应放入无 preload、无 Node、禁止导航/弹窗的 sandbox iframe；主 renderer 不得直接承载第三方文档脚本。
+- 外链打开必须走受控回调；不能把不可信 `href` 直接传给 `window.zcode` 或 `shell.openExternal`。
 
-Security regressions must cover the protocol allowlist, encoding/control-character bypasses, a real DOCX
-hyperlink relationship, and manual acceptance of clicks in the Desktop main renderer; they must also lock
-the PDF annotation layer off and verify that asynchronously added links sanitize only the changed subtree
-without rescanning the whole preview root.
+### 内置预览的已知注入与外链绕过修复
+
+内置预览保持现有承载与只读行为。本次修复已知入口，不把主窗口声明为文档沙箱：
+
+- PPTX 气泡图 tooltip 的系列名和数值必须按文本转义后再插入 HTML；图例保留原始文本。依赖补丁覆盖应用使用的 browser 入口，预览与 PDF 打印共用该入口。
+- XLSX 的单元格、形状、图片外链必须共用 `onOpenLink` 回调，经 `sanitizeDocumentHref` 校验后调用现有 `onOpenBrowserUrl`。回调拒绝时不回落到 `window.open`。工作表内部定位继续由查看器处理。
+- Desktop 主窗口的原生 popup 一律拒绝创建；合法 HTTP(S) 请求转发到现有 Browser 打开事件，危险协议不转发。嵌入浏览器和 MCP App guest 保持各自现有策略。
+- 不修改文件读取、监听、保存权限或预览状态 owner；Desktop 和 Web 的 XLSX 复用同一受控回调。
+
+```text
+XLSX 单元格 / 形状 / 图片 → 同一外链回调 → URL 白名单 → 现有 Browser 打开入口
+主窗口原生 popup         → Main 拒绝建窗 → HTTP(S) 才转发 Browser 打开事件
+PPTX tooltip            → 动态字段转义 → HTML 只包含静态格式和文本
+```
+
+| Case  | 场景与断言                                                                                                                          | 状态             |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| OPS01 | 打开包含 HTML 系列名的真实 PPTX 并悬浮气泡；tooltip 显示字面文本，不生成攻击节点，不执行标记脚本；打印路径使用相同修复              | macOS 通过，待人工复核 |
+| OPS02 | 真实 XLSX 的单元格、形状、图片点击危险协议，既不调用原生 `window.open`，也不打开 Browser；合法 HTTP(S) 仍路由，内部工作表跳转仍可用 | macOS 通过，待人工复核 |
+| OPS03 | 主窗口直接请求危险协议 popup，主窗口地址与原生窗口数量不变；HTTP(S) 转入 Browser，仍不创建原生窗口                                  | macOS 通过，待人工复核 |
+
+候选 E2E：`packages/desktop/test/e2e/manual-review/pending/office-preview-security.test.ts`。
+2026-10-29：macOS Electron 候选回归 3/3 通过（包含真实 PDF 文件导出），运行 ID：
+`desktop-e2e-20261029052945936-p62112-8df77f872a16aa7f`。候选保持待人工复核，不自动转正或加入 CI。
+同一 XLSX 组件在浏览器宽屏 / 手机尺寸 × 深 / 浅主题下验收通过：每组 7 次危险链接均到达拦截入口，
+HTTP、HTTPS 和工作表内跳转正常；PPTX browser 入口与打印渲染也通过。未验证 Windows、Linux、实体手机或真实远控链路。
+
+安全回归必须覆盖协议白名单、编码/控制字符绕过、DOCX 真实 hyperlink relationship，以及 Desktop 主 renderer 点击后的人工验收。
+同时必须锁定 PDF annotation layer 关闭状态，并验证异步新增链接只净化变更子树而不重复扫描整个预览根节点。
 
 ## Impact Brief
 
-### UI Surface
+### UI Surface Matrix
 
-| Item                  | Content                                                                                                  |
-| --------------------- | -------------------------------------------------------------------------------------------------------- |
-| User scenario         | Open a Word / Excel file from the workspace                                                              |
-| UI entry              | Workspace file tree, file links and other `CodeViewerSource` entries                                     |
-| Shared implementation | `PreviewPane` -> `PreviewPaneContent` -> `PreviewPaneOfficeContent`                                      |
-| Display / draft owner | The current Preview Pane's read, parse, zoom and error state; no persisted draft                         |
-| Validation / gating   | Extension routing, 25 MB binary read limit, parser error boundary                                        |
-| Commit                | Read-only call of workspace-scoped `fileService.readBinaryPreview`; no write commit                      |
-| Authority             | File bytes at `source.path` in the current workspace                                                     |
-| Mode boundary         | Desktop / Web / remote workspaces share service injection; preview state does not enter the message flow |
-| Must isolate          | task/session, desktop continuous, web remote replayable, other preview tabs                              |
+| 用户场景                            | UI 入口                                              | 共享实现                                                          | 展示 / 草稿 owner                                            | 校验 / gating                                    | 提交动作                                                                 | 权威来源                                       | 模式边界                                                                  | 必须隔离                                                              |
+| ----------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------ | ---------------------------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| 从 workspace 打开 Word / Excel 文件 | 工作区文件树、文件链接和其他 `CodeViewerSource` 入口 | `PreviewPane` → `PreviewPaneContent` → `PreviewPaneOfficeContent` | 当前 Preview Pane 的读取、解析、缩放和错误 state；无持久草稿 | 扩展名路由、25 MB 二进制读取上限、解析器错误边界 | 只读调用 workspace-scoped `fileService.readBinaryPreview`；无写入 commit | 当前 workspace 中 `source.path` 对应的文件字节 | Desktop / Web / 远程 workspace 共用 service 注入；预览 state 不进入消息流 | task/session、desktop continuous、web remote replayable、其他预览 tab |
 
-### Shared and Divergent Behavior
+### Shared And Divergent Behavior
 
-| Concern            | Shared                                                                              | Intentionally different                                                                                                | Meaning                                                                  |
-| ------------------ | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| File read          | All Office types use the same bounded binary read and base64 RPC return             | none                                                                                                                   | No change to file service, workspace identity or the 25 MB limit         |
-| Routing and errors | `PreviewPaneOfficeContent` lazy-loads, blank loading and localized error state      | `.xlsx`, `.docx`, `.doc` enter separate renderer chunks                                                                | `.docx` can swap implementation without affecting Excel or legacy `.doc` |
-| Rendering          | All read-only Preview Pane content                                                  | `.docx` uses `docx-preview`; `.doc` uses legacy `react-docx`; Excel uses `react-xlsx`                                  | `docx-preview` cannot parse OLE `.doc`, so routing is explicit           |
-| Excel multi-sheet  | One read-only controller per workbook                                               | ZCode's custom sheet navigation shows only visible workbook tabs and does not enable the library's edit/export toolbar | Sheet switching must not cost re-parsing or opening write capability     |
-| DOCX pagination    | Pages keep OOXML section boundaries and their own margins                           | Uses the official `docx-preview` default section grouping; `lastRenderedPageBreak` is not additionally enabled         | Same-size sections may still have different margins and must not merge   |
-| Responsive         | Word preview shares the shrink-only-never-enlarge rule of `calculateDocxPreviewFit` | DOCX measures the generated HTML wrapper; legacy `.doc` measures the editor canvas                                     | Keeps desktop narrow sidebar and small-screen layout semantics           |
-| Lifecycle          | Source switch clears the currently visible content                                  | DOCX `renderAsync` has no cancel API, so detached DOM + active guard                                                   | An old async result cannot overwrite the latest file                     |
+| 关注点     | 共享                                                               | 有意不同                                                                        | 对本次替换的意义                                      |
+| ---------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| 文件读取   | 所有 Office 类型使用同一受限二进制读取和 base64 RPC 返回           | 无                                                                              | 不修改 file service、workspace identity 或 25 MB 上限 |
+| 路由与错误 | `PreviewPaneOfficeContent` 统一懒加载、空白 loading 和本地化错误态 | `.xlsx`、`.docx`、`.doc` 进入独立 renderer chunk                                | `.docx` 可替换实现而不影响 Excel 或旧 `.doc`          |
+| 渲染       | 都是只读 Preview Pane 内容                                         | `.docx` 用 `docx-preview`；`.doc` 用 legacy `react-docx`；Excel 用 `react-xlsx` | `docx-preview` 不支持 OLE `.doc`，必须显式分流        |
+| Excel 多表 | Excel workbook 共用同一个只读 controller                          | ZCode 自定义 sheet 导航只展示可见 workbook tab，不启用库的编辑/导出 toolbar   | 多表切换不能以重新解析文件或开放写入能力为代价        |
+| DOCX 分页  | 页面必须保留 OOXML section 边界及各自页边距                        | 使用 `docx-preview` 官方默认的 section 分组行为；不额外启用 `lastRenderedPageBreak` | 同尺寸 section 也可能拥有不同页边距，禁止合并        |
+| 响应式     | Word 预览共用 `calculateDocxPreviewFit` 的只缩小不放大规则         | DOCX 测量生成的 HTML wrapper；legacy `.doc` 测量 editor 画布                    | 保持桌面窄侧栏和小屏布局语义                          |
+| 生命周期   | source 切换时清理当前可见内容                                      | DOCX 的 `renderAsync` 无取消 API，使用 detached DOM + active guard              | 旧异步结果不能覆盖最新文件                            |
 
 ### Feature Relationships
 
-| Rank           | From                            | Edge                      | To                                         | Condition / reason                                                            |
-| -------------- | ------------------------------- | ------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------- |
-| must-inspect   | Office file preview             | renders-in                | Preview Pane Office surface                | The only user-visible entry (`PreviewPane.tsx`, `previewPaneContent.tsx`)     |
-| must-inspect   | Preview Pane Office surface     | reads-through             | workspace binary preview service           | Office parsing needs full bounded bytes (`PreviewPane.tsx`, `fileService.ts`) |
-| must-inspect   | DOCX surface                    | renders-with              | `docx-preview.renderAsync`                 | `.docx` only (`previewPaneOfficeDocxContent.tsx`)                             |
-| conditional    | legacy Word surface             | renders-with              | `@extend-ai/react-docx`                    | OLE `.doc` compatibility path only (`previewPaneOfficeLegacyDocContent.tsx`)  |
-| invariant-only | Preview Pane local render state | must-remain-isolated-from | desktop continuous / web remote replayable | Preview is not task runtime or recovery state                                 |
+| Rank           | From                            | Semantic edge             | To                                         | 条件 / 原因                      | 证据                                        |
+| -------------- | ------------------------------- | ------------------------- | ------------------------------------------ | -------------------------------- | ------------------------------------------- |
+| must-inspect   | Office file preview             | renders-in                | Preview Pane Office surface                | 唯一用户可见入口                 | `PreviewPane.tsx`、`previewPaneContent.tsx` |
+| must-inspect   | Preview Pane Office surface     | reads-through             | workspace binary preview service           | Office 解析需要完整受限字节      | `PreviewPane.tsx`、`fileService.ts`         |
+| must-inspect   | DOCX surface                    | renders-with              | `docx-preview.renderAsync`                 | 仅 `.docx`                       | `previewPaneOfficeDocxContent.tsx`          |
+| conditional    | legacy Word surface             | renders-with              | `@extend-ai/react-docx`                    | 仅 OLE `.doc` 兼容路径           | `previewPaneOfficeLegacyDocContent.tsx`     |
+| invariant-only | Preview Pane local render state | must-remain-isolated-from | desktop continuous / web remote replayable | 预览不是 task runtime 或恢复状态 | 架构约束 + UI 本地 state                    |
+| evidence-only  | Office preview implementation   | covered-by                | unit + runtime + build smoke               | 不声明新的产品依赖               | `officeFilePreview.test.ts`、Verification   |
 
-### State Owners and Commit Sinks
+### State Owners And Commit Sinks
 
-| State / fact                            | Display owner                  | Authoritative owner                | Command / service          | Persistence |
-| --------------------------------------- | ------------------------------ | ---------------------------------- | -------------------------- | ----------- |
-| Office file bytes                       | `PreviewPane`                  | Current workspace file service     | `readBinaryPreview`        | none added  |
-| DOCX generated DOM, loading, error, fit | `PreviewPaneOfficeDocxContent` | The currently mounted Preview Pane | `docx-preview.renderAsync` | none        |
-| File type                               | `getOfficeFilePreviewKind`     | source path extension              | no commit                  | none        |
+| 状态 / 事实                        | 展示 owner                     | 权威 owner                  | command / service          | 持久化       | 证据                  |
+| ---------------------------------- | ------------------------------ | --------------------------- | -------------------------- | ------------ | --------------------- |
+| Office 文件字节                    | `PreviewPane`                  | 当前 workspace file service | `readBinaryPreview`        | 无新增持久化 | `PreviewPane.tsx`     |
+| DOCX 生成 DOM、loading、error、fit | `PreviewPaneOfficeDocxContent` | 当前挂载的 Preview Pane     | `docx-preview.renderAsync` | 无           | component + unit test |
+| 文件类型                           | `getOfficeFilePreviewKind`     | source path 扩展名          | 无 commit                  | 无           | helper test           |
 
 ### Must-Preserve Invariants
 
-| Invariant                                                                                               | Surface / mode                             | Proof                                                                          |
-| ------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------ |
-| `.docx` no longer enters `@extend-ai/react-docx`; `.doc` does not enter `docx-preview`                  | Desktop / Web / local / remote             | Routing helper and two separate lazy chunk unit tests, production build output |
-| After a source switch, an old `renderAsync` result cannot commit to visible DOM                         | All DOCX previews                          | stale render component test                                                    |
-| Adjacent same-size sections render as independent pages with their own `pgMar`                          | All DOCX previews                          | Real two-section fixture + renderer regression test                            |
-| DOCX white pages use a low-contrast light shadow, not the renderer's default 50% black shadow           | light / dark / Zai Light / Zai Dark        | page surface style component test + CDP computed style                         |
-| Preview never reads a same-path local file in place of a remote workspace file                          | SSH / WSL / Docker / Web                   | Existing workspace service wiring reused                                       |
-| Preview state does not enter the task/session snapshot or message flow                                  | desktop continuous / web remote replayable | No protocol, store, main or relay change                                       |
-| Document content keeps white paper and its own colors; the outer chrome uses only semantic theme tokens | light / dark                               | runtime screenshot + `DESIGN.md` check                                         |
+| 不变量                                                                 | Surface / 模式                             | 证明                                                   |
+| ---------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------ |
+| `.docx` 不再进入 `@extend-ai/react-docx`；`.doc` 不进入 `docx-preview` | Desktop / Web / local / remote             | 路由 helper 与两个独立 lazy chunk 的单测、生产构建产物 |
+| source 切换后旧 `renderAsync` 结果不可提交到可见 DOM                   | 所有 DOCX 预览                             | stale render component test                            |
+| 相邻同尺寸 section 必须渲染为独立页面，并使用各自的 `pgMar`           | 所有 DOCX 预览                             | 真实双 section fixture + renderer regression test      |
+| DOCX 白纸页面使用低对比度浅阴影，不使用 renderer 默认的 50% 黑色阴影 | light / dark / Zai Light / Zai Dark        | page surface style component test + CDP computed style |
+| 预览不读取本机同路径替代 remote workspace 文件                         | SSH / WSL / Docker / Web                   | 继续复用既有 workspace service wiring                  |
+| 预览 state 不进入 task/session snapshot 或消息流                       | desktop continuous / web remote replayable | 无协议、store、main、relay 变更                        |
+| 文档内容保持白纸和自身颜色，外层只使用语义主题 token                   | light / dark                               | runtime screenshot + `DESIGN.md` 检查                  |
 
-The feature graph `.agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml` carries the
-Office file preview capability, surface, local render owner and binary preview service nodes and edges.
-No unresolved questions: the user fixed the `.docx` renderer target; keeping `.doc` is a compatibility
-decision from the new library's format boundary and the existing product contract. E2E handoff is not
-needed (no conversation/session; component + Web runtime + production build suffice).
+### Codegraph Evidence
+
+当前会话未提供 codegraph 工具，因此按 skill fallback 使用精确 symbol 文本扫描验证直接调用方，展开深度为 2。
+
+| Seed                           | 查询           | 直接调用方 / 路径                                  | 深度 | 结论                                            |
+| ------------------------------ | -------------- | -------------------------------------------------- | ---- | ----------------------------------------------- |
+| `getOfficeFilePreviewKind`     | direct callers | `PreviewPane.tsx`                                  | 1    | 扩展名只决定 Preview Pane Office 路由           |
+| `PreviewPaneOfficeContent`     | direct callers | `previewPaneContent.tsx`                           | 1    | Office UI 只有一个共享分发入口                  |
+| `PreviewPaneOfficeDocxContent` | direct callers | `previewPaneOfficeContent.tsx` dynamic import      | 1    | DOCX renderer 可独立替换和分包                  |
+| `readBinaryPreview`            | direct callers | `PreviewPane.tsx`                                  | 2    | 不需要改 service / RPC / workspace identity     |
+| Office preview tests           | affected tests | `officeFilePreview.test.ts`、`previewPane.test.ts` | 2    | 覆盖路由、render options、错误恢复、stale guard |
+
+### Graph Drift And Delta
+
+| 状态            | 节点 / 边                                                                                                 | 原因                                   | 动作                                                                                 |
+| --------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------ |
+| confirmed drift | 原图缺少 Office file preview capability / surface / local render owner / binary preview service           | live code 和已有 spec 已存在该产品能力 | 已补充 `.agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml` |
+| confirmed delta | Office surface reads through workspace file service，并与 desktop continuous / web remote replayable 隔离 | 本次替换保持既有边界                   | 已写入节点、edge、code seed；YAML 完整性和 seed 文件检查通过                         |
+
+### Unresolved Questions
+
+无。用户已明确 `.docx` renderer 目标；`.doc` 保持既有能力是由新库格式边界和现有产品 contract 共同确定的兼容决策。
+
+### Planning Handoff
+
+| 项目                    | 目标                                                                         | 状态       |
+| ----------------------- | ---------------------------------------------------------------------------- | ---------- |
+| Spec update             | 本文                                                                         | complete   |
+| Case catalog / coverage | 本文 `Candidate Combinations`、`Accepted Cases`                              | complete   |
+| Decision backlog        | 无未决产品语义                                                               | complete   |
+| E2E handoff             | 不涉及 conversation/session；component + Web runtime + production build 足够 | not-needed |
 
 ## Boundary Decisions
 
-| Boundary          | Decision                                                                                                                                                                                                                                                                                                                 | Reason                                                                                                                                                         |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Excel extensions  | Support `.xlsx`, `.xlsm`, `.xls`; `.xlsx` is the fully supported path, `.xlsm` / `.xls` show what the library's limited parsing can read                                                                                                                                                                                 | `react-xlsx` officially supports mainly OOXML `.xlsx`; old formats show only data the underlying parser can read                                               |
-| Word extensions   | OOXML `.docx` uses the stable `renderAsync` API of `docx-preview`; legacy binary `.doc` keeps the read-only editor viewer of `@extend-ai/react-docx`                                                                                                                                                                     | `docx-preview` targets ZIP/OOXML DOCX and cannot parse OLE `.doc`; splitting replaces the problematic DOCX chain without regressing `.doc`                     |
-| Interaction       | Read-only throughout; no editing, saving, copy-paste or export capability                                                                                                                                                                                                                                                | Preview Pane shows content and owns no file-write semantics                                                                                                    |
-| File source       | Keep resolving the workspace-scoped `fileService` from the source's `workspacePath`, `workspaceIdentity`, `workspaceRemoteSessionId`                                                                                                                                                                                     | Local, SSH / WSL / Docker, standalone Web and mobile remote share one service boundary                                                                         |
-| File read         | A new generic bounded binary preview read returns the whole file as base64 over RPC; limit 25 MB                                                                                                                                                                                                                         | Office ZIP / OLE parsing needs full bytes; avoids UI direct Node file access and unbounded cross-process transfer                                              |
-| Loading           | Office render components and third-party libs lazy-load by file type; Excel WASM loads as a build asset                                                                                                                                                                                                                  | Keeps ordinary text/image preview free of Office parser size and init cost                                                                                     |
-| Loading feedback  | During file read, lazy load and parse keep a blank preview surface with only an invisible `aria-busy` state; do not show an "Office file preview loading" text                                                                                                                                                           | Real loading is short, and flashing text causes needless visual jumps                                                                                          |
-| Theme             | Excel receives the current light/dark theme; DOCX keeps paper white and neutral page gaps, dark theme changes only the outer workspace                                                                                                                                                                                   | Document colors are content semantics and must not be rewritten by the app theme                                                                               |
-| Excel multi-sheet | Keep `showDefaultToolbar={false}`; render only visible workbook tabs through the `toolbar` render prop; selecting a tab calls `setActiveTabIndex` on the same controller                                                                                                                                                 | The default toolbar carries both sheet tabs and edit/download actions; preview needs only multi-sheet navigation without reopening write or export entries     |
-| Excel ZIP paths   | Accept `.xlsx` whose ZIP entries use non-standard Windows backslash separators, normalized by `react-xlsx@0.16.0` at the unified read boundary before parsing                                                                                                                                                            | Some Excel writers produce entries like `xl\worksheets\sheet1.xml`; older versions misreported recoverable files as missing required parts                     |
-| Page layer        | DOCX pages reuse the old `react-docx` light paper shadow `0 2px 10px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.05)`, overriding the `docx-preview` default 50% black shadow                                                                                                                                   | Paper is an ordinary content surface, not an overlay; a low-contrast shadow separates page from background without a heavy black edge                          |
-| Responsive        | The preview root fills the Preview Pane; Excel scrolls inside its own container; DOCX measures the generated page wrapper after `renderAsync`, scales proportionally down to the available container width when too narrow, recomputes live when the container widens, never enlarging beyond the original document size | Desktop and mobile Web share semantics while original paper pixel width cannot break the Preview Pane                                                          |
-| DOCX pagination   | `ignoreLastRenderedPageBreak` stays at the `docx-preview` official default `true`; adjacent sections, even of the same paper size, generate separate pages applying their own `pgMar`                                                                                                                                    | With `false`, `docx-preview@0.4.0` merges same-size sections without an explicit page break, so body text inherits the cover's zero margins                    |
-| DOCX security     | Disable `altChunk` HTML rendering; images and fonts use base64 URLs; discard stale render results and clear generated DOM on file switch or unmount                                                                                                                                                                      | The preview file may come from an untrusted workspace; avoids injecting embedded HTML into the renderer and an old async document overwriting the current file |
-| Errors            | A missing file keeps the existing weak hint; over-limit, parse failure and corrupt format show a localized error state and log once through the UI logger                                                                                                                                                                | Keeps the existing Preview Pane error hierarchy and gives diagnosable evidence                                                                                 |
+| 边界          | 决策                                                                                                                                                                                      | 原因                                                                                                                      |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Excel 扩展名  | 支持 `.xlsx`、`.xlsm`、`.xls`；`.xlsx` 是完整支持路径，`.xlsm` / `.xls` 按渲染库的有限解析能力展示                                                                                        | `react-xlsx` 官方声明主要支持 OOXML `.xlsx`，旧格式只展示底层解析器能够读取的数据                                         |
+| Word 扩展名   | OOXML `.docx` 使用 `docx-preview` 的稳定 `renderAsync` API；旧二进制 `.doc` 继续使用 `@extend-ai/react-docx` 的只读 editor viewer                                                         | `docx-preview` 面向 ZIP/OOXML DOCX，不能解析 OLE `.doc`；分开路由既替换问题较多的 DOCX 渲染链路，也不回退已有 `.doc` 能力 |
+| 交互模式      | 统一只读；不暴露编辑、保存、复制粘贴或导出能力                                                                                                                                            | Preview Pane 的产品职责是展示，不拥有文件写入语义                                                                         |
+| 文件来源      | 继续使用当前 source 的 `workspacePath`、`workspaceIdentity`、`workspaceRemoteSessionId` 解析 workspace-scoped `fileService`                                                               | 保持本地、SSH / WSL / Docker、独立 Web 和手机远控共享同一服务边界                                                         |
+| 文件读取      | 新增通用、受限的二进制预览读取接口，以 base64 跨 RPC 返回完整文件；上限为 25 MB                                                                                                           | Office ZIP / OLE 解析需要完整字节；避免 UI 直接访问 Node 文件系统，也避免无限制跨进程传输                                 |
+| 加载方式      | Office 渲染组件和第三方库按文件类型懒加载；Excel WASM 作为构建资产加载                                                                                                                    | 避免普通文本/图片预览承担 Office 解析器体积和初始化成本                                                                   |
+| 加载反馈      | 文件读取、懒加载和解析期间保持空白预览面，只保留不可见的 `aria-busy` 状态，不显示“正在加载 Office 文件预览”文案                                                                           | 实际加载时间很短，文字闪现会制造不必要的视觉跳变                                                                          |
+| 主题          | Excel 接收当前 light/dark 主题；DOCX 保持纸张白色与中性页面间隙，暗色主题只改变外层工作区                                                                                                 | 文档自身颜色属于内容语义，不能被应用主题任意改写                                                                          |
+| Excel 多表    | 保持 `showDefaultToolbar={false}`，通过 `toolbar` render prop 只渲染可见 workbook tab；选择 tab 时调用同一 controller 的 `setActiveTabIndex`                                             | 默认 toolbar 同时承载 sheet tabs 和编辑/下载动作；预览只需要多表导航，不能为了显示 sheet 而重新开放写入或导出入口         |
+| Excel ZIP 路径 | 接受 ZIP entry 使用非标准 Windows 反斜杠分隔符的 `.xlsx`，由 `react-xlsx@0.16.0` 在统一读取边界归一化后解析                                                                               | 部分 Excel 写入器会生成 `xl\worksheets\sheet1.xml` 一类 entry；旧版会把可恢复文件误报为缺少必需 part                      |
+| 页面层级      | DOCX 页面复用原 `react-docx` 浅色纸张阴影 `0 2px 10px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.05)`，覆盖 `docx-preview` 默认 50% 黑色阴影                         | 纸张是普通内容 surface，不是 overlay；低对比度阴影可区分页面与背景且不会形成过重黑边                                       |
+| 响应式        | 预览根节点填满 Preview Pane；Excel 表格在自身容器内滚动；DOCX 在 `renderAsync` 完成后测量生成的页面包装层，宽度不足时等比缩小到容器可用宽度，容器变宽后实时重算，但不放大超过文档原始尺寸 | 桌面与手机 Web 不改变功能语义，同时避免纸张原始像素宽度撑破 Preview Pane                                                  |
+| DOCX 分页     | `ignoreLastRenderedPageBreak` 保持 `docx-preview` 官方默认值 `true`；相邻 section 即使纸张尺寸相同，也必须分别生成页面并应用各自的 `pgMar`                                                     | `docx-preview@0.4.0` 在该选项为 `false` 时会合并没有显式 page break 且纸张尺寸相同的 section，导致后续正文沿用封面零边距 |
+| DOCX 安全边界 | 禁用 `altChunk` HTML 渲染，图片和字体使用 base64 URL；切换文件或卸载时丢弃过期渲染结果并清空生成 DOM                                                                                      | Preview 文件可能来自不受信任的 workspace；避免把嵌入 HTML 注入 renderer，也避免异步完成的旧文档覆盖当前文件               |
+| 错误          | 文件缺失继续使用现有弱提示；超限、解析失败和格式损坏显示本地化错误态，同时用 UI logger 记录一次失败                                                                                       | 保持 Preview Pane 现有错误层级并提供可诊断证据                                                                            |
 
 ## Domain Scope
 
-| Domain                               | Included | Note                                                                                                |
-| ------------------------------------ | -------- | --------------------------------------------------------------------------------------------------- |
-| File / workspace service             | Yes      | Binary files are read through the dependency-injected workspace service                             |
-| UI shell / theme / responsive / i18n | Yes      | New render container, loading and error states, zh/en copy                                          |
-| Rendering / performance              | Yes      | Office dependencies and parsing load on demand; transfer protected by the 25 MB limit               |
-| Workspace identity / remote runtime  | Yes      | Isolation keeps using `workspaceIdentity?.trim() \|\| workspacePath`; file path is only for reading |
-| Session / task realtime              | No       | Preview is UI-local state, not in continuous or replayable message flows                            |
-| Persistence                          | No       | Page, sheet, zoom or Office document state is not saved                                             |
+| Domain                               | 是否包含 | 说明                                                                            |
+| ------------------------------------ | -------- | ------------------------------------------------------------------------------- |
+| File / workspace service             | 是       | 二进制文件必须通过依赖注入后的 workspace service 读取                           |
+| UI shell / theme / responsive / i18n | 是       | 新增渲染容器、加载态、错误态和中英文文案                                        |
+| Rendering / performance              | 是       | Office 依赖和解析按需加载，文件传输受 25 MB 上限保护                            |
+| Workspace identity / remote runtime  | 是       | 隔离继续使用 `workspaceIdentity?.trim() \|\| workspacePath`，文件路径只用于读取 |
+| Session / task realtime              | 否       | 预览是 UI 本地状态，不进入 continuous 或 replayable 消息流                      |
+| Persistence                          | 否       | 不保存页码、sheet、缩放或 Office 文档状态                                       |
 
 ## Candidate Combinations
 
-| ID     | File / environment                                        | Action                  | Expected result                                                                                                  | Status                                |
-| ------ | --------------------------------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| OFP-01 | Local `.xlsx`                                             | Open from file tree     | Read full bytes, show a read-only workbook, sheets switchable                                                    | accepted                              |
-| OFP-02 | Local `.docx`                                             | Open from file tree     | Show a read-only paginated document via `docx-preview.renderAsync`                                               | accepted                              |
-| OFP-03 | `.xlsm` / `.xls`                                          | Open from file tree     | Try to show data the underlying parser supports; failure enters the unified error state                          | accepted                              |
-| OFP-04 | SSH / WSL / Docker / Web workspace                        | Open an Office file     | Use the matching workspace-scoped `fileService`, never the same-path local file                                  | accepted                              |
-| OFP-05 | Phone narrow screen or narrow desktop Preview Pane        | Open an Office file     | DOCX pages scale proportionally to available width with no horizontal overflow, last page reachable by scrolling | accepted                              |
-| OFP-06 | File over 25 MB                                           | Open                    | Refuse the cross-RPC read and show a localized over-limit error                                                  | accepted                              |
-| OFP-07 | Corrupt, encrypted or parser-unsupported file             | Open                    | Show a localized cannot-preview error, other tabs unaffected                                                     | accepted                              |
-| OFP-08 | Plain text, Markdown, SVG, image                          | Open                    | Original rendering and menu behavior kept                                                                        | accepted                              |
-| OFP-09 | Legacy binary `.doc`                                      | Open from file tree     | Read full bytes and show a paginated document through the Word read-only chain                                   | accepted                              |
-| OFP-10 | Office file edit/save                                     | Operate in Preview Pane | Capability not provided                                                                                          | pruned: beyond read-only preview duty |
-| OFP-11 | Any supported Office file                                 | Open preview            | Blank during loading, no visible loading text flash; content shows directly when done                            | accepted                              |
-| OFP-12 | Two-section DOCX with zero-margin cover and margined body | Open preview            | Two independent pages; body keeps its own left/right margins, not merged with the cover section                  | accepted                              |
-| OFP-13 | `.xlsx` with backslash ZIP entries                        | Open preview            | Normalize entry paths and show the workbook, no corrupt-file error                                               | accepted                              |
+| ID     | 文件 / 环境                        | 操作                 | 预期结果                                                          | 状态                     |
+| ------ | ---------------------------------- | -------------------- | ----------------------------------------------------------------- | ------------------------ |
+| OFP-01 | 本地 `.xlsx`                       | 从文件树打开         | 读取完整字节并显示只读 workbook，可切换 sheet                     | accepted                 |
+| OFP-02 | 本地 `.docx`                       | 从文件树打开         | 通过 `docx-preview.renderAsync` 显示只读分页文档                  | accepted                 |
+| OFP-03 | `.xlsm` / `.xls`                   | 从文件树打开         | 尝试显示底层解析器支持的数据；失败进入统一错误态                  | accepted                 |
+| OFP-04 | SSH / WSL / Docker / Web workspace | 打开 Office 文件     | 使用对应 workspace-scoped `fileService`，不读取本机同路径         | accepted                 |
+| OFP-05 | 手机窄屏或较窄的桌面 Preview Pane  | 打开 Office 文件     | DOCX 生成页面按可用宽度等比缩小且无横向溢出，滚动时能访问最后一页 | accepted                 |
+| OFP-06 | 文件超过 25 MB                     | 打开                 | 拒绝跨 RPC 读取并显示本地化超限错误                               | accepted                 |
+| OFP-07 | 文件损坏、加密或解析器不支持       | 打开                 | 显示本地化不可预览错误，不影响其他 tab                            | accepted                 |
+| OFP-08 | 普通文本、Markdown、SVG、图片      | 打开                 | 保持原渲染和菜单行为                                              | accepted                 |
+| OFP-09 | 旧二进制 `.doc`                    | 从文件树打开         | 读取完整字节并通过 Word 只读渲染链路显示分页文档                  | accepted                 |
+| OFP-10 | Office 文件编辑/保存               | 在 Preview Pane 操作 | 不提供该能力                                                      | pruned：超出只读预览职责 |
+| OFP-11 | 任意受支持的 Office 文件           | 打开预览             | 加载期间保持空白，不闪现可见 loading 文案；完成后直接显示内容     | accepted                 |
+| OFP-12 | 封面零边距、正文有页边距的双 section DOCX | 打开预览         | 生成两张独立页面；正文保留自己的左右页边距，不被封面 section 合并 | accepted                 |
+| OFP-13 | ZIP entry 使用反斜杠的 `.xlsx`            | 打开预览         | 归一化 entry 路径并正常显示 workbook，不进入文件损坏错误态        | accepted                 |
 
 ## Accepted Cases
 
-| Case ID | Setup                                                       | Action                         | Assertions                                                                                                                                                       | Evidence                                                         | Automation |
-| ------- | ----------------------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ---------- |
-| OFP-01  | Small multi-sheet `.xlsx`                                   | Open preview and switch sheet  | Recognized as Excel; binary read called; all visible sheet names shown; selection calls `setActiveTabIndex` and updates the active sheet; no edit/export toolbar | UI helper + component interaction test + CDP runtime             | covered    |
-| OFP-02  | `.docx` with paragraphs                                     | Open preview                   | Recognized as DOCX; binary read called; `docx-preview.renderAsync` called with safe options                                                                      | UI helper + component test + CDP runtime                         | covered    |
-| OFP-04  | Source with remote workspace params                         | Open preview                   | Workspace triple still passed to `useWorkspaceServices`                                                                                                          | Existing Preview Pane wiring + regression test                   | covered    |
-| OFP-05  | DOCX original paper width larger than the preview container | Open, resize, scroll to bottom | Scale is `min(1, available width / original width)`; wrapper size and transform use the same ratio; no horizontal overflow and last page reachable               | component test + CDP scaled-scroll regression                    | covered    |
-| OFP-06  | Binary file over 25 MB                                      | Read preview                   | Service rejects before reading, returns no content                                                                                                               | service unit test                                                | covered    |
-| OFP-07  | Invalid Office bytes                                        | Render preview                 | Parser error converted to a readable error state by the error boundary                                                                                           | component test                                                   | covered    |
-| OFP-08  | Existing text / image source                                | Open preview                   | Still takes the existing chunked text or media path                                                                                                              | existing tests                                                   | covered    |
-| OFP-09  | OLE Compound Document `.doc`                                | Open preview                   | Recognized as legacy Word; binary read called; handed to `react-docx` only on this compatibility path                                                            | UI helper + PreviewPane routing test + real parser/runtime smoke | covered    |
-| OFP-11  | Office file read or parse unfinished                        | Open preview                   | Blank preview surface with `aria-busy`, no visible loading text                                                                                                  | component test                                                   | covered    |
-| OFP-12  | Two same-size sections with different margins               | Open preview                   | `docx-preview` generates two `section`s; the second page uses the body `pgMar`, not the cover's `padding: 0`                                                     | real DOCX renderer regression + CDP runtime                      | covered    |
-| OFP-13  | Required OOXML part with backslash ZIP entry                | Open preview                   | `react-xlsx` controller finishes parsing, no `Missing required part` error and a worksheet tab is generated                                                      | real renderer integration test                                   | covered    |
+| Case ID | Setup                           | Action                     | Assertions                                                                                                | Evidence                                                         | 自动化状态 |
+| ------- | ------------------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ---------- |
+| OFP-01  | 小型多 sheet `.xlsx`            | 打开文件预览并切换 sheet   | 识别为 Excel；调用二进制读取；显示所有可见 sheet 名；选择后调用 `setActiveTabIndex` 并更新活动 sheet；不显示编辑/导出工具栏 | UI helper + component interaction test + CDP runtime             | covered    |
+| OFP-02  | 含段落的 `.docx`                | 打开文件预览               | 识别为 DOCX；调用二进制读取；以安全选项调用 `docx-preview.renderAsync`                                    | UI helper + component test + CDP runtime                         | covered    |
+| OFP-04  | source 带 remote workspace 参数 | 打开文件预览               | 继续把 workspace 三元组交给 `useWorkspaceServices`                                                        | 现有 Preview Pane wiring + regression test                       | covered    |
+| OFP-05  | DOCX 原始纸张宽度大于预览容器   | 打开、调整宽度并滚动到底部 | 缩放比例为 `min(1, 可用宽度 / 原始宽度)`；包装层宽高与 transform 使用同一比例；容器无横向溢出且末页可访问 | component test + CDP scaled-scroll regression                    | covered    |
+| OFP-06  | 大于 25 MB 的二进制文件         | 读取预览                   | service 在读取前拒绝，不返回文件内容                                                                      | service unit test                                                | covered    |
+| OFP-07  | 非法 Office 字节                | 渲染预览                   | parser 错误被错误边界转换成可读错误态                                                                     | component test                                                   | covered    |
+| OFP-08  | 现有文本 / 图片 source          | 打开预览                   | 仍走既有分块文本或媒体路径                                                                                | existing tests                                                   | covered    |
+| OFP-09  | OLE Compound Document `.doc`    | 打开文件预览               | 识别为 legacy Word；调用二进制读取；只在该兼容路径交给 `react-docx` 解析                                  | UI helper + PreviewPane routing test + real parser/runtime smoke | covered    |
+| OFP-11  | Office 文件读取或解析尚未完成   | 打开文件预览               | 空白预览面带 `aria-busy`，不渲染可见 loading 文案                                                         | component test                                                   | covered    |
+| OFP-12  | 两个同尺寸、不同页边距的 section | 打开文件预览               | `docx-preview` 生成两个 `section`；第二页使用正文 `pgMar`，不沿用封面 `padding: 0`                         | real DOCX renderer regression + CDP runtime                      | covered    |
+| OFP-13  | 必需 OOXML part 使用反斜杠 ZIP entry | 打开文件预览             | `react-xlsx` controller 解析完成，无 `Missing required part` 错误且生成 worksheet tab                     | real renderer integration test                                  | covered    |
 
 ## Implementation Contract
 
-- `packages/shared` declares the generic binary preview return type; `IFileService` exposes a size-bounded
-  read method.
-- `packages/services` checks the size after `stat` and before `readFile`; default and hard limit are both
-  25 MB.
-- `packages/ui/src/PreviewPane.tsx` only does recognition, read lifecycle and error normalization; Office
-  rendering lives in separate modules.
-- Office files must not first enter the binary fallback of `readTextFile`; results of an old request must
-  be dropped on a source switch.
-- Third-party renderers must load dynamically. The Excel viewer must be explicitly `readOnly` and WASM must
-  come as a relative build asset usable by Vite / Electron.
-- The Excel renderer must use `@extend-ai/react-xlsx@^0.16.0` or a higher compatible version so
-  non-standard backslash ZIP entries are normalized at the read boundary shared by worker, main thread and
-  deferred load.
-- Excel must keep `showDefaultToolbar={false}` so no edit, save or export entry opens; multi-sheet
-  navigation must read `controller.tabs` through the `toolbar` render prop and switch with
-  `controller.setActiveTabIndex` inside the same workbook controller; it must not show only the first
-  sheet nor rebuild or re-parse the workbook to switch.
-- `.docx` and `.doc` must keep bypassing `readTextFile` and get full bytes through the bounded binary read
-  interface; they must not fall back to code preview because a `.doc` may contain extractable text.
-- `.docx` must call `docx-preview.renderAsync` and never re-enter the model/editor chain of
-  `@extend-ai/react-docx`. Render options must disable `renderAltChunks`, disable debug and use base64 URLs;
-  only the current source's async result may commit to visible DOM.
-- `.docx` must not override `ignoreLastRenderedPageBreak` to `false`; the official default section grouping
-  is kept so same-size sections still paginate independently and apply their own margins.
-- Pages generated by `docx-preview` must override its default `0 0 10px rgba(0, 0, 0, 0.5)` shadow with the
-  old `react-docx` light paper shadow; white pages must not switch back to a dark shadow by the app dark
-  theme.
-- Legacy binary `.doc` keeps its separate `useDocxEditor` + `DocxEditorViewer mode="read-only"`
-  compatibility path; that path must not be reused for `.docx`.
-- DOCX must keep the document's original layout ratio and shrink only when the generated page width exceeds
-  the container's available width; the scaled placeholder width/height must update in sync, not leave an
-  unscaled scroll area behind a bare `transform`.
-- The Office loading phase shows no visible loading text; the blank state is still exposed to assistive
-  technology via `aria-busy`.
-- New styles use only `DESIGN.md` semantic tokens and are verified in Zai Light, Zai Dark and narrow
-  screens. UI error logs use `packages/ui/src/logger.ts`, never `console`.
+- `packages/shared` 声明通用二进制预览返回类型；`IFileService` 暴露受大小限制的读取方法。
+- `packages/services` 在 `stat` 后、`readFile` 前检查大小，默认和硬上限均为 25 MB。
+- `packages/ui/src/PreviewPane.tsx` 只负责识别、读取生命周期和错误归一化；Office 渲染放在独立模块。
+- Office 文件不能先进入 `readTextFile` 的 binary fallback；切换 source 时必须丢弃旧请求结果。
+- 第三方渲染器必须动态加载。Excel viewer 必须显式 `readOnly`，WASM 必须由 Vite / Electron 可用的相对构建资产提供。
+- Excel renderer 必须使用 `@extend-ai/react-xlsx@^0.16.0` 或更高兼容版本，确保非标准反斜杠 ZIP entry 在 worker、主线程和 deferred load 共用的读取边界完成归一化。
+- Excel 必须保留 `showDefaultToolbar={false}`，避免开放编辑、保存和导出入口；多 sheet 导航必须通过 `toolbar` render prop 读取 `controller.tabs`，并用 `controller.setActiveTabIndex` 在同一 workbook controller 内切换，不能只展示首个 sheet，也不能为切换 sheet 重建或重新解析 workbook。
+- `.docx` 与 `.doc` 必须继续绕过 `readTextFile` 并通过受限二进制读取接口取得完整字节；不能因 `.doc` 可能含可提取文本而回退代码预览。
+- `.docx` 必须调用 `docx-preview.renderAsync`，不得再进入 `@extend-ai/react-docx` 的 model/editor 链路。渲染选项必须关闭 `renderAltChunks`、关闭 debug，并使用 base64 URL；只允许当前 source 的异步结果提交到可见 DOM。
+- `.docx` 不得把 `ignoreLastRenderedPageBreak` 覆盖为 `false`；必须保留 `docx-preview` 官方默认的 section 分组行为，确保同尺寸 section 仍独立分页并应用各自页边距。
+- `docx-preview` 生成的页面必须覆盖其默认 `0 0 10px rgba(0, 0, 0, 0.5)` 阴影，统一使用原 `react-docx` 浅色纸张阴影；不得按应用暗色主题把白纸页面改回深阴影。
+- 旧二进制 `.doc` 单独保留 `useDocxEditor` + `DocxEditorViewer mode="read-only"` 兼容路径；不得把该兼容路径重新用于 `.docx`。
+- DOCX 必须保留文档原始排版比例，只在生成页面宽度超过容器可用宽度时缩小；缩放后的占位宽高必须同步更新，不能只使用 `transform` 留下未缩放的滚动区域。
+- Office 加载阶段不得显示可见 loading 文案；空白态继续通过 `aria-busy` 暴露给辅助技术。
+- 新增样式只使用 `DESIGN.md` 的语义 token，并同时验证 Zai Light、Zai Dark 和窄屏。
+- UI 错误日志统一使用 `packages/ui/src/logger.ts`，不得直接调用 `console`。
 
 ## Verification
 
-- Service unit: normal base64, default/custom size limit, directory rejection.
-- UI unit: extension recognition, Excel multi-sheet names and switching interaction, Excel default edit
-  toolbar off, real Excel parsing of backslash ZIP entries, `.docx` / `.doc` routing, no code-wrap menu for
-  Office files, loading and error branches, `renderAsync` safe options, same-size two-section pagination and
-  margins, DOCX light page shadow, legacy `.doc` read-only props.
-- Desktop runtime: open a real multi-sheet `.xlsx`; all sheet tabs visible, clicking switches the active
-  sheet content with no re-read of the file.
-- Web runtime: open the official `docx-preview` `page-layout` DOCX fixture; the 794px original paper scales
-  to `0.531486` in a 422px Preview Pane, no alert in the visible DOM, no browser page error.
-- Build smoke: Desktop renderer and Web production builds both resolve the Office packages, worker and
-  Excel WASM assets.
-- Repository gates: `pnpm typecheck`, `pnpm lint`.
+- service unit：正常 base64、默认/自定义大小限制、目录拒绝。
+- UI unit：扩展名识别、Excel 多 sheet 名称与切换交互、Excel 默认编辑 toolbar 关闭、反斜杠 ZIP entry 的真实 Excel 解析、`.docx` / `.doc` 分流、Office 文件不显示代码换行菜单、加载与错误分支、`renderAsync` 安全选项、同尺寸双 section 分页与页边距、DOCX 浅色页面阴影、旧 `.doc` 只读 props。
+- Desktop runtime：打开真实多 sheet `.xlsx`，验证 sheet tab 全部可见、点击后活动 sheet 内容切换且无重新读取文件。
+- Web runtime：使用 `docx-preview` 官方 `page-layout` DOCX fixture 打开真实预览；794px 原始纸张在 422px Preview Pane 内缩放为 `0.531486`，可见 DOM 无 alert，浏览器无 page error。
+- build smoke：Desktop renderer 与 Web production build 都能解析 Office 包、worker 和 Excel WASM 资产。
+- repository gates：`pnpm typecheck`、`pnpm lint`。

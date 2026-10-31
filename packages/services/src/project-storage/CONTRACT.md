@@ -2,6 +2,8 @@
 
 Host 项目组织态的持久化升级。调用者持有 app SQLite 连接，CLI 通过协议交接事实，不导入此模块。
 
+`hasProjectWorkspace` reads only the active roots of the current Host's undeleted projects and their task-project links, which the Host uses for first CLI allocation. Tasks retained by a soft-deleted project still count as project workspaces. The default-task migration cleared task ownership, and leftover roots on its soft-deleted container do not take part in allocation. The query neither creates nor persists a process ownership, does not change task.cwd, and does not trigger a process migration when a task is moved. Process ownership is kept by ProcessManager until the original process exits.
+
 - `0005_projects`（旧 ID `0001_projects`）首次迁移旧 settings 中保留的 workspace；不删除或改写旧列语义、不移动目录。
 - 首次项目集合与 position 仅来自 lastWorkspaceSession 中本 Host 保留的项目条目，按原顺序去重，保留无任务的已保存项目。conversation、历史 tasks、recentProjects 和 Group 不创建项目；settings 缺失或列表为空时不推断项目。历史任务保留 cwd 与组织态，无匹配项目时保持 NULL；已有 ledger 不重跑转换、不重排或自动清理项目。
 - ID 沿用 CLI 的四位递增序号 + snake_case 名称，两个库独立编号；开发期旧 ID 的本机更名不修改 SQL/checksum 或重新执行转换。
@@ -40,3 +42,11 @@ Host 项目组织态的持久化升级。调用者持有 app SQLite 连接，CLI
 ## 2026-10-22 Reservation placeholder startup sweep
 
 `sweepAbandonedReservations` (`project-repository.ts`) deletes only the `RESERVATION_PLACEHOLDER_SQL` rows of host `local`. It runs inside `prepareTasksIndexStorage` after the migration COMMIT and before the repos open, and only when the caller passes `sweepAbandonedReservations: true`. That option must be passed only by the first prepare attempt of the first local Host of an app process. Main sets the flag through `packages/desktop/src/main/storage-sweep-gate/contract.ts` and holds later local `InitLocal` messages until that Host reports a startup phase past `preparing_host_storage` (`preparing_session_storage`, `starting_services`, `ready`) or `failed`, or exits. Rules, the replay argument and the open race are in `specs/first-submission-lifecycle.md` ("Placeholder startup sweep").
+
+## Explicit local open reuses an existing root
+
+`saveProject` accepts a `reuseExistingRoot` option for an explicit local directory open. It is accepted only for a single-root request with no project ID and no editable fields. After the directory is validated asynchronously and normalized, the same Host write transaction either reuses the non-deleted project that contains that root or creates a single-root project. A primary directory match wins; otherwise the choice is stable by `position`, then by ID. Reuse does not change project metadata and does not restore a deleted project. Ordinary saves, the global new-task entry, and remote entries do not enable this option.
+
+## Creation command ID allocation belongs to the Host
+
+`session_creation_commands` is keyed uniquely by `workspace_key`, `client_id`, and `command_id`, and commits in the same write transaction as the task reservation. On the first request without an explicit ID, the Host allocates `sess_${randomUUID()}`; retries read only the original mapping. An explicit ID conflict, or a mapping whose task has been fully deleted, is rejected and never re-allocated. A legacy request with no mapping queries only the original 3.16 hash ID; if it matches, the existing task row is kept and a mapping is registered. Migration `0009` only creates the mapping table and does not rewrite historical tasks. Command execution and ACK are still decided by the CLI.

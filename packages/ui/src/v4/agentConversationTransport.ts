@@ -1,5 +1,6 @@
+import type { SessionLifecycleSnapshot } from "@zcode/shared";
 import { sendWithConversationDelayE2E } from "@/v4/conversationTransportDelayE2E.js";
-import { getLocalTtftObserver } from "@/v4/telemetry/localTtftObserver.js";
+import { getLocalTtftObserver } from "@/v4/telemetry/local-ttft/contract.js";
 import { calibrateLocalTtftClock, incognitoCapabilityGateError, localTtftNow } from "@zcode/shared";
 /* oxlint-disable eslint(max-lines) -- Keep uploads, chunked reads, and runtime lifecycle within one host boundary for this transport. */
 // Desktop/host implementation of ConversationTransport: bridges to the v4 forwarding surface of IZCodeAgentService
@@ -77,6 +78,8 @@ type ConversationV4AgentService = Pick<
   | "attachmentAbortV4"
   | "attachmentPreviewSourceV4"
   | "attachmentReadV4"
+  | "getSessionLifecycle"
+  | "onDynamicSessionLifecycle"
   | "onDynamicConversationFrame"
   | "onDynamicLocalTtftFacts"
   | "onAgentRuntimeRestarted"
@@ -168,6 +171,9 @@ export function createAgentConversationTransport(
   let runtimeRestartUpstream: { dispose(): void } | null = null;
   let runtimeLifecycleUpstream: { dispose(): void } | null = null;
   let runtimeGeneration = 0;
+  const sessionGenerations = new Map<string, number>();
+  const sessionLifecycleListeners = new Set<(snapshot: SessionLifecycleSnapshot) => void>();
+  let sessionLifecycleUpstream: { dispose(): void } | null = null;
   const targetWorkspaceKey = target.workspaceIdentity?.trim() || target.workspacePath;
   const lifecycleContext = {
     workspaceKey: targetWorkspaceKey,
@@ -184,6 +190,32 @@ export function createAgentConversationTransport(
     return bytes;
   };
   return {
+    getSessionLifecycle(sessionId) {
+      return agentService.getSessionLifecycle({ ...workspace, sessionId });
+    },
+    onSessionLifecycle(listener) {
+      sessionLifecycleListeners.add(listener);
+      sessionLifecycleUpstream ??= agentService.onDynamicSessionLifecycle(workspace)((snapshot) => {
+        if (snapshot.state === "stopping") {
+          const topic = `conversation/${snapshot.sessionId}`;
+          sessionGenerations.set(topic, (sessionGenerations.get(topic) ?? 0) + 1);
+          for (const [id, subscriptionTopic] of topicBySubscriptionId) {
+            if (subscriptionTopic !== topic) continue;
+            barrier.forget(id);
+            decoder.discard(topic, id);
+            topicBySubscriptionId.delete(id);
+          }
+        }
+        for (const callback of sessionLifecycleListeners) callback(snapshot);
+      });
+      return () => {
+        sessionLifecycleListeners.delete(listener);
+        if (sessionLifecycleListeners.size === 0) {
+          sessionLifecycleUpstream?.dispose();
+          sessionLifecycleUpstream = null;
+        }
+      };
+    },
     async subscribe(params: SubscribeParams): Promise<V4ConversationSubscribeResult> {
       const sessionId = parseConversationTopic(params.topic);
       if (!sessionId) {
@@ -204,6 +236,7 @@ export function createAgentConversationTransport(
         await ensureHandshake();
         pending = barrier.begin(params.topic);
         const subscribeRuntimeGeneration = runtimeGeneration;
+        const subscribeSessionGeneration = sessionGenerations.get(params.topic) ?? 0;
         const result = await agentService.subscribeConversationV4({
           ...workspace,
           sessionId,
@@ -213,7 +246,10 @@ export function createAgentConversationTransport(
             ? { retryInitialization: params.retryInitialization }
             : {}),
         });
-        if (subscribeRuntimeGeneration !== runtimeGeneration) {
+        if (
+          subscribeRuntimeGeneration !== runtimeGeneration ||
+          subscribeSessionGeneration !== (sessionGenerations.get(params.topic) ?? 0)
+        ) {
           // A late ACK from an old runtime may reuse a new runtime's subId; here, only
           // clear local pending state and do not blindly unsubscribe a same-named subscription from the new runtime.
           barrier.cancel(pending);
@@ -359,6 +395,7 @@ export function createAgentConversationTransport(
         planEnabled?: boolean;
         config?: { planEnabled?: boolean };
         firstInput?: { planEnabled?: boolean };
+        genUiContext?: unknown[];
       };
       // Old Hosts strip unknown fields; do not accidentally send yolo + Plan as full-access execution.
       if (
@@ -374,6 +411,14 @@ export function createAgentConversationTransport(
       ) {
         const gateError = incognitoCapabilityGateError(hello.capabilities);
         if (gateError) throw new Error(gateError);
+      }
+      // An old Host may strip unknown fields first, so the executor-side check cannot recover the lost state.
+      if (
+        envelope.type === "sendText" &&
+        payload.genUiContext?.length &&
+        hello.capabilities.genUiContext !== true
+      ) {
+        throw new Error("proto.genUiContextUnsupported");
       }
       return sendWithConversationDelayE2E(envelope, () =>
         agentService.sendConversationCommandV4({ ...workspace, ...context, envelope }),

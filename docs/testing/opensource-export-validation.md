@@ -1,69 +1,61 @@
-# Open-source Export Integrity
+# 开源导出完整性
 
-## Scope
+## 范围
 
-Create a fix branch from the latest staging and repair the export tooling, placeholder types, docs
-and test metadata. Application runtime logic, protocol values, request timing, UI behavior and test
-assertions stay unchanged.
+基于指定同步源的固定提交，在独立准备分支修复导出工具、占位类型、文档和测试元数据。
+已发布 release 分支和标签保持冻结，通用修复单独进入 staging；版本专用排除项随基线重新验证。
+应用运行逻辑、协议值、请求时序、UI 行为和测试断言保持不变。
 
-## Contract
+## 契约
 
-1. The Computer Use placeholder package provides public build and type-check entries, and its log
-   callback types match the real producer; the build only verifies the bundled declarations and
-   produces no native capability; the root unit-test project entry is kept and verifies the
-   placeholder behavior.
-2. Orphaned-test detection matches by full file name or path and must not delete public tests
-   because file names share a substring.
-3. The public case catalog, coverage matrix and account fixture tests keep being exported;
-   official-version-specific content goes into existing topic files.
-4. Docs and comments describe this project's behavior, with personal paths, accounts and product
-   benchmarking removed; protocol, provider and compatibility-import names stay.
-5. The competitor gate recognizes full names, allows explicit pagination terms and protocol keys; a
-   descriptive product mention on the same line is still blocked.
-6. The E2E manifest `providerFixtures` points to existing upstream fixtures; candidate specs are not
-   moved and the promotion state is not changed.
-7. License identification fixes are bound to the exact package version and the publisher's original
-   text; no broad allowlist or updated hash may mask a material gap.
-8. The latest version in the open-source README matches the source version.
+1. Computer Use 占位包提供公共构建与类型检查入口，日志回调类型与真实 producer 一致；
+   构建只验证随包声明，不产出原生能力；保留根 CUA 测试项目入口并验证占位行为。
+2. 孤立测试识别按完整文件名或路径匹配，不能因文件名子串相同删除公共测试。
+3. 公共 case catalog、coverage matrix 和账号夹具测试继续导出；官方版本专属内容归入已有主题文件。
+4. 文档和注释使用本项目行为描述，去掉个人路径、账号和产品对标；协议、provider 和兼容导入名称保留。
+5. 竞品门禁识别完整名称，允许明确的分页术语与协议键；同一行中的描述性产品提及仍被拦截。
+6. E2E manifest 的 providerFixtures 指向现存 upstream 夹具；不移动候选 spec、不改变转正状态。
+7. 许可标识修复绑定精确包版本与发布方原文；不能用宽泛白名单或更新哈希掩盖材料缺口。
+8. 开源 README 的最新版本与源版本一致。
 
-### Legacy admission for an independent Git history
+### 同步边界
 
-After export, lint and architecture checks cannot depend on unpublished Git objects. The exporter
-first verifies that the existing admission commit belongs to the specified source ref, then
-generates a fixed manifest of Git blobs and file modes for source that still matches the admitted
-version after export, while keeping upstream-added public paths. The open-source policy uses this
-manifest; the closed-source side keeps the original commit admission; the two sources cannot be
-enabled together.
+- 轨迹录制工具只消费自身录制的 JSONL、fixture 与 model-io 输入，不接受或复制外部产品的对照请求；通用录制、推导与协议格式转换继续保留。
+- 开发态 Agent 源码入口先使用 `ZCODE_AGENT_WORKDIR`，再搜索相邻 `zcode-cli` / `glm` 目录；其他目录名只通过现有显式配置接入，不保留历史研发目录候选。发行资源解析顺序不变。
+- BG24 用长跑与短跑职责命名后台 Agent，spec、case manifest、upstream fixture 的工具 ID、提示词与匹配器同步更新，原断言与时序不变。
+- README 同时保留已导出的历史版本记录与本次源版本记录。
+- 导出后按实际文件存在性收口工程测试清单和架构例外的精确路径；保留仍存在的替换实现与 glob，不靠敏感词删条目。路径全部移除的例外整项删除。
+- 公共服务只校验响应信封并调用共享请求校验契约；专属配置字段的有效性检查随 `request-security-edition/` 整目录替换，闭源保持原校验结果，开源返回空配置。
+- CUA 占位包的执行结果保持 MCP `CallToolResult` 类型，公开 broker 与 helperConstants 入口提供相同的 Helper 参数常量；这些契约只支持公共调用方编译，不启用真实 Computer Use。
+- 正式 E2E 的环境筛选只读取公开的远程目标路径清单。内部队列仍是声明源，由 `node harness/remote/sync-target-specs.mjs` 生成清单并通过工程检查防止漂移。独立的 `check:e2e-remote-targets` 推送前门禁直接核对队列与 JSON，不依赖 Vitest 的模块图选测；缺少私有 harness 目录的开源树跳过该私有一致性校验，有队列时清单缺失或漂移均失败；开源加载配置不依赖内部 harness。
+- 验收包含轨迹入口拒绝已移除参数、临时目录中的开发入口解析、BG24 fixture 校验与桌面 replay，以及最终开源树的完整工程/CUA/CLI 检查。
 
-The manifest describes only the files made public this time, does not reveal excluded paths, and
-does not automatically admit rewritten files. Newly added paths are filtered by the rule effective
-date of the specified source ref; the export commit date must not bring legacy paths that were not
-retroactive back into admission. Legacy paths entering the public history for the first time are
-stored with fixed content and mode, only restoring the date attribution of the source history; they
-do not take part in lint line-count admission. The checker compares both the staging area and the
-working tree; edits after commit, restore after staging, renames, mode changes and untracked files
-cannot inherit the exemption. Legacy admission reuses only the original max-lines and
-unmanaged-new-file rules and exempts no other lint or module-structure errors.
+### 独立 Git 历史的存量准入
+
+导出后的 lint 与架构检查不能依赖未公开的 Git 对象。导出器先验证既有准入提交属于指定源 ref，
+再为导出后仍与准入版本一致的源码生成固定的 Git blob 与文件模式清单，同时保留公开的上游新增路径。
+开源策略使用该清单，闭源继续使用原有提交准入；两种来源不能同时启用。
+
+清单只描述本次公开文件，不公开已排除路径，不自动接纳改写后的文件。
+新增路径按指定源 ref 的规则生效日期筛选；导出提交的日期不能让原本不受追溯的存量路径重新进入准入范围。
+首次进入公开历史的旧路径另存固定内容与模式，只恢复源历史原有的日期归属；不参与 lint 行数准入。
+检查器同时比较暂存区和工作区；提交后编辑、暂存后恢复、改名、模式变化及未跟踪文件均不能继承豁免。
+存量准入只沿用原有 max-lines 与 unmanaged-new-file 规则，不豁免其他 lint 或模块结构错误。
 
 ```text
-specified source ref + merged admission commits -> exporter -> fixed content and mode manifest of public files
+指定源 ref + 已合入的准入提交 → 导出器 → 公开文件的固定内容与模式清单
                                            ↓
-staging area + working tree in the independent open-source history -> compare as is -> original lint / architecture rules
+独立开源历史中的暂存区 + 工作区 → 原样比较 → 原有 lint / 架构规则
 ```
 
-Regression must run in a brand-new Git repository, proving the check works without closed-source
-commit objects and covering exiting admission after a modification. The placeholder package's
-`vitest.config.ts` only assembles the unit-test project and registers that test config by exact
-path; it is not widened to producer implementation files.
+回归必须在全新 Git 仓库中运行，证明没有闭源提交对象也能检查，并覆盖修改后退出准入的情况。
+占位包的 `vitest.config.ts` 只装配单测项目，通过精确路径登记该测试配置；不扩大到 producer 实现文件。
 
-## Acceptance
+## 验收
 
-- First reproduce the placeholder build/type problem, the orphan-test wrong deletion and the term
-  false positive, then verify the fix.
-- Re-export; the hard gate is zero; public docs and tests exist; the patch stack is empty.
-- In the independent open-source tree, install with a frozen lockfile and run the build entry, root
-  and CLI type checks, lint, the full unit tests and the coverage-manifest audit.
-- On the closed-source side run the architecture check, affected tests, type check and lint. The
-  fixture check covers all modified manifests.
-- Basic license checks and strict material checks are reported separately; existing material gaps do
-  not count as fixed.
+- 先复现占位包构建/类型、孤立测试误删和词条误报，再验证修复。
+- 重新导出，硬门禁为零；公共文档和测试存在，补丁栈为空。
+- 在独立开源树冻结安装，执行构建入口、根与 CLI 类型检查、lint、保留的工程/CUA 占位/CLI 测试及覆盖清单审计。
+- 闭源执行架构检查、受影响测试、类型检查和 lint。夹具检查覆盖修改的全部 manifest。
+- 基础许可检查与严格材料检查分别报告；既有材料缺口不计为已修复。
+

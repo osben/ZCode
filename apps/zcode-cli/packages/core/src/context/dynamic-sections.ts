@@ -2,10 +2,13 @@ import {
   DEFAULT_COMMUNICATION_PROMPT,
   DEFAULT_CONTEXT_MANAGEMENT_PROMPT,
 } from "@zcode/shared";
-import type { ContextBuilderConfig, ContextSection } from "./types.js";
+import type { ContextSection } from "./types.js";
 import { estimateTokens } from "./utils.js";
 
-export function buildSessionGuidanceSection(toolNames: readonly string[], hasSkills = false): ContextSection | null {
+export function buildSessionGuidanceSection(
+  toolNames: readonly string[],
+  hasSkills = false,
+): ContextSection | null {
   const tools = new Set(toolNames);
   const lines = ["# Session-specific guidance"];
 
@@ -22,7 +25,9 @@ export function buildSessionGuidanceSection(toolNames: readonly string[], hasSki
   // }
 
   if (tools.has("Skill") && hasSkills) {
-    lines.push("- When the user types `/<skill-name>`, invoke it via Skill. Only use skills listed in the user-invocable skills section \u2014 don't guess.");
+    lines.push(
+      " - When the user types `/<skill-name>`, invoke it via Skill. Only use skills listed in the user-invocable skills section \u2014 don't guess.",
+    );
   }
 
   // if (tools.has("AskUserQuestion")) {
@@ -42,17 +47,6 @@ export function buildDynamicBehaviorSection(override?: string): ContextSection {
   // body — guidance paragraphs, code-style rule, and risk paragraph together.
   const content = override?.trim() ? override.trim() : DEFAULT_COMMUNICATION_PROMPT;
   return createDynamicSection("Dynamic Behavior", "dynamic_behavior", content);
-}
-
-export function buildOutputStyleSection(
-  style: ContextBuilderConfig["outputStyle"],
-): ContextSection | null {
-  if (!style || style.prompt.trim().length === 0) return null;
-  return createDynamicSection(
-    "Output Style",
-    "output_style",
-    [`# Output Style: ${style.name}`, style.prompt.trim()].join("\n"),
-  );
 }
 
 export function buildContextManagementSection(override?: string): ContextSection {

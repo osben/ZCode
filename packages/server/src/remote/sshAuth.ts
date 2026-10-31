@@ -8,6 +8,8 @@ import type { PublicZCodeErrorCode } from "@zcode/shared";
 export const SSH_READY_TIMEOUT_MS = 60_000;
 export const SSH_KEEPALIVE_INTERVAL_MS = 15_000;
 export const SSH_KEEPALIVE_COUNT_MAX = 3;
+// ssh2 sends one heartbeat per interval and only reports an error after the COUNT_MAX + 1st attempt also gets no reply, hence 4 intervals.
+const SSH_KEEPALIVE_TIMEOUT_MS = SSH_KEEPALIVE_INTERVAL_MS * (SSH_KEEPALIVE_COUNT_MAX + 1);
 
 interface SSHConnectConfigInput {
   host: string;
@@ -77,6 +79,8 @@ export function createKeyboardInteractiveResponder(
     }
 
     // Record the request for the connect error path; the password is still sent so password-only prompts keep working.
+    // Only prompt text counts as evidence of a second factor. Prompt rounds or counts do not: a host that asks for Password
+    // again after a wrong password is still only asking for the password, and the responder keeps no state across attempts.
     if (
       [name, instructions, ...prompts.map(({ prompt }) => prompt)].some((text) =>
         VERIFICATION_PROMPT_PATTERN.test(text),
@@ -144,8 +148,10 @@ export function normalizeSSHConnectError(
     (error as { level?: string }).level === "client-timeout"
   ) {
     if (options.established) {
+      // ssh2 reports keepalive and handshake timeouts both as client-timeout, differing only in message. After ready only
+      // keepalive can produce client-timeout, so the connection phase decides the copy instead of ssh2's English text.
       return new Error(
-        `SSH 连接无响应：约 ${SSH_READY_TIMEOUT_MS / 1000} 秒没有收到服务器的心跳响应，连接已断开，请检查网络或服务器状态`,
+        `SSH 连接无响应：约 ${SSH_KEEPALIVE_TIMEOUT_MS / 1000} 秒没有收到服务器的心跳响应，连接已断开，请检查网络或服务器状态`,
         { cause: error },
       );
     }
@@ -175,7 +181,7 @@ export function normalizeSSHConnectError(
 }
 
 function authenticationError(message: string, cause: unknown): Error {
-  // 认证发生在懒连接的 probe 内；在仍有 ssh2 结构化原因的边界定码，避免被归成预检失败。
+  // Authentication happens inside the lazy connection's probe; assign the code at the boundary where ssh2's structured reason is still available, so it is not classified as a probe failure.
   return Object.assign(new Error(message, { cause }), {
     code: "remote-authentication-failed" satisfies PublicZCodeErrorCode,
   });

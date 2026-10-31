@@ -4,7 +4,7 @@ import type { PluginSandboxHandle, PluginSandboxRegisterInput } from "@zcode/sha
 import {
   BrowserWindow,
   clipboard,
-  nativeImage,
+  ClipboardItem,
   MessageChannelMain,
   app,
   dialog,
@@ -28,15 +28,15 @@ import { DesktopBrowserScreenshotActivityController } from "@desktop/main/browse
 
 export interface PluginSandboxHost {
   clearBrowserData(): Promise<void>;
-  /** host 进程经 parentPort 登记；返回句柄前完成 partition session 准备。 */
+  /** Registration from the host process via parentPort; partition session preparation completes before the handle is returned. */
   registerFromHost(input: PluginSandboxRegisterInput): PluginSandboxHandle;
-  /** desktopWindowChrome 的 will-attach 分支。 */
+  /** desktopWindowChrome's will-attach branch. */
   configureGuest(input: {
     webPreferences: Electron.WebPreferences;
     params: Record<string, string>;
     ownerWebContentsId: number;
   }): ReturnType<typeof configurePluginSandboxGuest>;
-  /** desktopWindowChrome 的 did-attach 分支。 */
+  /** desktopWindowChrome's did-attach branch. */
   attachGuest(input: { guest: WebContents; hostWebContents: WebContents; sandboxId: string }): void;
 }
 
@@ -47,20 +47,22 @@ export function getPluginSandboxHost(): PluginSandboxHost | null {
 }
 
 /**
- * 在 app ready 后安装一次：创建注册表、注册 renderer 可调的两条 IPC（dispose / 手势消费，按 sender 归属校验）。
- * scheme 的 privileged 注册必须在 app ready 前、与 zcode-media 同一次调用完成，不在这里。
+ * Installed once after app ready: creates the registry and registers the two renderer-callable
+ * IPC channels (dispose / gesture consumption, validated by sender ownership).
+ * The scheme's privileged registration must happen before app ready in the same call as
+ * zcode-media, not here.
  */
 export function installPluginSandboxHost(input: {
   preloadPath: string;
   rendererDir: string;
   aliasDir: string;
-  /** vite dev server 地址；有值时 shell 资源从它代理（见 PluginSandboxAssetSource）。 */
+  /** Vite dev server URL; when set, shell assets are proxied from it (see PluginSandboxAssetSource). */
   devServerUrl?: string;
   logger?: { warn: (...args: unknown[]) => void; info?: (...args: unknown[]) => void };
   registry?: PluginSandboxRegistryPort;
-  /** 注册表容量（缺省 64）；e2e L05 用 1 验证配额拒绝。 */
+  /** Registry capacity (default 64); e2e L05 uses 1 to verify quota rejection. */
   registryMaxEntries?: number;
-  /** 应用语言（与 index.ts 的 resolveEffectiveConfirmationLocale 同源）；每次弹框时读取。缺省用系统语言。 */
+  /** App language (same source as resolveEffectiveConfirmationLocale in index.ts); read each time a dialog opens. Defaults to the system language. */
   getLocale?: () => Locale;
 }): PluginSandboxHost {
   if (installedHost) return installedHost;
@@ -91,7 +93,7 @@ export function installPluginSandboxHost(input: {
       requestId: sandboxId,
       reason: "plugin-execution",
     });
-    // 隐藏页面仅需低频推进；不能全局关闭 backgroundThrottling，否则同窗空闲 guest 也会跑帧。
+    // Hidden pages only need low-frequency progress; backgroundThrottling must not be globally disabled or idle guests in the same window would also tick frames.
     state.lease?.markPrepared?.();
     state.lease?.invalidated?.addEventListener(
       "abort",
@@ -113,8 +115,8 @@ export function installPluginSandboxHost(input: {
     if (guest.isDestroyed()) return Promise.resolve();
     const existing = stopping.get(guest);
     if (existing) return existing;
-    // Electron 41 的 attached guest.close 只销毁包装对象，iframe 仍可写存储。
-    // 先完成原生空白页导航，真正移除旧文档；不用 destroyed 或延时猜测页面已经停止。
+    // In Electron 41, attached guest.close only destroys the wrapper object; the iframe can still write storage.
+    // Complete a native blank-page navigation first to really remove the old document; do not guess the page stopped from destroyed events or delays.
     const stopped = Promise.resolve().then(async () => {
       if (guest.isDestroyed()) return;
       const allowUnload = (event: Electron.Event) => event.preventDefault();
@@ -122,7 +124,7 @@ export function installPluginSandboxHost(input: {
       try {
         await guest.loadURL("about:blank");
       } catch (error) {
-        // Renderer 移除 webview / owner 关闭时会中止导航，此时实际文档已释放。
+        // The renderer removing the webview / the owner closing aborts the navigation; at that point the real document is already released.
         if (!guest.isDestroyed()) throw error;
       } finally {
         guest.removeListener("will-prevent-unload", allowUnload);
@@ -135,14 +137,15 @@ export function installPluginSandboxHost(input: {
     stopping.set(guest, stopped);
     return stopped;
   };
-  // partition 持久且按可信 App 身份隔离：dispose 关闭 guest 和端口，
-  // 不撤 protocol handler、不清存储；存储清理走已有清除所有数据入口。
+  // Partitions are persistent and isolated per trusted app identity: dispose closes the guest
+  // and ports, but does not unregister the protocol handler or clear storage; storage cleanup
+  // goes through the existing clear-all-data entry.
   const onDispose = (record: PluginSandboxRecord) => {
     releaseExecution(record.sandboxId);
     detachByKey.get(record.sandboxId)?.();
     detachByKey.delete(record.sandboxId);
     const guest = guests.get(record.sandboxId);
-    // 保留 guest 到真正停止：清除数据必须能等待已经进入 dispose 的旧实例。
+    // Keep the guest until it truly stops: clearing data must be able to wait for old instances already in dispose.
     if (guest)
       void stopGuest(guest).catch((error: unknown) =>
         input.logger?.warn("[plugin-sandbox] guest stop failed", String(error)),
@@ -155,8 +158,10 @@ export function installPluginSandboxHost(input: {
       ...(input.registryMaxEntries !== undefined ? { maxEntries: input.registryMaxEntries } : {}),
     });
 
-  // 页面浏览器权限闸门：确认框由 main 原生弹出，父窗口是登记该沙箱的宿主窗口，页面无法伪造。
-  // 缺省语言与 desktopApplicationMenu 的 resolveSystemApplicationLocale 同源（系统语言优先）。
+  // Page browser-permission gate: the confirmation dialog is popped natively by main, and the
+  // parent window is the host window that registered the sandbox, so the page cannot fake it.
+  // The default language shares its source with desktopApplicationMenu's
+  // resolveSystemApplicationLocale (system language first).
   const resolveLocale = (): Locale =>
     input.getLocale?.() ??
     resolveSystemLocale(
@@ -229,7 +234,7 @@ export function installPluginSandboxHost(input: {
       if (!owner || owner.isDestroyed()) throw new Error("MCP App window is no longer available");
       const handle = registry.register(registerInput);
       partitions.add(handle.partition);
-      // prepare 后尚未挂载的登记也属于窗口；关闭和清除数据不能漏掉它们。
+      // Registrations prepared but not yet attached also belong to the window; close and clear-data must not miss them.
       if (!watchedOwners.has(owner.id)) {
         watchedOwners.add(owner.id);
         owner.once("destroyed", () => {
@@ -244,7 +249,7 @@ export function installPluginSandboxHost(input: {
         permissions,
         logger: input.logger,
       });
-      // 每个沙箱登记一次一条，供排 renderer / host / main 三段握手用。
+      // One record per sandbox registration, for debugging the renderer / host / main three-way handshake.
       input.logger?.info?.("[plugin-sandbox] registered", {
         sandboxId: handle.sandboxId,
         initId: handle.initId,
@@ -268,8 +273,9 @@ export function installPluginSandboxHost(input: {
         return;
       }
       guests.set(sandboxId, guest);
-      // dom-ready / did-finish-load 回调时仍可能处于 loading，早到的活动请求会被上面的守卫跳过。
-      // 以真正停止加载的事件承接待处理请求，不能依赖插件或 session 再发一次活动请求。
+      // At dom-ready / did-finish-load the page may still be loading; early activity requests get
+      // skipped by the guard above. Carry pending requests on the real load-stopped event; do not
+      // rely on the plugin or session re-sending an activity request.
       guest.on("did-stop-loading", () => syncExecution(sandboxId));
       guest.once("destroyed", () => {
         if (guests.get(sandboxId) === guest) {
@@ -277,7 +283,7 @@ export function installPluginSandboxHost(input: {
           guests.delete(sandboxId);
         }
       });
-      // H14：宿主 webContents 销毁（窗口关闭 / 崩溃）时释放它名下全部登记；每个 owner 只挂一次。
+      // H14: when the host webContents is destroyed (window closed / crash), release all its registrations; attach only once per owner.
       if (!watchedOwners.has(hostWebContents.id)) {
         watchedOwners.add(hostWebContents.id);
         const ownerId = hostWebContents.id;
@@ -342,21 +348,22 @@ export function installPluginSandboxHost(input: {
       guests.get(request.sandboxId) === guest;
     if (!isCurrent() || !guest) throw new Error("Sandbox capture is no longer available");
     const captured = await guest.capturePage();
-    // 截图期间页面可能释放或换代；旧请求不得把错误页面的图像写入剪贴板。
+    // The page may be released or replaced during capture; a stale request must not write the wrong page's image to the clipboard.
     if (!isCurrent()) throw new Error("Sandbox capture is no longer available");
     const cropped = captured.crop(scaleCaptureRect(request, captured.getSize()));
-    clipboard.writeImage(
-      process.platform === "win32"
-        ? nativeImage.createFromBitmap(cropped.toBitmap(), cropped.getSize())
-        : cropped,
-    );
+    // Electron 44 removed synchronous writeImage; keep the image encoded as PNG and confirm the copy only after the native write completes.
+    await clipboard.write([
+      new ClipboardItem({
+        "image/png": new Blob([Uint8Array.from(cropped.toPNG())], { type: "image/png" }),
+      }),
+    ]);
   });
   ipcMain.handle(
     PlatformChannels.PluginSandboxDispose,
     (event, sandboxId: unknown, initId: unknown) => {
       if (typeof sandboxId !== "string") return;
       const record = registry.get(sandboxId);
-      // 只有登记时的宿主窗口能释放自己的沙箱；其他 sender 静默忽略。
+      // Only the host window that registered can release its own sandbox; other senders are silently ignored.
       if (!record || record.ownerWebContentsId !== event.sender.id) return;
       input.logger?.info?.("[plugin-sandbox] dispose requested", {
         sandboxId,
@@ -365,7 +372,7 @@ export function installPluginSandboxHost(input: {
       });
       registry.dispose(sandboxId, typeof initId === "number" ? initId : undefined);
       const guest = guests.get(sandboxId);
-      // 旧 initId 的迟到 dispose 不能停止仍有效的登记。
+      // A late dispose with an old initId must not stop a still-valid registration.
       if (guest && !registry.get(sandboxId)) return stopGuest(guest);
     },
   );

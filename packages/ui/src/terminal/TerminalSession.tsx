@@ -11,6 +11,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { resolveTerminalFontFamily } from "@/lib/uiFonts.js";
 import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
 import type { ZCodeState } from "@/store/index.js";
+import { useComposerClientNamespace, useTerminalOwnerId } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
 import {
   ContextMenu,
@@ -19,6 +20,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu.js";
 import {
+  attachTerminalMobileInput,
   createPendingTerminalInputFallback,
   consumeTerminalInputFallbackHandledData,
   createTerminalInputFallbackKeydownCandidate,
@@ -36,6 +38,7 @@ import { mergeTerminalTheme } from "@/terminal/terminalTheme.js";
 import { setTerminalWebglRenderer } from "@/terminal/terminalWebglRenderer.js";
 import {
   sidePaneTerminalSessionRegistry,
+  createSidePaneTerminalConnection,
   type SidePaneTerminalSessionEntry,
 } from "@/terminal/sidePaneTerminalSessionRegistry.js";
 
@@ -129,6 +132,8 @@ export function TerminalSession({
   workspaceKey?: string;
 }) {
   const { intl } = useZCodeIntl();
+  const clientNamespace = useComposerClientNamespace();
+  const terminalOwnerId = useTerminalOwnerId();
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -378,11 +383,26 @@ export function TerminalSession({
     // unmount only detaches the DOM without disposing resources; remount reuses persistentKey and preserves scrollback across workspaces.
     // Original path (bottom terminal without persistentKey) remains byte-for-byte unchanged.
     if (persistentKey) {
+      sidePaneTerminalSessionRegistry.releaseStaleOwner(clientNamespace, terminalOwnerId);
       terminalProfileThemeRef.current = undefined;
-      const existingEntry = sidePaneTerminalSessionRegistry.get(persistentKey);
+      const existingEntry = sidePaneTerminalSessionRegistry.get(persistentKey, {
+        workspaceKey: workspaceKey ?? cwd ?? "",
+        clientNamespace,
+      });
+      // On mobile the device can switch within the same page; the same path does not mean the same Host, so the old PTY id must not be handed to a new device.
+      if (!existingEntry && sidePaneTerminalSessionRegistry.has(persistentKey)) {
+        terminalIdRef.current = undefined;
+        logger.warn("[Terminal] persistent session scope mismatch", {
+          persistentKey,
+          workspaceKey,
+          clientNamespace,
+        });
+        return;
+      }
 
       // --- Reuse fast path: returning to a workspace/remounting when the entry is already in the registry ---
       if (existingEntry) {
+        existingEntry.connection?.rebind(services.terminalService);
         termRef.current = existingEntry.term;
         fitAddonRef.current = existingEntry.fitAddon;
         terminalIdRef.current = existingEntry.terminalId || undefined;
@@ -464,6 +484,8 @@ export function TerminalSession({
       term.loadAddon(new ClipboardAddon());
       term.open(hostEl);
       setTerminalWebglRenderer(term, terminalWebglEnabledRef.current);
+      const mobileInput = attachTerminalMobileInput(term, isWindowsDesktop);
+      registryDisposers.push(mobileInput);
 
       let initialTerminalSize: TerminalSize | null = null;
       if (isVisibleRef.current && hostEl.clientWidth > 0 && hostEl.clientHeight > 0) {
@@ -487,6 +509,7 @@ export function TerminalSession({
 
       // Component-local customKeyEventHandler (depends on the component inputFallback ref)
       term.attachCustomKeyEventHandler((e) => {
+        if (!mobileInput.handleKeyEvent(e)) return false;
         if (e.type !== "keydown") return true;
         inputFallbackKeydownCandidateRef.current =
           e.metaKey || e.ctrlKey || e.altKey
@@ -572,6 +595,8 @@ export function TerminalSession({
         cwd: cwd ?? "",
         // workspaceKey is used to dispose by workspace when a workspace tab is actually closed (matching bottom-terminal openWorkspaceKeys).
         workspaceKey: workspaceKey ?? cwd ?? "",
+        clientNamespace,
+        terminalOwnerId,
         hostEl,
         dispose: () => {}, // Complete it immediately afterward
       };
@@ -584,9 +609,9 @@ export function TerminalSession({
             logger.warn("[Terminal] persistent dispose disposer failed:", error);
           }
         }
-        if (entry.terminalId) {
-          void services.terminalService.dispose({ id: entry.terminalId });
-        }
+        void entry.connection?.dispose().catch((error) => {
+          logger.warn("[Terminal] persistent PTY dispose failed:", error);
+        });
         try {
           term.dispose();
         } catch (error) {
@@ -648,15 +673,14 @@ export function TerminalSession({
             requestFocus();
           }
 
-          // Data subscription → term.write (registered in the registry, so scrollback continues accumulating while detached)
-          registryDisposers.push(
-            services.terminalService.onDynamicData(id)((data) => {
+          // A bridge generation change only updates the entry's service binding; the xterm input listener and the PTY stay resident.
+          entry.connection = createSidePaneTerminalConnection({
+            id,
+            service: services.terminalService,
+            onData: (data) => {
               term.write(normalizePowerShellReadlineRedraw(data, shell));
-            }),
-          );
-          // Exit subscription (registered in the registry; matching the original path, call onExit when provided or write an exit notice otherwise)
-          registryDisposers.push(
-            services.terminalService.onDynamicExit(id)((exitCode) => {
+            },
+            onExit: (exitCode) => {
               const exitHandler = exitHandlerRef.current;
               logger.info("[Terminal] persistent session exited", {
                 autoClose: Boolean(exitHandler),
@@ -670,8 +694,8 @@ export function TerminalSession({
               }
               // Side-pane Terminal does not pass onExit, so keep the exit notice.
               term.write(`\r\n${exitedMessageRef.current}\r\n`);
-            }),
-          );
+            },
+          });
 
           // onData (registered with the registry and kept for the lifetime of the terminal):
           // Do not put it in localDisposers; cleanup(detach) would cancel it, and the reuse path does not rebind it,
@@ -706,7 +730,7 @@ export function TerminalSession({
                 inputFallbackKeydownCandidateRef.current = null;
               }
               markTerminalInputFallbackHandled(pendingInputFallbacksRef.current, data);
-              void services.terminalService.write({ id, data });
+              void entry.connection?.write(data);
             }),
           );
 
@@ -747,7 +771,7 @@ export function TerminalSession({
                     terminalId: id,
                     terminalTabId: sessionId,
                   });
-                  void services.terminalService.write({ id, data: insertedText });
+                  void entry.connection?.write(insertedText);
                 }
                 if (fallbackAction.shouldClearTextarea) {
                   textarea.value = "";
@@ -847,6 +871,7 @@ export function TerminalSession({
     term.loadAddon(new ClipboardAddon());
     term.open(el);
     setTerminalWebglRenderer(term, terminalWebglEnabledRef.current);
+    const mobileInput = attachTerminalMobileInput(term, isWindowsDesktop);
     let initialTerminalSize: TerminalSize | null = null;
     if (isVisibleRef.current && el.clientWidth > 0 && el.clientHeight > 0) {
       try {
@@ -874,6 +899,7 @@ export function TerminalSession({
     // - On Windows/Linux, Ctrl+C is normally sent to the PTY as SIGINT, so copy instead when text is selected.
     // - Without interception, Ctrl+V is entered as the `^V` character.
     term.attachCustomKeyEventHandler((e) => {
+      if (!mobileInput.handleKeyEvent(e)) return false;
       if (e.type !== "keydown") return true;
       inputFallbackKeydownCandidateRef.current =
         e.metaKey || e.ctrlKey || e.altKey
@@ -919,7 +945,7 @@ export function TerminalSession({
       attributeFilter: ["class"],
     });
 
-    const disposables: IDisposable[] = [];
+    const disposables: IDisposable[] = [mobileInput];
     const { terminalService } = services;
     disposables.push(
       // Interaction note: plain URLs are not part of the React DOM, so calculate clickable regions from the buffer
@@ -1144,6 +1170,8 @@ export function TerminalSession({
     };
   }, [
     clearResizeThrottleTimer,
+    clientNamespace,
+    terminalOwnerId,
     cwd,
     isWindowsDesktop,
     onShellLabelChange,
@@ -1153,6 +1181,7 @@ export function TerminalSession({
     services,
     sessionId,
     persistentKey,
+    workspaceKey,
   ]);
 
   // Toggle changes must apply to existing xterm instances (including registry-reused instances); declare this after the creation effect so termRef is ready.

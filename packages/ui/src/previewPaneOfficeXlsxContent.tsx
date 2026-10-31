@@ -3,7 +3,7 @@ import { XlsxViewer, setWasmSource, type XlsxViewerController } from "@extend-ai
 import xlsxWasmUrl from "@extend-ai/react-xlsx/duke_sheets_wasm_bg.wasm?url";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { installDocumentLinkSafety } from "@/lib/officeFilePreview.js";
+import { installDocumentLinkSafety, sanitizeDocumentHref } from "@/lib/officeFilePreview.js";
 import { logger } from "@/logger.js";
 
 setWasmSource(xlsxWasmUrl);
@@ -139,6 +139,17 @@ export function PreviewPaneOfficeXlsxContent({
   const viewerRef = useRef<HTMLDivElement | null>(null);
   const { intl } = useZCodeIntl();
   const sheetTabsLabel = intl.formatMessage({ id: "codeViewer.excel.sheetTabs" });
+  const handleOpenLink = useCallback(
+    (href: string) => {
+      const safeHref = sanitizeDocumentHref(href);
+      if (!safeHref || safeHref.startsWith("#")) {
+        logger.warn("[PreviewPane] 已阻断 Excel 不安全外链", { path: sourcePath });
+        return;
+      }
+      onOpenBrowserUrl?.(safeHref);
+    },
+    [onOpenBrowserUrl, sourcePath],
+  );
   // react-xlsx’s default toolbar contains both editing actions and sheet tabs.
   // Closing the default toolbar in preview removes multi-sheet navigation, so restore only read-only sheet tabs through the toolbar render prop.
   const renderSheetTabs = useCallback(
@@ -161,6 +172,8 @@ export function PreviewPaneOfficeXlsxContent({
       <XlsxViewer
         file={buffer}
         fileName={sourcePath}
+        // Canvas cells and shapes/images once went straight to window.open, bypassing the <a> checks; the shared exit is validated by the host.
+        onOpenLink={handleOpenLink}
         height="100%"
         isDark={isDark}
         readOnly

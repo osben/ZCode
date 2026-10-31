@@ -55,17 +55,18 @@ export const ProjectTaskRow = memo(function Row({
     () => presentation.onOpenTaskFiles?.(task, remoteSessionId ?? undefined),
     [presentation.onOpenTaskFiles, task, remoteSessionId],
   );
-  // 原因：内联 JSX 每次都会创建新引用，导致 TaskList 的 memo 比较失效。
+  // Reason: inline JSX creates a new reference every render, defeating TaskList's memo comparison.
   const organizationActions = useMemo(() => <TaskGroupTaskMenu task={task} />, [task]);
-  // 原因：会话行复用项目详情会在浏览任务时重复弹层；远程身份详情只由项目入口承载。
+  // Reason: session rows reusing project details would pop layers repeatedly while browsing tasks; remote identity details live only on the project entry.
   return (
-    <div>
+    // Each row renders its own TaskList; the outer padding keeps selected/hover backgrounds from sticking together.
+    <div className="py-px">
       <TaskList
         organizationActions={organizationActions}
         workspacePath={task.workspacePath}
         workspaceIdentity={task.workspaceIdentity}
         remoteSessionId={remoteSessionId ?? undefined}
-        // pinnedTasks 只负责标识样式；TaskList 的真实渲染集合始终是 tasks。
+        // pinnedTasks only drives badge styling; TaskList's actual render set is always tasks.
         tasks={rows}
         pinnedTasks={task.pinned ? rows : EMPTY}
         activeTaskId={activeId}
@@ -81,7 +82,7 @@ export const ProjectTaskRow = memo(function Row({
         showCreateButton={false}
         showFooter={false}
         showEmptyState={false}
-        // 原因：旧接线只传排序，遗漏 timeline 样式，导致目录信息和空闲灰点消失。
+        // Reason: the old wiring only passed sorting and missed the timeline variant, losing directory info and the idle gray dot.
         taskRowVariant={variant}
         hoverEnabled={!presentation.isWebRemoteControl}
         sortBy="updated"
@@ -106,13 +107,14 @@ export function ProjectTaskRows({
   showEmptyState = true,
 }: {
   showEmptyState?: boolean;
-  kind?: "project" | "pinned" | "timeline";
+  kind?: "project" | "pinned" | "timeline" | "unread";
   tasks: ProjectTask[];
   onSelect: ProjectSidebarProps["onSelectTask"];
   refresh(): Promise<void>;
 }) {
   const { intl, locale } = useZCodeIntl();
-  const pageSize = kind === "timeline" ? 20 : 5;
+  const chronological = kind === "timeline" || kind === "unread";
+  const pageSize = chronological ? 20 : 5;
   const [limit, setLimit] = useState(pageSize);
   const [showAll, setShowAll] = useState(false);
   const ordered = useMemo(
@@ -122,43 +124,44 @@ export function ProjectTaskRows({
   const visible =
     kind === "pinned" ? (showAll ? ordered : ordered.slice(0, 20)) : ordered.slice(0, limit);
   const hasMore = kind === "pinned" ? ordered.length > 20 : ordered.length > limit;
-  const headings =
-    kind === "timeline"
-      ? timelineDateHeadings(
-          visible.map((task) => task.updatedAt),
-          Date.now(),
-          locale,
-        )
-      : [];
-  // 原因：逐行复用 TaskList 后，空数组不再挂载旧空态；列表 owner 统一展示一次。
+  const headings = chronological
+    ? timelineDateHeadings(
+        visible.map((task) => task.updatedAt),
+        Date.now(),
+        locale,
+      )
+    : [];
+  // Reason: with TaskList reused per row, an empty array no longer mounts the old empty state; the list owner shows it once.
   if (!tasks.length)
     return kind === "pinned" || !showEmptyState ? null : (
       <div
         className="px-8.5 py-2 text-ui-base text-foreground-subtlest"
         data-testid="project-no-tasks"
       >
-        {intl.formatMessage({ id: "taskList.noTasks" })}
+        {intl.formatMessage({
+          id: kind === "unread" ? "taskList.noUnreadTasks" : "taskList.noTasks",
+        })}
       </div>
     );
   return (
     <div
-      className={kind === "pinned" || kind === "timeline" ? "px-2" : undefined}
+      className={kind === "pinned" || chronological ? "px-2" : undefined}
       data-testid={
         kind === "pinned"
           ? "project-pinned-tasks"
-          : kind === "timeline"
-            ? "project-timeline-tasks"
+          : chronological
+            ? `project-${kind}-tasks`
             : undefined
       }
     >
       {kind === "pinned" ? (
-        // 原因：重构遗漏了原置顶区的外层留白，并把分区标题降成了辅助字号。
+        // Reason: the refactor missed the pinned section's original outer padding and demoted its heading to the auxiliary font size.
         <h3 className="px-2.5 py-1 text-ui-base font-medium text-foreground-subtlest">
           {intl.formatMessage({ id: "taskList.pinnedSection" })}
         </h3>
       ) : null}
       {visible.map((task, index) => (
-        // 日期标题与行共用完整任务 key；跨日期段更新不能重挂载正在操作的任务行。
+        // Date headings share the row's full task key; updates across date segments must not remount a task row being acted on.
         <Fragment
           key={JSON.stringify([
             task.hostId,
@@ -178,7 +181,7 @@ export function ProjectTaskRows({
             task={task}
             onSelect={onSelect}
             refresh={refresh}
-            variant={kind === "timeline" ? "timeline" : "default"}
+            variant={chronological ? "timeline" : "default"}
             showFiles={kind === "pinned"}
           />
         </Fragment>
@@ -188,7 +191,7 @@ export function ProjectTaskRows({
           data-task-list-show-more="true"
           variant="ghost"
           size="sm"
-          // 原因：分页入口误用辅助字号和次级颜色，与任务标题及空态不一致；仅交互时提亮。
+          // Reason: the pagination entry misused the auxiliary font size and secondary color, inconsistent with task titles and empty states; brighten only on interaction.
           className="ml-8.5 h-auto p-0 text-ui-base text-foreground-subtlest hover:bg-transparent focus-visible:text-foreground"
           onClick={() =>
             kind === "pinned" ? setShowAll((value) => !value) : setLimit((n) => n + pageSize)

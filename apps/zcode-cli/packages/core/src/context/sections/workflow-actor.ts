@@ -4,7 +4,7 @@
 //
 // Identity section for a dynamic workflow subagent (workflow child).
 //
-// It replaces the interactive Agent Identity ("You are an interactive ZCode agent that helps users"): a subagent's reader is a script, not a person.
+// It replaces the main session's user-goal-oriented Agent Identity: a subagent's reader is a script, not a person.
 // It does **not** replace other base sections; the safety IMPORTANT lines and `# Harness` block are reused verbatim from identity,
 // while the builder continues to append memory / skills / project instructions.
 // The author-written persona follows the opening sentence and precedes the contract: role-specific instructions are more prominent than general rules,
@@ -50,8 +50,13 @@ function buildWorkflowContract(): string {
   ].join("\n");
 }
 
-/** `harness` toggle; off omits the `# Harness` block and keeps the confirmation floor. */
-export type WorkflowActorSectionOptions = Pick<IdentitySectionOptions, "includeHarness">;
+/**
+ * `harness` toggle (off omits the `# Harness` block and keeps the confirmation floor) and the MCS
+ * flag that picks the Harness delivery-notice wording.
+ */
+export type WorkflowActorSectionOptions = Pick<IdentitySectionOptions, "includeHarness"> & {
+  midConversationSystem?: boolean;
+};
 
 function buildWorkflowActorIdentityPrompt(
   actor: WorkflowActorContext,
@@ -63,15 +68,17 @@ function buildWorkflowActorIdentityPrompt(
     `You are a subagent inside a dynamic workflow run${named}. A script created you and hands you work one ask at a time; the script — not a person — consumes what you return. There is no user in this conversation to talk to.`,
   ];
   const persona = actor.persona?.trim();
-  // There is no longer a CLI prefix before this section ("You are ZCode, an interactive coding agent" is the wrong identity for a subagent),
-  // so this is the first line of the system prompt and no longer starts with a blank line.
+  // Workflow subagents do not use the user-facing product prefix,
+  // so this is the first line of the system prompt and does not start with a blank line.
   const parts = [
     opening.join("\n"),
     ...(persona ? ["", persona] : []),
     "",
     buildSecurityNotice(),
     "",
-    options.includeHarness ? buildHarnessBlock() : DEFAULT_CONFIRMATION_PARAGRAPH,
+    options.includeHarness
+      ? buildHarnessBlock(undefined, options.midConversationSystem ?? true)
+      : DEFAULT_CONFIRMATION_PARAGRAPH,
     "",
     buildWorkflowContract(),
   ];

@@ -1,6 +1,6 @@
 // Shared mounted harness for the late worktree reservation ACK suites. The vi.mock setup stays in
 // each suite file (mocks are per test file); this module only renders the composer with them.
-import { act, createElement } from "react";
+import { act, createElement, useCallback } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
@@ -11,7 +11,7 @@ import {
 } from "@/v4/ConversationComposer.js";
 import {
   persistV4ComposerDraft,
-  readV4ComposerDraft,
+  resolveComposerScope,
   V4_DRAFT_SCOPE_ROOT,
   type V4ComposerDraft,
 } from "@/v4/composer/composerDraftStore.js";
@@ -20,6 +20,67 @@ import {
   type ComposerDraftWorktreeIntent,
   type ComposerWorktreePreparationParams,
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
+import { useDraftConfigControl } from "@/v4/composer/useDraftConfigControl.js";
+
+/**
+ * The new-task draft is stored under its organization scope (the owner passes it on every write),
+ * so suites that read or seed the root draft must pass the same scope.
+ */
+export const ROOT_DRAFT_SCOPE = resolveComposerScope(null);
+
+type OwnerDraftProps =
+  | "composerDraft"
+  | "composerDraftScopeToken"
+  | "stageComposerContent"
+  | "captureComposerContentLifecycleCommit"
+  | "captureComposerSubmissionDraftTransaction"
+  | "persistComposerContent"
+  | "updateComposerContent"
+  | "replaceComposerDraft"
+  | "draftConfig";
+
+export type ComposerHarnessProps = Omit<ConversationComposerProps, OwnerDraftProps>;
+
+/**
+ * Feeds ConversationComposer the draft owner props exactly as SessionPane does, using the real
+ * useDraftConfigControl owner. Tests that drive lifecycle commits or submission transactions
+ * therefore exercise the same write paths as production.
+ */
+export function ComposerWithDraftOwner(props: ComposerHarnessProps) {
+  const { workspacePath, sessionId = null, ...rest } = props;
+  const owner = useDraftConfigControl({
+    workspacePath,
+    provider: undefined,
+    sessionId,
+    sessionConfig: null,
+    agentStartupAllowed: false,
+    modelSelectionService: null,
+  });
+  // SessionPane passes the owner's stable callback; a fresh closure here would re-run the composer's
+  // scope-restore effect (it lists replaceComposerDraft as a dependency) on every harness render.
+  const { replaceComposerDraft: ownerReplaceComposerDraft } = owner;
+  const replaceComposerDraft = useCallback(
+    (next: Omit<V4ComposerDraft, "updatedAt">) => {
+      replaceComposerDraftSpy(next);
+      ownerReplaceComposerDraft(next);
+    },
+    [ownerReplaceComposerDraft],
+  );
+  return createElement(ConversationComposer, {
+    ...rest,
+    workspacePath,
+    sessionId,
+    composerDraft: owner.composerDraft,
+    composerDraftScopeToken: owner.composerDraftScopeToken,
+    draftConfig: owner.draftConfig,
+    stageComposerContent: owner.stageComposerContent,
+    captureComposerContentLifecycleCommit: owner.captureComposerContentLifecycleCommit,
+    captureComposerSubmissionDraftTransaction: owner.captureComposerSubmissionDraftTransaction,
+    persistComposerContent: owner.persistComposerContent,
+    updateComposerContent: owner.updateComposerContent,
+    replaceComposerDraft,
+  });
+}
 
 export function createMinimalElement(ownerDocument: Document, tagName = "div") {
   const element = {
@@ -232,17 +293,26 @@ export function renderLateAckComposer(
     return {} as ConversationComposerSendResult | void;
   });
   const render = (sessionId: string | null, draftText?: string) => {
-    const scopeId = sessionId ?? V4_DRAFT_SCOPE_ROOT;
-    const composerDraft: V4ComposerDraft = draftText
-      ? { text: draftText, updatedAt: Date.now() }
-      : (readV4ComposerDraft("/workspace", undefined, scopeId) ?? { text: "", updatedAt: 0 });
+    if (draftText !== undefined) {
+      // A draft typed in another scope before this render; the owner reads it on mount.
+      persistV4ComposerDraft(
+        "/workspace",
+        undefined,
+        sessionId ?? V4_DRAFT_SCOPE_ROOT,
+        {
+          text: draftText,
+          updatedAt: Date.now(),
+        },
+        ROOT_DRAFT_SCOPE,
+      );
+    }
     return createElement(
       ZCodeIntlProvider,
       { initialLocale: "en-US" },
       createElement(
         ComposerDraftWorktreeIntentContext.Provider,
         { value: slot },
-        createElement(ConversationComposer, {
+        createElement(ComposerWithDraftOwner, {
           draftMode: sessionId === null,
           onSelectModel: vi.fn(),
           onSelectThought: vi.fn(),
@@ -256,20 +326,6 @@ export function renderLateAckComposer(
           provider: undefined,
           sessionId,
           snapshot: controls.snapshot,
-          composerDraft,
-          updateComposerContent: (content: { text: string }) => {
-            persistV4ComposerDraft("/workspace", undefined, scopeId, {
-              ...composerDraft,
-              ...content,
-            });
-          },
-          replaceComposerDraft: (next) => {
-            replaceComposerDraftSpy(next);
-            persistV4ComposerDraft("/workspace", undefined, scopeId, {
-              ...next,
-              updatedAt: Date.now(),
-            });
-          },
           submissionReady: controls.submissionReady,
           workspacePath: "/workspace",
         }),
@@ -294,9 +350,15 @@ export function renderLateAckComposer(
     rerender: (sessionId, draftText) => {
       // Simulate the user having typed in the target chat: its draft is already persisted.
       if (draftText !== undefined) {
-        persistV4ComposerDraft("/workspace", undefined, sessionId ?? V4_DRAFT_SCOPE_ROOT, {
-          text: draftText,
-        });
+        persistV4ComposerDraft(
+          "/workspace",
+          undefined,
+          sessionId ?? V4_DRAFT_SCOPE_ROOT,
+          {
+            text: draftText,
+          },
+          ROOT_DRAFT_SCOPE,
+        );
       }
       currentSessionId = sessionId;
       act(() => {

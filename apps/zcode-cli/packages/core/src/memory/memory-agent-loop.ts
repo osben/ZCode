@@ -3,23 +3,27 @@ import { isAbsolute } from "node:path";
 
 import type {
   ModelInputMessage,
-  ModelMessageContent,
   ModelUsage,
   ModelResult,
   Model,
-  ModelReasoningContentBlock,
   ModelRequest,
   ModelToolCall,
   ModelToolContract,
 } from "@zcode/contracts";
 
-import { modelContentForToolResult, isErrorForToolResult } from "../runtime/helpers/tool-result.js";
+import {
+  createRuntimeAssistantEntry,
+  createRuntimeToolResultEntry,
+  type RuntimeMessageEntry,
+} from "../agent/message-history.js";
+import { toolBatchModelEntries } from "../runtime/helpers/tool-result.js";
 import { projectMessagesForModelMediaPolicy } from "../runtime/helpers/media-budget.js";
 import {
   analyzeBashCommand,
   isBashCommandPermissionSafe,
 } from "../tool/handlers/bash-command-parser.js";
 import { isRuntimeReadOnlyBashCommand } from "../tool/handlers/bash-semantics.js";
+import type { ToolRegistry } from "../tool/registry.js";
 import type { ExecutableToolCall, ToolExecutionResult } from "../tool/types.js";
 import {
   isDreamJournalRelativePath,
@@ -43,8 +47,15 @@ export interface MemoryAgentLoopRequestUsage {
   usage?: ModelUsage;
 }
 
-export interface MemoryAgentLoopResult {
+/** One request produced by the renderer: messages, the tool catalog, and the ToolSearch switch. */
+export interface MemoryAgentRenderedRequest {
   messages: ModelInputMessage[];
+  tools: ModelToolContract[];
+  toolSearchEnabled: boolean;
+}
+
+export interface MemoryAgentLoopResult {
+  entries: RuntimeMessageEntry[];
   requests: MemoryAgentLoopRequestUsage[];
   turns: number;
 }
@@ -60,36 +71,45 @@ export interface MemoryAgentToolPolicyInput {
 export type MemoryAgentToolPolicyDecision = { allowed: true } | { allowed: false; reason: string };
 
 const MEMORY_AGENT_READ_ONLY_TOOLS = new Set(["Read", "Grep", "Glob"]);
+const MEMORY_AGENT_MISSING_RESULT = "Tool call returned no result";
 
+/**
+ * Memory Agent loop (Extraction, Dream). It shares Main's single-step kernel instead of a separate "tool result -> next request" path:
+ * each turn renders the request from entries with Main's renderer; calls that pass the Memory policy run through Main's scheduler;
+ * a result batch becomes entries (tool results + batch attachments) via the same function Main uses to settle. See memory/README.md.
+ */
 export async function runMemoryAgentLoop(input: {
   abortSignal?: AbortSignal;
   onRequestStart?: (index: number) => void;
   onRequestSettled?: (request: MemoryAgentLoopRequestUsage) => Promise<void>;
-  executeTool: (
-    toolCall: ExecutableToolCall,
+  /** Initial entries: Main's provider entries plus the prompt. */
+  entries: readonly RuntimeMessageEntry[];
+  /** Main's renderer: builds each request from all entries. */
+  renderRequest: (entries: readonly RuntimeMessageEntry[]) => MemoryAgentRenderedRequest;
+  /** Main's scheduling and execution; receives only calls that pass the Memory policy. */
+  executeToolCalls: (
+    toolCalls: ExecutableToolCall[],
     options: { abortSignal?: AbortSignal },
-  ) => Promise<ToolExecutionResult>;
+  ) => Promise<ToolExecutionResult[]>;
+  /** Settlement reads the batch hints declared by tools. */
+  registry: Pick<ToolRegistry, "get">;
   maxTurns: number;
-  request: {
-    messages: readonly ModelInputMessage[];
-    tools: readonly ModelToolContract[];
-    toolSearchEnabled: boolean;
-  };
   model: Model;
   rootDir: string;
   workingDirectory: string;
   workspaceRoot: string;
 }): Promise<MemoryAgentLoopResult> {
-  const messages = input.request.messages.map(cloneModelMessage);
+  const entries = [...input.entries];
   const requests: MemoryAgentLoopRequestUsage[] = [];
   let turns = 0;
 
   for (; turns < input.maxTurns; turns += 1) {
     input.abortSignal?.throwIfAborted();
+    const rendered = input.renderRequest(entries);
     // Projecting only the initial Memory snapshot would miss media produced later by tools such as Read; every
-    // provider request must apply the same capability + budget policy to a request-local copy.
+    // provider request must apply the same capability + budget policy.
     const mediaProjection = projectMessagesForModelMediaPolicy(
-      messages.map(cloneModelMessage),
+      rendered.messages,
       input.model.properties.inputFormat,
     );
     const request: ModelRequest = {
@@ -97,8 +117,8 @@ export async function runMemoryAgentLoop(input: {
       messages: mediaProjection.messages,
       options: auxiliaryModelOptions(input.model),
       // The Memory agent's provider request must preserve Main's real tool catalog; execution permissions are narrowed only at the tool-use boundary.
-      tools: input.request.tools as ModelToolContract[],
-      toolSearchEnabled: input.request.toolSearchEnabled,
+      tools: rendered.tools,
+      toolSearchEnabled: rendered.toolSearchEnabled,
     };
     input.onRequestStart?.(turns);
     const startedAt = Date.now();
@@ -133,48 +153,56 @@ export async function runMemoryAgentLoop(input: {
     input.abortSignal?.throwIfAborted();
 
     const toolCalls = response.toolCalls ?? [];
-    messages.push(createAssistantMessage(response.text, response.reasoning, toolCalls));
+    entries.push(createRuntimeAssistantEntry(response.text, toolCalls, response.reasoning));
     if (toolCalls.length === 0) {
       turns += 1;
       break;
     }
 
-    const toolMessages = await Promise.all(
-      toolCalls.map(async (toolCall): Promise<ModelInputMessage> => {
-        const decision = evaluateMemoryAgentToolPolicy({
-          rootDir: input.rootDir,
-          toolCall,
-          tools: input.request.tools,
-          workingDirectory: input.workingDirectory,
-          workspaceRoot: input.workspaceRoot,
-        });
-        if (!decision.allowed) {
-          return {
-            content: decision.reason,
-            isError: true,
-            role: "tool",
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-          };
-        }
-
-        const result = await input.executeTool(
-          { id: toolCall.id, input: toolCall.input, name: toolCall.name },
-          { abortSignal: input.abortSignal },
-        );
-        return {
-          content: modelContentForToolResult(result),
-          isError: isErrorForToolResult(result),
-          role: "tool",
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
-        };
-      }),
+    const deniedReasons = new Map<string, string>();
+    const allowedCalls: ExecutableToolCall[] = [];
+    for (const toolCall of toolCalls) {
+      const decision = evaluateMemoryAgentToolPolicy({
+        rootDir: input.rootDir,
+        toolCall,
+        tools: rendered.tools,
+        workingDirectory: input.workingDirectory,
+        workspaceRoot: input.workspaceRoot,
+      });
+      if (decision.allowed) {
+        allowedCalls.push({ id: toolCall.id, input: toolCall.input, name: toolCall.name });
+      } else {
+        deniedReasons.set(toolCall.id, decision.reason);
+      }
+    }
+    const results =
+      allowedCalls.length > 0
+        ? await input.executeToolCalls(allowedCalls, { abortSignal: input.abortSignal })
+        : [];
+    const batch = toolBatchModelEntries(results, { registry: input.registry });
+    const executedById = new Map(
+      batch.toolResults.map((entry) => [entry.message.toolCallId, entry] as const),
     );
-    messages.push(...toolMessages);
+    // Tool results follow the calls' declared order; denied calls are not scheduled and get their rejection result in place.
+    // Every tool_use needs a tool_result or the provider rejects the next request; fill in an error result when the executor returns none.
+    for (const toolCall of toolCalls) {
+      const deniedReason = deniedReasons.get(toolCall.id);
+      entries.push(
+        deniedReason === undefined
+          ? (executedById.get(toolCall.id) ??
+              createRuntimeToolResultEntry(
+                toolCall.id,
+                toolCall.name,
+                MEMORY_AGENT_MISSING_RESULT,
+                true,
+              ))
+          : createRuntimeToolResultEntry(toolCall.id, toolCall.name, deniedReason, true),
+      );
+    }
+    entries.push(...batch.attachments);
   }
 
-  return { messages, requests, turns };
+  return { entries, requests, turns };
 }
 
 export function evaluateMemoryAgentToolPolicy(
@@ -287,43 +315,6 @@ function resolveContainedPath(
   } catch {
     return undefined;
   }
-}
-
-function createAssistantMessage(
-  text: string,
-  reasoning: readonly ModelReasoningContentBlock[] | undefined,
-  toolCalls: readonly ModelToolCall[],
-): ModelInputMessage {
-  return {
-    content: assistantContent(text, reasoning),
-    role: "assistant",
-    toolCalls: toolCalls.map((call) => ({ ...call })),
-  };
-}
-
-function assistantContent(
-  text: string,
-  reasoning: readonly ModelReasoningContentBlock[] | undefined,
-): ModelMessageContent {
-  if (!reasoning?.length) return text;
-  return [
-    ...reasoning.map((block) => ({
-      ...block,
-      providerOptions: block.providerOptions ? { ...block.providerOptions } : undefined,
-    })),
-    ...(text ? [{ text, type: "text" as const }] : []),
-  ];
-}
-
-function cloneModelMessage(message: ModelInputMessage): ModelInputMessage {
-  return {
-    ...message,
-    cacheControl: message.cacheControl ? { ...message.cacheControl } : undefined,
-    content: Array.isArray(message.content)
-      ? message.content.map((block) => ({ ...block }))
-      : message.content,
-    toolCalls: message.toolCalls?.map((call) => ({ ...call })),
-  };
 }
 
 function stringProperty(value: unknown, property: string): string | undefined {

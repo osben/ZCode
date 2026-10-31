@@ -1,7 +1,9 @@
+import { toolSearchNameForMode } from "@zcode/contracts";
 import { resolveDeferredToolCall } from "../deferred-call.js";
 import {
   type AgentTelemetryErrorCategory,
   CoreErrorType,
+  HookEventName,
   createChildTraceContext,
   createCoreError,
   createRootTraceContext,
@@ -9,11 +11,11 @@ import {
   traceContextToLogContext,
   type ToolExecutionSpanWriter,
   type SessionEvent,
-  toolSearchNameForMode,
 } from "@zcode/contracts";
 import {
   OFFICIAL_CUA_FRAME_MODEL_CONTENT_PROTECTION,
   attestOfficialCuaFrameContent,
+  containsOfficialCuaImageRefCredentialText,
 } from "@zcode/zcode-cua/frame-contract";
 import {
   normalizeToolExecutionInput,
@@ -28,13 +30,11 @@ import {
   createErrorResult,
   createPermissionErrorResult,
   createToolHandlerFailureError,
-  isTerminalProviderFailure,
   isToolHandlerFailure,
-  isToolHandlerFailureError,
 } from "./errors.js";
 import { emitToolCallError, emitToolCallResult, emitToolCallStarted } from "./events.js";
 import {
-  formatHookAdditionalContexts,
+  formatToolHookAdditionalContexts,
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
   runPreToolUseHooks,
@@ -44,7 +44,7 @@ import { resolveToolPermission } from "./permission-flow.js";
 import { snapshotPermissionInput } from "./permission-input.js";
 import { buildToolInputResolutionContext } from "./permission-input-adjustments.js";
 import { createMcpToolDisplay, createToolResultDisplay } from "./result-display.js";
-import { appendHookAdditionalContexts, serializeOutput } from "./result-serialization.js";
+import { serializeOutput } from "./result-serialization.js";
 import { appendNestedInstructions } from "./nested-instructions.js";
 import {
   ToolDeadline,
@@ -162,12 +162,12 @@ async function executeToolCallImpl(
         },
       ),
     );
-    if (emptyToolName) {
-      // Stopping an empty name at admission would leave the model without a paired
-      // result. Reuse the registry-miss lifecycle, while preserving the original blank
-      // name from the model in provider content.
-      result.modelContent = `<tool_use_error>Error: No such tool available: ${toolCall.name}</tool_use_error>`;
-    }
+    // Stopping an empty name at admission would leave the model without a paired result. Reuse the
+    // registry-miss lifecycle, while provider content strictly preserves the original name returned by the
+    // model (including a blank name).
+    // Fix reason: a non-empty unknown tool name used to send only `Tool not found: X`, without the
+    // tool_use_error wrapper.
+    result.modelContent = `<tool_use_error>Error: No such tool available: ${toolCall.name}</tool_use_error>`;
     // registry miss 发生在 handler/ToolCallStarted 之前；旧代码只把失败
     // 返回给 provider，没有发布 ToolCallError，V4 tool row 因而永久停在 inputStreaming。
     await emitToolCallError(
@@ -354,8 +354,21 @@ async function executeToolCallImpl(
       traceContext,
       options?.signal,
     );
+    // Format on demand at each exit: the success path must filter credentials before formatting (see below), and an
+    // oversized context is persisted to disk, so formatting early would write an extra file.
+    const formatPreToolHookContexts = () =>
+      formatToolHookAdditionalContexts(
+        deps,
+        HookEventName.PreToolUse,
+        canonicalToolCall,
+        preToolHookResult.additionalContexts,
+        traceContext,
+      );
+    // Pre contexts already filtered and formatted on the success path; the catch block reuses them if an error is
+    // thrown afterwards.
+    let formattedSafePreContexts: string[] | undefined;
     if (preToolHookResult.permissionBehavior === "deny" || preToolHookResult.preventContinuation) {
-      const result = appendPreToolAdditionalContextsToErrorResult(
+      const result = withHookAdditionalContexts(
         withPlanExitDeniedTurnStop(
           createPermissionErrorResult(
             canonicalToolCall,
@@ -376,7 +389,7 @@ async function executeToolCallImpl(
             toolName: canonicalToolCall.name,
           },
         ),
-        preToolHookResult.additionalContexts,
+        await formatPreToolHookContexts(),
       );
       telemetry?.setPermissionDecision("denied");
       telemetry?.finishDenied("policy_denied");
@@ -391,12 +404,12 @@ async function executeToolCallImpl(
       });
       const hookInputValidation = validateInput(executionInput, entry);
       if (hookInputValidation) {
-        // When validation fails after a Hook modifies the input, this returns before the handler. The old branch skipped
-        // the shared PreToolUse context append, so the model saw only a schema error and missed Hook diagnostics;
+        // When validation fails after a Hook modifies the input, this returns before the handler. The old branch did not
+        // carry the PreToolUse context, so the model saw only a schema error and missed Hook diagnostics;
         // this did not match the early-failure contract for deny and permission-deny.
-        const result = appendPreToolAdditionalContextsToErrorResult(
+        const result = withHookAdditionalContexts(
           createErrorResult(canonicalToolCall, hookInputValidation),
-          preToolHookResult.additionalContexts,
+          await formatPreToolHookContexts(),
         );
         telemetry?.finishFailed("validation", "parse", result.error);
         return result;
@@ -426,7 +439,7 @@ async function executeToolCallImpl(
       },
     );
     if (!permissionResult.allowed) {
-      const result = appendPreToolAdditionalContextsToErrorResult(
+      const result = withHookAdditionalContexts(
         withWorkflowRefineDeniedFollowUp(
           withPlanExitDeniedTurnStop(permissionResult.result, {
             mode,
@@ -435,7 +448,7 @@ async function executeToolCallImpl(
           }),
           { toolName: canonicalToolCall.name },
         ),
-        preToolHookResult.additionalContexts,
+        await formatPreToolHookContexts(),
       );
       if (result.error?.type === CoreErrorType.PermissionDenied) {
         telemetry?.finishDenied("user_denied");
@@ -503,6 +516,7 @@ async function executeToolCallImpl(
         toolSearch: options?.toolSearch,
         telemetry,
         automationTurn: options?.automationTurn,
+        automationId: options?.automationId,
         offPeakTurn: options?.offPeakTurn,
         traceContext,
         traceId,
@@ -551,7 +565,15 @@ async function executeToolCallImpl(
         runtimeTaskRegistry: deps.runtimeTaskRegistry,
         readFileState: deps.readFileState,
         recordReadFileStateMetadata: (metadata) => {
-          readFileStateMetadata = metadata;
+          // Fix reason: parts are persisted in declaration order before the tool starts and updated in place on
+          // completion, and the order in which tool results return is not the write order either (serialization,
+          // hooks, and result events still run asynchronously after the handler writes). Cold resume replays
+          // snapshots in those two orders, so parallel tools pick the wrong view. The tool calls this
+          // synchronously right after writing live state, so the number taken here is the live write order.
+          readFileStateMetadata = {
+            ...metadata,
+            snapshotIndex: deps.nextReadFileStateSnapshotIndex(),
+          };
         },
         recordSkillTelemetryMetadata: (metadata) => {
           skillTelemetryMetadata = metadata;
@@ -613,11 +635,41 @@ async function executeToolCallImpl(
         traceContext,
         options?.signal,
       );
-      serialization = appendHookAdditionalContexts(
-        serialization,
-        [...preToolHookResult.additionalContexts, ...postToolHookResult.additionalContexts],
-        modelOutputEntry,
+      // Fix reason: Hook text used to be spliced into the tool result and consumed its budget. Now the tool result
+      // holds only the tool's original text, and settlement writes the Hook text as attachments after this batch of
+      // results.
+      // An official CUA frame's image_ref credential must not enter model context through Hook text: drop such
+      // contexts and account for them as truncation.
+      const isCredentialSafe = (context: string) =>
+        modelOutputEntry.modelContentProtection !== OFFICIAL_CUA_FRAME_MODEL_CONTENT_PROTECTION ||
+        !containsOfficialCuaImageRefCredentialText(context);
+      const safePreContexts = preToolHookResult.additionalContexts.filter(isCredentialSafe);
+      const safePostContexts = postToolHookResult.additionalContexts.filter(isCredentialSafe);
+      if (
+        safePreContexts.length < preToolHookResult.additionalContexts.length ||
+        safePostContexts.length < postToolHookResult.additionalContexts.length
+      ) {
+        serialization = { ...serialization, truncated: true };
+      }
+      formattedSafePreContexts = await formatToolHookAdditionalContexts(
+        deps,
+        HookEventName.PreToolUse,
+        canonicalToolCall,
+        safePreContexts,
+        traceContext,
       );
+      const hookAdditionalContexts = [
+        ...formattedSafePreContexts,
+        ...(await formatToolHookAdditionalContexts(
+          deps,
+          HookEventName.PostToolUse,
+          canonicalToolCall,
+          safePostContexts,
+          traceContext,
+        )),
+      ];
+      // Hook contexts travel as attachments, so the result budget left for the nested reminder is
+      // whatever the serialized tool output has not used.
       serialization = await appendNestedInstructions(
         deps,
         executionInput,
@@ -662,6 +714,7 @@ async function executeToolCallImpl(
           output,
           display,
           modelContent: finalModelContent,
+          ...(hookAdditionalContexts.length > 0 ? { hookAdditionalContexts } : {}),
           ...(readFileStateMetadata ? { readFileStateMetadata } : {}),
           performance: perf,
           serialization,
@@ -711,31 +764,30 @@ async function executeToolCallImpl(
         traceContext,
         options?.signal,
       );
-      let result = createErrorResult(
-        canonicalToolCall,
-        error instanceof Error ? error : new Error(String(error)),
-        durationMs,
+      // Fix reason: Hook text used to be spliced onto the UI summary in a failed result, so the model saw a
+      // different error with and without Hooks. Now the tool result holds only the original text from
+      // createErrorResult, and the Hook text becomes separate attachments.
+      let result = withHookAdditionalContexts(
+        createErrorResult(
+          canonicalToolCall,
+          error instanceof Error ? error : new Error(String(error)),
+          durationMs,
+        ),
+        [
+          // Fix reason: when an error is thrown after the success path has formatted the contexts (for example
+          // official CUA frame validation fails, or writing the result event fails), formatting again would use the
+          // unfiltered contexts, send filtered credentials into attachments, and persist an oversized context to
+          // disk a second time.
+          ...(formattedSafePreContexts ?? (await formatPreToolHookContexts())),
+          ...(await formatToolHookAdditionalContexts(
+            deps,
+            HookEventName.PostToolUseFailure,
+            canonicalToolCall,
+            failureHookResult.additionalContexts,
+            traceContext,
+          )),
+        ],
       );
-      const baseModelContent = result.error
-        ? (isToolHandlerFailureError(error) || isTerminalProviderFailure(result.error.attribution)) &&
-          typeof result.modelContent === "string"
-          ? result.modelContent
-          : result.error.message
-        : undefined;
-      if (failureHookResult.additionalContexts.length > 0 && baseModelContent) {
-        result.modelContent = [
-          baseModelContent,
-          formatHookAdditionalContexts([
-            ...preToolHookResult.additionalContexts,
-            ...failureHookResult.additionalContexts,
-          ]),
-        ].join("\n\n");
-      } else if (preToolHookResult.additionalContexts.length > 0 && baseModelContent) {
-        result.modelContent = [
-          baseModelContent,
-          formatHookAdditionalContexts(preToolHookResult.additionalContexts),
-        ].join("\n\n");
-      }
       result = withAutomationCreateLimitTurnStop(result, {
         error,
         toolName: canonicalToolCall.name,
@@ -835,19 +887,16 @@ function errorCategoryForToolError(type: string | undefined): AgentTelemetryErro
   }
 }
 
-function appendPreToolAdditionalContextsToErrorResult(
+/**
+ * Success, failure, and early-return failures (PreToolUse denial, validation failure after a Hook rewrite, permission
+ * denial) all carry the Hook context. PreToolUse deny and permission denial return before the handler, and the old
+ * logic attached context only on the handler's success/exception paths, so the model could not see the
+ * additionalContext a Hook had clearly returned.
+ */
+function withHookAdditionalContexts(
   result: ToolExecutionResult,
-  additionalContexts: string[],
+  hookAdditionalContexts: readonly string[],
 ): ToolExecutionResult {
-  if (result.success || !result.error || additionalContexts.length === 0) return result;
-
-  // PreToolUse denial and permission denial return before the handler. Previously,
-  // context was appended only on handler success/error paths, so the model could not see
-  // additionalContext returned by the hook.
-  const baseModelContent =
-    typeof result.modelContent === "string" ? result.modelContent : result.error.message;
-  return {
-    ...result,
-    modelContent: [baseModelContent, formatHookAdditionalContexts(additionalContexts)].join("\n\n"),
-  };
+  if (hookAdditionalContexts.length === 0) return result;
+  return { ...result, hookAdditionalContexts: [...hookAdditionalContexts] };
 }

@@ -108,6 +108,8 @@ export interface McpAppResourceMeta {
   heightHint?: number;
   minFrameHeight?: number;
   showInline?: boolean;
+  /** Resource-level explicit background retention request; default is no retention, actual reclaim is decided by the host. */
+  backgroundRetention?: boolean;
 }
 /** Resource-level presentation info carried back to the renderer with the sandbox handle; CSP and relaxations take effect only in main and are not returned. */
 export type PluginSandboxResourceMeta = Omit<McpAppResourceMeta, "csp" | "cspRelaxations">;
@@ -170,6 +172,11 @@ export const MCP_APPS_WIDGET_STATE_EXPERIMENTAL_KEY = "zcode/widgetState";
 export const MCP_APPS_RESOURCE_SUBSCRIBE_EXPERIMENTAL_KEY = "zcode/resourceSubscribe";
 export const MCP_APPS_SURFACE_EXPERIMENTAL_KEY = "zcode/surface";
 /**
+ * The host lets a plugin document create child frames internally (srcdoc / about:blank previews, declared frameDomains) without treating it as a page reload that revokes the instance.
+ * Older hosts stop the page on child-frame navigation; plugins needing nested previews degrade on this key instead of creating a frame and then being released.
+ */
+export const MCP_APPS_NESTED_FRAMES_EXPERIMENTAL_KEY = "zcode/nestedFrames";
+/**
  * ZCode extension method `ui/set-widget-state { widgetState }` (MCP Apps has no widgetState): the
  * page hands UI state to the host
  * renderer to keep in memory (not persisted; restorable on re-mount within the session); the
@@ -206,9 +213,9 @@ export interface PluginSandboxPlatformPort {
   supportsRetainedMove?: boolean;
   /** Available only for host-initiated operations; main validates owner/generation before copying the current page content. */
   copyImage?(input: PluginSandboxCaptureRequest): Promise<void>;
-  /** 只为指定代际的 MCP guest 保持可逆后台执行；不改变窗口或其他页面的节流。 */
+  /** Keep reversible background execution only for the MCP guest of the given generation; does not change throttling of the window or other pages. */
   setExecutionActive?(sandboxId: string, initId: number, active: boolean): Promise<void>;
-  /** 宿主窗口 webContents id；prepareSandbox 用它作为 owner，main 在 will-attach 时校验。 */
+  /** Host window webContents id; prepareSandbox uses it as owner and main validates it on will-attach. */
   getOwnerWebContentsId(): Promise<number>;
   /**
    * Release the sandbox. With initId, only the captured registration is released: a new page uses
@@ -269,6 +276,7 @@ export interface PluginSandboxRegisterRequestPayload {
   minFrameHeight?: number;
   /** Resource-level always-visible marker, returned to the renderer in the handle's resourceMeta. */
   showInline?: boolean;
+  backgroundRetention?: boolean;
 }
 /** Registration input used inside the host: strips the transport-level requestId. */
 export type PluginSandboxRegisterInput = Omit<PluginSandboxRegisterRequestPayload, "requestId">;

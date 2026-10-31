@@ -8,7 +8,10 @@ import type {
   RemoteUploadOptions,
   StdioStream,
 } from "@zcode/server/remote/backend.js";
-import { createCloseEventController } from "@zcode/server/remote/closeEvent.js";
+import {
+  createCloseEventController,
+  resolveRemoteExitCode,
+} from "@zcode/server/remote/closeEvent.js";
 import {
   listDockerContainers,
   probeDockerDaemon,
@@ -38,7 +41,7 @@ function normalizeDockerOutput(raw: string): string {
 }
 
 function buildDockerExecArgs(containerName: string, commandArgs: string[]): string[] {
-  // 直接 exec/read 跳过容器枚举后失去了隐式校验；在组装 argv 处拒绝选项形态和非法引用。
+  // Direct exec/read skips container enumeration, which used to perform implicit validation; reject option shapes and invalid references where argv is assembled.
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(containerName)) {
     throw new Error("Invalid Docker container reference");
   }
@@ -172,11 +175,11 @@ export class DockerBackend implements IRemoteBackend {
   }
 
   async exec(command: string): Promise<StdioStream> {
-    // Bug 原因：`docker exec` 本身接受名称、完整 ID 和 ID 前缀，也会权威报告 daemon/
-    // container 状态。旧实现却在每条命令前先跑 `docker version`，首次再跑两次 `docker ps`
-    // 和一次 home 探测；冷启动 Source 的单 round-trip probe 因而被放大成五条 CLI 命令。
-    // 纯 exec 不解析远端路径，直接使用用户已确认的 container ref；需要 `~` 展开为本地
-    // 路径的 read/upload 仍走 resolveInfo 的严格校验。
+    // Cause: `docker exec` itself accepts names, full IDs and ID prefixes, and authoritatively reports daemon/container state.
+    // The old code ran `docker version` before every command, plus two `docker ps` calls and a home probe on first use, so a
+    // cold-start Source's single round-trip probe was amplified into five CLI commands. Plain exec does not resolve remote paths
+    // and uses the user-confirmed container ref directly; read/upload, which need `~` expanded to a local path, still go through
+    // the strict resolveInfo validation.
     const containerRef = this.options.container.trim();
 
     return new Promise((resolve, reject) => {
@@ -209,11 +212,12 @@ export class DockerBackend implements IRemoteBackend {
           onClose.fire(code);
         };
 
-        child.on("exit", (code) => {
-          fireOnce(code ?? 0);
+        // A signal-terminated process has a null code and must not count as success; see resolveRemoteExitCode.
+        child.on("exit", (code, signal) => {
+          fireOnce(resolveRemoteExitCode(code, signal));
         });
-        child.on("close", (code) => {
-          fireOnce(code ?? 0);
+        child.on("close", (code, signal) => {
+          fireOnce(resolveRemoteExitCode(code, signal));
         });
 
         resolve({
@@ -239,8 +243,8 @@ export class DockerBackend implements IRemoteBackend {
 
   async readFile(remotePath: string): Promise<string> {
     if (remotePath === "~" || remotePath.startsWith("~/")) {
-      // Source ingress token 等内部文件本来就以 home 相对路径表达；shell 在容器内能权威
-      // 展开 `$HOME`，无需先用 docker ps + docker exec 解析同一个 container/home。
+      // Internal files such as the Source ingress token are already expressed as home-relative paths; the shell expands `$HOME`
+      // authoritatively inside the container, so there is no need to resolve the same container/home first with docker ps + docker exec.
       const shellPath =
         remotePath === "~" ? '"$HOME"' : `"$HOME"/${quotePosixShellArg(remotePath.slice(2))}`;
       return normalizeDockerOutput(
@@ -263,17 +267,17 @@ export class DockerBackend implements IRemoteBackend {
   }
 
   async diagnoseExecFailure(): Promise<void> {
-    // A failed exec after a successful availability check may mean the daemon stopped in between; re-probe instead of trusting the cache.
+    // exec skips the daemon probe up front to stay within the cold-start budget (see the exec comment), so it probes once only after a command fails.
+    // Discard any earlier success: the daemon may have stopped since, and a stale cache would misclassify this failure as the command's own failure.
     this.availabilityPromise = null;
     await this.ensureAvailable();
   }
 
   private async ensureAvailable(): Promise<void> {
     if (!this.availabilityPromise) {
-      // Bug 原因：Source probe 内的每条 Docker exec 都重复执行 `docker version`；首次解析
-      // container/home 又重复 `docker ps`。应用冷启动峰值下，四五个 CLI round-trip 会让
-      // 单个本地 Docker Source 在真正 probe 前就耗尽 10 秒预算。Backend 生命周期内只需
-      // 探测一次 daemon；失败清空 promise，后续显式重试仍可重新检测。
+      // Cause: every Docker exec inside the Source probe re-ran `docker version`, and the first container/home resolution re-ran `docker ps`.
+      // At the cold-start peak, four or five CLI round-trips could exhaust the 10-second budget of a single local Docker Source before the
+      // real probe started. The daemon only needs one probe per backend lifecycle; a failure clears the promise so a later explicit retry still re-checks.
       // The daemon probe error carries the reason (for example "Cannot connect to the Docker daemon"), which is kept in the message.
       this.availabilityPromise = probeDockerDaemon().catch((error: unknown) => {
         this.availabilityPromise = null;

@@ -8,17 +8,25 @@ import {
   createTopicResourcePeers,
 } from "@zcode/services/node";
 import { IZCodeAgentService } from "@zcode/services";
-import { ZCODE_VERSION } from "@zcode/shared";
+import { ZCODE_APP_VERSION_ENV, ZCODE_VERSION } from "@zcode/shared";
 import { createCoreHttpServer } from "./http.js";
 import { createIngressToken } from "./ingressToken.js";
 import { installParentDisconnectHandler } from "./parentDisconnect.js";
 import { resolveCoreServerId } from "./serverIdentity.js";
 import { createTaskActivityTracker } from "./taskActivityTracker.js";
+import { CORE_HEARTBEAT_INTERVAL_MS } from "../contracts.js";
 import { resolveServerLayout } from "../runtime/paths.js";
 
 declare const __ZCODE_BUILTIN_PROVIDER_CONFIG_JSON__: string | undefined;
 
 export async function runServerCore(generation: number): Promise<void> {
+  // Bug cause: the Agent's model request headers read the App version from ZCODE_APP_VERSION and
+  // fall back to the CLI package version (0.17.0) when missing. Locally Desktop main injects it;
+  // remotely the Core is launched via SSH/WSL/Docker exec → Supervisor fork, and no link in that
+  // chain has the env, so remote requests reported 0.17.0 (rejected by gateways that gate on
+  // client version). During upgrades the old Supervisor launches the new release's Core, so only
+  // the Core can write its own compile-time version, which the Agent inherits at spawn.
+  process.env[ZCODE_APP_VERSION_ENV] = ZCODE_VERSION;
   let shutdown: ((reason: string) => Promise<void>) | undefined;
   let parentDisconnected = false;
   let disposeParentDisconnectHandler = (): void => undefined;
@@ -30,9 +38,10 @@ export async function runServerCore(generation: number): Promise<void> {
   const topicResourcePeers = createTopicResourcePeers();
   const explicitZCodeBuiltinProviderConfigFilePath =
     process.env[ZCODE_BUILTIN_PROVIDER_CONFIG_FILE_ENV]?.trim();
-  // Built-in Config 物化到所属 Environment 配置根（~/.zcode/v2）而不是 release 自带的 runtime 目录：
-  // release 目录是不可变的，同一 releaseId 重装时 assertExistingReleaseMatches 会重算整棵树的
-  // 内容哈希，多出的物化文件会让校验失败。
+  // The Built-in Config is materialized into the owning Environment's config root (~/.zcode/v2),
+  // not the release's own runtime directory: the release directory is immutable, and reinstalling
+  // the same releaseId makes assertExistingReleaseMatches recompute the whole tree's content
+  // hash — extra materialized files would fail that check.
   const zcodeBuiltinProviderConfigFilePath = explicitZCodeBuiltinProviderConfigFilePath
     ? explicitZCodeBuiltinProviderConfigFilePath
     : typeof __ZCODE_BUILTIN_PROVIDER_CONFIG_JSON__ === "string"
@@ -129,7 +138,7 @@ export async function runServerCore(generation: number): Promise<void> {
       .finally(() => {
         heartbeatInFlight = undefined;
       });
-  }, 10_000);
+  }, CORE_HEARTBEAT_INTERVAL_MS);
   shutdown = async (reason: string): Promise<void> => {
     if (shutdownStarted) return;
     shutdownStarted = true;

@@ -94,7 +94,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// Display-only: when config.json is corrupt, commands are listed as if the config were empty so browsing still works. All writes go through updateUserCliConfig.
+// List display only: when config.json is corrupt, show commands as an empty config without breaking browsing. All writes go through updateUserCliConfig.
 async function readUserCliConfig(): Promise<Record<string, unknown>> {
   try {
     const content = await readFile(getUserCliConfigPath(), "utf-8");
@@ -133,7 +133,8 @@ function readCommandEnabledOverrides(config: Record<string, unknown>): Map<strin
   return overrides;
 }
 
-async function readCommandEnabledOverridesFromUserConfig(): Promise<Map<string, boolean>> {
+/** Keyed by the command file's absolute path; the data-sync listing reuses this read too (read-only display; a corrupt config.json is treated as all-enabled). */
+export async function readCommandEnabledOverridesFromUserConfig(): Promise<Map<string, boolean>> {
   return readCommandEnabledOverrides(await readUserCliConfig());
 }
 
@@ -161,6 +162,18 @@ function setCommandEnabledOverride(
     delete nextConfig.command;
   }
   return nextConfig;
+}
+
+/** Write multiple enabled overrides at once (used when data sync creates commands); the write path is the same as setCommandEnabled. */
+export async function setUserCommandEnabledOverrides(
+  entries: ReadonlyArray<{ filePath: string; enabled: boolean }>,
+): Promise<void> {
+  await updateUserCliConfig((config) =>
+    entries.reduce(
+      (next, entry) => setCommandEnabledOverride(next, entry.filePath, entry.enabled),
+      config,
+    ),
+  );
 }
 
 interface PluginConfigSummary {

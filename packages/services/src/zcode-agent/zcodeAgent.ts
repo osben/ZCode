@@ -5,6 +5,7 @@ import type {
   ZCodeSessionContentProfile,
 } from "@zcode/shared";
 /* eslint-disable max-lines -- The ZCode Agent service interface declares protocol/session/workspace methods together; splitting it would increase service descriptor migration costs. */
+import type { RemoteConversationTelemetryEvent } from "@zcode/shared/conversation-telemetry";
 import type { Event, IDisposable } from "@zcode/rpc";
 import { ServiceChannels } from "@zcode/shared";
 import type {
@@ -36,6 +37,8 @@ import type {
   ZCodeToolExecResource,
   ZCodeProcessChildProcess,
   ZCodeMcpListResult,
+  WorkspaceMcpTrustDecision,
+  ZCodeWorkspaceMcpTrustResult,
   ZCodePluginsListResult,
   ZCodePluginsOverviewResult,
   ZCodePluginsMarketplaceMutationResult,
@@ -71,6 +74,7 @@ import type {
   ZCodePluginsCancelOperationResult,
   ZCodePluginOperationProgressNotification,
   ZCodeProviderRuntimeHeadersRequestParams,
+  RequestVerificationConfig,
   ZCodeProviderRuntimeHeadersCancelled,
   ZCodeProviderTestModelConnectivityParams,
   ZCodeProviderTestModelConnectivityResult,
@@ -119,6 +123,7 @@ import type {
   V4ConnectionFlowState,
   V4ConversationFileChangesResult,
   V4ConversationFileRewindPreviewResult,
+  V4ConversationInputPredictionResult,
   V4ConversationPlansResult,
   V4ConversationWorkflowRunEventsResult,
   V4ConversationWorkflowRunArtifactDataResult,
@@ -133,6 +138,11 @@ import type {
   V4SessionsIndexSubscribeResult,
   V4WorkspaceConfigSubscribeResult,
   WorkspaceConfigTopicWireCandidate,
+} from "@zcode/shared/zcode-protocol-v4";
+import type {
+  V4SessionDataMeasureResult,
+  V4SessionDataParams,
+  V4SessionDataPurgeResult,
 } from "@zcode/shared/zcode-protocol-v4";
 import { createServiceDescriptor } from "../descriptors.js";
 
@@ -445,10 +455,25 @@ export interface ZCodeAgentConversationRowsRangeParams extends ZCodeAgentSession
   beforeRowId?: number;
   /** 1..rowsRangeMaxLimit（200）。 */
   limit: number;
+  /**
+   * Mobile preloading: read hot sessions only. Workspace CLI not running, endpoint unsupported, or session
+   * not in memory all report proto.sessionNotResident — no process spawn, no cold recovery.
+   */
+  residency?: "resident-only";
 }
 
 /** Terminal ExitPlanMode catalog for the currently active branch. */
 export type ZCodeAgentConversationPlansParams = ZCodeAgentSessionTarget;
+
+/** Mobile remote-control input prediction (ghost hint); wire format in docs/web-remote-control/mobile-input-prediction.md. */
+export interface ZCodeAgentConversationInputPredictionParams extends ZCodeAgentSessionTarget {
+  /** Session revision the phone currently sees; part of the CLI-side cache key, used to drop stale replies. */
+  revision: number;
+  /** Current draft; missing/empty = predict the next input, non-empty = continue the draft. */
+  draft?: string;
+  /** Phone-side request id, echoed verbatim, used to drop stale replies. */
+  requestId?: string;
+}
 
 /** Paginated workflow run event log for the detail-page audit surface; cursor = journal sequence. */
 export interface ZCodeAgentConversationWorkflowRunEventsParams extends ZCodeAgentSessionTarget {
@@ -519,7 +544,7 @@ export interface ZCodeAgentConversationFileRewindPreviewParams extends ZCodeAgen
 }
 
 export interface ZCodeAgentConversationCommandParams extends ZCodeAgentWorkspaceTarget {
-  /** 仅 Host 消费；显式 NULL 表示全局任务，不向 CLI 发送项目概念。 */
+  /** Consumed by the Host only; explicit NULL means a global task — no project notion is sent to the CLI. */
   projectId?: string | null;
   envelope: CommandEnvelope;
   /** Host-internal only, for the Browser Use runtime boundary; not included in the V4 wire envelope. */
@@ -611,6 +636,11 @@ export interface ZCodeAgentWorkspaceConfigSubscribeParams extends ZCodeAgentWork
   runtimePolicy?: ZCodeAgentRuntimePolicy;
 }
 
+/** Per-request config bound by the Host for the App responder; does not extend the Agent wire protocol. */
+export type ZCodeAgentProviderRuntimeHeadersRequest = ZCodeProviderRuntimeHeadersRequestParams & {
+  requestVerificationConfig?: RequestVerificationConfig;
+};
+
 export type ZCodeAgentServiceEvent =
   | { type: "session.event"; event: ZCodeSessionEvent }
   | { type: "state.updated"; notification: ZCodeStateUpdatedNotification }
@@ -621,7 +651,7 @@ export type ZCodeAgentServiceEvent =
       requestId: string;
       response: ZCodeUserInputResponse;
     }
-  | { type: "providerRuntimeHeaders.request"; request: ZCodeProviderRuntimeHeadersRequestParams }
+  | { type: "providerRuntimeHeaders.request"; request: ZCodeAgentProviderRuntimeHeadersRequest }
   | { type: "snapshot"; snapshot: ZCodeSessionStateSnapshot };
 
 export interface ZCodeAgentAppRuntimePreferences {
@@ -673,6 +703,16 @@ export interface IZCodeAgentService {
     params: ZCodeAgentListSessionSubagentsParams,
   ): Promise<ZCodeSessionSubagentsResult>;
   getAppUsageStats(params: ZCodeAgentAppUsageParams): Promise<AppUsageSnapshot>;
+  /** Measurement before project data deletion: read-only, uses an existing local runtime or the management process; never spawns an Agent for a project. */
+  measureSessionData?(params: V4SessionDataParams): Promise<V4SessionDataMeasureResult>;
+  /**
+   * Permanently delete sessions and directory memory. When the workspace already has an Agent process, hand
+   * it over (it holds session runtime state, can detect running sessions, and release loaded ones);
+   * otherwise hand it to the management process. Local machine only.
+   */
+  purgeSessionData?(
+    params: V4SessionDataParams & { workspace: ZCodeAgentWorkspaceTarget },
+  ): Promise<V4SessionDataPurgeResult>;
   getTaskTokenUsage(params: ZCodeAgentTaskTokenUsageParams): Promise<ZCodeTaskTokenUsageResult>;
   readSession(params: ZCodeAgentReadSessionParams): Promise<ZCodeSessionStateSnapshot>;
   readSessionMessages(
@@ -687,6 +727,7 @@ export interface IZCodeAgentService {
   grantWorkspaceHookTrust(
     params: ZCodeAgentGrantWorkspaceHookTrustParams,
   ): Promise<ZCodeWorkspaceHookTrustGrantResult>;
+  setWorkspaceMcpTrust(params: WorkspaceMcpTrustDecision): Promise<ZCodeWorkspaceMcpTrustResult>;
   listMcpServerStatuses(params: ZCodeAgentListMcpServerStatusesParams): Promise<ZCodeMcpListResult>;
   listPlugins(params: ZCodeAgentPluginViewParams): Promise<ZCodePluginsListResult>;
   /**
@@ -884,7 +925,7 @@ export interface IZCodeAgentService {
    */
   onDynamicProviderRuntimeHeadersRequest(
     params: ZCodeAgentSessionTarget,
-  ): Event<ZCodeProviderRuntimeHeadersRequestParams>;
+  ): Event<ZCodeAgentProviderRuntimeHeadersRequest>;
   /**
    * Workspace-level subscription entry point for Start Plan runtime headers (used by the production responder).
    * Bug cause (2026-08-16 Web remote-control hang): the session-level entry point subscribes only when a Desktop pane mounts,
@@ -894,7 +935,7 @@ export interface IZCodeAgentService {
    */
   onDynamicWorkspaceProviderRuntimeHeadersRequest(
     params: ZCodeAgentWorkspaceTarget,
-  ): Event<ZCodeProviderRuntimeHeadersRequestParams>;
+  ): Event<ZCodeAgentProviderRuntimeHeadersRequest>;
   /** Deliver validation cancellations for this workspace only; these are not part of the conversation stream. */
   onDynamicWorkspaceProviderRuntimeHeadersCancelled(
     params: ZCodeAgentWorkspaceTarget,
@@ -908,6 +949,9 @@ export interface IZCodeAgentService {
    */
   onDynamicProcessResourceSample(): Event<AgentLaneResourceSample>;
   /** MCP process lifecycle and low-frequency memory events, for reporting to ARMS by a trusted Host relay only. */
+  /** Subscribed to by the trusted Host relay only; phone statistics do not depend on the renderer lifecycle. */
+  onDynamicRemoteConversationTelemetry(): Event<RemoteConversationTelemetryEvent>;
+
   onDynamicMcpTelemetry(): Event<ZCodeMcpTelemetryEvent>;
   /** MCP process-tree resource facts, for aggregation and reporting by a trusted Host only. */
   onDynamicMcpResourceSamples(): Event<ZCodeMcpResourceSample[]>;
@@ -941,6 +985,10 @@ export interface IZCodeAgentService {
   conversationPlansV4(
     params: ZCodeAgentConversationPlansParams,
   ): Promise<V4ConversationPlansResult>;
+  /** Input prediction: read-only, stateless; Host switch off / no runtime / failure all return an empty result, never throws. */
+  conversationInputPredictionV4(
+    params: ZCodeAgentConversationInputPredictionParams,
+  ): Promise<V4ConversationInputPredictionResult>;
   /** Paginated workflow-run event log; like plans, it is read-only, stateless, and safe to retry after a timeout. */
   conversationWorkflowRunEventsV4(
     params: ZCodeAgentConversationWorkflowRunEventsParams,
@@ -998,6 +1046,16 @@ export interface IZCodeAgentService {
   conversationAttachmentStatV4(
     params: ZCodeAgentConversationAttachmentStatParams,
   ): Promise<V4ConversationAttachmentStatResult>;
+  getSessionLifecycle(
+    params: ZCodeAgentSessionTarget,
+  ): Promise<import("@zcode/shared").SessionLifecycleSnapshot | null>;
+  ensureSessionReady(params: ZCodeAgentSessionTarget): Promise<void>;
+  stopSessionRuntime(params: ZCodeAgentSessionTarget): Promise<void>;
+  restartSessionRuntime(params: ZCodeAgentSessionTarget): Promise<void>;
+  /** Lifecycle facts independent of the disposable conversation publisher. */
+  onDynamicSessionLifecycle(
+    params: ZCodeAgentWorkspaceTarget,
+  ): Event<import("@zcode/shared").SessionLifecycleSnapshot>;
   /** Workspace-level downlink frame stream (v4/conversation/frame); the renderer routes by topic. */
   onDynamicConversationFrame(
     params: ZCodeAgentWorkspaceTarget,
@@ -1021,7 +1079,7 @@ export interface IZCodeAgentService {
   onDynamicPluginUiToolResult?(): Event<
     PluginUiToolResultNotification & { workspacePath: string; workspaceIdentity?: string }
   >;
-  /** Read-only CLI persistent facts; does not restore a running session. Older remotes may not provide it. */
+  /** Read-only CLI persisted facts; does not restore session runtime instances. Older remotes may not provide this capability. */
   reconcileSessionsIndexV4?(
     params: ZCodeAgentWorkspaceTarget & { sessionIds: string[] },
   ): Promise<SessionsIndexReconcileResult>;
@@ -1068,7 +1126,9 @@ export interface IZCodeAgentService {
   ) => IDisposable;
   /** Whether a desktop-local CUA turn is still running, so Helper recovery does not reclaim the Agent mid-turn. */
   hasActiveCuaOperationTurn(): boolean;
-  disposeWorkspace(params: ZCodeAgentWorkspaceTarget): Promise<void>;
+  disposeWorkspace(
+    params: ZCodeAgentWorkspaceTarget & { releasePreparation?: boolean },
+  ): Promise<void>;
   disposeAll(): void;
 }
 

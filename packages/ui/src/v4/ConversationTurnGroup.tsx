@@ -1,3 +1,4 @@
+import { useShallow } from "zustand/react/shallow";
 import { BotTopicPreparation } from "@/v4/BotTopicPreparation.js";
 import { useBotTopicInterruption } from "@/v4/botGroupDeliveryContext.js";
 import { ConnectedBotGroupDeliveryAction } from "@/v4/BotGroupDeliveryAction.js";
@@ -14,7 +15,11 @@ import {
   type ReactNode,
 } from "react";
 import { ChevronRightIcon, EyeIcon } from "lucide-react";
-import { type HighspeedMessageMeta, type ZCodeApiRetryStatus } from "@zcode/shared";
+import {
+  zcodeProviderRuntimeHeadersErrorCode,
+  type HighspeedMessageMeta,
+  type ZCodeApiRetryStatus,
+} from "@zcode/shared";
 import {
   TID_CHAT_ASSISTANT_HISTORY_CONTENT,
   TID_CHAT_ASSISTANT_HISTORY_TRIGGER,
@@ -59,7 +64,7 @@ import { isHighspeedShareEligible } from "@/highspeed/highspeedShare.js";
 import {
   aggregateHighspeedCardMetrics,
   getHighspeedTurnByCommandId,
-  getHighspeedTurnVersion,
+  getHighspeedTurnDependencies,
   subscribeHighspeedTurns,
   type HighspeedShareMetrics,
 } from "@/highspeed/highspeedTurnStore.js";
@@ -139,6 +144,8 @@ interface ConversationTurnGroupProps {
     attachments?: readonly AttachmentRef[],
     workspaceMode?: "preserve" | "rewind",
   ) => Promise<CommandAck | boolean | void> | CommandAck | boolean | void;
+  /** First turn of the session: the top spacing comes from the Timeline status pill inset, so this turn adds no top padding. */
+  topClearedByTimeline?: boolean;
 }
 
 interface CronAutomationTurnCard {
@@ -237,22 +244,80 @@ function ExternalAgentStallStatus() {
   );
 }
 
+/**
+ * Fork: live `tok/s` for a running work segment (specs/session-token-throughput.md). Renders nothing
+ * until one of the two sources has a value; never shows `0 tok/s`.
+ */
+function WorkingThroughput({
+  enabled,
+  context,
+  rows,
+}: {
+  enabled: boolean;
+  context: ConversationRowRenderContext;
+  rows: readonly AssistantWorkRow[];
+}) {
+  const { intl, locale } = useZCodeIntl();
+  const { tokensPerSecond } = useSessionThroughput({
+    enabled,
+    sessionId: context.sessionId,
+    workspaceIdentity: context.workspaceIdentity,
+    workspacePath: context.workspacePath,
+  });
+  const streamingContent = resolveSegmentStreamingContent(rows);
+  const streamingTokensPerSecond = useStreamingThroughput({
+    enabled,
+    contentKey: streamingContent.key,
+    text: streamingContent.text,
+  });
+  const isEstimate = streamingTokensPerSecond !== null;
+  const throughputTokensPerSecond = isEstimate ? streamingTokensPerSecond : tokensPerSecond;
+  if (!enabled || throughputTokensPerSecond === null) return null;
+  return (
+    <span
+      data-testid="chat-working-throughput"
+      data-throughput-estimated={isEstimate ? "true" : undefined}
+      title={intl.formatMessage({
+        id: isEstimate
+          ? "chat.history.workingThroughputEstimateTitle"
+          : "chat.history.workingThroughputTitle",
+      })}
+      className="ml-auto shrink-0 pl-2 text-ui-base tabular-nums text-foreground-subtle"
+    >
+      {isEstimate ? "~" : ""}
+      {formatTokensPerSecond(locale, throughputTokensPerSecond)} tok/s
+    </span>
+  );
+}
+
 function TurnChatLoadingSlot({
   apiRetry,
   externalAgentStall,
   eligible,
+  initialElapsedMs,
+  context,
+  throughputRows,
 }: {
   apiRetry: ApiRetryState | null;
   externalAgentStall: ExternalAgentStallState | null;
   eligible: boolean;
+  initialElapsedMs: number;
+  context: ConversationRowRenderContext;
+  throughputRows: readonly AssistantWorkRow[];
 }) {
   const { intl, locale } = useZCodeIntl();
   const retryStatus = useMemo(() => (apiRetry ? toRetryStatus(apiRetry) : null), [apiRetry]);
-  // 前两次短暂恢复对用户等价于普通加载；保留 apiRetry 运行态，但只在
-  // 第三次重试开始后显示计数。必须在 retry/loading 分支前收敛，否则会留下空 slot，
-  // 而不是回退到 ChatLoading。
+  // The config read has not sent a model request yet, so show progress on the first recovery
+  // attempt to avoid the user thinking the message was already sent. Other short early recoveries
+  // look like normal loading to the user: keep the apiRetry runtime state, but only show the count
+  // once the third retry starts. This must converge before the retry/loading branches, otherwise
+  // an empty slot is left instead of falling back to ChatLoading.
   const visibleRetryStatus =
-    retryStatus && retryStatus.attempt >= MIN_VISIBLE_API_RETRY_ATTEMPT ? retryStatus : null;
+    retryStatus &&
+    (apiRetry?.reasonCode === zcodeProviderRuntimeHeadersErrorCode.configNetwork ||
+      retryStatus.attempt >= MIN_VISIBLE_API_RETRY_ATTEMPT)
+      ? retryStatus
+      : null;
   // Same gate as loading: while an interaction (for example a permission card) owns the turn's
   // progress, the agent is waiting on the user and a stall status would be misleading.
   if (externalAgentStall && eligible) {
@@ -268,9 +333,13 @@ function TurnChatLoadingSlot({
       {visibleRetryStatus ? (
         <ChatApiRetryStatus apiRetry={visibleRetryStatus} intl={intl} locale={locale} />
       ) : (
-        // running 是 ChatLoading 的权威事实；额外静默计时会让 projection
-        // 更新反复重启可见性，并使 UI 晚于真实状态。
-        <ChatLoading loading data-testid={TID_CHAT_LOADING} size="sm" />
+        // running is the authoritative fact for ChatLoading; an extra silent timer would keep restarting
+        // visibility on projection updates and make the UI lag behind the real state.
+        <div className="flex items-center">
+          <ChatLoading loading data-testid={TID_CHAT_LOADING} initialElapsedMs={initialElapsedMs} />
+          {/* Fork: upstream hides the running "Working" row, so live tok/s rides on the loading row. */}
+          <WorkingThroughput enabled context={context} rows={throughputRows} />
+        </div>
       )}
     </div>
   );
@@ -694,20 +763,6 @@ function AssistantHistoryStatus({
     locale,
   );
   const isRunning = segment.workStatus?.state === "running";
-  const { tokensPerSecond } = useSessionThroughput({
-    enabled: isRunning,
-    sessionId: context.sessionId,
-    workspaceIdentity: context.workspaceIdentity,
-    workspacePath: context.workspacePath,
-  });
-  const segmentStreamingContent = resolveSegmentStreamingContent(segment.assistantWorkRows);
-  const streamingTokensPerSecond = useStreamingThroughput({
-    enabled: isRunning,
-    contentKey: segmentStreamingContent.key,
-    text: segmentStreamingContent.text,
-  });
-  const isEstimate = streamingTokensPerSecond !== null;
-  const throughputTokensPerSecond = isEstimate ? streamingTokensPerSecond : tokensPerSecond;
   const savedDurationLabel =
     segment.workStatus?.state === "completed" &&
     highspeedMeta?.savedDurationMs !== undefined &&
@@ -773,20 +828,8 @@ function AssistantHistoryStatus({
             {intl.formatMessage({ id: "chat.highspeed.statusTag" })}
           </span>
         </div>
-      ) : isRunning && throughputTokensPerSecond !== null ? (
-        <span
-          data-testid="chat-working-throughput"
-          data-throughput-estimated={isEstimate ? "true" : undefined}
-          title={intl.formatMessage({
-            id: isEstimate
-              ? "chat.history.workingThroughputEstimateTitle"
-              : "chat.history.workingThroughputTitle",
-          })}
-          className="ml-auto shrink-0 pl-2 text-ui-base tabular-nums text-foreground-subtle"
-        >
-          {isEstimate ? "~" : ""}
-          {formatTokensPerSecond(locale, throughputTokensPerSecond)} tok/s
-        </span>
+      ) : isRunning ? (
+        <WorkingThroughput enabled context={context} rows={segment.assistantWorkRows} />
       ) : !isRunning && segment.workStatus?.outputTokens !== undefined ? (
         <span
           data-testid="chat-worked-output-tokens"
@@ -805,6 +848,7 @@ function AssistantHistoryStatus({
 
 function ConversationWorkSegmentFlow({
   segment,
+  turnRunning,
   sourceCommandIds,
   context,
   onFork,
@@ -824,6 +868,7 @@ function ConversationWorkSegmentFlow({
   afterUserInputs,
 }: {
   segment: ConversationTurnWorkSegment;
+  turnRunning: boolean;
   sourceCommandIds: readonly string[];
   context: ConversationRowRenderContext;
   onFork?: (target: ConversationRowTarget) => void;
@@ -848,7 +893,8 @@ function ConversationWorkSegmentFlow({
     setHistoryOpen(segment.assistantHistoryDefaultOpen);
   }, [segment.assistantHistoryDefaultOpen, segment.key]);
 
-  const shouldShowHistoryStatus = segment.workStatus !== undefined;
+  const shouldShowHistoryStatus =
+    !turnRunning && segment.workStatus !== undefined && segment.workStatus.state !== "running";
   const firstAssistantFlowItemIndex = segment.flowItems.findIndex(
     (item) => item.kind !== "userInput",
   );
@@ -861,12 +907,12 @@ function ConversationWorkSegmentFlow({
       )
     : -2;
   let historyChunkIndex = 0;
-  const open = segment.assistantHistoryDefaultOpen ? true : historyOpen;
+  const open = turnRunning || segment.assistantHistoryDefaultOpen || historyOpen;
 
   return (
     <Collapsible
       open={open}
-      onOpenChange={segment.assistantHistoryDefaultOpen ? undefined : setHistoryOpen}
+      onOpenChange={turnRunning || segment.assistantHistoryDefaultOpen ? undefined : setHistoryOpen}
       // 外层 flex gap 不属于 Radix 测量的 content 高度，收起到 0 后会在
       // display:none 的最后一帧再少 20px。普通兄弟用外边距保持原盒模型，history
       // 的间距则放进动画层。
@@ -1072,6 +1118,9 @@ function ConversationTurnFlow({
           apiRetry={apiRetry}
           externalAgentStall={externalAgentStall}
           eligible={showLoading}
+          initialElapsedMs={unit.workStatus?.durationMs ?? 0}
+          context={context}
+          throughputRows={unit.workSegments?.at(-1)?.assistantWorkRows ?? unit.assistantWorkRows}
         />
       </div>
     );
@@ -1116,11 +1165,12 @@ function ConversationTurnFlow({
   // 即使恢复了 guide 的 row 全序，也不能让所有 history chunk 共享同一个
   // Collapsible。accepted guide 现在由 CLI workSegments 定界，每段组件自行维护折叠状态。
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-5 [&>[data-zcode-chat-loading-slot]:not(:first-child)]:-mt-2">
       {workSegments.map((segment) => (
         <ConversationWorkSegmentFlow
           key={segment.key}
           segment={segment}
+          turnRunning={unit.isRunning}
           sourceCommandIds={[
             ...segment.flowItems.flatMap((item) =>
               item.kind === "userInput" && item.row.sourceCommandId
@@ -1153,6 +1203,9 @@ function ConversationTurnFlow({
         apiRetry={apiRetry}
         externalAgentStall={externalAgentStall}
         eligible={showLoading}
+        initialElapsedMs={unit.workStatus?.durationMs ?? 0}
+        context={context}
+        throughputRows={unit.workSegments?.at(-1)?.assistantWorkRows ?? unit.assistantWorkRows}
       />
     </div>
   );
@@ -1226,6 +1279,21 @@ function ConversationBackgroundResultWork({
   assistantCodeCommentProjectionEnabled: boolean;
   assistantPreviewCardsAutoOpenKey?: string;
 }) {
+  const [historyOpen, setHistoryOpen] = useState(unit.assistantHistoryDefaultOpen);
+  useEffect(() => {
+    setHistoryOpen(unit.assistantHistoryDefaultOpen);
+  }, [unit.assistantHistoryDefaultOpen, unit.key]);
+  const open =
+    !unit.workStatus || unit.isRunning || unit.assistantHistoryDefaultOpen || historyOpen;
+  const historySegment: ConversationTurnWorkSegment = {
+    key: unit.key,
+    flowItems: unit.flowItems,
+    assistantWorkRows: unit.assistantWorkRows,
+    assistantHistoryRows: unit.assistantHistoryRows,
+    assistantFollowingRows: unit.assistantFollowingRows,
+    assistantHistoryDefaultOpen: unit.assistantHistoryDefaultOpen,
+    ...(unit.workStatus ? { workStatus: unit.workStatus } : {}),
+  };
   const hasHistory = unit.assistantHistoryRows.length > 0;
   const hasFollowing = unit.assistantFollowingRows.length > 0;
   const showLoading = shouldShowTurnChatLoading({
@@ -1250,8 +1318,8 @@ function ConversationBackgroundResultWork({
     fetchFileChanges: context.fetchFileChanges,
   });
 
-  // 后台结果已经由独立唤醒轮总结过；复用普通 assistant 的工时折叠
-  // 会显示不准确的分段耗时，并让一段短总结产生没有意义的收起状态。
+  // Background wake-up turns use the same completed-state collapse as normal replies; the duration
+  // counts only this wake-up turn.
   //
   // workflow run 的 workflow 通知带结构化载荷时改渲染既有工具卡语法的通知行（替换裸标题行）；
   // 载荷缺席（批量轮、旧 transcript、bash/subagent）→ 原样退回标题行。
@@ -1305,7 +1373,20 @@ function ConversationBackgroundResultWork({
       : undefined;
 
   return (
-    <div className="flex flex-col gap-5">
+    <Collapsible
+      open={open}
+      onOpenChange={setHistoryOpen}
+      className="flex flex-col gap-5 [&>[data-zcode-chat-loading-slot]:not(:first-child)]:-mt-2"
+    >
+      {!unit.isRunning && unit.workStatus ? (
+        <AssistantHistoryStatus
+          segment={historySegment}
+          open={open}
+          context={context}
+          highspeed={false}
+          sourceCommandIds={unit.header?.sourceCommandId ? [unit.header.sourceCommandId] : []}
+        />
+      ) : null}
       {workflowNotification ? (
         <WorkflowNotificationToolRow
           notification={workflowNotification}
@@ -1322,7 +1403,7 @@ function ConversationBackgroundResultWork({
           }
         />
       ) : (
-        <div className="flex w-full border-b border-[var(--color-border)]/50 pb-2">
+        <div className="flex w-full">
           <div
             data-testid={testId(TID_CHAT_BACKGROUND_RESULT_TITLE, unit.key)}
             className="min-w-0 whitespace-pre-wrap break-words text-left text-ui-base text-[var(--color-foreground-subtle)]"
@@ -1331,15 +1412,19 @@ function ConversationBackgroundResultWork({
           </div>
         </div>
       )}
-      {hasHistory ? (
-        <div className="flex flex-col gap-2">
-          <ConversationAssistantWorkItems
-            rows={unit.assistantHistoryRows}
-            context={context}
-            assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
-          />
+      <CollapsibleContent data-testid={testId(TID_CHAT_ASSISTANT_HISTORY_CONTENT, unit.key)}>
+        <div className="flex flex-col gap-5">
+          {hasHistory ? (
+            <div className="flex flex-col gap-2">
+              <ConversationAssistantWorkItems
+                rows={unit.assistantHistoryRows}
+                context={context}
+                assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
+              />
+            </div>
+          ) : null}
         </div>
-      ) : null}
+      </CollapsibleContent>
       {latestAssistantTextRow ? (
         <ConversationTurnRow
           key={`${latestAssistantTextRow.rowId}:${latestAssistantTextRow.entityId ?? ""}`}
@@ -1366,8 +1451,11 @@ function ConversationBackgroundResultWork({
         apiRetry={apiRetry}
         externalAgentStall={externalAgentStall}
         eligible={showLoading}
+        initialElapsedMs={unit.workStatus?.durationMs ?? 0}
+        context={context}
+        throughputRows={unit.workSegments?.at(-1)?.assistantWorkRows ?? unit.assistantWorkRows}
       />
-    </div>
+    </Collapsible>
   );
 }
 
@@ -1382,12 +1470,18 @@ function ConversationTurnGroupImpl({
   onFeedbackChange,
   onEdit,
   onPinChange,
+  topClearedByTimeline = false,
 }: ConversationTurnGroupProps) {
   const isOfficeMode = useIsOfficeMode();
   const { intl } = useZCodeIntl();
   const visibleUserRows = useMemo(() => unit.visibleUserInputs, [unit.visibleUserInputs]);
-  useSyncExternalStore(subscribeHighspeedTurns, getHighspeedTurnVersion, getHighspeedTurnVersion);
   const sourceCommandId = unit.header?.sourceCommandId ?? visibleUserRows[0]?.sourceCommandId;
+  const selectHighspeed = useShallow(getHighspeedTurnDependencies);
+  const highspeedState = useSyncExternalStore(
+    subscribeHighspeedTurns,
+    () => selectHighspeed(sourceCommandId),
+    () => selectHighspeed(sourceCommandId),
+  );
   const highspeedTurn = getHighspeedTurnByCommandId(sourceCommandId);
   // Bug 根因：历史标识过去只依赖 Renderer 内存；卡过期或冷恢复后记录不可用，
   // 即使 transcript 已持久化 highspeed metadata，也会把 accelerated output 渲染成普通工时。
@@ -1444,7 +1538,7 @@ function ConversationTurnGroupImpl({
     }
     // 卡片和历史标识继续保留，但不超过 1.2x 或缺少完整耗时数据时不提供分享入口。
     return target && isHighspeedShareEligible(target.metrics) ? target : null;
-  }, [highspeedMeta, highspeedTurn, unit.highspeedOutputFooterTarget]);
+  }, [highspeedMeta, highspeedTurn, highspeedState, unit.highspeedOutputFooterTarget]);
   const [highspeedShareDialogOpen, setHighspeedShareDialogOpen] = useState(false);
   const firstReasoningRowId = useMemo(
     () => unit.assistantWorkRows.find((row) => row.kind === "reasoning")?.rowId,
@@ -1608,7 +1702,7 @@ function ConversationTurnGroupImpl({
       data-highspeed-gradient={showHighspeedAnimatedGradient ? "true" : undefined}
       className={cn(
         "relative mx-auto flex w-full flex-col gap-5 px-4 @md/conversation:px-6 pb-5",
-        startsWithoutUserBubble ? "pt-0" : "pt-14",
+        startsWithoutUserBubble || topClearedByTimeline ? "pt-0" : "pt-14",
         showHighspeedAnimatedGradient && "highspeed-animated-gradient-text",
       )}
     >

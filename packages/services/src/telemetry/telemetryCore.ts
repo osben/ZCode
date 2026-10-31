@@ -603,7 +603,7 @@ export function createTelemetryCore(dependencies: TelemetryCoreDependencies = {}
               elementName: "app_launch",
               eventRegion: "app",
               eventType: "view",
-              eventExtraDetail: {},
+              eventExtraDetail: { ui_mode: context.uiMode ?? "unknown" },
               userId,
             },
             context,
@@ -657,7 +657,7 @@ export function createTelemetryCore(dependencies: TelemetryCoreDependencies = {}
                 elementName: "app_daily_active",
                 eventRegion: "app",
                 eventType: "view",
-                eventExtraDetail: {},
+                eventExtraDetail: { ui_mode: context.uiMode ?? "unknown" },
                 userId,
               },
               context,
@@ -686,6 +686,8 @@ export function createTelemetryCore(dependencies: TelemetryCoreDependencies = {}
       );
     },
 
+    // Accept full-delivery promises the upstream already received but has not started reporting over HTTP, sharing the existing pending set and exit budget.
+    trackPendingReport: trackReport,
     flushPendingReports,
   };
 }

@@ -4,7 +4,7 @@
 // Experimental channel for dynamic workflow authoring: synchronously compile and run a
 // scratch-facade snippet through `DynamicWorkflowSnippetPort` into the bootstrap execution layer.
 // Fully transient: no background task and no persistence. Show a confirmation only for snippets containing a world.run command.
-// （prepareApproval）。
+// (see prepareApproval).
 //
 // The port's presence selects the path:
 //   1. Port present (production wiring): compile and execute, returning {ok, diagnostics, logs, response}.
@@ -12,7 +12,8 @@
 
 import {
   EVAL_WORKFLOW_SNIPPET_DEFAULT_TIMEOUT_MS,
-  EVAL_WORKFLOW_SNIPPET_SOURCE_ERROR,
+  EVAL_WORKFLOW_SNIPPET_SOURCE_CONFLICT_ERROR,
+  EVAL_WORKFLOW_SNIPPET_SOURCE_MISSING_ERROR,
   EVAL_WORKFLOW_SNIPPET_TOOL_NAME,
   EvalWorkflowSnippetInputJsonSchema,
   EvalWorkflowSnippetInputSchema,
@@ -67,10 +68,15 @@ function validateEvalWorkflowSnippetInput(input: unknown): ToolInputValidationRe
   const hasCode = parsed.data.code !== undefined;
   const hasPath = parsed.data.path !== undefined;
   if (hasCode === hasPath) {
+    // Report "both given" and "neither given" separately: the latter is usually the arguments
+    // JSON failing to parse and the adapter restoring `{}` (see WORKFLOW_SOURCE_MISSING_HINT);
+    // merged into one sentence, a model that did write `code` cannot read out the cause.
     return {
       result: false,
       errorCode: EVAL_WORKFLOW_SNIPPET_FAILURE_CODE,
-      message: EVAL_WORKFLOW_SNIPPET_SOURCE_ERROR,
+      message: hasCode
+        ? EVAL_WORKFLOW_SNIPPET_SOURCE_CONFLICT_ERROR
+        : EVAL_WORKFLOW_SNIPPET_SOURCE_MISSING_ERROR,
     };
   }
   return { result: true };
@@ -79,13 +85,25 @@ function validateEvalWorkflowSnippetInput(input: unknown): ToolInputValidationRe
 /**
  * Normalize a `path` source into `code`. The entire file is the snippet (do not parse a metadata block), and store the path as an
  * absolute path. The confirmation gate (`prepareApproval` reads `code` to find world.run stations) and handler then see the same bytes.
+ *
+ * Both sources backfill `script` (= `code`) so the PreToolUse hook can read the snippet using
+ * the other three tools' field names (see the `EvalWorkflowSnippetInputSchema` comment).
  */
 async function resolveEvalWorkflowSnippetInput(
   input: unknown,
   cwd: string,
 ): Promise<ToolInputResolutionResult> {
   const parsed = EvalWorkflowSnippetInputSchema.safeParse(input);
-  if (!parsed.success || parsed.data.path === undefined) return { result: true, input };
+  if (!parsed.success) return { result: true, input };
+  if (parsed.data.path === undefined) {
+    const { code } = parsed.data;
+    // A missing `code` cannot get here: validateInput already rejects "neither given".
+    if (code === undefined) return { result: true, input };
+    return {
+      result: true,
+      input: { ...parsed.data, code, script: code } satisfies EvalWorkflowSnippetInput,
+    };
+  }
   const read = await readWorkflowScriptFile({
     cwd,
     inputPath: parsed.data.path,
@@ -99,6 +117,7 @@ async function resolveEvalWorkflowSnippetInput(
     input: {
       ...parsed.data,
       code: read.file.source,
+      script: read.file.source,
       path: read.file.path,
     } satisfies EvalWorkflowSnippetInput,
   };

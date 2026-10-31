@@ -2,8 +2,9 @@ import { zcodeWorkspaceUpdateInteractionPreferencesParamsSchema } from "@zcode/s
 import { parseParams, type ZCodeProtocolAgentServerContext } from "./server-types.js";
 
 /**
- * Apply workspace interaction preferences. The CLI process is isolated by workspace, so the registry
- * is the authoritative gate shared by main tasks, background tasks, and subagents in that workspace.
+ * Apply Host-global interaction preferences. All workspaces in the shared CLI receive the same
+ * settings; the registry is the in-process authoritative gate shared by main tasks, background
+ * tasks and sub-agents; the Host syncs serially per physical connection.
  */
 export async function updateInteractionPreferences(
   context: ZCodeProtocolAgentServerContext,

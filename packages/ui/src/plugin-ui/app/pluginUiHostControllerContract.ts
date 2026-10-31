@@ -48,6 +48,8 @@ export interface PluginUiToolFeed {
 
 export interface PluginUiHostControllerDeps extends PluginUiInteractionCallbacks {
   onBusyChange?(): void;
+  /** Model-initiated page tools and sampling; excludes the page's own polling. */
+  onActivity?(): void;
   onInstanceClosed?(): void;
   createTransport(port: PluginSandboxTransportPort): Transport;
   bridge: Pick<
@@ -93,6 +95,8 @@ export interface PluginUiHostControllerDeps extends PluginUiInteractionCallbacks
   /** Read when creating the AppBridge on port arrival, generating the capability declaration from the interactions actually available at that moment. */
   getHostCapabilities(): McpUiHostCapabilities;
   initialHostContext: McpUiHostContext;
+  /** Reads the current presentation choice; the sidebar and tool row share the page, so the controller is not rebuilt on placement change. */
+  getPreferredDisplayMode?: () => PluginUiPresentation["preferredDisplayMode"];
   hostVersion: string;
   onPhase(
     phase: PluginUiHostPhase,

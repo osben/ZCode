@@ -1,9 +1,7 @@
 import type { Model, ModelInputMessage } from "@zcode/contracts";
 import { DEFAULT_CONFIRMATION_PARAGRAPH, type IncognitoProfile } from "@zcode/shared";
-import { ContextBuilder } from "../context/builder.js";
+import { ContextBuilder, buildMetaUserAttachments } from "../context/builder.js";
 import {
-  buildContextMetaUserBody,
-  buildSkillsMetaUserBody,
   type ContextBuilderConfig,
   type ContextBuildResult,
   type ContextSection,
@@ -12,11 +10,16 @@ import {
 import { buildCliPrefixSection } from "../context/sections/cli-prefix.js";
 import { resolveIncognitoPromptToggles } from "../context/sections/prompt-toggles.js";
 import { buildCurrentDateSection } from "../context/sections/current-date.js";
+import { buildEnvironmentSections } from "../context/sections/env-info.js";
 import { buildRequestUserContextSection } from "../context/sections/request-user-context.js";
 import type { ExecutionWorktreeEnvFact } from "../context/sections/env-info.js";
 import { buildSkillsSection } from "../context/sections/skills.js";
 import { estimateTokens } from "../context/utils.js";
-import { buildSubagentCommonNotes, buildSubagentEnvironmentContext } from "./system-prompt.js";
+import {
+  SUBAGENT_LAUNCHER_MESSAGES_NOTE,
+  buildSubagentCommonNotes,
+  buildSubagentExecutionWorktreeContext,
+} from "./system-prompt.js";
 
 export interface SubagentContextBuilderConfig {
   agentPrompt: string;
@@ -71,40 +74,13 @@ export class SubagentContextBuilder extends ContextBuilder {
           cacheControl: EPHEMERAL_CACHE_CONTROL,
         }),
       );
-    const skillsContent = buildSkillsMetaUserBody(
-      orderedSections.filter(
-        (section) => section.injectionTarget === "meta_user" && section.source === "skills",
-      ),
-    );
-    const contextContent = buildContextMetaUserBody(
-      orderedSections.filter(
-        (section) => section.injectionTarget === "meta_user" && section.source !== "skills",
-      ),
-    );
 
     return {
       sections: orderedSections,
       totalChars,
       totalTokens,
       systemMessages,
-      metaUserAttachments: [
-        ...(skillsContent
-          ? [
-              {
-                source: "skills_listing" as const,
-                content: skillsContent,
-              },
-            ]
-          : []),
-        ...(contextContent
-          ? [
-              {
-                source: "context_prefix" as const,
-                content: contextContent,
-              },
-            ]
-          : []),
-      ],
+      metaUserAttachments: buildMetaUserAttachments(orderedSections),
     };
   }
 }
@@ -120,7 +96,8 @@ function buildSubagentContextSections(config: SubagentContextBuilderConfig): Con
     config.incognito,
   );
   const sections: ContextSection[] = identityOff ? [] : [buildCliPrefixSection()];
-  const agentPrompt = config.agentPrompt.trimEnd();
+  // Trim the agent body at both ends; the leading-boundary newline is still added below by ZCode design.
+  const agentPrompt = config.agentPrompt.trim();
   if (agentPrompt) {
     sections.push(
       createSubagentSection({
@@ -141,25 +118,25 @@ function buildSubagentContextSections(config: SubagentContextBuilderConfig): Con
       source: "subagent_notes",
       cacheHint: "stable",
       // By design, each subsequent subagent system block carries a double-newline leading boundary.
+      // The launcher-messages paragraph comes before the Notes. It is an authorization boundary, so it
+      // stays with the confirmation safety floor when the harness toggle is off.
       content: harnessOff
-        ? `\n\n${DEFAULT_CONFIRMATION_PARAGRAPH}`
-        : `\n\n${buildSubagentCommonNotes()}`,
+        ? `\n\n${SUBAGENT_LAUNCHER_MESSAGES_NOTE}\n\n${DEFAULT_CONFIRMATION_PARAGRAPH}`
+        : `\n\n${SUBAGENT_LAUNCHER_MESSAGES_NOTE}\n\n${buildSubagentCommonNotes()}`,
     }),
   );
-  const environmentContext = buildSubagentEnvironmentContext({
-    agentPrompt: config.agentPrompt,
-    envInfo: config.envInfo,
-    model: config.model,
-    executionWorktree: config.executionWorktree,
-    worktreeOnly: environmentOff,
-  });
-  if (environmentContext) {
+  // Environment and model are runtime announcements; the incognito `environment` toggle drops them.
+  if (!environmentOff) {
+    sections.push(...buildEnvironmentSections(config.envInfo, config.model));
+  }
+  const executionWorktreeContext = buildSubagentExecutionWorktreeContext(config.executionWorktree);
+  if (executionWorktreeContext) {
     sections.push(
       createSubagentSection({
-        name: "Subagent Environment",
-        source: "subagent_environment",
+        name: "Subagent Execution Worktree",
+        source: "execution_worktree",
         cacheHint: "dynamic",
-        content: `\n\n${environmentContext}`,
+        content: `\n\n${executionWorktreeContext}`,
       }),
     );
   }

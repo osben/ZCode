@@ -1,4 +1,5 @@
 import {
+  modelDescriptorOf,
   withExternalAgentTurnDriverOf,
   type ModelRequestSessionType,
   type ModelRetryBudget,
@@ -19,6 +20,7 @@ import {
   resolveModelRetryBudgetFromTaskType,
 } from "./model-request-session-type.js";
 import { getOffPeakModelBinding } from "../off-peak/model-binding.js";
+import { readSessionFeatures } from "../session-features/contract.js";
 
 export function createRuntimeModel(
   runtime: AgentRuntimeInternal,
@@ -46,6 +48,8 @@ export function createRuntimeModel(
       ? "other"
       : resolveModelRequestSessionTypeFromTaskType(runtime.config.taskType),
     retryBudget,
+    // Workspace-scoped requests borrow the runtime of some session in that workspace and must not carry its capability tags.
+    scope !== "workspace",
   );
   return getOffPeakModelBinding(input.requestDependencies)?.wrap(model) ?? model;
 }
@@ -64,7 +68,8 @@ function withRuntimeInvocationLayer(
   runtime: AgentRuntimeInternal,
   model: Model,
   sessionType: ModelRequestSessionType,
-  retryBudget?: ModelRetryBudget,
+  retryBudget: ModelRetryBudget | undefined,
+  includeSessionFeatures: boolean,
 ): Model {
   const layer: ModelInvocationContext = {
     // Reason: title, Memory, and tool calls previously overwrote other based on purpose, losing the host's classification.
@@ -76,7 +81,16 @@ function withRuntimeInvocationLayer(
       ? {}
       : { modelRequestAdmission: runtime.modelRequestAdmission }),
   };
-  return withHostInvocationLayer(model, "runtime", () => layer);
+  // Session capability tags are added mid-session, while the turn model and the parent handle reused by subagents
+  // live long, so read the owner's current set on every call instead of snapshotting it at handle creation. Write
+  // undefined explicitly so the call site cannot carry in a different value.
+  return withHostInvocationLayer(model, "runtime", () => {
+    const features = includeSessionFeatures ? readSessionFeatures(runtime) : [];
+    return {
+      ...layer,
+      modelRequestSessionFeatures: features.length === 0 ? undefined : features,
+    };
+  });
 }
 
 const HOST_INVOCATION_LAYERS = Symbol("zcode.hostInvocationLayers");
@@ -120,13 +134,7 @@ export function withModelInvocationContext(
   // A marker Model for an external agent carries its turn driver on a symbol key; the wrapper keeps it
   // so the turn path still recognizes the model after invocation-context layering.
   const wrapped: Model = {
-    providerId: model.providerId,
-    modelId: model.modelId,
-    displayName: model.displayName,
-    properties: model.properties,
-    requestCapabilities: model.requestCapabilities,
-    optionSpecs: model.optionSpecs,
-    options: model.options,
+    ...modelDescriptorOf(model),
     bind(options) {
       return withModelInvocationContext(model.bind(options), createContext);
     },

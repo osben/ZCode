@@ -21,10 +21,10 @@ interface CapturedRequest {
   messages: string;
 }
 
-function createStabilityRuntime(input: {
-  sessionId: string;
-  now: () => Date;
-}): { runtime: ReturnType<typeof createTestAgentRuntime>; requests: CapturedRequest[] } {
+function createStabilityRuntime(input: { sessionId: string; now: () => Date }): {
+  runtime: ReturnType<typeof createTestAgentRuntime>;
+  requests: CapturedRequest[];
+} {
   const requests: CapturedRequest[] = [];
   const runtime = createTestAgentRuntime(
     createSessionId(input.sessionId),
@@ -169,9 +169,10 @@ describe("prompt-cache prefix stability (specs/prompt-cache-stability.md)", () =
       JSON.stringify(prefixMessages(requests[0]!)),
     );
 
-    // The snapshot date stays in the prefix; the rolled-over date appears only in the tail.
+    // The first request announces the runtime clock's date inside the prefix; the rolled-over date
+    // appears only in the tail.
     const prefixJson = JSON.stringify(prefixMessages(requests[1]!));
-    expect(prefixJson).toContain(SNAPSHOT_CURRENT_DATE);
+    expect(prefixJson).toContain("2026-10-01");
     expect(prefixJson).not.toContain("2026-10-02");
 
     const tail = capturedMessages(requests[1]!)
@@ -182,7 +183,7 @@ describe("prompt-cache prefix stability (specs/prompt-cache-stability.md)", () =
     expect(tail).toContain("2026-10-02");
   });
 
-  it("S3: a model switch changes only the dynamic system block", async () => {
+  it("S3: a model switch keeps the whole prefix identical and announces the model change in the tail", async () => {
     const { runtime, requests } = createStabilityRuntime({
       sessionId: "prompt-cache-model-switch",
       now: () => new Date("2026-10-01T12:00:00"),
@@ -197,14 +198,22 @@ describe("prompt-cache prefix stability (specs/prompt-cache-stability.md)", () =
 
     expect(requests).toHaveLength(2);
     const first = capturedMessages(requests[0]!);
-    const second = capturedMessages(requests[1]!);
     for (const index of [0, 1, 2]) {
       expect(first[index]?.role, `system message ${index} stays at the head`).toBe("system");
     }
-    expect(JSON.stringify(second[0])).toBe(JSON.stringify(first[0]));
-    expect(JSON.stringify(second[1])).toBe(JSON.stringify(first[1]));
-    expect(JSON.stringify(second[2])).not.toBe(JSON.stringify(first[2]));
-    expect(messageText(second[2]!)).toContain("provider-b/model-b");
-    expect(messageText(first[2]!)).toContain("provider-a/model-a");
+    // The model line is a runtime announcement (tail), not part of the system blocks.
+    expect(JSON.stringify(prefixMessages(requests[1]!))).toBe(
+      JSON.stringify(prefixMessages(requests[0]!)),
+    );
+    const firstTail = capturedMessages(requests[0]!)
+      .slice(prefixLength(requests[0]!))
+      .map(messageText)
+      .join("\n");
+    const secondTail = capturedMessages(requests[1]!)
+      .slice(prefixLength(requests[1]!))
+      .map(messageText)
+      .join("\n");
+    expect(firstTail).not.toContain("provider-b/model-b");
+    expect(secondTail).toContain("You are powered by the model named provider-b/model-b.");
   });
 });

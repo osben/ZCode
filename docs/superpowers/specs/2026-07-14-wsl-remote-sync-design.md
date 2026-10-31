@@ -1,51 +1,56 @@
-# WSL Remote Sync Entry Design
+# WSL 远端同步入口设计
 
-## Background
+> **被取代（2026-10，票 14）**：入口显示条件已由[数据同步规格](../../remote/data-sync.md)「旧入口」一节取代：连接向导、Header、侧栏项目菜单入口覆盖 SSH、WSL、Docker 三种远程 tab，从 workspace identity 解析 sourceServerId（旧格式 tab 解析不出时不显示入口），只在设备在线时可用；Web 与手机远控不显示入口（平台不能申请 source-settings attachment）。本文「Docker 本轮不扩展入口」已不成立。写权限预检 15 秒超时仍有效，实现位于数据同步弹窗。
 
-Skill, MCP, and Plugin remote sync was designed for SSH workspaces, with SSH-named UI entries and copy. Desktop WSL workspaces already run the unified `RemoteTarget` / `InitRemoteWorkspace` / remote service collection chain, with `skillSyncService`, `mcpSyncService`, and `pluginSyncService` coming from the WSL remote host.
+## 背景
 
-## Goals
+现有 Skill、MCP、Plugin 远端同步最初按 SSH workspace 设计，UI 入口和文案都以 SSH host 命名。但桌面 WSL workspace 已经走统一 `RemoteTarget` / `InitRemoteWorkspace` / remote service collection 链路，`skillSyncService`、`mcpSyncService`、`pluginSyncService` 均来自 WSL 远端 host。
 
-- SSH and WSL workspaces show the same remote sync entries.
-- The sync target stays the current remote runtime's user directories: `~/.zcode/skills`, `~/.zcode/cli/config.json`, `~/.zcode/plugins`.
-- Local workspaces show no remote sync entries.
-- Docker is not extended this round — no spreading plugin-install and MCP environment-compatibility risk into containers.
+## 目标
 
-## Design
+- SSH 和 WSL workspace 都显示同一套远端同步入口。
+- 同步目标仍是当前远端 runtime 的用户目录：`~/.zcode/skills`、`~/.zcode/cli/config.json`、`~/.zcode/plugins`。
+- 本地 workspace 不显示远端同步入口。
+- Docker 本轮不扩展入口，避免把插件安装和 MCP 环境兼容风险扩大到容器场景。
 
-The UI-layer `shouldShowSshRemoteSyncActions` generalizes into a remote sync capability check accepting `remoteTarget.kind` of `ssh` or `wsl`. Remote service wiring gains no branch and reuses the existing remote workspace services.
+## 设计
 
-Target labels per kind:
+将 UI 层的 `shouldShowSshRemoteSyncActions` 泛化为 remote sync capability 判断，允许 `remoteTarget.kind` 为 `ssh` 或 `wsl`。远端 service wiring 不新增分支，继续复用现有 remote workspace services。
 
-- SSH: `user@host:port · /remote/workspace`
-- WSL: `WSL · distro · user · /remote/workspace`
+目标标签按 target 类型展示：
 
-Copy moves from "SSH host" to "remote target / 远端目标" so WSL is not mislabeled. MCP and plugin environment notices keep explaining that things run in the remote environment after sync; if a local MCP command or plugin depends on Windows-only capabilities under WSL, status checks surface the unavailability — no silent filtering at the sync entry layer.
+- SSH：`user@host:port · /remote/workspace`
+- WSL：`WSL · distro · user · /remote/workspace`
 
-## Write-permission preflight
+文案从 “SSH host” 调整为 “remote target / 远端目标”，避免 WSL 场景看到错误描述。MCP 和 Plugin 的环境提醒继续说明同步后在远端环境运行；WSL 下如果本地 MCP 命令或插件依赖 Windows-only 能力，状态检查会暴露不可用，不在同步入口层做静默过滤。
 
-Before sync starts, the remote sync service runs a write preflight:
+## 写入权限预检
 
-- Skills: `~/.zcode/skills`
-- MCP: `~/.zcode/cli`
-- Plugins: `~/.zcode/plugins` and `~/.zcode/cli`
+同步开始前由远端 sync service 执行写入预检：
 
-The preflight only does `mkdir -p`-equivalent directory creation, writes a `.zcode-sync-preflight-*` temp file, and deletes it immediately. No `chmod`/`chown` — the WSL/SSH user's permission model is never changed. If a directory is owned by another user, the target path is a file, or the remote user cannot write, the UI shows an error before exporting local resources and stops the sync.
+- Skills：检查 `~/.zcode/skills`
+- MCP：检查 `~/.zcode/cli`
+- Plugins：检查 `~/.zcode/plugins` 和 `~/.zcode/cli`
 
-Preflight is part of the sync lifecycle. After clicking start, the flow must enter the `preflighting` activity state before the first remote RPC await, with a ref-level in-flight guard against fast repeat clicks while React state is uncommitted. Neither `preflighting` nor `syncing` may close the dialog; on preflight failure the flow returns to `selection` and never proceeds to export, import, or plugin install.
+预检只做 `mkdir -p` 等价目录创建、写入一个 `.zcode-sync-preflight-*` 临时文件并立即删除。它不做 `chmod` / `chown`，避免改变 WSL/SSH 用户已有权限模型。若目录被其他用户占用、目标路径是文件或当前远端用户不可写，UI 在导出本地资源前显示错误并停止同步。
 
-The preflight remote RPC has a UI-side bounded wait, 15 s by default. On timeout the UI restores `selection`, releases the in-flight guard, and shows a localized error; a late RPC return no longer advances the sync. The service layer has no cancellation token and the preflight only does repeatable marker-file write/delete, so this version keeps the UI main flow recoverable without introducing a remote runtime or new cancellation channel.
+预检属于同步生命周期的一部分。点击开始后必须在第一个远端 RPC await 前进入 `preflighting` 活动状态，并用 ref 级 in-flight guard 防止 React state 尚未提交时的快速重复点击。`preflighting` 和 `syncing` 都禁止关闭弹窗；预检失败后恢复 `selection`，不再继续导出、导入或启动插件安装。
 
-## Web remote-control boundary
+预检远端 RPC 必须有 UI 侧有界等待，默认 15 秒。超时后 UI 恢复 `selection`、释放 in-flight guard 并显示本地化错误；底层 RPC 若迟到返回，不再推进本次同步流程。当前服务层没有取消令牌，预检只做可重复 marker 文件写删，因此本版本先保证 UI 主流程可恢复，不额外引入远端 runtime 或新的取消通道。
 
-Sync entries show only on the desktop `desktop-continuous` surface. Mobile web remote control uses shared-host attachment, where `baseServices` means the current bridge host; when that bridge host is itself a WSL/SSH remote workspace host, `local*SyncService` and `remote*SyncService` can point at the same remote host, breaking the invariant "source = desktop local user directory, destination = current remote user directory".
+## Web 远控边界
 
-The current version therefore hides Skills/MCP/Plugins remote sync entries on the `web-remote-replayable` surface, and never spins up a separate mobile Agent runtime, local host, or remote session. If mobile sync is required later, it must explicitly inject the desktop-local source service through the existing host attachment while keeping the destination as the current remote workspace service.
+同步入口只在桌面端 `desktop-continuous` surface 显示。手机 Web 远控使用 shared-host attachment，`baseServices` 表示当前 bridge host；当当前 bridge 本身是 WSL/SSH 远端 workspace host 时，`local*SyncService` 与 `remote*SyncService` 可能指向同一远端 host，无法满足“source 为桌面本地用户目录、destination 为当前远端用户目录”的同步不变量。
 
-## Verification
+因此当前版本在 `web-remote-replayable` surface 隐藏 Skills/MCP/Plugins 远端同步入口，不为手机端另起独立 Agent runtime、local host 或新的远端 session。若后续产品要求手机端支持同步，需要通过已有 host attachment 显式注入桌面本地 source service，并保持 destination 仍是当前远端 workspace service。
 
-- UI helper unit tests: SSH and WSL show sync entries; local and Docker do not; the Web remote surface hides them (no remote-to-self sync).
-- Connected-directory page covers the WSL sync dropdown; skill sync target format covers the WSL label.
-- Service unit tests cover remote write-preflight success and unwritable-target failure.
-- Sync dialog unit tests cover the `preflighting` close protection and in-flight guard; the preflight helper covers timeout convergence (a permanently pending remote RPC must never lock the dialog).
-- Run `pnpm typecheck` and `pnpm lint`.
+## 验证
+
+- UI helper 单测覆盖 SSH、WSL 显示同步入口，本地和 Docker 不显示。
+- UI helper 单测覆盖 Web remote surface 隐藏同步入口，避免远端到自身同步。
+- 连接成功目录页覆盖 WSL 显示同步下拉。
+- Skill 同步目标格式覆盖 WSL label。
+- Service 单测覆盖远端写入预检成功与目标路径不可写失败。
+- 同步弹窗单测覆盖 `preflighting` 关闭保护与 in-flight guard。
+- 同步预检 helper 单测覆盖超时收敛，避免远端 RPC 永久 pending 锁死弹窗。
+- 执行 `pnpm typecheck` 与 `pnpm lint`。

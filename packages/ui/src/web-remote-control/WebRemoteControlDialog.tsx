@@ -10,10 +10,11 @@ import {
 } from "@/web-remote-control/domain/presentation.js";
 import { memo, useEffect, useMemo, useState } from "react";
 import QRCode from "qrcode";
-import type { BotProvider, WebRemoteControlStatus } from "@zcode/shared";
+import { DesktopCommandIds, type BotProvider, type WebRemoteControlStatus } from "@zcode/shared";
 import {
   Bot as BotIcon,
   CopyIcon,
+  FileDown,
   LoaderCircle,
   MonitorSmartphone,
   Smartphone,
@@ -62,7 +63,7 @@ function WebRemoteControlLoginButton({ onOpenChange }: { onOpenChange: (open: bo
       className="enabled:cursor-pointer"
       disabled={loadingProviders}
       onClick={() => {
-        // 远控401不清全局用户；必须指定当前渠道建立新登录尝试，避免统一入口把缓存用户当作成功。
+        // A remote-control 401 does not clear the global user; start a new login attempt scoped to the current channel so the unified entry does not mistake the cached user for success.
         if (hasUser && !activeProvider) {
           toast(intl.formatMessage({ id: "login.oauth.loginFailure" }));
           void refreshProviders();
@@ -154,11 +155,12 @@ export const WebRemoteControlDialog = memo(function WebRemoteControlDialogCompon
             remoteSessionId,
             initialTaskId,
           });
-          // 兼容仍可返回 cancelled 的平台实现；当前 Desktop 不再叠加原生确认。
+          // Stay compatible with platform implementations that can still return cancelled; current Desktop no longer adds a native confirmation.
           nextStatus = startResult.status === "cancelled" ? { status: "idle" } : startResult;
         }
-        // Bugfix: 手机端默认主题已统一收敛到 dark，不再依赖二维码 URL 透传 theme。
-        // 这里去掉启动参数里的 theme，避免桌面端主题无意义地参与远控链路。
+        // Bugfix: the mobile default theme has converged to dark and no longer relies on the QR URL
+        // to pass theme through. Drop theme from the launch params so the desktop theme does not
+        // pointlessly participate in the remote-control chain.
 
         if (!cancelled) {
           setStatus(nextStatus);
@@ -241,9 +243,10 @@ export const WebRemoteControlDialog = memo(function WebRemoteControlDialogCompon
           isSameWebRemoteControlStatus(currentStatus, nextStatus) ? currentStatus : nextStatus,
         );
       } catch {
-        // Bugfix: Web 远程控制的状态变化发生在 main / relay 侧，
-        // 如果弹层只在打开时同步一次，状态会长期停在“等待连接”。
-        // 这里用轻量轮询补齐状态刷新；单次失败时静默忽略，避免打断用户操作。
+        // Bugfix: Web remote-control status changes happen on the main / relay side;
+        // if the dialog synced only once on open, the status would sit at "waiting for connection"
+        // indefinitely. A lightweight poll fills the gap; single failures are silently ignored so
+        // user interaction is not interrupted.
       }
     };
 
@@ -325,6 +328,15 @@ export const WebRemoteControlDialog = memo(function WebRemoteControlDialogCompon
     }
   };
 
+  // Remote-control diagnostics: the panel's "Pull mobile logs" is the only user entry (the help-menu
+  // item was removed on 2026-10-28); the main process reports the result in a dialog.
+  const handlePullMobileLogs = () => {
+    logger.info("[WebRemoteControlDialog] 拉取手机日志", {
+      sessionId: status.sessionId ?? "none",
+    });
+    void platform.executeDesktopCommand(DesktopCommandIds.PullMobileLogs);
+  };
+
   const handleDialogOpenChange = (nextOpen: boolean) => {
     logger.info("[WebRemoteControlDialog] 弹层开关状态变化", {
       workspacePath,
@@ -368,19 +380,22 @@ export const WebRemoteControlDialog = memo(function WebRemoteControlDialogCompon
       <Dialog open={open} onOpenChange={handleDialogOpenChange}>
         <DialogContent
           showCloseButton={false}
-          // Bugfix: Mobile Remote Control 弹窗之前比 Remote Connect 更宽也更贴近窗口边缘，
-          // 启动二维码和 Bot Channel 内容时会显得层级不一致。这里复用 Remote Connect 的外层尺寸，
-          // 但不强制撑满高度；远控内容比 Remote Connect 少，内容自适应能避免窗口显得空。
+          // Bugfix: the Mobile Remote Control dialog used to be wider and closer to the window edge
+          // than Remote Connect, looking inconsistently layered when the QR code or Bot Channel
+          // content showed. Reuse Remote Connect's outer dimensions but do not force full height;
+          // remote-control content is sparser, and self-sizing avoids an empty-looking window.
           className="max-h-[calc(100vh-6rem)] max-w-4xl gap-0 overflow-hidden rounded-2xl p-0"
         >
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
-            // Bugfix: 这个弹窗会贴近桌面窗口顶部显示，默认 close 在 Electron drag 区里容易点不中。
-            // 这里改成显式点击关闭，并把按钮本身标成 no-drag，保证右上角关闭动作能稳定命中。
-            // Bugfix: 远控弹层内可点击控件之前没有显式 pointer cursor，桌面端 hover 时不像可操作元素。
-            // 这里仅给启用态补手指指针，禁用态仍沿用 Button 的 disabled 交互语义。
+            // Bugfix: this dialog sits near the top of the desktop window, where the default close
+            // button easily misses clicks inside the Electron drag region. Switch to an explicit
+            // click-to-close button and mark it no-drag so the top-right close action lands reliably.
+            // Bugfix: clickable controls in the remote-control dialog previously had no explicit
+            // pointer cursor and did not look actionable on desktop hover. Add the pointer cursor
+            // for enabled state only; disabled state keeps Button's disabled interaction semantics.
             className="absolute top-2 right-2 enabled:cursor-pointer [app-region:no-drag]"
             onClick={handleDismiss}
           >
@@ -467,6 +482,19 @@ export const WebRemoteControlDialog = memo(function WebRemoteControlDialogCompon
                             {statusDetail}
                           </div>
                         </div>
+                        {status.mobileConnected ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="default"
+                            data-testid="web-remote-control-pull-mobile-logs"
+                            className="shrink-0 gap-2 enabled:cursor-pointer"
+                            onClick={handlePullMobileLogs}
+                          >
+                            <FileDown className="size-3.5" />
+                            {intl.formatMessage({ id: "webRemoteControl.pullMobileLogs" })}
+                          </Button>
+                        ) : null}
                         {loading ? (
                           <LoaderCircle className="size-4 animate-spin text-foreground-subtle" />
                         ) : (
@@ -567,8 +595,8 @@ export const WebRemoteControlDialog = memo(function WebRemoteControlDialogCompon
                         className="flex min-h-0 cursor-pointer items-start gap-3 rounded-lg border border-transparent bg-surface px-3 py-3 text-left transition-colors hover:border-input-border-focused hover:bg-surface-hover focus-visible:border-input-border-focused"
                         onClick={() => handleOpenBotEntry(entry.provider)}
                       >
-                        {/* Bugfix: 远控 Bot Channel 入口原来用通用 lucide 图标，用户无法一眼区分微信、飞书和 Telegram。
-                            这里直接复用 BotsDialog 的渠道 logo，不再额外包裹容器，保证品牌图标本身作为视觉识别。 */}
+                        {/* Bugfix: the remote-control Bot Channel entries used generic lucide icons, and users could not tell WeChat, Feishu, and Telegram apart at a glance.
+                            Reuse the BotsDialog channel logos directly without an extra wrapper so the brand icon itself carries the visual identity. */}
                         <ProviderIcon provider={entry.provider} className="size-12 shrink-0" />
                         <span className="min-w-0 flex-1 space-y-1">
                           <span className="flex min-w-0 items-center gap-1.5 text-ui-base font-medium text-foreground">

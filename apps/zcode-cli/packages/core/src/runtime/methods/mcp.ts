@@ -11,6 +11,22 @@ import type { McpToolDescriptor, PluginReferenceCatalog } from "@zcode/contracts
 
 const MCP_SESSION_OAUTH_AUTHORIZATION_TIMEOUT_MS = 15_000;
 
+export async function refreshWorkspaceTrustAdmission(
+  runtime: AgentRuntimeInternal,
+  traceContext: TraceContext,
+): Promise<void> {
+  try {
+    await runtime.mcpPort?.refreshWorkspaceTrustAdmission?.();
+  } catch (error) {
+    // A publication failure must not block normal chat; execution permission is still checked independently by the MCP gate.
+    runtime.logger?.warn("MCP trust admission publication failed", {
+      ...traceContextToLogContext(traceContext),
+      event: "mcp.trust.admission.failed",
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 /**
  * Only servers carrying both the official plugin ID injected by the resolver and this process's private authority may share
  * Computer Use project authorization. Server names, tool names, and manifest env can all be spoofed by third parties and cannot be trusted alone.
@@ -73,6 +89,7 @@ export function startMcpStartup(
     .connectConfiguredServers(servers, {
       // If nobody completes browser authorization for an authorization_code MCP, session startup previously waited for the default five minutes,
       // delaying model requests. Wait only 15 seconds; settings exposes the authorization entry point through mcp/list.
+      signal: this.shutdownSignal,
       oauthAuthorizationTimeoutMs: MCP_SESSION_OAUTH_AUTHORIZATION_TIMEOUT_MS,
       trace: traceContext,
       workingDirectory: this.workingDirectory,
@@ -135,7 +152,9 @@ export async function initializeMcp(
   const serverCount = Object.keys(this.config.mcp?.servers ?? {}).length;
 
   try {
+    await refreshWorkspaceTrustAdmission(this, traceContext);
     const snapshot = await startup;
+    this.shutdownSignal.throwIfAborted();
     const registered = registerMcpTools(this.registry, mcpPort, snapshot.tools, {
       allowedTools: this.config.toolAllowlist,
       disallowedTools: this.config.toolDisallowlist,

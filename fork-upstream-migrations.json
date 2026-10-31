@@ -1,5 +1,5 @@
 {
-  "upstreamCommit": "3c5b227649371507ddc4eb46ac5133afe6db1cab",
+  "upstreamCommit": "a60ba6a7e5a06742270ca605f5d2cc2766afa7e1",
   "sets": {
     "cli": [
       {
@@ -133,6 +133,14 @@
       {
         "id": "0007_initial_workspace_order",
         "checksum": "cac45e440b4b54f588d7611bd1512232e18dda3c87144949568e45251edbcf1b"
+      },
+      {
+        "id": "0008_remote_entry_deleted_cache",
+        "checksum": "ecb3ae060f6fe3b2e8e40da94055c2b053ef6a0434f3afc4b433c0111c4bedea"
+      },
+      {
+        "id": "0009_session_creation_commands",
+        "checksum": "961b30b1391ea81139ffda2dc8e42ef1ddc5a5fcc46b20de44b62f53ee5d09fb"
       }
     ],
     "tasks_index:controller-remote": [

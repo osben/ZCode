@@ -44,7 +44,7 @@ import {
   type AiSdkModelTextRequest,
   type ResolvedAiSdkModel,
 } from "./runner-runtime.js";
-import { resolveToolSearchCapability } from "./tool-search.js";
+import { resolveModelRequestCapabilities } from "./tool-search.js";
 import { createModel, type ModelExecutionRequest } from "./model.js";
 import { refreshOffPeakRequestAuth } from "./off-peak-request-auth.js";
 import { isAccountAccess } from "./account-access-mode.js";
@@ -66,6 +66,9 @@ export type {
 export { normalizeUsage, toModelStreamEvent } from "./runner-normalization.js";
 
 export interface AiSdkModelAdapterOptions {
+  /** Inject request observation or a test transport; still goes through the existing proxy, protocol, and parameter mapping chain. */
+  transport?: typeof globalThis.fetch;
+  observeTransport?: (transport: typeof globalThis.fetch) => typeof globalThis.fetch;
   defaultHeaders?: AiSdkModelExecutionConfig["defaultHeaders"];
   requestSecurityState?: ModelRequestSecurityState;
   endpointRoutingPort?: import("@zcode/contracts").ProviderEndpointRoutingPort;
@@ -112,6 +115,8 @@ export class AiSdkModelAdapter {
         ...(options.env ? { env: options.env } : {}),
       },
       {
+        ...(options.transport ? { transport: options.transport } : {}),
+        ...(options.observeTransport ? { observeTransport: options.observeTransport } : {}),
         ...(options.requestSecurityState
           ? { requestSecurityState: options.requestSecurityState }
           : {}),
@@ -140,8 +145,8 @@ export class AiSdkModelAdapter {
     }
     this.statusSink = {
       async publish(event) {
-        // 多个 sink 必须独立执行：任一 sink 失败不得连带影响其他 sink，
-        // 也不能阻塞原有调用链。
+        // Sinks must execute independently: one sink's failure must not affect the others
+        // or block the original call chain.
         const results = await Promise.allSettled([
           Promise.resolve().then(() => current.publish(event)),
           Promise.resolve().then(() => sink.publish(event)),
@@ -179,18 +184,21 @@ export class AiSdkModelAdapter {
       const shouldAttachReasoningTelemetry = request.options.reasoningLevel !== undefined;
       const selectedReasoningLevel = request.options.reasoningLevel;
       const requestAuthDependency = options.requestDependencies?.requestAuth;
-      // Bug 根因：加速卡（highspeed）与 Off-Peak 同为 Coding Plan 派生模式，本轮动态鉴权
-      // （zcode JWT + Coding Plan 双 JWT + X-Highspeed-Card-ID，见 docs/highspeed/highspeed-card-spec.md
-      // §2.2）经 modelExecution.requestAuth 下发到执行作用域 Source。若门禁只认 off-peak，highspeed
-      // 会落到下面的账号 runtime-header 刷新分支，把整包 requestAuth（含卡 ID）丢弃，加速请求因缺卡 ID/
-      // 错误鉴权被 /api/v1/highspeed 网关判 401。两种派生免签模式必须同样消费执行作用域 Source。
+      // Bug root cause: the highspeed card and Off-Peak are both Coding-Plan-derived modes; this turn's
+      // dynamic auth (zcode JWT + Coding Plan dual JWT + X-Highspeed-Card-ID, see
+      // docs/highspeed/highspeed-card-spec.md §2.2) reaches the execution-scoped Source via
+      // modelExecution.requestAuth. If the gate recognized only off-peak, highspeed fell into the account
+      // runtime-header refresh branch below, dropping the whole requestAuth (card ID included), and the
+      // /api/v1/highspeed gateway rejected the accelerated request with 401 for the missing card ID /
+      // wrong auth. Both derived sign-free modes must consume the execution-scoped Source alike.
       const requestAuthRequired =
         options.providerConfig.access.type === "zhipu-account" &&
         (options.providerConfig.access.mode === "off-peak" ||
           options.providerConfig.access.mode === "highspeed");
-      // 调用级 runtime header Port 只服务绑定完整 Account Access 的账号型 Model；
-      // 普通 API-key Model 若也消费该 Port，会把静态鉴权误送到 Host 刷新并在请求前失败。
-      // 派生模式保留执行作用域票据/卡身份；Off-Peak 的 PAT 仍逐请求向原账号 owner 刷新。
+      // The call-level runtime header Port serves only account-type Models bound to a full Account
+      // Access; a plain API-key Model consuming it would misroute static auth to the Host refresh and
+      // fail before the request. Derived modes keep the execution-scoped ticket/card identity; the
+      // Off-Peak PAT is still refreshed per request against the original account owner.
       const refreshRuntimeHeadersBeforeAttempt = requestAuthRequired
         ? async (input: ModelRequestAuthSourceInput) => {
             const requestAuth = await requestAuthDependency?.source?.resolve(input);
@@ -235,8 +243,9 @@ export class AiSdkModelAdapter {
                 ...invocationContext.modelCall,
                 reasoning: {
                   ...invocationContext.modelCall?.reasoning,
-                  // 过去按 none/off 等档位名称猜测 enabled/disabled，导致 Telemetry
-                  // 把 Provider 方言当成统一语义。这里只记录请求实际选择的公开档位。
+                  // The old code guessed enabled/disabled from level names like none/off, so Telemetry
+                  // treated provider dialects as one semantic. Record only the public level the request
+                  // actually selected.
                   ...(selectedReasoningLevel ? { requestedLevel: selectedReasoningLevel } : {}),
                 },
               },
@@ -287,12 +296,10 @@ export class AiSdkModelAdapter {
           });
     };
     return createModel({
-      requestCapabilities: {
-        toolSearch: resolveToolSearchCapability(
-          options.providerConfig.api.type,
-          options.providerConfig.access,
-        ),
-      },
+      requestCapabilities: resolveModelRequestCapabilities(
+        options.providerConfig.api.type,
+        options.providerConfig.access,
+      ),
       providerId: resolved.providerId,
       modelId: resolved.modelId,
       displayName: options.displayName,
@@ -371,7 +378,7 @@ export class AiSdkModelAdapter {
       request: projectedRequest,
       resolveModel,
       resolved,
-      // single-attempt 预算（带 selectionFallback 的执行作用域句柄）把 maxAttempts 收敛为 1。
+      // A single-attempt budget (execution-scoped handle with selectionFallback) converges maxAttempts to 1.
       retry: resolveRetryOptionsForBudget(this.retry, projectedRequest.modelRetryBudget),
       runtime: this.runtime,
       statusSink: this.statusSink,
@@ -432,9 +439,10 @@ function projectRequestHistory(
 ): AiSdkModelTextRequest {
   if (resolved.providerKind !== "anthropic") return request;
 
-  // 结构归一化过去位于每次物理请求都会经过的 serializer，签名修复重试
-  // 因而会再次删除上一轮刚补出的 assistant 占位并合并 user。逻辑请求入口只投影一次，
-  // 后续 attempt 只能复用或从这份 request-local history 派生。
+  // Structure normalization used to live in the serializer that every physical request passes through, so
+  // signature-repair retries re-deleted the assistant placeholder the previous round had just restored and
+  // merged user messages again. The logical request entry projects exactly once; later attempts only reuse
+  // or derive from this request-local history.
   const messages = normalizeReasoningHistory(request.messages, {
     providerId: resolved.providerId,
     modelId: resolved.modelId,

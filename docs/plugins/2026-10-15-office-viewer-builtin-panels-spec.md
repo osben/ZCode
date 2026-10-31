@@ -1,172 +1,195 @@
-# Built-in document plugin viewer panels spec: documents / pdf / presentations / spreadsheets 0.2.0
+# 内置文档插件查看面板规格：documents / pdf / presentations / spreadsheets 0.2.0
 
-> Date: 2026-10-15
-> Status: implemented; real desktop verification pending
-> Related: the plugin repository's test marketplace has published same-named 0.2.0 plugins (with viewer
-> panels); this change folds the panels into the built-in plugins shipped with the app.
+> 日期：2026-10-15
+> 状态：已实现，桌面端真机验证待补
+> 关联：插件仓库测试市场已发布同名插件 0.2.0（含查看面板）；本次把面板并入随应用发布的内置插件。
 
-## 1. Background and decisions
+## 1. 背景与决策
 
-The four document plugins are built-in plugins shipped with the app (`zcode-plugins-official`), with plugin
-ID `<name>@zcode-plugins-official`. If the plugin repository's CDN catalog publishes a same-named entry, the
-merged catalog shows the CDN entry, but runtime discovery loads the built-in copy first, a same-ID
-marketplace install is treated as a duplicate and ignored, and built-in plugins do not take part in
-marketplace updates. So the viewer panels cannot ship from the plugin repository alone; they must upgrade
-with the built-in plugins.
+四个文档插件是随应用发布的内置插件（`zcode-plugins-official`），插件 ID 为 `<name>@zcode-plugins-official`。插件仓库的 CDN 目录若发布同名条目，合并目录会以 CDN 条目展示，但运行时发现先加载内置副本、同 ID 的市场安装被判为重复忽略，内置插件也不参与市场更新。因此查看面板不能从插件仓库单独发布，必须随内置插件升级。
 
-Decisions:
+决策：
 
-- All four plugins move to 0.2.0. Besides the existing production skills they add one viewer skill (`docx-viewer`, `pdf-viewer`, `pptx-viewer`, `xlsx-viewer`), one stdio MCP server and one UI surface with `availability: "session"`.
-- The panel implementation lives in the shared package `@zcode/office-runtime` (`apps/zcode-cli/packages/office-runtime`). Each plugin declares the panel title and formats in the `office` field of its package.json; its `build` script calls `../office-runtime/scripts/build.mjs` and bundles only that format's parser and viewer.
-- Production skills, the visual-review Agent and the license (Apache-2.0) are unchanged; panel and server code is written to `dist/LICENSE` under office-runtime's MIT license.
+- 四个插件统一升到 0.2.0，在原有生产技能之外新增一个查看技能（`docx-viewer`、`pdf-viewer`、`pptx-viewer`、`xlsx-viewer`）、一个 stdio MCP server 和一个 `availability: "session"` 的 UI surface。
+- 面板实现放在共享包 `@zcode/office-runtime`（`apps/zcode-cli/packages/office-runtime`）。每个插件在 package.json 的 `office` 字段声明面板标题与格式，`build` 脚本调用 `../office-runtime/scripts/build.mjs`，只打包该格式的解析器与查看器。
+- `read_document`、`search_document` 服务面板里的讨论：返回的位置是面板使用的锚点，可直接交给 `show_in_viewer`；PDF 文字与面板文字层经过同一套归一（§6.3），可作为 `quote` 高亮。Excel 例外：没有缓存结果的公式在 server 文字里没有值，面板会计算并显示（见 `xlsx-viewer` 技能）。工具描述写明这一用途，要求先 `open_document`，并把面板之外的提取与处理指向同格式的生产技能（`docx` / `xlsx` / `pptx` / `pdf`）。server 不校验文件是否已在面板打开：未打开的工作区文件照常可读，没有面板的环境（见各查看技能）也依赖这一点。
+- 生产技能、视觉评审 Agent 与许可证（Apache-2.0）保持不变；面板与 server 代码随 office-runtime 的 MIT 许可写入 `dist/LICENSE`。
 
-## 2. Build and artifacts
+## 2. 构建与产物
 
 ```text
 apps/zcode-cli/packages/<name>-plugin/package.json  ── office.title / office.kinds
                 │ pnpm --filter @zcode/<name>-plugin build
                 ▼
-office-runtime/scripts/build.mjs (plugin name taken from .zcode-plugin/plugin.json)
+office-runtime/scripts/build.mjs（插件名取自 .zcode-plugin/plugin.json）
                 ▼
 <name>-plugin/dist/
-  server.mjs                 MCP server, fully bundled by esbuild, no node_modules at runtime
-  ui/panel.html, assets.json panel entry and chunked-script manifest
-  ui/bundle-*.txt ...        panel scripts, pdf.js / xlsx resources
+  server.mjs                 MCP server，esbuild 全量打包，运行时不读 node_modules
+  ui/panel.html, assets.json 面板入口与分片脚本清单
+  ui/bundle-*.txt …          面板脚本、pdf.js / xlsx 资源
   LICENSE, THIRD_PARTY_NOTICES.txt
 ```
 
-- The plugin name must come from the manifest: it is the MCP service name, the surface id and the `ui://<name>/` prefix, while built-in package directories carry a `-plugin` suffix.
-- `dist/` is not in git (`apps/zcode-cli/.gitignore`). The turbo plugin `build` depends on office-runtime `build` (type check only), so office-runtime source changes invalidate the four plugins' build cache.
-- Viewer dependencies (pdfjs-dist, docx-preview, pptx-renderer, react-xlsx, exceljs, ...) are devDependencies of office-runtime: bundled at build time, not distributed as runtime npm dependencies; the licenses of bundled parts are written to `dist/THIRD_PARTY_NOTICES.txt`. exceljs's streaming read/write dependencies (archiver, unzipper, tmp, fast-csv) are replaced by stub modules at build time and do not enter the artifact.
+- 插件名必须取自 manifest：它是 MCP 服务名、surface id 与 `ui://<name>/` 前缀，而内置包目录名带 `-plugin` 后缀。
+- `dist/` 不入 git（`apps/zcode-cli/.gitignore`）。turbo 的插件 `build` 依赖 office-runtime 的 `build`（仅类型检查），office-runtime 源码变化会使四个插件的构建缓存失效。
+- 查看器依赖（pdfjs-dist、docx-preview、pptx-renderer、react-xlsx、exceljs 等）声明为 office-runtime 的 devDependencies：它们只在构建期被打包，不作为运行时 npm 依赖分发；被打包部分的许可随产物写入 `dist/THIRD_PARTY_NOTICES.txt`。exceljs 的流式读写依赖（archiver、unzipper、tmp、fast-csv）在构建时以桩模块替换，不进入产物。
 
-## 3. Required assets and version sources
+## 3. 必需资产与版本事实源
 
-The sole definition of artifact paths is `OFFICE_RUNTIME_OUTPUTS` in office-runtime `contract.ts`:
-`dist/server.mjs`, `dist/ui/assets.json`, `dist/ui/panel.html`. All lists below must stay in sync:
+产物路径的唯一定义是 office-runtime `contract.ts` 的 `OFFICE_RUNTIME_OUTPUTS`：`dist/server.mjs`、`dist/ui/assets.json`、`dist/ui/panel.html`。以下清单都要同步：
 
-| Location                                                   | Content                                                                                                                              |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `bootstrap/src/app/official-plugin-definitions.ts`         | Version 0.2.0 (pdf 0.2.1, declared per plugin); `requiredSeedPaths` adds the viewer skill and `OFFICIAL_OFFICE_VIEWER_RUNTIME_PATHS` |
-| `cli/scripts/sea-official-plugin-assets.mjs`               | Version 0.2.0 (pdf 0.2.1); `requiresRuntime: true`, `requiredRuntimePaths` are the panel artifacts                                   |
-| `desktop/scripts/prepare-agent-node-bundle.mjs`            | `requiresRuntime: true`, `runtimeBuildScript` points to the office-runtime build script                                              |
-| `scripts/build-desktop-agent-cli.mjs`                      | The dev chain builds the four plugins and validates `dist/server.mjs`                                                                |
-| `server/src/remote/zcodeAgentOfficialPluginAssets.ts`      | Remote required assets include the viewer skill and panel artifacts                                                                  |
-| `docker/plugin-eval/Dockerfile`                            | The eval image builds the four plugins before staging                                                                                |
-| Each plugin's `package.json` / `.zcode-plugin/plugin.json` | Version 0.2.0 (pdf 0.2.1)                                                                                                            |
+| 位置                                                  | 内容                                                                                                                     |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `bootstrap/src/app/official-plugin-definitions.ts`    | 版本 0.2.1（pdf 0.2.2，按插件各自声明）；`requiredSeedPaths` 增加 viewer skill 与 `OFFICIAL_OFFICE_VIEWER_RUNTIME_PATHS` |
+| `cli/scripts/sea-official-plugin-assets.mjs`          | 版本 0.2.1（pdf 0.2.2）；`requiresRuntime: true`，`requiredRuntimePaths` 为面板产物                                      |
+| `desktop/scripts/prepare-agent-node-bundle.mjs`       | `requiresRuntime: true`，`runtimeBuildScript` 指向 office-runtime 构建脚本                                               |
+| `scripts/build-desktop-agent-cli.mjs`                 | dev 链路构建四个插件并校验 `dist/server.mjs`                                                                             |
+| `server/src/remote/zcodeAgentOfficialPluginAssets.ts` | 远端必需资产加入 viewer skill 与面板产物                                                                                 |
+| `docker/plugin-eval/Dockerfile`                       | 评测镜像在 stage 前构建四个插件                                                                                          |
+| 各插件 `package.json` / `.zcode-plugin/plugin.json`   | 版本 0.2.1（pdf 0.2.2）；MCP server 声明 `"isolation": "workspace"`（§8）                                                |
 
-When `requiredSeedPaths` has a gap, seeding rejects only that plugin and falls back to a usable old cache,
-leaving other plugins unaffected; an unbuilt dev environment therefore sees these four plugins stuck on an
-old cache or missing, not all plugins failing.
+`requiredSeedPaths` 缺项时 seed 只拒绝该插件并回退到可用旧缓存，不影响其他插件；因此未构建的开发环境会看到这四个插件停留在旧缓存或缺失，而不是全部插件失败。
 
-The desktop bootstrap build path used to run `tsc` and then the build script for each runtime plugin;
-document plugins have no tsconfig of their own, so `tsc` now runs only when the plugin root has a
-`tsconfig.json`.
+桌面 bootstrap 构建路径原先对每个运行时插件先跑 `tsc` 再跑构建脚本；文档插件没有自己的 tsconfig，现改为仅在插件根目录存在 `tsconfig.json` 时运行 `tsc`。
 
-## 4. Acceptance
+## 4. 验收
 
-- office-runtime: `typecheck`, `lint`, unit tests (parsers, anchors, text, i18n, alignment, contract).
-- Four plugins: after `build`, `smoke` (real stdio MCP: open, read, search, locate, out-of-range path rejection) and `test:e2e` (loads the panel in Chrome under the MCP Apps sandbox CSP; covers selection citation, Agent locate, find, drawer, screenshot, dark-theme Chinese inline card).
-- Version and asset consistency: bootstrap `plugins.test.ts`, `build-sea.test.mjs`, desktop `runtime-asset-scripts.test.ts`, server `remoteDeploy.test.ts`.
-- Pending: actually open the four panels in the ZCode desktop app (including remote workspaces); e2e does not cover the Electron sandbox itself.
+- office-runtime：`typecheck`、`lint`、单测（解析器、锚点、文本、i18n、对齐、契约）。
+- 四个插件：`build` 后 `smoke`（真实 stdio MCP：打开、读取、搜索、定位、越界路径拒绝）与 `test:e2e`（Chrome 中按 MCP Apps 沙箱 CSP 加载面板，覆盖选区引用、Agent 定位、查找、抽屉、截图、深色中文内联卡片）。
+- 版本与资产一致性：bootstrap `plugins.test.ts`、`build-sea.test.mjs`、desktop `runtime-asset-scripts.test.ts`、server `remoteDeploy.test.ts`。
+- 待补：在 ZCode 桌面端（含远程工作区）实际打开四种面板；e2e 不覆盖 Electron 沙箱本身。
 
-## 5. Local files and window restore (2026-10-16)
+## 5. 本地文件与窗口恢复（2026-10-16）
 
-- The empty state is a title, description, an open-file button and format notes. The button calls the system file picker and supports files outside the workspace; cancel leaves the page unchanged.
-- Files are imported in 4 MiB chunks to `.zcode/document-imports/<uuid>/<filename>`, keeping the 100 MiB limit. Preview and Agent references use the copy; the original is not modified and arbitrary path reads are not opened. Same-name files are stored independently.
-- A manually created document window gets an instanceId persisted with the tab. Ordinary plugins and tool-driven surfaces keep their original routing.
-- The SHA-256 of the full workspace/session/plugin/server/resource/surface instance forms an opaque stateKey; panel localStorage stores the last successfully loaded path of that window and never restores from the server-global last document. When storage is unavailable the preview still works but restore is not guaranteed.
+- 空状态为标题、描述、打开文件按钮与格式说明。按钮调用系统文件选择器，支持工作区外文件；取消不改变页面。
+- 文件按 4 MiB 分块导入 `.zcode/document-imports/<uuid>/<filename>`，沿用 100 MiB 上限。预览与 Agent 引用副本，不修改原文件，不开放任意路径读取。同名文件独立保存。
+- 手动新建文档窗口生成 instanceId，随标签页持久化。普通插件与工具驱动 surface 保持原路由。
+- 完整 workspace/session/plugin/server/resource/surface instance 的 SHA-256 构成不透明 stateKey，面板 localStorage 保存该窗口最后成功加载的路径，不从服务器全局最后文档恢复。存储不可用时仍能预览，但不能保证恢复。
 
 ```mermaid
 flowchart LR
-  A[New tab] --> B[New instanceId / empty state]
-  B --> C[Pick a file and load successfully]
-  C --> D[Save path by stateKey]
-  E[Return to original session] --> F[Restore original tab instanceId]
+  A[新建标签页] --> B[新 instanceId / 空状态]
+  B --> C[选文件并成功加载]
+  C --> D[按 stateKey 保存路径]
+  E[回到原 session] --> F[恢复原标签页 instanceId]
   F --> D
-  D --> G[Load that window's last file]
+  D --> G[加载该窗口上次的文件]
 ```
 
-The official plugin entry is rebuilt from the built-in original manifest, keeping the real entry and
-arguments and repairing wrong caches; HTTP/SSE is not validated as stdio. The service exports main and
-starts itself only when run directly. The send-confirmation dialog and the selection-question overlay use
-compact spacing, an input area and a uniform border, keeping send, cancel and keyboard behavior.
+官方插件入口从内置原始 manifest 重建，保留真实入口及参数，修正错误缓存；HTTP/SSE 不按 stdio 校验。服务导出 main，直接执行时才自行启动。确认发送弹窗与选区提问浮层采用紧凑间距、输入区与统一边框，保留发送、取消及键盘行为。
 
-### Scenario and coverage matrix
+### 场景与覆盖矩阵
 
-| Scenario                                                               | Coverage                                           | Boundary                                                         |
-| ---------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------- |
-| Cache entry repair, argument retention, HTTP config                    | bootstrap/tests/official-plugin-runtime.test.ts    | unit test                                                        |
-| Chunk order, incomplete rejection, same-name isolation, cancel cleanup | office-runtime/src/adapters/files.test.ts          | unit test                                                        |
-| New-window isolation, stable serialization scope, session isolation    | packages/ui/src/plugin-ui/contract.test.ts         | unit test                                                        |
-| Local import, reload restore, new-window empty state                   | documents branch of office-runtime/scripts/e2e.mjs | Browser AppBridge + real MCP, not an Electron E2E                |
-| PDF/PPT native file picker, two PDF windows in one session             | manual on a macOS dev instance                     | verified; cross-session, remote workspace, Windows/Linux pending |
-| Compact overlay and confirm dialog                                     | existing interaction regression and manual checks  | dual-theme and mobile-remote visual acceptance pending           |
+| 场景                                       | 覆盖位置                                         | 边界                                               |
+| ------------------------------------------ | ------------------------------------------------ | -------------------------------------------------- |
+| 缓存入口修复、参数保留、HTTP 配置          | bootstrap/tests/official-plugin-runtime.test.ts  | 单元测试                                           |
+| 分块顺序、未完成拒绝、同名隔离、取消清理   | office-runtime/src/adapters/files.test.ts        | 单元测试                                           |
+| 新窗口隔离、序列化作用域稳定、session 隔离 | packages/ui/src/plugin-ui/contract.test.ts       | 单元测试                                           |
+| 本地导入、重载恢复、新窗口空状态           | office-runtime/scripts/e2e.mjs 的 documents 分支 | 浏览器 AppBridge + 真实 MCP，不是 Electron E2E     |
+| PDF/PPT 原生文件选择、PDF 同会话双窗口     | macOS 开发实例人工验收                           | 已验证；跨 session、远程工作区、Windows/Linux 待补 |
+| 紧凑浮层与确认框                           | 原有交互回归与人工检查                           | 双主题、手机远控视觉验收待补                       |
 
-## 6. PDF CJK text
+## 6. PDF 中日韩文字
 
-Conventions of the PDF panel (`office-runtime/ui/viewers/PdfView.tsx`, pdf.js 5.4.296) for Chinese,
-Japanese and Korean (CJK) text. Shipped with pdf plugin 0.2.1: the bump moves installed users to a new cache
-directory instead of reusing 0.2.0's old panel artifacts (the other three document plugins stay at 0.2.0).
-Embedded fonts are loaded by pdf.js directly and do not go through the font chain below; this section covers
-only **non-embedded fonts** and **text extraction**.
+PDF 面板（`office-runtime/ui/viewers/PdfView.tsx`，pdf.js 5.4.296）对中日韩（CJK）文字的约定。随 pdf 插件 0.2.1 发布：升版让已装用户换到新的缓存目录，不沿用 0.2.0 的旧面板产物（其余三个文档插件仍为 0.2.0）。嵌入字体由 pdf.js 直接加载，不经下面的字体链；本节只处理**未嵌入字体**和**文字提取**。
 
-### 6.1 Font chain for non-embedded fonts
+### 6.1 未嵌入字体的字体链
 
-For a non-embedded font pdf.js only looks for a same-named system font and otherwise falls back to the
-generic `serif` / `sans-serif`, so SimSun (宋体) is often drawn as a sans-serif; when the font name is a
-multi-byte encoding such as GBK (for example `/#CB#CE#CC#E5` = 宋体) pdf.js gives up substitution. The panel
-takes over the font chain where the pdf.js canvas sets the font:
+pdf.js 对未嵌入字体只按字体名找同名系统字体，找不到就退回通用 `serif` / `sans-serif`，因此宋体常被画成黑体；字体名是 GBK 等多字节编码（如 `/#CB#CE#CC#E5` = 宋体）时 pdf.js 直接放弃替换。面板在 pdf.js 画布设置字体处接管字体链：
 
 ```text
-PDF font (non-embedded) ── name (with GBK / Big5 / Shift-JIS / EUC-KR decoding) + pdf.js Serif flag
-        │ classify in ui/cjkFonts.ts
+PDF 字体（未嵌入）── 名称（含 GBK / Big5 / Shift-JIS / EUC-KR 解码）+ pdf.js 的 Serif 标志
+        │ 分类 ui/cjkFonts.ts
         ▼
-script sc | tc | jp | kr (default sc) x style serif | sans | kai | fang (use the Serif flag when the name is unrecognized)
+文种 sc | tc | jp | kr（默认 sc）× 字形 serif | sans | kai | fang（名称未识别时取 Serif 标志）
         ▼
-canvas font = <original pdf.js font chain (trailing generic family removed)>, "zcode-cjk-<script>-<style>",
-              ["zcode-cjk-<script>-serif" (for kai / fang)], ["zcode-cjk-fallback"], <generic family>
+canvas font = <pdf.js 原字体链（去掉末尾通用族）>, "zcode-cjk-<文种>-<字形>",
+              ["zcode-cjk-<文种>-serif"（kai / fang 时）], ["zcode-cjk-fallback"], <通用族>
 ```
 
-- `zcode-cjk-*` are `FontFace`s registered by the panel. Their source is a `local()` list of similar fonts common on the three platforms (macOS 宋体-简 / 苹方 / 楷体-简..., Windows SimSun / Microsoft YaHei / KaiTi..., Linux Noto / Source Han / 文泉驿...). `unicode-range` covers only CJK characters and full-width punctuation, so Latin fallback is unchanged.
-- The panel loads all `zcode-cjk-*` before the document opens (`local()` lookup, no download). The original pdf.js font chain goes first: if the system really has the same-named font (for example SimSun on Windows) it is still used.
-- Applies only to fonts pdf.js marks as missing font file (`missingFile`); Type 3 and embedded fonts are unchanged.
-- Implementation: at build time an esbuild plugin rewrites the single line in pdf.js canvas `setFont` that computes the font chain (the build fails if the original text is not found) and calls `pdfTypeface` in `ui/cjkFonts.ts`.
+- `zcode-cjk-*` 是面板注册的 `FontFace`：来源为三端常见同类字体的 `local()` 列表（macOS 宋体-简 / 苹方 / 楷体-简…，Windows SimSun / Microsoft YaHei / KaiTi…，Linux Noto / Source Han / 文泉驿…），`unicode-range` 只覆盖 CJK 字符与全角标点，因此不改变拉丁文字的回退。
+- 面板在文档打开前加载全部 `zcode-cjk-*`（`local()` 查找，无下载）。pdf.js 的原字体链放在最前：系统真的装有同名字体（如 Windows 的 SimSun）时仍用它。
+- 只作用于 pdf.js 标记为缺字体文件的字体（`missingFile`），Type 3 与嵌入字体不变。
+- 实现方式：构建时 esbuild 插件改写 pdf.js 画布 `setFont` 中计算字体链的一行（找不到原文即构建失败），调用 `ui/cjkFonts.ts` 的 `pdfTypeface`。
 
-### 6.2 Built-in fallback font
+### 6.2 内置兜底字体
 
-When the system has no CJK font at all (every `zcode-cjk-*` fails to load, common on minimal Linux), before
-opening the first PDF the panel loads the Noto Sans SC 400 shipped with the plugin (Fontsource 5.3.1,
-OFL-1.1, split by unicode-range into 97 pieces, about 2.4 MiB, covering GB2312 at 99.5%), registered as
-`zcode-cjk-fallback` and placed before the generic family in the chain. Canvas drawing does not wait for
-fonts, so the fallback must be ready before first paint rather than loaded and redrawn afterwards. It loads
-once per panel lifetime; machines with any system CJK font never load it. Font files are read as
-`ui://pdf/assets/fonts/*.woff2` resources with manifest `ui://pdf/assets/cjk-fallback.json`; only the pdf
-plugin's build produces them.
+系统没有任何 CJK 字体（全部 `zcode-cjk-*` 都加载失败，常见于精简 Linux）时，面板在打开第一个 PDF 前加载随插件分发的 Noto Sans SC 400（Fontsource 5.3.1，OFL-1.1，按 unicode-range 切成 97 片、约 2.4 MiB、覆盖 GB2312 99.5%），注册为 `zcode-cjk-fallback`，排在字体链的通用族之前。画布绘制不等待字体，所以兜底字体必须在首次绘制前就绪，而不是绘制后补加载再重画。面板生命周期内只加载一次；有任一系统 CJK 字体的机器不会加载。字体文件以 `ui://pdf/assets/fonts/*.woff2` 资源读取，清单为 `ui://pdf/assets/cjk-fallback.json`；只有 pdf 插件的构建产出它们。
 
-### 6.3 Text extraction normalization
+### 6.3 文字提取归一
 
-PDFs printed by Chrome / Skia often write a radical compatibility character as the ToUnicode of some
-Chinese characters (文 -> ⽂ U+2F42, 黄 -> ⻩ U+2EE9): the page looks right but copy, find and citation are
-wrong. Server parsing (`read_document`, `search_document`) and the panel text layer and find all go through
-`normalizeCjkCompat` in `src/domain/cjk.ts`: Kangxi radicals (U+2F00-2FD5) by NFKC, radical supplements
-(U+2E80-2EF3) by Unicode 16.0 `EquivalentUnifiedIdeograph.txt`, taking only the 100 entries whose equivalent
-is in the BMP (another 14 are extension-area components and are not replaced). No global NFKC (it would turn
-full-width punctuation into half-width). Each replacement is one UTF-16 unit before and after.
+Chrome / Skia 打印出的 PDF 常把部分汉字的 ToUnicode 写成部首兼容字符（文→⽂ U+2F42，黄→⻩ U+2EE9），画面正确但复制、查找、引用全错。server 解析（`read_document`、`search_document`）与面板文字层、查找统一经 `src/domain/cjk.ts` 的 `normalizeCjkCompat` 归一：康熙部首（U+2F00–2FD5）按 NFKC，部首补充（U+2E80–2EF3）按 Unicode 16.0 `EquivalentUnifiedIdeograph.txt`，只收等价字在 BMP 的 100 条（另 14 条是扩展区的部件字，不作替换）。不做整体 NFKC（会把全角标点变成半角）。替换前后都是一个 UTF-16 单元。
 
-### 6.4 pdf.js resources
+### 6.4 pdf.js 资源
 
-The panel resource allowlist permits `pdfjs/wasm/*.wasm` (openjpeg for JPEG 2000 images, qcms for ICC
-colors); they were previously rejected, so those two kinds of content could not be decoded.
+面板资源白名单允许 `pdfjs/wasm/*.wasm`（openjpeg 解 JPEG 2000 图像、qcms 处理 ICC 颜色），此前被拒导致这两类内容无法解码。
 
-### 6.5 Acceptance
+### 6.5 验收
 
-- Unit tests: font classification and chain (`ui/cjkFonts.test.ts`), radical normalization (`src/domain/cjk.test.ts`), extraction and search of `fixtures/cjk.pdf` (`parse.test.ts`), resource allowlist (`src/adapters/assets.test.ts`).
-- pdf plugin `test:e2e`: opens `docs/cjk.pdf`, asserts `zcode-cjk-*` fonts are loaded before painting and that locate and find hit by normalized citation; another page makes every `local()` lookup fail, asserts only `zcode-cjk-fallback` is registered and keeps a screenshot; `smoke` reads the wasm and fallback font resources.
-- Pending: manual verification on real Windows / Linux and in environments without CJK fonts.
+- 单测：字体分类与字体链（`ui/cjkFonts.test.ts`）、部首归一（`src/domain/cjk.test.ts`）、`fixtures/cjk.pdf` 的提取与搜索（`parse.test.ts`）、资源白名单（`src/adapters/assets.test.ts`）。
+- pdf 插件 `test:e2e`：打开 `docs/cjk.pdf`，断言 `zcode-cjk-*` 字体在绘制前已加载、按归一后的引文定位与查找命中；另开一页让所有 `local()` 查找失败，断言只注册了 `zcode-cjk-fallback` 并截图留档；`smoke` 读取 wasm 与兜底字体资源。
+- 待补：Windows / Linux 真机与无 CJK 字体环境的人工验证。
 
-## 7. Review closure: privacy, views and import lifecycle
+## 7. Review 收口：隐私、视图与导入生命周期
 
-- The host sends only a full-scope SHA-256 restore key, never a path or sessionId. Window restore and recent files share a window-level cache holding at most 128 recently used windows; beyond that the oldest window returns to the empty state.
-- `report_view` carries a viewId and DocumentOwner stores it per window. `get_view` may specify a viewId; with several windows and none specified it returns the window list and an ambiguity hint instead of picking the last reporter. A view is released when the page leaves normally; an abnormally exited stale view can at most cause a conservative ambiguity hint, never a crossed answer. Agent locate still opens the dedicated surface, and the tool copy says so.
-- Imports are managed serially by the server. Before a new import is admitted, incomplete imports with no data for over 10 minutes are cleaned. Server startup sweeps only expired `.partial` files, keeping finished copies and recent imports of other processes. Concurrent begins never exceed the 4-slot limit, and failure and exit cleanup produce no unhandled rejections. Resource expiry is used only for reclamation, never to decide page sync order.
-- Coverage: restore-key privacy, window cache limit and isolation, multi-view ambiguity, concurrency limit, timeout reclamation, startup sweep and finished-copy retention.
+- 宿主仅下发完整作用域的 SHA-256 恢复键，不下发路径或 sessionId。窗口恢复与最近文件共用窗口级缓存，最多保留 128 个最近使用窗口；超出后最旧窗口回到空状态。
+- report_view 携带 viewId，DocumentOwner 按窗口保存。get_view 可指定 viewId；多个窗口且未指定时返回窗口清单及歧义提示，不任选最后上报者。页面正常离开时释放视图；异常退出的旧视图最多造成保守的歧义提示，不串答。Agent 定位继续打开专用 surface，工具文案明确该行为。
+- 导入由服务端串行管理；新导入准入前清理超过 10 分钟没有数据的未完成导入。服务端启动只清扫过期的 `.partial`，保留成品和近期其他进程导入。并发 begin 不突破每 session 4 槽的上限（§8.2），失败与退出清理不产生未处理 rejection。资源过期只用于回收，不用来决定页面同步顺序。
+- 覆盖：恢复键隐私、窗口缓存上限与隔离、多视图歧义、并发上限、超时回收、启动清扫及完成副本保留。
+
+## 8. 工作区共享 server
+
+每个文档插件在同一工作区只起一个 MCP server 进程，供该工作区全部 session 共用（四个插件即每工作区四个进程）；此前每个 session 各起一份。面板、工具与交互不变。
+
+### 8.1 宿主
+
+- 插件 manifest 的 stdio / http MCP server 可声明 `"isolation": "workspace"`。插件 MCP 解析（`adapters/src/plugins/mcp.ts`）只对官方市场（`zcode-plugins-official`）插件透传该字段；其他插件的声明被忽略，保持 session isolation（`docs/mcp-platform-boundary.md`）。
+- 连接池沿用 node_repl 的共享规则：键为 server 名 + workspaceKey + 解析后的配置（`adapters/src/mcp/pool.ts`），每个 session 持有一个 lease，最后一个 lease 释放后按既有 grace 关闭。`${ZCODE_PROJECT_DIR}` 不同的 session 配置不同，仍各起一份。
+- 官方插件运行时 manifest 重写（`official-plugin-runtime.ts`）保留 `isolation`。
+- 四个插件升版（0.2.1，pdf 0.2.2）：同版本缓存目录里的旧 `dist/server.mjs` 不区分 session，不能在新 manifest 下被共享。
+
+### 8.2 server 状态按 session 划分
+
+宿主给每次 `tools/call` 写入 `_meta.session_id`：Agent 调用来自执行工具的 session，面板调用（`mcp/uiCallTool`）来自面板所属 session（`adapters/src/mcp/index.ts` 的 `mcpRequestMeta`）。subagent 与工作流子代理的调用另带 `_meta.root_session_id`，即派生它的顶层 session（trace context 的 `rootSessionId`，在派生处写入、随子 trace 继承）。server 按 `root_session_id ?? session_id` 划分状态，所以 subagent 与父 session 的面板共用同一份查看状态，和改造前同进程时一致。session 只用来划分查看状态，不作授权依据：调用方只有宿主，面板不能自填 `_meta`。
+
+```text
+session 1 Agent ─ open_document(a) ──┐  _meta.session_id = s1
+session 1 面板  ─ load / report_view ─┤
+                                     ├──► 共享 server ── DocumentOwner
+session 2 Agent ─ open_document(b) ──┤                    ├─ 解析缓存（共享，按路径 + size/mtime）
+session 2 面板  ─ load / report_view ─┘  session_id = s2   ├─ s1：current、views、revealSeq、文件句柄
+                                                          └─ s2：current、views、revealSeq、文件句柄
+文件分块（resources/read）不带 session：按 load_document 发出的不可猜 token 查找
+```
+
+| 状态                                         | 归属                                                                                                     |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| 解析缓存                                     | 全 server 共享，上限 6 个文档                                                                            |
+| `current`（get_viewer）、reveal 序号         | 每 session                                                                                               |
+| 视图上报（report_view / get_view / release） | 每 session；get_view 只列本 session 的窗口                                                               |
+| 文件句柄                                     | 每 session 最多 4 个，超出淘汰本 session 最旧的；面板读完最后一块即释放；token 全局唯一，分块按 token 查 |
+| 导入                                         | 每 session 4 槽（§7 的上限与回收规则改为按 session 计）                                                  |
+
+- 缺少 `session_id`（旧宿主、直接 stdio 启动的 smoke / e2e）时归入同一个默认 session，行为等同改造前的单 session 进程。
+- server 收不到 session 关闭：session 状态按最近使用保留最多 32 个，超出时淘汰最久未用的 session 及其句柄；不用超时回收。被淘汰的 session 再次调用时从空状态开始，面板按 §5 的窗口恢复重新加载。
+- 文件句柄只用于把字节交给面板：面板在 `load_document` 后立即按序读完全部分块并自留字节，server 送出最后一块即删除句柄。常驻字节因此只取决于进行中的加载，不取决于历史 session 数；面板读到一半消失时，句柄由本 session 的 4 个上限或 session 淘汰回收。
+- `load_document` 解析期间所属 session 被淘汰时，不再登记句柄，返回 `invalid_token`，面板显示既有的重新加载入口。
+- 导入槽位按 session 计：一个 session 放弃的导入不占其他 session 的槽位；10 分钟空闲回收不变。
+
+### 8.3 行为变化
+
+- server 崩溃影响该工作区所有 session 的同一面板；下次调用由连接池重连，面板显示既有错误态与重新加载入口。
+- 进程生命周期随工作区内任一 session 的 lease 延续。
+
+### 8.4 覆盖
+
+| 场景                                                     | 覆盖位置                                                                                                                                                |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 官方插件透传 isolation，非官方忽略                       | adapters/tests/plugin-mcp-isolation.test.ts                                                                                                             |
+| session 间 current / 视图 / 句柄隔离、缓存共享、LRU 淘汰 | office-runtime/src/app/sessions.test.ts                                                                                                                 |
+| 工具从 `_meta.session_id` 取 session                     | office-runtime/src/adapters/server.test.ts（内存传输）                                                                                                  |
+| 两个 session 共用真实 stdio server                       | office-runtime/scripts/smoke.mjs                                                                                                                        |
+| subagent 调用带 root_session_id，server 按它划分         | adapters/tests/mcp.test.ts；office-runtime/src/adapters/server.test.ts                                                                                  |
+| 句柄读完最后一块即释放；淘汰中的加载不登记句柄           | office-runtime/src/app/sessions.test.ts                                                                                                                 |
+| 导入槽位按 session 计                                    | office-runtime/src/adapters/files.test.ts                                                                                                               |
+| 桌面多 session 真机                                      | macOS 开发实例人工验收通过（agent 日志中多个 session 的 `mcp.pool.lease.acquired` 指向同一 `mcpTransportPid`）；桌面 E2E、Windows/Linux、远程工作区待补 |

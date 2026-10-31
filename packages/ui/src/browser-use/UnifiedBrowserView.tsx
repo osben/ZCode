@@ -215,9 +215,10 @@ export function UnifiedBrowserView({
   // Consumed initialUrl/navigationRequest values, to avoid duplicate navigation.
   const lastAppliedInitialUrlRef = useRef<string | null>(null);
   const lastHandledNavigationRequestIdRef = useRef<string | null>(null);
-  const lastRestorableUrlRef = useRef<string | null>(
-    initialUrl && initialUrl !== DEFAULT_BROWSER_URL ? initialUrl : null,
-  );
+  // Record only URLs the main frame has committed. Attachment URLs start a download without
+  // committing a page; they were once written to restore state before navigation, so every
+  // rebind / remount downloaded them again.
+  const lastRestorableUrlRef = useRef<string | null>(null);
   const guestRecoveryInProgressRef = useRef(false);
   // For an external navigation on a failed guest, acknowledge only after the replacement guest actually takes over the loadURL.
   const pendingGuestNavigationCompletionRef = useRef<PendingGuestNavigationCompletion | null>(null);
@@ -442,10 +443,40 @@ export function UnifiedBrowserView({
     }
   }, []);
 
+  // After a navigation settles, the restore URL follows the committed URL: download responses,
+  // ERR_ABORTED and ERR_FAILED commit no page, so after falling back the initialUrl / restore
+  // URL no longer points at the attachment and a remount will not download it again.
+  const settleRestorableUrl = useCallback((target: ElectronWebviewTag) => {
+    const committedUrl = safeWebviewCall(() => target.getURL(), "") || DEFAULT_BROWSER_URL;
+    lastRestorableUrlRef.current = committedUrl === DEFAULT_BROWSER_URL ? null : committedUrl;
+    onUrlChangeRef.current?.(committedUrl);
+  }, []);
+
+  const downloadNavigationRef = useRef({ urls: new Set<string>(), failedUrl: "" });
+  const isDownloadNavigationFailure = useCallback((url: string, message: string) => {
+    if (!message.includes("ERR_FAILED")) return false;
+    downloadNavigationRef.current.failedUrl = url;
+    return downloadNavigationRef.current.urls.has(url);
+  }, []);
+
   // ---- Wire webview events + report guestId on did-attach ----
   useEffect(() => {
     if (!webview) return;
 
+    const stopDownloadSubscription = platform.onBrowserViewDownloadStarted?.((payload) => {
+      if (safeWebviewCall(() => webview.getWebContentsId(), -1) !== payload.webContentsId) return;
+      const navigation = downloadNavigationRef.current;
+      payload.urls.forEach((url) => navigation.urls.add(url));
+      // will-download and the loadURL rejection can arrive in either order; when the latter comes late, only clear the download error for the same URL.
+      if (navigation.urls.has(navigation.failedUrl)) {
+        setBrowserState((prev) => ({
+          ...prev,
+          errorMessage: null,
+          loadErrorCode: null,
+          isLoading: false,
+        }));
+      }
+    });
     const handleDidAttach = () => {
       // navigationHistory.restore is available only for a guest that has never loaded a page. If reporting waits until
       // dom-ready, about:blank has already committed and restore can only reload the URL. Report immediately after attach so
@@ -477,7 +508,10 @@ export function UnifiedBrowserView({
             await webview.loadURL(pending);
           } catch (loadError: unknown) {
             const message = loadError instanceof Error ? loadError.message : String(loadError);
-            if (!message.includes("ERR_ABORTED")) {
+            if (
+              !message.includes("ERR_ABORTED") &&
+              !isDownloadNavigationFailure(pending, message)
+            ) {
               setBrowserState((prev) => ({
                 ...prev,
                 errorMessage: intl.formatMessage(
@@ -488,6 +522,7 @@ export function UnifiedBrowserView({
               }));
             }
           } finally {
+            settleRestorableUrl(webview);
             // Acknowledging after only writing an external request to pendingUrl is insufficient: a failed guest will never consume it.
             // Count the navigation intent as taken over only after the replacement guest reaches dom-ready and attempts loadURL.
             completePendingGuestNavigation(pendingCompletion);
@@ -500,6 +535,7 @@ export function UnifiedBrowserView({
     };
 
     const handleDidStartLoading = () => {
+      downloadNavigationRef.current = { urls: new Set(), failedUrl: "" };
       void cancelWebElementPicking();
       setBrowserState((prev) => ({
         ...prev,
@@ -527,14 +563,19 @@ export function UnifiedBrowserView({
     const handleDidFailLoad = (event: ElectronWebviewDidFailLoadEvent) => {
       // Ignore subframe failures and -3 (ERR_ABORTED, interrupted by a later navigation).
       if (!event.isMainFrame || event.errorCode === -3) return;
+      if (event.errorCode === -2 && isDownloadNavigationFailure(event.validatedURL, "ERR_FAILED"))
+        return;
       logger.warn("[browser-use] 页面加载失败", {
         errorCode: event.errorCode,
         errorDescription: event.errorDescription,
         url: event.validatedURL,
       });
+      // A failed main-frame navigation never committed, so it must not count as the current page
+      // URL: residency would report it as the restore address and the attachment URL would be
+      // downloaded again on every recovery round. The address bar and error state still use
+      // validatedURL.
       setBrowserState((prev) => ({
         ...prev,
-        currentUrl: event.validatedURL || prev.currentUrl,
         errorMessage: intl.formatMessage(
           { id: "browser.loadFailed" },
           {
@@ -642,6 +683,7 @@ export function UnifiedBrowserView({
     webview.addEventListener("render-process-gone", handleRenderProcessGone);
 
     return () => {
+      stopDownloadSubscription?.();
       webview.removeEventListener("did-attach", handleDidAttach);
       webview.removeEventListener("dom-ready", handleDomReady);
       webview.removeEventListener("did-start-loading", handleDidStartLoading);
@@ -659,10 +701,12 @@ export function UnifiedBrowserView({
     detachBrowserGuestBeforeReplacement,
     intl,
     isResidencyRestore,
+    isDownloadNavigationFailure,
     isSelected,
     platform,
     reportBrowserGuest,
     setGuestZoomFactor,
+    settleRestorableUrl,
     syncBrowserState,
     webview,
   ]);
@@ -687,10 +731,10 @@ export function UnifiedBrowserView({
   useEffect(() => {
     const effectiveWorkspaceKey = workspaceKey ?? (workspaceIdentity?.trim() || workspacePath);
     if (!effectiveWorkspaceKey || !sessionId) return;
-    const restoreUrl =
-      browserState.currentUrl && browserState.currentUrl !== DEFAULT_BROWSER_URL
-        ? browserState.currentUrl
-        : (lastRestorableUrlRef.current ?? null);
+    // lastRestorableUrlRef is the single source of the restore URL (written only after a
+    // main-frame commit); no fallback to currentUrl, which uncommitted navigations or failure
+    // states may have overwritten.
+    const restoreUrl = lastRestorableUrlRef.current;
     void platform
       .browserViewReportResidency?.({
         tabId: browserKey,
@@ -797,8 +841,6 @@ export function UnifiedBrowserView({
       // After launch-failed, isReady=false; writing only the address-bar URL to pendingUrl is insufficient:
       // the invalid guest will never fire dom-ready again, leaving both the failure state and queued navigation stuck forever.
       if (browserState.guestFailure && (source === "toolbar" || source === "request")) {
-        lastRestorableUrlRef.current = nextUrl;
-        onUrlChange?.(nextUrl);
         const rebuilt = await rebuildBrowserGuest(
           nextUrl,
           source === "request" ? "external-navigation" : "address-navigation",
@@ -821,8 +863,6 @@ export function UnifiedBrowserView({
 
       setAddressValue(displayBrowserUrl(nextUrl));
       setHasNavigated(true);
-      lastRestorableUrlRef.current = nextUrl;
-      onUrlChange?.(nextUrl);
       setBrowserState((prev) => ({ ...prev, errorMessage: null, loadErrorCode: null }));
       lastRequestedUrlRef.current = nextUrl;
 
@@ -836,7 +876,8 @@ export function UnifiedBrowserView({
         await webview.loadURL(nextUrl);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (message.includes("ERR_ABORTED")) return;
+        if (message.includes("ERR_ABORTED") || isDownloadNavigationFailure(nextUrl, message))
+          return;
         setBrowserState((prev) => ({
           ...prev,
           errorMessage: intl.formatMessage(
@@ -845,6 +886,8 @@ export function UnifiedBrowserView({
           ),
           isLoading: false,
         }));
+      } finally {
+        settleRestorableUrl(webview);
       }
     },
     [
@@ -853,8 +896,9 @@ export function UnifiedBrowserView({
       browserState.isReady,
       completePendingGuestNavigation,
       intl,
-      onUrlChange,
+      isDownloadNavigationFailure,
       rebuildBrowserGuest,
+      settleRestorableUrl,
       waitForGuestNavigationTakeover,
       webview,
     ],
@@ -863,7 +907,6 @@ export function UnifiedBrowserView({
   // ---- Navigate to the initial/restored URL on mount (restoring a human tab) ----
   useEffect(() => {
     if (!initialUrl || initialUrl === DEFAULT_BROWSER_URL) return;
-    lastRestorableUrlRef.current = initialUrl;
     if (lastAppliedInitialUrlRef.current === initialUrl) return;
     if (browserState.currentUrl === initialUrl) {
       lastAppliedInitialUrlRef.current = initialUrl;
@@ -1001,12 +1044,16 @@ export function UnifiedBrowserView({
   );
 
   const handleRetryGuest = useCallback(() => {
-    void rebuildBrowserGuest(lastRestorableUrlRef.current, "manual-retry");
+    void rebuildBrowserGuest(
+      lastRestorableUrlRef.current ?? lastRequestedUrlRef.current,
+      "manual-retry",
+    );
   }, [rebuildBrowserGuest]);
 
   // A load failure means only this navigation was rejected; the guest is still alive, so call openUrl again without rebuilding it.
   const handleRetryLoad = useCallback(() => {
-    const retryUrl = lastRestorableUrlRef.current ?? browserState.currentUrl;
+    const retryUrl =
+      lastRequestedUrlRef.current ?? lastRestorableUrlRef.current ?? browserState.currentUrl;
     if (!retryUrl) return;
     void openUrl(retryUrl, "toolbar");
   }, [browserState.currentUrl, openUrl]);

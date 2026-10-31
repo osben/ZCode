@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "inputHashEncoding": "UTF-8 with CRLF normalized to LF; notice and source snapshot hashes remain byte-exact",
   "scope": "Production dependency union across current workspace projects, copied source/assets and native tools; not a per-installer SBOM or a certification of all licensing obligations.",
-  "noticesSha256": "4024cd171f30e4ff4f7ce1f1ce0545306f09f9de9ba6bdb581723bb3d5a3bfec",
+  "noticesSha256": "5b90fc0cbb16c8fedb3d9a005b344f90d8cd77369d18dfbf3febd2c5b3a894d7",
   "inputs": {
     ".agents/skills/agent-browser/references/authentication.md": "e2c3b0f4a1dc1368dee821f03c000d818a48421d09f3872525dddffe73f2112b",
     ".agents/skills/agent-browser/references/commands.md": "17522fc56d742663f47231ff06c4811abc87e12c7f78e11f94d253ddd540a909",
@@ -225,41 +225,43 @@
     ".agents/skills/react-best-practices/rules/server-serialization.md": "f4c7d68b29c82381baad059c4a7f09e868e71ec9c3115a26ad3ae7d24c0dfe1f",
     ".agents/skills/react-best-practices/SKILL.md": "71ed7794962fa6e803ee83030517b5b93a9f70fbfeb431ec4535c5480a8d8355",
     "apps/dev-docs/package.json": "edbd31600f6e7801f1556ab6f8feaf2c6be0a5a9c47c6109b8afbc456eff127a",
-    "apps/zcode-cli/package.json": "6be71e4348a0e720e78b5ad4c6108a0c93e375ac5e0572a8a83f9580eea3c0c9",
-    "apps/zcode-cli/packages/adapters/package.json": "b826ed5321ff5cd037e8d9adc4e4caf5684f331d6ecd7474cc30355ebd94dbfb",
-    "apps/zcode-cli/packages/android-emulator-plugin/package.json": "67d65b4b85ecbb313dc797d065b4339893ecb162f918891162ead3aff31aa57c",
-    "apps/zcode-cli/packages/bootstrap/package.json": "5e7604cefd848bb2901ff333c2e094f35de77511a17f17988d7f3dac0e476719",
-    "apps/zcode-cli/packages/browser-use-plugin/package.json": "980cd566eae2bc06eb247bc37793285dfd272937f68bfa76625bc0d9772edf9f",
-    "apps/zcode-cli/packages/cli/package.json": "ecdf3ef1d1dcb1b939b7fe0f6c33d55b43c3b49b9a2bf623f9dc9b91f3b3ce63",
+    "apps/zcode-cli/package.json": "e156fcdcb017cfd35efbdd6301266bf6e60bd320e0569c8622909f69bb33e877",
+    "apps/zcode-cli/packages/adapters/package.json": "7ccdbfbed33fd56125e83cb9be8c42d10cdab7c19f9d1ee815fa6b0ba3848415",
+    "apps/zcode-cli/packages/android-emulator-plugin/package.json": "16dbd1d9ae3f4b11139a3017537b9d5d76680d715898648bca0103f20aa9322a",
+    "apps/zcode-cli/packages/bootstrap/package.json": "104e511d678ac18665394ff3c118185038a5f1838ee1af28324a4d18b9258911",
+    "apps/zcode-cli/packages/browser-use-plugin/package.json": "065e2ac7dff6adf510a9072c6db9787b0aa2aaa2164cb298c6abbce3adfb2af1",
+    "apps/zcode-cli/packages/cli/package.json": "319f1413696fa1fc08a16aeef7de70467ca240443064fa29bfb0246ba92a2070",
     "apps/zcode-cli/packages/contracts/package.json": "0c3ff1fcc74d5b3635a818b0a1e94b98f40c0610a22818c1808f6bd93db76dbe",
     "apps/zcode-cli/packages/core/package.json": "09365d12d8a6adf4340a76242562b7ac94948bf79e5351028de75a2a2bc4dfc1",
     "apps/zcode-cli/packages/core/src/tool/handlers/generated/bash-command-registry.ts": "f92c0350f433926ce4894218a9f81b9dd7d15e215852b978254f47cf9f8af0f3",
     "apps/zcode-cli/packages/debug/package.json": "afc187eeca718e7538f9ad10ac7c13420a0475a1518041eb2d11ca334007baed",
-    "apps/zcode-cli/packages/documents-plugin/package.json": "7ce3663e5e14ff8f4e9c2c456e0e023c1228ca0823518e56073fdc1149389ff7",
+    "apps/zcode-cli/packages/documents-plugin/package.json": "8c620e111595e2507d72b7987b93e5248b896368b164b6895cc93414cb4fac3f",
     "apps/zcode-cli/packages/dynamic-workflow-runtime/package.json": "f44b6f8a302280f5cc034511371987b0c3d35d0c4bd5d101b774f1987d2a063c",
     "apps/zcode-cli/packages/dynamic-workflow/package.json": "8882dc96ee17ccf1790e9d0075cdecc9bd633f81d77afca1b91a70ae0d5c5a94",
     "apps/zcode-cli/packages/i18n/package.json": "cd51fc9cda66d726ab54f9821ff748bc150bf4bd84143bb7c8aa9b712a7e6c61",
     "apps/zcode-cli/packages/image-search-plugin/package.json": "f59cba2c8890624a2f5164c9e2f68f808021d2958a7f088544c268eddc9a26a5",
-    "apps/zcode-cli/packages/ios-simulator-plugin/package.json": "17dcda2be5d4c92dcacb9f7f55f1675c62a69d7285df74503a08699d7e24c827",
-    "apps/zcode-cli/packages/node-repl-host/package.json": "15d1f3446779c0e1bb0db3026dd2e598a7bdb95c95408080c1803eef70d8ec24",
+    "apps/zcode-cli/packages/ios-simulator-plugin/package.json": "31958146608a541956de69ba97e3b6f8438d5d23b4691dd2c1aee1395dddbecf",
+    "apps/zcode-cli/packages/node-repl-host/package.json": "9fd8c4a9acbf31e59c2eec778f2da34b80b9f34e1194621dcfc2f43fa649d694",
     "apps/zcode-cli/packages/office-runtime/package.json": "c51046c5646a0670e554ac4b5949c70cc029c1ba94a5ee3b277b26208e2b4063",
-    "apps/zcode-cli/packages/pdf-plugin/package.json": "63588284641c57e2d7a6b8ff5826cdcb451a5b21f7bc91d6f544ef535d36bc14",
+    "apps/zcode-cli/packages/pdf-plugin/package.json": "2ccccf3f68100d30434c8bc4200e5fbdb94407589cf5f773017d9e22db5904fd",
     "apps/zcode-cli/packages/plugin-creator-plugin/package.json": "17ab1504c465c165b013f983270f54868aa282538557bf6f935daac153e46ba6",
-    "apps/zcode-cli/packages/presentations-plugin/package.json": "8c8bc559c98ca67cbe95616032589d14425dc85fae309a824101efc1a021e861",
+    "apps/zcode-cli/packages/presentations-plugin/package.json": "4e3ece90cfd89765a39985d95376ed5d5e02be15ee4b2a284dc50bc1541cbddd",
     "apps/zcode-cli/packages/restore-legacy-sessions-plugin/package.json": "ee180a70bc31e945dfa798fd2592a3150cd2e55d546d44be361a90a24cb33fd3",
     "apps/zcode-cli/packages/shared-types/package.json": "ad13f66905c8a6a9090728fbd7c0d4f4e08f088fa734eee1c00c16ea85c25b25",
     "apps/zcode-cli/packages/skill-creator-plugin/package.json": "9477f2dbaf0de233856a8d71f8aa1e4fac95e189358887df5c3b7c13672727a6",
-    "apps/zcode-cli/packages/spreadsheets-plugin/package.json": "b293c49125bfb98e5798210fb773f71266d725867c97e9b01442f1ae3a530228",
+    "apps/zcode-cli/packages/spreadsheets-plugin/package.json": "5dacf452bfc6206efc2f204b368cbdef31a3f9a4a331be9d1b61b267f4f208df",
     "apps/zcode-cli/packages/superpowers-plugin/LICENSE": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
     "apps/zcode-cli/packages/superpowers-plugin/package.json": "003495dd8441f4a9b017931e081770a157fa48b895752d0cfe7487d437507685",
     "apps/zcode-cli/packages/swift-bridge/package.json": "958674fcd44c789564ee672b0e6c687f1f900f4286174280700ddfb442d23906",
     "apps/zcode-cli/packages/telemetry/package.json": "954efd1242b408ff58b3d7cd79816710c4262ebb09b6bb8b54f2db4af72a7b6e",
     "apps/zcode-cli/packages/tui/package.json": "340a14a3c7e99aa7a9239c8d0f4220689c9d1a7ec575869141d3961fd8ac6c2d",
     "apps/zcode-cli/packages/typescript-lsp-plugin/package.json": "ec39f2b8d5896178d63fe069077377d71ba78b6fd8ed15d830c965569a32b11b",
-    "apps/zcode-cli/packages/visualize-plugin/package.json": "f38e0334cd743a4ca15cf8884ca563aaf0b37bccbdfca63505f56f84f5576971",
+    "apps/zcode-cli/packages/visualize-plugin/package.json": "dc688bea66bdbedf9101a3cb427cd351a659139ce882bda29b64064951557fe8",
     "apps/zcode-cli/packages/zcode-cua-plugin/package.json": "31115112fe15f0c5206ef497694c0a7bec2853e7d1cb6f93791f5e90909e5371",
     "apps/zcode-cli/packages/zcode-guide-plugin/package.json": "b6b6c4a0097496f5bf8848ad4fecea1c2e9f8a94d4a3b962217a74a6253deacf",
+    "apps/zcode-cli/packages/zcode-site-plugin/package.json": "533c0a36851bb83564b33f1dcb21e178f7b6d772703acae9a19d8b55cc0b4daf",
     "apps/zcode-cli/tools/prompt-trajectory/package.json": "d88d95b28f3c6e82905d6569d0605c2634db73c27cc7ebb79765f5851cdf140e",
+    "apps/zcode-cli/tools/provider-regression/package.json": "65065e1cba48ffbac435ae7490623b2ccb79f664e813892592de3fca4fce099c",
     "apps/zcode-cli/tools/typescript/package.json": "23d7e50d2089d205ce3022c5bafbb6b3e31d000e41ac678a5934e0b72627cf3a",
     "docs/knip/docs/.gitignore": "ceb40af0a4929eda8eb4d8e9562783000df06dd09ef7a4de9f170b7c1b79aaac",
     "docs/knip/docs/astro.config.ts": "e28f72a471b759d9caa185f9b0e0f65ed50bf2314a4513a8513ce6fa0bfb42fb",
@@ -434,10 +436,10 @@
     "docs/knip/docs/src/styles/theme-light.css": "e2e85900fd43b5b563f56b9ce7e2a09f07d7420a78e80f0133efffeb8fce2aa0",
     "docs/knip/docs/src/util/post.ts": "6d7c45bd29035a73f1b67d24524760c7e317f367d32216de2c9a240dda7a40d1",
     "docs/knip/docs/tsconfig.json": "662b1f10a5e572b49a45669e4be9ee46c22f987dcf277c204948777b367df1cd",
-    "package.json": "555766ffc6c15639f068d62f2eb4561a674635703331a0b4b0c0b1e1fa0f8d2e",
-    "packages/acp-agent-runtime/package.json": "851da0fb39e9bfd221b9d7aa58a083a51ca64d10182f8c68a2169c4f0a6cd46b",
+    "package.json": "d0e703e0d1a869dea9df9c251594e88307d9752954116ff8396d21b925df5c5e",
+    "packages/acp-agent-runtime/package.json": "91dc7df94ff32954b6728577a07535204080112ab468cffe374a1f2dedd96ec8",
     "packages/client/package.json": "e76f441549130dc3e5e68072a36b6cb9044e19a6625f1e813f19a4def2b1b689",
-    "packages/desktop/package.json": "3760844458c67c655cece2517492b4cbe7561ff4ece646d3140ee3e05cae0cfd",
+    "packages/desktop/package.json": "eb55afa66c3a37878d55dcb20461fe58e40a958710e8fabc337b02f88319b8de",
     "packages/desktop/src/renderer/public/material-icons/3d.svg": "9527b849f0fba57ca7640e2717b3a19cb5f5e046712cbbd8b75d73af338c68fb",
     "packages/desktop/src/renderer/public/material-icons/abap.svg": "1335bd7eb9a0ed49deb622330d680c2e97731726a7a5eee8e4f46dc1e5db4de4",
     "packages/desktop/src/renderer/public/material-icons/abc.svg": "d1a68020e8f020ef29dca5f94dc8613b7ae8fb5b212d8b1cc23b0f975ac7acda",
@@ -1586,20 +1588,20 @@
     "packages/desktop/src/renderer/public/material-icons/zip.svg": "dad79a45f756542d37abd422502ecfbea15720b92ea1c9d80ef0439ab6b9448a",
     "packages/e2e-report/package.json": "9808a9da5498ce2de59f05f86543fb9d250d888897d477fa3c6f0d32ec265c37",
     "packages/formal-proof/package.json": "48ca152b063d96ecff4308d581e130e7c95708d4bed9065ff09561c9ce51132e",
-    "packages/model-option-map/package.json": "9ba8537bca94b388eca39307ebb3ab85c473f01fa51368162be5b3bc303315ee",
-    "packages/provider-node/package.json": "0174b81cf8bf75dbc165aed64868d00d7d96d2371b18a524b23897edd54809d2",
-    "packages/provider/package.json": "ac57cf638a667737216dd0bbbbb101552cdaa75bca8d502d10f1b8a5a281c10a",
+    "packages/model-option-map/package.json": "3c4f3581fda415d2567e9c33be2fbecb6fe2160fddd2a5a2265012bed977b77b",
+    "packages/provider-node/package.json": "173a510ed39d88042602697345dd3eeefa2dcc786bef85267db60f39575ca84c",
+    "packages/provider/package.json": "dee1d0a66f94d922685a647af9972def6482e2d2d96cfa4e1facb402b40af7d0",
     "packages/remote-relay/package.json": "0eb23d547f273b899e3e9b286962851d5ac299c6666196dbb9a7bda05b768277",
     "packages/rpc/examples/01-basic-ipc.ts": "ca24aeb27c2daacf3a177fc34515be4249a33fe20fdb41376aa7cc91829067c5",
     "packages/rpc/examples/02-proxy-channel.ts": "ada298b301df28172687a539a670c091807d4f5afef81fa12b86f77225623943",
     "packages/rpc/examples/03-ipc-server-client.ts": "aa2d787bdbca0004262fb51c419a6b54727cf3ca8f7ac773ce5f878e38ec480e",
     "packages/rpc/examples/04-remote-connection.ts": "a20ca7ac5707df08b03f174b2f4027524d062f496a5fe5a9eabad4d8874ff0e8",
-    "packages/rpc/package.json": "096520229295f4efc4d8bea1d184484cd2f7289af17472d80847c7db1ac26dd0",
+    "packages/rpc/package.json": "f5732ad00827c7171df134220ce2f3325efdbdcfa506216f137b281892920ddb",
     "packages/rpc/src/buffer.ts": "ffa593a4b55eed31d8e013fb3bb68169fb331b79dae0729f4d4e664fd3c379c0",
-    "packages/rpc/src/channelClient.ts": "842e46ecb5141b1bf28490b59a8c6e24bda40112a71adffb91c8614c06d580f8",
-    "packages/rpc/src/channels.shared.ts": "d7faaf2affcb028355501e44b0c9bcbc673f7ad4f5c812cbf012d33260517586",
+    "packages/rpc/src/channelClient.ts": "7c14e3a80c55b30b91de5754d1c6c75dfb0c0c1a100eb948cc0298fa4b2c1a64",
+    "packages/rpc/src/channels.shared.ts": "b258b76cf9bd792b117b0dc4c1ef7a4ee1e7245ab878c5c7ffe07b33a07c3bf6",
     "packages/rpc/src/channels.ts": "afaba1724055a3d2e6b8b379553569489b71ac6eb252f636ab91649657485209",
-    "packages/rpc/src/channelServer.ts": "89110433522b71de8914bbb23117b4028a3c8e4bc3591af5a46060963bbe95c6",
+    "packages/rpc/src/channelServer.ts": "6020d47312972f6d7f113c28507e7934ca3779692e2cfcef6b5913c8bf441bdb",
     "packages/rpc/src/delayedChannel.ts": "e7607b7fe9f35c742db206df90852e2ccafb75abc088606cf1ddbae801574ecf",
     "packages/rpc/src/foundation.ts": "c811765db208fc3c1f1e7c1613df0a1ac66f0af9104761d8d7d5ac0144d7062d",
     "packages/rpc/src/index.ts": "61f6e09fd7402dee1ed64c2a48410c54baa53be532dbcfefc7c9a9a9d4610521",
@@ -1610,14 +1612,14 @@
     "packages/rpc/src/protocol.ts": "9e1ec464bb37f954d5078214d1105e00d8dbeddf9deb99cbb2c6ec902c993de4",
     "packages/rpc/src/proxy-channel.ts": "d47403622bacceb29efa598f2968705e0e603463b242e0cef4f5810dc28f265e",
     "packages/rpc/src/remote.ts": "a3e143e390ade3b938e988102c1815f15aa6122bb2535a0aba82b3620b694a5d",
-    "packages/rpc/src/serialization.ts": "cd5be9d083d7ee0c28e9adbfde601594020fd86ec33f3c9d2ce529af52ced6d4",
+    "packages/rpc/src/serialization.ts": "9efd0e5fb427ddad866a2dd78f069c994aaf6fe8ee9c0f0b521299ff02cdb065",
     "packages/server/package.json": "d079c4959b9cc1ffcdbe67fb57091bbf015a532bf4109d1c8ead1de5433e5146",
-    "packages/services/package.json": "afb002925c5290b8835510404243be7860829fc3ef829abefee601a482f48011",
+    "packages/services/package.json": "39f9b56ab6fbc977470fcc77116c303372784feefb63d7f42d918ebea1716ed2",
     "packages/share-ui/package.json": "b0fac6165b73a93e53fd0df576694d3e500e1856a38b60c3e5f4573fb40a3593",
-    "packages/shared/package.json": "3a7914da4525ba4bf7b7aa25a90fd20a1c5bed50ad8f8013cb3787603d66c6be",
+    "packages/shared/package.json": "d68270806f47de5ff999ca004da4a64a8948e87ceafda5baaef28e8584f0c402",
     "packages/shared/src/zcode-protocol-v4/wire-codec.ts": "68c3b53bf93f67891e9abb0d908054192633be671a148a8b3019590aa3d4ef6a",
     "packages/stream-animate/package.json": "9b3ca5e5993ca636af4569212df1974898ec5f3016de5da223a8a985258917aa",
-    "packages/ui/package.json": "e9014733b5efb635970aab0350589139d061a42eed2b154e736eb84eb03da7ce",
+    "packages/ui/package.json": "93274fb91784adc92c4f7ac80a563635bc42b27b95a7d0ab7ab7db133a67f212",
     "packages/ui/src/assets/notification-sounds/task-notification-pop.mp3": "b2f9e814e5eb1330d637bf75833095fe49864357a263cca136d3428d6bb8b305",
     "packages/ui/src/assets/notification-sounds/voice-dictation-start.wav": "99c2a8079149143d0b3b96ce87e266e8fc809f54efec388918df6f4034c55a48",
     "packages/ui/src/assets/notification-sounds/voice-dictation-stop.wav": "1420173f160ea05c1010021719bae2c7828082f16fc4b685f3f8f2746fb578c5",
@@ -1627,7 +1629,7 @@
     "packages/ui/src/components/ai-elements/audio-player.tsx": "3ed28af16b3a49123ac19b27763188d1087bdb8919d52263c00c761326d0a15a",
     "packages/ui/src/components/ai-elements/canvas.tsx": "7bc92905e97c182c9a2f52b421a4d70414c8700a66039af9a4466587f74d2687",
     "packages/ui/src/components/ai-elements/chain-of-thought.tsx": "d9755d90e2949137f03bb603ed34a1e1893a83fdc3cae321a02814af307400e3",
-    "packages/ui/src/components/ai-elements/chat-loading.tsx": "2e6da0eba3e49cc78cc01d463c84c60b7bafa6a9a219e9babb429aeb96a272c1",
+    "packages/ui/src/components/ai-elements/chat-loading.tsx": "f46632c241c6e5a914d097bf4557c649c91d16fd589a95fe29370e72d20070e9",
     "packages/ui/src/components/ai-elements/checkpoint.tsx": "72459f6fb8668e9245ec32542f92c7de809cc9b5a366bb44ab08f91ea4e1255b",
     "packages/ui/src/components/ai-elements/code-block.tsx": "78a9d276d00cd1eb89b6ce2f456b5f9c00126519d690cb92a2c4ceee29c4ab61",
     "packages/ui/src/components/ai-elements/commit.tsx": "afac0c4b7c646fcdeae1b9f329c7cb236f72052f537831990b86c02e7f2c7260",
@@ -1640,7 +1642,7 @@
     "packages/ui/src/components/ai-elements/edge.tsx": "661a25632f0879b8363f22e6b99198a6d37ad622781c798c090fcad9b591b181",
     "packages/ui/src/components/ai-elements/environment-variables.tsx": "397931dbf3496ad98df1f5e044410b87030e37c245e1299bc774c294fb08c047",
     "packages/ui/src/components/ai-elements/file-tree.tsx": "55386da0f5d2f453dd88fa84716e02cd0ea36a2f3822d93e717102ca8247b15f",
-    "packages/ui/src/components/ai-elements/image-preview-dialog.tsx": "1f25a198c49c3b2d6e4a72fb16efba3e621beeb51e00e808ca9cff65be39d546",
+    "packages/ui/src/components/ai-elements/image-preview-dialog.tsx": "ffa2181ce43eea4ad325ca9c5c7ea9cccd9852cdc4628bad981be45c545cfa9b",
     "packages/ui/src/components/ai-elements/image-thumbnail-gallery.tsx": "185766c039c6c4852ae12360360f7cf29e844a1463358b8cc2c6de972dcdaf43",
     "packages/ui/src/components/ai-elements/image.tsx": "1c6f9595ef814c4ef9648607562fa77a3007f7d857571f8e107a24022fe83e24",
     "packages/ui/src/components/ai-elements/inline-citation.tsx": "f7221c9ed75860944f1eee97df52edb95f822acdafa94852a1ba2bee4f97725c",
@@ -1650,7 +1652,7 @@
     "packages/ui/src/components/ai-elements/markdown-list.tsx": "97f241edff91efc12c5089e442ee342bca97ac7a387009db8fc05eb34a815bfd",
     "packages/ui/src/components/ai-elements/markdown-table.tsx": "26b4a5c6ee7cc0ba8b6ced914460cf30fb6564aa1776555a515624cfbb5f39df",
     "packages/ui/src/components/ai-elements/mermaid-block.tsx": "dc0540c45299cd3039942d1d41c9abc52867d2ab0297f92ac5877dec151b7465",
-    "packages/ui/src/components/ai-elements/message.tsx": "4bb5728ee57d9d085250ad43bf0be461b3c476c6eedabea3a5cc7304baad9967",
+    "packages/ui/src/components/ai-elements/message.tsx": "fc6a34283a58ae3bdcea9c709fd312dc90d0b488e6fb93475a587f3872a6fc2e",
     "packages/ui/src/components/ai-elements/mic-selector.tsx": "e6249c6380a9aa768a411b7fc05e57388b7dc8a6e2afae687250d33ce9bb54db",
     "packages/ui/src/components/ai-elements/model-selector.tsx": "745414195be63160ab61efadc8352c2c6a28d3ba53107896c146a499c0847b99",
     "packages/ui/src/components/ai-elements/node.tsx": "d7b68c41717a509bd9063f0a9fc0c4525ceb2b23bae4028bcd49ec949fc6268f",
@@ -1665,7 +1667,7 @@
     "packages/ui/src/components/ai-elements/prompt-input-textarea.tsx": "4798574a8f2fc8584a1c5585d9dd878dd19d76bd05603e77948ec12180649def",
     "packages/ui/src/components/ai-elements/prompt-input.tsx": "0fbb4b74bc85caa860a68c894fd525aa5beda4c7634a5fc7a9ce75a644a5d922",
     "packages/ui/src/components/ai-elements/queue.tsx": "0f11940db2b9fe8539906446dcaa2bd77ce9139d9d8db5e168a118698dc07623",
-    "packages/ui/src/components/ai-elements/reasoning.tsx": "5ea3d0b93547ab417757ebc93238248076c346163586f7805ef9981daf66ef62",
+    "packages/ui/src/components/ai-elements/reasoning.tsx": "63c04393d8679170ebffc8e092c1bf31053043d123cfcd1f7ce1a4a6fc142ec5",
     "packages/ui/src/components/ai-elements/sandbox.tsx": "f521400dbaebe4c2a2fbcdcb8c18f98980c566169233beb137b22a093b44bbf0",
     "packages/ui/src/components/ai-elements/schema-display.tsx": "826d2e11423ee3bc0295c31936c347f06361335aa849626031aa0885e3530cdd",
     "packages/ui/src/components/ai-elements/shimmer.tsx": "ac7a33e314039f0807f03edbb116437259e715418b199a51983b5fd15bcd4150",
@@ -1694,7 +1696,7 @@
     "packages/ui/src/components/ui/carousel.tsx": "75966a0c51114fb00e21a1d9a481008306055f2811c8fd744c889b1fb7924677",
     "packages/ui/src/components/ui/chart.tsx": "282e9cc30bc1213d7c9073c675b7726e6a1f031cfe889df6d266caba4615ceb8",
     "packages/ui/src/components/ui/checkbox.tsx": "5b3cb5612ed7654218e1cdd86fc41c7b490475721948d50a603996133245bace",
-    "packages/ui/src/components/ui/code-viewer.tsx": "94a4b5ea4295d9f3d5b5af3898f8ea0ec1b03b815d7837f20b1c1473e8419844",
+    "packages/ui/src/components/ui/code-viewer.tsx": "d5abd4e9dbdd6e813c564f1f17efca1a1a7b09c7e6b4a5e3d53d06a17ee5baaa",
     "packages/ui/src/components/ui/collapsible.tsx": "fcb5125c2c0e824e8b75e3b9c164011bac7a4c602ff83cf0937b71620ee77d92",
     "packages/ui/src/components/ui/command.tsx": "55bfa0562eda095412bb18e1411509540afd4e020d95c948dd37c6bcb2e27593",
     "packages/ui/src/components/ui/context-menu.tsx": "1b36d77da7b66ec68f5bf71d6cd8597a3ed0545266f02a7216b4c8d8aaba4ce3",
@@ -1729,12 +1731,12 @@
     "packages/ui/src/components/ui/switch.tsx": "1a6490eb3c47b3a86b76c8469e5702608ea57da7853df5de00fffa9a4a472adf",
     "packages/ui/src/components/ui/tabs.tsx": "adc59a0469c80118e9d60c08bf0222d55664ef95e6c522496b5c201011b347f0",
     "packages/ui/src/components/ui/textarea.tsx": "a839574ce1301fbaa9ba917fdb980900eb9118bffa7c6c4e469f3293b122ed30",
-    "packages/ui/src/components/ui/toast.tsx": "96b98d0952766416cfdc524f16141852a80502eec88c96cd37039f4cf9711da3",
+    "packages/ui/src/components/ui/toast.tsx": "44ff42c1517f038199b5bc58746272fc073c7272ac2a8ede3bb51e191b7c37dc",
     "packages/ui/src/components/ui/tooltip.tsx": "b385da0f882ef4a44c101051107a670c42f7b347b86ef8ca0dba40369ed34d3b",
     "packages/ui/src/components/ui/usePdfZoomOverlay.ts": "86ecd37ff0d7d1f99fdc653196c276d23b6db5b0c4df96cf6c9170696fd2ad62",
     "packages/ui/src/components/ui/ZCodeAboutLogo.tsx": "1e5b7c2e8a9dc98a3c597cbe34122521319eaeb89825e4c41641e77715d1407a",
-    "packages/ui/src/lib/builtinSkillI18n.ts": "105a8c42c5049409932138bafc2b96933a5f57c7403abbfbe1a534f7131c370c",
-    "packages/ui/src/styles.css": "72c59c493026072508e8ab479995bbf856bdaabdaf7aa9f26f8138a0c3431ef5",
+    "packages/ui/src/lib/builtinSkillI18n.ts": "07094b38082b18d937512d0c349c4729bce771e671e47e403fb63ae5b9f226f3",
+    "packages/ui/src/styles.css": "725738b9281e3adbc95b3eefcb196ccb70f6569f1a70134c058089654950c475",
     "packages/web-share/package.json": "a11495f2e892fac87e07a9d803162c055aba98870d6cef5686e29e1cb7ff2f2f",
     "packages/web/package.json": "3ef958bcfb1b100bc0911f652f965a50d41a75a72eb85c1ed889793239578208",
     "packages/web/public/material-icons/3d.svg": "9527b849f0fba57ca7640e2717b3a19cb5f5e046712cbbd8b75d73af338c68fb",
@@ -2883,18 +2885,20 @@
     "packages/web/public/material-icons/zeabur.svg": "8bb7c84934202e9b24842ddb1ca69d316b9d69f1a4f5ebc9bbcce78eb2cea1a7",
     "packages/web/public/material-icons/zig.svg": "37be0ce02cf471b18d86150b3c38e80caa7c16c49a15078e7db6f1f41788d101",
     "packages/web/public/material-icons/zip.svg": "dad79a45f756542d37abd422502ecfbea15720b92ea1c9d80ef0439ab6b9448a",
-    "packages/zcode-cua/package.json": "794687f6e1bf78cc4838e776263908223e2df0a79e15d867a655b112f123ce20",
-    "packages/zcode-server-cli/package.json": "c7595857bfc586a97bb2e9c960d8c97c18bfad21e9cb08b3db07a2d679f0cde6",
+    "packages/zcode-cua/package.json": "793b57a07e1e7321a7c939f070ce8fadf2f6863bb830444a6cdc37a2e6e133f8",
+    "packages/zcode-server-cli/package.json": "08baf52bbe33de54fe01e583b6f978818951731daed6682267c3e0e77208b270",
     "patches/@ai-sdk__anthropic@3.0.81.patch": "d3a7c381eba7f5157f765a0528003af17cf84544911dfb7412c7800168e01c18",
     "patches/@ai-sdk__openai-compatible@2.0.60.patch": "9632fe9d821b3dc20939ae509cc35b968d90d018bbd1d812390718898182a38b",
+    "patches/@aiden0z__pptx-renderer@1.2.4.patch": "e1a90a724324c45a2cc90cf84d1ae1f35755b8fc9438a208d610960bd0d5f65a",
     "patches/@arms__rum-electron@0.0.3.patch": "f1454df241f84744c2d488cd1e47c9640ee2aebf4373759343a430e9114630f6",
+    "patches/@extend-ai__react-xlsx@0.16.0.patch": "b2fc5fcfa1aab1271d20fd539d2a367f06aac08a191425885cf8f1125b7c6bc8",
     "patches/@radix-ui__react-collapsible@1.1.12.patch": "4b7b3781f603e111bb33aef9c4b1694ac9bacd3dff47692606de9876d4631164",
     "patches/vitest@4.1.7.patch": "11fdb66aa985e1d77e68752deeb7c1130ae33c9a4e2968f23aae8adaf8bc9ba0",
     "patches/wdio-electron-service@9.2.1.patch": "52481dae5e76772fcb8c2a9ff42feb3d0e1478e28815a4b975c81b9287e3385f",
-    "pnpm-lock.yaml": "93babef230c18902b7377bf40820f870a4c6af11634e88fc6340fbf6fe0727b8",
-    "pnpm-workspace.yaml": "b0ff9cab81ab487a7eea1f10f14ad297e209db77706b634e61773e6957151988",
+    "pnpm-lock.yaml": "1b0e51c762e33909e273bc7050a450703c911f1ef4feae4b87a890bd15bcade6",
+    "pnpm-workspace.yaml": "11a5fc7d5120030a34f731c4ff283acc9228e8023d0c5370ca80f00d05ffc4b1",
     "scripts/license-texts/Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-    "scripts/native-search-tools-config.mjs": "044aeb91fe4ce6aae345400916ba8fbfa5c3e3a220a09f52ea267c9533d9a4bd",
+    "scripts/native-search-tools-config.mjs": "6796d146adde87ff28d132911aea0ed54bb68aa8cb7229feb0fa8980e0ee7aa1",
     "scripts/remote-native-search-tools-config.mjs": "2ddb7054e219ea487596cbdcb83d5c7eac9f239cfe169cfac22e3759d95d7c35",
     "third-party/copied-components.json": "c06f4c9105bcacb868bc1b2010e822242f71abcac20dd76f01e3c2b881ebd811",
     "third-party/embedded-components.json": "9586ccca15897f56d4ca1d703dffe9e02880fedd766c1dff93f7ac1f52ea891a",
@@ -3012,8 +3016,8 @@
     "third-party/native-search/licenses/f8a6a9a718ca8be13701d706d208dd0d7b4d2b41cb1df3342fc5a6d602bd1dac.txt": "f8a6a9a718ca8be13701d706d208dd0d7b4d2b41cb1df3342fc5a6d602bd1dac",
     "third-party/native-search/licenses/f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af.txt": "f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af",
     "third-party/native-search/licenses/f9c375a1be4a41f7b70301dd83c91cb89e41567478859b77eef375a52d782505.txt": "f9c375a1be4a41f7b70301dd83c91cb89e41567478859b77eef375a52d782505",
-    "third-party/native-search/sources.json": "2998c72709a6db9d95ae2c1e1a4ca5e0c202e0caa5bd93cc29c108b5b2eb846a",
-    "third-party/npm-overrides.json": "f6c44410a85c445fb700f0777beb4ed2cea5e335ec455ad4c6be397c6440ade8",
+    "third-party/native-search/sources.json": "a75a5719bd900be85b97e3cb9ee365a59c378b814e5b509c1d7f85e26b2e88c6",
+    "third-party/npm-overrides.json": "5206e939938ccef73fd25c894ebc4df55a868055ae58a763c76d5eedb258febe",
     "third-party/runtime/node-22.16.0-LICENSE.txt": "1ae62e2015784ba438db7b04ebd33f3c4ff3efdb824c111c4ececd99945fd52d",
     "third-party/runtime/node-24.14.0-LICENSE.txt": "4573185d56580da2b890ba34a85a409257640f1c5632eade4300137266194d18",
     "third-party/runtime/node-26.11.1-LICENSE.txt": "6b85ee1983d01fa2cdcdd5d1a3053c6221fae41d6a54e43b416bf35969fc4128",
@@ -3059,7 +3063,6 @@
     "third-party/upstream/5f787c1dee3c56547f09ccc2906ab5f5293c4d8dd6c8654e573216c38e908dbd.txt": "5f787c1dee3c56547f09ccc2906ab5f5293c4d8dd6c8654e573216c38e908dbd",
     "third-party/upstream/66aa9feab8bb39aceebd69f2a357015d57ceab486d3c7a19ff8d3d4110a6d101.txt": "66aa9feab8bb39aceebd69f2a357015d57ceab486d3c7a19ff8d3d4110a6d101",
     "third-party/upstream/6ae13df543a24b3fb18c25182cf4f084132f799ea9225410f7037888401b7469.txt": "6ae13df543a24b3fb18c25182cf4f084132f799ea9225410f7037888401b7469",
-    "third-party/upstream/6f7e6eae2a2afbaa67b266650f7342e7bf8e82cb57f6ab98148b3d6e0fb4450a.txt": "6f7e6eae2a2afbaa67b266650f7342e7bf8e82cb57f6ab98148b3d6e0fb4450a",
     "third-party/upstream/75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6.txt": "75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6",
     "third-party/upstream/8405932022a556380c2d8c272eff154a923feb197233f348ce5f7334fb0a5ede.txt": "8405932022a556380c2d8c272eff154a923feb197233f348ce5f7334fb0a5ede",
     "third-party/upstream/8802fecf9da4367bc23bcf20b21cc143785fc6c92b152f3fa7fbe6ce08d344d6.txt": "8802fecf9da4367bc23bcf20b21cc143785fc6c92b152f3fa7fbe6ce08d344d6",
@@ -3972,8 +3975,24 @@
       ]
     },
     {
+      "name": "@electron-internal/extract-zip",
+      "version": "1.0.8",
+      "license": "MIT",
+      "repository": "https://github.com/electron/extract-zip",
+      "notices": [
+        {
+          "member": "LICENSE",
+          "sha256": "edab8abb78d9c5b36944c3e00aebf6a90eb32378993f49ac8a3904007029c629"
+        },
+        {
+          "member": "README.md (license section)",
+          "sha256": "daf005969aac8cb4283b3777361f0244f4cce898b9a983a60b7f0d9e96f559bf"
+        }
+      ]
+    },
+    {
       "name": "@electron/get",
-      "version": "2.0.3",
+      "version": "5.1.0",
       "license": "MIT",
       "repository": "https://github.com/electron/get",
       "notices": [
@@ -6991,18 +7010,6 @@
       ]
     },
     {
-      "name": "@sindresorhus/is",
-      "version": "4.6.0",
-      "license": "MIT",
-      "repository": "sindresorhus/is",
-      "notices": [
-        {
-          "member": "license",
-          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
-        }
-      ]
-    },
-    {
       "name": "@sindresorhus/merge-streams",
       "version": "4.0.0",
       "license": "MIT",
@@ -7119,22 +7126,6 @@
         {
           "member": "LICENSE",
           "sha256": "f5ecc63f26b1bf790f68fd8e4a84376385b19b9246100dc93a5b6ba9bf17f964"
-        }
-      ]
-    },
-    {
-      "name": "@szmarczak/http-timer",
-      "version": "4.0.6",
-      "license": "MIT",
-      "repository": "git+https://github.com/szmarczak/http-timer.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "0194571d45a06ea2a22ceb51f981e3be92525966d28847dbc0d9982603bf90de"
-        },
-        {
-          "member": "README.md (license section)",
-          "sha256": "daf005969aac8cb4283b3777361f0244f4cce898b9a983a60b7f0d9e96f559bf"
         }
       ]
     },
@@ -7351,18 +7342,6 @@
         {
           "member": "LICENSE",
           "sha256": "c2a4cfb69592431f4b3a179c114909bb76a979d5748c19ca595c94133c623b12"
-        }
-      ]
-    },
-    {
-      "name": "@types/cacheable-request",
-      "version": "6.0.3",
-      "license": "MIT",
-      "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
         }
       ]
     },
@@ -7835,32 +7814,8 @@
       ]
     },
     {
-      "name": "@types/http-cache-semantics",
-      "version": "4.2.0",
-      "license": "MIT",
-      "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
-        }
-      ]
-    },
-    {
       "name": "@types/katex",
       "version": "0.16.8",
-      "license": "MIT",
-      "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
-        }
-      ]
-    },
-    {
-      "name": "@types/keyv",
-      "version": "3.1.4",
       "license": "MIT",
       "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
       "notices": [
@@ -7909,18 +7864,6 @@
     {
       "name": "@types/node",
       "version": "24.12.2",
-      "license": "MIT",
-      "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
-        }
-      ]
-    },
-    {
-      "name": "@types/node",
-      "version": "25.6.0",
       "license": "MIT",
       "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
       "notices": [
@@ -8003,18 +7946,6 @@
       ]
     },
     {
-      "name": "@types/responselike",
-      "version": "1.0.3",
-      "license": "MIT",
-      "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
-        }
-      ]
-    },
-    {
       "name": "@types/trusted-types",
       "version": "2.0.7",
       "license": "MIT",
@@ -8065,18 +7996,6 @@
     {
       "name": "@types/validate-npm-package-name",
       "version": "4.0.2",
-      "license": "MIT",
-      "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
-        }
-      ]
-    },
-    {
-      "name": "@types/yauzl",
-      "version": "2.10.3",
       "license": "MIT",
       "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
       "notices": [
@@ -8715,18 +8634,6 @@
       ]
     },
     {
-      "name": "boolean",
-      "version": "3.2.0",
-      "license": "MIT",
-      "repository": "git://github.com/thenativeweb/boolean.git",
-      "notices": [
-        {
-          "member": "LICENSE.txt",
-          "sha256": "8e4aa1aef825c37d6f74d4b867dccb7b059b66c75ecdedc74834e2f403568a27"
-        }
-      ]
-    },
-    {
       "name": "border-beam",
       "version": "1.4.1",
       "license": "MIT",
@@ -8859,38 +8766,6 @@
         {
           "member": "Readme.md (license section)",
           "sha256": "084adb10b5fc6c48ed64780d1fe8ef625aca43532bafed6762d96ac3ec03cec5"
-        }
-      ]
-    },
-    {
-      "name": "cacheable-lookup",
-      "version": "5.0.4",
-      "license": "MIT",
-      "repository": "git+https://github.com/szmarczak/cacheable-lookup.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "b35de79efc88b23c73dd431df6075bed0890db0db1544ee3d57b046aa7a8e72b"
-        },
-        {
-          "member": "README.md (license section)",
-          "sha256": "daf005969aac8cb4283b3777361f0244f4cce898b9a983a60b7f0d9e96f559bf"
-        }
-      ]
-    },
-    {
-      "name": "cacheable-request",
-      "version": "7.0.4",
-      "license": "MIT",
-      "repository": "lukechilds/cacheable-request",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "861908ec818ff6142fdd6c4b66d6264c206d3d5a46003b1342e1853a9a85abac"
-        },
-        {
-          "member": "README.md (license section)",
-          "sha256": "4f6bff47d23de042c99fb8f97a4a4193390d0f7fef2443b6aef8945aa8147b79"
         }
       ]
     },
@@ -9207,22 +9082,6 @@
         {
           "member": "LICENSE.txt",
           "sha256": "2dc0465729366c3a7890dfa9e972a1ba7048a26c02116fb8b419a6a1ac110149"
-        }
-      ]
-    },
-    {
-      "name": "clone-response",
-      "version": "1.0.3",
-      "license": "MIT",
-      "repository": "git+https://github.com/sindresorhus/clone-response.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "861908ec818ff6142fdd6c4b66d6264c206d3d5a46003b1342e1853a9a85abac"
-        },
-        {
-          "member": "README.md (license section)",
-          "sha256": "4f6bff47d23de042c99fb8f97a4a4193390d0f7fef2443b6aef8945aa8147b79"
         }
       ]
     },
@@ -10243,18 +10102,6 @@
       ]
     },
     {
-      "name": "decompress-response",
-      "version": "6.0.0",
-      "license": "MIT",
-      "repository": "sindresorhus/decompress-response",
-      "notices": [
-        {
-          "member": "license",
-          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
-        }
-      ]
-    },
-    {
       "name": "dedent",
       "version": "1.7.2",
       "license": "MIT",
@@ -10311,34 +10158,6 @@
       ]
     },
     {
-      "name": "defer-to-connect",
-      "version": "2.0.1",
-      "license": "MIT",
-      "repository": "git+https://github.com/szmarczak/defer-to-connect.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "0194571d45a06ea2a22ceb51f981e3be92525966d28847dbc0d9982603bf90de"
-        },
-        {
-          "member": "README.md (license section)",
-          "sha256": "daf005969aac8cb4283b3777361f0244f4cce898b9a983a60b7f0d9e96f559bf"
-        }
-      ]
-    },
-    {
-      "name": "define-data-property",
-      "version": "1.1.4",
-      "license": "MIT",
-      "repository": "git+https://github.com/ljharb/define-data-property.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "b41d08bc3624d8c436fc80237d73ebb361985a67f4504bbcd703e5ca2b27254c"
-        }
-      ]
-    },
-    {
       "name": "define-lazy-prop",
       "version": "3.0.0",
       "license": "MIT",
@@ -10347,18 +10166,6 @@
         {
           "member": "license",
           "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
-        }
-      ]
-    },
-    {
-      "name": "define-properties",
-      "version": "1.2.1",
-      "license": "MIT",
-      "repository": "git://github.com/ljharb/define-properties.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "00d402c2bbe7c67369bd01ce2c16b8ed46ccc949a1ee2d6bb8f9606afa8c7434"
         }
       ]
     },
@@ -10439,18 +10246,6 @@
       "version": "1.1.0",
       "license": "MIT",
       "repository": "https://github.com/thekashey/detect-node",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "54b32293ea560d22cd9b62af9b2cda1a030d910a48c6601d227c5ff2338d95f8"
-        }
-      ]
-    },
-    {
-      "name": "detect-node",
-      "version": "2.1.0",
-      "license": "MIT",
-      "repository": "https://github.com/iliakan/detect-node",
       "notices": [
         {
           "member": "LICENSE",
@@ -10692,7 +10487,7 @@
     },
     {
       "name": "electron-to-chromium",
-      "version": "1.5.336",
+      "version": "1.5.452",
       "license": "ISC",
       "repository": "git+https://github.com/Kilian/electron-to-chromium.git",
       "notices": [
@@ -10708,7 +10503,7 @@
     },
     {
       "name": "electron-updater",
-      "version": "6.8.9",
+      "version": "6.8.10",
       "license": "MIT",
       "repository": "git+https://github.com/electron-userland/electron-builder.git",
       "notices": [
@@ -10720,7 +10515,7 @@
     },
     {
       "name": "electron",
-      "version": "41.0.3",
+      "version": "44.7.0",
       "license": "MIT",
       "repository": "https://github.com/electron/electron",
       "notices": [
@@ -10851,22 +10646,6 @@
       ]
     },
     {
-      "name": "end-of-stream",
-      "version": "1.4.5",
-      "license": "MIT",
-      "repository": "git://github.com/mafintosh/end-of-stream.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "3fe8d55a98dbf260eace67c00cf9bc53edb46234e840098a0b93df3096b97fb6"
-        },
-        {
-          "member": "README.md (license section)",
-          "sha256": "daf005969aac8cb4283b3777361f0244f4cce898b9a983a60b7f0d9e96f559bf"
-        }
-      ]
-    },
-    {
       "name": "entities",
       "version": "4.5.0",
       "license": "BSD-2-Clause",
@@ -10904,13 +10683,13 @@
     },
     {
       "name": "env-paths",
-      "version": "2.2.1",
+      "version": "3.0.0",
       "license": "MIT",
       "repository": "sindresorhus/env-paths",
       "notices": [
         {
           "member": "license",
-          "sha256": "48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0"
+          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
         }
       ]
     },
@@ -10979,18 +10758,6 @@
       ]
     },
     {
-      "name": "es6-error",
-      "version": "4.1.1",
-      "license": "MIT",
-      "repository": "https://github.com/bjyoungblood/es6-error.git",
-      "notices": [
-        {
-          "member": "LICENSE.md",
-          "sha256": "9f655c5baa5a6f254d1e87f27e14d04acaff4bd0b489ea3c2f33723919da2f44"
-        }
-      ]
-    },
-    {
       "name": "escalade",
       "version": "3.2.0",
       "license": "MIT",
@@ -11031,18 +10798,6 @@
         {
           "member": "Readme.md (license section)",
           "sha256": "ab27fc045f7a02ee0f02640e290b14a849a6a9d3dac2c5e6a4f986d303543809"
-        }
-      ]
-    },
-    {
-      "name": "escape-string-regexp",
-      "version": "4.0.0",
-      "license": "MIT",
-      "repository": "sindresorhus/escape-string-regexp",
-      "notices": [
-        {
-          "member": "license",
-          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
         }
       ]
     },
@@ -11283,18 +11038,6 @@
       ]
     },
     {
-      "name": "extract-zip",
-      "version": "2.0.1",
-      "license": "BSD-2-Clause",
-      "repository": "maxogden/extract-zip",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "77b2de947c65f3062fb347118ca198ca50898ead84a8509d8153fa65741f029b"
-        }
-      ]
-    },
-    {
       "name": "fast-deep-equal",
       "version": "3.1.3",
       "license": "MIT",
@@ -11472,22 +11215,6 @@
     },
     {
       "name": "follow-redirects",
-      "version": "1.16.0",
-      "license": "MIT",
-      "repository": "git+ssh://git@github.com/follow-redirects/follow-redirects.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "bfa8a54bb952ccda79f0f1889721d108f5b605babbb2b8a3705ffb52f4132eb7"
-        },
-        {
-          "member": "README.md (license section)",
-          "sha256": "abd3792ba3b4f3da7f4ed431de50254c3e748bba1596bc7f36937b97767e02d2"
-        }
-      ]
-    },
-    {
-      "name": "follow-redirects",
       "version": "1.16.1",
       "license": "MIT",
       "repository": "git+ssh://git@github.com/follow-redirects/follow-redirects.git",
@@ -11591,22 +11318,6 @@
         {
           "member": "README.md (license section)",
           "sha256": "17f7fa5a10a40e614e14342fa1b18046fee2edcdfb9528bf67f4593ef2ff61fd"
-        }
-      ]
-    },
-    {
-      "name": "fs-extra",
-      "version": "8.1.0",
-      "license": "MIT",
-      "repository": "https://github.com/jprichardson/node-fs-extra",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "1e76029602ae9b21cc4e612db2496d92febed882ba13ba745f8b3309e85f9d39"
-        },
-        {
-          "member": "README.md (license section)",
-          "sha256": "99418da6b0279959da793d62433978847d00236e852c4be780f384b7f506d425"
         }
       ]
     },
@@ -11724,18 +11435,6 @@
     },
     {
       "name": "get-stream",
-      "version": "5.2.0",
-      "license": "MIT",
-      "repository": "sindresorhus/get-stream",
-      "notices": [
-        {
-          "member": "license",
-          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
-        }
-      ]
-    },
-    {
-      "name": "get-stream",
       "version": "6.0.1",
       "license": "MIT",
       "repository": "sindresorhus/get-stream",
@@ -11807,30 +11506,6 @@
       ]
     },
     {
-      "name": "global-agent",
-      "version": "3.0.0",
-      "license": "BSD-3-Clause",
-      "repository": "https://github.com/gajus/global-agent",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "ba98e94118579117505f6f11fd9a4354c5e65ece03b4898d8b8f7785efcd25c1"
-        }
-      ]
-    },
-    {
-      "name": "globalthis",
-      "version": "1.0.4",
-      "license": "MIT",
-      "repository": "git://github.com/ljharb/System.global.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "acfaf437865d82f0fa9b9cdcae8b550bed8d011adaa5b42d973191caf99f62a8"
-        }
-      ]
-    },
-    {
       "name": "gopd",
       "version": "1.2.0",
       "license": "MIT",
@@ -11839,18 +11514,6 @@
         {
           "member": "LICENSE",
           "sha256": "d90bf0a089da4cf43d644ed240a0b3825dcdb705e64e38371d56995a4cc9e4c5"
-        }
-      ]
-    },
-    {
-      "name": "got",
-      "version": "11.8.6",
-      "license": "MIT",
-      "repository": "sindresorhus/got",
-      "notices": [
-        {
-          "member": "license",
-          "sha256": "48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0"
         }
       ]
     },
@@ -11875,18 +11538,6 @@
         {
           "member": "LICENSE",
           "sha256": "5e807b516a9be9229ed459880bf353a336e2d947867247290680d437017be391"
-        }
-      ]
-    },
-    {
-      "name": "has-property-descriptors",
-      "version": "1.0.2",
-      "license": "MIT",
-      "repository": "git+https://github.com/inspect-js/has-property-descriptors.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "0f0ca96f50793990031ebc488a38f7292ff70bce8ab6a8e5eeda674abc32ccdf"
         }
       ]
     },
@@ -12255,18 +11906,6 @@
       ]
     },
     {
-      "name": "http-cache-semantics",
-      "version": "4.2.0",
-      "license": "BSD-2-Clause",
-      "repository": "git+https://github.com/kornelski/http-cache-semantics.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "ab868ad5a2ef5068560d9cd3b2180ec63c140bb4c5cae1ba779d300a0ac74fa3"
-        }
-      ]
-    },
-    {
       "name": "http-errors",
       "version": "2.0.1",
       "license": "MIT",
@@ -12307,22 +11946,6 @@
         {
           "member": "LICENSE",
           "sha256": "71368fd0f5b4129191e9afcd1e1ef2dc89a9090d3e4d80bbab92dafd032b3bef"
-        }
-      ]
-    },
-    {
-      "name": "http2-wrapper",
-      "version": "1.0.3",
-      "license": "MIT",
-      "repository": "git+https://github.com/szmarczak/http2-wrapper.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "0194571d45a06ea2a22ceb51f981e3be92525966d28847dbc0d9982603bf90de"
-        },
-        {
-          "member": "README.md (license section)",
-          "sha256": "daf005969aac8cb4283b3777361f0244f4cce898b9a983a60b7f0d9e96f559bf"
         }
       ]
     },
@@ -13035,22 +12658,6 @@
       ]
     },
     {
-      "name": "json-buffer",
-      "version": "3.0.1",
-      "license": "MIT",
-      "repository": "git://github.com/dominictarr/json-buffer.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "715f1f0f2eb7688e53e4e958acdc7fc9e365ae3eaf26efc2604b93cc65fdc3f5"
-        },
-        {
-          "member": "README.md (license section)",
-          "sha256": "daf005969aac8cb4283b3777361f0244f4cce898b9a983a60b7f0d9e96f559bf"
-        }
-      ]
-    },
-    {
       "name": "json-schema-traverse",
       "version": "1.0.0",
       "license": "MIT",
@@ -13095,18 +12702,6 @@
       ]
     },
     {
-      "name": "json-stringify-safe",
-      "version": "5.0.1",
-      "license": "ISC",
-      "repository": "git://github.com/isaacs/json-stringify-safe",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b"
-        }
-      ]
-    },
-    {
       "name": "json5",
       "version": "2.2.3",
       "license": "MIT",
@@ -13119,22 +12714,6 @@
         {
           "member": "README.md (license section)",
           "sha256": "09ebd9927f40b8b47880fa9ad15bd2e09ca95a6d52668767c2b0f01550920357"
-        }
-      ]
-    },
-    {
-      "name": "jsonfile",
-      "version": "4.0.0",
-      "license": "MIT",
-      "repository": "git@github.com:jprichardson/node-jsonfile.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "a9801fb52ba22ef808682a094da8a7a480584b7ed0dfd0d888ab543616335031"
-        },
-        {
-          "member": "README.md (license section)",
-          "sha256": "e61af02e143359d84791b8386297b57a0739d9f545e253757bec1ef00952ca23"
         }
       ]
     },
@@ -13231,22 +12810,6 @@
         {
           "member": "README.md (license section)",
           "sha256": "1a7471ca96e17d08d390ff3b0c23ccbbff29390483add7577ae75c799d494b59"
-        }
-      ]
-    },
-    {
-      "name": "keyv",
-      "version": "4.5.4",
-      "license": "MIT",
-      "repository": "git+https://github.com/jaredwray/keyv.git",
-      "notices": [
-        {
-          "member": "README.md (license section)",
-          "sha256": "7c52c9115673b3e47e2a78c9c911558b7b2f23b144a3927e5fa862e1409727ba"
-        },
-        {
-          "member": "https://registry.npmjs.org/keyv/4.5.4",
-          "sha256": "6f7e6eae2a2afbaa67b266650f7342e7bf8e82cb57f6ab98148b3d6e0fb4450a"
         }
       ]
     },
@@ -13591,22 +13154,6 @@
       ]
     },
     {
-      "name": "lowercase-keys",
-      "version": "2.0.0",
-      "license": "MIT",
-      "repository": "sindresorhus/lowercase-keys",
-      "notices": [
-        {
-          "member": "license",
-          "sha256": "48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0"
-        },
-        {
-          "member": "readme.md (license section)",
-          "sha256": "0b8c7c0c5579b689ab841976b473ebe9269aa46347fc1295431e0fc3f2452d36"
-        }
-      ]
-    },
-    {
       "name": "lru_map",
       "version": "0.4.1",
       "license": "MIT",
@@ -13783,18 +13330,6 @@
         {
           "member": "README.md (license section)",
           "sha256": "9432aa108cccae3962e4d284c49478ba528fb74e0fb68c4af719e8a338bb15da"
-        }
-      ]
-    },
-    {
-      "name": "matcher",
-      "version": "3.0.0",
-      "license": "MIT",
-      "repository": "sindresorhus/matcher",
-      "notices": [
-        {
-          "member": "license",
-          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
         }
       ]
     },
@@ -14791,34 +14326,6 @@
       ]
     },
     {
-      "name": "mimic-response",
-      "version": "1.0.1",
-      "license": "MIT",
-      "repository": "sindresorhus/mimic-response",
-      "notices": [
-        {
-          "member": "license",
-          "sha256": "48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0"
-        },
-        {
-          "member": "readme.md (license section)",
-          "sha256": "0b8c7c0c5579b689ab841976b473ebe9269aa46347fc1295431e0fc3f2452d36"
-        }
-      ]
-    },
-    {
-      "name": "mimic-response",
-      "version": "3.1.0",
-      "license": "MIT",
-      "repository": "sindresorhus/mimic-response",
-      "notices": [
-        {
-          "member": "license",
-          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
-        }
-      ]
-    },
-    {
       "name": "minimatch",
       "version": "10.2.5",
       "license": "BlueOak-1.0.0",
@@ -15131,18 +14638,6 @@
       ]
     },
     {
-      "name": "normalize-url",
-      "version": "6.1.0",
-      "license": "MIT",
-      "repository": "sindresorhus/normalize-url",
-      "notices": [
-        {
-          "member": "license",
-          "sha256": "48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0"
-        }
-      ]
-    },
-    {
       "name": "npm-run-path",
       "version": "4.0.1",
       "license": "MIT",
@@ -15207,18 +14702,6 @@
         {
           "member": "readme.markdown (license section)",
           "sha256": "04694eacd112f4a979f1dd1c7a1c365ea2d721f505eb0464bd05838d80933c34"
-        }
-      ]
-    },
-    {
-      "name": "object-keys",
-      "version": "1.1.1",
-      "license": "MIT",
-      "repository": "git://github.com/ljharb/object-keys.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "5640e5cbe2e9f57f6ccfdd8dbfbeadb875495bdbcb69d2666ce3177ccd0942e4"
         }
       ]
     },
@@ -15367,18 +14850,6 @@
         {
           "member": "license",
           "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
-        }
-      ]
-    },
-    {
-      "name": "p-cancelable",
-      "version": "2.1.1",
-      "license": "MIT",
-      "repository": "sindresorhus/p-cancelable",
-      "notices": [
-        {
-          "member": "license",
-          "sha256": "48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0"
         }
       ]
     },
@@ -16191,22 +15662,6 @@
       ]
     },
     {
-      "name": "pump",
-      "version": "3.0.4",
-      "license": "MIT",
-      "repository": "git://github.com/mafintosh/pump.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "3fe8d55a98dbf260eace67c00cf9bc53edb46234e840098a0b93df3096b97fb6"
-        },
-        {
-          "member": "README.md (license section)",
-          "sha256": "daf005969aac8cb4283b3777361f0244f4cce898b9a983a60b7f0d9e96f559bf"
-        }
-      ]
-    },
-    {
       "name": "qrcode",
       "version": "1.5.4",
       "license": "MIT",
@@ -16247,18 +15702,6 @@
         {
           "member": "README.md (license section)",
           "sha256": "a3c7d5b41af742dce5b55e0b2cb165c39b857e3d48e51ed2ee1e66afe3b82887"
-        }
-      ]
-    },
-    {
-      "name": "quick-lru",
-      "version": "5.1.1",
-      "license": "MIT",
-      "repository": "sindresorhus/quick-lru",
-      "notices": [
-        {
-          "member": "license",
-          "sha256": "48da2f39e100d4085767e94966b43f4fa95ff6a0698fba57ed460914e35f94a0"
         }
       ]
     },
@@ -16931,38 +16374,6 @@
       ]
     },
     {
-      "name": "resolve-alpn",
-      "version": "1.2.1",
-      "license": "MIT",
-      "repository": "git+https://github.com/szmarczak/resolve-alpn.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "03b347a3d13b0e5bdb8fc5edeed0286b1be51441c6490a90710692d227136e0d"
-        },
-        {
-          "member": "README.md (license section)",
-          "sha256": "daf005969aac8cb4283b3777361f0244f4cce898b9a983a60b7f0d9e96f559bf"
-        }
-      ]
-    },
-    {
-      "name": "responselike",
-      "version": "2.0.1",
-      "license": "MIT",
-      "repository": "https://github.com/sindresorhus/responselike.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "2c4e066228dbca96c8c6e8bef5377306f227ffa1d87a18a218b230e13ac5d39e"
-        },
-        {
-          "member": "README.md (license section)",
-          "sha256": "4f6bff47d23de042c99fb8f97a4a4193390d0f7fef2443b6aef8945aa8147b79"
-        }
-      ]
-    },
-    {
       "name": "restore-cursor",
       "version": "5.1.0",
       "license": "MIT",
@@ -17003,18 +16414,6 @@
         {
           "member": "README.md (license section)",
           "sha256": "64c4e000fb5924d18ea114fdbf7c32d1eb3db896cd25c15973f1ad1efbbfeb0d"
-        }
-      ]
-    },
-    {
-      "name": "roarr",
-      "version": "2.15.4",
-      "license": "BSD-3-Clause",
-      "repository": "git@github.com:gajus/roarr.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "ba98e94118579117505f6f11fd9a4354c5e65ece03b4898d8b8f7785efcd25c1"
         }
       ]
     },
@@ -17223,22 +16622,6 @@
       ]
     },
     {
-      "name": "semver-compare",
-      "version": "1.0.0",
-      "license": "MIT",
-      "repository": "git://github.com/substack/semver-compare.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "435a6722c786b0a56fbe7387028f1d9d3f3a2d0fb615bb8fee118727c3f59b7b"
-        },
-        {
-          "member": "readme.markdown (license section)",
-          "sha256": "4d8a73c1024e09c8b323a225d3a7880156ba5a4b9a8d56c9f4fd4202384b110f"
-        }
-      ]
-    },
-    {
       "name": "semver",
       "version": "6.3.1",
       "license": "ISC",
@@ -17287,18 +16670,6 @@
         {
           "member": "README.md (license section)",
           "sha256": "6acb5236fdb284e239fdd9aa3e939067b28373d09c241ce7aab38d2d01f0e495"
-        }
-      ]
-    },
-    {
-      "name": "serialize-error",
-      "version": "7.0.1",
-      "license": "MIT",
-      "repository": "sindresorhus/serialize-error",
-      "notices": [
-        {
-          "member": "license",
-          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
         }
       ]
     },
@@ -17671,22 +17042,6 @@
         {
           "member": "readme.md (license section)",
           "sha256": "64a574420fb94c697fafecb00f684df486d228c66ecfdc497b1455ae319f4fbe"
-        }
-      ]
-    },
-    {
-      "name": "sprintf-js",
-      "version": "1.1.3",
-      "license": "BSD-3-Clause",
-      "repository": "https://github.com/alexei/sprintf.js.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "f8287e4dd9480be58c56aca4a55c23b782c43a86e69aabad78fff4df0d29edef"
-        },
-        {
-          "member": "README.md (license section)",
-          "sha256": "b0103765a1ddbb08ac290cf214f00caabac645d7f8702d22677d0b766f7b7729"
         }
       ]
     },
@@ -18292,22 +17647,6 @@
     },
     {
       "name": "type-fest",
-      "version": "0.13.1",
-      "license": "(MIT OR CC0-1.0)",
-      "repository": "sindresorhus/type-fest",
-      "notices": [
-        {
-          "member": "license",
-          "sha256": "64a93ffc0a06a2266dbb57ed7ebe3b56ba66ab337b6347fabdbf86c76819fbae"
-        },
-        {
-          "member": "readme.md (license section)",
-          "sha256": "ee8ce2b628da002780228222081dd7353fb050ca452de937983a369a1d80c418"
-        }
-      ]
-    },
-    {
-      "name": "type-fest",
       "version": "4.41.0",
       "license": "(MIT OR CC0-1.0)",
       "repository": "sindresorhus/type-fest",
@@ -18425,18 +17764,6 @@
     {
       "name": "undici-types",
       "version": "7.16.0",
-      "license": "MIT",
-      "repository": "git+https://github.com/nodejs/undici.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "a6db8096b2707bc0102d256917d4d33f298ba36d8c3f25de067a2b5bb379db27"
-        }
-      ]
-    },
-    {
-      "name": "undici-types",
-      "version": "7.19.2",
       "license": "MIT",
       "repository": "git+https://github.com/nodejs/undici.git",
       "notices": [
@@ -18655,22 +17982,6 @@
         {
           "member": "readme.md (license section)",
           "sha256": "3d0339f36ada73cc5c1832994ec0be2c9e77e3a91afad459af826df73a82616a"
-        }
-      ]
-    },
-    {
-      "name": "universalify",
-      "version": "0.1.2",
-      "license": "MIT",
-      "repository": "git+https://github.com/RyanZim/universalify.git",
-      "notices": [
-        {
-          "member": "LICENSE",
-          "sha256": "3fda5977c0904e226190b4e21d64340c1731e2142d6fe5f3dee0090a216b8b63"
-        },
-        {
-          "member": "README.md (license section)",
-          "sha256": "daf005969aac8cb4283b3777361f0244f4cce898b9a983a60b7f0d9e96f559bf"
         }
       ]
     },
@@ -19814,7 +19125,7 @@
         },
         {
           "file": "packages/ui/src/components/ui/code-viewer.tsx",
-          "sha256": "94a4b5ea4295d9f3d5b5af3898f8ea0ec1b03b815d7837f20b1c1473e8419844"
+          "sha256": "d5abd4e9dbdd6e813c564f1f17efca1a1a7b09c7e6b4a5e3d53d06a17ee5baaa"
         },
         {
           "file": "packages/ui/src/components/ui/collapsible.tsx",
@@ -19946,7 +19257,7 @@
         },
         {
           "file": "packages/ui/src/components/ui/toast.tsx",
-          "sha256": "96b98d0952766416cfdc524f16141852a80502eec88c96cd37039f4cf9711da3"
+          "sha256": "44ff42c1517f038199b5bc58746272fc073c7272ac2a8ede3bb51e191b7c37dc"
         },
         {
           "file": "packages/ui/src/components/ui/tooltip.tsx",
@@ -19958,7 +19269,7 @@
         },
         {
           "file": "packages/ui/src/styles.css",
-          "sha256": "72c59c493026072508e8ab479995bbf856bdaabdaf7aa9f26f8138a0c3431ef5"
+          "sha256": "725738b9281e3adbc95b3eefcb196ccb70f6569f1a70134c058089654950c475"
         }
       ]
     },
@@ -20144,7 +19455,7 @@
         },
         {
           "file": "packages/ui/src/components/ai-elements/chat-loading.tsx",
-          "sha256": "2e6da0eba3e49cc78cc01d463c84c60b7bafa6a9a219e9babb429aeb96a272c1"
+          "sha256": "f46632c241c6e5a914d097bf4557c649c91d16fd589a95fe29370e72d20070e9"
         },
         {
           "file": "packages/ui/src/components/ai-elements/checkpoint.tsx",
@@ -20196,7 +19507,7 @@
         },
         {
           "file": "packages/ui/src/components/ai-elements/image-preview-dialog.tsx",
-          "sha256": "1f25a198c49c3b2d6e4a72fb16efba3e621beeb51e00e808ca9cff65be39d546"
+          "sha256": "ffa2181ce43eea4ad325ca9c5c7ea9cccd9852cdc4628bad981be45c545cfa9b"
         },
         {
           "file": "packages/ui/src/components/ai-elements/image-thumbnail-gallery.tsx",
@@ -20236,7 +19547,7 @@
         },
         {
           "file": "packages/ui/src/components/ai-elements/message.tsx",
-          "sha256": "4bb5728ee57d9d085250ad43bf0be461b3c476c6eedabea3a5cc7304baad9967"
+          "sha256": "fc6a34283a58ae3bdcea9c709fd312dc90d0b488e6fb93475a587f3872a6fc2e"
         },
         {
           "file": "packages/ui/src/components/ai-elements/mic-selector.tsx",
@@ -20296,7 +19607,7 @@
         },
         {
           "file": "packages/ui/src/components/ai-elements/reasoning.tsx",
-          "sha256": "5ea3d0b93547ab417757ebc93238248076c346163586f7805ef9981daf66ef62"
+          "sha256": "63c04393d8679170ebffc8e092c1bf31053043d123cfcd1f7ce1a4a6fc142ec5"
         },
         {
           "file": "packages/ui/src/components/ai-elements/sandbox.tsx",
@@ -30196,15 +29507,15 @@
         },
         {
           "file": "packages/rpc/src/channelClient.ts",
-          "sha256": "842e46ecb5141b1bf28490b59a8c6e24bda40112a71adffb91c8614c06d580f8"
+          "sha256": "7c14e3a80c55b30b91de5754d1c6c75dfb0c0c1a100eb948cc0298fa4b2c1a64"
         },
         {
           "file": "packages/rpc/src/channelServer.ts",
-          "sha256": "89110433522b71de8914bbb23117b4028a3c8e4bc3591af5a46060963bbe95c6"
+          "sha256": "6020d47312972f6d7f113c28507e7934ca3779692e2cfcef6b5913c8bf441bdb"
         },
         {
           "file": "packages/rpc/src/channels.shared.ts",
-          "sha256": "d7faaf2affcb028355501e44b0c9bcbc673f7ad4f5c812cbf012d33260517586"
+          "sha256": "b258b76cf9bd792b117b0dc4c1ef7a4ee1e7245ab878c5c7ffe07b33a07c3bf6"
         },
         {
           "file": "packages/rpc/src/channels.ts",
@@ -30252,7 +29563,7 @@
         },
         {
           "file": "packages/rpc/src/serialization.ts",
-          "sha256": "cd5be9d083d7ee0c28e9adbfde601594020fd86ec33f3c9d2ce529af52ced6d4"
+          "sha256": "9efd0e5fb427ddad866a2dd78f069c994aaf6fe8ee9c0f0b521299ff02cdb065"
         },
         {
           "file": "packages/rpc/examples/01-basic-ipc.ts",
@@ -30293,7 +29604,7 @@
       "files": [
         {
           "file": "packages/ui/src/lib/builtinSkillI18n.ts",
-          "sha256": "105a8c42c5049409932138bafc2b96933a5f57c7403abbfbe1a534f7131c370c"
+          "sha256": "07094b38082b18d937512d0c349c4729bce771e671e47e403fb63ae5b9f226f3"
         },
         {
           "file": "apps/zcode-cli/packages/superpowers-plugin/LICENSE",
@@ -31458,6 +30769,16 @@
       "package": "@ai-sdk/anthropic@3.0.81",
       "file": "patches/@ai-sdk__anthropic@3.0.81.patch",
       "sha256": "d3a7c381eba7f5157f765a0528003af17cf84544911dfb7412c7800168e01c18"
+    },
+    {
+      "package": "@aiden0z/pptx-renderer@1.2.4",
+      "file": "patches/@aiden0z__pptx-renderer@1.2.4.patch",
+      "sha256": "e1a90a724324c45a2cc90cf84d1ae1f35755b8fc9438a208d610960bd0d5f65a"
+    },
+    {
+      "package": "@extend-ai/react-xlsx@0.16.0",
+      "file": "patches/@extend-ai__react-xlsx@0.16.0.patch",
+      "sha256": "b2fc5fcfa1aab1271d20fd539d2a367f06aac08a191425885cf8f1125b7c6bc8"
     }
   ],
   "exceptions": [
@@ -31517,6 +30838,28 @@
         "checkedOn": "2026-09-21",
         "result": "The versioned npm archive contains no standalone complete LICENSE; existing publisher declaration and original README license sections remain preserved. Upstream authorization/copyright material is still required to close this review.",
         "npmArchiveSha256": "f4dd386c2e705ffb8692a8afdc1e3b8ff09c6b8ef3aee48d0537ff71d8839cd1"
+      }
+    },
+    {
+      "package": "@hono/node-ws@1.3.1",
+      "repo": "honojs/middleware",
+      "refs": [
+        "@hono/node-ws@1.3.1",
+        "node-ws@1.3.1",
+        "v1.3.1"
+      ],
+      "file": "third-party/upstream/cb666043f5dfbe01f82130889956de3ec3bc527e8e335783a59bd647a25f32a0.txt",
+      "sha256": "cb666043f5dfbe01f82130889956de3ec3bc527e8e335783a59bd647a25f32a0",
+      "source": "https://registry.npmjs.org/%40hono%2Fnode-ws/1.3.1",
+      "evidenceKind": "publisher-license-identifier-and-standard-terms",
+      "license": "MIT",
+      "reviewEvidence": {
+        "checkedOn": "2026-10-16",
+        "result": "The versioned npm archive contains no standalone complete LICENSE; existing publisher declaration and original README license sections remain preserved. Upstream authorization/copyright material is still required to close this review.",
+        "npmArchiveSha256": "f742a98d56449a2730ac76c85ddb507aa25929be7e28dd13df7522018cc71813",
+        "sourceRevision": "d0e7b8ee0b8552defc580f30b2a55ad6fbbdfa7a",
+        "sourceTreeUrl": "https://api.github.com/repos/honojs/middleware/git/trees/d0e7b8ee0b8552defc580f30b2a55ad6fbbdfa7a?recursive=1",
+        "upstreamLicenseFiles": []
       }
     },
     {
@@ -31599,14 +30942,6 @@
       }
     },
     {
-      "package": "keyv@4.5.4",
-      "file": "third-party/upstream/6f7e6eae2a2afbaa67b266650f7342e7bf8e82cb57f6ab98148b3d6e0fb4450a.txt",
-      "sha256": "6f7e6eae2a2afbaa67b266650f7342e7bf8e82cb57f6ab98148b3d6e0fb4450a",
-      "source": "https://registry.npmjs.org/keyv/4.5.4",
-      "evidenceKind": "publisher-license-identifier-and-standard-terms",
-      "license": "MIT"
-    },
-    {
       "package": "@arms/rum-browser@0.1.8",
       "file": "third-party/upstream/2c976d327b293bd74c257cd53e9b4ecef97a06b1651baa3b24327c97192cb3de.txt",
       "sha256": "2c976d327b293bd74c257cd53e9b4ecef97a06b1651baa3b24327c97192cb3de",
@@ -31649,28 +30984,6 @@
         "npmArchiveSha256": "6eec23d5d381a8b0ffafe91c19876d3a052e463618695981a7529f3a8bca1997",
         "sourceRevision": "b7e5f7ccce1a3ac5b339cc4c587974e8989cbc16",
         "sourceTreeUrl": "https://api.github.com/repos/TooTallNate/proxy-agents/git/trees/b7e5f7ccce1a3ac5b339cc4c587974e8989cbc16?recursive=1",
-        "upstreamLicenseFiles": []
-      }
-    },
-    {
-      "package": "@hono/node-ws@1.3.1",
-      "repo": "honojs/middleware",
-      "refs": [
-        "@hono/node-ws@1.3.1",
-        "node-ws@1.3.1",
-        "v1.3.1"
-      ],
-      "file": "third-party/upstream/cb666043f5dfbe01f82130889956de3ec3bc527e8e335783a59bd647a25f32a0.txt",
-      "sha256": "cb666043f5dfbe01f82130889956de3ec3bc527e8e335783a59bd647a25f32a0",
-      "source": "https://registry.npmjs.org/%40hono%2Fnode-ws/1.3.1",
-      "evidenceKind": "publisher-license-identifier-and-standard-terms",
-      "license": "MIT",
-      "reviewEvidence": {
-        "checkedOn": "2026-10-16",
-        "result": "The versioned npm archive contains no standalone complete LICENSE; existing publisher declaration and original README license sections remain preserved. Upstream authorization/copyright material is still required to close this review.",
-        "npmArchiveSha256": "f742a98d56449a2730ac76c85ddb507aa25929be7e28dd13df7522018cc71813",
-        "sourceRevision": "d0e7b8ee0b8552defc580f30b2a55ad6fbbdfa7a",
-        "sourceTreeUrl": "https://api.github.com/repos/honojs/middleware/git/trees/d0e7b8ee0b8552defc580f30b2a55ad6fbbdfa7a?recursive=1",
         "upstreamLicenseFiles": []
       }
     }
@@ -31964,6 +31277,10 @@
       "reason": "Original version-specific publisher copyright/license material remains incomplete."
     },
     {
+      "id": "@hono/node-ws@1.3.1",
+      "reason": "Original version-specific publisher copyright/license material remains incomplete."
+    },
+    {
       "id": "lazy-val@1.0.5",
       "reason": "Original version-specific publisher copyright/license material remains incomplete."
     },
@@ -31980,10 +31297,6 @@
       "reason": "Original version-specific publisher copyright/license material remains incomplete."
     },
     {
-      "id": "keyv@4.5.4",
-      "reason": "Original version-specific publisher copyright/license material remains incomplete."
-    },
-    {
       "id": "@arms/rum-browser@0.1.8",
       "reason": "Original version-specific publisher copyright/license material remains incomplete."
     },
@@ -31997,10 +31310,6 @@
     },
     {
       "id": "proxy-agent-negotiate@1.1.0",
-      "reason": "Original version-specific publisher copyright/license material remains incomplete."
-    },
-    {
-      "id": "@hono/node-ws@1.3.1",
       "reason": "Original version-specific publisher copyright/license material remains incomplete."
     },
     {

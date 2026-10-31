@@ -74,9 +74,10 @@ export function resolveAppRuntimeConfig(input: {
   const initialModelSelection = options.resume
     ? registrySelection?.selection
     : (options.runtimeConfig?.modelSelection ?? registrySelection?.selection);
-  // 空白会话先创建、再应用本次 Submission 的选择；强制初始默认模型会
-  // 让未配置 default 的用户在 switch/send 前就创建失败。未绑定 Runtime 可以存在，
-  // 真正执行仍由 admission/ModelFactory 校验完整选择，不能在这里偷偷选择 Registry 首项。
+  // A blank session is created first, then this Submission's selection is applied; forcing an
+  // initial default model would make session creation fail before switch/send for users without a
+  // configured default. A Runtime without a binding may exist — real execution is still validated
+  // by admission/ModelFactory against the full selection; never silently pick the Registry's first entry here.
   const requestedTitleGeneration = options.runtimeConfig?.titleGeneration;
   const requestedTitleModelSelection = requestedTitleGeneration?.modelSelection;
   const titleGeneration =
@@ -84,12 +85,14 @@ export function resolveAppRuntimeConfig(input: {
       ? undefined
       : {
           ...requestedTitleGeneration,
-          // 标题生成 sidecar 默认 15s 在慢模型/代理链路下容易超时，
-          // 入口层统一补 60s，避免旧 core 默认值或空配置让桌面端继续回落到 15s。
+          // The title-generation sidecar's default 15s times out easily on slow models/proxy chains;
+          // the entry layer uniformly supplies 60s so old core defaults or empty config do not keep the desktop falling back to 15s.
           timeoutMs: requestedTitleGeneration.timeoutMs ?? 60_000,
-          // 空 titleGeneration 表示启用默认标题生成，模型必须跟随会话当前模型。
-          // 如果这里在草稿 session 创建时固化另一份标题模型，之后切模型只会更新主链路，
-          // 首发时的 generate title sidecar 会继续使用切换前的旧 provider/model。
+          // Empty titleGeneration means default title generation is enabled and the model must
+          // follow the session's current model.
+          // If another title model were frozen in here at draft-session creation, later model
+          // switches would only update the main chain, and the first-turn generate-title sidecar
+          // would keep using the pre-switch provider/model.
           ...(requestedTitleModelSelection
             ? {
                 modelSelection: requestedTitleModelSelection,
@@ -112,16 +115,28 @@ export function resolveAppRuntimeConfig(input: {
   );
   const cuaBridgeServerNames = new Set(trustedOfficialCuaServerNames);
   if (pluginRuntimeFeatures?.computerUse === true && configuredMcpServers.node_repl) {
-    // node_repl 需要 broker 注入，但不是 CUA MCP server。注入资格与官方 CUA 图片
-    // authority 必须分开；把它塞进 trustedOfficialCuaServerNames 会让整个
-    // 通用 node_repl 结果被误送进 exact-raster gate，Browser 截图和 console 日志都会失败。
+    // node_repl needs broker injection but is not a CUA MCP server. Injection eligibility and the
+    // official CUA image authority must stay separate; putting it into
+    // trustedOfficialCuaServerNames would misroute every generic node_repl result into the
+    // exact-raster gate and break both Browser screenshots and console logging.
     cuaBridgeServerNames.add("node_repl");
   }
-  // 产品决定 workspace MCP 开箱即用：project 作用域 MCP 默认 trusted，并自动连接。
   const untrustedProjectMcpServers = new Set<string>();
+  for (const [name, config] of Object.entries(configuredMcpServers)) {
+    if (
+      config.source?.kind === "workspace" ||
+      (!config.source && configResult.sources.mcp.serverSources[name] === "project")
+    ) {
+      configuredMcpServers[name] = { ...config, source: { kind: "workspace" } };
+      untrustedProjectMcpServers.add(name);
+    } else if (!config.source && configResult.sources.mcp.serverSources[name] === "user") {
+      // headless configs keep the user source too; a corrupt project file must not turn user MCP into a to-be-trusted declaration.
+      configuredMcpServers[name] = { ...config, source: { kind: "user" } };
+    }
+  }
   const autoConnectMcpServers = omitMcpServers(
     configuredMcpServers,
-    untrustedProjectMcpServers,
+    new Set(),
     cuaBridgeServerNames,
   );
   const runtimeBuiltInModelSelectionOverrides =
@@ -147,10 +162,11 @@ export function resolveAppRuntimeConfig(input: {
       resolveBashTimeoutPolicy(options.env ?? process.env),
     mode: options.runtimeConfig?.mode ?? persistedMode ?? configResult.config.permission.mode,
     modelSelection: initialModelSelection,
-    // 仅接受显式传入的会话级工具面（ZCode Protocol session/create 或 CLI
-    // --allowed-tools/--disallowed-tools）。不要从 config.permission.allowedTools
-    // 回落：那个键的既有语义是“免审批清单”，把它投影到注册面会让老配置里
-    // 只写了几个 allowedTools 的用户突然丢失其余全部工具。
+    // Accept only an explicitly passed session-level tool surface (ZCode Protocol session/create
+    // or CLI --allowed-tools/--disallowed-tools). Do not fall back to
+    // config.permission.allowedTools: that key's existing semantics are an "approval-free list",
+    // and projecting it onto the registration surface would suddenly strip every other tool from
+    // users whose legacy config lists only a few allowedTools.
     toolAllowlist: options.runtimeConfig?.toolAllowlist,
     toolDisallowlist: options.runtimeConfig?.toolDisallowlist,
     embeddedSearchBackend:

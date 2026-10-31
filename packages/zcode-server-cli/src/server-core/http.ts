@@ -246,6 +246,7 @@ export async function createCoreHttpServer(
       websocketRpc: true,
       virtualProjects: true,
       processResourceTelemetry: true,
+      remoteConversationTelemetry: true,
     },
   });
   // A bare Set cannot enforce expiresAt, so unconsumed capabilities would remain valid and accumulate indefinitely.

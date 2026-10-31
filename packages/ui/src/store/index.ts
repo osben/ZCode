@@ -71,6 +71,7 @@ export interface LoginEntryAttempt {
 const CODE_PREVIEW_SETTINGS_KEY = "zcode-code-preview-settings";
 const PERFORMANCE_MODE_STORAGE_KEY = "zcode-performance-mode";
 const TERMINAL_WEBGL_STORAGE_KEY = "zcode-terminal-webgl";
+const HIDE_PROJECT_DEVICE_NAMES_STORAGE_KEY = "zcode-hide-project-device-names";
 export const FILE_MANAGER_NAVIGATION_PREFERENCES_STORAGE_KEY =
   "zcode-file-manager-navigation-preferences";
 
@@ -163,6 +164,10 @@ export interface ZCodeState extends FontPreferencesState {
   terminalWebglEnabled: boolean;
   setTerminalWebglEnabled: (enabled: boolean) => void;
 
+  /** Desktop project rows only consume this; device identity and other entries are unaffected. */
+  hideProjectDeviceNames: boolean;
+  setHideProjectDeviceNames: (hidden: boolean) => void;
+
   /** Whether task notifications are enabled (desktop notifications; sound is controlled by a sub-toggle). */
   notificationEnabled: boolean;
   setNotificationEnabled: (enabled: boolean) => void;
@@ -241,8 +246,9 @@ export interface ZCodeState extends FontPreferencesState {
   /** Request to open the onboarding dialog manually. */
   newUserOnboardingOpen: boolean;
   setNewUserOnboardingOpen: (open: boolean) => void;
-  onboardingDialogRequested: boolean | "migration";
-  requestOnboardingDialog: (entry?: "migration") => void;
+  /** Requests opening the migration wizard; every entry goes straight to the first step, Sessions. */
+  onboardingDialogRequested: boolean;
+  requestOnboardingDialog: () => void;
   clearOnboardingDialogRequest: () => void;
 }
 
@@ -352,6 +358,12 @@ export function createZCodeStore(
       set({ terminalWebglEnabled: enabled });
     },
 
+    hideProjectDeviceNames: readSafeLocalStorage(HIDE_PROJECT_DEVICE_NAMES_STORAGE_KEY) === "true",
+    setHideProjectDeviceNames: (hidden) => {
+      writeSafeLocalStorage(HIDE_PROJECT_DEVICE_NAMES_STORAGE_KEY, String(hidden));
+      set({ hideProjectDeviceNames: hidden });
+    },
+
     notificationEnabled: isTaskNotificationEnabled(),
     setNotificationEnabled: (enabled: boolean) => {
       persistTaskNotificationEnabled(enabled);
@@ -446,7 +458,7 @@ export function createZCodeStore(
     newUserOnboardingOpen: false,
     setNewUserOnboardingOpen: (open) => set({ newUserOnboardingOpen: open }),
     onboardingDialogRequested: false,
-    requestOnboardingDialog: (entry) => set({ onboardingDialogRequested: entry ?? true }),
+    requestOnboardingDialog: () => set({ onboardingDialogRequested: true }),
     clearOnboardingDialogRequest: () => set({ onboardingDialogRequested: false }),
   }));
 

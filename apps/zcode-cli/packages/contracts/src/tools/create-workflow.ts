@@ -22,9 +22,27 @@ export const CREATE_WORKFLOW_TOOL_NAME = "CreateWorkflow";
  */
 export const DYNAMIC_WORKFLOW_SKILL_NAME = "dynamic-workflows";
 
-/** Validation message for "provide exactly one execution-body source." Kept as a constant because the model is its only reader and all three paths need identical wording. */
-export const CREATE_WORKFLOW_SOURCE_ERROR =
-  "Provide exactly one workflow source: `script` for a one-off script written inline, `saved` to run a workflow saved in this project, or `path` for a script file on disk (the file a previous result named). Passing more than one, or none, is ambiguous.";
+/**
+ * Shared trailing sentence for "no source arrived" (CreateWorkflow and EvalWorkflowSnippet;
+ * all fields of both are optional).
+ *
+ * Bug cause: when the arguments are not valid JSON, the adapter logs
+ * `model.tool_input.normalize_failed` and restores the call to `{}`
+ * (adapters/src/model/tool-input-normalization.ts); `{}` passes the schema, so the call fails
+ * at "exactly one source". The old wording merged "too many" and "none given" into one
+ * "…or none, is ambiguous" sentence, so a model that did write a script could not read out the
+ * cause and would just resend the same broken call. Hence "none given" gets its own sentence
+ * spelling out the most common cause and how to avoid it.
+ */
+export const WORKFLOW_SOURCE_MISSING_HINT =
+  "If you did pass one, the call's arguments were not valid JSON, and a call that does not parse arrives empty. The usual cause is an unescaped backslash or double quote in the inline source: inside a JSON string a regex's `\\d` must be written `\\\\d`. Escape it, or write the source to a file and pass `path`.";
+
+/** More than one source given (the choice to retract). A constant because the model is its only reader, one sentence across three paths. */
+export const CREATE_WORKFLOW_SOURCE_CONFLICT_ERROR =
+  "Provide exactly one workflow source: `script` for a one-off script written inline, `saved` to run a workflow saved in this project, or `path` for a script file on disk (the file a previous result named). Passing more than one is ambiguous.";
+
+/** No source at all: most likely the arguments failed to parse (see {@link WORKFLOW_SOURCE_MISSING_HINT}). */
+export const CREATE_WORKFLOW_SOURCE_MISSING_ERROR = `No workflow source arrived. Pass \`script\` for a one-off script written inline, \`saved\` to run a workflow saved in this project, or \`path\` for a script file on disk. ${WORKFLOW_SOURCE_MISSING_HINT}`;
 
 /** Validation message that `args` belongs only to the `path` source (`saved` has its own `saved.args`, while inline scripts have no declarations). */
 export const CREATE_WORKFLOW_ARGS_WITHOUT_PATH_ERROR =

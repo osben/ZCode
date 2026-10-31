@@ -25,6 +25,7 @@ import {
   runCommandAndReadStdout,
 } from "../../../scripts/spawn-command.mjs";
 import { resolveIntranetDepsBaseUrl } from "../../../scripts/intranetDefaults.mjs";
+import { stampMacosUpdateManifests } from "./macos-update-manifest.mjs";
 
 const desktopRoot = resolve(import.meta.dirname, "..");
 const workspaceRoot = resolve(desktopRoot, "../..");
@@ -116,6 +117,8 @@ const requiredRuntimeModules = [
   // Bug fix: keep the Feishu SDK external to avoid Electron ESM dynamic-require crashes, and verify
   // that the scoped package is present in app.asar.
   "@larksuiteoapi/node-sdk",
+  // The 26.17.0 pnpm collector can still miss deduped transitive deps; the final package validates the full closure from the updater entry.
+  "electron-updater",
   // If ssh2's critical dependencies (asn1/bcrypt-pbkdf/tweetnacl) are missing, connecting to a remote
   // workspace throws MODULE_NOT_FOUND during key parsing. Include this dependency chain in validation.
   "asn1",
@@ -202,6 +205,10 @@ export function resolveElectronBuilderBinariesMirror(env = process.env) {
 
 export function createElectronBuilderBinariesMirrorEnv(mirror) {
   return {
+    // 26.17.0 rejects non-localhost HTTP tool mirrors by default. Allow it only for the explicit
+    // HTTP builder subprocess; when HTTPS, clear the parent environment's permissive switch so
+    // it does not spread to other download paths.
+    ELECTRON_BUILDER_BINARIES_ALLOW_HTTP: /^http:\/\//i.test(mirror.trim()) ? "true" : "",
     // electron-builder's DOWNLOAD_OVERRIDE_URL takes precedence over the mirror.
     // If CI points it at the Electron runtime directory, it bypasses the mirror fallback and still gets 404s.
     ELECTRON_BUILDER_BINARIES_DOWNLOAD_OVERRIDE_URL: "",
@@ -215,6 +222,27 @@ export function createElectronBuilderBinariesMirrorEnv(mirror) {
   };
 }
 
+export function createBundleProcessEnvs({ os, arch, electronMirror, electronBuilderMirror }) {
+  const commonEnv = {
+    ZCODE_TARGET_OS: os,
+    ZCODE_TARGET_ARCH: arch,
+    ...createElectronRuntimeMirrorEnv(electronMirror),
+  };
+  const clearedElectronBuilderEnv = createElectronBuilderBinariesMirrorEnv("");
+
+  return {
+    // Asset preparation and regular compilation must not inherit Builder's HTTP authorization or tool mirror.
+    buildEnv: {
+      ...commonEnv,
+      ...clearedElectronBuilderEnv,
+    },
+    electronBuilderEnv: {
+      ...commonEnv,
+      ...createElectronBuilderBinariesMirrorEnv(electronBuilderMirror),
+    },
+  };
+}
+
 export function shouldFallbackElectronBuilderBinariesMirror(output, mirror, env = process.env) {
   const normalizedOutput = output.toLowerCase();
   const normalizedMirror = mirror.trim().replace(/\/+$/, "");
@@ -224,16 +252,23 @@ export function shouldFallbackElectronBuilderBinariesMirror(output, mirror, env 
   );
   const isMissingBuilderBinary =
     normalizedOutput.includes("status code 404") || normalizedOutput.includes("response code 404");
+  const isDefaultDepsMirror = normalizedMirror === normalizedDefaultMirror;
+  // With 26.17 + @electron/get, concurrent download failures aggregated by AsyncTaskManager
+  // surface only as a generic "HTTPError: Response code 404" without the full mirror URL; when
+  // the default intranet mirror lacks a new tool directory, switching to the public mirror for
+  // a retry must stay possible, or the failure only surfaces as Cannot cleanup at ZIP/DMG stage.
   const isDefaultDepsMirrorMissing =
-    normalizedMirror === normalizedDefaultMirror &&
-    normalizedOutput.includes("electron-builder-binaries/");
+    isDefaultDepsMirror && normalizedOutput.includes("electron-builder-binaries/");
+  const isDefaultDepsMirrorGenericTool404 = isDefaultDepsMirror && isMissingBuilderBinary;
   const isMisconfiguredNpmMirrorElectronRuntime =
     normalizedOutput.includes("npmmirror.com/binaries/electron/") &&
     !normalizedOutput.includes("electron-builder-binaries/");
 
   return (
     isMissingBuilderBinary &&
-    (isDefaultDepsMirrorMissing || isMisconfiguredNpmMirrorElectronRuntime)
+    (isDefaultDepsMirrorMissing ||
+      isDefaultDepsMirrorGenericTool404 ||
+      isMisconfiguredNpmMirrorElectronRuntime)
   );
 }
 
@@ -739,12 +774,12 @@ async function main() {
   console.log(`[bundle] target=${os}/${arch}`);
   console.log(`[bundle] skipPrepare=${skipPrepare} skipBuild=${skipBuild}`);
 
-  const buildEnv = {
-    ZCODE_TARGET_OS: os,
-    ZCODE_TARGET_ARCH: arch,
-    ...createElectronRuntimeMirrorEnv(resolveElectronMirror()),
-    ...createElectronBuilderBinariesMirrorEnv(resolveElectronBuilderBinariesMirror()),
-  };
+  const { buildEnv, electronBuilderEnv } = createBundleProcessEnvs({
+    os,
+    arch,
+    electronMirror: resolveElectronMirror(),
+    electronBuilderMirror: resolveElectronBuilderBinariesMirror(),
+  });
 
   if (dryRun) {
     console.log(`[bundle] dry-run: ${pnpmCommand} ${buildArgs.join(" ")}`);
@@ -760,8 +795,10 @@ async function main() {
   }
 
   await runTimedAsync("bundle:electron-builder", () =>
-    runElectronBuilderWithRetry(buildArgs, buildEnv),
+    runElectronBuilderWithRetry(buildArgs, electronBuilderEnv),
   );
+
+  await stampMacosUpdateManifests({ outputDir: desktopDistRoot, platform: os });
 
   runTimedSync("bundle:verify-runtime-dependencies", () =>
     verifyPackagedRuntimeDependencies(os, arch),

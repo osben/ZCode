@@ -117,7 +117,10 @@ function collectTextRangesInElement(element: HTMLElement, normalizedQuery: strin
   return ranges;
 }
 
-function getMountedRowElement(root: HTMLElement, rowId: number): HTMLElement | null {
+export function getMountedConversationFindRow(
+  root: HTMLElement,
+  rowId: number,
+): HTMLElement | null {
   return root.querySelector<HTMLElement>(`[data-row-id="${rowId}"]`);
 }
 
@@ -130,7 +133,7 @@ export function getMountedConversationFindRange(
   if (!normalizedQuery) {
     return null;
   }
-  const rowElement = getMountedRowElement(root, match.rowId);
+  const rowElement = getMountedConversationFindRow(root, match.rowId);
   if (!rowElement) {
     return null;
   }
@@ -155,12 +158,26 @@ export function applyConversationFindHighlights({
     return null;
   }
 
-  const ranges = matches
-    .map((match) => getMountedConversationFindRange(root, query, match))
-    .filter((range): range is Range => range !== null);
-  const activeRange = activeMatch
-    ? getMountedConversationFindRange(root, query, activeMatch)
-    : null;
+  // Re-walking the whole tree per hit on the same row degrades to quadratic complexity; offscreen rows should not query the DOM per hit either.
+  const mountedRows = new Map<number, HTMLElement>();
+  for (const element of root.querySelectorAll<HTMLElement>("[data-row-id]")) {
+    const rowId = Number(element.dataset.rowId);
+    if (!mountedRows.has(rowId)) mountedRows.set(rowId, element);
+  }
+  const rowRanges = new Map<number, Range[]>();
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const resolveRange = (match: ConversationFindMatch): Range | null => {
+    const element = mountedRows.get(match.rowId);
+    if (!element || !normalizedQuery) return null;
+    let found = rowRanges.get(match.rowId);
+    if (!found) {
+      found = collectTextRangesInElement(element, normalizedQuery);
+      rowRanges.set(match.rowId, found);
+    }
+    return found[match.rowMatchIndex] ?? null;
+  };
+  const ranges = matches.map(resolveRange).filter((range): range is Range => range !== null);
+  const activeRange = activeMatch ? resolveRange(activeMatch) : null;
 
   support.highlights.set(FIND_HIGHLIGHT_NAME, createHighlight(support.Highlight, ranges, 0));
   support.highlights.set(
@@ -195,7 +212,9 @@ export function applySearchResultHighlight({
 export function scrollConversationFindRangeIntoView(range: Range) {
   const container = range.commonAncestorContainer;
   const element = container instanceof Element ? container : container.parentElement;
-  element?.scrollIntoView({ block: "center", behavior: "smooth" });
+  // Centering the virtual window mounts new buffer rows; the later height-measurement compensation cancels the native smooth animation and leaves a wrong landing point.
+  // Complete the hit positioning immediately, then let the existing anchor compensation keep the relative position instead of fighting the animation for scroll control.
+  element?.scrollIntoView({ block: "center", behavior: "auto" });
 }
 
 export function clearConversationFindHighlights() {

@@ -32,16 +32,17 @@ const MESSAGE_DATA_UPDATE = preserveLegacyMembers("message", [
 ]);
 const PART_DATA_UPDATE = preserveLegacyMembers("part", ["fromModel", "toModel", "model"]);
 
-  // Sequence rules for on-conflict:
-  // A resave in the same scope must preserve the existing sequence exactly, including NULL. coalesce(existing, excluded)
-  // would move a historical NULL row (missed by migration or written by an older binary) to the end (excluded=max+1) on any resave;
-  // even the save after assistant completion could trigger timeline drift. Migration 0015 fixes NULL values in one backfill.
-  // Only a cross-scope rebind (ID conflict with a different session/message, limited to import upserts) uses the new scope tail from excluded.
-export async function saveMessage(
+// Sequence rules for on-conflict:
+// A resave in the same scope must preserve the existing sequence exactly, including NULL. coalesce(existing, excluded)
+// would move a historical NULL row (missed by migration or written by an older binary) to the end (excluded=max+1) on any resave;
+// even the save after assistant completion could trigger timeline drift. Migration 0015 fixes NULL values in one backfill.
+// Only a cross-scope rebind (ID conflict with a different session/message, limited to import upserts) uses the new scope tail from excluded.
+// DatabaseSync's internal repository stays synchronous; awaiting inside a transaction lets other sessions' writes mix into the same connection's transaction.
+export function saveMessage(
   db: DatabaseSync,
   input: MessageInfo,
   copyFrom?: Parameters<SessionStorePort["saveMessage"]>[1],
-): Promise<void> {
+): void {
   const { id, sessionID, ...data } = input;
   // The frozen legacy protocol mapper unconditionally reads user.model; if the whole object is missing, the message body cannot be opened.
   // Add only the required object; conflict updates/copy logic preserve the original model on legacy rows, and the new Reader does not use it.
@@ -111,11 +112,11 @@ export async function removeMessage(
   );
 }
 
-export async function savePart(
+export function savePart(
   db: DatabaseSync,
   input: MessagePart,
   copyFrom?: Parameters<SessionStorePort["savePart"]>[1],
-): Promise<void> {
+): void {
   const { id, sessionID, messageID, ...data } = input;
   let storedData: Record<string, unknown> = data;
   if (input.type === "timeline" && input.timelineType === "model_change") {
@@ -219,10 +220,7 @@ export async function removePart(
   );
 }
 
-export async function messages(
-  db: DatabaseSync,
-  input: { sessionID: SessionId },
-): Promise<MessageWithParts[]> {
+export function messages(db: DatabaseSync, input: { sessionID: SessionId }): MessageWithParts[] {
   const messageRows = db
     .prepare(
       `

@@ -112,7 +112,7 @@ interface SessionResourceCloseInput {
   closeNodeReplBrowserBroker?: () => Promise<void> | void;
   closeSessionStore?: () => void;
   logger: Logger;
-  timeoutMs?: number;
+  timeoutMs?: number | null;
 }
 
 interface CreateSessionFacadeDeps {
@@ -122,6 +122,7 @@ interface CreateSessionFacadeDeps {
    * run service 的 `close()`。缺席即本装配没有 dwf 端口（journal 窄化失败、测试装配）。
    */
   closeDynamicWorkflowRuns?: () => Promise<void>;
+  closeScriptWorkflowRuns?: () => Promise<void>;
   closeNodeReplBrowserBroker?: () => Promise<void> | undefined;
   configResult: ConfigResult;
   configuredMcpServers: Record<string, McpServerConfig>;
@@ -291,6 +292,7 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
       closePromise ??= (async () => {
         // SessionEnd hooks run first, while every session resource is still alive. A hook
         // failure must never block the close chain: log it and continue releasing resources.
+        // They run outside the shutdown deadline below, which only bounds resource release.
         try {
           await deps.runtime.runSessionEndHooks(deps.traceContext);
         } catch (error: unknown) {
@@ -300,51 +302,61 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
             module: "bootstrap.app",
           });
         }
-        // The close entry point first blocks new scheduling and cancels in-flight Memory Extraction,
-        // then waits for cancellation to settle.
-        deps.runtime.beginShutdown();
-        await Promise.all([
-          deps.runtime.drainMemoryExtractions(60_000),
-          deps.runtime.drainBackgroundDreams(60_000),
-        ]);
-        // This App owns the engine, so closing must stop it explicitly.
-        // The placement satisfies two constraints: **after** beginShutdown, terminal notifications
-        // emitted during settlement are dropped (background-notifications.ts does not enqueue while
-        // shutting down), so they cannot wake a model in a closing session; **before**
-        // closeSessionResources, subagents still have execution, MCP, and session-store resources to
-        // abort cleanly, and the engine can write its stopped(interrupted) journal entry.
-        if (deps.closeDynamicWorkflowRuns !== undefined) {
-          try {
-            await deps.closeDynamicWorkflowRuns();
-          } catch (error: unknown) {
-            // 卡住或抛错的 dwf 关闭绝不能吃掉资源关闭（同下面并行关闭那条注释的论证）：
-            // 记一条 warn 继续走，最坏情况是那个 run 留成孤儿行，下一次构造时被收敛。
-            deps.logger.warn?.(
-              "Closing dynamic workflow runs failed; continuing to close resources",
-              {
-                errorMessage: error instanceof Error ? error.message : String(error),
-                event: "dynamic_workflow.service.close_failed",
-                module: "bootstrap.app",
-              },
+        await closeSessionResourceWithinDeadline(
+          "session_shutdown",
+          async () => {
+            // The close entry point first blocks new scheduling and cancels in-flight Memory
+            // Extraction and background Dreams, then waits for cancellation to settle.
+            const errors: unknown[] = [];
+            deps.runtime.beginShutdown();
+            // This App owns the dwf engine, so closing must stop it explicitly. The placement
+            // satisfies two constraints: **after** beginShutdown, terminal notifications emitted
+            // during settlement are dropped (background-notifications.ts does not enqueue while
+            // shutting down), so they cannot wake a model in a closing session; **before**
+            // closeSessionResources, subagents still have execution, MCP, and session-store
+            // resources to abort cleanly, and the engine can write its stopped(interrupted) entry.
+            const owners: Array<[string, (() => Promise<void>) | undefined]> = [
+              ["runtime_work", () => deps.runtime.closeOwnedWork()],
+              ["background_dreams", () => deps.runtime.drainBackgroundDreams(60_000)],
+              ["dynamic_workflow", deps.closeDynamicWorkflowRuns],
+              ["script_workflow", deps.closeScriptWorkflowRuns],
+            ];
+            // The deadline only bounds the outer wait; until the real drain finishes, dependent
+            // resources must stay held by this chain.
+            const closed = await Promise.allSettled(
+              owners.flatMap(([, close]) => (close ? [Promise.resolve().then(close)] : [])),
             );
-          }
-        }
-        const closableSessionStore =
-          deps.ownsSessionStore && isClosableSessionStore(deps.sessionStore)
-            ? deps.sessionStore
-            : undefined;
-        await closeSessionResources({
-          beginShutdown: () => deps.runtime.beginShutdown(),
-          closeBrowserSession: () => deps.runtime.closeBrowserSession(),
-          closeExecution:
-            deps.ownsExecutionPort && deps.executionPort.close
-              ? () => deps.executionPort.close?.()
-              : undefined,
-          closeMcp: deps.ownsMcpPort && deps.mcpPort ? () => deps.mcpPort?.close() : undefined,
-          closeNodeReplBrowserBroker: deps.closeNodeReplBrowserBroker,
-          closeSessionStore: closableSessionStore ? () => closableSessionStore.close() : undefined,
-          logger: deps.logger,
-        });
+            for (const result of closed)
+              if (result.status === "rejected") errors.push(result.reason);
+            const closableSessionStore =
+              deps.ownsSessionStore && isClosableSessionStore(deps.sessionStore)
+                ? deps.sessionStore
+                : undefined;
+            try {
+              await closeSessionResources({
+                beginShutdown: () => deps.runtime.beginShutdown(),
+                closeBrowserSession: () => deps.runtime.closeBrowserSession(),
+                closeExecution:
+                  deps.ownsExecutionPort && deps.executionPort.close
+                    ? () => deps.executionPort.close?.()
+                    : undefined,
+                closeMcp:
+                  deps.ownsMcpPort && deps.mcpPort ? () => deps.mcpPort?.close() : undefined,
+                closeNodeReplBrowserBroker: deps.closeNodeReplBrowserBroker,
+                closeSessionStore: closableSessionStore
+                  ? () => closableSessionStore.close()
+                  : undefined,
+                logger: deps.logger,
+                timeoutMs: null,
+              });
+            } catch (error) {
+              errors.push(error);
+            }
+            if (errors.length) throw new AggregateError(errors, "Session shutdown failed");
+          },
+          DEFAULT_SESSION_RESOURCE_CLOSE_TIMEOUT_MS,
+          deps.logger,
+        );
       })();
       return await closePromise;
     },
@@ -782,20 +794,18 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
 }
 
 export async function closeSessionResources(input: SessionResourceCloseInput): Promise<void> {
+  const errors: unknown[] = [];
   try {
     // 第一拍先关闭 runtime admission；后续 execution cancel 只能收口状态，不能再唤醒模型。
     input.beginShutdown();
   } catch (error) {
+    errors.push(error);
     input.logger.warn("Failed to begin runtime shutdown", {
       error: error instanceof Error ? error.message : String(error),
       event: "session.shutdown_admission.failed",
     });
   }
 
-  const timeoutMs = Math.max(
-    1,
-    Math.trunc(input.timeoutMs ?? DEFAULT_SESSION_RESOURCE_CLOSE_TIMEOUT_MS),
-  );
   const resources: Array<[name: string, close: (() => Promise<void> | void) | undefined]> = [
     ["browser_session", input.closeBrowserSession],
     ["execution", input.closeExecution],
@@ -803,23 +813,43 @@ export async function closeSessionResources(input: SessionResourceCloseInput): P
     ["node_repl_browser_broker", input.closeNodeReplBrowserBroker],
   ];
 
-  // 旧关闭链串行 await；Browser close 永不 settle 时，Execution/MCP 永远不会执行。
-  // 各 owner 并行、独立带 deadline，任何一个失败都不能跳过其它资源。
-  await Promise.all(
-    resources.flatMap(([name, close]) =>
-      close ? [closeSessionResourceWithinDeadline(name, close, timeoutMs, input.logger)] : [],
-    ),
+  // Independent resources are released in parallel; an outer timeout must not let a borrower that
+  // is still finishing touch an already-closed store.
+  const completion = (async () => {
+    const results = await Promise.allSettled(
+      resources.flatMap(([name, close]) =>
+        close
+          ? [
+              Promise.resolve()
+                .then(close)
+                .catch((error: unknown) => {
+                  input.logger.warn("Session resource close failed", {
+                    event: "session.resource_close.failed",
+                    resource: name,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                  throw error;
+                }),
+            ]
+          : [],
+      ),
+    );
+    for (const result of results) if (result.status === "rejected") errors.push(result.reason);
+    try {
+      input.closeSessionStore?.();
+    } catch (error) {
+      errors.push(error);
+    }
+    if (errors.length)
+      throw new AggregateError(errors, "Session resources could not be safely released");
+  })();
+  if (input.timeoutMs === null) return completion;
+  return closeSessionResourceWithinDeadline(
+    "session_resources",
+    () => completion,
+    Math.max(1, Math.trunc(input.timeoutMs ?? DEFAULT_SESSION_RESOURCE_CLOSE_TIMEOUT_MS)),
+    input.logger,
   );
-
-  try {
-    input.closeSessionStore?.();
-  } catch (error) {
-    input.logger.warn("Failed to close session store", {
-      error: error instanceof Error ? error.message : String(error),
-      event: "session.resource_close.failed",
-      resource: "session_store",
-    });
-  }
 }
 
 async function closeSessionResourceWithinDeadline(
@@ -848,13 +878,14 @@ async function closeSessionResourceWithinDeadline(
       resource: name,
       timeoutMs,
     });
-    return;
+    throw new Error(`Session resource close timed out: ${name}`);
   }
   logger.warn("Session resource close failed", {
     error: outcome.error instanceof Error ? outcome.error.message : String(outcome.error),
     event: "session.resource_close.failed",
     resource: name,
   });
+  throw outcome.error;
 }
 
 async function persistSessionModelSelection(deps: CreateSessionFacadeDeps): Promise<void> {
@@ -879,16 +910,34 @@ async function persistSessionModelSelection(deps: CreateSessionFacadeDeps): Prom
       },
     });
   } catch (error) {
-    // 选型已经在当前 runtime 生效；持久化失败不能反向伪装成切换失败，但必须留生产日志。
-    deps.logger.warn("Session model selection persistence failed", {
+    const logContext = {
       ...traceContextToLogContext(deps.traceContext),
       error: error instanceof Error ? error.message : String(error),
-      event: "session.model_selection.persist_failed",
       modelId: selection.modelId,
       module: "bootstrap",
       providerId: selection.providerId,
-      status: "failed",
       thoughtLevel: selection.options?.reasoningLevel,
+    };
+    // Bug cause (ZCT-2109847556412547072): when the App sets the model/thought level before the
+    // first message of a deferred session, the session row does not exist yet, so the entry write
+    // always fails with FOREIGN KEY, yet it reached production logs as a warn and misled
+    // investigation. The first persistence (ensureSessionPersisted) backfills the same entry from
+    // the Session Selection at that time, so only downgrade to debug while the session is still
+    // unpersisted. Still attempt the write instead of skipping up front: if the first persistence
+    // is in flight, skipping would lose a selection made after it read the selection.
+    if (!deps.runtime.isSessionPersisted()) {
+      deps.logger.debug("Session model selection persistence deferred until session is persisted", {
+        ...logContext,
+        event: "session.model_selection.persist_deferred",
+        status: "waiting",
+      });
+      return;
+    }
+    // 选型已经在当前 runtime 生效；持久化失败不能反向伪装成切换失败，但必须留生产日志。
+    deps.logger.warn("Session model selection persistence failed", {
+      ...logContext,
+      event: "session.model_selection.persist_failed",
+      status: "failed",
     });
   }
 }

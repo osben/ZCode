@@ -1,5 +1,5 @@
-// Command inbox：统一命令 admission 与查询入口。
-// 三类事实严格分离：in-flight / live input 永远 pinned；只有 settled 进入 512/session LRU。
+// Command inbox: the unified command admission and query entry point.
+// Three fact classes are strictly separated: in-flight / live inputs stay pinned forever; only settled ones enter the 512/session LRU.
 import { PendingSessionCreations } from "./command-inbox-creations.js";
 import type {
   CommandAck,
@@ -14,7 +14,7 @@ import {
   parseCommandEnvelope,
 } from "@zcode/shared/zcode-protocol-v4";
 
-/** guard 裁决结果：拒绝（撤 optimistic）或 noop（晚到者静默收口，§6.3）。 */
+/** Guard verdict: reject (withdraw optimistic) or noop (late arrival silently closed out, §6.3). */
 export type GuardDecision =
   | { verdict: "allow" }
   | { verdict: "stale"; reasonCode: string; message?: string }
@@ -24,18 +24,18 @@ export type GuardDecision =
 type PersistentLookup = (key: CommandKey) => Promise<CommandAck | null> | CommandAck | null;
 
 export interface CommandInboxHost {
-  /** 幂等查询完成后、持有 session admission 时准备冷会话，不另设接受队列。 */
+  /** Prepare a cold session after the idempotent query, while holding session admission; no separate accept queue. */
   prepareDecision?(envelope: CommandEnvelope): Promise<void>;
 
-  /** 会话当前 revision；未知会话返回 null（createSession 用 null sessionId）。 */
+  /** The session's current revision; null for an unknown session (createSession uses a null sessionId). */
   getRevision(sessionId: string): number | null;
-  /** 会话当前投影代际；CAS 必须先校验 epoch，再校验 revision。 */
+  /** The session's current projection epoch; CAS must check epoch first, then revision. */
   getLogEpoch(sessionId: string): string | null;
-  /** row-targeting command 的 entity/action 同源 resolver 裁决。 */
+  /** Entity/action verdict from the same resolver as row-targeting commands. */
   validateRowTarget?(envelope: CommandEnvelope): GuardDecision;
-  /** 业务 guard（product-protocol guard id）。缺省一律放行。 */
+  /** Business guard (product-protocol guard id). Defaults to always allow. */
   guard?(envelope: CommandEnvelope): GuardDecision;
-  /** 以下回调顺序就是持久化事实优先级；实现必须精确匹配 sourceCommandId。 */
+  /** The callback order below is the persisted-fact priority; implementations must match sourceCommandId exactly. */
   lookupTranscriptCommand?: PersistentLookup;
   lookupTimelineCommand?: PersistentLookup;
   lookupChildCommand?: PersistentLookup;
@@ -65,15 +65,15 @@ export type CommandInboxOutcome =
       kind: "execute";
       envelope: CommandEnvelope;
       ack: CommandAck;
-      /** CLI 串行 admission 分配的权威顺序；用它构造 ConversationInputIntent。 */
+      /** Authoritative order assigned by CLI serial admission; used to build the ConversationInputIntent. */
       admissionSeq: number;
       admittedAt: number;
       queueItemId: string;
-      /** 执行完成后回填终态。必须调用一次，用于释放 per-session admission gate。 */
+      /** Called once after execution finishes to fill in the final state; releases the per-session admission gate. */
       settle: (final: CommandFinal) => void;
     };
 
-// createSession 与 null sessionId query 归全局桶。
+// createSession and null-sessionId queries go to the global bucket.
 const GLOBAL_BUCKET = "@global";
 
 export function queueItemIdForCommand(commandId: string): string {
@@ -83,8 +83,9 @@ export function queueItemIdForCommand(commandId: string): string {
 type GateRelease = () => void;
 
 /**
- * FIFO async gate。返回显式 release 是因为 per-session gate 要跨过 gateway execute，
- * 直到 settle 才释放；普通 with-lock 会在 handle 返回时过早放行下一条 admission。
+ * FIFO async gate. An explicit release is returned because the per-session gate must span the
+ * gateway execute and only release at settle; a plain with-lock would let the next admission
+ * through too early when handle returns.
  */
 class AsyncGateRegistry {
   private readonly tails = new Map<string, Promise<void>>();
@@ -188,11 +189,12 @@ export class CommandInbox {
       const existing = await this.lookupExact(key);
       if (existing) return this.ackOnly(this.retryAck(existing));
 
-      // 固定锁序：key gate → per-session admission gate。session gate 持有到 settle，
-      // 因而同 session 不同 commandId 以 CLI 实际执行 admission 的顺序串行。
+      // Fixed lock order: key gate → per-session admission gate. The session gate is held until
+      // settle, so different commandIds in the same session serialize in the order the CLI
+      // actually performs admission.
       const releaseSession = await this.sessionGates.acquire(bucketKey);
       try {
-        // 等待 session gate 期间，上一条命令可能增量写入了本 key 的持久化事实。
+        // While waiting on the session gate, the previous command may have incrementally written persisted facts for this key.
         const afterWaitPinned = this.inFlight.get(bucketKey)?.get(envelope.commandId);
         if (afterWaitPinned) {
           releaseSession();
@@ -222,8 +224,9 @@ export class CommandInbox {
         const entry: InFlightEntry = { ack: decision.ack, final, resolveFinal };
         this.mapFor(this.inFlight, bucketKey).set(envelope.commandId, entry);
 
-        // 旧单表 LRU 会在 >512 条 churn 时淘汰仍在执行/队列里的命令，随后
-        // query 返回 unknown、重试再次执行。新命令先 pin，再释放 key gate。
+        // The old single-table LRU evicted commands still executing/queued during >512-entry
+        // churn; the query then returned unknown and a retry executed again. New commands are
+        // pinned first, then the key gate is released.
         releaseKey();
         let settled = false;
         return {
@@ -247,9 +250,10 @@ export class CommandInbox {
             } else {
               this.rememberSettled(bucketKey, envelope.commandId, ack);
             }
-            // 在途 duplicate 过去直接拿 admission ACK，fork/create 尚无 child
-            // result 时就返回，ACK 丢失重试会导航失败。所有同 key 请求必须共享这一个
-            // final promise，并在释放 session FIFO 前看到同一终态。
+            // An in-flight duplicate used to take the admission ACK directly and return before
+            // fork/create had a child result; a lost ACK retried and navigation failed. All
+            // same-key requests must share this one final promise and see the same final state
+            // before the session FIFO is released.
             entry.resolveFinal(ack);
             releaseSession();
           },
@@ -261,19 +265,19 @@ export class CommandInbox {
     } catch (error) {
       return this.ackOnly(this.queryUnavailableAck(key, error));
     } finally {
-      // execute 路径已在 pin 后提前 release；release 幂等，其他路径在这里释放。
+      // The execute path already released early after pinning; release is idempotent, other paths release here.
       releaseKey();
     }
   }
 
-  /** 1..64 的上层 schema 由 gateway 校验；这里并行查询并保持 Promise.all 输入顺序。 */
+  /** The 1..64 upper-bound schema is validated by the gateway; queries run in parallel preserving Promise.all input order. */
   async query(
     keys: readonly CommandKey[],
   ): Promise<Array<{ key: CommandKey; result: CommandAck | "unknown" }>> {
     return Promise.all(keys.map((key) => this.queryOne(key)));
   }
 
-  /** queue/guide admission 后 pin 同一个完整 intent；settled churn 不得触及它。 */
+  /** Pins the same full intent after queue/guide admission; settled churn must not touch it. */
   pinLiveInput(sessionId: string, intent: ConversationInputIntent, ack?: CommandAck): void {
     const bucketKey = this.bucketKey(sessionId);
     const inFlightAck = this.inFlight.get(bucketKey)?.get(intent.sourceCommandId)?.ack;
@@ -289,7 +293,7 @@ export class CommandInbox {
     this.settled.get(bucketKey)?.delete(intent.sourceCommandId);
   }
 
-  /** queue/guide 进入 transcript、取消或失败时解除 pin，并可把终态转入 settled LRU。 */
+  /** Unpins when the queue/guide input enters the transcript, is cancelled, or fails; may move the final state into the settled LRU. */
   releaseLiveInput(key: CommandKey, finalAck?: CommandAck): void {
     const bucketKey = this.bucketKey(key.sessionId);
     const live = this.liveInputs.get(bucketKey)?.get(key.commandId);
@@ -308,8 +312,9 @@ export class CommandInbox {
   }
 
   /**
-   * Resident 去激活后，inbox 也必须回到 CLI 冷启动状态。in-flight/live facts 不能清，
-   * 调用方必须把它们作为回收保护条件；settled 仍可从 durable transcript/timeline 回源。
+   * After a resident deactivates, the inbox must also return to the CLI cold-start state.
+   * In-flight/live facts must not be cleared; callers must use them as recycle-guard
+   * conditions. Settled facts can still be re-sourced from the durable transcript/timeline.
    */
   clearSession(sessionId: string): boolean {
     const bucketKey = this.bucketKey(sessionId);
@@ -319,6 +324,16 @@ export class CommandInbox {
     this.settled.delete(bucketKey);
     this.admissionSeq.delete(bucketKey);
     return true;
+  }
+
+  /** Only for replacement paths that already closed execution admission and released the old instance; final-state facts still re-source from the persistent ledger. */
+  async resetReleasedSession(sessionId: string): Promise<void> {
+    const bucketKey = this.bucketKey(sessionId);
+    await Promise.all(
+      [...(this.inFlight.get(bucketKey)?.values() ?? [])].map((entry) => entry.final),
+    );
+    this.liveInputs.delete(bucketKey);
+    this.clearSession(sessionId);
   }
 
   private async queryOne(
@@ -497,7 +512,7 @@ export class CommandInbox {
   }
 
   private retryAck(ack: CommandAck): CommandAck {
-    // failed 是终态事实，不得被 duplicate 状态覆盖后让 UI/服务误判为可接受。
+    // failed is a final-state fact; it must not be overwritten by duplicate status and mislead UI/services into treating it as acceptable.
     return ack.status === "failed" ? ack : { ...ack, status: "duplicate" };
   }
 

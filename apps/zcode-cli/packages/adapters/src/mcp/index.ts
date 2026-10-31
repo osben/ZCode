@@ -64,6 +64,11 @@ import {
   createMcpTransportFetch,
   type NetworkEgressEnvPolicy,
 } from "./network.js";
+import {
+  applyMcpNodeFallbackEnv,
+  type McpNodeFallback,
+  type McpNodeFallbackProvider,
+} from "./node-fallback.js";
 import { loadCredentialPair } from "./oauth-credentials.js";
 import {
   classifyInteractiveAuthorizationTrigger,
@@ -126,9 +131,15 @@ export interface CreateMcpAdapterOptions {
   mcpOAuth?: McpOAuthRuntimeOptions;
   network?: NetworkEgressEnvPolicy;
   /**
-   * Auth dependencies for official Server MCP. Missing trustedOrigins still fails closed;
-   * authHeadersPort is optional, and requests become anonymous when absent so the server can make
-   * the authoritative decision.
+   * Desktop Electron Node fallback: when injected by the host, stdio MCP's node/npm/npx fall back to
+   * Electron and the bundled npm when missing from the user's PATH (docs/design/v2/mcp-node-fallback.md).
+   * When absent, env is unchanged.
+   */
+  nodeFallback?: McpNodeFallbackProvider;
+  /**
+    * Auth dependencies for official Server MCP. Missing trustedOrigins still fails closed;
+    * authHeadersPort is optional, and requests become anonymous when absent so the server can make
+    * the authoritative decision.
    */
   officialMcpAuth?: {
     authHeadersPort?: OfficialMcpAuthHeadersPort;
@@ -231,6 +242,12 @@ export {
   type McpConnectionPoolOptions,
 } from "./pool.js";
 export {
+  createMcpNodeFallbackProvider,
+  type CreateMcpNodeFallbackProviderOptions,
+  type McpNodeFallback,
+  type McpNodeFallbackProvider,
+} from "./node-fallback.js";
+export {
   createMcpTelemetryTracker,
   resolvePluginName,
   type McpTelemetryTracker,
@@ -252,6 +269,7 @@ class NodeMcpAdapter implements McpPort {
   private readonly logger?: Logger;
   private readonly mcpOAuth?: McpOAuthRuntimeOptions;
   private readonly network?: NetworkEgressEnvPolicy;
+  private readonly nodeFallback?: McpNodeFallbackProvider;
   private readonly officialMcpAuth?: CreateMcpAdapterOptions["officialMcpAuth"];
   private readonly telemetry?: McpTelemetryTracker;
   private readonly connectionGenerations = new Map<string, number>();
@@ -302,6 +320,7 @@ class NodeMcpAdapter implements McpPort {
     });
     this.mcpOAuth = options.mcpOAuth;
     this.network = options.network;
+    this.nodeFallback = options.nodeFallback;
     this.officialMcpAuth = options.officialMcpAuth;
     this.telemetry = options.telemetry;
     this.workingDirectory = options.workingDirectory;
@@ -1544,6 +1563,18 @@ class NodeMcpAdapter implements McpPort {
       config.type === "stdio" ? "process_start_failed" : "network_unreachable";
 
     try {
+      // Root cause (MR !3089 review CR-02): the first stdio connection must prepare the node fallback (file IO)
+      // first; it used to be awaited bare inside createTransport, outside the connection timeout and
+      // cancellation — stuck IO left the connection hanging in connecting forever.
+      const nodeFallback =
+        config.type === "stdio" && this.nodeFallback
+          ? await withTimeout(
+              this.nodeFallback.resolve(),
+              timeoutMs,
+              `MCP server ${name} node fallback preparation timed out after ${timeoutMs}ms`,
+              signal,
+            )
+          : undefined;
       const transportBundle = await this.createTransport(
         config,
         name,
@@ -1551,6 +1582,7 @@ class NodeMcpAdapter implements McpPort {
         oauthAuthorizationTimeoutMs,
         workingDirectory,
         signal,
+        nodeFallback,
       );
       transport = transportBundle.transport;
       getRecentStderr = this.attachStdioLogging(name, transport);
@@ -1953,6 +1985,7 @@ class NodeMcpAdapter implements McpPort {
     _oauthAuthorizationTimeoutMs?: number,
     workingDirectory?: string,
     signal?: AbortSignal,
+    nodeFallback?: McpNodeFallback,
   ): Promise<{ transport: McpTransport }> {
     if (config.type === "stdio") {
       return {
@@ -1962,10 +1995,14 @@ class NodeMcpAdapter implements McpPort {
           cwd: config.cwd
             ? resolve(workingDirectory ?? this.workingDirectory ?? process.cwd(), config.cwd)
             : (workingDirectory ?? this.workingDirectory),
-          env: {
-            ...buildMcpStdioEnv({ env: this.env, network: this.network }),
-            ...config.env,
-          },
+          // The fallback merges after the server env: when a plugin brings its own PATH, the shim directory is still appended at the end.
+          env: applyMcpNodeFallbackEnv(
+            {
+              ...buildMcpStdioEnv({ env: this.env, network: this.network }),
+              ...config.env,
+            },
+            nodeFallback,
+          ),
           stderr: "pipe",
           ...(isOfficialAuthConfig(config) && config.official
             ? {
@@ -2244,7 +2281,7 @@ class NodeMcpAdapter implements McpPort {
     const record = this.records.get(name);
     if (!record) return null;
     const generation = this.connectionGenerations.get(name) ?? 0;
-    // 会话恢复先于 MCP 握手完成；复用已有连接任务，避免首次打开把 connecting 误判为失败。
+    // Session restore completes before the MCP handshake; reuse the existing connection task so the first open does not misjudge connecting as failure.
     await record.connecting;
     return this.isCurrentConnection(name, generation) ? this.appConnectionSnapshot(name) : null;
   }
@@ -2353,6 +2390,9 @@ function mcpRequestMeta(request: McpCallToolRequest): Record<string, unknown> {
     ...(request.trace?.spanId ? { span_id: request.trace.spanId } : {}),
     ...(request.trace?.parentSpanId ? { parent_span_id: request.trace.parentSpanId } : {}),
     ...(request.trace?.sessionId ? { session_id: request.trace.sessionId } : {}),
+    // Subagent / workflow-child calls carry the top-level session that derived them, so a workspace-shared
+    // server can let the child share state with the parent session (docs plugin viewer spec §8.2).
+    ...(request.trace?.rootSessionId ? { root_session_id: request.trace.rootSessionId } : {}),
     ...(request.trace?.turnId ? { turn_id: request.trace.turnId } : {}),
     ...(request.runtimeScope ? { runtime_scope: request.runtimeScope } : {}),
     ...(request.workspacePath ? { workspace_path: request.workspacePath } : {}),

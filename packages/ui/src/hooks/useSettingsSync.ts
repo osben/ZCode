@@ -28,6 +28,7 @@ function createInitialState(): SettingsSyncUiState {
     selectedKeys: [],
     tasks: [],
     result: null,
+    workspaceRequiredCount: 0,
     error: null,
   };
 }
@@ -105,20 +106,79 @@ function buildStateSelections(selectedKeys: string[]): SettingsSyncSelection[] {
   });
 }
 
+function countSelectionItems(selection: SettingsSyncSelection): number {
+  return (
+    selection.skillPaths?.length ??
+    selection.commandPaths?.length ??
+    selection.pluginPaths?.length ??
+    selection.mcpServerPaths?.length ??
+    1
+  );
+}
+
 function buildTasksFromSelections(selections: SettingsSyncSelection[]): SettingsSyncUiTask[] {
   return selections.map((selection, index) => ({
     id: `${selection.agent}:${selection.category}:${selection.sourceScope ?? "all"}:${selection.targetScope ?? "auto"}:${index}`,
     agent: selection.agent,
     category: selection.category,
-    discoveredCount:
-      selection.skillPaths?.length ??
-      selection.commandPaths?.length ??
-      selection.pluginPaths?.length ??
-      selection.mcpServerPaths?.length ??
-      1,
+    discoveredCount: countSelectionItems(selection),
     status: "pending" as const,
   }));
 }
+
+/** Selections whose import target or source is a project: with no project open there is nowhere
+ *  to read or write. */
+function selectionRequiresWorkspace(selection: SettingsSyncSelection): boolean {
+  return selection.targetScope === "project" || selection.sourceScope === "project";
+}
+
+/**
+ * Merge results in the selections' original order: workspace-required items are recorded as
+ * failed, the rest take the import service's results in sequence.
+ * applyTaskResults aligns tasks by agent:category occurrence order, so the order must match
+ * the selections.
+ */
+function mergeWorkspaceRequiredResults(
+  selections: SettingsSyncSelection[],
+  blocked: ReadonlySet<SettingsSyncSelection>,
+  imported: SettingsSyncImportResult,
+): SettingsSyncImportResult {
+  const importedResults = [...imported.taskResults];
+  const taskResults = selections.flatMap((selection) => {
+    if (!blocked.has(selection)) {
+      const next = importedResults.shift();
+      return next ? [next] : [];
+    }
+    const failedCount = countSelectionItems(selection);
+    return [
+      {
+        agent: selection.agent,
+        category: selection.category,
+        status: "failed" as const,
+        importedCount: 0,
+        skippedCount: 0,
+        failedCount,
+      },
+    ];
+  });
+  const blockedCount = [...blocked].reduce(
+    (sum, selection) => sum + countSelectionItems(selection),
+    0,
+  );
+  return {
+    successCount: imported.successCount,
+    skippedCount: imported.skippedCount,
+    failedCount: imported.failedCount + blockedCount,
+    taskResults: [...taskResults, ...importedResults],
+  };
+}
+
+const EMPTY_IMPORT_RESULT: SettingsSyncImportResult = {
+  successCount: 0,
+  skippedCount: 0,
+  failedCount: 0,
+  taskResults: [],
+};
 
 function normalizeError(error: unknown): string {
   if (error instanceof Error) {
@@ -150,32 +210,38 @@ export function useSettingsSync(params: { workspacePath?: string; workspaceIdent
     params.workspaceIdentity,
   );
   const runningImportRef = useRef(0);
+  const discoveryRequestRef = useRef(0);
   const [state, setState] = useState<SettingsSyncUiState>(createInitialState);
 
   const loadDiscovery = useCallback(
-    async (intent: LoadDiscoveryIntent = "firstRun") => {
+    async (intent: LoadDiscoveryIntent = "firstRun", requestId = ++discoveryRequestRef.current) => {
       if (!params.workspacePath) {
         return;
       }
 
-      setState((current) => ({
-        ...current,
-        loading: true,
-        error: null,
-      }));
+      // A first-run response used to overwrite a manual window; responses arriving after close
+      // or a workspace switch also revived stale UI. Each detection commits only to its own
+      // request generation — even queued React updaters must re-check.
+      const isCurrent = () => discoveryRequestRef.current === requestId;
+      const updateState = (update: (current: SettingsSyncUiState) => SettingsSyncUiState) =>
+        setState((current) => (isCurrent() ? update(current) : current));
+      updateState((current) => ({ ...current, loading: true, error: null }));
 
       try {
         const rawDiscovery = await settingsSyncService.detect({
           workspacePath: params.workspacePath,
           workspaceIdentity: params.workspaceIdentity,
         });
+        if (!isCurrent()) return;
         const discovery = normalizeDiscovery(rawDiscovery);
         if (discovery.agents.length === 0) {
           if (intent === "manual") {
-            // Clicking "Guide" in Settings reopens onboarding and reruns detect. Reusing first-start behavior for an empty
-            // result would reset open to false and make the dialog flash closed. For manual opens, keep the welcome page so
-            // users can still access session migration and other flows.
-            setState((current) => ({
+            // Clicking "Migrate" on the data-sync page reopens the wizard and re-runs detect;
+            // reusing the first-run logic on an empty result would reset open to false and the
+            // user would see the dialog flash shut. A manual open should keep the wizard's
+            // first step, "Sessions", so the user can still run session migration and similar
+            // flows.
+            updateState((current) => ({
               ...current,
               open: true,
               loading: false,
@@ -194,14 +260,15 @@ export function useSettingsSync(params: { workspacePath?: string; workspaceIdent
           // After third-party agent migration was removed, first-start detection returns an empty result.
           // Do not open an onboarding dialog with nothing to do; mark it handled directly.
           await settingsSyncService.markFirstRunPromptHandled();
-          setState(createInitialState());
+          if (!isCurrent()) return;
+          updateState(createInitialState);
           logger.info("[settings-sync] discovery empty, prompt handled", {
             workspacePath: params.workspacePath,
           });
           return;
         }
         const selectedKeys = buildDefaultSelectedKeys(discovery);
-        setState((current) => ({
+        updateState((current) => ({
           ...current,
           open: true,
           loading: false,
@@ -218,12 +285,13 @@ export function useSettingsSync(params: { workspacePath?: string; workspaceIdent
           selectedCount: selectedKeys.length,
         });
       } catch (error) {
+        if (!isCurrent()) return;
         const message = normalizeError(error);
         logger.error("[settings-sync] discovery failed", {
           workspacePath: params.workspacePath,
           error: message,
         });
-        setState((current) => ({
+        updateState((current) => ({
           ...current,
           open: true,
           loading: false,
@@ -235,17 +303,20 @@ export function useSettingsSync(params: { workspacePath?: string; workspaceIdent
   );
 
   useEffect(() => {
+    const requestId = ++discoveryRequestRef.current;
+    const cancel = () => {
+      discoveryRequestRef.current += 1;
+    };
+    // A new workspace must not reuse the previous workspace's detection results or loading state.
+    setState(createInitialState());
     if (!params.workspacePath) {
-      setState(createInitialState());
-      return;
+      return cancel;
     }
 
     if (FORCE_SHOW_ONBOARDING_ON_EVERY_REFRESH) {
-      void loadDiscovery();
-      return;
+      void loadDiscovery("firstRun", requestId);
+      return cancel;
     }
-
-    let cancelled = false;
 
     void (async () => {
       try {
@@ -253,38 +324,34 @@ export function useSettingsSync(params: { workspacePath?: string; workspaceIdent
         // During debugging it appeared every time a workspace opened, repeatedly interrupting users who had skipped it.
         // Read handled state first and detect/show only if the prompt has not been consumed yet.
         const promptState = await settingsSyncService.getFirstRunPromptState();
-        if (cancelled) {
+        if (discoveryRequestRef.current !== requestId) {
           return;
         }
 
         if (promptState.handled) {
-          setState(createInitialState());
+          setState((current) =>
+            discoveryRequestRef.current === requestId ? createInitialState() : current,
+          );
           return;
         }
 
-        await loadDiscovery();
+        await loadDiscovery("firstRun", requestId);
       } catch (error) {
+        if (discoveryRequestRef.current !== requestId) return;
         const message = normalizeError(error);
         logger.error("[settings-sync] first run prompt state failed", {
           workspacePath: params.workspacePath,
           error: message,
         });
-        if (cancelled) {
-          return;
-        }
-
-        setState((current) => ({
-          ...current,
-          open: true,
-          loading: false,
-          error: message,
-        }));
+        setState((current) =>
+          discoveryRequestRef.current === requestId
+            ? { ...current, open: true, loading: false, error: message }
+            : current,
+        );
       }
     })();
 
-    return () => {
-      cancelled = true;
-    };
+    return cancel;
   }, [loadDiscovery, params.workspacePath, settingsSyncService]);
 
   const selectedCount = state.selectedKeys.length;
@@ -297,8 +364,9 @@ export function useSettingsSync(params: { workspacePath?: string; workspaceIdent
   }, [state.tasks]);
 
   const close = useCallback(() => {
+    discoveryRequestRef.current += 1;
     runningImportRef.current += 1;
-    setState((current) => ({ ...current, open: false, importing: false }));
+    setState((current) => ({ ...current, open: false, loading: false, importing: false }));
     if (FORCE_SHOW_ONBOARDING_ON_EVERY_REFRESH) {
       return;
     }
@@ -313,16 +381,14 @@ export function useSettingsSync(params: { workspacePath?: string; workspaceIdent
   }, [params.workspacePath, settingsSyncService]);
 
   const reopen = useCallback(() => {
-    setState((current) => {
-      if (!current.discovery && !current.loading && params.workspacePath) {
-        // "Reopen onboarding" in Settings may happen after the first-start prompt was handled.
-        // Local state has returned to its initial state; setting open=true alone would show an empty dialog with no discovery data.
-        // Run detection when data is missing so opening from Settings still shows all migratable content.
-        void loadDiscovery("manual");
-      }
-      return { ...current, open: true };
-    });
-  }, [loadDiscovery, params.workspacePath]);
+    const requestId = ++discoveryRequestRef.current;
+    setState((current) => ({ ...current, open: true, loading: false }));
+    // A manual open takes over from the first-run detection: it must not be blocked by stale
+    // loading state, and side effects must not be started inside an updater.
+    if (!state.discovery && params.workspacePath) {
+      void loadDiscovery("manual", requestId);
+    }
+  }, [loadDiscovery, params.workspacePath, state.discovery]);
 
   const toggleSelection = useCallback((key: string) => {
     setState((current) => {
@@ -396,10 +462,6 @@ export function useSettingsSync(params: { workspacePath?: string; workspaceIdent
       additionalSelections: SettingsSyncSelection[] = [],
       options: { includeCurrentSelections?: boolean } = {},
     ) => {
-      if (!params.workspacePath) {
-        return;
-      }
-
       const includeCurrentSelections = options.includeCurrentSelections ?? true;
       // The data migration wizard may temporarily hide provider settings; do not silently import the default-selected providers while hidden.
       const stateSelections =
@@ -408,6 +470,22 @@ export function useSettingsSync(params: { workspacePath?: string; workspaceIdent
       if (selections.length === 0) {
         return;
       }
+      discoveryRequestRef.current += 1;
+      // Fix (decision 24): the old code returned early when workspacePath was missing, so skill /
+      // MCP / command imports entered from the data-sync page's "Migrate" were silently skipped
+      // wholesale while the result page still showed completion. The import service supports
+      // having no project: user-level items import as usual; project-required items are not
+      // imported, counted as failed, and the completion page states the reason.
+      const workspaceRequired = new Set(
+        params.workspacePath ? [] : selections.filter(selectionRequiresWorkspace),
+      );
+      const importableSelections = selections.filter(
+        (selection) => !workspaceRequired.has(selection),
+      );
+      const workspaceRequiredCount = [...workspaceRequired].reduce(
+        (sum, selection) => sum + countSelectionItems(selection),
+        0,
+      );
       const runId = runningImportRef.current + 1;
       runningImportRef.current = runId;
       const initialTasks =
@@ -420,23 +498,35 @@ export function useSettingsSync(params: { workspacePath?: string; workspaceIdent
 
       setState((current) => ({
         ...current,
+        loading: false,
         importing: true,
         step: "importing",
         tasks: initialTasks,
         result: null,
+        workspaceRequiredCount,
         error: null,
       }));
 
       logger.info("[settings-sync] import started", {
         workspacePath: params.workspacePath,
         selections,
+        workspaceRequiredCount,
       });
 
-      const importPromise = settingsSyncService.importSelected({
-        workspacePath: params.workspacePath,
-        workspaceIdentity: params.workspaceIdentity,
-        selections,
-      });
+      const importPromise =
+        importableSelections.length > 0
+          ? settingsSyncService
+              .importSelected({
+                workspacePath: params.workspacePath,
+                workspaceIdentity: params.workspaceIdentity,
+                selections: importableSelections,
+              })
+              .then((imported) =>
+                mergeWorkspaceRequiredResults(selections, workspaceRequired, imported),
+              )
+          : Promise.resolve(
+              mergeWorkspaceRequiredResults(selections, workspaceRequired, EMPTY_IMPORT_RESULT),
+            );
 
       for (let index = 0; index < initialTasks.length; index += 1) {
         if (runningImportRef.current !== runId) {

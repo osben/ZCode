@@ -25,10 +25,11 @@ export {
  * | Security validation rejected | 3007 | 403 | Client cannot complete security validation; contact support |
  * | Model concurrency limit | 3010 | 429 | Show the upgrade banner under Start Plan |
  * | Rate limited | 3002/429 | 429 | Show rate-limit message and retry later |
- * | Off-peak ticket unavailable | 3102 | 400 | Segment duration limit reached; create a new off-peak task to continue |
+ * | Off-peak ticket expired | 3102 | 400 | Missed the slot or old-version expiry; prompt to create a new task manually |
+ * | Off-peak run timeout | 3106 | 400 | Single run hit the time cap; prompt to create a new task manually |
  * | Upstream HTTP failure | 2007 | 500 | Retryable; refresh quota and do not deduct quota locally |
  */
-import { isOffPeakTicketExpiredError } from "@zcode/shared";
+import { isOffPeakTicketExpiredError, OFF_PEAK_TICKET_EXPIRED_MARKER } from "@zcode/shared";
 
 export const PROVIDER_BUSINESS_ERROR_CODES = [
   "1006",
@@ -41,6 +42,7 @@ export const PROVIDER_BUSINESS_ERROR_CODES = [
   "3010",
   "3002",
   "3102",
+  "3106",
   "2007",
   "429",
   // ChatGPT plan (OpenAI SIWC) codes; specs/chatgpt-plan-signin.md "Limits and recovery in Desktop".
@@ -72,6 +74,7 @@ export const PROVIDER_BUSINESS_ERROR_MESSAGE_IDS: Record<ProviderBusinessErrorCo
   "3009": "zcode.error.providerBusiness.3009",
   "3010": "zcode.error.providerBusiness.3010",
   "3102": "zcode.error.providerBusiness.3102",
+  "3106": "zcode.error.providerBusiness.3106",
   "2007": "zcode.error.providerBusiness.2007",
   "429": "zcode.error.providerBusiness.429",
   subscription_sharing_usage_limit_exceeded: "chat.quota.chatgptPlanLimited",
@@ -107,8 +110,9 @@ const PROVIDER_BUSINESS_ERROR_UI_ACTIONS: Record<
   "3009": "upgrade",
   "3010": "upgrade",
   "3002": "retry-later",
-  // 3102 Off-peak ticket unavailable: continuation requires creating a new off-peak task; retry/model-switch actions in the banner cannot recover it.
+  // Both a missed slot and a run timeout need a new ticket; banner retry or switching models cannot restore the original one.
   "3102": null,
+  "3106": null,
   "2007": "retry-later",
   "429": "retry-later",
   // The ChatGPT plan banner and the Model settings action cover these; no relogin of the Z.ai account.
@@ -141,6 +145,9 @@ export function isProviderBusinessErrorCode(
 }
 
 export function getProviderBusinessErrorMessageId(code: string | undefined): string | undefined {
+  if (code === OFF_PEAK_TICKET_EXPIRED_MARKER) {
+    return "zcode.error.offPeakTicketExpired";
+  }
   if (!isProviderBusinessErrorCode(code)) {
     return undefined;
   }
@@ -177,7 +184,7 @@ export function resolveStartPlanQuotaExhaustedBusinessCode(
   }
 
   // Older running/historical tasks retain only the outer error code, so the real providerCode=1005 was reduced to
-  // PROVIDER_BUSINESS_ERROR / SEND_FAILED / unknown_error + "exceed limit/exceed quota limit"。
+  // PROVIDER_BUSINESS_ERROR / SEND_FAILED / unknown_error + "exceed limit/exceed quota limit".
   // ChatView calls this inside the Start Plan provider boundary to avoid affecting same-named errors from other providers.
   if (
     (normalizedMessage.includes("exceed limit") ||
@@ -301,19 +308,17 @@ export function shouldRefreshQuotaOnProviderBusinessRetry(code: string | undefin
 }
 
 /**
- * Off-peak ticket unavailable (upstream 3102: ticket invalid or expired).
- * The adapter wraps this business code as `off-peak-ticket-expired: <upstream message>` in the turn error.
- * When the outer code is reduced to a wrapper such as PROVIDER_BUSINESS_ERROR, use the stable marker as fallback;
- * otherwise the banner would show the raw "off peak ticket is invaliad or expired" message to the user.
+ * Only an explicit 3102 may prompt a quota refund; the legacy marker also covers run timeouts and must not be treated as 3102.
  */
 export function resolveOffPeakTicketExpiredBusinessCode(
   code: string | undefined,
   message: string | undefined,
-): "3102" | undefined {
-  if (code?.trim() === "3102") {
-    return "3102";
+): "3102" | "3106" | typeof OFF_PEAK_TICKET_EXPIRED_MARKER | undefined {
+  const normalized = code?.trim();
+  if (normalized === "3102" || normalized === "3106") {
+    return normalized;
   }
-  return isOffPeakTicketExpiredError(message) ? "3102" : undefined;
+  return isOffPeakTicketExpiredError(message) ? OFF_PEAK_TICKET_EXPIRED_MARKER : undefined;
 }
 
 export function isSuspiciousEmptyModelResultMessage(message: string | undefined): boolean {

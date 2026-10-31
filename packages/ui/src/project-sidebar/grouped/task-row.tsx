@@ -59,10 +59,8 @@ type GroupedTaskRowProps = {
   currentGroupId?: string;
   groups: TaskGroupMenuItem[];
   remoteSessionId?: string;
-  activeWorkspacePath: string;
-  activeWorkspaceIdentity?: string;
-  activeTaskId: string | null;
-  mobileActiveTaskKey?: string | null;
+  isActive: boolean;
+  isMobileActive: boolean;
   onSelectTask: (
     workspacePath: string,
     taskId: string,
@@ -89,15 +87,9 @@ type GroupedTaskRowIntl = ReturnType<typeof useZCodeIntl>["intl"];
 function deriveGroupedTaskRowPresentation({
   task,
   intl,
-  activeWorkspacePath,
-  activeWorkspaceIdentity,
-  activeTaskId,
 }: {
   task: ZCodeTaskMeta;
   intl: GroupedTaskRowIntl;
-  activeWorkspacePath: string;
-  activeWorkspaceIdentity?: string;
-  activeTaskId: string | null;
 }) {
   const workspaceKey = buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity);
   const taskActivity = getTaskListRowActivity(task);
@@ -123,9 +115,6 @@ function deriveGroupedTaskRowPresentation({
     intl.formatMessage({
       id: task.forkedFromTaskId ? "taskList.forkedUntitled" : "taskList.untitled",
     });
-  const isActive =
-    buildTaskWorkspaceKey(activeWorkspacePath, activeWorkspaceIdentity) === workspaceKey &&
-    activeTaskId === task.taskId;
   const statusDotClassName =
     leadingIndicator === "error"
       ? "bg-destructive"
@@ -144,7 +133,6 @@ function deriveGroupedTaskRowPresentation({
     // 月亮身份改为持久 meta 标记判断；off-peak store 反查在任务被删除后会丢失
     // 会话溯源，且让每一行多背一个全局 store 订阅。
     isTaskOffPeak: isOffPeakTask(task),
-    isActive,
     statusDotClassName,
   };
 }
@@ -187,14 +175,9 @@ function GroupedRunStateIndicator({
 // DragOverlay 高频渲染时只返回纯展示节点，避免隐藏 action tooltip 的 Radix ref 循环和 task 路径 RPC。
 function GroupedTaskDragOverlayRow({
   task,
-  activeWorkspacePath,
-  activeWorkspaceIdentity,
-  activeTaskId,
+  isActive,
   dragging,
-}: Pick<
-  GroupedTaskRowProps,
-  "task" | "activeWorkspacePath" | "activeWorkspaceIdentity" | "activeTaskId" | "dragging"
->) {
+}: Pick<GroupedTaskRowProps, "task" | "isActive" | "dragging">) {
   const { intl } = useZCodeIntl();
   const {
     hasPendingInteraction,
@@ -203,15 +186,8 @@ function GroupedTaskDragOverlayRow({
     taskTitle,
     isTaskCron,
     isTaskOffPeak,
-    isActive,
     statusDotClassName,
-  } = deriveGroupedTaskRowPresentation({
-    task,
-    intl,
-    activeWorkspacePath,
-    activeWorkspaceIdentity,
-    activeTaskId,
-  });
+  } = deriveGroupedTaskRowPresentation({ task, intl });
 
   // The overlay is presentation only: no workflow run lines or hover actions, so it mounts no
   // confirmation side effects or click targets.
@@ -277,10 +253,8 @@ function GroupedTaskInteractiveRow({
   currentGroupId,
   groups,
   remoteSessionId,
-  activeWorkspacePath,
-  activeWorkspaceIdentity,
-  activeTaskId,
-  mobileActiveTaskKey,
+  isActive,
+  isMobileActive,
   onSelectTask,
   onCloseTask,
   onOpenFileTree,
@@ -315,20 +289,12 @@ function GroupedTaskInteractiveRow({
     taskTitle,
     isTaskCron,
     isTaskOffPeak,
-    isActive,
     statusDotClassName,
-  } = deriveGroupedTaskRowPresentation({
-    task,
-    intl,
-    activeWorkspacePath,
-    activeWorkspaceIdentity,
-    activeTaskId,
-  });
+  } = deriveGroupedTaskRowPresentation({ task, intl });
   // Bugfix：远端 session 未就绪时打开文件树必然会被 resolver 拒绝，因此不要暴露
   // 无效 action；本地 task 不需要 remoteSessionId，仍保持入口可用。
   const canOpenFileTree =
     Boolean(onOpenFileTree) && (!task.workspaceIdentity?.trim() || Boolean(remoteSessionId));
-  const isMobileActive = mobileActiveTaskKey === `${workspaceKey}:${task.taskId}`;
   // Workflow run lines sit under the title, as in the flat task list.
   const workflowRunLinesNode = taskActivity?.workflowActivity ? (
     <TaskWorkflowRunLines
@@ -766,9 +732,7 @@ function GroupedTaskRowComponent({ dragOverlay, ...props }: GroupedTaskRowProps)
     return (
       <GroupedTaskDragOverlayRow
         task={props.task}
-        activeWorkspacePath={props.activeWorkspacePath}
-        activeWorkspaceIdentity={props.activeWorkspaceIdentity}
-        activeTaskId={props.activeTaskId}
+        isActive={props.isActive}
         dragging={props.dragging}
       />
     );

@@ -1,19 +1,8 @@
-/* Adapter-specific handling for the off-peak task queue protocol.
-  Semantics apply only to requests whose Model Config explicitly declares the off-peak-queue protocol; business
-  codes 3105/3102 may mean something else in other BigModel APIs, so do not add them to the global
-  failure-provider-business-codes mapping.
-
-   - 429 (including business code 3105) = queued response: wait once for min(Retry-After, 5min),
-     then perform unlimited idempotent probes; the caller freezes the attempt budget (otherwise it
-     is misclassified as an API failure after the default 11 attempts, D24 rule 2); abort propagates
-     through sleep.
-   - 400/3102 = unusable ticket (active ticket expired after 3h / ready ticket is invalid): fail
-     immediately with a stable marker; Desktop recognizes it and retries with the same task_id
-     before resuming (§4.6), rather than treating it as an ordinary failure.
-   - D24 rule 1 (first-dispatch abandonment) is not implemented in the adapter: if the first dispatch
-     is stuck at the gateway, the ready ticket's 5-minute TTL naturally triggers 3102 and requeues
-     the resume. The wait is bounded by about TTL plus one clamped probe (≤ 10 minutes), meeting the
-     intent with one fewer state (this simplification was written back into tech-design §4.3). */
+/* The off-peak queueing protocol applies only to requests that explicitly declare off-peak-queue.
+   429/3105 waits do not consume the normal retry budget; 3102 missed-slot and 3106 run timeout
+   both carry the expiry marker — the Host ends this task and does not reissue a ticket
+   automatically. Other providers do not use these business-code semantics. */
+import { isOffPeakTicketExpiredCode } from "@zcode/shared";
 import type { ClassifiedModelFailure } from "./failure-classifier.js";
 import { isProviderBusinessError } from "./model-execution.js";
 
@@ -45,8 +34,8 @@ export function resolveOffPeakFailureDecision(params: {
   const businessCode = isProviderBusinessError(params.error)
     ? params.error.providerCode
     : undefined;
-  // The latest server contract uses 3102; keep 3001 for compatibility with old gateway responses during rolling deployment.
-  if (businessCode === "3102" || businessCode === "3001") {
+  // 3102/3106 are distinguished by the new contract; 3001 stays only for old-gateway compatibility — the new 3104 invalid ticket is not treated as expired.
+  if (isOffPeakTicketExpiredCode(businessCode) || businessCode === "3001") {
     return { kind: "ticketExpired" };
   }
   // The actual queue signal is HTTP 429 (3105 with Retry-After); a bare 429 without a business code also means queued.

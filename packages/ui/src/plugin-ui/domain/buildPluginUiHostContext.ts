@@ -59,9 +59,35 @@ function resolveTimeZone(): string {
 export function appAllowsDisplayMode(
   capabilities: McpUiAppCapabilities | undefined,
   mode: McpUiDisplayMode,
+  preferredDisplayMode?: McpUiDisplayMode,
 ): boolean {
   const declared = capabilities?.availableDisplayModes;
-  return !declared || declared.includes(mode);
+  if (declared && !declared.includes(mode)) return false;
+  // The fullscreen tool previously fell back to inline after the side pane closed; capability support for both modes does not mean this presentation should return to the conversation.
+  return !(
+    mode === "inline" &&
+    preferredDisplayMode === "fullscreen" &&
+    (!declared || declared.includes("fullscreen"))
+  );
+}
+
+/** Registered capabilities are a hard boundary; preference and anchor updates must not reintroduce modes the page does not support. */
+export function constrainPluginUiDisplayModes(
+  context: McpUiHostContext,
+  capabilities: McpUiAppCapabilities | undefined,
+  preferredDisplayMode?: McpUiDisplayMode,
+): McpUiHostContext {
+  const availableDisplayModes = (context.availableDisplayModes ?? ["inline", "fullscreen"]).filter(
+    (mode) => mode !== "pip" && appAllowsDisplayMode(capabilities, mode, preferredDisplayMode),
+  );
+  const current = context.displayMode ?? "inline";
+  return {
+    ...context,
+    availableDisplayModes,
+    displayMode: availableDisplayModes.includes(current)
+      ? current
+      : (availableDisplayModes[0] ?? current),
+  };
 }
 
 /** Inline instance receives `ui/request-display-mode`: switch only within the host's available set; `pip` and unavailable modes honestly return the current mode. */

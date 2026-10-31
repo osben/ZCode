@@ -180,6 +180,7 @@ describe("Team Plan 设置与使用统计 E2E", () => {
       await profileTrigger.click();
       // The English UI's plan label is Team; assert only the badge itself to avoid a false pass when the username contains team text.
       const teamLabel = locale === "zh-CN" ? "团队" : "Team";
+      // The sidebar hint moved to a delayed Tooltip and no longer keeps a native title; read the visible text scoped to the plan container.
       const badge = $('[data-testid="profile-menu-plan"]');
       await badge.waitForDisplayed({ timeout: 30000 });
       await expect(badge).toHaveText(teamLabel);

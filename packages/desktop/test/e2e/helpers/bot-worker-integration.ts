@@ -27,7 +27,7 @@ import {
   createFeishuConfig,
 } from "../bots/helpers/bots-service-harness.js";
 
-/** 真实 Host/CLI，只有模型 HTTP、飞书 HTTP 和 Bot 配置存储使用隔离夹具。 */
+/** Real Host/CLI; only the model HTTP, Feishu HTTP and bot config storage use isolated fixtures. */
 export async function createBotWorkerIntegration(baseUrl: string, dropTextContaining?: string) {
   const home = await mkdtemp(join(getE2EAppDataPaths().homeDir, "bot-worker-"));
   const workspacePath = join(home, "workspace");
@@ -172,7 +172,7 @@ export async function createBotWorkerIntegration(baseUrl: string, dropTextContai
     const permissionRequests: unknown[] = [];
     {
       const subscribe = agent.onDynamicSessionEvent;
-      // 在真实 CLI 与 legacy 投影边界注入丢帧；终态与持久正文保持真实，不能伪造补齐结果。
+      // Inject frame drops at the real CLI and legacy projection boundary; the terminal state and persisted body stay real and must not be backfilled.
       agent.onDynamicSessionEvent =
         (params) =>
         (listener, ...rest) =>

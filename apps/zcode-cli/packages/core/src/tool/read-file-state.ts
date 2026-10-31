@@ -15,37 +15,31 @@ export function createReadFileStatePathKey(
   return normalizeToolPathForComparison(filePath, platform);
 }
 
-export function createReadFileStateKey(
-  filePath: string,
-  offset: number | undefined,
-  limit: number | undefined,
+/**
+ * One entry per file: Read, Write, Edit, and workflow drafts overwrite the file's previous
+ * record; Bash backfill and Recall injection add one only when the file has no record yet.
+ * Delete-then-set keeps the Map's iteration order equal to most-recent-write order.
+ *
+ * Fix rationale: storing multiple entries per path+offset+limit meant finding the "latest
+ * view" required scanning the whole table, and cold recovery picked by a different rule set,
+ * so the same history deduplicated differently before and after a restart.
+ */
+export function setReadFileStateEntry(
+  readFileState: ReadFileStateMap,
+  entry: ReadFileStateEntry,
   platform: ReadFileStatePlatform = currentPlatform,
-): string {
-  return [
-    createReadFileStatePathKey(filePath, platform),
-    String(offset ?? 1),
-    limit === undefined ? "" : String(limit),
-  ].join("\0");
+): void {
+  const key = createReadFileStatePathKey(entry.path, platform);
+  readFileState.delete(key);
+  readFileState.set(key, entry);
 }
 
-export function findStrictFullReadFileState(
-  readFileState: ReadFileStateMap | undefined,
-  filePath: string,
-  platform: ReadFileStatePlatform = currentPlatform,
-): ReadFileStateEntry | undefined {
-  if (!readFileState) return undefined;
-
-  return findLatestReadFileStateByPath(readFileState, filePath, platform, (entry) =>
-    isStrictFullReadState(entry),
-  );
-}
-
-export function findEditableReadFileState(
-  readFileState: ReadFileStateMap | undefined,
-  filePath: string,
-  platform: ReadFileStatePlatform = currentPlatform,
-): ReadFileStateEntry | undefined {
-  return findLatestReadFileState(readFileState, filePath, platform);
+/** Raw spelling from the tool input; not recorded when it equals the normalized path. */
+export function requestedPathField(
+  requestedPath: string | undefined,
+  path: string,
+): Pick<ReadFileStateEntry, "requestedPath"> {
+  return requestedPath === undefined || requestedPath === path ? {} : { requestedPath };
 }
 
 export function findLatestReadFileState(
@@ -53,40 +47,10 @@ export function findLatestReadFileState(
   filePath: string,
   platform: ReadFileStatePlatform = currentPlatform,
 ): ReadFileStateEntry | undefined {
-  if (!readFileState) return undefined;
-
-  // Preferring a full Read means that even after Bash/formatter edits the file and the model rereads a range as instructed,
-  // Edit/Write still checks mtime against the old full Read and keeps falsely reporting stale state. Choose a baseline using the latest read state for the file;
-  // consumers separately reject an actual partial view.
-  return findLatestReadFileStateByPath(readFileState, filePath, platform, () => true);
+  return readFileState?.get(createReadFileStatePathKey(filePath, platform));
 }
 
 export function normalizeReadFileStateMtimeMs(mtimeMs: number | undefined): number | undefined {
   if (mtimeMs === undefined) return undefined;
   return Math.floor(mtimeMs);
-}
-
-function findLatestReadFileStateByPath(
-  readFileState: ReadFileStateMap,
-  filePath: string,
-  platform: ReadFileStatePlatform,
-  accepts: (entry: ReadFileStateEntry) => boolean,
-): ReadFileStateEntry | undefined {
-  const pathKey = createReadFileStatePathKey(filePath, platform);
-  let latest: ReadFileStateEntry | undefined;
-  let latestReadAt = Number.NEGATIVE_INFINITY;
-  for (const entry of readFileState.values()) {
-    if (createReadFileStatePathKey(entry.path, platform) !== pathKey) continue;
-    if (!accepts(entry)) continue;
-    const readAt = entry.readAt.getTime();
-    if (readAt < latestReadAt) continue;
-    latest = entry;
-    latestReadAt = readAt;
-  }
-  return latest;
-}
-
-function isStrictFullReadState(entry: ReadFileStateEntry): boolean {
-  if (entry.isPartialView) return false;
-  return (entry.offset ?? 1) <= 1 && entry.limit === undefined;
 }

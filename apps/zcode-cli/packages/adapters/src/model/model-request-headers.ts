@@ -1,13 +1,22 @@
 const MODEL_AUTH_HEADER_NAMES = new Set(["authorization", "x-api-key"]);
 export const MODEL_QUERY_SOURCE_HEADER = "x-zcode-query-source";
+/** Session capability tags (docs/design/v2/model/session-features-header.md). */
+export const MODEL_SESSION_FEATURES_HEADER = "x-zcode-session-features";
+/** Attribution headers that only the calling context may generate: provider static values and
+ *  SDK defaults are always stripped, with no fallback when absent. */
+const MODEL_CONTEXT_OWNED_HEADER_NAMES = new Set([
+  MODEL_QUERY_SOURCE_HEADER,
+  MODEL_SESSION_FEATURES_HEADER,
+]);
 
-/** Request purpose belongs to the call context; do not inherit it from static Provider config or SDK default headers. */
-export function withoutModelQuerySourceHeader(
+/** Request purpose and session capabilities are owned by the calling context and must not be
+ *  inherited from Provider static config or SDK default headers. */
+export function withoutContextOwnedModelHeaders(
   headers: Readonly<Record<string, string>> | undefined,
 ): Record<string, string> {
   return Object.fromEntries(
     Object.entries(headers ?? {}).filter(
-      ([name]) => name.toLowerCase() !== MODEL_QUERY_SOURCE_HEADER,
+      ([name]) => !MODEL_CONTEXT_OWNED_HEADER_NAMES.has(name.toLowerCase()),
     ),
   );
 }

@@ -5,15 +5,22 @@ import {
 } from "@/v4/conversationTurnNavigatorHelpers.js";
 import type { ConversationTurnRenderUnit } from "@/v4/conversationTurnRenderUnits.js";
 
-/** 分享选择是完整 product turn；提问导航只列 realUser，不能拿它代替分享目录。 */
+/** Share selection is a full product turn; the question navigator only lists realUser turns and cannot substitute for the share catalog. */
 export function buildConversationShareItems(
   units: readonly ConversationTurnRenderUnit[],
   options: BuildConversationTurnNavigatorItemsOptions,
 ): ConversationTurnNavigatorItem[] {
   const queries = buildConversationTurnNavigatorItems(units, options);
+  // Filtering all queries per turn is quadratic in long conversations; one grouping pass preserves the original query order.
+  const queriesByUnit = new Map<number, ConversationTurnNavigatorItem[]>();
+  for (const query of queries) {
+    const group = queriesByUnit.get(query.unitIndex);
+    if (group) group.push(query);
+    else queriesByUnit.set(query.unitIndex, [query]);
+  }
   return units.flatMap((unit, unitIndex) => {
-    const existing = queries.filter((item) => item.unitIndex === unitIndex);
-    if (existing.length) return existing;
+    const existing = queriesByUnit.get(unitIndex);
+    if (existing) return existing;
     if (
       !unit.header ||
       unit.timelineOnly ||

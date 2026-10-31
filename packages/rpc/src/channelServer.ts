@@ -48,6 +48,7 @@ export class ChannelServer<TContext = string> implements IChannelServer<TContext
       case ResponseType.PromiseSuccess:
       case ResponseType.PromiseError:
       case ResponseType.EventFire:
+      case ResponseType.EventError:
       case ResponseType.PromiseErrorObj:
         this.send([response.type, response.id], response.data);
         return;
@@ -66,9 +67,12 @@ export class ChannelServer<TContext = string> implements IChannelServer<TContext
   }
 
   private onRawMessage(message: VSBuffer): void {
+    // Fix reason: a reverse ChannelClient sits on the same protocol, so the peer's incoming responses
+    // also arrive here. The old code decoded the message body before checking the type, fully decoding
+    // every response twice. Fix: read the message header first and decode only request bodies addressed
+    // to this end.
     const reader = new BufferReader(message);
     const header = deserialize(reader);
-    const body = deserialize(reader);
     const type = header[0] as RequestType;
 
     switch (type) {
@@ -78,7 +82,7 @@ export class ChannelServer<TContext = string> implements IChannelServer<TContext
           id: header[1],
           channelName: header[2],
           name: header[3],
-          arg: body,
+          arg: deserialize(reader),
         });
         return;
       case RequestType.EventListen:
@@ -87,7 +91,7 @@ export class ChannelServer<TContext = string> implements IChannelServer<TContext
           id: header[1],
           channelName: header[2],
           name: header[3],
-          arg: body,
+          arg: deserialize(reader),
         });
         return;
       case RequestType.PromiseCancel:
@@ -150,6 +154,7 @@ export class ChannelServer<TContext = string> implements IChannelServer<TContext
               taskId?: unknown;
               traceId?: unknown;
               retryable?: unknown;
+              profileId?: unknown;
             } = {
               message: error.message,
               name: error.name,
@@ -167,6 +172,11 @@ export class ChannelServer<TContext = string> implements IChannelServer<TContext
               "taskId",
               "traceId",
               "retryable",
+              // Bug cause: the Host's remote wait points (needing install/upgrade or credentials) use
+              // profileId to identify the actual operation route; the old allowlist dropped it, so the
+              // sidebar could only hand a credential-less target to the wizard, which then reported
+              // "SSH authentication failed" after confirming the install.
+              "profileId",
             ] as const;
             for (const key of passthroughKeys) {
               const value = errorRecord[key];
@@ -208,18 +218,33 @@ export class ChannelServer<TContext = string> implements IChannelServer<TContext
       return;
     }
 
-    const disposable = channel.listen(
-      this.ctx,
-      request.name,
-      request.arg,
-    )((data) => {
+    try {
+      const disposable = channel.listen(
+        this.ctx,
+        request.name,
+        request.arg,
+      )((data) => {
+        this.sendResponse({
+          id: request.id,
+          data,
+          type: ResponseType.EventFire,
+        });
+      });
+      this.activeRequests.set(request.id, disposable);
+    } catch (error) {
+      // Already-finished resources like terminals reject late subscriptions; that rejection belongs to
+      // this request and must not escape and take down the whole Host. A standalone failure frame is
+      // not treated as a business event by old clients and establishes no unreleasable subscription.
       this.sendResponse({
         id: request.id,
-        data,
-        type: ResponseType.EventFire,
+        type: ResponseType.EventError,
+        data: {
+          name: error instanceof Error ? error.name : "Error",
+          message: error instanceof Error ? error.message : String(error),
+          ...(error instanceof Error && error.stack ? { stack: error.stack.split("\n") } : {}),
+        },
       });
-    });
-    this.activeRequests.set(request.id, disposable);
+    }
   }
 
   private disposeActiveRequest(id: number): void {

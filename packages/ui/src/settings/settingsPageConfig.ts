@@ -1,5 +1,6 @@
 import {
   Archive,
+  Folders,
   Monitor,
   Moon,
   Settings,
@@ -28,6 +29,7 @@ import {
   Mic,
   VenetianMask,
   MessageSquarePlus,
+  RefreshCw,
 } from "lucide-react";
 import { isSettingsSectionEnabled, type SettingsSectionId } from "@/lib/settingsNavigation.js";
 import type { Theme } from "@/useTheme.js";
@@ -211,10 +213,25 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     titleId: "settings.workspaceFileSearch.title",
     groupId: "basics",
   },
+  // Data sync is the first item of "Data and stats" (docs/remote/data-sync.md); shown on desktop only.
+  {
+    id: "dataSync",
+    icon: RefreshCw,
+    titleId: "remoteSync.title",
+    contentTitleId: "remoteSync.title",
+    groupId: "dataAndStats",
+  },
   {
     id: "usage",
     icon: BarChart3,
     titleId: "settings.usageTitle",
+    groupId: "dataAndStats",
+  },
+  // Project management is listed before archive management (docs/superpowers/specs/2026-10-24-project-management.md).
+  {
+    id: "projects",
+    icon: Folders,
+    titleId: "projectManagement.nav",
     groupId: "dataAndStats",
   },
   {
@@ -291,9 +308,12 @@ export const SETTINGS_SECTION_GROUPS = BASE_SETTINGS_SECTION_GROUPS.map((group) 
 
 export type { SettingsSectionId };
 
+/** Settings sections that depend on local Source Server management and device connections; hidden on Web and mobile remote control. */
+const DESKTOP_ONLY_SETTINGS_SECTIONS = new Set<SettingsSectionId>(["remoteDevices", "dataSync"]);
+
 export function isSettingsSectionAvailable(
   section: SettingsSectionId,
   isDesktop: boolean,
 ): boolean {
-  return isDesktop || section !== "remoteDevices";
+  return isDesktop || !DESKTOP_ONLY_SETTINGS_SECTIONS.has(section);
 }

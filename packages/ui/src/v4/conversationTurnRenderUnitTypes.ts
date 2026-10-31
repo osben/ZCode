@@ -53,7 +53,7 @@ export interface ConversationTurnRenderUnit extends HighspeedOutputFooterMark {
   latestAssistantTextRow?: AssistantTextRow;
   /** Visible interleaving order of user/assistant within one product turn; adjacent work rows stay grouped. */
   flowItems: ConversationTurnFlowItem[];
-  /** The original input and each accepted guide each map to one distinct visual work segment. */
+  /** One segment per raw input; guides taken at the same drain boundary share the segment opened by the first one, whose header comes from header.workSegments. */
   workSegments?: ConversationTurnWorkSegment[];
   renderRows: ConversationRow[];
   isLastTurn: boolean;
@@ -74,7 +74,7 @@ export interface BuildConversationTurnRenderUnitsOptions {
   pluginUiPinResolver?: PluginUiRowPinResolver;
   /**
    * Per-timeline memo. When supplied, a non-running turn whose inputs are unchanged keeps the same unit object
-   * across calls (docs/ui/v4-chat-turn-render-units.md, 渲染性能规则). Owned by one timeline instance.
+   * across calls (docs/ui/v4-chat-turn-render-units.md, rendering performance rules). Owned by one timeline instance.
    */
   cache?: ConversationTurnRenderUnitCache;
 }

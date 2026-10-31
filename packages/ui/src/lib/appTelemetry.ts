@@ -1,3 +1,6 @@
+import { useContext, useLayoutEffect } from "react";
+import { StoreContext } from "@/store/StoreProvider.js";
+import type { InterfaceMode } from "@/lib/interfaceMode.js";
 import {
   BIGMODEL_PROVIDER_ID,
   BUILTIN_MODEL_PROVIDER_IDS,
@@ -7,6 +10,7 @@ import {
   sanitizeTelemetryEventDetail,
   type BuiltinModelProviderId,
   type IPlatformService,
+  type TelemetryUiMode,
 } from "@zcode/shared";
 import { logger } from "@/logger.js";
 
@@ -65,4 +69,31 @@ export async function reportAppTelemetryEvent(
     // Desktop Main's TelemetryCore records the final failure as a redacted warning; the UI only preserves business isolation,
     // avoiding duplicate records and preventing raw IPC errors from entering production logs.
   }
+}
+
+/** Mapped only at the telemetry boundary; without an interaction source, do not assume a default coding mode. */
+export function toTelemetryUiMode(mode: InterfaceMode | undefined): TelemetryUiMode {
+  return mode === "office" ? "work" : mode === "coding" ? "code" : "unknown";
+}
+
+/** Sync the existing host context from the single store; creates no business events or extra polling. */
+export function useInterfaceModeTelemetry(platform: IPlatformService, enabled: boolean): void {
+  const store = useContext(StoreContext);
+  useLayoutEffect(() => {
+    if (!enabled || !store || !platform.syncTelemetryContext) return;
+    const sync = () => {
+      try {
+        platform.syncTelemetryContext?.({
+          ...collectTelemetryRendererContext(),
+          uiMode: toTelemetryUiMode(store.getState().interfaceMode),
+        });
+      } catch {
+        // A telemetry bridge failure must not interrupt startup, mode switching, or cross-window broadcast.
+      }
+    };
+    sync();
+    return store.subscribe((state, previous) => {
+      if (state.interfaceMode !== previous.interfaceMode) sync();
+    });
+  }, [enabled, platform, store]);
 }

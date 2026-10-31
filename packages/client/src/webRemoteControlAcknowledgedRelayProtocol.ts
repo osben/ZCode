@@ -42,6 +42,8 @@ class AcknowledgedRelayProtocol implements AcknowledgedWebRemoteControlRelayProt
   private readonly saturatedEmitter = new Emitter<void>();
   private readonly drainedEmitter = new Emitter<void>();
   private readonly degradedEmitter = new Emitter<WebRemoteControlRpcTransportFault>();
+  private readonly lifetime = new AbortController();
+  readonly signal = this.lifetime.signal;
   private assembler: WebRemoteControlRpcTransportAssembler | null;
   private readonly outboundBatches = new AcknowledgedRelayBatchQueue();
   private queuedInbound: unknown[] = [];
@@ -359,11 +361,14 @@ class AcknowledgedRelayProtocol implements AcknowledgedWebRemoteControlRelayProt
     this.unacknowledgedByteCount = 0;
     this.saturated = false;
     this.assembler = null;
+    // End the old RPC first so callers restore uncommitted drafts, then notify the resume owner to create the next bridge generation.
+    this.lifetime.abort();
     this.degradedEmitter.fire(fault);
   }
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.lifetime.abort();
     this.deadline.dispose();
     this.clearAssemblyTimer();
     this.outboundBatches.clear();

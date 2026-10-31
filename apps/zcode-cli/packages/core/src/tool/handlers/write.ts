@@ -21,9 +21,10 @@ import { stampMemoryOriginSessionId } from "../../memory/origin-session.js";
 import { resolveWorkspacePath } from "../path-policy.js";
 import { publishFileMutation, writeChangedRange } from "../file-mutation.js";
 import {
-  createReadFileStateKey,
   findLatestReadFileState,
   normalizeReadFileStateMtimeMs,
+  requestedPathField,
+  setReadFileStateEntry,
 } from "../read-file-state.js";
 import { createReadFileStateMetadataFromEntry } from "../read-file-state-metadata.js";
 import type { ReadFileStateEntry, ReadFileStateMap, ToolExecutionContext } from "../types.js";
@@ -141,6 +142,7 @@ export const writeHandler: ToolHandler = async (input, context) => {
   const readFileStateEntry = updateReadFileStateAfterWrite(
     context.readFileState,
     filePath,
+    file_path,
     contentToWrite,
     writeResult.revision,
   );
@@ -346,12 +348,14 @@ function isStrictFullRead(entry: ReadFileStateEntry): boolean {
 function updateReadFileStateAfterWrite(
   readFileState: ReadFileStateMap | undefined,
   filePath: string,
+  requestedPath: string,
   content: string,
   revision: FileSystemReadTextResult["revision"] | undefined,
 ): ReadFileStateEntry | undefined {
   if (!readFileState) return undefined;
   const entry: ReadFileStateEntry = {
     path: filePath,
+    ...requestedPathField(requestedPath, filePath),
     content,
     offset: undefined,
     limit: undefined,
@@ -362,7 +366,7 @@ function updateReadFileStateAfterWrite(
     mtimeMs: normalizeReadFileStateMtimeMs(revision?.mtimeMs),
     sizeBytes: revision?.sizeBytes ?? Buffer.byteLength(content, "utf8"),
   };
-  readFileState.set(createReadFileStateKey(filePath, 1, undefined), entry);
+  setReadFileStateEntry(readFileState, entry);
   return entry;
 }
 

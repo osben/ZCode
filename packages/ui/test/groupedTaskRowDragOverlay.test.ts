@@ -63,6 +63,8 @@ function rowElement(dragOverlay: boolean) {
       activeWorkspacePath: task.workspacePath,
       activeWorkspaceIdentity: undefined,
       activeTaskId: task.taskId,
+      // The drag overlay takes its selection from the caller's rowSelection (TaskGroupedView), not from the active ids.
+      isActive: true,
       onSelectTask: () => {},
       onCloseTask: () => {},
       onMoveTaskToGroup: () => {},

@@ -7,10 +7,11 @@ DOCKERFILE="${DOCKERFILE:-Dockerfile.desktop-e2e}"
 DOCKER_PLATFORM="${DOCKER_PLATFORM:-linux/amd64}"
 PNPM_VERSION="${PNPM_VERSION:-12.14.0}"
 DEFAULT_E2E_SPEC="./test/e2e/container-boot.test.ts,./test/e2e/smoke.test.ts,./test/e2e/e2ecase-regression.test.ts,./test/e2e/upstream-provider.test.ts,./test/e2e/task-list-archive-confirmation.test.ts"
-# 修复原因：formal/local replay 通过不等于 Docker admission；Assistant Preview Cards 的容器尝试
-# 停在镜像解析阶段，CDD01 则在 WDIO 内失败；两者都没有 replay-isolated 绿色证据。
+# Fix reason: a passing formal/local replay is not Docker admission; the Assistant Preview Cards
+# container attempt stalled at image resolution and CDD01 failed inside WDIO; neither has
+# replay-isolated green evidence.
 CONVERSATION_SESSION_VERIFIED_E2E_SPEC=""
-# 只有通过人工 review、formal promotion 和单 spec Docker admission 的插件用例才能写入。
+# Only plugin cases that passed manual review, formal promotion, and single-spec Docker admission may be listed here.
 PLUGIN_MANAGEMENT_VERIFIED_E2E_SPEC=""
 E2E_SPEC_PRESET="${E2E_SPEC_PRESET:-}"
 if [ "$#" -gt 1 ]; then
@@ -143,10 +144,17 @@ if [ "${SKIP_DRIVER_PREFETCH:-0}" != "1" ]; then
     "${IMAGE_NAME}:latest" \
     bash -lc '
       set -euo pipefail
-      version="${CHROMEDRIVER_VERSION:-$(node -e "const { electronToChromium } = require(\"electron-to-chromium\"); const pkg = require(\"./packages/desktop/package.json\"); console.log(electronToChromium(pkg.devDependencies.electron));")}"
-      echo "Chromedriver version: ${version}"
-      timeout "${DRIVER_PREFETCH_TIMEOUT}s" pnpm exec browsers install "chromedriver@${version}" --path "${WDIO_BROWSER_DRIVER_CACHE_DIR}" --format "{{browser}}@{{buildId}} {{path}}"
+      timeout "${DRIVER_PREFETCH_TIMEOUT}s" node packages/desktop/scripts/chromedriver-preflight.mjs prepare "${WDIO_BROWSER_DRIVER_CACHE_DIR}"
     '
+fi
+
+# The prefetched patch may differ from Chromium's exact patch; offline runs must read the actual path instead of going online again to guess the version.
+CHROMEDRIVER_BINARY="$(docker run --rm --platform "$DOCKER_PLATFORM" \
+  -v "${DRIVER_CACHE_VOLUME}:${DRIVER_CACHE_DIR}" "${IMAGE_NAME}:latest" \
+  node packages/desktop/scripts/chromedriver-preflight.mjs path "$DRIVER_CACHE_DIR")"
+if [ -z "$CHROMEDRIVER_BINARY" ]; then
+  printf '[desktop-e2e-container] Chromedriver cache path is empty; run prefetch again.\n' >&2
+  exit 1
 fi
 
 docker_run_args=(
@@ -154,6 +162,7 @@ docker_run_args=(
   --platform "$DOCKER_PLATFORM"
   --shm-size "$SHM_SIZE"
   -e CI=1
+  -e "CHROMEDRIVER_PATH=${CHROMEDRIVER_BINARY}"
   -e ZCODE_E2E_CONTAINER=1
   -e "ZCODE_E2E_RUN_ID=${E2E_RUN_ID}"
   -e "ZCODE_E2E_ARTIFACT_DIR=${CONTAINER_ARTIFACT_DIR}"
@@ -184,7 +193,7 @@ if [ -n "${E2E_PROVIDER_API_KEY:-}" ]; then
   docker_run_args+=(-e "E2E_PROVIDER_API_KEY=${E2E_PROVIDER_API_KEY}")
 fi
 
-# 修复：E2E 上游供应商由环境变量配置后，容器只转发了 API key，抓包模式拿不到上游地址与模型必然失败。
+# Fix: once the E2E upstream provider is configured via env vars, the container only forwarded the API key; capture mode could not reach the upstream address or model and always failed.
 for provider_env_name in E2E_PROVIDER_BASE_URL E2E_PROVIDER_MODEL E2E_PROVIDER_SECONDARY_MODEL \
   E2E_PROVIDER_PRESET E2E_PROVIDER_THOUGHT_LEVEL E2E_PROVIDER_SECONDARY_THOUGHT_LEVEL; do
   if [ -n "${!provider_env_name:-}" ]; then

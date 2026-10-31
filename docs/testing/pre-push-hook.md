@@ -1,192 +1,38 @@
 # Pre-push Hook
 
-Husky owns Git's `pre-push`.
-
-- After dependencies are installed, the root script `pnpm prepare` runs and installs Husky.
-- `pre-push` runs `pnpm run verify:pre-push`.
-- Root `pnpm test` runs unit tests only; it does not treat desktop `packages/desktop/test/e2e` as
-  Vitest cases.
-- The E2E exclude glob in the unit-test script must be quoted. Otherwise the shell expands
-  `packages/desktop/test/e2e/**/*.test.ts` into real files, Vitest treats the extra files as filters
-  while also excluding them, and reports `No test files found`, which blocks the push.
-- `verify:pre-push` runs lint, the architecture check and the affected unit tests of the push range
-  in turn; a failure of lint, the architecture check, the selected tests or the script itself blocks
-  the push.
-
-This catches obvious problems with fast static checks before code reaches the remote, then catches
-unit-test problems locally, while `pnpm test:e2e` stays the separate entry for desktop E2E.
-
-<a id="开发环境与版本管理工具"></a>
-
-## Development Environment and Version Managers
-
-pre-push uses the pnpm / Node on the current `PATH` and does not require mise. The earlier outer
-`mise exec` of the hook could pick a specified version, but forced developers who prepared their
-environment with nvm or similar to install mise too, or the checks failed before starting.
+Husky 的 `.husky/pre-push` 使用当前 PATH 中的 Node / pnpm，执行 `pnpm verify:pre-push`。
+不强制依赖 mise，也不自动安装工具、stash 工作区或跳过失败检查。
 
 ```text
-developer prepares Node / pnpm (mise, nvm or other)
-    → Git hook keeps push ref info and cleans the Git local env
-    → pnpm run verify:pre-push
-    → lint / architecture check / affected unit tests
+Git push ref 输入 → 清理 Git local env → 工作区与目标检查
+                                      → 远程目标清单一致性 → lint → 过时文档措辞 → schema → 架构工具测试 → 变更架构检查 → 受影响工程测试
 ```
 
-- The repository declares tool versions and runs the checks; the personal environment makes a
-  suitable Node / pnpm findable by Git.
-- mise stays an optional development entry; `mise.toml`, `mise-run.mjs` and the existing
-  child-process PATH protection are unchanged.
-- If a GUI Git client cannot find Node / pnpm, initialize your own version-manager environment in
-  the personal `~/.config/husky/init.sh`; see the [Husky
-  docs](https://typicode.github.io/husky/how-to.html#node-version-managers-and-guis).
-- A missing command or a failed check still blocks the push; the hook does not install tools and
-  does not silently skip checks.
-- The hook only drops its dependency on mise; it adds no version check and changes no existing
-  development, CLI/SEA or CI version requirement.
+- 已暂存、未暂存或未跟踪修改均阻止 push；忽略 Git 已忽略的文件。
+- hook 每个非删除目标先解析为 commit，再与当前 HEAD 比较；附注标签可以指向 HEAD；删除 ref 可通过目标检查，多 ref 逐项校验。
+- hook 继续通过 ZCODE_PRE_PUSH_STDIN 传递 ref 和 SHA，架构检查与工程测试使用真实推送基线。
+- 架构基线优先级：显式参数或环境变量、CI 变量、push remote SHA、upstream merge-base、
+  默认分支 merge-base、HEAD。首次推送优先 origin/staging。具体实现见 scripts/architecture/git-base.mjs。
+- 无效的显式架构基线仍失败。工程测试保留 remote SHA / 首推 staging merge-base / 手动 upstream 的基线语义；无效基线不能静默跳过。
+- Git local env 必须先清理，避免工程测试的临时 Git 仓库误操作当前仓库。
+- 过时文档措辞检查（`pnpm docs:stale-phrases:check`，`scripts/check-stale-doc-phrases.mjs`）：规则改了以后，旧说法常留在复述这条规则的其他文档里。脚本登记已作废的说法，扫描 `docs/` 与 `apps/zcode-cli/docs/` 的 Markdown，出现即失败并指向现行规则；`docs/plans/`、`docs/v4-refactor/` 是历史记录，不检查。改规则时把旧说法加进登记表。
+- 远程目标清单一致性检查（`pnpm check:e2e-remote-targets`）直接比较内部队列声明与公开 JSON，不依赖 affected 的 import 图。只有私有 harness 目录不存在时跳过；有队列时清单缺失、损坏或漂移均阻止 push，且检查不改写文件。
+- 任何检查失败均阻止 push；工作区检查也可独立执行 node scripts/check-push-worktree.mjs。
 
-## Affected Unit Tests
+## 测试边界
 
-### Goal and entries
+App 单测已按 [测试规格](unit-test-quality.md) 退役；不再提供根 test、test:unit、
+test:unit:affected、test:coverage 或 lint-staged 测试入口。
 
-`pnpm test:unit:affected` uses Vitest's official changed/related and Vite module dependency
-analysis. The thin entry only handles the Git baseline, the Push worktree check, the full-suite skip
-and result messages; it maintains no own dependency graph, baseline consumer graph, source filtering
-or Node test selection.
+- 工程 Vitest：pnpm test:engineering <文件>，精确清单见 scripts/engineering-test-files.json。
+- 工程增量：pnpm test:engineering:affected --base <任务起点>；--dry-run 可预览官方依赖图选中清单。
+  pre-push 使用 --scope push；仅选择 engineering 项目，CLI/CUA 仍走独立入口。
+  全量选择按既有规则报告跳过，不把跳过当通过；显式全量使用 pnpm test:engineering。
+- 工程执行工具回归：pnpm test:engineering-tools。
+- 架构及推送工具：pnpm test:architecture；schema：pnpm db:schema:check。
+- Node 工程测试：按受影响文件执行 node --test。
+- CUA：pnpm --filter @zcode/zcode-cua test；Agent CLI 按 apps/zcode-cli/AGENTS.md 执行。
+- 桌面与浏览器验收保留既有入口及生命周期，不由工程检查代替。
 
-| Entry                                           | Official selection scope                                                                                                |
-| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `pnpm test:unit:affected`                       | `changed: true`, including staged, unstaged and untracked files                                                         |
-| `pnpm test:unit:affected --base <commit>`       | `changed: <SHA>`, including commits after the task start and current uncommitted changes                                |
-| `pnpm test:unit:affected --scope push`          | Explicit baseline first; by default the hook remote SHA, and for a first push the merge-base of HEAD and origin/staging |
-| `pnpm test:unit:affected --files <files...>`    | Official related, for explicit file entries such as lint-staged                                                         |
-| The above plus `--dry-run` / `--dry-run --json` | Preview the officially selected test files; JSON contains only the test list                                            |
-
-The task records HEAD SHA once at the start and uses that start at the end. Uncommitted changes that
-existed before the start are all included; no initial patch is saved or subtracted. Official changed
-uses Git's three-dot comparison and current uncommitted files; changes brought in by a merge take
-part in selection normally, with no source filtering or extra net-diff computation.
-
-Push requires staged, unstaged and untracked changes to be empty (files ignored by Git are ignored).
-When not clean it exits non-zero, without auto-stash or creating a checkout, so what runs is the
-pushed version. A non-delete hook ref must point to the current HEAD; for multiple refs the official
-selection is called with each baseline and the exact test specs are merged. A delete ref needs no
-tests. In manual push mode without hook input, upstream is used; without a valid upstream, the
-merge-base of origin/staging. No usable baseline, an invalid remote SHA that needs to be used, or a
-target that is not HEAD all exit non-zero. An explicit baseline takes priority over the hook remote
-SHA; without an explicit baseline the baseline of a new branch uses only origin/staging and guesses
-no other branch.
-
-In all modes the baseline priority is `--base` → `ZCODE_AFFECTED_TEST_BASE` → `ZCODE_PRE_PUSH_BASE`
-→ the scenario default baseline. `ZCODE_AFFECTED_TEST_BASE=<ref> git push` hands the resolved SHA of
-the given branch, tag or commit to Vitest changed; branch names like staging are not hardcoded. Even
-with a specified baseline, Push still requires a clean worktree and a non-delete target equal to
-HEAD. An invalid explicit baseline is an error and does not fall back to the remote SHA.
-
-The default worktree mode does not read upstream when there is no explicit baseline. `--files` /
-`--files-manifest` use official related and are not mixed with `--base` or push.
-
-### Selection and execution
-
-```text
-scenario and baseline → Push worktree check → Vitest official selection → compare with full root UT specs
-                                                     ├─ 0: message, exit 0
-                                                     ├─ partial: run the same spec list
-                                                     └─ all: explain why, skip UT, exit 0
-```
-
-- Granularity is the test file; once a file is selected all cases in it run. The projects included
-  by the root config form the whole root UT suite, excluding desktop E2E and the standalone CLI
-  tests; Node native tests under scripts run separately with node --test and are not linked
-  automatically.
-- Selection uses the public getRelevantTestSpecifications; globTestSpecifications supplies the full
-  list. Preview only transforms modules, without collecting/importing tests; execution uses the same
-  Vitest instance and the same exact specs, so CLI file-name substring matching cannot widen the
-  scope.
-- Official forceRerunTriggers keeps its default config, adds the config-file pattern
-  `**/{vitest,vite}.config.*` (the current default glob's trailing `/**` misses some config files),
-  and adds the shared vitest.setup.ts. Reason: official module dependency analysis does not
-  additionally include setupFiles; a change to the shared setup must count as a full-suite impact,
-  which the entry explains and skips UT, exiting successfully.
-- Full means the complete suite was selected (specs identified by project/pool/path), not an
-  arbitrary count threshold. A large number of really related tests that do not cover the complete
-  suite run as usual. Even in dry-run / JSON, selecting the whole non-empty suite is explained and
-  exits successfully, and does not block Push.
-- With no selected tests it explains and exits 0; this does not mean all changes are verified.
-  Limits of official dependency detection apply as is, with no own compensation such as literal file
-  reads, type dependencies or deleted-file baselines.
-- Selection precision depends on an accurate module graph, not on selection rules: official
-  selection is a file-level transitive closure, and `export *` through a barrel passes one module's
-  change to every test importing the barrel. High-fan-in pure-constant modules therefore go only
-  through sub-paths, not the root barrel. The constants of `packages/shared/src/test-ids.ts` are
-  imported only from `@zcode/shared/test-ids`; the root entry no longer re-exports them and
-  importing them from the root entry is rejected by typecheck; the workflow family
-  `test-ids-workflow.ts` is still exported by the root entry and is outside this rule. Reason: the
-  root entry aggregates 100+ `export *`, and changing test-ids once selected 1379/2638 tests, of
-  which about 50 reference test-ids directly.
-- A test failure exits 1; Git, argument, baseline and Vitest errors and a dirty worktree exit 2; a
-  full-suite skip exits 0 and does not mean the tests passed. It never falls back to the full suite
-  automatically, never adds a full-suite retry, and never silently swallows selector exceptions.
-  pnpm test / pnpm test:unit stay the explicit full entries.
-- Output shows the selected count and baseline; when the full suite is skipped it explains that
-  official selection chose the whole suite and lists the officially related changed files. dry-run
-  lists exact specs and JSON contains runner/project/pool/path, without inventing per-file relation
-  reasons.
-- Git/file operations are async; hook local env cleaning and the lint-staged JSON manifest are kept,
-  so Windows does not expand file names through a shell. The worktree and index are not modified.
-
-The full-suite skip applies to the worktree, task end, Push and explicit file entries. In Push, a
-failing lint, architecture check, dirty worktree, baseline or an actual partial test failure still
-blocks the push; the skip only lets the affected-UT item through and does not mean the tests passed.
-
-### Regression acceptance
-
-Verified with a temporary Git repository, real Vitest and command entries: partial selection
-consistent between preview and execution, unselected files not run, tasks spanning commits and old
-WIP, newly added tests, config and shared setup full-suite skip, common-dependency full-suite skip,
-a real git push succeeding after a full-suite skip, no-relation successful exit, test failure,
-invalid baseline, first/existing-branch Push, dirty worktree and non-HEAD push blocked, multiple
-refs and delete refs, integration merges taking part in selection normally, lint-staged manifest and
-Git local env isolation. The fixture removes the outer push/baseline environment before injecting
-the scenario's own parameters, so the real repository's SHAs do not pollute the temporary repo.
-
-### Timing and real child-process tests
-
-- Timing algorithms are verified with a controlled clock and data events for ordering; real IO
-  wiring keeps separate integration coverage, and process-start queueing is not counted into very
-  short algorithm test windows.
-- Close tests with real child processes first wait for the ready event the fixture emits after
-  registering its exit handler, then start the close timer; a fixed sleep does not prove the child
-  is ready.
-- Integration tests that must start an independent Node within a short window, show service process
-  trees or use native dependencies go into the `fork-isolated` group of `vitest.config.ts`. That
-  group runs file by file serially after the ordinary tests; real processes, original assertions and
-  timeout values are kept, and no case is skipped.
-- The CI shell integration test for remote-control frontend source selection starts Git, Bash and
-  Node in a row; it belongs to the serial group above and keeps the real source selection, build
-  wiring, cleanup verification and the original 30-second timeout.
-- Native file-watching integration tests also verify real event delivery in the serial group;
-  notification dedup and event order are verified separately with controlled watcher events, so
-  logic assertions are not bound to system event scheduling. Gen UI state covers external writes,
-  duplicate file events, same-value write ACK, and still receiving notifications after reading the
-  latest state.
-- Normal completion asserts the exit code, `timedOut: false` and `aborted: false` together. Cancel
-  or deadline must not treat a signal exit as success; resource-cleanup assertions must confirm only
-  the resources created by this run are removed.
-
-```text
-ordinary unit (controlled events/clock) → fork-isolated (real process, single file serial)
-                                     └─ normal end / cancel / deadline → check state and resource cleanup
-```
-
-### CLI native test environment
-
-affected selects only the root Vitest UT; tool Node tests run separately and do not replace the
-CLI's native `pnpm --filter zcode-cli test`. The CLI's CUA sync test locates the producer checkout
-with the explicitly passed `ZCODE_CUA_REPO`; the Turbo test task includes it in the cache key and
-passes it to the test; no local absolute path is recorded and the producer pin is not changed.
-`VITEST_MAX_WORKERS` is passed through and part of the cache key likewise, so a resource-limited
-full verification can limit single-suite concurrency explicitly; timeouts must not be enlarged to
-mask assertion failures.
-
-The CLI full entry builds the root workspace `@zcode/model-option-map` through pretest, so SEA tests
-can read runtime resources from a clean checkout; they must not depend on a previously hand-built
-dist.
+工程 Vitest 使用独立进程串行执行真实 IO 测试，避免并发 Git、构建和原生模块互相干扰。
+未执行、零收集、平台跳过或环境失败均不代表测试通过。日常只运行受影响工程测试，不默认全量。

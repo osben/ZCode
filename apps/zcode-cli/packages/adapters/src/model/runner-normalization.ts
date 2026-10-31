@@ -151,6 +151,29 @@ export function toModelStreamEvent(chunk: TextStreamPart<ToolSet>): ModelStreamE
       };
     }
 
+    // Only accept tool results the provider executed server-side; local tool results are produced by core itself.
+    case "tool-result":
+      return chunk.providerExecuted
+        ? {
+            type: "provider_tool_result",
+            toolCallId: chunk.toolCallId,
+            toolName: chunk.toolName,
+            output: chunk.output,
+            isError: false,
+          }
+        : undefined;
+
+    case "tool-error":
+      return chunk.providerExecuted
+        ? {
+            type: "provider_tool_result",
+            toolCallId: chunk.toolCallId,
+            toolName: chunk.toolName,
+            output: chunk.error,
+            isError: true,
+          }
+        : undefined;
+
     case "finish":
       return {
         type: "finish",

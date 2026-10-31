@@ -18,7 +18,8 @@ export const WORKSPACE_HOOK_SCHEMA_FIELDS = {
     "PostCompact",
     "SessionEnd",
   ],
-  process: ["type", "command", "enabled", "args", "timeoutMs", "statusMessage"],
+  // onError is part of the declaration digest (shared/workspace-hook-digest.ts); changing it requires re-trusting.
+  process: ["type", "command", "enabled", "args", "timeoutMs", "statusMessage", "onError"],
   command: [
     "type",
     "command",
@@ -28,6 +29,7 @@ export const WORKSPACE_HOOK_SCHEMA_FIELDS = {
     "timeout",
     "timeoutMs",
     "statusMessage",
+    "onError",
   ],
 } as const;
 
@@ -214,6 +216,8 @@ const canonicalEntryBaseShape = {
   resolvedTimeoutMs: positiveIntegerSchema,
   resolvedMaxOutputBytes: positiveIntegerSchema,
   statusMessage: nonEmptyStringSchema.optional(),
+  // Present only when the declaration says deny (same rule as the declaration digest, see shared/workspace-hook-digest.ts).
+  onError: z.literal("deny").optional(),
   sourceRootEnabled: z.boolean(),
   declarationEnabled: z.boolean(),
   runtimeHooksEnabled: z.boolean(),

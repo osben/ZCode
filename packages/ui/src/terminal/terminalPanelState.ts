@@ -108,7 +108,7 @@ export function closeTerminalSession(
   state: TerminalPanelState,
   sessionId: string,
 ): TerminalPanelState {
-  if (getTerminalSessionCloseAction(state, sessionId) !== "close-session") {
+  if (getTerminalSessionCloseAction(state, sessionId) === "none") {
     return state;
   }
 
@@ -121,11 +121,15 @@ export function closeTerminalSession(
   const closingIndex = workspace.sessionIds.indexOf(sessionId);
   const nextSessionIds = workspace.sessionIds.filter((id) => id !== sessionId);
   const fallbackSessionId = nextSessionIds[Math.max(0, closingIndex - 1)] ?? nextSessionIds[0];
+  const { [sessionId]: _closedSession, ...nextSessions } = state.sessions;
   if (!fallbackSessionId) {
-    return state;
+    const { [session.workspaceKey]: _closedWorkspace, ...nextWorkspaces } = state.workspaces;
+    return {
+      sessions: nextSessions,
+      workspaces: nextWorkspaces,
+    };
   }
 
-  const { [sessionId]: _closedSession, ...nextSessions } = state.sessions;
   return {
     sessions: nextSessions,
     workspaces: {
@@ -157,16 +161,10 @@ export function exitTerminalSession(
     };
   }
 
-  // When the PTY has already exited, closing the last tab cannot behave like a manual close that only hides the pane and keeps it alive.
-  // Remove the session/workspace records too; reopening the workspace will lazily create a new PTY through ensure.
-  const { [sessionId]: _exitedSession, ...nextSessions } = state.sessions;
-  const { [session.workspaceKey]: _exitedWorkspace, ...nextWorkspaces } = state.workspaces;
+  const action = session.workspaceKey === activeWorkspaceKey ? "close-panel" : "close-session";
   return {
-    state: {
-      sessions: nextSessions,
-      workspaces: nextWorkspaces,
-    },
-    action: session.workspaceKey === activeWorkspaceKey ? "close-panel" : "close-session",
+    state: closeTerminalSession(state, sessionId),
+    action,
   };
 }
 

@@ -1,7 +1,11 @@
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { DEFAULT_WORKSPACE, waitForDefaultWorkspaceReady } from "../../../helpers/desktop-app.js";
-import { selectNativeProjectDirectories } from "../../../helpers/project-sidebar.js";
+import {
+  DEFAULT_WORKSPACE,
+  waitForDefaultWorkspaceReady,
+  waitForWorkspaceApp,
+} from "#e2e/helpers/desktop-app";
+import { selectNativeProjectDirectories } from "#e2e/helpers/project-sidebar";
 import { ServiceChannels } from "@zcode/shared";
 import type { VirtualProject } from "@zcode/services";
 import {
@@ -62,7 +66,7 @@ describe("Local project native multi-folder selection", () => {
         .$('[data-testid="virtual-project-primary"]')
         .isExisting(),
     ).toBe(true);
-    // PCFT01/02/03：确认前读取真实 Host，取消不能留下项目或改写草稿。
+    // PCFT01/02/03: read the real Host before confirming; cancel must not leave a project behind or rewrite the draft.
     const readSaved = () =>
       callHandoffHost<VirtualProject[]>(ServiceChannels.Project, "readProjects");
     const before = await readSaved();
@@ -100,11 +104,12 @@ describe("Local project native multi-folder selection", () => {
     }
     await $('[data-testid="virtual-project-save"]').click();
     await $('[data-testid="project-folder-trust-dialog"]').waitForDisplayed();
-    // Electron 没有 Browser.getWindowForTarget，窗口尺寸通过真实 BrowserWindow 调整。
+    // Electron has no Browser.getWindowForTarget; window size is adjusted through a real BrowserWindow.
     const windowSize = await browser.electron.execute((electron) => {
       const appWindow = electron.BrowserWindow.getAllWindows()[0]!;
       return { bounds: appWindow.getBounds(), minimum: appWindow.getMinimumSize() };
     });
+    const trustViewport = await browser.execute(() => ({ width: innerWidth, height: innerHeight }));
     const trustTheme = await browser.execute(() =>
       (window as ThemeWindow).__testActions!.getTheme(),
     );
@@ -133,11 +138,7 @@ describe("Local project native multi-folder selection", () => {
             (value) => (window as ThemeWindow).__testActions!.setTheme(value),
             theme,
           );
-          await browser.execute(async () => {
-            await new Promise<void>((resolve) =>
-              requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-            );
-          });
+          await waitForTrustLayout({ width, height: 844 });
           const geometry = await browser.execute(() => {
             const button = document.querySelector('[data-testid="project-folder-trust-confirm"]')!;
             const box = button.getBoundingClientRect();
@@ -176,6 +177,27 @@ describe("Local project native multi-folder selection", () => {
         trustLocale,
       );
     }
+    // When the native resize returns, the dialog's size transition may still be moving buttons; wait for the layout to settle so a single click does not miss.
+    await waitForTrustLayout(trustViewport);
+    expect(
+      await browser.execute(() =>
+        document
+          .getAnimations()
+          .filter((animation) => {
+            const dialog = document.querySelector('[data-testid="project-folder-trust-dialog"]');
+            const target = (animation.effect as KeyframeEffect | null)?.target;
+            return (
+              animation.playState === "running" &&
+              animation instanceof CSSTransition &&
+              /^(max-)?(width|height)$|^transform$/.test(animation.transitionProperty) &&
+              target instanceof Element &&
+              dialog &&
+              (dialog.contains(target) || target.contains(dialog))
+            );
+          })
+          .map((animation) => (animation as CSSTransition).transitionProperty),
+      ),
+    ).toEqual([]);
     await $('[data-testid="project-folder-trust-confirm"]').click();
     await $('[data-testid="virtual-project-name"]').waitForExist({ reverse: true });
     expect(
@@ -183,14 +205,15 @@ describe("Local project native multi-folder selection", () => {
         .find((item) => item.name === "E2E_NATIVE_PROJECT_PICKER")
         ?.roots.map((item) => item.rootPath),
     ).toEqual(paths);
-    // 窄屏布局会自动收起侧栏；还原尺寸后通过真实入口展开，再检查项目顺序。
+    // The narrow layout auto-collapses the sidebar; after restoring the size, expand it via the real entry, then check project order.
     if (!(await $('[data-testid="project-section"]').isDisplayed())) {
       await $('button[aria-label="Toggle sidebar"], button[aria-label="Toggle sidebar"]').click();
     }
     await $(project).waitForDisplayed();
     expect(await readProjectOrder()).toEqual(["E2E_NATIVE_PROJECT_PICKER", ...previousOrder]);
     await browser.refresh();
-    await waitForDefaultWorkspaceReady(30_000);
+    // Creating the project already activated the chosen primary directory; waiting for the old fixture directory after refresh would misreport a correct restore as a navigation failure.
+    await waitForWorkspaceApp(paths[1]!, 30_000);
     await $(project).waitForDisplayed();
     expect(await readProjectOrder()).toEqual(["E2E_NATIVE_PROJECT_PICKER", ...previousOrder]);
     await $(project).$('[data-testid="virtual-project-menu"]').click();
@@ -238,3 +261,25 @@ describe("Local project native multi-folder selection", () => {
     await $(project).waitForExist({ reverse: true });
   });
 });
+
+async function waitForTrustLayout(viewport: { width: number; height: number }): Promise<void> {
+  await browser.waitUntil(
+    () =>
+      browser.execute((expected) => {
+        const dialog = document.querySelector('[data-testid="project-folder-trust-dialog"]');
+        if (!dialog || innerWidth !== expected.width || innerHeight !== expected.height)
+          return false;
+        return !document.getAnimations().some((animation) => {
+          const target = (animation.effect as KeyframeEffect | null)?.target;
+          return (
+            animation.playState === "running" &&
+            animation instanceof CSSTransition &&
+            /^(max-)?(width|height)$|^transform$/.test(animation.transitionProperty) &&
+            target instanceof Element &&
+            (dialog.contains(target) || target.contains(dialog))
+          );
+        });
+      }, viewport),
+    { timeout: 10_000, timeoutMsg: "信任弹窗视口或布局过渡尚未完成" },
+  );
+}

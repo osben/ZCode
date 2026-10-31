@@ -10,7 +10,8 @@
 
 import {
   CREATE_WORKFLOW_ARGS_WITHOUT_PATH_ERROR,
-  CREATE_WORKFLOW_SOURCE_ERROR,
+  CREATE_WORKFLOW_SOURCE_CONFLICT_ERROR,
+  CREATE_WORKFLOW_SOURCE_MISSING_ERROR,
   CreateWorkflowInputSchema,
   type CreateWorkflowInput,
   type ModelCatalogPort,
@@ -50,7 +51,12 @@ export function validateCreateWorkflowSource(
   const sources = [parsed.data.script, parsed.data.saved, parsed.data.path].filter(
     (source) => source !== undefined,
   );
-  if (sources.length !== 1) return failure(CREATE_WORKFLOW_SOURCE_ERROR);
+  // Report "none given" and "too many given" separately: none given usually means the argument
+  // JSON failed to parse and the adapter restored it to `{}` (see
+  // WORKFLOW_SOURCE_MISSING_HINT); merged into one sentence, a model that wrote a script cannot
+  // tell the cause.
+  if (sources.length === 0) return failure(CREATE_WORKFLOW_SOURCE_MISSING_ERROR);
+  if (sources.length > 1) return failure(CREATE_WORKFLOW_SOURCE_CONFLICT_ERROR);
   // `args` must appear with `path`: saved arguments use `saved.args`, while inline scripts have no
   // declaration to validate. Silently ignoring them would make the caller think they took effect,
   // while the script sees empty `args`.

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { promisify } from "node:util";
 import { test } from "node:test";
+import { patchNodePtyPrebuilds } from "./zcode-distribution/assets.mjs";
 import { installScriptSource } from "./zcode-distribution/installer.mjs";
 
 const exec = promisify(execFile);
@@ -229,4 +230,19 @@ test("installer creates zcode and the installed command defaults to CLI", async 
   assert.deepEqual(JSON.parse(result.stdout).argv, []);
   const webHelp = await exec(join(bin, "zcode"), ["--web", "--help"]);
   assert.match(webHelp.stdout, /zcode --web/);
+});
+
+test("node-pty prebuild patch keeps the official native that matches the official JS", async (t) => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "zcode-distribution-pty-")));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const prebuilds = join(directory, "node_modules/node-pty/prebuilds");
+  await mkdir(join(prebuilds, "darwin-arm64"), { recursive: true });
+  await writeFile(join(prebuilds, "darwin-arm64/pty.node"), "official-1.1.0");
+  await patchNodePtyPrebuilds(directory);
+  // Bug regression: the old patch overwrote the official 1.1.0 darwin native with the platform
+  // package's 1.2.0-beta.10 native; the official JS passes only 3 resize args while the new
+  // native needs 5, so macOS terminal resize always failed.
+  assert.equal(await readFile(join(prebuilds, "darwin-arm64/pty.node"), "utf8"), "official-1.1.0");
+  // Platforms missing from the official package are still filled in by the platform package.
+  assert.ok((await readFile(join(prebuilds, "linux-x64/pty.node"))).length > 0);
 });

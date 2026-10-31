@@ -477,8 +477,8 @@ export function PermissionDialog({
 }: {
   request: ZCodePermissionRequest;
   responding?: boolean;
-  responseError?: string;
   permissionMode?: string;
+  responseError?: string;
   /**
    * `content` 只在工作流确认窗的放行应答上出现：用户在窗里改过的设置（docs/dynamic-workflow/launch.md
    * 「Adjusting the settings in the window」）。没改过即不传。

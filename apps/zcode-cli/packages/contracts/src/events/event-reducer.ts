@@ -360,6 +360,8 @@ export class EventReducer {
         source: payload.source ?? existing?.source,
         inputPresentation: payload.inputPresentation ?? existing?.inputPresentation,
         intent: payload.intent ?? existing?.intent,
+        // An edit event is not a re-admission; keep the original automation attribution when no identity is carried.
+        automationId: payload.automationId ?? existing?.automationId,
         toolDisallowlist: payload.toolDisallowlist ?? existing?.toolDisallowlist,
         // editQueueItem resends the queued event with the same id. Editing is not a new
         // admission, so preserve the original queue time and array position; otherwise a cold

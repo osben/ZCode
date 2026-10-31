@@ -1,4 +1,5 @@
-import { mobilePluginDiscoveryTelemetrySchema } from "./telemetry.js";
+import { mobilePluginDiscoveryTelemetrySchema, telemetryUiModeSchema } from "./telemetry.js";
+import { remoteConversationTelemetryEventSchema } from "./conversation-telemetry/remoteTelemetryEvent.js";
 import { databaseStartupControlSchema, databaseStartupStateSchema } from "./database-startup.js";
 import { mcpAppInstanceSchema } from "./mcp-apps/instance.js";
 import {
@@ -16,12 +17,14 @@ import { zcodeProcessDiagnosticSchema } from "./process-diagnostic.js";
 import { PROCESS_RESOURCE_CLI_LANES } from "./processResourceTelemetry.js";
 import {
   providerProvisioningErrorCodeSchema,
+  providerProvisioningLaneStatusSchema,
   providerProvisioningTriggerSchema,
 } from "./provider-provisioning.js";
 import { zcodeProviderSchema } from "./providers.js";
 import { REMOTE_ASSET_INSTALL_MODES } from "./remoteAssetInstallMode.js";
 import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
 import type { WebRemoteControlAppPayload } from "./web-remote-control.js";
+import { webRemoteControlMobileLogAppPayloadSchemas } from "#src/web-remote-relay/index.js";
 import { PROTOCOL_V4_LIMITS } from "./zcode-protocol-v4/core.js";
 import { sourceServerArtifactPolicySchema } from "./source-server/release.js";
 import { sessionWorkflowActivitySchema } from "./zcode-protocol-v4/sessions-index-workflow-activity.js";
@@ -175,6 +178,7 @@ export const webRemoteControlFailureReasonSchema = z.enum([
 
 export const webRemoteControlExternalWorkspaceBridgeSchema = z.discriminatedUnion("kind", [
   z.object({
+    terminalOwnerId: webRemoteControlTransportIdSchema.optional(),
     bridgeSessionId: webRemoteControlTransportIdSchema,
     bridgeGeneration: z.number().int().nonnegative().optional(),
     recoveryId: webRemoteControlTransportIdSchema.optional(),
@@ -184,6 +188,7 @@ export const webRemoteControlExternalWorkspaceBridgeSchema = z.discriminatedUnio
     initialTaskId: nonEmptyStringSchema.optional(),
   }),
   z.object({
+    terminalOwnerId: webRemoteControlTransportIdSchema.optional(),
     bridgeSessionId: webRemoteControlTransportIdSchema,
     bridgeGeneration: z.number().int().nonnegative().optional(),
     recoveryId: webRemoteControlTransportIdSchema.optional(),
@@ -275,6 +280,109 @@ export const webRemoteControlPlatformMethodSchema = z.enum([
   "openExternalFile",
 ]);
 
+// Mobile action request: workspaceIdentity is optional, matching KMP; when a remote task lacks
+// identity, the controller resolves it by path.
+const webRemoteControlTaskActionTargetShape = {
+  requestId: nonEmptyStringSchema,
+  taskId: nonEmptyStringSchema,
+  workspacePath: nonEmptyStringSchema,
+  workspaceIdentity: nonEmptyStringSchema.optional(),
+};
+
+export const webRemoteControlRendererActionRequestSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("task-pin"),
+    ...webRemoteControlTaskActionTargetShape,
+    pinned: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("task-archive"),
+    ...webRemoteControlTaskActionTargetShape,
+    archived: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("workspace-create"),
+    requestId: nonEmptyStringSchema,
+    name: z.string(),
+  }),
+]);
+
+export const webRemoteControlRendererActionResultSchema = z.union([
+  z.object({
+    requestId: nonEmptyStringSchema,
+    success: z.literal(true),
+    workspacePath: nonEmptyStringSchema.optional(),
+    projectId: nonEmptyStringSchema.optional(),
+    hostId: nonEmptyStringSchema.optional(),
+  }),
+  z.object({
+    requestId: nonEmptyStringSchema,
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+const webRemoteControlActionPayloadSchemas = [
+  z.object({
+    zcode_type: z.literal("workspace-create-request"),
+    requestId: nonEmptyStringSchema,
+    name: z.string(),
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-create-response"),
+    requestId: nonEmptyStringSchema,
+    success: z.literal(true),
+    workspacePath: nonEmptyStringSchema,
+    workspaceKey: nonEmptyStringSchema,
+    projectId: nonEmptyStringSchema.optional(),
+    hostId: nonEmptyStringSchema.optional(),
+  }),
+  z.object({
+    zcode_type: z.literal("workspace-create-response"),
+    requestId: nonEmptyStringSchema,
+    success: z.literal(false),
+    error: z.string(),
+  }),
+  z.object({
+    zcode_type: z.literal("task-pin-request"),
+    ...webRemoteControlTaskActionTargetShape,
+    pinned: z.boolean(),
+  }),
+  z.object({
+    zcode_type: z.literal("task-pin-response"),
+    requestId: nonEmptyStringSchema,
+    taskId: nonEmptyStringSchema,
+    success: z.literal(true),
+    pinned: z.boolean(),
+  }),
+  z.object({
+    zcode_type: z.literal("task-pin-response"),
+    requestId: nonEmptyStringSchema,
+    taskId: nonEmptyStringSchema,
+    success: z.literal(false),
+    error: z.string(),
+  }),
+  z.object({
+    zcode_type: z.literal("task-archive-request"),
+    ...webRemoteControlTaskActionTargetShape,
+    archived: z.boolean().optional(),
+  }),
+  z.object({
+    zcode_type: z.literal("task-archive-response"),
+    requestId: nonEmptyStringSchema,
+    taskId: nonEmptyStringSchema,
+    success: z.literal(true),
+    archived: z.boolean(),
+  }),
+  z.object({
+    zcode_type: z.literal("task-archive-response"),
+    requestId: nonEmptyStringSchema,
+    taskId: nonEmptyStringSchema,
+    success: z.literal(false),
+    error: z.string(),
+  }),
+] as const;
+
 const webRemoteControlAppPayloadSchemas = [
   z
     .object({
@@ -284,6 +392,7 @@ const webRemoteControlAppPayloadSchemas = [
     .strict(),
   z.object({
     zcode_type: z.literal("bootstrap-request"),
+    terminalClientSessionId: webRemoteControlTransportIdSchema.optional(),
     requestId: nonEmptyStringSchema,
   }),
   z.object({
@@ -309,6 +418,7 @@ const webRemoteControlAppPayloadSchemas = [
   z
     .object({
       zcode_type: z.literal("workspace-bridge-open"),
+      terminalClientSessionId: webRemoteControlTransportIdSchema.optional(),
       requestId: nonEmptyStringSchema,
       bridgeSessionId: webRemoteControlTransportIdSchema,
       bridgeGeneration: z.number().int().nonnegative().optional(),
@@ -453,6 +563,7 @@ const webRemoteControlAppPayloadSchemas = [
       "buffer-overflow",
       "buffer-timeout",
       "source-session-replaced",
+      "terminal-owner-ended",
     ]),
     seq: z.number().int().nonnegative().optional(),
     expectedSeq: z.number().int().nonnegative().optional(),
@@ -490,6 +601,10 @@ const webRemoteControlAppPayloadSchemas = [
     online: z.boolean().optional(),
     hiddenDurationMs: z.number().int().nonnegative().optional(),
   }),
+  ...webRemoteControlActionPayloadSchemas,
+  // Mobile log channel (push + pull); wire format in
+  // docs/web-remote-control/mobile-log-channel.md.
+  ...webRemoteControlMobileLogAppPayloadSchemas,
 ] as const;
 
 // Bugfix: Multiple messages in an app payload share zcode_type (for example, platform-response),
@@ -587,6 +702,7 @@ export const taskNotificationPayloadSchema = z.object({
 });
 
 export const telemetryRendererContextSchema = z.object({
+  uiMode: telemetryUiModeSchema.optional(),
   clientTimezone: nonEmptyStringSchema,
   clientLanguage: nonEmptyStringSchema,
   screenResolution: nonEmptyStringSchema,
@@ -633,6 +749,9 @@ const hostAgentWarmupTargetSchema = z.object({
 });
 
 export const hostInitLocalMessageSchema = z.object({
+  browserBackendIdentity: z
+    .object({ id: nonEmptyStringSchema, generation: z.number().int().nonnegative() })
+    .optional(),
   type: z.literal("init-local"),
   databaseStartupId: z.string().min(1).max(128).optional(),
   hostId: nonEmptyStringSchema.optional(),
@@ -645,7 +764,8 @@ export const hostInitLocalMessageSchema = z.object({
   agentWarmupTargets: z.array(hostAgentWarmupTargetSchema).max(1).optional(),
   agentSpawnFallbackCwd: nonEmptyStringSchema.optional(),
   remoteAssets: remoteAssetDirsSchema.optional(),
-  /** spawn 时刻 Main 的实时界面语言；后续变化由 application-locale-changed 推送。 */
+  /** Main's live UI language at spawn time; later changes are pushed via
+   *  application-locale-changed. */
   locale: localeSchema.optional(),
   zcodeBuiltinProviderConfigFilePath: nonEmptyStringSchema,
   runtimeProcessEnvPatch: z
@@ -657,7 +777,8 @@ export const hostInitLocalMessageSchema = z.object({
 
 export const windowHostRemoteWorkspaceDescriptorSchema = z
   .object({
-    /** 本次请求直接复用的在线连接；只包含脱敏目标，不是 session 持久状态。 */
+    /** Online connection reused directly by this request; holds only a redacted target, not
+     *    session-persistent state. */
     reusedConnectionTarget: remoteTargetSchema.optional(),
     sourceServerId: nonEmptyStringSchema.optional(),
     remoteSessionId: nonEmptyStringSchema,
@@ -672,7 +793,8 @@ export type WindowHostRemoteWorkspaceDescriptor = z.infer<
   typeof windowHostRemoteWorkspaceDescriptorSchema
 >;
 
-/** Desktop Main → Preload → Renderer 的 remote workspace MessagePort 元数据合同。 */
+/** Metadata contract for the remote workspace MessagePort from Desktop Main → Preload →
+ *  Renderer. */
 export const scopedServicePortPayloadSchema = windowHostRemoteWorkspaceDescriptorSchema
   .pick({
     sourceServerId: true,
@@ -758,6 +880,7 @@ export const hostDisposeRemoteWorkspaceSessionMessageSchema = z
 export const hostAttachServicePortMessageSchema = z
   .object({
     type: z.literal("attach-service-port"),
+    terminalOwnerId: nonEmptyStringSchema.optional(),
     // main can declare only the attachment source; the host process still assigns connectionId.
     // Desktop reload/remote reattach must explicitly use continuous; mobile shared-host must use replayable.
     requestId: nonEmptyStringSchema,
@@ -979,6 +1102,7 @@ export const hostPluginSandboxRegisterResultMessageSchema = z
         heightHint: z.number().int().positive().optional(),
         minFrameHeight: z.number().int().positive().optional(),
         showInline: z.boolean().optional(),
+        backgroundRetention: z.boolean().optional(),
         // Browser permissions declared by the resource are returned to the renderer with the handle (in hostContext.permissions); they use the same enum as registration permissions.
         permissions: z
           .array(z.enum(["camera", "microphone", "geolocation", "clipboardWrite"]))
@@ -1021,7 +1145,18 @@ export const hostProviderProvisioningExecuteMessageSchema = z
   })
   .strict();
 
-/** 手机只提交项目意图；实际目录和远端 scope 必须由窗口 Host 准备。 */
+/** main → host: result of the data-sync page reading / retrying a Provisioning lane (correlated
+ *  by requestId). */
+export const hostProviderProvisioningLaneResultMessageSchema = z
+  .object({
+    type: z.literal("provider-provisioning-lane-result"),
+    requestId: nonEmptyStringSchema,
+    status: providerProvisioningLaneStatusSchema,
+  })
+  .strict();
+
+/** Mobile only submits the project intent; the actual directory and remote scope must be
+ *  prepared by the window Host. */
 export const hostPrepareProjectWorkspaceMessageSchema = z
   .object({
     type: z.literal("prepare-project-workspace"),
@@ -1099,6 +1234,9 @@ export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
   hostBindRemoteWorkspaceContextMessageSchema,
   hostCancelRemoteWorkspaceBindMessageSchema,
   hostDisposeRemoteWorkspaceSessionMessageSchema,
+  z
+    .object({ type: z.literal("set-terminal-owner"), ownerId: nonEmptyStringSchema.nullable() })
+    .strict(),
   hostAttachServicePortMessageSchema,
   hostDetachServicePortMessageSchema,
   hostDisposeMessageSchema,
@@ -1124,6 +1262,7 @@ export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
   hostCuaPipFocusChangedMessageSchema,
   hostApplicationLocaleChangedMessageSchema,
   hostProviderProvisioningExecuteMessageSchema,
+  hostProviderProvisioningLaneResultMessageSchema,
 ]);
 
 export const hostRemoteWorkspaceConnectedResponseSchema = z
@@ -1138,7 +1277,7 @@ export const hostRemoteWorkspaceContextBoundResponseSchema = z
   .object({
     type: z.literal("remote-workspace-context-bound"),
     requestId: nonEmptyStringSchema,
-    // Desktop tab rekey only；手机 replayable attachment 不消费该提示。
+    // Desktop tab rekey only; mobile replayable attachments do not consume this hint.
     previousWorkspaceIdentity: nonEmptyStringSchema.optional(),
   })
   .strict();
@@ -1416,6 +1555,16 @@ export const hostPluginTelemetryResponseSchema = z
   .strict();
 export type HostPluginTelemetryResponse = z.infer<typeof hostPluginTelemetryResponseSchema>;
 
+export const hostRemoteConversationTelemetryResponseSchema = z
+  .object({
+    type: z.literal("remote-conversation-telemetry"),
+    event: remoteConversationTelemetryEventSchema,
+  })
+  .strict();
+export type HostRemoteConversationTelemetryResponse = z.infer<
+  typeof hostRemoteConversationTelemetryResponseSchema
+>;
+
 export const hostSessionCreateTelemetryResponseSchema = z
   .object({
     type: z.literal("session-create-telemetry"),
@@ -1601,6 +1750,7 @@ export const hostOffPeakSchedulerWakeRequestResponseSchema = z.object({
 
 // host → main: execute one browser-use command (main executes it through WebContentsView + CDP).
 export const hostBrowserExecuteRequestResponseSchema = z.object({
+  controlScopeId: nonEmptyStringSchema.optional(),
   type: z.literal("browser-execute-request"),
   requestId: nonEmptyStringSchema,
   // Migration compatibility: older host bundles omit browserId/context; the new browser-client path always includes them.
@@ -1666,6 +1816,7 @@ export const hostPluginSandboxRegisterRequestResponseSchema = z
     heightHint: z.number().int().positive().optional(),
     minFrameHeight: z.number().int().positive().optional(),
     showInline: z.boolean().optional(),
+    backgroundRetention: z.boolean().optional(),
   })
   .strict()
   .refine(
@@ -1699,7 +1850,21 @@ export const hostNetworkTelemetryBatchResponseSchema = z.object({
 export const hostProviderProvisioningSourceChangedResponseSchema = z
   .object({
     type: z.literal("provider-provisioning-source-changed"),
-    trigger: providerProvisioningTriggerSchema.exclude(["environment-online"]),
+    trigger: providerProvisioningTriggerSchema.exclude(["environment-online", "user-retry"]),
+  })
+  .strict();
+
+/**
+ * host → main: the data-sync page reads (read) a Provisioning lane by device, reads after the
+ * current execution finishes (wait), or retries (retry). Main always replies with
+ * provider-provisioning-lane-result.
+ */
+export const hostProviderProvisioningLaneRequestResponseSchema = z
+  .object({
+    type: z.literal("provider-provisioning-lane-request"),
+    requestId: nonEmptyStringSchema,
+    sourceServerId: nonEmptyStringSchema,
+    action: z.enum(["read", "wait", "retry"]),
   })
   .strict();
 
@@ -1764,6 +1929,7 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
   hostMcpResourceSamplesResponseSchema,
   hostToolExecResourceResponseSchema,
   hostSessionCreateTelemetryResponseSchema,
+  hostRemoteConversationTelemetryResponseSchema,
   hostPluginTelemetryResponseSchema,
   hostAgentRunningTaskCountChangedResponseSchema,
   hostWorkspaceRunningTaskCountChangedResponseSchema,
@@ -1793,6 +1959,7 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
   hostNetworkTelemetryBatchResponseSchema,
   hostProviderProvisioningSourceChangedResponseSchema,
   hostProviderProvisioningExecutionResultResponseSchema,
+  hostProviderProvisioningLaneRequestResponseSchema,
   hostCronRunResultResponseSchema,
   hostOffPeakRunResultResponseSchema,
   hostCronSchedulerWakeRequestResponseSchema,

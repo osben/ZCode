@@ -4,7 +4,6 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
-  type RefObject,
   type ReactNode,
 } from "react";
 import type {
@@ -73,7 +72,6 @@ export function ProviderCardHeader({
   logo,
   editingName,
   nameValue,
-  nameInputRef,
   nameEditable = true,
   onNameChange,
   onNameBlur,
@@ -89,7 +87,6 @@ export function ProviderCardHeader({
   logo?: ProviderConfigObject["logo"];
   editingName: boolean;
   nameValue: string;
-  nameInputRef: RefObject<HTMLInputElement | null>;
   nameEditable?: boolean;
   onNameChange: (value: string) => void;
   onNameBlur: () => void;
@@ -112,7 +109,7 @@ export function ProviderCardHeader({
         {editingName ? (
           <Input
             {...TECHNICAL_INPUT_ATTRIBUTES}
-            ref={nameInputRef}
+            autoFocus
             data-testid={TID_MODEL_PROVIDER_NAME_INPUT}
             type="text"
             size="lg"
@@ -150,10 +147,11 @@ export function ProviderCardHeader({
             <DropdownMenuContent
               align="end"
               onCloseAutoFocus={(event) => {
-                // After renaming, keep focus in the input; closing the menu must not move it back to the trigger button.
+                // A menu in its exit animation still steals focus on mouse move; it must be closed before mounting and focusing the input.
                 if (renameRequestedRef.current) {
                   event.preventDefault();
                   renameRequestedRef.current = false;
+                  onStartEditName();
                 }
               }}
             >
@@ -162,7 +160,6 @@ export function ProviderCardHeader({
                   data-testid={TID_MODEL_PROVIDER_NAME_EDIT_BUTTON}
                   onSelect={() => {
                     renameRequestedRef.current = true;
-                    onStartEditName();
                   }}
                 >
                   <Pencil className="size-3.5" />

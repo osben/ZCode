@@ -10,6 +10,7 @@ const restoredOAuthCredentials = {
 
 describe("desktop e2e startup credentials", () => {
   it.each([
+    "conversation-session-off-peak-team-plan.test.ts",
     "coding-plan-upgrade-webview-refresh-provider.test.ts",
     "marketing-touch-rewards.test.ts",
   ])("%s 保留本地 Start 余额/请求鉴权所需 JWT", (spec) => {
@@ -34,7 +35,7 @@ describe("desktop e2e startup credentials", () => {
     expect(
       createE2EStartupCredentialSeed({
         specs: [
-          "/repo/packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-unbound-resume.test.ts",
+          "/repo/packages/desktop/test/e2e/conversation-session/conversation-session-unbound-resume.test.ts",
         ],
         legacyAuthToken: "fake-auth-token",
         restoredOAuthCredentials,
@@ -92,9 +93,7 @@ describe("desktop e2e startup credentials", () => {
   it("JWT 401 自动退出专项 spec 保留完整 restored OAuth fixture", () => {
     expect(
       createE2EStartupCredentialSeed({
-        specs: [
-          "/repo/packages/desktop/test/e2e/manual-review/pending/jwt-401-auto-logout.test.ts",
-        ],
+        specs: ["/repo/packages/desktop/test/e2e/jwt-401-auto-logout.test.ts"],
         legacyAuthToken: "fake-auth-token",
         restoredOAuthCredentials,
       }),

@@ -37,8 +37,15 @@ function ActiveSessionPluginReferenceIconProvider({
     [catalog.authority, catalog.entries],
   );
   const projection = useMemo(
-    () => (catalog.authority === "session" ? { sessionId, iconByPluginId } : null),
-    [catalog.authority, iconByPluginId, sessionId],
+    () =>
+      catalog.authority === "session"
+        ? {
+            sessionId,
+            iconByPluginId,
+            nameByPluginId: new Map(catalog.entries.map((entry) => [entry.pluginId, entry.name])),
+          }
+        : null,
+    [catalog.authority, catalog.entries, iconByPluginId, sessionId],
   );
 
   return <PluginReferenceIconProvider value={projection}>{children}</PluginReferenceIconProvider>;
@@ -49,7 +56,8 @@ function ActiveSessionPluginReferenceIconProvider({
  *
  * Putting the catalog hook directly on SessionPane resolves workspace services even when disabled,
  * adding dependencies and requests to every session without Plugin references. With this as a child component,
- * the data hook mounts only when there is a user message containing plugin:// and the Session snapshot is ready.
+ * the data hook is mounted only when the session actually contains plugin:// user messages or
+ * MCP UI tool cards and the Session snapshot is ready.
  */
 export function SessionPluginReferenceIconBoundary({
   children,

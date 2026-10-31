@@ -40,6 +40,7 @@ export type RowActions = NonNullable<z.infer<typeof rowActionsSchema>>;
 // Row-level metadata for workflow turns moved to workflow-row-meta.ts (max-lines); re-export names unchanged here.
 export {
   backgroundResultOriginMetaSchema,
+  subagentResultMetaSchema,
   workflowBlockedMetaSchema,
   workflowLaunchMetaSchema,
   workflowNotificationMetaSchema,
@@ -92,7 +93,8 @@ export const turnHeaderRowSchema = z.object({
   modelDurationMs: z.number().nonnegative().optional(),
   toolDurationMs: z.number().nonnegative().optional(),
   otherDurationMs: z.number().nonnegative().optional(),
-  // guide does not split a product turn, but each accepted guide starts a separate visual work segment.
+  // Guides do not split a product turn; one drain boundary takes all waiting guides in FIFO
+  // order and they share the first opened visual work segment.
   // Defaults to absent to preserve old snapshot compatibility; once guide is present, CLI projects the first and subsequent segments fully.
   workSegments: z.array(turnWorkSegmentSchema).optional(),
   originMeta: backgroundResultOriginMetaSchema.optional(),
@@ -456,3 +458,23 @@ export const conversationRowSchema = z.discriminatedUnion("kind", [
 ]);
 export type ConversationRow = z.infer<typeof conversationRowSchema>;
 export type ConversationRowKind = ConversationRow["kind"];
+
+/**
+ * "Frozen history + tail turns" partition of rows.window (spec: docs/ui/chat-virtual-scroll.md,
+ * "per-frame derivation cost").
+ *
+ * Merely a view type over the row array — never on the wire, no schema; construction and
+ * caching live in the renderer's conversationProjectionStore.
+ * It lives here so domain layers such as plugin UI depend only on protocol types, not the v4
+ * store. Concatenating history and tail equals rows item by item.
+ */
+export interface ConversationRowsPartition {
+  /** Rows before the tail; the reference changes only when the history segment changes. */
+  readonly history: readonly ConversationRow[];
+  /**
+   * Suffix of the window: all rows of the turn holding the last row, possibly spanning several
+   * turns (an older turn appended rows, or the tail turn was truncated internally); its turns
+   * never intersect history's. Consumers must not assume the tail holds a single turn.
+   */
+  readonly tail: readonly ConversationRow[];
+}

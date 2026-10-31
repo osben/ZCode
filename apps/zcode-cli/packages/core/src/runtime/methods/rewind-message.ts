@@ -28,6 +28,7 @@ import {
   formatUnavailableRewindResponse,
   formatWorkspaceRewindNoticeBody,
   getLatestActiveSessionMessageId,
+  isHiddenReminderMessage,
   isTurnCancellationError,
   selectCheckpointForMessage,
   selectCheckpointsForMessages,
@@ -39,7 +40,7 @@ import type {
   WorkspaceRewindResult,
 } from "../types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
-import { rebuildContextPrefix } from "./context-refresh.js";
+import { rebuildContextPrefix, refreshRestoredAnnouncements } from "./context-refresh.js";
 import { mainTurnCacheHitAggregateFromMessages } from "./turn-model-step-usage.js";
 
 export async function rewindToMessage(
@@ -699,11 +700,14 @@ async function rebuildConversationDerivedState(
   await hydrateReadFileStateFromSession({
     messages: options.persistedMessages,
     readFileState: this.readFileState,
+    // rewind does not reload context: keep the MEMORY.md record written at session start.
+    retainContextSeeds: true,
     workingDirectory: this.workingDirectory,
     workspaceRoot: this.workspaceRoot,
     ...branchOptions,
   });
   rebuildContextPrefix(this);
+  refreshRestoredAnnouncements(this);
   this.injectTargetStateIntoMessageHistory(
     await this.readSessionTargetForContext(options.traceContext),
   );
@@ -728,13 +732,14 @@ async function rebuildConversationDerivedState(
     activeMessages,
     persistedMessages: options.persistedMessages,
   });
-  this.turnNumber = activeMessages.filter(
-    (message) => message.info.role === "user" && !message.info.summary,
-  ).length;
+  this.turnNumber = activeMessages.filter(isRewindableUserPrompt).length;
   this.currentTurnFileChanges = new Map();
   this.autoCompactConsecutiveFailures = 0;
 }
 
+// Root cause: hidden reminders sit between the user input and the assistant. Assistant-anchor
+// rewind stopped on them, leaving the old input in history; turnNumber also counted them as a
+// turn, making cold recovery larger than live. They are not conversation messages — skip them in both places.
 function isRewindableUserPrompt(message: MessageWithParts): boolean {
-  return message.info.role === "user" && !message.info.summary;
+  return message.info.role === "user" && !message.info.summary && !isHiddenReminderMessage(message);
 }

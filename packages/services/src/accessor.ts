@@ -33,6 +33,8 @@ import type { IClientConfigService } from "./client-config/clientConfig.js";
 import type { IClientScenesService } from "./client-scenes/clientScenes.js";
 import type { ISkillsService } from "./skills/skills.js";
 import type { ISkillSyncService } from "./skill-sync/skillSync.js";
+import type { IDeviceSyncStateService, IUserConfigSyncService } from "./data-sync/index.js";
+import type { IProviderProvisioningStatusService } from "./provider-provisioning-status/index.js";
 import type { IMcpSyncService } from "./mcp-sync/mcpSync.js";
 import type { IPluginSyncService } from "./plugin-sync/pluginSync.js";
 import type { IPluginsService } from "./plugins/plugins.js";
@@ -103,6 +105,10 @@ export interface IServiceAccessor {
   readonly providerSettingsService: IProviderSettingsService;
   /** The sole model-selection View published by the current Environment Registry. */
   readonly modelSelectionService: IModelSelectionService;
+  /** Registered only by the desktop local Host: device sync status for the data sync page. */
+  readonly deviceSyncStateService?: IDeviceSyncStateService;
+  /** Registered only by the desktop local Host: provider Provisioning lane status and retry for the data sync page. */
+  readonly providerProvisioningStatusService?: IProviderProvisioningStatusService;
   readonly usageStatsService: IUsageStatsService;
   readonly codingPlanSubscriptionService: ICodingPlanSubscriptionService;
   readonly clientConfigService: IClientConfigService;
@@ -123,6 +129,8 @@ export interface IServiceAccessor {
   /** App-Provided Tools; present only for the desktop local agent. */
   readonly pluginUiAppToolsService?: IPluginUiAppToolsService;
   readonly pluginSyncService: IPluginSyncService;
+  /** Data sync: the user-config sync channel shared by subagents, commands and hooks (distinguished by category). */
+  readonly userConfigSyncService: IUserConfigSyncService;
   readonly pluginsService: IPluginsService;
   /** Settings-page plugin management (the UI no longer calls the plugins/* surface of zcodeAgentService directly) */
   readonly pluginManagementService: IPluginManagementService;

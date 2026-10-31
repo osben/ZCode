@@ -57,6 +57,24 @@ export function getAppConfigDir(): string {
   return join(getZCodeDataRootDir(), "v2");
 }
 
+/**
+ * Home resolution for the agent-side user-level default instructions (personalization) file.
+ * Must stay fully consistent with the CLI adapter (resolveUserHomeDir in
+ * apps/zcode-cli/packages/adapters/src/context/index.ts): HOME/USERPROFILE only.
+ * Do not switch to ZCODE_DATA_BASE_DIR (the CLI ignores it when reading this file)
+ * or ZCODE_DESKTOP_HOME_DIR (the agent subprocess does not honor it), otherwise
+ * the file the App writes and the file the Agent reads would diverge.
+ */
+export function resolveAgentUserInstructionsHomeDir(env: NodeJS.ProcessEnv = process.env): string {
+  const envHome = env.HOME?.trim() || env.USERPROFILE?.trim();
+  return envHome && envHome.length > 0 ? envHome : homedir();
+}
+
+/** `{home}/.zcode/AGENTS.md`: the single source of truth for user custom instructions (personalization). */
+export function getAgentUserInstructionsFilePath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(resolveAgentUserInstructionsHomeDir(env), ".zcode", "AGENTS.md");
+}
+
 function readEnvValue(env: Record<string, string | undefined>, key: string): string | undefined {
   const direct = env[key]?.trim();
   if (direct) {

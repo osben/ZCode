@@ -1,4 +1,5 @@
 import { useOpenExistingSession } from "@/hooks/useOpenExistingSession.js";
+import { useInterfaceModeTelemetry } from "@/lib/appTelemetry.js";
 import {
   ProjectDirectoryProvider,
   useOptionalProjectDirectory,
@@ -40,7 +41,11 @@ import {
   useDynamicWorkflowUserModeSync,
 } from "@/hooks/useDynamicWorkflowAvailability.js";
 import { DirectoryBrowser } from "@/DirectoryBrowser.js";
-import { attachRemoteProjectWorkspace, resolveEntryProject } from "@/project-sidebar/index.js";
+import {
+  attachRemoteProjectWorkspace,
+  resolveEntryProject,
+  useWebRemoteControlRendererActions,
+} from "@/project-sidebar/index.js";
 import { useTabPersistence, type WorkspacePersistenceGate } from "@/hooks/useTabPersistence.js";
 import { useTokenRefresh } from "@/hooks/useTokenRefresh.js";
 import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
@@ -162,6 +167,7 @@ export function Root(props: RootProps) {
         <ServiceProvider
           services={props.services}
           composerClientNamespace={props.composerClientNamespace}
+          terminalOwnerId={props.terminalOwnerId}
         >
           <PlatformProvider platform={props.platform}>
             <StoreProvider
@@ -222,6 +228,7 @@ function RootInner({
   webRemoteControlTerminalTransportState,
   initialWorkspaceLoadingFallback,
 }: RootProps) {
+  useInterfaceModeTelemetry(platform, isDesktop === true);
   useEffect(() => {
     setRequestSecurityReporter(platform);
     setMcpStorePlatform(platform);
@@ -714,6 +721,7 @@ function RootInner({
     activeWorkspacePath,
     activeWorkspaceIdentity,
     supportsSettings,
+    isDesktop,
     allowOpenWorkspace,
     preferDirectoryBrowser: shouldPreferDirectoryBrowser,
     openDirectoryBrowser: handleOpenDirectoryBrowser,
@@ -725,7 +733,6 @@ function RootInner({
       setWelcomeScreenOpenReason("logout-provider-required");
     },
     userId: user?.id,
-    isDesktop,
     onOpenRemoteConnection: allowRemoteWorkspace ? handleOpenRemoteConnection : undefined,
     openRemoteProjectWorkspace: openPreparedRemoteProjectWorkspace,
     openMobileProjectDraft: webRemoteControlWorkspaceSwitcher?.openProjectDraft,
@@ -871,6 +878,7 @@ function RootInner({
       }
     });
   }, [handleReconnectRemoteWorkspace, platform]);
+  useWebRemoteControlRendererActions(platform);
 
   useEffect(() => {
     // Bugfix: fileDisplay 默认不传 basePath 时需要落到“当前激活 workspace”。
@@ -1061,9 +1069,7 @@ function RootInner({
     startDraftInWorkspace,
     startNewTaskFromActiveWorkspace,
     openWorkspace: handleOpenWorkspace,
-    openWorkspacePath: (path) => {
-      void handleSelectProject(path);
-    },
+    openWorkspacePath: handleSelectProject,
     setWorkspaceActionError,
     allowOpenWorkspace,
     isDesktop,
@@ -1518,6 +1524,22 @@ function RootInner({
     webRemoteControlWorkspaceSwitcher?.openWorkspace,
   );
 
+  // Bug cause: with no open project, Root rendered only the standalone settings page and the migration wizard was not mounted, so "Migrate" on the data sync page did nothing.
+  // Both branches share one migration wizard node; with no project workspacePath is empty and user-level items still import (see useSettingsSync).
+  const onboardingDialog = (
+    <ScopedErrorBoundary
+      scope="onboarding-dialog"
+      resetKeys={[workspaceShellIdentity?.trim() || workspaceShellPath]}
+      variant="silent"
+    >
+      <OnboardingDialog
+        workspacePath={workspaceShellPath || undefined}
+        workspaceIdentity={workspaceShellIdentity}
+        isDesktop={isDesktop}
+      />
+    </ScopedErrorBoundary>
+  );
+
   const settingsLayerProps = {
     onOpenSession: handleOpenExistingSession,
     isDesktop,
@@ -1576,6 +1598,7 @@ function RootInner({
         >
           <SettingsPage {...settingsLayerProps} />
         </ScopedErrorBoundary>
+        {onboardingDialog}
       </RootShell>
     );
   }
@@ -1690,17 +1713,7 @@ function RootInner({
             </RemoteProjectPresentationProvider>
           </RemoteWorkspaceControllerProvider>
         )}
-        <ScopedErrorBoundary
-          scope="onboarding-dialog"
-          resetKeys={[workspaceShellIdentity?.trim() || workspaceShellPath]}
-          variant="silent"
-        >
-          <OnboardingDialog
-            workspacePath={workspaceShellPath || undefined}
-            workspaceIdentity={workspaceShellIdentity}
-            isDesktop={isDesktop}
-          />
-        </ScopedErrorBoundary>
+        {onboardingDialog}
       </OccupationOnboarding>
     </RootShell>
   );

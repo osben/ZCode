@@ -21,8 +21,15 @@ import {
   type RuntimeMessageEntry,
 } from "../../agent/message-history.js";
 import {
+  createProviderToolRoundEntries,
+  providerToolRoundsCompactGroupKey,
+  withCompactGroupKey,
+} from "../provider-tool-rounds/contract.js";
+import {
+  createContentFilteredModelResultError,
   createModelContextExceededFinishError,
   createCompactRapidRefillError,
+  isContentFilteredEmptyModelResult,
   objectKeys,
   projectExecutionErrorPayload,
   finalizeSuspiciousEmptyModelResult,
@@ -455,19 +462,40 @@ async function runModelBackedTurnStepImpl(
         traceContext: modelTraceContext,
       });
       const reasoning = latestStreamSnapshot.reasoning.filter(hasAssistantReasoningContent);
-      if (latestStreamSnapshot.text.length > 0 || reasoning.length > 0) {
+      const modelRef = state.model
+        ? { providerId: state.model.providerId, modelId: state.model.modelId }
+        : undefined;
+      // Collapsed server-side built-in tool rounds were already persisted during the stream;
+      // on cancellation they must still enter the live history.
+      const providerRoundEntries = createProviderToolRoundEntries(
+        latestStreamSnapshot.providerToolRounds,
+        modelRef,
+        hasAssistantReasoningContent,
+      );
+      const hasCurrentRound = latestStreamSnapshot.text.length > 0 || reasoning.length > 0;
+      if (hasCurrentRound || providerRoundEntries.length > 0) {
         // On cancellation, the durable snapshot has already been persisted, but the success path's live history commit
         // and historyRoundCount do not run, leaving provider history inconsistent between the current process and cold resume.
-        commitTurnRequestEntries(this, state.turnRequestState, [
-          createRuntimeAssistantEntry(
-            latestStreamSnapshot.text,
-            undefined,
-            reasoning,
-            state.model
-              ? { providerId: state.model.providerId, modelId: state.model.modelId }
-              : undefined,
+        commitTurnRequestEntries(
+          this,
+          state.turnRequestState,
+          withCompactGroupKey(
+            [
+              ...providerRoundEntries,
+              ...(hasCurrentRound
+                ? [
+                    createRuntimeAssistantEntry(
+                      latestStreamSnapshot.text,
+                      undefined,
+                      reasoning,
+                      modelRef,
+                    ),
+                  ]
+                : []),
+            ],
+            providerToolRoundsCompactGroupKey(latestStreamSnapshot.providerToolRounds),
           ),
-        ]);
+        );
         recordModelHistoryRound(state);
       }
     }
@@ -528,7 +556,18 @@ async function runModelBackedTurnStepImpl(
     this.messageHistory.setCacheHit(result.usage.cacheReadTokens);
   }
 
-  let toolCalls = this.extractToolCallsFromResult(result);
+  // Server-side built-in tools were already split into separate preceding rounds during the
+  // stream (each with its result commit); they are not this step's final calls: continuation,
+  // over-window, and fileChanges do not count them, while the empty-result check still counts
+  // them as content (the last round's body may be empty).
+  // Provider calls that were not split into rounds, such as web_search, are still handled as
+  // full tool calls (docs/model-request-output-tokens.md).
+  const extractedToolCalls = this.extractToolCallsFromResult(result);
+  const providerRoundCallIds = new Set(
+    (result.providerToolRounds ?? []).map((round) => round.toolCall.id),
+  );
+  let toolCalls = extractedToolCalls.filter((toolCall) => !providerRoundCallIds.has(toolCall.id));
+  const providerExecutedToolCallCount = extractedToolCalls.length - toolCalls.length;
   const providerToolCallCount = toolCalls.length;
   const localTerminalResponse = state.automationCreateLimitReached === true;
   if (state.automationCreateLimitReached && toolCalls.length > 0) {
@@ -603,8 +642,36 @@ async function runModelBackedTurnStepImpl(
   }
   if (
     !localTerminalResponse &&
+    isContentFilteredEmptyModelResult(
+      result.finishReason,
+      rawFinishReason,
+      responseLength,
+      toolCalls.length + providerExecutedToolCallCount,
+    )
+  ) {
+    this.logger?.warn("Model output was blocked by provider content filter", {
+      ...traceContextToLogContext(modelTraceContext),
+      event: "model.response.content_filtered",
+      finishReason: result.finishReason,
+      module: "core.runtime",
+      rawFinishReason,
+      status: "completed",
+    });
+    throw createContentFilteredModelResultError({
+      finishReason: result.finishReason,
+      model: executionModelSelection,
+      rawFinishReason,
+    });
+  }
+  if (
+    !localTerminalResponse &&
     outputTokenContinuation === "none" &&
-    isSuspiciousEmptyModelResult(result.finishReason, responseLength, toolCalls.length, usage)
+    isSuspiciousEmptyModelResult(
+      result.finishReason,
+      responseLength,
+      toolCalls.length + providerExecutedToolCallCount,
+      usage,
+    )
   ) {
     this.logger?.warn("Model returned an empty non-stop result", {
       ...traceContextToLogContext(modelTraceContext),
@@ -734,9 +801,6 @@ async function runModelBackedTurnStepImpl(
     .map((toolCall) => streamingToolCoordinator.admit(toolCall));
   const streamedToolResults = await streamingToolCoordinator.drain(executableToolCalls);
   if (outputTokenContinuation !== "none") {
-    // On the first output-limit hit, the current request may contain a one-time project-memory attachment;
-    // advance query-local state from the actual request array rather than reverting to the pre-request array.
-    state.turnRequestState.entries = options.requestEntries;
     const assistantCommitted = await persistCompletedAssistantStep(this, state, {
       assistantPersistenceAnchor,
       assistantCreatedAt,

@@ -2,6 +2,16 @@ import { autoUpdate } from "@floating-ui/dom";
 import type { PluginSandboxHandle } from "@zcode/shared/mcp-apps";
 import type { SandboxPagePlacement } from "../contract.js";
 
+/**
+ * Whether a non-main-frame navigation targets the sandbox document (the plugin frame reloading
+ * itself). The webview's did-start-navigation carries no frame hierarchy; child frames inside the
+ * plugin document (srcdoc / about:blank previews, declared frameDomains) are not reloads — the
+ * hierarchy decision belongs to Main. Missing URL counts as a reload.
+ */
+export function isSandboxDocumentNavigation(url: string | undefined): boolean {
+  return !url || url.startsWith("zcode-sandbox:");
+}
+
 function parkingRoot(): HTMLElement {
   const existing = document.querySelector<HTMLElement>("[data-sandbox-page-parking]");
   if (existing) return existing;
@@ -29,6 +39,7 @@ export function createPluginUiPagePlane(events: {
   let stopPreview: (() => void) | undefined;
   let preview: HTMLElement | null = null;
   let executionActive = false;
+  let allowedDisplayModes: readonly string[] = ["inline", "fullscreen"];
   let backgroundSize = { width: 640, height: 480 };
   let disposed = false,
     loaded = false,
@@ -90,17 +101,22 @@ export function createPluginUiPagePlane(events: {
       stop();
     };
   };
+  const hasVisibleBounds = (node: HTMLElement) => {
+    const rect = node.getBoundingClientRect();
+    return (
+      node.isConnected &&
+      node.checkVisibility({ visibilityProperty: true }) &&
+      rect.width > 0 &&
+      rect.height > 0
+    );
+  };
   const layout = () => {
     if (disposed) return;
-    // forceMount 的隐藏 tab 仍连接 DOM，但尺寸为零；不能让它夺走后台初始化的承载表面。
+    // A forceMount hidden tab is still in the DOM but has zero size; it must not steal the hosting surface from background initialization.
     const candidates = [...anchors].filter(([, a]) => {
-      const node = a.placement.node;
-      const rect = node.getBoundingClientRect();
       return (
-        node.isConnected &&
-        node.checkVisibility({ visibilityProperty: true }) &&
-        rect.width > 0 &&
-        rect.height > 0
+        allowedDisplayModes.includes(a.placement.kind === "sidebar" ? "fullscreen" : "inline") &&
+        hasVisibleBounds(a.placement.node)
       );
     });
     const chosen = candidates.find(([, a]) => a.placement.kind === "sidebar") ?? candidates.at(-1);
@@ -119,7 +135,7 @@ export function createPluginUiPagePlane(events: {
       root.style.display = "none";
       root.inert = true;
       if (executionActive) {
-        // display:none 会停止编辑器依赖的 rAF；保留的 MCP 页面始终需要可执行且不接收输入的表面。
+        // display:none stops the rAF the editor depends on; a retained MCP page always needs an executable, input-blocking surface.
         Object.assign(root.style, {
           display: "block",
           position: "fixed",
@@ -159,8 +175,12 @@ export function createPluginUiPagePlane(events: {
     if (!(event as Event & { isMainFrame?: boolean }).isMainFrame) pluginLoaded = true;
   };
   const navigation = (event: Event) => {
-    const nav = event as Event & { isMainFrame?: boolean; isInPlace?: boolean };
-    if (!nav.isInPlace && ((loaded && nav.isMainFrame) || (pluginLoaded && !nav.isMainFrame)))
+    const nav = event as Event & { isMainFrame?: boolean; isInPlace?: boolean; url?: string };
+    if (
+      !nav.isInPlace &&
+      ((loaded && nav.isMainFrame) ||
+        (pluginLoaded && !nav.isMainFrame && isSandboxDocumentNavigation(nav.url)))
+    )
       events.onCrash();
   };
   const prepareUnmount = (expectedId?: string) => {
@@ -180,6 +200,16 @@ export function createPluginUiPagePlane(events: {
     handleId = null;
   };
   return {
+    hasVisibleAnchor() {
+      // After recycling or hiding, the restore intent still follows the presentation anchor; do not infer it from the old guest's visibility.
+      return [...anchors.values()].some(
+        ({ placement, visible }) => visible && hasVisibleBounds(placement.node),
+      );
+    },
+    setAllowedDisplayModes(modes: readonly string[]) {
+      allowedDisplayModes = modes;
+      layout();
+    },
     setExecutionActive(active: boolean) {
       if (executionActive === active) return;
       executionActive = active;

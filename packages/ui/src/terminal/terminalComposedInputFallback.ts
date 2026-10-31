@@ -1,3 +1,100 @@
+import type { Terminal } from "@xterm/xterm";
+
+/** Mobile 229 input is committed via native input events, avoiding the race with xterm's periodic textarea reads. */
+export function attachTerminalMobileInput(term: Terminal, isWindowsDesktop: boolean) {
+  const root = term.element;
+  const textarea = term.textarea;
+  const mobile =
+    /Android|iPhone|iPad|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  if (isWindowsDesktop || !mobile || !root || !textarea)
+    return { handleKeyEvent: () => true, dispose() {} };
+
+  let ownsInput = false;
+  let composition: "idle" | "active" | "committing" = "idle";
+  const reset = () => {
+    ownsInput = false;
+  };
+  const handleKeyEvent = (event: KeyboardEvent) => {
+    // Character-bearing keypresses are sent by xterm; hand ownership back so the following line-break input does not send Enter twice.
+    if (event.type === "keypress" && (event.charCode || event.which)) reset();
+    if (event.type !== "keydown") return true;
+    ownsInput =
+      event.keyCode === 229 &&
+      !event.isComposing &&
+      composition === "idle" &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey;
+    // Keep xterm's keyDownSeen so the native input after compositionend can deduplicate;
+    // only block 229 from starting the timed read. The matching plain input is submitted
+    // exclusively in the capture handlers below. Do not preventDefault, preserving the
+    // browser's native textarea update.
+    return !ownsInput;
+  };
+  const submit = (event: Event, text: string) => {
+    ownsInput = false;
+    event.stopPropagation();
+    textarea.value = "";
+    // Reuse onData's single write path so keep-alive remounts still use the current PTY connection.
+    term.input(text, true);
+  };
+  const onInput = (event: Event) => {
+    const input = event as InputEvent;
+    if (event.target !== textarea || !ownsInput || composition !== "idle" || input.isComposing)
+      return;
+    if (input.inputType === "insertText" && input.data) submit(event, input.data);
+    // Mobile Enter may arrive as only 229 + insertLineBreak; once we take over 229, Enter semantics must be completed here.
+    else if (input.inputType === "insertLineBreak") submit(event, "\r");
+    else if (input.inputType === "deleteContentBackward") submit(event, "\x7f");
+    else if (input.inputType === "deleteContentForward") submit(event, "\x1b[3~");
+    else reset();
+  };
+  const onBeforeInput = (event: Event) => {
+    const input = event as InputEvent;
+    if (event.target !== textarea || !ownsInput || composition !== "idle" || input.isComposing)
+      return;
+    // Submitted text never stays in the hidden textarea; a native delete on an empty textarea may
+    // produce no input event, so consume deletes in beforeinput to avoid swallowing terminal backspace.
+    if (input.inputType === "deleteContentBackward" || input.inputType === "deleteContentForward") {
+      event.preventDefault();
+      submit(event, input.inputType === "deleteContentBackward" ? "\x7f" : "\x1b[3~");
+    }
+  };
+  const onCompositionStart = () => {
+    composition = "active";
+    reset();
+  };
+  const onCompositionEnd = (event: CompositionEvent) => {
+    // xterm reads the textarea on the tick after compositionend. Until it emits onData, the original
+    // composition path still owns the input, preventing an immediately following 229 character from
+    // clearing not-yet-committed CJK text.
+    composition = event.data ? "committing" : "idle";
+  };
+  const compositionCommit = term.onData((data) => {
+    // PTY status queries are also answered via onData; an ESC control reply must not be treated as committed CJK text.
+    if (composition === "committing" && getPlainTerminalInputText(data)) composition = "idle";
+  });
+  root.addEventListener("beforeinput", onBeforeInput, true);
+  root.addEventListener("input", onInput, true);
+  textarea.addEventListener("compositionstart", onCompositionStart);
+  textarea.addEventListener("compositionend", onCompositionEnd);
+  textarea.addEventListener("blur", reset);
+  textarea.addEventListener("paste", reset);
+  return {
+    handleKeyEvent,
+    dispose() {
+      compositionCommit.dispose();
+      root.removeEventListener("beforeinput", onBeforeInput, true);
+      root.removeEventListener("input", onInput, true);
+      textarea.removeEventListener("compositionstart", onCompositionStart);
+      textarea.removeEventListener("compositionend", onCompositionEnd);
+      textarea.removeEventListener("blur", reset);
+      textarea.removeEventListener("paste", reset);
+    },
+  };
+}
+
 export interface PendingTerminalInputFallback {
   handled: boolean;
   text: string;

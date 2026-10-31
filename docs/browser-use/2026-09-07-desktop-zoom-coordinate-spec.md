@@ -174,7 +174,7 @@ $env:ZCODE_E2E_MANUAL_REVIEW = '1'
 $env:E2E_PROVIDER_HTTP_MODE = 'replay'
 $fixtures = Join-Path (Get-Location).Path 'packages/desktop/test/e2e/fixtures/deepseek'
 $env:E2E_PROVIDER_REPLAY_FIXTURE_PATH = "$fixtures/common.json,$fixtures/conversation-session/conversation-session-browser-zoom-coordinates.json"
-pnpm --filter @zcode/desktop test:e2e -- --spec './test/e2e/conversation-session/manual-review/pending/conversation-session-browser-zoom-coordinates.test.ts'
+pnpm --filter @zcode/desktop test:e2e -- --spec './test/e2e/conversation-session/conversation-session-browser-zoom-coordinates.test.ts'
 ```
 
 The DPI extension runs on the same Windows native Electron with `--force-device-scale-factor=1/1.5/2`, which does not represent three different physical-DPI machines. Place the following temporary config at `packages/desktop/.e2e-artifacts/browser-zoom-dpi.wdio.ts`, then run `pnpm --filter @zcode/desktop exec wdio run ./.e2e-artifacts/browser-zoom-dpi.wdio.ts --spec <the spec above>`:

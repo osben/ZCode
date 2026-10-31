@@ -31,6 +31,7 @@ import type {
 import type { ZCodeProviderAccountAccess } from "@zcode/shared";
 import type { EffectiveModelSelectionResult } from "@zcode/shared/model-selection";
 import type { RuntimeMessageEntry } from "../agent/message-history.js";
+import type { ProviderToolRound } from "./provider-tool-rounds/contract.js";
 import type {
   CompactPhase,
   CompactReason,
@@ -257,7 +258,7 @@ export interface AgentRuntimeConfig {
   systemPromptOverrides?: SystemPromptOverrides;
   agentName?: string; // Default: "zcode-agent"
   workingDirectory?: string; // Required for context builder
-  /** 本次运行的附加目录，仅用于环境 prompt 展示，不参与配置发现或持久化。 */
+  /** Additional directories for this run, display-only in the environment prompt; not part of config discovery or persistence. */
   additionalDirectories?: readonly string[];
   /**
    * Actual workspace path representation supplied by the caller, used for session persistence and
@@ -287,7 +288,12 @@ export interface AgentRuntimeConfig {
   /** Used only for persistence isolation; file and command execution still use workingDirectory. */
   workspaceIdentity?: WorkspaceId;
   envInfo?: EnvInfo; // Optional, will be auto-detected if not provided
-  currentDate?: string; // YYYY-MM-DD, resolved by adapter when omitted
+  /**
+   * YYYY-MM-DD; resolved by the adapter when omitted. Used only for the ContextBuilder date
+   * section's usage stats; the date announcement the model sees always comes from the runtime
+   * clock (inject `now` for a fixed date).
+   */
+  currentDate?: string;
   userInstructions?: UserInstructionsOptions; // P1: AGENTS.md
   projectContext?: ProjectContext; // P2: auto-detected if not provided
   skillMetadataBudget?: number;
@@ -412,6 +418,13 @@ export interface AgentRuntimeDeps {
    * observer (signals only). Absence means no gate.
    */
   modelRequestAdmission?: ModelRequestAdmission;
+  /**
+   * Admission-port factory for main-agent subagents (the `Agent` tool): called with the **current**
+   * parent sessionId when a subagent is spawned; the result becomes the child runtime's
+   * `modelRequestAdmission` (gate-constrained; subagents of the same parent session share one queue).
+   * When absent, the child runtime reuses the parent's `modelRequestAdmission`.
+   */
+  subagentModelRequestAdmission?: (parentSessionId: string) => ModelRequestAdmission;
   onOffPeakLifecycleEvent?: (
     event: import("./off-peak/lifecycle.js").OffPeakLifecycleEvent,
   ) => void;
@@ -491,7 +504,7 @@ export interface ModelExecutionContext {
   /** Skip automatic Project Memory Extraction for this Turn only; does not modify Session Memory config. */
   memoryExtraction?: "skip";
   selectionScope: "execution";
-  /** 接纳加速输入前固定的 Session 候选；仅在内存中随本条命令传递。 */
+  /** Session candidate pinned before admitting the accelerated input; in-memory only, carried with this command. */
   highspeedFallbackSelection?: ModelSelection;
   requestDependencies?: ModelRequestDependencies;
   subagents?: {
@@ -517,7 +530,7 @@ export interface ModelExecutionContext {
 }
 
 export interface ExecuteTurnOptionsBase {
-  /** 内存后台命令归属；不进入 canonical intent 或持久化模型默认。 */
+  /** Owning in-memory background command; does not enter the canonical intent or persisted model defaults. */
   offPeakExecutionId?: string;
   executionSelection?: ModelSelection;
   abortSignal?: AbortSignal;
@@ -802,7 +815,6 @@ export interface ResumeSessionResult extends SessionHistoryHydrationResult {
   /** Whether resume persisted compact repair facts that the current materialization cannot fully represent. */
   persistedMessagesReloadRequired: boolean;
   readFileStateRestoredCount: number;
-  readFileStateSkippedRangeReadCount: number;
   readFileStateSkippedUnreadableEditCount: number;
   traceId: TraceId;
 }
@@ -817,6 +829,7 @@ export interface PermissionDecisionResult {
 export interface ExecuteToolsOptions {
   toolSearch?: ToolSearchExecutionContext;
   automationTurn?: boolean;
+  automationId?: string;
   offPeakTurn?: boolean;
   signal?: AbortSignal;
   traceContext?: TraceContext;
@@ -926,8 +939,10 @@ export interface RunModelTextRequestOptions {
 }
 
 export interface RuntimeModelStreamSnapshot {
+  /** Content of the current round (after the last server-built-in tool); earlier rounds are in providerToolRounds. */
   reasoning: ModelReasoningContentBlock[];
   text: string;
+  providerToolRounds?: readonly ProviderToolRound[];
 }
 
 export interface StreamedToolExecutionResult {
@@ -945,6 +960,8 @@ export interface RuntimeModelTextResult {
   reasoning?: ModelReasoningContentBlock[];
   text: string;
   toolCalls?: ModelToolCall[];
+  /** Earlier rounds split out by server-built-in tools; text/reasoning keeps only the last round. */
+  providerToolRounds?: ProviderToolRound[];
   usage: ModelUsage;
 }
 

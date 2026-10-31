@@ -95,7 +95,10 @@ import { browserCommandResultSchema } from "../browser-use/result.js";
 import { appToolSearchModeSchema } from "../app-runtime-preferences.js";
 import { integratedTerminalShellSelectionSchema } from "../validationAppSettings.js";
 import { zcodeTaskModeSchema } from "../zcode-task-mode-schema.js";
-import { OFFICIAL_MCP_AUTH_PORT_FAILURE_REASONS } from "../official-mcp-auth.js";
+import {
+  OFFICIAL_AUTH_CONSUMER_KINDS,
+  OFFICIAL_MCP_AUTH_PORT_FAILURE_REASONS,
+} from "../official-mcp-auth.js";
 import {
   zcodeSyntheticUserMessageSourceSchema as legacyZcodeSyntheticUserMessageSourceSchema,
   zcodeDeliveryKindSchema,
@@ -120,7 +123,7 @@ import {
   zcodeWorkspaceRefSchema,
 } from "../zcode-protocol-legacy-types.js";
 
-export * from "../localTtft.js";
+export * from "../local-ttft/contract.js";
 export {
   hookExecutionProjectionSchema,
   hookInvocationRowSchema,
@@ -141,6 +144,9 @@ export const ZCODE_PROTOCOL_VERSION = 1 as const;
 export const ZCODE_PROTOCOL_V4_WIRE_VERSION = 3 as const;
 export const zcodeRuntimeCapabilitiesSchema = z.object({
   durableFirstSubmission: z.boolean().optional(),
+  sessionDirectorySource: z.boolean().optional(),
+  sessionWorkspaceRouting: z.boolean().optional(),
+  genUiContext: z.boolean().optional(),
   historyFirst: z.boolean().optional(),
   independentPlanState: z.boolean().optional(),
   // This CLI persists and enforces createSession `incognito`; the Host must not forward it otherwise.
@@ -149,8 +155,21 @@ export const zcodeRuntimeCapabilitiesSchema = z.object({
   incognitoPromptToggles: z.boolean().optional(),
   // This CLI answers provider/refreshRegistry; the Host must not make a command wait on it otherwise.
   providerRegistryRefresh: z.boolean().optional(),
+  /** The CLI understands the residency parameter of rowsRange; an older CLI strips it and cold-resumes, so the Host refuses to forward it. */
+  residentRowsRange: z.boolean().optional(),
 });
 export type ZCodeRuntimeCapabilities = z.infer<typeof zcodeRuntimeCapabilitiesSchema>;
+export const zcodeRuntimeCapabilitiesParamsSchema = z
+  .object({
+    hostCapabilities: z
+      .object({
+        sessionDirectorySource: z.boolean().optional(),
+        sessionWorkspaceRouting: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
 export const zcodeProtocolErrorCodes = {
   sessionUnavailable: -32004,
 } as const;
@@ -772,7 +791,9 @@ export const zcodeProtocolMcpServerSchema = z.union([
   z
     .object({
       name: nonEmptyString,
+      scope: z.enum(["user", "workspace"]).optional(),
       command: nonEmptyString,
+      cwd: nonEmptyString.optional(),
       args: z.array(z.string()),
       env: z.array(zcodeProtocolMcpEntrySchema),
       isolation: z.enum(["session", "workspace"]).optional(),
@@ -784,6 +805,7 @@ export const zcodeProtocolMcpServerSchema = z.union([
   z
     .object({
       name: nonEmptyString,
+      scope: z.enum(["user", "workspace"]).optional(),
       type: z.enum(["http", "sse"]),
       url: nonEmptyString,
       headers: z.array(zcodeProtocolMcpEntrySchema),
@@ -828,9 +850,38 @@ export const MCP_SERVER_FAILURE_KINDS = [
 ] as const;
 export const mcpServerFailureKindSchema = z.enum(MCP_SERVER_FAILURE_KINDS);
 export type McpServerFailureKind = z.infer<typeof mcpServerFailureKindSchema>;
+export const workspaceMcpTrustReviewSchema = z
+  .object({
+    declarationDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+    sourcePaths: z.array(nonEmptyString),
+    display: z.string(),
+    trusted: z.boolean(),
+    configuredEnabled: z.boolean(),
+    transport: z.enum(["stdio", "http", "sse"]),
+  })
+  .strict();
+export type WorkspaceMcpTrustReview = z.infer<typeof workspaceMcpTrustReviewSchema>;
+export const zcodeWorkspaceMcpTrustParamsSchema = z
+  .object({
+    workspace: zcodeWorkspaceRefSchema,
+    serverName: nonEmptyString,
+    declarationDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+    trusted: z.boolean(),
+  })
+  .strict();
+export const zcodeWorkspaceMcpTrustResultSchema = z
+  .object({
+    accepted: z.boolean(),
+    reasonCode: z
+      .enum(["workspace_mcp_declaration_changed", "workspace_mcp_trust_unavailable"])
+      .optional(),
+  })
+  .strict();
+export type ZCodeWorkspaceMcpTrustResult = z.infer<typeof zcodeWorkspaceMcpTrustResultSchema>;
 export const zcodeMcpServerStatusSnapshotSchema = z
   .object({
     status: zcodeMcpServerStatusKindSchema,
+    workspaceTrust: workspaceMcpTrustReviewSchema.optional(),
     transport: z.enum(["stdio", "http", "sse"]),
     toolCount: z.number().int().nonnegative(),
     updatedAt: nonEmptyString,
@@ -1552,6 +1603,11 @@ export const zcodeTurnStartedEventPayloadSchema = z
     input: z.string(),
     inputId: nonEmptyString.optional(),
     queryId: nonEmptyString.optional(),
+    // Bugfix: the CLI writes the Host-admitted background execution attribution into turn.started. When it is not declared here,
+    // strict validation drops the whole start event, so a reused Bot private-chat subscription cannot switch to the new turn.
+    automationId: nonEmptyString.optional(),
+    offPeakTaskId: nonEmptyString.optional(),
+    offPeakRunType: z.enum(["init", "resume"]).optional(),
     inputSource: zcodeTurnInputSourceSchema.optional(),
     inputVisibility: zcodeMessageVisibilitySchema.optional(),
     executionKind: z.enum(["agent", "controlOnly"]).optional(),
@@ -2090,7 +2146,7 @@ export {
   type SubagentRuntimeConfig,
 } from "../subagent-runtime-config.js";
 export const zcodeSubagentsReadRuntimeConfigParamsSchema = z
-  .object({ sessionId: nonEmptyString })
+  .object({ sessionId: nonEmptyString, workspace: zcodeWorkspaceRefSchema.optional() })
   .strict();
 
 export const ZCODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS = 15_000;
@@ -2099,6 +2155,9 @@ export const zcodeSessionRequestRuntimePreferencesParamsSchema = z
   .object({
     sessionId: nonEmptyString,
     scope: zcodeSessionRuntimePreferencesScopeSchema,
+    workspace: zcodeWorkspaceRefSchema.optional(),
+    // The CLI gives the directory source from the persisted parent chain; the target sessionId still keeps the child identity.
+    directorySessionId: nonEmptyString.optional(),
   })
   .strict();
 export type ZCodeSessionRequestRuntimePreferencesParams = z.infer<
@@ -2666,7 +2725,7 @@ export const zcodeProviderUpdateAccountConfigResultSchema = z
 export type ZCodeProviderUpdateAccountConfigResult = z.infer<
   typeof zcodeProviderUpdateAccountConfigResultSchema
 >;
-/** Worker 从所属 Environment 的正式 Config Store 重建进程内 Provider Registry。 */
+/** The worker rebuilds the in-process Provider Registry from its Environment's formal Config Store. */
 export const zcodeProviderRefreshRegistryParamsSchema = z
   .object({
     reason: nonEmptyString,
@@ -2821,6 +2880,7 @@ export type ZCodeBrowserListResult = z.infer<typeof zcodeBrowserListResultSchema
 /** Agent sends a browser-use command to the app for execution. */
 export const zcodeBrowserExecuteParamsSchema = z
   .object({
+    controlScopeId: nonEmptyString.optional(),
     requestId: nonEmptyString,
     sessionId: nonEmptyString,
     turnId: nonEmptyString.optional(),
@@ -2922,6 +2982,14 @@ export type ZCodeProviderRuntimeHeadersCancelled = z.infer<
   typeof zcodeProviderRuntimeHeadersCancelledSchema
 >;
 
+// The standard JSON-RPC error keeps old schema compatibility and adds no fields to strictly validated responses.
+export const ZCODE_PROVIDER_CONFIG_NETWORK_ERROR = -32032;
+
+export const zcodeProviderRuntimeHeadersErrorCode = {
+  configNetwork: "request_verification_config_network",
+  configInvalid: "request_verification_config_invalid",
+} as const;
+
 export const zcodeProviderRuntimeHeadersResponseSchema = z.discriminatedUnion("headersApplied", [
   z
     .object({
@@ -2956,15 +3024,37 @@ export type ZCodeProviderRuntimeHeadersResponse = z.infer<
 // The Agent process is not authoritative for user identity: it sends (pluginId, mcpKey, targetOrigin) to Host, which
 // resolves the current Coding Plan credentials and returns identity headers for this request. The request contains no secrets.
 // Like interaction/requestProviderRuntimeHeaders: initiated by Agent, answered automatically by Host, with no UI.
+//
+// `consumer` defaults to `mcp-server` (older agents omit the field); in that case `mcpKey` is required;
+// `plugin-command` is a request that an official plugin command process makes through the agent proxy endpoint. It has no MCP and carries no `mcpKey`,
+// the host resolves it as "plan optional": without a plan it grants only the ZCode login identity (technical design 5.8).
 export const zcodeOfficialMcpAuthHeadersRequestParamsSchema = z
   .object({
     requestId: nonEmptyString,
     workspace: zcodeWorkspaceRefSchema,
     pluginId: nonEmptyString,
-    mcpKey: nonEmptyString,
+    consumer: z.enum(OFFICIAL_AUTH_CONSUMER_KINDS).optional(),
+    mcpKey: nonEmptyString.optional(),
     targetOrigin: nonEmptyString,
   })
-  .strict();
+  .strict()
+  .superRefine((params, ctx) => {
+    const isCommand = params.consumer === "plugin-command";
+    if (isCommand && params.mcpKey !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "plugin-command must not carry mcpKey",
+        path: ["mcpKey"],
+      });
+    }
+    if (!isCommand && params.mcpKey === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "mcpKey is required for mcp-server",
+        path: ["mcpKey"],
+      });
+    }
+  });
 export type ZCodeOfficialMcpAuthHeadersRequestParams = z.infer<
   typeof zcodeOfficialMcpAuthHeadersRequestParamsSchema
 >;
@@ -3066,7 +3156,7 @@ export const zcodePluginUiSurfaceSchema = z
     id: nonEmptyString.max(128),
     title: z.union([nonEmptyString, z.record(z.string(), z.string())]),
     icon: z.string().optional(),
-    // 运行时 namespaced server 名（plugin:<name>:<server>），可直接用于 mcp/uiReadResource。
+    // Runtime namespaced server name (plugin:<name>:<server>), usable directly for mcp/uiReadResource.
     server: nonEmptyString,
     resourceUri: nonEmptyString.max(2048),
     availability: z.literal("session"),
@@ -3134,8 +3224,8 @@ export const zcodePluginsListResultSchema = z
   .strict();
 export type ZCodePluginsListResult = z.infer<typeof zcodePluginsListResultSchema>;
 
-// ── 插件 UI 面板入口──
-// 工作区级只读投影：已启用插件清单 `ui.surfaces[]` 的合法条目；插件启停后 host 重新拉取。
+// ── Plugin UI panel entry ──
+// Workspace-level read-only projection: valid entries of the enabled plugin manifests' `ui.surfaces[]`; the host refetches after a plugin is enabled or disabled.
 export const zcodePluginsListUiSurfacesParamsSchema = z
   .object({ workspace: zcodeWorkspaceRefSchema })
   .strict();
@@ -3496,13 +3586,13 @@ export const zcodeWorkflowsMoveResultSchema = z.union([
 ]);
 export type ZCodeWorkflowsMoveResult = z.infer<typeof zcodeWorkflowsMoveResultSchema>;
 
-// ── 从一次 run 保存工作流（docs/dynamic-workflow/transcript-and-notifications.md「Saving the
-// run, and running it again」）──
-// 完成卡的「直接保存」走这条：**不收脚本，只收 runId**——要写的那份正文是这次 run 实际执行的
-// 脚本，agent 从 journal 记录（`scriptText`）里读。脚本不经 GUI 走一圈有两个后果值得写下来：
-// 修订过的 run 存下的是**结算它的**那一份，而工具行入参被快照裁成预览的老对话也照样存得出
-// 同样的字节。名字合法性、覆盖、遮��与类型检查全部复用 SaveWorkflow 的同一套实现（不变式 3）。
-/** 另一档已有同名定义（遮蔽事实）；与 contracts 的 SavedWorkflowShadowing 逐字对齐。 */
+// ── Saving a workflow from a run (docs/dynamic-workflow/transcript-and-notifications.md, "Saving the
+// run, and running it again") ──
+// The completion card's "save directly" uses this path: it accepts no script, only a runId. The body to write is the script
+// this run actually executed, which the agent reads from the journal record (`scriptText`). Two consequences of this are worth noting:
+// a revised run saves the version that settled it, and an old conversation whose tool-row input was trimmed to a preview can still save
+// the same bytes. Name validity, overwrite, shadowing and type checks all reuse the same SaveWorkflow implementation (invariant 3).
+/** Another existing definition with the same name (the shadowing fact); kept aligned verbatim with contracts' SavedWorkflowShadowing. */
 export const zcodeSavedWorkflowShadowingSchema = z.enum(["hides_global", "hidden_by_project"]);
 export type ZCodeSavedWorkflowShadowing = z.infer<typeof zcodeSavedWorkflowShadowingSchema>;
 
@@ -4099,6 +4189,7 @@ export type ZCodeAutomationProtocol = z.infer<typeof zcodeAutomationProtocolSche
 
 export const zcodeAutomationCreateParamsSchema = z
   .object({
+    workspace: zcodeWorkspaceRefSchema.optional(),
     title: z.string().optional(),
     cronExpr: nonEmptyString,
     relativeDelayMinutes: z.number().int().positive().max(525_600).optional(),
@@ -4142,6 +4233,7 @@ export type ZCodeAutomationCreateProtocolResult = z.infer<typeof zcodeAutomation
 
 export const zcodeAutomationUpdateParamsSchema = z
   .object({
+    workspace: zcodeWorkspaceRefSchema.optional(),
     automationId: nonEmptyString,
     title: nonEmptyString.optional(),
     cronExpr: nonEmptyString.optional(),
@@ -4197,7 +4289,9 @@ export const zcodeAutomationUpdateResultSchema = z
   .strict();
 export type ZCodeAutomationUpdateProtocolResult = z.infer<typeof zcodeAutomationUpdateResultSchema>;
 
-export const zcodeAutomationListParamsSchema = z.object({}).strict();
+export const zcodeAutomationListParamsSchema = z
+  .object({ workspace: zcodeWorkspaceRefSchema.optional() })
+  .strict();
 export type ZCodeAutomationListProtocolParams = z.infer<typeof zcodeAutomationListParamsSchema>;
 export const zcodeAutomationListResultSchema = z
   .object({ automations: z.array(zcodeAutomationProtocolSchema) })
@@ -4205,7 +4299,7 @@ export const zcodeAutomationListResultSchema = z
 export type ZCodeAutomationListProtocolResult = z.infer<typeof zcodeAutomationListResultSchema>;
 
 export const zcodeAutomationCheckTaskBindingParamsSchema = z
-  .object({ targetTaskId: nonEmptyString })
+  .object({ workspace: zcodeWorkspaceRefSchema.optional(), targetTaskId: nonEmptyString })
   .strict();
 export type ZCodeAutomationCheckTaskBindingProtocolParams = z.infer<
   typeof zcodeAutomationCheckTaskBindingParamsSchema
@@ -4218,15 +4312,24 @@ export type ZCodeAutomationCheckTaskBindingProtocolResult = z.infer<
 >;
 
 export const zcodeAutomationDeleteParamsSchema = z
-  .object({ automationId: nonEmptyString })
+  .object({ workspace: zcodeWorkspaceRefSchema.optional(), automationId: nonEmptyString })
   .strict();
 export type ZCodeAutomationDeleteProtocolParams = z.infer<typeof zcodeAutomationDeleteParamsSchema>;
 export const zcodeAutomationDeleteResultSchema = z.object({ deleted: z.boolean() }).strict();
 export type ZCodeAutomationDeleteProtocolResult = z.infer<typeof zcodeAutomationDeleteResultSchema>;
 
+// Self-pause of an execution turn (CronPauseSelf): automationId comes from the CLI loop state; the Host pauses only inside the current workspace
+// conditionally (only active and enabled turns become paused) and reports whether it took effect.
+export const zcodeAutomationPauseParamsSchema = z
+  .object({ workspace: zcodeWorkspaceRefSchema.optional(), automationId: nonEmptyString })
+  .strict();
+export type ZCodeAutomationPauseProtocolParams = z.infer<typeof zcodeAutomationPauseParamsSchema>;
+export const zcodeAutomationPauseResultSchema = z.object({ paused: z.boolean() }).strict();
+export type ZCodeAutomationPauseProtocolResult = z.infer<typeof zcodeAutomationPauseResultSchema>;
+
 // ---- In-session creation protocol for Off-Peak tasks ----
 // A sibling to automation in a separate domain; do not reuse markers or tables. Host injects the workspace
-// from the current session instead of including it in protocol arguments (matching automation/create).
+// Negotiated workspace injection for the current session. permissionMode exposes only the product's four supported values (D29-4); Host resolves defaults (D49-4: yolo / last allowed_models entry / highest reasoning level).
 // permissionMode exposes only the product's four supported values (D29-4); Host resolves defaults (D49-4: yolo / last allowed_models entry / highest reasoning level).
 export const zcodeOffPeakPermissionModeSchema = z.enum([
   "build",
@@ -4239,6 +4342,7 @@ export type ZCodeOffPeakProtocolPermissionMode = z.infer<typeof zcodeOffPeakPerm
 
 export const zcodeOffPeakCreateParamsSchema = z
   .object({
+    workspace: zcodeWorkspaceRefSchema.optional(),
     title: nonEmptyString,
     prompt: nonEmptyString,
     permissionMode: zcodeOffPeakPermissionModeSchema.optional(),
@@ -4287,14 +4391,53 @@ export const zcodeOffPeakCreateResultSchema = z.discriminatedUnion("ok", [
 ]);
 export type ZCodeOffPeakCreateProtocolResult = z.infer<typeof zcodeOffPeakCreateResultSchema>;
 
-export const zcodeOffPeakListParamsSchema = z.object({}).strict();
+export const zcodeOffPeakListParamsSchema = z
+  .object({ workspace: zcodeWorkspaceRefSchema.optional() })
+  .strict();
 export type ZCodeOffPeakListProtocolParams = z.infer<typeof zcodeOffPeakListParamsSchema>;
 export const zcodeOffPeakListResultSchema = z
   .object({ tasks: z.array(zcodeOffPeakTaskSnapshotSchema) })
   .strict();
 export type ZCodeOffPeakListProtocolResult = z.infer<typeof zcodeOffPeakListResultSchema>;
 
+// Session running-instance lifecycle; unlike session/stop (which stops generation).
+export const sessionLifecycleParamsSchema = z.object({ sessionId: z.string().min(1) }).strict();
+export const sessionLifecycleStateSchema = z.enum([
+  "unloaded",
+  "starting",
+  "ready",
+  "stopping",
+  "faulted",
+]);
+export const sessionLifecycleOperationSchema = z.enum(["ensureReady", "stop", "restart"]);
+export const sessionLifecycleFailureSchema = z
+  .object({
+    operation: sessionLifecycleOperationSchema,
+    code: z.string(),
+    message: z.string(),
+  })
+  .strict();
+export const sessionLifecycleSnapshotSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    state: sessionLifecycleStateSchema,
+    generation: z.number().int().nonnegative().default(0),
+    revision: z.number().int().nonnegative().default(0),
+    lastError: sessionLifecycleFailureSchema.nullable(),
+  })
+  .strict();
+export const sessionLifecycleResultSchema = z.object({ completed: z.literal(true) }).strict();
+export type SessionLifecycleState = z.infer<typeof sessionLifecycleStateSchema>;
+export type SessionLifecycleOperation = z.infer<typeof sessionLifecycleOperationSchema>;
+export type SessionLifecycleFailure = z.infer<typeof sessionLifecycleFailureSchema>;
+export type SessionLifecycleSnapshot = z.infer<typeof sessionLifecycleSnapshotSchema>;
+
 export const zcodeProtocolMethods = {
+  sessionLifecycleChanged: "session/lifecycle/changed",
+  sessionLifecycleGetState: "session/lifecycle/getState",
+  sessionLifecycleEnsureReady: "session/lifecycle/ensureReady",
+  sessionLifecycleStop: "session/lifecycle/stop",
+  sessionLifecycleRestart: "session/lifecycle/restart",
   runtimeCapabilities: "runtime/capabilities",
   computerUseOperationEvent: "computer-use/operation-event",
   sessionCreate: "session/create",
@@ -4353,6 +4496,7 @@ export const zcodeProtocolMethods = {
   workspaceCancelGenerateText: "workspace/cancelGenerateText",
   providerTestModelConnectivity: "provider/testModelConnectivity",
   mcpList: "mcp/list",
+  workspaceMcpTrust: "workspace/mcp/trust",
   mcpReadResource: "mcp/readResource",
   mcpUiOpenInstance: "mcp/uiOpenInstance",
   mcpUiCloseInstance: "mcp/uiCloseInstance",
@@ -4415,6 +4559,7 @@ export const zcodeProtocolMethods = {
   automationCheckTaskBinding: "automation/checkTaskBinding",
   automationList: "automation/list",
   automationDelete: "automation/delete",
+  automationPause: "automation/pause",
   // Off-Peak session creation: a separate method family alongside automation.
   offPeakCreate: "offPeak/create",
   offPeakList: "offPeak/list",
@@ -4458,6 +4603,10 @@ export const zcodeProtocolSessionMethodContracts = {
   [zcodeProtocolMethods.workspaceHookTrustGrant]: {
     params: zcodeWorkspaceHookTrustGrantParamsSchema,
     result: zcodeWorkspaceHookTrustGrantResultSchema,
+  },
+  [zcodeProtocolMethods.workspaceMcpTrust]: {
+    params: zcodeWorkspaceMcpTrustParamsSchema,
+    result: zcodeWorkspaceMcpTrustResultSchema,
   },
   [zcodeProtocolMethods.mcpList]: {
     params: zcodeMcpListParamsSchema,
@@ -4534,13 +4683,13 @@ export const zcodeProtocolSessionMethodContracts = {
 export type ZCodeProtocolSessionMethodContract =
   (typeof zcodeProtocolSessionMethodContracts)[keyof typeof zcodeProtocolSessionMethodContracts];
 
-// 启动入口的独立存储命令与严格结果 schema，和 CLI 共用一份契约。
+// The startup-entry standalone storage command and its strict result schema share one contract with the CLI.
 export {
   STORAGE_MIGRATION_COMMAND,
   storageMigrationReportSchema,
 } from "../sqlite-migrations/contract.js";
 
-/** 仅存储准备子进程的私有控制帧，原始路径不进入业务事件或遥测。 */
+/** Private control frames for the storage-preparation subprocess only; raw paths never enter business events or telemetry. */
 export const zcodeStoragePreparationFrameSchema = z.discriminatedUnion("method", [
   z
     .object({
@@ -4560,7 +4709,7 @@ export const zcodeStoragePathReadySchema = z
   .strict();
 
 // Strict factual contract for local Desktop TTFT; checkpoints cannot substitute for actual content frames.
-export { localTtftFactsSchema } from "../localTtft.js";
+export { localTtftFactsSchema } from "../local-ttft/contract.js";
 // Group source is injected by the trusted Host; V4 commands and persisted inputs use the same runtime validation.
 export {
   botIdentitySchema,

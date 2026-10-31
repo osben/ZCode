@@ -34,7 +34,7 @@ async function importCreateWebPlatform() {
   });
   vi.stubGlobal("navigator", { language: "en-US" });
 
-  const { createWebPlatform } = await import("../src/main.js");
+  const { createWebPlatform } = await import("../src/platform/index.js");
   return createWebPlatform;
 }
 

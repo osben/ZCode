@@ -1092,14 +1092,13 @@ async function collectExistingMcpServerNameKeys(
 }
 
 /**
- * Migration imports write to config.json (mcp.servers for MCP servers, plugins.dirs for plugins).
- * Root cause: the old implementation read via readJsonFileOrEmpty before writing, so a read failure
- * or corrupt JSON produced an empty object that was then written back over the whole file with
- * writeFile, wiping unrelated config.json entries such as commands, skills, and hooks; writeFile is
- * not an atomic write either. Fix: switch to updateJsonObjectFile — a corrupt file rejects the
- * write, the content is re-read before writing, only this feature's fields are touched, and the
- * file is replaced atomically. Errors propagate to importXxxForAgent's catch, which marks the item
- * as failed in the migration result as before.
+ * The migration import writes config.json (MCP's mcp.servers, plugins' plugins.dirs).
+ * Root cause: the old code read the file with readJsonFileOrEmpty before writing; on a read failure or corrupt JSON it returned an
+ * empty object and wrote the whole file back with writeFile, wiping other config in config.json such as commands, skills and hooks.
+ * writeFile is also not atomic.
+ * Fix: use updateJsonObjectFile. A corrupt file reports an error without writing, the file is re-read before writing, only this
+ * import's own fields change, and the replacement is atomic.
+ * Errors go to the importXxxForAgent catch, which marks the item as failed in the migration result as before.
  */
 async function addMcpServerToZcodeConfig(
   filePath: string,

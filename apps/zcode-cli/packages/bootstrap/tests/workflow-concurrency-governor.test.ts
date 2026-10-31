@@ -1,8 +1,9 @@
 /**
- * 进程级并发治理器（docs/dynamic-workflow/concurrency.md「The governor」）：按 provider key
- * 分桶、**每个模型请求**准入（tryAdmit 快路径 / admit 排队）、run 间轮转、ticket 上的状态事件映射与去重、
- * epoch 阻尼、cap 变化扇出、Retry-After 冷却唤醒、空闲重置、主代理 observer。控制器用真的（纯 AIMD
- * 状态机），时钟与定时器注入。
+ * Process-level concurrency governor (docs/dynamic-workflow/concurrency.md "The governor"):
+ * bucketing by provider key, admission **per model request** (tryAdmit fast path / admit
+ * queueing), round-robin across runs, status-event mapping and dedup on tickets, epoch damping,
+ * cap-change fan-out, Retry-After cooldown wake-ups, idle reset, and the main-agent observer.
+ * The controller is real (a pure AIMD state machine); clocks and timers are injected.
  */
 
 import { describe, expect, it } from "vitest";
@@ -27,7 +28,7 @@ const KEY_A = workflowConcurrencyKey(MODEL_A);
 const KEY_B = workflowConcurrencyKey(MODEL_B);
 const CEILING = 8;
 
-/** 假时钟 + 假定时器：治理器唯一的 I/O 面。 */
+/** Fake clock + fake timers: the governor's only I/O surface. */
 function fakeClock() {
   let current = 1_000_000;
   const timers: Array<{ at: number; fire: () => void; cancelled: boolean }> = [];
@@ -40,7 +41,7 @@ function fakeClock() {
         entry.cancelled = true;
       };
     },
-    /** 推进时钟并触发到期定时器。 */
+    /** Advance the clock and fire due timers. */
     advance(ms: number) {
       current += ms;
       for (const entry of [...timers]) {
@@ -69,7 +70,7 @@ function statusEvent(
   } as unknown as ModelNetworkStatusEvent;
 }
 
-/** 一次尝试的四种结局，按 runner 实际发出的事件序列喂给 ticket。 */
+/** Four endings of one attempt, fed to the ticket in the event sequence the runner actually emits. */
 const outcome = {
   started: (ticket: ModelRequestAdmissionTicket, model = MODEL_A) =>
     ticket.publish(statusEvent({ type: "model_request_started" }, model)),
@@ -79,7 +80,7 @@ const outcome = {
       statusEvent({ type: "model_request_completed", durationMs: 1 } as never, model),
     );
   },
-  /** 一次完整的 429：runner 先发 failed(retryable:true) 再发 retry_scheduled（决策 27 去重的对象）。 */
+  /** A full 429: the runner emits failed(retryable:true) then retry_scheduled (what decision 27 deduplicates). */
   throttled429: (ticket: ModelRequestAdmissionTicket, retryAfterMs?: number, model = MODEL_A) => {
     outcome.started(ticket, model);
     void ticket.publish(
@@ -144,18 +145,18 @@ function makeGovernor(defaultConcurrency = CEILING) {
     now: clock.now,
     schedule: clock.schedule,
   });
-  /** 快路径必命中（测试前提：闸门开、无人排队），否则测试本身写错。 */
+  /** The fast path must hit (test precondition: gate open, nobody queued); otherwise the test itself is wrong. */
   const admitNow = (runId = "runA", key = KEY_A): ModelRequestAdmissionTicket => {
     const ticket = governor.tryAdmit(runId, key);
     if (ticket === undefined) throw new Error("tryAdmit unexpectedly missed");
     return ticket;
   };
-  /** 主代理路径：observer 立即放行。 */
+  /** Main-agent path: the observer admits immediately. */
   const observe = async (model = MODEL_A) => governor.observer().acquire({ model });
   return { clock, governor, admitNow, observe };
 }
 
-/** admit 立即结算与否的观察面（不 await 挂起的 promise）。 */
+/** Observation surface for whether an admit settles immediately (without awaiting the pending promise). */
 function track(promise: Promise<ModelRequestAdmissionTicket>) {
   const state: { ticket?: ModelRequestAdmissionTicket; error?: unknown; settled: boolean } = {
     settled: false,
@@ -200,7 +201,7 @@ describe("workflow concurrency governor — 桶与闸门（决策 34）", () => 
     expect(waiting.settled).toBe(false);
     expect(governor.snapshot(KEY_A)).toMatchObject({ cap: CEILING, inFlight: CEILING, waiters: 1 });
 
-    // 一次尝试结束（成功）释放名额，唤醒等待者。
+    // One attempt ends (success), releasing a slot and waking a waiter.
     outcome.completed(tickets[0]!);
     await flush();
     expect(waiting.ticket).toBeDefined();
@@ -212,7 +213,7 @@ describe("workflow concurrency governor — 桶与闸门（决策 34）", () => 
     const first = admitNow("A");
     const waiting = track(governor.admit("B", KEY_A, new AbortController().signal));
     await flush();
-    // 释放 first 让闸门开一瞬：排队的 B 先拿到；A 再来 tryAdmit 不能越过 B。
+    // Releasing first opens the gate for a moment: queued B gets it first; A's next tryAdmit cannot overtake B.
     outcome.completed(first);
     await flush();
     expect(waiting.ticket).toBeDefined();
@@ -220,7 +221,7 @@ describe("workflow concurrency governor — 桶与闸门（决策 34）", () => 
     const another = track(governor.admit("A", KEY_A, new AbortController().signal));
     await flush();
     expect(another.settled).toBe(false);
-    // 有 A 在排队时闸门若开，快路径对任何 run 都关着。
+    // While A is queued, the fast path stays closed for every run even if the gate opens.
     outcome.completed(waiting.ticket!);
     await flush();
     expect(another.ticket).toBeDefined();
@@ -249,10 +250,10 @@ describe("workflow concurrency governor — 桶与闸门（决策 34）", () => 
     const third = governor.observer().tryAcquire!({ model: MODEL_A });
     expect(first).toBeDefined();
     expect(second).toBeDefined();
-    // 闸门已满（2/2）：observer 仍命中快路径。
+    // Gate already full (2/2): the observer still hits the fast path.
     expect(third).toBeDefined();
     expect(governor.snapshot(KEY_A)?.inFlight).toBe(3);
-    // workflow 请求此刻拿不到快路径。
+    // A workflow request cannot take the fast path right now.
     expect(governor.tryAdmit("run-x", KEY_A)).toBeUndefined();
     first!.release();
     second!.release();
@@ -263,12 +264,12 @@ describe("workflow concurrency governor — 桶与闸门（决策 34）", () => 
   it("observer 不排队、不看冷却，但计入 inFlight（决策 37）", async () => {
     const { governor, observe, admitNow, clock } = makeGovernor(1);
     const busy = admitNow("A");
-    // 闸门已满：observer 仍立即放行。
+    // Gate already full: the observer still admits immediately.
     const main = await observe();
     expect(governor.snapshot(KEY_A)?.inFlight).toBe(2);
     outcome.throttled429(main, 30_000);
     expect(governor.snapshot(KEY_A)?.cooldownUntil).toBe(clock.now() + 30_000);
-    // 冷却中：observer 照样放行；workflow 请求不行。
+    // During cooldown: the observer still admits; workflow requests cannot.
     const again = await observe();
     expect(again).toBeDefined();
     expect(governor.tryAdmit("A", KEY_A)).toBeUndefined();
@@ -302,7 +303,7 @@ describe("workflow concurrency governor — 桶与闸门（决策 34）", () => 
     enqueue("A", 10);
     enqueue("B", 1);
     await flush();
-    // cap=1：第一个放行的是 A（先到）；结束后轮到 B，而不是 A 的第二个。
+    // cap=1: A (first to arrive) is admitted first; after it ends, it is B's turn — not A's second request.
     expect(order).toEqual(["A"]);
     outcome.completed(tickets.shift()!);
     await flush();
@@ -326,7 +327,7 @@ describe("workflow concurrency governor — 桶与闸门（决策 34）", () => 
     expect(waiting.error).toBeInstanceOf(Error);
     expect((waiting.error as Error).message).toBe("run cancelled");
     expect(governor.snapshot(KEY_A)?.waiters).toBe(0);
-    // 第一个结束：没有人再被放行（等待者已退场），名额空着。
+    // The first one ends: nobody else is admitted (waiters already left), and the slot stays open.
     outcome.completed(first);
     await flush();
     expect(governor.snapshot(KEY_A)?.inFlight).toBe(0);
@@ -361,6 +362,117 @@ describe("workflow concurrency governor — 桶与闸门（决策 34）", () => 
   });
 });
 
+describe("workflow concurrency governor — 主代理 subagent 池（docs/dynamic-workflow/concurrency.md「Where the port is bound」）", () => {
+  // Fix reason: subagents used to inherit the parent's observer — parallel Agent calls neither
+  // queued nor respected Retry-After, the largest source of production 1302 storms.
+
+  it("受闸门约束：cap 满时快路径未命中，acquire 排队到有名额", async () => {
+    const { governor, admitNow } = makeGovernor(1);
+    const pool = governor.sessionSubagents("session-1");
+    const busy = admitNow("A");
+    expect(pool.tryAcquire!({ model: MODEL_A })).toBeUndefined();
+    const waiting = track(pool.acquire({ model: MODEL_A }));
+    await flush();
+    expect(waiting.settled).toBe(false);
+    outcome.completed(busy);
+    await flush();
+    expect(waiting.ticket).toBeDefined();
+    expect(governor.snapshot(KEY_A)?.inFlight).toBe(1);
+  });
+
+  it("看冷却：主代理撞出的 Retry-After 冻结 subagent，到期唤醒；主代理（observer）照常放行", async () => {
+    const { governor, clock, observe } = makeGovernor();
+    outcome.throttled429(await observe(), 20_000);
+    const pool = governor.sessionSubagents("session-1");
+    expect(pool.tryAcquire!({ model: MODEL_A })).toBeUndefined();
+    const waiting = track(pool.acquire({ model: MODEL_A }));
+    await flush();
+    expect(waiting.settled).toBe(false);
+    expect(await observe()).toBeDefined();
+    clock.advance(20_000);
+    await flush();
+    expect(waiting.ticket).toBeDefined();
+  });
+
+  it("喂信号：subagent 的 429 同样压低 cap、设冷却", async () => {
+    const { governor, clock } = makeGovernor();
+    const ticket = governor.sessionSubagents("session-1").tryAcquire!({ model: MODEL_A })!;
+    outcome.throttled429(ticket, 10_000);
+    expect(governor.snapshot(KEY_A)?.cap).toBe(6);
+    expect(governor.snapshot(KEY_A)?.cooldownUntil).toBe(clock.now() + 10_000);
+  });
+
+  it("同一父会话的 subagent 共用一条队列，在轮转里只占一份：workflow run 不被饿死", async () => {
+    const { governor, admitNow } = makeGovernor(1);
+    const busy = admitNow("runA");
+    const order: string[] = [];
+    const tickets: ModelRequestAdmissionTicket[] = [];
+    const record = (label: string) => (ticket: ModelRequestAdmissionTicket) => {
+      order.push(label);
+      tickets.push(ticket);
+    };
+    // Two subagents of one session each want 2 requests — 4 waiters total; the workflow run queues only 1.
+    for (const pool of [governor.sessionSubagents("s1"), governor.sessionSubagents("s1")]) {
+      void pool.acquire({ model: MODEL_A }).then(record("sub"));
+      void pool.acquire({ model: MODEL_A }).then(record("sub"));
+    }
+    void governor.admit("runA", KEY_A, new AbortController().signal).then(record("wf"));
+    await flush();
+    outcome.completed(busy);
+    await flush();
+    outcome.completed(tickets.shift()!);
+    await flush();
+    // Round-robin works by run identity: the four subagent requests count as one run, so the second slot goes to the workflow.
+    expect(order).toEqual(["sub", "wf"]);
+  });
+
+  it("不同父会话各自一份：s1 排 2 个、s2 排 1 个，s2 的第一个不晚于 s1 的第二个", async () => {
+    const { governor, admitNow } = makeGovernor(1);
+    const busy = admitNow("A");
+    const order: string[] = [];
+    const tickets: ModelRequestAdmissionTicket[] = [];
+    const enqueue = (sessionId: string) =>
+      void governor
+        .sessionSubagents(sessionId)
+        .acquire({ model: MODEL_A })
+        .then((ticket) => {
+          order.push(sessionId);
+          tickets.push(ticket);
+        });
+    enqueue("s1");
+    enqueue("s1");
+    enqueue("s2");
+    await flush();
+    outcome.completed(busy);
+    await flush();
+    outcome.completed(tickets.shift()!);
+    await flush();
+    expect(order).toEqual(["s1", "s2"]);
+  });
+
+  it("signal abort 把等待中的 subagent 请求移出队列", async () => {
+    const { governor, admitNow } = makeGovernor(1);
+    admitNow("A");
+    const controller = new AbortController();
+    const waiting = track(
+      governor.sessionSubagents("s1").acquire({ model: MODEL_A, signal: controller.signal }),
+    );
+    await flush();
+    expect(governor.snapshot(KEY_A)?.waiters).toBe(1);
+    controller.abort(new Error("user cancelled"));
+    await flush();
+    expect((waiting.error as Error).message).toBe("user cancelled");
+    expect(governor.snapshot(KEY_A)?.waiters).toBe(0);
+  });
+
+  it("不抬增长上限：subagent 池不进桶的 runs，登记了大上界的 run 也只抬它自己用过的 key", () => {
+    const { governor } = makeGovernor();
+    governor.setRunBound("big", 40);
+    void governor.sessionSubagents("s1").tryAcquire!({ model: MODEL_A });
+    expect(governor.snapshot(KEY_A)?.growthLimit).toBe(2 * CEILING);
+  });
+});
+
 describe("workflow concurrency governor — ticket 上的事件映射（决策 27/36）", () => {
   it("一次 429 = failed(retryable:true) + retry_scheduled，只算一次 throttled（不减两次）", async () => {
     const { governor, observe } = makeGovernor();
@@ -390,8 +502,10 @@ describe("workflow concurrency governor — ticket 上的事件映射（决策 2
     });
   });
 
-  // 配额 429（1308 + Retry-After）是 Stop 集：run 停下、由用户决定何时再试。它若按限流记，
-  // Retry-After（常指到额度窗口结束）会冻住整个桶，用户用重置卡恢复额度后 resume 仍卡在闸门上。
+  // Quota 429s (1308 + Retry-After) belong to the Stop set: the run stops and the user decides
+  // when to retry. If they were recorded as throttling, the Retry-After (often pointing to the
+  // quota window's end) would freeze the whole bucket, and after the user restores quota with a
+  // reset card, resume would still be stuck at the gate.
   it.each([
     ["run 的 ticket", "run"],
     ["主代理 observer 的 ticket", "observer"],
@@ -472,7 +586,7 @@ describe("workflow concurrency governor — ticket 上的事件映射（决策 2
       successStreak: streak,
       cap: CEILING,
     });
-    // 已结算：再喂 429 也不减。
+    // Already settled: feeding another 429 does not decrement.
     void ticket.publish(
       statusEvent({
         type: "model_retry_scheduled",
@@ -483,7 +597,7 @@ describe("workflow concurrency governor — ticket 上的事件映射（决策 2
       } as never),
     );
     expect(governor.snapshot(KEY_A)).toMatchObject({ inFlight: 0, cap: CEILING });
-    // 终结事件之后再 release 也不再减。
+    // A release after the terminal event no longer decrements either.
     const second = admitNow();
     outcome.completed(second);
     second.release();
@@ -502,7 +616,7 @@ describe("workflow concurrency governor — epoch 阻尼（决策 35）", () => 
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({ previous: CEILING, next: 6, reason: "rate_limited" });
 
-    // 新 epoch 下发出的请求撞墙才是对 cap=6 的评价。
+    // Only requests issued in the new epoch hitting the wall count as feedback on cap=6.
     outcome.throttled429(admitNow());
     expect(governor.snapshot(KEY_A)).toMatchObject({ cap: 4, epoch: 2 });
     expect(seen).toHaveLength(2);
@@ -511,16 +625,16 @@ describe("workflow concurrency governor — epoch 阻尼（决策 35）", () => 
   it("旧 epoch 的成功不计 streak；当前 epoch 连续 K = 4 次成功且有等待者才 +1", async () => {
     const { governor, admitNow } = makeGovernor(2);
     const stale = [admitNow(), admitNow()];
-    // 两个都在飞时其中一个 429：cap 2→1，另一个成了旧 epoch。
+    // One of the two in-flight 429s: cap 2→1, and the other becomes old-epoch.
     outcome.throttled429(stale[0]!);
     expect(governor.snapshot(KEY_A)).toMatchObject({ cap: 1, inFlight: 1 });
-    // 让一个等待者排着（决策 15：有需求才加 cap）。
+    // Keep one waiter queued (decision 15: cap grows only with demand).
     const waiting = track(governor.admit("runA", KEY_A, new AbortController().signal));
     await flush();
     outcome.completed(stale[1]!);
     expect(governor.snapshot(KEY_A)?.successStreak).toBe(0);
     await flush();
-    // 等待者拿到名额（inFlight 1 == cap 1），此后每次结束都补一个等待者，凑 4 次当前 epoch 成功。
+    // The waiter gets a slot (inFlight 1 == cap 1); from here each completion backfills one waiter, accumulating 4 current-epoch successes.
     expect(waiting.ticket).toBeDefined();
     let current = waiting.ticket!;
     for (let i = 0; i < 3; i++) {
@@ -548,7 +662,7 @@ describe("workflow concurrency governor — 扇出与遗忘", () => {
     governor.subscribe("A", (change) => seenA.push(change));
     governor.subscribe("B", (change) => seenB.push(change));
     governor.subscribe("C", (change) => seenC.push(change));
-    // A 在 alpha 上有在飞；B 只订阅了；C 在 beta 上有在飞。
+    // A has in-flight requests on alpha; B only subscribed; C has in-flight requests on beta.
     const a = admitNow("A", KEY_A);
     admitNow("C", KEY_B);
 
@@ -607,7 +721,7 @@ describe("workflow concurrency governor — 扇出与遗忘", () => {
 });
 
 describe("workflow concurrency governor — 增长上限（docs/dynamic-workflow/concurrency.md「The governor」）", () => {
-  /** 让 run 在 key 上持续有一个等待者，并凑满 n 次当前 epoch 的成功；返回最后仍在飞的票。 */
+  /** Keep one waiter for the run on the key and accumulate n current-epoch successes; returns the tickets still in flight. */
   async function climb(
     governor: ReturnType<typeof makeGovernor>["governor"],
     runId: string,
@@ -620,9 +734,9 @@ describe("workflow concurrency governor — 增长上限（docs/dynamic-workflow
       const done = live.shift()!;
       outcome.completed(done);
       await flush();
-      // 等待者可能被放行（cap 够），也可能还在排；放行的票加入在飞。
+      // The waiter may be admitted (cap allows) or still queued; admitted tickets join the in-flight set.
       if (next.ticket !== undefined) live.push(next.ticket);
-      // 每轮把能放行的都补满，保持「有人在等」。
+      // Each round backfills everything admissible, keeping "someone waiting" true.
       for (;;) {
         const extra = governor.tryAdmit(runId, KEY_A);
         if (extra === undefined) break;
@@ -649,7 +763,7 @@ describe("workflow concurrency governor — 增长上限（docs/dynamic-workflow
     const tickets = Array.from({ length: 4 }, () => admitNow("big"));
     expect(governor.snapshot(KEY_A)?.growthLimit).toBe(20);
     expect(governor.snapshot(KEY_B)?.growthLimit).toBe(50);
-    // 起跳：第一次准入即把 cap 拉到登记的上界，不用一级一级爬。
+    // Jump start: the first admission pulls cap straight to the registered ceiling — no climbing one step at a time.
     expect(governor.snapshot(KEY_A)?.cap).toBe(20);
     expect(governor.snapshot(KEY_B)?.cap).toBe(50);
     for (const t of tickets) outcome.completed(t);
@@ -668,7 +782,7 @@ describe("workflow concurrency governor — 增长上限（docs/dynamic-workflow
     const seenOther: ConcurrencyChange[] = [];
     governor.subscribe("other", (change) => seenOther.push(change));
     governor.setRunBound("big", 20);
-    // 另一个默认 run 在这个 key 上一直有一个在飞请求（engaged，所以收得到扇出）。
+    // Another default run keeps one in-flight request on this key (engaged, so it receives the fan-out).
     const other = admitNow("other");
     const live = Array.from({ length: 3 }, () => admitNow("big"));
     const capBefore = governor.snapshot(KEY_A)!.cap;

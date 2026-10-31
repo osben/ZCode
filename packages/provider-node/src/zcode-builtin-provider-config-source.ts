@@ -55,7 +55,10 @@ export class NodeZCodeBuiltinProviderConfigSource implements ProviderSource<Prov
     } catch {
       // Active is only a disposable cache; failures in directory locking, watching, or atomic materialization must not block
       // the Bundled baseline. Bypass Active if its cache boundary is unavailable; invalid Bundled data still throws here.
-      release = selectReleaseCandidate(await readReleaseCandidate(this.#bundledFilePath), null);
+      release = selectReleaseCandidate(
+        await readBundledReleaseCandidate(this.#bundledFilePath),
+        null,
+      );
     }
     this.#observedSignature ??= signatureOf(release);
     return snapshotFromRelease(release, this.#sourceKey);
@@ -99,7 +102,7 @@ export class NodeZCodeBuiltinProviderConfigSource implements ProviderSource<Prov
 
   async #readAndMaterializeLocked(): Promise<ZCodeBuiltinRelease> {
     const [bundled, active] = await Promise.all([
-      readReleaseCandidate(this.#bundledFilePath),
+      readBundledReleaseCandidate(this.#bundledFilePath),
       this.#activeFilePath === this.#bundledFilePath
         ? Promise.resolve(null)
         : readReleaseCandidate(this.#activeFilePath),
@@ -168,11 +171,39 @@ interface ReleaseCandidate {
   readonly error?: unknown;
 }
 
-async function readReleaseCandidate(filePath: string): Promise<ReleaseCandidate | null> {
+/**
+ * Bug cause: the remote Core materializes the build-embedded Bundled into `runtime/provider/bundled` only at
+ * startup; once that directory is deleted mid-run alongside Endpoint Active, every read gets two ENOENTs and
+ * Provisioning sync keeps failing until the Core restarts. Bundled is immutable for the process lifetime
+ * (upgrades presuppose exiting the old process), so remember this process's last successfully parsed Bundled
+ * by path and use it as the baseline only when the file is missing; Active is then rebuilt from the selected
+ * candidate as usual. The Bundled path is never written back: Desktop's Bundled lives inside read-only
+ * install resources. A module-level cache instead of an instance field because Endpoint switches create new
+ * Source instances that must still read the same baseline. When a Worker reads the Host's Active as Bundled,
+ * this is equivalent to the last-known-good of the last successful read.
+ */
+const lastValidBundledReleaseByPath = new Map<string, ZCodeBuiltinRelease>();
+
+async function readBundledReleaseCandidate(filePath: string): Promise<ReleaseCandidate> {
+  const key = resolve(filePath);
+  const candidate = await readReleaseCandidate(filePath);
+  if (candidate.release) {
+    lastValidBundledReleaseByPath.set(key, candidate.release);
+    return candidate;
+  }
+  const baseline = isFileNotFound(candidate.error)
+    ? lastValidBundledReleaseByPath.get(key)
+    : undefined;
+  return baseline ? { release: baseline } : candidate;
+}
+
+async function readReleaseCandidate(filePath: string): Promise<ReleaseCandidate> {
   try {
     return { release: decodeZCodeBuiltinRelease(JSON.parse(await readFile(filePath, "utf8"))) };
   } catch (error) {
-    if (isFileNotFound(error)) return null;
+    // Bug cause: ENOENT used to return null directly; with both files missing the AggregateError's error
+    // list was empty and the log showed only "both unavailable" without paths. Missing is an invalid
+    // candidate like any other, so keep the original error for the summary report.
     return { error };
   }
 }

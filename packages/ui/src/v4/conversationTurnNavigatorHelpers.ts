@@ -1,4 +1,8 @@
-import type { ConversationTurnRenderUnit } from "@/v4/conversationTurnRenderUnits.js";
+import {
+  sameItems,
+  type ConversationTurnRenderUnit,
+  type ConversationTurnRenderUnitsPartition,
+} from "@/v4/conversationTurnRenderUnits.js";
 
 export type ConversationTurnNavigatorAssistantPreviewKind = "empty" | "running" | "text";
 
@@ -69,6 +73,40 @@ export interface ResolveConversationTurnNavigatorVisualFocusItemIndexOptions {
 
 export const CONVERSATION_TURN_NAVIGATOR_MIN_WIDTH_PX = 864;
 
+function collectRealUserQueryRowIds(units: readonly ConversationTurnRenderUnit[]): number[] {
+  const rowIds: number[] = [];
+  for (const unit of units) {
+    for (const row of unit.visibleUserInputs) {
+      if (row.origin === "realUser") rowIds.push(row.rowId);
+    }
+  }
+  return rowIds;
+}
+
+/**
+ * Keep identity while directory members are unchanged; body tokens or the clock must not make DOM anchor registration rebuild in full.
+ * Input is partitioned into "history + tail turn" (docs/ui/chat-virtual-scroll.md, "per-frame derivation cost"): when the history reference is unchanged and
+ * tail members are unchanged, reuse directly; stream frames collect only the tail, and the whole window is compared only when the history segment changes.
+ */
+export function createConversationTurnNavigatorQueryRowIdsSelector() {
+  let previous: ReadonlySet<number> = new Set<number>();
+  let previousHistory: readonly ConversationTurnRenderUnit[] | null = null;
+  let previousTailRowIds: number[] = [];
+  return (units: ConversationTurnRenderUnitsPartition): ReadonlySet<number> => {
+    const tailRowIds = collectRealUserQueryRowIds(units.tail);
+    if (previousHistory === units.history && sameItems(previousTailRowIds, tailRowIds)) {
+      return previous;
+    }
+    previousHistory = units.history;
+    previousTailRowIds = tailRowIds;
+    const next = new Set([...collectRealUserQueryRowIds(units.history), ...tailRowIds]);
+    if (next.size !== previous.size || [...next].some((rowId) => !previous.has(rowId))) {
+      previous = next;
+    }
+    return previous;
+  };
+}
+
 export type ConversationTurnNavigatorHydrationResult =
   | { status: "hydrated"; logEpoch: string }
   | { status: "not-enough-queries"; logEpoch: string }
@@ -100,74 +138,12 @@ export function resolveConversationTurnNavigatorHydrationRetryDelayMs(
 const DEFAULT_MAX_PREVIEW_CHARS = 220;
 const DEFAULT_MAX_PREVIEW_PARAGRAPHS = 2;
 
-function normalizePreviewParagraphs(text: string, maxParagraphs: number): string[] {
-  return text
-    .trim()
-    .split(/\n\s*\n/u)
-    .map((paragraph) => paragraph.replace(/\s+/gu, " ").trim())
-    .filter(Boolean)
-    .slice(0, Math.max(1, maxParagraphs));
-}
-
 function truncatePreview(text: string, maxChars: number): string {
   const normalizedMaxChars = Math.max(8, maxChars);
   if (text.length <= normalizedMaxChars) {
     return text;
   }
   return `${text.slice(0, normalizedMaxChars - 3).trimEnd()}...`;
-}
-
-/**
- * Raw characters of the joined assistant text that a preview may scan. The preview shows at most `maxPreviewChars`
- * normalized characters, and every rebuild of the navigator reruns this, so a long session must not normalize all of its text each time.
- */
-const PREVIEW_SCAN_CHARS = 4_096;
-const PARAGRAPH_SEPARATOR = /\n\s*\n/u;
-
-function normalizePreviewParagraph(paragraph: string): string {
-  return paragraph.replace(/\s+/gu, " ").trim();
-}
-
-/** The first `limit` code units of `texts.join("\n\n")`, built without joining the rest. `whole` means the join fit entirely. */
-function takeJoinedPreviewPrefix(
-  texts: readonly string[],
-  limit: number,
-): { text: string; whole: boolean } {
-  let prefix = "";
-  for (const [index, text] of texts.entries()) {
-    if (index > 0) {
-      if (prefix.length + 2 > limit) return { text: prefix, whole: false };
-      prefix += "\n\n";
-    }
-    const room = limit - prefix.length;
-    if (text.length > room) return { text: prefix + text.slice(0, room), whole: false };
-    prefix += text;
-  }
-  return { text: prefix, whole: true };
-}
-
-/**
- * Preview from a non-final prefix of the joined text, or null when the prefix cannot prove the result.
- *
- * Every piece except the last is terminated by a separator inside the prefix, so the separator matches are the same as in the full text.
- * If `limit` such pieces normalize to non-empty text, the output is exactly those paragraphs.
- * Otherwise the last piece may still grow, but its normalized text is a prefix of the full paragraph.
- * It can then be used only when that prefix alone exceeds `maxChars`: the full output starts with it, so the truncation is unchanged.
- */
-function buildBoundedPreviewText(
-  prefixText: string,
-  limit: number,
-  maxChars: number,
-): string | null {
-  const pieces = prefixText.split(PARAGRAPH_SEPARATOR);
-  const terminated = pieces.slice(0, -1).map(normalizePreviewParagraph).filter(Boolean);
-  if (terminated.length >= limit) {
-    return truncatePreview(terminated.slice(0, limit).join("\n"), maxChars);
-  }
-  const unterminated = normalizePreviewParagraph(pieces[pieces.length - 1] ?? "");
-  const paragraphs = unterminated ? [...terminated, unterminated] : terminated;
-  const joined = paragraphs.slice(0, limit).join("\n");
-  return joined.length > maxChars ? truncatePreview(joined, maxChars) : null;
 }
 
 function buildPreviewText({
@@ -181,26 +157,42 @@ function buildPreviewText({
   maxPreviewChars: number;
   maxPreviewParagraphs: number;
 }): string {
-  const prefix = takeJoinedPreviewPrefix(texts, PREVIEW_SCAN_CHARS);
-  if (!prefix.whole) {
-    const bounded = buildBoundedPreviewText(
-      prefix.text,
-      Math.max(1, maxPreviewParagraphs),
-      Math.max(8, maxPreviewChars),
-    );
-    if (bounded !== null) {
-      return bounded;
+  const maxChars = Math.max(8, maxPreviewChars);
+  const maxParagraphs = Math.trunc(Math.max(1, maxPreviewParagraphs));
+  let preview = "";
+  let paragraphs = 1;
+  let whitespace = false;
+  let newlines = 0;
+  // The old implementation joined and regex-normalized the whole text before truncating, so every streamed delta rescanned the long history.
+  // Reading one extra significant character is enough to decide whether to elide, which keeps the original whitespace, blank-line paragraph and UTF-16 truncation semantics.
+  for (const text of texts) {
+    if (preview) {
+      whitespace = true;
+      newlines = 2;
+    }
+    for (let index = 0; index < text.length; index += 1) {
+      const character = text[index]!;
+      if (/\s/u.test(character)) {
+        whitespace = true;
+        if (character === "\n") newlines += 1;
+        continue;
+      }
+      if (whitespace && preview) {
+        if (newlines >= 2) {
+          if (paragraphs >= maxParagraphs) return truncatePreview(preview, maxChars);
+          paragraphs += 1;
+          preview += "\n";
+        } else {
+          preview += " ";
+        }
+      }
+      preview += character;
+      whitespace = false;
+      newlines = 0;
+      if (preview.length > maxChars) return truncatePreview(preview, maxChars);
     }
   }
-  // Short or pathological inputs (for example, a long whitespace run before the first paragraph) use the full normalization.
-  const paragraphs = normalizePreviewParagraphs(
-    prefix.whole ? prefix.text : texts.join("\n\n"),
-    maxPreviewParagraphs,
-  );
-  if (paragraphs.length === 0) {
-    return fallback;
-  }
-  return truncatePreview(paragraphs.join("\n"), maxPreviewChars);
+  return preview || fallback;
 }
 
 function buildAssistantPreview(
@@ -286,6 +278,110 @@ export function buildConversationTurnNavigatorItems(
   });
 }
 
+/**
+ * The cache covers only the current directory; unchanged history turns must not rescan body text because of a tail token or the clock.
+ * Input is partitioned into "history + tail turn": history-segment entries are cached by history reference, and each frame rebuilds entries only for the tail,
+ * returning the previous directory directly when tail entry values are unchanged (the preview is at most 220 characters; beyond that, streamed body text no longer changes the entry).
+ */
+export function createConversationTurnNavigatorItemsSelector() {
+  type UnitCache = Map<
+    string,
+    { unit: ConversationTurnRenderUnit; index: number; items: ConversationTurnNavigatorItem[] }
+  >;
+  let historyCache: UnitCache = new Map();
+  let tailCache: UnitCache = new Map();
+  let previousOptions: BuildConversationTurnNavigatorItemsOptions | undefined;
+  let history: {
+    units: readonly ConversationTurnRenderUnit[];
+    items: ConversationTurnNavigatorItem[];
+  } | null = null;
+  let previousTailItems: ConversationTurnNavigatorItem[] = [];
+  let previousItems: ConversationTurnNavigatorItem[] = [];
+
+  const selectUnitItems = (
+    units: readonly ConversationTurnRenderUnit[],
+    indexOffset: number,
+    options: BuildConversationTurnNavigatorItemsOptions,
+    lookup: (key: string) => ReturnType<UnitCache["get"]>,
+    next: UnitCache,
+  ) =>
+    units.flatMap((unit, offset) => {
+      const index = indexOffset + offset;
+      const cached = lookup(unit.key);
+      if (cached?.unit === unit && cached.index === index) {
+        next.set(unit.key, cached);
+        return cached.items;
+      }
+      const built = buildConversationTurnNavigatorItems([unit], options).map((item) => ({
+        ...item,
+        unitIndex: index,
+      }));
+      // A running clock or a change to the invisible body tail does not necessarily change the directory's displayed values.
+      const stable = built.map((item, i) => {
+        const old = cached?.items[i];
+        return old &&
+          Object.keys(item).every(
+            (key) => item[key as keyof typeof item] === old[key as keyof typeof item],
+          )
+          ? old
+          : item;
+      });
+      next.set(unit.key, { unit, index, items: stable });
+      return stable;
+    });
+
+  return (
+    units: ConversationTurnRenderUnitsPartition,
+    options: BuildConversationTurnNavigatorItemsOptions,
+  ) => {
+    if (
+      !previousOptions ||
+      Object.keys({ ...previousOptions, ...options }).some(
+        (key) =>
+          options[key as keyof typeof options] !== previousOptions?.[key as keyof typeof options],
+      )
+    ) {
+      historyCache.clear();
+      tailCache.clear();
+      history = null;
+    }
+    previousOptions = options;
+    const previousHistoryCache = historyCache;
+    const previousTailCache = tailCache;
+    let historyChanged = false;
+    if (history?.units !== units.history) {
+      historyCache = new Map();
+      history = {
+        units: units.history,
+        items: selectUnitItems(
+          units.history,
+          0,
+          options,
+          (key) => previousHistoryCache.get(key) ?? previousTailCache.get(key),
+          historyCache,
+        ),
+      };
+      historyChanged = true;
+    }
+    tailCache = new Map();
+    const tailItems = selectUnitItems(
+      units.tail,
+      units.history.length,
+      options,
+      (key) => previousTailCache.get(key) ?? previousHistoryCache.get(key),
+      tailCache,
+    );
+    if (!historyChanged && sameItems(tailItems, previousTailItems)) {
+      return previousItems;
+    }
+    previousTailItems = tailItems;
+    const items = [...history.items, ...tailItems];
+    if (sameItems(items, previousItems)) return previousItems;
+    previousItems = items;
+    return items;
+  };
+}
+
 function resolveFiniteNonNegative(value: number): number {
   return Number.isFinite(value) ? Math.max(0, value) : 0;
 }
@@ -300,15 +396,26 @@ export function resolveConversationTurnNavigatorActiveUnitIndex({
     return undefined;
   }
 
-  const itemByUnitIndex = new Map(items.map((item) => [item.unitIndex, item]));
+  // items are generated in renderUnits order (one turn may have several queries). Scrolling looks up only a few visible turns,
+  // so binary search over the existing order is enough; a full-directory Map must not be reallocated on every scroll pixel.
+  const lowerBound = (unitIndex: number) => {
+    let low = 0;
+    let high = items.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (items[middle]!.unitIndex < unitIndex) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  };
   const viewportStart = resolveFiniteNonNegative(scrollOffsetPx);
   const viewportEnd = viewportStart + Math.max(1, resolveFiniteNonNegative(viewportHeightPx));
 
   let activeUnitIndex: number | undefined;
   let activeDistance = Number.POSITIVE_INFINITY;
   for (const virtualItem of virtualItems) {
-    const item = itemByUnitIndex.get(virtualItem.index);
-    if (!item) {
+    const item = items[lowerBound(virtualItem.index)];
+    if (item?.unitIndex !== virtualItem.index) {
       continue;
     }
     const rowStart = resolveFiniteNonNegative(virtualItem.start);
@@ -337,9 +444,7 @@ export function resolveConversationTurnNavigatorActiveUnitIndex({
   }
 
   return (
-    items.find((item) => item.unitIndex >= topVirtualIndex)?.unitIndex ??
-    items.findLast((item) => item.unitIndex <= topVirtualIndex)?.unitIndex ??
-    items[0]?.unitIndex
+    items[lowerBound(topVirtualIndex)]?.unitIndex ?? items.at(-1)?.unitIndex ?? items[0]?.unitIndex
   );
 }
 
@@ -352,32 +457,40 @@ export function resolveConversationTurnNavigatorActiveQueryRowId({
 
   const viewportStart = resolveFiniteNonNegative(scrollOffsetPx);
   const viewportEnd = viewportStart + Math.max(1, resolveFiniteNonNegative(viewportHeightPx));
-  const normalized = positions
-    .map((position) => {
-      const start = resolveFiniteNonNegative(position.start);
-      return {
-        rowId: position.rowId,
-        start,
-        end: Math.max(start, resolveFiniteNonNegative(position.end)),
-      };
-    })
-    .sort((left, right) => left.start - right.start || left.rowId - right.rowId);
-
-  const visible = normalized.filter(
-    (position) => position.end >= viewportStart && position.start <= viewportEnd,
-  );
-  if (visible.length > 0) {
-    return visible.reduce((nearest, candidate) =>
-      Math.abs(candidate.start - viewportStart) < Math.abs(nearest.start - viewportStart)
-        ? candidate
-        : nearest,
-    ).rowId;
+  let nearest: ConversationTurnNavigatorQueryPosition | undefined;
+  let distance = Number.POSITIVE_INFINITY;
+  let before: ConversationTurnNavigatorQueryPosition | undefined;
+  let after: ConversationTurnNavigatorQueryPosition | undefined;
+  // Keep the original distance and tie rules after sorting by start/rowId; no need to allocate and sort three arrays on every scroll.
+  for (const position of positions) {
+    const start = resolveFiniteNonNegative(position.start);
+    const end = Math.max(start, resolveFiniteNonNegative(position.end));
+    const candidate =
+      start === position.start && end === position.end ? position : { ...position, start, end };
+    const delta = Math.abs(start - viewportStart);
+    if (
+      end >= viewportStart &&
+      start <= viewportEnd &&
+      (delta < distance ||
+        (delta === distance &&
+          nearest &&
+          (start < nearest.start || (start === nearest.start && position.rowId < nearest.rowId))))
+    ) {
+      nearest = candidate;
+      distance = delta;
+    }
+    if (
+      start <= viewportStart &&
+      (!before || start > before.start || (start === before.start && position.rowId > before.rowId))
+    )
+      before = candidate;
+    if (
+      start > viewportStart &&
+      (!after || start < after.start || (start === after.start && position.rowId < after.rowId))
+    )
+      after = candidate;
   }
-
-  return (
-    normalized.findLast((position) => position.start <= viewportStart)?.rowId ??
-    normalized.find((position) => position.start > viewportStart)?.rowId
-  );
+  return nearest?.rowId ?? before?.rowId ?? after?.rowId;
 }
 
 export function resolveConversationTurnNavigatorBarVisualState({

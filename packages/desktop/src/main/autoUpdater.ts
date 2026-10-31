@@ -7,6 +7,7 @@ const { autoUpdater } = pkg;
 import {
   DEFAULT_LOCALE,
   DEFAULT_ZCODE_ENDPOINT_ORIGIN,
+  TEST_ZCODE_ENDPOINT_ORIGIN,
   PlatformChannels,
   ZCODE_VERSION,
   desktopMenuMessageIds,
@@ -21,6 +22,7 @@ import {
 } from "@zcode/shared";
 import { logger } from "./logger.js";
 import { restoreDictationSystemMuteForShutdown } from "./desktopDictationSystemAudio.js";
+import { verifyWindowsAuthenticodeSignature } from "../../scripts/powershell-command.mjs";
 import { ManifestUpdateProvider, getElectronReleasePlatform } from "./manifestUpdateProvider.js";
 
 export const CHECK_FOR_UPDATE_MENU_ID = "check-for-update";
@@ -498,6 +500,22 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
   }
   quitAndInstallPhase = "preparing";
   logger.info("[auto-update] user requested quit and install");
+  if (process.platform === "win32" && app.isPackaged) {
+    try {
+      // electron-updater 6.8.10 skips the download hook when the downloaded-package cache hits, so re-check the actual pending installer before services shut down.
+      // Read the existing updater's installerPath instead of storing a second path, which could leave ready and the install target out of sync.
+      const installerPath = (autoUpdater as unknown as { readonly installerPath: string | null })
+        .installerPath;
+      if (!installerPath) throw new Error("Windows update installer is missing");
+      const failure = await verifyWindowsAuthenticodeSignature(installerPath);
+      if (failure) throw new Error(failure);
+    } catch (error) {
+      quitAndInstallPhase = "idle";
+      handleAutoUpdateFailure(error, "Windows update signature verification failed");
+      if (rejectUnavailable) throw error;
+      return;
+    }
+  }
   // On macOS, quitAndInstall() does not trigger app.before-quit before closing windows.
   // If window close is allowed only through before-quit, the existing "traffic-light close = hide window" behavior blocks exit:
   // the UI disappears after clicking update, but the process remains and installation does not continue.
@@ -764,6 +782,8 @@ function readSwitchValue(argv: readonly string[], switchName: string): string | 
   const equalsPrefix = `${switchName}=`;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    // Protocol registration separates the external URL with "--"; anything after it must not be reinterpreted as an app switch.
+    if (arg === "--") break;
     if (!arg) {
       continue;
     }
@@ -787,6 +807,9 @@ export function resolveUpdateFeedSourceFromStartupConfig(
     env?: Record<string, string | undefined>;
   } = {},
 ): RuntimeUpdateFeedSource | undefined {
+  // Quotes in a Windows deep link can split out extra argv entries. Packaged builds must ignore the debug update feed,
+  // so untrusted startup arguments (or an inherited environment variable) cannot take over the installer download source.
+  if (app.isPackaged) return undefined;
   const argv = options.argv ?? process.argv;
   const env = options.env ?? process.env;
   const feedUrl = readSwitchValue(argv, UPDATE_FEED_URL_SWITCH) ?? env[UPDATE_FEED_URL_ENV]?.trim();
@@ -835,7 +858,8 @@ async function syncAutoUpdateCheckChannelFromSettings(
 }
 
 function applyManifestUpdateProvider(options: InitAutoUpdaterOptions): void {
-  const manifestUrl = options.updateFeedSource?.url.trim();
+  // Enforce the packaged-build restriction again at the updater assembly boundary, so internal callers cannot bypass startup config resolution.
+  const manifestUrl = app.isPackaged ? undefined : options.updateFeedSource?.url.trim();
   autoUpdater.setFeedURL({
     provider: "custom",
     updateProvider: ManifestUpdateProvider,
@@ -843,8 +867,20 @@ function applyManifestUpdateProvider(options: InitAutoUpdaterOptions): void {
     ...(manifestUrl ? { manifestUrl } : {}),
     releasePlatform: getElectronReleasePlatform(),
     deviceMid: options.deviceMid,
-    resolveEndpointOrigin:
-      options.resolveEndpointOrigin ?? (() => resolveRuntimeZCodeEndpointOrigin(process.env)),
+    resolveEndpointOrigin: async () => {
+      const origin = await (
+        options.resolveEndpointOrigin ?? (() => resolveRuntimeZCodeEndpointOrigin(process.env))
+      )();
+      // A generic backend override does not authorize update releases; packaged builds may only use the existing official HTTPS endpoints.
+      if (
+        app.isPackaged &&
+        origin !== DEFAULT_ZCODE_ENDPOINT_ORIGIN &&
+        origin !== TEST_ZCODE_ENDPOINT_ORIGIN
+      ) {
+        return DEFAULT_ZCODE_ENDPOINT_ORIGIN;
+      }
+      return origin;
+    },
     resolveReleaseChannel: async () => {
       // Upstream 3.15.3 parity: keep the channel the staged package was downloaded with;
       // refreshing mid-install could resolve against a different channel than the staged
@@ -1625,6 +1661,11 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   // install an older package after the target moves up.
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.logger = logger;
+  if (autoUpdater instanceof pkg.NsisUpdater) {
+    // Keep the publisherName in the package to activate the NSIS hook, but do not treat the old distinguished name as a future admission condition for certificate rotation.
+    autoUpdater.verifyUpdateCodeSignature = (_publisherNames, filePath) =>
+      verifyWindowsAuthenticodeSignature(filePath);
+  }
   applyManifestUpdateProvider(options);
 
   const triggerCheckForUpdates = (reason: string) => {
@@ -1781,9 +1822,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
           kind: "available",
           version:
             menuState.kind === "update-available" ? menuState.version : (readyUpdateVersion ?? ""),
-          ...(menuState.kind !== "checking" && menuState.channel
-            ? { channel: menuState.channel }
-            : {}),
+          ...("channel" in menuState && menuState.channel ? { channel: menuState.channel } : {}),
         });
         return;
       }

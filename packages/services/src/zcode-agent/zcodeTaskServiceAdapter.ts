@@ -34,12 +34,13 @@ import {
   collectZCodeBackgroundTaskNotificationsByToolUseId,
   mergeZCodeBackgroundTaskControlItems,
   parseZCodeBackgroundTaskControlItems,
-  parseZCodeBackgroundTaskNotificationText,
+  parseZCodeBackgroundTaskNotifications,
   parseModelPickerValue as parseSharedModelSelection,
   resolveWorkspaceKey,
   resolveZCodeVisibleSessionTitle,
   textFromZCodeMessageParts,
   ZCODE_AGENT_PROVIDER,
+  zcodeBackgroundTaskNotificationFailureText,
   zcodeBackgroundTaskNotificationToolUpdateStatus,
   appendZCodeStreamingToolInputDelta,
   buildZCodeStreamingToolInputPreview,
@@ -1256,7 +1257,7 @@ export function createZCodeTaskServiceAdapter(
   }
 
   /**
-   * session/setMode → v4 switchCollaborationMode。
+   * session/setMode → v4 switchCollaborationMode.
    * Preserve the auto exception: v4 command values intentionally exclude auto (command.ts says auto is
    * not user-selectable and does not belong in the UI command surface), while legacy ZCodeSessionMode
    * includes auto and the old operation accepts it. To keep UI behavior unchanged, continue routing auto
@@ -1944,7 +1945,11 @@ export function createZCodeTaskServiceAdapter(
     async releaseWorkspacePreparation(params): Promise<void> {
       // Closing workspace UI releases the RPC caller but does not stop a prewarmed Agent. After Hosts
       // are shared for WSL, the Host remains alive, so reclaim the runtime for this workspaceKey explicitly.
-      await options.zcodeAgentService.disposeWorkspace(normalizeWorkspaceParams(params));
+      // releasePreparation keeps a shared task runtime alive for other workspaces and only closes this workspace's prepared sessions.
+      await options.zcodeAgentService.disposeWorkspace({
+        ...normalizeWorkspaceParams(params),
+        releasePreparation: true,
+      });
     },
 
     async checkCodexConnectivity(): Promise<ZCodeCodexConnectivityCheckResult> {
@@ -4038,35 +4043,37 @@ function toZCodeDeliveryKind(
   return deliveryKind === "replayable" ? "web-remote-replayable" : "desktop-continuous";
 }
 
-function backgroundTaskNotificationToolUpdateFromInput(params: {
+function backgroundTaskNotificationToolUpdatesFromInput(params: {
   input: string | undefined;
   inputId: InputId | undefined;
+  originMeta: unknown;
   taskId: string;
   traceId: TraceId;
-}): Extract<ZCodeStreamEvent, { type: "tool_call_update" }> | null {
-  const parsed = parseZCodeBackgroundTaskNotificationText(params.input);
-  if (!parsed) {
-    return null;
-  }
-  const status = zcodeBackgroundTaskNotificationToolUpdateStatus(parsed.notification.status);
-  return {
-    type: "tool_call_update",
-    taskId: params.taskId,
-    traceId: params.traceId,
-    ...(params.inputId ? { inputId: params.inputId } : {}),
-    toolId: parsed.toolUseId,
-    status,
-    content: parsed.notification.result ?? parsed.notification.summary,
-    // Replayable dynamic events must also map notification errors to the standard tool error field;
-    // otherwise mobile remote control and desktop continuous delivery show different failure details.
-    ...(status === "failed" && parsed.notification.error
-      ? { error: parsed.notification.error }
-      : {}),
-    raw: attachZCodeBackgroundTaskNotificationToRaw(
-      { toolCallId: parsed.toolUseId },
-      parsed.notification,
-    ),
-  };
+}): Extract<ZCodeStreamEvent, { type: "tool_call_update" }>[] {
+  // Terminal state and failure text come first from this round's originMeta structured result,
+  // never parsed out of summary text. Each notification in a merged round updates its own tool.
+  return parseZCodeBackgroundTaskNotifications(params.input, params.originMeta).map((parsed) => {
+    const status = zcodeBackgroundTaskNotificationToolUpdateStatus(parsed.notification.status);
+    return {
+      type: "tool_call_update",
+      taskId: params.taskId,
+      traceId: params.traceId,
+      ...(params.inputId ? { inputId: params.inputId } : {}),
+      toolId: parsed.toolUseId,
+      status,
+      content: parsed.notification.result ?? parsed.notification.summary,
+      // Replayable dynamic events must also map notification errors to the standard tool error field;
+      // otherwise mobile remote control and desktop continuous delivery show different failure details.
+      // Bug cause: a merged round has no structured result and the notification carries no <error>, so the failure detail used to be empty.
+      ...(status === "failed"
+        ? { error: zcodeBackgroundTaskNotificationFailureText(parsed.notification) }
+        : {}),
+      raw: attachZCodeBackgroundTaskNotificationToRaw(
+        { toolCallId: parsed.toolUseId },
+        parsed.notification,
+      ),
+    };
+  });
 }
 
 function mapMessage(
@@ -4325,7 +4332,9 @@ function mapToolPart(
       status: notificationFailed ? "failed" : "completed",
       input: state.input,
       output: state.output,
-      ...(notificationFailed && taskNotification?.error ? { error: taskNotification.error } : {}),
+      ...(notificationFailed && taskNotification
+        ? { error: zcodeBackgroundTaskNotificationFailureText(taskNotification) }
+        : {}),
       raw,
     };
   }
@@ -4534,14 +4543,15 @@ function mapSessionEvent(
       ...(event.turnId ? { turnId: event.turnId } : {}),
       startedAt: event.timestamp,
     };
-    const taskNotificationToolUpdate = backgroundTaskNotificationToolUpdateFromInput({
+    const taskNotificationToolUpdates = backgroundTaskNotificationToolUpdatesFromInput({
       input: stringValue(payload.input),
+      originMeta: payload.originMeta,
       taskId: params.taskId,
       traceId,
       inputId: eventInputId,
     });
-    if (taskNotificationToolUpdate) {
-      return [runStartedEvent, taskNotificationToolUpdate];
+    if (taskNotificationToolUpdates.length > 0) {
+      return [runStartedEvent, ...taskNotificationToolUpdates];
     }
     if (
       stringValue(payload.inputSource) === "goal-continuation" &&

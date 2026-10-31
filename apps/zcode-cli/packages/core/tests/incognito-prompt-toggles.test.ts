@@ -17,14 +17,15 @@ import { createTestModelFactory } from "./test-runtime-model.js";
 // below identify those sections in the built provider-visible text.
 const MARKERS = {
   cliPrefix: "You are ZCode, an interactive coding agent",
-  identityIntro: "You are an interactive ZCode agent that helps users with software engineering tasks.",
+  identityIntro:
+    "You are an interactive ZCode agent that helps users with software engineering tasks.",
   harness: "# Harness",
   desktop: "# ZCode Desktop Context",
   behavior: "# Communicating with the user",
   sessionGuidance: "# Session-specific guidance",
   environment: "# Environment",
   workingDirectory: "Primary working directory",
-  gitStatus: "gitStatus:",
+  gitStatus: "# gitStatus",
 } as const;
 
 const SAFETY_NOTICE = "IMPORTANT: Assist with authorized security testing";
@@ -56,6 +57,17 @@ const SKILL = {
   disableModelInvocation: false,
 } as never;
 
+// Environment, model, Git and date are runtime announcements now: their builder sections are the
+// text the runtime announces, so the prompt-toggle checks read them alongside the system messages.
+const ANNOUNCED_SOURCES = new Set(["env_info", "model", "session_context", "current_date"]);
+
+function announcedText(result: { sections: Array<{ source: string; content: string }> }): string {
+  return result.sections
+    .filter((section) => ANNOUNCED_SOURCES.has(section.source))
+    .map((section) => section.content)
+    .join("\n");
+}
+
 function buildMain(incognito: IncognitoProfile | undefined) {
   const builder = createContextBuilder({
     workingDirectory: ENV_INFO.cwd,
@@ -70,7 +82,7 @@ function buildMain(incognito: IncognitoProfile | undefined) {
   const result = builder.build();
   const system = result.systemMessages.map((message) => message.content).join("\n");
   const meta = result.metaUserAttachments.map((attachment) => attachment.content).join("\n");
-  return { system, text: `${system}\n${meta}`, result };
+  return { system, text: `${system}\n${meta}\n${announcedText(result)}`, result };
 }
 
 function profileWith(on: Partial<IncognitoCapabilities>): IncognitoProfile {
@@ -92,24 +104,30 @@ describe("main agent prompt toggles", () => {
 
   it("incognito with every prompt toggle off keeps only the safety floor and context management", () => {
     const { system, text } = buildMain(INCOGNITO_LOCKDOWN_PROFILE);
-    expectMarkers(text, [SAFETY_NOTICE, CONFIRMATION_PARAGRAPH, CONTEXT_MANAGEMENT], [
-      ...ALL_MARKERS,
-    ]);
+    expectMarkers(
+      text,
+      [SAFETY_NOTICE, CONFIRMATION_PARAGRAPH, CONTEXT_MANAGEMENT],
+      [...ALL_MARKERS],
+    );
     // The confirmation floor is emitted exactly once, in the stable system message.
     expect(system.split(CONFIRMATION_PARAGRAPH).length - 1).toBe(1);
   });
 
   it("identity on alone returns the CLI prefix and identity intro only", () => {
     const { text } = buildMain(profileWith({ identity: true }));
-    expectMarkers(text, [MARKERS.cliPrefix, MARKERS.identityIntro], [
-      MARKERS.harness,
-      MARKERS.desktop,
-      MARKERS.behavior,
-      MARKERS.sessionGuidance,
-      MARKERS.environment,
-      MARKERS.workingDirectory,
-      MARKERS.gitStatus,
-    ]);
+    expectMarkers(
+      text,
+      [MARKERS.cliPrefix, MARKERS.identityIntro],
+      [
+        MARKERS.harness,
+        MARKERS.desktop,
+        MARKERS.behavior,
+        MARKERS.sessionGuidance,
+        MARKERS.environment,
+        MARKERS.workingDirectory,
+        MARKERS.gitStatus,
+      ],
+    );
   });
 
   it("harness on alone returns the harness block, desktop context, behavior and session guidance", () => {
@@ -124,11 +142,11 @@ describe("main agent prompt toggles", () => {
 
   it("environment on alone returns the environment block and git system context", () => {
     const { text } = buildMain(profileWith({ environment: true }));
-    expectMarkers(text, [MARKERS.environment, MARKERS.workingDirectory, MARKERS.gitStatus], [
-      MARKERS.cliPrefix,
-      MARKERS.harness,
-      MARKERS.behavior,
-    ]);
+    expectMarkers(
+      text,
+      [MARKERS.environment, MARKERS.workingDirectory, MARKERS.gitStatus],
+      [MARKERS.cliPrefix, MARKERS.harness, MARKERS.behavior],
+    );
   });
 
   it("environment off keeps the execution-worktree bullet under the environment heading", () => {
@@ -146,7 +164,9 @@ describe("main agent prompt toggles", () => {
       .build()
       .systemMessages.map((message) => message.content)
       .join("\n");
-    expect(text).toContain("# Environment\n- Execution worktree: this session runs in a linked git worktree");
+    expect(text).toContain(
+      "# Environment\n- Execution worktree: this session runs in a linked git worktree",
+    );
     expect(text).not.toContain(MARKERS.workingDirectory);
     expect(text).not.toContain(MARKERS.gitStatus);
   });
@@ -190,17 +210,15 @@ describe("subagent prompt toggles", () => {
         : {}),
       ...(incognito ? { incognito } : {}),
     });
-    return builder
-      .build()
-      .systemMessages.map((message) => message.content)
-      .join("\n");
+    const result = builder.build();
+    return `${result.systemMessages.map((message) => message.content).join("\n")}\n${announcedText(result)}`;
   };
 
   it("a normal subagent keeps the CLI prefix, notes and environment", () => {
     const text = subagentSystem(undefined);
     expect(text).toContain(MARKERS.cliPrefix);
     expect(text).toContain("Notes:");
-    expect(text).toContain("Working directory: /workspace/app");
+    expect(text).toContain("Primary working directory: /workspace/app");
   });
 
   it("an incognito subagent with all prompt toggles off keeps only its task prompt and the confirmation floor", () => {
@@ -224,7 +242,7 @@ describe("subagent prompt toggles", () => {
     expect(withIdentity).toContain(MARKERS.cliPrefix);
     expect(withIdentity).not.toContain("Working directory");
     const withEnvironment = subagentSystem(profileWith({ environment: true }));
-    expect(withEnvironment).toContain("Working directory: /workspace/app");
+    expect(withEnvironment).toContain("Primary working directory: /workspace/app");
     expect(withEnvironment).not.toContain(MARKERS.cliPrefix);
   });
 });

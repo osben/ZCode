@@ -1,5 +1,6 @@
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 import {
+  MCP_APPS_NESTED_FRAMES_EXPERIMENTAL_KEY,
   MCP_APPS_RESOURCE_SUBSCRIBE_EXPERIMENTAL_KEY,
   MCP_APPS_SURFACE_EXPERIMENTAL_KEY,
   MCP_APPS_WIDGET_STATE_EXPERIMENTAL_KEY,
@@ -18,15 +19,15 @@ export interface PluginUiHostCapabilityInput {
   canDownloadFile: boolean;
   /** Persistent surface instance: declares `experimental["zcode/surface"]: { id }` so the page can tell it is running in a pane. */
   surfaceId?: string;
-  /** 窗口恢复键，仅接受宿主派生的不透明摘要。 */
+  /** Window restore key; only host-derived opaque digests are accepted. */
   surfaceStateKey?: string;
 }
 
 /**
- * Single construction point for hostCapabilities. Declarations map one-to-one to handlers: without a
- * session action binding, message is not declared; without a composer, updateModelContext is not declared.
- * ZCode extensions (widgetState, resourceSubscribe, surface, relaxed csp) all go in
- * `experimental["zcode/…"]`; the official SDK's zod strips unknown capability keys outside the standard slots.
+ * The single construction point of hostCapabilities. Declarations map one-to-one to handlers: no session-action
+ * binding means no message declaration, no composer means no updateModelContext. ZCode extensions (widgetState,
+ * resourceSubscribe, surface, csp relaxations, nestedFrames) always go under `experimental["zcode/…"]` —
+ * the official SDK's zod strips unknown capability keys beyond the standard slots.
  */
 export function buildPluginUiHostCapabilities(
   input: PluginUiHostCapabilityInput,
@@ -45,6 +46,7 @@ export function buildPluginUiHostCapabilities(
       : {}),
     experimental: {
       ...buildMcpAppsCspExperimentalCapability(),
+      [MCP_APPS_NESTED_FRAMES_EXPERIMENTAL_KEY]: {},
       ...(input.canSetWidgetState ? { [MCP_APPS_WIDGET_STATE_EXPERIMENTAL_KEY]: {} } : {}),
       ...(input.canSubscribeResources
         ? { [MCP_APPS_RESOURCE_SUBSCRIBE_EXPERIMENTAL_KEY]: {} }

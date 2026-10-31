@@ -1,7 +1,8 @@
-// L2：v4 原生 queue 命令组（deleteQueueItem / editQueueItem / reorderQueueItem /
-// setAutoDrain / setFollowupMode / sendQueuedNow）——验证命令直驱 core app 层 API，
-// sendQueuedNow 的「reserve → stop barrier → start/promote → remove」编排语义保真。
-// fake 风格参照 tests/v4-native-commands.test.ts（fake host/app，不经旧协议代码）。
+// L2: the v4 native queue command group (deleteQueueItem / editQueueItem / reorderQueueItem /
+// setAutoDrain / setFollowupMode / sendQueuedNow) — verifies the commands drive the core app
+// layer API directly, with sendQueuedNow's "reserve → stop barrier → start/promote → remove"
+// orchestration semantics preserved faithfully.
+// Fake style follows tests/v4-native-commands.test.ts (fake host/app, bypassing legacy protocol code).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionEventType, type SessionEvent } from "@zcode/contracts";
 import { createTurnCancelReason, hasPreserveQueueAutoDrainCancelIntent } from "@zcode/core";
@@ -80,8 +81,9 @@ function makeApp(overrides: Record<string, unknown> = {}) {
 }
 
 /**
- * 加速轮的协议原形：Selection 指向隐藏的加速卡内建 Provider（端点/能力来自 Provider Config），
- * 只有卡 JWT 与卡 ID 作为本次执行的动态鉴权随 modelExecution 下发。
+ * Protocol shape of a speed-up turn: the Selection points at the hidden speed-up-card built-in
+ * Provider (endpoint/capabilities from Provider Config); only the card JWT and card ID travel
+ * with modelExecution as this execution's dynamic credentials.
  */
 const ORDINARY_MODEL_SELECTION = {
   providerId: "builtin:bigmodel-coding-plan",
@@ -159,7 +161,7 @@ function makeHost(
       legacyMutations.push(reason);
     },
     waitForProjectionEventCommit: async () => {},
-    // 默认查得到完整权威 intent（sendQueuedNow 正路径）；各用例按需覆盖。
+    // By default the full authoritative intent is retrievable (sendQueuedNow happy path); cases override as needed.
     getQueueItem: vi.fn().mockReturnValue(queueItem()),
     ...hostOverrides,
     legacyMutations,
@@ -368,7 +370,7 @@ describe("v4 原生 sendQueuedNow", () => {
     const host = makeHost(record, {
       getQueueItem: vi.fn().mockReturnValue(
         queueItem({
-          // 队列持久化普通提交模型；临时 Highspeed Selection 与凭据只在 CLI 内存暂存。
+          // The queue persists the normal submission model; the temporary Highspeed Selection and credentials are staged in CLI memory only.
           modelSelection: ORDINARY_MODEL_SELECTION,
           highspeed: {
             schemaVersion: 1,
@@ -398,13 +400,13 @@ describe("v4 原生 sendQueuedNow", () => {
       }),
     );
     const sendOptions = app.sendInput.mock.calls[0]?.[1];
-    // selectionScope=execution 表达「只作用于本轮」：不再需要提升后回写/恢复会话模型。
+    // selectionScope=execution expresses "applies to this turn only": no post-promote write-back/restore of the session model is needed.
     expect(sendOptions.modelExecution.selectionScope).toBe("execution");
     await expect(
       sendOptions.modelExecution.requestDependencies.requestAuth.source.resolve(),
     ).resolves.toEqual(HIGHSPEED_MODEL_EXECUTION.requestAuth);
     expect(sendOptions.modelExecution.selectionFallback?.target).toEqual(ORDINARY_MODEL_SELECTION);
-    // 凭据已冻结进本轮，暂存副本立即销毁，避免同一张卡被后续队列项复用。
+    // Credentials are frozen into this turn; the staged copy is destroyed immediately so later queue items cannot reuse the same card.
     expect(deleteQueuedTurnExecution).toHaveBeenCalledWith("s1", "source-command-q1");
   });
 
@@ -454,7 +456,7 @@ describe("v4 原生 sendQueuedNow", () => {
         }),
       }),
     );
-    // 补供材料优先于内存暂存：这里 CLI 暂存为空，必须用命令带来的新 JWT 才不会降级。
+    // Supplied material takes priority over the in-memory staging: with the CLI staging empty here, only the new JWT carried by the command avoids downgrade.
     const sendOptions = app.sendInput.mock.calls[0]?.[1];
     await expect(
       sendOptions.modelExecution.requestDependencies.requestAuth.source.resolve(),
@@ -495,7 +497,7 @@ describe("v4 原生 sendQueuedNow", () => {
     const sendOptions = app.sendInput.mock.calls[0]?.[1];
     expect(sendOptions?.modelExecution).toBeUndefined();
     expect(sendOptions?.intent?.highspeed).toBeUndefined();
-    // 队列项是发送时快照；降级不得回看之后可能已变化的 Session 模型。
+    // A queue item is a send-time snapshot; the downgrade must not look back at the Session model, which may have changed since.
     expect(sendOptions?.intent?.modelSelection).toEqual(ORDINARY_MODEL_SELECTION);
     expect(sendOptions?.intent?.modelSelection).not.toEqual(sessionSelection);
     expect(deleteQueuedTurnExecution).toHaveBeenCalledWith("s1", "source-command-q1");
@@ -610,7 +612,7 @@ describe("v4 原生 sendQueuedNow", () => {
 
     await new V4CommandExecutor(host).execute(envelope("sendQueuedNow", { queueItemId: "q-1" }));
 
-    // Core admission 完成后就移除队列项，不等待后台 turn 结束。
+    // The queue item is removed once Core admission completes, without waiting for the background turn to end.
     expect(app.removeQueueItem).toHaveBeenCalledWith(
       "q-1",
       expect.objectContaining({ reason: "promoted", reservationId: "cmd-q1" }),
@@ -696,41 +698,54 @@ describe("v4 原生 sendQueuedNow", () => {
     );
   });
 
-  it("compact queue item：sendQueuedNow 走手动 compact path，不作为普通 prompt 重发", async () => {
-    let finishCompact!: () => void;
-    const compactGate = new Promise<Record<string, never>>((resolve) => {
-      finishCompact = () => resolve({});
-    });
-    const app = makeApp({ submitPrompt: vi.fn().mockReturnValue(compactGate) });
-    const record = makeRecord({ app });
-    const host = makeHost(record, {
-      getQueueItem: vi.fn().mockReturnValue(
-        queueItem({
-          queueItemId: "q-compact",
-          sourceCommandId: "source-compact",
-          kind: "compact",
-          text: "/compact",
-          attachments: [],
+  it.each([false, true])(
+    "compact queue item：提升保留原选择，autoDrain=%s",
+    async (autoDrainPromotion) => {
+      let finishCompact!: () => void;
+      const compactGate = new Promise<Record<string, never>>((resolve) => {
+        finishCompact = () => resolve({});
+      });
+      const app = makeApp({ submitPrompt: vi.fn().mockReturnValue(compactGate) });
+      const record = makeRecord({ app });
+      const host = makeHost(record, {
+        getQueueItem: vi.fn().mockReturnValue(
+          queueItem({
+            queueItemId: "q-compact",
+            sourceCommandId: "source-compact",
+            kind: "compact",
+            text: "/compact",
+            attachments: [],
+          }),
+        ),
+        recordPersistentCommandFact: vi.fn().mockResolvedValue(undefined),
+      });
+      await new V4CommandExecutor(host).execute(
+        Object.assign(envelope("sendQueuedNow", { queueItemId: "q-compact" }), {
+          __v4ExecutionContext: autoDrainPromotion ? { autoDrainPromotion: true } : undefined,
         }),
-      ),
-      recordPersistentCommandFact: vi.fn().mockResolvedValue(undefined),
-    });
-    await new V4CommandExecutor(host).execute(
-      envelope("sendQueuedNow", { queueItemId: "q-compact" }),
-    );
-    expect(app.submitPrompt).toHaveBeenCalledWith(
-      "/compact",
-      expect.objectContaining({ inputId: "source-compact" }),
-    );
-    expect(app.sendInput).not.toHaveBeenCalled();
-    expect(app.removeQueueItem).toHaveBeenCalledWith(
-      "q-compact",
-      expect.objectContaining({ reason: "promoted", reservationId: "cmd-q1" }),
-    );
-    expect(host.legacyMutations).toContain("queue_compact_promoted");
-    finishCompact();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+      );
+      expect(app.submitPrompt).toHaveBeenCalledWith(
+        "/compact",
+        expect.objectContaining({
+          inputId: "source-compact",
+          intent: expect.objectContaining({
+            sourceCommandId: "source-compact",
+            queueItemId: "q-compact",
+            admissionSeq: 7,
+            modelSelection: queueItem().modelSelection,
+          }),
+        }),
+      );
+      expect(app.sendInput).not.toHaveBeenCalled();
+      expect(app.removeQueueItem).toHaveBeenCalledWith(
+        "q-compact",
+        expect.objectContaining({ reason: "promoted", reservationId: "cmd-q1" }),
+      );
+      expect(host.legacyMutations).toContain("queue_compact_promoted");
+      finishCompact();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    },
+  );
 
   it("运行中会话：stop（只 abort 不 await）→ 轮询等 finally 释放锁 → 重发", async () => {
     const calls: string[] = [];
@@ -746,7 +761,7 @@ describe("v4 原生 sendQueuedNow", () => {
       }),
     });
     const controller = new AbortController();
-    // 模拟后台 turn 的 finally：收到 abort 后延迟 60ms（>1 个轮询间隔）才释放锁。
+    // Simulates a background turn's finally: after receiving the abort it waits 60ms (>1 polling interval) before releasing the lock.
     controller.signal.addEventListener("abort", () => {
       calls.push("abort");
       setTimeout(() => {
@@ -758,7 +773,7 @@ describe("v4 原生 sendQueuedNow", () => {
     await new V4CommandExecutor(makeHost(record)).execute(
       envelope("sendQueuedNow", { queueItemId: "q-1" }),
     );
-    // 关键顺序：abort → 锁释放 → 才重发（否则撞 "A prompt is already running"）。
+    // Critical order: abort → lock released → only then re-send (otherwise it hits "A prompt is already running").
     expect(calls).toEqual(["abort", "release", "resend"]);
     expect(app.sendInput).toHaveBeenCalledWith(
       expect.objectContaining({ text: "排队原文" }),
@@ -766,14 +781,52 @@ describe("v4 原生 sendQueuedNow", () => {
     );
   });
 
+  it("automation queue 提升时回放可信身份，并在该 turn 结束后清理", async () => {
+    const completion = deferred<unknown>();
+    const app = makeApp({
+      sendInput: vi.fn().mockImplementation(async (_input, options) => {
+        options?.onTurnStartedObserved?.({
+          id: "event-automation-queue-turn-started",
+          type: SessionEventType.TurnStarted,
+          payload: { messageId: "msg-automation-queue-turn-started" },
+        });
+        return {
+          completion: completion.promise,
+          kind: "started_turn",
+          turnId: "turn-automation-queued",
+        };
+      }),
+    });
+    const record = makeRecord({ app });
+    const item = queueItem({ attachments: [], automationId: "automation-queued" });
+
+    await new V4CommandExecutor(makeHost(record, { getQueueItem: () => item })).execute(
+      envelope("sendQueuedNow", { queueItemId: item.queueItemId }),
+    );
+
+    expect(app.sendInput).toHaveBeenCalledWith(
+      expect.objectContaining({ text: item.text }),
+      expect.objectContaining({
+        automationId: "automation-queued",
+        inputId: item.sourceCommandId,
+        requireIdle: true,
+      }),
+    );
+    expect(record.activeAutomationId).toBe("automation-queued");
+
+    completion.resolve({});
+    await flushDetachedWork();
+    expect(record.activeAutomationId).toBeUndefined();
+  });
+
+  // When a manual promote actually preempts the old execution, the tapped text is likewise an ordinary user message, same as auto drain.
   it.each([
-    { stopKind: "stopped", withAttachment: false, autoDrain: false, expected: "user_steer" },
-    { stopKind: "idle", withAttachment: false, autoDrain: false, expected: undefined },
-    { stopKind: "stopped", withAttachment: true, autoDrain: false, expected: undefined },
-    { stopKind: "stopped", withAttachment: false, autoDrain: true, expected: undefined },
+    { stopKind: "stopped", withAttachment: false, autoDrain: false },
+    { stopKind: "idle", withAttachment: false, autoDrain: false },
+    { stopKind: "stopped", withAttachment: false, autoDrain: true },
   ])(
-    "队列立即发送 human 提示：$stopKind / attachment=$withAttachment / auto=$autoDrain",
-    async ({ stopKind, withAttachment, autoDrain, expected }) => {
+    "队列立即发送仍是普通用户输入：$stopKind / attachment=$withAttachment / auto=$autoDrain",
+    async ({ stopKind, withAttachment, autoDrain }) => {
       const stopActiveForegroundExecution = vi
         .fn()
         .mockReturnValue(
@@ -793,7 +846,7 @@ describe("v4 原生 sendQueuedNow", () => {
       expect(app.sendInput).toHaveBeenCalledTimes(1);
       const [input, options] = app.sendInput.mock.calls[0]!;
       expect(input.text).toBe(item.text);
-      expect(options.inputPresentation).toBe(expected);
+      expect(options).not.toHaveProperty("inputPresentation");
       expect(options).toMatchObject({
         inputId: item.sourceCommandId,
         requireIdle: true,
@@ -1118,9 +1171,10 @@ describe("v4 原生 sendQueuedNow", () => {
         stopActiveForegroundExecution,
       },
       sendInput: vi.fn().mockImplementation(async (_input, options) => {
-        // Bug 原因：model-only notification turn 只登记在 Core foreground authority，
-        // Bootstrap 没有 activeAbortController。真实 input facade 在旧 foreground 未停止时
-        // 会把同一 queue item 当 steer 接收，因而不会提交 TurnStarted authority。
+        // Bug cause: a model-only notification turn is registered only in Core foreground
+        // authority, and Bootstrap has no activeAbortController. The real input facade, with the
+        // old foreground still running, receives the same queue item as a steer and therefore
+        // never commits a TurnStarted authority.
         if (activeForegroundExecutionId !== undefined) {
           calls.push("steer-old-notification");
           return {};
@@ -1233,7 +1287,7 @@ describe("v4 原生 sendQueuedNow", () => {
       },
       markQueueItemPromoting: vi.fn().mockImplementation(async () => {
         calls.push("queue-item-promoting");
-        // 复现 runtime command drain 在 stop/wait 与 startPromptTurn 之间取得调度权。
+        // Reproduces the runtime command drain gaining scheduling between stop/wait and startPromptTurn.
         queueMicrotask(() => {
           if (
             activeForegroundExecutionId === undefined &&
@@ -1297,7 +1351,7 @@ describe("v4 原生 sendQueuedNow", () => {
       runtime: { stopActiveForegroundExecution },
     });
     const controller = new AbortController();
-    // 不挂 abort 监听：模拟 turn 卡死，finally 永不释放锁。
+    // No abort listener attached: simulates a hung turn whose finally never releases the lock.
     const record = makeRecord({ app, activeAbortController: controller });
     const pending = new V4CommandExecutor(makeHost(record)).execute(
       envelope("sendQueuedNow", { queueItemId: "q-1" }),

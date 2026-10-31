@@ -4,7 +4,7 @@
  */
 
 import type { SettingsDirectoryLocation } from "./settings-source.js";
-import type { McpServerFailureKind } from "./zcode-protocol/index.js";
+import type { McpServerFailureKind, WorkspaceMcpTrustReview } from "./zcode-protocol/index.js";
 
 // CUA official plugin identity constants (ported from feat; shared by the UI Settings panel and bootstrap to prevent literal drift).
 export const ZCODE_CUA_OFFICIAL_PLUGIN_ID = "computer-use@zcode-plugins-official";
@@ -33,6 +33,7 @@ export interface McpServerConfig {
   command?: string; // stdio server command
   args?: string[]; // stdio server arguments
   env?: Record<string, string>; // stdio server environment variables
+  environment?: Record<string, string>; // Import-config compatibility; unified into env at execution
   headers?: Record<string, string>; // HTTP/SSE server request headers
   http_headers?: Record<string, string>; // Legacy compatibility field; older BigModel MCP configs put authentication headers here.
   oauth?: McpOAuthConfig; // HTTP/SSE OAuth machine credential configuration
@@ -53,7 +54,13 @@ export interface McpServerConfig {
   [key: string]: any;
 }
 
-export type McpServerStatus = "connected" | "disconnected" | "error" | "connecting" | "unknown";
+export type McpServerStatus =
+  | "connected"
+  | "disconnected"
+  | "error"
+  | "connecting"
+  | "unknown"
+  | "untrusted";
 
 export interface CliMcpConfig {
   mcpServers: Record<string, McpServerConfig>;
@@ -132,6 +139,7 @@ export interface ZCodeMcpServer {
   failureKind?: McpServerFailureKind;
   serverRequestId?: string;
   toolCount?: number;
+  workspaceTrust?: WorkspaceMcpTrustReview;
   authorization?: {
     type: "oauth_authorization_code";
     authorizationUrl: string;
@@ -173,12 +181,13 @@ export interface McpTestResult {
   response_time?: number;
 }
 
-export type ZCodeAgentMcpServer =
+export type ZCodeAgentMcpServer = { scope?: "user" | "workspace" } & (
   | {
       name: string;
       command: string;
       args: string[];
       env: Array<{ name: string; value: string }>;
+      cwd?: string;
       alwaysLoad?: boolean;
       isolation?: "session" | "workspace";
       protocolVersion?: "legacy" | "auto" | "2026-07-28";
@@ -194,7 +203,8 @@ export type ZCodeAgentMcpServer =
       headers: Array<{ name: string; value: string }>;
       oauth?: McpOAuthConfig;
       timeoutMs?: number;
-    };
+    }
+);
 
 export interface McpClientCredentialsOAuthConfig {
   type: "client_credentials";
@@ -271,9 +281,29 @@ export function isZCodeCuaMcpPackageArg(value: string): boolean {
   return matchesZCodeCuaSpec(value) || matchesZCodeCuaSpec(zcodeCuaArgLeaf(value));
 }
 
+/** Review summaries and the Host DTO share Windows command normalization, so approving
+ *  cmd /c and then running npx is not wrongly rejected. */
+export function normalizeMcpStdioCommand(command: string, args: string[] = []) {
+  const isWin32 =
+    (typeof process !== "undefined" && process.platform === "win32") ||
+    (typeof navigator !== "undefined" && /win/i.test(navigator.platform));
+  const lowerCmd = command.toLowerCase();
+  const unwrappedCommand = args[1];
+  if (
+    isWin32 &&
+    (lowerCmd === "cmd" || lowerCmd === "cmd.exe") &&
+    args[0] === "/c" &&
+    unwrappedCommand
+  ) {
+    return { command: unwrappedCommand, args: args.slice(2) };
+  }
+  return { command, args };
+}
+
 export function convertToZCodeAgentMcpServer(
   name: string,
   config: McpServerConfig,
+  scope?: "user" | "workspace",
 ): ZCodeAgentMcpServer | null {
   let inferredType = config.type;
   if (!inferredType) {
@@ -286,36 +316,28 @@ export function convertToZCodeAgentMcpServer(
     // On Windows, the agent usually starts subprocesses with shell: true.
     // "cmd /c npx ..." then gets wrapped twice as "cmd.exe /c cmd /c npx ...", causing connection failures.
     // Remove the cmd /c wrapper here and use the inner command directly.
-    let command = config.command;
-    let args = config.args || [];
-    // Detect the platform automatically: use process.platform in Node.js and navigator.platform in browsers.
-    const isWin32 =
-      (typeof process !== "undefined" && process.platform === "win32") ||
-      (typeof navigator !== "undefined" && /win/i.test(navigator.platform));
-    if (isWin32) {
-      const lowerCmd = command.toLowerCase();
-      const unwrappedCommand = args[1];
-      if ((lowerCmd === "cmd" || lowerCmd === "cmd.exe") && args[0] === "/c" && unwrappedCommand) {
-        // With noUncheckedIndexedAccess, args[1] remains string | undefined even after checking length.
-        // Read it explicitly and check for emptiness to narrow the type and avoid passing an empty command to the ZCode Agent.
-        command = unwrappedCommand;
-        args = args.slice(2);
-      }
-    }
+    const { command, args } = normalizeMcpStdioCommand(config.command, config.args);
+    // File parsing supports environment; the DTO must not drop it, or review and the actual env
+    // would differ.
+    const env = config.env ?? config.environment;
     return {
       name,
+      ...(scope ? { scope } : {}),
       command,
       args,
-      env: config.env
-        ? Object.entries(config.env).map(([key, value]) => ({
+      ...(typeof config.cwd === "string" ? { cwd: config.cwd } : {}),
+      env: env
+        ? Object.entries(env).map(([key, value]) => ({
             name: key,
             value,
           }))
         : [],
-      // 修复原因：DTO 逐字段重建曾丢失 alwaysLoad；仅透传布尔值，保留显式 false。
+      // Fix rationale: the DTO's field-by-field rebuild once dropped alwaysLoad; pass the
+      // boolean through only, preserving an explicit false.
       ...(typeof config.alwaysLoad === "boolean" ? { alwaysLoad: config.alwaysLoad } : {}),
-      // MCP 设置页会把 timeoutMs 写入 config；session/create 走协议 DTO 时
-      // 只能透传正整数，否则 strict protocol schema 会把存量非法配置从“忽略”变成“创建失败”。
+      // The MCP settings page writes timeoutMs into the config; session/create over the
+      // protocol DTO may pass through positive integers only, or the strict protocol schema
+      // would turn existing invalid config from "ignored" into "creation failed".
       ...(isValidMcpTimeoutMs(config.timeoutMs) ? { timeoutMs: config.timeoutMs } : {}),
       ...(isMcpIsolation(config.isolation) ? { isolation: config.isolation } : {}),
       ...(isMcpProtocolVersion(config.protocolVersion)
@@ -327,6 +349,7 @@ export function convertToZCodeAgentMcpServer(
     const headers = getMcpServerRequestHeaders(config);
     return {
       name,
+      ...(scope ? { scope } : {}),
       type: normalizedType,
       url: config.url,
       headers: headers
@@ -336,9 +359,11 @@ export function convertToZCodeAgentMcpServer(
           }))
         : [],
       ...(isValidMcpOAuthConfig(config.oauth) ? { oauth: config.oauth } : {}),
-      // HTTP/SSE 与 stdio 使用相同规则，避免配置在进入 Agent 前丢失。
+      // HTTP/SSE follows the same rules as stdio so config is not lost before reaching the
+      // Agent.
       ...(typeof config.alwaysLoad === "boolean" ? { alwaysLoad: config.alwaysLoad } : {}),
-      // HTTP/SSE MCP 与 stdio 一样需要保留超时配置，避免 UI 保存后真实 session 丢字段。
+      // HTTP/SSE MCP needs to keep the timeout config just like stdio, so the real session
+      // does not lose the field after the UI saves.
       ...(isValidMcpTimeoutMs(config.timeoutMs) ? { timeoutMs: config.timeoutMs } : {}),
       ...(isMcpIsolation(config.isolation) ? { isolation: config.isolation } : {}),
       ...(isMcpProtocolVersion(config.protocolVersion)
@@ -389,4 +414,12 @@ function isValidMcpOAuthConfig(value: unknown): value is McpOAuthConfig {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export interface WorkspaceMcpTrustDecision {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  serverName: string;
+  declarationDigest: string;
+  trusted: boolean;
 }

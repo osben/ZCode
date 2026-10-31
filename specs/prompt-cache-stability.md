@@ -40,10 +40,10 @@ date change) and the conversation itself — is the volatile tail and is exempt.
 ```
 [0] system   CLI prefix                                  (no cacheControl)
 [1] system   stable body (identity)                      (cacheControl: ephemeral)
-[2] system   dynamic block (behavior, env, model line,
-              output style, context management, git)      (cacheControl: ephemeral)
-[3] meta-user skills_listing
-[4] meta-user context_prefix (AGENTS.md + current date)
+[2] system   dynamic block (behavior, execution-worktree notice,
+              session guidance, memory, context management)  (cacheControl: ephemeral)
+[3] meta-user runtime announcements: environment, model, skills_listing,
+              context_prefix (AGENTS.md), session_context (git), date
 [5] agent-listing reminder (initial listing on the first request; persisted — later agent-listing
     deltas join the tail, never the prefix)
 [k] first user conversation message ("conversation" begins here)
@@ -62,8 +62,11 @@ attachments, never spliced into the prefix.
 **R4 — volatile inputs are snapshotted at session start.** Environment info, git status, current
 date, user/project instructions, the memory index, and the skills listing are captured once by
 `ensureContextInitialized` (`core/src/runtime/methods/context.ts:41-96`) and reused verbatim for
-every later prefix rebuild. A day rollover does **not** touch the prefix: the new date arrives as
-a `date_change` tail reminder (`turn.ts:1233-1246`), driven by the runtime's injected `now`.
+every later prefix rebuild. Environment and model facts reach the model only as runtime
+announcements (`context-refresh.ts`), persisted once and never re-rendered into the system blocks.
+The date comes from the runtime's injected `now`: the first request announces it inside the prefix,
+and a day rollover does **not** touch the prefix — the new date arrives as a `date_change` tail
+reminder (`turn.ts:1233-1246`).
 
 **R5 — the tool set is frozen unless allowed.** Tools are not added, removed, or reordered
 mid-session except via the allowed-change list. Async capability probes must settle **before the
@@ -73,7 +76,7 @@ first model request** so late registration cannot mutate the tools array between
 
 | Change                              | Effect on the prefix                                                                                                                                                                           |
 | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/model` switch (Session Selection) | Only the dynamic block changes (`[2]`): the "You are powered by the model named …" line. `[0]` and `[1]` are unchanged.                                                                        |
+| `/model` switch (Session Selection) | No prefix change: `[0]`, `[1]`, `[2]` and the prefix announcements stay identical. The "You are powered by the model named …" line is appended to the tail as a `model` announcement.          |
 | Language change                     | System text re-rendered (translation)                                                                                                                                                          |
 | Output style change                 | Output-style section/reminder                                                                                                                                                                  |
 | `systemPromptOverrides` change      | Stable/dynamic section text                                                                                                                                                                    |
@@ -101,8 +104,9 @@ index of the first message containing `turn-one`:
 - **S2 — day rollover:** the injected `now` advances across midnight between the turns. The
   prefix stays identical; request 2's **tail** carries the `date_change` reminder; the new date
   appears nowhere in the prefix.
-- **S3 — model switch (negative control):** Session Selection changes before turn 2. System
-  messages `[0]` and `[1]` stay equal; only the dynamic block `[2]` differs.
+- **S3 — model switch (negative control):** Session Selection changes before turn 2. The whole
+  prefix stays byte-identical; the model change appears only as a `model` announcement in request
+  2's tail.
 
 ## Fixed violation: LSP late registration (R5)
 

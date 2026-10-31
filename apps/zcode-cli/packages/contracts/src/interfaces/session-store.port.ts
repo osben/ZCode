@@ -267,6 +267,15 @@ export interface ForkCommitBundle {
   };
 }
 
+/**
+ * Multiple messages of one session and their parts are written in order, all-or-nothing.
+ * Used for compaction pre-request announcements, summaries and attachments, and idle batch notifications (one message, multiple text parts).
+ */
+export interface MessageCommitBundle {
+  sessionID: SessionId;
+  messages: MessageWithParts[];
+}
+
 export interface UpdateSessionInput {
   id: SessionId;
   lastOutcome?: SessionLastOutcome;
@@ -504,7 +513,7 @@ export interface AttachmentStorageMetadata {
   storageKind?: "inline" | "artifact" | "local_ref" | "remote_ref" | "metadata_only";
   artifactUri?: string;
   originalUrl?: string;
-  /** 路径引用首次发送的完整说明；恢复时原样复用，不能用文件内容 preview 代替。 */
+  /** Full description sent when the path reference was first attached; reused verbatim on recovery — a file-content preview is not a substitute. */
   pathReferenceText?: string;
   recoverability?: "provider_ready" | "rebuildable" | "preview_only" | "metadata_only" | "missing";
   preview?: {
@@ -573,6 +582,13 @@ export interface CompactionPart {
     start?: number;
     end?: number;
   };
+  /** Not part of strict compactBoundary or the App protocol; ignored by legacy versions reading it as JSON. */
+  metadata?: CompactionPartMetadata;
+}
+
+export interface CompactionPartMetadata {
+  /** Pre-request announcement before the summary; cold recovery puts it back before the summary, and slicing the preserved tail after it skips it. */
+  compactLeadingMessageIds?: MessageId[];
 }
 
 export type TimelinePartDisplay = "separator" | "worklog";
@@ -837,6 +853,8 @@ export const SESSION_ENTRY_WORKSPACE_FILE_REWIND = "runtime/workspace_file_rewin
 /** Dynamic-workflow tools have been activated in this session (docs/dynamic-workflow/launch.md, “On demand: activation”). */
 export const SESSION_ENTRY_DYNAMIC_WORKFLOW_ACTIVATION =
   "runtime/dynamic_workflow_activation" as const;
+/** Capability labels used by this session (docs/design/v2/model/session-features-header.md). */
+export const SESSION_ENTRY_SESSION_FEATURES = "runtime/session_features" as const;
 
 export const SESSION_ENTRY_TYPES = [
   SESSION_ENTRY_TARGET_COMPLETION_VERIFICATION,
@@ -847,6 +865,7 @@ export const SESSION_ENTRY_TYPES = [
   SESSION_ENTRY_WORKSPACE_CHECKPOINT,
   SESSION_ENTRY_WORKSPACE_FILE_REWIND,
   SESSION_ENTRY_DYNAMIC_WORKFLOW_ACTIVATION,
+  SESSION_ENTRY_SESSION_FEATURES,
 ] as const;
 
 export type SessionEntryType = (typeof SESSION_ENTRY_TYPES)[number];
@@ -1236,10 +1255,18 @@ export interface SessionStorePort {
   /** Only transaction entry point for V4 stable / compact-edit forks. Legacy workspace forks do not call it. */
   commitForkBundle?(bundle: ForkCommitBundle): Promise<SessionInfo>;
   commitSharedContextImportBundle?(bundle: SharedContextImportCommitBundle): Promise<SessionInfo>;
+  /** The single transactional entry for a group of messages; without it the caller writes one by one. */
+  commitMessageBundle?(bundle: MessageCommitBundle): Promise<void>;
   transitionSharedContextImport?(input: SharedContextImportTransition): Promise<boolean>;
   updateSession(input: UpdateSessionInput): Promise<SessionInfo>;
-  /** 只写一次删除时间；正文保留，普通列表永不返回软删除行。 */
+  /** Writes the deletion timestamp once; the body is kept and normal listings never return soft-deleted rows. */
   softDeleteSession?(sessionID: SessionId, timeDeleted?: number): Promise<void>;
+  /** Each root session → the root itself plus owned descendants (subagent / workflow / side Q&A, forks excluded); missing roots map to an empty array. */
+  listOwnedSessionTrees?(sessionIDs: SessionId[]): Promise<Map<SessionId, SessionId[]>>;
+  /** Each target session → other undeleted sessions whose parts still reference its artifacts (`zcode-artifact://<target>/…`); targets with no referrers are absent. */
+  listArtifactReferrers?(sessionIDs: SessionId[]): Promise<Map<SessionId, SessionId[]>>;
+  /** Fully deletes all rows of a session and its owned descendants; used only for user-confirmed "delete data", and sessions that no longer exist are a no-op. */
+  purgeSessions?(sessionIDs: SessionId[]): Promise<void>;
   getSession(sessionID: SessionId): Promise<SessionInfo | null>;
   listSessions(input?: ListSessionsInput): Promise<SessionInfo[]>;
   /**

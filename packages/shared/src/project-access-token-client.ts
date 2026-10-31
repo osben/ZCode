@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { projectTokenSuccessCodeSchema } from "./project-access-token-response.js";
 import { API_KEY_USAGE_SCENE } from "./api-key-usage-scene.js";
-import { ProjectAccessTokenCache, ProjectAccessTokenError } from "./project-access-token.js";
+import {
+  ProjectAccessTokenCache,
+  ProjectAccessTokenError,
+  ProjectAccessTokenHttpStatusError,
+  projectAccessTokenRequestFailureCode,
+  ProjectAccessTokenTransientError,
+} from "./project-access-token.js";
 import { ZCODE_VERSION } from "./version.js";
 import { isCredentialDecryptError } from "./oauth.js";
 
@@ -146,17 +152,17 @@ export class ProjectAccessTokenClient {
           try {
             saved = await this.options.locationStore?.load(storageKey);
           } catch (error) {
-            // 异常分支也必须先校验代次；clear 后的迟到失败不得触发恢复副作用。
+            // The exception path must also validate the generation first; a late failure after clear must not trigger recovery side effects.
             assertCurrent();
             if (!isCredentialDecryptError(error) || !this.options.locationStore?.recoverUnreadable)
               throw error;
-            // 恢复端口本身可能发生 IO 错误；先保留固定诊断，避免外层错误归一后丢失解密线索。
+            // The recovery port itself can hit IO errors; keep the fixed diagnostics first so error normalization does not lose the decryption clue.
             this.options.observe?.({
               family: input.family,
               stage: "resolve",
               code: "project_token_location_unreadable",
             });
-            // 位置是可重建缓存，不是登录事实。恢复端口在共享锁内重读并仅删除仍坏的记录。
+            // Locations are a rebuildable cache, not login facts. The recovery port re-reads inside the shared lock and deletes only records still broken.
             saved = await this.options.locationStore.recoverUnreadable(storageKey, assertCurrent);
             assertCurrent();
             this.options.observe?.({
@@ -229,19 +235,24 @@ export class ProjectAccessTokenClient {
       if (!value.enabled) throw new Error("project_token_disabled");
       return { token: value.token, ...location };
     } catch (error) {
-      // Upstream error bodies or network exceptions may carry credentials; propagate only fixed
-      // error codes, keeping no original cause/message.
+      // Upstream error bodies or network exceptions may carry credentials; propagate only the
+      // fixed error code, keeping neither the original cause nor message. Request failures the
+      // adapter already classified structurally project by category; other unknown exceptions
+      // still map to request_failed.
       const code =
         error instanceof ProjectAccessTokenError
           ? error.code
-          : error instanceof Error &&
-              [
-                "project_token_disabled",
-                "project_token_project_unavailable",
-                "project_token_invalid_response",
-              ].includes(error.message)
-            ? error.message
-            : "project_token_request_failed";
+          : error instanceof ProjectAccessTokenTransientError ||
+              error instanceof ProjectAccessTokenHttpStatusError
+            ? projectAccessTokenRequestFailureCode(error.failure)
+            : error instanceof Error &&
+                [
+                  "project_token_disabled",
+                  "project_token_project_unavailable",
+                  "project_token_invalid_response",
+                ].includes(error.message)
+              ? error.message
+              : "project_token_request_failed";
       this.options.observe?.({ family: input.family, stage: "resolve", code });
       throw new Error(code);
     }
@@ -253,7 +264,7 @@ export class ProjectAccessTokenClient {
     loginToken: string,
     request: (url: string, init: RequestInit) => Promise<unknown>,
   ): Promise<KeyLocation> {
-    // customerInfo 要求裸业务 token；Bearer 格式拒绝会被误判为登录失效。
+    // customerInfo requires the bare business token; a Bearer-format rejection would be misread as signed-out.
     const headers = {
       Authorization: loginToken,
       "Content-Type": "application/json",

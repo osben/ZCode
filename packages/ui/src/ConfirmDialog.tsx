@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CodeBlock, CodeBlockHeader } from "@/components/ai-elements/code-block.js";
+import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
+import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
+import { resolveTheme, type Theme } from "@/useTheme.js";
 import { Checkbox } from "@/components/ui/checkbox.js";
 import { XIcon, TriangleAlertIcon, FolderIcon, SquareTerminalIcon, GlobeIcon } from "lucide-react";
 import {
@@ -36,6 +40,11 @@ const CONFIRM_DIALOG_OWN_ENTER_SELECTOR =
 
 export function ConfirmDialogHost() {
   const { intl } = useZCodeIntl();
+  const theme = useZCodeStoreWithDefault<Theme>((state) => state.theme, "system");
+  const codeSettings = useZCodeStoreWithDefault(
+    (state) => state.codePreviewSettings,
+    DEFAULT_CODE_PREVIEW_SETTINGS,
+  );
   const pendingRequest = useConfirmDialogStore((state) => state.pendingRequest);
   const settleConfirmation = useConfirmDialogStore((state) => state.settleConfirmation);
 
@@ -96,9 +105,9 @@ export function ConfirmDialogHost() {
         return;
       }
 
-      // Keep the keyboard semantics of focused controls inside the dialog, so Enter on a checkbox,
-      // button, or text field does not confirm the dialog (ui-accidental-action-guards #1).
+      // Checkboxes and code actions keep the keyboard semantics of their buttons, so Enter while copying JSON does not also submit the trust confirmation.
       if (
+        (displayedRequest?.checkbox || displayedRequest?.codeBlock) &&
         event.target instanceof HTMLElement &&
         event.target.closest(CONFIRM_DIALOG_OWN_ENTER_SELECTOR)
       )
@@ -242,9 +251,11 @@ export function ConfirmDialogHost() {
           // 同一删除确认框看起来尺寸不一致。定时任务删除按设计固定同一 presentation。
           isAutomationConfirmation ? AUTOMATION_CONFIRM_DIALOG_CONTENT_CLASS : "sm:max-w-md",
           displayedRequest?.compact && "top-[44%] min-h-[161px] gap-4 sm:max-w-[400px]",
+          displayedRequest?.codeBlock &&
+            "max-h-[calc(100dvh-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-2xl",
         )}
       >
-        <DialogHeader className="gap-2">
+        <DialogHeader className="min-w-0 gap-2">
           <DialogTitle className="text-ui-lg font-semibold text-foreground">
             {displayedRequest?.title}
           </DialogTitle>
@@ -253,12 +264,35 @@ export function ConfirmDialogHost() {
               className={cn(
                 "whitespace-pre-line pt-0.5 text-ui-base leading-6 text-foreground-subtle",
                 isAutomationConfirmation && AUTOMATION_CONFIRM_DIALOG_DESCRIPTION_CLASS,
+                displayedRequest.scrollableDescription &&
+                  "max-h-96 overflow-y-auto overscroll-contain break-words",
+                displayedRequest.codeBlock && "max-h-32",
               )}
             >
               {displayedRequest.description}
             </DialogDescription>
           ) : null}
         </DialogHeader>
+        {displayedRequest?.codeBlock ? (
+          <CodeBlock
+            {...displayedRequest.codeBlock}
+            data-testid="confirm-dialog-code"
+            theme={
+              resolveTheme(theme) === "dark" ? codeSettings.darkTheme : codeSettings.lightTheme
+            }
+            fontSizePx={codeSettings.fontSizePx}
+            showLineNumbers
+            wrapLongLines
+            className="flex min-h-0 min-w-0 flex-col border border-border bg-card"
+            contentClassName="min-h-0 overflow-auto overscroll-contain"
+          >
+            <CodeBlockHeader
+              language={displayedRequest.codeBlock.language}
+              showWrapButton={false}
+              className="shrink-0 px-3 pt-2"
+            />
+          </CodeBlock>
+        ) : null}
         <DialogFooter
           className={cn(
             "gap-2 sm:justify-end",

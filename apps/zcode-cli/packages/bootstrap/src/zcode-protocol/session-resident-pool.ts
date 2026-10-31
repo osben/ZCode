@@ -96,22 +96,17 @@ export class SessionResidentPool {
    * across sessions from racing with sampler reclamation; per-session counts express exact ownership
    * and participate in that session's eligibility.
    */
-  async acquireOperation(
-    sessionIdsInput?: string | readonly string[],
-  ): Promise<() => void> {
+  async acquireOperation(sessionIdsInput?: string | readonly string[]): Promise<() => void> {
     const sessionIds = [
       ...new Set(
-        (typeof sessionIdsInput === "string" ? [sessionIdsInput] : sessionIdsInput ?? []).filter(
+        (typeof sessionIdsInput === "string" ? [sessionIdsInput] : (sessionIdsInput ?? [])).filter(
           (sessionId) => sessionId.length > 0,
         ),
       ),
     ];
     this.activeOperationCount += 1;
     for (const sessionId of sessionIds) {
-      this.operationLeaseCounts.set(
-        sessionId,
-        (this.operationLeaseCounts.get(sessionId) ?? 0) + 1,
-      );
+      this.operationLeaseCounts.set(sessionId, (this.operationLeaseCounts.get(sessionId) ?? 0) + 1);
     }
 
     let released = false;
@@ -230,6 +225,10 @@ export class SessionResidentPool {
 
   waitForDeactivation(sessionId: string): Promise<void> {
     return this.inFlightDeactivations.get(sessionId) ?? Promise.resolve();
+  }
+
+  operationCount(sessionId: string): number {
+    return this.operationLeaseCounts.get(sessionId) ?? 0;
   }
 
   private isEligible(sessionId: string, facts: SessionResidencyFacts): boolean {

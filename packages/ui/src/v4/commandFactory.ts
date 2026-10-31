@@ -59,6 +59,16 @@ export function createCommandEnvelope<T extends CommandType>(
   if (ROW_TARGETING_COMMANDS.has(input.type) && !input.baseLogEpoch) {
     throw new Error(`command ${input.type} 是 row target 命令，必须携带 baseLogEpoch`);
   }
+  // Session ID resumes as UUID v4; assign it when the envelope is first constructed so retries do not regenerate it and reserve another task.
+  const payload =
+    input.type === "createSession"
+      ? {
+          ...input.payload,
+          sessionId:
+            (input.payload as CommandPayloadMap["createSession"]).sessionId ??
+            `sess_${crypto.randomUUID()}`,
+        }
+      : input.payload;
   return {
     commandId: uuidv7(),
     clientId: getV4ClientId(),
@@ -66,7 +76,7 @@ export function createCommandEnvelope<T extends CommandType>(
     ...(input.baseRevision !== undefined ? { baseRevision: input.baseRevision } : {}),
     ...(input.baseLogEpoch ? { baseLogEpoch: input.baseLogEpoch } : {}),
     type: input.type,
-    payload: input.payload,
+    payload,
     issuedAt: Date.now(),
   };
 }

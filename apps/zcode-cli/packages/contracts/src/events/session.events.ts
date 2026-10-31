@@ -1,6 +1,6 @@
 import type { ExecutionOutputPreview } from "../interfaces/execution.port.js";
 import type { RuntimeInputPresentation } from "../interfaces/runtime-input-presentation.js";
-/* eslint-disable max-lines -- session event 契约集中在单文件导出，避免 app/agent 协议类型分散后漂移。 */
+/* eslint-disable max-lines -- session event contracts are exported from one file so app/agent protocol types do not drift apart. */
 // ============================================================
 // Session Events - All event types for the agent loop
 // ============================================================
@@ -98,20 +98,20 @@ export const SessionEventType = {
   TurnStarted: "turn_started",
   TurnInputReceived: "turn_input_received",
   TurnSteerQueued: "turn_steer_queued",
-  // guide 未遇到可用 tool batch 即收口时，原 intent 原地改投普通 queue。
+  // When guide closes without meeting a usable tool batch, the original intent re-routes in place to the ordinary queue.
   TurnSteerDeliveryChanged: "turn_steer_delivery_changed",
-  // sendQueuedNow 原子提升：reservation/promoting/rollback 均进入事件流，投影不本地猜测。
+  // sendQueuedNow atomic promotion: reservation/promoting/rollback all enter the event stream; projections do not guess locally.
   TurnSteerDispatchChanged: "turn_steer_dispatch_changed",
   TurnSteerDrained: "turn_steer_drained",
   TurnSteerRejected: "turn_steer_rejected",
   TurnSteerDiscarded: "turn_steer_discarded",
-  // session_input 与 user message/parts 已在同一事务 promotion；CommandInbox 可安全解除 pin。
+  // session_input and the user message/parts were promoted in the same transaction; CommandInbox may safely unpin.
   SessionInputPromoted: "session_input_promoted",
-  // v4 queue 重排：queue 项顺序变化（reducer 按 orderedPendingInputIds 重排 queue rows）。
+  // v4 queue reorder: queue item order change (the reducer reorders queue rows by orderedPendingInputIds).
   TurnSteerReordered: "turn_steer_reordered",
-  // v4 输入控制：queue autoDrain 开关（held 派生 heldQueueInputRequiresChoice 的授权位）。
+  // v4 input control: the queue autoDrain toggle (held derives heldQueueInputRequiresChoice's authorization bit).
   QueueAutoDrainChanged: "queue_auto_drain_changed",
-  // v4 输入控制：followup 路由模式（running 时 enqueue vs guide）。
+  // v4 input control: the followup routing mode (enqueue vs guide while running).
   FollowupModeChanged: "followup_mode_changed",
   TurnComplete: "turn_complete",
   TurnError: "turn_error",
@@ -120,8 +120,8 @@ export const SessionEventType = {
   AssistantFeedbackUpdated: "assistant_feedback_updated",
   RowPinnedUpdated: "row_pinned_updated",
   HighspeedMetricsUpdated: "highspeed_metrics_updated",
-  // （2026-09-12）：原 ToolWidgetStateUpdated / SessionPluginUiStateUpdated 已删除，
-  // 插件 UI widgetState 回退 renderer 内存，不再经 CLI 事件流。
+  // (2026-09-12): the former ToolWidgetStateUpdated / SessionPluginUiStateUpdated were deleted;
+  // plugin UI widgetState falls back to renderer memory and no longer flows through CLI events.
   SystemMessage: "system_message",
   ModelRequest: "model_request",
   ModelSelected: "model_selected",
@@ -148,26 +148,29 @@ export const SessionEventType = {
   BackgroundTaskStarted: "background_task_started",
   BackgroundTaskUpdated: "background_task_updated",
   BackgroundTaskCompleted: "background_task_completed",
-  // workflow run 的实时进度：一条引擎 RunEvent 一条事件，追加到**父会话**（run 自己没有会话）。
-  // v4 侧归约成 workflowRuns 状态键；v3 侧在 shouldExposeSessionEventToProtocol 剥离。
-  // 命名刻意带 dynamic_：legacy `Workflow` 工具的 script run 事件（workflow_started /
-  // workflow_completed，script-workflow-runtime.ts）是另一套日志，同名会真的混淆。
+  // Real-time progress of a workflow run: one engine RunEvent becomes one event, appended to
+  // the **parent session** (the run has no session of its own).
+  // The v4 side reduces these into the workflowRuns state key; the v3 side strips them in
+  // shouldExposeSessionEventToProtocol.
+  // The dynamic_ prefix is deliberate: the legacy `Workflow` tool's script run events
+  // (workflow_started / workflow_completed, script-workflow-runtime.ts) are a separate log, and a shared name would genuinely confuse.
   DynamicWorkflowRunProgress: "dynamic_workflow_run_progress",
   PermissionRequested: "permission_requested",
   PermissionResolved: "permission_resolved",
   PermissionDenied: "permission_denied",
-  // 插件 UI 订阅的 MCP 资源变化。只进 live 投影（v4Gateway.ingest，seq 0），不落盘、不进冷恢复。
+  // MCP resource changes subscribed by plugin UI. Live projection only (v4Gateway.ingest, seq 0); not persisted, not in cold recovery.
   PluginUiResourceUpdated: "plugin_ui_resource_updated",
   PluginUiResourceListChanged: "plugin_ui_resource_list_changed",
-  /** App-Provided Tools：模型发起的页面工具调用，只进 live 投影（实例信箱），不落盘。 */
+  /** App-Provided Tools: model-initiated page tool calls; live projection only (instance mailbox), not persisted. */
   PluginUiInstanceClosed: "plugin_ui_instance_closed",
   PluginUiAppToolCallRequested: "plugin_ui_app_tool_call_requested",
   UserInputAutoResolutionUpdated: "user_input_auto_resolution_updated",
   WorkspaceHookReviewRequested: "workspace_hook_review_requested",
   WorkspaceHookReviewSettled: "workspace_hook_review_settled",
   WorkspaceHookReviewSuperseded: "workspace_hook_review_superseded",
-  // 软门禁:准入状态变化时发射,pendingCount=0 时投影层清空 snapshot 字段。
+  // Soft gate: emitted when admission state changes; when pendingCount=0 the projection layer clears the snapshot field.
   WorkspaceHookAdmissionUpdated: "workspace_hook_admission_updated",
+  WorkspaceMcpAdmissionUpdated: "workspace_mcp_admission_updated",
   HookRunStarted: "hook_run_started",
   HookRunProgress: "hook_run_progress",
   HookRunCompleted: "hook_run_completed",
@@ -237,30 +240,31 @@ export type CompactLifecyclePayload = CompactTimelinePayload;
 export type MicrocompactBoundaryEventPayload = MicrocompactBoundaryPayload;
 
 /**
- * 附件渲染（additive）：用户输入附件的轻量展示元信息，随 TurnStarted 下发，
- * v4 投影据此填 userInput row 的 attachments。
- * 只承载展示所需字段，不含内容本体（内容经 resolve/persist 走 FilePart/artifact）。
+ * Attachment rendering (additive): lightweight display metadata for user-input attachments,
+ * delivered with TurnStarted; the v4 projection fills the userInput row's attachments from it.
+ * Carries display fields only, never the content body (content travels via resolve/persist into FilePart/artifact).
  */
 export interface TurnAttachmentMeta {
   fileName: string;
   mime: string;
   bytes: number;
-  /** 内容引用（本地路径 / artifact URI）；data URL 等无稳定引用时缺省。 */
+  /** Content reference (local path / artifact URI); absent for data URLs and other unstable references. */
   ref?: string;
 }
 
 /**
- * workflow 通知的结构化载荷。
- * 发射侧铸造、有界（summary≤500 / result≤4000 / error≤2000 / reports.preview 逐条≤500、≤8 条 /
- * artifacts ≤8 条、title≤120 / question·context≤4000）；与 shared 的
- * workflowNotificationMetaSchema 保持手工同步。
- * 批量通知轮刻意不携带——一轮一张 manifest 的对应关系在批量下不成立。
+ * Structured payload of a workflow notification.
+ * Minted on the emitter side and bounded (summary≤500 / result≤4000 / error≤2000 /
+ * reports.preview ≤500 each and ≤8 entries / artifacts ≤8 / title≤120 /
+ * question·context≤4000); kept manually in sync with shared's
+ * workflowNotificationMetaSchema.
+ * Batch notification turns deliberately omit it — the one-manifest-per-turn mapping does not hold in batches.
  */
 export type WorkflowNotificationMeta =
   | {
       kind: "terminal";
       status: "completed" | "errored" | "stopped";
-      /** `status === "stopped"` 才在场。 */
+      /** Present only when `status === "stopped"`. */
       stopReason?: "user" | "model" | "provider" | "interrupted" | "superseded";
       summary: string;
       result?: string;
@@ -269,11 +273,12 @@ export type WorkflowNotificationMeta =
       error?: string;
       reports?: { count: number; shown: number; preview: string[] };
       /**
-       * 用户面产物的 chips 载荷：≤ 8 条，
-       * 超出（含被种类过滤掉的）置 `artifactsTruncated`。
+       * Chips payload of user-facing artifacts: ≤ 8 entries;
+       * anything beyond (including those filtered out by kind) sets `artifactsTruncated`.
        *
-       * ⚠ 术语：这里的 artifact 是脚本经 `artifact.*` 发布给用户看的产出，与同一载荷上的
-       * `result`（脚本顶层返回值，引擎内部也叫 artifact）是两件不同的东西。
+       * ⚠ Terminology: artifact here is what the script publishes for the user via `artifact.*`,
+       * distinct from the `result` on the same payload (the script's top-level return value,
+       * which the engine also calls artifact).
        */
       artifacts?: {
         id: string;
@@ -281,7 +286,7 @@ export type WorkflowNotificationMeta =
         title?: string;
         version: number;
         contentType?: string;
-        /** run 的交付物；清单以它带头。只有它带 `description`（完成卡的交付物行要念）。 */
+        /** The run's deliverable; the listing leads with it. Only it carries `description` (the completion card's deliverable line reads it aloud). */
         primary?: true;
         description?: string;
       }[];
@@ -297,9 +302,11 @@ export type WorkflowNotificationMeta =
       askedAt?: number;
     }
   /**
-   * 脚本到达一处留白（docs/dynamic-workflow/transcript-and-notifications.md 的 `hole` 载荷）：
-   * 主代理欠这个 run 一段代码。`prompt` ≤4000（与升级问题同界）；`before` / `after` 是留白前后
-   * 的阶段名，`draftPath` / `line` 指向 run 草稿里的那一行。每个 `hole-reached` 恰好一条。
+   * The script reached a hole (the `hole` payload of
+   * docs/dynamic-workflow/transcript-and-notifications.md): the main agent owes this run a
+   * piece of code. `prompt` ≤4000 (same bound as escalation questions); `before` / `after` are
+   * the stage names around the hole, and `draftPath` / `line` point at that line in the run
+   * draft. Exactly one per `hole-reached`.
    */
   | {
       kind: "hole";
@@ -314,7 +321,7 @@ export type WorkflowNotificationMeta =
       after?: string;
       reachedAt?: number;
     }
-  /** run 级停滞：每个 stall 段一条，不是终态。 */
+  /** Run-level stall: one per stall segment, not a terminal state. */
   | {
       kind: "stall";
       sinceMs: number;
@@ -323,12 +330,14 @@ export type WorkflowNotificationMeta =
     };
 
 /**
- * 主代理闲着、run 还欠着决定时的提醒：每个 run 一条，带发出那一刻开着的问题数、等着的留白数与
- * 其中最久的等待。不是 run 事件——由父会话的空闲钟发出。
+ * Reminder for when the main agent is idle while a run still owes decisions: one per run,
+ * carrying the open question count, waiting hole count, and longest wait at emission time.
+ * Not a run event — emitted by the parent session's idle clock.
  *
- * 它是 originMeta 上独立的键，不是 WorkflowNotificationMeta 的成员：那个 union 在线上是闭集，多一个
- * kind 会让不认识它的客户端拒掉整帧、打不开会话；不认识的键只是被剥掉
- * （docs/dynamic-workflow/transcript-and-notifications.md「The payload」）。
+ * It is a separate key on originMeta, not a WorkflowNotificationMeta member: that union is a
+ * closed set on the wire, and an extra kind would make clients that do not know it reject the
+ * whole frame and be unable to open the session; an unknown key is merely stripped
+ * (docs/dynamic-workflow/transcript-and-notifications.md, "The payload").
  */
 export interface WorkflowBlockedMeta {
   questions: number;
@@ -336,22 +345,31 @@ export interface WorkflowBlockedMeta {
   sinceMs: number;
 }
 
-/** 独立后台结果轮的展示元信息；批量轮可复用代表任务身份并合成 title，不从通知文本反向解析。 */
+/** Background Agent terminal state; product status reads this instead of parsing notification text. error appears only on failed, same cause as in the summary. */
+export interface SubagentResultMeta {
+  status: "completed" | "failed" | "killed";
+  error?: string;
+}
+
+/** Display metadata of a standalone background-result turn; batch turns may reuse the representative task identity and synthesize a title instead of reverse-parsing notification text. */
 export interface BackgroundResultOriginMeta {
-  /** `workflow` 是 dynamic-workflow run（workId ≡ runId），复用整条后台通知管线。 */
+  /** `workflow` is a dynamic-workflow run (workId ≡ runId), reusing the whole background-notification pipeline. */
   /** `dream` is the /dream memory-consolidation completion notification. */
   backgroundSource: "bash" | "subagent" | "workflow" | "dream";
   workId: string;
   title: string;
-  /** 只在 backgroundSource === "workflow" 的单条通知轮上在场；manifest 渲染的唯一数据源。 */
+  /** Present only on a single-notification turn with backgroundSource === "workflow"; the sole data source for manifest rendering. */
   workflowNotification?: WorkflowNotificationMeta;
-  /** 空闲提醒的载荷；与 workflowNotification 至多在场一个。 */
+  /** Idle-reminder payload; at most one of it and workflowNotification is present. */
   workflowBlocked?: WorkflowBlockedMeta;
+  /** Present only on a single-notification turn with backgroundSource === "subagent"; merged turns do not carry it. */
+  subagentResult?: SubagentResultMeta;
 }
 
 /**
- * turn 是否承载真实 Agent 执行。controlOnly 只为可见控制输入建立时间线边界，
- * 不得推进 session running/activeWorks，也不应产生“工作中/已工作”状态。
+ * Whether the turn carries real Agent execution. controlOnly only establishes a timeline
+ * boundary for visible control input; it must not advance session running/activeWorks and
+ * should produce no "working/worked" state.
  */
 export type TurnExecutionKind = "agent" | "controlOnly";
 
@@ -371,23 +389,28 @@ export type TurnBackgroundAttribution =
     };
 
 /**
- * 中枢直接启动已保存工作流的启动轮元数据。同一份同时写进 user message 的 `metadata`（冷恢复来源）与 `TurnStarted`
- * payload（活投影来源）——冷热同形，投影据它画启动卡而不是显示文本。
+ * Launch-turn metadata for a hub-started saved workflow. The same copy is written into the
+ * user message's `metadata` (cold-recovery source) and the `TurnStarted` payload (live
+ * projection source) — identical shape cold and hot, letting the projection draw the launch
+ * card from it instead of display text.
  */
-/** 启动元数据上的 display 只允许 create_workflow 这一种投影（与 shared 行 schema 同形）。 */
+/** The display on launch metadata allows only the create_workflow projection (same shape as the shared row schema). */
 export type WorkflowLaunchDisplay = Extract<ToolResultDisplayPayload, { kind: "create_workflow" }>;
 
 /**
- * 设置轮（docs/dynamic-workflow/launch.md「The settings turn」）的「改了什么」：只有改动过的设置在场，
- * 每项 from / to 缺一端即那一端是默认（模型 = 会话模型，上限 = 默认并发）。`ceiling` 是默认并发 D
- * （线上键名早于「默认并发」这个概念，为兼容旧端保留），供「默认 13 → 4」这种读法。与 shared 的 `workflowSettingsAmendMetaSchema` 同形。
+ * The settings turn's (docs/dynamic-workflow/launch.md, "The settings turn") "what changed":
+ * only changed settings are present; a missing from / to end means that end is the default
+ * (model = session model, cap = default concurrency). `ceiling` is the default concurrency D
+ * (the wire key predates the "default concurrency" concept and is kept for legacy clients),
+ * supporting readings like "default 13 → 4". Same shape as shared's `workflowSettingsAmendMetaSchema`.
  */
 export interface WorkflowSettingsAmendMeta {
   /**
-   * 被这次调整替代（或接着跑）的那个 run。**缺席即就地生效**
-   * （docs/dynamic-workflow/launch.md「The settings turn」）：只改并发上界、run 又还在飞时，
-   * 那次「配置」既不停这次 run 也不另起一次，于是没有前驱可指——`runId` 指的就是被调整的那一个。
-   * 与 shared 的 `workflowSettingsAmendMetaSchema` 同形（那边记着老桌面上的偏斜）。
+   * The run this adjustment replaces (or continues). **Absent means applied in place**
+   * (docs/dynamic-workflow/launch.md, "The settings turn"): when only the concurrency cap
+   * changes and the run is still in flight, that "configure" neither stops the run nor starts
+   * another, so there is no predecessor to point at — `runId` names the adjusted run itself.
+   * Same shape as shared's `workflowSettingsAmendMetaSchema` (which records the legacy-desktop skew).
    */
   predecessorRunId?: string;
   subagentModel?: { from?: string; to?: string };
@@ -396,64 +419,75 @@ export interface WorkflowSettingsAmendMeta {
 }
 
 export interface WorkflowLaunchMeta {
-  /** run 的身份（≡ backgroundTaskId ≡ cancelBackgroundWork 的 workId）。 */
+  /** The run's identity (≡ backgroundTaskId ≡ cancelBackgroundWork's workId). */
   runId: string;
   /**
-   * 启动这次 run 的合成 toolCall id（中枢启动 `launch-<uuid>`，设置轮 `settings-<uuid>`；
-   * 工具卡 → 详情页关联键）。
+   * The synthetic toolCall id that launched this run (hub launch `launch-<uuid>`, settings
+   * turn `settings-<uuid>`; the tool-card → detail-page link key).
    */
   toolCallId: string;
   /**
-   * 工作流名（解析结果，非用户/模型可覆盖）；启动卡题名与会话标题都取它。中枢启动恒在场；设置轮取被
-   * 调整的 run 自己的名字，无名 run 即缺席（UI 换用兜底词，不拿 run id 当标题）。
+   * The workflow name (resolution result, not user/model overridable); both the launch card
+   * title and the session title use it. Always present on hub launches; on the settings turn it
+   * is the adjusted run's own name, absent for unnamed runs (the UI falls back to placeholder
+   * wording rather than using the run id as a title).
    */
   name?: string;
-  /** 解析出的实际作用域（不是请求里可能缺席的 scope）。只属于中枢启动：设置轮没有保存文件可指。 */
+  /** The resolved actual scope (not the request's possibly-absent scope). Hub launches only: the settings turn has no saved file to point to. */
   scope?: SavedWorkflowScope;
-  /** 保存文件的落点，用于详情/诊断；不参与执行。只属于中枢启动。 */
+  /** Where the saved file landed, for details/diagnostics; not part of execution. Hub launches only. */
   path?: string;
-  /** 本次 run 的实参（已按声明校验并回填默认值）；有界见 {@link boundWorkflowLaunchMeta}。 */
+  /** This run's arguments (validated against declarations with defaults filled in); bounds in {@link boundWorkflowLaunchMeta}. */
   args?: Record<string, unknown>;
-  /** 工作流说明（saved 元数据的 description），有界 ≤ 500 字符。 */
+  /** Workflow description (the saved metadata's description), bounded ≤ 500 characters. */
   description?: string;
   /**
-   * 启动前编译得到的 `create_workflow` 结果 display（有界因果图 + 诊断），与 CreateWorkflow 工具行
-   * `display` 同一投影、同一构造函数。run 详情侧板按 toolCallId 找「发起行」取图——直接启动没有
-   * 工具行，图就从这里取。
+   * The `create_workflow` result display compiled before launch (bounded causal graph +
+   * diagnostics); same projection and constructor as the CreateWorkflow tool row's `display`.
+   * The run detail side pane looks up the "originating row" by toolCallId for the graph — a
+   * direct launch has no tool row, so the graph comes from here.
    */
   display?: WorkflowLaunchDisplay;
   /**
-   * 本次 run 实际执行的脚本原文（与 `port.submit.scriptText` 同一份）。工具路径把它放在工具入参
-   * `input.script` 上供侧板 Script 区读取，这里是同一事实的启动轮落点；有界见
-   * {@link WORKFLOW_LAUNCH_SCRIPT_MAX_CHARS}（超界整体缺席，侧板 Script 区随之缺席）。
+   * The raw script this run actually executes (same copy as `port.submit.scriptText`). The
+   * tool path puts it on the tool input `input.script` for the side pane's Script section; this
+   * is the same fact's launch-turn landing spot; bounds in
+   * {@link WORKFLOW_LAUNCH_SCRIPT_MAX_CHARS} (over-bound it is entirely absent, and the side
+   * pane's Script section goes with it).
    */
   script?: string;
-  /** 设置轮才在场：这次 run 是用「配置」从哪个 run 修订来的、改了什么。 */
+  /** Settings-turn only: which run this run was revised from via "Configure", and what changed. */
   amend?: WorkflowSettingsAmendMeta;
 }
 
-/** {@link WorkflowLaunchMeta.args} 的 JSON 序列化上界（字节）。超界即丢，换成一个标记键。 */
+/** JSON serialization bound (bytes) for {@link WorkflowLaunchMeta.args}. Over-bound it is dropped and replaced with a marker key. */
 export const WORKFLOW_LAUNCH_ARGS_MAX_BYTES = 4_096;
-/** {@link WorkflowLaunchMeta.description} 的字符上界。 */
+/** Character bound for {@link WorkflowLaunchMeta.description}. */
 export const WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS = 500;
 /**
- * {@link WorkflowLaunchMeta.script} 的字符上界。工具路径的 `input.script` 本就不设界地进转写，
- * 这里取一个远大于任何合理 dwf 脚本、又能挡住误塞整份仓库的上限；超界整体缺席而非截断
- * （半截脚本对 Script 区没有意义，图仍在 display 里）。
+ * Character bound for {@link WorkflowLaunchMeta.script}. The tool path's `input.script`
+ * already enters the transcript unbounded, so this cap only needs to exceed any sane dwf
+ * script while blocking an accidentally-inlined whole repo; over-bound it is entirely absent
+ * rather than truncated (a half script is useless to the Script section — the graph still
+ * lives in display).
  */
 export const WORKFLOW_LAUNCH_SCRIPT_MAX_CHARS = 256_000;
 /**
- * args 超界时的替身键。真实实参永远走模型面的规范句（那份不截断），这里的元数据只喂启动卡；
- * 一个大到 4KB 的实参袋在卡上本就无从展示，所以整体替换成单条可读标记而不是硬塞。用省略号
- * 作键：它落在 `SAVED_WORKFLOW_NAME_PATTERN` 之外，不可能与真实实参名相撞。
+ * The stand-in key used when args exceed the bound. Real arguments always travel via the
+ * model-facing canonical sentence (that copy is never truncated); this metadata feeds only the
+ * launch card — a 4KB argument bag is unshowable on a card anyway, so it is wholly replaced
+ * with a single readable marker instead of being crammed in. The ellipsis is the key: it falls
+ * outside `SAVED_WORKFLOW_NAME_PATTERN` and can never collide with a real argument name.
  */
 export const WORKFLOW_LAUNCH_ARGS_TRUNCATED_KEY = "…";
 
 /**
- * 把启动轮元数据收进边界内。args 序列化后超 {@link WORKFLOW_LAUNCH_ARGS_MAX_BYTES} 即整体
- * 换成 `{ "…": "arguments omitted (N bytes)" }` 标记（见 {@link WORKFLOW_LAUNCH_ARGS_TRUNCATED_KEY}）；
- * description 超 {@link WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS} 即截断加省略号。铸造侧就地调用，
- * 让 message metadata 与 TurnStarted payload 拿到同一份有界值。
+ * Pulls launch-turn metadata inside its bounds. If serialized args exceed
+ * {@link WORKFLOW_LAUNCH_ARGS_MAX_BYTES}, they are wholly replaced with the
+ * `{ "…": "arguments omitted (N bytes)" }` marker (see
+ * {@link WORKFLOW_LAUNCH_ARGS_TRUNCATED_KEY}); if description exceeds
+ * {@link WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS}, it is truncated with an ellipsis. Called at
+ * the minting site so message metadata and the TurnStarted payload get the same bounded values.
  */
 export function boundWorkflowLaunchMeta(input: WorkflowLaunchMeta): WorkflowLaunchMeta {
   const bounded: WorkflowLaunchMeta = {
@@ -477,54 +511,58 @@ export function boundWorkflowLaunchMeta(input: WorkflowLaunchMeta): WorkflowLaun
         ? `${input.description.slice(0, WORKFLOW_LAUNCH_DESCRIPTION_MAX_CHARS - 1)}…`
         : input.description;
   }
-  // display 已在构造处（createCreateWorkflowDisplay + boundCausalityGraph）限长，原样透传。
+  // display is already length-bounded at construction (createCreateWorkflowDisplay + boundCausalityGraph); passed through verbatim.
   if (input.display !== undefined) bounded.display = input.display;
   if (input.script !== undefined && input.script.length <= WORKFLOW_LAUNCH_SCRIPT_MAX_CHARS) {
     bounded.script = input.script;
   }
-  // amend 块本身有界（两个模型串由调用方取自已解析的规范形，与 run 状态同一条上界）。
+  // The amend block is itself bounded (the two model strings come from the caller's resolved canonical form, same bound as run state).
   if (input.amend !== undefined) bounded.amend = input.amend;
   return bounded;
 }
 
 export interface TurnStartedPayloadBase {
-  /** 执行入口的单调 epoch 毫秒；hooks/持久化发生在 TurnStarted 发布前，不能据发布时间反推执行开始。 */
+  /** Client origin of the current input/background causal chain, for statistics only. */
+  inputOrigin?: "desktop" | "mobile";
+  /** Monotonic epoch ms of the execution entry; hooks/persistence happen before TurnStarted is published, so execution start cannot be inferred from publish time. */
   executionStartedAt?: number;
   turnNumber: number;
   input: string;
   /**
-   * v4 文件摘要按 turn rowId 发起 query，但 workspace checkpoint 以 user messageId
-   * 为恢复锚点；TurnStarted 必须携带同一个持久 id，投影才能把 userInput row
-   * 反查到对应 checkpoint。
+   * v4 file summaries query by turn rowId, but workspace checkpoints use the user messageId
+   * as the recovery anchor; TurnStarted must carry the same persistent id so the projection
+   * can map a userInput row back to its checkpoint.
    */
   messageId?: MessageId;
   inputId?: string;
-  /** 仅 admission 透传给无正文 telemetry fact；不能从 session 归属反推。 */
-  /** 同一 runtime command 内覆盖 primary turn → goal verify/continue 的稳定取消身份。 */
+  /** Passed through by admission only for bodyless telemetry facts; must not be inferred from session ownership. */
+  /** Stable cancellation identity of the override-primary-turn → goal verify/continue within one runtime command. */
   foregroundExecutionId?: string;
   queryId?: QueryId;
   inputSource?: SyntheticUserMessageSource;
   inputVisibility?: MessageVisibility;
   /**
-   * 中枢直接启动已保存工作流的启动轮元数据（`inputSource === "workflow_launch"` 时在场）。
-   * 活投影据它画启动卡；与消息 metadata 里的同一份对齐（冷热同形）。
+   * Launch-turn metadata for a hub-started saved workflow (present when
+   * `inputSource === "workflow_launch"`). The live projection draws the launch card from it;
+   * aligned with the same copy in message metadata (identical cold and hot).
    */
   workflowLaunch?: WorkflowLaunchMeta;
-  /** 缺省为 agent，兼容旧事件与历史 transcript。 */
+/** Defaults to agent, for legacy events and historical transcripts. */
   executionKind?: TurnExecutionKind;
   /**
-   * `input` 从此下标起是引擎附加文本（dwf ask 尾注 / nudge），GUI 把它折进披露；0 = 整条都是；
-   * 缺席 = 无。与消息 metadata 里的同一份对齐（冷热同形）。
+   * From this index on, `input` is engine-appended text (dwf ask footnote / nudge); the GUI
+   * folds it into the disclosure; 0 = the whole string is; absent = none. Aligned with the
+   * same copy in message metadata (identical cold and hot).
    */
   epilogueStart?: number;
-  /** idle background wake 的结构化来源；active-loop 合流不会创建独立 TurnStarted。 */
+  /** Structured source of an idle background wake; active-loop merging does not create a separate TurnStarted. */
   originMeta?: BackgroundResultOriginMeta;
-  /** 仅当一个 background notification batch 的所有成员来源一致时透传；混合来源留空。 */
+  /** Passed through only when every member of a background notification batch shares one source; left empty for mixed sources. */
   backgroundSource?: BackgroundResultOriginMeta["backgroundSource"];
   targetId?: string;
-  /** 本轮用户输入的附件元信息（无附件时缺省）。 */
+  /** Attachment metadata of this turn's user input (absent when there are none). */
   attachments?: TurnAttachmentMeta[];
-  /** CLI admission metadata；inputId 继续作为 sourceCommandId 兼容锚点。 */
+  /** CLI admission metadata; inputId remains the sourceCommandId compatibility anchor. */
   intent?: TurnInputIntentMetadata;
 }
 
@@ -545,9 +583,11 @@ export interface TurnSteerQueuedPayload {
   commandKind?: TurnSteerCommandKind;
   source?: TurnSteerSource;
   inputPresentation?: RuntimeInputPresentation;
-  /** 当前排队输入消费时不向 provider 暴露的工具名。 */
+  /** Trusted automation identity injected by Host admission; recovering it from tracking fields is forbidden. */
+  automationId?: string;
+  /** Tool names not exposed to the provider while the current queued input is consumed. */
   toolDisallowlist?: readonly string[];
-  /** 投递语义：queue=消费时切新 product turn；guide=内联当前轮。 */
+  /** Delivery semantics: queue = new product turn when consumed; guide = inlined into the current turn. */
   delivery?: TurnSteerDeliveryMode;
   targetTurnId: TurnId;
   queueLength: number;
@@ -560,7 +600,7 @@ export interface TurnSteerDeliveryChangedPayload {
   requestedDelivery: "guide";
   admittedDelivery: "queue";
   fallbackReasonCode: string;
-  /** 已改投后的完整 intent；reducer/cold replay 不从旁路状态猜 delivery。 */
+  /** The full intent after re-routing; reducer/cold replay must not guess delivery from side-channel state. */
   intent?: TurnInputIntentMetadata;
 }
 
@@ -590,9 +630,10 @@ export interface TurnSteerDrainedPayload {
   targetTurnId: TurnId;
   injectedMessageIds: MessageId[];
   /**
-   * drain 事实自带文本与持久 messageId，投影不再依赖
-   * 内存 queue 状态取文本（查不到 queue item 就静默丢 user 行）。
-   * delivery 决定切轮语义；缺省按 queue（每条一轮）。
+   * The drain fact carries its own text and persistent messageId, so the projection no longer
+   * depends on in-memory queue state for the text (a missing queue item used to silently drop
+   * the user row).
+   * delivery decides the turn-switch semantics; defaults to queue (one turn per item).
    */
   drainedInputs?: Array<{
     pendingInputId: string;
@@ -615,9 +656,10 @@ export interface TurnSteerRejectedPayload {
 export interface TurnSteerDiscardedPayload {
   pendingInputIds: string[];
   targetTurnId: TurnId;
-  // user_removed（v4 queue 单项删除）：用户显式从 queue 移除某项，区别于 turn 生命周期丢弃。
-  // promoted：sendQueuedNow 已取得执行权，只从 queue 投影摘除；session_input 必须继续
-  // 保持 admitted，直到 user message 原子 promotion（或重启后 discarded）。
+  // user_removed (v4 queue single-item delete): the user explicitly removed an item from the queue, distinct from turn-lifecycle discard.
+  // promoted: sendQueuedNow has taken the execution right and the item is only removed from the
+  // queue projection; session_input must stay admitted until the user message's atomic
+  // promotion (or discarded after a restart).
   reason: "turn_cancelled" | "turn_failed" | "session_resumed" | "user_removed" | "promoted";
 }
 
@@ -632,16 +674,16 @@ export interface TurnCompletePayload {
   tokenCount: number;
   usage?: ModelUsageSummary;
   toolCallCount: number;
-  /** 当前 query 已成功提交到 provider 可见持久历史的模型产物数量。 */
+  /** Count of model artifacts the current query has successfully committed to the provider-visible persistent history. */
   historyRoundCount?: number;
   duration: number;
   inputId?: string;
   resultType: TurnResultType;
-  /** 当前 turn 是否消费过来源为 subagent 的后台结果通知。 */
+  /** Whether the current turn consumed a subagent-sourced background result notification. */
   backgroundSubagentResultConsumed?: boolean;
-  /** 当前 turn 是否消费过来源为 workflow（dynamic-workflow run）的后台通知。 */
+  /** Whether the current turn consumed a workflow-sourced (dynamic-workflow run) background notification. */
   workflowResultConsumed?: boolean;
-  /** 内部抢占（如 sendQueuedNow）只终止当前 turn，不等价于用户手动 Stop 队列。 */
+  /** An internal preemption (e.g. sendQueuedNow) only terminates the current turn; it is not equivalent to the user's manual Stop of the queue. */
   preserveQueueAutoDrainOnCancel?: boolean;
 }
 
@@ -649,15 +691,15 @@ export interface TurnErrorPayload {
   error: ErrorPayload;
   turnPhase: string;
   inputId?: string;
-  /** 当前 turn 是否消费过来源为 subagent 的后台结果通知。 */
+  /** Whether the current turn consumed a subagent-sourced background result notification. */
   backgroundSubagentResultConsumed?: boolean;
-  /** 当前 turn 是否消费过来源为 workflow（dynamic-workflow run）的后台通知。 */
+  /** Whether the current turn consumed a workflow-sourced (dynamic-workflow run) background notification. */
   workflowResultConsumed?: boolean;
 }
 
 export type TurnResultType =
   | "success"
-  // "cancelled": 用户主动中断（TurnCancelled）属于正常结束，复用 TurnComplete 上报而非 TurnError。
+  // "cancelled": a user-initiated interruption (TurnCancelled) is a normal ending, reported via TurnComplete rather than TurnError.
   | "cancelled"
   | "error_max_turns"
   | "error_max_budget"
@@ -724,9 +766,9 @@ export interface TargetCompletionVerificationPayload {
   targetId: string;
   status: TargetCompletionVerificationStatus;
   verificationId: string;
-  /** 与触发该验证的前台 runtime command 共用，供 Stop 做 stale guard。 */
+  /** Shared with the foreground runtime command that triggered this verification, for Stop's stale guard. */
   foregroundExecutionId?: string;
-  /** sendQueuedNow 抢占 verifier 时只暂停 goal，不暂停 future queue。 */
+  /** When sendQueuedNow preempts the verifier, only the goal is paused, not the future queue. */
   preserveQueueAutoDrainOnCancel?: boolean;
   verification?: GoalCompletionVerificationOutput;
   goalIteration?: number;
@@ -747,21 +789,22 @@ export type ModelSelectionOrigin = "registryFallback";
 
 export interface ModelSelectedPayload {
   modelSelection: ModelSelection;
-  /** Active Model 已解析出的 reasoning，仅供执行事实/展示投影，不属于稀疏 Selection。 */
+  /** Reasoning already resolved by the Active Model, for execution-fact/display projections only; not part of the sparse Selection. */
   effectiveReasoningLevel?: string;
-  /** 缺失表示只更新当前选型；null 表示显式 ∅→selection 模型边界。 */
+  /** Absent means only the current selection updates; null means an explicit ∅→selection model boundary. */
   previousModelSelection?: ModelSelection | null;
-  /** 只有 Agent 自动恢复模型时携带；缺失表示普通选型或旧事件。 */
+  /** Carried only when the Agent auto-restores a model; absent means an ordinary selection or a legacy event. */
   origin?: ModelSelectionOrigin;
-  /** 当前 selection 对应的思考档位能力；与模型选型同事件原子发布。 */
+  /** Thinking-tier capability of the current selection; published atomically with the model selection in the same event. */
   supportedThoughtLevels?: string[];
-  /** 当前 selection 在 runtime 实际应用的上下文窗口；null 表示显式清除，字段缺失兼容旧事件。 */
+  /** Context window actually applied at runtime for the current selection; null is an explicit clear, and a missing field stays compatible with legacy events. */
   contextWindow?: number | null;
 }
 
 /**
- * 执行 Selection 退回会话 Selection 的原因，与 @zcode/shared 的 selectionFallback 规则同值域：
- * 卡过期由声明的 provider 错误码命中，其余任何加速请求失败归为 request_failed。
+ * Why an execution Selection fell back to the session Selection; same value domain as
+ * @zcode/shared's selectionFallback rules: card expiry is matched by declared provider error
+ * codes, and any other speed-up request failure is classified as request_failed.
  */
 export type TurnExecutionModelFallbackReason =
   | "highspeed_card_expired"
@@ -772,8 +815,9 @@ export interface TurnExecutionModelFallbackPayload {
   inputId?: string;
   reason: TurnExecutionModelFallbackReason;
   /**
-   * Provider 重构后单轮执行模型统一用稀疏 Selection 表达（旧的 ModelRef 已删除）：
-   * from 是本轮 execution 作用域的加速 Selection，to 是会话常驻 Selection。
+   * After the Provider refactor, single-turn execution models are uniformly expressed as a
+   * sparse Selection (the old ModelRef is gone): from is this turn's execution-scoped speed-up
+   * Selection, to is the session's resident Selection.
    */
   fromModelSelection: ModelSelection;
   toModelSelection: ModelSelection;
@@ -875,7 +919,7 @@ export interface ModelCompletePayload {
   fileChanges?: TurnFileChangeSummary;
   querySource?: string;
   stopReason: string;
-  /** 当前模型请求组装出的完整 tool call 数量；旧事件可能缺失。 */
+  /** Count of complete tool calls assembled by the current model request; may be missing on legacy events. */
   toolCallCount?: number;
   usage: TokenUsage | ModelUsage;
 }
@@ -934,9 +978,11 @@ export interface ToolCallStartedPayload {
   startedAt: Date;
   display?: ToolResultDisplayPayload;
   /**
-   * 这次调用**解析后**的副作用能力（工具元数据 + 按入参解析的运行时能力，例如 Bash 的只读命令判定）。
-   * 事件在 handler 动手之前发出，所以订阅者能在第一个字节落盘前知道「要写了」——dynamic-workflow 的
-   * driver 据此关闭 amend-resume 的导入缓存（`isWorkspaceMutatingToolCall`）。可选：早于本字段的事件没有。
+   * The call's side-effect capability **after resolution** (tool metadata + runtime capability
+   * resolved from inputs, e.g. Bash's read-only command detection). The event is emitted
+   * before the handler acts, so subscribers know "about to write" before the first byte lands
+   * — dynamic-workflow's driver uses it to close the amend-resume import cache
+   * (`isWorkspaceMutatingToolCall`). Optional: events earlier than this field do not have it.
    */
   readOnly?: boolean;
   sideEffectScope?: ToolSideEffectScope;
@@ -946,7 +992,7 @@ export interface ToolCallProgressPayload {
   toolCallId: ToolCallId;
   toolName?: string;
   elapsedMs?: number;
-  /** MCP `notifications/progress`（A8）：progress / total / message 原样转发。 */
+  /** MCP `notifications/progress` (A8): progress / total / message forwarded verbatim. */
   progress?: number;
   total?: number;
   message?: string;
@@ -963,18 +1009,18 @@ export interface ToolCallResultPayload {
   toolCallId: ToolCallId;
   result: ToolResultPayload;
   duration: number;
-  /** Skill metadata 仅用于 telemetry，不进入模型可见的 result.content。 */
+  /** Skill metadata is for telemetry only and never enters model-visible result.content. */
   skillMetadata?: SkillTelemetryMetadata;
-  /** 执行时 ToolEntry 的插件归属，不从工具名称推断。 */
+  /** The ToolEntry's plugin attribution at execution time; not inferred from the tool name. */
   pluginId?: string;
 }
 
 export interface ToolCallErrorPayload {
   toolCallId: ToolCallId;
   error: ErrorPayload;
-  /** Skill metadata 仅用于 telemetry，不进入模型可见的错误正文。 */
+  /** Skill metadata is for telemetry only and never enters the model-visible error body. */
   skillMetadata?: SkillTelemetryMetadata;
-  /** 执行时 ToolEntry 的插件归属，不从工具名称推断。 */
+  /** The ToolEntry's plugin attribution at execution time; not inferred from the tool name. */
   pluginId?: string;
 }
 
@@ -997,8 +1043,9 @@ export interface BackgroundTaskPayloadBase {
   taskId: string;
   toolCallId?: ToolCallId | string;
   toolName?: string;
-  // "workflow" = workflow run（CreateWorkflow）。追踪器的行为已按 per-tool lifecycleProvider
-  // 分派，taskKind 只决定面板分组与图标，所以加宽是纯展示修正，不改任何生命周期语义。
+  // "workflow" = a workflow run (CreateWorkflow). Tracker behavior is already dispatched per
+  // tool via lifecycleProvider; taskKind only decides panel grouping and icons, so widening it
+  // is a pure display fix that changes no lifecycle semantics.
   // "dream" = background memory consolidation launched by the /dream command (registry task, not a tool call).
   taskKind?: "bash" | "subagent" | "workflow" | "dream";
   childSessionId?: SessionId | string;
@@ -1036,25 +1083,29 @@ export type BackgroundTaskCompletedPayload = BackgroundTaskPayloadBase & {
 };
 
 /**
- * 一条 workflow run 进度事件（父会话）。字段与 {@link DynamicWorkflowRunEvent} 同形——
- * **一次序列化、两个消费者**：`listEvents` 的事件页与这里的会话事件用同一个有界载荷，
- * 读端因此不需要两套解释规则。`type` 已被会话事件信封占用，故引擎事件种类叫 `eventType`。
+ * One workflow run progress event (parent session). Fields share the shape of
+ * {@link DynamicWorkflowRunEvent} — **one serialization, two consumers**: `listEvents`' event
+ * page and this session event use the same bounded payload, so readers need no two sets of
+ * interpretation rules. `type` is taken by the session-event envelope, hence the engine event
+ * kind is called `eventType`.
  */
 export interface DynamicWorkflowRunProgressPayload {
   runId: string;
-  /** 发起这次 run 的 CreateWorkflow 工具调用（工具卡 → 详情页的关联键）。 */
+  /** The CreateWorkflow tool call that launched this run (tool-card → detail-page link key). */
   toolCallId?: ToolCallId | string;
-  /** journal sequence（`appendEvent` 单调分配）；事件日志的 cursor 与它同一把尺。 */
+  /** journal sequence (monotonic, allocated by `appendEvent`); the event-log cursor uses the same ruler. */
   sequence: number;
-  /** 引擎事件种类：run-started / actor-created / node-* / usage-updated / log / report / phase-entered / run-settled。 */
+  /** Engine event kind: run-started / actor-created / node-* / usage-updated / log / report / phase-entered / run-settled. */
   eventType: string;
   payload: Record<string, unknown>;
   truncated?: boolean;
-  /** 派生字段（toProgressPayload）：`actor-created` 上该子代理会话的 id（driver 铸的 `sess_dwf-…`）。 */
+  /** Derived field (toProgressPayload): the subagent session's id on `actor-created` (driver-minted `sess_dwf-…`). */
   actorSessionId?: string;
   /**
-   * 派生字段（与 `actorSessionId` 同类，见 toProgressPayload）：该 run 的 `run-launched.inputId`。
-   * 只挂在 `actor-created` / `run-settled` 两种事件上，供下游把子代理归到发起 run 的那一轮。升级前的 run 没有 `run-launched`，字段缺席。
+   * Derived field (same family as `actorSessionId`, see toProgressPayload): the run's
+   * `run-launched.inputId`. Attached only to `actor-created` / `run-settled` events so
+   * downstream can attribute the subagent to the turn that launched the run. Pre-upgrade runs
+   * have no `run-launched`, and the field is absent.
    */
   launchInputId?: string;
 }
@@ -1070,15 +1121,16 @@ export interface PermissionRequestedPayload {
   suggestedPermissionUpdates?: PermissionUpdate[];
   origin?: InteractionRequestOrigin;
   /**
-   * 工具自报的确认预览，由 `prepareApproval` 钩子产出。复用结果通道的 display 投影，
-   * 让 ask 与结果卡共享同一套有界形状，不新增无界字段。
+   * The tool's self-reported confirmation preview, produced by the `prepareApproval` hook.
+   * Reuses the result channel's display projection so ask and result cards share the same
+   * bounded shape, adding no unbounded fields.
    */
   display?: ToolResultDisplayPayload;
   fullAccessSupported?: boolean;
   optionsPolicy?: PermissionOptionsPolicy;
 }
 
-/** 订阅者以 (scopeId, generation) 标识沙箱实例；renderer 只投递给 generation 一致的实例。 */
+/** Subscribers identify a sandbox instance by (scopeId, generation); the renderer delivers only to instances whose generation matches. */
 export interface PluginUiResourceSubscriberRef {
   instance: import("@zcode/shared/mcp-apps").McpAppInstance;
   scopeId: string;
@@ -1095,7 +1147,7 @@ export interface PluginUiResourceListChangedPayload {
   serverName: string;
   subscribers: PluginUiResourceSubscriberRef[];
 }
-/** App-Provided Tools：一次待执行的页面工具调用，投递给 subscribers 里唯一的实例。 */
+/** App-Provided Tools: one pending page tool call, delivered to the single instance among subscribers. */
 export interface PluginUiAppToolCallRequestedPayload {
   activity?: boolean;
   cancelled?: boolean;
@@ -1156,10 +1208,17 @@ export interface WorkspaceHookReviewSupersededPayload {
   supersededByInteractionId: string;
 }
 
-// 软门禁:准入层完成评估后上报 pending 状态。
-// pendingCount = configuredEnabled && admissionClass === "pending" 的声明数;
-// pendingCount === 0 → 投影层将 snapshot.workspaceHookAdmission 置 null(提示条消失)。
+// Soft gate: the admission layer reports pending state after evaluating.
+// pendingCount = declarations that are configuredEnabled && admissionClass === "pending";
+// pendingCount === 0 → the projection layer sets snapshot.workspaceHookAdmission to null (the banner disappears).
 export interface WorkspaceHookAdmissionUpdatedPayload {
+  pendingCount: number;
+  bundleDigest: string;
+  workspaceIdentity?: string;
+}
+
+/** The MCP declaration-set digest is only for banner deduplication; per-item authorization still uses each declarationDigest. */
+export interface WorkspaceMcpAdmissionUpdatedPayload {
   pendingCount: number;
   bundleDigest: string;
   workspaceIdentity?: string;
@@ -1237,9 +1296,9 @@ export interface TokenUsage {
 export interface ErrorPayload {
   code?: string;
   detail?: string;
-  /** 错误链中最深的非 wrapper frame 的原始 message，供客户端 telemetry 定位根因。 */
+  /** The raw message of the deepest non-wrapper frame in the error chain, for client telemetry root-cause location. */
   underlyingErrorMessage?: string;
-  /** 同一底层 frame 的 detail/errorDetails/details 内容。 */
+  /** The detail/errorDetails/details content of the same underlying frame. */
   underlyingErrorDetail?: string;
   type: string;
   message: string;
@@ -1249,7 +1308,7 @@ export interface ErrorPayload {
   data?: unknown;
 }
 
-/** 只承载可聚合的失败事实，不包含请求正文、凭据、URL 或监控策略。 */
+/** Carries aggregatable failure facts only — no request bodies, credentials, URLs, or monitoring policies. */
 export interface ErrorAttribution {
   source?: "provider" | "runtime" | "tool" | "network";
   reason?: string;
@@ -1262,11 +1321,13 @@ export interface ErrorAttribution {
   statusCode?: number;
   providerErrorCode?: string;
   retryable?: boolean;
-  /** string=使用该 Highspeed 卡，null=明确未使用，undefined=旧 Agent 未发布。 */
+  /** string = that Highspeed card was used; null = explicitly unused; undefined = a legacy Agent did not publish it. */
   highspeedCardId?: string | null;
   /**
-   * true=本轮 Highspeed 创建期或请求期失败已命中退回声明，但所有退回目标都无法创建，整轮按真实错误
-   * 结束。Renderer 据此作废匹配卡；不再按错误码推断，请求期 3402/网络失败的 code 是 provider 错误码。
+   * true = this turn's Highspeed creation- or request-phase failure matched a fallback
+   * declaration but no fallback target could be created, so the whole turn ended with the real
+   * error. The renderer invalidates the matched card from this; error codes are no longer
+   * inferred — a request-phase 3402/network failure's code is a provider error code.
    */
   highspeedFallbackUnavailable?: boolean;
 }
@@ -1307,7 +1368,7 @@ export function createModelUsageSummaryFromEvents(
   for (const event of events) {
     if (event.type === SessionEventType.ModelNetworkStatus) {
       const payload = event.payload as ModelNetworkStatusEvent;
-      // 成功请求由 ModelComplete 计入；只补充失败请求的已报告用量，避免双计。
+      // Successful requests are counted by ModelComplete; only the failed request's already-reported usage is added, avoiding double counting.
       if (payload.type === "model_request_failed" && payload.usage) usages.push(payload.usage);
     }
     if (event.type !== SessionEventType.ModelComplete) continue;
@@ -1402,6 +1463,7 @@ export type SessionEventPayload =
   | WorkspaceHookReviewSettledPayload
   | WorkspaceHookReviewSupersededPayload
   | WorkspaceHookAdmissionUpdatedPayload
+  | WorkspaceMcpAdmissionUpdatedPayload
   | HookRunLifecyclePayload
   | CompactLifecyclePayload
   | MicrocompactBoundaryEventPayload

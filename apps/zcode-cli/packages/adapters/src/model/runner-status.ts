@@ -5,6 +5,7 @@ import type {
   ModelReasoningCallHint,
   ModelStatusSink,
   ModelTransportKind,
+  ModelRequestSessionFeature,
   ModelRequestSessionType as ModelRequestSessionTypeValue,
   QueryId,
   ResolvedModelApiCallObservation,
@@ -43,6 +44,8 @@ export interface ModelStatusContext {
   providerId: ResolvedAiSdkModel["providerId"];
   modelId: ResolvedAiSdkModel["modelId"];
   modelRequestSessionType: ModelRequestSessionTypeValue;
+  /** Capability flags already used by this session; retries reuse the same set (like session type, unchanged across attempts). */
+  modelRequestSessionFeatures?: readonly ModelRequestSessionFeature[];
   baseURL?: string;
   providerKind?: string;
   transport: ModelTransportKind;
@@ -69,6 +72,9 @@ export function createStatusContext(input: {
       input.request.modelRequestSessionType,
       resolvedModelCall,
     ),
+    ...(input.request.modelRequestSessionFeatures === undefined
+      ? {}
+      : { modelRequestSessionFeatures: input.request.modelRequestSessionFeatures }),
     requestId: stringMetadata(metadata.requestId) ?? crypto.randomUUID(),
     sessionId: (input.request.traceContext?.sessionId ??
       stringMetadata(metadata.sessionId)) as ModelStatusContext["sessionId"],
@@ -344,6 +350,27 @@ function modelStatusLogContext(event: ModelNetworkStatusEvent): Record<string, u
 }
 
 function logStatusEvent(event: ModelNetworkStatusEvent, logger?: Logger): void {
+  // Keep only per-attempt boundaries; the old first_content accepted an empty block start and cannot be used for local first meaningful content.
+  if (event.querySource === "main_turn" || event.querySource === "compact") {
+    const names: Partial<Record<ModelNetworkStatusEvent["type"], string>> = {
+      model_request_queued: "queued",
+      model_request_admitted: "admitted",
+      model_request_started: "request_started",
+      model_request_completed: "completed",
+      model_request_failed: "failed",
+      model_retry_scheduled: "retry_wait",
+      model_first_provider_event: "first_provider_event",
+    };
+    const name = names[event.type];
+    if (name)
+      logLocalModelMilestone(logger, event, name, {
+        ...("attempt" in event ? { attempt: event.attempt } : {}),
+        ...("queuedMs" in event ? { queuedMs: event.queuedMs } : {}),
+        ...("durationMs" in event ? { durationMs: event.durationMs } : {}),
+        ...("delayMs" in event ? { delayMs: event.delayMs } : {}),
+        ...("statusCode" in event ? { statusCode: event.statusCode } : {}),
+      });
+  }
   switch (event.type) {
     case "model_request_queued":
       logger?.debug("Model request queued for admission", {
@@ -431,5 +458,31 @@ function logStatusEvent(event: ModelNetworkStatusEvent, logger?: Logger): void {
     case "model_request_observation":
       // The fetch layer already wrote local logs immediately; this only publishes telemetry.
       return;
+  }
+}
+
+/** Local production diagnostics keep only correlation and timing; request URLs, headers, and bodies never go into logs. */
+export function logLocalModelMilestone(
+  logger: Logger | undefined,
+  context: ModelStatusContext | ModelNetworkStatusEvent,
+  name: string,
+  fields: Record<string, unknown> = {},
+): void {
+  try {
+    logger?.info("Model first-response diagnostic", {
+      event: `ttft.model.${name}`,
+      traceId: context.traceId,
+      sessionId: context.sessionId,
+      turnId: context.turnId,
+      queryId: context.queryId,
+      querySource: context.querySource,
+      requestId: context.requestId,
+      providerId: context.providerId,
+      modelId: context.modelId,
+      at: performance.timeOrigin + performance.now(),
+      ...fields,
+    });
+  } catch {
+    /* Diagnostics must not interrupt the stream or retries. */
   }
 }

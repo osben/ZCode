@@ -38,6 +38,8 @@ export interface WebRemoteControlDeviceTransportOptions {
   };
   onStateChange(state: WebRemoteControlDeviceTransportState): void;
   onPayload(payload: WebRemoteControlAppPayload): void;
+  /** Payloads the schema does not recognize; the upper layer decides whether to reply unsupported-action — the transport does not understand business semantics. */
+  onUnrecognizedPayload?(payload: unknown): void;
   onRawTransportPayload?(payload: unknown): boolean;
   onRawTransportFault?(reasonCode: string): void;
   onError(error: Error): void;

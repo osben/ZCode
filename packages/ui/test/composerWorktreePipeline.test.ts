@@ -28,7 +28,7 @@ import {
 } from "@/v4/composer/composerWorktreePipeline.js";
 
 import { restartPreparedWorktreeCreation } from "@/v4/composer/restartPreparedWorktreeCreation.js";
-import { ConversationComposer } from "@/v4/ConversationComposer.js";
+import { ComposerWithDraftOwner } from "./v4ConversationComposerLateAckHarness.js";
 import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
 import {
   ComposerDraftWorktreeIntentContext,
@@ -117,6 +117,15 @@ vi.mock("@/ControlHintTooltip.js", async () => {
 const setupStepsServices = vi.hoisted(() => ({
   current: null as null | { rpcReady: boolean; services: { gitService: unknown } },
 }));
+// The draft owner (useDraftConfigControl) reads the session service and settings hooks; this suite
+// has no ServiceProvider, so both are stubbed. The owner's write paths are exercised unchanged.
+vi.mock("@/hooks/useZCodeSessionService.js", () => ({
+  useZCodeSessionService: () => ({}),
+}));
+vi.mock("@/hooks/useSettingService.js", () => ({
+  useSettings: () => ({ settings: {} }),
+}));
+
 vi.mock("@/hooks/useWorkspaceServices.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/useWorkspaceServices.js")>();
   return {
@@ -1837,8 +1846,7 @@ describe("BUG-GWT-005: frozen submission admission after failed creation → Ret
         createElement(
           ComposerDraftWorktreeIntentContext.Provider,
           { value: { current: intent } },
-          createElement(ConversationComposer, {
-            composerDraft: { text: "", updatedAt: 0 },
+          createElement(ComposerWithDraftOwner, {
             draftMode: props.draftMode,
             onSelectModel: vi.fn(),
             onSelectThought: vi.fn(),
@@ -1851,8 +1859,6 @@ describe("BUG-GWT-005: frozen submission admission after failed creation → Ret
             sessionId: props.sessionId,
             snapshot: null,
             submissionReady: true,
-            updateComposerContent: vi.fn(),
-            replaceComposerDraft: vi.fn(),
             workspacePath: WORKSPACE_KEY,
           }),
         ),
@@ -1988,8 +1994,7 @@ describe("BUG-GWT-005: frozen submission admission after failed creation → Ret
         createElement(
           ComposerDraftWorktreeIntentContext.Provider,
           { value: { current: intent } },
-          createElement(ConversationComposer, {
-            composerDraft: { text: "", updatedAt: 0 },
+          createElement(ComposerWithDraftOwner, {
             draftMode: props.draftMode,
             onSelectModel: vi.fn(),
             onSelectThought: vi.fn(),
@@ -2002,8 +2007,6 @@ describe("BUG-GWT-005: frozen submission admission after failed creation → Ret
             sessionId: props.sessionId,
             snapshot: null,
             submissionReady: true,
-            updateComposerContent: vi.fn(),
-            replaceComposerDraft: vi.fn(),
             workspacePath: WORKSPACE_KEY,
           }),
         ),
@@ -2151,8 +2154,7 @@ describe("BUG-GWT-005: frozen submission admission after failed creation → Ret
             createElement(
               ComposerDraftWorktreeIntentContext.Provider,
               { value: { current: intent } },
-              createElement(ConversationComposer, {
-                composerDraft: { text: "", updatedAt: 0 },
+              createElement(ComposerWithDraftOwner, {
                 draftMode: true,
                 onSelectModel: vi.fn(),
                 onSelectThought: vi.fn(),
@@ -2165,8 +2167,6 @@ describe("BUG-GWT-005: frozen submission admission after failed creation → Ret
                 sessionId: null,
                 snapshot: null,
                 submissionReady: true,
-                updateComposerContent: vi.fn(),
-                replaceComposerDraft: vi.fn(),
                 workspacePath: WORKSPACE_KEY,
               }),
             ),
@@ -2272,8 +2272,7 @@ describe("BUG-GWT-005: frozen submission admission after failed creation → Ret
                 onPreparationFailed: onWorktreePreparationFailed,
               })
             : null,
-          createElement(ConversationComposer, {
-            composerDraft: { text: "", updatedAt: 0 },
+          createElement(ComposerWithDraftOwner, {
             draftMode: props.draftMode,
             onSelectModel: vi.fn(),
             onSelectThought: vi.fn(),
@@ -2286,8 +2285,6 @@ describe("BUG-GWT-005: frozen submission admission after failed creation → Ret
             sessionId: props.sessionId,
             snapshot: null,
             submissionReady: true,
-            updateComposerContent: vi.fn(),
-            replaceComposerDraft: vi.fn(),
             workspacePath: WORKSPACE_KEY,
           }),
         ),
@@ -2446,8 +2443,7 @@ describe("BUG-GWT-005: frozen submission admission after failed creation → Ret
                 onPreparationFailed: onWorktreePreparationFailed,
               })
             : null,
-          createElement(ConversationComposer, {
-            composerDraft: { text: "", updatedAt: 0 },
+          createElement(ComposerWithDraftOwner, {
             draftMode: props.draftMode,
             onSelectModel: vi.fn(),
             onSelectThought: vi.fn(),
@@ -2460,8 +2456,6 @@ describe("BUG-GWT-005: frozen submission admission after failed creation → Ret
             sessionId: props.sessionId,
             snapshot: null,
             submissionReady: true,
-            updateComposerContent: vi.fn(),
-            replaceComposerDraft: vi.fn(),
             workspacePath: WORKSPACE_KEY,
           }),
         ),
@@ -2763,9 +2757,8 @@ describe("shared-context-only worktree submission recovery", () => {
           ComposerDraftWorktreeIntentContext.Provider,
           { value: { current: intent } },
           // A remount is a fresh composer instance, as on first-send view promotion or reload.
-          createElement(ConversationComposer, {
+          createElement(ComposerWithDraftOwner, {
             key: props.draftMode ? "draft" : "prepared",
-            composerDraft: { text: "", updatedAt: 0 },
             draftMode: props.draftMode,
             onSelectModel: vi.fn(),
             onSelectThought: vi.fn(),
@@ -2778,8 +2771,6 @@ describe("shared-context-only worktree submission recovery", () => {
             sessionId: props.sessionId,
             snapshot: snapshotWithSharedContext(props.pending),
             submissionReady: true,
-            updateComposerContent: vi.fn(),
-            replaceComposerDraft: vi.fn(),
             workspacePath: WORKSPACE_KEY,
           }),
         ),

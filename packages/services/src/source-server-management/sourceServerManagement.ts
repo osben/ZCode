@@ -8,6 +8,7 @@ import type {
   SourceServerManagementDirectoryDelta,
   SourceServerManagementStateDelta,
   SourceServerOperationLog,
+  SourceServerRunningTasksResult,
 } from "@zcode/shared";
 import { ServiceChannels } from "@zcode/shared";
 import { createServiceDescriptor } from "../descriptors.js";
@@ -23,9 +24,9 @@ export interface UpdateConnectionProfileInput {
 export interface ISourceServerManagementService {
   readonly onDidChangeState: Event<SourceServerManagementStateDelta>;
   readonly onDidChangeDirectory: Event<SourceServerManagementDirectoryDelta>;
-  /** Desktop Host 的连接/更新日志变更通知；历史由 Host 内存 owner 保留。 */
+  /** Connection/update log append notifications from the Desktop Host; history is kept by the in-Host memory owner. */
   readonly onDidAppendOperationLog?: Event<SourceServerOperationLog>;
-  /** 显式进入/刷新页面时请求更新统计；事件刷新只读取已有投影，避免反馈轮询。 */
+  /** Request fresh statistics on explicit page entry/refresh; event-driven refreshes only read the existing projection, avoiding feedback polling. */
   getSnapshot(
     options?: SourceServerManagementSnapshotRequest,
   ): Promise<SourceServerManagementSnapshot>;
@@ -47,6 +48,25 @@ export interface ISourceServerManagementService {
     workspacePurpose: "conversation";
   }>;
   updateSource(input: SourceServerUpdateRequest): Promise<SourceServerManagementSnapshot>;
+  /**
+   * Stop the remote service on the device (RDLC-01): the Host disconnects and drops the resume
+   * intent first, then runs `stop --wait` remotely.
+   * The device stays disconnected after both success and failure; failure throws an error with a code. Exposed to the Desktop Renderer only.
+   */
+  stopSource(sourceServerId: string): Promise<SourceServerManagementSnapshot>;
+  /**
+   * Restart the remote service on the device (RDLC-01): the Host registers a lifecycle operation
+   * flight (shown as connecting meanwhile), runs `restart` remotely, and on success follows the
+   * existing connect flow and emits reconnect. Failure throws an error with a code. Exposed to the Desktop Renderer only.
+   */
+  restartSource(sourceServerId: string): Promise<SourceServerManagementSnapshot>;
+  /**
+   * Read the running tasks on the device before stop / restart confirmation (RDLC-01); routing
+   * and credential rules match the two methods above. When the device provides no trusted
+   * listing, returns `{ available: false }` rather than "no tasks"; throws `credentials-required`
+   * when credentials cannot be obtained silently. Exposed to the Desktop Renderer only.
+   */
+  getSourceRunningTasks(sourceServerId: string): Promise<SourceServerRunningTasksResult>;
   renameSource(
     sourceServerId: string,
     displayName: string,

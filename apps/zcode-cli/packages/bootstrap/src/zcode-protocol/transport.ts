@@ -12,6 +12,7 @@ import {
   zcodeProtocolMethods,
   zcodeProtocolNotifications,
 } from "@zcode/shared";
+import { V4_METHODS } from "@zcode/shared/zcode-protocol-v4";
 import type { Logger } from "@zcode/contracts";
 
 type ZCodeProtocolOutgoingMessage =
@@ -25,6 +26,20 @@ type ZCodeProtocolMessageHandler = (
 ) => Promise<ZCodeProtocolOutgoingMessage | undefined>;
 
 const PROTOCOL_EOF_DRAIN_MS = 100;
+// Lifecycle is serialized by the session owner itself. Queued behind a long request, a query
+// would miss starting/stopping, and one session's startup would be blocked by the whole
+// workspace's queue.
+const SESSION_LIFECYCLE_CONCURRENT_METHODS = new Set<string>([
+  // V4 admission/recovery already has a session owner; serializing the whole connection would
+  // let A's initialization block B's stop and subscribe.
+  V4_METHODS.command,
+  V4_METHODS.conversationSubscribe,
+  V4_METHODS.commandsQuery,
+  zcodeProtocolMethods.sessionLifecycleGetState,
+  zcodeProtocolMethods.sessionLifecycleEnsureReady,
+  zcodeProtocolMethods.sessionLifecycleStop,
+  zcodeProtocolMethods.sessionLifecycleRestart,
+]);
 // Plugin read requests are handled as soon as they arrive instead of queuing behind install/update. The describe branch that
 // writes the manifest holds its own storage lock; list/overview are synchronous handlers that do not yield the event loop
 // while running, and seed writes to disk only when content changes, so reads cannot interleave with an install's
@@ -230,7 +245,8 @@ export class ZCodeProtocolNdjsonConnection {
     if (
       "id" in message &&
       "method" in message &&
-      PLUGIN_READ_IMMEDIATE_METHODS.has(message.method)
+      (PLUGIN_READ_IMMEDIATE_METHODS.has(message.method) ||
+        SESSION_LIFECYCLE_CONCURRENT_METHODS.has(message.method))
     ) {
       // Bugfix: plugin details and the list used to queue behind the serial queue, so while install A was downloading, opening details stuck in the component loading state,
       // and a newly created right-side tab (the new store's first list/overview load) stuck on the skeleton. Read requests do not depend on the results of preceding requests,

@@ -10,8 +10,8 @@
 //
 // “Read” means **the history still visible to the model now** (runtime messageHistory), not a session-level flag:
 // after compaction removes the skill text from context, its call is gone from history too, so the gate closes again and the model must reread it—
-// the same semantics as Edit requiring Read (readFileState is also cleared after compaction). If the probe is absent (a session without a Skill
-// tool, or a context constructed directly by a unit test), the gate does not apply; do not impose a prerequisite that cannot be satisfied.
+// This is exactly the same semantics as Edit requiring Read (after compaction, readFileState keeps only files fed back to the model). When the probe is
+// absent (sessions without the Skill tool, unit-test-built contexts) the gate does not apply: never put an unsatisfiable prerequisite in front of the model.
 
 import { DYNAMIC_WORKFLOW_SKILL_NAME } from "@zcode/contracts";
 import type { ToolHandlerFailure, ToolInputResolutionContext } from "../types.js";

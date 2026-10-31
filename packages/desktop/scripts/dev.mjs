@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { prepareDevElectronAppBundle } from "./devElectronAppBundle.mjs";
+import { ensureElectronRuntime } from "./ensure-electron-runtime.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const mainBundle = resolve(root, "out/main/index.js");
@@ -16,25 +17,6 @@ const buildReadyMarkers = [
 ];
 const waitLogIntervalMs = 3_000;
 const require = createRequire(import.meta.url);
-
-function resolveLocalElectronBinary() {
-  const electronPackageJsonPath = require.resolve("electron/package.json");
-  const electronPackageRoot = resolve(electronPackageJsonPath, "..");
-
-  // This previously called spawn("electron") on Windows and depended on PATH containing the local binary.
-  // With pnpm and PowerShell, the child process often receives node but cannot find the electron command,
-  // so the dev script fails with ENOENT and developers have to start each process in a separate terminal.
-  // Resolve the Electron binary from the current project to avoid PATH differences across shells/platforms.
-  if (process.platform === "win32") {
-    return resolve(electronPackageRoot, "dist", "electron.exe");
-  }
-
-  if (process.platform === "darwin") {
-    return resolve(electronPackageRoot, "dist", "Electron.app", "Contents", "MacOS", "Electron");
-  }
-
-  return resolve(electronPackageRoot, "dist", "electron");
-}
 
 function probeHttpUrl(url) {
   return new Promise((resolveProbe) => {
@@ -112,8 +94,8 @@ async function waitForReady() {
 const rendererUrl = await waitForReady();
 console.log("[dev] Starting Electron...");
 
-const electronBinary = resolveLocalElectronBinary();
-let electronCommand = existsSync(electronBinary) ? electronBinary : "electron";
+const electronBinary = await ensureElectronRuntime();
+let electronCommand = electronBinary;
 
 if (process.platform === "darwin" && existsSync(electronBinary)) {
   // Raw Electron launched from the command line on macOS has no CFBundleURLTypes, so LaunchServices

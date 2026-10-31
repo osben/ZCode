@@ -8,9 +8,10 @@ import {
   ENABLE_CUA_TOOL_CALL_GROUPING,
   prepareCuaGroupFlowItems,
 } from "@/v4/conversationCuaGroups.js";
-// Bugfix：必须直接引用纯函数模块，不能走 `@/plugin-ui/index.js` 桶文件。本文件在分享只读
-// 时间线闭包里，桶文件会把 plugin-ui 全量组件 → V4ConversationContext → @zcode/services →
-// @zcode/provider 拖进 web-share 构建，导致 `@zcode/shared/mcp-apps` 等子路径无法解析、构建失败。
+// Bugfix: import the pure-function module directly instead of the `@/plugin-ui/index.js` barrel. This
+// file lives inside the share read-only timeline closure, and the barrel would drag plugin-ui's full
+// components → V4ConversationContext → @zcode/services → @zcode/provider into the web-share build,
+// leaving subpaths like `@zcode/shared/mcp-apps` unresolvable and breaking the build.
 import {
   isPluginUiPinnedToolRow,
   type PluginUiRowPinResolver,
@@ -100,11 +101,32 @@ function isAssistantWorkRow(row: ConversationRow): row is AssistantWorkRow {
   return row.kind !== "turnHeader" && row.kind !== "userInput";
 }
 
-function splitVisualWorkSegments(rows: readonly ConversationRow[]): DraftVisualWorkSegment[] {
+function isGuidedUserInputRow(row: ConversationRow | undefined): row is UserInputRow {
+  return row !== undefined && isUserInputRow(row) && row.guided === true;
+}
+
+function splitVisualWorkSegments(
+  rows: readonly ConversationRow[],
+  header: TurnHeaderRow | undefined,
+): DraftVisualWorkSegment[] {
+  // Work segment boundaries trust only the CLI-provided workSegments: which guides were fetched in one
+  // batch is known only to the CLI. Fix reason: the old code opened a segment per guided user, matching
+  // the CLI's one-guide-per-segment split. After the runtime changed to drain all waiting guides FIFO at
+  // one boundary, per-item splitting broke one fetch into several segments; we now split only at segment
+  // starts declared by the CLI. Only old snapshots without workSegments fall back: a guided user
+  // directly after another merges into the current segment.
+  const triggerEntityIds = header?.workSegments
+    ? new Set(header.workSegments.flatMap((segment) => segment.triggerEntityId ?? []))
+    : undefined;
   const segments: DraftVisualWorkSegment[] = [];
   let current: DraftVisualWorkSegment = { orderedRows: [] };
   for (const row of rows) {
-    if (isUserInputRow(row) && row.guided === true && current.orderedRows.length > 0) {
+    const opensSegment =
+      isUserInputRow(row) &&
+      (triggerEntityIds
+        ? row.entityId !== undefined && triggerEntityIds.has(row.entityId)
+        : row.guided === true && !isGuidedUserInputRow(current.orderedRows.at(-1)));
+    if (opensSegment && current.orderedRows.length > 0) {
       segments.push(current);
       current = { orderedRows: [], triggerRow: row };
     }
@@ -167,7 +189,7 @@ export function buildConversationTurnWorkSegments(options: {
   /** Decides whether plugin cards belong in the collapsed area; defaults to “keep all visible.” */
   pluginUiPinResolver?: PluginUiRowPinResolver;
 }): ConversationTurnWorkSegment[] {
-  const visualDrafts = splitVisualWorkSegments(options.orderedRows);
+  const visualDrafts = splitVisualWorkSegments(options.orderedRows, options.header);
   const tailRowIds = new Set(options.assistantTailRows.map((row) => row.rowId));
   return visualDrafts.map((segment, segmentIndex) => {
     const segmentAssistantRows = segment.orderedRows.filter(isAssistantWorkRow);

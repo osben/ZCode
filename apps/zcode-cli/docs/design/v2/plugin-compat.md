@@ -10,9 +10,11 @@ capability domains. Hook files from non-official third-party Marketplaces can be
 parsed for diagnostics, but are not injected into the runtime until ZCode has an
 explicit trust and permission gate.
 
-Claude Code Marketplace compatibility extends the installation and discovery model of the first-party
-packaged plugins (iOS Simulator, Android Emulator) but is not an arbitrary extension runtime. High-risk
-Claude plugin features are recognized and diagnosed before ZCode grows a matching runtime.
+This feature started as first-party packaged capabilities such as the iOS
+Simulator and Android Emulator plugins. Claude Code Marketplace compatibility
+extends the installation and discovery model, but it is still not a new arbitrary
+extension runtime. High-risk Claude plugin features are recognized and diagnosed
+before ZCode grows a matching runtime.
 
 See also `docs/claude-code-marketplace-plugin-compat.md` for the Marketplace
 implementation plan and phased V1a/V1b/V1c scope.
@@ -179,6 +181,25 @@ official cache path on first startup or when the embedded plugin hash changes.
 The MCP command must point at the seeded cache directory, not the source
 workspace and not a module compiled into the ZCode SEA main bundle.
 
+Seeding replaces one plugin version directory only while it holds the seed lock
+for that version. It writes the new tree to a unique `<version>.tmp-*` sibling.
+It moves the old target to a unique `<version>.backup-*` sibling, then renames
+the temporary tree to the target, so a failed promotion can restore the old
+target. A directory rename can return `EXDEV` inside one parent directory when
+the old target is in a lower layer of an overlay filesystem (for example, a
+container image that already contains the plugin cache). In that case, seeding
+deletes the seed marker of the old target first, deletes the old target, and
+then promotes the temporary tree. Because the marker goes first, an interrupted
+deletion cannot leave a partial tree that looks current; the next startup seeds
+it again.
+
+A seed failure that ZCode cannot complete degrades only the affected plugin:
+transient errors after the retry budget, a seed lock timeout, `ENOENT` after a
+concurrent writer already promoted a current tree, and `EXDEV`. ZCode logs
+`Official plugin cache operation degraded`, keeps a usable older cache when one
+exists, and does not fail session startup or session resume. `EXDEV` is not
+retried, because it does not go away on retry.
+
 For bundled official plugins only, ZCode rewrites the seeded
 `.zcode-plugin/plugin.json` MCP server command at seed time. The rewritten
 command launches the current ZCode executable through the hidden
@@ -289,12 +310,15 @@ Compatibility levels:
 Unsupported or diagnostic-only fields are ignored with diagnostics:
 
 - `hooks` from third-party Marketplace plugins
-- `agents`
 - `outputStyles`
 - `lspServers`
 - `channels`
 - `settings`
 - marketplace-only metadata not needed at runtime
+
+`agents` declarations without a discovered source file, such as object metadata
+or a single-file path, do not produce runtime profiles; directory support is
+defined under [Agents](#agents).
 
 `dependencies` is install-time only for Marketplace-installed plugins. It must
 not be reported through the legacy `plugin_unsupported_component` warning once
@@ -357,11 +381,16 @@ expansion tells the model to load that skill before performing the command.
 
 ### Agents
 
-ZCode enumerates the conventional plugin-root location `agents/*.md` and loads the profiles of enabled
-plugins into the subagent runtime as `<plugin-name>:<agent-name>`; when the bare name does not collide
-it is also provided as an alias. This conventional-directory capability differs from the manifest
-`agents` field: P0 still only diagnoses custom agents paths declared in the manifest and does not
-project arbitrary external paths into runtime components.
+ZCode 枚举默认 `agents/*.md` 与 manifest `agents` 字符串或数组声明的插件根内目录。
+组件名称优先取 frontmatter `name`，缺失时取文件名；发现结果同时保存实际源文件 `path`。
+加载器只读取该路径，不从名称重新拼接文件名，也不为缺少路径的描述性组件猜测文件。
+文件读取失败保留 `agent_read_failed` 诊断，不查找替代文件。
+
+已启用插件中的 profile 以 `<plugin-name>:<agent-name>` 加载到子代理运行时；名称无冲突时
+同时提供裸名别名。组件仍按名称去重：manifest 对象声明先于文件，默认目录先于额外目录，
+重复声明的目录只扫描一次；首次发现的条目保留其来源。对象声明仅提供描述，无源文件路径时
+不加载。目录继续使用插件根内路径校验；组件名称不作为路径输入。源路径只用于 CLI 内部，
+对外组件详情仍只投影名称与描述。
 
 ### MCP
 
@@ -402,6 +431,13 @@ A `.mcp.json` file may use Claude's wrapper shape:
   }
 }
 ```
+
+A plugin MCP server runs once per session by default. Official plugins
+(`zcode-plugins-official`) may declare `"isolation": "workspace"` to share one
+process among all sessions of a workspace; such a server must keep its own state
+apart per session using the host's `_meta.session_id` (the document viewer
+plugins do, see `docs/plugins/2026-10-15-office-viewer-builtin-panels-spec.md`
+§8 in the repository root). ZCode ignores `isolation` on other plugins.
 
 If a server has `command` but no `type`, ZCode infers `type: "stdio"`.
 Server names are normalized for model-visible tool names by replacing

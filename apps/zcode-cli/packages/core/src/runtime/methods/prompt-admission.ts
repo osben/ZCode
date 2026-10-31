@@ -29,6 +29,7 @@ export async function admitPrompt(
     // Bootstrap's busy snapshot, the state may become idle during a cross-layer await and the prompt can start with the ordinary model by mistake.
     return await this.enqueueDeferredInput({
       attachments,
+      automationId: options.automationId,
       commandKind: options.commandKind,
       delivery: "queue",
       input,
@@ -70,6 +71,7 @@ export async function admitPrompt(
     if (canSteer) {
       const delivery = options?.queueDelivery === "guide" ? "guide" : undefined;
       return await this.steerTurn({
+        automationId: options?.automationId,
         commandKind: options?.commandKind,
         delivery,
         expectedTurnId: options?.expectedTurnId,
@@ -88,6 +90,7 @@ export async function admitPrompt(
       options?.queueDelivery === "guide" && attachments === undefined ? "guide" : "queue";
     return await this.enqueueDeferredInput({
       attachments,
+      automationId: options?.automationId,
       commandKind: options?.commandKind,
       delivery,
       input,

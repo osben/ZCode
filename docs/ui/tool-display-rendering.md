@@ -1,383 +1,127 @@
 # Tool Display Rendering
 
-> Current state: V4 rows reuse the unified ToolCall renderer through an adapter layer; this document
-> describes the current rendering boundary.
+> **当前状态**：V4 row 通过适配层复用统一的 ToolCall renderer；本文描述当前渲染边界。
 
-## Goal
+## 目标
 
-Unify the display entry of chat tools so conversation rows do not pile up branches by `kind`, while leaving
-an extension point for dedicated rendering of `execute`, `search`, `fetch` and other tools.
+统一聊天区 tool 的展示入口，避免在 conversation row 里按 `kind` 堆分支，同时给后续 `execute`、`search`、`fetch` 等 tool 的专用渲染留扩展口。
 
-## Current Structure
+## 当前结构
 
-- `packages/ui/src/lib/toolDisplay.ts`: normalizes `ChatToolCall` into `ToolDisplayModel`; outputs
-  `inlinePreview`, `viewerSource`, `showInput`, `showOutput`, `showKind`.
-- `packages/ui/src/lib/codeViewer.ts`: extracts `text / patch / file / image` preview data; it does not
-  decide the final UI and only provides preview capability.
-- `packages/ui/src/v4/ConversationRowView.tsx` and `packages/ui/src/v4/toolCallRowAdapter.ts`: adapt a V4
-  `ToolCallRow` to the unified renderer input, without duplicating per-tool UI in the row component.
-- `packages/ui/src/ToolCallBlocks.tsx`: renderer registration and selection;
-  `packages/ui/src/ToolCallBlocks/renderers/` holds kind/family-specific display.
-- `packages/ui/src/ToolCallBlocks/ToolCallBody.tsx`: generic parameters, results, files and Markdown
-  preview.
+- `packages/ui/src/lib/toolDisplay.ts`
+  - 负责把 `ChatToolCall` 归一成 `ToolDisplayModel`
+  - 输出 `inlinePreview`、`viewerSource`、`showInput`、`showOutput`、`showKind`
+- `packages/ui/src/lib/codeViewer.ts`
+  - 负责提取 `text / patch / file / image` 预览数据
+  - 不直接决定最终 UI，只提供预览能力
+- `packages/ui/src/v4/ConversationRowView.tsx` 与 `packages/ui/src/v4/toolCallRowAdapter.ts`
+  - 把 V4 `ToolCallRow` 适配成统一 renderer 所需的输入，不在 row 组件内复制各类 tool UI
+- `packages/ui/src/ToolCallBlocks.tsx`
+  - 负责 renderer 注册和选择；`packages/ui/src/ToolCallBlocks/renderers/` 承载 kind/family 专用展示
+- `packages/ui/src/ToolCallBlocks/ToolCallBody.tsx`
+  - 负责通用参数、结果、文件和 Markdown 预览
 
-## Visibility in the Conversation Stream
+## 会话流可见性
 
-- `EnterPlanMode` is the internal boundary of a conversation mode switch and offers no actionable detail to
-  the user; the main stream renders no tool row for it in `inputStreaming` / `running` / terminal states.
-- Visibility filtering applies only to UI render units: the protocol projection keeps the original
-  `ToolCallRow`, and run state, cold restore, mode switching and diagnostic traces must not be lost because
-  display is hidden.
-- The filter runs on the render units shared by desktop `desktop-continuous` and mobile
-  `web-remote-replayable`, and does not rewrite either delivery's snapshot, gap recovery or message order.
-- Conversation work items derive consecutive non-read-only Shell calls into an `Execute` UI group; that
-  parent node is not a protocol tool call and, once expanded, keeps reusing the single
-  `ExecuteToolCallBlock`. PermissionDialog does not go through this aggregation and still approves and
-  shows the real tool call individually.
+- `DeferredToolCall` 在 `inputStreaming` 阶段尚未确认目标工具，不渲染临时卡片或空白占位，也不从半截包装参数推测目标。完整调用经 Core 确认后，同一行按目标名称复用原 renderer 和显示设置；关闭“显示待办”时，包装的 TodoWrite 从传参到完成均不展示卡片。
+- 此过滤只隐藏包装调用的参数生成阶段；直接工具的流式预览、目标工具执行进度以及包装调用的失败/停止展示保持原行为。会话运行态和 Stop 入口仍读取原始投影。
+- `EnterPlanMode` 是会话模式切换的内部边界，不向用户提供可操作详情；主会话流在 `inputStreaming` / `running` / 终态下都不渲染它的 tool row。
+- 可见性过滤只作用于 UI render unit：协议投影仍保留原始 `ToolCallRow`，运行态、冷恢复、模式切换和诊断轨迹不得因隐藏展示而丢失。
+- 过滤在桌面 `desktop-continuous` 和手机 `web-remote-replayable` 共用的渲染单元上执行，不改写两类 delivery 的快照、gap 恢复或消息顺序。
+- conversation work items 会把连续的非只读 Shell 派生为 `Execute` UI 分组；该父节点不是协议工具调用，展开后继续复用单条 `ExecuteToolCallBlock`。PermissionDialog 不经过该聚合路径，仍按真实 tool call 单独审批和展示。
 
-## Collapsed-Detail Measurement Boundary
+## 收起详情的测量边界
 
-A sidebar toggle changes the conversation width and the virtual list may remount historical turns. A
-collapsed tool detail keeps Radix's DOM, ARIA and animation lifecycle, but a fully hidden node must not
-write measurement styles or read geometry; visible, collapsing and `forceMount` content keep the original
-measuring flow. Performance must not be bought by removing the first-expand animation, reducing history
-content or changing expand memory.
+侧栏开关会改变会话宽度，虚拟列表可能重新挂载历史轮次。收起的工具详情仍保留 Radix 的 DOM、ARIA 和动画生命周期，但完全隐藏的节点不应写入测量样式或读取几何尺寸；可见、正在收起及 `forceMount` 内容继续按原流程测量。不得以移除首次展开动画、减少历史内容或改变展开记忆来换取性能。
 
 ```text
-sidebar width change -> timeline height measure and virtual window update -> historical tools mount
-  fully hidden -> keep collapsed state, skip useless measurement
-  expanded / collapse animating / forceMount -> original size measurement and Presence lifecycle
+侧栏宽度变化 → timeline 测高与虚拟窗口更新 → 历史工具挂载
+  完全隐藏 → 保留折叠状态，跳过无效测量
+  展开 / 收起动画中 / forceMount → 原尺寸测量与 Presence 生命周期
 ```
 
-The affected layer is presentation; the fix is at the size-measurement boundary of
-`@radix-ui/react-collapsible` (ESM and CommonJS in sync). Tools, message history, project groups and
-Accordion share this dependency, so check initial closed, default open, mouse/keyboard toggle, nesting,
-quick reverse toggle and `forceMount`. `ToolLayout` still holds tool expand memory, Radix holds animation
-presence, and `ConversationTimeline` remains the scroll owner. Mobile Web shares the display component;
-protocol, permission, tool execution and continuous/replayable transport are unchanged, so those unaffected
-combinations are not expanded.
+影响层为 presentation，修正在 `@radix-ui/react-collapsible` 的尺寸测量边界；ESM 与 CommonJS 同步。工具、消息历史、项目分组和 Accordion 共用该依赖，需检查初始闭合、默认展开、鼠标/键盘切换、嵌套、快速反向切换和 `forceMount`。`ToolLayout` 仍持有工具展开记忆，Radix 持有动画 presence，`ConversationTimeline` 仍是滚动 owner。手机 Web 共用展示组件，协议、权限、工具执行和 continuous/replayable 传输不变，因此不扩展这些不受影响的组合。
 
-SPT05 acceptance uses real DOM geometry calls and animation events as evidence: on first/second mount of
-batch-collapsed tools the measurement of hidden nodes is zero; expand and collapse animation, detail
-content, keyboard and expand memory are kept; the height variable still works for default-open and
-`forceMount`. Desktop/mobile, light/dark and zh/en are verified together. Timing records serve before/after
-comparison, not machine-dependent absolute durations. Timeline resize following, off-bottom and session
-position reuse the SRM10 regression.
+SPT05 验收以真实 DOM 几何调用和动画事件为证据：批量收起工具初次/再次挂载时隐藏节点的测量为零；展开与收起动画、详情内容、键盘和展开记忆保持；默认展开及 `forceMount` 的高度变量仍有效。桌面/手机、深浅主题与中英文共同验证。耗时记录用于前后比较，不使用机器相关绝对时长作为通过标准。时间线 resize 的跟随、离底及会话位置沿用 SRM10 回归。
 
-## Extension
+## 扩展方式
 
-- A new kind-specific optimization first adds a strategy in `toolDisplay.ts`; a strategy only enhances the
-  display decision and does not rewrite the main render skeleton.
-- File-type tools prefer reusing the preview extraction of `codeViewer.ts`; image resources go through the
-  `image` preview first, other binaries keep the fallback hint.
+- 新增 kind 专用优化时，优先在 `toolDisplay.ts` 里增加 strategy
+- strategy 只做“展示决策增强”，不要重写主渲染骨架
+- 文件型 tool 优先复用 `codeViewer.ts` 的预览提取结果
+- 多媒体资源如果是图片，优先走 `image` preview；其他二进制继续走兜底提示
 
-## Dedicated Tool Renderers
+## 专用 Tool Renderer
 
-- `ToolSearch` uses a search summary card by exact tool name, reusing WebSearch's icon, running state and
-  failure hint. The card is never expandable and renders no parameters, search results, schema or raw data.
-  The summary uses the input `query`: `select:Read,TodoWrite` shows as "搜索工具：Read, TodoWrite" (Search
-  tools: Read, TodoWrite), a keyword query keeps the original text; with input not yet arrived or empty only
-  "搜索工具" shows. zh/en share one render path and a long query keeps the search card's single-line
-  ellipsis. This split is UI-only: ToolSearch is not added to the generic search family or Explore
-  aggregation, and tool results, model requests and persistence are unchanged. Desktop live, cold restore
-  and mobile Web share the renderer.
-- The expanded layout of `Node REPL` / Browser Use tools stays transparent and on the same horizontal
-  baseline as the tool summary body; no whole-block horizontal padding on top of `ToolLayout`'s detail
-  spacing. The text result block and the code/error stack after "查看执行细节" (View execution details)
-  each use `bg-card border border-border rounded-xl`; images, the "查看执行细节" button and the collapse
-  layout stay outside the card. A single-line, non-JSON result of at most 160 characters shows as ordinary
-  secondary body text; JSON, multi-line or longer logs keep the CodeBlock with copy/wrap actions. Image
-  results always use a single column in the stream's expanded area, to avoid too-narrow two-column
-  thumbnails on narrow desktop columns and mobile Web; the large-image viewer is unchanged.
-- The expanded area of the `CUA` tool shows only user-facing action, result, failure reason, suggestion,
-  screenshot, permission, environment, list and app state, and offers no "view raw data" entry of the full
-  tool call JSON. Raw input, output, display and lifecycle metadata are still kept by the existing protocol
-  and persistence chain but do not enter the CUA expanded UI shared by desktop and mobile Web; raw-data
-  capability of other tool renderers is unaffected.
-- `ReadSessionContext` renders through `ReadSessionContextToolCallBlock`, not the fallback `Parameters` /
-  `Result` JSON blocks. The summary row shows the `query` of this context read with `sessionId` as a
-  secondary identifier; the expanded area shows only `query` and the returned context content (for a
-  structured output prefer `output.content`, then fall back to text output or `rawOutput`).
-- `SendMessage` belongs to the `message` family and renders through `SendMessageToolCallBlock`. The
-  collapsed state composes one full sentence: "已发送/正在发送" (sent/sending) + input `summary` + "给/to" +
-  target agent `to`; the expanded state shows only target agent, summary and message body, never delivery
-  status, message/agent/task id, output path, result or the whole tool call JSON. When target, summary and
-  message have all not arrived, expansion must be disabled, so no empty detail panel appears on streaming
-  input or a snapshot whose fields are not loaded.
-- The primary display data of `SendMessage` is the `local_agent_message` display payload generated by Core
-  outside the model-content formatting and hook additional-context concatenation. The payload keeps only
-  `status`, failure `error` and result `message`, and must not carry or show delivery, message/agent/task
-  id or output path; `error` and `message` are each bound by a 4 KiB UTF-8 budget, truncating on a full
-  code point and appending a `...[truncated]` marker, so display cannot bypass the tool result budget and
-  amplify live events and persisted snapshots. Lowercase `send_message` is a different session mailbox
-  semantics and must not reuse the `SendMessage` identity, display or renderer.
-- If the `SendMessage` display returns `status: "failed"`, it shows "消息发送失败" (message send failed)
-  and a failure status as a business failure even when the outer tool call is completed; a real tool
-  failure likewise must not keep showing "已发送". Structured output, JSON strings, plain-text model content
-  and `rawOutput` / `result.content` are only old-snapshot/provider compatibility fallbacks; success or
-  failure must not be inferred from error text.
-- The collapsed `SendMessage` state must cover every terminal state explicitly: `completed` "已发送",
-  `failed` or a display business failure "消息发送失败", `denied` "发送已拒绝", `stopped` "发送已停止"; a
-  non-success terminal state must not fall into the success text.
-- `TaskStop` belongs to the `task-control` family and renders through `TaskStopToolCallBlock`. The
-  collapsed state uses only the stopping/stopped action text and `task_id` (the deprecated `shell_id` is
-  accepted at input stage), never `task_type`; in the expanded state the summary row keeps the task id and
-  the detail area shows only task type, task description or command, and result message, without repeating
-  the task id nor the whole tool call JSON.
-- The primary display data of `TaskStop` is the Core-generated `task_stop` display payload with fields
-  `taskId`, `taskType`, optional `command`, result `message` and optional `truncated` only. `command` and
-  `message` are each bound by a 16 KiB UTF-8 budget; truncating either sets `truncated: true`, so display
-  cannot bypass the tool result budget; the expanded UI must state clearly that details were truncated.
-  Live events read from `raw.result.display`, persisted restore from `raw.display`, other providers may
-  read from `raw.rawOutput.display`; all three entries go through one UI reader with strict kind/field
-  validation.
-- The successful output/model content of `TaskStop` keeps the original tool contract; the runtime must let
-  `command` mean the real command for `local_bash` and a short `description` for `local_agent`, never
-  putting the full subagent `prompt` in the result. For `local_agent` the UI shows the `command` of a
-  trusted `task_stop` display as "任务描述" (task description) in body style; command tasks keep showing it
-  as "命令" (command) in monospace. A historical `local_agent` result without display must not show the old
-  `output.command` as a description (that field may hold the full prompt); the old field is used only to
-  recognize and compress the standard success text exactly. The display projection only removes the
-  duplication already shown by the separate `command` field: `Successfully stopped task: <taskId>
-(<command>)` shows in the UI "结果" (result) as `Successfully stopped task: <taskId>`. For historical
-  results without display the UI does an exact match of the same template only; any custom result text is
-  kept verbatim.
-- `TaskStop` stays compatible with old structured objects, JSON strings and `rawOutput`. A historical
-  result with hook additional context may only recognize the explicit `\n\n[Hook additional context]`
-  envelope and parse the JSON before it, with no arbitrary prefix truncation or text guessing. The stop
-  action itself uses no destructive color; only a real failure state keeps reusing `ToolLayout`'s failure
-  status and error tooltip.
-- The collapsed `TaskStop` state covers every terminal state explicitly: `completed` "已停止", `failed`
-  "停止任务失败", `denied` "停止操作已拒绝", `stopped` "停止操作已取消"; failure, denial or interruption
-  must not appear together with "已停止". For `failed` / `denied` / `stopped` carrying an error reason, the
-  expanded state shows it as "结果"; if task type, description or command, result and truncation notice are
-  all absent, expansion must be disabled, so no clickable-but-empty detail panel appears.
-- `TaskOutput` belongs to the `task-control` family and renders through `TaskOutputToolCallBlock`. The
-  collapsed state uses the monospace `task_id` as main content and projects the status by priority "tool
-  execution terminal state > retrieval status > queried task status": a tool execution failure shows the
-  unified "执行失败" (execution failed), running "任务运行中", wait timeout "等待超时", successfully read
-  completed task "已获取", failed/lost "任务失败", cancelled/killed/stopped "任务已停止". An unknown task
-  status shows verbatim; a successful read must not always be treated as task success.
-- The primary display data of `TaskOutput` is the Core-generated `task_output` display payload, containing
-  only `retrievalStatus`, an optional `taskStatus` of at most 64 characters, an optional `output` of at most
-  2000 characters and optional `truncated`. `task_id` is read directly from the tool input and not repeated
-  in display. Output keeps the first 2000 characters after `trimEnd()`; blank output generates no field,
-  and partial output obtained while running may be shown. Only non-empty output provides an expand entry,
-  using a fixed-max-height scrolling `<pre>`; when truncated, a notice says the rest is omitted. Task type,
-  description, error, prompt, result, output path and raw provider XML/JSON must not enter display, summary
-  body or expanded content; a real tool execution failure still reuses `ToolLayout`'s generic failure
-  status tooltip showing the error reason via `context.errorText` on hover/copy, and generates no expanded
-  area.
-- `RespondToCoordinator` belongs to the `message` family and renders through
-  `RespondToCoordinatorToolCallBlock`. The collapsed state uses only the input `summary` as main content and
-  offers no expanded area: running "正在回复", success "回复已排队" (reply queued), business or execution
-  failure the unified "执行失败", denial and stop their terminal texts. "Queued" only means the response
-  command entered the parent runtime command queue and must not be written as delivered, read or handled.
-- The primary display data of `RespondToCoordinator` is the Core-generated `respond_to_coordinator` display
-  payload containing only `status: "success" | "failed"`. `message`, `responseId`, `error` and the raw
-  result must not be copied into display, summary body or expanded content; a real tool execution failure
-  still reuses `ToolLayout`'s generic failure tooltip via `context.errorText`, and a business
-  `status: "failed"` generates no invented error detail. Ordinary child tool rows materialize only in the
-  child session topic; the parent session keeps showing only Agent/Task summaries and must not restore
-  mirrored child tool rows for the dedicated card.
-- The new displays travel through completed tool metadata and V4 `ToolCallRow.display`. For old records
-  without the matching display, the two renderers show a minimal summary from the input and the generic tool
-  lifecycle only, parse no provider-visible XML/JSON, and add no persistence migration.
-- The formal desktop WDIO reuses the background Agent lifecycle to verify both projection chains. The
-  success case really calls `TaskOutput` in the parent session and expands its output, then enters the child
-  session from the Agent summary to check `RespondToCoordinator`'s summary/"回复已排队" and parent-session
-  isolation. The combined error case makes TaskOutput query a nonexistent task and makes the child call
-  RespondToCoordinator missing the required `message`, currently covering the error terminal state of both
-  tool rows, the unified "执行失败" text, card bodies not containing the provider error wrapper or raw
-  error, and the child-only boundary. The WDIO assertion that hovering the generic failure status of the two
-  error cards shows the matching `context.errorText` is not added yet, so O19 stays `partial`. E2E does not
-  re-enumerate retrieval/task statuses, business queue failure, the 2,000-character boundary or mobile
-  replayable; those combinations are covered by targeted Core display, V4 projection/wire and shared
-  renderer tests.
-- These renderers all reuse `ToolLayout`, `ToolSnapshotFieldNotice`, semantic color tokens, `text-ui-base`
-  body typography and lucide icons. The command in the collapsed summary of Execute/Shell tools uses the UI
-  sans font, consistent with the same summary row; the expanded command body keeps monospace. JSX props
-  passed to the memoized `ToolLayout` must keep a stable reference via `useMemo`; the detail layout must
-  wrap vertically on narrow screens and work on desktop/Web, Zai Light/Zai Dark and zh/en text lengths.
-- `Read` / `Edit` / `Write` summaries keep the file name first as the conversation stream narrows: a
-  conversation container narrower than `360px` first hides the action label, source badge and parent
-  directory path, the file chip uses the remaining width and truncates inside itself; file icon, diff stats
-  and expand entry stay. Normal widths still show the full action label and path; desktop split and mobile
-  Web share the container rule.
-- All ToolCalls keep a static kind icon while running, not replaced by a spinning loading icon; running is
-  expressed by the kind-text sweep, status text and summary content, avoiding continuous animation cost when
-  many tool calls stream at once.
-- ToolCall copy follows "running state uses an action name, terminal state a stable category name": Chinese
-  `pending` / `in_progress` kind labels use "正在 + action"; English keeps the existing concise action words
-  (`Reading`, `Sending`, `Working`) without mechanical expansion. After `completed` / `failed` / `denied` /
-  `stopped` it returns to the category name without "已"; target, command, file and business result stay in
-  the summary body, and failure, denial, stop remain expressed by the status label. Example: a single Read
-  shows `正在读取 · package.json` and after completion `读取 · package.json`; a single Execute shows
-  `正在执行 · pnpm test` and after completion `终端 · pnpm test`. "已读取"/"已执行" must not be used as a
-  terminal category name, and the same in-progress action must not repeat in the category name and the
-  summary body.
-- Dedicated business states take priority over generic lifecycle text: `RespondToCoordinator` success is
-  still "回复已排队"; `TaskOutput` still distinguishes task running, wait timeout, task failed and task
-  stopped; `TaskStop` still distinguishes successfully stopping a task from the stop operation itself being
-  denied/cancelled. The category name only says what the tool is and must not override these results.
-- Explore, Terminal and Changes create a UI synthetic parent group only when at least 2 consecutive tools of
-  the same kind occur inside one visible work segment; when the longest consecutive run has 1 tool, show the
-  original tool with no parent group. While streaming, the first tool shows as the original tool at once
-  and upgrades to a parent group anchored on the first tool's identity once the second consecutive
-  same-kind tool arrives. A different kind of tool, visible reasoning and assistant text cut the run; hidden
-  reasoning and a Shell still waiting for command classification are treated as transparent boundaries.
-- An ordinary Explore aggregate (search, list dir, read file, etc.) can be expanded/collapsed manually even
-  while running; the running state only means the message tail is still in the exploring phase, and no
-  longer forces expansion or locks interaction. When a child tool is added to the same Explore segment
-  during streaming, the identity of the aggregate component and expand state must anchor on the first child
-  tool; the last child tool or the current count must not enter the identity key, so content growth does
-  not reset an expanded detail to collapsed. While in progress the icon stays a magnifier, not replaced by a
-  loading spinner. The collapsed `kindLabel` is always the tenseless `Explore` / `查阅`, never
-  `Exploring` / `Explored`; summary body and kind label are always separated by a static dot, and the
-  completed state also shows `Explore · 3 lists, 2 files`. The latest child's `primaryText` /
-  `secondaryText` are borrowed only when its summary is already clear. Child summaries always keep the
-  in-progress action form, e.g. `Explore · Reading filename path`, `Explore · Searching xxx`,
-  `Explore · Running command`, not disappearing or turning into completion text when the child completes. A
-  read child enters the collapsed state only after its path is resolved and reuses the Read tool's own file
-  chip to keep the file icon, path tooltip and file-preview click behavior; a half-baked fallback such as
-  `Read` must not take over the summary. When a child goes from running to completed, the collapsed state
-  keeps the latest child content, avoiding flicker between child status words and parent aggregate stats.
-  Collapsed content changes use a vertical scroll animation by default: 300ms per scroll, then a stable
-  500ms rest before the next one, total under 1s per item; `ToolCallBlock.disableSummaryContentAnimation` /
-  `AssistantMessage.disableToolSummaryContentAnimation` is the unified switch that turns off the summary
-  scrolling of both Agent and Explore, then shows the latest summary directly and clears the pending queue;
-  the lower-level `ToolLayout.disableSummaryContentAnimation` or `QueuedSummaryContent.disableAnimation`
-  remain local switches. The total queue holds at most three items: the current item, the second pending
-  item and a third replaceable item; the current item is not interrupted, the second is not overwritten by
-  later summaries, and new summaries arriving during animation replace only the third, so stale summaries
-  are not queued indefinitely. If a busy main thread makes the scroll timer clearly late, the old queue is
-  not replayed but compressed to the latest summary. When Explore ends, the pending queue compresses into
-  the final aggregate summary. The expanded state shows the parent aggregate stats and child tool details.
-  The Explore parent is only a UI synthetic container and does not represent one real tool execution: a
-  child failure appears only inside that child's detail and no child `error` may be summarized into a
-  failure of the parent Explore; failure display of real protocol tools themselves is unaffected.
-- The running state of Explore and Execute parents derives from stage boundaries: it is `in_progress` only
-  if the group is the last visible assistant work chunk of a `running` work segment and no other visible row
-  follows it. A later other tool, assistant text or visible reasoning ends the previous stage; non-first
-  reasoning hidden by settings, and a Shell row deferred because its command has not arrived, are neither
-  visible boundaries nor part of tail-position judgment. A terminal segment's tail is completed (shown as
-  stopped if a cancelled child exists). Child tool lifecycle affects only the expanded details and does not
-  decide the parent run state.
-- Shell command classification for Explore aggregation must cover both Unix shells and Windows PowerShell.
-  Commands wrapped by `pwsh` / `powershell.exe -Command` are unwrapped first. Known read-only PowerShell
-  commands such as `Get-ChildItem` / `gci` / `dir`, `Get-Content` / `gc` / `type`, `Select-String` / `sls`,
-  `Get-Location`, `Test-Path`, `Resolve-Path` go into Explore; known write or destructive commands such as
-  `Remove-Item` / `del` / `erase`, `Set-Content`, `Add-Content`, `Clear-Content`, `Out-File`, `New-Item`,
-  `Move-Item`, `Copy-Item`, `Rename-Item`, `Set-Item` do not. Write detection takes priority over read-only
-  detection.
-- The command text in Tool summaries and Execute details inherits UI sans and does not use `font-mono`;
-  command output keeps `font-mono` to preserve alignment and recognizability of terminal-like data. This is
-  a product exception to the global typography default for command display.
-- The Execute parent group uses the cross-platform category title `Terminal` / `终端`, not referring to a
-  specific Windows Terminal app; PowerShell, cmd.exe, Git Bash, WSL and Unix shells all use it, and the
-  Running/Ran texts of a single Execute child are unchanged. The parent `kindLabel` and summary are always
-  separated by a static `·`. While running, each scroll snapshot must contain the full action semantics
-  `Running <command>` / `执行中 <command>`, never scrolling a bare command; the summary structure aligns
-  with the Explore shell child summary: the action word uses `text-foreground-subtle`, the command uses
-  `text-foreground-subtlest`, played as one scroll snapshot. When a running parent group is expanded, the
-  parent summary shows only `Terminal · N commands`, not the action word or current command; the current
-  state is expressed by the child tool summary below. The completed state shows `Terminal · N commands` with
-  failure/stop stats.
-- Consecutive file-write rows aggregate into a `Changes` / `更改` parent group; the parent run state, like
-  Explore/Terminal, is decided by visible stage boundaries and does not depend on child lifecycle. A
-  running collapsed state vertically scrolls the latest `Writing/Editing + file chip + relative directory`;
-  a running or completed expanded state shows only `Changes · N files`; a completed collapsed state shows
-  `Changes · N files · file chips`. Files are flattened across children, de-duplicated by full path keeping
-  first order; the full list renders first, then as many leading chips as the actual summary width allows
-  are kept and the rest show `+N`, recomputed by ResizeObserver on width changes to restore or collapse
-  files. The multi-file summary of a single Edit keeps reusing the existing child-file renderer. Changes is
-  only a UI synthetic container; child failure/stopped is not summarized as parent failure.
-- The file name in the file chip reused by Edit and Changes summary/scroll content uses
-  `text-foreground-subtle`, one level lower than ordinary main text; the relative directory after it keeps
-  `text-foreground-subtlest`, preserving the file-name vs path hierarchy.
-- Agent / SubAgent tools always use the bot icon and the outer SubAgent kind label; the agent type (e.g.
-  `Explore`) must not show as the outer kind, and the bot icon is not replaced by a loader while running.
-  The collapsed summary body and kind label are always separated by a static dot, and the completed state
-  also shows `SubAgent · xxx`. When a child tool has a confirmable summary, the collapsed body borrows the
-  latest child summary, e.g. `SubAgent · Reading filename path`, `SubAgent · Searching xxx`,
-  `SubAgent · Running command`; only the child summary after the dot takes part in the scroll animation, and
-  it always keeps the in-progress action form. The expanded state still shows the Agent's own prompt,
-  activity content and child tool list. Without a clear child summary, the Agent's own title or description
-  keeps showing.
-- The visual run state of a SubAgent depends only on the parent Agent tool's `pending` / `in_progress`.
-  Child tools are expanded details and do not keep the parent Agent running; when the parent Agent is
-  completed, the outer converges to a static `SubAgent · xxx` even if a child tool is still running.
-- When a `TodoWrite` child appears in the collapsed Agent / SubAgent state, show a todo-semantic summary,
-  not the bare tool name: prefer the in-progress item, else the next unfinished item, else the last
-  completed item; format `Updating todo 2/5 · current task`, and `Updated todo 5/5 · current task` when all
-  are done. So when a child agent updates the plan the scrolling summary still carries concrete content
-  rather than `Running TodoWrite`.
-- While the current main turn is still running, the Agent / SubAgent card and the bottom chat `ChatLoading`
-  show simultaneously. The Agent card and its child tools only handle tool details and do not control
-  `ChatLoading`; the bottom loading hides when the main turn reaches a terminal state and also while
-  waiting for AskUserQuestion or a permission confirmation, so "waiting for the user" is not expressed as
-  "thinking".
-- While streaming, a running shell tool is handled in two scenarios:
-  - Right after `tool_input_start` arrives with the command arguments not yet complete, do not render this
-    unclassified shell, whether it is a later tool of the active Explore or the first standalone tool of
-    the current turn; wait until the command is classifiable, so the user does not see `Run` first and then
-    an upgrade to `Explore` next frame for a read-only command.
-  - An unclassified shell directly following an active Explore must not show separately as `Ran Bash` even
-    if completed. Such a tool has no displayable command and should be absorbed by the preceding Explore's
-    visual progress, avoiding a meaningless Bash row under the Explore summary.
-  - Once the command is classifiable, render by the classification immediately: read-only exploration
-    commands go into `Explore`, non-exploration commands stay standalone `Run` / shell tools, so a really
-    executing command has progress feedback.
-- The `Goal` tool, the `/goal` command mention in user messages, the goal summary and the goal validation
-  divider all use lucide's `GoalIcon`, consistent with the user-visible `/goal` semantics, instead of
-  `TargetIcon`.
+- `ToolSearch` 按精确工具名使用搜索摘要卡，复用 WebSearch 的图标、运行状态和失败提示。卡片始终不可展开，不渲染参数、搜索结果、schema 或原始数据。
+- 摘要使用输入 `query`：`select:Read,TodoWrite` 展示为“搜索工具：Read, TodoWrite”，关键词查询保留原文；输入尚未到达或为空时只显示“搜索工具”。中英文共用同一渲染路径，长查询沿用搜索卡的单行省略。
+- 该分流仅属于 UI，不把 ToolSearch 加入通用 search family 或 Explore 聚合，不改变工具结果、模型请求及持久化。桌面实时与冷恢复、手机 Web 共用该 renderer。
+- `Node REPL` / Browser Use 工具的展开布局保持透明，并与工具摘要正文保持同一水平基线；不得在 `ToolLayout` 的详情间距之外再次叠加整块横向 padding。文本结果内容块和“查看执行细节”展开后的代码/错误栈分别使用 `bg-card border border-border rounded-xl`；图片、“查看执行细节”按钮和折叠布局本身留在卡片外。单行、非 JSON、长度不超过 160 字符的短结果使用普通次级正文展示；JSON、多行或更长的日志继续使用带复制/换行操作的 CodeBlock。图片结果在消息流展开区始终使用单列，避免窄桌面栏和手机 Web 中被响应式断点切成过窄的双列缩略图；大图查看器行为保持不变。
+- `CUA` 工具的展开区只展示面向用户的动作、结果、失败原因、建议、截图、权限、环境、列表和应用状态，不提供完整 tool call JSON 的“查看原始数据”入口。原始 input、output、display 和生命周期元数据仍按既有协议与持久化链路保留，只是不进入桌面端与手机 Web 共用的 CUA 展开界面；其他工具 renderer 的原始数据能力不受影响。
+- `ReadSessionContext` 通过 `ReadSessionContextToolCallBlock` 渲染，不走 fallback 的 `Parameters` / `Result` JSON 块。
+- 摘要行展示本次上下文读取的 `query`，并把 `sessionId` 作为次级标识。
+- 展开区只展示 `query` 和返回的上下文内容；若 output 是结构化对象，优先读取 `output.content`，再回退到文本型 output 或 `rawOutput`。
+- `SendMessage` 归入 `message` family，并通过 `SendMessageToolCallBlock` 渲染。收起态按“已发送/正在发送 + input `summary`（缺省时用 `message` 的第一个非空行） + 给/to + 目标 agent `to`”组成一句完整摘要；展开态只展示目标智能体、摘要和消息正文，不展示投递状态、message/agent/task id、输出路径、result 或整段 tool call JSON。目标、摘要和消息都尚未到达时必须禁用展开，禁止在 streaming input 或字段未加载的 snapshot 上出现空详情面板。
+- `SendMessage` 的主展示数据使用 Core 在 model content 格式化之外生成的 `local_agent_message` display payload（hook additional context 是单独的附件，不进 tool result）。payload 只保留 `status`、失败 `error` 和结果 `message`，不得携带或展示 delivery、message/agent/task id、输出路径；`error` 与 `message` 必须分别受 4 KiB UTF-8 预算约束，超出时保留完整 code point 并追加 `...[truncated]` 标记，避免 display 绕过 tool result budget 放大实时事件和持久化快照。lowercase `send_message` 是另一条 session mailbox 语义，不得复用 `SendMessage` identity、display 或 renderer。
+- `SendMessage` 的 display 若返回 `status: "failed"`，即使外层 tool call 已 completed，也按业务失败展示“消息发送失败”和 failure status；真实 tool failure 同样不得继续显示“已发送”。结构化 output、JSON 字符串、纯文本 model content 和 `rawOutput` / `result.content` 只作为旧快照/provider 兼容 fallback，禁止通过错误文案推断成功或失败。
+- `SendMessage` 的收起态必须显式覆盖完整终态：`completed` 显示“已发送”，`failed` 或 display 业务失败显示“消息发送失败”，`denied` 显示“发送已拒绝”，`stopped` 显示“发送已停止”；不得把非成功终态落入成功文案。
+- `TaskStop` 归入 `task-control` family，并通过 `TaskStopToolCallBlock` 渲染。收起态只使用停止中/已停止的动作文案和 `task_id`（输入阶段兼容 deprecated `shell_id`），不得展示 `task_type`；展开态的摘要行继续保留 task id，详情区只展示 task type、任务描述或命令，以及结果消息，不重复 task id，也不展示整段 tool call JSON。
+- `TaskStop` 的主展示数据使用 Core 生成的 `task_stop` display payload，字段只包含 `taskId`、`taskType`、可选 `command`、结果 `message` 和可选 `truncated`。`command` 与 `message` 必须分别受 16 KiB UTF-8 预算约束，任一字段被截断时设置 `truncated: true`，避免 display 绕过 tool result budget 放大实时事件、持久化快照和展开 DOM；UI 展开态必须明确提示详情已截断。实时事件从 `raw.result.display` 读取，持久化恢复从 `raw.display` 读取，其他 provider 可从 `raw.rawOutput.display` 读取；三个入口必须由同一个 UI reader 做严格 kind/字段校验。
+- `TaskStop` 的成功 output/model content 继续保持原始工具契约；runtime 必须让 `local_bash` 的 `command` 表示实际命令、`local_agent` 的 `command` 表示短 `description`，不得把完整 subagent `prompt` 放入结果。UI 对 `local_agent` 将可信 `task_stop` display 中的 `command` 按“任务描述”以正文样式展示；命令型任务继续按“命令”以等宽样式展示。没有 display 的历史 `local_agent` 结果不得把旧 `output.command` 当作描述展示，因为该字段可能保存完整 prompt；旧字段只允许用于精确识别并压缩标准成功文案。display projection 只负责去掉标准成功文案中已经由 `command` 字段单独展示的重复内容：`Successfully stopped task: <taskId> (<command>)` 在 UI 的“结果”中显示为 `Successfully stopped task: <taskId>`。UI 对没有 display 的历史结果只做同一模板的精确匹配，任意自定义结果文案必须原样保留。
+- `TaskStop` 继续兼容旧结构化对象、JSON 字符串和 `rawOutput`。历史结果若带 hook additional context，只允许识别明确的 `\n\n[Hook additional context]` envelope 并解析前段 JSON，不得做任意前缀截断或文案猜测。停止操作本身不使用 destructive 颜色；只有真实失败态继续复用 `ToolLayout` 的 failure status 与错误 tooltip。
+- `TaskStop` 的收起态必须显式覆盖完整终态：`completed` 显示“已停止”，`failed` 显示“停止任务失败”，`denied` 显示“停止操作已拒绝”，`stopped` 显示“停止操作已取消”；失败、拒绝或中断不得与“已停止”同时出现。
+- `TaskStop` 的 `failed` / `denied` / `stopped` 若带错误原因，展开态将该原因作为“结果”展示；若 task type、任务描述或命令、结果和截断提示都不存在，则必须禁用展开，禁止出现可点击但内容为空的详情面板。
+- `TaskOutput` 归入 `task-control` family，并通过 `TaskOutputToolCallBlock` 渲染。收起态使用等宽 `task_id` 作为主内容，状态按“工具执行终态 > retrieval status > 被查询 task status”的优先级投影：工具执行失败显示统一的“执行失败”，运行中显示“任务运行中”，等待超时显示“等待超时”，成功读取 completed task 显示“已获取”，failed/lost 显示“任务失败”，cancelled/killed/stopped 显示“任务已停止”。未知 task status 原样显示，禁止把成功读取结果一律当作 task 成功。
+- `TaskOutput` 的主展示数据使用 Core 生成的 `task_output` display payload，只包含 `retrievalStatus`、最长 64 字符的可选 `taskStatus`、最长 2000 字符的可选 `output` 和可选 `truncated`。`task_id` 继续直接读取 tool input，不在 display 重复保存。output 使用 `trimEnd()` 后保留前 2000 字符；空白 output 不生成字段，运行中已取得的部分 output 允许展示。仅非空 output 提供展开入口，展开区使用固定最大高度的滚动 `<pre>`；截断时提示后续内容已省略。task type、description、error、prompt、result、output path 和原始 provider XML/JSON 不得进入 display、摘要正文或展开内容；真实 tool execution failure 仍复用 `ToolLayout` 的通用失败状态 tooltip，通过 `context.errorText` 在 hover/copy 时展示错误原因，且不因此生成展开区。
+- `RespondToCoordinator` 归入 `message` family，并通过 `RespondToCoordinatorToolCallBlock` 渲染。收起态只使用 input `summary` 作为主内容，不提供展开区；运行中显示“正在回复”，success 显示“回复已排队”，业务或执行失败显示统一的“执行失败”，拒绝和停止显示对应终态。“已排队”只表示 response command 已进入 parent runtime command queue，不得写成已送达、已读取或已处理。
+- `RespondToCoordinator` 的主展示数据使用 Core 生成的 `respond_to_coordinator` display payload，只包含 `status: "success" | "failed"`。`message`、`responseId`、`error` 和原始 result 不得复制到 display、摘要正文或展开内容；真实 tool execution failure 仍复用 `ToolLayout` 的通用失败状态 tooltip，通过 `context.errorText` 在 hover/copy 时展示错误原因，业务 `status: "failed"` 不凭空生成错误详情。普通 child tool row 只在 child session topic 中物化；父会话继续只显示 Agent/Task 摘要，不得为了专属卡片恢复 mirrored child tool row。
+- 新增 display 通过 completed tool metadata 和 V4 `ToolCallRow.display` 传输。旧记录没有对应 display 时，两个 renderer 只使用 input 与通用 tool lifecycle 展示最小摘要，不解析 provider-visible XML/JSON，也不新增持久化迁移。
+- 正式 desktop WDIO 复用 background Agent 生命周期验证两条投影链：成功 case 在父会话真实调用 `TaskOutput` 并展开 output，随后从 Agent 摘要进入 child 会话检查 `RespondToCoordinator` 的 summary/“回复已排队”以及父会话隔离；组合错误 case 让 TaskOutput 查询不存在的 task，并让 child 调用缺少必填 `message` 的 RespondToCoordinator，当前覆盖两个 tool row 的 error 终态、统一的“执行失败”文案、卡片正文不包含 provider error wrapper 或原始错误，以及 child-only 边界。两张错误卡 hover 通用失败状态后展示对应 `context.errorText` 的 WDIO 断言尚未补齐，因此 O19 保持 `partial`。E2E 不重复枚举 retrieval/task 状态、业务 queue failure、2,000 字符边界或 mobile replayable；这些组合由 Core display、V4 projection/wire 和共享 renderer 定向测试覆盖。
+- 这些 renderer 都复用 `ToolLayout`、`ToolSnapshotFieldNotice`、semantic color token、`text-ui-base` 正文排版和 lucide 图标。Execute/Shell 工具收起态 summary 中的 command 使用 UI sans 字体，与同一摘要行保持一致；展开后的命令正文继续使用等宽字体。传给 memoized `ToolLayout` 的 JSX props 必须通过 `useMemo` 保持稳定引用；详情布局必须在窄屏纵向自然换行，并兼容桌面/Web、Zai Light/Zai Dark 与中英文文案长度。
+- `Read` / `Edit` / `Write` 摘要在会话流变窄时优先保留文件名：窄于 `360px` 的 conversation container 先隐藏动作标签、来源徽标和父目录路径，文件 chip 使用剩余宽度并在自身内部截断；文件图标、diff 统计和展开入口继续保留。普通宽度仍显示完整动作标签与路径，桌面分栏与手机 Web 共用同一容器规则。
+- 所有 ToolCall 运行中都保留静态 kind 图标，不再替换成旋转 loading 图标；运行态通过 kind 文案扫光、状态文案和摘要内容表达，避免大量 toolcall 同时 streaming 时持续触发动画渲染开销。
+- ToolCall 文案统一遵循“运行态动作名称、终态稳定类别名称”：中文 `pending` / `in_progress` 的 kind label 使用 `正在 + 动作`；英文沿用简洁自然的现有动作词（如 `Reading`、`Sending`、`Working`），不为句式对称机械扩写。进入 `completed` / `failed` / `denied` / `stopped` 后统一回到不带“已”的类别名称，目标、命令、文件和业务结果继续放在摘要正文中，失败、拒绝、停止等异常状态继续由 status label 表达。例如单个 Read 显示 `正在读取 · package.json`，完成后显示 `读取 · package.json`；单个 Execute 显示 `正在执行 · pnpm test`，完成后显示 `终端 · pnpm test`。禁止把“已读取”“已执行”等成功动作当作终态类别名称，也禁止在类别名称和摘要正文中重复同一个进行中动作。
+- 专属业务状态优先于通用生命周期文案：`RespondToCoordinator` 的成功结果仍是“回复已排队”，`TaskOutput` 仍区分任务运行中、等待超时、任务失败和任务已停止，`TaskStop` 仍区分成功停止任务与停止操作自身被拒绝/取消。类别名称只负责说明工具是什么，不能覆盖这些业务结果。
+- Explore、Terminal、Changes 只在同一可见工作段内连续同类工具达到 2 个及以上时创建 UI 合成父组；最大连续片段只有 1 个工具时直接显示原始工具，不套父组。流式阶段首个工具立即按原工具显示，第二个连续同类工具到达后再升级为以首个工具锚定身份的父组。异类工具、可见 reasoning 和 assistant text 继续切断片段；隐藏 reasoning 与等待命令分类的 Shell 继续作为透明边界处理。
+- 普通 Explore 聚合工具（搜索、列目录、读文件等）在运行态也允许用户手动展开/收起；运行态只表示当前消息尾部仍处在查阅段，不再强制展开或锁定交互。同一段 Explore 在流式过程中新增子工具时，聚合组件和展开状态的身份必须锚定首个子工具，禁止把末尾子工具或当前数量放进身份 key，避免内容增长把用户已经展开的详情重置为收起。进行中时图标仍固定显示放大镜，不替换成 loading spinner。收起态的 `kindLabel` 始终使用无时态的 `Explore` / `查阅`，不再显示 `Exploring` / `Explored`；摘要正文和 kind label 始终用静态分隔点隔开，完成态也显示为 `Explore · 3 lists, 2 files`。只在最新子工具摘要已经明确时借用它的 `primaryText` / `secondaryText`。子工具摘要始终补充 ing 动作态，例如 `Explore · Reading 文件名 路径`、`Explore · Searching 查找 xxx`、`Explore · Running command`，不随子工具完成态消失或切成完成文案。其中 read 子工具必须等到路径解析出来后才放进收起态，并复用 Read 工具自己的文件 chip，以保留文件图标、路径 tooltip 和文件预览点击行为，禁止用 `Read` 这类半成品 fallback 抢占摘要。子工具从 running 变 completed 时，收起态保持最新子工具内容，避免在子工具状态词和父级聚合统计之间来回闪动。收起态内容变化默认使用纵向滚动动效：单次滚动 300ms，滚动完成后稳定停留 500ms 再播放下一条，单条总耗时必须小于 1s；`ToolCallBlock.disableSummaryContentAnimation` / `AssistantMessage.disableToolSummaryContentAnimation` 是统一开关，会同时关闭 Agent 和 Explore 的摘要滚动，关闭后直接显示最新摘要并清空待播队列；底层 `ToolLayout.disableSummaryContentAnimation` 或 `QueuedSummaryContent.disableAnimation` 继续保留为局部开关。总队列最多三项，分别是当前项、第二条待显示项、第三条可插队项；当前项不被打断，第二条不被后来摘要覆盖，动画期间继续到来的新摘要只替换第三条，避免把过期摘要无限排队。若主线程繁忙导致滚动 timer 明显晚到，不再补播旧队列，直接压缩到最新摘要，避免卡顿后继续回放过期状态。Explore 结束时把待播队列压缩成最终聚合摘要，不继续播放过期子工具摘要。展开态展示父级聚合统计和子工具明细。Explore 父节点只是 UI 合成容器，不代表一次真实工具执行；子工具失败只在对应子工具明细内展示，禁止把任一子工具的 `error` 汇总成父 Explore 的失败状态。真实协议工具自身的失败展示不受此规则影响。
+- Explore 与 Execute 父级运行态都按阶段边界派生：只有分组位于 `running` work segment 的最后一个可见 assistant work chunk，且组后没有其他可见 row 时才为 `in_progress`。后续其他工具、assistant text 或可见 reasoning 都结束前一阶段；被设置隐藏的非首 reasoning，以及 command 尚未到达而暂缓渲染的 Shell row，都不构成可见边界，也不参与尾部位置判断。terminal segment 尾部为 completed（存在 cancelled child 时可显示 stopped）。子工具生命周期只影响展开明细，不反向决定父级运行态。
+- Explore 聚合的 shell 命令归类必须同时覆盖 Unix shell 和 Windows PowerShell。`pwsh` / `powershell.exe -Command` 包裹的命令先解包再判定；已知只读 PowerShell 命令如 `Get-ChildItem` / `gci` / `dir`、`Get-Content` / `gc` / `type`、`Select-String` / `sls`、`Get-Location`、`Test-Path`、`Resolve-Path` 进入 Explore；已知写入或破坏性命令如 `Remove-Item` / `del` / `erase`、`Set-Content`、`Add-Content`、`Clear-Content`、`Out-File`、`New-Item`、`Move-Item`、`Copy-Item`、`Rename-Item`、`Set-Item` 不进入 Explore。写入判定优先于只读判定。
+- Tool 摘要和 Execute 详情中的 command 文本统一继承 UI sans，不使用 `font-mono`；命令输出仍保留 `font-mono`，维持 terminal-like 数据的对齐与辨识度。这是 command 展示对全局 typography 默认规则的产品例外。
+- Execute 父组使用跨平台类别标题 `Terminal` / `终端`，不指代具体 Windows Terminal 应用；PowerShell、cmd.exe、Git Bash、WSL 和 Unix shell 都沿用该标题，单条 Execute 子工具的 Running/Ran 文案不变。父组 `kindLabel` 与摘要始终用静态 `·` 分隔。运行中每个滚动快照必须包含完整动作语义 `Running <command>` / `执行中 <command>`，不能只滚动裸 command；摘要结构和 Explore shell 子摘要对齐：动作词使用 `text-foreground-subtle`，command 使用 `text-foreground-subtlest`，两者作为同一个滚动快照播放。运行中展开父组后，父 summary 只显示 `Terminal · N commands`，不得继续显示动作词或当前 command，当前状态由下方子 tool summary 表达。完成态显示 `Terminal · N commands` 及失败/停止统计。
+- 连续 file-write rows 聚合为 `Changes` / `更改` 父组，父运行态与 Explore/Terminal 一样由可见阶段边界决定，不依赖 child 生命周期。进行中收起态纵向滚动最新 `Writing/Editing + file chip + relative directory`；进行中或完成展开态只显示 `Changes · N files`；完成收起态显示 `Changes · N files · file chips`。文件跨 children 扁平化后按完整 path 去重并保持首次顺序；首次渲染完整列表，再根据 summary 实际可用宽度保留尽可能多的前序 chip，其余显示 `+N`，宽度变化时通过 ResizeObserver 重算并恢复或收起文件。单个 Edit 的多文件 summary 继续复用现有子文件 renderer。Changes 只是 UI 合成容器，child failure/stopped 不汇总为父失败。
+- Edit 与 Changes summary/滚动内容复用的 file chip 文件名统一使用 `text-foreground-subtle`，比普通主文本低一级；其后的相对目录继续使用 `text-foreground-subtlest`，保持文件名与路径的层级差。
+- Agent / SubAgent 工具始终使用 bot 图标和外层 SubAgent kind label，禁止把 agent 类型（例如 `Explore`）显示成外层 kind；运行中也不把 bot 图标替换成 loader。收起态摘要正文和 kind label 始终用静态分隔点隔开，完成态也显示为 `SubAgent · xxx`。当子工具存在可确认 summary 时，收起态正文借用最新子工具 summary，例如 `SubAgent · Reading 文件名 路径`、`SubAgent · Searching 查找 xxx`、`SubAgent · Running command`；只有点后面的子工具 summary 参与滚动动效。子工具摘要始终保留 ing 动作态，不随完成态消失。展开态仍展示 Agent 自己的 prompt、活动内容和子工具列表。没有明确子工具 summary 时，继续显示 Agent 自己的标题或描述。
+- SubAgent 的视觉运行态只看父 Agent tool 的 `pending` / `in_progress`。子工具是展开区明细，不反向续住父 Agent 运行态；父 Agent 已经 completed 时，即使子 tool 仍 running，外层也收敛成静态 `SubAgent · xxx`。
+- Agent / SubAgent 收起态遇到 `TodoWrite` 子工具时展示待办语义摘要，不展示裸工具名：优先展示 in-progress 项，否则展示下一条未完成项，否则展示最后一条完成项；格式为 `Updating todo 2/5 · 当前任务`，全部完成时为 `Updated todo 5/5 · 当前任务`。这样子 agent 更新计划时，滚动摘要仍能表达具体内容，而不是 `Running TodoWrite`。
+- 当前主轮仍为 running 时，Agent / SubAgent 卡片与聊天底部 `ChatLoading` 同时显示。Agent 卡片及其内部子工具只负责工具详情，不控制 `ChatLoading`；底部 loading 在主轮进入终态时隐藏，等待 AskUserQuestion 或权限确认期间也隐藏，避免把“等待用户”误表达成“正在思考”。
+- 流式过程中，running shell tool 要分两个场景处理：
+  - `tool_input_start` 刚到、命令参数还没拼完整时，先不要渲染这个未分类 shell。无论它是 active Explore 后续 tool，还是当前轮第一个独立 tool，都要等命令可分类后再展示，避免用户先看到 `Run`，下一帧又因为只读命令被升级成 `Explore`。
+  - active Explore 后面紧跟的未分类 shell 即使已经完成，也不要单独显示成 `Ran Bash`。这类 tool 没有可展示命令，应该由前面的 Explore 视觉进度吸收，避免 Explore 摘要下方残留无意义的 Bash 行。
+  - 命令已经可分类时，立即按分类结果渲染：只读探查命令进入 `Explore`，非探查命令保持独立 `Run` / shell tool，避免真实执行命令没有进度反馈。
+- `Goal` 工具、用户消息里的 `/goal` 命令 mention、goal 摘要和 goal 校验分割线统一使用 lucide 的 `GoalIcon`。
+  这个图标与用户可见的 `/goal` 语义一致，避免继续用 `TargetIcon` 造成项目内图标和 lucide `goal` 图标不一致。
 
-## Edit Line Count
+## 编辑行数计数
 
-- The summary row of `Edit` / file-write tools keeps reusing `changeStat.added` / `changeStat.removed` as
-  the only stats source; the UI does not re-derive diff line counts in rendering.
-- When the count changes, the digits in `+N` / `-N` may use one short character-slot flip animation; the
-  `+` / `-` signs stay static and colors keep `text-diff-added` / `text-diff-removed`.
-- The flip animation must use fixed character width and `tabular-nums`, avoiding summary-row jitter from
-  continuous desktop streaming updates or mobile replayable catch-up frames.
-- With `prefers-reduced-motion: reduce` the digits degrade to static slots, keeping only the full-reading
-  label for assistive technology.
-- A running `Write` / `Edit` preview gets a new real `changeStat` from the projection at most once per
-  second; path, content, diff and `+N/-N` of one sample must update atomically.
-- The UI must not chase the target line by line with `requestAnimationFrame`. When the target goes from
-  `12` to `45`, hand `45` to one short flip directly, without replaying `13`, `14` and other intermediates.
-- On tool end, cancel, restored history snapshot or mobile replayable terminal state, show the real target
-  immediately and do not replay stale streaming line counts.
+- `Edit` / 写文件类工具的摘要行继续复用 `changeStat.added` / `changeStat.removed` 作为唯一统计来源，UI 不在渲染层重新推导 diff 行数。
+- 行数变化时，`+N` / `-N` 中的数字可使用一次短字符槽翻页动画；`+` / `-` 符号保持静态，颜色继续使用 `text-diff-added` / `text-diff-removed`。
+- 翻页动画必须使用固定字符宽度和 `tabular-nums`，避免桌面端连续流式更新或手机端 replayable 恢复补帧时造成摘要行抖动。
+- 用户开启 `prefers-reduced-motion: reduce` 时，数字降级为静态字符槽，只保留完整读数的辅助技术标签。
+- 运行中的 `Write` / `Edit` 预览由 projection 最多每秒提供一次新的真实 `changeStat`；同一个采样点的路径、内容、diff 与 `+N/-N` 必须原子更新。
+- UI 禁止用 `requestAnimationFrame` 逐行追赶目标值。目标从 `12` 更新到 `45` 时直接把 `45` 交给一次短翻页，不补播 `13`、`14` 等中间值。
+- 工具结束、取消、恢复历史 snapshot 或手机 replayable 终态时立即显示真实目标，不回放已经过期的流式行数。
 
-## History Consistency
+## 历史一致性
 
-- ZCode persisted tool calls persist `status` and `raw`, so diff / image / special tool payloads of the
-  live stream reuse the same display logic after refresh.
-- Core's `ToolResultDisplayPayload` is the UI's structured fact boundary: display is generated from the raw
-  tool output, travels through live `ToolCallResult.result.display` and is persisted through completed tool
-  part metadata. Formatting, truncation and hook additional context of model-visible content must not change
-  display.
-- The V4 product projection must keep generic displays such as CUA and file diff in
-  `ToolCallRow.output.display`; `ToolCallRow.display` keeps only the existing `node_repl_images` dedicated
-  channel. The UI adapter reads `output.display` first and stays compatible with the old Node REPL
-  top-level display.
-- The `input` of CUA display v1 stays readable only as a compatibility field for old history; new events no
-  longer write it again. The tool call's own `ToolCallRow.input` is the only input fact source, and the UI
-  discards the copy when parsing old display.
-- When reading display, the UI must cover both desktop `desktop-continuous` live raw events and mobile
-  `web-remote-replayable` persisted metadata; replayable recovery data must not be spliced into the desktop
-  continuous main chain, nor bypass the existing snapshot/gap recovery boundary.
+- ZCode persisted tool call 现在会持久化 `status` 和 `raw`
+- 这样实时流里的 diff / image / 特殊 tool payload，刷新后仍然能复用同一套展示逻辑
+- Core 的 `ToolResultDisplayPayload` 是 UI 结构化事实边界：display 从原始 tool output 生成，通过实时 `ToolCallResult.result.display` 传输，并通过 completed tool part metadata 持久化。模型可见 content 的格式化、截断和 hook additional context 不得改变 display。
+- V4 product projection 必须把 CUA、file diff 等通用 display 保留在 `ToolCallRow.output.display`；`ToolCallRow.display` 只保留既有 `node_repl_images` 专用通道。UI adapter 优先读取 `output.display`，并兼容旧 Node REPL 顶层 display。
+- CUA display v1 的 `input` 仅作为旧历史记录兼容字段继续可读；新事件不再重复写入。工具调用自身的 `ToolCallRow.input` 是唯一输入事实源，UI 解析旧 display 时丢弃其中的副本。
+- UI 读取 display 时必须同时覆盖桌面 `desktop-continuous` 的实时 raw event 与手机 `web-remote-replayable` 的持久化 metadata；不得把 replayable 恢复数据拼接进 desktop continuous 主链路，也不得绕过现有 snapshot/gap 恢复边界。
 
-## WebFetch and Public Tool Display
+## WebFetch 与公开工具展示
 
-WebFetch belongs to its own web-fetch family. The summary uses a web icon, Fetch/Fetching (Chinese:
-网页抓取/正在抓取) and the target URL; it does not use the prompt and is not expandable. Explicit historical
-fetch/web_fetch/webfetch aliases are compatible; classification is not guessed from the URL input. The
-permission preview reuses the WebFetch renderer; an Explore child reuses the URL text extraction function,
-then renders through the exploration group.
+WebFetch 独立归入 web-fetch family。摘要使用网页图标、Fetch/Fetching（中文：网页抓取/正在抓取）和目标 URL；不使用 prompt，不展开。明确历史 fetch/web_fetch/webfetch 别名兼容；不按 URL 输入猜分类。权限预览复用 WebFetch renderer；Explore 子项复用 URL 文本提取函数，再由探索分组渲染。
 
-The App and sharing reuse the tool renderer registry and group presentation. The App injects file media,
-app icons, model provider names and agent colors through capabilities; plugin interaction is injected via
-the render context's pluginUi; public display injects only resource URLs and safe external links. The pure
-display layer must not statically import services, platform or plugin runtime. Fetch still belongs to the
-read-only exploration group.
+App 与分享复用工具 renderer 注册表及分组 presentation。App 通过 capabilities 注入文件媒体、应用图标、模型 provider 名称和 agent 颜色；插件交互通过 render context 的 pluginUi 注入；公开展示仅注入资源 URL 与安全外链。纯展示层不能静态导入服务、平台、插件 runtime。Fetch 仍属于只读探索分组。

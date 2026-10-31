@@ -12,7 +12,7 @@ import { toast } from "@/components/ui/toast.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 
-/** 打开任务才绑定 workspace；列表 mutation 不借导航创建 scope。 */
+/** Only opening a task binds a workspace; list mutations must not create scopes via navigation. */
 export function useProjectTaskNavigation(
   props: ProjectSidebarProps,
   tree: ProjectTree,
@@ -42,7 +42,7 @@ export function useProjectTaskNavigation(
             .getWorkspaceState(props.workspacePath, activeWorkspaceIdentity ?? undefined)
         : undefined;
     const originFocus = readFocus();
-    // 同一目录内切换任务或新草稿也会使旧连接失效，不能仅比较 workspace 身份。
+    // Switching tasks or starting a new draft inside the same directory also invalidates the old connection, so comparing workspace identity alone is not enough.
     const isCurrent = () =>
       sequence.current === request &&
       latest.current.activeWorkspaceIdentity === activeWorkspaceIdentity &&
@@ -110,6 +110,14 @@ export function useProjectTaskNavigation(
       props.onSelectTask(path, taskId, identity, remoteSessionId, unreadAt, options);
     };
     void open().catch((error) => {
+      // Bug cause: clicking several tasks while the first connection is pending made superseded clicks
+      // throw navigation-cancelled, or share the new click's connection failure, surfacing an error every
+      // time. Superseding is the user's new intent; only the latest navigation reports the outcome.
+      if (
+        sequence.current !== request ||
+        (error instanceof Error && error.message === "project.navigation-cancelled")
+      )
+        return;
       logger.error("[project-sidebar] 打开任务失败", error);
       toast(String(error));
     });

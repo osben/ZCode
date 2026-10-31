@@ -1,77 +1,73 @@
-# Windows CUA product runtime spec
+# Windows CUA 产品运行时规范
 
-## Goal
+## 目标
 
-Without depending on a local `zcode-cua` source directory and without controlling SSH/WSL/Docker/remote
-workspaces, let a Windows x64/arm64 ZCode installer start the local Computer Use Helper on demand, reusing
-the existing `@zcode/protocol`, the CUA broker, the official `zcode-cua` plugin and the desktop-local host
-lifecycle.
+在不依赖本地 `zcode-cua` 源码目录、不控制 SSH/WSL/Docker/远程工作区的前提下，让
+Windows x64/arm64 的 ZCode 安装包能够按需启动本机 Computer Use Helper，并复用现有
+`@zcode/protocol`、CUA broker、官方 `zcode-cua` 插件和桌面本地 host 生命周期。
 
-Source development may still override product resources with `ZCODE_CUA_DEV_ROOT`; a product installer by
-default reads only its own `resources/tools/cua-helper`, does not search adjacent directories, does not
-download a Helper and does not fall back to the macOS implementation.
+源码开发仍允许使用 `ZCODE_CUA_DEV_ROOT` 覆盖产品资源；产品安装包默认只读取自身
+`resources/tools/cua-helper`，不搜索相邻目录、不下载 Helper、不回退到 macOS 实现。
 
-## Design conclusion
+## 设计结论
 
-Windows reuses the boundary proven on macOS: the Agent connects only to the broker and the Helper holds the
-automation capability independently. It does not copy macOS's separately published `.app`/SEA form (needed for
-TCC authorization): Windows has no corresponding TCC principal requirement, so the Helper is started by the
-Electron Node runtime inside the installer and the native `ax_native.node` ships as an installed resource.
+Windows 沿用 macOS 已验证的“Agent 只连接 broker、Helper 独立持有自动化能力”边界，
+但不复制 macOS 为 TCC 授权单独发布 `.app`/SEA 的形式。Windows 没有对应的 TCC
+授权主体要求，因此 Helper 由安装包内的 Electron Node 运行时启动，原生
+`ax_native.node` 作为安装资源发布。
 
-`@zcode/zcode-cua` is the only package identity for Helper JavaScript, native source, addon and version
-verification; no helper-runtime alias may be declared for the same Git commit. macOS/Windows CI must rebuild
-the target-architecture addon from the canonical package and fail closed when `binding.gyp` or the
-platform source is missing.
+`@zcode/zcode-cua` 是 Helper JavaScript、native source、addon 与版本校验的唯一包身份；不得再为同一 Git 提交声明 helper-runtime alias。macOS/Windows CI 必须从 canonical 包重建目标架构 addon，缺少 `binding.gyp` 或对应平台源码时 fail closed。
 
 ```text
-Build time
+构建期
 
-pinned commit of @zcode/zcode-cua (or build-time explicit ZCODE_CUA_HELPER_RUNTIME_PACKAGE_DIR)
+固定提交的 @zcode/zcode-cua（或构建期显式 ZCODE_CUA_HELPER_RUNTIME_PACKAGE_DIR）
   ├─ package.json:zcodeCuaRuntime.windows.entry
   ├─ package.json:zcodeCuaRuntime.windows.nativeAddon
-  └─ externalized runtime deps express / sharp
+  └─ 外置运行依赖 express / sharp
                  |
                  v
 prepare:windows-cua-helper
-  ├─ verify package identity, target win32 arch and PE machine
-  ├─ copy the minimal runtime files
-  └─ generate runtime-manifest.json with SHA-256
+  ├─ 校验 package 身份、目标 win32 架构和 PE machine
+  ├─ 复制最小运行文件
+  └─ 生成带 SHA-256 的 runtime-manifest.json
                  |
                  v
 bundled-tools/win32-{x64|arm64}/cua-helper
                  |
                  v
 electron-builder extraResources + Windows signExts(.node/.dll)
-  ├─ at copy time, sign .node/.dll in the final directory first
-  ├─ afterPack checks win32/arch from the actual context equals the configured target
-  ├─ refresh manifest.sha256 using only the final signed bytes
-  └─ then strictly verify manifest / PE / hash / dependency closure / realpath containment
+  ├─ 复制时先签名最终目录中的 .node/.dll
+  ├─ afterPack 按实际 context 校验 win32/arch 与配置目标一致
+  ├─ 只用最终已签名字节刷新 manifest.sha256
+  └─ 再严格校验 manifest / PE / hash / 依赖闭包 / realpath containment
                  |
                  v
-<install dir>/resources/tools/cua-helper
+<安装目录>/resources/tools/cua-helper
 ```
 
 ```text
-Run time (desktop-local only)
+运行期（仅 desktop-local）
 
-official CUA plugin enabled
-  -> host lazily resolves the Windows runtime
-     -> if ZCODE_CUA_DEV_ROOT is non-empty: strictly use the explicit source root
-     -> else: strictly use process.resourcesPath/tools/cua-helper
-        -> verify manifest / win32 / arch / Electron version / file hashes
+官方 CUA 插件启用
+  -> host 延迟解析 Windows runtime
+     -> 若 ZCODE_CUA_DEV_ROOT 非空：严格使用显式源码根
+     -> 否则：严格使用 process.resourcesPath/tools/cua-helper
+        -> 校验 manifest / win32 / arch / Electron 版本 / 文件哈希
            -> Electron.exe + ELECTRON_RUN_AS_NODE=1 fork windows-helper.js
-              -> Helper loads ax_native.node
-                 -> named pipe broker ready + health PID re-check
-                    -> Agent obtains socket/token/pluginAuthority
+              -> Helper 加载 ax_native.node
+                 -> named pipe broker ready + health PID 复核
+                    -> Agent 获得 socket/token/pluginAuthority
 ```
 
-`desktop-attached-remote`, `standalone-server` and hosts with a remote workspace identity keep not creating a
-default Helper. This adds no runtime, local host, SSH/WSL/Docker session, and does not change the mobile
-`/remote` replayable, owner, queue, snapshot or workspace identity semantics.
+`desktop-attached-remote`、`standalone-server`、带 remote workspace identity 的 host
+继续不创建默认 Helper。此变更不新增 runtime、local host、SSH/WSL/Docker session，
+也不改变手机 `/remote` 的 replayable、owner、queue、snapshot 或 workspace identity
+语义。
 
-## Release resource contract
+## 发布资源契约
 
-The producer must expose a strict, versionable Windows runtime contract in `package.json`:
+生产者必须在 `package.json` 暴露严格、可版本化的 Windows runtime 契约：
 
 ```json
 {
@@ -85,26 +81,26 @@ The producer must expose a strict, versionable Windows runtime contract in `pack
 }
 ```
 
-The contract object and the Windows sub-object allow no unknown fields; both artifacts must be canonical
-`/`-separated relative paths, must differ, and must not contain backslashes, absolute paths, empty segments,
-`.`, `..`, ADS colons or NUL. The consumer must not hard-code the producer version or artifact directory.
+契约对象和 Windows 子对象不允许未知字段；两个 artifact 都必须是规范的 `/` 分隔相对路径，
+不能相同，也不能包含反斜杠、绝对路径、空段、`.`、`..`、ADS 冒号或 NUL。消费端不得再固定生产者
+版本号或 artifact 目录。
 
-The product directory is fixed at `resources/tools/cua-helper` and contains at least:
+产品目录固定为 `resources/tools/cua-helper`，至少包含：
 
 - `runtime-manifest.json`
-- `package.json` (declares `"type": "module"`; version equals the manifest `packageVersion`)
-- the Helper file the contract `entry` points to
-- the native module the contract `nativeAddon` points to
-- `node_modules/express` and its runtime dependency closure
-- `node_modules/sharp` and the target platform's `@img/*` prebuild packages
+- `package.json`（声明 `"type": "module"`；version 与 manifest 的 `packageVersion` 一致）
+- 契约 `entry` 指向的 Helper 文件
+- 契约 `nativeAddon` 指向的原生模块
+- `node_modules/express` 及其运行时依赖闭包
+- `node_modules/sharp` 和目标平台对应的 `@img/*` 预编译包
 
-The `package.json` module declaration is mandatory (ZCT-2093176018262081536): the entry is ESM containing bare
-`import`; if the runtime root has no nearest package.json, Node can rely only on detect-module syntax
-probing, and any stray package.json with a `"type"` on the install drive chain disables the probe, making the
-Helper fail with `SyntaxError` exit 1 and surface as `broker_unavailable`. Staging generates the file and the
-afterPack verifier checks its presence, type and version consistency.
+`package.json` 的 module 声明是硬性要求（ZCT-2093176018262081536）：entry 是含裸
+`import` 的 ESM，若运行时根没有最近的 package.json，Node 只能靠 detect-module 语法探测
+兜底；安装盘符链上任何带 `"type"` 的杂散 package.json 都会禁用探测，让 Helper 以
+`SyntaxError` exit 1 失败并表现为 `broker_unavailable`。staging 负责生成该文件，
+afterPack verifier 负责校验其存在、类型与版本一致性。
 
-Manifest schema version is `1` with fixed fields:
+manifest schema 版本为 `1`，字段固定为：
 
 ```json
 {
@@ -123,95 +119,87 @@ Manifest schema version is `1` with fixed fields:
 }
 ```
 
-Paths and versions above are illustrative. Staging must write the current producer's contract paths verbatim
-into `entry`/`addon` and the current package version verbatim into `packageVersion` for provenance; the
-runtime requires only a non-empty string and does not compare it with a version constant in ZCode. The real
-release version selection is still managed by the exact commit in the lockfile.
+上例路径和版本只用于展示。staging 必须把当前生产者的契约路径原样写入 `entry`/`addon`，
+把当前 package version 原样写入 `packageVersion` 作为来源追踪；运行时只要求它是非空字符串，
+不与 ZCode 内的版本常量比较。真正的发布版本选择仍由 lockfile 的精确 commit 管理。
 
-`arch` allows `x64` or `arm64`. Build time must check the `.node` PE machine: `0x8664` is x64, `0xaa64` is
-arm64. A mismatched target fails the build immediately; installing a host x64 artifact into an arm64 package
-is forbidden.
+`arch` 允许 `x64` 或 `arm64`。构建期必须检查 `.node` 的 PE machine：
+`0x8664` 对应 x64，`0xaa64` 对应 arm64。目标不匹配时构建立即失败，禁止把宿主
+x64 产物误装进 arm64 包。
 
-The release dependency must be pinned to an exact, remotely fetchable `zcode-cua` commit; floating branch
-refs, adjacent-directory guessing or install-time compilation are not allowed. `ZCODE_CUA_DEV_ROOT` is only an
-explicit local-development override.
+发布依赖必须固定到可从远端获取的 `zcode-cua` 精确 commit；不能使用分支浮动引用、
+相邻目录猜测或安装时临时编译。`ZCODE_CUA_DEV_ROOT` 只作为显式本地开发覆盖。
 
-## Runtime admission and failure semantics
+## 运行时准入与失败语义
 
-1. When the platform is not `win32`, the Windows resolver returns the stable `unsupported-platform`.
-2. A non-empty `ZCODE_CUA_DEV_ROOT` must be an absolute path and still goes through package/entry/addon
-   verification; a misconfiguration fails closed without falling back to product resources.
-3. Without a dev override an absolute `resourcesPath` must exist and the product root is fixed to
-   `tools/cua-helper`.
-4. Product mode must verify manifest schema, packageName, platform, arch, Electron version, entry/addon
-   relative paths and SHA-256.
-5. Diagnostics report only a stable reason and relative artifact, never unrelated environment variables,
-   tokens or file contents.
-6. The Helper still starts lazily; with the feature off or the official plugin disabled it does not start,
-   probe or spawn a child process.
-7. start/stop/restart/health, ready PID, health PID, named-pipe token and termination-blocking semantics
-   follow the existing Windows Helper host; productization adds no second lifecycle.
+1. 平台不是 `win32` 时，Windows resolver 返回稳定的 `unsupported-platform`。
+2. `ZCODE_CUA_DEV_ROOT` 非空时必须是绝对路径，并继续执行 package/entry/addon 校验；
+   配错后 fail closed，不回退产品资源。
+3. 未设置开发覆盖时必须存在绝对 `resourcesPath`，产品根固定派生为
+   `tools/cua-helper`。
+4. 产品模式必须校验 manifest schema、packageName、platform、arch、
+   Electron 版本、entry/addon 相对路径和 SHA-256。
+5. 诊断只报告稳定 reason 和相对 artifact，不输出无关环境变量、token 或文件内容。
+6. Helper 仍延迟启动；特性关闭或官方插件未启用时不启动、不探测、不产生子进程。
+7. start/stop/restart/health、ready PID、health PID、named-pipe token 和终止阻塞语义沿用
+   现有 Windows Helper host，不因产品化新增第二套生命周期。
 
-Source admission and staging cannot check only lexical paths. The source root must be a non-link directory;
-`package.json`, entry and addon must be non-link regular files and each `realpath` must be physically
-contained in the source root's `realpath`. So even if an intermediate directory is replaced by a
-junction/reparse point, no file outside the repo can enter the dev runtime or the installer.
+源码准入和 staging 不能只检查词法路径。source root 必须是非链接目录；`package.json`、
+entry、addon 必须是非链接普通文件，且各自的 `realpath` 必须物理包含在 source root 的
+`realpath` 内。这样即使中间目录被 junction/reparse point 替换，也不能把仓库外文件带入
+开发运行时或安装包。
 
-## Signing and installation boundary
+## 签名与安装边界
 
-- Windows release builds are still signed uniformly by the repo's vsigntool hook.
-- `electron-builder.win.signExts` must contain `.node` and `.dll`, so the CUA addon, the Sharp addon/libvips
-  and other installer native deps enter the same signing moment.
-- A local build without a certificate may produce an unsigned test package but cannot claim release-signing
-  verification.
-- electron-builder 26 signs `.node`/`.dll` through the Windows transformer while copying `extraResources`,
-  and signing changes file bytes. `afterPack` must first verify the manifest's fixed fields, paths, PE
-  architecture, dependency closure and physical containment, refresh only the SHA-256 of entry/addon in the
-  final directory, then run one strict verification including hashes; it must not keep using the unsigned
-  hashes from staging.
-- Windows `afterPack` must take the actual os/arch from the electron-builder context and require it equal the
-  configured target; a `--win` cross build or inconsistent environment variables must fail, never return
-  skipped or accept under the wrong architecture.
-- Update packages reuse the desktop app's existing update channel; the Helper has no independent
-  download/update state.
+- Windows 发布构建继续由仓库的 vsigntool hook 统一签名。
+- `electron-builder.win.signExts` 必须包含 `.node` 和 `.dll`，使 CUA addon、Sharp
+  addon/libvips 与其他安装包原生依赖进入同一签名时机。
+- 本地无证书构建允许生成未签名测试包，但不能宣称完成发布签名验证。
+- electron-builder 26 会在复制 `extraResources` 时通过 Windows transformer 签名
+  `.node`/`.dll`，签名会改变文件字节。`afterPack` 必须先验证 manifest 的固定字段、路径、
+  PE 架构、依赖闭包和物理包含关系，只刷新最终目录中 entry/addon 的 SHA-256，再执行一次
+  包含哈希在内的严格校验；不能继续使用 staging 阶段的未签名字节哈希。
+- Windows `afterPack` 必须从 electron-builder context 取得实际 os/arch，并与配置目标严格
+  相等；`--win` 交叉构建或环境变量不一致时必须失败，不能返回 skipped 或按错误架构验收。
+- 更新包复用桌面应用既有更新通道，Helper 不建立独立下载/更新状态。
 
 ```text
-staging manifest (unsigned-bytes hash)
+staging manifest（未签名字节 hash）
   -> extraResources copy
-     -> Windows transformer signs .node/.dll
-        -> afterPack verifies actual win32/arch
-           -> verify fixed contract + PE + dependency closure + realpath containment
-              -> refresh final-bytes hash
-                 -> strict re-verification of the final manifest
-                    -> later EXE/app.asar signing (no longer touches resources/tools/cua-helper)
+     -> Windows transformer 签名 .node/.dll
+        -> afterPack 校验实际 win32/arch
+           -> 校验固定契约 + PE + dependency closure + realpath containment
+              -> 刷新最终字节 hash
+                 -> 严格复验最终 manifest
+                    -> 后续 EXE/app.asar 签名（不再改 resources/tools/cua-helper）
 ```
 
-## Acceptance
+## 验收
 
-Automation covers at least:
+自动化至少覆盖：
 
-- source override and packaged runtime resolution paths;
-- a misconfigured source override does not fall back;
-- any mismatch of manifest schema/platform/arch/Electron/hash fails closed;
-- the Windows feature can still create a lazy product host without `ZCODE_CUA_DEV_ROOT`;
-- non-desktop-local and remote workspace identity keep refusing creation;
-- staging x64/arm64 PE machine verification;
-- source/staging reject physical escape through symlink, junction/reparse point;
-- electron-builder includes Helper resources, `.node`/`.dll` signing extensions, context target assertions,
-  post-signing hash refresh and strict afterPack re-verification;
-- Electron 41 loads the staged `ax_native.node` directly;
-- start the Helper from the staged/packaged product root, complete ready/health, and after exit confirm the
-  named pipe is not connectable and no Helper child process remains;
-- Windows' existing 30-tool source/live smoke does not regress.
+- source override 与 packaged runtime 两种解析路径；
+- 配错 source override 不回退；
+- manifest schema/platform/arch/Electron/hash 任一不匹配均 fail closed；
+- Windows 特性在无 `ZCODE_CUA_DEV_ROOT` 时仍可创建延迟产品 host；
+- 非 desktop-local 与 remote workspace identity 继续拒绝创建；
+- staging 的 x64/arm64 PE machine 校验；
+- source/staging 拒绝 symlink、junction/reparse point 造成的物理越界；
+- electron-builder 包含 Helper 资源、`.node`/`.dll` 签名扩展、context 目标断言，以及
+  签名后 hash 刷新与严格 afterPack 复验；
+- 使用 Electron 41 直接加载 staged `ax_native.node`；
+- 从 staged/packaged 产品根启动 Helper，完成 ready/health，并在退出后确认 named pipe
+  不可连接、无遗留 Helper 子进程；
+- Windows 现有 30 工具 source/live smoke 不回退。
 
-Repo-level gates stay `pnpm typecheck` and `pnpm lint`. Pre-existing `test:unit:affected` failures on the
-branch unrelated to CUA must be listed separately and not disguised as CUA regressions.
+仓库级门禁保持 `pnpm typecheck` 与 `pnpm lint`。当前分支既有、与 CUA 无关的
+`test:engineering:affected` 失败必须单独列出，不得把它们伪装成 CUA 回归。
 
-## Local product acceptance record (2026-07-29)
+## 本地产品验收记录（2026-07-29）
 
-Windows `--dir` acceptance must explicitly load the repo's non-default config file name; a bare
-`electron-builder --win --x64 --dir` does not load `electron-builder.config.js` and wrongly reports the
-desktop `package.json` as missing a version before `extraMetadata.version` is injected. The correct command:
+Windows `--dir` 验收必须显式加载仓库的非默认配置文件名；裸跑
+`electron-builder --win --x64 --dir` 不会加载 `electron-builder.config.js`，会在
+`extraMetadata.version` 注入前错误报告 desktop `package.json` 缺少 version。正确命令为：
 
 ```powershell
 Remove-Item Env:ZCODE_CUA_DEV_ROOT -ErrorAction SilentlyContinue
@@ -225,47 +213,46 @@ pnpm --filter @zcode/desktop exec electron-builder `
 Remove-Item Env:ZCODE_CUA_HELPER_RUNTIME_PACKAGE_DIR
 ```
 
-The local producer was selected through an explicit `ZCODE_CUA_HELPER_RUNTIME_PACKAGE_DIR` for
-`@zcode/zcode-cua` staging; the workspace/lockfile still keeps the remotely fetchable exact pinned dependency;
-target win32/x64, addon PE machine `0x8664`. The resource directory is
-`<workspace>\packages\desktop\dist\win-unpacked\resources`, the manifest
-`resources\tools\cua-helper\runtime-manifest.json`. After a GitHub download interruption, the cached
-`electron-v41.0.3-win32-x64.zip` verified against Electron's official `checksums.json` was reused (zip SHA-256
-`93346b31dfcd779c4c4cdfdfb2e3f9642e7a9888e388a8971ff3e95dbf948887`).
+本机通过显式 `ZCODE_CUA_HELPER_RUNTIME_PACKAGE_DIR` 选择本地 producer 完成
+`@zcode/zcode-cua` staging；workspace/lockfile 仍保持远端可获取的精确 pinned dependency，目标为
+win32/x64，addon PE machine 为 `0x8664`。产物资源目录为
+`<workspace>\packages\desktop\dist\win-unpacked\resources`，manifest 为
+`resources\tools\cua-helper\runtime-manifest.json`。GitHub 下载中断后复用了已缓存并按
+Electron 官方 `checksums.json` 验证的 `electron-v41.0.3-win32-x64.zip`；zip SHA-256 为
+`93346b31dfcd779c4c4cdfdfb2e3f9642e7a9888e388a8971ff3e95dbf948887`。
 
-The local command executor's 20-minute cap interrupted exactly while `rcedit` modified the branded
-`ZCode Preview.exe`; the leftover exe still had Electron `41.0.3` version info and a hash different from the
-cache's original `electron.exe`, so Windows Application Control refused to start it. That command has no
-trustworthy final exit code and cannot be recorded as a successful branded unpacked build. Running the same
-`verifyPackagedWindowsCuaHelper` as afterPack independently verified the manifest, entry/addon hash, PE,
-express/Sharp dependency closure and physical containment in the final resources, returning `verified`.
+本地命令执行器的 20 分钟上限恰好在 `rcedit` 修改 branded
+`ZCode Preview.exe` 时中断，遗留 exe 的版本仍是 Electron `41.0.3`，hash 也不同于
+cache 原始 `electron.exe`；Windows Application Control 因而拒绝启动它。该次命令没有
+可采信的最终 exit code，不能记为 branded unpacked build 成功。独立运行与 afterPack
+相同的 `verifyPackagedWindowsCuaHelper` 已验证最终 resources 中的 manifest、entry/addon
+hash、PE、express/Sharp 依赖闭包和物理包含关系，返回 `verified`。
 
-To verify only packaged resources and the target ABI, the original Electron `41.0.3` x64 was extracted from
-that exact zip (exe SHA-256 `c3ff0b19217c3f3521bd392899cffa65b0f0c0aae500ee0291e85490a52327d4`) and run
-beside the unpacked Electron resources; it is Electron `41.0.3`, embedded Node `24.14.0`, N-API `10`. The
-product integration test overrode only the resolver's `command` with that executable; root/entry/addon/
-node_modules all came from the packaged resources. In the final dedicated gate record the owned Helper PID was
-`39992`; ready, health and `broker_info` PIDs were identical, after `stop()` a new named-pipe connection was
-refused within 500 ms, the exact PID exited, and the token appeared in neither argv nor captured logs.
+为了只验证 packaged resources 与目标 ABI，从上述 exact zip 提取原始 Electron
+`41.0.3` x64（exe SHA-256
+`c3ff0b19217c3f3521bd392899cffa65b0f0c0aae500ee0291e85490a52327d4`），与 unpacked
+Electron 资源同目录运行；其版本为 Electron `41.0.3`、embedded Node `24.14.0`、
+N-API `10`。产品集成测试使用该 executable 仅覆盖 resolver 的 `command`，其余
+root/entry/addon/node_modules 均来自上述 packaged resources。最终专项门禁记录中的 owned
+Helper PID 为 `39992`；ready、health、`broker_info` PID 完全一致，`stop()` 后新 named-pipe
+连接在 500 ms 内被拒绝，exact PID 退出，token 未出现在 argv 或捕获日志。
 
-Live smoke runs of the same packaged entry/addon/node_modules all exit `0`:
+同一 packaged entry/addon/node_modules 的 live smoke 均 exit `0`：
 
-- pointer: move, zero wheel, position observe/restore, hold interrupt and Helper clean exit all pass;
-- clipboard: text read, marker write/read-back, original-text restore re-check and Helper clean exit all pass;
-- screen: display/window WGC, occlusion equivalence, `capture_app`, `state_image`, fixed minimized failure,
-  cursor restore and Helper/fixture clean exit all pass;
-- canonical tool surface: 30-tool coverage valid, 28 non-clipboard observation/display/pointer/keyboard/
-  semantic/focus/runtime tools pass; the two clipboard tools are covered by the companion smoke.
+- pointer：移动、零滚轮、位置观察/恢复、hold 中断和 Helper clean exit 全部通过；
+- clipboard：文本读取、marker 写入/读回、原文本恢复复核和 Helper clean exit 全部通过；
+- screen：display/window WGC、遮挡等价、`capture_app`、`state_image`、最小化固定失败、
+  光标恢复及 Helper/fixture clean exit 全部通过；
+- canonical tool surface：30-tool 覆盖有效，28 个非剪贴板 observation/display/pointer/
+  keyboard/semantic/focus/runtime 工具通过；clipboard 两项由 companion smoke 覆盖。
 
-This machine has no release certificate, so the above ABI/resources acceptance must not be extrapolated to
-final branded/signed executable acceptance. CI/signing-machine builds must still run the full
-`rcedit -> .node/.dll/exe signing -> afterPack` and re-run the branded exe lifecycle test; Windows Application
-Control must not be turned off for local acceptance.
+本机没有发布证书，不能把上述 ABI/resources 验收外推为最终 branded/signed executable
+验收。CI/签名机构建仍必须完整跑完 `rcedit -> .node/.dll/exe 签名 -> afterPack`，并再次
+执行 branded exe 生命周期测试；不得为本地验收关闭 Windows Application Control。
 
-## Explicitly not done
+## 明确不做
 
-- No control or addition of SSH, WSL, Docker, remote workspace or mobile `/remote` runtime.
-- No standalone Windows Helper downloader, installer or auto-updater.
-- No Windows administrator elevation; high-integrity targets keep failing closed.
-- This phase does not promise exact HDR/ICC color management; WGC ordinary-desktop capture correctness follows
-  the source-phase conclusion.
+- 不控制或新增 SSH、WSL、Docker、远程 workspace、手机 `/remote` runtime。
+- 不为 Windows 新建独立 Helper 下载器、安装器或自动更新器。
+- 不新增 Windows 管理员提权；高完整性目标继续 fail closed。
+- 本阶段不承诺 HDR/ICC 精确色彩管理；WGC 的普通桌面捕获正确性沿用源码阶段结论。

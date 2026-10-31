@@ -34,9 +34,15 @@ export function normalizeReasoningHistory(
   targetModel?: { modelId: ModelId; providerId: ModelProviderId },
 ): ModelInputMessage[] {
   const compatibleHistory = removeCrossModelReasoning(messages, targetModel);
-  const withoutOrphans = removeReasoningOnlyAssistants(compatibleHistory);
+  const withoutOrphans = removeAssistantsMergingNeighbors(
+    compatibleHistory,
+    isReasoningOnlyAssistant,
+  );
   const withoutTrailingReasoning = removeTrailingReasoning(withoutOrphans);
-  const withoutWhitespaceOnlyAssistants = removeWhitespaceOnlyAssistants(withoutTrailingReasoning);
+  const withoutWhitespaceOnlyAssistants = removeAssistantsMergingNeighbors(
+    withoutTrailingReasoning,
+    isWhitespaceOnlyAssistant,
+  );
   return repairEmptyAssistantContent(withoutWhitespaceOnlyAssistants);
 }
 
@@ -145,13 +151,36 @@ function filterReasoningBlocks(
   return result ?? messages;
 }
 
-function removeReasoningOnlyAssistants(messages: ModelInputMessage[]): ModelInputMessage[] {
-  const result = messages.filter((message) => {
-    if (message.role !== "assistant" || hasToolCalls(message)) return true;
-    if (!Array.isArray(message.content) || message.content.length === 0) return true;
-    return !message.content.every((block) => block.type === "reasoning");
-  });
+function removeAssistantsMergingNeighbors(
+  messages: ModelInputMessage[],
+  shouldRemove: (message: ModelInputMessage) => boolean,
+): ModelInputMessage[] {
+  const result: ModelInputMessage[] = [];
+  let removedBefore = false;
+  for (const message of messages) {
+    if (shouldRemove(message)) {
+      removedBefore = true;
+      continue;
+    }
+    const previous = result.at(-1);
+    // After the removal, the user messages on both sides are concatenated directly downstream and
+    // the previous text would lack a trailing "\n", so merge here.
+    // Root cause: merge only the pair adjacent to the deletion point; other adjacent user messages
+    // are already joined by the request layer, and re-merging the whole run would add an extra "\n" to each pair.
+    if (removedBefore && canMergeAdjacentUserMessages(previous, message)) {
+      result[result.length - 1] = mergeUserMessagePair(previous, message);
+    } else {
+      result.push(message);
+    }
+    removedBefore = false;
+  }
   return result.length === messages.length ? messages : result;
+}
+
+function isReasoningOnlyAssistant(message: ModelInputMessage): boolean {
+  if (message.role !== "assistant" || hasToolCalls(message)) return false;
+  if (!Array.isArray(message.content) || message.content.length === 0) return false;
+  return message.content.every((block) => block.type === "reasoning");
 }
 
 function removeTrailingReasoning(messages: ModelInputMessage[]): ModelInputMessage[] {
@@ -172,18 +201,14 @@ function removeTrailingReasoning(messages: ModelInputMessage[]): ModelInputMessa
   return result;
 }
 
-function removeWhitespaceOnlyAssistants(messages: ModelInputMessage[]): ModelInputMessage[] {
-  const filtered = messages.filter((message) => {
-    if (message.role !== "assistant" || hasToolCalls(message)) return true;
-    if (!Array.isArray(message.content) || message.content.length === 0) return true;
-    return !message.content.every(
-      (block) =>
-        block.type === "text" &&
-        (block.text.trim().length === 0 || block.text.trim() === EMPTY_ASSISTANT_CONTENT_FALLBACK),
-    );
-  });
-  if (filtered.length === messages.length) return messages;
-  return mergeAdjacentUserMessages(filtered);
+function isWhitespaceOnlyAssistant(message: ModelInputMessage): boolean {
+  if (message.role !== "assistant" || hasToolCalls(message)) return false;
+  if (!Array.isArray(message.content) || message.content.length === 0) return false;
+  return message.content.every(
+    (block) =>
+      block.type === "text" &&
+      (block.text.trim().length === 0 || block.text.trim() === EMPTY_ASSISTANT_CONTENT_FALLBACK),
+  );
 }
 
 function repairEmptyAssistantContent(messages: ModelInputMessage[]): ModelInputMessage[] {
@@ -210,26 +235,17 @@ function repairEmptyAssistantContent(messages: ModelInputMessage[]): ModelInputM
   return result ?? messages;
 }
 
-function mergeAdjacentUserMessages(messages: ModelInputMessage[]): ModelInputMessage[] {
-  const result: ModelInputMessage[] = [];
-
-  for (const message of messages) {
-    const previous = result.at(-1);
-    if (!canMergeAdjacentUserMessages(previous, message)) {
-      result.push(message);
-      continue;
-    }
-
-    const merged: ModelInputMessage = {
-      role: "user",
-      content: mergeUserContent(previous.content, message.content),
-    };
-    const cacheControl = message.cacheControl ?? previous.cacheControl;
-    if (cacheControl) merged.cacheControl = { ...cacheControl };
-    result[result.length - 1] = merged;
-  }
-
-  return result;
+function mergeUserMessagePair(
+  previous: ModelInputMessage,
+  message: ModelInputMessage,
+): ModelInputMessage {
+  const merged: ModelInputMessage = {
+    role: "user",
+    content: mergeUserContent(previous.content, message.content),
+  };
+  const cacheControl = message.cacheControl ?? previous.cacheControl;
+  if (cacheControl) merged.cacheControl = { ...cacheControl };
+  return merged;
 }
 
 function canMergeAdjacentUserMessages(

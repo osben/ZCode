@@ -4,14 +4,17 @@ import type { ChildProcess } from "node:child_process";
 import { access, copyFile, mkdir, readFile, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { dirname, posix } from "node:path";
-import type { WSLConnectOptions } from "@zcode/shared";
+import { isValidWslUser, type WSLConnectOptions } from "@zcode/shared";
 import type {
   IRemoteBackend,
   RemoteEnvironment,
   RemoteUploadOptions,
   StdioStream,
 } from "@zcode/server/remote/backend.js";
-import { createCloseEventController } from "@zcode/server/remote/closeEvent.js";
+import {
+  createCloseEventController,
+  resolveRemoteExitCode,
+} from "@zcode/server/remote/closeEvent.js";
 import {
   normalizeRemoteArch,
   normalizeRemotePlatform,
@@ -47,6 +50,19 @@ export interface ResolvedWSLIdentity {
 
 const WSL_COMMAND = "wsl.exe";
 const WSL_EXEC_MAX_BUFFER = 8 * 1024 * 1024;
+const WSL_IDENTITY_SENTINEL = "__ZCODE_WSL_IDENTITY__";
+// Bug cause: identity probing used to run `bash -lc` and parse by line; an echo in the profile
+// printed before the identity output and was recorded as distro/user in the device Profile, so
+// every later connection reported "WSL distro named … not found". The identity depends only on
+// WSL-injected $WSL_DISTRO_NAME, id, and $HOME — no login environment needed; the sentinel
+// separates the identity from the rest of wsl.exe or shell output.
+const WSL_IDENTITY_COMMAND_ARGS = [
+  "bash",
+  "--noprofile",
+  "--norc",
+  "-c",
+  `printf '%s\\n' '${WSL_IDENTITY_SENTINEL}' "$WSL_DISTRO_NAME" "$(id -un)" "$HOME"`,
+];
 
 function quotePosixShellArg(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -84,12 +100,15 @@ export function buildWslArgs(
     args.push("-u", userName);
   }
 
-  // Bug 原因：wsl.exe 不带 --exec 时会把 `--` 之后的原始命令行整段交给用户默认 shell 以 `-c` 执行，
-  // 而 Node 为含空格/引号的参数加的是双引号，外层 shell 会先展开 `"$var"`、`$(...)`，
-  // 再把剩余内容交给内层 `bash -lc`。局部变量（如 Source Server tar preflight 的 `$tar_tool`）
-  // 因此被提前展开成空串，远端输出 `tar=` 且退出码 0，被误判为「远端缺少 tar」。
-  // --exec 让 wsl.exe 按 CommandLineToArgvW 解析 argv 后直接 exec，argv 与 Node 的引号规则互逆，
-  // 命令字节原样到达 bash；登录环境仍由这里显式的 `bash -lc` 提供。
+  // Bug cause: without --exec, wsl.exe hands the raw command line after `--` to the user's
+  // default shell as `-c`, while Node quotes arguments containing spaces/quotes in double
+  // quotes, so the outer shell first expands `"$var"` and `$(...)` before passing the rest to
+  // the inner `bash -lc`. Local variables (such as `$tar_tool` in the Source Server tar
+  // preflight) were expanded to empty strings early; the remote printed `tar=` with exit code 0
+  // and was misjudged as "remote missing tar". --exec makes wsl.exe parse argv with
+  // CommandLineToArgvW and exec directly; its rules are the inverse of Node's quoting, so the
+  // command bytes reach bash verbatim. The login environment is still provided by the explicit
+  // `bash -lc` here.
   args.push("--exec", ...commandArgs);
   return args;
 }
@@ -372,11 +391,13 @@ export class WSLBackend implements IRemoteBackend {
           onClose.fire(code);
         };
 
-        child.on("exit", (code) => {
-          fireOnce(code ?? 0);
+        // code is null when killed by a signal and must not count as success; see
+        // resolveRemoteExitCode.
+        child.on("exit", (code, signal) => {
+          fireOnce(resolveRemoteExitCode(code, signal));
         });
-        child.on("close", (code) => {
-          fireOnce(code ?? 0);
+        child.on("close", (code, signal) => {
+          fireOnce(resolveRemoteExitCode(code, signal));
         });
 
         resolve({
@@ -529,22 +550,37 @@ export class WSLBackend implements IRemoteBackend {
       return this.resolvedInfoPromise;
     }
 
-    this.resolvedInfoPromise = (async () => {
+    const resolving = (async () => {
       const distros = await this.safeListDistros();
       const selected = this.pickDistro(distros);
       const launchDistroName = selected?.name ?? this.options.distro?.trim() ?? null;
       const requestedUserName = this.options.user?.trim() || null;
-      const identityOutput = normalizeWslOutput(
-        await this.execDirect(
-          ["bash", "-lc", `printf '%s\\n' "$WSL_DISTRO_NAME"; id -un; printf %s "$HOME"`],
-          launchDistroName,
-          requestedUserName,
-        ),
+      const identityLines = normalizeWslOutput(
+        await this.execDirect(WSL_IDENTITY_COMMAND_ARGS, launchDistroName, requestedUserName),
+      ).split("\n");
+      const sentinelIndex = identityLines
+        .map((line) => line.trim())
+        .lastIndexOf(WSL_IDENTITY_SENTINEL);
+      if (sentinelIndex < 0) {
+        throw new Error("无法解析 WSL 身份：探测输出缺少身份标记");
+      }
+      const [reportedDistroName = "", actualUserName = "", ...homeLines] = identityLines.slice(
+        sentinelIndex + 1,
       );
-      const [reportedDistroName = "", actualUserName = "", ...homeLines] =
-        identityOutput.split("\n");
-      const distroName = reportedDistroName.trim() || launchDistroName;
+      // The wsl -l listing is authoritative for the distro; the name reported inside the
+      // distro is used only when the listing is unavailable.
+      const listedDistroName = distros.find(
+        (distro) =>
+          distro.name.localeCompare(reportedDistroName.trim(), undefined, {
+            sensitivity: "base",
+          }) === 0,
+      )?.name;
+      const distroName =
+        listedDistroName ?? selected?.name ?? (reportedDistroName.trim() || launchDistroName);
       const userName = actualUserName.trim() || requestedUserName;
+      if (userName && !isValidWslUser(userName)) {
+        throw new Error("无法解析 WSL 身份：user 无效");
+      }
       const homeDir = homeLines.join("\n").trim();
       if (!homeDir) {
         throw new Error("无法解析 WSL 用户 HOME");
@@ -557,8 +593,17 @@ export class WSLBackend implements IRemoteBackend {
         homeDir,
       };
     })();
+    this.resolvedInfoPromise = resolving;
+    // Failures are not cached: errors such as wsl.exe still starting or a temporarily
+    // unavailable distro must let the next call probe again; otherwise a long-lived backend
+    // would keep reusing the same failed result.
+    resolving.catch(() => {
+      if (this.resolvedInfoPromise === resolving) {
+        this.resolvedInfoPromise = null;
+      }
+    });
 
-    return this.resolvedInfoPromise;
+    return resolving;
   }
 
   private async safeListDistros(): Promise<WSLDistro[]> {

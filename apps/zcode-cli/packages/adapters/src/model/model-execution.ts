@@ -36,7 +36,7 @@ import { normalizeModelTlsFailure } from "./failure-tls.js";
 import {
   mergeModelRequestHeaders,
   withoutModelAuthHeaders,
-  withoutModelQuerySourceHeader,
+  withoutContextOwnedModelHeaders,
 } from "./model-request-headers.js";
 
 export type AiSdkProviderKind = "openai" | "anthropic" | "openai-compatible";
@@ -65,6 +65,9 @@ export interface AiSdkModelExecutionOptions {
   requestSecurityState?: ModelRequestSecurityState;
   logger?: Logger;
   transport?: ProviderFetch;
+  /** Bypass observation after proxy and CA resolution; does not replace the product network
+   *  policy. */
+  observeTransport?: (transport: ProviderFetch) => ProviderFetch;
 }
 
 export interface AiSdkNetworkConfig {
@@ -85,6 +88,8 @@ export interface AiSdkResolvedModel {
   /** Present only for chatgpt-account bindings; holds the latest captured plan usage snapshot. */
   siwcUsageCapture?: SiwcUsageCapture;
   requestObservations?: ModelRequestSecurityPort;
+  /** Held per resolveRequest call; must not be shared across concurrent requests or retries. */
+  streamTiming?: { firstContentAt?: number };
 }
 
 export interface AiSdkBoundModelResolution {
@@ -105,6 +110,7 @@ export interface ProviderBusinessErrorFetchOptions {
   env?: EnvRecord;
   providerId: string;
   providerKind: AiSdkProviderKind;
+  streamTiming?: { firstContentAt?: number };
   fetch?: ProviderFetch;
   httpProxy?: string;
   noProxy?: string;
@@ -175,6 +181,7 @@ export class AiSdkModelExecution {
   private readonly endpointRoutingPort?: ProviderEndpointRoutingPort;
   private readonly logger?: Logger;
   private readonly baseTransport?: ProviderFetch;
+  private readonly observeTransport?: AiSdkModelExecutionOptions["observeTransport"];
   private readonly providerTransports = new Map<string, ProviderFetch>();
   private readonly requestSecurity: ModelRequestSecurityPort;
 
@@ -185,6 +192,7 @@ export class AiSdkModelExecution {
     this.endpointRoutingPort = config.endpointRoutingPort;
     this.logger = options.logger;
     this.baseTransport = options.transport;
+    this.observeTransport = options.observeTransport;
     this.requestSecurity = (
       options.requestSecurityState ?? createModelRequestSecurityState()
     ).createExecution({ logger: options.logger });
@@ -266,12 +274,14 @@ export class AiSdkModelExecution {
     // by providerId would make a new Model incorrectly reuse the old Endpoint / Header / API Key after
     // configuration changes.
     const rawRequestBodyCapture: RawRequestBodyCapture = {};
+    const streamTiming: NonNullable<AiSdkResolvedModel["streamTiming"]> = {};
     const factory = this.createFactory(
       snapshot.providerId,
       providerConfig,
       optionMaps,
       optionValues,
       rawRequestBodyCapture,
+      streamTiming,
       snapshot.supportsJsonSchemaOutput,
       snapshot.providerConfig.access?.type === "zhipu-account" ? requestAuth?.apiKeyId : undefined,
       siwcUsageCapture,
@@ -287,6 +297,7 @@ export class AiSdkModelExecution {
       rawRequestBodyCapture,
       ...(siwcUsageCapture ? { siwcUsageCapture } : {}),
       requestObservations: this.requestSecurity,
+      streamTiming,
     };
   }
 
@@ -296,14 +307,19 @@ export class AiSdkModelExecution {
     optionMaps: CompiledModelOptionMaps | undefined,
     optionValues: ModelOptionValues | undefined,
     rawRequestBodyCapture: RawRequestBodyCapture,
+    streamTiming: NonNullable<AiSdkResolvedModel["streamTiming"]>,
     supportsJsonSchemaOutput: boolean,
     apiKeyId?: string,
     siwcUsageCapture?: SiwcUsageCapture,
   ): LanguageModelFactory {
     const apiKey = this.resolveApiKey(providerConfig);
     // The SDK merges factory default headers; remove the static source here so missing values are truly omitted.
-    const headers = withoutModelQuerySourceHeader(providerConfig.headers);
-    const networkTransport = this.resolveProviderTransport(providerId);
+    const headers = withoutContextOwnedModelHeaders(providerConfig.headers);
+    const networkTransport = observeProviderFetch(
+      this.resolveProviderTransport(providerId),
+      this.logger,
+      providerId,
+    );
     // The ID belongs to this attempt; do not put it in a transport cached by Provider, or it could leak across account switches.
     const providerTransport = this.endpointRoutingPort
       ? createProviderEndpointRoutingFetch({
@@ -321,6 +337,7 @@ export class AiSdkModelExecution {
       fetch: requestTransport,
       providerId,
       providerKind: providerConfig.kind,
+      streamTiming,
     });
     // SIWC shaping must run BELOW the option map (i.e. be invoked after it) so it strips what
     // the catalog rules injected (e.g. max_output_tokens, rejected by the direct route).
@@ -398,8 +415,11 @@ export class AiSdkModelExecution {
       httpProxy: this.network.httpProxy,
       noProxy: this.network.noProxy,
     });
-    this.providerTransports.set(providerId, networkTransport);
-    return networkTransport;
+    // Observation at the low-level fetch injection point would be bypassed by the network
+    // adapter when a proxy or CA is configured.
+    const observedTransport = this.observeTransport?.(networkTransport) ?? networkTransport;
+    this.providerTransports.set(providerId, observedTransport);
+    return observedTransport;
   }
 }
 
@@ -555,6 +575,56 @@ export function createProviderBusinessErrorFetch(
       throw businessError;
     }
     return response;
+  };
+}
+
+/** Network boundary inside request security processing; reads only correlation headers —
+ *  never logs URLs or consumes response bodies. */
+export function observeProviderFetch(
+  fetch: ProviderFetch,
+  logger: Logger | undefined,
+  providerId: string,
+): ProviderFetch {
+  if (!logger) return fetch;
+  return async (input, init) => {
+    const headers = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined),
+    );
+    const requestId = headers.get("x-request-id");
+    const querySource = headers.get("x-zcode-query-source");
+    if (!requestId || (querySource !== "main_turn" && querySource !== "compact"))
+      return fetch(input, init);
+    const start = performance.timeOrigin + performance.now();
+    const log = (name: string, statusCode?: number) => {
+      const at = performance.timeOrigin + performance.now();
+      try {
+        logger.info("Model transport diagnostic", {
+          event: `ttft.model.${name}`,
+          requestId,
+          querySource,
+          providerId,
+          queryId: headers.get("x-query-id") ?? undefined,
+          sessionId: headers.get("x-session-id") ?? undefined,
+          traceId: (headers.get("x-zcode-trace-id") ?? undefined) as
+            | import("@zcode/contracts").TraceId
+            | undefined,
+          at,
+          durationMs: at - start,
+          statusCode,
+        });
+      } catch {
+        /* Logging failures must not change the network return value. */
+      }
+    };
+    log("fetch_started");
+    try {
+      const response = await fetch(input, init);
+      log("response_headers", response.status);
+      return response;
+    } catch (error) {
+      log("fetch_failed");
+      throw error;
+    }
   };
 }
 
@@ -912,8 +982,75 @@ function emitProviderBusinessSseFrame(
     return false;
   }
 
+  // Tool arguments and some text are buffered by later compat/retry layers; timing at release
+  // would compress receive latency to a few milliseconds. Reuse the interface layer's existing
+  // framing and record the first meaningful output before any content buffering, without
+  // changing the retry submission boundary.
+  if (
+    options.streamTiming &&
+    options.streamTiming.firstContentAt === undefined &&
+    providerSseFrameHasContent(frame, options.providerKind)
+  ) {
+    options.streamTiming.firstContentAt = Date.now();
+  }
   controller.enqueue(encoder.encode(`${frame}${separator}`));
   return true;
+}
+
+function providerSseFrameHasContent(frame: string, kind: AiSdkProviderKind): boolean {
+  const data = readSseFrame(frame).data;
+  const body = data ? safeParseRecord(data) : undefined;
+  if (!body) return false;
+  const nonEmpty = (value: unknown): boolean => typeof value === "string" && value.length > 0;
+  if (kind === "anthropic") {
+    if (body.type === "content_block_delta") {
+      const delta = asRecord(body.delta);
+      switch (delta?.type) {
+        case "text_delta":
+          return nonEmpty(delta.text);
+        case "thinking_delta":
+          return nonEmpty(delta.thinking);
+        case "input_json_delta":
+          return nonEmpty(delta.partial_json);
+        default:
+          return false;
+      }
+    }
+    if (body.type === "content_block_start") {
+      const block = asRecord(body.content_block);
+      if (block?.type === "text") return nonEmpty(block.text);
+      if (block?.type === "thinking") return nonEmpty(block.thinking);
+      if (block?.type === "tool_use" || block?.type === "server_tool_use") {
+        const input = asRecord(block.input);
+        return input !== undefined && Object.keys(input).length > 0;
+      }
+    }
+    return false;
+  }
+  if (kind === "openai") {
+    return (
+      (body.type === "response.output_text.delta" ||
+        body.type === "response.reasoning_text.delta" ||
+        body.type === "response.reasoning_summary_text.delta" ||
+        body.type === "response.function_call_arguments.delta") &&
+      nonEmpty(body.delta)
+    );
+  }
+  return (
+    Array.isArray(body.choices) &&
+    body.choices.some((choice) => {
+      const delta = asRecord(asRecord(choice)?.delta);
+      if (!delta) return false;
+      return (
+        nonEmpty(delta.content) ||
+        nonEmpty(delta.reasoning_content) ||
+        nonEmpty(delta.reasoning) ||
+        nonEmpty(asRecord(delta.function_call)?.arguments) ||
+        (Array.isArray(delta.tool_calls) &&
+          delta.tool_calls.some((call) => nonEmpty(asRecord(asRecord(call)?.function)?.arguments)))
+      );
+    })
+  );
 }
 
 function detectProviderBusinessSseFrameFailure(frame: string):

@@ -5,10 +5,11 @@ import {
   applySearchResultHighlight,
   clearConversationFindHighlights,
   clearSearchResultHighlight,
+  getMountedConversationFindRow,
   scrollConversationFindRangeIntoView,
 } from "@/v4/conversationFindHighlightDom.js";
 import {
-  buildConversationFindIndex,
+  createConversationFindIndexBuilder,
   findConversationMatchIndexByKey,
   getConversationFindMatchKey,
   resolveConversationFindActiveIndex,
@@ -16,7 +17,10 @@ import {
   type ConversationFindMatch,
   type ConversationFindMatchKey,
 } from "@/v4/conversationFindIndex.js";
-import type { ConversationTurnRenderUnit } from "@/v4/conversationTurnRenderUnits.js";
+import type {
+  ConversationTurnRenderUnit,
+  ConversationTurnRenderUnitsPartition,
+} from "@/v4/conversationTurnRenderUnits.js";
 import type {
   ChatSearchResultHighlightRequest,
   ConversationFindMatchState,
@@ -28,7 +32,8 @@ const SEARCH_RESULT_HIGHLIGHT_DURATION_MS = 3000;
 
 export interface UseConversationTimelineFindOptions {
   rootRef: React.RefObject<HTMLElement | null>;
-  renderUnits: readonly ConversationTurnRenderUnit[];
+  /** Render units partitioned into "history + tail turn"; the history segment's reference is stable across streaming frames. */
+  renderUnits: ConversationTurnRenderUnitsPartition;
   rows: readonly ConversationRow[];
   mountedRowsKey: string;
   canLoadOlder: boolean;
@@ -42,6 +47,7 @@ export interface UseConversationTimelineFindOptions {
   searchResultHighlightRequest?: ChatSearchResultHighlightRequest | null;
   onSearchResultHighlightDone?: (requestId: number) => void;
   scrollToUnit: (unitIndex: number) => void;
+  isMountedLayoutMeasured: () => boolean;
 }
 
 function normalizeSearchResultSnippet(text: string): string {
@@ -60,6 +66,77 @@ function sourceTextContainsSnippet(sourceText: string, snippet: string): boolean
   return normalizeSearchResultSnippet(sourceText).toLocaleLowerCase().includes(normalizedSnippet);
 }
 
+type UnitFindCache = Map<
+  string,
+  { unit: ConversationTurnRenderUnit; source: ConversationFindMatch[]; loadedRowCount: number }
+>;
+
+/**
+ * Append one segment's unit matches to matches in global order and return the sum of those units' loadedRowCount.
+ * Fix rationale: a streaming delta only changes the current running turn; a stable turn's full-text index is
+ * reusable, avoiding a scan of the whole history per token that kept the renderer main thread saturated in
+ * long sessions. Non-running units look up their previous matches in lookups and write them into nextCache;
+ * running units are rebuilt every time.
+ */
+function appendUnitFindMatches({
+  units,
+  indexOffset,
+  matches,
+  cacheKeyPrefix,
+  lookups,
+  nextCache,
+  build,
+}: {
+  units: readonly ConversationTurnRenderUnit[];
+  indexOffset: number;
+  matches: ConversationFindMatch[];
+  cacheKeyPrefix: string;
+  lookups: readonly UnitFindCache[];
+  nextCache: UnitFindCache;
+  build: (unit: ConversationTurnRenderUnit) => {
+    matches: ConversationFindMatch[];
+    loadedRowCount: number;
+  };
+}): number {
+  let loadedRowCount = 0;
+  units.forEach((unit, offset) => {
+    const unitIndex = indexOffset + offset;
+    const cacheKey = `${cacheKeyPrefix}:${unit.key}`;
+    // A history revision keeps the turn key but the text changed; the cache must invalidate with the immutable projection identity.
+    const cached = unit.isRunning
+      ? undefined
+      : lookups.map((cache) => cache.get(cacheKey)).find((entry) => entry?.unit === unit);
+    const unitIndexResult = cached
+      ? { matches: cached.source, loadedRowCount: cached.loadedRowCount }
+      : build(unit);
+    if (!unit.isRunning) {
+      nextCache.set(
+        cacheKey,
+        cached ?? {
+          unit,
+          source: unitIndexResult.matches,
+          loadedRowCount: unitIndexResult.loadedRowCount,
+        },
+      );
+    }
+    loadedRowCount += unitIndexResult.loadedRowCount;
+    for (const match of unitIndexResult.matches) {
+      // Freshly built matches are unpublished, so fill in positions directly; cached matches are copied only when their window position changed.
+      // High-frequency short queries can produce huge result sets; never unconditionally copy every object again after building in the same round.
+      if (!cached) {
+        match.globalIndex = matches.length;
+        match.unitIndex = unitIndex;
+      }
+      matches.push(
+        match.globalIndex === matches.length && match.unitIndex === unitIndex
+          ? match
+          : { ...match, globalIndex: matches.length, unitIndex },
+      );
+    }
+  });
+  return loadedRowCount;
+}
+
 export function useConversationTimelineFind({
   rootRef,
   renderUnits,
@@ -76,53 +153,103 @@ export function useConversationTimelineFind({
   searchResultHighlightRequest,
   onSearchResultHighlightDone,
   scrollToUnit,
+  isMountedLayoutMeasured,
 }: UseConversationTimelineFindOptions) {
+  const buildFindIndex = useMemo(() => createConversationFindIndexBuilder(), []);
+  // Fixed empty index while not searching: effects depending on it do not rerun on every streaming frame.
+  const emptyFindIndex = useMemo(() => buildFindIndex([], ""), [buildFindIndex]);
   const codeCommentCardsEnabled = useAssistantCodeCommentFeatureEnabled();
   const findStable = sessionPhase !== "running" && sessionPhase !== "prewarming";
-  const unitFindCacheRef = useRef(
-    new Map<string, { source: ConversationFindMatch[]; loadedRowCount: number }>(),
-  );
-  const unitFindCacheQueryRef = useRef("");
-  const conversationFindIndex = useMemo(() => {
-    const query = conversationFindQuery;
-    const normalizedQuery = query.trim().toLocaleLowerCase();
-    if (unitFindCacheQueryRef.current !== normalizedQuery) {
-      unitFindCacheRef.current.clear();
-      unitFindCacheQueryRef.current = normalizedQuery;
-    }
+  const normalizedFindQuery = conversationFindQuery.trim().toLocaleLowerCase();
+  // History and tail caches each keep only their own segment's units; a unit migrating between segments is caught by the other table as a fallback.
+  const historyFindCacheRef = useRef<UnitFindCache>(new Map());
+  const tailFindCacheRef = useRef<UnitFindCache>(new Map());
+  // Bug root cause: the index used to be built over all render units, assembling cache keys every round even
+  // when not searching, so per-frame cost grew linearly with history. History matches are cached by the history
+  // reference and only the tail is rebuilt per frame; when not searching, return the fixed empty index directly.
+  const historyFindIndex = useMemo(() => {
     const matches: ConversationFindMatch[] = [];
-    let loadedRowCount = 0;
-    // Reason for the fix: Streaming deltas change only the current running turn; the full-text index for stable turns can be reused,
-    // avoiding a full-history scan for every token that would keep the renderer’s main thread busy in long conversations.
-    renderUnits.forEach((unit, unitIndex) => {
-      const cacheKey = `${normalizedQuery}:${codeCommentCardsEnabled}:${unit.key}`;
-      const cached = !unit.isRunning ? unitFindCacheRef.current.get(cacheKey) : undefined;
-      const unitIndexResult = cached
-        ? { matches: cached.source, loadedRowCount: cached.loadedRowCount }
-        : buildConversationFindIndex([unit], query, {
-            projectAssistantCodeComments: codeCommentCardsEnabled,
-          });
-      if (!unit.isRunning && !cached) {
-        unitFindCacheRef.current.set(cacheKey, {
-          source: unitIndexResult.matches,
-          loadedRowCount: unitIndexResult.loadedRowCount,
-        });
-      }
-      loadedRowCount += unitIndexResult.loadedRowCount;
-      for (const match of unitIndexResult.matches) {
-        matches.push({ ...match, globalIndex: matches.length, unitIndex });
-      }
+    if (!normalizedFindQuery) {
+      // When find closes, drop the previous query's units and matches (before the change, each call kept only the current window's units).
+      if (historyFindCacheRef.current.size > 0) historyFindCacheRef.current = new Map();
+      return { matches, loadedRowCount: 0 };
+    }
+    const nextCache: UnitFindCache = new Map();
+    const loadedRowCount = appendUnitFindMatches({
+      units: renderUnits.history,
+      indexOffset: 0,
+      matches,
+      cacheKeyPrefix: `${normalizedFindQuery}:${codeCommentCardsEnabled}`,
+      lookups: [historyFindCacheRef.current, tailFindCacheRef.current],
+      nextCache,
+      build: (unit) =>
+        buildFindIndex([unit], conversationFindQuery, {
+          projectAssistantCodeComments: codeCommentCardsEnabled,
+        }),
     });
-    return { query: normalizedQuery, matches, matchCount: matches.length, loadedRowCount };
-  }, [codeCommentCardsEnabled, conversationFindQuery, renderUnits]);
+    // Keep only the current window; trimmed-away history matches must not keep occupying the cache.
+    historyFindCacheRef.current = nextCache;
+    return { matches, loadedRowCount };
+  }, [
+    buildFindIndex,
+    codeCommentCardsEnabled,
+    conversationFindQuery,
+    normalizedFindQuery,
+    renderUnits.history,
+  ]);
+  const conversationFindIndex = useMemo(() => {
+    if (!normalizedFindQuery) {
+      if (tailFindCacheRef.current.size > 0) tailFindCacheRef.current = new Map();
+      return emptyFindIndex;
+    }
+    const matches = [...historyFindIndex.matches];
+    const nextCache: UnitFindCache = new Map();
+    // The tail is usually the still-running last turn; running units are not cached; finished units in the tail reuse cache like the history segment.
+    const tailRowCount = appendUnitFindMatches({
+      units: renderUnits.tail,
+      indexOffset: renderUnits.history.length,
+      matches,
+      cacheKeyPrefix: `${normalizedFindQuery}:${codeCommentCardsEnabled}`,
+      lookups: [tailFindCacheRef.current, historyFindCacheRef.current],
+      nextCache,
+      build: (unit) =>
+        buildFindIndex([unit], conversationFindQuery, {
+          projectAssistantCodeComments: codeCommentCardsEnabled,
+        }),
+    });
+    tailFindCacheRef.current = nextCache;
+    return {
+      query: normalizedFindQuery,
+      matches,
+      matchCount: matches.length,
+      loadedRowCount: historyFindIndex.loadedRowCount + tailRowCount,
+    };
+  }, [
+    buildFindIndex,
+    codeCommentCardsEnabled,
+    conversationFindQuery,
+    emptyFindIndex,
+    historyFindIndex,
+    normalizedFindQuery,
+    renderUnits,
+  ]);
   const searchResultFindIndex = useMemo(
     () =>
       findStable && searchResultHighlightRequest
-        ? buildConversationFindIndex(renderUnits, searchResultHighlightRequest.query, {
-            projectAssistantCodeComments: codeCommentCardsEnabled,
-          })
-        : buildConversationFindIndex([], ""),
-    [codeCommentCardsEnabled, findStable, renderUnits, searchResultHighlightRequest],
+        ? buildFindIndex(
+            [...renderUnits.history, ...renderUnits.tail],
+            searchResultHighlightRequest.query,
+            { projectAssistantCodeComments: codeCommentCardsEnabled },
+          )
+        : emptyFindIndex,
+    [
+      buildFindIndex,
+      codeCommentCardsEnabled,
+      emptyFindIndex,
+      findStable,
+      renderUnits,
+      searchResultHighlightRequest,
+    ],
   );
   const [resolvedFindActiveIndex, setResolvedFindActiveIndex] = useState(-1);
   const findActiveKeyRef = useRef<ConversationFindMatchKey | null>(null);
@@ -204,13 +331,21 @@ export function useConversationTimelineFind({
     if (!conversationFindIndex.query || !activeFindMatch) {
       return;
     }
-    const scrollKey = `${conversationFindIndex.query}:${activeFindMatch.rowId}:${activeFindMatch.rowMatchIndex}:${activeFindMatch.unitIndex}`;
+    // Bug root cause: the single-match loop only updated the DOM highlight request; once the match left the
+    // virtual window there was no Range left to scroll. Explicit navigation now also drives virtual-window
+    // positioning; passive match reports are still deduplicated by the same request key.
+    const scrollKey = `${conversationFindNavigationRequestId}:${conversationFindIndex.query}:${activeFindMatch.rowId}:${activeFindMatch.rowMatchIndex}:${activeFindMatch.unitIndex}`;
     if (lastFindScrollKeyRef.current === scrollKey) {
       return;
     }
     lastFindScrollKeyRef.current = scrollKey;
     scrollToUnit(activeFindMatch.unitIndex);
-  }, [activeFindMatch, conversationFindIndex.query, scrollToUnit]);
+  }, [
+    activeFindMatch,
+    conversationFindIndex.query,
+    conversationFindNavigationRequestId,
+    scrollToUnit,
+  ]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -227,9 +362,29 @@ export function useConversationTimelineFind({
         activeMatch: activeFindMatch,
       });
       const highlightScrollKey = `${conversationFindNavigationRequestId}:${conversationFindIndex.query}:${activeFindMatch?.rowId ?? "none"}:${activeFindMatch?.rowMatchIndex ?? -1}:${activeFindMatch?.unitIndex ?? -1}`;
-      if (activeRange && lastFindHighlightScrollKeyRef.current !== highlightScrollKey) {
+      // Mounted does not mean layout is booked; while sizes are still estimates, centering would use
+      // soon-stale coordinates. Confirm the handoff with this batch's actual layout; size commits wake via
+      // mountedRowsKey, with no fixed delay.
+      if (
+        lastFindHighlightScrollKeyRef.current !== highlightScrollKey &&
+        isMountedLayoutMeasured()
+      ) {
+        // Height-measurement compensation pauses on width changes; the target may get pushed out of the
+        // virtual window by taller rows ahead. Only unfinished requests reposition on measurement commits;
+        // once settled, the user scrolling away must not be pulled back again.
+        // Source Markdown markers and link targets may have no DOM Range; a mounted target must finish the
+        // request, otherwise window updates triggered by the user scrolling away would pull it back
+        // repeatedly. Coarse positioning continues only when the target row is not mounted.
+        if (
+          !activeRange &&
+          activeFindMatch &&
+          !getMountedConversationFindRow(root, activeFindMatch.rowId)
+        ) {
+          scrollToUnit(activeFindMatch.unitIndex);
+          return;
+        }
         lastFindHighlightScrollKeyRef.current = highlightScrollKey;
-        scrollConversationFindRangeIntoView(activeRange);
+        if (activeRange) scrollConversationFindRangeIntoView(activeRange);
       }
     });
 
@@ -240,6 +395,8 @@ export function useConversationTimelineFind({
     conversationFindQuery,
     conversationFindNavigationRequestId,
     mountedRowsKey,
+    isMountedLayoutMeasured,
+    scrollToUnit,
     rootRef,
   ]);
 
@@ -328,14 +485,25 @@ export function useConversationTimelineFind({
         query: request.query,
         match,
       });
-      if (!range) {
+      if (!isMountedLayoutMeasured()) {
+        return;
+      }
+      // History search results likewise distinguish not-mounted from not-highlightable, so Range-less requests never hold the scroll forever.
+      if (!range && !getMountedConversationFindRow(root, match.rowId)) {
+        scrollToUnit(match.unitIndex);
         return;
       }
       searchResultAppliedRequestRef.current = request.requestId;
-      scrollConversationFindRangeIntoView(range);
       if (searchResultCleanupTimerRef.current !== undefined) {
         window.clearTimeout(searchResultCleanupTimerRef.current);
+        searchResultCleanupTimerRef.current = undefined;
       }
+      if (!range) {
+        clearSearchResultHighlight();
+        onSearchResultHighlightDone?.(request.requestId);
+        return;
+      }
+      scrollConversationFindRangeIntoView(range);
       searchResultCleanupTimerRef.current = window.setTimeout(() => {
         clearSearchResultHighlight();
         onSearchResultHighlightDone?.(request.requestId);
@@ -349,6 +517,7 @@ export function useConversationTimelineFind({
     findStable,
     loadingOlder,
     mountedRowsKey,
+    isMountedLayoutMeasured,
     onSearchResultHighlightDone,
     rootRef,
     rows,

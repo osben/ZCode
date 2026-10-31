@@ -54,10 +54,8 @@ function GroupedTaskItemComponent({
   groupId,
   groups,
   remoteSessionId,
-  activeWorkspacePath,
-  activeWorkspaceIdentity,
-  activeTaskId,
-  mobileActiveTaskKey,
+  isActive,
+  isMobileActive,
   onSelectTask,
   onCloseTask,
   onOpenFileTree,
@@ -75,10 +73,8 @@ function GroupedTaskItemComponent({
   groupId?: string;
   groups: TaskGroupMenuItem[];
   remoteSessionId?: string;
-  activeWorkspacePath: string;
-  activeWorkspaceIdentity?: string;
-  activeTaskId: string | null;
-  mobileActiveTaskKey?: string | null;
+  isActive: boolean;
+  isMobileActive: boolean;
   onSelectTask: (
     workspacePath: string,
     taskId: string,
@@ -104,10 +100,8 @@ function GroupedTaskItemComponent({
         currentGroupId={groupId}
         groups={groups}
         remoteSessionId={remoteSessionId}
-        activeWorkspacePath={activeWorkspacePath}
-        activeWorkspaceIdentity={activeWorkspaceIdentity}
-        activeTaskId={activeTaskId}
-        mobileActiveTaskKey={mobileActiveTaskKey}
+        isActive={isActive}
+        isMobileActive={isMobileActive}
         onSelectTask={onSelectTask}
         onCloseTask={onCloseTask}
         onOpenFileTree={onOpenFileTree}

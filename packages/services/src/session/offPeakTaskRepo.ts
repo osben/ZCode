@@ -663,6 +663,8 @@ export class OffPeakTaskRepo {
       filesChanged?: number;
       /** Deterministic error during scheduler dispatch; when present, atomically increment one dispatch attempt and save last_error. */
       dispatchError?: string;
+      /** A stale poll may only finish the ticket and status it observed; it must not overwrite a newer ticket from a manual Continue. */
+      expectedTask?: Pick<ZCodeOffPeakTask, "status" | "serverTicketId">;
     },
   ): Promise<ZCodeOffPeakTask | null> {
     await this.ensureReady();
@@ -678,7 +680,9 @@ export class OffPeakTaskRepo {
             schedulable = 0,
             claim_running = 0, claimed_at = NULL,
             updated_at = @ended_at
-        WHERE off_peak_task_id = @id AND status NOT IN (${TERMINAL_SQL_LIST})`,
+        WHERE off_peak_task_id = @id AND status NOT IN (${TERMINAL_SQL_LIST})
+          AND (@expected_status IS NULL OR
+            (status = @expected_status AND server_ticket_id IS @expected_ticket_id))`,
       )
       .run({
         id: offPeakTaskId,
@@ -688,6 +692,8 @@ export class OffPeakTaskRepo {
         files_changed: options.filesChanged ?? null,
         dispatch_attempt_inc: options.dispatchError ? 1 : 0,
         dispatch_error: options.dispatchError ?? null,
+        expected_status: options.expectedTask?.status ?? null,
+        expected_ticket_id: options.expectedTask?.serverTicketId ?? null,
       });
     if (res.changes !== 1) return null;
     return rowToTask(this.getRow(offPeakTaskId)!);

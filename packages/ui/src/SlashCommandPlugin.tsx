@@ -107,8 +107,11 @@ export function SlashCommandPlugin({
   const activeTokenRef = useRef<ActivePromptInputTokenSnapshot | null>(null);
   const commandSuggestions = useMemo(() => {
     const excluded = new Set((excludedCommandNames ?? []).map(normalizeSlashCommandValue));
+    const recoveryNames = new Set(
+      appCommands?.filter((command) => command.recovery).map((command) => command.value),
+    );
     const cliSuggestions = buildSlashSuggestions(commands).filter(
-      (item) => !excluded.has(item.value),
+      (item) => !excluded.has(item.value) && !recoveryNames.has(item.value),
     );
     // Append app-level commands after the CLI catalog; when the CLI already provides a command with the same name, prefer the CLI to avoid masking it.
     const cliValues = new Set(cliSuggestions.map((item) => item.value));

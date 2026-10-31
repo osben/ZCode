@@ -23,8 +23,16 @@ import type {
   WebRemoteControlReconnectWorkspaceRequest,
   WebRemoteControlWorkspaceTarget,
 } from "./web-remote-control.js";
+import type {
+  WebRemoteControlRendererActionRequest,
+  WebRemoteControlRendererActionResult,
+} from "#src/web-remote-relay/index.js";
 import type { AppSettings, Locale } from "./protocol.js";
-import type { ArmsCustomEventPayload, RendererTelemetryEventPayload } from "./telemetry.js";
+import type {
+  ArmsCustomEventPayload,
+  RendererTelemetryEventPayload,
+  TelemetryRendererContext,
+} from "./telemetry.js";
 import type {
   RendererActionTraceBatchV1,
   RendererActionTraceConfigV1,
@@ -222,6 +230,21 @@ export interface EditorInfo {
   iconDataUrl: string;
 }
 
+/** Applications the system registered for the current file type; ids are resolved by the host only and must not be executed as commands. */
+export interface FileApplicationInfo {
+  id: string;
+  name: string;
+  iconDataUrl?: string;
+  isDefault: boolean;
+}
+
+export interface FileApplicationTarget {
+  path: string;
+  pathKind: "file" | "directory";
+  workspaceIdentity?: string;
+  remoteTarget?: OpenInEditorRemoteTarget;
+}
+
 export interface ApplicationIconInfo {
   iconDataUrl: string;
 }
@@ -260,7 +283,7 @@ export interface CreateTempTextAttachmentResult {
 
 /**
  * Open a dwf artifact as a file: write the bytes of a particular artifact version to a local copy on the host machine.
- * （docs/dynamic-workflow/authoring.md「How the user sees them」）。
+ * (see docs/dynamic-workflow/authoring.md, "How the user sees them").
  *
  * ⚠ Terminology: artifact means output published to the user by a script via `artifact.*`, not the engine's `RunSettlement.artifact`.
  */
@@ -292,6 +315,7 @@ export type SaveFileRequest =
     };
 
 export interface SaveFileResult {
+  /** On desktop means the file was written; on Web only means the download was handed to the browser, not confirmed on disk. */
   canceled?: boolean;
   error?: string;
   path?: string;
@@ -479,7 +503,7 @@ export interface RemoteSessionClosedEvent {
   exitCode: number | null;
   signal: string | null;
   error?: string;
-  /** true = Source transport 仍在自动恢复预算内，UI 不得做终态失败收口。 */
+  /** true = Source transport is still within its auto-recovery budget; the UI must not finalize a terminal failure. */
   recoverable?: boolean;
   recoveryAttempt?: number;
   recoveryLimit?: number;
@@ -618,7 +642,7 @@ export interface BindRemoteWorkspaceSessionContextResult {
   workspacePath: string;
   workspaceIdentity: string;
   workspacePurpose?: import("./workspacePurpose.js").WorkspacePurpose;
-  /** Desktop 专用的 tab 原地换代提示；不是任务路由身份，手机 replayable 客户端忽略。 */
+  /** Desktop-only in-place tab replacement hint; not a task routing identity, ignored by mobile replayable clients. */
   previousWorkspaceIdentity?: string;
 }
 
@@ -630,6 +654,22 @@ export type BindRemoteWorkspaceSessionContextIpcResult =
       reasonCode?: string;
       retryable?: boolean;
     };
+
+/**
+ * Restore a structured bind IPC result into a success result, or an Error carrying code/retryable.
+ * Bug cause: an Error thrown from preload loses custom properties when crossing the contextBridge,
+ * leaving the renderer with only message; preload must return the structured result as-is and
+ * call this function on the renderer side.
+ */
+export function unwrapRemoteWorkspaceBindResult(
+  result: BindRemoteWorkspaceSessionContextIpcResult,
+): BindRemoteWorkspaceSessionContextResult {
+  if (result.success) return result.result;
+  const error = new Error(result.error) as Error & { code?: string; retryable?: boolean };
+  if (result.reasonCode) error.code = result.reasonCode;
+  if (result.retryable !== undefined) error.retryable = result.retryable;
+  throw error;
+}
 
 export const DesktopCommandIds = {
   NewTask: "newTask",
@@ -650,6 +690,7 @@ export const DesktopCommandIds = {
   OpenFeedback: "openFeedback",
   OpenCommunity: "openCommunity",
   ExportLogs: "exportLogs",
+  PullMobileLogs: "pullMobileLogs",
   ToggleDevTools: "toggleDevTools",
   OpenResourceManager: "openResourceManager",
   ToggleZCodeStdioTapDevProxy: "toggleZCodeStdioTapDevProxy",
@@ -688,10 +729,10 @@ export type CuaOsSupport =
  * Business services (files, terminal, credentials, etc.) use the IServiceAccessor RPC channel.
  */
 export interface IPlatformService {
-  /** 是否支持当前客户端本机文件的默认应用与目录操作；Web 不具备此能力。 */
+  /** Whether default-app and directory operations on the local client's files are supported; Web does not have this capability. */
   canOpenLocalFiles?: boolean;
 
-  /** 当前平台的文件选择框是否能返回 agent 可访问的本地绝对路径 */
+  /** Whether the current platform's file picker can return local absolute paths the agent can access */
   canSelectFilePath?: boolean;
 
   /**
@@ -728,7 +769,7 @@ export interface IPlatformService {
   /** Open the system multi-file picker and return selected file paths; return an empty array when cancelled. */
   selectFiles?(): Promise<string[]>;
 
-  /** Write a file using the host's native Save As dialog; not implemented by regular Web. */
+  /** Desktop writes via the native save-as dialog; Web starts a download in the current browser. */
   saveFile?(payload: SaveFileRequest): Promise<SaveFileResult>;
 
   /**
@@ -768,7 +809,7 @@ export interface IPlatformService {
   /** Subscribe to remote workspace session close events; returns a disposer. */
   onRemoteSessionClosed(handler: (event: RemoteSessionClosedEvent) => void): () => void;
 
-  /** 订阅 Source transport 自动重连后的 logical session 换代事件。 */
+  /** Subscribe to logical session succession events after Source transport auto-reconnects. */
   onRemoteSessionReconnected?(handler: (event: RemoteSessionReconnectedEvent) => void): () => void;
 
   /** Subscribe to successful remote workspace reconnections triggered by a Bot; returns a disposer. */
@@ -795,15 +836,15 @@ export interface IPlatformService {
     reasonCode?: string;
     retryable?: boolean;
     sessionId?: string;
-    /** 本次直接复用的在线连接目标，凭据不参与认证也不得持久化。 */
+    /** Online connection target reused directly this time; credentials take no part in auth and must not be persisted. */
     reusedConnectionTarget?: RemoteTarget;
-    /** 安装/升级等待时由 Host 确认的实际连接线路。 */
+    /** Actual connection line confirmed by the Host while install/upgrade is pending. */
     profileId?: string;
-    /** WSL 安装/升级等待使用本次已解析身份；预览失败也不能重新选择系统默认值。 */
+    /** WSL install/upgrade wait uses the identity resolved this time; even if the preview fails, the system default must not be re-selected. */
     resolvedWslTarget?: Required<WSLConnectOptions>;
   }>;
 
-  /** Desktop-only：请求在线 Source 的无 workspace 配置 attachment。 */
+  /** Desktop-only: request a workspace-less settings attachment for an online Source. */
   requestSourceSettingsAttachment?(sourceServerId: string): Promise<{ attachmentId: string }>;
 
   /** Cancel a remote connection that has not yet completed in the current window (optional; Web may ignore). */
@@ -824,16 +865,16 @@ export interface IPlatformService {
     context: WebRemoteControlContext,
   ): Promise<WebRemoteControlStartOperationResult>;
 
-  /** 关闭当前窗口已开启的 Web 远程控制能力 */
+  /** Turn off Web remote control already enabled for the current window */
   stopWebRemoteControl(): Promise<void>;
 
   /** Get Web remote-control status for the current window. */
   getWebRemoteControlStatus(): Promise<WebRemoteControlStatus>;
 
-  /** 桌面 OAuth 会话通知；main 独立重读凭据后决定是否恢复远控。 */
+  /** Desktop OAuth session notification; main independently re-reads credentials and decides whether to resume remote control. */
   notifyWebRemoteControlAuthStateChanged?(change: WebRemoteControlAuthStateChange): void;
 
-  /** 订阅当前窗口 Web 远程控制状态变化；旧平台可不实现，UI 会保留轮询兜底 */
+  /** Subscribe to the current window's Web remote control status changes; legacy platforms may omit it, the UI keeps a polling fallback */
   onWebRemoteControlStatusChanged?(handler: (status: WebRemoteControlStatus) => void): () => void;
 
   /** Release remote sessions created in the current window. */
@@ -934,6 +975,9 @@ export interface IPlatformService {
   /** Trigger a system notification for the task state; the host decides whether to display it. */
   showTaskNotification(payload: TaskNotificationPayload): void;
 
+  /** Sync the current UI context for host launch/daily-active events; Web may omit it. */
+  syncTelemetryContext?(context: TelemetryRendererContext): void;
+
   /** Report UI telemetry events through the host environment. */
   reportTelemetryEvent(payload: RendererTelemetryEventPayload): Promise<void>;
 
@@ -948,7 +992,7 @@ export interface IPlatformService {
   ): () => void;
   /** Renderer → Main: send a completed ui_action batch; strictly out-of-band and fire-and-forget. */
   reportRendererActionTraceBatch?(batch: RendererActionTraceBatchV1): void;
-  reportLocalTtftBatch?(batch: import("./localTtft.js").LocalTtftBatch): void;
+  reportLocalTtftBatch?(batch: import("./local-ttft/contract.js").LocalTtftBatch): void;
 
   /**
    * Renderer → Main: heap reading from the main-window renderer every 60 seconds, recorded as a `renderer_main` role event. One-way send, fire-and-forget;
@@ -962,11 +1006,18 @@ export interface IPlatformService {
   /** Sync workspaces that Web remote control may switch to in the current window; the Web fallback may ignore this. */
   syncWebRemoteControlWorkspaces?(workspaces: WebRemoteControlWorkspaceTarget[]): void;
 
-  /** 注册 Web 远程控制手机端请求重连 workspace 的回调，返回 disposer */
+  /** Register the Web remote control mobile-side callback requesting a workspace reconnect; returns a disposer */
   onWebRemoteControlReconnectWorkspace?(
     handler: (
       request: WebRemoteControlReconnectWorkspaceRequest,
     ) => Promise<WebRemoteControlReconnectWorkspaceResult>,
+  ): () => void;
+
+  /** Register callbacks for mobile remote-control actions (pin/unarchive/create local project); returns a disposer; not implemented by the Web fallback */
+  onWebRemoteControlRendererAction?(
+    handler: (
+      request: WebRemoteControlRendererActionRequest,
+    ) => Promise<WebRemoteControlRendererActionResult>,
   ): () => void;
 
   /** Sync the unread task count for the current window to the host for Dock/taskbar badge aggregation. */
@@ -1016,6 +1067,9 @@ export interface IPlatformService {
     request: EmbeddedBrowserSitePermissionResetRequest,
   ): Promise<EmbeddedBrowserSitePermissionsSnapshot>;
   /** Register a callback for when an Agent's first browser command creates a controlled view (automatically opens a browser-use tab); returns a disposer. */
+  onBrowserViewDownloadStarted?(
+    handler: (payload: { webContentsId: number; urls: string[] }) => void,
+  ): () => void;
   onBrowserViewReady?(
     handler: (payload: {
       workspaceKey: string;
@@ -1229,8 +1283,17 @@ export interface IPlatformService {
   /** User confirmed restarting to install the update. */
   quitAndInstallUpdate(): Promise<void>;
 
-  /** 获取已安装编辑器/终端；传文件路径时追加匹配类型的本机应用（含图标）。 */
+  /** List installed editors/terminals; when a file path is given, append native apps matching its type (with icons). */
   getInstalledEditors(filePath?: string): Promise<EditorInfo[]>;
+
+  /** System-associated applications for a local file; Web/remote/directories provide no native apps. */
+  getFileApplications?(target: FileApplicationTarget): Promise<FileApplicationInfo[]>;
+
+  /** Open a local file with that application after re-confirming the system association. */
+  openFileWithApplication?(
+    applicationId: string,
+    target: FileApplicationTarget,
+  ): Promise<{ success: boolean; error?: string }>;
 
   /** Open a path with the specified editor. */
   openInEditor(

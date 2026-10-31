@@ -40,9 +40,16 @@ export interface AutomationCreateContext {
   sessionId?: string;
 }
 
+export interface AutomationPauseInput {
+  /** Automation identity for this run injected by the executor, not from model input. */
+  id: string;
+}
+
 export interface AutomationPort {
   create(input: CronCreateInput, context?: AutomationCreateContext): Promise<CronAutomation>;
   update(input: CronUpdateInput): Promise<CronAutomation>;
   list(): Promise<CronAutomation[]>;
   delete(input: CronDeleteInput): Promise<boolean>;
+  /** Conditional pause: only active and enabled tasks become paused; returns whether the state actually changed. */
+  pause(input: AutomationPauseInput): Promise<boolean>;
 }

@@ -22,6 +22,7 @@ import { resolveLogoutProviderFamilyDomain } from "@/lib/providerFamilyDomainSet
 import { isRendererReloadNavigation } from "@/lib/rendererNavigation.js";
 import { parseWslUncWorkspacePath } from "@/lib/wslUncWorkspace.js";
 import { logger } from "@/logger.js";
+import { toast } from "@/components/ui/toast.js";
 import { useComposerClientNamespace } from "@/hooks/useServices.js";
 import {
   resolveComposerScope,
@@ -171,6 +172,7 @@ export function useRootWorkspaceActions({
   activeWorkspacePath,
   activeWorkspaceIdentity,
   supportsSettings,
+  isDesktop = false,
   allowOpenWorkspace,
   preferDirectoryBrowser,
   openDirectoryBrowser,
@@ -184,7 +186,6 @@ export function useRootWorkspaceActions({
   openRemoteProjectWorkspace,
   openMobileProjectDraft,
   workbenchGroupClientMode = "desktop-continuous",
-  isDesktop = false,
 }: {
   intl: ReturnType<typeof import("@/i18n/IntlProvider.js").useZCodeIntl>["intl"];
   platform: IPlatformService;
@@ -423,7 +424,23 @@ export function useRootWorkspaceActions({
                     (newTaskTarget.workspaceIdentity?.trim() || newTaskTarget.workspacePath),
               )?.projectId ?? undefined)
             : (workspace.draftProjectId ?? undefined);
-          if (hostId && !projectId) throw new Error("project.remote-project-required");
+          if (projectId && (!hostId || hostId === "local")) {
+            // Soft delete keeps the historical project_id; inheriting it directly into a new task would report not-found and stay on the old page.
+            // Only inherit a valid project on the same Host, and re-verify the draft; a read failure still reports an error and is not passed off as a deleted project.
+            const projects = tree?.projects ?? (await services.projectService?.readProjects());
+            if (!projects) throw new Error("project.service-unavailable");
+            if (
+              !projects.some(
+                (project) =>
+                  project.id === projectId && project.hostId === "local" && !project.deleted,
+              )
+            ) {
+              logger.debug("[Root] 新任务不继承已删除的本地项目", { projectId });
+              projectId = undefined;
+            }
+          }
+          if (hostId && hostId !== "local" && !projectId)
+            throw new Error("project.remote-project-required");
         }
         if (!isCurrent()) return;
         if (workbenchGroupClientMode === "web-remote-replayable") {
@@ -482,12 +499,29 @@ export function useRootWorkspaceActions({
       } catch (error) {
         if (!isCurrent()) return;
         logger.error("[Root] 准备新任务失败", error);
-        if (typeof request === "object") request.onError?.(error);
-        setWorkspaceActionError(error instanceof Error ? error.message : String(error));
+        if (typeof request === "object" && request.onError) request.onError(error);
+        else {
+          // Reason: the original error state was shown to no one; after the folder was moved away, top-bar create and the shortcut would only fail silently.
+          // Feed back at the action exit that is still valid; callers with onError keep showing it themselves, to avoid duplicate prompts.
+          // The mobile bridge returns a plain error object; instanceof Error must not drop its message.
+          const message =
+            error &&
+            typeof error === "object" &&
+            "message" in error &&
+            typeof error.message === "string"
+              ? error.message
+              : String(error);
+          toast(
+            message === "project.primaryRootMissing" || message === "project.primaryRootUnavailable"
+              ? intl.formatMessage({ id: message })
+              : message,
+          );
+        }
       }
     },
     [
       services.projectService,
+      intl,
       composerClientNamespace,
       activeWorkspacePath,
       activeWorkspaceIdentity,
@@ -590,8 +624,29 @@ export function useRootWorkspaceActions({
   ]);
 
   const handleSelectProject = useCallback(
-    async (path: string) => {
+    async (path: string, activateOtherWindow = true) => {
       logger.info("[Root] handleSelectProject called with path:", path);
+      const sequence = ++navigationSequence.current;
+      const origin = tabStoreApi.getState();
+      const readOriginDraft = () =>
+        origin.activeWorkspacePath
+          ? useZCodeSessionStore
+              .getState()
+              .getWorkspaceState(
+                origin.activeWorkspacePath,
+                origin.activeWorkspaceIdentity ?? undefined,
+              )
+          : undefined;
+      const originDraft = readOriginDraft();
+      const isCurrent = () => {
+        const current = readOriginDraft();
+        return (
+          sequence === navigationSequence.current &&
+          tabStoreApi.getState().activeTabId === origin.activeTabId &&
+          current?.activeTaskId === originDraft?.activeTaskId &&
+          current?.draftFocusVersion === originDraft?.draftFocusVersion
+        );
+      };
       try {
         const wslUncWorkspace = parseWslUncWorkspacePath(path);
         if (wslUncWorkspace && onOpenRemoteConnection) {
@@ -619,6 +674,7 @@ export function useRootWorkspaceActions({
           }
         }
 
+        if (!isCurrent()) return;
         // Desktop: resolve the folder's project first. reuseExistingRoot makes this idempotent per root, so opening
         // the same folder again reuses the project and the draft binds to the same project id.
         let projectId: string | undefined;
@@ -628,9 +684,13 @@ export function useRootWorkspaceActions({
             await services.projectService.saveProject({ roots: [path], reuseExistingRoot: true })
           ).id;
         }
+        if (!isCurrent()) return;
 
-        // 桌面端：检查是否已有其他窗口打开了该目录，如果是则激活该窗口对应 tab
-        const result = await platform.activateOrSetWorkspace(path);
+        // Desktop: check whether another window already opened this folder; if so, activate that window's tab
+        const result = activateOtherWindow
+          ? await platform.activateOrSetWorkspace(path)
+          : { activated: false };
+        if (!isCurrent()) return;
         if (result.activated) {
           logger.info("[Root] 目录已在其他窗口打开，已激活该窗口对应 tab，跳过重复打开");
           return;
@@ -642,7 +702,9 @@ export function useRootWorkspaceActions({
         // 即使命中已存在 tab，也必须清掉该 workspace 的 activeTaskId 并回到单 pane 草稿。
         startDraftInWorkspace(path, undefined, projectId ? { projectId } : undefined);
         setWorkspaceActionError(null);
+        logger.info("[Root] 已打开目录", { path, projectId });
       } catch (err) {
+        if (!isCurrent()) return;
         logger.error("[Root] handleSelectProject error:", err);
         setWorkspaceActionError(err instanceof Error ? err.message : String(err));
       }
@@ -656,8 +718,9 @@ export function useRootWorkspaceActions({
       requestConfirmation,
       services.projectService,
       services.settingService,
+      isDesktop,
       startDraftInWorkspace,
-      supportsSettings,
+      tabStoreApi,
     ],
   );
 

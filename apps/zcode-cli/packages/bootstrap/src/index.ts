@@ -114,3 +114,6 @@ export type {
   WorkspaceHookTrustCliStatus,
   WorkspaceHookTrustCliTarget,
 } from "./workspace-hook-trust-cli.js";
+
+// Embedded calls reuse the product request assembly to keep origin headers and network config from drifting.
+export { createRuntimeAiSdkModelExecutionConfig } from "./model-config.js";

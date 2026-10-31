@@ -38,6 +38,7 @@ export const DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS: ReadonlySet<string> = new Set(
   // landed with the UI plugin, but it was missed here — Settings treated it as disabled by
   // default, disagreeing with the CLI's actual enabled state.
   "visualize@zcode-plugins-official",
+  "zcode-site@zcode-plugins-official",
   // Computer control falls back to disabled by default, so computer-use is not included in this list.
   // This set must match every plugin marked defaultEnabled in official-plugin-definitions.ts,
   // and the Bootstrap test mechanically compares them to ensure the default-enabled Settings set matches the CLI's official plugin declarations.

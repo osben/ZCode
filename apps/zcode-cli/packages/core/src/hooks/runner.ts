@@ -1,4 +1,6 @@
 import {
+  HookEventName,
+  HookOnError,
   HookOutcome,
   SessionEventType,
   isCoreError,
@@ -181,6 +183,7 @@ export class InMemoryHookRunner implements HookRunner {
             )
           : undefined;
         const safeDiagnostics = blocked ? sanitizeHookDiagnostics(diagnostics) : undefined;
+        if (!blocked) this.logAllowedToolCall(input, hook, hookIndex, durationMs);
 
         await this.emitHookEvent(
           blocked ? SessionEventType.HookRunBlocked : SessionEventType.HookRunCompleted,
@@ -211,8 +214,20 @@ export class InMemoryHookRunner implements HookRunner {
         const durationMs = Date.now() - startedAt;
         const outcome = resolveHookFailureOutcome(error);
         const errorMessage = sanitizeHookDisplayText(readHookErrorMessage(error));
+        // A hook's own error used to always pass through (fail-open): a guard that crashes reading a
+        // wrong field equals no guard at all, and nobody knows. `onError: "deny"` makes this error
+        // take the same shape as "hook blocked with exit code 2", routed down the same deny path.
+        const denyReason = resolveDenyOnErrorReason(hook, input, outcome, errorMessage);
+        if (denyReason !== undefined) {
+          mergeHookRunResult(
+            result,
+            processHookOutput(input.hookEventName, preToolUseDenyOutput(denyReason)),
+          );
+        }
         await this.emitHookEvent(
-          SessionEventType.HookRunFailed,
+          denyReason === undefined
+            ? SessionEventType.HookRunFailed
+            : SessionEventType.HookRunBlocked,
           input,
           hookInvocationId,
           hookRunId,
@@ -225,8 +240,9 @@ export class InMemoryHookRunner implements HookRunner {
             durationMs,
             errorCode: isCoreError(error) ? error.code : undefined,
             errorMessage,
-            outcome,
+            outcome: denyReason === undefined ? outcome : HookOutcome.Blocked,
             stderrPreview: errorMessage,
+            ...(denyReason === undefined ? {} : { blockReason: denyReason }),
           },
         );
 
@@ -242,12 +258,47 @@ export class InMemoryHookRunner implements HookRunner {
           hookIndex,
           matcher: hook.matcher,
           module: "core.hooks",
+          ...(denyReason === undefined ? {} : { onError: HookOnError.Deny }),
+          outcome,
           source: hook.source,
         });
       }
     }
 
     return result;
+  }
+
+  /**
+   * Allowances also leave a trace: a user/project/plugin-configured PreToolUse hook allowing a tool
+   * call logs one info record. Previously only denials and failures were persisted, so a guard that
+   * silently allowed everything was indistinguishable in logs from no guard at all. Built-in hooks
+   * are not logged (they hang on other events and scale with message flow); records are produced
+   * only for tool calls that have PreToolUse hooks configured.
+   */
+  private logAllowedToolCall(
+    input: HookInput,
+    hook: HookRegistration,
+    hookIndex: number,
+    durationMs: number,
+  ): void {
+    if (input.hookEventName !== HookEventName.PreToolUse) return;
+    if (hook.sourceKind === undefined || hook.sourceKind === "internal") return;
+    this.logger?.info("PreToolUse hook allowed tool call", {
+      ...traceContextToLogContext({
+        traceId: input.traceId,
+        sessionId: input.sessionId,
+        turnId: input.turnId,
+      }),
+      durationMs,
+      event: "hook.run.allowed",
+      hookIndex,
+      matcher: hook.matcher,
+      module: "core.hooks",
+      source: hook.source,
+      sourceKind: hook.sourceKind,
+      toolCallId: input.toolCallId,
+      toolName: input.toolName,
+    });
   }
 
   private async runBackgroundHook(options: {
@@ -458,4 +509,36 @@ function sanitizeHookDiagnostics(
 
 export function createInMemoryHookRunner(options?: HookRunnerOptions): InMemoryHookRunner {
   return new InMemoryHookRunner(options);
+}
+
+/**
+ * `onError: "deny"` applies only to PreToolUse, and only when the hook actually ran and errored.
+ * A user interrupt does not count as an error: turning it into a denial would make "cancel" look
+ * like a policy rejection. Returns the denial reason; undefined when not denying.
+ */
+function resolveDenyOnErrorReason(
+  hook: HookRegistration,
+  input: HookInput,
+  outcome: HookOutcome,
+  errorMessage: string,
+): string | undefined {
+  if (hook.onError !== HookOnError.Deny) return undefined;
+  if (input.hookEventName !== HookEventName.PreToolUse) return undefined;
+  if (outcome === HookOutcome.Cancelled) return undefined;
+  return sanitizeHookDisplayText(
+    `PreToolUse hook failed and its onError is "deny", so the tool call is blocked: ${errorMessage}`,
+  );
+}
+
+/** Same shape as an exit-code-2 denial (createExitCodeBlockOutput in configured-runner-callback.ts). */
+function preToolUseDenyOutput(reason: string): HookJSONOutput {
+  return {
+    continue: false,
+    reason,
+    hookSpecificOutput: {
+      hookEventName: HookEventName.PreToolUse,
+      permissionDecision: "deny",
+      permissionDecisionReason: reason,
+    },
+  };
 }

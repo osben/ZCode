@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type {
   WindowHostControllerTaskListItem,
-  ZCodeTaskListKind,
+  ZCodeTaskListQuery,
   ZCodeTaskListWorkspaceScope,
 } from "@zcode/services";
 import { logger } from "@/logger.js";
@@ -40,7 +40,9 @@ function buildWorkspaceScopes(
 }
 
 export function useGlobalTaskList(params: {
-  kind: ZCodeTaskListKind;
+  kind: ZCodeTaskListQuery["kind"];
+  scope?: "host";
+  enabled?: boolean;
   workspaceTabs: ReadonlyArray<
     Pick<WorkspaceTabState, "workspacePath" | "workspaceIdentity"> & {
       remoteSessionId?: string;
@@ -59,8 +61,12 @@ export function useGlobalTaskList(params: {
   );
   const controllerRevision = useSyncExternalStore(
     controllerRegistry?.subscribe ?? subscribeToNothing,
-    controllerRegistry?.getRevision ?? zeroRevision,
-    controllerRegistry?.getRevision ?? zeroRevision,
+    (params.scope === "host"
+      ? controllerRegistry?.getDirectoryRevision
+      : controllerRegistry?.getRevision) ?? zeroRevision,
+    (params.scope === "host"
+      ? controllerRegistry?.getDirectoryRevision
+      : controllerRegistry?.getRevision) ?? zeroRevision,
   );
   const workspaceSignature = JSON.stringify(
     params.workspaceTabs
@@ -90,11 +96,12 @@ export function useGlobalTaskList(params: {
       ),
   );
   const workspaceScopes = useMemo(
-    () => buildWorkspaceScopes(params.workspaceTabs),
+    () =>
+      params.scope === "host" ? ("host" as const) : buildWorkspaceScopes(params.workspaceTabs),
     // workspaceSignature identifies normalized scope values and avoids duplicate queries
     // when a parent recreates the tabs array.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [workspaceSignature],
+    [workspaceSignature, params.scope],
   );
   const taskListVersionSignature = useZCodeSessionStore((state) =>
     JSON.stringify(
@@ -156,7 +163,7 @@ export function useGlobalTaskList(params: {
         version.taskListVersionSignature,
         version.workspaceSourceGenerationSignature,
       ]);
-      if (workspaceScopes.length === 0) {
+      if (params.enabled === false || workspaceScopes.length === 0) {
         setItems([]);
         itemsRef.current = [];
         setTotal(0);
@@ -206,7 +213,7 @@ export function useGlobalTaskList(params: {
         }
       }
     },
-    [controllerRegistry, params.kind, query, queryKey, workspaceScopes],
+    [controllerRegistry, params.enabled, params.kind, query, queryKey, workspaceScopes],
   );
 
   const refresh = useCallback(async () => {

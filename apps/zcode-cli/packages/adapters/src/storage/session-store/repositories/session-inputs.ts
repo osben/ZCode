@@ -30,7 +30,7 @@ interface SessionInputRow {
   time_updated: number;
 }
 
-export async function saveSessionInput(
+export function saveSessionInput(
   db: DatabaseSync,
   input: {
     id: string;
@@ -39,7 +39,7 @@ export async function saveSessionInput(
     delivery: SessionInputDelivery;
     payload: { text: string; [key: string]: unknown };
   },
-): Promise<void> {
+): void {
   const now = Date.now();
   // admitted_sequence is allocated monotonically within the session ledger. Re-entry with the same id uses the
   // runtime's actual kind/delivery/payload to correct pre-admission before execution while preserving the original sequence and state (idempotently).
@@ -187,7 +187,7 @@ export async function updateSessionInputs(
   }
 }
 
-export async function promoteSessionInput(
+export function promoteSessionInput(
   db: DatabaseSync,
   input: {
     id: string;
@@ -195,13 +195,14 @@ export async function promoteSessionInput(
     message: MessageInfo;
     parts: MessagePart[];
   },
-): Promise<void> {
+): void {
   const now = Date.now();
+  // The transaction belongs to a shared connection and must complete synchronously; awaiting mid-transaction would roll back other sessions' already-successful writes.
   db.exec("begin immediate");
   try {
-    await saveMessage(db, input.message);
+    saveMessage(db, input.message);
     for (const part of input.parts) {
-      await savePart(db, part);
+      savePart(db, part);
     }
     const refs =
       input.message.metadata && typeof input.message.metadata === "object"
@@ -246,11 +247,9 @@ export async function promoteSessionInput(
           time: { ...entry.time, updated: now },
           data: { ...data, status: "attached", attachedMessageId: String(input.message.id) },
         });
-        const contextMessage = (
-          await readMessages(db, {
-            sessionID: input.sessionID,
-          })
-        ).find((candidate) => {
+        const contextMessage = readMessages(db, {
+          sessionID: input.sessionID,
+        }).find((candidate) => {
           const metadata = candidate.info.metadata;
           return Boolean(
             metadata &&
@@ -259,7 +258,7 @@ export async function promoteSessionInput(
           );
         });
         if (contextMessage) {
-          await saveMessage(db, {
+          saveMessage(db, {
             ...contextMessage.info,
             metadata: {
               ...(contextMessage.info.metadata ?? {}),

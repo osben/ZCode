@@ -9,6 +9,40 @@ export interface AggregatePersistedOutputBudget {
   maxBytes: number;
 }
 
+/**
+ * A bounded tail holding the last maxBytes bytes of one output stream (request-level `outputLimit.tailBytes`).
+ *
+ * Deliberately does not reuse `appendTail`'s progress tail: that buffer is sized by the
+ * adapter-configured progressTailBytes (small by default), decoding the whole block on every
+ * progress event and `Buffer.concat`-ing on every chunk — scaled up to request-level MiB, that
+ * means copying the entire tail per chunk (total output × tail size) and decoding the entire
+ * tail per progress tick. Here chunks are stored whole and dequeued whole, amortized O(total
+ * output), concatenated once at settlement.
+ */
+class ByteTail {
+  private readonly chunks: Buffer[] = [];
+  private bytes = 0;
+
+  constructor(private readonly maxBytes: number) {}
+
+  append(chunk: Buffer): void {
+    if (chunk.byteLength === 0) return;
+    const kept =
+      chunk.byteLength > this.maxBytes ? chunk.subarray(chunk.byteLength - this.maxBytes) : chunk;
+    this.chunks.push(kept);
+    this.bytes += kept.byteLength;
+    // If maxBytes is still satisfied after dropping the leading whole chunk, the head can never appear in the tail again.
+    while (this.chunks.length > 1 && this.bytes - this.chunks[0]!.byteLength >= this.maxBytes) {
+      this.bytes -= this.chunks.shift()!.byteLength;
+    }
+  }
+
+  buffer(): Buffer {
+    const all = Buffer.concat(this.chunks, this.bytes);
+    return all.byteLength > this.maxBytes ? all.subarray(all.byteLength - this.maxBytes) : all;
+  }
+}
+
 export class OutputCollector {
   private readonly chunks: Buffer[] = [];
   private readonly maxPersistedBytes: number;
@@ -19,6 +53,7 @@ export class OutputCollector {
   private readonly outputPath?: string;
   private readonly persistOutput: OutputPersistenceMode;
   private readonly aggregatePersistedBudget?: AggregatePersistedOutputBudget;
+  private readonly requestedTail?: ByteTail;
   private stream?: WriteStream;
   private artifactBytes = 0;
   private artifactTruncated = false;
@@ -37,6 +72,8 @@ export class OutputCollector {
     outputPath?: string;
     persistOutput: OutputPersistenceMode;
     aggregatePersistedBudget?: AggregatePersistedOutputBudget;
+    /** Request-level tail byte budget (`outputLimit.tailBytes`); absent or <= 0 means no retention and no tail in the result. */
+    requestedTailBytes?: number;
   }) {
     this.maxInlineBytes = Math.max(0, options.maxInlineBytes);
     this.maxPersistedBytes = Math.max(0, options.maxPersistedBytes);
@@ -46,6 +83,9 @@ export class OutputCollector {
     this.outputPath = options.outputPath;
     this.persistOutput = options.persistOutput;
     this.aggregatePersistedBudget = options.aggregatePersistedBudget;
+    if (options.requestedTailBytes !== undefined && options.requestedTailBytes > 0) {
+      this.requestedTail = new ByteTail(options.requestedTailBytes);
+    }
   }
 
   append(chunk: Buffer, source?: NodeJS.ReadableStream): void {
@@ -58,6 +98,7 @@ export class OutputCollector {
 
     this.totalBytes += chunk.byteLength;
     this.appendTail(chunk);
+    this.requestedTail?.append(chunk);
 
     if (this.inlineBytes >= this.maxInlineBytes) {
       this.truncated = this.truncated || chunk.byteLength > 0;
@@ -96,6 +137,14 @@ export class OutputCollector {
       artifactPath: hasArtifact ? this.outputPath : undefined,
       artifactBytes: hasArtifact ? this.artifactBytes : undefined,
       artifactTruncated: hasArtifact ? this.artifactTruncated : undefined,
+      ...(this.requestedTail
+        ? {
+            tail: decodeExecutionOutputBuffer(
+              this.requestedTail.buffer(),
+              this.legacyOutputEncoding,
+            ),
+          }
+        : {}),
     };
   }
 

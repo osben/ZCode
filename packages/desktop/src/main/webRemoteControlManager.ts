@@ -19,6 +19,7 @@ import {
   type HostPreparedProjectWorkspace,
   type HostProjectWorkspaceNavigationInput,
   resolveWebRemoteControlRelayHttpOrigin,
+  resolveUnrecognizedWebRemoteControlRequest,
   resolveWebRemoteControlWorkspaceKey,
   type WebRemoteControlAppPayload,
   type WebRemoteControlAuthStateChange,
@@ -27,6 +28,7 @@ import {
   type WebRemoteControlFailure,
   type WebRemoteControlFailureReason,
   type WebRemoteControlMobileDeviceInfo,
+  type WebRemoteControlMobileLogPayload,
   type WebRemoteControlMobileViewState,
   type WebRemoteControlMobileTaskViewUpdatePayload,
   type WebRemoteControlPlatformMethod,
@@ -50,10 +52,17 @@ import {
 import { WebRemoteControlV2ConnectionError } from "@zcode/shared/web-remote-relay";
 import {
   WebRemoteControlDeviceTransport,
+  MobilePushConnection,
   type WebRemoteControlDeviceTransportOptions,
   type WebRemoteControlDeviceTransportState,
   createWebRemoteControlV2Http,
   type WebRemoteControlLogin,
+  createMobileLogPullCoordinator,
+  MobileLogPullError,
+  type MobileLogPullQuery,
+  type MobileLogPullShard,
+  type MobileLogPullSummary,
+  type MobileLogSink,
 } from "#src/main/web-remote-relay/index.js";
 import type {
   WebRemoteControlDeviceStorage,
@@ -61,6 +70,11 @@ import type {
 } from "#src/main/web-remote-relay/index.js";
 
 import type { WebRemoteControlFeatureGate } from "./webRemoteControlFeatureGate.js";
+import {
+  respondToWebRemoteControlActionRequest,
+  type RunWebRemoteControlRendererAction,
+  type WebRemoteControlActionRequestPayload,
+} from "#src/main/web-remote-relay/index.js";
 
 interface WebRemoteControlHostAttachmentHandle {
   entryId: string;
@@ -71,6 +85,7 @@ interface WebRemoteControlHostAttachmentHandle {
 }
 
 interface WorkspaceBridgeRuntime {
+  terminalOwnerId?: string;
   bridgeSessionId: string;
   bridgeGeneration?: number;
   recoveryId?: string;
@@ -119,6 +134,7 @@ interface WindowControlLifecycle {
 }
 
 interface WindowControlRuntime {
+  terminalOwner?: { clientSessionId: string; id: string };
   windowId: number;
   workspacePath: string;
   workspaceIdentity?: string;
@@ -213,6 +229,8 @@ interface WebRemoteControlManagerDependencies {
     windowId: number,
     target: { workspacePath: string; workspaceIdentity?: string },
   ) => Promise<void>;
+  /** Phone pin/archive/create-local-project requests are executed by the target window's Renderer; when absent, these three request types reply with success:false. */
+  runRendererAction?: RunWebRemoteControlRendererAction;
   prepareProjectWorkspace?: (
     windowId: number,
     project: HostProjectWorkspaceNavigationInput,
@@ -224,8 +242,9 @@ interface WebRemoteControlManagerDependencies {
   onStatusChanged?: (windowId: number, status: WebRemoteControlStatus) => void;
   attachWorkspaceHost: (
     windowId: number,
-    context: WebRemoteControlContext & { kind: "local" | "remote" },
+    context: WebRemoteControlContext & { kind: "local" | "remote"; terminalOwnerId?: string },
   ) => Promise<WebRemoteControlHostAttachmentHandle>;
+  setTerminalOwner: (windowId: number, ownerId: string | null) => void;
   releaseWorkspaceHostAttachment: (attachmentId: string) => void;
   disposeWorkspaceHostAttachmentsForWindow: (windowId: number, reason: string) => void;
   disposeWorkspaceHostAttachmentsForRemoteSession: (
@@ -235,6 +254,16 @@ interface WebRemoteControlManagerDependencies {
   createDeviceTransport?: (
     options: WebRemoteControlDeviceTransportOptions,
   ) => WebRemoteControlDeviceTransportLike;
+  /** Persists mobile logs (mobile-log) to disk; when not injected, entries are dropped. */
+  mobileLogSink?: Pick<MobileLogSink, "append">;
+  /** Per-shard timeout for mobile log pulls (injected by unit tests). */
+  mobileLogPullShardTimeoutMs?: number;
+}
+
+/** Target connection from which mobile logs can be pulled. */
+export interface WebRemoteControlMobileLogPullTarget {
+  windowId: number;
+  deviceLabel: string;
 }
 
 // Bugfix: first-time external relay authentication is affected by edge cold starts and network jitter; in practice it can slightly exceed 15s.
@@ -304,6 +333,7 @@ function toExternalBridge(
   runtime: WorkspaceBridgeRuntime,
 ): WebRemoteControlExternalWorkspaceBridge {
   const base = {
+    ...(runtime.terminalOwnerId ? { terminalOwnerId: runtime.terminalOwnerId } : {}),
     bridgeSessionId: runtime.bridgeSessionId,
     ...(runtime.bridgeGeneration !== undefined
       ? { bridgeGeneration: runtime.bridgeGeneration }
@@ -343,6 +373,9 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
   let registrationQueue: Promise<unknown> = Promise.resolve();
   const startAuthorizations = new Map<string, WebRemoteControlStartAuthorization>();
   const availableWorkspacesByWindowId = new Map<number, WebRemoteControlWorkspaceTarget[]>();
+  const mobileLogPulls = createMobileLogPullCoordinator({
+    shardTimeoutMs: dependencies.mobileLogPullShardTimeoutMs,
+  });
 
   function reportRemoteUsageEvent(windowId: number, event: TelemetryEventPayload): void {
     try {
@@ -384,6 +417,144 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
       remoteKind,
     };
   }
+  /**
+   * Bugfix: a 401 only invalidates the JWT used to start the request. The old implementation treated a 401 from an in-flight old JWT as the current login being invalid,
+   * so when the same account signed in again (signed-in already handled) before the old request returned, remote control stuck at auth-required and needed a second login notification.
+   * Here the credential reader currentLogin checks: once the JWT has been replaced, the error becomes retryable and the transport requests again with the new JWT after backoff;
+   * an account or endpoint change still makes currentLogin throw auth-required, and the original 401 is kept only when the JWT is unchanged.
+   */
+  async function retryIfJwtReplaced<T>(
+    currentLogin: () => Promise<WebRemoteControlLogin>,
+    used: WebRemoteControlLogin,
+    request: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await request();
+    } catch (error) {
+      if (!(error instanceof WebRemoteControlV2ConnectionError) || error.reason !== "auth-required")
+        throw error;
+      if ((await currentLogin()).jwt !== used.jwt)
+        throw new WebRemoteControlV2ConnectionError("relay-unavailable", true);
+      throw error;
+    }
+  }
+  function resolveRegistration(
+    currentLogin: () => Promise<WebRemoteControlLogin>,
+    origin: string,
+    force: boolean,
+    registrationSignal: AbortSignal,
+    // Registration HTTP may target the relay origin, while the stored identity stays keyed by the endpoint origin.
+    httpOrigin: string = origin,
+  ) {
+    const http = createWebRemoteControlV2Http(httpOrigin);
+    // The manager reads/updates identity serially so that first starts in multiple windows do not each overwrite the persisted SID.
+    const operation = registrationQueue.then(async () => {
+      const current = await currentLogin();
+      const stored = await dependencies.deviceStorage.load();
+      registrationSignal.throwIfAborted();
+      if (!force && stored?.userId === current.userId && stored.endpointOrigin === origin)
+        return stored.deviceSid;
+      if (stored?.endpointOrigin === origin) {
+        try {
+          await http.delete(stored.deviceSid, current.jwt, registrationSignal);
+        } catch {
+          dependencies.logger.warn("[web-remote-control] V2 old device cleanup failed");
+        }
+      }
+      registrationSignal.throwIfAborted();
+      const deviceSid = await retryIfJwtReplaced(currentLogin, current, () =>
+        http.register(dependencies.deviceMid, current.jwt, registrationSignal),
+      );
+      await currentLogin();
+      registrationSignal.throwIfAborted();
+      try {
+        await dependencies.deviceStorage.save({
+          deviceSid,
+          userId: current.userId,
+          endpointOrigin: origin,
+        });
+      } catch (error) {
+        // A save failure is not a network failure; a bare error would make the transport register a new SID on every backoff and leave orphan devices.
+        // The new SID has not connected yet, so first make a best-effort attempt to revoke the remote registration, then end this start with a non-retryable error.
+        dependencies.logger.error(
+          "[web-remote-control] V2 device identity persistence failed",
+          error,
+        );
+        try {
+          await http.delete(deviceSid, current.jwt, registrationSignal);
+        } catch {
+          dependencies.logger.warn("[web-remote-control] V2 new device cleanup failed");
+        }
+        throw new WebRemoteControlV2ConnectionError("relay-unavailable");
+      }
+      registrationSignal.throwIfAborted();
+      dependencies.logger.info("[web-remote-control] V2 device registered");
+      return deviceSid;
+    });
+    registrationQueue = operation.catch(() => {});
+    return operation;
+  }
+  const notificationConnection = new MobilePushConnection(async (signal) => {
+    const login = await dependencies.getLogin();
+    const endpoint = await dependencies.getEndpointUrls?.();
+    signal.throwIfAborted();
+    if (!login?.jwt || !login.userId || !dependencies.featureGate.isEnabled()) return null;
+    const origin = new URL(endpoint?.origin ?? dependencies.mobileRemoteControlUrl).origin;
+    const http = createWebRemoteControlV2Http(origin);
+    let supported = false,
+      status: "available" | "unavailable" | "unknown" = "unknown";
+    try {
+      const response = await fetch(new URL("/api/v1/remote/notification/status", origin), {
+        headers: { Authorization: `Bearer ${login.jwt}` },
+        signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
+        redirect: "error",
+      });
+      if (response.ok) {
+        const body = (await response.json()) as {
+          code?: number;
+          data?: { protocol_version?: number; event_transport?: string; status?: string };
+        };
+        supported =
+          body.code === 0 &&
+          body.data?.protocol_version === 1 &&
+          body.data?.event_transport === "http";
+        if (
+          supported &&
+          (body.data?.status === "available" ||
+            body.data?.status === "unavailable" ||
+            body.data?.status === "unknown")
+        )
+          status = body.data.status;
+      }
+    } catch {
+      signal.throwIfAborted();
+    }
+    const currentLogin = async () => {
+      const current = await dependencies.getLogin();
+      const endpointNow = await dependencies.getEndpointUrls?.();
+      signal.throwIfAborted();
+      if (
+        !current?.jwt ||
+        current.userId !== login.userId ||
+        new URL(endpointNow?.origin ?? dependencies.mobileRemoteControlUrl).origin !== origin
+      )
+        throw new WebRemoteControlV2ConnectionError("auth-required");
+      return current;
+    };
+    return {
+      identity: `${origin}:${login.userId}`,
+      report: async (event, reportSignal) => {
+        // The overall budget covers device registration and the synchronous push; it must not restart after registration.
+        const requestSignal = AbortSignal.any([signal, reportSignal, AbortSignal.timeout(20_000)]);
+        const sid = await resolveRegistration(currentLogin, origin, false, requestSignal);
+        const current = await currentLogin();
+        requestSignal.throwIfAborted();
+        return http.reportNotification(sid, event, current.jwt, requestSignal);
+      },
+      supported,
+      status,
+    };
+  }, dependencies.logger);
   const pushedWorkspaceListSignaturesByWindowId = new Map<number, string>();
   let startupRestoreClaimed = false;
   let lifecycleRevision = 0;
@@ -470,6 +641,42 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
     }
 
     runtime.currentBridge = undefined;
+  }
+
+  function endTerminalOwner(runtime: WindowControlRuntime): void {
+    const hadOwner = runtime.terminalOwner !== undefined;
+    runtime.terminalOwner = undefined;
+    // An old client has no page owner, but confirming a disconnect must still end the attachment so its independent terminal scope can be reclaimed.
+    // Also revoke in-flight opens so a late attachment can only release and cannot reattach.
+    // Ending the owner revokes in-flight navigation first, so a late attachment cannot reattach a PTY that was already reclaimed.
+    cancelBridgeOpen(runtime);
+    const bridge = runtime.currentBridge;
+    if (bridge) {
+      runtime.pendingBridgeInvalidation = {
+        zcode_type: "bridge-degraded",
+        bridgeSessionId: bridge.bridgeSessionId,
+        bridgeGeneration: bridge.bridgeGeneration,
+        recoveryId: bridge.recoveryId,
+        reason: "terminal-owner-ended",
+      };
+    }
+    disposeRuntimeBridgeResources(runtime);
+    if (hadOwner) dependencies.setTerminalOwner(runtime.windowId, null);
+    sendPendingBridgeInvalidation(runtime);
+  }
+
+  function ensureTerminalOwner(runtime: WindowControlRuntime, clientSessionId?: string): void {
+    if (!clientSessionId) {
+      // An old page has no claim protocol and must not inherit the previous page's owner; fall back to attachment reclaim.
+      // bootstrap is a claim/read, not a disconnect event; an old client repeating bootstrap must not destroy its active bridge.
+      if (runtime.terminalOwner) endTerminalOwner(runtime);
+      return;
+    }
+    if (runtime.terminalOwner?.clientSessionId === clientSessionId) return;
+    endTerminalOwner(runtime);
+    const id = randomUUID();
+    runtime.terminalOwner = { clientSessionId, id };
+    dependencies.setTerminalOwner(runtime.windowId, id);
   }
 
   function isCurrentBridgeRuntime(
@@ -580,6 +787,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
       if (runtimes.get(runtime.windowId) !== runtime || runtime.status === "error") {
         return;
       }
+      endTerminalOwner(runtime);
       runtime.status = "running";
       runtime.mobileConnected = false;
       emitRuntimeStatus(runtime);
@@ -711,6 +919,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
       reason: failure.reason,
       error: failure.message ?? failure.reason,
     });
+    endTerminalOwner(runtime);
     cancelBridgeOpen(runtime);
     disposeRuntimeBridgeResources(runtime);
     clearPendingOutboundPayloadTimer(runtime);
@@ -719,6 +928,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
     runtime.pairingRefreshTimer = undefined;
     runtime.pendingOutboundPayloads.length = 0;
     runtime.transport.dispose();
+    mobileLogPulls.cancelOwner(runtime, `remote control closed: ${failure.reason}`);
     runtime.status = "error";
     runtime.mobileConnected = false;
     runtime.error = failure.message;
@@ -746,12 +956,14 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
     if (runtime.pairingRefreshTimer) clearInterval(runtime.pairingRefreshTimer);
     runtimes.delete(windowId);
     pushedWorkspaceListSignaturesByWindowId.delete(windowId);
+    endTerminalOwner(runtime);
     cancelBridgeOpen(runtime);
     disposeRuntimeBridgeResources(runtime);
     clearPendingOutboundPayloadTimer(runtime);
     clearMobileDisconnectGraceTimer(runtime);
     runtime.pendingOutboundPayloads.length = 0;
     runtime.transport.dispose();
+    mobileLogPulls.cancelOwner(runtime, `remote control stopped: ${reason}`);
     dependencies.disposeWorkspaceHostAttachmentsForWindow(windowId, reason);
 
     dependencies.logger.info(
@@ -897,10 +1109,11 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
     return JSON.stringify(workspaceSignatureEntries);
   }
 
-  function pushWorkspaceListUpdated(runtime: WindowControlRuntime): void {
+  function pushWorkspaceListUpdated(runtime: WindowControlRuntime, force = false): void {
     const result = buildWorkspaceListResult(runtime);
     const signature = buildWorkspaceListPushSignature(result);
-    if (pushedWorkspaceListSignaturesByWindowId.get(runtime.windowId) === signature) {
+    // force: after the phone creates a project the list may not change (the project is not necessarily in a tab), but a push is still needed to make the phone reread the project tree.
+    if (!force && pushedWorkspaceListSignaturesByWindowId.get(runtime.windowId) === signature) {
       return;
     }
 
@@ -954,7 +1167,15 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
     runtime: WindowControlRuntime,
     request: WebRemoteControlWorkspaceBridgeOpenPayload,
   ): Promise<WebRemoteControlExternalWorkspaceBridge> {
+    // Only bootstrap establishes the page owner; a late open from an old page must not reclaim an ended session.
+    if (
+      request.terminalClientSessionId &&
+      runtime.terminalOwner?.clientSessionId !== request.terminalClientSessionId
+    ) {
+      return Promise.reject(new Error("Terminal page session has ended; bootstrap is required."));
+    }
     const intentKey = JSON.stringify([
+      request.terminalClientSessionId,
       request.workspaceKey,
       request.taskId ?? null,
       request.project?.projectId,
@@ -1067,6 +1288,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
     emitRuntimeStatus(runtime);
 
     const bridgeRuntime: WorkspaceBridgeRuntime = {
+      terminalOwnerId: request.terminalClientSessionId ? runtime.terminalOwner?.id : undefined,
       bridgeSessionId: request.bridgeSessionId,
       bridgeGeneration: request.bridgeGeneration,
       recoveryId: request.recoveryId,
@@ -1095,6 +1317,9 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
         remoteSessionId: target.remoteSessionId,
         initialTaskId: request.taskId,
         kind: target.kind,
+        ...(bridgeRuntime.terminalOwnerId
+          ? { terminalOwnerId: bridgeRuntime.terminalOwnerId }
+          : {}),
       });
       if (!isCurrentBridgeRuntime(runtime, bridgeRuntime) || runtime.bridgeOpen !== pending) {
         dependencies.releaseWorkspaceHostAttachment(acquired.attachmentId);
@@ -1293,6 +1518,34 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
     sendAppPayload(runtime, response);
   }
 
+  async function respondToActionRequest(
+    runtime: WindowControlRuntime,
+    request: WebRemoteControlActionRequestPayload,
+  ): Promise<void> {
+    const response = await respondToWebRemoteControlActionRequest(
+      runtime.windowId,
+      request,
+      dependencies.runRendererAction,
+    );
+    if (runtimes.get(runtime.windowId) !== runtime) return;
+    sendAppPayload(runtime, response);
+    if (response.zcode_type === "workspace-create-response" && response.success) {
+      pushWorkspaceListUpdated(runtime, true);
+    }
+  }
+
+  /** Replies app-error to unrecognized request-type payloads so a new phone connected to an older desktop degrades immediately instead of waiting for a timeout. */
+  function respondToUnrecognizedPayload(runtime: WindowControlRuntime, value: unknown): void {
+    const request = resolveUnrecognizedWebRemoteControlRequest(value);
+    if (!request) return;
+    sendAppPayload(runtime, {
+      zcode_type: "app-error",
+      requestId: request.requestId,
+      reason: "unsupported-action",
+      error: `Desktop does not recognize app payload type: ${request.zcodeType}`,
+    });
+  }
+
   function applyMobileViewStateUpdate(
     runtime: WindowControlRuntime,
     viewState: WebRemoteControlMobileViewState,
@@ -1384,6 +1637,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
   function routePayload(runtime: WindowControlRuntime, payload: WebRemoteControlAppPayload): void {
     switch (payload.zcode_type) {
       case "bootstrap-request":
+        ensureTerminalOwner(runtime, payload.terminalClientSessionId);
         sendAppPayload(runtime, {
           zcode_type: "bootstrap-response",
           requestId: payload.requestId,
@@ -1428,9 +1682,70 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
       case "mobile-diagnostic":
         logMobileDiagnostic(runtime, payload);
         break;
+      case "task-pin-request":
+      case "task-archive-request":
+      case "workspace-create-request":
+        void respondToActionRequest(runtime, payload);
+        break;
+      case "mobile-log":
+        appendMobileLog(runtime, payload);
+        break;
+      case "mobile-log-pull-response":
+        if (!mobileLogPulls.handleResponse(payload)) {
+          dependencies.logger.info("[web-remote-control] dropped stale mobile log pull response", {
+            requestId: payload.requestId,
+          });
+        }
+        break;
+      case "app-error":
+        // Error reported by the phone for a desktop request: currently only log pulls claim it by requestId (unsupported-action fallback).
+        mobileLogPulls.handleAppError(payload);
+        break;
       default:
+        // Request-type payloads that parse but are not handled on this side also reply with unsupported-action.
+        respondToUnrecognizedPayload(runtime, payload);
         break;
     }
+  }
+
+  function resolveMobileLogDeviceLabel(runtime: WindowControlRuntime): string {
+    const info = runtime.mobileDeviceInfo;
+    return info ? [info.name, info.platform].filter(Boolean).join("-") : "";
+  }
+
+  function appendMobileLog(
+    runtime: WindowControlRuntime,
+    payload: WebRemoteControlMobileLogPayload,
+  ): void {
+    if (!dependencies.mobileLogSink) return;
+    const info = runtime.mobileDeviceInfo;
+    dependencies.mobileLogSink.append(
+      {
+        deviceKey: payload.device?.id ?? (resolveMobileLogDeviceLabel(runtime) || "unknown-device"),
+        sessionKey: payload.sessionId ?? runtime.deviceSid,
+        header: {
+          device:
+            payload.device ??
+            (info
+              ? { name: info.name, platform: info.platform, appVersion: info.version }
+              : undefined),
+          mobileSessionId: payload.sessionId,
+          desktopSession: runtime.deviceSid,
+          windowId: runtime.windowId,
+        },
+      },
+      payload.events,
+    );
+  }
+
+  function findMobileLogPullRuntime(
+    windowId: number | undefined,
+  ): WindowControlRuntime | undefined {
+    const isPaired = (runtime: WindowControlRuntime | undefined) =>
+      runtime?.transportState === "paired" && runtime.mobileConnected;
+    const preferred = windowId === undefined ? undefined : runtimes.get(windowId);
+    if (isPaired(preferred)) return preferred;
+    return [...runtimes.values()].find((runtime) => isPaired(runtime));
   }
 
   function mapTransportState(
@@ -1589,6 +1904,14 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
   }
 
   return {
+    startNotifications: () => notificationConnection.start(),
+    refreshNotifications: () => notificationConnection.refresh(),
+    observeNotificationRun: (run: unknown) => notificationConnection.observeRun(run),
+    sendNotification: (
+      event: unknown,
+      resolveLocale: Parameters<MobilePushConnection["send"]>[1],
+    ) => notificationConnection.send(event, resolveLocale),
+    disposeNotifications: () => notificationConnection.dispose(),
     authorizeStart,
     async startAuthorized(
       windowId: number,
@@ -1668,62 +1991,15 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
           assertActive();
           return { userId: current.userId, jwt };
         };
-        const register = (force: boolean, transportSignal: AbortSignal) => {
-          const registrationSignal = AbortSignal.any([signal, transportSignal]);
-          // The manager reads/updates identity serially so that first starts in multiple windows do not each overwrite the persisted SID.
-          const operation = registrationQueue.then(async () => {
-            const current = await currentLogin();
-            const stored = await dependencies.deviceStorage.load();
-            registrationSignal.throwIfAborted();
-            if (
-              !force &&
-              !forceRegistration &&
-              stored?.userId === current.userId &&
-              stored.endpointOrigin === endpointOrigin
-            )
-              return stored.deviceSid;
-            if (stored?.endpointOrigin === endpointOrigin) {
-              try {
-                await http.delete(stored.deviceSid, current.jwt, registrationSignal);
-              } catch {
-                dependencies.logger.warn("[web-remote-control] V2 old device cleanup failed");
-              }
-            }
-            registrationSignal.throwIfAborted();
-            const deviceSid = await http.register(
-              dependencies.deviceMid,
-              current.jwt,
-              registrationSignal,
-            );
-            await currentLogin();
-            registrationSignal.throwIfAborted();
-            try {
-              await dependencies.deviceStorage.save({
-                deviceSid,
-                userId: current.userId,
-                endpointOrigin,
-              });
-            } catch (error) {
-              // A save failure is not a network failure; a bare error would make the transport register a new SID on every backoff and leave orphan devices.
-              // The new SID has not connected yet, so first make a best-effort attempt to revoke the remote registration, then end this start with a non-retryable error.
-              dependencies.logger.error(
-                "[web-remote-control] V2 device identity persistence failed",
-                error,
-              );
-              try {
-                await http.delete(deviceSid, current.jwt, registrationSignal);
-              } catch {
-                dependencies.logger.warn("[web-remote-control] V2 new device cleanup failed");
-              }
-              throw new WebRemoteControlV2ConnectionError("relay-unavailable");
-            }
-            registrationSignal.throwIfAborted();
-            dependencies.logger.info("[web-remote-control] V2 device registered");
-            return deviceSid;
-          });
-          registrationQueue = operation.catch(() => {});
-          return operation;
-        };
+        // The start-time forceRegistration option (reinstall) must skip SID reuse just like a transport-requested force.
+        const register = (force: boolean, transportSignal: AbortSignal) =>
+          resolveRegistration(
+            currentLogin,
+            endpointOrigin,
+            force || forceRegistration,
+            AbortSignal.any([signal, transportSignal]),
+            relayOrigin,
+          );
         let deviceSid = "";
         let runtime: WindowControlRuntime;
         let readySettled = false;
@@ -1757,9 +2033,8 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
             },
             getToken: async (transportSignal) => {
               const current = await currentLogin();
-              const token = await http.token(
-                current.jwt,
-                AbortSignal.any([signal, transportSignal]),
+              const token = await retryIfJwtReplaced(currentLogin, current, () =>
+                http.token(current.jwt, AbortSignal.any([signal, transportSignal])),
               );
               await currentLogin();
               dependencies.logger.info("[web-remote-control] V2 device token acquired");
@@ -1835,17 +2110,18 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
               if (state === "kicked") finish(new Error("session-conflict"));
             },
             onPayload: (payload) => routePayload(runtime, payload),
+            onUnrecognizedPayload: (value) => respondToUnrecognizedPayload(runtime, value),
             onRawTransportPayload: (payload) => routeRawTransportCandidate(runtime, payload),
             onRawTransportFault: (reasonCode) =>
               runtime.currentBridge?.relayProtocol?.markDegraded(reasonCode),
             onSendReady: (event) => {
               flushPendingOutboundPayloads(runtime);
+              // The background may drop the first invalidation notice; resend along the existing heartbeat until the new bridge identity takes over.
+              // Web consumes idempotently per bridge, so duplicate notices do not reset the recovery or backoff budget.
+              sendPendingBridgeInvalidation(runtime);
               const isFirstSendReadyForPairing = !runtime.hasObservedSendReadyForPairing;
               runtime.hasObservedSendReadyForPairing = true;
               if (event.kind === "reconnected-socket" || isFirstSendReadyForPairing) {
-                // Bug cause: same-socket heartbeat ACKs fire send-ready about every 10 seconds; if a degraded latch is re-sent every time,
-                // the Web side would repeatedly rebuild the same recovery generation and break the bounded 1s/2s/5s backoff.
-                sendPendingBridgeInvalidation(runtime);
                 requestMobileTaskView(runtime);
               }
               const relayProtocol = runtime.currentBridge?.relayProtocol;
@@ -1948,7 +2224,9 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
 
     async suspend(windowId: number, reason: string): Promise<void> {
       clearStartAuthorizationsForWindow(windowId);
+      if (reason === "endpoint-changed") notificationConnection.invalidate();
       await stopWindowRuntime(windowId, reason);
+      if (reason === "endpoint-changed") void notificationConnection.refresh();
     },
 
     async notifyAuthStateChanged(
@@ -1965,6 +2243,8 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
           requireAuthentication(windowId);
           return;
         }
+        // Only refresh notification eligibility; whether the identity changed is decided by MobilePushConnection, and repeated notifications for the same account do not clear the owner.
+        void notificationConnection.refresh({ restart: true });
         const endpointOrigin = new URL(endpointUrls?.origin ?? dependencies.mobileRemoteControlUrl)
           .origin;
         const staleWindows = [...windowLifecycles].filter(
@@ -1994,6 +2274,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
         }
         return;
       }
+      notificationConnection.invalidate();
       lifecycleRevision += 1;
       startupRestoreClaimed = false;
       const windowIds = new Set([
@@ -2074,6 +2355,38 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
         );
         return false;
       }
+    },
+
+    /** Find a paired connection that can pull logs: prefer the specified window, otherwise any paired window. */
+    findMobileLogPullTarget(
+      windowId: number | undefined,
+    ): WebRemoteControlMobileLogPullTarget | undefined {
+      const runtime = findMobileLogPullRuntime(windowId);
+      if (!runtime) return undefined;
+      return {
+        windowId: runtime.windowId,
+        deviceLabel: resolveMobileLogDeviceLabel(runtime) || "mobile",
+      };
+    },
+
+    /** Pull logs from the paired phone; each shard is handed to onShard for disk persistence one at a time, and the summary is returned after all complete. */
+    pullMobileLogs(
+      windowId: number,
+      query: MobileLogPullQuery,
+      onShard: (shard: MobileLogPullShard) => Promise<void>,
+    ): Promise<MobileLogPullSummary> {
+      const runtime = findMobileLogPullRuntime(windowId);
+      if (!runtime || runtime.windowId !== windowId) {
+        return Promise.reject(
+          new MobileLogPullError("not-paired", "no paired mobile for this window"),
+        );
+      }
+      return mobileLogPulls.start({
+        owner: runtime,
+        query,
+        send: (payload) => sendAppPayload(runtime, payload),
+        onShard,
+      });
     },
 
     getStatus(windowId: number): WebRemoteControlStatus {

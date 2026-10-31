@@ -22,6 +22,7 @@ import type {
 import { maybeThrowStorageFsFault } from "./fs-fault-injection.js";
 
 export * from "./session-store.js";
+export * from "./session-data-files/index.js";
 
 // The in-memory event store implementation moved to @zcode/contracts.
 // Keep the `@zcode/adapters/storage` export path unchanged so callers do not need to change imports.

@@ -11,6 +11,7 @@ import {
   type TraceContext,
 } from "@zcode/contracts";
 import type { McpTelemetryTracker } from "@zcode/adapters";
+import type { SessionDataFilesPort } from "@zcode/adapters/storage";
 import type { WorkspaceHookPolicyProvider } from "@zcode/core";
 import type { AccountProviderConfigSnapshot } from "@zcode/provider";
 import {
@@ -72,6 +73,8 @@ export interface ZCodeProtocolAgentDependencies {
    * reported as failures.
    */
   storageRoot?: string;
+  /** Session and directory files under the CLI storage root; used only to measure and delete "project data". */
+  sessionDataFiles?: SessionDataFilesPort;
   version?: string;
   /** Hook policy managed by the trusted Host; workspace/project configuration cannot override it. */
   workspaceHookPolicyProvider?: WorkspaceHookPolicyProvider;
@@ -176,6 +179,9 @@ export interface ZCodeProtocolClientRequestOptions {
 }
 
 export interface ZCodeProtocolAgentServerContext {
+  /** This stdio Host has confirmed it accepts the directory source field; invalidated when the process closes, no directory cache is stored. */
+  sessionDirectorySourceEnabled?: boolean;
+  sessionWorkspaceRoutingEnabled?: boolean;
   /** 进程退出期间，迟到的异步物化不能重新登记 session。 */
   assertServing?: () => void;
   deps: ZCodeProtocolAgentResolvedDependencies;
@@ -211,6 +217,7 @@ export interface ZCodeProtocolAgentServerContext {
   sessionResidentPool?: SessionResidentPool;
   /** Language server preferences and status; absent in runtimes without LSP, where the methods return a protocol error. */
   lsp?: LspProtocolHost;
+  sessionLifecycle?: import("../session-lifecycle/index.js").SessionLifecycleController;
   sessions: Map<string, ZCodeProtocolSessionRecord>;
   preparedWorktreeSessions?: Map<string, ZCodeProtocolPreparedWorktreeSession>;
   preparedSubmissionSessions?: Map<string, ZCodeProtocolPreparedSubmissionSession>;
@@ -382,6 +389,13 @@ export function requireSession(
   sessionId: string,
   options: { deliveryKind?: ZCodeDeliveryKind; operation?: string } = {},
 ): ZCodeProtocolSessionRecord {
+  if (context.sessionLifecycle && !context.sessionLifecycle.isReady(sessionId)) {
+    throw new ProtocolRequestError(
+      zcodeProtocolErrorCodes.sessionUnavailable,
+      "Session runtime is not ready",
+      { code: "runtimeNotReady" },
+    );
+  }
   const record = context.sessions.get(sessionId);
   if (!record) {
     // 诊断：readSession 只读取活跃 runtime；记录缺失时要区分“冷会话尚未恢复”和“ID 已失效”，

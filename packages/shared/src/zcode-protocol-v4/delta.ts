@@ -28,6 +28,7 @@ import {
   sessionUsageStateSchema,
   subagentProjectionStateSchema,
   workspaceHookAdmissionStateSchema,
+  workspaceMcpAdmissionStateSchema,
 } from "./snapshot.js";
 import {
   WORKFLOW_RUNS_LIMITS,
@@ -61,6 +62,7 @@ export const statePatchSchema = z.object({
   plan: planStateSchema.nullable().optional(),
   // Soft gate: null clears pending state (the banner disappears); an object updates the pending review state.
   workspaceHookAdmission: workspaceHookAdmissionStateSchema.nullable().optional(),
+  workspaceMcpAdmission: workspaceMcpAdmissionStateSchema.nullable().optional(),
 });
 export type StatePatch = z.infer<typeof statePatchSchema>;
 

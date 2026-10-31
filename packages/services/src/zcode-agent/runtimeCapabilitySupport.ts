@@ -51,6 +51,11 @@ export function ensureIndependentPlanSupport(client: CapabilityClient): Promise<
   );
 }
 
+/** Gen UI state must not fall back to being spliced into the user's text; when unsupported, keep the draft and refuse to send. */
+export function ensureGenUiContextSupport(client: CapabilityClient): Promise<void> {
+  return ensureRuntimeCapability(client, "genUiContext", "proto.genUiContextUnsupported");
+}
+
 /**
  * Older remote CLIs use strict subscribe and reject the history-first field, so the field is
  * forwarded only after the endpoint advertises `historyFirst`. A failed read answers false.

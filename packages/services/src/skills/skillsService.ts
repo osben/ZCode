@@ -520,7 +520,8 @@ function normalizeSkillConfigPath(path: string): string {
   return path.replaceAll("\\", "/");
 }
 
-// Display-only: when config.json is corrupt, skills are listed as if the config were empty so browsing still works. Writes go through writeSkillEnabledMap.
+// List display only: when config.json is corrupt, skills are shown with an empty config and
+// browsing still works. Writes go through writeSkillEnabledMap.
 async function readCliConfigFile(): Promise<Record<string, unknown>> {
   try {
     const raw = await readFile(SKILL_CLI_CONFIG_FILE, "utf-8");
@@ -551,11 +552,11 @@ async function readSkillEnabledMap(): Promise<Record<string, boolean>> {
 }
 
 /**
- * Root cause: the old implementation read through readCliConfigFile before writing, which returned an empty
- * object on read failures or corrupt JSON, and then wrote the whole file back with writeFile — wiping other
- * config.json entries such as MCP and plugins; writeFile is not atomic either.
- * Fix: switch to updateJsonObjectFile — a corrupt file rejects the write, the content is re-read before
- * writing, only the skills field is changed, and the replacement is atomic.
+ * Root cause: the old implementation read with readCliConfigFile before writing; on read
+ * failure or corrupt JSON it returned an empty object, then wrote the whole file back with
+ * writeFile, wiping other config.json entries such as MCP and plugins; writeFile is not atomic
+ * either. Fix: use updateJsonObjectFile — error instead of writing when the file is corrupt,
+ * re-read before writing, touch only the skills field, replace atomically.
  */
 async function writeSkillEnabledMap(next: Record<string, boolean>): Promise<void> {
   await updateJsonObjectFile(SKILL_CLI_CONFIG_FILE, (current) => {

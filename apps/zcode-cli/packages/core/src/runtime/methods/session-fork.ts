@@ -42,6 +42,7 @@ import {
   clonePartForFork,
   emptyTokenUsageInfo,
   formatConversationForkNoticeBody,
+  isHiddenReminderMessage,
   slugify,
 } from "../helpers/index.js";
 import type { AgentRuntimeInternal } from "../internal.js";
@@ -68,6 +69,8 @@ function stableForkError(message: string, context: Record<string, unknown> = {})
 const MODEL_SELECTION_ENTRY_SUFFIX = ":runtime-model-selection";
 
 function modelSelectionFromMessage(message: MessageWithParts): ModelSelection | undefined {
+  // Hidden reminders (e.g. interrupt markers after a stop) only record provider/model without options; they are not selection facts at this point.
+  if (isHiddenReminderMessage(message)) return undefined;
   const selection = persistedModelSelectionOfMessage(message);
   // Accelerated-card Selection is a one-turn execution fact (`selectionScope=execution`, highspeed-card-spec §5),
   // valid only when paired with requestAuth from that same turn. If a child inherits it, it remains on an accelerated Provider without credentials:

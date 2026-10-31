@@ -13,6 +13,9 @@ import { modelStatusContextToLogContext, type ModelStatusContext } from "./runne
 import { modelFailureAttributionFields } from "./runner-telemetry.js";
 
 const MAX_REASONABLE_RETRY_AFTER_MS = 5 * 60_000;
+/** Jitter added on top of Retry-After: at most 20% of retry-after, capped at 5 seconds. */
+const RETRY_AFTER_JITTER_RATIO = 0.2;
+const RETRY_AFTER_JITTER_MAX_MS = 5_000;
 const RELIABLE_ATTRIBUTION_CONTEXT_KEYS = [
   "errorPhase",
   "exceptionKind",
@@ -46,7 +49,12 @@ export function calculateRetryDelay(
   // Providers may return retry-after values from tens of seconds to several minutes.
   // The old 60-second cap reduced valid rate-limit waits to a shorter local backoff.
   if (isReasonableRetryAfterMs(retryAfterMs, uncapped)) {
-    return retryAfterMs;
+    // A batch of requests rate-limited at the same moment gets the same retry-after: without
+    // jitter they all wake in the same millisecond and hit the limit together again (the live
+    // 1302 storm of 2026-10). Jitter is added backwards-only, never earlier than the provider requires.
+    if (!retry.jitter) return retryAfterMs;
+    const spread = Math.min(retryAfterMs * RETRY_AFTER_JITTER_RATIO, RETRY_AFTER_JITTER_MAX_MS);
+    return retryAfterMs + Math.round(Math.random() * spread);
   }
 
   if (!retry.jitter || capped === 0) {

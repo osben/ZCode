@@ -1,23 +1,20 @@
-/* eslint-disable max-lines -- the mock gateway simulates availability, ticket, status, settlement, and messages together; splitting it would fragment shared ticket state. */
-/* In-process mock gateway for off-peak tasks.
-   Starts a local HTTP service at 127.0.0.1 that fully simulates quota snapshots, ticket acquisition,
-   batch status checks, settlement, and messages. Point the real HTTP client and idle plan provider's
-   baseURL at this gateway's origin to exercise the same code paths as production; remove the
-   ZCODE_OFFPEAK_MOCK switch when integrating with a real server (tech-design §10 step 3).
+/* eslint-disable max-lines -- the mock gateway simulates availability, ticket, status, settle, and messages in one place; splitting it would fragment the shared ticket state. */
+/* In-process off-peak mock gateway.
+   A local 127.0.0.1 http service fully simulates quota snapshot / ticketing / batch status / settle / messages.
+   The real HTTP client and the idle plan provider only need their baseURL pointed at this gateway's origin —
+   production code paths are identical to integration runs, and flipping the ZCODE_OFFPEAK_MOCK switch is
+   enough (tech-design §10, step 3).
 
-   ⚠ After admission, the messages endpoint forwards requests unchanged to the real model endpoint
-   returned by resolveUpstream() (usually the user's Anthropic-compatible coding-plan endpoint).
-   Mock mode uses the real model and bills the user's own key; use it only for development or
-   demos, as documented.
+   ⚠ After admission, the messages endpoint proxies requests verbatim to the real model endpoint chosen by
+   resolveUpstream() (usually the user's coding plan's anthropic-compatible endpoint) — mock mode runs the
+   real model and billing goes through the user's own key; development/demo only, as documented.
 
-   State machine (aligned with the server axis of the D26 two-axis model):
-   take → queued (FIFO position); status polling triggers promotion (polling is the promotion event):
-   after readyDelayMs, the ticket becomes ready (readyDeadline = +readyTtlMs); if no first
-   message arrives before ready expires, it becomes expired; admission of the first message
-   moves it to active (activeDeadline = +activeMs);
-   when active expires, it becomes expired and messages return 400/3102; settle moves it to settled (idempotently).
-   Before messages are admitted, inject N 429/3105 responses with Retry-After to simulate
-   throttling when resources are full (D24). */
+   State machine (the server axis of D26's two axes):
+   take → queued (FIFO position); status polling triggers promotion (polling is Promote):
+   ticket older than readyDelayMs → ready (readyDeadline = +readyTtlMs); ready expiring without the first
+   message → expired; first message admitted → active (activeDeadline = +activeMs);
+   active expiring → expired and messages returns 400/3106; settle → settled (idempotent).
+   Before admission, messages can inject N rounds of 429/3105 + Retry-After (fine-grained full-load valve, D24). */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { ServiceLogger } from "../logger/serviceLogger.js";
 
@@ -26,7 +23,7 @@ export interface OffPeakMockGatewayOptions {
   readyDelayMs?: number;
   /** Window to send the first message after ready; defaults to 5min. */
   readyTtlMs?: number;
-  /** Hard limit for active state; defaults to 3h (reduce it to demonstrate automatic resume after 400/3102). */
+  /** Hard cap on active; defaults to 3h (shrink it to demo the 400/3106 expiry close-out). */
   activeMs?: number;
   /** Number of 429/3105 responses before admitting each ticket; defaults to 0. */
   queue429Count?: number;
@@ -329,25 +326,25 @@ export async function startOffPeakMockGateway(
     const ticket = tickets.get(ticketId);
     const now = Date.now();
     if (ticket) advance(ticket, now);
-    if (!ticket || ticket.state === "expired" || ticket.state === "settled") {
-      json(res, 400, { code: 3102, msg: "wrong off-peak ticket" });
+    if (!ticket || ticket.state === "settled" || ticket.state === "queued") {
+      json(res, 400, { code: 3104, msg: "invalid off-peak ticket" });
+      return;
+    }
+    if (ticket.state === "expired") {
+      // Activated and non-activated expired tickets must use distinct codes per the new server contract; the mock must not mask a client that misses 3106.
+      json(res, 400, {
+        code: ticket.activeDeadline === undefined ? 3102 : 3106,
+        msg:
+          ticket.activeDeadline === undefined
+            ? "off-peak ready window expired"
+            : "off-peak active window expired",
+      });
       return;
     }
     if (config.scenario === "invalid-ticket") {
-      // Exercise the real 3102 terminal path in E2E: the client must request a new ticket while preserving the task identity,
-      // and must not silently redirect the failed off-peak request to the regular Chat provider.
+      // Fault-injected run timeout; the real Host/CLI must end the task, not re-ticket or switch to an ordinary plan.
       invalidTicketRequests += 1;
-      json(res, 400, { code: 3102, msg: "wrong off-peak ticket" });
-      return;
-    }
-    if (ticket.state === "queued") {
-      // A message arrived before the coarse gate opened: respond as queued by the fine gate (the client should not reach this defensive branch).
-      json(
-        res,
-        429,
-        { code: 3105, msg: "not ready" },
-        { "retry-after": String(config.retryAfterS) },
-      );
+      json(res, 400, { code: 3106, msg: "off-peak active window expired" });
       return;
     }
     if (ticket.queue429Remaining > 0) {
@@ -400,7 +397,7 @@ export async function startOffPeakMockGateway(
         ticket.state = "expired";
         invalidTicketRequests++;
         capturedRequests[capturedRequests.length - 1]!.stage = "parent-wakeup-expired";
-        json(res, 400, { code: 3102, msg: "wrong off-peak ticket" });
+        json(res, 400, { code: 3106, msg: "off-peak active window expired" });
         return;
       }
       const scripted =
@@ -517,6 +514,7 @@ export async function startOffPeakMockGateway(
       ) {
         json(res, 200, {
           invalidTicketRequests,
+          issuedTicketCount: tickets.size,
           requests: capturedRequests,
         });
         return;
@@ -704,7 +702,7 @@ function readRequestBoolean(value: unknown, key: string): boolean {
 
 function classifyForegroundSubagentScenarioRequest(requestJson: unknown): string {
   const serialized = JSON.stringify(requestJson);
-  // 标题包含相同用户素材，必须先按 system 任务区分，否则会误触发整套 Agent 脚本。
+  // Titles contain the same user material; classify system tasks first or the whole Agent script would be triggered by mistake.
   if (serialized.includes("Generate a concise title for this coding session."))
     return "session-title";
   if (serialized.includes(FOREGROUND_SUBAGENT_SCENARIO.parentMarker)) {

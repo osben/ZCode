@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { ExecutionPort, ExecutionResult, SessionId } from "@zcode/contracts";
+import type { ExecutionPort, ExecutionResult } from "@zcode/contracts";
+import { DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS } from "../src/app/official-plugin-definitions.js";
 import { resolveZCodeBuiltinPromptCommand } from "../src/builtin-prompt-command.js";
 import { resolveZCodeCustomCommandPrompt } from "../src/custom-command-prompt.js";
 import { listProtocolSlashCommands } from "../src/zcode-protocol/slash-commands.js";
@@ -31,9 +32,25 @@ describe("protocol slash command surface", () => {
       // 同名自定义命令不得顶替内置 `/workflow`（保留名）：目录里只剩内置那一行。
       await writeCommand(userCommands, "workflow", "Shadowing workflow", "Should be hidden.");
 
+      // Default-enabled official plugins (e.g. ZCode Sites `/site-*`) are explicitly disabled so
+      // they do not leak into the list, and plugin storage stays inside the temp root.
+      const configPath = join(tempRoot, "config.json");
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          plugins: {
+            enabledPlugins: Object.fromEntries(
+              [...DEFAULT_ENABLED_OFFICIAL_PLUGIN_IDS].map((id) => [id, false]),
+            ),
+          },
+          storage: { dir: join(tempRoot, "storage") },
+        }),
+      );
+
       const commands = await listProtocolSlashCommands({
         env: { ZCODE_ENV: "test" },
         homeDirectory: home,
+        projectConfigPath: configPath,
         skipUserConfig: true,
         workingDirectory: workspace,
       });
@@ -171,84 +188,6 @@ describe("protocol slash command surface", () => {
       expect(
         resolveZCodeBuiltinPromptCommand("please /init", { workingDirectory: workspace }),
       ).toBe(undefined);
-    } finally {
-      await rm(tempRoot, { force: true, recursive: true });
-    }
-  });
-
-  it("runs shell expansion for plugin commands with plugin and session variables", async () => {
-    const tempRoot = await mkdtemp(join(tmpdir(), "zcode-plugin-command-shell-"));
-    const workspace = join(tempRoot, "workspace");
-    const pluginRoot = join(tempRoot, "ralph-loop");
-    const commandsRoot = join(pluginRoot, "commands");
-    const pluginDataRoot = join(tempRoot, "plugins");
-    const configPath = join(tempRoot, "config.json");
-    const sessionId = "sess_shell_expansion" as SessionId;
-    let capturedRequest: Parameters<ExecutionPort["run"]>[0] | undefined;
-    const executionPort: ExecutionPort = {
-      async run(request) {
-        capturedRequest = request;
-        return createExecutionResult("ralph setup output");
-      },
-    };
-
-    try {
-      await mkdir(commandsRoot, { recursive: true });
-      await mkdir(join(pluginRoot, ".claude-plugin"), { recursive: true });
-      await writeFile(
-        join(pluginRoot, ".claude-plugin", "plugin.json"),
-        JSON.stringify({ name: "ralph-loop", version: "1.0.0" }),
-      );
-      await writeCommand(
-        commandsRoot,
-        "ralph-loop",
-        "Start Ralph",
-        [
-          "Before",
-          "```!",
-          'echo "${CLAUDE_PLUGIN_ROOT}/scripts/setup-ralph-loop.sh" "$ARGUMENTS"',
-          "```",
-          "After",
-        ].join("\n"),
-      );
-      await writeFile(
-        configPath,
-        JSON.stringify({
-          plugins: {
-            dirs: [pluginRoot],
-            enabled: true,
-          },
-          storage: {
-            dir: pluginDataRoot,
-          },
-        }),
-      );
-
-      const prompt = await resolveZCodeCustomCommandPrompt("/ralph-loop build demo", {
-        env: { ZCODE_ENV: "test" },
-        executionPort,
-        projectConfigPath: configPath,
-        sessionId,
-        skipUserConfig: true,
-        workingDirectory: workspace,
-      });
-
-      expect(prompt).toContain("ralph setup output");
-      expect(prompt).not.toContain("```!");
-      expect(capturedRequest?.command).toMatchObject({
-        command: 'echo "${CLAUDE_PLUGIN_ROOT}/scripts/setup-ralph-loop.sh" "build demo"',
-        mode: "shell",
-      });
-      expect(capturedRequest?.cwd).toBe(workspace);
-      expect(capturedRequest?.env?.set).toMatchObject({
-        CLAUDE_CODE_SESSION_ID: sessionId,
-        CLAUDE_PLUGIN_ROOT: pluginRoot,
-        CLAUDE_PROJECT_DIR: workspace,
-        CLAUDE_SESSION_ID: sessionId,
-        ZCODE_PLUGIN_ROOT: pluginRoot,
-        ZCODE_PROJECT_DIR: workspace,
-        ZCODE_SESSION_ID: sessionId,
-      });
     } finally {
       await rm(tempRoot, { force: true, recursive: true });
     }

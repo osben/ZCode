@@ -12,7 +12,7 @@ const CASE_MARKER = "E2E_R3_UI_PAIRWISE";
 const artifactDir = resolve(process.env.ZCODE_E2E_ARTIFACT_DIR ?? ".e2e-artifacts/r3-ui-pairwise");
 const NARROW = { width: 960, height: 700 };
 
-/** Electron 下 WebDriver setWindowSize 不可用（Browser.getWindowForTarget 缺失），改经 main 进程设置主窗口尺寸。 */
+/** WebDriver setWindowSize is unavailable under Electron (Browser.getWindowForTarget is missing); set the main window size via the main process instead. */
 async function setWindowSize(width: number, height: number): Promise<number> {
   const startedAt = Date.now();
   await browser.electron.execute(
@@ -69,7 +69,7 @@ async function setLocaleAndTheme(
     locale,
     theme,
   );
-  // locale/theme 切换为异步状态更新：最多等 10s 收敛。
+  // locale/theme switches are async state updates: wait up to 10s for convergence.
   let state = await read();
   await browser.waitUntil(
     async () => {
@@ -81,7 +81,7 @@ async function setLocaleAndTheme(
   return state;
 }
 
-/** 视口内可见的关键元素是否被裁切/横向溢出，以及焦点是否落在可见元素上。 */
+/** Whether key elements visible in the viewport are clipped/horizontally overflowing, and whether focus lands on a visible element. */
 async function readLayoutHealth(selectors: string[]): Promise<{
   overflowX: boolean;
   clipped: string[];
@@ -160,13 +160,24 @@ describe(`${CASE_MARKER}: 项目导航中英文/深浅主题与窄窗口`, () =>
       const selector = `[data-project-workspace-identity="${identity}"]`;
       const row = $(selector);
       expect(await row.getAttribute("data-connection-state")).toBe("online");
-      // 项目整合后设备标签只负责展示；详情弹层已移除，操作由项目菜单承载。
+      // After project consolidation the device label is display-only; the details popover is gone and actions live in the project menu.
       const deviceName = (await readSettings()).sourceServers?.find(
         (source) => source.sourceServerId === sourceId,
       )?.displayName;
       expect(deviceName).toBeTruthy();
       const device = row.$('[data-testid="project-device"]');
-      expect(await device.getAttribute("title")).toBe(deviceName);
+      // The device's native title moved into the unified identity details; check the visible name and a real hover so a stale attribute does not fail later matrix cases early.
+      expect(await device.getText()).toBe(deviceName);
+      await row.$('[data-testid="virtual-project-toggle"]').moveTo();
+      const details = $('[data-testid="remote-identity-details"]');
+      await details.waitForDisplayed();
+      current.identityDetails = await details.getText();
+      expect(current.identityDetails).toContain(deviceName);
+      expect(current.identityDetails).toContain(config.workspacePaths[0]);
+      expect(await details.$$("button")).toHaveLength(0);
+      const outside = await browser.execute(() => ({ x: innerWidth - 24, y: 24 }));
+      await browser.action("pointer").move(outside).perform();
+      await details.waitForDisplayed({ reverse: true });
       await row.moveTo();
       const trigger = row.$('[data-testid="virtual-project-menu"]');
       await trigger.click();
@@ -187,7 +198,7 @@ describe(`${CASE_MARKER}: 项目导航中英文/深浅主题与窄窗口`, () =>
       expect(
         await editor.$('[data-testid="virtual-project-root-name"]').getAttribute("title"),
       ).toBe(config.workspacePaths[0]);
-      // 菜单退场与 Dialog autofocus 分别提交；显示节点后仍需等待焦点实际进入编辑器。
+      // Menu exit and Dialog autofocus commit separately; after the node shows, still wait for focus to actually land in the editor.
       await browser
         .waitUntil(
           () =>

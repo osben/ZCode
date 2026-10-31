@@ -243,6 +243,11 @@ export const CronListInputSchema = z.object({}).strict();
 export type CronListInput = z.infer<typeof CronListInputSchema>;
 export const CronListInputJsonSchema = toToolJsonSchema(CronListInputSchema);
 
+// CronPauseSelf has no model-controllable input: the pause target can only be the executor-injected automationId for this turn.
+export const CronPauseSelfInputSchema = z.object({}).strict();
+export type CronPauseSelfInput = z.infer<typeof CronPauseSelfInputSchema>;
+export const CronPauseSelfInputJsonSchema = toToolJsonSchema(CronPauseSelfInputSchema);
+
 export const CronDeleteInputSchema = z
   .object({
     id: nonEmptyString.describe("Automation id returned by CronCreate or CronList"),
@@ -333,3 +338,13 @@ export const CronDeleteOutputSchema = z
   .strict();
 export type CronDeleteOutput = z.infer<typeof CronDeleteOutputSchema>;
 export const CronDeleteOutputJsonSchema = toToolJsonSchema(CronDeleteOutputSchema);
+
+export const CronPauseSelfOutputSchema = z
+  .object({
+    paused: z.boolean(),
+    id: nonEmptyString,
+    message: nonEmptyString,
+  })
+  .strict();
+export type CronPauseSelfOutput = z.infer<typeof CronPauseSelfOutputSchema>;
+export const CronPauseSelfOutputJsonSchema = toToolJsonSchema(CronPauseSelfOutputSchema);

@@ -11,7 +11,7 @@ import type {
   ResolvedAiSdkModel,
 } from "./runner-runtime.js";
 import { createModelRequestAttributionHeaders, type ModelStatusContext } from "./runner-status.js";
-import { withoutModelQuerySourceHeader } from "./model-request-headers.js";
+import { withoutContextOwnedModelHeaders } from "./model-request-headers.js";
 import { zhipuAccountMode } from "./account-access-mode.js";
 
 type ExperimentalIncludeWithResponseBody = {
@@ -31,9 +31,10 @@ function mergeRequestHeaders(
   providerHeaders: Record<string, string> | undefined,
   attributionHeaders: Record<string, string>,
 ): Record<string, string> {
-  // Generic case-insensitive deduplication would change how the SDK merges legacy attribution headers; remove only the static query-source value here.
+  // Generic case-insensitive deduplication would change how the SDK merges legacy attribution headers;
+  // remove only the static query-source and session-features values owned by the call context.
   return {
-    ...withoutModelQuerySourceHeader(providerHeaders),
+    ...withoutContextOwnedModelHeaders(providerHeaders),
     ...attributionHeaders,
   };
 }

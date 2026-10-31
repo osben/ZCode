@@ -2,10 +2,13 @@ import {
   AMEND_WORKFLOW_TOOL_NAME,
   CREATE_WORKFLOW_TOOL_NAME,
   FILL_WORKFLOW_HOLE_TOOL_NAME,
+  GET_WORKFLOW_RUN_TOOL_NAME,
+  LIST_WORKFLOW_RUNS_TOOL_NAME,
   RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
   RESPOND_TO_COORDINATOR_TOOL_NAME,
   RESUME_WORKFLOW_RUN_TOOL_NAME,
   SAVE_WORKFLOW_TOOL_NAME,
+  type SessionTaskType,
 } from "@zcode/contracts";
 import { incognitoExcludes } from "@zcode/shared";
 import { EXPLORE_AGENT_ALLOWED_TOOLS } from "../../subagent/explore-tools.js";
@@ -31,7 +34,7 @@ const WORKFLOW_CHILD_DISALLOWED_TOOLS = [
   AMEND_WORKFLOW_TOOL_NAME,
   // SaveWorkflow is excluded for the **same** reason: it also declares alwaysAsk, so a child would make an invisible confirmation
   // request and hang until timeout. ListSavedWorkflows is not excluded; the no-dialog rationale does not apply to read-only queries,
-  // just as it does not apply to the two run introspection tools.
+  // (the two run-introspection tools are excluded for a different root cause, see RUN_INTROSPECTION_TOOLS below).
   SAVE_WORKFLOW_TOOL_NAME,
   // **Structurally disabled**: children must not orchestrate another workflow. Resume re-executes the full script (replay settled
   // nodes, redispatch unfinished ones), which is the same capability level as starting with CreateWorkflow. Even if removing the
@@ -52,17 +55,42 @@ const WORKFLOW_CHILD_DISALLOWED_TOOLS = [
 ] as const;
 
 /**
- * Final runtime tool denylist: turn-level `toolDisallowlist` plus structural exclusions derived from taskType.
- * Keep it here rather than at each child-runtime construction site; there are two construction sites (`workflow-facade.ts` and
- * `script-workflow-child-runtime.ts`), and their lists would inevitably drift.
+ * Run-introspection tools not registered in child runtimes.
+ *
+ * The root cause differs from the list above: they are read-only and ungated, but they read through the dwf run
+ * port, which exists only in the app's top-level runtime — child runtimes must not hold it by invariant
+ * (`bootstrap/src/app/dynamic-workflow-run-progress-sink.ts`: if a child held it, runs started by child sessions
+ * would sink events into the parent session's transcript). So in a child runtime they would only ever report
+ * `workflow_introspection_unavailable` (production 2026-10-20: 155 workflow-child calls, all failed).
+ * Not registering them keeps the model from calling a tool that can only fail.
+ */
+const RUN_INTROSPECTION_TOOLS = [LIST_WORKFLOW_RUNS_TOOL_NAME, GET_WORKFLOW_RUN_TOOL_NAME] as const;
+
+/** Child runtimes that hold no dwf run port (docs/dynamic-workflow/launch.md, "workflow child sessions"). */
+const CHILD_TASK_TYPES_WITHOUT_RUN_PORT: ReadonlySet<SessionTaskType> = new Set<SessionTaskType>([
+  "subagent_child",
+  "workflow_child",
+  "nested_workflow_child",
+]);
+
+/**
+  * Final runtime tool denylist: turn-level `toolDisallowlist` plus structural exclusions derived from taskType.
+  * Keep it here rather than at each child-runtime construction site; there are two construction sites (`workflow-facade.ts` and
+  * `script-workflow-child-runtime.ts`), and their lists would inevitably drift.
  */
 export function resolveRuntimeDisallowedTools(
   config: AgentRuntimeConfig,
 ): readonly string[] | undefined {
-  if (config.taskType !== "workflow_child") return config.toolDisallowlist;
+  const structural = [
+    ...(config.taskType === "workflow_child" ? WORKFLOW_CHILD_DISALLOWED_TOOLS : []),
+    ...(config.taskType !== undefined && CHILD_TASK_TYPES_WITHOUT_RUN_PORT.has(config.taskType)
+      ? RUN_INTROSPECTION_TOOLS
+      : []),
+  ];
+  if (structural.length === 0) return config.toolDisallowlist;
 
   const disallowed = new Set(config.toolDisallowlist ?? []);
-  for (const toolName of WORKFLOW_CHILD_DISALLOWED_TOOLS) disallowed.add(toolName);
+  for (const toolName of structural) disallowed.add(toolName);
   return [...disallowed];
 }
 

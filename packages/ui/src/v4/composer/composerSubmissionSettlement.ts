@@ -58,29 +58,20 @@ export function trackUnsettledComposerSubmission(
     unsubscribe: () => undefined,
   };
   trackedByScope.set(scopeKey, tracked);
-  const listen = () => {
-    tracked.unsubscribe = pendingCommandRegistry.subscribeResolution(
-      submission.commandId,
-      (resolution) => {
-        if (trackedByScope.get(scopeKey) !== tracked) return;
-        // "unknown" (e.g. a reconnect query that found nothing yet) decides nothing. The registry
-        // drops its listeners after each notification, so listen again: dropping the tracking here
-        // would let a later acceptance leave the restored text sendable — a duplicate resend.
-        if (resolution === "unknown") {
-          listen();
-          return;
-        }
-        if (!isAuthoritativeResolution(resolution)) {
-          // failed/discarded：原文应继续留在草稿里，交给既有的恢复 UI 处理。
-          trackedByScope.delete(scopeKey);
-          return;
-        }
-        tracked.settled = true;
-        deliver(scopeKey, tracked);
-      },
-    );
-  };
-  listen();
+  tracked.unsubscribe = pendingCommandRegistry.subscribeResolution(
+    submission.commandId,
+    (resolution) => {
+      if (trackedByScope.get(scopeKey) !== tracked) return;
+      if (!isAuthoritativeResolution(resolution)) {
+        // Explicit failure or discarded: the original text stays in the draft; an unknown query result
+        // produces no settlement notification.
+        trackedByScope.delete(scopeKey);
+        return;
+      }
+      tracked.settled = true;
+      deliver(scopeKey, tracked);
+    },
+  );
 }
 
 /**

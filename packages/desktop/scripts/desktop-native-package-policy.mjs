@@ -10,6 +10,38 @@ const SUPPORTED_DESKTOP_PLATFORM_KEYS = [
   "win32-x64",
 ];
 
+// sharp ships every platform binary variant through optionalDependencies. The electron-builder 26.17
+// pnpm collector packs the variants from the full lockfile platform graph, so darwin/linux and cross-arch
+// win32 variants (Mach-O/ELF, about 110MB uncompressed) all end up in app.asar. That inflates the installer
+// and sends them through signApp on Windows signing, which triggered a chained 0x8010006a failure (CI
+// observed 2026-10-26; the signing hook now skips files by PE magic). Each target platform keeps only the
+// variant group the runtime actually resolves.
+const SHARP_VARIANT_PACKAGES = [
+  "sharp-win32-x64",
+  "sharp-win32-arm64",
+  "sharp-darwin-x64",
+  "sharp-darwin-arm64",
+  "sharp-libvips-darwin-x64",
+  "sharp-libvips-darwin-arm64",
+  "sharp-linux-x64",
+  "sharp-linux-arm64",
+  "sharp-libvips-linux-x64",
+  "sharp-libvips-linux-arm64",
+  "sharp-linuxmusl-x64",
+  "sharp-linuxmusl-arm64",
+  "sharp-libvips-linuxmusl-x64",
+  "sharp-libvips-linuxmusl-arm64",
+];
+
+const SHARP_VARIANTS_BY_PLATFORM = {
+  "win32-x64": ["sharp-win32-x64"],
+  "win32-arm64": ["sharp-win32-arm64"],
+  "darwin-x64": ["sharp-darwin-x64", "sharp-libvips-darwin-x64"],
+  "darwin-arm64": ["sharp-darwin-arm64", "sharp-libvips-darwin-arm64"],
+  "linux-x64": ["sharp-linux-x64", "sharp-libvips-linux-x64"],
+  "linux-arm64": ["sharp-linux-arm64", "sharp-libvips-linux-arm64"],
+};
+
 function assertSupportedTargetPlatformKey(targetPlatformKey) {
   if (!SUPPORTED_DESKTOP_PLATFORM_KEYS.includes(targetPlatformKey)) {
     throw new Error(`不支持的桌面目标平台: ${targetPlatformKey}`);
@@ -46,6 +78,10 @@ export function createDesktopNativePackagePrunePatterns(targetPlatformKey) {
     // so a koffi upgrade adding a new platform cannot escape pruning through an enumerated directory list.
     "!node_modules/koffi/build/koffi/**",
     `node_modules/koffi/build/koffi/${targetPlatformKey.replaceAll("-", "_")}/**`,
+    // Prune @img/sharp variants for non-target platforms; the target variant is verified by the violation check below.
+    ...SHARP_VARIANT_PACKAGES.filter(
+      (name) => !SHARP_VARIANTS_BY_PLATFORM[targetPlatformKey].includes(name),
+    ).map((name) => `!node_modules/@img/${name}/**`),
   ];
 }
 
@@ -97,6 +133,16 @@ export function findDesktopNativePackageViolations(entries, targetPlatformKey) {
       path.startsWith("/node_modules/@napi-rs/canvas-")
     ) {
       violations.push(`不应打包 renderer 无需的 Canvas native: ${path}`);
+      continue;
+    }
+
+    // If a pruning rule leaks or the collector regresses, non-target @img/sharp variants must fail closed here.
+    const sharpVariantMatch = /^\/node_modules\/@img\/(sharp-[a-z0-9-]+)(?:\/|$)/.exec(path);
+    if (
+      sharpVariantMatch &&
+      !SHARP_VARIANTS_BY_PLATFORM[targetPlatformKey].includes(sharpVariantMatch[1])
+    ) {
+      violations.push(`sharp 包含非目标平台变体: ${sharpVariantMatch[1]} ${path}`);
       continue;
     }
 

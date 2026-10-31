@@ -27,6 +27,7 @@ import { recordToolUsageFromEvent } from "./usage-observability.js";
 import { persistSessionShellEnvironmentSnapshot } from "./session-shell-environment.js";
 import { persistRuntimeModelSelection } from "./turn-model.js";
 import { writeDynamicWorkflowActivationEntryIfActivated } from "./dynamic-workflow-activation.js";
+import { writeSessionFeaturesEntryAfterFirstPersist } from "../session-features/contract.js";
 import {
   persistWorkspaceCheckpointEntry,
   persistWorkspaceFileRewindEntry,
@@ -271,7 +272,7 @@ async function persistDurableSessionEvent(
 
   if (event.type === SessionEventType.TurnComplete || event.type === SessionEventType.TurnError) {
     const payload = event.payload as { resultType?: string };
-    // 终态由 CLI 在发布事件前持久化；Host 冷启动不能再把全部历史任务推导为成功。
+    // Terminal states are persisted by the CLI before the event is published; on cold start the Host must no longer infer all historical tasks as successful.
     await this.sessionStore.updateSession({
       id: event.sessionId,
       lastOutcome:
@@ -705,6 +706,8 @@ async function persistSession(
     // When `/workflow` is the first turn, activation happens before persistence (launch.md, “On demand: activation”); add the entry here afterward.
     await writeDynamicWorkflowActivationEntryIfActivated(this);
     this.sessionPersisted = true;
+    // Session capability labels emitted before the first persist lived only in memory; write them here. Later entries each queue their own write.
+    await writeSessionFeaturesEntryAfterFirstPersist(this, traceContext);
     this.logger?.debug("Session persisted", {
       ...traceContextToLogContext(traceContext),
       event: "session.persisted",

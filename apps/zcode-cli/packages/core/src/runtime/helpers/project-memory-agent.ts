@@ -1,4 +1,11 @@
-import type { Model, ModelToolContract, TraceContext } from "../deps.js";
+import type {
+  ExecutableToolCall,
+  Model,
+  ModelToolContract,
+  ToolCall,
+  ToolExecutionResult,
+  TraceContext,
+} from "../deps.js";
 import type { AgentTelemetryCausation, ModelApiOperation } from "@zcode/contracts";
 import {
   PermissionService,
@@ -13,6 +20,7 @@ import type { MemoryAgentLoopRequestUsage } from "../../memory/memory-agent-loop
 import type { ReadFileStateMap } from "../../tool/types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { getSessionShellSelectionFromConfig } from "../methods/session-shell-environment.js";
+import { scheduleTools } from "../methods/tools.js";
 import { prepareRuntimeProviderRequest } from "./runtime-provider-request-messages.js";
 import { createRefreshRuntimeHeadersBeforeModelAttempt } from "../methods/model-runtime-headers.js";
 import { createRuntimeModel, withModelInvocationContext } from "../methods/runtime-model.js";
@@ -76,7 +84,7 @@ export function captureProjectMemoryAgentContext(
     model,
     operation: input.operation,
     readFileState: new Map(runtime.readFileState),
-    // Memory 的既有执行策略不允许 ToolSearch；历史引用只在此请求投影中降级。
+    // Memory's existing execution policy does not allow ToolSearch; historical references are downgraded in this request projection only.
     tools: runtime
       .getTools(model)
       .filter((tool) => tool.name !== "ToolSearch")
@@ -87,9 +95,19 @@ export function captureProjectMemoryAgentContext(
   };
 }
 
-export function prepareProjectMemoryAgentRequest(
+/** The Memory Agent's initial entries: Main's provider entries plus the prompt. */
+export function projectMemoryAgentEntries(
   context: ProjectMemoryAgentContext,
   prompt: string,
+): RuntimeMessageEntry[] {
+  // Same shape as prepareRuntimeProviderRequest appending the prompt, so the first-round request stays byte-identical.
+  return [...context.providerEntries, { message: { role: "user", content: prompt } }];
+}
+
+/** Build the Memory request from entries with Main's renderer (MCS, merged tool_result, ToolSearch exposure, cache control). */
+export function renderProjectMemoryAgentRequest(
+  context: ProjectMemoryAgentContext,
+  entries: readonly RuntimeMessageEntry[],
 ) {
   return prepareRuntimeProviderRequest(
     {
@@ -97,15 +115,36 @@ export function prepareProjectMemoryAgentRequest(
     },
     {
       applyCacheControl: true,
-      entries: context.providerEntries,
+      entries,
       model: context.model,
-      prompt,
       tools: context.tools,
     },
   ).request;
 }
 
-export function createProjectMemoryAgentToolExecutor(
+/** The Memory Agent's tools run under Main's scheduling: concurrentSafe in parallel, the rest sequentially. */
+export function createProjectMemoryAgentToolRunner(
+  runtime: AgentRuntimeInternal,
+  context: ProjectMemoryAgentContext,
+) {
+  const executor = createProjectMemoryAgentToolExecutor(runtime, context);
+  return async (
+    toolCalls: ExecutableToolCall[],
+    options: { abortSignal?: AbortSignal },
+  ): Promise<ToolExecutionResult[]> => {
+    const schedule = await scheduleTools.call(runtime, toolCalls as ToolCall[]);
+    const run = executor.executeSchedule(toolCalls, schedule, {
+      signal: options.abortSignal,
+      traceContext: context.traceContext,
+    });
+    for (;;) {
+      const next = await run.next();
+      if (next.done) return next.value;
+    }
+  };
+}
+
+function createProjectMemoryAgentToolExecutor(
   runtime: AgentRuntimeInternal,
   context: ProjectMemoryAgentContext,
 ) {

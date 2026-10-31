@@ -1,10 +1,7 @@
+import { LOCAL_TOOL_SEARCH_DESCRIPTION, renderToolSearchAnnouncement } from "./description.js";
 import {
-  LOCAL_TOOL_SEARCH_DESCRIPTION,
-  renderToolSearchAnnouncement,
-} from "./description.js";
-import {
-  LOCAL_TOOL_SEARCH_NAME,
   TOOL_SEARCH_NAME,
+  LOCAL_TOOL_SEARCH_NAME,
   DEFERRED_TOOL_CALL_NAME,
   type ToolSearchMode,
   type ResolvedToolSearchMode,
@@ -15,7 +12,7 @@ import {
 } from "@zcode/contracts";
 import type { ToolRegistry } from "../registry.js";
 import type { ToolMetadata } from "../types.js";
-import type { RuntimeMessageEntry } from "../../agent/message-history.js";
+import type { RuntimeAttachmentEntry, RuntimeMessageEntry } from "../../agent/message-history.js";
 import { collectToolSearchHistory, projectToolReferences } from "./history.js";
 
 export function resolveToolSearchMode(
@@ -119,7 +116,7 @@ export function buildToolExposure(input: ToolExposureInput) {
     })
     .map((tool) => {
       const { deferLoading: _previous, ...contract } = tool;
-      // Local 只改变模型侧名称；注册表、目录和控制判定仍使用 TOOL_SEARCH_NAME。
+      // Local mode only changes the model-facing name; the registry, catalog and control checks still use TOOL_SEARCH_NAME.
       if (mode === "local" && tool.name === TOOL_SEARCH_NAME)
         return {
           ...contract,
@@ -146,7 +143,7 @@ export function buildToolExposure(input: ToolExposureInput) {
 export function buildToolSearchAnnouncement(
   input: ToolExposureInput,
   compactDiscoveredTools?: ReadonlySet<string>,
-): RuntimeMessageEntry | undefined {
+): RuntimeAttachmentEntry | undefined {
   // Off 不需要公告或提升信息，保持关闭路径不扫描公告历史。
   if (resolveToolSearchMode(input.model, input.mode) === "off") return undefined;
   // Bug 根因：全量 metadata 与增量正文不一致，compact 保留尾部时会误以为旧名称仍在上下文。
@@ -175,12 +172,16 @@ export function buildToolSearchAnnouncement(
   const available = new Set(input.tools.map((tool) => tool.name));
   const removedNames = [...announced].filter((name) => !available.has(name)).sort();
   if (addedNames.length === 0 && removedNames.length === 0) return undefined;
+  // Hidden-this-turn removals can only be identified at generation time: the registry changes later, so request projection renders from the recorded names.
+  const hiddenNames = removedNames.filter((name) => input.registry?.get(name) !== undefined);
+  const delta = { addedNames, removedNames, readdedNames };
   return {
     kind: "attachment",
-    content: renderToolSearchAnnouncement({ addedNames, removedNames, readdedNames }, mode),
+    content: renderToolSearchAnnouncement(delta, mode, hiddenNames),
     metadata: {
       source: "tool_search_announcement",
-      toolSearchAnnouncement: { addedNames, removedNames, readdedNames },
+      toolSearchAnnouncement: delta,
+      ...(hiddenNames.length ? { toolSearchHiddenNames: hiddenNames } : {}),
     },
   };
 }

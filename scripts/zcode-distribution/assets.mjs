@@ -1,4 +1,4 @@
-import { chmod, cp, mkdir, readFile, rm, stat } from "node:fs/promises";
+import { chmod, cp, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, relative, resolve, sep } from "node:path";
 import {
@@ -190,11 +190,22 @@ export async function patchNodePtyPrebuilds(packageRoot) {
     if (!sourceStat?.isDirectory()) {
       continue;
     }
-    await cp(sourcePrebuildRoot, nodePtyPrebuildRoot, {
-      dereference: true,
-      force: true,
-      recursive: true,
-    });
+    for (const platformKey of await readdir(sourcePrebuildRoot)) {
+      const targetPrebuildDir = resolve(nodePtyPrebuildRoot, platformKey);
+      // Bug cause: the platform package is 1.2.0-beta.10 (resize takes 5 args); the old logic
+      // force-overwrote the whole directory, replacing the official node-pty's same-version
+      // darwin native even though the official JS passes only 3 args, so macOS terminal resize
+      // always failed. Platform prebuilds already shipped by the official package match its JS
+      // version and must not be overwritten; the platform package only fills platforms the
+      // official package lacks.
+      if (await pathExists(targetPrebuildDir)) {
+        continue;
+      }
+      await cp(resolve(sourcePrebuildRoot, platformKey), targetPrebuildDir, {
+        dereference: true,
+        recursive: true,
+      });
+    }
   }
 
   for (const helper of [

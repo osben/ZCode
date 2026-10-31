@@ -5,14 +5,12 @@
  * the last three turns). Resource-level `showInline` is also written as true when the handle arrives
  * (only when no manual record exists).
  */
-const pins = new Map<string, boolean>();
+const pinsBySession = new Map<string, ReadonlyMap<string, boolean>>();
+const emptyPins: ReadonlyMap<string, boolean> = new Map();
 const listeners = new Set<() => void>();
-let version = 0;
-
-const keyOf = (sessionKey: string, toolCallId: string) => `${sessionKey}\u0000${toolCallId}`;
 
 export function getPluginUiManualPin(sessionKey: string, toolCallId: string): boolean | undefined {
-  return pins.get(keyOf(sessionKey, toolCallId));
+  return getPluginUiDisclosureSnapshot(sessionKey).get(toolCallId);
 }
 
 export function setPluginUiManualPin(
@@ -20,17 +18,19 @@ export function setPluginUiManualPin(
   toolCallId: string,
   pinned: boolean | undefined,
 ): void {
-  const key = keyOf(sessionKey, toolCallId);
-  if (pins.get(key) === pinned) return;
-  if (pinned === undefined) pins.delete(key);
-  else pins.set(key, pinned);
-  version += 1;
+  const previous = getPluginUiDisclosureSnapshot(sessionKey);
+  if (previous.get(toolCallId) === pinned) return;
+  const next = new Map(previous);
+  if (pinned === undefined) next.delete(toolCallId);
+  else next.set(toolCallId, pinned);
+  if (next.size === 0) pinsBySession.delete(sessionKey);
+  else pinsBySession.set(sessionKey, next);
   for (const listener of listeners) listener();
 }
 
-/** Snapshot version: incremented on any record change; the timeline rebuilds collapse boundaries from it. */
-export function getPluginUiDisclosureVersion(): number {
-  return version;
+/** The former global version propagated other sessions' pin actions into the current timeline; the snapshot now changes only with its owning session. */
+export function getPluginUiDisclosureSnapshot(sessionKey: string): ReadonlyMap<string, boolean> {
+  return pinsBySession.get(sessionKey) ?? emptyPins;
 }
 
 export function subscribePluginUiDisclosure(listener: () => void): () => void {
@@ -40,7 +40,6 @@ export function subscribePluginUiDisclosure(listener: () => void): () => void {
 
 /** For tests: clear all records. */
 export function resetPluginUiDisclosureForTest(): void {
-  pins.clear();
+  pinsBySession.clear();
   listeners.clear();
-  version = 0;
 }

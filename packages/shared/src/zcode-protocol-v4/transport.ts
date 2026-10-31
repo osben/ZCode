@@ -1,4 +1,4 @@
-import { localTtftFactsSchema } from "../localTtft.js";
+import { localTtftFactsSchema } from "../local-ttft/contract.js";
 /* eslint-disable max-lines -- The three topics' logical/physical/candidate schemas must share one generic transport declaration to avoid cross-file divergence. */
 // Transport envelope: connection handshake / subscription / frame envelope.
 // The phase is a type placeholder (enabled when the channel layer is connected later); the data shape is finalized.
@@ -34,6 +34,7 @@ export const hostCapabilitiesSchema = z.object({
   // Wire-compatible: absence from an older Host is equivalent to false; callers must check with === true.
   workspaceHookReview: z.boolean().optional(),
   independentPlanState: z.boolean().optional(),
+  genUiContext: z.boolean().optional(),
   /**
    * This Host sends `workflowRun.*` key-level deltas (the two ops in delta.ts), so `workflowRuns`
    * actors / nodes can reach 1024 instead of the old limit of 256. Consumers without this capability still receive whole-key
@@ -45,6 +46,13 @@ export const hostCapabilitiesSchema = z.object({
   // This Host forwards the thirteen-key incognito profile (see specs/incognito-session.md, Protocol).
   incognitoPromptToggles: z.boolean().optional(),
   historyFirst: z.boolean().optional(),
+  /**
+   * This Host enables and forwards `v4/conversation/inputPrediction`. On old Hosts a missing
+   * value equals false; mobile must check === true or it must not send prediction requests.
+   */
+  inputPrediction: z.boolean().optional(),
+  /** This Host supports rowsRange's `residency: "resident-only"`; missing equals false and mobile must not preload. */
+  residentRowsRange: z.boolean().optional(),
 });
 export type HostCapabilities = z.infer<typeof hostCapabilitiesSchema>;
 
@@ -123,9 +131,9 @@ export const subscribeParamsSchema = z
     topic: z.string(),
     // High-water invariant: include only if the client actually has a consistent state at that point.
     base: z.object({ logEpoch: z.string(), seq: z.number() }).optional(),
-    // 手动重试仅消费当前 failed attempt；普通重连不重跑 hook。
+    // Manual retry consumes only the current failed attempt; a normal reconnect does not re-run hooks.
     retryInitialization: z.string().min(1).optional(),
-    // QoS hint，只影响调度，不影响语义。
+    // QoS hint; affects scheduling only, never semantics.
     visibility: z.enum(["foreground", "background"]).optional(),
   })
   .strict();
@@ -354,6 +362,8 @@ export const V4_METHODS = {
   conversationUnsubscribe: "v4/conversation/unsubscribe",
   // Row pagination query (rows/range): read-only, stateless, safe to retry after timeout.
   conversationRowsRange: "v4/conversation/rowsRange",
+  // Mobile input prediction (input-prediction.ts): read-only query; an old CLI just leaves mobile silently without a hint.
+  conversationInputPrediction: "v4/conversation/inputPrediction",
   // Terminal ExitPlanMode catalog for the current active branch; read-only, stateless, safe to retry after timeout.
   conversationPlans: "v4/conversation/plans",
   conversationFileChanges: "v4/conversation/fileChanges",
@@ -381,6 +391,11 @@ export const V4_METHODS = {
   // so this is a v4 query rather than a Host direct connection. This removes consumers of legacy usage/stats and session/usage.
   usageStats: "v4/usage/stats",
   conversationUsage: "v4/conversation/usage",
+  // Full project-data deletion (schema in session-data.ts): measure is read-only; purge is
+  // idempotent — an already-absent session succeeds as 0 bytes.
+  // Skew-safe new methods: an old CLI returns method-not-found, from which the Host hides the "delete data" option.
+  sessionDataMeasure: "v4/storage/sessionData/measure",
+  sessionDataPurge: "v4/storage/sessionData/purge",
   // Attachment transaction: full-data RPC is forbidden. Decoded bytes per chunk <=512KiB;
   // each request must prove <=1MiB on both renderer->Host Channel and Host->CLI NDJSON.
   attachmentBegin: "v4/attachment/begin",
@@ -422,7 +437,7 @@ export const v4ConnectionFlowResultSchema = z.object({}).strict();
 
 export const V4_NOTIFICATIONS = {
   offPeakLifecycle: "v4/offPeak/lifecycle",
-  // 下行帧（snapshot / deltas），params = ConversationTopicFrame。
+  // Downlink frame (snapshot / deltas), params = ConversationTopicFrame.
   conversationFrame: "v4/conversation/frame",
   // Body-free facts for live ingest only; excluded from topic snapshot/recovery.
   conversationTelemetryFact: "v4/telemetry/event",
@@ -535,6 +550,13 @@ export const v4ConversationRowsRangeParamsSchema = z.object({
   // Fetch rows where rowId < beforeRowId; absent means start backward from the current tail.
   beforeRowId: z.number().optional(),
   limit: z.number().min(1).max(PROTOCOL_V4_LIMITS.rowsRangeMaxLimit),
+  /**
+   * Mobile preloads a read-only hot session: a session not in memory reports
+   * proto.sessionNotResident — no cold restore, no projection rebuild; the Host only reuses an
+   * already-running workspace CLI and never spawns one for it. Default = current behavior
+   * (cold restore on demand).
+   */
+  residency: z.literal("resident-only").optional(),
 });
 export type V4ConversationRowsRangeParams = z.infer<typeof v4ConversationRowsRangeParamsSchema>;
 

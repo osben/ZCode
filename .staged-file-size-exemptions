@@ -41,9 +41,7 @@ packages/ui/src/GitPane.tsx
 packages/ui/src/LexicalChatInput.tsx
 packages/ui/src/app-shell/AnimatedSidePanePanel.tsx
 packages/ui/src/hooks/useVoiceDictation.ts
-packages/ui/src/lib/messageTelemetry.ts
 packages/ui/src/settings/VoiceDictationSection.tsx
-packages/ui/src/v4/telemetry/conversationTelemetrySupervisor.ts
 packages/client/src/globals.d.ts
 packages/desktop/src/main/desktopOAuthDeepLink.ts
 packages/desktop/src/main/index.ts
@@ -173,8 +171,6 @@ packages/ui/src/lib/zcodeSessionProjection.ts
 packages/ui/src/remote-connection/RemoteConnectionConnectingStep.tsx
 packages/ui/src/settings/ComputerUseSection.tsx
 packages/ui/src/settings/ExternalAgentImportDialog.tsx
-packages/ui/src/settings/RemoteMcpSyncDialog.tsx
-packages/ui/src/settings/RemotePluginSyncDialog.tsx
 packages/ui/src/settings/model-provider-section/Detail.tsx
 packages/ui/src/settings/model-provider-section/InlineEditableProviderCard.tsx
 packages/ui/src/settings/model-provider-section/ProviderCardSections.tsx
@@ -276,7 +272,6 @@ packages/web/src/web-remote-control/adapters/webRemoteControlTransport.ts
 apps/zcode-cli/packages/bootstrap/src/app/bundled-plugins.ts
 packages/provider/src/config/model-config.ts
 apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/cold-event-merge.ts
-packages/services/src/conversation-share/conversationSharePublicProjection.ts
 
 # ISSUE-042: pre-existing 23 KB upstream file; the empty-untracked fix touches it and a new sibling file is blocked by unmanaged-new-file.
 packages/services/src/git/repo/gitCliHelpers.ts
@@ -315,3 +310,54 @@ packages/services/src/commands/commandsService.ts
 packages/services/src/settings-sync/settingsSyncService.ts
 # Already over the cap at base 3.16.2 (79000+ bytes); the 3.17.1 reinstall port adds the menu item, availability and callback to the device card.
 packages/ui/src/settings/SourceServerManagementPanel.tsx
+
+# Upstream 3.17.1 sync merge: upstream sources over the cap that carry fork deltas (comment translation,
+# ported fixes), plus the fork test manifest and the vendored native-search source inventory.
+apps/zcode-cli/packages/adapters/src/model/failure-classifier.ts
+apps/zcode-cli/packages/adapters/src/model/model-execution.ts
+apps/zcode-cli/packages/bootstrap/src/app/dynamic-workflow-run-launch.ts
+apps/zcode-cli/packages/bootstrap/src/app/dynamic-workflow-run-service.ts
+apps/zcode-cli/packages/bootstrap/src/app/dynamic-workflow-run-submit.ts
+apps/zcode-cli/packages/bootstrap/src/app/workflow-driver.ts
+apps/zcode-cli/packages/bootstrap/src/app/workflow-world-read.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol-entrypoint.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/command-inbox.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/handlers/session-flow.ts
+apps/zcode-cli/packages/contracts/src/events/event-reducer.ts
+apps/zcode-cli/packages/core/src/repl/node-repl-session.ts
+apps/zcode-cli/packages/core/src/runtime-task/notification.ts
+apps/zcode-cli/packages/core/src/runtime/methods/context-refresh.ts
+apps/zcode-cli/packages/core/src/runtime/methods/resume.ts
+apps/zcode-cli/packages/core/src/runtime/methods/rewind-message.ts
+apps/zcode-cli/packages/core/src/runtime/methods/session-fork.ts
+apps/zcode-cli/packages/core/src/tool/executor/background-tasks.ts
+apps/zcode-cli/packages/core/src/tool/executor/workflow-artifact.ts
+apps/zcode-cli/packages/core/src/tool/handlers/cron.ts
+apps/zcode-cli/packages/core/src/tool/handlers/edit.ts
+apps/zcode-cli/packages/core/src/tool/handlers/read.ts
+apps/zcode-cli/packages/dynamic-workflow/src/analysis/causality-graph.ts
+apps/zcode-cli/packages/dynamic-workflow/src/lowering/lower.ts
+packages/desktop/electron-builder.config.js
+packages/desktop/scripts/bundle.mjs
+packages/desktop/src/main/autoUpdater.ts
+packages/services/src/coding-plan-subscription/bigmodelCodingPlanSubscriptionProvider.ts
+packages/services/src/cua-permission-broker/windowsCuaDevHelperHost.ts
+packages/services/src/file/fileService.ts
+packages/services/src/mcp-sync/mcpSyncService.ts
+packages/services/src/official-mcp/officialMcpCredentials.ts
+packages/services/src/plugin-sync/pluginSyncService.ts
+packages/services/src/project-storage/project-repository.ts
+packages/services/src/project/index.ts
+packages/services/src/subagents/subagentsService.ts
+packages/services/src/telemetry/telemetryCore.ts
+packages/shared/src/browser-use/commands.ts
+packages/shared/src/conversation-telemetry/conversationTelemetryEngine.ts
+packages/shared/src/conversation-telemetry/messageTelemetry.ts
+packages/ui/src/hooks/useSettingsSync.ts
+packages/ui/src/project-sidebar/ProjectNodeContent.tsx
+packages/ui/src/prompt-editor/ChatPromptEditor.tsx
+packages/ui/src/v4/conversationTurnRenderUnits.ts
+packages/ui/src/v4/telemetry/local-ttft/localTtftObserver.ts
+packages/ui/src/v4/useConversationTimelineFind.ts
+scripts/fork-test-files.json
+third-party/native-search/sources.json

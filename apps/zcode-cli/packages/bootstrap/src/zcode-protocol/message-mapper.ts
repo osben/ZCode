@@ -1,8 +1,17 @@
+import { normalizeGenUiInput } from "@zcode/core";
+import { genUiModelContextSchema } from "@zcode/shared/gen-ui";
 import type { ZCodeMessagePart, ZCodeMessageWithParts, ZCodeToolState } from "@zcode/shared";
 import type { MessagePart, MessageWithParts, ToolState } from "@zcode/contracts";
 import { shouldHideInvalidToolCallFromProduct } from "../tool-call-product-visibility.js";
 
 export function mapMessageWithParts(message: MessageWithParts): ZCodeMessageWithParts {
+  const intent =
+    message.info.metadata?.conversationInputIntent ?? message.info.metadata?.inputIntent;
+  const context = genUiModelContextSchema.safeParse(
+    intent && typeof intent === "object"
+      ? (intent as Record<string, unknown>).genUiContext
+      : undefined,
+  );
   return {
     info:
       message.info.role === "user"
@@ -56,7 +65,21 @@ export function mapMessageWithParts(message: MessageWithParts): ZCodeMessageWith
         (part) =>
           part.type !== "tool" || !shouldHideInvalidToolCallFromProduct(part.tool, part.metadata),
       )
-      .map(mapMessagePart),
+      .map((part) => {
+        // History reads and the search index share this exit; legacy tail blocks reuse the CLI decoder without altering persisted bodies.
+        if (
+          message.info.role === "user" &&
+          !message.info.synthetic &&
+          part.type === "text" &&
+          !part.synthetic
+        ) {
+          return mapMessagePart({
+            ...part,
+            text: normalizeGenUiInput(part.text, context.success ? context.data : undefined).text,
+          });
+        }
+        return mapMessagePart(part);
+      }),
   };
 }
 

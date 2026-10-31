@@ -56,9 +56,9 @@ pnpm architecture:context <module-id>
 pnpm architecture:adopt <module-id> --root <dir> [--layer domain|app|adapters|ui] [--owner <group>]
 ```
 
-The comparison base for `--changed` is chosen in this order: `--base <sha>` or `ZCODE_PRE_PUSH_BASE` > CI merge-request variables (such as `CI_MERGE_REQUEST_DIFF_BASE_SHA`) > the remote sha from pre-push stdin > `@{upstream}` > the default-branch merge-base (same order as `run-affected-unit-tests`, with `origin/staging` preferred) > `HEAD`. The second line of the report prints the base actually used. The base is never just `git diff HEAD`: in a clean CI checkout and during pre-push that diff is empty and the gate would check only cycles.
+The comparison base for `--changed` is chosen in this order: `--base <sha>` or `ZCODE_PRE_PUSH_BASE` > CI merge-request variables (such as `CI_MERGE_REQUEST_DIFF_BASE_SHA`) > the remote sha from pre-push stdin > `@{upstream}` > the default-branch merge-base (maintained in `scripts/architecture/default-branch.mjs`, same order as `run-affected-engineering-tests`, with `origin/staging` preferred) > `HEAD`. The second line of the report prints the base actually used. The base is never just `git diff HEAD`: in a clean CI checkout and during pre-push that diff is empty and the gate would check only cycles. A 2026-09 review found that the first version used only `git diff HEAD` and has been fixed.
 
-`architecture:adopt` registers a directory as a managed module: it infers `requires` from real imports, generates the missing five-file skeleton, and registers the module in the policy file while preserving comments. It exists so that registering a module is cheaper than bypassing the rules.
+`architecture:adopt` registers a directory as a managed module: it infers `requires` from real imports, generates the missing four-file skeleton (`module.ts`, `contract.ts`, `contract.example.ts`, `CONTRACT.md`) without requiring or generating App unit tests, and registers the module in the policy file while preserving comments. It exists so that registering a module is cheaper than bypassing the rules.
 
 Local development and CI use the same checker. `--changed` resolves the complete dependency graph but blocks only on this change and its required impact closure; global policy, circular dependencies, and baseline growth are always checked. CI must not refresh the baseline automatically. `baseline:update -- --changed` replaces only entries within the changed closure and does not drop records outside it. File paths in violations and in the baseline are repository-root-relative POSIX paths, so they are stable across machines. The checker's own regression tests run with `pnpm test:architecture`, which is wired into `verify:pre-push` and the CI lint job.
 
@@ -84,7 +84,7 @@ Verification uses a temporary Git repository covering more than 1 MiB of tracked
 
 [architecture-governance skill](../../.agents/skills/architecture-governance/SKILL.md) applies to code changes; skip it for documentation-only tasks. Before changing code, identify the expected module and check the current baseline; check again after the change. For cross-module changes, changes to state ownership, or unclear contracts, generate an `architecture:context` reading package. For local changes with clear contracts, read only the relevant contracts, specs, and tests. Specs, verification scope, and completion criteria follow the [root AGENTS.md](../../AGENTS.md); they are not defined again here.
 
-The reading package is generated from code and policy. It includes the target module's `module.ts`, `contract.ts`, examples, contract tests, a short `CONTRACT.md`, direct dependency contracts, owner, allowed edges, and affected tests; it does not copy the full implementation.
+The reading package is generated from code and policy. It includes the target module's `module.ts`, `contract.ts`, examples, a short `CONTRACT.md`, direct dependency contracts, owner, and allowed edges; it does not copy the full implementation.
 
 ## Rollout Order
 

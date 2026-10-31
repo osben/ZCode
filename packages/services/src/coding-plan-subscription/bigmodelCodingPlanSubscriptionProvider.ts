@@ -1,5 +1,6 @@
 import {
-  readRequestVerificationConfig,
+  ApiError,
+  readValidatedRequestVerificationConfig,
   requestVerificationClaimHeaders,
   isRequestVerificationMessage,
   type RequestVerificationClientConfig,
@@ -471,7 +472,12 @@ export class BigModelCodingPlanSubscriptionProvider {
   }
 
   async getRequestVerificationConfig(): Promise<RequestVerificationConfig | null> {
-    return readRequestVerificationConfig((await this.getClientConfigs()).data?.configs);
+    const payload = await this.getClientConfigs();
+    // HTTP success does not mean the config is valid; a bad config must not be auto-retried as a network failure, still less open the skip-validation path.
+    if ((payload.code !== undefined && payload.code !== 0) || payload.success === false) {
+      throw new Error("Request verification configuration is invalid");
+    }
+    return readValidatedRequestVerificationConfig(payload.data?.configs);
   }
 
   async getForceUpdateConfig(): Promise<ForceUpdateConfig | null> {
@@ -1494,6 +1500,18 @@ async function readCodingPlanApiJson<T>(
     if (isUnrenderableRemoteErrorMessage(message)) {
       // Payment endpoints occasionally return a WAF/HTML page or a non-JSON response; passing it through would render the full
       // HTML on the payment confirmation page. Normalize it to a stable error code at the service boundary and let the UI localize the message.
+      // HTML affects display only; do not drop the HTTP status and transport reason, or config reads cannot tell 503 from 401.
+      if (error instanceof ApiError) {
+        throw new ApiError({
+          message: CODING_PLAN_SYSTEM_BUSY,
+          url: error.url,
+          method: error.method,
+          status: error.status,
+          responseHeaders: error.responseHeaders,
+          // The original ApiError.message may be full HTML; carry only the underlying cause forward, never feed the body back into the error chain.
+          cause: error.cause,
+        });
+      }
       throw new Error(CODING_PLAN_SYSTEM_BUSY);
     }
     throw error;

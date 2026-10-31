@@ -634,9 +634,9 @@ export function PluginStorePage({
             />
             <Button
               type="button"
-              variant="secondary"
+              variant="default"
               size="lg"
-              className="font-medium"
+              className="font-normal"
               data-testid="plugin-store-manage-open"
               onClick={() => setView("manage")}
             >
@@ -659,6 +659,7 @@ export function PluginStorePage({
         <div data-testid="plugin-store-manage" className="space-y-4">
           <div className="flex items-center gap-2">
             <Button
+              type="button"
               variant="ghost"
               size="icon"
               data-testid="plugin-store-manage-back"

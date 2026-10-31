@@ -1,5 +1,7 @@
 import { Lexer } from "marked";
 
+/** Index file name in the memory directory; the context prefix injects it, and compaction restore excludes it by this name. */
+export const MEMORY_INDEX_FILE_NAME = "MEMORY.md";
 const MEMORY_INDEX_LINE_LIMIT = 200;
 const MEMORY_INDEX_CHARACTER_LIMIT = 25_000;
 // Newest index entries are appended at the end, so over the limits the kept budget is biased

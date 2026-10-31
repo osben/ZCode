@@ -13,15 +13,13 @@ export function resolveChatPlaceholderKey(options: {
 }): ChatPlaceholderMessageKey {
   const { compactNewTask = false, hasHistoryMessages, isTaskProcessing } = options;
 
-  // Branch by meaning:
-  // 1) No history -> newTask
-  // 2) Has history and idle -> followUpAsk
-  // 3) Has history and running -> followUpQueue
+  // Still processing while the first submission is committed but its message projection has not arrived; empty history must not flash back to the new-task hint.
+  if (isTaskProcessing) return "chat.placeholder.followUpQueue";
   if (!hasHistoryMessages) {
     return compactNewTask ? "chat.placeholder.newTaskMobile" : "chat.placeholder.newTask";
   }
 
-  return isTaskProcessing ? "chat.placeholder.followUpQueue" : "chat.placeholder.followUpAsk";
+  return "chat.placeholder.followUpAsk";
 }
 
 export function shouldDeferChatPlaceholder(options: {

@@ -1,25 +1,15 @@
-# Project Sidebar Width Stability
+# 项目侧栏宽度稳定性
 
-2026-09-11: users reported that the "显示更多" (show more) button flickered while idle and sat off-center to the
-right. This supplements the section layout boundary of the virtual-project spec.
+2026-09-11 用户反馈“显示更多”静止时持续闪动且偏右；本条补充虚拟项目 spec 的分区布局边界。
 
-The single-column width of the project/task sections is decided by the sidebar's available width. A task title and
-its marquee copy must not stretch the section; title overflow stays with the original TaskTitleOverflowText and the
-page size stays with ProjectTaskRows. "显示更多" is centered within its task list's width and stays stable before
-and after paging.
+项目/任务分区的单列宽度由侧栏可用宽度决定。任务标题及其走马灯副本不能撑开分区；标题溢出由原 TaskTitleOverflowText 管理，分页数量仍由 ProjectTaskRows 管理。分页入口的宽度与水平位置保持稳定。2026-09-15 的[分页文字规格](../../ui/sidebar-show-more-typography.md)已将普通列表收口为每页 5 条并保留文字缩进；本回归沿用该后续规格，不再要求旧版居中或每页 20 条。
 
 ```text
-sidebar available width -> section column width -> title overflow detection -> title copy
-                               ^                                              |
-                               +---------- reverse stretching forbidden ------+
+侧栏可用宽度 -> 分区列宽 -> 标题溢出检测 -> 标题副本
+                   ^                         |
+                   +------ 禁止反向撑宽 ------+
 ```
 
-The fix constrains the minimum width of the Grid single column in the project-sidebar UI module. It reuses the
-original column gap, collapse, task title, paging and data owners; no new state, observer or timer is added. Desktop
-and mobile share this layout; the continuous / replayable and Host / CLI data chains are unchanged.
+修复在 project-sidebar UI 模块约束 Grid 单列的最小宽度；复用原列间距、折叠、任务标题、分页和数据 owner，不添加状态、observer 或定时器。桌面及手机共享这层布局，不改变 continuous / replayable 和 Host / CLI 数据链路。
 
-Acceptance VP-WIDTH-01 (accepted / pending): a real Electron renderer with an isolated HOME and a synthetic task
-index, 25 mixed long/short titles in each of the project and task areas, no provider requests. Observe idle for a
-time window: no horizontal section overflow, no button width jumps, text centered in the task list; clicking
-"显示更多" expands 20 items to 25. Check light/dark themes and normal/narrow section widths. The synthetic index
-proves layout and paging only, not session resume or CLI sync.
+验收 VP-WIDTH-01（accepted / pending）：真实 Electron renderer 使用隔离 HOME 的合成任务索引，项目与任务区各 25 条混合长短标题；无 provider 请求。静止观察一个时间窗口，分区无横向溢出、按钮宽度不跳变、分页入口不发生水平跳动；逐次点击“显示更多”按 5→10→15→20→25 展开。检查明暗主题以及正常/窄分区宽度。合成索引仅用于布局及分页，不证明会话恢复或 CLI 同步。

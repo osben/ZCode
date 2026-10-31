@@ -4,6 +4,7 @@ import {
   FALLBACK_UI_LOCALE,
   buildLocalMediaPreviewUrl,
   resolveSystemLocale,
+  unwrapRemoteWorkspaceBindResult,
   type IPlatformService,
 } from "@zcode/shared";
 
@@ -36,7 +37,7 @@ export function createDesktopPlatform(options: {
       window.zcode.materializeWorkflowArtifactFile(payload),
     onRemoteConnectionLog: (handler) => window.zcode.onRemoteConnectionLog(handler),
     onRemoteSessionClosed: (handler) => window.zcode.onRemoteSessionClosed(handler),
-    // Source 自动重连会替换 logical session；统一由 preload bridge 转发换代事件。
+    // Source auto-reconnect replaces the logical session; the preload bridge forwards the generation change centrally.
     onRemoteSessionReconnected: (handler) =>
       window.zcode.onRemoteSessionReconnected?.(handler) ?? (() => {}),
     activateOrSetWorkspace: (path) =>
@@ -48,9 +49,15 @@ export function createDesktopPlatform(options: {
       Promise.reject(new Error("Source settings attachment bridge unavailable")),
     cancelPendingRemoteConnection: (requestId) =>
       window.zcode.cancelPendingRemoteConnection?.(requestId) ?? Promise.resolve(),
-    bindRemoteWorkspaceSessionContext: (context) =>
-      window.zcode.bindRemoteWorkspaceSessionContext?.(context) ??
-      Promise.reject(new Error("Desktop bindRemoteWorkspaceSessionContext bridge unavailable")),
+    bindRemoteWorkspaceSessionContext: async (context) => {
+      if (!window.zcode.bindRemoteWorkspaceSessionContext) {
+        throw new Error("Desktop bindRemoteWorkspaceSessionContext bridge unavailable");
+      }
+      // preload returns the structured result; restoring the error on the page side keeps code/retryable.
+      return unwrapRemoteWorkspaceBindResult(
+        await window.zcode.bindRemoteWorkspaceSessionContext(context),
+      );
+    },
     startWebRemoteControl: (context) => window.zcode.startWebRemoteControl(context),
     stopWebRemoteControl: () => window.zcode.stopWebRemoteControl(),
     getWebRemoteControlStatus: () => window.zcode.getWebRemoteControlStatus(),
@@ -90,6 +97,7 @@ export function createDesktopPlatform(options: {
     onPaymentCallback: (callback) => window.zcode.onPaymentCallback(callback),
     onShareImport: (callback) => window.zcode.onShareImport?.(callback) ?? (() => {}),
     notifyRendererReady: () => window.zcode.notifyRendererReady(),
+    syncTelemetryContext: (context) => window.zcode.syncTelemetryContext(context),
     reportTelemetryEvent: (payload) => window.zcode.reportTelemetryEvent(payload),
     reportArmsCustomEvent: (payload) => {
       recordArmsCustomEventForE2E(payload);
@@ -114,10 +122,12 @@ export function createDesktopPlatform(options: {
       window.zcode.syncWebRemoteControlWorkspaces?.(workspaces),
     onWebRemoteControlReconnectWorkspace: (handler) =>
       window.zcode.onWebRemoteControlReconnectWorkspace?.(handler) ?? (() => {}),
+    onWebRemoteControlRendererAction: (handler) =>
+      window.zcode.onWebRemoteControlRendererAction?.(handler) ?? (() => {}),
     syncWindowUnreadCount: (count) => window.zcode.syncWindowUnreadCount(count),
     syncActiveTaskSession: (sessionId) => window.zcode.syncActiveTaskSession(sessionId),
     syncAppSettings: (patch) => window.zcode.syncAppSettings?.(patch),
-    // 桥缺失（旧 preload 升级窗口）时按 supported 兜底，与 Windows 现状一致，设置开关可用。
+    // When the bridge is missing (old preload in an upgraded window), fall back to supported, matching Windows, so the settings toggle stays usable.
     getCloseToTrayCapability: () =>
       window.zcode.getCloseToTrayCapability?.() ??
       Promise.resolve({ supported: true, gnomeLikeWithoutTray: false }),
@@ -149,9 +159,10 @@ export function createDesktopPlatform(options: {
     onNewTask: (handler) => window.zcode.onNewTask(handler),
     onOpenTaskDraft: (handler) => window.zcode.onOpenTaskDraft?.(handler) ?? (() => {}),
     onOpenWorkspace: (handler) => {
-      // 开发态或升级后的旧窗口可能仍运行未暴露 onOpenWorkspace 的 preload，
-      // renderer 直接调用会在启动时崩溃。这里和 activateOrSetWorkspace 一样做兼容兜底，
-      // 缺少该 bridge 时只禁用原生菜单回调，不影响应用继续打开。
+      // Dev builds or old windows after an upgrade may still run a preload that does not expose
+      // onOpenWorkspace; a direct renderer call would crash at startup. Like activateOrSetWorkspace,
+      // this adds a compatibility fallback. When the bridge is missing, only the native menu callback
+      // is disabled and the app still opens.
       return window.zcode.onOpenWorkspace?.(handler) ?? (() => {});
     },
     onOpenWorkspacePath: (handler) => window.zcode.onOpenWorkspacePath?.(handler) ?? (() => {}),
@@ -203,6 +214,9 @@ export function createDesktopPlatform(options: {
     skipUpdateVersion: (version) => window.zcode.skipUpdateVersion?.(version) ?? Promise.resolve(),
     quitAndInstallUpdate: () => window.zcode.quitAndInstallUpdate(),
     getInstalledEditors: (filePath) => window.zcode.getInstalledEditors(filePath),
+    getFileApplications: (target) => window.zcode.getFileApplications(target),
+    openFileWithApplication: (applicationId, target) =>
+      window.zcode.openFileWithApplication(applicationId, target),
     getApplicationIcon: (bundleId) =>
       window.zcode.getApplicationIcon?.(bundleId) ?? Promise.resolve(null),
     openInEditor: (editorId, path, editorOptions) =>

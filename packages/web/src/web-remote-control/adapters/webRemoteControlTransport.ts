@@ -50,6 +50,8 @@ export class WebRemoteControlTerminalTransport {
   private tokenController?: AbortController;
   private handshakeTimer?: ReturnType<typeof setTimeout>;
   private authenticated = false;
+  // The socket the last matched arrived on that has not yet been revoked by waiting/INTERNAL/close; suspending does not revoke this connection fact.
+  private pairedSocket?: WebSocket;
   private readonly heartbeat: WebRemoteControlV2Heartbeat;
   private socketGeneration = 0;
   private lastPairedSocketGeneration = 0;
@@ -213,7 +215,9 @@ export class WebRemoteControlTerminalTransport {
         maxBytes: WEB_REMOTE_CONTROL_RPC_TRANSPORT_LIMITS.maxPhysicalFrameBytes,
       };
     }
-    if (this.state !== "paired" || this.staleWaitingCount > 0) {
+    // While suspended, only ack already-received reliable frames so the peer's 45-second deadline is not misjudged; new business sends still wait for paired.
+    const retainedAck = payload.zcode_type === "rpc-frame-ack" && this.canContinueRetainedRpc();
+    if ((this.state !== "paired" && !retainedAck) || this.staleWaitingCount > 0) {
       return { kind: "unavailable" };
     }
     return this.sendSerialized(prepared.message, prepared.json)
@@ -323,12 +327,23 @@ export class WebRemoteControlTerminalTransport {
         this.applyPairStatus(message.pair_status);
         break;
       case "pair_status_ack":
-        if (!this.authenticated || this.state === "suspended") return;
+        if (!this.authenticated) return;
+        if (this.state === "suspended") {
+          // Background waiting only revokes the raw-frame permit; a late matched does not revive the page or heartbeat — the foreground probe reconfirms.
+          if (message.pair_status === "waiting") this.pairedSocket = undefined;
+          return;
+        }
         this.applyPairStatus(message.pair_status);
         break;
       case "data":
-        if (!this.authenticated || this.state !== "paired") return;
-        this.handleDataPayload(message.payload);
+        if (!this.authenticated) return;
+        if (this.state === "paired") {
+          this.handleDataPayload(message.payload);
+        } else if (this.canContinueRetainedRpc() && isRawTransportCandidate(message.payload)) {
+          // Bugfix: 3.16 dropped rpc-frames of the still-valid socket while suspended/probing, so the next frame's sequence had a gap (physicalGap, bridge rebuild).
+          // Raw frames go to the existing adapter for identity and ordering checks; unaccepted ones do not fall back to app payloads.
+          this.options.onRawTransportPayload?.(message.payload);
+        }
         break;
       case "error":
         this.handleRelayError(message.code, message.message);
@@ -336,7 +351,18 @@ export class WebRemoteControlTerminalTransport {
     }
   }
 
+  /** Whether, during suspension or original-socket probing, the current socket is still the same authenticated open connection; by default also requires the raw-frame permit not to be revoked. */
+  private canContinueRetainedRpc(requirePermit = true): boolean {
+    return (
+      (this.state === "suspended" || this.state === "reconnecting") &&
+      this.authenticated &&
+      (!requirePermit || this.socket === this.pairedSocket) &&
+      this.socket?.readyState === this.WebSocketCtor.OPEN
+    );
+  }
+
   private applyPairStatus(status: "waiting" | "matched"): void {
+    this.pairedSocket = status === "matched" ? this.socket : undefined;
     this.lastPairStatusAckAt = Date.now();
     this.emitDiagnostic({ type: "pair-status", pairStatus: status, state: this.state });
     if (webRemoteControlV2PairState(status) === "waiting_terminal") {
@@ -406,6 +432,14 @@ export class WebRemoteControlTerminalTransport {
       return;
     }
     if (code === "INTERNAL") {
+      if (this.wasPaired && this.canContinueRetainedRpc(false)) {
+        // Bugfix: an ACK sent while suspended gets INTERNAL when the hub cannot find the desktop. An unpaired reconnect would close the socket
+        // and clear wasPaired, skipping the original-socket probe on return and failing after 30s if the desktop is gone; only revoke the permit.
+        // With several ACKs in flight INTERNAL repeats and the first already revoked it, so no permit is required, else later ones fall into the unpaired branch.
+        this.pairedSocket = undefined;
+        this.options.onError(new Error(message || code));
+        return;
+      }
       if (this.state === "paired" || (this.hadPairedSession && this.state === "waiting")) {
         this.enterWaitingForDeviceAfterRelayError(message || code);
         return;
@@ -588,6 +622,7 @@ export class WebRemoteControlTerminalTransport {
   }
 
   private enterWaitingForDeviceAfterRelayError(message: string): void {
+    this.pairedSocket = undefined;
     // Bugfix: when zcode-remote-hub forwards data on an authenticated connection and cannot find the device, it only returns INTERNAL,
     // and does not close the current terminal WS. Here the phone-side WS is kept, downgraded to waiting, and pairing status continues to be queried,
     // to avoid amplifying "the desktop is temporarily absent" into repeated phone-side reconnects.
@@ -665,6 +700,7 @@ export class WebRemoteControlTerminalTransport {
   }
 
   private closeSocket(): void {
+    this.pairedSocket = undefined;
     // A wait timeout belongs to the old socket; KICKED's backoff must not let its leftover reference block the new generation from restarting the timer.
     this.clearWaitingTimer();
     ++this.socketGeneration;

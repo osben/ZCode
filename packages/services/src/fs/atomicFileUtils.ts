@@ -1,4 +1,15 @@
-import { mkdir, writeFile, rename, rm, readdir, readFile, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  writeFile,
+  rename,
+  rm,
+  readdir,
+  readFile,
+  stat,
+} from "node:fs/promises";
 import { dirname, basename, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { acquireFileLock, atomicWritePrivateTextFile } from "@zcode/shared/node";
@@ -49,6 +60,36 @@ function getErrorCode(error: unknown): string | undefined {
 
   const code = (error as { code?: unknown }).code;
   return typeof code === "string" ? code : undefined;
+}
+
+/** Whether the path itself exists (lstat, not following symlinks: a dangling symlink also counts as existing). Other errors are rethrown as they are. */
+export async function pathExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if (getErrorCode(error) === "ENOENT") return false;
+    throw error;
+  }
+}
+
+/**
+ * A temporary file in the same directory (starts with `.`, which scans skip) + rename atomically replaces the target file; when mode is passed, the original file's permission bits are kept.
+ * The temporary file is written with `wx`, so it never overwrites an existing file; on failure the temporary file is deleted. No locking and no retries.
+ */
+export async function writeFileAtomically(
+  path: string,
+  content: Uint8Array,
+  mode?: number,
+): Promise<void> {
+  const temp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
+  try {
+    await writeFile(temp, content, { flag: "wx" });
+    if (mode !== undefined) await chmod(temp, mode & 0o777);
+    await rename(temp, path);
+  } finally {
+    await rm(temp, { force: true });
+  }
 }
 
 function isRetryableAtomicRenameError(error: unknown): boolean {

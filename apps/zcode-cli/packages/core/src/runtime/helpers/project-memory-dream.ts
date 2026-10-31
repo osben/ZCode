@@ -3,11 +3,12 @@ import { randomUUID } from "node:crypto";
 import { incognitoExcludes } from "@zcode/shared";
 
 import type { BackgroundTaskPayloadBase, ModelTextContentBlock } from "@zcode/contracts";
-import type { Model, ModelInputMessage, SessionInfo, TraceContext } from "../deps.js";
+import type { Model, SessionInfo, TraceContext } from "../deps.js";
 import { SessionEventType, traceContextToLogContext } from "../deps.js";
 import {
   systemReminderAttachmentEntry,
   type RuntimeAttachmentEntry,
+  type RuntimeMessageEntry,
 } from "../../agent/message-history.js";
 import {
   acquireDreamLock,
@@ -34,10 +35,11 @@ import { findLatestReadFileState } from "../../tool/read-file-state.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { resolveMainAgentSystemPromptOverrides } from "../methods/context.js";
 import {
-  prepareProjectMemoryAgentRequest,
   captureProjectMemoryAgentContext,
-  createProjectMemoryAgentToolExecutor,
+  createProjectMemoryAgentToolRunner,
+  projectMemoryAgentEntries,
   recordProjectMemoryAgentModelUsageFact,
+  renderProjectMemoryAgentRequest,
   type ProjectMemoryAgentContext,
 } from "./project-memory-agent.js";
 import { invalidateProjectMemoryRecallPaths } from "./project-memory-recall.js";
@@ -514,38 +516,39 @@ async function runDreamConsolidation(
       sessionIds: input.transcriptSessionIds,
       transcriptRoot: runtime.modelIoDir!,
     });
-    const request = prepareProjectMemoryAgentRequest(context, prompt);
-    const executor = createProjectMemoryAgentToolExecutor(runtime, context);
+    const initialEntries = projectMemoryAgentEntries(context, prompt);
+    const runTools = createProjectMemoryAgentToolRunner(runtime, context);
     const touchedPaths = new Set<string>();
 
     phase = "agent_loop";
     const loopResult = await runMemoryAgentLoop({
       abortSignal: input.abortSignal,
-      executeTool: async (toolCall, loopOptions) => {
-        const callPaths = new Set<string>();
-        collectDreamTouchedPaths(callPaths, {
-          rootDir: context.memoryRoot,
-          toolCall,
-          workingDirectory: context.workingDirectory,
-          workspaceRoot: context.workspaceRoot,
-        });
-        // The snapshot must be durable before the tool runs, so a crash mid-tool still leaves
-        // the pre-change state on record.
-        for (const filePath of callPaths) {
-          touchedPaths.add(filePath);
-          await snapshotBeforeTouchSafely(runtime, context, journal, filePath);
+      entries: initialEntries,
+      executeToolCalls: async (toolCalls, loopOptions) => {
+        for (const toolCall of toolCalls) {
+          const callPaths = new Set<string>();
+          collectDreamTouchedPaths(callPaths, {
+            rootDir: context.memoryRoot,
+            toolCall,
+            workingDirectory: context.workingDirectory,
+            workspaceRoot: context.workspaceRoot,
+          });
+          // The snapshot must be durable before the batch runs, so a crash mid-tool still leaves
+          // the pre-change state on record.
+          for (const filePath of callPaths) {
+            touchedPaths.add(filePath);
+            await snapshotBeforeTouchSafely(runtime, context, journal, filePath);
+          }
+          input.onActivity?.(describeDreamToolActivity(toolCall));
         }
-        input.onActivity?.(describeDreamToolActivity(toolCall));
-        return executor.execute(toolCall, {
-          signal: loopOptions.abortSignal,
-          traceContext: context.traceContext,
-        });
+        return runTools(toolCalls, loopOptions);
       },
       onRequestStart: (index) => input.onActivity?.(`Model request ${index + 1}…`),
       onRequestSettled: (request) =>
         recordProjectMemoryAgentModelUsageFact(runtime, context, request, "dream"),
       maxTurns: DREAM_MAX_TURNS,
-      request,
+      registry: runtime.registry,
+      renderRequest: (entries) => renderProjectMemoryAgentRequest(context, entries),
       model: context.model,
       rootDir: context.memoryRoot,
       workingDirectory: context.workingDirectory,
@@ -580,7 +583,9 @@ async function runDreamConsolidation(
     });
     return {
       status: "consolidated",
-      summary: finalAssistantText(loopResult.messages) ?? memoryUpdateSummary(paths),
+      summary:
+        finalAssistantText(loopResult.entries.slice(initialEntries.length)) ??
+        memoryUpdateSummary(paths),
       touchedPaths: paths,
     };
   } catch (error) {
@@ -697,10 +702,11 @@ function dreamNotificationText(
 }
 
 /** Last non-empty assistant text from the Memory agent loop, or undefined when the loop ended without one. */
-function finalAssistantText(messages: readonly ModelInputMessage[]): string | undefined {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (!message || message.role !== "assistant") continue;
+function finalAssistantText(entries: readonly RuntimeMessageEntry[]): string | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (!entry || entry.kind === "attachment" || entry.message.role !== "assistant") continue;
+    const message = entry.message;
     const text =
       typeof message.content === "string"
         ? message.content

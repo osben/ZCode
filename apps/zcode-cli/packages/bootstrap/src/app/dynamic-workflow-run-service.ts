@@ -418,6 +418,7 @@ export function createDynamicWorkflowRunService(
     trackSettlement,
     close,
     assertOpen,
+    trackOperation,
     noteForeignTerminalRow,
   } = createRunServiceLifecycle({
     journal: deps.journal,
@@ -437,6 +438,7 @@ export function createDynamicWorkflowRunService(
     runs,
     escalations,
     caps,
+    assertOpen,
     trackSettlement,
   };
 
@@ -452,12 +454,12 @@ export function createDynamicWorkflowRunService(
       request: DynamicWorkflowRunSubmitRequest,
     ): Promise<DynamicWorkflowRunSubmitResult> {
       assertOpen();
-      return submitDynamicWorkflowRun(entryContext, request);
+      return trackOperation(() => submitDynamicWorkflowRun(entryContext, request));
     },
 
     async amend(request: DynamicWorkflowRunAmendRequest): Promise<DynamicWorkflowRunAmendResult> {
       assertOpen();
-      return amendDynamicWorkflowRun(entryContext, request);
+      return trackOperation(() => amendDynamicWorkflowRun(entryContext, request));
     },
 
     /**
@@ -483,7 +485,7 @@ export function createDynamicWorkflowRunService(
 
     async resume(runId: string): Promise<DynamicWorkflowRunResumeResult> {
       assertOpen();
-      return resumeDynamicWorkflowRun(entryContext, runId);
+      return trackOperation(() => resumeDynamicWorkflowRun(entryContext, runId));
     },
 
     async listRunsForSession(limit?: number): Promise<DynamicWorkflowRunSessionSummary[]> {

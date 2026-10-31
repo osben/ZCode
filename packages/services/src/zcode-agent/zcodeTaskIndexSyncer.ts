@@ -197,8 +197,13 @@ function resolveTerminalUnreadSignal(
   if (summary.phase === "error") {
     return "background_terminal";
   }
+  // completedInterrupted means the old execution was interrupted by the user actively stopping,
+  // sending a new message, or starting a new conversation. It is still a terminal/ready boundary and
+  // task status still resolves to completed; we only avoid fabricating an unread badge here, so a
+  // deliberate user action does not leave a red dot that requires switching away and back to clear.
+  if (summary.phase === "completedInterrupted") return undefined;
   if (
-    (summary.phase === "completedSuccess" || summary.phase === "completedInterrupted") &&
+    summary.phase === "completedSuccess" &&
     (summary.goalStatus === undefined || summary.goalStatus === "verified")
   ) {
     return "background_terminal";

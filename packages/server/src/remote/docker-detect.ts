@@ -178,6 +178,7 @@ export async function isDockerAvailable(): Promise<boolean> {
     // Previously only a missing docker command counted as unavailable, so an unstarted daemon was still reported as available
     // and the UI kept showing the Docker entry until connection failed.
     // Return false for any probe failure so the entry reflects actual connectability.
+    // Connection paths that need the failure reason use probeDockerDaemon.
     return false;
   }
 }

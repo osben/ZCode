@@ -4,7 +4,7 @@
 // ② top history reachable — after scrollTop=0 the earliest rows are present in the DOM (the virtual window backfills correctly);
 // ③ scrolling up is not dragged back by streaming — while turn2 streams slowly and the user stays at the top, scrollTop is not yanked to the bottom by deltas;
 // ④ back-to-bottom button — appears once following is released; pressing it restores following and snaps to the bottom.
-// Full coverage of the anchor state machine semantics lives in the L1 unit test (packages/ui/test/v4TimelineScrollAnchor.test.ts).
+// The former L1 anchoring state-machine unit tests are retired; this spec only proves the four product scenarios above, not full state-space coverage.
 import { skipOccupationOnboardingIfPresent } from "../helpers/occupation-onboarding.js";
 import { clearAppData } from "../helpers/desktop-app.js";
 import {

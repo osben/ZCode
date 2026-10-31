@@ -30,6 +30,21 @@ export const HookOutcome = {
 
 export type HookOutcome = (typeof HookOutcome)[keyof typeof HookOutcome];
 
+/**
+ * What to do when the hook itself errors (non-0 and non-2 exit, timeout, output JSON failing
+ * schema). Default `allow`: pass through, same as before this field existed. `deny`: applies to
+ * PreToolUse only; the error is treated as the hook having blocked the tool call with exit code 2.
+ * User interruptions, untrusted workspace hooks that never ran, and async hooks are unaffected.
+ */
+export const HookOnError = {
+  Allow: "allow",
+  Deny: "deny",
+} as const;
+
+export type HookOnError = (typeof HookOnError)[keyof typeof HookOnError];
+
+export const HookOnErrorSchema = z.enum([HookOnError.Allow, HookOnError.Deny]);
+
 export const HookSourceKind = {
   User: "user",
   Plugin: "plugin",
@@ -331,6 +346,7 @@ export interface HookCommandConfig {
   async?: boolean;
   command: string;
   enabled?: boolean;
+  onError?: HookOnError;
   plugin?: HookPluginContext;
   shell?: true | string;
   /** Runtime-only provenance; the public config schema deliberately strips this field. */
@@ -345,6 +361,7 @@ export interface HookProcessConfig {
   args?: string[];
   command: string;
   enabled?: boolean;
+  onError?: HookOnError;
   plugin?: HookPluginContext;
   /** Runtime-only provenance; the public config schema deliberately strips this field. */
   source?: HookConfigSource;
@@ -408,6 +425,7 @@ export const HookProcessConfigSchema = z.object({
   args: z.array(z.string()).optional(),
   timeoutMs: z.number().int().positive().optional(),
   statusMessage: z.string().optional(),
+  onError: HookOnErrorSchema.optional(),
 });
 
 export const HookCommandConfigSchema = z.object({
@@ -419,6 +437,7 @@ export const HookCommandConfigSchema = z.object({
   timeout: z.number().positive().optional(),
   timeoutMs: z.number().int().positive().optional(),
   statusMessage: z.string().optional(),
+  onError: HookOnErrorSchema.optional(),
 });
 
 export const HookConfigSchema = z.discriminatedUnion("type", [

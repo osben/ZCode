@@ -22,7 +22,7 @@ import {
   resolve as resolvePath,
   sep,
 } from "node:path";
-import type { ExecutionPort, FileSystemPort } from "@zcode/contracts";
+import type { ExecutionOutputLimit, ExecutionPort, FileSystemPort } from "@zcode/contracts";
 import { WORLD_READ_CAPS, WorkflowError, type WorldReadOp } from "@zcode/dynamic-workflow";
 import {
   GIT_SHOW_PREFIX_ARGV,
@@ -327,20 +327,40 @@ interface WorldRunResult {
  *   3. **No timeout ceiling.** Defaults to 300s; scripts can increase it as needed (for tests
  *      that really run for a long time). Cancellation remains the final control.
  *
- * stdout/stderr are each capped at 256 KB, probed at cap+1 (`maxInlineBytes` is one more than
- * the larger cap, then each stream is checked separately). Reject over-limit output rather than
- * truncating it; the message gives an actionable next step, following the same policy as grep/diff.
+ * Output is collected in one of three `opts.output` modes ({@link WorldRunOutput}). **Bounded
+ * output must be declared at the call site**: results go verbatim into `dwf_node.result_json`
+ * and resume replays them verbatim, so the value the script receives and the journal value must
+ * be byte-identical. If the driver truncated on its own initiative, script and journal would be
+ * the same truncated view with nobody aware it is truncated; when the script declares
+ * `"discard"` / `{ tail }`, the bounded copy is the complete result of this call and the two
+ * copies agree naturally.
+ *
+ * - `full` (default): 16 MiB each for stdout/stderr, detected via cap+1 (`maxInlineBytes` set to
+ *   the larger cap +1, then judged per stream); over the limit it rejects rather than truncates —
+ *   the message offers an actionable next step, the same house policy as grep/diff.
+ * - `discard` / `tail`: `maxInlineBytes: 0`; the port still counts and still reads to exit
+ *   (persistOutput defaults to `"none"`; only a disk-write limit can fail the execution).
+ *   `truncated` is then always true, but it is **not** a cap violation: the script declared it
+ *   does not want the full text, nothing is hidden. `tail`'s tail is retained in chunks by the
+ *   port's `outputLimit.tailBytes`, not by buffering the whole stream here — that would still
+ *   hit the inline cap and defeat the mode.
  */
 async function worldRun(deps: WorldReadDeps, args: unknown[]): Promise<WorldRunResult> {
-  const { argv, cmd, timeoutMs } = worldRunArgs(args);
+  const { argv, cmd, timeoutMs, output } = worldRunArgs(args);
 
   const stdoutCap = WORLD_READ_CAPS.runStdoutMaxBytes;
   const stderrCap = WORLD_READ_CAPS.runStderrMaxBytes;
+  const outputLimit: ExecutionOutputLimit =
+    output.mode === "full"
+      ? { maxInlineBytes: Math.max(stdoutCap, stderrCap) + 1 }
+      : output.mode === "discard"
+        ? { maxInlineBytes: 0 }
+        : { maxInlineBytes: 0, tailBytes: output.bytes };
   const result = await deps.executionPort.run({
     command: { mode: "argv", file: cmd, args: argv },
     cwd: deps.cwd,
     timeoutMs,
-    outputLimit: { maxInlineBytes: Math.max(stdoutCap, stderrCap) + 1 },
+    outputLimit,
   });
 
   if (result.status === "timed_out") {
@@ -358,39 +378,122 @@ async function worldRun(deps: WorldReadDeps, args: unknown[]): Promise<WorldRunR
       result.error === undefined &&
       typeof result.exitCode === "number");
   if (!ranToExit) {
-    const detail = result.error?.message ?? (firstLine(result.stderr.text) || result.status);
+    const detail =
+      result.error?.message ??
+      (firstLine(result.stderr.text || (result.stderr.tail ?? "")) || result.status);
     throw new WorkflowError(
       "DriverError",
       `world.run '${cmd}' did not run to completion (${result.status}): ${detail}`,
     );
   }
 
+  const exitCode = result.exitCode ?? 0;
+  if (output.mode === "discard") return { exitCode, stdout: "", stderr: "" };
+  if (output.mode === "tail") {
+    const { tail: stdoutTail } = result.stdout;
+    const { tail: stderrTail } = result.stderr;
+    // Port contract: a request for tailBytes always comes back with a tail. Its absence is a
+    // wiring error (e.g. an unsupported port was swapped in); handing back an empty string would
+    // let a gating script misread "not received" as "no output".
+    if (stdoutTail === undefined || stderrTail === undefined) {
+      throw new WorkflowError(
+        "DriverError",
+        `world.run '${cmd}': the execution port returned no output tail for output: { tail: ${output.bytes} }.`,
+      );
+    }
+    return { exitCode, stdout: stdoutTail, stderr: stderrTail };
+  }
+
   if (result.stdout.bytes > stdoutCap || result.stdout.truncated) {
     throw capExceeded(
       `world.run '${cmd}': stdout is ${result.stdout.bytes} bytes, over the ${stdoutCap}-byte cap. ` +
-        `Quiet the output (e.g. --quiet), or write a file and files.read a summary.`,
+        `${RUN_OVER_CAP_HINT} Or quiet the output (e.g. --quiet), or write a file and files.read a summary.`,
     );
   }
   if (result.stderr.bytes > stderrCap || result.stderr.truncated) {
     throw capExceeded(
       `world.run '${cmd}': stderr is ${result.stderr.bytes} bytes, over the ${stderrCap}-byte cap. ` +
-        `Reduce the diagnostics, or write a file and files.read a summary.`,
+        `${RUN_OVER_CAP_HINT} Or reduce the diagnostics, or write a file and files.read a summary.`,
     );
   }
 
-  return {
-    exitCode: result.exitCode ?? 0,
-    stdout: result.stdout.text,
-    stderr: result.stderr.text,
-  };
+  return { exitCode, stdout: result.stdout.text, stderr: result.stderr.text };
+}
+
+/** Preferred next step when full mode exceeds the cap: declare bounded output at the call site. */
+const RUN_OVER_CAP_HINT = `Pass opts.output: { tail: n } to keep the last n bytes, or "discard" if only the exit code matters.`;
+
+/**
+ * `world.run` output mode (the validated shape of `opts.output`). One mode applies to both
+ * streams at once (settled: no per-stream variants).
+ * `tail.bytes` is capped at the full-mode cap: the tail also goes verbatim into the journal, so
+ * it draws on the same budget.
+ */
+type WorldRunOutput =
+  | { readonly mode: "full" }
+  | { readonly mode: "discard" }
+  | { readonly mode: "tail"; readonly bytes: number };
+
+const WORLD_RUN_TAIL_MAX_BYTES = Math.min(
+  WORLD_READ_CAPS.runStdoutMaxBytes,
+  WORLD_READ_CAPS.runStderrMaxBytes,
+);
+
+/** The only legal spelling of `opts.output`, embedded in every shape error so script authors
+ *  can see at a glance how to fix it. */
+const WORLD_RUN_OUTPUT_SHAPES = `"full", "discard", or { tail: n } with n an integer from 1 to ${WORLD_RUN_TAIL_MAX_BYTES}`;
+
+/** Preview of `opts.output` in error messages: the value is more actionable than a type name
+ *  (`{"tail":0}` beats `object`). */
+const OUTPUT_ARG_PREVIEW_MAX_CHARS = 80;
+
+function describeOutputArg(raw: unknown): string {
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(raw);
+  } catch {
+    text = undefined;
+  }
+  if (text === undefined) return describeArg(raw);
+  return text.length > OUTPUT_ARG_PREVIEW_MAX_CHARS
+    ? `${text.slice(0, OUTPUT_ARG_PREVIEW_MAX_CHARS)}…`
+    : text;
+}
+
+function worldRunOutputArg(raw: unknown): WorldRunOutput {
+  if (raw === undefined || raw === "full") return { mode: "full" };
+  if (raw === "discard") return { mode: "discard" };
+  const invalid = () =>
+    new WorkflowError(
+      "DriverError",
+      `world.run: opts.output must be ${WORLD_RUN_OUTPUT_SHAPES}; got ${describeOutputArg(raw)}.`,
+    );
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw invalid();
+  const keys = Object.keys(raw);
+  if (keys.length !== 1 || keys[0] !== "tail") throw invalid();
+  const bytes = (raw as { tail: unknown }).tail;
+  if (
+    typeof bytes !== "number" ||
+    !Number.isInteger(bytes) ||
+    bytes < 1 ||
+    bytes > WORLD_RUN_TAIL_MAX_BYTES
+  ) {
+    throw invalid();
+  }
+  return { mode: "tail", bytes };
 }
 
 /**
- * `world.run` argument shape: `[cmd: string, args?: string[], opts?: { timeoutMs?: number }]`.
+ * Argument shape of `world.run`: `[cmd: string, args?: string[], opts?: { timeoutMs?: number; output?: … }]`.
  * Follows the same rules as {@link worldReadStringArgs} (fail loudly, never coerce), but the
  * shape (array + options bag) exceeds the string-sequence helper's scope, so it is separate.
  */
-function worldRunArgs(args: unknown[]): { cmd: string; argv: string[]; timeoutMs: number } {
+function worldRunArgs(args: unknown[]): {
+  cmd: string;
+  argv: string[];
+  timeoutMs: number;
+  output: WorldRunOutput;
+} {
   if (args.length < 1 || args.length > 3) {
     throw new WorkflowError(
       "DriverError",
@@ -421,6 +524,7 @@ function worldRunArgs(args: unknown[]): { cmd: string; argv: string[]; timeoutMs
 
   const rawOpts = args[2];
   let timeoutMs: number = WORLD_READ_CAPS.runDefaultTimeoutMs;
+  let output: WorldRunOutput = { mode: "full" };
   if (rawOpts !== undefined) {
     if (typeof rawOpts !== "object" || rawOpts === null || Array.isArray(rawOpts)) {
       throw new WorkflowError(
@@ -440,9 +544,10 @@ function worldRunArgs(args: unknown[]): { cmd: string; argv: string[]; timeoutMs
       // time; cancellation is the final control.
       timeoutMs = rawTimeout;
     }
+    output = worldRunOutputArg((rawOpts as { output?: unknown }).output);
   }
 
-  return { argv, cmd, timeoutMs };
+  return { argv, cmd, timeoutMs, output };
 }
 
 // ——————————————————————————————— Pure helpers ———————————————————————————————

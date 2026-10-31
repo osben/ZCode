@@ -14,7 +14,7 @@
 // Like the draft itself, this is **best effort**: if stat fails, do not record it and let the model's first Edit fall back to the usual “Read first” path.
 
 import { createReadFileStateMetadataFromEntry } from "../read-file-state-metadata.js";
-import { createReadFileStateKey, normalizeReadFileStateMtimeMs } from "../read-file-state.js";
+import { normalizeReadFileStateMtimeMs, setReadFileStateEntry } from "../read-file-state.js";
 import type { ReadFileStateEntry, ToolExecutionContext } from "../types.js";
 
 export type WorkflowDraftAuthoringTool = "CreateWorkflow" | "AmendWorkflow" | "FillWorkflowHole";
@@ -56,7 +56,7 @@ export async function recordAuthoredWorkflowDraft(
     mtimeMs: normalizeReadFileStateMtimeMs(revision.mtimeMs),
     sizeBytes: revision.sizeBytes ?? Buffer.byteLength(draft.source, "utf8"),
   };
-  readFileState.set(createReadFileStateKey(draft.path, 1, undefined), entry);
+  setReadFileStateEntry(readFileState, entry);
 
   // Resume restores read-state only from tool-part metadata (read-file-state-hydrator.ts). Without recording this entry, the same
   // bug returns after session recovery.

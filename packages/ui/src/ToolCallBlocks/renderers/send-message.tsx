@@ -60,6 +60,14 @@ function readText(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
+// summary is now optional: the tool description says to use the message's first line as the preview when absent, and the card title matches that.
+function readFirstLine(value: string | undefined): string | undefined {
+  return value
+    ?.split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+}
+
 function readRawResultContent(raw: unknown): unknown {
   const rawRecord = toRecord(raw);
   const result = toRecord(rawRecord?.result);
@@ -139,9 +147,12 @@ export function SendMessageToolCallBlock(context: ToolCallBlockRenderContext) {
       : isStopped
         ? "chat.toolCall.status.stopped"
         : undefined;
+  const previewText = summary ?? readFirstLine(message);
   const primaryText = useMemo(
-    () => <span className="min-w-0 truncate">{summary ?? toolCall.title ?? "SendMessage"}</span>,
-    [summary, toolCall.title],
+    () => (
+      <span className="min-w-0 truncate">{previewText ?? toolCall.title ?? "SendMessage"}</span>
+    ),
+    [previewText, toolCall.title],
   );
   const secondaryText = useMemo(
     () =>

@@ -13,3 +13,7 @@ Legacy `hash` and `t` QR parameters are rejected by the QR parser. The contract 
 provide end-to-end encryption.
 
 Full semantics: [Relay V2 spec](../../../../docs/web-remote-control/relay-v2-pairing.md).
+
+## Mobile notifications
+
+mobilePushEventSchema / mobilePushRunSchema describe only the HTTP notification payload and never enter the Relay WebSocket messages. collectMobilePushEvents only classifies admitted online-state changes; it does not handle initial/recovery or IO.

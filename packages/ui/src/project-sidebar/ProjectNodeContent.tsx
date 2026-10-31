@@ -8,6 +8,7 @@ import {
   ExternalLink,
   FolderMinus,
   MessagesSquare,
+  Folders,
   ListTree,
   Pin,
   PinOff,
@@ -56,6 +57,7 @@ export type ProjectNodeProps = {
   project: VirtualProject;
   remoteHost?: RemoteProjectHost;
   deviceLabel?: string;
+  hideDeviceName?: boolean;
   diagnostics?: { error?: string };
   expanded: boolean;
   onExpandedChange(value: boolean): void;
@@ -79,6 +81,8 @@ export type ProjectNodeProps = {
   /** Set only when the project's primary root has a GitHub remote. */
   onOpenGitHub?(): void;
   onManageSessions?(): void;
+  /** Desktop only: jumps to Settings > Projects for bulk management. */
+  onManageProjects?(): void;
 };
 
 // 原因：useSortable 的激活/测量/落点更新曾让 41 个项目的菜单和 Tooltip 连续重渲染。
@@ -87,6 +91,7 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
   project,
   remoteHost,
   deviceLabel,
+  hideDeviceName = false,
   diagnostics,
   tasks,
   hasUnread = false,
@@ -103,6 +108,7 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
   onMenuOpen,
   onOpenGitHub,
   onManageSessions,
+  onManageProjects,
   additionalActions = EMPTY_ADDITIONAL_ACTIONS,
   editable,
   isOpen,
@@ -208,6 +214,17 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
             icon: FolderMinus,
             run: onRemoveEntry,
             group: "danger",
+          },
+        ]
+      : []),
+    ...(onManageProjects
+      ? [
+          {
+            id: "manage-projects",
+            label: intl.formatMessage({ id: "projectManagement.manage" }),
+            icon: Folders,
+            run: onManageProjects,
+            group: "projects",
           },
         ]
       : []),
@@ -320,7 +337,7 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
                       <span className="truncate text-ui-base text-foreground-subtle">
                         {project.name}
                       </span>
-                      {remoteHost ? (
+                      {remoteHost && !hideDeviceName ? (
                         <span
                           data-testid="project-device"
                           className="max-w-24 truncate text-ui-sm text-remote-foreground-muted"

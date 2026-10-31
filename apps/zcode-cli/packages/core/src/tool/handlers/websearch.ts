@@ -32,31 +32,14 @@ const PROVIDER_WEBSEARCH_TOOL_NAME = "web_search";
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_USES = 8;
 
-const WEBSEARCH_MONTH_NAMES = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-] as const;
-
-function buildWebSearchProviderDescription(now: Date = new Date()): string {
-  const currentMonth = `${WEBSEARCH_MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`;
-  return [
-    "Search the web. Returns result blocks with titles and URLs. US-only.",
-    "",
-    `- The current month is ${currentMonth} — use this when searching for recent information.`,
-    "- `allowed_domains` / `blocked_domains` filter results.",
-    '- After answering from results, end with a "Sources:" list of the URLs you used as markdown links.',
-  ].join("\n");
-}
+// The current month is deliberately not in the description: the model learns the month from the session's current date, keeping the description byte-stable so the tools cache does not invalidate across months.
+const WEBSEARCH_PROVIDER_DESCRIPTION = [
+  "Search the web. Returns result blocks with titles and URLs. US-only.",
+  "",
+  "- The current month is (provided in the conversation below) — use this when searching for recent information.",
+  "- `allowed_domains` / `blocked_domains` filter results.",
+  '- After answering from results, end with a "Sources:" list of the URLs you used as markdown links.',
+].join("\n");
 
 const webSearchHandler: ToolHandler<WebSearchInput, WebSearchOutput> = async (input, context) => {
   const startedAt = Date.now();
@@ -92,8 +75,8 @@ const webSearchHandler: ToolHandler<WebSearchInput, WebSearchOutput> = async (in
       },
     ],
     tools: [createProviderNativeWebSearchContract(input)],
-    // BigModel 的 Anthropic 兼容端点会拒绝 named forced web_search tool_choice（1210）。
-    // 这里保持自动选择，依靠单工具请求和 prompt 触发 provider-native 搜索。
+    // BigModel's Anthropic-compatible endpoint rejects a named forced web_search tool_choice (1210).
+    // Keep auto selection here; the single-tool request plus the prompt triggers provider-native search.
     options: {
       ...auxiliaryModelOptions(model),
       maxOutputTokens: Math.min(4096, model.optionSpecs.maxOutputTokens.max),
@@ -101,9 +84,9 @@ const webSearchHandler: ToolHandler<WebSearchInput, WebSearchOutput> = async (in
     abortSignal: context.abortSignal,
   };
 
-  // BigModel Anthropic 兼容端点的非流式 JSON 会把 provider 内部
-  // web_search 结果返回为 assistant-side 裸 tool_result，AI SDK 会在 schema
-  // 校验阶段抛 Invalid JSON response。走流式可复用现有 SSE compat。
+  // BigModel's Anthropic-compatible endpoint, in non-streaming JSON, returns provider-internal
+  // web_search results as an assistant-side bare tool_result, and the AI SDK then throws
+  // Invalid JSON response at schema validation. Streaming reuses the existing SSE compat.
   const result = await collectWebSearchStreamResult({
     events: runWithModelInvocationContext(
       {
@@ -116,7 +99,7 @@ const webSearchHandler: ToolHandler<WebSearchInput, WebSearchOutput> = async (in
           querySource: "web_search_tool",
         },
         modelCall: { operation: "web_search" },
-        // statusSink 不在这里设：执行器交出的 context.model 已带默认会话事件出口。
+        // statusSink is not set here: the executor-provided context.model already carries the default session event sink.
         traceContext: webSearchTraceFromContext(context),
       },
       () => assertNotExternalAgentModel(model, "web search").streamText(request),
@@ -133,11 +116,7 @@ export const webSearchToolEntry: ToolEntry = {
     shouldDefer: true,
     name: WEBSEARCH_TOOL_NAME,
     searchHint: "search the web for current information",
-    // 写死月份会导致模型可见的 WebSearch 描述过期。
-    // 每次读取时重新生成，避免长驻进程跨月后继续投递旧月份。
-    get description() {
-      return buildWebSearchProviderDescription();
-    },
+    description: WEBSEARCH_PROVIDER_DESCRIPTION,
     readOnly: true,
     destructive: false,
     concurrentSafe: true,

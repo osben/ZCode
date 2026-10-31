@@ -31,6 +31,14 @@ import {
 import type { TaskIdentityRef } from "@/lib/taskNavigationHistory.js";
 
 const subscribeToNothing = () => () => {};
+const sameReadErrors = (left: ReadonlyMap<string, string>, right: ReadonlyMap<string, string>) =>
+  left.size === right.size && [...left].every(([hostId, message]) => right.get(hostId) === message);
+const sameAvailability = (
+  left: ReadonlyMap<string, ProjectAvailability>,
+  right: ReadonlyMap<string, ProjectAvailability>,
+) =>
+  left.size === right.size &&
+  [...right].every(([key, value]) => areStabilizedValuesEquivalent(left.get(key), value));
 const zeroRevision = () => 0;
 const EMPTY: ProjectTree = { projects: [], tasks: [] };
 export function useProjectTree(isDesktop = false) {
@@ -61,6 +69,8 @@ export function useProjectTree(isDesktop = false) {
     new Map(),
   );
   const [directory, setDirectory] = useState<RemoteProjectDirectory>({ hosts: [], entries: [] });
+  // Last project read failure per Host; display projection only, not persisted, cleared by the next successful read.
+  const [hostReadErrors, setHostReadErrors] = useState<ReadonlyMap<string, string>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const serial = useRef(0);
@@ -86,6 +96,7 @@ export function useProjectTree(isDesktop = false) {
     service: typeof service;
     remote: typeof remoteService;
     tree: ProjectTree;
+    errors: ReadonlyMap<string, string>;
   } | null>(null);
   const readOnce = useCallback(async () => {
     const request = serial.current;
@@ -112,7 +123,16 @@ export function useProjectTree(isDesktop = false) {
             }
           }
         }
-        accepted.current = { service, remote: remoteService, tree: result.tree };
+        // Reads are triggered by events and failures may persist; log only when the error changes, to avoid repeated logs for one fault.
+        for (const [hostId, message] of result.errors)
+          if (previous?.errors.get(hostId) !== message)
+            logger.warn("[project-sidebar] 读取远端项目失败", { hostId, error: message });
+        accepted.current = {
+          service,
+          remote: remoteService,
+          tree: result.tree,
+          errors: result.errors,
+        };
         // Deletion facts are owned here and retained per host: a failed or offline host keeps its last-known tombstones,
         // and a host leaves the facts only when it leaves directory membership. A different service starts from empty facts.
         deletedTaskFacts.current = reconcileDeletedTaskFacts({
@@ -162,15 +182,13 @@ export function useProjectTree(isDesktop = false) {
           // 树已复用等价引用，但连接/入口每次 RPC 都是新对象，仍会广播整棵目录。
           // 在接收边界比较完整内容；连接变化与入口移除仍发布，不在组件 memo 中忽略字段。
           setAvailability((previous) =>
-            previous.size === result.availability.size &&
-            [...result.availability].every(([key, value]) =>
-              areStabilizedValuesEquivalent(previous.get(key), value),
-            )
-              ? previous
-              : result.availability,
+            sameAvailability(previous, result.availability) ? previous : result.availability,
           );
           setDirectory((previous) =>
             areStabilizedValuesEquivalent(previous, result.directory) ? previous : result.directory,
+          );
+          setHostReadErrors((previous) =>
+            sameReadErrors(previous, result.errors) ? previous : result.errors,
           );
           setError(null);
           for (const pending of ready) {
@@ -194,6 +212,23 @@ export function useProjectTree(isDesktop = false) {
         setError(String(cause));
         for (const pending of pendingCommits.current) pending.finish(cause);
         logger.error("[project-sidebar] 读取项目树失败", cause);
+      }
+      // Bug cause: the read waits for the remote entry directory first; during cold start it keeps failing (e.g. Source Directory init failure),
+      // leaving the sidebar with no snapshot and local projects empty too. Without a successful snapshot only the local tree is re-read; with a snapshot
+      // keep the previous complete tree, so remote projects do not vanish for a round and cancel in-flight remote navigation, edits and first-send commits.
+      if (service && request === serial.current && accepted.current?.service !== service) {
+        const local = await readProjectSidebarTree({ projectService: service }).catch(() => null);
+        if (local && request === serial.current) {
+          // Bug cause: the local-only tree read returns new availability/directory objects every time; while the directory keeps failing every refresh
+          // re-broadcasts the whole sidebar. It uses the same equivalence check as the success path; the reference is kept when the content is unchanged.
+          setTree((previous) => stabilizeProjectTree(previous, local.tree));
+          setAvailability((previous) =>
+            sameAvailability(previous, local.availability) ? previous : local.availability,
+          );
+          setDirectory((previous) =>
+            areStabilizedValuesEquivalent(previous, local.directory) ? previous : local.directory,
+          );
+        }
       }
     } finally {
       if (request === serial.current) setLoading(false);
@@ -374,6 +409,7 @@ export function useProjectTree(isDesktop = false) {
       factTree: tree,
       directory,
       availability,
+      hostReadErrors,
       service,
       remoteService,
       refresh: refreshDirectory,
@@ -387,6 +423,7 @@ export function useProjectTree(isDesktop = false) {
       tree,
       directory,
       availability,
+      hostReadErrors,
       service,
       remoteService,
       refreshDirectory,

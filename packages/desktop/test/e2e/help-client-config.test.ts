@@ -13,6 +13,7 @@ type DesktopBridge = {
   executeDesktopCommand(command: string): Promise<void>;
   canOpenCommunity(locale: Locale): Promise<boolean>;
   setApplicationLocale(locale: Locale): Promise<void>;
+  getDeviceId(): Promise<string>;
 };
 
 async function command(command: string) {
@@ -45,12 +46,12 @@ describe("帮助配置 client/configs", () => {
     originalSettings = await readSettings();
     fixture = await readHelpFixture();
     const appPath = await browser.electron.execute((electron) => electron.app.getAppPath());
-    // E2E 必须只改 worker 的隔离默认配置，绝不写开发者的真实安装目录。
+    // E2E must only modify the worker's isolated default config and must never write to the developer's real install directory.
     if (!appPath.includes(".e2e-cache")) throw new Error(`Unexpected E2E app path: ${appPath}`);
     localPath = join(appPath, "../../config/default.json");
     originalLocal = await readFile(localPath, "utf8").catch(() => undefined);
-    // Main 的 setApplicationLocale 只更新原生菜单，不修改 Renderer 的持久语言。
-    // 先为隔离副本设置界面语言再加载，避免中文系统下用英文选择器误报帮助入口缺失。
+    // Main's setApplicationLocale only updates the native menu and does not change the Renderer's persisted language.
+    // Set the UI language on the isolated copy before loading, so a Chinese system does not report a missing help entry when using English selectors.
     await seedSettings({ locale: "en-US", localePreference: "en-US" });
     await browser.refresh();
     await waitForDefaultWorkspaceReady(30000);
@@ -103,13 +104,26 @@ describe("帮助配置 client/configs", () => {
     });
     await command("openCommunity");
     await expectExternal(fixture.remote.community_urls!["zh-CN"]!);
-    // 同一端点也被 Host Provider Config 拉取（带 x-request-id）；缓存断言只统计 Main 的帮助请求。
+    // The same endpoint is also fetched by Host Provider Config (with x-request-id); the cache assertion only counts Main's help requests.
     const helpRequests = server.requests.filter((request) => !request.headers["x-request-id"]);
     expect(helpRequests).toHaveLength(1);
     const query = new URL(helpRequests[0]!.url, server.origin).searchParams;
     expect(query.get("app_version")).toBeTruthy();
     expect(query.get("platform")).toBe(`${process.platform}-${process.arch}`);
     expect(helpRequests[0]!.headers.authorization).toBeUndefined();
+  });
+
+  it("HC-01-copy-device-mid: 真实帮助菜单复制当前设备 MID", async () => {
+    const expected = await browser.execute(async () => {
+      return (window as unknown as { zcode: DesktopBridge }).zcode.getDeviceId();
+    });
+    await $('button[aria-label="Help"]').click();
+    await $('[role="menuitem"]*=Copy device MID').click();
+    await browser.waitUntil(
+      async () =>
+        (await browser.electron.execute((electron) => electron.clipboard.readText())) === expected,
+      { timeout: 10_000, timeoutMsg: "系统剪贴板没有收到当前设备 MID" },
+    );
   });
 
   it("HC-02: 英文缺失只回退英文内置值", async () => {

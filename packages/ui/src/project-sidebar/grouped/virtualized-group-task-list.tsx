@@ -1,4 +1,5 @@
 import type { ChildSessionSelectOptions } from "@/components/TaskChildSessionRows.js";
+import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import type { ProjectTask as ZCodeTaskMeta } from "@/project-sidebar/contract.js";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -163,10 +164,15 @@ export function VirtualizedGroupedTaskList({
         groupId={groupId}
         groups={groups}
         remoteSessionId={getTaskRemoteSessionId(task)}
-        activeWorkspacePath={activeWorkspacePath}
-        activeWorkspaceIdentity={activeWorkspaceIdentity}
-        activeTaskId={activeTaskId}
-        mobileActiveTaskKey={mobileActiveTaskKey}
+        isActive={
+          activeTaskId === task.taskId &&
+          buildTaskWorkspaceKey(activeWorkspacePath, activeWorkspaceIdentity) ===
+            buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity)
+        }
+        isMobileActive={
+          mobileActiveTaskKey ===
+          `${buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity)}:${task.taskId}`
+        }
         onSelectTask={onSelectTask}
         onCloseTask={onCloseTask}
         onOpenFileTree={onOpenFileTree}

@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  assertInstalledLockfileSnapshot,
+  stripPnpmEnvLockfileDocument,
+  createPnpmLockfileOnlyEnv,
   createInstallablePackageFilter,
   productionPackages,
   readLockfilePlatformConstraints,
@@ -56,6 +59,38 @@ snapshots:
 
 const TARGETS = { os: ["darwin", "linux", "win32"], cpu: ["arm64", "x64"], libc: null };
 
+test("锁图查询强制使用 pnpm lockfile-only 模式", () => {
+  assert.equal(
+    createPnpmLockfileOnlyEnv({ NPM_CONFIG_LOCKFILE_ONLY: "false" }).NPM_CONFIG_LOCKFILE_ONLY,
+    "true",
+  );
+});
+
+test("安装快照与根 lockfile 内容一致即通过，换行风格差异不算漂移", () => {
+  assert.doesNotThrow(() => assertInstalledLockfileSnapshot("same", "same"));
+  // Review CR-03 regression: on a Windows autocrlf workspace the root lockfile is CRLF while
+  // the install snapshot is LF; when the dependency graph matches, it must pass.
+  assert.doesNotThrow(() => assertInstalledLockfileSnapshot("a\r\nb\r\n", "a\nb\n"));
+  // Real content differences (still different after normalization) still fail strictly.
+  assert.throws(
+    () => assertInstalledLockfileSnapshot("current\r\n", "stale\n"),
+    /pnpm install --frozen-lockfile/,
+  );
+});
+
+test("pnpm 12 env-lockfile document is ignored by the installed snapshot comparison", () => {
+  const env =
+    "---\nlockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    configDependencies: {}\n---\n";
+  const graph = "lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n";
+  assert.equal(stripPnpmEnvLockfileDocument(`${env}${graph}`), graph);
+  assert.equal(stripPnpmEnvLockfileDocument(graph), graph);
+  assert.doesNotThrow(() => assertInstalledLockfileSnapshot(`${env}${graph}`, graph));
+  assert.throws(
+    () => assertInstalledLockfileSnapshot(`${env}${graph}`, "lockfileVersion: '9.0'\n"),
+    /pnpm install --frozen-lockfile/,
+  );
+});
+
 test("只读取 packages 段的 os/cpu/libc 约束，snapshots 段不参与", () => {
   const constraints = readLockfilePlatformConstraints(LOCKFILE);
   assert.deepEqual(constraints.get("@img/sharp-linux-s390x@0.34.5"), {
@@ -75,7 +110,7 @@ test("与 pnpm 可安装规则一致：非目标 cpu/os 排除，libc 只在宿�
   assert.equal(installable("@img/sharp-linux-s390x", "0.34.5"), false);
   assert.equal(installable("@img/sharp-wasm32", "0.34.5"), false);
   assert.equal(installable("fsevents", "2.3.3"), true);
-  // pnpm 的否定项语义：目标平台里只要有一个被否定，整个包就不安装。
+  // pnpm's negation semantics: if any target platform is negated, the whole package is not installed.
   assert.equal(installable("not-windows", "1.0.0"), false);
   assert.equal(installable("@img/sharp-linuxmusl-x64", "0.34.5"), true);
   assert.equal(installable("@emnapi/runtime", "1.9.2"), true);

@@ -3,18 +3,20 @@
 ## Rules and ownership
 
 `pnpm verify:pre-push` (`scripts/run-pre-push.mjs`) owns the sequential local
-gate: lint, `architecture:check --changed`, `test-copy:check`,
-`instruction-commands:check` (specs/instruction-command-contract.md),
-`db:migrations:check` (specs/upstream-migration-freeze.md), affected Vitest
-(`test:unit:affected -- --scope push`), then the complete `test:node` suite. A
-failed stage stops the gate and preserves its nonzero exit status. Every executed
-stage reports its start, result and elapsed time; the gate also reports total
-elapsed time. The SQLite schema contract check is not part of the gate yet; it
-returns with the product sync that provides its shared migration module.
+gate: upstream's `check:push-worktree` (pushed refs must equal a clean `HEAD`),
+`check:e2e-remote-targets`, lint, `docs:stale-phrases:check`, `db:schema:check`,
+`test:architecture`, `architecture:check --changed`, then the fork stages
+`test-copy:check`, `instruction-commands:check`
+(specs/instruction-command-contract.md), `db:migrations:check`
+(specs/upstream-migration-freeze.md), affected Vitest
+(`test:engineering:affected -- --scope push`, specs/fork-test-pipeline.md), then
+the complete `test:node` suite. A failed stage stops the gate and preserves its
+nonzero exit status. Every executed stage reports its start, result and elapsed
+time; the gate also reports total elapsed time.
 
 The affected stage receives its base from the fork resolver: `run-pre-push.mjs`
 computes the merge-base of the resolved target and `HEAD` and passes it as
-`ZCODE_AFFECTED_TEST_BASE`. Upstream `scripts/affected-unit-tests/scope.mjs`
+`ZCODE_AFFECTED_TEST_BASE`. Upstream `scripts/engineering-tests/scope.mjs`
 honours that override before its own first-push fallback, which hard-codes
 `origin/staging` (absent in this fork, whose default branch is `fork`, see `specs/fork-branch-model.md`).
 `scope.mjs` stays byte-identical to upstream.
@@ -24,7 +26,8 @@ explicit base, Git pre-push input, upstream, then default branch. The
 default-branch fallback prefers `origin/HEAD`, then `origin/fork`, then
 `origin/staging`, `origin/main`, `origin/master`, `main` and `master`. An existing
 remote branch still uses the remote SHA supplied by Git. Affected Vitest scope
-selection is owned by upstream `scripts/run-affected-unit-tests.mjs`.
+selection is owned by `scripts/run-affected-engineering-tests.mjs` (upstream, plus the fork projects
+and `--on-full`).
 
 Only a nonempty, known diff consisting entirely of root-level `.md` files or
 `.md` files inside `docs/` and `specs/` may skip both test stages. Lint and
@@ -43,7 +46,9 @@ an executed check.
 
 ```text
 Git refs -> pre-push diff target resolver -> documentation classification
-                                          -> lint -> architecture:check --changed
+                                          -> check:push-worktree -> check:e2e-remote-targets
+                                              -> lint -> docs:stale-phrases:check -> db:schema:check
+                                              -> test:architecture -> architecture:check --changed
                                               -> test-copy:check -> instruction-commands:check
                                               -> db:migrations:check
                                               -> documentation only: skip tests
@@ -58,7 +63,7 @@ Git refs -> pre-push diff target resolver -> documentation classification
    preferred when present; the legacy fallbacks remain usable.
 2. A committed docs/specs/root Markdown change or deletion runs static checks
    and skips both test commands. Source edits, config edits, application Markdown,
-   MDX, mixed changes and code renamed into documentation run all four stages.
+   MDX, mixed changes and code renamed into documentation also run both test stages.
 3. An existing-branch push uses Git's supplied remote SHA, not an unrelated
    default branch. A missing target or multi-ref push runs all stages.
 4. A failing stage reports its duration and exit code, suppresses subsequent
@@ -70,7 +75,7 @@ Git refs -> pre-push diff target resolver -> documentation classification
    the merge-base with the default branch to the affected stage and does not
    reach upstream's `origin/staging` fallback.
 
-Regression tests live in `scripts/test/run-affected-unit-tests.test.mjs` and
+Regression tests live in `scripts/test/affected-engineering-test-cli.test.mjs` and
 `scripts/test/run-pre-push.test.mjs` and run with `pnpm test:pre-push` in PR CI.
 They remain separate from `test:node` so their temporary Git repositories and
 subprocesses do not add latency to every ordinary push.

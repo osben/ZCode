@@ -208,9 +208,9 @@ describe(`${CASE}: 实际 Web 查看与桌面唯一未读写者`, () => {
     await prepareSSHConnectionPage(CASE);
     await ensureUpstreamProviderForE2E({ skipToolbarSelection: true });
     await startNewV4Draft();
-    // 回放模型只提供 disabled；用例不依赖通用 helper 的 high 默认档位。
+    // The replay seed declares high/max; unread assertions do not depend on the tier, so explicitly select high from the catalog.
     await selectUpstreamModel();
-    await selectUpstreamThoughtLevelValue("disabled");
+    await selectUpstreamThoughtLevelValue("high");
     await installHandoffRpcProbe();
     webBrowser = await chromium.launch({
       ...(process.env.ZCODE_E2E_MOBILE_BROWSER_EXECUTABLE || process.env.R3_MOBILE_CHROME
@@ -225,7 +225,7 @@ describe(`${CASE}: 实际 Web 查看与桌面唯一未读写者`, () => {
       if (width === 390) {
         await startNewV4Draft();
         await selectUpstreamModel();
-        await selectUpstreamThoughtLevelValue("disabled");
+        await selectUpstreamThoughtLevelValue("high");
       }
       await sendV4Prompt(`${CASE}_SEED: 只回复 MRO03_SEED_DONE`);
       await waitForV4AssistantMessageContaining("MRO03_SEED_DONE", 90_000);
@@ -260,7 +260,7 @@ describe(`${CASE}: 实际 Web 查看与桌面唯一未读写者`, () => {
       };
 
       if (width === 390) {
-        // 桌面手动未读是用户提醒；Web 持续查看同一任务时，断点变化不能伪造离开和返回。
+        // Desktop manual unread is a user reminder; while Web keeps viewing the same task, checkpoint changes must not fabricate a leave-and-return.
         const row = $(`[data-testid=${JSON.stringify(testId(TID_TASK_ITEM, address.taskId))}]`);
         await row.click({ button: "right" });
         let marked = false;
@@ -279,7 +279,7 @@ describe(`${CASE}: 实际 Web 查看与桌面唯一未读写者`, () => {
             (narrow) => Boolean(document.querySelector('[data-mobile-page="chat"]')) === narrow,
             nextWidth < 768,
           );
-          // 对持久 marker 做有界稳定性断言，捕获 resize 后异步到达的错误已读命令。
+          // Bounded stability assertion on the persistent marker, catching a wrongly-issued read command arriving async after the resize.
           const start = Date.now();
           await browser.waitUntil(
             async () => {
@@ -299,7 +299,7 @@ describe(`${CASE}: 实际 Web 查看与桌面唯一未读写者`, () => {
       }
 
       await beginDesktopTurn(address, `${CASE}_HOME`);
-      // 窄屏返回首页；宽屏通过插件市场离开会话，不能仅用聊天已挂载判断正在查看。
+      // Narrow screens go back home; wide screens leave the conversation via the plugin market — "chat mounted" alone is not proof of viewing.
       if (width < 768) await showMobileTaskHome(page);
       else await page.getByRole("button", { name: /^(Plugin Store)$/u }).click();
       await waitMobileTaskView(null);
@@ -310,7 +310,7 @@ describe(`${CASE}: 实际 Web 查看与桌面唯一未读写者`, () => {
       evidence[`${width}-home`] = { marker: homeMarker, cleared: true };
 
       await beginDesktopTurn(address, `${CASE}_RECONNECT`);
-      // 离开原页会真正关闭relay；返回保留该条浏览器history，不点击任务来代替自动已读。
+      // Leaving the page truly closes the relay; the return keeps that browser history entry and does not click the task in place of auto-read.
       await page.goto("about:blank");
       await waitMobileTaskView(null);
       await releaseControlledReplay("mro03-reconnect");
@@ -333,7 +333,7 @@ describe(`${CASE}: 实际 Web 查看与桌面唯一未读写者`, () => {
         .first()
         .getAttribute("data-session-id");
       if (!promotedId) throw new Error("MRO03 Web draft did not become a task");
-      // 新未归类草稿可由Host分配新目录，不能复用上一个任务的cwd冒充完整身份。
+      // A new unclassified draft may get a new directory from the Host; reusing the previous task's cwd would not be a full identity.
       const promoted: UnreadTaskAddress = await page.evaluate((taskId) => {
         const tabs = (
           window as Window & {
@@ -370,12 +370,12 @@ describe(`${CASE}: 实际 Web 查看与桌面唯一未读写者`, () => {
     this.timeout(5 * 60_000);
     if (!artifacts) throw new Error("MRO03 isolated artifacts required");
     if (!backgroundAddress) {
-      // 允许用现有mocha grep单独定位真实可见性场景，仍通过UI建立自己的任务前置。
+      // Allows locating the real-visibility scenario alone with the existing mocha grep, still setting up its own task prerequisites through the UI.
       await prepareSSHConnectionPage(CASE);
       await ensureUpstreamProviderForE2E({ skipToolbarSelection: true });
       await startNewV4Draft();
       await selectUpstreamModel();
-      await selectUpstreamThoughtLevelValue("disabled");
+      await selectUpstreamThoughtLevelValue("high");
       await installHandoffRpcProbe();
       await sendV4Prompt(`${CASE}_SEED: 只回复 MRO03_SEED_DONE`);
       await waitForV4AssistantMessageContaining("MRO03_SEED_DONE", 90_000);
