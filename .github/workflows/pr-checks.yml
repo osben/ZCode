@@ -192,3 +192,5 @@ jobs:
             pnpm test:engineering:affected -- --base "$base" --on-full run
           fi
           pnpm test:node
+          # Relay suites sit outside both manifests and the affected selection; run them on every PR.
+          pnpm test:relay

@@ -24,7 +24,8 @@ cases). Taking the upstream model unchanged would silently stop running them.
   - `fork-isolated`: `forks` pool, serial, for tests that spawn real build/tool subprocesses
     (`packages/provider-node/test/builtin-provider-build.test.ts`).
   - `relay`: the self-hosted relay suites, by glob (`packages/remote-relay/**/*.test.ts`,
-    `packages/shared/src/web-remote-relay/**/*.test.ts`), threads pool. Only `test:relay` selects it.
+    `packages/shared/src/web-remote-relay/**/*.test.ts`), threads pool. Only `test:relay` selects it;
+    PR CI and `pnpm test` call it explicitly because the affected selection never reaches it.
 
   Both manifests are listed in `forceRerunTriggers`, so a manifest change selects the whole suite.
 
@@ -32,7 +33,7 @@ cases). Taking the upstream model unchanged would silently stop running them.
   - `test:engineering` = upstream engineering project, started through `scripts/run-vitest.mjs`
     (Node 26 Web Storage flag);
   - `test:fork` = `fork-unit` + `fork-isolated` through `scripts/run-vitest.mjs`;
-  - `test` = `test:engineering && test:fork && test:node`;
+  - `test` = `test:engineering && test:fork && test:node && test:relay`;
   - `test:engineering:affected` = `scripts/run-affected-engineering-tests.mjs`, selecting across the
     `engineering`, `fork-unit` and `fork-isolated` projects. It keeps the fork's `--on-full run|skip`
     option and Web Storage re-exec; `--files-manifest` is dropped with its only caller (the
@@ -55,14 +56,14 @@ stages, in this order: `check:push-worktree`, `check:e2e-remote-targets`, `lint`
 documentation-only) `test:engineering:affected --scope push` and `test:node`.
 
 PR CI (specs/pr-affected-unit-tests.md) runs `test:engineering:affected --base <merge-base> --on-full run`,
-or `test:engineering` + `test:fork` when a dependency manifest changed, then `test:node`. The
-scheduled workflow runs `pnpm test`.
+or `test:engineering` + `test:fork` when a dependency manifest changed, then `test:node` and
+`test:relay`. The scheduled workflow runs `pnpm test`.
 
 ```text
 scripts/engineering-test-files.json (upstream) --> project engineering --+
 scripts/fork-test-files.json (fork) ---------> project fork-unit -------+--> test:engineering:affected
                                           \--> project fork-isolated --+     (pre-push, PR CI)
-pnpm test = test:engineering -> test:fork -> test:node   (scheduled full run)
+pnpm test = test:engineering -> test:fork -> test:node -> test:relay   (scheduled full run)
 ```
 
 ## Acceptance scenarios
@@ -76,3 +77,5 @@ pnpm test = test:engineering -> test:fork -> test:node   (scheduled full run)
 4. A pre-push from a dirty worktree fails at `check:push-worktree` before any test runs.
 5. A fork test missing from disk, listed twice, unsorted, or also present in the engineering
    manifest fails `scripts/test/fork-test-files.test.mjs`.
+6. PR CI and `pnpm test` run `test:relay`, so a relay suite failure blocks the PR even though the
+   relay project is outside both manifests.
